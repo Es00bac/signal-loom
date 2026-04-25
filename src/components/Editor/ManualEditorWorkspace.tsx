@@ -128,6 +128,7 @@ import type {
 import {
   createEditorAsset,
   getEditorAssets,
+  getProjectEditorAssets,
   migrateStageObjectsToEditorAssets,
 } from '../../lib/editorAssets';
 import { onNativeRendererCommand } from '../../lib/nativeApp';
@@ -336,9 +337,13 @@ export function ManualEditorWorkspace({ getNewFlowNodePosition }: ManualEditorWo
     () => (activeComposition ? getEditorStageObjects(activeComposition.data) : []),
     [activeComposition],
   );
-  const editorAssets = useMemo(
+  const compositionEditorAssets = useMemo(
     () => (activeComposition ? getEditorAssets(activeComposition.data) : []),
     [activeComposition],
+  );
+  const editorAssets = useMemo(
+    () => getProjectEditorAssets(compositionEditorAssets, orderedLibraryItems),
+    [compositionEditorAssets, orderedLibraryItems],
   );
   const timelineSnapPoints = useMemo(
     () => normalizeTimelineSnapPoints(activeComposition?.data.editorTimelineSnapPoints),
@@ -894,7 +899,7 @@ export function ManualEditorWorkspace({ getNewFlowNodePosition }: ManualEditorWo
 
     queueMicrotask(() => {
       commitActiveCompositionPatch({
-        editorAssets: [...editorAssets, ...migrated.assets],
+        editorAssets: [...compositionEditorAssets, ...migrated.assets],
         editorVisualClips: [...visualClips, ...migrated.clips],
         editorStageObjects: [],
       }, 'Migrate stage objects to editor assets');
@@ -902,8 +907,8 @@ export function ManualEditorWorkspace({ getNewFlowNodePosition }: ManualEditorWo
     });
   }, [
     activeComposition,
+    compositionEditorAssets,
     commitActiveCompositionPatch,
-    editorAssets,
     sequenceDurationSeconds,
     stageObjects,
     visualClips,
@@ -1064,7 +1069,7 @@ export function ManualEditorWorkspace({ getNewFlowNodePosition }: ManualEditorWo
 
     const nextAsset = createEditorAsset(kind);
     commitActiveCompositionPatch({
-      editorAssets: [nextAsset, ...editorAssets],
+      editorAssets: [nextAsset, ...compositionEditorAssets],
     }, `Add ${kind} editor asset`);
     setSourceBinTab('editorAssets');
 
@@ -1174,6 +1179,12 @@ export function ManualEditorWorkspace({ getNewFlowNodePosition }: ManualEditorWo
       return;
     }
 
+    if (!compositionEditorAssets.some((candidate) => candidate.id === asset.id)) {
+      commitActiveCompositionPatch({
+        editorAssets: [asset, ...compositionEditorAssets],
+      }, 'Materialize source text asset');
+    }
+
     setContextMenu(null);
     setTextEditDialog({
       mode: 'asset',
@@ -1220,7 +1231,7 @@ export function ManualEditorWorkspace({ getNewFlowNodePosition }: ManualEditorWo
 
     if (textEditDialog.mode === 'asset') {
       commitActiveCompositionPatch({
-        editorAssets: editorAssets.map((asset) =>
+        editorAssets: compositionEditorAssets.map((asset) =>
           asset.id === textEditDialog.targetId && asset.kind === 'text'
             ? {
                 ...asset,
@@ -1971,7 +1982,7 @@ export function ManualEditorWorkspace({ getNewFlowNodePosition }: ManualEditorWo
 
     if (importedImageAssets.length > 0) {
       commitActiveCompositionPatch({
-        editorAssets: [...importedImageAssets, ...editorAssets],
+        editorAssets: [...importedImageAssets, ...compositionEditorAssets],
       }, 'Import editor image assets');
       setSourceBinTab('editorAssets');
     }
@@ -2093,7 +2104,7 @@ export function ManualEditorWorkspace({ getNewFlowNodePosition }: ManualEditorWo
       });
 
       commitActiveCompositionPatch({
-        editorAssets: [nextAsset, ...editorAssets],
+        editorAssets: [nextAsset, ...compositionEditorAssets],
       }, 'Commit cropped image asset');
       setSourceBinTab('editorAssets');
     } catch (error) {
@@ -2657,6 +2668,11 @@ export function ManualEditorWorkspace({ getNewFlowNodePosition }: ManualEditorWo
                         key={asset.id}
                         onOpenContextMenu={(event) => openEditorAssetContextMenu(asset, event)}
                         onPlace={(trackIndex) => placeEditorAssetOnTrack(asset, trackIndex)}
+                        previewSourceItem={
+                          asset.kind === 'image' && asset.imageSourceId
+                            ? sourceItemByNodeId.get(asset.imageSourceId)
+                            : undefined
+                        }
                       />
                     ))
                   ) : (
@@ -5562,10 +5578,12 @@ function EditorAssetCard({
   asset,
   onOpenContextMenu,
   onPlace,
+  previewSourceItem,
 }: {
   asset: EditorAsset;
   onOpenContextMenu: (event: React.MouseEvent<HTMLElement>) => void;
   onPlace: (trackIndex: number) => void;
+  previewSourceItem?: SourceBinItem;
 }) {
   return (
     <article
@@ -5597,6 +5615,8 @@ function EditorAssetCard({
                 borderWidth: Math.min(4, asset.shapeDefaults?.borderWidth ?? 2),
               }}
             />
+          ) : previewSourceItem?.assetUrl ? (
+            <img alt={asset.label} className="h-full w-full object-cover" src={previewSourceItem.assetUrl} />
           ) : (
             <ImageIcon size={18} />
           )}

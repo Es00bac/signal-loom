@@ -8,6 +8,7 @@ import type {
   NodeData,
   TextClipEffect,
 } from '../types/flow';
+import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import { createEditorVisualClip } from './manualEditorState';
 
 export interface CreateEditorAssetOptions {
@@ -25,6 +26,63 @@ export function getEditorAssets(nodeData: Partial<NodeData>): EditorAsset[] {
   }
 
   return value.flatMap((asset) => normalizeEditorAsset(asset));
+}
+
+export function getProjectEditorAssets(
+  editorAssets: EditorAsset[],
+  sourceItems: SourceBinLibraryItem[],
+): EditorAsset[] {
+  const representedImageSourceIds = new Set(
+    editorAssets.flatMap((asset) => (
+      asset.kind === 'image' && asset.imageSourceId ? [asset.imageSourceId] : []
+    )),
+  );
+  const existingAssetIds = new Set(editorAssets.map((asset) => asset.id));
+  const sourceEditorAssets = sourceItems.flatMap<EditorAsset>((item) => {
+    const assetId = `asset-source-${item.id}`;
+
+    if (existingAssetIds.has(assetId)) {
+      return [];
+    }
+
+    if (item.kind === 'text') {
+      const text = item.text?.trim();
+
+      if (!text) {
+        return [];
+      }
+
+      existingAssetIds.add(assetId);
+      return [{
+        id: assetId,
+        kind: 'text',
+        label: item.label,
+        createdAt: item.createdAt,
+        updatedAt: item.createdAt,
+        textDefaults: {
+          ...createTextDefaults(),
+          text,
+        },
+      }];
+    }
+
+    if (item.kind !== 'image' || !item.assetUrl || representedImageSourceIds.has(item.id)) {
+      return [];
+    }
+
+    existingAssetIds.add(assetId);
+    representedImageSourceIds.add(item.id);
+    return [{
+      id: assetId,
+      kind: 'image',
+      label: item.label,
+      createdAt: item.createdAt,
+      updatedAt: item.createdAt,
+      imageSourceId: item.id,
+    }];
+  });
+
+  return [...editorAssets, ...sourceEditorAssets];
 }
 
 export function createEditorAsset(

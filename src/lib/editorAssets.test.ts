@@ -3,6 +3,7 @@ import type { EditorAsset, EditorStageObject } from '../types/flow';
 import {
   createEditorAsset,
   getEditorAssets,
+  getProjectEditorAssets,
   migrateStageObjectsToEditorAssets,
 } from './editorAssets';
 
@@ -30,6 +31,88 @@ describe('getEditorAssets', () => {
 
     expect(assets).toHaveLength(1);
     expect(assets[0]?.id).toBe('title-1');
+  });
+});
+
+describe('getProjectEditorAssets', () => {
+  it('surfaces saved source-bin images as editor assets', () => {
+    const textAsset = createEditorAsset('text', { id: 'title-1', label: 'Title' });
+    const assets = getProjectEditorAssets([textAsset], [
+      {
+        id: 'source-image-1',
+        label: 'Generated frame',
+        kind: 'image',
+        mimeType: 'image/png',
+        assetUrl: 'blob:generated-frame',
+        createdAt: 10,
+      },
+      {
+        id: 'source-video-1',
+        label: 'Generated clip',
+        kind: 'video',
+        mimeType: 'video/mp4',
+        assetUrl: 'blob:generated-clip',
+        createdAt: 20,
+      },
+    ]);
+
+    expect(assets).toEqual([
+      textAsset,
+      {
+        id: 'asset-source-source-image-1',
+        kind: 'image',
+        label: 'Generated frame',
+        createdAt: 10,
+        updatedAt: 10,
+        imageSourceId: 'source-image-1',
+      },
+    ]);
+  });
+
+  it('does not duplicate source-bin images already represented by explicit editor assets', () => {
+    const imageAsset = createEditorAsset('image', {
+      id: 'asset-image-1',
+      label: 'Imported image',
+      imageSourceId: 'source-image-1',
+      createdAt: 30,
+    });
+    const assets = getProjectEditorAssets([imageAsset], [
+      {
+        id: 'source-image-1',
+        label: 'Imported image',
+        kind: 'image',
+        mimeType: 'image/png',
+        assetUrl: 'blob:imported-image',
+        createdAt: 10,
+      },
+    ]);
+
+    expect(assets).toEqual([imageAsset]);
+  });
+
+  it('surfaces saved source-bin text as editor assets', () => {
+    const assets = getProjectEditorAssets([], [
+      {
+        id: 'source-text-1',
+        label: 'Generated caption',
+        kind: 'text',
+        text: 'Generated caption text',
+        createdAt: 40,
+      },
+    ]);
+
+    expect(assets).toEqual([
+      expect.objectContaining({
+        id: 'asset-source-source-text-1',
+        kind: 'text',
+        label: 'Generated caption',
+        createdAt: 40,
+        updatedAt: 40,
+        textDefaults: expect.objectContaining({
+          text: 'Generated caption text',
+        }),
+      }),
+    ]);
   });
 });
 

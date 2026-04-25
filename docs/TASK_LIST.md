@@ -129,3 +129,4 @@
 - [x] Combine the editor header controls into the app titlebar and remove the redundant Manual Editor banner
 - [x] Fix Composition-node mini-timeline handles so visible inputs align to actual lanes instead of floating over the node body/footer
 - [x] Add source-bin starring, per-item collapse, collapse/expand-all controls, and thumbnail media preview popups
+- [x] Surface flow-source-bin text and image assets in the editor Project Source Bin's Editor Assets tab
