@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    @apply bg-[#0b0c10] text-gray-100 font-sans;
+    margin: 0;
+    overflow: hidden;
+    color-scheme: dark;
+  }
+
+  * {
+    scrollbar-color: rgba(34, 211, 238, 0.38) rgba(8, 17, 29, 0.82);
+    scrollbar-width: thin;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: rgba(8, 17, 29, 0.82);
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(34, 211, 238, 0.42), rgba(59, 130, 246, 0.38));
+    border: 2px solid rgba(8, 17, 29, 0.82);
+    border-radius: 999px;
+  }
+
+  input,
+  select,
+  textarea {
+    accent-color: #22d3ee;
+  }
+}
+
+@layer components {
+  .react-flow__node-input,
+  .react-flow__node-input.selectable:hover,
+  .react-flow__node-input.selectable.selected,
+  .react-flow__node-input.selectable:focus,
+  .react-flow__node-input.selectable:focus-visible {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .react-flow__controls button {
+    background: #101a29;
+    border-bottom: 1px solid rgba(103, 232, 249, 0.14);
+    color: rgba(207, 250, 254, 0.82);
+  }
+
+  .react-flow__controls button:hover {
+    background: rgba(34, 211, 238, 0.12);
+    color: #ffffff;
+  }
+}

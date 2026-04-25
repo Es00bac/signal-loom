@@ -1,0 +1,15 @@
+[Unit]
+Description=Signal Loom local remote-access agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/signal-loom-remote.env
+WorkingDirectory=%h/SignalLoom
+ExecStart=/usr/bin/node %h/SignalLoom/ops/remote-access/local-agent.mjs
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

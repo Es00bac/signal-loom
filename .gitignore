@@ -1,0 +1,50 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local runtime state, browser automation artifacts, and generated output
+.codex
+.cache
+.omc
+.playwright-cli
+.playwright-mcp
+coverage
+output
+scratch
+*.sloom
+*.signal-loom-scratch
+
+# Local development notes can contain machine paths, deployment hostnames,
+# and other operator-specific context that should not be published by default.
+docs/notes
+docs/superpowers
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

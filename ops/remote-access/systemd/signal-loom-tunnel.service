@@ -1,0 +1,14 @@
+[Unit]
+Description=Signal Loom reverse SSH tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/signal-loom-remote.env
+ExecStart=/usr/bin/env bash -lc 'exec /usr/bin/ssh -NT -i "$SIGNAL_LOOM_TUNNEL_SSH_KEY" -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -R 127.0.0.1:41731:127.0.0.1:${SIGNAL_LOOM_PREVIEW_PORT:-4174} -R 127.0.0.1:41732:127.0.0.1:41732 "$SIGNAL_LOOM_TUNNEL_USER@$SIGNAL_LOOM_TUNNEL_HOST"'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

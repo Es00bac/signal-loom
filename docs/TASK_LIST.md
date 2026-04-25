@@ -1,0 +1,131 @@
+# Flows Clone Task List
+
+## Phase 1: Planning and Scaffolding
+- [x] Analyze image and determine requirements
+- [x] Create handoff documentation (`CLAUDE.md`, `AGENTS.md`, `docs/HANDOFF.md`)
+- [x] Create initial task list and notes structure
+- [x] Implement local state management for API keys and UI preferences
+
+## Phase 2: UI Shell & Layout
+- [x] Build Top Navigation Bar (Logo, Flow Name, Zoom Controls, Share, Configuration)
+- [x] Build Bottom Floating Toolbar for Node Insertion (Image, Video, Audio, Text, Config)
+- [x] Build the Settings Modal for configuring API Keys (OpenAI, Gemini, Vertex, Hugging Face, ElevenLabs)
+- [x] Setup the base Infinite Canvas using `@xyflow/react`
+
+## Phase 3: Node Types & UI
+- [x] Create base Custom Node component wrapper (with headers, handles, and execution status)
+- [x] Implement Text Prompt Node (Input)
+- [x] Implement Image Generation Node (Output/Input)
+- [x] Implement Config/Settings Node (Parameters like Model, Steps, Aspect Ratio)
+- [x] Implement "Run" button per-node to execute a sub-graph
+
+## Phase 4: Execution Engine
+- [x] Build Execution Context (DAG parser for React Flow nodes/edges)
+- [x] Implement Text-to-Image execution via Hugging Face / OpenAI / Gemini
+- [x] Implement Text-to-Text execution via Gemini / OpenAI / Hugging Face
+- [x] Implement Text-to-Video execution via Gemini / Hugging Face
+- [x] Add explicit start-frame and end-frame support for Gemini/Veo video generation
+- [x] Implement Text-to-Speech execution via ElevenLabs / Hugging Face
+- [x] Pass outputs of one node as inputs to the next
+
+## Phase 5: Polish & Persistence
+- [x] Save/Load flow to `localStorage`
+- [x] Add loading spinners / node status feedback
+- [x] Replace free-text model and voice fields with provider-filtered dropdown selectors
+- [x] Add local image/audio import support plus per-node save/download actions
+- [x] Preserve per-node generation history and allow switching between prior runs with compact run selectors
+- [x] Add a Composition node for combining video and audio with timeline-style alignment controls
+- [x] Add larger clickable connector ports with compatible next-step action menus
+- [x] Add a source-bin node plus a dedicated editor workspace toggle for manual timeline editing
+- [x] Promote the editor workspace with separate source/program monitors and a sequencer-style layout
+- [x] Make all source-bin nodes act as entry points into one shared editor media pool
+- [x] Add local project save/open/import/export plus bulk media export from the editor workspace
+- [x] Make the editor source bin project-owned with autosaved imported/generated assets that save and reopen with each project
+- [x] Add editor panel toggles and drag-to-resize splitters for the source/program/bin/inspector layout
+- [x] Expand composition editing beyond one-video-plus-audio into a real sequencer with reusable source-bin assets and richer track controls
+- [x] Turn the source bin into a persistent local source library with shared entry nodes, direct media import, and a collapsible flow-workspace sidebar
+- [x] Add richer manual-editor finishing controls including text overlays, clip transforms, motion keyframes, timeline splitting, and editor context menus
+- [x] Make the editor monitors substantially more usable with larger preview stages, explicit program-canvas settings, a live edit-stage view, and select/cut timeline tools
+- [x] Improve editor clip ergonomics with playhead-based cutting, bin-to-timeline drag/drop, video-audio placement on audio lanes, and monitor-stage scaling fixes
+- [x] Tighten the editor into a denser NLE-style workspace with adjustable track heights, clip edge thumbnails, audio waveforms, and stronger render activity feedback
+- [x] Add undo/redo controls and keyboard shortcuts for manual editor composition edits
+- [x] Fix editor render feedback, add draggable timeline track-height handles, and carry opacity automation points into renders
+- [x] Add multimodal text-node image context via connected image nodes and direct source-bin image drop for image-to-text prompting
+- [x] Keep source and program monitor previews fitted inside their panels instead of bleeding into the timeline/editor chrome
+- [x] Fix the monitor rendering regression that collapsed source/program previews into thin strips or blank-looking panels
+- [x] Place newly added toolbar/editor nodes at the center of the current flow viewport instead of a fixed screen location
+- [x] Respect non-square aspect ratios in image generation and image editing requests instead of silently defaulting to square outputs
+- [x] Rebrand the app with a distinct product name and update the visible shell, defaults, and docs consistently
+- [x] Replace the titlebar placeholder initials with a cropped Signal Loom logo asset and matching compact styling
+- [x] Add collapsible model-generated text nodes with compact scrollable result previews
+- [x] Add blurred/synthetic in-progress previews for image generation nodes while providers render the final image
+- [x] Make generated source-bin videos durable for timeline editing by saving blob outputs into the project scratch store and referencing saved source-bin item IDs
+- [x] Add visually distinct, dark-theme-safe color accents for each node type
+- [x] Add fullscreen controls, right-click node title bookmarks, and a collapsible right-side bookmark navigator
+- [x] Add virtual alias nodes so one upstream node can be reused from multiple places without moving around the canvas
+- [x] Add filesystem project-folder save/open controls plus per-project scratch folder export for source-bin media
+- [x] Add timeline clip context-menu export actions for first/last video frames into the source bin
+- [x] Refresh the Hugging Face image/video/audio model catalogs with current popular options and make the image node show only the controls supported by the selected model
+- [x] Add shared custom right-click menus across the flow and editor workspaces instead of relying on the browser default context menu
+- [x] Add basic local image-editing tools starting with crop plus selected-region edits composited back into the source image
+- [x] Add timeline automation curves for audio volume and visual opacity so clips can fade or duck over time with editable points
+- [x] Add per-audio-track sequencer volume controls that scale clip volume automation during editor renders
+- [x] Make the program monitor and final render use the same transform/layout math so the editor preview matches exported output more closely
+- [x] Add a secure VPS-backed remote access path for Signal Loom with authenticated login, a reverse tunnel to this machine, and remote start controls for the local app service
+- [x] Show image media previews in node cards using their real aspect ratios instead of forcing square crops
+- [x] Add preview-only collapse controls for large media nodes so the flow workspace stays navigable
+- [x] Add direct editor narration tools, richer per-clip source-audio controls, deeper transitions, and more complete NLE-style finishing features
+- [x] Add an optional directory-backed project scratch workspace for autosave/export instead of browser-only storage
+- [x] Add program-monitor text and rectangle stage objects with transform, opacity, color, and blend/filter controls
+- [x] Add click-to-preview modal panes for image and video node thumbnails in the flow workspace
+- [x] Add visual clip property copy/paste with selectable position, size, rotation, and opacity targets for clip starts/ends
+- [x] Replace untimed program-monitor text and rectangle stage objects with reusable timeline-backed editor assets in a Source Bin tab
+- [x] Add non-destructive clip edge trimming, selectable timeline gaps with Fill Gap, and crop/filter controls that preview and render identically
+- [x] Add timeline snap markers, clip snapping, and Shift-to-whole-second timeline interactions
+- [x] Harden editor performance by bounding timeline preview memory, deduping waveform/duration work, and avoiding base64 media during active editing
+- [x] Make linked scratch folders the active media store so imports/generated editor assets stop filling Chrome's root-profile storage
+- [x] Bound timeline thumbnail and waveform decoding so normal slicing cannot spike Chrome memory by decoding many whole media files at once
+- [x] Make timeline text render as transparent free text with right-click editing from the timeline/source bin and keep the inspector scrollable
+- [x] Make timeline text objects use natural text bounds with invisible selection boxes and scale-driven font animation
+- [x] Add multi-point timeline keyframes for visual transforms, opacity, and audio volume with jump controls and shortcuts
+- [x] Expand visual finishing with a reusable image/video/text filter and blend-mode stack (screen, darken, overlay, dodge, burn, etc.)
+- [x] Final UI styling pass (dark mode as seen in the reference image)
+
+## Phase 6: Hardening
+- [x] Convert Signal Loom into an Electron desktop app with native KDE/globalmenu menus and native file open/save workflows
+- [x] Investigate and fix the Composition-node freeze caused by repeated media-duration reloads during rerenders
+- [x] Fix the current memory spike/crash by coalescing source-bin media ingestion and restoring linked scratch storage on reload
+- [x] Fix Veo start/end-frame logic so interpolation mode follows actual graph wiring and matches the current Gemini contract
+- [x] Fix composition export/timeline interaction bugs and surface miswired frame-image edges on the video node
+- [x] Remove the React Flow built-in input-node skin leak behind custom text nodes
+- [x] Auto-repair legacy or misdropped image-to-video edges onto the proper frame handles
+- [x] Add upstream image-edit support to image nodes for Gemini and OpenAI image models
+- [x] Give video start-frame and end-frame their own dedicated handles and replace stale same-handle edges on reconnect
+- [x] Normalize Gemini Veo model aliases to canonical request IDs so frame-conditioned renders do not send unsupported inlineData payloads
+- [x] Enforce Gemini Veo interpolation's current 8-second duration requirement in the video node UI and execution validation
+- [x] Set Gemini Veo person-generation mode correctly for image-conditioned and interpolation video requests
+- [x] Add video import mode plus scrubber-based still-frame export from video assets
+- [x] Let image nodes extract first or last frame images from upstream video sources
+- [x] Reuse already-generated upstream media outputs instead of rerunning completed branches
+- [x] Add automated smoke tests for node creation, settings persistence, and graph execution
+- [x] Prevent stale remote provider chunks from surfacing raw dynamic-import failures in generator nodes
+- [x] Add an optional backend proxy mode so users do not need to expose provider keys directly to the browser
+- [x] Add asset upload / input nodes for richer Flow-style multimodal chaining
+- [x] Add pre-run spend estimation plus post-run usage telemetry with node-level and global summaries
+- [x] Add Gemini 3.1 Flash TTS narration controls for accent, style, and delivery guidance
+- [x] Normalize composition video-track connections when edges are drawn without the expected handle and replace video duration dropdowns with a three-stop slider
+- [x] Add separate editable-source and reference-image inputs to image nodes so Gemini image editing can use style/outfit guidance images
+- [x] Add richer per-node execution telemetry and cancellation for long-running video jobs
+- [x] Close remaining ElevenLabs-style video parity gaps: negative prompts, batch generations, richer reference image controls, and richer export/history UX
+- [x] Add an optional local native FFmpeg render path with multithreaded CPU fallback and AMD VAAPI acceleration for composition/editor exports
+- [x] Fix non-destructive cut source-range instability by deduping clip preview extraction and using explicit source ranges consistently
+- [x] Cut flow-workspace rerender/persist cost: stabilize per-node runtime callbacks, narrow node store subscriptions, memoize node components, debounce localStorage writes, batch imported-asset restores, lazy-load the manual editor workspace, and split provider SDKs into separate vendor chunks
+- [x] Restore text/media/config node control focus by marking React Flow node controls as no-drag/no-pan/no-wheel interaction surfaces
+- [x] Fix animated timeline text renders by measuring rasterized text bounds with real font metrics and safety padding
+- [x] Fix small-scale animated text renders by aligning FFmpeg visual scaling with the program monitor's 10% minimum
+- [x] Replace conflicting visual start/end animation controls with default Start/End keyframes as the authoritative transform model
+- [x] Make native project open/save use `.sloom` files with per-project scratch folders so source-bin media reconnects from the File menu
+- [x] Restore renamed `.sloom` source-bin media from legacy sibling scratch folders when project assets were saved before the final project name
+- [x] Combine the editor header controls into the app titlebar and remove the redundant Manual Editor banner
+- [x] Fix Composition-node mini-timeline handles so visible inputs align to actual lanes instead of floating over the node body/footer
+- [x] Add source-bin starring, per-item collapse, collapse/expand-all controls, and thumbnail media preview popups

@@ -1,0 +1,14 @@
+[Unit]
+Description=Signal Loom VPS authentication gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/signal-loom-gateway.env
+ExecStart=/usr/bin/node /opt/signal-loom-remote/vps-gateway.mjs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

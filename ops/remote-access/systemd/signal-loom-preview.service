@@ -1,0 +1,15 @@
+[Unit]
+Description=Signal Loom local preview service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/SignalLoom
+ExecStart=/usr/bin/bash -lc 'npm run build && npm run preview -- --host 127.0.0.1 --port 4174'
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target
