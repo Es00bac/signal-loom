@@ -4,6 +4,18 @@ Signal Loom is a local-first AI media workflow studio with a node graph for gene
 
 The app runs in a normal browser through Vite and also ships as an Electron desktop app with native file dialogs and a KDE Plasma global menu.
 
+## Screenshots
+
+<figure>
+  <img src="docs/assets/signal-loom-flow.png" alt="Signal Loom flow workspace showing connected generation nodes, the persistent source bin, provider telemetry, and a composition node." />
+  <figcaption><strong>Flow workspace.</strong> Build reusable generation graphs with prompt, image, video, source-bin, and composition nodes while tracking run cost and keeping generated assets in the project library.</figcaption>
+</figure>
+
+<figure>
+  <img src="docs/assets/signal-loom-editor.png" alt="Signal Loom editor workspace showing the project source bin, source and program monitors, a sequencer timeline, keyframes, and inspector controls." />
+  <figcaption><strong>Editor workspace.</strong> Assemble source-bin media on a multi-track timeline, tune source/program monitors, and keyframe clip transform and opacity from the inspector.</figcaption>
+</figure>
+
 ## Features
 
 - Node-based workflow canvas built with React Flow.
