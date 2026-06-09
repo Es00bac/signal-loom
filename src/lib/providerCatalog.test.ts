@@ -1,12 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_MODELS,
   FALLBACK_MODEL_OPTIONS,
   getConfiguredProviders,
+  getImageAspectRatioOptions,
+  getSupportedImageAspectRatio,
   getVideoDurationOptions,
   mapAspectRatioToImageDimensions,
+  mapAspectRatioToImageSize,
+  RENDER_BACKEND_OPTIONS,
 } from './providerCatalog';
 
 describe('FALLBACK_MODEL_OPTIONS', () => {
+  it('makes the local render auto option explicit about AMD VAAPI GPU acceleration', () => {
+    expect(RENDER_BACKEND_OPTIONS.find((option) => option.value === 'auto')?.label).toContain('AMD VAAPI GPU');
+    expect(RENDER_BACKEND_OPTIONS.find((option) => option.value === 'native-amd-vaapi')?.label).toContain('AMD VAAPI GPU');
+  });
+
+  it('defaults Gemini text generation to the documented Gemini 3 Flash API model', () => {
+    expect(DEFAULT_MODELS.text.gemini).toBe('gemini-3.5-flash');
+  });
+
+  it('keeps documented Gemini 3 text model IDs available without inventing an Omni alias', () => {
+    const geminiTextModelIds = FALLBACK_MODEL_OPTIONS.text.gemini.map((option) => option.value);
+
+    expect(geminiTextModelIds).toEqual(expect.arrayContaining([
+      'gemini-3.5-flash',
+      'gemini-3-flash-preview',
+      'gemini-3.1-pro-preview',
+      'gemini-3.1-flash-lite',
+      'gemini-3.1-flash-lite-preview',
+    ]));
+    expect(geminiTextModelIds).not.toContain('gemini-omni-flash');
+  });
+
   it('keeps current Hugging Face image, video, and audio choices available', () => {
     expect(FALLBACK_MODEL_OPTIONS.image.huggingface.map((option) => option.value)).toEqual(
       expect.arrayContaining([
@@ -30,6 +57,58 @@ describe('FALLBACK_MODEL_OPTIONS', () => {
       ]),
     );
   });
+
+  it('adds the worthwhile Vertex Imagen 4 generation models to the Gemini image picker', () => {
+    expect(FALLBACK_MODEL_OPTIONS.image.gemini.map((option) => option.value)).toEqual(
+      expect.arrayContaining([
+        'imagen-4.0-fast-generate-001',
+        'imagen-4.0-generate-001',
+        'imagen-4.0-ultra-generate-001',
+      ]),
+    );
+  });
+
+  it('adds cloud and local advanced image editing providers to the image picker catalog', () => {
+    expect(FALLBACK_MODEL_OPTIONS.image.bfl.map((option) => option.value)).toEqual(
+      expect.arrayContaining([
+        'flux-2-pro',
+        'flux-2-flex',
+        'flux-2-max',
+      ]),
+    );
+    expect(FALLBACK_MODEL_OPTIONS.image.stability.map((option) => option.value)).toEqual(
+      expect.arrayContaining([
+        'stable-image-edit-inpaint',
+        'stable-image-edit-erase',
+        'stable-image-edit-outpaint',
+        'stable-image-edit-search-replace',
+      ]),
+    );
+    expect(FALLBACK_MODEL_OPTIONS.image.localOpen.map((option) => option.value)).toEqual(
+      expect.arrayContaining([
+        'Qwen/Qwen-Image-Edit',
+        'black-forest-labs/FLUX.1-Kontext-dev',
+      ]),
+    );
+  });
+
+  it('adds the requested Atlas Cloud native image models to the image picker catalog', () => {
+    expect(FALLBACK_MODEL_OPTIONS.image.atlas.map((option) => option.value)).toEqual(
+      expect.arrayContaining([
+        'black-forest-labs/flux-schnell',
+        'black-forest-labs/flux-dev',
+        'black-forest-labs/flux-dev-lora',
+        'z-image/turbo',
+        'bytedance/seedream-v5.0-lite',
+        'google/nano-banana-pro/text-to-image',
+        'black-forest-labs/flux-kontext-dev',
+        'bytedance/seedream-v5.0-lite/edit',
+        'atlascloud/qwen-image/edit',
+        'atlascloud/qwen-image/edit-2511',
+        'fireredteam/firered-image-edit-1.0',
+      ]),
+    );
+  });
 });
 
 describe('getConfiguredProviders', () => {
@@ -40,7 +119,61 @@ describe('getConfiguredProviders', () => {
         { gemini: '', openai: '', huggingface: '', elevenlabs: '' },
         { backendProxyEnabled: true, backendProxyBaseUrl: 'http://127.0.0.1:8787' },
       ),
-    ).toEqual(['gemini', 'openai', 'huggingface']);
+    ).toEqual(['gemini', 'openai', 'atlas', 'huggingface', 'bfl', 'stability', 'localOpen']);
+  });
+
+  it('exposes Android image generation only when the phone accelerator URL is configured', () => {
+    expect(
+      getConfiguredProviders(
+        'image',
+        { gemini: '', openai: '', huggingface: '', elevenlabs: '' },
+        { androidAcceleratorBaseUrl: 'http://192.168.1.42:8788' },
+      ),
+    ).toEqual(['android']);
+  });
+
+  it('exposes Gemini image generation without a browser key when Vertex ADC image mode is configured', () => {
+    expect(
+      getConfiguredProviders(
+        'image',
+        { gemini: '', openai: '', huggingface: '', elevenlabs: '' },
+        {
+          backendProxyEnabled: false,
+          backendProxyBaseUrl: '',
+          geminiCredentialMode: 'vertex-adc',
+          vertexProjectId: 'gen-lang-client-0529114074',
+        },
+      ),
+    ).toEqual(['gemini']);
+  });
+
+  it('does not expose Gemini text generation from Vertex image-only ADC settings', () => {
+    expect(
+      getConfiguredProviders(
+        'text',
+        { gemini: '', openai: '', huggingface: '', elevenlabs: '' },
+        {
+          backendProxyEnabled: false,
+          backendProxyBaseUrl: '',
+          geminiCredentialMode: 'vertex-adc',
+          vertexProjectId: 'gen-lang-client-0529114074',
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  it('exposes BFL, Stability, and Local/Open when their cloud keys or endpoint are configured', () => {
+    expect(
+      getConfiguredProviders(
+        'image',
+        { gemini: '', openai: '', huggingface: '', elevenlabs: '', bfl: 'bfl-key', stability: 'sk-stability' },
+        {
+          backendProxyEnabled: false,
+          backendProxyBaseUrl: '',
+          localOpenImageEndpointUrl: 'http://127.0.0.1:8188/signal-loom-image-edit',
+        },
+      ),
+    ).toEqual(['bfl', 'stability', 'localOpen']);
   });
 });
 
@@ -58,16 +191,132 @@ describe('getVideoDurationOptions', () => {
   });
 });
 
-describe('mapAspectRatioToImageDimensions', () => {
-  it('maps landscape images to a wider output', () => {
-    expect(mapAspectRatioToImageDimensions('16:9')).toEqual({ width: 1536, height: 1024 });
+describe('getImageAspectRatioOptions', () => {
+  it('exposes Gemini ImageConfig aspect ratios for Gemini image models', () => {
+    expect(getImageAspectRatioOptions('gemini', 'gemini-3-pro-image-preview').map((option) => option.value)).toEqual([
+      '1:1',
+      '2:3',
+      '3:2',
+      '3:4',
+      '4:3',
+      '4:5',
+      '5:4',
+      '9:16',
+      '16:9',
+      '21:9',
+    ]);
   });
 
-  it('maps portrait images to a taller output', () => {
-    expect(mapAspectRatioToImageDimensions('9:16')).toEqual({ width: 1024, height: 1536 });
+  it('uses the Gemini 3 ImageConfig aspect ratio set for Gemini 3.1 Flash Image', () => {
+    expect(getImageAspectRatioOptions('gemini', 'gemini-3.1-flash-image-preview').map((option) => option.value)).toEqual([
+      '1:1',
+      '2:3',
+      '3:2',
+      '3:4',
+      '4:3',
+      '4:5',
+      '5:4',
+      '9:16',
+      '16:9',
+      '21:9',
+    ]);
+  });
+
+  it('keeps Gemini 2.5 Flash Image limited to its documented ratios', () => {
+    expect(getImageAspectRatioOptions('gemini', 'gemini-2.5-flash-image').map((option) => option.value)).toEqual([
+      '1:1',
+      '3:4',
+      '4:3',
+      '9:16',
+      '16:9',
+    ]);
+  });
+
+  it('keeps Imagen 4 generation models on Vertex-supported ratios', () => {
+    expect(getImageAspectRatioOptions('gemini', 'imagen-4.0-generate-001').map((option) => option.value)).toEqual([
+      '1:1',
+      '3:4',
+      '4:3',
+      '9:16',
+      '16:9',
+    ]);
+  });
+
+  it('limits OpenAI image options to native request sizes', () => {
+    expect(getImageAspectRatioOptions('openai', 'gpt-image-1').map((option) => option.value)).toEqual([
+      '1:1',
+      '3:2',
+      '2:3',
+    ]);
+  });
+
+  it('uses full image aspect-ratio controls for BFL and Local/Open while hiding ratios for edit-only Stability models', () => {
+    expect(getImageAspectRatioOptions('bfl', 'flux-2-pro').map((option) => option.value)).toEqual([
+      '1:1',
+      '2:3',
+      '3:2',
+      '3:4',
+      '4:3',
+      '4:5',
+      '5:4',
+      '9:16',
+      '16:9',
+      '21:9',
+    ]);
+    expect(getImageAspectRatioOptions('localOpen', 'Qwen/Qwen-Image-Edit').map((option) => option.value)).toEqual([
+      '1:1',
+      '2:3',
+      '3:2',
+      '3:4',
+      '4:3',
+      '4:5',
+      '5:4',
+      '9:16',
+      '16:9',
+      '21:9',
+    ]);
+    expect(getImageAspectRatioOptions('stability', 'stable-image-edit-search-replace')).toEqual([]);
+  });
+
+  it('normalizes provider-specific unsupported ratios before the node writes them', () => {
+    expect(getSupportedImageAspectRatio('openai', 'gpt-image-1', '16:9')).toBe('3:2');
+    expect(getSupportedImageAspectRatio('openai', 'gpt-image-1', '4:3')).toBe('3:2');
+    expect(getSupportedImageAspectRatio('gemini', 'gemini-3-pro-image-preview', '4:3')).toBe('4:3');
+  });
+});
+
+describe('mapAspectRatioToImageDimensions', () => {
+  it('maps landscape images to their actual requested ratio', () => {
+    expect(mapAspectRatioToImageDimensions('16:9')).toEqual({ width: 1376, height: 768 });
+    expect(mapAspectRatioToImageDimensions('4:3')).toEqual({ width: 1200, height: 896 });
+    expect(mapAspectRatioToImageDimensions('5:4')).toEqual({ width: 1152, height: 928 });
+    expect(mapAspectRatioToImageDimensions('21:9')).toEqual({ width: 1584, height: 672 });
+  });
+
+  it('maps portrait images to their actual requested ratio', () => {
+    expect(mapAspectRatioToImageDimensions('9:16')).toEqual({ width: 768, height: 1376 });
+    expect(mapAspectRatioToImageDimensions('3:4')).toEqual({ width: 896, height: 1200 });
+    expect(mapAspectRatioToImageDimensions('4:5')).toEqual({ width: 928, height: 1152 });
   });
 
   it('keeps square images square', () => {
     expect(mapAspectRatioToImageDimensions('1:1')).toEqual({ width: 1024, height: 1024 });
+  });
+});
+
+describe('mapAspectRatioToImageSize', () => {
+  it('maps exact OpenAI image aspect ratios to native request sizes', () => {
+    expect(mapAspectRatioToImageSize('1:1')).toBe('1024x1024');
+    expect(mapAspectRatioToImageSize('3:2')).toBe('1536x1024');
+    expect(mapAspectRatioToImageSize('2:3')).toBe('1024x1536');
+  });
+
+  it('keeps legacy landscape and portrait labels compatible with existing flows', () => {
+    expect(mapAspectRatioToImageSize('16:9')).toBe('1536x1024');
+    expect(mapAspectRatioToImageSize('9:16')).toBe('1024x1536');
+  });
+
+  it('rejects ratios OpenAI cannot request natively instead of silently changing the composition', () => {
+    expect(() => mapAspectRatioToImageSize('4:3')).toThrow('OpenAI image generation does not support 4:3 output.');
   });
 });

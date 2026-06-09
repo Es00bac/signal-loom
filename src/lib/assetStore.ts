@@ -31,12 +31,32 @@ interface SaveDataUrlAssetInput {
   dataUrl: string;
 }
 
+let cachedDatabasePromise: Promise<IDBDatabase> | null = null;
+
 function openDatabase(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (cachedDatabasePromise) {
+    return cachedDatabasePromise;
+  }
+
+  cachedDatabasePromise = new Promise<IDBDatabase>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      cachedDatabasePromise = null;
+      reject(new Error('Timeout opening local asset database.'));
+    }, 3000);
+
     const request = window.indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onerror = () => {
+      clearTimeout(timeoutId);
+      cachedDatabasePromise = null;
       reject(request.error ?? new Error('Failed to open the local asset database.'));
+    };
+
+    request.onblocked = () => {
+      clearTimeout(timeoutId);
+      console.warn('IndexedDB database open is blocked.');
+      cachedDatabasePromise = null;
+      reject(new Error('IndexedDB database open is blocked by another connection.'));
     };
 
     request.onupgradeneeded = () => {
@@ -48,9 +68,12 @@ function openDatabase(): Promise<IDBDatabase> {
     };
 
     request.onsuccess = () => {
+      clearTimeout(timeoutId);
       resolve(request.result);
     };
   });
+
+  return cachedDatabasePromise;
 }
 
 async function persistAssetRecord(record: StoredAssetRecord): Promise<StoredAssetPayload> {
@@ -66,8 +89,6 @@ async function persistAssetRecord(record: StoredAssetRecord): Promise<StoredAsse
 
     store.put(record);
   });
-
-  database.close();
 
   const payload = materializeStoredAssetPayload(record);
 
@@ -181,8 +202,6 @@ export async function deleteImportedAsset(id: string): Promise<void> {
 
     store.delete(id);
   });
-
-  database.close();
 }
 
 export function materializeStoredAssetPayload(
@@ -222,7 +241,6 @@ async function loadImportedAssetRecord(id: string): Promise<StoredAssetRecord | 
       reject(request.error ?? new Error('Failed to load the stored local asset.'));
   });
 
-  database.close();
   return result;
 }
 

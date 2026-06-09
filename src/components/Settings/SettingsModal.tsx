@@ -96,6 +96,12 @@ export const SettingsModal: React.FC = () => {
                 placeholder="sk-..."
               />
               <ApiKeyInput
+                label="Atlas"
+                value={apiKeys.atlas ?? ''}
+                onChange={(value) => setApiKey('atlas', value)}
+                placeholder="sk-atlas-..."
+              />
+              <ApiKeyInput
                 label="Hugging Face"
                 value={apiKeys.huggingface}
                 onChange={(value) => setApiKey('huggingface', value)}
@@ -117,6 +123,12 @@ export const SettingsModal: React.FC = () => {
                 value={providerSettings.openaiBaseUrl}
                 onChange={(value) => setProviderSetting('openaiBaseUrl', value)}
                 placeholder="https://api.openai.com/v1"
+              />
+              <TextInput
+                label="Atlas base URL"
+                value={providerSettings.atlasBaseUrl ?? ''}
+                onChange={(value) => setProviderSetting('atlasBaseUrl', value)}
+                placeholder="https://api.atlas-cloud.ai/v1"
               />
 
               <SelectInput

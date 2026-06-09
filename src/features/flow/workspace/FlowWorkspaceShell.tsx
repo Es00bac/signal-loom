@@ -1,0 +1,303 @@
+import {
+  Background,
+  Controls,
+  type Edge,
+  type OnConnect,
+  type OnConnectEnd,
+  type OnConnectStart,
+  type OnEdgesChange,
+  type OnNodesChange,
+  ReactFlow,
+} from '@xyflow/react';
+import type { ComponentType, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from 'react';
+import { AlertTriangle, Braces, Bug, Loader2, Sparkles, X } from 'lucide-react';
+import { LibrarySearchDialog } from '../../../components/Common/LibrarySearchDialog';
+import { ErrorBoundary } from '../../../components/Recovery/ErrorBoundary';
+import type { StandardLibraryFunction } from '../../../lib/standardLibrary';
+import type { FlowDiagnostic } from '../../../lib/flowSignals';
+import type { AppNode } from '../../../types/flow';
+
+export interface FlowWorkspaceShellProps {
+  blockingFlowDiagnosticCount: number;
+  diagnosticsOpen: boolean;
+  edges: Edge[];
+  flowDiagnostics: FlowDiagnostic[];
+  flowOrganizeJob: { title: string; detail: string } | null;
+  flowRecoveryKey: string;
+  librarySearchMenu: { x: number; y: number } | null;
+  nodeTypes: Record<string, ComponentType<any>>;
+  nodes: AppNode[];
+  onCancelFlowAutoOrganize: () => void;
+  onCloseDiagnostics: () => void;
+  onCloseLibrarySearch: () => void;
+  onCollapseSelection: () => void;
+  onConnect: OnConnect;
+  onConnectEnd: OnConnectEnd;
+  onConnectStart: OnConnectStart;
+  onCreateGroupFromSelection: () => void;
+  onDragOver: (event: ReactDragEvent<HTMLDivElement>) => void;
+  onDrop: (event: ReactDragEvent<HTMLDivElement>) => void;
+  onEdgesChange: OnEdgesChange;
+  onNodeContextMenu: (event: ReactMouseEvent, node: AppNode) => void;
+  onNodesChange: OnNodesChange<AppNode>;
+  onPaneClick: (event: ReactMouseEvent) => void;
+  onPaneContextMenu: (event: MouseEvent | ReactMouseEvent<Element, MouseEvent>) => void;
+  onSelectLibrarySearchTemplate: (template: StandardLibraryFunction) => void;
+  onStartFlowAutoOrganize: () => void;
+  onToggleDiagnostics: () => void;
+  selectedFlowNodeCount: number;
+}
+
+export function FlowWorkspaceShell({
+  blockingFlowDiagnosticCount,
+  diagnosticsOpen,
+  edges,
+  flowDiagnostics,
+  flowOrganizeJob,
+  flowRecoveryKey,
+  librarySearchMenu,
+  nodeTypes,
+  nodes,
+  onCancelFlowAutoOrganize,
+  onCloseDiagnostics,
+  onCloseLibrarySearch,
+  onCollapseSelection,
+  onConnect,
+  onConnectEnd,
+  onConnectStart,
+  onCreateGroupFromSelection,
+  onDragOver,
+  onDrop,
+  onEdgesChange,
+  onNodeContextMenu,
+  onNodesChange,
+  onPaneClick,
+  onPaneContextMenu,
+  onSelectLibrarySearchTemplate,
+  onStartFlowAutoOrganize,
+  onToggleDiagnostics,
+  selectedFlowNodeCount,
+}: FlowWorkspaceShellProps) {
+  return (
+    <div className="absolute inset-0" data-testid="flow-workspace-shell">
+      <ErrorBoundary className="absolute inset-0" level="canvas" resetKeys={[flowRecoveryKey]} title="Flow Canvas">
+        <ReactFlow<AppNode, Edge>
+          className="bg-[var(--sl-bg)]"
+          edges={edges}
+          elementsSelectable={!flowOrganizeJob}
+          fitView
+          nodeTypes={nodeTypes}
+          nodes={nodes}
+          nodesConnectable={!flowOrganizeJob}
+          nodesDraggable={!flowOrganizeJob}
+          onConnect={onConnect}
+          onConnectEnd={onConnectEnd}
+          onConnectStart={onConnectStart}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+          onEdgesChange={onEdgesChange}
+          onNodeContextMenu={onNodeContextMenu}
+          onNodesChange={onNodesChange}
+          onPaneClick={onPaneClick}
+          onPaneContextMenu={onPaneContextMenu}
+          panOnDrag={!flowOrganizeJob}
+          proOptions={{ hideAttribution: true }}
+          zoomOnPinch={!flowOrganizeJob}
+          zoomOnScroll={!flowOrganizeJob}
+        >
+          <Background color="#2d2d34" gap={24} size={2} />
+          <Controls
+            className="theme-popover !bottom-24 !left-4 !bg-[#252830] !border-gray-700 !text-gray-300 shadow-xl rounded-xl overflow-hidden"
+            showInteractive={false}
+          />
+        </ReactFlow>
+        <button
+          className="absolute right-4 top-4 z-20 inline-flex items-center gap-2 rounded-md border border-cyan-300/30 bg-[#0d141f]/90 px-3 py-2 text-xs font-semibold text-cyan-50 shadow-xl transition-colors hover:border-cyan-200/70 disabled:cursor-not-allowed disabled:border-gray-700 disabled:text-gray-500"
+          disabled={Boolean(flowOrganizeJob) || nodes.length === 0}
+          onClick={onStartFlowAutoOrganize}
+          type="button"
+        >
+          <Sparkles size={14} />
+          Clean Flow
+        </button>
+        <button
+          className={`absolute right-4 top-16 z-20 inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-semibold shadow-xl transition-colors ${
+            blockingFlowDiagnosticCount > 0
+              ? 'border-rose-300/45 bg-rose-500/15 text-rose-50 hover:border-rose-100/80'
+              : flowDiagnostics.length > 0
+                ? 'border-amber-300/35 bg-amber-400/10 text-amber-50 hover:border-amber-100/70'
+                : 'border-emerald-300/30 bg-[#0d141f]/90 text-emerald-50 hover:border-emerald-100/70'
+          }`}
+          onClick={onToggleDiagnostics}
+          title="Open Flow diagnostics and debug log"
+          type="button"
+        >
+          {blockingFlowDiagnosticCount > 0 ? <AlertTriangle size={14} /> : <Bug size={14} />}
+          Diagnostics {flowDiagnostics.length}
+        </button>
+        {diagnosticsOpen ? (
+          <FlowDiagnosticsPanel
+            diagnostics={flowDiagnostics}
+            nodes={nodes}
+            onClose={onCloseDiagnostics}
+          />
+        ) : null}
+        {selectedFlowNodeCount > 0 && !flowOrganizeJob ? (
+          <div className="absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-emerald-300/25 bg-[#08131b]/95 px-3 py-2 text-xs text-emerald-50 shadow-2xl backdrop-blur-md">
+            <span className="font-semibold text-emerald-100">{selectedFlowNodeCount} selected</span>
+            <button
+              className="inline-flex items-center gap-2 rounded-lg border border-emerald-300/30 bg-emerald-300/10 px-3 py-1.5 font-semibold transition-colors hover:border-emerald-100/70 hover:bg-emerald-300/20"
+              onClick={onCollapseSelection}
+              title="Replace the selected logic with one reusable function node. External wires become function inputs and outputs."
+              type="button"
+            >
+              <Braces size={14} />
+              Collapse into reusable function
+            </button>
+            <button
+              className="rounded-lg border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 font-semibold text-cyan-50 transition-colors hover:border-cyan-100/70 hover:bg-cyan-300/20"
+              onClick={onCreateGroupFromSelection}
+              title="Draw a workspace group around the selected nodes without hiding them."
+              type="button"
+            >
+              Group only
+            </button>
+          </div>
+        ) : null}
+        {flowOrganizeJob ? (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 p-4">
+            <div className="w-full max-w-sm rounded-md border border-cyan-300/25 bg-[#0d141f] p-4 text-cyan-50 shadow-2xl">
+              <div className="flex items-start gap-3">
+                <Loader2 className="mt-0.5 animate-spin text-cyan-200" size={22} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold">{flowOrganizeJob.title}</div>
+                  <div className="mt-1 text-xs leading-5 text-cyan-100/75">{flowOrganizeJob.detail}</div>
+                </div>
+                <button
+                  aria-label="Cancel Flow cleanup"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-cyan-300/25 text-cyan-100 transition-colors hover:border-cyan-200/70 hover:text-white"
+                  onClick={onCancelFlowAutoOrganize}
+                  type="button"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+              <button
+                className="mt-4 inline-flex w-full items-center justify-center rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-xs font-semibold text-cyan-50 transition-colors hover:border-cyan-200/70"
+                onClick={onCancelFlowAutoOrganize}
+                type="button"
+              >
+                Cancel and Revert
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {librarySearchMenu ? (
+          <LibrarySearchDialog
+            onClose={onCloseLibrarySearch}
+            onSelect={onSelectLibrarySearchTemplate}
+            x={librarySearchMenu.x}
+            y={librarySearchMenu.y}
+          />
+        ) : null}
+      </ErrorBoundary>
+    </div>
+  );
+}
+
+function FlowDiagnosticsPanel({
+  diagnostics,
+  nodes,
+  onClose,
+}: {
+  diagnostics: FlowDiagnostic[];
+  nodes: AppNode[];
+  onClose: () => void;
+}) {
+  const activeRuns = nodes.filter((node) => node.data.isRunning || node.data.statusMessage || node.data.error);
+  return (
+    <aside className="absolute right-4 top-28 z-30 flex max-h-[min(620px,calc(100vh-160px))] w-[420px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-xl border border-cyan-300/20 bg-[#08111c]/95 text-cyan-50 shadow-2xl backdrop-blur-xl">
+      <header className="flex items-start justify-between gap-3 border-b border-cyan-300/15 p-3">
+        <div>
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-cyan-100">
+            <Bug size={14} />
+            Flow diagnostics
+          </div>
+          <p className="mt-1 text-[11px] leading-5 text-cyan-100/55">
+            Critical issues block runs. Warnings explain risky but runnable graph logic.
+          </p>
+        </div>
+        <button
+          className="rounded-md border border-cyan-300/20 p-1.5 text-cyan-100/70 transition-colors hover:border-cyan-100/70 hover:text-white"
+          onClick={onClose}
+          type="button"
+        >
+          <X size={14} />
+        </button>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <div className="mb-3 grid grid-cols-3 gap-2 text-center text-[11px] font-semibold">
+          <div className="rounded-lg border border-rose-300/20 bg-rose-400/10 p-2 text-rose-100">
+            {diagnostics.filter((diagnostic) => diagnostic.severity === 'critical').length} critical
+          </div>
+          <div className="rounded-lg border border-amber-300/20 bg-amber-400/10 p-2 text-amber-100">
+            {diagnostics.filter((diagnostic) => diagnostic.severity === 'warning').length} warnings
+          </div>
+          <div className="rounded-lg border border-cyan-300/20 bg-cyan-400/10 p-2 text-cyan-100">
+            {activeRuns.length} log
+          </div>
+        </div>
+        <div className="space-y-2">
+          {diagnostics.length === 0 ? (
+            <div className="rounded-lg border border-emerald-300/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+              No broken Flow logic detected.
+            </div>
+          ) : diagnostics.map((diagnostic) => (
+            <div
+              className={`rounded-lg border p-3 text-xs leading-5 ${
+                diagnostic.severity === 'critical'
+                  ? 'border-rose-300/25 bg-rose-500/10 text-rose-50'
+                  : diagnostic.severity === 'warning'
+                    ? 'border-amber-300/25 bg-amber-400/10 text-amber-50'
+                    : 'border-cyan-300/20 bg-cyan-400/10 text-cyan-50'
+              }`}
+              key={`${diagnostic.id}-${diagnostic.nodeId ?? ''}-${diagnostic.edgeId ?? ''}`}
+            >
+              <div className="font-semibold uppercase tracking-wide">
+                {diagnostic.severity}{diagnostic.blocksRun ? ' · blocks run' : ''}
+              </div>
+              <div className="mt-1">{diagnostic.message}</div>
+              {diagnostic.nodeId || diagnostic.edgeId ? (
+                <div className="mt-1 text-[11px] opacity-70">
+                  {diagnostic.nodeId ? `Node: ${diagnostic.nodeId}` : null}
+                  {diagnostic.nodeId && diagnostic.edgeId ? ' · ' : null}
+                  {diagnostic.edgeId ? `Edge: ${diagnostic.edgeId}` : null}
+                </div>
+              ) : null}
+              {diagnostic.suggestedFix ? (
+                <div className="mt-2 rounded bg-black/20 px-2 py-1 text-[11px] opacity-85">
+                  Fix: {diagnostic.suggestedFix}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+        {activeRuns.length > 0 ? (
+          <div className="mt-4">
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-100/55">Run log</div>
+            <div className="space-y-2">
+              {activeRuns.map((node) => (
+                <div className="rounded-lg border border-cyan-300/15 bg-black/20 p-2 text-xs leading-5" key={node.id}>
+                  <div className="font-semibold text-cyan-100">{node.data.customTitle ?? node.id}</div>
+                  <div className={node.data.error ? 'text-rose-100' : 'text-cyan-100/65'}>
+                    {node.data.error ?? node.data.statusMessage ?? (node.data.isRunning ? 'Running...' : 'Idle')}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </aside>
+  );
+}

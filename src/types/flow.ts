@@ -1,36 +1,176 @@
-import type { Node, NodeProps } from '@xyflow/react';
+import type { Edge, Node, NodeProps } from '@xyflow/react';
 
-export type FlowNodeType =
-  | 'textNode'
-  | 'imageGen'
-  | 'videoGen'
-  | 'audioGen'
-  | 'settings'
-  | 'composition'
-  | 'sourceBin'
-  | 'virtual';
+export const FLOW_NODE_TYPES = [
+  'textNode',
+  'imageGen',
+  'cropImageNode',
+  'videoGen',
+  'audioGen',
+  'settings',
+  'composition',
+  'sourceBin',
+  'valueNode',
+  'list',
+  'expander',
+  'envelope',
+  'virtual',
+  'portal',
+  'advancedImageEditor',
+  'switchNode',
+  'forkSwitchNode',
+  'runMeNode',
+  'packageNode',
+  'loopNode',
+  'visionVerifyNode',
+  'logicNode',
+  'conditionalNode',
+  'comparisonNode',
+  'loopGateNode',
+  'loopBreakNode',
+  'mathNode',
+  'listLengthNode',
+  'valueMonitorNode',
+  'stringTemplateNode',
+  'regexReplaceNode',
+  'switchCaseNode',
+  'promptsJoinerNode',
+  'negativePromptNode',
+  'seedSequencerNode',
+  'promptMixerNode',
+  'storyStateNode',
+  'arrayFlatNode',
+  'textSentimentAnalysisNode',
+  'imageFeatureExtractorNode',
+  'fallbackSelectorNode',
+  'dialogueScriptSplitterNode',
+  'numberNode',
+  'colorSwatchNode',
+  'groupNode',
+  'functionNode',
+  'functionInputNode',
+  'functionOutputNode',
+  'javascriptNode',
+  'jsonQueryNode',
+  'regexParseNode',
+  'pythonNode',
+  'jsonBuilderNode',
+  'htmlSandboxNode',
+  'apiFetchNode',
+  'sqlQueryNode',
+  'csvParserNode',
+  'mathExpressionNode',
+  'xmlYamlNode',
+] as const;
+
+export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
 
 export type TextNodeMode = 'prompt' | 'generate';
 export type MediaNodeMode = 'generate' | 'import';
 export type TextProvider = 'gemini' | 'openai' | 'huggingface';
-export type ImageProvider = 'gemini' | 'openai' | 'huggingface';
+export type ImageProvider = 'gemini' | 'openai' | 'huggingface' | 'bfl' | 'stability' | 'localOpen' | 'android' | 'atlas';
 export type VideoProvider = 'gemini' | 'huggingface';
 export type AudioProvider = 'gemini' | 'elevenlabs' | 'huggingface';
+export type ColorSwatchUsageMode = 'primary' | 'theme' | 'brand' | 'grade';
 export type AudioGenerationMode = 'speech' | 'soundEffect' | 'voiceChange';
-export type AspectRatio = '1:1' | '16:9' | '9:16';
+export type AspectRatio =
+  | '1:1'
+  | '2:3'
+  | '3:2'
+  | '3:4'
+  | '4:3'
+  | '4:5'
+  | '5:4'
+  | '9:16'
+  | '16:9'
+  | '21:9';
 export type VideoResolution = '720p' | '1080p' | '4k';
 export type ImageOutputFormat = 'png' | 'jpeg' | 'webp';
 export type AudioOutputFormat = 'mp3_44100_128' | 'mp3_44100_64' | 'pcm_44100';
-export type ResultType = 'text' | 'image' | 'video' | 'audio';
-export type SerializableNodeValue = string | number | boolean | null | undefined;
+export type ResultType = 'text' | 'number' | 'boolean' | 'json' | 'image' | 'video' | 'audio' | 'package' | 'list' | 'envelope';
+export const FUNCTION_NODE_SCHEMA_VERSION = 1 as const;
+export type DynamicValue = string | number | boolean | null | Record<string, unknown> | unknown[];
+export type FunctionBindingSourceMode = 'flow' | 'constant' | 'expression';
+export type FunctionValueKind = ResultType | 'any';
+export type FunctionExpressionLanguage = 'mustache' | 'jsonata' | 'javascript';
+export type FunctionMissingStrategy = 'default' | 'null' | 'error' | 'skip';
+export type TransformKind =
+  | 'identity'
+  | 'set'
+  | 'defaultValue'
+  | 'trim'
+  | 'toText'
+  | 'toNumber'
+  | 'toBoolean'
+  | 'toJson'
+  | 'coalesce'
+  | 'prefix'
+  | 'suffix'
+  | 'replace'
+  | 'regexReplace'
+  | 'slice'
+  | 'split'
+  | 'join'
+  | 'take'
+  | 'drop'
+  | 'append'
+  | 'prepend'
+  | 'template'
+  | 'case'
+  | 'ifEmpty'
+  | 'jsonPath'
+  | 'pick'
+  | 'map'
+  | 'filter';
+export type ListLoopMode = 'paired' | 'allCombinations';
+export type SerializableNodeValue = unknown;
 export type VideoFrameSelection = 'first' | 'last';
 export type VideoReferenceType = 'asset' | 'style';
 export type RenderBackendPreference = 'auto' | 'browser' | 'native-cpu' | 'native-amd-vaapi';
+export type VideoExportPresetId =
+  | 'review-h264-1080p'
+  | 'social-vertical-h264'
+  | 'archive-high-quality'
+  | 'webm-vp9-opus'
+  | 'gif-preview'
+  | 'prores-mov'
+  | 'hevc-h265-mp4'
+  | 'hevc-h265-mov'
+  | 'png-image-sequence'
+  | 'jpeg-image-sequence';
+export type VideoExportPresetPlanId = VideoExportPresetId;
+export type GeminiThinkingLevel = 'default' | 'minimal' | 'low' | 'medium' | 'high';
+export type GeminiMediaResolution = 'default' | 'low' | 'medium' | 'high' | 'ultraHigh';
+export type GeminiCredentialMode = 'api-key' | 'vertex-adc';
+export type VertexAuthMode = 'gcloud-user' | 'gcloud-adc';
+export type PaperPrintUpscaleMethod =
+  | 'auto'
+  | 'local-browser'
+  | 'stability-fast'
+  | 'stability-conservative'
+  | 'vertex-imagen'
+  | 'android-accelerator'
+  | 'local-ai-cpu';
+export type PaperPdfRasterPreset = 'print-png' | 'balanced-jpeg' | 'proof-jpeg';
+export type TextOutputFormat = 'plain' | 'json';
 export type ImageTargetHandle =
+  | 'image'
+  | 'refImage'
   | 'image-edit-source'
+  | 'image-mask'
   | 'image-reference-1'
   | 'image-reference-2'
-  | 'image-reference-3';
+  | 'image-reference-3'
+  | 'image-reference-4'
+  | 'image-reference-5'
+  | 'image-reference-6'
+  | 'image-reference-7'
+  | 'image-reference-8'
+  | 'image-reference-9'
+  | 'image-reference-10'
+  | 'image-reference-11'
+  | 'image-reference-12'
+  | 'image-reference-13'
+  | 'image-reference-14';
 export type VideoTargetHandle =
   | 'video-prompt'
   | 'video-start-frame'
@@ -45,18 +185,27 @@ export type CompositionTargetHandle =
   | 'composition-audio-2'
   | 'composition-audio-3'
   | 'composition-audio-4';
+export type ListTargetHandle = `list-item-${number}`;
 export type Capability = 'text' | 'image' | 'video' | 'audio';
 export type UsageTelemetrySource = 'estimate' | 'actual';
 export type UsageTelemetryConfidence = 'measured' | 'heuristic' | 'fixed' | 'unknown';
-export type WorkspaceView = 'flow' | 'editor';
-export type EditorSourceKind = 'text' | 'image' | 'video' | 'audio' | 'composition';
+export type WorkspaceView = 'flow' | 'editor' | 'image' | 'paper';
+export type EditorSourceKind = 'text' | 'image' | 'video' | 'audio' | 'composition' | 'document' | 'subtitle' | 'package';
 export type EditorVisualSourceKind = 'text' | 'shape' | 'image' | 'video' | 'composition';
 export type VisualClipTransition = 'none' | 'fade' | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down';
 export type EditorVisualFitMode = 'contain' | 'cover' | 'stretch';
 export type TextClipEffect = 'none' | 'shadow' | 'glow' | 'outline';
 export type EditorAssetKind = 'text' | 'shape' | 'image';
 export type EditorShapeKind = 'rectangle';
-export type EditorClipFilterKind = 'brightness' | 'contrast' | 'saturation' | 'blur' | 'grayscale';
+export type EditorClipFilterKind =
+  | 'brightness'
+  | 'contrast'
+  | 'saturation'
+  | 'blur'
+  | 'grayscale'
+  | 'sepia'
+  | 'invert'
+  | 'hue-rotate';
 export type EditorStageObjectKind = 'text' | 'rectangle';
 export type EditorStageBlendMode =
   | 'normal'
@@ -67,6 +216,201 @@ export type EditorStageBlendMode =
   | 'darken'
   | 'color-dodge'
   | 'color-burn';
+
+export interface FunctionPortKind {
+  id: string;
+  key: string;
+  label: string;
+  description?: string;
+  resultType: FunctionValueKind;
+  required: boolean;
+  defaultValue?: DynamicValue;
+  allowMultiple?: boolean;
+  order: number;
+}
+
+export interface FunctionContract {
+  id: string;
+  title: string;
+  description?: string;
+  inputPorts: FunctionPortKind[];
+  outputPorts: FunctionPortKind[];
+  version: 1;
+}
+
+export interface FunctionFlowSource {
+  mode: 'flow';
+  sourceType: 'nodeOutput' | 'nodeInput';
+  sourceNodeId?: string;
+  sourceHandle?: string;
+  sourceVariable?: string;
+}
+
+export interface FunctionConstantSource {
+  mode: 'constant';
+  valueType: ResultType | 'json' | 'boolean' | 'number' | 'string' | 'null';
+  value: DynamicValue;
+}
+
+export interface FunctionExpressionSource {
+  mode: 'expression';
+  language: FunctionExpressionLanguage;
+  expression: string;
+}
+
+export type FunctionBindingSource = FunctionFlowSource | FunctionConstantSource | FunctionExpressionSource;
+
+export interface FunctionTransformStepBase {
+  id: string;
+  kind: TransformKind;
+  label?: string;
+}
+
+export interface FunctionTransformDefaultValue extends FunctionTransformStepBase {
+  kind: 'defaultValue';
+  value: DynamicValue;
+}
+
+export interface FunctionTransformPrefixSuffix extends FunctionTransformStepBase {
+  kind: 'prefix' | 'suffix' | 'prepend' | 'append';
+  text: string;
+}
+
+export interface FunctionTransformReplace extends FunctionTransformStepBase {
+  kind: 'replace';
+  find: string;
+  replacement: string;
+}
+
+export interface FunctionTransformRegexReplace extends FunctionTransformStepBase {
+  kind: 'regexReplace';
+  pattern: string;
+  replacement: string;
+  flags?: string;
+}
+
+export interface FunctionTransformJsonPath extends FunctionTransformStepBase {
+  kind: 'jsonPath';
+  path: string;
+  fallback?: DynamicValue;
+}
+
+export interface FunctionTransformCase extends FunctionTransformStepBase {
+  kind: 'case';
+  when: 'lower' | 'upper' | 'title' | 'camel' | 'pascal' | 'kebab' | 'snake';
+}
+
+export interface FunctionTransformJsonParse extends FunctionTransformStepBase {
+  kind: 'toJson';
+}
+
+export interface FunctionTransformIfEmpty extends FunctionTransformStepBase {
+  kind: 'ifEmpty';
+  fallback: DynamicValue;
+}
+
+export interface FunctionTransformTemplate extends FunctionTransformStepBase {
+  kind: 'template';
+  template: string;
+}
+
+export interface FunctionTransformTakeDrop extends FunctionTransformStepBase {
+  kind: 'take' | 'drop';
+  count: number;
+}
+
+export interface FunctionTransformSet extends FunctionTransformStepBase {
+  kind: 'set';
+  sourcePath: string;
+}
+
+export type FunctionTransformStep =
+  | FunctionTransformStepBase
+  | FunctionTransformDefaultValue
+  | FunctionTransformPrefixSuffix
+  | FunctionTransformReplace
+  | FunctionTransformRegexReplace
+  | FunctionTransformJsonPath
+  | FunctionTransformCase
+  | FunctionTransformJsonParse
+  | FunctionTransformIfEmpty
+  | FunctionTransformTemplate
+  | FunctionTransformTakeDrop
+  | FunctionTransformSet;
+
+export interface FunctionInputBinding {
+  id: string;
+  targetInputPortId: string;
+  source: FunctionBindingSource;
+  transforms: FunctionTransformStep[];
+  resultType: FunctionValueKind;
+  missing: {
+    strategy: FunctionMissingStrategy;
+    value?: DynamicValue;
+  };
+}
+
+export interface FunctionOutputBinding {
+  id: string;
+  targetOutputPortId: string;
+  sourceNodeId: string;
+  sourceHandle?: string;
+  expression?: string;
+  transforms: FunctionTransformStep[];
+  resultType: FunctionValueKind;
+  missing: {
+    strategy: FunctionMissingStrategy;
+    value?: DynamicValue;
+  };
+}
+
+export interface FunctionBoundaryLink {
+  id: string;
+  edgeId: string;
+  portId: string;
+  internalNodeId: string;
+  internalHandle?: string;
+  externalNodeId?: string;
+  externalHandle?: string;
+}
+
+export interface PersistedFunctionNodeGraph {
+  version: 1;
+  nodes: Array<Pick<Node, 'id' | 'type' | 'position' | 'data'> & { data: Record<string, unknown> }>;
+  edges: Edge[];
+  inputBoundaryLinks?: FunctionBoundaryLink[];
+  outputBoundaryLinks?: FunctionBoundaryLink[];
+  bounds?: { x: number; y: number; width: number; height: number };
+  viewport?: { x: number; y: number; zoom: number };
+}
+
+export interface FunctionNodeConfig {
+  schemaVersion: typeof FUNCTION_NODE_SCHEMA_VERSION;
+  title: string;
+  description?: string;
+  contract: FunctionContract;
+  graph: PersistedFunctionNodeGraph;
+  inputBindings: FunctionInputBinding[];
+  outputBindings: FunctionOutputBinding[];
+  tags?: string[];
+  isLocked?: boolean;
+  lastRunRuntime?: {
+    result: 'success' | 'partial' | 'error' | 'idle';
+    lastRunAt: number;
+    nodeCount: number;
+    edgeCount: number;
+  };
+}
+
+export interface GroupNodeConfig {
+  title: string;
+  description?: string;
+  childNodeIds: string[];
+  childEdgeIds: string[];
+  bounds: { x: number; y: number; width: number; height: number };
+  collapsed: boolean;
+  color?: string;
+}
 
 export interface TimelineAutomationPoint {
   timePercent: number;
@@ -92,6 +436,20 @@ export interface EditorClipFilter {
   kind: EditorClipFilterKind;
   amount: number;
   enabled: boolean;
+}
+
+export interface EditorClipChromaKeySettings {
+  enabled: boolean;
+  color: string;
+  similarityPercent: number;
+  blendPercent: number;
+}
+
+export interface EditorClipStrokeSettings {
+  enabled: boolean;
+  color: string;
+  widthPx: number;
+  opacityPercent: number;
 }
 
 export interface EditorTextDefaults {
@@ -161,6 +519,8 @@ export interface EditorVisualClip {
   cropRotationDeg: number;
   filterStack: EditorClipFilter[];
   blendMode?: EditorStageBlendMode;
+  chromaKey?: EditorClipChromaKeySettings;
+  stroke?: EditorClipStrokeSettings;
   transitionIn: VisualClipTransition;
   transitionOut: VisualClipTransition;
   transitionDurationMs: number;
@@ -232,6 +592,11 @@ export interface UsageTelemetry {
   notes?: string[];
 }
 
+export interface VideoExportPresetPlanData {
+  presetId: VideoExportPresetId;
+  notes?: string;
+}
+
 export interface NodeResultAttempt {
   id: string;
   result: string;
@@ -239,6 +604,21 @@ export interface NodeResultAttempt {
   statusMessage: string;
   createdAt: string;
   usage?: UsageTelemetry;
+  variableName?: string;
+}
+
+export interface EnvelopeItem {
+  id: string;
+  index: number;
+  kind: ResultType;
+  label: string;
+  value: string;
+  mimeType?: string;
+  sourceBinItemId?: string;
+  sourceNodeId?: string;
+  usage?: UsageTelemetry;
+  text?: string;
+  invalidReason?: string;
 }
 
 export interface SelectOption {
@@ -270,6 +650,9 @@ export interface ApiKeys {
   gemini: string;
   huggingface: string;
   elevenlabs: string;
+  bfl?: string;
+  stability?: string;
+  atlas?: string;
 }
 
 export interface ProviderSettings {
@@ -277,8 +660,38 @@ export interface ProviderSettings {
   elevenlabsVoiceId: string;
   renderBackendPreference: RenderBackendPreference;
   localNativeRenderUrl: string;
+  localNativeRenderToken?: string;
   backendProxyEnabled: boolean;
   backendProxyBaseUrl: string;
+  geminiCredentialMode: GeminiCredentialMode;
+  vertexAuthMode: VertexAuthMode;
+  vertexProjectId: string;
+  vertexLocation: string;
+  vertexQuotaProjectId: string;
+  vertexEnvironmentVariables: string;
+  paperPrintUpscaleMethod: PaperPrintUpscaleMethod;
+  paperPdfRasterPreset: PaperPdfRasterPreset;
+  localOpenImageEndpointUrl?: string;
+  localOpenImageAuthHeader?: string;
+  localOpenImageDefaultModel?: string;
+  genericImageEndpointUrl?: string;
+  genericImageAuthHeader?: string;
+  localAiCpuEndpointUrl?: string;
+  localAiCpuAuthHeader?: string;
+  localAiCpuModel?: string;
+  atlasBaseUrl?: string;
+  androidAcceleratorBaseUrl?: string;
+  androidAcceleratorAuthToken?: string;
+  androidAcceleratorDefaultUpscaler?: string;
+  androidAcceleratorDefaultImageModel?: string;
+  batchMaxRetries: number;
+  batchRetryBaseDelayMs: number;
+}
+
+export interface VertexNativeAuthConfig {
+  mode: VertexAuthMode;
+  quotaProjectId?: string;
+  environmentVariables?: string;
 }
 
 export interface DefaultModelSettings {
@@ -299,8 +712,32 @@ export interface ExecutionConfig {
   steps: number;
   durationSeconds: number;
   videoResolution: VideoResolution;
+  videoFrameRate: number;
   imageOutputFormat: ImageOutputFormat;
   audioOutputFormat: AudioOutputFormat;
+}
+
+export interface VideoRenderAssemblyManifestData {
+  version: 1;
+  kind: 'video-render-segment-assembly';
+  mode: 'safe-artifact-assembly' | 'planning-only';
+  summary?: string;
+  caveat?: string;
+  segments: Array<{
+    key: string;
+    startMs: number;
+    endMs: number;
+    activeClipIds: string[];
+    signature: string;
+    action: 'reuse-cached-segment' | 'render-dirty-span';
+    cachedUrl?: string;
+    reason?: string;
+  }>;
+}
+
+export interface VideoRenderAssemblyResultData {
+  assembledFromSegments: boolean;
+  assemblyUnavailableReason?: string;
 }
 
 export interface NodeData {
@@ -309,6 +746,7 @@ export interface NodeData {
   onRun?: () => void;
   onSelectAttempt?: (attemptId: string) => void;
   isRunning?: boolean;
+  retryState?: { attempt: number; max: number; nextAttemptAt: number };
   error?: string;
   statusMessage?: string;
   collapsed?: boolean;
@@ -318,9 +756,21 @@ export interface NodeData {
   resultHistory?: NodeResultAttempt[];
   selectedResultId?: string;
   usage?: UsageTelemetry;
+  flowVariableName?: string;
+  envelopeItems?: EnvelopeItem[];
+  envelopeItemKind?: ResultType | 'mixed';
+  expandedItemIndex?: number;
+  listLoopMode?: ListLoopMode;
+  valueKind?: 'text' | 'number' | 'boolean' | 'json';
+  value?: DynamicValue;
+  colorSwatchColors?: string[];
+  colorSwatchDraftColor?: string;
+  colorSwatchSelectedIndex?: number;
+  colorSwatchUsageMode?: ColorSwatchUsageMode;
+  loopBreakReason?: string;
   prompt?: string;
   systemPrompt?: string;
-  mode?: TextNodeMode;
+  mode?: TextNodeMode | string;
   mediaMode?: MediaNodeMode;
   provider?: TextProvider | ImageProvider | VideoProvider | AudioProvider;
   modelId?: string;
@@ -328,7 +778,30 @@ export interface NodeData {
   steps?: number;
   durationSeconds?: number;
   videoResolution?: VideoResolution;
+  videoFrameRate?: number;
   imageOutputFormat?: ImageOutputFormat;
+  imageOperation?: string;
+  imageAutoUpscale?: boolean;
+  imageSearchPrompt?: string;
+  imageExactColor?: string;
+  imageTextEditPrompt?: string;
+  imageSeed?: number;
+  imageGuidanceScale?: number;
+  imageEditStrength?: number;
+  imageLoraWeightsJson?: string;
+  imageSafetyCheckerEnabled?: boolean;
+  imageOutpaintLeft?: number;
+  imageOutpaintRight?: number;
+  imageOutpaintUp?: number;
+  imageOutpaintDown?: number;
+  imageCreativity?: number;
+  imagePaintedMaskDataUrl?: string;
+  imagePaintedMaskUpdatedAt?: number;
+  imageMaskBrushSize?: number;
+  cropXPercent?: number;
+  cropYPercent?: number;
+  cropWidthPercent?: number;
+  cropHeightPercent?: number;
   audioOutputFormat?: AudioOutputFormat;
   voiceId?: string;
   geminiVoiceName?: string;
@@ -343,11 +816,20 @@ export interface NodeData {
   videoReference1Type?: VideoReferenceType;
   videoReference2Type?: VideoReferenceType;
   videoReference3Type?: VideoReferenceType;
+  sourceBinItemId?: string;
   sourceAssetId?: string;
   sourceAssetUrl?: string;
   sourceAssetName?: string;
   sourceAssetMimeType?: string;
+  portalRole?: 'entry' | 'exit';
+  portalPairId?: string;
+  portalLabel?: string;
   textVisionSourceItemId?: string;
+  geminiThinkingLevel?: GeminiThinkingLevel;
+  geminiMediaResolution?: GeminiMediaResolution;
+  geminiGoogleSearchEnabled?: boolean;
+  geminiCodeExecutionEnabled?: boolean;
+  textOutputFormat?: TextOutputFormat;
   videoFrameSelection?: VideoFrameSelection;
   compositionAudioTrackCount?: number;
   compositionTimelineSeconds?: number;
@@ -371,6 +853,27 @@ export interface NodeData {
   editorAssets?: EditorAsset[];
   editorStageObjects?: EditorStageObject[];
   editorTimelineSnapPoints?: number[];
+  editorExportPresetPlan?: VideoExportPresetPlanData;
+  editorRenderCacheCompositionSignature?: string;
+  editorRenderCacheSegmentSignatures?: Record<string, string>;
+  editorRenderCacheSegmentArtifacts?: Record<string, {
+    key: string;
+    signature: string;
+    url: string;
+    startMs: number;
+    endMs: number;
+    updatedAt?: string;
+  }>;
+  editorRenderCacheAssemblyManifest?: VideoRenderAssemblyManifestData;
+  editorRenderCacheLastAssemblyManifest?: VideoRenderAssemblyManifestData;
+  editorRenderCacheLastAssemblyResult?: VideoRenderAssemblyResultData;
+  editorRenderCacheUpdatedAt?: string;
+  resultMimeType?: string;
+  resultExtension?: string;
+  resultFileName?: string;
+  resultOutputMetadata?: Record<string, unknown>;
+  functionNode?: FunctionNodeConfig;
+  groupNode?: GroupNodeConfig;
 }
 
 export type AppNode = Node<NodeData, FlowNodeType>;

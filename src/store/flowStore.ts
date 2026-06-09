@@ -37,11 +37,12 @@ import {
   normalizeImageConnectionTargetHandle,
   normalizeImageEdges,
 } from '../lib/imageEdgeMigration';
+import { resolveImageNodeMaskInput } from '../lib/imageNodeMask';
 import {
   estimateExecutionPlan,
   formatRollupSummary,
 } from '../lib/costEstimation';
-import { IMAGE_REFERENCE_HANDLES } from '../lib/imageModelSupport';
+import { IMAGE_MASK_HANDLE, IMAGE_REFERENCE_HANDLES } from '../lib/imageModelSupport';
 import {
   getEditorAudioClips,
   getEditorAudioTrackVolumes,
@@ -54,12 +55,62 @@ import {
   type ManualEditorVisualSequenceClip,
 } from '../lib/manualEditorSequence';
 import { appendResultAttempt, resolveSelectedResultAttempt } from '../lib/resultHistory';
-import { executeNodeRequest } from '../lib/flowExecution';
+import { executeNodeRequest, hashExecutionParameters } from '../lib/flowExecution';
+import {
+  buildCollapsedFunctionNode,
+  createDefaultFunctionNodeConfig,
+  createGroupNodeConfig,
+  getNodeResultForFunctionRouting,
+  pasteFlowClipboard,
+  serializeFlowSelection,
+  type FlowClipboardPayload,
+} from '../lib/functionNodes';
+import {
+  buildListNodeItems,
+  getListNodeKind,
+  isListItemTargetHandle,
+  resolveExpandedListItemForNode,
+  resolveNodeListItemKind,
+  resolvePackageNodeData,
+  collectEnvelopeItemsForEnvelopeNode,
+  evaluateNodeTextForMonitor,
+} from '../lib/listNodes';
+import {
+  applyListItemsToExecutionContext,
+  buildLoopIterationItems,
+  collectListLoopInputs,
+  type LoopIterationItem,
+  getLoopIterationCount,
+  normalizeListLoopMode,
+} from '../lib/listExecution';
+import {
+  collectPromptSignalForNode,
+  getBlockingSignalDiagnostics,
+  getSignalIterationCount,
+  signalToTextAt,
+} from '../lib/flowSignals';
+import { LOOP_BREAK_TARGET_HANDLE } from '../lib/flowControlHandles';
+import { shouldBreakLoopAtIteration } from '../lib/loopControl';
+import { getBlockingFlowDiagnostics } from '../lib/flowDiagnostics';
 import { buildSourceBinItem } from '../lib/sourceBin';
+import { buildFlowNodePatchForRestoredSourceBinItem } from '../lib/sourceBinFlowBridge';
+import {
+  buildFlowNodeGeneratedResultPatch,
+  sourceBinItemBelongsToFlowNode,
+} from '../lib/flowNodeResultRestore';
+import { recordProjectUsageFromExecution } from '../lib/projectUsageRecording';
+import type { FlowProjectFlowSnapshot, FlowProjectFlowSnapshotInput } from '../lib/flowProjectWorkspaces';
+import {
+  getDefaultGeminiTextMimeType,
+  isGeminiTextMediaInputSupported,
+  type GeminiTextMediaInput,
+} from '../lib/geminiTextModel';
 import {
   buildSourceBinLibraryItemLookup,
   mapLibraryItemToEditorSourceItem,
 } from '../lib/editorSourceItems';
+import { renameNodeBookmarkState } from './flow/slices/bookmarkActions';
+import { replaceFlowSnapshotState } from './flow/slices/snapshotActions';
 import {
   normalizeVideoImageConnectionTargetHandle,
   normalizeVideoImageEdges,
@@ -71,23 +122,36 @@ import {
   normalizeGeminiVideoModelId,
 } from '../lib/videoModelSupport';
 import { resolveEffectiveSourceNode } from '../lib/virtualNodes';
+import {
+  isPortalSyntheticEdge,
+  normalizePortalEdges,
+  prunePortalExitEdgesForRemovedEntryLeads,
+} from '../lib/portalNodes';
 import type {
   AspectRatio,
   AppNode,
+  DynamicValue,
+  EditorSourceKind,
   ExecutionConfig,
+  EnvelopeItem,
   FlowNodeType,
   ImageTargetHandle,
   NodeData,
   PersistedNodeData,
+  ResultType,
   RuntimeSettingsSnapshot,
   SerializableNodeValue,
+  UsageTelemetry,
   VideoReferenceType,
   VideoTargetHandle,
 } from '../types/flow';
 import { useSettingsStore } from './settingsStore';
 import { useSourceBinStore } from './sourceBinStore';
+import { useProjectUsageStore } from './projectUsageStore';
+import { useConfirmationStore } from './confirmationStore';
+import { useFlowWorkspaceStore } from './flowWorkspaceStore';
 
-interface FlowState {
+export interface FlowState {
   nodes: AppNode[];
   edges: Edge[];
   bookmarkSidebarOpen: boolean;
@@ -95,10 +159,12 @@ interface FlowState {
   onNodesChange: OnNodesChange<AppNode>;
   onEdgesChange: OnEdgesChange;
   onConnect: OnConnect;
-  addNode: (type: FlowNodeType, position: { x: number; y: number }) => string;
+  addNode: (type: FlowNodeType, position: { x: number; y: number }, initialData?: Partial<NodeData>) => string;
   addConnectedNode: (sourceNodeId: string, type: FlowNodeType, targetHandle?: string) => void;
   updateNodeData: (id: string, key: string, value: SerializableNodeValue) => void;
   patchNodeData: (id: string, patch: Partial<NodeData>) => void;
+  renameNodeBookmark: (id: string, rawTitle: string | null) => void;
+  clearNodeBookmark: (id: string) => void;
   removeEditorSourceReferences: (sourceNodeId: string) => void;
   selectNodeAttempt: (id: string, attemptId: string) => void;
   runNode: (id: string) => Promise<void>;
@@ -106,18 +172,40 @@ interface FlowState {
   hydratePersistedState: () => void;
   restoreImportedAssets: () => Promise<void>;
   exportFlow: () => string;
-  exportProjectFlowSnapshot: () => {
-    version: number;
-    nodes: AppNode[];
-    edges: Edge[];
-  };
-  replaceFlowSnapshot: (snapshot: {
-    nodes: AppNode[];
-    edges: Edge[];
-  }) => void;
+  exportProjectFlowSnapshot: () => FlowProjectFlowSnapshot;
+  replaceFlowSnapshot: (snapshot: FlowProjectFlowSnapshotInput) => void;
+  insertTemplate: (template: { nodes: Partial<AppNode>[]; edges: Partial<Edge>[] }, position: { x: number; y: number }) => void;
+  copySelection: () => boolean;
+  cutSelection: () => Promise<boolean>;
+  pasteClipboard: (position: { x: number; y: number }) => boolean;
+  deleteSelection: () => Promise<boolean>;
+  selectAllNodes: () => void;
+  deselectAll: () => void;
+  createGroupFromSelection: (title?: string) => string | undefined;
+  collapseSelectionToFunction: (title?: string) => string | undefined;
+  centerOnNode: (id: string) => void;
+  registerCenterOnNodeCallback: (callback: (id: string) => void) => void;
+  onSourceBinItemRemoved: (id: string, removedItem?: import('./sourceBinStore').SourceBinLibraryItem) => void;
 }
 
 const activeRunControllers = new Map<string, AbortController>();
+let flowClipboard: FlowClipboardPayload | null = null;
+
+function getActiveFlowWorkspaceUsageContext(): {
+  flowWorkspaceId?: string;
+  flowWorkspaceName?: string;
+} {
+  const flowWorkspaceState = useFlowWorkspaceStore.getState();
+  const flowWorkspaceId = flowWorkspaceState.activeWorkspaceId;
+  const flowWorkspaceName = flowWorkspaceId
+    ? flowWorkspaceState.getWorkspace(flowWorkspaceId)?.name
+    : undefined;
+
+  return {
+    flowWorkspaceId,
+    flowWorkspaceName,
+  };
+}
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
@@ -126,6 +214,10 @@ function isAbortError(error: unknown): boolean {
 const FLOW_STORAGE_KEY = 'flow-canvas-storage';
 const PERSIST_DEBOUNCE_MS = 400;
 const VIDEO_REFERENCE_HANDLES = ['video-reference-1', 'video-reference-2', 'video-reference-3'] as const;
+
+function makeFlowId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+}
 
 function createDebouncedLocalStorage(delayMs: number): StateStorage {
   const pending = new Map<string, string>();
@@ -210,23 +302,40 @@ function resolveNodeOutputAsset(node: AppNode): string | undefined {
     (node.type === 'imageGen' || node.type === 'audioGen' || node.type === 'videoGen') &&
     (node.data.mediaMode ?? 'generate') === 'import'
   ) {
-    return node.data.sourceAssetUrl;
+    if (node.data.sourceAssetUrl) {
+      return node.data.sourceAssetUrl;
+    }
+    if (node.data.result) {
+      return node.data.result;
+    }
+    if (node.data.sourceBinItemId) {
+      const item = useSourceBinStore.getState().getAllItems().find((item) => item.id === node.data.sourceBinItemId);
+      if (item?.assetUrl) {
+        return item.assetUrl;
+      }
+    }
+    return undefined;
   }
 
   return node.data.result;
 }
 
 function shouldReuseExistingNodeOutput(node: AppNode): boolean {
-  if (!['imageGen', 'videoGen', 'audioGen', 'composition'].includes(node.type)) {
+  if (!['imageGen', 'cropImageNode', 'videoGen', 'audioGen', 'composition', 'functionNode'].includes(node.type)) {
     return false;
   }
 
   return Boolean(resolveNodeOutputAsset(node));
 }
 
-function canRunNode(node: AppNode): boolean {
-  if (node.type === 'settings' || node.type === 'sourceBin' || node.type === 'virtual') {
-    return false;
+export function canRunNode(node: AppNode): boolean {
+  if (
+    node.type === 'composition' ||
+    node.type === 'cropImageNode' ||
+    node.type === 'visionVerifyNode' ||
+    node.type === 'functionNode'
+  ) {
+    return true;
   }
 
   if (node.type === 'textNode') {
@@ -237,7 +346,7 @@ function canRunNode(node: AppNode): boolean {
     return (node.data.mediaMode ?? 'generate') === 'generate';
   }
 
-  return true;
+  return false;
 }
 
 function createInitialNodeData(type: FlowNodeType, settings: RuntimeSettingsSnapshot): PersistedNodeData {
@@ -256,6 +365,13 @@ function createInitialNodeData(type: FlowNodeType, settings: RuntimeSettingsSnap
         provider: 'gemini',
         modelId: settings.defaultModels.image.gemini,
         videoFrameSelection: 'last',
+      };
+    case 'cropImageNode':
+      return {
+        cropXPercent: 10,
+        cropYPercent: 10,
+        cropWidthPercent: 80,
+        cropHeightPercent: 80,
       };
     case 'videoGen':
       return {
@@ -292,6 +408,7 @@ function createInitialNodeData(type: FlowNodeType, settings: RuntimeSettingsSnap
       return {
         aspectRatio: '16:9',
         videoResolution: '1080p',
+        videoFrameRate: 30,
         compositionAudioTrackCount: 1,
         compositionTimelineSeconds: 30,
         compositionUseVideoAudio: false,
@@ -310,7 +427,43 @@ function createInitialNodeData(type: FlowNodeType, settings: RuntimeSettingsSnap
         compositionAudio4Enabled: true,
       };
     case 'sourceBin':
+      return {};
+    case 'valueNode':
+      return {
+        valueKind: 'text',
+        value: '',
+      };
+    case 'colorSwatchNode':
+      return {
+        colorSwatchColors: [],
+        colorSwatchDraftColor: '#38BDF8',
+        colorSwatchSelectedIndex: -1,
+        colorSwatchUsageMode: 'primary',
+      };
+    case 'list':
+      return {};
+    case 'expander':
+      return {
+        expandedItemIndex: 0,
+      };
+    case 'envelope':
     case 'virtual':
+    case 'portal':
+    case 'advancedImageEditor':
+      return {};
+    case 'groupNode':
+      return {
+        groupNode: createGroupNodeConfig({
+          childNodeIds: [],
+          childEdgeIds: [],
+          bounds: { x: 0, y: 0, width: 280, height: 180 },
+        }),
+      };
+    case 'functionNode':
+      return {
+        functionNode: createDefaultFunctionNodeConfig('Reusable function'),
+      };
+    default:
       return {};
   }
 }
@@ -328,6 +481,10 @@ function stripRuntimeData(node: AppNode): AppNode {
       statusMessage: undefined,
       result: undefined,
       resultType: undefined,
+      resultMimeType: undefined,
+      resultExtension: undefined,
+      resultFileName: undefined,
+      resultOutputMetadata: undefined,
       resultHistory: undefined,
       selectedResultId: undefined,
       usage: undefined,
@@ -350,6 +507,18 @@ function stripProjectRuntimeData(node: AppNode): AppNode {
       sourceAssetUrl: undefined,
     },
   };
+}
+
+function combineNodeDataPatches(...patches: Array<Partial<NodeData> | undefined>): Partial<NodeData> | undefined {
+  const combined: Partial<NodeData> = {};
+
+  for (const patch of patches) {
+    if (patch) {
+      Object.assign(combined, patch);
+    }
+  }
+
+  return Object.keys(combined).length > 0 ? combined : undefined;
 }
 
 function normalizePersistedNode(node: AppNode): AppNode {
@@ -454,11 +623,105 @@ function attachRuntimeDataToNodes(nodes: AppNode[], get: () => FlowState): AppNo
   return mutated ? next : nodes;
 }
 
-function normalizeFlowEdges(nodes: AppNode[], edges: Edge[]): Edge[] {
-  return normalizeCompositionEdges(
-    nodes,
-    normalizeVideoImageEdges(nodes, normalizeImageEdges(nodes, edges)),
+async function confirmGeneratedAssetCleanupForRemovedNodes(removedNodeIds: Iterable<string>): Promise<void> {
+  const removedNodeIdSet = new Set(removedNodeIds);
+  if (removedNodeIdSet.size === 0) {
+    return;
+  }
+
+  const sourceBinStore = useSourceBinStore.getState();
+  const itemsToRemove = sourceBinStore.getAllItems().filter((item) => item.originNodeId && removedNodeIdSet.has(item.originNodeId));
+
+  if (itemsToRemove.length === 0) {
+    return;
+  }
+
+  const shouldDelete = await useConfirmationStore.getState().requestConfirmation(
+    `Deleting these nodes will orphan ${itemsToRemove.length} generated asset(s) in your Source Library.\n\nContinue to delete these generated assets as well, or cancel to keep them in the Source Library.`,
+    'Generated Asset Cleanup',
   );
+
+  if (shouldDelete) {
+    itemsToRemove.forEach((item) => sourceBinStore.removeItem(item.id));
+  }
+}
+
+function hasNodeDataPatchChange(data: NodeData, patch: Partial<NodeData>): boolean {
+  return Object.entries(patch).some(([key, value]) => !Object.is(data[key], value));
+}
+
+function normalizeFlowEdges(nodes: AppNode[], edges: Edge[]): Edge[] {
+  const visibleEdges = edges.filter((edge) => !isPortalSyntheticEdge(edge));
+  return normalizePortalEdges(nodes, normalizeCompositionEdges(
+    nodes,
+    normalizeVideoImageEdges(nodes, normalizeImageEdges(nodes, visibleEdges)),
+  ));
+}
+
+export function sanitizePersistedFlowState(value: unknown): { nodes: AppNode[]; edges: Edge[]; bookmarkSidebarOpen: boolean } {
+  const input = isRecord(value) ? value : {};
+  return {
+    nodes: Array.isArray(input.nodes) ? (input.nodes as AppNode[]) : [],
+    edges: Array.isArray(input.edges) ? (input.edges as Edge[]) : [],
+    bookmarkSidebarOpen: typeof input.bookmarkSidebarOpen === 'boolean' ? input.bookmarkSidebarOpen : true,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function validateListConnection(
+  connection: Connection,
+  nodes: AppNode[],
+  edges: Edge[],
+): { connection?: Connection; edges: Edge[]; error?: string } {
+  const targetNode = nodes.find((node) => node.id === connection.target);
+
+  if (targetNode?.type !== 'list') {
+    return { connection, edges };
+  }
+
+  if (!isListItemTargetHandle(connection.targetHandle)) {
+    return {
+      edges,
+      error: 'Drop outputs onto a visible list slot instead of the list body.',
+    };
+  }
+
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  const rawSourceNode = nodesById.get(connection.source);
+  const sourceNode = rawSourceNode
+    ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
+    : undefined;
+  const sourceKind = sourceNode?.type === 'expander'
+    ? resolveExpandedListItemForNode(sourceNode, nodes, edges)?.kind
+    : sourceNode
+      ? resolveNodeListItemKind(sourceNode, nodes, edges)
+      : undefined;
+
+  if (!sourceKind) {
+    return {
+      edges,
+      error: 'This output does not have a valid completed value to add yet.',
+    };
+  }
+
+  const existingKind = getListNodeKind(buildListNodeItems(targetNode.id, nodes, edges));
+
+  if (existingKind && existingKind !== sourceKind) {
+    return {
+      edges,
+      error: `This list is typed as ${existingKind}; ${sourceKind} outputs cannot be added.`,
+    };
+  }
+
+  return {
+    connection,
+    edges: edges.filter(
+      (edge) => !(edge.target === connection.target && edge.targetHandle === connection.targetHandle),
+    ),
+  };
 }
 
 function buildIncomingMap(edges: Edge[]): Map<string, string[]> {
@@ -477,6 +740,50 @@ function buildNodeMap(nodes: AppNode[]): Map<string, AppNode> {
   return new Map(nodes.map((node) => [node.id, node]));
 }
 
+function getEffectiveSources(
+  nodeId: string,
+  edges: Edge[],
+  nodesById: Map<string, AppNode>,
+  visited = new Set<string>()
+): AppNode[] {
+  if (visited.has(nodeId)) {
+    return [];
+  }
+  visited.add(nodeId);
+
+  const node = nodesById.get(nodeId);
+  if (!node) {
+    return [];
+  }
+
+  if (canRunNode(node)) {
+    return [node];
+  }
+
+  const sources: AppNode[] = [];
+  const resolvedNode = resolveEffectiveSourceNode(node, nodesById, edges);
+  if (resolvedNode && resolvedNode.id !== node.id) {
+    return getEffectiveSources(resolvedNode.id, edges, nodesById, visited);
+  }
+
+  for (const edge of edges) {
+    if (edge.target === nodeId) {
+      const parentSources = getEffectiveSources(edge.source, edges, nodesById, visited);
+      for (const src of parentSources) {
+        if (!sources.some((s) => s.id === src.id)) {
+          sources.push(src);
+        }
+      }
+    }
+  }
+
+  if (sources.length === 0) {
+    return [node];
+  }
+
+  return sources;
+}
+
 function getExecutionDependencies(
   node: AppNode,
   edges: Edge[],
@@ -490,126 +797,266 @@ function getExecutionDependencies(
     }
 
     const rawSourceNode = nodesById.get(edge.source);
-    const sourceNode = rawSourceNode
-      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
-      : undefined;
-
-    if (!sourceNode) {
+    if (!rawSourceNode) {
       continue;
     }
 
-    if (sourceNode.type === 'settings') {
-      dependencies.add(sourceNode.id);
-      continue;
-    }
+    const effectiveSources = getEffectiveSources(rawSourceNode.id, edges, nodesById);
 
-    if (node.type === 'textNode') {
-      if (sourceNode.type === 'textNode' || sourceNode.type === 'imageGen') {
-        dependencies.add(sourceNode.id);
+    for (const sourceNode of effectiveSources) {
+      if (edge.targetHandle === LOOP_BREAK_TARGET_HANDLE) {
+        if (canRunNode(sourceNode)) {
+          dependencies.add(sourceNode.id);
+        }
+        continue;
       }
 
-      continue;
-    }
-
-    if (node.type === 'imageGen') {
-      if (
-        sourceNode.type === 'textNode' ||
-        sourceNode.type === 'imageGen' ||
-        sourceNode.type === 'videoGen' ||
-        sourceNode.type === 'composition'
-      ) {
+      if (sourceNode.type === 'settings') {
         dependencies.add(sourceNode.id);
+        continue;
       }
 
-      continue;
-    }
+      if (node.type === 'list') {
+        const nodeList = Array.from(nodesById.values());
+        const sourceKind = resolveNodeListItemKind(sourceNode, nodeList, edges);
 
-    if (node.type === 'audioGen') {
-      const audioMode = (node.data.audioGenerationMode as string | undefined) ?? 'speech';
-
-      if (audioMode === 'voiceChange') {
-        if (sourceNode.type === 'audioGen') {
+        if (sourceKind && isListItemTargetHandle(edge.targetHandle)) {
           dependencies.add(sourceNode.id);
         }
 
         continue;
       }
 
-      if (sourceNode.type === 'textNode') {
-        dependencies.add(sourceNode.id);
-      }
-
-      continue;
-    }
-
-    if (node.type === 'videoGen') {
-      if (sourceNode.type === 'textNode') {
+      if (node.type === 'envelope') {
         dependencies.add(sourceNode.id);
         continue;
       }
 
-      if (
-        sourceNode.type === 'imageGen' &&
-        isVideoImageConditioningHandle(edge.targetHandle as VideoTargetHandle | undefined)
-      ) {
+      if (node.type === 'expander') {
+        const nodeList = Array.from(nodesById.values());
+        if (
+          sourceNode.type === 'list' ||
+          sourceNode.type === 'envelope' ||
+          resolveNodeListItemKind(sourceNode, nodeList, edges)
+        ) {
+          dependencies.add(sourceNode.id);
+        }
+
+        continue;
+      }
+
+      if (sourceNode.type === 'expander') {
         dependencies.add(sourceNode.id);
         continue;
       }
 
-      if (
-        (sourceNode.type === 'videoGen' || sourceNode.type === 'composition') &&
-        isVideoExtensionHandle(edge.targetHandle as VideoTargetHandle | undefined)
-      ) {
+      if (sourceNode.type === 'list' || sourceNode.type === 'envelope') {
         dependencies.add(sourceNode.id);
+        continue;
       }
 
-      continue;
-    }
-
-    if (node.type === 'composition') {
-      if (
-        (isCompositionVideoConnection(edge) && ['videoGen', 'composition'].includes(sourceNode.type)) ||
-        (COMPOSITION_AUDIO_HANDLES.includes(edge.targetHandle as typeof COMPOSITION_AUDIO_HANDLES[number]) &&
-          sourceNode.type === 'audioGen')
-      ) {
+      if (sourceNode.type === 'packageNode') {
         dependencies.add(sourceNode.id);
+        continue;
+      }
+
+      if (sourceNode.type === 'colorSwatchNode') {
+        dependencies.add(sourceNode.id);
+        continue;
+      }
+
+      if (node.type === 'functionNode') {
+        if (sourceNode.type !== 'groupNode') {
+          dependencies.add(sourceNode.id);
+        }
+        continue;
+      }
+
+      if (node.type === 'textNode') {
+        if (
+          sourceNode.type === 'textNode' ||
+          sourceNode.type === 'imageGen' ||
+          sourceNode.type === 'cropImageNode' ||
+          sourceNode.type === 'audioGen' ||
+          sourceNode.type === 'videoGen' ||
+          sourceNode.type === 'composition' ||
+          sourceNode.type === 'functionNode'
+        ) {
+          dependencies.add(sourceNode.id);
+        }
+
+        continue;
+      }
+
+      if (node.type === 'imageGen') {
+        if (
+          sourceNode.type === 'textNode' ||
+          sourceNode.type === 'imageGen' ||
+          sourceNode.type === 'cropImageNode' ||
+          sourceNode.type === 'videoGen' ||
+          sourceNode.type === 'composition' ||
+          sourceNode.type === 'functionNode'
+        ) {
+          dependencies.add(sourceNode.id);
+        }
+
+        continue;
+      }
+
+      if (node.type === 'cropImageNode') {
+        if (
+          sourceNode.type === 'imageGen' ||
+          sourceNode.type === 'cropImageNode' ||
+          sourceNode.type === 'functionNode'
+        ) {
+          dependencies.add(sourceNode.id);
+        }
+
+        continue;
+      }
+
+      if (node.type === 'audioGen') {
+        const audioMode = (node.data.audioGenerationMode as string | undefined) ?? 'speech';
+
+        if (audioMode === 'voiceChange') {
+          if (sourceNode.type === 'audioGen') {
+            dependencies.add(sourceNode.id);
+          }
+
+          continue;
+        }
+
+        if (sourceNode.type === 'textNode' || sourceNode.type === 'functionNode') {
+          dependencies.add(sourceNode.id);
+        }
+
+        continue;
+      }
+
+      if (node.type === 'videoGen') {
+        if (sourceNode.type === 'textNode' || sourceNode.type === 'functionNode') {
+          dependencies.add(sourceNode.id);
+          continue;
+        }
+
+        if (
+          (sourceNode.type === 'imageGen' || sourceNode.type === 'cropImageNode') &&
+          isVideoImageConditioningHandle(edge.targetHandle as VideoTargetHandle | undefined)
+        ) {
+          dependencies.add(sourceNode.id);
+          continue;
+        }
+
+        if (
+          (sourceNode.type === 'videoGen' || sourceNode.type === 'composition') &&
+          isVideoExtensionHandle(edge.targetHandle as VideoTargetHandle | undefined)
+        ) {
+          dependencies.add(sourceNode.id);
+        }
+
+        continue;
+      }
+
+      if (node.type === 'composition') {
+        if (
+          (isCompositionVideoConnection(edge) && ['videoGen', 'composition', 'functionNode'].includes(sourceNode.type)) ||
+          (COMPOSITION_AUDIO_HANDLES.includes(edge.targetHandle as typeof COMPOSITION_AUDIO_HANDLES[number]) &&
+            (sourceNode.type === 'audioGen' || sourceNode.type === 'functionNode'))
+        ) {
+          dependencies.add(sourceNode.id);
+        }
+      }
+
+      if (node.type === 'visionVerifyNode') {
+        if (
+          sourceNode.type === 'textNode' ||
+          sourceNode.type === 'imageGen' ||
+          sourceNode.type === 'cropImageNode' ||
+          sourceNode.type === 'visionVerifyNode' ||
+          sourceNode.type === 'functionNode'
+        ) {
+          dependencies.add(sourceNode.id);
+        }
+        continue;
       }
     }
   }
 
-  return [...dependencies];
+  if (node.type === 'storyStateNode') {
+    const key = (node.data.key as string) ?? '';
+    const incomingEdge = edges.find((e) => e.target === node.id);
+    if (!incomingEdge && key) {
+      for (const n of nodesById.values()) {
+        if (n.type === 'storyStateNode' && n.id !== node.id && (n.data.key as string) === key) {
+          if (edges.some((e) => e.target === n.id)) {
+            dependencies.add(n.id);
+          }
+        }
+      }
+    }
+  }
+
+  return [...dependencies].filter((depId) => depId !== node.id);
 }
 
-function collectTextInputs(
+export function collectTextInputs(
   nodeId: string,
   nodesById: Map<string, AppNode>,
   incoming: Map<string, string[]>,
+  edges: Edge[] = [],
 ): string {
   const sourceIds = incoming.get(nodeId) ?? [];
   const prompts = sourceIds.flatMap((sourceId) =>
-    collectTextInputsFromSource(sourceId, nodesById, incoming, new Set()),
+    collectTextInputsFromSource(sourceId, nodesById, incoming, edges, new Set()),
   );
 
   return prompts.join('\n\n').trim();
 }
 
-function collectTextImageInputs(
+function collectTextMediaInputs(
   node: AppNode,
   nodesById: Map<string, AppNode>,
   edges: Edge[],
-): string[] {
-  const inputUrls = new Set<string>();
+): GeminiTextMediaInput[] {
+  const inputsByUrl = new Map<string, GeminiTextMediaInput>();
+  const addInput = (input: GeminiTextMediaInput) => {
+    const mimeType = input.mimeType ?? getDefaultGeminiTextMimeType(input.kind);
+    const normalizedInput: GeminiTextMediaInput = {
+      ...input,
+      mimeType,
+    };
+
+    if (!normalizedInput.url || !isGeminiTextMediaInputSupported(normalizedInput)) {
+      return;
+    }
+
+    inputsByUrl.set(`${normalizedInput.url}:${mimeType ?? ''}`, normalizedInput);
+  };
   const directSourceItemId =
     typeof node.data.textVisionSourceItemId === 'string' && node.data.textVisionSourceItemId.trim()
       ? node.data.textVisionSourceItemId.trim()
       : undefined;
-  const sourceBinItems = useSourceBinStore.getState().items;
+  const sourceBinItems = useSourceBinStore.getState().getAllItems();
+
+  if (typeof node.data.sourceAssetUrl === 'string' && node.data.sourceAssetUrl.trim()) {
+    addInput({
+      url: node.data.sourceAssetUrl,
+      mimeType: node.data.sourceAssetMimeType,
+      kind: inferGeminiTextMediaKind(node.data.sourceAssetMimeType),
+      label: node.data.sourceAssetName,
+    });
+  }
 
   if (directSourceItemId) {
     const directSourceItem = sourceBinItems.find((item) => item.id === directSourceItemId);
 
-    if (directSourceItem?.kind === 'image' && directSourceItem.assetUrl) {
-      inputUrls.add(directSourceItem.assetUrl);
+    if (directSourceItem?.assetUrl) {
+      addInput({
+        url: directSourceItem.assetUrl,
+        mimeType: directSourceItem.mimeType,
+        kind: directSourceItem.kind,
+        label: directSourceItem.label,
+      });
     }
   }
 
@@ -622,24 +1069,63 @@ function collectTextImageInputs(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
       : undefined;
 
-    if (sourceNode?.type !== 'imageGen') {
+    if (!sourceNode || !['imageGen', 'cropImageNode', 'audioGen', 'videoGen', 'composition', 'expander'].includes(sourceNode.type)) {
       continue;
     }
 
-    const imageUrl = collectImageInputFromSource(edge.source, nodesById, incoming, new Set());
+    const mediaInput = collectTextMediaInputFromSource(edge.source, nodesById, incoming, edges, new Set());
 
-    if (imageUrl) {
-      inputUrls.add(imageUrl);
+    if (mediaInput) {
+      addInput(mediaInput);
     }
   }
 
-  return [...inputUrls];
+  return [...inputsByUrl.values()];
+}
+
+function resolveExpandedItemFromNode(
+  node: AppNode,
+  nodesById: Map<string, AppNode>,
+  edges: Edge[],
+) {
+  return resolveExpandedListItemForNode(node, [...nodesById.values()], edges);
+}
+
+function expandedItemMatchesAcceptedTypes(
+  item: ReturnType<typeof resolveExpandedListItemForNode>,
+  acceptedTypes: FlowNodeType[],
+): boolean {
+  if (!item) return false;
+  return acceptedTypes.some((type) => {
+    switch (type) {
+      case 'textNode':
+        return item.kind === 'text';
+      case 'imageGen':
+      case 'cropImageNode':
+        return item.kind === 'image';
+      case 'videoGen':
+      case 'composition':
+        return item.kind === 'video';
+      case 'audioGen':
+        return item.kind === 'audio';
+      default:
+        return false;
+    }
+  });
+}
+
+function textMediaKindForExpandedItem(
+  item: NonNullable<ReturnType<typeof resolveExpandedListItemForNode>>,
+): GeminiTextMediaInput['kind'] | undefined {
+  return inferGeminiTextMediaKind(item.mimeType)
+    ?? (item.kind === 'image' || item.kind === 'audio' || item.kind === 'video' ? item.kind : undefined);
 }
 
 function collectTextInputsFromSource(
   sourceId: string,
   nodesById: Map<string, AppNode>,
   incoming: Map<string, string[]>,
+  edges: Edge[],
   visited: Set<string>,
 ): string[] {
   if (visited.has(sourceId)) {
@@ -655,20 +1141,53 @@ function collectTextInputsFromSource(
 
   if (node.type === 'settings') {
     return (incoming.get(sourceId) ?? []).flatMap((upstreamId) =>
-      collectTextInputsFromSource(upstreamId, nodesById, incoming, visited),
+      collectTextInputsFromSource(upstreamId, nodesById, incoming, edges, visited),
     );
   }
 
   if (node.type === 'virtual') {
     return (incoming.get(sourceId) ?? []).flatMap((upstreamId) =>
-      collectTextInputsFromSource(upstreamId, nodesById, incoming, visited),
+      collectTextInputsFromSource(upstreamId, nodesById, incoming, edges, visited),
     );
   }
 
-  if (node.type === 'textNode') {
-    const mode = node.data.mode ?? 'prompt';
-    const value = (mode === 'generate' ? node.data.result : node.data.prompt)?.trim();
-    return value ? [value] : [];
+  const listAndUtilityNodeTypes = [
+    'textNode',
+    'expander',
+    'packageNode',
+    'colorSwatchNode',
+    'conditionalNode',
+    'stringTemplateNode',
+    'promptsJoinerNode',
+    'regexReplaceNode',
+    'listLengthNode',
+    'mathNode',
+    'logicNode',
+    'comparisonNode',
+    'visionVerifyNode',
+    'valueMonitorNode',
+    'numberNode',
+    'functionNode',
+  ];
+
+  if (listAndUtilityNodeTypes.includes(node.type)) {
+    const monitorVisited = new Set(visited);
+    monitorVisited.delete(node.id);
+    const value = evaluateNodeTextForMonitor(node.id, Array.from(nodesById.values()), edges, monitorVisited);
+    return value.trim() ? [value.trim()] : [];
+  }
+
+  if (node.type === 'envelope') {
+    const items = collectEnvelopeItemsForEnvelopeNode(node.id, Array.from(nodesById.values()), edges);
+    return items.flatMap((item) => {
+      if (item.kind === 'text' && item.value?.trim()) {
+        return [item.value.trim()];
+      }
+      if (item.kind === 'package' && item.text?.trim()) {
+        return [item.text.trim()];
+      }
+      return [];
+    });
   }
 
   return [];
@@ -686,7 +1205,7 @@ function collectImageInputForHandle(
   );
 
   for (const edge of matchingEdges) {
-    const image = collectImageInputFromSource(edge.source, nodesById, incoming, new Set());
+    const image = collectImageInputFromSource(edge.source, nodesById, incoming, edges, new Set());
 
     if (image) {
       return image;
@@ -729,14 +1248,14 @@ function collectVideoExtensionInput(
   )?.result;
 }
 
-function collectUpstreamImageInput(
+export function collectUpstreamImageInput(
   nodeId: string,
   nodesById: Map<string, AppNode>,
   edges: Edge[],
 ): string | undefined {
   const explicitSource = collectUpstreamImageInputForHandles(
     nodeId,
-    ['image-edit-source'],
+    ['image-edit-source', 'image'],
     nodesById,
     edges,
   );
@@ -756,11 +1275,12 @@ function collectUpstreamImageInput(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
       : undefined;
 
-    if (sourceNode?.type !== 'imageGen') {
+    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'packageNode', 'envelope', 'expander', 'functionNode'];
+    if (!sourceNode || !allowedTypes.includes(sourceNode.type)) {
       continue;
     }
 
-    const image = collectImageInputFromSource(edge.source, nodesById, incoming, new Set());
+    const image = collectImageInputFromSource(edge.source, nodesById, incoming, edges, new Set());
 
     if (image) {
       return image;
@@ -770,7 +1290,7 @@ function collectUpstreamImageInput(
   return undefined;
 }
 
-function collectUpstreamImageInputForHandles(
+export function collectUpstreamImageInputForHandles(
   nodeId: string,
   targetHandles: Array<ImageTargetHandle | undefined>,
   nodesById: Map<string, AppNode>,
@@ -787,11 +1307,12 @@ function collectUpstreamImageInputForHandles(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
       : undefined;
 
-    if (sourceNode?.type !== 'imageGen') {
+    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'packageNode', 'envelope', 'expander', 'functionNode'];
+    if (!sourceNode || !allowedTypes.includes(sourceNode.type)) {
       continue;
     }
 
-    const image = collectImageInputFromSource(edge.source, nodesById, incoming, new Set());
+    const image = collectImageInputFromSource(edge.source, nodesById, incoming, edges, new Set());
 
     if (image) {
       return image;
@@ -812,6 +1333,16 @@ function collectImageReferenceInputs(
   });
 }
 
+export function collectImageMaskInput(
+  nodeId: string,
+  nodesById: Map<string, AppNode>,
+  edges: Edge[],
+): string | undefined {
+  const node = nodesById.get(nodeId);
+  const connectedMaskInput = collectUpstreamImageInputForHandles(nodeId, [IMAGE_MASK_HANDLE], nodesById, edges);
+  return node ? resolveImageNodeMaskInput({ connectedMaskInput, nodeData: node.data }) : connectedMaskInput;
+}
+
 function collectUpstreamVideoInput(
   nodeId: string,
   nodesById: Map<string, AppNode>,
@@ -825,7 +1356,29 @@ function collectUpstreamVideoInput(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
       : undefined;
 
-    if (!sourceNode || !['videoGen', 'composition'].includes(sourceNode.type)) {
+    if (!sourceNode) {
+      continue;
+    }
+
+    if (sourceNode.type === 'expander') {
+      const item = resolveExpandedItemFromNode(sourceNode, nodesById, edges);
+      if (item?.kind === 'video') {
+        return item.value;
+      }
+      continue;
+    }
+
+    if (sourceNode.type === 'functionNode') {
+      const asset = sourceNode.data.resultType === 'video' && typeof sourceNode.data.result === 'string'
+        ? sourceNode.data.result
+        : undefined;
+      if (asset) {
+        return asset;
+      }
+      continue;
+    }
+
+    if (!['videoGen', 'composition'].includes(sourceNode.type)) {
       continue;
     }
 
@@ -852,7 +1405,29 @@ function collectUpstreamAudioInput(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
       : undefined;
 
-    if (sourceNode?.type !== 'audioGen') {
+    if (!sourceNode) {
+      continue;
+    }
+
+    if (sourceNode.type === 'expander') {
+      const item = resolveExpandedItemFromNode(sourceNode, nodesById, edges);
+      if (item?.kind === 'audio') {
+        return item.value;
+      }
+      continue;
+    }
+
+    if (sourceNode.type === 'functionNode') {
+      const asset = sourceNode.data.resultType === 'audio' && typeof sourceNode.data.result === 'string'
+        ? sourceNode.data.result
+        : undefined;
+      if (asset) {
+        return asset;
+      }
+      continue;
+    }
+
+    if (sourceNode.type !== 'audioGen') {
       continue;
     }
 
@@ -870,7 +1445,7 @@ function collectEditorVisualSequence(
   node: AppNode,
   nodesById: Map<string, AppNode>,
 ): ManualEditorVisualSequenceClip[] {
-  const sourceBinItems = useSourceBinStore.getState().items;
+  const sourceBinItems = useSourceBinStore.getState().getAllItems();
   const sourceBinItemBySourceId = buildSourceBinLibraryItemLookup(sourceBinItems);
   const editorAssetById = new Map(getEditorAssets(node.data).map((asset) => [asset.id, asset]));
 
@@ -918,7 +1493,7 @@ function collectEditorAudioSequence(
   volumeKeyframes?: Array<{ timePercent: number; volumePercent: number }>;
   enabled: boolean;
 }> {
-  const sourceBinItems = useSourceBinStore.getState().items;
+  const sourceBinItems = useSourceBinStore.getState().getAllItems();
   const sourceBinItemBySourceId = buildSourceBinLibraryItemLookup(sourceBinItems);
   const audioTrackVolumes = getEditorAudioTrackVolumes(node.data);
 
@@ -993,6 +1568,15 @@ function collectResultInputForHandle(
     : undefined;
 
   if (!sourceNode || !acceptedTypes.includes(sourceNode.type)) {
+    if (sourceNode?.type === 'expander') {
+      const item = resolveExpandedItemFromNode(sourceNode, nodesById, edges);
+      if (expandedItemMatchesAcceptedTypes(item, acceptedTypes)) {
+        return {
+          node: sourceNode,
+          result: item!.value,
+        };
+      }
+    }
     return undefined;
   }
 
@@ -1008,10 +1592,73 @@ function collectResultInputForHandle(
   };
 }
 
+function collectFunctionNodeInputs(
+  node: AppNode,
+  nodesById: Map<string, AppNode>,
+  edges: Edge[],
+): Record<string, DynamicValue> {
+  const config = node.data.functionNode;
+  if (!config) {
+    return {};
+  }
+
+  const portsById = new Map(config.contract.inputPorts.map((port) => [port.id, port]));
+  const inputs: Record<string, DynamicValue> = {};
+
+  for (const edge of edges) {
+    if (edge.target !== node.id || !edge.targetHandle) {
+      continue;
+    }
+
+    const port = portsById.get(edge.targetHandle);
+    if (!port) {
+      continue;
+    }
+
+    const rawSourceNode = nodesById.get(edge.source);
+    const sourceNode = rawSourceNode
+      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
+      : undefined;
+
+    if (!sourceNode) {
+      continue;
+    }
+
+    const value = resolveFunctionInputValue(sourceNode, nodesById, edges);
+    inputs[port.id] = value;
+    inputs[port.key] = value;
+  }
+
+  return inputs;
+}
+
+function resolveFunctionInputValue(
+  sourceNode: AppNode,
+  nodesById: Map<string, AppNode>,
+  edges: Edge[],
+): DynamicValue {
+  const asset = resolveNodeOutputAsset(sourceNode);
+  if (asset !== undefined) {
+    return asset;
+  }
+
+  const routed = getNodeResultForFunctionRouting(sourceNode);
+  if (!isEmptyFunctionInputValue(routed)) {
+    return routed;
+  }
+
+  return evaluateNodeTextForMonitor(sourceNode.id, Array.from(nodesById.values()), edges, new Set());
+}
+
+function isEmptyFunctionInputValue(value: DynamicValue): boolean {
+  return value === '' || value === null || value === undefined || (Array.isArray(value) && value.length === 0);
+}
+
 function collectImageInputFromSource(
   sourceId: string,
   nodesById: Map<string, AppNode>,
   incoming: Map<string, string[]>,
+  edges: Edge[],
   visited: Set<string>,
 ): string | undefined {
   if (visited.has(sourceId)) {
@@ -1027,7 +1674,7 @@ function collectImageInputFromSource(
 
   if (node.type === 'settings') {
     for (const upstreamId of incoming.get(sourceId) ?? []) {
-      const image = collectImageInputFromSource(upstreamId, nodesById, incoming, visited);
+      const image = collectImageInputFromSource(upstreamId, nodesById, incoming, edges, visited);
 
       if (image) {
         return image;
@@ -1039,7 +1686,7 @@ function collectImageInputFromSource(
 
   if (node.type === 'virtual') {
     for (const upstreamId of incoming.get(sourceId) ?? []) {
-      const image = collectImageInputFromSource(upstreamId, nodesById, incoming, visited);
+      const image = collectImageInputFromSource(upstreamId, nodesById, incoming, edges, visited);
 
       if (image) {
         return image;
@@ -1049,10 +1696,200 @@ function collectImageInputFromSource(
     return undefined;
   }
 
-  if (node.type === 'imageGen') {
+  if (node.type === 'imageGen' || node.type === 'cropImageNode') {
+    if ((node.data.mediaMode ?? 'generate') === 'import') {
+      if (node.data.sourceAssetUrl) {
+        return node.data.sourceAssetUrl;
+      }
+      if (node.data.result) {
+        return node.data.result;
+      }
+      if (node.data.sourceBinItemId) {
+        const item = useSourceBinStore.getState().getAllItems().find((item) => item.id === node.data.sourceBinItemId);
+        if (item?.assetUrl) {
+          return item.assetUrl;
+        }
+      }
+      return undefined;
+    }
+    return node.data.result;
+  }
+
+  if (node.type === 'functionNode') {
+    return node.data.resultType === 'image' && typeof node.data.result === 'string'
+      ? node.data.result
+      : undefined;
+  }
+
+  if (node.type === 'expander') {
+    const item = resolveExpandedItemFromNode(node, nodesById, edges);
+    return item?.kind === 'image' ? item.value : undefined;
+  }
+
+  if (node.type === 'packageNode') {
+    const pkg = resolvePackageNodeData(node.id, Array.from(nodesById.values()), edges);
+    return pkg.image;
+  }
+
+  if (node.type === 'envelope') {
+    const items = collectEnvelopeItemsForEnvelopeNode(node.id, Array.from(nodesById.values()), edges);
+    const imgItem = items.find((item) => (item.kind === 'image' || item.kind === 'package') && item.value);
+    return imgItem?.value;
+  }
+
+  return undefined;
+}
+
+function collectTextMediaInputFromSource(
+  sourceId: string,
+  nodesById: Map<string, AppNode>,
+  incoming: Map<string, string[]>,
+  edges: Edge[],
+  visited: Set<string>,
+): GeminiTextMediaInput | undefined {
+  if (visited.has(sourceId)) {
+    return undefined;
+  }
+
+  visited.add(sourceId);
+
+  const node = nodesById.get(sourceId);
+  if (!node) {
+    return undefined;
+  }
+
+  if (node.type === 'settings' || node.type === 'virtual') {
+    for (const upstreamId of incoming.get(sourceId) ?? []) {
+      const input = collectTextMediaInputFromSource(upstreamId, nodesById, incoming, edges, visited);
+
+      if (input) {
+        return input;
+      }
+    }
+
+    return undefined;
+  }
+
+  if (
+    node.type === 'imageGen' ||
+    node.type === 'cropImageNode' ||
+    node.type === 'audioGen' ||
+    node.type === 'videoGen' ||
+    node.type === 'composition' ||
+    node.type === 'functionNode'
+  ) {
+    const url = resolveNodeOutputAsset(node);
+
+    if (!url) {
+      return undefined;
+    }
+
+    return {
+      url,
+      kind: resolveTextMediaKindForNode(node),
+      mimeType: resolveNodeOutputMimeType(node),
+      label: typeof node.data.sourceAssetName === 'string' ? node.data.sourceAssetName : node.data.modelId,
+    };
+  }
+
+  if (node.type === 'expander') {
+    const item = resolveExpandedItemFromNode(node, nodesById, edges);
+    if (!item) return undefined;
+    const kind = textMediaKindForExpandedItem(item);
+    if (!kind) return undefined;
+    return {
+      url: item.value,
+      kind,
+      mimeType: item.mimeType,
+      label: item.label,
+    };
+  }
+
+  return undefined;
+}
+
+function resolveNodeOutputMimeType(node: AppNode): string | undefined {
+  if (node.type === 'imageGen' || node.type === 'cropImageNode' || node.type === 'videoGen' || node.type === 'audioGen') {
     return (node.data.mediaMode ?? 'generate') === 'import'
-      ? node.data.sourceAssetUrl
-      : node.data.result;
+      ? node.data.sourceAssetMimeType
+      : node.data.resultMimeType ?? getDefaultGeminiTextMimeType(resolveTextMediaKindForNode(node));
+  }
+
+  if (node.type === 'composition') {
+    return typeof node.data.resultMimeType === 'string'
+      ? node.data.resultMimeType
+      : node.data.resultType === 'package'
+        ? 'application/zip'
+        : 'video/mp4';
+  }
+
+  if (node.type === 'functionNode') {
+    if (typeof node.data.resultMimeType === 'string') {
+      return node.data.resultMimeType;
+    }
+    switch (node.data.resultType) {
+      case 'image':
+        return 'image/png';
+      case 'video':
+        return 'video/mp4';
+      case 'audio':
+        return 'audio/mpeg';
+      case 'package':
+        return 'application/zip';
+      case 'text':
+      case 'number':
+      case 'boolean':
+        return 'text/plain';
+      case 'json':
+      case 'list':
+      case 'envelope':
+        return 'application/json';
+      default:
+        return undefined;
+    }
+  }
+
+  return undefined;
+}
+
+function resolveTextMediaKindForNode(node: AppNode): GeminiTextMediaInput['kind'] | undefined {
+  switch (node.type) {
+    case 'imageGen':
+    case 'cropImageNode':
+      return 'image';
+    case 'audioGen':
+      return 'audio';
+    case 'videoGen':
+      return 'video';
+    case 'composition':
+      return node.data.resultType === 'package' ? 'package' : 'composition';
+    case 'functionNode':
+      if (node.data.resultType === 'image' || node.data.resultType === 'audio' || node.data.resultType === 'video' || node.data.resultType === 'package') {
+        return node.data.resultType;
+      }
+      return undefined;
+    default:
+      return undefined;
+  }
+}
+
+function inferGeminiTextMediaKind(mimeType?: string): GeminiTextMediaInput['kind'] | undefined {
+  const normalized = mimeType?.toLowerCase() ?? '';
+
+  if (normalized.startsWith('image/')) {
+    return 'image';
+  }
+
+  if (normalized.startsWith('audio/')) {
+    return 'audio';
+  }
+
+  if (normalized.startsWith('video/')) {
+    return 'video';
+  }
+
+  if (normalized === 'application/pdf' || normalized.startsWith('text/')) {
+    return 'document';
   }
 
   return undefined;
@@ -1082,6 +1919,7 @@ function mergeExecutionConfig(current: ExecutionConfig, data: NodeData): Executi
     steps: coerceNumber(data.steps, current.steps),
     durationSeconds: coerceNumber(data.durationSeconds, current.durationSeconds),
     videoResolution: getVideoResolution((data.videoResolution as string | undefined) ?? current.videoResolution),
+    videoFrameRate: coerceFrameRate(data.videoFrameRate, current.videoFrameRate),
     imageOutputFormat: getImageOutputFormat(
       (data.imageOutputFormat as string | undefined) ?? current.imageOutputFormat,
     ),
@@ -1089,6 +1927,11 @@ function mergeExecutionConfig(current: ExecutionConfig, data: NodeData): Executi
       (data.audioOutputFormat as string | undefined) ?? current.audioOutputFormat,
     ),
   };
+}
+
+function coerceFrameRate(value: number | string | undefined, fallback: number): number {
+  const next = coerceNumber(value, fallback);
+  return [24, 25, 30, 60].includes(next) ? next : fallback;
 }
 
 function visitConfigNodes(
@@ -1127,6 +1970,196 @@ function coerceNumber(value: number | string | undefined, fallback: number): num
   return fallback;
 }
 
+function resolveCombinedLoopIterationCount(explicitLoopCount: number, promptSignalLoopCount: number): number {
+  if (promptSignalLoopCount <= 1) {
+    return explicitLoopCount;
+  }
+
+  if (explicitLoopCount <= 1) {
+    return promptSignalLoopCount;
+  }
+
+  if (explicitLoopCount === promptSignalLoopCount) {
+    return explicitLoopCount;
+  }
+
+  throw new Error('Prompt batches and connected media lists must have the same length, or one side must be a single broadcastable item.');
+}
+
+function formatBlockingDiagnosticsMessage(diagnostics: Array<{ message: string; nodeId?: string; edgeId?: string }>): string {
+  const [first, ...rest] = diagnostics;
+  const location = first?.nodeId ? `Node ${first.nodeId}: ` : first?.edgeId ? `Edge ${first.edgeId}: ` : '';
+  const suffix = rest.length > 0 ? ` (${rest.length} more issue${rest.length === 1 ? '' : 's'} in Diagnostics.)` : '';
+  return `${location}${first?.message ?? 'Flow diagnostics found a blocking issue.'}${suffix}`;
+}
+
+function buildEnvelopeItemFromExecution(
+  nodeId: string,
+  index: number,
+  execution: {
+    result: string;
+    resultType: ResultType;
+    statusMessage: string;
+    usage?: UsageTelemetry;
+    mimeType?: string;
+  },
+  iterationItems: LoopIterationItem[] = [],
+): EnvelopeItem {
+  return {
+    id: `${nodeId}-envelope-${Date.now()}-${index}`,
+    index,
+    kind: execution.resultType,
+    label: buildEnvelopeItemLabel(execution.resultType, index, iterationItems),
+    value: execution.result,
+    mimeType: execution.mimeType ?? getResultMimeType(execution.resultType),
+    sourceNodeId: nodeId,
+    usage: execution.usage,
+  };
+}
+
+function buildEnvelopeItemFromSourceBinItem(item: import('./sourceBinStore').SourceBinLibraryItem): EnvelopeItem {
+  return {
+    id: `envelope-${item.id}`,
+    index: item.envelopeIndex ?? 0,
+    kind: item.kind as ResultType,
+    label: item.label,
+    value: item.assetUrl ?? item.text ?? '',
+    mimeType: item.mimeType ?? 'application/octet-stream',
+    sourceBinItemId: item.id,
+    sourceNodeId: item.originNodeId ?? '',
+  };
+}
+
+function buildEnvelopeItemLabel(
+  kind: ResultType,
+  index: number,
+  iterationItems: LoopIterationItem[],
+): string {
+  const baseLabel = `${capitalizeResultKind(kind)} ${index + 1}`;
+
+  if (iterationItems.length < 2) {
+    return baseLabel;
+  }
+
+  const dimensions = iterationItems
+    .map(formatLoopDimensionLabel)
+    .filter((label) => label.length > 0);
+
+  return dimensions.length > 0 ? `${baseLabel} · ${dimensions.join(' + ')}` : baseLabel;
+}
+
+function formatLoopDimensionLabel(iterationItem: LoopIterationItem): string {
+  const handleLabel = formatLoopTargetHandleLabel(iterationItem.input.targetHandle);
+
+  if (handleLabel) {
+    return `${handleLabel} ${iterationItem.item.index + 1}`;
+  }
+
+  return iterationItem.item.label;
+}
+
+function formatLoopTargetHandleLabel(targetHandle?: string | null): string | undefined {
+  switch (targetHandle) {
+    case 'video-prompt':
+      return 'Prompt';
+    case 'video-start-frame':
+      return 'Start';
+    case 'video-end-frame':
+      return 'End';
+    case 'video-reference-1':
+      return 'Reference 1';
+    case 'video-reference-2':
+      return 'Reference 2';
+    case 'video-reference-3':
+      return 'Reference 3';
+    case 'video-source-video':
+      return 'Source Video';
+    case 'image-edit-source':
+      return 'Source';
+    case 'image-mask':
+      return 'Mask';
+    case 'image-reference-1':
+      return 'Reference 1';
+    case 'image-reference-2':
+      return 'Reference 2';
+    case 'image-reference-3':
+      return 'Reference 3';
+    case 'composition-video':
+      return 'Video';
+    case 'composition-audio-1':
+      return 'Audio 1';
+    case 'composition-audio-2':
+      return 'Audio 2';
+    case 'composition-audio-3':
+      return 'Audio 3';
+    case 'composition-audio-4':
+      return 'Audio 4';
+    default:
+      return undefined;
+  }
+}
+
+function aggregateEnvelopeUsage(items: EnvelopeItem[]): UsageTelemetry | undefined {
+  const usages = items.map((item) => item.usage).filter((usage): usage is UsageTelemetry => Boolean(usage));
+
+  if (usages.length === 0) {
+    return undefined;
+  }
+
+  const sumField = (field: keyof UsageTelemetry): number | undefined => {
+    const values = usages.map((usage) => usage[field]).filter((value): value is number => typeof value === 'number');
+    return values.length > 0 ? values.reduce((total, value) => total + value, 0) : undefined;
+  };
+
+  const costValues = usages.map((usage) => usage.costUsd);
+  const allCostsKnown = costValues.every((value) => typeof value === 'number');
+
+  return {
+    source: 'actual',
+    confidence: usages.every((usage) => usage.confidence === 'measured') ? 'measured' : 'unknown',
+    costUsd: allCostsKnown
+      ? costValues.reduce((total, value) => total + (value ?? 0), 0)
+      : undefined,
+    inputTokens: sumField('inputTokens'),
+    outputTokens: sumField('outputTokens'),
+    totalTokens: sumField('totalTokens'),
+    characters: sumField('characters'),
+    durationSeconds: sumField('durationSeconds'),
+    imageCount: sumField('imageCount') ?? (items.filter((item) => item.kind === 'image').length || undefined),
+    notes: [`Aggregated from ${items.length} envelope iteration${items.length === 1 ? '' : 's'}.`],
+  };
+}
+
+function capitalizeResultKind(kind: ResultType): string {
+  return kind.charAt(0).toUpperCase() + kind.slice(1);
+}
+
+function getResultMimeType(kind: ResultType): string {
+  switch (kind) {
+    case 'image':
+      return 'image/png';
+    case 'video':
+      return 'video/mp4';
+    case 'audio':
+      return 'audio/mpeg';
+    case 'package':
+      return 'application/zip';
+    case 'text':
+    case 'number':
+      return 'text/plain';
+    case 'boolean':
+      return 'application/x.boolean';
+    case 'json':
+    case 'list':
+    case 'envelope':
+      return 'application/json';
+  }
+}
+
+function isAssetSourceKind(kind: ResultType): kind is Extract<ResultType, Exclude<EditorSourceKind, 'text'>> {
+  return kind === 'image' || kind === 'video' || kind === 'audio' || kind === 'package';
+}
+
 function getDefaultExecutionConfigForNode(nodeType: FlowNodeType): ExecutionConfig {
   if (nodeType === 'videoGen') {
     return {
@@ -1138,6 +2171,10 @@ function getDefaultExecutionConfigForNode(nodeType: FlowNodeType): ExecutionConf
   return DEFAULT_EXECUTION_CONFIG;
 }
 
+let centerOnNodeCallback: ((id: string) => void) | null = null;
+
+export { evaluateNodeTextForMonitor } from '../lib/listNodes';
+
 export const useFlowStore = create<FlowState>()(
   persist(
     (set, get) => ({
@@ -1145,13 +2182,114 @@ export const useFlowStore = create<FlowState>()(
       edges: [],
       bookmarkSidebarOpen: true,
       setBookmarkSidebarOpen: (bookmarkSidebarOpen) => set({ bookmarkSidebarOpen }),
-      onNodesChange: (changes: NodeChange<AppNode>[]) => {
+      centerOnNode: (id) => centerOnNodeCallback?.(id),
+      registerCenterOnNodeCallback: (cb) => { centerOnNodeCallback = cb; },
+      onSourceBinItemRemoved: (id, removedItem) => {
+        set((state) => {
+          const updatedNodes = state.nodes.map((node) => {
+            let nodeUpdated = false;
+            const nextData = { ...node.data };
+
+            // 1. Clear node results or imported assets matching the removed item
+            if (nextData.result && (nextData.result === removedItem?.assetUrl || nextData.result === removedItem?.text)) {
+              nextData.result = undefined;
+              nextData.resultType = undefined;
+              nextData.resultMimeType = undefined;
+              nextData.resultExtension = undefined;
+              nextData.resultFileName = undefined;
+              nodeUpdated = true;
+            }
+            if (nextData.sourceAssetUrl && nextData.sourceAssetUrl === removedItem?.assetUrl) {
+              nextData.sourceAssetUrl = undefined;
+              nextData.sourceAssetId = undefined;
+              nextData.sourceAssetName = undefined;
+              nextData.sourceAssetMimeType = undefined;
+              nodeUpdated = true;
+            }
+
+            // 2. Filter envelopeItems
+            if (Array.isArray(nextData.envelopeItems)) {
+              const previousLength = nextData.envelopeItems.length;
+              const filtered = nextData.envelopeItems.filter((item) => {
+                if (item.sourceBinItemId === id) return false;
+                if (removedItem?.assetUrl && item.value === removedItem.assetUrl) return false;
+                return true;
+              });
+
+              if (filtered.length !== previousLength) {
+                // Re-index remaining envelope items sequentially
+                nextData.envelopeItems = filtered.map((item, idx) => ({
+                  ...item,
+                  index: idx,
+                }));
+                nodeUpdated = true;
+              }
+            }
+
+            // 3. Filter resultHistory
+            if (Array.isArray(nextData.resultHistory)) {
+              const previousLength = nextData.resultHistory.length;
+              const filteredHistory = nextData.resultHistory.filter((attempt) => {
+                if (removedItem?.assetUrl && attempt.result === removedItem.assetUrl) return false;
+                return true;
+              });
+
+              if (filteredHistory.length !== previousLength) {
+                nextData.resultHistory = filteredHistory;
+                nodeUpdated = true;
+
+                // Handle selected result pointer
+                if (nextData.selectedResultId && !filteredHistory.some((h) => h.id === nextData.selectedResultId)) {
+                  nextData.selectedResultId = undefined;
+                  if (filteredHistory.length > 0) {
+                    const lastAttempt = filteredHistory[filteredHistory.length - 1];
+                    nextData.result = lastAttempt.result;
+                    nextData.selectedResultId = lastAttempt.id;
+                  } else {
+                    nextData.result = undefined;
+                  }
+                }
+              }
+            }
+
+            if (nodeUpdated) {
+              return { ...node, data: nextData };
+            }
+            return node;
+          });
+
+          return {
+            nodes: attachRuntimeDataToNodes(updatedNodes, () => state),
+          };
+        });
+      },
+      onNodesChange: async (changes: NodeChange<AppNode>[]) => {
+        const removedNodeIds = changes
+          .filter((change) => change.type === 'remove')
+          .map((change) => change.id);
+
+        if (removedNodeIds.length > 0) {
+          await confirmGeneratedAssetCleanupForRemovedNodes(removedNodeIds);
+        }
+
         set({
           nodes: attachRuntimeDataToNodes(applyNodeChanges(changes, get().nodes), get),
         });
       },
       onEdgesChange: (changes: EdgeChange[]) => {
-        set({ edges: normalizeFlowEdges(get().nodes, applyEdgeChanges(changes, get().edges)) });
+        const previousEdges = get().edges;
+        const removedEdgeIds = changes
+          .filter((change) => change.type === 'remove')
+          .map((change) => change.id);
+        const changedEdges = applyEdgeChanges(changes, previousEdges);
+        const prunedEdges = prunePortalExitEdgesForRemovedEntryLeads(
+          get().nodes,
+          previousEdges,
+          changedEdges,
+          removedEdgeIds,
+        );
+
+        set({ edges: normalizeFlowEdges(get().nodes, prunedEdges) });
       },
       onConnect: (connection: Connection) => {
         const normalizedImageConnection = normalizeImageConnectionTargetHandle(
@@ -1169,29 +2307,245 @@ export const useFlowStore = create<FlowState>()(
           get().nodes,
           get().edges,
         );
+        const listValidation = validateListConnection(normalizedConnection, get().nodes, get().edges);
+
+        if (!listValidation.connection) {
+          if (normalizedConnection.target && listValidation.error) {
+            get().patchNodeData(normalizedConnection.target, {
+              error: listValidation.error,
+              statusMessage: undefined,
+            });
+          }
+          return;
+        }
+
         const prunedEdges = replaceExclusiveVideoFrameEdges(
-          normalizedConnection,
+          listValidation.connection,
           get().nodes,
-          get().edges,
+          listValidation.edges,
         );
 
-        set({ edges: normalizeFlowEdges(get().nodes, addEdge(normalizedConnection, prunedEdges)) });
+        if (normalizedConnection.target) {
+          get().patchNodeData(normalizedConnection.target, {
+            error: undefined,
+            statusMessage: undefined,
+          });
+        }
+
+        set({ edges: normalizeFlowEdges(get().nodes, addEdge(listValidation.connection, prunedEdges)) });
       },
-      addNode: (type, position) => {
-        const id = `${type}-${Date.now()}`;
+      addNode: (type, position, initialData) => {
         const settings = useSettingsStore.getState();
+        if (type === 'portal') {
+          const pairId = `portal-pair-${makeFlowId()}`;
+          const entryId = `portal-entry-${makeFlowId()}`;
+          const exitId = `portal-exit-${makeFlowId()}`;
+          const entry = attachRuntimeData(
+            {
+              id: entryId,
+              type,
+              position,
+              data: {
+                ...createInitialNodeData(type, settings),
+                portalRole: 'entry',
+                portalPairId: pairId,
+                portalLabel: 'Portal pair',
+              },
+            },
+            get,
+          );
+          const exit = attachRuntimeData(
+            {
+              id: exitId,
+              type,
+              position: {
+                x: position.x + 420,
+                y: position.y,
+              },
+              data: {
+                ...createInitialNodeData(type, settings),
+                portalRole: 'exit',
+                portalPairId: pairId,
+                portalLabel: 'Portal pair',
+              },
+            },
+            get,
+          );
+
+          set({ nodes: [...get().nodes, entry, exit] });
+          return entryId;
+        }
+
+        const id = `${type}-${makeFlowId()}`;
         const node = attachRuntimeData(
           {
             id,
             type,
             position,
-            data: createInitialNodeData(type, settings),
+            data: combineNodeDataPatches(createInitialNodeData(type, settings), initialData) ?? {},
           },
           get,
         );
 
         set({ nodes: [...get().nodes, node] });
         return id;
+      },
+      insertTemplate: (template, position) => {
+        const settings = useSettingsStore.getState();
+        const idMap = new Map<string, string>();
+        
+        const newNodes = template.nodes.map(templateNode => {
+          const originalId = templateNode.id!;
+          const newId = `${templateNode.type}-${makeFlowId()}`;
+          idMap.set(originalId, newId);
+          
+          return attachRuntimeData(
+            {
+              id: newId,
+              type: templateNode.type as AppNode['type'],
+              position: {
+                x: position.x + (templateNode.position?.x ?? 0),
+                y: position.y + (templateNode.position?.y ?? 0)
+              },
+              data: combineNodeDataPatches(createInitialNodeData(templateNode.type as AppNode['type'], settings), templateNode.data) ?? {},
+            },
+            get
+          );
+        });
+
+        const newEdges = template.edges.map(templateEdge => ({
+          ...templateEdge,
+          id: `e-${makeFlowId()}`,
+          source: idMap.get(templateEdge.source!) || templateEdge.source!,
+          target: idMap.get(templateEdge.target!) || templateEdge.target!,
+        })) as Edge[];
+
+        set({
+          nodes: [...get().nodes, ...newNodes],
+          edges: normalizeFlowEdges([...get().nodes, ...newNodes], [...get().edges, ...newEdges])
+        });
+      },
+      copySelection: () => {
+        const clipboard = serializeFlowSelection(get().nodes, get().edges);
+        if (!clipboard) {
+          return false;
+        }
+        flowClipboard = clipboard;
+        return true;
+      },
+      cutSelection: async () => {
+        if (!get().copySelection()) {
+          return false;
+        }
+        return await get().deleteSelection();
+      },
+      pasteClipboard: (position) => {
+        const pasted = pasteFlowClipboard({
+          clipboard: flowClipboard,
+          existingNodes: get().nodes,
+          existingEdges: get().edges,
+          position,
+          createId: (prefix) => `${prefix}-${makeFlowId()}`,
+        });
+
+        if (pasted.nodes.length === 0) {
+          return false;
+        }
+
+        set({
+          nodes: attachRuntimeDataToNodes(pasted.nextNodes, get),
+          edges: normalizeFlowEdges(pasted.nextNodes, pasted.nextEdges),
+        });
+        return true;
+      },
+      deleteSelection: async () => {
+        const selectedNodeIds = new Set(get().nodes.filter((node) => node.selected).map((node) => node.id));
+        const selectedEdgeIds = new Set(get().edges.filter((edge) => edge.selected).map((edge) => edge.id));
+
+        if (selectedNodeIds.size === 0 && selectedEdgeIds.size === 0) {
+          return false;
+        }
+
+        await confirmGeneratedAssetCleanupForRemovedNodes(selectedNodeIds);
+
+        const nextNodes = get().nodes.filter((node) => !selectedNodeIds.has(node.id));
+        const nextEdges = get().edges.filter((edge) => (
+          !selectedEdgeIds.has(edge.id) &&
+          !selectedNodeIds.has(edge.source) &&
+          !selectedNodeIds.has(edge.target)
+        ));
+
+        set({
+          nodes: attachRuntimeDataToNodes(nextNodes, get),
+          edges: normalizeFlowEdges(nextNodes, nextEdges),
+        });
+        return true;
+      },
+      selectAllNodes: () => {
+        set({
+          nodes: get().nodes.map((node) => ({ ...node, selected: true })),
+          edges: get().edges.map((edge) => ({ ...edge, selected: true })),
+        });
+      },
+      deselectAll: () => {
+        set({
+          nodes: get().nodes.map((node) => ({ ...node, selected: false })),
+          edges: get().edges.map((edge) => ({ ...edge, selected: false })),
+        });
+      },
+      createGroupFromSelection: (title = 'Group') => {
+        const clipboard = serializeFlowSelection(get().nodes, get().edges);
+        if (!clipboard) {
+          return undefined;
+        }
+
+        const id = `groupNode-${makeFlowId()}`;
+        const groupNode = attachRuntimeData(
+          {
+            id,
+            type: 'groupNode',
+            position: {
+              x: clipboard.bounds.x - 24,
+              y: clipboard.bounds.y - 64,
+            },
+            selected: true,
+            data: {
+              groupNode: createGroupNodeConfig({
+                title,
+                childNodeIds: clipboard.nodes.map((node) => node.id),
+                childEdgeIds: clipboard.edges.map((edge) => edge.id),
+                bounds: clipboard.bounds,
+              }),
+            },
+          },
+          get,
+        );
+
+        set({
+          nodes: [
+            ...get().nodes.map((node) => ({ ...node, selected: false })),
+            groupNode,
+          ],
+        });
+        return id;
+      },
+      collapseSelectionToFunction: (title) => {
+        const collapsed = buildCollapsedFunctionNode({
+          nodes: get().nodes,
+          edges: get().edges,
+          createId: (prefix) => `${prefix}-${makeFlowId()}`,
+          title,
+        });
+
+        if (!collapsed) {
+          return undefined;
+        }
+
+        set({
+          nodes: attachRuntimeDataToNodes(collapsed.nextNodes, get),
+          edges: normalizeFlowEdges(collapsed.nextNodes, collapsed.nextEdges),
+        });
+        return collapsed.functionNode.id;
       },
       addConnectedNode: (sourceNodeId, type, targetHandle) => {
         const sourceNode = get().nodes.find((node) => node.id === sourceNodeId);
@@ -1200,8 +2554,65 @@ export const useFlowStore = create<FlowState>()(
           return;
         }
 
-        const id = `${type}-${Date.now()}`;
         const settings = useSettingsStore.getState();
+        if (type === 'portal') {
+          const pairId = `portal-pair-${makeFlowId()}`;
+          const entryId = `portal-entry-${makeFlowId()}`;
+          const exitId = `portal-exit-${makeFlowId()}`;
+          const entry = attachRuntimeData(
+            {
+              id: entryId,
+              type,
+              position: {
+                x: sourceNode.position.x + 320,
+                y: sourceNode.position.y + 24,
+              },
+              data: {
+                ...createInitialNodeData(type, settings),
+                portalRole: 'entry',
+                portalPairId: pairId,
+                portalLabel: 'Portal pair',
+              },
+            },
+            get,
+          );
+          const exit = attachRuntimeData(
+            {
+              id: exitId,
+              type,
+              position: {
+                x: sourceNode.position.x + 740,
+                y: sourceNode.position.y + 24,
+              },
+              data: {
+                ...createInitialNodeData(type, settings),
+                portalRole: 'exit',
+                portalPairId: pairId,
+                portalLabel: 'Portal pair',
+              },
+            },
+            get,
+          );
+
+          set({
+            nodes: [...get().nodes, entry, exit],
+            edges: normalizeFlowEdges(
+              [...get().nodes, entry, exit],
+              addEdge(
+                {
+                  source: sourceNodeId,
+                  sourceHandle: null,
+                  target: entryId,
+                  targetHandle: targetHandle ?? null,
+                },
+                get().edges,
+              ),
+            ),
+          });
+          return;
+        }
+
+        const id = `${type}-${makeFlowId()}`;
         const xOffset = type === 'composition' ? 420 : 320;
         const nextNode = attachRuntimeData(
           {
@@ -1236,13 +2647,38 @@ export const useFlowStore = create<FlowState>()(
         get().patchNodeData(id, { [key]: value } as Partial<NodeData>);
       },
       patchNodeData: (id, patch) => {
-        set({
-          nodes: get().nodes.map((node) =>
-            node.id === id
-              ? attachRuntimeData({ ...node, data: { ...node.data, ...patch } }, get)
-              : node,
-          ),
+        const currentNodes = get().nodes;
+        let changed = false;
+        const nodes = currentNodes.map((node) => {
+          if (node.id !== id || !hasNodeDataPatchChange(node.data, patch)) {
+            return node;
+          }
+
+          changed = true;
+          return attachRuntimeData({ ...node, data: { ...node.data, ...patch } }, get);
         });
+
+        if (!changed) {
+          return;
+        }
+
+        set({ nodes });
+      },
+      renameNodeBookmark: (id, rawTitle) => {
+        const nextState = renameNodeBookmarkState(
+          get().nodes,
+          get().bookmarkSidebarOpen,
+          id,
+          rawTitle,
+          (node) => attachRuntimeData(node, get),
+        );
+
+        if (nextState) {
+          set(nextState);
+        }
+      },
+      clearNodeBookmark: (id) => {
+        get().renameNodeBookmark(id, '');
       },
       removeEditorSourceReferences: (sourceNodeId) => {
         for (const node of get().nodes) {
@@ -1297,35 +2733,77 @@ export const useFlowStore = create<FlowState>()(
         });
       },
       hydratePersistedState: () => {
+        const safe = sanitizePersistedFlowState(get());
+        const normalizedNodes = attachRuntimeDataToNodes(safe.nodes, get);
         set({
-          nodes: attachRuntimeDataToNodes(get().nodes, get),
-          edges: normalizeFlowEdges(get().nodes, get().edges),
+          nodes: normalizedNodes,
+          edges: normalizeFlowEdges(normalizedNodes, safe.edges),
+          bookmarkSidebarOpen: safe.bookmarkSidebarOpen,
         });
       },
       restoreImportedAssets: async () => {
-        const nodesWithAssets = get().nodes.filter((node) => node.data.sourceAssetId);
+        const sourceBinItems = useSourceBinStore.getState().getAllItems();
+        const nodesWithAssets = get().nodes.filter((node) => (
+          node.data.sourceAssetId ||
+          node.data.sourceAssetUrl ||
+          node.data.sourceAssetName ||
+          node.data.sourceBinItemId ||
+          node.data.textVisionSourceItemId ||
+          sourceBinItems.some((item) => sourceBinItemBelongsToFlowNode(item, node.id))
+        ));
 
         const updates = await Promise.all(
           nodesWithAssets.map(async (node) => {
-            const assetId = node.data.sourceAssetId;
+            const sourceBinPatch = buildFlowNodePatchForRestoredSourceBinItem(node.data, sourceBinItems);
+            const generatedResultPatch = buildFlowNodeGeneratedResultPatch(node.id, node.data, sourceBinItems, {
+              replaceExistingHistory: true,
+            });
+            const sourceBinAssetUrl =
+              typeof sourceBinPatch?.sourceAssetUrl === 'string' && sourceBinPatch.sourceAssetUrl.trim()
+                ? sourceBinPatch.sourceAssetUrl
+                : undefined;
+
+            if (sourceBinPatch && sourceBinAssetUrl) {
+              const patch = combineNodeDataPatches(sourceBinPatch, generatedResultPatch);
+              return patch ? { nodeId: node.id, patch } : undefined;
+            }
+
+            const patchedAssetId =
+              typeof sourceBinPatch?.sourceAssetId === 'string' && sourceBinPatch.sourceAssetId.trim()
+                ? sourceBinPatch.sourceAssetId
+                : undefined;
+            const assetId = patchedAssetId ?? node.data.sourceAssetId;
 
             if (!assetId) {
-              return undefined;
+              const patch = combineNodeDataPatches(sourceBinPatch, generatedResultPatch);
+              return patch ? { nodeId: node.id, patch } : undefined;
             }
 
-            const storedAsset = await loadImportedAsset(assetId);
+            const storedAsset = await loadImportedAsset(assetId).catch(() => undefined);
 
             if (!storedAsset) {
-              return { nodeId: node.id, patch: { sourceAssetUrl: undefined } as Partial<NodeData> };
+              const missingAssetPatch = sourceBinPatch
+                ? undefined
+                : ({ sourceAssetUrl: undefined } as Partial<NodeData>);
+              const patch = combineNodeDataPatches(
+                sourceBinPatch,
+                generatedResultPatch,
+                missingAssetPatch,
+              );
+              return patch ? { nodeId: node.id, patch } : undefined;
             }
 
+            const restoredAssetPatch: Partial<NodeData> = {
+              ...sourceBinPatch,
+              sourceAssetId: assetId,
+              sourceAssetUrl: storedAsset.dataUrl,
+              sourceAssetName: sourceBinPatch?.sourceAssetName ?? storedAsset.name,
+              sourceAssetMimeType: sourceBinPatch?.sourceAssetMimeType ?? storedAsset.mimeType,
+            };
+            const patch = combineNodeDataPatches(restoredAssetPatch, generatedResultPatch);
             return {
               nodeId: node.id,
-              patch: {
-                sourceAssetUrl: storedAsset.dataUrl,
-                sourceAssetName: storedAsset.name,
-                sourceAssetMimeType: storedAsset.mimeType,
-              } as Partial<NodeData>,
+              patch: patch ?? restoredAssetPatch,
             };
           }),
         );
@@ -1367,11 +2845,11 @@ export const useFlowStore = create<FlowState>()(
         edges: get().edges,
       }),
       replaceFlowSnapshot: (snapshot) => {
-        const normalizedNodes = attachRuntimeDataToNodes(snapshot.nodes ?? [], get);
-        set({
-          nodes: normalizedNodes,
-          edges: normalizeFlowEdges(normalizedNodes, snapshot.edges ?? []),
-        });
+        set(replaceFlowSnapshotState(
+          snapshot,
+          (nodes) => attachRuntimeDataToNodes(nodes, get),
+          normalizeFlowEdges,
+        ));
       },
       runNode: async (nodeId: string) => {
         const preflightState = get();
@@ -1394,10 +2872,70 @@ export const useFlowStore = create<FlowState>()(
           return;
         }
 
+        const blockingDiagnostics = getBlockingFlowDiagnostics(preflightState.nodes, preflightState.edges);
+        if (blockingDiagnostics.length > 0) {
+          get().patchNodeData(nodeId, {
+            error: formatBlockingDiagnosticsMessage(blockingDiagnostics),
+            statusMessage: undefined,
+          });
+          return;
+        }
+
+        let preflightLoopCount = 0;
+        let preflightRunCount = 0;
+        try {
+          const preflightNode = preflightState.nodes.find((node) => node.id === nodeId);
+          const preflightLoopMode = normalizeListLoopMode(preflightNode?.data.listLoopMode);
+          const preflightPromptSignal = collectPromptSignalForNode(
+            nodeId,
+            preflightState.nodes,
+            preflightState.edges,
+          );
+          const promptDiagnostics = getBlockingSignalDiagnostics(preflightPromptSignal);
+          if (promptDiagnostics.length > 0) {
+            throw new Error(formatBlockingDiagnosticsMessage(promptDiagnostics));
+          }
+          preflightLoopCount = getLoopIterationCount(
+            collectListLoopInputs(nodeId, preflightState.nodes, preflightState.edges),
+            preflightLoopMode,
+          );
+          preflightRunCount = resolveCombinedLoopIterationCount(
+            preflightLoopCount,
+            getSignalIterationCount(preflightPromptSignal),
+          );
+        } catch (error) {
+          get().patchNodeData(nodeId, {
+            error: error instanceof Error ? error.message : 'Connected lists could not be expanded.',
+            statusMessage: undefined,
+          });
+          return;
+        }
+
+        if (preflightRunCount > 1) {
+          const preflightNode = preflightState.nodes.find((node) => node.id === nodeId);
+          const preflightLoopMode = normalizeListLoopMode(preflightNode?.data.listLoopMode);
+          const loopLabel = preflightLoopCount > 0
+            ? preflightLoopMode === 'allCombinations' ? 'all-combinations' : 'paired'
+            : 'auto-batched prompt';
+          const proceed = await useConfirmationStore.getState().requestConfirmation(
+            `This ${loopLabel} run will execute ${preflightRunCount} envelope iterations against the configured node. Continue only if you want to run every item now.`,
+            'Envelope Run Confirmation',
+          );
+
+          if (!proceed) {
+            get().patchNodeData(nodeId, {
+              statusMessage: 'Envelope run cancelled before sending any provider requests.',
+              error: undefined,
+            });
+            return;
+          }
+        }
+
         if (preflightEstimate.rollup.totalKnownCostUsd >= 0.01 || preflightEstimate.rollup.unknownCostCount > 0) {
           const summary = formatRollupSummary(preflightEstimate.rollup, 'Estimated run cost');
-          const proceed = window.confirm(
+          const proceed = await useConfirmationStore.getState().requestConfirmation(
             `${summary}\n\nOnly continue if you want to spend against the configured providers now.`,
+            'Run Cost Confirmation',
           );
 
           if (!proceed) {
@@ -1466,10 +3004,25 @@ export const useFlowStore = create<FlowState>()(
 
             const nodesById = buildNodeMap(latestState.nodes);
             const incoming = buildIncomingMap(latestState.edges);
+            const promptSignal = collectPromptSignalForNode(currentId, latestState.nodes, latestState.edges);
+            const blockingPromptDiagnostics = getBlockingSignalDiagnostics(promptSignal);
+            if (blockingPromptDiagnostics.length > 0) {
+              throw new Error(formatBlockingDiagnosticsMessage(blockingPromptDiagnostics));
+            }
             const context = {
-              prompt: collectTextInputs(currentId, nodesById, incoming),
-              textImageInputs: collectTextImageInputs(latestNode, nodesById, latestState.edges),
+              prompt: signalToTextAt(promptSignal, 0),
+              textMediaInputs: collectTextMediaInputs(latestNode, nodesById, latestState.edges),
+              functionInputs: latestNode.type === 'functionNode'
+                ? collectFunctionNodeInputs(latestNode, nodesById, latestState.edges)
+                : undefined,
               editImageInput: collectUpstreamImageInput(currentId, nodesById, latestState.edges),
+              refImageInput: collectUpstreamImageInputForHandles(
+                currentId,
+                ['refImage'],
+                nodesById,
+                latestState.edges,
+              ),
+              editMaskImageInput: collectImageMaskInput(currentId, nodesById, latestState.edges),
               editReferenceImageInputs: collectImageReferenceInputs(
                 currentId,
                 nodesById,
@@ -1496,7 +3049,7 @@ export const useFlowStore = create<FlowState>()(
                 COMPOSITION_VIDEO_HANDLE,
                 nodesById,
                 latestState.edges,
-                ['videoGen', 'composition'],
+                ['videoGen', 'composition', 'functionNode'],
               )?.result,
               audioInputs: COMPOSITION_AUDIO_HANDLES.map((handle) => {
                 const track = collectResultInputForHandle(
@@ -1504,7 +3057,7 @@ export const useFlowStore = create<FlowState>()(
                   handle,
                   nodesById,
                   latestState.edges,
-                  ['audioGen'],
+                  ['audioGen', 'functionNode'],
                 );
 
                 if (!track) {
@@ -1536,9 +3089,177 @@ export const useFlowStore = create<FlowState>()(
               visualSequenceClips: collectEditorVisualSequence(latestNode, nodesById),
               stageObjects: collectEditorStageObjects(latestNode),
               sequenceAudioInputs: collectEditorAudioSequence(latestNode, nodesById),
+              nativeAssemblyManifest: latestNode.data.editorRenderCacheAssemblyManifest,
+              exportPresetId: latestNode.data.editorExportPresetPlan?.presetId,
               config: collectExecutionConfig(currentId, latestNode, nodesById, incoming),
             };
             const settings = useSettingsStore.getState();
+            const loopInputs = collectListLoopInputs(currentId, latestState.nodes, latestState.edges);
+            const loopMode = normalizeListLoopMode(latestNode.data.listLoopMode);
+            const loopIterationCount = getLoopIterationCount(loopInputs, loopMode);
+            const promptSignalIterationCount = getSignalIterationCount(promptSignal);
+            const combinedIterationCount = resolveCombinedLoopIterationCount(loopIterationCount, promptSignalIterationCount);
+
+            if (combinedIterationCount > 0) {
+              const envelopeItems: EnvelopeItem[] = [];
+              let stoppedLoopMessage: string | undefined;
+              const loopStatusLabel = loopIterationCount > 0
+                ? loopMode === 'allCombinations' ? 'Combination' : 'Envelope'
+                : 'Prompt batch';
+
+              for (let index = 0; index < combinedIterationCount; index += 1) {
+                throwIfRunAborted();
+
+                const breakDecision = shouldBreakLoopAtIteration(currentId, latestState.nodes, latestState.edges, index);
+                if (breakDecision.shouldBreak) {
+                  stoppedLoopMessage = `Stopped before iteration ${index + 1}/${combinedIterationCount}${breakDecision.reason ? `: ${breakDecision.reason}` : ''}`;
+                  get().patchNodeData(currentId, {
+                    envelopeItems,
+                    statusMessage: stoppedLoopMessage,
+                    error: undefined,
+                  });
+                  break;
+                }
+
+                const iterationItems = loopIterationCount > 0 ? buildLoopIterationItems(loopInputs, index, loopMode) : [];
+                const routedIterationItems = promptSignalIterationCount > 0
+                  ? iterationItems.filter(({ item }) => item.kind !== 'text')
+                  : iterationItems;
+                const loopContext = applyListItemsToExecutionContext(
+                  {
+                    ...context,
+                    prompt: promptSignalIterationCount > 0 ? signalToTextAt(promptSignal, index) : context.prompt,
+                  },
+                  latestNode,
+                  routedIterationItems,
+                );
+                
+                const envelopeId = await hashExecutionParameters(latestNode.data, loopContext);
+                const allSourceBinItems = useSourceBinStore.getState().getAllItems();
+                const existingAsset = allSourceBinItems.find(
+                  (item) => item.originNodeId === currentId && item.envelopeId === envelopeId && item.envelopeIndex === index
+                );
+
+                if (existingAsset) {
+                  envelopeItems.push(buildEnvelopeItemFromSourceBinItem(existingAsset));
+                  get().patchNodeData(currentId, {
+                    envelopeItems,
+                    statusMessage: `${loopStatusLabel} ${index + 1}/${combinedIterationCount}: Resumed from Source Bin`,
+                    error: undefined,
+                  });
+                  continue;
+                }
+
+                const execution = await executeNodeRequest(latestNode, loopContext, settings, (statusMessage) => {
+                  if (abortSignal.aborted) {
+                    return;
+                  }
+
+                  get().patchNodeData(currentId, {
+                    statusMessage: `${loopStatusLabel} ${index + 1}/${combinedIterationCount}: ${statusMessage}`,
+                    error: undefined,
+                  });
+                }, { signal: abortSignal });
+
+                throwIfRunAborted();
+                recordProjectUsageFromExecution({
+                  node: latestNode,
+                  usage: execution.usage,
+                  workspace: 'flow',
+                  ...getActiveFlowWorkspaceUsageContext(),
+                  recordUsage: useProjectUsageStore.getState().recordUsage,
+                });
+                
+                const newEnvelopeItem = buildEnvelopeItemFromExecution(currentId, index, execution, iterationItems);
+                
+                if (isAssetSourceKind(execution.resultType)) {
+                  const sourceItem = await useSourceBinStore.getState().addAssetItem({
+                    label: newEnvelopeItem.label,
+                    kind: execution.resultType,
+                    mimeType: newEnvelopeItem.mimeType ?? 'application/octet-stream',
+                    dataUrl: newEnvelopeItem.value,
+                    originNodeId: currentId,
+                    envelopeId,
+                    envelopeLabel: newEnvelopeItem.label,
+                    envelopeIndex: index,
+                    envelopeCollapsed: false,
+                  });
+                  newEnvelopeItem.value = sourceItem.assetUrl ?? newEnvelopeItem.value;
+                  newEnvelopeItem.sourceBinItemId = sourceItem.id;
+                }
+
+                envelopeItems.push(newEnvelopeItem);
+
+                get().patchNodeData(currentId, {
+                  envelopeItems,
+                  statusMessage: `${loopStatusLabel} ${index + 1}/${combinedIterationCount}: ${execution.statusMessage}`,
+                  error: undefined,
+                });
+              }
+
+              const firstItem = envelopeItems[0];
+              if (!firstItem) {
+                latestState.patchNodeData(currentId, {
+                  envelopeItems,
+                  error: undefined,
+                  statusMessage: stoppedLoopMessage ?? 'The connected list did not contain any runnable items.',
+                });
+                return;
+              }
+
+              const statusMessage = stoppedLoopMessage
+                ? `${stoppedLoopMessage}. Kept ${envelopeItems.length} ${firstItem.kind} item${envelopeItems.length === 1 ? '' : 's'}.`
+                : `Generated envelope with ${envelopeItems.length} ${firstItem.kind} item${envelopeItems.length === 1 ? '' : 's'}`;
+              const usage = aggregateEnvelopeUsage(envelopeItems);
+              const nextAttemptState = appendResultAttempt(latestNode.data.resultHistory ?? [], {
+                result: firstItem.value,
+                resultType: firstItem.kind,
+                statusMessage,
+                usage,
+              });
+
+              latestState.patchNodeData(currentId, {
+                result: firstItem.value,
+                resultType: firstItem.kind,
+                envelopeItems,
+                resultHistory: nextAttemptState.attempts,
+                selectedResultId: nextAttemptState.selectedAttemptId,
+                usage,
+                error: undefined,
+                statusMessage,
+              });
+              return;
+            }
+
+            const envelopeId = await hashExecutionParameters(latestNode.data, context);
+            const allSourceBinItems = useSourceBinStore.getState().getAllItems();
+            const existingAsset = allSourceBinItems.find(
+              (item) => item.originNodeId === currentId && item.envelopeId === envelopeId && item.envelopeIndex === 0
+            );
+
+            if (existingAsset) {
+              const execution = {
+                result: existingAsset.assetUrl ?? existingAsset.text ?? '',
+                resultType: existingAsset.kind as import('../types/flow').ResultType,
+                statusMessage: 'Resumed from Source Bin',
+                mimeType: existingAsset.mimeType,
+              };
+
+              const nextAttemptState = appendResultAttempt(latestNode.data.resultHistory ?? [], execution);
+
+              latestState.patchNodeData(currentId, {
+                result: execution.result,
+                resultType: execution.resultType,
+                resultMimeType: execution.mimeType,
+                envelopeItems: undefined,
+                resultHistory: nextAttemptState.attempts,
+                selectedResultId: nextAttemptState.selectedAttemptId,
+                statusMessage: execution.statusMessage,
+                error: undefined,
+              });
+              return;
+            }
+
             const execution = await executeNodeRequest(latestNode, context, settings, (statusMessage) => {
               if (abortSignal.aborted) {
                 return;
@@ -1552,11 +3273,39 @@ export const useFlowStore = create<FlowState>()(
 
             throwIfRunAborted();
 
+            recordProjectUsageFromExecution({
+              node: latestNode,
+              usage: execution.usage,
+              workspace: 'flow',
+              ...getActiveFlowWorkspaceUsageContext(),
+              recordUsage: useProjectUsageStore.getState().recordUsage,
+            });
+
+            if (isAssetSourceKind(execution.resultType)) {
+              const sourceItem = await useSourceBinStore.getState().addAssetItem({
+                label: (latestNode.data.title as string) || `${latestNode.type} result`,
+                kind: execution.resultType,
+                mimeType: execution.mimeType ?? 'application/octet-stream',
+                dataUrl: execution.result,
+                originNodeId: currentId,
+                envelopeId,
+                envelopeLabel: (latestNode.data.title as string) || `${latestNode.type} result`,
+                envelopeIndex: 0,
+                envelopeCollapsed: false,
+              });
+              execution.result = sourceItem.assetUrl ?? execution.result;
+            }
+
             const nextAttemptState = appendResultAttempt(latestNode.data.resultHistory ?? [], execution);
 
             latestState.patchNodeData(currentId, {
               result: execution.result,
               resultType: execution.resultType,
+              resultMimeType: execution.mimeType,
+              resultExtension: execution.extension,
+              resultFileName: execution.fileName,
+              resultOutputMetadata: execution.outputMetadata,
+              envelopeItems: undefined,
               resultHistory: nextAttemptState.attempts,
               selectedResultId: nextAttemptState.selectedAttemptId,
               usage: execution.usage,
@@ -1605,9 +3354,13 @@ export const useFlowStore = create<FlowState>()(
       name: FLOW_STORAGE_KEY,
       storage: createJSONStorage(() => createDebouncedLocalStorage(PERSIST_DEBOUNCE_MS)),
       partialize: (state) => ({
-        nodes: state.nodes.map(stripRuntimeData),
-        edges: state.edges,
+        nodes: Array.isArray(state.nodes) ? state.nodes.map(stripRuntimeData) : [],
+        edges: Array.isArray(state.edges) ? state.edges : [],
         bookmarkSidebarOpen: state.bookmarkSidebarOpen,
+      }),
+      merge: (persisted, current) => ({
+        ...current,
+        ...sanitizePersistedFlowState(persisted),
       }),
       onRehydrateStorage: () => (state) => {
         state?.hydratePersistedState();

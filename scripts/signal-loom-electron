@@ -1,8 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+node_bin="${SIGNAL_LOOM_NODE_BIN:-}"
+if [ -z "${node_bin}" ]; then
+  if command -v node >/dev/null 2>&1; then
+    node_bin='node'
+elif [ -x /usr/bin/node ]; then
+  node_bin='/usr/bin/node'
+elif [ -x /bin/node ]; then
+  node_bin='/bin/node'
+elif [ -x /usr/local/bin/node ]; then
+  node_bin='/usr/local/bin/node'
+else
+    echo "signal-loom-electron: Node.js was not found in PATH. Set SIGNAL_LOOM_NODE_BIN to a working Node binary." >&2
+    exit 127
+  fi
+else
+  if [ ! -x "${node_bin}" ]; then
+    echo "signal-loom-electron: SIGNAL_LOOM_NODE_BIN is not executable: ${node_bin}" >&2
+    exit 127
+  fi
+fi
+
+self="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || realpath -- "${BASH_SOURCE[0]}")"
+script_dir="$(cd -- "$(dirname -- "$self")" && pwd)"
 project_root="$(cd -- "$script_dir/.." && pwd)"
 
 cd "$project_root"
-exec /usr/bin/node electron/launcher.cjs "$@"
+exec "$node_bin" electron/launcher.cjs "$@"

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, FolderOpen, Save, Trash2, Upload, X } from 'lucide-react';
 import { useFlowStore } from '../../store/flowStore';
+import { useFlowWorkspaceStore } from '../../store/flowWorkspaceStore';
+import { useConfirmationStore } from '../../store/confirmationStore';
 import { type EditorWorkspaceSnapshot, useEditorStore } from '../../store/editorStore';
 import { useSourceBinStore } from '../../store/sourceBinStore';
 import {
@@ -14,6 +16,8 @@ import {
   type FlowProjectSummary,
 } from '../../lib/projectLibrary';
 import { exportProjectAssets } from '../../lib/projectAssets';
+import { resetProjectDocument, restoreProjectDocument } from '../../lib/projectDocumentActions';
+import { CURRENT_PROJECT_SCHEMA_VERSION } from '../../lib/projectSchema';
 import {
   DEFAULT_SCRATCH_DIRECTORY_NAME,
   PROJECT_DOCUMENT_FILE_NAME,
@@ -28,6 +32,7 @@ import {
   type FileSystemWorkspaceSummary,
 } from '../../lib/fileSystemWorkspace';
 import { APP_NAME, DEFAULT_PROJECT_NAME, UNTITLED_PROJECT_NAME } from '../../lib/brand';
+import { DockableDialog } from '../DockablePanel';
 
 interface ProjectLibraryModalProps {
   isOpen: boolean;
@@ -36,13 +41,11 @@ interface ProjectLibraryModalProps {
 
 export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProps) {
   const exportProjectFlowSnapshot = useFlowStore((state) => state.exportProjectFlowSnapshot);
-  const replaceFlowSnapshot = useFlowStore((state) => state.replaceFlowSnapshot);
-  const restoreImportedAssets = useFlowStore((state) => state.restoreImportedAssets);
+  const exportFlowWorkspaceProject = useFlowWorkspaceStore((state) => state.exportProjectSnapshot);
+  const activeFlowWorkspaceId = useFlowWorkspaceStore((state) => state.activeWorkspaceId);
   const nodes = useFlowStore((state) => state.nodes);
   const exportWorkspaceSnapshot = useEditorStore((state) => state.exportWorkspaceSnapshot);
-  const restoreWorkspaceSnapshot = useEditorStore((state) => state.restoreWorkspaceSnapshot);
   const exportProjectSourceBin = useSourceBinStore((state) => state.exportProjectSnapshot);
-  const restoreProjectSourceBin = useSourceBinStore((state) => state.restoreProjectSnapshot);
   const setSourceBinScratchDirectoryHandle = useSourceBinStore((state) => state.setScratchDirectoryHandle);
   const migrateSourceBinAssetsToScratch = useSourceBinStore((state) => state.migrateAssetsToScratch);
   const [projectName, setProjectName] = useState('');
@@ -103,12 +106,18 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
 
   async function buildCurrentProjectDocument(projectId?: string): Promise<FlowProjectDocument> {
     const resolvedName = projectName.trim() || selectedProject?.name || `${DEFAULT_PROJECT_NAME} ${new Date().toLocaleString()}`;
+    const savedAt = Date.now();
+    const flow = exportProjectFlowSnapshot();
+    const flowWorkspaces = exportFlowWorkspaceProject(flow);
 
     return {
+      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
       id: projectId ?? selectedProjectId ?? globalThis.crypto?.randomUUID?.() ?? `project-${Date.now()}`,
       name: resolvedName,
-      savedAt: Date.now(),
-      flow: exportProjectFlowSnapshot(),
+      savedAt,
+      flow,
+      flowWorkspaces,
+      activeFlowWorkspaceId: activeFlowWorkspaceId ?? flowWorkspaces[0]?.id,
       editor: exportWorkspaceSnapshot(),
       sourceBin: await exportProjectSourceBin(),
       fileSystem: activeFileSystemSummary
@@ -130,16 +139,15 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
   }
 
   async function handleCreateBlankProject() {
-    if (!window.confirm('Start a new blank project? Any unsaved changes in the current workspace will be discarded.')) {
+    const confirmed = await useConfirmationStore.getState().requestConfirmation(
+      'Start a new blank project? Any unsaved changes in the current workspace will be discarded.',
+      'Start New Project'
+    );
+    if (!confirmed) {
       return;
     }
 
-    replaceFlowSnapshot({
-      nodes: [],
-      edges: [],
-    });
-    restoreWorkspaceSnapshot(undefined);
-    await restoreProjectSourceBin(undefined);
+    await resetProjectDocument();
     setProjectName(UNTITLED_PROJECT_NAME);
     setSelectedProjectId(undefined);
     setFileSystemSummary(undefined);
@@ -173,10 +181,7 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
         throw new Error('The selected project could not be found.');
       }
 
-      replaceFlowSnapshot(project.flow);
-      await restoreImportedAssets();
-      restoreWorkspaceSnapshot(project.editor);
-      await restoreProjectSourceBin(project.sourceBin);
+      await restoreProjectDocument(project);
       setProjectName(project.name);
       setSelectedProjectId(project.id);
       setFileSystemSummary(await loadFileSystemWorkspaceSummary(project.id));
@@ -190,7 +195,11 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
   }
 
   async function handleDeleteProject(projectId: string) {
-    if (!window.confirm('Delete this saved project from local storage?')) {
+    const confirmed = await useConfirmationStore.getState().requestConfirmation(
+      'Delete this saved project from local storage?',
+      'Delete Project'
+    );
+    if (!confirmed) {
       return;
     }
 
@@ -214,6 +223,8 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
 
     try {
       let flow = exportProjectFlowSnapshot();
+      let flowWorkspaces = exportFlowWorkspaceProject(flow);
+      let exportedActiveFlowWorkspaceId = activeFlowWorkspaceId ?? flowWorkspaces[0]?.id;
       let editor: Partial<EditorWorkspaceSnapshot> = exportWorkspaceSnapshot();
       let name = projectName.trim() || selectedProject?.name || DEFAULT_PROJECT_NAME;
       let sourceBin = await exportProjectSourceBin({ includeAssetData: true });
@@ -226,16 +237,21 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
         }
 
         flow = project.flow;
+        flowWorkspaces = project.flowWorkspaces ?? flowWorkspaces;
+        exportedActiveFlowWorkspaceId = project.activeFlowWorkspaceId ?? exportedActiveFlowWorkspaceId;
         editor = project.editor ?? editor;
         name = project.name;
         sourceBin = project.sourceBin ?? sourceBin;
       }
 
       downloadJsonFile(`${slugify(name)}.sloom`, {
+        schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
         id: projectId,
         name,
         savedAt: Date.now(),
         flow,
+        flowWorkspaces,
+        activeFlowWorkspaceId: exportedActiveFlowWorkspaceId,
         editor,
         sourceBin,
       });
@@ -254,10 +270,7 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
 
     try {
       const project = await parseProjectDocument(file);
-      replaceFlowSnapshot(project.flow);
-      await restoreImportedAssets();
-      restoreWorkspaceSnapshot(project.editor);
-      await restoreProjectSourceBin(project.sourceBin);
+      await restoreProjectDocument(project);
       setProjectName(project.name);
       setSelectedProjectId(project.id);
       await saveProjectDocument(project);
@@ -392,10 +405,7 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
         scratchDirectoryHandle,
       });
 
-      replaceFlowSnapshot(saved.flow);
-      await restoreImportedAssets();
-      restoreWorkspaceSnapshot(saved.editor);
-      await restoreProjectSourceBin(saved.sourceBin);
+      await restoreProjectDocument(saved);
       setProjectName(saved.name);
       setSelectedProjectId(saved.id);
       setFileSystemSummary(summary);
@@ -475,8 +485,16 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-gray-800 bg-[#1c1e26] shadow-2xl">
+    <DockableDialog
+      defaultFloatingRect={{ x: 96, y: 76, width: 1040, height: 680 }}
+      dialogId="project-library"
+      minSize={{ width: 620, height: 420 }}
+      onClose={onClose}
+      open={isOpen}
+      title="Project Library"
+      workspaceId="app-dialogs"
+    >
+      <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[#1c1e26]">
         <div className="flex items-center justify-between border-b border-gray-800 bg-[#252830] p-5">
           <div>
             <h2 className="text-xl font-semibold text-gray-100">Project Library</h2>
@@ -633,7 +651,7 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
               ) : null}
 
               <input
-                accept=".sloom,.signal-loom.json,.json,application/json"
+                accept=".sloom"
                 className="hidden"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
@@ -725,7 +743,7 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
           </section>
         </div>
       </div>
-    </div>
+    </DockableDialog>
   );
 }
 

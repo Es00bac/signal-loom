@@ -406,10 +406,21 @@ async function urlToBlob(url: string, fallbackMimeType?: string): Promise<Blob> 
 
 async function openWorkspaceDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error('Timeout opening local filesystem workspace database.'));
+    }, 3000);
+
     const request = window.indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onerror = () => {
+      clearTimeout(timeoutId);
       reject(request.error ?? new Error('Failed to open the filesystem workspace database.'));
+    };
+
+    request.onblocked = () => {
+      clearTimeout(timeoutId);
+      console.warn('IndexedDB database open is blocked.');
+      reject(new Error('IndexedDB database open is blocked by another connection.'));
     };
 
     request.onupgradeneeded = () => {
@@ -421,6 +432,7 @@ async function openWorkspaceDatabase(): Promise<IDBDatabase> {
     };
 
     request.onsuccess = () => {
+      clearTimeout(timeoutId);
       resolve(request.result);
     };
   });

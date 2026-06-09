@@ -4,6 +4,7 @@ import {
   estimateExecutionPlan,
   estimateGeminiTextCostUsd,
   estimateGeminiVideoCostUsd,
+  estimateGenerativeFillCostUsd,
 } from './costEstimation';
 import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
 
@@ -19,6 +20,7 @@ function createNode(id: string, type: AppNode['type'], data: AppNode['data'] = {
 const settings: RuntimeSettingsSnapshot = {
   apiKeys: {
     openai: '',
+    atlas: '',
     gemini: 'key',
     huggingface: '',
     elevenlabs: '',
@@ -32,6 +34,7 @@ const settings: RuntimeSettingsSnapshot = {
     image: {
       gemini: 'gemini-2.5-flash-image',
       openai: 'gpt-image-1',
+      atlas: 'gpt-image-2',
       huggingface: 'hf-image',
     },
     video: {
@@ -72,6 +75,29 @@ describe('estimateGeminiVideoCostUsd', () => {
 
   it('normalizes legacy Veo aliases before estimating cost', () => {
     expect(estimateGeminiVideoCostUsd('veo-3.1-fast', 4, '720p')).toBeCloseTo(0.6, 6);
+  });
+});
+
+describe('estimateGenerativeFillCostUsd', () => {
+  it('estimates Atlas GPT Image 2 similarly to OpenAI-compatible image models', () => {
+    expect(
+      estimateGenerativeFillCostUsd('atlas', 'gpt-image-2', 1, 'Portrait of a cyberpunk city'),
+    ).toBe(
+      estimateGenerativeFillCostUsd('openai', 'gpt-image-2', 1, 'Portrait of a cyberpunk city'),
+    );
+  });
+
+  it('infers Stability erase operation cost from model id', () => {
+    expect(estimateGenerativeFillCostUsd('stability', 'stable-image-edit-erase')).toBe(0.05);
+  });
+
+  it('infers Stability search-replace and relight costs from model ids', () => {
+    expect(estimateGenerativeFillCostUsd('stability', 'stable-image-edit-search-replace')).toBe(0.05);
+    expect(estimateGenerativeFillCostUsd('stability', 'stable-image-edit-replace-background-relight')).toBe(0.08);
+  });
+
+  it('infers Stability outpaint cost from model id', () => {
+    expect(estimateGenerativeFillCostUsd('stability', 'stable-image-edit-outpaint')).toBe(0.04);
   });
 });
 

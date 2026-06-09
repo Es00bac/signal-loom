@@ -15,6 +15,21 @@ import {
   isVideoImageConditioningHandle,
   normalizeGeminiVideoModelId,
 } from './videoModelSupport';
+import {
+  estimateImageModelCostUsd,
+  getImageModelDefinition,
+  type ImageModelOperation,
+} from './imageProviderCapabilities';
+import type { GenerativeFillProvider } from './imageEditorAi';
+import { addConfiguredUpscaleCost } from './universalImageUpscale';
+import {
+  isListItemTargetHandle,
+  resolveExpandedListItemForNode,
+  resolveNodeListItemKind,
+  resolvePackageNodeData,
+  collectEnvelopeItemsForEnvelopeNode,
+  evaluateNodeTextForMonitor,
+} from './listNodes';
 import { resolveEffectiveSourceNode } from './virtualNodes';
 import type {
   AppNode,
@@ -31,6 +46,8 @@ import type {
   VideoTargetHandle,
 } from '../types/flow';
 
+import { useSourceBinStore } from '../store/sourceBinStore';
+
 interface TokenUsageEstimate {
   inputTokens: number;
   outputTokens: number;
@@ -44,6 +61,8 @@ interface TokenPricing {
 interface ExecutionContextEstimate {
   prompt: string;
   config: ExecutionConfig;
+  editImageInput?: string;
+  refImageInput?: string;
   audioSourceInput?: string;
   sourceVideoInput?: string;
   extensionVideoInput?: string;
@@ -68,6 +87,14 @@ export interface ExecutionPlanEstimate {
 }
 
 const GEMINI_TEXT_PRICING: Array<{ match: (modelId: string) => boolean; pricing: TokenPricing }> = [
+  {
+    match: (modelId) => modelId.startsWith('gemini-3.5-flash') || modelId.startsWith('gemini-1.5-flash'),
+    pricing: { inputUsdPerMillion: 0.075, outputUsdPerMillion: 0.3 },
+  },
+  {
+    match: (modelId) => modelId.startsWith('gemini-1.5-pro'),
+    pricing: { inputUsdPerMillion: 1.25, outputUsdPerMillion: 5.0 },
+  },
   {
     match: (modelId) => modelId.startsWith('gemini-3.1-pro-preview'),
     pricing: { inputUsdPerMillion: 2, outputUsdPerMillion: 12 },
@@ -147,7 +174,7 @@ function getElevenLabsCharacterRate(modelId: string): number | undefined {
   return ELEVENLABS_CHARACTER_PRICING.find((entry) => entry.match(normalized))?.usdPerThousandChars;
 }
 
-function estimateTokensFromText(text: string): number {
+export function estimateTokensFromText(text: string): number {
   const normalized = text.trim();
 
   if (!normalized) {
@@ -208,6 +235,95 @@ export function estimateGeminiTextCostUsd(modelId: string, usage: TokenUsageEsti
 export function estimateOpenAITextCostUsd(modelId: string, usage: TokenUsageEstimate): number | undefined {
   const pricing = getOpenAITextPricing(modelId);
   return pricing ? sumTextCost(pricing, usage) : undefined;
+}
+
+export function estimateGenerativeFillCostUsd(
+  provider: GenerativeFillProvider,
+  modelId?: string,
+  megapixels?: number,
+  prompt?: string,
+): number {
+  const textInputTokens = prompt ? estimateTokensFromText(prompt) : undefined;
+  switch (provider) {
+    case 'openai':
+      return estimateImageModelCostUsd({
+        providerId: 'openai',
+        modelId: modelId ?? 'gpt-image-1',
+        operation: 'mask-inpaint',
+        outputMegapixels: megapixels,
+        textInputTokens,
+      }).costUsd ?? 0.04;
+    case 'atlas':
+      return estimateImageModelCostUsd({
+        providerId: 'atlas',
+        modelId: modelId ?? 'gpt-image-1',
+        operation: 'mask-inpaint',
+        outputMegapixels: megapixels,
+        textInputTokens,
+      }).costUsd ?? 0.04;
+    case 'gemini':
+      return estimateImageModelCostUsd({
+        providerId: 'gemini',
+        modelId: modelId ?? 'gemini-2.5-flash-image',
+        operation: 'image-edit',
+        outputMegapixels: megapixels,
+        textInputTokens,
+      }).costUsd ?? 0.039;
+    case 'huggingface':
+      return estimateImageModelCostUsd({
+        providerId: 'huggingface',
+        modelId: modelId ?? 'black-forest-labs/FLUX.1-dev',
+        operation: 'text-to-image',
+        outputMegapixels: megapixels,
+        textInputTokens,
+      }).costUsd ?? 0.005;
+    case 'bfl':
+      return estimateImageModelCostUsd({
+        providerId: 'bfl',
+        modelId: modelId ?? 'flux-2-pro',
+        operation: 'image-edit',
+        outputMegapixels: megapixels,
+        textInputTokens,
+      }).costUsd ?? 0.045;
+    case 'stability':
+      const selectedModelId = modelId ?? 'stable-image-edit-inpaint';
+      const stabilityDefinition = getImageModelDefinition('stability', selectedModelId);
+      const stabilityOperation = resolveStabilityOperationForModel(stabilityDefinition.supportedOperations);
+      return estimateImageModelCostUsd({
+        providerId: 'stability',
+        modelId: selectedModelId,
+        operation: stabilityOperation,
+        outputMegapixels: megapixels,
+        textInputTokens,
+      }).costUsd ?? 0.05;
+    case 'localOpen':
+      return 0;
+    case 'generic':
+      return 0.0;
+  }
+}
+
+function resolveStabilityOperationForModel(operations: ImageModelOperation[]): ImageModelOperation {
+  if (operations.includes('replace-background-relight')) {
+    return 'replace-background-relight';
+  }
+  if (operations.includes('search-recolor')) {
+    return 'search-recolor';
+  }
+  if (operations.includes('search-replace')) {
+    return 'search-replace';
+  }
+  if (operations.includes('remove-background')) {
+    return 'remove-background';
+  }
+  if (operations.includes('outpaint')) {
+    return 'outpaint';
+  }
+  if (operations.includes('erase')) {
+    return 'erase';
+  }
+
+  return operations.includes('mask-inpaint') ? 'mask-inpaint' : 'image-edit';
 }
 
 function estimateGeminiImageCostUsd(
@@ -363,28 +479,55 @@ export function createLocalFrameExtractionUsage(source: UsageTelemetry['source']
   });
 }
 
+export function createLocalImageCropUsage(source: UsageTelemetry['source']): UsageTelemetry {
+  return buildUsageTelemetry(source, 'fixed', {
+    provider: 'local',
+    modelId: 'browser-image-crop',
+    costUsd: 0,
+    imageCount: 1,
+    notes: ['Image cropping runs locally in the browser and does not call a paid model.'],
+  });
+}
+
 function resolveNodeOutputAsset(node: AppNode): string | undefined {
   if (
     (node.type === 'imageGen' || node.type === 'audioGen' || node.type === 'videoGen') &&
     (node.data.mediaMode ?? 'generate') === 'import'
   ) {
-    return node.data.sourceAssetUrl;
+    if (node.data.sourceAssetUrl) {
+      return node.data.sourceAssetUrl;
+    }
+    if (node.data.result) {
+      return node.data.result;
+    }
+    if (node.data.sourceBinItemId) {
+      const item = useSourceBinStore.getState().getAllItems().find((item) => item.id === node.data.sourceBinItemId);
+      if (item?.assetUrl) {
+        return item.assetUrl;
+      }
+    }
+    return undefined;
   }
 
   return node.data.result;
 }
 
 function shouldReuseExistingNodeOutput(node: AppNode): boolean {
-  if (!['imageGen', 'videoGen', 'audioGen', 'composition'].includes(node.type)) {
+  if (!['imageGen', 'cropImageNode', 'videoGen', 'audioGen', 'composition', 'functionNode'].includes(node.type)) {
     return false;
   }
 
   return Boolean(resolveNodeOutputAsset(node));
 }
 
-function canRunNode(node: AppNode): boolean {
-  if (node.type === 'settings' || node.type === 'sourceBin' || node.type === 'virtual') {
-    return false;
+export function canRunNode(node: AppNode): boolean {
+  if (
+    node.type === 'composition' ||
+    node.type === 'cropImageNode' ||
+    node.type === 'visionVerifyNode' ||
+    node.type === 'functionNode'
+  ) {
+    return true;
   }
 
   if (node.type === 'textNode') {
@@ -395,7 +538,7 @@ function canRunNode(node: AppNode): boolean {
     return (node.data.mediaMode ?? 'generate') === 'generate';
   }
 
-  return true;
+  return false;
 }
 
 function getModelId<TCapability extends keyof RuntimeSettingsSnapshot['defaultModels']>(
@@ -429,6 +572,50 @@ function buildIncomingMap(edges: Edge[]): Map<string, string[]> {
   return incoming;
 }
 
+function getEffectiveSources(
+  nodeId: string,
+  edges: Edge[],
+  nodesById: Map<string, AppNode>,
+  visited = new Set<string>()
+): AppNode[] {
+  if (visited.has(nodeId)) {
+    return [];
+  }
+  visited.add(nodeId);
+
+  const node = nodesById.get(nodeId);
+  if (!node) {
+    return [];
+  }
+
+  if (canRunNode(node)) {
+    return [node];
+  }
+
+  const sources: AppNode[] = [];
+  const resolvedNode = resolveEffectiveSourceNode(node, nodesById, edges);
+  if (resolvedNode && resolvedNode.id !== node.id) {
+    return getEffectiveSources(resolvedNode.id, edges, nodesById, visited);
+  }
+
+  for (const edge of edges) {
+    if (edge.target === nodeId) {
+      const parentSources = getEffectiveSources(edge.source, edges, nodesById, visited);
+      for (const src of parentSources) {
+        if (!sources.some((s) => s.id === src.id)) {
+          sources.push(src);
+        }
+      }
+    }
+  }
+
+  if (sources.length === 0) {
+    return [node];
+  }
+
+  return sources;
+}
+
 function getExecutionDependencies(
   node: AppNode,
   edges: Edge[],
@@ -442,104 +629,190 @@ function getExecutionDependencies(
     }
 
     const rawSourceNode = nodesById.get(edge.source);
-    const sourceNode = rawSourceNode
-      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
-      : undefined;
-
-    if (!sourceNode) {
+    if (!rawSourceNode) {
       continue;
     }
 
-    if (sourceNode.type === 'settings') {
-      dependencies.add(sourceNode.id);
-      continue;
-    }
+    const effectiveSources = getEffectiveSources(rawSourceNode.id, edges, nodesById);
 
-    if (node.type === 'textNode') {
-      if (sourceNode.type === 'textNode' || sourceNode.type === 'imageGen') {
+    for (const sourceNode of effectiveSources) {
+      if (sourceNode.type === 'settings') {
         dependencies.add(sourceNode.id);
+        continue;
       }
 
-      continue;
-    }
+      if (node.type === 'list') {
+        const sourceKind = resolveNodeListItemKind(sourceNode);
 
-    if (node.type === 'imageGen') {
-      if (
-        sourceNode.type === 'textNode' ||
-        sourceNode.type === 'imageGen' ||
-        sourceNode.type === 'videoGen' ||
-        sourceNode.type === 'composition'
-      ) {
-        dependencies.add(sourceNode.id);
-      }
-
-      continue;
-    }
-
-    if (node.type === 'audioGen') {
-      const audioMode = (node.data.audioGenerationMode as string | undefined) ?? 'speech';
-
-      if (audioMode === 'voiceChange') {
-        if (sourceNode.type === 'audioGen') {
+        if (sourceKind && isListItemTargetHandle(edge.targetHandle)) {
           dependencies.add(sourceNode.id);
         }
 
         continue;
       }
 
-      if (sourceNode.type === 'textNode') {
-        dependencies.add(sourceNode.id);
-      }
-
-      continue;
-    }
-
-    if (node.type === 'videoGen') {
-      if (sourceNode.type === 'textNode') {
+      if (node.type === 'envelope') {
         dependencies.add(sourceNode.id);
         continue;
       }
 
-      if (
-        sourceNode.type === 'imageGen' &&
-        isVideoImageConditioningHandle(edge.targetHandle as VideoTargetHandle | undefined)
-      ) {
+      if (node.type === 'expander') {
+        if (
+          sourceNode.type === 'list' ||
+          sourceNode.type === 'envelope' ||
+          resolveNodeListItemKind(sourceNode)
+        ) {
+          dependencies.add(sourceNode.id);
+        }
+
+        continue;
+      }
+
+      if (sourceNode.type === 'expander') {
+        const expandedItem = resolveExpandedListItemForNode(sourceNode, [...nodesById.values()], edges);
+        if (expandedItem) {
+          dependencies.add(sourceNode.id);
+        }
+
+        continue;
+      }
+
+      if (sourceNode.type === 'list' || sourceNode.type === 'envelope') {
         dependencies.add(sourceNode.id);
         continue;
       }
 
-      if (
-        (sourceNode.type === 'videoGen' || sourceNode.type === 'composition') &&
-        isVideoExtensionHandle(edge.targetHandle as VideoTargetHandle | undefined)
-      ) {
+      if (sourceNode.type === 'packageNode') {
         dependencies.add(sourceNode.id);
+        continue;
       }
 
-      continue;
-    }
-
-    if (node.type === 'composition') {
-      if (
-        (isCompositionVideoConnection(edge) && ['videoGen', 'composition'].includes(sourceNode.type)) ||
-        (COMPOSITION_AUDIO_HANDLES.includes(edge.targetHandle as typeof COMPOSITION_AUDIO_HANDLES[number]) &&
-          sourceNode.type === 'audioGen')
-      ) {
+      if (sourceNode.type === 'colorSwatchNode') {
         dependencies.add(sourceNode.id);
+        continue;
+      }
+
+      if (node.type === 'functionNode') {
+        if (sourceNode.type !== 'groupNode') {
+          dependencies.add(sourceNode.id);
+        }
+        continue;
+      }
+
+      if (node.type === 'textNode') {
+        if (sourceNode.type === 'textNode' || sourceNode.type === 'imageGen' || sourceNode.type === 'cropImageNode' || sourceNode.type === 'functionNode') {
+          dependencies.add(sourceNode.id);
+        }
+
+        continue;
+      }
+
+      if (node.type === 'imageGen') {
+        if (
+          sourceNode.type === 'textNode' ||
+          sourceNode.type === 'imageGen' ||
+          sourceNode.type === 'cropImageNode' ||
+          sourceNode.type === 'videoGen' ||
+          sourceNode.type === 'composition' ||
+          sourceNode.type === 'functionNode'
+        ) {
+          dependencies.add(sourceNode.id);
+        }
+
+        continue;
+      }
+
+      if (node.type === 'cropImageNode') {
+        if (
+          sourceNode.type === 'imageGen' ||
+          sourceNode.type === 'cropImageNode' ||
+          sourceNode.type === 'functionNode'
+        ) {
+          dependencies.add(sourceNode.id);
+        }
+
+        continue;
+      }
+
+      if (node.type === 'audioGen') {
+        const audioMode = (node.data.audioGenerationMode as string | undefined) ?? 'speech';
+
+        if (audioMode === 'voiceChange') {
+          if (sourceNode.type === 'audioGen') {
+            dependencies.add(sourceNode.id);
+          }
+
+          continue;
+        }
+
+        if (sourceNode.type === 'textNode' || sourceNode.type === 'functionNode') {
+          dependencies.add(sourceNode.id);
+        }
+
+        continue;
+      }
+
+      if (node.type === 'videoGen') {
+        if (sourceNode.type === 'textNode' || sourceNode.type === 'functionNode') {
+          dependencies.add(sourceNode.id);
+          continue;
+        }
+
+        if (
+          (sourceNode.type === 'imageGen' || sourceNode.type === 'cropImageNode') &&
+          isVideoImageConditioningHandle(edge.targetHandle as VideoTargetHandle | undefined)
+        ) {
+          dependencies.add(sourceNode.id);
+          continue;
+        }
+
+        if (
+          (sourceNode.type === 'videoGen' || sourceNode.type === 'composition') &&
+          isVideoExtensionHandle(edge.targetHandle as VideoTargetHandle | undefined)
+        ) {
+          dependencies.add(sourceNode.id);
+        }
+
+        continue;
+      }
+
+      if (node.type === 'composition') {
+        if (
+          (isCompositionVideoConnection(edge) && ['videoGen', 'composition', 'functionNode'].includes(sourceNode.type)) ||
+          (COMPOSITION_AUDIO_HANDLES.includes(edge.targetHandle as typeof COMPOSITION_AUDIO_HANDLES[number]) &&
+            (sourceNode.type === 'audioGen' || sourceNode.type === 'functionNode'))
+        ) {
+          dependencies.add(sourceNode.id);
+        }
+      }
+
+      if (node.type === 'visionVerifyNode') {
+        if (
+          sourceNode.type === 'textNode' ||
+          sourceNode.type === 'imageGen' ||
+          sourceNode.type === 'cropImageNode' ||
+          sourceNode.type === 'visionVerifyNode' ||
+          sourceNode.type === 'functionNode'
+        ) {
+          dependencies.add(sourceNode.id);
+        }
+        continue;
       }
     }
   }
 
-  return [...dependencies];
+  return [...dependencies].filter((depId) => depId !== node.id);
 }
 
-function collectTextInputs(
+export function collectTextInputs(
   nodeId: string,
   nodesById: Map<string, AppNode>,
   incoming: Map<string, string[]>,
+  edges: Edge[],
 ): string {
   const sourceIds = incoming.get(nodeId) ?? [];
   const prompts = sourceIds.flatMap((sourceId) =>
-    collectTextInputsFromSource(sourceId, nodesById, incoming, new Set()),
+    collectTextInputsFromSource(sourceId, nodesById, incoming, edges, new Set()),
   );
 
   return prompts.join('\n\n').trim();
@@ -549,6 +822,7 @@ function collectTextInputsFromSource(
   sourceId: string,
   nodesById: Map<string, AppNode>,
   incoming: Map<string, string[]>,
+  edges: Edge[],
   visited: Set<string>,
 ): string[] {
   if (visited.has(sourceId)) {
@@ -564,27 +838,216 @@ function collectTextInputsFromSource(
 
   if (node.type === 'settings') {
     return (incoming.get(sourceId) ?? []).flatMap((upstreamId) =>
-      collectTextInputsFromSource(upstreamId, nodesById, incoming, visited),
+      collectTextInputsFromSource(upstreamId, nodesById, incoming, edges, visited),
     );
   }
 
   if (node.type === 'virtual') {
     return (incoming.get(sourceId) ?? []).flatMap((upstreamId) =>
-      collectTextInputsFromSource(upstreamId, nodesById, incoming, visited),
+      collectTextInputsFromSource(upstreamId, nodesById, incoming, edges, visited),
     );
   }
 
-  if (node.type === 'textNode') {
-    const mode = node.data.mode ?? 'prompt';
-    const value =
-      mode === 'generate'
-        ? (node.data.result ?? node.data.prompt)?.trim()
-        : node.data.prompt?.trim();
+  const listAndUtilityNodeTypes = [
+    'textNode',
+    'expander',
+    'packageNode',
+    'colorSwatchNode',
+    'conditionalNode',
+    'stringTemplateNode',
+    'promptsJoinerNode',
+    'regexReplaceNode',
+    'listLengthNode',
+    'mathNode',
+    'logicNode',
+    'comparisonNode',
+    'visionVerifyNode',
+    'valueMonitorNode',
+    'numberNode',
+    'functionNode',
+  ];
 
-    return value ? [value] : [];
+  if (listAndUtilityNodeTypes.includes(node.type)) {
+    const monitorVisited = new Set(visited);
+    monitorVisited.delete(node.id);
+    const value = evaluateNodeTextForMonitor(node.id, Array.from(nodesById.values()), edges, monitorVisited);
+    return value.trim() ? [value.trim()] : [];
+  }
+
+  if (node.type === 'envelope') {
+    const items = collectEnvelopeItemsForEnvelopeNode(node.id, Array.from(nodesById.values()), edges);
+    return items.flatMap((item) => {
+      if (item.kind === 'text' && item.value?.trim()) {
+        return [item.value.trim()];
+      }
+      if (item.kind === 'package' && item.text?.trim()) {
+        return [item.text.trim()];
+      }
+      return [];
+    });
   }
 
   return [];
+}
+
+function collectImageInputFromSource(
+  sourceId: string,
+  nodesById: Map<string, AppNode>,
+  incoming: Map<string, string[]>,
+  edges: Edge[],
+  visited: Set<string>,
+): string | undefined {
+  if (visited.has(sourceId)) {
+    return undefined;
+  }
+
+  visited.add(sourceId);
+
+  const node = nodesById.get(sourceId);
+  if (!node) {
+    return undefined;
+  }
+
+  if (node.type === 'settings') {
+    for (const upstreamId of incoming.get(sourceId) ?? []) {
+      const image = collectImageInputFromSource(upstreamId, nodesById, incoming, edges, visited);
+
+      if (image) {
+        return image;
+      }
+    }
+
+    return undefined;
+  }
+
+  if (node.type === 'virtual') {
+    for (const upstreamId of incoming.get(sourceId) ?? []) {
+      const image = collectImageInputFromSource(upstreamId, nodesById, incoming, edges, visited);
+
+      if (image) {
+        return image;
+      }
+    }
+
+    return undefined;
+  }
+
+  if (node.type === 'imageGen' || node.type === 'cropImageNode') {
+    if ((node.data.mediaMode ?? 'generate') === 'import') {
+      if (node.data.sourceAssetUrl) {
+        return node.data.sourceAssetUrl;
+      }
+      if (node.data.result) {
+        return node.data.result;
+      }
+      if (node.data.sourceBinItemId) {
+        const item = useSourceBinStore.getState().getAllItems().find((item) => item.id === node.data.sourceBinItemId);
+        if (item?.assetUrl) {
+          return item.assetUrl;
+        }
+      }
+      return undefined;
+    }
+    return node.data.result;
+  }
+
+  if (node.type === 'functionNode') {
+    return node.data.resultType === 'image' && typeof node.data.result === 'string'
+      ? node.data.result
+      : undefined;
+  }
+
+  if (node.type === 'packageNode') {
+    const pkg = resolvePackageNodeData(node.id, Array.from(nodesById.values()), edges);
+    return pkg.image;
+  }
+
+  if (node.type === 'envelope') {
+    const items = collectEnvelopeItemsForEnvelopeNode(node.id, Array.from(nodesById.values()), edges);
+    const imgItem = items.find((item) => (item.kind === 'image' || item.kind === 'package') && item.value);
+    return imgItem?.value;
+  }
+
+  if (node.type === 'expander') {
+    const item = resolveExpandedListItemForNode(node, Array.from(nodesById.values()), edges);
+    return item?.kind === 'image' ? item.value : undefined;
+  }
+
+  return undefined;
+}
+
+export function collectUpstreamImageInput(
+  nodeId: string,
+  nodesById: Map<string, AppNode>,
+  edges: Edge[],
+): string | undefined {
+  const explicitSource = collectUpstreamImageInputForHandles(
+    nodeId,
+    ['image-edit-source', 'image'],
+    nodesById,
+    edges,
+  );
+
+  if (explicitSource) {
+    return explicitSource;
+  }
+
+  const incoming = buildIncomingMap(edges);
+  const matchingEdges = edges.filter(
+    (edge) => edge.target === nodeId && (edge.targetHandle == null || edge.targetHandle === ''),
+  );
+
+  for (const edge of matchingEdges) {
+    const rawSourceNode = nodesById.get(edge.source);
+    const sourceNode = rawSourceNode
+      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
+      : undefined;
+
+    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'packageNode', 'envelope', 'expander', 'functionNode'];
+    if (!sourceNode || !allowedTypes.includes(sourceNode.type)) {
+      continue;
+    }
+
+    const image = collectImageInputFromSource(edge.source, nodesById, incoming, edges, new Set());
+
+    if (image) {
+      return image;
+    }
+  }
+
+  return undefined;
+}
+
+export function collectUpstreamImageInputForHandles(
+  nodeId: string,
+  targetHandles: Array<string | undefined>,
+  nodesById: Map<string, AppNode>,
+  edges: Edge[],
+): string | undefined {
+  const incoming = buildIncomingMap(edges);
+  const matchingEdges = edges.filter(
+    (edge) => edge.target === nodeId && targetHandles.includes(edge.targetHandle ?? undefined),
+  );
+
+  for (const edge of matchingEdges) {
+    const rawSourceNode = nodesById.get(edge.source);
+    const sourceNode = rawSourceNode
+      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
+      : undefined;
+
+    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'packageNode', 'envelope', 'expander', 'functionNode'];
+    if (!sourceNode || !allowedTypes.includes(sourceNode.type)) {
+      continue;
+    }
+
+    const image = collectImageInputFromSource(edge.source, nodesById, incoming, edges, new Set());
+
+    if (image) {
+      return image;
+    }
+  }
+
+  return undefined;
 }
 
 function collectUpstreamVideoInput(
@@ -600,7 +1063,7 @@ function collectUpstreamVideoInput(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
       : undefined;
 
-    if (!sourceNode || !['videoGen', 'composition'].includes(sourceNode.type)) {
+    if (!sourceNode || !['videoGen', 'composition', 'functionNode'].includes(sourceNode.type)) {
       continue;
     }
 
@@ -627,7 +1090,7 @@ function collectUpstreamAudioInput(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
       : undefined;
 
-    if (sourceNode?.type !== 'audioGen') {
+    if (!sourceNode || !['audioGen', 'functionNode'].includes(sourceNode.type)) {
       continue;
     }
 
@@ -659,7 +1122,7 @@ function collectVideoExtensionInput(
     ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
     : undefined;
 
-  if (!sourceNode || !['videoGen', 'composition'].includes(sourceNode.type)) {
+  if (!sourceNode || !['videoGen', 'composition', 'functionNode'].includes(sourceNode.type)) {
     return undefined;
   }
 
@@ -712,6 +1175,7 @@ function mergeExecutionConfig(current: ExecutionConfig, data: NodeData): Executi
     steps: coerceNumber(data.steps, current.steps),
     durationSeconds: coerceNumber(data.durationSeconds, current.durationSeconds),
     videoResolution: getVideoResolution((data.videoResolution as string | undefined) ?? current.videoResolution),
+    videoFrameRate: coerceFrameRate(data.videoFrameRate, current.videoFrameRate),
     imageOutputFormat: getImageOutputFormat(
       (data.imageOutputFormat as string | undefined) ?? current.imageOutputFormat,
     ),
@@ -719,6 +1183,11 @@ function mergeExecutionConfig(current: ExecutionConfig, data: NodeData): Executi
       (data.audioOutputFormat as string | undefined) ?? current.audioOutputFormat,
     ),
   };
+}
+
+function coerceFrameRate(value: unknown, fallback: number): number {
+  const next = coerceNumber(value as number | string | undefined, fallback);
+  return [24, 25, 30, 60].includes(next) ? next : fallback;
 }
 
 function coerceNumber(value: number | string | undefined, fallback: number): number {
@@ -796,6 +1265,12 @@ function estimateNodeOwnTelemetry(
     });
   }
 
+  if (node.type === 'cropImageNode') {
+    return context.editImageInput
+      ? createLocalImageCropUsage('estimate')
+      : undefined;
+  }
+
   if (node.type === 'imageGen') {
     if ((node.data.mediaMode ?? 'generate') !== 'generate') {
       return undefined;
@@ -815,17 +1290,45 @@ function estimateNodeOwnTelemetry(
     }
 
     if (provider === 'gemini') {
-      return createGeminiImageUsage(modelId, prompt, context.config.aspectRatio, 'estimate', inputTokens);
+      return withAutoUpscaleEstimate(
+        createGeminiImageUsage(modelId, prompt, context.config.aspectRatio, 'estimate', inputTokens),
+        node.data,
+        settings,
+      );
     }
 
-    return buildUsageTelemetry('estimate', 'unknown', {
+    if (provider === 'android') {
+      return withAutoUpscaleEstimate(buildUsageTelemetry('estimate', 'fixed', {
+        provider: 'android',
+        modelId,
+        imageCount: 1,
+        costUsd: 0,
+        notes: ['Android Accelerator generation runs on the paired phone with $0 provider spend.'],
+      }), node.data, settings);
+    }
+
+    const modelDefinition = getImageModelDefinition(provider, modelId);
+    const operation = resolveImageOperationForEstimate(
+      modelDefinition.supportedOperations,
+      Boolean(context.editImageInput),
+    );
+    const imageCost = estimateImageModelCostUsd({
+      providerId: provider,
+      modelId,
+      operation,
+      imageCount: 1,
+      textInputTokens: inputTokens,
+    });
+
+    return withAutoUpscaleEstimate(buildUsageTelemetry('estimate', imageCost.confidence === 'unknown' ? 'unknown' : 'heuristic', {
       provider,
       modelId,
       inputTokens,
       totalTokens: inputTokens,
       imageCount: 1,
-      notes: ['Pricing for this image provider is not currently mapped in the app.'],
-    });
+      costUsd: imageCost.costUsd,
+      notes: imageCost.notes,
+    }), node.data, settings);
   }
 
   if (node.type === 'videoGen') {
@@ -891,7 +1394,81 @@ function estimateNodeOwnTelemetry(
     return createLocalCompositionUsage('estimate');
   }
 
+  if (node.type === 'visionVerifyNode') {
+    const provider = 'gemini';
+    const modelId = node.data.modelId ?? 'gemini-3.5-flash';
+    const prompt = context.prompt || 'Verify consistency';
+    let inputTokens = estimateTokensFromText(prompt);
+
+    if (context.editImageInput) {
+      inputTokens += 258;
+    }
+    if (context.refImageInput) {
+      inputTokens += 258;
+    }
+
+    const outputTokens = 512;
+
+    const costUsd = estimateGeminiTextCostUsd(modelId, { inputTokens, outputTokens });
+
+    return buildUsageTelemetry('estimate', costUsd === undefined ? 'unknown' : 'heuristic', {
+      provider,
+      modelId,
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      costUsd,
+      notes: costUsd === undefined ? ['Pricing for this model is not currently mapped in the app.'] : ['Multimodal verification pricing includes prompt text and image tokens.'],
+    });
+  }
+
+  if (node.type === 'functionNode') {
+    return buildUsageTelemetry('estimate', 'fixed', {
+      costUsd: 0,
+      notes: ['Function nodes route existing graph outputs and local transforms without provider spend.'],
+    });
+  }
+
   return undefined;
+}
+
+function withAutoUpscaleEstimate(
+  telemetry: UsageTelemetry,
+  nodeData: NodeData,
+  settings: RuntimeSettingsSnapshot,
+): UsageTelemetry {
+  if (!nodeData.imageAutoUpscale) {
+    return telemetry;
+  }
+
+  const estimated = addConfiguredUpscaleCost({
+    baseCostUsd: telemetry.costUsd,
+    enabled: true,
+    providerSettings: settings.providerSettings,
+    apiKeys: settings.apiKeys,
+  });
+
+  return {
+    ...telemetry,
+    costUsd: estimated.costUsd,
+    notes: [
+      ...(telemetry.notes ?? []),
+      ...estimated.notes,
+    ],
+  };
+}
+
+function resolveImageOperationForEstimate(
+  operations: ImageModelOperation[],
+  hasEditSource: boolean,
+): ImageModelOperation {
+  if (hasEditSource && operations.includes('image-edit')) {
+    return 'image-edit';
+  }
+  if (hasEditSource && operations.includes('mask-inpaint')) {
+    return 'mask-inpaint';
+  }
+  return operations[0] ?? 'text-to-image';
 }
 
 export function aggregateUsageTelemetries(telemetries: UsageTelemetry[]): UsageRollup {
@@ -973,7 +1550,9 @@ export function estimateExecutionPlan(
     const telemetry = estimateNodeOwnTelemetry(
       currentNode,
       {
-        prompt: collectTextInputs(currentId, nodesById, incoming),
+        prompt: collectTextInputs(currentId, nodesById, incoming, edges),
+        editImageInput: collectUpstreamImageInput(currentId, nodesById, edges),
+        refImageInput: collectUpstreamImageInputForHandles(currentId, ['refImage'], nodesById, edges),
         audioSourceInput: collectUpstreamAudioInput(currentId, nodesById, edges),
         sourceVideoInput: collectUpstreamVideoInput(currentId, nodesById, edges),
         extensionVideoInput: collectVideoExtensionInput(currentId, nodesById, edges),
@@ -1003,7 +1582,9 @@ export function estimateCanvasRunCosts(
     const telemetry = estimateNodeOwnTelemetry(
       node,
       {
-        prompt: collectTextInputs(node.id, nodesById, incoming),
+        prompt: collectTextInputs(node.id, nodesById, incoming, edges),
+        editImageInput: collectUpstreamImageInput(node.id, nodesById, edges),
+        refImageInput: collectUpstreamImageInputForHandles(node.id, ['refImage'], nodesById, edges),
         audioSourceInput: collectUpstreamAudioInput(node.id, nodesById, edges),
         sourceVideoInput: collectUpstreamVideoInput(node.id, nodesById, edges),
         extensionVideoInput: collectVideoExtensionInput(node.id, nodesById, edges),
@@ -1020,7 +1601,8 @@ export function estimateCanvasRunCosts(
 
 export function collectActualUsageRollup(nodes: AppNode[]): UsageRollup {
   const telemetries = nodes.flatMap((node) =>
-    (node.data.resultHistory ?? []).flatMap((attempt) => (attempt.usage ? [attempt.usage] : [])),
+    (Array.isArray(node.data.resultHistory) ? node.data.resultHistory : [])
+      .flatMap((attempt) => (attempt.usage ? [attempt.usage] : [])),
   );
 
   return aggregateUsageTelemetries(telemetries);

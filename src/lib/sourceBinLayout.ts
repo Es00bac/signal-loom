@@ -7,6 +7,69 @@ export interface SourceBinDisplayItem {
   createdAt?: number;
   starred?: boolean;
   assetUrl?: string;
+  envelopeId?: string;
+  envelopeLabel?: string;
+  envelopeCollapsed?: boolean;
+}
+
+export type SourceBinKindFilter = 'all' | 'visual' | 'video' | 'image' | 'audio' | 'text';
+
+export interface SourceBinDisplayFilter {
+  kind: SourceBinKindFilter;
+  query: string;
+}
+
+export interface SourceBinDisplayBin<T extends SourceBinDisplayItem> {
+  id: string;
+  name: string;
+  items: T[];
+}
+
+export interface SourceBinKindCounts {
+  all: number;
+  visual: number;
+  video: number;
+  image: number;
+  audio: number;
+  text: number;
+}
+
+export type SourceLibraryDisplayEntry<T extends SourceBinDisplayItem> =
+  | { kind: 'item'; item: T }
+  | { kind: 'envelope'; id: string; label: string; collapsed: boolean; items: T[] };
+
+export type SourceLibraryDisplayRow<T extends SourceBinDisplayItem> =
+  | { kind: 'item'; key: string; item: T }
+  | { kind: 'envelope-header'; key: string; id: string; label: string; collapsed: boolean; itemCount: number; items: T[] }
+  | { kind: 'envelope-item'; key: string; envelopeId: string; item: T };
+
+export interface SourceBinSidebarPresentationInput {
+  dockable: boolean;
+  sidebarOpen: boolean;
+}
+
+export interface SourceBinSidebarPresentation {
+  contentOpen: boolean;
+  widthClassName: 'w-full' | 'w-[22rem]' | 'w-14';
+  toggleAction: 'collapse-dock' | 'toggle-sidebar';
+}
+
+export function resolveSourceBinSidebarPresentation(
+  input: SourceBinSidebarPresentationInput,
+): SourceBinSidebarPresentation {
+  if (input.dockable) {
+    return {
+      contentOpen: true,
+      widthClassName: 'w-full',
+      toggleAction: 'collapse-dock',
+    };
+  }
+
+  return {
+    contentOpen: input.sidebarOpen,
+    widthClassName: input.sidebarOpen ? 'w-[22rem]' : 'w-14',
+    toggleAction: 'toggle-sidebar',
+  };
 }
 
 export function sortSourceBinItemsForDisplay<T extends SourceBinDisplayItem>(items: readonly T[]): T[] {
@@ -27,6 +90,71 @@ export function sortSourceBinItemsForDisplay<T extends SourceBinDisplayItem>(ite
   });
 }
 
+export function filterSourceBinItemsForDisplay<T extends SourceBinDisplayItem>(
+  items: readonly T[],
+  filter: SourceBinDisplayFilter,
+): T[] {
+  const normalizedQuery = filter.query.trim().toLocaleLowerCase();
+  return sortSourceBinItemsForDisplay(
+    items.filter((item) => {
+      if (!matchesKindFilter(item, filter.kind)) {
+        return false;
+      }
+
+      if (!normalizedQuery) {
+        return true;
+      }
+
+      return `${item.label} ${item.kind}`.toLocaleLowerCase().includes(normalizedQuery);
+    }),
+  );
+}
+
+export function filterSourceBinsForDisplay<T extends SourceBinDisplayItem, B extends SourceBinDisplayBin<T>>(
+  bins: readonly B[],
+  filter: SourceBinDisplayFilter,
+): B[] {
+  const normalizedQuery = filter.query.trim().toLocaleLowerCase();
+
+  return bins.flatMap((bin) => {
+    const binNameMatches = Boolean(normalizedQuery) && bin.name.toLocaleLowerCase().includes(normalizedQuery);
+    const items = binNameMatches
+      ? filterSourceBinItemsForDisplay(bin.items, { ...filter, query: '' })
+      : filterSourceBinItemsForDisplay(bin.items, filter);
+
+    if (items.length > 0) {
+      return [{ ...bin, items }];
+    }
+
+    if (!normalizedQuery || binNameMatches) {
+      return [{ ...bin, items }];
+    }
+
+    return [];
+  });
+}
+
+export function buildSourceBinKindCounts(items: readonly SourceBinDisplayItem[]): SourceBinKindCounts {
+  const counts: SourceBinKindCounts = {
+    all: items.length,
+    visual: 0,
+    video: 0,
+    image: 0,
+    audio: 0,
+    text: 0,
+  };
+
+  for (const item of items) {
+    if (matchesKindFilter(item, 'visual')) counts.visual += 1;
+    if (matchesKindFilter(item, 'video')) counts.video += 1;
+    if (matchesKindFilter(item, 'image')) counts.image += 1;
+    if (matchesKindFilter(item, 'audio')) counts.audio += 1;
+    if (matchesKindFilter(item, 'text')) counts.text += 1;
+  }
+
+  return counts;
+}
+
 export function getSourceBinPreviewKind(item: Pick<SourceBinDisplayItem, 'kind' | 'assetUrl'>): MediaPreviewKind | undefined {
   if (!item.assetUrl) {
     return undefined;
@@ -41,4 +169,113 @@ export function getSourceBinPreviewKind(item: Pick<SourceBinDisplayItem, 'kind' 
   }
 
   return undefined;
+}
+
+export function groupSourceLibraryItems<T extends SourceBinDisplayItem>(
+  items: readonly T[],
+): SourceLibraryDisplayEntry<T>[] {
+  const looseEntries: Array<SourceLibraryDisplayEntry<T>> = [];
+  const envelopeGroups = new Map<string, { label: string; items: T[] }>();
+  const envelopeOrder: string[] = [];
+
+  for (const item of items) {
+    if (!item.envelopeId) {
+      looseEntries.push({ kind: 'item', item });
+      continue;
+    }
+
+    const group = envelopeGroups.get(item.envelopeId);
+    if (group) {
+      group.items.push(item);
+      continue;
+    }
+
+    envelopeOrder.push(item.envelopeId);
+    envelopeGroups.set(item.envelopeId, {
+      label: item.envelopeLabel ?? 'Envelope',
+      items: [item],
+    });
+  }
+
+  return [
+    ...envelopeOrder.map((id) => {
+      const group = envelopeGroups.get(id);
+      const items = group?.items ?? [];
+      return {
+        kind: 'envelope' as const,
+        id,
+        label: group?.label ?? 'Envelope',
+        collapsed: items.some((item) => Boolean(item.envelopeCollapsed)),
+        items: sortSourceBinItemsForDisplay(items),
+      };
+    }),
+    ...looseEntries,
+  ];
+}
+
+export function buildSourceLibraryDisplayRows<T extends SourceBinDisplayItem>(
+  items: readonly T[],
+): SourceLibraryDisplayRow<T>[] {
+  const rows: SourceLibraryDisplayRow<T>[] = [];
+
+  for (const entry of groupSourceLibraryItems(items)) {
+    if (entry.kind === 'item') {
+      rows.push({
+        kind: 'item' as const,
+        key: `item:${entry.item.id}`,
+        item: entry.item,
+      });
+      continue;
+    }
+
+    rows.push({
+      kind: 'envelope-header' as const,
+      key: `envelope:${entry.id}`,
+      id: entry.id,
+      label: entry.label,
+      collapsed: entry.collapsed,
+      itemCount: entry.items.length,
+      items: entry.items,
+    });
+
+    if (!entry.collapsed) {
+      for (const item of entry.items) {
+        rows.push({
+          kind: 'envelope-item' as const,
+          key: `envelope-item:${item.id}`,
+          envelopeId: entry.id,
+          item,
+        });
+      }
+    }
+  }
+
+  return rows;
+}
+
+export function getSourceLibraryDisplayRowHeight<T extends SourceBinDisplayItem & { collapsed?: boolean }>(
+  row: SourceLibraryDisplayRow<T>,
+): number {
+  if (row.kind === 'envelope-header') {
+    return 52;
+  }
+
+  return row.item.collapsed ? 76 : 124;
+}
+
+function matchesKindFilter(item: SourceBinDisplayItem, filter: SourceBinKindFilter): boolean {
+  switch (filter) {
+    case 'all':
+      return true;
+    case 'visual':
+      return item.kind === 'image' || item.kind === 'video' || item.kind === 'composition' || item.kind === 'text';
+    case 'video':
+      return item.kind === 'video' || item.kind === 'composition';
+    case 'image':
+      return item.kind === 'image';
+    case 'audio':
+      return item.kind === 'audio';
+    case 'text':
+      return item.kind === 'text';
+  }
 }

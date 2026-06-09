@@ -1,5 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+contextBridge.exposeInMainWorld(
+  'SIGNAL_LOOM_ENABLE_AUTOMATION_PATHS',
+  process.env.SIGNAL_LOOM_ENABLE_AUTOMATION_PATHS === '1' ? '1' : '0',
+);
+
 function onChannel(channel, callback) {
   const handler = (_event, payload) => callback(payload);
   ipcRenderer.on(channel, handler);
@@ -16,9 +21,24 @@ contextBridge.exposeInMainWorld('signalLoomNative', {
   saveProjectFile: (document) => ipcRenderer.invoke('signal-loom:project-save', document),
   saveProjectFileAs: (document) => ipcRenderer.invoke('signal-loom:project-save-as', document),
   importMediaFiles: (options) => ipcRenderer.invoke('signal-loom:import-media-files', options),
+  normalizeImportedMediaBatch: (items) => ipcRenderer.invoke('signal-loom:normalize-imported-media-batch', items),
+  exportPaperPdf: (request) => ipcRenderer.invoke('signal-loom:paper-export-pdf', request),
+  exportPaperImages: (request) => ipcRenderer.invoke('signal-loom:paper-export-images', request),
+  captureCurrentWindowPng: () => ipcRenderer.invoke('signal-loom:capture-current-window-png'),
+  generateVertexImage: (request) => ipcRenderer.invoke('signal-loom:vertex-generate-image', request),
+  generateVertexText: (request) => ipcRenderer.invoke('signal-loom:vertex-generate-text', request),
+  generateVertexVideo: (request) => ipcRenderer.invoke('signal-loom:vertex-generate-video', request),
+  materializeSourceAsset: (request) => ipcRenderer.invoke('signal-loom:source-asset-materialize', request),
   chooseScratchDirectory: () => ipcRenderer.invoke('signal-loom:choose-scratch-directory'),
+  openWorkspaceWindow: (workspace) => ipcRenderer.invoke('signal-loom:open-workspace-window', workspace),
+  setActiveWorkspace: (workspace) => ipcRenderer.invoke('signal-loom:set-active-workspace', workspace),
+  setKeyboardShortcuts: (shortcuts) => ipcRenderer.invoke('signal-loom:set-keyboard-shortcuts', shortcuts),
+  getSourceLibrarySnapshot: () => ipcRenderer.invoke('signal-loom:source-library-get-snapshot'),
+  syncSourceLibrarySnapshot: (snapshot) => ipcRenderer.invoke('signal-loom:source-library-sync-snapshot', snapshot),
+  applySourceLibraryChange: (change) => ipcRenderer.invoke('signal-loom:source-library-apply-change', change),
   showAbout: () => ipcRenderer.invoke('signal-loom:show-about'),
   openPath: (filePath) => ipcRenderer.invoke('signal-loom:open-path', filePath),
   onMenuCommand: (callback) => onChannel('signal-loom:menu-command', callback),
   onProjectPathChanged: (callback) => onChannel('signal-loom:project-path-changed', callback),
+  onSourceLibraryChanged: (callback) => onChannel('signal-loom:source-library-changed', callback),
 });

@@ -1,33 +1,132 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, shell } from 'electron';
-import { existsSync } from 'node:fs';
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, join, resolve } from 'node:path';
+import { execFile } from 'node:child_process';
+import { existsSync, statSync } from 'node:fs';
+import { copyFile, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import menuModule from './menu.cjs';
+import paperPdfExportModule from './paper-pdf-export.cjs';
+import paperImageExportModule from './paper-image-export.cjs';
 import projectFileModule from './project-files.cjs';
+import mediaFormatRegistryModule from './media-format-registry.cjs';
+import startupProjectModule from './startup-project.cjs';
+import vertexAuthModule from './vertex-auth.cjs';
+import windowOptionsModule from './window-options.cjs';
+import automationPathModule from './automation-paths.cjs';
 
 const { createApplicationMenuTemplate, SIGNAL_LOOM_MENU_COMMANDS } = menuModule;
 const {
+  buildPaperPdfDefaultPath,
+  buildPaperPdfPrintOptions,
+  buildPaperPdfRenderReadyScript,
+  ensurePdfExtension,
+  sanitizePdfFileName,
+} = paperPdfExportModule;
+const {
+  buildPaperImageDefaultDirectoryPath,
+  ensurePaperImageExportDirectory,
+  imageBufferFromDataUrl,
+  sanitizePaperImagePathPart,
+} = paperImageExportModule;
+const {
+  CURRENT_PROJECT_SCHEMA_VERSION,
   SIGNAL_LOOM_PROJECT_EXTENSION,
   attachNativeScratchAssetsToProjectDocument,
+  buildDataUrlAssetSignatureCandidates,
   buildNativeAssetUrl,
+  buildNativeScratchFileName,
+  buildProjectOverwriteBackupPath,
   buildProjectScratchDirectoryCandidates,
-  decodeNativeAssetUrl,
+  collectNativeAssetCapabilitiesFromSourceBin,
+  collectSourceBinItems,
+  createNativeAssetCapabilityRegistry,
   ensureSignalLoomProjectExtension,
+  extractRecoverableMediaSignatureFromSourceKey,
+  getProjectSaveDialogDefaultPath,
+  isSignalLoomProjectBackupPath,
+  mapSourceBinItemsAsync,
+  parseNativeAssetUrl,
   parseProjectDocumentJson,
+  removeTransientRecoveredScratchAssetsFromSourceBin,
   resolveScratchAssetNativePath,
+  sanitizeFileName,
+  shouldWriteProjectSaveDirectly,
 } = projectFileModule;
+const { getElectronDialogFilterGroups } = mediaFormatRegistryModule;
+const {
+  buildStartupProjectStatePath,
+  parseStartupProjectState,
+  resolveStartupProjectPath,
+  serializeStartupProjectState,
+} = startupProjectModule;
+const {
+  buildVertexAccessTokenCommand,
+  buildVertexAuthEnvironment,
+  parseVertexEnvironmentVariables,
+} = vertexAuthModule;
+const {
+  buildWorkspaceWindowOpenResult,
+  focusFloatingPanelChildWindow,
+  isSignalLoomFloatingPanelWindow,
+} = windowOptionsModule;
+const {
+  getAutomationImportMediaPaths,
+  getAutomationPaperImageDirectory,
+  getAutomationPaperPdfPath,
+  getAutomationProjectOpenPath,
+  getAutomationProjectSavePath,
+} = automationPathModule;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const flowImportWorkerUrl = new URL('./flow-import-worker.mjs', import.meta.url);
 const rendererUrl = process.env.ELECTRON_RENDERER_URL;
 const isDev = Boolean(rendererUrl);
 const appName = 'Signal Loom';
+const execFileAsync = promisify(execFile);
 let mainWindow = null;
+const workspaceWindows = new Map();
 let applicationMenu = null;
 let currentProjectPath = undefined;
 let currentScratchDirectoryPath = undefined;
+let currentAssetCapabilityRootPaths = [];
+let startupProject = undefined;
+let activeWorkspace = 'flow';
+let keyboardShortcuts = {};
+let sourceLibraryVersion = 0;
+let sourceLibrarySnapshot = createEmptySourceLibrarySnapshot();
+const nativeAssetCapabilityRegistry = createNativeAssetCapabilityRegistry();
+const nativeAssetCapabilityAssetIds = new Map();
+const nativeAssetCapabilityRealPaths = new Map();
+
+const WORKSPACE_VIEWS = ['flow', 'editor', 'image', 'paper'];
+const WORKSPACE_LABELS = {
+  flow: 'Flow',
+  editor: 'Video',
+  image: 'Image',
+  paper: 'Paper',
+};
+
+const VIEW_COMMAND_WORKSPACES = {
+  [SIGNAL_LOOM_MENU_COMMANDS.viewFlow]: 'flow',
+  [SIGNAL_LOOM_MENU_COMMANDS.viewEditor]: 'editor',
+  [SIGNAL_LOOM_MENU_COMMANDS.viewImage]: 'image',
+  [SIGNAL_LOOM_MENU_COMMANDS.viewPaper]: 'paper',
+};
+
+if (process.platform === 'linux' && process.env.SIGNAL_LOOM_ELECTRON_ENABLE_GPU !== '1') {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
+  app.commandLine.appendSwitch('in-process-gpu');
+}
 
 app.setName(appName);
+const isolatedUserDataDir = process.env.SIGNAL_LOOM_ELECTRON_USER_DATA_DIR?.trim();
+if (isolatedUserDataDir) {
+  app.setPath('userData', resolve(isolatedUserDataDir));
+}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -46,18 +145,452 @@ function getRendererEntryUrl() {
   return rendererUrl ?? pathToFileURL(resolve(__dirname, '../dist/index.html')).toString();
 }
 
+function isWorkspaceView(value) {
+  return typeof value === 'string' && WORKSPACE_VIEWS.includes(value);
+}
+
+function buildWorkspaceRendererUrl(workspace) {
+  const url = new URL(getRendererEntryUrl());
+  url.searchParams.set('workspace', workspace);
+  return url.toString();
+}
+
+function getWorkspaceWindowTitle(workspace) {
+  return `${appName} - ${WORKSPACE_LABELS[workspace] ?? 'Workspace'}`;
+}
+
+function getWorkspaceForWindow(window) {
+  for (const [workspace, workspaceWindow] of workspaceWindows.entries()) {
+    if (workspaceWindow === window) {
+      return workspace;
+    }
+  }
+  return undefined;
+}
+
+function getIpcWindow(event) {
+  return BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
+}
+
+function broadcastProjectPathChanged() {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send('signal-loom:project-path-changed', currentProjectPath);
+    }
+  }
+}
+
+function createEmptySourceLibrarySnapshot() {
+  return {
+    bins: [{
+      id: 'default',
+      name: 'Source Library',
+      collapsed: false,
+      createdAt: Date.now(),
+      items: [],
+    }],
+    dismissedSourceKeys: [],
+  };
+}
+
+function clonePlain(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function normalizeSourceLibrarySnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') {
+    return createEmptySourceLibrarySnapshot();
+  }
+
+  const inputBins = Array.isArray(snapshot.bins) && snapshot.bins.length > 0
+    ? snapshot.bins
+    : Array.isArray(snapshot.items)
+      ? [{ ...createEmptySourceLibrarySnapshot().bins[0], items: snapshot.items }]
+      : [];
+  const bins = inputBins.map((bin, index) => {
+    const input = bin && typeof bin === 'object' ? bin : {};
+    const items = Array.isArray(input.items)
+      ? input.items
+          .filter((item) => item && typeof item === 'object' && typeof item.id === 'string' && typeof item.kind === 'string')
+          .map((item) => ({ ...clonePlain(item), createdAt: typeof item.createdAt === 'number' ? item.createdAt : Date.now() }))
+      : [];
+
+    return {
+      id: typeof input.id === 'string' && input.id.trim() ? input.id : (index === 0 ? 'default' : `bin-${index}`),
+      name: typeof input.name === 'string' && input.name.trim() ? input.name : (index === 0 ? 'Source Library' : 'Recovered Bin'),
+      collapsed: Boolean(input.collapsed),
+      createdAt: typeof input.createdAt === 'number' && Number.isFinite(input.createdAt) ? input.createdAt : Date.now(),
+      items,
+    };
+  });
+
+  return {
+    bins: bins.length > 0 ? bins : createEmptySourceLibrarySnapshot().bins,
+    dismissedSourceKeys: Array.isArray(snapshot.dismissedSourceKeys)
+      ? snapshot.dismissedSourceKeys.filter((key) => typeof key === 'string')
+      : [],
+  };
+}
+
+function getSourceLibrarySnapshot() {
+  return clonePlain(sourceLibrarySnapshot);
+}
+
+async function isPathInsideDirectory(filePath, directoryPath) {
+  if (typeof filePath !== 'string' || typeof directoryPath !== 'string' || !filePath || !directoryPath) {
+    return false;
+  }
+
+  const [realFilePath, realDirectoryPath] = await Promise.all([
+    realpath(filePath).catch(() => undefined),
+    realpath(directoryPath).catch(() => undefined),
+  ]);
+
+  if (!realFilePath || !realDirectoryPath) {
+    return false;
+  }
+
+  const relativePath = relative(realDirectoryPath, realFilePath);
+  return relativePath === '' || Boolean(relativePath && !relativePath.startsWith('..') && !isAbsolute(relativePath));
+}
+
+async function registerNativeAssetCapability(filePath, { allowExternal = false, assetId } = {}) {
+  const capabilityRootPaths = currentAssetCapabilityRootPaths.length > 0
+    ? currentAssetCapabilityRootPaths
+    : [currentScratchDirectoryPath];
+  const isInsideCapabilityRoot = (
+    await Promise.all(capabilityRootPaths.map((directoryPath) => isPathInsideDirectory(filePath, directoryPath)))
+  ).some(Boolean);
+
+  if (!allowExternal && !isInsideCapabilityRoot) {
+    return undefined;
+  }
+
+  const realFilePath = await realpath(filePath).catch(() => undefined);
+  if (!realFilePath) {
+    return undefined;
+  }
+
+  const registeredPath = nativeAssetCapabilityRegistry.register(filePath);
+  if (registeredPath) {
+    nativeAssetCapabilityRealPaths.set(registeredPath, realFilePath);
+    if (typeof assetId === 'string' && assetId.trim()) {
+      nativeAssetCapabilityAssetIds.set(assetId.trim(), registeredPath);
+    }
+  }
+
+  return registeredPath;
+}
+
+async function registerNativeAssetCapabilitiesFromSourceBin(sourceBin, { replace = false } = {}) {
+  const previouslyRegisteredPaths = new Set(nativeAssetCapabilityRegistry.list());
+
+  if (replace) {
+    nativeAssetCapabilityRegistry.clear();
+    nativeAssetCapabilityAssetIds.clear();
+    nativeAssetCapabilityRealPaths.clear();
+  }
+
+  for (const capability of collectNativeAssetCapabilitiesFromSourceBin(sourceBin)) {
+    await registerNativeAssetCapability(capability.filePath, {
+      allowExternal: previouslyRegisteredPaths.has(resolve(capability.filePath)),
+      assetId: capability.assetId,
+    });
+  }
+}
+
+async function isNativeAssetCapabilityRegistered(filePath) {
+  if (!nativeAssetCapabilityRegistry.has(filePath)) {
+    return false;
+  }
+
+  const registeredPath = resolve(filePath);
+  const registeredRealPath = nativeAssetCapabilityRealPaths.get(registeredPath);
+  const currentRealPath = await realpath(filePath).catch(() => undefined);
+  return Boolean(registeredRealPath && currentRealPath && registeredRealPath === currentRealPath);
+}
+
+function broadcastSourceLibraryChanged(change) {
+  const event = {
+    version: sourceLibraryVersion,
+    change: clonePlain(change),
+  };
+
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send('signal-loom:source-library-changed', event);
+    }
+  }
+}
+
+async function setSourceLibrarySnapshot(snapshot, { broadcast = false } = {}) {
+  sourceLibrarySnapshot = normalizeSourceLibrarySnapshot(snapshot);
+  await registerNativeAssetCapabilitiesFromSourceBin(sourceLibrarySnapshot, { replace: true });
+  sourceLibraryVersion += 1;
+
+  if (broadcast) {
+    broadcastSourceLibraryChanged({
+      type: 'source-library-snapshot',
+      snapshot: getSourceLibrarySnapshot(),
+    });
+  }
+
+  return sourceLibraryVersion;
+}
+
+async function resetSourceLibrarySnapshot({ broadcast = false } = {}) {
+  return setSourceLibrarySnapshot(undefined, { broadcast });
+}
+
+async function syncSourceLibraryFromDocument(document, options) {
+  return setSourceLibrarySnapshot(document?.sourceBin, options);
+}
+
+async function applySourceLibraryChange(change) {
+  if (!change || typeof change !== 'object' || typeof change.type !== 'string') {
+    return { error: 'Invalid Source Library change.' };
+  }
+
+  if (change.type === 'source-library-snapshot') {
+    return {
+      ok: true,
+      version: await setSourceLibrarySnapshot(change.snapshot, { broadcast: true }),
+    };
+  }
+
+  if (change.type === 'source-bin-items-added') {
+    const incomingItems = Array.isArray(change.items)
+      ? change.items
+          .filter((item) => item && typeof item === 'object' && typeof item.id === 'string' && typeof item.kind === 'string')
+          .map((item) => clonePlain(item))
+      : [];
+
+    if (incomingItems.length === 0) {
+      return { ok: true, version: sourceLibraryVersion };
+    }
+
+    const normalizedSnapshot = normalizeSourceLibrarySnapshot(sourceLibrarySnapshot);
+    const requestedTargetBinId = typeof change.targetBinId === 'string' && change.targetBinId.trim()
+      ? change.targetBinId
+      : normalizedSnapshot.bins[0]?.id ?? 'default';
+    const targetBinExists = normalizedSnapshot.bins.some((bin) => bin.id === requestedTargetBinId);
+    const targetBinId = targetBinExists ? requestedTargetBinId : normalizedSnapshot.bins[0]?.id ?? 'default';
+    const incomingIds = new Set(incomingItems.map((item) => item.id));
+    const nextBins = normalizedSnapshot.bins.map((bin, index) => {
+      const withoutIncoming = bin.items.filter((item) => !incomingIds.has(item.id));
+      if (bin.id === targetBinId || index === 0 && !normalizedSnapshot.bins.some((candidate) => candidate.id === targetBinId)) {
+        return { ...bin, collapsed: false, items: [...incomingItems, ...withoutIncoming] };
+      }
+
+      return { ...bin, items: withoutIncoming };
+    });
+
+    if (!normalizedSnapshot.bins.some((candidate) => candidate.id === targetBinId) && nextBins.length === 0) {
+      nextBins.push({
+        id: targetBinId,
+        name: 'Source Library',
+        collapsed: false,
+        createdAt: Date.now(),
+        items: incomingItems,
+      });
+    }
+
+    sourceLibrarySnapshot = {
+      ...normalizedSnapshot,
+      bins: nextBins,
+    };
+    await registerNativeAssetCapabilitiesFromSourceBin(sourceLibrarySnapshot, { replace: true });
+    sourceLibraryVersion += 1;
+    broadcastSourceLibraryChanged({
+      type: 'source-bin-items-added',
+      items: incomingItems,
+      ...(targetBinId ? { targetBinId } : {}),
+    });
+    return { ok: true, version: sourceLibraryVersion };
+  }
+
+  if (change.type === 'source-bin-item-renamed') {
+    const itemId = typeof change.itemId === 'string' ? change.itemId.trim() : '';
+    const label = typeof change.label === 'string' ? change.label.trim() : '';
+
+    if (!itemId || !label) {
+      return { ok: true, version: sourceLibraryVersion };
+    }
+
+    let didRename = false;
+    const normalizedSnapshot = normalizeSourceLibrarySnapshot(sourceLibrarySnapshot);
+    sourceLibrarySnapshot = {
+      ...normalizedSnapshot,
+      bins: normalizedSnapshot.bins.map((bin) => ({
+        ...bin,
+        items: bin.items.map((item) => {
+          if (item.id !== itemId || item.label === label) {
+            return item;
+          }
+
+          didRename = true;
+          return { ...item, label };
+        }),
+      })),
+    };
+
+    if (!didRename) {
+      return { ok: true, version: sourceLibraryVersion };
+    }
+
+    await registerNativeAssetCapabilitiesFromSourceBin(sourceLibrarySnapshot, { replace: true });
+    sourceLibraryVersion += 1;
+    broadcastSourceLibraryChanged({ type: 'source-bin-item-renamed', itemId, label });
+    return { ok: true, version: sourceLibraryVersion };
+  }
+
+  if (change.type === 'source-bin-item-removed') {
+    const itemId = typeof change.itemId === 'string' ? change.itemId.trim() : '';
+    if (!itemId) {
+      return { ok: true, version: sourceLibraryVersion };
+    }
+
+    const normalizedSnapshot = normalizeSourceLibrarySnapshot(sourceLibrarySnapshot);
+    let removedSourceKey = typeof change.sourceKey === 'string' ? change.sourceKey : undefined;
+    let didRemove = false;
+    sourceLibrarySnapshot = {
+      ...normalizedSnapshot,
+      bins: normalizedSnapshot.bins.map((bin) => {
+        const nextItems = bin.items.filter((item) => {
+          if (item.id !== itemId) {
+            return true;
+          }
+
+          didRemove = true;
+          removedSourceKey ??= typeof item.sourceKey === 'string' ? item.sourceKey : undefined;
+          return false;
+        });
+        return nextItems.length === bin.items.length ? bin : { ...bin, items: nextItems };
+      }),
+      dismissedSourceKeys: removedSourceKey && !normalizedSnapshot.dismissedSourceKeys.includes(removedSourceKey)
+        ? [...normalizedSnapshot.dismissedSourceKeys, removedSourceKey]
+        : normalizedSnapshot.dismissedSourceKeys,
+    };
+
+    if (!didRemove) {
+      return { ok: true, version: sourceLibraryVersion };
+    }
+
+    await registerNativeAssetCapabilitiesFromSourceBin(sourceLibrarySnapshot, { replace: true });
+    sourceLibraryVersion += 1;
+    broadcastSourceLibraryChanged({
+      type: 'source-bin-item-removed',
+      itemId,
+      ...(removedSourceKey ? { sourceKey: removedSourceKey } : {}),
+    });
+    return { ok: true, version: sourceLibraryVersion };
+  }
+
+  return { error: 'Unsupported Source Library change.' };
+}
+
+function getStartupProjectStatePath() {
+  return buildStartupProjectStatePath(app.getPath('userData'));
+}
+
+async function rememberProjectPath(filePath) {
+  if (isSignalLoomProjectBackupPath(filePath)) {
+    await forgetRememberedProjectPath();
+    return;
+  }
+
+  await mkdir(app.getPath('userData'), { recursive: true });
+  await writeFile(getStartupProjectStatePath(), serializeStartupProjectState(filePath), 'utf8');
+}
+
+async function forgetRememberedProjectPath() {
+  await rm(getStartupProjectStatePath(), { force: true });
+}
+
+async function readRememberedProjectPath() {
+  try {
+    const contents = await readFile(getStartupProjectStatePath(), 'utf8');
+    const rememberedPath = parseStartupProjectState(contents);
+    const resolvedPath = resolveStartupProjectPath(rememberedPath, existsSync);
+    if (rememberedPath && !resolvedPath) {
+      await forgetRememberedProjectPath();
+    }
+    return resolvedPath;
+  } catch {
+    return undefined;
+  }
+}
+
+function setCurrentProjectAssetRoots(filePath, document, scratchDirectoryPath) {
+  currentProjectPath = filePath;
+  currentScratchDirectoryPath = scratchDirectoryPath;
+  currentAssetCapabilityRootPaths = [
+    ...(typeof filePath === 'string' ? buildProjectScratchDirectoryCandidates(filePath, document) : []),
+    scratchDirectoryPath,
+  ].filter((directoryPath) => typeof directoryPath === 'string' && directoryPath.length > 0);
+  currentAssetCapabilityRootPaths = [...new Set(currentAssetCapabilityRootPaths)];
+}
+
+async function loadRememberedStartupProject() {
+  const filePath = await readRememberedProjectPath();
+  if (!filePath) {
+    setCurrentProjectAssetRoots(undefined, undefined, undefined);
+    startupProject = undefined;
+    await resetSourceLibrarySnapshot();
+    return;
+  }
+
+  try {
+    const contents = await readFile(filePath, 'utf8');
+    const prepared = await prepareProjectDocumentForNativeOpen(filePath, parseProjectDocumentJson(contents));
+    setCurrentProjectAssetRoots(filePath, prepared.document, prepared.scratchDirectoryPath);
+    startupProject = {
+      canceled: false,
+      filePath,
+      scratchDirectoryPath: currentScratchDirectoryPath,
+      document: prepared.document,
+    };
+    await syncSourceLibraryFromDocument(prepared.document);
+  } catch {
+    setCurrentProjectAssetRoots(undefined, undefined, undefined);
+    startupProject = undefined;
+    await resetSourceLibrarySnapshot();
+    await forgetRememberedProjectPath();
+  }
+}
+
 function sendRendererCommand(command) {
-  const target = BrowserWindow.getFocusedWindow() ?? mainWindow;
+  const workspace = VIEW_COMMAND_WORKSPACES[command];
+  if (workspace) {
+    createWorkspaceWindow(workspace);
+    return;
+  }
+
+  const target = BrowserWindow.getFocusedWindow() ?? workspaceWindows.get(activeWorkspace) ?? mainWindow;
   target?.webContents.send('signal-loom:menu-command', command);
 }
 
-function createMainWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 960,
-    minWidth: 1024,
-    minHeight: 720,
-    title: appName,
+function createWorkspaceWindow(workspace = 'flow') {
+  if (!isWorkspaceView(workspace)) {
+    return undefined;
+  }
+
+  const existing = workspaceWindows.get(workspace);
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) {
+      existing.restore();
+    }
+    existing.show();
+    existing.focus();
+    return existing;
+  }
+
+  const workspaceWindow = new BrowserWindow({
+    width: workspace === 'flow' ? 1440 : 1320,
+    height: workspace === 'flow' ? 960 : 860,
+    minWidth: workspace === 'flow' ? 1024 : 900,
+    minHeight: workspace === 'flow' ? 720 : 640,
+    title: getWorkspaceWindowTitle(workspace),
     backgroundColor: '#08111d',
     show: false,
     webPreferences: {
@@ -68,51 +601,111 @@ function createMainWindow() {
     },
   });
 
+  workspaceWindow.webContents.setWindowOpenHandler((details) =>
+    buildWorkspaceWindowOpenResult(details, workspaceWindow),
+  );
+
+  workspaceWindow.webContents.on('did-create-window', (childWindow, details) => {
+    if (!isSignalLoomFloatingPanelWindow(details)) {
+      return;
+    }
+
+    const focusFloatingPanel = () => focusFloatingPanelChildWindow(workspaceWindow, childWindow);
+    focusFloatingPanel();
+    childWindow.once('ready-to-show', focusFloatingPanel);
+  });
+
   if (applicationMenu) {
-    mainWindow.setMenu(applicationMenu);
-    mainWindow.setAutoHideMenuBar(false);
-    mainWindow.setMenuBarVisibility(true);
+    workspaceWindow.setMenu(applicationMenu);
+    workspaceWindow.setAutoHideMenuBar(false);
+    workspaceWindow.setMenuBarVisibility(true);
   }
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.maximize();
-    mainWindow?.show();
-  });
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
-
-  void mainWindow.loadURL(getRendererEntryUrl());
-
-  if (isDev) {
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  workspaceWindows.set(workspace, workspaceWindow);
+  if (workspace === 'flow') {
+    mainWindow = workspaceWindow;
   }
+
+  workspaceWindow.once('ready-to-show', () => {
+    if (workspace === 'flow') {
+      workspaceWindow.maximize();
+    }
+    workspaceWindow.show();
+  });
+
+  workspaceWindow.on('focus', () => {
+    activeWorkspace = workspace;
+    installApplicationMenu();
+  });
+
+  workspaceWindow.on('closed', () => {
+    workspaceWindows.delete(workspace);
+    if (workspace === 'flow') {
+      mainWindow = null;
+    }
+  });
+
+  void workspaceWindow.loadURL(buildWorkspaceRendererUrl(workspace));
+
+  if (isDev && workspace === 'flow') {
+    workspaceWindow.webContents.openDevTools({ mode: 'detach' });
+  }
+
+  return workspaceWindow;
 }
 
 function installApplicationMenu() {
   const template = createApplicationMenuTemplate({
     appName,
     isMac: process.platform === 'darwin',
+    activeWorkspace,
+    keyboardShortcuts,
     sendCommand: sendRendererCommand,
   });
 
   applicationMenu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(applicationMenu);
+  for (const window of workspaceWindows.values()) {
+    if (!window.isDestroyed()) {
+      window.setMenu(applicationMenu);
+      window.setAutoHideMenuBar(false);
+      window.setMenuBarVisibility(true);
+    }
+  }
+}
+
+function sanitizeKeyboardShortcutsForMenu(shortcuts) {
+  if (!shortcuts || typeof shortcuts !== 'object') {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(shortcuts)
+      .filter(([command, shortcut]) => typeof command === 'string' && typeof shortcut === 'string' && shortcut.trim())
+      .map(([command, shortcut]) => [command, shortcut.trim()]),
+  );
 }
 
 function getProjectDialogFilters() {
   return [
     { name: 'Signal Loom Project', extensions: [SIGNAL_LOOM_PROJECT_EXTENSION.replace(/^\./, '')] },
-    { name: 'Legacy Signal Loom Project', extensions: ['signal-loom.json', 'json'] },
     { name: 'All Files', extensions: ['*'] },
   ];
 }
 
-async function chooseProjectSavePath(existingPath) {
-  const result = await dialog.showSaveDialog(mainWindow ?? undefined, {
-    title: 'Save Signal Loom Project',
-    defaultPath: existingPath ? ensureSignalLoomProjectExtension(existingPath) : `untitled${SIGNAL_LOOM_PROJECT_EXTENSION}`,
+async function chooseProjectSavePath(existingPath, parentWindow) {
+  const automationPath = getAutomationProjectSavePath(process.env);
+  if (automationPath) {
+    return ensureSignalLoomProjectExtension(automationPath);
+  }
+
+  const defaultPath = getProjectSaveDialogDefaultPath(existingPath);
+
+  const result = await dialog.showSaveDialog(parentWindow ?? mainWindow ?? undefined, {
+    title: isSignalLoomProjectBackupPath(existingPath)
+      ? 'Save Restored Signal Loom Project'
+      : 'Save Signal Loom Project',
+    defaultPath,
     filters: getProjectDialogFilters(),
   });
 
@@ -126,10 +719,18 @@ async function chooseProjectSavePath(existingPath) {
 async function writeProjectDocument(filePath, document) {
   await mkdir(dirname(filePath), { recursive: true });
   const prepared = await prepareProjectDocumentForNativeSave(filePath, document);
+  await backupExistingProjectBeforeOverwrite(filePath);
   await writeFile(filePath, `${JSON.stringify(prepared.document, null, 2)}\n`, 'utf8');
-  currentProjectPath = filePath;
-  currentScratchDirectoryPath = prepared.scratchDirectoryPath;
-  mainWindow?.webContents.send('signal-loom:project-path-changed', currentProjectPath);
+  setCurrentProjectAssetRoots(filePath, prepared.document, prepared.scratchDirectoryPath);
+  startupProject = {
+    canceled: false,
+    filePath,
+    scratchDirectoryPath: currentScratchDirectoryPath,
+    document: prepared.document,
+  };
+  await syncSourceLibraryFromDocument(prepared.document, { broadcast: true });
+  await rememberProjectPath(filePath);
+  broadcastProjectPathChanged();
 
   return {
     canceled: false,
@@ -139,120 +740,67 @@ async function writeProjectDocument(filePath, document) {
   };
 }
 
-function inferMediaKind(filePath) {
-  const extension = extname(filePath).toLowerCase();
+async function backupExistingProjectBeforeOverwrite(filePath) {
+  if (!shouldWriteProjectSaveDirectly(filePath)) return;
 
-  if (['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif'].includes(extension)) {
-    return 'image';
+  try {
+    const existing = await stat(filePath);
+    if (!existing.isFile() || existing.size <= 0) return;
+  } catch {
+    return;
   }
 
-  if (['.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'].includes(extension)) {
-    return 'video';
+  const baseBackupPath = buildProjectOverwriteBackupPath(filePath);
+  let backupPath = baseBackupPath;
+  for (let attempt = 2; existsSync(backupPath); attempt += 1) {
+    backupPath = `${baseBackupPath}-${attempt}`;
   }
-
-  if (['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'].includes(extension)) {
-    return 'audio';
-  }
-
-  return undefined;
+  await copyFile(filePath, backupPath);
 }
 
-function inferMimeType(filePath, kind) {
-  const extension = extname(filePath).toLowerCase();
-  const byExtension = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.webp': 'image/webp',
-    '.gif': 'image/gif',
-    '.avif': 'image/avif',
-    '.mp4': 'video/mp4',
-    '.mov': 'video/quicktime',
-    '.webm': 'video/webm',
-    '.mkv': 'video/x-matroska',
-    '.mp3': 'audio/mpeg',
-    '.wav': 'audio/wav',
-    '.ogg': 'audio/ogg',
-    '.flac': 'audio/flac',
-    '.m4a': 'audio/mp4',
-    '.aac': 'audio/aac',
+async function openProjectDocumentFromPath(filePath) {
+  const contents = await readFile(filePath, 'utf8');
+  const prepared = await prepareProjectDocumentForNativeOpen(filePath, parseProjectDocumentJson(contents));
+  setCurrentProjectAssetRoots(filePath, prepared.document, prepared.scratchDirectoryPath);
+  startupProject = {
+    canceled: false,
+    filePath,
+    scratchDirectoryPath: currentScratchDirectoryPath,
+    document: prepared.document,
   };
+  await syncSourceLibraryFromDocument(prepared.document, { broadcast: true });
+  await rememberProjectPath(filePath);
+  broadcastProjectPathChanged();
 
-  return byExtension[extension] ?? (
-    kind === 'image'
-      ? 'image/png'
-      : kind === 'video'
-        ? 'video/mp4'
-        : 'audio/mpeg'
-  );
+  return {
+    canceled: false,
+    filePath,
+    scratchDirectoryPath: currentScratchDirectoryPath,
+    document: prepared.document,
+  };
 }
 
-function sanitizeFileName(value) {
-  return value
-    .trim()
-    .replace(/[/\\?%*:|"<>]+/g, '-')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'asset';
-}
-
-function getDefaultExtensionForNativeItem(item) {
-  const mimeType = item.mimeType;
-
-  if (mimeType?.includes('png')) {
-    return 'png';
-  }
-
-  if (mimeType?.includes('jpeg') || mimeType?.includes('jpg')) {
-    return 'jpg';
-  }
-
-  if (mimeType?.includes('webp')) {
-    return 'webp';
-  }
-
-  if (mimeType?.includes('wav')) {
-    return 'wav';
-  }
-
-  if (mimeType?.includes('mpeg') || mimeType?.includes('mp3')) {
-    return 'mp3';
-  }
-
-  if (mimeType?.includes('mp4')) {
-    return 'mp4';
-  }
-
-  switch (item.kind) {
-    case 'image':
-      return 'png';
-    case 'audio':
-      return 'mp3';
-    case 'video':
-    case 'composition':
-      return 'mp4';
-    default:
-      return 'bin';
-  }
-}
-
-function ensureFileNameHasExtension(fileName, item) {
-  return extname(fileName) ? fileName : `${fileName}.${getDefaultExtensionForNativeItem(item)}`;
-}
-
-function buildNativeScratchFileName(item) {
-  const idPart = sanitizeFileName(item.id ?? `asset-${Date.now()}`);
-  const labelPart = ensureFileNameHasExtension(sanitizeFileName(item.label ?? item.kind ?? 'asset'), item);
-
-  return `${idPart}-${labelPart}`;
-}
-
-function getNativeFilePathFromAssetUrl(assetUrl) {
+async function getNativeFilePathFromAssetUrl(assetUrl) {
   if (typeof assetUrl !== 'string' || !assetUrl.startsWith('signal-loom-asset://')) {
     return undefined;
   }
 
-  return decodeNativeAssetUrl(assetUrl);
+  let parsedAsset;
+  try {
+    parsedAsset = parseNativeAssetUrl(assetUrl);
+  } catch {
+    return undefined;
+  }
+
+  const filePath = parsedAsset.type === 'asset'
+    ? nativeAssetCapabilityAssetIds.get(parsedAsset.assetId)
+    : parsedAsset.filePath;
+
+  if (!filePath) {
+    return undefined;
+  }
+
+  return await isNativeAssetCapabilityRegistered(filePath) ? filePath : undefined;
 }
 
 function parseDataUrl(dataUrl) {
@@ -277,7 +825,103 @@ function parseDataUrl(dataUrl) {
   };
 }
 
-async function materializeProjectSourceBinItem(item, scratchDirectoryPath, scratchDirectoryPaths = [scratchDirectoryPath]) {
+async function hasUsableNativeAsset(filePath) {
+  try {
+    const fileStats = await stat(filePath);
+    return fileStats.isFile() && fileStats.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+function hasUsableNativeAssetSync(filePath) {
+  try {
+    const fileStats = statSync(filePath);
+    return fileStats.isFile() && fileStats.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function readdirScratchDirectory(scratchDirectoryPath) {
+  try {
+    return await readdir(scratchDirectoryPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+async function buildScratchAssetSignatureRecoveryIndex(sourceBin, scratchDirectoryPath) {
+  const wantedSignatures = new Set(
+    collectSourceBinItems(sourceBin)
+      .map((item) => extractRecoverableMediaSignatureFromSourceKey(item?.sourceKey))
+      .filter(Boolean),
+  );
+
+  if (wantedSignatures.size === 0) {
+    return new Map();
+  }
+
+  const entries = (await readdirScratchDirectory(scratchDirectoryPath))
+    .filter((entry) => entry.isFile())
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const recoveryIndex = new Map();
+
+  for (const entry of entries) {
+    if (recoveryIndex.size >= wantedSignatures.size) {
+      break;
+    }
+
+    const nativeFilePath = join(scratchDirectoryPath, entry.name);
+    const fileStats = await stat(nativeFilePath).catch(() => undefined);
+
+    if (!fileStats?.isFile() || fileStats.size <= 0) {
+      continue;
+    }
+
+    const buffer = await readFile(nativeFilePath).catch(() => undefined);
+
+    if (!buffer?.byteLength) {
+      continue;
+    }
+
+    for (const signature of buildDataUrlAssetSignatureCandidates(buffer, entry.name)) {
+      if (wantedSignatures.has(signature) && !recoveryIndex.has(signature)) {
+        recoveryIndex.set(signature, nativeFilePath);
+      }
+    }
+  }
+
+  return recoveryIndex;
+}
+
+async function attachRecoveredScratchAssetsToSourceBin(sourceBin) {
+  if (!sourceBin) {
+    return sourceBin;
+  }
+
+  // Orphan scratch files are recovery evidence, not authoritative source-library entries.
+  return removeTransientRecoveredScratchAssetsFromSourceBin(sourceBin);
+}
+
+function removeBrokenNativeAssetReference(item, nativeFilePath) {
+  if (typeof item?.assetUrl !== 'string' || !item.assetUrl.startsWith('signal-loom-asset://')) {
+    return item;
+  }
+
+  return {
+    ...item,
+    nativeFilePath,
+    assetUrl: undefined,
+  };
+}
+
+async function materializeProjectSourceBinItem(
+  item,
+  scratchDirectoryPath,
+  scratchDirectoryPaths = [scratchDirectoryPath],
+  sourceKeyAssetRecoveryIndex = new Map(),
+) {
   if (!item || item.kind === 'text') {
     return item;
   }
@@ -287,51 +931,87 @@ async function materializeProjectSourceBinItem(item, scratchDirectoryPath, scrat
   const scratchFileName = item.scratchFileName ?? buildNativeScratchFileName(item);
   const targetPath = join(scratchDirectoryPath, scratchFileName);
   const dataUrlAsset = parseDataUrl(item.assetUrl);
+  const registeredAssetPath = dataUrlAsset ? undefined : await getNativeFilePathFromAssetUrl(item.assetUrl);
   const sourcePath = dataUrlAsset
     ? undefined
-    : resolveScratchAssetNativePath(item, scratchDirectoryPaths, existsSync) ?? getNativeFilePathFromAssetUrl(item.assetUrl);
+    : resolveScratchAssetNativePath(item, scratchDirectoryPaths, existsSync) ?? registeredAssetPath;
 
   if (!sourcePath && !dataUrlAsset && !item.scratchFileName) {
     return item;
   }
 
   try {
-    if (sourcePath && resolve(sourcePath) !== resolve(targetPath)) {
-      await copyFile(sourcePath, targetPath);
+    const sourceKeySignature = extractRecoverableMediaSignatureFromSourceKey(item.sourceKey);
+    const recoveredSourcePath = sourceKeySignature
+      ? sourceKeyAssetRecoveryIndex.get(sourceKeySignature)
+      : undefined;
+    let materializationSourcePath = sourcePath;
+
+    if (materializationSourcePath && !(await hasUsableNativeAsset(materializationSourcePath))) {
+      materializationSourcePath = recoveredSourcePath;
+    } else if (!materializationSourcePath && recoveredSourcePath) {
+      materializationSourcePath = recoveredSourcePath;
+    }
+
+    if (materializationSourcePath && !(await hasUsableNativeAsset(materializationSourcePath))) {
+      throw new Error('Referenced source asset is missing or empty.');
+    }
+
+    if (dataUrlAsset && dataUrlAsset.buffer.byteLength === 0) {
+      throw new Error('Source asset payload is empty.');
+    }
+
+    if (materializationSourcePath && resolve(materializationSourcePath) !== resolve(targetPath)) {
+      await copyFile(materializationSourcePath, targetPath);
     } else if (dataUrlAsset) {
       await writeFile(targetPath, dataUrlAsset.buffer);
     }
+
+    if (!(await hasUsableNativeAsset(targetPath))) {
+      throw new Error('Materialized scratch asset is missing or empty.');
+    }
   } catch {
     // Keep the project document saveable even when a referenced source file was moved.
+    return removeBrokenNativeAssetReference(item, targetPath);
   }
+
+  await registerNativeAssetCapability(targetPath, { assetId: item.id });
 
   return {
     ...item,
     mimeType: item.mimeType ?? dataUrlAsset?.mimeType,
     scratchFileName,
     nativeFilePath: targetPath,
-    assetUrl: buildNativeAssetUrl(targetPath),
+    assetUrl: buildNativeAssetUrl(targetPath, item.id),
   };
 }
 
 async function prepareProjectDocumentForNativeSave(filePath, document) {
   const scratchDirectoryPaths = buildProjectScratchDirectoryCandidates(filePath, document);
   const scratchDirectoryPath = scratchDirectoryPaths[0];
-  const sourceItems = Array.isArray(document?.sourceBin?.items) ? document.sourceBin.items : undefined;
-  const sourceBin = sourceItems
-    ? {
-        ...document.sourceBin,
-        items: await Promise.all(
-          sourceItems.map((item) => materializeProjectSourceBinItem(item, scratchDirectoryPath, scratchDirectoryPaths)),
+  const sourceKeyAssetRecoveryIndex = document?.sourceBin
+    ? await buildScratchAssetSignatureRecoveryIndex(document.sourceBin, scratchDirectoryPath)
+    : new Map();
+  const sourceBin = document?.sourceBin
+    ? await mapSourceBinItemsAsync(
+        document.sourceBin,
+        (item) => materializeProjectSourceBinItem(
+          item,
+          scratchDirectoryPath,
+          scratchDirectoryPaths,
+          sourceKeyAssetRecoveryIndex,
         ),
-      }
+      )
     : document?.sourceBin;
-  const scratchAssetCount = sourceBin?.items?.filter((item) => item.kind !== 'text' && item.scratchFileName).length ?? 0;
+  const scratchAssetCount = collectSourceBinItems(sourceBin)
+    .filter((item) => item.kind !== 'text' && item.scratchFileName)
+    .length;
 
   return {
     scratchDirectoryPath,
     document: {
       ...document,
+      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
       savedAt: Date.now(),
       sourceBin,
       fileSystem: {
@@ -348,57 +1028,80 @@ async function prepareProjectDocumentForNativeSave(filePath, document) {
 async function prepareProjectDocumentForNativeOpen(filePath, document) {
   const scratchDirectoryPaths = buildProjectScratchDirectoryCandidates(filePath, document);
   const scratchDirectoryPath = scratchDirectoryPaths[0];
-  const sourceItems = Array.isArray(document?.sourceBin?.items) ? document.sourceBin.items : undefined;
+  const sourceKeyAssetRecoveryIndex = document?.sourceBin
+    ? await buildScratchAssetSignatureRecoveryIndex(document.sourceBin, scratchDirectoryPath)
+    : new Map();
 
-  if (!sourceItems) {
+  if (!document?.sourceBin) {
+    const openedDocument = attachNativeScratchAssetsToProjectDocument(
+      document,
+      scratchDirectoryPath,
+      hasUsableNativeAssetSync,
+    );
+
     return {
       scratchDirectoryPath,
-      document: attachNativeScratchAssetsToProjectDocument(document, scratchDirectoryPath),
+      document: {
+        ...openedDocument,
+        sourceBin: await attachRecoveredScratchAssetsToSourceBin(openedDocument?.sourceBin, scratchDirectoryPath),
+      },
     };
   }
 
+  const sourceBin = await mapSourceBinItemsAsync(document.sourceBin, async (item) => {
+    if (!item || item.kind === 'text') {
+      return item;
+    }
+
+    if (item.scratchFileName || (typeof item.assetUrl === 'string' && item.assetUrl.startsWith('data:'))) {
+      return materializeProjectSourceBinItem(
+        item,
+        scratchDirectoryPath,
+        scratchDirectoryPaths,
+        sourceKeyAssetRecoveryIndex,
+      );
+    }
+
+    if (item.nativeFilePath) {
+      const nativeFilePath = resolveScratchAssetNativePath(item, scratchDirectoryPaths, existsSync);
+      const fallbackAssetUrl = typeof item.assetUrl === 'string' && item.assetUrl.startsWith('signal-loom-asset://')
+        ? undefined
+        : item.assetUrl;
+
+      return {
+        ...item,
+        nativeFilePath,
+        assetUrl: nativeFilePath && hasUsableNativeAssetSync(nativeFilePath)
+          ? buildNativeAssetUrl(nativeFilePath, item.id)
+          : fallbackAssetUrl,
+      };
+    }
+
+    return item;
+  });
+
+  const openedDocument = attachNativeScratchAssetsToProjectDocument(
+    {
+      ...document,
+      sourceBin: await attachRecoveredScratchAssetsToSourceBin(sourceBin, scratchDirectoryPath),
+    },
+    scratchDirectoryPath,
+    hasUsableNativeAssetSync,
+  );
+
   return {
     scratchDirectoryPath,
-    document: {
-      ...document,
-      sourceBin: {
-        ...document.sourceBin,
-        items: await Promise.all(
-          sourceItems.map(async (item) => {
-            if (!item || item.kind === 'text') {
-              return item;
-            }
-
-            if (item.scratchFileName || (typeof item.assetUrl === 'string' && item.assetUrl.startsWith('data:'))) {
-              return materializeProjectSourceBinItem(item, scratchDirectoryPath, scratchDirectoryPaths);
-            }
-
-            if (item.nativeFilePath) {
-              const nativeFilePath = resolveScratchAssetNativePath(item, scratchDirectoryPaths, existsSync);
-
-              return {
-                ...item,
-                nativeFilePath,
-                assetUrl: nativeFilePath ? buildNativeAssetUrl(nativeFilePath) : item.assetUrl,
-              };
-            }
-
-            return item;
-          }),
-        ),
-      },
-    },
+    document: openedDocument,
   };
 }
 
-async function materializeNativeImport(filePath, scratchDirectoryPath) {
-  const kind = inferMediaKind(filePath);
-
-  if (!kind) {
+async function materializeNativeImport(item, scratchDirectoryPath) {
+  if (!isPlainObject(item) || typeof item.filePath !== 'string' || typeof item.kind !== 'string') {
     return undefined;
   }
 
-  const sourceName = basename(filePath);
+  const filePath = item.filePath;
+  const sourceName = typeof item.label === 'string' && item.label.trim() ? item.label.trim() : basename(filePath);
   const id = globalThis.crypto?.randomUUID?.() ?? `native-asset-${Date.now()}`;
   let storedPath = filePath;
   let scratchFileName;
@@ -410,42 +1113,800 @@ async function materializeNativeImport(filePath, scratchDirectoryPath) {
     await copyFile(filePath, storedPath);
   }
 
+  await registerNativeAssetCapability(storedPath, { allowExternal: true, assetId: id });
+
   return {
     id,
     label: sourceName,
-    kind,
-    mimeType: inferMimeType(storedPath, kind),
-    assetUrl: buildNativeAssetUrl(storedPath),
+    kind: item.kind,
+    mimeType: typeof item.mimeType === 'string' && item.mimeType.trim() ? item.mimeType.trim() : 'application/octet-stream',
+    assetUrl: buildNativeAssetUrl(storedPath, id),
     nativeFilePath: storedPath,
     scratchFileName,
     createdAt: Date.now(),
   };
 }
 
+function sanitizeFlowImportWorkerItems(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return [];
+  }
+
+  return items.flatMap((item) => {
+    if (!isPlainObject(item) || typeof item.filePath !== 'string' || !item.filePath.trim()) {
+      return [];
+    }
+
+    return [{
+      filePath: item.filePath.trim(),
+      ...(typeof item.label === 'string' && item.label.trim() ? { label: item.label.trim() } : {}),
+      ...(typeof item.kind === 'string' && item.kind.trim() ? { kind: item.kind.trim() } : {}),
+      ...(typeof item.mimeType === 'string' && item.mimeType.trim() ? { mimeType: item.mimeType.trim() } : {}),
+    }];
+  });
+}
+
+async function runFlowImportWorker(items) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(flowImportWorkerUrl, { type: 'module' });
+    let settled = false;
+
+    const settle = (fn, value) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      void worker.terminate().catch(() => undefined);
+      fn(value);
+    };
+
+    worker.once('message', (payload) => {
+      if (typeof payload?.error === 'string' && payload.error.trim()) {
+        settle(reject, new Error(payload.error));
+        return;
+      }
+
+      settle(resolve, Array.isArray(payload?.items) ? payload.items : []);
+    });
+    worker.once('error', (error) => settle(reject, error));
+    worker.once('exit', (code) => {
+      if (!settled && code !== 0) {
+        settle(reject, new Error(`Flow import worker exited with code ${code}.`));
+      }
+    });
+    worker.postMessage({
+      type: 'normalize-imported-media-batch',
+      items,
+    });
+  });
+}
+
+async function normalizeImportedMediaBatchInMain(items) {
+  const sanitizedItems = sanitizeFlowImportWorkerItems(items);
+
+  if (sanitizedItems.length === 0) {
+    return [];
+  }
+
+  return runFlowImportWorker(sanitizedItems);
+}
+
+async function choosePaperPdfSavePath(request, parentWindow) {
+  const automationPath = getAutomationPaperPdfPath(process.env);
+  if (automationPath) {
+    return ensurePdfExtension(automationPath);
+  }
+
+  const result = await dialog.showSaveDialog(parentWindow ?? mainWindow ?? undefined, {
+    title: 'Export Paper PDF',
+    defaultPath: buildPaperPdfDefaultPath(request, currentProjectPath),
+    filters: [
+      { name: 'PDF Document', extensions: ['pdf'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+
+  if (result.canceled || !result.filePath) {
+    return undefined;
+  }
+
+  return ensurePdfExtension(result.filePath);
+}
+
+async function choosePaperImageExportDirectory(request, parentWindow) {
+  const directoryName = sanitizePaperImagePathPart(request?.directoryName, 'paper-webcomic-images');
+  const automationDirectory = getAutomationPaperImageDirectory(process.env);
+  if (automationDirectory) {
+    return ensurePaperImageExportDirectory(automationDirectory, directoryName);
+  }
+
+  const result = await dialog.showOpenDialog(parentWindow ?? mainWindow ?? undefined, {
+    title: 'Export Paper Page Images',
+    defaultPath: buildPaperImageDefaultDirectoryPath(request, currentProjectPath),
+    properties: ['openDirectory', 'createDirectory'],
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return undefined;
+  }
+
+  return ensurePaperImageExportDirectory(result.filePaths[0], directoryName);
+}
+
+const PAPER_PDF_RENDER_READY_TIMEOUT_MS = 12000;
+const PAPER_PDF_PRINT_TIMEOUT_MS = 30000;
+
+function withTimeout(promise, timeoutMs, label) {
+  let timeout;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms.`)), timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
+async function waitForPaperPdfRenderReady(exportWindow) {
+  await withTimeout(
+    exportWindow.webContents.executeJavaScript(buildPaperPdfRenderReadyScript(), true),
+    PAPER_PDF_RENDER_READY_TIMEOUT_MS,
+    'Paper PDF render readiness',
+  ).catch(() => undefined);
+}
+
+async function exportPaperPdfToFile(request, filePath) {
+  const tempDir = join(app.getPath('temp'), 'signal-loom-paper-pdf');
+  const tempHtmlPath = join(
+    tempDir,
+    `${Date.now()}-${sanitizePdfFileName(request?.title || request?.fileName || 'paper-document')}.html`,
+  );
+  const exportWindow = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  try {
+    await mkdir(tempDir, { recursive: true });
+    await writeFile(tempHtmlPath, request.html, 'utf8');
+    await exportWindow.loadFile(tempHtmlPath);
+    await waitForPaperPdfRenderReady(exportWindow);
+    const pdf = await withTimeout(
+      exportWindow.webContents.printToPDF(buildPaperPdfPrintOptions(request)),
+      PAPER_PDF_PRINT_TIMEOUT_MS,
+      'Paper PDF print',
+    );
+    await writeFile(filePath, pdf);
+
+    return {
+      canceled: false,
+      filePath,
+      bytes: pdf.byteLength ?? pdf.length ?? 0,
+    };
+  } finally {
+    if (!exportWindow.isDestroyed()) {
+      exportWindow.destroy();
+    }
+    void rm(tempHtmlPath, { force: true }).catch(() => undefined);
+  }
+}
+
+async function exportPaperImagesToDirectory(request, directoryPath) {
+  const pages = Array.isArray(request?.pages) ? request.pages : [];
+  if (!pages.length) {
+    throw new Error('No Paper pages were provided for image export.');
+  }
+
+  await mkdir(directoryPath, { recursive: true });
+  const files = [];
+  let totalBytes = 0;
+
+  for (const page of pages) {
+    const mimeType = page?.mimeType === 'image/jpeg' ? 'image/jpeg' : 'image/png';
+    const fallbackName = `page-${String(page?.pageNumber ?? files.length + 1).padStart(3, '0')}.${mimeType === 'image/jpeg' ? 'jpg' : 'png'}`;
+    const fileName = sanitizePaperImagePathPart(page?.fileName, fallbackName);
+    const buffer = imageBufferFromDataUrl(page?.dataUrl, mimeType);
+    const filePath = join(directoryPath, fileName);
+    await writeFile(filePath, buffer);
+    const bytes = buffer.byteLength ?? buffer.length ?? 0;
+    totalBytes += bytes;
+    files.push({
+      fileName,
+      filePath,
+      pageNumber: Number(page?.pageNumber) || files.length + 1,
+      bytes,
+    });
+  }
+
+  return {
+    canceled: false,
+    directoryPath,
+    files,
+    bytes: totalBytes,
+  };
+}
+
 function installProtocolHandlers() {
   protocol.handle('signal-loom-asset', async (request) => {
-    const filePath = decodeNativeAssetUrl(request.url);
+    const filePath = await getNativeFilePathFromAssetUrl(request.url);
+    if (!filePath) {
+      return new Response('Signal Loom asset capability is not registered for this project.', { status: 403 });
+    }
+
     return net.fetch(pathToFileURL(filePath).toString());
   });
 }
 
-function installIpcHandlers() {
-  ipcMain.handle('signal-loom:get-native-state', () => ({
-    currentProjectPath,
-    currentScratchDirectoryPath,
-    platform: process.platform,
-    isDev,
-  }));
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
-  ipcMain.handle('signal-loom:clear-project-path', () => {
-    currentProjectPath = undefined;
-    currentScratchDirectoryPath = undefined;
-    mainWindow?.webContents.send('signal-loom:project-path-changed', currentProjectPath);
+function sanitizeVertexPathSegment(value, label) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${label} is required.`);
+  }
+
+  const trimmed = value.trim();
+
+  if (!/^[a-zA-Z0-9._-]+$/.test(trimmed)) {
+    throw new Error(`${label} contains unsupported characters.`);
+  }
+
+  return trimmed;
+}
+
+function buildVertexImageEndpoint(request) {
+  const projectId = sanitizeVertexPathSegment(request.projectId, 'Vertex project ID');
+  const location = sanitizeVertexPathSegment(request.location || 'global', 'Vertex location');
+  const modelId = sanitizeVertexPathSegment(request.modelId, 'Vertex model ID');
+  const method = request.route === 'imagen-predict'
+    ? 'predict'
+    : request.route === 'gemini-generate-content'
+      ? 'generateContent'
+      : undefined;
+
+  if (!method) {
+    throw new Error('Unsupported Vertex image route.');
+  }
+
+  return {
+    url: `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:${method}`,
+    projectId,
+    modelId,
+  };
+}
+
+function buildVertexTextEndpoint(request) {
+  const projectId = sanitizeVertexPathSegment(request.projectId, 'Vertex project ID');
+  const location = sanitizeVertexPathSegment(request.location || 'global', 'Vertex location');
+  const modelId = sanitizeVertexPathSegment(request.modelId, 'Vertex model ID');
+
+  return {
+    url: `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:generateContent`,
+    projectId,
+    modelId,
+  };
+}
+
+function sanitizeVertexApiVersion(value) {
+  if (value === 'v1' || value === 'v1beta1' || value === 'v1alpha') {
+    return value;
+  }
+
+  return 'v1';
+}
+
+function buildVertexRegionalHost(location) {
+  return location === 'global'
+    ? 'aiplatform.googleapis.com'
+    : `${location}-aiplatform.googleapis.com`;
+}
+
+function buildVertexVideoEndpoint(request) {
+  const projectId = sanitizeVertexPathSegment(request.projectId, 'Vertex project ID');
+  const location = sanitizeVertexPathSegment(request.location || 'us-central1', 'Vertex location');
+  const modelId = sanitizeVertexPathSegment(request.modelId, 'Vertex model ID');
+  const route = request.route === 'gemini-generate-content'
+    ? 'gemini-generate-content'
+    : request.route === 'veo-predict-long-running'
+      ? 'veo-predict-long-running'
+      : undefined;
+
+  if (!route) {
+    throw new Error('Unsupported Vertex video route.');
+  }
+
+  const apiVersion = route === 'gemini-generate-content'
+    ? sanitizeVertexApiVersion(request.apiVersion || 'v1beta1')
+    : 'v1';
+  const modelPath = `projects/${projectId}/locations/${location}/publishers/google/models/${modelId}`;
+  const baseUrl = `https://${buildVertexRegionalHost(location)}/${apiVersion}/${modelPath}`;
+  const method = route === 'gemini-generate-content' ? 'generateContent' : 'predictLongRunning';
+
+  return {
+    url: `${baseUrl}:${method}`,
+    fetchOperationUrl: `${baseUrl}:fetchPredictOperation`,
+    projectId,
+    modelId,
+    route,
+  };
+}
+
+function resolveVertexQuotaProjectId(request, endpointProjectId) {
+  const quotaProjectId = request?.auth?.quotaProjectId;
+  if (typeof quotaProjectId === 'string' && quotaProjectId.trim()) {
+    return sanitizeVertexPathSegment(quotaProjectId, 'Vertex quota project ID');
+  }
+
+  const envQuotaProjectId = parseVertexEnvironmentVariables(request?.auth?.environmentVariables).GOOGLE_CLOUD_QUOTA_PROJECT;
+  return typeof envQuotaProjectId === 'string' && envQuotaProjectId.trim()
+    ? sanitizeVertexPathSegment(envQuotaProjectId, 'Vertex quota project ID')
+    : endpointProjectId;
+}
+
+async function getGcloudAccessToken(auth) {
+  try {
+    const { command, args } = buildVertexAccessTokenCommand(auth);
+    const commandLabel = args.length ? `${command} ${args.join(' ')}` : command;
+    const { stdout } = await execFileAsync(command, args, {
+      env: buildVertexAuthEnvironment(auth, process.env),
+      timeout: 30000,
+      maxBuffer: 1024 * 1024,
+    });
+    const token = stdout.trim();
+
+    if (!token) {
+      throw new Error('gcloud returned an empty access token.');
+    }
+
+    return token;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not get a Google access token from gcloud. Tried \'${commandLabel}\'. Check Settings > Providers > Vertex AI, then run the listed gcloud login or ADC command. ${message}`);
+  }
+}
+
+function extractVertexGeneratedImage(response) {
+  const candidates = Array.isArray(response?.candidates) ? response.candidates : [];
+
+  for (const candidate of candidates) {
+    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+
+    for (const part of parts) {
+      const inlineData = part?.inlineData ?? part?.inline_data;
+      const data = inlineData?.data;
+
+      if (typeof data === 'string' && data) {
+        return {
+          mimeType: typeof inlineData.mimeType === 'string' ? inlineData.mimeType : 'image/png',
+          data,
+        };
+      }
+    }
+  }
+
+  const predictions = Array.isArray(response?.predictions) ? response.predictions : [];
+
+  for (const prediction of predictions) {
+    const data = prediction?.bytesBase64Encoded
+      ?? prediction?.bytes_base64_encoded
+      ?? prediction?.image?.bytesBase64Encoded
+      ?? prediction?.image?.bytes_base64_encoded;
+
+    if (typeof data === 'string' && data) {
+      return {
+        mimeType: prediction?.mimeType ?? prediction?.image?.mimeType ?? 'image/png',
+        data,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function extractVertexGeneratedText(response) {
+  const candidates = Array.isArray(response?.candidates) ? response.candidates : [];
+  const textParts = [];
+
+  for (const candidate of candidates) {
+    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+
+    for (const part of parts) {
+      if (typeof part?.text === 'string' && part.text.trim()) {
+        textParts.push(part.text);
+      }
+    }
+  }
+
+  return textParts.join('\n').trim();
+}
+
+function extractVertexGeneratedVideo(response) {
+  const responseBody = response?.response ?? response;
+  const videos = Array.isArray(responseBody?.videos) ? responseBody.videos : [];
+
+  for (const video of videos) {
+    const extracted = getVertexVideoPayload(video);
+
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  const generatedSamples = Array.isArray(responseBody?.generateVideoResponse?.generatedSamples)
+    ? responseBody.generateVideoResponse.generatedSamples
+    : [];
+
+  for (const sample of generatedSamples) {
+    const extracted = getVertexVideoPayload(sample?.video ?? sample);
+
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  return undefined;
+}
+
+function getVertexVideoPayload(value) {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const data = stringOrUndefined(value.bytesBase64Encoded)
+    ?? stringOrUndefined(value.bytes_base64_encoded)
+    ?? stringOrUndefined(value.encodedVideo)
+    ?? stringOrUndefined(value.videoBytes)
+    ?? stringOrUndefined(value.video_bytes);
+  const mimeType = stringOrUndefined(value.mimeType)
+    ?? stringOrUndefined(value.mime_type)
+    ?? stringOrUndefined(value.encoding)
+    ?? 'video/mp4';
+  const gcsUri = stringOrUndefined(value.gcsUri) ?? stringOrUndefined(value.gcs_uri);
+  const uri = stringOrUndefined(value.uri);
+
+  if (!data && !gcsUri && !uri) {
+    return undefined;
+  }
+
+  return {
+    mimeType,
+    ...(data ? { data } : {}),
+    ...(gcsUri ? { gcsUri } : {}),
+    ...(uri ? { uri } : {}),
+  };
+}
+
+function stringOrUndefined(value) {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildVertexErrorMessage(status, payload, label = 'generation') {
+  const apiMessage = payload?.error?.message;
+
+  if (typeof apiMessage === 'string' && apiMessage.trim()) {
+    return `Vertex AI ${label} failed (${status}): ${apiMessage}`;
+  }
+
+  return `Vertex AI ${label} failed (${status}).`;
+}
+
+async function generateVertexImage(request) {
+  if (!isPlainObject(request) || !isPlainObject(request.body)) {
+    return { error: 'Invalid Vertex image request.' };
+  }
+
+  try {
+    const endpoint = buildVertexImageEndpoint(request);
+    const token = await getGcloudAccessToken(request.auth);
+    const quotaProjectId = resolveVertexQuotaProjectId(request, endpoint.projectId);
+    const response = await fetch(endpoint.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'x-goog-user-project': quotaProjectId,
+      },
+      body: JSON.stringify(request.body),
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      return { error: buildVertexErrorMessage(response.status, payload, 'image generation') };
+    }
+
+    const image = extractVertexGeneratedImage(payload);
+
+    if (!image) {
+      return { error: 'Vertex AI returned no image data.' };
+    }
+
+    return {
+      result: `data:${image.mimeType};base64,${image.data}`,
+      resultType: 'image',
+      mimeType: image.mimeType,
+      statusMessage: `Generated with ${endpoint.modelId}`,
+    };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Vertex AI image generation failed.',
+    };
+  }
+}
+
+async function generateVertexText(request) {
+  if (!isPlainObject(request) || !isPlainObject(request.body)) {
+    return { error: 'Invalid Vertex text request.' };
+  }
+
+  try {
+    const endpoint = buildVertexTextEndpoint(request);
+    const token = await getGcloudAccessToken(request.auth);
+    const quotaProjectId = resolveVertexQuotaProjectId(request, endpoint.projectId);
+    const response = await fetch(endpoint.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'x-goog-user-project': quotaProjectId,
+      },
+      body: JSON.stringify(request.body),
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      return { error: buildVertexErrorMessage(response.status, payload, 'text generation') };
+    }
+
+    const text = extractVertexGeneratedText(payload);
+
+    if (!text) {
+      return { error: 'Vertex AI returned no text content.' };
+    }
+
+    return {
+      text,
+      statusMessage: `Generated with ${endpoint.modelId}`,
+    };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Vertex AI text generation failed.',
+    };
+  }
+}
+
+async function generateVertexVideo(request) {
+  if (!isPlainObject(request) || !isPlainObject(request.body)) {
+    return { error: 'Invalid Vertex video request.' };
+  }
+
+  try {
+    const endpoint = buildVertexVideoEndpoint(request);
+    const token = await getGcloudAccessToken(request.auth);
+    const quotaProjectId = resolveVertexQuotaProjectId(request, endpoint.projectId);
+    const initialResponse = await fetch(endpoint.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'x-goog-user-project': quotaProjectId,
+      },
+      body: JSON.stringify(request.body),
+    });
+    const initialPayload = await initialResponse.json().catch(() => ({}));
+
+    if (!initialResponse.ok) {
+      return { error: buildVertexErrorMessage(initialResponse.status, initialPayload, 'video generation') };
+    }
+
+    const finalPayload = endpoint.route === 'veo-predict-long-running'
+      ? await pollVertexVideoOperation({
+          endpoint,
+          operation: initialPayload,
+          token,
+          quotaProjectId,
+        })
+      : initialPayload;
+    const video = extractVertexGeneratedVideo(finalPayload);
+
+    if (!video) {
+      return { error: 'Vertex AI returned no video data.' };
+    }
+
+    const materialized = await materializeVertexVideo(video, token, quotaProjectId);
+
+    return {
+      result: materialized.result,
+      resultType: 'video',
+      mimeType: materialized.mimeType,
+      statusMessage: `Generated with ${endpoint.modelId}`,
+    };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Vertex AI video generation failed.',
+    };
+  }
+}
+
+async function pollVertexVideoOperation({ endpoint, operation, token, quotaProjectId }) {
+  let currentOperation = operation;
+
+  for (let attempt = 0; attempt < 45; attempt += 1) {
+    if (currentOperation?.error) {
+      throw new Error(currentOperation.error.message || 'Vertex AI video operation failed.');
+    }
+
+    if (currentOperation?.done) {
+      return currentOperation;
+    }
+
+    if (!currentOperation?.name) {
+      throw new Error('Vertex AI video generation started without an operation name.');
+    }
+
+    await sleep(10_000);
+    const response = await fetch(endpoint.fetchOperationUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'x-goog-user-project': quotaProjectId,
+      },
+      body: JSON.stringify({
+        operationName: currentOperation.name,
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(buildVertexErrorMessage(response.status, payload, 'video operation polling'));
+    }
+
+    currentOperation = payload;
+  }
+
+  throw new Error('Vertex AI video generation timed out after waiting 7.5 minutes.');
+}
+
+async function materializeVertexVideo(video, token, quotaProjectId) {
+  if (video.data) {
+    return {
+      result: `data:${video.mimeType};base64,${video.data}`,
+      mimeType: video.mimeType,
+    };
+  }
+
+  const url = video.gcsUri
+    ? vertexGcsUriToDownloadUrl(video.gcsUri)
+    : video.uri;
+
+  if (!url) {
+    throw new Error('Vertex AI returned a video reference that Signal Loom could not download.');
+  }
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'x-goog-user-project': quotaProjectId,
+    },
+  });
+
+  if (!response.ok) {
+    const payload = await response.text().catch(() => '');
+    throw new Error(payload.trim() || `Vertex AI video download failed (${response.status}).`);
+  }
+
+  const mimeType = response.headers.get('content-type') || video.mimeType || 'video/mp4';
+  const buffer = Buffer.from(await response.arrayBuffer());
+
+  return {
+    result: `data:${mimeType};base64,${buffer.toString('base64')}`,
+    mimeType,
+  };
+}
+
+function vertexGcsUriToDownloadUrl(gcsUri) {
+  const match = /^gs:\/\/([^/]+)\/(.+)$/.exec(gcsUri);
+
+  if (!match) {
+    return undefined;
+  }
+
+  const [, bucket, objectName] = match;
+  return `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}?alt=media`;
+}
+
+async function materializeSourceAsset(request) {
+  if (!currentScratchDirectoryPath) {
+    return { error: 'No active Signal Loom scratch directory is available.' };
+  }
+
+  if (!isPlainObject(request) || typeof request.dataUrl !== 'string') {
+    return { error: 'Invalid source asset materialization request.' };
+  }
+
+  try {
+    const now = Date.now();
+    const item = {
+      id: typeof request.id === 'string' && request.id.trim() ? request.id : `source-bin-${now}`,
+      label: typeof request.label === 'string' && request.label.trim() ? request.label : 'Generated asset',
+      kind: typeof request.kind === 'string' && request.kind.trim() ? request.kind : 'image',
+      mimeType: typeof request.mimeType === 'string' && request.mimeType.trim() ? request.mimeType : 'application/octet-stream',
+      assetUrl: request.dataUrl,
+      pixelWidth: Number.isFinite(request.pixelWidth) ? request.pixelWidth : undefined,
+      pixelHeight: Number.isFinite(request.pixelHeight) ? request.pixelHeight : undefined,
+      createdAt: Number.isFinite(request.createdAt) ? request.createdAt : now,
+      sourceKey: typeof request.sourceKey === 'string' ? request.sourceKey : undefined,
+      originNodeId: typeof request.originNodeId === 'string' ? request.originNodeId : undefined,
+      isGenerated: typeof request.isGenerated === 'boolean' ? request.isGenerated : undefined,
+      starred: typeof request.starred === 'boolean' ? request.starred : undefined,
+      collapsed: typeof request.collapsed === 'boolean' ? request.collapsed : undefined,
+      envelopeId: typeof request.envelopeId === 'string' ? request.envelopeId : undefined,
+      envelopeLabel: typeof request.envelopeLabel === 'string' ? request.envelopeLabel : undefined,
+      envelopeIndex: Number.isFinite(request.envelopeIndex) ? request.envelopeIndex : undefined,
+      envelopeCollapsed: typeof request.envelopeCollapsed === 'boolean' ? request.envelopeCollapsed : undefined,
+    };
+
+    const materializedItem = await materializeProjectSourceBinItem(item, currentScratchDirectoryPath, [currentScratchDirectoryPath]);
+
+    if (
+      typeof materializedItem?.nativeFilePath !== 'string'
+      || !(await hasUsableNativeAsset(materializedItem.nativeFilePath))
+      || typeof materializedItem.assetUrl !== 'string'
+      || !materializedItem.assetUrl.startsWith('signal-loom-asset://')
+    ) {
+      return { error: 'Could not write the source asset into the active scratch folder.' };
+    }
+
+    return {
+      item: materializedItem,
+    };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Could not materialize the source asset into the scratch folder.',
+    };
+  }
+}
+
+function installIpcHandlers() {
+  ipcMain.handle('signal-loom:get-native-state', (event) => {
+    const window = getIpcWindow(event);
+    return {
+      currentProjectPath,
+      currentScratchDirectoryPath,
+      startupProject,
+      workspace: window ? getWorkspaceForWindow(window) ?? activeWorkspace : activeWorkspace,
+      platform: process.platform,
+      isDev,
+    };
+  });
+
+  ipcMain.handle('signal-loom:clear-project-path', async () => {
+    setCurrentProjectAssetRoots(undefined, undefined, undefined);
+    startupProject = undefined;
+    await resetSourceLibrarySnapshot({ broadcast: true });
+    void forgetRememberedProjectPath().catch(() => undefined);
+    broadcastProjectPathChanged();
     return { ok: true };
   });
 
-  ipcMain.handle('signal-loom:project-open', async () => {
-    const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+  ipcMain.handle('signal-loom:project-open', async (event) => {
+    const automationPath = getAutomationProjectOpenPath(process.env);
+    if (automationPath) {
+      return openProjectDocumentFromPath(automationPath);
+    }
+
+    const result = await dialog.showOpenDialog(getIpcWindow(event), {
       title: 'Open Signal Loom Project',
       properties: ['openFile'],
       filters: getProjectDialogFilters(),
@@ -455,23 +1916,16 @@ function installIpcHandlers() {
       return { canceled: true };
     }
 
-    const filePath = result.filePaths[0];
-    const contents = await readFile(filePath, 'utf8');
-    const prepared = await prepareProjectDocumentForNativeOpen(filePath, parseProjectDocumentJson(contents));
-    currentProjectPath = filePath;
-    currentScratchDirectoryPath = prepared.scratchDirectoryPath;
-    mainWindow?.webContents.send('signal-loom:project-path-changed', currentProjectPath);
-
-    return {
-      canceled: false,
-      filePath,
-      scratchDirectoryPath: currentScratchDirectoryPath,
-      document: prepared.document,
-    };
+    return openProjectDocumentFromPath(result.filePaths[0]);
   });
 
-  ipcMain.handle('signal-loom:project-save', async (_event, document) => {
-    const filePath = currentProjectPath ?? await chooseProjectSavePath();
+  ipcMain.handle('signal-loom:project-save', async (event, document) => {
+    const automationPath = getAutomationProjectSavePath(process.env);
+    const filePath = automationPath
+      ? ensureSignalLoomProjectExtension(automationPath)
+      : shouldWriteProjectSaveDirectly(currentProjectPath)
+      ? currentProjectPath
+      : await chooseProjectSavePath(currentProjectPath, getIpcWindow(event));
 
     if (!filePath) {
       return { canceled: true };
@@ -480,8 +1934,8 @@ function installIpcHandlers() {
     return writeProjectDocument(filePath, document);
   });
 
-  ipcMain.handle('signal-loom:project-save-as', async (_event, document) => {
-    const filePath = await chooseProjectSavePath(currentProjectPath);
+  ipcMain.handle('signal-loom:project-save-as', async (event, document) => {
+    const filePath = await chooseProjectSavePath(currentProjectPath, getIpcWindow(event));
 
     if (!filePath) {
       return { canceled: true };
@@ -490,25 +1944,33 @@ function installIpcHandlers() {
     return writeProjectDocument(filePath, document);
   });
 
-  ipcMain.handle('signal-loom:import-media-files', async (_event, options = {}) => {
-    const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
-      title: 'Import Media',
-      properties: ['openFile', 'multiSelections'],
-      filters: [
-        { name: 'Media', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif', 'mp4', 'mov', 'mkv', 'webm', 'mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'] },
-        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif'] },
-        { name: 'Video', extensions: ['mp4', 'mov', 'mkv', 'webm'] },
-        { name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-    });
+  ipcMain.handle('signal-loom:normalize-imported-media-batch', async (_event, items) => {
+    return normalizeImportedMediaBatchInMain(items);
+  });
 
-    if (result.canceled || result.filePaths.length === 0) {
-      return { canceled: true, items: [] };
+  ipcMain.handle('signal-loom:import-media-files', async (event, options = {}) => {
+    const automationPaths = getAutomationImportMediaPaths(process.env);
+    let filePaths = automationPaths;
+
+    if (!filePaths) {
+      const result = await dialog.showOpenDialog(getIpcWindow(event), {
+        title: 'Import Media',
+        properties: ['openFile', 'multiSelections'],
+        filters: getElectronDialogFilterGroups(),
+      });
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { canceled: true, items: [] };
+      }
+
+      filePaths = result.filePaths;
     }
 
+    const normalizedItems = await normalizeImportedMediaBatchInMain(
+      filePaths.map((filePath) => ({ filePath })),
+    );
     const items = await Promise.all(
-      result.filePaths.map((filePath) => materializeNativeImport(filePath, options.scratchDirectoryPath)),
+      normalizedItems.map((item) => materializeNativeImport(item, options.scratchDirectoryPath)),
     );
 
     return {
@@ -517,8 +1979,106 @@ function installIpcHandlers() {
     };
   });
 
-  ipcMain.handle('signal-loom:choose-scratch-directory', async () => {
-    const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+  ipcMain.handle('signal-loom:paper-export-pdf', async (event, request) => {
+    if (!request || typeof request.html !== 'string' || !request.html.trim()) {
+      return {
+        canceled: false,
+        error: 'No Paper document HTML was provided for PDF export.',
+      };
+    }
+
+    const filePath = await choosePaperPdfSavePath(request, getIpcWindow(event));
+
+    if (!filePath) {
+      return { canceled: true };
+    }
+
+    try {
+      return await exportPaperPdfToFile(request, filePath);
+    } catch (error) {
+      return {
+        canceled: false,
+        error: error instanceof Error ? error.message : 'Failed to export the Paper PDF.',
+      };
+    }
+  });
+
+  ipcMain.handle('signal-loom:paper-export-images', async (event, request) => {
+    if (!request || !Array.isArray(request.pages) || request.pages.length === 0) {
+      return {
+        canceled: false,
+        error: 'No Paper page images were provided for export.',
+      };
+    }
+
+    const directoryPath = await choosePaperImageExportDirectory(request, getIpcWindow(event));
+
+    if (!directoryPath) {
+      return { canceled: true };
+    }
+
+    try {
+      return await exportPaperImagesToDirectory(request, directoryPath);
+    } catch (error) {
+      return {
+        canceled: false,
+        error: error instanceof Error ? error.message : 'Failed to export Paper page images.',
+      };
+    }
+  });
+
+  ipcMain.handle('signal-loom:capture-current-window-png', async (event) => {
+    const window = getIpcWindow(event);
+    if (!window || window.isDestroyed()) {
+      return {
+        canceled: false,
+        error: 'No active Electron window was available to capture.',
+      };
+    }
+
+    try {
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+      const image = await withTimeout(
+        window.webContents.capturePage(),
+        10000,
+        'Current window capture',
+      );
+      const size = image.getSize();
+      return {
+        canceled: false,
+        mimeType: 'image/png',
+        base64: image.toPNG().toString('base64'),
+        width: size.width,
+        height: size.height,
+      };
+    } catch (error) {
+      return {
+        canceled: false,
+        error: error instanceof Error ? error.message : 'Failed to capture the current Electron window.',
+      };
+    }
+  });
+
+  ipcMain.handle('signal-loom:vertex-generate-image', async (_event, request) => {
+    return generateVertexImage(request);
+  });
+
+  ipcMain.handle('signal-loom:vertex-generate-text', async (_event, request) => {
+    return generateVertexText(request);
+  });
+
+  ipcMain.handle('signal-loom:vertex-generate-video', async (_event, request) => {
+    return generateVertexVideo(request);
+  });
+
+  ipcMain.handle('signal-loom:source-asset-materialize', async (_event, request) => {
+    return materializeSourceAsset(request);
+  });
+
+  ipcMain.handle('signal-loom:choose-scratch-directory', async (event) => {
+    const result = await dialog.showOpenDialog(getIpcWindow(event), {
       title: 'Choose Signal Loom Scratch Folder',
       properties: ['openDirectory', 'createDirectory'],
     });
@@ -527,7 +2087,7 @@ function installIpcHandlers() {
       return { canceled: true };
     }
 
-    currentScratchDirectoryPath = result.filePaths[0];
+    setCurrentProjectAssetRoots(currentProjectPath, startupProject?.document, result.filePaths[0]);
 
     return {
       canceled: false,
@@ -535,8 +2095,50 @@ function installIpcHandlers() {
     };
   });
 
-  ipcMain.handle('signal-loom:show-about', async () => {
-    await dialog.showMessageBox(mainWindow ?? undefined, {
+  ipcMain.handle('signal-loom:open-workspace-window', async (_event, workspace) => {
+    if (!isWorkspaceView(workspace)) {
+      return { error: 'Unknown workspace.' };
+    }
+
+    createWorkspaceWindow(workspace);
+
+    return { ok: true, workspace };
+  });
+
+  ipcMain.handle('signal-loom:set-active-workspace', async (_event, workspace) => {
+    if (!['flow', 'editor', 'image', 'paper'].includes(workspace)) {
+      return { error: 'Unknown workspace.' };
+    }
+
+    if (activeWorkspace !== workspace) {
+      activeWorkspace = workspace;
+      installApplicationMenu();
+    }
+
+    return { ok: true };
+  });
+
+  ipcMain.handle('signal-loom:set-keyboard-shortcuts', async (_event, shortcuts) => {
+    keyboardShortcuts = sanitizeKeyboardShortcutsForMenu(shortcuts);
+    installApplicationMenu();
+
+    return { ok: true };
+  });
+
+  ipcMain.handle('signal-loom:source-library-get-snapshot', async () => ({
+    version: sourceLibraryVersion,
+    snapshot: getSourceLibrarySnapshot(),
+  }));
+
+  ipcMain.handle('signal-loom:source-library-sync-snapshot', async (_event, snapshot) => ({
+    ok: true,
+    version: await setSourceLibrarySnapshot(snapshot, { broadcast: true }),
+  }));
+
+  ipcMain.handle('signal-loom:source-library-apply-change', async (_event, change) => applySourceLibraryChange(change));
+
+  ipcMain.handle('signal-loom:show-about', async (event) => {
+    await dialog.showMessageBox(getIpcWindow(event), {
       type: 'info',
       title: `About ${appName}`,
       message: appName,
@@ -555,15 +2157,16 @@ function installIpcHandlers() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   installProtocolHandlers();
   installIpcHandlers();
   installApplicationMenu();
-  createMainWindow();
+  await loadRememberedStartupProject();
+  createWorkspaceWindow('flow');
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
+      createWorkspaceWindow('flow');
     }
   });
 });

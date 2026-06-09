@@ -1,33 +1,60 @@
 import React from 'react';
-import { Download, FolderOpen, Maximize2, Minimize2, Minus, Play, Plus, Redo2, Settings, Undo2 } from 'lucide-react';
+import { Command, Download, FolderOpen, Library, Maximize2, Minimize2, Minus, Play, Plus, Redo2, Settings, Undo2 } from 'lucide-react';
 import { useReactFlow, useViewport } from '@xyflow/react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useFlowStore } from '../../store/flowStore';
 import { useEditorStore } from '../../store/editorStore';
+import { useImageEditorStore } from '../../store/imageEditorStore';
 import { useSourceBinStore } from '../../store/sourceBinStore';
+import { useDockablePanelStore } from '../../store/dockablePanelStore';
 import { ProjectLibraryModal } from './ProjectLibraryModal';
 import { APP_EYEBROW, APP_NAME } from '../../lib/brand';
-import { APP_MENU_GROUPS, shouldShowIntegratedAppMenu } from '../../lib/appMenuModel';
+import { buildAppMenuGroups, shouldShowIntegratedAppMenu } from '../../lib/appMenuModel';
 import { dispatchNativeRendererCommand, getSignalLoomNativeBridge, type NativeMenuCommand } from '../../lib/nativeApp';
+import type { ActivityTrailSource } from '../../lib/activityTrail';
+import {
+  applyVideoDockablePanelVisibility,
+  type VideoPanelVisibilityKey,
+} from '../../lib/videoDockablePanelVisibility';
+import { fitToContainer, zoomViewportStepAroundCenter } from '../ImageEditor/viewport';
 import {
   TITLEBAR_LOGO_ALT,
   TITLEBAR_LOGO_CONTAINER_CLASS,
   TITLEBAR_LOGO_IMAGE_CLASS,
   TITLEBAR_LOGO_SRC,
 } from '../../lib/titlebarBrand';
+import { PAPER_TOPBAR_SLOT_ID } from '../../lib/paperTopbarSlot';
+import { BottomToolbar } from './BottomToolbar';
+import type { FlowNodeType, NodeData, WorkspaceView } from '../../types/flow';
+import { FunctionLibraryDrawer } from '../Common/FunctionLibraryDrawer';
+import { FlowWorkspaceSwitcher } from '../../features/flow/workspace/FlowWorkspaceSwitcher';
+import { useFlowWorkspaceCommands } from '../../features/flow/workspace/useFlowWorkspaceCommands';
+import {
+  createFunctionNodeDataFromLibraryFunction,
+  createLibraryFunctionFromFunctionNode,
+  getFunctionLibraryEntries,
+  type StandardLibraryFunction,
+} from '../../lib/standardLibrary';
 
 interface TopNavbarProps {
-  onMenuCommand?: (command: NativeMenuCommand) => void;
+  onMenuCommand?: (command: NativeMenuCommand, source?: ActivityTrailSource) => void;
+  flowWorkspaceMetricLabel?: string;
+  workspaceView?: WorkspaceView;
 }
 
-export const TopNavbar: React.FC<TopNavbarProps> = ({ onMenuCommand }) => {
+export const TopNavbar: React.FC<TopNavbarProps> = ({
+  onMenuCommand,
+  flowWorkspaceMetricLabel,
+  workspaceView: workspaceViewOverride,
+}) => {
   const toggleSettings = useSettingsStore((state) => state.toggleSettings);
+  const keyboardShortcuts = useSettingsStore((state) => state.keyboardShortcuts);
   const exportFlow = useFlowStore((state) => state.exportFlow);
   const nodes = useFlowStore((state) => state.nodes);
   const addNode = useFlowStore((state) => state.addNode);
   const runNode = useFlowStore((state) => state.runNode);
-  const workspaceView = useEditorStore((state) => state.workspaceView);
-  const setWorkspaceView = useEditorStore((state) => state.setWorkspaceView);
+  const storedWorkspaceView = useEditorStore((state) => state.workspaceView);
+  const workspaceView = workspaceViewOverride ?? storedWorkspaceView;
   const activeCompositionId = useEditorStore((state) => state.activeCompositionId);
   const sourceBinVisible = useEditorStore((state) => state.sourceBinVisible);
   const sourceMonitorVisible = useEditorStore((state) => state.sourceMonitorVisible);
@@ -36,11 +63,19 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onMenuCommand }) => {
   const setActiveSourceBinId = useEditorStore((state) => state.setActiveSourceBinId);
   const setActiveCompositionId = useEditorStore((state) => state.setActiveCompositionId);
   const setPanelVisibility = useEditorStore((state) => state.setPanelVisibility);
-  const sourceBinItems = useSourceBinStore((state) => state.items);
+  const dockVideoPanel = useDockablePanelStore((state) => state.dockPanel);
+  const hideVideoPanel = useDockablePanelStore((state) => state.hidePanel);
+  const activeImageDocument = useImageEditorStore((state) =>
+    state.documents.find((doc) => doc.id === state.activeDocId) ?? null,
+  );
+  const imageViewportContainerSize = useImageEditorStore((state) => state.viewportContainerSize);
+  const setImageViewport = useImageEditorStore((state) => state.setViewport);
+  const sourceBinItemCount = useSourceBinStore((state) => state.bins.reduce((sum, bin) => sum + bin.items.length, 0));
   const { zoom } = useViewport();
   const { fitView, screenToFlowPosition, zoomIn, zoomOut } = useReactFlow();
   const [copyState, setCopyState] = React.useState<'idle' | 'copied' | 'error'>('idle');
   const [isProjectLibraryOpen, setProjectLibraryOpen] = React.useState(false);
+  const [isFunctionLibraryOpen, setFunctionLibraryOpen] = React.useState(false);
   const [isFullscreen, setFullscreen] = React.useState(Boolean(document.fullscreenElement));
   const [openMenuId, setOpenMenuId] = React.useState<string | null>(null);
   const [showIntegratedMenu] = React.useState(() =>
@@ -55,8 +90,25 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onMenuCommand }) => {
     () => nodes.filter((node) => node.type === 'composition'),
     [nodes],
   );
+  const customFunctionLibraryEntries = React.useMemo(
+    () => nodes.flatMap((node) => createLibraryFunctionFromFunctionNode(node) ?? []),
+    [nodes],
+  );
   const activeComposition = compositionNodes.find((node) => node.id === activeCompositionId);
   const isCompositionRendering = Boolean(activeComposition?.data.isRunning);
+  const isImageWorkspace = workspaceView === 'image';
+  const isPaperWorkspace = workspaceView === 'paper';
+  const showBrand = workspaceView !== 'paper';
+  const showGenericViewportControls = !isPaperWorkspace;
+  const appMenuGroups = React.useMemo(() => buildAppMenuGroups(workspaceView, keyboardShortcuts), [keyboardShortcuts, workspaceView]);
+  const imageViewportReady =
+    Boolean(activeImageDocument) &&
+    imageViewportContainerSize.width > 0 &&
+    imageViewportContainerSize.height > 0;
+  const visibleZoom =
+    isImageWorkspace && activeImageDocument ? activeImageDocument.viewport.zoom : zoom;
+  const primaryControlsFlexClass = isPaperWorkspace || workspaceView === 'flow' ? 'shrink-0' : 'flex-1';
+  const flowWorkspaceCommands = useFlowWorkspaceCommands();
 
   React.useEffect(() => {
     const updateFullscreenState = () => setFullscreen(Boolean(document.fullscreenElement));
@@ -104,9 +156,9 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onMenuCommand }) => {
     await document.documentElement.requestFullscreen();
   };
 
-  const handleMenuCommand = (command: NativeMenuCommand) => {
+  const handleMenuCommand = (command: NativeMenuCommand, source: ActivityTrailSource = 'menu') => {
     setOpenMenuId(null);
-    onMenuCommand?.(command);
+    onMenuCommand?.(command, source);
   };
 
   const getNewFlowNodePosition = React.useCallback(() => (
@@ -122,6 +174,15 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onMenuCommand }) => {
     setActiveCompositionId(addNode('composition', getNewFlowNodePosition()));
   }, [addNode, getNewFlowNodePosition, setActiveCompositionId]);
 
+  const addFlowNodeFromTopbar = React.useCallback((type: FlowNodeType, initialData?: Partial<NodeData>) => {
+    addNode(type, getNewFlowNodePosition(), initialData);
+  }, [addNode, getNewFlowNodePosition]);
+
+  const insertFunctionLibraryEntry = React.useCallback((func: StandardLibraryFunction) => {
+    addFlowNodeFromTopbar('functionNode', createFunctionNodeDataFromLibraryFunction(func));
+    setFunctionLibraryOpen(false);
+  }, [addFlowNodeFromTopbar]);
+
   const renderActiveComposition = React.useCallback(() => {
     if (!activeComposition || isCompositionRendering) {
       return;
@@ -130,33 +191,121 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onMenuCommand }) => {
     void runNode(activeComposition.id);
   }, [activeComposition, isCompositionRendering, runNode]);
 
+  const toggleVideoPanel = React.useCallback(
+    (panel: VideoPanelVisibilityKey, visible: boolean) => {
+      applyVideoDockablePanelVisibility(panel, visible, {
+        dockPanel: dockVideoPanel,
+        hidePanel: hideVideoPanel,
+        setPanelVisibility,
+      });
+    },
+    [dockVideoPanel, hideVideoPanel, setPanelVisibility],
+  );
+
+  const handleZoomOut = React.useCallback(() => {
+    if (isImageWorkspace) {
+      if (!activeImageDocument || !imageViewportReady) return;
+      setImageViewport(
+        activeImageDocument.id,
+        zoomViewportStepAroundCenter(
+          activeImageDocument.viewport,
+          imageViewportContainerSize,
+          'out',
+        ),
+      );
+      return;
+    }
+
+    void zoomOut();
+  }, [
+    activeImageDocument,
+    imageViewportContainerSize,
+    imageViewportReady,
+    isImageWorkspace,
+    setImageViewport,
+    zoomOut,
+  ]);
+
+  const handleZoomFit = React.useCallback(() => {
+    if (isImageWorkspace) {
+      if (!activeImageDocument || !imageViewportReady) return;
+      setImageViewport(
+        activeImageDocument.id,
+        fitToContainer(
+          { width: activeImageDocument.width, height: activeImageDocument.height },
+          imageViewportContainerSize,
+        ),
+      );
+      return;
+    }
+
+    void fitView({ padding: 0.2, duration: 300 });
+  }, [
+    activeImageDocument,
+    fitView,
+    imageViewportContainerSize,
+    imageViewportReady,
+    isImageWorkspace,
+    setImageViewport,
+  ]);
+
+  const handleZoomIn = React.useCallback(() => {
+    if (isImageWorkspace) {
+      if (!activeImageDocument || !imageViewportReady) return;
+      setImageViewport(
+        activeImageDocument.id,
+        zoomViewportStepAroundCenter(
+          activeImageDocument.viewport,
+          imageViewportContainerSize,
+          'in',
+        ),
+      );
+      return;
+    }
+
+    void zoomIn();
+  }, [
+    activeImageDocument,
+    imageViewportContainerSize,
+    imageViewportReady,
+    isImageWorkspace,
+    setImageViewport,
+    zoomIn,
+  ]);
+
   return (
-    <div className="absolute top-0 left-0 right-0 z-40 flex h-16 items-center gap-3 border-b border-cyan-400/15 bg-[#08111d]/95 px-4 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
-      <div className="flex min-w-0 items-center gap-3">
+    <div className="theme-topbar absolute top-0 left-0 right-0 z-[80] flex h-16 items-center gap-3 border-b px-4 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
+      <div
+        className="pointer-events-none relative z-20 flex min-w-0 items-center gap-3"
+        data-topbar-left-controls="true"
+      >
         {showIntegratedMenu ? (
           <div
             ref={appMenuRef}
-            className="flex shrink-0 items-center gap-0.5 border-r border-cyan-300/15 pr-3"
+            className="pointer-events-auto flex shrink-0 items-center gap-0.5 border-r border-cyan-300/15 pr-3"
             onKeyDown={(event) => {
               if (event.key === 'Escape') {
                 setOpenMenuId(null);
               }
             }}
           >
-            {APP_MENU_GROUPS.map((group) => (
+            {appMenuGroups.map((group) => (
               <div className="relative" key={group.id}>
                 <button
                   aria-expanded={openMenuId === group.id}
-                  className={`rounded px-2 py-1 text-xs font-medium text-cyan-100/70 transition-colors hover:bg-cyan-400/10 hover:text-white ${
+                  className={`rounded px-2 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:text-cyan-100/25 ${
+                    group.enabled ? 'text-cyan-100/70 hover:bg-cyan-400/10 hover:text-white' : 'text-cyan-100/25'
+                  } ${
                     openMenuId === group.id ? 'bg-cyan-400/10 text-white' : ''
                   }`}
+                  disabled={!group.enabled}
                   onClick={() => setOpenMenuId((current) => current === group.id ? null : group.id)}
                   type="button"
                 >
                   {group.label}
                 </button>
                 {openMenuId === group.id ? (
-                  <div className="absolute left-0 top-full z-50 mt-2 min-w-56 overflow-hidden rounded-md border border-cyan-300/20 bg-[#0d1725] py-1 shadow-2xl shadow-black/40">
+                  <div className="absolute left-0 top-full z-[70] mt-2 min-w-56 overflow-hidden rounded-md border border-cyan-300/20 bg-[#0d1725] py-1 shadow-2xl shadow-black/40">
                     {group.items.map((item) => (
                       <button
                         className="flex w-full items-center justify-between gap-5 px-3 py-2 text-left text-sm text-cyan-50/80 transition-colors hover:bg-cyan-400/10 hover:text-white"
@@ -176,35 +325,46 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onMenuCommand }) => {
             ))}
           </div>
         ) : null}
-        <div className={TITLEBAR_LOGO_CONTAINER_CLASS}>
-          <img
-            alt={TITLEBAR_LOGO_ALT}
-            className={TITLEBAR_LOGO_IMAGE_CLASS}
-            src={TITLEBAR_LOGO_SRC}
-          />
-        </div>
-        <div className="hidden flex-col xl:flex">
-          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-200/65">{APP_EYEBROW}</div>
-          <div className="text-lg font-semibold tracking-normal">
-            <span className="text-cyan-300">{APP_NAME.split(' ')[0]}</span>
-            <span className="text-white"> {APP_NAME.split(' ').slice(1).join(' ')}</span>
-          </div>
-        </div>
-        <div className="flex items-center rounded-full border border-cyan-300/15 bg-[#101a29] p-1">
-          <ViewToggleButton
-            active={workspaceView === 'flow'}
-            label="Flow"
-            onClick={() => setWorkspaceView('flow')}
-          />
-          <ViewToggleButton
-            active={workspaceView === 'editor'}
-            label="Editor"
-            onClick={() => setWorkspaceView('editor')}
-          />
-        </div>
+        {showBrand ? (
+          <>
+            <div className={TITLEBAR_LOGO_CONTAINER_CLASS}>
+              <img
+                alt={TITLEBAR_LOGO_ALT}
+                className={TITLEBAR_LOGO_IMAGE_CLASS}
+                src={TITLEBAR_LOGO_SRC}
+              />
+            </div>
+            <div className="hidden flex-col xl:flex">
+              <div className="theme-muted-text text-xs font-semibold uppercase tracking-[0.2em]">{APP_EYEBROW}</div>
+              <div className="text-lg font-semibold tracking-normal">
+                <span className="theme-accent-text">{APP_NAME.split(' ')[0]}</span>
+                <span className="text-white"> {APP_NAME.split(' ').slice(1).join(' ')}</span>
+              </div>
+            </div>
+          </>
+        ) : null}
       </div>
 
-      <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+      {workspaceView === 'flow' ? (
+        <div
+          className="pointer-events-none relative z-10 flex min-w-0 flex-1 justify-center"
+          data-flow-node-toolbar-layer="true"
+        >
+          <BottomToolbar onAddNode={addFlowNodeFromTopbar} variant="topbar" />
+        </div>
+      ) : null}
+
+      {isPaperWorkspace ? (
+        <div
+          className="flex min-w-0 flex-1 items-center overflow-hidden"
+          id={PAPER_TOPBAR_SLOT_ID}
+        />
+      ) : null}
+
+      <div
+        className={`pointer-events-none relative z-20 flex min-w-0 items-center justify-end gap-2 ${primaryControlsFlexClass}`}
+        data-topbar-primary-controls="true"
+      >
         {workspaceView === 'editor' ? (
           <EditorTitlebarControls
             activeCompositionId={activeComposition?.id}
@@ -217,37 +377,57 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onMenuCommand }) => {
             onHelp={() => dispatchNativeRendererCommand('help:keyboard-shortcuts')}
             onRedo={() => dispatchNativeRendererCommand('edit:redo')}
             onRender={renderActiveComposition}
-            onTogglePanel={setPanelVisibility}
+            onTogglePanel={toggleVideoPanel}
             onUndo={() => dispatchNativeRendererCommand('edit:undo')}
             programMonitorVisible={programMonitorVisible}
-            sourceBinCount={sourceBinItems.length}
+            sourceBinCount={sourceBinItemCount}
             sourceBinNodeCount={sourceBinNodeCount}
             sourceBinVisible={sourceBinVisible}
             sourceMonitorVisible={sourceMonitorVisible}
           />
         ) : null}
 
-        <div className="flex shrink-0 items-center gap-2 rounded-full border border-cyan-300/15 bg-[#101a29] px-2 py-1.5">
-          <div className="hidden min-w-16 items-center justify-center border-r border-cyan-300/15 px-2 text-sm text-cyan-100/80 lg:flex">
-            {Math.round(zoom * 100)}%
-          </div>
+        <div className="theme-control pointer-events-auto flex shrink-0 items-center gap-2 rounded-full border px-2 py-1.5">
+          {showGenericViewportControls ? (
+            <>
+              <div className="theme-border theme-muted-text hidden min-w-16 items-center justify-center border-r px-2 text-sm 2xl:flex">
+                {Math.round(visibleZoom * 100)}%
+              </div>
 
-          <IconButton icon={<Minus size={16} />} label="Zoom out" onClick={() => void zoomOut()} />
-          <button
-            className="rounded-full px-2.5 py-2 text-sm text-cyan-100/75 transition-colors hover:bg-cyan-400/10 hover:text-white"
-            onClick={() => void fitView({ padding: 0.2, duration: 300 })}
-            type="button"
-          >
-            Fit
-          </button>
-          <IconButton icon={<Plus size={16} />} label="Zoom in" onClick={() => void zoomIn()} />
+              <IconButton
+                disabled={isImageWorkspace && !imageViewportReady}
+                icon={<Minus size={16} />}
+                label="Zoom out"
+                onClick={handleZoomOut}
+              />
+              <button
+                className="rounded-full px-2.5 py-2 text-sm text-cyan-100/75 transition-colors hover:bg-cyan-400/10 hover:text-white disabled:cursor-not-allowed disabled:text-cyan-100/30 disabled:hover:bg-transparent"
+                disabled={isImageWorkspace && !imageViewportReady}
+                onClick={handleZoomFit}
+                type="button"
+              >
+                Fit
+              </button>
+              <IconButton
+                disabled={isImageWorkspace && !imageViewportReady}
+                icon={<Plus size={16} />}
+                label="Zoom in"
+                onClick={handleZoomIn}
+              />
 
-          <div className="mx-0.5 h-5 w-px bg-cyan-300/15" />
+              <div className="mx-0.5 h-5 w-px bg-cyan-300/15" />
+            </>
+          ) : null}
 
           <IconButton
             icon={isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
             label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
             onClick={() => void toggleFullscreen()}
+          />
+          <IconButton
+            icon={<Command size={16} />}
+            label="Command palette"
+            onClick={() => handleMenuCommand('view:command-palette', 'topbar')}
           />
 
           <div className="mx-0.5 h-5 w-px bg-cyan-300/15" />
@@ -259,18 +439,52 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onMenuCommand }) => {
             type="button"
           >
             <FolderOpen size={16} />
-            <span className="hidden xl:inline">Projects</span>
+            <span className="hidden 2xl:inline">Projects</span>
           </button>
 
-          <button
-            className="flex items-center gap-2 rounded-full px-2.5 py-2 text-sm text-cyan-100/75 transition-colors hover:bg-cyan-400/10 hover:text-white"
-            onClick={() => void handleCopyFlow()}
-            title="Copy the current flow JSON to the clipboard"
-            type="button"
-          >
-            <Download size={16} />
-            <span className="hidden xl:inline">{copyState === 'copied' ? 'Copied' : copyState === 'error' ? 'Failed' : 'Export'}</span>
-          </button>
+          {workspaceView === 'flow' ? (
+            <FlowWorkspaceSwitcher
+              activeWorkspaceId={flowWorkspaceCommands.activeWorkspaceId}
+              onCreateWorkspace={() => {
+                void flowWorkspaceCommands.handleCreateWorkspace();
+              }}
+              onSelectWorkspace={flowWorkspaceCommands.handleSelectWorkspace}
+              workspaces={flowWorkspaceCommands.workspaces}
+            />
+          ) : null}
+
+          {workspaceView === 'flow' ? (
+            <button
+              className="flex items-center gap-2 rounded-full border border-emerald-300/30 bg-emerald-400/15 px-2.5 py-2 text-sm font-semibold text-emerald-100 transition-colors hover:border-emerald-100/70 hover:bg-emerald-300/25 hover:text-white"
+              onClick={() => setFunctionLibraryOpen(true)}
+              title="Open the reusable function library"
+              type="button"
+            >
+              <Library size={16} />
+              <span className="hidden 2xl:inline">Functions</span>
+            </button>
+          ) : null}
+
+          {workspaceView === 'flow' ? (
+            <button
+              className="flex items-center gap-2 rounded-full px-2.5 py-2 text-sm text-cyan-100/75 transition-colors hover:bg-cyan-400/10 hover:text-white"
+              onClick={() => void handleCopyFlow()}
+              title="Copy the current flow JSON to the clipboard"
+              type="button"
+            >
+              <Download size={16} />
+              <span className="hidden 2xl:inline">{copyState === 'copied' ? 'Copied' : copyState === 'error' ? 'Failed' : 'Export'}</span>
+            </button>
+          ) : null}
+
+          {workspaceView === 'flow' && flowWorkspaceMetricLabel ? (
+            <span
+              className="hidden rounded-full border border-cyan-300/15 px-2.5 py-2 text-[11px] text-cyan-100/45 3xl:inline"
+              data-testid="flow-workspace-metrics"
+            >
+              {flowWorkspaceMetricLabel}
+            </span>
+          ) : null}
 
           <IconButton icon={<Settings size={16} />} label="Provider settings" onClick={toggleSettings} />
         </div>
@@ -280,6 +494,14 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onMenuCommand }) => {
         isOpen={isProjectLibraryOpen}
         onClose={() => setProjectLibraryOpen(false)}
       />
+      <FunctionLibraryDrawer
+        builtInFunctions={getFunctionLibraryEntries([]).filter((entry) => entry.source !== 'custom')}
+        customFunctions={customFunctionLibraryEntries}
+        onClose={() => setFunctionLibraryOpen(false)}
+        onInsertBuiltIn={insertFunctionLibraryEntry}
+        onInsertCustom={insertFunctionLibraryEntry}
+        open={isFunctionLibraryOpen}
+      />
     </div>
   );
 };
@@ -288,28 +510,7 @@ interface IconButtonProps {
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
-}
-
-function ViewToggleButton({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className={`rounded-full px-3 py-2 text-sm font-medium transition-colors ${
-        active ? 'bg-cyan-400 text-slate-950 shadow-[0_0_16px_rgba(34,211,238,0.25)]' : 'text-cyan-100/70 hover:bg-cyan-400/10 hover:text-white'
-      }`}
-      onClick={onClick}
-      type="button"
-    >
-      {label}
-    </button>
-  );
+  disabled?: boolean;
 }
 
 type EditorPanelVisibilityKey = 'sourceMonitorVisible' | 'programMonitorVisible' | 'inspectorVisible' | 'sourceBinVisible';
@@ -352,7 +553,7 @@ function EditorTitlebarControls({
   sourceMonitorVisible: boolean;
 }) {
   return (
-    <div className="hidden min-w-0 flex-1 items-center justify-end gap-1.5 overflow-hidden 2xl:flex">
+    <div className="pointer-events-auto hidden min-w-0 flex-1 items-center justify-end gap-1.5 overflow-hidden 2xl:flex">
       <div className="hidden shrink-0 rounded-md border border-cyan-300/15 bg-[#101a29]/85 px-2 py-1 text-[11px] font-medium text-cyan-100/75 min-[1800px]:block">
         Source Pool · {sourceBinCount} asset{sourceBinCount === 1 ? '' : 's'} · {sourceBinNodeCount} bin{sourceBinNodeCount === 1 ? '' : 's'}
       </div>
@@ -462,10 +663,11 @@ function PanelToggleButton({
   );
 }
 
-function IconButton({ icon, label, onClick }: IconButtonProps) {
+function IconButton({ disabled = false, icon, label, onClick }: IconButtonProps) {
   return (
     <button
-      className="rounded-full p-2 text-cyan-100/60 transition-colors hover:bg-cyan-400/10 hover:text-white"
+      className="rounded-full p-2 text-cyan-100/60 transition-colors hover:bg-cyan-400/10 hover:text-white disabled:cursor-not-allowed disabled:text-cyan-100/25 disabled:hover:bg-transparent"
+      disabled={disabled}
       onClick={onClick}
       title={label}
       type="button"

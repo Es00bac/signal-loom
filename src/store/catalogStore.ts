@@ -22,14 +22,14 @@ interface CatalogState {
   refreshCatalogs: (settings: RuntimeSettingsSnapshot) => Promise<void>;
 }
 
-interface GeminiModelRecord {
+export interface GeminiModelRecord {
   name?: string;
   displayName?: string;
   description?: string;
   supportedGenerationMethods?: string[];
 }
 
-interface OpenAIModelRecord {
+export interface OpenAIModelRecord {
   id?: string;
 }
 
@@ -102,40 +102,7 @@ async function fetchGeminiModels(apiKey: string): Promise<ModelCatalog> {
   const catalog = buildEmptyModelCatalog();
 
   for (const model of payload.models ?? []) {
-    const modelName = model.name?.replace(/^models\//, '').trim();
-
-    if (!modelName) {
-      continue;
-    }
-
-    const lowerName = modelName.toLowerCase();
-    const normalizedModelName = lowerName.startsWith('veo-')
-      ? normalizeGeminiVideoModelId(modelName)
-      : modelName;
-    const option: SelectOption = {
-      value: normalizedModelName,
-      label: model.displayName?.trim() || normalizedModelName,
-      description: model.description?.trim(),
-    };
-
-    if (lowerName.startsWith('veo-')) {
-      catalog.video.gemini.push(option);
-      continue;
-    }
-
-    if (lowerName.includes('image') || lowerName.startsWith('imagen-')) {
-      catalog.image.gemini.push(option);
-      continue;
-    }
-
-    if (lowerName.startsWith('gemini-')) {
-      if (lowerName.includes('tts')) {
-        catalog.audio.gemini.push(option);
-        continue;
-      }
-
-      catalog.text.gemini.push(option);
-    }
+    addGeminiModelRecordToCatalog(catalog, model);
   }
 
   catalog.text.gemini = dedupeOptions(catalog.text.gemini);
@@ -146,7 +113,58 @@ async function fetchGeminiModels(apiKey: string): Promise<ModelCatalog> {
   return catalog;
 }
 
-async function fetchOpenAIModels(apiKey: string, baseUrl: string): Promise<ModelCatalog> {
+export function addGeminiModelRecordToCatalog(catalog: ModelCatalog, model: GeminiModelRecord): void {
+  const modelName = model.name?.replace(/^models\//, '').trim();
+
+  if (!modelName) {
+    return;
+  }
+
+  const lowerName = modelName.toLowerCase();
+  const normalizedModelName = lowerName.startsWith('veo-')
+    ? normalizeGeminiVideoModelId(modelName)
+    : modelName;
+  const option: SelectOption = {
+    value: normalizedModelName,
+    label: model.displayName?.trim() || normalizedModelName,
+    description: model.description?.trim(),
+  };
+
+  if (lowerName.includes('omni') && lowerName.startsWith('gemini-')) {
+    catalog.text.gemini.push(option);
+    catalog.image.gemini.push(option);
+    catalog.video.gemini.push(option);
+    catalog.audio.gemini.push(option);
+    return;
+  }
+
+  if (lowerName.startsWith('veo-')) {
+    catalog.video.gemini.push(option);
+    return;
+  }
+
+  if (lowerName.includes('image') || lowerName.startsWith('imagen-')) {
+    catalog.image.gemini.push(option);
+    return;
+  }
+
+  if (lowerName.startsWith('gemini-')) {
+    if (lowerName.includes('tts')) {
+      catalog.audio.gemini.push(option);
+      return;
+    }
+
+    catalog.text.gemini.push(option);
+  }
+}
+
+type OpenAICompatibleCatalogProvider = 'openai' | 'atlas';
+
+async function fetchOpenAIModels(
+  apiKey: string,
+  baseUrl: string,
+  provider: OpenAICompatibleCatalogProvider = 'openai',
+): Promise<ModelCatalog> {
   const normalizedBaseUrl = baseUrl.trim() || 'https://api.openai.com/v1';
   const response = await fetch(`${normalizedBaseUrl.replace(/\/$/, '')}/models`, {
     headers: {
@@ -155,49 +173,82 @@ async function fetchOpenAIModels(apiKey: string, baseUrl: string): Promise<Model
   });
 
   if (!response.ok) {
-    throw new Error(`OpenAI model discovery failed with status ${response.status}.`);
+    throw new Error(`${provider === 'atlas' ? 'Atlas' : 'OpenAI'} model discovery failed with status ${response.status}.`);
   }
 
   const payload = (await response.json()) as { data?: OpenAIModelRecord[] };
-  const textOptions: SelectOption[] = [];
-  const imageOptions: SelectOption[] = [];
+  const catalog = buildEmptyModelCatalog();
 
   for (const model of payload.data ?? []) {
-    const modelId = model.id?.trim();
-
-    if (!modelId) {
-      continue;
-    }
-
-    const option: SelectOption = {
-      value: modelId,
-      label: modelId,
-    };
-    const lowerId = modelId.toLowerCase();
-
-    if (lowerId.includes('image')) {
-      imageOptions.push(option);
-      continue;
-    }
-
-    if (
-      lowerId.includes('embedding') ||
-      lowerId.includes('moderation') ||
-      lowerId.includes('transcribe') ||
-      lowerId.includes('whisper') ||
-      lowerId.includes('tts')
-    ) {
-      continue;
-    }
-
-    textOptions.push(option);
+    addOpenAICompatibleModelRecordToCatalog(catalog, model, provider);
   }
 
-  const catalog = buildEmptyModelCatalog();
-  catalog.text.openai = dedupeOptions(textOptions);
-  catalog.image.openai = dedupeOptions(imageOptions);
+  catalog.text.openai = dedupeOptions(catalog.text.openai);
+  catalog.image.openai = dedupeOptions(catalog.image.openai);
+  catalog.image.atlas = dedupeOptions(catalog.image.atlas);
 
   return catalog;
+}
+
+export function addOpenAICompatibleModelRecordToCatalog(
+  catalog: ModelCatalog,
+  model: OpenAIModelRecord,
+  provider: OpenAICompatibleCatalogProvider = 'openai',
+): void {
+  const modelId = model.id?.trim();
+
+  if (!modelId) {
+    return;
+  }
+
+  const option: SelectOption = {
+    value: modelId,
+    label: modelId,
+  };
+  const lowerId = modelId.toLowerCase();
+
+  if (provider === 'atlas') {
+    if (isAtlasDiscoverableImageModelId(lowerId)) {
+      catalog.image.atlas.push(option);
+    }
+    return;
+  }
+
+  if (lowerId.includes('image')) {
+    catalog.image.openai.push(option);
+    return;
+  }
+
+  if (
+    lowerId.includes('embedding') ||
+    lowerId.includes('moderation') ||
+    lowerId.includes('transcribe') ||
+    lowerId.includes('whisper') ||
+    lowerId.includes('tts')
+  ) {
+    return;
+  }
+
+  catalog.text.openai.push(option);
+}
+
+function isAtlasDiscoverableImageModelId(lowerId: string): boolean {
+  return (
+    lowerId.includes('image') ||
+    lowerId.includes('flux') ||
+    lowerId.includes('kontext') ||
+    lowerId.includes('seedream') ||
+    lowerId.includes('banana') ||
+    lowerId.includes('qwen') ||
+    lowerId.includes('firered') ||
+    lowerId.includes('z-image') ||
+    lowerId.includes('stable-diffusion')
+  );
+}
+
+function isAtlasNativeDiscoveryBaseUrl(baseUrl: string | undefined): boolean {
+  const normalized = (baseUrl ?? '').trim().replace(/\/$/, '').toLowerCase();
+  return !normalized || normalized === 'https://api.atlascloud.ai/api/v1';
 }
 
 async function fetchElevenLabsModels(apiKey: string): Promise<SelectOption[]> {
@@ -266,47 +317,51 @@ async function fetchElevenLabsVoices(apiKey: string): Promise<VoiceOption[]> {
 function mergeCatalog(target: ModelCatalog, partial: Partial<ModelCatalog>): ModelCatalog {
   const merged = cloneModelCatalog(target);
 
-  if (partial.text?.gemini) {
+  if (partial.text?.gemini?.length) {
     merged.text.gemini = partial.text.gemini;
   }
 
-  if (partial.text?.openai) {
+  if (partial.text?.openai?.length) {
     merged.text.openai = partial.text.openai;
   }
 
-  if (partial.text?.huggingface) {
+  if (partial.text?.huggingface?.length) {
     merged.text.huggingface = partial.text.huggingface;
   }
 
-  if (partial.image?.gemini) {
+  if (partial.image?.gemini?.length) {
     merged.image.gemini = partial.image.gemini;
   }
 
-  if (partial.image?.openai) {
+  if (partial.image?.openai?.length) {
     merged.image.openai = partial.image.openai;
   }
 
-  if (partial.image?.huggingface) {
+  if (partial.image?.atlas?.length) {
+    merged.image.atlas = partial.image.atlas;
+  }
+
+  if (partial.image?.huggingface?.length) {
     merged.image.huggingface = partial.image.huggingface;
   }
 
-  if (partial.video?.gemini) {
+  if (partial.video?.gemini?.length) {
     merged.video.gemini = partial.video.gemini;
   }
 
-  if (partial.video?.huggingface) {
+  if (partial.video?.huggingface?.length) {
     merged.video.huggingface = partial.video.huggingface;
   }
 
-  if (partial.audio?.gemini) {
+  if (partial.audio?.gemini?.length) {
     merged.audio.gemini = partial.audio.gemini;
   }
 
-  if (partial.audio?.elevenlabs) {
+  if (partial.audio?.elevenlabs?.length) {
     merged.audio.elevenlabs = partial.audio.elevenlabs;
   }
 
-  if (partial.audio?.huggingface) {
+  if (partial.audio?.huggingface?.length) {
     merged.audio.huggingface = partial.audio.huggingface;
   }
 
@@ -344,6 +399,21 @@ export const useCatalogStore = create<CatalogState>()((set) => ({
         Object.assign(nextCatalog, mergeCatalog(nextCatalog, partial));
       } catch (error) {
         errors.push(error instanceof Error ? error.message : 'OpenAI catalog refresh failed.');
+      }
+    }
+
+    if (settings.apiKeys.atlas?.trim()) {
+      if (!isAtlasNativeDiscoveryBaseUrl(settings.providerSettings.atlasBaseUrl)) {
+        try {
+          const partial = await fetchOpenAIModels(
+            settings.apiKeys.atlas.trim(),
+            settings.providerSettings.atlasBaseUrl ?? '',
+            'atlas',
+          );
+          Object.assign(nextCatalog, mergeCatalog(nextCatalog, partial));
+        } catch (error) {
+          errors.push(error instanceof Error ? error.message : 'Atlas catalog refresh failed.');
+        }
       }
     }
 

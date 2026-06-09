@@ -1,5 +1,243 @@
 # Flows Clone Task List
 
+## Current Status
+- [x] Cross-app production hardening slice: make normal Source Library project imports create a durable shared Project imports envelope, sync across Flow/Video/Image/Paper, and persist through save/open.
+- [x] Cross-app production hardening slice: preserve Paper OS File Manager image-drop Page N import envelopes through Flow, Video, Image, and Paper Source Libraries, including Video envelope-label display and native multi-window smoke coverage.
+- [x] Cross-app production hardening verification: run the native release gate after the Flow schema parity Electron manifest change, and fix any native `.sloom`, Source Library, Paper, Video, or multi-window regression it exposes.
+- [x] Cross-app production hardening verification: run the local release gate after the Flow schema parity and toolbar changes, and fix any build, lint, unit, or browser-smoke regressions it exposes.
+- [x] Cross-app production hardening slice: add a Flow node schema parity gate so runtime node types, node catalog entries, renderer project validation, Electron `.sloom` validation, and usage-ledger sanitization stay in sync.
+- [x] Cross-app production hardening slice: add configurable native real-project soak performance budgets for heap, DOM nodes, event listeners, and per-cycle duration, with dashboard-visible pass/fail evidence.
+- [x] Cross-app production hardening slice: run an extended native real-project soak against the restored Chronicle `.sloom`, exercising Flow/Video/Image/Paper workspace switching and Source Library churn with dashboard-visible evidence.
+- [x] Cross-app production hardening verification: run the native real-project soak and Paper PDF parity gates against the restored Chronicle `.sloom` so the dashboard Native Gate Evidence covers multi-window Source Library churn and real Paper PDF visual parity artifacts.
+- [x] Cross-app production hardening verification: run the native real-project PDF smoke against the restored Chronicle `.sloom` so the dashboard Native Gate Evidence includes current Paper PDF export proof from a real project.
+- [x] Cross-app production hardening verification: confirm OS File Manager image drops onto Paper pages populate Page N imports Source Library envelopes, place linked frames, and persist through native save/open.
+- [x] Cross-app production hardening verification: refresh the native Video render smoke artifact so the dashboard Native Gate Evidence card has current desktop render proof instead of a missing video-render report.
+- [x] Project development dashboard slice: treat docs/status-only verification commits as non-implementation commits for active-workstream checkpoint freshness so the dashboard does not show false stale warnings after status updates.
+- [x] Cross-app production hardening verification: reverify OS image file drops on Paper pages create Page N imports Source Library envelopes, place linked page frames, and survive native save/open round-trip.
+- [x] Project development dashboard slice: align the Vite app dev server port with the dashboard service URL and show an offline start command when the app server is down.
+- [x] Android accelerator companion productionization slice: include exact redacted rerun commands in stale Android Local Dream gate contract warnings so dashboard remediation is copyable.
+- [x] Project development dashboard slice: stack Android Local Dream stale-gate warnings so contract-stale evidence still explains when the current prepared fork is source-only or otherwise not live-validation ready.
+- [x] Android accelerator companion productionization slice: mark Android Local Dream gate evidence stale when a passed `/v1/capabilities` report lacks current one-app contract markers such as setup proof.
+- [x] Android accelerator companion productionization slice: add a guided source-only setup mode to `npm run setup:android-localdream` so no-device fork refreshes record dashboard evidence without bypassing the setup workflow.
+- [x] Cross-app production hardening slice: run the native stress gate after Paper OS-drop page round-trip coverage so repeated Source Library churn still passes with the stronger Paper import smoke.
+- [x] Cross-app production hardening slice: extend Paper OS image-drop native evidence to page-specific Page N imports and save/open durability for imported linked frames.
+- [x] Cross-app production hardening slice: add repeatable native/Electron smoke evidence for Paper OS image file drops into Page N imports envelopes and linked page frames.
+- [x] Android accelerator companion productionization slice: refresh the ignored source-only prepared Local Dream fork after setup-proof patch changes and verify the dashboard readiness evidence no longer reports stale source hooks.
+- [x] Android accelerator companion productionization slice: surface exact prepared-fork regeneration guidance on the dashboard when verifier evidence is stale after setup-proof patch changes.
+- [x] Android accelerator companion productionization slice: persist in-app Test API/Test Generate/Test Upscale setup proof into `/v1/capabilities` and require it for replace-package production gate readiness.
+- [x] Android accelerator companion productionization slice: include exact redacted replace-package rerun commands in capabilities readiness failure evidence so dashboard remediation is copyable after first-run setup.
+- [x] Project development dashboard slice: capture compact redacted stdout/stderr for release-gate steps and render those diagnostics in the dashboard release-gate ledger.
+- [x] Android accelerator companion productionization slice: summarize `/v1/capabilities` gate evidence with downloaded model/upscaler counts, mode, and warnings so the dashboard stays readable during live validation.
+- [x] Android accelerator companion productionization slice: make the Android Local Dream production gate parse `/v1/capabilities` and fail early with a clear first-run redownload/in-app smoke-test message when the replacement app has no downloaded model or upscaler.
+- [x] Android accelerator companion productionization slice: make replace-package guided setup stop at a first-run redownload and in-app smoke-test checkpoint before production gate validation, so the replacement app is not asked to generate/upscale before its own model and upscaler downloads exist.
+- [x] Android accelerator companion productionization slice: add in-app Signal Loom generation and upscale smoke-test controls on the Android setup screen so users can prove the one-app companion can run production operations before returning to desktop workflows.
+- [x] Android accelerator companion productionization slice: add an in-app Signal Loom gateway self-test on the Android setup screen so users can verify `/v1/capabilities` from the companion app before trying desktop generation or upscaling.
+- [x] Project development dashboard slice: mark Android Local Dream gate evidence stale or blocked when the current prepared fork is source-only/not-ready so old passing live-gate reports do not imply the current one-app companion is live-validation ready.
+- [x] Android accelerator companion productionization slice: show Local Dream runtime asset readiness on the Signal Loom Android setup screen so replace-package users can distinguish APK/runtime asset readiness from model and upscaler download readiness.
+- [x] Android accelerator companion productionization slice: show live model/upscaler download progress, extracting, success, and failure states on the Signal Loom Android setup screen so replace-package users can monitor required asset redownloads from the one-app companion.
+- [x] Android accelerator companion productionization slice: make model downloads first-class on the Signal Loom Android setup screen, with per-model download controls and verifier coverage so replace-package users can redownload required model data inside the one-app companion.
+- [x] Project development dashboard slice: surface guided Android Local Dream setup evidence so dry-run previews, destructive replace-package confirmation blocks, step outcomes, report paths, and linked gate evidence stay visible without adding dashboard-run mutation controls.
+- [x] Cross-app production hardening slice: surface native Video segment assembly success/fallback metadata in the Program Monitor so users can tell whether cached spans were actually assembled or a full-output fallback was used.
+- [x] Cross-app production hardening slice: import OS-dropped image files on Paper pages into a Page N imports Source Library envelope and place linked image frames automatically.
+- [x] Cross-app production hardening slice: reconcile the screencast-confirmed external floating popup size-drift fix into the active implementation branch without regressing dock-to-floating drag continuation.
+- [x] Cross-app production hardening slice: clean up Video render-cache contract language so executable native artifact assembly is described honestly without claiming true dirty-span-only rendering.
+- [x] Cross-app production hardening slice: fix dock-to-floating drag continuation so Flow Bookmarks and other docked panels keep following the pointer after detaching, without expanding to full dock height.
+- [x] Cross-app production hardening slice: fix Image workspace right-sidebar dock resizing so panel order stays stable, the column width actually changes, and undocked dialogs preserve size while being moved.
+- [x] Cross-app production hardening slice: execute native Video segment assembly by concatenating materialized reusable cached spans with newly rendered dirty-span artifacts when a safe assembly plan is available.
+- [x] Cross-app production hardening slice: add native Video segment assembly planning for concatenating reusable cached segment artifacts with newly rendered dirty-span artifacts.
+- [x] Cross-app production hardening slice: fix the Flow top toolbar hit-testing/layout overlap where node category controls sit under the top navigation layer at desktop widths, blocking normal click interaction.
+- [x] Cross-app production hardening slice: persist returned native Video segment artifacts through media composition, Flow execution metadata, and Video render-cache storage so dirty spans can become reusable cached assets after render.
+- [x] Cross-app production hardening slice: wire native Video segment artifact execution into an opt-in `/render` JSON response while keeping default raw MP4 responses unchanged, with focused tests, real service smoke, and dashboard verification.
+- [x] Cross-app production hardening slice: add a native Video segment extraction executor helper that turns extraction plans into serializable artifact payloads, with focused tests and dashboard verification.
+- [x] Cross-app production hardening slice: carry native Video render segment extraction plans into validated render jobs, with focused tests and dashboard-visible progress toward executable partial render artifacts.
+- [x] Cross-app production hardening slice: add native Video render segment extraction planning for dirty spans, with focused tests and dashboard-visible progress toward true partial render reuse.
+- [x] Cross-app production hardening slice: retain proven reusable Video render-cache segment artifacts after successful renders instead of clearing the whole artifact map, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: make Video render-cache assembly manifests inspectable in the Program Monitor, with reusable/dirty span detail, focused tests, and browser verification.
+- [x] Cross-app production hardening slice: add a native Video render assembly-manifest boundary for reusable cached spans and dirty spans, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: design and implement the next Video render-cache architecture step for changed-span reuse planning, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: make Video render-cache misses explain stale full-composition invalidation instead of showing a misleading initial render plan, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: make Video render-cache signatures include text clip content, audio clips, stage objects, canvas/export settings, and cache-safety guards, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: make Video Render reuse the previous rendered preview when no timeline spans have changed, with persisted cache signatures, focused tests, and browser verification.
+- [x] Cross-app production hardening slice: keep undocked/floating panels and dialogs from changing size while being dragged, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: restore a usable default Video docked layout with visible source/program monitors above a resizable timeline, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: make Flow variable autocomplete offer explicit all-items tokens for list/envelope variables, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: make project usage-ledger entry IDs include the resolved operation for durable auditability, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: align project save/open validators and usage-ledger node sanitizers with newer Flow node types, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: make the Flow Crop Image node source preview crop box match the actual cropped output, with focused tests and browser verification.
+- [x] Project development dashboard slice: surface active workstream checkpoint freshness/staleness when the committed checkpoint metadata lags behind the latest git commit, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: add a visible variable reference rail to the Flow expanded prompt editor so declared result/list/envelope variables can be inserted without memorizing syntax, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: surface the configured Video render backend in the Program Monitor so GPU/native/browser render intent is visible before export, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: block Video renders when export readiness reports missing media errors, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: add a persistent Video export-readiness indicator for missing timeline/source media and honest dirty-span analysis status, with focused tests and browser verification.
+- [x] Cross-app production hardening slice: keep Paper preflight readiness visible from the main topbar even when the Preflight panel is closed, with first-issue navigation, focused tests, and browser verification.
+- [x] Cross-app production hardening slice: make Video Program Monitor chroma key visible in the live preview so green-screen clips have preview/export parity instead of an export-only disclosure.
+- [x] Project development dashboard slice: add an active implementation workstream ledger and dashboard card so in-progress changes, checkpoints, verification steps, and next implementation slices stay visible while development continues.
+- [x] Cross-app production hardening slice: add a deterministic native Video render smoke gate that launches Electron, clicks the Video Render control, verifies a rendered preview, captures a real MP4 artifact from the native render service, and surfaces the evidence on the dashboard.
+- [x] Cross-app production hardening slice: make frontend project parsing/restore tests work in isolated git worktrees by removing reliance on ignored local `.sloom` fixtures.
+- [x] Project development dashboard slice: surface Android companion readiness by checking ADB availability, authorized device state, Local Dream package/split visibility, package mode, and Android SDK hints.
+- [x] Project development dashboard slice: surface JSON health details for local services, especially native render available backends and recommended AMD VAAPI acceleration status.
+- [x] Android accelerator companion productionization slice: add a no-mutation Local Dream fork doctor/preflight mode that checks required tools, ADB device readiness, installed Local Dream APK/splits, package mode, and Android SDK hints before clone/patch/build steps.
+- [x] Project development dashboard slice: persist release-gate step summaries as a local JSON ledger and surface the latest gate run on the dashboard alongside native artifact evidence.
+- [x] Project development dashboard slice: surface native release-gate evidence, artifact paths, real-project readiness, soak metrics, and Paper PDF parity reports so development status stays observable while hardening continues.
+- [x] Cross-app production hardening slice: run the native release gate after the recent hardening work and fix any startup, save/open, multi-window, Source Library, soak, or Paper PDF parity regressions it exposes.
+- [x] Cross-app production hardening slice: run the local release gate after dialog/startup hardening and fix any build, lint, unit, or browser-smoke regressions it exposes.
+- [x] Cross-app production hardening slice: suppress known benign ResizeObserver loop browser noise at startup without hiding real application errors, with tests and browser verification.
+- [x] Android accelerator companion productionization slice: add an explicit Local Dream fork replace-package build mode and user-approved uninstall/reinstall/redownload documentation so the one-app Signal Loom Android path can be packaged without relying on Play Store private model data.
+- [x] Cross-app production hardening slice: replace remaining blocking browser alerts with a shared themed alert dialog/status path across Project, Flow Source Library, Image, Video, and Paper, with tests and browser verification.
+- [x] Cross-app production hardening slice: replace the Image editor Text tool browser content prompt with the themed async text-input dialog, with tests and browser verification.
+- [x] Cross-app production hardening slice: replace Flow Image node browser delete confirmation with the themed async confirmation dialog, with tests and browser verification.
+- [x] Cross-app production hardening slice: replace Paper workspace browser text prompts with the themed async text-input dialog for new documents, source envelopes, and parent pages, with tests and browser verification.
+- [x] Cross-app production hardening slice: replace Flow Source Library browser text prompts with a themed async text-input dialog for creating and renaming source bins, with tests and browser verification.
+- [x] Cross-app production hardening slice: replace remaining Flow blocking native confirmations with the themed async confirmation dialog for node deletion and run-cost/envelope guardrails, with automation-safe tests and browser verification.
+- [x] Activity Trail review hardening: expand direct workspace action coverage across Flow/Video/Image/Paper, strengthen sensitive-data redaction, broadcast clear events across windows, and document browser verification.
+- [x] Cross-app production hardening slice: add a unified Activity Trail that records recent app/menu/palette commands and key workspace actions across Flow, Video, Image, and Paper, with command-palette access, clear status labels, bounded persistence, and browser verification.
+- [x] Adobe hardening Phase 6 UX workflow command palette: add a global searchable command palette with workspace-aware commands, keyboard access, panel/project/settings actions, and browser verification for discoverability across Flow, Video, Image, and Paper.
+- [x] Adobe hardening Phase 4 Image editable-document durability: clone mutable layer bitmaps/masks on duplicate, preserve vector/source-linked layer metadata and lightweight Image snapshots through project save/open sanitization, and verify browser-level Image workspace persistence behavior.
+- [x] Adobe hardening Phase 2 Source Library ACK/version repair: retry failed native Source Library ACKs with authoritative snapshots, detect native version gaps, show degraded sync state with manual repair, and publish same-id asset updates across windows.
+- [x] Adobe hardening Phase 2 opaque native asset URLs: use `signal-loom-asset://asset/<id>` for new native Source Library media, keep legacy `signal-loom-asset://file/<path>` compatibility, and verify real protocol access still rejects unregistered and symlink-escaped media.
+- [x] Adobe hardening Phase 2 native asset protocol abuse smoke: exercise the real Electron `signal-loom-asset://` handler with registered Source Library assets, unregistered scratch files, and scratch symlink escapes.
+- [x] Adobe hardening Phase 2 native asset capability slice: register active Source Library native asset paths, reject unregistered `signal-loom-asset://` protocol reads, and cover the capability registry with focused tests.
+- [x] Add a local Signal Loom project development dashboard that tracks active implementation status, git/checkpoint state, task progress, notes, verification commands, and local service health during development.
+- [x] Run an Adobe-style Signal Loom product audit with sub-agent review across architecture, media/performance, UX/workflow, and QA/release readiness; document strengths, must-improve risks, and roadmap recommendations.
+- [x] Add production-oriented Video clip effects: chroma key/green screen, per-clip stroke/border, expanded filter effects, preview/export parity, and incremental render dirty-region signatures.
+- [x] Rework the Video workspace default layout so Source and Program monitors are visible side by side above a usable resizable timeline, add drag handles between docked panels, and fix undocked panel/window growth while dragging.
+- [x] Add an expandable large editor for Flow Text prompt node text areas so longer prompts can be viewed and edited at once.
+- [x] Add Flow prompt variables so generated attempts, lists, and envelopes can be named and referenced in prompt/template text with autocomplete and indexed list access.
+- [x] Fix the Video workspace dockable layout regression and shared undocked panel/window growth while dragging.
+- [x] Add a large popup mask-painting workspace inside Flow image inpaint/outpaint nodes, with connected-mask priority and node-owned painted masks for mask-aware providers.
+- [x] Add a Flow Crop Image node that accepts one image, crops it locally, and outputs the cropped image for downstream image/video/reference inputs.
+- [x] Add Paper page assets to the Video workspace so flattened Paper pages can be browsed, dragged to the timeline, and used as robust storyboard/reference media.
+- [x] Add a Flow Color Swatch node that builds reusable palettes and feeds image/video nodes textual palette guidance for visual consistency.
+- [x] Flow node/edge system audit and function/group node pass: add first-class reusable Function and Group nodes, configurable function input/output bindings with flow/constant/expression modes and transform chains, selected-node collapse-to-function, Flow copy/cut/paste/delete/select-all shortcuts, runtime/cost/source-list routing for function outputs, and focused regression coverage.
+- [x] Fix the user-reported Flow Canvas startup recovery-boundary crash caused by image-node/store update feedback loops.
+- [x] Fix Paper speech/thought bubble text-box movement so the bubble text remains visible while the text box drag/resize layer is active.
+- [x] Complete the first production stability gate by auditing unstable store selectors, adding no-op write regressions, and hardening Paper/Image store updates that previously emitted unchanged state.
+- [x] Add the first production smoke harness: `npm run test:smoke`, workspace/source-library smoke contracts, and a browser/Electron QA checklist.
+- [x] Run a production-readiness audit across Flow, Video, Image, and Paper, documenting crash/freeze risks, incomplete UX flows, missing tests, performance hazards, and standards that must improve beyond the current repository baseline.
+- [x] Paper: support connected/chained speech and thought bubbles for multiple utterances by one character, including connector lines, editable chain ordering, export/PDF/flatten parity, and intuitive canvas controls.
+- [x] Paper/Image text UX: allow direct in-workspace text editing for text boxes/bubbles/titles/subtitles, strengthen typography/effects for cover-art and comic production, and add copy-style/paste-style for Paper frame/text/border/opacity styles.
+- [x] Add a comic-book sound-effects plugin for onomatopoeia text such as screech, bang, kapow, and whirrrrr, with a designer dialog that previews the final effect before placement, custom text/effect controls, preset application, trailing-off effects, warps, fills, strokes, halftone/speed effects, reusable styles, and Paper/Image integration.
+- [x] Paper: add style copy/paste, text stroke/shadow/skew/scale rendering and inspector controls, plus Paper toolbar/context-menu comic SFX preset insertion.
+- [x] Paper: add a right-click quick image edit flow that lets users describe an edit directly in the Paper workspace, runs the selected cloud/local image-edit provider, saves the result to the Source Library, and replaces the selected image frame without destroying the original asset.
+- [x] Image editor: add provider/model-aware selected-region operation controls, reference descriptions/image URLs, search/outpaint controls, per-operation cost labels, and undoable image-size/canvas-size/upscale document controls without requiring live provider credentials during development.
+- [x] Image editor: add Photoshop-grade selected-region editing with paint/select/mask workflows, multiple reference inputs, region prompts, seamless edge integration, upscaling, custom document sizes, image resize, and canvas resize.
+- [x] Image provider platform: complete capability-specific nodes for each selected cloud/API provider, expose each model's full supported controls, show realistic per-generation cost before execution, and document sign-up/config/use in built-in wiki/help.
+- [x] Cross-app production hardening slice: revoke Source Library blob/object URLs when scratch/fallback media items are removed or replaced by project restore/hydration so long-running Flow/Video/Image/Paper sessions do not leak preview URLs.
+- [x] Cross-app production hardening slice: add guarded Electron automation paths for native `.sloom` open/save, native media import, Paper PDF export, and Paper webcomic image-directory export so release-gate smoke can run without blocking on GUI file dialogs.
+- [x] Comic SFX designer refinement: make the Paper/Image sound-effect plugin preview-first and expose every effect parameter already supported by the SFX model, including trail scale, burst stroke, speed-line geometry/opacity, and halftone radius/opacity.
+- [x] Image Comic SFX editability: retain placed SFX designer recipes on Image layers and allow selected SFX layers to reopen the designer for non-destructive rerasterized updates instead of forcing a new bitmap placement.
+- [x] Cross-app production hardening slice: fix the native Paper PDF hidden-window readiness hang so Electron automation smoke completes `.sloom` save/open, media import, Paper PDF export, and named webcomic PNG directory export.
+- [x] Cross-app production hardening slice: add `npm run smoke:native` as a repeatable Electron release-gate script for native `.sloom` save/open, media import, Paper PDF export, Paper PNG directory export, all-workspace window opening, shared native Source Library snapshot visibility, file signature checks, and recovery-boundary detection.
+- [x] Cross-app production hardening slice: prevent renderer project-restore startup from republishing stale Source Library snapshots over newer native bridge changes, and prove a native Source Library item becomes visible in Flow, Video, Image, and Paper windows.
+- [x] Cross-app production hardening slice: add `npm run smoke:native:stress` for repeated native Source Library add/rename/remove churn from rotating Flow/Video/Image/Paper windows, with per-cycle snapshot/UI convergence and recovery-boundary checks.
+- [x] Cross-app production hardening slice: add `npm run smoke:native:project` for isolated real `.sloom` project startup/window/Paper PDF export smoke against Chronicle-sized projects instead of only synthetic tiny projects.
+- [x] Cross-app production hardening slice: fix native project-open recovery when a `.sloom.bak-*` backup points at a missing derived scratch folder, so real project backups can fall back to the saved scratch directory instead of throwing ENOENT.
+- [x] Cross-app production hardening slice: protect `.sloom.bak-*` backup files from destructive normal Save by refusing direct backup writes, defaulting Save/Save As to a restored `.sloom` copy path, and avoiding backup paths in remembered startup state.
+- [x] Paper PDF parity: route the default native Paper PDF export through flattened page snapshot images so PDF text/bubbles match the Paper/webcomic raster output instead of using a separate live HTML text layout path.
+- [x] Paper PDF export: add a persisted raster preset for default desktop PDF export, with Balanced JPEG, Print PNG, and Proof JPEG modes so users can choose realistic file-size/quality tradeoffs instead of always producing huge lossless raster PDFs.
+- [x] Cross-app production hardening slice: isolate native smoke runs in a temp Electron user-data directory so release-gate automation does not overwrite the user's remembered project/settings state.
+- [x] Paper workspace usability follow-up: make comic sound effects place as a single editable decal object, size short SFX text safely by default, pin the Document / Export toolbar as a static top bar, remove wasted Paper titlebar brand space, and make Paper Inspector sections collapsible.
+- [x] Paper titlebar workspace-space follow-up: move the Paper Document / Export toolbar into the existing app topbar slot instead of a separate row, reclaim the vertical canvas space, and keep Paper side panels aligned directly under the topbar.
+- [x] Image editor context menu: fix the right-click context menu so it opens at the mouse cursor instead of pinning to the top of the window, with a regression test.
+- [x] Dockable UI stability: fix undocked dialog dragging so panel dimensions stay constant while moving, and stabilize Image Layers/Properties right-dock column resize behavior so docked panels do not jump or resize unpredictably.
+- [x] Image workspace Source Library regression: clicking a Source Library image should open it in the Image editor again, and dragging an image from Source Library onto a blank Image canvas should create/open an editable image document.
+- [x] Chronicle project recovery: create a non-destructive rebuilt Paper `.sloom` copy from the recovered editable project and exported PNG references, preserving cover/crop image transforms, tightening text fit, auditing bubble tails, and adding conservative chained bubbles where same-speaker utterances are consecutive.
+- [ ] Cross-app production hardening: make Flow, Video, Image, and Paper intuitive, resilient, performant, and smooth under real projects, with verification for startup, save/open, multi-window sync, source-library use, and long-running AI/media operations.
+- [x] Flow multi-workspace milestone 1: add baseline metrics, `flowWorkspaces` project migration, a Flow workspace registry, topbar workspace switching UI, and active-runtime unload/hydrate behavior so inactive Flow workspaces release memory instead of only hiding UI.
+- [x] Flow multi-workspace milestone 2: scope Flow multi-window commands and usage tracking by Flow workspace id so multi-window actions and telemetry target the correct Flow workspace instance.
+- [x] Flow large-project Source Library slice: add a reusable source asset handle pool and virtualize the generated-pool list so large projects mount fewer sidebar rows while asset URL lifetime is managed intentionally.
+- [x] Flow large-project Source Library slice: flatten Source Library bin/envelope rows and virtualize regular bin contents so large Project imports envelopes do not mount every card at once.
+- [x] Flow large-project import pipeline slice: add a worker-backed native media normalization contract so Electron import-menu file classification stops doing batch kind/mime inference inline on the main thread.
+- [x] Flow app modularity slice: extract a dedicated Flow workspace shell, isolate Flow canvas drop-import logic, and add smaller flow runtime/document store boundaries without changing current behavior.
+- [x] Flow multi-workspace acceptance slice: harden native real-project smoke/soak automation with isolated X11 Electron launches, CDP retry handling, direct renderer-command Paper export, and explicit workspace-switch / renderer-heap budget evidence.
+- [x] Turn the existing Flow multi-workspace and performance design note into an execution-ready implementation roadmap with ordered slices, concrete file targets, and release-risk gates.
+- [x] Cross-app production hardening slice: recover missing Source Library entries from Paper frame scratch assets during native `.sloom` open so existing Paper layouts keep their placed images after reopen.
+- [x] Cross-app production hardening slice: add a repeatable native real-project soak gate that opens a restored `.sloom` in an isolated Electron profile, cycles Flow/Video/Image/Paper, churns Source Library changes across workspace windows, records CDP performance metrics, and writes a JSON evidence report.
+- [x] Paper/PDF parity hardening slice: add a native PDF parity evidence gate that captures overlay-free editor page screenshots from a restored `.sloom`, exports the current raster PDF path, rasterizes matching PDF pages, creates diff images/metrics, and documents the output package.
+- [x] Paper export: add webcomic PNG/page-image export alongside PDF with output resolution/quality controls, project/page-based file naming inside a named directory, and fix Paper PDF text layout/font-size parity against the editor.
+- [x] Fix Paper click-to-create frame tools so a plain click creates and selects a normal-sized speech/thought/text/image frame instead of losing the interaction or creating only a minimum-size frame.
+- [x] Fix release-gate workspace interaction blockers: Image `Open image` imports local raster/SVG/TIFF/GIF files without shared-panel hit-test interception, and Video Program Tools `Text` remains clickable with compact monitor controls and auto-creates a composition when needed.
+- [x] Add production advanced image provider support for BFL FLUX.2, Stability AI edit/generation APIs, and Local/Open image endpoints with capability-aware Image node controls, mask input, cost telemetry, setup/help docs, and adult-capable provider research safeguards.
+- [x] Add user-friendly persistent provider and production-output configuration, including Vertex environment/project setup, print-ready Paper upscaling method defaults, and built-in setup instructions.
+- [x] Finish the large-project performance caveats by syncing the Source Library through the Electron native bridge and virtualizing offscreen Paper spreads/pages.
+- [x] Add large-project performance hardening with a pre-change snapshot, `.sloom` media reference normalization, a Source Library service contract, and lazy media preview loading for large Source Libraries/Paper documents.
+- [x] Add Vertex AI gcloud ADC image support for Gemini/Imagen image models, including Imagen 4 Fast/Generate/Ultra model choices, desktop-native token handling, and Image workspace Gemini generative-fill routing through Vertex mode.
+- [x] Add provider/model-aware image aspect-ratio support so Gemini image nodes and config nodes can request 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9, and model-specific Gemini 2.5-safe subsets.
+- [x] Fix intermittent `.sloom` project-open failures when IndexedDB cannot open its local asset backing store by falling back to saved file-backed Source Library asset URLs.
+- [x] Generate and QA Issue #1 headless comic panel art, preserve generated media in the `.sloom` source library, and append the generated pages to the Paper workspace.
+- [x] Fix Paper Cover/Crop so image frames do not fall back to stretch when image pixel metadata is missing, and hydrate natural image dimensions from loaded images.
+- [x] Add Paper image-frame right-click print upscaling that creates a new source-library asset sized for the current document DPI and selected frame placement.
+- [x] Paper print AI upscaling: replace the local/Vertex-only right-click print upscale path with a cost-aware dialog that supports Stability AI cloud upscalers, Vertex Imagen, local browser final fitting, and exact-DPI source-library replacement while preserving crop/fit/scale.
+- [x] Android accelerator integration slice: research Local Dream/Snapdragon NPU paths, document the companion API, add a buildable Android gateway scaffold, add persistent Android accelerator settings, add a tested Signal Loom client, and route Paper print upscaling through a zero-provider-cost Android NPU/GPU method when configured.
+- [x] Android accelerator gateway device validation: install the scaffold APK on the attached Galaxy device, grant notification permission, start the foreground LAN server, verify bearer-token auth, CORS preflight, and `/v1/capabilities` through `adb forward`.
+- [x] Android accelerator live Local Dream bridge validation: detect the installed Local Dream backend over phone loopback, expose `local-dream-active`, convert Local Dream SSE/raw-RGB generation output into Signal Loom JSON/PNG, and verify real QNN-backed generation plus 4x upscaling through the Signal Loom gateway.
+- [x] Make the configured Android phone upscaler the universal Image/Photos upscale path, with local fallback and visible method/status feedback; add a Flow image-generation auto-upscale toggle that uses the currently configured upscaler and includes paid upscaling in pre-run cost estimates.
+- [ ] Android accelerator companion productionization: compile the gateway into a Local Dream based fork or equivalent same-UID runtime so model/upscaler downloads, backend startup, capability listing, generation, and upscaling are controlled from one near-idiot-proof companion app instead of requiring the separate Play Store Local Dream app to be running.
+- [x] Android accelerator companion productionization slice: add a guided setup command for the Local Dream based Signal Loom companion that can run prepare/build/install/start/live gate with correct side-by-side and replace-package APK paths.
+- [x] Android accelerator companion productionization slice: add a no-device source-only Local Dream fork preparation mode and tighten prepared-fork verification so build/live readiness requires extracted runtime assets.
+- [x] Android accelerator companion productionization slice: start the generated Local Dream Signal Loom gateway through an app-owned exported activity intent so the production gate can launch the non-exported foreground service without weakening service export security.
+- [x] Android accelerator companion productionization slice: make the Android Local Dream gate discover or configure the local Android SDK so the generated fork Gradle build can run without manual `local.properties` edits.
+- [x] Android accelerator companion productionization slice: add a repeatable Android Local Dream production gate that records doctor, prepared-fork verification, build/install/start, adb-forward, and `/v1` API smoke evidence for dashboard review.
+- [x] Android accelerator companion productionization slice: surface prepared Local Dream fork verifier status on the development dashboard so missing, failing, and ready one-app fork gates are visible beside ADB/package readiness.
+- [x] Android accelerator companion productionization slice: add a no-mutation prepared-fork verifier that confirms the generated Local Dream fork contains the Signal Loom gateway service, screen, NSD advertising, integrated capabilities, backend startup hooks, and model/upscaler repository access before build/install.
+- [x] Android accelerator companion productionization slice: add NSD discovery advertising, setup-screen copy/open/refresh controls, visible bridge status, foreground-service running status, and live ADB validation while the same-UID Local Dream fork remains open.
+- [x] Android accelerator Paper export validation: run Paper print-upscale replacement through the phone upscaler against an actual Paper frame, save the replacement asset, and capture print/web export evidence.
+- [x] Android accelerator/Paper print finalization status follow-up: show provider-specific Paper batch progress, expose visible Android companion job status, and re-queue stale print-upscaled assets when the current frame/document DPI target needs more pixels.
+- [x] Android accelerator/Paper quick-upscale failure fix: replace browser multipart phone upscale uploads with JSON image payloads, add Android JSON decode support, and preflight Local Dream bridge availability before sending image bytes.
+- [x] Android accelerator bridge diagnostics: verify the Local Dream SDXL NPU backend brings 127.0.0.1:8081 online, prove companion upscaling and generation pass through it, and preflight Android image generation before posting prompt jobs when no phone model is reachable.
+- [x] Paper print AI upscaling: research CPU-safe local AI upscaler options for this workstation and keep the Local CPU AI option gated unavailable until a tiled native helper/runtime can run without out-of-memory crashes.
+- [x] Paper KDP comic export wizard: after print-quality upscaling is complete, export KDP-ready comic interior/cover assets with page-role mapping, trim/bleed/DPI validation, print-upscale preflight, and user-friendly configuration.
+- [x] Flow project spend tracker: persist project-level usage/cost ledger data in `.sloom`, broken down by provider/model/operation/workspace, show total project spend across sessions, and add live credit/balance lookup where provider APIs support it.
+- [x] Make the Source Library live-sync generated/imported/edited assets and removals across Flow, Paper, Image, and Video workspace windows.
+- [x] Fix native startup so it fully restores the remembered `.sloom` project with assets or starts from a clean blank project, with a startup splash while loading.
+- [x] Cross-app production hardening slice: stop blank native startup from re-running on every App callback churn, so `Starting New Project` no longer loops `resetProjectDocument()` and Source Library native sync forever.
+- [x] Keep undocked dialogue windows stacked above their owning workspace window by parenting and raising external floating popup windows.
+- [x] Finish the theme implementation pass across shared menus, toolbars, dockable panels, workspace fallbacks, and external floating panel documents.
+- [x] Fix Source Library item renaming so right-click Rename and the T button use an inline editor and sync renamed labels across workspace windows.
+- [x] Fix undocked dialog dragging so external floating windows stay anchored under the cursor instead of reopening/jumping during pointer movement.
+- [x] Add 20 interface theme variations with settings previews, theme-aware shell chrome, and regression coverage.
+- [x] Fix dockable Bookmarks collapse so it releases its full dock width like Source Library, and keep undocked Tool Properties visible if its external floating window disappears.
+- [x] Fix multi-window Source Library flicker after opening Paper by replacing whole-store BroadcastChannel snapshot sync with merge-only command messages and Flow-owned source ingestion.
+- [x] Split Flow/Video/Image/Paper into separate Electron workspace windows, move Add Nodes into the fixed top Flow toolbar area, scope menus/hotkeys per focused window, and support monitor-level floating dockable dialogs/panels.
+- [x] Restore generated Flow node result/history/envelope media from reopened `.sloom` Source Library assets so prior batches stay usable on the workspace.
+- [x] Add Source Library item context menus with rename actions and collapsible envelope groups.
+- [x] Add visual thumbnails to image/video Expander selections.
+- [x] Preserve current Flow zoom when portals or bookmark waypoints recenter the workspace, and let connector drags jump to bookmarks.
+- [x] Fix Source Bin image imports on Flow project reopen so dropped media nodes keep using the restored Source Bin asset instead of losing their preview/output.
+- [x] Change source-bin ingestion so flow-generated media only lands in the Source Library when explicitly routed through source-bin connected flow outputs (including envelope-backed outputs), instead of auto-creating per-output source-bin envelopes for every generation.
+- [x] Fix Paper PDF flattening so speech/thought bubble artwork survives raster export instead of exporting only the bubble text.
+- [x] Fix raster Paper spread PDF export so print outputs do not include editor/proof-only guides, red gutters, or blank-page labels.
+- [x] Fix the Paper speech-bubble arc regression so the bubble body stays inside the resize bounding box while only the tail can extend outside it.
+- [x] Fix Paper PDF export fidelity by rasterizing page-based PDF output from flattened page snapshots and tighten speech-bubble paths so stems render as continuous outlines without seam artifacts.
+- [x] Add unified keyboard shortcut routing across Flow/Video/Image/Paper, including Paper/Image undo-redo-copy-cut-paste/delete actions and visible hotkey labels in the global menus.
+- [x] Add Paper professional print-production controls for PDF target/output intent, ink limit, black/spot policy, package/PDF metadata, and honest preflight warnings for browser PDF proof limitations.
+- [x] Add paired Flow portal nodes with single entrance/exit connectors, hidden synthetic graph edges for execution logic, connection summaries, toolbar/context-menu creation, and viewport jump-to-exit behavior after connecting to the entrance.
+- [x] Fix Paper speech bubble stems so they render as a continuous curved bubble outline and add a single curve handle/control for speech and thought bubble tails.
+- [x] Refine Paper shape editing so normal selection shows the resize bounding box only, Ctrl/Cmd exposes vertex editing, Shift snaps vertex edits to frame borders, Shift locks resize aspect ratio, and resize handles exist on corners and edges.
+- [x] Correct Paper polygon vertex editing so caption boxes keep editable corner handles, stale caption triangles are ignored, vertices can be inserted/deleted along edges, and edited caption/panel polygons export correctly.
+- [x] Complete the cumulative Paper image-transform/vertex-editing work plus .sloom project media hardening and the Flow expander node.
+- [x] Fix Paper bubble tails, snapping menu controls, Shift guide/ruler snapping, and two-axis image crop panning.
+- [x] Add Gemini 3 Flash multimodal text support in Signal Loom after researching the current Google AI model surface.
+- [x] Add Paper modifier-wheel zoom support so Ctrl/Cmd+wheel zooms the canvas, Shift accelerates the wheel zoom step, and ordinary wheel scrolling remains unchanged.
+- [x] Fix the dockable Source Bin collapse path so the internal source-bin rail collapses the dock slot, the workspace margin follows the actual dock chrome width, titlebar action buttons are removed, and drag docking shows a visible snap preview.
+- [x] Fix docked collapsed panel chrome so left Source Bin collapse releases full-width dock space instead of leaving a blank gutter.
+- [x] Fix Paper stacking root cause so document z-index ordering is decoupled from canvas CSS layers, newly created frames stack on top by default, and collapsed left Source Bin sidebars release their workspace offset.
+- [x] Fix Paper caption stacking/render ordering and move Paper panel toggles/reset into global menu commands instead of overlay buttons.
+- [x] Fix Paper image-frame offset rendering so offsets pan the source crop without translating the image element and revealing frame fill.
+- [x] Replace button-driven dock movement with header drag-and-snap docking, make shared Source Bin a flush docked left sidebar, support stacked side panels, and ensure floating/docked panel contents scroll inside constrained panel bounds.
+- [x] Fix Video titlebar panel toggles so Source opens the dockable Source Monitor, and make undocked shared Source Bin/Bookmarks panels scroll correctly in Flow/Image/Paper.
+- [x] Add controlled docked-panel resize handles, make the Video timeline resizable from the divider above it, and modernize the Video source-bin display for larger mixed media libraries.
+- [x] Add menu-selectable workspace view defaults and harden dock/floating panel bounds so oversized panels cannot trap or cover the UI without a reset path.
+- [x] Fix the latest Paper/Video workspace polish regressions: connected double-page spreads, overlay/menu stacking, creation-tool hit testing, dock sizing/scroll behavior, Paper selection menu commands, richer type controls, Paper-to-Image bubble export parity, and the cramped 4K Video timeline layout.
+- [x] Historical checkpoint: all documented tasks were complete when this marker was added; newer production-hardening tasks now supersede it.
+- [x] Blank-window startup crash fixes are green: persisted dockable/source-bin/editor/workspace/Paper/Flow state is sanitized before render or hydration.
+- [x] User-reported dockable-panel `Maximum update depth exceeded` crash is documented as fixed and validated.
+- [x] Malformed `.sloom` project-open crash fixes are green: validation, sanitization, transactional restore, rollback tests, and user-visible error handling are in place.
+- [x] Error recovery UI is complete with app/workspace/dockable boundaries and safe persisted-state recovery actions.
+- [x] Image workspace standalone file saving is expanded: direct downloads now support PNG, JPEG, WebP, AVIF, BMP, static GIF, TIFF, SVG, layered PSD, and GIMP-style XCF, while Source Bin / Flow / Video handoff remains on visible export formats.
+- [x] Flow now contains the modularized Flow2 codebase: shared download/storage helpers, native menu subscriptions, split Image quick actions/layer/properties panels, feature-module Video/Paper workspaces, and Flow/Source Bin store slice boundaries are integrated into the single active codebase.
+- [x] Paper and Image editor navigation/selection polish is complete: Paper supports modifier multi-select, group movement/stacking, Shift image-crop panning, and a hand tool; Image has a matching hand tool; interface themes and the installed Electron menu launcher are wired.
+
 ## Phase 1: Planning and Scaffolding
 - [x] Analyze image and determine requirements
 - [x] Create handoff documentation (`CLAUDE.md`, `AGENTS.md`, `docs/HANDOFF.md`)
@@ -130,3 +368,85 @@
 - [x] Fix Composition-node mini-timeline handles so visible inputs align to actual lanes instead of floating over the node body/footer
 - [x] Add source-bin starring, per-item collapse, collapse/expand-all controls, and thumbnail media preview popups
 - [x] Surface flow-source-bin text and image assets in the editor Project Source Bin's Editor Assets tab
+- [x] Keep generated and imported source-bin assets visible when durable browser/scratch persistence fails
+- [x] Render shared node context menus from a viewport portal so rename menus open at the cursor
+- [x] Make `.sloom` project save/open materialize binned source-library media so generated videos reopen after a fresh launch
+- [x] Remove legacy JSON project affordances from the active save/open UI and focus project workspaces on `.sloom` files
+- [x] Fix editor keyframe deletion and make timeline opacity handles easier to drag without accidentally creating keyframes
+- [x] Make native `.sloom` Save/Save As embed temporary blob-backed generated videos before Electron writes the project workspace
+- [x] Preserve source display-aspect metadata through render fit scaling so animated motion and borders match the program monitor
+- [x] Add typed list nodes and envelope containers for looped media/text variations with nested source-bin output
+- [x] Align envelope-driven Veo frame interpolation requests with the current Gemini API contract
+- [x] Fix Gemini Veo media-input serialization to match the Google GenAI MLDev wire shape used by the live video endpoint
+- [x] Add nested all-combinations loop mode for multi-list and envelope-driven runs
+- [x] Wire image workspace titlebar zoom controls and layer thumbnail invalidation for raster edits
+- [x] Wire image editor Cut, Copy, and Paste through the context menu and Ctrl shortcuts
+- [x] Clip prompt-based image edits to the submitted selection with a Photoshop-style layer mask
+- [x] Add Photoshop-style layer mask controls for creating masks from selections and managing them per layer
+- [x] Add 70 total Photoshop-style image quick actions to the Image workspace context menu
+- [x] Route edited Image workspace outputs back through durable Source Bin assets for Flow and video-editor reuse
+- [x] Add 200 more implemented Photoshop-style image quick actions with generated, tested selection/layer/transform/pixel presets
+- [x] Add real non-destructive adjustment layers and align Image handoff naming around Source Bin, Flow, and Video workflows
+- [x] Add Photoshop-style layer effects for image layers with visible-output rendering through Source Bin, Flow, envelopes, and Video
+- [x] Add multi-format Image workspace visible export for PNG, JPEG, WebP, and AVIF source-bin assets
+- [x] Add Openverse free-resource image search/import into the Image workspace Source Bin workflow
+- [x] Add stackable per-layer Image workspace filters that render before effects and export through Source Bin
+- [x] Add Clone Stamp retouch tool with Alt-click sampling, brush controls, undo, and toolbar/shortcut integration
+- [x] Add storyboard-oriented brush presets for paint, eraser, and clone-stamp workflows
+- [x] Fix Linux Electron launch reliability by adding a tested GPU-disable fallback to the desktop launcher
+- [x] Add PSD import/export interoperability for layered Image workspace documents
+- [x] Add a Spot Heal retouch brush for automatic blemish blending
+- [x] Add a Blur Brush retouch tool for localized softening
+- [x] Add a Sharpen Brush retouch tool for localized contrast/detail boosts
+- [x] Add a Smudge Brush retouch tool for dragged-pixel blending
+- [x] Add Dodge and Burn brushes for localized exposure retouching
+- [x] Add Sponge saturate/desaturate brushes for localized color retouching
+- [x] Add a Paint Bucket tool for contiguous-region color fills
+- [x] Add a Linear Gradient tool for foreground-to-transparent gradient fills
+- [x] Add filled Rectangle and Ellipse raster shape tools
+- [x] Add Noise and Pixelate non-destructive layer filters
+- [x] Build toward 85% Photoshop desktop priority parity for storyboards and AI media production: painting/retouch, masks, filters, layer effects, free resource search/import, multi-format image support, and PSD support
+- [x] Add a Paper workspace for print layout with pages, rulers, guides, grids, source-library placement, print HTML/PDF preview export, and comic/manga frame tools
+- [x] Make workspace menus static but tab-specific, with Flow/Video/Image/Paper menus disabled when their workspace is inactive
+- [x] Replace the Image workspace prompt-only text tool with configurable multiline text settings in the properties panel
+- [x] Expand Paper document setup with common page sizes, custom dimensions, bleed, margins, columns, grids, and DPI controls
+- [x] Make Paper frames directly manipulable with drag-create, move, resize, rotate, image fit/crop/offset/rotation controls, and bubble-tail controls
+- [x] Add Image workspace comic/manga creation tools plus visible crop preview and layer rotation controls for Photoshop-style workflows
+- [x] Add Paper right-click usability commands, source-library frame/page placement, stacking actions, and shape/border/gradient controls
+- [x] Add persisted Image/Paper workspace layout customization with resizable/hideable panels
+- [x] Add Paper ruler guide dragging, organic comic bubble handles, arrow-key nudging, and image-frame handoff into Image/Video workspaces
+- [x] Close Paper free polygons by clicking an existing vertex after enough points have been placed
+- [x] Fix Paper shaped image-frame strokes, Paper image Y crop offsets, accidental UI text selection, and Flow node rename/bookmark controls
+- [x] Fix Image generative selection-edit layer placement so generated patches align with the selected document region
+- [x] Allow Paper workspace frames to be created, placed, resized, hit-tested, and dragged outside page bounds
+- [x] Fix Paper ruler-drag guide placement and add native Electron PDF export for Paper documents
+- [x] Fix Paper PDF bleed interpretation, speech-bubble text alignment, guide movement, visible bleed overlays, configurable document backgrounds, and flattened page export to Source Library/envelopes/Image
+- [x] Fix native Paper PDF trim alignment so bleed handling does not push exported layouts right/down
+- [x] Force native Electron Paper PDF export to use the document's explicit page size instead of default paper centering
+- [x] Replace the Image workspace basic line brush with a pressure-aware dab brush engine, grouped default brush library, and expanded brush configuration controls
+- [x] Fix Paper ruler guide orientation and add a visible always-on trim/cut overlay above page content
+- [x] Align Paper PDF and flattened Image export frame-content rendering with the live Paper canvas for image frames, shaped frames, and caption vertical alignment
+- [x] Fix Paper PDF image/shape frame offsets from default figure margins and embed placed image assets before flattened Image export rasterization
+- [x] Add dockable, movable, resizable floating dialog support for major app/help/media/video tool dialogs
+- [x] Audit and fix Video workspace program-monitor vs final-render layout parity for positioned images, text, crops, and transforms
+- [x] Add more print/document production support in Paper for comic and generative-media publishing workflows
+- [x] Build side-by-side Adobe comparison and prioritization for InDesign/Paper, Photoshop/Image, and Premiere/Video workflow gaps
+- [x] Complete the first Adobe porting wave/integration pass for Paper, Image, and Video
+- [x] Complete the post-crash Adobe integration pass for started Paper/Image/Video parity features
+- [x] Continue deeper Adobe parity follow-up: Paper parent pages/styles/package export, Image richer text/adjustment polish beyond the integrated controls, and Video transition/render-parity completion
+- [x] Expand import/export format support across Source Bin, Image, Paper, Video, captions, packages, and Electron/native file filters
+- [x] Add standalone Image workspace file-download options for common raster, layered, and workfile formats while preserving workflow-safe Source Bin, Flow, and Video visible exports
+- [x] Harden persisted startup state for dockable panels, source-bin, editor, workspace layout, Paper, and Flow hydration; reproduced the startup infinite update/persisted dockable crash and verified the sanitized hydration path stays mounted
+- [x] Harden malformed `.sloom` project open with validation, sanitization, transactional restore, rollback behavior, and restore-path regression tests
+- [x] Add app-level, workspace-level, dockable-host, and dockable-panel render error recovery boundaries with retry/reset/cleanup recovery UI
+- [x] Fix Paper cover/crop image panning so image frames render an aspect-correct movable image canvas instead of clipping a translated frame-sized image.
+- [x] Harden native `.sloom` saves after the Chronicle data-loss incident: automation saves now always use isolated automation paths, and overwriting an existing project first creates a timestamped sibling `.sloom.bak-*` backup.
+- [x] Build and verify a one-app Signal Loom Android Local Dream fork path with embedded LAN API, model/upscaler readiness UI, serialized generation/upscale jobs, Local Dream runtime asset extraction, and side-by-side debug install documentation.
+- [x] Harden Paper print Android upscaling with conservative retries for transient phone/network/backend failures while failing fast for missing configuration or unavailable downloaded model/upscaler state.
+- [x] Add Android accelerator setup diagnostics in Settings so users can distinguish the standalone bridge companion from the one-app Signal Loom Android build and see model/upscaler readiness warnings before print/generation jobs fail.
+- [x] Resolve production packaging for Signal Loom Android model-data migration: a debug side-by-side app cannot read the Play Store Local Dream app's private downloaded model directory, so either a user-approved reinstall/redownload path or a signed migration/export path is still required.
+- [x] Implement Elena's Gutter Knife Tool (Paper Workspace): Complete UI and store wiring for 'gutterKnife' tool, dragging interactions, preview lines, and button in PaperWorkspace.
+- [x] Unify Image AI Cost Estimation (Image Workspace Interop): Bind 'estimateGenerativeFillCostUsd' to the shared ledger in costEstimation.ts.
+- [x] Implement Hybrid PDF Printing (Paper Workspace): Modify 'paperPdfExport.ts' to rasterize backdrop artwork panels while keeping text, bubbles, and vector outlines as sharp vector elements.
+- [x] Add Vector Layer Type (Image Workspace Interop): Add a 'vector' layer type supporting SVG XML recipes in canvas documents.
+- [x] Update the documentation of Signal Loom with advanced story algorithm examples, including State-Driven Storyboards, Multimodal Screenplay Orchestration, and Closed-Loop Style Verification, complete with visual dark-theme HTML node graphs in SLOOM.html, project documentation updates, and standard library template integration.
