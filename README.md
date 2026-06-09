@@ -7,6 +7,11 @@ The app runs in a normal browser through Vite and also ships as an Electron desk
 ## Screenshots
 
 <figure>
+  <img src="docs/assets/signal-loom-current.png" alt="Signal Loom current application snapshot" />
+  <figcaption><strong>Current version.</strong> Current application screenshot from a recent desktop run.</figcaption>
+</figure>
+
+<figure>
   <img src="docs/assets/signal-loom-flow.png" alt="Signal Loom flow workspace showing connected generation nodes, the persistent source bin, provider telemetry, and a composition node." />
   <figcaption><strong>Flow workspace.</strong> Build reusable generation graphs with prompt, image, video, source-bin, and composition nodes while tracking run cost and keeping generated assets in the project library.</figcaption>
 </figure>
