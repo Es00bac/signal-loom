@@ -1,5 +1,7 @@
 # Signal Loom
 
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-es00bac-FFDD00?logo=buymeacoffee&logoColor=000)](https://buymeacoffee.com/es00bac)
+
 Signal Loom is a local-first AI media suite with four applications sharing one project model and one source library:
 
 - **Flow**: build generation and orchestration graphs.
