@@ -60,6 +60,7 @@ export function ImageEditorAssetBar({ getNewFlowNodePosition }: ImageEditorAsset
   const setWorkspaceView = useEditorStore((s) => s.setWorkspaceView);
   const setSourceBinTab = useEditorStore((s) => s.setSourceBinTab);
   const setSelectedSourceItemId = useEditorStore((s) => s.setSelectedSourceItemId);
+  const activeFlowSourceBinId = useEditorStore((s) => s.activeFlowSourceBinId);
   const activeFlowWorkspaceId = useFlowWorkspaceStore((state) => state.activeWorkspaceId);
   const [activeExportAction, setActiveExportAction] = useState<ExportAction | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -71,7 +72,7 @@ export function ImageEditorAssetBar({ getNewFlowNodePosition }: ImageEditorAsset
   const [importingResourceId, setImportingResourceId] = useState<string | null>(null);
   const psdFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const saveActiveDocumentToSourceBin = async (): Promise<SourceBinLibraryItem | undefined> => {
+  const saveActiveDocumentToSourceBin = async (targetBinId?: string): Promise<SourceBinLibraryItem | undefined> => {
     const doc = getActiveDocument();
     if (!doc) {
       await showAlertDialog({
@@ -119,7 +120,7 @@ export function ImageEditorAssetBar({ getNewFlowNodePosition }: ImageEditorAsset
         kind: 'image',
         mimeType: exportFormat.mimeType,
         dataUrl,
-      });
+      }, targetBinId);
       setStatusMessage(`Saved "${item.label}" to the Source Bin.`);
     }
 
@@ -219,7 +220,7 @@ export function ImageEditorAssetBar({ getNewFlowNodePosition }: ImageEditorAsset
 
   const handleSendToFlow = () => {
     void runExportAction('flow', async () => {
-      const item = await saveActiveDocumentToSourceBin();
+      const item = await saveActiveDocumentToSourceBin(activeFlowSourceBinId);
       if (!item) return;
       const bridge = getSignalLoomNativeBridge();
       if (bridge?.openWorkspaceWindow) {
@@ -229,6 +230,7 @@ export function ImageEditorAssetBar({ getNewFlowNodePosition }: ImageEditorAsset
             type: 'flow-create-source-node',
             targetWorkspace: 'flow',
             targetFlowWorkspaceId: activeFlowWorkspaceId,
+            targetBinId: activeFlowSourceBinId,
             item,
           });
         }, 200);

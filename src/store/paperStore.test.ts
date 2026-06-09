@@ -1,0 +1,498 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { createPaperComicSfxDesign } from '../lib/paperComicSfx';
+import { addFrameToPaperPage, createDefaultPaperDocument } from '../lib/paperDocument';
+import type { SourceBinLibraryItem } from './sourceBinStore';
+import { usePaperStore } from './paperStore';
+
+function resetPaperStore() {
+  const document = createDefaultPaperDocument({ title: 'Paper Store Test' });
+  usePaperStore.setState({
+    document,
+    selectedPageId: document.pages[0].id,
+    selectedFrameId: null,
+    selectedFrameIds: [],
+    tool: 'select',
+    zoom: 0.8,
+    undoStack: [],
+    redoStack: [],
+    clipboardFrames: [],
+    styleClipboard: null,
+  });
+}
+
+function textItem(): SourceBinLibraryItem {
+  return {
+    id: 'script-line-1',
+    label: 'Script line',
+    kind: 'text',
+    text: 'Panel narration from Flow.',
+    createdAt: 1,
+  };
+}
+
+function seedStackedFrames() {
+  let document = createDefaultPaperDocument({ title: 'Paper Store Selection Test' });
+  const pageId = document.pages[0].id;
+  for (const [index, id] of ['frame-a', 'frame-b', 'frame-c', 'frame-d'].entries()) {
+    const added = addFrameToPaperPage(document, pageId, {
+      id,
+      kind: index === 0 ? 'image' : 'caption',
+      label: id,
+      xMm: 12 + index * 10,
+      yMm: 16 + index * 8,
+      widthMm: 30,
+      heightMm: 20,
+      zIndex: index,
+    });
+    document = added.document;
+  }
+  usePaperStore.setState({
+    document,
+    selectedPageId: pageId,
+    selectedFrameId: 'frame-a',
+    selectedFrameIds: ['frame-a'],
+    tool: 'select',
+    zoom: 0.8,
+    undoStack: [],
+    redoStack: [],
+    clipboardFrames: [],
+    styleClipboard: null,
+  });
+  return { pageId };
+}
+
+function stackOrder() {
+  return [...usePaperStore.getState().document.pages[0].frames]
+    .sort((a, b) => a.zIndex - b.zIndex)
+    .map((frame) => frame.id);
+}
+
+function paperEditActions() {
+  return usePaperStore.getState() as ReturnType<typeof usePaperStore.getState> & {
+    chainSelectedBubbles: () => void;
+    copySelection: () => void;
+    cutSelection: () => void;
+    pasteSelection: () => void;
+    deleteSelection: () => void;
+    unchainSelectedBubbles: () => void;
+    copySelectedFrameStyle: () => boolean;
+    pasteFrameStyleToSelection: () => number;
+    addComicSfx: (
+      presetId: 'bang' | 'kapow' | 'screech' | 'whirrrrr' | 'boom' | 'crash' | 'zap' | 'slam',
+      options?: { point?: { xMm: number; yMm: number }; text?: string },
+    ) => string | undefined;
+    undo: () => void;
+    redo: () => void;
+  };
+}
+
+describe('paperStore interaction actions', () => {
+  beforeEach(resetPaperStore);
+
+  it('adds and updates ruler-created guides on the selected page', () => {
+    const pageId = usePaperStore.getState().selectedPageId;
+    usePaperStore.setState((state) => ({
+      document: {
+        ...state.document,
+        view: {
+          ...state.document.view,
+          showGuides: false,
+        },
+      },
+    }));
+
+    const guideId = usePaperStore.getState().addGuideToPage(pageId, {
+      orientation: 'vertical',
+      positionMm: 21,
+      label: 'Dragged vertical',
+    });
+
+    expect(guideId).toBeDefined();
+    expect(usePaperStore.getState().document.view.showGuides).toBe(true);
+    expect(usePaperStore.getState().document.pages[0].guides).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: guideId,
+          orientation: 'vertical',
+          positionMm: 21,
+          label: 'Dragged vertical',
+        }),
+      ]),
+    );
+
+    usePaperStore.getState().updateGuide(pageId, guideId!, { positionMm: 44 });
+    expect(
+      usePaperStore.getState().document.pages[0].guides.find((guide) => guide.id === guideId)?.positionMm,
+    ).toBe(44);
+  });
+
+  it('places source-library text on the page and lets arrow-key nudging move the selected frame', () => {
+    const pageId = usePaperStore.getState().selectedPageId;
+
+    usePaperStore.getState().placeSourceAssetAt({
+      pageId,
+      item: textItem(),
+      point: { xMm: 30, yMm: 40 },
+    });
+
+    const selectedFrameId = usePaperStore.getState().selectedFrameId;
+    const placedFrame = usePaperStore.getState().document.pages[0].frames.find((frame) => frame.id === selectedFrameId);
+    expect(placedFrame).toMatchObject({
+      kind: 'text',
+      xMm: 30,
+      yMm: 40,
+      text: 'Panel narration from Flow.',
+    });
+
+    usePaperStore.getState().nudgeSelectedFrame(1.25, -0.5);
+    const nudgedFrame = usePaperStore.getState().document.pages[0].frames.find((frame) => frame.id === selectedFrameId);
+    expect(nudgedFrame).toMatchObject({
+      xMm: 31.25,
+      yMm: 39.5,
+    });
+  });
+
+  it('supports additive and toggle frame selection for modifier-click workflows', () => {
+    seedStackedFrames();
+    const state = usePaperStore.getState() as typeof usePaperStore extends { getState: () => infer T }
+      ? T & {
+          selectFrameWithMode: (
+            frameId: string | null,
+            mode?: 'replace' | 'add' | 'toggle',
+          ) => void;
+        }
+      : never;
+
+    state.selectFrameWithMode('frame-b', 'add');
+    expect(usePaperStore.getState().selectedFrameIds).toEqual(['frame-a', 'frame-b']);
+    expect(usePaperStore.getState().selectedFrameId).toBe('frame-b');
+
+    (usePaperStore.getState() as typeof state).selectFrameWithMode('frame-a', 'toggle');
+    expect(usePaperStore.getState().selectedFrameIds).toEqual(['frame-b']);
+
+    (usePaperStore.getState() as typeof state).selectFrameWithMode('frame-c');
+    expect(usePaperStore.getState().selectedFrameIds).toEqual(['frame-c']);
+  });
+
+  it('applies stacking actions to the selected frame group while preserving relative order', () => {
+    const { pageId } = seedStackedFrames();
+    usePaperStore.setState({
+      selectedFrameId: 'frame-b',
+      selectedFrameIds: ['frame-a', 'frame-b'],
+    });
+
+    usePaperStore.getState().runFrameContextAction(pageId, 'frame-b', 'bring-to-front');
+    expect(stackOrder()).toEqual(['frame-c', 'frame-d', 'frame-a', 'frame-b']);
+    expect(usePaperStore.getState().selectedFrameIds).toEqual(['frame-a', 'frame-b']);
+
+    usePaperStore.getState().runFrameContextAction(pageId, 'frame-a', 'send-backward');
+    expect(stackOrder()).toEqual(['frame-c', 'frame-a', 'frame-b', 'frame-d']);
+    expect(usePaperStore.getState().selectedFrameIds).toEqual(['frame-a', 'frame-b']);
+  });
+
+  it('copies and pastes selected Paper frames on the current page', () => {
+    seedStackedFrames();
+
+    paperEditActions().copySelection();
+    paperEditActions().pasteSelection();
+
+    const state = usePaperStore.getState();
+    const page = state.document.pages[0];
+    const pastedFrame = page.frames.find((frame) => frame.id === state.selectedFrameId);
+
+    expect(page.frames).toHaveLength(5);
+    expect(pastedFrame).toMatchObject({
+      kind: 'image',
+      label: 'frame-a copy',
+      xMm: 16,
+      yMm: 20,
+    });
+    expect(pastedFrame?.id).not.toBe('frame-a');
+    expect(state.selectedFrameIds).toEqual([pastedFrame?.id]);
+  });
+
+  it('copies the active frame style and pastes it to every selected frame as one undoable edit', () => {
+    const { pageId } = seedStackedFrames();
+    paperEditActions().updateFrame(pageId, 'frame-a', {
+      fillColor: '#fbe400',
+      fillOpacity: 0.92,
+      strokeColor: '#101010',
+      strokeOpacity: 0.75,
+      strokeWidthMm: 2.4,
+      strokeStyle: 'dashed',
+      cornerRadiusMm: 3,
+      opacity: 0.84,
+      typography: {
+        fontFamily: 'Impact, sans-serif',
+        fontSizePt: 36,
+        fontWeight: '900',
+        fontStyle: 'normal',
+        leadingPt: 34,
+        align: 'center',
+        color: '#111111',
+        tracking: 1.5,
+        hyphenate: false,
+      },
+      textStrokeColor: '#ffffff',
+      textStrokeWidthMm: 0.8,
+      textShadowColor: 'rgba(0,0,0,0.55)',
+      textShadowOffsetXMm: 1.2,
+      textShadowOffsetYMm: 1.6,
+      textShadowBlurMm: 0.4,
+      textSkewXDeg: -8,
+      textScaleX: 1.14,
+    });
+
+    usePaperStore.setState({
+      selectedFrameId: 'frame-a',
+      selectedFrameIds: ['frame-a'],
+      undoStack: [],
+      redoStack: [],
+    });
+
+    expect(paperEditActions().copySelectedFrameStyle()).toBe(true);
+
+    usePaperStore.setState({
+      selectedFrameId: 'frame-c',
+      selectedFrameIds: ['frame-b', 'frame-c'],
+    });
+
+    expect(paperEditActions().pasteFrameStyleToSelection()).toBe(2);
+    const styledFrames = usePaperStore.getState().document.pages[0].frames
+      .filter((frame) => frame.id === 'frame-b' || frame.id === 'frame-c');
+    expect(styledFrames).toHaveLength(2);
+    for (const frame of styledFrames) {
+      expect(frame).toMatchObject({
+        fillColor: '#fbe400',
+        fillOpacity: 0.92,
+        strokeColor: '#101010',
+        strokeOpacity: 0.75,
+        strokeWidthMm: 2.4,
+        strokeStyle: 'dashed',
+        cornerRadiusMm: 3,
+        opacity: 0.84,
+        textStrokeColor: '#ffffff',
+        textStrokeWidthMm: 0.8,
+        textShadowColor: 'rgba(0,0,0,0.55)',
+        textShadowOffsetXMm: 1.2,
+        textShadowOffsetYMm: 1.6,
+        textShadowBlurMm: 0.4,
+        textSkewXDeg: -8,
+        textScaleX: 1.14,
+      });
+      expect(frame.typography.fontFamily).toBe('Impact, sans-serif');
+      expect(frame.typography.fontSizePt).toBe(36);
+      expect(frame.typography.tracking).toBe(1.5);
+      expect(frame.text).toBe('Narration caption');
+      expect(frame.xMm).not.toBe(12);
+    }
+    expect(usePaperStore.getState().undoStack).toHaveLength(1);
+
+    paperEditActions().undo();
+    const restoredFrame = usePaperStore.getState().document.pages[0].frames.find((frame) => frame.id === 'frame-b');
+    expect(restoredFrame?.fillColor).not.toBe('#fbe400');
+    expect(restoredFrame?.typography.fontFamily).not.toBe('Impact, sans-serif');
+  });
+
+  it('adds a comic sound-effect preset as one selected undoable decal frame', () => {
+    const pageId = usePaperStore.getState().selectedPageId;
+
+    const primaryFrameId = paperEditActions().addComicSfx('kapow', {
+      point: { xMm: 36, yMm: 42 },
+      text: 'Kablam!',
+    });
+
+    const state = usePaperStore.getState();
+    const page = state.document.pages.find((candidate) => candidate.id === pageId);
+    expect(primaryFrameId).toMatch(/^sfx-kapow-/);
+    expect(page?.frames).toHaveLength(1);
+    expect(state.selectedPageId).toBe(pageId);
+    expect(state.selectedFrameId).toBe(primaryFrameId);
+    expect(state.selectedFrameIds).toEqual([primaryFrameId]);
+    expect(state.undoStack).toHaveLength(1);
+
+    const primaryFrame = page?.frames.find((frame) => frame.id === primaryFrameId);
+    expect(primaryFrame).toMatchObject({
+      kind: 'image',
+      fit: 'stretch',
+      xMm: 36,
+      yMm: 42,
+      comicSfxDesign: {
+        presetId: 'kapow',
+        text: 'KABLAM!',
+      },
+    });
+    expect(primaryFrame?.asset?.mimeType).toBe('image/svg+xml');
+    expect(primaryFrame?.asset?.src).toContain('data:image/svg+xml');
+
+    paperEditActions().undo();
+    expect(usePaperStore.getState().document.pages.find((candidate) => candidate.id === pageId)?.frames).toHaveLength(0);
+  });
+
+  it('adds customized comic sound-effect designer output as one selected undoable decal frame', () => {
+    const pageId = usePaperStore.getState().selectedPageId;
+    const design = createPaperComicSfxDesign('zap', {
+      text: 'bzzt',
+      fillColor: '#22d3ee',
+      strokeColor: '#082f49',
+      speedLinesEnabled: true,
+      speedLineCount: 6,
+      burstEnabled: false,
+      halftoneEnabled: true,
+      halftoneCount: 5,
+    });
+
+    const primaryFrameId = paperEditActions().addComicSfx('zap', {
+      point: { xMm: 18, yMm: 19 },
+      design,
+    });
+
+    const state = usePaperStore.getState();
+    const page = state.document.pages.find((candidate) => candidate.id === pageId);
+    expect(primaryFrameId).toMatch(/^sfx-zap-/);
+    expect(page?.frames).toHaveLength(1);
+    expect(page?.frames.find((frame) => frame.id === primaryFrameId)).toMatchObject({
+      kind: 'image',
+      label: 'BZZT Comic SFX',
+      comicSfxDesign: {
+        text: 'BZZT',
+        fillColor: '#22d3ee',
+        strokeColor: '#082f49',
+        speedLineCount: 6,
+        halftoneCount: 5,
+        burstEnabled: false,
+      },
+    });
+    expect(page?.frames.find((frame) => frame.id === primaryFrameId)?.asset?.src).toContain('data:image/svg+xml');
+    expect(state.selectedFrameIds).toEqual([primaryFrameId]);
+  });
+
+  it('cuts, deletes, undoes, and redoes selected Paper frames', () => {
+    seedStackedFrames();
+
+    paperEditActions().cutSelection();
+    expect(usePaperStore.getState().document.pages[0].frames.map((frame) => frame.id)).not.toContain('frame-a');
+
+    paperEditActions().pasteSelection();
+    expect(usePaperStore.getState().document.pages[0].frames).toHaveLength(4);
+
+    paperEditActions().deleteSelection();
+    expect(usePaperStore.getState().document.pages[0].frames).toHaveLength(3);
+
+    paperEditActions().undo();
+    expect(usePaperStore.getState().document.pages[0].frames).toHaveLength(4);
+
+    paperEditActions().redo();
+    expect(usePaperStore.getState().document.pages[0].frames).toHaveLength(3);
+  });
+
+  it('undoes direct frame edits and document setup changes from keyboard-triggered undo', () => {
+    seedStackedFrames();
+    const pageId = usePaperStore.getState().document.pages[0].id;
+
+    paperEditActions().updateFrame(pageId, 'frame-a', { xMm: 42 });
+    expect(usePaperStore.getState().document.pages[0].frames.find((frame) => frame.id === 'frame-a')?.xMm).toBe(42);
+
+    paperEditActions().undo();
+    expect(usePaperStore.getState().document.pages[0].frames.find((frame) => frame.id === 'frame-a')?.xMm).toBe(12);
+
+    paperEditActions().updateDocumentSetup({ dpi: 450 });
+    expect(usePaperStore.getState().document.page.dpi).toBe(450);
+
+    paperEditActions().undo();
+    expect(usePaperStore.getState().document.page.dpi).toBe(300);
+  });
+
+  it('does not emit history or state changes for unchanged frame patches', () => {
+    const { pageId } = seedStackedFrames();
+    const before = usePaperStore.getState();
+    const notifications: Array<ReturnType<typeof usePaperStore.getState>> = [];
+    const unsubscribe = usePaperStore.subscribe((state) => {
+      notifications.push(state);
+    });
+
+    try {
+      before.updateFrame(pageId, 'frame-a', { xMm: 12 });
+    } finally {
+      unsubscribe();
+    }
+
+    const after = usePaperStore.getState();
+    expect(after.document).toBe(before.document);
+    expect(after.undoStack).toBe(before.undoStack);
+    expect(notifications).toHaveLength(0);
+  });
+
+  it('chains and unchains selected speech or thought bubbles in one undoable edit', () => {
+    let document = createDefaultPaperDocument({ title: 'Bubble Chains' });
+    const pageId = document.pages[0].id;
+    for (const [index, id] of ['bubble-a', 'bubble-b', 'bubble-c'].entries()) {
+      document = addFrameToPaperPage(document, pageId, {
+        id,
+        kind: index === 2 ? 'thoughtBubble' : 'speechBubble',
+        label: id,
+        xMm: 12 + index * 36,
+        yMm: 24,
+        widthMm: 30,
+        heightMm: 18,
+        zIndex: index,
+      }).document;
+    }
+    usePaperStore.setState({
+      document,
+      selectedPageId: pageId,
+      selectedFrameId: 'bubble-c',
+      selectedFrameIds: ['bubble-b', 'bubble-a', 'bubble-c'],
+      undoStack: [],
+      redoStack: [],
+    });
+
+    paperEditActions().chainSelectedBubbles();
+
+    const chainedState = usePaperStore.getState();
+    const frames = chainedState.document.pages[0].frames;
+    const chainId = frames.find((frame) => frame.id === 'bubble-a')?.bubbleChainId;
+    expect(chainId).toMatch(/^bubble-chain-/);
+    expect(frames.map((frame) => [frame.id, frame.bubbleChainId, frame.bubbleChainOrder])).toEqual([
+      ['bubble-a', chainId, 2],
+      ['bubble-b', chainId, 1],
+      ['bubble-c', chainId, 3],
+    ]);
+    expect(chainedState.undoStack).toHaveLength(1);
+
+    paperEditActions().unchainSelectedBubbles();
+    expect(usePaperStore.getState().document.pages[0].frames.map((frame) => frame.bubbleChainId)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+
+    paperEditActions().undo();
+    expect(usePaperStore.getState().document.pages[0].frames.map((frame) => frame.bubbleChainId)).toEqual([
+      chainId,
+      chainId,
+      chainId,
+    ]);
+  });
+
+  it('restores a safe default from malformed paper document and layout state', () => {
+    usePaperStore.getState().restoreSnapshot({
+      document: {
+        id: 'broken',
+        page: null,
+        pages: [{ id: 'page-1', frames: null }],
+      },
+      selectedPageId: 'missing-page',
+      selectedFrameId: 'missing-frame',
+      tool: 'bad-tool',
+      zoom: Number.POSITIVE_INFINITY,
+    } as never);
+
+    const state = usePaperStore.getState();
+    expect(state.document.pages.length).toBeGreaterThan(0);
+    expect(state.selectedPageId).toBe(state.document.pages[0].id);
+    expect(state.selectedFrameId).toBeNull();
+    expect(state.tool).toBe('select');
+    expect(state.zoom).toBe(0.8);
+  });
+});

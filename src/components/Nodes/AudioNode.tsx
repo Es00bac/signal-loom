@@ -8,6 +8,7 @@ import { saveImportedAsset } from '../../lib/assetStore';
 import { buildDownloadFilename, downloadAsset } from '../../lib/downloadAsset';
 import { EXPORT_BASENAME } from '../../lib/brand';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
+import { assignVariableToResultAttempt } from '../../lib/flowVariables';
 import { getCompatibleNodeActions } from '../../lib/nodeActionMenu';
 import {
   AUDIO_OUTPUT_FORMAT_OPTIONS,
@@ -279,6 +280,7 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
       isRunning={data.isRunning}
       error={data.error}
       statusMessage={data.statusMessage}
+      retryState={data.retryState}
       onToggleCollapsed={() => data.onChange?.('collapsed', !isCollapsed)}
       footerActions={
         assetUrl ? (
@@ -292,6 +294,7 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
       {mediaMode === 'generate' ? (
         <AttemptHistory
           attempts={data.resultHistory}
+          onAssignVariable={(attemptId, variableName) => data.onChange?.('resultHistory', assignVariableToResultAttempt(data.resultHistory, attemptId, variableName))}
           onSelectAttempt={data.onSelectAttempt}
           selectedAttemptId={data.selectedResultId}
         />

@@ -8,6 +8,7 @@ interface FlowCanvasDropImportOptions {
   onSetLatestImportDuration: (durationMs: number | undefined) => void;
   onShowSourceBin: () => void;
   screenToFlowPosition: (position: { x: number; y: number }) => { x: number; y: number };
+  sourceBinTargetId?: string;
   sourceBinItems: SourceBinLibraryItem[];
 }
 
@@ -17,6 +18,7 @@ export function useFlowCanvasDropImport({
   onSetLatestImportDuration,
   onShowSourceBin,
   screenToFlowPosition,
+  sourceBinTargetId,
   sourceBinItems,
 }: FlowCanvasDropImportOptions) {
   const handleDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
@@ -31,7 +33,7 @@ export function useFlowCanvasDropImport({
       void (async () => {
         try {
           const importStartedAt = performance.now();
-          const importedItems = await importFiles(rawFiles);
+          const importedItems = await importFiles(rawFiles, sourceBinTargetId);
           onSetLatestImportDuration(Math.round(performance.now() - importStartedAt));
           if (importedItems.length === 0) {
             return;
@@ -78,6 +80,7 @@ export function useFlowCanvasDropImport({
     onSetLatestImportDuration,
     onShowSourceBin,
     screenToFlowPosition,
+    sourceBinTargetId,
     sourceBinItems,
   ]);
 

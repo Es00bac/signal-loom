@@ -1,11 +1,15 @@
 import type { SelectOption, VideoTargetHandle } from '../types/flow';
 
 const GEMINI_VIDEO_MODEL_ALIASES = new Map<string, string>([
-  ['veo-3.1', 'veo-3.1-generate-preview'],
-  ['veo-3.1-preview', 'veo-3.1-generate-preview'],
-  ['veo-3.1-fast', 'veo-3.1-fast-generate-preview'],
-  ['veo-3.1-fast-preview', 'veo-3.1-fast-generate-preview'],
-  ['veo-3.1-lite', 'veo-3.1-lite-generate-preview'],
+  ['gemini-omni', 'gemini-omni-flash-preview'],
+  ['gemini-omni-flash', 'gemini-omni-flash-preview'],
+  ['veo-3.1', 'veo-3.1-generate-001'],
+  ['veo-3.1-preview', 'veo-3.1-generate-001'],
+  ['veo-3.1-generate-preview', 'veo-3.1-generate-001'],
+  ['veo-3.1-fast', 'veo-3.1-fast-generate-001'],
+  ['veo-3.1-fast-preview', 'veo-3.1-fast-generate-001'],
+  ['veo-3.1-fast-generate-preview', 'veo-3.1-fast-generate-001'],
+  ['veo-3.1-lite', 'veo-3.1-lite-generate-001'],
   ['veo-3.1-lite-preview', 'veo-3.1-lite-generate-preview'],
   ['veo-3', 'veo-3.0-generate-001'],
   ['veo-3-preview', 'veo-3.0-generate-001'],
@@ -16,11 +20,15 @@ const GEMINI_VIDEO_MODEL_ALIASES = new Map<string, string>([
 ]);
 
 const GEMINI_REFERENCE_AND_EXTENSION_MODELS = new Set([
+  'veo-3.1-generate-001',
+  'veo-3.1-fast-generate-001',
   'veo-3.1-generate-preview',
   'veo-3.1-fast-generate-preview',
 ]);
 
 const GEMINI_INTERPOLATION_MODELS = new Set([
+  'veo-3.1-generate-001',
+  'veo-3.1-fast-generate-001',
   'veo-3.1-generate-preview',
   'veo-3.1-fast-generate-preview',
 ]);
@@ -35,8 +43,16 @@ export function normalizeGeminiVideoModelId(modelId: string | undefined): string
   return GEMINI_VIDEO_MODEL_ALIASES.get(trimmed.toLowerCase()) ?? trimmed;
 }
 
+export function isGeminiOmniModelId(modelId: string | undefined): boolean {
+  const normalized = normalizeGeminiVideoModelId(modelId).toLowerCase();
+  return normalized.startsWith('gemini-') && normalized.includes('omni');
+}
+
 export function supportsGeminiImageToVideo(modelId: string | undefined): boolean {
   const normalized = normalizeGeminiVideoModelId(modelId);
+  if (isGeminiOmniModelId(normalized)) {
+    return true;
+  }
   return normalized.startsWith('veo-3.');
 }
 
@@ -45,11 +61,13 @@ export function supportsGeminiFrameConditioning(modelId: string | undefined): bo
 }
 
 export function supportsGeminiReferenceImages(modelId: string | undefined): boolean {
-  return GEMINI_REFERENCE_AND_EXTENSION_MODELS.has(normalizeGeminiVideoModelId(modelId));
+  const normalized = normalizeGeminiVideoModelId(modelId);
+  return isGeminiOmniModelId(normalized) || GEMINI_REFERENCE_AND_EXTENSION_MODELS.has(normalized);
 }
 
 export function supportsGeminiVideoExtension(modelId: string | undefined): boolean {
-  return GEMINI_REFERENCE_AND_EXTENSION_MODELS.has(normalizeGeminiVideoModelId(modelId));
+  const normalized = normalizeGeminiVideoModelId(modelId);
+  return isGeminiOmniModelId(normalized) || GEMINI_REFERENCE_AND_EXTENSION_MODELS.has(normalized);
 }
 
 export function supportsGeminiAdvancedVideoConditioning(modelId: string | undefined): boolean {

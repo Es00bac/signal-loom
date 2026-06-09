@@ -1,8 +1,11 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
+import { strToU8, zipSync } from 'fflate';
 import type {
   AspectRatio,
+  EditorClipChromaKeySettings,
   EditorClipFilter,
+  EditorClipStrokeSettings,
   EditorAudioKeyframe,
   EditorStageBlendMode,
   EditorStageObject,
@@ -20,9 +23,17 @@ import {
 } from './editorKeyframes';
 import { buildClipEffectDescriptor, mapClipBlendModeToFFmpeg } from './editorClipEffects';
 import { buildTextOverlaySvgAsset } from './editorTextRender';
+import { buildShapeLayoutDescriptor } from './editorVisualLayout';
 import { resolveVisualClipSourceRangeMs } from './editorTimelineSourceRange';
 import { createMediaDurationResolver, type MediaDurationLoader } from './mediaDurationCache';
-import { renderViaLocalNativeFFmpeg, resolveNativeRenderTarget } from './localNativeRender';
+import {
+  renderViaLocalNativeFFmpeg,
+  renderViaLocalNativeFFmpegWithArtifacts,
+  resolveNativeRenderTarget,
+  type NativeRenderAssemblyManifest,
+  type NativeRenderAssemblyResult,
+  type NativeRenderSegmentArtifact,
+} from './localNativeRender';
 import {
   getNativeRenderThreadArgs,
   getNativeSequenceCommandPrefix,
@@ -31,6 +42,11 @@ import {
   type NativeRenderExecutionBackend,
 } from './nativeRenderSupport';
 import { getVideoCanvasDimensions } from './videoCanvas';
+import {
+  getVideoExportPresetAvailability,
+  resolveVideoExportPreset,
+  type VideoExportPresetOption,
+} from './videoPremiereParity';
 
 interface CompositionCommandTrack {
   inputName: string;
@@ -63,11 +79,12 @@ interface ComposeMediaOptions {
 }
 
 interface ComposeSequenceVisualClip {
+  id?: string;
   sourceNodeId: string;
   sourceKind: EditorVisualSourceKind;
   trackIndex: number;
   startMs: number;
-  aspectRatio?: '1:1' | '16:9' | '9:16';
+  aspectRatio?: AspectRatio;
   assetUrl?: string;
   text?: string;
   sourceInMs?: number;
@@ -103,6 +120,8 @@ interface ComposeSequenceVisualClip {
   cropRotationDeg?: number;
   filterStack?: EditorClipFilter[];
   blendMode?: EditorStageBlendMode;
+  chromaKey?: EditorClipChromaKeySettings;
+  stroke?: EditorClipStrokeSettings;
   transitionIn: 'none' | 'fade' | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down';
   transitionOut: 'none' | 'fade' | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down';
   transitionDurationMs: number;
@@ -138,10 +157,40 @@ interface ComposeSequenceMediaOptions {
   stageObjects?: EditorStageObject[];
   aspectRatio?: AspectRatio;
   videoResolution?: VideoResolution;
+  frameRate?: number;
+  exportPresetId?: string;
   providerSettings?: ProviderSettings;
+  nativeAssemblyManifest?: NativeRenderAssemblyManifest;
 }
 
-interface SequenceCanvas {
+export interface SequenceImageManifest {
+  version: 1;
+  presetId: string;
+  presetLabel: string;
+  frameMimeType: string;
+  frameExtension: string;
+  frameRate: number;
+  width: number;
+  height: number;
+  durationSeconds: number;
+  frameCount: number;
+  frames: string[];
+}
+
+export interface ComposeSequenceMediaResult {
+  blob: Blob;
+  mimeType: string;
+  extension: string;
+  fileName: string;
+  renderBackend: NativeRenderExecutionBackend | 'browser';
+  imageSequence?: boolean;
+  frameCount?: number;
+  manifest?: SequenceImageManifest;
+  segmentArtifacts?: NativeRenderSegmentArtifact[];
+  assemblyResult?: NativeRenderAssemblyResult;
+}
+
+export interface SequenceCanvas {
   width: number;
   height: number;
 }
@@ -169,7 +218,7 @@ interface PreparedSequenceStageObject {
 }
 
 let ffmpegPromise: Promise<FFmpeg> | undefined;
-const SEQUENCE_FRAME_RATE = 30;
+const DEFAULT_SEQUENCE_FRAME_RATE = 30;
 const MIN_SEQUENCE_VISUAL_SCALE_FACTOR = 0.1;
 
 export function buildCompositionCommand({
@@ -355,13 +404,19 @@ export async function composeSequenceMedia({
   stageObjects = [],
   aspectRatio = '16:9',
   videoResolution = '1080p',
+  frameRate = DEFAULT_SEQUENCE_FRAME_RATE,
+  exportPresetId,
   providerSettings,
-}: ComposeSequenceMediaOptions): Promise<Blob> {
+  nativeAssemblyManifest,
+}: ComposeSequenceMediaOptions): Promise<ComposeSequenceMediaResult> {
   if (visualClips.length === 0 && stageObjects.length === 0) {
     throw new Error('Manual editor compositions need at least one visual clip or stage object.');
   }
 
-  const outputName = 'sequence-output.mp4';
+  const exportPreset = resolveVideoExportPreset(exportPresetId);
+  const outputName = exportPreset.imageSequence
+    ? (exportPreset.outputPattern ?? `sequence-frame-%05d.${exportPreset.extension}`)
+    : `sequence-output.${exportPreset.extension}`;
   const canvas = getSequenceCanvas(aspectRatio, videoResolution);
   const resolveMediaDuration = createMediaDurationResolver(getMediaDuration);
   const preparedClips = await Promise.all(
@@ -377,7 +432,7 @@ export async function composeSequenceMedia({
       } satisfies PreparedSequenceVisualClip;
     }),
   );
-  const enabledAudioTracks = audioTracks.filter((track) => track.enabled);
+  const enabledAudioTracks = exportPreset.imageSequence ? [] : audioTracks.filter((track) => track.enabled);
   const preparedAudioTracks = await Promise.all(
     enabledAudioTracks.map(async (track, index) => {
       const audioInputName = `sequence-audio-${index + 1}.${resolveSequenceAudioExtension(track)}`;
@@ -402,21 +457,30 @@ export async function composeSequenceMedia({
     }) satisfies PreparedSequenceStageObject),
   );
   const timelineDurationSeconds = resolveSequenceTimelineDurationSeconds(preparedClips, preparedAudioTracks);
-  const nativeBackend = providerSettings
+  const nativeBackend = providerSettings && !exportPreset.imageSequence
     ? (await resolveNativeSequenceBackend(providerSettings))
     : null;
+  const renderTarget = nativeBackend === 'cpu' ? 'native-cpu' : nativeBackend === 'amd-vaapi' ? 'native-amd-vaapi' : 'browser';
+  const presetAvailability = getVideoExportPresetAvailability(exportPreset, renderTarget);
+
+  if (!presetAvailability.available) {
+    throw new Error(`${exportPreset.label} is unavailable for ${presetAvailability.label} render. ${presetAvailability.reason ?? exportPreset.caveat}`);
+  }
+
   const command = buildSequenceCommand({
     preparedClips,
     preparedAudioTracks,
     preparedStageObjects,
     canvas,
     timelineDurationSeconds,
+    frameRate,
+    exportPreset,
     outputName,
     nativeBackend,
   });
 
   if (providerSettings && nativeBackend) {
-    const nativeBlob = await renderViaLocalNativeFFmpeg({
+    const nativeRenderRequest = {
       providerSettings,
       outputName,
       command,
@@ -434,10 +498,35 @@ export async function composeSequenceMedia({
           url: object.sourceUrl,
         })),
       ],
-    });
+      assemblyManifest: nativeAssemblyManifest,
+    };
+
+    if (nativeAssemblyManifest) {
+      const nativeResult = await renderViaLocalNativeFFmpegWithArtifacts(nativeRenderRequest);
+
+      if (nativeResult) {
+        return {
+          blob: nativeResult.blob,
+          mimeType: exportPreset.mimeType,
+          extension: exportPreset.extension,
+          fileName: `sequence-output.${exportPreset.extension}`,
+          renderBackend: nativeBackend,
+          segmentArtifacts: nativeResult.segmentArtifacts,
+          ...(nativeResult.assemblyResult ? { assemblyResult: nativeResult.assemblyResult } : {}),
+        };
+      }
+    }
+
+    const nativeBlob = await renderViaLocalNativeFFmpeg(nativeRenderRequest);
 
     if (nativeBlob) {
-      return nativeBlob;
+      return {
+        blob: nativeBlob,
+        mimeType: exportPreset.mimeType,
+        extension: exportPreset.extension,
+        fileName: `sequence-output.${exportPreset.extension}`,
+        renderBackend: nativeBackend,
+      };
     }
   }
 
@@ -456,22 +545,155 @@ export async function composeSequenceMedia({
   }
 
   await ffmpeg.exec(command);
-  const output = await ffmpeg.readFile(outputName);
-  const bytes = output instanceof Uint8Array ? output : new TextEncoder().encode(String(output));
+
+  let result: ComposeSequenceMediaResult;
+
+  if (exportPreset.imageSequence) {
+    const frameEntries = await readSequenceFrameEntries(ffmpeg, exportPreset, outputName);
+    result = packageSequenceFramesAsZip({
+      frames: frameEntries,
+      exportPreset,
+      canvas,
+      frameRate,
+      durationSeconds: timelineDurationSeconds,
+    });
+  } else {
+    const output = await ffmpeg.readFile(outputName);
+    const bytes = output instanceof Uint8Array ? output : new TextEncoder().encode(String(output));
+    const blobBytes = new Uint8Array(bytes.byteLength);
+    blobBytes.set(bytes);
+    result = {
+      blob: new Blob([blobBytes], { type: exportPreset.mimeType }),
+      mimeType: exportPreset.mimeType,
+      extension: exportPreset.extension,
+      fileName: `sequence-output.${exportPreset.extension}`,
+      renderBackend: 'browser',
+    };
+  }
 
   for (const inputName of [
     ...preparedClips.map((clip) => clip.inputName),
     ...preparedAudioTracks.map((track) => track.inputName),
     ...preparedStageObjects.map((object) => object.inputName),
-    outputName,
   ]) {
     await ffmpeg.deleteFile(inputName);
   }
 
-  const blobBytes = new Uint8Array(bytes.byteLength);
-  blobBytes.set(bytes);
+  if (exportPreset.imageSequence) {
+    await Promise.allSettled(result.manifest?.frames.map((frame) => ffmpeg.deleteFile(frame)) ?? []);
+  } else {
+    await ffmpeg.deleteFile(outputName);
+  }
 
-  return new Blob([blobBytes], { type: 'video/mp4' });
+  return result;
+}
+
+export function packageSequenceFramesAsZip({
+  frames,
+  exportPreset,
+  canvas,
+  frameRate,
+  durationSeconds,
+}: {
+  frames: Array<{ name: string; data: Uint8Array }>;
+  exportPreset: VideoExportPresetOption;
+  canvas: SequenceCanvas;
+  frameRate: number;
+  durationSeconds: number;
+}): ComposeSequenceMediaResult {
+  const sortedFrames = [...frames].sort((left, right) => left.name.localeCompare(right.name));
+  const manifest: SequenceImageManifest = {
+    version: 1,
+    presetId: exportPreset.id,
+    presetLabel: exportPreset.label,
+    frameMimeType: exportPreset.mimeType,
+    frameExtension: exportPreset.extension,
+    frameRate,
+    width: canvas.width,
+    height: canvas.height,
+    durationSeconds,
+    frameCount: sortedFrames.length,
+    frames: sortedFrames.map((frame) => frame.name),
+  };
+  const entries: Record<string, Uint8Array> = {
+    'manifest.json': strToU8(`${JSON.stringify(manifest, null, 2)}\n`),
+  };
+
+  for (const frame of sortedFrames) {
+    const bytes = new Uint8Array(frame.data.byteLength);
+    bytes.set(frame.data);
+    entries[frame.name] = bytes;
+  }
+
+  const zipped = zipSync(entries);
+
+  return {
+    blob: new Blob([zipped], { type: 'application/zip' }),
+    mimeType: 'application/zip',
+    extension: 'zip',
+    fileName: `${exportPreset.id}.zip`,
+    renderBackend: 'browser',
+    imageSequence: true,
+    frameCount: sortedFrames.length,
+    manifest,
+  };
+}
+
+export function describeSequenceRenderBackend(
+  backend: NativeRenderExecutionBackend | 'browser',
+): string {
+  if (backend === 'amd-vaapi') {
+    return 'AMD VAAPI GPU encode (h264_vaapi)';
+  }
+
+  if (backend === 'cpu') {
+    return 'native CPU FFmpeg';
+  }
+
+  return 'browser FFmpeg';
+}
+
+export function describeSequenceRenderBackendCaveat(
+  backend: NativeRenderExecutionBackend | 'browser',
+): string {
+  if (backend === 'amd-vaapi') {
+    return 'The final encode is GPU accelerated; timeline compositing and filters still run through FFmpeg software filters before VAAPI upload.';
+  }
+
+  if (backend === 'cpu') {
+    return 'Native CPU FFmpeg handles this render with multithreaded software encoding.';
+  }
+
+  return 'Browser FFmpeg handles this render with maximum compatibility.';
+}
+
+async function readSequenceFrameEntries(
+  ffmpeg: FFmpeg,
+  exportPreset: VideoExportPresetOption,
+  outputPattern: string,
+): Promise<Array<{ name: string; data: Uint8Array }>> {
+  const matcher = buildSequenceOutputMatcher(outputPattern);
+  const entries = await ffmpeg.listDir('/');
+  const frameNames = entries
+    .filter((entry) => !entry.isDir && matcher.test(entry.name))
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+
+  if (frameNames.length === 0) {
+    throw new Error(`${exportPreset.label} did not produce any frames matching ${outputPattern}.`);
+  }
+
+  return Promise.all(frameNames.map(async (name) => {
+    const output = await ffmpeg.readFile(name);
+    const data = output instanceof Uint8Array ? output : new TextEncoder().encode(String(output));
+    return { name, data };
+  }));
+}
+
+function buildSequenceOutputMatcher(outputPattern: string): RegExp {
+  const escaped = outputPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = escaped.replace(/%0?\d*d/, '\\d+');
+  return new RegExp(`^${pattern}$`, 'i');
 }
 
 async function getFFmpeg(): Promise<FFmpeg> {
@@ -581,6 +803,8 @@ export function buildSequenceCommand({
   preparedStageObjects = [],
   canvas,
   timelineDurationSeconds,
+  frameRate = DEFAULT_SEQUENCE_FRAME_RATE,
+  exportPreset = resolveVideoExportPreset(),
   outputName,
   nativeBackend,
 }: {
@@ -589,10 +813,14 @@ export function buildSequenceCommand({
   preparedStageObjects?: PreparedSequenceStageObject[];
   canvas: SequenceCanvas;
   timelineDurationSeconds: number;
+  frameRate?: number;
+  exportPreset?: VideoExportPresetOption;
   outputName: string;
   nativeBackend: NativeRenderExecutionBackend | null;
 }): string[] {
   const command: string[] = [];
+  const isImageSequence = Boolean(exportPreset.imageSequence);
+  const commandAudioTracks = isImageSequence ? [] : preparedAudioTracks;
 
   if (nativeBackend) {
     command.push(...getNativeSequenceCommandPrefix(nativeBackend));
@@ -604,7 +832,7 @@ export function buildSequenceCommand({
     '-t',
     formatSeconds(timelineDurationSeconds),
     '-i',
-    `color=c=black:s=${canvas.width}x${canvas.height}:r=${SEQUENCE_FRAME_RATE}`,
+    `color=c=black:s=${canvas.width}x${canvas.height}:r=${formatFrameRate(frameRate)}`,
   );
 
   for (const preparedClip of preparedClips) {
@@ -623,7 +851,7 @@ export function buildSequenceCommand({
     command.push('-loop', '1', '-t', formatSeconds(timelineDurationSeconds), '-i', preparedStageObject.inputName);
   }
 
-  for (const preparedAudioTrack of preparedAudioTracks) {
+  for (const preparedAudioTrack of commandAudioTracks) {
     command.push('-i', preparedAudioTrack.inputName);
   }
 
@@ -631,7 +859,7 @@ export function buildSequenceCommand({
   filterParts.push(`[0:v]format=rgba[base0]`);
 
   for (const preparedClip of preparedClips) {
-    filterParts.push(buildSequenceVisualFilter(preparedClip, canvas));
+    filterParts.push(buildSequenceVisualFilter(preparedClip, canvas, frameRate, preparedClips));
   }
 
   const overlayOrder = [...preparedClips].sort(
@@ -646,7 +874,7 @@ export function buildSequenceCommand({
   overlayOrder.forEach((preparedClip, index) => {
     const outputLabel = `base${index + 1}`;
     const clipLabel = `clip${preparedClip.inputIndex}`;
-    filterParts.push(...buildClipCompositeFilters(currentBaseLabel, clipLabel, outputLabel, preparedClip));
+    filterParts.push(...buildClipCompositeFilters(currentBaseLabel, clipLabel, outputLabel, preparedClip, preparedClips));
     currentBaseLabel = outputLabel;
   });
 
@@ -661,7 +889,9 @@ export function buildSequenceCommand({
   });
 
   filterParts.push(
-    nativeBackend
+    isImageSequence
+      ? `[${currentBaseLabel}]format=${exportPreset.mimeType === 'image/jpeg' ? 'yuvj420p' : 'rgba'}[vout]`
+      : nativeBackend
       ? getNativeSequenceOutputFilter(currentBaseLabel, nativeBackend)
       : `[${currentBaseLabel}]format=yuv420p[vout]`,
   );
@@ -669,7 +899,7 @@ export function buildSequenceCommand({
   const audioLabels: string[] = [];
   const audioInputOffset = preparedClips.length + preparedStageObjects.length + 1;
 
-  preparedAudioTracks.forEach((preparedAudioTrack, index) => {
+  commandAudioTracks.forEach((preparedAudioTrack, index) => {
     const { track } = preparedAudioTrack;
     const inputIndex = audioInputOffset + index;
     const label = `a${index}`;
@@ -678,6 +908,10 @@ export function buildSequenceCommand({
     filterParts.push(`[${inputIndex}:a]${volumeFilter},adelay=${delay}|${delay}[${label}]`);
     audioLabels.push(`[${label}]`);
   });
+
+  const nativeAudioCodecArgs = nativeBackend ? exportPreset.nativeMapping?.[nativeBackend]?.audioCodecArgs : undefined;
+  const audioCodecArgs = nativeBackend ? (nativeAudioCodecArgs ?? ['-c:a', 'aac']) : exportPreset.audioCodecArgs;
+  const shouldMapAudio = !isImageSequence && audioLabels.length > 0 && audioCodecArgs.length > 0;
 
   if (audioLabels.length > 0) {
     filterParts.push(
@@ -692,21 +926,35 @@ export function buildSequenceCommand({
     '[vout]',
   );
 
-  if (audioLabels.length > 0) {
-    command.push('-map', '[aout]', '-c:a', 'aac');
+  if (shouldMapAudio) {
+    command.push('-map', '[aout]');
   } else {
     command.push('-an');
   }
 
-  if (nativeBackend) {
-    command.push(...getNativeSequenceEncoderArgs(nativeBackend));
+  if (isImageSequence) {
+    command.push('-r', formatFrameRate(frameRate), '-frames:v', String(resolveSequenceFrameCount(timelineDurationSeconds, frameRate)), ...exportPreset.videoCodecArgs);
+  } else if (nativeBackend) {
+    command.push(...getNativeSequenceEncoderArgs(nativeBackend, exportPreset));
+    if (shouldMapAudio) {
+      command.push(...audioCodecArgs);
+    }
   } else {
-    command.push('-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p');
+    command.push('-r', formatFrameRate(frameRate), ...exportPreset.videoCodecArgs);
+    if (shouldMapAudio) {
+      command.push(...audioCodecArgs);
+    }
   }
 
   command.push(outputName);
 
   return command;
+}
+
+function resolveSequenceFrameCount(durationSeconds: number, frameRate: number): number {
+  const safeDurationSeconds = Math.max(0.001, durationSeconds);
+  const safeFrameRate = Number.isFinite(frameRate) && frameRate > 0 ? frameRate : DEFAULT_SEQUENCE_FRAME_RATE;
+  return Math.max(1, Math.ceil(safeDurationSeconds * safeFrameRate));
 }
 
 function buildStageObjectOverlayFilter(
@@ -874,6 +1122,8 @@ async function resolveNativeSequenceBackend(
 function buildSequenceVisualFilter(
   preparedClip: PreparedSequenceVisualClip,
   canvas: SequenceCanvas,
+  frameRate = DEFAULT_SEQUENCE_FRAME_RATE,
+  allPreparedClips: PreparedSequenceVisualClip[] = [preparedClip],
 ): string {
   const { clip, inputIndex, clipDurationSeconds } = preparedClip;
   const filters: string[] = [];
@@ -896,8 +1146,7 @@ function buildSequenceVisualFilter(
 
   filters.push(
     `trim=duration=${formatSeconds(clipDurationSeconds)}`,
-    `fps=${SEQUENCE_FRAME_RATE}`,
-    'setsar=1',
+    `fps=${formatFrameRate(frameRate)}`,
     'format=rgba',
   );
 
@@ -911,10 +1160,13 @@ function buildSequenceVisualFilter(
     cropRotationDeg: clip.cropRotationDeg ?? 0,
     filterStack: clip.filterStack ?? [],
     blendMode: clip.blendMode,
+    chromaKey: clip.chromaKey,
+    stroke: clip.stroke,
   });
 
-  filters.push(...effectDescriptor.ffmpegFilters);
-
+  // Apply fit-mode scaling BEFORE the crop so the crop percentages apply to
+  // the already-fitted dimensions — matching the stage preview where the crop
+  // is a CSS inset on the fitted container rather than a pre-scale source crop.
   if (clip.sourceKind !== 'text') {
     if (clip.fitMode === 'stretch') {
       filters.push(`scale=${canvas.width}:${canvas.height}`);
@@ -924,6 +1176,10 @@ function buildSequenceVisualFilter(
       );
     }
   }
+
+  filters.push('setsar=1');
+
+  filters.push(...effectDescriptor.ffmpegFilters);
 
   const startScaleFactor = Math.max(MIN_SEQUENCE_VISUAL_SCALE_FACTOR, clip.scalePercent / 100);
   const endScaleFactor = Math.max(
@@ -993,6 +1249,8 @@ function buildSequenceVisualFilter(
     Math.max(0, clip.transitionDurationMs) / 1000,
   );
 
+  const editPointOffsetSeconds = resolveEditPointCrossDissolveOffsetSeconds(preparedClip, allPreparedClips);
+
   if (clip.transitionIn === 'fade' && transitionDurationSeconds > 0) {
     filters.push(`fade=t=in:st=0:d=${formatSeconds(transitionDurationSeconds)}:alpha=1`);
   }
@@ -1018,15 +1276,38 @@ function buildSequenceVisualFilter(
     );
   }
 
-  filters.push(`setpts=PTS-STARTPTS+${formatSeconds(clip.startMs / 1000)}/TB`);
+  filters.push(`setpts=PTS-STARTPTS+${formatSeconds(Math.max(0, clip.startMs / 1000 - editPointOffsetSeconds))}/TB`);
 
   return `[${inputIndex}:v]${filters.join(',')}[clip${inputIndex}]`;
 }
 
-function buildOverlayOptions(preparedClip: PreparedSequenceVisualClip): string {
+function resolveEditPointCrossDissolveOffsetSeconds(
+  preparedClip: PreparedSequenceVisualClip,
+  allPreparedClips: PreparedSequenceVisualClip[],
+): number {
+  const transitionDurationSeconds = Math.min(
+    preparedClip.clipDurationSeconds / 2,
+    Math.max(0, preparedClip.clip.transitionDurationMs) / 1000,
+  );
+
+  return preparedClip.clip.transitionIn === 'fade'
+    && transitionDurationSeconds > 0
+    && allPreparedClips.some((candidate) => {
+      if (candidate === preparedClip || candidate.clip.trackIndex !== preparedClip.clip.trackIndex) {
+        return false;
+      }
+
+      const candidateEndMs = candidate.clip.startMs + candidate.clipDurationSeconds * 1000;
+      return candidate.clip.transitionOut === 'fade' && Math.abs(candidateEndMs - preparedClip.clip.startMs) <= 1;
+    })
+    ? transitionDurationSeconds
+    : 0;
+}
+
+function buildOverlayOptions(preparedClip: PreparedSequenceVisualClip, editPointOffsetSeconds = 0): string {
   const { clip, clipDurationSeconds } = preparedClip;
-  const xExpression = buildOverlayXExpression(clip, clipDurationSeconds);
-  const yExpression = buildOverlayYExpression(clip, clipDurationSeconds);
+  const xExpression = buildOverlayXExpression(clip, clipDurationSeconds, editPointOffsetSeconds);
+  const yExpression = buildOverlayYExpression(clip, clipDurationSeconds, editPointOffsetSeconds);
 
   return `x='${xExpression}':y='${yExpression}':eof_action=pass:eval=frame`;
 }
@@ -1036,11 +1317,13 @@ function buildClipCompositeFilters(
   clipLabel: string,
   outputLabel: string,
   preparedClip: PreparedSequenceVisualClip,
+  allPreparedClips: PreparedSequenceVisualClip[],
 ): string[] {
   const ffmpegBlendMode = mapClipBlendModeToFFmpeg(preparedClip.clip.blendMode);
+  const editPointOffsetSeconds = resolveEditPointCrossDissolveOffsetSeconds(preparedClip, allPreparedClips);
 
   if (!ffmpegBlendMode) {
-    return [`[${baseLabel}][${clipLabel}]overlay=${buildOverlayOptions(preparedClip)}[${outputLabel}]`];
+    return [`[${baseLabel}][${clipLabel}]overlay=${buildOverlayOptions(preparedClip, editPointOffsetSeconds)}[${outputLabel}]`];
   }
 
   const baseForBlendLabel = `${outputLabel}blendbase`;
@@ -1051,7 +1334,7 @@ function buildClipCompositeFilters(
   return [
     `[${baseLabel}]split=2[${baseForBlendLabel}][${blankSourceLabel}]`,
     `[${blankSourceLabel}]${getBlendNeutralFilter(ffmpegBlendMode)}[${blankLabel}]`,
-    `[${blankLabel}][${clipLabel}]overlay=${buildOverlayOptions(preparedClip)}[${layerLabel}]`,
+    `[${blankLabel}][${clipLabel}]overlay=${buildOverlayOptions(preparedClip, editPointOffsetSeconds)}[${layerLabel}]`,
     `[${baseForBlendLabel}][${layerLabel}]blend=all_mode=${ffmpegBlendMode}[${outputLabel}]`,
   ];
 }
@@ -1083,16 +1366,17 @@ function resolveSequenceAudioExtension(track: ComposeSequenceAudioTrack): string
 function buildOverlayXExpression(
   clip: ComposeSequenceVisualClip,
   clipDurationSeconds: number,
+  editPointOffsetSeconds = 0,
 ): string {
-  const centerExpression = (clip.keyframes?.length ?? 0) > 0
-    ? buildKeyframedCenterExpression('W', clip, clipDurationSeconds)
-    : buildAnimatedCenterExpression('W', clip.positionX, clip.endPositionX, clip.motionEnabled, clip.startMs / 1000, clipDurationSeconds);
-  let expression = centerExpression;
   const transitionDurationSeconds = Math.min(
     clipDurationSeconds / 2,
     Math.max(0, clip.transitionDurationMs) / 1000,
   );
-  const startSeconds = clip.startMs / 1000;
+  const startSeconds = Math.max(0, clip.startMs / 1000 - editPointOffsetSeconds);
+  const centerExpression = (clip.keyframes?.length ?? 0) > 0
+    ? buildKeyframedCenterExpression('W', clip, clipDurationSeconds)
+    : buildAnimatedCenterExpression('W', clip.positionX, clip.endPositionX, clip.motionEnabled, startSeconds, clipDurationSeconds);
+  let expression = centerExpression;
   const endSeconds = startSeconds + clipDurationSeconds;
 
   if (transitionDurationSeconds > 0) {
@@ -1119,16 +1403,17 @@ function buildOverlayXExpression(
 function buildOverlayYExpression(
   clip: ComposeSequenceVisualClip,
   clipDurationSeconds: number,
+  editPointOffsetSeconds = 0,
 ): string {
-  const centerExpression = (clip.keyframes?.length ?? 0) > 0
-    ? buildKeyframedCenterExpression('H', clip, clipDurationSeconds)
-    : buildAnimatedCenterExpression('H', clip.positionY, clip.endPositionY, clip.motionEnabled, clip.startMs / 1000, clipDurationSeconds);
-  let expression = centerExpression;
   const transitionDurationSeconds = Math.min(
     clipDurationSeconds / 2,
     Math.max(0, clip.transitionDurationMs) / 1000,
   );
-  const startSeconds = clip.startMs / 1000;
+  const startSeconds = Math.max(0, clip.startMs / 1000 - editPointOffsetSeconds);
+  const centerExpression = (clip.keyframes?.length ?? 0) > 0
+    ? buildKeyframedCenterExpression('H', clip, clipDurationSeconds)
+    : buildAnimatedCenterExpression('H', clip.positionY, clip.endPositionY, clip.motionEnabled, startSeconds, clipDurationSeconds);
+  let expression = centerExpression;
   const endSeconds = startSeconds + clipDurationSeconds;
 
   if (transitionDurationSeconds > 0) {
@@ -1269,6 +1554,11 @@ function formatRate(value: number): string {
   return Math.max(0.25, value || 1).toFixed(4);
 }
 
+function formatFrameRate(value: number): string {
+  const safeValue = Number.isFinite(value) && value > 0 ? value : DEFAULT_SEQUENCE_FRAME_RATE;
+  return Number.isInteger(safeValue) ? String(safeValue) : safeValue.toFixed(3);
+}
+
 function formatSeconds(value: number): string {
   return Math.max(0, value).toFixed(3);
 }
@@ -1361,22 +1651,25 @@ async function renderShapeCard({
     throw new Error('Unable to create a shape card for the manual editor.');
   }
 
-  const width = 900;
-  const height = 440;
-  const left = (canvas.width - width) / 2;
-  const top = (canvas.height - height) / 2;
-  const radius = Math.max(0, Math.min(cornerRadius, width / 2, height / 2));
+  const shape = buildShapeLayoutDescriptor({
+    width: canvas.width,
+    height: canvas.height,
+    fillColor: fillColor || '#0ea5e9',
+    borderColor: borderColor || '#f8fafc',
+    borderWidth,
+    cornerRadius,
+  });
 
   context.save();
-  context.globalAlpha = Math.max(0, Math.min(1, opacityPercent / 100));
+  void opacityPercent;
   context.beginPath();
-  context.roundRect(left, top, width, height, radius);
-  context.fillStyle = fillColor || '#0ea5e9';
+  context.roundRect(shape.innerLeft, shape.innerTop, shape.innerWidth, shape.innerHeight, shape.cornerRadius);
+  context.fillStyle = shape.fillColor;
   context.fill();
 
-  if (borderWidth > 0) {
-    context.lineWidth = Math.max(0, borderWidth);
-    context.strokeStyle = borderColor || '#f8fafc';
+  if (shape.borderWidth > 0) {
+    context.lineWidth = shape.borderWidth;
+    context.strokeStyle = shape.borderColor;
     context.stroke();
   }
 

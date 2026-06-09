@@ -1,4 +1,4 @@
-import { Music, Type } from 'lucide-react';
+import { Archive, Music, Type } from 'lucide-react';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 import type { NodeResultAttempt } from '../../types/flow';
 
@@ -6,43 +6,61 @@ interface AttemptHistoryProps {
   attempts?: NodeResultAttempt[];
   selectedAttemptId?: string;
   onSelectAttempt?: (attemptId: string) => void;
+  onAssignVariable?: (attemptId: string, variableName: string) => void;
 }
 
 export function AttemptHistory({
   attempts = [],
   selectedAttemptId,
   onSelectAttempt,
+  onAssignVariable,
 }: AttemptHistoryProps) {
-  if (attempts.length < 2 || !onSelectAttempt) {
+  if (attempts.length === 0 || (!onSelectAttempt && !onAssignVariable)) {
     return null;
   }
 
   const useGridLayout = attempts.length > 6;
+  const selectedAttempt = attempts.find((attempt) => attempt.id === selectedAttemptId) ?? attempts[attempts.length - 1];
 
   return (
     <div className="space-y-1">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500">Runs</div>
-      <div className={useGridLayout ? 'grid grid-cols-4 gap-1.5' : 'flex gap-1.5 overflow-x-auto pb-1'}>
-        {attempts.map((attempt, index) => {
-          const isActive = attempt.id === selectedAttemptId;
+      {attempts.length > 1 && onSelectAttempt ? (
+        <>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500">Runs</div>
+          <div className={useGridLayout ? 'grid grid-cols-4 gap-1.5' : 'flex gap-1.5 overflow-x-auto pb-1'}>
+            {attempts.map((attempt, index) => {
+              const isActive = attempt.id === selectedAttemptId;
 
-          return (
-            <button
-              key={attempt.id}
-              className={withFlowNodeInteractionClasses(`overflow-hidden rounded-lg border transition-colors ${
-                isActive
-                  ? 'border-blue-400 bg-blue-500/10'
-                  : 'border-gray-700/60 bg-[#111217]/35 hover:border-gray-500'
-              } ${useGridLayout ? 'aspect-square min-w-0' : 'aspect-square w-12 shrink-0'}`)}
-              onClick={() => onSelectAttempt(attempt.id)}
-              title={`Run ${index + 1} · ${new Date(attempt.createdAt).toLocaleString()}`}
-              type="button"
-            >
-              {renderAttemptPreview(attempt, index)}
-            </button>
-          );
-        })}
-      </div>
+              return (
+                <button
+                  key={attempt.id}
+                  className={withFlowNodeInteractionClasses(`overflow-hidden rounded-lg border transition-colors ${
+                    isActive
+                      ? 'border-blue-400 bg-blue-500/10'
+                      : 'border-gray-700/60 bg-[#111217]/35 hover:border-gray-500'
+                  } ${useGridLayout ? 'aspect-square min-w-0' : 'aspect-square w-12 shrink-0'}`)}
+                  onClick={() => onSelectAttempt(attempt.id)}
+                  title={`Run ${index + 1} · ${new Date(attempt.createdAt).toLocaleString()}`}
+                  type="button"
+                >
+                  {renderAttemptPreview(attempt, index)}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
+      {selectedAttempt && onAssignVariable ? (
+        <label className="block">
+          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500">Variable</span>
+          <input
+            className={withFlowNodeInteractionClasses('w-full rounded-md border border-gray-700 bg-gray-950 px-2 py-1.5 font-mono text-[11px] text-gray-100 outline-none focus:border-blue-300')}
+            onChange={(event) => onAssignVariable(selectedAttempt.id, event.target.value)}
+            placeholder="variable_name"
+            value={selectedAttempt.variableName ?? ''}
+          />
+        </label>
+      ) : null}
     </div>
   );
 }
@@ -64,11 +82,11 @@ function renderAttemptPreview(attempt: NodeResultAttempt, index: number) {
     );
   }
 
-  const Icon = attempt.resultType === 'audio' ? Music : Type;
+  const Icon = attempt.resultType === 'audio' ? Music : attempt.resultType === 'package' ? Archive : Type;
 
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-gray-200">
-      {attempt.resultType === 'audio' ? <Icon size={14} /> : <Icon size={13} />}
+      {attempt.resultType === 'audio' || attempt.resultType === 'package' ? <Icon size={14} /> : <Icon size={13} />}
       <span className="text-[10px] font-semibold">R{index + 1}</span>
     </div>
   );

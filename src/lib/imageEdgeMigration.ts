@@ -25,7 +25,7 @@ export function normalizeImageEdges(nodes: AppNode[], edges: Edge[]): Edge[] {
     const targetHandle = edge.targetHandle ?? undefined;
 
     if (
-      sourceNode?.type === 'imageGen' &&
+      isImageInputSource(sourceNode) &&
       targetNode?.type === 'imageGen' &&
       !isImageConditioningHandle(targetHandle)
     ) {
@@ -79,7 +79,7 @@ export function normalizeImageConnectionTargetHandle(
   const targetHandle = connection.targetHandle ?? undefined;
 
   if (
-    sourceNode?.type !== 'imageGen' ||
+    !isImageInputSource(sourceNode) ||
     targetNode?.type !== 'imageGen' ||
     isImageConditioningHandle(targetHandle)
   ) {
@@ -118,7 +118,7 @@ function dedupeExclusiveImageEdges(
     const targetHandle = edge.targetHandle ?? undefined;
 
     if (
-      sourceNode?.type !== 'imageGen' ||
+      !isImageInputSource(sourceNode) ||
       targetNode?.type !== 'imageGen' ||
       !isImageConditioningHandle(targetHandle)
     ) {
@@ -137,4 +137,8 @@ function dedupeExclusiveImageEdges(
   }
 
   return dedupedReversed.reverse();
+}
+
+function isImageInputSource(node: AppNode | undefined): node is AppNode {
+  return node?.type === 'imageGen' || node?.type === 'cropImageNode';
 }

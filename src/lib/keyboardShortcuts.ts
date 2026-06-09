@@ -1,0 +1,226 @@
+import type { NativeMenuCommand } from './nativeApp';
+import type { WorkspaceView } from '../types/flow';
+
+type KeyboardShortcutEvent = Pick<
+  KeyboardEvent,
+  'key' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey' | 'target'
+>;
+
+export type KeyboardShortcutMap = Partial<Record<NativeMenuCommand, string>>;
+
+export const DEFAULT_KEYBOARD_SHORTCUTS: KeyboardShortcutMap = {
+  'file:new': 'Ctrl+N',
+  'file:open': 'Ctrl+O',
+  'file:save': 'Ctrl+S',
+  'file:save-as': 'Ctrl+Shift+S',
+  'file:import-media': 'Ctrl+I',
+  'edit:undo': 'Ctrl+Z',
+  'edit:redo': 'Ctrl+Shift+Z',
+  'edit:cut': 'Ctrl+X',
+  'edit:copy': 'Ctrl+C',
+  'edit:paste': 'Ctrl+V',
+  'edit:delete': 'Del',
+  'edit:select-all': 'Ctrl+A',
+  'edit:deselect': 'Ctrl+D',
+  'edit:invert-selection': 'Ctrl+Shift+I',
+  'view:flow': 'Ctrl+1',
+  'view:editor': 'Ctrl+2',
+  'view:image': 'Ctrl+3',
+  'view:paper': 'Ctrl+4',
+  'view:command-palette': 'Ctrl+K',
+  'image:tool-hand': 'H',
+  'image:tool-move': 'V',
+  'image:tool-marquee': 'M',
+  'image:tool-lasso': 'L',
+  'image:tool-magic-wand': 'W',
+  'image:tool-brush': 'B',
+  'image:tool-eraser': 'E',
+  'image:tool-clone-stamp': 'S',
+  'image:tool-spot-heal': 'J',
+  'image:tool-blur-brush': 'R',
+  'image:tool-sharpen-brush': 'Shift+R',
+  'image:tool-smudge-brush': 'U',
+  'image:tool-dodge-brush': 'O',
+  'image:tool-burn-brush': 'Shift+O',
+  'image:tool-sponge-saturate': 'P',
+  'image:tool-sponge-desaturate': 'Shift+P',
+  'image:tool-paint-bucket': 'G',
+  'image:tool-gradient': 'Shift+G',
+  'image:tool-rectangle-shape': 'X',
+  'image:tool-ellipse-shape': 'Shift+X',
+  'image:tool-crop': 'C',
+  'image:tool-text': 'T',
+  'image:tool-eyedropper': 'I',
+  'timeline:select': 'V',
+  'timeline:cut': 'C',
+  'timeline:slip': 'S',
+  'timeline:hand': 'H',
+  'timeline:snap': 'M',
+  'timeline:add-keyframe': 'K',
+  'timeline:previous-keyframe': '[',
+  'timeline:next-keyframe': ']',
+  'paper:tool-select': 'V',
+  'paper:tool-hand': 'H',
+  'paper:tool-text': 'T',
+  'paper:tool-image': 'I',
+  'paper:new-document': 'Ctrl+Alt+N',
+  'paper:add-page': 'Ctrl+Alt+P',
+  'paper:export-pdf': 'Ctrl+P',
+  'help:keyboard-shortcuts': 'F1',
+};
+
+const EDIT_WORKSPACES = new Set<WorkspaceView>(['flow', 'editor', 'image', 'paper']);
+
+export function resolveKeyboardShortcutCommand(
+  event: KeyboardShortcutEvent,
+  workspace: WorkspaceView,
+  shortcuts: KeyboardShortcutMap = {},
+): NativeMenuCommand | undefined {
+  const overrideShortcuts = sanitizeKeyboardShortcutMap(shortcuts);
+  const resolvedShortcuts = resolveKeyboardShortcutMap(shortcuts);
+  const commandPaletteShortcut = resolvedShortcuts['view:command-palette'];
+  if (
+    commandPaletteShortcut &&
+    doesEventMatchShortcut(event, commandPaletteShortcut) &&
+    isCommandAvailableInWorkspace('view:command-palette', workspace)
+  ) {
+    return 'view:command-palette';
+  }
+
+  if (isEditableShortcutTarget(event.target)) return undefined;
+
+  const overrideCandidates = Object.entries(overrideShortcuts) as Array<[NativeMenuCommand, string]>;
+  for (const [command, shortcut] of overrideCandidates) {
+    if (!isCommandAvailableInWorkspace(command, workspace)) continue;
+    if (doesEventMatchShortcut(event, shortcut)) return command;
+  }
+
+  if (EDIT_WORKSPACES.has(workspace)) {
+    const key = event.key.toLowerCase();
+    if (!event.altKey && !event.shiftKey && (event.ctrlKey || event.metaKey) && key === 'y') return 'edit:redo';
+    if (!event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey && event.key === 'Backspace') return 'edit:delete';
+  }
+  const candidates = Object.entries(resolvedShortcuts).filter(([command]) => !(command in overrideShortcuts)) as Array<[NativeMenuCommand, string]>;
+  for (const [command, shortcut] of candidates) {
+    if (!isCommandAvailableInWorkspace(command, workspace)) continue;
+    if (doesEventMatchShortcut(event, shortcut)) return command;
+  }
+  return undefined;
+}
+
+export function isEditableShortcutTarget(target: EventTarget | null): boolean {
+  if (typeof Element === 'undefined') {
+    const candidate = target as
+      | {
+          tagName?: string;
+          isContentEditable?: boolean;
+          closest?: (selector: string) => unknown;
+        }
+      | null;
+    const tagName = candidate?.tagName?.toLowerCase();
+    if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') return true;
+    if (candidate?.isContentEditable) return true;
+    return Boolean(candidate?.closest?.('[contenteditable="true"], [contenteditable="plaintext-only"]'));
+  }
+  if (!(target instanceof Element)) return false;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+    return true;
+  }
+  return Boolean(target.closest('[contenteditable="true"], [contenteditable="plaintext-only"]'));
+}
+
+export function resolveKeyboardShortcutMap(overrides: KeyboardShortcutMap = {}): KeyboardShortcutMap {
+  return {
+    ...DEFAULT_KEYBOARD_SHORTCUTS,
+    ...sanitizeKeyboardShortcutMap(overrides),
+  };
+}
+
+export function getKeyboardShortcutLabel(
+  command: NativeMenuCommand,
+  overrides: KeyboardShortcutMap = {},
+): string | undefined {
+  return resolveKeyboardShortcutMap(overrides)[command];
+}
+
+export function sanitizeKeyboardShortcutMap(shortcuts: KeyboardShortcutMap): KeyboardShortcutMap {
+  return Object.fromEntries(
+    Object.entries(shortcuts)
+      .map(([command, shortcut]) => [command, normalizeShortcutLabel(shortcut)])
+      .filter((entry): entry is [NativeMenuCommand, string] => Boolean(entry[1])),
+  );
+}
+
+export function normalizeShortcutLabel(shortcut: unknown): string {
+  if (typeof shortcut !== 'string') return '';
+  const parts = shortcut
+    .split('+')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!parts.length) return '';
+  const modifiers: string[] = [];
+  let key = '';
+  for (const part of parts) {
+    const normalized = part.toLowerCase();
+    if (normalized === 'ctrl' || normalized === 'control' || normalized === 'cmdorctrl' || normalized === 'commandorcontrol') {
+      if (!modifiers.includes('Ctrl')) modifiers.push('Ctrl');
+    } else if (normalized === 'cmd' || normalized === 'command' || normalized === 'meta') {
+      if (!modifiers.includes('Meta')) modifiers.push('Meta');
+    } else if (normalized === 'shift') {
+      if (!modifiers.includes('Shift')) modifiers.push('Shift');
+    } else if (normalized === 'alt' || normalized === 'option') {
+      if (!modifiers.includes('Alt')) modifiers.push('Alt');
+    } else {
+      key = normalizeShortcutKey(part);
+    }
+  }
+  return key ? [...modifiers, key].join('+') : '';
+}
+
+function doesEventMatchShortcut(event: KeyboardShortcutEvent, shortcut: string): boolean {
+  const normalized = normalizeShortcutLabel(shortcut);
+  if (!normalized) return false;
+  const parts = normalized.split('+');
+  const key = parts.at(-1) ?? '';
+  const modifiers = new Set(parts.slice(0, -1));
+  const ctrlWanted = modifiers.has('Ctrl');
+  const metaWanted = modifiers.has('Meta');
+  const ctrlOrMetaWanted = ctrlWanted && !metaWanted;
+  const eventCtrl = Boolean(event.ctrlKey);
+  const eventMeta = Boolean(event.metaKey);
+  const eventShift = Boolean(event.shiftKey);
+  const eventAlt = Boolean(event.altKey);
+  const eventCtrlOrMeta = eventCtrl || eventMeta;
+
+  if (ctrlOrMetaWanted ? !eventCtrlOrMeta : eventCtrl !== ctrlWanted || eventMeta !== metaWanted) return false;
+  if (eventShift !== modifiers.has('Shift')) return false;
+  if (eventAlt !== modifiers.has('Alt')) return false;
+  return normalizeShortcutKey(event.key) === key;
+}
+
+function normalizeShortcutKey(key: string): string {
+  const trimmed = key.trim();
+  if (!trimmed) return '';
+  const lower = trimmed.toLowerCase();
+  if (lower === 'delete') return 'Del';
+  if (lower === 'del') return 'Del';
+  if (lower === 'esc') return 'Esc';
+  if (lower === 'escape') return 'Esc';
+  if (lower === 'space') return 'Space';
+  if (lower === 'backspace') return 'Backspace';
+  if (/^f\d{1,2}$/i.test(trimmed)) return trimmed.toUpperCase();
+  if (trimmed.length === 1) return trimmed.toUpperCase();
+  return trimmed;
+}
+
+function isCommandAvailableInWorkspace(command: NativeMenuCommand, workspace: WorkspaceView): boolean {
+  if (command.startsWith('file:') || command.startsWith('view:') || command.startsWith('help:') || command === 'settings:keyboard-shortcuts') {
+    return true;
+  }
+  if (command.startsWith('edit:')) return EDIT_WORKSPACES.has(workspace);
+  if (command.startsWith('image:')) return workspace === 'image';
+  if (command.startsWith('paper:')) return workspace === 'paper';
+  if (command.startsWith('timeline:')) return workspace === 'editor';
+  if (command.startsWith('flow:')) return workspace === 'flow';
+  return false;
+}

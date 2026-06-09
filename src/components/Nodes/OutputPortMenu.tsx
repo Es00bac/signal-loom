@@ -10,9 +10,11 @@ interface OutputPortMenuProps {
   actions: NodeActionTemplate[];
   accentColor: string;
   hoverAccentColor: string;
+  isLogicNode?: boolean;
+  isGenericOutput?: boolean;
 }
 
-export function OutputPortMenu({ nodeId, actions, accentColor, hoverAccentColor }: OutputPortMenuProps) {
+export function OutputPortMenu({ nodeId, actions, accentColor, hoverAccentColor, isLogicNode, isGenericOutput }: OutputPortMenuProps) {
   const addConnectedNode = useFlowStore((state) => state.addConnectedNode);
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -42,7 +44,7 @@ export function OutputPortMenu({ nodeId, actions, accentColor, hoverAccentColor 
       <Handle
         type="source"
         position={Position.Right}
-        className="!w-6 !h-6 !border-[3px] !border-[#1e2027] !-mr-3"
+        className={`!w-6 !h-6 !border-[3px] !border-[#1e2027] !-mr-3 ${isGenericOutput ? 'sl-handle-triangle' : (isLogicNode ? '!rounded-none' : '!rounded-full')}`}
         style={{ backgroundColor: accentColor }}
       />
     );
@@ -53,7 +55,7 @@ export function OutputPortMenu({ nodeId, actions, accentColor, hoverAccentColor 
       <Handle
         type="source"
         position={Position.Right}
-        className="nodrag nopan !pointer-events-auto !w-8 !h-8 !rounded-full !border-[3px] !border-[#1e2027] !shadow-lg"
+        className={`nodrag nopan !pointer-events-auto !w-8 !h-8 !border-[3px] !border-[#1e2027] !shadow-lg ${isGenericOutput ? 'sl-handle-triangle' : (isLogicNode ? '!rounded-none' : '!rounded-full')}`}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();

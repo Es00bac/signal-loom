@@ -2,6 +2,7 @@ import type {
   CompositionTargetHandle,
   FlowNodeType,
   ImageTargetHandle,
+  ListTargetHandle,
   VideoTargetHandle,
 } from '../types/flow';
 
@@ -9,12 +10,13 @@ export interface NodeActionTemplate {
   id: string;
   label: string;
   targetType?: FlowNodeType;
-  targetHandle?: VideoTargetHandle | CompositionTargetHandle | ImageTargetHandle;
+  targetHandle?: VideoTargetHandle | CompositionTargetHandle | ImageTargetHandle | ListTargetHandle | string;
   disabled?: boolean;
 }
 
 export function getCompatibleNodeActions(nodeType: FlowNodeType): NodeActionTemplate[] {
   switch (nodeType) {
+    case 'cropImageNode':
     case 'imageGen':
       return [
         {
@@ -28,6 +30,12 @@ export function getCompatibleNodeActions(nodeType: FlowNodeType): NodeActionTemp
           label: 'Reference image',
           targetType: 'imageGen',
           targetHandle: 'image-reference-1',
+        },
+        {
+          id: 'use-as-mask',
+          label: 'Use as mask',
+          targetType: 'imageGen',
+          targetHandle: 'image-mask',
         },
         {
           id: 'describe-image',
@@ -57,6 +65,18 @@ export function getCompatibleNodeActions(nodeType: FlowNodeType): NodeActionTemp
           label: 'Collect in source bin',
           targetType: 'sourceBin',
         },
+        {
+          id: 'add-to-list',
+          label: 'Add to list',
+          targetType: 'list',
+          targetHandle: 'list-item-0',
+        },
+        {
+          id: 'feed-function',
+          label: 'Feed function',
+          targetType: 'functionNode',
+          targetHandle: 'input-flow',
+        },
       ];
     case 'videoGen':
       return [
@@ -84,6 +104,18 @@ export function getCompatibleNodeActions(nodeType: FlowNodeType): NodeActionTemp
           label: 'Collect in source bin',
           targetType: 'sourceBin',
         },
+        {
+          id: 'add-to-list',
+          label: 'Add to list',
+          targetType: 'list',
+          targetHandle: 'list-item-0',
+        },
+        {
+          id: 'feed-function',
+          label: 'Feed function',
+          targetType: 'functionNode',
+          targetHandle: 'input-flow',
+        },
         { id: 'lipsync-generation', label: 'Lipsync generation', disabled: true },
       ];
     case 'audioGen':
@@ -98,6 +130,18 @@ export function getCompatibleNodeActions(nodeType: FlowNodeType): NodeActionTemp
           id: 'collect-in-bin',
           label: 'Collect in source bin',
           targetType: 'sourceBin',
+        },
+        {
+          id: 'add-to-list',
+          label: 'Add to list',
+          targetType: 'list',
+          targetHandle: 'list-item-0',
+        },
+        {
+          id: 'feed-function',
+          label: 'Feed function',
+          targetType: 'functionNode',
+          targetHandle: 'input-flow',
         },
         { id: 'lipsync-generation', label: 'Lipsync generation', disabled: true },
       ];
@@ -124,6 +168,18 @@ export function getCompatibleNodeActions(nodeType: FlowNodeType): NodeActionTemp
           label: 'Collect in source bin',
           targetType: 'sourceBin',
         },
+        {
+          id: 'add-to-list',
+          label: 'Add to list',
+          targetType: 'list',
+          targetHandle: 'list-item-0',
+        },
+        {
+          id: 'feed-function',
+          label: 'Feed function',
+          targetType: 'functionNode',
+          targetHandle: 'input-flow',
+        },
       ];
     case 'composition':
       return [
@@ -131,6 +187,58 @@ export function getCompatibleNodeActions(nodeType: FlowNodeType): NodeActionTemp
           id: 'collect-in-bin',
           label: 'Collect in source bin',
           targetType: 'sourceBin',
+        },
+        {
+          id: 'add-to-list',
+          label: 'Add to list',
+          targetType: 'list',
+          targetHandle: 'list-item-0',
+        },
+        {
+          id: 'feed-function',
+          label: 'Feed function',
+          targetType: 'functionNode',
+          targetHandle: 'input-flow',
+        },
+      ];
+    case 'list':
+      return [
+        {
+          id: 'expand-list',
+          label: 'Expand item',
+          targetType: 'expander',
+        },
+        {
+          id: 'send-to-envelope',
+          label: 'Send to envelope',
+          targetType: 'envelope',
+        },
+        {
+          id: 'collect-in-bin',
+          label: 'Collect in source bin',
+          targetType: 'sourceBin',
+        },
+      ];
+    case 'envelope':
+      return [
+        {
+          id: 'expand-envelope',
+          label: 'Expand item',
+          targetType: 'expander',
+        },
+        {
+          id: 'collect-in-bin',
+          label: 'Collect in source bin',
+          targetType: 'sourceBin',
+        },
+      ];
+    case 'expander':
+      return [
+        {
+          id: 'add-to-list',
+          label: 'Add to list',
+          targetType: 'list',
+          targetHandle: 'list-item-0',
         },
       ];
     default:

@@ -30,6 +30,22 @@ describe('editor source item mapping', () => {
     expect(sourceItem.assetUrl).toBe('data:video/mp4;base64,AAA');
   });
 
+  it('preserves source-library envelope metadata for Video workspace cards and storyboard references', () => {
+    const sourceItem = mapLibraryItemToEditorSourceItem(createLibraryItem({
+      envelopeId: 'paper-page-imports:paper-1:page-2',
+      envelopeLabel: 'Page 2 imports',
+      envelopeIndex: 3,
+      envelopeCollapsed: false,
+    }));
+
+    expect(sourceItem).toMatchObject({
+      envelopeId: 'paper-page-imports:paper-1:page-2',
+      envelopeLabel: 'Page 2 imports',
+      envelopeIndex: 3,
+      envelopeCollapsed: false,
+    });
+  });
+
   it('keeps legacy origin-node clip references resolvable without overriding stable item ids', () => {
     const newest = createLibraryItem({
       id: 'saved-video-new',

@@ -14,6 +14,7 @@ import { buildDownloadFilename, downloadAsset } from '../../lib/downloadAsset';
 import { EXPORT_BASENAME } from '../../lib/brand';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 import { getCompatibleNodeActions } from '../../lib/nodeActionMenu';
+import { assignVariableToResultAttempt } from '../../lib/flowVariables';
 import {
   getConfiguredProviders,
   getModelOptions,
@@ -23,6 +24,7 @@ import {
 import { captureFrameFromVideoElement } from '../../lib/videoFrameExtraction';
 import {
   filterGeminiVideoModelsForConditioning,
+  isGeminiOmniModelId,
   normalizeGeminiVideoModelId,
   supportsGeminiFrameConditioning,
   supportsGeminiReferenceImages,
@@ -113,8 +115,7 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
   } = connections;
   const hasReferenceConnections = hasReference1Connection || hasReference2Connection || hasReference3Connection;
   const hasFrameInputs = hasStartFrameConnection || hasEndFrameConnection;
-  const hasInterpolationFrames = hasStartFrameConnection && hasEndFrameConnection;
-  const requiresEightSecondDuration = hasInterpolationFrames || hasReferenceConnections || hasExtensionConnection;
+  const requiresEightSecondDuration = hasReferenceConnections || hasExtensionConnection;
   const requiresAdvancedGeminiModel = hasEndFrameConnection || hasReferenceConnections || hasExtensionConnection;
   const durationValue = data.durationSeconds ?? 6;
   const configuredAspectRatio = (data.aspectRatio as AspectRatio | undefined) ?? '16:9';
@@ -168,6 +169,12 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
 
     data.onChange?.('modelId', selectedModelId);
   }, [data, provider, rawSelectedModelId, selectedModelId]);
+
+  useEffect(() => {
+    if (provider === 'gemini' && typeof data.videoBatchCount === 'number' && data.videoBatchCount !== 1) {
+      data.onChange?.('videoBatchCount', 1);
+    }
+  }, [data, provider]);
 
   useEffect(() => {
     if (provider !== 'gemini' || !requiresAdvancedGeminiModel) {
@@ -339,6 +346,7 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
       isRunning={data.isRunning}
       error={data.error}
       statusMessage={data.statusMessage}
+      retryState={data.retryState}
       onToggleCollapsed={() => data.onChange?.('collapsed', !isCollapsed)}
       footerActions={
         assetUrl ? (
@@ -358,6 +366,7 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
       {mediaMode === 'generate' ? (
         <AttemptHistory
           attempts={data.resultHistory}
+          onAssignVariable={(attemptId, variableName) => data.onChange?.('resultHistory', assignVariableToResultAttempt(data.resultHistory, attemptId, variableName))}
           onSelectAttempt={data.onSelectAttempt}
           selectedAttemptId={data.selectedResultId}
         />
@@ -460,14 +469,15 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
                 value={typeof data.videoNegativePrompt === 'string' ? data.videoNegativePrompt : ''}
               />
               <label className={withFlowNodeInteractionClasses('grid grid-cols-[1fr_auto] items-center gap-3 rounded-lg border border-gray-700/60 bg-[#111217]/50 px-2.5 py-2 text-[11px] text-gray-300 shadow-inner')}>
-                <span>Batch generations</span>
+                <span>Videos per request</span>
                 <input
-                  className={withFlowNodeInteractionClasses('w-16 rounded-md border border-gray-700/60 bg-[#0d0f15] px-2 py-1 text-right text-xs text-gray-100 outline-none')}
-                  max={4}
+                  className={withFlowNodeInteractionClasses('w-16 rounded-md border border-gray-700/60 bg-[#0d0f15] px-2 py-1 text-right text-xs text-gray-500 outline-none')}
+                  disabled
+                  max={1}
                   min={1}
-                  onChange={(event) => data.onChange?.('videoBatchCount', Number(event.target.value))}
+                  onChange={() => data.onChange?.('videoBatchCount', 1)}
                   type="number"
-                  value={typeof data.videoBatchCount === 'number' ? data.videoBatchCount : 1}
+                  value={1}
                 />
               </label>
             </>
@@ -534,9 +544,15 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
             <span className="text-gray-200"> Extend Video</span> to continue an existing clip.
           </div>
 
-          {provider === 'gemini' && (hasFrameInputs || hasReferenceConnections || hasExtensionConnection) ? (
+          {provider === 'gemini' && isGeminiOmniModelId(selectedModelId) ? (
+            <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-2 text-[11px] text-emerald-100">
+              Gemini Omni Flash is experimental in API mode. It is routed through Vertex when Vertex credentials are selected, and it fails closed if Vertex does not expose the model for this project.
+            </div>
+          ) : null}
+
+          {provider === 'gemini' && !isGeminiOmniModelId(selectedModelId) && (hasFrameInputs || hasReferenceConnections || hasExtensionConnection) ? (
             <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-2.5 py-2 text-[11px] text-blue-100">
-              Gemini Veo now supports prompt-only video, image-to-video, interpolation, reference-image guidance, and video extension in this node. Interpolation, reference-image guidance, and extension all lock the duration to 8 seconds. Extension also locks the output to 720p.
+              Gemini Veo now supports prompt-only video, image-to-video, interpolation, reference-image guidance, and video extension in this node. Reference-image guidance and extension lock the duration to 8 seconds. Extension also locks the output to 720p.
             </div>
           ) : null}
 

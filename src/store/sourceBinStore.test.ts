@@ -1,14 +1,23 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { useSourceBinStore } from './sourceBinStore';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { sanitizePersistedSourceBinState, useSourceBinStore } from './sourceBinStore';
+
+const originalRevokeObjectUrl = URL.revokeObjectURL;
 
 describe('source bin native file integration', () => {
   beforeEach(() => {
     useSourceBinStore.setState({
-      items: [],
+      bins: [{ id: 'default', name: 'Source Library', items: [], collapsed: false, createdAt: Date.now() }],
       dismissedSourceKeys: [],
       sidebarOpen: true,
       scratchDirectoryHandle: undefined,
       nativeScratchDirectoryPath: undefined,
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: originalRevokeObjectUrl,
     });
   });
 
@@ -25,12 +34,181 @@ describe('source bin native file integration', () => {
       },
     ]);
 
-    expect(useSourceBinStore.getState().items).toEqual([
+    const allItems = useSourceBinStore.getState().bins.flatMap((bin) => bin.items);
+    expect(allItems).toEqual([
       expect.objectContaining({
         id: 'native-video-1',
         assetUrl: 'signal-loom-asset://file/encoded-path',
         nativeFilePath: '/mnt/xtra/project/clip.mp4',
       }),
+    ]);
+  });
+
+  it('places browser file imports into the shared Project imports envelope', async () => {
+    const file = new File(['image bytes'], 'imported-panel.png', { type: 'image/png', lastModified: 1710000000000 });
+
+    await useSourceBinStore.getState().importFiles([file]);
+
+    const allItems = useSourceBinStore.getState().getAllItems();
+    expect(allItems).toHaveLength(1);
+    expect(allItems[0]).toMatchObject({
+      label: 'imported-panel.png',
+      kind: 'image',
+      mimeType: 'image/png',
+      envelopeId: 'project-imports',
+      envelopeLabel: 'Project imports',
+      envelopeIndex: 0,
+    });
+  });
+
+  it('continues Project imports envelope indexes across browser and native imports', async () => {
+    await useSourceBinStore.getState().importFiles([
+      new File(['image a'], 'first-import.png', { type: 'image/png', lastModified: 1710000000000 }),
+    ]);
+
+    await useSourceBinStore.getState().importNativeFiles([
+      {
+        id: 'native-image-2',
+        label: 'second-import.png',
+        kind: 'image',
+        mimeType: 'image/png',
+        assetUrl: 'signal-loom-asset://file/second-import',
+        nativeFilePath: '/project/second-import.png',
+        createdAt: 2,
+      },
+    ]);
+
+    const imports = useSourceBinStore.getState()
+      .getAllItems()
+      .filter((item) => item.envelopeId === 'project-imports')
+      .sort((left, right) => (left.envelopeIndex ?? 0) - (right.envelopeIndex ?? 0));
+
+    expect(imports.map((item) => [item.label, item.envelopeIndex])).toEqual([
+      ['first-import.png', 0],
+      ['second-import.png', 1],
+    ]);
+  });
+
+  it('keeps embedded asset data for browser file imports in native save snapshots', async () => {
+    const file = new File(['image bytes'], 'saved-panel.png', { type: 'image/png', lastModified: 1710000000000 });
+
+    await useSourceBinStore.getState().importFiles([file]);
+
+    const snapshot = await useSourceBinStore.getState().exportProjectSnapshot({
+      includeAssetData: true,
+    });
+
+    expect(snapshot.bins?.[0]?.items[0]).toEqual(expect.objectContaining({
+      label: 'saved-panel.png',
+      assetUrl: expect.stringMatching(/^data:image\/png;base64,/),
+      envelopeId: 'project-imports',
+      envelopeLabel: 'Project imports',
+      envelopeIndex: 0,
+    }));
+  });
+
+  it('updates an existing asset item in place and revokes the old object URL', async () => {
+    const revokeMock = vi.fn();
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revokeMock,
+    });
+
+    await useSourceBinStore.getState().addAssetItem({
+      id: 'update-test-1',
+      label: 'initial.png',
+      kind: 'image',
+      mimeType: 'image/png',
+      dataUrl: 'blob:test-initial-data',
+    });
+
+    expect(useSourceBinStore.getState().getAllItems()[0].label).toBe('initial.png');
+
+    await useSourceBinStore.getState().updateAssetItemData('update-test-1', {
+      label: 'updated.png',
+      mimeType: 'image/jpeg',
+      dataUrl: 'blob:test-updated-data',
+    });
+
+    const allItems = useSourceBinStore.getState().getAllItems();
+    expect(allItems.length).toBe(1);
+    expect(allItems[0].id).toBe('update-test-1');
+    expect(allItems[0].label).toBe('updated.png');
+    expect(allItems[0].mimeType).toBe('image/jpeg');
+    expect(revokeMock).toHaveBeenCalledWith('blob:test-initial-data');
+  });
+
+  it('upserts deterministic asset payloads by source key without changing the item id', async () => {
+    const firstItem = await useSourceBinStore.getState().addAssetItem({
+      label: 'Paper Page 1',
+      kind: 'image',
+      mimeType: 'image/png',
+      dataUrl: 'data:image/png;base64,Zmlyc3Q=',
+      sourceKey: 'paper-page:doc-1:page-1:1920x1080:trim',
+      envelopeId: 'paper-storyboard:doc-1',
+      envelopeLabel: 'Paper storyboard pages',
+      envelopeIndex: 0,
+    });
+
+    const secondItem = await useSourceBinStore.getState().addAssetItem({
+      label: 'Paper Page 1 refreshed',
+      kind: 'image',
+      mimeType: 'image/png',
+      dataUrl: 'data:image/png;base64,c2Vjb25k',
+      sourceKey: 'paper-page:doc-1:page-1:1920x1080:trim',
+      envelopeId: 'paper-storyboard:doc-1',
+      envelopeLabel: 'Paper storyboard pages',
+      envelopeIndex: 0,
+    });
+
+    const allItems = useSourceBinStore.getState().getAllItems();
+
+    expect(secondItem.id).toBe(firstItem.id);
+    expect(allItems).toHaveLength(1);
+    expect(allItems[0]).toMatchObject({
+      id: firstItem.id,
+      label: 'Paper Page 1 refreshed',
+      sourceKey: 'paper-page:doc-1:page-1:1920x1080:trim',
+      envelopeId: 'paper-storyboard:doc-1',
+      envelopeIndex: 0,
+    });
+  });
+
+  it('stores native document, subtitle, and package descriptors as source-bin assets', async () => {
+    await useSourceBinStore.getState().importNativeFiles([
+      {
+        id: 'native-doc-1',
+        label: 'layout.idml',
+        kind: 'document',
+        mimeType: 'application/vnd.adobe.indesign-idml-package',
+        assetUrl: 'signal-loom-asset://file/doc-path',
+        nativeFilePath: '/mnt/xtra/project/layout.idml',
+        createdAt: 1,
+      },
+      {
+        id: 'native-sub-1',
+        label: 'captions.vtt',
+        kind: 'subtitle',
+        mimeType: 'text/vtt',
+        assetUrl: 'signal-loom-asset://file/sub-path',
+        nativeFilePath: '/mnt/xtra/project/captions.vtt',
+        createdAt: 2,
+      },
+      {
+        id: 'native-package-1',
+        label: 'project.sloom',
+        kind: 'package',
+        mimeType: 'application/vnd.signal-loom.project+json',
+        assetUrl: 'signal-loom-asset://file/package-path',
+        nativeFilePath: '/mnt/xtra/project/project.sloom',
+        createdAt: 3,
+      },
+    ]);
+
+    expect(useSourceBinStore.getState().bins[0].items.map((item) => item.kind)).toEqual([
+      'document',
+      'subtitle',
+      'package',
     ]);
   });
 
@@ -50,7 +228,7 @@ describe('source bin native file integration', () => {
 
     const snapshot = await useSourceBinStore.getState().exportProjectSnapshot();
 
-    expect(snapshot.items[0]).toMatchObject({
+    expect(snapshot.bins?.[0]?.items[0]).toMatchObject({
       id: 'native-audio-1',
       assetUrl: 'signal-loom-asset://file/audio-path',
       nativeFilePath: '/mnt/xtra/project/sound.wav',
@@ -60,17 +238,25 @@ describe('source bin native file integration', () => {
 
   it('persists starred and collapsed source-bin item state through project snapshots', async () => {
     useSourceBinStore.setState({
-      items: [
+      bins: [
         {
-          id: 'clip-1',
-          label: 'clip.mp4',
-          kind: 'video',
-          mimeType: 'video/mp4',
-          assetUrl: 'signal-loom-asset://file/clip',
-          nativeFilePath: '/mnt/xtra/project/clip.mp4',
-          createdAt: 3,
-          starred: true,
-          collapsed: true,
+          id: 'default',
+          name: 'Source Library',
+          collapsed: false,
+          createdAt: Date.now(),
+          items: [
+            {
+              id: 'clip-1',
+              label: 'clip.mp4',
+              kind: 'video',
+              mimeType: 'video/mp4',
+              assetUrl: 'signal-loom-asset://file/clip',
+              nativeFilePath: '/mnt/xtra/project/clip.mp4',
+              createdAt: 3,
+              starred: true,
+              collapsed: true,
+            },
+          ],
         },
       ],
     });
@@ -79,18 +265,133 @@ describe('source bin native file integration', () => {
     await useSourceBinStore.getState().restoreProjectSnapshot(undefined);
     await useSourceBinStore.getState().restoreProjectSnapshot(snapshot);
 
-    expect(useSourceBinStore.getState().items[0]).toMatchObject({
+    expect(useSourceBinStore.getState().bins[0].items[0]).toMatchObject({
       id: 'clip-1',
       starred: true,
       collapsed: true,
     });
   });
 
+  it('keeps native scratch descriptors visible when the linked file is missing or empty', async () => {
+    await useSourceBinStore.getState().restoreProjectSnapshot({
+      dismissedSourceKeys: [],
+      bins: [
+        {
+          id: 'default',
+          name: 'Source Library',
+          collapsed: false,
+          createdAt: 1,
+          items: [
+            {
+              id: 'panel-image-1',
+              label: 'Panel image 1',
+              kind: 'image',
+              mimeType: 'image/png',
+              nativeFilePath: '/project/Issue 1.signal-loom-scratch/panel-image-1.png',
+              scratchFileName: 'panel-image-1.png',
+              createdAt: 2,
+              envelopeId: 'panel-envelope',
+              envelopeLabel: 'Panel envelope',
+              envelopeIndex: 0,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(useSourceBinStore.getState().bins[0].items).toEqual([
+      expect.objectContaining({
+        id: 'panel-image-1',
+        label: 'Panel image 1',
+        kind: 'image',
+        assetUrl: undefined,
+        nativeFilePath: '/project/Issue 1.signal-loom-scratch/panel-image-1.png',
+        scratchFileName: 'panel-image-1.png',
+        envelopeId: 'panel-envelope',
+      }),
+    ]);
+  });
+
+  it('does not let a stale async asset hydration overwrite a newer restored project snapshot', async () => {
+    useSourceBinStore.setState({
+      bins: [{
+        id: 'default',
+        name: 'Source Library',
+        collapsed: false,
+        createdAt: 1,
+        items: [
+          { id: 'stale-1', label: 'Stale image', kind: 'image', mimeType: 'image/png', createdAt: 1 },
+        ],
+      }],
+      dismissedSourceKeys: [],
+    });
+
+    const hydration = useSourceBinStore.getState().hydrateAssets();
+
+    useSourceBinStore.setState({
+      bins: [{
+        id: 'default',
+        name: 'Source Library',
+        collapsed: false,
+        createdAt: 2,
+        items: [
+          { id: 'restored-1', label: 'Restored image', kind: 'image', mimeType: 'image/png', createdAt: 2 },
+        ],
+      }],
+      dismissedSourceKeys: [],
+    });
+
+    await hydration;
+
+    expect(useSourceBinStore.getState().bins[0].items.map((item) => item.id)).toEqual(['restored-1']);
+  });
+
+  it('persists envelope grouping metadata through project snapshots', async () => {
+    useSourceBinStore.setState({
+      bins: [{
+        id: 'default',
+        name: 'Source Library',
+        collapsed: false,
+        createdAt: 1,
+        items: [{
+          id: 'item-1',
+          label: 'Generated image 1',
+          kind: 'image',
+          mimeType: 'image/png',
+          assetUrl: 'data:image/png;base64,AAA',
+          createdAt: 2,
+          envelopeId: 'image-node-1',
+          envelopeLabel: 'Image Generation Envelope',
+          envelopeIndex: 0,
+        }],
+      }],
+      dismissedSourceKeys: [],
+    });
+
+    const snapshot = await useSourceBinStore.getState().exportProjectSnapshot({ includeAssetData: true });
+    await useSourceBinStore.getState().restoreProjectSnapshot(undefined);
+    await useSourceBinStore.getState().restoreProjectSnapshot(snapshot);
+
+    expect(useSourceBinStore.getState().bins[0].items[0]).toMatchObject({
+      envelopeId: 'image-node-1',
+      envelopeLabel: 'Image Generation Envelope',
+      envelopeIndex: 0,
+    });
+  });
+
   it('can star and collapse individual source-bin items plus collapse or expand all items', () => {
     useSourceBinStore.setState({
-      items: [
-        { id: 'a', label: 'A', kind: 'video', createdAt: 1 },
-        { id: 'b', label: 'B', kind: 'audio', createdAt: 2 },
+      bins: [
+        {
+          id: 'default',
+          name: 'Source Library',
+          collapsed: false,
+          createdAt: Date.now(),
+          items: [
+            { id: 'a', label: 'A', kind: 'video', createdAt: 1 },
+            { id: 'b', label: 'B', kind: 'audio', createdAt: 2 },
+          ],
+        },
       ],
     });
 
@@ -98,7 +399,7 @@ describe('source bin native file integration', () => {
     useSourceBinStore.getState().setItemCollapsed('a', true);
     useSourceBinStore.getState().setAllItemsCollapsed(true);
 
-    expect(useSourceBinStore.getState().items).toEqual([
+    expect(useSourceBinStore.getState().bins[0].items).toEqual([
       expect.objectContaining({ id: 'a', collapsed: true }),
       expect.objectContaining({ id: 'b', starred: true, collapsed: true }),
     ]);
@@ -106,9 +407,394 @@ describe('source bin native file integration', () => {
     useSourceBinStore.getState().toggleItemStarred('b');
     useSourceBinStore.getState().setAllItemsCollapsed(false);
 
-    expect(useSourceBinStore.getState().items).toEqual([
+    expect(useSourceBinStore.getState().bins[0].items).toEqual([
       expect.objectContaining({ id: 'a', collapsed: false }),
       expect.objectContaining({ id: 'b', starred: false, collapsed: false }),
+    ]);
+  });
+
+  it('renames source-bin items without losing their durable asset metadata', () => {
+    useSourceBinStore.setState({
+      bins: [
+        {
+          id: 'default',
+          name: 'Source Library',
+          collapsed: false,
+          createdAt: 1,
+          items: [
+            {
+              id: 'image-1',
+              label: 'Old panel.png',
+              kind: 'image',
+              mimeType: 'image/png',
+              assetId: 'asset-1',
+              assetUrl: 'data:image/png;base64,AAA',
+              createdAt: 2,
+            },
+          ],
+        },
+      ],
+    });
+
+    useSourceBinStore.getState().renameItem('image-1', '  New panel.png  ');
+
+    expect(useSourceBinStore.getState().bins[0].items[0]).toEqual(expect.objectContaining({
+      id: 'image-1',
+      label: 'New panel.png',
+      assetId: 'asset-1',
+      assetUrl: 'data:image/png;base64,AAA',
+    }));
+  });
+
+  it('collapses envelope groups by marking every item in that source-library envelope', async () => {
+    useSourceBinStore.setState({
+      bins: [
+        {
+          id: 'default',
+          name: 'Source Library',
+          collapsed: false,
+          createdAt: 1,
+          items: [
+            {
+              id: 'env-a',
+              label: 'Frame A',
+              kind: 'image',
+              assetUrl: 'data:image/png;base64,AAA',
+              createdAt: 2,
+              envelopeId: 'env-1',
+              envelopeLabel: 'Storyboard envelope',
+            },
+            {
+              id: 'env-b',
+              label: 'Frame B',
+              kind: 'image',
+              assetUrl: 'data:image/png;base64,BBB',
+              createdAt: 3,
+              envelopeId: 'env-1',
+              envelopeLabel: 'Storyboard envelope',
+            },
+            {
+              id: 'solo',
+              label: 'Solo',
+              kind: 'image',
+              assetUrl: 'data:image/png;base64,CCC',
+              createdAt: 4,
+            },
+          ],
+        },
+      ],
+    });
+
+    useSourceBinStore.getState().setEnvelopeCollapsed('env-1', true);
+
+    expect(useSourceBinStore.getState().bins[0].items).toEqual([
+      expect.objectContaining({ id: 'env-a', envelopeCollapsed: true }),
+      expect.objectContaining({ id: 'env-b', envelopeCollapsed: true }),
+      expect.objectContaining({ id: 'solo' }),
+    ]);
+    expect(useSourceBinStore.getState().bins[0].items[2]).not.toHaveProperty('envelopeCollapsed');
+
+    const snapshot = await useSourceBinStore.getState().exportProjectSnapshot({ includeAssetData: true });
+    await useSourceBinStore.getState().restoreProjectSnapshot(undefined);
+    await useSourceBinStore.getState().restoreProjectSnapshot(snapshot);
+
+    expect(useSourceBinStore.getState().bins[0].items.filter((item) => item.envelopeId === 'env-1')).toEqual([
+      expect.objectContaining({ id: 'env-a', envelopeCollapsed: true }),
+      expect.objectContaining({ id: 'env-b', envelopeCollapsed: true }),
+    ]);
+  });
+
+  it('sanitizes null source-bin bins and items without flatMap assumptions', () => {
+    const sanitized = sanitizePersistedSourceBinState({
+      bins: [
+        null,
+        {
+          id: 'bin-1',
+          name: 'Recovered',
+          items: null,
+          collapsed: 'no',
+          createdAt: Number.NaN,
+        },
+        {
+          id: 'bin-2',
+          name: 'Mixed',
+          items: [
+            null,
+            { id: 'bad-kind', label: 'Bad', kind: 'other' },
+            { id: 'text-1', label: 42, kind: 'text', text: 'hello', createdAt: Number.POSITIVE_INFINITY },
+          ],
+        },
+      ],
+      items: null,
+      dismissedSourceKeys: ['source-a', 7],
+    });
+
+    expect(sanitized.dismissedSourceKeys).toEqual(['source-a']);
+    expect(sanitized.bins).toHaveLength(2);
+    expect(sanitized.bins?.[0]).toMatchObject({ id: 'bin-1', items: [] });
+    expect(sanitized.bins?.[1].items).toEqual([
+      expect.objectContaining({ id: 'text-1', label: 'Untitled Source', kind: 'text', text: 'hello' }),
+    ]);
+  });
+
+  it('removes transient recovered scratch items from persisted snapshots', () => {
+    const sanitized = sanitizePersistedSourceBinState({
+      bins: [
+        {
+          id: 'default',
+          name: 'Source Library',
+          items: [
+            {
+              id: 'panel-1',
+              label: 'Panel 1',
+              kind: 'image',
+              mimeType: 'image/png',
+              scratchFileName: 'panel-1.png',
+              createdAt: 1,
+            },
+            {
+              id: 'recovered-inline',
+              label: 'Recovered Inline',
+              kind: 'image',
+              mimeType: 'image/png',
+              scratchFileName: 'orphan-inline.png',
+              sourceKey: 'recovered-scratch:orphan-inline.png',
+              createdAt: 2,
+            },
+          ],
+          collapsed: false,
+          createdAt: 1,
+        },
+        {
+          id: 'recovered-scratch-assets',
+          name: 'Recovered Scratch Assets',
+          items: [
+            {
+              id: 'recovered-orphan',
+              label: 'Recovered Orphan',
+              kind: 'image',
+              mimeType: 'image/png',
+              scratchFileName: 'orphan.png',
+              sourceKey: 'recovered-scratch:orphan.png',
+              createdAt: 3,
+            },
+          ],
+          collapsed: true,
+          createdAt: 3,
+        },
+      ],
+      dismissedSourceKeys: [],
+    });
+
+    expect(sanitized.bins?.map((bin) => bin.id)).toEqual(['default']);
+    expect(sanitized.bins?.[0].items.map((item) => item.id)).toEqual(['panel-1']);
+  });
+
+  it('revokes object URLs when blob-backed source-bin items are removed', () => {
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    useSourceBinStore.setState({
+      bins: [
+        {
+          id: 'default',
+          name: 'Source Library',
+          collapsed: false,
+          createdAt: 1,
+          items: [
+            {
+              id: 'scratch-preview',
+              label: 'Scratch preview',
+              kind: 'image',
+              mimeType: 'image/png',
+              assetUrl: 'blob:scratch-preview',
+              createdAt: 2,
+            },
+          ],
+        },
+      ],
+      dismissedSourceKeys: [],
+    });
+
+    useSourceBinStore.getState().removeItem('scratch-preview');
+
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:scratch-preview');
+  });
+
+  it('revokes stale blob URLs when restoring a different project snapshot', async () => {
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    useSourceBinStore.setState({
+      bins: [
+        {
+          id: 'default',
+          name: 'Source Library',
+          collapsed: false,
+          createdAt: 1,
+          items: [
+            {
+              id: 'old-preview',
+              label: 'Old preview',
+              kind: 'image',
+              mimeType: 'image/png',
+              assetUrl: 'blob:old-preview',
+              createdAt: 2,
+            },
+            {
+              id: 'durable-preview',
+              label: 'Durable preview',
+              kind: 'image',
+              mimeType: 'image/png',
+              assetUrl: 'signal-loom-asset://file/durable-preview',
+              nativeFilePath: '/project/durable-preview.png',
+              createdAt: 3,
+            },
+          ],
+        },
+      ],
+      dismissedSourceKeys: [],
+    });
+
+    await useSourceBinStore.getState().restoreProjectSnapshot({
+      dismissedSourceKeys: [],
+      bins: [
+        {
+          id: 'default',
+          name: 'Source Library',
+          collapsed: false,
+          createdAt: 4,
+          items: [
+            {
+              id: 'new-preview',
+              label: 'New preview',
+              kind: 'image',
+              mimeType: 'image/png',
+              assetUrl: 'data:image/png;base64,AAAA',
+              createdAt: 5,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:old-preview');
+    expect(revokeObjectURL).not.toHaveBeenCalledWith('signal-loom-asset://file/durable-preview');
+  });
+
+  it('repairs duplicate source-bin envelope item indexes without dropping generated images', () => {
+    const sanitized = sanitizePersistedSourceBinState({
+      bins: [
+        {
+          id: 'default',
+          name: 'Source Library',
+          collapsed: false,
+          createdAt: 1,
+          items: [
+            {
+              id: 'panel-a',
+              label: 'Panel A',
+              kind: 'image',
+              mimeType: 'image/png',
+              scratchFileName: 'panel-a.png',
+              sourceKey: 'image:envelope-1:0:signal-loom-asset://file/panel-a',
+              originNodeId: 'envelope-1:0',
+              envelopeId: 'envelope-1',
+              envelopeIndex: 0,
+              createdAt: 1,
+            },
+            {
+              id: 'panel-b',
+              label: 'Panel B',
+              kind: 'image',
+              mimeType: 'image/png',
+              scratchFileName: 'panel-b.png',
+              sourceKey: 'image:envelope-1:0:signal-loom-asset://file/panel-b',
+              originNodeId: 'envelope-1:0',
+              envelopeId: 'envelope-1',
+              envelopeIndex: 0,
+              createdAt: 2,
+            },
+          ],
+        },
+      ],
+      dismissedSourceKeys: [],
+    });
+
+    expect(sanitized.bins?.[0].items).toEqual([
+      expect.objectContaining({
+        id: 'panel-a',
+        envelopeIndex: 0,
+        originNodeId: 'envelope-1:0',
+        sourceKey: 'image:envelope-1:0:signal-loom-asset://file/panel-a',
+      }),
+      expect.objectContaining({
+        id: 'panel-b',
+        envelopeIndex: 1,
+        originNodeId: 'envelope-1:1',
+        sourceKey: 'image:envelope-1:1:signal-loom-asset://file/panel-b',
+      }),
+    ]);
+  });
+
+  it('repairs collided originNodeId and sourceKey for generated envelope items instead of discarding them', () => {
+    const sanitized = sanitizePersistedSourceBinState({
+      bins: [
+        {
+          id: 'default',
+          name: 'Source Library',
+          collapsed: false,
+          createdAt: 1,
+          items: [
+            {
+              id: 'gen-1',
+              label: 'Gen Result 1',
+              kind: 'image',
+              mimeType: 'image/png',
+              assetUrl: 'signal-loom-asset://file/result-1.png',
+              sourceKey: 'image:imageGen-1:1:signal-loom-asset://file/result-1.png',
+              originNodeId: 'imageGen-1:1',
+              envelopeId: 'envelope-f15',
+              envelopeIndex: 0,
+              isGenerated: true,
+              createdAt: 1,
+            },
+            {
+              id: 'gen-2',
+              label: 'Gen Result 2',
+              kind: 'image',
+              mimeType: 'image/png',
+              assetUrl: 'signal-loom-asset://file/result-2.png',
+              sourceKey: 'image:imageGen-1:1:signal-loom-asset://file/result-2.png',
+              originNodeId: 'imageGen-1:1',
+              envelopeId: 'envelope-f15',
+              envelopeIndex: 0,
+              isGenerated: true,
+              createdAt: 2,
+            },
+          ],
+        },
+      ],
+      dismissedSourceKeys: [],
+    });
+
+    expect(sanitized.bins?.[0].items).toEqual([
+      expect.objectContaining({
+        id: 'gen-1',
+        envelopeIndex: 0,
+        originNodeId: 'imageGen-1:0',
+        sourceKey: 'image:imageGen-1:0:signal-loom-asset://file/result-1.png',
+      }),
+      expect.objectContaining({
+        id: 'gen-2',
+        envelopeIndex: 1,
+        originNodeId: 'imageGen-1:1',
+        sourceKey: 'image:imageGen-1:1:signal-loom-asset://file/result-2.png',
+      }),
     ]);
   });
 });

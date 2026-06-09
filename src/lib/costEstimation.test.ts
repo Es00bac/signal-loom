@@ -24,6 +24,8 @@ const settings: RuntimeSettingsSnapshot = {
     gemini: 'key',
     huggingface: '',
     elevenlabs: '',
+    bfl: '',
+    stability: '',
   },
   defaultModels: {
     text: {
@@ -36,6 +38,10 @@ const settings: RuntimeSettingsSnapshot = {
       openai: 'gpt-image-1',
       atlas: 'gpt-image-2',
       huggingface: 'hf-image',
+      bfl: 'flux-2-pro',
+      stability: 'stable-image-edit-inpaint',
+      localOpen: 'Qwen/Qwen-Image-Edit',
+      android: 'local-dream-active',
     },
     video: {
       gemini: 'veo-3.1-fast-generate-preview',
@@ -54,6 +60,19 @@ const settings: RuntimeSettingsSnapshot = {
     localNativeRenderUrl: '',
     backendProxyEnabled: false,
     backendProxyBaseUrl: '',
+    geminiCredentialMode: 'api-key',
+    vertexAuthMode: 'gcloud-user',
+    vertexProjectId: '',
+    vertexLocation: 'global',
+    vertexQuotaProjectId: '',
+    vertexEnvironmentVariables: '',
+    paperPrintUpscaleMethod: 'auto',
+    paperPdfRasterPreset: 'balanced-jpeg',
+    localOpenImageEndpointUrl: '',
+    localOpenImageAuthHeader: '',
+    localOpenImageDefaultModel: 'Qwen/Qwen-Image-Edit',
+    batchMaxRetries: 10,
+    batchRetryBaseDelayMs: 30000,
   },
 };
 
@@ -65,6 +84,15 @@ describe('estimateGeminiTextCostUsd', () => {
         outputTokens: 500,
       }),
     ).toBeCloseTo(0.00155, 6);
+  });
+
+  it('estimates Gemini 3 Flash text cost from input and output tokens', () => {
+    expect(
+      estimateGeminiTextCostUsd('gemini-3-flash-preview', {
+        inputTokens: 1000,
+        outputTokens: 500,
+      }),
+    ).toBeCloseTo(0.002, 6);
   });
 });
 
@@ -134,5 +162,161 @@ describe('estimateExecutionPlan', () => {
 
     expect(estimate.nodeIds).toEqual(['text-1', 'image-1']);
     expect(estimate.rollup.imageCount).toBe(1);
+  });
+
+  it('uses registered cloud image model prices for BFL and Stability image nodes', () => {
+    const nodes = [
+      createNode('text-1', 'textNode', {
+        mode: 'prompt',
+        prompt: 'A gold robot walking through fog',
+      }),
+      createNode('source-image', 'imageGen', {
+        mediaMode: 'import',
+        sourceAssetUrl: 'data:image/png;base64,SOURCE',
+      }),
+      createNode('bfl-image', 'imageGen', {
+        provider: 'bfl',
+        modelId: 'flux-2-pro',
+      }),
+      createNode('stability-edit', 'imageGen', {
+        provider: 'stability',
+        modelId: 'stable-image-edit-search-replace',
+        imageSearchPrompt: 'mug',
+      }),
+    ];
+
+    const bflEstimate = estimateExecutionPlan(
+      'bfl-image',
+      nodes,
+      [
+        { id: 'edge-text-bfl', source: 'text-1', target: 'bfl-image' },
+      ],
+      settings,
+    );
+    const estimate = estimateExecutionPlan(
+      'stability-edit',
+      nodes,
+      [
+        { id: 'edge-text-bfl', source: 'text-1', target: 'bfl-image' },
+        { id: 'edge-source-stability', source: 'source-image', target: 'stability-edit', targetHandle: 'image-edit-source' },
+        { id: 'edge-text-stability', source: 'text-1', target: 'stability-edit' },
+      ],
+      settings,
+    );
+
+    expect(bflEstimate.telemetries.find((entry) => entry.nodeId === 'bfl-image')?.telemetry).toMatchObject({
+      provider: 'bfl',
+      modelId: 'flux-2-pro',
+      costUsd: 0.03,
+      imageCount: 1,
+    });
+    expect(estimate.telemetries.find((entry) => entry.nodeId === 'stability-edit')?.telemetry).toMatchObject({
+      provider: 'stability',
+      modelId: 'stable-image-edit-search-replace',
+      costUsd: 0.05,
+      imageCount: 1,
+    });
+  });
+
+  it('labels Local/Open image model estimates as provider-defined instead of free', () => {
+    const nodes = [
+      createNode('text-1', 'textNode', {
+        mode: 'prompt',
+        prompt: 'Change the shop sign to OPEN LATE',
+      }),
+      createNode('source-image', 'imageGen', {
+        mediaMode: 'import',
+        sourceAssetUrl: 'data:image/png;base64,SOURCE',
+      }),
+      createNode('local-open-edit', 'imageGen', {
+        provider: 'localOpen',
+        modelId: 'Qwen/Qwen-Image-Edit',
+      }),
+    ];
+
+    const estimate = estimateExecutionPlan(
+      'local-open-edit',
+      nodes,
+      [
+        { id: 'edge-text', source: 'text-1', target: 'local-open-edit' },
+        { id: 'edge-source', source: 'source-image', target: 'local-open-edit', targetHandle: 'image-edit-source' },
+      ],
+      settings,
+    );
+
+    expect(estimate.telemetries.find((entry) => entry.nodeId === 'local-open-edit')?.telemetry).toMatchObject({
+      provider: 'localOpen',
+      modelId: 'Qwen/Qwen-Image-Edit',
+      costUsd: undefined,
+      imageCount: 1,
+    });
+    expect(estimate.rollup.unknownCostCount).toBe(1);
+  });
+
+  it('adds paid configured auto-upscale cost to Flow image generation estimates', () => {
+    const estimate = estimateExecutionPlan(
+      'image-1',
+      [
+        createNode('text-1', 'textNode', {
+          mode: 'prompt',
+          prompt: 'A gold robot walking through fog',
+        }),
+        createNode('image-1', 'imageGen', {
+          provider: 'stability',
+          modelId: 'stable-image-core',
+          imageAutoUpscale: true,
+        }),
+      ],
+      [{ id: 'edge-text', source: 'text-1', target: 'image-1' }],
+      {
+        ...settings,
+        apiKeys: { ...settings.apiKeys, stability: 'stability-key' },
+        providerSettings: {
+          ...settings.providerSettings,
+          paperPrintUpscaleMethod: 'stability-fast',
+        },
+      },
+    );
+
+    expect(estimate.telemetries.find((entry) => entry.nodeId === 'image-1')?.telemetry).toMatchObject({
+      provider: 'stability',
+      modelId: 'stable-image-core',
+      costUsd: 0.05,
+      imageCount: 1,
+    });
+  });
+
+  it('does not add provider spend for Android configured auto-upscale estimates', () => {
+    const estimate = estimateExecutionPlan(
+      'image-1',
+      [
+        createNode('text-1', 'textNode', {
+          mode: 'prompt',
+          prompt: 'A gold robot walking through fog',
+        }),
+        createNode('image-1', 'imageGen', {
+          provider: 'stability',
+          modelId: 'stable-image-core',
+          imageAutoUpscale: true,
+        }),
+      ],
+      [{ id: 'edge-text', source: 'text-1', target: 'image-1' }],
+      {
+        ...settings,
+        apiKeys: { ...settings.apiKeys, stability: 'stability-key' },
+        providerSettings: {
+          ...settings.providerSettings,
+          androidAcceleratorBaseUrl: 'http://192.168.1.42:8788',
+          paperPrintUpscaleMethod: 'auto',
+        },
+      },
+    );
+
+    expect(estimate.telemetries.find((entry) => entry.nodeId === 'image-1')?.telemetry).toMatchObject({
+      provider: 'stability',
+      modelId: 'stable-image-core',
+      costUsd: 0.03,
+      imageCount: 1,
+    });
   });
 });

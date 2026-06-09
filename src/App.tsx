@@ -326,6 +326,8 @@ function FlowApp() {
   const setPanelVisibility = useEditorStore((state) => state.setPanelVisibility);
   const setSourceBinTab = useEditorStore((state) => state.setSourceBinTab);
   const setSelectedSourceItemId = useEditorStore((state) => state.setSelectedSourceItemId);
+  const activeFlowSourceBinId = useEditorStore((state) => state.activeFlowSourceBinId);
+  const setActiveFlowSourceBinId = useEditorStore((state) => state.setActiveFlowSourceBinId);
   const refreshCatalogs = useCatalogStore((state) => state.refreshCatalogs);
   const apiKeys = useSettingsStore((state) => state.apiKeys);
   const defaultModels = useSettingsStore((state) => state.defaultModels);
@@ -334,6 +336,8 @@ function FlowApp() {
   const keyboardShortcuts = useSettingsStore((state) => state.keyboardShortcuts);
   const openSettings = useSettingsStore((state) => state.openSettings);
   const sourceBinItems = useSourceBinStore(useShallow((state) => state.bins.flatMap((bin) => bin.items)));
+  const sourceBinIds = useSourceBinStore(useShallow((state) => state.bins.map((bin) => bin.id)));
+  const sourceBins = useSourceBinStore(useShallow((state) => state.bins));
   const activeImageDocId = useImageEditorStore((state) => state.activeDocId);
   const activePaperDocumentId = usePaperStore((state) => state.document.id);
   const applyWorkspaceViewDefault = useDockablePanelStore((state) => state.applyWorkspaceViewDefault);
@@ -374,6 +378,13 @@ function FlowApp() {
     () => buildSourceLibraryRendererItemIds(sourceBinItems),
     [sourceBinItems],
   );
+  const flowImportTargetBinId = useMemo(() => {
+    if (activeFlowSourceBinId && sourceBinIds.includes(activeFlowSourceBinId)) {
+      return activeFlowSourceBinId;
+    }
+
+    return sourceBinIds[0];
+  }, [activeFlowSourceBinId, sourceBinIds]);
   const interfaceTheme = useMemo(() => resolveInterfaceTheme(interfaceThemeId), [interfaceThemeId]);
   const interfaceThemeStyle = useMemo(() => buildInterfaceThemeStyle(interfaceTheme) as CSSProperties, [interfaceTheme]);
   const activeIngestSignatureRef = useRef<string | undefined>(undefined);
@@ -411,6 +422,12 @@ function FlowApp() {
   const workspaceWindowSenderId = useMemo(() => getWorkspaceWindowSenderId(), []);
   const sourceLibraryNativeVersionRef = useRef(0);
   const activeWorkspaceView = windowWorkspaceView ?? workspaceView;
+
+  useEffect(() => {
+    if (flowImportTargetBinId && activeFlowSourceBinId !== flowImportTargetBinId) {
+      setActiveFlowSourceBinId(flowImportTargetBinId);
+    }
+  }, [activeFlowSourceBinId, flowImportTargetBinId, setActiveFlowSourceBinId]);
   const showFlowWorkspaceDiagnostics = useMemo(
     () => shouldShowFlowWorkspaceDiagnostics(import.meta.env.VITE_SIGNAL_LOOM_FLOW_WORKSPACE_DIAGNOSTICS),
     [],
@@ -972,7 +989,7 @@ function FlowApp() {
           return;
         case 'flow-create-source-node': {
           void ensureFlowTargetWorkspaceHydrated(command.targetFlowWorkspaceId).then(() => {
-            mergeCommandSourceBinItems([command.item]);
+            mergeCommandSourceBinItems([command.item], command.targetBinId);
             const nodeId = addNode(getFlowNodeTypeForSourceBinItem(command.item), getViewportCenterPosition());
             patchNodeData(nodeId, buildFlowNodePatchForSourceBinItem(command.item));
             recordActivityTrailEvent({
@@ -1049,12 +1066,18 @@ function FlowApp() {
     }
 
     activeIngestSignatureRef.current = connectedSourceBinSignature;
-    void ingestConnectedItems(connectedSourceBinItems).finally(() => {
+    void ingestConnectedItems(connectedSourceBinItems, flowImportTargetBinId).finally(() => {
       if (activeIngestSignatureRef.current === connectedSourceBinSignature) {
         activeIngestSignatureRef.current = undefined;
       }
     });
-  }, [activeWorkspaceView, connectedSourceBinItems, connectedSourceBinSignature, ingestConnectedItems]);
+  }, [
+    activeWorkspaceView,
+    connectedSourceBinItems,
+    connectedSourceBinSignature,
+    flowImportTargetBinId,
+    ingestConnectedItems,
+  ]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -1202,7 +1225,7 @@ function FlowApp() {
         });
 
         if (!result.canceled && result.items.length > 0) {
-          await importNativeFiles(result.items);
+          await importNativeFiles(result.items, flowImportTargetBinId);
           setPanelVisibility('sourceBinVisible', true);
         }
         return;
@@ -1447,6 +1470,7 @@ function FlowApp() {
     getNativeProjectName,
     getViewportCenterPosition,
     handleAddNode,
+    flowImportTargetBinId,
     applyWorkspaceViewDefault,
     activeWorkspaceView,
     importNativeFiles,
@@ -1549,9 +1573,9 @@ function FlowApp() {
       return;
     }
 
-    await importFiles(files);
+    await importFiles(files, flowImportTargetBinId);
     setPanelVisibility('sourceBinVisible', true);
-  }, [importFiles, setPanelVisibility]);
+  }, [flowImportTargetBinId, importFiles, setPanelVisibility]);
 
   useEffect(() => {
     const bridge = getSignalLoomNativeBridge();
@@ -1667,6 +1691,7 @@ function FlowApp() {
     onSetLatestImportDuration: setLatestFlowImportDurationMs,
     onShowSourceBin: () => setPanelVisibility('sourceBinVisible', true),
     screenToFlowPosition,
+    sourceBinTargetId: flowImportTargetBinId,
     sourceBinItems,
   });
 
@@ -1843,8 +1868,11 @@ function FlowApp() {
       style={interfaceThemeStyle}
     >
       <TopNavbar
+        activeFlowSourceBinId={activeFlowSourceBinId}
         flowWorkspaceMetricLabel={flowWorkspaceMetricLabel}
+        onActiveFlowSourceBinChange={setActiveFlowSourceBinId}
         onMenuCommand={(command, source) => void handleAppMenuCommand(command, source)}
+        sourceBins={sourceBins}
         workspaceView={activeWorkspaceView}
       />
       <UsageBar />

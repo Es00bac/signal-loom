@@ -6,14 +6,8 @@ export interface VideoCanvasDimensions {
 }
 
 export function getAspectRatioValue(aspectRatio: AspectRatio): number {
-  switch (aspectRatio) {
-    case '1:1':
-      return 1;
-    case '9:16':
-      return 9 / 16;
-    default:
-      return 16 / 9;
-  }
+  const [width, height] = aspectRatio.split(':').map((part) => Number(part));
+  return width > 0 && height > 0 ? width / height : 16 / 9;
 }
 
 export function getVideoCanvasDimensions(

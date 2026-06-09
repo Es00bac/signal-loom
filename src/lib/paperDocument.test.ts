@@ -1,0 +1,857 @@
+import { describe, expect, it } from 'vitest';
+import type { SourceBinLibraryItem } from '../store/sourceBinStore';
+import {
+  addFrameToPaperPage,
+  addFrameToPaperParentPage,
+  assignPaperParentPage,
+  computeEffectivePaperFrame,
+  createDefaultPaperDocument,
+  detachInheritedPaperFrame,
+  exportPaperDocumentToPrintHtml,
+  parsePaperDocument,
+  paperDocumentBackgroundCss,
+  paperPixelsFromMm,
+  PAPER_PAGE_PRESETS,
+  placeSourceAssetInPaperFrame,
+  resolvePaperPageFramesForOutput,
+  updatePaperDocumentSetup,
+  updatePaperFrame,
+} from './paperDocument';
+
+function makeImageItem(): SourceBinLibraryItem {
+  return {
+    id: 'asset-panel-1',
+    label: 'Panel Art',
+    kind: 'image',
+    mimeType: 'image/png',
+    assetUrl: 'data:image/png;base64,abc123',
+    createdAt: 1,
+  };
+}
+
+describe('paperDocument', () => {
+  it('creates a print-oriented document with pages, margins, grids, and guides enabled', () => {
+    const doc = createDefaultPaperDocument({
+      title: 'Signal Loom Comic',
+      preset: 'us-letter',
+    });
+
+    expect(doc.title).toBe('Signal Loom Comic');
+    expect(doc.pages).toHaveLength(1);
+    expect(doc.pages[0].pageNumber).toBe(1);
+    expect(doc.page.widthMm).toBe(215.9);
+    expect(doc.page.heightMm).toBe(279.4);
+    expect(doc.page.dpi).toBe(300);
+    expect(doc.layout.marginsMm.top).toBeGreaterThan(0);
+    expect(doc.layout.columns.count).toBe(2);
+    expect(doc.view.showRulers).toBe(true);
+    expect(doc.view.showGrid).toBe(true);
+    expect(doc.view.showGuides).toBe(true);
+    expect(doc.view.snapToGuides).toBe(false);
+    expect(doc.view.snapToGrid).toBe(false);
+    expect(doc.printProduction).toEqual(expect.objectContaining({
+      pdfStandard: 'browser-pdf',
+      outputIntentProfileId: 'srgb',
+      totalInkLimitPercent: 300,
+    }));
+    expect(doc.parentPages).toHaveLength(1);
+    expect(doc.styles.paragraph.map((style) => style.id)).toEqual(expect.arrayContaining(['para-comic-dialogue', 'para-caption', 'para-sfx']));
+  });
+
+  it('normalizes legacy speech/thought frame kinds into current bubble frame kinds', () => {
+    const legacy = {
+      ...createDefaultPaperDocument({ title: 'Legacy bubbles' }),
+      pages: [
+        {
+          ...createDefaultPaperDocument().pages[0],
+          frames: [
+            {
+              id: 'legacy-speech',
+              kind: 'speech',
+              xMm: 10,
+              yMm: 12,
+              widthMm: 50,
+              heightMm: 24,
+              text: 'Speech alias',
+            },
+            {
+              id: 'legacy-thought',
+              kind: 'thought',
+              xMm: 20,
+              yMm: 40,
+              widthMm: 50,
+              heightMm: 24,
+              text: 'Thought alias',
+            },
+          ],
+        },
+      ],
+    };
+
+    const parsed = parsePaperDocument(JSON.stringify(legacy));
+
+    expect(parsed.pages[0].frames.map((frame) => frame.kind)).toEqual(['speechBubble', 'thoughtBubble']);
+    expect(exportPaperDocumentToPrintHtml(parsed)).toContain('class="frame frame-speechBubble"');
+    expect(exportPaperDocumentToPrintHtml(parsed)).toContain('class="frame frame-thoughtBubble"');
+  });
+
+  it('resolves assigned parent page frames into canvas and print output with detach overrides', () => {
+    let doc = createDefaultPaperDocument({ title: 'Parents' });
+    const pageId = doc.pages[0].id;
+    const parentId = doc.parentPages[0].id;
+    doc = addFrameToPaperParentPage(doc, parentId, {
+      kind: 'caption',
+      xMm: 5,
+      yMm: 6,
+      widthMm: 40,
+      heightMm: 10,
+      text: 'Folio',
+    }).document;
+    doc = assignPaperParentPage(doc, pageId, parentId);
+
+    const inherited = resolvePaperPageFramesForOutput(doc, doc.pages[0]);
+    expect(inherited[0]).toEqual(expect.objectContaining({ inherited: true, locked: true, text: 'Folio' }));
+    expect(exportPaperDocumentToPrintHtml(doc)).toContain('Folio');
+
+    const detached = detachInheritedPaperFrame(doc, pageId, inherited[0].id);
+    expect(detached.frameId).toBeTruthy();
+    expect(detached.document.pages[0].frames[0]).toEqual(expect.objectContaining({ inherited: false, locked: false, text: 'Folio' }));
+  });
+
+  it('resolves live page frames in z-index order so caption stacking updates the canvas order', () => {
+    let doc = createDefaultPaperDocument({ title: 'Caption Stack' });
+    const pageId = doc.pages[0].id;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'panel-art',
+      kind: 'image',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 80,
+      heightMm: 60,
+      zIndex: 2,
+    }).document;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'caption-copy',
+      kind: 'caption',
+      xMm: 18,
+      yMm: 20,
+      widthMm: 52,
+      heightMm: 16,
+      text: 'Caption should stack behind the bubble.',
+      zIndex: 0,
+    }).document;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'dialogue',
+      kind: 'speechBubble',
+      xMm: 24,
+      yMm: 26,
+      widthMm: 45,
+      heightMm: 24,
+      text: 'Top bubble',
+      zIndex: 1,
+    }).document;
+
+    expect(resolvePaperPageFramesForOutput(doc, doc.pages[0]).map((frame) => frame.id)).toEqual([
+      'caption-copy',
+      'dialogue',
+      'panel-art',
+    ]);
+  });
+
+  it('exports chained bubble connector artwork with print HTML and flattened-page parity', () => {
+    let doc = createDefaultPaperDocument({ title: 'Bubble Chain Export' });
+    const pageId = doc.pages[0].id;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'bubble-a',
+      kind: 'speechBubble',
+      xMm: 20,
+      yMm: 28,
+      widthMm: 44,
+      heightMm: 24,
+      text: 'First',
+      bubbleChainId: 'chain-1',
+      bubbleChainOrder: 1,
+    }).document;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'bubble-b',
+      kind: 'speechBubble',
+      xMm: 84,
+      yMm: 36,
+      widthMm: 44,
+      heightMm: 24,
+      text: 'Second',
+      bubbleChainId: 'chain-1',
+      bubbleChainOrder: 2,
+    }).document;
+
+    const html = exportPaperDocumentToPrintHtml(doc);
+
+    expect(html).toContain('class="paper-bubble-connectors"');
+    expect(html).toContain('x1="64"');
+    expect(html).toContain('x2="84"');
+    expect(html).toContain('First');
+    expect(html).toContain('Second');
+  });
+
+  it('places newly created frames above the existing page stack when z-index is implicit', () => {
+    let doc = createDefaultPaperDocument({ title: 'Default Stack' });
+    const pageId = doc.pages[0].id;
+    const first = addFrameToPaperPage(doc, pageId, {
+      id: 'first-caption',
+      kind: 'caption',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 50,
+      heightMm: 12,
+    });
+    doc = first.document;
+    const second = addFrameToPaperPage(doc, pageId, {
+      id: 'second-caption',
+      kind: 'caption',
+      xMm: 12,
+      yMm: 12,
+      widthMm: 50,
+      heightMm: 12,
+    });
+    doc = second.document;
+
+    expect(doc.pages[0].frames.map((frame) => [frame.id, frame.zIndex])).toEqual([
+      ['first-caption', 0],
+      ['second-caption', 1],
+    ]);
+  });
+
+  it('computes effective paragraph, character, and object styles for frames', () => {
+    let doc = createDefaultPaperDocument({ title: 'Styles' });
+    const pageId = doc.pages[0].id;
+    const added = addFrameToPaperPage(doc, pageId, {
+      kind: 'caption',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 50,
+      heightMm: 20,
+      paragraphStyleId: 'para-caption',
+      characterStyleId: 'char-emphasis',
+      objectStyleId: 'obj-caption-box',
+    });
+    doc = added.document;
+
+    const frame = doc.pages[0].frames.find((candidate) => candidate.id === added.frameId)!;
+    const effective = computeEffectivePaperFrame(doc, frame);
+
+    expect(effective.typography.fontFamily).toBe('Georgia, serif');
+    expect(effective.typography.fontStyle).toBe('italic');
+    expect(effective.fillColor).toBe('#fff4bf');
+    expect(exportPaperDocumentToPrintHtml(doc)).toContain('font-family: Georgia, serif');
+  });
+
+  it('supports common page presets, custom sizes, bleed, margins, columns, grids, and DPI', () => {
+    expect(Object.keys(PAPER_PAGE_PRESETS)).toEqual(expect.arrayContaining([
+      'us-letter',
+      'us-legal',
+      'tabloid',
+      'a4',
+      'a5',
+      'square-8',
+      'comic-book',
+      'manga-digest',
+      'webtoon-panel',
+    ]));
+    expect(paperPixelsFromMm(25.4, 300)).toBe(300);
+
+    const doc = createDefaultPaperDocument({
+      title: 'Custom Print Setup',
+      preset: 'comic-book',
+      dpi: 600,
+    });
+    expect(doc.page.widthMm).toBe(170);
+    expect(doc.page.dpi).toBe(600);
+
+    const custom = updatePaperDocumentSetup(doc, {
+      preset: 'custom',
+      widthMm: 148,
+      heightMm: 210,
+      dpi: 450,
+      bleedMm: 5,
+      marginsMm: { top: 11, right: 12, bottom: 13, left: 14 },
+      columns: { count: 4, gutterMm: 4.25 },
+      grid: { enabled: true, sizeMm: 4, subdivisions: 8 },
+    });
+
+    expect(custom.page).toMatchObject({
+      preset: 'custom',
+      widthMm: 148,
+      heightMm: 210,
+      dpi: 450,
+      bleedMm: 5,
+    });
+    expect(custom.layout.marginsMm).toEqual({ top: 11, right: 12, bottom: 13, left: 14 });
+    expect(custom.layout.columns).toEqual({ count: 4, gutterMm: 4.25 });
+    expect(custom.layout.grid).toEqual({ enabled: true, sizeMm: 4, subdivisions: 8 });
+    expect(custom.pages[0].guides.some((guide) => guide.positionMm === 74)).toBe(true);
+  });
+
+  it('supports solid, linear-gradient, and radial-gradient document backgrounds in print export', () => {
+    const solid = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Solid Background' }), {
+      background: { type: 'solid', color: '#111827' },
+    });
+    expect(paperDocumentBackgroundCss(solid.background)).toBe('#111827');
+    expect(exportPaperDocumentToPrintHtml(solid)).toContain('background: #111827;');
+
+    const linear = updatePaperDocumentSetup(solid, {
+      background: {
+        type: 'linear-gradient',
+        fromColor: '#fef3c7',
+        toColor: '#67e8f9',
+        angleDeg: 135,
+      },
+    });
+    expect(paperDocumentBackgroundCss(linear.background)).toBe('linear-gradient(135deg, #fef3c7, #67e8f9)');
+    expect(exportPaperDocumentToPrintHtml(linear)).toContain('background: linear-gradient(135deg, #fef3c7, #67e8f9);');
+
+    const radial = updatePaperDocumentSetup(linear, {
+      background: {
+        type: 'radial-gradient',
+        fromColor: '#ffffff',
+        toColor: '#0f172a',
+        radialShape: 'circle',
+      },
+    });
+    expect(paperDocumentBackgroundCss(radial.background)).toBe('radial-gradient(circle, #ffffff, #0f172a)');
+  });
+
+  it('sanitizes unsafe document background values back to print-safe defaults', () => {
+    const doc = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Unsafe Background' }), {
+      background: {
+        type: 'linear-gradient',
+        color: 'url(https://example.test/leak)',
+        fromColor: 'var(--bad)',
+        toColor: '#67e8f9',
+        angleDeg: Number.POSITIVE_INFINITY,
+      },
+    });
+
+    expect(doc.background).toMatchObject({
+      type: 'linear-gradient',
+      color: '#ffffff',
+      fromColor: '#ffffff',
+      toColor: '#67e8f9',
+      angleDeg: 90,
+    });
+  });
+
+  it('places source-library image assets into image frames without losing print-frame metadata', () => {
+    const doc = createDefaultPaperDocument({ title: 'Placed Asset' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame, frameId } = addFrameToPaperPage(doc, pageId, {
+      kind: 'image',
+      xMm: 20,
+      yMm: 25,
+      widthMm: 80,
+      heightMm: 55,
+      label: 'Panel 1',
+      fit: 'cover',
+    });
+
+    const placed = placeSourceAssetInPaperFrame(withFrame, {
+      pageId,
+      frameId,
+      item: makeImageItem(),
+    });
+    const frame = placed.pages[0].frames.find((candidate) => candidate.id === frameId);
+
+    expect(frame?.kind).toBe('image');
+    expect(frame?.asset?.sourceBinItemId).toBe('asset-panel-1');
+    expect(frame?.asset?.src).toBe('data:image/png;base64,abc123');
+    expect(frame?.fit).toBe('cover');
+    expect(frame?.imageScale).toBe(1);
+    expect(frame?.imageOffsetXPercent).toBe(0);
+    expect(frame?.widthMm).toBe(80);
+  });
+
+  it('exports print HTML with page size, bleed, crop marks, columns, and placed assets', () => {
+    const doc = createDefaultPaperDocument({ title: 'Print Export', preset: 'us-letter' });
+    const pageId = doc.pages[0].id;
+    const { document: withTextFrame, frameId: textFrameId } = addFrameToPaperPage(doc, pageId, {
+      kind: 'text',
+      xMm: 18,
+      yMm: 18,
+      widthMm: 90,
+      heightMm: 120,
+      text: 'A long page of editorial copy.',
+      columns: 3,
+    });
+    const withStyledText = updatePaperFrame(withTextFrame, pageId, textFrameId, {
+      typography: {
+        fontFamily: 'Inter',
+        fontSizePt: 11,
+        leadingPt: 14,
+        tracking: 10,
+        align: 'justify',
+        hyphenate: true,
+      },
+    });
+    const { document: withImageFrame, frameId: imageFrameId } = addFrameToPaperPage(withStyledText, pageId, {
+      kind: 'image',
+      xMm: 112,
+      yMm: 18,
+      widthMm: 70,
+      heightMm: 70,
+      label: 'Panel art slot',
+      fit: 'cover',
+      imageScale: 1.25,
+      imageOffsetXPercent: 10,
+      imageOffsetYPercent: -5,
+      imageRotationDeg: 15,
+    });
+    const placed = placeSourceAssetInPaperFrame(withImageFrame, {
+      pageId,
+      frameId: imageFrameId,
+      item: makeImageItem(),
+    });
+
+    const html = exportPaperDocumentToPrintHtml(placed);
+
+    expect(html).toContain('@page');
+    expect(html).toContain('size: 221.9mm 285.4mm');
+    expect(html).toContain('name="signal-loom-paper-dpi" content="300"');
+    expect(html).toContain('bleed: 3mm');
+    expect(html).toContain('crop');
+    expect(html).toContain('class="paper-sheet"');
+    expect(html).toContain('width: 221.9mm;');
+    expect(html).toContain('height: 285.4mm;');
+    expect(html).toContain('left: 3mm;');
+    expect(html).toContain('top: 3mm;');
+    expect(html).toContain('column-count: 3');
+    expect(html).toContain('hyphens: auto');
+    expect(html).toContain('Panel Art');
+    expect(html).toContain('data:image/png;base64,abc123');
+    expect(html).toContain('class="frame-content"');
+    expect(html).toContain('padding: 2mm');
+    expect(html).toContain('object-position: 50% 50%');
+    expect(html).toContain('position: absolute; width: 125%; height: 125%; max-width: none; max-height: none; left: 60%; top: 45%');
+    expect(html).toContain('transform: translate(-50%, -50%) rotate(15deg)');
+  });
+
+  it('exports image content inside the same padded frame-content box used by the live canvas', () => {
+    const doc = createDefaultPaperDocument({ title: 'Image Frame Export' });
+    const pageId = doc.pages[0].id;
+    const { document: withImageFrame, frameId } = addFrameToPaperPage(doc, pageId, {
+      kind: 'image',
+      xMm: 12,
+      yMm: 18,
+      widthMm: 70,
+      heightMm: 48,
+      label: 'Inset panel art',
+      fit: 'cover',
+      imageScale: 1.15,
+      imageOffsetXPercent: -8,
+      imageOffsetYPercent: 14,
+      imageRotationDeg: -3,
+    });
+    const placed = placeSourceAssetInPaperFrame(withImageFrame, {
+      pageId,
+      frameId,
+      item: makeImageItem(),
+    });
+
+    const html = exportPaperDocumentToPrintHtml(placed);
+
+    expect(html).toContain('.frame { position: absolute; margin: 0; overflow: visible; }');
+    expect(html).toContain('<figure class="frame frame-image"');
+    expect(html).toContain('class="frame-content"');
+    expect(html).toContain('overflow: hidden');
+    expect(html).toContain('padding: 2mm');
+    expect(html).toContain('object-position: 50% 50%');
+    expect(html).toContain('position: absolute; width: 115%; height: 115%; max-width: none; max-height: none; left: 42%; top: 64%');
+    expect(html).toContain('transform: translate(-50%, -50%) rotate(-3deg)');
+  });
+
+  it('exports caption text through the same vertical alignment box as the editor', () => {
+    let doc = createDefaultPaperDocument({ title: 'Caption Alignment' });
+    const pageId = doc.pages[0].id;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'caption-1',
+      kind: 'caption',
+      xMm: 10,
+      yMm: 14,
+      widthMm: 80,
+      heightMm: 14,
+      text: 'Centered narration.',
+      textVerticalAlign: 'middle',
+      typography: {
+        align: 'center',
+      },
+    }).document;
+
+    const html = exportPaperDocumentToPrintHtml(doc);
+
+    expect(html).toContain('class="frame frame-caption"');
+    expect(html).toContain('class="frame-content"');
+    expect(html).toContain('display: flex');
+    expect(html).toContain('justify-content: center');
+    expect(html).toContain('class="frame-text-content"');
+    expect(html).toContain('Centered narration.');
+  });
+
+  it('uses explicit sheet dimensions for PDF bleed instead of relying only on CSS paged-media bleed', () => {
+    const doc = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Bleed Export', preset: 'custom' }), {
+      widthMm: 100,
+      heightMm: 150,
+      bleedMm: 5,
+    });
+
+    const html = exportPaperDocumentToPrintHtml(doc);
+
+    expect(html).toContain('@page');
+    expect(html).toContain('size: 110mm 160mm');
+    expect(html).toContain('bleed: 5mm');
+    expect(html).toContain('width: 110mm;');
+    expect(html).toContain('height: 160mm;');
+    expect(html).toContain('left: 5mm;');
+    expect(html).toContain('top: 5mm;');
+    expect(html).toContain('data-trim-width="100mm"');
+    expect(html).toContain('data-trim-height="150mm"');
+  });
+
+  it('can export trim-aligned print HTML for native PDF so content is not pushed by bleed', () => {
+    const doc = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Trim PDF', preset: 'custom' }), {
+      widthMm: 100,
+      heightMm: 150,
+      bleedMm: 5,
+    });
+
+    const html = exportPaperDocumentToPrintHtml(doc, { mediaBox: 'trim' });
+
+    expect(html).toContain('size: 100mm 150mm');
+    expect(html).toContain('bleed: 5mm');
+    expect(html).toContain('width: 100mm;');
+    expect(html).toContain('height: 150mm;');
+    expect(html).toContain('left: 0mm;');
+    expect(html).toContain('top: 0mm;');
+    expect(html).toContain('data-bleed="5mm"');
+  });
+
+  it('keeps preview-only margin guides out of print HTML unless explicitly requested', () => {
+    const doc = createDefaultPaperDocument({ title: 'Clean Print', preset: 'comic-book' });
+
+    expect(exportPaperDocumentToPrintHtml(doc)).not.toContain('.paper-page::after');
+    expect(exportPaperDocumentToPrintHtml(doc)).not.toContain('rgba(6, 182, 212');
+    expect(exportPaperDocumentToPrintHtml(doc, { includeScreenGuides: true })).toContain('.paper-page::after');
+  });
+
+  it('exports print-production metadata for press proof and package workflows', () => {
+    const doc = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Press Metadata', preset: 'comic-book' }), {
+      printProduction: {
+        pdfStandard: 'pdf-x-4',
+        outputIntentProfileId: 'gracol-2013-coated',
+        totalInkLimitPercent: 300,
+        blackPolicy: 'force-100k-text',
+        spotColorPolicy: 'warn',
+        overprintPreview: true,
+      },
+    });
+
+    const html = exportPaperDocumentToPrintHtml(doc);
+
+    expect(html).toContain('name="signal-loom-paper-pdf-standard" content="pdf-x-4"');
+    expect(html).toContain('name="signal-loom-paper-output-intent-profile" content="gracol-2013-coated"');
+    expect(html).toContain('name="signal-loom-paper-output-intent-label" content="GRACoL 2013 Coated / CRPC6"');
+    expect(html).toContain('name="signal-loom-paper-output-intent-color-space" content="cmyk"');
+    expect(html).toContain('name="signal-loom-paper-total-ink-limit" content="300"');
+    expect(html).toContain('name="signal-loom-paper-overprint-preview" content="true"');
+  });
+
+  it('exports SVG-backed Paper shapes and bubbles with concrete line, ellipse, polygon, dash, and gradient markup', () => {
+    let doc = createDefaultPaperDocument({ title: 'Shape Export', preset: 'comic-book' });
+    const pageId = doc.pages[0].id;
+
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'line-1',
+      kind: 'shape',
+      shapeKind: 'line',
+      xMm: 10,
+      yMm: 12,
+      widthMm: 40,
+      heightMm: 5,
+      strokeStyle: 'dotted',
+      strokeWidthMm: 0.5,
+    }).document;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'ellipse-1',
+      kind: 'shape',
+      shapeKind: 'ellipse',
+      xMm: 20,
+      yMm: 25,
+      widthMm: 50,
+      heightMm: 38,
+      fillGradient: {
+        type: 'linear',
+        fromColor: '#67e8f9',
+        toColor: '#f9a8d4',
+        angleDeg: 135,
+      },
+      fillOpacity: 0.75,
+    }).document;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'speech-1',
+      kind: 'speechBubble',
+      xMm: 30,
+      yMm: 70,
+      widthMm: 60,
+      heightMm: 34,
+      fillGradient: {
+        type: 'linear',
+        fromColor: '#fef3c7',
+        toColor: '#f9a8d4',
+        angleDeg: 90,
+      },
+      strokeStyle: 'dashed',
+    }).document;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'poly-1',
+      kind: 'shape',
+      shapeKind: 'hexagon',
+      xMm: 90,
+      yMm: 40,
+      widthMm: 40,
+      heightMm: 40,
+    }).document;
+
+    const html = exportPaperDocumentToPrintHtml(doc);
+    const bubbleSvgMarkup = decodeBubbleSvgSources(html).join('\n');
+
+    expect(html).toContain('<line x1="0" y1="50" x2="100" y2="50"');
+    expect(html).toContain('stroke-dasharray="1 3"');
+    expect(html).toContain('<ellipse cx="50" cy="50" rx="48" ry="48"');
+    expect(html).toContain('id="paper-gradient-ellipse-1"');
+    expect(html).toContain('fill="url(#paper-gradient-ellipse-1)"');
+    expect(html).toContain('fill-opacity="0.75"');
+    expect(bubbleSvgMarkup).toContain('id="paper-gradient-speech-1"');
+    expect(bubbleSvgMarkup).toContain('stroke-dasharray="5 4"');
+    expect(html).toContain('<polygon points="25,0 75,0 100,50 75,100 25,100 0,50"');
+  });
+
+  it('exports speech-bubble text as an absolute inner text box so PDF layout matches the canvas', () => {
+    let doc = createDefaultPaperDocument({ title: 'Speech Export', preset: 'comic-book' });
+    const pageId = doc.pages[0].id;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'speech-box-1',
+      kind: 'speechBubble',
+      xMm: 30,
+      yMm: 70,
+      widthMm: 58,
+      heightMm: 28,
+      text: 'No one can own a dead person.',
+      textBoxXPercent: 12,
+      textBoxYPercent: 18,
+      textBoxWidthPercent: 76,
+      textBoxHeightPercent: 42,
+      textRotationDeg: -7,
+      textVerticalAlign: 'middle',
+      typography: {
+        align: 'center',
+      },
+    }).document;
+
+    const html = exportPaperDocumentToPrintHtml(doc);
+
+    expect(html).toContain('class="frame frame-speechBubble"');
+    expect(html).toContain('background: transparent; border: 0; padding: 0;');
+    expect(html).toContain('position: absolute; left: 12%; top: 18%; width: 76%; height: 42%');
+    expect(html).toContain('transform: rotate(-7deg)');
+    expect(html).toContain('display: flex; flex-direction: column; justify-content: center');
+    expect(html).toContain('text-align: center');
+    expect(html).toContain('No one can own a dead person.');
+  });
+
+  it('exports bubble artwork as image-backed SVG so flattened raster PDFs keep the visible bubble shape', () => {
+    let doc = createDefaultPaperDocument({ title: 'Raster Bubble Export', preset: 'comic-book' });
+    const pageId = doc.pages[0].id;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'speech-raster-safe',
+      kind: 'speechBubble',
+      xMm: 30,
+      yMm: 70,
+      widthMm: 58,
+      heightMm: 28,
+      text: 'The shape must survive flattening.',
+      tailXPercent: -12,
+      tailYPercent: 135,
+      bubblePinchXPercent: 42,
+      bubblePinchYPercent: 82,
+    }).document;
+
+    const html = exportPaperDocumentToPrintHtml(doc);
+    const bubbleImageMatch = /<img class="paper-bubble-shape"[^>]+src="([^"]+)"/.exec(html);
+
+    expect(bubbleImageMatch?.[1]).toMatch(/^data:image\/svg\+xml;charset=utf-8,/);
+    expect(html).not.toContain('<svg viewBox="0 0 100 100" preserveAspectRatio="none" width="100%" height="100%" style="position: absolute; inset: 0; overflow: visible;">');
+    expect(html).toContain('left: -');
+    expect(html).toContain('top: -');
+    expect(decodeURIComponent(bubbleImageMatch?.[1] ?? '')).toContain('<path d="');
+    expect(decodeURIComponent(bubbleImageMatch?.[1] ?? '')).toContain('fill="#ffffff"');
+  });
+
+  it('exports shaped image-frame strokes around the selected ellipse instead of a rectangular image border', () => {
+    let doc = createDefaultPaperDocument({ title: 'Shaped Image Frame', preset: 'comic-book' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame, frameId } = addFrameToPaperPage(doc, pageId, {
+      id: 'ellipse-image-frame',
+      kind: 'image',
+      shapeKind: 'ellipse',
+      xMm: 20,
+      yMm: 25,
+      widthMm: 70,
+      heightMm: 48,
+      label: 'Oval panel art',
+      strokeColor: '#c026d3',
+      strokeStyle: 'dashed',
+      strokeWidthMm: 1,
+      fillColor: '#fff4bf',
+    });
+    doc = placeSourceAssetInPaperFrame(withFrame, {
+      pageId,
+      frameId,
+      item: makeImageItem(),
+    });
+
+    const html = exportPaperDocumentToPrintHtml(doc);
+
+    expect(html).toContain('class="frame frame-image"');
+    expect(html).toContain('background: transparent; border: 0;');
+    expect(html).toContain('clip-path: ellipse(50% 50% at 50% 50%)');
+    expect(html).toContain('<ellipse cx="50" cy="50" rx="48" ry="48" fill="none"');
+    expect(html).toContain('stroke="#c026d3"');
+    expect(html).toContain('stroke-width="1mm"');
+    expect(html).toContain('stroke-dasharray="5 4"');
+  });
+
+  it('exports comic panel image frames with editable polygon vertices as the clipping path and stroke', () => {
+    let doc = createDefaultPaperDocument({ title: 'Angled Panel', preset: 'comic-book' });
+    const pageId = doc.pages[0].id;
+    const { document: withPanel, frameId } = addFrameToPaperPage(doc, pageId, {
+      id: 'angled-panel',
+      kind: 'panel',
+      xMm: 20,
+      yMm: 25,
+      widthMm: 70,
+      heightMm: 48,
+      label: 'Angled panel',
+      vertices: [
+        { xPercent: 0, yPercent: 10 },
+        { xPercent: 100, yPercent: 0 },
+        { xPercent: 92, yPercent: 100 },
+        { xPercent: -8, yPercent: 88 },
+      ],
+    });
+    doc = placeSourceAssetInPaperFrame(withPanel, {
+      pageId,
+      frameId,
+      item: makeImageItem(),
+    });
+
+    const html = exportPaperDocumentToPrintHtml(doc);
+
+    expect(html).toContain('clip-path: polygon(0% 10%, 100% 0%, 92% 100%, -8% 88%)');
+    expect(html).toContain('<polygon points="0,10 100,0 92,100 -8,88" fill="none"');
+  });
+
+  it('ignores stale triangle vertices on caption frames while exporting edited caption polygons', () => {
+    let doc = createDefaultPaperDocument({ title: 'Caption Vertices', preset: 'comic-book' });
+    const pageId = doc.pages[0].id;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'caption-stale-triangle',
+      kind: 'caption',
+      xMm: 12,
+      yMm: 14,
+      widthMm: 50,
+      heightMm: 18,
+      text: 'Caption',
+      vertices: [
+        { xPercent: 50, yPercent: 0 },
+        { xPercent: 100, yPercent: 100 },
+        { xPercent: 0, yPercent: 100 },
+      ],
+    }).document;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'caption-edited-polygon',
+      kind: 'caption',
+      xMm: 20,
+      yMm: 42,
+      widthMm: 70,
+      heightMm: 16,
+      text: 'Edited caption',
+      vertices: [
+        { xPercent: 0, yPercent: 0 },
+        { xPercent: 100, yPercent: 0 },
+        { xPercent: 88, yPercent: 100 },
+        { xPercent: 0, yPercent: 100 },
+      ],
+    }).document;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'caption-edited-triangle',
+      kind: 'caption',
+      xMm: 22,
+      yMm: 68,
+      widthMm: 46,
+      heightMm: 18,
+      text: 'Edited triangle',
+      vertices: [
+        { xPercent: 0, yPercent: 0 },
+        { xPercent: 100, yPercent: 100 },
+        { xPercent: 0, yPercent: 100 },
+      ],
+    }).document;
+
+    const html = exportPaperDocumentToPrintHtml(doc);
+
+    expect(html).not.toContain('clip-path: polygon(50% 0%, 100% 100%, 0% 100%)');
+    expect(html).toContain('clip-path: polygon(0% 0%, 100% 0%, 88% 100%, 0% 100%)');
+    expect(html).toContain('<polygon points="0,0 100,0 88,100 0,100" fill="none"');
+    expect(html).toContain('clip-path: polygon(0% 0%, 100% 100%, 0% 100%)');
+    expect(html).toContain('<polygon points="0,0 100,100 0,100" fill="none"');
+  });
+
+  it('exports speech and thought bubble outlines with their tail geometry', () => {
+    let doc = createDefaultPaperDocument({ title: 'Bubbles' });
+    const pageId = doc.pages[0].id;
+    doc = addFrameToPaperPage(doc, pageId, {
+      kind: 'speechBubble',
+      xMm: 20,
+      yMm: 20,
+      widthMm: 70,
+      heightMm: 40,
+      text: 'Top tail',
+      tailXPercent: 50,
+      tailYPercent: 0,
+      bubblePinchXPercent: 50,
+      bubblePinchYPercent: 18,
+    }).document;
+    doc = addFrameToPaperPage(doc, pageId, {
+      kind: 'thoughtBubble',
+      xMm: 25,
+      yMm: 70,
+      widthMm: 70,
+      heightMm: 40,
+      text: 'Left tail',
+      tailXPercent: 0,
+      tailYPercent: 50,
+      bubblePinchXPercent: 18,
+      bubblePinchYPercent: 50,
+    }).document;
+
+    const html = exportPaperDocumentToPrintHtml(doc);
+    const bubbleSvgMarkup = decodeBubbleSvgSources(html).join('\n');
+
+    expect(html).toContain('Top tail');
+    expect(html).toContain('Left tail');
+    expect(bubbleSvgMarkup).toContain('50 0');
+    expect(bubbleSvgMarkup).toContain('0 50');
+  });
+});
+
+function decodeBubbleSvgSources(html: string): string[] {
+  return Array.from(html.matchAll(/<img class="paper-bubble-shape"[^>]+src="([^"]+)"/g))
+    .map((match) => decodeURIComponent(match[1]));
+}

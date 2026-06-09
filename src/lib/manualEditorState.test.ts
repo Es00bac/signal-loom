@@ -74,6 +74,80 @@ describe('getEditorVisualClips', () => {
       { timePercent: 100, valuePercent: 100 },
     ]);
   });
+
+  it('normalizes saved chroma key, stroke, and expanded filter settings', () => {
+    const clips = getEditorVisualClips({
+      editorVisualClips: [
+        {
+          id: 'visual-effects',
+          sourceNodeId: 'source-1',
+          sourceKind: 'video',
+          trackIndex: 0,
+          startMs: 0,
+          sourceInMs: 0,
+          trimStartMs: 0,
+          trimEndMs: 0,
+          playbackRate: 1,
+          reversePlayback: false,
+          fitMode: 'contain',
+          scalePercent: 100,
+          opacityPercent: 100,
+          rotationDeg: 0,
+          flipHorizontal: false,
+          flipVertical: false,
+          positionX: 0,
+          positionY: 0,
+          cropLeftPercent: 0,
+          cropRightPercent: 0,
+          cropTopPercent: 0,
+          cropBottomPercent: 0,
+          cropPanXPercent: 0,
+          cropPanYPercent: 0,
+          cropRotationDeg: 0,
+          filterStack: [
+            { id: 'sepia', kind: 'sepia', amount: 120, enabled: true },
+            { id: 'bad', kind: 'warp', amount: 100, enabled: true },
+          ],
+          chromaKey: {
+            enabled: true,
+            color: 'green',
+            similarityPercent: 140,
+            blendPercent: -8,
+          },
+          stroke: {
+            enabled: true,
+            color: '#ff00cc',
+            widthPx: 240,
+            opacityPercent: 140,
+          },
+          transitionIn: 'none',
+          transitionOut: 'none',
+          transitionDurationMs: 500,
+          textFontFamily: 'Inter',
+          textSizePx: 64,
+          textColor: '#fff',
+          textEffect: 'shadow',
+          textBackgroundOpacityPercent: 0,
+        },
+      ],
+    } as Partial<NodeData> as NodeData);
+
+    expect(clips[0].filterStack).toEqual([
+      { id: 'sepia', kind: 'sepia', amount: 100, enabled: true },
+    ]);
+    expect(clips[0].chromaKey).toEqual({
+      enabled: true,
+      color: '#00ff00',
+      similarityPercent: 100,
+      blendPercent: 0,
+    });
+    expect(clips[0].stroke).toEqual({
+      enabled: true,
+      color: '#ff00cc',
+      widthPx: 80,
+      opacityPercent: 100,
+    });
+  });
 });
 
 describe('getEditorAudioClips', () => {

@@ -19,6 +19,14 @@ export function hasConnectedImageReferenceSource(
   return hasConnectedImageInput(nodes, edges, targetNodeId, targetHandles);
 }
 
+export function hasConnectedImageMaskSource(
+  nodes: AppNode[],
+  edges: Edge[],
+  targetNodeId: string,
+): boolean {
+  return hasConnectedImageInput(nodes, edges, targetNodeId, ['image-mask']);
+}
+
 export function resolveConnectedImageEditAsset(
   nodes: AppNode[],
   edges: Edge[],
@@ -34,6 +42,14 @@ export function resolveConnectedImageReferenceAsset(
   targetHandles: Array<ImageTargetHandle | undefined>,
 ): string | undefined {
   return resolveConnectedImageInputAsset(nodes, edges, targetNodeId, targetHandles);
+}
+
+export function resolveConnectedImageMaskAsset(
+  nodes: AppNode[],
+  edges: Edge[],
+  targetNodeId: string,
+): string | undefined {
+  return resolveConnectedImageInputAsset(nodes, edges, targetNodeId, ['image-mask']);
 }
 
 export function hasConnectedImageInput(
@@ -82,5 +98,9 @@ function findConnectedImageInputSource(
     ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
     : undefined;
 
-  return sourceNode?.type === 'imageGen' ? sourceNode : undefined;
+  return isImageInputSource(sourceNode) ? sourceNode : undefined;
+}
+
+function isImageInputSource(node: AppNode | undefined): node is AppNode {
+  return node?.type === 'imageGen' || node?.type === 'cropImageNode';
 }

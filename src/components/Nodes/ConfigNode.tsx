@@ -3,8 +3,8 @@ import { SlidersHorizontal } from 'lucide-react';
 import { BaseNode } from './BaseNode';
 import { VideoDurationSlider } from './VideoDurationSlider';
 import {
-  ASPECT_RATIO_OPTIONS,
   AUDIO_OUTPUT_FORMAT_OPTIONS,
+  IMAGE_ASPECT_RATIO_OPTIONS,
   IMAGE_STEP_OPTIONS,
   VIDEO_RESOLUTION_OPTIONS,
 } from '../../lib/providerCatalog';
@@ -25,6 +25,7 @@ function ConfigNodeComponent({ data }: AppNodeProps) {
       hasOutput
       error={data.error}
       statusMessage={data.statusMessage}
+      retryState={data.retryState}
     >
       <div className="flex flex-col gap-3">
         <FieldLabel label="Aspect Ratio">
@@ -33,7 +34,7 @@ function ConfigNodeComponent({ data }: AppNodeProps) {
             onChange={(event) => data.onChange?.('aspectRatio', event.target.value)}
             value={data.aspectRatio ?? '1:1'}
           >
-            {ASPECT_RATIO_OPTIONS.map((option) => (
+            {IMAGE_ASPECT_RATIO_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>

@@ -13,6 +13,10 @@ export function mapLibraryItemToEditorSourceItem(item: SourceBinLibraryItem): So
     createdAt: item.createdAt,
     starred: item.starred,
     collapsed: item.collapsed,
+    envelopeId: item.envelopeId,
+    envelopeLabel: item.envelopeLabel,
+    envelopeIndex: item.envelopeIndex,
+    envelopeCollapsed: item.envelopeCollapsed,
   };
 }
 

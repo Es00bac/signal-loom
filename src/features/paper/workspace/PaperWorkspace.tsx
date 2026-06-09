@@ -1807,7 +1807,8 @@ export function PaperWorkspace() {
 
   const sendPaperFrameSourceToFlow = useCallback((frame: PaperFrame | undefined) => {
     const activeFlowWorkspaceId = useFlowWorkspaceStore.getState().activeWorkspaceId;
-    const command = buildPaperFrameFlowSourceCommand(frame, sourceItems, activeFlowWorkspaceId);
+    const activeFlowSourceBinId = useEditorStore.getState().activeFlowSourceBinId;
+    const command = buildPaperFrameFlowSourceCommand(frame, sourceItems, activeFlowWorkspaceId, activeFlowSourceBinId);
     if (!command) {
       setStatus('Select an image frame backed by a source-library image before sending it to Flow.');
       return;

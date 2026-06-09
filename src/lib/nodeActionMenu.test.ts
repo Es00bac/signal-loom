@@ -33,6 +33,12 @@ describe('getCompatibleNodeActions', () => {
       targetHandle: 'image-reference-1',
     });
 
+    expect(actions.find((action) => action.id === 'use-as-mask')).toMatchObject({
+      label: 'Use as mask',
+      targetType: 'imageGen',
+      targetHandle: 'image-mask',
+    });
+
     expect(actions.find((action) => action.id === 'animate-to-video')).toMatchObject({
       label: 'Animate to video',
       targetType: 'videoGen',
@@ -42,6 +48,12 @@ describe('getCompatibleNodeActions', () => {
     expect(actions.find((action) => action.id === 'collect-in-bin')).toMatchObject({
       label: 'Collect in source bin',
       targetType: 'sourceBin',
+    });
+
+    expect(actions.find((action) => action.id === 'add-to-list')).toMatchObject({
+      label: 'Add to list',
+      targetType: 'list',
+      targetHandle: 'list-item-0',
     });
   });
 
@@ -63,12 +75,17 @@ describe('getCompatibleNodeActions', () => {
   it('offers source-bin collection from composition outputs', () => {
     const actions = getCompatibleNodeActions('composition');
 
-    expect(actions).toEqual([
+    expect(actions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'collect-in-bin',
         label: 'Collect in source bin',
         targetType: 'sourceBin',
       }),
-    ]);
+      expect.objectContaining({
+        id: 'add-to-list',
+        label: 'Add to list',
+        targetType: 'list',
+      }),
+    ]));
   });
 });

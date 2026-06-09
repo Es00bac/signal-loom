@@ -29,17 +29,21 @@ export function buildSourceBinIngestSignature(items: SourceBinItem[]): string {
 export function takePendingSourceBinIngestItems(
   items: SourceBinItem[],
   options: {
-    dismissedSourceKeys: ReadonlySet<string>;
     existingSourceKeys: ReadonlySet<string>;
+    existingItemIds?: ReadonlySet<string>;
     pendingSourceKeys: Set<string>;
+    dismissedSourceKeys?: ReadonlySet<string>;
   },
 ): PendingSourceBinIngestItem[] {
   return items.flatMap((item) => {
+    if (item.sourceBinItemId && options.existingItemIds?.has(item.sourceBinItemId)) {
+      return [];
+    }
+
     const sourceKey = buildConnectedItemSourceKey(item);
 
     if (
       !sourceKey ||
-      options.dismissedSourceKeys.has(sourceKey) ||
       options.existingSourceKeys.has(sourceKey) ||
       options.pendingSourceKeys.has(sourceKey)
     ) {

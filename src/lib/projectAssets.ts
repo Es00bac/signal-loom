@@ -35,7 +35,7 @@ export async function exportProjectAssets(nodes: AppNode[]): Promise<ExportableP
 }
 
 function buildProjectAsset(node: AppNode): ExportableProjectAsset | undefined {
-  if (node.type === 'imageGen') {
+  if (node.type === 'imageGen' || node.type === 'cropImageNode') {
     const url = resolveNodeAssetUrl(node);
 
     if (!url) {
@@ -46,10 +46,14 @@ function buildProjectAsset(node: AppNode): ExportableProjectAsset | undefined {
     return {
       id: `${node.id}:${url.slice(0, 32)}`,
       nodeId: node.id,
-      label: node.data.sourceAssetName ?? node.data.modelId ?? 'image',
+      label: node.type === 'cropImageNode' ? node.data.customTitle ?? 'cropped image' : node.data.sourceAssetName ?? node.data.modelId ?? 'image',
       url,
       mimeType,
-      fileName: buildDownloadFilename(node.data.sourceAssetName ?? `${node.id}-image`, mimeType, 'png'),
+      fileName: buildDownloadFilename(
+        node.type === 'cropImageNode' ? node.data.customTitle ?? `${node.id}-crop` : node.data.sourceAssetName ?? `${node.id}-image`,
+        mimeType,
+        'png',
+      ),
     };
   }
 
@@ -97,7 +101,7 @@ function resolveNodeAssetUrl(node: AppNode): string | undefined {
     return node.data.result;
   }
 
-  if (node.type === 'imageGen' || node.type === 'videoGen' || node.type === 'audioGen') {
+  if (node.type === 'imageGen' || node.type === 'cropImageNode' || node.type === 'videoGen' || node.type === 'audioGen') {
     return (node.data.mediaMode ?? 'generate') === 'import'
       ? node.data.sourceAssetUrl
       : node.data.result;

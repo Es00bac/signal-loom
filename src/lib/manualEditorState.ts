@@ -1,6 +1,5 @@
 import type {
   EditorAudioClip,
-  EditorClipFilter,
   EditorVisualSourceKind,
   EditorVisualClip,
   NodeData,
@@ -15,7 +14,12 @@ import {
   normalizeVisualKeyframes,
   visualKeyframesToOpacityAutomation,
 } from './editorKeyframes';
-import { normalizeClipBlendMode } from './editorClipEffects';
+import {
+  normalizeClipBlendMode,
+  normalizeClipChromaKey,
+  normalizeClipFilterStack,
+  normalizeClipStroke,
+} from './editorClipEffects';
 
 export function getEditorVisualClips(nodeData: NodeData): EditorVisualClip[] {
   const value = nodeData.editorVisualClips;
@@ -74,8 +78,10 @@ export function getEditorVisualClips(nodeData: NodeData): EditorVisualClip[] {
       cropPanXPercent: normalizeSignedPercent(clip.cropPanXPercent, 0),
       cropPanYPercent: normalizeSignedPercent(clip.cropPanYPercent, 0),
       cropRotationDeg: normalizeInteger(clip.cropRotationDeg, 0),
-      filterStack: normalizeFilterStack(clip.filterStack),
+      filterStack: normalizeClipFilterStack(clip.filterStack),
       blendMode: normalizeClipBlendMode(clip.blendMode),
+      chromaKey: normalizeClipChromaKey(clip.chromaKey),
+      stroke: normalizeClipStroke(clip.stroke),
       transitionIn: normalizeTransition(clip.transitionIn),
       transitionOut:
         clip.transitionOut !== undefined
@@ -207,8 +213,10 @@ export function createEditorVisualClip(
     cropPanXPercent: overrides.cropPanXPercent ?? 0,
     cropPanYPercent: overrides.cropPanYPercent ?? 0,
     cropRotationDeg: overrides.cropRotationDeg ?? 0,
-    filterStack: overrides.filterStack ?? [],
+    filterStack: normalizeClipFilterStack(overrides.filterStack ?? []),
     blendMode: normalizeClipBlendMode(overrides.blendMode),
+    chromaKey: normalizeClipChromaKey(overrides.chromaKey),
+    stroke: normalizeClipStroke(overrides.stroke),
     transitionIn: overrides.transitionIn ?? 'none',
     transitionOut: overrides.transitionOut ?? 'none',
     transitionDurationMs: overrides.transitionDurationMs ?? 500,
@@ -301,35 +309,6 @@ function normalizeSignedPercent(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value)
     ? Math.max(-100, Math.min(100, Math.round(value)))
     : fallback;
-}
-
-function normalizeFilterStack(value: unknown): EditorClipFilter[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.flatMap((filter) => {
-    if (!isRecord(filter) || typeof filter.id !== 'string') {
-      return [];
-    }
-
-    if (
-      filter.kind !== 'brightness' &&
-      filter.kind !== 'contrast' &&
-      filter.kind !== 'saturation' &&
-      filter.kind !== 'blur' &&
-      filter.kind !== 'grayscale'
-    ) {
-      return [];
-    }
-
-    return [{
-      id: filter.id,
-      kind: filter.kind,
-      amount: normalizeInteger(filter.amount, 0),
-      enabled: typeof filter.enabled === 'boolean' ? filter.enabled : true,
-    }];
-  });
 }
 
 function normalizeNonNegativeNumber(value: unknown, fallback: number): number {

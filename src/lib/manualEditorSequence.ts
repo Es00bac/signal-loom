@@ -1,6 +1,8 @@
 import type {
   AspectRatio,
   EditorClipFilter,
+  EditorClipChromaKeySettings,
+  EditorClipStrokeSettings,
   EditorStageBlendMode,
   EditorVisualKeyframe,
   EditorVisualClip,
@@ -55,6 +57,8 @@ export interface ManualEditorVisualSequenceClip {
   cropRotationDeg: number;
   filterStack: EditorClipFilter[];
   blendMode: EditorStageBlendMode;
+  chromaKey?: EditorClipChromaKeySettings;
+  stroke?: EditorClipStrokeSettings;
   transitionIn: 'none' | 'fade' | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down';
   transitionOut: 'none' | 'fade' | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down';
   transitionDurationMs: number;
@@ -115,6 +119,8 @@ export function buildManualEditorVisualSequenceClip(
     cropRotationDeg: clip.cropRotationDeg ?? 0,
     filterStack: clip.filterStack?.map((filter) => ({ ...filter })) ?? [],
     blendMode: clip.blendMode ?? 'normal',
+    chromaKey: clip.chromaKey ? { ...clip.chromaKey } : undefined,
+    stroke: clip.stroke ? { ...clip.stroke } : undefined,
     transitionIn: clip.transitionIn,
     transitionOut: clip.transitionOut,
     transitionDurationMs: clip.transitionDurationMs,

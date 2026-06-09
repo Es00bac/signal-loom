@@ -1,8 +1,11 @@
 import type { FlowProjectDocument } from './projectLibrary';
 import type { SourceBinProjectSnapshot, SourceBinLibraryItem } from '../store/sourceBinStore';
 import { loadImportedAssetBlob } from './assetStore';
+import { inferDownloadExtension } from './mediaFormatRegistry';
+import { CURRENT_PROJECT_SCHEMA_VERSION } from './projectSchema';
+import { sanitizeProjectDocument } from './projectValidation';
 
-export const PROJECT_DOCUMENT_FILE_NAME = 'signal-loom-project.json';
+export const PROJECT_DOCUMENT_FILE_NAME = 'signal-loom-project.sloom';
 export const SCRATCH_MANIFEST_FILE_NAME = 'scratch-manifest.json';
 export const DEFAULT_SCRATCH_DIRECTORY_NAME = 'scratch';
 
@@ -80,44 +83,25 @@ export function getExtensionForMimeType(
   mimeType: string | undefined,
   kind: SourceBinLibraryItem['kind'],
 ): string {
-  if (mimeType?.includes('png')) {
-    return 'png';
-  }
+  return inferDownloadExtension(mimeType, getFallbackExtensionForSourceKind(kind));
+}
 
-  if (mimeType?.includes('jpeg') || mimeType?.includes('jpg')) {
-    return 'jpg';
-  }
-
-  if (mimeType?.includes('webp')) {
-    return 'webp';
-  }
-
-  if (mimeType?.includes('wav')) {
-    return 'wav';
-  }
-
-  if (mimeType?.includes('mpeg') || mimeType?.includes('mp3')) {
-    return 'mp3';
-  }
-
-  if (mimeType?.includes('mp4')) {
-    return 'mp4';
-  }
-
+function getFallbackExtensionForSourceKind(kind: SourceBinLibraryItem['kind']): string {
   switch (kind) {
-    case 'image':
-      return 'png';
-    case 'audio':
-      return 'mp3';
+    case 'image': return 'png';
     case 'video':
-    case 'composition':
-      return 'mp4';
-    case 'text':
-      return 'txt';
+    case 'composition': return 'mp4';
+    case 'audio': return 'mp3';
+    case 'text': return 'txt';
+    case 'document': return 'pdf';
+    case 'subtitle': return 'vtt';
+    case 'package': return 'zip';
   }
 }
 
-export function buildScratchAssetFileName(item: SourceBinProjectSnapshot['items'][number]): string {
+export function buildScratchAssetFileName(
+  item: Pick<SourceBinLibraryItem, 'id' | 'label' | 'kind' | 'mimeType' | 'scratchFileName' | 'createdAt'> & { assetUrl?: string },
+): string {
   if (item.scratchFileName) {
     return item.scratchFileName;
   }
@@ -158,7 +142,7 @@ export async function loadScratchAssetBlob(
 export function createScratchAssetManifest(
   snapshot: SourceBinProjectSnapshot,
 ): ScratchAssetManifestEntry[] {
-  return snapshot.items.flatMap((item) => {
+  return collectSnapshotItems(snapshot).flatMap((item) => {
     if (item.kind === 'text' || (!item.assetUrl && !item.assetId)) {
       return [];
     }
@@ -173,6 +157,16 @@ export function createScratchAssetManifest(
       sourceKey: item.sourceKey,
     }];
   });
+}
+
+function collectSnapshotItems(
+  snapshot: SourceBinProjectSnapshot,
+): Array<SourceBinLibraryItem & { assetUrl?: string }> {
+  if (Array.isArray(snapshot.bins) && snapshot.bins.length > 0) {
+    return snapshot.bins.flatMap((bin) => bin.items);
+  }
+
+  return snapshot.items ?? [];
 }
 
 export async function saveProjectDocumentToDirectory(
@@ -191,31 +185,12 @@ export async function loadProjectDocumentFromDirectory(
 ): Promise<FlowProjectDocument> {
   const fileHandle = await projectDirectoryHandle.getFileHandle(PROJECT_DOCUMENT_FILE_NAME);
   const file = await fileHandle.getFile();
-  const parsed = JSON.parse(await file.text()) as Partial<FlowProjectDocument>;
-
-  if (
-    !parsed ||
-    typeof parsed !== 'object' ||
-    !parsed.flow ||
-    !Array.isArray(parsed.flow.nodes) ||
-    !Array.isArray(parsed.flow.edges)
-  ) {
-    throw new Error(`The selected folder does not contain a valid ${PROJECT_DOCUMENT_FILE_NAME}.`);
+  try {
+    return sanitizeProjectDocument(JSON.parse(await file.text()), projectDirectoryHandle.name);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : `The selected folder does not contain a valid ${PROJECT_DOCUMENT_FILE_NAME}.`;
+    throw new Error(message);
   }
-
-  return {
-    id: typeof parsed.id === 'string' ? parsed.id : globalThis.crypto?.randomUUID?.() ?? `project-${Date.now()}`,
-    name: typeof parsed.name === 'string' ? parsed.name : projectDirectoryHandle.name,
-    savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : Date.now(),
-    flow: {
-      version: typeof parsed.flow.version === 'number' ? parsed.flow.version : 3,
-      nodes: parsed.flow.nodes as FlowProjectDocument['flow']['nodes'],
-      edges: parsed.flow.edges as FlowProjectDocument['flow']['edges'],
-    },
-    editor: parsed.editor,
-    sourceBin: parsed.sourceBin,
-    fileSystem: parsed.fileSystem,
-  };
 }
 
 export async function saveProjectWorkspaceToFileSystem(input: {
@@ -231,6 +206,7 @@ export async function saveProjectWorkspaceToFileSystem(input: {
     : 0;
   const document: FlowProjectDocument = {
     ...input.document,
+    schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
     savedAt: Date.now(),
     fileSystem: {
       projectDirectoryName: input.projectDirectoryHandle.name,
@@ -254,9 +230,10 @@ export async function writeScratchAssets(
   sourceBin: SourceBinProjectSnapshot,
 ): Promise<number> {
   const manifest = createScratchAssetManifest(sourceBin);
+  const allItems = collectSnapshotItems(sourceBin);
 
   for (const entry of manifest) {
-    const item = sourceBin.items.find((candidate) => candidate.id === entry.id);
+    const item = allItems.find((candidate) => candidate.id === entry.id);
 
     if (!item?.assetUrl && !item?.assetId) {
       continue;

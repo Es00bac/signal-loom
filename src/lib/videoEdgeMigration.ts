@@ -32,7 +32,7 @@ export function normalizeVideoImageEdges(nodes: AppNode[], edges: Edge[]): Edge[
     }
 
     if (
-      sourceNode?.type === 'imageGen' &&
+      isVideoFrameImageSource(sourceNode) &&
       targetNode?.type === 'videoGen' &&
       !isVideoImageConditioningHandle(targetHandle)
     ) {
@@ -93,7 +93,7 @@ export function normalizeVideoImageEdges(nodes: AppNode[], edges: Edge[]): Edge[
         ? resolveEffectiveSourceNode(rawSourceNode, nodesById, deduped)
         : undefined;
 
-      if (sourceNode?.type === 'imageGen') {
+      if (isVideoFrameImageSource(sourceNode)) {
         deduped.push({
           ...endFrameEdge,
           id: `${endFrameEdge.id}-start-frame`,
@@ -120,7 +120,7 @@ export function normalizeVideoImageConnectionTargetHandle(
   const targetHandle = connection.targetHandle ?? undefined;
 
   if (
-    sourceNode?.type !== 'imageGen' ||
+    !isVideoFrameImageSource(sourceNode) ||
     targetNode?.type !== 'videoGen' ||
     isVideoImageConditioningHandle(targetHandle)
   ) {
@@ -156,7 +156,7 @@ export function replaceExclusiveVideoFrameEdges(
   const targetHandle = connection.targetHandle ?? undefined;
 
   if (
-    sourceNode?.type !== 'imageGen' ||
+    !isVideoFrameImageSource(sourceNode) ||
     targetNode?.type !== 'videoGen' ||
     !isVideoImageConditioningHandle(targetHandle)
   ) {
@@ -166,6 +166,10 @@ export function replaceExclusiveVideoFrameEdges(
   return edges.filter(
     (edge) => !(edge.target === connection.target && edge.targetHandle === connection.targetHandle),
   );
+}
+
+function isVideoFrameImageSource(node: AppNode | undefined): node is AppNode {
+  return node?.type === 'imageGen' || node?.type === 'cropImageNode';
 }
 
 function dedupeExclusiveVideoFrameEdges(

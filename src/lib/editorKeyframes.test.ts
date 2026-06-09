@@ -5,6 +5,8 @@ import {
   getAdjacentKeyframePercent,
   getAudioKeyframeStateAtProgress,
   getVisualKeyframeStateAtProgress,
+  removeAudioKeyframe,
+  removeVisualKeyframe,
   upsertAudioKeyframe,
   upsertVisualKeyframe,
   visualKeyframesToOpacityAutomation,
@@ -276,6 +278,51 @@ describe('editor visual keyframes', () => {
       },
     ]);
   });
+
+  it('removes a visual opacity keyframe without reviving it from stale automation points', () => {
+    const clip = createVisualClip({
+      opacityPercent: 100,
+      opacityAutomationPoints: [
+        { timePercent: 0, valuePercent: 100 },
+        { timePercent: 50, valuePercent: 20 },
+        { timePercent: 100, valuePercent: 0 },
+      ],
+      keyframes: [
+        {
+          timePercent: 0,
+          positionX: 0,
+          positionY: 0,
+          scalePercent: 100,
+          rotationDeg: 0,
+          opacityPercent: 100,
+        },
+        {
+          timePercent: 50,
+          positionX: 0,
+          positionY: 0,
+          scalePercent: 100,
+          rotationDeg: 0,
+          opacityPercent: 20,
+        },
+        {
+          timePercent: 100,
+          positionX: 0,
+          positionY: 0,
+          scalePercent: 100,
+          rotationDeg: 0,
+          opacityPercent: 0,
+        },
+      ],
+    });
+
+    const nextClip = removeVisualKeyframe(clip, 1);
+
+    expect(nextClip.keyframes?.map((keyframe) => keyframe.timePercent)).toEqual([0, 100]);
+    expect(nextClip.opacityAutomationPoints).toEqual([
+      { timePercent: 0, valuePercent: 100 },
+      { timePercent: 100, valuePercent: 0 },
+    ]);
+  });
 });
 
 describe('editor audio keyframes', () => {
@@ -304,6 +351,33 @@ describe('editor audio keyframes', () => {
       { timePercent: 0, valuePercent: 0 },
       { timePercent: 25, valuePercent: 25 },
       { timePercent: 100, valuePercent: 100 },
+    ]);
+  });
+
+  it('removes an audio volume keyframe without reviving it from stale automation points', () => {
+    const clip = createAudioClip({
+      volumePercent: 100,
+      volumeAutomationPoints: [
+        { timePercent: 0, valuePercent: 100 },
+        { timePercent: 50, valuePercent: 35 },
+        { timePercent: 100, valuePercent: 0 },
+      ],
+      volumeKeyframes: [
+        { timePercent: 0, volumePercent: 100 },
+        { timePercent: 50, volumePercent: 35 },
+        { timePercent: 100, volumePercent: 0 },
+      ],
+    });
+
+    const nextClip = removeAudioKeyframe(clip, 1);
+
+    expect(nextClip.volumeKeyframes).toEqual([
+      { timePercent: 0, volumePercent: 100 },
+      { timePercent: 100, volumePercent: 0 },
+    ]);
+    expect(nextClip.volumeAutomationPoints).toEqual([
+      { timePercent: 0, valuePercent: 100 },
+      { timePercent: 100, valuePercent: 0 },
     ]);
   });
 });

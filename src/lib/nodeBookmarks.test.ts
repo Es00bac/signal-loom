@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { AppNode } from '../types/flow';
-import { collectNodeBookmarks, resolveNodeDisplayTitle } from './nodeBookmarks';
+import {
+  collectNodeBookmarks,
+  getNodeTypeLabel,
+  resolveNodeBookmarkRename,
+  resolveNodeDisplayTitle,
+} from './nodeBookmarks';
 
 function createNode(id: string, type: AppNode['type'], customTitle?: string): AppNode {
   return {
@@ -29,5 +34,24 @@ describe('node bookmarks', () => {
       { id: 'text-1', title: 'Scene prompt', type: 'textNode' },
       { id: 'video-1', title: 'Hero clip', type: 'videoGen' },
     ]);
+  });
+
+  it('normalizes node bookmark rename submissions into a store patch and sidebar intent', () => {
+    expect(resolveNodeBookmarkRename('  Hero image  ')).toEqual({
+      patch: { customTitle: 'Hero image' },
+      shouldOpenBookmarkSidebar: true,
+    });
+
+    expect(resolveNodeBookmarkRename('   ')).toEqual({
+      patch: { customTitle: undefined },
+      shouldOpenBookmarkSidebar: false,
+    });
+
+    expect(resolveNodeBookmarkRename(null)).toBeUndefined();
+  });
+
+  it('uses concrete labels for primitive and consistency helper nodes', () => {
+    expect(getNodeTypeLabel('numberNode')).toBe('Number');
+    expect(getNodeTypeLabel('colorSwatchNode')).toBe('Color Swatch');
   });
 });

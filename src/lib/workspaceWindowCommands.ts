@@ -30,6 +30,7 @@ export type WorkspaceWindowCommand =
       item: SourceBinLibraryItem;
       targetWorkspace: 'flow';
       targetFlowWorkspaceId?: string;
+      targetBinId?: string;
     }
   | {
       type: 'video-select-source-item';

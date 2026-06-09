@@ -13,6 +13,7 @@ import {
 } from './manualEditorState';
 import { getEditorStageObjects } from './editorStageObjects';
 import { getEditorAssets } from './editorAssets';
+import { isAspectRatio } from './providerCatalog';
 
 export const EDITOR_HISTORY_LIMIT = 80;
 
@@ -184,7 +185,7 @@ function cloneStageObject(
 }
 
 function normalizeAspectRatio(value: unknown): AspectRatio | undefined {
-  return value === '1:1' || value === '16:9' || value === '9:16' ? value : undefined;
+  return isAspectRatio(value) ? value : undefined;
 }
 
 function normalizeVideoResolution(value: unknown): VideoResolution | undefined {

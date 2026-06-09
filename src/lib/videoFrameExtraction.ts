@@ -62,7 +62,7 @@ export async function extractVideoFramesAtTimes(
 
 async function loadVideoFrameSource(videoUrl: string): Promise<{ video: HTMLVideoElement }> {
   const video = document.createElement('video');
-  video.preload = 'metadata';
+  video.preload = 'auto';
   video.muted = true;
   video.playsInline = true;
   video.src = videoUrl;
@@ -78,13 +78,12 @@ async function captureVideoFrameAtTime(
 ): Promise<Blob> {
   const duration = Number.isFinite(video.duration) ? video.duration : 0;
   const boundedTime = Math.max(0, Math.min(duration, targetTimeSeconds));
-  const seekTime = video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA && boundedTime === 0 && duration > 0
+  const seekTime = boundedTime === 0 && duration > 0
     ? Math.min(duration, 0.001)
     : boundedTime;
 
   if (Math.abs(video.currentTime - seekTime) > 0.001) {
-    video.currentTime = seekTime;
-    await waitForEvent(video, 'seeked');
+    await seekVideoToTime(video, seekTime);
   }
 
   if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
@@ -92,6 +91,73 @@ async function captureVideoFrameAtTime(
   }
 
   return captureFrameFromVideoElement(video, options);
+}
+
+/**
+ * Seek a video element to a target time. Registers the `seeked` listener
+ * BEFORE setting `currentTime` to avoid the race where the seek completes
+ * before the listener is attached. Falls back to brief playback if the
+ * seeked event never fires.
+ */
+function seekVideoToTime(video: HTMLVideoElement, targetTime: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const fallbackTimeout = window.setTimeout(() => {
+      cleanup();
+      attemptPlayFallback(video, targetTime).then(resolve, reject);
+    }, 3_000);
+
+    const cleanup = () => {
+      window.clearTimeout(fallbackTimeout);
+      video.removeEventListener('seeked', handleSeeked);
+      video.removeEventListener('error', handleError);
+    };
+
+    const handleSeeked = () => {
+      cleanup();
+      resolve();
+    };
+
+    const handleError = () => {
+      cleanup();
+      reject(video.error ?? new Error('Video frame capture failed while seeking.'));
+    };
+
+    // Register listeners BEFORE triggering the seek to avoid missing the event
+    video.addEventListener('seeked', handleSeeked, { once: true });
+    video.addEventListener('error', handleError, { once: true });
+    video.currentTime = targetTime;
+  });
+}
+
+/**
+ * Fallback when the `seeked` event never fires: play the video briefly so
+ * the decoder produces frames, then pause near the target time.
+ */
+function attemptPlayFallback(video: HTMLVideoElement, targetTime: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const maxWait = window.setTimeout(() => {
+      video.pause();
+      reject(new Error('Video frame capture timed out while waiting for seeked.'));
+    }, 5_000);
+
+    const checkPlayback = () => {
+      if (video.ended || video.currentTime >= targetTime) {
+        window.clearTimeout(maxWait);
+        video.pause();
+        resolve();
+        return;
+      }
+
+      window.setTimeout(checkPlayback, 50);
+    };
+
+    video.play().then(() => {
+      window.setTimeout(checkPlayback, 100);
+    }).catch(() => {
+      window.clearTimeout(maxWait);
+      reject(new Error('Video frame capture timed out while waiting for seeked.'));
+    });
+  });
 }
 
 export async function captureFrameFromVideoElement(
@@ -155,7 +221,7 @@ function releaseVideoFrameSource(video: HTMLVideoElement): void {
 
 function waitForEvent(
   target: HTMLVideoElement,
-  eventName: 'loadedmetadata' | 'loadeddata' | 'seeked',
+  eventName: 'loadedmetadata' | 'loadeddata',
 ): Promise<void> {
   if (eventName === 'loadedmetadata' && target.readyState >= HTMLMediaElement.HAVE_METADATA) {
     return Promise.resolve();

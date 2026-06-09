@@ -1,5 +1,42 @@
-import { describe, expect, it } from 'vitest';
-import { buildCompositionCommand, buildSequenceCommand } from './mediaComposition';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { unzipSync, strFromU8 } from 'fflate';
+
+vi.mock('./localNativeRender', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./localNativeRender')>();
+
+  return {
+    ...actual,
+    renderViaLocalNativeFFmpeg: vi.fn(),
+    renderViaLocalNativeFFmpegWithArtifacts: vi.fn(),
+    resolveNativeRenderTarget: vi.fn(),
+  };
+});
+
+import {
+  buildCompositionCommand,
+  buildSequenceCommand,
+  composeSequenceMedia,
+  describeSequenceRenderBackend,
+  describeSequenceRenderBackendCaveat,
+  packageSequenceFramesAsZip,
+} from './mediaComposition';
+import {
+  renderViaLocalNativeFFmpeg,
+  renderViaLocalNativeFFmpegWithArtifacts,
+  resolveNativeRenderTarget,
+} from './localNativeRender';
+import { getVideoExportPresetOption } from './videoPremiereParity';
+import type { ProviderSettings, VideoRenderAssemblyManifestData } from '../types/flow';
+
+const mockedRenderViaLocalNativeFFmpeg = vi.mocked(renderViaLocalNativeFFmpeg);
+const mockedRenderViaLocalNativeFFmpegWithArtifacts = vi.mocked(renderViaLocalNativeFFmpegWithArtifacts);
+const mockedResolveNativeRenderTarget = vi.mocked(resolveNativeRenderTarget);
+
+beforeEach(() => {
+  mockedRenderViaLocalNativeFFmpeg.mockReset();
+  mockedRenderViaLocalNativeFFmpegWithArtifacts.mockReset();
+  mockedResolveNativeRenderTarget.mockReset();
+});
 
 describe('buildCompositionCommand', () => {
   it('builds an ffmpeg command that delays and mixes enabled audio tracks into the video', () => {
@@ -82,7 +119,213 @@ describe('buildCompositionCommand', () => {
   });
 });
 
+describe('composeSequenceMedia', () => {
+  it('passes safe artifact assembly manifests to local render jobs', async () => {
+    mockedResolveNativeRenderTarget.mockResolvedValue({
+      endpoint: 'http://127.0.0.1:41736',
+      backend: 'cpu',
+    });
+    const nativeBlob = new Blob([new Uint8Array([1, 2, 3])], { type: 'video/mp4' });
+    mockedRenderViaLocalNativeFFmpeg.mockResolvedValue(nativeBlob);
+    const assemblyManifest = {
+      version: 1,
+      kind: 'video-render-segment-assembly',
+      mode: 'safe-artifact-assembly',
+      summary: 'Segment artifact reuse: 1 reusable cached span, 1 queued dirty span.',
+      caveat: 'Native artifact assembly can reuse materialized cached spans; dirty spans are still extracted from a full render until dirty-span-only rendering lands.',
+      segments: [
+        {
+          key: '0-1000',
+          startMs: 0,
+          endMs: 1000,
+          activeClipIds: ['clip-clean'],
+          signature: 'sig-clean',
+          action: 'reuse-cached-segment',
+          cachedUrl: 'blob:clean-span',
+        },
+        {
+          key: '1000-2000',
+          startMs: 1000,
+          endMs: 2000,
+          activeClipIds: ['clip-dirty'],
+          signature: 'sig-dirty',
+          action: 'render-dirty-span',
+          reason: 'timeline span changed',
+        },
+      ],
+    } satisfies VideoRenderAssemblyManifestData;
+
+    await expect(composeSequenceMedia({
+      visualClips: [
+        {
+          sourceNodeId: 'clip-clean',
+          sourceKind: 'image',
+          trackIndex: 0,
+          startMs: 0,
+          assetUrl: 'data:image/png;base64,UE5H',
+          durationSeconds: 2,
+          trimStartMs: 0,
+          trimEndMs: 0,
+          playbackRate: 1,
+          reversePlayback: false,
+          fitMode: 'contain',
+          scalePercent: 100,
+          scaleMotionEnabled: false,
+          endScalePercent: 100,
+          opacityPercent: 100,
+          rotationDeg: 0,
+          rotationMotionEnabled: false,
+          endRotationDeg: 0,
+          flipHorizontal: false,
+          flipVertical: false,
+          positionX: 0,
+          positionY: 0,
+          motionEnabled: false,
+          endPositionX: 0,
+          endPositionY: 0,
+          transitionIn: 'none',
+          transitionOut: 'none',
+          transitionDurationMs: 0,
+          textFontFamily: 'Inter, system-ui, sans-serif',
+          textSizePx: 64,
+          textColor: '#f3f4f6',
+          textEffect: 'shadow',
+          textBackgroundOpacityPercent: 0,
+        },
+      ],
+      audioTracks: [],
+      aspectRatio: '16:9',
+      videoResolution: '720p',
+      frameRate: 30,
+      providerSettings: {
+        renderBackendPreference: 'native-cpu',
+        localNativeRenderUrl: 'http://127.0.0.1:41736',
+      } as ProviderSettings,
+      nativeAssemblyManifest: assemblyManifest,
+    })).resolves.toMatchObject({
+      blob: nativeBlob,
+      renderBackend: 'cpu',
+    });
+
+    expect(mockedRenderViaLocalNativeFFmpeg).toHaveBeenCalledWith(expect.objectContaining({
+      assemblyManifest,
+    }));
+  });
+
+  it('returns native segment artifacts from artifact-aware sequence renders', async () => {
+    mockedResolveNativeRenderTarget.mockResolvedValue({
+      endpoint: 'http://127.0.0.1:41736',
+      backend: 'cpu',
+    });
+    const nativeBlob = new Blob([new Uint8Array([1, 2, 3])], { type: 'video/mp4' });
+    const segmentArtifacts = [
+      {
+        key: '1000-2000',
+        signature: 'sig-dirty',
+        startMs: 1000,
+        endMs: 2000,
+        fileName: 'segment-1000-2000.mp4',
+        mimeType: 'video/mp4',
+        base64: 'AQID',
+      },
+    ];
+    mockedRenderViaLocalNativeFFmpegWithArtifacts.mockResolvedValue({
+      blob: nativeBlob,
+      segmentArtifacts,
+      assemblyResult: {
+        assembledFromSegments: true,
+      },
+    });
+    const assemblyManifest = {
+      version: 1,
+      kind: 'video-render-segment-assembly',
+      mode: 'safe-artifact-assembly',
+      segments: [
+        {
+          key: '1000-2000',
+          startMs: 1000,
+          endMs: 2000,
+          activeClipIds: ['clip-dirty'],
+          signature: 'sig-dirty',
+          action: 'render-dirty-span',
+          reason: 'timeline span changed',
+        },
+      ],
+    } satisfies VideoRenderAssemblyManifestData;
+
+    await expect(composeSequenceMedia({
+      visualClips: [
+        {
+          sourceNodeId: 'clip-dirty',
+          sourceKind: 'image',
+          trackIndex: 0,
+          startMs: 0,
+          assetUrl: 'data:image/png;base64,UE5H',
+          durationSeconds: 2,
+          trimStartMs: 0,
+          trimEndMs: 0,
+          playbackRate: 1,
+          reversePlayback: false,
+          fitMode: 'contain',
+          scalePercent: 100,
+          scaleMotionEnabled: false,
+          endScalePercent: 100,
+          opacityPercent: 100,
+          rotationDeg: 0,
+          rotationMotionEnabled: false,
+          endRotationDeg: 0,
+          flipHorizontal: false,
+          flipVertical: false,
+          positionX: 0,
+          positionY: 0,
+          motionEnabled: false,
+          endPositionX: 0,
+          endPositionY: 0,
+          transitionIn: 'none',
+          transitionOut: 'none',
+          transitionDurationMs: 0,
+          textFontFamily: 'Inter, system-ui, sans-serif',
+          textSizePx: 64,
+          textColor: '#f3f4f6',
+          textEffect: 'shadow',
+          textBackgroundOpacityPercent: 0,
+        },
+      ],
+      audioTracks: [],
+      aspectRatio: '16:9',
+      videoResolution: '720p',
+      frameRate: 30,
+      providerSettings: {
+        renderBackendPreference: 'native-cpu',
+        localNativeRenderUrl: 'http://127.0.0.1:41736',
+      } as ProviderSettings,
+      nativeAssemblyManifest: assemblyManifest,
+    })).resolves.toMatchObject({
+      blob: nativeBlob,
+      renderBackend: 'cpu',
+      segmentArtifacts,
+      assemblyResult: {
+        assembledFromSegments: true,
+      },
+    });
+
+    expect(mockedRenderViaLocalNativeFFmpegWithArtifacts).toHaveBeenCalledWith(expect.objectContaining({
+      assemblyManifest,
+    }));
+    expect(mockedRenderViaLocalNativeFFmpeg).not.toHaveBeenCalled();
+  });
+});
+
 describe('buildSequenceCommand', () => {
+  it('describes render backends in user-facing GPU/CPU terms', () => {
+    expect(describeSequenceRenderBackend('amd-vaapi')).toBe('AMD VAAPI GPU encode (h264_vaapi)');
+    expect(describeSequenceRenderBackend('cpu')).toBe('native CPU FFmpeg');
+    expect(describeSequenceRenderBackend('browser')).toBe('browser FFmpeg');
+    expect(describeSequenceRenderBackendCaveat('amd-vaapi')).toContain('final encode is GPU accelerated');
+    expect(describeSequenceRenderBackendCaveat('cpu')).not.toContain('GPU');
+    expect(describeSequenceRenderBackendCaveat('browser')).not.toContain('GPU');
+  });
+
   it('overlays prepared stage objects after timeline visual clips', () => {
     const command = buildSequenceCommand({
       preparedClips: [],
@@ -111,15 +354,266 @@ describe('buildSequenceCommand', () => {
       ],
       canvas: { width: 1280, height: 720 },
       timelineDurationSeconds: 4,
+      frameRate: 24,
       outputName: 'sequence-output.mp4',
       nativeBackend: null,
     });
 
     const filterGraph = command[command.indexOf('-filter_complex') + 1];
 
+    expect(command.join(' ')).toContain('-i color=c=black:s=1280x720:r=24');
     expect(command.join(' ')).toContain('-loop 1 -t 4.000 -i stage-text.png');
     expect(filterGraph).toContain('[base0][stage1]overlay=0:0[stagebase1]');
     expect(filterGraph).toContain('[stagebase1]format=yuv420p[vout]');
+  });
+
+  it('applies executable browser export preset codec args', () => {
+    const command = buildSequenceCommand({
+      preparedClips: [],
+      preparedAudioTracks: [],
+      canvas: { width: 1280, height: 720 },
+      timelineDurationSeconds: 4,
+      frameRate: 30,
+      exportPreset: {
+        id: 'archive-high-quality',
+        label: 'Archive High Quality',
+        container: 'MP4',
+        extension: 'mp4',
+        mimeType: 'video/mp4',
+        codec: 'High-quality H.264/AAC',
+        videoCodecArgs: ['-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-profile:v', 'high', '-pix_fmt', 'yuv420p'],
+        audioCodecArgs: ['-c:a', 'aac', '-b:a', '320k'],
+        crf: 18,
+        profile: 'high',
+        frameRate: 30,
+        intendedUse: 'Master handoff before downstream edits.',
+        caveat: 'Browser render favors quality over speed.',
+        capabilities: { browser: true, nativeCpu: true, nativeVaapi: true },
+      },
+      outputName: 'sequence-output.mp4',
+      nativeBackend: null,
+    });
+
+    expect(command.join(' ')).toContain('-r 30 -c:v libx264 -preset slow -crf 18');
+    expect(command).not.toContain('ultrafast');
+  });
+
+  it('maps AMD VAAPI sequence renders to GPU upload and h264_vaapi encode args', () => {
+    const command = buildSequenceCommand({
+      preparedClips: [],
+      preparedAudioTracks: [],
+      canvas: { width: 1280, height: 720 },
+      timelineDurationSeconds: 4,
+      frameRate: 30,
+      exportPreset: {
+        id: 'archive-high-quality',
+        label: 'Archive High Quality',
+        container: 'MP4',
+        extension: 'mp4',
+        mimeType: 'video/mp4',
+        codec: 'High-quality H.264/AAC',
+        videoCodecArgs: ['-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-profile:v', 'high', '-pix_fmt', 'yuv420p'],
+        audioCodecArgs: ['-c:a', 'aac', '-b:a', '320k'],
+        crf: 18,
+        profile: 'high',
+        frameRate: 30,
+        intendedUse: 'Master handoff before downstream edits.',
+        caveat: 'Browser render favors quality over speed.',
+        capabilities: { browser: true, nativeCpu: true, nativeVaapi: true },
+      },
+      outputName: 'sequence-output.mp4',
+      nativeBackend: 'amd-vaapi',
+    });
+    const filterGraph = command[command.indexOf('-filter_complex') + 1];
+
+    expect(command).toEqual(expect.arrayContaining(['-vaapi_device', '/dev/dri/renderD128']));
+    expect(filterGraph).toContain('[base0]format=nv12,hwupload[vout]');
+    expect(command).toEqual(expect.arrayContaining(['-c:v', 'h264_vaapi']));
+    expect(command.join(' ')).not.toContain('libx264');
+  });
+
+  it('omits audio mapping for silent GIF export presets', () => {
+    const command = buildSequenceCommand({
+      preparedClips: [],
+      preparedAudioTracks: [
+        {
+          inputName: 'music.opus',
+          sourceUrl: 'music.opus',
+          durationSeconds: 4,
+          track: {
+            url: 'music.opus',
+            sourceNodeId: 'audio-1',
+            sourceKind: 'audio',
+            offsetMs: 0,
+            trackIndex: 0,
+            volumePercent: 100,
+            enabled: true,
+          },
+        },
+      ],
+      canvas: { width: 1280, height: 720 },
+      timelineDurationSeconds: 4,
+      frameRate: 30,
+      exportPreset: {
+        id: 'gif-preview',
+        label: 'Animated GIF Preview',
+        container: 'GIF',
+        extension: 'gif',
+        mimeType: 'image/gif',
+        codec: 'GIF image stream',
+        videoCodecArgs: ['-r', '12', '-loop', '0'],
+        audioCodecArgs: [],
+        intendedUse: 'Silent preview.',
+        caveat: 'Silent.',
+        capabilities: { browser: true, nativeCpu: true, nativeVaapi: false },
+      },
+      outputName: 'sequence-output.gif',
+      nativeBackend: null,
+    });
+
+    expect(command).toContain('-an');
+    expect(command).not.toEqual(expect.arrayContaining(['-map', '[aout]']));
+    expect(command.slice(-1)[0]).toBe('sequence-output.gif');
+  });
+
+  it('renders PNG image sequences to a numbered MEMFS output pattern without audio', () => {
+    const preset = getVideoExportPresetOption('png-image-sequence');
+    const command = buildSequenceCommand({
+      preparedClips: [],
+      preparedAudioTracks: [
+        {
+          inputName: 'music.mp3',
+          sourceUrl: 'music.mp3',
+          durationSeconds: 2,
+          track: {
+            url: 'music.mp3',
+            sourceNodeId: 'audio-1',
+            sourceKind: 'audio',
+            offsetMs: 0,
+            trackIndex: 0,
+            volumePercent: 100,
+            enabled: true,
+          },
+        },
+      ],
+      canvas: { width: 1280, height: 720 },
+      timelineDurationSeconds: 2,
+      frameRate: 24,
+      exportPreset: preset,
+      outputName: preset.outputPattern ?? 'sequence-frame-%05d.png',
+      nativeBackend: null,
+    });
+    const filterGraph = command[command.indexOf('-filter_complex') + 1];
+
+    expect(command.join(' ')).not.toContain('-i music.mp3');
+    expect(filterGraph).toContain('format=rgba[vout]');
+    expect(command).toEqual(expect.arrayContaining(['-an', '-frames:v', '48', '-c:v', 'png']));
+    expect(command.slice(-1)[0]).toBe('sequence-frame-%05d.png');
+  });
+
+  it('packages image sequence frames as a ZIP with manifest metadata', async () => {
+    const result = packageSequenceFramesAsZip({
+      frames: [
+        { name: 'sequence-frame-00002.png', data: new Uint8Array([2]) },
+        { name: 'sequence-frame-00001.png', data: new Uint8Array([1]) },
+      ],
+      exportPreset: getVideoExportPresetOption('png-image-sequence'),
+      canvas: { width: 1920, height: 1080 },
+      frameRate: 30,
+      durationSeconds: 0.067,
+    });
+    const entries = unzipSync(new Uint8Array(await result.blob.arrayBuffer()));
+    const manifest = JSON.parse(strFromU8(entries['manifest.json']));
+
+    expect(result.mimeType).toBe('application/zip');
+    expect(result.extension).toBe('zip');
+    expect(result.imageSequence).toBe(true);
+    expect(Object.keys(entries)).toEqual(expect.arrayContaining([
+      'manifest.json',
+      'sequence-frame-00001.png',
+      'sequence-frame-00002.png',
+    ]));
+    expect(manifest).toMatchObject({
+      presetId: 'png-image-sequence',
+      frameMimeType: 'image/png',
+      width: 1920,
+      height: 1080,
+      frameRate: 30,
+      frameCount: 2,
+      frames: ['sequence-frame-00001.png', 'sequence-frame-00002.png'],
+    });
+  });
+
+  it('starts adjacent fade-in clips early for edit-point dissolve render overlap', () => {
+    const baseClip = {
+      sourceNodeId: 'source-1',
+      sourceKind: 'image' as const,
+      trackIndex: 0,
+      sourceInMs: 0,
+      trimStartMs: 0,
+      trimEndMs: 0,
+      playbackRate: 1,
+      reversePlayback: false,
+      fitMode: 'contain' as const,
+      scalePercent: 100,
+      scaleMotionEnabled: false,
+      endScalePercent: 100,
+      opacityPercent: 100,
+      rotationDeg: 0,
+      rotationMotionEnabled: false,
+      endRotationDeg: 0,
+      flipHorizontal: false,
+      flipVertical: false,
+      positionX: 0,
+      positionY: 0,
+      motionEnabled: false,
+      endPositionX: 0,
+      endPositionY: 0,
+      cropLeftPercent: 0,
+      cropRightPercent: 0,
+      cropTopPercent: 0,
+      cropBottomPercent: 0,
+      cropPanXPercent: 0,
+      cropPanYPercent: 0,
+      cropRotationDeg: 0,
+      filterStack: [],
+      transitionDurationMs: 1000,
+      textFontFamily: 'Inter, system-ui, sans-serif',
+      textSizePx: 72,
+      textColor: '#ffffff',
+      textEffect: 'none' as const,
+      textBackgroundOpacityPercent: 0,
+    };
+    const command = buildSequenceCommand({
+      preparedClips: [
+        {
+          inputIndex: 1,
+          inputName: 'a.png',
+          sourceUrl: 'a.png',
+          clipDurationSeconds: 4,
+          clip: { ...baseClip, id: 'a', startMs: 0, assetUrl: 'a.png', transitionIn: 'none' as const, transitionOut: 'fade' as const },
+        },
+        {
+          inputIndex: 2,
+          inputName: 'b.png',
+          sourceUrl: 'b.png',
+          clipDurationSeconds: 4,
+          clip: { ...baseClip, id: 'b', startMs: 4000, assetUrl: 'b.png', transitionIn: 'fade' as const, transitionOut: 'none' as const },
+        },
+      ],
+      preparedAudioTracks: [],
+      canvas: { width: 1280, height: 720 },
+      timelineDurationSeconds: 8,
+      frameRate: 30,
+      outputName: 'sequence-output.mp4',
+      nativeBackend: null,
+    });
+
+    const filterGraph = command[command.indexOf('-filter_complex') + 1];
+
+    expect(filterGraph).toContain('fade=t=out:st=3.000:d=1.000:alpha=1');
+    expect(filterGraph).toContain('fade=t=in:st=0:d=1.000:alpha=1');
+    expect(filterGraph).toContain('setpts=PTS-STARTPTS+3.000/TB');
   });
 
   it('multiplies track volume with clip volume and clip automation for sequence audio', () => {
@@ -216,6 +710,68 @@ describe('buildSequenceCommand', () => {
     expect(filterGraph).toContain(")*2)':eval=frame");
   });
 
+  it('preserves source display aspect until after fit scaling media clips', () => {
+    const command = buildSequenceCommand({
+      preparedClips: [
+        {
+          inputIndex: 1,
+          inputName: 'clip.mp4',
+          sourceUrl: 'clip.mp4',
+          clipDurationSeconds: 4,
+          clip: {
+            sourceNodeId: 'source-1',
+            sourceKind: 'video',
+            trackIndex: 0,
+            startMs: 0,
+            assetUrl: 'clip.mp4',
+            durationSeconds: 4,
+            trimStartMs: 0,
+            trimEndMs: 0,
+            playbackRate: 1,
+            reversePlayback: false,
+            fitMode: 'contain',
+            scalePercent: 100,
+            scaleMotionEnabled: false,
+            endScalePercent: 100,
+            opacityPercent: 100,
+            rotationDeg: 0,
+            rotationMotionEnabled: false,
+            endRotationDeg: 0,
+            flipHorizontal: false,
+            flipVertical: false,
+            positionX: 0,
+            positionY: 0,
+            motionEnabled: false,
+            endPositionX: 0,
+            endPositionY: 0,
+            transitionIn: 'none',
+            transitionOut: 'none',
+            transitionDurationMs: 500,
+            textFontFamily: 'Inter, system-ui, sans-serif',
+            textSizePx: 64,
+            textColor: '#f3f4f6',
+            textEffect: 'shadow',
+            textBackgroundOpacityPercent: 0,
+          },
+        },
+      ],
+      preparedAudioTracks: [],
+      canvas: { width: 1280, height: 720 },
+      timelineDurationSeconds: 4,
+      outputName: 'sequence-output.mp4',
+      nativeBackend: null,
+    });
+
+    const filterGraph = command[command.indexOf('-filter_complex') + 1];
+    const clipFilter = filterGraph.split(';').find((part) => part.startsWith('[1:v]'));
+
+    expect(clipFilter).toBeDefined();
+    expect(clipFilter!.indexOf('scale=1280:720:force_original_aspect_ratio=decrease')).toBeGreaterThan(-1);
+    expect(clipFilter!.indexOf('scale=1280:720:force_original_aspect_ratio=decrease')).toBeLessThan(
+      clipFilter!.indexOf('setsar=1'),
+    );
+  });
+
   it('renders non-normal clip blend modes through a full-frame blend layer', () => {
     const command = buildSequenceCommand({
       preparedClips: [
@@ -275,6 +831,81 @@ describe('buildSequenceCommand', () => {
     expect(filterGraph).toContain('[base1blanksrc]lutrgb=r=0:g=0:b=0,format=rgba[clipblank1]');
     expect(filterGraph).toContain("[clipblank1][clip1]overlay=x='");
     expect(filterGraph).toContain('[base1blendbase][cliplayer1]blend=all_mode=screen[base1]');
+  });
+
+  it('renders clip chroma key and stroke settings in the sequence filter graph', () => {
+    const command = buildSequenceCommand({
+      preparedClips: [
+        {
+          inputIndex: 1,
+          inputName: 'green-screen.mp4',
+          sourceUrl: 'green-screen.mp4',
+          clipDurationSeconds: 5,
+          clip: {
+            sourceNodeId: 'clip-1',
+            sourceKind: 'video',
+            trackIndex: 1,
+            startMs: 0,
+            assetUrl: 'green-screen.mp4',
+            sourceInMs: 0,
+            durationSeconds: 5,
+            trimStartMs: 0,
+            trimEndMs: 0,
+            playbackRate: 1,
+            reversePlayback: false,
+            fitMode: 'contain',
+            scalePercent: 50,
+            scaleMotionEnabled: false,
+            endScalePercent: 50,
+            opacityPercent: 90,
+            rotationDeg: 0,
+            rotationMotionEnabled: false,
+            endRotationDeg: 0,
+            flipHorizontal: false,
+            flipVertical: false,
+            positionX: 120,
+            positionY: 80,
+            motionEnabled: false,
+            endPositionX: 120,
+            endPositionY: 80,
+            filterStack: [
+              { id: 'hue', kind: 'hue-rotate', amount: 30, enabled: true },
+            ],
+            chromaKey: {
+              enabled: true,
+              color: '#00ff00',
+              similarityPercent: 22,
+              blendPercent: 7,
+            },
+            stroke: {
+              enabled: true,
+              color: '#ff00cc',
+              widthPx: 8,
+              opacityPercent: 80,
+            },
+            transitionIn: 'none',
+            transitionOut: 'none',
+            transitionDurationMs: 500,
+            textFontFamily: 'Inter, system-ui, sans-serif',
+            textSizePx: 64,
+            textColor: '#f3f4f6',
+            textEffect: 'shadow',
+            textBackgroundOpacityPercent: 0,
+          },
+        },
+      ],
+      preparedAudioTracks: [],
+      canvas: { width: 1280, height: 720 },
+      timelineDurationSeconds: 5,
+      outputName: 'sequence-output.mp4',
+      nativeBackend: null,
+    });
+
+    const filterGraph = command[command.indexOf('-filter_complex') + 1];
+
+    expect(filterGraph).toContain('chromakey=0x00ff00:0.2200:0.0700');
+    expect(filterGraph).toContain("hue=h='30.0000'");
+    expect(filterGraph).toContain('drawbox=x=0:y=0:w=iw:h=ih:color=0xff00cc@0.8000:t=8');
   });
 
   it('does not fit text clips to the full video frame before clip scale animation', () => {

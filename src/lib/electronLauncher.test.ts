@@ -36,7 +36,10 @@ describe('Electron launcher environment', () => {
 
     expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBe('x11');
     expect(env.GDK_BACKEND).toBe('x11');
-    expect(getElectronLaunchArgs(env, 'linux')).toEqual(['--ozone-platform=x11', '.']);
+    expect(getElectronLaunchArgs(env, 'linux')).toEqual([
+      '--ozone-platform=x11',
+      '.',
+    ]);
   });
 
   it('allows native Wayland opt-out for Electron if explicitly requested', async () => {
@@ -50,7 +53,23 @@ describe('Electron launcher environment', () => {
 
     expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBeUndefined();
     expect(env.GDK_BACKEND).toBeUndefined();
-    expect(getElectronLaunchArgs(env, 'linux')).toEqual(['.']);
+    expect(getElectronLaunchArgs(env, 'linux')).toEqual([
+      '.',
+    ]);
+  });
+
+  it('allows Linux GPU to be explicitly disabled via env', async () => {
+    const { buildElectronEnvironment, getElectronLaunchArgs } = await loadLauncherModule();
+    const env = buildElectronEnvironment({
+      SIGNAL_LOOM_ELECTRON_DISABLE_GPU: '1',
+    }, 'linux');
+
+    expect(getElectronLaunchArgs(env, 'linux')).toEqual([
+      '--disable-gpu',
+      '--disable-gpu-sandbox',
+      '--in-process-gpu',
+      '.',
+    ]);
   });
 
   it('preserves existing GTK modules while adding appmenu once', async () => {

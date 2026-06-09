@@ -52,7 +52,7 @@ export function findMiswiredVideoImageSources(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
       : undefined;
 
-    if (sourceNode?.type !== 'imageGen') {
+    if (!isVideoFrameImageSource(sourceNode)) {
       return [];
     }
 
@@ -109,7 +109,7 @@ function findConnectedVideoFrameSource(
     ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
     : undefined;
 
-  return sourceNode?.type === 'imageGen' ? sourceNode : undefined;
+  return isVideoFrameImageSource(sourceNode) ? sourceNode : undefined;
 }
 
 function findConnectedVideoSource(
@@ -135,4 +135,8 @@ function findConnectedVideoSource(
   return sourceNode && (sourceNode.type === 'videoGen' || sourceNode.type === 'composition')
     ? sourceNode
     : undefined;
+}
+
+function isVideoFrameImageSource(node: AppNode | undefined): node is AppNode {
+  return node?.type === 'imageGen' || node?.type === 'cropImageNode';
 }

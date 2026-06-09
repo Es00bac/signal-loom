@@ -13,3 +13,22 @@ export function withFlowNodeInteractionClasses(className = ''): string {
 
   return Array.from(classNames).join(' ');
 }
+
+export function shouldOpenNodeTitleContextMenu(input: {
+  nodeSelected: boolean;
+  target: EventTarget | null;
+}): boolean {
+  if (input.nodeSelected) {
+    return false;
+  }
+
+  return !isNativeNodeContextMenuTarget(input.target);
+}
+
+export function isNativeNodeContextMenuTarget(target: EventTarget | null): boolean {
+  if (typeof Element === 'undefined' || !(target instanceof Element)) {
+    return false;
+  }
+
+  return Boolean(target.closest('input, textarea, select, button, a, [contenteditable="true"], .react-flow__handle'));
+}

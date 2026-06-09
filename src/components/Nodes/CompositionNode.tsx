@@ -15,6 +15,7 @@ import {
 import { buildDownloadFilename, downloadAsset } from '../../lib/downloadAsset';
 import { EXPORT_BASENAME } from '../../lib/brand';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
+import { assignVariableToResultAttempt } from '../../lib/flowVariables';
 import {
   COMPOSITION_AUDIO_HANDLES,
   COMPOSITION_VIDEO_HANDLE,
@@ -94,7 +95,8 @@ function CompositionNodeComponent({ id, data }: AppNodeProps) {
     }
   }, [connectedAudioTracks, data, visibleAudioTrackCount]);
 
-  const previewUrl = data.result ?? connectedVideo?.url;
+  const hasPackageResult = data.resultType === 'package';
+  const previewUrl = hasPackageResult ? connectedVideo?.url : data.result ?? connectedVideo?.url;
   const connectedVideoDuration = connectedVideo ? durations[connectedVideo.nodeId] ?? 0 : 0;
   const videoAudioSettings = getCompositionTrackSettings(data, COMPOSITION_VIDEO_HANDLE);
 
@@ -230,6 +232,7 @@ function CompositionNodeComponent({ id, data }: AppNodeProps) {
       isRunning={data.isRunning}
       error={data.error}
       statusMessage={data.statusMessage}
+      retryState={data.retryState}
       onToggleCollapsed={() => data.onChange?.('collapsed', !isCollapsed)}
       footerActions={
         <>
@@ -248,6 +251,7 @@ function CompositionNodeComponent({ id, data }: AppNodeProps) {
     >
       <AttemptHistory
         attempts={data.resultHistory}
+        onAssignVariable={(attemptId, variableName) => data.onChange?.('resultHistory', assignVariableToResultAttempt(data.resultHistory, attemptId, variableName))}
         onSelectAttempt={data.onSelectAttempt}
         selectedAttemptId={data.selectedResultId}
       />
@@ -576,6 +580,10 @@ function findConnectedMedia(
   const sourceNode = nodes.find((node) => node.id === edge.source);
 
   if (!sourceNode || !acceptedTypes.includes(sourceNode.type)) {
+    return undefined;
+  }
+
+  if (sourceNode.type === 'composition' && sourceNode.data.resultType === 'package') {
     return undefined;
   }
 

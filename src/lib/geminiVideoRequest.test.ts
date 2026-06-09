@@ -19,7 +19,7 @@ describe('buildGeminiVideoRequest', () => {
     expect(request.parameters?.resolution).toBe('720p');
   });
 
-  it('serializes negative prompts and batch counts when supplied', () => {
+  it('serializes negative prompts and sample counts when supplied', () => {
     const request = buildGeminiVideoRequest(
       {
         prompt: 'cinematic city flythrough',
@@ -34,10 +34,11 @@ describe('buildGeminiVideoRequest', () => {
     );
 
     expect(request.parameters?.negativePrompt).toBe('blur, low detail');
-    expect(request.parameters?.sampleCount).toBe(3);
+    expect(request.parameters?.sampleCount).toBe(1);
+    expect(request.parameters?.personGeneration).toBe('allow_all');
   });
 
-  it('maps interpolation inputs onto REST image and lastFrame fields', () => {
+  it('maps interpolation inputs onto the Gemini video MLDev image fields', () => {
     const request = buildGeminiVideoRequest(
       {
         prompt: 'looping bear prompt',
@@ -58,13 +59,14 @@ describe('buildGeminiVideoRequest', () => {
     );
 
     expect(request.instances[0].image).toEqual({
-      mimeType: 'image/png',
       bytesBase64Encoded: 'AAA',
+      mimeType: 'image/png',
     });
     expect(request.instances[0].lastFrame).toEqual({
-      mimeType: 'image/png',
       bytesBase64Encoded: 'BBB',
+      mimeType: 'image/png',
     });
+    expect(request.parameters?.personGeneration).toBe('allow_adult');
   });
 
   it('maps reference-image guidance to the REST referenceImages shape', () => {
@@ -99,20 +101,21 @@ describe('buildGeminiVideoRequest', () => {
     expect(request.instances[0].referenceImages).toEqual([
       {
         image: {
-          mimeType: 'image/png',
           bytesBase64Encoded: 'AAA',
+          mimeType: 'image/png',
         },
         referenceType: 'asset',
       },
       {
         image: {
-          mimeType: 'image/png',
           bytesBase64Encoded: 'BBB',
+          mimeType: 'image/png',
         },
         referenceType: 'style',
       },
     ]);
     expect(request.parameters?.seed).toBe(42);
+    expect(request.parameters?.personGeneration).toBe('allow_adult');
   });
 
   it('maps video extension to the documented REST video field', () => {
@@ -135,5 +138,6 @@ describe('buildGeminiVideoRequest', () => {
       encodedVideo: 'CCC',
       encoding: 'video/mp4',
     });
+    expect(request.parameters?.personGeneration).toBe('allow_all');
   });
 });

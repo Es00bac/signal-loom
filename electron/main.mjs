@@ -80,9 +80,13 @@ const {
 } = automationPathModule;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const PRODUCTION_RENDERER_URL = pathToFileURL(resolve(__dirname, '../dist/index.html')).toString();
 const flowImportWorkerUrl = new URL('./flow-import-worker.mjs', import.meta.url);
 const rendererUrl = process.env.ELECTRON_RENDERER_URL;
 const isDev = Boolean(rendererUrl);
+const DEV_RENDERER_READY_RETRY_COUNT = 12;
+const DEV_RENDERER_READY_RETRY_DELAY_MS = 250;
+const DEV_RENDERER_READY_TIMEOUT_ERROR = 'Renderer URL is unavailable.';
 const appName = 'Signal Loom';
 const execFileAsync = promisify(execFile);
 let mainWindow = null;
@@ -99,6 +103,7 @@ let sourceLibrarySnapshot = createEmptySourceLibrarySnapshot();
 const nativeAssetCapabilityRegistry = createNativeAssetCapabilityRegistry();
 const nativeAssetCapabilityAssetIds = new Map();
 const nativeAssetCapabilityRealPaths = new Map();
+let activeRendererEntryUrl = rendererUrl ?? PRODUCTION_RENDERER_URL;
 
 const WORKSPACE_VIEWS = ['flow', 'editor', 'image', 'paper'];
 const WORKSPACE_LABELS = {
@@ -142,7 +147,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 function getRendererEntryUrl() {
-  return rendererUrl ?? pathToFileURL(resolve(__dirname, '../dist/index.html')).toString();
+  return activeRendererEntryUrl;
 }
 
 function isWorkspaceView(value) {
@@ -159,6 +164,14 @@ function getWorkspaceWindowTitle(workspace) {
   return `${appName} - ${WORKSPACE_LABELS[workspace] ?? 'Workspace'}`;
 }
 
+function canFallbackToProductionRenderer() {
+  if (!isDev || !hasDevRendererUrl(activeRendererEntryUrl) || !isProductionRendererReady()) {
+    return false;
+  }
+
+  return activeRendererEntryUrl !== PRODUCTION_RENDERER_URL;
+}
+
 function getWorkspaceForWindow(window) {
   for (const [workspace, workspaceWindow] of workspaceWindows.entries()) {
     if (workspaceWindow === window) {
@@ -166,6 +179,95 @@ function getWorkspaceForWindow(window) {
     }
   }
   return undefined;
+}
+
+function sleepMs(durationMs) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, durationMs);
+  });
+}
+
+function hasDevRendererUrl(url) {
+  try {
+    const parsedUrl = new URL(url);
+    return parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function isProductionRendererReady() {
+  try {
+    return existsSync(resolve(__dirname, '../dist/index.html'));
+  } catch {
+    return false;
+  }
+}
+
+async function canLoadRendererUrl(url) {
+  return new Promise((resolve) => {
+    const request = net.request({
+      method: 'GET',
+      url,
+      redirect: 'follow',
+    });
+
+    let handled = false;
+    const finish = (value) => {
+      if (handled) return;
+      handled = true;
+      resolve(value);
+    };
+
+    const timer = setTimeout(() => {
+      request.abort();
+      finish(false);
+    }, 800);
+
+    request.on('response', (response) => {
+      clearTimeout(timer);
+      response.resume();
+      response.on('end', () => {
+        finish(response.statusCode === 200);
+      });
+      response.on('error', () => {
+        finish(false);
+      });
+    });
+    request.on('error', () => {
+      clearTimeout(timer);
+      finish(false);
+    });
+    request.end();
+  });
+}
+
+async function resolveRendererEntryUrl() {
+  if (!isDev) {
+    return;
+  }
+
+  const attempts = Array.from({ length: DEV_RENDERER_READY_RETRY_COUNT }, (_, index) => index + 1);
+
+  for (const attempt of attempts) {
+    const isReachable = await canLoadRendererUrl(rendererUrl);
+    if (isReachable) {
+      activeRendererEntryUrl = rendererUrl;
+      return;
+    }
+
+    if (isProductionRendererReady()) {
+      console.warn(
+        `Dev renderer is unavailable (attempt ${attempt}/${attempts.length}); falling back to packaged dist renderer for startup.`,
+      );
+      activeRendererEntryUrl = PRODUCTION_RENDERER_URL;
+      return;
+    }
+
+    await sleepMs(DEV_RENDERER_READY_RETRY_DELAY_MS);
+  }
+
+  throw new Error(`${DEV_RENDERER_READY_TIMEOUT_ERROR} ${rendererUrl} (no local dist fallback available).`);
 }
 
 function getIpcWindow(event) {
@@ -615,6 +717,16 @@ function createWorkspaceWindow(workspace = 'flow') {
     childWindow.once('ready-to-show', focusFloatingPanel);
   });
 
+  workspaceWindow.webContents.on('did-fail-load', (_event, _errorCode, _errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || !canFallbackToProductionRenderer()) {
+      return;
+    }
+
+    console.warn(`Renderer load failed for "${validatedURL}". Falling back to packaged dist renderer.`);
+    activeRendererEntryUrl = PRODUCTION_RENDERER_URL;
+    void workspaceWindow.loadURL(buildWorkspaceRendererUrl(workspace));
+  });
+
   if (applicationMenu) {
     workspaceWindow.setMenu(applicationMenu);
     workspaceWindow.setAutoHideMenuBar(false);
@@ -672,6 +784,11 @@ function installApplicationMenu() {
       window.setMenuBarVisibility(true);
     }
   }
+}
+
+function getInstalledApplicationMenuLabels() {
+  const menu = Menu.getApplicationMenu();
+  return menu?.items.map((item) => item.label).filter(Boolean) ?? [];
 }
 
 function sanitizeKeyboardShortcutsForMenu(shortcuts) {
@@ -2161,6 +2278,26 @@ app.whenReady().then(async () => {
   installProtocolHandlers();
   installIpcHandlers();
   installApplicationMenu();
+  if (process.env.SIGNAL_LOOM_ELECTRON_MENU_SMOKE === '1') {
+    console.log(`Signal Loom application menu: ${getInstalledApplicationMenuLabels().join(', ')}`);
+    app.quit();
+    return;
+  }
+  try {
+    await resolveRendererEntryUrl();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Electron renderer startup resolution failed.';
+    console.error(message);
+
+    if (!isProductionRendererReady()) {
+      dialog.showErrorBox(
+        'Signal Loom startup failed',
+        `${message} Build the Vite app (npm run build) and restart in production mode.`,
+      );
+      app.quit();
+      return;
+    }
+  }
   await loadRememberedStartupProject();
   createWorkspaceWindow('flow');
 

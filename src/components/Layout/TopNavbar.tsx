@@ -37,14 +37,20 @@ import {
 } from '../../lib/standardLibrary';
 
 interface TopNavbarProps {
+  activeFlowSourceBinId?: string;
   onMenuCommand?: (command: NativeMenuCommand, source?: ActivityTrailSource) => void;
+  onActiveFlowSourceBinChange?: (binId: string | undefined) => void;
   flowWorkspaceMetricLabel?: string;
+  sourceBins?: Array<{ id: string; name: string; items: unknown[] }>;
   workspaceView?: WorkspaceView;
 }
 
 export const TopNavbar: React.FC<TopNavbarProps> = ({
+  activeFlowSourceBinId,
   onMenuCommand,
+  onActiveFlowSourceBinChange,
   flowWorkspaceMetricLabel,
+  sourceBins = [],
   workspaceView: workspaceViewOverride,
 }) => {
   const toggleSettings = useSettingsStore((state) => state.toggleSettings);
@@ -109,6 +115,13 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
     isImageWorkspace && activeImageDocument ? activeImageDocument.viewport.zoom : zoom;
   const primaryControlsFlexClass = isPaperWorkspace || workspaceView === 'flow' ? 'shrink-0' : 'flex-1';
   const flowWorkspaceCommands = useFlowWorkspaceCommands();
+  const flowTargetBinId = React.useMemo(() => {
+    if (activeFlowSourceBinId && sourceBins.some((bin) => bin.id === activeFlowSourceBinId)) {
+      return activeFlowSourceBinId;
+    }
+
+    return sourceBins[0]?.id ?? '';
+  }, [activeFlowSourceBinId, sourceBins]);
 
   React.useEffect(() => {
     const updateFullscreenState = () => setFullscreen(Boolean(document.fullscreenElement));
@@ -385,6 +398,27 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             sourceBinVisible={sourceBinVisible}
             sourceMonitorVisible={sourceMonitorVisible}
           />
+        ) : null}
+
+        {workspaceView === 'flow' && sourceBins.length > 0 ? (
+          <label
+            className="theme-control pointer-events-auto flex h-9 shrink-0 items-center gap-2 rounded-full border px-3 text-sm text-cyan-50/80"
+            title="Target source bin"
+          >
+            <Library size={15} />
+            <select
+              aria-label="Target source bin"
+              className="max-w-44 bg-transparent text-sm text-cyan-50 outline-none"
+              onChange={(event) => onActiveFlowSourceBinChange?.(event.target.value || undefined)}
+              value={flowTargetBinId}
+            >
+              {sourceBins.map((bin) => (
+                <option className="bg-[#0d1725] text-cyan-50" key={bin.id} value={bin.id}>
+                  {bin.name} ({bin.items.length})
+                </option>
+              ))}
+            </select>
+          </label>
         ) : null}
 
         <div className="theme-control pointer-events-auto flex shrink-0 items-center gap-2 rounded-full border px-2 py-1.5">

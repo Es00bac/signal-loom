@@ -54,6 +54,7 @@ export interface GeminiVideoRestRequest {
     seed?: number;
     negativePrompt?: string;
     sampleCount?: number;
+    personGeneration?: 'allow_all' | 'allow_adult';
   };
 }
 
@@ -110,6 +111,7 @@ export function buildGeminiVideoRequest(
     aspectRatio: config.aspectRatio,
     durationSeconds: config.durationSeconds,
     resolution: config.videoResolution,
+    personGeneration: resolvePersonGeneration(inputs),
   };
 
   if (typeof config.seed === 'number' && Number.isFinite(config.seed)) {
@@ -123,11 +125,17 @@ export function buildGeminiVideoRequest(
   }
 
   if (typeof config.sampleCount === 'number' && Number.isFinite(config.sampleCount)) {
-    parameters.sampleCount = Math.max(1, Math.min(4, Math.round(config.sampleCount)));
+    parameters.sampleCount = 1;
   }
 
   return {
     instances: [instance],
     parameters,
   };
+}
+
+function resolvePersonGeneration(inputs: GeminiVideoRequestInputs): 'allow_all' | 'allow_adult' {
+  return inputs.startImage || inputs.endImage || (inputs.referenceImages?.length ?? 0) > 0
+    ? 'allow_adult'
+    : 'allow_all';
 }

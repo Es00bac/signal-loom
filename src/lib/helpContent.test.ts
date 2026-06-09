@@ -16,4 +16,25 @@ describe('help content', () => {
     expect(getHelpSection('feature-help').groups.length).toBeGreaterThan(3);
     expect(getHelpSection('project-documentation').summary).toContain('Signal Loom');
   });
+
+  it('documents setup and cost expectations for advanced image providers', () => {
+    const featureHelp = getHelpSection('feature-help');
+    const cloudImageModels = featureHelp.groups.find((group) => group.title === 'Cloud Image Models');
+
+    expect(cloudImageModels?.items.join('\n')).toContain('Black Forest Labs');
+    expect(cloudImageModels?.items.join('\n')).toContain('Stability AI');
+    expect(cloudImageModels?.items.join('\n')).toContain('Local/Open');
+    expect(cloudImageModels?.items.join('\n')).toContain('cost');
+  });
+
+  it('documents Android accelerator setup and Paper print upscale behavior', () => {
+    const featureHelp = getHelpSection('feature-help');
+    const androidHelp = featureHelp.groups.find((group) => group.title === 'Android Accelerator Setup');
+
+    expect(androidHelp?.items.join('\n')).toContain('companion');
+    expect(androidHelp?.items.join('\n')).toContain('/v1/generate');
+    expect(androidHelp?.items.join('\n')).toContain('/v1/upscale');
+    expect(androidHelp?.items.join('\n')).toContain('Auto-upscale');
+    expect(androidHelp?.items.join('\n')).toContain('$0 provider spend');
+  });
 });

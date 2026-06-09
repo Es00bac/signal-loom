@@ -1,0 +1,159 @@
+import { describe, expect, it } from 'vitest';
+import {
+  addFrameToPaperPage,
+  createDefaultPaperDocument,
+  updatePaperDocumentSetup,
+} from './paperDocument';
+import {
+  buildFlattenedPaperPageSourcePayload,
+  buildFlattenedPaperPageSvgExport,
+  buildFlattenedPaperPageSvgExportWithEmbeddedAssets,
+  getPaperPageExportDimensions,
+} from './paperPageFlattenExport';
+
+describe('paperPageFlattenExport', () => {
+  it('builds a selected-page SVG export at document DPI with bleed included', () => {
+    let doc = updatePaperDocumentSetup(createDefaultPaperDocument({
+      title: 'Issue 01',
+      preset: 'custom',
+      dpi: 300,
+    }), {
+      widthMm: 100,
+      heightMm: 150,
+      bleedMm: 5,
+      background: {
+        type: 'linear-gradient',
+        fromColor: '#fef3c7',
+        toColor: '#67e8f9',
+        angleDeg: 135,
+      },
+    });
+    const firstPageId = doc.pages[0].id;
+    doc = addFrameToPaperPage(doc, firstPageId, {
+      kind: 'caption',
+      xMm: 10,
+      yMm: 12,
+      widthMm: 80,
+      heightMm: 20,
+      text: 'First page only',
+    }).document;
+
+    const second = addFrameToPaperPage({ ...doc, pages: [...doc.pages, { ...doc.pages[0], id: 'page-2', pageNumber: 2, frames: [] }] }, 'page-2', {
+      kind: 'caption',
+      xMm: 10,
+      yMm: 12,
+      widthMm: 80,
+      heightMm: 20,
+      text: 'Second page hidden',
+    }).document;
+
+    const exported = buildFlattenedPaperPageSvgExport(second, firstPageId);
+
+    expect(exported.label).toBe('Issue 01 - Page 1');
+    expect(exported.mimeType).toBe('image/svg+xml');
+    expect(exported.widthPx).toBe(1299);
+    expect(exported.heightPx).toBe(1890);
+    expect(exported.svg).toContain('foreignObject');
+    expect(exported.svg).toContain('linear-gradient(135deg, #fef3c7, #67e8f9)');
+    expect(exported.svg).toContain('First page only');
+    expect(exported.svg).not.toContain('Second page hidden');
+    expect(exported.dataUrl).toMatch(/^data:image\/svg\+xml;charset=utf-8,/);
+  });
+
+  it('can build source-library payloads with envelope metadata for flattened page groups', () => {
+    const doc = createDefaultPaperDocument({ title: 'Manga Layout', preset: 'manga-digest', dpi: 600 });
+    const payload = buildFlattenedPaperPageSourcePayload(doc, doc.pages[0].id, {
+      envelopeId: 'paper-envelope-1',
+      envelopeLabel: 'Chapter 3 pages',
+      envelopeIndex: 2,
+    });
+
+    expect(payload).toMatchObject({
+      label: 'Manga Layout - Page 1',
+      kind: 'image',
+      mimeType: 'image/svg+xml',
+      envelopeId: 'paper-envelope-1',
+      envelopeLabel: 'Chapter 3 pages',
+      envelopeIndex: 2,
+    });
+    expect(payload.dataUrl).toContain('data:image/svg+xml');
+  });
+
+  it('can inline placed image assets before building the flattened SVG snapshot', async () => {
+    const doc = createDefaultPaperDocument({ title: 'Inline Assets' });
+    const pageId = doc.pages[0].id;
+    const { document: withImage, frameId } = addFrameToPaperPage(doc, pageId, {
+      kind: 'image',
+      xMm: 10,
+      yMm: 20,
+      widthMm: 40,
+      heightMm: 30,
+      label: 'Blob-backed panel',
+    });
+    const sourceDoc = {
+      ...withImage,
+      pages: withImage.pages.map((page) => page.id === pageId
+        ? {
+            ...page,
+            frames: page.frames.map((frame) => frame.id === frameId
+              ? {
+                  ...frame,
+                  asset: {
+                    sourceBinItemId: 'image-1',
+                    label: 'Blob-backed panel',
+                    kind: 'image' as const,
+                    src: 'blob:http://127.0.0.1:5175/panel-art',
+                    mimeType: 'image/png',
+                  },
+                }
+              : frame),
+          }
+        : page),
+    };
+
+    const exported = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(sourceDoc, pageId, {
+      resolveImageSrc: async (src) => src === 'blob:http://127.0.0.1:5175/panel-art'
+        ? 'data:image/png;base64,embedded'
+        : src,
+    });
+
+    expect(exported.svg).toContain('data:image/png;base64,embedded');
+    expect(exported.svg).not.toContain('blob:http://127.0.0.1:5175/panel-art');
+  });
+
+  it('does not bake screen-only margin guides into flattened page snapshots', () => {
+    const doc = createDefaultPaperDocument({
+      title: 'Clean Snapshot',
+      preset: 'comic-book',
+      dpi: 300,
+    });
+
+    const exported = buildFlattenedPaperPageSvgExport(doc, doc.pages[0].id, {
+      includeBleed: false,
+    });
+
+    expect(exported.svg).not.toContain('.paper-page::after');
+    expect(exported.svg).not.toContain('rgba(6, 182, 212');
+  });
+
+  it('can compute export dimensions with or without bleed', () => {
+    const doc = updatePaperDocumentSetup(createDefaultPaperDocument({ preset: 'custom', dpi: 300 }), {
+      widthMm: 25.4,
+      heightMm: 50.8,
+      bleedMm: 3,
+    });
+
+    expect(getPaperPageExportDimensions(doc, { includeBleed: true })).toMatchObject({
+      widthPx: 371,
+      heightPx: 671,
+      widthMm: 31.4,
+      heightMm: 56.8,
+    });
+    expect(getPaperPageExportDimensions(doc, { includeBleed: false })).toMatchObject({
+      widthPx: 300,
+      heightPx: 600,
+      widthMm: 25.4,
+      heightMm: 50.8,
+    });
+  });
+});

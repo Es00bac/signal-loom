@@ -1,4 +1,9 @@
-import type { ProviderSettings, RenderBackendPreference } from '../types/flow';
+import type {
+  ProviderSettings,
+  RenderBackendPreference,
+  VideoRenderAssemblyManifestData,
+  VideoRenderAssemblyResultData,
+} from '../types/flow';
 import type { NativeRenderExecutionBackend } from './nativeRenderSupport';
 
 interface NativeRenderHealthResponse {
@@ -18,16 +23,37 @@ interface NativeRenderRequestInput {
   base64: string;
 }
 
+export type NativeRenderAssemblyManifest = VideoRenderAssemblyManifestData;
+export type NativeRenderAssemblyResult = VideoRenderAssemblyResultData;
+
 interface NativeRenderRequest {
   outputName: string;
   command: string[];
   backend: NativeRenderExecutionBackend;
   inputs: NativeRenderRequestInput[];
+  assemblyManifest?: NativeRenderAssemblyManifest;
+  returnSegmentArtifacts?: boolean;
 }
 
 interface ResolvedNativeRenderTarget {
   endpoint: string;
   backend: NativeRenderExecutionBackend;
+}
+
+export interface NativeRenderSegmentArtifact {
+  key: string;
+  signature: string;
+  startMs: number;
+  endMs: number;
+  fileName: string;
+  mimeType: string;
+  base64: string;
+}
+
+export interface NativeRenderWithArtifactsResult {
+  blob: Blob;
+  segmentArtifacts: NativeRenderSegmentArtifact[];
+  assemblyResult?: NativeRenderAssemblyResult;
 }
 
 let cachedHealth:
@@ -77,11 +103,13 @@ export async function renderViaLocalNativeFFmpeg({
   outputName,
   command,
   inputs,
+  assemblyManifest,
 }: {
   providerSettings: ProviderSettings;
   outputName: string;
   command: string[];
   inputs: NativeRenderInput[];
+  assemblyManifest?: NativeRenderAssemblyManifest;
 }): Promise<Blob | null> {
   const target = await resolveNativeRenderTarget(providerSettings);
 
@@ -89,16 +117,19 @@ export async function renderViaLocalNativeFFmpeg({
     return null;
   }
 
+  const token = providerSettings.localNativeRenderToken?.trim();
   const response = await fetch(`${target.endpoint}/render`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { 'X-Signal-Loom-Render-Token': token } : {}),
     },
     body: JSON.stringify({
       outputName,
       command,
       backend: target.backend,
       inputs: await Promise.all(inputs.map(serializeRenderInput)),
+      ...(assemblyManifest ? { assemblyManifest } : {}),
     } satisfies NativeRenderRequest),
   });
 
@@ -107,6 +138,88 @@ export async function renderViaLocalNativeFFmpeg({
   }
 
   return await response.blob();
+}
+
+export async function renderViaLocalNativeFFmpegWithArtifacts({
+  providerSettings,
+  outputName,
+  command,
+  inputs,
+  assemblyManifest,
+}: {
+  providerSettings: ProviderSettings;
+  outputName: string;
+  command: string[];
+  inputs: NativeRenderInput[];
+  assemblyManifest?: NativeRenderAssemblyManifest;
+}): Promise<NativeRenderWithArtifactsResult | null> {
+  const target = await resolveNativeRenderTarget(providerSettings);
+
+  if (!target) {
+    return null;
+  }
+
+  const token = providerSettings.localNativeRenderToken?.trim();
+  const response = await fetch(`${target.endpoint}/render`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'X-Signal-Loom-Render-Token': token } : {}),
+    },
+    body: JSON.stringify({
+      outputName,
+      command,
+      backend: target.backend,
+      inputs: await Promise.all(inputs.map(serializeRenderInput)),
+      ...(assemblyManifest ? { assemblyManifest } : {}),
+      returnSegmentArtifacts: true,
+    } satisfies NativeRenderRequest),
+  });
+
+  if (!response.ok) {
+    throw new Error(await extractNativeRenderError(response));
+  }
+
+  const payload = await response.json() as {
+    outputBase64?: unknown;
+    mimeType?: unknown;
+    segmentArtifacts?: unknown;
+    assembledFromSegments?: unknown;
+    assemblyUnavailableReason?: unknown;
+  };
+  const outputBase64 = typeof payload.outputBase64 === 'string' ? payload.outputBase64 : undefined;
+
+  if (!outputBase64) {
+    throw new Error('The local native render service returned an invalid artifact response.');
+  }
+
+  const assemblyResult = normalizeNativeRenderAssemblyResult(payload);
+
+  return {
+    blob: new Blob([base64ToArrayBuffer(outputBase64)], {
+      type: typeof payload.mimeType === 'string' ? payload.mimeType : 'video/mp4',
+    }),
+    segmentArtifacts: normalizeNativeRenderSegmentArtifacts(payload.segmentArtifacts),
+    ...(assemblyResult ? { assemblyResult } : {}),
+  };
+}
+
+function normalizeNativeRenderAssemblyResult(payload: {
+  assembledFromSegments?: unknown;
+  assemblyUnavailableReason?: unknown;
+}): NativeRenderAssemblyResult | undefined {
+  if (typeof payload.assembledFromSegments !== 'boolean') {
+    return undefined;
+  }
+
+  const reason = typeof payload.assemblyUnavailableReason === 'string'
+    ? payload.assemblyUnavailableReason.trim()
+    : '';
+
+  return {
+    assembledFromSegments: payload.assembledFromSegments,
+    ...(reason ? { assemblyUnavailableReason: reason } : {}),
+  };
 }
 
 async function fetchNativeRendererHealth(endpoint: string): Promise<NativeRenderHealthResponse | null> {
@@ -129,7 +242,12 @@ async function fetchNativeRendererHealth(endpoint: string): Promise<NativeRender
       return null;
     }
 
-    const health = (await response.json()) as NativeRenderHealthResponse;
+    const health = normalizeNativeRenderHealth(await response.json());
+
+    if (!health) {
+      return null;
+    }
+
     cachedHealth = {
       endpoint,
       expiresAt: now + 15_000,
@@ -141,6 +259,38 @@ async function fetchNativeRendererHealth(endpoint: string): Promise<NativeRender
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+function normalizeNativeRenderHealth(value: unknown): NativeRenderHealthResponse | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const payload = value as Partial<NativeRenderHealthResponse>;
+
+  if (!Array.isArray(payload.availableBackends)) {
+    return null;
+  }
+
+  const availableBackends = payload.availableBackends.filter(isNativeRenderExecutionBackend);
+
+  if (availableBackends.length === 0) {
+    return null;
+  }
+
+  const recommendedBackend = isNativeRenderExecutionBackend(payload.recommendedBackend)
+    ? payload.recommendedBackend
+    : availableBackends[0];
+
+  return {
+    ok: Boolean(payload.ok),
+    availableBackends,
+    recommendedBackend,
+  };
+}
+
+function isNativeRenderExecutionBackend(value: unknown): value is NativeRenderExecutionBackend {
+  return value === 'cpu' || value === 'amd-vaapi';
 }
 
 function resolveRequestedBackend(
@@ -224,6 +374,52 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   }
 
   return btoa(binary);
+}
+
+function base64ToArrayBuffer(value: string): ArrayBuffer {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+function normalizeNativeRenderSegmentArtifacts(value: unknown): NativeRenderSegmentArtifact[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return [];
+    }
+
+    const artifact = entry as Partial<NativeRenderSegmentArtifact>;
+
+    if (
+      typeof artifact.key !== 'string'
+      || typeof artifact.signature !== 'string'
+      || typeof artifact.startMs !== 'number'
+      || typeof artifact.endMs !== 'number'
+      || typeof artifact.fileName !== 'string'
+      || typeof artifact.base64 !== 'string'
+    ) {
+      return [];
+    }
+
+    return [{
+      key: artifact.key,
+      signature: artifact.signature,
+      startMs: artifact.startMs,
+      endMs: artifact.endMs,
+      fileName: artifact.fileName,
+      mimeType: typeof artifact.mimeType === 'string' ? artifact.mimeType : 'video/mp4',
+      base64: artifact.base64,
+    }];
+  });
 }
 
 function guessMimeType(name: string): string {

@@ -7,11 +7,14 @@ describe('getNodeTheme', () => {
     const nodeTypes: FlowNodeType[] = [
       'textNode',
       'imageGen',
+      'cropImageNode',
       'videoGen',
       'audioGen',
       'settings',
       'composition',
       'sourceBin',
+      'list',
+      'envelope',
       'virtual',
     ];
     const accents = nodeTypes.map((type) => getNodeTheme(type).accentColor);

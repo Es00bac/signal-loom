@@ -41,10 +41,7 @@ export function normalizeVisualKeyframes(clip: VisualKeyframeClip): EditorVisual
     getLegacyVisualStateAtProgress(clip, 0),
     getLegacyVisualStateAtProgress(clip, 100),
   ];
-
-  for (const point of clip.opacityAutomationPoints ?? []) {
-    candidates.push(getLegacyVisualStateAtProgress(clip, point.timePercent));
-  }
+  const explicitKeyframes: EditorVisualKeyframe[] = [];
 
   for (const keyframe of clip.keyframes ?? []) {
     if (!isRecord(keyframe)) {
@@ -52,7 +49,15 @@ export function normalizeVisualKeyframes(clip: VisualKeyframeClip): EditorVisual
     }
 
     const timePercent = normalizeTimePercent(keyframe.timePercent, 0);
-    candidates.push(normalizeVisualKeyframeCandidate(keyframe, getLegacyVisualStateAtProgress(clip, timePercent)));
+    explicitKeyframes.push(normalizeVisualKeyframeCandidate(keyframe, getLegacyVisualStateAtProgress(clip, timePercent)));
+  }
+
+  if (explicitKeyframes.length > 0) {
+    candidates.push(...explicitKeyframes);
+  } else {
+    for (const point of clip.opacityAutomationPoints ?? []) {
+      candidates.push(getLegacyVisualStateAtProgress(clip, point.timePercent));
+    }
   }
 
   return dedupeVisualKeyframes(candidates).sort((left, right) => left.timePercent - right.timePercent);
@@ -196,10 +201,7 @@ export function normalizeAudioKeyframes(clip: AudioKeyframeClip): EditorAudioKey
     getLegacyAudioStateAtProgress(clip, 0),
     getLegacyAudioStateAtProgress(clip, 100),
   ];
-
-  for (const point of clip.volumeAutomationPoints ?? []) {
-    candidates.push(getLegacyAudioStateAtProgress(clip, point.timePercent));
-  }
+  const explicitKeyframes: EditorAudioKeyframe[] = [];
 
   for (const keyframe of clip.volumeKeyframes ?? []) {
     if (!isRecord(keyframe)) {
@@ -207,7 +209,15 @@ export function normalizeAudioKeyframes(clip: AudioKeyframeClip): EditorAudioKey
     }
 
     const timePercent = normalizeTimePercent(keyframe.timePercent, 0);
-    candidates.push(normalizeAudioKeyframeCandidate(keyframe, getLegacyAudioStateAtProgress(clip, timePercent)));
+    explicitKeyframes.push(normalizeAudioKeyframeCandidate(keyframe, getLegacyAudioStateAtProgress(clip, timePercent)));
+  }
+
+  if (explicitKeyframes.length > 0) {
+    candidates.push(...explicitKeyframes);
+  } else {
+    for (const point of clip.volumeAutomationPoints ?? []) {
+      candidates.push(getLegacyAudioStateAtProgress(clip, point.timePercent));
+    }
   }
 
   return dedupeAudioKeyframes(candidates).sort((left, right) => left.timePercent - right.timePercent);

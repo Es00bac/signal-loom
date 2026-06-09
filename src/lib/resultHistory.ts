@@ -21,7 +21,7 @@ export function appendResultAttempt(
   };
 
   return {
-    attempts: [...attempts, nextAttempt],
+    attempts: [...(Array.isArray(attempts) ? attempts : []), nextAttempt],
     selectedAttemptId: nextAttempt.id,
   };
 }
@@ -30,5 +30,9 @@ export function resolveSelectedResultAttempt(
   attempts: NodeResultAttempt[],
   attemptId: string,
 ): NodeResultAttempt | undefined {
+  if (!Array.isArray(attempts)) {
+    return undefined;
+  }
+
   return attempts.find((attempt) => attempt.id === attemptId);
 }

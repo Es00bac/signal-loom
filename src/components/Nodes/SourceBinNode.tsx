@@ -4,6 +4,7 @@ import { BaseNode } from './BaseNode';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 import { useEditorStore } from '../../store/editorStore';
 import { useSourceBinStore } from '../../store/sourceBinStore';
+import { useShallow } from 'zustand/react/shallow';
 import type { AppNodeProps } from '../../types/flow';
 
 const actionButtonClassName = withFlowNodeInteractionClasses(
@@ -12,7 +13,7 @@ const actionButtonClassName = withFlowNodeInteractionClasses(
 
 function SourceBinNodeComponent({ id }: AppNodeProps) {
   const openEditorForSourceBin = useEditorStore((state) => state.openEditorForSourceBin);
-  const items = useSourceBinStore((state) => state.items);
+  const items = useSourceBinStore(useShallow((state) => state.bins.flatMap((bin) => bin.items)));
   const counts = items.reduce<Record<string, number>>((current, item) => {
     current[item.kind] = (current[item.kind] ?? 0) + 1;
     return current;
@@ -36,7 +37,7 @@ function SourceBinNodeComponent({ id }: AppNodeProps) {
       }
     >
       <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-2.5 py-2 text-[11px] text-blue-100">
-        Connect image, video, audio, text, or composition outputs here to feed the shared persistent source library. Multiple source-bin nodes act as parallel entry points into the same saved bin.
+        Connect image, video, audio, text, document, subtitle, package, or composition outputs here to feed the shared persistent source library. Multiple source-bin nodes act as parallel entry points into the same saved bin.
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -44,6 +45,7 @@ function SourceBinNodeComponent({ id }: AppNodeProps) {
         <CountCard label="Video" value={(counts.video ?? 0) + (counts.composition ?? 0)} />
         <CountCard label="Image" value={counts.image ?? 0} />
         <CountCard label="Audio" value={counts.audio ?? 0} />
+        <CountCard label="Docs" value={(counts.document ?? 0) + (counts.subtitle ?? 0) + (counts.package ?? 0)} />
       </div>
 
       <div className="rounded-lg border border-gray-700/60 bg-[#111217]/35 p-2">

@@ -19,6 +19,7 @@ export function buildPaperFrameFlowSourceCommand(
   frame: PaperFrame | undefined,
   sourceItems: readonly SourceBinLibraryItem[],
   targetFlowWorkspaceId?: string,
+  targetBinId?: string,
 ): PaperFrameFlowSourceCommand | undefined {
   const item = getPaperFrameFlowSourceItem(frame, sourceItems);
   if (!item) {
@@ -29,6 +30,7 @@ export function buildPaperFrameFlowSourceCommand(
     type: 'flow-create-source-node',
     targetWorkspace: 'flow',
     targetFlowWorkspaceId,
+    targetBinId,
     item,
   };
 }

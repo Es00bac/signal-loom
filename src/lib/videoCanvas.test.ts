@@ -6,6 +6,9 @@ describe('getAspectRatioValue', () => {
     expect(getAspectRatioValue('16:9')).toBeCloseTo(16 / 9);
     expect(getAspectRatioValue('9:16')).toBeCloseTo(9 / 16);
     expect(getAspectRatioValue('1:1')).toBe(1);
+    expect(getAspectRatioValue('4:3')).toBeCloseTo(4 / 3);
+    expect(getAspectRatioValue('3:4')).toBeCloseTo(3 / 4);
+    expect(getAspectRatioValue('21:9')).toBeCloseTo(21 / 9);
   });
 });
 

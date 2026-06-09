@@ -1,0 +1,390 @@
+import { adjustmentLayerLabel, defaultAdjustmentSettings } from './ImageAdjustmentLayer';
+import type { AdjustmentLayerKind, ImageAdjustmentSettings } from '../../types/imageEditor';
+import { useImageEditorStore } from '../../store/imageEditorStore';
+
+const ADJUSTMENT_LAYER_KINDS: AdjustmentLayerKind[] = [
+  'brightnessContrast',
+  'hueSaturation',
+  'blackWhite',
+  'invert',
+  'exposure',
+  'temperatureTint',
+  'levels',
+  'curves',
+];
+
+export function AdjustmentLayerControls({
+  adjustment,
+  disabled,
+  onChange,
+}: {
+  adjustment: ImageAdjustmentSettings;
+  disabled?: boolean;
+  onChange: (settings: ImageAdjustmentSettings) => void;
+}) {
+  const setKind = (kind: AdjustmentLayerKind) => {
+    onChange(defaultAdjustmentSettings(kind));
+  };
+
+  return (
+    <div className="mt-2 border-t border-cyan-300/10 pt-2">
+      <div className="mb-2 flex items-center gap-2">
+        <label className="w-12 text-cyan-100/40">Adjust</label>
+        <select
+          className="flex-1 rounded border border-cyan-300/10 bg-[#252630] px-1.5 py-0.5 text-xs text-cyan-100/80 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={disabled}
+          onChange={(event) => setKind(event.target.value as AdjustmentLayerKind)}
+          value={adjustment.kind}
+        >
+          {ADJUSTMENT_LAYER_KINDS.map((kind) => (
+            <option key={kind} value={kind}>
+              {adjustmentLayerLabel(kind)}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="space-y-2">
+        {renderAdjustmentSettings(adjustment, disabled, onChange)}
+      </div>
+      <button
+        className="mt-2 w-full rounded border border-cyan-300/10 bg-[#252630] px-2 py-1 text-[11px] font-semibold text-cyan-100/55 hover:border-emerald-300/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+        disabled={disabled}
+        onClick={() => onChange(defaultAdjustmentSettings(adjustment.kind))}
+        type="button"
+      >
+        Reset {adjustmentLayerLabel(adjustment.kind)}
+      </button>
+    </div>
+  );
+}
+
+
+function renderAdjustmentSettings(
+  adjustment: ImageAdjustmentSettings,
+  disabled: boolean | undefined,
+  onChange: (settings: ImageAdjustmentSettings) => void,
+): React.ReactNode {
+  switch (adjustment.kind) {
+    case 'brightnessContrast':
+      return (
+        <>
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Bright"
+            max={150}
+            min={-150}
+            onChange={(brightness) => onChange({ ...adjustment, brightness })}
+            step={1}
+            value={adjustment.brightness}
+          />
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Contrast"
+            max={100}
+            min={-100}
+            onChange={(contrast) => onChange({ ...adjustment, contrast })}
+            step={1}
+            value={adjustment.contrast}
+          />
+        </>
+      );
+    case 'hueSaturation':
+      return (
+        <>
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Hue"
+            max={180}
+            min={-180}
+            onChange={(hue) => onChange({ ...adjustment, hue })}
+            step={1}
+            value={adjustment.hue}
+          />
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Sat"
+            max={100}
+            min={-100}
+            onChange={(saturation) => onChange({ ...adjustment, saturation })}
+            step={1}
+            value={adjustment.saturation}
+          />
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Light"
+            max={100}
+            min={-100}
+            onChange={(lightness) => onChange({ ...adjustment, lightness })}
+            step={1}
+            value={adjustment.lightness}
+          />
+        </>
+      );
+    case 'exposure':
+      return (
+        <>
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Expose"
+            max={3}
+            min={-3}
+            onChange={(exposure) => onChange({ ...adjustment, exposure })}
+            step={0.1}
+            value={adjustment.exposure}
+          />
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Offset"
+            max={0.5}
+            min={-0.5}
+            onChange={(offset) => onChange({ ...adjustment, offset })}
+            step={0.01}
+            value={adjustment.offset}
+          />
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Gamma"
+            max={3}
+            min={0.1}
+            onChange={(gamma) => onChange({ ...adjustment, gamma })}
+            step={0.05}
+            value={adjustment.gamma}
+          />
+        </>
+      );
+    case 'temperatureTint':
+      return (
+        <>
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Temp"
+            max={100}
+            min={-100}
+            onChange={(temperature) => onChange({ ...adjustment, temperature })}
+            step={1}
+            value={adjustment.temperature}
+          />
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Tint"
+            max={100}
+            min={-100}
+            onChange={(tint) => onChange({ ...adjustment, tint })}
+            step={1}
+            value={adjustment.tint}
+          />
+        </>
+      );
+    case 'levels':
+      return (
+        <>
+          <AdjustmentChannelSelect
+            disabled={disabled}
+            value={adjustment.channel}
+            onChange={(channel) => onChange({ ...adjustment, channel })}
+          />
+          <AdjustmentSlider
+            disabled={disabled}
+            label="In B"
+            max={254}
+            min={0}
+            onChange={(inputBlack) => onChange({ ...adjustment, inputBlack })}
+            step={1}
+            value={adjustment.inputBlack}
+          />
+          <AdjustmentSlider
+            disabled={disabled}
+            label="In W"
+            max={255}
+            min={1}
+            onChange={(inputWhite) => onChange({ ...adjustment, inputWhite })}
+            step={1}
+            value={adjustment.inputWhite}
+          />
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Gamma"
+            max={3}
+            min={0.1}
+            onChange={(gamma) => onChange({ ...adjustment, gamma })}
+            step={0.05}
+            value={adjustment.gamma}
+          />
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Out B"
+            max={255}
+            min={0}
+            onChange={(outputBlack) => onChange({ ...adjustment, outputBlack })}
+            step={1}
+            value={adjustment.outputBlack}
+          />
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Out W"
+            max={255}
+            min={0}
+            onChange={(outputWhite) => onChange({ ...adjustment, outputWhite })}
+            step={1}
+            value={adjustment.outputWhite}
+          />
+        </>
+      );
+    case 'curves':
+      return (
+        <>
+          <AdjustmentChannelSelect
+            disabled={disabled}
+            value={adjustment.channel}
+            onChange={(channel) => onChange({ ...adjustment, channel })}
+          />
+          <div className="grid grid-cols-2 gap-1">
+            {adjustment.points.map((point, index) => (
+              <div className="grid grid-cols-2 gap-1" key={index}>
+                <input
+                  className="rounded border border-cyan-300/10 bg-[#10131b] px-1 py-0.5 text-[11px] text-cyan-100/55"
+                  disabled={disabled}
+                  max={255}
+                  min={0}
+                  onChange={(event) => {
+                    const points = adjustment.points.map((candidate, candidateIndex) => candidateIndex === index ? { ...candidate, input: parseFloat(event.target.value) } : candidate);
+                    onChange({ ...adjustment, points });
+                  }}
+                  title="Input"
+                  type="number"
+                  value={point.input}
+                />
+                <input
+                  className="rounded border border-cyan-300/10 bg-[#10131b] px-1 py-0.5 text-[11px] text-cyan-100/55"
+                  disabled={disabled}
+                  max={255}
+                  min={0}
+                  onChange={(event) => {
+                    const points = adjustment.points.map((candidate, candidateIndex) => candidateIndex === index ? { ...candidate, output: parseFloat(event.target.value) } : candidate);
+                    onChange({ ...adjustment, points });
+                  }}
+                  title="Output"
+                  type="number"
+                  value={point.output}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-1">
+            <button className="rounded border border-cyan-300/10 px-1.5 py-1 text-[10px] text-cyan-100/55 hover:text-white" disabled={disabled} onClick={() => onChange({ ...adjustment, points: [...adjustment.points, { input: 128, output: 128 }] })} type="button">Add Point</button>
+            <button className="rounded border border-cyan-300/10 px-1.5 py-1 text-[10px] text-cyan-100/55 hover:text-white" disabled={disabled || adjustment.points.length <= 2} onClick={() => onChange({ ...adjustment, points: adjustment.points.slice(0, -1) })} type="button">Remove Point</button>
+          </div>
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Shadow"
+            max={120}
+            min={-120}
+            onChange={(shadows) => onChange({ ...adjustment, shadows })}
+            step={1}
+            value={adjustment.shadows}
+          />
+          <AdjustmentSlider
+            disabled={disabled}
+            label="Mid"
+            max={120}
+            min={-120}
+            onChange={(midtones) => onChange({ ...adjustment, midtones })}
+            step={1}
+            value={adjustment.midtones}
+          />
+          <AdjustmentSlider
+            disabled={disabled}
+            label="High"
+            max={120}
+            min={-120}
+            onChange={(highlights) => onChange({ ...adjustment, highlights })}
+            step={1}
+            value={adjustment.highlights}
+          />
+        </>
+      );
+    case 'blackWhite':
+      return <p className="text-[11px] text-cyan-100/35">Converts lower visible layers to monochrome.</p>;
+    case 'invert':
+      return <p className="text-[11px] text-cyan-100/35">Inverts lower visible layer colors.</p>;
+  }
+}
+
+export function AdjustmentChannelSelect({
+  disabled,
+  value,
+  onChange,
+}: {
+  disabled?: boolean;
+  value: 'rgb' | 'red' | 'green' | 'blue';
+  onChange: (value: 'rgb' | 'red' | 'green' | 'blue') => void;
+}) {
+  return (
+    <label className="flex items-center gap-2">
+      <span className="w-12 text-cyan-100/40">Channel</span>
+      <select
+        className="flex-1 rounded border border-cyan-300/10 bg-[#252630] px-1.5 py-0.5 text-xs text-cyan-100/80 disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value as 'rgb' | 'red' | 'green' | 'blue')}
+        value={value}
+      >
+        <option value="rgb">RGB</option>
+        <option value="red">Red</option>
+        <option value="green">Green</option>
+        <option value="blue">Blue</option>
+      </select>
+    </label>
+  );
+}
+
+export function AdjustmentSlider({
+  disabled,
+  label,
+  max,
+  min,
+  onChange,
+  step,
+  value,
+}: {
+  disabled?: boolean;
+  label: string;
+  max: number;
+  min: number;
+  onChange: (value: number) => void;
+  step: number;
+  value: number;
+}) {
+  const commit = (nextValue: number) => {
+    if (!Number.isFinite(nextValue)) return;
+    onChange(Math.max(min, Math.min(max, nextValue)));
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <label className="w-12 text-cyan-100/40">{label}</label>
+      <input
+        className="flex-1 cursor-pointer accent-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={disabled}
+        max={max}
+        min={min}
+        onChange={(event) => commit(parseFloat(event.target.value))}
+        onPointerDown={() => useImageEditorStore.getState().setIsDraggingSlider(true)}
+        onPointerUp={() => useImageEditorStore.getState().setIsDraggingSlider(false)}
+        onPointerCancel={() => useImageEditorStore.getState().setIsDraggingSlider(false)}
+        step={step}
+        type="range"
+        value={value}
+      />
+      <input
+        className="w-12 rounded border border-cyan-300/10 bg-[#10131b] px-1 py-0.5 text-right text-[11px] text-cyan-100/55 disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={disabled}
+        max={max}
+        min={min}
+        onChange={(event) => commit(parseFloat(event.target.value))}
+        step={step}
+        type="number"
+        value={Number.isInteger(value) ? value : Number(value.toFixed(2))}
+      />
+    </div>
+  );
+}

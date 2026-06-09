@@ -1,4 +1,11 @@
-import type { EditorClipFilter, EditorStageBlendMode, EditorVisualClip } from '../types/flow';
+import type {
+  EditorClipChromaKeySettings,
+  EditorClipFilter,
+  EditorClipFilterKind,
+  EditorClipStrokeSettings,
+  EditorStageBlendMode,
+  EditorVisualClip,
+} from '../types/flow';
 
 export interface ClipCropSettings {
   cropLeftPercent: number;
@@ -13,13 +20,22 @@ export interface ClipCropSettings {
 export interface ClipEffectSettings extends ClipCropSettings {
   filterStack: EditorClipFilter[];
   blendMode?: EditorStageBlendMode;
+  chromaKey?: EditorClipChromaKeySettings;
+  stroke?: EditorClipStrokeSettings;
 }
 
 export interface ClipEffectDescriptor {
   crop: ClipCropSettings;
   filterStack: EditorClipFilter[];
+  chromaKey?: EditorClipChromaKeySettings;
+  stroke?: EditorClipStrokeSettings;
   cssFilter: string;
   cssBlendMode: EditorStageBlendMode;
+  cssOutline?: {
+    color: string;
+    widthPx: number;
+    opacityPercent: number;
+  };
   ffmpegFilters: string[];
   ffmpegBlendMode?: string;
 }
@@ -34,6 +50,31 @@ const CLIP_BLEND_MODES: EditorStageBlendMode[] = [
   'color-dodge',
   'color-burn',
 ];
+
+const CLIP_FILTER_KINDS: readonly EditorClipFilterKind[] = [
+  'brightness',
+  'contrast',
+  'saturation',
+  'blur',
+  'grayscale',
+  'sepia',
+  'invert',
+  'hue-rotate',
+];
+
+export const DEFAULT_CLIP_CHROMA_KEY: EditorClipChromaKeySettings = {
+  enabled: false,
+  color: '#00ff00',
+  similarityPercent: 20,
+  blendPercent: 6,
+};
+
+export const DEFAULT_CLIP_STROKE: EditorClipStrokeSettings = {
+  enabled: false,
+  color: '#ffffff',
+  widthPx: 0,
+  opacityPercent: 100,
+};
 
 export function normalizeClipCrop(settings: ClipCropSettings): ClipCropSettings {
   let left = clamp(settings.cropLeftPercent, 0, 95);
@@ -73,20 +114,33 @@ export function getClipEffectSettings(clip: EditorVisualClip): ClipEffectSetting
     cropPanXPercent: clip.cropPanXPercent,
     cropPanYPercent: clip.cropPanYPercent,
     cropRotationDeg: clip.cropRotationDeg,
-    filterStack: clip.filterStack,
+    filterStack: normalizeClipFilterStack(clip.filterStack),
     blendMode: normalizeClipBlendMode(clip.blendMode),
+    chromaKey: normalizeClipChromaKey(clip.chromaKey),
+    stroke: normalizeClipStroke(clip.stroke),
   };
 }
 
 export function buildClipEffectDescriptor(settings: ClipEffectSettings): ClipEffectDescriptor {
-  const filterStack = settings.filterStack ?? [];
+  const filterStack = normalizeClipFilterStack(settings.filterStack);
+  const chromaKey = normalizeClipChromaKey(settings.chromaKey);
+  const stroke = normalizeClipStroke(settings.stroke);
 
   return {
     crop: normalizeClipCrop(settings),
     filterStack,
+    chromaKey,
+    stroke,
     cssFilter: buildCssClipFilter(filterStack),
     cssBlendMode: buildCssClipBlendMode(settings.blendMode),
-    ffmpegFilters: buildFFmpegClipEffectFilters(settings),
+    cssOutline: stroke.enabled && stroke.widthPx > 0
+      ? {
+          color: stroke.color,
+          widthPx: stroke.widthPx,
+          opacityPercent: stroke.opacityPercent,
+        }
+      : undefined,
+    ffmpegFilters: buildFFmpegClipEffectFilters({ ...settings, chromaKey, filterStack, stroke }),
     ffmpegBlendMode: mapClipBlendModeToFFmpeg(settings.blendMode),
   };
 }
@@ -103,6 +157,51 @@ export function normalizeClipBlendMode(value: unknown): EditorStageBlendMode {
 
 export function getClipBlendModes(): EditorStageBlendMode[] {
   return [...CLIP_BLEND_MODES];
+}
+
+export function getClipFilterKinds(): EditorClipFilterKind[] {
+  return [...CLIP_FILTER_KINDS];
+}
+
+export function normalizeClipFilterStack(value: unknown): EditorClipFilter[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((filter) => {
+    if (!isRecord(filter) || typeof filter.id !== 'string' || !CLIP_FILTER_KINDS.includes(filter.kind as EditorClipFilterKind)) {
+      return [];
+    }
+
+    return [{
+      id: filter.id,
+      kind: filter.kind as EditorClipFilterKind,
+      amount: normalizeClipFilterAmount(filter.kind as EditorClipFilterKind, filter.amount),
+      enabled: typeof filter.enabled === 'boolean' ? filter.enabled : true,
+    }];
+  });
+}
+
+export function normalizeClipChromaKey(value: unknown): EditorClipChromaKeySettings {
+  const input = isRecord(value) ? value : {};
+
+  return {
+    enabled: typeof input.enabled === 'boolean' ? input.enabled : DEFAULT_CLIP_CHROMA_KEY.enabled,
+    color: normalizeColor(input.color, DEFAULT_CLIP_CHROMA_KEY.color),
+    similarityPercent: clamp(input.similarityPercent, 0, 100),
+    blendPercent: clamp(input.blendPercent, 0, 100),
+  };
+}
+
+export function normalizeClipStroke(value: unknown): EditorClipStrokeSettings {
+  const input = isRecord(value) ? value : {};
+
+  return {
+    enabled: typeof input.enabled === 'boolean' ? input.enabled : DEFAULT_CLIP_STROKE.enabled,
+    color: normalizeColor(input.color, DEFAULT_CLIP_STROKE.color),
+    widthPx: clamp(input.widthPx, 0, 80),
+    opacityPercent: clamp(input.opacityPercent, 0, 100),
+  };
 }
 
 export function buildCssClipBlendMode(value: unknown): EditorStageBlendMode {
@@ -132,6 +231,8 @@ export function mapClipBlendModeToFFmpeg(value: unknown): string | undefined {
 
 export function buildFFmpegClipEffectFilters(settings: ClipEffectSettings): string[] {
   const crop = normalizeClipCrop(settings);
+  const chromaKey = normalizeClipChromaKey(settings.chromaKey);
+  const stroke = normalizeClipStroke(settings.stroke);
   const filters: string[] = [];
   const widthPercent = (100 - crop.cropLeftPercent - crop.cropRightPercent) / 100;
   const heightPercent = (100 - crop.cropTopPercent - crop.cropBottomPercent) / 100;
@@ -159,7 +260,11 @@ export function buildFFmpegClipEffectFilters(settings: ClipEffectSettings): stri
     filters.push(`rotate='${(crop.cropRotationDeg * Math.PI / 180).toFixed(6)}':c=none:ow=rotw(iw):oh=roth(ih)`);
   }
 
-  for (const filter of settings.filterStack.filter((item) => item.enabled)) {
+  if (chromaKey.enabled) {
+    filters.push(`chromakey=${formatFFmpegHexColor(chromaKey.color)}:${(chromaKey.similarityPercent / 100).toFixed(4)}:${(chromaKey.blendPercent / 100).toFixed(4)}`);
+  }
+
+  for (const filter of normalizeClipFilterStack(settings.filterStack).filter((item) => item.enabled)) {
     if (filter.kind === 'brightness') {
       filters.push(`eq=brightness=${(filter.amount / 100).toFixed(4)}`);
     } else if (filter.kind === 'contrast') {
@@ -170,7 +275,17 @@ export function buildFFmpegClipEffectFilters(settings: ClipEffectSettings): stri
       filters.push(`boxblur=${Math.max(0, filter.amount / 10).toFixed(2)}:1`);
     } else if (filter.kind === 'grayscale') {
       filters.push('format=gray,format=rgba');
+    } else if (filter.kind === 'sepia') {
+      filters.push('colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131');
+    } else if (filter.kind === 'invert') {
+      filters.push('negate=negate_alpha=0');
+    } else if (filter.kind === 'hue-rotate') {
+      filters.push(`hue=h='${filter.amount.toFixed(4)}'`);
     }
+  }
+
+  if (stroke.enabled && stroke.widthPx > 0 && stroke.opacityPercent > 0) {
+    filters.push(`drawbox=x=0:y=0:w=iw:h=ih:color=${formatFFmpegHexColor(stroke.color)}@${(stroke.opacityPercent / 100).toFixed(4)}:t=${stroke.widthPx}`);
   }
 
   return filters;
@@ -198,14 +313,26 @@ export function buildCssClipFilter(filters: EditorClipFilter[]): string {
       return [`grayscale(${formatCssNumber(Math.max(0, Math.min(1, filter.amount / 100)))})`];
     }
 
+    if (filter.kind === 'sepia') {
+      return [`sepia(${formatCssNumber(Math.max(0, Math.min(1, filter.amount / 100)))})`];
+    }
+
+    if (filter.kind === 'invert') {
+      return [`invert(${formatCssNumber(Math.max(0, Math.min(1, filter.amount / 100)))})`];
+    }
+
+    if (filter.kind === 'hue-rotate') {
+      return [`hue-rotate(${formatCssNumber(filter.amount)}deg)`];
+    }
+
     return [];
   });
 
   return parts.join(' ');
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, Math.round(value)));
+function clamp(value: unknown, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(typeof value === 'number' && Number.isFinite(value) ? value : min)));
 }
 
 function clampFloat(value: number, min: number, max: number): number {
@@ -214,4 +341,38 @@ function clampFloat(value: number, min: number, max: number): number {
 
 function formatCssNumber(value: number): string {
   return Number(value.toFixed(4)).toString();
+}
+
+function normalizeClipFilterAmount(kind: EditorClipFilterKind, value: unknown): number {
+  if (kind === 'hue-rotate') {
+    return clamp(value, -180, 180);
+  }
+
+  if (kind === 'blur' || kind === 'grayscale' || kind === 'sepia' || kind === 'invert') {
+    return clamp(value, 0, 100);
+  }
+
+  return clamp(value, -100, 100);
+}
+
+function formatFFmpegHexColor(color: string): string {
+  return `0x${normalizeColor(color, '#000000').slice(1).toLowerCase()}`;
+}
+
+function normalizeColor(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim().toLowerCase();
+  const named: Record<string, string> = {
+    green: '#00ff00',
+    blue: '#0000ff',
+    red: '#ff0000',
+    black: '#000000',
+    white: '#ffffff',
+  };
+  if (named[trimmed]) return named[trimmed];
+  return /^#[0-9a-f]{6}$/i.test(trimmed) ? trimmed : fallback;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }

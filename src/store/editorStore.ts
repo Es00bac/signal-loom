@@ -5,6 +5,7 @@ import type { WorkspaceView } from '../types/flow';
 export interface EditorWorkspaceSnapshot {
   workspaceView: WorkspaceView;
   activeSourceBinId?: string;
+  activeFlowSourceBinId?: string;
   activeCompositionId?: string;
   selectedSourceItemId?: string;
   selectedVisualClipId?: string;
@@ -27,6 +28,7 @@ interface EditorState extends EditorWorkspaceSnapshot {
   setWorkspaceView: (view: WorkspaceView) => void;
   toggleWorkspaceView: () => void;
   setActiveSourceBinId: (id: string | undefined) => void;
+  setActiveFlowSourceBinId: (id: string | undefined) => void;
   setActiveCompositionId: (id: string | undefined) => void;
   setSelectedSourceItemId: (id: string | undefined) => void;
   setSelectedVisualClipId: (id: string | undefined) => void;
@@ -68,28 +70,60 @@ const DEFAULT_EDITOR_LAYOUT: Pick<
   inspectorVisible: true,
   sourceBinVisible: true,
   sourceMonitorWidth: 320,
-  inspectorWidth: 280,
-  sourceBinWidth: 300,
+  inspectorWidth: 320,
+  sourceBinWidth: 280,
   monitorSplitPercent: 50,
-  monitorSectionHeight: 560,
+  monitorSectionHeight: 400,
   timelineVisualTrackHeight: 84,
   timelineAudioTrackHeight: 64,
 };
 
+const WORKSPACE_VIEWS: readonly WorkspaceView[] = ['flow', 'editor', 'image', 'paper'];
+const SOURCE_BIN_TABS: readonly EditorWorkspaceSnapshot['sourceBinTab'][] = ['media', 'editorAssets'];
+
 function clampPanelWidth(width: number, min: number, max: number): number {
+  if (!Number.isFinite(width)) return min;
   return Math.max(min, Math.min(max, Math.round(width)));
 }
 
 function clampPercent(percent: number, min: number, max: number): number {
+  if (!Number.isFinite(percent)) return min;
   return Math.max(min, Math.min(max, Math.round(percent)));
 }
 
 function clampPanelHeight(height: number, min: number, max: number): number {
+  if (!Number.isFinite(height)) return min;
   return Math.max(min, Math.min(max, Math.round(height)));
 }
 
 function clampTimelineTrackHeight(height: number, min: number, max: number): number {
+  if (!Number.isFinite(height)) return min;
   return Math.max(min, Math.min(max, Math.round(height)));
+}
+
+export function sanitizeEditorWorkspaceSnapshot(snapshot: unknown): EditorWorkspaceSnapshot {
+  const input = isRecord(snapshot) ? snapshot : {};
+  return {
+    workspaceView: isWorkspaceView(input.workspaceView) ? input.workspaceView : 'flow',
+    activeSourceBinId: optionalString(input.activeSourceBinId),
+    activeFlowSourceBinId: optionalString(input.activeFlowSourceBinId),
+    activeCompositionId: optionalString(input.activeCompositionId),
+    selectedSourceItemId: optionalString(input.selectedSourceItemId),
+    selectedVisualClipId: optionalString(input.selectedVisualClipId),
+    selectedAudioClipId: optionalString(input.selectedAudioClipId),
+    sourceBinTab: isSourceBinTab(input.sourceBinTab) ? input.sourceBinTab : DEFAULT_EDITOR_LAYOUT.sourceBinTab,
+    sourceMonitorVisible: booleanOr(input.sourceMonitorVisible, DEFAULT_EDITOR_LAYOUT.sourceMonitorVisible),
+    programMonitorVisible: booleanOr(input.programMonitorVisible, DEFAULT_EDITOR_LAYOUT.programMonitorVisible),
+    inspectorVisible: booleanOr(input.inspectorVisible, DEFAULT_EDITOR_LAYOUT.inspectorVisible),
+    sourceBinVisible: booleanOr(input.sourceBinVisible, DEFAULT_EDITOR_LAYOUT.sourceBinVisible),
+    sourceMonitorWidth: clampPanelWidth(numberOr(input.sourceMonitorWidth, DEFAULT_EDITOR_LAYOUT.sourceMonitorWidth), 260, 560),
+    inspectorWidth: clampPanelWidth(numberOr(input.inspectorWidth, DEFAULT_EDITOR_LAYOUT.inspectorWidth), 260, 560),
+    sourceBinWidth: clampPanelWidth(numberOr(input.sourceBinWidth, DEFAULT_EDITOR_LAYOUT.sourceBinWidth), 240, 520),
+    monitorSplitPercent: clampPercent(numberOr(input.monitorSplitPercent, DEFAULT_EDITOR_LAYOUT.monitorSplitPercent), 30, 70),
+    monitorSectionHeight: clampPanelHeight(numberOr(input.monitorSectionHeight, DEFAULT_EDITOR_LAYOUT.monitorSectionHeight), 220, 900),
+    timelineVisualTrackHeight: clampTimelineTrackHeight(numberOr(input.timelineVisualTrackHeight, DEFAULT_EDITOR_LAYOUT.timelineVisualTrackHeight), 60, 220),
+    timelineAudioTrackHeight: clampTimelineTrackHeight(numberOr(input.timelineAudioTrackHeight, DEFAULT_EDITOR_LAYOUT.timelineAudioTrackHeight), 44, 220),
+  };
 }
 
 export const useEditorStore = create<EditorState>()(
@@ -97,6 +131,7 @@ export const useEditorStore = create<EditorState>()(
     (set, get) => ({
       workspaceView: 'flow',
       activeSourceBinId: undefined,
+      activeFlowSourceBinId: undefined,
       activeCompositionId: undefined,
       selectedSourceItemId: undefined,
       selectedVisualClipId: undefined,
@@ -104,10 +139,14 @@ export const useEditorStore = create<EditorState>()(
       ...DEFAULT_EDITOR_LAYOUT,
       setWorkspaceView: (workspaceView) => set({ workspaceView }),
       toggleWorkspaceView: () =>
-        set((state) => ({
-          workspaceView: state.workspaceView === 'flow' ? 'editor' : 'flow',
-        })),
+        set((state) => {
+          const views: WorkspaceView[] = ['flow', 'editor', 'image', 'paper'];
+          const currentIndex = views.indexOf(state.workspaceView);
+          const nextIndex = (currentIndex + 1) % views.length;
+          return { workspaceView: views[nextIndex] };
+        }),
       setActiveSourceBinId: (activeSourceBinId) => set({ activeSourceBinId }),
+      setActiveFlowSourceBinId: (activeFlowSourceBinId) => set({ activeFlowSourceBinId }),
       setActiveCompositionId: (activeCompositionId) => set({ activeCompositionId }),
       setSelectedSourceItemId: (selectedSourceItemId) => set({ selectedSourceItemId }),
       setSelectedVisualClipId: (selectedVisualClipId) => set({ selectedVisualClipId }),
@@ -155,6 +194,7 @@ export const useEditorStore = create<EditorState>()(
         return {
           workspaceView: state.workspaceView,
           activeSourceBinId: state.activeSourceBinId,
+          activeFlowSourceBinId: state.activeFlowSourceBinId,
           activeCompositionId: state.activeCompositionId,
           selectedSourceItemId: state.selectedSourceItemId,
           selectedVisualClipId: state.selectedVisualClipId,
@@ -174,57 +214,38 @@ export const useEditorStore = create<EditorState>()(
         };
       },
       restoreWorkspaceSnapshot: (snapshot) =>
-        set({
-          workspaceView: snapshot?.workspaceView ?? 'flow',
-          activeSourceBinId: snapshot?.activeSourceBinId,
-          activeCompositionId: snapshot?.activeCompositionId,
-          selectedSourceItemId: snapshot?.selectedSourceItemId,
-          selectedVisualClipId: snapshot?.selectedVisualClipId,
-          selectedAudioClipId: snapshot?.selectedAudioClipId,
-          sourceBinTab: snapshot?.sourceBinTab ?? DEFAULT_EDITOR_LAYOUT.sourceBinTab,
-          sourceMonitorVisible: snapshot?.sourceMonitorVisible ?? DEFAULT_EDITOR_LAYOUT.sourceMonitorVisible,
-          programMonitorVisible: snapshot?.programMonitorVisible ?? DEFAULT_EDITOR_LAYOUT.programMonitorVisible,
-          inspectorVisible: snapshot?.inspectorVisible ?? DEFAULT_EDITOR_LAYOUT.inspectorVisible,
-          sourceBinVisible: snapshot?.sourceBinVisible ?? DEFAULT_EDITOR_LAYOUT.sourceBinVisible,
-          sourceMonitorWidth: clampPanelWidth(
-            snapshot?.sourceMonitorWidth ?? DEFAULT_EDITOR_LAYOUT.sourceMonitorWidth,
-            260,
-            560,
-          ),
-          inspectorWidth: clampPanelWidth(
-            snapshot?.inspectorWidth ?? DEFAULT_EDITOR_LAYOUT.inspectorWidth,
-            260,
-            560,
-          ),
-          sourceBinWidth: clampPanelWidth(
-            snapshot?.sourceBinWidth ?? DEFAULT_EDITOR_LAYOUT.sourceBinWidth,
-            240,
-            520,
-          ),
-          monitorSplitPercent: clampPercent(
-            snapshot?.monitorSplitPercent ?? DEFAULT_EDITOR_LAYOUT.monitorSplitPercent,
-            30,
-            70,
-          ),
-          monitorSectionHeight: clampPanelHeight(
-            snapshot?.monitorSectionHeight ?? DEFAULT_EDITOR_LAYOUT.monitorSectionHeight,
-            220,
-            900,
-          ),
-          timelineVisualTrackHeight: clampTimelineTrackHeight(
-            snapshot?.timelineVisualTrackHeight ?? DEFAULT_EDITOR_LAYOUT.timelineVisualTrackHeight,
-            60,
-            220,
-          ),
-          timelineAudioTrackHeight: clampTimelineTrackHeight(
-            snapshot?.timelineAudioTrackHeight ?? DEFAULT_EDITOR_LAYOUT.timelineAudioTrackHeight,
-            44,
-            220,
-          ),
-        }),
+        set(sanitizeEditorWorkspaceSnapshot(snapshot)),
     }),
     {
       name: 'flow-editor-workspace',
+      merge: (persisted, current) => ({
+        ...current,
+        ...sanitizeEditorWorkspaceSnapshot(persisted),
+      }),
     },
   ),
 );
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function booleanOr(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function isWorkspaceView(value: unknown): value is WorkspaceView {
+  return typeof value === 'string' && WORKSPACE_VIEWS.includes(value as WorkspaceView);
+}
+
+function isSourceBinTab(value: unknown): value is EditorWorkspaceSnapshot['sourceBinTab'] {
+  return typeof value === 'string' && SOURCE_BIN_TABS.includes(value as EditorWorkspaceSnapshot['sourceBinTab']);
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  describeNativeSequencePresetMapping,
   getNativeRenderThreadArgs,
   getNativeSequenceCommandPrefix,
   getNativeSequenceEncoderArgs,
@@ -18,12 +19,14 @@ describe('nativeRenderSupport', () => {
     ]);
   });
 
-  it('uses libx264 for the native CPU sequence encoder path', () => {
-    expect(getNativeSequenceEncoderArgs('cpu')).toEqual([
+  it('maps executable presets to native CPU libx264 options', () => {
+    expect(getNativeSequenceEncoderArgs('cpu', { crf: 18 })).toEqual([
       '-c:v',
       'libx264',
       '-preset',
-      'ultrafast',
+      'medium',
+      '-crf',
+      '18',
       '-pix_fmt',
       'yuv420p',
     ]);
@@ -38,5 +41,16 @@ describe('nativeRenderSupport', () => {
       '-qp',
       '20',
     ]);
+  });
+
+  it('normalizes VAAPI limitations instead of silently ignoring preset intent', () => {
+    const mapping = describeNativeSequencePresetMapping('amd-vaapi', {
+      label: 'Archive High Quality',
+      crf: 18,
+      profile: 'high',
+    });
+
+    expect(mapping.videoCodecArgs).toEqual(['-c:v', 'h264_vaapi', '-qp', '19']);
+    expect(mapping.notes.join(' ')).toContain('normalized to VAAPI QP');
   });
 });
