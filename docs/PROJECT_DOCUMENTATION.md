@@ -1,80 +1,90 @@
 # Signal Loom Project Documentation
 
-Signal Loom is a node-based generative AI media studio with a timeline editor for assembling, animating, and rendering multimedia projects. It runs as both a browser/Vite app and an Electron desktop app. The Electron path adds native file dialogs, KDE Plasma globalmenu integration, and local filesystem workflows while keeping the web build available for remote access.
+Signal Loom is a multi-app AI media suite that runs as a browser app and as an Electron desktop app. It shares one project format and one Source Library across all workspaces so generated and imported assets remain usable without duplicate imports.
 
-## Workspaces
+## Architecture Snapshot
+
+- **Project format**: `.sloom` (JSON-backed project documents), with optional project scratch directories for local media.
+- **Active workspaces**: `Flow`, `Video`, `Image`, `Paper`.
+- **Desktop/runtime integrations**: Native file dialogs, native workspace-window launch, and optional native menu commands from Electron.
+- **Cross-workspace source flow**: Media and envelopes written to the Source Library are synchronized between all workspaces. Flow executions, imported images, editor outputs, and Paper assets stay discoverable without manual re-linking.
+
+## Workspace Suite
 
 ### Flow Workspace
 
-Use the Flow workspace to build media-generation graphs. Nodes can create or import text, images, video, audio, settings, source-bin entries, compositions, and aliases. The source bin is the bridge between generated/imported media and the editor timeline.
+Build prompt chains and multimodal pipelines. Flow is the graph composer and orchestration center.
 
-### Editor Workspace
+What Flow handles:
 
-Use the Editor workspace for manual post-production. It includes source/program monitors, source-bin and editor-assets tabs, visual/audio timeline lanes, clip inspectors, keyframes, crop/filter controls, and render controls.
+- Text, image, video, audio, settings, source-bin, composition, and control nodes.
+- Generation chaining with provider-specific model settings.
+- Source-bin placement and envelope creation for downstream apps.
+- Node-level cost estimation and execution telemetry.
+- Flow multi-workspace support, with workspace-scoped snapshots and source-bin syncing.
 
-## Tutorial
+### Video Workspace
 
-### 1. Create or Open a Project
+Assemble and polish timeline output.
 
-1. Use `File > New Project` or `File > Open`.
-2. In Electron, save native projects as `.sloom` files. Each project automatically uses a sibling `*.signal-loom-scratch` folder for source-bin media.
-3. Use `File > Set Scratch Folder` only when you need a temporary scratch location before the project has its own `.sloom` file.
-4. Switch to the Editor workspace from the titlebar or `View > Editor Workspace`.
+What Video handles:
 
-### 2. Add Media
+- Visual and audio timeline lanes.
+- Source and program monitor control.
+- Clip trimming, cut/split operations, keyframes, transforms, crops, filters, and transitions.
+- Audio volume/level keyframing and stage-object composition.
+- Project-ready render controls, backend selection, and output preferences.
 
-1. Import images, video, or audio into the source bin.
-2. Create text or shape editor assets from the editor-assets tab.
-3. Drag source-bin items into visual or audio lanes.
+### Image Workspace
 
-### 3. Edit the Timeline
+Create and edit raster documents with direct layer-style controls.
 
-1. Select a clip.
-2. Move the red playhead to the desired cut point.
-3. Press `C`, choose `Timeline > Cut Tool`, or click `Cut` to split the selected visual clip at the playhead.
-4. Drag clip edges to trim non-destructively.
-5. Hold `Shift` while scrubbing, cutting, snapping, or trimming to use whole-second steps.
+What Image handles:
 
-### 4. Animate and Finish
+- Document-level layer operations, brush and selection tooling.
+- Masks and region-based edits.
+- Provider-assisted image operations and in-editor generation/switchable operations.
+- Export and save flows that return assets to the shared Source Library.
+- Reusable history and source-bin friendly image-document lifecycle.
 
-1. Select a visual or audio clip.
-2. Move the playhead and press `K` or click `Add Key`.
-3. Adjust transform, opacity, crop, filters, or volume.
-4. Jump between keyframes with `[` and `]`.
-5. Render when the program monitor matches the intended output.
+### Paper Workspace
 
-## Feature Help
+Design page-based content and prepare print/export assets.
 
-### Timeline Tools
+What Paper handles:
 
-- `Select`: move and select clips.
-- `Cut`: split the selected visual clip at the playhead; clicking a visual clip in cut mode also cuts at the playhead.
-- `Slip`: shift source content inside a timed clip without moving the clip itself.
-- `Hand`: pan the timeline viewport.
-- `Snap`: add snap points from the time ruler.
+- Page creation, rulers, guides, grid/snap controls, and spread/document controls.
+- Text and speech/thought bubble workflows.
+- Image frame placement and linked asset workflows from Source Library.
+- PDF/Webcomic export and DTP-oriented output presets.
+- Export/flattening and book-style production paths.
 
-### Text and Shapes
+## Typical Workflow
 
-- Text assets behave like natural text-sized layers, not visible rectangles.
-- Shape assets are separate timeline-backed rectangle layers.
-- Right-click text assets or text clips to edit wording, font, color, size, and effects.
+1. **Create or open a project**
+   - Use `File > New Project` or `File > Open`.
+   - In Electron, native `.sloom` projects are opened through the native project bridge.
+2. **Move between workspaces**
+   - Use the topbar workspace controls or `View` menu to jump between Flow, Video, Image, and Paper.
+   - Project state, workspace snapshots, and Source Library entries remain connected.
+3. **Generate and import assets**
+   - Use Flow nodes or Image/Paper actions to generate media.
+   - Import local files from OS file manager or drag/drop into supported targets.
+4. **Compose finished output**
+   - Finalize layout and keyframe edits in Video.
+   - Finish page composition in Paper.
+   - Export in your target format from the active workspace.
 
-### Crop, Filters, and Transforms
+## Feature Notes
 
-- Crop is non-destructive and affects preview/render only.
-- Pan and rotate media inside the crop boundary without changing source media.
-- Clips can use filters, blend modes, opacity, and keyframed transform animation.
+### Source Library
 
-### Audio
+The Source Library is intentionally shared: generated content from Flow/Image/Paper, manually imported media, and exported outputs are visible in all workspaces.
 
-- Audio lanes support clip volume, per-track volume, waveform previews, and volume keyframes.
-- Video assets can be placed on audio lanes when their audio needs separate timing.
+### Keyboard behavior
 
-### Gaps and Snapping
-
-- Cutting leaves gaps in place.
-- Select a gap and right-click it to fill that gap.
-- Hold `Shift` during timeline operations to snap to whole seconds.
+- Workspace-specific shortcuts resolve to the active app (for example, paper and image tools only act in their matching workspaces).
+- Generic project/edit commands are available across all workspaces via menu and command routes.
 
 ## Keyboard Shortcuts
 
@@ -87,7 +97,7 @@ Use the Editor workspace for manual post-production. It includes source/program 
 - `M`: snap marker tool.
 - `K`: add or update a keyframe.
 - `[ / ]`: jump to previous or next keyframe.
-- `Delete / Backspace`: remove selected clip or stage object.
+- `Delete / Backspace`: remove selected clip, layer, or object.
 - `Ctrl/Cmd + Z`: undo.
 - `Ctrl/Cmd + Shift + Z` or `Ctrl + Y`: redo.
 - `F1` or `Shift + /`: open help.

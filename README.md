@@ -1,6 +1,13 @@
 # Signal Loom
 
-Signal Loom is a local-first AI media workflow studio with a node graph for generation and a timeline editor for finishing. It is designed for building prompt chains, generating media through user-supplied providers, organizing reusable assets, and rendering edited video sequences without handing project files to a hosted editor.
+Signal Loom is a local-first AI media suite with four applications sharing one project model and one source library:
+
+- **Flow**: build generation and orchestration graphs.
+- **Video**: edit timeline sequencing, compositing, keyframes, and rendering.
+- **Image**: perform layer-based image editing and model-driven visual retouching.
+- **Paper**: do page-based publishing and print-ready layout for comics, books, and long-form documents.
+
+The suite runs from the same `.sloom` project and automatically synchronizes media between apps so Flow outputs can be consumed in Image, Paper, or Video without re-importing assets.
 
 The app runs in a normal browser through Vite and also ships as an Electron desktop app with native file dialogs and a KDE Plasma global menu.
 
@@ -17,17 +24,19 @@ The app runs in a normal browser through Vite and also ships as an Electron desk
 </figure>
 
 <figure>
-  <img src="docs/assets/signal-loom-editor.png" alt="Signal Loom editor workspace showing the project source bin, source and program monitors, a sequencer timeline, keyframes, and inspector controls." />
-  <figcaption><strong>Editor workspace.</strong> Assemble source-bin media on a multi-track timeline, tune source/program monitors, and keyframe clip transform and opacity from the inspector.</figcaption>
+  <img src="docs/assets/signal-loom-editor.png" alt="Signal Loom video workspace showing the source/program monitors, timeline, and clip controls." />
+  <figcaption><strong>Video workspace.</strong> Assemble source-bin media on a multi-track timeline, tune source/program monitors, and keyframe clip transform and opacity from the inspector.</figcaption>
 </figure>
 
 ## Features
 
 - Node-based workflow canvas built with React Flow.
 - Prompt, text, image, video, audio, and composition nodes.
+- Layered Image editor with masks, region tools, canvas transforms, multiple export formats, and model-in-the-loop operations.
+- Paper workspace with page grids/rulers/guides, linked-frame placement, comic bubble and speech tooling, and print-ready export options.
 - Timeline editor with source bins, editor assets, text and shape overlays, crop controls, clip cuts, gaps, snapping, keyframes, opacity, volume, and transform animation.
 - Browser and Electron project workflows that can save and reopen `.sloom` project files.
-- Local scratch/project media references so generated and imported assets can be reused across cuts.
+- Shared Source Library and project scratch references so generated/imported assets are reused across all four apps.
 - Optional local native render helper for FFmpeg-backed rendering.
 - Optional remote preview gateway for self-hosted browser access.
 
