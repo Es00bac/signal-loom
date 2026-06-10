@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Signal Loom Dex</string>
+    <string name="title_activity_main">Signal Loom Dex</string>
+    <string name="package_name">com.spac3.signalloomdex</string>
+    <string name="custom_url_scheme">com.spac3.signalloomdex</string>
+</resources>
