@@ -34,7 +34,6 @@ import {
   buildSourceLibraryDisplayRows,
   getSourceBinPreviewKind,
   filterSourceBinsForDisplay,
-  getSourceLibraryDisplayRowHeight,
   resolveSourceBinSidebarPresentation,
   sortSourceBinItemsForDisplay,
 } from '../../lib/sourceBinLayout';
@@ -61,8 +60,6 @@ const SUBTITLE_SOURCE_IMPORT_ACCEPT = getAcceptStringForKinds(['subtitle']);
 const PACKAGE_SOURCE_IMPORT_ACCEPT = getAcceptStringForKinds(['package']);
 const GENERATED_POOL_ROW_HEIGHT = 124;
 const GENERATED_POOL_COLLAPSED_ROW_HEIGHT = 76;
-const SOURCE_LIBRARY_ROW_HEIGHT = 124;
-const SOURCE_LIBRARY_VIRTUALIZATION_ROW_THRESHOLD = 18;
 
 interface FlowSourceBinSidebarProps {
   dockable?: boolean;
@@ -856,7 +853,6 @@ function SourceBinSection({
   const isCollapsed = Boolean(bin.collapsed);
   const orderedItems = useMemo(() => sortSourceBinItemsForDisplay(bin.items), [bin.items]);
   const rows = useMemo(() => buildSourceLibraryDisplayRows(orderedItems), [orderedItems]);
-  const shouldVirtualizeRows = rows.length >= SOURCE_LIBRARY_VIRTUALIZATION_ROW_THRESHOLD;
   const itemCount = bin.items.length;
   const resolveRowKey = (row: SourceLibraryRow) => `${bin.id}:${row.key}`;
 
@@ -946,25 +942,11 @@ function SourceBinSection({
       {!isCollapsed ? (
         <div className="space-y-2 border-t border-gray-700/40 px-3 pb-3 pt-2">
           {orderedItems.length > 0 ? (
-            shouldVirtualizeRows ? (
-              <div className="max-h-[32rem] overflow-hidden" data-source-library-bin-list="">
-                <VirtualizedSourceBinList
-                  className="h-full pr-1"
-                  getItemHeight={(row) => getSourceLibraryDisplayRowHeight(row)}
-                  getItemKey={(row) => resolveRowKey(row)}
-                  initialHeight={512}
-                  items={rows}
-                  rowHeight={SOURCE_LIBRARY_ROW_HEIGHT}
-                  renderRow={(row) => renderSourceLibraryRow(row)}
-                />
+            rows.map((row) => (
+              <div key={resolveRowKey(row)}>
+                {renderSourceLibraryRow(row)}
               </div>
-            ) : (
-              rows.map((row) => (
-                <div key={resolveRowKey(row)}>
-                  {renderSourceLibraryRow(row)}
-                </div>
-              ))
-            )
+            ))
           ) : (
             <div className="rounded-lg border border-dashed border-gray-700/60 bg-[#0d0f15]/50 px-3 py-3 text-center text-[11px] text-gray-500">
               Empty bin — import or generate media to fill it
