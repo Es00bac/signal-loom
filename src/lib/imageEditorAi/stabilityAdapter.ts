@@ -25,7 +25,9 @@ export async function runStabilityInpaint(
   const formData = new FormData();
   formData.append('image', await blobToFile(request.source, 'source.png'));
   if (operation === 'mask-inpaint' || operation === 'erase') {
-    formData.append('mask', await blobToFile(request.mask, 'mask.png'));
+    const { normalizeMaskBlobForProvider } = await import('../imageMask/maskConventions');
+    const normalizedMask = await normalizeMaskBlobForProvider(request.mask, { provider: 'stability', modelId: request.model });
+    formData.append('mask', await blobToFile(normalizedMask, 'mask.png'));
   }
 
   Object.entries(built.fields).forEach(([key, value]) => {

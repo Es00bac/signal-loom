@@ -23,7 +23,9 @@ export async function runAtlasInpaint(
   });
 
   const sourceFile = await blobToFile(request.source, 'source.png');
-  const maskFile = await blobToFile(request.mask, 'mask.png');
+  const { normalizeMaskBlobForProvider } = await import('../imageMask/maskConventions');
+  const normalizedMask = await normalizeMaskBlobForProvider(request.mask, { provider: 'atlas', modelId: model });
+  const maskFile = await blobToFile(normalizedMask, 'mask.png');
 
   const response = await client.images.edit(
     {

@@ -117,3 +117,40 @@ export async function getDataUrlDimensions(dataUrl: string): Promise<{ width: nu
   });
   return { width: img.naturalWidth || img.width, height: img.naturalHeight || img.height };
 }
+
+async function decodeBlobToImageData(blob: Blob): Promise<ImageData> {
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Unable to decode mask blob.'));
+      img.src = url;
+    });
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas 2D context unavailable for mask normalization.');
+    ctx.drawImage(image, 0, 0);
+    return ctx.getImageData(0, 0, width, height);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Normalize a canonical mask Blob (already at document resolution) to a provider's encoding. */
+export async function normalizeMaskBlobForProvider(
+  maskBlob: Blob,
+  opts: { provider: string; modelId?: string },
+): Promise<Blob> {
+  if (!canDecodeImages()) {
+    return maskBlob;
+  }
+  const encoding = maskEncodingForProvider(opts.provider, opts.modelId);
+  const imageData = await decodeBlobToImageData(maskBlob);
+  const transformed = transformMaskPixels(imageData.data, encoding);
+  return encodeToPngBlob(transformed, imageData.width, imageData.height);
+}
