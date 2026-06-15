@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useImageEditorStore } from '../../../store/imageEditorStore';
-import { applyPinch, screenToDoc as screenToDocMath, docToScreen as docToScreenMath } from '../viewport';
+import { screenToDoc as screenToDocMath, docToScreen as docToScreenMath } from '../viewport';
 import type { CompositeRenderer } from '../CompositeRenderer';
 import type { EditorTool } from '../../../types/imageEditor';
 import type { ToolEnv, ToolHandler, Point, Modifiers } from './types';
@@ -184,51 +184,7 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       return { x: event.clientX - rect.left, y: event.clientY - rect.top };
     };
 
-    // Two-finger pinch-zoom + pan. Works regardless of touch-navigation mode:
-    // one finger still draws (pen mode); two fingers always navigate the canvas.
-    const activeTouches = new Map<number, Point>();
-    let pinchActive = false;
-    let lastPinch: { dist: number; midX: number; midY: number } | null = null;
-    const pinchSample = () => {
-      const pts = [...activeTouches.values()];
-      const dx = pts[0].x - pts[1].x;
-      const dy = pts[0].y - pts[1].y;
-      return { dist: Math.hypot(dx, dy), midX: (pts[0].x + pts[1].x) / 2, midY: (pts[0].y + pts[1].y) / 2 };
-    };
-    const cancelActiveTool = () => {
-      const env = buildEnv();
-      if (env) HANDLERS[useImageEditorStore.getState().tool].onCancel?.(env);
-    };
-    const applyPinchStep = () => {
-      if (activeTouches.size < 2 || !lastPinch) return;
-      const sample = pinchSample();
-      const state = useImageEditorStore.getState();
-      const doc = state.documents.find((d) => d.id === state.activeDocId);
-      if (doc) {
-        state.setViewport(doc.id, applyPinch(doc.viewport, lastPinch, sample));
-        rendererRef.current?.requestRender();
-      }
-      lastPinch = sample;
-    };
-
     const onDown = (event: PointerEvent) => {
-      if (event.pointerType === 'touch') {
-        activeTouches.set(event.pointerId, screenPoint(event));
-        if (activeTouches.size >= 2) {
-          if (!pinchActive) {
-            pinchActive = true;
-            cancelActiveTool(); // a single-finger stroke may have started; abort it
-          }
-          try { el.setPointerCapture(event.pointerId); } catch { /* ignore */ }
-          lastPinch = pinchSample();
-          event.preventDefault();
-          return;
-        }
-        if (pinchActive) {
-          event.preventDefault();
-          return;
-        }
-      }
       if (shouldIgnoreImageCanvasToolEvent(event)) return;
       const env = buildEnv();
       if (!env) return;
@@ -238,14 +194,6 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       handler.onPointerDown?.(env, docPoint, modsFrom(event), event);
     };
     const onMove = (event: PointerEvent) => {
-      if (event.pointerType === 'touch' && activeTouches.has(event.pointerId)) {
-        activeTouches.set(event.pointerId, screenPoint(event));
-      }
-      if (pinchActive) {
-        applyPinchStep();
-        event.preventDefault();
-        return;
-      }
       if (shouldIgnoreImageCanvasToolEvent(event)) return;
       const env = buildEnv();
       if (!env) return;
@@ -254,17 +202,6 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       handler.onPointerMove?.(env, docPoint, modsFrom(event), event);
     };
     const onUp = (event: PointerEvent) => {
-      if (event.pointerType === 'touch' && activeTouches.has(event.pointerId)) {
-        activeTouches.delete(event.pointerId);
-        const wasPinching = pinchActive;
-        if (activeTouches.size < 2) lastPinch = null;
-        if (activeTouches.size === 0) pinchActive = false;
-        if (wasPinching) {
-          try { el.releasePointerCapture(event.pointerId); } catch { /* ignore */ }
-          event.preventDefault();
-          return; // part of the two-finger gesture — don't end a drawing stroke
-        }
-      }
       if (shouldIgnoreImageCanvasToolEvent(event)) return;
       const env = buildEnv();
       if (!env) return;

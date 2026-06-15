@@ -13,7 +13,7 @@ import { shouldRouteImagePointerToTouchNavigation } from '../../lib/imageTouchNa
 import { usePaperTouchNavigationAvailabilityDescriptor } from '../../lib/paperTouchNavigation';
 import { CompositeRenderer } from './CompositeRenderer';
 import { bitmapFromUrl, cloneBitmap, createBitmap } from './LayerBitmap';
-import { docToScreen, fitToContainer, panBy, screenToDoc, zoomAround, type Point } from './viewport';
+import { applyPinch, docToScreen, fitToContainer, panBy, screenToDoc, zoomAround, type Point } from './viewport';
 import { getSelection } from './selectionRegistry';
 import { useToolDispatcher } from './tools/dispatcher';
 import type { EditorTool, ImageDocument, ImageLayer, ImageVectorPathPoint, LayerBitmap } from '../../types/imageEditor';
@@ -507,6 +507,21 @@ export function ImageEditorCanvas() {
     let panStart: { x: number; y: number } | null = null;
     let panOrigin: { panX: number; panY: number } | null = null;
     let spaceHeld = false;
+    // Two-finger pinch-zoom + pan: two fingers always navigate (regardless of touch-nav
+    // mode or active tool); one finger keeps its normal behavior. Runs in the capture
+    // phase, ahead of single-finger pan and the drawing dispatcher.
+    const activeTouches = new Map<number, { x: number; y: number }>();
+    let pinching = false;
+    let lastPinch: { dist: number; midX: number; midY: number } | null = null;
+    const pinchSample = () => {
+      const rect = wrapper.getBoundingClientRect();
+      const pts = [...activeTouches.values()];
+      const ax = pts[0].x - rect.left;
+      const ay = pts[0].y - rect.top;
+      const bx = pts[1].x - rect.left;
+      const by = pts[1].y - rect.top;
+      return { dist: Math.hypot(ax - bx, ay - by), midX: (ax + bx) / 2, midY: (ay + by) / 2 };
+    };
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
@@ -523,6 +538,27 @@ export function ImageEditorCanvas() {
     };
     const onDown = (event: PointerEvent) => {
       const state = useImageEditorStore.getState();
+      if (event.pointerType === 'touch') {
+        activeTouches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (activeTouches.size >= 2) {
+          // Second finger down: become a pinch, cancelling any one-finger pan.
+          panning = false;
+          panStart = null;
+          panOrigin = null;
+          pinching = true;
+          lastPinch = pinchSample();
+          try { wrapper.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+          wrapper.style.cursor = 'grabbing';
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        if (pinching) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+      }
       const handToolActive = state.tool === 'hand';
       const touchNavigationActive = shouldRouteImagePointerToTouchNavigation({
         available: imageTouchNavigationAvailability.available,
@@ -543,6 +579,24 @@ export function ImageEditorCanvas() {
       }
     };
     const onMove = (event: PointerEvent) => {
+      if (event.pointerType === 'touch' && activeTouches.has(event.pointerId)) {
+        activeTouches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      }
+      if (pinching) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (activeTouches.size >= 2 && lastPinch) {
+          const state = useImageEditorStore.getState();
+          const doc = state.documents.find((d) => d.id === state.activeDocId);
+          if (doc) {
+            const sample = pinchSample();
+            state.setViewport(doc.id, applyPinch(doc.viewport, lastPinch, sample));
+            rendererRef.current?.requestRender();
+            lastPinch = sample;
+          }
+        }
+        return;
+      }
       if (!panning || !panStart || !panOrigin) return;
       event.preventDefault();
       event.stopPropagation();
@@ -560,6 +614,20 @@ export function ImageEditorCanvas() {
       rendererRef.current?.requestRender();
     };
     const onUp = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') {
+        activeTouches.delete(event.pointerId);
+        if (activeTouches.size < 2) lastPinch = null;
+        if (pinching) {
+          try { wrapper.releasePointerCapture(event.pointerId); } catch { /* ignore */ }
+          if (activeTouches.size === 0) {
+            pinching = false;
+            wrapper.style.cursor = spaceHeld || useImageEditorStore.getState().tool === 'hand' ? 'grab' : '';
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+      }
       if (!panning) return;
       panning = false;
       panStart = null;
