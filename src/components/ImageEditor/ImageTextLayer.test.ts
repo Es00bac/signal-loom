@@ -795,9 +795,9 @@ describe('ImageTextLayer', () => {
     const matrix = describeImageTextTypographySupportMatrix(layers);
 
     expect(matrix.summary).toEqual({
-      ready: 5,
+      ready: 11,
       limited: 5,
-      unsupported: 7,
+      unsupported: 1,
     });
     expect(matrix.capabilities.map((capability) => [capability.id, capability.status])).toEqual([
       ['live-text-editing', 'ready'],
@@ -806,28 +806,27 @@ describe('ImageTextLayer', () => {
       ['style-package-signatures', 'ready'],
       ['text-preview-signatures', 'limited'],
       ['font-fallback-persistence', 'limited'],
-      ['installed-font-browsing', 'unsupported'],
+      ['installed-font-browsing', 'ready'],
       ['opentype-feature-intent', 'limited'],
-      ['advanced-shaping', 'unsupported'],
+      ['advanced-shaping', 'ready'],
       ['find-replace', 'ready'],
       ['readability-diagnostics', 'limited'],
-      ['dictionary-backed-spellcheck', 'unsupported'],
+      ['dictionary-backed-spellcheck', 'ready'],
       ['straight-segment-text-on-path', 'limited'],
-      ['bezier-text-on-path-editing', 'unsupported'],
-      ['vertical-type', 'unsupported'],
-      ['editable-text-warp', 'unsupported'],
+      ['bezier-text-on-path-editing', 'ready'],
+      ['vertical-type', 'ready'],
+      ['editable-text-warp', 'ready'],
       ['native-psd-editable-text-export', 'unsupported'],
     ]);
     expect(matrix.capabilities.find((capability) => capability.id === 'installed-font-browsing')).toMatchObject({
-      implemented: false,
-      blockerCode: 'installed-font-browsing-unsupported',
-      caveats: ['Browser canvas APIs do not provide deterministic installed-font enumeration or install flows.'],
+      implemented: true,
+      caveats: ['Local Font Access is optional; standard stack fallback remains available when native font enumeration is unavailable.'],
     });
     expect(matrix.capabilities.find((capability) => capability.id === 'native-psd-editable-text-export')?.signature).toBe(
       'image-text-typography-capability:v1:{"id":"native-psd-editable-text-export","status":"unsupported","implemented":false,"blockerCode":"native-psd-editable-text-export-unsupported"}',
     );
     expect(matrix.previewSignature).toBe(
-      'image-text-typography-support-matrix:v1:{"layerIds":["title"],"capabilities":[["live-text-editing","ready"],["character-options","ready"],["paragraph-options","ready"],["style-package-signatures","ready"],["text-preview-signatures","limited"],["font-fallback-persistence","limited"],["installed-font-browsing","unsupported"],["opentype-feature-intent","limited"],["advanced-shaping","unsupported"],["find-replace","ready"],["readability-diagnostics","limited"],["dictionary-backed-spellcheck","unsupported"],["straight-segment-text-on-path","limited"],["bezier-text-on-path-editing","unsupported"],["vertical-type","unsupported"],["editable-text-warp","unsupported"],["native-psd-editable-text-export","unsupported"]],"summary":{"ready":5,"limited":5,"unsupported":7}}',
+      'image-text-typography-support-matrix:v1:{"layerIds":["title"],"capabilities":[["live-text-editing","ready"],["character-options","ready"],["paragraph-options","ready"],["style-package-signatures","ready"],["text-preview-signatures","limited"],["font-fallback-persistence","limited"],["installed-font-browsing","ready"],["opentype-feature-intent","limited"],["advanced-shaping","ready"],["find-replace","ready"],["readability-diagnostics","limited"],["dictionary-backed-spellcheck","ready"],["straight-segment-text-on-path","limited"],["bezier-text-on-path-editing","ready"],["vertical-type","ready"],["editable-text-warp","ready"],["native-psd-editable-text-export","unsupported"]],"summary":{"ready":11,"limited":5,"unsupported":1}}',
     );
   });
 
@@ -1159,23 +1158,7 @@ describe('ImageTextLayer', () => {
           reason: 'non-text-or-rasterized-layer',
         },
       ],
-      unsupportedStates: [
-        {
-          feature: 'live-native-font-discovery',
-          status: 'unsupported',
-          reason: 'Browser canvas font resolution cannot enumerate installed native fonts deterministically.',
-        },
-        {
-          feature: 'text-on-path',
-          status: 'unsupported',
-          reason: 'Editable text-on-path layers are not supported by the local text engine.',
-        },
-        {
-          feature: 'spellcheck-dictionaries',
-          status: 'unsupported',
-          reason: 'No local spellcheck dictionaries are bundled for deterministic offline spelling corrections.',
-        },
-      ],
+      unsupportedStates: [],
       previewSignature: 'image-text-find-replace:v1:{"query":"AI","replacement":"Signal","caseSensitive":false,"wholeWord":true,"affectedLayerIds":["title","caption"],"proposals":[["title",2,"Signal poster Signal"],["caption",1,"plain Signal and braid"]],"skippedLayerIds":["pixels"]}',
     });
   });
@@ -1278,23 +1261,7 @@ describe('ImageTextLayer', () => {
         averageWordsPerSentence: 3,
         longestLineLength: 29,
       },
-      unsupportedStates: [
-        {
-          feature: 'live-native-font-discovery',
-          status: 'unsupported',
-          reason: 'Browser canvas font resolution cannot enumerate installed native fonts deterministically.',
-        },
-        {
-          feature: 'text-on-path',
-          status: 'unsupported',
-          reason: 'Editable text-on-path layers are not supported by the local text engine.',
-        },
-        {
-          feature: 'spellcheck-dictionaries',
-          status: 'unsupported',
-          reason: 'No local spellcheck dictionaries are bundled for deterministic offline spelling corrections.',
-        },
-      ],
+      unsupportedStates: [],
       previewSignature: 'image-text-spellcheck-readability:v1:{"affectedLayerIds":["headline"],"readability":{"characterCount":41,"wordCount":6,"sentenceCount":2,"averageWordsPerSentence":3,"longestLineLength":29},"skippedLayerIds":["flattened"]}',
     });
   });
@@ -1527,7 +1494,7 @@ describe('ImageTextLayer', () => {
       previewSignature: 'image-text-find-replace:v1:{"query":"AI","replacement":"Signal","caseSensitive":false,"wholeWord":true,"affectedLayerIds":["title","locked-caption"],"proposals":[["title",1,"Signal title"],["locked-caption",1,"Signal caption"]],"skippedLayerIds":["native-only","pixels"]}',
     });
     expect(readiness.operations.spellcheckReadability).toMatchObject({
-      status: 'limited',
+      status: 'ready',
       affectedLayerIds: ['title', 'locked-caption'],
       readability: {
         characterCount: 19,
@@ -1574,11 +1541,9 @@ describe('ImageTextLayer', () => {
       'native-psd-editable-text-unsupported',
       'missing-raster-preview',
       'native-psd-editable-text-unsupported',
-      'spellcheck-dictionaries-unavailable',
-      'text-on-path-unsupported',
     ]);
     expect(readiness.previewSignature).toBe(
-      'image-text-typography-readiness:v1:{"status":"blocked","layerStatuses":[["title","limited"],["locked-caption","blocked"],["native-only","blocked"],["pixels","blocked"]],"blockerCodes":["locked-layer","non-editable-text-metadata","missing-retained-text"],"warningCodes":["raster-preview-only","font-fallback-stack-recorded","opentype-unsupported-tags-ignored","opentype-feature-caveat","text-warp-rasterized","native-psd-editable-text-unsupported","missing-raster-preview","native-psd-editable-text-unsupported","missing-raster-preview","native-psd-editable-text-unsupported","spellcheck-dictionaries-unavailable","text-on-path-unsupported"],"findReplace":"image-text-find-replace:v1:{\\"query\\":\\"AI\\",\\"replacement\\":\\"Signal\\",\\"caseSensitive\\":false,\\"wholeWord\\":true,\\"affectedLayerIds\\":[\\"title\\",\\"locked-caption\\"],\\"proposals\\":[[\\"title\\",1,\\"Signal title\\"],[\\"locked-caption\\",1,\\"Signal caption\\"]],\\"skippedLayerIds\\":[\\"native-only\\",\\"pixels\\"]}","spellcheckReadability":"image-text-spellcheck-readability:v1:{\\"affectedLayerIds\\":[\\"title\\",\\"locked-caption\\"],\\"readability\\":{\\"characterCount\\":19,\\"wordCount\\":4,\\"sentenceCount\\":1,\\"averageWordsPerSentence\\":4,\\"longestLineLength\\":10},\\"skippedLayerIds\\":[\\"native-only\\",\\"pixels\\"]}"}',
+      'image-text-typography-readiness:v1:{"status":"blocked","layerStatuses":[["title","limited"],["locked-caption","blocked"],["native-only","blocked"],["pixels","blocked"]],"blockerCodes":["locked-layer","non-editable-text-metadata","missing-retained-text"],"warningCodes":["raster-preview-only","font-fallback-stack-recorded","opentype-unsupported-tags-ignored","opentype-feature-caveat","text-warp-rasterized","native-psd-editable-text-unsupported","missing-raster-preview","native-psd-editable-text-unsupported","missing-raster-preview","native-psd-editable-text-unsupported"],"findReplace":"image-text-find-replace:v1:{\\"query\\":\\"AI\\",\\"replacement\\":\\"Signal\\",\\"caseSensitive\\":false,\\"wholeWord\\":true,\\"affectedLayerIds\\":[\\"title\\",\\"locked-caption\\"],\\"proposals\\":[[\\"title\\",1,\\"Signal title\\"],[\\"locked-caption\\",1,\\"Signal caption\\"]],\\"skippedLayerIds\\":[\\"native-only\\",\\"pixels\\"]}","spellcheckReadability":"image-text-spellcheck-readability:v1:{\\"affectedLayerIds\\":[\\"title\\",\\"locked-caption\\"],\\"readability\\":{\\"characterCount\\":19,\\"wordCount\\":4,\\"sentenceCount\\":1,\\"averageWordsPerSentence\\":4,\\"longestLineLength\\":10},\\"skippedLayerIds\\":[\\"native-only\\",\\"pixels\\"]}"}',
     );
   });
 
@@ -1657,7 +1622,7 @@ describe('ImageTextLayer', () => {
       ['style-package-metadata', 'ready'],
       ['text-on-path-caveats', 'limited'],
       ['find-replace-planning', 'ready'],
-      ['spellcheck-readability-planning', 'limited'],
+      ['spellcheck-readability-planning', 'ready'],
       ['stable-signatures', 'ready'],
     ]);
     expect(progress.checks.find((check) => check.id === 'live-edit-readiness')).toMatchObject({
@@ -1688,7 +1653,7 @@ describe('ImageTextLayer', () => {
       evidence: ['Retained straight text path metadata: title'],
       caveats: [
         'Text-on-path exports flatten current glyph layout to pixels; native PSD editable text-on-path remains unsupported.',
-        'Curved Bezier text-on-path editing is not supported.',
+        'Curved Bezier text-on-path editing uses retained cubic controls plus sampled glyph baselines for canvas preview/export.',
       ],
     });
     expect(progress.stableSignatures.checks).toHaveLength(8);
@@ -1743,7 +1708,7 @@ describe('ImageTextLayer', () => {
       ],
     });
     expect(readiness.operations.spellcheckReadability).toMatchObject({
-      status: 'limited',
+      status: 'ready',
       affectedLayerIds: ['headline'],
       readability: {
         characterCount: 14,

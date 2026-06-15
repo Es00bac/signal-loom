@@ -69,7 +69,7 @@ describe('desktop and Android packaging configuration', () => {
 
     expect(buildDesktopPackagingReadinessSummary(packageJson)).toEqual({
       productName: 'Signal Loom',
-      appId: 'com.spac3.signalloom',
+      appId: 'studio.sloom.signalloom',
       workspaceLaunchSurface: 'electron-native-menu',
       platforms: [
         {
@@ -188,7 +188,7 @@ describe('desktop and Android packaging configuration', () => {
     expect(packageJson.scripts['dist:mac:zip']).toBe('npm run build && electron-builder --mac zip');
     expect(packageJson.scripts['icons:mac']).toBe('bash scripts/create-mac-icon.sh');
     expect(packageJson.build).toMatchObject({
-      appId: 'com.spac3.signalloom',
+      appId: 'studio.sloom.signalloom',
       productName: 'Signal Loom',
       win: {
         icon: 'build/icons/icon.ico',

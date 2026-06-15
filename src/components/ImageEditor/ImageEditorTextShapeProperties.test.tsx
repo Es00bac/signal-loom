@@ -215,7 +215,7 @@ describe('TextPanel', () => {
     expect(container.textContent).toContain('Baseline 12px');
     expect(container.textContent).toContain('OpenType intent liga, ss01');
     expect(container.textContent).toContain('Typography support matrix');
-    expect(container.textContent).toContain('Unsupported capabilities 7');
+    expect(container.textContent).toContain('Unsupported capabilities 1');
     expect(container.textContent).toContain('Retained text style is stored as Signal Loom metadata while native PSD editable text layers are not written.');
   });
 

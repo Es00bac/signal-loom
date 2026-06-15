@@ -9,7 +9,7 @@ describe('ImagePhotoshopParity puppet warp row', () => {
       parityEstimate: expect.any(Number),
     });
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'puppet-warp-advanced-warp')?.signalLoom).toContain('no mesh UI');
-    expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'puppet-warp-advanced-warp')?.signalLoom).toContain('perspective warp');
+    expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'puppet-warp-advanced-warp')?.signalLoom).toContain('Perspective Warp');
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'puppet-warp-advanced-warp')?.signalLoom).toContain('deterministic add/move/remove pin mutation helpers');
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'puppet-warp-advanced-warp')?.signalLoom).toContain('non-destructive');
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'puppet-warp-advanced-warp')?.parityEstimate).toBeGreaterThanOrEqual(8);

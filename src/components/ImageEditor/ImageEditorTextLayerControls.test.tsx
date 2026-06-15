@@ -222,7 +222,7 @@ describe('EditableTextLayerControls', () => {
     expect(container.textContent).toContain('ss01');
     expect(container.textContent).toContain('Typography parity checks');
     expect(container.textContent).toContain('Typography support matrix');
-    expect(container.textContent).toContain('Unsupported capabilities 7');
+    expect(container.textContent).toContain('Unsupported capabilities 1');
     expect(container.textContent).toContain('Live edit readiness');
     expect(container.textContent).toContain('OpenType unsupported states');
     expect(container.textContent).toContain('Stable signatures');

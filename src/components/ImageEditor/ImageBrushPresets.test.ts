@@ -512,9 +512,9 @@ describe('ImageBrushPresets', () => {
         symmetryMode: 'none',
       },
       texture: {
-        supported: false,
+        supported: true,
         requested: true,
-        requestedFields: ['texture', 'dualBrush'],
+        requestedFields: ['texture', 'textureScale', 'dualBrush'],
         fallback: 'flat-brush-tip',
       },
       scattering: {
@@ -527,13 +527,10 @@ describe('ImageBrushPresets', () => {
     });
     expect(descriptor.dynamics.previewSignature).toBe(descriptor.preview.signature);
     expect(descriptor.dynamics.unsupportedWarnings.map((warning) => `${warning.field}:${warning.category}`)).toEqual([
-      'texture:texture',
-      'dualBrush:texture',
       'angleJitter:randomization',
     ]);
     expect(descriptor.tags).toEqual(expect.arrayContaining([
       'warning:unsupported-dynamics',
-      'fallback:texture',
       'fallback:scatter-jitter',
     ]));
   });
@@ -577,11 +574,9 @@ describe('ImageBrushPresets', () => {
       importedPresetIds: ['user-imported-wash-2'],
       previewSignatures: ['44:0.18:0.72:0.25:17:6,9->66,9:10'],
     });
-    expect(descriptor.unsupportedWarnings.map((warning) => `${warning.presetId}:${warning.field}`)).toEqual([
-      'user-imported-wash-2:dualBrush',
-    ]);
+    expect(descriptor.unsupportedWarnings.map((warning) => `${warning.presetId}:${warning.field}`)).toEqual([]);
     expect(descriptor.signature).toBe(
-      'brush-pack-validation:v1:parseable=true:version=1:accepted=1:rejected=1:ids=user-imported-wash-2:previews=44:0.18:0.72:0.25:17:6,9->66,9:10:warnings=dualBrush:reasons=preset-2:missing-label,preset-2:missing-settings',
+      'brush-pack-validation:v1:parseable=true:version=1:accepted=1:rejected=1:ids=user-imported-wash-2:previews=44:0.18:0.72:0.25:17:6,9->66,9:10:warnings=none:reasons=preset-2:missing-label,preset-2:missing-settings',
     );
   });
 });
