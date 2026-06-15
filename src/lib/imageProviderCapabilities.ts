@@ -1,3 +1,5 @@
+import { inferImageModelCapabilities } from './imageModelInference';
+
 export type FirstClassImageProviderId =
   | 'gemini'
   | 'openai'
@@ -1348,6 +1350,21 @@ export function getImageModelDefinition(
 
   if (exact) {
     return cloneModelDefinition(exact);
+  }
+
+  if (modelId && modelId.trim()) {
+    const inferred = inferImageModelCapabilities(providerId, modelId);
+    return {
+      providerId,
+      modelId,
+      label: inferred.label,
+      recommendedUse: `Auto-detected ${providerId} model from its slug; capabilities inferred.`,
+      capabilities: inferred.capabilities,
+      supportedOperations: inferred.supportedOperations,
+      visibleControls: inferred.visibleControls,
+      cost: { confidence: 'provider-defined', unitLabel: 'provider-billed' },
+      docsUrl: '',
+    };
   }
 
   const providerDefault = MODEL_DEFINITIONS.find((definition) => definition.providerId === providerId);

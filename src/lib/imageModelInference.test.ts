@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { inferImageModelCapabilities } from './imageModelInference';
+import { getImageModelDefinition } from './imageProviderCapabilities';
 
 describe('inferImageModelCapabilities', () => {
   it('nano-banana reference-to-image exposes references with a high max', () => {
@@ -43,5 +44,14 @@ describe('inferImageModelCapabilities', () => {
     const inferred = inferImageModelCapabilities('atlas', 'somevendor/whatever/edit');
     expect(inferred.capabilities.imageToImage).toBe(true);
     expect(inferred.capabilities.referenceImages).toBe(false);
+  });
+});
+
+describe('getImageModelDefinition inference fallback', () => {
+  it('an uncurated Atlas reference slug exposes references (not the t2i default)', () => {
+    const def = getImageModelDefinition('atlas', 'totallyunseen/model-x/reference-to-image');
+    expect(def.capabilities.referenceImages).toBe(true);
+    expect(def.visibleControls).toContain('referenceImages');
+    expect(def.modelId).toBe('totallyunseen/model-x/reference-to-image');
   });
 });
