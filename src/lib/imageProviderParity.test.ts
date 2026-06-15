@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getImageModelCapabilities } from './imageProviderCapabilities';
+import { getImageModelCapabilities, getImageNodeControlModel } from './imageProviderCapabilities';
 
 describe('cross-provider nano-banana reference parity', () => {
   it('exposes references on Gemini and Atlas nano-banana routes alike', () => {
@@ -28,5 +28,13 @@ describe('BFL reference + Stability mask audits', () => {
   });
   it('Stability search-replace exposes word-driven editing (no manual mask)', () => {
     expect(getImageModelCapabilities('stability', 'stable-image-edit-search-replace').searchReplace).toBe(true);
+  });
+});
+
+describe('unverified pricing surfaces provider-billed and still runs', () => {
+  it('an inferred Atlas model shows a provider-billed label and remains runnable', () => {
+    const model = getImageNodeControlModel('atlas', 'somevendor/whatever/text-to-image');
+    expect(model.costEstimateLabel.toLowerCase()).toContain('provider-billed');
+    expect(model.supportedOperations.length).toBeGreaterThan(0);
   });
 });
