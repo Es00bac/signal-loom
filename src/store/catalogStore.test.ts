@@ -40,4 +40,10 @@ describe('addOpenAICompatibleModelRecordToCatalog', () => {
     ]);
     expect(catalog.image.openai).toEqual([]);
   });
+
+  it('maps a discovered native Atlas nano-banana slug into the atlas image catalog', () => {
+    const catalog = buildEmptyModelCatalog();
+    addOpenAICompatibleModelRecordToCatalog(catalog, { id: 'google/nano-banana-2/reference-to-image' }, 'atlas');
+    expect(catalog.image.atlas.some((option) => option.value === 'google/nano-banana-2/reference-to-image')).toBe(true);
+  });
 });

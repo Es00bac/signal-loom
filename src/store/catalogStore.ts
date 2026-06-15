@@ -403,17 +403,16 @@ export const useCatalogStore = create<CatalogState>()((set) => ({
     }
 
     if (settings.apiKeys.atlas?.trim()) {
-      if (!isAtlasNativeDiscoveryBaseUrl(settings.providerSettings.atlasBaseUrl)) {
-        try {
-          const partial = await fetchOpenAIModels(
-            settings.apiKeys.atlas.trim(),
-            settings.providerSettings.atlasBaseUrl ?? '',
-            'atlas',
-          );
-          Object.assign(nextCatalog, mergeCatalog(nextCatalog, partial));
-        } catch (error) {
-          errors.push(error instanceof Error ? error.message : 'Atlas catalog refresh failed.');
-        }
+      // Attempt discovery against the native Atlas API (or a custom OpenAI-compatible base);
+      // failures are non-fatal because the curated seed already covers the defaults.
+      const atlasBase = isAtlasNativeDiscoveryBaseUrl(settings.providerSettings.atlasBaseUrl)
+        ? 'https://api.atlascloud.ai/api/v1'
+        : settings.providerSettings.atlasBaseUrl ?? '';
+      try {
+        const partial = await fetchOpenAIModels(settings.apiKeys.atlas.trim(), atlasBase, 'atlas');
+        Object.assign(nextCatalog, mergeCatalog(nextCatalog, partial));
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : 'Atlas catalog refresh failed.');
       }
     }
 
