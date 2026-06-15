@@ -5,6 +5,9 @@ interface VertexAuthModule {
   buildVertexAccessTokenCommand: (auth?: { mode?: string; environmentVariables?: string }) => { command: string; args: string[] };
   buildVertexAuthEnvironment: (auth: { environmentVariables?: string }, baseEnv: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
   parseVertexEnvironmentVariables: (value?: string) => Record<string, string>;
+  buildVertexLoginCommand: (auth?: { mode?: string; environmentVariables?: string }) => { command: string; args: string[] };
+  buildVertexListProjectsCommand: (auth?: { environmentVariables?: string }) => { command: string; args: string[] };
+  parseGcloudProjectsList: (stdout?: string) => Array<{ projectId: string; name: string }>;
 }
 
 async function loadVertexAuthModule(): Promise<VertexAuthModule> {
@@ -99,5 +102,36 @@ describe('Electron Vertex native auth helpers', () => {
       mode: 'gcloud-user',
       environmentVariables: 'export GCLOUD_ACCOUNT="jgoogly02@gmail.com"',
     }).args).toEqual(['auth', 'print-access-token', '--account', 'jgoogly02@gmail.com']);
+  });
+
+  it('builds login and project-list commands and parses project output', async () => {
+    const mod = await loadVertexAuthModule();
+
+    expect(mod.buildVertexLoginCommand({ mode: 'gcloud-adc' })).toMatchObject({
+      args: ['auth', 'application-default', 'login'],
+    });
+    expect(mod.buildVertexLoginCommand({ mode: 'gcloud-user' })).toMatchObject({
+      args: ['auth', 'login'],
+    });
+    expect(mod.buildVertexLoginCommand({
+      mode: 'gcloud-user',
+      environmentVariables: 'GCLOUD_ACCOUNT=me@example.com',
+    })).toMatchObject({
+      args: ['auth', 'login', '--account', 'me@example.com'],
+    });
+
+    expect(mod.buildVertexListProjectsCommand()).toMatchObject({
+      args: ['projects', 'list', '--format=json'],
+    });
+
+    expect(mod.parseGcloudProjectsList(JSON.stringify([
+      { projectId: 'p1', name: 'One' },
+      { projectId: 'p2', name: 'Two' },
+      { name: 'missing-id' },
+    ]))).toEqual([
+      { projectId: 'p1', name: 'One' },
+      { projectId: 'p2', name: 'Two' },
+    ]);
+    expect(mod.parseGcloudProjectsList('not json')).toEqual([]);
   });
 });

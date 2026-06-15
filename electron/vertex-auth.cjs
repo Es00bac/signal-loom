@@ -159,6 +159,18 @@ function normalizeVertexAuthMode(mode) {
   return VALID_VERTEX_AUTH_MODES.has(mode) ? mode : 'gcloud-user';
 }
 
+function resolveVertexAccount(auth = {}) {
+  const environment = parseVertexEnvironmentVariables(auth.environmentVariables);
+  return readVertexAuthValue([
+    environment.GCLOUD_ACCOUNT,
+    environment.CLOUDSDK_ACCOUNT,
+    environment.GOOGLE_CLOUD_ACCOUNT,
+    process.env.GCLOUD_ACCOUNT,
+    process.env.CLOUDSDK_ACCOUNT,
+    process.env.GOOGLE_CLOUD_ACCOUNT,
+  ]);
+}
+
 function buildVertexAccessTokenCommand(auth = {}) {
   const environment = parseVertexEnvironmentVariables(auth.environmentVariables);
   const mode = normalizeVertexAuthMode(auth.mode);
@@ -188,6 +200,47 @@ function buildVertexAccessTokenCommand(auth = {}) {
     command,
     args,
   };
+}
+
+function buildVertexLoginCommand(auth = {}) {
+  const mode = normalizeVertexAuthMode(auth.mode);
+  const command = resolveGcloudCommand(auth);
+
+  if (mode === 'gcloud-adc') {
+    return { command, args: ['auth', 'application-default', 'login'] };
+  }
+
+  const args = ['auth', 'login'];
+  const account = resolveVertexAccount(auth);
+  if (account) {
+    args.push('--account', account);
+  }
+  return { command, args };
+}
+
+function buildVertexListProjectsCommand(auth = {}) {
+  return {
+    command: resolveGcloudCommand(auth),
+    args: ['projects', 'list', '--format=json'],
+  };
+}
+
+function parseGcloudProjectsList(stdout) {
+  let parsed;
+  try {
+    parsed = JSON.parse(String(stdout ?? '[]'));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  return parsed
+    .map((entry) => ({
+      projectId: entry && typeof entry.projectId === 'string' ? entry.projectId : '',
+      name: entry && typeof entry.name === 'string' ? entry.name : '',
+    }))
+    .filter((entry) => entry.projectId);
 }
 
 function parseVertexEnvironmentVariables(value) {
@@ -232,4 +285,7 @@ module.exports = {
   buildVertexAuthEnvironment,
   normalizeVertexAuthMode,
   parseVertexEnvironmentVariables,
+  buildVertexLoginCommand,
+  buildVertexListProjectsCommand,
+  parseGcloudProjectsList,
 };
