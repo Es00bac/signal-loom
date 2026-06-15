@@ -19,11 +19,16 @@ import {
   listImageModelDefinitions,
   type FirstClassImageProviderId,
 } from '../../lib/imageProviderCapabilities';
-import { getSelection } from './selectionRegistry';
-import { cloneMask, maskBoundingBox } from './SelectionMask';
+import { getSelection, setSelection } from './selectionRegistry';
+import { cloneMask, createMask, maskBoundingBox } from './SelectionMask';
 import { docRectToScreen } from './viewport';
 import { buildGenerativeFillRequestArtifacts } from './GenerativeFillArtifacts';
 import { createGenerativeFillLayerFromBlob } from './GenerativeFillLayer';
+import { renderImageDocumentLayersToBitmap } from './ImageAdjustmentLayer';
+import { createBitmap } from './LayerBitmap';
+import { configureDetectorKeys, listConfiguredDetectors } from '../../lib/imageMask/objectMaskDetectors';
+import { useSettingsStore } from '../../store/settingsStore';
+import type { RuntimeSettingsSnapshot } from '../../types/flow';
 import {
   getDraggedSourceLibraryItemId,
   hasDraggedSourceLibraryItem,
@@ -37,6 +42,7 @@ const COST_THRESHOLD_USD = 0.5;
 const PROVIDER_LABELS: { value: GenerativeFillProvider; label: string }[] = [
   { value: 'gemini', label: 'Gemini' },
   { value: 'openai', label: 'OpenAI' },
+  { value: 'atlas', label: 'Atlas Cloud' },
   { value: 'huggingface', label: 'Hugging Face' },
   { value: 'bfl', label: 'BFL FLUX.2' },
   { value: 'stability', label: 'Stability' },
@@ -44,9 +50,40 @@ const PROVIDER_LABELS: { value: GenerativeFillProvider; label: string }[] = [
   { value: 'generic', label: 'Generic HTTP' },
 ];
 
+export interface GenerativeFillBarReferenceSlotDescriptor {
+  slotIndex: number;
+  id: string;
+  label: string;
+  sourceSummary: string;
+  chipLabel: string;
+  removeTitle: string;
+}
+
+export function describeGenerativeFillBarReferenceSlots(
+  references: Array<Pick<GenerativeFillReferenceInput, 'id' | 'label' | 'description' | 'imageUrl'>>,
+): GenerativeFillBarReferenceSlotDescriptor[] {
+  return references.map((reference, index) => {
+    const slotIndex = index + 1;
+    const sourceSummary = describeReferenceSlotSource(reference);
+    const label = describeReferenceSlotLabel(reference, slotIndex);
+
+    return {
+      slotIndex,
+      id: reference.id,
+      label,
+      sourceSummary,
+      chipLabel: `Ref ${slotIndex}: ${label}`,
+      removeTitle: `Remove reference slot ${slotIndex} (${sourceSummary})`,
+    };
+  });
+}
+
 export function GenerativeFillBar() {
   const activeDoc = useImageEditorStore((s) =>
     s.documents.find((d) => d.id === s.activeDocId) ?? null,
+  );
+  const dismissed = useImageEditorStore((s) =>
+    s.activeDocId ? Boolean(s.generativeFillDismissedByDocId[s.activeDocId]) : false,
   );
   const addLayer = useImageEditorStore((s) => s.addLayer);
   const viewportContainerSize = useImageEditorStore((s) => s.viewportContainerSize);
@@ -69,6 +106,67 @@ export function GenerativeFillBar() {
   const [references, setReferences] = useState<GenerativeFillReferenceInput[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const apiKeys = useSettingsStore((s) => s.apiKeys);
+  const providerSettings = useSettingsStore((s) => s.providerSettings);
+  const [detectPhrase, setDetectPhrase] = useState('');
+  const [detecting, setDetecting] = useState(false);
+  const settingsSnapshot = useMemo(
+    () => ({ apiKeys, providerSettings }) as RuntimeSettingsSnapshot,
+    [apiKeys, providerSettings],
+  );
+  const maskDetector = useMemo(() => listConfiguredDetectors(settingsSnapshot)[0], [settingsSnapshot]);
+
+  const handleDetect = async () => {
+    if (!activeDoc || !maskDetector || !detectPhrase.trim()) {
+      return;
+    }
+    setDetecting(true);
+    setError(null);
+    const flattened = renderImageDocumentLayersToBitmap(activeDoc);
+    const sourceCanvas = createBitmap(activeDoc.width, activeDoc.height);
+    const sourceCtx = sourceCanvas.getContext('2d');
+    if (!sourceCtx) {
+      setDetecting(false);
+      setError('Failed to flatten the document for detection.');
+      return;
+    }
+    sourceCtx.drawImage(flattened, 0, 0);
+    const sourceBlob = await sourceCanvas.convertToBlob({ type: 'image/png' });
+    const sourceUrl = URL.createObjectURL(sourceBlob);
+    try {
+      configureDetectorKeys(settingsSnapshot);
+      const detection = await maskDetector.detect({
+        sourceImageDataUrl: sourceUrl,
+        phrase: detectPhrase.trim(),
+        width: activeDoc.width,
+        height: activeDoc.height,
+      });
+      const detectedImage = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Unable to decode detection mask.'));
+        img.src = detection.maskDataUrl;
+      });
+      const maskCanvas = createBitmap(activeDoc.width, activeDoc.height);
+      const maskCtx = maskCanvas.getContext('2d');
+      if (!maskCtx) throw new Error('Failed to read the detection mask.');
+      maskCtx.drawImage(detectedImage, 0, 0, activeDoc.width, activeDoc.height);
+      const maskData = maskCtx.getImageData(0, 0, activeDoc.width, activeDoc.height).data;
+      const mask = createMask(activeDoc.width, activeDoc.height);
+      for (let p = 0; p < mask.data.length; p += 1) {
+        mask.data[p] = maskData[p * 4 + 3];
+      }
+      setSelection(activeDoc.id, mask);
+      const store = useImageEditorStore.getState();
+      store.setHasSelection(activeDoc.id, Boolean(maskBoundingBox(mask)));
+      store.bumpSelectionVersion(activeDoc.id);
+    } catch (detectError) {
+      setError(detectError instanceof Error ? detectError.message : 'Object detection failed.');
+    } finally {
+      URL.revokeObjectURL(sourceUrl);
+      setDetecting(false);
+    }
+  };
   const abortRef = useRef<AbortController | null>(null);
   const refFileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -123,7 +221,7 @@ export function GenerativeFillBar() {
     }
   };
 
-  const visible = Boolean(activeDoc?.hasSelection);
+  const visible = Boolean(activeDoc?.hasSelection) && !dismissed;
 
   const anchor = useMemo(() => {
     if (!activeDoc) return null;
@@ -150,6 +248,7 @@ export function GenerativeFillBar() {
       .filter((candidate) => !candidate.localOnly),
     [effectiveModel, provider],
   );
+  const referenceSlots = useMemo(() => describeGenerativeFillBarReferenceSlots(references), [references]);
   const effectiveOperationId = operationOptions.some((candidate) => candidate.id === operation)
     ? operation
     : operationOptions[0]?.id;
@@ -159,10 +258,31 @@ export function GenerativeFillBar() {
   const containerHeight = viewportContainerSize.height;
   const containerWidth = viewportContainerSize.width;
 
+  const compactPanel = containerWidth < 640;
+  const horizontalMargin = compactPanel ? 8 : 16;
+  const preferredPanelWidth = Math.min(780, Math.max(500, containerWidth - 32));
+  const maxPanelWidth = Math.max(240, containerWidth - horizontalMargin * 2);
+  const panelWidth = Math.min(preferredPanelWidth, maxPanelWidth);
+  const estimatedPanelHeight = compactPanel ? Math.min(520, Math.max(280, containerHeight - horizontalMargin * 2)) : 260;
   const placeAbove = anchor.y > 60;
-  const panelWidth = Math.min(780, Math.max(500, containerWidth - 32));
-  const top = placeAbove ? Math.max(8, anchor.y - 116) : Math.min(containerHeight - 116, anchor.y + anchor.height + 8);
-  const left = Math.min(Math.max(16, anchor.x), Math.max(16, containerWidth - panelWidth - 16));
+  const belowAnchorTop = anchor.y + anchor.height + 8;
+  const aboveAnchorTop = anchor.y - estimatedPanelHeight - 8;
+  const maxTop = Math.max(horizontalMargin, containerHeight - estimatedPanelHeight - horizontalMargin);
+  const top = placeAbove
+    ? Math.max(horizontalMargin, aboveAnchorTop)
+    : Math.min(maxTop, Math.max(horizontalMargin, belowAnchorTop));
+  const left = Math.min(
+    Math.max(horizontalMargin, anchor.x),
+    Math.max(horizontalMargin, containerWidth - panelWidth - horizontalMargin),
+  );
+  const maxHeight = Math.max(96, containerHeight - top - horizontalMargin);
+  const primaryControlsClassName = compactPanel ? 'grid grid-cols-2 gap-2' : 'grid grid-cols-4 gap-2';
+  const referenceControlsClassName = compactPanel
+    ? 'grid grid-cols-2 gap-1.5'
+    : 'grid grid-cols-[1fr_1fr_auto_auto] gap-1.5';
+  const referenceInputClassName = compactPanel
+    ? 'col-span-2 min-w-0 rounded border border-cyan-300/10 bg-[#070a10] px-2 py-1 text-xs text-cyan-50 placeholder:text-cyan-100/30 text-left'
+    : 'min-w-0 rounded border border-cyan-300/10 bg-[#070a10] px-2 py-1 text-xs text-cyan-50 placeholder:text-cyan-100/30 text-left';
 
   const selectedOperation = operationOptions.find((candidate) => candidate.id === effectiveOperationId) ?? operationOptions[0];
   const runCheck = selectedOperation
@@ -289,8 +409,16 @@ export function GenerativeFillBar() {
 
   return (
     <div
+      data-image-generative-fill-bar="true"
       className="absolute z-50 flex flex-col gap-2 rounded-xl border border-cyan-300/30 bg-[#10151f]/95 p-2 shadow-2xl backdrop-blur"
-      style={{ left, top, width: panelWidth }}
+      style={{
+        left,
+        maxHeight,
+        overscrollBehavior: 'contain',
+        overflowY: 'auto',
+        top,
+        width: panelWidth,
+      }}
     >
       <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
         <Sparkles className="text-cyan-400" size={16} />
@@ -305,7 +433,7 @@ export function GenerativeFillBar() {
               void handleSubmit();
             }
             if (e.key === 'Escape') {
-              useImageEditorStore.getState().setHasSelection(activeDoc.id, true);
+              useImageEditorStore.getState().setGenerativeFillDismissed(activeDoc.id, true);
             }
           }}
           placeholder={selectedOperation ? promptPlaceholder(selectedOperation.id) : 'Select an edit operation'}
@@ -316,8 +444,7 @@ export function GenerativeFillBar() {
           aria-label="Dismiss generative edit"
           className="rounded p-1 text-cyan-100/40 hover:text-white"
           onClick={() => {
-            // dismiss = clear selection so the bar disappears.
-            useImageEditorStore.getState().setHasSelection(activeDoc.id, false);
+            useImageEditorStore.getState().setGenerativeFillDismissed(activeDoc.id, true);
           }}
           type="button"
         >
@@ -325,7 +452,27 @@ export function GenerativeFillBar() {
         </button>
       </div>
 
-      <div className="grid grid-cols-4 gap-2">
+      {maskDetector ? (
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            className="min-w-0 flex-1 rounded border border-cyan-300/10 bg-[#0d0f15] px-2 py-1 text-xs text-cyan-50 placeholder:text-cyan-100/30"
+            disabled={detecting}
+            onChange={(e) => setDetectPhrase(e.target.value)}
+            placeholder={`Detect with ${maskDetector.label}, e.g. the sky`}
+            value={detectPhrase}
+          />
+          <button
+            className="shrink-0 rounded border border-cyan-300/30 bg-cyan-500/15 px-2 py-1 text-xs font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-50"
+            disabled={detecting || !detectPhrase.trim()}
+            onClick={() => void handleDetect()}
+            type="button"
+          >
+            {detecting ? 'Detecting…' : 'Detect → select'}
+          </button>
+        </div>
+      ) : null}
+
+      <div className={primaryControlsClassName}>
         <select
           className="min-w-0 rounded border border-cyan-300/10 bg-[#0d0f15] px-2 py-1 text-xs text-cyan-100/80"
           disabled={running}
@@ -463,16 +610,16 @@ export function GenerativeFillBar() {
           <div className="text-[10px] text-cyan-400/65 font-medium mb-1">
             Drag images from Source Library here or use options below:
           </div>
-          <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-1.5">
+          <div className={referenceControlsClassName}>
             <input
-              className="min-w-0 rounded border border-cyan-300/10 bg-[#070a10] px-2 py-1 text-xs text-cyan-50 placeholder:text-cyan-100/30 text-left"
+              className={referenceInputClassName}
               disabled={running}
               onChange={(event) => setReferenceDescription(event.target.value)}
               placeholder="Description"
               value={referenceDescription}
             />
             <input
-              className="min-w-0 rounded border border-cyan-300/10 bg-[#070a10] px-2 py-1 text-xs text-cyan-50 placeholder:text-cyan-100/30 text-left"
+              className={referenceInputClassName}
               disabled={running}
               onChange={(event) => setReferenceImageUrl(event.target.value)}
               placeholder="Image URL"
@@ -503,17 +650,17 @@ export function GenerativeFillBar() {
               Add
             </button>
           </div>
-          {references.length > 0 && (
+          {referenceSlots.length > 0 && (
             <div className="flex flex-wrap gap-1 pt-1.5">
-              {references.map((reference) => (
+              {referenceSlots.map((reference) => (
                 <button
                   className="max-w-[14rem] truncate rounded border border-cyan-300/10 bg-cyan-400/10 px-2 py-0.5 text-left text-[11px] text-cyan-100/70 hover:border-red-300/40 hover:text-red-100 cursor-pointer"
                   key={reference.id}
                   onClick={() => setReferences((current) => current.filter((item) => item.id !== reference.id))}
-                  title="Remove reference"
+                  title={reference.removeTitle}
                   type="button"
                 >
-                  {reference.label || reference.description || reference.imageUrl}
+                  {reference.chipLabel}
                 </button>
               ))}
             </div>
@@ -536,6 +683,37 @@ export function GenerativeFillBar() {
       )}
     </div>
   );
+}
+
+function describeReferenceSlotLabel(
+  reference: Pick<GenerativeFillReferenceInput, 'label' | 'description' | 'imageUrl'>,
+  slotIndex: number,
+): string {
+  const label = reference.label?.trim();
+  if (label) return label;
+  const description = reference.description?.trim();
+  if (description) return description;
+  const imageUrl = reference.imageUrl?.trim();
+  if (imageUrl?.startsWith('data:')) return 'Embedded image';
+  if (imageUrl) return 'Image URL reference';
+  return `Reference ${slotIndex}`;
+}
+
+function describeReferenceSlotSource(
+  reference: Pick<GenerativeFillReferenceInput, 'description' | 'imageUrl'>,
+): string {
+  const hasDescription = Boolean(reference.description?.trim());
+  const imageUrl = reference.imageUrl?.trim() ?? '';
+  const imageKind = imageUrl.startsWith('data:')
+    ? 'embedded image'
+    : imageUrl
+      ? 'image URL'
+      : null;
+
+  if (imageKind && hasDescription) return `${imageKind} + description`;
+  if (imageKind) return imageKind;
+  if (hasDescription) return 'description';
+  return 'empty reference';
 }
 
 function getModelOptions(provider: GenerativeFillProvider): Array<{ modelId: string; label: string }> {
