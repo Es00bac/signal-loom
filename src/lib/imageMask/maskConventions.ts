@@ -71,8 +71,35 @@ export interface NormalizeMaskOptions {
   height: number;
 }
 
+/** True when the runtime can decode/encode images via canvas (false in headless test envs). */
+export function canDecodeImages(): boolean {
+  if (typeof document === 'undefined' || typeof Image === 'undefined') return false;
+  try {
+    const canvas = document.createElement('canvas');
+    return typeof canvas.getContext === 'function' && canvas.getContext('2d') !== null;
+  } catch {
+    return false;
+  }
+}
+
+/** Decode a base64 image data URL to a Blob of its real bytes (no canvas needed). */
+function decodeDataUrlToBlob(dataUrl: string): Blob {
+  const match = dataUrl.match(/^data:([^;]+)?;base64,(.+)$/);
+  if (!match) throw new Error('Unsupported mask data URL.');
+  const binary = atob(match[2]);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: match[1] || 'image/png' });
+}
+
 /** Convert a canonical mask data URL to the PNG a specific provider expects. */
 export async function normalizeMaskForProvider(maskDataUrl: string, opts: NormalizeMaskOptions): Promise<Blob> {
+  if (!canDecodeImages()) {
+    // Headless/test environments have no working canvas; return the mask's real bytes unchanged.
+    return decodeDataUrlToBlob(maskDataUrl);
+  }
   const encoding = maskEncodingForProvider(opts.provider, opts.modelId);
   const imageData = await decodeToImageData(maskDataUrl, opts.width, opts.height);
   const transformed = transformMaskPixels(imageData.data, encoding);

@@ -37,6 +37,7 @@ import {
   getImageModelDefinition,
   type ImageModelOperation,
 } from './imageProviderCapabilities';
+import { canDecodeImages, getDataUrlDimensions, normalizeMaskForProvider } from './imageMask/maskConventions';
 import {
   buildBflFlux2Request,
   buildLocalOpenImageEditRequest,
@@ -85,6 +86,7 @@ import {
   runAndroidAcceleratorGenerate,
   runAndroidAcceleratorUpscale,
 } from './androidAccelerator';
+import { runAndroidNativeImageUpscale } from './androidNativeImageUpscaler';
 import {
   runLocalCpuUpscaler,
   type LocalCpuUpscalerInput,
@@ -170,6 +172,7 @@ interface ExecutionResult {
   result: string;
   resultType: ResultType;
   statusMessage: string;
+  blob?: Blob;
   usage?: UsageTelemetry;
   mimeType?: string;
   extension?: string;
@@ -1176,8 +1179,13 @@ async function executeAtlasNativeImageNode(input: {
   const sourceImage = input.sourceImageInput
     ? await uploadAtlasMedia(baseUrl, apiKey, input.sourceImageInput, 'flow-atlas-source.png')
     : undefined;
-  const maskImage = input.maskImageInput
-    ? await uploadAtlasMedia(baseUrl, apiKey, input.maskImageInput, 'flow-atlas-mask.png')
+  const maskImage = input.maskImageInput && input.sourceImageInput
+    ? await uploadAtlasMedia(
+        baseUrl,
+        apiKey,
+        `data:image/png;base64,${await blobToBase64(await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, 'atlas', input.modelId))}`,
+        'flow-atlas-mask.png',
+      )
     : undefined;
   const referenceImages = await Promise.all(
     input.referenceImageInputs.map((imageInput, index) =>
@@ -1256,9 +1264,14 @@ async function executeAtlasNativeImageNode(input: {
     imageCount: 1,
   });
 
+  const materializedResult = await materializeAtlasImageResult(
+    normalizeAtlasResultUrl(resultUrl, input.context.config.imageOutputFormat),
+  );
+
   return {
-    result: normalizeAtlasResultUrl(resultUrl, input.context.config.imageOutputFormat),
+    result: materializedResult.result,
     resultType: 'image',
+    mimeType: materializedResult.mimeType,
     statusMessage: `${isEditOperation ? 'Edited' : 'Generated'} with ${input.modelId}`,
     usage: buildImageUsage('atlas', input.modelId, {
       costUsd: estimate.costUsd,
@@ -1425,6 +1438,22 @@ function normalizeAtlasResultUrl(resultUrl: string, outputFormat: ExecutionConfi
   }
 
   return `data:image/${outputFormat};base64,${resultUrl}`;
+}
+
+async function materializeAtlasImageResult(resultUrl: string): Promise<{ result: string; mimeType?: string }> {
+  if (!/^https?:\/\//i.test(resultUrl)) {
+    const inlineMimeType = resultUrl.match(/^data:([^;,]+)/)?.[1];
+    return {
+      result: resultUrl,
+      mimeType: inlineMimeType,
+    };
+  }
+
+  const blob = await fetchImageResultBlob(resultUrl, 'Atlas result download failed');
+  return {
+    result: await toResultUrl(blob),
+    mimeType: blob.type || undefined,
+  };
 }
 
 function parseAtlasLoraWeights(value: unknown): unknown {
@@ -1605,6 +1634,21 @@ async function runConfiguredFlowImageUpscale(input: {
       targetWidthPx: dimensions.width * 2,
       targetHeightPx: dimensions.height * 2,
       upscalerId: input.settings.providerSettings.androidAcceleratorDefaultUpscaler ?? 'upscaler_realistic',
+      outputFormat: input.outputFormat,
+    });
+    return {
+      result: result.dataUrl,
+      mimeType: result.mimeType,
+    };
+  }
+
+  if (input.plan.provider === 'android-native') {
+    const dimensions = await resolveImageDimensions(input.sourceImage).catch(() => input.fallbackDimensions);
+    const sourceDataUrl = await normalizeRemoteImageInput(input.sourceImage);
+    const result = await runAndroidNativeImageUpscale({
+      sourceDataUrl,
+      targetWidthPx: dimensions.width * 2,
+      targetHeightPx: dimensions.height * 2,
       outputFormat: input.outputFormat,
     });
     return {
@@ -1919,7 +1963,8 @@ async function executeStabilityImageNode(input: {
   formData.append('image', await dataUrlToFile(input.sourceImageInput, 'flow-stability-source.png'));
 
   if (input.maskImageInput) {
-    formData.append('mask', await dataUrlToFile(input.maskImageInput, 'flow-stability-mask.png'));
+    const maskBlob = await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, 'stability', input.modelId);
+    formData.append('mask', new File([maskBlob], 'flow-stability-mask.png', { type: 'image/png' }));
   }
 
   const response = await fetch(built.endpoint, {
@@ -1969,7 +2014,9 @@ async function executeLocalOpenImageNode(input: {
     model: input.modelId || input.settings.providerSettings.localOpenImageDefaultModel || 'Qwen/Qwen-Image-Edit',
     prompt: input.prompt,
     image: await imageInputToBase64(input.sourceImageInput),
-    mask: input.maskImageInput ? await imageInputToBase64(input.maskImageInput) : undefined,
+    mask: input.maskImageInput
+      ? await blobToBase64(await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, 'localOpen', input.modelId))
+      : undefined,
     referenceImages,
     outputFormat: input.context.config.imageOutputFormat,
   });
@@ -3010,6 +3057,7 @@ async function executeCompositionNode(
     return {
       result: await toResultUrl(sequenceOutput.blob),
       resultType: isImageSequence ? 'package' : 'video',
+      blob: sequenceOutput.blob,
       statusMessage: isImageSequence
         ? `Rendered ${sequenceOutput.frameCount ?? 0} ${exportPreset.extension.toUpperCase()} sequence frame${sequenceOutput.frameCount === 1 ? '' : 's'} at ${context.config.videoFrameRate} fps using ${exportPreset.label} with ${describeSequenceRenderBackend(sequenceOutput.renderBackend)}. Output is a ZIP archive with manifest.json; audio tracks are ignored for image sequence exports. ${describeSequenceRenderBackendCaveat(sequenceOutput.renderBackend)}`
         : `Rendered editor sequence with ${visualSequenceClips.length} visual clip${visualSequenceClips.length === 1 ? '' : 's'} and ${stageObjects.length} stage object${stageObjects.length === 1 ? '' : 's'} at ${context.config.videoFrameRate} fps using ${exportPreset.label} with ${describeSequenceRenderBackend(sequenceOutput.renderBackend)}. ${describeSequenceRenderBackendCaveat(sequenceOutput.renderBackend)}`,
@@ -3049,6 +3097,7 @@ async function executeCompositionNode(
   return {
     result: await toResultUrl(blob),
     resultType: 'video',
+    blob,
     statusMessage:
       enabledAudioInputs.length > 0
         ? `Mixed ${enabledAudioInputs.length} audio track${enabledAudioInputs.length === 1 ? '' : 's'} into the composition.`
@@ -3430,7 +3479,7 @@ async function executeOpenAiCompatibleImageNode(input: {
     ? await client.images.edit({
         model: input.modelId,
         image: await dataUrlToFile(input.sourceImageInput, 'flow-image-edit.png'),
-        ...(input.maskImageInput ? { mask: await dataUrlToFile(input.maskImageInput, 'flow-image-mask.png') } : {}),
+        ...(input.maskImageInput ? { mask: new File([await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput!, input.provider, input.modelId)], 'flow-image-mask.png', { type: 'image/png' }) } : {}),
         prompt: input.prompt,
         size: mapAspectRatioToImageSize(aspectRatio),
       })
@@ -3547,6 +3596,21 @@ async function dataUrlToFile(dataUrl: string, filename: string): Promise<File> {
   const mimeType = blob.type || 'image/png';
 
   return new File([blob], filename, { type: mimeType });
+}
+
+/** Normalize a canonical painted/connected mask to the encoding `provider`/`modelId` expects, sized to the source image. */
+async function normalizeMaskBlob(
+  maskDataUrl: string,
+  sourceDataUrl: string,
+  provider: string,
+  modelId: string | undefined,
+): Promise<Blob> {
+  if (!canDecodeImages()) {
+    // Skip Image/canvas dimension probing in headless envs; normalizeMaskForProvider passes through.
+    return normalizeMaskForProvider(maskDataUrl, { provider, modelId, width: 0, height: 0 });
+  }
+  const { width, height } = await getDataUrlDimensions(sourceDataUrl);
+  return normalizeMaskForProvider(maskDataUrl, { provider, modelId, width, height });
 }
 
 async function toResultUrl(value: Blob | string): Promise<string> {
