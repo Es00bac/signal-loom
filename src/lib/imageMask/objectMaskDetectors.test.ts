@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { compositeBoxesToCanonicalAlpha } from './objectMaskDetectors';
+import {
+  compositeBoxesToCanonicalAlpha,
+  listConfiguredDetectors,
+  parseGeminiSegments,
+} from './objectMaskDetectors';
+import type { RuntimeSettingsSnapshot } from '../../types/flow';
 
 describe('compositeBoxesToCanonicalAlpha', () => {
   it('marks the box region opaque (edit) and the rest transparent (keep)', () => {
@@ -15,5 +20,30 @@ describe('compositeBoxesToCanonicalAlpha', () => {
   it('returns all-transparent when there are no objects', () => {
     const alpha = compositeBoxesToCanonicalAlpha([], 4, 4);
     expect(Array.from(alpha).every((v) => v === 0)).toBe(true);
+  });
+});
+
+function settingsWith(geminiKey: string): RuntimeSettingsSnapshot {
+  return { apiKeys: { gemini: geminiKey } } as unknown as RuntimeSettingsSnapshot;
+}
+
+describe('listConfiguredDetectors', () => {
+  it('includes the Gemini detector when a Gemini key is set', () => {
+    const ids = listConfiguredDetectors(settingsWith('k')).map((d) => d.id);
+    expect(ids).toContain('gemini-segmentation');
+  });
+  it('excludes it when no Gemini key is set', () => {
+    const ids = listConfiguredDetectors(settingsWith('')).map((d) => d.id);
+    expect(ids).not.toContain('gemini-segmentation');
+  });
+});
+
+describe('parseGeminiSegments', () => {
+  it('parses box_2d records from a fenced JSON reply', () => {
+    const out = parseGeminiSegments('```json\n[{"label":"cat","box_2d":[10,20,30,40]}]\n```');
+    expect(out).toEqual([{ label: 'cat', box: [10, 20, 30, 40] }]);
+  });
+  it('returns [] when no JSON array is present', () => {
+    expect(parseGeminiSegments('no objects found')).toEqual([]);
   });
 });
