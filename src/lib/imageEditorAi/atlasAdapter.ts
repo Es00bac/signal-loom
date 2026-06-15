@@ -1,6 +1,11 @@
 import { useSettingsStore } from '../../store/settingsStore';
 import type { GenerativeFillRequest, GenerativeFillResult } from '../imageEditorAi';
 import { blobToFile } from './blobUtils';
+import {
+  isAtlasNativeImageModelId,
+  normalizeAtlasBaseUrl,
+  runAtlasNativeGenerativeFill,
+} from './atlasNativeImage';
 
 const DEFAULT_MODEL = 'gpt-image-2';
 
@@ -12,19 +17,38 @@ export async function runAtlasInpaint(
     throw new Error('Atlas API key not configured. Set it in Settings → API Keys.');
   }
 
-  const baseUrl = useSettingsStore.getState().providerSettings.atlasBaseUrl;
+  // Default to the native Atlas API so the Atlas key is never sent to api.openai.com.
+  const baseUrl = normalizeAtlasBaseUrl(useSettingsStore.getState().providerSettings.atlasBaseUrl);
   const model = request.model ?? DEFAULT_MODEL;
 
+  const { normalizeMaskBlobForProvider } = await import('../imageMask/maskConventions');
+  const normalizedMask = await normalizeMaskBlobForProvider(request.mask, { provider: 'atlas', modelId: model });
+
+  // Native Atlas models (FLUX, Nano Banana, Seedream, Qwen, …) use Atlas's own
+  // /model/generateImage endpoint — not OpenAI's images.edit.
+  if (isAtlasNativeImageModelId(model)) {
+    const png = await runAtlasNativeGenerativeFill({
+      apiKey,
+      baseUrl,
+      modelId: model,
+      prompt: request.prompt,
+      source: request.source,
+      mask: normalizedMask,
+      references: request.references,
+      signal: request.abortSignal,
+    });
+    return { png, modelUsed: model };
+  }
+
+  // OpenAI-compatible Atlas route (e.g. gpt-image-*): pointed at the Atlas base URL.
   const { default: OpenAI } = await import('openai');
   const client = new OpenAI({
     apiKey,
-    baseURL: baseUrl?.trim() || undefined,
+    baseURL: baseUrl,
     dangerouslyAllowBrowser: true,
   });
 
   const sourceFile = await blobToFile(request.source, 'source.png');
-  const { normalizeMaskBlobForProvider } = await import('../imageMask/maskConventions');
-  const normalizedMask = await normalizeMaskBlobForProvider(request.mask, { provider: 'atlas', modelId: model });
   const maskFile = await blobToFile(normalizedMask, 'mask.png');
 
   const response = await client.images.edit(
