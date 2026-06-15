@@ -599,7 +599,7 @@ export function ImageEditorCanvas() {
       onDoubleClick={handleCanvasDoubleClick}
       style={{ touchAction: 'none' }}
     >
-      <canvas ref={canvasElRef} className="block h-full w-full" />
+      <canvas ref={canvasElRef} className="block h-full w-full" style={{ touchAction: 'none' }} />
 
       {activeTextLayer && activeTextBounds && !editingTextLayer && !activeTextLayer.locked ? (
         <button
