@@ -31,3 +31,62 @@ export function transformMaskPixels(src: Uint8ClampedArray, encoding: MaskEncodi
   }
   return out;
 }
+
+async function decodeToImageData(dataUrl: string, width: number, height: number): Promise<ImageData> {
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Unable to decode mask image.'));
+    img.src = dataUrl;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context unavailable for mask normalization.');
+  ctx.clearRect(0, 0, width, height);
+  ctx.drawImage(image, 0, 0, width, height);
+  return ctx.getImageData(0, 0, width, height);
+}
+
+function encodeToPngBlob(bytes: Uint8ClampedArray, width: number, height: number): Promise<Blob> {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context unavailable for mask normalization.');
+  const imageData = ctx.createImageData(width, height);
+  imageData.data.set(bytes);
+  ctx.putImageData(imageData, 0, 0);
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Mask PNG encoding failed.'))), 'image/png'),
+  );
+}
+
+export interface NormalizeMaskOptions {
+  provider: string;
+  modelId?: string;
+  width: number;
+  height: number;
+}
+
+/** Convert a canonical mask data URL to the PNG a specific provider expects. */
+export async function normalizeMaskForProvider(maskDataUrl: string, opts: NormalizeMaskOptions): Promise<Blob> {
+  const encoding = maskEncodingForProvider(opts.provider, opts.modelId);
+  const imageData = await decodeToImageData(maskDataUrl, opts.width, opts.height);
+  const transformed = transformMaskPixels(imageData.data, encoding);
+  return encodeToPngBlob(transformed, opts.width, opts.height);
+}
+
+/** Decode a data URL to its natural pixel dimensions (used to size the normalized mask to the source). */
+export async function getDataUrlDimensions(dataUrl: string): Promise<{ width: number; height: number }> {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Unable to read image dimensions.'));
+    image.src = dataUrl;
+  });
+  return { width: img.naturalWidth || img.width, height: img.naturalHeight || img.height };
+}
