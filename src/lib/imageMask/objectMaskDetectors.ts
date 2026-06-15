@@ -1,5 +1,5 @@
 import type { RuntimeSettingsSnapshot } from '../../types/flow';
-import { blobToBase64, dataUrlToBlob } from '../imageEditorAi/blobUtils';
+import { blobToBase64 } from '../imageEditorAi/blobUtils';
 
 export interface DetectedObject {
   label: string;
@@ -103,7 +103,9 @@ export const geminiSegmentationDetector: ObjectMaskDetector = {
     const apiKey = requireDetectorGeminiKey();
     const { GoogleGenAI } = await import('@google/genai');
     const client = new GoogleGenAI({ apiKey });
-    const base64 = await blobToBase64(dataUrlToBlob(input.sourceImageDataUrl));
+    // fetch handles data:, blob:, and http(s) source URLs uniformly.
+    const sourceResponse = await fetch(input.sourceImageDataUrl, { signal: input.signal });
+    const base64 = await blobToBase64(await sourceResponse.blob());
     const response = await client.models.generateContent({
       model: GEMINI_SEGMENTATION_MODEL,
       contents: [{

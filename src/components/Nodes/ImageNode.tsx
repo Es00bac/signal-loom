@@ -28,6 +28,7 @@ import {
   supportsImageEditing,
   supportsImageReferenceGuidance,
 } from '../../lib/imageModelSupport';
+import { configureDetectorKeys, listConfiguredDetectors } from '../../lib/imageMask/objectMaskDetectors';
 import {
   getImageNodeControlModel,
   type ImageNodeVisibleControl,
@@ -58,6 +59,7 @@ import type {
   AppNodeProps,
   ImageProvider,
   MediaNodeMode,
+  RuntimeSettingsSnapshot,
   VideoFrameSelection,
 } from '../../types/flow';
 
@@ -174,6 +176,11 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
     ?? (typeof data.result === 'string' ? data.result : undefined)
     ?? (typeof data.sourceAssetUrl === 'string' ? data.sourceAssetUrl : undefined);
   const canOpenMaskPainter = Boolean(maskPainterSourceUrl);
+  const settingsSnapshot = useMemo(
+    () => ({ apiKeys, providerSettings }) as RuntimeSettingsSnapshot,
+    [apiKeys, providerSettings],
+  );
+  const maskDetector = useMemo(() => listConfiguredDetectors(settingsSnapshot)[0], [settingsSnapshot]);
   const isVideoFrameMode = mediaMode === 'generate' && hasVideoSourceConnection;
   const isEditingMode = mediaMode === 'generate' && hasEditSourceConnection;
   const isReferenceGuidedMode = mediaMode === 'generate' && !isEditingMode && hasReferenceConnections;
@@ -815,6 +822,14 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
             setMaskPainterOpen(false);
           }}
           sourceImageUrl={maskPainterSourceUrl}
+          detectorLabel={maskDetector?.label}
+          onDetect={maskDetector && maskPainterSourceUrl ? async (phrase) => {
+            configureDetectorKeys(settingsSnapshot);
+            const { getDataUrlDimensions } = await import('../../lib/imageMask/maskConventions');
+            const { width, height } = await getDataUrlDimensions(maskPainterSourceUrl);
+            const detection = await maskDetector.detect({ sourceImageDataUrl: maskPainterSourceUrl, phrase, width, height });
+            return detection.maskDataUrl;
+          } : undefined}
         />
       ) : null}
     </BaseNode>

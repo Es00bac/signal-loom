@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
-import { Brush, Eraser, RotateCcw, Save, Trash2, X } from 'lucide-react';
+import { Brush, Eraser, RotateCcw, Save, Sparkles, Trash2, X } from 'lucide-react';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 
 interface ImageMaskPainterDialogProps {
@@ -10,6 +10,8 @@ interface ImageMaskPainterDialogProps {
   onClose: () => void;
   onSave: (maskDataUrl: string) => void;
   sourceImageUrl: string;
+  detectorLabel?: string;
+  onDetect?: (phrase: string) => Promise<string>;
 }
 
 type PaintTool = 'brush' | 'eraser';
@@ -22,6 +24,8 @@ export function ImageMaskPainterDialog({
   onClose,
   onSave,
   sourceImageUrl,
+  detectorLabel,
+  onDetect,
 }: ImageMaskPainterDialogProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -32,6 +36,8 @@ export function ImageMaskPainterDialog({
   const [tool, setTool] = useState<PaintTool>('brush');
   const [error, setError] = useState<string | undefined>();
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
+  const [detectPhrase, setDetectPhrase] = useState('');
+  const [isDetecting, setIsDetecting] = useState(false);
 
   const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -270,6 +276,49 @@ export function ImageMaskPainterDialog({
                 value={brushSize}
               />
             </label>
+
+            {onDetect ? (
+              <div className="space-y-1">
+                <input
+                  className="w-full rounded-md border border-gray-700 bg-[#111217] px-2 py-1.5 text-xs text-gray-200 outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(event) => setDetectPhrase(event.target.value)}
+                  placeholder={`Detect with ${detectorLabel ?? 'AI'}, e.g. the cat`}
+                  value={detectPhrase}
+                />
+                <button
+                  className="flex w-full items-center justify-center gap-1.5 rounded-md border border-blue-400/50 bg-blue-500/15 px-2 py-2 text-xs font-semibold text-blue-50 hover:bg-blue-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={isDetecting || !detectPhrase.trim()}
+                  onClick={async () => {
+                    if (!onDetect) {
+                      return;
+                    }
+                    setIsDetecting(true);
+                    setError(undefined);
+                    try {
+                      const maskCanvas = maskCanvasRef.current;
+                      const detectedUrl = await onDetect(detectPhrase.trim());
+                      const detected = new Image();
+                      detected.onload = () => {
+                        const ctx = maskCanvas?.getContext('2d');
+                        if (maskCanvas && ctx) {
+                          ctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+                          ctx.drawImage(detected, 0, 0, maskCanvas.width, maskCanvas.height);
+                          renderCanvas();
+                        }
+                      };
+                      detected.src = detectedUrl;
+                    } catch (detectError) {
+                      setError(detectError instanceof Error ? detectError.message : 'Object detection failed.');
+                    } finally {
+                      setIsDetecting(false);
+                    }
+                  }}
+                  type="button"
+                >
+                  <Sparkles size={14} /> {isDetecting ? 'Detecting…' : 'Detect object'}
+                </button>
+              </div>
+            ) : null}
 
             <button
               className="flex w-full items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2 py-2 text-xs font-semibold text-gray-300 hover:text-white"
