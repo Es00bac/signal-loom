@@ -1,0 +1,32 @@
+import { describe, expect, it } from 'vitest';
+import { getImageModelCapabilities } from './imageProviderCapabilities';
+
+describe('cross-provider nano-banana reference parity', () => {
+  it('exposes references on Gemini and Atlas nano-banana routes alike', () => {
+    // Gemini "nano banana" = gemini-3-pro-image (also used in Vertex-ADC mode)
+    expect(getImageModelCapabilities('gemini', 'gemini-3-pro-image').referenceImages).toBe(true);
+    // Atlas nano-banana-2 reference + edit routes must match
+    expect(getImageModelCapabilities('atlas', 'google/nano-banana-2/reference-to-image').referenceImages).toBe(true);
+    expect(getImageModelCapabilities('atlas', 'google/nano-banana-2/edit').referenceImages).toBe(true);
+  });
+
+  it('gives the Atlas nano-banana edit route a comparable reference budget', () => {
+    const atlas = getImageModelCapabilities('atlas', 'google/nano-banana-2/reference-to-image');
+    const gemini = getImageModelCapabilities('gemini', 'gemini-3-pro-image');
+    expect(atlas.maxReferenceImages).toBe(gemini.maxReferenceImages);
+  });
+});
+
+describe('BFL reference + Stability mask audits', () => {
+  it('BFL FLUX.2 Pro accepts multiple reference images', () => {
+    const caps = getImageModelCapabilities('bfl', 'flux-2-pro');
+    expect(caps.referenceImages).toBe(true);
+    expect(caps.maxReferenceImages).toBeGreaterThanOrEqual(4);
+  });
+  it('Stability inpaint exposes mask inpainting', () => {
+    expect(getImageModelCapabilities('stability', 'stable-image-edit-inpaint').maskInpaint).toBe(true);
+  });
+  it('Stability search-replace exposes word-driven editing (no manual mask)', () => {
+    expect(getImageModelCapabilities('stability', 'stable-image-edit-search-replace').searchReplace).toBe(true);
+  });
+});
