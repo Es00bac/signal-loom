@@ -48,3 +48,17 @@ docs/superpowers
 *.njsproj
 *.sln
 *.sw?
+
+# Packaging and build output
+/release/
+/test-results/
+
+# Generated dev-dashboard snapshots
+ops/dev-dashboard/artifacts/
+
+# Scratch QA screenshots (repo root)
+/dashboard-static-checklists-current-1920x1080.png
+/image-layer-transform-warp-before-1920x1080.png
+/paper-mobile-source-drawer-handle-mcp.png
+/sloom-studio-live-desktop-1920x1080-posthardening.png
+/sloom-studio-live-mobile-412x915-posthardening.png
