@@ -200,6 +200,474 @@ describe('sanitizeProjectDocument', () => {
     expect(project.sourceBin?.bins?.[0].items.map((item) => item.id)).toEqual(['text-1', 'image-1']);
   });
 
+  it('preserves Image layer color labels during project restore sanitization', () => {
+    const project = projectWith({
+      imageEditor: {
+        activeDocId: 'doc-1',
+        documents: [
+          {
+            id: 'doc-1',
+            title: 'Layer labels',
+            width: 320,
+            height: 240,
+            layers: [
+              {
+                id: 'layer-1',
+                name: 'Character ink',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+                colorLabel: 'red',
+              },
+            ],
+            activeLayerId: 'layer-1',
+            hasSelection: false,
+            selectionVersion: 0,
+            viewport: { zoom: 1, panX: 0, panY: 0 },
+            dirty: true,
+          },
+        ],
+      },
+    });
+
+    expect(project.imageEditor?.documents[0].layers[0].colorLabel).toBe('red');
+  });
+
+  it('preserves Image layer clipping-mask flags during project restore sanitization', () => {
+    const project = projectWith({
+      imageEditor: {
+        activeDocId: 'doc-1',
+        documents: [
+          {
+            id: 'doc-1',
+            title: 'Clipping stack',
+            width: 320,
+            height: 240,
+            layers: [
+              {
+                id: 'base',
+                name: 'Base shape',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+              },
+              {
+                id: 'shade',
+                name: 'Clipped shading',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+                clippingMask: true,
+              },
+            ],
+            activeLayerId: 'shade',
+            hasSelection: false,
+            selectionVersion: 0,
+            viewport: { zoom: 1, panX: 0, panY: 0 },
+            dirty: false,
+          },
+        ],
+      },
+    });
+
+    expect(project.imageEditor?.documents[0].layers[1].clippingMask).toBe(true);
+  });
+
+  it('preserves and clamps Image layer mask density and feather during project restore sanitization', () => {
+    const project = projectWith({
+      imageEditor: {
+        activeDocId: 'doc-1',
+        documents: [
+          {
+            id: 'doc-1',
+            title: 'Mask tuning',
+            width: 320,
+            height: 240,
+            layers: [
+              {
+                id: 'valid-mask',
+                name: 'Valid mask layer',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+                maskDensity: 0.35,
+                maskFeather: 12,
+              },
+              {
+                id: 'invalid-mask',
+                name: 'Invalid mask layer',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+                maskDensity: -3,
+                maskFeather: 'oops',
+              },
+            ],
+            activeLayerId: 'valid-mask',
+            hasSelection: false,
+            selectionVersion: 0,
+            viewport: { zoom: 1, panX: 0, panY: 0 },
+            dirty: false,
+          },
+        ],
+      },
+    });
+
+    expect(project.imageEditor?.documents[0].layers[0]).toMatchObject({
+      maskDensity: 0.35,
+      maskFeather: 12,
+    });
+    expect(project.imageEditor?.documents[0].layers[1]).toMatchObject({
+      maskDensity: 0,
+      maskFeather: 0,
+    });
+  });
+
+  it('preserves and clamps Image layer skew, perspective, warp, and distort transform state during project restore sanitization', () => {
+    const project = projectWith({
+      imageEditor: {
+        activeDocId: 'doc-1',
+        documents: [
+          {
+            id: 'doc-1',
+            title: 'Layer transform restore',
+            width: 320,
+            height: 240,
+            layers: [
+              {
+                id: 'valid-transform',
+                name: 'Valid transform layer',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+                skewXDeg: 18.25,
+                skewYDeg: -12.5,
+                perspectiveX: 0.25,
+                perspectiveY: -0.125,
+                warp: {
+                  top: 0.25,
+                  right: -0.5,
+                  bottom: 0.1,
+                  left: 0,
+                },
+                cornerOffsets: {
+                  nw: { x: -4, y: -2 },
+                  ne: { x: 8, y: -1 },
+                  se: { x: 12, y: 5 },
+                  sw: { x: -6, y: 4 },
+                },
+              },
+              {
+                id: 'invalid-transform',
+                name: 'Invalid transform layer',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+                skewXDeg: 500,
+                skewYDeg: 'oops',
+                perspectiveX: 2,
+                perspectiveY: 'bad',
+                warp: {
+                  top: 4,
+                  right: 'oops',
+                  bottom: -3,
+                  left: Infinity,
+                },
+                cornerOffsets: {
+                  nw: { x: 'bad', y: undefined },
+                  ne: { x: Infinity, y: 1 },
+                  se: { x: 2, y: NaN },
+                  sw: null,
+                },
+              },
+            ],
+            activeLayerId: 'valid-transform',
+            hasSelection: false,
+            selectionVersion: 0,
+            viewport: { zoom: 1, panX: 0, panY: 0 },
+            dirty: false,
+          },
+        ],
+      },
+    });
+
+    expect(project.imageEditor?.documents[0].layers[0]).toMatchObject({
+      skewXDeg: 18.25,
+      skewYDeg: -12.5,
+      perspectiveX: 0.25,
+      perspectiveY: -0.125,
+      warp: {
+        top: 0.25,
+        right: -0.5,
+        bottom: 0.1,
+        left: 0,
+      },
+      cornerOffsets: {
+        nw: { x: -4, y: -2 },
+        ne: { x: 8, y: -1 },
+        se: { x: 12, y: 5 },
+        sw: { x: -6, y: 4 },
+      },
+    });
+    expect(project.imageEditor?.documents[0].layers[1]).toMatchObject({
+      skewXDeg: 75,
+      skewYDeg: 0,
+      perspectiveX: 0.95,
+      perspectiveY: 0,
+      warp: {
+        top: 1,
+        right: 0,
+        bottom: -1,
+        left: 0,
+      },
+      cornerOffsets: {
+        nw: { x: 0, y: 0 },
+        ne: { x: 0, y: 1 },
+        se: { x: 2, y: 0 },
+        sw: { x: 0, y: 0 },
+      },
+    });
+  });
+
+  it('sanitizes Image layer lock variants during project restore', () => {
+    const project = projectWith({
+      imageEditor: {
+        activeDocId: 'doc-1',
+        documents: [
+          {
+            id: 'doc-1',
+            title: 'Layer lock variants',
+            width: 320,
+            height: 240,
+            layers: [
+              {
+                id: 'paint',
+                name: 'Paint layer',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+                locks: {
+                  pixels: true,
+                  position: 'yes',
+                },
+              },
+              {
+                id: 'move',
+                name: 'Move layer',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+                locks: {
+                  pixels: false,
+                  position: true,
+                },
+              },
+            ],
+            activeLayerId: 'paint',
+            hasSelection: false,
+            selectionVersion: 0,
+            viewport: { zoom: 1, panX: 0, panY: 0 },
+            dirty: false,
+          },
+        ],
+      },
+    });
+
+    expect(project.imageEditor?.documents[0].layers[0].locks).toEqual({ pixels: true });
+    expect(project.imageEditor?.documents[0].layers[1].locks).toEqual({ position: true });
+  });
+
+  it('preserves valid Image layer groups and removes invalid group memberships during restore', () => {
+    const project = projectWith({
+      imageEditor: {
+        activeDocId: 'doc-1',
+        documents: [
+          {
+            id: 'doc-1',
+            title: 'Layer groups',
+            width: 320,
+            height: 240,
+            layers: [
+              {
+                id: 'paint',
+                name: 'Paint layer',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+                groupId: 'group-1',
+              },
+              {
+                id: 'bad-child',
+                name: 'Bad child',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+                groupId: 'missing-group',
+              },
+              {
+                id: 'group-1',
+                name: 'Paint folder',
+                type: 'group',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 12,
+                y: 18,
+                bitmapVersion: 0,
+                groupExpanded: false,
+                bitmap: 'bad-runtime-data',
+                mask: 'bad-mask',
+              },
+            ],
+            activeLayerId: 'paint',
+            hasSelection: false,
+            selectionVersion: 0,
+            viewport: { zoom: 1, panX: 0, panY: 0 },
+            dirty: false,
+          },
+        ],
+      },
+    });
+
+    const layers = project.imageEditor?.documents[0].layers;
+    expect(layers?.map((layer) => [layer.id, layer.type, layer.groupId])).toEqual([
+      ['paint', 'image', 'group-1'],
+      ['bad-child', 'image', undefined],
+      ['group-1', 'group', undefined],
+    ]);
+    expect(layers?.[2]).toMatchObject({
+      groupExpanded: false,
+      bitmap: null,
+      mask: null,
+      x: 0,
+      y: 0,
+    });
+  });
+
+  it('preserves Image linked-layer movement groups only when at least two layers share the group', () => {
+    const project = projectWith({
+      imageEditor: {
+        activeDocId: 'doc-1',
+        documents: [
+          {
+            id: 'doc-1',
+            title: 'Layer links',
+            width: 320,
+            height: 240,
+            layers: [
+              {
+                id: 'base',
+                name: 'Base',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+                linkGroupId: 'link-a',
+              },
+              {
+                id: 'paint',
+                name: 'Paint',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+                linkGroupId: 'link-a',
+              },
+              {
+                id: 'orphan',
+                name: 'Orphan',
+                type: 'image',
+                visible: true,
+                locked: false,
+                opacity: 1,
+                blendMode: 'normal',
+                x: 0,
+                y: 0,
+                bitmapVersion: 0,
+                linkGroupId: 'link-orphan',
+              },
+            ],
+            activeLayerId: 'paint',
+            hasSelection: false,
+            selectionVersion: 0,
+            viewport: { zoom: 1, panX: 0, panY: 0 },
+            dirty: false,
+          },
+        ],
+      },
+    });
+
+    expect(project.imageEditor?.documents[0].layers.map((layer) => [layer.id, layer.linkGroupId])).toEqual([
+      ['base', 'link-a'],
+      ['paint', 'link-a'],
+      ['orphan', undefined],
+    ]);
+  });
+
   it('restores the active node result from the selected saved history attempt', () => {
     const project = projectWith({
       flow: {
@@ -407,12 +875,57 @@ describe('sanitizeProjectDocument', () => {
           activeLayerId: 'vector-layer',
           hasSelection: true,
           selectionVersion: 3,
+          savedSelectionChannels: [
+            {
+              id: 'alpha-1',
+              name: 'Saved outline',
+              width: 800,
+              height: 600,
+              dataBase64: 'AQIDBA==',
+              createdAt: 11,
+            },
+            {
+              id: 'broken-alpha',
+              name: '',
+              width: 0,
+              height: -1,
+              dataBase64: 12,
+              createdAt: 'bad',
+            },
+          ],
+          spotChannels: [
+            {
+              id: 'spot-1',
+              name: 'Varnish',
+              width: 800,
+              height: 600,
+              color: { r: 20, g: 120, b: 220 },
+              opacity: 0.75,
+              solidity: 0.5,
+              visible: false,
+              dataBase64: 'AQIDBA==',
+              createdAt: 12,
+              updatedAt: 13,
+            },
+            {
+              id: 'broken-spot',
+              name: '',
+              width: 0,
+              height: -1,
+              color: { r: 300, g: 'bad', b: -10 },
+              opacity: 2,
+              solidity: -1,
+              dataBase64: 12,
+              createdAt: 'bad',
+            },
+          ],
           viewport: { zoom: 2, panX: 10, panY: 20 },
           dirty: true,
           snapshots: [{
             id: 'snap-1',
             name: 'Before lettering',
             createdAt: 10,
+            updatedAt: 15,
             width: -20,
             height: 0,
             layers: [{
@@ -442,6 +955,27 @@ describe('sanitizeProjectDocument', () => {
     const doc = project.imageEditor?.documents[0];
     expect(doc?.sourceBinItemId).toBe('source-panel');
     expect(doc?.metadata?.sourceFormat).toBe('SVG');
+    expect((doc as unknown as {
+      savedSelectionChannels?: Array<{ id: string; name: string; dataBase64: string }>;
+    })?.savedSelectionChannels).toEqual([
+      expect.objectContaining({
+        id: 'alpha-1',
+        name: 'Saved outline',
+        dataBase64: 'AQIDBA==',
+      }),
+    ]);
+    expect((doc as unknown as {
+      spotChannels?: Array<{ id: string; name: string; dataBase64: string; opacity: number; solidity: number; visible: boolean }>;
+    })?.spotChannels).toEqual([
+      expect.objectContaining({
+        id: 'spot-1',
+        name: 'Varnish',
+        dataBase64: 'AQIDBA==',
+        opacity: 0.75,
+        solidity: 0.5,
+        visible: false,
+      }),
+    ]);
     expect(doc?.layers[0]).toMatchObject({
       id: 'vector-layer',
       type: 'vector',
@@ -463,6 +997,7 @@ describe('sanitizeProjectDocument', () => {
     expect(doc?.snapshots?.[0]).toMatchObject({
       id: 'snap-1',
       name: 'Before lettering',
+      updatedAt: 15,
       width: 800,
       height: 600,
       activeLayerId: 'vector-layer',

@@ -1,13 +1,33 @@
 import type { ImageDocument, ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import { maskToCanvas, type SelectionMask } from './SelectionMask';
+import { createQuickMaskOverlayMask } from './ImageQuickMask';
+import { buildSelectAndMaskPreviewMask, createSelectAndMaskMatteMask } from './ImageSelectAndMask';
 import { drawCropPreviewOverlay } from './ImageCropOverlay';
 import { getCropPreview } from './tools/cropTool';
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import { createBitmap } from './LayerBitmap';
+import { createLayerMaskOverlayMask } from './ImageLayerMask';
+import {
+  applyPerspectiveToPoint,
+  applyWarpToPoint,
+  buildTransformedCornersFromMetrics,
+  DEFAULT_TRANSFORM_ORIGIN,
+  clampImageLayerTransformOrigin,
+  drawLayerBitmapTransformed,
+  getImageLayerBitmapDrawMetrics,
+  hasImageLayerWarp,
+  interpolateCornerOffset,
+  roundImageLayerTransformNumber,
+  resolveImageLayerTransformOrigin,
+  transformSourcePoint,
+} from './ImageLayerTransform';
 import { renderLayerWithEffects } from './ImageLayerEffects';
+import { isImageLayerEffectivelyVisible } from './ImageLayerGroups';
+import type { ImageLayerWithVectorMask } from './ImageVectorMasks';
 
 import {
   renderImageDocumentLayersToBitmap,
+  composeLayerBitmapWithLiveMasks,
   applyAdjustmentToImageData,
   applyAdjustmentToPixel,
   applyBlackWhite,
@@ -32,8 +52,544 @@ import {
 const ANTS_DASH_LENGTH = 4;
 const ANTS_PERIOD_MS = 600;
 
+type ImageBlendMode = ImageLayer['blendMode'];
+
+export interface ImageBlendModeRenderCapability {
+  supported: true;
+  compositeOperation: GlobalCompositeOperation;
+}
+
+export interface ImageBlendModeCapabilityDescriptor {
+  mode: ImageBlendMode;
+  label: string;
+  canvasCompositeOperation: GlobalCompositeOperation;
+  preview: ImageBlendModeRenderCapability;
+  export: ImageBlendModeRenderCapability;
+  warnings: readonly string[];
+}
+
+export interface ImageBlendModeWarningOptions {
+  blendIf?: boolean;
+  advancedBlending?: boolean;
+}
+
+export type ImageBlendModeSupportGroupId = 'basic' | 'contrast' | 'component';
+
+export interface ImageBlendModeSupportGroup {
+  id: ImageBlendModeSupportGroupId;
+  label: string;
+  modes: ImageBlendMode[];
+  supported: boolean;
+  caveats: string[];
+}
+
+export interface ImageBlendModeCanvasCompositeMapping {
+  mode: ImageBlendMode;
+  compositeOperation: GlobalCompositeOperation;
+}
+
+export type ImageBlendModeAdvancedStateId =
+  | 'blend-if'
+  | 'fill-opacity'
+  | 'knockout'
+  | 'channel-targeting';
+
+export type ImageBlendModeChannelTarget = 'red' | 'green' | 'blue';
+export type ImageBlendModeKnockoutMode = 'none' | 'shallow' | 'deep';
+export type ImageBlendModeExportTarget = 'editable' | 'flattened' | 'source-bin';
+
+export interface UnsupportedPhotoshopBlendFeature {
+  id: 'blend-if' | 'advanced-blending';
+  label: string;
+  supported: false;
+  caveat: string;
+}
+
+export interface ImageBlendModeAlphaOpacityCaveat {
+  id: 'layer-opacity' | 'flattened-alpha';
+  label: string;
+  value: number;
+  caveat: string;
+}
+
+export interface ImageBlendModeParityOptions extends ImageBlendModeWarningOptions {
+  activeModes?: readonly ImageBlendMode[];
+  opacity?: number;
+  exportTarget?: 'editable' | 'flattened';
+}
+
+export interface ImageBlendModeParityDescriptor {
+  previewId: 'image-blend-mode-parity:v1';
+  activeModes: ImageBlendMode[];
+  supportGroups: ImageBlendModeSupportGroup[];
+  canvasCompositeMappings: ImageBlendModeCanvasCompositeMapping[];
+  unsupportedPhotoshopFeatures: UnsupportedPhotoshopBlendFeature[];
+  alphaOpacityCaveats: ImageBlendModeAlphaOpacityCaveat[];
+  knownMathLimitations: string[];
+  previewSignature: string;
+  exportSignature: string;
+  warnings: string[];
+}
+
+export interface ImageBlendModePortabilityReadinessOptions {
+  activeModes?: readonly ImageBlendMode[];
+  blendIf?: boolean;
+  fillOpacity?: number;
+  knockout?: Exclude<ImageBlendModeKnockoutMode, 'none'>;
+  channelTargeting?: readonly ImageBlendModeChannelTarget[];
+  exportTarget?: ImageBlendModeExportTarget;
+  sourceBinLinked?: boolean;
+  batchLayerCount?: number;
+}
+
+export interface ImageBlendModeCanvasCompositeSupport {
+  supported: true;
+  modes: ImageBlendMode[];
+  mappings: ImageBlendModeCanvasCompositeMapping[];
+}
+
+export interface ImageBlendModeUnsupportedAdvancedState {
+  id: ImageBlendModeAdvancedStateId;
+  label: string;
+  requested: boolean;
+  supported: false;
+  value?: number;
+  mode?: ImageBlendModeKnockoutMode;
+  channels?: ImageBlendModeChannelTarget[];
+  caveat: string;
+  reasonCode: ImageBlendModePortabilityReasonCode;
+}
+
+export type ImageBlendModeSourceBinParityCaveatCode =
+  | 'source-bin-visible-export-flattens-blend-stack'
+  | 'source-bin-overwrite-requires-linked-source';
+
+export interface ImageBlendModeSourceBinParityCaveat {
+  code: ImageBlendModeSourceBinParityCaveatCode;
+  target: ImageBlendModeExportTarget;
+  warning: string;
+}
+
+export type ImageBlendModePortabilityReasonCode =
+  | 'advanced-blending-unsupported'
+  | 'blend-if-unsupported'
+  | 'fill-opacity-unsupported'
+  | 'knockout-unsupported'
+  | 'channel-targeting-unsupported'
+  | 'source-bin-linked-visible-export'
+  | 'source-bin-unlinked-visible-export';
+
+export interface ImageBlendModeActionSuitability {
+  recordable: boolean;
+  replayable: boolean;
+  reasonCodes: ImageBlendModePortabilityReasonCode[];
+}
+
+export interface ImageBlendModeBatchSuitability {
+  status: 'ready' | 'warning' | 'blocked';
+  layerCount: number;
+  reasonCodes: ImageBlendModePortabilityReasonCode[];
+}
+
+export interface ImageBlendModePortabilityReadinessDescriptor {
+  id: 'image-blend-mode-portability-readiness:v1';
+  canvasCompositeSupport: ImageBlendModeCanvasCompositeSupport;
+  unsupportedPhotoshopAdvancedStates: ImageBlendModeUnsupportedAdvancedState[];
+  exportSourceBinParityCaveats: ImageBlendModeSourceBinParityCaveat[];
+  actionSuitability: ImageBlendModeActionSuitability;
+  batchSuitability: ImageBlendModeBatchSuitability;
+  signature: string;
+  warnings: string[];
+}
+
+export const SUPPORTED_IMAGE_BLEND_MODES = [
+  'normal',
+  'multiply',
+  'screen',
+  'overlay',
+  'darken',
+  'lighten',
+  'color-dodge',
+  'color-burn',
+  'hard-light',
+  'soft-light',
+  'difference',
+  'exclusion',
+  'hue',
+  'saturation',
+  'color',
+  'luminosity',
+] as const satisfies readonly ImageBlendMode[];
+
+const IMAGE_BLEND_MODE_LABELS = {
+  normal: 'Normal',
+  multiply: 'Multiply',
+  screen: 'Screen',
+  overlay: 'Overlay',
+  darken: 'Darken',
+  lighten: 'Lighten',
+  'color-dodge': 'Color Dodge',
+  'color-burn': 'Color Burn',
+  'hard-light': 'Hard Light',
+  'soft-light': 'Soft Light',
+  difference: 'Difference',
+  exclusion: 'Exclusion',
+  hue: 'Hue',
+  saturation: 'Saturation',
+  color: 'Color',
+  luminosity: 'Luminosity',
+} satisfies Record<ImageBlendMode, string>;
+
+const BLEND_IF_UNSUPPORTED_WARNING =
+  'Blend If source/underlying tonal range splitting is not supported yet; flatten or rasterize those advanced blending settings before relying on Image preview/export parity.';
+const ADVANCED_BLENDING_UNSUPPORTED_WARNING =
+  'Advanced blending options such as channel targeting, knockout, and fill opacity are not supported yet; only layer opacity and canvas-native blend modes are previewed and exported.';
+const FILL_OPACITY_UNSUPPORTED_WARNING =
+  'Photoshop Fill Opacity is not supported yet; Signal Loom uses layer opacity for canvas preview/export and treats fill opacity as metadata-only.';
+const KNOCKOUT_UNSUPPORTED_WARNING =
+  'Photoshop shallow/deep knockout is not supported yet; group and layer stacks render without knockout isolation.';
+const CHANNEL_TARGETING_UNSUPPORTED_WARNING =
+  'Photoshop advanced blending channel targeting is not supported yet; canvas blend modes apply to the full composited RGB result.';
+const CANVAS_BLEND_MATH_LIMITATION =
+  'Canvas blend math is browser-managed and may not exactly match Photoshop in non-sRGB, high-bit-depth, or color-managed documents.';
+const COMPONENT_BLEND_MATH_LIMITATION =
+  'Hue, Saturation, Color, and Luminosity rely on Canvas 2D component blending and are treated as flattened sRGB preview/export approximations.';
+const SOFT_LIGHT_DODGE_BURN_LIMITATION =
+  'Soft Light and Color Dodge/Burn formulas are delegated to the browser Canvas implementation; parity should be validated visually for critical PSD roundtrips.';
+const LAYER_OPACITY_CAVEAT =
+  'Layer opacity is applied through CanvasRenderingContext2D.globalAlpha before blend compositing; Photoshop fill opacity and per-channel opacity are not modeled.';
+const FLATTENED_ALPHA_CAVEAT =
+  'Flattened blend exports preserve canvas alpha compositing but do not retain editable Photoshop blend-mode stacks.';
+const SOURCE_BIN_FLATTENED_BLEND_STACK_CAVEAT =
+  'Source Bin visible exports flatten the canvas blend result and do not preserve editable blend-mode stacks for suite handoff.';
+const SOURCE_BIN_LINK_REQUIRED_CAVEAT =
+  'Source Bin overwrite parity requires a linked source item; unlinked layers can export a new flattened asset but cannot safely overwrite source content.';
+
+const IMAGE_BLEND_MODE_SUPPORT_GROUPS: readonly ImageBlendModeSupportGroup[] = [
+  {
+    id: 'basic',
+    label: 'Basic canvas blend modes',
+    modes: ['normal', 'multiply', 'screen', 'overlay'],
+    supported: true,
+    caveats: [],
+  },
+  {
+    id: 'contrast',
+    label: 'Contrast and comparison blend modes',
+    modes: ['darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion'],
+    supported: true,
+    caveats: [CANVAS_BLEND_MATH_LIMITATION],
+  },
+  {
+    id: 'component',
+    label: 'Component blend modes',
+    modes: ['hue', 'saturation', 'color', 'luminosity'],
+    supported: true,
+    caveats: [COMPONENT_BLEND_MATH_LIMITATION],
+  },
+];
+
+export const IMAGE_BLEND_MODE_CAPABILITIES: readonly ImageBlendModeCapabilityDescriptor[] =
+  SUPPORTED_IMAGE_BLEND_MODES.map((mode) => {
+    const compositeOperation = imageBlendModeToCanvasCompositeOperation(mode);
+    return {
+      mode,
+      label: IMAGE_BLEND_MODE_LABELS[mode],
+      canvasCompositeOperation: compositeOperation,
+      preview: {
+        supported: true,
+        compositeOperation,
+      },
+      export: {
+        supported: true,
+        compositeOperation,
+      },
+      warnings: [],
+    };
+  });
+
+const IMAGE_BLEND_MODE_CAPABILITY_BY_MODE = new Map(
+  IMAGE_BLEND_MODE_CAPABILITIES.map((descriptor) => [descriptor.mode, descriptor]),
+);
+
+export function imageBlendModeToCanvasCompositeOperation(blendMode: ImageBlendMode): GlobalCompositeOperation {
+  return blendMode === 'normal' ? 'source-over' : blendMode;
+}
+
+export function getImageBlendModeCapability(mode: ImageBlendMode): ImageBlendModeCapabilityDescriptor {
+  return IMAGE_BLEND_MODE_CAPABILITY_BY_MODE.get(mode) ?? IMAGE_BLEND_MODE_CAPABILITIES[0];
+}
+
+export function getUnsupportedImageBlendModeWarnings(
+  options: ImageBlendModeWarningOptions = {},
+): string[] {
+  const warnings: string[] = [];
+  if (options.blendIf) {
+    warnings.push(BLEND_IF_UNSUPPORTED_WARNING);
+  }
+  if (options.advancedBlending) {
+    warnings.push(ADVANCED_BLENDING_UNSUPPORTED_WARNING);
+  }
+  return warnings;
+}
+
+export function getImageBlendModeCapabilityGroups(): ImageBlendModeSupportGroup[] {
+  return IMAGE_BLEND_MODE_SUPPORT_GROUPS.map((group) => ({
+    ...group,
+    modes: [...group.modes],
+    caveats: [...group.caveats],
+  }));
+}
+
+export function describeImageBlendModeParity(
+  options: ImageBlendModeParityOptions = {},
+): ImageBlendModeParityDescriptor {
+  const supportGroups = getImageBlendModeCapabilityGroups();
+  const canvasCompositeMappings = IMAGE_BLEND_MODE_CAPABILITIES.map((descriptor) => ({
+    mode: descriptor.mode,
+    compositeOperation: descriptor.canvasCompositeOperation,
+  }));
+  const activeModes = uniqueBlendModes(options.activeModes ?? SUPPORTED_IMAGE_BLEND_MODES);
+  const unsupportedPhotoshopFeatures = describeUnsupportedPhotoshopBlendFeatures(options);
+  const alphaOpacityCaveats = describeBlendModeAlphaOpacityCaveats(options);
+  const knownMathLimitations = [
+    CANVAS_BLEND_MATH_LIMITATION,
+    COMPONENT_BLEND_MATH_LIMITATION,
+    SOFT_LIGHT_DODGE_BURN_LIMITATION,
+  ];
+  const warnings = [
+    ...getUnsupportedImageBlendModeWarnings(options),
+    ...alphaOpacityCaveats.map((caveat) => caveat.caveat),
+    ...knownMathLimitations,
+  ];
+
+  return {
+    previewId: 'image-blend-mode-parity:v1',
+    activeModes,
+    supportGroups,
+    canvasCompositeMappings,
+    unsupportedPhotoshopFeatures,
+    alphaOpacityCaveats,
+    knownMathLimitations,
+    previewSignature: `image-blend-preview:v1:${JSON.stringify({
+      previewId: 'image-blend-mode-parity:v1',
+      activeModes,
+      mappings: canvasCompositeMappings.filter((mapping) => activeModes.includes(mapping.mode)),
+      supportGroups: supportGroups.map((group) => group.id),
+      unsupported: unsupportedPhotoshopFeatures.map((feature) => feature.id),
+      alphaOpacityCaveats: alphaOpacityCaveats.map((caveat) => caveat.id),
+      knownMathLimitations,
+    })}`,
+    exportSignature: `image-blend-export:v1:${JSON.stringify({
+      previewId: 'image-blend-mode-parity:v1',
+      target: options.exportTarget ?? 'editable',
+      activeModes,
+      mappings: canvasCompositeMappings,
+      unsupported: unsupportedPhotoshopFeatures,
+      alphaOpacityCaveats,
+      knownMathLimitations,
+    })}`,
+    warnings,
+  };
+}
+
+export function describeImageBlendModePortabilityReadiness(
+  options: ImageBlendModePortabilityReadinessOptions = {},
+): ImageBlendModePortabilityReadinessDescriptor {
+  const activeModes = uniqueBlendModes(options.activeModes ?? SUPPORTED_IMAGE_BLEND_MODES);
+  const mappings = IMAGE_BLEND_MODE_CAPABILITIES
+    .filter((descriptor) => activeModes.includes(descriptor.mode))
+    .map((descriptor) => ({
+      mode: descriptor.mode,
+      compositeOperation: descriptor.canvasCompositeOperation,
+    }));
+  const unsupportedPhotoshopAdvancedStates = describeUnsupportedBlendAdvancedStates(options);
+  const activeUnsupportedStates = unsupportedPhotoshopAdvancedStates.filter((state) => state.requested);
+  const exportSourceBinParityCaveats = describeBlendSourceBinParityCaveats(options);
+  const hasAdvancedUnsupported = activeUnsupportedStates.length > 0;
+  const actionReasonCodes: ImageBlendModePortabilityReasonCode[] = hasAdvancedUnsupported
+    ? ['advanced-blending-unsupported']
+    : [];
+  const batchReasonCodes: ImageBlendModePortabilityReasonCode[] = [...actionReasonCodes];
+  if (options.exportTarget === 'source-bin') {
+    batchReasonCodes.push(options.sourceBinLinked ? 'source-bin-linked-visible-export' : 'source-bin-unlinked-visible-export');
+  }
+  const batchLayerCount = Math.max(1, Math.trunc(options.batchLayerCount ?? 1));
+  const batchStatus: ImageBlendModeBatchSuitability['status'] = hasAdvancedUnsupported
+    ? 'blocked'
+    : batchReasonCodes.length > 0
+      ? 'warning'
+      : 'ready';
+  const warnings = [
+    ...activeUnsupportedStates.map((state) => state.caveat),
+    ...exportSourceBinParityCaveats.map((caveat) => caveat.warning),
+  ];
+
+  return {
+    id: 'image-blend-mode-portability-readiness:v1',
+    canvasCompositeSupport: {
+      supported: true,
+      modes: activeModes,
+      mappings,
+    },
+    unsupportedPhotoshopAdvancedStates,
+    exportSourceBinParityCaveats,
+    actionSuitability: {
+      recordable: !hasAdvancedUnsupported,
+      replayable: !hasAdvancedUnsupported,
+      reasonCodes: actionReasonCodes,
+    },
+    batchSuitability: {
+      status: batchStatus,
+      layerCount: batchLayerCount,
+      reasonCodes: batchReasonCodes,
+    },
+    signature: `image-blend-mode-portability-readiness:v1:${JSON.stringify({
+      activeModes,
+      unsupported: activeUnsupportedStates.map((state) => state.id),
+      exportTarget: options.exportTarget ?? 'editable',
+      sourceBinLinked: options.sourceBinLinked ?? false,
+      batchLayerCount,
+    })}`,
+    warnings,
+  };
+}
+
+function describeUnsupportedPhotoshopBlendFeatures(
+  options: ImageBlendModeWarningOptions,
+): UnsupportedPhotoshopBlendFeature[] {
+  const features: UnsupportedPhotoshopBlendFeature[] = [];
+  if (options.blendIf) {
+    features.push({
+      id: 'blend-if',
+      label: 'Blend If',
+      supported: false,
+      caveat: BLEND_IF_UNSUPPORTED_WARNING,
+    });
+  }
+  if (options.advancedBlending) {
+    features.push({
+      id: 'advanced-blending',
+      label: 'Advanced Blending',
+      supported: false,
+      caveat: ADVANCED_BLENDING_UNSUPPORTED_WARNING,
+    });
+  }
+  return features;
+}
+
+function describeBlendModeAlphaOpacityCaveats(
+  options: ImageBlendModeParityOptions,
+): ImageBlendModeAlphaOpacityCaveat[] {
+  const opacity = typeof options.opacity === 'number' && Number.isFinite(options.opacity)
+    ? clamp01(options.opacity)
+    : 1;
+  const caveats: ImageBlendModeAlphaOpacityCaveat[] = [{
+    id: 'layer-opacity',
+    label: 'Layer opacity',
+    value: opacity,
+    caveat: LAYER_OPACITY_CAVEAT,
+  }];
+  if (options.exportTarget === 'flattened') {
+    caveats.push({
+      id: 'flattened-alpha',
+      label: 'Flattened export alpha',
+      value: 1,
+      caveat: FLATTENED_ALPHA_CAVEAT,
+    });
+  }
+  return caveats;
+}
+
+function describeUnsupportedBlendAdvancedStates(
+  options: ImageBlendModePortabilityReadinessOptions,
+): ImageBlendModeUnsupportedAdvancedState[] {
+  const fillOpacity = typeof options.fillOpacity === 'number' && Number.isFinite(options.fillOpacity)
+    ? clamp01(options.fillOpacity)
+    : 1;
+  const channels = uniqueChannels(options.channelTargeting ?? []);
+  return [
+    {
+      id: 'blend-if',
+      label: 'Blend If',
+      requested: options.blendIf === true,
+      supported: false,
+      caveat: BLEND_IF_UNSUPPORTED_WARNING,
+      reasonCode: 'blend-if-unsupported',
+    },
+    {
+      id: 'fill-opacity',
+      label: 'Fill Opacity',
+      requested: options.fillOpacity !== undefined && fillOpacity < 1,
+      supported: false,
+      value: fillOpacity,
+      caveat: FILL_OPACITY_UNSUPPORTED_WARNING,
+      reasonCode: 'fill-opacity-unsupported',
+    },
+    {
+      id: 'knockout',
+      label: 'Knockout',
+      requested: options.knockout !== undefined,
+      supported: false,
+      mode: options.knockout ?? 'none',
+      caveat: KNOCKOUT_UNSUPPORTED_WARNING,
+      reasonCode: 'knockout-unsupported',
+    },
+    {
+      id: 'channel-targeting',
+      label: 'Channel Targeting',
+      requested: channels.length > 0,
+      supported: false,
+      channels,
+      caveat: CHANNEL_TARGETING_UNSUPPORTED_WARNING,
+      reasonCode: 'channel-targeting-unsupported',
+    },
+  ];
+}
+
+function describeBlendSourceBinParityCaveats(
+  options: ImageBlendModePortabilityReadinessOptions,
+): ImageBlendModeSourceBinParityCaveat[] {
+  if (options.exportTarget !== 'source-bin') return [];
+  const caveats: ImageBlendModeSourceBinParityCaveat[] = [{
+    code: 'source-bin-visible-export-flattens-blend-stack',
+    target: 'source-bin',
+    warning: SOURCE_BIN_FLATTENED_BLEND_STACK_CAVEAT,
+  }];
+  caveats.push({
+    code: 'source-bin-overwrite-requires-linked-source',
+    target: 'source-bin',
+    warning: SOURCE_BIN_LINK_REQUIRED_CAVEAT,
+  });
+  return caveats;
+}
+
+function uniqueChannels(channels: readonly ImageBlendModeChannelTarget[]): ImageBlendModeChannelTarget[] {
+  const seen = new Set<ImageBlendModeChannelTarget>();
+  const unique: ImageBlendModeChannelTarget[] = [];
+  for (const channel of channels) {
+    if (seen.has(channel)) continue;
+    seen.add(channel);
+    unique.push(channel);
+  }
+  return unique;
+}
+
+function uniqueBlendModes(modes: readonly ImageBlendMode[]): ImageBlendMode[] {
+  const seen = new Set<ImageBlendMode>();
+  const unique: ImageBlendMode[] = [];
+  for (const mode of modes) {
+    if (seen.has(mode)) continue;
+    seen.add(mode);
+    unique.push(mode);
+  }
+  return unique;
+}
+
 function getHighResWorkerBlobUrl(): string {
   const code = `
+    const DEFAULT_TRANSFORM_ORIGIN = ${DEFAULT_TRANSFORM_ORIGIN};
+    ${imageBlendModeToCanvasCompositeOperation.toString()}
     ${applyAdjustmentToImageData.toString()}
     ${applyAdjustmentToPixel.toString()}
     ${applyBlackWhite.toString()}
@@ -53,6 +609,17 @@ function getHighResWorkerBlobUrl(): string {
     ${clamp01.toString()}
     ${clampByte.toString()}
     ${wrap01.toString()}
+    ${clampImageLayerTransformOrigin.toString()}
+    ${resolveImageLayerTransformOrigin.toString()}
+    ${roundImageLayerTransformNumber.toString()}
+    ${applyWarpToPoint.toString()}
+    ${applyPerspectiveToPoint.toString()}
+    ${interpolateCornerOffset.toString()}
+    ${hasImageLayerWarp.toString()}
+    ${transformSourcePoint.toString()}
+    ${buildTransformedCornersFromMetrics.toString()}
+    ${getImageLayerBitmapDrawMetrics.toString()}
+    ${drawLayerBitmapTransformed.toString()}
 
     self.onmessage = async function(e) {
       const { docWidth, docHeight, layers } = e.data;
@@ -62,6 +629,7 @@ function getHighResWorkerBlobUrl(): string {
 
       for (const layer of layers) {
         if (!layer.visible) continue;
+        if (layer.type === 'group') continue;
 
         if (layer.type === 'adjustment' && layer.adjustment) {
           const source = ctx.getImageData(0, 0, docWidth, docHeight);
@@ -85,22 +653,8 @@ function getHighResWorkerBlobUrl(): string {
         if (layer.bitmap) {
           ctx.save();
           ctx.globalAlpha = clamp01(layer.opacity);
-          const blend = layer.blendMode;
-          ctx.globalCompositeOperation = blend === 'normal' ? 'source-over' : blend;
-
-          const rotation = layer.rotationDeg || 0;
-          const left = (layer.x || 0) + (layer.offsetX || 0);
-          const top = (layer.y || 0) + (layer.offsetY || 0);
-          const width = layer.bitmap.width;
-          const height = layer.bitmap.height;
-
-          if (rotation === 0) {
-            ctx.drawImage(layer.bitmap, left, top);
-          } else {
-            ctx.translate(left + width / 2, top + height / 2);
-            ctx.rotate((rotation * Math.PI) / 180);
-            ctx.drawImage(layer.bitmap, -width / 2, -height / 2);
-          }
+          ctx.globalCompositeOperation = imageBlendModeToCanvasCompositeOperation(layer.blendMode);
+          drawLayerBitmapTransformed(ctx, layer.bitmap, layer, layer.offsetX || 0, layer.offsetY || 0);
           ctx.restore();
         }
       }
@@ -203,7 +757,12 @@ export class CompositeRenderer {
     }
   }
 
-  requestRender(): void {
+  requestRender(options: { invalidateBitmapCache?: boolean } = {}): void {
+    if (options.invalidateBitmapCache) {
+      this.workerDocSignature = null;
+      this.closeWorkerResultBitmap();
+      this.lowResDoc = null;
+    }
     if (this.rafId !== null) return;
     this.rafId = requestAnimationFrame(() => {
       this.rafId = null;
@@ -274,10 +833,24 @@ export class CompositeRenderer {
         x: l.x,
         y: l.y,
         rotationDeg: l.rotationDeg,
+        skewXDeg: l.skewXDeg,
+        skewYDeg: l.skewYDeg,
+        perspectiveX: l.perspectiveX,
+        perspectiveY: l.perspectiveY,
+        warp: l.warp,
+        cornerOffsets: l.cornerOffsets,
+        transformOriginX: l.transformOriginX,
+        transformOriginY: l.transformOriginY,
         adjustment: l.adjustment,
         bitmapVersion: l.bitmapVersion,
+        hasMask: Boolean(l.mask),
+        maskDensity: l.maskDensity,
+        maskFeather: l.maskFeather,
         effects: l.effects,
         filters: l.filters,
+        groupId: l.groupId,
+        groupExpanded: l.groupExpanded,
+        vectorMask: getLayerVectorMaskMetadata(l),
       }))
     });
   }
@@ -316,10 +889,57 @@ export class CompositeRenderer {
         }
       }
 
+      const vectorMask = getLayerVectorMaskMetadata(layer);
+      const scaledMetadata = vectorMask
+        ? {
+            ...layer.metadata,
+            vectorMask: {
+              ...vectorMask,
+              path: {
+                ...vectorMask.path,
+                bounds: vectorMask.path.bounds
+                  ? {
+                      x: vectorMask.path.bounds.x * this.lowResScale,
+                      y: vectorMask.path.bounds.y * this.lowResScale,
+                      width: vectorMask.path.bounds.width * this.lowResScale,
+                      height: vectorMask.path.bounds.height * this.lowResScale,
+                    }
+                  : null,
+                points: vectorMask.path.points.map((point) => ({
+                  x: point.x * this.lowResScale,
+                  y: point.y * this.lowResScale,
+                })),
+              },
+            },
+          }
+        : layer.metadata;
+
       return {
         ...layer,
+        metadata: scaledMetadata,
         x: layer.x * this.lowResScale,
         y: layer.y * this.lowResScale,
+        ...(layer.cornerOffsets ? {
+          cornerOffsets: {
+            nw: {
+              x: layer.cornerOffsets.nw.x * this.lowResScale,
+              y: layer.cornerOffsets.nw.y * this.lowResScale,
+            },
+            ne: {
+              x: layer.cornerOffsets.ne.x * this.lowResScale,
+              y: layer.cornerOffsets.ne.y * this.lowResScale,
+            },
+            se: {
+              x: layer.cornerOffsets.se.x * this.lowResScale,
+              y: layer.cornerOffsets.se.y * this.lowResScale,
+            },
+            sw: {
+              x: layer.cornerOffsets.sw.x * this.lowResScale,
+              y: layer.cornerOffsets.sw.y * this.lowResScale,
+            },
+          },
+        } : {}),
+        ...(layer.maskFeather !== undefined ? { maskFeather: layer.maskFeather * this.lowResScale } : {}),
         bitmap: scaledBitmap || layer.bitmap, // fallback to original if scaling failed or it's an adjustment
         mask: scaledMask || layer.mask,
       };
@@ -363,7 +983,7 @@ export class CompositeRenderer {
 
     // We map the doc's layers, rendering effects to flat bitmaps before sending
     const mappedLayers = await Promise.all(doc.layers.map(async layer => {
-      if (!layer.visible) return { visible: false };
+      if (!isImageLayerEffectivelyVisible(layer, doc.layers) || layer.type === 'group') return { visible: false };
 
       if (layer.type === 'adjustment') {
         let maskBitmap = null;
@@ -387,7 +1007,7 @@ export class CompositeRenderer {
 
       const bitmapToTransfer = styled
         ? styled.bitmap
-        : (layer.mask ? this.composeLayerWithMask(layer) : layer.bitmap);
+        : composeLayerBitmapWithLiveMasks(layer);
 
       let imageBitmap = null;
       if (bitmapToTransfer) {
@@ -395,19 +1015,29 @@ export class CompositeRenderer {
         transferables.push(imageBitmap);
       }
 
-      return {
-        type: layer.type,
-        visible: true,
-        opacity: layer.opacity,
-        blendMode: layer.blendMode,
-        x: layer.x,
-        y: layer.y,
-        rotationDeg: layer.rotationDeg,
-        offsetX: styled?.offsetX || 0,
-        offsetY: styled?.offsetY || 0,
-        bitmap: imageBitmap,
-      };
-    }));
+        return {
+          type: layer.type,
+          visible: true,
+          opacity: layer.opacity,
+          blendMode: layer.blendMode,
+          x: layer.x,
+          y: layer.y,
+          rotationDeg: layer.rotationDeg,
+          skewXDeg: layer.skewXDeg,
+          skewYDeg: layer.skewYDeg,
+          perspectiveX: layer.perspectiveX,
+          perspectiveY: layer.perspectiveY,
+          warp: layer.warp,
+          cornerOffsets: layer.cornerOffsets,
+          transformOriginX: layer.transformOriginX,
+          transformOriginY: layer.transformOriginY,
+          offsetX: styled?.offsetX || 0,
+          offsetY: styled?.offsetY || 0,
+          baseWidth: layer.bitmap?.width || imageBitmap?.width || 0,
+          baseHeight: layer.bitmap?.height || imageBitmap?.height || 0,
+          bitmap: imageBitmap,
+        };
+      }));
 
     return new Promise<void>((resolve, reject) => {
       if (!this.workerObj) {
@@ -432,18 +1062,6 @@ export class CompositeRenderer {
         layers: mappedLayers,
       }, transferables);
     });
-  }
-
-  private composeLayerWithMask(layer: ImageLayer) {
-    if (!layer.bitmap || !layer.mask) return layer.bitmap;
-    const bitmap = createBitmap(layer.bitmap.width, layer.bitmap.height);
-    const ctx = bitmap.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(layer.bitmap, 0, 0);
-      ctx.globalCompositeOperation = 'destination-in';
-      ctx.drawImage(layer.mask, 0, 0);
-    }
-    return bitmap;
   }
 
   private draw(): void {
@@ -502,17 +1120,42 @@ export class CompositeRenderer {
       }
     }
 
-    if (this.currentSelection) {
+    const { quickMaskSettings, selectAndMaskSettings } = useImageEditorStore.getState();
+    const activeLayer = doc.layers.find((layer) => layer.id === doc.activeLayerId) ?? null;
+    if (selectAndMaskSettings.enabled && this.currentSelection) {
+      this.drawSelectAndMaskPreview(
+        buildSelectAndMaskPreviewMask(this.currentSelection, selectAndMaskSettings),
+        doc.width,
+        doc.height,
+        selectAndMaskSettings.previewMode,
+      );
+    } else if (!quickMaskSettings.enabled && doc.activeLayerEditTarget === 'mask' && activeLayer?.mask) {
+      this.drawActiveLayerMaskOverlay(activeLayer, doc.width, doc.height);
+    } else if (quickMaskSettings.enabled && doc) {
+      this.drawQuickMaskOverlay(
+        this.currentSelection,
+        doc.width,
+        doc.height,
+        quickMaskSettings.viewMode,
+        quickMaskSettings.overlayOpacity,
+      );
+    } else if (this.currentSelection) {
       this.drawSelectionAnts(this.currentSelection);
     }
 
     ctx.restore();
 
-    const cropPreview = getCropPreview();
+    const cropPreview = getCropPreview(doc);
     if (cropPreview) {
+      const guideMode = useImageEditorStore.getState().cropToolSettings.guideMode;
       ctx.save();
       ctx.scale(this.dpr, this.dpr);
       drawCropPreviewOverlay(ctx, {
+        canvasSize: {
+          width: this.canvas.width / this.dpr,
+          height: this.canvas.height / this.dpr,
+        },
+        guideMode,
         preview: cropPreview,
         viewport: doc.viewport,
       });
@@ -546,6 +1189,70 @@ export class CompositeRenderer {
 
     ctx.restore();
   }
+
+  private drawQuickMaskOverlay(
+    selection: SelectionMask | null,
+    width: number,
+    height: number,
+    viewMode: 'maskedAreas' | 'selectedAreas',
+    overlayOpacity: number,
+  ): void {
+    const ctx = this.ctx;
+    const overlay = createQuickMaskOverlayMask(selection, width, height, viewMode);
+    ctx.save();
+    ctx.globalAlpha = Math.max(0.1, Math.min(0.9, overlayOpacity));
+    ctx.drawImage(maskToCanvas(overlay, 255, 0, 0), 0, 0);
+    ctx.restore();
+  }
+
+  private drawSelectAndMaskPreview(
+    selection: SelectionMask,
+    width: number,
+    height: number,
+    previewMode: 'maskedAreas' | 'selectedAreas' | 'onBlack' | 'onWhite' | 'blackWhite',
+  ): void {
+    const ctx = this.ctx;
+
+    if (previewMode === 'blackWhite') {
+      ctx.save();
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(maskToCanvas(selection, 255, 255, 255), 0, 0);
+      ctx.restore();
+      return;
+    }
+
+    const matte = createSelectAndMaskMatteMask(selection, width, height, previewMode);
+    ctx.save();
+    if (previewMode === 'onBlack') {
+      ctx.globalAlpha = 0.88;
+      ctx.drawImage(maskToCanvas(matte, 0, 0, 0), 0, 0);
+    } else if (previewMode === 'onWhite') {
+      ctx.globalAlpha = 0.88;
+      ctx.drawImage(maskToCanvas(matte, 255, 255, 255), 0, 0);
+    } else {
+      ctx.globalAlpha = 0.5;
+      ctx.drawImage(maskToCanvas(matte, 255, 0, 0), 0, 0);
+    }
+    ctx.restore();
+  }
+
+  private drawActiveLayerMaskOverlay(
+    layer: Pick<ImageLayer, 'x' | 'y' | 'mask' | 'maskDensity' | 'maskFeather'>,
+    width: number,
+    height: number,
+  ): void {
+    const ctx = this.ctx;
+    const overlay = createLayerMaskOverlayMask(layer, width, height);
+    ctx.save();
+    ctx.globalAlpha = 0.45;
+    ctx.drawImage(maskToCanvas(overlay, 255, 0, 0), 0, 0);
+    ctx.restore();
+  }
+}
+
+function getLayerVectorMaskMetadata(layer: ImageLayer) {
+  return (layer as ImageLayerWithVectorMask).metadata?.vectorMask ?? null;
 }
 
 function drawTransparencyCheckerboard(

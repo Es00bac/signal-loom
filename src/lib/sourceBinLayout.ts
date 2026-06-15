@@ -45,18 +45,27 @@ export type SourceLibraryDisplayRow<T extends SourceBinDisplayItem> =
 
 export interface SourceBinSidebarPresentationInput {
   dockable: boolean;
+  embeddedDrawer?: boolean;
   sidebarOpen: boolean;
 }
 
 export interface SourceBinSidebarPresentation {
   contentOpen: boolean;
   widthClassName: 'w-full' | 'w-[22rem]' | 'w-14';
-  toggleAction: 'collapse-dock' | 'toggle-sidebar';
+  toggleAction: 'collapse-dock' | 'toggle-sidebar' | 'none';
 }
 
 export function resolveSourceBinSidebarPresentation(
   input: SourceBinSidebarPresentationInput,
 ): SourceBinSidebarPresentation {
+  if (input.embeddedDrawer) {
+    return {
+      contentOpen: true,
+      widthClassName: 'w-full',
+      toggleAction: 'none',
+    };
+  }
+
   if (input.dockable) {
     return {
       contentOpen: true,

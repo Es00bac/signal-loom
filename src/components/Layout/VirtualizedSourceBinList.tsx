@@ -260,7 +260,7 @@ export function VirtualizedSourceBinList<T extends object>({
         <div
           data-source-bin-virtualized-list-inner=""
           style={{
-            transform: `translateY(${-offsetY}px)`,
+            transform: `translateY(${offsetY}px)`,
             willChange: 'transform',
           }}
         >

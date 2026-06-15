@@ -47,7 +47,12 @@ export function SharedWorkspaceDockablePanels({
       defaults.map((definition, index) => {
         const key = panelKey(workspaceId, definition.panelId);
         const defaultLayout = createDefaultDockablePanelLayout(definition, index);
-        const layout = sanitizeDockablePanelLayout(layouts[key], defaultLayout, viewport);
+        const layout = sanitizeDockablePanelLayout(
+          layouts[key],
+          defaultLayout,
+          viewport,
+          { constrainFloatingRectPosition: false, constrainFloatingRectSize: false },
+        );
         return { definition, layout };
       }),
     [defaults, layouts, viewport, workspaceId],
@@ -95,15 +100,15 @@ function SharedDockZoneStack({
   if (zone === 'overlay') {
     return (
       <div
-        className="absolute left-1/2 flex max-h-[calc(100%-6rem)] w-[min(520px,calc(100%-2rem))] -translate-x-1/2 flex-col gap-0"
+        className="absolute left-1/2 flex max-h-[calc(100%-6rem)] w-[min(520px,calc(100%-2rem))] -translate-x-1/2 flex-col gap-0 pointer-events-none"
         style={{ top: topOffsetPx + 16 }}
       >
-        {zoneEntries.map((entry) => renderSharedPanel(
+        {zoneEntries.map((entry, index) => renderSharedPanel(
           entry.definition,
           entry.layout,
           viewport,
           onCenterBookmarkNode,
-          'h-auto min-h-0 flex-1 rounded-none',
+          `h-auto min-h-0 rounded-none ${entry.layout.mode === 'collapsed' ? `mt-2 ${index === 0 ? 'mt-8' : ''}` : 'flex-1'}`,
         ))}
       </div>
     );
@@ -112,15 +117,15 @@ function SharedDockZoneStack({
   if (zone === 'top' || zone === 'bottom') {
     return (
       <div
-        className={`absolute ${zone === 'bottom' ? 'bottom-0' : ''} left-0 right-0 flex min-w-0 ${zone === 'top' ? 'flex-row' : 'flex-row-reverse'} gap-0`}
+        className={`absolute ${zone === 'bottom' ? 'bottom-0' : ''} left-0 right-0 flex min-w-0 ${zone === 'top' ? 'flex-row' : 'flex-row-reverse'} gap-0 pointer-events-none`}
         style={zone === 'top' ? { top: topOffsetPx } : undefined}
       >
-        {zoneEntries.map((entry) => renderSharedPanel(
+        {zoneEntries.map((entry, index) => renderSharedPanel(
           entry.definition,
           entry.layout,
           viewport,
           onCenterBookmarkNode,
-          'min-w-0 flex-1 rounded-none',
+          `min-w-0 rounded-none ${entry.layout.mode === 'collapsed' ? `ml-2 ${index === 0 ? 'ml-8' : ''}` : 'flex-1'}`,
         ))}
       </div>
     );
@@ -129,15 +134,15 @@ function SharedDockZoneStack({
   const edgeClassName = zone === 'right' ? 'right-0' : 'left-0';
   return (
     <div
-      className={`absolute bottom-0 ${edgeClassName} flex min-h-0 flex-col gap-0`}
+      className={`absolute bottom-0 ${edgeClassName} flex min-h-0 flex-col gap-0 pointer-events-none`}
       style={{ top: topOffsetPx }}
     >
-      {zoneEntries.map((entry) => renderSharedPanel(
+      {zoneEntries.map((entry, index) => renderSharedPanel(
         entry.definition,
         entry.layout,
         viewport,
         onCenterBookmarkNode,
-        'h-auto min-h-0 flex-1 rounded-none',
+        `h-auto min-h-0 rounded-none ${entry.layout.mode === 'collapsed' ? `mt-2 ${index === 0 ? 'mt-24' : ''}` : 'flex-1'}`,
       ))}
     </div>
   );

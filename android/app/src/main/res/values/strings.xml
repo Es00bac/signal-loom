@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Signal Loom</string>
+    <string name="title_activity_main">Signal Loom</string>
+    <string name="package_name">studio.sloom.signalloom</string>
+    <string name="custom_url_scheme">studio.sloom.signalloom</string>
+</resources>

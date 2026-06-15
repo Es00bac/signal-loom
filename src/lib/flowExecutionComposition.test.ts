@@ -149,6 +149,7 @@ describe('executeNodeRequest composition metadata', () => {
         assemblyUnavailableReason: 'Cached segment 0-1000 must be a materialized data URL for native assembly.',
       },
     });
+    expect(result.blob).toBeInstanceOf(Blob);
     expect(mockedComposeSequenceMedia).toHaveBeenCalledWith(expect.objectContaining({
       nativeAssemblyManifest,
     }));

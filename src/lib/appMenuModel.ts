@@ -1,6 +1,7 @@
-import type { NativeMenuCommand } from './nativeApp';
+import { buildNativeStandaloneEntryReadiness, type NativeMenuCommand } from './nativeApp';
 import type { WorkspaceView } from '../types/flow';
 import { getKeyboardShortcutLabel, type KeyboardShortcutMap } from './keyboardShortcuts';
+import type { WorkspaceIconId } from './workspaceIcons';
 
 export interface AppMenuItem {
   label: string;
@@ -13,6 +14,122 @@ export interface AppMenuGroup {
   label: string;
   enabled: boolean;
   items: AppMenuItem[];
+}
+
+export type WorkspaceMenuGroupId = 'flow' | 'video' | 'image' | 'paper';
+export type WorkspaceSuiteLaunchStatus = 'available';
+export type WorkspaceStandaloneLaunchStatus = 'native-bridge-window';
+
+export interface WorkspaceAppLaunchDescriptor {
+  workspace: WorkspaceView;
+  appName: string;
+  menuGroupId: WorkspaceMenuGroupId;
+  menuGroupLabel: string;
+  launchCommand: NativeMenuCommand;
+  launchLabel: string;
+  shortcut: string;
+  iconId: WorkspaceIconId;
+  suiteLaunchStatus: WorkspaceSuiteLaunchStatus;
+  standaloneLaunchStatus: WorkspaceStandaloneLaunchStatus;
+}
+
+export type WorkspaceSuiteStandaloneHandoffStatus = 'ready';
+export type WorkspaceStandaloneEntryPoint = `signal-loom://workspace/${WorkspaceView}`;
+
+export interface WorkspaceSuiteStandaloneHandoff {
+  workspace: WorkspaceView;
+  appName: string;
+  suiteCommand: NativeMenuCommand;
+  suiteMenuGroupId: WorkspaceMenuGroupId;
+  suiteMenuGroupLabel: string;
+  standaloneEntryPoint: WorkspaceStandaloneEntryPoint;
+  standaloneMode: 'shared-binary-window';
+  handoffStatus: WorkspaceSuiteStandaloneHandoffStatus;
+  caveat: string;
+  signature: string;
+}
+
+export const WORKSPACE_APP_LAUNCH_DESCRIPTORS: readonly WorkspaceAppLaunchDescriptor[] = [
+  {
+    workspace: 'flow',
+    appName: 'Flow',
+    menuGroupId: 'flow',
+    menuGroupLabel: 'Flow',
+    launchCommand: 'view:flow',
+    launchLabel: 'Open/Focus Flow Window',
+    shortcut: 'Ctrl+1',
+    iconId: 'flow',
+    suiteLaunchStatus: 'available',
+    standaloneLaunchStatus: 'native-bridge-window',
+  },
+  {
+    workspace: 'editor',
+    appName: 'Video',
+    menuGroupId: 'video',
+    menuGroupLabel: 'Video',
+    launchCommand: 'view:editor',
+    launchLabel: 'Open/Focus Video Window',
+    shortcut: 'Ctrl+2',
+    iconId: 'editor',
+    suiteLaunchStatus: 'available',
+    standaloneLaunchStatus: 'native-bridge-window',
+  },
+  {
+    workspace: 'image',
+    appName: 'Image',
+    menuGroupId: 'image',
+    menuGroupLabel: 'Image',
+    launchCommand: 'view:image',
+    launchLabel: 'Open/Focus Image Window',
+    shortcut: 'Ctrl+3',
+    iconId: 'image',
+    suiteLaunchStatus: 'available',
+    standaloneLaunchStatus: 'native-bridge-window',
+  },
+  {
+    workspace: 'paper',
+    appName: 'Paper',
+    menuGroupId: 'paper',
+    menuGroupLabel: 'Paper',
+    launchCommand: 'view:paper',
+    launchLabel: 'Open/Focus Paper Window',
+    shortcut: 'Ctrl+4',
+    iconId: 'paper',
+    suiteLaunchStatus: 'available',
+    standaloneLaunchStatus: 'native-bridge-window',
+  },
+];
+
+export function getWorkspaceAppLaunchDescriptor(workspace: WorkspaceView): WorkspaceAppLaunchDescriptor {
+  const descriptor = WORKSPACE_APP_LAUNCH_DESCRIPTORS.find((entry) => entry.workspace === workspace);
+  if (!descriptor) {
+    throw new Error(`Unknown workspace app launch descriptor: ${workspace}`);
+  }
+  return descriptor;
+}
+
+export function buildWorkspaceSuiteStandaloneHandoff(workspace: WorkspaceView): WorkspaceSuiteStandaloneHandoff {
+  const descriptor = getWorkspaceAppLaunchDescriptor(workspace);
+  const standalone = buildNativeStandaloneEntryReadiness(workspace);
+
+  return {
+    workspace,
+    appName: descriptor.appName,
+    suiteCommand: descriptor.launchCommand,
+    suiteMenuGroupId: descriptor.menuGroupId,
+    suiteMenuGroupLabel: descriptor.menuGroupLabel,
+    standaloneEntryPoint: standalone.entryPoint,
+    standaloneMode: standalone.mode,
+    handoffStatus: 'ready',
+    caveat: `The ${descriptor.appName} workspace can be launched from the suite menu or deep-linked into the shared Signal Loom binary; it is not a separately signed standalone executable.`,
+    signature: [
+      'workspace-handoff:v1',
+      workspace,
+      descriptor.launchCommand,
+      standalone.entryPoint,
+      standalone.mode,
+    ].join('|'),
+  };
 }
 
 export function buildAppMenuGroups(activeWorkspace: WorkspaceView, shortcuts: KeyboardShortcutMap = {}): AppMenuGroup[] {
@@ -83,7 +200,10 @@ export function buildAppMenuGroups(activeWorkspace: WorkspaceView, shortcuts: Ke
       { label: 'Lasso Tool', command: 'image:tool-lasso', shortcut: 'L' },
       { label: 'Magic Wand Tool', command: 'image:tool-magic-wand', shortcut: 'W' },
       { label: 'Brush Tool', command: 'image:tool-brush', shortcut: 'B' },
+      { label: 'Pen Tool', command: 'image:tool-pen', shortcut: 'Shift+B' },
       { label: 'Eraser Tool', command: 'image:tool-eraser', shortcut: 'E' },
+      { label: 'Background Eraser Tool', command: 'image:tool-background-eraser', shortcut: 'Alt+E' },
+      { label: 'Magic Eraser Tool', command: 'image:tool-magic-eraser', shortcut: 'Shift+E' },
       { label: 'Clone Stamp Tool', command: 'image:tool-clone-stamp', shortcut: 'S' },
       { label: 'Spot Heal Tool', command: 'image:tool-spot-heal', shortcut: 'J' },
       { label: 'Blur Brush', command: 'image:tool-blur-brush', shortcut: 'R' },
@@ -109,6 +229,7 @@ export function buildAppMenuGroups(activeWorkspace: WorkspaceView, shortcuts: Ke
     label: 'Paper',
     enabled: activeWorkspace === 'paper',
     items: [
+      { label: 'Open/Focus Paper Window', command: 'view:paper', shortcut: 'Ctrl+4' },
       { label: 'Undo', command: 'edit:undo', shortcut: 'Ctrl+Z' },
       { label: 'Redo', command: 'edit:redo', shortcut: 'Ctrl+Shift+Z' },
       { label: 'Cut', command: 'edit:cut', shortcut: 'Ctrl+X' },
@@ -173,6 +294,7 @@ export function buildAppMenuGroups(activeWorkspace: WorkspaceView, shortcuts: Ke
       { label: 'Open/Focus Paper Window', command: 'view:paper', shortcut: 'Ctrl+4' },
       { label: 'Command Palette...', command: 'view:command-palette', shortcut: 'Ctrl+K' },
       { label: 'Activity Trail...', command: 'view:activity-trail' },
+      { label: 'Toggle Interface', command: 'view:toggle-interface', shortcut: 'Tab' },
       { label: 'Toggle Source Bin', command: 'view:toggle-source-bin' },
       { label: 'Toggle Inspector', command: 'view:toggle-inspector' },
       { label: 'Reset Current Workspace Panels', command: 'view:layout-reset' },

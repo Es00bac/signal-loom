@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import { showAlertDialog } from '../../store/alertDialogStore';
+import { AdvancedColorPicker } from '../Common/AdvancedColorPicker';
 
 export interface NewDocumentModalProps {
   isOpen: boolean;
@@ -162,11 +163,12 @@ export function NewDocumentModal({ isOpen, onClose, onCreate }: NewDocumentModal
 
             {bgType === 'custom' && (
               <div className="flex items-center gap-2 mt-2">
-                <input
-                  type="color"
+                <AdvancedColorPicker
                   value={customBgColor}
-                  onChange={(e) => setCustomBgColor(e.target.value)}
-                  className="h-8 w-10 border border-cyan-300/10 bg-transparent p-0 cursor-pointer focus:outline-none rounded-xs"
+                  onChange={setCustomBgColor}
+                  label="Custom canvas background"
+                  className="h-8 w-10"
+                  buttonClassName="border border-cyan-300/10 bg-transparent focus:outline-none rounded-xs"
                 />
                 <input
                   type="text"

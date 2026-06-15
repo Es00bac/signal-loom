@@ -7,6 +7,334 @@ import { rasterizeLayerBitmapTransformed } from './ImageLayerTransform';
 export const IMAGE_XCF_MIME_TYPE = 'image/x-xcf';
 export const IMAGE_XCF_EXTENSION = 'xcf';
 
+export type SignalLoomXcfExportMode = 'native-raster' | 'flattened-raster' | 'omitted-unsupported';
+export type SignalLoomXcfDetectionConfidence = 'extension-and-mime' | 'extension' | 'mime' | 'none';
+export type SignalLoomXcfUnsupportedReason = 'native-xcf-decoder-not-implemented';
+export type SignalLoomXcfExportCompatibilityLevel = 'layered-raster-export-only';
+export type SignalLoomXcfFallbackRouteKind = 'png' | 'tiff' | 'psd' | 'source-library';
+export type SignalLoomXcfFallbackRecommendationAction =
+  | 'convert-layered-handoff'
+  | 'convert-visible-composite'
+  | 'convert-visible-preview'
+  | 'archive-original';
+export type SignalLoomXcfNativeHeaderState =
+  | 'recognized-xcf-header'
+  | 'missing-header-bytes'
+  | 'unrecognized-header';
+export type SignalLoomXcfNativeHeaderSignature = 'gimp-xcf' | 'not-provided' | 'unknown';
+export type SignalLoomXcfNativeDecodeStatus = 'unsupported' | 'not-xcf-source';
+export type SignalLoomXcfNativeDecodeAction = 'convert-first' | 'ignore-non-xcf';
+export type SignalLoomXcfNativeBlockedOperation =
+  | 'open-as-pixels'
+  | 'reconstruct-layer-tree'
+  | 'reconstruct-layer-masks'
+  | 'reconstruct-editable-text'
+  | 'reconstruct-groups'
+  | 'reconstruct-filter-stacks'
+  | 'reconstruct-source-links';
+export type SignalLoomXcfNativeUnsupportedStateCode =
+  | 'native-pixel-decode-unavailable'
+  | 'native-layer-tree-decode-unavailable'
+  | 'native-edit-state-decode-unavailable';
+
+export interface SignalLoomXcfSourceIdentityInput {
+  fileName?: string;
+  mimeType?: string;
+}
+
+export interface SignalLoomXcfSourceIdentity {
+  extension: string | null;
+  mimeType: string | null;
+  isXcfExtension: boolean;
+  isXcfMimeType: boolean;
+  isXcf: boolean;
+  confidence: SignalLoomXcfDetectionConfidence;
+}
+
+export interface SignalLoomXcfImportReadinessInput extends SignalLoomXcfSourceIdentityInput {
+  bytes?: ArrayBufferLike | Uint8Array;
+  sourceLibraryItemId?: string;
+}
+
+export interface SignalLoomXcfFallbackRoute {
+  route: SignalLoomXcfFallbackRouteKind;
+  label: string;
+  preserves: string;
+  recommendedFor: string;
+  caveat: string;
+}
+
+export interface SignalLoomXcfFallbackRecommendation extends SignalLoomXcfFallbackRoute {
+  rank: number;
+  action: SignalLoomXcfFallbackRecommendationAction;
+}
+
+export interface SignalLoomXcfNativeHeaderDescriptor {
+  provided: boolean;
+  recognized: boolean;
+  signature: SignalLoomXcfNativeHeaderSignature;
+  version: string | null;
+  state: SignalLoomXcfNativeHeaderState;
+}
+
+export interface SignalLoomXcfNativeUnsupportedState {
+  code: SignalLoomXcfNativeUnsupportedStateCode;
+  summary: string;
+}
+
+export interface SignalLoomXcfNativeDecodeStateDescriptor {
+  version: 1;
+  kind: 'signal-loom-xcf-native-decode-state';
+  detection: SignalLoomXcfSourceIdentity;
+  header: SignalLoomXcfNativeHeaderDescriptor;
+  decode: {
+    status: SignalLoomXcfNativeDecodeStatus;
+    canDecodePixels: false;
+    canDecodeNativeEditState: false;
+    unsupportedReason: SignalLoomXcfUnsupportedReason | null;
+    unsupportedStates: SignalLoomXcfNativeUnsupportedState[];
+    blockedOperations: SignalLoomXcfNativeBlockedOperation[];
+  };
+  recommendedAction: SignalLoomXcfNativeDecodeAction;
+  fallbackRecommendations: SignalLoomXcfFallbackRecommendation[];
+  stableSignature: string;
+}
+
+export interface SignalLoomXcfRoundTripRiskDescriptor {
+  level: 'high';
+  nativeReopenSupported: false;
+  sourceEditStatePreserved: false;
+  summary: string;
+  affectedConstructs: SignalLoomXcfNativeConstruct[];
+  recommendedFallbackRoutes: SignalLoomXcfFallbackRouteKind[];
+  blockers: string[];
+}
+
+export interface SignalLoomXcfImportReadinessPolicy {
+  version: 1;
+  kind: 'signal-loom-xcf-import-readiness';
+  detection: SignalLoomXcfSourceIdentity;
+  import: {
+    supported: false;
+    status: 'unsupported';
+    canOpenAsPixels: false;
+    unsupportedReason: SignalLoomXcfUnsupportedReason;
+    message: string;
+  };
+  fallbackRoutes: SignalLoomXcfFallbackRoute[];
+  fallbackRecommendations: SignalLoomXcfFallbackRecommendation[];
+  nativeDecodeState: SignalLoomXcfNativeDecodeStateDescriptor;
+  exportCompatibilityLevel: SignalLoomXcfExportCompatibilityLevel;
+  caveats: {
+    layers: string;
+    masks: string;
+    groups: string;
+    text: string;
+    effects: string;
+    filters: string;
+    sourceLinks: string;
+  };
+  sourcePolicy: {
+    importSignature: string;
+    exportSignature: string;
+    nativeRoundtrip: 'unsupported';
+  };
+  compatibilitySignature: string;
+  policyWarnings: SignalLoomXcfPolicyWarning[];
+  roundTripRisk: SignalLoomXcfRoundTripRiskDescriptor;
+}
+
+export type SignalLoomXcfExportWarningCode =
+  | 'xcf-import-unsupported'
+  | 'editable-text-flattened'
+  | 'layer-effects-flattened'
+  | 'layer-masks-flattened'
+  | 'source-links-flattened'
+  | 'filter-metadata-flattened'
+  | 'adjustment-layers-omitted'
+  | 'layer-groups-omitted';
+
+export type SignalLoomXcfPolicyWarningScope = 'import' | 'export';
+export type SignalLoomXcfNativeConstruct =
+  | 'xcf-document'
+  | 'text'
+  | 'layer-effects'
+  | 'layer-mask'
+  | 'source-link'
+  | 'filter-stack'
+  | 'adjustment-layer'
+  | 'layer-group';
+export type SignalLoomXcfPolicyPreservation = 'unsupported' | 'flattened-raster' | 'omitted';
+
+export interface SignalLoomXcfExportWarning {
+  code: SignalLoomXcfExportWarningCode;
+  severity: 'warning';
+  layerIds: string[];
+  message: string;
+}
+
+export interface SignalLoomXcfPolicyWarning {
+  descriptorId: string;
+  scope: SignalLoomXcfPolicyWarningScope;
+  code: SignalLoomXcfExportWarningCode;
+  nativeConstruct: SignalLoomXcfNativeConstruct;
+  affectedLayerIds: string[];
+  preservation: SignalLoomXcfPolicyPreservation;
+  nativeRoundtrip: 'unsupported';
+  fallbackRoute: SignalLoomXcfFallbackRouteKind;
+  message: string;
+}
+
+export interface SignalLoomXcfExportLayerDescriptor {
+  id: string;
+  name: string;
+  type: ImageLayer['type'];
+  order: number;
+  xcfLayerIndex: number | null;
+  exportMode: SignalLoomXcfExportMode;
+  flattened: boolean;
+  omitted: boolean;
+  visible: boolean;
+  opacity: number;
+  blendMode: BlendMode;
+  text?: {
+    contentLength: number;
+    fontFamily?: string;
+    fontSize?: number;
+    nativeEditableText: false;
+  };
+  effects?: {
+    count: number;
+    kinds: string[];
+    enabledKinds: string[];
+    nativeLayerEffects: false;
+  };
+  mask?: {
+    width: number;
+    height: number;
+    nativeLayerMask: false;
+  };
+  sourceLink?: {
+    id: string;
+    label?: string;
+    status: NonNullable<NonNullable<ImageLayer['metadata']>['sourceLink']>['status'] | 'linked';
+    nativeSmartObject: false;
+  };
+  filters?: {
+    count: number;
+    enabledCount: number;
+    kinds: string[];
+    nativeSmartFilters: false;
+    metadataOnly: true;
+  };
+  adjustment?: {
+    kind: NonNullable<ImageLayer['adjustment']>['kind'];
+    nativeAdjustmentLayer: false;
+  };
+  warningCodes: SignalLoomXcfExportWarningCode[];
+}
+
+export interface SignalLoomXcfRetainedMetadataSummary {
+  textLayerIds: string[];
+  effectLayerIds: string[];
+  sourceLinkedLayerIds: string[];
+  filterLayerIds: string[];
+}
+
+export interface SignalLoomXcfLayerRoundTripWarning {
+  code: SignalLoomXcfExportWarningCode;
+  severity: 'warning';
+  message: string;
+  fallbackRoute: SignalLoomXcfFallbackRouteKind;
+  flattened: boolean;
+  omitted: boolean;
+}
+
+export interface SignalLoomXcfLayerWarningDescriptor {
+  layerId: string;
+  layerName: string;
+  exportMode: SignalLoomXcfExportMode;
+  flattened: boolean;
+  omitted: boolean;
+  warnings: SignalLoomXcfLayerRoundTripWarning[];
+}
+
+export interface SignalLoomXcfLayerConstructWarningDescriptor {
+  descriptorId: string;
+  layerId: string;
+  layerName: string;
+  code: SignalLoomXcfExportWarningCode;
+  nativeConstruct: SignalLoomXcfNativeConstruct;
+  preservation: SignalLoomXcfPolicyPreservation;
+  fallbackRoute: SignalLoomXcfFallbackRouteKind;
+  exportMode: SignalLoomXcfExportMode;
+  flattened: boolean;
+  omitted: boolean;
+  message: string;
+}
+
+export interface SignalLoomXcfExportCompatibilityDescriptor {
+  version: 1;
+  kind: 'signal-loom-xcf-export-compatibility';
+  format: {
+    label: 'XCF';
+    mimeType: typeof IMAGE_XCF_MIME_TYPE;
+    extension: typeof IMAGE_XCF_EXTENSION;
+  };
+  import: {
+    supported: false;
+    status: 'unsupported';
+    canOpenAsPixels: false;
+    recommendedHandoffFormats: ['PSD', 'TIFF', 'PNG', 'JPEG'];
+    message: string;
+  };
+  export: {
+    supported: true;
+    status: 'layered-raster-export-only';
+    layerOrder: 'bottom-to-top';
+    xcfLayerOrder: 'bottom-to-top';
+    preservesRasterLayers: true;
+    preservesEditableText: false;
+    preservesAdjustmentLayers: false;
+    preservesLayerEffects: false;
+    preservesLayerMasks: false;
+    preservesLayerGroups: false;
+    preservesSourceLinks: false;
+  };
+  summary: {
+    layerCount: number;
+    exportedRasterLayerCount: number;
+    skippedLayerCount: number;
+    flattenedLayerCount: number;
+    textLayerCount: number;
+    adjustmentLayerCount: number;
+    effectLayerCount: number;
+    maskLayerCount: number;
+    filterLayerCount: number;
+    groupCount: number;
+    sourceLinkedLayerCount: number;
+    warningCount: number;
+  };
+  sourcePolicy: {
+    signature: string;
+    importAction: 'convert-first';
+    exportAction: 'export-layered-raster';
+    nativeRoundtrip: 'unsupported';
+  };
+  compatibilitySignature: string;
+  recommendedFallbackRoutes: SignalLoomXcfFallbackRoute[];
+  fallbackRecommendations: SignalLoomXcfFallbackRecommendation[];
+  retainedMetadata: SignalLoomXcfRetainedMetadataSummary;
+  layerWarnings: SignalLoomXcfLayerWarningDescriptor[];
+  layerConstructWarnings: SignalLoomXcfLayerConstructWarningDescriptor[];
+  policyWarnings: SignalLoomXcfPolicyWarning[];
+  roundTripRisk: SignalLoomXcfRoundTripRiskDescriptor;
+  compatibilitySummary: string;
+  roundTripCaveats: string[];
+  warnings: SignalLoomXcfExportWarning[];
+  layers: SignalLoomXcfExportLayerDescriptor[];
+}
+
 interface XcfLayerExport {
   name: string;
   width: number;
@@ -21,6 +349,207 @@ interface XcfLayerExport {
 }
 
 const XCF_TILE_SIZE = 64;
+const XCF_IMPORT_UNSUPPORTED_MESSAGE = 'GIMP XCF workfiles are not imported or decoded by Image; open them in GIMP and export PSD, TIFF, PNG, or JPEG before opening here.';
+const XCF_DETECTED_UNSUPPORTED_MESSAGE = 'GIMP XCF workfiles are detected, but Image cannot import or decode XCF pixels or native edit state yet.';
+const XCF_MIME_TYPES = new Set(['image/x-xcf', 'image/x-gimp-xcf', 'image/xcf']);
+const XCF_IMPORT_UNSUPPORTED_REASON: SignalLoomXcfUnsupportedReason = 'native-xcf-decoder-not-implemented';
+const XCF_NATIVE_BLOCKED_OPERATIONS: SignalLoomXcfNativeBlockedOperation[] = [
+  'open-as-pixels',
+  'reconstruct-layer-tree',
+  'reconstruct-layer-masks',
+  'reconstruct-editable-text',
+  'reconstruct-groups',
+  'reconstruct-filter-stacks',
+  'reconstruct-source-links',
+];
+const XCF_NATIVE_UNSUPPORTED_STATES: SignalLoomXcfNativeUnsupportedState[] = [
+  {
+    code: 'native-pixel-decode-unavailable',
+    summary: 'Image does not include a native XCF pixel decoder.',
+  },
+  {
+    code: 'native-layer-tree-decode-unavailable',
+    summary: 'Image does not reconstruct native XCF layer trees, masks, groups, or blend state.',
+  },
+  {
+    code: 'native-edit-state-decode-unavailable',
+    summary: 'Image does not reconstruct editable XCF text, filters, effects, or source-link state.',
+  },
+];
+const XCF_IMPORT_RISK_CONSTRUCTS: SignalLoomXcfNativeConstruct[] = [
+  'xcf-document',
+  'text',
+  'layer-effects',
+  'layer-mask',
+  'source-link',
+  'filter-stack',
+  'adjustment-layer',
+  'layer-group',
+];
+
+export function detectXcfSourceIdentity(input: SignalLoomXcfSourceIdentityInput): SignalLoomXcfSourceIdentity {
+  const extension = normalizeXcfExtension(input.fileName);
+  const mimeType = normalizeXcfMimeType(input.mimeType);
+  const isXcfExtension = extension === IMAGE_XCF_EXTENSION;
+  const isXcfMimeType = Boolean(mimeType && XCF_MIME_TYPES.has(mimeType));
+  const confidence = getXcfDetectionConfidence(isXcfExtension, isXcfMimeType);
+
+  return {
+    extension,
+    mimeType,
+    isXcfExtension,
+    isXcfMimeType,
+    isXcf: isXcfExtension || isXcfMimeType,
+    confidence,
+  };
+}
+
+export function describeXcfNativeDecodeState(
+  input: SignalLoomXcfImportReadinessInput = {},
+): SignalLoomXcfNativeDecodeStateDescriptor {
+  const detection = detectXcfSourceIdentity(input);
+  const header = inspectXcfHeader(input.bytes);
+  const isXcfCandidate = detection.isXcf || header.recognized;
+  const status: SignalLoomXcfNativeDecodeStatus = isXcfCandidate ? 'unsupported' : 'not-xcf-source';
+  const fallbackRecommendations = isXcfCandidate ? buildXcfFallbackRecommendations() : [];
+
+  return {
+    version: 1,
+    kind: 'signal-loom-xcf-native-decode-state',
+    detection,
+    header,
+    decode: {
+      status,
+      canDecodePixels: false,
+      canDecodeNativeEditState: false,
+      unsupportedReason: status === 'unsupported' ? XCF_IMPORT_UNSUPPORTED_REASON : null,
+      unsupportedStates: status === 'unsupported' ? XCF_NATIVE_UNSUPPORTED_STATES : [],
+      blockedOperations: status === 'unsupported' ? XCF_NATIVE_BLOCKED_OPERATIONS : [],
+    },
+    recommendedAction: status === 'unsupported' ? 'convert-first' : 'ignore-non-xcf',
+    fallbackRecommendations,
+    stableSignature: buildXcfNativeDecodeStateSignature(detection, header, status, fallbackRecommendations),
+  };
+}
+
+export function describeXcfImportReadinessPolicy(
+  input: SignalLoomXcfImportReadinessInput = {},
+): SignalLoomXcfImportReadinessPolicy {
+  const detection = detectXcfSourceIdentity(input);
+  const nativeDecodeState = describeXcfNativeDecodeState(input);
+  const policyWarnings = buildXcfPolicyWarnings([{
+    code: 'xcf-import-unsupported',
+    severity: 'warning',
+    layerIds: [],
+    message: XCF_DETECTED_UNSUPPORTED_MESSAGE,
+  }]);
+
+  return {
+    version: 1,
+    kind: 'signal-loom-xcf-import-readiness',
+    detection,
+    import: {
+      supported: false,
+      status: 'unsupported',
+      canOpenAsPixels: false,
+      unsupportedReason: XCF_IMPORT_UNSUPPORTED_REASON,
+      message: XCF_DETECTED_UNSUPPORTED_MESSAGE,
+    },
+    fallbackRoutes: buildXcfFallbackRoutes(),
+    fallbackRecommendations: buildXcfFallbackRecommendations(),
+    nativeDecodeState,
+    exportCompatibilityLevel: 'layered-raster-export-only',
+    caveats: {
+      layers: 'XCF layer pixels can be exported from Image, but imported XCF layers are unsupported until a native decoder exists.',
+      masks: 'Layer masks are not read from XCF and are flattened into pixels during current XCF export.',
+      groups: 'Native XCF group folders are not imported and Image currently exports a flat raster layer list.',
+      text: 'Editable XCF text is not imported; Image text layers export as raster pixels.',
+      effects: 'Native GIMP effects or Signal Loom layer effects are not preserved as editable XCF effect state.',
+      filters: 'GIMP filter/plugin state and Signal Loom filter stacks are not round-tripped as native editable XCF filters.',
+      sourceLinks: 'Source-linked layers and Smart Object-like relationships are metadata-only in Image and are not native XCF links.',
+    },
+    sourcePolicy: {
+      importSignature: buildXcfImportPolicySignature(detection, input.sourceLibraryItemId),
+      exportSignature: 'xcf-export:v1|level=layered-raster-export-only|nativeRoundtrip=unsupported',
+      nativeRoundtrip: 'unsupported',
+    },
+    compatibilitySignature: buildXcfImportCompatibilitySignature(detection),
+    policyWarnings,
+    roundTripRisk: buildXcfImportRoundTripRisk(),
+  };
+}
+
+export function describeImageDocumentXcfExportCompatibility(
+  doc: ImageDocument,
+): SignalLoomXcfExportCompatibilityDescriptor {
+  const xcfLayerIndexByLayerId = buildXcfLayerIndexByLayerId(doc.layers);
+  const layers = doc.layers.map((layer, order) => buildXcfExportLayerDescriptor(
+    layer,
+    order,
+    xcfLayerIndexByLayerId.get(layer.id) ?? null,
+  ));
+  const warnings = buildXcfExportWarnings(layers);
+  const retainedMetadata = buildXcfRetainedMetadataSummary(layers);
+  const policyWarnings = buildXcfPolicyWarnings(warnings);
+
+  return {
+    version: 1,
+    kind: 'signal-loom-xcf-export-compatibility',
+    format: { label: 'XCF', mimeType: IMAGE_XCF_MIME_TYPE, extension: IMAGE_XCF_EXTENSION },
+    import: {
+      supported: false,
+      status: 'unsupported',
+      canOpenAsPixels: false,
+      recommendedHandoffFormats: ['PSD', 'TIFF', 'PNG', 'JPEG'],
+      message: XCF_IMPORT_UNSUPPORTED_MESSAGE,
+    },
+    export: {
+      supported: true,
+      status: 'layered-raster-export-only',
+      layerOrder: 'bottom-to-top',
+      xcfLayerOrder: 'bottom-to-top',
+      preservesRasterLayers: true,
+      preservesEditableText: false,
+      preservesAdjustmentLayers: false,
+      preservesLayerEffects: false,
+      preservesLayerMasks: false,
+      preservesLayerGroups: false,
+      preservesSourceLinks: false,
+    },
+    summary: {
+      layerCount: layers.length,
+      exportedRasterLayerCount: layers.filter((layer) => !layer.omitted).length,
+      skippedLayerCount: layers.filter((layer) => layer.omitted).length,
+      flattenedLayerCount: layers.filter((layer) => layer.flattened).length,
+      textLayerCount: layers.filter((layer) => layer.text).length,
+      adjustmentLayerCount: layers.filter((layer) => layer.adjustment).length,
+      effectLayerCount: layers.filter((layer) => layer.effects).length,
+      maskLayerCount: layers.filter((layer) => layer.mask).length,
+      filterLayerCount: layers.filter((layer) => layer.filters).length,
+      groupCount: layers.filter((layer) => layer.type === 'group').length,
+      sourceLinkedLayerCount: layers.filter((layer) => layer.sourceLink).length,
+      warningCount: warnings.length,
+    },
+    sourcePolicy: {
+      signature: buildXcfSourcePolicySignature(layers, warnings),
+      importAction: 'convert-first',
+      exportAction: 'export-layered-raster',
+      nativeRoundtrip: 'unsupported',
+    },
+    compatibilitySignature: buildXcfCompatibilitySignature(layers, warnings),
+    recommendedFallbackRoutes: buildXcfFallbackRoutes(),
+    fallbackRecommendations: buildXcfFallbackRecommendations(),
+    retainedMetadata,
+    layerWarnings: buildXcfLayerWarnings(layers),
+    layerConstructWarnings: buildXcfLayerConstructWarnings(layers),
+    policyWarnings,
+    roundTripRisk: buildXcfExportRoundTripRisk(warnings),
+    compatibilitySummary: 'XCF is export-only in Image: raster layers can be written for GIMP, but Image cannot reopen XCF workfiles.',
+    roundTripCaveats: buildXcfRoundTripCaveats(warnings),
+    warnings,
+    layers,
+  };
+}
 
 export async function imageDocumentToXcfBlob(doc: ImageDocument): Promise<Blob> {
   const bytes = imageDocumentToXcfBytes(doc);
@@ -103,6 +632,626 @@ function imageLayerToXcfLayer(layer: ImageLayer, active: boolean): XcfLayerExpor
     mode: imageBlendModeToXcfMode(layer.blendMode),
     imageData: getBitmapImageData(raster.bitmap as LayerBitmap),
     active,
+  };
+}
+
+function normalizeXcfExtension(fileName: string | undefined): string | null {
+  const trimmed = fileName?.trim();
+  if (!trimmed) return null;
+  const lastSegment = trimmed.split(/[\\/]/).pop() ?? trimmed;
+  const dotIndex = lastSegment.lastIndexOf('.');
+  if (dotIndex < 0 || dotIndex === lastSegment.length - 1) return null;
+  return lastSegment.slice(dotIndex + 1).toLowerCase();
+}
+
+function normalizeXcfMimeType(mimeType: string | undefined): string | null {
+  const normalized = mimeType?.trim().toLowerCase();
+  return normalized || null;
+}
+
+function getXcfDetectionConfidence(
+  isXcfExtension: boolean,
+  isXcfMimeType: boolean,
+): SignalLoomXcfDetectionConfidence {
+  if (isXcfExtension && isXcfMimeType) return 'extension-and-mime';
+  if (isXcfExtension) return 'extension';
+  if (isXcfMimeType) return 'mime';
+  return 'none';
+}
+
+function inspectXcfHeader(bytes: ArrayBufferLike | Uint8Array | undefined): SignalLoomXcfNativeHeaderDescriptor {
+  const view = normalizeXcfByteView(bytes);
+  if (!view || view.byteLength === 0) {
+    return {
+      provided: false,
+      recognized: false,
+      signature: 'not-provided',
+      version: null,
+      state: 'missing-header-bytes',
+    };
+  }
+
+  let headerText = '';
+  const length = Math.min(view.byteLength, 14);
+  for (let index = 0; index < length; index += 1) {
+    const byte = view[index];
+    if (byte === 0) break;
+    headerText += String.fromCharCode(byte);
+  }
+
+  const match = /^gimp xcf(?:\s+(v\d{3}))?/i.exec(headerText);
+  if (match) {
+    return {
+      provided: true,
+      recognized: true,
+      signature: 'gimp-xcf',
+      version: match[1]?.toLowerCase() ?? null,
+      state: 'recognized-xcf-header',
+    };
+  }
+
+  return {
+    provided: true,
+    recognized: false,
+    signature: 'unknown',
+    version: null,
+    state: 'unrecognized-header',
+  };
+}
+
+function normalizeXcfByteView(bytes: ArrayBufferLike | Uint8Array | undefined): Uint8Array | null {
+  if (!bytes) return null;
+  if (bytes instanceof Uint8Array) return bytes;
+  return new Uint8Array(bytes);
+}
+
+function buildXcfFallbackRoutes(): SignalLoomXcfFallbackRoute[] {
+  return [
+    {
+      route: 'png',
+      label: 'PNG visible composite',
+      preserves: 'flattened pixels and transparency',
+      recommendedFor: 'Preview or lightweight flattened exchange.',
+      caveat: 'Loses layers, masks, text editability, effects, and source links.',
+    },
+    {
+      route: 'tiff',
+      label: 'TIFF visible composite',
+      preserves: 'flattened print-oriented pixels',
+      recommendedFor: 'Visible composite handoff after editing elsewhere.',
+      caveat: 'Use 8-bit uncompressed TIFF; layered/native XCF state, text editability, effects, and source links are not reconstructed.',
+    },
+    {
+      route: 'psd',
+      label: 'PSD layered handoff',
+      preserves: 'best-effort layers and metadata',
+      recommendedFor: 'Best route when you still need a layered document Image can reopen.',
+      caveat: 'Still may flatten native XCF text, masks, effects, groups, source links, and blend behavior depending on GIMP export.',
+    },
+    {
+      route: 'source-library',
+      label: 'Keep original in Source Library',
+      preserves: 'the original XCF file as a managed source asset',
+      recommendedFor: 'Archive provenance while using converted derivatives in Image.',
+      caveat: 'Stored for handoff/reference only; it is not decoded into an editable Image document.',
+    },
+  ];
+}
+
+function buildXcfFallbackRecommendations(): SignalLoomXcfFallbackRecommendation[] {
+  const routesByKind = new Map(buildXcfFallbackRoutes().map((route) => [route.route, route] as const));
+  return [
+    {
+      ...getXcfFallbackRoute(routesByKind, 'psd'),
+      rank: 1,
+      action: 'convert-layered-handoff',
+    },
+    {
+      ...getXcfFallbackRoute(routesByKind, 'tiff'),
+      rank: 2,
+      action: 'convert-visible-composite',
+    },
+    {
+      ...getXcfFallbackRoute(routesByKind, 'png'),
+      rank: 3,
+      action: 'convert-visible-preview',
+    },
+    {
+      ...getXcfFallbackRoute(routesByKind, 'source-library'),
+      rank: 4,
+      action: 'archive-original',
+    },
+  ];
+}
+
+function getXcfFallbackRoute(
+  routesByKind: Map<SignalLoomXcfFallbackRouteKind, SignalLoomXcfFallbackRoute>,
+  route: SignalLoomXcfFallbackRouteKind,
+): SignalLoomXcfFallbackRoute {
+  const fallback = routesByKind.get(route);
+  if (!fallback) throw new Error(`Missing XCF fallback route: ${route}`);
+  return fallback;
+}
+
+function buildXcfImportPolicySignature(
+  detection: SignalLoomXcfSourceIdentity,
+  sourceLibraryItemId: string | undefined,
+): string {
+  return [
+    'xcf-import:v1',
+    `detected=${detection.confidence}`,
+    'status=unsupported',
+    `reason=${XCF_IMPORT_UNSUPPORTED_REASON}`,
+    `fallbacks=${buildXcfFallbackRoutes().map((route) => route.route).join(',')}`,
+    `source=${sourceLibraryItemId?.trim() || 'untracked'}`,
+  ].join('|');
+}
+
+function buildXcfNativeDecodeStateSignature(
+  detection: SignalLoomXcfSourceIdentity,
+  header: SignalLoomXcfNativeHeaderDescriptor,
+  status: SignalLoomXcfNativeDecodeStatus,
+  fallbackRecommendations: SignalLoomXcfFallbackRecommendation[],
+): string {
+  return [
+    'xcf-native-decode:v1',
+    `detected=${detection.confidence}`,
+    `header=${formatXcfHeaderSignature(header)}`,
+    `status=${status}`,
+    'pixels=false',
+    'editState=false',
+    `fallbacks=${fallbackRecommendations.map((route) => route.route).join(',') || 'none'}`,
+  ].join('|');
+}
+
+function formatXcfHeaderSignature(header: SignalLoomXcfNativeHeaderDescriptor): string {
+  if (header.signature !== 'gimp-xcf') return header.signature;
+  return `gimp-xcf-${header.version ?? 'unknown'}`;
+}
+
+function buildXcfImportCompatibilitySignature(detection: SignalLoomXcfSourceIdentity): string {
+  return [
+    'xcf-import-compatibility:v1',
+    `detected=${detection.confidence}`,
+    'import=unsupported',
+    'export=layered-raster-export-only',
+    `fallbacks=${buildXcfFallbackRoutes().map((route) => route.route).join(',')}`,
+  ].join('|');
+}
+
+function buildXcfCompatibilitySignature(
+  layers: SignalLoomXcfExportLayerDescriptor[],
+  warnings: SignalLoomXcfExportWarning[],
+): string {
+  return [
+    'xcf-compatibility:v1',
+    'import=unsupported',
+    'export=layered-raster-export-only',
+    `layers=${layers.length}`,
+    `exported=${layers.filter((layer) => !layer.omitted).length}`,
+    `omitted=${layers.filter((layer) => layer.omitted).length}`,
+    `flattened=${layers.filter((layer) => layer.flattened).length}`,
+    `warnings=${warnings.map((warning) => warning.code).join(',') || 'none'}`,
+  ].join('|');
+}
+
+function buildXcfRetainedMetadataSummary(
+  layers: SignalLoomXcfExportLayerDescriptor[],
+): SignalLoomXcfRetainedMetadataSummary {
+  return {
+    textLayerIds: layers.filter((layer) => layer.text).map((layer) => layer.id),
+    effectLayerIds: layers.filter((layer) => layer.effects).map((layer) => layer.id),
+    sourceLinkedLayerIds: layers.filter((layer) => layer.sourceLink).map((layer) => layer.id),
+    filterLayerIds: layers.filter((layer) => layer.filters).map((layer) => layer.id),
+  };
+}
+
+function buildXcfLayerWarnings(
+  layers: SignalLoomXcfExportLayerDescriptor[],
+): SignalLoomXcfLayerWarningDescriptor[] {
+  return layers
+    .map((layer) => ({
+      layerId: layer.id,
+      layerName: layer.name,
+      exportMode: layer.exportMode,
+      flattened: layer.flattened,
+      omitted: layer.omitted,
+      warnings: layer.warningCodes.map((code) => buildXcfLayerRoundTripWarning(code, layer)),
+    }))
+    .filter((layer) => layer.warnings.length > 0);
+}
+
+function buildXcfLayerConstructWarnings(
+  layers: SignalLoomXcfExportLayerDescriptor[],
+): SignalLoomXcfLayerConstructWarningDescriptor[] {
+  return layers.flatMap((layer) => layer.warningCodes.map((code) => ({
+    descriptorId: `xcf-layer-construct-warning:v1|layer=${layer.id}|code=${code}`,
+    layerId: layer.id,
+    layerName: layer.name,
+    code,
+    nativeConstruct: describeXcfPolicyWarningNativeConstruct(code),
+    preservation: describeXcfPolicyWarningPreservation(code),
+    fallbackRoute: describeXcfLayerWarningFallbackRoute(code),
+    exportMode: layer.exportMode,
+    flattened: layer.flattened,
+    omitted: layer.omitted,
+    message: describeXcfLayerWarningMessage(code),
+  })));
+}
+
+function buildXcfLayerRoundTripWarning(
+  code: SignalLoomXcfExportWarningCode,
+  layer: SignalLoomXcfExportLayerDescriptor,
+): SignalLoomXcfLayerRoundTripWarning {
+  return {
+    code,
+    severity: 'warning',
+    message: describeXcfLayerWarningMessage(code),
+    fallbackRoute: describeXcfLayerWarningFallbackRoute(code),
+    flattened: layer.flattened,
+    omitted: layer.omitted,
+  };
+}
+
+function buildXcfPolicyWarnings(
+  warnings: SignalLoomXcfExportWarning[],
+): SignalLoomXcfPolicyWarning[] {
+  return warnings.map((warning) => ({
+    descriptorId: `xcf-policy-warning:v1|scope=${warning.code === 'xcf-import-unsupported' ? 'import' : 'export'}|code=${warning.code}`,
+    scope: warning.code === 'xcf-import-unsupported' ? 'import' : 'export',
+    code: warning.code,
+    nativeConstruct: describeXcfPolicyWarningNativeConstruct(warning.code),
+    affectedLayerIds: [...warning.layerIds],
+    preservation: describeXcfPolicyWarningPreservation(warning.code),
+    nativeRoundtrip: 'unsupported',
+    fallbackRoute: warning.code === 'xcf-import-unsupported' ? 'psd' : describeXcfLayerWarningFallbackRoute(warning.code),
+    message: warning.message,
+  }));
+}
+
+function buildXcfImportRoundTripRisk(): SignalLoomXcfRoundTripRiskDescriptor {
+  return {
+    level: 'high',
+    nativeReopenSupported: false,
+    sourceEditStatePreserved: false,
+    summary: 'Opening an XCF requires external conversion first; native XCF edit state cannot round-trip through Image.',
+    affectedConstructs: XCF_IMPORT_RISK_CONSTRUCTS,
+    recommendedFallbackRoutes: buildXcfFallbackRecommendations().map((route) => route.route),
+    blockers: [
+      'no native XCF decoder',
+      'no native XCF text/effect/mask reconstruction',
+      'no native XCF group/filter/source-link roundtrip',
+      'no in-app XCF import pixel reader',
+    ],
+  };
+}
+
+function buildXcfExportRoundTripRisk(
+  warnings: SignalLoomXcfExportWarning[],
+): SignalLoomXcfRoundTripRiskDescriptor {
+  return {
+    level: 'high',
+    nativeReopenSupported: false,
+    sourceEditStatePreserved: false,
+    summary: 'Exported XCF files are not native round-trip workfiles for Image; unsupported constructs require fallback handoff formats.',
+    affectedConstructs: buildXcfAffectedConstructs(warnings),
+    recommendedFallbackRoutes: buildXcfFallbackRecommendations().map((route) => route.route),
+    blockers: buildXcfRoundTripRiskBlockers(warnings),
+  };
+}
+
+function buildXcfAffectedConstructs(
+  warnings: SignalLoomXcfExportWarning[],
+): SignalLoomXcfNativeConstruct[] {
+  const constructs: SignalLoomXcfNativeConstruct[] = [];
+  warnings.forEach((warning) => {
+    if (warning.code === 'xcf-import-unsupported') return;
+    const construct = describeXcfPolicyWarningNativeConstruct(warning.code);
+    if (!constructs.includes(construct)) constructs.push(construct);
+  });
+  return constructs;
+}
+
+function buildXcfRoundTripRiskBlockers(warnings: SignalLoomXcfExportWarning[]): string[] {
+  const warningCodes = new Set(warnings.map((warning) => warning.code));
+  const blockers = ['no native XCF decoder'];
+  if (warningCodes.has('editable-text-flattened')) {
+    blockers.push('editable text exports as raster pixels');
+  }
+  if (warningCodes.has('layer-effects-flattened')) {
+    blockers.push('layer effects export as flattened pixels');
+  }
+  if (warningCodes.has('layer-masks-flattened')) {
+    blockers.push('layer masks export as flattened pixels');
+  }
+  if (warningCodes.has('source-links-flattened')) {
+    blockers.push('source links are not native XCF links');
+  }
+  if (warningCodes.has('filter-metadata-flattened')) {
+    blockers.push('filter stacks are not native editable XCF filters');
+  }
+  if (warningCodes.has('adjustment-layers-omitted')) {
+    blockers.push('adjustment layers are omitted from native XCF layers');
+  }
+  if (warningCodes.has('layer-groups-omitted')) {
+    blockers.push('layer groups are omitted as native XCF folders');
+  }
+  return blockers;
+}
+
+function describeXcfPolicyWarningNativeConstruct(
+  code: SignalLoomXcfExportWarningCode,
+): SignalLoomXcfNativeConstruct {
+  switch (code) {
+    case 'xcf-import-unsupported':
+      return 'xcf-document';
+    case 'editable-text-flattened':
+      return 'text';
+    case 'layer-effects-flattened':
+      return 'layer-effects';
+    case 'layer-masks-flattened':
+      return 'layer-mask';
+    case 'source-links-flattened':
+      return 'source-link';
+    case 'filter-metadata-flattened':
+      return 'filter-stack';
+    case 'adjustment-layers-omitted':
+      return 'adjustment-layer';
+    case 'layer-groups-omitted':
+      return 'layer-group';
+    default:
+      return 'xcf-document';
+  }
+}
+
+function describeXcfPolicyWarningPreservation(
+  code: SignalLoomXcfExportWarningCode,
+): SignalLoomXcfPolicyPreservation {
+  switch (code) {
+    case 'xcf-import-unsupported':
+      return 'unsupported';
+    case 'adjustment-layers-omitted':
+    case 'layer-groups-omitted':
+      return 'omitted';
+    default:
+      return 'flattened-raster';
+  }
+}
+
+function describeXcfLayerWarningFallbackRoute(
+  code: SignalLoomXcfExportWarningCode,
+): SignalLoomXcfFallbackRouteKind {
+  switch (code) {
+    case 'source-links-flattened':
+      return 'source-library';
+    case 'editable-text-flattened':
+    case 'layer-effects-flattened':
+    case 'layer-masks-flattened':
+    case 'filter-metadata-flattened':
+    case 'layer-groups-omitted':
+      return 'psd';
+    case 'adjustment-layers-omitted':
+      return 'tiff';
+    case 'xcf-import-unsupported':
+      return 'png';
+    default:
+      return 'png';
+  }
+}
+
+function describeXcfLayerWarningMessage(code: SignalLoomXcfExportWarningCode): string {
+  switch (code) {
+    case 'xcf-import-unsupported':
+      return 'Image can export XCF files, but importing or decoding existing GIMP XCF workfiles is unsupported.';
+    case 'editable-text-flattened':
+      return 'Editable text exports to XCF as raster pixels; text remains editable only in the Signal Loom Image document.';
+    case 'layer-effects-flattened':
+      return 'Layer effects are rasterized into XCF layer pixels instead of native editable GIMP effects.';
+    case 'layer-masks-flattened':
+      return 'Layer masks are baked into XCF layer pixels instead of native editable GIMP masks.';
+    case 'source-links-flattened':
+      return 'Source-linked layer metadata is not written as native XCF link state; keep the original asset in the Source Library.';
+    case 'filter-metadata-flattened':
+      return 'Filter stacks are retained as Signal Loom metadata but exported as flattened XCF pixels instead of native editable filters.';
+    case 'adjustment-layers-omitted':
+      return 'Adjustment layers are omitted from native XCF layers; use a visible flattened format when baked color is required.';
+    case 'layer-groups-omitted':
+      return 'Layer groups are not written as native XCF folders; exported raster layers remain flat.';
+    default:
+      return 'XCF native construct is not preserved as editable GIMP state.';
+  }
+}
+
+function buildXcfLayerIndexByLayerId(layers: ImageLayer[]): Map<string, number> {
+  return new Map(
+    layers
+      .filter(isLayerExportedAsXcfRaster)
+      .map((layer, index) => [layer.id, index] as const),
+  );
+}
+
+function buildXcfExportLayerDescriptor(
+  layer: ImageLayer,
+  order: number,
+  xcfLayerIndex: number | null,
+): SignalLoomXcfExportLayerDescriptor {
+  const warningCodes = buildXcfLayerWarningCodes(layer, xcfLayerIndex !== null);
+  const flattened = xcfLayerIndex !== null && warningCodes.some((code) => (
+    code === 'editable-text-flattened'
+    || code === 'layer-effects-flattened'
+    || code === 'layer-masks-flattened'
+    || code === 'source-links-flattened'
+    || code === 'filter-metadata-flattened'
+  ));
+  const descriptor: SignalLoomXcfExportLayerDescriptor = {
+    id: layer.id,
+    name: layer.name,
+    type: layer.type,
+    order,
+    xcfLayerIndex,
+    exportMode: xcfLayerIndex === null ? 'omitted-unsupported' : flattened ? 'flattened-raster' : 'native-raster',
+    flattened,
+    omitted: xcfLayerIndex === null,
+    visible: layer.visible,
+    opacity: clamp01(layer.opacity),
+    blendMode: layer.blendMode,
+    warningCodes,
+  };
+
+  if (layer.text) {
+    descriptor.text = {
+      contentLength: layer.text.content.length,
+      fontFamily: layer.text.fontFamily,
+      fontSize: layer.text.fontSize,
+      nativeEditableText: false,
+    };
+  }
+  if (layer.effects?.length) {
+    const kinds = Array.from(new Set(layer.effects.map((effect) => effect.kind))).sort((left, right) => left.localeCompare(right));
+    const enabledKinds = Array.from(new Set(
+      layer.effects.filter((effect) => effect.enabled).map((effect) => effect.kind),
+    )).sort((left, right) => left.localeCompare(right));
+    descriptor.effects = {
+      count: layer.effects.length,
+      kinds,
+      enabledKinds,
+      nativeLayerEffects: false,
+    };
+  }
+  if (layer.mask) {
+    descriptor.mask = {
+      width: layer.mask.width,
+      height: layer.mask.height,
+      nativeLayerMask: false,
+    };
+  }
+  const sourceLink = normalizeXcfSourceLink(layer);
+  if (sourceLink) descriptor.sourceLink = sourceLink;
+  if (layer.filters?.length) {
+    const kinds = Array.from(new Set(layer.filters.map((filter) => filter.kind))).sort((left, right) => left.localeCompare(right));
+    descriptor.filters = {
+      count: layer.filters.length,
+      enabledCount: layer.filters.filter((filter) => filter.enabled).length,
+      kinds,
+      nativeSmartFilters: false,
+      metadataOnly: true,
+    };
+  }
+  if (layer.adjustment) {
+    descriptor.adjustment = {
+      kind: layer.adjustment.kind,
+      nativeAdjustmentLayer: false,
+    };
+  }
+
+  return descriptor;
+}
+
+function buildXcfLayerWarningCodes(
+  layer: ImageLayer,
+  exported: boolean,
+): SignalLoomXcfExportWarningCode[] {
+  const warningCodes: SignalLoomXcfExportWarningCode[] = [];
+  if (exported && (layer.type === 'text' || layer.text)) warningCodes.push('editable-text-flattened');
+  if (exported && (layer.effects?.length ?? 0) > 0) warningCodes.push('layer-effects-flattened');
+  if (exported && layer.mask) warningCodes.push('layer-masks-flattened');
+  if (exported && (layer.metadata?.smartLinkedSourceId || layer.metadata?.sourceLink)) warningCodes.push('source-links-flattened');
+  if (exported && (layer.filters?.length ?? 0) > 0) warningCodes.push('filter-metadata-flattened');
+  if (layer.type === 'adjustment' || layer.adjustment) warningCodes.push('adjustment-layers-omitted');
+  if (layer.type === 'group') warningCodes.push('layer-groups-omitted');
+  return warningCodes;
+}
+
+function buildXcfExportWarnings(
+  layers: SignalLoomXcfExportLayerDescriptor[],
+): SignalLoomXcfExportWarning[] {
+  const warnings: SignalLoomXcfExportWarning[] = [{
+    code: 'xcf-import-unsupported',
+    severity: 'warning',
+    layerIds: [],
+    message: 'Image can export XCF files, but importing or decoding existing GIMP XCF workfiles is unsupported.',
+  }];
+
+  appendXcfLayerWarning(warnings, layers, 'editable-text-flattened', 'Editable text layers are exported to XCF as raster pixels; text content and style remain editable only in the Image document.');
+  appendXcfLayerWarning(warnings, layers, 'layer-effects-flattened', 'Layer effects are rasterized into XCF layer pixels instead of native editable GIMP effects.');
+  appendXcfLayerWarning(warnings, layers, 'layer-masks-flattened', 'Layer masks are baked into XCF layer pixels instead of native editable GIMP masks.');
+  appendXcfLayerWarning(warnings, layers, 'source-links-flattened', 'Source-linked layer editability is exported as raster pixels; native smart object/source-link semantics are not written to XCF.');
+  appendXcfLayerWarning(warnings, layers, 'filter-metadata-flattened', 'Filter stacks are retained as Signal Loom metadata but exported to XCF as flattened layer pixels instead of native editable filters.');
+  appendXcfLayerWarning(warnings, layers, 'adjustment-layers-omitted', 'Adjustment layers are not written as native XCF layers; export a visible flattened format for baked color adjustments.');
+  appendXcfLayerWarning(warnings, layers, 'layer-groups-omitted', 'Layer groups are not written as native XCF folders; exported child raster layers remain flat.');
+
+  return warnings;
+}
+
+function appendXcfLayerWarning(
+  warnings: SignalLoomXcfExportWarning[],
+  layers: SignalLoomXcfExportLayerDescriptor[],
+  code: SignalLoomXcfExportWarningCode,
+  message: string,
+): void {
+  const layerIds = layers
+    .filter((layer) => layer.warningCodes.includes(code))
+    .map((layer) => layer.id);
+  if (layerIds.length === 0) return;
+  warnings.push({ code, severity: 'warning', layerIds, message });
+}
+
+function buildXcfSourcePolicySignature(
+  layers: SignalLoomXcfExportLayerDescriptor[],
+  warnings: SignalLoomXcfExportWarning[],
+): string {
+  return [
+    'xcf-interop:v1',
+    'import=unsupported',
+    'export=layered-raster-export-only',
+    `layers=${layers.length}`,
+    `exported=${layers.filter((layer) => !layer.omitted).length}`,
+    `omitted=${layers.filter((layer) => layer.omitted).length}`,
+    `warnings=${warnings.map((warning) => warning.code).join(',') || 'none'}`,
+  ].join('|');
+}
+
+function buildXcfRoundTripCaveats(warnings: SignalLoomXcfExportWarning[]): string[] {
+  const warningCodes = new Set(warnings.map((warning) => warning.code));
+  const caveats = ['Image cannot import or decode GIMP XCF workfiles.'];
+  const editableStateLossCodes: SignalLoomXcfExportWarningCode[] = [
+    'editable-text-flattened',
+    'adjustment-layers-omitted',
+  ];
+
+  if (editableStateLossCodes.some((code) => warningCodes.has(code))) {
+    caveats.push('Editable text, adjustment layers, layer effects, masks, groups, and source links are not round-tripped as native XCF edit state.');
+  }
+  if (
+    warningCodes.has('layer-masks-flattened')
+    || warningCodes.has('layer-effects-flattened')
+    || warningCodes.has('source-links-flattened')
+    || warningCodes.has('filter-metadata-flattened')
+    || warningCodes.has('layer-groups-omitted')
+  ) {
+    caveats.push('Layer masks, layer effects, source links, and filter stacks are flattened into exported pixels.');
+  }
+  if (warningCodes.has('layer-groups-omitted')) {
+    caveats.push('Layer groups are omitted as native folders; exported raster layers remain flat.');
+  }
+
+  return caveats;
+}
+
+function isLayerExportedAsXcfRaster(layer: ImageLayer): boolean {
+  return Boolean(layer.bitmap && layer.type !== 'adjustment');
+}
+
+function normalizeXcfSourceLink(layer: ImageLayer): SignalLoomXcfExportLayerDescriptor['sourceLink'] {
+  const sourceId = layer.metadata?.sourceLink?.id ?? layer.metadata?.smartLinkedSourceId;
+  if (!sourceId) return undefined;
+  return {
+    id: sourceId,
+    ...(layer.metadata?.sourceLink?.label || layer.metadata?.sourceLabel
+      ? { label: layer.metadata.sourceLink?.label ?? layer.metadata.sourceLabel }
+      : {}),
+    status: layer.metadata?.sourceLink?.status ?? 'linked',
+    nativeSmartObject: false,
   };
 }
 

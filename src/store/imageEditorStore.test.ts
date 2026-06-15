@@ -1,10 +1,14 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { createEmptyImageDocument, useImageEditorStore } from './imageEditorStore';
+import { DEFAULT_IMAGE_EDITOR_TOOLBAR_FLYOUT_ORDER } from '../components/ImageEditor/imageEditorTools';
 import {
   DEFAULT_BRUSH_SETTINGS,
+  DEFAULT_GRADIENT_TOOL_SETTINGS,
+  DEFAULT_SHAPE_TOOL_SETTINGS,
   DEFAULT_SELECTION_TOOL_SETTINGS,
   DEFAULT_TEXT_TOOL_SETTINGS,
   type EditorOperation,
+  type GradientToolSettings,
   type ImageLayer,
   type LayerBitmap,
 } from '../types/imageEditor';
@@ -60,12 +64,19 @@ function resetStore() {
     documents: [],
     activeDocId: null,
     tool: 'move',
+    backgroundColor: '#000000',
     brushSettings: { ...DEFAULT_BRUSH_SETTINGS },
+    gradientToolSettings: { ...DEFAULT_GRADIENT_TOOL_SETTINGS },
+    shapeToolSettings: { ...DEFAULT_SHAPE_TOOL_SETTINGS },
     selectionToolSettings: { ...DEFAULT_SELECTION_TOOL_SETTINGS },
     textToolSettings: { ...DEFAULT_TEXT_TOOL_SETTINGS },
     viewportContainerSize: { width: 0, height: 0 },
     undoStacks: {},
     redoStacks: {},
+    quickActionMacros: [],
+    activeQuickActionRecording: null,
+    toolbarFlyoutOrder: [...DEFAULT_IMAGE_EDITOR_TOOLBAR_FLYOUT_ORDER],
+    generativeFillDismissedByDocId: {},
   });
 }
 
@@ -78,6 +89,13 @@ describe('imageEditorStore — documents', () => {
     const state = useImageEditorStore.getState();
     expect(state.documents).toHaveLength(1);
     expect(state.activeDocId).toBe('doc-1');
+  });
+
+  it('creates new documents with persisted channel collections initialized', () => {
+    const doc = createEmptyImageDocument({ id: 'doc-empty-channels', title: 'a.png', width: 800, height: 600 });
+
+    expect(doc.savedSelectionChannels).toEqual([]);
+    expect(doc.spotChannels).toEqual([]);
   });
 
   it('switches to existing doc instead of duplicating on re-open', () => {
@@ -221,19 +239,114 @@ describe('imageEditorStore — tools and settings', () => {
     expect(useImageEditorStore.getState().tool).toBe('brush');
   });
 
+  it('stores a sanitized custom Image toolbar flyout order', () => {
+    useImageEditorStore.getState().setToolbarFlyoutOrder([
+      'text',
+      'eraser',
+      'bogus',
+      'selection',
+      'text',
+    ]);
+
+    expect(useImageEditorStore.getState().toolbarFlyoutOrder.slice(0, 3)).toEqual([
+      'text',
+      'eraser',
+      'selection',
+    ]);
+    expect(useImageEditorStore.getState().toolbarFlyoutOrder).toHaveLength(13);
+
+    useImageEditorStore.getState().resetToolbarFlyoutOrder();
+    expect(useImageEditorStore.getState().toolbarFlyoutOrder.slice(0, 3)).toEqual([
+      'move',
+      'hand',
+      'selection',
+    ]);
+  });
+
   it('updates brush settings partially', () => {
-    useImageEditorStore.getState().setBrushSettings({ size: 24 });
+    useImageEditorStore.getState().setBrushSettings({ size: 24, symmetryMode: 'vertical' });
     const settings = useImageEditorStore.getState().brushSettings;
     expect(settings.size).toBe(24);
+    expect(settings.symmetryMode).toBe('vertical');
     expect(settings.opacity).toBe(DEFAULT_BRUSH_SETTINGS.opacity);
   });
 
+  it('swaps and resets foreground and background colors', () => {
+    useImageEditorStore.getState().setBrushSettings({ color: '#112233' });
+    useImageEditorStore.getState().setBackgroundColor('#aabbcc');
+
+    useImageEditorStore.getState().swapForegroundBackgroundColors();
+
+    expect(useImageEditorStore.getState().brushSettings.color).toBe('#aabbcc');
+    expect(useImageEditorStore.getState().backgroundColor).toBe('#112233');
+
+    useImageEditorStore.getState().resetForegroundBackgroundColors();
+
+    expect(useImageEditorStore.getState().brushSettings.color).toBe('#ffffff');
+    expect(useImageEditorStore.getState().backgroundColor).toBe('#000000');
+  });
+
   it('updates selection tool settings partially', () => {
-    useImageEditorStore.getState().setSelectionToolSettings({ feather: 5, mode: 'add' });
+    useImageEditorStore.getState().setSelectionToolSettings({
+      feather: 5,
+      mode: 'add',
+      paintBucketBlendMode: 'multiply',
+      paintBucketPreserveTransparency: true,
+    });
     const settings = useImageEditorStore.getState().selectionToolSettings;
     expect(settings.feather).toBe(5);
     expect(settings.mode).toBe('add');
+    expect(settings.paintBucketBlendMode).toBe('multiply');
+    expect(settings.paintBucketPreserveTransparency).toBe(true);
     expect(settings.antiAlias).toBe(DEFAULT_SELECTION_TOOL_SETTINGS.antiAlias);
+  });
+
+  it('persists gradient tool settings independently of brush foreground color', () => {
+    useImageEditorStore.getState().setGradientToolSettings({
+      mode: 'radial',
+      colorMode: 'foregroundToBackground',
+      reverse: true,
+      dither: true,
+      presetId: 'warm-sunset',
+      colorStops: [
+        { offset: 0, color: '#2d1b69', opacity: 1 },
+        { offset: 0.35, color: '#f97316', opacity: 0.8 },
+        { offset: 1, color: '#fde68a', opacity: 0.45 },
+      ],
+    } as Partial<GradientToolSettings> & { dither: boolean; presetId: string });
+    useImageEditorStore.getState().setTool('brush');
+    useImageEditorStore.getState().setTool('gradientTool');
+
+    const settings = useImageEditorStore.getState().gradientToolSettings;
+    expect(settings.mode).toBe('radial');
+    expect(settings.colorMode).toBe('foregroundToBackground');
+    expect(settings.reverse).toBe(true);
+    expect(settings.dither).toBe(true);
+    expect(settings.presetId).toBe('warm-sunset');
+    expect(settings.colorStops).toEqual([
+      { offset: 0, color: '#2d1b69', opacity: 1 },
+      { offset: 0.35, color: '#f97316', opacity: 0.8 },
+      { offset: 1, color: '#fde68a', opacity: 0.45 },
+    ]);
+    expect(useImageEditorStore.getState().brushSettings.color).toBe(DEFAULT_BRUSH_SETTINGS.color);
+  });
+
+  it('persists the active layer edit target and falls back to the layer when switching to one without a mask', () => {
+    const doc = createEmptyImageDocument({ id: 'doc-edit-target', title: 'a', width: 10, height: 10 });
+    useImageEditorStore.getState().openDocument({
+      ...doc,
+      layers: [
+        makeLayer({ id: 'masked', mask: new OffscreenCanvas(10, 10) as LayerBitmap }),
+        makeLayer({ id: 'plain' }),
+      ],
+      activeLayerId: 'masked',
+    });
+
+    useImageEditorStore.getState().setActiveLayerEditTarget('doc-edit-target', 'mask');
+    expect(useImageEditorStore.getState().documents[0].activeLayerEditTarget).toBe('mask');
+
+    useImageEditorStore.getState().setActiveLayer('doc-edit-target', 'plain');
+    expect(useImageEditorStore.getState().documents[0].activeLayerEditTarget).toBe('layer');
   });
 });
 
@@ -258,6 +371,17 @@ describe('imageEditorStore — selection + viewport', () => {
     const updated = useImageEditorStore.getState().getActiveDocument()!;
     expect(updated.selectionVersion).toBe(2);
     expect(updated.hasSelection).toBe(true);
+  });
+
+  it('clears the dismissed generative-edit state when the selection is cleared', () => {
+    const doc = createEmptyImageDocument({ id: 'doc-1', title: 'a', width: 10, height: 10 });
+    useImageEditorStore.getState().openDocument(doc);
+    useImageEditorStore.getState().setHasSelection('doc-1', true);
+    useImageEditorStore.getState().setGenerativeFillDismissed('doc-1', true);
+
+    useImageEditorStore.getState().setHasSelection('doc-1', false);
+
+    expect(Boolean(useImageEditorStore.getState().generativeFillDismissedByDocId['doc-1'])).toBe(false);
   });
 
   it('setViewport patches the active doc viewport', () => {
@@ -396,10 +520,32 @@ describe('imageEditorStore — layers', () => {
         ...createEmptyImageDocument({ id: 'doc-1', title: 'a', width: 10, height: 10, sourceBinItemId: 'source-1' }),
         layers: [layer],
         activeLayerId: 'vector-1',
+        savedSelectionChannels: [{
+          id: 'alpha-1',
+          name: 'Saved hair mask',
+          width: 10,
+          height: 10,
+          dataBase64: 'AAAA',
+          createdAt: 12,
+        }],
+        spotChannels: [{
+          id: 'spot-1',
+          name: 'Varnish',
+          width: 10,
+          height: 10,
+          color: { r: 20, g: 120, b: 220 },
+          opacity: 0.75,
+          solidity: 0.5,
+          visible: true,
+          dataBase64: 'AAAA',
+          createdAt: 13,
+          updatedAt: 14,
+        }],
         snapshots: [{
           id: 'snapshot-1',
           name: 'Before edits',
           createdAt: 10,
+          updatedAt: 15,
           width: 10,
           height: 10,
           layers: [layer],
@@ -426,6 +572,11 @@ describe('imageEditorStore — layers', () => {
       vectorRecipe: '<svg><text>Bang</text></svg>',
     });
     expect(snapshot.documents[0].snapshots).toHaveLength(1);
+    expect(snapshot.documents[0].snapshots?.[0]).toMatchObject({
+      id: 'snapshot-1',
+      name: 'Before edits',
+      updatedAt: 15,
+    });
     expect(snapshot.documents[0].snapshots?.[0].layers[0]).toMatchObject({
       id: 'vector-1',
       type: 'vector',
@@ -433,6 +584,133 @@ describe('imageEditorStore — layers', () => {
       mask: null,
       vectorRecipe: '<svg><text>Bang</text></svg>',
     });
+    expect((snapshot.documents[0] as unknown as {
+      savedSelectionChannels?: Array<{ id: string; name: string; dataBase64: string }>;
+    }).savedSelectionChannels).toEqual([
+      expect.objectContaining({
+        id: 'alpha-1',
+        name: 'Saved hair mask',
+        dataBase64: 'AAAA',
+      }),
+    ]);
+    expect((snapshot.documents[0] as unknown as {
+      spotChannels?: Array<{ id: string; name: string; dataBase64: string; opacity: number; solidity: number }>;
+    }).spotChannels).toEqual([
+      expect.objectContaining({
+        id: 'spot-1',
+        name: 'Varnish',
+        dataBase64: 'AAAA',
+        opacity: 0.75,
+        solidity: 0.5,
+      }),
+    ]);
+  });
+
+  it('restoreProjectSnapshot preserves sanitized spot channels', () => {
+    useImageEditorStore.getState().restoreProjectSnapshot({
+      activeDocId: 'doc-restored-spot',
+      quickActionMacros: [],
+      documents: [{
+        ...createEmptyImageDocument({ id: 'doc-restored-spot', title: 'Restored', width: 2, height: 2 }),
+        spotChannels: [{
+          id: 'spot-varnish',
+          name: 'Varnish',
+          width: 2,
+          height: 2,
+          color: { r: 20, g: 120, b: 220 },
+          opacity: 0.75,
+          solidity: 0.5,
+          visible: false,
+          dataBase64: 'AAAA',
+          createdAt: 13,
+          updatedAt: 14,
+        }],
+      }],
+    });
+
+    expect(useImageEditorStore.getState().getActiveDocument()?.spotChannels).toEqual([
+      expect.objectContaining({
+        id: 'spot-varnish',
+        name: 'Varnish',
+        color: { r: 20, g: 120, b: 220 },
+        opacity: 0.75,
+        solidity: 0.5,
+        visible: false,
+        dataBase64: 'AAAA',
+      }),
+    ]);
+  });
+
+  it('exports and restores saved quick action macros in the Image project snapshot', () => {
+    setupDoc();
+    useImageEditorStore.setState({
+      quickActionMacros: [{
+        id: 'macro-1',
+        name: 'Center and fade',
+        createdAt: 10,
+        updatedAt: 20,
+        steps: [
+          { actionId: 'centerLayer' },
+          { actionId: 'setLayerOpacity50' },
+        ],
+      }],
+    });
+
+    const snapshot = useImageEditorStore.getState().exportProjectSnapshot();
+    expect(snapshot.quickActionMacros).toEqual([
+      expect.objectContaining({
+        id: 'macro-1',
+        name: 'Center and fade',
+        steps: [
+          { actionId: 'centerLayer' },
+          { actionId: 'setLayerOpacity50' },
+        ],
+      }),
+    ]);
+
+    useImageEditorStore.getState().restoreProjectSnapshot(undefined);
+    expect(useImageEditorStore.getState().quickActionMacros).toEqual([]);
+
+    useImageEditorStore.getState().restoreProjectSnapshot(snapshot);
+    expect(useImageEditorStore.getState().quickActionMacros).toEqual([
+      expect.objectContaining({
+        id: 'macro-1',
+        name: 'Center and fade',
+        steps: [
+          { actionId: 'centerLayer' },
+          { actionId: 'setLayerOpacity50' },
+        ],
+      }),
+    ]);
+  });
+
+  it('renames saved quick action macros and preserves the new name in project snapshots', () => {
+    setupDoc();
+    useImageEditorStore.setState({
+      quickActionMacros: [{
+        id: 'macro-1',
+        name: 'Action 1',
+        createdAt: 10,
+        updatedAt: 10,
+        steps: [{ actionId: 'centerLayer' }],
+      }],
+    });
+
+    useImageEditorStore.getState().renameQuickActionMacro('macro-1', 'Batch Center');
+    expect(useImageEditorStore.getState().quickActionMacros).toEqual([
+      expect.objectContaining({
+        id: 'macro-1',
+        name: 'Batch Center',
+      }),
+    ]);
+
+    const snapshot = useImageEditorStore.getState().exportProjectSnapshot();
+    expect(snapshot.quickActionMacros).toEqual([
+      expect.objectContaining({
+        id: 'macro-1',
+        name: 'Batch Center',
+      }),
+    ]);
   });
 
   it('updateLayer patches a single layer', () => {

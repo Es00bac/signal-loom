@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AndroidAcceleratorUpscaleInput } from '../../lib/androidAccelerator';
+import type { AndroidNativeImageUpscaleInput } from '../../lib/androidNativeImageUpscaler';
 import type { LocalCpuUpscalerInput } from '../../lib/localCpuUpscaler';
 import { createEmptyImageDocument } from '../../store/imageEditorStore';
 import type { ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import {
+  describeImageDocumentUniversalUpscaleReadiness,
   describeUniversalImageUpscaleProvider,
   upscaleImageDocumentUniversal,
 } from './ImageUniversalUpscale';
@@ -124,8 +126,115 @@ describe('ImageUniversalUpscale', () => {
     });
   });
 
+  it('uses the in-app Android native image upscaler before browser resize when running on Android', async () => {
+    const doc = {
+      ...createEmptyImageDocument({ id: 'doc-native', title: 'camera.png', width: 300, height: 200 }),
+      layers: [makeLayer()],
+      activeLayerId: 'layer-1',
+    };
+    const upscaledBitmap = { width: 600, height: 400 } as LayerBitmap;
+    const androidNativeUpscale = vi.fn(async (request: AndroidNativeImageUpscaleInput) => ({
+      dataUrl: 'data:image/png;base64,native-upscaled',
+      mimeType: 'image/png' as const,
+      width: request.targetWidthPx,
+      height: request.targetHeightPx,
+      accelerator: 'android-native-bitmap',
+    }));
+
+    const result = await upscaleImageDocumentUniversal({
+      doc,
+      scalePercent: 200,
+      providerSettings: {
+        androidAcceleratorBaseUrl: '',
+        androidAcceleratorDefaultUpscaler: 'upscaler_realistic',
+      },
+      androidNativeUpscale,
+      isAndroidNativeUpscalerAvailable: true,
+      documentToDataUrl: async () => 'data:image/png;base64,source',
+      dataUrlToBitmap: async (dataUrl) => {
+        expect(dataUrl).toBe('data:image/png;base64,native-upscaled');
+        return upscaledBitmap;
+      },
+    });
+
+    expect(androidNativeUpscale).toHaveBeenCalledWith(expect.objectContaining({
+      sourceDataUrl: 'data:image/png;base64,source',
+      targetWidthPx: 600,
+      targetHeightPx: 400,
+      outputFormat: 'png',
+    }));
+    expect(result).toMatchObject({
+      provider: 'android-native',
+      estimatedCostUsd: 0,
+      statusMessage: 'Upscaled "camera.png" to 600 x 400px with Android native image upscaler.',
+    });
+    expect(result.document).toMatchObject({
+      width: 600,
+      height: 400,
+      activeLayerId: 'android-native-upscale-doc-native',
+    });
+    expect(result.document.layers[0]).toMatchObject({
+      id: 'android-native-upscale-doc-native',
+      name: 'Android native upscale',
+      bitmap: upscaledBitmap,
+    });
+  });
+
+  it('surfaces the native plugin runtime evidence in status text and result metadata', async () => {
+    const doc = {
+      ...createEmptyImageDocument({ id: 'doc-native-runtime', title: 'camera.png', width: 300, height: 200 }),
+      layers: [makeLayer(), makeLayer({ id: 'layer-2', name: 'Layer 2' })],
+      activeLayerId: 'layer-1',
+    };
+    const upscaledBitmap = { width: 600, height: 400 } as LayerBitmap;
+    const androidNativeUpscale = vi.fn(async (request: AndroidNativeImageUpscaleInput) => ({
+      dataUrl: 'data:image/png;base64,native-upscaled',
+      mimeType: 'image/png' as const,
+      width: request.targetWidthPx,
+      height: request.targetHeightPx,
+      accelerator: 'local-dream-qnn-htp',
+      backend: 'signal-loom-bundled-local-dream',
+      modelUsed: 'upscaler_realistic',
+      warnings: ['Bundled Local Dream QNN upscaler output is 4x internally and was final-fit to the requested dimensions.'],
+    }));
+
+    const result = await upscaleImageDocumentUniversal({
+      doc,
+      scalePercent: 200,
+      providerSettings: {
+        androidAcceleratorBaseUrl: '',
+        androidAcceleratorDefaultUpscaler: 'upscaler_realistic',
+      },
+      androidNativeUpscale,
+      isAndroidNativeUpscalerAvailable: true,
+      documentToDataUrl: async () => 'data:image/png;base64,source',
+      dataUrlToBitmap: async () => upscaledBitmap,
+    });
+
+    expect(result).toMatchObject({
+      provider: 'android-native',
+      statusMessage: 'Upscaled "camera.png" to 600 x 400px with Android native image upscaler via QNN (signal-loom-bundled-local-dream).',
+      runtime: {
+        accelerator: 'local-dream-qnn-htp',
+        backend: 'signal-loom-bundled-local-dream',
+        modelUsed: 'upscaler_realistic',
+        kind: 'accelerated',
+      },
+    });
+    expect(result.document.layers[0].metadata).toMatchObject({
+      sourceFormat: 'android-native-upscale',
+      sourceWarnings: expect.arrayContaining([
+        'The AI upscaler operates on the flattened visible image; undo restores the original layers.',
+        'Android native runtime: QNN via signal-loom-bundled-local-dream.',
+        'Android native model: upscaler_realistic.',
+        'Bundled Local Dream QNN upscaler output is 4x internally and was final-fit to the requested dimensions.',
+      ]),
+    });
+  });
+
   it('uses explicit labels for the visible method/status indicator', () => {
     expect(describeUniversalImageUpscaleProvider('android-accelerator')).toBe('Android accelerator: NPU/GPU upscaler');
+    expect(describeUniversalImageUpscaleProvider('android-native')).toBe('Android native image upscaler');
     expect(describeUniversalImageUpscaleProvider('browser')).toBe('Local image resize');
     expect(describeUniversalImageUpscaleProvider('local-ai-cpu')).toBe('Local CPU AI upscaler');
   });
@@ -177,6 +286,69 @@ describe('ImageUniversalUpscale', () => {
     expect(result.document.layers[0]).toMatchObject({
       id: 'cpu-upscale-doc-2',
       name: 'Local CPU AI upscale',
+    });
+  });
+
+  it('describes document-level universal upscale readiness without executing providers', () => {
+    const doc = {
+      ...createEmptyImageDocument({ id: 'doc-readiness', title: 'cover.png', width: 320, height: 240 }),
+      layers: [makeLayer()],
+      activeLayerId: 'layer-1',
+    };
+
+    const readiness = describeImageDocumentUniversalUpscaleReadiness({
+      doc,
+      scalePercent: 150,
+      providerSettings: {
+        androidAcceleratorBaseUrl: '',
+        localAiCpuEndpointUrl: '',
+      },
+      isAndroidNativeUpscalerAvailable: true,
+    });
+
+    expect(readiness).toMatchObject({
+      descriptorId: 'image-universal-upscale-readiness:v1',
+      readiness: 'ready',
+      target: {
+        sourceWidthPx: 320,
+        sourceHeightPx: 240,
+        widthPx: 480,
+        heightPx: 360,
+        policy: 'scale-percent',
+        scalePercent: 150,
+      },
+      routes: [
+        expect.objectContaining({
+          id: 'on-device-preferred',
+          provider: 'android-native',
+          readiness: 'ready',
+          selected: true,
+        }),
+        expect.objectContaining({ id: 'cloud-fallback' }),
+        expect.objectContaining({ id: 'bitmap-fallback' }),
+      ],
+    });
+    expect(readiness.stableSignature).toContain('source=image:320x240');
+    expect(readiness.stableSignature).toContain('target=scale-percent:480x360:scale=150:action=queue-upscale');
+    expect((readiness as typeof readiness & {
+      policy?: {
+        sourceExclusion: { action: string };
+        printResolution: { defaultTargetDpi: number; action: string };
+        fallbackOrder: Array<{ rank: number; routeId: string; provider: string }>;
+      };
+    }).policy).toMatchObject({
+      sourceExclusion: {
+        action: 'allow-upscale',
+      },
+      printResolution: {
+        defaultTargetDpi: 300,
+        action: 'queue-upscale',
+      },
+      fallbackOrder: [
+        { rank: 1, routeId: 'on-device-preferred', provider: 'android-native' },
+        { rank: 2, routeId: 'cloud-fallback', provider: 'vertex-imagen' },
+        { rank: 3, routeId: 'bitmap-fallback', provider: 'browser' },
+      ],
     });
   });
 });

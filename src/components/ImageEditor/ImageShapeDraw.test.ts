@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { drawFilledEllipseOnImageData, drawFilledRectOnImageData } from './ImageShapeDraw';
+import { drawFilledEllipseOnImageData, drawFilledRectOnImageData, drawVectorPathOnImageData } from './ImageShapeDraw';
 
 function makeImageData(width: number, height: number): ImageData {
   return {
@@ -47,5 +47,44 @@ describe('ImageShapeDraw', () => {
 
     expect(getPixel(drawn, 3, 3)).toEqual([0, 255, 0, 255]);
     expect(getPixel(drawn, 1, 1)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('draws open vector paths as stroke-only while retaining closed path fill and stroke order', () => {
+    const lineSource = makeImageData(6, 3);
+
+    const line = drawVectorPathOnImageData(lineSource, {
+      points: [
+        { x: 1, y: 1 },
+        { x: 4, y: 1 },
+      ],
+      closed: false,
+      fillColor: '#00ff00',
+      fillOpacity: 1,
+      strokeColor: '#ff0000',
+      strokeOpacity: 1,
+      strokeWidth: 1,
+    });
+
+    expect(getPixel(line, 2, 1)).toEqual([255, 0, 0, 255]);
+    expect(getPixel(line, 2, 0)).toEqual([0, 0, 0, 0]);
+
+    const closedSource = makeImageData(5, 5);
+    const closed = drawVectorPathOnImageData(closedSource, {
+      points: [
+        { x: 1, y: 1 },
+        { x: 4, y: 1 },
+        { x: 4, y: 4 },
+        { x: 1, y: 4 },
+      ],
+      closed: true,
+      fillColor: '#00ff00',
+      fillOpacity: 1,
+      strokeColor: '#0000ff',
+      strokeOpacity: 1,
+      strokeWidth: 1,
+    });
+
+    expect(getPixel(closed, 2, 2)).toEqual([0, 255, 0, 255]);
+    expect(getPixel(closed, 1, 1)).toEqual([0, 0, 255, 255]);
   });
 });

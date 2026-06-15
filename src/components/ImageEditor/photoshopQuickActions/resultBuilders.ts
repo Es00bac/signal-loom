@@ -1,4 +1,5 @@
 import type { BlendMode, ImageDocument, ImageLayer } from '../../../types/imageEditor';
+import { canEditImageLayerPixels, canMoveImageLayer } from '../../../lib/imageLayerLocks';
 import { maskBoundingBox, type SelectionMask } from '../SelectionMask';
 import { replaceLayer } from './layerStack';
 import type { PhotoshopQuickActionResult } from './types';
@@ -16,7 +17,7 @@ export function buildTransformResult(
   before: ImageLayer,
   after: ImageLayer,
 ): PhotoshopQuickActionResult | null {
-  if (before.locked) return null;
+  if (!canMoveImageLayer(before)) return null;
   if (before.x === after.x && before.y === after.y) return null;
   return {
     kind: 'transform',
@@ -35,7 +36,7 @@ export function applyLayerReplacement(
   layer: ImageLayer | null | undefined,
   transform: (layer: ImageLayer) => ImageLayer | null,
 ): PhotoshopQuickActionResult | null {
-  if (!layer || layer.locked) return null;
+  if (!canEditImageLayerPixels(layer)) return null;
   const nextLayer = transform(layer);
   if (!nextLayer) return null;
   return buildLayerOpResult(doc, replaceLayer(doc.layers, layer.id, nextLayer), layer.id);

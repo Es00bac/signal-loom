@@ -16,6 +16,24 @@ export function createEmptyLayer(
   }
 
   const id = `layer-${type}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  if (type === 'group') {
+    return {
+      id,
+      name: name ?? defaultLayerName(type, doc.layers.length + 1),
+      type,
+      visible: true,
+      locked: false,
+      opacity: 1,
+      blendMode: 'normal',
+      x: 0,
+      y: 0,
+      bitmap: null,
+      bitmapVersion: 0,
+      mask: null,
+      groupExpanded: true,
+    };
+  }
+
   return {
     id,
     name: name ?? defaultLayerName(type, doc.layers.length + 1),
@@ -44,6 +62,8 @@ function defaultLayerName(type: LayerType, index: number): string {
       return `Adjustment ${index}`;
     case 'vector':
       return `Vector ${index}`;
+    case 'group':
+      return `Group ${index}`;
     default:
       return `Layer ${index}`;
   }

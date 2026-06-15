@@ -77,6 +77,15 @@ export interface PaperPrintAndroidAcceleratorUpscaleResult {
   mimeType?: VertexImagenOutputMimeType;
 }
 
+export interface PaperPrintAndroidNativeUpscaleRequest extends PaperPrintUpscaleTarget {
+  sourceDataUrl: string;
+}
+
+export interface PaperPrintAndroidNativeUpscaleResult {
+  dataUrl: string;
+  mimeType?: VertexImagenOutputMimeType;
+}
+
 export type PaperPrintUpscaleBusyProvider =
   | 'browser'
   | 'preparing'
@@ -84,6 +93,7 @@ export type PaperPrintUpscaleBusyProvider =
   | 'stability-fast'
   | 'stability-conservative'
   | 'android-accelerator'
+  | 'android-native'
   | 'local-ai-cpu';
 
 export interface PaperPrintUpscalePlan {
@@ -239,6 +249,7 @@ export async function upscalePaperImageForPrint(input: {
   vertexUpscale?: (request: PaperPrintVertexUpscaleRequest) => Promise<PaperPrintVertexUpscaleResult>;
   stabilityUpscale?: (request: PaperPrintStabilityUpscaleRequest) => Promise<PaperPrintStabilityUpscaleResult>;
   androidAcceleratorUpscale?: (request: PaperPrintAndroidAcceleratorUpscaleRequest) => Promise<PaperPrintAndroidAcceleratorUpscaleResult>;
+  androidNativeUpscale?: (request: PaperPrintAndroidNativeUpscaleRequest) => Promise<PaperPrintAndroidNativeUpscaleResult>;
   localAiUpscale?: (request: PaperPrintLocalAiUpscaleRequest) => Promise<PaperPrintLocalAiUpscaleResult>;
   stabilityPrompt?: string;
   stabilityCreativity?: number;
@@ -267,6 +278,7 @@ export async function upscalePaperImageForPrint(input: {
     stabilityAvailable: Boolean(input.stabilityUpscale),
     vertexAvailable: Boolean(input.vertexUpscale),
     androidAcceleratorAvailable: Boolean(input.androidAcceleratorUpscale),
+    androidNativeAvailable: Boolean(input.androidNativeUpscale),
     localAiAvailable: Boolean(input.localAiUpscale),
   });
 
@@ -366,6 +378,28 @@ export async function upscalePaperImageForPrint(input: {
     };
   }
 
+  if (input.androidNativeUpscale && plan.provider === 'android-native') {
+    const source = resolveProviderUpscaleSource(input.src, image);
+    input.onProviderResolved?.('android-native');
+    const androidResult = await input.androidNativeUpscale({
+      ...target,
+      sourceDataUrl: source.dataUrl,
+    });
+    const fittedDataUrl = await fitProviderResultToTargetDataUrl(
+      androidResult.dataUrl,
+      target.targetWidthPx,
+      target.targetHeightPx,
+    );
+
+    return {
+      ...target,
+      dataUrl: fittedDataUrl,
+      mimeType: 'image/png',
+      provider: 'android-native',
+      estimatedCostUsd: 0,
+    };
+  }
+
   if (input.localAiUpscale && plan.provider === 'local-ai-cpu') {
     const source = resolveProviderUpscaleSource(input.src, image);
     input.onProviderResolved?.('local-ai-cpu');
@@ -406,6 +440,7 @@ export function resolvePaperPrintUpscalePlan(input: {
   vertexAvailable: boolean;
   localAiAvailable?: boolean;
   androidAcceleratorAvailable?: boolean;
+  androidNativeAvailable?: boolean;
 }): PaperPrintUpscalePlan {
   const method = input.method ?? 'auto';
   const noCost = estimatePaperPrintUpscaleCostUsd(method, 1);
@@ -434,6 +469,21 @@ export function resolvePaperPrintUpscalePlan(input: {
         notes: [
           'Auto will use the paired Android accelerator over the local network because it has no provider spend.',
           'Signal Loom will still do an exact local fit to the document DPI after the NPU/GPU AI pass.',
+        ],
+      };
+    }
+
+    if (input.androidNativeAvailable) {
+      return {
+        method,
+        provider: 'android-native',
+        canRun: true,
+        estimatedCostUsd: 0,
+        costLabel: 'Free',
+        usesLocalFinalFit: true,
+        notes: [
+          'Auto will use the Android app native image upscaler because it has no provider spend.',
+          'Signal Loom will still do an exact local fit to the document DPI after the Android result returns.',
         ],
       };
     }
@@ -548,7 +598,7 @@ export function estimatePaperPrintUpscaleCostUsd(
     return roundUsd(STABILITY_CONSERVATIVE_UPSCALE_COST_USD * count);
   }
 
-  if (method === 'local-browser' || method === 'browser' || method === 'local-ai-cpu' || method === 'android-accelerator') {
+  if (method === 'local-browser' || method === 'browser' || method === 'local-ai-cpu' || method === 'android-accelerator' || method === 'android-native') {
     return 0;
   }
 
@@ -611,6 +661,10 @@ export function describePaperPrintUpscaleBusyProvider(
 
   if (provider === 'android-accelerator') {
     return 'Android accelerator: NPU/GPU upscaler';
+  }
+
+  if (provider === 'android-native') {
+    return 'Android native image upscaler';
   }
 
   if (provider === 'local-ai-cpu') {
@@ -971,6 +1025,8 @@ function paperPrintUpscaleProviderTelemetryLabel(
       return { provider: 'vertex', modelId: 'imagen-4.0-upscale-preview' };
     case 'android-accelerator':
       return { provider: 'android-accelerator', modelId: 'signal-loom-android-upscaler' };
+    case 'android-native':
+      return { provider: 'android-native', modelId: 'signal-loom-android-native-bitmap' };
     case 'local-ai-cpu':
       return { provider: 'local', modelId: 'cpu-ai-upscaler' };
     case 'browser':

@@ -63,13 +63,14 @@ const GENERATED_POOL_COLLAPSED_ROW_HEIGHT = 76;
 
 interface FlowSourceBinSidebarProps {
   dockable?: boolean;
+  embeddedDrawer?: boolean;
   workspaceId?: SourceLibraryWorkspaceId;
 }
 
 type SourcePanelMode = 'source-library' | 'generated-pool';
 type GeneratedPoolKindFilter = 'all' | 'audio' | 'image' | 'video';
 
-export function FlowSourceBinSidebar({ dockable = false, workspaceId }: FlowSourceBinSidebarProps) {
+export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false, workspaceId }: FlowSourceBinSidebarProps) {
   const [sidebarMode, setSidebarMode] = useState<SourcePanelMode>('source-library');
   const [generatedPoolKindFilter, setGeneratedPoolKindFilter] = useState<GeneratedPoolKindFilter>('all');
   const editorWorkspaceView = useEditorStore((state) => state.workspaceView);
@@ -421,14 +422,18 @@ export function FlowSourceBinSidebar({ dockable = false, workspaceId }: FlowSour
     }
   };
 
-  const sidebarPresentation = resolveSourceBinSidebarPresentation({ dockable, sidebarOpen });
+  const sidebarPresentation = resolveSourceBinSidebarPresentation({ dockable, embeddedDrawer, sidebarOpen });
   const handleToggleSidebar = () => {
+    if (sidebarPresentation.toggleAction === 'none') {
+      return;
+    }
     if (sidebarPresentation.toggleAction === 'collapse-dock' && isSharedWorkspaceId(workspaceView)) {
       collapsePanel(workspaceView, 'source-bin');
       return;
     }
     toggleSidebar();
   };
+  const showSidebarRail = sidebarPresentation.toggleAction !== 'none';
   const sidebarWidthClassName = sidebarPresentation.widthClassName;
   const sidebarPlacementClassName = dockable
     ? 'flex h-full rounded-none border-0 shadow-none backdrop-blur-0'
@@ -465,15 +470,17 @@ export function FlowSourceBinSidebar({ dockable = false, workspaceId }: FlowSour
     <aside
       className={`${sidebarPlacementClassName} ${sidebarWidthClassName} overflow-hidden bg-[#10151f]/95 transition-[width] duration-200`}
     >
-      <button
-        aria-label={dockable ? 'Collapse Source Bin panel' : sidebarPresentation.contentOpen ? 'Collapse Source Bin' : 'Expand Source Bin'}
-        className="flex w-14 shrink-0 flex-col items-center gap-3 border-r border-gray-700/60 bg-[#0d1118] py-4 text-gray-300 transition-colors hover:text-white"
-        onClick={handleToggleSidebar}
-        type="button"
-      >
-        <Archive size={18} />
-        {sidebarPresentation.contentOpen ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
-      </button>
+      {showSidebarRail ? (
+        <button
+          aria-label={dockable ? 'Collapse Source Bin panel' : sidebarPresentation.contentOpen ? 'Collapse Source Bin' : 'Expand Source Bin'}
+          className="flex w-14 shrink-0 flex-col items-center gap-3 border-r border-gray-700/60 bg-[#0d1118] py-4 text-gray-300 transition-colors hover:text-white"
+          onClick={handleToggleSidebar}
+          type="button"
+        >
+          <Archive size={18} />
+          {sidebarPresentation.contentOpen ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
+        </button>
+      ) : null}
 
       {sidebarPresentation.contentOpen ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -940,7 +947,7 @@ function SourceBinSection({
       </div>
 
       {!isCollapsed ? (
-        <div className="space-y-2 border-t border-gray-700/40 px-3 pb-3 pt-2">
+        <div className="space-y-2 border-t border-gray-700/40 px-3 pb-3 pt-2" data-source-library-bin-list="">
           {orderedItems.length > 0 ? (
             rows.map((row) => (
               <div key={resolveRowKey(row)}>

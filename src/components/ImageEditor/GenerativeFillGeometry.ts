@@ -8,6 +8,37 @@ export interface GenerativeFillPlacementBounds {
   height: number;
 }
 
+export interface GenerativeFillPlacementPlan {
+  descriptorId: 'generative-fill-placement:v1';
+  documentSize: {
+    width: number;
+    height: number;
+  };
+  contextPaddingPx: number;
+  selection: {
+    present: boolean;
+    empty: boolean;
+    selectedPixels: number;
+    coverage: number;
+    bounds: GenerativeFillPlacementBounds | null;
+  };
+  placementBounds: GenerativeFillPlacementBounds;
+  localSelectionBounds: GenerativeFillPlacementBounds | null;
+  artifacts: {
+    source: {
+      width: number;
+      height: number;
+      mimeType: 'image/png';
+    };
+    mask: {
+      width: number;
+      height: number;
+      mimeType: 'image/png';
+    };
+  };
+  previewSignature: string;
+}
+
 export function resolveGenerativeFillPlacementBounds(
   doc: Pick<ImageDocument, 'width' | 'height'>,
   selection: SelectionMask,
@@ -32,6 +63,62 @@ export function resolveGenerativeFillPlacementBounds(
     width: selectionBounds.width + padding * 2,
     height: selectionBounds.height + padding * 2,
   }, doc);
+}
+
+export function describeGenerativeFillPlacementPlan(
+  doc: Pick<ImageDocument, 'width' | 'height'>,
+  selection: SelectionMask,
+  paddingPx = 64,
+): GenerativeFillPlacementPlan {
+  const contextPaddingPx = Math.max(0, Math.round(paddingPx));
+  const selectionBounds = maskBoundingBox(selection);
+  const selectedPixels = countSelectedPixels(selection);
+  const placementBounds = resolveGenerativeFillPlacementBounds(doc, selection, contextPaddingPx);
+  const localSelectionBounds = selectionBounds
+    ? {
+        x: selectionBounds.x - placementBounds.x,
+        y: selectionBounds.y - placementBounds.y,
+        width: selectionBounds.width,
+        height: selectionBounds.height,
+      }
+    : null;
+  const previewPayload = {
+    documentSize: { width: doc.width, height: doc.height },
+    contextPaddingPx,
+    selectionBounds,
+    placementBounds,
+    selectedPixels,
+  };
+
+  return {
+    descriptorId: 'generative-fill-placement:v1',
+    documentSize: { width: doc.width, height: doc.height },
+    contextPaddingPx,
+    selection: {
+      present: true,
+      empty: selectedPixels === 0,
+      selectedPixels,
+      coverage: selection.width * selection.height > 0
+        ? Number((selectedPixels / (selection.width * selection.height)).toFixed(4))
+        : 0,
+      bounds: selectionBounds,
+    },
+    placementBounds,
+    localSelectionBounds,
+    artifacts: {
+      source: {
+        width: placementBounds.width,
+        height: placementBounds.height,
+        mimeType: 'image/png',
+      },
+      mask: {
+        width: placementBounds.width,
+        height: placementBounds.height,
+        mimeType: 'image/png',
+      },
+    },
+    previewSignature: `generative-fill-placement:v1:${JSON.stringify(previewPayload)}`,
+  };
 }
 
 export function cropSelectionToBounds(
@@ -79,4 +166,14 @@ function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   if (max < min) return min;
   return Math.round(Math.min(max, Math.max(min, value)));
+}
+
+function countSelectedPixels(selection: SelectionMask): number {
+  let selectedPixels = 0;
+  for (let index = 0; index < selection.data.length; index += 1) {
+    if (selection.data[index] > 0) {
+      selectedPixels += 1;
+    }
+  }
+  return selectedPixels;
 }

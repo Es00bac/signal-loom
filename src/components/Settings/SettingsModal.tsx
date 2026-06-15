@@ -22,15 +22,28 @@ import {
   getKeyboardShortcutLabel,
   normalizeShortcutLabel,
 } from '../../lib/keyboardShortcuts';
+import {
+  GAMEPAD_CONTROL_DEFINITIONS,
+  GAMEPAD_WORKSPACES,
+  getGamepadCommandOptionsForWorkspace,
+  type GamepadBindingProfile,
+  type GamepadControlBinding,
+  type GamepadControlId,
+  type GamepadWorkspace,
+} from '../../lib/gamepadBindings';
 import { NATIVE_MENU_COMMANDS, type NativeMenuCommand } from '../../lib/nativeApp';
 import { useCatalogStore } from '../../store/catalogStore';
-import { useSettingsStore } from '../../store/settingsStore';
+import {
+  getApiKeyStorageStatus,
+  useSettingsStore,
+} from '../../store/settingsStore';
 import type { Capability, ProviderSettings } from '../../types/flow';
 import {
   getAndroidAcceleratorStatus,
   summarizeAndroidAcceleratorStatus,
 } from '../../lib/androidAccelerator';
 import { DockableDialog } from '../DockablePanel';
+import { useMobilePhoneInterfaceDescriptor } from '../../lib/mobilePhoneInterface';
 
 export const SettingsModal: React.FC = () => {
   const {
@@ -41,15 +54,19 @@ export const SettingsModal: React.FC = () => {
     providerSettings,
     interfaceThemeId,
     keyboardShortcuts,
+    gamepadBindings,
     settingsPanel,
     setApiKey,
     setDefaultModel,
     setInterfaceThemeId,
     setKeyboardShortcut,
+    setGamepadBinding,
     setProviderSetting,
     resetKeyboardShortcuts,
+    resetGamepadBindings,
     openSettings,
   } = useSettingsStore();
+  const keyStorageStatus = getApiKeyStorageStatus(apiKeys);
   const {
     modelCatalog,
     elevenLabsVoices,
@@ -95,6 +112,8 @@ export const SettingsModal: React.FC = () => {
     }
   };
 
+  const phone = useMobilePhoneInterfaceDescriptor().enabled;
+
   return (
     <DockableDialog
       defaultFloatingRect={{ x: 120, y: 72, width: 920, height: 680 }}
@@ -102,19 +121,53 @@ export const SettingsModal: React.FC = () => {
       minSize={{ width: 520, height: 420 }}
       onClose={toggleSettings}
       open={isSettingsOpen}
-      title={settingsPanel === 'keyboard' ? 'Keyboard Shortcut Configuration' : 'Provider Configuration'}
+      title={settingsPanel === 'keyboard'
+        ? 'Keyboard Shortcut Configuration'
+        : settingsPanel === 'gamepad'
+          ? 'Gamepad Binding Configuration'
+          : 'Provider Configuration'}
       workspaceId="app-dialogs"
     >
       <div
         className="signal-loom-themed theme-panel flex h-full min-h-0 flex-col overflow-hidden"
       >
-        <div className="theme-surface theme-border flex justify-between items-center p-5 border-b">
+        {phone ? (
+          <div className="theme-surface theme-border flex items-center gap-2 overflow-x-auto border-b px-3 py-2">
+            <div className="flex shrink-0 items-center gap-1 rounded-lg border border-gray-800 bg-[#0b1018] p-1">
+              {([['providers', 'Providers'], ['keyboard', 'Shortcuts'], ['gamepad', 'Gamepad']] as const).map(
+                ([panel, label]) => (
+                  <button
+                    key={panel}
+                    className={`whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
+                      settingsPanel === panel ? 'bg-blue-500/20 text-blue-100' : 'text-gray-300 hover:text-white'
+                    }`}
+                    onClick={() => openSettings(panel)}
+                    type="button"
+                  >
+                    {label}
+                  </button>
+                ),
+              )}
+            </div>
+            <button
+              aria-label="Refresh Catalogs"
+              className="ml-auto shrink-0 rounded-lg border border-gray-700 bg-[#111217]/60 p-2 text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
+              onClick={() => void handleRefresh()}
+              type="button"
+            >
+              {isRefreshing ? <LoaderCircle className="animate-spin" size={16} /> : <RefreshCcw size={16} />}
+            </button>
+          </div>
+        ) : null}
+        <div className={`theme-surface theme-border ${phone ? 'hidden' : 'flex'} justify-between items-center p-5 border-b`}>
           <div>
             <h2 className="text-xl font-semibold text-gray-100">Provider Configuration</h2>
             <p className="text-sm text-gray-400 mt-1">
               {settingsPanel === 'keyboard'
                 ? 'Customize command and tool shortcuts. Changes apply to browser/runtime shortcuts and integrated menu labels immediately.'
-                : 'Keys stay in local browser storage. Model and voice selectors are refreshed from the providers you have configured.'}
+                : settingsPanel === 'gamepad'
+                  ? 'Bind gamepad controls for each workspace. Changes apply to Android and desktop controller input immediately.'
+                  : `Keys are ${keyStorageStatus.encryptedAtRest ? 'stored encrypted' : 'not encrypted'} in ${keyStorageStatus.storageMedium}. ${keyStorageStatus.caveat}`}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -141,6 +194,17 @@ export const SettingsModal: React.FC = () => {
               Shortcuts
             </button>
             <button
+              className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                settingsPanel === 'gamepad'
+                  ? 'border-blue-400/60 bg-blue-500/15 text-blue-100'
+                  : 'border-gray-700 bg-[#111217]/60 text-gray-200 hover:border-gray-500 hover:text-white'
+              }`}
+              onClick={() => openSettings('gamepad')}
+              type="button"
+            >
+              Gamepad
+            </button>
+            <button
               className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-[#111217]/60 px-3 py-2 text-sm font-medium text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
               onClick={() => void handleRefresh()}
               type="button"
@@ -158,12 +222,18 @@ export const SettingsModal: React.FC = () => {
           </div>
         </div>
 
-        <div className="p-6 overflow-y-auto space-y-8">
+        <div className={`overflow-y-auto space-y-8 ${phone ? 'p-4' : 'p-6'}`}>
           {settingsPanel === 'keyboard' ? (
             <KeyboardShortcutsSection
               keyboardShortcuts={keyboardShortcuts}
               onChange={setKeyboardShortcut}
               onReset={resetKeyboardShortcuts}
+            />
+          ) : settingsPanel === 'gamepad' ? (
+            <GamepadBindingsSection
+              gamepadBindings={gamepadBindings}
+              onChange={setGamepadBinding}
+              onReset={resetGamepadBindings}
             />
           ) : (
             <>
@@ -618,6 +688,180 @@ function KeyboardShortcutsSection({
         </div>
       </div>
     </Section>
+  );
+}
+
+function GamepadBindingsSection({
+  gamepadBindings,
+  onChange,
+  onReset,
+}: {
+  gamepadBindings: GamepadBindingProfile;
+  onChange: (workspace: GamepadWorkspace, controlId: GamepadControlId, patch: Partial<GamepadControlBinding>) => void;
+  onReset: () => void;
+}) {
+  const [activeWorkspace, setActiveWorkspace] = React.useState<GamepadWorkspace>('flow');
+  const commandOptions = getGamepadCommandOptionsForWorkspace(activeWorkspace);
+  const workspaceBindings = gamepadBindings[activeWorkspace];
+  const activeWorkspaceLabel = GAMEPAD_WORKSPACES.find((workspace) => workspace.id === activeWorkspace)?.label ?? activeWorkspace;
+
+  return (
+    <Section title="Gamepad Bindings">
+      <div className="rounded-xl border border-gray-800 bg-[#111217]/50 p-4" data-gamepad-bindings-panel="true">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex rounded-lg border border-gray-800 bg-[#0b1018] p-1">
+            {GAMEPAD_WORKSPACES.map((workspace) => (
+              <button
+                aria-pressed={activeWorkspace === workspace.id}
+                className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
+                  activeWorkspace === workspace.id
+                    ? 'bg-blue-500/20 text-blue-100'
+                    : 'text-gray-400 hover:bg-gray-800/70 hover:text-gray-100'
+                }`}
+                key={workspace.id}
+                onClick={() => setActiveWorkspace(workspace.id)}
+                type="button"
+              >
+                {workspace.label}
+              </button>
+            ))}
+          </div>
+          <button
+            className="rounded-lg border border-gray-700 bg-[#0d0f15] px-3 py-2 text-sm font-medium text-gray-200 hover:border-gray-500 hover:text-white"
+            onClick={onReset}
+            type="button"
+          >
+            Reset Defaults
+          </button>
+        </div>
+        <div className="grid gap-2">
+          {GAMEPAD_CONTROL_DEFINITIONS.map((control) => {
+            const binding = workspaceBindings[control.id];
+            return (
+              <div
+                className="grid gap-3 rounded-lg border border-gray-800 bg-[#0b1018] px-3 py-2 lg:grid-cols-[11rem_minmax(14rem,1fr)_minmax(18rem,28rem)]"
+                key={control.id}
+              >
+                <div>
+                  <div className="text-sm font-medium text-gray-200">{control.label}</div>
+                  <div className="text-xs capitalize text-gray-500">{control.kind}</div>
+                </div>
+                <select
+                  aria-label={`${activeWorkspaceLabel} ${control.label} command`}
+                  className="w-full rounded-lg border border-gray-700 bg-[#111217] px-2.5 py-2 text-sm text-gray-100 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/40"
+                  onChange={(event) => onChange(activeWorkspace, control.id, { command: event.target.value as NativeMenuCommand | '' })}
+                  value={binding.command}
+                >
+                  <option value="">None</option>
+                  {commandOptions.map((command) => (
+                    <option key={command} value={command}>
+                      {formatShortcutCommandLabel(command)}
+                    </option>
+                  ))}
+                </select>
+                <GamepadAdvancedControls
+                  binding={binding}
+                  controlId={control.id}
+                  kind={control.kind}
+                  onChange={(patch) => onChange(activeWorkspace, control.id, patch)}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function GamepadAdvancedControls({
+  binding,
+  controlId,
+  kind,
+  onChange,
+}: {
+  binding: GamepadControlBinding;
+  controlId: GamepadControlId;
+  kind: string;
+  onChange: (patch: Partial<GamepadControlBinding>) => void;
+}) {
+  const isAnalog = kind === 'axis' || kind === 'trigger';
+  return (
+    <div className="grid gap-2 text-xs text-gray-400 sm:grid-cols-2">
+      <NumberSetting
+        label="Threshold"
+        max={1}
+        min={0.05}
+        onChange={(threshold) => onChange({ threshold })}
+        step={0.05}
+        value={binding.threshold}
+      />
+      {kind === 'axis' ? (
+        <>
+          <NumberSetting
+            label="Deadzone"
+            max={0.95}
+            min={0}
+            onChange={(deadzone) => onChange({ deadzone })}
+            step={0.05}
+            value={binding.deadzone}
+          />
+          <NumberSetting
+            label="Sensitivity"
+            max={3}
+            min={0.1}
+            onChange={(sensitivity) => onChange({ sensitivity })}
+            step={0.1}
+            value={binding.sensitivity}
+          />
+          <label className="flex items-center gap-2 rounded-lg border border-gray-800 bg-[#111217] px-2 py-2">
+            <input
+              checked={binding.inverted}
+              onChange={(event) => onChange({ inverted: event.target.checked })}
+              type="checkbox"
+            />
+            Invert
+          </label>
+        </>
+      ) : null}
+      {!isAnalog ? (
+        <div className="rounded-lg border border-gray-800 bg-[#111217] px-2 py-2 text-gray-500">
+          Digital edge trigger
+        </div>
+      ) : null}
+      <input name={`gamepad-${controlId}-marker`} type="hidden" value={controlId} />
+    </div>
+  );
+}
+
+function NumberSetting({
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="grid grid-cols-[5rem_1fr] items-center gap-2 rounded-lg border border-gray-800 bg-[#111217] px-2 py-1.5">
+      <span>{label}</span>
+      <input
+        className="min-w-0 rounded border border-gray-700 bg-[#0d0f15] px-2 py-1 font-mono text-xs text-gray-100"
+        max={max}
+        min={min}
+        onChange={(event) => onChange(Number(event.target.value))}
+        step={step}
+        type="number"
+        value={Number(value.toFixed(2))}
+      />
+    </label>
   );
 }
 

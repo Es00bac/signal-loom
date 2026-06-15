@@ -7,8 +7,11 @@ const mocks = vi.hoisted(() => ({
   loadImportedAssetBlob: vi.fn(),
   loadScratchAssetBlob: vi.fn(),
   localizeAssetForProject: vi.fn(),
+  materializeAndroidSourceAsset: vi.fn(),
+  isAndroidSourceAssetPermissionError: vi.fn(),
   saveDataUrlAsset: vi.fn(),
   saveImportedAsset: vi.fn(),
+  showAlertDialog: vi.fn(),
   storeScratchAssetBlob: vi.fn(),
 }));
 
@@ -30,6 +33,15 @@ vi.mock('../lib/sourceBinPersistence', () => ({
   localizeAssetForProject: mocks.localizeAssetForProject,
 }));
 
+vi.mock('../lib/androidSourceAssetStorage', () => ({
+  materializeAndroidSourceAsset: mocks.materializeAndroidSourceAsset,
+  isAndroidSourceAssetPermissionError: mocks.isAndroidSourceAssetPermissionError,
+}));
+
+vi.mock('./alertDialogStore', () => ({
+  showAlertDialog: mocks.showAlertDialog,
+}));
+
 import { useSourceBinStore } from './sourceBinStore';
 
 describe('source bin persistence fallbacks', () => {
@@ -41,13 +53,21 @@ describe('source bin persistence fallbacks', () => {
     mocks.loadImportedAssetBlob.mockReset();
     mocks.loadScratchAssetBlob.mockReset();
     mocks.localizeAssetForProject.mockReset();
+    mocks.materializeAndroidSourceAsset.mockReset();
+    mocks.isAndroidSourceAssetPermissionError.mockReset();
     mocks.saveDataUrlAsset.mockReset();
     mocks.saveImportedAsset.mockReset();
+    mocks.showAlertDialog.mockReset();
     mocks.storeScratchAssetBlob.mockReset();
     mocks.localizeAssetForProject.mockImplementation(async (assetUrl: string, mimeType?: string) => ({
       dataUrl: assetUrl,
       mimeType: mimeType ?? 'application/octet-stream',
     }));
+    mocks.materializeAndroidSourceAsset.mockResolvedValue(undefined);
+    mocks.isAndroidSourceAssetPermissionError.mockImplementation((error: unknown) => (
+      error instanceof Error && error.name === 'AndroidSourceAssetPermissionError'
+    ));
+    mocks.showAlertDialog.mockResolvedValue(undefined);
     useSourceBinStore.setState({
       bins: [{ id: 'default', name: 'Source Library', items: [], collapsed: false, createdAt: Date.now() }],
       dismissedSourceKeys: [],
@@ -84,6 +104,75 @@ describe('source bin persistence fallbacks', () => {
     ]);
     expect(allItems[0].assetId).toBeUndefined();
     expect(allItems[0].scratchFileName).toBeUndefined();
+  });
+
+  it('persists generated media through Android native storage before IndexedDB fallback', async () => {
+    mocks.materializeAndroidSourceAsset.mockResolvedValueOnce({
+      id: 'source-image-1',
+      label: 'Generated still',
+      kind: 'image',
+      mimeType: 'image/png',
+      assetUrl: 'capacitor://file:///storage/emulated/0/Documents/Signal Loom/Source Library/source-image-1.png',
+      nativeFilePath: 'file:///storage/emulated/0/Documents/Signal Loom/Source Library/source-image-1.png',
+      originNodeId: 'image-1',
+      sourceKey: 'image:image-1:data:image/png;base64,AAAA',
+      isGenerated: true,
+      createdAt: 10,
+    });
+
+    await useSourceBinStore.getState().ingestConnectedItems([
+      {
+        id: 'source-image-1',
+        nodeId: 'image-1',
+        label: 'Generated still',
+        kind: 'image',
+        assetUrl: 'data:image/png;base64,AAAA',
+        mimeType: 'image/png',
+        isGenerated: true,
+      },
+    ]);
+
+    const allItems = useSourceBinStore.getState().bins.flatMap((bin) => bin.items);
+    expect(allItems).toEqual([
+      expect.objectContaining({
+        label: 'Generated still',
+        kind: 'image',
+        mimeType: 'image/png',
+        nativeFilePath: 'file:///storage/emulated/0/Documents/Signal Loom/Source Library/source-image-1.png',
+        assetUrl: 'capacitor://file:///storage/emulated/0/Documents/Signal Loom/Source Library/source-image-1.png',
+      }),
+    ]);
+    expect(mocks.saveDataUrlAsset).not.toHaveBeenCalled();
+    expect(mocks.saveImportedAsset).not.toHaveBeenCalled();
+  });
+
+  it('alerts when Android denies storage permission before keeping a temporary generated preview', async () => {
+    const denied = new Error('denied');
+    denied.name = 'AndroidSourceAssetPermissionError';
+    mocks.materializeAndroidSourceAsset.mockRejectedValueOnce(denied);
+
+    await useSourceBinStore.getState().ingestConnectedItems([
+      {
+        id: 'source-image-1',
+        nodeId: 'image-1',
+        label: 'Generated still',
+        kind: 'image',
+        assetUrl: 'data:image/png;base64,AAAA',
+        mimeType: 'image/png',
+      },
+    ]);
+
+    expect(mocks.showAlertDialog).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Storage Permission Required',
+      tone: 'warning',
+    }));
+    const fallbackItem = useSourceBinStore.getState().bins.flatMap((bin) => bin.items)[0];
+    expect(fallbackItem).toEqual(expect.objectContaining({
+      label: 'Generated still',
+      assetUrl: 'data:image/png;base64,AAAA',
+    }));
+    expect(fallbackItem.assetId).toBeUndefined();
+    expect(fallbackItem.nativeFilePath).toBeUndefined();
   });
 
   it('keeps imported media in the source bin if durable import persistence fails', async () => {

@@ -8,6 +8,7 @@ const SIGNAL_LOOM_MENU_COMMANDS = Object.freeze({
   fileExportProject: 'file:export-project',
   fileExportAssets: 'file:export-assets',
   settingsKeyboardShortcuts: 'settings:keyboard-shortcuts',
+  settingsGamepadBindings: 'settings:gamepad-bindings',
   editUndo: 'edit:undo',
   editRedo: 'edit:redo',
   editCut: 'edit:cut',
@@ -23,6 +24,7 @@ const SIGNAL_LOOM_MENU_COMMANDS = Object.freeze({
   viewPaper: 'view:paper',
   viewToggleSourceBin: 'view:toggle-source-bin',
   viewToggleInspector: 'view:toggle-inspector',
+  viewToggleInterface: 'view:toggle-interface',
   viewCommandPalette: 'view:command-palette',
   viewActivityTrail: 'view:activity-trail',
   viewLayoutReset: 'view:layout-reset',
@@ -37,7 +39,9 @@ const SIGNAL_LOOM_MENU_COMMANDS = Object.freeze({
   imageToolLasso: 'image:tool-lasso',
   imageToolMagicWand: 'image:tool-magic-wand',
   imageToolBrush: 'image:tool-brush',
+  imageToolPen: 'image:tool-pen',
   imageToolEraser: 'image:tool-eraser',
+  imageToolMagicEraser: 'image:tool-magic-eraser',
   imageToolCloneStamp: 'image:tool-clone-stamp',
   imageToolSpotHeal: 'image:tool-spot-heal',
   imageToolBlurBrush: 'image:tool-blur-brush',
@@ -67,6 +71,7 @@ const SIGNAL_LOOM_MENU_COMMANDS = Object.freeze({
   paperToolHand: 'paper:tool-hand',
   paperToolText: 'paper:tool-text',
   paperToolImage: 'paper:tool-image',
+  paperToolEyedropper: 'paper:tool-eyedropper',
   paperNewDocument: 'paper:new-document',
   paperAddPage: 'paper:add-page',
   paperExportPdf: 'paper:export-pdf',
@@ -106,6 +111,41 @@ const SIGNAL_LOOM_MENU_COMMANDS = Object.freeze({
   helpAbout: 'help:about',
 });
 
+const DESKTOP_WORKSPACE_MENU_DESCRIPTORS = Object.freeze([
+  Object.freeze({
+    workspace: 'flow',
+    menuLabel: 'Flow',
+    launchLabel: 'Open/Focus Flow Window',
+    launchCommand: SIGNAL_LOOM_MENU_COMMANDS.viewFlow,
+    accelerator: 'CommandOrControl+1',
+    launchSurface: 'electron-native-menu',
+  }),
+  Object.freeze({
+    workspace: 'editor',
+    menuLabel: 'Video',
+    launchLabel: 'Open/Focus Video Window',
+    launchCommand: SIGNAL_LOOM_MENU_COMMANDS.viewEditor,
+    accelerator: 'CommandOrControl+2',
+    launchSurface: 'electron-native-menu',
+  }),
+  Object.freeze({
+    workspace: 'image',
+    menuLabel: 'Image',
+    launchLabel: 'Open/Focus Image Window',
+    launchCommand: SIGNAL_LOOM_MENU_COMMANDS.viewImage,
+    accelerator: 'CommandOrControl+3',
+    launchSurface: 'electron-native-menu',
+  }),
+  Object.freeze({
+    workspace: 'paper',
+    menuLabel: 'Paper',
+    launchLabel: 'Open/Focus Paper Window',
+    launchCommand: SIGNAL_LOOM_MENU_COMMANDS.viewPaper,
+    accelerator: 'CommandOrControl+4',
+    launchSurface: 'electron-native-menu',
+  }),
+]);
+
 let activeKeyboardShortcuts = {};
 
 function commandItem(label, command, sendCommand, extra = {}) {
@@ -124,6 +164,21 @@ function commandItem(label, command, sendCommand, extra = {}) {
     click: () => sendCommand(command),
     ...itemExtra,
   };
+}
+
+function workspaceLaunchItem(workspace, sendCommand) {
+  const descriptor = getDesktopWorkspaceMenuDescriptor(workspace);
+  return commandItem(descriptor.launchLabel, descriptor.launchCommand, sendCommand, {
+    accelerator: descriptor.accelerator,
+  });
+}
+
+function getDesktopWorkspaceMenuDescriptor(workspace) {
+  const descriptor = DESKTOP_WORKSPACE_MENU_DESCRIPTORS.find((entry) => entry.workspace === workspace);
+  if (!descriptor) {
+    throw new Error(`Unknown desktop workspace menu descriptor: ${workspace}`);
+  }
+  return descriptor;
 }
 
 function resolveCommandAccelerator(command, fallback) {
@@ -188,6 +243,9 @@ function createApplicationMenuTemplate({
         }),
         commandItem('Set Scratch Folder...', SIGNAL_LOOM_MENU_COMMANDS.fileSetScratchFolder, sendCommand),
         commandItem('Keyboard Shortcuts...', SIGNAL_LOOM_MENU_COMMANDS.settingsKeyboardShortcuts, sendCommand),
+        commandItem('Gamepad Bindings...', SIGNAL_LOOM_MENU_COMMANDS.settingsGamepadBindings, sendCommand, {
+          accelerator: 'CommandOrControl+Alt+G',
+        }),
         { type: 'separator' },
         commandItem('Export .sloom Project...', SIGNAL_LOOM_MENU_COMMANDS.fileExportProject, sendCommand),
         commandItem('Export Assets...', SIGNAL_LOOM_MENU_COMMANDS.fileExportAssets, sendCommand),
@@ -196,16 +254,12 @@ function createApplicationMenuTemplate({
       ],
     },
     workspaceMenu('Flow', 'flow', activeWorkspace, [
-      commandItem('Open/Focus Flow Window', SIGNAL_LOOM_MENU_COMMANDS.viewFlow, sendCommand, {
-        accelerator: 'CommandOrControl+1',
-      }),
+      workspaceLaunchItem('flow', sendCommand),
       commandItem('Add Source Bin Node', SIGNAL_LOOM_MENU_COMMANDS.flowAddSourceBin, sendCommand),
       commandItem('Export Flow Assets...', SIGNAL_LOOM_MENU_COMMANDS.fileExportAssets, sendCommand),
     ]),
     workspaceMenu('Video', 'editor', activeWorkspace, [
-      commandItem('Open/Focus Video Window', SIGNAL_LOOM_MENU_COMMANDS.viewEditor, sendCommand, {
-        accelerator: 'CommandOrControl+2',
-      }),
+      workspaceLaunchItem('editor', sendCommand),
       { type: 'separator' },
       commandItem('Undo', SIGNAL_LOOM_MENU_COMMANDS.editUndo, sendCommand, {
         accelerator: 'CommandOrControl+Z',
@@ -254,9 +308,7 @@ function createApplicationMenuTemplate({
       }),
     ]),
     workspaceMenu('Image', 'image', activeWorkspace, [
-      commandItem('Open/Focus Image Window', SIGNAL_LOOM_MENU_COMMANDS.viewImage, sendCommand, {
-        accelerator: 'CommandOrControl+3',
-      }),
+      workspaceLaunchItem('image', sendCommand),
       { type: 'separator' },
       commandItem('Undo', SIGNAL_LOOM_MENU_COMMANDS.editUndo, sendCommand, {
         accelerator: 'CommandOrControl+Z',
@@ -305,8 +357,14 @@ function createApplicationMenuTemplate({
       commandItem('Brush Tool', SIGNAL_LOOM_MENU_COMMANDS.imageToolBrush, sendCommand, {
         accelerator: 'B',
       }),
+      commandItem('Pen Tool', SIGNAL_LOOM_MENU_COMMANDS.imageToolPen, sendCommand, {
+        accelerator: 'Shift+B',
+      }),
       commandItem('Eraser Tool', SIGNAL_LOOM_MENU_COMMANDS.imageToolEraser, sendCommand, {
         accelerator: 'E',
+      }),
+      commandItem('Magic Eraser Tool', SIGNAL_LOOM_MENU_COMMANDS.imageToolMagicEraser, sendCommand, {
+        accelerator: 'Shift+E',
       }),
       commandItem('Clone Stamp Tool', SIGNAL_LOOM_MENU_COMMANDS.imageToolCloneStamp, sendCommand, {
         accelerator: 'S',
@@ -361,6 +419,8 @@ function createApplicationMenuTemplate({
       commandItem('Download PSD...', SIGNAL_LOOM_MENU_COMMANDS.imageExportPsd, sendCommand),
     ]),
     workspaceMenu('Paper', 'paper', activeWorkspace, [
+      workspaceLaunchItem('paper', sendCommand),
+      { type: 'separator' },
       commandItem('Undo', SIGNAL_LOOM_MENU_COMMANDS.editUndo, sendCommand, {
         accelerator: 'CommandOrControl+Z',
       }),
@@ -400,6 +460,9 @@ function createApplicationMenuTemplate({
         accelerator: 'T',
       }),
       commandItem('Image Tool', SIGNAL_LOOM_MENU_COMMANDS.paperToolImage, sendCommand, {
+        accelerator: 'Shift+I',
+      }),
+      commandItem('Eyedropper Tool', SIGNAL_LOOM_MENU_COMMANDS.paperToolEyedropper, sendCommand, {
         accelerator: 'I',
       }),
       { type: 'separator' },
@@ -449,23 +512,18 @@ function createApplicationMenuTemplate({
     {
       label: 'View',
       submenu: [
-        commandItem('Open/Focus Flow Window', SIGNAL_LOOM_MENU_COMMANDS.viewFlow, sendCommand, {
-          accelerator: 'CommandOrControl+1',
-        }),
-        commandItem('Open/Focus Video Window', SIGNAL_LOOM_MENU_COMMANDS.viewEditor, sendCommand, {
-          accelerator: 'CommandOrControl+2',
-        }),
-        commandItem('Open/Focus Image Window', SIGNAL_LOOM_MENU_COMMANDS.viewImage, sendCommand, {
-          accelerator: 'CommandOrControl+3',
-        }),
-        commandItem('Open/Focus Paper Window', SIGNAL_LOOM_MENU_COMMANDS.viewPaper, sendCommand, {
-          accelerator: 'CommandOrControl+4',
-        }),
+        workspaceLaunchItem('flow', sendCommand),
+        workspaceLaunchItem('editor', sendCommand),
+        workspaceLaunchItem('image', sendCommand),
+        workspaceLaunchItem('paper', sendCommand),
         { type: 'separator' },
         commandItem('Command Palette...', SIGNAL_LOOM_MENU_COMMANDS.viewCommandPalette, sendCommand, {
           accelerator: 'CommandOrControl+K',
         }),
         commandItem('Activity Trail...', SIGNAL_LOOM_MENU_COMMANDS.viewActivityTrail, sendCommand),
+        commandItem('Toggle Interface', SIGNAL_LOOM_MENU_COMMANDS.viewToggleInterface, sendCommand, {
+          accelerator: 'Tab',
+        }),
         { type: 'separator' },
         commandItem('Toggle Source Bin', SIGNAL_LOOM_MENU_COMMANDS.viewToggleSourceBin, sendCommand),
         commandItem('Toggle Inspector', SIGNAL_LOOM_MENU_COMMANDS.viewToggleInspector, sendCommand),
@@ -525,5 +583,6 @@ function createApplicationMenuTemplate({
 
 module.exports = {
   SIGNAL_LOOM_MENU_COMMANDS,
+  DESKTOP_WORKSPACE_MENU_DESCRIPTORS,
   createApplicationMenuTemplate,
 };

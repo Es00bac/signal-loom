@@ -1,4 +1,4 @@
-import type { DockablePanelMode, PanelRect } from './dockablePanel';
+import type { DockablePanelFloatingRectSpace, DockablePanelMode, PanelRect } from './dockablePanel';
 
 interface FloatingPanelWindowDecision {
   isNative: boolean;
@@ -8,6 +8,11 @@ interface FloatingPanelWindowDecision {
 interface OwnerWindowScreenPosition {
   screenX: number;
   screenY: number;
+}
+
+interface FloatingPanelWindowFeatureOptions {
+  resizable?: boolean;
+  floatingRectSpace?: DockablePanelFloatingRectSpace;
 }
 
 interface FloatingPanelOwnerRenderDecision {
@@ -50,6 +55,7 @@ interface ExternalFloatingPanelMoveEndRectInput {
   windowScreenY: number;
   dragStartWidth: number;
   dragStartHeight: number;
+  floatingRectSpace?: DockablePanelFloatingRectSpace;
   reportedInnerWidth?: number;
   reportedInnerHeight?: number;
 }
@@ -82,20 +88,30 @@ export function shouldUseExternalFloatingPanelWindow({
 export function buildFloatingPanelWindowFeatures(
   rect: PanelRect,
   ownerWindow: OwnerWindowScreenPosition,
+  options: FloatingPanelWindowFeatureOptions = {},
 ): string {
-  const width = Math.max(160, Math.round(rect.width));
-  const height = Math.max(120, Math.round(rect.height));
-  const left = Math.round(ownerWindow.screenX + rect.x);
-  const top = Math.round(ownerWindow.screenY + rect.y);
-
-  return [
+  const width = normalizeWindowDimension(rect.width, 1);
+  const height = normalizeWindowDimension(rect.height, 1);
+  const screenRect = resolveFloatingPanelScreenRect({
+    rect,
+    ownerScreenX: ownerWindow.screenX,
+    ownerScreenY: ownerWindow.screenY,
+    floatingRectSpace: options.floatingRectSpace,
+  });
+  const left = Math.round(screenRect.x);
+  const top = Math.round(screenRect.y);
+  const features = [
     'popup=yes',
     'frame=false',
     `width=${width}`,
     `height=${height}`,
     `left=${left}`,
     `top=${top}`,
-  ].join(',');
+  ];
+  if (options.resizable === false) {
+    features.push('resizable=no');
+  }
+  return features.join(',');
 }
 
 export function shouldRenderFloatingPanelInOwnerWindow({
@@ -140,8 +156,66 @@ export function resolveOwnerRelativeFloatingPanelRect({
   return {
     x: Math.round(windowScreenX - ownerScreenX),
     y: Math.round(windowScreenY - ownerScreenY),
-    width: Math.max(160, Math.round(width)),
-    height: Math.max(120, Math.round(height)),
+    width: normalizeWindowDimension(width, 1),
+    height: normalizeWindowDimension(height, 1),
+  };
+}
+
+export function resolveFloatingPanelScreenRect({
+  rect,
+  ownerScreenX,
+  ownerScreenY,
+  floatingRectSpace,
+}: {
+  rect: PanelRect;
+  ownerScreenX: number;
+  ownerScreenY: number;
+  floatingRectSpace?: DockablePanelFloatingRectSpace;
+}): PanelRect {
+  if (floatingRectSpace === 'screen') {
+    return {
+      x: Math.round(finiteCoordinateOr(rect.x, 0)),
+      y: Math.round(finiteCoordinateOr(rect.y, 0)),
+      width: normalizeWindowDimension(rect.width, 1),
+      height: normalizeWindowDimension(rect.height, 1),
+    };
+  }
+
+  return {
+    x: Math.round(finiteCoordinateOr(ownerScreenX, 0) + finiteCoordinateOr(rect.x, 0)),
+    y: Math.round(finiteCoordinateOr(ownerScreenY, 0) + finiteCoordinateOr(rect.y, 0)),
+    width: normalizeWindowDimension(rect.width, 1),
+    height: normalizeWindowDimension(rect.height, 1),
+  };
+}
+
+export function resolveFloatingPanelOwnerRect({
+  rect,
+  ownerScreenX,
+  ownerScreenY,
+  floatingRectSpace,
+}: {
+  rect: PanelRect;
+  ownerScreenX: number;
+  ownerScreenY: number;
+  floatingRectSpace?: DockablePanelFloatingRectSpace;
+}): PanelRect {
+  if (floatingRectSpace === 'screen') {
+    return resolveOwnerRelativeFloatingPanelRect({
+      ownerScreenX,
+      ownerScreenY,
+      windowScreenX: rect.x,
+      windowScreenY: rect.y,
+      width: rect.width,
+      height: rect.height,
+    });
+  }
+
+  return {
+    x: Math.round(finiteOr(rect.x, 0)),
+    y: Math.round(finiteOr(rect.y, 0)),
+    width: normalizeWindowDimension(rect.width, 1),
+    height: normalizeWindowDimension(rect.height, 1),
   };
 }
 
@@ -152,7 +226,17 @@ export function resolveExternalFloatingPanelMoveEndRect({
   windowScreenY,
   dragStartWidth,
   dragStartHeight,
+  floatingRectSpace,
 }: ExternalFloatingPanelMoveEndRectInput): PanelRect {
+  if (floatingRectSpace === 'screen') {
+    return {
+      x: Math.round(finiteCoordinateOr(windowScreenX, 0)),
+      y: Math.round(finiteCoordinateOr(windowScreenY, 0)),
+      width: normalizeWindowDimension(dragStartWidth, 1),
+      height: normalizeWindowDimension(dragStartHeight, 1),
+    };
+  }
+
   return resolveOwnerRelativeFloatingPanelRect({
     ownerScreenX,
     ownerScreenY,
@@ -172,8 +256,8 @@ export function resolveExternalFloatingPanelWindowSize({
   fallbackHeight,
 }: ExternalFloatingPanelWindowSizeInput): { width: number; height: number } {
   return {
-    width: Math.max(160, Math.round(finiteOr(innerWidth, finiteOr(outerWidth, fallbackWidth)))),
-    height: Math.max(120, Math.round(finiteOr(innerHeight, finiteOr(outerHeight, fallbackHeight)))),
+    width: normalizeWindowDimension(innerWidth, finiteOr(outerWidth, fallbackWidth)),
+    height: normalizeWindowDimension(innerHeight, finiteOr(outerHeight, fallbackHeight)),
   };
 }
 
@@ -185,8 +269,8 @@ export function shouldResizeExternalFloatingPanelWindow({
   lastRequestedWidth,
   lastRequestedHeight,
 }: ExternalFloatingPanelResizeSyncInput): boolean {
-  const roundedTargetWidth = Math.round(finiteOr(targetWidth, 160));
-  const roundedTargetHeight = Math.round(finiteOr(targetHeight, 120));
+  const roundedTargetWidth = normalizeWindowDimension(targetWidth, 1);
+  const roundedTargetHeight = normalizeWindowDimension(targetHeight, 1);
   const roundedCurrentWidth = roundOptionalPositive(currentWidth);
   const roundedCurrentHeight = roundOptionalPositive(currentHeight);
 
@@ -200,6 +284,14 @@ export function shouldResizeExternalFloatingPanelWindow({
 
 function finiteOr(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function finiteCoordinateOr(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function normalizeWindowDimension(value: number | undefined, fallback: number): number {
+  return Math.max(1, Math.round(finiteOr(value, fallback)));
 }
 
 function roundOptionalPositive(value: number | undefined): number | undefined {

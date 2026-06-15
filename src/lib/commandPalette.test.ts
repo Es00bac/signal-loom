@@ -18,6 +18,7 @@ describe('command palette model', () => {
       'app:clean-flow',
       'app:open-flow-diagnostics',
       'menu:file:save',
+      'menu:view:toggle-interface',
       'menu:view:activity-trail',
       'menu:view:image',
       'menu:help:feature-help',

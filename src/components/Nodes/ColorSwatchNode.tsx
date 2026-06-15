@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { Palette, Plus, Trash2 } from 'lucide-react';
+import { AdvancedColorPicker } from '../Common/AdvancedColorPicker';
 import { BaseNode } from './BaseNode';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 import {
@@ -127,11 +128,11 @@ function ColorSwatchNodeComponent({ id, data }: AppNodeProps) {
         </label>
 
         <div className="flex items-center gap-2">
-          <input
-            aria-label="Pick swatch color"
-            className={withFlowNodeInteractionClasses('h-9 w-12 cursor-pointer rounded-md border border-gray-700 bg-gray-950 p-1')}
-            onChange={(event) => handleColorChange(event.target.value)}
-            type="color"
+          <AdvancedColorPicker
+            buttonClassName={withFlowNodeInteractionClasses('rounded-md border border-gray-700 bg-gray-950')}
+            className="h-9 w-12"
+            label="Pick swatch color"
+            onChange={handleColorChange}
             value={draftColor}
           />
           <code className="min-w-0 flex-1 rounded-md border border-gray-700 bg-gray-950 px-2 py-2 font-mono text-[11px] text-gray-100">

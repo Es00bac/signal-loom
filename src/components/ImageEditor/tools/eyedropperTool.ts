@@ -1,6 +1,7 @@
 import type { ToolEnv, ToolHandler, Point, Modifiers } from './types';
 import { renderImageDocumentLayersToBitmap } from '../ImageAdjustmentLayer';
 import { renderLayerWithEffects } from '../ImageLayerEffects';
+import { samplePixelColorFromCanvas } from '../../Paper/PaperWorkspaceUtils';
 
 export const eyedropperTool: ToolHandler = {
   onPointerDown(env, point, mods) {
@@ -35,12 +36,11 @@ function sample(env: ToolEnv, point: Point, mods: Modifiers): void {
   ) {
     return;
   }
-  const tmp = new OffscreenCanvas(1, 1);
-  const ctx = tmp.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return;
-  ctx.drawImage(sampleBitmap.bitmap, sourceX, sourceY, 1, 1, 0, 0, 1, 1);
-  const data = ctx.getImageData(0, 0, 1, 1).data;
-  if (data[3] === 0) return;
-  const color = `#${[data[0], data[1], data[2]].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
-  env.store.setBrushSettings({ color });
+  const sampleColor = samplePixelColorFromCanvas({
+    bitmap: sampleBitmap.bitmap,
+    x: sourceX,
+    y: sourceY,
+  });
+  if ('reason' in sampleColor) return;
+  env.store.setBrushSettings({ color: sampleColor.color });
 }

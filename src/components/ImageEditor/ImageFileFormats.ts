@@ -8,15 +8,473 @@ export const IMAGE_SVG_MIME_TYPE = 'image/svg+xml';
 export const IMAGE_BMP_MIME_TYPE = 'image/bmp';
 export const IMAGE_GIF_MIME_TYPE = 'image/gif';
 
+const BROWSER_RASTER_DEPTH_LABEL = '8-bit RGBA canvas pixels';
+export const PHOTOSHOP_PSD_MAX_DIMENSION = 30000;
+export const CAMERA_RAW_SUPPORTED_EXTENSIONS = [
+  '3fr',
+  'ari',
+  'arw',
+  'bay',
+  'cr2',
+  'cr3',
+  'crw',
+  'dcr',
+  'dng',
+  'erf',
+  'fff',
+  'iiq',
+  'kdc',
+  'mef',
+  'mos',
+  'mrw',
+  'nef',
+  'nrw',
+  'orf',
+  'pef',
+  'raf',
+  'raw',
+  'rwl',
+  'rw2',
+  'sr2',
+  'srf',
+  'srw',
+  'x3f',
+] as const;
+
+export const CAMERA_RAW_SUPPORTED_MIME_TYPES = [
+  'image/x-adobe-dng',
+  'image/x-canon-cr2',
+  'image/x-canon-cr3',
+  'image/x-canon-crw',
+  'image/x-epson-erf',
+  'image/x-fuji-raf',
+  'image/x-hasselblad-3fr',
+  'image/x-kodak-dcr',
+  'image/x-kodak-kdc',
+  'image/x-leaf-mos',
+  'image/x-mamiya-mef',
+  'image/x-minolta-mrw',
+  'image/x-nikon-nef',
+  'image/x-nikon-nrw',
+  'image/x-olympus-orf',
+  'image/x-panasonic-raw',
+  'image/x-panasonic-rw2',
+  'image/x-pentax-pef',
+  'image/x-phaseone-iiq',
+  'image/x-samsung-srw',
+  'image/x-sigma-x3f',
+  'image/x-sony-arw',
+  'image/x-sony-sr2',
+  'image/x-sony-srf',
+] as const;
+
+export const CAMERA_RAW_SUPPORTED_HANDOFF_FORMATS = ['8-bit TIFF', 'PSD', 'PNG', 'JPEG'] as const;
+const CAMERA_RAW_RECOMMENDED_CONVERSION_PATH = [
+  'Develop the RAW source in a dedicated RAW processor with demosaic, profile interpretation, and non-destructive edits.',
+  `Export a fully developed derivative as ${CAMERA_RAW_SUPPORTED_HANDOFF_FORMATS.join(', ')} before opening in Image.`,
+  'Open the exported file as a normal raster import target.',
+] as const;
+
+const CAMERA_RAW_EXTENSIONS = new Set<string>(CAMERA_RAW_SUPPORTED_EXTENSIONS);
+const CAMERA_RAW_MIME_TYPES = new Set<string>(CAMERA_RAW_SUPPORTED_MIME_TYPES);
+const PSD_MIME_TYPES = new Set([
+  'image/vnd.adobe.photoshop',
+  'image/x-photoshop',
+  'application/photoshop',
+  'application/x-photoshop',
+]);
+const XCF_MIME_TYPES = new Set(['image/x-xcf', 'image/x-gimp-xcf', 'image/xcf']);
+
+const CAMERA_RAW_UNSUPPORTED_MESSAGE = 'Camera Raw files are detected, but Image does not currently include a RAW demosaic/development pipeline. Develop the RAW file in a camera raw processor and export 8-bit TIFF, PSD, PNG, or JPEG before opening here.';
+
+export type CameraRawImportBlockerCode = 'raw-demosaic-missing' | 'camera-profile-controls-missing';
+
+export interface CameraRawImportBlockerDescriptor {
+  code: CameraRawImportBlockerCode;
+  summary: string;
+}
+
+export interface CameraRawRoundtripRiskDescriptor {
+  level: 'unsupported';
+  summary: string;
+  caveats: string[];
+}
+
+export interface CameraRawDevelopFirstMetadata {
+  sourceLabel?: string;
+  sourceMimeType?: string;
+  sourceExtension?: string;
+  supportedHandoffFormats: string[];
+  recommendedConversionPath: readonly string[];
+  openAsPixelsBlockedReasons: string[];
+}
+
+export type CameraRawOpenPolicy = 'develop-first' | 'open-as-pixels';
+export type CameraRawUnsupportedStateCode =
+  | 'native-raw-open'
+  | 'raw-demosaic'
+  | 'raw-camera-profile-controls'
+  | 'raw-non-destructive-develop';
+
+export interface CameraRawUnsupportedStateDescriptor {
+  code: CameraRawUnsupportedStateCode;
+  message: string;
+}
+
+export interface CameraRawOpenPolicyDescriptor {
+  descriptorId: 'camera-raw-open-policy:v1';
+  detected: boolean;
+  sourceLabel?: string;
+  sourceExtension?: string;
+  sourceMimeType?: string;
+  openPolicy: CameraRawOpenPolicy;
+  canOpenAsPixels: boolean;
+  externalDevelopmentRequired: boolean;
+  developFirst?: CameraRawDevelopFirstMetadata;
+  recommendedFallbackRoutes: SourceImageWorkflowFallbackRouteDescriptor[];
+  unsupportedStates: CameraRawUnsupportedStateDescriptor[];
+  stableSignature: string;
+}
+
+export interface CameraRawImportReadinessDescriptor {
+  descriptorId: 'camera-raw-import-readiness:v1';
+  detected: boolean;
+  sourceExtension?: string;
+  sourceMimeType?: string;
+  sourceLabel?: string;
+  supportedExtensions: string[];
+  supportedMimeTypes: string[];
+  supportedHandoffFormats: string[];
+  externalDevelopmentRequired: true;
+  openAsPixelsBlockedReasons: string[];
+  openAsPixelsBlockers: CameraRawImportBlockerDescriptor[];
+  unsupportedImportBlockers: CameraRawImportBlockerDescriptor[];
+  roundtripRisk: CameraRawRoundtripRiskDescriptor;
+  suiteHandoffCaveats: string[];
+  policySignatures: {
+    detection: string;
+    handoff: string;
+    blockers: string;
+  };
+}
+
+interface SourceImageFormatPolicyMetadata {
+  sourceFormatLabel?: string;
+  sourceMimeType?: string;
+  sourceExtension?: string;
+  sourceBitsPerChannel?: number;
+  highBitDepth?: boolean;
+}
+
+type SourceImageFormatPolicyWithMetadata<T> = T & SourceImageFormatPolicyMetadata;
+
 export type SourceImageFormatPolicy =
-  | { kind: 'psd' }
-  | { kind: 'psb'; message: string }
-  | { kind: 'xcf'; message: string }
-  | { kind: 'tiff' }
-  | { kind: 'svg' }
-  | { kind: 'gif'; animated: boolean; warning?: string }
-  | { kind: 'exr'; message: string }
-  | { kind: 'raster' };
+  | SourceImageFormatPolicyWithMetadata<{ kind: 'psd' }>
+  | SourceImageFormatPolicyWithMetadata<{ kind: 'psb'; message: string }>
+  | SourceImageFormatPolicyWithMetadata<{ kind: 'xcf'; message: string }>
+  | SourceImageFormatPolicyWithMetadata<{ kind: 'tiff' }>
+  | SourceImageFormatPolicyWithMetadata<{ kind: 'svg' }>
+  | SourceImageFormatPolicyWithMetadata<{ kind: 'gif'; animated: boolean; warning?: string }>
+  | SourceImageFormatPolicyWithMetadata<{ kind: 'exr'; message: string }>
+  | SourceImageFormatPolicyWithMetadata<{ kind: 'cameraRaw'; message: string }>
+  | SourceImageFormatPolicyWithMetadata<{ kind: 'raster' }>;
+
+export type SourceImageFormatImportStatus = 'supported' | 'rasterized' | 'first-frame-only' | 'unsupported';
+export type SourceImageFormatExportStatus = 'flattened-raster' | 'layered-with-metadata' | 'layered-export-only' | 'unsupported';
+export type SourceImageFormatNativeRoundtrip = 'none' | 'metadata-only' | 'rasterized' | 'unsupported';
+export type SourceImageBitDepthStatus =
+  | 'browser-8-bit-rgba'
+  | 'native-8-bit-supported'
+  | 'high-bit-depth-loss-warning'
+  | 'high-bit-depth-unsupported'
+  | 'not-decoded';
+export type SourceImageBitsPerChannel = number | 'unknown' | 'camera-raw';
+export type SourceImageFormatWarningCode =
+  | 'psd-native-constructs-flattened'
+  | 'psb-import-unsupported'
+  | 'xcf-import-unsupported'
+  | 'xcf-editable-state-loss'
+  | 'tiff-format-limits'
+  | 'svg-rasterized-import'
+  | 'svg-flattened-export'
+  | 'gif-animation-first-frame'
+  | 'gif-static-flattened-export'
+  | 'exr-import-unsupported'
+  | 'camera-raw-import-unsupported'
+  | 'high-bit-depth-raster-loss'
+  | 'high-bit-depth-import-unsupported';
+
+export type SourceImageCompatibilityWarningCategory =
+  | 'editable-state-loss'
+  | 'layer-mask-effect-loss'
+  | 'vector-rasterized'
+  | 'animation-loss'
+  | 'raw-development'
+  | 'high-bit-depth-loss'
+  | 'unsupported-format';
+
+export interface SourceImageCompatibilityWarningDescriptor {
+  code: SourceImageFormatWarningCode;
+  category: SourceImageCompatibilityWarningCategory;
+  severity: 'warning';
+  summary: string;
+}
+
+export type SourceImageReadinessStatus = 'ready' | 'limited' | 'handoff-required' | 'unsupported';
+export type SourceImageImportAction = 'open-as-pixels' | 'rasterize' | 'first-frame-only' | 'develop-first' | 'convert-first' | 'unsupported';
+export type SourceImageExportAction = 'flattened-raster' | 'layered-with-metadata' | 'layered-export-only' | 'unsupported';
+
+export interface SourceImageFormatReadinessDescriptor {
+  status: SourceImageReadinessStatus;
+  importAction: SourceImageImportAction;
+  exportAction: SourceImageExportAction;
+  userSummary: string;
+  roundTripCaveats: string[];
+}
+
+export interface SourceImageBitDepthDescriptor {
+  status: SourceImageBitDepthStatus;
+  sourceBitsPerChannel: SourceImageBitsPerChannel;
+  editorBitsPerChannel: 8;
+  browserDecodedTo: typeof BROWSER_RASTER_DEPTH_LABEL | 'not decoded';
+  preservesHighBitDepth: boolean;
+  warning?: string;
+}
+
+export interface SourceImageFormatCompatibilityDescriptor {
+  importSupported: boolean;
+  exportSupported: boolean;
+  nativeRoundtrip: SourceImageFormatNativeRoundtrip;
+  preservesEditableLayers: boolean;
+  preservesAnimation: boolean;
+  flattenedExport: boolean;
+}
+
+export interface SourceImageFormatPolicyDescription {
+  formatLabel: string;
+  sourceMimeType?: string;
+  sourceExtension?: string;
+  importStatus: SourceImageFormatImportStatus;
+  exportStatus: SourceImageFormatExportStatus;
+  importSummary: string;
+  exportSummary: string;
+  warningCodes: SourceImageFormatWarningCode[];
+  warnings: string[];
+  limitations: string[];
+  sourceFormatLimits: string[];
+  bitDepth: SourceImageBitDepthDescriptor;
+  compatibility: SourceImageFormatCompatibilityDescriptor;
+  compatibilityWarnings: SourceImageCompatibilityWarningDescriptor[];
+  editStateLoss: SourceImageEditStateLossDescriptor;
+  readiness: SourceImageFormatReadinessDescriptor;
+  roundTripCaveats: string[];
+  importPolicy: SourceImageImportPolicyDescriptor;
+  policySignature: string;
+}
+
+export interface SourceImageWorkflowFallbackRouteDescriptor {
+  route: string;
+  label: string;
+  preserves: string;
+  recommendedFor: string;
+  caveat: string;
+}
+
+export interface SourceImageEditStateLossDescriptor {
+  layers: string;
+  text: string;
+  effects: string;
+  sourceLinks: string;
+}
+
+export interface SourceImageImportPolicyDescriptor {
+  status: SourceImageFormatImportStatus;
+  canOpenAsPixels: boolean;
+  requiresExternalProcessor: boolean;
+  recommendedHandoffFormats: string[];
+  recommendedFallbackRoutes: SourceImageWorkflowFallbackRouteDescriptor[];
+  vectorStatePreserved: boolean;
+  animationPreserved: boolean;
+  limitations: string[];
+}
+
+export type SourceImageLayerFlatteningPolicy = 'preserves-layers' | 'flattens-on-import' | 'flattens-on-export' | 'unsupported';
+export type SourceImageFrameLimit = number | 'none' | 'not-decoded';
+
+export interface SourceImageLayerPolicyDescriptor {
+  importPreservesLayers: boolean;
+  exportPreservesLayers: boolean;
+  flattening: SourceImageLayerFlatteningPolicy;
+  summary: string;
+}
+
+export interface SourceImageAnimationPolicyDescriptor {
+  importFrameLimit: SourceImageFrameLimit;
+  exportFrameLimit: SourceImageFrameLimit;
+  preservesAnimation: boolean;
+  summary: string;
+}
+
+export interface SourceImageVectorPolicyDescriptor {
+  importPreservesVectorState: boolean;
+  exportPreservesVectorState: boolean;
+  summary: string;
+}
+
+export interface SourceImageColorProfilePolicyDescriptor {
+  preservesEmbeddedProfiles: boolean;
+  summary: string;
+}
+
+export interface SourceImageRawHandoffPolicyDescriptor {
+  requiresDevelopFirst: true;
+  recommendedHandoffFormats: string[];
+  recommendedConversionPath: readonly string[];
+  openAsPixelsBlockedReasons: string[];
+  summary: string;
+}
+
+export type SourceImagePsbThresholdCode = 'psd-max-dimension-exceeded' | 'psb-header-version-2';
+
+export type PhotoshopDocumentKind = 'psd' | 'psb' | 'unknown';
+
+export interface SourceImagePsbThresholdDescriptor {
+  code: SourceImagePsbThresholdCode;
+  limit: string;
+  unsupported: true;
+  summary: string;
+}
+
+export interface SourceImagePsbUnsupportedPolicyDescriptor {
+  unsupported: true;
+  thresholds: string[];
+  thresholdDescriptors: SourceImagePsbThresholdDescriptor[];
+  largeDocumentCaveats: string[];
+  summary: string;
+}
+
+export interface PhotoshopDocumentSizePolicyDescriptor {
+  descriptorId: 'photoshop-document-size-policy:v1';
+  kind: PhotoshopDocumentKind;
+  width?: number;
+  height?: number;
+  channels?: number;
+  bitDepth?: number;
+  colorMode?: number;
+  psdMaxDimension: typeof PHOTOSHOP_PSD_MAX_DIMENSION;
+  canAttemptLayeredPsdImport: boolean;
+  requiresConversion: boolean;
+  blockers: SourceImagePsbThresholdDescriptor[];
+  recommendedFallbackRoutes: SourceImageWorkflowFallbackRouteDescriptor[];
+  stableSignature: string;
+}
+
+export interface SourceImageFormatPolicyWarningDescriptor {
+  descriptorId: string;
+  code: SourceImageFormatWarningCode;
+  summary: string;
+}
+
+export interface SourceImageFormatExportReadinessDescriptor {
+  formatLabel: string;
+  importAction: SourceImageImportAction;
+  exportAction: SourceImageExportAction;
+  warningCodes: SourceImageFormatWarningCode[];
+  policyWarnings: SourceImageFormatPolicyWarningDescriptor[];
+  recommendedHandoffFormats: string[];
+  recommendedFallbackRoutes: SourceImageWorkflowFallbackRouteDescriptor[];
+  editStateLoss: SourceImageEditStateLossDescriptor;
+  layerPolicy: SourceImageLayerPolicyDescriptor;
+  animationPolicy: SourceImageAnimationPolicyDescriptor;
+  vectorPolicy: SourceImageVectorPolicyDescriptor;
+  colorProfilePolicy: SourceImageColorProfilePolicyDescriptor;
+  bitDepthPolicy: SourceImageBitDepthDescriptor;
+  rawPolicy?: SourceImageRawHandoffPolicyDescriptor;
+  psbPolicy?: SourceImagePsbUnsupportedPolicyDescriptor;
+  stableSignature: string;
+}
+
+export type SourceImageOpenRouteKind =
+  | 'open-as-pixels'
+  | 'open-layered-psd'
+  | 'open-as-psb'
+  | 'open-native-xcf'
+  | SourceImageWorkflowFallbackRouteDescriptor['route'];
+
+export type SourceImageOpenUnsupportedStateCode =
+  | 'native-raw-demosaic'
+  | 'raw-camera-profile-controls'
+  | 'raw-non-destructive-develop'
+  | 'native-xcf-decode'
+  | 'full-xcf-native-constructs'
+  | 'full-psd-native-constructs'
+  | 'native-psb-decode'
+  | 'full-psb-native-constructs'
+  | 'icc-managed-open-transform';
+
+export type SourceImageOpenUnsupportedStateCategory =
+  | 'raw-development'
+  | 'native-constructs'
+  | 'native-decoder'
+  | 'color-management';
+
+export interface SourceImageOpenUnsupportedStateDescriptor {
+  code: SourceImageOpenUnsupportedStateCode;
+  category: SourceImageOpenUnsupportedStateCategory;
+  blocksOpenAsPixels: boolean;
+  summary: string;
+}
+
+export interface SourceImageOpenRouteDescriptor {
+  route: SourceImageOpenRouteKind;
+  rank: number;
+  supported: boolean;
+  openAction: SourceImageImportAction;
+  label: string;
+  preserves: string;
+  recommendedFor: string;
+  caveat: string;
+  unsupportedStateCodes: SourceImageOpenUnsupportedStateCode[];
+}
+
+export type SourceImageRoundtripRiskLevel = 'none' | 'rasterized' | 'metadata-only' | 'unsupported';
+
+export interface SourceImageFileOpenRoundtripRiskDescriptor {
+  riskId: string;
+  stableId: string;
+  level: SourceImageRoundtripRiskLevel;
+  nativeRoundtrip: SourceImageFormatNativeRoundtrip;
+  affectedConstructs: SourceImageOpenUnsupportedStateCode[];
+  summary: string;
+}
+
+export interface SourceImageFileOpenReadinessSignatures {
+  importPolicy: string;
+  fallbackRouteRanking: string;
+  nativeConstructWarnings: string;
+  roundtripRisk: string;
+  sourcePolicy: string;
+}
+
+export interface SourceImageFileOpenReadinessDescriptor {
+  descriptorId: 'source-image-file-open-readiness:v1';
+  formatLabel: string;
+  sourceExtension?: string;
+  sourceMimeType?: string;
+  importStatus: SourceImageFormatImportStatus;
+  importAction: SourceImageImportAction;
+  canOpenAsPixels: boolean;
+  requiresExternalProcessor: boolean;
+  openRoutes: SourceImageOpenRouteDescriptor[];
+  unsupportedStates: SourceImageOpenUnsupportedStateDescriptor[];
+  nativeConstructWarnings: SourceImageOpenUnsupportedStateDescriptor[];
+  fallbackRoutes: SourceImageWorkflowFallbackRouteDescriptor[];
+  rawDevelopFirst?: CameraRawDevelopFirstMetadata;
+  roundtripRisk: SourceImageFileOpenRoundtripRiskDescriptor;
+  sourcePolicySignature: string;
+  signatures: SourceImageFileOpenReadinessSignatures;
+  stableSignature: string;
+}
 
 export interface SourceImageOpenParams {
   id: string;
@@ -25,6 +483,1835 @@ export interface SourceImageOpenParams {
   sourceLabel?: string;
   sourceMimeType?: string;
   sourceUrl?: string;
+}
+
+export function describePhotoshopDocumentSizePolicy(input: {
+  bytes?: Uint8Array | ArrayBuffer;
+  fileName?: string;
+  mimeType?: string;
+  kind?: PhotoshopDocumentKind;
+  width?: number;
+  height?: number;
+} = {}): PhotoshopDocumentSizePolicyDescriptor {
+  const header = readPhotoshopDocumentHeader(input.bytes);
+  const extension = normalizeSourceExtension(input.fileName);
+  const mimeType = normalizeMimeType(input.mimeType);
+  const kind = input.kind ?? header.kind ?? inferPhotoshopDocumentKindFromIdentity(extension, mimeType);
+  const width = normalizePositiveInteger(input.width ?? header.width);
+  const height = normalizePositiveInteger(input.height ?? header.height);
+  const blockers = buildPhotoshopDocumentSizeBlockers({ kind, width, height });
+  const canAttemptLayeredPsdImport = kind === 'psd' && blockers.length === 0;
+  const requiresConversion = blockers.length > 0 || kind === 'psb';
+  const recommendedFallbackRoutes = requiresConversion ? buildPhotoshopLargeDocumentFallbackRoutes() : [];
+  const descriptor: PhotoshopDocumentSizePolicyDescriptor = {
+    descriptorId: 'photoshop-document-size-policy:v1',
+    kind,
+    ...(width ? { width } : {}),
+    ...(height ? { height } : {}),
+    ...(header.channels ? { channels: header.channels } : {}),
+    ...(header.bitDepth ? { bitDepth: header.bitDepth } : {}),
+    ...(header.colorMode !== undefined ? { colorMode: header.colorMode } : {}),
+    psdMaxDimension: PHOTOSHOP_PSD_MAX_DIMENSION,
+    canAttemptLayeredPsdImport,
+    requiresConversion,
+    blockers,
+    recommendedFallbackRoutes,
+    stableSignature: [
+      'photoshop-size-policy:v1',
+      `kind=${kind}`,
+      `width=${width ?? 'unknown'}`,
+      `height=${height ?? 'unknown'}`,
+      `max=${PHOTOSHOP_PSD_MAX_DIMENSION}`,
+      `blockers=${blockers.map((blocker) => blocker.code).join(',') || 'none'}`,
+    ].join('|'),
+  };
+  return descriptor;
+}
+
+export function describeSourceImageFormatPolicy(policy: SourceImageFormatPolicy): SourceImageFormatPolicyDescription {
+  switch (policy.kind) {
+    case 'psd':
+      return makeSourceImageFormatPolicyDescription({
+        formatLabel: 'PSD',
+        importStatus: 'supported',
+        exportStatus: 'layered-with-metadata',
+        importSummary: 'Layered PSD import is supported, including retained Signal Loom metadata for linked-source and editor state where available.',
+        exportSummary: 'PSD export is available, but unsupported native PSD constructs are written as flattened pixels plus Signal Loom metadata-only records.',
+        warningCodes: ['psd-native-constructs-flattened'],
+        warnings: [],
+        limitations: [
+          'Native PSD Smart Object semantics are not written back as editable Smart Objects.',
+          'Editable text, adjustment layers, and layer effects are exported as flattened pixels with metadata-only preservation where possible.',
+        ],
+        compatibility: {
+          nativeRoundtrip: 'metadata-only',
+          preservesEditableLayers: false,
+        },
+      });
+    case 'psb':
+      return makeSourceImageFormatPolicyDescription({
+        formatLabel: 'PSB',
+        importStatus: 'unsupported',
+        exportStatus: 'unsupported',
+        importSummary: policy.message,
+        exportSummary: 'PSB large-document import is not supported. Convert the file to PSD, TIFF, PNG, or JPEG before opening in Image.',
+        warningCodes: ['psb-import-unsupported'],
+        warnings: [policy.message],
+        limitations: [
+          'PSB large document decoding is not implemented in Image.',
+        ],
+      });
+    case 'xcf':
+      return makeSourceImageFormatPolicyDescription({
+        formatLabel: 'XCF',
+        importStatus: 'unsupported',
+        exportStatus: 'layered-export-only',
+        importSummary: policy.message,
+        exportSummary: 'XCF export is available for sharing Image documents with GIMP, but XCF workfiles are not imported or decoded here.',
+        warningCodes: ['xcf-import-unsupported', 'xcf-editable-state-loss'],
+        warnings: [policy.message],
+        limitations: [
+          'XCF import is unsupported, so GIMP-authored workfiles must be converted before opening.',
+          'Editable text, adjustment layers, layer effects, masks, and source links are not preserved as native editable XCF constructs.',
+        ],
+        compatibility: {
+          exportSupported: true,
+          nativeRoundtrip: 'unsupported',
+          preservesEditableLayers: false,
+          flattenedExport: false,
+        },
+      });
+    case 'tiff':
+      const highBitTiff = Boolean(policy.highBitDepth && (policy.sourceBitsPerChannel ?? 0) > 8);
+      return makeSourceImageFormatPolicyDescription({
+        formatLabel: 'TIFF',
+        sourceMimeType: policy.sourceMimeType,
+        sourceExtension: policy.sourceExtension,
+        importStatus: highBitTiff ? 'unsupported' : 'supported',
+        exportStatus: 'flattened-raster',
+        importSummary: highBitTiff
+          ? `${policy.sourceBitsPerChannel}-bit/channel TIFF samples are detected, but Image only decodes classic uncompressed 8-bit TIFF. Convert to 8-bit TIFF, PSD, PNG, or JPEG before opening.`
+          : 'TIFF import is supported for classic uncompressed 8-bit grayscale, RGB, and RGBA images.',
+        exportSummary: 'TIFF export is available as a flattened 8-bit RGBA image.',
+        warningCodes: highBitTiff
+          ? ['tiff-format-limits', 'high-bit-depth-import-unsupported']
+          : ['tiff-format-limits'],
+        warnings: highBitTiff ? [createHighBitDepthUnsupportedWarning(policy)] : [],
+        limitations: [
+          'BigTIFF, compressed TIFF, planar TIFF, and non-8-bit sample depths are not decoded.',
+        ],
+        sourceFormatLimits: createTiffSourceFormatLimits(policy),
+        bitDepth: highBitTiff
+          ? createHighBitDepthUnsupportedDescriptor(policy)
+          : createNativeEightBitDepthDescriptor(),
+        compatibility: highBitTiff
+          ? {
+              importSupported: false,
+              nativeRoundtrip: 'unsupported',
+            }
+          : undefined,
+      });
+    case 'svg':
+      return makeSourceImageFormatPolicyDescription({
+        formatLabel: 'SVG',
+        importStatus: 'rasterized',
+        exportStatus: 'flattened-raster',
+        importSummary: 'SVG files are rasterized on open and kept as pixel layers while the original SVG source is retained in metadata.',
+        exportSummary: 'SVG export wraps a flattened raster snapshot in an SVG container; it does not rebuild editable vector artwork.',
+        warningCodes: ['svg-rasterized-import', 'svg-flattened-export'],
+        warnings: [],
+        limitations: [
+          'Editable vector structure is not reconstructed from browser rasterization, so SVG import/export remains raster-backed.',
+        ],
+        sourceFormatLimits: [
+          `SVG import is rasterized through browser image decoding, so Image edits ${BROWSER_RASTER_DEPTH_LABEL} rather than retained SVG objects.`,
+        ],
+        bitDepth: createBrowserRasterBitDepthDescriptor(policy),
+        compatibility: {
+          nativeRoundtrip: 'rasterized',
+        },
+      });
+    case 'gif':
+      return makeSourceImageFormatPolicyDescription({
+        formatLabel: policy.animated ? 'Animated GIF' : 'GIF',
+        importStatus: policy.animated ? 'first-frame-only' : 'supported',
+        exportStatus: 'flattened-raster',
+        importSummary: policy.animated
+          ? policy.warning ?? 'Animated GIF files open as the first frame only.'
+          : 'Static GIF import is supported as a raster image.',
+        exportSummary: 'GIF export is static GIF only and writes a flattened single-frame image.',
+        warningCodes: policy.animated
+          ? ['gif-animation-first-frame', 'gif-static-flattened-export']
+          : ['gif-static-flattened-export'],
+        warnings: policy.warning ? [policy.warning] : [],
+        limitations: [
+          policy.animated
+            ? 'Animation timing and multi-frame playback are not preserved in Image; use Video for animation workflows.'
+            : 'GIF export remains palette-based and flattened.',
+        ],
+        sourceFormatLimits: [
+          `GIF frames are decoded into ${BROWSER_RASTER_DEPTH_LABEL}; palette animation state is not an Image document channel.`,
+        ],
+        bitDepth: createBrowserRasterBitDepthDescriptor(policy),
+        compatibility: {
+          preservesAnimation: !policy.animated,
+        },
+      });
+    case 'exr':
+      return makeSourceImageFormatPolicyDescription({
+        formatLabel: 'OpenEXR',
+        importStatus: 'unsupported',
+        exportStatus: 'unsupported',
+        importSummary: policy.message,
+        exportSummary: 'Convert OpenEXR/HDR content to PNG, TIFF, or JPEG before using Image.',
+        warningCodes: ['exr-import-unsupported'],
+        warnings: [policy.message],
+        limitations: [
+          'Browser-safe EXR/HDR decoding is not implemented in this workspace.',
+        ],
+      });
+    case 'cameraRaw':
+      return makeSourceImageFormatPolicyDescription({
+        formatLabel: 'Camera Raw',
+        sourceMimeType: policy.sourceMimeType,
+        sourceExtension: policy.sourceExtension,
+        importStatus: 'unsupported',
+        exportStatus: 'unsupported',
+        importSummary: policy.message,
+        exportSummary: 'Develop first in a RAW processor, then export 8-bit TIFF, PSD, PNG, or JPEG for Image.',
+        warningCodes: ['camera-raw-import-unsupported'],
+        warnings: [policy.message],
+        limitations: [
+          'RAW demosaic, camera-profile controls, and non-destructive RAW development are not implemented in Image.',
+        ],
+        sourceFormatLimits: [
+          `${formatSourceIdentity(policy, 'Camera Raw')} requires external RAW development before Image can edit pixels.`,
+        ],
+        bitDepth: createNotDecodedBitDepthDescriptor('camera-raw'),
+      });
+    case 'raster':
+    default:
+      const rasterWarnings = policy.highBitDepth ? [createHighBitDepthRasterWarning(policy)] : [];
+      return makeSourceImageFormatPolicyDescription({
+        formatLabel: policy.sourceFormatLabel ?? 'Raster image',
+        sourceMimeType: policy.sourceMimeType,
+        sourceExtension: policy.sourceExtension,
+        importStatus: 'supported',
+        exportStatus: 'flattened-raster',
+        importSummary: policy.highBitDepth && policy.sourceBitsPerChannel
+          ? `${policy.sourceFormatLabel ?? 'Raster image'} sources open as flattened image layers after browser decode; ${policy.sourceBitsPerChannel}-bit/channel source samples are reduced to 8-bit RGBA canvas pixels.`
+          : 'Standard browser-decodable raster formats open as flattened image layers.',
+        exportSummary: 'Raster export is available through the supported flattened document formats.',
+        warningCodes: policy.highBitDepth ? ['high-bit-depth-raster-loss'] : [],
+        warnings: rasterWarnings,
+        limitations: policy.highBitDepth ? [createHighBitDepthRasterWarning(policy)] : [],
+        sourceFormatLimits: createRasterSourceFormatLimits(policy),
+        bitDepth: createBrowserRasterBitDepthDescriptor(policy),
+      });
+  }
+}
+
+export function describeSourceImageFormatExportReadiness(
+  policy: SourceImageFormatPolicy,
+): SourceImageFormatExportReadinessDescriptor {
+  const description = describeSourceImageFormatPolicy(policy);
+  const recommendedHandoffFormats = description.importPolicy.recommendedHandoffFormats;
+  const layerPolicy = buildLayerPolicyDescriptor(description);
+  const animationPolicy = buildAnimationPolicyDescriptor(description);
+  const vectorPolicy = buildVectorPolicyDescriptor(description);
+  const bitDepthPolicy = buildReadinessBitDepthPolicy(policy, description);
+  const cameraRawDevelopFirst = describeCameraRawDevelopFirstMetadata({
+    sourceMimeType: description.sourceMimeType,
+    sourceExtension: description.sourceExtension,
+  });
+  const rawPolicy = policy.kind === 'cameraRaw'
+    ? {
+        requiresDevelopFirst: true,
+        recommendedHandoffFormats,
+        recommendedConversionPath: cameraRawDevelopFirst.recommendedConversionPath,
+        openAsPixelsBlockedReasons: cameraRawDevelopFirst.openAsPixelsBlockedReasons,
+        summary: 'RAW demosaic, camera color/profile interpretation, and non-destructive develop settings must be handled in an external RAW processor before Image editing.',
+      } satisfies SourceImageRawHandoffPolicyDescriptor
+    : undefined;
+  const psbPolicy = policy.kind === 'psb'
+    ? {
+        unsupported: true,
+        thresholds: [
+          'PSD 30,000 px per side limit exceeded or PSB version 2 header detected',
+          'Large document workflows require conversion before Image import',
+        ],
+        thresholdDescriptors: [
+          {
+            code: 'psd-max-dimension-exceeded',
+            limit: '30,000 px per side',
+            unsupported: true,
+            summary: 'Documents beyond the PSD 30,000 px per side limit require PSB, which Image does not decode.',
+          },
+          {
+            code: 'psb-header-version-2',
+            limit: '8BPS version 2 header',
+            unsupported: true,
+            summary: 'PSB version 2 large-document headers are detected and blocked before ag-psd import.',
+          },
+        ],
+        largeDocumentCaveats: [
+          'Image has no tiled or streaming PSB decoder for large canvases.',
+          'Native PSB round-trip is unsupported; convert to PSD within size limits or to a flattened 8-bit raster handoff.',
+        ],
+        summary: 'PSB large-document import/export is unsupported; convert to a supported handoff format before opening in Image.',
+      } satisfies SourceImagePsbUnsupportedPolicyDescriptor
+    : undefined;
+
+  const readiness = {
+    formatLabel: description.formatLabel,
+    importAction: description.readiness.importAction,
+    exportAction: description.readiness.exportAction,
+    warningCodes: description.warningCodes,
+    policyWarnings: description.compatibilityWarnings.map((warning) => ({
+      descriptorId: `source-format-warning:v1|format=${description.formatLabel}|code=${warning.code}`,
+      code: warning.code,
+      summary: warning.summary,
+    })),
+    recommendedHandoffFormats,
+    recommendedFallbackRoutes: description.importPolicy.recommendedFallbackRoutes,
+    editStateLoss: description.editStateLoss,
+    layerPolicy,
+    animationPolicy,
+    vectorPolicy,
+    colorProfilePolicy: buildColorProfilePolicyDescriptor(description),
+    bitDepthPolicy,
+    ...(rawPolicy ? { rawPolicy } : {}),
+    ...(psbPolicy ? { psbPolicy } : {}),
+  };
+
+  return {
+    ...readiness,
+    stableSignature: buildSourceExportReadinessSignature(readiness),
+  };
+}
+
+export function describeSourceImageFileOpenReadiness(
+  policy: SourceImageFormatPolicy,
+): SourceImageFileOpenReadinessDescriptor {
+  const description = describeSourceImageFormatPolicy(policy);
+  const importAction = description.readiness.importAction;
+  const canOpenAsPixels = description.importPolicy.canOpenAsPixels;
+  const unsupportedStates = buildSourceImageOpenUnsupportedStates(policy, description);
+  const fallbackRoutes = description.importPolicy.recommendedFallbackRoutes;
+  const openRoutes = buildSourceImageOpenRoutes(policy, description, unsupportedStates);
+  const nativeConstructWarnings = unsupportedStates.filter((state) => (
+    state.category === 'native-constructs'
+    || state.category === 'native-decoder'
+    || state.category === 'raw-development'
+    || state.category === 'color-management'
+  ));
+  const roundtripRisk = buildSourceImageFileOpenRoundtripRisk(description, unsupportedStates);
+  const rawDevelopFirst = policy.kind === 'cameraRaw'
+    ? describeCameraRawDevelopFirstMetadata({
+        sourceMimeType: description.sourceMimeType,
+        sourceExtension: description.sourceExtension,
+      })
+    : undefined;
+  const signatures: SourceImageFileOpenReadinessSignatures = {
+    importPolicy: buildSourceImageOpenImportPolicySignature(description),
+    fallbackRouteRanking: buildSourceImageOpenFallbackRouteRankingSignature(description.formatLabel, openRoutes),
+    nativeConstructWarnings: buildSourceImageOpenNativeConstructWarningSignature(description.formatLabel, nativeConstructWarnings),
+    roundtripRisk: roundtripRisk.riskId,
+    sourcePolicy: description.policySignature,
+  };
+
+  return {
+    descriptorId: 'source-image-file-open-readiness:v1',
+    formatLabel: description.formatLabel,
+    ...(description.sourceExtension ? { sourceExtension: description.sourceExtension } : {}),
+    ...(description.sourceMimeType ? { sourceMimeType: description.sourceMimeType } : {}),
+    importStatus: description.importStatus,
+    importAction,
+    canOpenAsPixels,
+    requiresExternalProcessor: description.importPolicy.requiresExternalProcessor,
+    openRoutes,
+    unsupportedStates,
+    nativeConstructWarnings,
+    fallbackRoutes,
+    ...(rawDevelopFirst ? { rawDevelopFirst } : {}),
+    roundtripRisk,
+    sourcePolicySignature: description.policySignature,
+    signatures,
+    stableSignature: [
+      'source-image-file-open-readiness:v1',
+      `format=${description.formatLabel}`,
+      `import=${description.importStatus}`,
+      `action=${importAction}`,
+      `routes=${openRoutes.map((route) => `${route.rank}:${route.route}:${route.supported ? 'supported' : 'unsupported'}`).join(',')}`,
+      `unsupported=${unsupportedStates.map((state) => state.code).join(',') || 'none'}`,
+      `risk=${roundtripRisk.riskId}`,
+    ].join('|'),
+  };
+}
+
+export function isCameraRawExtension(extensionOrFileName: string | undefined): boolean {
+  const extension = normalizeCameraRawExtension(extensionOrFileName);
+  return CAMERA_RAW_EXTENSIONS.has(extension ?? '');
+}
+
+export function isCameraRawMimeType(mimeType: string | undefined): boolean {
+  return CAMERA_RAW_MIME_TYPES.has(normalizeMimeType(mimeType) ?? '');
+}
+
+export function describeCameraRawImportReadiness(input: {
+  fileName?: string;
+  mimeType?: string;
+  sourceLabel?: string;
+} = {}): CameraRawImportReadinessDescriptor {
+  const sourceExtension = normalizeCameraRawExtension(input.fileName);
+  const sourceMimeType = normalizeMimeType(input.mimeType);
+  const detected = isCameraRawFormat(sourceExtension, sourceMimeType);
+  const unsupportedImportBlockers = createCameraRawUnsupportedImportBlockers();
+  const sourceLabel = (input.sourceLabel ?? input.fileName ?? '').trim();
+  const developFirstMetadata = describeCameraRawDevelopFirstMetadata({
+    sourceLabel,
+    sourceMimeType,
+    sourceExtension,
+  });
+
+  return {
+    descriptorId: 'camera-raw-import-readiness:v1',
+    detected,
+    ...(sourceExtension ? { sourceExtension } : {}),
+    ...(sourceMimeType ? { sourceMimeType } : {}),
+    ...(sourceLabel ? { sourceLabel } : {}),
+    supportedExtensions: [...CAMERA_RAW_SUPPORTED_EXTENSIONS],
+    supportedMimeTypes: [...CAMERA_RAW_SUPPORTED_MIME_TYPES],
+    supportedHandoffFormats: [...CAMERA_RAW_SUPPORTED_HANDOFF_FORMATS],
+    externalDevelopmentRequired: true,
+    unsupportedImportBlockers,
+    openAsPixelsBlockedReasons: developFirstMetadata.openAsPixelsBlockedReasons,
+    openAsPixelsBlockers: unsupportedImportBlockers,
+    roundtripRisk: {
+      level: 'unsupported',
+      summary: 'Camera Raw cannot round-trip as an editable source document in Image.',
+      caveats: [
+        'RAW demosaic, camera profiles, and non-destructive RAW settings are not represented in Image documents.',
+        'Developed pixels can continue through Image only after export to 8-bit TIFF, PSD, PNG, or JPEG.',
+      ],
+    },
+    suiteHandoffCaveats: [
+      'Flow, Video, and Paper handoff should receive the developed raster or PSD derivative, not the original RAW payload.',
+      'Keep the original RAW as a Source Library reference if provenance matters; Image edits will not update it.',
+    ],
+    policySignatures: {
+      detection: `camera-raw-detection:v1|ext=${sourceExtension ?? 'none'}|mime=${sourceMimeType ?? 'none'}|detected=${detected}`,
+      handoff: `camera-raw-handoff:v1|formats=${CAMERA_RAW_SUPPORTED_HANDOFF_FORMATS.join(',')}|external=true`,
+      blockers: `camera-raw-blockers:v1|${unsupportedImportBlockers.map((blocker) => blocker.code).join(',')}`,
+    },
+  };
+}
+
+export function describeCameraRawDevelopFirstMetadata(input: {
+  sourceLabel?: string;
+  sourceMimeType?: string;
+  sourceExtension?: string;
+}): CameraRawDevelopFirstMetadata {
+  return {
+    sourceLabel: input.sourceLabel?.trim(),
+    sourceMimeType: normalizeMimeType(input.sourceMimeType),
+    sourceExtension: normalizeCameraRawExtension(input.sourceExtension),
+    supportedHandoffFormats: [...CAMERA_RAW_SUPPORTED_HANDOFF_FORMATS],
+    recommendedConversionPath: [...CAMERA_RAW_RECOMMENDED_CONVERSION_PATH],
+    openAsPixelsBlockedReasons: createCameraRawUnsupportedImportBlockers().map((blocker) => blocker.summary),
+  };
+}
+
+export function describeCameraRawOpenPolicy(input: {
+  fileName?: string;
+  mimeType?: string;
+  sourceLabel?: string;
+} = {}): CameraRawOpenPolicyDescriptor {
+  const sourceExtension = normalizeCameraRawExtension(input.fileName);
+  const sourceMimeType = normalizeMimeType(input.mimeType);
+  const sourceLabel = (input.sourceLabel ?? input.fileName ?? '').trim();
+  const detected = isCameraRawFormat(sourceExtension, sourceMimeType);
+  const openPolicy: CameraRawOpenPolicy = detected ? 'develop-first' : 'open-as-pixels';
+  const unsupportedStates = detected ? buildCameraRawOpenUnsupportedStates() : [];
+  const developFirst = detected
+    ? describeCameraRawDevelopFirstMetadata({
+        sourceLabel,
+        sourceExtension,
+        sourceMimeType,
+      })
+    : undefined;
+  const editStateLoss = detected
+    ? buildEditStateLossDescriptor({
+        formatLabel: 'Camera Raw',
+        warningCodes: ['camera-raw-import-unsupported'],
+        importStatus: 'unsupported',
+        exportStatus: 'unsupported',
+      })
+    : undefined;
+  const recommendedFallbackRoutes = detected && editStateLoss
+    ? buildWorkflowFallbackRoutes({
+        formatLabel: 'Camera Raw',
+        warningCodes: ['camera-raw-import-unsupported'],
+        importStatus: 'unsupported',
+        editStateLoss,
+      })
+    : [];
+
+  return {
+    descriptorId: 'camera-raw-open-policy:v1',
+    detected,
+    ...(sourceLabel ? { sourceLabel } : {}),
+    ...(sourceExtension ? { sourceExtension } : {}),
+    ...(sourceMimeType ? { sourceMimeType } : {}),
+    openPolicy,
+    canOpenAsPixels: !detected,
+    externalDevelopmentRequired: detected,
+    ...(developFirst ? { developFirst } : {}),
+    recommendedFallbackRoutes,
+    unsupportedStates,
+    stableSignature: [
+      'camera-raw-open-policy:v1',
+      `ext=${sourceExtension ?? 'none'}`,
+      `mime=${sourceMimeType ?? 'none'}`,
+      `detected=${detected}`,
+      `policy=${openPolicy}`,
+      `unsupported=${unsupportedStates.map((state) => state.code).join(',') || 'none'}`,
+    ].join('|'),
+  };
+}
+
+type SourceImageFormatPolicyDescriptionInput = Omit<
+  SourceImageFormatPolicyDescription,
+  | 'compatibility'
+  | 'sourceFormatLimits'
+  | 'bitDepth'
+  | 'compatibilityWarnings'
+  | 'editStateLoss'
+  | 'readiness'
+  | 'roundTripCaveats'
+  | 'importPolicy'
+  | 'policySignature'
+> & {
+  sourceFormatLimits?: string[];
+  bitDepth?: SourceImageBitDepthDescriptor;
+  compatibility?: Partial<SourceImageFormatCompatibilityDescriptor>;
+};
+
+function makeSourceImageFormatPolicyDescription(
+  input: SourceImageFormatPolicyDescriptionInput,
+): SourceImageFormatPolicyDescription {
+  const { compatibility, bitDepth, sourceFormatLimits, ...description } = input;
+  const resolvedSourceFormatLimits = sourceFormatLimits ?? [];
+  const resolvedBitDepth = bitDepth ?? createNotDecodedBitDepthDescriptor('unknown');
+  const resolvedCompatibility: SourceImageFormatCompatibilityDescriptor = {
+    importSupported: description.importStatus !== 'unsupported',
+    exportSupported: description.exportStatus !== 'unsupported',
+    nativeRoundtrip: description.importStatus === 'unsupported' || description.exportStatus === 'unsupported'
+      ? 'unsupported'
+      : 'none',
+    preservesEditableLayers: false,
+    preservesAnimation: false,
+    flattenedExport: description.exportStatus === 'flattened-raster',
+    ...compatibility,
+  };
+  const compatibilityWarnings = description.warningCodes.map((code) => buildCompatibilityWarningDescriptor(code));
+  const roundTripCaveats = buildRoundTripCaveats({
+    formatLabel: description.formatLabel,
+    warningCodes: description.warningCodes,
+    limitations: description.limitations,
+    importStatus: description.importStatus,
+    exportStatus: description.exportStatus,
+  });
+  const editStateLoss = buildEditStateLossDescriptor({
+    formatLabel: description.formatLabel,
+    warningCodes: description.warningCodes,
+    importStatus: description.importStatus,
+    exportStatus: description.exportStatus,
+  });
+  const readiness = buildReadinessDescriptor({
+    formatLabel: description.formatLabel,
+    importStatus: description.importStatus,
+    exportStatus: description.exportStatus,
+    warningCodes: description.warningCodes,
+    roundTripCaveats,
+  });
+  const importPolicy = buildSourceImageImportPolicy({
+    importStatus: description.importStatus,
+    warningCodes: description.warningCodes,
+    limitations: description.limitations,
+    sourceFormatLimits: resolvedSourceFormatLimits,
+    compatibility: resolvedCompatibility,
+    formatLabel: description.formatLabel,
+    editStateLoss,
+  });
+  const resolvedDescription = {
+    ...description,
+    sourceFormatLimits: resolvedSourceFormatLimits,
+    bitDepth: resolvedBitDepth,
+    compatibility: resolvedCompatibility,
+    compatibilityWarnings,
+    editStateLoss,
+    readiness,
+    roundTripCaveats,
+    importPolicy,
+  };
+
+  return {
+    ...resolvedDescription,
+    policySignature: buildSourcePolicySignature(resolvedDescription),
+  };
+}
+
+function buildCompatibilityWarningDescriptor(
+  code: SourceImageFormatWarningCode,
+): SourceImageCompatibilityWarningDescriptor {
+  switch (code) {
+    case 'svg-rasterized-import':
+      return {
+        code,
+        category: 'vector-rasterized',
+        severity: 'warning',
+        summary: 'SVG vector objects are rasterized on import.',
+      };
+    case 'svg-flattened-export':
+      return {
+        code,
+        category: 'vector-rasterized',
+        severity: 'warning',
+        summary: 'SVG export is a flattened raster snapshot rather than editable vector artwork.',
+      };
+    case 'gif-animation-first-frame':
+      return {
+        code,
+        category: 'animation-loss',
+        severity: 'warning',
+        summary: 'GIF animation frames and timing are not preserved in Image.',
+      };
+    case 'gif-static-flattened-export':
+      return {
+        code,
+        category: 'animation-loss',
+        severity: 'warning',
+        summary: 'GIF export is flattened to a static single-frame image.',
+      };
+    case 'tiff-format-limits':
+      return {
+        code,
+        category: 'layer-mask-effect-loss',
+        severity: 'warning',
+        summary: 'TIFF interoperability is flattened; native layer, mask, and effect structures are not round-tripped.',
+      };
+    case 'camera-raw-import-unsupported':
+      return {
+        code,
+        category: 'raw-development',
+        severity: 'warning',
+        summary: 'Develop Camera Raw externally before opening in Image.',
+      };
+    case 'high-bit-depth-raster-loss':
+    case 'high-bit-depth-import-unsupported':
+      return {
+        code,
+        category: 'high-bit-depth-loss',
+        severity: 'warning',
+        summary: 'High-bit-depth source samples are not preserved in Image editing.',
+      };
+    case 'psd-native-constructs-flattened':
+    case 'xcf-editable-state-loss':
+      return {
+        code,
+        category: 'editable-state-loss',
+        severity: 'warning',
+        summary: 'Native editable state is represented as flattened pixels or metadata where supported.',
+      };
+    case 'psb-import-unsupported':
+      return {
+        code,
+        category: 'unsupported-format',
+        severity: 'warning',
+        summary: 'PSB large-document import/export is unsupported; convert to a supported handoff format before opening in Image.',
+      };
+    case 'xcf-import-unsupported':
+    case 'exr-import-unsupported':
+    default:
+      return {
+        code,
+        category: 'unsupported-format',
+        severity: 'warning',
+        summary: 'This source format requires conversion or a limited handoff before editing in Image.',
+      };
+  }
+}
+
+function buildReadinessDescriptor({
+  formatLabel,
+  importStatus,
+  exportStatus,
+  warningCodes,
+  roundTripCaveats,
+}: {
+  formatLabel: string;
+  importStatus: SourceImageFormatImportStatus;
+  exportStatus: SourceImageFormatExportStatus;
+  warningCodes: readonly SourceImageFormatWarningCode[];
+  roundTripCaveats: string[];
+}): SourceImageFormatReadinessDescriptor {
+  return {
+    status: inferReadinessStatus(importStatus, exportStatus, warningCodes),
+    importAction: inferImportAction(importStatus, warningCodes),
+    exportAction: exportStatus,
+    userSummary: buildUserCompatibilitySummary(formatLabel, importStatus, exportStatus, warningCodes),
+    roundTripCaveats,
+  };
+}
+
+function inferReadinessStatus(
+  importStatus: SourceImageFormatImportStatus,
+  exportStatus: SourceImageFormatExportStatus,
+  warningCodes: readonly SourceImageFormatWarningCode[],
+): SourceImageReadinessStatus {
+  if (warningCodes.includes('camera-raw-import-unsupported') || warningCodes.includes('psb-import-unsupported')) return 'handoff-required';
+  if (importStatus === 'unsupported' && exportStatus === 'unsupported') return 'unsupported';
+  if (importStatus !== 'supported' || exportStatus !== 'layered-with-metadata' || warningCodes.length > 0) return 'limited';
+  return 'ready';
+}
+
+function inferImportAction(
+  importStatus: SourceImageFormatImportStatus,
+  warningCodes: readonly SourceImageFormatWarningCode[],
+): SourceImageImportAction {
+  if (warningCodes.includes('camera-raw-import-unsupported')) return 'develop-first';
+  if (
+    warningCodes.includes('psb-import-unsupported')
+    || warningCodes.includes('xcf-import-unsupported')
+    || warningCodes.includes('exr-import-unsupported')
+    || warningCodes.includes('high-bit-depth-import-unsupported')
+  ) return 'convert-first';
+  if (importStatus === 'rasterized') return 'rasterize';
+  if (importStatus === 'first-frame-only') return 'first-frame-only';
+  if (importStatus === 'supported') return 'open-as-pixels';
+  return 'unsupported';
+}
+
+function buildUserCompatibilitySummary(
+  formatLabel: string,
+  importStatus: SourceImageFormatImportStatus,
+  exportStatus: SourceImageFormatExportStatus,
+  warningCodes: readonly SourceImageFormatWarningCode[],
+): string {
+  if (warningCodes.includes('camera-raw-import-unsupported')) {
+    return 'Camera Raw requires external RAW development before Image can edit pixels.';
+  }
+  if (warningCodes.includes('tiff-format-limits')) {
+    return 'TIFF opens only for classic 8-bit uncompressed pixel data and exports as a flattened 8-bit raster.';
+  }
+  if (warningCodes.includes('gif-animation-first-frame')) {
+    return 'Animated GIF opens as the first frame only; GIF export is flattened and static.';
+  }
+  if (warningCodes.includes('svg-rasterized-import')) {
+    return 'SVG opens as rasterized pixels; export is a flattened raster snapshot, not editable vector artwork.';
+  }
+  if (importStatus === 'unsupported') {
+    return `${formatLabel} must be converted before Image can edit it.`;
+  }
+  if (exportStatus === 'flattened-raster') {
+    return `${formatLabel} opens as pixels and exports through flattened raster formats.`;
+  }
+  return `${formatLabel} can be opened with the current Image interoperability policy.`;
+}
+
+function buildRoundTripCaveats({
+  formatLabel,
+  warningCodes,
+  limitations,
+  importStatus,
+  exportStatus,
+}: {
+  formatLabel: string;
+  warningCodes: readonly SourceImageFormatWarningCode[];
+  limitations: readonly string[];
+  importStatus: SourceImageFormatImportStatus;
+  exportStatus: SourceImageFormatExportStatus;
+}): string[] {
+  const caveats: string[] = [];
+  if (warningCodes.includes('camera-raw-import-unsupported')) {
+    caveats.push('RAW demosaic, camera profiles, and non-destructive RAW settings are not represented in Image documents.');
+  }
+  if (warningCodes.includes('tiff-format-limits')) {
+    caveats.push('TIFF layers, masks, effects, compression variants, and high-bit-depth samples are not round-tripped as native edit state.');
+  }
+  if (warningCodes.includes('gif-animation-first-frame')) {
+    caveats.push('GIF animation frames, frame delays, disposal modes, and looping metadata are not preserved in Image.');
+  }
+  if (warningCodes.includes('svg-rasterized-import')) {
+    caveats.push('SVG vector objects, text, gradients, filters, masks, and effects are rasterized to pixels on import.');
+  }
+  if (warningCodes.includes('svg-flattened-export')) {
+    caveats.push('SVG export wraps or represents a flattened raster snapshot rather than reconstructing editable vector state.');
+  }
+  if (warningCodes.includes('xcf-import-unsupported')) {
+    caveats.push('XCF files exported from Image cannot be reopened as XCF workfiles in Image.');
+  }
+  if (importStatus === 'unsupported' && caveats.length === 0) {
+    caveats.push(`${formatLabel} import is unsupported and requires conversion before editing.`);
+  }
+  if (exportStatus === 'flattened-raster' && caveats.length === 0) {
+    caveats.push(`${formatLabel} export is flattened raster output; layered edit state stays in the Image document.`);
+  }
+  return uniqueStrings([...caveats, ...limitations.filter((limit) => /layer|mask|effect|animation|vector|RAW|demosaic|flatten/i.test(limit))]);
+}
+
+function buildSourceImageImportPolicy({
+  importStatus,
+  warningCodes,
+  limitations,
+  sourceFormatLimits,
+  compatibility,
+  formatLabel,
+  editStateLoss,
+}: {
+  importStatus: SourceImageFormatImportStatus;
+  warningCodes: readonly SourceImageFormatWarningCode[];
+  limitations: readonly string[];
+  sourceFormatLimits: readonly string[];
+  compatibility: SourceImageFormatCompatibilityDescriptor;
+  formatLabel: string;
+  editStateLoss: SourceImageEditStateLossDescriptor;
+}): SourceImageImportPolicyDescriptor {
+  const requiresExternalProcessor = warningCodes.includes('camera-raw-import-unsupported')
+    || warningCodes.includes('psb-import-unsupported')
+    || warningCodes.includes('exr-import-unsupported')
+    || warningCodes.includes('high-bit-depth-import-unsupported');
+
+  return {
+    status: importStatus,
+    canOpenAsPixels: importStatus === 'supported' || importStatus === 'rasterized' || importStatus === 'first-frame-only',
+    requiresExternalProcessor,
+    recommendedHandoffFormats: requiresExternalProcessor ? [...CAMERA_RAW_SUPPORTED_HANDOFF_FORMATS] : [],
+    recommendedFallbackRoutes: buildWorkflowFallbackRoutes({
+      formatLabel,
+      warningCodes,
+      importStatus,
+      editStateLoss,
+    }),
+    vectorStatePreserved: compatibility.nativeRoundtrip !== 'rasterized' && compatibility.preservesEditableLayers,
+    animationPreserved: compatibility.preservesAnimation,
+    limitations: uniqueStrings([...limitations, ...sourceFormatLimits]),
+  };
+}
+
+function buildEditStateLossDescriptor({
+  formatLabel,
+  warningCodes,
+  importStatus,
+  exportStatus,
+}: {
+  formatLabel: string;
+  warningCodes: readonly SourceImageFormatWarningCode[];
+  importStatus: SourceImageFormatImportStatus;
+  exportStatus: SourceImageFormatExportStatus;
+}): SourceImageEditStateLossDescriptor {
+  if (warningCodes.includes('camera-raw-import-unsupported')) {
+    return {
+      layers: 'RAW development yields a single developed raster derivative; layered Image work begins only after export to PSD, TIFF, PNG, or JPEG.',
+      text: 'RAW camera files do not carry Image text-layer edit state; add text after external development.',
+      effects: 'RAW develop controls stay outside Image and do not become editable Image layer effects.',
+      sourceLinks: 'Keep the original RAW in the Source Library for provenance; Image edits apply only to the developed derivative.',
+    };
+  }
+  if (warningCodes.includes('psb-import-unsupported')) {
+    return {
+      layers: 'PSB cannot be opened directly in Image; convert to PSD for layered work or TIFF, PNG, or JPEG for flattened handoff.',
+      text: 'Text editability depends on the external conversion path before import; Image does not import native PSB text state.',
+      effects: 'Effect editability depends on the external conversion path before import; native PSB effect records are not read here.',
+      sourceLinks: 'Source-linked or Smart Object semantics do not import from PSB in Image; keep the original PSB beside any converted derivative.',
+    };
+  }
+  if (warningCodes.includes('xcf-import-unsupported')) {
+    return {
+      layers: 'XCF workfiles are not imported; exported XCF layers are raster-only and Image cannot reopen native XCF layer state.',
+      text: 'Editable XCF text is not imported, and Image text exports to XCF as raster pixels only.',
+      effects: 'Native GIMP effects and Signal Loom layer effects are flattened into exported XCF pixels.',
+      sourceLinks: 'Source-linked layers stay as metadata or packaged source assets; native XCF link state is not written.',
+    };
+  }
+  if (warningCodes.includes('psd-native-constructs-flattened')) {
+    return {
+      layers: 'Raster PSD layers can reopen, but unsupported groups, adjustments, and linked constructs fall back to flattened pixels or metadata-only records.',
+      text: 'Retained text is stored as Signal Loom metadata; exported PSD layers do not carry native editable PSD text records.',
+      effects: 'Layer effects are flattened into PSD pixels and metadata-only settings instead of native PSD layer-effect records.',
+      sourceLinks: 'Source-linked layers export as flattened pixels plus Signal Loom metadata; native PSD Smart Object and source-link records are not written.',
+    };
+  }
+  if (warningCodes.includes('svg-rasterized-import') || warningCodes.includes('svg-flattened-export')) {
+    return {
+      layers: 'SVG artwork is rasterized on import and flattened on export; retained layer structure is not reconstructed.',
+      text: 'SVG text becomes raster pixels on import and export.',
+      effects: 'SVG filters, masks, gradients, and effects are rasterized into pixels.',
+      sourceLinks: 'Keep the original SVG in the Source Library if provenance matters; rasterized Image edits do not preserve external SVG link semantics.',
+    };
+  }
+  if (warningCodes.includes('gif-animation-first-frame') || warningCodes.includes('gif-static-flattened-export')) {
+    return {
+      layers: 'GIF import opens a single raster frame and GIF export writes a single flattened frame only.',
+      text: 'Text is baked into the imported or exported GIF frame.',
+      effects: 'Layer effects are baked into the imported or exported GIF frame.',
+      sourceLinks: 'Source-linked relationships are not represented in GIF files; keep linked originals outside the GIF handoff.',
+    };
+  }
+  if (warningCodes.includes('tiff-format-limits') || warningCodes.includes('high-bit-depth-import-unsupported')) {
+    return {
+      layers: 'TIFF import and export operate as flattened raster pixels only; layered edit state does not round-trip.',
+      text: 'Text is flattened into visible TIFF pixels.',
+      effects: 'Layer effects are flattened into visible TIFF pixels.',
+      sourceLinks: 'Source-linked relationships are not represented in TIFF; keep linked originals in the Source Library or a PSD working file.',
+    };
+  }
+  if (importStatus === 'unsupported') {
+    return {
+      layers: `${formatLabel} requires conversion before Image can edit raster layers.`,
+      text: `${formatLabel} text editability is not preserved through unsupported import.`,
+      effects: `${formatLabel} effect editability is not preserved through unsupported import.`,
+      sourceLinks: `${formatLabel} source-link semantics are not available to Image without conversion.`,
+    };
+  }
+  if (exportStatus === 'flattened-raster') {
+    return {
+      layers: `${formatLabel} export is flattened; layered edit state stays in the Image document.`,
+      text: `${formatLabel} export bakes text into raster pixels.`,
+      effects: `${formatLabel} export bakes layer effects into raster pixels.`,
+      sourceLinks: `${formatLabel} export does not carry native source-link relationships.`,
+    };
+  }
+  return {
+    layers: `${formatLabel} can reopen raster layers under the current policy.`,
+    text: `${formatLabel} text editability is limited to what Image retains in local metadata.`,
+    effects: `${formatLabel} effect editability is limited to what Image retains in local metadata.`,
+    sourceLinks: `${formatLabel} source-link state is limited to what Image retains in local metadata.`,
+  };
+}
+
+function buildWorkflowFallbackRoutes({
+  formatLabel,
+  warningCodes,
+  importStatus,
+  editStateLoss,
+}: {
+  formatLabel: string;
+  warningCodes: readonly SourceImageFormatWarningCode[];
+  importStatus: SourceImageFormatImportStatus;
+  editStateLoss: SourceImageEditStateLossDescriptor;
+}): SourceImageWorkflowFallbackRouteDescriptor[] {
+  if (warningCodes.includes('camera-raw-import-unsupported')) {
+    return [
+      {
+        route: 'external-raw-development',
+        label: 'Develop in RAW processor',
+        preserves: 'demosaic, camera profile, lens correction, and non-destructive RAW controls',
+        recommendedFor: 'Primary develop master before any Image editing.',
+        caveat: 'Image cannot open RAW sensor data directly; only the developed derivative continues into Image.',
+      },
+      {
+        route: 'psd-developed-derivative',
+        label: 'PSD developed derivative',
+        preserves: 'developed pixels plus room for layered Image edits after import',
+        recommendedFor: 'Continue compositing after external RAW development.',
+        caveat: editStateLoss.layers,
+      },
+      {
+        route: 'tiff-developed-derivative',
+        label: 'TIFF developed derivative',
+        preserves: 'developed raster pixels for print-oriented handoff',
+        recommendedFor: 'Bake the develop result for raster finishing or print exchange.',
+        caveat: 'Keep the RAW separately; TIFF does not preserve RAW develop controls, source links, or layered edit state.',
+      },
+      {
+        route: 'source-library-original',
+        label: 'Keep original RAW in Source Library',
+        preserves: 'the untouched camera original for provenance and re-development',
+        recommendedFor: 'Reference and archive alongside developed derivatives.',
+        caveat: editStateLoss.sourceLinks,
+      },
+    ];
+  }
+  if (warningCodes.includes('psb-import-unsupported')) {
+    return [
+      {
+        route: 'psd-conversion',
+        label: 'Convert to PSD',
+        preserves: 'the safest layered route Image can reopen',
+        recommendedFor: 'Working master when the large document can be reduced into PSD limits.',
+        caveat: 'Layer, text, effect, and source-link fidelity depends on the external conversion; verify after conversion.',
+      },
+      {
+        route: 'tiff-visible-composite',
+        label: 'TIFF visible composite',
+        preserves: 'flattened print-oriented pixels',
+        recommendedFor: 'Visible raster handoff when layered editing is no longer required.',
+        caveat: 'Loses layers, editable text, effects, and source links.',
+      },
+      {
+        route: 'png-jpeg-preview',
+        label: 'PNG or JPEG preview',
+        preserves: 'lightweight flattened preview pixels',
+        recommendedFor: 'Review, approvals, or quick downstream preview use.',
+        caveat: 'Preview exports drop layered, text, effect, and source-link editability.',
+      },
+      {
+        route: 'source-library-original',
+        label: 'Keep original PSB in Source Library',
+        preserves: 'the original large-document file for archive or external suite work',
+        recommendedFor: 'Retain provenance when conversion is necessary.',
+        caveat: editStateLoss.sourceLinks,
+      },
+    ];
+  }
+  if (warningCodes.includes('xcf-import-unsupported')) {
+    return [
+      {
+        route: 'psd-layered-handoff',
+        label: 'PSD layered handoff',
+        preserves: 'best-effort raster layers and metadata after conversion',
+        recommendedFor: 'Best route when you still need a layered document Image can reopen.',
+        caveat: 'Text, masks, effects, groups, and source links may still flatten during GIMP-to-PSD conversion.',
+      },
+      {
+        route: 'tiff-visible-composite',
+        label: 'TIFF visible composite',
+        preserves: 'flattened print-oriented pixels',
+        recommendedFor: 'Visible composite handoff after editing elsewhere.',
+        caveat: 'Loses XCF layers, text editability, effects, and source-link semantics.',
+      },
+      {
+        route: 'png-visible-composite',
+        label: 'PNG visible composite',
+        preserves: 'flattened pixels and transparency',
+        recommendedFor: 'Preview or lightweight flattened exchange.',
+        caveat: 'Loses XCF layers, masks, text editability, effects, and source links.',
+      },
+      {
+        route: 'source-library-original',
+        label: 'Keep original XCF in Source Library',
+        preserves: 'the untouched GIMP workfile for reference or external editing',
+        recommendedFor: 'Archive provenance while using converted derivatives in Image.',
+        caveat: editStateLoss.sourceLinks,
+      },
+    ];
+  }
+  if (warningCodes.includes('psd-native-constructs-flattened') || (importStatus === 'supported' && formatLabel === 'PSD')) {
+    return [
+      {
+        route: 'psd-signal-loom-metadata',
+        label: 'PSD with Signal Loom metadata',
+        preserves: 'raster layers plus retained Signal Loom text, effects, adjustment, source-link, and filter metadata',
+        recommendedFor: 'Best working master when Signal Loom will reopen the PSD.',
+        caveat: 'Text, effects, and source links reopen as metadata-only or flattened constructs, not native PSD records.',
+      },
+      {
+        route: 'source-library-package',
+        label: 'Source Library package',
+        preserves: 'original linked assets, snapshots, relink history, and retained metadata beside the PSD',
+        recommendedFor: 'Keep suite handoff recoverable when linked assets or smart filters matter.',
+        caveat: 'Requires the packaged project assets; external PSD tools still do not see native Smart Object or source-link records.',
+      },
+      {
+        route: 'tiff-visible-composite',
+        label: 'TIFF visible composite',
+        preserves: 'flattened print-oriented pixels',
+        recommendedFor: 'Print or approval handoff where editability is no longer required.',
+        caveat: 'Loses editable layers, text, effects, masks, source links, filters, and groups.',
+      },
+      {
+        route: 'png-visible-composite',
+        label: 'PNG visible composite',
+        preserves: 'flattened visible pixels with transparency',
+        recommendedFor: 'Preview or lightweight flattened handoff.',
+        caveat: 'Use for preview only; text, effects, layers, and source links are all baked into pixels.',
+      },
+    ];
+  }
+  if (warningCodes.includes('svg-rasterized-import') || warningCodes.includes('svg-flattened-export')) {
+    return [
+      {
+        route: 'source-library-original-svg',
+        label: 'Keep original SVG in Source Library',
+        preserves: 'the original vector artwork and source provenance',
+        recommendedFor: 'Return to a vector editor or preserve the authoring source.',
+        caveat: editStateLoss.sourceLinks,
+      },
+      {
+        route: 'png-visible-composite',
+        label: 'PNG visible composite',
+        preserves: 'flattened pixels and transparency',
+        recommendedFor: 'Preview or downstream raster handoff.',
+        caveat: 'Vector text, effects, filters, and masks remain rasterized.',
+      },
+      {
+        route: 'psd-raster-working-file',
+        label: 'PSD raster working file',
+        preserves: 'the rasterized import in a layered Image-friendly working format',
+        recommendedFor: 'Continue raster compositing after accepting the SVG-to-pixels conversion.',
+        caveat: 'Keeps the rasterized result only; editable SVG vector state is not reconstructed.',
+      },
+    ];
+  }
+  if (warningCodes.includes('gif-animation-first-frame') || warningCodes.includes('gif-static-flattened-export')) {
+    return [
+      {
+        route: 'video-animation-workflow',
+        label: 'Use Video for animation',
+        preserves: 'frame timing, ordering, and animation workflow controls',
+        recommendedFor: 'Any animated GIF timing or multi-frame editing work.',
+        caveat: 'Image only opens the first frame and exports a static flattened GIF.',
+      },
+      {
+        route: 'png-single-frame',
+        label: 'PNG single frame',
+        preserves: 'the selected visible frame as a flattened raster image',
+        recommendedFor: 'Edit or review one frame outside the animation timeline.',
+        caveat: 'Animation timing, loops, text editability, effects, and source links are lost.',
+      },
+      {
+        route: 'tiff-single-frame',
+        label: 'TIFF single frame',
+        preserves: 'a flattened single frame for print-oriented raster handoff',
+        recommendedFor: 'Static print or color-critical frame delivery.',
+        caveat: 'Animation state and any layered editability are lost.',
+      },
+    ];
+  }
+  if (warningCodes.includes('tiff-format-limits') || warningCodes.includes('high-bit-depth-import-unsupported')) {
+    return [
+      {
+        route: 'psd-layered-working-master',
+        label: 'PSD layered working master',
+        preserves: 'the safest layered Image working file once TIFF pixels are imported',
+        recommendedFor: 'Continue layered editing after a TIFF import or conversion.',
+        caveat: 'TIFF itself stays flattened; keep PSD as the editable master if text, effects, or source links matter.',
+      },
+      {
+        route: 'tiff-visible-composite',
+        label: 'TIFF visible composite',
+        preserves: 'flattened raster pixels for print-oriented exchange',
+        recommendedFor: 'Final visible composite delivery.',
+        caveat: 'Loses layers, text editability, effects, and source links.',
+      },
+      {
+        route: 'png-preview-handoff',
+        label: 'PNG preview handoff',
+        preserves: 'lightweight flattened preview pixels',
+        recommendedFor: 'Quick preview or review handoff.',
+        caveat: 'Preview route remains flattened and does not preserve edit-state metadata.',
+      },
+    ];
+  }
+  return [];
+}
+
+function buildSourceImageOpenRoutes(
+  policy: SourceImageFormatPolicy,
+  description: SourceImageFormatPolicyDescription,
+  unsupportedStates: SourceImageOpenUnsupportedStateDescriptor[],
+): SourceImageOpenRouteDescriptor[] {
+  if (policy.kind === 'cameraRaw') {
+    return rankSourceImageOpenRoutes([
+      sourceImageFallbackRouteToOpenRoute(description.importPolicy.recommendedFallbackRoutes[0], description.readiness.importAction, true),
+      makeUnsupportedOpenRoute({
+        route: 'open-as-pixels',
+        label: 'Open RAW as pixels',
+        openAction: 'develop-first',
+        unsupportedStateCodes: ['native-raw-demosaic'],
+        caveat: 'Image cannot demosaic RAW sensor data directly.',
+      }),
+      ...description.importPolicy.recommendedFallbackRoutes.slice(1).map((route) => sourceImageFallbackRouteToOpenRoute(route, description.readiness.importAction, true)),
+    ]);
+  }
+
+  if (policy.kind === 'psd') {
+    return rankSourceImageOpenRoutes([
+      {
+        route: 'open-layered-psd',
+        rank: 0,
+        supported: true,
+        openAction: 'open-as-pixels',
+        label: 'Open layered PSD',
+        preserves: 'raster PSD layers plus Signal Loom metadata where present',
+        recommendedFor: 'PSD files within current size limits when raster layer editing is needed.',
+        caveat: 'Full native PSD constructs are partial: text, effects, source links, smart filters, masks, and groups are flattened or metadata-only.',
+        unsupportedStateCodes: ['full-psd-native-constructs'],
+      },
+      ...description.importPolicy.recommendedFallbackRoutes.map((route) => sourceImageFallbackRouteToOpenRoute(route, description.readiness.importAction, true)),
+    ]);
+  }
+
+  if (policy.kind === 'psb') {
+    return rankSourceImageOpenRoutes([
+      ...description.importPolicy.recommendedFallbackRoutes.map((route) => sourceImageFallbackRouteToOpenRoute(route, description.readiness.importAction, true)),
+      makeUnsupportedOpenRoute({
+        route: 'open-as-psb',
+        label: 'Open native PSB',
+        openAction: 'convert-first',
+        unsupportedStateCodes: ['native-psb-decode', 'full-psb-native-constructs'],
+        caveat: 'Image has no PSB large-document decoder or full native Photoshop construct importer.',
+      }),
+    ]);
+  }
+
+  if (policy.kind === 'xcf') {
+    return rankSourceImageOpenRoutes([
+      ...description.importPolicy.recommendedFallbackRoutes.map((route) => sourceImageFallbackRouteToOpenRoute(route, description.readiness.importAction, true)),
+      makeUnsupportedOpenRoute({
+        route: 'open-native-xcf',
+        label: 'Open native XCF',
+        openAction: 'convert-first',
+        unsupportedStateCodes: ['native-xcf-decode', 'full-xcf-native-constructs'],
+        caveat: 'Image cannot decode native XCF pixels, layer trees, masks, groups, text, filters, effects, or source links.',
+      }),
+    ]);
+  }
+
+  if (description.importPolicy.canOpenAsPixels) {
+    return rankSourceImageOpenRoutes([{
+      route: 'open-as-pixels',
+      rank: 0,
+      supported: true,
+      openAction: description.readiness.importAction,
+      label: description.importStatus === 'rasterized' ? `Rasterize ${description.formatLabel}` : `Open ${description.formatLabel} as pixels`,
+      preserves: description.importStatus === 'first-frame-only'
+        ? 'the first decoded frame as 8-bit RGBA pixels'
+        : 'browser-decoded 8-bit RGBA pixels',
+      recommendedFor: 'Direct Image editing when accepting the current raster import limits.',
+      caveat: description.roundTripCaveats[0] ?? `${description.formatLabel} opens under the current raster import policy.`,
+      unsupportedStateCodes: unsupportedStates
+        .filter((state) => state.blocksOpenAsPixels)
+        .map((state) => state.code),
+    }]);
+  }
+
+  return rankSourceImageOpenRoutes(description.importPolicy.recommendedFallbackRoutes.map((route) => (
+    sourceImageFallbackRouteToOpenRoute(route, description.readiness.importAction, true)
+  )));
+}
+
+function rankSourceImageOpenRoutes(routes: Array<Omit<SourceImageOpenRouteDescriptor, 'rank'> & { rank?: number }>): SourceImageOpenRouteDescriptor[] {
+  return routes
+    .filter((route): route is Omit<SourceImageOpenRouteDescriptor, 'rank'> & { rank?: number } => Boolean(route))
+    .map((route, index) => ({
+      ...route,
+      rank: index + 1,
+      unsupportedStateCodes: uniqueSourceImageOpenUnsupportedStateCodes(route.unsupportedStateCodes),
+    }));
+}
+
+function sourceImageFallbackRouteToOpenRoute(
+  route: SourceImageWorkflowFallbackRouteDescriptor | undefined,
+  openAction: SourceImageImportAction,
+  supported: boolean,
+): Omit<SourceImageOpenRouteDescriptor, 'rank'> {
+  if (!route) {
+    return {
+      route: 'open-as-pixels',
+      supported: false,
+      openAction,
+      label: 'Unsupported open route',
+      preserves: 'nothing',
+      recommendedFor: 'No supported direct route is available.',
+      caveat: 'No fallback route is available for this source.',
+      unsupportedStateCodes: [],
+    };
+  }
+  return {
+    route: route.route,
+    supported,
+    openAction,
+    label: route.label,
+    preserves: route.preserves,
+    recommendedFor: route.recommendedFor,
+    caveat: route.caveat,
+    unsupportedStateCodes: [],
+  };
+}
+
+function makeUnsupportedOpenRoute(input: {
+  route: SourceImageOpenRouteKind;
+  label: string;
+  openAction: SourceImageImportAction;
+  unsupportedStateCodes: SourceImageOpenUnsupportedStateCode[];
+  caveat: string;
+}): Omit<SourceImageOpenRouteDescriptor, 'rank'> {
+  return {
+    route: input.route,
+    supported: false,
+    openAction: input.openAction,
+    label: input.label,
+    preserves: 'no native editable state in Image',
+    recommendedFor: 'Unsupported direct open attempt; use a ranked fallback route instead.',
+    caveat: input.caveat,
+    unsupportedStateCodes: input.unsupportedStateCodes,
+  };
+}
+
+function buildSourceImageOpenUnsupportedStates(
+  policy: SourceImageFormatPolicy,
+  description: SourceImageFormatPolicyDescription,
+): SourceImageOpenUnsupportedStateDescriptor[] {
+  const states: SourceImageOpenUnsupportedStateDescriptor[] = [];
+  if (policy.kind === 'cameraRaw') {
+    states.push(
+      makeSourceImageOpenUnsupportedState('native-raw-demosaic'),
+      makeSourceImageOpenUnsupportedState('raw-camera-profile-controls'),
+      makeSourceImageOpenUnsupportedState('raw-non-destructive-develop'),
+    );
+  }
+  if (policy.kind === 'xcf') {
+    states.push(
+      makeSourceImageOpenUnsupportedState('native-xcf-decode'),
+      makeSourceImageOpenUnsupportedState('full-xcf-native-constructs'),
+    );
+  }
+  if (policy.kind === 'psd') {
+    states.push(makeSourceImageOpenUnsupportedState('full-psd-native-constructs'));
+  }
+  if (policy.kind === 'psb') {
+    states.push(
+      makeSourceImageOpenUnsupportedState('native-psb-decode'),
+      makeSourceImageOpenUnsupportedState('full-psb-native-constructs'),
+    );
+  }
+  if (!description.warningCodes.includes('exr-import-unsupported')) {
+    states.push(makeSourceImageOpenUnsupportedState('icc-managed-open-transform'));
+  }
+  return uniqueSourceImageOpenUnsupportedStates(states);
+}
+
+function makeSourceImageOpenUnsupportedState(
+  code: SourceImageOpenUnsupportedStateCode,
+): SourceImageOpenUnsupportedStateDescriptor {
+  switch (code) {
+    case 'native-raw-demosaic':
+      return {
+        code,
+        category: 'raw-development',
+        blocksOpenAsPixels: true,
+        summary: 'Native RAW demosaic is unavailable; RAW files require external development before Image can edit pixels.',
+      };
+    case 'raw-camera-profile-controls':
+      return {
+        code,
+        category: 'raw-development',
+        blocksOpenAsPixels: true,
+        summary: 'Camera profile, white balance, lens correction, and sensor color controls are not implemented in Image.',
+      };
+    case 'raw-non-destructive-develop':
+      return {
+        code,
+        category: 'raw-development',
+        blocksOpenAsPixels: true,
+        summary: 'Non-destructive RAW develop state is not stored or round-tripped by Image documents.',
+      };
+    case 'native-xcf-decode':
+      return {
+        code,
+        category: 'native-decoder',
+        blocksOpenAsPixels: true,
+        summary: 'Native XCF pixel and workfile decoding is not implemented.',
+      };
+    case 'full-xcf-native-constructs':
+      return {
+        code,
+        category: 'native-constructs',
+        blocksOpenAsPixels: true,
+        summary: 'Full XCF layer trees, masks, groups, editable text, filters, effects, and source links are not reconstructed.',
+      };
+    case 'full-psd-native-constructs':
+      return {
+        code,
+        category: 'native-constructs',
+        blocksOpenAsPixels: false,
+        summary: 'Full PSD native constructs are partial: unsupported text, effects, masks, groups, Smart Objects, and smart filters are flattened or metadata-only.',
+      };
+    case 'native-psb-decode':
+      return {
+        code,
+        category: 'native-decoder',
+        blocksOpenAsPixels: true,
+        summary: 'Native PSB large-document decoding is not implemented.',
+      };
+    case 'full-psb-native-constructs':
+      return {
+        code,
+        category: 'native-constructs',
+        blocksOpenAsPixels: true,
+        summary: 'Full PSB native Photoshop constructs cannot be imported because PSB decoding is unsupported.',
+      };
+    case 'icc-managed-open-transform':
+    default:
+      return {
+        code: 'icc-managed-open-transform',
+        category: 'color-management',
+        blocksOpenAsPixels: false,
+        summary: 'ICC-managed open transforms are not applied; browser-decoded pixels are treated as 8-bit RGBA workspace pixels.',
+      };
+  }
+}
+
+function buildSourceImageFileOpenRoundtripRisk(
+  description: SourceImageFormatPolicyDescription,
+  unsupportedStates: SourceImageOpenUnsupportedStateDescriptor[],
+): SourceImageFileOpenRoundtripRiskDescriptor {
+  const level = getSourceImageFileOpenRoundtripRiskLevel(description);
+  const formatId = formatLabelForStableId(description.formatLabel);
+  const riskId = `roundtrip-risk:${formatId}:${level}:v1`;
+  const affectedConstructs = unsupportedStates.map((state) => state.code);
+  return {
+    riskId,
+    stableId: riskId,
+    level,
+    nativeRoundtrip: description.compatibility.nativeRoundtrip,
+    affectedConstructs,
+    summary: buildSourceImageFileOpenRoundtripRiskSummary(description.formatLabel, level),
+  };
+}
+
+function getSourceImageFileOpenRoundtripRiskLevel(
+  description: SourceImageFormatPolicyDescription,
+): SourceImageRoundtripRiskLevel {
+  if (description.compatibility.nativeRoundtrip === 'metadata-only') return 'metadata-only';
+  if (description.compatibility.nativeRoundtrip === 'rasterized') return 'rasterized';
+  if (description.compatibility.nativeRoundtrip === 'unsupported') return 'unsupported';
+  return 'none';
+}
+
+function buildSourceImageFileOpenRoundtripRiskSummary(
+  formatLabel: string,
+  level: SourceImageRoundtripRiskLevel,
+): string {
+  switch (level) {
+    case 'metadata-only':
+      return `${formatLabel} can reopen through raster layers plus retained Signal Loom metadata, but full native construct round-trip is not claimed.`;
+    case 'rasterized':
+      return `${formatLabel} opens through rasterization; editable native source structure is not round-tripped.`;
+    case 'unsupported':
+      return `${formatLabel} native open or round-trip is unsupported; use a ranked conversion or handoff route.`;
+    case 'none':
+    default:
+      return `${formatLabel} has no native round-trip claim beyond the current pixel-open policy.`;
+  }
+}
+
+function buildSourceImageOpenImportPolicySignature(
+  description: SourceImageFormatPolicyDescription,
+): string {
+  return [
+    'import-policy:v1',
+    `format=${description.formatLabel}`,
+    `status=${description.importStatus}`,
+    `action=${description.readiness.importAction}`,
+    `canOpen=${description.importPolicy.canOpenAsPixels}`,
+    `external=${description.importPolicy.requiresExternalProcessor}`,
+  ].join('|');
+}
+
+function buildSourceImageOpenFallbackRouteRankingSignature(
+  formatLabel: string,
+  routes: SourceImageOpenRouteDescriptor[],
+): string {
+  return [
+    'fallback-ranking:v1',
+    `format=${formatLabel}`,
+    `routes=${routes.map((route) => `${route.rank}:${route.route}`).join(',') || 'none'}`,
+  ].join('|');
+}
+
+function buildSourceImageOpenNativeConstructWarningSignature(
+  formatLabel: string,
+  warnings: SourceImageOpenUnsupportedStateDescriptor[],
+): string {
+  return [
+    'native-constructs:v1',
+    `format=${formatLabel}`,
+    `warnings=${warnings.map((warning) => warning.code).join(',') || 'none'}`,
+  ].join('|');
+}
+
+function formatLabelForStableId(formatLabel: string): string {
+  return formatLabel.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown';
+}
+
+function uniqueSourceImageOpenUnsupportedStates(
+  states: SourceImageOpenUnsupportedStateDescriptor[],
+): SourceImageOpenUnsupportedStateDescriptor[] {
+  const seen = new Set<SourceImageOpenUnsupportedStateCode>();
+  return states.filter((state) => {
+    if (seen.has(state.code)) return false;
+    seen.add(state.code);
+    return true;
+  });
+}
+
+function uniqueSourceImageOpenUnsupportedStateCodes(
+  codes: SourceImageOpenUnsupportedStateCode[],
+): SourceImageOpenUnsupportedStateCode[] {
+  return [...new Set(codes)];
+}
+
+function readPhotoshopDocumentHeader(bytes: Uint8Array | ArrayBuffer | undefined): {
+  kind?: PhotoshopDocumentKind;
+  width?: number;
+  height?: number;
+  channels?: number;
+  bitDepth?: number;
+  colorMode?: number;
+} {
+  const viewBytes = bytes instanceof ArrayBuffer
+    ? new Uint8Array(bytes)
+    : bytes;
+  if (!viewBytes || viewBytes.length < 6) return {};
+  if (viewBytes[0] !== 0x38 || viewBytes[1] !== 0x42 || viewBytes[2] !== 0x50 || viewBytes[3] !== 0x53) {
+    return {};
+  }
+
+  const view = new DataView(viewBytes.buffer, viewBytes.byteOffset, viewBytes.byteLength);
+  const version = view.getUint16(4, false);
+  const header = {
+    kind: version === 1 ? 'psd' as const : version === 2 ? 'psb' as const : 'unknown' as const,
+    ...(viewBytes.length >= 26
+      ? {
+          channels: view.getUint16(12, false),
+          height: view.getUint32(14, false),
+          width: view.getUint32(18, false),
+          bitDepth: view.getUint16(22, false),
+          colorMode: view.getUint16(24, false),
+        }
+      : {}),
+  };
+  return header;
+}
+
+function inferPhotoshopDocumentKindFromIdentity(
+  extension: string | undefined,
+  mimeType: string | undefined,
+): PhotoshopDocumentKind {
+  if (extension === 'psb') return 'psb';
+  if (extension === 'psd' || PSD_MIME_TYPES.has(mimeType ?? '')) return 'psd';
+  return 'unknown';
+}
+
+function buildPhotoshopDocumentSizeBlockers({
+  kind,
+  width,
+  height,
+}: {
+  kind: PhotoshopDocumentKind;
+  width?: number;
+  height?: number;
+}): SourceImagePsbThresholdDescriptor[] {
+  const blockers: SourceImagePsbThresholdDescriptor[] = [];
+  if (kind === 'psb') {
+    blockers.push({
+      code: 'psb-header-version-2',
+      limit: '8BPS version 2 header',
+      unsupported: true,
+      summary: 'PSB version 2 large-document headers are blocked before ag-psd import.',
+    });
+  }
+  if (
+    (typeof width === 'number' && width > PHOTOSHOP_PSD_MAX_DIMENSION)
+    || (typeof height === 'number' && height > PHOTOSHOP_PSD_MAX_DIMENSION)
+  ) {
+    blockers.push({
+      code: 'psd-max-dimension-exceeded',
+      limit: '30,000 px per side',
+      unsupported: true,
+      summary: `PSD header dimensions ${width ?? 'unknown'} x ${height ?? 'unknown'} exceed the 30,000 px PSD limit; convert to a supported derivative before Image import.`,
+    });
+  }
+  return blockers;
+}
+
+function buildPhotoshopLargeDocumentFallbackRoutes(): SourceImageWorkflowFallbackRouteDescriptor[] {
+  return [
+    {
+      route: 'psd-conversion',
+      label: 'Convert to PSD within size limits',
+      preserves: 'the safest layered route Image can attempt when dimensions fit PSD limits',
+      recommendedFor: 'Working master handoff after reducing canvas size, cropping, or flattening oversized content.',
+      caveat: 'Layer, text, effect, and source-link fidelity depends on the external conversion; verify after conversion.',
+    },
+    {
+      route: 'tiff-visible-composite',
+      label: 'TIFF visible composite',
+      preserves: 'flattened print-oriented pixels',
+      recommendedFor: 'Visible raster handoff when layered editing is no longer required.',
+      caveat: 'Loses layers, editable text, effects, and source links.',
+    },
+    {
+      route: 'png-jpeg-preview',
+      label: 'PNG or JPEG preview',
+      preserves: 'lightweight flattened preview pixels',
+      recommendedFor: 'Review, approvals, or quick downstream preview use.',
+      caveat: 'Preview exports drop layered, text, effect, and source-link editability.',
+    },
+    {
+      route: 'source-library-original',
+      label: 'Keep original Photoshop document in Source Library',
+      preserves: 'the original PSD/PSB for archive or external suite work',
+      recommendedFor: 'Retain provenance when conversion is necessary.',
+      caveat: 'Image cannot decode PSB or oversized PSD layer data directly.',
+    },
+  ];
+}
+
+function normalizePositiveInteger(value: number | undefined): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : undefined;
+}
+
+function normalizeSourceExtension(fileName: string | undefined): string | undefined {
+  const value = fileName?.trim().toLowerCase();
+  if (!value) return undefined;
+  const withoutQuery = value.split(/[?#]/)[0];
+  const extension = withoutQuery.startsWith('.') && !withoutQuery.slice(1).includes('.')
+    ? withoutQuery.slice(1)
+    : withoutQuery.split('.').pop();
+  return extension || undefined;
+}
+
+function buildSourcePolicySignature(description: Omit<SourceImageFormatPolicyDescription, 'policySignature'>): string {
+  return [
+    'source-format:v1',
+    `format=${description.formatLabel}`,
+    `ext=${description.sourceExtension ?? 'none'}`,
+    `mime=${description.sourceMimeType ?? 'none'}`,
+    `import=${description.importStatus}`,
+    `export=${description.exportStatus}`,
+    `bitDepth=${description.bitDepth.sourceBitsPerChannel}`,
+    `warnings=${description.warningCodes.join(',') || 'none'}`,
+  ].join('|');
+}
+
+function buildLayerPolicyDescriptor(
+  description: SourceImageFormatPolicyDescription,
+): SourceImageLayerPolicyDescriptor {
+  const importPreservesLayers = description.compatibility.preservesEditableLayers && description.importStatus === 'supported';
+  const exportPreservesLayers = description.exportStatus === 'layered-with-metadata' && description.compatibility.preservesEditableLayers;
+  const flattening: SourceImageLayerFlatteningPolicy = description.importStatus === 'unsupported'
+    ? 'unsupported'
+    : exportPreservesLayers
+      ? 'preserves-layers'
+      : description.importStatus === 'rasterized'
+        ? 'flattens-on-import'
+        : 'flattens-on-export';
+
+  return {
+    importPreservesLayers,
+    exportPreservesLayers,
+    flattening,
+    summary: exportPreservesLayers
+      ? `${description.formatLabel} can carry layered metadata for this policy.`
+      : `${description.formatLabel} handoff is flattened for layer preservation; editable layer, mask, effect, and adjustment state stays in the Image document or metadata only.`,
+  };
+}
+
+function buildAnimationPolicyDescriptor(
+  description: SourceImageFormatPolicyDescription,
+): SourceImageAnimationPolicyDescriptor {
+  const animatedGif = description.warningCodes.includes('gif-animation-first-frame');
+  const notDecoded = description.importStatus === 'unsupported';
+  const importFrameLimit: SourceImageFrameLimit = animatedGif ? 1 : notDecoded ? 'not-decoded' : 'none';
+  const exportFrameLimit: SourceImageFrameLimit = description.exportStatus === 'flattened-raster' ? 1 : notDecoded ? 'not-decoded' : 'none';
+
+  return {
+    importFrameLimit,
+    exportFrameLimit,
+    preservesAnimation: description.compatibility.preservesAnimation,
+    summary: animatedGif
+      ? 'Animated GIF imports the first frame only and exports a flattened single-frame GIF; frame delays, disposal modes, and loops are not preserved.'
+      : `${description.formatLabel} does not preserve timeline animation in Image export policy.`,
+  };
+}
+
+function buildVectorPolicyDescriptor(
+  description: SourceImageFormatPolicyDescription,
+): SourceImageVectorPolicyDescriptor {
+  const rasterizedSvg = description.warningCodes.includes('svg-rasterized-import') || description.warningCodes.includes('svg-flattened-export');
+  return {
+    importPreservesVectorState: !rasterizedSvg && description.compatibility.preservesEditableLayers,
+    exportPreservesVectorState: !rasterizedSvg && description.exportStatus !== 'flattened-raster',
+    summary: rasterizedSvg
+      ? 'SVG is rasterized on import and flattened on export; editable vector objects, text, filters, gradients, and masks are not reconstructed.'
+      : `${description.formatLabel} vector edit state is not guaranteed outside retained Image document metadata.`,
+  };
+}
+
+function buildColorProfilePolicyDescriptor(
+  description: SourceImageFormatPolicyDescription,
+): SourceImageColorProfilePolicyDescriptor {
+  return {
+    preservesEmbeddedProfiles: false,
+    summary: `${description.formatLabel} policy uses browser/canvas or local 8-bit RGBA pixels; embedded ICC profiles, camera profiles, and wide-gamut color management are not round-tripped as native profile data.`,
+  };
+}
+
+function buildReadinessBitDepthPolicy(
+  policy: SourceImageFormatPolicy,
+  description: SourceImageFormatPolicyDescription,
+): SourceImageBitDepthDescriptor {
+  if (policy.kind === 'tiff' && policy.sourceBitsPerChannel === undefined) {
+    return {
+      ...description.bitDepth,
+      sourceBitsPerChannel: 'unknown',
+    };
+  }
+  return description.bitDepth;
+}
+
+function buildSourceExportReadinessSignature(
+  readiness: Omit<SourceImageFormatExportReadinessDescriptor, 'stableSignature'>,
+): string {
+  const layerSignature = readiness.layerPolicy.exportPreservesLayers ? 'preserved' : 'flattened';
+  return [
+    'source-export-readiness:v1',
+    `format=${readiness.formatLabel}`,
+    `import=${readiness.importAction}`,
+    `export=${readiness.exportAction}`,
+    `layers=${layerSignature}`,
+    `frames=${readiness.animationPolicy.importFrameLimit}`,
+    `bitDepth=${readiness.bitDepthPolicy.sourceBitsPerChannel}`,
+    `warnings=${readiness.warningCodes.join(',') || 'none'}`,
+  ].join('|');
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
+function createCameraRawUnsupportedImportBlockers(): CameraRawImportBlockerDescriptor[] {
+  return [
+    {
+      code: 'raw-demosaic-missing',
+      summary: 'Image has no RAW demosaic/development pipeline for camera sensor data.',
+    },
+    {
+      code: 'camera-profile-controls-missing',
+      summary: 'Camera profile, white balance, lens correction, and non-destructive develop controls must be handled externally.',
+    },
+  ];
+}
+
+function buildCameraRawOpenUnsupportedStates(): CameraRawUnsupportedStateDescriptor[] {
+  return [
+    {
+      code: 'native-raw-open',
+      message: 'Native Camera Raw files cannot be opened as editable Image pixels without external development.',
+    },
+    {
+      code: 'raw-demosaic',
+      message: 'RAW demosaic is unsupported in the Image workspace.',
+    },
+    {
+      code: 'raw-camera-profile-controls',
+      message: 'Camera profile, white balance, lens correction, and sensor color controls are unsupported in Image.',
+    },
+    {
+      code: 'raw-non-destructive-develop',
+      message: 'Non-destructive RAW develop settings are not stored or round-tripped by Image documents.',
+    },
+  ];
+}
+
+function createNotDecodedBitDepthDescriptor(
+  sourceBitsPerChannel: SourceImageBitsPerChannel,
+): SourceImageBitDepthDescriptor {
+  return {
+    status: 'not-decoded',
+    sourceBitsPerChannel,
+    editorBitsPerChannel: 8,
+    browserDecodedTo: 'not decoded',
+    preservesHighBitDepth: false,
+  };
+}
+
+function createBrowserRasterBitDepthDescriptor(policy: SourceImageFormatPolicy): SourceImageBitDepthDescriptor {
+  if (policy.highBitDepth && policy.sourceBitsPerChannel) {
+    return {
+      status: 'high-bit-depth-loss-warning',
+      sourceBitsPerChannel: policy.sourceBitsPerChannel,
+      editorBitsPerChannel: 8,
+      browserDecodedTo: BROWSER_RASTER_DEPTH_LABEL,
+      preservesHighBitDepth: false,
+      warning: createHighBitDepthRasterWarning(policy),
+    };
+  }
+
+  return {
+    status: 'browser-8-bit-rgba',
+    sourceBitsPerChannel: policy.sourceBitsPerChannel ?? 'unknown',
+    editorBitsPerChannel: 8,
+    browserDecodedTo: BROWSER_RASTER_DEPTH_LABEL,
+    preservesHighBitDepth: false,
+  };
+}
+
+function createNativeEightBitDepthDescriptor(): SourceImageBitDepthDescriptor {
+  return {
+    status: 'native-8-bit-supported',
+    sourceBitsPerChannel: 8,
+    editorBitsPerChannel: 8,
+    browserDecodedTo: 'not decoded',
+    preservesHighBitDepth: false,
+  };
+}
+
+function createHighBitDepthUnsupportedDescriptor(policy: SourceImageFormatPolicy): SourceImageBitDepthDescriptor {
+  return {
+    status: 'high-bit-depth-unsupported',
+    sourceBitsPerChannel: policy.sourceBitsPerChannel ?? 'unknown',
+    editorBitsPerChannel: 8,
+    browserDecodedTo: 'not decoded',
+    preservesHighBitDepth: false,
+    warning: createHighBitDepthUnsupportedWarning(policy),
+  };
+}
+
+function createHighBitDepthRasterWarning(policy: SourceImageFormatPolicy): string {
+  const formatLabel = policy.sourceFormatLabel ?? policy.kind.toUpperCase();
+  const bits = policy.sourceBitsPerChannel ?? 'high-bit';
+  return `${formatLabel} source is ${bits}-bit/channel, but browser image decoding and canvas editing reduce it to 8-bit RGBA pixels.`;
+}
+
+function createHighBitDepthUnsupportedWarning(policy: SourceImageFormatPolicy): string {
+  const formatLabel = policy.sourceFormatLabel ?? policy.kind.toUpperCase();
+  const bits = policy.sourceBitsPerChannel ?? 'high-bit';
+  return `${formatLabel} source is ${bits}-bit/channel, but Image only decodes 8-bit ${formatLabel} samples. Convert to 8-bit TIFF, PSD, PNG, or JPEG before opening.`;
+}
+
+function createRasterSourceFormatLimits(policy: SourceImageFormatPolicy): string[] {
+  const formatLabel = policy.sourceFormatLabel ?? 'Raster image';
+  const limits = [
+    `${formatLabel} imports use browser image decoding and canvas APIs, so Image edits ${BROWSER_RASTER_DEPTH_LABEL} regardless of source bit depth.`,
+  ];
+  if (policy.sourceMimeType || policy.sourceExtension) {
+    limits.push(`${formatSourceIdentity(policy, formatLabel)} is treated as a browser-decodable flattened raster source.`);
+  }
+  return limits;
+}
+
+function createTiffSourceFormatLimits(policy: SourceImageFormatPolicy): string[] {
+  return [
+    `${formatSourceIdentity(policy, 'TIFF')} must be classic uncompressed chunky 8-bit grayscale, RGB, or RGBA TIFF to import.`,
+    'BigTIFF, compressed TIFF, planar TIFF, floating point samples, and high-bit integer samples are not decoded.',
+  ];
+}
+
+function formatSourceIdentity(policy: SourceImageFormatPolicy, fallbackLabel: string): string {
+  const parts = [
+    policy.sourceMimeType ? `Source MIME ${policy.sourceMimeType}` : undefined,
+    policy.sourceExtension ? `.${policy.sourceExtension}` : undefined,
+    policy.sourceFormatLabel ?? fallbackLabel,
+  ].filter(Boolean);
+  return parts.join(' / ');
 }
 
 export function detectSourceImageFormatPolicy(input: {
@@ -38,23 +2325,50 @@ export function detectSourceImageFormatPolicy(input: {
 
   if (bytes && bytes.length >= 4 && bytes[0] === 0x38 && bytes[1] === 0x42 && bytes[2] === 0x50 && bytes[3] === 0x53) {
     const version = bytes.length >= 6 ? (bytes[4] << 8) | bytes[5] : 1;
-    if (version === 2) return { kind: 'psb', message: 'PSB large-document files are detected, but Image currently supports layered PSD only. Convert to PSD, TIFF, PNG, or JPEG before opening.' };
-    return { kind: 'psd' };
+    if (version === 2) {
+      return {
+        kind: 'psb',
+        message: 'PSB large-document files are detected, but Image currently supports layered PSD only. Convert to PSD, TIFF, PNG, or JPEG before opening.',
+        ...createSourcePolicyMetadata(extension, mimeType, 'PSB'),
+      };
+    }
+    return { kind: 'psd', ...createSourcePolicyMetadata(extension, mimeType, 'PSD') };
   }
 
-  if (extension === 'psb') return { kind: 'psb', message: 'PSB large-document files are not supported in Image yet. Convert to PSD, TIFF, PNG, or JPEG before opening.' };
-  if (extension === 'psd' || mimeType === 'image/vnd.adobe.photoshop') return { kind: 'psd' };
-  if (extension === 'xcf' || mimeType === 'image/x-xcf') {
-    return { kind: 'xcf', message: 'XCF export is available, but importing GIMP XCF workfiles is not decoded in Image yet. Open the XCF in GIMP and export PSD, TIFF, PNG, or JPEG before opening here.' };
+  if (extension === 'psb') {
+    return {
+      kind: 'psb',
+      message: 'PSB large-document files are not supported in Image yet. Convert to PSD, TIFF, PNG, or JPEG before opening.',
+      ...createSourcePolicyMetadata(extension, mimeType, 'PSB'),
+    };
+  }
+  if (extension === 'psd' || PSD_MIME_TYPES.has(mimeType ?? '')) return { kind: 'psd', ...createSourcePolicyMetadata(extension, mimeType, 'PSD') };
+  if (extension === 'xcf' || XCF_MIME_TYPES.has(mimeType ?? '')) {
+    return {
+      kind: 'xcf',
+      message: 'XCF export is available, but importing GIMP XCF workfiles is not decoded in Image yet. Open the XCF in GIMP and export PSD, TIFF, PNG, or JPEG before opening here.',
+      ...createSourcePolicyMetadata(extension, mimeType, 'XCF'),
+    };
   }
   if (extension === 'exr' || mimeType === 'image/x-exr' || mimeType === 'image/exr') {
-    return { kind: 'exr', message: 'OpenEXR/HDR image data is detected, but Image does not currently include a browser-safe EXR decoder. Convert to PNG, TIFF, or JPEG before opening.' };
+    return {
+      kind: 'exr',
+      message: 'OpenEXR/HDR image data is detected, but Image does not currently include a browser-safe EXR decoder. Convert to PNG, TIFF, or JPEG before opening.',
+      ...createSourcePolicyMetadata(extension, mimeType, 'OpenEXR'),
+    };
+  }
+  if (isCameraRawFormat(extension, mimeType)) {
+    return {
+      kind: 'cameraRaw',
+      message: CAMERA_RAW_UNSUPPORTED_MESSAGE,
+      ...createSourcePolicyMetadata(extension, mimeType, 'Camera Raw'),
+    };
   }
   if (extension === 'svg' || mimeType === IMAGE_SVG_MIME_TYPE || startsWithAscii(bytes, '<svg') || startsWithAscii(bytes, '<?xml')) {
     return { kind: 'svg' };
   }
   if (isTiffHeader(bytes) || extension === 'tif' || extension === 'tiff' || mimeType === IMAGE_TIFF_MIME_TYPE) {
-    return { kind: 'tiff' };
+    return { kind: 'tiff', ...createTiffPolicyMetadata(extension, mimeType, bytes) };
   }
   if (isGifHeader(bytes) || extension === 'gif' || mimeType === 'image/gif') {
     const animated = bytes ? isAnimatedGif(bytes) : false;
@@ -62,10 +2376,11 @@ export function detectSourceImageFormatPolicy(input: {
       kind: 'gif',
       animated,
       warning: animated ? 'Animated GIF opened as the first frame only. Use Video for animation/timing work.' : undefined,
+      ...createSourcePolicyMetadata(extension, mimeType, 'GIF'),
     };
   }
 
-  return { kind: 'raster' };
+  return { kind: 'raster', ...createRasterPolicyMetadata(extension, mimeType, bytes) };
 }
 
 export function getImageMimeTypeFromRegistry(fileName?: string, mimeType?: string): string {
@@ -74,6 +2389,72 @@ export function getImageMimeTypeFromRegistry(fileName?: string, mimeType?: strin
     return inferMimeTypeFromFile(fileName, 'image') ?? format.mimeTypes[0] ?? 'image/png';
   }
   return mimeType || 'image/png';
+}
+
+function createSourcePolicyMetadata(
+  extension: string | undefined,
+  mimeType: string | undefined,
+  sourceFormatLabel: string,
+): SourceImageFormatPolicyMetadata {
+  return {
+    sourceFormatLabel,
+    ...(mimeType ? { sourceMimeType: mimeType } : {}),
+    ...(extension ? { sourceExtension: extension } : {}),
+  };
+}
+
+function createTiffPolicyMetadata(
+  extension: string | undefined,
+  mimeType: string | undefined,
+  bytes: Uint8Array | undefined,
+): SourceImageFormatPolicyMetadata {
+  const bits = readTiffBitsPerChannel(bytes);
+  return {
+    ...createSourcePolicyMetadata(extension, mimeType, 'TIFF'),
+    ...(bits ? { sourceBitsPerChannel: bits } : {}),
+    ...(bits && bits > 8 ? { highBitDepth: true } : {}),
+  };
+}
+
+function createRasterPolicyMetadata(
+  extension: string | undefined,
+  mimeType: string | undefined,
+  bytes: Uint8Array | undefined,
+): SourceImageFormatPolicyMetadata {
+  const sourceFormatLabel = inferBrowserRasterFormatLabel(extension, mimeType, bytes);
+  const bits = sourceFormatLabel === 'PNG' ? readPngBitsPerChannel(bytes) : undefined;
+  return {
+    ...createSourcePolicyMetadata(extension, mimeType, sourceFormatLabel),
+    ...(bits ? { sourceBitsPerChannel: bits } : {}),
+    ...(bits && bits > 8 ? { highBitDepth: true } : {}),
+  };
+}
+
+function inferBrowserRasterFormatLabel(
+  extension: string | undefined,
+  mimeType: string | undefined,
+  bytes: Uint8Array | undefined,
+): string {
+  if (isPngHeader(bytes) || extension === 'png' || mimeType === 'image/png') return 'PNG';
+  if (extension === 'jpg' || extension === 'jpeg' || mimeType === 'image/jpeg') return 'JPEG';
+  if (extension === 'webp' || mimeType === 'image/webp') return 'WebP';
+  if (extension === 'avif' || mimeType === 'image/avif') return 'AVIF';
+  if (extension === 'bmp' || mimeType === IMAGE_BMP_MIME_TYPE) return 'BMP';
+  return 'Raster image';
+}
+
+function normalizeCameraRawExtension(extensionOrFileName: string | undefined): string | undefined {
+  const value = extensionOrFileName?.trim().toLowerCase();
+  if (!value) return undefined;
+  const withoutQuery = value.split(/[?#]/)[0];
+  const extension = withoutQuery.startsWith('.') && !withoutQuery.slice(1).includes('.')
+    ? withoutQuery.slice(1)
+    : withoutQuery.split('.').pop();
+  return extension || undefined;
+}
+
+function isCameraRawFormat(extension: string | undefined, mimeType: string | undefined): boolean {
+  return CAMERA_RAW_EXTENSIONS.has(extension ?? '') || CAMERA_RAW_MIME_TYPES.has(mimeType ?? '');
 }
 
 export function encodeImageDataToTiff(imageData: ImageData): Uint8Array {
@@ -396,6 +2777,66 @@ function isTiffHeader(bytes: Uint8Array | undefined): boolean {
     || (bytes[0] === 0x4d && bytes[1] === 0x4d && bytes[2] === 0 && bytes[3] === 42)
     || (bytes[0] === 0x49 && bytes[1] === 0x49 && bytes[2] === 43 && bytes[3] === 0)
     || (bytes[0] === 0x4d && bytes[1] === 0x4d && bytes[2] === 0 && bytes[3] === 43);
+}
+
+function readTiffBitsPerChannel(bytes: Uint8Array | undefined): number | undefined {
+  if (!isTiffHeader(bytes) || !bytes || bytes.length < 10) return undefined;
+  const littleEndian = bytes[0] === 0x49;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const readU16 = (offset: number) => offset + 2 <= bytes.byteLength ? view.getUint16(offset, littleEndian) : undefined;
+  const readU32 = (offset: number) => offset + 4 <= bytes.byteLength ? view.getUint32(offset, littleEndian) : undefined;
+  if (readU16(2) !== 42) return undefined;
+
+  const ifdOffset = readU32(4);
+  if (ifdOffset === undefined || ifdOffset + 2 > bytes.byteLength) return undefined;
+  const tagCount = readU16(ifdOffset);
+  if (tagCount === undefined) return undefined;
+
+  for (let index = 0; index < tagCount; index += 1) {
+    const entryOffset = ifdOffset + 2 + index * 12;
+    if (entryOffset + 12 > bytes.byteLength || readU16(entryOffset) !== 258) continue;
+    const type = readU16(entryOffset + 2);
+    const count = readU32(entryOffset + 4);
+    const valueOffset = readU32(entryOffset + 8);
+    if (type === undefined || count === undefined || valueOffset === undefined) return undefined;
+    if (type !== 3 && type !== 4) return undefined;
+    if (count === 1) return type === 3 ? readU16(entryOffset + 8) : valueOffset;
+
+    const bytesPerValue = type === 3 ? 2 : 4;
+    const inline = count * bytesPerValue <= 4;
+    const offset = inline ? entryOffset + 8 : valueOffset;
+    if (offset + count * bytesPerValue > bytes.byteLength) return undefined;
+    let maxBits = 0;
+    for (let valueIndex = 0; valueIndex < count; valueIndex += 1) {
+      const value = type === 3
+        ? readU16(offset + valueIndex * bytesPerValue)
+        : readU32(offset + valueIndex * bytesPerValue);
+      if (value === undefined) return undefined;
+      maxBits = Math.max(maxBits, value);
+    }
+    return maxBits || undefined;
+  }
+
+  return undefined;
+}
+
+function isPngHeader(bytes: Uint8Array | undefined): boolean {
+  return Boolean(bytes
+    && bytes.length >= 8
+    && bytes[0] === 137
+    && bytes[1] === 80
+    && bytes[2] === 78
+    && bytes[3] === 71
+    && bytes[4] === 13
+    && bytes[5] === 10
+    && bytes[6] === 26
+    && bytes[7] === 10);
+}
+
+function readPngBitsPerChannel(bytes: Uint8Array | undefined): number | undefined {
+  if (!isPngHeader(bytes) || !bytes || bytes.length < 25) return undefined;
+  if (!startsWithAscii(bytes.subarray(12, 16), 'IHDR')) return undefined;
+  return bytes[24];
 }
 
 function isGifHeader(bytes: Uint8Array | undefined): boolean {

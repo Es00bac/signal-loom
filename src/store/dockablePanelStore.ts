@@ -11,6 +11,7 @@ import {
   resizeFloatingPanelRect,
   sanitizeDockablePanelLayout,
   type DockablePanelDefault,
+  type DockablePanelFloatingRectSpace,
   type DockablePanelLayout,
   type DockablePanelMode,
   type DockablePanelSnapTarget,
@@ -32,14 +33,19 @@ interface DockablePanelState extends DockablePanelSnapshot {
   setPanelMode: (workspaceId: string, panelId: string, mode: DockablePanelMode) => void;
   dockPanel: (workspaceId: string, panelId: string, zone: DockZone) => void;
   snapPanelToDockTarget: (workspaceId: string, panelId: string, target: DockablePanelSnapTarget) => void;
-  floatPanel: (workspaceId: string, panelId: string, rect?: Partial<PanelRect>, viewport?: ViewportSize) => void;
+  floatPanel: (workspaceId: string, panelId: string, rect?: Partial<PanelRect>, viewport?: ViewportSize, options?: { constrainSize?: boolean; floatingRectSpace?: DockablePanelFloatingRectSpace }) => void;
   hidePanel: (workspaceId: string, panelId: string) => void;
   collapsePanel: (workspaceId: string, panelId: string) => void;
   closePanel: (workspaceId: string, panelId: string) => void;
   moveFloatingPanel: (workspaceId: string, panelId: string, deltaX: number, deltaY: number, viewport: ViewportSize) => void;
-  resizeFloatingPanel: (workspaceId: string, panelId: string, resize: ResizeDelta, viewport: ViewportSize) => void;
+  resizeFloatingPanel: (workspaceId: string, panelId: string, resize: ResizeDelta, viewport: ViewportSize, options?: { constrainSize?: boolean }) => void;
   resizeDockedPanel: (workspaceId: string, panelId: string, resize: ResizeDelta, viewport: ViewportSize) => void;
   bringPanelToFront: (workspaceId: string, panelId: string) => void;
+  groupPanelWithPanel: (workspaceId: string, panelId: string, targetPanelId: string) => void;
+  activatePanelTab: (workspaceId: string, panelId: string) => void;
+  reorderPanelTab: (workspaceId: string, panelId: string, targetPanelId: string, placement: 'before' | 'after') => void;
+  ungroupPanelTab: (workspaceId: string, panelId: string) => void;
+  splitPanelTab: (workspaceId: string, panelId: string) => void;
   resetPanelLayout: (workspaceId: string, panelId: string) => void;
   resetWorkspacePanels: (workspaceId: string) => void;
   applyWorkspaceViewDefault: (workspaceId: string, preset: WorkspaceViewDefaultPreset) => void;
@@ -57,16 +63,24 @@ export const useDockablePanelStore = create<DockablePanelState>()(
         set({ defaults: registered.defaults, layouts: registered.layouts });
       },
       setPanelMode: (workspaceId, panelId, mode) => {
-        updatePanel(set, get, workspaceId, panelId, (layout) => ({ ...layout, mode }));
+        updatePanelGroup(set, get, workspaceId, panelId, (layout) => ({ ...layout, mode }));
       },
       dockPanel: (workspaceId, panelId, zone) => {
-        updatePanel(set, get, workspaceId, panelId, (layout) => ({
+        updatePanelGroup(set, get, workspaceId, panelId, (layout) => ({
           ...layout,
           mode: 'docked',
           dockZone: zone,
-        }));
+          floatingRectSpace: undefined,
+        }), { syncDockedSideContainerWidth: true });
       },
       snapPanelToDockTarget: (workspaceId, panelId, target) => {
+        if (target.mode === 'tab') {
+          set((state) => ({
+            layouts: groupPanelWithPanelLayouts(state.layouts, state.defaults, workspaceId, panelId, target.referencePanelId),
+          }));
+          return;
+        }
+
         if (target.mode !== 'docked') {
           return;
         }
@@ -79,11 +93,13 @@ export const useDockablePanelStore = create<DockablePanelState>()(
             ...current,
             mode: 'docked',
             dockZone: target.dockZone,
+            floatingRectSpace: undefined,
           };
 
           const orderedZoneEntries = Object.entries(state.layouts)
             .filter(([entryKey, layout]) => (
               entryKey !== key
+              && (!current.tabGroupId || layout.tabGroupId !== current.tabGroupId)
               && layout.workspaceId === workspaceId
               && layout.dockZone === target.dockZone
               && (layout.mode === 'docked' || layout.mode === 'collapsed')
@@ -104,29 +120,43 @@ export const useDockablePanelStore = create<DockablePanelState>()(
           orderedWithCurrent.splice(insertIndex, 0, [key, dockedCurrent]);
 
           orderedWithCurrent.forEach(([entryKey, layout], index) => {
-            nextLayouts[entryKey] = {
-              ...layout,
+            const nextLayout = {
+              ...(nextLayouts[entryKey] ?? layout),
               mode: entryKey === key ? 'docked' : layout.mode,
               dockZone: target.dockZone,
               zOrder: index,
             };
+            nextLayouts[entryKey] = nextLayout;
+            syncTabGroupLayouts(nextLayouts, nextLayout, {
+              mode: nextLayout.mode,
+              dockZone: nextLayout.dockZone,
+              floatingRect: nextLayout.floatingRect,
+              floatingRectSpace: nextLayout.floatingRectSpace,
+              zOrder: nextLayout.zOrder,
+            });
+            syncDockedSideContainerWidth(nextLayouts, nextLayout);
           });
 
           return { layouts: nextLayouts };
         });
       },
-      floatPanel: (workspaceId, panelId, rect, viewport = defaultViewport()) => {
-        updatePanel(set, get, workspaceId, panelId, (layout, layouts) => ({
-          ...layout,
-          mode: 'floating',
-          floatingRect: normalizeFloatingPanelRect(
+      floatPanel: (workspaceId, panelId, rect, viewport = defaultViewport(), options = {}) => {
+        updatePanelGroup(set, get, workspaceId, panelId, (layout, layouts) => {
+          const floatingRectSpace = resolveNextFloatingRectSpace(layout.floatingRectSpace, rect, options.floatingRectSpace);
+          const floatingRect = normalizeFloatingPanelRect(
             { ...layout.floatingRect, ...rect },
             viewport,
             layout.minSize,
-            { constrainPosition: false },
-          ),
-          zOrder: nextPanelZOrder(Object.values(layouts)),
-        }));
+            { constrainPosition: false, constrainSize: options.constrainSize },
+          );
+          return {
+            ...layout,
+            mode: 'floating',
+            floatingRectSpace,
+            floatingRect,
+            zOrder: nextPanelZOrder(Object.values(layouts)),
+          };
+        });
       },
       hidePanel: (workspaceId, panelId) => {
         updatePanel(set, get, workspaceId, panelId, (layout) => ({ ...layout, mode: 'hidden' }));
@@ -138,7 +168,7 @@ export const useDockablePanelStore = create<DockablePanelState>()(
         get().hidePanel(workspaceId, panelId);
       },
       moveFloatingPanel: (workspaceId, panelId, deltaX, deltaY, viewport) => {
-        updatePanel(set, get, workspaceId, panelId, (layout) => ({
+        updatePanelGroup(set, get, workspaceId, panelId, (layout) => ({
           ...layout,
           floatingRect: moveFloatingPanelRect(
             layout.floatingRect,
@@ -150,15 +180,15 @@ export const useDockablePanelStore = create<DockablePanelState>()(
           ),
         }));
       },
-      resizeFloatingPanel: (workspaceId, panelId, resize, viewport) => {
-        updatePanel(set, get, workspaceId, panelId, (layout) => ({
+      resizeFloatingPanel: (workspaceId, panelId, resize, viewport, options = {}) => {
+        updatePanelGroup(set, get, workspaceId, panelId, (layout) => ({
           ...layout,
           floatingRect: resizeFloatingPanelRect(
             layout.floatingRect,
             resize,
             viewport,
             layout.minSize,
-            { constrainPosition: false },
+            { constrainPosition: false, constrainSize: options.constrainSize },
           ),
         }));
       },
@@ -206,7 +236,7 @@ export const useDockablePanelStore = create<DockablePanelState>()(
         });
       },
       bringPanelToFront: (workspaceId, panelId) => {
-        updatePanel(set, get, workspaceId, panelId, (layout, layouts) => (
+        updatePanelGroup(set, get, workspaceId, panelId, (layout, layouts) => (
           layout.mode === 'floating'
             ? {
                 ...layout,
@@ -214,6 +244,31 @@ export const useDockablePanelStore = create<DockablePanelState>()(
               }
             : layout
         ));
+      },
+      groupPanelWithPanel: (workspaceId, panelId, targetPanelId) => {
+        set((state) => ({
+          layouts: groupPanelWithPanelLayouts(state.layouts, state.defaults, workspaceId, panelId, targetPanelId),
+        }));
+      },
+      activatePanelTab: (workspaceId, panelId) => {
+        set((state) => ({
+          layouts: activatePanelTabLayouts(state.layouts, workspaceId, panelId),
+        }));
+      },
+      reorderPanelTab: (workspaceId, panelId, targetPanelId, placement) => {
+        set((state) => ({
+          layouts: reorderPanelTabLayouts(state.layouts, workspaceId, panelId, targetPanelId, placement),
+        }));
+      },
+      ungroupPanelTab: (workspaceId, panelId) => {
+        set((state) => ({
+          layouts: ungroupPanelTabLayouts(state.layouts, workspaceId, panelId),
+        }));
+      },
+      splitPanelTab: (workspaceId, panelId) => {
+        set((state) => ({
+          layouts: ungroupPanelTabLayouts(state.layouts, workspaceId, panelId),
+        }));
       },
       resetPanelLayout: (workspaceId, panelId) => {
         const key = panelKey(workspaceId, panelId);
@@ -279,7 +334,7 @@ function buildRegisteredPanelDefaults(
     const persistedLayout = nextLayouts[key];
     const nextLayout = previousDefault && areDockablePanelLayoutsEqual(persistedLayout, previousDefault)
       ? defaultLayout
-      : mergePersistedLayout(persistedLayout, defaultLayout);
+      : mergePersistedLayout(persistedLayout, defaultLayout, input);
     if (!areDockablePanelLayoutsEqual(nextDefaults[key], defaultLayout)) {
       nextDefaults[key] = defaultLayout;
       changed = true;
@@ -300,8 +355,35 @@ function buildRegisteredPanelDefaults(
 function mergePersistedLayout(
   persisted: unknown,
   defaultLayout: DockablePanelLayout,
+  defaultInput: DockablePanelDefault,
 ): DockablePanelLayout {
-  return sanitizeDockablePanelLayout(persisted, defaultLayout);
+  const sanitized = sanitizeDockablePanelLayout(
+    persisted,
+    defaultLayout,
+    undefined,
+    { constrainFloatingRectPosition: false, constrainFloatingRectSize: false },
+  );
+  return defaultInput.fixedSize
+    ? repairFixedSizeDefaultLayout(sanitized, defaultLayout)
+    : sanitized;
+}
+
+function repairFixedSizeDefaultLayout(
+  layout: DockablePanelLayout,
+  defaultLayout: DockablePanelLayout,
+): DockablePanelLayout {
+  const mode = layout.mode === 'hidden' ? 'hidden' : defaultLayout.mode;
+  return {
+    ...layout,
+    mode,
+    dockZone: defaultLayout.dockZone,
+    floatingRect: {
+      ...layout.floatingRect,
+      width: defaultLayout.floatingRect.width,
+      height: defaultLayout.floatingRect.height,
+    },
+    minSize: { ...defaultLayout.minSize },
+  };
 }
 
 function resizeDockedPanelRectToMatch(
@@ -443,9 +525,24 @@ function sanitizePersistedLayouts(
   const layouts: Record<string, DockablePanelLayout> = {};
   for (const [key, value] of Object.entries(persisted)) {
     const fallback = currentLayouts[key] ?? fallbackLayoutFromKey(key);
-    layouts[key] = sanitizeDockablePanelLayout(value, fallback);
+    layouts[key] = sanitizeDockablePanelLayout(
+      value,
+      fallback,
+      undefined,
+      { constrainFloatingRectPosition: false, constrainFloatingRectSize: false },
+    );
   }
   return layouts;
+}
+
+function resolveNextFloatingRectSpace(
+  current: DockablePanelFloatingRectSpace | undefined,
+  rect: Partial<PanelRect> | undefined,
+  requested: DockablePanelFloatingRectSpace | undefined,
+): DockablePanelFloatingRectSpace | undefined {
+  if (requested === 'screen') return 'screen';
+  if (requested === 'owner') return undefined;
+  return rect ? undefined : current;
 }
 
 function fallbackLayoutFromKey(key: string): DockablePanelLayout {
@@ -472,6 +569,463 @@ function updatePanel(
     };
   });
   void get;
+}
+
+function updatePanelGroup(
+  set: (partial: (state: DockablePanelState) => Partial<DockablePanelState>) => void,
+  get: () => DockablePanelState,
+  workspaceId: string,
+  panelId: string,
+  updater: (layout: DockablePanelLayout, layouts: Record<string, DockablePanelLayout>) => DockablePanelLayout,
+  options: { syncDockedSideContainerWidth?: boolean } = {},
+): void {
+  const key = panelKey(workspaceId, panelId);
+  set((state) => {
+    const current = state.layouts[key] ?? state.defaults[key] ?? createDefaultDockablePanelLayout({ workspaceId, panelId });
+    const nextLayout = updater(current, state.layouts);
+    const nextLayouts = {
+      ...state.layouts,
+      [key]: nextLayout,
+    };
+    syncTabGroupLayouts(nextLayouts, nextLayout, {
+      mode: nextLayout.mode,
+      dockZone: nextLayout.dockZone,
+      floatingRect: nextLayout.floatingRect,
+      floatingRectSpace: nextLayout.floatingRectSpace,
+      zOrder: nextLayout.zOrder,
+    });
+    if (options.syncDockedSideContainerWidth) {
+      syncDockedSideContainerWidth(nextLayouts, nextLayout);
+    }
+    return { layouts: nextLayouts };
+  });
+  void get;
+}
+
+function groupPanelWithPanelLayouts(
+  layouts: Record<string, DockablePanelLayout>,
+  defaults: Record<string, DockablePanelLayout>,
+  workspaceId: string,
+  panelId: string,
+  targetPanelId: string,
+): Record<string, DockablePanelLayout> {
+  if (panelId === targetPanelId) return layouts;
+
+  const key = panelKey(workspaceId, panelId);
+  const targetKey = panelKey(workspaceId, targetPanelId);
+  const currentInput = layouts[key] ?? defaults[key] ?? createDefaultDockablePanelLayout({ workspaceId, panelId });
+  const targetInput = layouts[targetKey] ?? defaults[targetKey] ?? createDefaultDockablePanelLayout({ workspaceId, panelId: targetPanelId });
+  const nextLayouts = {
+    ...layouts,
+    [key]: currentInput,
+    [targetKey]: targetInput,
+  };
+
+  if (currentInput.tabGroupId && currentInput.tabGroupId === targetInput.tabGroupId) {
+    return activatePanelTabLayouts(nextLayouts, workspaceId, panelId);
+  }
+
+  removePanelFromTabGroup(nextLayouts, workspaceId, panelId);
+  const target = nextLayouts[targetKey] ?? targetInput;
+  const current = nextLayouts[key] ?? currentInput;
+  const tabGroupId = target.tabGroupId ?? createTabGroupId(workspaceId, target.panelId);
+  const targetMembers = resolveTabGroupMembers(nextLayouts, workspaceId, tabGroupId);
+  const nextOrder = targetMembers.length
+    ? Math.max(...targetMembers.map((layout) => layout.tabGroupOrder ?? 0)) + 1
+    : 1;
+
+  if (!target.tabGroupId) {
+    nextLayouts[targetKey] = {
+      ...target,
+      tabGroupId,
+      tabGroupOrder: 0,
+      tabGroupActive: false,
+    };
+  }
+
+  for (const [entryKey, layout] of Object.entries(nextLayouts)) {
+    if (layout.workspaceId !== workspaceId || layout.tabGroupId !== tabGroupId) continue;
+    nextLayouts[entryKey] = {
+      ...layout,
+      mode: target.mode,
+      dockZone: target.dockZone,
+      floatingRect: { ...target.floatingRect },
+      floatingRectSpace: target.floatingRectSpace,
+      zOrder: target.zOrder,
+      tabGroupActive: false,
+    };
+  }
+
+  nextLayouts[key] = {
+    ...current,
+    mode: target.mode,
+    dockZone: target.dockZone,
+    floatingRect: { ...target.floatingRect },
+    floatingRectSpace: target.floatingRectSpace,
+    zOrder: target.zOrder,
+    tabGroupId,
+    tabGroupOrder: nextOrder,
+    tabGroupActive: true,
+  };
+
+  syncDockedSideContainerWidth(nextLayouts, nextLayouts[key]);
+
+  return ensureValidTabGroups(nextLayouts, workspaceId);
+}
+
+function activatePanelTabLayouts(
+  layouts: Record<string, DockablePanelLayout>,
+  workspaceId: string,
+  panelId: string,
+): Record<string, DockablePanelLayout> {
+  const key = panelKey(workspaceId, panelId);
+  const layout = layouts[key];
+  if (!layout?.tabGroupId) return layouts;
+  const nextLayouts = { ...layouts };
+  const groupMembers = Object.entries(layouts)
+    .filter(([, entryLayout]) => (
+      entryLayout.workspaceId === workspaceId
+      && entryLayout.tabGroupId === layout.tabGroupId
+    ))
+    .sort(([, a], [, b]) => (
+      Number(b.tabGroupActive) - Number(a.tabGroupActive)
+      || (a.tabGroupOrder ?? 0) - (b.tabGroupOrder ?? 0)
+      || a.panelId.localeCompare(b.panelId)
+    ));
+  const referenceLayout = groupMembers[0]?.[1] ?? layout;
+  for (const [entryKey, entryLayout] of Object.entries(layouts)) {
+    if (entryLayout.workspaceId !== workspaceId || entryLayout.tabGroupId !== layout.tabGroupId) continue;
+    nextLayouts[entryKey] = {
+      ...entryLayout,
+      mode: referenceLayout.mode,
+      dockZone: referenceLayout.dockZone,
+      floatingRect: { ...referenceLayout.floatingRect },
+      floatingRectSpace: referenceLayout.floatingRectSpace,
+      zOrder: referenceLayout.zOrder,
+      tabGroupActive: entryKey === key,
+    };
+  }
+  return nextLayouts;
+}
+
+function ungroupPanelTabLayouts(
+  layouts: Record<string, DockablePanelLayout>,
+  workspaceId: string,
+  panelId: string,
+): Record<string, DockablePanelLayout> {
+  const key = panelKey(workspaceId, panelId);
+  const layout = layouts[key];
+  if (!layout?.tabGroupId) return layouts;
+  const groupMembersBefore = Object.entries(layouts).filter(([, entryLayout]) => (
+    entryLayout.workspaceId === workspaceId
+    && entryLayout.tabGroupId === layout.tabGroupId
+  ));
+  const nextLayouts = { ...layouts };
+  removePanelFromTabGroup(nextLayouts, workspaceId, panelId);
+  stabilizeUngroupedDockedTabOrder(nextLayouts, workspaceId, layout, groupMembersBefore);
+  return ensureValidTabGroups(nextLayouts, workspaceId, layout.tabGroupId);
+}
+
+function reorderPanelTabLayouts(
+  layouts: Record<string, DockablePanelLayout>,
+  workspaceId: string,
+  panelId: string,
+  targetPanelId: string,
+  placement: 'before' | 'after',
+): Record<string, DockablePanelLayout> {
+  if (panelId === targetPanelId) return layouts;
+  const key = panelKey(workspaceId, panelId);
+  const targetKey = panelKey(workspaceId, targetPanelId);
+  const layout = layouts[key];
+  const target = layouts[targetKey];
+  if (!layout?.tabGroupId || !target?.tabGroupId || layout.tabGroupId !== target.tabGroupId) {
+    return layouts;
+  }
+
+  const members = Object.entries(layouts)
+    .filter(([, entryLayout]) => (
+      entryLayout.workspaceId === workspaceId
+      && entryLayout.tabGroupId === layout.tabGroupId
+    ))
+    .sort(([, a], [, b]) => (
+      (a.tabGroupOrder ?? 0) - (b.tabGroupOrder ?? 0)
+      || a.panelId.localeCompare(b.panelId)
+    ));
+  const movingEntry = members.find(([entryKey]) => entryKey === key);
+  if (!movingEntry) return layouts;
+
+  const orderedEntries = members.filter(([entryKey]) => entryKey !== key);
+  const targetIndex = orderedEntries.findIndex(([entryKey]) => entryKey === targetKey);
+  if (targetIndex < 0) return layouts;
+
+  orderedEntries.splice(targetIndex + (placement === 'after' ? 1 : 0), 0, movingEntry);
+  const nextLayouts = { ...layouts };
+  orderedEntries.forEach(([entryKey, entryLayout], index) => {
+    nextLayouts[entryKey] = {
+      ...entryLayout,
+      tabGroupOrder: index,
+    };
+  });
+
+  return ensureValidTabGroups(nextLayouts, workspaceId, layout.tabGroupId);
+}
+
+function removePanelFromTabGroup(
+  layouts: Record<string, DockablePanelLayout>,
+  workspaceId: string,
+  panelId: string,
+): void {
+  const key = panelKey(workspaceId, panelId);
+  const layout = layouts[key];
+  if (!layout?.tabGroupId) return;
+  layouts[key] = {
+    ...layout,
+    tabGroupId: undefined,
+    tabGroupOrder: undefined,
+    tabGroupActive: undefined,
+  };
+  ensureValidTabGroups(layouts, workspaceId, layout.tabGroupId);
+}
+
+function stabilizeUngroupedDockedTabOrder(
+  layouts: Record<string, DockablePanelLayout>,
+  workspaceId: string,
+  ungroupedLayout: DockablePanelLayout,
+  groupMembersBefore: Array<[string, DockablePanelLayout]>,
+): void {
+  if (
+    !ungroupedLayout.tabGroupId
+    || (ungroupedLayout.mode !== 'docked' && ungroupedLayout.mode !== 'collapsed')
+  ) {
+    return;
+  }
+
+  const ungroupedKey = panelKey(workspaceId, ungroupedLayout.panelId);
+  const groupMemberKeys = new Set(groupMembersBefore.map(([entryKey]) => entryKey));
+  const groupZOrder = Math.min(...groupMembersBefore.map(([, layout]) => layout.zOrder));
+  const remainingGroupEntries = groupMembersBefore
+    .filter(([entryKey, layout]) => (
+      entryKey !== ungroupedKey
+      && layouts[entryKey]
+      && layout.workspaceId === workspaceId
+      && layout.dockZone === ungroupedLayout.dockZone
+      && (layout.mode === 'docked' || layout.mode === 'collapsed')
+    ))
+    .sort(([, a], [, b]) => (
+      (a.tabGroupOrder ?? 0) - (b.tabGroupOrder ?? 0)
+      || a.panelId.localeCompare(b.panelId)
+    ));
+  const ungroupedCurrent = layouts[ungroupedKey];
+  if (!ungroupedCurrent) return;
+
+  type StackUnit =
+    | { type: 'panel'; key: string; zOrder: number; panelId: string }
+    | { type: 'group'; keys: string[]; zOrder: number; panelId: string };
+
+  const ungroupedOrder = ungroupedLayout.tabGroupOrder ?? 0;
+  const formerGroupUnits: StackUnit[] = [];
+  if (remainingGroupEntries.length <= 1) {
+    const individualEntries = [
+      ...remainingGroupEntries.map(([entryKey, layout]) => ({
+        entryKey,
+        panelId: layout.panelId,
+        order: layout.tabGroupOrder ?? 0,
+      })),
+      {
+        entryKey: ungroupedKey,
+        panelId: ungroupedLayout.panelId,
+        order: ungroupedOrder,
+      },
+    ].sort((a, b) => a.order - b.order || a.panelId.localeCompare(b.panelId));
+
+    formerGroupUnits.push(...individualEntries.map((entry) => ({
+      type: 'panel' as const,
+      key: entry.entryKey,
+      zOrder: groupZOrder,
+      panelId: entry.panelId,
+    })));
+  } else {
+    const remainingOrders = remainingGroupEntries.map(([, layout]) => layout.tabGroupOrder ?? 0);
+    const groupUnit: StackUnit = {
+      type: 'group',
+      keys: remainingGroupEntries.map(([entryKey]) => entryKey),
+      zOrder: groupZOrder,
+      panelId: remainingGroupEntries[0]?.[1].panelId ?? ungroupedLayout.panelId,
+    };
+    const ungroupedUnit: StackUnit = {
+      type: 'panel',
+      key: ungroupedKey,
+      zOrder: groupZOrder,
+      panelId: ungroupedLayout.panelId,
+    };
+    formerGroupUnits.push(
+      ungroupedOrder < Math.min(...remainingOrders)
+        ? ungroupedUnit
+        : groupUnit,
+      ungroupedOrder < Math.min(...remainingOrders)
+        ? groupUnit
+        : ungroupedUnit,
+    );
+  }
+
+  const unrelatedUnits: StackUnit[] = Object.entries(layouts)
+    .filter(([entryKey, layout]) => (
+      !groupMemberKeys.has(entryKey)
+      && layout.workspaceId === workspaceId
+      && layout.dockZone === ungroupedLayout.dockZone
+      && (layout.mode === 'docked' || layout.mode === 'collapsed')
+    ))
+    .map(([entryKey, layout]) => ({
+      type: 'panel' as const,
+      key: entryKey,
+      zOrder: layout.zOrder,
+      panelId: layout.panelId,
+    }))
+    .sort((a, b) => a.zOrder - b.zOrder || a.panelId.localeCompare(b.panelId));
+
+  const insertIndex = unrelatedUnits.findIndex((unit) => unit.zOrder >= groupZOrder);
+  const orderedUnits = [...unrelatedUnits];
+  orderedUnits.splice(insertIndex < 0 ? orderedUnits.length : insertIndex, 0, ...formerGroupUnits);
+
+  orderedUnits.forEach((unit, index) => {
+    if (unit.type === 'panel') {
+      const layout = layouts[unit.key];
+      if (!layout) return;
+      layouts[unit.key] = {
+        ...layout,
+        zOrder: index,
+      };
+      return;
+    }
+
+    for (const entryKey of unit.keys) {
+      const layout = layouts[entryKey];
+      if (!layout) continue;
+      layouts[entryKey] = {
+        ...layout,
+        zOrder: index,
+      };
+    }
+  });
+}
+
+function ensureValidTabGroups(
+  layouts: Record<string, DockablePanelLayout>,
+  workspaceId: string,
+  groupId?: string,
+): Record<string, DockablePanelLayout> {
+  const groups = new Map<string, Array<[string, DockablePanelLayout]>>();
+  for (const entry of Object.entries(layouts)) {
+    const [, layout] = entry;
+    if (layout.workspaceId !== workspaceId || !layout.tabGroupId) continue;
+    if (groupId && layout.tabGroupId !== groupId) continue;
+    const members = groups.get(layout.tabGroupId) ?? [];
+    members.push(entry);
+    groups.set(layout.tabGroupId, members);
+  }
+
+  for (const members of groups.values()) {
+    if (members.length <= 1) {
+      for (const [entryKey, layout] of members) {
+        layouts[entryKey] = {
+          ...layout,
+          tabGroupId: undefined,
+          tabGroupOrder: undefined,
+          tabGroupActive: undefined,
+        };
+      }
+      continue;
+    }
+
+    const sortedMembers = [...members].sort(([, a], [, b]) => (
+      (a.tabGroupOrder ?? 0) - (b.tabGroupOrder ?? 0)
+      || a.panelId.localeCompare(b.panelId)
+    ));
+    const activeMember = sortedMembers.find(([, layout]) => layout.tabGroupActive) ?? sortedMembers[0];
+    sortedMembers.forEach(([entryKey, layout], index) => {
+      layouts[entryKey] = {
+        ...layout,
+        tabGroupOrder: index,
+        tabGroupActive: entryKey === activeMember[0],
+      };
+    });
+  }
+
+  return layouts;
+}
+
+function resolveTabGroupMembers(
+  layouts: Record<string, DockablePanelLayout>,
+  workspaceId: string,
+  tabGroupId: string,
+): DockablePanelLayout[] {
+  return Object.values(layouts).filter((layout) => (
+    layout.workspaceId === workspaceId
+    && layout.tabGroupId === tabGroupId
+  ));
+}
+
+function syncTabGroupLayouts(
+  layouts: Record<string, DockablePanelLayout>,
+  source: DockablePanelLayout,
+  shared: Pick<DockablePanelLayout, 'mode' | 'dockZone' | 'floatingRect' | 'floatingRectSpace' | 'zOrder'>,
+): void {
+  if (!source.tabGroupId) return;
+  for (const [entryKey, layout] of Object.entries(layouts)) {
+    if (
+      layout.workspaceId !== source.workspaceId
+      || layout.panelId === source.panelId
+      || layout.tabGroupId !== source.tabGroupId
+    ) {
+      continue;
+    }
+    layouts[entryKey] = {
+      ...layout,
+      ...shared,
+      floatingRect: { ...shared.floatingRect },
+    };
+  }
+}
+
+function syncDockedSideContainerWidth(
+  layouts: Record<string, DockablePanelLayout>,
+  source: DockablePanelLayout,
+): void {
+  if (source.mode !== 'docked' || (source.dockZone !== 'left' && source.dockZone !== 'right')) {
+    return;
+  }
+
+  const sourceShared = isSharedDockContainerPanel(source.panelId);
+  const entries = Object.entries(layouts)
+    .filter(([, layout]) => (
+      layout.workspaceId === source.workspaceId
+      && layout.mode === 'docked'
+      && layout.dockZone === source.dockZone
+      && isSharedDockContainerPanel(layout.panelId) === sourceShared
+    ))
+    .sort(([, a], [, b]) => a.zOrder - b.zOrder || a.panelId.localeCompare(b.panelId));
+  if (!entries.length) return;
+
+  const reference = entries.find(([, layout]) => layout.panelId !== source.panelId)?.[1] ?? source;
+  const width = reference.floatingRect.width;
+  for (const [entryKey, layout] of entries) {
+    if (layout.floatingRect.width === width) continue;
+    layouts[entryKey] = {
+      ...layout,
+      floatingRect: {
+        ...layout.floatingRect,
+        width,
+      },
+    };
+  }
+}
+
+function isSharedDockContainerPanel(panelId: string): boolean {
+  return panelId === 'source-bin' || panelId === 'bookmarks';
+}
+
+function createTabGroupId(workspaceId: string, panelId: string): string {
+  return `${workspaceId}-tab-group-${panelId}`;
 }
 
 function defaultViewport(): ViewportSize {

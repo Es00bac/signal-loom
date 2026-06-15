@@ -43,6 +43,80 @@ type PaperVertexEditOptions = {
   borderSnapThresholdMm?: number;
 };
 
+export interface EyedropperPixelSource {
+  bitmap: (CanvasImageSource & { width: number; height: number });
+  x: number;
+  y: number;
+}
+
+export interface EyedropperPixelColorResult {
+  color: string;
+}
+
+export interface EyedropperPixelUnsupportedReason {
+  reason: string;
+}
+
+export type EyedropperPixelResult = EyedropperPixelColorResult | EyedropperPixelUnsupportedReason;
+
+export interface PaperEyedropperPixelSource extends EyedropperPixelSource {
+  kind: 'image' | 'page';
+  sourceLabel?: string;
+}
+
+export interface PaperEyedropperPixelResult {
+  color: string;
+  sourceKind: 'image' | 'page';
+  sourceLabel: string;
+}
+
+export type PaperEyedropperPixelColorResult = PaperEyedropperPixelResult | EyedropperPixelUnsupportedReason;
+
+const PAPER_EYEDROPPER_DEFAULT_SOURCE_LABEL: Record<PaperEyedropperPixelSource['kind'], string> = {
+  image: 'Paper image',
+  page: 'Paper page',
+};
+
+export function samplePixelColorFromCanvas(source: EyedropperPixelSource): EyedropperPixelResult {
+  const x = Math.floor(source.x);
+  const y = Math.floor(source.y);
+  if (x < 0 || y < 0 || x >= source.bitmap.width || y >= source.bitmap.height) {
+    return { reason: 'Sample point is outside the available pixel source.' };
+  }
+
+  const tmp = new OffscreenCanvas(1, 1);
+  const ctx = tmp.getContext('2d', { willReadFrequently: true });
+  if (!ctx) {
+    return { reason: 'Unable to read pixel data because no 2D canvas context is available.' };
+  }
+
+  ctx.drawImage(source.bitmap, x, y, 1, 1, 0, 0, 1, 1);
+  const data = ctx.getImageData(0, 0, 1, 1).data;
+  if (data[3] === 0) {
+    return { reason: 'Sampled pixel is fully transparent.' };
+  }
+
+  const color = `#${[data[0], data[1], data[2]].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+  return { color };
+}
+
+export function resolvePaperEyedropperPixelColor(source?: PaperEyedropperPixelSource | null): PaperEyedropperPixelColorResult {
+  if (!source) {
+    return { reason: 'No image/page pixel source is available for Paper eyedropper sampling.' };
+  }
+
+  const sample = samplePixelColorFromCanvas(source);
+  if ('reason' in sample) {
+    return sample;
+  }
+
+  return {
+    color: sample.color,
+    sourceKind: source.kind,
+    sourceLabel: source.sourceLabel ?? PAPER_EYEDROPPER_DEFAULT_SOURCE_LABEL[source.kind],
+  };
+}
+
 export function frameKindForTool(tool: PaperTool): PaperFrameKind | null {
   switch (tool) {
     case 'text':
@@ -67,6 +141,7 @@ export function frameKindForTool(tool: PaperTool): PaperFrameKind | null {
       return 'shape';
     case 'hand':
     case 'select':
+    case 'eyedropper':
     case 'gutterKnife':
       return null;
     default:
@@ -93,8 +168,54 @@ export function shapeKindForTool(tool: PaperTool): PaperFrame['shapeKind'] | und
 
 export function toolLabel(tool: PaperTool): string {
   if (tool === 'hand') return 'Hand';
+  if (tool === 'eyedropper') return 'Eyedropper';
+  if (tool === 'gutterKnife') return 'Gutter knife';
   const kind = frameKindForTool(tool);
   return kind ? frameKindLabel(kind) : 'Select';
+}
+
+export function resolvePaperEyedropperFrameColor(frame: PaperFrame): string {
+  if ((frame.kind === 'text' || frame.kind === 'caption') && isOpaqueColor(frame.typography.color)) {
+    return frame.typography.color;
+  }
+
+  if (frame.shapeKind === 'line' && isOpaqueColor(frame.strokeColor)) {
+    return frame.strokeColor;
+  }
+
+  if (frame.fillOpacity > 0 && isOpaqueColor(frame.fillColor)) {
+    return frame.fillColor;
+  }
+
+  if (frame.strokeOpacity > 0 && frame.strokeWidthMm > 0 && isOpaqueColor(frame.strokeColor)) {
+    return frame.strokeColor;
+  }
+
+  if (isOpaqueColor(frame.typography.color)) {
+    return frame.typography.color;
+  }
+
+  return '#000000';
+}
+
+export function buildPaperEyedropperFrameColorPatch(frame: PaperFrame, color: string): PaperFramePatch {
+  if (frame.kind === 'text' || frame.kind === 'caption') {
+    return { typography: { color } };
+  }
+
+  if (frame.shapeKind === 'line') {
+    return { strokeColor: color };
+  }
+
+  return { fillColor: color };
+}
+
+function isOpaqueColor(color: string | undefined): color is string {
+  if (!color) return false;
+  const normalized = color.trim().toLowerCase();
+  if (!normalized || normalized === 'transparent') return false;
+  if (/^#[0-9a-f]{6}00$/.test(normalized)) return false;
+  return true;
 }
 
 export function frameKindLabel(kind: PaperFrameKind): string {

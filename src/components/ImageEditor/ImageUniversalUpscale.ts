@@ -6,23 +6,46 @@ import {
   type AndroidAcceleratorUpscaleInput,
 } from '../../lib/androidAccelerator';
 import {
+  isAndroidNativeImageUpscalerAvailable,
+  runAndroidNativeImageUpscale,
+  type AndroidImageParityRuntimeInput,
+  type AndroidNativeImageUpscaleInput,
+  type AndroidNativeImageUpscaleResult,
+} from '../../lib/androidNativeImageUpscaler';
+import {
   isLocalCpuUpscalerConfigured,
   type LocalCpuUpscalerImageResult,
   type LocalCpuUpscalerInput,
 } from '../../lib/localCpuUpscaler';
-import type { ProviderSettings } from '../../types/flow';
+import { DEFAULT_PROVIDER_SETTINGS } from '../../lib/providerCatalog';
+import {
+  describeUniversalImageUpscaleReadiness,
+  type UniversalImageUpscalePrintTargetInput,
+  type UniversalImageUpscaleReadinessDescriptor,
+  type UniversalImageUpscaleWorkflowSourceKind,
+} from '../../lib/universalImageUpscale';
+import type { ApiKeys, ProviderSettings } from '../../types/flow';
 import type { ImageDocument, ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import { resizeImageDocumentPixels, scaleImageDocumentToPercent } from './ImageDocumentGeometry';
 import { imageDocumentToDataUrl } from './ImageDocumentExport';
 import { bitmapFromImageSource } from './LayerBitmap';
 
-export type UniversalImageUpscaleProvider = 'android-accelerator' | 'local-ai-cpu' | 'browser';
+export type UniversalImageUpscaleProvider = 'android-accelerator' | 'android-native' | 'local-ai-cpu' | 'browser';
+
+export interface UniversalImageUpscaleRuntimeMetadata {
+  kind: 'accelerated' | 'bitmap-fallback' | 'remote-accelerator' | 'local-ai-cpu' | 'browser-resize' | 'unknown';
+  accelerator?: string;
+  backend?: string;
+  modelUsed?: string;
+  warnings: string[];
+}
 
 export interface UniversalImageUpscaleResult {
   document: ImageDocument;
   provider: UniversalImageUpscaleProvider;
   estimatedCostUsd: number;
   statusMessage: string;
+  runtime?: UniversalImageUpscaleRuntimeMetadata;
 }
 
 export interface UniversalImageUpscaleInput {
@@ -38,9 +61,45 @@ export interface UniversalImageUpscaleInput {
   >;
   scalePercent?: number;
   androidUpscale?: (input: AndroidAcceleratorUpscaleInput) => Promise<AndroidAcceleratorImageResult>;
+  androidNativeUpscale?: (input: AndroidNativeImageUpscaleInput) => Promise<AndroidNativeImageUpscaleResult>;
+  isAndroidNativeUpscalerAvailable?: boolean;
   localAiCpuUpscale?: (input: LocalCpuUpscalerInput) => Promise<LocalCpuUpscalerImageResult>;
   documentToDataUrl?: (doc: ImageDocument) => Promise<string>;
   dataUrlToBitmap?: (dataUrl: string) => Promise<LayerBitmap>;
+}
+
+export interface ImageDocumentUniversalUpscaleReadinessInput {
+  doc: ImageDocument;
+  providerSettings: Partial<ProviderSettings>;
+  apiKeys?: Pick<ApiKeys, 'stability'>;
+  sourceKind?: UniversalImageUpscaleWorkflowSourceKind;
+  targetWidthPx?: number;
+  targetHeightPx?: number;
+  scalePercent?: number;
+  printTarget?: UniversalImageUpscalePrintTargetInput;
+  isAndroidNativeUpscalerAvailable?: boolean;
+  onDeviceRuntime?: AndroidImageParityRuntimeInput;
+}
+
+export function describeImageDocumentUniversalUpscaleReadiness(
+  input: ImageDocumentUniversalUpscaleReadinessInput,
+): UniversalImageUpscaleReadinessDescriptor {
+  return describeUniversalImageUpscaleReadiness({
+    providerSettings: {
+      ...DEFAULT_PROVIDER_SETTINGS,
+      ...input.providerSettings,
+    },
+    apiKeys: input.apiKeys,
+    sourceKind: input.sourceKind,
+    sourceWidthPx: input.doc.width,
+    sourceHeightPx: input.doc.height,
+    targetWidthPx: input.targetWidthPx,
+    targetHeightPx: input.targetHeightPx,
+    scalePercent: input.scalePercent,
+    printTarget: input.printTarget,
+    androidNativeAvailable: input.isAndroidNativeUpscalerAvailable,
+    onDeviceRuntime: input.onDeviceRuntime,
+  });
 }
 
 export async function upscaleImageDocumentUniversal(input: UniversalImageUpscaleInput): Promise<UniversalImageUpscaleResult> {
@@ -61,15 +120,45 @@ export async function upscaleImageDocumentUniversal(input: UniversalImageUpscale
       outputFormat: 'png',
     });
     const bitmap = await dataUrlToBitmap(androidResult.dataUrl);
+    const runtime = buildUniversalUpscaleRuntimeMetadata('android-accelerator', androidResult);
     return {
       document: replaceDocumentWithSingleUpscaledLayer(input.doc, bitmap, target.width, target.height, {
         idSuffix: 'phone-upscale',
         metadataSourceFormat: 'android-accelerator-upscale',
         statusLabel: 'Phone AI',
+        sourceWarnings: buildUpscaleLayerWarnings(input.doc, runtime, 'Android accelerator'),
       }),
       provider: 'android-accelerator',
       estimatedCostUsd: 0,
       statusMessage: `Upscaled "${input.doc.title}" to ${target.width} x ${target.height}px with Android accelerator.`,
+      ...(runtime ? { runtime } : {}),
+    };
+  }
+
+  if (input.isAndroidNativeUpscalerAvailable ?? isAndroidNativeImageUpscalerAvailable()) {
+    const documentToDataUrl = input.documentToDataUrl ?? imageDocumentToDataUrl;
+    const dataUrlToBitmap = input.dataUrlToBitmap ?? bitmapFromDataUrl;
+    const sourceDataUrl = await documentToDataUrl(input.doc);
+    const androidResult = await (input.androidNativeUpscale ?? runAndroidNativeImageUpscale)({
+      sourceDataUrl,
+      targetWidthPx: target.width,
+      targetHeightPx: target.height,
+      outputFormat: 'png',
+    });
+    const bitmap = await dataUrlToBitmap(androidResult.dataUrl);
+    const runtime = buildUniversalUpscaleRuntimeMetadata('android-native', androidResult);
+
+    return {
+      document: replaceDocumentWithSingleUpscaledLayer(input.doc, bitmap, target.width, target.height, {
+        idSuffix: 'android-native-upscale',
+        metadataSourceFormat: 'android-native-upscale',
+        statusLabel: 'Android native',
+        sourceWarnings: buildUpscaleLayerWarnings(input.doc, runtime, 'Android native'),
+      }),
+      provider: 'android-native',
+      estimatedCostUsd: 0,
+      statusMessage: buildAndroidNativeStatusMessage(input.doc.title, target.width, target.height, runtime),
+      ...(runtime ? { runtime } : {}),
     };
   }
 
@@ -118,6 +207,9 @@ export function describeUniversalImageUpscaleProvider(provider: UniversalImageUp
   if (provider === 'android-accelerator') {
     return 'Android accelerator: NPU/GPU upscaler';
   }
+  if (provider === 'android-native') {
+    return 'Android native image upscaler';
+  }
   if (provider === 'local-ai-cpu') {
     return 'Local CPU AI upscaler';
   }
@@ -133,6 +225,7 @@ function replaceDocumentWithSingleUpscaledLayer(
     idSuffix?: string;
     metadataSourceFormat?: string;
     statusLabel?: string;
+    sourceWarnings?: string[];
   },
 ): ImageDocument {
   const statusLabel = options?.statusLabel ?? 'AI';
@@ -153,9 +246,7 @@ function replaceDocumentWithSingleUpscaledLayer(
     mask: null,
     metadata: {
       sourceFormat: metadataSourceFormat,
-      sourceWarnings: doc.layers.length > 1
-        ? ['The AI upscaler operates on the flattened visible image; undo restores the original layers.']
-        : undefined,
+      sourceWarnings: options?.sourceWarnings,
     },
   };
 
@@ -182,4 +273,109 @@ async function bitmapFromDataUrl(dataUrl: string): Promise<LayerBitmap> {
   } finally {
     imageBitmap.close();
   }
+}
+
+function buildUniversalUpscaleRuntimeMetadata(
+  provider: UniversalImageUpscaleProvider,
+  result: {
+    accelerator?: string;
+    backend?: string;
+    modelUsed?: string;
+    warnings?: string[];
+  },
+): UniversalImageUpscaleRuntimeMetadata | undefined {
+  const accelerator = result.accelerator?.trim();
+  const backend = result.backend?.trim();
+  const modelUsed = result.modelUsed?.trim();
+  const warnings = result.warnings?.filter((warning) => warning.trim().length > 0) ?? [];
+  if (!accelerator && !backend && !modelUsed && warnings.length === 0) {
+    return undefined;
+  }
+
+  const combined = `${accelerator ?? ''} ${backend ?? ''}`.toLowerCase();
+  const kind = provider === 'android-accelerator'
+    ? 'remote-accelerator'
+    : combined.includes('bitmap')
+      ? 'bitmap-fallback'
+      : combined.includes('qnn') || combined.includes('nnapi') || combined.includes('local-dream')
+        ? 'accelerated'
+        : 'unknown';
+
+  return {
+    kind,
+    ...(accelerator ? { accelerator } : {}),
+    ...(backend ? { backend } : {}),
+    ...(modelUsed ? { modelUsed } : {}),
+    warnings,
+  };
+}
+
+function buildUpscaleLayerWarnings(
+  doc: ImageDocument,
+  runtime: UniversalImageUpscaleRuntimeMetadata | undefined,
+  runtimeLabel: 'Android accelerator' | 'Android native',
+): string[] | undefined {
+  const warnings: string[] = [];
+  if (doc.layers.length > 1) {
+    warnings.push('The AI upscaler operates on the flattened visible image; undo restores the original layers.');
+  }
+  if (runtime) {
+    const runtimeSummary = runtimeLabel === 'Android native'
+      ? buildAndroidNativeRuntimeWarning(runtime)
+      : buildAndroidAcceleratorRuntimeWarning(runtime);
+    if (runtimeSummary) {
+      warnings.push(runtimeSummary);
+    }
+    if (runtime.modelUsed) {
+      warnings.push(`${runtimeLabel} model: ${runtime.modelUsed}.`);
+    }
+    warnings.push(...runtime.warnings);
+  }
+  return warnings.length > 0 ? warnings : undefined;
+}
+
+function buildAndroidNativeStatusMessage(
+  title: string,
+  width: number,
+  height: number,
+  runtime?: UniversalImageUpscaleRuntimeMetadata,
+): string {
+  const suffix = runtime?.kind === 'accelerated' && runtime.backend
+    ? ` via ${describeRuntimeAcceleratorLabel(runtime)} (${runtime.backend}).`
+    : '.';
+  return `Upscaled "${title}" to ${width} x ${height}px with Android native image upscaler${suffix}`;
+}
+
+function buildAndroidNativeRuntimeWarning(runtime: UniversalImageUpscaleRuntimeMetadata): string | undefined {
+  if (runtime.kind === 'accelerated') {
+    return `Android native runtime: ${describeRuntimeAcceleratorLabel(runtime)} via ${runtime.backend ?? 'native backend'}.`;
+  }
+  if (runtime.kind === 'bitmap-fallback') {
+    return `Android native runtime: bitmap fallback via ${runtime.backend ?? 'android-bitmap'}.`;
+  }
+  if (runtime.accelerator || runtime.backend) {
+    return `Android native runtime: ${runtime.accelerator ?? runtime.backend ?? 'unknown runtime'}.`;
+  }
+  return undefined;
+}
+
+function buildAndroidAcceleratorRuntimeWarning(runtime: UniversalImageUpscaleRuntimeMetadata): string | undefined {
+  if (runtime.accelerator && runtime.backend) {
+    return `Android accelerator runtime: ${runtime.accelerator} via ${runtime.backend}.`;
+  }
+  if (runtime.accelerator) {
+    return `Android accelerator runtime: ${runtime.accelerator}.`;
+  }
+  if (runtime.backend) {
+    return `Android accelerator runtime: ${runtime.backend}.`;
+  }
+  return undefined;
+}
+
+function describeRuntimeAcceleratorLabel(runtime: UniversalImageUpscaleRuntimeMetadata): string {
+  const combined = `${runtime.accelerator ?? ''} ${runtime.backend ?? ''}`.toLowerCase();
+  if (combined.includes('qnn')) return 'QNN';
+  if (combined.includes('nnapi')) return 'NNAPI';
+  if (combined.includes('bitmap')) return 'bitmap fallback';
+  return runtime.accelerator ?? runtime.backend ?? 'unknown runtime';
 }

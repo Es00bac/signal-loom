@@ -17,13 +17,6 @@ export function createPaperDockablePanelDefaults(): DockablePanelDefault[] {
   return [
     {
       workspaceId: PAPER_DOCKABLE_WORKSPACE_ID,
-      panelId: PAPER_DOCKABLE_PANEL_IDS.tools,
-      dockZone: 'left',
-      floatingRect: { x: 72, y: 96, width: 104, height: 620 },
-      minSize: { width: 72, height: 260 },
-    },
-    {
-      workspaceId: PAPER_DOCKABLE_WORKSPACE_ID,
       panelId: PAPER_DOCKABLE_PANEL_IDS.inspector,
       dockZone: 'right',
       floatingRect: { x: 1040, y: 96, width: 340, height: 720 },

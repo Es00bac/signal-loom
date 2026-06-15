@@ -1,10 +1,26 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateBinaryMask, generateFeatheredMask } from './maskGeneration';
 
 describe('maskGeneration', () => {
+  beforeEach(() => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
+      createImageData: (width: number, height: number) => ({
+        data: new Uint8ClampedArray(width * height * 4),
+        height,
+        width,
+      }),
+      putImageData: vi.fn(),
+    }) as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,mask');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('generates a binary mask data URL for a selection', () => {
     const width = 10;
     const height = 10;

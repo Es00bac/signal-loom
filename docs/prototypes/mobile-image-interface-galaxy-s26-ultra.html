@@ -1,0 +1,1146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23030711'/%3E%3Cpath d='M8 16h16M16 8v16' stroke='%2322d3ee' stroke-width='3'/%3E%3C/svg%3E" />
+  <title>Signal Loom Mobile Image Workspace Prototype</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --phone-w: 412px;
+      --phone-h: 891px;
+      --top-open: 112px;
+      --top-closed: 42px;
+      --left-open: 132px;
+      --left-closed: 30px;
+      --right-open: 166px;
+      --right-closed: 30px;
+      --bottom-open: 118px;
+      --bottom-closed: 34px;
+      --cyan: #22d3ee;
+      --lime: #a3e635;
+      --rose: #fb7185;
+      --amber: #fbbf24;
+      --bg: #030711;
+      --panel: #0b1421;
+      --panel-2: #101a29;
+      --line: rgba(103, 232, 249, 0.22);
+      --text: #d8f7ff;
+      --muted: rgba(216, 247, 255, 0.62);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 20% 12%, rgba(34, 211, 238, 0.18), transparent 34%),
+        radial-gradient(circle at 80% 70%, rgba(251, 113, 133, 0.12), transparent 30%),
+        linear-gradient(135deg, #02050b, #08111e 45%, #02050b);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    .review-stage {
+      display: grid;
+      grid-template-columns: auto minmax(260px, 360px);
+      gap: 22px;
+      align-items: center;
+      padding: 22px;
+    }
+
+    .phone-shell {
+      width: var(--phone-w);
+      height: var(--phone-h);
+      padding: 10px;
+      border-radius: 30px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: linear-gradient(180deg, #141923, #030711);
+      box-shadow:
+        0 28px 90px rgba(0, 0, 0, 0.62),
+        0 0 0 1px rgba(34, 211, 238, 0.12) inset;
+      position: relative;
+    }
+
+    .phone-screen {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      border-radius: 22px;
+      border: 1px solid rgba(103, 232, 249, 0.22);
+      background: #030711;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.72) inset;
+      touch-action: none;
+      user-select: none;
+    }
+
+    .device-camera {
+      position: absolute;
+      z-index: 40;
+      left: 50%;
+      top: 9px;
+      width: 62px;
+      height: 16px;
+      transform: translateX(-50%);
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      pointer-events: none;
+    }
+
+    .workspace {
+      position: absolute;
+      left: var(--workspace-left);
+      right: var(--workspace-right);
+      top: var(--workspace-top);
+      bottom: var(--workspace-bottom);
+      overflow: hidden;
+      border: 1px solid rgba(103, 232, 249, 0.14);
+      background:
+        linear-gradient(rgba(34, 211, 238, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(34, 211, 238, 0.05) 1px, transparent 1px),
+        #050913;
+      background-size: 22px 22px;
+      transition: inset 180ms ease;
+    }
+
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .workspace-caption {
+      position: absolute;
+      left: 12px;
+      bottom: 10px;
+      max-width: calc(100% - 24px);
+      padding: 5px 8px;
+      border-radius: 4px;
+      background: rgba(3, 7, 17, 0.72);
+      border: 1px solid rgba(103, 232, 249, 0.18);
+      color: rgba(216, 247, 255, 0.68);
+      font-size: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      pointer-events: none;
+    }
+
+    .drawer {
+      position: absolute;
+      z-index: 12;
+      background: rgba(8, 17, 29, 0.96);
+      border: 1px solid var(--line);
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.34);
+      backdrop-filter: blur(18px);
+      overflow: hidden;
+      transition: width 180ms ease, height 180ms ease, transform 180ms ease;
+    }
+
+    .top-drawer {
+      left: 0;
+      top: 0;
+      right: 0;
+      height: var(--top-current);
+      border-radius: 0 0 12px 12px;
+      border-left: 0;
+      border-right: 0;
+      border-top: 0;
+    }
+
+    .left-drawer {
+      left: 0;
+      top: var(--top-current);
+      bottom: var(--bottom-current);
+      width: var(--left-current);
+      border-left: 0;
+      border-radius: 0 12px 12px 0;
+    }
+
+    .right-drawer {
+      right: 0;
+      top: var(--top-current);
+      bottom: var(--bottom-current);
+      width: var(--right-current);
+      border-right: 0;
+      border-radius: 12px 0 0 12px;
+    }
+
+    .bottom-drawer {
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: var(--bottom-current);
+      border-radius: 12px 12px 0 0;
+      border-left: 0;
+      border-right: 0;
+      border-bottom: 0;
+    }
+
+    .drawer-handle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 0;
+      color: var(--muted);
+      background: rgba(34, 211, 238, 0.08);
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+    }
+
+    .top-handle,
+    .bottom-handle {
+      height: 12px;
+      width: 100%;
+    }
+
+    .left-handle,
+    .right-handle {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 30px;
+      writing-mode: vertical-rl;
+    }
+
+    .left-handle { right: 0; }
+    .right-handle { left: 0; }
+
+    .top-content {
+      height: calc(100% - 12px);
+      display: grid;
+      grid-template-rows: 34px 1fr;
+      min-height: 0;
+    }
+
+    .document-strip {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 5px 7px 4px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      border-bottom: 1px solid rgba(103, 232, 249, 0.12);
+    }
+
+    .doc-tab,
+    .small-button,
+    .workspace-tab {
+      height: 24px;
+      border: 1px solid rgba(103, 232, 249, 0.18);
+      border-radius: 5px;
+      background: rgba(6, 13, 23, 0.88);
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .doc-tab {
+      min-width: 86px;
+      padding: 0 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 5px;
+    }
+
+    .doc-tab.active {
+      color: #fff;
+      border-color: rgba(34, 211, 238, 0.58);
+      background: rgba(34, 211, 238, 0.16);
+    }
+
+    .small-button {
+      width: 28px;
+      min-width: 28px;
+      display: grid;
+      place-items: center;
+      color: var(--text);
+    }
+
+    .workspace-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 4px;
+      padding: 6px 7px;
+    }
+
+    .workspace-tab.active {
+      border-color: rgba(251, 113, 133, 0.5);
+      background: rgba(251, 113, 133, 0.15);
+      color: #ffe4e9;
+    }
+
+    .quick-actions {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 4px;
+      padding: 0 7px 6px;
+    }
+
+    .quick-actions button,
+    .bottom-tabs button,
+    .source-tabs button {
+      border: 1px solid rgba(103, 232, 249, 0.16);
+      border-radius: 5px;
+      background: rgba(16, 26, 41, 0.84);
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 5px 4px;
+      cursor: pointer;
+    }
+
+    .top-drawer.closed .workspace-tabs,
+    .top-drawer.closed .quick-actions {
+      display: none;
+    }
+
+    .side-content {
+      height: 100%;
+      width: calc(100% - 30px);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .left-content {
+      margin-right: 30px;
+    }
+
+    .right-content {
+      margin-left: 30px;
+    }
+
+    .drawer-title {
+      padding: 9px 10px 6px;
+      font-size: 11px;
+      font-weight: 900;
+      color: var(--text);
+      text-transform: uppercase;
+      letter-spacing: 0.11em;
+      border-bottom: 1px solid rgba(103, 232, 249, 0.12);
+    }
+
+    .source-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      padding: 6px;
+    }
+
+    .source-list,
+    .accordion-stack {
+      min-height: 0;
+      overflow-y: auto;
+      padding: 6px;
+      display: grid;
+      gap: 6px;
+      scrollbar-width: thin;
+    }
+
+    .source-card {
+      min-height: 72px;
+      border: 1px solid rgba(103, 232, 249, 0.14);
+      border-radius: 6px;
+      overflow: hidden;
+      background: rgba(16, 26, 41, 0.78);
+    }
+
+    .thumb {
+      height: 42px;
+      background:
+        radial-gradient(circle at 30% 40%, rgba(34, 211, 238, 0.85), transparent 22%),
+        radial-gradient(circle at 70% 55%, rgba(251, 113, 133, 0.7), transparent 24%),
+        linear-gradient(135deg, rgba(163, 230, 53, 0.42), rgba(8, 17, 29, 0.8));
+    }
+
+    .source-card span {
+      display: block;
+      padding: 5px 6px;
+      font-size: 10px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .left-drawer.closed .side-content,
+    .right-drawer.closed .side-content {
+      display: none;
+    }
+
+    .accordion {
+      border: 1px solid rgba(103, 232, 249, 0.14);
+      border-radius: 6px;
+      overflow: hidden;
+      background: rgba(16, 26, 41, 0.68);
+    }
+
+    .accordion button {
+      width: 100%;
+      border: 0;
+      padding: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(34, 211, 238, 0.08);
+      color: var(--text);
+      font-size: 10px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+    }
+
+    .accordion-body {
+      display: grid;
+      gap: 6px;
+      padding: 7px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .accordion.closed .accordion-body {
+      display: none;
+    }
+
+    .layer-row,
+    .history-row,
+    .field-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 24px;
+      border: 1px solid rgba(103, 232, 249, 0.1);
+      border-radius: 4px;
+      padding: 4px 6px;
+      background: rgba(3, 7, 17, 0.35);
+    }
+
+    .toggle-chip {
+      width: 26px;
+      height: 14px;
+      border-radius: 999px;
+      background: rgba(163, 230, 53, 0.32);
+      border: 1px solid rgba(163, 230, 53, 0.4);
+    }
+
+    .bottom-content {
+      height: calc(100% - 12px);
+      display: grid;
+      grid-template-rows: 28px 1fr;
+      min-height: 0;
+    }
+
+    .bottom-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 5px;
+      padding: 5px 7px 0;
+    }
+
+    .asset-strip {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 76px;
+      gap: 6px;
+      overflow-x: auto;
+      padding: 7px;
+      scrollbar-width: thin;
+    }
+
+    .asset-tile {
+      border: 1px solid rgba(103, 232, 249, 0.15);
+      border-radius: 5px;
+      overflow: hidden;
+      background: rgba(16, 26, 41, 0.72);
+    }
+
+    .asset-tile .thumb { height: 48px; }
+    .asset-tile span {
+      display: block;
+      padding: 3px 4px;
+      font-size: 9px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .bottom-drawer.closed .bottom-tabs,
+    .bottom-drawer.closed .asset-strip {
+      display: none;
+    }
+
+    .tool-palette {
+      position: absolute;
+      z-index: 22;
+      left: 44px;
+      top: 130px;
+      width: 66px;
+      max-height: calc(100% - 48px);
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(163, 230, 53, 0.38);
+      background: #0a1016;
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.45);
+      touch-action: none;
+      overflow: hidden;
+    }
+
+    .tool-handle {
+      height: 14px;
+      flex: 0 0 14px;
+      display: grid;
+      place-items: center;
+      cursor: grab;
+      background: #111a20;
+      border-bottom: 1px solid rgba(163, 230, 53, 0.35);
+      color: rgba(163, 230, 53, 0.75);
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 32px);
+      grid-auto-rows: 32px;
+      gap: 0;
+      min-height: 0;
+      overflow-y: auto;
+      scrollbar-width: thin;
+    }
+
+    .tool {
+      width: 32px;
+      height: 32px;
+      border: 1px solid rgba(163, 230, 53, 0.24);
+      border-radius: 0;
+      background: #15251c;
+      color: var(--lime);
+      font-size: 17px;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+    }
+
+    .tool.active {
+      background: var(--lime);
+      color: #08110d;
+    }
+
+    .color-wells {
+      position: relative;
+      height: 62px;
+      flex: 0 0 62px;
+      border: 1px solid rgba(163, 230, 53, 0.24);
+      border-top: 0;
+      background: #0a1016;
+    }
+
+    .well {
+      position: absolute;
+      width: 34px;
+      height: 34px;
+      border: 2px solid rgba(255, 255, 255, 0.86);
+      background: #fff;
+    }
+
+    .well.back {
+      right: 8px;
+      bottom: 8px;
+      border-color: rgba(163, 230, 53, 0.6);
+      background: #020711;
+    }
+
+    .well.front {
+      left: 8px;
+      top: 8px;
+      z-index: 2;
+    }
+
+    .tool-mini {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      border: 1px solid rgba(163, 230, 53, 0.3);
+      background: #050913;
+      color: var(--lime);
+      font-size: 11px;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+    }
+
+    .tool-mini.swap { right: 2px; top: 2px; }
+    .tool-mini.reset { left: 2px; bottom: 2px; }
+
+    .hide-ui {
+      position: absolute;
+      z-index: 50;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 42px;
+      height: 42px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.26);
+      background: rgba(3, 7, 17, 0.76);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.46);
+      backdrop-filter: blur(16px);
+    }
+
+    .tool-toggle {
+      position: absolute;
+      z-index: 49;
+      right: 12px;
+      top: calc(50% + 50px);
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      border: 1px solid rgba(163, 230, 53, 0.35);
+      background: rgba(10, 16, 22, 0.78);
+      color: var(--lime);
+      cursor: pointer;
+    }
+
+    .app {
+      --top-current: var(--top-open);
+      --left-current: var(--left-closed);
+      --right-current: var(--right-open);
+      --bottom-current: var(--bottom-closed);
+      --workspace-top: var(--top-current);
+      --workspace-left: var(--left-current);
+      --workspace-right: var(--right-current);
+      --workspace-bottom: var(--bottom-current);
+    }
+
+    .app.top-closed { --top-current: var(--top-closed); }
+    .app.left-open { --left-current: var(--left-open); }
+    .app.right-closed { --right-current: var(--right-closed); }
+    .app.bottom-open { --bottom-current: var(--bottom-open); }
+
+    .app.ui-hidden {
+      --top-current: 0px;
+      --left-current: 0px;
+      --right-current: 0px;
+      --bottom-current: 0px;
+    }
+
+    .app.ui-hidden .drawer,
+    .app.ui-hidden .tool-palette,
+    .app.ui-hidden .tool-toggle {
+      display: none;
+    }
+
+    .app.tools-hidden .tool-palette {
+      display: none;
+    }
+
+    .app.landscape-shell {
+      width: 891px;
+      height: 412px;
+    }
+
+    .side-note {
+      max-width: 360px;
+      border: 1px solid rgba(103, 232, 249, 0.16);
+      border-radius: 10px;
+      padding: 14px;
+      background: rgba(8, 17, 29, 0.78);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+    }
+
+    .side-note h1 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      color: #fff;
+    }
+
+    .side-note p,
+    .side-note li {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .side-note ul {
+      padding-left: 18px;
+      margin: 8px 0 12px;
+    }
+
+    .sim-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 12px;
+    }
+
+    .sim-controls button {
+      border: 1px solid rgba(103, 232, 249, 0.18);
+      background: rgba(16, 26, 41, 0.84);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 7px 9px;
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    @media (max-width: 900px) {
+      body { overflow: auto; }
+      .review-stage {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="review-stage">
+    <section class="phone-shell app" id="app" aria-label="Galaxy Ultra mobile prototype">
+      <div class="phone-screen">
+        <div class="device-camera" aria-hidden="true"></div>
+
+        <section class="workspace" aria-label="Image workspace canvas">
+          <canvas id="workspaceCanvas"></canvas>
+          <div class="workspace-caption">Canvas stays central. Edge drawers reserve space; hide UI gives the whole surface back.</div>
+        </section>
+
+        <section class="drawer top-drawer" data-drawer="top">
+          <div class="top-content">
+            <div class="document-strip" aria-label="Open image documents">
+              <button class="small-button" title="New image document">+</button>
+              <button class="small-button" title="Open image">⌁</button>
+              <button class="doc-tab active">Neon City <span>×</span></button>
+              <button class="doc-tab">Ref Sheet <span>×</span></button>
+              <button class="doc-tab">Panel 04 <span>×</span></button>
+            </div>
+            <div>
+              <div class="workspace-tabs" aria-label="Workspace tabs">
+                <button class="workspace-tab">Flow</button>
+                <button class="workspace-tab">Video</button>
+                <button class="workspace-tab active">Image</button>
+                <button class="workspace-tab">Paper</button>
+              </div>
+              <div class="quick-actions" aria-label="Image quick controls">
+                <button>Undo</button>
+                <button>Redo</button>
+                <button>Fit</button>
+                <button>100%</button>
+                <button>Save</button>
+              </div>
+            </div>
+          </div>
+          <button class="drawer-handle top-handle" data-toggle="top">Top Toolbar</button>
+        </section>
+
+        <section class="drawer left-drawer closed" data-drawer="left">
+          <div class="side-content left-content">
+            <div class="drawer-title">Source Library</div>
+            <div class="source-tabs">
+              <button>Project</button>
+              <button>Generated</button>
+            </div>
+            <div class="source-list">
+              <div class="source-card"><div class="thumb"></div><span>neon-alley-ref.png</span></div>
+              <div class="source-card"><div class="thumb"></div><span>protagonist-sheet.png</span></div>
+              <div class="source-card"><div class="thumb"></div><span>drone-prop-front.png</span></div>
+              <div class="source-card"><div class="thumb"></div><span>magic-sigil-layer.webp</span></div>
+              <div class="source-card"><div class="thumb"></div><span>generated-panel-07.png</span></div>
+            </div>
+          </div>
+          <button class="drawer-handle left-handle" data-toggle="left">Sources</button>
+        </section>
+
+        <section class="drawer right-drawer" data-drawer="right">
+          <div class="side-content right-content">
+            <div class="drawer-title">Dialogs</div>
+            <div class="accordion-stack">
+              <div class="accordion" data-accordion>
+                <button>Layers <span>▾</span></button>
+                <div class="accordion-body">
+                  <div class="layer-row"><span>Glow effects</span><span class="toggle-chip"></span></div>
+                  <div class="layer-row"><span>Character ink</span><span class="toggle-chip"></span></div>
+                  <div class="layer-row"><span>City plate</span><span class="toggle-chip"></span></div>
+                </div>
+              </div>
+              <div class="accordion" data-accordion>
+                <button>Properties <span>▾</span></button>
+                <div class="accordion-body">
+                  <div class="field-row"><span>Blend</span><strong>Normal</strong></div>
+                  <div class="field-row"><span>Opacity</span><strong>100%</strong></div>
+                  <div class="field-row"><span>Smoothing</span><strong>42</strong></div>
+                </div>
+              </div>
+              <div class="accordion closed" data-accordion>
+                <button>Masks <span>▸</span></button>
+                <div class="accordion-body">
+                  <div class="field-row"><span>Density</span><strong>100%</strong></div>
+                  <div class="field-row"><span>Feather</span><strong>0 px</strong></div>
+                </div>
+              </div>
+              <div class="accordion closed" data-accordion>
+                <button>Channels <span>▸</span></button>
+                <div class="accordion-body">
+                  <div class="field-row"><span>RGB</span><strong>On</strong></div>
+                  <div class="field-row"><span>Alpha 1</span><strong>Saved</strong></div>
+                </div>
+              </div>
+              <div class="accordion closed" data-accordion>
+                <button>History <span>▸</span></button>
+                <div class="accordion-body">
+                  <div class="history-row">Brush stroke</div>
+                  <div class="history-row">Move layer</div>
+                  <div class="history-row">Open document</div>
+                </div>
+              </div>
+              <div class="accordion closed" data-accordion>
+                <button>Paths <span>▸</span></button>
+                <div class="accordion-body">
+                  <div class="field-row"><span>Work Path</span><strong>1</strong></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <button class="drawer-handle right-handle" data-toggle="right">Dialogs</button>
+        </section>
+
+        <section class="drawer bottom-drawer closed" data-drawer="bottom">
+          <div class="bottom-content">
+            <div class="bottom-tabs">
+              <button>Assets</button>
+              <button>Brushes</button>
+              <button>Styles</button>
+              <button>Macros</button>
+            </div>
+            <div class="asset-strip" aria-label="Bottom assets">
+              <div class="asset-tile"><div class="thumb"></div><span>Brush 01</span></div>
+              <div class="asset-tile"><div class="thumb"></div><span>Ink Wash</span></div>
+              <div class="asset-tile"><div class="thumb"></div><span>Cyber Glow</span></div>
+              <div class="asset-tile"><div class="thumb"></div><span>Line FX</span></div>
+              <div class="asset-tile"><div class="thumb"></div><span>Export PNG</span></div>
+            </div>
+          </div>
+          <button class="drawer-handle bottom-handle" data-toggle="bottom">Assets / Brushes / Styles</button>
+        </section>
+
+        <div class="tool-palette" id="toolPalette" aria-label="Floating Image tools">
+          <div class="tool-handle" id="toolHandle">•••</div>
+          <div class="tool-grid">
+            <button class="tool active" title="Move">⌁</button>
+            <button class="tool" title="Hand">☝</button>
+            <button class="tool" title="Marquee">□</button>
+            <button class="tool" title="Lasso">○</button>
+            <button class="tool" title="Magic Wand">✣</button>
+            <button class="tool" title="Brush">🖌</button>
+            <button class="tool" title="Eraser">▱</button>
+            <button class="tool" title="Clone">♜</button>
+            <button class="tool" title="Heal">✣</button>
+            <button class="tool" title="Stamp">♟</button>
+            <button class="tool" title="Gradient">▥</button>
+            <button class="tool" title="Droplet">◑</button>
+            <button class="tool" title="Selection">⌖</button>
+            <button class="tool" title="Pan">☝</button>
+            <button class="tool" title="Dodge">☀</button>
+            <button class="tool" title="Burn">☾</button>
+            <button class="tool" title="Palette">◉</button>
+            <button class="tool" title="Sponge">⊘</button>
+            <button class="tool" title="Bucket">◫</button>
+            <button class="tool" title="Blend">◎</button>
+            <button class="tool" title="Pen">✒</button>
+            <button class="tool" title="Shape">□</button>
+            <button class="tool" title="Ellipse">○</button>
+            <button class="tool" title="Crop">⌗</button>
+            <button class="tool" title="Text">T</button>
+            <button class="tool" title="Eyedropper">⌕</button>
+          </div>
+          <div class="color-wells">
+            <div class="well back"></div>
+            <div class="well front"></div>
+            <button class="tool-mini swap" title="Swap">⇄</button>
+            <button class="tool-mini reset" title="Reset">↺</button>
+          </div>
+        </div>
+
+        <button class="hide-ui" id="hideUi" title="Hide or restore all interface">◉</button>
+        <button class="tool-toggle" id="toolToggle" title="Toggle floating tools">▦</button>
+      </div>
+    </section>
+
+    <aside class="side-note">
+      <h1>Phone Image Workspace Shell</h1>
+      <p>This is the proposed phone-specific layout. Desktop, DeX, and tablet keep the current dockable/tabbed floating panels. Phone uses edge drawers and accordion panels.</p>
+      <ul>
+        <li>Top: document tabs, plus/new canvas, open image, workspace tabs, quick actions.</li>
+        <li>Left: Source Library / generated assets drawer.</li>
+        <li>Right: dialogs as vertical accordions, not desktop floating tabs.</li>
+        <li>Bottom: assets, brushes, styles, macros.</li>
+        <li>Center: canvas plus draggable Photoshop-style tools palette.</li>
+        <li>Round button: hides/restores all UI, including floating tools.</li>
+      </ul>
+      <div class="sim-controls">
+        <button id="portrait">Portrait 412×891</button>
+        <button id="landscape">Landscape 891×412</button>
+        <button id="reset">Reset Drawers</button>
+      </div>
+      <p>Sim target: Galaxy Ultra-class phone, QHD+ physical display with a high-density CSS viewport approximation.</p>
+    </aside>
+  </main>
+
+  <script>
+    const app = document.getElementById('app');
+    const canvas = document.getElementById('workspaceCanvas');
+    const ctx = canvas.getContext('2d');
+    const toolPalette = document.getElementById('toolPalette');
+    const toolHandle = document.getElementById('toolHandle');
+    const hideUi = document.getElementById('hideUi');
+    const toolToggle = document.getElementById('toolToggle');
+    const preserved = { classes: '' };
+
+    function drawCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.round(rect.width * dpr));
+      canvas.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      const w = rect.width;
+      const h = rect.height;
+      const grad = ctx.createLinearGradient(0, 0, w, h);
+      grad.addColorStop(0, '#0c2233');
+      grad.addColorStop(0.45, '#101229');
+      grad.addColorStop(1, '#260b22');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.strokeStyle = 'rgba(34,211,238,0.14)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < w; x += 24) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+      }
+      for (let y = 0; y < h; y += 24) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+
+      ctx.save();
+      ctx.translate(w * 0.5, h * 0.5);
+      ctx.rotate(-0.2);
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      roundedRect(ctx, -w * 0.28, -h * 0.33, w * 0.56, h * 0.66, 12);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(3,7,17,0.75)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      const panelW = w * 0.22;
+      const panelH = h * 0.2;
+      const panels = [
+        [-w * 0.24, -h * 0.27, panelW, panelH, '#22d3ee'],
+        [0, -h * 0.27, panelW, panelH, '#fb7185'],
+        [-w * 0.24, -h * 0.04, panelW, panelH * 1.35, '#a3e635'],
+        [0, -h * 0.04, panelW, panelH * 1.35, '#fbbf24'],
+      ];
+      for (const [x, y, pw, ph, color] of panels) {
+        ctx.fillStyle = color + '33';
+        ctx.fillRect(x, y, pw, ph);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, pw, ph);
+      }
+      ctx.restore();
+
+      ctx.fillStyle = 'rgba(216,247,255,0.7)';
+      ctx.font = '600 11px system-ui, sans-serif';
+      ctx.fillText(`${Math.round(w)} × ${Math.round(h)} working canvas`, 12, 22);
+    }
+
+    function roundedRect(context, x, y, w, h, r) {
+      context.beginPath();
+      context.moveTo(x + r, y);
+      context.arcTo(x + w, y, x + w, y + h, r);
+      context.arcTo(x + w, y + h, x, y + h, r);
+      context.arcTo(x, y + h, x, y, r);
+      context.arcTo(x, y, x + w, y, r);
+      context.closePath();
+    }
+
+    function setDrawer(side, open) {
+      if (side === 'top') app.classList.toggle('top-closed', !open);
+      if (side === 'left') {
+        app.classList.toggle('left-open', open);
+        if (open) app.classList.add('right-closed');
+      }
+      if (side === 'right') {
+        app.classList.toggle('right-closed', !open);
+        if (open) app.classList.remove('left-open');
+      }
+      if (side === 'bottom') app.classList.toggle('bottom-open', open);
+      syncDrawerClasses();
+      requestAnimationFrame(clampToolPalette);
+      requestAnimationFrame(drawCanvas);
+    }
+
+    function syncDrawerClasses() {
+      document.querySelector('[data-drawer="top"]').classList.toggle('closed', app.classList.contains('top-closed'));
+      document.querySelector('[data-drawer="left"]').classList.toggle('closed', !app.classList.contains('left-open'));
+      document.querySelector('[data-drawer="right"]').classList.toggle('closed', app.classList.contains('right-closed'));
+      document.querySelector('[data-drawer="bottom"]').classList.toggle('closed', !app.classList.contains('bottom-open'));
+    }
+
+    document.querySelectorAll('[data-toggle]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const side = button.dataset.toggle;
+        const open = side === 'top'
+          ? app.classList.contains('top-closed')
+          : side === 'left'
+            ? !app.classList.contains('left-open')
+            : side === 'right'
+              ? app.classList.contains('right-closed')
+              : !app.classList.contains('bottom-open');
+        setDrawer(side, open);
+      });
+    });
+
+    document.querySelectorAll('[data-accordion] > button').forEach((button) => {
+      button.addEventListener('click', () => {
+        const panel = button.closest('[data-accordion]');
+        panel.classList.toggle('closed');
+        button.querySelector('span').textContent = panel.classList.contains('closed') ? '▸' : '▾';
+      });
+    });
+
+    document.querySelectorAll('.tool').forEach((button) => {
+      button.addEventListener('click', () => {
+        document.querySelectorAll('.tool').forEach((tool) => tool.classList.remove('active'));
+        button.classList.add('active');
+      });
+    });
+
+    hideUi.addEventListener('click', () => {
+      if (app.classList.contains('ui-hidden')) {
+        app.className = preserved.classes || 'phone-shell app';
+      } else {
+        preserved.classes = app.className;
+        app.classList.add('ui-hidden');
+      }
+      syncDrawerClasses();
+      requestAnimationFrame(clampToolPalette);
+      requestAnimationFrame(drawCanvas);
+    });
+
+    toolToggle.addEventListener('click', () => {
+      app.classList.toggle('tools-hidden');
+    });
+
+    document.getElementById('portrait').addEventListener('click', () => {
+      app.classList.remove('landscape-shell');
+      requestAnimationFrame(clampToolPalette);
+      requestAnimationFrame(drawCanvas);
+    });
+
+    document.getElementById('landscape').addEventListener('click', () => {
+      app.classList.add('landscape-shell');
+      requestAnimationFrame(clampToolPalette);
+      requestAnimationFrame(drawCanvas);
+    });
+
+    document.getElementById('reset').addEventListener('click', () => {
+      app.className = 'phone-shell app';
+      syncDrawerClasses();
+      requestAnimationFrame(clampToolPalette);
+      requestAnimationFrame(drawCanvas);
+    });
+
+    let drag = null;
+    toolHandle.addEventListener('pointerdown', (event) => {
+      const rect = toolPalette.getBoundingClientRect();
+      const screen = app.querySelector('.phone-screen').getBoundingClientRect();
+      const workspace = app.querySelector('.workspace').getBoundingClientRect();
+      drag = {
+        pointerId: event.pointerId,
+        dx: event.clientX - rect.left,
+        dy: event.clientY - rect.top,
+        screen,
+        bounds: {
+          left: workspace.left - screen.left + 6,
+          right: workspace.right - screen.left - 6,
+          top: workspace.top - screen.top + 6,
+          bottom: workspace.bottom - screen.top - 6,
+        },
+      };
+      toolHandle.setPointerCapture(event.pointerId);
+    });
+
+    toolHandle.addEventListener('pointermove', (event) => {
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const maxX = Math.max(drag.bounds.left, drag.bounds.right - toolPalette.offsetWidth);
+      const maxY = Math.max(drag.bounds.top, drag.bounds.bottom - toolPalette.offsetHeight);
+      const x = Math.max(drag.bounds.left, Math.min(maxX, event.clientX - drag.screen.left - drag.dx));
+      const y = Math.max(drag.bounds.top, Math.min(maxY, event.clientY - drag.screen.top - drag.dy));
+      toolPalette.style.left = `${x}px`;
+      toolPalette.style.top = `${y}px`;
+    });
+
+    toolHandle.addEventListener('pointerup', (event) => {
+      if (drag?.pointerId === event.pointerId) drag = null;
+    });
+
+    function clampToolPalette() {
+      const screen = app.querySelector('.phone-screen').getBoundingClientRect();
+      const workspace = app.querySelector('.workspace').getBoundingClientRect();
+      const bounds = {
+        left: workspace.left - screen.left + 6,
+        right: workspace.right - screen.left - 6,
+        top: workspace.top - screen.top + 6,
+        bottom: workspace.bottom - screen.top - 6,
+      };
+      toolPalette.style.maxHeight = `${Math.max(132, bounds.bottom - bounds.top)}px`;
+      const rect = toolPalette.getBoundingClientRect();
+      const currentLeft = Number.parseFloat(toolPalette.style.left) || rect.left - screen.left;
+      const currentTop = Number.parseFloat(toolPalette.style.top) || rect.top - screen.top;
+      const maxX = Math.max(bounds.left, bounds.right - toolPalette.offsetWidth);
+      const maxY = Math.max(bounds.top, bounds.bottom - toolPalette.offsetHeight);
+      toolPalette.style.left = `${Math.max(bounds.left, Math.min(maxX, currentLeft))}px`;
+      toolPalette.style.top = `${Math.max(bounds.top, Math.min(maxY, currentTop))}px`;
+    }
+
+    new ResizeObserver(() => {
+      clampToolPalette();
+      drawCanvas();
+    }).observe(canvas);
+    syncDrawerClasses();
+    clampToolPalette();
+    drawCanvas();
+  </script>
+</body>
+</html>

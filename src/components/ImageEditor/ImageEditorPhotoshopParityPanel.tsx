@@ -1,4 +1,4 @@
-import { countImageParityStatuses, getHighPriorityImageParityItems } from './ImagePhotoshopParity';
+import { countImageParityStatuses, getHighPriorityImageParityItems, getImageParityChecklistStatus } from './ImagePhotoshopParity';
 
 export function PhotoshopParityPanel() {
   const highPriority = getHighPriorityImageParityItems();
@@ -15,12 +15,15 @@ export function PhotoshopParityPanel() {
         </span>
       </div>
       <div className="space-y-1.5">
-        {highPriority.map((item) => (
+        {highPriority.map((item) => {
+          const status = getImageParityChecklistStatus(item);
+
+          return (
           <div className="rounded border border-cyan-300/10 bg-[#1a1b23] p-2" key={item.id}>
             <div className="mb-1 flex items-center justify-between gap-2">
               <span className="font-semibold text-cyan-100/75">{item.area}</span>
-              <span className={`text-[10px] uppercase tracking-wide ${parityStatusClass(item.status)}`}>
-                {item.status}
+              <span className={`text-[10px] uppercase tracking-wide ${parityStatusClass(status)}`}>
+                {status}
               </span>
             </div>
             <div className="grid grid-cols-2 gap-2 text-[10px] leading-snug text-cyan-100/45">
@@ -29,7 +32,7 @@ export function PhotoshopParityPanel() {
             </div>
             <p className="mt-1 text-[10px] leading-snug text-cyan-100/35">{item.workflowReason}</p>
           </div>
-        ))}
+        );})}
       </div>
     </div>
   );

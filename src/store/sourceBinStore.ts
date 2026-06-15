@@ -13,6 +13,10 @@ import {
   loadScratchAssetBlob,
   storeScratchAssetBlob,
 } from '../lib/fileSystemWorkspace';
+import {
+  isAndroidSourceAssetPermissionError,
+  materializeAndroidSourceAsset,
+} from '../lib/androidSourceAssetStorage';
 import { buildMediaAssetSignaturePart } from '../lib/mediaAssetSignature';
 import { getSignalLoomNativeBridge } from '../lib/nativeApp';
 import {
@@ -53,6 +57,7 @@ import {
   setSourceBinItemCollapsed,
   toggleSourceBinItemStarred,
 } from './sourceBin/slices/itemActions';
+import { showAlertDialog } from './alertDialogStore';
 
 export interface SourceBinLibraryItem {
   id: string;
@@ -128,6 +133,7 @@ export interface SourceBinState {
     kind: Exclude<EditorSourceKind, 'text'>;
     mimeType: string;
     dataUrl: string;
+    blob?: Blob;
     pixelWidth?: number;
     pixelHeight?: number;
     isGenerated?: boolean;
@@ -163,6 +169,7 @@ const TRANSIENT_RECOVERED_SCRATCH_BIN_ID = 'recovered-scratch-assets';
 const TRANSIENT_RECOVERED_SCRATCH_SOURCE_KEY_PREFIX = 'recovered-scratch:';
 const PROJECT_IMPORT_ENVELOPE_ID = 'project-imports';
 const PROJECT_IMPORT_ENVELOPE_LABEL = 'Project imports';
+let androidSourceAssetPermissionAlertOpen = false;
 const revocableSourceAssetHandles = createSourceAssetHandlePool((url) => {
   try {
     URL.revokeObjectURL?.(url);
@@ -1824,6 +1831,7 @@ async function persistLibraryAssetItem(item: {
   kind: Exclude<EditorSourceKind, 'text'>;
   mimeType: string;
   dataUrl: string;
+  blob?: Blob;
   sourceKey?: string;
   originNodeId?: string;
   isGenerated?: boolean;
@@ -1878,12 +1886,24 @@ async function persistLibraryAssetItem(item: {
     return nativeAsset;
   }
 
+  try {
+    const androidAsset = await materializeAndroidSourceAsset(item);
+    if (androidAsset) {
+      return androidAsset;
+    }
+  } catch (error) {
+    if (isAndroidSourceAssetPermissionError(error)) {
+      notifyAndroidSourceAssetPermissionRequired(item.label);
+    }
+    throw error;
+  }
+
   // For blob URLs, fetch the blob directly and store it without the expensive
   // base64 round-trip through localizeAssetForProject. This avoids OOM failures
   // on large generated videos and ensures they get a reliable assetId.
   let storedAsset: StoredAssetPayload;
-  if (item.dataUrl.startsWith('blob:')) {
-    const blob = await assetUrlToBlob(item.dataUrl, item.mimeType);
+  if (item.blob || item.dataUrl.startsWith('blob:')) {
+    const blob = item.blob ?? await assetUrlToBlob(item.dataUrl, item.mimeType);
     const fileName = normalizeAssetLabel(item.label, item.kind, blob.type || item.mimeType);
     storedAsset = await saveImportedAsset(new File([blob], fileName, { type: blob.type || item.mimeType }));
   } else {
@@ -1923,6 +1943,7 @@ async function materializeLibraryAssetItemWithNativeBridge(item: {
   kind: Exclude<EditorSourceKind, 'text'>;
   mimeType: string;
   dataUrl: string;
+  blob?: Blob;
   sourceKey?: string;
   originNodeId?: string;
   isGenerated?: boolean;
@@ -1941,6 +1962,13 @@ async function materializeLibraryAssetItemWithNativeBridge(item: {
     return undefined;
   }
 
+  const materializeBlob = item.blob ?? (item.dataUrl.startsWith('blob:')
+    ? await assetUrlToBlob(item.dataUrl, item.mimeType)
+    : undefined);
+  const binaryData = materializeBlob
+    ? new Uint8Array(await materializeBlob.arrayBuffer())
+    : undefined;
+
   const id = item.id ?? globalThis.crypto?.randomUUID?.() ?? `source-bin-${Date.now()}`;
   const result = await bridge.materializeSourceAsset({
     id,
@@ -1948,6 +1976,7 @@ async function materializeLibraryAssetItemWithNativeBridge(item: {
     kind: item.kind,
     mimeType: item.mimeType,
     dataUrl: item.dataUrl,
+    ...(binaryData ? { binaryData } : {}),
     sourceKey: item.sourceKey,
     originNodeId: item.originNodeId,
     isGenerated: item.isGenerated,
@@ -1991,6 +2020,7 @@ async function persistLibraryAssetItemWithFallback(item: {
   kind: Exclude<EditorSourceKind, 'text'>;
   mimeType: string;
   dataUrl: string;
+  blob?: Blob;
   sourceKey?: string;
   originNodeId?: string;
   isGenerated?: boolean;
@@ -2009,6 +2039,22 @@ async function persistLibraryAssetItemWithFallback(item: {
   } catch {
     return createFallbackLibraryAssetItem(item);
   }
+}
+
+function notifyAndroidSourceAssetPermissionRequired(label: string): void {
+  if (androidSourceAssetPermissionAlertOpen) {
+    return;
+  }
+
+  androidSourceAssetPermissionAlertOpen = true;
+  void showAlertDialog({
+    title: 'Storage Permission Required',
+    message: `Signal Loom needs Android file storage access to save generated asset "${label}" into the Source Library. Tap Allow when Android asks for file access, then regenerate or reimport the asset if it was saved only as a temporary preview.`,
+    confirmLabel: 'OK',
+    tone: 'warning',
+  }).finally(() => {
+    androidSourceAssetPermissionAlertOpen = false;
+  });
 }
 
 function createFallbackLibraryAssetItem(item: {

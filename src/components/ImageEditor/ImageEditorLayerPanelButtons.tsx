@@ -23,7 +23,7 @@ export function ActionButton({
 }) {
   return (
     <button
-      className={`flex flex-1 items-center justify-center gap-1 rounded px-2 py-1 text-[11px] ${
+      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded p-1 text-[11px] ${
         disabled
           ? 'cursor-not-allowed text-cyan-100/20'
           : 'text-cyan-100/60 hover:bg-cyan-400/10 hover:text-white'
@@ -34,17 +34,21 @@ export function ActionButton({
       type="button"
     >
       {icon}
-      <span className="hidden xl:inline">{label}</span>
+      <span className="sr-only">{label}</span>
     </button>
   );
 }
 
 export function MaskActionButton({
+  active,
+  ariaLabel,
   disabled,
   icon,
   label,
   onClick,
 }: {
+  active?: boolean;
+  ariaLabel?: string;
   disabled?: boolean;
   icon: React.ReactNode;
   label: string;
@@ -55,8 +59,11 @@ export function MaskActionButton({
       className={`flex min-w-0 items-center justify-center gap-1 rounded border px-1.5 py-1 text-[10px] ${
         disabled
           ? 'cursor-not-allowed border-cyan-300/5 text-cyan-100/20'
-          : 'border-cyan-300/10 text-cyan-100/60 hover:bg-cyan-400/10 hover:text-white'
+          : active
+            ? 'border-cyan-300/40 bg-cyan-400/10 text-white'
+            : 'border-cyan-300/10 text-cyan-100/60 hover:bg-cyan-400/10 hover:text-white'
       }`}
+      aria-label={ariaLabel}
       disabled={disabled}
       onClick={onClick}
       title={label}

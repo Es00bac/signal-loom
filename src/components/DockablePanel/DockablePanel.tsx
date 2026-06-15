@@ -19,6 +19,8 @@ import {
 import {
   buildFloatingPanelWindowFeatures,
   createExternalFloatingPanelDragAnchor,
+  resolveFloatingPanelOwnerRect,
+  resolveFloatingPanelScreenRect,
   resolveExternalFloatingPanelWindowSize,
   resolveExternalFloatingPanelWindowPosition,
   resolveExternalFloatingPanelMoveEndRect,
@@ -39,11 +41,17 @@ export interface DockablePanelProps {
   className?: string;
   bodyClassName?: string;
   allowedDockZones?: DockZone[];
+  chrome?: DockablePanelChrome;
+  fixedSize?: boolean;
   viewport?: ViewportSize;
   role?: AriaRole;
   ariaModal?: boolean;
   onClose?: () => void;
+  tabs?: ReactNode;
+  externalWindowKey?: string;
 }
+
+export type DockablePanelChrome = 'standard' | 'compact-floating';
 
 interface DragState {
   pointerId: number;
@@ -118,18 +126,24 @@ const FLOATING_PANEL_THEME_CSS_VARIABLES = [
   '--sl-accent-contrast',
   '--sl-danger',
 ];
+const DEFAULT_DOCKABLE_PANEL_BODY_CLASS_NAME = 'min-h-0 overflow-auto p-3';
+const SIDE_DOCKED_DOCKABLE_PANEL_BODY_CLASS_NAME = 'min-h-0 overflow-visible p-3';
 
 export function DockablePanel({
   layout,
   title,
   children,
   className = '',
-  bodyClassName = 'min-h-0 overflow-auto p-3',
+  bodyClassName = DEFAULT_DOCKABLE_PANEL_BODY_CLASS_NAME,
   allowedDockZones = ['left', 'right', 'top', 'bottom', 'center', 'overlay'],
+  chrome = 'standard',
+  fixedSize = false,
   viewport,
   role = 'region',
   ariaModal,
   onClose,
+  tabs,
+  externalWindowKey,
 }: DockablePanelProps) {
   const dragState = useRef<DragState | null>(null);
   const mountedRef = useRef(false);
@@ -139,12 +153,17 @@ export function DockablePanel({
   const floatPanel = useDockablePanelStore((state) => state.floatPanel);
   const setPanelMode = useDockablePanelStore((state) => state.setPanelMode);
   const snapPanelToDockTarget = useDockablePanelStore((state) => state.snapPanelToDockTarget);
+  const groupPanelWithPanel = useDockablePanelStore((state) => state.groupPanelWithPanel);
   const moveFloatingPanel = useDockablePanelStore((state) => state.moveFloatingPanel);
   const resizeFloatingPanel = useDockablePanelStore((state) => state.resizeFloatingPanel);
   const resizeDockedPanel = useDockablePanelStore((state) => state.resizeDockedPanel);
   const bringPanelToFront = useDockablePanelStore((state) => state.bringPanelToFront);
   const resolvedViewport = useMemo(() => viewport ?? readViewport(), [viewport]);
   const isFloating = layout.mode === 'floating';
+  const isCompactFloatingChrome = chrome === 'compact-floating' && isFloating;
+  const hasFixedFloatingGeometry = fixedSize || isCompactFloatingChrome;
+  const floatingRectSpace = layout.floatingRectSpace === 'screen' ? 'screen' : 'owner';
+  const floatingWindowKey = externalWindowKey ?? layout.panelId;
   const shouldUseExternalWindow = shouldUseExternalFloatingPanelWindow({
     isNative: Boolean(getSignalLoomNativeBridge()),
     mode: layout.mode,
@@ -158,21 +177,30 @@ export function DockablePanel({
   const isCollapsed = layout.mode === 'collapsed';
   const isHorizontalDock = layout.dockZone === 'top' || layout.dockZone === 'bottom';
   const isVerticalDock = layout.dockZone === 'left' || layout.dockZone === 'right';
+  const ownerFloatingRect = useMemo(
+    () => resolveFloatingPanelOwnerRect({
+      rect: layout.floatingRect,
+      ownerScreenX: typeof window === 'undefined' ? 0 : window.screenX,
+      ownerScreenY: typeof window === 'undefined' ? 0 : window.screenY,
+      floatingRectSpace,
+    }),
+    [floatingRectSpace, layout.floatingRect],
+  );
   const renderedFloatingRect = useMemo(
     () => normalizeFloatingPanelRect(
-      layout.floatingRect,
+      ownerFloatingRect,
       resolvedViewport,
       layout.minSize,
       { constrainPosition: shouldRenderInOwnerWindow },
     ),
-    [layout.floatingRect, layout.minSize, resolvedViewport, shouldRenderInOwnerWindow],
+    [ownerFloatingRect, layout.minSize, resolvedViewport, shouldRenderInOwnerWindow],
   );
   const externalFloatingRect = useMemo(
     () => normalizeFloatingPanelRect(
       layout.floatingRect,
       resolvedViewport,
       layout.minSize,
-      { constrainPosition: false },
+      { constrainPosition: false, constrainSize: false },
     ),
     [layout.floatingRect, layout.minSize, resolvedViewport],
   );
@@ -183,8 +211,8 @@ export function DockablePanel({
       ? {
         left: 0,
         top: 0,
-        width: '100vw',
-        height: isCollapsed ? undefined : '100vh',
+        width: hasFixedFloatingGeometry ? externalFloatingRect.width : '100vw',
+        height: isCollapsed ? undefined : hasFixedFloatingGeometry ? externalFloatingRect.height : '100vh',
         minWidth: layout.minSize.width,
         minHeight: isCollapsed ? undefined : layout.minSize.height,
         zIndex: zIndexForFloatingPanel(layout.zOrder),
@@ -201,8 +229,17 @@ export function DockablePanel({
     : {
         ...resolveDockedPanelStyleMetrics(layout),
       };
-  const dockedFullHeightClassName = !isFloating && !isHorizontalDock ? 'h-full' : '';
+  const dockedFullHeightClassName = !isFloating && !isHorizontalDock && !isVerticalDock ? 'h-full' : '';
+  const bodyFlexClassName = isCompactFloatingChrome
+    ? 'flex-none'
+    : !isFloating && isVerticalDock
+      ? 'flex-none'
+      : 'flex-1';
+  const resolvedBodyClassName = !isFloating && isVerticalDock && bodyClassName === DEFAULT_DOCKABLE_PANEL_BODY_CLASS_NAME
+    ? SIDE_DOCKED_DOCKABLE_PANEL_BODY_CLASS_NAME
+    : bodyClassName;
   const dockedResizeHandle = !isFloating && !isCollapsed ? DOCKED_RESIZE_HANDLES[layout.dockZone] : undefined;
+  const canDockExternalPanel = shouldUseExternalWindow && !hasFixedFloatingGeometry;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -243,10 +280,13 @@ export function DockablePanel({
 
     const popup = window.open(
       '',
-      `signal-loom-${layout.workspaceId}-${layout.panelId}`,
+      `signal-loom-${layout.workspaceId}-${floatingWindowKey}`,
       buildFloatingPanelWindowFeatures(externalFloatingRectRef.current, {
         screenX: window.screenX,
         screenY: window.screenY,
+      }, {
+        ...(hasFixedFloatingGeometry ? { resizable: false } : {}),
+        floatingRectSpace,
       }),
     );
 
@@ -268,6 +308,11 @@ export function DockablePanel({
       root.id = 'signal-loom-floating-panel-root';
       popup.document.body.append(root);
     }
+    configureExternalPanelDocumentGeometry(
+      popup.document,
+      root,
+      hasFixedFloatingGeometry ? externalFloatingRectRef.current : undefined,
+    );
     setExternalPanelRootLater(root);
 
     const handlePopupClosed = () => {
@@ -300,22 +345,44 @@ export function DockablePanel({
       lastExternalResizeTargetRef.current = null;
     };
   }, [
+    floatingRectSpace,
+    hasFixedFloatingGeometry,
+    floatingWindowKey,
     isFloating,
-    layout.panelId,
     layout.workspaceId,
     shouldUseExternalWindow,
-    title,
   ]);
+
+  useEffect(() => {
+    const popup = externalWindowRef.current;
+    if (!popup || popup.closed) return;
+    popup.document.title = title;
+  }, [externalPanelRoot, title]);
+
+  useEffect(() => {
+    if (!externalPanelRoot) return;
+    configureExternalPanelDocumentGeometry(
+      externalPanelRoot.ownerDocument,
+      externalPanelRoot,
+      hasFixedFloatingGeometry ? externalFloatingRect : undefined,
+    );
+  }, [externalFloatingRect, externalPanelRoot, hasFixedFloatingGeometry]);
 
   useEffect(() => {
     if (!shouldUseExternalWindow || !isFloating || !externalPanelRoot) return;
     let disposed = false;
     const popup = externalWindowRef.current;
     if (!popup || popup.closed || dragState.current?.externalWindowDrag) return;
-    const targetX = Math.round(window.screenX + externalFloatingRect.x);
-    const targetY = Math.round(window.screenY + externalFloatingRect.y);
-    const targetWidth = Math.max(160, Math.round(externalFloatingRect.width));
-    const targetHeight = Math.max(120, Math.round(externalFloatingRect.height));
+    const targetScreenRect = resolveFloatingPanelScreenRect({
+      rect: externalFloatingRect,
+      ownerScreenX: window.screenX,
+      ownerScreenY: window.screenY,
+      floatingRectSpace,
+    });
+    const targetX = Math.round(targetScreenRect.x);
+    const targetY = Math.round(targetScreenRect.y);
+    const targetWidth = Math.max(1, Math.round(externalFloatingRect.width));
+    const targetHeight = Math.max(1, Math.round(externalFloatingRect.height));
 
     try {
       if (Math.round(popup.screenX) !== targetX || Math.round(popup.screenY) !== targetY) {
@@ -353,7 +420,7 @@ export function DockablePanel({
     return () => {
       disposed = true;
     };
-  }, [externalFloatingRect, externalPanelRoot, isFloating, shouldUseExternalWindow]);
+  }, [externalFloatingRect, externalPanelRoot, hasFixedFloatingGeometry, floatingRectSpace, isFloating, shouldUseExternalWindow]);
 
   if (layout.mode === 'hidden') return null;
 
@@ -448,6 +515,7 @@ export function DockablePanel({
         layout.panelId,
         { ...current.resize, deltaX, deltaY },
         resolvedViewport,
+        { constrainSize: !useExternalPanelChrome },
       );
       dragState.current = { ...current, lastX: event.clientX, lastY: event.clientY };
     } else if (current.action === 'docked-resize' && current.resize) {
@@ -469,6 +537,26 @@ export function DockablePanel({
           });
           try {
             popup.moveTo(nextPosition.screenX, nextPosition.screenY);
+            const targetWidth = Math.max(1, Math.round(current.externalWindowDrag.width));
+            const targetHeight = Math.max(1, Math.round(current.externalWindowDrag.height));
+            const popupSize = resolveExternalFloatingPanelWindowSize({
+              innerWidth: popup.innerWidth,
+              innerHeight: popup.innerHeight,
+              outerWidth: popup.outerWidth,
+              outerHeight: popup.outerHeight,
+              fallbackWidth: targetWidth,
+              fallbackHeight: targetHeight,
+            });
+            if (shouldResizeExternalFloatingPanelWindow({
+              targetWidth,
+              targetHeight,
+              currentWidth: popupSize.width,
+              currentHeight: popupSize.height,
+              lastRequestedWidth: targetWidth,
+              lastRequestedHeight: targetHeight,
+            })) {
+              popup.resizeTo(targetWidth, targetHeight);
+            }
           } catch {
             setExternalPanelRoot(null);
           }
@@ -535,8 +623,9 @@ export function DockablePanel({
         windowScreenY: popup && !popup.closed ? popup.screenY : fallbackPosition.screenY,
         dragStartWidth: current.externalWindowDrag.width,
         dragStartHeight: current.externalWindowDrag.height,
+        floatingRectSpace: 'screen',
       });
-      floatPanel(layout.workspaceId, layout.panelId, nextRect, resolvedViewport);
+      floatPanel(layout.workspaceId, layout.panelId, nextRect, resolvedViewport, { constrainSize: false, floatingRectSpace: 'screen' });
     } else if (current.action === 'move' && current.detachedFromDock) {
       const snapTarget = resolveDockablePanelSnapTarget(
         { x: event.clientX, y: event.clientY },
@@ -546,6 +635,8 @@ export function DockablePanel({
       );
       if (snapTarget.mode === 'docked') {
         snapPanelToDockTarget(layout.workspaceId, layout.panelId, snapTarget);
+      } else if (snapTarget.mode === 'tab') {
+        groupPanelWithPanel(layout.workspaceId, layout.panelId, snapTarget.referencePanelId);
       }
     }
     dragState.current = null;
@@ -558,10 +649,24 @@ export function DockablePanel({
     <section
       aria-label={title}
       aria-modal={ariaModal}
-      className={`theme-popover ${isFloating ? 'fixed flex min-h-0 flex-col' : `relative flex min-h-0 flex-col ${dockedFullHeightClassName}`} overflow-hidden rounded-xl border border-cyan-300/15 bg-[#0d1522]/95 text-cyan-50 shadow-2xl ${className}`}
+      className={isCollapsed && !isFloating
+        ? `theme-popover relative flex flex-col items-center justify-center bg-[#08111d]/95 font-bold uppercase tracking-widest text-cyan-100 shadow-xl backdrop-blur-md transition-colors hover:bg-cyan-400/15 border-cyan-300/35 border ${
+            isVerticalDock
+              ? `h-24 w-7 py-3 text-xs [writing-mode:vertical-rl] ${
+                  layout.dockZone === 'left' ? 'rounded-r-lg border-l-0' : 'rounded-l-lg border-r-0'
+                }`
+              : `h-7 w-24 px-3 text-xs ${
+                  layout.dockZone === 'top' ? 'rounded-b-lg border-t-0' : 'rounded-t-lg border-b-0'
+                }`
+          } ${className}`
+        : isCompactFloatingChrome
+        ? `theme-popover fixed flex min-h-0 flex-col overflow-hidden rounded-[3px] border border-cyan-300/25 bg-[#11131a]/95 text-cyan-50 shadow-2xl ${className}`
+        : `theme-popover ${isFloating ? 'fixed flex min-h-0 flex-col' : `relative flex min-h-0 flex-col ${dockedFullHeightClassName}`} overflow-hidden rounded-xl border border-cyan-300/15 bg-[#0d1522]/95 text-cyan-50 shadow-2xl ${className}`}
       data-dock-zone={layout.dockZone}
+      data-dockable-panel-chrome={chrome}
       data-dockable-panel-mode={layout.mode}
       data-dockable-panel-id={layout.panelId}
+      data-dockable-tab-target={!isCompactFloatingChrome && !fixedSize && allowedDockZones.length > 0 ? 'true' : undefined}
       data-dockable-workspace-id={layout.workspaceId}
       onPointerDown={() => bringPanelToFront(layout.workspaceId, layout.panelId)}
       role={role}
@@ -570,9 +675,7 @@ export function DockablePanel({
       {isCollapsed && !isFloating ? (
         <button
           aria-label={`Expand ${title}`}
-          className={`theme-button flex min-h-0 min-w-0 flex-1 items-center justify-center bg-[#111c2c] px-1 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100/80 transition-colors hover:bg-cyan-300/15 hover:text-white ${
-            isVerticalDock ? '[writing-mode:vertical-rl]' : ''
-          }`}
+          className="h-full w-full outline-none flex items-center justify-center pointer-events-auto"
           onClick={(event) => {
             event.stopPropagation();
             setPanelMode(layout.workspaceId, layout.panelId, 'docked');
@@ -583,53 +686,78 @@ export function DockablePanel({
           {title}
         </button>
       ) : (
-        <div
-          aria-label={`${title} drag handle`}
-          className="theme-header relative z-10 flex touch-none cursor-grab items-center gap-2 border-b border-cyan-300/10 bg-[#111c2c] px-2 py-1.5 active:cursor-grabbing"
-          onPointerDown={startDrag}
-          onDoubleClick={() => {
-            if (isCollapsed) {
-              setPanelMode(layout.workspaceId, layout.panelId, isFloating ? 'floating' : 'docked');
-            }
-          }}
-          role="button"
-          tabIndex={0}
-          title={`${title} drag handle`}
-        >
-          <GripHorizontal aria-hidden size={14} className="shrink-0 text-cyan-100/45" />
-          <span className="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100/80">
-            {title}
-          </span>
-          {shouldUseExternalWindow ? (
-            <button
-              className="theme-button rounded border border-cyan-300/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100/70 hover:border-cyan-200/50 hover:text-white"
-              onClick={(event) => {
-                event.stopPropagation();
-                setPanelMode(layout.workspaceId, layout.panelId, 'docked');
-              }}
-              onPointerDown={(event) => event.stopPropagation()}
-              type="button"
-            >
-              Dock
-            </button>
-          ) : null}
-          {onClose ? (
-            <button
-              className="theme-button rounded border border-cyan-300/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100/70 hover:border-cyan-200/50 hover:text-white"
-              onClick={(event) => {
-                event.stopPropagation();
-                onClose();
-              }}
-              onPointerDown={(event) => event.stopPropagation()}
-              type="button"
-            >
-              Close
-            </button>
-          ) : null}
-        </div>
+        isCompactFloatingChrome ? (
+          <div
+            aria-label={`${title} drag handle`}
+            className="relative z-10 flex h-3 shrink-0 touch-none cursor-grab items-center justify-center border-b border-cyan-300/20 bg-[#171a22] active:cursor-grabbing"
+            onPointerDown={startDrag}
+            role="button"
+            tabIndex={0}
+            title={`${title} drag handle`}
+          >
+            <GripHorizontal aria-hidden size={11} className="shrink-0 text-cyan-100/50" />
+          </div>
+        ) : (
+          <div
+            aria-label={`${title} drag handle`}
+            className="theme-header relative z-10 flex touch-none cursor-grab items-center gap-2 border-b border-cyan-300/10 bg-[#111c2c] px-2 py-1.5 active:cursor-grabbing"
+            onPointerDown={startDrag}
+            onDoubleClick={() => {
+              if (isCollapsed) {
+                setPanelMode(layout.workspaceId, layout.panelId, isFloating ? 'floating' : 'docked');
+              }
+            }}
+            role="button"
+            tabIndex={0}
+            title={`${title} drag handle`}
+          >
+            <GripHorizontal aria-hidden size={14} className="shrink-0 text-cyan-100/45" />
+            <span className="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100/80">
+              {title}
+            </span>
+            {canDockExternalPanel ? (
+              <button
+                className="theme-button rounded border border-cyan-300/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100/70 hover:border-cyan-200/50 hover:text-white"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setPanelMode(layout.workspaceId, layout.panelId, 'docked');
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                type="button"
+              >
+                Dock
+              </button>
+            ) : null}
+            {onClose ? (
+              <button
+                className="theme-button rounded border border-cyan-300/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100/70 hover:border-cyan-200/50 hover:text-white"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onClose();
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                type="button"
+              >
+                Close
+              </button>
+            ) : null}
+          </div>
+        )
       )}
+      {!isCollapsed && tabs ? (
+        <div
+          className="shrink-0 border-b border-cyan-300/10 bg-[#0a1320]/95"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          {tabs}
+        </div>
+      ) : null}
       {!isCollapsed ? (
-        <div className={`min-h-0 flex-1 ${bodyClassName}`} onPointerDown={(event) => event.stopPropagation()}>
+        <div
+          className={`min-h-0 ${bodyFlexClassName} ${resolvedBodyClassName}`}
+          data-dockable-panel-body={layout.panelId}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
           <ErrorBoundary
             className="min-h-full"
             level="panel"
@@ -640,7 +768,7 @@ export function DockablePanel({
           </ErrorBoundary>
         </div>
       ) : null}
-      {isFloating && !isCollapsed
+      {isFloating && !isCollapsed && !fixedSize && !isCompactFloatingChrome
         ? RESIZE_HANDLES.map((handle) => (
             <div
               aria-label={`${title} ${handle.label.toLowerCase()}`}
@@ -750,16 +878,53 @@ function prepareExternalPanelDocument(targetDocument: Document): void {
   }
 }
 
+function configureExternalPanelDocumentGeometry(
+  targetDocument: Document,
+  root: HTMLElement,
+  fixedRect?: PanelRect,
+): void {
+  if (!fixedRect) {
+    targetDocument.documentElement.style.width = '';
+    targetDocument.documentElement.style.height = '';
+    targetDocument.documentElement.style.overflow = '';
+    targetDocument.body.style.width = '';
+    targetDocument.body.style.height = '';
+    targetDocument.body.style.overflow = 'hidden';
+    root.style.width = '';
+    root.style.height = '';
+    root.style.overflow = '';
+    return;
+  }
+
+  const width = `${Math.max(1, Math.round(fixedRect.width))}px`;
+  const height = `${Math.max(1, Math.round(fixedRect.height))}px`;
+  targetDocument.documentElement.style.width = width;
+  targetDocument.documentElement.style.height = height;
+  targetDocument.documentElement.style.overflow = 'hidden';
+  targetDocument.documentElement.style.background = 'transparent';
+  targetDocument.body.style.width = width;
+  targetDocument.body.style.height = height;
+  targetDocument.body.style.overflow = 'hidden';
+  targetDocument.body.style.background = 'transparent';
+  root.style.width = width;
+  root.style.height = height;
+  root.style.overflow = 'hidden';
+}
+
 function collectDockedPanelStackRects(workspaceId: string, activePanelId: string): DockablePanelStackRect[] {
   if (typeof document === 'undefined') return [];
-  const elements = document.querySelectorAll<HTMLElement>('[data-dockable-panel-id][data-dockable-workspace-id][data-dock-zone]');
+  const elements = document.querySelectorAll<HTMLElement>('[data-dockable-panel-id][data-dockable-workspace-id][data-dock-zone][data-dockable-tab-target="true"]');
   const rects: DockablePanelStackRect[] = [];
 
   elements.forEach((element) => {
     if (element.dataset.dockableWorkspaceId !== workspaceId) return;
     const panelId = element.dataset.dockablePanelId;
     if (!panelId || panelId === activePanelId) return;
-    if (element.dataset.dockablePanelMode !== 'docked' && element.dataset.dockablePanelMode !== 'collapsed') return;
+    if (
+      element.dataset.dockablePanelMode !== 'docked'
+      && element.dataset.dockablePanelMode !== 'collapsed'
+      && element.dataset.dockablePanelMode !== 'floating'
+    ) return;
     const dockZone = element.dataset.dockZone;
     if (!isDockZone(dockZone)) return;
     const rect = readElementRect(element);

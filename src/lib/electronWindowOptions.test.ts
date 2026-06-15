@@ -8,7 +8,11 @@ interface ElectronWindowOptionsModule {
     action: 'allow' | 'deny';
     overrideBrowserWindowOptions?: Record<string, unknown>;
   };
-  focusFloatingPanelChildWindow: (parentWindow: unknown, childWindow: Record<string, unknown>) => void;
+  focusFloatingPanelChildWindow: (
+    parentWindow: unknown,
+    childWindow: Record<string, unknown>,
+    details?: { frameName?: string; features?: string },
+  ) => void;
   isSignalLoomFloatingPanelWindow: (details: { frameName?: string; features?: string }) => boolean;
 }
 
@@ -32,7 +36,35 @@ describe('Electron floating panel window options', () => {
       modal: false,
       frame: false,
       show: true,
-      skipTaskbar: false,
+      skipTaskbar: true,
+    });
+  });
+
+  it('honors non-resizable fixed palette popup features for compact tool windows', async () => {
+    const { buildWorkspaceWindowOpenResult } = await loadWindowOptionsModule();
+    const parentWindow = { id: 1 };
+    const result = buildWorkspaceWindowOpenResult({
+      frameName: 'signal-loom-image-tools',
+      features: 'popup=yes,frame=false,width=66,height=456,left=2368,top=192,resizable=no',
+    }, parentWindow);
+
+    expect(result.action).toBe('allow');
+    expect(result.overrideBrowserWindowOptions).toMatchObject({
+      parent: parentWindow,
+      backgroundColor: '#00000000',
+      frame: false,
+      hasShadow: false,
+      height: 456,
+      maxHeight: 456,
+      maxWidth: 66,
+      minHeight: 456,
+      minWidth: 66,
+      resizable: false,
+      transparent: true,
+      useContentSize: true,
+      width: 66,
+      x: 2368,
+      y: 192,
     });
   });
 
@@ -65,5 +97,34 @@ describe('Electron floating panel window options', () => {
     expect(childWindow.show).toHaveBeenCalled();
     expect(childWindow.moveTop).toHaveBeenCalled();
     expect(childWindow.focus).toHaveBeenCalled();
+  });
+
+  it('clips fixed compact floating child windows to their requested palette shape', async () => {
+    const { focusFloatingPanelChildWindow } = await loadWindowOptionsModule();
+    const childWindow = {
+      focus: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      isMinimized: vi.fn(() => false),
+      moveTop: vi.fn(),
+      setContentSize: vi.fn(),
+      setMaximumSize: vi.fn(),
+      setMinimumSize: vi.fn(),
+      setParentWindow: vi.fn(),
+      setResizable: vi.fn(),
+      setShape: vi.fn(),
+      setSize: vi.fn(),
+      show: vi.fn(),
+    };
+
+    focusFloatingPanelChildWindow({ id: 1 }, childWindow, {
+      features: 'popup=yes,frame=false,width=66,height=456,left=2368,top=192,resizable=no',
+    });
+
+    expect(childWindow.setResizable).toHaveBeenCalledWith(false);
+    expect(childWindow.setMinimumSize).toHaveBeenCalledWith(66, 456);
+    expect(childWindow.setMaximumSize).toHaveBeenCalledWith(66, 456);
+    expect(childWindow.setContentSize).toHaveBeenCalledWith(66, 456);
+    expect(childWindow.setSize).toHaveBeenCalledWith(66, 456);
+    expect(childWindow.setShape).toHaveBeenCalledWith([{ x: 0, y: 0, width: 66, height: 456 }]);
   });
 });

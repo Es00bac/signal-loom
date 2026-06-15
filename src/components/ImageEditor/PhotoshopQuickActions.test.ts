@@ -14,6 +14,7 @@ import {
   createLayerViaCopy,
   createLayerViaCut,
   desaturateLayer,
+  describePhotoshopQuickActionCompatibility,
   duplicateLayerQuickAction,
   cropLayerToSelection,
   featherSelection,
@@ -24,12 +25,15 @@ import {
   fitLayerWidthToCanvas,
   flipLayerHorizontal,
   flipLayerVertical,
+  getPhotoshopQuickActionCapabilityDescriptor,
   growSelection,
   invertLayerColors,
+  listPhotoshopQuickActionCapabilityDescriptors,
   lowerLayerOneStep,
   moveLayerToBack,
   moveLayerToFront,
   nudgeLayer,
+  nudgeSelection,
   raiseLayerOneStep,
   rasterizeLayerToCanvas,
   resetLayerPosition,
@@ -55,6 +59,7 @@ import {
   selectVerticalCenterBand,
   shrinkSelection,
   smoothSelection,
+  summarizePhotoshopQuickActionCatalog,
   trimCanvasToVisible,
   trimTransparentLayer,
 } from './PhotoshopQuickActions';
@@ -170,6 +175,14 @@ function setPixel(bitmap: LayerBitmap, x: number, y: number, rgba: [number, numb
   data.set(rgba, (y * bitmap.width + x) * 4);
 }
 
+function fillBitmap(bitmap: LayerBitmap, rgba: [number, number, number, number]) {
+  for (let y = 0; y < bitmap.height; y += 1) {
+    for (let x = 0; x < bitmap.width; x += 1) {
+      setPixel(bitmap, x, y, rgba);
+    }
+  }
+}
+
 function rgbaAt(bitmap: LayerBitmap, x: number, y: number): number[] {
   const data = (bitmap as unknown as FakeOffscreenCanvas).context.imageData.data;
   return Array.from(data.slice((y * bitmap.width + x) * 4, (y * bitmap.width + x) * 4 + 4));
@@ -184,9 +197,9 @@ describe('PhotoshopQuickActions', () => {
     installCanvasStub();
   });
 
-  it('enumerates the original 70 plus 200 more shipped Photoshop-style quick actions', () => {
+  it('enumerates the original 70 plus local fill plus 204 more shipped Photoshop-style quick actions', () => {
     const ids = PHOTOSHOP_QUICK_ACTIONS.map((action) => action.id);
-    expect(ids.slice(0, 70)).toEqual([
+    expect(ids.slice(0, 75)).toEqual([
       'selectLayerBounds',
       'selectLayerOpaquePixels',
       'growSelection',
@@ -194,6 +207,10 @@ describe('PhotoshopQuickActions', () => {
       'featherSelection',
       'borderSelection',
       'smoothSelection',
+      'nudgeSelectionLeft',
+      'nudgeSelectionRight',
+      'nudgeSelectionUp',
+      'nudgeSelectionDown',
       'clearOutsideSelection',
       'layerViaCopy',
       'layerViaCut',
@@ -257,9 +274,10 @@ describe('PhotoshopQuickActions', () => {
       'fitLayerInsideCanvas',
       'fillLayerToCanvas',
       'rasterizeLayerToCanvas',
+      'localContentAwareFillPatch',
     ]);
-    expect(ids).toHaveLength(270);
-    expect(new Set(ids).size).toBe(270);
+    expect(ids).toHaveLength(275);
+    expect(new Set(ids).size).toBe(275);
     expect(ids).toEqual(expect.arrayContaining([
       'growSelection16px',
       'selectGrid5x5Cell25',
@@ -274,6 +292,221 @@ describe('PhotoshopQuickActions', () => {
     ]));
   });
 
+  it('exposes local content-aware fill as a Pixels quick action for the image context menu', () => {
+    expect(PHOTOSHOP_QUICK_ACTIONS).toContainEqual({
+      id: 'localContentAwareFillPatch',
+      label: 'Local Content-Aware Fill / Patch',
+      group: 'Pixels',
+    });
+  });
+
+  it('describes quick-action capabilities by category, input, output, and undoability', () => {
+    const descriptors = listPhotoshopQuickActionCapabilityDescriptors();
+
+    expect(descriptors).toHaveLength(PHOTOSHOP_QUICK_ACTIONS.length);
+    expect(descriptors.map((descriptor) => descriptor.id)).toEqual(
+      PHOTOSHOP_QUICK_ACTIONS.map((action) => action.id),
+    );
+    expect(getPhotoshopQuickActionCapabilityDescriptor('selectLayerBounds')).toEqual({
+      id: 'selectLayerBounds',
+      label: 'Select Layer Bounds',
+      category: 'Selection',
+      input: ['document', 'activeLayer'],
+      output: 'selection',
+      undoable: true,
+      mutatesDocument: false,
+      implementation: 'local-deterministic',
+      warning: null,
+    });
+    expect(getPhotoshopQuickActionCapabilityDescriptor('clearOutsideSelection')).toEqual({
+      id: 'clearOutsideSelection',
+      label: 'Clear Outside Selection',
+      category: 'Pixels',
+      input: ['document', 'editablePixels', 'selection'],
+      output: 'paint',
+      undoable: true,
+      mutatesDocument: true,
+      implementation: 'local-deterministic',
+      warning: null,
+    });
+    expect(getPhotoshopQuickActionCapabilityDescriptor('layerViaCopy')).toEqual({
+      id: 'layerViaCopy',
+      label: 'Layer via Copy',
+      category: 'Layer',
+      input: ['document', 'activeLayer', 'selection'],
+      output: 'layer',
+      undoable: true,
+      mutatesDocument: true,
+      implementation: 'local-deterministic',
+      warning: null,
+    });
+    expect(getPhotoshopQuickActionCapabilityDescriptor('centerLayer')).toEqual({
+      id: 'centerLayer',
+      label: 'Center Layer',
+      category: 'Transform',
+      input: ['document', 'movableLayer'],
+      output: 'transform',
+      undoable: true,
+      mutatesDocument: true,
+      implementation: 'local-deterministic',
+      warning: null,
+    });
+    expect(getPhotoshopQuickActionCapabilityDescriptor('trimCanvasToVisible')).toEqual({
+      id: 'trimCanvasToVisible',
+      label: 'Trim Canvas to Visible Pixels',
+      category: 'Canvas',
+      input: ['document'],
+      output: 'document',
+      undoable: true,
+      mutatesDocument: true,
+      implementation: 'local-deterministic',
+      warning: null,
+    });
+    expect(getPhotoshopQuickActionCapabilityDescriptor('localContentAwareFillPatch')).toEqual({
+      id: 'localContentAwareFillPatch',
+      label: 'Local Content-Aware Fill / Patch',
+      category: 'Pixels',
+      input: ['document', 'editablePixels'],
+      output: 'paint',
+      undoable: true,
+      mutatesDocument: true,
+      implementation: 'local-approximation',
+      warning: 'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
+    });
+    expect(getPhotoshopQuickActionCapabilityDescriptor('missingAction')).toBeNull();
+  });
+
+  it('warns when a quick action is a local approximation of Photoshop or cloud AI features', () => {
+    const localFill = getPhotoshopQuickActionCapabilityDescriptor('localContentAwareFillPatch');
+    const warnedActionIds = listPhotoshopQuickActionCapabilityDescriptors()
+      .filter((descriptor) => descriptor.warning)
+      .map((descriptor) => descriptor.id);
+
+    expect(warnedActionIds).toEqual(['localContentAwareFillPatch']);
+    expect(localFill).toMatchObject({
+      implementation: 'local-approximation',
+      warning: 'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
+    });
+  });
+
+  it('describes content-aware quick-action compatibility with active-layer execution and new-layer caveats', () => {
+    const layer = makeLayer();
+    fillBitmap(layer.bitmap as LayerBitmap, [30, 60, 90, 255]);
+    setPixel(layer.bitmap as LayerBitmap, 1, 1, [240, 0, 0, 255]);
+    const doc = makeDoc({ layers: [layer], activeLayerId: layer.id });
+    const selection = createMask(doc.width, doc.height);
+    setRect(selection, 3, 2, 1, 1, 255, false);
+
+    const compatibility = describePhotoshopQuickActionCompatibility({
+      actionId: 'localContentAwareFillPatch',
+      doc,
+      selection,
+      operation: 'patch',
+      outputTarget: 'new-layer',
+    });
+
+    expect(compatibility).toMatchObject({
+      descriptorId: 'photoshop-quick-action-compatibility:v1',
+      actionId: 'localContentAwareFillPatch',
+      documentId: 'doc-1',
+      activeLayerId: 'layer-1',
+      knownAction: true,
+      category: 'Pixels',
+      output: 'paint',
+      implementation: 'local-approximation',
+      compatible: false,
+      blockerCodes: ['output-to-new-layer-unsupported'],
+      warnings: [
+        'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
+      ],
+      contentAwareRepair: {
+        operation: 'patch',
+        targetKind: 'selection',
+        readinessState: 'ready',
+        activeLayerExecutable: true,
+        targetPixels: 1,
+        sourcePixels: 11,
+        blockerCodes: [],
+        requestedOutputTarget: 'new-layer',
+        appliedOutputTarget: 'active-layer',
+        outputCreatesLayer: false,
+        nonDestructive: false,
+      },
+    });
+    expect(compatibility.contentAwareRepair?.samplingRegionSignature).toContain('local-content-aware-sampling-region:v1:');
+    expect(compatibility.contentAwareRepair?.operationSignature).toBe(
+      'local-content-aware-operation:v1:{"operation":"patch","execution":"sample-and-blend-source-pixels","requiresSourcePixels":true,"modifiesRgb":true,"modifiesAlpha":true}',
+    );
+    expect(compatibility.previewSignature).toContain('"outputPolicySignature":"local-content-aware-output-policy:v1:');
+  });
+
+  it('blocks content-aware quick actions when transparent fallback has no target pixels', () => {
+    const layer = makeLayer();
+    fillBitmap(layer.bitmap as LayerBitmap, [30, 60, 90, 255]);
+    const doc = makeDoc({ layers: [layer], activeLayerId: layer.id });
+
+    const compatibility = describePhotoshopQuickActionCompatibility({
+      actionId: 'localContentAwareFillPatch',
+      doc,
+    });
+
+    expect(compatibility).toMatchObject({
+      compatible: false,
+      blockerCodes: ['empty-transparent-target'],
+      contentAwareRepair: {
+        operation: 'fill',
+        targetKind: 'transparent-pixels',
+        readinessState: 'no-target-pixels',
+        activeLayerExecutable: false,
+        targetPixels: 0,
+        sourcePixels: 0,
+        blockerCodes: ['empty-transparent-target'],
+      },
+    });
+  });
+
+  it('summarizes the quick-action catalog in stable dashboard-ready buckets', () => {
+    expect(summarizePhotoshopQuickActionCatalog()).toEqual({
+      total: 275,
+      byCategory: {
+        Selection: 131,
+        Pixels: 13,
+        Layer: 48,
+        Transform: 82,
+        Canvas: 1,
+      },
+      byInput: {
+        document: 229,
+        activeLayer: 47,
+        editablePixels: 35,
+        movableLayer: 64,
+        selection: 51,
+      },
+      byOutput: {
+        selection: 131,
+        paint: 13,
+        layer: 66,
+        transform: 64,
+        document: 1,
+      },
+      undoable: {
+        undoable: 275,
+        notUndoable: 0,
+      },
+      mutatesDocument: {
+        mutating: 144,
+        nonMutating: 131,
+      },
+      warnings: [
+        {
+          id: 'localContentAwareFillPatch',
+          label: 'Local Content-Aware Fill / Patch',
+          warning: 'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
+        },
+      ],
+    });
+  });
+
   it('creates layer selections and selection morphology variants', () => {
     const doc = makeDoc();
     const layer = makeLayer();
@@ -286,6 +519,7 @@ describe('PhotoshopQuickActions', () => {
     const feathered = featherSelection(opaque, 1);
     const bordered = borderSelection(grown, 1);
     const smoothed = smoothSelection(grown);
+    const nudged = nudgeSelection(opaque, 2, 1);
 
     expect(alphaAtMask(bounds, 2, 1)).toBe(255);
     expect(alphaAtMask(bounds, 5, 3)).toBe(255);
@@ -296,6 +530,8 @@ describe('PhotoshopQuickActions', () => {
     expect(alphaAtMask(feathered, 3, 2)).toBeGreaterThan(0);
     expect(alphaAtMask(bordered, 2, 2)).toBe(200);
     expect(alphaAtMask(smoothed, 3, 2)).toBeGreaterThan(0);
+    expect(alphaAtMask(nudged, 5, 3)).toBe(200);
+    expect(alphaAtMask(nudged, 3, 2)).toBe(0);
   });
 
   it('supports additional canvas and selection quick actions', () => {
@@ -600,7 +836,7 @@ describe('PhotoshopQuickActions', () => {
     setRect(selection, 3, 2, 1, 1, 255, false);
 
     const selectionResult = createPhotoshopQuickActionResult({
-      actionId: 'growSelection',
+      actionId: 'nudgeSelectionRight',
       doc,
       layer,
       selection,
@@ -638,7 +874,8 @@ describe('PhotoshopQuickActions', () => {
     });
 
     expect(selectionResult?.kind).toBe('selection');
-    expect(selectionResult?.kind === 'selection' ? alphaAtMask(selectionResult.selection, 2, 2) : 0).toBe(255);
+    expect(selectionResult?.kind === 'selection' ? alphaAtMask(selectionResult.selection, 4, 2) : 0).toBe(255);
+    expect(selectionResult?.kind === 'selection' ? alphaAtMask(selectionResult.selection, 3, 2) : 255).toBe(0);
     expect(paintResult?.kind).toBe('paint');
     expect(layerResult?.kind).toBe('layerOp');
     expect(layerResult?.kind === 'layerOp' ? layerResult.activeLayerId : undefined).toBe('new-layer');

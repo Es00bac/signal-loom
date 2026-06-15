@@ -7,6 +7,34 @@ type KeyboardShortcutEvent = Pick<
 >;
 
 export type KeyboardShortcutMap = Partial<Record<NativeMenuCommand, string>>;
+export type KeyboardShortcutWorkspaceRoute =
+  | 'global'
+  | 'edit-workspaces'
+  | 'flow-workspace-only'
+  | 'image-workspace-only'
+  | 'paper-workspace-only'
+  | 'editor-workspace-only'
+  | 'unsupported';
+
+export interface KeyboardShortcutReadiness {
+  commandsWithShortcuts: NativeMenuCommand[];
+  missingCommandShortcuts: NativeMenuCommand[];
+  collisions: Array<{
+    workspace: WorkspaceView;
+    shortcut: string;
+    commands: NativeMenuCommand[];
+  }>;
+  workspaceRoutes: Array<{
+    command: NativeMenuCommand;
+    workspace: WorkspaceView | 'global' | 'edit';
+    route: KeyboardShortcutWorkspaceRoute;
+  }>;
+  unsupported: Array<{
+    kind: 'nested-tool-flyouts' | 'toolbar-customization';
+    supported: false;
+    caveat: string;
+  }>;
+}
 
 export const DEFAULT_KEYBOARD_SHORTCUTS: KeyboardShortcutMap = {
   'file:new': 'Ctrl+N',
@@ -14,6 +42,7 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: KeyboardShortcutMap = {
   'file:save': 'Ctrl+S',
   'file:save-as': 'Ctrl+Shift+S',
   'file:import-media': 'Ctrl+I',
+  'settings:gamepad-bindings': 'Ctrl+Alt+G',
   'edit:undo': 'Ctrl+Z',
   'edit:redo': 'Ctrl+Shift+Z',
   'edit:cut': 'Ctrl+X',
@@ -27,6 +56,7 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: KeyboardShortcutMap = {
   'view:editor': 'Ctrl+2',
   'view:image': 'Ctrl+3',
   'view:paper': 'Ctrl+4',
+  'view:toggle-interface': 'Tab',
   'view:command-palette': 'Ctrl+K',
   'image:tool-hand': 'H',
   'image:tool-move': 'V',
@@ -34,7 +64,10 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: KeyboardShortcutMap = {
   'image:tool-lasso': 'L',
   'image:tool-magic-wand': 'W',
   'image:tool-brush': 'B',
+  'image:tool-pen': 'Shift+B',
   'image:tool-eraser': 'E',
+  'image:tool-background-eraser': 'Alt+E',
+  'image:tool-magic-eraser': 'Shift+E',
   'image:tool-clone-stamp': 'S',
   'image:tool-spot-heal': 'J',
   'image:tool-blur-brush': 'R',
@@ -85,6 +118,15 @@ export function resolveKeyboardShortcutCommand(
     isCommandAvailableInWorkspace('view:command-palette', workspace)
   ) {
     return 'view:command-palette';
+  }
+
+  const interfaceToggleShortcut = resolvedShortcuts['view:toggle-interface'];
+  if (
+    interfaceToggleShortcut &&
+    doesEventMatchShortcut(event, interfaceToggleShortcut) &&
+    isCommandAvailableInWorkspace('view:toggle-interface', workspace)
+  ) {
+    return 'view:toggle-interface';
   }
 
   if (isEditableShortcutTarget(event.target)) return undefined;
@@ -213,8 +255,8 @@ function normalizeShortcutKey(key: string): string {
   return trimmed;
 }
 
-function isCommandAvailableInWorkspace(command: NativeMenuCommand, workspace: WorkspaceView): boolean {
-  if (command.startsWith('file:') || command.startsWith('view:') || command.startsWith('help:') || command === 'settings:keyboard-shortcuts') {
+export function isCommandAvailableInWorkspace(command: NativeMenuCommand, workspace: WorkspaceView): boolean {
+  if (command.startsWith('file:') || command.startsWith('view:') || command.startsWith('help:') || command.startsWith('settings:')) {
     return true;
   }
   if (command.startsWith('edit:')) return EDIT_WORKSPACES.has(workspace);
@@ -223,4 +265,69 @@ function isCommandAvailableInWorkspace(command: NativeMenuCommand, workspace: Wo
   if (command.startsWith('timeline:')) return workspace === 'editor';
   if (command.startsWith('flow:')) return workspace === 'flow';
   return false;
+}
+
+export function describeKeyboardShortcutReadiness(
+  shortcuts: KeyboardShortcutMap = DEFAULT_KEYBOARD_SHORTCUTS,
+): KeyboardShortcutReadiness {
+  const normalizedEntries = Object.entries(shortcuts)
+    .map(([command, shortcut]) => [command as NativeMenuCommand, normalizeShortcutLabel(shortcut)] as const);
+  const commandsWithShortcuts = normalizedEntries
+    .filter(([, shortcut]) => Boolean(shortcut))
+    .map(([command]) => command);
+  const missingCommandShortcuts = normalizedEntries
+    .filter(([, shortcut]) => !shortcut)
+    .map(([command]) => command);
+  const workspaces: WorkspaceView[] = ['flow', 'editor', 'image', 'paper'];
+  const collisions: KeyboardShortcutReadiness['collisions'] = [];
+
+  for (const workspace of workspaces) {
+    const buckets = new Map<string, NativeMenuCommand[]>();
+    for (const [command, shortcut] of normalizedEntries) {
+      if (!shortcut || !isCommandAvailableInWorkspace(command, workspace)) continue;
+      buckets.set(shortcut, [...buckets.get(shortcut) ?? [], command]);
+    }
+    for (const [shortcut, commands] of buckets.entries()) {
+      if (commands.length > 1) {
+        collisions.push({ workspace, shortcut, commands });
+      }
+    }
+  }
+
+  return {
+    commandsWithShortcuts,
+    missingCommandShortcuts,
+    collisions,
+    workspaceRoutes: commandsWithShortcuts.map((command) => ({
+      command,
+      ...describeCommandWorkspaceRoute(command),
+    })),
+    unsupported: [
+      {
+        kind: 'nested-tool-flyouts',
+        supported: false,
+        caveat: 'Shortcuts target concrete commands; cycling nested tool flyouts is not implemented.',
+      },
+      {
+        kind: 'toolbar-customization',
+        supported: false,
+        caveat: 'Shortcut customization can remap commands, but toolbar layout customization is not implemented.',
+      },
+    ],
+  };
+}
+
+function describeCommandWorkspaceRoute(command: NativeMenuCommand): {
+  workspace: WorkspaceView | 'global' | 'edit';
+  route: KeyboardShortcutWorkspaceRoute;
+} {
+  if (command.startsWith('file:') || command.startsWith('view:') || command.startsWith('help:') || command.startsWith('settings:')) {
+    return { workspace: 'global', route: 'global' };
+  }
+  if (command.startsWith('edit:')) return { workspace: 'edit', route: 'edit-workspaces' };
+  if (command.startsWith('image:')) return { workspace: 'image', route: 'image-workspace-only' };
+  if (command.startsWith('paper:')) return { workspace: 'paper', route: 'paper-workspace-only' };
+  if (command.startsWith('timeline:')) return { workspace: 'editor', route: 'editor-workspace-only' };
+  if (command.startsWith('flow:')) return { workspace: 'flow', route: 'flow-workspace-only' };
+  return { workspace: 'global', route: 'unsupported' };
 }

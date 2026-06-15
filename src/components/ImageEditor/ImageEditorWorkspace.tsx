@@ -684,39 +684,44 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
                   disabled={!activeDocId}
                   onCommand={runNavigationCommand}
                 />
-                <ImageLayoutButton
-                  active={toolsVisible}
-                  label="Tools"
-                  onClick={() => {
-                    setSelectedLayoutPresetId('custom');
-                    setImageLayout({ toolbarVisible: !toolsVisible });
-                    setImagePanelGroupVisible([IMAGE_DOCKABLE_PANEL_IDS.tools], !toolsVisible, hidePanel, dockPanel, floatPanel);
-                  }}
-                />
-                <ImageLayoutButton
-                  active={rightPanelsVisible}
-                  label="Panels"
-                  onClick={() => {
-                    setSelectedLayoutPresetId('custom');
-                    setImageLayout({ rightPanelVisible: !rightPanelsVisible });
-                    setImagePanelGroupVisible(
-                      [IMAGE_DOCKABLE_PANEL_IDS.layers, IMAGE_DOCKABLE_PANEL_IDS.properties, IMAGE_DOCKABLE_PANEL_IDS.channels, IMAGE_DOCKABLE_PANEL_IDS.paths, IMAGE_DOCKABLE_PANEL_IDS.history],
-                      !rightPanelsVisible,
-                      hidePanel,
-                      dockPanel,
-                      floatPanel,
-                    );
-                  }}
-                />
-                <ImageLayoutButton
-                  active={assetsVisible}
-                  label="Assets"
-                  onClick={() => {
-                    setSelectedLayoutPresetId('custom');
-                    setImageLayout({ assetBarVisible: !assetsVisible });
-                    setImagePanelGroupVisible([IMAGE_DOCKABLE_PANEL_IDS.assets], !assetsVisible, hidePanel, dockPanel, floatPanel);
-                  }}
-                />
+                {/* On phone these are redundant with the source/panels/assets edge drawer handles. */}
+                {!mobilePhoneInterface.enabled ? (
+                  <>
+                    <ImageLayoutButton
+                      active={toolsVisible}
+                      label="Tools"
+                      onClick={() => {
+                        setSelectedLayoutPresetId('custom');
+                        setImageLayout({ toolbarVisible: !toolsVisible });
+                        setImagePanelGroupVisible([IMAGE_DOCKABLE_PANEL_IDS.tools], !toolsVisible, hidePanel, dockPanel, floatPanel);
+                      }}
+                    />
+                    <ImageLayoutButton
+                      active={rightPanelsVisible}
+                      label="Panels"
+                      onClick={() => {
+                        setSelectedLayoutPresetId('custom');
+                        setImageLayout({ rightPanelVisible: !rightPanelsVisible });
+                        setImagePanelGroupVisible(
+                          [IMAGE_DOCKABLE_PANEL_IDS.layers, IMAGE_DOCKABLE_PANEL_IDS.properties, IMAGE_DOCKABLE_PANEL_IDS.channels, IMAGE_DOCKABLE_PANEL_IDS.paths, IMAGE_DOCKABLE_PANEL_IDS.history],
+                          !rightPanelsVisible,
+                          hidePanel,
+                          dockPanel,
+                          floatPanel,
+                        );
+                      }}
+                    />
+                    <ImageLayoutButton
+                      active={assetsVisible}
+                      label="Assets"
+                      onClick={() => {
+                        setSelectedLayoutPresetId('custom');
+                        setImageLayout({ assetBarVisible: !assetsVisible });
+                        setImagePanelGroupVisible([IMAGE_DOCKABLE_PANEL_IDS.assets], !assetsVisible, hidePanel, dockPanel, floatPanel);
+                      }}
+                    />
+                  </>
+                ) : null}
                 <label className="mr-2 flex items-center gap-1.5 rounded border border-cyan-300/10 bg-[#101a29]/70 px-2 py-1 text-[11px] font-semibold text-cyan-100/55">
                   <span>Layout</span>
                   <select

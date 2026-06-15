@@ -21,6 +21,135 @@ export interface Point {
   y: number;
 }
 
+export type AlphaMaskCombineMonotonicity =
+  | 'source-defined'
+  | 'expands-or-preserves-alpha'
+  | 'reduces-or-preserves-alpha';
+
+export interface AlphaMaskCombineModeDescriptor {
+  kind: 'alpha-mask-combine-mode';
+  mode: SelectionMode;
+  label: string;
+  alphaRule: string;
+  previewFormula: string;
+  preservesPartialAlpha: boolean;
+  monotonicity: AlphaMaskCombineMonotonicity;
+  signature: string;
+}
+
+export type SelectionMaskOverlayWarningCode =
+  | 'selection-mask-feather-display-only'
+  | 'selection-mask-richer-visualization-unsupported';
+
+export interface SelectionMaskOverlayWarning {
+  code: SelectionMaskOverlayWarningCode;
+  severity: 'warning';
+  message: string;
+}
+
+export interface SelectionMaskAlphaSummary {
+  transparentPixels: number;
+  partialPixels: number;
+  fullPixels: number;
+  minAlpha: number;
+  maxAlpha: number;
+  averageAlpha: number;
+}
+
+export interface SelectionMaskOverlayDisplayDescriptor {
+  tintColor: string;
+  opacity: number;
+  opacityLabel: string;
+  featherPx: number;
+  featherLabel: string;
+}
+
+export interface SelectionMaskOverlayDescriptorOptions {
+  label?: string;
+  tintColor?: string;
+  opacity?: number;
+  featherPx?: number;
+}
+
+export interface SelectionMaskOverlayDescriptor {
+  kind: 'selection-mask-overlay';
+  label: string;
+  size: { width: number; height: number };
+  alpha: SelectionMaskAlphaSummary;
+  display: SelectionMaskOverlayDisplayDescriptor;
+  warnings: SelectionMaskOverlayWarning[];
+  limitations: string[];
+  signature: string;
+}
+
+export type SelectionMaskPersistenceWarningCode = 'selection-mask-saved-selection-metadata-only';
+
+export interface SelectionMaskPersistenceWarning {
+  code: SelectionMaskPersistenceWarningCode;
+  severity: 'warning';
+  message: string;
+}
+
+export interface SelectionMaskPersistenceDescriptorOptions {
+  label?: string;
+  storageTarget?: 'saved-selection-alpha-channel';
+}
+
+export interface SelectionMaskPersistenceDescriptor {
+  kind: 'selection-mask-persistence';
+  label: string;
+  storageTarget: 'saved-selection-alpha-channel';
+  loadTarget: 'document-selection';
+  roundTrip: 'lossless-alpha-mask';
+  hasSelection: boolean;
+  partialAlpha: boolean;
+  warnings: SelectionMaskPersistenceWarning[];
+  signature: string;
+}
+
+const ALPHA_MASK_COMBINE_MODE_DESCRIPTORS: Record<SelectionMode, AlphaMaskCombineModeDescriptor> = {
+  replace: {
+    kind: 'alpha-mask-combine-mode',
+    mode: 'replace',
+    label: 'Replace Selection',
+    alphaRule: 'target = source',
+    previewFormula: 'source',
+    preservesPartialAlpha: true,
+    monotonicity: 'source-defined',
+    signature: 'alpha-mask-combine:v1:replace:source',
+  },
+  add: {
+    kind: 'alpha-mask-combine-mode',
+    mode: 'add',
+    label: 'Add to Selection',
+    alphaRule: 'target = max(target, source)',
+    previewFormula: 'max(target, source)',
+    preservesPartialAlpha: true,
+    monotonicity: 'expands-or-preserves-alpha',
+    signature: 'alpha-mask-combine:v1:add:max(target, source)',
+  },
+  subtract: {
+    kind: 'alpha-mask-combine-mode',
+    mode: 'subtract',
+    label: 'Subtract from Selection',
+    alphaRule: 'target = max(0, target - source)',
+    previewFormula: 'max(0, target - source)',
+    preservesPartialAlpha: true,
+    monotonicity: 'reduces-or-preserves-alpha',
+    signature: 'alpha-mask-combine:v1:subtract:max(0, target - source)',
+  },
+  intersect: {
+    kind: 'alpha-mask-combine-mode',
+    mode: 'intersect',
+    label: 'Intersect with Selection',
+    alphaRule: 'target = min(target, source)',
+    previewFormula: 'min(target, source)',
+    preservesPartialAlpha: true,
+    monotonicity: 'reduces-or-preserves-alpha',
+    signature: 'alpha-mask-combine:v1:intersect:min(target, source)',
+  },
+};
+
 export function createMask(width: number, height: number): SelectionMask {
   return {
     width,
@@ -110,6 +239,81 @@ export function combineMasks(
       }
       return;
   }
+}
+
+export function describeAlphaMaskCombineMode(mode: SelectionMode): AlphaMaskCombineModeDescriptor {
+  const descriptor = ALPHA_MASK_COMBINE_MODE_DESCRIPTORS[mode];
+  if (!descriptor) {
+    throw new Error(`Unsupported alpha mask combine mode: ${mode}`);
+  }
+  return { ...descriptor };
+}
+
+export function describeSelectionMaskOverlay(
+  mask: SelectionMask,
+  options: SelectionMaskOverlayDescriptorOptions = {},
+): SelectionMaskOverlayDescriptor {
+  const label = normalizeOverlayLabel(options.label);
+  const alpha = summarizeMaskAlpha(mask);
+  const display = buildSelectionMaskOverlayDisplay(options);
+  const warnings = buildSelectionMaskOverlayWarnings(display.featherPx);
+  const signature = `selection-mask-overlay:v1:${JSON.stringify({
+    label,
+    width: mask.width,
+    height: mask.height,
+    alpha,
+    display: {
+      opacity: display.opacity,
+      featherPx: display.featherPx,
+    },
+    warnings: warnings.map((warning) => warning.code),
+  })}`;
+
+  return {
+    kind: 'selection-mask-overlay',
+    label,
+    size: { width: mask.width, height: mask.height },
+    alpha,
+    display,
+    warnings,
+    limitations: warnings.map((warning) => warning.message),
+    signature,
+  };
+}
+
+export function describeSelectionMaskPersistence(
+  mask: SelectionMask,
+  options: SelectionMaskPersistenceDescriptorOptions = {},
+): SelectionMaskPersistenceDescriptor {
+  const label = normalizeOverlayLabel(options.label);
+  const hasSelection = !isMaskEmpty(mask);
+  const partialAlpha = mask.data.some((value) => value > 0 && value < 255);
+  const storageTarget = options.storageTarget ?? 'saved-selection-alpha-channel';
+  const warnings: SelectionMaskPersistenceWarning[] = [{
+    code: 'selection-mask-saved-selection-metadata-only',
+    severity: 'warning',
+    message: 'Saved-selection round-trip is represented as alpha-mask metadata; native channel UI/export is not modeled here.',
+  }];
+
+  return {
+    kind: 'selection-mask-persistence',
+    label,
+    storageTarget,
+    loadTarget: 'document-selection',
+    roundTrip: 'lossless-alpha-mask',
+    hasSelection,
+    partialAlpha,
+    warnings,
+    signature: `selection-mask-persistence:v1:${JSON.stringify({
+      label,
+      storageTarget,
+      loadTarget: 'document-selection',
+      roundTrip: 'lossless-alpha-mask',
+      hasSelection,
+      partialAlpha,
+      warnings: warnings.map((warning) => warning.code),
+    })}`,
+  };
 }
 
 /**
@@ -265,7 +469,8 @@ export function setFloodFill(
   seedX: number,
   seedY: number,
   tolerance: number,
-  alpha = 255,
+  alphaOrContiguous: number | boolean = 255,
+  contiguous = true,
 ): void {
   if (
     source.width !== mask.width ||
@@ -286,6 +491,20 @@ export function setFloodFill(
   const sg = px[seedIdx + 1];
   const sb = px[seedIdx + 2];
   const tol2 = tolerance * tolerance;
+  const alpha = typeof alphaOrContiguous === 'number' ? alphaOrContiguous : 255;
+  const useContiguous = typeof alphaOrContiguous === 'boolean' ? alphaOrContiguous : contiguous;
+
+  if (!useContiguous) {
+    for (let cy = 0; cy < height; cy += 1) {
+      for (let cx = 0; cx < width; cx += 1) {
+        const flatIdx = cy * width + cx;
+        if (matchesSeedColor(flatIdx)) {
+          if (alpha > mask.data[flatIdx]) mask.data[flatIdx] = alpha;
+        }
+      }
+    }
+    return;
+  }
 
   const visited = new Uint8Array(width * height);
   const stack: [number, number][] = [[seedX, seedY]];
@@ -315,6 +534,10 @@ export function setFloodFill(
   function matches(cx: number, cy: number): boolean {
     const idx = cy * width + cx;
     if (visited[idx]) return false;
+    return matchesSeedColor(idx);
+  }
+
+  function matchesSeedColor(idx: number): boolean {
     const off = idx * 4;
     const dr = px[off] - sr;
     const dg = px[off + 1] - sg;
@@ -382,4 +605,106 @@ export function maskToCanvas(
   }
   ctx.putImageData(imageData, 0, 0);
   return canvas;
+}
+
+function summarizeMaskAlpha(mask: SelectionMask): SelectionMaskAlphaSummary {
+  let transparentPixels = 0;
+  let partialPixels = 0;
+  let fullPixels = 0;
+  let minAlpha = 255;
+  let maxAlpha = 0;
+  let alphaTotal = 0;
+
+  for (let index = 0; index < mask.data.length; index += 1) {
+    const alpha = mask.data[index];
+    if (alpha === 0) {
+      transparentPixels += 1;
+    } else if (alpha === 255) {
+      fullPixels += 1;
+    } else {
+      partialPixels += 1;
+    }
+    if (alpha < minAlpha) minAlpha = alpha;
+    if (alpha > maxAlpha) maxAlpha = alpha;
+    alphaTotal += alpha;
+  }
+
+  if (mask.data.length === 0) {
+    minAlpha = 0;
+  }
+
+  return {
+    transparentPixels,
+    partialPixels,
+    fullPixels,
+    minAlpha,
+    maxAlpha,
+    averageAlpha: roundTo(alphaTotal / Math.max(1, mask.data.length), 2),
+  };
+}
+
+function buildSelectionMaskOverlayDisplay(
+  options: SelectionMaskOverlayDescriptorOptions,
+): SelectionMaskOverlayDisplayDescriptor {
+  const opacity = normalizeOpacity(options.opacity);
+  const featherPx = normalizeFeatherPx(options.featherPx);
+  return {
+    tintColor: normalizeTintColor(options.tintColor),
+    opacity,
+    opacityLabel: `${Math.round(opacity * 100)}%`,
+    featherPx,
+    featherLabel: featherPx === 0 ? '0 px' : `${formatFixedDecimal(featherPx)} px`,
+  };
+}
+
+function buildSelectionMaskOverlayWarnings(featherPx: number): SelectionMaskOverlayWarning[] {
+  const warnings: SelectionMaskOverlayWarning[] = [];
+  if (featherPx > 0) {
+    warnings.push({
+      code: 'selection-mask-feather-display-only',
+      severity: 'warning',
+      message: 'Feather is displayed as descriptor metadata; this helper does not blur or mutate mask pixels.',
+    });
+  }
+  warnings.push({
+    code: 'selection-mask-richer-visualization-unsupported',
+    severity: 'warning',
+    message: 'Advanced marching-ants animation, per-edge colorization, and channel-specific matte views are not represented by this descriptor.',
+  });
+  return warnings;
+}
+
+function normalizeOverlayLabel(label: string | undefined): string {
+  const normalized = label?.trim();
+  return normalized && normalized.length > 0 ? normalized : 'Selection Mask';
+}
+
+function normalizeTintColor(color: string | undefined): string {
+  const normalized = color?.trim().toLowerCase();
+  if (normalized && /^#[0-9a-f]{6}$/.test(normalized)) {
+    return normalized;
+  }
+  if (normalized && /^#[0-9a-f]{3}$/.test(normalized)) {
+    return `#${normalized[1]}${normalized[1]}${normalized[2]}${normalized[2]}${normalized[3]}${normalized[3]}`;
+  }
+  return '#ff0000';
+}
+
+function normalizeOpacity(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0.5;
+  return roundTo(Math.max(0, Math.min(1, value)), 3);
+}
+
+function normalizeFeatherPx(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 0;
+  return roundTo(value, 2);
+}
+
+function roundTo(value: number, decimals: number): number {
+  const scale = 10 ** decimals;
+  return Math.round(value * scale) / scale;
+}
+
+function formatFixedDecimal(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }

@@ -18,9 +18,9 @@ import { ConfirmationDialog } from './components/Common/ConfirmationDialog';
 import { TextInputDialog } from './components/Common/TextInputDialog';
 import { AlertDialog } from './components/Common/AlertDialog';
 import { TopNavbar } from './components/Layout/TopNavbar';
-import { UsageBar } from './components/Layout/UsageBar';
 import { CommandPalette } from './components/Common/CommandPalette';
 import { ActivityTrailPanel } from './components/Common/ActivityTrailPanel';
+import { GamepadInputManager } from './components/Common/GamepadInputManager';
 
 import { TextNode as InputNode } from './components/Nodes/TextNode';
 import { ImageNode } from './components/Nodes/ImageNode';
@@ -201,6 +201,12 @@ import { FlowWorkspaceShell } from './features/flow/workspace/FlowWorkspaceShell
 import { useFlowCanvasDropImport } from './features/flow/workspace/useFlowCanvasDropImport';
 import { useFlowDocumentStore } from './store/flow/flowDocumentStore';
 import { useFlowRuntimeStore } from './store/flow/flowRuntimeStore';
+import {
+  resolveNextMobileChromeModeForApplicationTab,
+  useMobileInterfaceStore,
+} from './store/mobileInterfaceStore';
+import { useMobilePhoneInterfaceDescriptor } from './lib/mobilePhoneInterface';
+import { shouldShowSharedWorkspacePanels } from './lib/sharedWorkspacePanelVisibility';
 
 import './index.css';
 
@@ -334,6 +340,7 @@ function FlowApp() {
   const providerSettings = useSettingsStore((state) => state.providerSettings);
   const interfaceThemeId = useSettingsStore((state) => state.interfaceThemeId);
   const keyboardShortcuts = useSettingsStore((state) => state.keyboardShortcuts);
+  const gamepadBindings = useSettingsStore((state) => state.gamepadBindings);
   const openSettings = useSettingsStore((state) => state.openSettings);
   const sourceBinItems = useSourceBinStore(useShallow((state) => state.bins.flatMap((bin) => bin.items)));
   const sourceBinIds = useSourceBinStore(useShallow((state) => state.bins.map((bin) => bin.id)));
@@ -1275,6 +1282,9 @@ function FlowApp() {
       case 'settings:keyboard-shortcuts':
         openSettings('keyboard');
         return;
+      case 'settings:gamepad-bindings':
+        openSettings('gamepad');
+        return;
       case 'view:flow':
         await openWorkspaceView('flow');
         return;
@@ -1287,18 +1297,46 @@ function FlowApp() {
       case 'view:paper':
         await openWorkspaceView('paper');
         return;
+      case 'view:toggle-interface': {
+        const mobileInterface = useMobileInterfaceStore.getState();
+        const nextMode = resolveNextMobileChromeModeForApplicationTab(mobileInterface.chromeMode);
+        if (nextMode === 'hidden') {
+          mobileInterface.hideInterface();
+        } else {
+          mobileInterface.restoreInterface();
+        }
+        return;
+      }
       case 'view:command-palette':
         setCommandPaletteOpen(true);
         return;
       case 'view:activity-trail':
         setActivityTrailOpen(true);
         return;
-      case 'view:toggle-source-bin':
-        setPanelVisibility('sourceBinVisible', !sourceBinVisible);
+      case 'view:toggle-source-bin': {
+        if (activeWorkspaceView === 'editor') {
+          setPanelVisibility('sourceBinVisible', !sourceBinVisible);
+        } else {
+          const workspaceId = getDockableWorkspaceId(activeWorkspaceView);
+          const layout = useDockablePanelStore.getState().layouts[`${workspaceId}/source-bin`];
+          if (layout) {
+            useDockablePanelStore.getState().setPanelMode(workspaceId, 'source-bin', layout.mode === 'hidden' ? 'docked' : 'hidden');
+          }
+        }
         return;
-      case 'view:toggle-inspector':
-        setPanelVisibility('inspectorVisible', !inspectorVisible);
+      }
+      case 'view:toggle-inspector': {
+        if (activeWorkspaceView === 'editor') {
+          setPanelVisibility('inspectorVisible', !inspectorVisible);
+        } else {
+          const workspaceId = getDockableWorkspaceId(activeWorkspaceView);
+          const layout = useDockablePanelStore.getState().layouts[`${workspaceId}/inspector`];
+          if (layout) {
+            useDockablePanelStore.getState().setPanelMode(workspaceId, 'inspector', layout.mode === 'hidden' ? 'docked' : 'hidden');
+          }
+        }
         return;
+      }
       case 'view:layout-reset':
         applyWorkspaceViewDefault(getDockableWorkspaceId(activeWorkspaceView), 'reset');
         return;
@@ -1389,7 +1427,10 @@ function FlowApp() {
       case 'image:tool-lasso':
       case 'image:tool-magic-wand':
       case 'image:tool-brush':
+      case 'image:tool-pen':
       case 'image:tool-eraser':
+      case 'image:tool-background-eraser':
+      case 'image:tool-magic-eraser':
       case 'image:tool-clone-stamp':
       case 'image:tool-spot-heal':
       case 'image:tool-blur-brush':
@@ -1860,10 +1901,25 @@ function FlowApp() {
     [edges, nodes],
   );
   const sharedPanelWorkspaceId = activeWorkspaceView === 'image' || activeWorkspaceView === 'paper' ? activeWorkspaceView : 'flow';
+  const mobilePhoneInterface = useMobilePhoneInterfaceDescriptor();
+  const mobileChromeMode = useMobileInterfaceStore((state) => state.chromeMode);
+  const applicationChromeHidden = mobileChromeMode === 'hidden';
+  const workspaceTopPaddingClassName = applicationChromeHidden
+    ? 'pt-0'
+    : mobilePhoneInterface.enabled
+      ? mobilePhoneInterface.collapsedTopPaddingClassName
+      : 'pt-16';
+  const showSharedWorkspacePanels = shouldShowSharedWorkspacePanels({
+    applicationChromeHidden,
+    mobilePhoneInterfaceEnabled: mobilePhoneInterface.enabled,
+    workspaceView: activeWorkspaceView,
+  });
 
   return (
     <div
       className="signal-loom-themed w-screen h-screen overflow-hidden flex flex-col relative font-sans"
+      data-mobile-phone-interface={mobilePhoneInterface.enabled ? mobilePhoneInterface.orientation : undefined}
+      data-mobile-phone-interface-mode={mobilePhoneInterface.enabled ? mobileChromeMode : undefined}
       data-source-library-renderer-item-ids={sourceLibraryRendererItemIds}
       style={interfaceThemeStyle}
     >
@@ -1875,7 +1931,11 @@ function FlowApp() {
         sourceBins={sourceBins}
         workspaceView={activeWorkspaceView}
       />
-      <UsageBar />
+      <GamepadInputManager
+        activeWorkspace={activeWorkspaceView}
+        bindings={gamepadBindings}
+        onCommand={(command) => void handleAppMenuCommand(command, 'shortcut')}
+      />
       <input
         ref={browserProjectOpenInputRef}
         accept=".sloom"
@@ -1892,7 +1952,7 @@ function FlowApp() {
         type="file"
       />
 
-      <div className="flex-1 w-full h-full relative pt-16" ref={flowViewportRef}>
+      <div className={`flex-1 w-full h-full relative ${workspaceTopPaddingClassName}`} ref={flowViewportRef}>
         {activeWorkspaceView === 'flow' ? (
           <FlowWorkspaceShell
             blockingFlowDiagnosticCount={blockingFlowDiagnosticCount}
@@ -1992,7 +2052,7 @@ function FlowApp() {
             </ErrorBoundary>
           </Suspense>
         ) : null}
-        {activeWorkspaceView !== 'editor' ? (
+        {showSharedWorkspacePanels ? (
           <ErrorBoundary
             className="absolute inset-0 z-20 pointer-events-none"
             level="panel"
@@ -2049,18 +2109,15 @@ function FlowApp() {
 
 function StartupSplash({ title, detail }: { title: string; detail: string }) {
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-[var(--sl-bg)]/96 backdrop-blur-sm">
-      <div className="theme-popover flex w-[min(420px,calc(100vw-48px))] flex-col gap-4 rounded-lg border px-6 py-5 shadow-2xl">
-        <div className="flex items-center gap-3">
-          <div className="h-3 w-3 rounded-full bg-[var(--sl-accent)] shadow-[0_0_18px_var(--sl-accent)]" />
-          <div>
-            <div className="text-sm font-semibold text-[var(--sl-text)]">{title}</div>
-            <div className="mt-1 text-xs text-[var(--sl-muted)]">{detail}</div>
-          </div>
-        </div>
-        <div className="h-1 overflow-hidden rounded-full bg-[color-mix(in_srgb,var(--sl-panel)_70%,black)]">
-          <div className="h-full w-1/2 animate-pulse rounded-full bg-[var(--sl-accent)]" />
-        </div>
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-[#020711]">
+      <img
+        alt="Signal Loom is starting"
+        className="h-full max-h-full w-full max-w-full object-contain"
+        draggable={false}
+        src="/signal-loom-splash.png"
+      />
+      <div className="sr-only" role="status">
+        {title}. {detail}
       </div>
     </div>
   );
@@ -2140,9 +2197,24 @@ function AppHelpModal({
   );
 }
 
+function AppBootSplashDismissor() {
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+
+    const timeoutId = window.setTimeout(() => {
+      document.documentElement.dataset.appReady = 'true';
+    }, 450);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
+  return null;
+}
+
 export default function App() {
   return (
     <ReactFlowProvider>
+      <AppBootSplashDismissor />
       <FlowApp />
     </ReactFlowProvider>
   );

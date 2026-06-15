@@ -76,6 +76,8 @@ describe('PaperTopStrip titlebar placement', () => {
     expect(html).toContain('Snap Guides');
     expect(html).toContain('Snap Grid');
     expect(html).toContain('overflow-x-auto');
+    expect(html).toContain('min-w-max');
+    expect(html).toContain('shrink-0');
   });
 
   it('marks the preflight button when the panel is visible', () => {

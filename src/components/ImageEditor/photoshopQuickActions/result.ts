@@ -1,4 +1,5 @@
 import type { ImageDocument, ImageLayer } from '../../../types/imageEditor';
+import { canEditImageLayerPixels } from '../../../lib/imageLayerLocks';
 import type { SelectionMask } from '../SelectionMask';
 import { generatedQuickActionById } from './catalog';
 import type {
@@ -18,6 +19,7 @@ import {
   borderSelection,
   featherSelection,
   growSelection,
+  nudgeSelection,
   selectBorderRingPercent,
   selectBottomHalf,
   selectCanvas,
@@ -43,6 +45,7 @@ import {
   clearSelectedPixels,
   desaturateLayer,
   invertLayerColors,
+  localContentAwareFillPatch,
   setLayerPixelAlphaPercent,
 } from './pixelActions';
 import {
@@ -118,8 +121,16 @@ export function createPhotoshopQuickActionResult({
       return selection ? buildSelectionResult(borderSelection(selection)) : null;
     case 'smoothSelection':
       return selection ? buildSelectionResult(smoothSelection(selection)) : null;
+    case 'nudgeSelectionLeft':
+      return selection ? buildSelectionResult(nudgeSelection(selection, -1, 0)) : null;
+    case 'nudgeSelectionRight':
+      return selection ? buildSelectionResult(nudgeSelection(selection, 1, 0)) : null;
+    case 'nudgeSelectionUp':
+      return selection ? buildSelectionResult(nudgeSelection(selection, 0, -1)) : null;
+    case 'nudgeSelectionDown':
+      return selection ? buildSelectionResult(nudgeSelection(selection, 0, 1)) : null;
     case 'clearOutsideSelection': {
-      if (!layer || !selection || layer.locked) return null;
+      if (!canEditImageLayerPixels(layer) || !selection) return null;
       const operation = clearOutsideSelection(doc, layer, selection);
       return operation ? { kind: 'paint', operation } : null;
     }
@@ -131,7 +142,7 @@ export function createPhotoshopQuickActionResult({
       return buildLayerOpResult(doc, after, newLayer.id);
     }
     case 'layerViaCut': {
-      if (!layer || !selection || layer.locked) return null;
+      if (!canEditImageLayerPixels(layer) || !selection) return null;
       const result = createLayerViaCut(doc, layer, selection, createLayerId());
       if (!result) return null;
       const updatedLayer = {
@@ -147,7 +158,7 @@ export function createPhotoshopQuickActionResult({
       return buildLayerOpResult(doc, after, result.newLayer.id);
     }
     case 'cropLayerToSelection': {
-      if (!layer || !selection || layer.locked) return null;
+      if (!canEditImageLayerPixels(layer) || !selection) return null;
       const nextLayer = cropLayerToSelection(doc, layer, selection);
       return nextLayer ? buildLayerOpResult(doc, replaceLayer(doc.layers, layer.id, nextLayer), layer.id) : null;
     }
@@ -195,8 +206,13 @@ export function createPhotoshopQuickActionResult({
     case 'borderSelectionLarge':
       return selection ? buildSelectionResult(borderSelection(selection, 4)) : null;
     case 'clearSelectedPixels': {
-      if (!layer || !selection || layer.locked) return null;
+      if (!canEditImageLayerPixels(layer) || !selection) return null;
       const operation = clearSelectedPixels(doc, layer, selection);
+      return operation ? { kind: 'paint', operation } : null;
+    }
+    case 'localContentAwareFillPatch': {
+      if (!canEditImageLayerPixels(layer)) return null;
+      const operation = localContentAwareFillPatch(doc, layer, selection);
       return operation ? { kind: 'paint', operation } : null;
     }
     case 'duplicateLayer': {
@@ -241,12 +257,12 @@ export function createPhotoshopQuickActionResult({
     case 'fitLayerHeightToCanvas':
       return applyLayerReplacement(doc, layer, (current) => fitLayerHeightToCanvas(doc, current));
     case 'invertLayerColors': {
-      if (!layer || layer.locked) return null;
+      if (!canEditImageLayerPixels(layer)) return null;
       const operation = invertLayerColors(doc, layer);
       return operation ? { kind: 'paint', operation } : null;
     }
     case 'desaturateLayer': {
-      if (!layer || layer.locked) return null;
+      if (!canEditImageLayerPixels(layer)) return null;
       const operation = desaturateLayer(doc, layer);
       return operation ? { kind: 'paint', operation } : null;
     }
@@ -332,12 +348,12 @@ function createGeneratedQuickActionResult({
     case 'layerScale':
       return applyLayerReplacement(doc, layer, (current) => scaleLayerByPercent(doc, current, action.percent));
     case 'brightness': {
-      if (!layer || layer.locked) return null;
+      if (!canEditImageLayerPixels(layer)) return null;
       const operation = adjustLayerBrightness(doc, layer, action.delta);
       return operation ? { kind: 'paint', operation } : null;
     }
     case 'pixelAlpha': {
-      if (!layer || layer.locked) return null;
+      if (!canEditImageLayerPixels(layer)) return null;
       const operation = setLayerPixelAlphaPercent(doc, layer, action.percent);
       return operation ? { kind: 'paint', operation } : null;
     }

@@ -1,16 +1,172 @@
+import type { ImageDocument } from '../../types/imageEditor';
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import { toSnapshot } from './SelectionMask';
 import { applyOperation } from './undoRedoApply';
 import { clearSelection, getSelection, setSelection } from './selectionRegistry';
 import {
   createPhotoshopQuickActionResult,
+  describePhotoshopQuickActionCompatibility,
+  getPhotoshopQuickActionCapabilityDescriptor,
   type PhotoshopQuickActionId,
 } from './PhotoshopQuickActions';
 import { rasterizeSvgToBitmapAtResolution } from './ImageFileFormats';
 
+export interface PhotoshopQuickActionAutomationDescriptor {
+  descriptorId: 'photoshop-quick-action-automation:v1';
+  automationSurface: {
+    workspaceId: 'image-automation';
+    separateFromMainFlow: true;
+    scope: 'open-document-quick-actions';
+  };
+  callableOperations: Array<{
+    kind: 'quick-action';
+    id: string;
+    callable: boolean;
+    source: 'suite-native-quick-action';
+    reason?: 'missing-from-registry';
+  }>;
+  variableBindingReadiness: {
+    state: 'ready-for-explicit-review';
+    supportsActionIdBinding: true;
+    supportsArbitraryJsExpressions: false;
+  };
+  dryRunDiagnostics: {
+    safe: true;
+    canMutateDocuments: false;
+    documentCount: number;
+    actionableDocumentCount: number;
+    blockedDocumentCount: number;
+    blockedDocumentIds: string[];
+  };
+  contentAwareRepairCompatibility?: {
+    requested: true;
+    actionIds: string[];
+    batchSuitable: boolean;
+    documents: Array<{
+      docId: string;
+      actionId: string;
+      compatible: boolean;
+      targetKind: string | null;
+      operation: string | null;
+      readinessState: string | null;
+      outputTarget: string | null;
+      blockerCodes: string[];
+      previewSignature: string | null;
+    }>;
+  };
+}
+
+export function buildPhotoshopQuickActionAutomationDescriptor(input: {
+  actionIds: readonly string[];
+  documents: readonly ImageDocument[];
+  activeDocId: string | null;
+}): PhotoshopQuickActionAutomationDescriptor {
+  const callableOperations = input.actionIds.map((actionId) => {
+    const descriptor = getPhotoshopQuickActionCapabilityDescriptor(actionId);
+    return descriptor
+      ? {
+          kind: 'quick-action' as const,
+          id: actionId,
+          callable: true as const,
+          source: 'suite-native-quick-action' as const,
+        }
+      : {
+          kind: 'quick-action' as const,
+          id: actionId,
+          callable: false as const,
+          source: 'suite-native-quick-action' as const,
+          reason: 'missing-from-registry' as const,
+        };
+  });
+
+  const hasCallableActions = callableOperations.some((operation) => operation.callable);
+  const actionableDescriptors = callableOperations
+    .filter((operation) => operation.callable)
+    .map((operation) => getPhotoshopQuickActionCapabilityDescriptor(operation.id))
+    .filter((descriptor) => descriptor !== null);
+  const contentAwareRepairCompatibility = buildContentAwareRepairCompatibility(
+    input.actionIds.filter((actionId) => actionId === 'localContentAwareFillPatch'),
+    input.documents,
+  );
+  const contentAwareBlockedDocumentIds = new Set(
+    contentAwareRepairCompatibility?.documents
+      .filter((documentCompatibility) => !documentCompatibility.compatible)
+      .map((documentCompatibility) => documentCompatibility.docId) ?? [],
+  );
+  const blockedDocumentIds = input.documents
+    .filter((doc) => {
+      if (!hasCallableActions) return true;
+      const missingRequiredActiveLayer = actionableDescriptors.some((descriptor) => (
+        descriptor.input.includes('activeLayer') || descriptor.input.includes('editablePixels') || descriptor.input.includes('movableLayer')
+      )) && !doc.activeLayerId;
+      return missingRequiredActiveLayer || contentAwareBlockedDocumentIds.has(doc.id);
+    })
+    .map((doc) => doc.id);
+
+  const descriptor: PhotoshopQuickActionAutomationDescriptor = {
+    descriptorId: 'photoshop-quick-action-automation:v1',
+    automationSurface: {
+      workspaceId: 'image-automation',
+      separateFromMainFlow: true,
+      scope: 'open-document-quick-actions',
+    },
+    callableOperations,
+    variableBindingReadiness: {
+      state: 'ready-for-explicit-review',
+      supportsActionIdBinding: true,
+      supportsArbitraryJsExpressions: false,
+    },
+    dryRunDiagnostics: {
+      safe: true,
+      canMutateDocuments: false,
+      documentCount: input.documents.length,
+      actionableDocumentCount: input.documents.length - blockedDocumentIds.length,
+      blockedDocumentCount: blockedDocumentIds.length,
+      blockedDocumentIds,
+    },
+  };
+
+  if (contentAwareRepairCompatibility) {
+    descriptor.contentAwareRepairCompatibility = contentAwareRepairCompatibility;
+  }
+
+  return descriptor;
+}
+
+function buildContentAwareRepairCompatibility(
+  actionIds: string[],
+  documents: readonly ImageDocument[],
+): PhotoshopQuickActionAutomationDescriptor['contentAwareRepairCompatibility'] | undefined {
+  if (actionIds.length === 0) return undefined;
+
+  const documentCompatibilities = documents.flatMap((doc) =>
+    actionIds.map((actionId) => {
+      const compatibility = describePhotoshopQuickActionCompatibility({ actionId, doc });
+      return {
+        docId: doc.id,
+        actionId,
+        compatible: compatibility.compatible,
+        targetKind: compatibility.contentAwareRepair?.targetKind ?? null,
+        operation: compatibility.contentAwareRepair?.operation ?? null,
+        readinessState: compatibility.contentAwareRepair?.readinessState ?? null,
+        outputTarget: compatibility.contentAwareRepair?.appliedOutputTarget ?? null,
+        blockerCodes: compatibility.blockerCodes,
+        previewSignature: compatibility.contentAwareRepair?.previewSignature ?? null,
+      };
+    }),
+  );
+
+  return {
+    requested: true,
+    actionIds,
+    batchSuitable: documentCompatibilities.every((compatibility) => compatibility.compatible),
+    documents: documentCompatibilities,
+  };
+}
+
 export function runPhotoshopQuickAction(
   actionId: PhotoshopQuickActionId,
-  options: { createLayerId?: () => string } = {},
+  options: { createLayerId?: () => string; skipRecording?: boolean } = {},
 ): boolean {
   const state = useImageEditorStore.getState();
   const doc = state.documents.find((candidate) => candidate.id === state.activeDocId);
@@ -53,6 +209,7 @@ export function runPhotoshopQuickAction(
       }
 
       useImageEditorStore.getState().setHasSelection(doc.id, result.hasSelection);
+      maybeRecordQuickAction(actionId, options.skipRecording);
       return true;
     }
     case 'paint':
@@ -61,6 +218,7 @@ export function runPhotoshopQuickAction(
       state.pushOperation(result.operation);
       applyOperation(result.operation, 'redo');
       regenerateVectorLayersIfNeeded(doc.id, beforeVectorSizes);
+      maybeRecordQuickAction(actionId, options.skipRecording);
       return true;
     case 'layerOp':
       state.pushOperation(result.operation);
@@ -69,8 +227,14 @@ export function runPhotoshopQuickAction(
         useImageEditorStore.getState().setActiveLayer(doc.id, result.activeLayerId);
       }
       regenerateVectorLayersIfNeeded(doc.id, beforeVectorSizes);
+      maybeRecordQuickAction(actionId, options.skipRecording);
       return true;
   }
+}
+
+function maybeRecordQuickAction(actionId: PhotoshopQuickActionId, skipRecording = false): void {
+  if (skipRecording) return;
+  useImageEditorStore.getState().appendQuickActionRecordingStep(actionId);
 }
 
 function regenerateVectorLayersIfNeeded(

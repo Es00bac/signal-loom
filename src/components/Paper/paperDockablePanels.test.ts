@@ -13,26 +13,28 @@ describe('paperDockablePanels', () => {
     useDockablePanelStore.setState({ defaults: {}, layouts: {} });
   });
 
-  it('defines movable Paper panels as dockable defaults while the document bar stays pinned', () => {
+  it('defines movable Paper panels as dockable defaults while the document bar and tools stay pinned outside docking', () => {
     const defaults = createPaperDockablePanelDefaults();
 
     expect(defaults.map((panel) => panel.panelId)).toEqual([
-      PAPER_DOCKABLE_PANEL_IDS.tools,
       PAPER_DOCKABLE_PANEL_IDS.inspector,
       PAPER_DOCKABLE_PANEL_IDS.preflight,
       PAPER_DOCKABLE_PANEL_IDS.linkedAssets,
       PAPER_DOCKABLE_PANEL_IDS.dtpParity,
     ]);
     expect(defaults.some((panel) => panel.panelId === PAPER_DOCKABLE_PANEL_IDS.documentStrip)).toBe(false);
-    expect(defaults).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ panelId: PAPER_DOCKABLE_PANEL_IDS.tools, dockZone: 'left' }),
-        expect.objectContaining({ panelId: PAPER_DOCKABLE_PANEL_IDS.inspector, dockZone: 'right' }),
-        expect.objectContaining({ panelId: PAPER_DOCKABLE_PANEL_IDS.preflight, dockZone: 'right' }),
-        expect.objectContaining({ panelId: PAPER_DOCKABLE_PANEL_IDS.linkedAssets, dockZone: 'right' }),
-        expect.objectContaining({ panelId: PAPER_DOCKABLE_PANEL_IDS.dtpParity, dockZone: 'right' }),
-      ]),
-    );
+    expect(defaults.some((panel) => panel.panelId === PAPER_DOCKABLE_PANEL_IDS.tools)).toBe(false);
+    expect(defaults).toEqual(expect.arrayContaining([
+      expect.objectContaining({ panelId: PAPER_DOCKABLE_PANEL_IDS.inspector, dockZone: 'right' }),
+      expect.objectContaining({ panelId: PAPER_DOCKABLE_PANEL_IDS.preflight, dockZone: 'right' }),
+      expect.objectContaining({ panelId: PAPER_DOCKABLE_PANEL_IDS.linkedAssets, dockZone: 'right' }),
+      expect.objectContaining({ panelId: PAPER_DOCKABLE_PANEL_IDS.dtpParity, dockZone: 'right' }),
+    ]));
+  });
+
+  it('keeps Paper tools out of the dock store so stale layouts cannot make it dockable or resizable', () => {
+    expect(createPaperDockablePanelDefaults().map((panel) => panel.panelId))
+      .not.toContain(PAPER_DOCKABLE_PANEL_IDS.tools);
   });
 
   it('keeps the default right dock narrow enough for a usable document canvas', () => {

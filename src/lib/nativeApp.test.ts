@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  NATIVE_WORKSPACE_STANDALONE_ENTRY_POINTS,
+  buildNativeStandaloneEntryReadiness,
   dispatchNativeRendererCommand,
   getSignalLoomNativeBridge,
   isNativeMenuCommand,
@@ -82,6 +84,56 @@ describe('native app bridge helpers', () => {
     expect(getSignalLoomNativeBridge()?.onSourceLibraryChanged).toBe(bridge.onSourceLibraryChanged);
   });
 
+  it('describes native shared-binary standalone entry points for workspace launch readiness', () => {
+    expect(NATIVE_WORKSPACE_STANDALONE_ENTRY_POINTS.map((entry) => ({
+      workspace: entry.workspace,
+      command: entry.command,
+      entryPoint: entry.entryPoint,
+      mode: entry.mode,
+    }))).toEqual([
+      {
+        workspace: 'flow',
+        command: 'view:flow',
+        entryPoint: 'signal-loom://workspace/flow',
+        mode: 'shared-binary-window',
+      },
+      {
+        workspace: 'editor',
+        command: 'view:editor',
+        entryPoint: 'signal-loom://workspace/editor',
+        mode: 'shared-binary-window',
+      },
+      {
+        workspace: 'image',
+        command: 'view:image',
+        entryPoint: 'signal-loom://workspace/image',
+        mode: 'shared-binary-window',
+      },
+      {
+        workspace: 'paper',
+        command: 'view:paper',
+        entryPoint: 'signal-loom://workspace/paper',
+        mode: 'shared-binary-window',
+      },
+    ]);
+
+    expect(buildNativeStandaloneEntryReadiness('paper')).toEqual({
+      workspace: 'paper',
+      command: 'view:paper',
+      entryPoint: 'signal-loom://workspace/paper',
+      mode: 'shared-binary-window',
+      status: 'ready',
+      unsupportedStandaloneExecutable: true,
+      suiteHandoffMode: 'shared-binary-deep-link',
+      packageTargets: ['macos', 'windows', 'linux'],
+      packageCaveats: [
+        'Standalone Image handoff stays inside the shared Signal Loom desktop package; separate signed single-workspace executables are not produced.',
+      ],
+      caveat: 'Standalone workspace entry uses the shared Signal Loom desktop binary and focused workspace windows; separate signed executables are not packaged.',
+      signature: 'native-standalone-entry:v2|paper|view:paper|signal-loom://workspace/paper|shared-binary-window|suite-handoff=shared-binary-deep-link|targets=macos,windows,linux|separate-exe=false',
+    });
+  });
+
   it('accepts common edit clipboard commands from native menus', () => {
     expect(isNativeMenuCommand('edit:cut')).toBe(true);
     expect(isNativeMenuCommand('edit:copy')).toBe(true);
@@ -91,6 +143,8 @@ describe('native app bridge helpers', () => {
   it('accepts expanded Image and Paper tool commands from native menus', () => {
     expect(isNativeMenuCommand('image:tool-hand')).toBe(true);
     expect(isNativeMenuCommand('image:tool-sharpen-brush')).toBe(true);
+    expect(isNativeMenuCommand('image:tool-background-eraser')).toBe(true);
+    expect(isNativeMenuCommand('image:tool-magic-eraser')).toBe(true);
     expect(isNativeMenuCommand('image:tool-eyedropper')).toBe(true);
     expect(isNativeMenuCommand('paper:tool-select')).toBe(true);
     expect(isNativeMenuCommand('paper:tool-text')).toBe(true);

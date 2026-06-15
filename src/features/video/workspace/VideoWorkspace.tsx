@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
+  ChevronUp,
   Diamond,
   Star,
   Trash2,
@@ -24,6 +25,8 @@ import { useFlowStore } from '../../../store/flowStore';
 import { useConfirmationStore } from '../../../store/confirmationStore';
 import { showAlertDialog } from '../../../store/alertDialogStore';
 import { useEditorStore } from '../../../store/editorStore';
+import { useMobileInterfaceStore } from '../../../store/mobileInterfaceStore';
+import { useMobilePhoneInterfaceDescriptor } from '../../../lib/mobilePhoneInterface';
 import type { SourceBinItem } from '../../../lib/sourceBin';
 import { buildDownloadFilename, downloadAsset } from '../../../lib/downloadAsset';
 import {
@@ -125,6 +128,7 @@ import type { TimelineClipFrameEdge } from '../../../lib/timelineClipFrameExport
 import { cropImageDataUrl } from '../../../lib/localImageEditing';
 import { executeNodeRequest } from '../../../lib/flowExecution';
 import { useSettingsStore } from '../../../store/settingsStore';
+import { AdvancedColorPicker } from '../../../components/Common/AdvancedColorPicker';
 import {
   getEditorStageObjects,
   getStageObjectBlendModes,
@@ -229,6 +233,7 @@ import {
   textClipsToCaptionCues,
 } from '../../../lib/videoCaptions';
 import { DockableDialog, DockablePanelHost, type DockablePanelDefinition } from '../../../components/DockablePanel';
+import { VideoWorkspaceMobileShell } from './VideoWorkspaceMobileShell';
 import { useDockablePanelStore } from '../../../store/dockablePanelStore';
 import {
   VIDEO_PANEL_IDS,
@@ -1375,6 +1380,16 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     }
 
     commitActiveCompositionPatch(patch, 'Update composition settings');
+  };
+
+  const handleCreateComposition = () => {
+    const compositionId = addNode('composition', getNewFlowNodePosition());
+    patchNodeData(compositionId, {
+      customTitle: 'Video Composition',
+      editorAssets: [],
+    });
+    setActiveCompositionId(compositionId);
+    recordActivityTrailWorkspaceEvent('editor', 'Create Video Composition', 'composition', 'toolbar');
   };
 
   const addEditorAsset = (kind: EditorAssetKind) => {
@@ -3353,6 +3368,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
             renderStatusMessage={compositionRenderStatus ?? incrementalRenderSummary}
             renderBackendStatus={renderBackendStatus}
             renderCacheDetailLines={renderCacheDetailLines}
+            hasActiveComposition={Boolean(activeComposition)}
+            onCreateComposition={handleCreateComposition}
             onAspectRatioChange={(aspectRatio) => updateActiveCompositionSettings({ aspectRatio })}
             onOpenClipContextMenu={openVisualClipContextMenu}
             onOpenContextMenu={(event) => {
@@ -3586,10 +3603,29 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     }),
   ];
   const renderLegacyVideoFallback = false;
+  const mobilePhoneInterface = useMobilePhoneInterfaceDescriptor();
+  const mobileChromeMode = useMobileInterfaceStore((state) => state.chromeMode);
+  const workspaceChromePaddingClassName = mobilePhoneInterface.enabled
+    ? mobileChromeMode === 'hidden'
+      ? mobilePhoneInterface.hiddenTopPaddingClassName
+      : mobilePhoneInterface.collapsedTopPaddingClassName
+    : 'pt-16';
+
+  if (mobilePhoneInterface.enabled) {
+    // Phone: a multi-pane desktop NLE can't fit, so render the dedicated tabbed mobile
+    // shell over the same panel contents. Desktop layout below is left untouched.
+    return (
+      <div
+        className={`absolute inset-0 z-30 bg-[radial-gradient(circle_at_top,#182236_0%,#0b0e14_45%,#06080d_100%)] px-2 pb-2 ${workspaceChromePaddingClassName}`}
+      >
+        <VideoWorkspaceMobileShell panels={videoPanels} previewPanelId={VIDEO_PANEL_IDS.programMonitor} />
+      </div>
+    );
+  }
 
   return (
-    <div className="absolute inset-0 z-30 bg-[radial-gradient(circle_at_top,#182236_0%,#0b0e14_45%,#06080d_100%)] px-3 pb-3 pt-16">
-      <div className="absolute right-4 top-20 z-50 flex gap-2">
+    <div className={`absolute inset-0 z-30 bg-[radial-gradient(circle_at_top,#182236_0%,#0b0e14_45%,#06080d_100%)] px-3 pb-3 ${workspaceChromePaddingClassName}`}>
+      <div className={`absolute right-4 z-50 flex gap-2 ${mobilePhoneInterface.enabled ? 'top-14' : 'top-20'}`}>
         <button
           className="rounded-full border border-cyan-300/25 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 shadow-lg backdrop-blur transition-colors hover:border-cyan-200/70 hover:text-white"
           onClick={resetVideoPanelLayout}
@@ -3860,6 +3896,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                         renderStatusMessage={compositionRenderStatus ?? incrementalRenderSummary}
                         renderBackendStatus={renderBackendStatus}
                         renderCacheDetailLines={renderCacheDetailLines}
+                        hasActiveComposition={Boolean(activeComposition)}
+                        onCreateComposition={handleCreateComposition}
                         onAspectRatioChange={(aspectRatio) =>
                           updateActiveCompositionSettings({ aspectRatio })
                         }
@@ -4893,6 +4931,8 @@ export function ProgramMonitorPanel({
   isRunning,
   renderStatusMessage,
   errorMessage,
+  hasActiveComposition = true,
+  onCreateComposition,
 }: {
   stageMode: 'stage' | 'rendered';
   previewUrl?: string;
@@ -4935,10 +4975,99 @@ export function ProgramMonitorPanel({
   isRunning?: boolean;
   renderStatusMessage?: string;
   errorMessage?: string;
+  hasActiveComposition?: boolean;
+  onCreateComposition?: () => void;
 }) {
+  const [isSidebarOpen, setSidebarOpen] = useState(true);
   const imageSequenceFrameCount = getImageSequenceFrameCount(previewOutputMetadata);
   const isImageSequenceOutput = Boolean(imageSequenceFrameCount !== undefined);
+  const renderedPreviewDescriptor = buildRenderedPreviewDescriptor({
+    previewUrl,
+    previewOutputMetadata,
+    isRunning,
+    renderStatusMessage,
+    errorMessage,
+    isImageSequenceOutput,
+  });
   const renderBlockedReason = exportReadiness.tone === 'error' ? exportReadiness.detail : undefined;
+  const renderedPreviewPlaceholderState: 'waiting' | 'error' | 'empty' | 'idle' = isRunning
+    ? 'waiting'
+    : errorMessage
+      ? 'error'
+      : renderStatusMessage
+        ? 'empty'
+        : 'idle';
+  const showFloatingRenderOverlay = stageMode !== 'rendered' || Boolean(previewUrl);
+  const selectedStageClip = selectedClip
+    ? stageClips.find((stageClip) => stageClip.clip.id === selectedClip.id)
+    : undefined;
+
+  const selectedKeyframeState = selectedClip
+    ? getVisualKeyframeStateAtProgress(
+        selectedClip,
+        selectedStageClip ? getStageClipProgress(selectedStageClip) * 100 : 0,
+      )
+    : undefined;
+
+  const updateStageClipAtProgress = (
+    stageClip: ProgramStageClip,
+    patch: Partial<EditorVisualClip>,
+  ) => {
+    onUpdateClip(
+      stageClip.clip.id,
+      applyVisualClipPatchAtProgress(stageClip.clip, getStageClipProgress(stageClip) * 100, patch),
+    );
+  };
+
+  const adjustSelectedClip = (patch: Partial<EditorVisualClip>) => {
+    if (!selectedClip) {
+      return;
+    }
+
+    const selectedStageClip = stageClips.find((stageClip) => stageClip.clip.id === selectedClip.id);
+
+    if (selectedStageClip) {
+      updateStageClipAtProgress(selectedStageClip, patch);
+    } else {
+      onUpdateClip(selectedClip.id, patch);
+    }
+  };
+
+  const nudgeSelectedClip = (deltaX: number, deltaY: number) => {
+    if (!selectedClip) {
+      return;
+    }
+
+    const selectedStageClip = stageClips.find((stageClip) => stageClip.clip.id === selectedClip.id);
+    const currentState = selectedStageClip
+      ? getVisualKeyframeStateAtProgress(selectedClip, getStageClipProgress(selectedStageClip) * 100)
+      : getVisualKeyframeStateAtProgress(selectedClip, 0);
+
+    adjustSelectedClip({
+      positionX: currentState.positionX + deltaX,
+      positionY: currentState.positionY + deltaY,
+    });
+  };
+
+  const adjustSelectedStageObject = (patch: Partial<EditorStageObject>) => {
+    if (!selectedStageObject) {
+      return;
+    }
+
+    onUpdateStageObject(selectedStageObject.id, patch);
+  };
+
+  const nudgeSelectedStageObject = (deltaX: number, deltaY: number) => {
+    if (!selectedStageObject) {
+      return;
+    }
+
+    adjustSelectedStageObject({
+      x: selectedStageObject.x + deltaX,
+      y: selectedStageObject.y + deltaY,
+    });
+  };
+
   const handleSaveVideo = async () => {
     if (!previewUrl) {
       return;
@@ -4950,55 +5079,31 @@ export function ProgramMonitorPanel({
     await downloadAsset(previewUrl, buildDownloadFilename(`${EXPORT_BASENAME}-program`, mimeType, extension));
   };
 
+  useEffect(() => {
+    if (stageMode !== 'rendered' || !previewUrl || isImageSequenceOutput) {
+      return;
+    }
+
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+
+    video.pause();
+    video.currentTime = 0;
+    video.load();
+  }, [isImageSequenceOutput, previewUrl, stageMode, videoRef]);
+
   return (
     <section className={`${panelClassName} flex h-full min-h-0 flex-col overflow-hidden`}>
-      <div className="border-b border-gray-700/60 px-3 py-2">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-gray-100">Program Monitor</div>
-            <div className="mt-0.5 text-[11px] text-gray-500">
-              Edit the composition canvas directly here, then render a compiled preview when you want to verify the actual output.
-            </div>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              <SummaryPill label="Canvas" value={`${sequenceSummary.frameShapeLabel} · ${sequenceSummary.sizeLabel}`} />
-              <SummaryPill label="Timebase" value={sequenceSummary.frameRateLabel} />
-              <SummaryPill label="Visual" value={String(visualClipCount)} />
-              <SummaryPill label="Audio" value={String(audioClipCount)} />
-              <SummaryPill
-                label="Length"
-                value={sequenceSummary.durationLabel}
-              />
-              <VideoExportReadinessPill summary={exportReadiness} />
-              <VideoRenderBackendPill summary={renderBackendStatus} />
-              {incrementalRenderSummary ? (
-                <SummaryPill label="Render cache" value={incrementalRenderSummary} />
-              ) : null}
-              {isRunning ? (
-                <div className="rounded-full border border-amber-400/40 bg-amber-500/15 px-3 py-1 text-[11px] font-semibold text-amber-100">
-                  Rendering live
-                </div>
-              ) : null}
-            </div>
-            {renderCacheDetailLines.length > 0 ? (
-              <div
-                className="mt-2 flex max-w-[46rem] flex-col gap-1 rounded-md border border-cyan-300/20 bg-cyan-500/10 px-2.5 py-2 text-[11px] leading-4 text-cyan-50/90"
-                data-video-render-cache-details="true"
-              >
-                {renderCacheDetailLines.slice(0, 4).map((line) => (
-                  <div key={line}>{line}</div>
-                ))}
-                {renderCacheDetailLines.length > 4 ? (
-                  <div className="text-cyan-100/65">
-                    {renderCacheDetailLines.length - 4} more span{renderCacheDetailLines.length - 4 === 1 ? '' : 's'} in this render plan.
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+      {/* COMPACT TOP BAR */}
+      <div className="flex shrink-0 items-center justify-between border-b border-gray-700/60 bg-[#12161f] px-3 py-1.5 min-h-[44px]">
+        <div className="flex items-center gap-3">
+          <div className="text-[12px] font-bold text-gray-100 uppercase tracking-wider">Program Monitor</div>
+          {hasActiveComposition && (
             <div className="inline-flex overflow-hidden rounded-lg border border-gray-700/60 bg-[#0f131b]">
               <button
-                className={`px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                className={`px-2.5 py-1 text-[11px] font-semibold transition-colors ${
                   stageMode === 'stage' ? 'bg-blue-500/20 text-blue-100' : 'text-gray-300 hover:text-white'
                 }`}
                 onClick={() => onSetMonitorMode('stage')}
@@ -5007,151 +5112,594 @@ export function ProgramMonitorPanel({
                 Edit Stage
               </button>
               <button
-                className={`px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                className={`px-2.5 py-1 text-[11px] font-semibold transition-colors ${
                   stageMode === 'rendered'
                     ? 'bg-blue-500/20 text-blue-100'
                     : 'text-gray-300 hover:text-white'
                 }`}
                 data-video-rendered-preview-tab="true"
-                disabled={!previewUrl}
                 onClick={() => onSetMonitorMode('rendered')}
                 type="button"
               >
                 Rendered Preview
               </button>
             </div>
-            <ProgramMonitorQuickControls
-              aspectRatio={aspectRatio}
-              exportPresetPlan={exportPresetPlan}
-              frameRate={frameRate}
-              hasCaptionCues={hasCaptionCues}
-              onAspectRatioChange={onAspectRatioChange}
-              onExportCaptions={onExportCaptions}
-              onExportPresetPlanChange={onExportPresetPlanChange}
-              onFrameRateChange={onFrameRateChange}
-              onResolutionChange={onResolutionChange}
-              parityDiagnostics={parityDiagnostics}
-              sequenceSummary={sequenceSummary}
-              videoResolution={videoResolution}
-            />
-            {previewUrl ? (
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          {!hasActiveComposition ? (
+            onCreateComposition && (
               <button
-                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700/60 bg-[#0f131b] px-2.5 py-1.5 text-[11px] font-semibold text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
-                onClick={() => void handleSaveVideo()}
+                onClick={onCreateComposition}
+                className="inline-flex items-center gap-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 text-[11px] font-semibold transition-colors"
                 type="button"
               >
-                <Archive size={12} />
-                {isImageSequenceOutput ? 'Save ZIP' : 'Save Video'}
+                <Plus size={11} />
+                Create Composition
               </button>
-            ) : null}
-            <button
-              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
-                isRunning
-                  ? 'bg-amber-400 text-black shadow-[0_0_18px_rgba(251,191,36,0.35)]'
-                  : renderBlockedReason
-                    ? 'cursor-not-allowed bg-gray-700 text-gray-400'
-                  : 'bg-white text-black hover:bg-gray-200'
-              }`}
-              data-video-render-button="true"
-              disabled={Boolean(renderBlockedReason)}
-              onClick={onRun}
-              title={renderBlockedReason}
-              type="button"
-            >
-              <Play size={12} fill="currentColor" />
-              {isRunning ? 'Rendering…' : 'Render'}
-            </button>
-          </div>
+            )
+          ) : (
+            <>
+              {onCreateComposition && (
+                <button
+                  onClick={onCreateComposition}
+                  className="inline-flex items-center gap-1 rounded-lg border border-gray-700/60 bg-[#0f131b] hover:border-gray-500 text-gray-300 hover:text-white px-2 py-1 text-[11px] font-semibold transition-colors"
+                  title="Create a new video composition node"
+                  type="button"
+                >
+                  <Plus size={11} />
+                  New Comp
+                </button>
+              )}
+              <button
+                onClick={() => setSidebarOpen(!isSidebarOpen)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700/60 bg-[#0f131b] px-2.5 py-1 text-[11px] font-semibold text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
+                type="button"
+              >
+                {isSidebarOpen ? 'Hide Controls' : 'Show Controls'}
+              </button>
+            </>
+          )}
         </div>
       </div>
-      <div className="relative flex min-h-0 flex-1 flex-col p-2.5">
-        {monitorParityNotices.length > 0 ? (
-          <div className="mb-2 shrink-0 space-y-1.5">
-            {monitorParityNotices.map((notice) => (
-              <div
-                className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-5 text-amber-100"
-                key={notice}
-              >
-                {notice}
+
+      {/* MAIN CONTENT LAYOUT (STAGE & SIDEBAR SIDE-BY-SIDE) */}
+      <div className="flex flex-1 min-h-0 relative overflow-hidden bg-[#0a0d14]">
+        {/* PREVIEW STAGE AREA */}
+        <div className="relative flex min-h-0 flex-1 flex-col p-2.5 bg-black overflow-hidden justify-center">
+          {!hasActiveComposition ? (
+            <div className="flex h-full w-full flex-col items-center justify-center p-6 text-center select-none bg-[#0a0d14]">
+              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full border border-gray-800 bg-[#0f131b] text-gray-400 shadow-lg">
+                <Film size={24} />
               </div>
-            ))}
-          </div>
-        ) : null}
-        <div className="min-h-0 flex-1" data-program-stage-shell>
-          {stageMode === 'rendered' && previewUrl && isImageSequenceOutput ? (
-            <div className="flex h-full min-h-0 items-center justify-center" onContextMenu={onOpenContextMenu}>
-              <div className="max-w-md rounded-2xl border border-purple-300/25 bg-[#0f131b] p-5 text-center shadow-2xl shadow-black/30">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-purple-300/30 bg-purple-500/15 text-purple-100">
-                  <Archive size={20} />
-                </div>
-                <div className="mt-3 text-sm font-semibold text-white">Image Sequence Archive Ready</div>
-                <div className="mt-1 text-xs leading-5 text-gray-400">
-                  {imageSequenceFrameCount} frame{imageSequenceFrameCount === 1 ? '' : 's'} exported as {getVideoExportPresetOption(exportPresetPlan.presetId).extension.toUpperCase()} plus manifest.json. Audio is ignored for image sequence exports.
-                </div>
+              <h3 className="text-sm font-semibold text-white">No Active Composition</h3>
+              <p className="mt-1 max-w-[260px] text-xs text-gray-500 leading-normal">
+                Initialize a video composition node to begin sequencing video, images, audio, and captions.
+              </p>
+              {onCreateComposition && (
                 <button
-                  className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-[11px] font-semibold text-black transition-colors hover:bg-gray-200"
+                  onClick={onCreateComposition}
+                  className="mt-5 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-semibold text-white shadow-lg transition-all"
+                  type="button"
+                >
+                  <Plus size={14} />
+                  Create Video Composition
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col h-full w-full min-h-0 justify-center">
+              {monitorParityNotices.length > 0 ? (
+                <div className="mb-2 shrink-0 space-y-1.5">
+                  {monitorParityNotices.map((notice) => (
+                    <div
+                      className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-1.5 text-[11px] leading-relaxed text-amber-100"
+                      key={notice}
+                    >
+                      {notice}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {stageMode === 'rendered' ? (
+                <RenderedPreviewDescriptorStrip descriptor={renderedPreviewDescriptor} />
+              ) : null}
+              {stageMode === 'rendered' && previewUrl && isImageSequenceOutput ? (
+                <div
+                  className="min-h-0 flex flex-1 items-center justify-center"
+                  data-video-rendered-preview-state="archive"
+                  onContextMenu={onOpenContextMenu}
+                >
+                  <div className="max-w-md rounded-2xl border border-purple-300/25 bg-[#0f131b] p-5 text-center shadow-2xl shadow-black/30">
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-purple-300/30 bg-purple-500/15 text-purple-100">
+                      <Archive size={20} />
+                    </div>
+                    <div className="mt-3 text-sm font-semibold text-white">Image Sequence Archive Ready</div>
+                    <div className="mt-1 text-xs leading-5 text-gray-400">
+                      {imageSequenceFrameCount} frame{imageSequenceFrameCount === 1 ? '' : 's'} exported as {getVideoExportPresetOption(exportPresetPlan.presetId).extension.toUpperCase()} plus manifest.json. Audio is ignored for image sequence exports.
+                    </div>
+                    <button
+                      className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-[11px] font-semibold text-black transition-colors hover:bg-gray-200"
+                      onClick={() => void handleSaveVideo()}
+                      type="button"
+                    >
+                      <Archive size={12} />
+                      Save ZIP Archive
+                    </button>
+                  </div>
+                </div>
+              ) : stageMode === 'rendered' && previewUrl ? (
+                <div
+                  className="min-h-0 flex-1"
+                  data-video-rendered-preview-state="ready"
+                  onContextMenu={onOpenContextMenu}
+                >
+                  <MonitorStageFrame aspectRatioValue={getAspectRatioValue(aspectRatio)}>
+                    <video
+                      key={previewUrl}
+                      className="absolute inset-0 h-full w-full object-contain"
+                      controls
+                      data-video-rendered-preview="true"
+                      preload="metadata"
+                      ref={videoRef}
+                      src={previewUrl}
+                    />
+                  </MonitorStageFrame>
+                </div>
+              ) : stageMode === 'rendered' ? (
+                <RenderedPreviewStatusPanel
+                  errorMessage={errorMessage}
+                  renderStatusMessage={renderStatusMessage}
+                  state={renderedPreviewPlaceholderState}
+                />
+              ) : (
+                <div className="min-h-0 flex-1" data-program-stage-shell>
+                  <ProgramStage
+                    activeTool={activeTool}
+                    aspectRatioValue={getAspectRatioValue(aspectRatio)}
+                    canvas={canvas}
+                    onOpenContextMenu={onOpenContextMenu}
+                    onOpenClipContextMenu={onOpenClipContextMenu}
+                    onSelectClip={onSelectClip}
+                    onSelectStageObject={onSelectStageObject}
+                    onUpdateClip={onUpdateClip}
+                    onUpdateStageObject={onUpdateStageObject}
+                    selectedClip={selectedClip}
+                    selectedStageObject={selectedStageObject}
+                    stageClips={stageClips}
+                    stageObjects={stageObjects}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {isRunning && showFloatingRenderOverlay ? (
+            <div className="pointer-events-none absolute inset-2.5 z-30 flex items-start justify-end">
+              <div className="min-w-64 rounded-lg border border-amber-400/40 bg-[#120f08]/92 px-3 py-2 text-amber-50 shadow-[0_0_28px_rgba(251,191,36,0.18)] backdrop-blur">
+                <div className="flex items-center gap-2">
+                  <div className="flex items-end gap-1">
+                    <span className="h-2 w-1 animate-pulse rounded-full bg-amber-300 [animation-delay:0ms]" />
+                    <span className="h-3 w-1 animate-pulse rounded-full bg-amber-200 [animation-delay:120ms]" />
+                    <span className="h-4 w-1 animate-pulse rounded-full bg-amber-100 [animation-delay:240ms]" />
+                  </div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-100/90">
+                    Render In Progress
+                  </div>
+                </div>
+                <div className="mt-1 text-xs text-amber-50/85">
+                  {renderStatusMessage ?? 'Signal Loom is rendering the current composition.'}
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {!isRunning && errorMessage && showFloatingRenderOverlay ? (
+            <div className="pointer-events-none absolute inset-2.5 z-30 flex items-start justify-end">
+              <div className="max-w-md rounded-lg border border-red-400/45 bg-[#1b0d0f]/92 px-3 py-2 text-red-50 shadow-[0_0_28px_rgba(248,113,113,0.18)] backdrop-blur">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-red-100/90">
+                  Render Failed
+                </div>
+                <div className="mt-1 text-xs leading-5 text-red-50/85">{errorMessage}</div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {/* CONTROLS & INFO SIDEBAR */}
+        {hasActiveComposition && isSidebarOpen && (
+          <div className="w-[300px] shrink-0 border-l border-gray-700/60 bg-[#0d1017] flex flex-col min-h-0 overflow-y-auto p-4 gap-4 scrollbar-thin">
+            <div>
+              <div className="text-[12px] font-bold text-gray-100 uppercase tracking-wider">Sequence Info</div>
+              <div className="mt-1 text-[11px] text-gray-400 leading-normal">
+                Configure properties and monitor export specs of the active composition.
+              </div>
+            </div>
+
+            {/* Spec Row Grid */}
+            <div className="rounded-lg border border-gray-800 bg-[#12161f]/50 p-3 flex flex-col gap-2.5">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Composition Specs</div>
+              <div className="flex flex-col gap-2">
+                <div className="flex justify-between items-center text-[11px] text-gray-400">
+                  <span>Canvas:</span>
+                  <span className="font-semibold text-gray-200">{sequenceSummary.frameShapeLabel} · {sequenceSummary.sizeLabel}</span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] text-gray-400">
+                  <span>Timebase:</span>
+                  <span className="font-semibold text-gray-200">{sequenceSummary.frameRateLabel}</span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] text-gray-400">
+                  <span>Length:</span>
+                  <span className="font-semibold text-gray-200">{sequenceSummary.durationLabel}</span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] text-gray-400">
+                  <span>Tracks:</span>
+                  <span className="font-semibold text-gray-200">V:{visualClipCount} · A:{audioClipCount}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* PROGRAM TOOLS (MOVED TO SIDEBAR) */}
+            {stageMode === 'stage' && (
+              <div className="rounded-lg border border-cyan-500/20 bg-[#101520] p-3 flex flex-col gap-3">
+                <div className="flex items-center justify-between border-b border-gray-800 pb-2">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-cyan-400">Program Tools</div>
+                  {selectedClip && <div className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-medium text-blue-300">Clip Selected</div>}
+                  {selectedStageObject && <div className="rounded bg-purple-500/10 px-1.5 py-0.5 text-[9px] font-medium text-purple-300">Object Selected</div>}
+                  {!selectedClip && !selectedStageObject && <div className="text-[9px] font-medium text-gray-500">No Selection</div>}
+                </div>
+
+                {/* Add Elements Section */}
+                <div className="flex flex-col gap-1.5">
+                  <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Add Elements</div>
+                  <div className="flex gap-2">
+                    <button
+                      className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2.5 py-1.5 text-xs font-semibold text-gray-200 hover:border-gray-500 hover:text-white flex items-center justify-center gap-1.5 transition-colors"
+                      onClick={() => onAddEditorAsset('text')}
+                      type="button"
+                    >
+                      <Type size={12} />
+                      Text
+                    </button>
+                    <button
+                      className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2.5 py-1.5 text-xs font-semibold text-gray-200 hover:border-gray-500 hover:text-white flex items-center justify-center gap-1.5 transition-colors"
+                      onClick={() => onAddEditorAsset('shape')}
+                      type="button"
+                    >
+                      <Square size={12} />
+                      Rect
+                    </button>
+                  </div>
+                </div>
+
+                {/* Selected Clip Tools */}
+                {selectedClip && (
+                  <div className="flex flex-col gap-3 border-t border-gray-800 pt-2.5">
+                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Clip Fit & Align</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        className={`px-2 py-1 text-[11px] font-semibold rounded border transition-colors ${
+                          selectedClip.fitMode === 'contain'
+                            ? 'border-blue-400/50 bg-blue-500/20 text-blue-100'
+                            : 'border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white'
+                        }`}
+                        onClick={() => adjustSelectedClip({ fitMode: 'contain' })}
+                        type="button"
+                      >
+                        Contain
+                      </button>
+                      <button
+                        className={`px-2 py-1 text-[11px] font-semibold rounded border transition-colors ${
+                          selectedClip.fitMode === 'cover'
+                            ? 'border-blue-400/50 bg-blue-500/20 text-blue-100'
+                            : 'border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white'
+                        }`}
+                        onClick={() => adjustSelectedClip({ fitMode: 'cover' })}
+                        type="button"
+                      >
+                        Cover
+                      </button>
+                      <button
+                        className={`px-2 py-1 text-[11px] font-semibold rounded border transition-colors ${
+                          selectedClip.fitMode === 'stretch'
+                            ? 'border-blue-400/50 bg-blue-500/20 text-blue-100'
+                            : 'border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white'
+                        }`}
+                        onClick={() => adjustSelectedClip({ fitMode: 'stretch' })}
+                        type="button"
+                      >
+                        Stretch
+                      </button>
+                      <button
+                        className="px-2 py-1 text-[11px] font-semibold rounded border border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
+                        onClick={() => adjustSelectedClip({ positionX: 0, positionY: 0 })}
+                        type="button"
+                      >
+                        Center
+                      </button>
+                    </div>
+
+                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Clip Transform</div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        className="px-2 py-1.5 text-[11px] font-medium rounded border border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
+                        onClick={() => adjustSelectedClip({ scalePercent: Math.max(10, (selectedKeyframeState?.scalePercent ?? selectedClip.scalePercent) - 10) })}
+                        type="button"
+                      >
+                        Scale -10%
+                      </button>
+                      <button
+                        className="px-2 py-1.5 text-[11px] font-medium rounded border border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
+                        onClick={() => adjustSelectedClip({ scalePercent: Math.min(500, (selectedKeyframeState?.scalePercent ?? selectedClip.scalePercent) + 10) })}
+                        type="button"
+                      >
+                        Scale +10%
+                      </button>
+                      <button
+                        className="px-2 py-1.5 text-[11px] font-medium rounded border border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
+                        onClick={() => adjustSelectedClip({ rotationDeg: (selectedKeyframeState?.rotationDeg ?? selectedClip.rotationDeg) - 15 })}
+                        type="button"
+                      >
+                        Rotate -15°
+                      </button>
+                      <button
+                        className="px-2 py-1.5 text-[11px] font-medium rounded border border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
+                        onClick={() => adjustSelectedClip({ rotationDeg: (selectedKeyframeState?.rotationDeg ?? selectedClip.rotationDeg) + 15 })}
+                        type="button"
+                      >
+                        Rotate +15°
+                      </button>
+                      <button
+                        className="px-2 py-1.5 text-[11px] font-medium rounded border border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
+                        onClick={() => adjustSelectedClip({ opacityPercent: Math.max(0, (selectedKeyframeState?.opacityPercent ?? selectedClip.opacityPercent) - 10) })}
+                        type="button"
+                      >
+                        Opacity -10%
+                      </button>
+                      <button
+                        className="px-2 py-1.5 text-[11px] font-medium rounded border border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
+                        onClick={() => adjustSelectedClip({ opacityPercent: Math.min(100, (selectedKeyframeState?.opacityPercent ?? selectedClip.opacityPercent) + 10) })}
+                        type="button"
+                      >
+                        Opacity +10%
+                      </button>
+                    </div>
+
+                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Clip Position Nudge</div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2 py-1.5 text-xs font-semibold text-gray-200 hover:border-gray-500 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                        onClick={() => nudgeSelectedClip(-32, 0)}
+                        type="button"
+                        title="Nudge Left"
+                      >
+                        <ChevronLeft size={14} />
+                        Left
+                      </button>
+                      <button
+                        className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2 py-1.5 text-xs font-semibold text-gray-200 hover:border-gray-500 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                        onClick={() => nudgeSelectedClip(32, 0)}
+                        type="button"
+                        title="Nudge Right"
+                      >
+                        <ChevronRight size={14} />
+                        Right
+                      </button>
+                      <button
+                        className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2 py-1.5 text-xs font-semibold text-gray-200 hover:border-gray-500 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                        onClick={() => nudgeSelectedClip(0, -32)}
+                        type="button"
+                        title="Nudge Up"
+                      >
+                        <ChevronUp size={14} />
+                        Up
+                      </button>
+                      <button
+                        className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2 py-1.5 text-xs font-semibold text-gray-200 hover:border-gray-500 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                        onClick={() => nudgeSelectedClip(0, 32)}
+                        type="button"
+                        title="Nudge Down"
+                      >
+                        <ChevronDown size={14} />
+                        Down
+                      </button>
+                    </div>
+
+                    <button
+                      className="mt-1 w-full px-2.5 py-1.5 text-[11px] font-semibold rounded border border-gray-700/60 bg-[#1b1c24]/80 hover:bg-gray-800 text-gray-300 hover:text-white transition-colors"
+                      onClick={() =>
+                        onUpdateClip(selectedClip.id, ensureVisualClipHasKeyframes({
+                          ...selectedClip,
+                          fitMode: 'contain',
+                          scalePercent: 100,
+                          endScalePercent: 100,
+                          scaleMotionEnabled: false,
+                          positionX: 0,
+                          positionY: 0,
+                          endPositionX: 0,
+                          endPositionY: 0,
+                          motionEnabled: false,
+                          rotationDeg: 0,
+                          rotationMotionEnabled: false,
+                          endRotationDeg: 0,
+                          opacityPercent: 100,
+                          opacityAutomationPoints: undefined,
+                          keyframes: undefined,
+                          flipHorizontal: false,
+                          flipVertical: false,
+                        }))
+                      }
+                      type="button"
+                    >
+                      Reset Clip Properties
+                    </button>
+                  </div>
+                )}
+
+                {/* Selected Stage Object Tools */}
+                {selectedStageObject && (
+                  <div className="flex flex-col gap-3 border-t border-gray-800 pt-2.5">
+                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Object Transform</div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        className="px-2 py-1.5 text-[11px] font-medium rounded border border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
+                        onClick={() => adjustSelectedStageObject({ rotationDeg: selectedStageObject.rotationDeg - 15 })}
+                        type="button"
+                      >
+                        Rotate -15°
+                      </button>
+                      <button
+                        className="px-2 py-1.5 text-[11px] font-medium rounded border border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
+                        onClick={() => adjustSelectedStageObject({ rotationDeg: selectedStageObject.rotationDeg + 15 })}
+                        type="button"
+                      >
+                        Rotate +15°
+                      </button>
+                      <button
+                        className="px-2 py-1.5 text-[11px] font-medium rounded border border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
+                        onClick={() => adjustSelectedStageObject({ opacityPercent: Math.max(0, selectedStageObject.opacityPercent - 10) })}
+                        type="button"
+                      >
+                        Opacity -10%
+                      </button>
+                      <button
+                        className="px-2 py-1.5 text-[11px] font-medium rounded border border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
+                        onClick={() => adjustSelectedStageObject({ opacityPercent: Math.min(100, selectedStageObject.opacityPercent + 10) })}
+                        type="button"
+                      >
+                        Opacity +10%
+                      </button>
+                    </div>
+
+                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Object Position Nudge</div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2 py-1.5 text-xs font-semibold text-gray-200 hover:border-gray-500 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                        onClick={() => nudgeSelectedStageObject(-32, 0)}
+                        type="button"
+                        title="Object Nudge Left"
+                      >
+                        <ChevronLeft size={14} />
+                        Left
+                      </button>
+                      <button
+                        className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2 py-1.5 text-xs font-semibold text-gray-200 hover:border-gray-500 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                        onClick={() => nudgeSelectedStageObject(32, 0)}
+                        type="button"
+                        title="Object Nudge Right"
+                      >
+                        <ChevronRight size={14} />
+                        Right
+                      </button>
+                      <button
+                        className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2 py-1.5 text-xs font-semibold text-gray-200 hover:border-gray-500 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                        onClick={() => nudgeSelectedStageObject(0, -32)}
+                        type="button"
+                        title="Object Nudge Up"
+                      >
+                        <ChevronUp size={14} />
+                        Up
+                      </button>
+                      <button
+                        className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2 py-1.5 text-xs font-semibold text-gray-200 hover:border-gray-500 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                        onClick={() => nudgeSelectedStageObject(0, 32)}
+                        type="button"
+                        title="Object Nudge Down"
+                      >
+                        <ChevronDown size={14} />
+                        Down
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Section: Quick Controls */}
+            <div className="flex flex-col gap-2.5">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Settings</div>
+              <ProgramMonitorQuickControls
+                aspectRatio={aspectRatio}
+                exportPresetPlan={exportPresetPlan}
+                frameRate={frameRate}
+                hasCaptionCues={hasCaptionCues}
+                onAspectRatioChange={onAspectRatioChange}
+                onExportCaptions={onExportCaptions}
+                onExportPresetPlanChange={onExportPresetPlanChange}
+                onFrameRateChange={onFrameRateChange}
+                onResolutionChange={onResolutionChange}
+                parityDiagnostics={parityDiagnostics}
+                videoResolution={videoResolution}
+              />
+            </div>
+
+            {/* Section: Status */}
+            <div className="flex flex-col gap-2.5">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Status</div>
+              <div className="flex flex-col gap-2">
+                <VideoExportReadinessPill summary={exportReadiness} />
+                <VideoRenderBackendPill summary={renderBackendStatus} />
+              </div>
+
+              {incrementalRenderSummary && (
+                <div className="mt-1 p-2 rounded border border-amber-500/20 bg-amber-500/5 text-[11px] text-amber-200/90 leading-normal">
+                  <span className="font-semibold text-amber-300">Render cache:</span> {incrementalRenderSummary}
+                </div>
+              )}
+            </div>
+
+            {/* Section: Cache Manifest Details */}
+            {renderCacheDetailLines.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Cache Manifest Details</div>
+                <div
+                  className="flex flex-col gap-1 rounded-md border border-cyan-300/20 bg-cyan-500/10 px-2.5 py-2 text-[11px] leading-4 text-cyan-50/90"
+                  data-video-render-cache-details="true"
+                >
+                  {renderCacheDetailLines.slice(0, 4).map((line) => (
+                    <div key={line}>{line}</div>
+                  ))}
+                  {renderCacheDetailLines.length > 4 ? (
+                    <div className="text-cyan-100/65">
+                      {renderCacheDetailLines.length - 4} more span{renderCacheDetailLines.length - 4 === 1 ? '' : 's'} in this render plan.
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            )}
+
+            {/* Section: Bottom Actions */}
+            <div className="mt-auto flex flex-col gap-2 pt-2 border-t border-gray-800">
+              {previewUrl && (
+                <button
+                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-700/60 bg-[#0f131b] px-3 py-2 text-[11px] font-semibold text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
                   onClick={() => void handleSaveVideo()}
                   type="button"
                 >
                   <Archive size={12} />
-                  Save ZIP Archive
+                  {isImageSequenceOutput ? 'Save ZIP' : 'Save Video'}
                 </button>
-              </div>
-            </div>
-          ) : stageMode === 'rendered' && previewUrl ? (
-            <div className="h-full min-h-0" onContextMenu={onOpenContextMenu}>
-              <MonitorStageFrame aspectRatioValue={getAspectRatioValue(aspectRatio)}>
-                <video className="absolute inset-0 h-full w-full object-contain" controls data-video-rendered-preview="true" ref={videoRef} src={previewUrl} />
-              </MonitorStageFrame>
-            </div>
-          ) : (
-            <ProgramStage
-              activeTool={activeTool}
-              aspectRatioValue={getAspectRatioValue(aspectRatio)}
-              canvas={canvas}
-              onOpenContextMenu={onOpenContextMenu}
-              onOpenClipContextMenu={onOpenClipContextMenu}
-              onAddEditorAsset={onAddEditorAsset}
-              onSelectClip={onSelectClip}
-              onSelectStageObject={onSelectStageObject}
-              onUpdateClip={onUpdateClip}
-              onUpdateStageObject={onUpdateStageObject}
-              selectedClip={selectedClip}
-              selectedStageObject={selectedStageObject}
-              stageClips={stageClips}
-              stageObjects={stageObjects}
-            />
-          )}
-        </div>
-        {isRunning ? (
-          <div className="pointer-events-none absolute inset-2.5 z-30 flex items-start justify-end">
-            <div className="min-w-64 rounded-lg border border-amber-400/40 bg-[#120f08]/92 px-3 py-2 text-amber-50 shadow-[0_0_28px_rgba(251,191,36,0.18)] backdrop-blur">
-              <div className="flex items-center gap-2">
-                <div className="flex items-end gap-1">
-                  <span className="h-2 w-1 animate-pulse rounded-full bg-amber-300 [animation-delay:0ms]" />
-                  <span className="h-3 w-1 animate-pulse rounded-full bg-amber-200 [animation-delay:120ms]" />
-                  <span className="h-4 w-1 animate-pulse rounded-full bg-amber-100 [animation-delay:240ms]" />
-                </div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-100/90">
-                  Render In Progress
-                </div>
-              </div>
-              <div className="mt-1 text-xs text-amber-50/85">
-                {renderStatusMessage ?? 'Signal Loom is rendering the current composition.'}
-              </div>
+              )}
+              <button
+                className={`w-full inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-semibold transition-colors ${
+                  isRunning
+                    ? 'bg-amber-400 text-black shadow-[0_0_18px_rgba(251,191,36,0.35)]'
+                    : renderBlockedReason
+                      ? 'cursor-not-allowed bg-gray-700 text-gray-400'
+                    : 'bg-white text-black hover:bg-gray-200'
+                }`}
+                data-video-render-button="true"
+                disabled={Boolean(renderBlockedReason)}
+                onClick={onRun}
+                title={renderBlockedReason}
+                type="button"
+              >
+                <Play size={12} fill="currentColor" />
+                {isRunning ? 'Rendering…' : 'Render'}
+              </button>
             </div>
           </div>
-        ) : null}
-        {!isRunning && errorMessage ? (
-          <div className="pointer-events-none absolute inset-2.5 z-30 flex items-start justify-end">
-            <div className="max-w-md rounded-lg border border-red-400/45 bg-[#1b0d0f]/92 px-3 py-2 text-red-50 shadow-[0_0_28px_rgba(248,113,113,0.18)] backdrop-blur">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-red-100/90">
-                Render Failed
-              </div>
-              <div className="mt-1 text-xs leading-5 text-red-50/85">{errorMessage}</div>
-            </div>
-          </div>
-        ) : null}
+        )}
       </div>
     </section>
   );
@@ -5165,6 +5713,133 @@ function getImageSequenceFrameCount(metadata: Record<string, unknown> | undefine
   return typeof metadata.frameCount === 'number' && Number.isFinite(metadata.frameCount)
     ? metadata.frameCount
     : undefined;
+}
+
+type RenderedPreviewDescriptorStatus = 'idle' | 'rendering' | 'completed' | 'failed' | 'unsupported';
+
+interface RenderedPreviewDescriptor {
+  status: RenderedPreviewDescriptorStatus;
+  title: string;
+  detail: string;
+  metadata: string[];
+}
+
+function buildRenderedPreviewDescriptor({
+  previewUrl,
+  previewOutputMetadata,
+  isRunning,
+  renderStatusMessage,
+  errorMessage,
+  isImageSequenceOutput,
+}: {
+  previewUrl?: string;
+  previewOutputMetadata?: Record<string, unknown>;
+  isRunning?: boolean;
+  renderStatusMessage?: string;
+  errorMessage?: string;
+  isImageSequenceOutput: boolean;
+}): RenderedPreviewDescriptor {
+  const fileName = getPreviewMetadataString(previewOutputMetadata, ['fileName', 'outputFileName', 'name', 'label']);
+  const mimeType = getPreviewMetadataString(previewOutputMetadata, ['mimeType', 'outputMimeType']);
+  const frameCount = getPreviewMetadataNumber(previewOutputMetadata, ['frameCount']);
+  const previewSupportLabel = getBrowserPreviewSupportLabel(fileName, mimeType);
+  const metadata: string[] = [];
+
+  if (fileName) {
+    metadata.push(fileName);
+  }
+  if (mimeType) {
+    metadata.push(mimeType);
+  }
+  if (typeof frameCount === 'number') {
+    metadata.push(`${frameCount} frame${frameCount === 1 ? '' : 's'}`);
+  }
+  if (previewUrl?.startsWith('blob:')) {
+    metadata.push('Blob URL ready');
+  }
+
+  if (isRunning) {
+    return {
+      status: 'rendering',
+      title: 'Rendering preview',
+      detail: renderStatusMessage?.trim() || 'Signal Loom is rendering the current composition.',
+      metadata,
+    };
+  }
+
+  if (errorMessage?.trim()) {
+    return {
+      status: 'failed',
+      title: 'Render failed',
+      detail: errorMessage.trim(),
+      metadata,
+    };
+  }
+
+  if (previewUrl) {
+    return {
+      status: 'completed',
+      title: isImageSequenceOutput ? 'Render complete' : 'Preview ready',
+      detail: isImageSequenceOutput
+        ? (renderStatusMessage?.trim() || 'Rendered output is available as an image-sequence archive.')
+        : (renderStatusMessage?.trim() || 'Playable rendered preview is ready in the Program Monitor.'),
+      metadata,
+    };
+  }
+
+  if (renderStatusMessage?.trim() || previewOutputMetadata) {
+    return {
+      status: 'unsupported',
+      title: 'Preview unavailable',
+      detail: renderStatusMessage?.trim()
+        || previewSupportLabel
+        || 'The last render completed without a browser-playable preview asset.',
+      metadata: previewSupportLabel ? [...metadata, previewSupportLabel] : metadata,
+    };
+  }
+
+  return {
+    status: 'idle',
+    title: 'Ready to render',
+    detail: 'Run Render to build a playable Program Monitor preview for this composition.',
+    metadata,
+  };
+}
+
+function getPreviewMetadataString(
+  metadata: Record<string, unknown> | undefined,
+  keys: readonly string[],
+): string | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function getPreviewMetadataNumber(
+  metadata: Record<string, unknown> | undefined,
+  keys: readonly string[],
+): number | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+  }
+
+  return undefined;
 }
 
 function VideoPremiereParityPanel() {
@@ -5221,11 +5896,109 @@ function videoParityStatusClassName(status: 'done' | 'partial' | 'gap'): string 
   }
 }
 
+function RenderedPreviewStatusPanel({
+  state,
+  renderStatusMessage,
+  errorMessage,
+}: {
+  state: 'waiting' | 'error' | 'empty' | 'idle';
+  renderStatusMessage?: string;
+  errorMessage?: string;
+}) {
+  const title = state === 'waiting'
+    ? 'Rendering preview'
+    : state === 'error'
+      ? 'Rendered preview unavailable'
+      : state === 'empty'
+        ? 'Rendered preview unavailable'
+        : 'No rendered preview yet';
+  const detail = state === 'waiting'
+    ? (renderStatusMessage?.trim() || 'Signal Loom is rendering the current composition.')
+    : state === 'error'
+      ? (errorMessage?.trim() || 'The last render did not produce a playable preview asset.')
+      : state === 'empty'
+        ? (renderStatusMessage?.trim() || 'The last render completed without a playable preview asset.')
+        : 'Run Render to build a playable Program Monitor preview for this composition.';
+  const toneClassName = state === 'error'
+    ? 'border-red-400/30 bg-red-500/10 text-red-50'
+    : state === 'waiting'
+      ? 'border-amber-300/30 bg-amber-500/10 text-amber-50'
+      : 'border-gray-700/60 bg-[#0f131b] text-gray-100';
+  const iconClassName = state === 'error'
+    ? 'border-red-300/30 bg-red-500/15 text-red-100'
+    : state === 'waiting'
+      ? 'border-amber-300/30 bg-amber-500/15 text-amber-100'
+      : 'border-cyan-300/20 bg-cyan-400/10 text-cyan-100';
+
+  return (
+    <div className="flex h-full min-h-0 items-center justify-center" data-video-rendered-preview-state={state}>
+      <div className={`max-w-md rounded-2xl border p-5 text-center shadow-2xl shadow-black/30 ${toneClassName}`}>
+        <div className={`mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border ${iconClassName}`}>
+          <Film size={20} />
+        </div>
+        <div className="mt-3 text-sm font-semibold">{title}</div>
+        <div className="mt-1 text-xs leading-5 opacity-85">{detail}</div>
+      </div>
+    </div>
+  );
+}
+
+function RenderedPreviewDescriptorStrip({ descriptor }: { descriptor: RenderedPreviewDescriptor }) {
+  const statusClassName = descriptor.status === 'completed'
+    ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-50'
+    : descriptor.status === 'rendering'
+      ? 'border-amber-300/30 bg-amber-500/10 text-amber-50'
+      : descriptor.status === 'failed'
+        ? 'border-red-400/30 bg-red-500/10 text-red-50'
+        : descriptor.status === 'unsupported'
+          ? 'border-purple-300/30 bg-purple-500/10 text-purple-50'
+          : 'border-gray-700/60 bg-[#0f131b] text-gray-100';
+  const badgeClassName = descriptor.status === 'completed'
+    ? 'border-emerald-300/30 bg-emerald-500/15 text-emerald-100'
+    : descriptor.status === 'rendering'
+      ? 'border-amber-300/30 bg-amber-500/15 text-amber-100'
+      : descriptor.status === 'failed'
+        ? 'border-red-300/30 bg-red-500/15 text-red-100'
+        : descriptor.status === 'unsupported'
+          ? 'border-purple-300/30 bg-purple-500/15 text-purple-100'
+          : 'border-cyan-300/20 bg-cyan-400/10 text-cyan-100';
+
+  return (
+    <div
+      className={`mb-2 shrink-0 rounded-lg border px-3 py-2 ${statusClassName}`}
+      data-video-render-preview-status={descriptor.status}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] opacity-85">
+            {descriptor.title}
+          </div>
+          <div className="mt-1 text-xs leading-5 opacity-90">{descriptor.detail}</div>
+        </div>
+        <div className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${badgeClassName}`}>
+          {descriptor.status}
+        </div>
+      </div>
+      {descriptor.metadata.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {descriptor.metadata.map((item) => (
+            <span
+              className="rounded-full border border-white/10 bg-black/15 px-2 py-0.5 text-[10px] leading-4 opacity-90"
+              key={item}
+            >
+              {item}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ProgramMonitorQuickControls({
   aspectRatio,
   videoResolution,
   frameRate,
-  sequenceSummary,
   exportPresetPlan,
   hasCaptionCues,
   parityDiagnostics,
@@ -5238,7 +6011,6 @@ function ProgramMonitorQuickControls({
   aspectRatio: AspectRatio;
   videoResolution: VideoResolution;
   frameRate: number;
-  sequenceSummary: ReturnType<typeof buildVideoSequenceSummary>;
   exportPresetPlan: VideoExportPresetPlanData;
   hasCaptionCues: boolean;
   parityDiagnostics: ReturnType<typeof buildVideoParityDiagnostics>;
@@ -5252,48 +6024,78 @@ function ProgramMonitorQuickControls({
   const attentionCount = parityDiagnostics.filter((diagnostic) => diagnostic.severity === 'attention').length;
 
   return (
-    <div className="flex max-w-[min(58rem,100%)] flex-wrap items-end gap-2 rounded-lg border border-gray-700/60 bg-[#0f131b] px-2 py-1.5">
-      <label className="block min-w-28 space-y-1 text-[10px] text-gray-500">
-        <span>Frame</span>
+    <div className="flex flex-col w-full gap-3 rounded-lg border border-gray-800 bg-[#0f131b]/40 p-3">
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block space-y-1 text-[10px] text-gray-500">
+          <span>Frame</span>
+          <select
+            className="w-full rounded-md border border-gray-700/60 bg-[#111217] px-2 py-1 text-[11px] font-medium text-gray-200 outline-none"
+            onChange={(event) => onAspectRatioChange(event.target.value as AspectRatio)}
+            value={aspectRatio}
+          >
+            <option value="16:9">Landscape</option>
+            <option value="9:16">Vertical</option>
+            <option value="1:1">Square</option>
+          </select>
+        </label>
+        <label className="block space-y-1 text-[10px] text-gray-500">
+          <span>Size</span>
+          <select
+            className="w-full rounded-md border border-gray-700/60 bg-[#111217] px-2 py-1 text-[11px] font-medium text-gray-200 outline-none"
+            onChange={(event) => onResolutionChange(event.target.value as VideoResolution)}
+            value={videoResolution}
+          >
+            <option value="720p">720p</option>
+            <option value="1080p">1080p</option>
+            <option value="4k">4k</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block space-y-1 text-[10px] text-gray-500">
+          <span>FPS</span>
+          <select
+            className="w-full rounded-md border border-gray-700/60 bg-[#111217] px-2 py-1 text-[11px] font-medium text-gray-200 outline-none"
+            onChange={(event) => onFrameRateChange(Number(event.target.value))}
+            value={frameRate}
+          >
+            <option value={24}>24</option>
+            <option value={25}>25</option>
+            <option value={30}>30</option>
+            <option value={60}>60</option>
+          </select>
+        </label>
+
+        <div className="block space-y-1 text-[10px] text-gray-500">
+          <span>Verify Diagnostics</span>
+          <details className="relative w-full">
+            <summary className="cursor-pointer list-none rounded-md border border-amber-300/25 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-100 text-center">
+              {attentionCount > 0 ? `${attentionCount} Attention` : 'All Pass'}
+            </summary>
+            <div className="absolute right-0 top-7 z-50 max-h-52 w-64 overflow-y-auto rounded-lg border border-amber-300/25 bg-[#111217] p-2 shadow-xl">
+              {parityDiagnostics.map((diagnostic) => (
+                <div
+                  className={`mb-1.5 rounded-md border px-2 py-1.5 text-[10px] leading-4 ${
+                    diagnostic.severity === 'attention'
+                      ? 'border-amber-300/25 bg-amber-950/35 text-amber-50/90'
+                      : 'border-emerald-300/25 bg-emerald-950/25 text-emerald-50/90'
+                  }`}
+                  key={diagnostic.id}
+                >
+                  <div className="font-semibold">{diagnostic.title}</div>
+                  <div className="mt-0.5 opacity-85">{diagnostic.detail}</div>
+                </div>
+              ))}
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <label className="block w-full space-y-1 text-[10px] text-purple-100/70">
+        <span>Export Codec & Profile</span>
         <select
-          className="w-full rounded-md border border-gray-700/60 bg-[#111217] px-2 py-1.5 text-[11px] font-medium text-gray-200 outline-none"
-          onChange={(event) => onAspectRatioChange(event.target.value as AspectRatio)}
-          value={aspectRatio}
-        >
-          <option value="16:9">Landscape</option>
-          <option value="9:16">Vertical</option>
-          <option value="1:1">Square</option>
-        </select>
-      </label>
-      <label className="block min-w-24 space-y-1 text-[10px] text-gray-500">
-        <span>Size</span>
-        <select
-          className="w-full rounded-md border border-gray-700/60 bg-[#111217] px-2 py-1.5 text-[11px] font-medium text-gray-200 outline-none"
-          onChange={(event) => onResolutionChange(event.target.value as VideoResolution)}
-          value={videoResolution}
-        >
-          <option value="720p">720p</option>
-          <option value="1080p">1080p</option>
-          <option value="4k">4k</option>
-        </select>
-      </label>
-      <label className="block min-w-24 space-y-1 text-[10px] text-gray-500">
-        <span>FPS</span>
-        <select
-          className="w-full rounded-md border border-gray-700/60 bg-[#111217] px-2 py-1.5 text-[11px] font-medium text-gray-200 outline-none"
-          onChange={(event) => onFrameRateChange(Number(event.target.value))}
-          value={frameRate}
-        >
-          <option value={24}>24</option>
-          <option value={25}>25</option>
-          <option value={30}>30</option>
-          <option value={60}>60</option>
-        </select>
-      </label>
-      <label className="block min-w-52 flex-1 space-y-1 text-[10px] text-purple-100/70">
-        <span>Export</span>
-        <select
-          className="w-full rounded-md border border-purple-300/25 bg-[#111217] px-2 py-1.5 text-[11px] font-medium text-gray-100 outline-none"
+          className="w-full rounded-md border border-purple-300/25 bg-[#111217] px-2 py-1 text-[11px] font-medium text-gray-100 outline-none"
           onChange={(event) => onExportPresetPlanChange(event.target.value as VideoExportPresetPlanId)}
           value={exportPresetPlan.presetId}
         >
@@ -5304,46 +6106,31 @@ function ProgramMonitorQuickControls({
           ))}
         </select>
       </label>
-      <div className="flex flex-wrap items-center gap-1.5 pb-0.5">
-        <button
-          className="rounded-md border border-purple-300/25 bg-[#111217] px-2 py-1 text-[10px] font-semibold text-purple-50 disabled:cursor-not-allowed disabled:opacity-45"
-          disabled={!hasCaptionCues}
-          onClick={() => onExportCaptions('srt')}
-          type="button"
-        >
-          SRT
-        </button>
-        <button
-          className="rounded-md border border-purple-300/25 bg-[#111217] px-2 py-1 text-[10px] font-semibold text-purple-50 disabled:cursor-not-allowed disabled:opacity-45"
-          disabled={!hasCaptionCues}
-          onClick={() => onExportCaptions('vtt')}
-          type="button"
-        >
-          VTT
-        </button>
-        <details className="relative">
-          <summary className="cursor-pointer list-none rounded-md border border-amber-300/25 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-100">
-            Verify {attentionCount > 0 ? attentionCount : 'Pass'}
-          </summary>
-          <div className="absolute right-0 top-7 z-50 max-h-52 w-80 overflow-y-auto rounded-lg border border-amber-300/25 bg-[#111217] p-2 shadow-xl">
-            {parityDiagnostics.map((diagnostic) => (
-              <div
-                className={`mb-1.5 rounded-md border px-2 py-1.5 text-[10px] leading-4 ${
-                  diagnostic.severity === 'attention'
-                    ? 'border-amber-300/25 bg-amber-950/35 text-amber-50/90'
-                    : 'border-emerald-300/25 bg-emerald-950/25 text-emerald-50/90'
-                }`}
-                key={diagnostic.id}
-              >
-                <div className="font-semibold">{diagnostic.title}</div>
-                <div className="mt-0.5 opacity-85">{diagnostic.detail}</div>
-              </div>
-            ))}
-          </div>
-        </details>
+
+      <div className="flex items-center justify-between gap-2 border-t border-gray-800/60 pt-2">
+        <span className="text-[10px] text-gray-500">Export Captions:</span>
+        <div className="flex gap-1.5">
+          <button
+            className="rounded-md border border-purple-300/25 bg-[#111217] px-2 py-0.5 text-[10px] font-semibold text-purple-50 disabled:cursor-not-allowed disabled:opacity-45 hover:border-purple-300/40"
+            disabled={!hasCaptionCues}
+            onClick={() => onExportCaptions('srt')}
+            type="button"
+          >
+            SRT
+          </button>
+          <button
+            className="rounded-md border border-purple-300/25 bg-[#111217] px-2 py-0.5 text-[10px] font-semibold text-purple-50 disabled:cursor-not-allowed disabled:opacity-45 hover:border-purple-300/40"
+            disabled={!hasCaptionCues}
+            onClick={() => onExportCaptions('vtt')}
+            type="button"
+          >
+            VTT
+          </button>
+        </div>
       </div>
-      <div className="w-full truncate text-[10px] leading-4 text-gray-400">
-        {sequenceSummary.sizeLabel} · {sequenceSummary.frameRateLabel} · {sequenceSummary.durationLabel} · {selectedPreset.container} .{selectedPreset.extension} · {selectedPreset.codec}
+
+      <div className="truncate text-[9px] text-gray-500 leading-tight">
+        {selectedPreset.container} · .{selectedPreset.extension} · {selectedPreset.codec}
       </div>
     </div>
   );
@@ -5524,7 +6311,6 @@ function ProgramStage({
   canvas,
   aspectRatioValue,
   activeTool,
-  onAddEditorAsset,
   onSelectClip,
   onSelectStageObject,
   onUpdateClip,
@@ -5539,7 +6325,6 @@ function ProgramStage({
   canvas: { width: number; height: number };
   aspectRatioValue: number;
   activeTool: TimelineTool;
-  onAddEditorAsset: (kind: EditorAssetKind) => void;
   onSelectClip: (clipId: string) => void;
   onSelectStageObject: (objectId: string) => void;
   onUpdateClip: (clipId: string, patch: Partial<EditorVisualClip>) => void;
@@ -5548,97 +6333,11 @@ function ProgramStage({
   onOpenContextMenu: (event: React.MouseEvent<HTMLDivElement>) => void;
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const [toolPalettePosition, setToolPalettePosition] = useState({ x: 12, y: 12 });
   const [stageViewportSize, setStageViewportSize] = useState<{ width: number; height: number }>({
     width: canvas.width,
     height: canvas.height,
   });
-  const updateStageClipAtProgress = (
-    stageClip: ProgramStageClip,
-    patch: Partial<EditorVisualClip>,
-  ) => {
-    onUpdateClip(
-      stageClip.clip.id,
-      applyVisualClipPatchAtProgress(stageClip.clip, getStageClipProgress(stageClip) * 100, patch),
-    );
-  };
-  const adjustSelectedClip = (patch: Partial<EditorVisualClip>) => {
-    if (!selectedClip) {
-      return;
-    }
 
-    const selectedStageClip = stageClips.find((stageClip) => stageClip.clip.id === selectedClip.id);
-
-    if (selectedStageClip) {
-      updateStageClipAtProgress(selectedStageClip, patch);
-    } else {
-      onUpdateClip(selectedClip.id, patch);
-    }
-  };
-
-  const nudgeSelectedClip = (deltaX: number, deltaY: number) => {
-    if (!selectedClip) {
-      return;
-    }
-
-    const selectedStageClip = stageClips.find((stageClip) => stageClip.clip.id === selectedClip.id);
-    const currentState = selectedStageClip
-      ? getVisualKeyframeStateAtProgress(selectedClip, getStageClipProgress(selectedStageClip) * 100)
-      : getVisualKeyframeStateAtProgress(selectedClip, 0);
-
-    adjustSelectedClip({
-      positionX: currentState.positionX + deltaX,
-      positionY: currentState.positionY + deltaY,
-    });
-  };
-
-  const adjustSelectedStageObject = (patch: Partial<EditorStageObject>) => {
-    if (!selectedStageObject) {
-      return;
-    }
-
-    onUpdateStageObject(selectedStageObject.id, patch);
-  };
-
-  const nudgeSelectedStageObject = (deltaX: number, deltaY: number) => {
-    if (!selectedStageObject) {
-      return;
-    }
-
-    adjustSelectedStageObject({
-      x: selectedStageObject.x + deltaX,
-      y: selectedStageObject.y + deltaY,
-    });
-  };
-
-  const startToolPaletteDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!stageRef.current) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const stageBounds = stageRef.current.getBoundingClientRect();
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startPosition = toolPalettePosition;
-
-    const onMove = (moveEvent: PointerEvent) => {
-      setToolPalettePosition({
-        x: Math.max(0, Math.min(stageBounds.width - 180, startPosition.x + moveEvent.clientX - startX)),
-        y: Math.max(0, Math.min(stageBounds.height - 80, startPosition.y + moveEvent.clientY - startY)),
-      });
-    };
-
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  };
 
   const startMoveDrag = (event: React.PointerEvent<HTMLButtonElement>, stageClip: ProgramStageClip) => {
     if (event.button !== 0 || activeTool !== 'select' || !stageRef.current) {
@@ -5890,15 +6589,6 @@ function ProgramStage({
       stageViewportSize.height / Math.max(1, canvas.height),
     ),
   );
-  const selectedStageClip = selectedClip
-    ? stageClips.find((stageClip) => stageClip.clip.id === selectedClip.id)
-    : undefined;
-  const selectedKeyframeState = selectedClip
-    ? getVisualKeyframeStateAtProgress(
-        selectedClip,
-        selectedStageClip ? getStageClipProgress(selectedStageClip) * 100 : 0,
-      )
-    : undefined;
 
   return (
     <div className="h-full min-h-0">
@@ -5908,92 +6598,6 @@ function ProgramStage({
           onContextMenu={onOpenContextMenu}
           ref={stageRef}
         >
-          <div
-            className="absolute z-40 max-w-[min(36rem,calc(100%-1rem))] rounded-xl border border-gray-700/70 bg-[#0f131b]/90 p-2 shadow-xl backdrop-blur"
-            style={{ left: toolPalettePosition.x, top: toolPalettePosition.y }}
-          >
-            <div
-              className="mb-2 cursor-move select-none text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200/80"
-              onPointerDown={startToolPaletteDrag}
-              title="Drag to move this tool palette inside the program monitor"
-            >
-              Program Tools
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <StageToolButton icon={<Type size={12} />} label="Text" onClick={() => onAddEditorAsset('text')} />
-              <StageToolButton icon={<Square size={12} />} label="Rectangle" onClick={() => onAddEditorAsset('shape')} />
-              {selectedClip ? (
-                <>
-                  <StageToolButton
-                    active={selectedClip.fitMode === 'contain'}
-                    label="Contain"
-                    onClick={() => adjustSelectedClip({ fitMode: 'contain' })}
-                  />
-                  <StageToolButton
-                    active={selectedClip.fitMode === 'cover'}
-                    label="Cover"
-                    onClick={() => adjustSelectedClip({ fitMode: 'cover' })}
-                  />
-                  <StageToolButton
-                    active={selectedClip.fitMode === 'stretch'}
-                    label="Stretch"
-                    onClick={() => adjustSelectedClip({ fitMode: 'stretch' })}
-                  />
-                  <StageToolButton label="Center" onClick={() => adjustSelectedClip({ positionX: 0, positionY: 0 })} />
-                  <StageToolButton label="Scale -" onClick={() => adjustSelectedClip({ scalePercent: Math.max(10, (selectedKeyframeState?.scalePercent ?? selectedClip.scalePercent) - 10) })} />
-                  <StageToolButton label="Scale +" onClick={() => adjustSelectedClip({ scalePercent: Math.min(500, (selectedKeyframeState?.scalePercent ?? selectedClip.scalePercent) + 10) })} />
-                  <StageToolButton label="Rotate -" onClick={() => adjustSelectedClip({ rotationDeg: (selectedKeyframeState?.rotationDeg ?? selectedClip.rotationDeg) - 15 })} />
-                  <StageToolButton label="Rotate +" onClick={() => adjustSelectedClip({ rotationDeg: (selectedKeyframeState?.rotationDeg ?? selectedClip.rotationDeg) + 15 })} />
-                  <StageToolButton label="Opacity -" onClick={() => adjustSelectedClip({ opacityPercent: Math.max(0, (selectedKeyframeState?.opacityPercent ?? selectedClip.opacityPercent) - 10) })} />
-                  <StageToolButton label="Opacity +" onClick={() => adjustSelectedClip({ opacityPercent: Math.min(100, (selectedKeyframeState?.opacityPercent ?? selectedClip.opacityPercent) + 10) })} />
-                  <StageToolButton label="Left" onClick={() => nudgeSelectedClip(-32, 0)} />
-                  <StageToolButton label="Right" onClick={() => nudgeSelectedClip(32, 0)} />
-                  <StageToolButton label="Up" onClick={() => nudgeSelectedClip(0, -32)} />
-                  <StageToolButton label="Down" onClick={() => nudgeSelectedClip(0, 32)} />
-                  <StageToolButton
-                    label="Reset"
-                    onClick={() =>
-                      onUpdateClip(selectedClip.id, ensureVisualClipHasKeyframes({
-                        ...selectedClip,
-                        fitMode: 'contain',
-                        scalePercent: 100,
-                        endScalePercent: 100,
-                        scaleMotionEnabled: false,
-                        positionX: 0,
-                        positionY: 0,
-                        endPositionX: 0,
-                        endPositionY: 0,
-                        motionEnabled: false,
-                        rotationDeg: 0,
-                        rotationMotionEnabled: false,
-                        endRotationDeg: 0,
-                        opacityPercent: 100,
-                        opacityAutomationPoints: undefined,
-                        keyframes: undefined,
-                        flipHorizontal: false,
-                        flipVertical: false,
-                      }))
-                    }
-                  />
-                </>
-              ) : null}
-              {selectedStageObject ? (
-                <>
-                  <StageToolButton label="Obj Left" onClick={() => nudgeSelectedStageObject(-32, 0)} />
-                  <StageToolButton label="Obj Right" onClick={() => nudgeSelectedStageObject(32, 0)} />
-                  <StageToolButton label="Obj Up" onClick={() => nudgeSelectedStageObject(0, -32)} />
-                  <StageToolButton label="Obj Down" onClick={() => nudgeSelectedStageObject(0, 32)} />
-                  <StageToolButton label="Obj Rotate -" onClick={() => adjustSelectedStageObject({ rotationDeg: selectedStageObject.rotationDeg - 15 })} />
-                  <StageToolButton label="Obj Rotate +" onClick={() => adjustSelectedStageObject({ rotationDeg: selectedStageObject.rotationDeg + 15 })} />
-                  <StageToolButton label="Obj Opacity -" onClick={() => adjustSelectedStageObject({ opacityPercent: Math.max(0, selectedStageObject.opacityPercent - 10) })} />
-                  <StageToolButton label="Obj Opacity +" onClick={() => adjustSelectedStageObject({ opacityPercent: Math.min(100, selectedStageObject.opacityPercent + 10) })} />
-                </>
-              ) : null}
-            </div>
-            <div className="mt-2 text-[11px] text-gray-400">
-              Drag this palette by its title. Select stage objects to move, resize, rotate, and tune them in the inspector.
-            </div>
-          </div>
           {stageClips.length > 0
             ? (
             stageClips.map((stageClip) => {
@@ -6636,10 +7240,11 @@ function StageObjectInspector({
             />
             <label className="block space-y-2 text-xs text-gray-400">
               <span>Color</span>
-              <input
-                className="h-11 w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-2 py-1"
-                onChange={(event) => onUpdate({ color: event.target.value } as Partial<EditorStageObject>)}
-                type="color"
+              <AdvancedColorPicker
+                className="h-11 w-full"
+                buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                label="Stage object text color"
+                onChange={(color) => onUpdate({ color } as Partial<EditorStageObject>)}
                 value={object.color}
               />
             </label>
@@ -6650,19 +7255,21 @@ function StageObjectInspector({
           <div className="grid gap-3 md:grid-cols-2">
             <label className="block space-y-2 text-xs text-gray-400">
               <span>Fill</span>
-              <input
-                className="h-11 w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-2 py-1"
-                onChange={(event) => onUpdate({ fillColor: event.target.value } as Partial<EditorStageObject>)}
-                type="color"
+              <AdvancedColorPicker
+                className="h-11 w-full"
+                buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                label="Stage object fill color"
+                onChange={(fillColor) => onUpdate({ fillColor } as Partial<EditorStageObject>)}
                 value={object.fillColor}
               />
             </label>
             <label className="block space-y-2 text-xs text-gray-400">
               <span>Border</span>
-              <input
-                className="h-11 w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-2 py-1"
-                onChange={(event) => onUpdate({ borderColor: event.target.value } as Partial<EditorStageObject>)}
-                type="color"
+              <AdvancedColorPicker
+                className="h-11 w-full"
+                buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                label="Stage object border color"
+                onChange={(borderColor) => onUpdate({ borderColor } as Partial<EditorStageObject>)}
                 value={object.borderColor}
               />
             </label>
@@ -7298,10 +7905,11 @@ function InspectorPanel({
                   <div className="grid gap-3 md:grid-cols-2">
                     <label className="block space-y-2 text-xs text-gray-400">
                       <span>Key color</span>
-                      <input
-                        className="h-10 w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-2 py-1"
-                        onChange={(event) => updateChromaKey({ color: event.target.value })}
-                        type="color"
+                      <AdvancedColorPicker
+                        className="h-10 w-full"
+                        buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                        label="Chroma key color"
+                        onChange={(color) => updateChromaKey({ color })}
                         value={chromaKey.color}
                       />
                     </label>
@@ -7337,10 +7945,11 @@ function InspectorPanel({
                   <div className="grid gap-3 md:grid-cols-2">
                     <label className="block space-y-2 text-xs text-gray-400">
                       <span>Stroke color</span>
-                      <input
-                        className="h-10 w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-2 py-1"
-                        onChange={(event) => updateStroke({ color: event.target.value })}
-                        type="color"
+                      <AdvancedColorPicker
+                        className="h-10 w-full"
+                        buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                        label="Clip stroke color"
+                        onChange={(color) => updateStroke({ color })}
                         value={stroke.color}
                       />
                     </label>
@@ -7482,10 +8091,11 @@ function InspectorPanel({
                   />
                   <label className="block space-y-2 text-xs text-gray-400">
                     <span>Text color</span>
-                    <input
-                      className="h-11 w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-2 py-1"
-                      onChange={(event) => onUpdateVisualClip({ textColor: event.target.value })}
-                      type="color"
+                    <AdvancedColorPicker
+                      className="h-11 w-full"
+                      buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                      label="Visual clip text color"
+                      onChange={(textColor) => onUpdateVisualClip({ textColor })}
                       value={visualClip.textColor}
                     />
                   </label>
@@ -7511,19 +8121,21 @@ function InspectorPanel({
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="block space-y-2 text-xs text-gray-400">
                     <span>Fill</span>
-                    <input
-                      className="h-11 w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-2 py-1"
-                      onChange={(event) => onUpdateVisualClip({ shapeFillColor: event.target.value })}
-                      type="color"
+                    <AdvancedColorPicker
+                      className="h-11 w-full"
+                      buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                      label="Visual clip shape fill color"
+                      onChange={(shapeFillColor) => onUpdateVisualClip({ shapeFillColor })}
                       value={visualClip.shapeFillColor ?? '#0ea5e9'}
                     />
                   </label>
                   <label className="block space-y-2 text-xs text-gray-400">
                     <span>Border</span>
-                    <input
-                      className="h-11 w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-2 py-1"
-                      onChange={(event) => onUpdateVisualClip({ shapeBorderColor: event.target.value })}
-                      type="color"
+                    <AdvancedColorPicker
+                      className="h-11 w-full"
+                      buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                      label="Visual clip shape border color"
+                      onChange={(shapeBorderColor) => onUpdateVisualClip({ shapeBorderColor })}
                       value={visualClip.shapeBorderColor ?? '#f8fafc'}
                     />
                   </label>
@@ -8579,10 +9191,11 @@ function TextEditDialog({
             />
             <label className="block space-y-2 text-xs text-gray-400">
               <span>Color</span>
-              <input
-                className="h-11 w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-2 py-1"
-                onChange={(event) => onChange({ color: event.target.value })}
-                type="color"
+              <AdvancedColorPicker
+                className="h-11 w-full"
+                buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                label="Editor asset text color"
+                onChange={(color) => onChange({ color })}
                 value={draft.color}
               />
             </label>
@@ -8715,14 +9328,6 @@ function MiniPreview({ item }: { item: SourceBinItem }) {
   return <MonitorSurface item={item} variant="mini" />;
 }
 
-function SummaryPill({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-full border border-gray-700/60 bg-[#111217]/50 px-3 py-1 text-[11px] text-gray-300">
-      <span className="text-gray-500">{label}</span> <span className="font-semibold text-white">{value}</span>
-    </div>
-  );
-}
-
 function VideoExportReadinessPill({ summary }: { summary: VideoExportReadinessSummary }) {
   return (
     <div
@@ -8779,33 +9384,6 @@ function ToolToggleButton({
         active
           ? 'border-blue-400/40 bg-blue-500/15 text-blue-100'
           : 'border-gray-700/60 bg-[#111217]/50 text-gray-300 hover:border-gray-500 hover:text-white'
-      }`}
-      onClick={onClick}
-      type="button"
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-function StageToolButton({
-  active = false,
-  icon,
-  label,
-  onClick,
-}: {
-  active?: boolean;
-  icon?: ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
-        active
-          ? 'border-blue-400/50 bg-blue-500/20 text-blue-100'
-          : 'border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white'
       }`}
       onClick={onClick}
       type="button"

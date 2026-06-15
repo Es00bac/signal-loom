@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { resolveKeyboardShortcutCommand } from './keyboardShortcuts';
+import {
+  describeKeyboardShortcutReadiness,
+  resolveKeyboardShortcutCommand,
+} from './keyboardShortcuts';
 import type { WorkspaceView } from '../types/flow';
 
 type ShortcutEventInit = {
@@ -33,6 +36,16 @@ describe('keyboard shortcut command resolver', () => {
     expect(resolve({ key: 'k', metaKey: true })).toBe('view:command-palette');
   });
 
+  it('maps plain Tab to the application interface toggle instead of browser focus traversal', () => {
+    const input = { tagName: 'input' } as unknown as EventTarget;
+
+    expect(resolve({ key: 'Tab' }, 'flow')).toBe('view:toggle-interface');
+    expect(resolve({ key: 'Tab' }, 'image')).toBe('view:toggle-interface');
+    expect(resolve({ key: 'Tab', target: input }, 'paper')).toBe('view:toggle-interface');
+    expect(resolve({ key: 'Tab', shiftKey: true }, 'paper')).toBeUndefined();
+    expect(resolve({ key: 'Tab', ctrlKey: true }, 'editor')).toBeUndefined();
+  });
+
   it('maps edit accelerators for Flow and editor workspaces with edit command handlers', () => {
     expect(resolve({ key: 'z', ctrlKey: true }, 'paper')).toBe('edit:undo');
     expect(resolve({ key: 'z', ctrlKey: true, shiftKey: true }, 'image')).toBe('edit:redo');
@@ -50,6 +63,8 @@ describe('keyboard shortcut command resolver', () => {
     expect(resolve({ key: 'c' }, 'editor')).toBe('timeline:cut');
     expect(resolve({ key: '[' }, 'editor')).toBe('timeline:previous-keyframe');
     expect(resolve({ key: 'b' }, 'image')).toBe('image:tool-brush');
+    expect(resolve({ key: 'e', altKey: true }, 'image')).toBe('image:tool-background-eraser');
+    expect(resolve({ key: 'e', shiftKey: true }, 'image')).toBe('image:tool-magic-eraser');
     expect(resolve({ key: 'r', shiftKey: true }, 'image')).toBe('image:tool-sharpen-brush');
     expect(resolve({ key: 't' }, 'paper')).toBe('paper:tool-text');
     expect(resolve({ key: 'v' }, 'paper')).toBe('paper:tool-select');
@@ -81,5 +96,35 @@ describe('keyboard shortcut command resolver', () => {
     expect(resolveKeyboardShortcutCommand(event({ key: 'Backspace' }), 'paper', {
       'paper:tool-select': 'Backspace',
     })).toBe('paper:tool-select');
+  });
+
+  it('describes workspace-aware shortcut routing and image tool collisions', () => {
+    const readiness = describeKeyboardShortcutReadiness({
+      'image:tool-brush': 'B',
+      'image:tool-pen': 'B',
+      'image:tool-text': '',
+      'timeline:cut': 'B',
+    });
+
+    expect(readiness.missingCommandShortcuts).toContain('image:tool-text');
+    expect(readiness.collisions).toContainEqual({
+      workspace: 'image',
+      shortcut: 'B',
+      commands: ['image:tool-brush', 'image:tool-pen'],
+    });
+    expect(readiness.collisions).not.toContainEqual({
+      workspace: 'editor',
+      shortcut: 'B',
+      commands: expect.arrayContaining(['timeline:cut']),
+    });
+    expect(readiness.workspaceRoutes.find((route) => route.command === 'image:tool-brush')).toMatchObject({
+      workspace: 'image',
+      route: 'image-workspace-only',
+    });
+    expect(readiness.unsupported).toContainEqual({
+      kind: 'nested-tool-flyouts',
+      supported: false,
+      caveat: 'Shortcuts target concrete commands; cycling nested tool flyouts is not implemented.',
+    });
   });
 });

@@ -15,6 +15,7 @@ import startupProjectModule from './startup-project.cjs';
 import vertexAuthModule from './vertex-auth.cjs';
 import windowOptionsModule from './window-options.cjs';
 import automationPathModule from './automation-paths.cjs';
+import linuxWindowingModule from './linux-windowing.cjs';
 
 const { createApplicationMenuTemplate, SIGNAL_LOOM_MENU_COMMANDS } = menuModule;
 const {
@@ -78,9 +79,13 @@ const {
   getAutomationProjectOpenPath,
   getAutomationProjectSavePath,
 } = automationPathModule;
+const {
+  applyElectronMainLinuxWindowingCompatibility,
+} = linuxWindowingModule;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PRODUCTION_RENDERER_URL = pathToFileURL(resolve(__dirname, '../dist/index.html')).toString();
+const SIGNAL_LOOM_SPLASH_IMAGE_PATH = resolve(__dirname, 'assets', 'signal-loom-splash.png');
 const flowImportWorkerUrl = new URL('./flow-import-worker.mjs', import.meta.url);
 const rendererUrl = process.env.ELECTRON_RENDERER_URL;
 const isDev = Boolean(rendererUrl);
@@ -90,6 +95,7 @@ const DEV_RENDERER_READY_TIMEOUT_ERROR = 'Renderer URL is unavailable.';
 const appName = 'Signal Loom';
 const execFileAsync = promisify(execFile);
 let mainWindow = null;
+let splashWindow = null;
 const workspaceWindows = new Map();
 let applicationMenu = null;
 let currentProjectPath = undefined;
@@ -119,6 +125,8 @@ const VIEW_COMMAND_WORKSPACES = {
   [SIGNAL_LOOM_MENU_COMMANDS.viewImage]: 'image',
   [SIGNAL_LOOM_MENU_COMMANDS.viewPaper]: 'paper',
 };
+
+applyElectronMainLinuxWindowingCompatibility(app, process.env, process.platform);
 
 if (process.platform === 'linux' && process.env.SIGNAL_LOOM_ELECTRON_ENABLE_GPU !== '1') {
   app.disableHardwareAcceleration();
@@ -202,6 +210,101 @@ function isProductionRendererReady() {
   } catch {
     return false;
   }
+}
+
+function buildStartupSplashHtml() {
+  const imageUrl = pathToFileURL(SIGNAL_LOOM_SPLASH_IMAGE_PATH).href;
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data:; style-src 'unsafe-inline';" />
+    <title>Signal Loom is starting</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #020712;
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+      }
+
+      img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        user-select: none;
+        -webkit-user-drag: none;
+      }
+    </style>
+  </head>
+  <body>
+    <img src="${imageUrl}" alt="Signal Loom is starting" />
+  </body>
+</html>`;
+}
+
+function createStartupSplashWindow() {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    return splashWindow;
+  }
+
+  if (!existsSync(SIGNAL_LOOM_SPLASH_IMAGE_PATH)) {
+    return undefined;
+  }
+
+  splashWindow = new BrowserWindow({
+    width: 560,
+    height: 560,
+    minWidth: 560,
+    minHeight: 560,
+    maxWidth: 560,
+    maxHeight: 560,
+    useContentSize: true,
+    title: 'Signal Loom is starting',
+    backgroundColor: '#020712',
+    frame: false,
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  splashWindow.setMenuBarVisibility(false);
+  splashWindow.on('closed', () => {
+    splashWindow = null;
+  });
+  void splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildStartupSplashHtml())}`);
+
+  return splashWindow;
+}
+
+function closeStartupSplashWindow() {
+  if (!splashWindow || splashWindow.isDestroyed()) {
+    splashWindow = null;
+    return;
+  }
+
+  const window = splashWindow;
+  splashWindow = null;
+  window.destroy();
 }
 
 async function canLoadRendererUrl(url) {
@@ -712,7 +815,7 @@ function createWorkspaceWindow(workspace = 'flow') {
       return;
     }
 
-    const focusFloatingPanel = () => focusFloatingPanelChildWindow(workspaceWindow, childWindow);
+    const focusFloatingPanel = () => focusFloatingPanelChildWindow(workspaceWindow, childWindow, details);
     focusFloatingPanel();
     childWindow.once('ready-to-show', focusFloatingPanel);
   });
@@ -743,6 +846,9 @@ function createWorkspaceWindow(workspace = 'flow') {
       workspaceWindow.maximize();
     }
     workspaceWindow.show();
+    if (workspace === 'flow') {
+      closeStartupSplashWindow();
+    }
   });
 
   workspaceWindow.on('focus', () => {
@@ -1948,7 +2054,21 @@ async function materializeSourceAsset(request) {
     return { error: 'No active Signal Loom scratch directory is available.' };
   }
 
-  if (!isPlainObject(request) || typeof request.dataUrl !== 'string') {
+  if (!isPlainObject(request)) {
+    return { error: 'Invalid source asset materialization request.' };
+  }
+
+  const binaryData = request.binaryData instanceof Uint8Array
+    ? request.binaryData
+    : request.binaryData instanceof ArrayBuffer
+      ? new Uint8Array(request.binaryData)
+      : ArrayBuffer.isView(request.binaryData)
+        ? new Uint8Array(request.binaryData.buffer, request.binaryData.byteOffset, request.binaryData.byteLength)
+        : Array.isArray(request.binaryData)
+          ? Uint8Array.from(request.binaryData.filter((value) => Number.isFinite(value)).map((value) => Number(value)))
+          : undefined;
+  const hasDataUrl = typeof request.dataUrl === 'string';
+  if (!hasDataUrl && !binaryData) {
     return { error: 'Invalid source asset materialization request.' };
   }
 
@@ -1973,6 +2093,29 @@ async function materializeSourceAsset(request) {
       envelopeIndex: Number.isFinite(request.envelopeIndex) ? request.envelopeIndex : undefined,
       envelopeCollapsed: typeof request.envelopeCollapsed === 'boolean' ? request.envelopeCollapsed : undefined,
     };
+
+    if (binaryData) {
+      await mkdir(currentScratchDirectoryPath, { recursive: true });
+      const scratchFileName = buildNativeScratchFileName(item);
+      const targetPath = join(currentScratchDirectoryPath, scratchFileName);
+
+      await writeFile(targetPath, Buffer.from(binaryData));
+
+      if (!(await hasUsableNativeAsset(targetPath))) {
+        return { error: 'Could not write the source asset into the active scratch folder.' };
+      }
+
+      await registerNativeAssetCapability(targetPath, { assetId: item.id });
+
+      return {
+        item: {
+          ...item,
+          scratchFileName,
+          nativeFilePath: targetPath,
+          assetUrl: buildNativeAssetUrl(targetPath, item.id),
+        },
+      };
+    }
 
     const materializedItem = await materializeProjectSourceBinItem(item, currentScratchDirectoryPath, [currentScratchDirectoryPath]);
 
@@ -2283,6 +2426,7 @@ app.whenReady().then(async () => {
     app.quit();
     return;
   }
+  createStartupSplashWindow();
   try {
     await resolveRendererEntryUrl();
   } catch (error) {

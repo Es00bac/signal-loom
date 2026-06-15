@@ -13,6 +13,8 @@ import { createDockableDialogPanelDefault } from '../../lib/dockableDialog';
 import { Z_INDEX } from '../../lib/zIndex';
 import { useDockablePanelStore } from '../../store/dockablePanelStore';
 import { DockablePanel } from './DockablePanel';
+import { useMobilePhoneInterfaceDescriptor } from '../../lib/mobilePhoneInterface';
+import { X } from 'lucide-react';
 
 export interface DockableDialogProps {
   open: boolean;
@@ -61,8 +63,14 @@ export function DockableDialog({
     [defaultFloatingRect, dialogId, dockZone, minSize, workspaceId],
   );
   const fallbackLayout = createDefaultDockablePanelLayout(defaultLayout);
-  const layout = sanitizeDockablePanelLayout(layouts[layoutKey], fallbackLayout);
   const viewport = useViewportSize();
+  const mobilePhoneInterface = useMobilePhoneInterfaceDescriptor();
+  const layout = sanitizeDockablePanelLayout(
+    layouts[layoutKey],
+    fallbackLayout,
+    viewport,
+    { constrainFloatingRectPosition: false, constrainFloatingRectSize: false },
+  );
 
   useEffect(() => {
     registerPanelDefaults([defaultLayout]);
@@ -90,7 +98,46 @@ export function DockableDialog({
     return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [closeOnEscape, onClose, open]);
 
-  if (!open || layout.mode === 'hidden') return null;
+  if (!open) return null;
+
+  if (mobilePhoneInterface.enabled) {
+    // On a phone the draggable/min-width DockablePanel lands off-screen, so render a
+    // full-screen sheet with its own slim chrome (title + close) and a scrollable body.
+    const sheet = (
+      <div
+        aria-label={title}
+        aria-modal={modal}
+        className="signal-loom-themed theme-panel fixed inset-0 flex flex-col"
+        data-mobile-dialog-sheet="true"
+        role="dialog"
+        style={{ zIndex: Z_INDEX.floatingPanelBase + 400 }}
+      >
+        <div
+          className="theme-surface theme-border flex items-center justify-between gap-2 border-b px-4 py-3"
+          style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
+        >
+          <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-gray-100">{title}</h2>
+          <button
+            aria-label={`Close ${title}`}
+            className="shrink-0 rounded-md p-1.5 text-gray-300 transition-colors hover:bg-gray-700 hover:text-white"
+            onClick={onClose}
+            type="button"
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <div
+          className={`min-h-0 flex-1 overflow-auto ${className}`}
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        >
+          {children}
+        </div>
+      </div>
+    );
+    return createPortal(sheet, document.body);
+  }
+
+  if (layout.mode === 'hidden') return null;
 
   const dialog = (
     <div className="fixed inset-0 pointer-events-none" style={{ zIndex: Z_INDEX.floatingPanelBase + 400 }}>

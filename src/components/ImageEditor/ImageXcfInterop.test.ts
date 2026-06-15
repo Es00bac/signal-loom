@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ImageDocument, ImageLayer, LayerBitmap } from '../../types/imageEditor';
-import { imageDocumentToXcfBlob, IMAGE_XCF_MIME_TYPE } from './ImageXcfInterop';
+import * as xcfInterop from './ImageXcfInterop';
+import {
+  describeImageDocumentXcfExportCompatibility,
+  describeXcfImportReadinessPolicy,
+  detectXcfSourceIdentity,
+  imageDocumentToXcfBlob,
+  IMAGE_XCF_MIME_TYPE,
+} from './ImageXcfInterop';
 
 class FakeContext {
   imageData: ImageData;
@@ -26,6 +33,16 @@ class FakeContext {
   drawImage() {}
   clearRect() {}
   fillRect() {}
+  translate() {}
+  rotate() {}
+  scale() {}
+  transform() {}
+  setTransform() {}
+  beginPath() {}
+  moveTo() {}
+  lineTo() {}
+  closePath() {}
+  clip() {}
   save() {}
   restore() {}
 }
@@ -104,5 +121,889 @@ describe('ImageXcfInterop', () => {
     expect(blob.type).toBe(IMAGE_XCF_MIME_TYPE);
     expect(text.startsWith('gimp xcf')).toBe(true);
     expect(text).toContain('Ink Layer');
+  });
+
+  it('detects XCF source identity from extension and MIME without claiming decode support', () => {
+    expect(detectXcfSourceIdentity({
+      fileName: 'Poster.XCF',
+      mimeType: ' IMAGE/X-XCF ',
+    })).toEqual({
+      extension: 'xcf',
+      mimeType: 'image/x-xcf',
+      isXcfExtension: true,
+      isXcfMimeType: true,
+      isXcf: true,
+      confidence: 'extension-and-mime',
+    });
+
+    expect(detectXcfSourceIdentity({
+      fileName: 'flat-preview.png',
+      mimeType: 'image/png',
+    })).toEqual({
+      extension: 'png',
+      mimeType: 'image/png',
+      isXcfExtension: false,
+      isXcfMimeType: false,
+      isXcf: false,
+      confidence: 'none',
+    });
+
+    expect(detectXcfSourceIdentity({
+      fileName: 'no-extension',
+      mimeType: 'image/x-gimp-xcf',
+    })).toMatchObject({
+      extension: null,
+      mimeType: 'image/x-gimp-xcf',
+      isXcf: true,
+      confidence: 'mime',
+    });
+  });
+
+  it('describes unsupported XCF import readiness with actionable fallback routes and risk', () => {
+    const policy = describeXcfImportReadinessPolicy({
+      fileName: 'comic-page.xcf',
+      mimeType: 'application/octet-stream',
+      sourceLibraryItemId: 'source-xcf-1',
+    });
+
+    expect(policy).toMatchObject({
+      version: 1,
+      kind: 'signal-loom-xcf-import-readiness',
+      detection: {
+        extension: 'xcf',
+        mimeType: 'application/octet-stream',
+        isXcfExtension: true,
+        isXcfMimeType: false,
+        isXcf: true,
+        confidence: 'extension',
+      },
+      import: {
+        supported: false,
+        status: 'unsupported',
+        canOpenAsPixels: false,
+        unsupportedReason: 'native-xcf-decoder-not-implemented',
+        message: 'GIMP XCF workfiles are detected, but Image cannot import or decode XCF pixels or native edit state yet.',
+      },
+      fallbackRoutes: [
+        { route: 'png', label: 'PNG visible composite', preserves: 'flattened pixels and transparency', recommendedFor: 'Preview or lightweight flattened exchange.', caveat: 'Loses layers, masks, text editability, effects, and source links.' },
+        { route: 'tiff', label: 'TIFF visible composite', preserves: 'flattened print-oriented pixels', recommendedFor: 'Visible composite handoff after editing elsewhere.', caveat: 'Use 8-bit uncompressed TIFF; layered/native XCF state, text editability, effects, and source links are not reconstructed.' },
+        { route: 'psd', label: 'PSD layered handoff', preserves: 'best-effort layers and metadata', recommendedFor: 'Best route when you still need a layered document Image can reopen.', caveat: 'Still may flatten native XCF text, masks, effects, groups, source links, and blend behavior depending on GIMP export.' },
+        { route: 'source-library', label: 'Keep original in Source Library', preserves: 'the original XCF file as a managed source asset', recommendedFor: 'Archive provenance while using converted derivatives in Image.', caveat: 'Stored for handoff/reference only; it is not decoded into an editable Image document.' },
+      ],
+      fallbackRecommendations: [
+        { rank: 1, route: 'psd', action: 'convert-layered-handoff' },
+        { rank: 2, route: 'tiff', action: 'convert-visible-composite' },
+        { rank: 3, route: 'png', action: 'convert-visible-preview' },
+        { rank: 4, route: 'source-library', action: 'archive-original' },
+      ],
+      nativeDecodeState: {
+        version: 1,
+        kind: 'signal-loom-xcf-native-decode-state',
+        detection: {
+          extension: 'xcf',
+          mimeType: 'application/octet-stream',
+          isXcfExtension: true,
+          isXcfMimeType: false,
+          isXcf: true,
+          confidence: 'extension',
+        },
+        header: {
+          provided: false,
+          recognized: false,
+          signature: 'not-provided',
+          version: null,
+          state: 'missing-header-bytes',
+        },
+        decode: {
+          status: 'unsupported',
+          canDecodePixels: false,
+          canDecodeNativeEditState: false,
+          unsupportedReason: 'native-xcf-decoder-not-implemented',
+          blockedOperations: [
+            'open-as-pixels',
+            'reconstruct-layer-tree',
+            'reconstruct-layer-masks',
+            'reconstruct-editable-text',
+            'reconstruct-groups',
+            'reconstruct-filter-stacks',
+            'reconstruct-source-links',
+          ],
+        },
+        recommendedAction: 'convert-first',
+        stableSignature: 'xcf-native-decode:v1|detected=extension|header=not-provided|status=unsupported|pixels=false|editState=false|fallbacks=psd,tiff,png,source-library',
+      },
+      exportCompatibilityLevel: 'layered-raster-export-only',
+      caveats: {
+        layers: 'XCF layer pixels can be exported from Image, but imported XCF layers are unsupported until a native decoder exists.',
+        masks: 'Layer masks are not read from XCF and are flattened into pixels during current XCF export.',
+        groups: 'Native XCF group folders are not imported and Image currently exports a flat raster layer list.',
+        text: 'Editable XCF text is not imported; Image text layers export as raster pixels.',
+        effects: 'Native GIMP effects or Signal Loom layer effects are not preserved as editable XCF effect state.',
+        filters: 'GIMP filter/plugin state and Signal Loom filter stacks are not round-tripped as native editable XCF filters.',
+        sourceLinks: 'Source-linked layers and Smart Object-like relationships are metadata-only in Image and are not native XCF links.',
+      },
+      sourcePolicy: {
+        importSignature: 'xcf-import:v1|detected=extension|status=unsupported|reason=native-xcf-decoder-not-implemented|fallbacks=png,tiff,psd,source-library|source=source-xcf-1',
+        exportSignature: 'xcf-export:v1|level=layered-raster-export-only|nativeRoundtrip=unsupported',
+        nativeRoundtrip: 'unsupported',
+      },
+      compatibilitySignature: 'xcf-import-compatibility:v1|detected=extension|import=unsupported|export=layered-raster-export-only|fallbacks=png,tiff,psd,source-library',
+      roundTripRisk: {
+        level: 'high',
+        nativeReopenSupported: false,
+        sourceEditStatePreserved: false,
+        summary: 'Opening an XCF requires external conversion first; native XCF edit state cannot round-trip through Image.',
+        affectedConstructs: [
+          'xcf-document',
+          'text',
+          'layer-effects',
+          'layer-mask',
+          'source-link',
+          'filter-stack',
+          'adjustment-layer',
+          'layer-group',
+        ],
+        recommendedFallbackRoutes: ['psd', 'tiff', 'png', 'source-library'],
+        blockers: [
+          'no native XCF decoder',
+          'no native XCF text/effect/mask reconstruction',
+          'no native XCF group/filter/source-link roundtrip',
+          'no in-app XCF import pixel reader',
+        ],
+      },
+      policyWarnings: [
+        {
+          descriptorId: 'xcf-policy-warning:v1|scope=import|code=xcf-import-unsupported',
+          scope: 'import',
+          code: 'xcf-import-unsupported',
+          nativeConstruct: 'xcf-document',
+          affectedLayerIds: [],
+          preservation: 'unsupported',
+          nativeRoundtrip: 'unsupported',
+          fallbackRoute: 'psd',
+          message: 'GIMP XCF workfiles are detected, but Image cannot import or decode XCF pixels or native edit state yet.',
+        },
+      ],
+    });
+  });
+
+  it('publishes unsupported native XCF decode states from header bytes without claiming import', () => {
+    const describeDecodeState = (xcfInterop as typeof xcfInterop & {
+      describeXcfNativeDecodeState?: (input: {
+        fileName?: string;
+        mimeType?: string;
+        bytes?: Uint8Array;
+        sourceLibraryItemId?: string;
+      }) => unknown;
+    }).describeXcfNativeDecodeState;
+
+    expect(describeDecodeState).toBeTypeOf('function');
+
+    const state = describeDecodeState?.({
+      fileName: 'mystery.bin',
+      mimeType: 'application/octet-stream',
+      bytes: new TextEncoder().encode('gimp xcf v011\0'),
+      sourceLibraryItemId: 'source-xcf-2',
+    });
+
+    expect(state).toMatchObject({
+      version: 1,
+      kind: 'signal-loom-xcf-native-decode-state',
+      detection: {
+        extension: 'bin',
+        mimeType: 'application/octet-stream',
+        isXcfExtension: false,
+        isXcfMimeType: false,
+        isXcf: false,
+        confidence: 'none',
+      },
+      header: {
+        provided: true,
+        recognized: true,
+        signature: 'gimp-xcf',
+        version: 'v011',
+        state: 'recognized-xcf-header',
+      },
+      decode: {
+        status: 'unsupported',
+        canDecodePixels: false,
+        canDecodeNativeEditState: false,
+        unsupportedReason: 'native-xcf-decoder-not-implemented',
+        unsupportedStates: [
+          { code: 'native-pixel-decode-unavailable' },
+          { code: 'native-layer-tree-decode-unavailable' },
+          { code: 'native-edit-state-decode-unavailable' },
+        ],
+      },
+      recommendedAction: 'convert-first',
+      fallbackRecommendations: [
+        { rank: 1, route: 'psd', action: 'convert-layered-handoff' },
+        { rank: 2, route: 'tiff', action: 'convert-visible-composite' },
+        { rank: 3, route: 'png', action: 'convert-visible-preview' },
+        { rank: 4, route: 'source-library', action: 'archive-original' },
+      ],
+      stableSignature: 'xcf-native-decode:v1|detected=none|header=gimp-xcf-v011|status=unsupported|pixels=false|editState=false|fallbacks=psd,tiff,png,source-library',
+    });
+  });
+
+  it('describes deterministic XCF export compatibility losses without changing export bytes', () => {
+    const describeXcfExport = (xcfInterop as typeof xcfInterop & {
+      describeImageDocumentXcfExportCompatibility?: (doc: ImageDocument) => unknown;
+    }).describeImageDocumentXcfExportCompatibility;
+    const textLayer = makeLayer({
+      id: 'caption',
+      name: 'Caption Type',
+      type: 'text',
+      text: {
+        content: 'Dialog',
+        fontFamily: 'Inter',
+        fontSize: 18,
+        fontWeight: '700',
+        fontStyle: 'normal',
+        fontKerning: 'auto',
+        fontVariantCaps: 'normal',
+        letterSpacing: 0,
+        baselineShift: 0,
+        boxWidth: 120,
+        boxHeight: 32,
+        wrap: true,
+        color: '#ffffff',
+        lineHeight: 1.2,
+        align: 'center',
+        verticalAlign: 'middle',
+        warp: 'none',
+      },
+      effects: [
+        { id: 'fx-shadow', kind: 'dropShadow', enabled: true, color: '#000000', opacity: 0.5, angle: 135, distance: 7, size: 9 },
+      ],
+    });
+    const adjustmentLayer = makeLayer({
+      id: 'adjust',
+      name: 'Print Curve',
+      type: 'adjustment',
+      bitmap: null,
+      adjustment: { kind: 'levels', channel: 'rgb', inputBlack: 8, inputWhite: 245, gamma: 1, outputBlack: 0, outputWhite: 255 },
+    });
+    const doc = makeDoc({
+      layers: [
+        makeLayer({ id: 'paint', name: 'Paint' }),
+        textLayer,
+        adjustmentLayer,
+      ],
+      activeLayerId: 'caption',
+    });
+
+    expect(describeXcfExport).toBeTypeOf('function');
+    if (!describeXcfExport) return;
+
+    const descriptor = describeXcfExport(doc);
+    expect(descriptor).toMatchObject({
+      version: 1,
+      kind: 'signal-loom-xcf-export-compatibility',
+      format: { label: 'XCF', mimeType: 'image/x-xcf', extension: 'xcf' },
+      import: {
+        supported: false,
+        status: 'unsupported',
+        canOpenAsPixels: false,
+        recommendedHandoffFormats: ['PSD', 'TIFF', 'PNG', 'JPEG'],
+        message: 'GIMP XCF workfiles are not imported or decoded by Image; open them in GIMP and export PSD, TIFF, PNG, or JPEG before opening here.',
+      },
+      export: {
+        supported: true,
+        status: 'layered-raster-export-only',
+        layerOrder: 'bottom-to-top',
+        xcfLayerOrder: 'bottom-to-top',
+        preservesRasterLayers: true,
+        preservesEditableText: false,
+        preservesAdjustmentLayers: false,
+        preservesLayerEffects: false,
+        preservesLayerMasks: false,
+        preservesLayerGroups: false,
+        preservesSourceLinks: false,
+      },
+      summary: {
+        layerCount: 3,
+        exportedRasterLayerCount: 2,
+        skippedLayerCount: 1,
+        flattenedLayerCount: 1,
+        textLayerCount: 1,
+        adjustmentLayerCount: 1,
+        effectLayerCount: 1,
+        maskLayerCount: 0,
+        groupCount: 0,
+        sourceLinkedLayerCount: 0,
+        warningCount: 4,
+      },
+      warnings: [
+        {
+          code: 'xcf-import-unsupported',
+          severity: 'warning',
+          layerIds: [],
+          message: 'Image can export XCF files, but importing or decoding existing GIMP XCF workfiles is unsupported.',
+        },
+        {
+          code: 'editable-text-flattened',
+          severity: 'warning',
+          layerIds: ['caption'],
+          message: 'Editable text layers are exported to XCF as raster pixels; text content and style remain editable only in the Image document.',
+        },
+        {
+          code: 'layer-effects-flattened',
+          severity: 'warning',
+          layerIds: ['caption'],
+          message: 'Layer effects are rasterized into XCF layer pixels instead of native editable GIMP effects.',
+        },
+        {
+          code: 'adjustment-layers-omitted',
+          severity: 'warning',
+          layerIds: ['adjust'],
+          message: 'Adjustment layers are not written as native XCF layers; export a visible flattened format for baked color adjustments.',
+        },
+      ],
+      sourcePolicy: {
+        signature: 'xcf-interop:v1|import=unsupported|export=layered-raster-export-only|layers=3|exported=2|omitted=1|warnings=xcf-import-unsupported,editable-text-flattened,layer-effects-flattened,adjustment-layers-omitted',
+        importAction: 'convert-first',
+        exportAction: 'export-layered-raster',
+        nativeRoundtrip: 'unsupported',
+      },
+      compatibilitySummary: 'XCF is export-only in Image: raster layers can be written for GIMP, but Image cannot reopen XCF workfiles.',
+      roundTripCaveats: [
+        'Image cannot import or decode GIMP XCF workfiles.',
+        'Editable text, adjustment layers, layer effects, masks, groups, and source links are not round-tripped as native XCF edit state.',
+        'Layer masks, layer effects, source links, and filter stacks are flattened into exported pixels.',
+      ],
+      layers: [
+        {
+          id: 'paint',
+          name: 'Paint',
+          type: 'image',
+          order: 0,
+          xcfLayerIndex: 0,
+          exportMode: 'native-raster',
+          flattened: false,
+          omitted: false,
+          visible: true,
+          opacity: 1,
+          blendMode: 'normal',
+          warningCodes: [],
+        },
+        {
+          id: 'caption',
+          name: 'Caption Type',
+          type: 'text',
+          order: 1,
+          xcfLayerIndex: 1,
+          exportMode: 'flattened-raster',
+          flattened: true,
+          omitted: false,
+          visible: true,
+          opacity: 1,
+          blendMode: 'normal',
+          text: {
+            contentLength: 6,
+            fontFamily: 'Inter',
+            fontSize: 18,
+            nativeEditableText: false,
+          },
+          effects: {
+            count: 1,
+            kinds: ['dropShadow'],
+            enabledKinds: ['dropShadow'],
+            nativeLayerEffects: false,
+          },
+          warningCodes: ['editable-text-flattened', 'layer-effects-flattened'],
+        },
+        {
+          id: 'adjust',
+          name: 'Print Curve',
+          type: 'adjustment',
+          order: 2,
+          xcfLayerIndex: null,
+          exportMode: 'omitted-unsupported',
+          flattened: false,
+          omitted: true,
+          visible: true,
+          opacity: 1,
+          blendMode: 'normal',
+          adjustment: {
+            kind: 'levels',
+            nativeAdjustmentLayer: false,
+          },
+          warningCodes: ['adjustment-layers-omitted'],
+        },
+      ],
+    });
+    expect(descriptor.compatibilitySignature).toBe(
+      'xcf-compatibility:v1|import=unsupported|export=layered-raster-export-only|layers=3|exported=2|omitted=1|flattened=1|warnings=xcf-import-unsupported,editable-text-flattened,layer-effects-flattened,adjustment-layers-omitted',
+    );
+    expect(descriptor.retainedMetadata).toEqual({
+      textLayerIds: ['caption'],
+      effectLayerIds: ['caption'],
+      sourceLinkedLayerIds: [],
+      filterLayerIds: [],
+    });
+    expect(descriptor.policyWarnings).toEqual([
+      {
+        descriptorId: 'xcf-policy-warning:v1|scope=import|code=xcf-import-unsupported',
+        scope: 'import',
+        code: 'xcf-import-unsupported',
+        nativeConstruct: 'xcf-document',
+        affectedLayerIds: [],
+        preservation: 'unsupported',
+        nativeRoundtrip: 'unsupported',
+        fallbackRoute: 'psd',
+        message: 'Image can export XCF files, but importing or decoding existing GIMP XCF workfiles is unsupported.',
+      },
+      {
+        descriptorId: 'xcf-policy-warning:v1|scope=export|code=editable-text-flattened',
+        scope: 'export',
+        code: 'editable-text-flattened',
+        nativeConstruct: 'text',
+        affectedLayerIds: ['caption'],
+        preservation: 'flattened-raster',
+        nativeRoundtrip: 'unsupported',
+        fallbackRoute: 'psd',
+        message: 'Editable text layers are exported to XCF as raster pixels; text content and style remain editable only in the Image document.',
+      },
+      {
+        descriptorId: 'xcf-policy-warning:v1|scope=export|code=layer-effects-flattened',
+        scope: 'export',
+        code: 'layer-effects-flattened',
+        nativeConstruct: 'layer-effects',
+        affectedLayerIds: ['caption'],
+        preservation: 'flattened-raster',
+        nativeRoundtrip: 'unsupported',
+        fallbackRoute: 'psd',
+        message: 'Layer effects are rasterized into XCF layer pixels instead of native editable GIMP effects.',
+      },
+      {
+        descriptorId: 'xcf-policy-warning:v1|scope=export|code=adjustment-layers-omitted',
+        scope: 'export',
+        code: 'adjustment-layers-omitted',
+        nativeConstruct: 'adjustment-layer',
+        affectedLayerIds: ['adjust'],
+        preservation: 'omitted',
+        nativeRoundtrip: 'unsupported',
+        fallbackRoute: 'tiff',
+        message: 'Adjustment layers are not written as native XCF layers; export a visible flattened format for baked color adjustments.',
+      },
+    ]);
+    expect(descriptor.recommendedFallbackRoutes.map((route) => route.route)).toEqual([
+      'png',
+      'tiff',
+      'psd',
+      'source-library',
+    ]);
+    expect(descriptor.layerWarnings.map((layer) => ({
+      layerId: layer.layerId,
+      warningCodes: layer.warnings.map((warning) => warning.code),
+    }))).toEqual([
+      { layerId: 'caption', warningCodes: ['editable-text-flattened', 'layer-effects-flattened'] },
+      { layerId: 'adjust', warningCodes: ['adjustment-layers-omitted'] },
+    ]);
+    expect(describeXcfExport(doc)).toEqual(descriptor);
+  });
+
+  it('publishes XCF readiness, policy signature, and round-trip caveats for UI parity rows', () => {
+    const describeXcfExport = (xcfInterop as typeof xcfInterop & {
+      describeImageDocumentXcfExportCompatibility?: (doc: ImageDocument) => unknown;
+    }).describeImageDocumentXcfExportCompatibility;
+    expect(describeXcfExport).toBeTypeOf('function');
+    if (!describeXcfExport) return;
+
+    const doc = makeDoc({
+      layers: [
+        makeLayer({ id: 'paint', name: 'Paint' }),
+        makeLayer({
+          id: 'linked',
+          name: 'Linked Masked FX',
+          mask: new OffscreenCanvas(2, 2) as LayerBitmap,
+          metadata: {
+            smartLinkedSourceId: 'source-1',
+            sourceLabel: 'Reference.png',
+          },
+          effects: [
+            { id: 'fx-shadow', kind: 'dropShadow', enabled: true, color: '#000000', opacity: 0.5, angle: 135, distance: 7, size: 9 },
+          ],
+        }),
+        makeLayer({ id: 'group', name: 'Folder', type: 'group', bitmap: null }),
+      ],
+    });
+
+    expect(describeXcfExport(doc)).toMatchObject({
+      import: {
+        supported: false,
+        status: 'unsupported',
+        canOpenAsPixels: false,
+        recommendedHandoffFormats: ['PSD', 'TIFF', 'PNG', 'JPEG'],
+      },
+      export: {
+        supported: true,
+        status: 'layered-raster-export-only',
+        preservesLayerMasks: false,
+        preservesLayerEffects: false,
+        preservesSourceLinks: false,
+      },
+      sourcePolicy: {
+        signature: 'xcf-interop:v1|import=unsupported|export=layered-raster-export-only|layers=3|exported=2|omitted=1|warnings=xcf-import-unsupported,layer-effects-flattened,layer-masks-flattened,source-links-flattened,layer-groups-omitted',
+        importAction: 'convert-first',
+        exportAction: 'export-layered-raster',
+        nativeRoundtrip: 'unsupported',
+      },
+      compatibilitySummary: 'XCF is export-only in Image: raster layers can be written for GIMP, but Image cannot reopen XCF workfiles.',
+      roundTripCaveats: [
+        'Image cannot import or decode GIMP XCF workfiles.',
+        'Layer masks, layer effects, source links, and filter stacks are flattened into exported pixels.',
+        'Layer groups are omitted as native folders; exported raster layers remain flat.',
+      ],
+    });
+  });
+
+  it('describes XCF native-construct risk with signatures, per-layer warnings, and fallback routes', () => {
+    const importPolicy = describeXcfImportReadinessPolicy({
+      fileName: 'page.xcf',
+      mimeType: 'image/x-xcf',
+      sourceLibraryItemId: 'source-xcf',
+    }) as ReturnType<typeof describeXcfImportReadinessPolicy> & {
+      compatibilitySignature?: string;
+    };
+    const caption = makeLayer({
+      id: 'caption',
+      name: 'Caption',
+      type: 'text',
+      text: {
+        content: 'Dialog',
+        fontFamily: 'Inter',
+        fontSize: 18,
+        fontWeight: '700',
+        fontStyle: 'normal',
+        fontKerning: 'auto',
+        fontVariantCaps: 'normal',
+        letterSpacing: 0,
+        baselineShift: 0,
+        boxWidth: 120,
+        boxHeight: 32,
+        wrap: true,
+        color: '#ffffff',
+        lineHeight: 1.2,
+        align: 'center',
+        verticalAlign: 'middle',
+        warp: 'none',
+      },
+      mask: new OffscreenCanvas(2, 2) as LayerBitmap,
+      effects: [
+        { id: 'fx-shadow', kind: 'dropShadow', enabled: true, color: '#000000', opacity: 0.5, angle: 135, distance: 7, size: 9 },
+      ],
+      filters: [
+        { id: 'filter-blur', kind: 'blur', enabled: true, amount: 4, opacity: 0.75, blendMode: 'normal' },
+      ],
+      metadata: {
+        smartLinkedSourceId: 'source-1',
+        sourceLabel: 'Reference.png',
+      },
+    });
+    const adjustmentLayer = makeLayer({
+      id: 'adjust',
+      name: 'Print Curve',
+      type: 'adjustment',
+      bitmap: null,
+      adjustment: { kind: 'levels', channel: 'rgb', inputBlack: 8, inputWhite: 245, gamma: 1, outputBlack: 0, outputWhite: 255 },
+    });
+
+    const descriptor = describeImageDocumentXcfExportCompatibility(makeDoc({
+      layers: [
+        makeLayer({ id: 'paint', name: 'Paint' }),
+        caption,
+        adjustmentLayer,
+      ],
+      activeLayerId: 'caption',
+    })) as ReturnType<typeof describeImageDocumentXcfExportCompatibility> & {
+      compatibilitySignature?: string;
+      recommendedFallbackRoutes?: Array<{ route: string }>;
+      retainedMetadata?: {
+        textLayerIds: string[];
+        effectLayerIds: string[];
+        sourceLinkedLayerIds: string[];
+        filterLayerIds: string[];
+      };
+      layerWarnings?: Array<{
+        layerId: string;
+        layerName: string;
+        exportMode: string;
+        flattened: boolean;
+        omitted: boolean;
+        warnings: Array<{ code: string; fallbackRoute: string; message: string }>;
+      }>;
+    };
+
+    expect(importPolicy.compatibilitySignature).toBe(
+      'xcf-import-compatibility:v1|detected=extension-and-mime|import=unsupported|export=layered-raster-export-only|fallbacks=png,tiff,psd,source-library',
+    );
+    expect(descriptor.compatibilitySignature).toBe(
+      'xcf-compatibility:v1|import=unsupported|export=layered-raster-export-only|layers=3|exported=2|omitted=1|flattened=1|warnings=xcf-import-unsupported,editable-text-flattened,layer-effects-flattened,layer-masks-flattened,source-links-flattened,filter-metadata-flattened,adjustment-layers-omitted',
+    );
+    expect(descriptor.recommendedFallbackRoutes?.map((route) => route.route)).toEqual([
+      'png',
+      'tiff',
+      'psd',
+      'source-library',
+    ]);
+    expect(descriptor.retainedMetadata).toEqual({
+      textLayerIds: ['caption'],
+      effectLayerIds: ['caption'],
+      sourceLinkedLayerIds: ['caption'],
+      filterLayerIds: ['caption'],
+    });
+    expect(descriptor.summary).toMatchObject({
+      filterLayerCount: 1,
+      warningCount: 7,
+    });
+    expect(descriptor.layers[1]).toMatchObject({
+      id: 'caption',
+      exportMode: 'flattened-raster',
+      filters: {
+        count: 1,
+        enabledCount: 1,
+        kinds: ['blur'],
+        nativeSmartFilters: false,
+      },
+      warningCodes: [
+        'editable-text-flattened',
+        'layer-effects-flattened',
+        'layer-masks-flattened',
+        'source-links-flattened',
+        'filter-metadata-flattened',
+      ],
+    });
+    expect(descriptor.layerWarnings?.map((layer) => ({
+      layerId: layer.layerId,
+      exportMode: layer.exportMode,
+      flattened: layer.flattened,
+      omitted: layer.omitted,
+      warningCodes: layer.warnings.map((warning) => warning.code),
+    }))).toEqual([
+      {
+        layerId: 'caption',
+        exportMode: 'flattened-raster',
+        flattened: true,
+        omitted: false,
+        warningCodes: [
+          'editable-text-flattened',
+          'layer-effects-flattened',
+          'layer-masks-flattened',
+          'source-links-flattened',
+          'filter-metadata-flattened',
+        ],
+      },
+      {
+        layerId: 'adjust',
+        exportMode: 'omitted-unsupported',
+        flattened: false,
+        omitted: true,
+        warningCodes: ['adjustment-layers-omitted'],
+      },
+    ]);
+    expect(descriptor.layerWarnings?.find((layer) => layer.layerId === 'caption')?.warnings[4]).toMatchObject({
+      code: 'filter-metadata-flattened',
+      fallbackRoute: 'psd',
+    });
+    expect(descriptor.policyWarnings?.find((warning) => warning.code === 'source-links-flattened')).toMatchObject({
+      descriptorId: 'xcf-policy-warning:v1|scope=export|code=source-links-flattened',
+      nativeConstruct: 'source-link',
+      affectedLayerIds: ['caption'],
+      preservation: 'flattened-raster',
+      nativeRoundtrip: 'unsupported',
+      fallbackRoute: 'source-library',
+    });
+    expect(describeImageDocumentXcfExportCompatibility(makeDoc({
+      layers: [
+        makeLayer({ id: 'paint', name: 'Paint' }),
+        caption,
+        adjustmentLayer,
+      ],
+      activeLayerId: 'caption',
+    }))).toMatchObject({
+      compatibilitySignature: descriptor.compatibilitySignature,
+      layerWarnings: descriptor.layerWarnings,
+    });
+  });
+
+  it('marks filter-only XCF layers as flattened raster exports', () => {
+    const descriptor = describeImageDocumentXcfExportCompatibility(makeDoc({
+      layers: [
+        makeLayer({
+          id: 'filtered-paint',
+          name: 'Filtered Paint',
+          filters: [
+            { id: 'filter-blur', kind: 'blur', enabled: true, amount: 4, opacity: 0.75, blendMode: 'normal' },
+          ],
+        }),
+      ],
+      activeLayerId: 'filtered-paint',
+    }));
+
+    expect(descriptor.layers[0]).toMatchObject({
+      id: 'filtered-paint',
+      exportMode: 'flattened-raster',
+      flattened: true,
+      filters: {
+        count: 1,
+        enabledCount: 1,
+        kinds: ['blur'],
+        nativeSmartFilters: false,
+      },
+      warningCodes: ['filter-metadata-flattened'],
+    });
+    expect(descriptor.compatibilitySignature).toBe(
+      'xcf-compatibility:v1|import=unsupported|export=layered-raster-export-only|layers=1|exported=1|omitted=0|flattened=1|warnings=xcf-import-unsupported,filter-metadata-flattened',
+    );
+  });
+
+  it('summarizes XCF export round-trip risk and layer construct warning coverage', () => {
+    const caption = makeLayer({
+      id: 'caption',
+      name: 'Caption',
+      type: 'text',
+      text: {
+        content: 'Dialog',
+        fontFamily: 'Inter',
+        fontSize: 18,
+        fontWeight: '700',
+        fontStyle: 'normal',
+        fontKerning: 'auto',
+        fontVariantCaps: 'normal',
+        letterSpacing: 0,
+        baselineShift: 0,
+        boxWidth: 120,
+        boxHeight: 32,
+        wrap: true,
+        color: '#ffffff',
+        lineHeight: 1.2,
+        align: 'center',
+        verticalAlign: 'middle',
+        warp: 'none',
+      },
+      mask: new OffscreenCanvas(2, 2) as LayerBitmap,
+      effects: [
+        { id: 'fx-shadow', kind: 'dropShadow', enabled: true, color: '#000000', opacity: 0.5, angle: 135, distance: 7, size: 9 },
+      ],
+      filters: [
+        { id: 'filter-blur', kind: 'blur', enabled: true, amount: 4, opacity: 0.75, blendMode: 'normal' },
+      ],
+      metadata: {
+        smartLinkedSourceId: 'source-1',
+        sourceLabel: 'Reference.png',
+      },
+    });
+    const adjustmentLayer = makeLayer({
+      id: 'adjust',
+      name: 'Print Curve',
+      type: 'adjustment',
+      bitmap: null,
+      adjustment: { kind: 'levels', channel: 'rgb', inputBlack: 8, inputWhite: 245, gamma: 1, outputBlack: 0, outputWhite: 255 },
+    });
+    const groupLayer = makeLayer({
+      id: 'group',
+      name: 'Folder',
+      type: 'group',
+      bitmap: null,
+    });
+
+    const descriptor = describeImageDocumentXcfExportCompatibility(makeDoc({
+      layers: [
+        makeLayer({ id: 'paint', name: 'Paint' }),
+        caption,
+        adjustmentLayer,
+        groupLayer,
+      ],
+      activeLayerId: 'caption',
+    }));
+
+    expect(descriptor.roundTripRisk).toMatchObject({
+      level: 'high',
+      nativeReopenSupported: false,
+      sourceEditStatePreserved: false,
+      affectedConstructs: [
+        'text',
+        'layer-effects',
+        'layer-mask',
+        'source-link',
+        'filter-stack',
+        'adjustment-layer',
+        'layer-group',
+      ],
+      recommendedFallbackRoutes: ['psd', 'tiff', 'png', 'source-library'],
+    });
+    expect(descriptor.fallbackRecommendations.map((route) => [route.rank, route.route, route.action])).toEqual([
+      [1, 'psd', 'convert-layered-handoff'],
+      [2, 'tiff', 'convert-visible-composite'],
+      [3, 'png', 'convert-visible-preview'],
+      [4, 'source-library', 'archive-original'],
+    ]);
+    expect(descriptor.layerConstructWarnings.map((warning) => ({
+      layerId: warning.layerId,
+      code: warning.code,
+      nativeConstruct: warning.nativeConstruct,
+      preservation: warning.preservation,
+      fallbackRoute: warning.fallbackRoute,
+      exportMode: warning.exportMode,
+    }))).toEqual([
+      {
+        layerId: 'caption',
+        code: 'editable-text-flattened',
+        nativeConstruct: 'text',
+        preservation: 'flattened-raster',
+        fallbackRoute: 'psd',
+        exportMode: 'flattened-raster',
+      },
+      {
+        layerId: 'caption',
+        code: 'layer-effects-flattened',
+        nativeConstruct: 'layer-effects',
+        preservation: 'flattened-raster',
+        fallbackRoute: 'psd',
+        exportMode: 'flattened-raster',
+      },
+      {
+        layerId: 'caption',
+        code: 'layer-masks-flattened',
+        nativeConstruct: 'layer-mask',
+        preservation: 'flattened-raster',
+        fallbackRoute: 'psd',
+        exportMode: 'flattened-raster',
+      },
+      {
+        layerId: 'caption',
+        code: 'source-links-flattened',
+        nativeConstruct: 'source-link',
+        preservation: 'flattened-raster',
+        fallbackRoute: 'source-library',
+        exportMode: 'flattened-raster',
+      },
+      {
+        layerId: 'caption',
+        code: 'filter-metadata-flattened',
+        nativeConstruct: 'filter-stack',
+        preservation: 'flattened-raster',
+        fallbackRoute: 'psd',
+        exportMode: 'flattened-raster',
+      },
+      {
+        layerId: 'adjust',
+        code: 'adjustment-layers-omitted',
+        nativeConstruct: 'adjustment-layer',
+        preservation: 'omitted',
+        fallbackRoute: 'tiff',
+        exportMode: 'omitted-unsupported',
+      },
+      {
+        layerId: 'group',
+        code: 'layer-groups-omitted',
+        nativeConstruct: 'layer-group',
+        preservation: 'omitted',
+        fallbackRoute: 'psd',
+        exportMode: 'omitted-unsupported',
+      },
+    ]);
   });
 });

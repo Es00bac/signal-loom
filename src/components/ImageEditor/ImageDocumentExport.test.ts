@@ -4,6 +4,10 @@ import { createMask, setRect } from './SelectionMask';
 import {
   IMAGE_EXPORT_FORMATS,
   buildImageDocumentExportLabel,
+  buildImageDocumentExportReadinessDescriptor,
+  buildImageDocumentExportReadinessSignature,
+  describeImageDocumentExportPolicyDescriptor,
+  describeImageDocumentExportPlan,
   flattenImageDocumentToBitmap,
   imageDocumentToBlob,
   imageDocumentToDataUrl,
@@ -181,15 +185,11 @@ describe('ImageDocumentExport', () => {
     });
 
     const maskedComposite = calls[1].image as FakeOffscreenCanvas;
-    const maskedCalls = maskedComposite.context.drawImageCalls;
-    expect(maskedCalls).toHaveLength(2);
-    expect(maskedCalls[0]).toMatchObject({
-      image: masked.bitmap,
-      composite: 'source-over',
-    });
-    expect(maskedCalls[1]).toMatchObject({
-      image: masked.mask,
-      composite: 'destination-in',
+    expect(maskedComposite.width).toBe(3);
+    expect(maskedComposite.height).toBe(2);
+    expect(maskedComposite.context.lastImageData).toMatchObject({
+      width: 3,
+      height: 2,
     });
   });
 
@@ -248,6 +248,1075 @@ describe('ImageDocumentExport', () => {
     const dataUrl = await imageDocumentToDataUrl(makeDoc(), 'image/jpeg');
 
     expect(dataUrl.startsWith('data:image/jpeg;base64,')).toBe(true);
+  });
+
+  it('describes visible export output dimensions and flattening warnings deterministically', () => {
+    const doc = makeDoc({
+      width: 48,
+      height: 32,
+      layers: [
+        makeLayer({
+          id: 'base',
+          name: 'Base',
+          opacity: 0.5,
+          blendMode: 'multiply',
+        }),
+        makeLayer({
+          id: 'masked',
+          name: 'Masked',
+          mask: new OffscreenCanvas(3, 2) as LayerBitmap,
+          effects: [{
+            id: 'stroke-1',
+            kind: 'stroke',
+            enabled: true,
+            color: '#ffffff',
+            opacity: 1,
+            size: 2,
+            position: 'outside',
+          }],
+          filters: [{
+            id: 'blur-1',
+            kind: 'blur',
+            enabled: true,
+            amount: 4,
+            opacity: 0.75,
+            blendMode: 'normal',
+          }],
+        }),
+        makeLayer({
+          id: 'hidden',
+          name: 'Hidden',
+          visible: false,
+        }),
+      ],
+    });
+
+    expect(describeImageDocumentExportPlan(doc, 'image/jpeg')).toEqual({
+      kind: 'visible-export',
+      format: { label: 'JPEG', mimeType: 'image/jpeg', extension: 'jpg' },
+      sourceDimensions: { width: 48, height: 32 },
+      outputDimensions: { width: 48, height: 32 },
+      flattening: {
+        required: true,
+        preservesLayers: false,
+        includesHiddenLayers: false,
+        visibleLayerIds: ['base', 'masked'],
+        omittedHiddenLayerIds: ['hidden'],
+        flattenedLayerCount: 2,
+        featureCounts: {
+          masks: 1,
+          effects: 1,
+          filters: 1,
+          adjustments: 0,
+          textLayers: 0,
+          vectorLayers: 0,
+          nonNormalBlendModes: 1,
+          partialOpacity: 1,
+          sourceLinks: 0,
+        },
+        caveats: [
+          {
+            code: 'hidden-layers-omitted',
+            layerIds: ['hidden'],
+            message: 'Hidden layers are not included in the flattened visible export.',
+          },
+          {
+            code: 'layer-masks-baked',
+            layerIds: ['masked'],
+            message: 'Layer masks become baked alpha/pixel results in the output bitmap.',
+          },
+          {
+            code: 'layer-effects-rasterized',
+            layerIds: ['masked'],
+            message: 'Layer effects are rasterized and cannot be edited after export.',
+          },
+          {
+            code: 'layer-filters-rasterized',
+            layerIds: ['masked'],
+            message: 'Layer filters are rasterized and cannot be adjusted after export.',
+          },
+        ],
+      },
+      warnings: [
+        {
+          code: 'visible-export-flattens-layers',
+          severity: 'warning',
+          formatExtension: 'jpg',
+          layerIds: ['base', 'masked'],
+          message: 'JPEG export writes a flattened visible bitmap and does not preserve editable Image layers.',
+        },
+        {
+          code: 'hidden-layers-omitted',
+          severity: 'warning',
+          formatExtension: 'jpg',
+          layerIds: ['hidden'],
+          message: 'Hidden layers are omitted from the visible export.',
+        },
+        {
+          code: 'layer-masks-flattened',
+          severity: 'warning',
+          formatExtension: 'jpg',
+          layerIds: ['masked'],
+          message: 'Layer masks are baked into the exported pixels.',
+        },
+        {
+          code: 'layer-effects-flattened',
+          severity: 'warning',
+          formatExtension: 'jpg',
+          layerIds: ['masked'],
+          message: 'Layer effects are rasterized into the flattened export.',
+        },
+        {
+          code: 'layer-filters-flattened',
+          severity: 'warning',
+          formatExtension: 'jpg',
+          layerIds: ['masked'],
+          message: 'Layer filter stacks are rasterized into the flattened export.',
+        },
+        {
+          code: 'layer-compositing-flattened',
+          severity: 'warning',
+          formatExtension: 'jpg',
+          layerIds: ['base'],
+          message: 'Layer opacity and blend modes are composited into the flattened export.',
+        },
+      ],
+    });
+  });
+
+  it('plans print/proof export readiness with DPI, profile, and stable preview signatures', () => {
+    const doc = makeDoc({
+      id: 'doc-print',
+      title: 'Poster',
+      width: 1200,
+      height: 900,
+      metadata: {
+        colorProof: {
+          mode: 'cmyk-soft-proof',
+          intent: 'relative-colorimetric',
+          profileLabel: 'US Web Coated SWOP',
+        },
+      },
+      layers: [
+        makeLayer({ id: 'base' }),
+        makeLayer({
+          id: 'vector-logo',
+          type: 'vector',
+          metadata: {
+            vectorShape: {
+              kind: 'rect',
+              width: 100,
+              height: 60,
+              fillColor: '#ffffff',
+              fillOpacity: 1,
+              strokeColor: '#000000',
+              strokeOpacity: 1,
+              strokeWidth: 0,
+            },
+          },
+        }),
+      ],
+    });
+
+    const descriptor = buildImageDocumentExportReadinessDescriptor(doc, {
+      mimeType: 'image/tiff',
+      intent: 'print',
+      targetDpi: 300,
+      colorProfileLabel: 'US Web Coated SWOP',
+      previewTag: 'main',
+    });
+
+    expect(descriptor).toMatchObject({
+      kind: 'export-readiness',
+      format: { label: 'TIFF', mimeType: 'image/tiff', extension: 'tif' },
+      intent: 'print',
+      print: {
+        targetDpi: 300,
+        widthInches: 4,
+        heightInches: 3,
+        meetsTargetDpi: true,
+      },
+      proof: {
+        mode: 'cmyk-soft-proof',
+        intent: 'relative-colorimetric',
+        profileLabel: 'US Web Coated SWOP',
+        nativeCmykExport: false,
+        outputColorSpace: 'RGB',
+      },
+      profile: {
+        requestedProfileLabel: 'US Web Coated SWOP',
+        embeddedProfile: false,
+        conversionApplied: false,
+      },
+      preview: {
+        tag: 'main',
+        dimensions: { width: 1200, height: 900 },
+        flattenedLayerIds: ['base', 'vector-logo'],
+        omittedHiddenLayerIds: [],
+      },
+    });
+    expect(descriptor.preview.signature).toBe(
+      'image-export:v1|doc=doc-print|fmt=tif|intent=print|size=1200x900|layers=base,vector-logo|hidden=none|dpi=300|proof=cmyk-soft-proof:relative-colorimetric:US Web Coated SWOP|profile=US Web Coated SWOP|tag=main',
+    );
+    expect(descriptor.warnings.map((warning) => warning.code)).toEqual([
+      'visible-export-flattens-layers',
+      'editable-layer-state-flattened',
+      'tiff-export-8bit-rgba',
+      'color-profile-not-embedded',
+      'cmyk-proof-not-separated',
+    ]);
+  });
+
+  it('warns when print export target DPI exceeds actual document resolution', () => {
+    const descriptor = buildImageDocumentExportReadinessDescriptor(makeDoc({
+      id: 'doc-low-res',
+      width: 600,
+      height: 400,
+      layers: [makeLayer({ id: 'background' })],
+    }), {
+      mimeType: 'image/png',
+      intent: 'print',
+      targetDpi: 300,
+      printWidthInches: 4,
+      printHeightInches: 3,
+      previewTag: 'proof-a',
+    });
+
+    expect(descriptor.print).toMatchObject({
+      targetDpi: 300,
+      actualPpiX: 150,
+      actualPpiY: 133.3333,
+      meetsTargetDpi: false,
+    });
+    expect(descriptor.warnings.map((warning) => warning.code)).toContain('print-resolution-below-target');
+    expect(descriptor.preview.signature).toContain('print=4x3in');
+  });
+
+  it('describes press-ready export caveats without claiming native ICC or CMYK separations', () => {
+    const descriptor = buildImageDocumentExportReadinessDescriptor(makeDoc({
+      id: 'doc-press-caveats',
+      width: 1200,
+      height: 900,
+      metadata: {
+        colorProof: {
+          mode: 'cmyk-soft-proof',
+          intent: 'relative-colorimetric',
+          profileLabel: 'US Web Coated SWOP',
+        },
+      },
+      layers: [makeLayer({ id: 'plate-preview' })],
+    }), {
+      mimeType: 'image/tiff',
+      intent: 'print',
+      targetDpi: 300,
+      printWidthInches: 6,
+      printHeightInches: 4.5,
+      colorProfileLabel: 'US Web Coated SWOP',
+    });
+
+    expect(descriptor.pressReady).toEqual({
+      pressReady: false,
+      outputPixelSpace: 'RGB',
+      nativeCmyk: false,
+      embeddedIccProfile: false,
+      minTargetDpi: 300,
+      dpiReady: false,
+      profileReady: false,
+      unsupportedSeparations: [
+        {
+          code: 'process-cmyk-separations',
+          supported: false,
+          message: 'Process CMYK separations are unsupported; visible export writes flattened RGB/RGBA pixels.',
+        },
+        {
+          code: 'spot-color-plates',
+          supported: false,
+          message: 'Spot-color plates are unsupported; spot and proof intent must be handled by external prepress tooling.',
+        },
+        {
+          code: 'icc-output-profile-conversion',
+          supported: false,
+          message: 'ICC output-profile conversion and embedding are unsupported in the visible export path.',
+        },
+        {
+          code: 'printer-marks-pdfx',
+          supported: false,
+          message: 'Printer marks, output intents, and PDF/X packaging are outside Image visible export planning.',
+        },
+      ],
+      caveats: [
+        'Print size resolves below 300 DPI; resize/upscale or reduce physical print size before press handoff.',
+        'Requested profile "US Web Coated SWOP" is recorded as intent metadata only; ICC conversion and embedding are unsupported.',
+        'CMYK soft proof is a preview/metadata state only and does not create process-color separations.',
+        'Press-ready separations, spot plates, output intents, printer marks, and PDF/X packaging require external prepress tooling.',
+      ],
+      signature: 'image-export-press-ready:v1|fmt=tif|intent=print|dpi=300|actual=200x200|dpiReady=false|profile=US Web Coated SWOP|profileReady=false|separations=process-cmyk-separations,spot-color-plates,icc-output-profile-conversion,printer-marks-pdfx',
+    });
+    expect(descriptor.warnings.map((warning) => warning.code)).toEqual(expect.arrayContaining([
+      'print-resolution-below-target',
+      'color-profile-not-embedded',
+      'cmyk-proof-not-separated',
+    ]));
+  });
+
+  it('adds deterministic print-proof route warnings for DPI, profiles, and true contract proof gaps', () => {
+    const descriptor = buildImageDocumentExportReadinessDescriptor(makeDoc({
+      id: 'doc-print-proof-route',
+      width: 900,
+      height: 600,
+      metadata: {
+        colorProof: {
+          mode: 'cmyk-soft-proof',
+          intent: 'relative-colorimetric',
+          profileLabel: 'US Web Coated SWOP',
+        },
+      },
+      layers: [makeLayer({ id: 'proof-layer' })],
+    }), {
+      mimeType: 'image/tiff',
+      intent: 'print',
+      targetDpi: 300,
+      printWidthInches: 6,
+      printHeightInches: 4,
+      colorProfileLabel: 'US Web Coated SWOP',
+    });
+
+    expect(descriptor.printProof).toEqual({
+      mode: 'flattened-rgb-proof-derivative',
+      truePrintProof: false,
+      dpiReady: false,
+      profileReady: false,
+      softProofMode: 'cmyk-soft-proof',
+      profileLabel: 'US Web Coated SWOP',
+      warnings: [
+        'Print proof output resolves below the 300 DPI target.',
+        'US Web Coated SWOP is recorded as proof intent metadata only; ICC conversion and embedding are not applied.',
+        'CMYK soft proof does not create process separations in the flattened export route.',
+        'True contract proof calibration, printer marks, output intents, and PDF/X packaging require external prepress tooling.',
+      ],
+      unsupportedStates: [
+        {
+          code: 'contract-proof-calibration',
+          supported: false,
+          message: 'Hardware-calibrated contract proof output is unsupported by Image visible export.',
+        },
+        {
+          code: 'icc-profile-conversion',
+          supported: false,
+          message: 'ICC output-profile conversion and embedding are unsupported by Image visible export.',
+        },
+        {
+          code: 'pdfx-printer-marks',
+          supported: false,
+          message: 'PDF/X output intents, registration marks, crop marks, and color bars are not generated.',
+        },
+      ],
+      signature: 'image-export-print-proof:v1|fmt=tif|intent=print|dpiReady=false|profileReady=false|profile=US Web Coated SWOP|trueProof=false|unsupported=contract-proof-calibration,icc-profile-conversion,pdfx-printer-marks',
+    });
+  });
+
+  it('adds deterministic format warnings for SVG vector flattening and static GIF export limits', () => {
+    const vectorDoc = makeDoc({
+      id: 'doc-vector-export',
+      layers: [
+        makeLayer({
+          id: 'shape',
+          type: 'vector',
+          metadata: {
+            vectorShape: {
+              kind: 'ellipse',
+              width: 6,
+              height: 4,
+              fillColor: '#00ffff',
+              fillOpacity: 1,
+              strokeColor: '#000000',
+              strokeOpacity: 1,
+              strokeWidth: 0,
+            },
+          },
+        }),
+      ],
+    });
+    const svg = buildImageDocumentExportReadinessDescriptor(vectorDoc, { mimeType: 'image/svg+xml' });
+    const gif = buildImageDocumentExportReadinessDescriptor(vectorDoc, { mimeType: 'image/gif' });
+
+    expect(svg.warnings.map((warning) => warning.code)).toEqual([
+      'visible-export-flattens-layers',
+      'editable-layer-state-flattened',
+      'svg-vector-state-flattened',
+    ]);
+    expect(gif.warnings.map((warning) => warning.code)).toEqual([
+      'visible-export-flattens-layers',
+      'editable-layer-state-flattened',
+      'gif-export-static-only',
+    ]);
+  });
+
+  it('describes format capabilities, save-for-web implications, scale metadata, and preset readiness', () => {
+    const descriptor = buildImageDocumentExportReadinessDescriptor(makeDoc({
+      id: 'doc-web-export',
+      width: 2048,
+      height: 1024,
+      layers: [
+        makeLayer({
+          id: 'base',
+          opacity: 0.75,
+          metadata: {
+            sourceLink: {
+              id: 'linked-source',
+              label: 'Hero.psd',
+              status: 'linked',
+              relinkHistory: [],
+            },
+          },
+        }),
+        makeLayer({
+          id: 'headline',
+          type: 'text',
+          text: {
+            content: 'Signal Loom',
+            fontFamily: 'Inter',
+            fontSize: 48,
+            fontWeight: '700',
+            fontStyle: 'normal',
+            fontKerning: 'auto',
+            fontVariantCaps: 'normal',
+            baselineShift: 0,
+            boxWidth: null,
+            boxHeight: null,
+            wrap: false,
+            color: '#ffffff',
+            letterSpacing: 0,
+            lineHeight: 1.2,
+            align: 'center',
+            verticalAlign: 'top',
+            warp: 'none',
+          },
+        }),
+      ],
+    }), {
+      mimeType: 'image/webp',
+      intent: 'screen',
+      workflow: 'save-for-web',
+      scale: 0.5,
+      targetDpi: 144,
+      requestedAnimation: true,
+      exportPreset: {
+        id: 'webp-half',
+        label: 'WebP half',
+        quality: 82,
+        metadataPolicy: 'strip',
+      },
+      batch: {
+        enabled: true,
+        itemCount: 3,
+        nameTemplate: '{document}-{preset}-{index}',
+      },
+    });
+
+    expect(descriptor.workflow).toBe('save-for-web');
+    expect(descriptor.status).toBe('blocked');
+    expect(descriptor.capability).toEqual({
+      formatExtension: 'webp',
+      transparency: 'alpha',
+      animation: 'unsupported',
+      vector: 'rasterized',
+      text: 'rasterized',
+      layers: 'flattened',
+      colorProfile: 'not-embedded',
+      metadata: 'stripped',
+      browserEncoder: true,
+    });
+    expect(descriptor.scale).toEqual({
+      factor: 0.5,
+      sourceDimensions: { width: 2048, height: 1024 },
+      outputDimensions: { width: 1024, height: 512 },
+      metadataDpi: 144,
+      dpiEmbedded: false,
+      resampling: 'browser-bitmap-resample',
+    });
+    expect(descriptor.implications.map((implication) => implication.code)).toEqual([
+      'alpha-preserved',
+      'animation-unsupported',
+      'vector-rasterized',
+      'text-rasterized',
+      'layers-flattened',
+      'metadata-stripped',
+    ]);
+    expect(descriptor.exportPreset).toEqual({
+      ready: true,
+      id: 'webp-half',
+      label: 'WebP half',
+      quality: 82,
+      metadataPolicy: 'strip',
+      signature: 'preset=webp-half|quality=82|metadata=strip',
+    });
+    expect(descriptor.batch).toEqual({
+      ready: true,
+      enabled: true,
+      itemCount: 3,
+      nameTemplate: '{document}-{preset}-{index}',
+      warnings: [],
+      signature: 'batch=on|items=3|template={document}-{preset}-{index}',
+    });
+    expect(descriptor.sourceBinHandoff).toMatchObject({
+      target: 'source-bin',
+      safe: false,
+      sourceItemId: null,
+      sourceUrlKind: 'durable',
+      packageFlattenedDerivative: true,
+      preserveOriginalSourceReference: true,
+      caveats: [
+        {
+          code: 'flattened-derivative-required',
+          message: 'Handoff should package the exported flattened derivative as a new asset, not overwrite the editable Image document.',
+        },
+        {
+          code: 'source-link-editability-not-preserved',
+          message: 'Source-linked layer editability is not preserved in the flattened derivative; package originals separately when provenance matters.',
+        },
+        {
+          code: 'source-id-missing',
+          message: 'A durable Source Library item id is needed before Flow, Video, or Paper can safely reference the exported derivative.',
+        },
+      ],
+    });
+    expect(descriptor.blockers.map((blocker) => blocker.code)).toEqual(['animation-export-unsupported']);
+    expect(descriptor.unsupportedStates.map((state) => state.code)).toEqual(['animated-webp-export']);
+    expect(descriptor.signature).toBe(
+      'image-export-readiness:v1|doc=doc-web-export|workflow=save-for-web|status=blocked|fmt=webp|scale=0.5|size=1024x512|dpi=144|bitDepth=8to8|preset=webp-half|batch=3|handoff=caveat|warnings=visible-export-flattens-layers,editable-layer-state-flattened,layer-compositing-flattened,source-links-flattened|blockers=animation-export-unsupported|unsupported=animated-webp-export',
+    );
+  });
+
+  it('blocks empty batch exports and reports unsupported palette/color-profile states deterministically', () => {
+    const descriptor = buildImageDocumentExportReadinessDescriptor(makeDoc({
+      id: 'doc-gif-palette',
+      width: 300,
+      height: 200,
+      layers: [makeLayer({ id: 'only' })],
+    }), {
+      mimeType: 'image/gif',
+      workflow: 'export-as',
+      targetDpi: 96,
+      colorProfileLabel: 'Display P3',
+      requestedTransparency: true,
+      batch: {
+        enabled: true,
+        itemCount: 0,
+        nameTemplate: '',
+      },
+    });
+
+    expect(descriptor.status).toBe('blocked');
+    expect(descriptor.capability).toMatchObject({
+      formatExtension: 'gif',
+      transparency: 'binary',
+      animation: 'static-only',
+      colorProfile: 'not-embedded',
+    });
+    expect(descriptor.batch).toEqual({
+      ready: false,
+      enabled: true,
+      itemCount: 0,
+      nameTemplate: '',
+      warnings: [
+        'Batch export needs at least one target item.',
+        'Batch export needs a non-empty file-name template.',
+      ],
+      signature: 'batch=on|items=0|template=none',
+    });
+    expect(descriptor.blockers.map((blocker) => blocker.code)).toEqual(['batch-empty', 'batch-template-missing']);
+    expect(descriptor.unsupportedStates.map((state) => state.code)).toEqual([
+      'gif-alpha-quantized',
+      'indexed-palette-editor',
+      'icc-profile-embedding',
+    ]);
+    expect(descriptor.implications.map((implication) => implication.code)).toContain('alpha-quantized');
+  });
+
+  it('describes source-bin handoff safety for flattened derivatives and blob-only outputs', () => {
+    const descriptor = buildImageDocumentExportReadinessDescriptor(makeDoc({
+      id: 'doc-source-handoff',
+      width: 1600,
+      height: 900,
+      layers: [
+        makeLayer({ id: 'visible' }),
+        makeLayer({
+          id: 'linked-logo',
+          metadata: {
+            smartLinkedSourceId: 'logo-original',
+          },
+        }),
+        makeLayer({ id: 'hidden-notes', visible: false }),
+      ],
+    }), {
+      mimeType: 'image/png',
+      colorProfileLabel: 'Display P3',
+      sourceBinHandoff: {
+        target: 'video',
+        sourceItemId: 'exported-still',
+        sourceUrlKind: 'blob',
+        preserveOriginalSourceReference: false,
+      },
+    });
+
+    expect(descriptor.flattening.caveats.map((caveat) => caveat.code)).toEqual([
+      'hidden-layers-omitted',
+      'source-links-derived-only',
+    ]);
+    expect(descriptor.sourceBinHandoff).toEqual({
+      target: 'video',
+      safe: false,
+      sourceItemId: 'exported-still',
+      sourceUrlKind: 'blob',
+      packageFlattenedDerivative: true,
+      preserveOriginalSourceReference: false,
+      caveats: [
+        {
+          code: 'flattened-derivative-required',
+          message: 'Handoff should package the exported flattened derivative as a new asset, not overwrite the editable Image document.',
+        },
+        {
+          code: 'hidden-layers-not-packaged',
+          message: 'Hidden layers are omitted from the derivative and remain available only in the Image document.',
+        },
+        {
+          code: 'source-link-editability-not-preserved',
+          message: 'Source-linked layer editability is not preserved in the flattened derivative; package originals separately when provenance matters.',
+        },
+        {
+          code: 'blob-url-not-durable',
+          message: 'Blob URLs are session-local; persist the exported derivative into project scratch or native media before cross-workspace handoff.',
+        },
+        {
+          code: 'profile-intent-metadata-only',
+          message: 'Color profile intent is metadata-only for this export path and should not be treated as embedded ICC data.',
+        },
+        {
+          code: 'video-handoff-still-frame-only',
+          message: 'Video handoff receives a still flattened frame; print-proof metadata does not become timeline-aware video output.',
+        },
+      ],
+      signature: 'image-export-source-bin-handoff:v1|target=video|safe=false|source=exported-still|url=blob|preserveOriginal=false|caveats=flattened-derivative-required,hidden-layers-not-packaged,source-link-editability-not-preserved,blob-url-not-durable,profile-intent-metadata-only,video-handoff-still-frame-only',
+    });
+  });
+
+  it('builds deterministic per-format warning summary groups for flattened export limitations', () => {
+    const descriptor = buildImageDocumentExportReadinessDescriptor(makeDoc({
+      id: 'doc-warning-summary',
+      width: 800,
+      height: 600,
+      layers: [
+        makeLayer({
+          id: 'text-headline',
+          type: 'text',
+          text: {
+            content: 'Headline',
+            fontFamily: 'Inter',
+            fontSize: 48,
+            fontWeight: '700',
+            fontStyle: 'normal',
+            fontKerning: 'auto',
+            fontVariantCaps: 'normal',
+            baselineShift: 0,
+            boxWidth: null,
+            boxHeight: null,
+            wrap: false,
+            color: '#ffffff',
+            letterSpacing: 0,
+            lineHeight: 1.2,
+            align: 'left',
+            verticalAlign: 'top',
+            warp: 'none',
+          },
+        }),
+        makeLayer({
+          id: 'vector-badge',
+          type: 'vector',
+          metadata: {
+            vectorShape: {
+              kind: 'rect',
+              width: 160,
+              height: 64,
+              fillColor: '#ff00ff',
+              fillOpacity: 1,
+              strokeColor: '#000000',
+              strokeOpacity: 1,
+              strokeWidth: 2,
+            },
+          },
+        }),
+        makeLayer({
+          id: 'fx-layer',
+          mask: new OffscreenCanvas(3, 2) as LayerBitmap,
+          effects: [{
+            id: 'shadow-1',
+            kind: 'dropShadow',
+            enabled: true,
+            color: '#000000',
+            opacity: 0.5,
+            distance: 4,
+            size: 6,
+            angle: 135,
+          }],
+        }),
+      ],
+    }), {
+      mimeType: 'image/tiff',
+      intent: 'print',
+      targetDpi: 300,
+      colorProfileLabel: 'Display P3',
+    });
+
+    expect(descriptor.warningSummaryGroups).toEqual([
+      {
+        code: 'flattened-text',
+        formatExtension: 'tif',
+        warningCodes: ['editable-layer-state-flattened'],
+        layerIds: ['text-headline'],
+        message: 'TIFF export rasterizes editable text into the flattened output.',
+      },
+      {
+        code: 'flattened-vector',
+        formatExtension: 'tif',
+        warningCodes: ['editable-layer-state-flattened'],
+        layerIds: ['vector-badge'],
+        message: 'TIFF export rasterizes editable vector content into the flattened output.',
+      },
+      {
+        code: 'flattened-effects',
+        formatExtension: 'tif',
+        warningCodes: ['layer-effects-flattened'],
+        layerIds: ['fx-layer'],
+        message: 'TIFF export rasterizes layer effects into the flattened output.',
+      },
+      {
+        code: 'flattened-masks',
+        formatExtension: 'tif',
+        warningCodes: ['layer-masks-flattened'],
+        layerIds: ['fx-layer'],
+        message: 'TIFF export bakes layer masks into flattened alpha and pixels.',
+      },
+      {
+        code: 'color-profile',
+        formatExtension: 'tif',
+        warningCodes: ['color-profile-not-embedded'],
+        layerIds: ['text-headline', 'vector-badge', 'fx-layer'],
+        message: 'TIFF export records Display P3 as metadata intent only and does not embed an ICC profile.',
+      },
+      {
+        code: 'high-bit-depth',
+        formatExtension: 'tif',
+        warningCodes: ['tiff-export-8bit-rgba'],
+        layerIds: ['text-headline', 'vector-badge', 'fx-layer'],
+        message: 'TIFF export writes flattened 8-bit RGBA output and does not preserve high-bit-depth document data.',
+      },
+    ]);
+  });
+
+  it('reports source high-bit-depth documents as 8-bit visible export derivatives for any target format', () => {
+    const descriptor = buildImageDocumentExportReadinessDescriptor(makeDoc({
+      id: 'doc-high-bit-source',
+      width: 1600,
+      height: 900,
+      metadata: {
+        sourceFormat: 'EXR',
+        sourceMimeType: 'image/exr',
+        sourceBitDepth: 32,
+      },
+      layers: [makeLayer({ id: 'base' })],
+    }), {
+      mimeType: 'image/png',
+      intent: 'print',
+      targetDpi: 300,
+    });
+
+    expect(descriptor.bitDepth).toEqual({
+      sourceFormat: 'EXR',
+      sourceBitDepth: 32,
+      exportBitDepth: 8,
+      preservesSourceBitDepth: false,
+      highBitDepthCaveats: [
+        'EXR source precision is represented by the editable Image document as 8-bit RGBA canvas data.',
+        'PNG export writes a flattened 8-bit RGB/RGBA derivative; keep the EXR source master for 32-bit print, archive, or VFX handoff.',
+      ],
+    });
+    expect(descriptor.warnings.map((warning) => warning.code)).toContain('source-high-bit-depth-downsampled');
+    expect(descriptor.warningSummaryGroups).toContainEqual({
+      code: 'high-bit-depth',
+      formatExtension: 'png',
+      warningCodes: ['source-high-bit-depth-downsampled'],
+      layerIds: ['base'],
+      message: 'PNG export writes flattened 8-bit RGB/RGBA output and does not preserve 32-bit EXR source data.',
+    });
+    expect(descriptor.signature).toContain('bitDepth=32to8');
+  });
+
+  it('builds deterministic blocker summaries for missing durable source handoff state', () => {
+    const descriptor = buildImageDocumentExportReadinessDescriptor(makeDoc({
+      id: 'doc-blocker-summary',
+      width: 640,
+      height: 480,
+      layers: [makeLayer({ id: 'base' })],
+    }), {
+      mimeType: 'image/png',
+      sourceBinHandoff: {
+        target: 'flow',
+        sourceUrlKind: 'blob',
+        sourceItemId: null,
+      },
+    });
+
+    expect(descriptor.blockerSummaries).toEqual([
+      {
+        code: 'source-id-missing',
+        formatExtension: 'png',
+        caveatCodes: ['source-id-missing'],
+        message: 'PNG handoff needs a durable Source Library item id before Flow can safely reference the exported derivative.',
+      },
+      {
+        code: 'blob-url-not-durable',
+        formatExtension: 'png',
+        caveatCodes: ['blob-url-not-durable'],
+        message: 'PNG handoff cannot rely on blob URLs for Flow because blob-backed exports are session-local and not durable.',
+      },
+    ]);
+  });
+
+  it('builds typed export policy descriptors with stable signatures for format, proof, preset, and handoff risk', () => {
+    const descriptor = describeImageDocumentExportPolicyDescriptor(makeDoc({
+      id: 'doc-policy',
+      width: 2400,
+      height: 1200,
+      metadata: {
+        sourceFormat: 'PSD',
+        sourceBitDepth: 16,
+        colorProof: {
+          mode: 'cmyk-soft-proof',
+          intent: 'relative-colorimetric',
+          profileLabel: 'GRACoL 2013',
+        },
+      },
+      layers: [
+        makeLayer({
+          id: 'title',
+          type: 'text',
+          text: {
+            content: 'Policy',
+            fontFamily: 'Inter',
+            fontSize: 48,
+            fontWeight: '700',
+            fontStyle: 'normal',
+            fontKerning: 'auto',
+            fontVariantCaps: 'normal',
+            baselineShift: 0,
+            boxWidth: null,
+            boxHeight: null,
+            wrap: false,
+            color: '#ffffff',
+            letterSpacing: 0,
+            lineHeight: 1.2,
+            align: 'left',
+            verticalAlign: 'top',
+            warp: 'none',
+          },
+        }),
+        makeLayer({
+          id: 'badge',
+          type: 'vector',
+          metadata: {
+            vectorShape: {
+              kind: 'rect',
+              width: 200,
+              height: 80,
+              fillColor: '#ff00ff',
+              fillOpacity: 1,
+              strokeColor: '#000000',
+              strokeOpacity: 1,
+              strokeWidth: 2,
+            },
+          },
+        }),
+      ],
+    }), {
+      mimeType: 'image/gif',
+      intent: 'print',
+      targetDpi: 300,
+      printWidthInches: 12,
+      printHeightInches: 8,
+      colorProfileLabel: 'GRACoL 2013',
+      sourceBitDepth: 16,
+      requestedAnimation: true,
+      requestedTransparency: true,
+      exportPreset: {
+        id: 'legacy-gif',
+        label: 'Legacy GIF',
+        quality: 70,
+        metadataPolicy: 'strip',
+      },
+      sourceBinHandoff: {
+        target: 'paper',
+        sourceItemId: null,
+        sourceUrlKind: 'blob',
+      },
+    });
+
+    expect(descriptor.descriptorId).toBe('image-export-policy:v1');
+    expect(descriptor.formatPolicy).toMatchObject({
+      signature: 'image-export-format-policy:v1|fmt=gif|transparency=binary|animation=static-only|vector=rasterized|text=rasterized|layers=flattened|profile=not-embedded|metadata=stripped|browserEncoder=false',
+      unsupportedStateCodes: [
+        'animated-gif-export',
+        'gif-alpha-quantized',
+        'indexed-palette-editor',
+        'icc-profile-embedding',
+        'icc-profile-conversion',
+        'pdfx-printer-marks',
+        'live-native-vector-preservation',
+        'live-native-text-preservation',
+        'native-layer-effect-preservation',
+        'true-cmyk-separations',
+        'spot-color-separations',
+        'high-bit-depth-output',
+      ],
+    });
+    expect(descriptor.flatteningRisk).toEqual({
+      signature: 'image-export-flattening-risk:v1|required=true|layers=title,badge|hidden=none|text=1|vector=1|effects=0|masks=0|sourceLinks=0',
+      nativeConstructRiskCodes: [
+        'live-native-vector-preservation',
+        'live-native-text-preservation',
+      ],
+      flattenedFeatureCounts: descriptor.readiness.flattening.featureCounts,
+    });
+    expect(descriptor.proofPressPolicy.signatures).toEqual({
+      printProof: 'image-export-print-proof:v1|fmt=gif|intent=print|dpiReady=false|profileReady=false|profile=GRACoL 2013|trueProof=false|unsupported=contract-proof-calibration,icc-profile-conversion,pdfx-printer-marks',
+      pressReady: 'image-export-press-ready:v1|fmt=gif|intent=print|dpi=300|actual=200x150|dpiReady=false|profile=GRACoL 2013|profileReady=false|separations=process-cmyk-separations,spot-color-plates,icc-output-profile-conversion,printer-marks-pdfx',
+    });
+    expect(descriptor.presetCompatibility).toEqual({
+      ready: false,
+      presetSignature: 'preset=legacy-gif|quality=70|metadata=strip',
+      compatibilitySignature: 'image-export-preset-compat:v1|preset=legacy-gif|fmt=gif|ready=false|metadata=strip|quality=70|warnings=animated-gif-export,gif-alpha-quantized,indexed-palette-editor,icc-profile-embedding,live-native-vector-preservation,live-native-text-preservation,native-layer-effect-preservation,true-cmyk-separations,spot-color-separations,high-bit-depth-output|blockers=none',
+      warningCodes: [
+        'animated-gif-export',
+        'gif-alpha-quantized',
+        'indexed-palette-editor',
+        'icc-profile-embedding',
+        'live-native-vector-preservation',
+        'live-native-text-preservation',
+        'native-layer-effect-preservation',
+        'true-cmyk-separations',
+        'spot-color-separations',
+        'high-bit-depth-output',
+      ],
+      blockerCodes: [],
+    });
+    expect(descriptor.sourceBinHandoffRisk).toEqual({
+      safe: false,
+      signature: 'image-export-source-bin-handoff:v1|target=paper|safe=false|source=missing|url=blob|preserveOriginal=true|caveats=flattened-derivative-required,blob-url-not-durable,source-id-missing,profile-intent-metadata-only,paper-proof-routing-review-only',
+      riskSignature: 'image-export-source-handoff-risk:v1|target=paper|safe=false|url=blob|source=missing|caveats=flattened-derivative-required,blob-url-not-durable,source-id-missing,profile-intent-metadata-only,paper-proof-routing-review-only',
+      caveatCodes: [
+        'flattened-derivative-required',
+        'blob-url-not-durable',
+        'source-id-missing',
+        'profile-intent-metadata-only',
+        'paper-proof-routing-review-only',
+      ],
+    });
+    expect(descriptor.stableSignatures).toEqual({
+      formatPolicy: descriptor.formatPolicy.signature,
+      exportPresetCompatibility: descriptor.presetCompatibility.compatibilitySignature,
+      printProof: descriptor.proofPressPolicy.signatures.printProof,
+      pressReady: descriptor.proofPressPolicy.signatures.pressReady,
+      sourceBinHandoffRisk: descriptor.sourceBinHandoffRisk.riskSignature,
+      readiness: descriptor.readiness.signature,
+    });
+  });
+
+  it('builds a stable readiness signature from descriptor state', () => {
+    const descriptor = buildImageDocumentExportReadinessDescriptor(makeDoc({
+      id: 'doc-signature',
+      width: 400,
+      height: 300,
+      layers: [makeLayer({ id: 'base' })],
+    }), {
+      mimeType: 'image/png',
+      workflow: 'export-as',
+      scale: 2,
+      targetDpi: 300,
+      exportPreset: { id: 'retina', label: 'Retina', metadataPolicy: 'preserve' },
+    });
+
+    expect(buildImageDocumentExportReadinessSignature(descriptor)).toBe(descriptor.signature);
+    expect(descriptor.signature).toBe(
+      'image-export-readiness:v1|doc=doc-signature|workflow=export-as|status=ready|fmt=png|scale=2|size=800x600|dpi=300|bitDepth=8to8|preset=retina|batch=off|handoff=caveat|warnings=none|blockers=none|unsupported=none',
+    );
+  });
+
+  it('adds target-specific Paper and Video handoff warnings without changing preview signatures', () => {
+    const doc = makeDoc({
+      id: 'doc-handoff-routing',
+      width: 1600,
+      height: 900,
+      metadata: {
+        colorProof: {
+          mode: 'cmyk-soft-proof',
+          intent: 'relative-colorimetric',
+          profileLabel: 'FOGRA39',
+        },
+      },
+      layers: [
+        makeLayer({
+          id: 'linked',
+          metadata: {
+            sourceLink: {
+              id: 'src-1',
+              label: 'Linked.psd',
+              status: 'linked',
+              relinkHistory: [],
+            },
+          },
+        }),
+      ],
+    });
+
+    const paper = buildImageDocumentExportReadinessDescriptor(doc, {
+      mimeType: 'image/png',
+      intent: 'print',
+      targetDpi: 300,
+      previewTag: 'handoff',
+      sourceBinHandoff: {
+        target: 'paper',
+        sourceItemId: 'paper-asset-1',
+        sourceUrlKind: 'durable',
+      },
+    });
+    const video = buildImageDocumentExportReadinessDescriptor(doc, {
+      mimeType: 'image/png',
+      intent: 'proof',
+      targetDpi: 144,
+      previewTag: 'handoff',
+      sourceBinHandoff: {
+        target: 'video',
+        sourceItemId: 'video-asset-1',
+        sourceUrlKind: 'durable',
+      },
+    });
+
+    expect(paper.sourceBinHandoff.target).toBe('paper');
+    expect(paper.sourceBinHandoff.caveats.map((caveat) => caveat.code)).toContain('paper-proof-routing-review-only');
+    expect(paper.sourceBinHandoff.caveats.map((caveat) => caveat.message).join(' ')).toContain(
+      'Paper handoff receives a flattened page/placeable asset',
+    );
+    expect(video.sourceBinHandoff.target).toBe('video');
+    expect(video.sourceBinHandoff.caveats.map((caveat) => caveat.code)).toContain('video-handoff-still-frame-only');
+    expect(video.sourceBinHandoff.caveats.map((caveat) => caveat.message).join(' ')).toContain(
+      'Video handoff receives a still flattened frame',
+    );
+    expect(paper.preview.signature).toBe(
+      'image-export:v1|doc=doc-handoff-routing|fmt=png|intent=print|size=1600x900|layers=linked|hidden=none|dpi=300|proof=cmyk-soft-proof:relative-colorimetric:FOGRA39|profile=FOGRA39|tag=handoff',
+    );
+    expect(video.preview.signature).toBe(
+      'image-export:v1|doc=doc-handoff-routing|fmt=png|intent=proof|size=1600x900|layers=linked|hidden=none|dpi=144|proof=cmyk-soft-proof:relative-colorimetric:FOGRA39|profile=FOGRA39|tag=handoff',
+    );
   });
 
   it('encodes BMP and static GIF exports without relying on browser canvas MIME support', async () => {

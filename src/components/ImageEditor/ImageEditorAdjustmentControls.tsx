@@ -1,6 +1,12 @@
 import { adjustmentLayerLabel, defaultAdjustmentSettings } from './ImageAdjustmentLayer';
 import type { AdjustmentLayerKind, ImageAdjustmentSettings } from '../../types/imageEditor';
 import { useImageEditorStore } from '../../store/imageEditorStore';
+import {
+  getHistogramChannelStats,
+  summarizeHistogramBins,
+  type ImageHistogram,
+  type ImageHistogramChannel,
+} from './ImageHistogram';
 
 const ADJUSTMENT_LAYER_KINDS: AdjustmentLayerKind[] = [
   'brightnessContrast',
@@ -16,10 +22,12 @@ const ADJUSTMENT_LAYER_KINDS: AdjustmentLayerKind[] = [
 export function AdjustmentLayerControls({
   adjustment,
   disabled,
+  histogram,
   onChange,
 }: {
   adjustment: ImageAdjustmentSettings;
   disabled?: boolean;
+  histogram?: ImageHistogram | null;
   onChange: (settings: ImageAdjustmentSettings) => void;
 }) {
   const setKind = (kind: AdjustmentLayerKind) => {
@@ -44,7 +52,7 @@ export function AdjustmentLayerControls({
         </select>
       </div>
       <div className="space-y-2">
-        {renderAdjustmentSettings(adjustment, disabled, onChange)}
+        {renderAdjustmentSettings(adjustment, disabled, histogram, onChange)}
       </div>
       <button
         className="mt-2 w-full rounded border border-cyan-300/10 bg-[#252630] px-2 py-1 text-[11px] font-semibold text-cyan-100/55 hover:border-emerald-300/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
@@ -62,6 +70,7 @@ export function AdjustmentLayerControls({
 function renderAdjustmentSettings(
   adjustment: ImageAdjustmentSettings,
   disabled: boolean | undefined,
+  histogram: ImageHistogram | null | undefined,
   onChange: (settings: ImageAdjustmentSettings) => void,
 ): React.ReactNode {
   switch (adjustment.kind) {
@@ -183,6 +192,11 @@ function renderAdjustmentSettings(
             value={adjustment.channel}
             onChange={(channel) => onChange({ ...adjustment, channel })}
           />
+          <AdjustmentHistogramPreview
+            adjustmentChannel={adjustment.channel}
+            histogram={histogram}
+            title="Levels Histogram"
+          />
           <AdjustmentSlider
             disabled={disabled}
             label="In B"
@@ -237,6 +251,11 @@ function renderAdjustmentSettings(
             disabled={disabled}
             value={adjustment.channel}
             onChange={(channel) => onChange({ ...adjustment, channel })}
+          />
+          <AdjustmentHistogramPreview
+            adjustmentChannel={adjustment.channel}
+            histogram={histogram}
+            title="Curves Histogram"
           />
           <div className="grid grid-cols-2 gap-1">
             {adjustment.points.map((point, index) => (
@@ -310,6 +329,113 @@ function renderAdjustmentSettings(
   }
 }
 
+function AdjustmentHistogramPreview({
+  adjustmentChannel,
+  histogram,
+  title,
+}: {
+  adjustmentChannel: 'rgb' | 'red' | 'green' | 'blue';
+  histogram?: ImageHistogram | null;
+  title: string;
+}) {
+  if (!histogram) {
+    return (
+      <div className="rounded border border-dashed border-cyan-300/10 bg-[#10131b] p-1.5">
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100/45">
+            {title}
+          </span>
+          <span className="font-mono text-[10px] text-amber-200/55">
+            Pending
+          </span>
+        </div>
+        <p className="text-[10px] text-cyan-100/40">
+          Histogram preview pending
+        </p>
+        <p className="mt-0.5 text-[10px] text-cyan-100/35">
+          Render lower visible layers to inspect Levels or Curves clipping before applying changes.
+        </p>
+      </div>
+    );
+  }
+  const channel = getHistogramChannelForAdjustment(adjustmentChannel);
+  const bins = summarizeHistogramBins(histogram.channels[channel], 32);
+  const stats = getHistogramChannelStats(histogram, channel);
+  const maxBin = Math.max(1, ...bins);
+  const meanLabel = stats.mean === null ? '--' : String(stats.mean);
+  const rangeLabel = stats.min === null || stats.max === null ? 'Empty' : `${stats.min}-${stats.max}`;
+
+  return (
+    <div className="rounded border border-cyan-300/10 bg-[#10131b] p-1.5">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100/45">
+          {title}
+        </span>
+        <span className="font-mono text-[10px] text-cyan-100/45">
+          {getHistogramChannelLabel(channel)}
+        </span>
+      </div>
+      <div
+        aria-label={`Document ${getHistogramChannelLabel(channel)} adjustment histogram`}
+        className="flex h-8 items-end gap-px rounded border border-cyan-300/10 bg-[#070a10] px-1 py-1"
+      >
+        {bins.map((value, index) => (
+          <span
+            aria-hidden="true"
+            className={`block flex-1 rounded-sm ${getHistogramBarClass(channel)}`}
+            key={index}
+            style={{ height: `${Math.max(2, Math.round((value / maxBin) * 24))}px` }}
+            title={`${value} pixels`}
+          />
+        ))}
+      </div>
+      <div className="mt-1 grid grid-cols-3 gap-1 text-[10px] text-cyan-100/40">
+        <span>Mean <b className="font-mono text-cyan-100/65">{meanLabel}</b></span>
+        <span>Range <b className="font-mono text-cyan-100/65">{rangeLabel}</b></span>
+        <span>Pixels <b className="font-mono text-cyan-100/65">{stats.sampleCount}</b></span>
+      </div>
+      <div className="mt-0.5 grid grid-cols-2 gap-1 text-[10px] text-cyan-100/40">
+        <span>Shadow Clip <b className="font-mono text-cyan-100/65">{stats.clippedShadows}</b></span>
+        <span>Highlight Clip <b className="font-mono text-cyan-100/65">{stats.clippedHighlights}</b></span>
+      </div>
+    </div>
+  );
+}
+
+function getHistogramChannelForAdjustment(channel: 'rgb' | 'red' | 'green' | 'blue'): ImageHistogramChannel {
+  return channel === 'rgb' ? 'luminance' : channel;
+}
+
+function getHistogramChannelLabel(channel: ImageHistogramChannel): string {
+  switch (channel) {
+    case 'luminance':
+      return 'Lum';
+    case 'red':
+      return 'Red';
+    case 'green':
+      return 'Green';
+    case 'blue':
+      return 'Blue';
+    case 'alpha':
+      return 'Alpha';
+  }
+}
+
+function getHistogramBarClass(channel: ImageHistogramChannel): string {
+  switch (channel) {
+    case 'red':
+      return 'bg-red-400/75';
+    case 'green':
+      return 'bg-emerald-400/75';
+    case 'blue':
+      return 'bg-sky-400/75';
+    case 'alpha':
+      return 'bg-cyan-50/70';
+    case 'luminance':
+      return 'bg-cyan-300/70';
+  }
+}
+
 export function AdjustmentChannelSelect({
   disabled,
   value,
@@ -338,6 +464,7 @@ export function AdjustmentChannelSelect({
 }
 
 export function AdjustmentSlider({
+  ariaLabel,
   disabled,
   label,
   max,
@@ -346,6 +473,7 @@ export function AdjustmentSlider({
   step,
   value,
 }: {
+  ariaLabel?: string;
   disabled?: boolean;
   label: string;
   max: number;
@@ -363,6 +491,7 @@ export function AdjustmentSlider({
     <div className="flex items-center gap-2">
       <label className="w-12 text-cyan-100/40">{label}</label>
       <input
+        aria-label={ariaLabel}
         className="flex-1 cursor-pointer accent-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
         disabled={disabled}
         max={max}
@@ -376,6 +505,7 @@ export function AdjustmentSlider({
         value={value}
       />
       <input
+        aria-label={ariaLabel ? `${ariaLabel} value` : undefined}
         className="w-12 rounded border border-cyan-300/10 bg-[#10131b] px-1 py-0.5 text-right text-[11px] text-cyan-100/55 disabled:cursor-not-allowed disabled:opacity-50"
         disabled={disabled}
         max={max}

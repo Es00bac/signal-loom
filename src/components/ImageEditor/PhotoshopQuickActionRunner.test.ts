@@ -3,7 +3,11 @@ import type { ImageDocument, ImageLayer, LayerBitmap } from '../../types/imageEd
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import { createMask, setRect } from './SelectionMask';
 import { getSelection, setSelection, clearAllSelections } from './selectionRegistry';
-import { runPhotoshopQuickAction } from './PhotoshopQuickActionRunner';
+import { playImageQuickActionMacro } from './ImageQuickActionMacros';
+import {
+  buildPhotoshopQuickActionAutomationDescriptor,
+  runPhotoshopQuickAction,
+} from './PhotoshopQuickActionRunner';
 
 class FakeContext {
   imageData: ImageData;
@@ -115,6 +119,14 @@ function setPixel(bitmap: LayerBitmap, x: number, y: number, rgba: [number, numb
   data.set(rgba, (y * bitmap.width + x) * 4);
 }
 
+function fillBitmap(bitmap: LayerBitmap, rgba: [number, number, number, number]) {
+  for (let y = 0; y < bitmap.height; y += 1) {
+    for (let x = 0; x < bitmap.width; x += 1) {
+      setPixel(bitmap, x, y, rgba);
+    }
+  }
+}
+
 function rgbaAt(bitmap: LayerBitmap, x: number, y: number): number[] {
   const data = (bitmap as unknown as FakeOffscreenCanvas).context.imageData.data;
   return Array.from(data.slice((y * bitmap.width + x) * 4, (y * bitmap.width + x) * 4 + 4));
@@ -132,6 +144,8 @@ describe('PhotoshopQuickActionRunner', () => {
       activeDocId: doc.id,
       undoStacks: {},
       redoStacks: {},
+      quickActionMacros: [],
+      activeQuickActionRecording: null,
     });
   });
 
@@ -193,6 +207,31 @@ describe('PhotoshopQuickActionRunner', () => {
     ]);
   });
 
+  it('runs local content-aware fill as an undoable dirty paint quick action', () => {
+    const layer = useImageEditorStore.getState().documents[0].layers[0];
+    setPixel(layer.bitmap as LayerBitmap, 0, 0, [100, 120, 140, 255]);
+    setPixel(layer.bitmap as LayerBitmap, 1, 0, [100, 120, 140, 255]);
+    setPixel(layer.bitmap as LayerBitmap, 0, 1, [100, 120, 140, 255]);
+    setPixel(layer.bitmap as LayerBitmap, 1, 1, [250, 0, 0, 255]);
+    setPixel(layer.bitmap as LayerBitmap, 2, 1, [100, 120, 140, 255]);
+    setPixel(layer.bitmap as LayerBitmap, 1, 2, [100, 120, 140, 255]);
+
+    const selection = createMask(8, 6);
+    setRect(selection, 3, 2, 1, 1, 255, false);
+    setSelection('doc-1', selection);
+    useImageEditorStore.getState().setHasSelection('doc-1', true);
+
+    expect(runPhotoshopQuickAction('localContentAwareFillPatch')).toBe(true);
+
+    const state = useImageEditorStore.getState();
+    const doc = state.documents[0];
+    const updatedLayer = doc.layers.find((candidate) => candidate.id === 'layer-1');
+    expect(updatedLayer?.bitmap ? rgbaAt(updatedLayer.bitmap, 1, 1) : []).toEqual([100, 120, 140, 255]);
+    expect(updatedLayer?.bitmapVersion).toBe(1);
+    expect(doc.dirty).toBe(true);
+    expect(state.undoStacks['doc-1']?.map((op) => op.kind)).toEqual(['paint']);
+  });
+
   it('runs newly added selection, ordering, and color actions from the shared runner', () => {
     expect(runPhotoshopQuickAction('selectCanvas')).toBe(true);
     expect(runPhotoshopQuickAction('duplicateLayer', { createLayerId: () => 'duplicate-layer' })).toBe(true);
@@ -211,6 +250,58 @@ describe('PhotoshopQuickActionRunner', () => {
       'layerOp',
       'paint',
     ]);
+  });
+
+  it('records successful quick actions into the active recording and saves a replayable action set', () => {
+    const store = useImageEditorStore.getState();
+
+    store.startQuickActionRecording();
+    expect(runPhotoshopQuickAction('nudgeLayerRightLarge')).toBe(true);
+    expect(runPhotoshopQuickAction('nudgeLayerDownLarge')).toBe(true);
+
+    const macro = store.saveQuickActionRecording();
+
+    expect(macro).toMatchObject({
+      name: 'Action 1',
+      steps: [
+        { actionId: 'nudgeLayerRightLarge' },
+        { actionId: 'nudgeLayerDownLarge' },
+      ],
+    });
+    expect(useImageEditorStore.getState().quickActionMacros).toEqual([
+      expect.objectContaining({
+        name: 'Action 1',
+        steps: [
+          { actionId: 'nudgeLayerRightLarge' },
+          { actionId: 'nudgeLayerDownLarge' },
+        ],
+      }),
+    ]);
+  });
+
+  it('replays a saved quick action macro against the active document without re-recording the playback', () => {
+    useImageEditorStore.setState({
+      quickActionMacros: [{
+        id: 'macro-1',
+        name: 'Move right and down',
+        createdAt: 10,
+        updatedAt: 10,
+        steps: [
+          { actionId: 'nudgeLayerRightLarge' },
+          { actionId: 'nudgeLayerDownLarge' },
+        ],
+      }],
+    });
+
+    const store = useImageEditorStore.getState();
+    store.startQuickActionRecording();
+
+    expect(playImageQuickActionMacro('macro-1')).toBe(true);
+
+    const doc = useImageEditorStore.getState().documents[0];
+    expect(doc.layers[0]?.x).toBe(12);
+    expect(doc.layers[0]?.y).toBe(11);
+    expect(useImageEditorStore.getState().activeQuickActionRecording?.steps).toEqual([]);
   });
 
   it('regenerates vector layers after a scale quick action is run', async () => {
@@ -252,5 +343,135 @@ describe('PhotoshopQuickActionRunner', () => {
     expect(vectorLayer.bitmap).not.toBeNull();
     expect(vectorLayer.bitmap!.width).toBe(2);
     expect(vectorLayer.bitmap!.height).toBe(2);
+  });
+
+  it('describes suite-native callable quick actions for image automation dry runs across multiple documents', () => {
+    const secondLayer = makeLayer();
+    const docs = [
+      useImageEditorStore.getState().documents[0],
+      {
+        ...makeDoc(secondLayer),
+        id: 'doc-2',
+        title: 'Second doc',
+        activeLayerId: null,
+      },
+    ];
+
+    const descriptor = buildPhotoshopQuickActionAutomationDescriptor({
+      actionIds: ['resetLayerPosition', 'missingAction'],
+      documents: docs,
+      activeDocId: 'doc-1',
+    });
+
+    expect(descriptor).toEqual({
+      descriptorId: 'photoshop-quick-action-automation:v1',
+      automationSurface: {
+        workspaceId: 'image-automation',
+        separateFromMainFlow: true,
+        scope: 'open-document-quick-actions',
+      },
+      callableOperations: [
+        {
+          kind: 'quick-action',
+          id: 'resetLayerPosition',
+          callable: true,
+          source: 'suite-native-quick-action',
+        },
+        {
+          kind: 'quick-action',
+          id: 'missingAction',
+          callable: false,
+          source: 'suite-native-quick-action',
+          reason: 'missing-from-registry',
+        },
+      ],
+      variableBindingReadiness: {
+        state: 'ready-for-explicit-review',
+        supportsActionIdBinding: true,
+        supportsArbitraryJsExpressions: false,
+      },
+      dryRunDiagnostics: {
+        safe: true,
+        canMutateDocuments: false,
+        documentCount: 2,
+        actionableDocumentCount: 1,
+        blockedDocumentCount: 1,
+        blockedDocumentIds: ['doc-2'],
+      },
+    });
+  });
+
+  it('adds per-document content-aware compatibility to quick-action automation dry runs', () => {
+    const opaqueLayer = makeLayer();
+    fillBitmap(opaqueLayer.bitmap as LayerBitmap, [20, 40, 60, 255]);
+    const docs = [
+      useImageEditorStore.getState().documents[0],
+      {
+        ...makeDoc(opaqueLayer),
+        id: 'doc-opaque',
+        title: 'Opaque doc',
+      },
+    ];
+
+    const descriptor = buildPhotoshopQuickActionAutomationDescriptor({
+      actionIds: ['localContentAwareFillPatch'],
+      documents: docs,
+      activeDocId: 'doc-1',
+    }) as ReturnType<typeof buildPhotoshopQuickActionAutomationDescriptor> & {
+      contentAwareRepairCompatibility?: {
+        requested: boolean;
+        actionIds: string[];
+        batchSuitable: boolean;
+        documents: Array<{
+          docId: string;
+          actionId: string;
+          compatible: boolean;
+          targetKind: string | null;
+          operation: string | null;
+          readinessState: string | null;
+          outputTarget: string | null;
+          blockerCodes: string[];
+          previewSignature: string | null;
+        }>;
+      };
+    };
+
+    expect(descriptor.dryRunDiagnostics).toEqual({
+      safe: true,
+      canMutateDocuments: false,
+      documentCount: 2,
+      actionableDocumentCount: 1,
+      blockedDocumentCount: 1,
+      blockedDocumentIds: ['doc-opaque'],
+    });
+    expect(descriptor.contentAwareRepairCompatibility).toEqual({
+      requested: true,
+      actionIds: ['localContentAwareFillPatch'],
+      batchSuitable: false,
+      documents: [
+        {
+          docId: 'doc-1',
+          actionId: 'localContentAwareFillPatch',
+          compatible: true,
+          targetKind: 'transparent-pixels',
+          operation: 'fill',
+          readinessState: 'ready',
+          outputTarget: 'active-layer',
+          blockerCodes: [],
+          previewSignature: expect.stringContaining('local-content-aware-repair-preview:v1:'),
+        },
+        {
+          docId: 'doc-opaque',
+          actionId: 'localContentAwareFillPatch',
+          compatible: false,
+          targetKind: 'transparent-pixels',
+          operation: 'fill',
+          readinessState: 'no-target-pixels',
+          outputTarget: 'active-layer',
+          blockerCodes: ['empty-transparent-target'],
+          previewSignature: expect.stringContaining('local-content-aware-repair-preview:v1:'),
+        },
+      ],
+    });
   });
 });

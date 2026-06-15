@@ -12,4 +12,14 @@ describe('paperToolRegistry', () => {
       frameKind: null,
     });
   });
+
+  it('registers an eyedropper tool for sampling Paper colors', () => {
+    expect(PAPER_TOOL_DEFINITIONS.filter((definition) => definition.tool === 'eyedropper')).toHaveLength(1);
+    expect(PAPER_TOOL_DEFINITIONS.find((definition) => definition.tool === 'eyedropper')).toMatchObject({
+      label: 'Eyedropper',
+      shortcut: 'I',
+      frameKind: null,
+      add: false,
+    });
+  });
 });

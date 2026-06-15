@@ -4,7 +4,7 @@ import type { ImageEditorProjectSnapshot } from '../store/imageEditorStore';
 import type { SourceBinLibraryItem, SourceBinProjectSnapshot } from '../store/sourceBinStore';
 import type { AppNode, EditorSourceKind, EnvelopeItem, NodeData, NodeResultAttempt, ResultType, WorkspaceView } from '../types/flow';
 import type { PaperDocumentSnapshot, PaperTool } from '../types/paper';
-import type { ImageDocumentSnapshot, ImageLayer, LayerType } from '../types/imageEditor';
+import type { ImageDocumentSnapshot, ImageLayer, ImageLayerEditTarget, ImageQuickActionMacro, LayerType } from '../types/imageEditor';
 import type { FlowProjectDocument } from './projectLibrary';
 import {
   buildDefaultFlowWorkspace,
@@ -17,6 +17,21 @@ import { buildFlowNodeGeneratedResultPatch, collectSourceBinItemsForFlowNode } f
 import { buildMediaAssetSignaturePart } from './mediaAssetSignature';
 import { CURRENT_PROJECT_SCHEMA_VERSION, isFlowNodeType } from './projectSchema';
 import { sanitizeProjectUsageLedgerSnapshot } from './projectUsageLedger';
+import { sanitizeImageLayerLocks } from './imageLayerLocks';
+import {
+  omitImageLayerLinkGroup,
+  sanitizeImageLayerLinkGroupId,
+} from './imageLayerLinks';
+import {
+  sanitizeImageLayerMaskDensity,
+  sanitizeImageLayerMaskFeather,
+} from '../components/ImageEditor/ImageLayerMask';
+import {
+  isPlausibleSavedSelectionChannelData,
+  sanitizeSavedSelectionChannelName,
+  truncateSavedSelectionChannels,
+} from '../components/ImageEditor/ImageSelectionChannels';
+import { sanitizeImageSpotChannelName } from '../components/ImageEditor/ImageSpotChannels';
 
 const VALID_RESULT_TYPES = new Set<ResultType>(['text', 'number', 'boolean', 'json', 'image', 'video', 'audio', 'package', 'list', 'envelope']);
 const VALID_SOURCE_KINDS = new Set<EditorSourceKind>(['text', 'image', 'video', 'audio', 'composition', 'document', 'subtitle', 'package']);
@@ -359,17 +374,22 @@ export function sanitizeImageEditorSnapshot(snapshot: unknown): ImageEditorProje
         const height = finiteNumber(doc.height, 0);
         if (width <= 0 || height <= 0) return [];
         const layers = Array.isArray(doc.layers) ? doc.layers.filter(isRecord) : [];
+        const sanitizedLayers = sanitizeImageLayerCollection(layers);
         const snapshots = Array.isArray(doc.snapshots) ? doc.snapshots.filter(isRecord) : [];
+        const activeLayerEditTarget: ImageLayerEditTarget = doc.activeLayerEditTarget === 'mask' ? 'mask' : 'layer';
         return [{
           ...doc,
           id: stringValue(doc.id, `image-doc-${index}`),
           title: stringValue(doc.title, `Image ${index + 1}`),
           width,
           height,
-          layers: layers.map(sanitizeImageLayer),
+          layers: sanitizedLayers,
           activeLayerId: optionalString(doc.activeLayerId) ?? null,
+          activeLayerEditTarget,
           hasSelection: Boolean(doc.hasSelection),
           selectionVersion: finiteNumber(doc.selectionVersion, 0),
+          savedSelectionChannels: sanitizeSavedSelectionChannels(doc.savedSelectionChannels),
+          spotChannels: sanitizeImageSpotChannels(doc.spotChannels),
           viewport: isRecord(doc.viewport)
             ? { zoom: finiteNumber(doc.viewport.zoom, 1), panX: finiteNumber(doc.viewport.panX, 0), panY: finiteNumber(doc.viewport.panY, 0) }
             : { zoom: 1, panX: 0, panY: 0 },
@@ -385,7 +405,33 @@ export function sanitizeImageEditorSnapshot(snapshot: unknown): ImageEditorProje
   return {
     documents,
     activeDocId: optionalString(snapshot.activeDocId) ?? documents[0]?.id ?? null,
+    quickActionMacros: sanitizeImageQuickActionMacros(snapshot.quickActionMacros),
   };
+}
+
+function sanitizeImageQuickActionMacros(value: unknown): ImageQuickActionMacro[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((entry, index) => {
+    if (!isRecord(entry)) return [];
+    const steps = Array.isArray(entry.steps)
+      ? entry.steps.flatMap((step) => {
+          if (!isRecord(step)) return [];
+          const actionId = optionalString(step.actionId);
+          return actionId ? [{ actionId }] : [];
+        })
+      : [];
+
+    if (steps.length === 0) return [];
+
+    return [{
+      id: stringValue(entry.id, `quick-action-macro-${index}`),
+      name: stringValue(entry.name, `Action ${index + 1}`),
+      createdAt: finiteNumber(entry.createdAt, 0),
+      updatedAt: finiteNumber(entry.updatedAt, finiteNumber(entry.createdAt, 0)),
+      steps,
+    }];
+  });
 }
 
 function sanitizeImageDocumentSnapshot(
@@ -402,43 +448,250 @@ function sanitizeImageDocumentSnapshot(
     id: stringValue(snapshot.id, `image-snapshot-${index}`),
     name: stringValue(snapshot.name, `Snapshot ${index + 1}`),
     createdAt: finiteNumber(snapshot.createdAt, 0),
+    ...(typeof snapshot.updatedAt === 'number' && Number.isFinite(snapshot.updatedAt)
+      ? { updatedAt: snapshot.updatedAt }
+      : {}),
     width,
     height,
-    layers: layers.map(sanitizeImageLayer),
+    layers: sanitizeImageLayerCollection(layers),
     activeLayerId: optionalString(snapshot.activeLayerId) ?? null,
     hasSelection: Boolean(snapshot.hasSelection),
     selectionVersion: finiteNumber(snapshot.selectionVersion, 0),
   };
 }
 
+function sanitizeSavedSelectionChannels(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as Array<{
+      id: string;
+      name: string;
+      width: number;
+      height: number;
+      dataBase64: string;
+      createdAt: number;
+    }>;
+  }
+
+  return truncateSavedSelectionChannels(value.flatMap((entry, index) => {
+    if (!isRecord(entry)) return [];
+    const width = positiveFiniteNumber(entry.width, 0);
+    const height = positiveFiniteNumber(entry.height, 0);
+    const name = sanitizeSavedSelectionChannelName(entry.name);
+    const dataBase64 = isPlausibleSavedSelectionChannelData(entry.dataBase64) ? entry.dataBase64 : undefined;
+    if (width <= 0 || height <= 0 || !name || !dataBase64) return [];
+    return [{
+      id: stringValue(entry.id, `alpha-channel-${index}`),
+      name,
+      width,
+      height,
+      dataBase64,
+      createdAt: finiteNumber(entry.createdAt, 0),
+    }];
+  }));
+}
+
+function sanitizeImageSpotChannels(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as Array<{
+      id: string;
+      name: string;
+      width: number;
+      height: number;
+      color: { r: number; g: number; b: number };
+      opacity: number;
+      solidity: number;
+      visible: boolean;
+      dataBase64: string;
+      createdAt: number;
+      updatedAt?: number;
+    }>;
+  }
+
+  return value.flatMap((entry, index) => {
+    if (!isRecord(entry)) return [];
+    const width = positiveFiniteNumber(entry.width, 0);
+    const height = positiveFiniteNumber(entry.height, 0);
+    const name = sanitizeImageSpotChannelName(entry.name);
+    const dataBase64 = isPlausibleSavedSelectionChannelData(entry.dataBase64) ? entry.dataBase64 : undefined;
+    if (width <= 0 || height <= 0 || !name || !dataBase64) return [];
+
+    const updatedAt = finiteNumber(entry.updatedAt, Number.NaN);
+    return [{
+      id: stringValue(entry.id, `spot-channel-${index}`),
+      name,
+      width,
+      height,
+      color: sanitizeImageSpotChannelColor(entry.color),
+      opacity: clampUnit(finiteNumber(entry.opacity, 1)),
+      solidity: clampUnit(finiteNumber(entry.solidity, 1)),
+      visible: entry.visible !== false,
+      dataBase64,
+      createdAt: finiteNumber(entry.createdAt, 0),
+      ...(Number.isFinite(updatedAt) ? { updatedAt } : {}),
+    }];
+  });
+}
+
+function sanitizeImageSpotChannelColor(value: unknown): { r: number; g: number; b: number } {
+  const color = isRecord(value) ? value : {};
+  return {
+    r: clampByte(finiteNumber(color.r, 0)),
+    g: clampByte(finiteNumber(color.g, 174)),
+    b: clampByte(finiteNumber(color.b, 239)),
+  };
+}
+
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(0, Math.min(1, value));
+}
+
+function clampByte(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
 function sanitizeImageLayer(layer: UnknownRecord, layerIndex: number): ImageLayer {
+  const locks = sanitizeImageLayerLocks(layer.locks);
+  const type = sanitizeImageLayerType(layer.type);
+  const groupExpanded = typeof layer.groupExpanded === 'boolean' ? layer.groupExpanded : true;
+  const linkGroupId = sanitizeImageLayerLinkGroupId(layer.linkGroupId);
+  const skewXDeg = sanitizeImageLayerTransformSkew(layer.skewXDeg);
+  const skewYDeg = sanitizeImageLayerTransformSkew(layer.skewYDeg);
+  const perspectiveX = sanitizeImageLayerTransformPerspective(layer.perspectiveX);
+  const perspectiveY = sanitizeImageLayerTransformPerspective(layer.perspectiveY);
+  const warp = sanitizeImageLayerTransformWarp(layer.warp);
+  const cornerOffsets = sanitizeImageLayerTransformCornerOffsets(layer.cornerOffsets);
+  const transformOriginX = sanitizeImageLayerTransformOrigin(layer.transformOriginX);
+  const transformOriginY = sanitizeImageLayerTransformOrigin(layer.transformOriginY);
+  const maskDensity = sanitizeImageLayerMaskDensity(layer.maskDensity);
+  const maskFeather = sanitizeImageLayerMaskFeather(layer.maskFeather);
   return {
     ...layer,
     id: stringValue(layer.id, `layer-${layerIndex}`),
     name: stringValue(layer.name, `Layer ${layerIndex + 1}`),
-    type: sanitizeImageLayerType(layer.type),
+    type,
     visible: typeof layer.visible === 'boolean' ? layer.visible : true,
     locked: Boolean(layer.locked),
+    ...(locks ? { locks } : { locks: undefined }),
     opacity: finiteNumber(layer.opacity, 1),
     blendMode: typeof layer.blendMode === 'string' ? layer.blendMode as ImageLayer['blendMode'] : 'normal',
-    x: finiteNumber(layer.x, 0),
-    y: finiteNumber(layer.y, 0),
+    x: type === 'group' ? 0 : finiteNumber(layer.x, 0),
+    y: type === 'group' ? 0 : finiteNumber(layer.y, 0),
+    ...(type !== 'group' && skewXDeg !== undefined ? { skewXDeg } : {}),
+    ...(type !== 'group' && skewYDeg !== undefined ? { skewYDeg } : {}),
+    ...(type !== 'group' && perspectiveX !== undefined ? { perspectiveX } : {}),
+    ...(type !== 'group' && perspectiveY !== undefined ? { perspectiveY } : {}),
+    ...(type !== 'group' && warp !== undefined ? { warp } : {}),
+    ...(type !== 'group' && cornerOffsets !== undefined ? { cornerOffsets } : {}),
+    transformOriginX: type === 'group' ? undefined : transformOriginX,
+    transformOriginY: type === 'group' ? undefined : transformOriginY,
     bitmap: null,
     mask: null,
+    ...(maskDensity !== undefined ? { maskDensity } : {}),
+    ...(maskFeather !== undefined ? { maskFeather } : {}),
     bitmapVersion: finiteNumber(layer.bitmapVersion, 0),
+    groupExpanded: type === 'group' ? groupExpanded : undefined,
+    linkGroupId: type === 'group' ? undefined : linkGroupId,
   };
 }
 
+function sanitizeImageLayerCollection(layers: UnknownRecord[]): ImageLayer[] {
+  const sanitized = layers.map(sanitizeImageLayer);
+  const groupIds = new Set(sanitized.filter((layer) => layer.type === 'group').map((layer) => layer.id));
+  const grouped = sanitized.map((layer) => {
+    const validGroupId = typeof layer.groupId === 'string'
+      && layer.groupId !== layer.id
+      && groupIds.has(layer.groupId);
+    if (layer.type === 'group') {
+      return omitImageLayerGroupId(layer);
+    }
+    return validGroupId ? layer : omitImageLayerGroupId(layer);
+  });
+  const linkCounts = new Map<string, number>();
+  for (const layer of grouped) {
+    if (!layer.linkGroupId) continue;
+    linkCounts.set(layer.linkGroupId, (linkCounts.get(layer.linkGroupId) ?? 0) + 1);
+  }
+  return grouped.map((layer) => (
+    layer.linkGroupId && (linkCounts.get(layer.linkGroupId) ?? 0) >= 2
+      ? layer
+      : omitImageLayerLinkGroup(layer)
+  ));
+}
+
 function sanitizeImageLayerType(value: unknown): LayerType {
-  return ['image', 'mask', 'text', 'adjustment', 'vector'].includes(value as string)
+  return ['image', 'mask', 'text', 'adjustment', 'vector', 'group'].includes(value as string)
     ? value as LayerType
     : 'image';
+}
+
+function omitImageLayerGroupId(layer: ImageLayer): ImageLayer {
+  const { groupId: _groupId, ...rest } = layer;
+  return rest;
 }
 
 function positiveFiniteNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? value
     : fallback;
+}
+
+function sanitizeImageLayerTransformOrigin(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return Math.max(0, Math.min(1, value));
+}
+
+function sanitizeImageLayerTransformSkew(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.max(-75, Math.min(75, Math.round(value * 100) / 100));
+}
+
+function sanitizeImageLayerTransformPerspective(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.max(-0.95, Math.min(0.95, Math.round(value * 1000) / 1000));
+}
+
+function sanitizeImageLayerTransformWarp(value: unknown): ImageLayer['warp'] | undefined {
+  if (value === undefined) return undefined;
+  const entry = isRecord(value) ? value : {};
+  return {
+    top: sanitizeImageLayerTransformWarpValue(entry.top),
+    right: sanitizeImageLayerTransformWarpValue(entry.right),
+    bottom: sanitizeImageLayerTransformWarpValue(entry.bottom),
+    left: sanitizeImageLayerTransformWarpValue(entry.left),
+  };
+}
+
+function sanitizeImageLayerTransformCornerOffsets(value: unknown): ImageLayer['cornerOffsets'] | undefined {
+  if (value === undefined) return undefined;
+  const entry = isRecord(value) ? value : {};
+  return {
+    nw: sanitizeImageTransformPoint(entry.nw),
+    ne: sanitizeImageTransformPoint(entry.ne),
+    se: sanitizeImageTransformPoint(entry.se),
+    sw: sanitizeImageTransformPoint(entry.sw),
+  };
+}
+
+function sanitizeImageTransformPoint(value: unknown): { x: number; y: number } {
+  const point = isRecord(value) ? value : {};
+  return {
+    x: sanitizeImageTransformCoordinate(point.x),
+    y: sanitizeImageTransformCoordinate(point.y),
+  };
+}
+
+function sanitizeImageTransformCoordinate(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.round(value * 100) / 100;
+}
+
+function sanitizeImageLayerTransformWarpValue(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.max(-1, Math.min(1, Math.round(value * 1000) / 1000));
 }
 
 export function sanitizeFileSystemMetadata(value: unknown): FlowProjectDocument['fileSystem'] | undefined {

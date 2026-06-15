@@ -1,33 +1,64 @@
 import { cloneBitmap } from '../LayerBitmap';
-import { applyBlurBrushToBitmap } from '../ImageRetouch';
+import {
+  applyBlurBrushToBitmap,
+  buildRetouchSampleSource,
+  describeRetouchBrushToolPlan,
+  describeRetouchToolReadiness,
+  type RetouchSampleSource,
+} from '../ImageRetouch';
+import { canEditImageLayerPixels } from '../../../lib/imageLayerLocks';
+import { DEFAULT_RETOUCH_TOOL_SETTINGS } from '../../../types/imageEditor';
+import { resolveRetouchTargetLayer } from './retouchTargetLayer';
 import type { Point, ToolEnv, ToolHandler } from './types';
 
 interface BlurBrushStroke {
   layerId: string;
   bitmapBefore: OffscreenCanvas;
+  sampleSource: RetouchSampleSource;
   lastPoint: Point;
 }
 
 let stroke: BlurBrushStroke | null = null;
 
+export const blurBrushCapabilityDescriptor = describeRetouchBrushToolPlan({
+  tool: 'blur',
+  size: 25,
+  strength: 0.5,
+});
+
+export const blurBrushReadinessDescriptor = describeRetouchToolReadiness({
+  tool: 'blur',
+  sampleMode: DEFAULT_RETOUCH_TOOL_SETTINGS.sampleMode,
+});
+
+export const blurBrushFinishingReadinessSignature = blurBrushReadinessDescriptor.actionReadiness.signature;
+
 export const blurBrushTool: ToolHandler = {
   onPointerDown(env, point) {
-    const layer = env.activeLayer;
-    if (!layer || layer.locked || !layer.bitmap) return;
+    const layer = resolveRetouchTargetLayer(env, point);
+    if (!canEditImageLayerPixels(layer) || !layer?.bitmap) return;
+    const bitmapBefore = cloneBitmap(layer.bitmap);
+    const retouchSettings = env.retouchToolSettings ?? DEFAULT_RETOUCH_TOOL_SETTINGS;
     stroke = {
       layerId: layer.id,
-      bitmapBefore: cloneBitmap(layer.bitmap),
+      bitmapBefore,
+      sampleSource: buildRetouchSampleSource({
+        doc: env.doc,
+        layer,
+        layerSnapshot: bitmapBefore,
+        sampleMode: retouchSettings.sampleMode,
+      }),
       lastPoint: point,
     };
     blurAt(env, point);
-    env.requestRender();
+    env.requestRender({ invalidateBitmapCache: true });
   },
 
   onPointerMove(env, point) {
     if (!stroke) return;
     blurBetween(env, stroke.lastPoint, point);
     stroke.lastPoint = point;
-    env.requestRender();
+    env.requestRender({ invalidateBitmapCache: true });
   },
 
   onPointerUp(env) {
@@ -43,11 +74,18 @@ export const blurBrushTool: ToolHandler = {
       });
       env.store.bumpLayerBitmapVersion(env.doc.id, layer.id);
       env.store.markDocumentDirty(env.doc.id);
+      env.requestRender({ invalidateBitmapCache: true });
     }
     stroke = null;
   },
 
-  onCancel() {
+  onCancel(env) {
+    if (!stroke) return;
+    const layer = env.doc.layers.find((candidate) => candidate.id === stroke?.layerId);
+    if (layer?.bitmap) {
+      layer.bitmap.getContext('2d')?.drawImage(stroke.bitmapBefore, 0, 0);
+      env.requestRender({ invalidateBitmapCache: true });
+    }
     stroke = null;
   },
 };
@@ -69,13 +107,15 @@ function blurAt(env: ToolEnv, targetPoint: Point): void {
   if (!stroke) return;
   const layer = env.doc.layers.find((candidate) => candidate.id === stroke?.layerId);
   if (!layer?.bitmap) return;
+  const targetLayerPoint = {
+    x: targetPoint.x - layer.x,
+    y: targetPoint.y - layer.y,
+  };
   applyBlurBrushToBitmap(layer.bitmap, {
-    targetPoint: {
-      x: targetPoint.x - layer.x,
-      y: targetPoint.y - layer.y,
-    },
+    targetPoint: targetLayerPoint,
+    sourcePoint: stroke.sampleSource.coordinateSpace === 'document' ? targetPoint : targetLayerPoint,
     size: env.brushSettings.size,
     strength: env.brushSettings.opacity,
-    sourceBitmap: stroke.bitmapBefore,
+    sourceBitmap: stroke.sampleSource.bitmap,
   });
 }

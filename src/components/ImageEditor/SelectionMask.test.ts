@@ -3,6 +3,9 @@ import {
   cloneMask,
   combineMasks,
   createMask,
+  describeAlphaMaskCombineMode,
+  describeSelectionMaskOverlay,
+  describeSelectionMaskPersistence,
   fillMask,
   fromSnapshot,
   invertMask,
@@ -100,6 +103,132 @@ describe('SelectionMask — combineMasks', () => {
     const t = createMask(2, 2);
     const s = createMask(3, 3);
     expect(() => combineMasks(t, s, 'replace')).toThrow();
+  });
+
+  it('describes alpha combine modes with deterministic formulas', () => {
+    const modes = ['replace', 'add', 'subtract', 'intersect'] as const;
+
+    expect(modes.map((mode) => describeAlphaMaskCombineMode(mode))).toEqual([
+      {
+        kind: 'alpha-mask-combine-mode',
+        mode: 'replace',
+        label: 'Replace Selection',
+        alphaRule: 'target = source',
+        previewFormula: 'source',
+        preservesPartialAlpha: true,
+        monotonicity: 'source-defined',
+        signature: 'alpha-mask-combine:v1:replace:source',
+      },
+      {
+        kind: 'alpha-mask-combine-mode',
+        mode: 'add',
+        label: 'Add to Selection',
+        alphaRule: 'target = max(target, source)',
+        previewFormula: 'max(target, source)',
+        preservesPartialAlpha: true,
+        monotonicity: 'expands-or-preserves-alpha',
+        signature: 'alpha-mask-combine:v1:add:max(target, source)',
+      },
+      {
+        kind: 'alpha-mask-combine-mode',
+        mode: 'subtract',
+        label: 'Subtract from Selection',
+        alphaRule: 'target = max(0, target - source)',
+        previewFormula: 'max(0, target - source)',
+        preservesPartialAlpha: true,
+        monotonicity: 'reduces-or-preserves-alpha',
+        signature: 'alpha-mask-combine:v1:subtract:max(0, target - source)',
+      },
+      {
+        kind: 'alpha-mask-combine-mode',
+        mode: 'intersect',
+        label: 'Intersect with Selection',
+        alphaRule: 'target = min(target, source)',
+        previewFormula: 'min(target, source)',
+        preservesPartialAlpha: true,
+        monotonicity: 'reduces-or-preserves-alpha',
+        signature: 'alpha-mask-combine:v1:intersect:min(target, source)',
+      },
+    ]);
+  });
+});
+
+describe('SelectionMask — overlay descriptors', () => {
+  it('summarizes alpha coverage with feather and opacity display metadata', () => {
+    const mask = createMask(4, 1);
+    mask.data.set([0, 64, 255, 128]);
+    const descriptor = describeSelectionMaskOverlay(
+      mask,
+      {
+        label: 'Alpha 1',
+        tintColor: '#ff00ff',
+        opacity: 0.424,
+        featherPx: 3.456,
+      },
+    );
+
+    expect(descriptor).toMatchObject({
+      kind: 'selection-mask-overlay',
+      label: 'Alpha 1',
+      size: { width: 4, height: 1 },
+      alpha: {
+        transparentPixels: 1,
+        partialPixels: 2,
+        fullPixels: 1,
+        minAlpha: 0,
+        maxAlpha: 255,
+        averageAlpha: 111.75,
+      },
+      display: {
+        tintColor: '#ff00ff',
+        opacity: 0.424,
+        opacityLabel: '42%',
+        featherPx: 3.46,
+        featherLabel: '3.46 px',
+      },
+      warnings: [
+        {
+          code: 'selection-mask-feather-display-only',
+        },
+        {
+          code: 'selection-mask-richer-visualization-unsupported',
+        },
+      ],
+      limitations: [
+        'Feather is displayed as descriptor metadata; this helper does not blur or mutate mask pixels.',
+        'Advanced marching-ants animation, per-edge colorization, and channel-specific matte views are not represented by this descriptor.',
+      ],
+    });
+    expect(descriptor?.signature).toBe(
+      'selection-mask-overlay:v1:{"label":"Alpha 1","width":4,"height":1,"alpha":{"transparentPixels":1,"partialPixels":2,"fullPixels":1,"minAlpha":0,"maxAlpha":255,"averageAlpha":111.75},"display":{"opacity":0.424,"featherPx":3.46},"warnings":["selection-mask-feather-display-only","selection-mask-richer-visualization-unsupported"]}',
+    );
+  });
+
+  it('describes saved-selection round-trip metadata with deterministic warnings and signature', () => {
+    const mask = createMask(4, 1);
+    mask.data.set([0, 64, 255, 128]);
+
+    expect(describeSelectionMaskPersistence(mask, {
+      label: 'Subject A',
+      storageTarget: 'saved-selection-alpha-channel',
+    })).toEqual({
+      kind: 'selection-mask-persistence',
+      label: 'Subject A',
+      storageTarget: 'saved-selection-alpha-channel',
+      loadTarget: 'document-selection',
+      roundTrip: 'lossless-alpha-mask',
+      hasSelection: true,
+      partialAlpha: true,
+      warnings: [
+        {
+          code: 'selection-mask-saved-selection-metadata-only',
+          severity: 'warning',
+          message: 'Saved-selection round-trip is represented as alpha-mask metadata; native channel UI/export is not modeled here.',
+        },
+      ],
+      signature:
+        'selection-mask-persistence:v1:{"label":"Subject A","storageTarget":"saved-selection-alpha-channel","loadTarget":"document-selection","roundTrip":"lossless-alpha-mask","hasSelection":true,"partialAlpha":true,"warnings":["selection-mask-saved-selection-metadata-only"]}',
+    });
   });
 });
 
@@ -222,6 +351,25 @@ describe('SelectionMask — setFloodFill', () => {
       255, 255, 0, 0,
     ];
     expect(Array.from(mask.data)).toEqual(expected);
+  });
+
+  it('can match non-contiguous pixels when contiguous matching is disabled', () => {
+    const img = makeImage(3, 1, [
+      [255, 0, 0],
+      [0, 0, 255],
+      [255, 0, 0],
+    ]);
+    const mask = createMask(3, 1);
+    (setFloodFill as unknown as (
+      mask: ReturnType<typeof createMask>,
+      image: ImageData,
+      x: number,
+      y: number,
+      tolerance: number,
+      contiguous: boolean,
+    ) => void)(mask, img, 0, 0, 0, false);
+
+    expect(Array.from(mask.data)).toEqual([255, 0, 255]);
   });
 
   it('rejects out-of-bounds seed', () => {

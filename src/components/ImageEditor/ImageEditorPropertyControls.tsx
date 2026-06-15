@@ -6,6 +6,7 @@ export function Slider({
   step,
   onChange,
   format,
+  ariaLabel,
 }: {
   label: string;
   value: number;
@@ -14,7 +15,12 @@ export function Slider({
   step: number;
   onChange: (v: number) => void;
   format: (v: number) => string;
+  ariaLabel?: string;
 }) {
+  const handleInput = (value: string) => {
+    onChange(parseFloat(value));
+  };
+
   return (
     <div>
       <label className="mb-1 flex items-center justify-between">
@@ -22,10 +28,12 @@ export function Slider({
         <span className="text-cyan-100/40">{format(value)}</span>
       </label>
       <input
+        aria-label={ariaLabel}
         className="w-full cursor-pointer accent-cyan-400"
         max={max}
         min={min}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
+        onChange={(e) => handleInput(e.currentTarget.value)}
+        onInput={(e) => handleInput(e.currentTarget.value)}
         step={step}
         type="range"
         value={value}

@@ -29,6 +29,10 @@ function renderProgramMonitor({
   incrementalRenderSummary,
   renderCacheDetailLines,
   previewUrl,
+  previewOutputMetadata,
+  errorMessage,
+  isRunning = false,
+  renderStatusMessage,
   stageClips = [],
   stageMode = 'stage',
   selectedClip = stageClips[0]?.clip,
@@ -41,6 +45,10 @@ function renderProgramMonitor({
   incrementalRenderSummary?: string;
   renderCacheDetailLines?: string[];
   previewUrl?: string;
+  previewOutputMetadata?: Record<string, unknown>;
+  errorMessage?: string;
+  isRunning?: boolean;
+  renderStatusMessage?: string;
   stageMode?: 'stage' | 'rendered';
   selectedClip?: ProgramStageClip['clip'];
   stageClips?: ProgramStageClip[];
@@ -54,13 +62,13 @@ function renderProgramMonitor({
       aspectRatio={aspectRatio}
       audioClipCount={0}
       canvas={canvas}
-      errorMessage={undefined}
+      errorMessage={errorMessage}
       exportPresetPlan={{ presetId: 'review-h264-1080p' }}
       exportReadiness={exportReadiness}
       frameRate={30}
       hasCaptionCues={false}
       incrementalRenderSummary={incrementalRenderSummary}
-      isRunning={false}
+      isRunning={isRunning}
       monitorParityNotices={[]}
       onAddEditorAsset={vi.fn()}
       onAspectRatioChange={vi.fn()}
@@ -77,11 +85,11 @@ function renderProgramMonitor({
       onUpdateClip={vi.fn()}
       onUpdateStageObject={vi.fn()}
       parityDiagnostics={buildVideoParityDiagnostics({ visualClips, stageObjects: [] })}
-      previewOutputMetadata={undefined}
+      previewOutputMetadata={previewOutputMetadata}
       previewUrl={previewUrl}
       renderBackendStatus={renderBackendStatus}
       renderCacheDetailLines={renderCacheDetailLines}
-      renderStatusMessage={undefined}
+      renderStatusMessage={renderStatusMessage}
       selectedClip={selectedClip}
       selectedStageObject={undefined}
       sequenceSummary={buildVideoSequenceSummary(aspectRatio, videoResolution, canvas, durationSeconds, 30)}
@@ -136,7 +144,80 @@ describe('ProgramMonitorPanel', () => {
     });
 
     expect(html).toContain('data-video-rendered-preview="true"');
+    expect(html).toContain('data-video-rendered-preview-state="ready"');
     expect(html).toContain('blob:native-video-render-smoke');
+  });
+
+  it('surfaces an explicit idle rendered-preview descriptor before any render starts', () => {
+    const html = renderProgramMonitor({
+      stageMode: 'rendered',
+    });
+
+    expect(html).toContain('data-video-render-preview-status="idle"');
+    expect(html).toContain('Ready to render');
+    expect(html).toContain('Run Render to build a playable Program Monitor preview for this composition.');
+  });
+
+  it('shows an explicit waiting state when rendered preview mode is active before a preview asset exists', () => {
+    const html = renderProgramMonitor({
+      stageMode: 'rendered',
+      isRunning: true,
+      renderStatusMessage: 'Rendering editor sequence locally…',
+    });
+
+    expect(html).toContain('data-video-render-preview-status="rendering"');
+    expect(html).toContain('data-video-rendered-preview-state="waiting"');
+    expect(html).toContain('Rendering preview');
+    expect(html).toContain('Rendering editor sequence locally…');
+    expect(html).not.toContain('data-program-stage-shell');
+  });
+
+  it('surfaces a completed rendered-preview descriptor with output metadata for playable video renders', () => {
+    const html = renderProgramMonitor({
+      previewUrl: 'blob:native-video-render-smoke',
+      previewOutputMetadata: {
+        fileName: 'signal-loom-program.mp4',
+        mimeType: 'video/mp4',
+        frameCount: 180,
+        durationSeconds: 6,
+      },
+      stageMode: 'rendered',
+    });
+
+    expect(html).toContain('data-video-render-preview-status="completed"');
+    expect(html).toContain('Preview ready');
+    expect(html).toContain('signal-loom-program.mp4');
+    expect(html).toContain('video/mp4');
+    expect(html).toContain('180 frames');
+  });
+
+  it('shows an explicit error state when rendered preview mode has no playable preview', () => {
+    const html = renderProgramMonitor({
+      stageMode: 'rendered',
+      errorMessage: 'Render failed because ffmpeg could not open one source clip.',
+    });
+
+    expect(html).toContain('data-video-render-preview-status="failed"');
+    expect(html).toContain('data-video-rendered-preview-state="error"');
+    expect(html).toContain('Rendered preview unavailable');
+    expect(html).toContain('Render failed because ffmpeg could not open one source clip.');
+    expect(html).not.toContain('data-program-stage-shell');
+  });
+
+  it('surfaces a no-playable-output reason when the render completes without a browser-previewable video', () => {
+    const html = renderProgramMonitor({
+      previewOutputMetadata: {
+        fileName: 'signal-loom-program.mov',
+        mimeType: 'video/quicktime',
+      },
+      renderStatusMessage: 'Render completed to a native-only QuickTime output.',
+      stageMode: 'rendered',
+    });
+
+    expect(html).toContain('data-video-render-preview-status="unsupported"');
+    expect(html).toContain('Preview unavailable');
+    expect(html).toContain('Render completed to a native-only QuickTime output.');
+    expect(html).toContain('browser preview may be unsupported');
   });
 
   it('renders clip stroke, opacity, filters, and incremental render cache summary in the program monitor', () => {

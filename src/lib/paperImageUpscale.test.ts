@@ -280,6 +280,32 @@ describe('paperImageUpscale', () => {
     });
   });
 
+  it('prefers Android native in-app image upscaling in Auto before local CPU or cloud providers', () => {
+    const target = resolvePaperPrintUpscaleTarget(doc(300), frame({
+      widthMm: 100,
+      heightMm: 50,
+      fit: 'cover',
+    }), {
+      widthPx: 600,
+      heightPx: 400,
+    });
+
+    expect(resolvePaperPrintUpscalePlan({
+      method: 'auto',
+      target,
+      stabilityAvailable: true,
+      vertexAvailable: true,
+      localAiAvailable: true,
+      androidNativeAvailable: true,
+    })).toMatchObject({
+      provider: 'android-native',
+      canRun: true,
+      estimatedCostUsd: 0,
+      usesLocalFinalFit: true,
+    });
+    expect(describePaperPrintUpscaleBusyProvider('android-native')).toBe('Android native image upscaler');
+  });
+
   it('falls back from Auto to Vertex when Stability is unavailable and Vertex can satisfy the target', () => {
     const target = resolvePaperPrintUpscaleTarget(doc(300), frame({
       widthMm: 100,

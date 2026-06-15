@@ -1,14 +1,35 @@
-import { X } from 'lucide-react';
-import { createDefaultLayerEffect, layerEffectLabel } from './ImageLayerEffects';
+import { ArrowDown, ArrowUp, X } from 'lucide-react';
+import { AdvancedColorPicker } from '../Common/AdvancedColorPicker';
+import {
+  buildLayerEffectReadinessSummary,
+  createDefaultLayerEffect,
+  layerEffectLabel,
+  synchronizeLayerEffectsGlobalLight,
+} from './ImageLayerEffects';
 import { createDefaultLayerFilter, layerFilterLabel } from './ImageLayerFilters';
-import type { ImageLayerEffect, ImageLayerFilter, LayerEffectKind, LayerFilterKind } from '../../types/imageEditor';
+import type { ImageLayerStylePreset } from './ImageLayerStyleClipboard';
+import type {
+  BlendMode,
+  ImageLayerEffect,
+  ImageLayerFilter,
+  LayerEffectKind,
+  LayerFilterKind,
+  PatternOverlayPattern,
+} from '../../types/imageEditor';
 
 const LAYER_EFFECT_KINDS: LayerEffectKind[] = [
   'stroke',
   'dropShadow',
+  'innerShadow',
   'outerGlow',
+  'innerGlow',
   'colorOverlay',
+  'satin',
+  'patternOverlay',
+  'gradientOverlay',
 ];
+
+const PATTERN_OVERLAY_PATTERNS: PatternOverlayPattern[] = ['checker', 'diagonal', 'dots', 'grid'];
 
 const LAYER_FILTER_KINDS: LayerFilterKind[] = [
   'blur',
@@ -20,14 +41,43 @@ const LAYER_FILTER_KINDS: LayerFilterKind[] = [
   'pixelate',
 ];
 
+const FILTER_BLEND_MODES: BlendMode[] = [
+  'normal',
+  'multiply',
+  'screen',
+  'overlay',
+  'darken',
+  'lighten',
+  'color-dodge',
+  'color-burn',
+  'hard-light',
+  'soft-light',
+  'difference',
+  'exclusion',
+  'hue',
+  'saturation',
+  'color',
+  'luminosity',
+];
+
 export function LayerEffectsControls({
   disabled,
   effects,
+  globalLightAngle,
+  onApplyStylePreset,
   onChange,
+  onGlobalLightAngleChange,
+  onSaveStylePreset,
+  stylePresets,
 }: {
   disabled?: boolean;
   effects: ImageLayerEffect[];
+  globalLightAngle?: number;
+  onApplyStylePreset?: (presetId: string) => void;
   onChange: (effects: ImageLayerEffect[]) => void;
+  onGlobalLightAngleChange?: (angle: number) => void;
+  onSaveStylePreset?: () => void;
+  stylePresets?: ImageLayerStylePreset[];
 }) {
   const addEffect = (kind: LayerEffectKind) => {
     onChange([...effects, createDefaultLayerEffect(kind)]);
@@ -42,6 +92,14 @@ export function LayerEffectsControls({
   const removeEffect = (effectId: string) => {
     onChange(effects.filter((effect) => effect.id !== effectId));
   };
+  const updateGlobalLightAngle = (angle: number) => {
+    onGlobalLightAngleChange?.(angle);
+    onChange(synchronizeLayerEffectsGlobalLight(effects, angle));
+  };
+  const hasShadowEffect = effects.some((effect) => effect.kind === 'dropShadow' || effect.kind === 'innerShadow');
+  const showGlobalLight = hasShadowEffect || onGlobalLightAngleChange;
+  const showPresetControls = Boolean(onApplyStylePreset || onSaveStylePreset || (stylePresets?.length ?? 0) > 0);
+  const readinessSummary = buildLayerEffectControlsReadinessSummary(effects);
 
   return (
     <div className="mt-2 border-t border-cyan-300/10 pt-2">
@@ -65,6 +123,60 @@ export function LayerEffectsControls({
           </button>
         ))}
       </div>
+      {showGlobalLight ? (
+        <div className="mb-2 rounded border border-cyan-300/10 bg-[#10131b] p-1.5">
+          <MiniEffectSlider
+            disabled={disabled}
+            label="Light"
+            inputAriaLabel="Global light angle"
+            max={180}
+            min={-180}
+            onChange={updateGlobalLightAngle}
+            step={1}
+            value={globalLightAngle ?? firstShadowAngle(effects)}
+            format={(value) => `${Math.round(value)}°`}
+          />
+        </div>
+      ) : null}
+      <div
+        className="mb-2 truncate text-[10px] text-cyan-100/35"
+        data-layer-effect-readiness-signature={readinessSummary.signature}
+        data-layer-effect-readiness-status={readinessSummary.status}
+        title={readinessSummary.title}
+      >
+        {readinessSummary.label}
+      </div>
+      {showPresetControls ? (
+        <div className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] gap-1">
+          <select
+            aria-label="Layer style preset"
+            className="min-w-0 rounded border border-cyan-300/10 bg-[#252630] px-1 py-1 text-[11px] text-cyan-100/70 disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={disabled || !onApplyStylePreset || (stylePresets?.length ?? 0) === 0}
+            onChange={(event) => {
+              if (!event.target.value) return;
+              onApplyStylePreset?.(event.target.value);
+              event.target.value = '';
+            }}
+            value=""
+          >
+            <option value="">Style preset</option>
+            {(stylePresets ?? []).map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {preset.label}
+              </option>
+            ))}
+          </select>
+          <button
+            className="rounded border border-cyan-300/10 px-1.5 py-1 text-[10px] text-cyan-100/60 hover:bg-cyan-400/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={disabled || !onSaveStylePreset}
+            onClick={onSaveStylePreset}
+            title="Save current layer style"
+            type="button"
+          >
+            Save Style
+          </button>
+        </div>
+      ) : null}
       <div className="space-y-2">
         {effects.map((effect) => (
           <LayerEffectRow
@@ -103,6 +215,15 @@ export function LayerFiltersControls({
   const removeFilter = (filterId: string) => {
     onChange(filters.filter((filter) => filter.id !== filterId));
   };
+  const moveFilter = (filterId: string, direction: -1 | 1) => {
+    const index = filters.findIndex((filter) => filter.id === filterId);
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= filters.length) return;
+    const next = [...filters];
+    const [filter] = next.splice(index, 1);
+    next.splice(targetIndex, 0, filter);
+    onChange(next);
+  };
 
   return (
     <div className="mt-2 border-t border-cyan-300/10 pt-2">
@@ -127,11 +248,15 @@ export function LayerFiltersControls({
         ))}
       </div>
       <div className="space-y-1.5">
-        {filters.map((filter) => (
+        {filters.map((filter, index) => (
           <LayerFilterRow
+            canMoveDown={index < filters.length - 1}
+            canMoveUp={index > 0}
             disabled={disabled}
             filter={filter}
             key={filter.id}
+            onMoveDown={() => moveFilter(filter.id, 1)}
+            onMoveUp={() => moveFilter(filter.id, -1)}
             onRemove={() => removeFilter(filter.id)}
             onUpdate={(patch) => updateFilter(filter.id, patch)}
           />
@@ -146,14 +271,59 @@ export function LayerFiltersControls({
   );
 }
 
+function buildLayerEffectControlsReadinessSummary(effects: ImageLayerEffect[]): {
+  label: string;
+  signature: string;
+  status: 'ready' | 'warning' | 'blocked';
+  title: string;
+} {
+  const readiness = buildLayerEffectReadinessSummary(effects, { exportTarget: 'flattened' });
+  const globalLightCount = readiness.globalLight.effectIds.length;
+  const status = readiness.blockers.length > 0
+    ? 'blocked'
+    : readiness.warnings.length > 0 || globalLightCount > 0
+      ? 'warning'
+      : 'ready';
+  const globalLightLabel = globalLightCount === 1
+    ? '1 global-light effect'
+    : `${globalLightCount} global-light effects`;
+  return {
+    label: `${globalLightLabel} / Photoshop live effects flatten on export`,
+    signature: readiness.signatures.stack,
+    status,
+    title: 'Layer effects are editable inside Signal Loom presets; native PSD live effects, Blend If, and Smart Object effect preservation remain unsupported.',
+  };
+}
+
+function firstShadowAngle(effects: ImageLayerEffect[]): number {
+  const shadow = effects.find((effect) => effect.kind === 'dropShadow' || effect.kind === 'innerShadow');
+  return shadow && 'angle' in shadow ? shadow.angle : 45;
+}
+
+function getLayerFilterParityTitle(): string {
+  return 'Editable in Signal Loom: amount, blend mode, opacity, enabled state, and stack order. Smart-filter masks, advanced parameters, and native smart-filter roundtrip remain unsupported.';
+}
+
+function getLayerEffectParityTitle(): string {
+  return 'Portable inside Signal Loom with deterministic preview/export signatures. Editable Photoshop Blend If and Bevel & Emboss parity remain unsupported or flattened.';
+}
+
 export function LayerFilterRow({
+  canMoveDown,
+  canMoveUp,
   disabled,
   filter,
+  onMoveDown,
+  onMoveUp,
   onRemove,
   onUpdate,
 }: {
+  canMoveDown: boolean;
+  canMoveUp: boolean;
   disabled?: boolean;
   filter: ImageLayerFilter;
+  onMoveDown: () => void;
+  onMoveUp: () => void;
   onRemove: () => void;
   onUpdate: (patch: Partial<ImageLayerFilter>) => void;
 }) {
@@ -167,9 +337,29 @@ export function LayerFilterRow({
           title="Enable filter"
           type="checkbox"
         />
-        <span className="min-w-0 flex-1 truncate text-[11px] text-cyan-100/65">
+        <span className="min-w-0 flex-1 truncate text-[11px] text-cyan-100/65" title={getLayerFilterParityTitle()}>
           {layerFilterLabel(filter.kind)}
         </span>
+        <button
+          aria-label="Move filter up"
+          className="rounded p-0.5 text-cyan-100/35 hover:bg-cyan-400/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={disabled || !canMoveUp}
+          onClick={onMoveUp}
+          title="Move filter up"
+          type="button"
+        >
+          <ArrowUp size={12} />
+        </button>
+        <button
+          aria-label="Move filter down"
+          className="rounded p-0.5 text-cyan-100/35 hover:bg-cyan-400/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={disabled || !canMoveDown}
+          onClick={onMoveDown}
+          title="Move filter down"
+          type="button"
+        >
+          <ArrowDown size={12} />
+        </button>
         <button
           className="rounded p-0.5 text-cyan-100/35 hover:bg-cyan-400/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
           disabled={disabled}
@@ -183,12 +373,37 @@ export function LayerFilterRow({
       <MiniEffectSlider
         disabled={disabled}
         label="Amount"
+        inputAriaLabel="Filter amount"
         max={filter.kind === 'blur' || filter.kind === 'pixelate' ? 32 : 100}
         min={0}
         onChange={(amount) => onUpdate({ amount })}
         step={1}
         value={filter.amount}
         format={(value) => (filter.kind === 'blur' || filter.kind === 'pixelate' ? `${Math.round(value)}px` : `${Math.round(value)}%`)}
+      />
+      <select
+        aria-label="Filter blend mode"
+        className="mt-1 w-full rounded border border-cyan-300/10 bg-[#252630] px-1 py-0.5 text-[11px] text-cyan-100/70 disabled:cursor-not-allowed disabled:opacity-40"
+        disabled={disabled}
+        onChange={(event) => onUpdate({ blendMode: event.target.value as BlendMode })}
+        value={filter.blendMode ?? 'normal'}
+      >
+        {FILTER_BLEND_MODES.map((blendMode) => (
+          <option key={blendMode} value={blendMode}>
+            {blendMode}
+          </option>
+        ))}
+      </select>
+      <MiniEffectSlider
+        disabled={disabled}
+        label="Opacity"
+        inputAriaLabel="Filter opacity"
+        max={1}
+        min={0}
+        onChange={(opacity) => onUpdate({ opacity })}
+        step={0.01}
+        value={filter.opacity ?? 1}
+        format={(value) => `${Math.round(value * 100)}%`}
       />
     </div>
   );
@@ -215,16 +430,17 @@ export function LayerEffectRow({
           title="Enable effect"
           type="checkbox"
         />
-        <span className="min-w-0 flex-1 truncate text-[11px] text-cyan-100/65">
+        <span className="min-w-0 flex-1 truncate text-[11px] text-cyan-100/65" title={getLayerEffectParityTitle()}>
           {layerEffectLabel(effect.kind)}
         </span>
         {'color' in effect ? (
-          <input
-            className="h-5 w-7 cursor-pointer rounded border border-cyan-300/10 bg-transparent disabled:cursor-not-allowed disabled:opacity-40"
+          <AdvancedColorPicker
+            className="h-5 w-7"
+            buttonClassName="rounded border border-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-40"
             disabled={disabled}
-            onChange={(event) => onUpdate({ color: event.target.value } as Partial<ImageLayerEffect>)}
+            label="Effect color"
+            onChange={(color) => onUpdate({ color } as Partial<ImageLayerEffect>)}
             title="Effect color"
-            type="color"
             value={effect.color}
           />
         ) : null}
@@ -277,11 +493,12 @@ export function LayerEffectRow({
             </select>
           </>
         ) : null}
-        {effect.kind === 'dropShadow' ? (
+        {effect.kind === 'dropShadow' || effect.kind === 'innerShadow' ? (
           <>
             <MiniEffectSlider
               disabled={disabled}
               label="Distance"
+              inputAriaLabel={effect.kind === 'innerShadow' ? 'Inner shadow distance' : 'Drop shadow distance'}
               max={96}
               min={0}
               onChange={(distance) => onUpdate({ distance } as Partial<ImageLayerEffect>)}
@@ -292,6 +509,7 @@ export function LayerEffectRow({
             <MiniEffectSlider
               disabled={disabled}
               label="Size"
+              inputAriaLabel={effect.kind === 'innerShadow' ? 'Inner shadow size' : 'Drop shadow size'}
               max={96}
               min={0}
               onChange={(size) => onUpdate({ size } as Partial<ImageLayerEffect>)}
@@ -302,6 +520,7 @@ export function LayerEffectRow({
             <MiniEffectSlider
               disabled={disabled}
               label="Angle"
+              inputAriaLabel={effect.kind === 'innerShadow' ? 'Inner shadow angle' : 'Drop shadow angle'}
               max={180}
               min={-180}
               onChange={(angle) => onUpdate({ angle } as Partial<ImageLayerEffect>)}
@@ -309,6 +528,54 @@ export function LayerEffectRow({
               value={effect.angle}
               format={(value) => `${Math.round(value)}°`}
             />
+          </>
+        ) : null}
+        {effect.kind === 'satin' ? (
+          <>
+            <MiniEffectSlider
+              disabled={disabled}
+              label="Distance"
+              inputAriaLabel="Satin distance"
+              max={96}
+              min={0}
+              onChange={(distance) => onUpdate({ distance } as Partial<ImageLayerEffect>)}
+              step={1}
+              value={effect.distance}
+              format={(value) => `${Math.round(value)}px`}
+            />
+            <MiniEffectSlider
+              disabled={disabled}
+              label="Size"
+              inputAriaLabel="Satin size"
+              max={96}
+              min={1}
+              onChange={(size) => onUpdate({ size } as Partial<ImageLayerEffect>)}
+              step={1}
+              value={effect.size}
+              format={(value) => `${Math.round(value)}px`}
+            />
+            <MiniEffectSlider
+              disabled={disabled}
+              label="Angle"
+              inputAriaLabel="Satin angle"
+              max={180}
+              min={-180}
+              onChange={(angle) => onUpdate({ angle } as Partial<ImageLayerEffect>)}
+              step={1}
+              value={effect.angle}
+              format={(value) => `${Math.round(value)}°`}
+            />
+            <label className="flex items-center gap-1.5 text-[11px] text-cyan-100/45">
+              <input
+                aria-label="Invert satin"
+                checked={effect.invert}
+                className="h-3.5 w-3.5 accent-cyan-400"
+                disabled={disabled}
+                onChange={(event) => onUpdate({ invert: event.target.checked } as Partial<ImageLayerEffect>)}
+                type="checkbox"
+              />
+              Invert
+            </label>
           </>
         ) : null}
         {effect.kind === 'outerGlow' ? (
@@ -323,14 +590,132 @@ export function LayerEffectRow({
             format={(value) => `${Math.round(value)}px`}
           />
         ) : null}
+        {effect.kind === 'innerGlow' ? (
+          <MiniEffectSlider
+            disabled={disabled}
+            label="Size"
+            inputAriaLabel="Inner glow size"
+            max={96}
+            min={0}
+            onChange={(size) => onUpdate({ size } as Partial<ImageLayerEffect>)}
+            step={1}
+            value={effect.size}
+            format={(value) => `${Math.round(value)}px`}
+          />
+        ) : null}
+        {effect.kind === 'patternOverlay' ? (
+          <>
+            <select
+              aria-label="Pattern overlay pattern"
+              className="w-full rounded border border-cyan-300/10 bg-[#252630] px-1 py-0.5 text-[11px] text-cyan-100/70 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={disabled}
+              onChange={(event) =>
+                onUpdate({ pattern: event.target.value as PatternOverlayPattern } as Partial<ImageLayerEffect>)
+              }
+              value={effect.pattern}
+            >
+              {PATTERN_OVERLAY_PATTERNS.map((pattern) => (
+                <option key={pattern} value={pattern}>
+                  {formatPatternOverlayLabel(pattern)}
+                </option>
+              ))}
+            </select>
+            <div className="flex items-center justify-between gap-2 text-[11px] text-cyan-100/35">
+              <span>Back</span>
+              <AdvancedColorPicker
+                className="h-5 w-7"
+                buttonClassName="rounded border border-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={disabled}
+                label="Pattern overlay background color"
+                onChange={(backgroundColor) => onUpdate({ backgroundColor } as Partial<ImageLayerEffect>)}
+                title="Pattern overlay background color"
+                value={effect.backgroundColor}
+              />
+            </div>
+            <MiniEffectSlider
+              disabled={disabled}
+              label="Scale"
+              inputAriaLabel="Pattern overlay scale"
+              max={64}
+              min={1}
+              onChange={(scale) => onUpdate({ scale } as Partial<ImageLayerEffect>)}
+              step={1}
+              value={effect.scale}
+              format={(value) => `${Math.round(value)}px`}
+            />
+          </>
+        ) : null}
+        {effect.kind === 'gradientOverlay' ? (
+          <>
+            <div className="flex items-center justify-between gap-2 text-[11px] text-cyan-100/35">
+              <span>End</span>
+              <AdvancedColorPicker
+                className="h-5 w-7"
+                buttonClassName="rounded border border-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={disabled}
+                label="Gradient overlay end color"
+                onChange={(secondaryColor) => onUpdate({ secondaryColor } as Partial<ImageLayerEffect>)}
+                title="Gradient overlay end color"
+                value={effect.secondaryColor}
+              />
+            </div>
+            <MiniEffectSlider
+              disabled={disabled}
+              label="Angle"
+              inputAriaLabel="Gradient overlay angle"
+              max={180}
+              min={-180}
+              onChange={(angle) => onUpdate({ angle } as Partial<ImageLayerEffect>)}
+              step={1}
+              value={effect.angle}
+              format={(value) => `${Math.round(value)}°`}
+            />
+            <MiniEffectSlider
+              disabled={disabled}
+              label="Scale"
+              inputAriaLabel="Gradient overlay scale"
+              max={4}
+              min={0.1}
+              onChange={(scale) => onUpdate({ scale } as Partial<ImageLayerEffect>)}
+              step={0.1}
+              value={effect.scale}
+              format={(value) => `${Math.round(value * 100)}%`}
+            />
+            <label className="flex items-center gap-1.5 text-[11px] text-cyan-100/45">
+              <input
+                aria-label="Reverse gradient overlay"
+                checked={effect.reverse}
+                className="h-3.5 w-3.5 accent-cyan-400"
+                disabled={disabled}
+                onChange={(event) => onUpdate({ reverse: event.target.checked } as Partial<ImageLayerEffect>)}
+                type="checkbox"
+              />
+              Reverse
+            </label>
+          </>
+        ) : null}
       </div>
     </div>
   );
 }
 
+function formatPatternOverlayLabel(pattern: PatternOverlayPattern): string {
+  switch (pattern) {
+    case 'checker':
+      return 'Checker';
+    case 'diagonal':
+      return 'Diagonal';
+    case 'dots':
+      return 'Dots';
+    case 'grid':
+      return 'Grid';
+  }
+}
+
 export function MiniEffectSlider({
   disabled,
   format,
+  inputAriaLabel,
   label,
   max,
   min,
@@ -340,6 +725,7 @@ export function MiniEffectSlider({
 }: {
   disabled?: boolean;
   format: (value: number) => string;
+  inputAriaLabel?: string;
   label: string;
   max: number;
   min: number;
@@ -351,6 +737,7 @@ export function MiniEffectSlider({
     <div className="flex items-center gap-1.5 text-[11px]">
       <label className="w-12 text-cyan-100/35">{label}</label>
       <input
+        aria-label={inputAriaLabel ?? label}
         className="min-w-0 flex-1 cursor-pointer accent-sky-400 disabled:cursor-not-allowed disabled:opacity-40"
         disabled={disabled}
         max={max}

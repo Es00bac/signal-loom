@@ -27,6 +27,39 @@ describe('floating panel window helpers', () => {
     ).toBe('popup=yes,frame=false,width=640,height=420,left=2120,top=168');
   });
 
+  it('converts desktop-screen panel rects to popup features without adding the owner offset again', () => {
+    expect(
+      buildFloatingPanelWindowFeatures(
+        { x: -1720, y: 140, width: 640, height: 420 },
+        { screenX: 2000, screenY: 80 },
+        { floatingRectSpace: 'screen' },
+      ),
+    ).toBe('popup=yes,frame=false,width=640,height=420,left=-1720,top=140');
+  });
+
+  it('does not inflate compact Image tools palette window features to a generic floating-panel size', () => {
+    expect(
+      buildFloatingPanelWindowFeatures(
+        { x: 368, y: 112, width: 66, height: 456 },
+        { screenX: 2000, screenY: 80 },
+      ),
+    ).toBe('popup=yes,frame=false,width=66,height=456,left=2368,top=192');
+  });
+
+  it('marks fixed compact floating palettes as non-resizable native windows', () => {
+    expect(
+      (buildFloatingPanelWindowFeatures as (
+        rect: Parameters<typeof buildFloatingPanelWindowFeatures>[0],
+        ownerWindow: Parameters<typeof buildFloatingPanelWindowFeatures>[1],
+        options: { resizable: false },
+      ) => string)(
+        { x: 368, y: 112, width: 66, height: 456 },
+        { screenX: 2000, screenY: 80 },
+        { resizable: false },
+      ),
+    ).toContain('resizable=no');
+  });
+
   it('keeps floating panels visible in the owner window when the external popup is unavailable', () => {
     expect(shouldRenderFloatingPanelInOwnerWindow({
       shouldUseExternalWindow: false,
@@ -76,6 +109,17 @@ describe('floating panel window helpers', () => {
     })).toEqual({ x: 252, y: 66, width: 640, height: 420 });
   });
 
+  it('stores compact Image tools popup placement without widening it to a standard panel', () => {
+    expect(resolveOwnerRelativeFloatingPanelRect({
+      ownerScreenX: 2000,
+      ownerScreenY: 80,
+      windowScreenX: 2368,
+      windowScreenY: 192,
+      width: 66,
+      height: 456,
+    })).toEqual({ x: 368, y: 112, width: 66, height: 456 });
+  });
+
   it('persists external popup content size instead of chrome-inclusive outer size', () => {
     expect(resolveExternalFloatingPanelWindowSize({
       innerWidth: 640,
@@ -85,6 +129,17 @@ describe('floating panel window helpers', () => {
       fallbackWidth: 600,
       fallbackHeight: 400,
     })).toEqual({ width: 640, height: 420 });
+  });
+
+  it('reads compact Image tools popup size without applying generic floating-panel minimums', () => {
+    expect(resolveExternalFloatingPanelWindowSize({
+      innerWidth: 66,
+      innerHeight: 456,
+      outerWidth: 82,
+      outerHeight: 492,
+      fallbackWidth: 66,
+      fallbackHeight: 456,
+    })).toEqual({ width: 66, height: 456 });
   });
 
   it('preserves the drag-start panel size when storing an external popup move', () => {
@@ -98,6 +153,56 @@ describe('floating panel window helpers', () => {
       reportedInnerWidth: 652,
       reportedInnerHeight: 431,
     })).toEqual({ x: 252, y: 66, width: 640, height: 420 });
+  });
+
+  it('stores moved external popups as desktop-screen rects when requested', () => {
+    expect(resolveExternalFloatingPanelMoveEndRect({
+      ownerScreenX: 2000,
+      ownerScreenY: 80,
+      windowScreenX: -1720,
+      windowScreenY: 140,
+      dragStartWidth: 640,
+      dragStartHeight: 420,
+      floatingRectSpace: 'screen',
+    })).toEqual({ x: -1720, y: 140, width: 640, height: 420 });
+  });
+
+  it('preserves off-window owner-relative popup coordinates for multi-monitor placement metadata', () => {
+    expect(resolveExternalFloatingPanelMoveEndRect({
+      ownerScreenX: 2000,
+      ownerScreenY: 80,
+      windowScreenX: 4800,
+      windowScreenY: -240,
+      dragStartWidth: 640,
+      dragStartHeight: 420,
+    })).toEqual({ x: 2800, y: -320, width: 640, height: 420 });
+  });
+
+  it('preserves screen-space popup coordinates outside the owner viewport without changing size', () => {
+    expect(resolveExternalFloatingPanelMoveEndRect({
+      ownerScreenX: 2000,
+      ownerScreenY: 80,
+      windowScreenX: -3200,
+      windowScreenY: 1200,
+      dragStartWidth: 352,
+      dragStartHeight: 640,
+      floatingRectSpace: 'screen',
+      reportedInnerWidth: 388,
+      reportedInnerHeight: 684,
+    })).toEqual({ x: -3200, y: 1200, width: 352, height: 640 });
+  });
+
+  it('preserves compact Image tools drag-start size when storing an external popup move', () => {
+    expect(resolveExternalFloatingPanelMoveEndRect({
+      ownerScreenX: 2000,
+      ownerScreenY: 80,
+      windowScreenX: 2368,
+      windowScreenY: 192,
+      dragStartWidth: 66,
+      dragStartHeight: 456,
+      reportedInnerWidth: 160,
+      reportedInnerHeight: 456,
+    })).toEqual({ x: 368, y: 112, width: 66, height: 456 });
   });
 
   it('does not reapply the same external popup size during move-only layout sync', () => {

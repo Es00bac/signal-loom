@@ -5,9 +5,20 @@ import type {
   TextLayerStyle,
 } from '../../types/imageEditor';
 import { docRectToScreen } from './viewport';
-import { DEFAULT_IMAGE_TEXT_STYLE, updateTextLayerFromStyle } from './ImageTextLayer';
+import {
+  DEFAULT_IMAGE_TEXT_STYLE,
+  normalizeImageTextStyle,
+  serializeImageTextCharacterStyle,
+  serializeImageTextParagraphStyle,
+  serializeImageTextStylePackage,
+  updateTextLayerFromStyle,
+  type ImageTextCharacterStyleDescriptor,
+  type ImageTextParagraphStyleDescriptor,
+} from './ImageTextLayer';
+import { resolveImageLayerTransformOrigin } from './ImageLayerTransform';
 
 export type ImageTextPresetId = 'title' | 'subtitle' | 'coverTitle' | 'comicCaption' | 'comicSfx';
+export type ImageTextStylePresetId = 'posterBlock' | 'editorialItalic' | 'captionSmallCaps' | 'creditLine';
 
 export interface ImageTextPreset {
   id: ImageTextPresetId;
@@ -16,12 +27,36 @@ export interface ImageTextPreset {
   effects: ImageLayerEffect[];
 }
 
+export interface ImageTextStylePreset {
+  id: ImageTextStylePresetId;
+  label: string;
+  style: Partial<TextLayerStyle>;
+}
+
+export interface ImageTextStylePresetDescriptor {
+  presetId: ImageTextStylePresetId;
+  label: string;
+  previewId: string;
+  previewSignature: string;
+  characterStyle: ImageTextCharacterStyleDescriptor;
+  paragraphStyle: ImageTextParagraphStyleDescriptor;
+  portability: ImageTextStylePresetPortabilityDescriptor;
+}
+
+export interface ImageTextStylePresetPortabilityDescriptor {
+  status: 'portable-with-font-fallbacks';
+  preserves: Array<'font-family-stack' | 'character-style' | 'paragraph-style' | 'opentype-feature-intent'>;
+  caveats: string[];
+}
+
 export interface ImageTextEditOverlayBounds {
   x: number;
   y: number;
   width: number;
   height: number;
   rotationDeg: number;
+  transformOriginX: number;
+  transformOriginY: number;
 }
 
 export const IMAGE_TEXT_PRESETS: ImageTextPreset[] = [
@@ -129,8 +164,79 @@ export const IMAGE_TEXT_PRESETS: ImageTextPreset[] = [
   },
 ];
 
+export const IMAGE_TEXT_STYLE_PRESETS: ImageTextStylePreset[] = [
+  {
+    id: 'posterBlock',
+    label: 'Poster Block',
+    style: {
+      fontFamily: 'Impact, Haettenschweiler, Arial Black, sans-serif',
+      fontWeight: '900',
+      fontStyle: 'normal',
+      fontSize: 84,
+      fontKerning: 'normal',
+      fontVariantCaps: 'normal',
+      letterSpacing: 2,
+      baselineShift: 0,
+      align: 'center',
+      lineHeight: 0.94,
+    },
+  },
+  {
+    id: 'editorialItalic',
+    label: 'Editorial Italic',
+    style: {
+      fontFamily: 'Cormorant Garamond, Georgia, serif',
+      fontWeight: '600',
+      fontStyle: 'italic',
+      fontSize: 48,
+      fontKerning: 'normal',
+      fontVariantCaps: 'small-caps',
+      letterSpacing: 1,
+      baselineShift: 0,
+      align: 'center',
+      lineHeight: 1.08,
+    },
+  },
+  {
+    id: 'captionSmallCaps',
+    label: 'Caption Caps',
+    style: {
+      fontFamily: 'Inter, system-ui, sans-serif',
+      fontWeight: '700',
+      fontStyle: 'normal',
+      fontSize: 28,
+      fontKerning: 'auto',
+      fontVariantCaps: 'all-small-caps',
+      letterSpacing: 1.5,
+      baselineShift: 0,
+      align: 'left',
+      lineHeight: 1.18,
+    },
+  },
+  {
+    id: 'creditLine',
+    label: 'Credit Line',
+    style: {
+      fontFamily: 'Inter, system-ui, sans-serif',
+      fontWeight: '500',
+      fontStyle: 'normal',
+      fontSize: 18,
+      fontKerning: 'normal',
+      fontVariantCaps: 'small-caps',
+      letterSpacing: 3,
+      baselineShift: 0,
+      align: 'center',
+      lineHeight: 1.25,
+    },
+  },
+];
+
 export function getImageTextPreset(id: ImageTextPresetId): ImageTextPreset {
   return IMAGE_TEXT_PRESETS.find((preset) => preset.id === id) ?? IMAGE_TEXT_PRESETS[0];
+}
+
+export function getImageTextStylePreset(id: ImageTextStylePresetId): ImageTextStylePreset {
+  return IMAGE_TEXT_STYLE_PRESETS.find((preset) => preset.id === id) ?? IMAGE_TEXT_STYLE_PRESETS[0];
 }
 
 export function applyImageTextPresetToStyle(
@@ -143,6 +249,48 @@ export function applyImageTextPresetToStyle(
     content: current.content.trim() && current.content !== 'Text'
       ? current.content
       : preset.style.content,
+  };
+}
+
+export function applyImageTextStylePresetToStyle(
+  current: TextLayerStyle,
+  presetId: ImageTextStylePresetId,
+): Partial<TextLayerStyle> {
+  const preset = getImageTextStylePreset(presetId);
+  return {
+    ...current,
+    ...preset.style,
+  };
+}
+
+export function buildImageTextStylePresetDescriptor(
+  current: TextLayerStyle,
+  presetId: ImageTextStylePresetId,
+): ImageTextStylePresetDescriptor {
+  const preset = getImageTextStylePreset(presetId);
+  const normalizedStyle = normalizeImageTextStyle(applyImageTextStylePresetToStyle(current, presetId));
+  const stylePackage = serializeImageTextStylePackage(normalizedStyle);
+  const previewId = `image-text-style-preset:${preset.id}`;
+
+  return {
+    presetId: preset.id,
+    label: preset.label,
+    previewId,
+    previewSignature: `image-text-style-preset:v1:${JSON.stringify({
+      presetId: preset.id,
+      label: preset.label,
+      styleSignature: stylePackage.preview.signature,
+    })}`,
+    characterStyle: serializeImageTextCharacterStyle(normalizedStyle),
+    paragraphStyle: serializeImageTextParagraphStyle(normalizedStyle),
+    portability: {
+      status: 'portable-with-font-fallbacks',
+      preserves: ['font-family-stack', 'character-style', 'paragraph-style', 'opentype-feature-intent'],
+      caveats: [
+        'Preset portability depends on installed fonts; fallback family stack is retained.',
+        'Native PSD editable text preset roundtrip is not supported.',
+      ],
+    },
   };
 }
 
@@ -169,6 +317,7 @@ export function getImageTextEditOverlayBounds(
     width: layer.bitmap.width,
     height: layer.bitmap.height,
   }, viewport);
+  const origin = resolveImageLayerTransformOrigin(layer);
 
   return {
     x: rect.x,
@@ -176,6 +325,8 @@ export function getImageTextEditOverlayBounds(
     width: Math.max(36, rect.width),
     height: Math.max(24, rect.height),
     rotationDeg: layer.rotationDeg ?? 0,
+    transformOriginX: origin.x,
+    transformOriginY: origin.y,
   };
 }
 

@@ -1,12 +1,28 @@
 import type { EditorOperation, ImageDocument, ImageLayer } from '../../../types/imageEditor';
+import {
+  applyLocalContentAwareFillToImageData,
+  buildTransparentPixelMask,
+  buildLocalContentAwarePreviewId,
+  describeLocalContentAwarePatchPlan,
+  type LocalContentAwareBounds,
+  type LocalContentAwarePatchPlan,
+  type LocalContentAwareRequestedOutputTarget,
+  type LocalContentAwareRepairOperation,
+} from '../ImageContentAware';
 import { getBitmapImageData, putBitmapImageData } from '../LayerBitmap';
-import type { SelectionMask } from '../SelectionMask';
+import { createMask, isMaskEmpty, maskBoundingBox, type SelectionMask } from '../SelectionMask';
 import {
   cloneBitmapPixels,
   forEachBitmapPixel,
   getSelectionAlphaAtDocumentPixel,
 } from './bitmapUtils';
 import { clampByte } from './utils';
+
+export interface LayerLocalContentAwarePatchPlan extends LocalContentAwarePatchPlan {
+  layerId: string;
+  layerBounds: LocalContentAwareBounds;
+  documentSelectionBounds: LocalContentAwareBounds | null;
+}
 
 export function clearOutsideSelection(
   doc: ImageDocument,
@@ -95,6 +111,126 @@ export function clearSelectedPixels(
   return { kind: 'paint', docId: doc.id, layerId: layer.id, before, after };
 }
 
+export function localContentAwareFillPatch(
+  doc: ImageDocument,
+  layer: ImageLayer,
+  selection?: SelectionMask | null,
+  options: {
+    operation?: LocalContentAwareRepairOperation;
+  } = {},
+): Extract<EditorOperation, { kind: 'paint' }> | null {
+  if (!layer.bitmap) return null;
+  const before = cloneBitmapPixels(layer.bitmap);
+  const after = cloneBitmapPixels(layer.bitmap);
+  const imageData = getBitmapImageData(after);
+  const targetMask = selection ? selectionToLayerMask(doc, layer, selection) : buildTransparentPixelMask(imageData);
+  if (isMaskEmpty(targetMask)) return null;
+
+  const result = applyLocalContentAwareFillToImageData(imageData, {
+    selection: targetMask,
+    operation: options.operation,
+  });
+  if (result.changedPixels === 0) return null;
+
+  putBitmapImageData(after, result.imageData);
+  return { kind: 'paint', docId: doc.id, layerId: layer.id, before, after };
+}
+
+export function planLocalContentAwareFillPatch(
+  doc: ImageDocument,
+  layer: ImageLayer,
+  selection?: SelectionMask | null,
+  options: {
+    maxSampleRadius?: number;
+    outputTarget?: LocalContentAwareRequestedOutputTarget;
+    manualPatchSource?: LocalContentAwareBounds | null;
+    operation?: LocalContentAwareRepairOperation;
+  } = {},
+): LayerLocalContentAwarePatchPlan | null {
+  if (!layer.bitmap) return null;
+  const imageData = getBitmapImageData(layer.bitmap);
+  const targetMask = selection ? selectionToLayerMask(doc, layer, selection) : buildTransparentPixelMask(imageData);
+  const basePlan = describeLocalContentAwarePatchPlan(imageData, {
+    selection: targetMask,
+    maxSampleRadius: options.maxSampleRadius,
+    targetKind: selection ? 'selection' : 'transparent-pixels',
+    outputTarget: options.outputTarget,
+    manualPatchSource: options.manualPatchSource,
+    operation: options.operation,
+  });
+  const layerBounds = {
+    x: layer.x,
+    y: layer.y,
+    width: layer.bitmap.width,
+    height: layer.bitmap.height,
+  };
+  const documentSelectionBounds = selection
+    ? maskBoundingBox(selection)
+    : translateBounds(basePlan.selectionBounds, layer.x, layer.y);
+  const signaturePayload = {
+    layerId: layer.id,
+    layerBounds,
+    documentSelectionBounds,
+    targetKind: basePlan.targetKind,
+    outputTarget: basePlan.outputTarget,
+    selectionBounds: basePlan.selectionBounds,
+    samplingRadius: basePlan.samplingRadius,
+    targetPixels: basePlan.targetPixels,
+    sourcePixels: basePlan.sourcePixels,
+    warnings: basePlan.warnings.map((warning) => warning.code),
+  };
+  const previewSignature = `local-content-aware-patch:v1:${JSON.stringify(signaturePayload)}`;
+  const stablePreviewSignaturePayload = {
+    layerId: layer.id,
+    layerBounds,
+    documentSelectionBounds,
+    operation: basePlan.operation,
+    targetKind: basePlan.targetKind,
+    outputTarget: basePlan.outputTarget,
+    selectionBounds: basePlan.selectionBounds,
+    samplingRadius: basePlan.samplingRadius,
+    targetPixels: basePlan.targetPixels,
+    sourcePixels: basePlan.sourcePixels,
+    warnings: basePlan.warnings.map((warning) => warning.code),
+  };
+
+  return {
+    ...basePlan,
+    layerId: layer.id,
+    layerBounds,
+    documentSelectionBounds,
+    previewSignature,
+    stablePreview: {
+      ...basePlan.stablePreview,
+      signature: `local-content-aware-repair-preview:v1:${JSON.stringify(stablePreviewSignaturePayload)}`,
+      signatureFields: [
+        'layerId',
+        'layerBounds',
+        'documentSelectionBounds',
+        ...basePlan.stablePreview.signatureFields,
+      ],
+    },
+    preview: {
+      id: `${buildLocalContentAwarePreviewId(
+        basePlan.operation,
+        basePlan.targetKind,
+        imageData.width,
+        imageData.height,
+        basePlan.selectionBounds,
+        basePlan.samplingRadius,
+        basePlan.targetPixels,
+      )}:${layer.id}`,
+      signature: `local-content-aware-repair-preview:v1:${JSON.stringify(stablePreviewSignaturePayload)}`,
+      signatureFields: [
+        'layerId',
+        'layerBounds',
+        'documentSelectionBounds',
+        ...basePlan.stablePreview.signatureFields,
+      ],
+    },
+  };
+}
+
 function mapLayerPixels(
   doc: ImageDocument,
   layer: ImageLayer,
@@ -111,4 +247,32 @@ function mapLayerPixels(
 
   putBitmapImageData(after, imageData);
   return { kind: 'paint', docId: doc.id, layerId: layer.id, before, after };
+}
+
+function selectionToLayerMask(
+  doc: ImageDocument,
+  layer: ImageLayer,
+  selection: SelectionMask,
+): SelectionMask {
+  const bitmap = layer.bitmap;
+  if (!bitmap) return createMask(0, 0);
+  const mask = createMask(bitmap.width, bitmap.height);
+  forEachBitmapPixel(bitmap, (x, y) => {
+    mask.data[y * mask.width + x] = getSelectionAlphaAtDocumentPixel(doc, selection, layer.x + x, layer.y + y);
+  });
+  return mask;
+}
+
+function translateBounds(
+  bounds: LocalContentAwareBounds | null,
+  dx: number,
+  dy: number,
+): LocalContentAwareBounds | null {
+  if (!bounds) return null;
+  return {
+    x: bounds.x + dx,
+    y: bounds.y + dy,
+    width: bounds.width,
+    height: bounds.height,
+  };
 }

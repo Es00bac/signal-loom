@@ -140,6 +140,14 @@ describe('source bin display ordering', () => {
     });
   });
 
+  it('keeps embedded mobile drawer source-bin content expanded without its own collapse rail', () => {
+    expect(resolveSourceBinSidebarPresentation({ dockable: true, embeddedDrawer: true, sidebarOpen: false })).toEqual({
+      contentOpen: true,
+      widthClassName: 'w-full',
+      toggleAction: 'none',
+    });
+  });
+
   it('groups source-bin envelope children and exposes the persisted group collapsed state', () => {
     const grouped = groupSourceLibraryItems([
       { id: 'solo', label: 'Loose asset', kind: 'image', createdAt: 4 },

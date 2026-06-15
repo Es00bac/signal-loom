@@ -134,7 +134,7 @@ interface PaperActions {
 }
 
 const initialDocument = createDefaultPaperDocument({ title: 'Untitled Paper Layout' });
-const PAPER_TOOLS: readonly PaperTool[] = ['select', 'hand', 'text', 'image', 'speech', 'thought', 'caption', 'panel', 'shape', 'line', 'ellipse', 'triangle', 'pentagon', 'hexagon', 'gutterKnife'];
+const PAPER_TOOLS: readonly PaperTool[] = ['select', 'hand', 'text', 'image', 'speech', 'thought', 'caption', 'panel', 'shape', 'line', 'ellipse', 'triangle', 'pentagon', 'hexagon', 'eyedropper', 'gutterKnife'];
 const MAX_PAPER_HISTORY = 50;
 
 interface PaperHistorySnapshot {

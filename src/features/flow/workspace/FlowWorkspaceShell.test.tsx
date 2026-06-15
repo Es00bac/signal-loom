@@ -13,6 +13,13 @@ vi.mock('@xyflow/react', async () => {
     ReactFlow: ({ children }: { children?: any }) => (
       <div data-testid="react-flow-shell">{children}</div>
     ),
+    useReactFlow: () => ({
+      getViewport: () => ({ x: 0, y: 0, zoom: 1 }),
+      setViewport: () => {},
+    }),
+    useStoreApi: () => ({
+      getState: () => ({ minZoom: 0.5, maxZoom: 2 }),
+    }),
   };
 });
 

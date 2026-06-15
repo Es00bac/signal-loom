@@ -7,6 +7,60 @@ export interface PhotoshopQuickAction {
   group: 'Selection' | 'Pixels' | 'Layer' | 'Transform' | 'Canvas';
 }
 
+export type PhotoshopQuickActionCategory = PhotoshopQuickAction['group'];
+
+export type PhotoshopQuickActionCapabilityInput =
+  | 'document'
+  | 'activeLayer'
+  | 'editablePixels'
+  | 'movableLayer'
+  | 'selection';
+
+export type PhotoshopQuickActionCapabilityOutput =
+  | 'selection'
+  | 'paint'
+  | 'layer'
+  | 'transform'
+  | 'document';
+
+export type PhotoshopQuickActionImplementation =
+  | 'local-deterministic'
+  | 'local-approximation';
+
+export interface PhotoshopQuickActionCapabilityDescriptor {
+  id: string;
+  label: string;
+  category: PhotoshopQuickActionCategory;
+  input: readonly PhotoshopQuickActionCapabilityInput[];
+  output: PhotoshopQuickActionCapabilityOutput;
+  undoable: boolean;
+  mutatesDocument: boolean;
+  implementation: PhotoshopQuickActionImplementation;
+  warning: string | null;
+}
+
+export interface PhotoshopQuickActionWarningSummary {
+  id: string;
+  label: string;
+  warning: string;
+}
+
+export interface PhotoshopQuickActionCatalogSummary {
+  total: number;
+  byCategory: Record<PhotoshopQuickActionCategory, number>;
+  byInput: Record<PhotoshopQuickActionCapabilityInput, number>;
+  byOutput: Record<PhotoshopQuickActionCapabilityOutput, number>;
+  undoable: {
+    undoable: number;
+    notUndoable: number;
+  };
+  mutatesDocument: {
+    mutating: number;
+    nonMutating: number;
+  };
+  warnings: readonly PhotoshopQuickActionWarningSummary[];
+}
+
 export type GeneratedQuickActionDefinition =
   | (PhotoshopQuickAction & { kind: 'selectionMorphology'; operation: 'grow' | 'shrink' | 'feather' | 'border'; radius: number })
   | (PhotoshopQuickAction & { kind: 'selectionGrid'; columns: number; rows: number; cell: number })

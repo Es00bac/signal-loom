@@ -14,7 +14,7 @@ describe('TopNavbar hit-test layering', () => {
   it('lets empty topbar control regions pass pointer events through to the Flow toolbar', () => {
     const source = readFileSync(new URL('./TopNavbar.tsx', import.meta.url), 'utf8');
 
-    expect(source).toContain('pointer-events-none relative z-20 flex min-w-0 items-center gap-3');
+    expect(source).toContain('pointer-events-none relative z-20 flex min-w-0 max-w-[58vw] shrink items-center gap-3 overflow-x-auto');
     expect(source).toContain('pointer-events-auto flex shrink-0 items-center gap-0.5');
     expect(source).toContain('pointer-events-none relative z-20 flex min-w-0 items-center justify-end');
     expect(source).toContain('theme-control pointer-events-auto flex shrink-0 items-center gap-2');
@@ -25,26 +25,50 @@ describe('TopNavbar hit-test layering', () => {
 
     expect(source).toContain('pointer-events-none relative z-10 flex min-w-0 flex-1 justify-center');
     expect(source).not.toContain('absolute left-1/2 top-1/2 z-10');
-    expect(source).toContain("isPaperWorkspace || workspaceView === 'flow' ? 'shrink-0' : 'flex-1'");
+    expect(source).toContain("? 'max-w-[48vw] shrink-0 overflow-x-auto overflow-y-hidden [scrollbar-width:none]'");
+    expect(source).toContain(": 'flex-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none]';");
+  });
+
+  it('keeps workspace tabs and primary controls in bounded non-overlapping lanes', () => {
+    const source = readFileSync(new URL('./TopNavbar.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('data-testid="workspace-switcher"');
+    expect(source).toContain('pointer-events-auto flex shrink-0 items-center gap-1 rounded-full');
+    expect(source).toContain('data-topbar-primary-controls="true"');
+    expect(source).toContain('overflow-x-auto overflow-y-hidden [scrollbar-width:none]');
   });
 
   it('keeps Flow right-side action labels hidden until extra-wide desktops', () => {
     const source = readFileSync(new URL('./TopNavbar.tsx', import.meta.url), 'utf8');
 
-    expect(source).toContain('<span className="hidden 2xl:inline">Projects</span>');
-    expect(source).toContain('<span className="hidden 2xl:inline">Functions</span>');
-    expect(source).toContain('<span className="hidden 2xl:inline">{copyState === \'copied\' ? \'Copied\' : copyState === \'error\' ? \'Failed\' : \'Export\'}</span>');
-    expect(source).not.toContain('<span className="hidden xl:inline">Projects</span>');
-    expect(source).not.toContain('<span className="hidden xl:inline">Functions</span>');
-    expect(source).not.toContain('<span className="hidden xl:inline">{copyState === \'copied\' ? \'Copied\' : copyState === \'error\' ? \'Failed\' : \'Export\'}</span>');
+    expect(source).toContain('<span className="hidden min-[2000px]:inline">Projects</span>');
+    expect(source).toContain('<span className="hidden min-[2000px]:inline">Functions</span>');
+    expect(source).toContain('<span className="hidden min-[2000px]:inline">{copyState === \'copied\' ? \'Copied\' : copyState === \'error\' ? \'Failed\' : \'Export\'}</span>');
+    expect(source).not.toContain('<span className="hidden 2xl:inline">Projects</span>');
+    expect(source).not.toContain('<span className="hidden 2xl:inline">Functions</span>');
+    expect(source).not.toContain('<span className="hidden 2xl:inline">{copyState === \'copied\' ? \'Copied\' : copyState === \'error\' ? \'Failed\' : \'Export\'}</span>');
   });
 
-  it('keeps integrated menu dropdowns above the usage estimator overlay', () => {
+  it('declares compact workspace predicates without importing removed titlemark chrome', () => {
+    const source = readFileSync(new URL('./TopNavbar.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain("const isImageWorkspace = workspaceView === 'image';");
+    expect(source).toContain("const isPaperWorkspace = workspaceView === 'paper';");
+    expect(source).not.toContain("import { APP_EYEBROW, APP_NAME } from '../../lib/brand';");
+    expect(source).not.toContain('TITLEBAR_LOGO_SRC');
+    expect(source).not.toContain('TITLEBAR_LOGO_ALT');
+  });
+
+  it('keeps the usage estimator owned by topbar chrome instead of the canvas overlay', () => {
     const topbarSource = readFileSync(new URL('./TopNavbar.tsx', import.meta.url), 'utf8');
     const usageBarSource = readFileSync(new URL('./UsageBar.tsx', import.meta.url), 'utf8');
+    const appSource = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
 
     expect(topbarSource).toContain('theme-topbar absolute top-0 left-0 right-0 z-[80]');
     expect(topbarSource).toContain('absolute left-0 top-full z-[70]');
-    expect(usageBarSource).toContain('absolute left-1/2 top-20 z-[60]');
+    expect(topbarSource).toContain('<UsageBar placement="topbar" workspaceView={workspaceView} />');
+    expect(topbarSource).toContain('<UsageBar placement="mobile-drawer" workspaceView={workspaceView} />');
+    expect(usageBarSource).not.toContain('top-2 z-[90]');
+    expect(appSource).not.toContain('<UsageBar workspaceView={activeWorkspaceView} />');
   });
 });

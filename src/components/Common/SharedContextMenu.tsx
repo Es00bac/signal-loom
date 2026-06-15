@@ -1,11 +1,14 @@
-import { useMemo } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  clampContextMenuPosition,
+  estimateContextMenuHeight,
   getContextMenuMaxHeight,
+  getContextMenuMaxWidth,
   getContextMenuPortalTarget,
   normalizeContextMenuItems,
+  resolveContextMenuLayout,
   type SharedContextMenuItem,
+  type ContextMenuSize,
 } from '../../lib/sharedContextMenu';
 
 interface SharedContextMenuProps {
@@ -29,20 +32,59 @@ export function SharedContextMenu({
   items,
   onClose,
 }: SharedContextMenuProps) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [measuredSize, setMeasuredSize] = useState<ContextMenuSize>();
   const visibleItems = useMemo(() => normalizeContextMenuItems(items), [items]);
   const viewport = useMemo(() => ({
     width: typeof window === 'undefined' ? 1024 : window.innerWidth,
     height: typeof window === 'undefined' ? 768 : window.innerHeight,
   }), []);
   const maxHeight = useMemo(() => getContextMenuMaxHeight(viewport), [viewport]);
-  const position = useMemo(() => {
-    const menuSize = {
-      width: MENU_WIDTH,
-      height: Math.min(maxHeight, MENU_HEADER_HEIGHT + visibleItems.length * MENU_ITEM_HEIGHT + 16),
+  const menuWidth = useMemo(() => Math.min(MENU_WIDTH, getContextMenuMaxWidth(viewport)), [viewport]);
+  const estimatedHeight = useMemo(
+    () =>
+      estimateContextMenuHeight(visibleItems, {
+        headerHeight: MENU_HEADER_HEIGHT,
+        itemHeight: MENU_ITEM_HEIGHT,
+        maxHeight,
+        paddingY: 16,
+      }),
+    [maxHeight, visibleItems],
+  );
+  const layout = useMemo(
+    () =>
+      resolveContextMenuLayout({
+        point: { x, y },
+        viewport,
+        menuWidth,
+        estimatedHeight,
+        maxHeight,
+        headerHeight: MENU_HEADER_HEIGHT,
+        measuredSize,
+      }),
+    [estimatedHeight, maxHeight, measuredSize, menuWidth, viewport, x, y],
+  );
+
+  useLayoutEffect(() => {
+    const node = menuRef.current;
+    if (!node) {
+      return;
+    }
+
+    const { height, width } = node.getBoundingClientRect();
+    const nextSize = {
+      width: Math.ceil(width),
+      height: Math.ceil(height),
     };
 
-    return clampContextMenuPosition({ x, y }, viewport, menuSize);
-  }, [maxHeight, viewport, visibleItems.length, x, y]);
+    setMeasuredSize((current) => {
+      if (current && current.width === nextSize.width && current.height === nextSize.height) {
+        return current;
+      }
+
+      return nextSize;
+    });
+  }, [estimatedHeight, visibleItems]);
 
   if (visibleItems.length === 0) {
     return null;
@@ -51,16 +93,22 @@ export function SharedContextMenu({
   const menu = (
     <div
       aria-label={ariaLabel}
-      className="theme-popover fixed z-[80] flex min-w-64 flex-col overflow-hidden rounded-xl border border-gray-700/80 bg-[#10151f]/98 shadow-2xl backdrop-blur"
+      className="theme-popover fixed z-[80] flex flex-col overflow-hidden rounded-xl border border-gray-700/80 bg-[#10151f]/98 shadow-2xl backdrop-blur"
+      ref={menuRef}
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event) => event.stopPropagation()}
       role="menu"
-      style={{ left: position.x, maxHeight, top: position.y, width: MENU_WIDTH }}
+      style={{
+        left: layout.position.x,
+        maxHeight: layout.maxHeight,
+        top: layout.position.y,
+        width: layout.menuSize.width,
+      }}
     >
       <div className="theme-header shrink-0 border-b border-gray-700/60 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">
         {title}
       </div>
-      <div className="min-h-0 overflow-y-auto p-2">
+      <div className="min-h-0 overflow-y-auto p-2" style={{ maxHeight: layout.contentMaxHeight, overflowY: 'auto' }}>
         {visibleItems.map((item) => (
           <ContextMenuItem item={item} key={item.id} onClose={onClose} />
         ))}

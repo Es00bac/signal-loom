@@ -2,6 +2,8 @@ export type DockablePanelMode = 'docked' | 'floating' | 'hidden' | 'collapsed';
 
 export type DockZone = 'left' | 'right' | 'top' | 'bottom' | 'center' | 'overlay';
 
+export type DockablePanelFloatingRectSpace = 'owner' | 'screen';
+
 export interface PanelRect {
   x: number;
   y: number;
@@ -19,14 +21,41 @@ export interface ViewportSize {
   height: number;
 }
 
+export interface DockablePanelLayoutNormalizeOptions {
+  constrainFloatingRectPosition?: boolean;
+  constrainFloatingRectSize?: boolean;
+}
+
 export interface DockablePanelLayout {
   workspaceId: string;
   panelId: string;
   mode: DockablePanelMode;
   dockZone: DockZone;
   floatingRect: PanelRect;
+  floatingRectSpace?: DockablePanelFloatingRectSpace;
   minSize: PanelSize;
   zOrder: number;
+  tabGroupId?: string;
+  tabGroupOrder?: number;
+  tabGroupActive?: boolean;
+}
+
+export interface DockablePanelTabDescriptor {
+  panelId: string;
+  order: number;
+  active: boolean;
+}
+
+export interface DockablePanelTabGroupDescriptor {
+  id: string;
+  workspaceId: string;
+  mode: DockablePanelMode;
+  dockZone: DockZone;
+  floatingRect: PanelRect;
+  floatingRectSpace?: DockablePanelFloatingRectSpace;
+  zOrder: number;
+  activePanelId: string;
+  tabs: DockablePanelTabDescriptor[];
 }
 
 export interface DockablePanelDefault {
@@ -35,7 +64,12 @@ export interface DockablePanelDefault {
   mode?: DockablePanelMode;
   dockZone?: DockZone;
   floatingRect?: Partial<PanelRect>;
+  floatingRectSpace?: DockablePanelFloatingRectSpace;
   minSize?: Partial<PanelSize>;
+  fixedSize?: boolean;
+  tabGroupId?: string;
+  tabGroupOrder?: number;
+  tabGroupActive?: boolean;
 }
 
 export interface SerializableDockablePanelDefault {
@@ -44,7 +78,12 @@ export interface SerializableDockablePanelDefault {
   mode?: DockablePanelMode;
   dockZone?: DockZone;
   floatingRect?: Partial<PanelRect>;
+  floatingRectSpace?: DockablePanelFloatingRectSpace;
   minSize?: Partial<PanelSize>;
+  fixedSize?: boolean;
+  tabGroupId?: string;
+  tabGroupOrder?: number;
+  tabGroupActive?: boolean;
 }
 
 export interface ResizeDelta {
@@ -97,6 +136,11 @@ export type DockablePanelSnapTarget =
       mode: 'floating';
     }
   | {
+      mode: 'tab';
+      dockZone: DockZone;
+      referencePanelId: string;
+    }
+  | {
       mode: 'docked';
       dockZone: DockZone;
       placement: DockablePanelPlacement;
@@ -143,7 +187,12 @@ export function toSerializableDockablePanelDefault(input: DockablePanelDefault):
   if (input.mode !== undefined) output.mode = input.mode;
   if (input.dockZone !== undefined) output.dockZone = input.dockZone;
   if (input.floatingRect !== undefined) output.floatingRect = { ...input.floatingRect };
+  if (input.floatingRectSpace !== undefined) output.floatingRectSpace = input.floatingRectSpace;
   if (input.minSize !== undefined) output.minSize = { ...input.minSize };
+  if (input.fixedSize !== undefined) output.fixedSize = input.fixedSize;
+  if (input.tabGroupId !== undefined) output.tabGroupId = input.tabGroupId;
+  if (input.tabGroupOrder !== undefined) output.tabGroupOrder = input.tabGroupOrder;
+  if (input.tabGroupActive !== undefined) output.tabGroupActive = input.tabGroupActive;
   return output;
 }
 
@@ -161,11 +210,15 @@ export function createDefaultDockablePanelLayout(
         ...DEFAULT_FLOATING_RECT,
         ...input.floatingRect,
       },
+      floatingRectSpace: input.floatingRectSpace,
       minSize: {
         ...DEFAULT_PANEL_MIN_SIZE,
         ...input.minSize,
       },
       zOrder,
+      tabGroupId: normalizeTabGroupId(input.tabGroupId),
+      tabGroupOrder: input.tabGroupOrder === undefined ? undefined : normalizeZOrder(input.tabGroupOrder),
+      tabGroupActive: typeof input.tabGroupActive === 'boolean' ? input.tabGroupActive : undefined,
     },
     { width: 1920, height: 1080 },
   );
@@ -174,12 +227,38 @@ export function createDefaultDockablePanelLayout(
 export function normalizeDockablePanelLayout(
   layout: DockablePanelLayout,
   viewport: ViewportSize,
+  options: DockablePanelLayoutNormalizeOptions = {},
 ): DockablePanelLayout {
   const minSize = normalizeMinSize(layout.minSize);
+  const canPreserveSavedFloatingRect = layout.mode === 'floating' || layout.mode === 'hidden';
+  const floatingRectSpace = isFloatingRectSpace(layout.floatingRectSpace)
+    ? layout.floatingRectSpace
+    : undefined;
+  const tabGroupId = normalizeTabGroupId(layout.tabGroupId);
   return {
     ...layout,
+    ...(floatingRectSpace ? { floatingRectSpace } : { floatingRectSpace: undefined }),
+    ...(tabGroupId ? { tabGroupId } : { tabGroupId: undefined }),
+    tabGroupOrder: tabGroupId && Number.isFinite(layout.tabGroupOrder)
+      ? normalizeZOrder(layout.tabGroupOrder ?? 0)
+      : undefined,
+    tabGroupActive: tabGroupId && typeof layout.tabGroupActive === 'boolean'
+      ? layout.tabGroupActive
+      : undefined,
     minSize,
-    floatingRect: clampPanelRect(layout.floatingRect, viewport, minSize),
+    floatingRect: normalizeFloatingPanelRect(
+      layout.floatingRect,
+      viewport,
+      minSize,
+      {
+        constrainPosition: canPreserveSavedFloatingRect
+          ? options.constrainFloatingRectPosition ?? false
+          : true,
+        constrainSize: canPreserveSavedFloatingRect
+          ? options.constrainFloatingRectSize ?? false
+          : true,
+      },
+    ),
     zOrder: normalizeZOrder(layout.zOrder),
   };
 }
@@ -188,10 +267,23 @@ export function sanitizeDockablePanelLayout(
   value: unknown,
   defaultLayout: DockablePanelLayout,
   viewport: ViewportSize = { width: 1920, height: 1080 },
+  options: DockablePanelLayoutNormalizeOptions = {},
 ): DockablePanelLayout {
   const input = isRecord(value) ? value : {};
   const mode = isDockablePanelMode(input.mode) ? input.mode : defaultLayout.mode;
   const dockZone = isDockZone(input.dockZone) ? input.dockZone : defaultLayout.dockZone;
+  const floatingRectSpace = isFloatingRectSpace(input.floatingRectSpace)
+    ? input.floatingRectSpace
+    : defaultLayout.floatingRectSpace;
+  const tabGroupId = normalizeTabGroupId(input.tabGroupId) ?? normalizeTabGroupId(defaultLayout.tabGroupId);
+  const tabGroupOrder = tabGroupId
+    ? finiteOrUnknown(input.tabGroupOrder, defaultLayout.tabGroupOrder ?? 0)
+    : undefined;
+  const tabGroupActive = tabGroupId
+    ? typeof input.tabGroupActive === 'boolean'
+      ? input.tabGroupActive
+      : defaultLayout.tabGroupActive
+    : undefined;
   const minSizeInput = isRecord(input.minSize) ? input.minSize : {};
   const floatingRectInput = isRecord(input.floatingRect) ? input.floatingRect : {};
 
@@ -200,6 +292,7 @@ export function sanitizeDockablePanelLayout(
       ...defaultLayout,
       mode,
       dockZone,
+      floatingRectSpace,
       minSize: {
         width: finiteOrUnknown(minSizeInput.width, defaultLayout.minSize.width),
         height: finiteOrUnknown(minSizeInput.height, defaultLayout.minSize.height),
@@ -211,8 +304,12 @@ export function sanitizeDockablePanelLayout(
         height: finiteOrUnknown(floatingRectInput.height, defaultLayout.floatingRect.height),
       },
       zOrder: finiteOrUnknown(input.zOrder, defaultLayout.zOrder),
+      tabGroupId,
+      tabGroupOrder,
+      tabGroupActive,
     },
     viewport,
+    options,
   );
 }
 
@@ -286,6 +383,10 @@ export function areDockablePanelLayoutsEqual(a: DockablePanelLayout | undefined,
     && a.panelId === b.panelId
     && a.mode === b.mode
     && a.dockZone === b.dockZone
+    && resolveFloatingRectSpace(a) === resolveFloatingRectSpace(b)
+    && resolveTabGroupId(a) === resolveTabGroupId(b)
+    && resolveTabGroupOrder(a) === resolveTabGroupOrder(b)
+    && resolveTabGroupActive(a) === resolveTabGroupActive(b)
     && a.zOrder === b.zOrder
     && a.minSize.width === b.minSize.width
     && a.minSize.height === b.minSize.height
@@ -308,11 +409,12 @@ export function normalizeFloatingPanelRect(
   rect: PanelRect,
   viewport: ViewportSize,
   minSize: PanelSize = DEFAULT_PANEL_MIN_SIZE,
-  options: { constrainPosition?: boolean; margin?: number } = {},
+  options: { constrainPosition?: boolean; constrainSize?: boolean; margin?: number } = {},
 ): PanelRect {
   const normalizedViewport = normalizeViewport(viewport);
   const normalizedMin = normalizeMinSize(minSize);
   const constrainPosition = options.constrainPosition ?? true;
+  const constrainSize = options.constrainSize ?? true;
   const margin = options.margin ?? DEFAULT_VIEWPORT_MARGIN;
   const maxRecoverableWidth = Math.floor(normalizedViewport.width * MAX_FLOATING_PANEL_VIEWPORT_RATIO);
   const maxRecoverableHeight = Math.floor(normalizedViewport.height * MAX_FLOATING_PANEL_VIEWPORT_RATIO);
@@ -324,8 +426,14 @@ export function normalizeFloatingPanelRect(
     normalizedMin.height,
     Math.min(normalizedViewport.height - margin * 2, maxRecoverableHeight),
   );
-  const width = clampNumber(rect.width, normalizedMin.width, maxWidth);
-  const height = clampNumber(rect.height, normalizedMin.height, maxHeight);
+  const rawWidth = Math.round(finiteOr(rect.width, DEFAULT_FLOATING_RECT.width));
+  const rawHeight = Math.round(finiteOr(rect.height, DEFAULT_FLOATING_RECT.height));
+  const width = constrainSize
+    ? clampNumber(rawWidth, normalizedMin.width, maxWidth)
+    : Math.max(1, rawWidth);
+  const height = constrainSize
+    ? clampNumber(rawHeight, normalizedMin.height, maxHeight)
+    : Math.max(1, rawHeight);
 
   if (!constrainPosition) {
     return {
@@ -358,10 +466,10 @@ export function moveFloatingPanelRect(
   options: { constrainPosition?: boolean } = {},
 ): PanelRect {
   const normalizedViewport = normalizeViewport(viewport);
-  const normalizedMin = normalizeMinSize(minSize);
   const constrainPosition = options.constrainPosition ?? true;
-  const width = Math.max(normalizedMin.width, Math.round(finiteOr(rect.width, DEFAULT_FLOATING_RECT.width)));
-  const height = Math.max(normalizedMin.height, Math.round(finiteOr(rect.height, DEFAULT_FLOATING_RECT.height)));
+  void minSize;
+  const width = Math.max(1, Math.round(finiteOr(rect.width, DEFAULT_FLOATING_RECT.width)));
+  const height = Math.max(1, Math.round(finiteOr(rect.height, DEFAULT_FLOATING_RECT.height)));
   const nextX = Math.round(finiteOr(rect.x, DEFAULT_FLOATING_RECT.x) + finiteOr(deltaX, 0));
   const nextY = Math.round(finiteOr(rect.y, DEFAULT_FLOATING_RECT.y) + finiteOr(deltaY, 0));
 
@@ -447,7 +555,7 @@ export function resizeFloatingPanelRect(
   resize: ResizeDelta,
   viewport: ViewportSize,
   minSize: PanelSize = DEFAULT_PANEL_MIN_SIZE,
-  options: { constrainPosition?: boolean } = {},
+  options: { constrainPosition?: boolean; constrainSize?: boolean } = {},
 ): PanelRect {
   let nextX = rect.x;
   let nextY = rect.y;
@@ -555,10 +663,19 @@ export function resolveDockablePanelSnapTarget(
     }
 
     const sideStack = stackRect.dockZone === 'left' || stackRect.dockZone === 'right';
-    const midpoint = sideStack
-      ? stackRect.rect.y + stackRect.rect.height / 2
-      : stackRect.rect.x + stackRect.rect.width / 2;
-    const before = sideStack ? point.y < midpoint : point.x < midpoint;
+    const axisStart = sideStack ? stackRect.rect.y : stackRect.rect.x;
+    const axisSize = sideStack ? stackRect.rect.height : stackRect.rect.width;
+    const axisPoint = sideStack ? point.y : point.x;
+    const edgeBand = Math.max(18, Math.min(44, Math.round(axisSize * 0.22)));
+    if (axisPoint >= axisStart + edgeBand && axisPoint <= axisStart + axisSize - edgeBand) {
+      return {
+        mode: 'tab',
+        dockZone: stackRect.dockZone,
+        referencePanelId: stackRect.panelId,
+      };
+    }
+
+    const before = axisPoint < axisStart + axisSize / 2;
 
     return {
       mode: 'docked',
@@ -596,7 +713,21 @@ export function resolveDockablePanelSnapPreviewRect(
   stackPreviewThickness = 8,
 ): PanelRect | undefined {
   if (target.mode !== 'docked') {
-    return undefined;
+    if (target.mode !== 'tab') {
+      return undefined;
+    }
+    const referenceRect = stackRects.find((stackRect) => (
+      stackRect.panelId === target.referencePanelId
+      && stackRect.dockZone === target.dockZone
+    ))?.rect;
+    if (!referenceRect) return undefined;
+    const inset = 6;
+    return {
+      x: referenceRect.x + inset,
+      y: referenceRect.y + inset,
+      width: Math.max(1, referenceRect.width - inset * 2),
+      height: Math.max(1, referenceRect.height - inset * 2),
+    };
   }
 
   const normalizedViewport = normalizeViewport(viewport);
@@ -666,9 +797,55 @@ export function sortDockedPanels<T extends { dockZone: DockZone; zOrder: number;
   return [...panels].sort((a, b) => a.dockZone.localeCompare(b.dockZone) || a.zOrder - b.zOrder || a.panelId.localeCompare(b.panelId));
 }
 
+export function resolveDockablePanelTabGroups(
+  layouts: Iterable<DockablePanelLayout>,
+  workspaceId?: string,
+): DockablePanelTabGroupDescriptor[] {
+  const groups = new Map<string, DockablePanelLayout[]>();
+  for (const layout of layouts) {
+    if (workspaceId && layout.workspaceId !== workspaceId) continue;
+    const tabGroupId = normalizeTabGroupId(layout.tabGroupId);
+    if (!tabGroupId) continue;
+    const key = `${layout.workspaceId}/${tabGroupId}`;
+    const members = groups.get(key) ?? [];
+    members.push(layout);
+    groups.set(key, members);
+  }
+
+  return [...groups.values()]
+    .map((members) => {
+      const sortedMembers = [...members].sort((a, b) => (
+        resolveTabGroupOrder(a) - resolveTabGroupOrder(b)
+        || a.panelId.localeCompare(b.panelId)
+      ));
+      const activeMember = sortedMembers.find((layout) => resolveTabGroupActive(layout)) ?? sortedMembers[0];
+      return {
+        id: normalizeTabGroupId(activeMember.tabGroupId) ?? '',
+        workspaceId: activeMember.workspaceId,
+        mode: activeMember.mode,
+        dockZone: activeMember.dockZone,
+        floatingRect: { ...activeMember.floatingRect },
+        floatingRectSpace: activeMember.floatingRectSpace,
+        zOrder: activeMember.zOrder,
+        activePanelId: activeMember.panelId,
+        tabs: sortedMembers.map((layout, index) => ({
+          panelId: layout.panelId,
+          order: index,
+          active: layout.panelId === activeMember.panelId,
+        })),
+      };
+    })
+    .sort((a, b) => (
+      a.workspaceId.localeCompare(b.workspaceId)
+      || a.dockZone.localeCompare(b.dockZone)
+      || a.zOrder - b.zOrder
+      || a.id.localeCompare(b.id)
+    ));
+}
+
 function normalizeMinSize(size: PanelSize): PanelSize {
   return {
-    width: Math.max(80, Math.round(finiteOr(size.width, DEFAULT_PANEL_MIN_SIZE.width))),
+    width: Math.max(64, Math.round(finiteOr(size.width, DEFAULT_PANEL_MIN_SIZE.width))),
     height: Math.max(60, Math.round(finiteOr(size.height, DEFAULT_PANEL_MIN_SIZE.height))),
   };
 }
@@ -713,4 +890,28 @@ function isDockablePanelMode(value: unknown): value is DockablePanelMode {
 
 function isDockZone(value: unknown): value is DockZone {
   return typeof value === 'string' && VALID_DOCK_ZONES.includes(value as DockZone);
+}
+
+function isFloatingRectSpace(value: unknown): value is DockablePanelFloatingRectSpace {
+  return value === 'owner' || value === 'screen';
+}
+
+function resolveFloatingRectSpace(layout: DockablePanelLayout): DockablePanelFloatingRectSpace {
+  return layout.floatingRectSpace === 'screen' ? 'screen' : 'owner';
+}
+
+function normalizeTabGroupId(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function resolveTabGroupId(layout: DockablePanelLayout): string {
+  return normalizeTabGroupId(layout.tabGroupId) ?? '';
+}
+
+function resolveTabGroupOrder(layout: DockablePanelLayout): number {
+  return normalizeTabGroupId(layout.tabGroupId) ? normalizeZOrder(layout.tabGroupOrder ?? 0) : -1;
+}
+
+function resolveTabGroupActive(layout: DockablePanelLayout): boolean {
+  return Boolean(normalizeTabGroupId(layout.tabGroupId) && layout.tabGroupActive);
 }

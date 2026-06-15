@@ -1,5 +1,6 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Check, Save, Sparkles, Trash2, X } from 'lucide-react';
+import { AdvancedColorPicker } from '../Common/AdvancedColorPicker';
 import {
   buildPaperComicSfxFrames,
   createPaperComicSfxDesign,
@@ -400,10 +401,11 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
         onChange={(event) => onChange(event.target.value)}
         value={value}
       />
-      <input
-        className="h-8 w-10 cursor-pointer rounded border border-cyan-300/20 bg-transparent"
-        onChange={(event) => onChange(event.target.value)}
-        type="color"
+      <AdvancedColorPicker
+        className="h-8 w-10"
+        buttonClassName="rounded border border-cyan-300/20"
+        label={label}
+        onChange={onChange}
         value={colorInputValue(value)}
       />
     </label>

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ImageDocument, ImageLayer, LayerBitmap } from '../../types/imageEditor';
-import { addImageDocumentSnapshot, createImageDocumentSnapshot, deleteImageDocumentSnapshot, restoreImageDocumentSnapshot } from './ImageSnapshots';
+import {
+  addImageDocumentSnapshot,
+  buildImageSnapshotReadinessDescriptor,
+  createImageDocumentSnapshot,
+  deleteImageDocumentSnapshot,
+  renameImageDocumentSnapshot,
+  restoreImageDocumentSnapshot,
+} from './ImageSnapshots';
 
 function makeLayer(id: string): ImageLayer {
   return {
@@ -45,6 +52,156 @@ describe('ImageSnapshots', () => {
     expect(withSnapshot.snapshots).toHaveLength(1);
     expect(withSnapshot.snapshots?.[0]).toMatchObject({ name: 'Before type', layers: doc.layers });
     expect(withSnapshot.dirty).toBe(true);
+  });
+
+  it('renames snapshots with normalized durable names and updated metadata', () => {
+    const doc = addImageDocumentSnapshot(makeDoc(), createImageDocumentSnapshot(makeDoc(), 'Before cleanup'));
+    const snapshotId = doc.snapshots?.[0]?.id ?? '';
+
+    const renamed = renameImageDocumentSnapshot(doc, snapshotId, '  Final named state  ', 1234);
+
+    expect(renamed.snapshots?.[0]).toMatchObject({
+      id: snapshotId,
+      name: 'Final named state',
+      updatedAt: 1234,
+    });
+    expect(renamed.dirty).toBe(true);
+
+    const unchanged = renameImageDocumentSnapshot(renamed, snapshotId, '   ', 9999);
+    expect(unchanged).toBe(renamed);
+  });
+
+  it('builds deterministic snapshot readiness for named states and rename previews', () => {
+    const doc = makeDoc({
+      dirty: true,
+      snapshots: [
+        {
+          id: 'snapshot-base',
+          name: 'Base state',
+          createdAt: 10,
+          updatedAt: 20,
+          width: 10,
+          height: 10,
+          layers: [makeLayer('base')],
+          activeLayerId: 'base',
+          hasSelection: true,
+          selectionVersion: 2,
+        },
+        {
+          id: 'snapshot-bad',
+          name: 'Broken state',
+          createdAt: 30,
+          width: 0,
+          height: -1,
+          layers: [],
+          activeLayerId: null,
+          hasSelection: false,
+          selectionVersion: 3,
+        },
+      ],
+    });
+
+    const readiness = buildImageSnapshotReadinessDescriptor({
+      doc,
+      rename: {
+        snapshotId: 'snapshot-base',
+        draftName: '  Final   named state  ',
+      },
+    });
+
+    expect(readiness.descriptorId).toBe('image-history-snapshots-readiness:v1');
+    expect(readiness.document).toEqual({
+      id: 'doc',
+      title: 'Doc',
+      width: 10,
+      height: 10,
+      layerCount: 1,
+      activeLayerId: 'base',
+      hasSelection: false,
+      dirty: true,
+    });
+    expect(readiness.capacity).toEqual({
+      maxSnapshots: 12,
+      count: 2,
+      remaining: 10,
+      canCreate: true,
+    });
+    expect(readiness.namedSnapshots.snapshots.map((snapshot) => ({
+      id: snapshot.id,
+      name: snapshot.name,
+      layerCount: snapshot.layerCount,
+      restorable: snapshot.restorable,
+      blockerCodes: snapshot.blockers.map((blocker) => blocker.code),
+      warningCodes: snapshot.warnings.map((warning) => warning.code),
+    }))).toEqual([
+      {
+        id: 'snapshot-base',
+        name: 'Base state',
+        layerCount: 1,
+        restorable: true,
+        blockerCodes: [],
+        warningCodes: [],
+      },
+      {
+        id: 'snapshot-bad',
+        name: 'Broken state',
+        layerCount: 0,
+        restorable: false,
+        blockerCodes: ['invalid-snapshot-dimensions'],
+        warningCodes: ['empty-snapshot-layers'],
+      },
+    ]);
+    expect(readiness.rename).toMatchObject({
+      supported: true,
+      targetSnapshotId: 'snapshot-base',
+      targetExists: true,
+      currentName: 'Base state',
+      draftName: 'Final named state',
+      unchanged: false,
+      willUpdate: true,
+      blockers: [],
+      warnings: [],
+    });
+    expect(readiness.rename.signature).toBe(
+      'image-history-snapshot-rename:v1:{"snapshotId":"snapshot-base","targetExists":true,"currentName":"Base state","draftName":"Final named state","willUpdate":true,"blockerCodes":[],"warningCodes":[]}',
+    );
+    expect(readiness.preview).toEqual({
+      id: 'image-history-snapshots-preview:doc:2-snapshots:1-blockers',
+      signature: 'image-history-snapshots-readiness:v1:{"document":{"id":"doc","width":10,"height":10,"layerCount":1,"activeLayerId":"base","hasSelection":false},"snapshotSignatures":["image-history-snapshot:v1:{\\"id\\":\\"snapshot-base\\",\\"name\\":\\"Base state\\",\\"createdAt\\":10,\\"updatedAt\\":20,\\"width\\":10,\\"height\\":10,\\"layerCount\\":1,\\"activeLayerId\\":\\"base\\",\\"hasSelection\\":true,\\"selectionVersion\\":2,\\"restorable\\":true,\\"blockerCodes\\":[],\\"warningCodes\\":[]}","image-history-snapshot:v1:{\\"id\\":\\"snapshot-bad\\",\\"name\\":\\"Broken state\\",\\"createdAt\\":30,\\"updatedAt\\":null,\\"width\\":0,\\"height\\":-1,\\"layerCount\\":0,\\"activeLayerId\\":null,\\"hasSelection\\":false,\\"selectionVersion\\":3,\\"restorable\\":false,\\"blockerCodes\\":[\\"invalid-snapshot-dimensions\\"],\\"warningCodes\\":[\\"empty-snapshot-layers\\"]}"],"renameSignature":"image-history-snapshot-rename:v1:{\\"snapshotId\\":\\"snapshot-base\\",\\"targetExists\\":true,\\"currentName\\":\\"Base state\\",\\"draftName\\":\\"Final named state\\",\\"willUpdate\\":true,\\"blockerCodes\\":[],\\"warningCodes\\":[]}","blockerCodes":["invalid-snapshot-dimensions"],"warningCodes":["empty-snapshot-layers"]}',
+    });
+    expect(readiness.automationMetadata).toEqual({
+      workspaceId: 'image-automation',
+      separateFromMainFlow: true,
+      bindingReadiness: 'ready-for-review',
+      supportsNamedSnapshotVariables: true,
+      supportsArbitraryJsExpressions: false,
+      snapshotVariableTargets: ['snapshot-base', 'snapshot-bad'],
+    });
+  });
+
+  it('reports snapshot rename blockers for missing targets and blank names', () => {
+    const readiness = buildImageSnapshotReadinessDescriptor({
+      doc: makeDoc(),
+      rename: {
+        snapshotId: 'missing',
+        draftName: '   ',
+      },
+    });
+
+    expect(readiness.rename).toMatchObject({
+      supported: false,
+      targetSnapshotId: 'missing',
+      targetExists: false,
+      currentName: null,
+      draftName: '',
+      unchanged: false,
+      willUpdate: false,
+    });
+    expect(readiness.rename.blockers.map((blocker) => blocker.code)).toEqual([
+      'missing-snapshot',
+      'blank-snapshot-name',
+    ]);
+    expect(readiness.preview.id).toBe('image-history-snapshots-preview:doc:0-snapshots:2-blockers');
   });
 
   it('restores and deletes snapshots by id', () => {

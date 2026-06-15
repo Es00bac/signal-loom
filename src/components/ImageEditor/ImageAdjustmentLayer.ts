@@ -7,7 +7,17 @@ import type {
 } from '../../types/imageEditor';
 import { createBitmap, getBitmapImageData, putBitmapImageData } from './LayerBitmap';
 import { renderLayerWithEffects } from './ImageLayerEffects';
+import {
+  applyLayerMaskToImageData,
+  createProcessedLayerMaskBitmap,
+  getProcessedLayerMaskImageData,
+} from './ImageLayerMask';
 import { drawLayerBitmapTransformed } from './ImageLayerTransform';
+import {
+  getImageLayerGroupDescendantLayers,
+  isImageLayerEffectivelyVisible,
+} from './ImageLayerGroups';
+import { getLayerVectorMaskDescriptor, rasterizeLayerVectorMask } from './ImageVectorMasks';
 
 export function defaultAdjustmentSettings(kind: AdjustmentLayerKind): ImageAdjustmentSettings {
   switch (kind) {
@@ -74,30 +84,1444 @@ export function adjustmentLayerLabel(kind: AdjustmentLayerKind): string {
   }
 }
 
+export interface AdjustmentLayerPlanningBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export type AdjustmentLayerClippingFamily =
+  | 'none'
+  | 'layer-alpha'
+  | 'blend-if'
+  | 'vector-path'
+  | (string & {});
+
+export type AdjustmentLayerMaskFamily =
+  | 'none'
+  | 'raster-layer-mask'
+  | 'vector-mask'
+  | 'channel-mask'
+  | (string & {});
+
+export type AdjustmentLayerPresetFamily =
+  | 'single-adjustment'
+  | 'camera-raw'
+  | 'lookup-table'
+  | 'gradient-map'
+  | (string & {});
+
+export type AdjustmentLayerImportFamily =
+  | 'signal-loom'
+  | 'psd-native'
+  | 'xcf-native'
+  | 'flattened-raster'
+  | (string & {});
+
+export type AdjustmentLayerExportFamily =
+  | 'signal-loom'
+  | 'psd-native'
+  | 'flattened-raster'
+  | (string & {});
+
+export type AdjustmentLayerWorkflowColorMode = 'rgb' | 'cmyk' | 'lab' | 'grayscale' | 'indexed';
+export type AdjustmentLayerWorkflowBitDepth = 8 | 16 | 32;
+export type AdjustmentLayerWorkflowSupportStatus = 'supported' | 'partial' | 'preview-only' | 'conversion-required' | 'unsupported';
+
+export type AdjustmentLayerPlanningWarningCode =
+  | 'unsupported-adjustment-clipping-family'
+  | 'unsupported-adjustment-mask-family'
+  | 'unsupported-adjustment-preset-family'
+  | 'adjustment-import-flattened'
+  | 'adjustment-export-flattened';
+
+export interface AdjustmentLayerPlanningWarning {
+  code: AdjustmentLayerPlanningWarningCode;
+  severity: 'warning';
+  message: string;
+}
+
+export type AdjustmentLayerReadinessBlockerCode =
+  | 'adjustment-parameters-incomplete'
+  | 'adjustment-histogram-source-unavailable'
+  | 'adjustment-preset-serialization-unsupported'
+  | 'adjustment-preset-import-unsupported'
+  | 'adjustment-preset-export-unsupported';
+
+export interface AdjustmentLayerReadinessBlocker {
+  code: AdjustmentLayerReadinessBlockerCode;
+  severity: 'blocker';
+  message: string;
+}
+
+export interface AdjustmentLayerPlanningOptions {
+  documentBounds?: AdjustmentLayerPlanningBounds;
+  clippingFamily?: AdjustmentLayerClippingFamily;
+  maskFamily?: AdjustmentLayerMaskFamily;
+  presetFamily?: AdjustmentLayerPresetFamily;
+  colorMode?: AdjustmentLayerWorkflowColorMode;
+  bitDepth?: AdjustmentLayerWorkflowBitDepth;
+  histogramPreview?: boolean;
+  histogramSourceAvailable?: boolean;
+  livePreview?: boolean;
+  importFamily?: AdjustmentLayerImportFamily;
+  exportFamily?: AdjustmentLayerExportFamily;
+}
+
+export interface AdjustmentLayerPlanDescriptor {
+  version: 1;
+  layerId: string;
+  layerName: string;
+  kind: AdjustmentLayerKind;
+  label: string;
+  settings: ImageAdjustmentSettings;
+  scope: {
+    opacity: number;
+    blendMode: ImageLayer['blendMode'];
+    clippingFamily: AdjustmentLayerClippingFamily;
+    maskFamily: AdjustmentLayerMaskFamily;
+    presetFamily: AdjustmentLayerPresetFamily;
+  };
+  affectedBounds: AdjustmentLayerPlanningBounds;
+  workflow: AdjustmentLayerWorkflowDescriptor;
+  preview: AdjustmentLayerPreviewDescriptor;
+  previewSignature: string;
+  planSignature: string;
+  warnings: AdjustmentLayerPlanningWarning[];
+}
+
+export interface AdjustmentLayerPreset {
+  version: 1;
+  label: string;
+  kind: AdjustmentLayerKind;
+  settings: ImageAdjustmentSettings;
+  previewSignature: string;
+}
+
+export interface AdjustmentWorkflowPresetDescriptor {
+  version: 1;
+  label: string;
+  presetKinds: AdjustmentLayerKind[];
+  presets: AdjustmentLayerPreset[];
+  signature: string;
+}
+
+export interface AdjustmentLayerWorkflowPresetInput {
+  label: string;
+  settings: ImageAdjustmentSettings;
+}
+
+export interface AdjustmentLayerScopeStatusDescriptor {
+  family: AdjustmentLayerClippingFamily | AdjustmentLayerMaskFamily;
+  status: AdjustmentLayerWorkflowSupportStatus;
+  notes: string[];
+}
+
+export interface AdjustmentLayerDocumentPrecisionDescriptor {
+  colorMode: AdjustmentLayerWorkflowColorMode;
+  bitDepth: AdjustmentLayerWorkflowBitDepth;
+  status: AdjustmentLayerWorkflowSupportStatus;
+  limitations: string[];
+}
+
+export interface AdjustmentLayerWorkflowDescriptor {
+  presetSerialization: {
+    supported: boolean;
+    family: AdjustmentLayerPresetFamily;
+    serializedKind: AdjustmentLayerKind;
+  };
+  clipping: AdjustmentLayerScopeStatusDescriptor;
+  mask: AdjustmentLayerScopeStatusDescriptor;
+  histogramPreview: {
+    required: boolean;
+    dependency: 'base-layers-before-adjustment' | 'not-required';
+    supported: boolean;
+  };
+  livePreview: {
+    requested: boolean;
+    supported: boolean;
+    caveats: string[];
+  };
+  documentPrecision: AdjustmentLayerDocumentPrecisionDescriptor;
+}
+
+export interface AdjustmentLayerPreviewDescriptor {
+  id: string;
+  label: string;
+  signature: string;
+  requiresHistogram: boolean;
+  livePreviewCaveats: string[];
+}
+
+export interface AdjustmentLayerCoverageDescriptor {
+  count: number;
+  channels: Array<'rgb' | 'red' | 'green' | 'blue'>;
+  histogramRequired: boolean;
+}
+
+export interface AdjustmentLayerMaskInteractionDescriptor {
+  layerId: string;
+  family: AdjustmentLayerMaskFamily;
+  density: number;
+  feather: number;
+  summary: string;
+}
+
+export interface AdjustmentStackPlanDescriptor {
+  version: 1;
+  documentId: string;
+  adjustmentLayerIds: string[];
+  layers: AdjustmentLayerPlanDescriptor[];
+  coverage: Partial<Record<AdjustmentLayerKind, AdjustmentLayerCoverageDescriptor>>;
+  masks: AdjustmentLayerMaskInteractionDescriptor[];
+  limitations: string[];
+  warnings: AdjustmentLayerPlanningWarning[];
+  previewSignature: string;
+  planSignature: string;
+}
+
+export interface AdjustmentLayerParameterCompletenessDescriptor {
+  complete: boolean;
+  required: string[];
+  missing: string[];
+  normalizedSettings: ImageAdjustmentSettings;
+}
+
+export interface AdjustmentLayerHistogramReadinessDescriptor {
+  required: boolean;
+  dependency: 'base-layers-before-adjustment' | 'not-required';
+  ready: boolean;
+  reason: string;
+}
+
+export interface AdjustmentLayerPresetReadinessDescriptor {
+  serialization: {
+    family: AdjustmentLayerPresetFamily;
+    ready: boolean;
+    reason: string;
+  };
+  import: {
+    family: AdjustmentLayerImportFamily;
+    ready: boolean;
+    status: AdjustmentLayerWorkflowSupportStatus;
+    reason: string;
+  };
+  export: {
+    family: AdjustmentLayerExportFamily;
+    ready: boolean;
+    status: AdjustmentLayerWorkflowSupportStatus;
+    reason: string;
+  };
+}
+
+export interface AdjustmentLayerReadinessDescriptor {
+  version: 1;
+  layerId: string;
+  kind: AdjustmentLayerKind;
+  label: string;
+  parameterCompleteness: AdjustmentLayerParameterCompletenessDescriptor;
+  histogram: AdjustmentLayerHistogramReadinessDescriptor;
+  support: {
+    clipping: AdjustmentLayerScopeStatusDescriptor;
+    mask: AdjustmentLayerScopeStatusDescriptor;
+  };
+  preset: AdjustmentLayerPresetReadinessDescriptor;
+  warnings: AdjustmentLayerPlanningWarning[];
+  blockers: AdjustmentLayerReadinessBlocker[];
+  unsupportedStates: string[];
+  previewSignature: string;
+  signature: string;
+}
+
+export type AdjustmentLayerUnsupportedStateCode =
+  | 'live-gpu-preview-unsupported'
+  | 'true-high-bit-adjustment-pipeline-unsupported'
+  | 'photoshop-preset-family-parity-unsupported'
+  | 'cmyk-native-adjustment-unsupported'
+  | 'lab-native-adjustment-unsupported'
+  | 'native-psd-adjustment-fidelity-unsupported'
+  | 'blend-if-adjustment-clipping-unsupported'
+  | 'vector-mask-adjustment-scope-unsupported'
+  | 'channel-mask-adjustment-scope-unsupported';
+
+export interface AdjustmentLayerUnsupportedStateDescriptor {
+  code: AdjustmentLayerUnsupportedStateCode;
+  status: 'unsupported';
+  message: string;
+}
+
+export interface AdjustmentLayerReadinessSummaryDescriptor {
+  layerId: string;
+  ready: boolean;
+  blockerCodes: AdjustmentLayerReadinessBlockerCode[];
+  warningCodes: AdjustmentLayerPlanningWarningCode[];
+  parameterCompleteness: AdjustmentLayerParameterCompletenessDescriptor;
+  previewId: string;
+  previewSignature: string;
+}
+
+export interface AdjustmentPresetCompatibilityDescriptor {
+  version: 1;
+  label: string;
+  sourceKind: AdjustmentLayerKind;
+  targetKind: AdjustmentLayerKind;
+  compatible: boolean;
+  serialization: {
+    family: AdjustmentLayerPresetFamily;
+    supported: boolean;
+    blockerCode: 'adjustment-preset-serialization-unsupported' | null;
+  };
+  import: {
+    family: AdjustmentLayerImportFamily;
+    supported: boolean;
+    status: AdjustmentLayerWorkflowSupportStatus;
+    blockerCode: 'adjustment-preset-import-unsupported' | null;
+  };
+  export: {
+    family: AdjustmentLayerExportFamily;
+    supported: boolean;
+    status: AdjustmentLayerWorkflowSupportStatus;
+    blockerCode: 'adjustment-preset-export-unsupported' | null;
+  };
+  kindMatch: boolean;
+  unsupportedStateCodes: AdjustmentLayerUnsupportedStateCode[];
+  signature: string;
+}
+
+export interface AdjustmentStackReadinessDescriptor {
+  version: 1;
+  documentId: string;
+  stackSignature: string;
+  stackPreviewSignature: string;
+  stackPlanSignature: string;
+  stablePreviewIds: string[];
+  score: {
+    readyLayerCount: number;
+    totalLayerCount: number;
+    blockerCount: number;
+    warningCount: number;
+    unsupportedStateCount: number;
+    readinessRatio: number;
+  };
+  layerReadiness: AdjustmentLayerReadinessSummaryDescriptor[];
+  unsupportedStates: AdjustmentLayerUnsupportedStateDescriptor[];
+  presetCompatibility: AdjustmentPresetCompatibilityDescriptor;
+  warnings: AdjustmentLayerPlanningWarning[];
+}
+
+const SUPPORTED_ADJUSTMENT_CLIPPING_FAMILIES = new Set<string>(['none', 'layer-alpha']);
+const SUPPORTED_ADJUSTMENT_MASK_FAMILIES = new Set<string>(['none', 'raster-layer-mask']);
+const SUPPORTED_ADJUSTMENT_PRESET_FAMILIES = new Set<string>(['single-adjustment']);
+
+export function describeAdjustmentLayerPlan(
+  layer: Pick<ImageLayer, 'id' | 'name' | 'opacity' | 'blendMode' | 'clippingMask' | 'mask' | 'adjustment'>,
+  options: AdjustmentLayerPlanningOptions = {},
+): AdjustmentLayerPlanDescriptor {
+  const settings = normalizeAdjustmentSettingsForMetadata(layer.adjustment ?? defaultAdjustmentSettings('brightnessContrast'));
+  const bounds = normalizeAdjustmentPlanningBounds(options.documentBounds);
+  const clippingFamily = options.clippingFamily ?? (layer.clippingMask ? 'layer-alpha' : 'none');
+  const maskFamily = options.maskFamily ?? (layer.mask ? 'raster-layer-mask' : 'none');
+  const presetFamily = options.presetFamily ?? 'single-adjustment';
+  const warnings = getUnsupportedAdjustmentLayerPlanningWarnings({
+    clippingFamily,
+    maskFamily,
+    presetFamily,
+  });
+  const scope = {
+    opacity: clamp01(layer.opacity ?? 1),
+    blendMode: layer.blendMode ?? 'normal',
+    clippingFamily,
+    maskFamily,
+    presetFamily,
+  };
+  const workflow = describeAdjustmentLayerWorkflow(settings, scope, options);
+  const previewSignature = buildAdjustmentLayerPreviewSignature(layer.id, settings, scope, bounds);
+  const preview = {
+    id: `adjustment-preview:${layer.id}`,
+    label: `${adjustmentLayerLabel(settings.kind)} preview`,
+    signature: previewSignature,
+    requiresHistogram: workflow.histogramPreview.required,
+    livePreviewCaveats: workflow.livePreview.caveats,
+  };
+  const planSignature = buildAdjustmentLayerPlanSignature(layer.id, previewSignature, workflow, warnings);
+
+  return {
+    version: 1,
+    layerId: layer.id,
+    layerName: layer.name,
+    kind: settings.kind,
+    label: adjustmentLayerLabel(settings.kind),
+    settings,
+    scope,
+    affectedBounds: bounds,
+    workflow,
+    preview,
+    previewSignature,
+    planSignature,
+    warnings,
+  };
+}
+
+export function serializeAdjustmentLayerPreset(
+  label: string,
+  adjustment: ImageAdjustmentSettings,
+  options: AdjustmentLayerPlanningOptions = {},
+): AdjustmentLayerPreset | null {
+  const clippingFamily = options.clippingFamily ?? 'none';
+  const maskFamily = options.maskFamily ?? 'none';
+  const presetFamily = options.presetFamily ?? 'single-adjustment';
+  const warnings = getUnsupportedAdjustmentLayerPlanningWarnings({
+    clippingFamily,
+    maskFamily,
+    presetFamily,
+  });
+  if (warnings.length > 0) return null;
+
+  const settings = normalizeAdjustmentSettingsForMetadata(adjustment);
+  const bounds = normalizeAdjustmentPlanningBounds(options.documentBounds);
+  return {
+    version: 1,
+    label: normalizeAdjustmentPresetLabel(label),
+    kind: settings.kind,
+    settings,
+    previewSignature: buildAdjustmentPresetPreviewSignature(settings, bounds),
+  };
+}
+
+export function buildAdjustmentWorkflowPresetDescriptor(
+  label: string,
+  inputs: AdjustmentLayerWorkflowPresetInput[],
+  options: AdjustmentLayerPlanningOptions = {},
+): AdjustmentWorkflowPresetDescriptor {
+  const presets = inputs
+    .map((input) => serializeAdjustmentLayerPreset(input.label, input.settings, options))
+    .filter((preset): preset is AdjustmentLayerPreset => preset !== null);
+  const normalizedLabel = normalizeAdjustmentPresetLabel(label);
+
+  return {
+    version: 1,
+    label: normalizedLabel,
+    presetKinds: presets.map((preset) => preset.kind),
+    presets,
+    signature: `adjustment-workflow-preset:v1:${JSON.stringify({
+      label: normalizedLabel,
+      presetSignatures: presets.map((preset) => preset.previewSignature),
+    })}`,
+  };
+}
+
+export function buildAdjustmentStackPlanDescriptor(
+  doc: ImageDocument,
+  options: AdjustmentLayerPlanningOptions = {},
+): AdjustmentStackPlanDescriptor {
+  const bounds = normalizeAdjustmentPlanningBounds(options.documentBounds ?? {
+    x: 0,
+    y: 0,
+    width: doc.width,
+    height: doc.height,
+  });
+  const adjustmentLayers = doc.layers.filter((layer) => layer.type === 'adjustment' && layer.adjustment);
+  const layers = adjustmentLayers.map((layer) => describeAdjustmentLayerPlan(layer, {
+    ...options,
+    documentBounds: bounds,
+  }));
+  const warnings = dedupeAdjustmentPlanningWarnings([
+    ...layers.flatMap((layer) => layer.warnings),
+    ...getAdjustmentPortabilityWarnings(options),
+  ]);
+  const coverage = buildAdjustmentCoverageDescriptor(layers);
+  const masks = buildAdjustmentMaskInteractionDescriptors(adjustmentLayers);
+  const limitations = buildAdjustmentStackLimitations(layers, options);
+  const previewSignature = `adjustment-stack-preview:v1:${JSON.stringify({
+    documentId: doc.id,
+    bounds,
+    layerPreviewSignatures: layers.map((layer) => layer.previewSignature),
+  })}`;
+  const planSignature = `adjustment-stack-plan:v1:${JSON.stringify({
+    previewSignature,
+    warningCodes: warnings.map((warning) => warning.code),
+    coverageKinds: Object.keys(coverage),
+  })}`;
+
+  return {
+    version: 1,
+    documentId: doc.id,
+    adjustmentLayerIds: layers.map((layer) => layer.layerId),
+    layers,
+    coverage,
+    masks,
+    limitations,
+    warnings,
+    previewSignature,
+    planSignature,
+  };
+}
+
+export function describeAdjustmentLayerReadiness(
+  layer: Pick<ImageLayer, 'id' | 'name' | 'opacity' | 'blendMode' | 'clippingMask' | 'mask' | 'adjustment'>,
+  options: AdjustmentLayerPlanningOptions = {},
+): AdjustmentLayerReadinessDescriptor {
+  const settings = layer.adjustment ?? defaultAdjustmentSettings('brightnessContrast');
+  const plan = describeAdjustmentLayerPlan(layer, options);
+  const parameterCompleteness = describeAdjustmentParameterCompleteness(settings);
+  const histogram = describeAdjustmentHistogramReadiness(plan.workflow.histogramPreview, options);
+  const preset = describeAdjustmentPresetReadiness(plan.scope.presetFamily, options);
+  const unsupportedStates = buildAdjustmentUnsupportedStates({
+    parameterCompleteness,
+    histogram,
+    plan,
+    preset,
+  });
+  const warnings = dedupeAdjustmentPlanningWarnings([
+    ...plan.warnings,
+    ...getAdjustmentPortabilityWarnings(options),
+  ]);
+  const blockers = buildAdjustmentReadinessBlockers({
+    parameterCompleteness,
+    histogram,
+    plan,
+    preset,
+  });
+  const signature = `adjustment-readiness:v1:${JSON.stringify({
+    layerId: plan.layerId,
+    kind: plan.kind,
+    complete: parameterCompleteness.complete,
+    histogramReady: histogram.ready,
+    unsupportedStates,
+    blockerCodes: blockers.map((blocker) => blocker.code),
+    warningCodes: warnings.map((warning) => warning.code),
+    previewSignature: plan.previewSignature,
+  })}`;
+
+  return {
+    version: 1,
+    layerId: plan.layerId,
+    kind: plan.kind,
+    label: plan.label,
+    parameterCompleteness,
+    histogram,
+    support: {
+      clipping: plan.workflow.clipping,
+      mask: plan.workflow.mask,
+    },
+    preset,
+    warnings,
+    blockers,
+    unsupportedStates,
+    previewSignature: plan.previewSignature,
+    signature,
+  };
+}
+
+export function validateAdjustmentPresetCompatibility(options: {
+  label: string;
+  settings: ImageAdjustmentSettings;
+  presetFamily?: AdjustmentLayerPresetFamily;
+  importFamily?: AdjustmentLayerImportFamily;
+  exportFamily?: AdjustmentLayerExportFamily;
+  targetKind?: AdjustmentLayerKind;
+}): AdjustmentPresetCompatibilityDescriptor {
+  const presetFamily = options.presetFamily ?? 'single-adjustment';
+  const importFamily = options.importFamily ?? 'signal-loom';
+  const exportFamily = options.exportFamily ?? 'signal-loom';
+  const sourceKind = options.settings.kind;
+  const targetKind = options.targetKind ?? sourceKind;
+  const importReadiness = describeAdjustmentImportReadiness(importFamily);
+  const exportReadiness = describeAdjustmentExportReadiness(exportFamily);
+  const serializationSupported = SUPPORTED_ADJUSTMENT_PRESET_FAMILIES.has(presetFamily);
+  const kindMatch = sourceKind === targetKind;
+  const unsupportedStateCodes = buildAdjustmentUnsupportedStateDescriptors({
+    presetFamily,
+    importFamily,
+    exportFamily,
+  }).map((state) => state.code);
+  const compatible = serializationSupported && importReadiness.ready && exportReadiness.ready && kindMatch;
+  const label = normalizeAdjustmentPresetLabel(options.label);
+
+  return {
+    version: 1,
+    label,
+    sourceKind,
+    targetKind,
+    compatible,
+    serialization: {
+      family: presetFamily,
+      supported: serializationSupported,
+      blockerCode: serializationSupported ? null : 'adjustment-preset-serialization-unsupported',
+    },
+    import: {
+      family: importFamily,
+      supported: importReadiness.ready,
+      status: importReadiness.status,
+      blockerCode: importReadiness.ready ? null : 'adjustment-preset-import-unsupported',
+    },
+    export: {
+      family: exportFamily,
+      supported: exportReadiness.ready,
+      status: exportReadiness.status,
+      blockerCode: exportReadiness.ready ? null : 'adjustment-preset-export-unsupported',
+    },
+    kindMatch,
+    unsupportedStateCodes,
+    signature: `adjustment-preset-compatibility:v1:${JSON.stringify({
+      label,
+      sourceKind,
+      targetKind,
+      presetFamily,
+      importFamily,
+      exportFamily,
+      compatible,
+      unsupportedStateCodes,
+    })}`,
+  };
+}
+
+export function describeAdjustmentStackReadiness(
+  doc: ImageDocument,
+  options: AdjustmentLayerPlanningOptions = {},
+): AdjustmentStackReadinessDescriptor {
+  const plan = buildAdjustmentStackPlanDescriptor(doc, options);
+  const readiness = plan.layers.map((layerPlan) => {
+    const layer = doc.layers.find((candidate) => candidate.id === layerPlan.layerId) ?? {
+      id: layerPlan.layerId,
+      name: layerPlan.layerName,
+      opacity: layerPlan.scope.opacity,
+      blendMode: layerPlan.scope.blendMode,
+      clippingMask: layerPlan.scope.clippingFamily === 'layer-alpha',
+      mask: null,
+      adjustment: layerPlan.settings,
+    };
+    return describeAdjustmentLayerReadiness(layer, options);
+  });
+  const layerReadiness: AdjustmentLayerReadinessSummaryDescriptor[] = readiness.map((descriptor) => ({
+    layerId: descriptor.layerId,
+    ready: descriptor.blockers.length === 0 && descriptor.warnings.length === 0,
+    blockerCodes: descriptor.blockers.map((blocker) => blocker.code),
+    warningCodes: descriptor.warnings.map((warning) => warning.code),
+    parameterCompleteness: descriptor.parameterCompleteness,
+    previewId: `adjustment-preview:${descriptor.layerId}`,
+    previewSignature: descriptor.previewSignature,
+  }));
+  const unsupportedStates = buildAdjustmentUnsupportedStateDescriptors(options);
+  const readyLayerCount = layerReadiness.filter((layer) => layer.ready).length;
+  const totalLayerCount = layerReadiness.length;
+  const blockerCount = layerReadiness.reduce((total, layer) => total + layer.blockerCodes.length, 0);
+  const presetCompatibility = validateAdjustmentPresetCompatibility({
+    label: 'Adjustment Stack',
+    settings: plan.layers[0]?.settings ?? defaultAdjustmentSettings('brightnessContrast'),
+    presetFamily: options.presetFamily,
+    importFamily: options.importFamily,
+    exportFamily: options.exportFamily,
+  });
+  const unsupportedStateCodes = unsupportedStates.map((state) => state.code);
+  const stablePreviewIds = layerReadiness.map((layer) => layer.previewId);
+  const readinessRatio = totalLayerCount > 0 ? Math.round((readyLayerCount / totalLayerCount) * 1000) / 1000 : 1;
+  const stackSignature = `adjustment-stack-readiness:v1:${JSON.stringify({
+    documentId: doc.id,
+    stackPreviewSignature: plan.previewSignature,
+    stackPlanSignature: plan.planSignature,
+    stablePreviewIds,
+    readyLayerCount,
+    totalLayerCount,
+    blockerCount,
+    warningCodes: plan.warnings.map((warning) => warning.code),
+    unsupportedStateCodes,
+    presetCompatibilitySignature: presetCompatibility.signature,
+  })}`;
+
+  return {
+    version: 1,
+    documentId: doc.id,
+    stackSignature,
+    stackPreviewSignature: plan.previewSignature,
+    stackPlanSignature: plan.planSignature,
+    stablePreviewIds,
+    score: {
+      readyLayerCount,
+      totalLayerCount,
+      blockerCount,
+      warningCount: plan.warnings.length,
+      unsupportedStateCount: unsupportedStates.length,
+      readinessRatio,
+    },
+    layerReadiness,
+    unsupportedStates,
+    presetCompatibility,
+    warnings: plan.warnings,
+  };
+}
+
+export function applyAdjustmentPresetToLayer(
+  layer: ImageLayer,
+  preset: AdjustmentLayerPreset,
+): ImageLayer {
+  return {
+    ...layer,
+    type: 'adjustment',
+    bitmap: null,
+    adjustment: normalizeAdjustmentSettingsForMetadata(preset.settings),
+  };
+}
+
+export function getUnsupportedAdjustmentLayerPlanningWarnings(
+  options: AdjustmentLayerPlanningOptions = {},
+): AdjustmentLayerPlanningWarning[] {
+  const warnings: AdjustmentLayerPlanningWarning[] = [];
+  const clippingFamily = options.clippingFamily ?? 'none';
+  const maskFamily = options.maskFamily ?? 'none';
+  const presetFamily = options.presetFamily ?? 'single-adjustment';
+
+  if (!SUPPORTED_ADJUSTMENT_CLIPPING_FAMILIES.has(clippingFamily)) {
+    warnings.push({
+      code: 'unsupported-adjustment-clipping-family',
+      severity: 'warning',
+      message: `Adjustment layer ${clippingFamily} clipping is not supported yet; only normal lower-layer scope and layer-alpha clipping masks are represented.`,
+    });
+  }
+
+  if (!SUPPORTED_ADJUSTMENT_MASK_FAMILIES.has(maskFamily)) {
+    warnings.push({
+      code: 'unsupported-adjustment-mask-family',
+      severity: 'warning',
+      message: `Adjustment layer ${maskFamily} masks are not supported yet; only raster layer masks with density/feather metadata are represented.`,
+    });
+  }
+
+  if (!SUPPORTED_ADJUSTMENT_PRESET_FAMILIES.has(presetFamily)) {
+    warnings.push({
+      code: 'unsupported-adjustment-preset-family',
+      severity: 'warning',
+      message: `Adjustment preset family "${presetFamily}" is not supported yet; only single-adjustment Image presets can be serialized.`,
+    });
+  }
+
+  return warnings;
+}
+
+function getAdjustmentPortabilityWarnings(
+  options: AdjustmentLayerPlanningOptions,
+): AdjustmentLayerPlanningWarning[] {
+  const warnings: AdjustmentLayerPlanningWarning[] = [];
+  if (options.importFamily === 'psd-native' || options.importFamily === 'xcf-native' || options.importFamily === 'flattened-raster') {
+    warnings.push({
+      code: 'adjustment-import-flattened',
+      severity: 'warning',
+      message: `Adjustment ${options.importFamily} import is represented as planning metadata or flattened pixels; native adjustment round-trip is not complete.`,
+    });
+  }
+  if (options.exportFamily === 'psd-native' || options.exportFamily === 'flattened-raster') {
+    warnings.push({
+      code: 'adjustment-export-flattened',
+      severity: 'warning',
+      message: `Adjustment ${options.exportFamily} export flattens or approximates live adjustment layers instead of preserving native Photoshop adjustment controls.`,
+    });
+  }
+  return warnings;
+}
+
+function dedupeAdjustmentPlanningWarnings(
+  warnings: AdjustmentLayerPlanningWarning[],
+): AdjustmentLayerPlanningWarning[] {
+  const seen = new Set<AdjustmentLayerPlanningWarningCode>();
+  return warnings.filter((warning) => {
+    if (seen.has(warning.code)) return false;
+    seen.add(warning.code);
+    return true;
+  });
+}
+
+function buildAdjustmentCoverageDescriptor(
+  layers: AdjustmentLayerPlanDescriptor[],
+): Partial<Record<AdjustmentLayerKind, AdjustmentLayerCoverageDescriptor>> {
+  const coverage: Partial<Record<AdjustmentLayerKind, AdjustmentLayerCoverageDescriptor>> = {};
+  for (const layer of layers) {
+    const channel = getAdjustmentSettingsChannel(layer.settings);
+    const current = coverage[layer.kind] ?? {
+      count: 0,
+      channels: [],
+      histogramRequired: false,
+    };
+    current.count += 1;
+    if (!current.channels.includes(channel)) {
+      current.channels.push(channel);
+    }
+    current.histogramRequired = current.histogramRequired || layer.kind === 'levels' || layer.kind === 'curves';
+    coverage[layer.kind] = current;
+  }
+  return coverage;
+}
+
+function buildAdjustmentMaskInteractionDescriptors(
+  layers: ImageLayer[],
+): AdjustmentLayerMaskInteractionDescriptor[] {
+  return layers
+    .filter((layer) => !!layer.mask)
+    .map((layer) => {
+      const density = clamp01(layer.maskDensity ?? 1);
+      const feather = Math.max(0, normalizeFiniteAdjustmentNumber(layer.maskFeather, 0));
+      return {
+        layerId: layer.id,
+        family: 'raster-layer-mask',
+        density,
+        feather,
+        summary: `Raster layer mask limits ${adjustmentLayerLabel(layer.adjustment?.kind ?? 'brightnessContrast')} at ${Math.round(density * 100)}% density with ${feather}px feather.`,
+      };
+    });
+}
+
+function buildAdjustmentStackLimitations(
+  layers: AdjustmentLayerPlanDescriptor[],
+  options: AdjustmentLayerPlanningOptions,
+): string[] {
+  const limitations = new Set<string>();
+  if (options.exportFamily === 'flattened-raster' || options.exportFamily === 'psd-native') {
+    limitations.add('Adjustment layers are represented non-destructively in Signal Loom state but exported raster formats flatten the visible result.');
+  }
+  for (const layer of layers) {
+    for (const limitation of layer.workflow.documentPrecision.limitations) {
+      limitations.add(limitation);
+    }
+    if (layer.workflow.clipping.status === 'partial' || layer.workflow.clipping.status === 'unsupported') {
+      for (const note of layer.workflow.clipping.notes) {
+        limitations.add(note);
+      }
+    }
+    if (layer.workflow.mask.status === 'partial' || layer.workflow.mask.status === 'unsupported') {
+      for (const note of layer.workflow.mask.notes) {
+        limitations.add(note);
+      }
+    }
+  }
+  return [...limitations];
+}
+
+function getAdjustmentSettingsChannel(
+  settings: ImageAdjustmentSettings,
+): 'rgb' | 'red' | 'green' | 'blue' {
+  if (settings.kind === 'levels' || settings.kind === 'curves') {
+    return settings.channel;
+  }
+  return 'rgb';
+}
+
+function describeAdjustmentParameterCompleteness(
+  settings: ImageAdjustmentSettings,
+): AdjustmentLayerParameterCompletenessDescriptor {
+  const required = getAdjustmentRequiredParameters(settings);
+  const missing = required.filter((path) => isAdjustmentParameterMissing(settings, path));
+  return {
+    complete: missing.length === 0,
+    required,
+    missing,
+    normalizedSettings: normalizeAdjustmentSettingsForMetadata(settings),
+  };
+}
+
+function getAdjustmentRequiredParameters(settings: ImageAdjustmentSettings): string[] {
+  switch (settings.kind) {
+    case 'brightnessContrast':
+      return ['brightness', 'contrast'];
+    case 'hueSaturation':
+      return ['hue', 'saturation', 'lightness'];
+    case 'blackWhite':
+    case 'invert':
+      return [];
+    case 'exposure':
+      return ['exposure', 'offset', 'gamma'];
+    case 'temperatureTint':
+      return ['temperature', 'tint'];
+    case 'levels':
+      return ['channel', 'inputBlack', 'inputWhite', 'gamma', 'outputBlack', 'outputWhite'];
+    case 'curves':
+      return ['channel', 'points[0].input', 'points[0].output', 'points[1]', 'shadows', 'midtones', 'highlights'];
+  }
+}
+
+function isAdjustmentParameterMissing(settings: ImageAdjustmentSettings, path: string): boolean {
+  const source = settings as unknown as Record<string, unknown>;
+  if (path === 'channel') {
+    return source.channel !== 'rgb' && source.channel !== 'red' && source.channel !== 'green' && source.channel !== 'blue';
+  }
+  if (path === 'points[0].input' || path === 'points[0].output') {
+    const point = Array.isArray(source.points) ? source.points[0] as Record<string, unknown> | undefined : undefined;
+    const key = path.endsWith('.input') ? 'input' : 'output';
+    return typeof point?.[key] !== 'number' || !Number.isFinite(point[key]);
+  }
+  if (path === 'points[1]') {
+    return !Array.isArray(source.points) || source.points.length < 2;
+  }
+  return typeof source[path] !== 'number' || !Number.isFinite(source[path]);
+}
+
+function describeAdjustmentHistogramReadiness(
+  histogramPreview: AdjustmentLayerWorkflowDescriptor['histogramPreview'],
+  options: AdjustmentLayerPlanningOptions,
+): AdjustmentLayerHistogramReadinessDescriptor {
+  const ready = !histogramPreview.required || options.histogramSourceAvailable !== false;
+  return {
+    required: histogramPreview.required,
+    dependency: histogramPreview.dependency,
+    ready,
+    reason: histogramPreview.required
+      ? ready
+        ? 'Histogram-dependent preview can use the rendered base layer stack.'
+        : 'Histogram-dependent adjustments need rendered base layers before preset preview is ready.'
+      : 'Adjustment kind does not require histogram input.',
+  };
+}
+
+function describeAdjustmentPresetReadiness(
+  presetFamily: AdjustmentLayerPresetFamily,
+  options: AdjustmentLayerPlanningOptions,
+): AdjustmentLayerPresetReadinessDescriptor {
+  const importFamily = options.importFamily ?? 'signal-loom';
+  const exportFamily = options.exportFamily ?? 'signal-loom';
+  return {
+    serialization: {
+      family: presetFamily,
+      ready: SUPPORTED_ADJUSTMENT_PRESET_FAMILIES.has(presetFamily),
+      reason: SUPPORTED_ADJUSTMENT_PRESET_FAMILIES.has(presetFamily)
+        ? 'Single-adjustment Image presets serialize as live adjustment settings.'
+        : 'Only single-adjustment Image presets serialize as live adjustment settings.',
+    },
+    import: describeAdjustmentImportReadiness(importFamily),
+    export: describeAdjustmentExportReadiness(exportFamily),
+  };
+}
+
+function describeAdjustmentImportReadiness(
+  family: AdjustmentLayerImportFamily,
+): AdjustmentLayerPresetReadinessDescriptor['import'] {
+  if (family === 'signal-loom') {
+    return {
+      family,
+      ready: true,
+      status: 'supported',
+      reason: 'Signal Loom adjustment presets import as editable adjustment settings.',
+    };
+  }
+  if (family === 'psd-native') {
+    return {
+      family,
+      ready: false,
+      status: 'preview-only',
+      reason: 'Native PSD adjustment controls import as planning metadata or flattened pixels.',
+    };
+  }
+  return {
+    family,
+    ready: false,
+    status: 'preview-only',
+    reason: `${family} adjustment import is represented as planning metadata or flattened pixels.`,
+  };
+}
+
+function describeAdjustmentExportReadiness(
+  family: AdjustmentLayerExportFamily,
+): AdjustmentLayerPresetReadinessDescriptor['export'] {
+  if (family === 'signal-loom') {
+    return {
+      family,
+      ready: true,
+      status: 'supported',
+      reason: 'Signal Loom adjustment presets export as editable adjustment settings.',
+    };
+  }
+  if (family === 'flattened-raster') {
+    return {
+      family,
+      ready: false,
+      status: 'preview-only',
+      reason: 'Flattened raster export preserves pixels, not editable adjustment preset controls.',
+    };
+  }
+  return {
+    family,
+    ready: false,
+    status: 'preview-only',
+    reason: `${family} adjustment export flattens or approximates live adjustment controls.`,
+  };
+}
+
+function buildAdjustmentUnsupportedStates(input: {
+  parameterCompleteness: AdjustmentLayerParameterCompletenessDescriptor;
+  histogram: AdjustmentLayerHistogramReadinessDescriptor;
+  plan: AdjustmentLayerPlanDescriptor;
+  preset: AdjustmentLayerPresetReadinessDescriptor;
+}): string[] {
+  const states: string[] = [];
+  if (!input.parameterCompleteness.complete) states.push('parameters-incomplete');
+  if (!input.histogram.ready) states.push('histogram-source-unavailable');
+  if (input.plan.workflow.clipping.status === 'unsupported') states.push(`clipping:${input.plan.scope.clippingFamily}`);
+  if (input.plan.workflow.mask.status === 'unsupported') states.push(`mask:${input.plan.scope.maskFamily}`);
+  if (!input.preset.serialization.ready) states.push(`preset:${input.preset.serialization.family}`);
+  if (!input.preset.import.ready) states.push(`import:${input.preset.import.family}`);
+  if (!input.preset.export.ready) states.push(`export:${input.preset.export.family}`);
+  return states;
+}
+
+function buildAdjustmentReadinessBlockers(input: {
+  parameterCompleteness: AdjustmentLayerParameterCompletenessDescriptor;
+  histogram: AdjustmentLayerHistogramReadinessDescriptor;
+  plan: AdjustmentLayerPlanDescriptor;
+  preset: AdjustmentLayerPresetReadinessDescriptor;
+}): AdjustmentLayerReadinessBlocker[] {
+  const blockers: AdjustmentLayerReadinessBlocker[] = [];
+  if (!input.parameterCompleteness.complete) {
+    blockers.push({
+      code: 'adjustment-parameters-incomplete',
+      severity: 'blocker',
+      message: `${input.plan.label} is missing required parameters: ${input.parameterCompleteness.missing.join(', ')}.`,
+    });
+  }
+  if (!input.histogram.ready) {
+    blockers.push({
+      code: 'adjustment-histogram-source-unavailable',
+      severity: 'blocker',
+      message: `${input.plan.label} requires rendered base layers before histogram-dependent preview is ready.`,
+    });
+  }
+  if (!input.preset.serialization.ready) {
+    blockers.push({
+      code: 'adjustment-preset-serialization-unsupported',
+      severity: 'blocker',
+      message: `${input.preset.serialization.family} presets cannot serialize as editable Signal Loom adjustment settings.`,
+    });
+  }
+  if (!input.preset.import.ready) {
+    blockers.push({
+      code: 'adjustment-preset-import-unsupported',
+      severity: 'blocker',
+      message: `${input.preset.import.family} adjustment presets do not import as editable Signal Loom adjustment settings.`,
+    });
+  }
+  if (!input.preset.export.ready) {
+    blockers.push({
+      code: 'adjustment-preset-export-unsupported',
+      severity: 'blocker',
+      message: `${input.preset.export.family} adjustment presets do not export as editable Signal Loom adjustment settings.`,
+    });
+  }
+  return blockers;
+}
+
+function buildAdjustmentUnsupportedStateDescriptors(
+  options: AdjustmentLayerPlanningOptions,
+): AdjustmentLayerUnsupportedStateDescriptor[] {
+  const states: AdjustmentLayerUnsupportedStateDescriptor[] = [];
+  const add = (state: AdjustmentLayerUnsupportedStateDescriptor) => {
+    if (!states.some((candidate) => candidate.code === state.code)) states.push(state);
+  };
+
+  if (options.livePreview === true) {
+    add({
+      code: 'live-gpu-preview-unsupported',
+      status: 'unsupported',
+      message: 'Live GPU adjustment preview is not implemented; previews use deterministic browser-rendered RGB metadata.',
+    });
+  }
+  if (options.bitDepth === 16 || options.bitDepth === 32) {
+    add({
+      code: 'true-high-bit-adjustment-pipeline-unsupported',
+      status: 'unsupported',
+      message: 'True 16/32-bit adjustment processing is not implemented; browser canvas previews are reduced to 8-bit RGB.',
+    });
+  }
+  if (options.presetFamily && !SUPPORTED_ADJUSTMENT_PRESET_FAMILIES.has(options.presetFamily)) {
+    add({
+      code: 'photoshop-preset-family-parity-unsupported',
+      status: 'unsupported',
+      message: 'Photoshop preset-family parity is not implemented; only Signal Loom single-adjustment presets serialize as editable settings.',
+    });
+  }
+  if (options.colorMode === 'cmyk') {
+    add({
+      code: 'cmyk-native-adjustment-unsupported',
+      status: 'unsupported',
+      message: 'Native CMYK adjustment operations are not implemented; previews are RGB approximations.',
+    });
+  }
+  if (options.colorMode === 'lab') {
+    add({
+      code: 'lab-native-adjustment-unsupported',
+      status: 'unsupported',
+      message: 'Native LAB adjustment operations are not implemented; previews are RGB approximations.',
+    });
+  }
+  if (options.importFamily === 'psd-native' || options.exportFamily === 'psd-native') {
+    add({
+      code: 'native-psd-adjustment-fidelity-unsupported',
+      status: 'unsupported',
+      message: 'Native PSD adjustment fidelity is not implemented; PSD import/export uses planning metadata, approximation, or flattened pixels.',
+    });
+  }
+  if (options.clippingFamily === 'blend-if') {
+    add({
+      code: 'blend-if-adjustment-clipping-unsupported',
+      status: 'unsupported',
+      message: 'Blend-if clipping ranges are not represented by Image adjustment layers yet.',
+    });
+  }
+  if (options.maskFamily === 'vector-mask') {
+    add({
+      code: 'vector-mask-adjustment-scope-unsupported',
+      status: 'unsupported',
+      message: 'Vector masks are planning metadata only for adjustment layer scope.',
+    });
+  }
+  if (options.maskFamily === 'channel-mask') {
+    add({
+      code: 'channel-mask-adjustment-scope-unsupported',
+      status: 'unsupported',
+      message: 'Channel masks are planning metadata only for adjustment layer scope.',
+    });
+  }
+
+  return states;
+}
+
+function describeAdjustmentLayerWorkflow(
+  settings: ImageAdjustmentSettings,
+  scope: AdjustmentLayerPlanDescriptor['scope'],
+  options: AdjustmentLayerPlanningOptions,
+): AdjustmentLayerWorkflowDescriptor {
+  const histogramRequired = settings.kind === 'levels' || settings.kind === 'curves' || options.histogramPreview === true;
+  const documentPrecision = describeAdjustmentLayerDocumentPrecision(
+    options.colorMode ?? 'rgb',
+    options.bitDepth ?? 8,
+  );
+  const livePreviewCaveats = describeAdjustmentLayerLivePreviewCaveats({
+    requested: options.livePreview === true,
+    histogramRequired,
+    documentPrecision,
+  });
+
+  return {
+    presetSerialization: {
+      supported: SUPPORTED_ADJUSTMENT_PRESET_FAMILIES.has(scope.presetFamily),
+      family: scope.presetFamily,
+      serializedKind: settings.kind,
+    },
+    clipping: describeAdjustmentLayerClippingStatus(scope.clippingFamily),
+    mask: describeAdjustmentLayerMaskStatus(scope.maskFamily),
+    histogramPreview: {
+      required: histogramRequired,
+      dependency: histogramRequired ? 'base-layers-before-adjustment' : 'not-required',
+      supported: histogramRequired,
+    },
+    livePreview: {
+      requested: options.livePreview === true,
+      supported: documentPrecision.status !== 'unsupported',
+      caveats: livePreviewCaveats,
+    },
+    documentPrecision,
+  };
+}
+
+function describeAdjustmentLayerClippingStatus(
+  family: AdjustmentLayerClippingFamily,
+): AdjustmentLayerScopeStatusDescriptor {
+  if (family === 'none') {
+    return { family, status: 'supported', notes: [] };
+  }
+  if (family === 'layer-alpha') {
+    return {
+      family,
+      status: 'partial',
+      notes: ['Layer-alpha clipping is represented through the current lower-layer alpha mask only.'],
+    };
+  }
+  if (family === 'blend-if') {
+    return {
+      family,
+      status: 'unsupported',
+      notes: ['Blend-if clipping ranges are not represented by Image adjustment layers yet.'],
+    };
+  }
+  return {
+    family,
+    status: 'unsupported',
+    notes: [`${family} clipping is planning metadata only for adjustment layers.`],
+  };
+}
+
+function describeAdjustmentLayerMaskStatus(
+  family: AdjustmentLayerMaskFamily,
+): AdjustmentLayerScopeStatusDescriptor {
+  if (family === 'none') {
+    return { family, status: 'supported', notes: [] };
+  }
+  if (family === 'raster-layer-mask') {
+    return {
+      family,
+      status: 'partial',
+      notes: ['Raster masks support density and feather metadata, but mask editing parity is handled outside adjustment planning.'],
+    };
+  }
+  if (family === 'vector-mask' || family === 'channel-mask') {
+    return {
+      family,
+      status: 'unsupported',
+      notes: ['Vector and channel masks are planning metadata only for adjustment layers.'],
+    };
+  }
+  return {
+    family,
+    status: 'unsupported',
+    notes: [`${family} masks are planning metadata only for adjustment layers.`],
+  };
+}
+
+function describeAdjustmentLayerDocumentPrecision(
+  colorMode: AdjustmentLayerWorkflowColorMode,
+  bitDepth: AdjustmentLayerWorkflowBitDepth,
+): AdjustmentLayerDocumentPrecisionDescriptor {
+  const limitations: string[] = [];
+  let status: AdjustmentLayerWorkflowSupportStatus = 'supported';
+
+  if (colorMode === 'cmyk') {
+    status = 'preview-only';
+    limitations.push('CMYK adjustment math is not native; previews are RGB approximations only.');
+  } else if (colorMode === 'lab') {
+    status = 'unsupported';
+    limitations.push('Lab adjustment workflows are not implemented.');
+  } else if (colorMode === 'indexed' || colorMode === 'grayscale') {
+    status = 'conversion-required';
+    limitations.push(`${labelAdjustmentWorkflowColorMode(colorMode)} documents require RGB conversion before adjustment math runs.`);
+  }
+
+  if (bitDepth === 16) {
+    limitations.push('16-bit adjustment input is reduced to 8-bit browser canvas precision.');
+    if (status === 'supported') status = 'conversion-required';
+  } else if (bitDepth === 32) {
+    limitations.push('32-bit adjustment input must be tone-mapped to 8-bit browser canvas precision.');
+    if (status === 'supported') status = 'conversion-required';
+  }
+
+  return { colorMode, bitDepth, status, limitations };
+}
+
+function describeAdjustmentLayerLivePreviewCaveats(input: {
+  requested: boolean;
+  histogramRequired: boolean;
+  documentPrecision: AdjustmentLayerDocumentPrecisionDescriptor;
+}): string[] {
+  if (!input.requested) return [];
+  const caveats = ['Live preview is computed through browser 8-bit RGB canvas output.'];
+  if (input.histogramRequired) {
+    caveats.push('Histogram preview depends on re-rendering lower visible layers before the adjustment.');
+  }
+  if (input.documentPrecision.status === 'unsupported') {
+    caveats.push('Live preview is unavailable for unsupported color-mode workflows.');
+  }
+  return caveats;
+}
+
+function buildAdjustmentLayerPlanSignature(
+  layerId: string,
+  previewSignature: string,
+  workflow: AdjustmentLayerWorkflowDescriptor,
+  warnings: AdjustmentLayerPlanningWarning[],
+): string {
+  return `adjustment-plan:v1:${JSON.stringify({
+    layerId,
+    previewSignature,
+    workflowStatus: workflow.documentPrecision.status,
+    warnings: warnings.map((warning) => warning.code),
+  })}`;
+}
+
+function buildAdjustmentLayerPreviewSignature(
+  layerId: string,
+  settings: ImageAdjustmentSettings,
+  scope: AdjustmentLayerPlanDescriptor['scope'],
+  bounds: AdjustmentLayerPlanningBounds,
+): string {
+  return `adjustment-layer:v1:${JSON.stringify({
+    layerId,
+    kind: settings.kind,
+    settings,
+    scope,
+    bounds,
+  })}`;
+}
+
+function buildAdjustmentPresetPreviewSignature(
+  settings: ImageAdjustmentSettings,
+  bounds: AdjustmentLayerPlanningBounds,
+): string {
+  return `adjustment-preset:v1:${JSON.stringify({
+    kind: settings.kind,
+    settings,
+    bounds,
+  })}`;
+}
+
+function normalizeAdjustmentSettingsForMetadata(settings: ImageAdjustmentSettings): ImageAdjustmentSettings {
+  switch (settings.kind) {
+    case 'brightnessContrast':
+      return {
+        kind: settings.kind,
+        brightness: normalizeAdjustmentNumber(settings.brightness, -150, 150, 0),
+        contrast: normalizeAdjustmentNumber(settings.contrast, -100, 100, 0),
+      };
+    case 'hueSaturation':
+      return {
+        kind: settings.kind,
+        hue: normalizeAdjustmentNumber(settings.hue, -180, 180, 0),
+        saturation: normalizeAdjustmentNumber(settings.saturation, -100, 100, 0),
+        lightness: normalizeAdjustmentNumber(settings.lightness, -100, 100, 0),
+      };
+    case 'blackWhite':
+      return { kind: settings.kind };
+    case 'invert':
+      return { kind: settings.kind };
+    case 'exposure':
+      return {
+        kind: settings.kind,
+        exposure: normalizeAdjustmentNumber(settings.exposure, -3, 3, 0),
+        offset: normalizeAdjustmentNumber(settings.offset, -0.5, 0.5, 0),
+        gamma: normalizeAdjustmentNumber(settings.gamma, 0.1, 3, 1),
+      };
+    case 'temperatureTint':
+      return {
+        kind: settings.kind,
+        temperature: normalizeAdjustmentNumber(settings.temperature, -100, 100, 0),
+        tint: normalizeAdjustmentNumber(settings.tint, -100, 100, 0),
+      };
+    case 'levels':
+      return {
+        kind: settings.kind,
+        channel: normalizeAdjustmentChannel(settings.channel),
+        inputBlack: normalizeAdjustmentByte(settings.inputBlack, 0, 254, 0),
+        inputWhite: normalizeAdjustmentByte(settings.inputWhite, 1, 255, 255),
+        gamma: normalizeAdjustmentNumber(settings.gamma, 0.1, 3, 1),
+        outputBlack: normalizeAdjustmentByte(settings.outputBlack, 0, 255, 0),
+        outputWhite: normalizeAdjustmentByte(settings.outputWhite, 0, 255, 255),
+      };
+    case 'curves':
+      return {
+        kind: settings.kind,
+        channel: normalizeAdjustmentChannel(settings.channel),
+        points: normalizeCurvePointsForMetadata(settings.points),
+        shadows: normalizeAdjustmentNumber(settings.shadows, -120, 120, 0),
+        midtones: normalizeAdjustmentNumber(settings.midtones, -120, 120, 0),
+        highlights: normalizeAdjustmentNumber(settings.highlights, -120, 120, 0),
+      };
+  }
+}
+
+function normalizeCurvePointsForMetadata(
+  points: Array<{ input: number; output: number }> | undefined,
+): Array<{ input: number; output: number }> {
+  const source = points?.length ? points : [{ input: 0, output: 0 }, { input: 255, output: 255 }];
+  return source
+    .map((point) => ({
+      input: normalizeAdjustmentByte(point.input, 0, 255, 0),
+      output: normalizeAdjustmentByte(point.output, 0, 255, 0),
+    }))
+    .sort((a, b) => a.input - b.input || a.output - b.output);
+}
+
+function normalizeAdjustmentChannel(channel: 'rgb' | 'red' | 'green' | 'blue'): 'rgb' | 'red' | 'green' | 'blue' {
+  return channel === 'red' || channel === 'green' || channel === 'blue' ? channel : 'rgb';
+}
+
+function normalizeAdjustmentPlanningBounds(bounds: AdjustmentLayerPlanningBounds | undefined): AdjustmentLayerPlanningBounds {
+  return {
+    x: normalizeFiniteAdjustmentNumber(bounds?.x, 0),
+    y: normalizeFiniteAdjustmentNumber(bounds?.y, 0),
+    width: Math.max(0, normalizeFiniteAdjustmentNumber(bounds?.width, 0)),
+    height: Math.max(0, normalizeFiniteAdjustmentNumber(bounds?.height, 0)),
+  };
+}
+
+function normalizeAdjustmentPresetLabel(label: string): string {
+  const normalized = label.trim().replace(/\s+/g, ' ');
+  return normalized.length > 0 ? normalized.slice(0, 64) : 'Adjustment Preset';
+}
+
+function labelAdjustmentWorkflowColorMode(colorMode: AdjustmentLayerWorkflowColorMode): string {
+  switch (colorMode) {
+    case 'rgb':
+      return 'RGB';
+    case 'cmyk':
+      return 'CMYK';
+    case 'lab':
+      return 'Lab';
+    case 'grayscale':
+      return 'Grayscale';
+    case 'indexed':
+      return 'Indexed color';
+  }
+}
+
+function normalizeAdjustmentByte(value: number, min: number, max: number, fallback: number): number {
+  return clampByte(normalizeAdjustmentNumber(value, min, max, fallback));
+}
+
+function normalizeAdjustmentNumber(value: number, min: number, max: number, fallback: number): number {
+  return clamp(normalizeFiniteAdjustmentNumber(value, fallback), min, max);
+}
+
+function normalizeFiniteAdjustmentNumber(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
 export function renderImageDocumentLayersToBitmap(doc: ImageDocument): LayerBitmap {
   const bitmap = createBitmap(doc.width, doc.height);
   const ctx = getCtx(bitmap);
   ctx.clearRect(0, 0, bitmap.width, bitmap.height);
+  let clippingBaseMask: LayerBitmap | null = null;
 
   for (const layer of doc.layers) {
-    if (!layer.visible) continue;
+    if (!isImageLayerEffectivelyVisible(layer, doc.layers)) continue;
+    if (layer.type === 'group') {
+      clippingBaseMask = renderGroupAlphaMask(layer, doc.layers, doc.width, doc.height);
+      continue;
+    }
     if (layer.type === 'adjustment' && layer.adjustment) {
+      if (layer.clippingMask) {
+        if (clippingBaseMask) {
+          applyAdjustmentLayerToBitmap(bitmap, layer, { clippingMask: clippingBaseMask });
+        }
+        continue;
+      }
       applyAdjustmentLayerToBitmap(bitmap, layer);
       continue;
     }
+    if (layer.clippingMask) {
+      if (clippingBaseMask) {
+        paintPixelLayer(ctx, layer, { clippingMask: clippingBaseMask, documentWidth: doc.width, documentHeight: doc.height });
+      }
+      continue;
+    }
     paintPixelLayer(ctx, layer);
+    const nextBaseMask = renderLayerAlphaMask(layer, doc.width, doc.height);
+    if (nextBaseMask) {
+      clippingBaseMask = nextBaseMask;
+    }
   }
 
   return bitmap;
 }
 
-export function applyAdjustmentLayerToBitmap(target: LayerBitmap, layer: ImageLayer): void {
+export function applyAdjustmentLayerToBitmap(
+  target: LayerBitmap,
+  layer: ImageLayer,
+  options: {
+    clippingMask?: LayerBitmap;
+  } = {},
+): void {
   if (!layer.adjustment) return;
   const source = getBitmapImageData(target);
-  const mask = layer.mask ? getBitmapImageData(layer.mask) : undefined;
+  const mask = getProcessedLayerMaskImageData(layer) ?? undefined;
+  const clippingMask = options.clippingMask ? getBitmapImageData(options.clippingMask) : undefined;
   const adjusted = applyAdjustmentToImageData(source, layer.adjustment, {
     opacity: layer.opacity,
     mask,
+    clippingMask,
   });
   putBitmapImageData(target, adjusted);
 }
@@ -109,6 +1533,7 @@ export function applyAdjustmentToImageData(
   options: {
     opacity?: number;
     mask?: ImageData;
+    clippingMask?: ImageData;
   } = {},
 ): ImageData {
   const output = cloneImageData(source);
@@ -117,6 +1542,10 @@ export function applyAdjustmentToImageData(
   const maskData = options.mask?.data;
   const maskWidth = options.mask?.width ?? 0;
   const maskHeight = options.mask?.height ?? 0;
+  const hasClippingMask = !!options.clippingMask;
+  const clippingMaskData = options.clippingMask?.data;
+  const clippingMaskWidth = options.clippingMask?.width ?? 0;
+  const clippingMaskHeight = options.clippingMask?.height ?? 0;
   const sourceWidth = source.width;
   const sourceHeight = source.height;
   const sourceData = source.data;
@@ -155,14 +1584,18 @@ export function applyAdjustmentToImageData(
         const gOut = lutG[gIn];
         const bOut = lutB[bIn];
 
-        let maskAlpha = 1;
-        if (hasMask && maskData) {
-          if (x >= 0 && y >= 0 && x < maskWidth && y < maskHeight) {
-            maskAlpha = maskData[(y * maskWidth + x) * 4 + 3] / 255;
-            if (maskAlpha < 0) maskAlpha = 0;
-            if (maskAlpha > 1) maskAlpha = 1;
-          }
-        }
+        const maskAlpha = readLayerMaskAlpha({
+          x,
+          y,
+          hasMask,
+          maskData,
+          maskWidth,
+          maskHeight,
+          hasClippingMask,
+          clippingMaskData,
+          clippingMaskWidth,
+          clippingMaskHeight,
+        });
 
         const mix = opacity * maskAlpha;
         if (mix >= 1) {
@@ -202,14 +1635,18 @@ export function applyAdjustmentToImageData(
         const gOut = adjusted[1];
         const bOut = adjusted[2];
 
-        let maskAlpha = 1;
-        if (hasMask && maskData) {
-          if (x >= 0 && y >= 0 && x < maskWidth && y < maskHeight) {
-            maskAlpha = maskData[(y * maskWidth + x) * 4 + 3] / 255;
-            if (maskAlpha < 0) maskAlpha = 0;
-            if (maskAlpha > 1) maskAlpha = 1;
-          }
-        }
+        const maskAlpha = readLayerMaskAlpha({
+          x,
+          y,
+          hasMask,
+          maskData,
+          maskWidth,
+          maskHeight,
+          hasClippingMask,
+          clippingMaskData,
+          clippingMaskWidth,
+          clippingMaskHeight,
+        });
 
         const mix = opacity * maskAlpha;
         if (mix >= 1) {
@@ -268,13 +1705,14 @@ function paintVectorLayerDirectly(
     ctx.globalCompositeOperation = toCanvasCompositeOperation(layer.blendMode);
 
     if (layer.mask) {
-      const maskWidth = layer.mask.width;
-      const maskHeight = layer.mask.height;
+      const processedMask = createProcessedLayerMaskBitmap(layer);
+      const maskWidth = processedMask?.width ?? layer.mask.width;
+      const maskHeight = processedMask?.height ?? layer.mask.height;
       const tempBitmap = createBitmap(maskWidth, maskHeight);
       const tempCtx = getCtx(tempBitmap);
       tempCtx.drawImage(cached.img, 0, 0, maskWidth, maskHeight);
       tempCtx.globalCompositeOperation = 'destination-in';
-      tempCtx.drawImage(layer.mask, 0, 0);
+      tempCtx.drawImage(processedMask ?? layer.mask, 0, 0);
       drawLayerBitmapTransformed(ctx, tempBitmap, layer);
     } else {
       drawLayerBitmapTransformed(ctx, cached.img, layer);
@@ -284,7 +1722,15 @@ function paintVectorLayerDirectly(
   }
 }
 
-function paintPixelLayer(ctx: OffscreenCanvasRenderingContext2D, layer: ImageLayer): void {
+function paintPixelLayer(
+  ctx: OffscreenCanvasRenderingContext2D,
+  layer: ImageLayer,
+  options: {
+    clippingMask?: LayerBitmap;
+    documentWidth?: number;
+    documentHeight?: number;
+  } = {},
+): void {
   if (!layer.bitmap) {
     if (layer.type === 'vector') {
       const svgSource = layer.vectorRecipe || layer.metadata?.originalSvgSource;
@@ -301,24 +1747,123 @@ function paintPixelLayer(ctx: OffscreenCanvasRenderingContext2D, layer: ImageLay
   ctx.save();
   ctx.globalAlpha = clamp01(layer.opacity);
   ctx.globalCompositeOperation = toCanvasCompositeOperation(layer.blendMode);
+  const source = styled
+    ? styled.bitmap
+    : hasLiveLayerMask(layer) ? composeLayerBitmapWithLiveMasks(layer) ?? layer.bitmap : layer.bitmap;
+  const offsetX = styled?.offsetX ?? 0;
+  const offsetY = styled?.offsetY ?? 0;
   if (styled) {
-    drawLayerBitmapTransformed(ctx, styled.bitmap, layer, styled.offsetX, styled.offsetY);
+    if (options.clippingMask && options.documentWidth && options.documentHeight) {
+      ctx.drawImage(composeLayerWithClippingMask(layer, source, options.clippingMask, options.documentWidth, options.documentHeight, offsetX, offsetY), 0, 0);
+    } else {
+      drawLayerBitmapTransformed(ctx, source, layer, offsetX, offsetY);
+    }
   } else {
-    drawLayerBitmapTransformed(ctx, layer.mask ? composeLayerWithMask(layer) : layer.bitmap, layer);
+    if (options.clippingMask && options.documentWidth && options.documentHeight) {
+      ctx.drawImage(composeLayerWithClippingMask(layer, source, options.clippingMask, options.documentWidth, options.documentHeight, offsetX, offsetY), 0, 0);
+    } else {
+      drawLayerBitmapTransformed(ctx, source, layer);
+    }
   }
   ctx.restore();
 }
 
-function composeLayerWithMask(layer: ImageLayer): LayerBitmap {
-  if (!layer.bitmap || !layer.mask) {
-    throw new Error('Cannot compose a layer mask without both a bitmap and mask.');
+function renderLayerAlphaMask(layer: ImageLayer, documentWidth: number, documentHeight: number): LayerBitmap | null {
+  if (!layer.bitmap) return null;
+  const mask = createBitmap(documentWidth, documentHeight);
+  const ctx = getCtx(mask);
+  paintLayerAlphaToMask(ctx, layer);
+  return mask;
+}
+
+function renderGroupAlphaMask(
+  group: ImageLayer,
+  layers: readonly ImageLayer[],
+  documentWidth: number,
+  documentHeight: number,
+): LayerBitmap | null {
+  const descendants = getImageLayerGroupDescendantLayers(layers, group.id)
+    .filter((layer) => layer.type !== 'group' && isImageLayerEffectivelyVisible(layer, layers));
+  if (descendants.length === 0) return null;
+
+  const mask = createBitmap(documentWidth, documentHeight);
+  const ctx = getCtx(mask);
+  let painted = false;
+  for (const layer of descendants) {
+    painted = paintLayerAlphaToMask(ctx, layer) || painted;
   }
-  const bitmap = createBitmap(layer.bitmap.width, layer.bitmap.height);
+  return painted ? mask : null;
+}
+
+function paintLayerAlphaToMask(
+  ctx: OffscreenCanvasRenderingContext2D,
+  layer: ImageLayer,
+): boolean {
+  if (!layer.bitmap) return false;
+  const styled = layer.effects?.some((effect) => effect.enabled) || layer.filters?.some((filter) => filter.enabled)
+    ? renderLayerWithEffects(layer)
+    : null;
+  const source = styled
+    ? styled.bitmap
+    : hasLiveLayerMask(layer) ? composeLayerBitmapWithLiveMasks(layer) ?? layer.bitmap : layer.bitmap;
+  ctx.save();
+  ctx.globalAlpha = clamp01(layer.opacity);
+  drawLayerBitmapTransformed(ctx, source, layer, styled?.offsetX ?? 0, styled?.offsetY ?? 0);
+  ctx.restore();
+  return true;
+}
+
+function composeLayerWithClippingMask(
+  layer: ImageLayer,
+  source: CanvasImageSource,
+  clippingMask: LayerBitmap,
+  documentWidth: number,
+  documentHeight: number,
+  offsetX = 0,
+  offsetY = 0,
+): LayerBitmap {
+  const bitmap = createBitmap(documentWidth, documentHeight);
   const ctx = getCtx(bitmap);
-  ctx.drawImage(layer.bitmap, 0, 0);
+  drawLayerBitmapTransformed(ctx, source, layer, offsetX, offsetY);
   ctx.globalCompositeOperation = 'destination-in';
-  ctx.drawImage(layer.mask, 0, 0);
+  ctx.drawImage(clippingMask, 0, 0);
   return bitmap;
+}
+
+export function composeLayerBitmapWithLiveMasks(layer: ImageLayer): LayerBitmap | null {
+  if (!layer.bitmap) return null;
+  const vectorMaskDescriptor = getLayerVectorMaskDescriptor(layer);
+  const hasVectorMask = Boolean(vectorMaskDescriptor?.enabled);
+  if (!layer.mask && !hasVectorMask) return layer.bitmap;
+
+  const output = createBitmap(layer.bitmap.width, layer.bitmap.height);
+  const rasterMasked = layer.mask
+    ? applyLayerMaskToImageData(getBitmapImageData(layer.bitmap), layer)
+    : cloneImageData(getBitmapImageData(layer.bitmap));
+
+  if (hasVectorMask) {
+    const vectorMask = rasterizeLayerVectorMask(layer);
+    applyMaskAlphaToImageData(rasterMasked, getBitmapImageData(vectorMask));
+  }
+
+  putBitmapImageData(output, rasterMasked);
+  return output;
+}
+
+function hasLiveLayerMask(layer: ImageLayer): boolean {
+  return Boolean(layer.mask || getLayerVectorMaskDescriptor(layer)?.enabled);
+}
+
+function applyMaskAlphaToImageData(imageData: ImageData, mask: ImageData): void {
+  for (let y = 0; y < imageData.height; y += 1) {
+    for (let x = 0; x < imageData.width; x += 1) {
+      const offset = (y * imageData.width + x) * 4;
+      const maskAlpha = x < mask.width && y < mask.height
+        ? mask.data[(y * mask.width + x) * 4 + 3] ?? 0
+        : 0;
+      imageData.data[offset + 3] = Math.round((imageData.data[offset + 3] * maskAlpha) / 255);
+    }
+  }
 }
 
 export function applyAdjustmentToPixel(pixel: Rgba, adjustment: ImageAdjustmentSettings): Rgba {
@@ -534,11 +2079,59 @@ export function hueToRgb(p: number, q: number, t: number): number {
 }
 
 export function cloneImageData(imageData: ImageData): ImageData {
+  const data = new Uint8ClampedArray(imageData.data);
+  if (typeof ImageData !== 'undefined') {
+    return new ImageData(data, imageData.width, imageData.height);
+  }
   return {
     width: imageData.width,
     height: imageData.height,
-    data: new Uint8ClampedArray(imageData.data),
+    data,
   } as ImageData;
+}
+
+function readLayerMaskAlpha({
+  x,
+  y,
+  hasMask,
+  maskData,
+  maskWidth,
+  maskHeight,
+  hasClippingMask,
+  clippingMaskData,
+  clippingMaskWidth,
+  clippingMaskHeight,
+}: {
+  x: number;
+  y: number;
+  hasMask: boolean;
+  maskData?: Uint8ClampedArray;
+  maskWidth: number;
+  maskHeight: number;
+  hasClippingMask: boolean;
+  clippingMaskData?: Uint8ClampedArray;
+  clippingMaskWidth: number;
+  clippingMaskHeight: number;
+}): number {
+  let maskAlpha = 1;
+  if (hasMask && maskData) {
+    maskAlpha *= readAlpha(maskData, maskWidth, maskHeight, x, y);
+  }
+  if (hasClippingMask && clippingMaskData) {
+    maskAlpha *= readAlpha(clippingMaskData, clippingMaskWidth, clippingMaskHeight, x, y);
+  }
+  return clamp01(maskAlpha);
+}
+
+function readAlpha(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+): number {
+  if (x < 0 || y < 0 || x >= width || y >= height) return 0;
+  return data[(y * width + x) * 4 + 3] / 255;
 }
 
 function toCanvasCompositeOperation(blendMode: ImageLayer['blendMode']): GlobalCompositeOperation {

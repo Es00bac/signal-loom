@@ -27,6 +27,7 @@ export type PaperTool =
   | 'triangle'
   | 'pentagon'
   | 'hexagon'
+  | 'eyedropper'
   | 'gutterKnife';
 export type PaperFrameKind = 'text' | 'image' | 'document' | 'speechBubble' | 'thoughtBubble' | 'caption' | 'panel' | 'shape';
 export type PaperShapeKind = 'polygon' | 'line' | 'ellipse' | 'triangle' | 'pentagon' | 'hexagon';

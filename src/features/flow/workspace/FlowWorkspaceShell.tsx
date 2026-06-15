@@ -8,8 +8,12 @@ import {
   type OnEdgesChange,
   type OnNodesChange,
   ReactFlow,
+  useReactFlow,
+  useStoreApi,
 } from '@xyflow/react';
 import type { ComponentType, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { computePinchViewport, pinchSampleFromPoints, type PinchSample } from './flowPinchZoom';
 import { AlertTriangle, Braces, Bug, Loader2, Sparkles, X } from 'lucide-react';
 import { LibrarySearchDialog } from '../../../components/Common/LibrarySearchDialog';
 import { ErrorBoundary } from '../../../components/Recovery/ErrorBoundary';
@@ -78,8 +82,83 @@ export function FlowWorkspaceShell({
   onToggleDiagnostics,
   selectedFlowNodeCount,
 }: FlowWorkspaceShellProps) {
+  const reactFlow = useReactFlow();
+  const store = useStoreApi();
+  const pinchWrapperRef = useRef<HTMLDivElement>(null);
+  const pinchSampleRef = useRef<PinchSample | null>(null);
+  const [isPinching, setIsPinching] = useState(false);
+
+  // Two-finger pinch-zoom that works ANYWHERE on the canvas, including over nodes.
+  // React Flow's built-in pinch is pre-empted by node dragging when a finger lands on a
+  // node, so we intercept the gesture in the capture phase (before any node/pane handler
+  // can claim it) and drive the viewport ourselves. Only engages with 2+ touches that
+  // start inside the canvas, so single-finger pan/drag and overlay panels are untouched.
+  useEffect(() => {
+    const wrapper = pinchWrapperRef.current;
+    if (!wrapper) return undefined;
+
+    const sample = (touches: TouchList): PinchSample | null => {
+      if (touches.length < 2) return null;
+      const rect = wrapper.getBoundingClientRect();
+      const a = touches[0];
+      const b = touches[1];
+      return pinchSampleFromPoints(
+        a.clientX - rect.left,
+        a.clientY - rect.top,
+        b.clientX - rect.left,
+        b.clientY - rect.top,
+      );
+    };
+
+    const startedInsideCanvas = (target: EventTarget | null) =>
+      target instanceof Element && Boolean(target.closest('.react-flow'));
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length < 2 || !startedInsideCanvas(event.target)) return;
+      pinchSampleRef.current = sample(event.touches);
+      setIsPinching(true);
+      // Claim the gesture before the node-drag/pane handlers downstream can.
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (event.touches.length < 2 || !pinchSampleRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const next = sample(event.touches);
+      if (!next) return;
+      const { minZoom, maxZoom } = store.getState();
+      reactFlow.setViewport(
+        computePinchViewport(reactFlow.getViewport(), pinchSampleRef.current, next, { minZoom, maxZoom }),
+      );
+      pinchSampleRef.current = next;
+    };
+
+    const onTouchEnd = (event: TouchEvent) => {
+      if (event.touches.length >= 2) {
+        // A finger lifted but two remain — resample so the next frame doesn't jump.
+        pinchSampleRef.current = sample(event.touches);
+        return;
+      }
+      pinchSampleRef.current = null;
+      setIsPinching(false);
+    };
+
+    wrapper.addEventListener('touchstart', onTouchStart, { capture: true, passive: false });
+    wrapper.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
+    wrapper.addEventListener('touchend', onTouchEnd, { capture: true });
+    wrapper.addEventListener('touchcancel', onTouchEnd, { capture: true });
+    return () => {
+      wrapper.removeEventListener('touchstart', onTouchStart, { capture: true });
+      wrapper.removeEventListener('touchmove', onTouchMove, { capture: true });
+      wrapper.removeEventListener('touchend', onTouchEnd, { capture: true });
+      wrapper.removeEventListener('touchcancel', onTouchEnd, { capture: true });
+    };
+  }, [reactFlow, store]);
+
   return (
-    <div className="absolute inset-0" data-testid="flow-workspace-shell">
+    <div className="absolute inset-0" data-testid="flow-workspace-shell" ref={pinchWrapperRef}>
       <ErrorBoundary className="absolute inset-0" level="canvas" resetKeys={[flowRecoveryKey]} title="Flow Canvas">
         <ReactFlow<AppNode, Edge>
           className="bg-[var(--sl-bg)]"
@@ -89,7 +168,7 @@ export function FlowWorkspaceShell({
           nodeTypes={nodeTypes}
           nodes={nodes}
           nodesConnectable={!flowOrganizeJob}
-          nodesDraggable={!flowOrganizeJob}
+          nodesDraggable={!flowOrganizeJob && !isPinching}
           onConnect={onConnect}
           onConnectEnd={onConnectEnd}
           onConnectStart={onConnectStart}
@@ -100,7 +179,7 @@ export function FlowWorkspaceShell({
           onNodesChange={onNodesChange}
           onPaneClick={onPaneClick}
           onPaneContextMenu={onPaneContextMenu}
-          panOnDrag={!flowOrganizeJob}
+          panOnDrag={!flowOrganizeJob && !isPinching}
           proOptions={{ hideAttribution: true }}
           zoomOnPinch={!flowOrganizeJob}
           zoomOnScroll={!flowOrganizeJob}

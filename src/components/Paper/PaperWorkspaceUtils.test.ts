@@ -1,16 +1,50 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { addFrameToPaperPage, createDefaultPaperDocument } from '../../lib/paperDocument';
 import type { PaperFrame } from '../../types/paper';
 import {
   bubbleHandlePatch,
+  buildPaperEyedropperFrameColorPatch,
   buildPaperPdfRasterExportSettings,
   deletePaperFrameVertexPatch,
+  resolvePaperEyedropperPixelColor,
   exportPaperPdfDocument,
   insertPaperFrameVertexPatch,
   movePaperFrameVertexPatch,
+  resolvePaperEyedropperFrameColor,
   shouldShowPaperVertexHandles,
+  samplePixelColorFromCanvas,
   verticesForEditableFrame,
 } from './PaperWorkspaceUtils';
+
+type DrawImageArgs = Parameters<CanvasRenderingContext2D['drawImage']>;
+
+let pixelDrawArgs: DrawImageArgs | undefined;
+
+const pixelContext = {
+  drawImage: vi.fn((...args: DrawImageArgs) => {
+    pixelDrawArgs = args;
+  }),
+  getImageData: vi.fn(() => {
+    if (pixelDrawArgs?.[1] === 1 && pixelDrawArgs?.[2] === 2) {
+      return { data: new Uint8ClampedArray([18, 52, 86, 255]) };
+    }
+    return { data: new Uint8ClampedArray([18, 52, 86, 0]) };
+  }),
+};
+
+class FakeSampleCanvas {
+  width: number;
+  height: number;
+
+  constructor(width: number, height: number) {
+    this.width = width;
+    this.height = height;
+  }
+
+  getContext() {
+    return pixelContext;
+  }
+}
 
 function bubbleFrame(overrides: Partial<PaperFrame> = {}): PaperFrame {
   return {
@@ -82,6 +116,81 @@ describe('PaperWorkspaceUtils bubble handles', () => {
       tailYPercent: 92,
     }), 'curve', { xMm: 44, yMm: 48 })).toEqual({
       bubbleTailCurvePercent: 100,
+    });
+  });
+});
+
+describe('PaperWorkspaceUtils eyedropper', () => {
+  beforeEach(() => {
+    globalThis.OffscreenCanvas = FakeSampleCanvas as unknown as typeof OffscreenCanvas;
+    pixelDrawArgs = undefined;
+    pixelContext.drawImage.mockClear();
+    pixelContext.getImageData.mockClear();
+  });
+
+  it('samples the most visible editable color from a Paper frame', () => {
+    expect(resolvePaperEyedropperFrameColor(bubbleFrame({
+      kind: 'text',
+      typography: { ...bubbleFrame().typography, color: '#123456' },
+    }))).toBe('#123456');
+
+    expect(resolvePaperEyedropperFrameColor(bubbleFrame({
+      fillColor: '#abcdef',
+      strokeColor: '#654321',
+    }))).toBe('#abcdef');
+
+    expect(resolvePaperEyedropperFrameColor(bubbleFrame({
+      kind: 'shape',
+      shapeKind: 'line',
+      fillColor: 'transparent',
+      strokeColor: '#654321',
+    }))).toBe('#654321');
+  });
+
+  it('applies sampled colors to the selected frame color slot that matches its kind', () => {
+    expect(buildPaperEyedropperFrameColorPatch(bubbleFrame({ kind: 'text' }), '#abcdef')).toEqual({
+      typography: { color: '#abcdef' },
+    });
+
+    expect(buildPaperEyedropperFrameColorPatch(bubbleFrame({ kind: 'shape', shapeKind: 'line' }), '#abcdef')).toEqual({
+      strokeColor: '#abcdef',
+    });
+
+    expect(buildPaperEyedropperFrameColorPatch(bubbleFrame({ kind: 'panel' }), '#abcdef')).toEqual({
+      fillColor: '#abcdef',
+    });
+  });
+
+  it('samples pixels from an image/page canvas source', () => {
+    const bitmap = { width: 16, height: 16 } as unknown as (CanvasImageSource & { width: number; height: number });
+
+    const sample = samplePixelColorFromCanvas({
+      bitmap,
+      x: 1.7,
+      y: 2.4,
+    });
+
+    expect(sample).toEqual({ color: '#123456' });
+    expect(pixelContext.drawImage).toHaveBeenCalledWith(bitmap, 1, 2, 1, 1, 0, 0, 1, 1);
+  });
+
+  it('returns a clear unsupported reason when no Paper pixel source is available', () => {
+    const sample = resolvePaperEyedropperPixelColor();
+    expect(sample).toEqual({ reason: 'No image/page pixel source is available for Paper eyedropper sampling.' });
+  });
+
+  it('returns a resolved color for image- and page-sourced Paper sampling requests', () => {
+    const bitmap = { width: 16, height: 16 } as unknown as (CanvasImageSource & { width: number; height: number });
+
+    expect(resolvePaperEyedropperPixelColor({ kind: 'image', bitmap, x: 1.7, y: 2.2 })).toEqual({
+      color: '#123456',
+      sourceKind: 'image',
+      sourceLabel: 'Paper image',
+    });
+    expect(resolvePaperEyedropperPixelColor({ kind: 'page', bitmap, x: 1.7, y: 2.2 })).toEqual({
+      color: '#123456',
+      sourceKind: 'page',
+      sourceLabel: 'Paper page',
     });
   });
 });

@@ -1,5 +1,13 @@
 import type { BlendMode } from '../../../types/imageEditor';
-import type { GeneratedQuickActionDefinition, PhotoshopQuickAction } from './types';
+import type {
+  GeneratedQuickActionDefinition,
+  PhotoshopQuickAction,
+  PhotoshopQuickActionCatalogSummary,
+  PhotoshopQuickActionCategory,
+  PhotoshopQuickActionCapabilityDescriptor,
+  PhotoshopQuickActionCapabilityInput,
+  PhotoshopQuickActionCapabilityOutput,
+} from './types';
 import { pascalCase, titleCase, titleLabel } from './utils';
 
 export const BASE_PHOTOSHOP_QUICK_ACTIONS: PhotoshopQuickAction[] = [
@@ -10,6 +18,10 @@ export const BASE_PHOTOSHOP_QUICK_ACTIONS: PhotoshopQuickAction[] = [
   { id: 'featherSelection', label: 'Feather Selection', group: 'Selection' },
   { id: 'borderSelection', label: 'Border Selection', group: 'Selection' },
   { id: 'smoothSelection', label: 'Smooth Selection', group: 'Selection' },
+  { id: 'nudgeSelectionLeft', label: 'Nudge Selection Left 1 px', group: 'Selection' },
+  { id: 'nudgeSelectionRight', label: 'Nudge Selection Right 1 px', group: 'Selection' },
+  { id: 'nudgeSelectionUp', label: 'Nudge Selection Up 1 px', group: 'Selection' },
+  { id: 'nudgeSelectionDown', label: 'Nudge Selection Down 1 px', group: 'Selection' },
   { id: 'clearOutsideSelection', label: 'Clear Outside Selection', group: 'Pixels' },
   { id: 'layerViaCopy', label: 'Layer via Copy', group: 'Layer' },
   { id: 'layerViaCut', label: 'Layer via Cut', group: 'Layer' },
@@ -73,6 +85,7 @@ export const BASE_PHOTOSHOP_QUICK_ACTIONS: PhotoshopQuickAction[] = [
   { id: 'fitLayerInsideCanvas', label: 'Fit Layer Inside Canvas', group: 'Transform' },
   { id: 'fillLayerToCanvas', label: 'Fill Layer to Canvas', group: 'Transform' },
   { id: 'rasterizeLayerToCanvas', label: 'Rasterize Layer to Canvas', group: 'Layer' },
+  { id: 'localContentAwareFillPatch', label: 'Local Content-Aware Fill / Patch', group: 'Pixels' },
 ] as const;
 
 function buildSelectionMorphologyActions(): GeneratedQuickActionDefinition[] {
@@ -261,3 +274,315 @@ export const PHOTOSHOP_QUICK_ACTIONS: PhotoshopQuickAction[] = [
   ...BASE_PHOTOSHOP_QUICK_ACTIONS,
   ...GENERATED_PHOTOSHOP_QUICK_ACTIONS,
 ];
+
+type QuickActionCapabilityShape = Pick<
+  PhotoshopQuickActionCapabilityDescriptor,
+  'input' | 'output' | 'mutatesDocument' | 'implementation' | 'warning'
+>;
+
+const DOCUMENT_INPUT = ['document'] as const;
+const ACTIVE_LAYER_INPUT = ['document', 'activeLayer'] as const;
+const EDITABLE_PIXELS_INPUT = ['document', 'editablePixels'] as const;
+const MOVABLE_LAYER_INPUT = ['document', 'movableLayer'] as const;
+const SELECTION_INPUT = ['selection'] as const;
+const ACTIVE_LAYER_SELECTION_INPUT = ['document', 'activeLayer', 'selection'] as const;
+const EDITABLE_PIXELS_SELECTION_INPUT = ['document', 'editablePixels', 'selection'] as const;
+
+const QUICK_ACTION_CATEGORIES: readonly PhotoshopQuickActionCategory[] = [
+  'Selection',
+  'Pixels',
+  'Layer',
+  'Transform',
+  'Canvas',
+];
+
+const QUICK_ACTION_INPUTS: readonly PhotoshopQuickActionCapabilityInput[] = [
+  'document',
+  'activeLayer',
+  'editablePixels',
+  'movableLayer',
+  'selection',
+];
+
+const QUICK_ACTION_OUTPUTS: readonly PhotoshopQuickActionCapabilityOutput[] = [
+  'selection',
+  'paint',
+  'layer',
+  'transform',
+  'document',
+];
+
+const SELECTION_OUTPUT = {
+  output: 'selection',
+  mutatesDocument: false,
+} as const;
+
+const PAINT_OUTPUT = {
+  output: 'paint',
+  mutatesDocument: true,
+} as const;
+
+const LAYER_OUTPUT = {
+  output: 'layer',
+  mutatesDocument: true,
+} as const;
+
+const TRANSFORM_OUTPUT = {
+  output: 'transform',
+  mutatesDocument: true,
+} as const;
+
+const DOCUMENT_OUTPUT = {
+  output: 'document',
+  mutatesDocument: true,
+} as const;
+
+const DETERMINISTIC_IMPLEMENTATION = {
+  implementation: 'local-deterministic',
+  warning: null,
+} as const;
+
+const LOCAL_CONTENT_AWARE_FILL_WARNING =
+  'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.';
+
+const BASE_QUICK_ACTION_CAPABILITY_BY_ID: Record<string, QuickActionCapabilityShape> = {
+  selectLayerBounds: capability(ACTIVE_LAYER_INPUT, SELECTION_OUTPUT),
+  selectLayerOpaquePixels: capability(ACTIVE_LAYER_INPUT, SELECTION_OUTPUT),
+  growSelection: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  shrinkSelection: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  featherSelection: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  borderSelection: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  smoothSelection: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  nudgeSelectionLeft: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  nudgeSelectionRight: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  nudgeSelectionUp: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  nudgeSelectionDown: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  clearOutsideSelection: capability(EDITABLE_PIXELS_SELECTION_INPUT, PAINT_OUTPUT),
+  layerViaCopy: capability(ACTIVE_LAYER_SELECTION_INPUT, LAYER_OUTPUT),
+  layerViaCut: capability(EDITABLE_PIXELS_SELECTION_INPUT, LAYER_OUTPUT),
+  cropLayerToSelection: capability(EDITABLE_PIXELS_SELECTION_INPUT, LAYER_OUTPUT),
+  trimTransparentLayer: capability(EDITABLE_PIXELS_INPUT, LAYER_OUTPUT),
+  flipLayerHorizontal: capability(EDITABLE_PIXELS_INPUT, LAYER_OUTPUT),
+  flipLayerVertical: capability(EDITABLE_PIXELS_INPUT, LAYER_OUTPUT),
+  rotateLayer90Clockwise: capability(EDITABLE_PIXELS_INPUT, LAYER_OUTPUT),
+  rotateLayer90CounterClockwise: capability(EDITABLE_PIXELS_INPUT, LAYER_OUTPUT),
+  centerLayer: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  fitLayerToCanvas: capability(EDITABLE_PIXELS_INPUT, LAYER_OUTPUT),
+  resetLayerPosition: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  trimCanvasToVisible: capability(DOCUMENT_INPUT, DOCUMENT_OUTPUT),
+  selectCanvas: capability(DOCUMENT_INPUT, SELECTION_OUTPUT),
+  selectLayerTransparentPixels: capability(ACTIVE_LAYER_INPUT, SELECTION_OUTPUT),
+  selectSelectionBoundingBox: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  growSelectionLarge: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  shrinkSelectionLarge: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  featherSelectionLarge: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  borderSelectionLarge: capability(SELECTION_INPUT, SELECTION_OUTPUT),
+  clearSelectedPixels: capability(EDITABLE_PIXELS_SELECTION_INPUT, PAINT_OUTPUT),
+  duplicateLayer: capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT),
+  moveLayerToFront: capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT),
+  moveLayerToBack: capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT),
+  nudgeLayerLeft: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  nudgeLayerRight: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  nudgeLayerUp: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  nudgeLayerDown: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  nudgeLayerLeftLarge: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  nudgeLayerRightLarge: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  nudgeLayerUpLarge: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  nudgeLayerDownLarge: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  alignLayerLeft: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  alignLayerRight: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  alignLayerTop: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  alignLayerBottom: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  centerLayerHorizontal: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  centerLayerVertical: capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT),
+  fitLayerWidthToCanvas: capability(EDITABLE_PIXELS_INPUT, LAYER_OUTPUT),
+  fitLayerHeightToCanvas: capability(EDITABLE_PIXELS_INPUT, LAYER_OUTPUT),
+  invertLayerColors: capability(EDITABLE_PIXELS_INPUT, PAINT_OUTPUT),
+  desaturateLayer: capability(EDITABLE_PIXELS_INPUT, PAINT_OUTPUT),
+  resetLayerOpacity: capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT),
+  selectTopHalf: capability(DOCUMENT_INPUT, SELECTION_OUTPUT),
+  selectBottomHalf: capability(DOCUMENT_INPUT, SELECTION_OUTPUT),
+  selectLeftHalf: capability(DOCUMENT_INPUT, SELECTION_OUTPUT),
+  selectRightHalf: capability(DOCUMENT_INPUT, SELECTION_OUTPUT),
+  selectCenterSquare: capability(DOCUMENT_INPUT, SELECTION_OUTPUT),
+  selectHorizontalCenterBand: capability(DOCUMENT_INPUT, SELECTION_OUTPUT),
+  selectVerticalCenterBand: capability(DOCUMENT_INPUT, SELECTION_OUTPUT),
+  setLayerOpacity25: capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT),
+  setLayerOpacity50: capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT),
+  setLayerOpacity75: capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT),
+  setLayerBlendNormal: capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT),
+  setLayerBlendMultiply: capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT),
+  setLayerBlendScreen: capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT),
+  setLayerBlendOverlay: capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT),
+  rotateLayer180: capability(EDITABLE_PIXELS_INPUT, LAYER_OUTPUT),
+  raiseLayerOneStep: capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT),
+  lowerLayerOneStep: capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT),
+  fitLayerInsideCanvas: capability(EDITABLE_PIXELS_INPUT, LAYER_OUTPUT),
+  fillLayerToCanvas: capability(EDITABLE_PIXELS_INPUT, LAYER_OUTPUT),
+  rasterizeLayerToCanvas: capability(EDITABLE_PIXELS_INPUT, LAYER_OUTPUT),
+  localContentAwareFillPatch: {
+    ...capability(EDITABLE_PIXELS_INPUT, PAINT_OUTPUT),
+    implementation: 'local-approximation',
+    warning: LOCAL_CONTENT_AWARE_FILL_WARNING,
+  },
+};
+
+export const PHOTOSHOP_QUICK_ACTION_CAPABILITY_DESCRIPTORS: readonly PhotoshopQuickActionCapabilityDescriptor[] =
+  Object.freeze(PHOTOSHOP_QUICK_ACTIONS.map(describePhotoshopQuickActionCapability));
+
+const quickActionCapabilityDescriptorById = new Map(
+  PHOTOSHOP_QUICK_ACTION_CAPABILITY_DESCRIPTORS.map((descriptor) => [descriptor.id, descriptor]),
+);
+
+export const PHOTOSHOP_QUICK_ACTION_CATALOG_SUMMARY: PhotoshopQuickActionCatalogSummary =
+  buildPhotoshopQuickActionCatalogSummary(PHOTOSHOP_QUICK_ACTION_CAPABILITY_DESCRIPTORS);
+
+export function listPhotoshopQuickActionCapabilityDescriptors(): readonly PhotoshopQuickActionCapabilityDescriptor[] {
+  return PHOTOSHOP_QUICK_ACTION_CAPABILITY_DESCRIPTORS;
+}
+
+export function getPhotoshopQuickActionCapabilityDescriptor(
+  actionId: string,
+): PhotoshopQuickActionCapabilityDescriptor | null {
+  return quickActionCapabilityDescriptorById.get(actionId) ?? null;
+}
+
+export function summarizePhotoshopQuickActionCatalog(): PhotoshopQuickActionCatalogSummary {
+  return PHOTOSHOP_QUICK_ACTION_CATALOG_SUMMARY;
+}
+
+function describePhotoshopQuickActionCapability(
+  action: PhotoshopQuickAction,
+): PhotoshopQuickActionCapabilityDescriptor {
+  const generatedAction = generatedQuickActionById.get(action.id);
+  const shape = generatedAction
+    ? getGeneratedQuickActionCapability(generatedAction)
+    : BASE_QUICK_ACTION_CAPABILITY_BY_ID[action.id] ?? getFallbackQuickActionCapability(action);
+
+  return Object.freeze({
+    id: action.id,
+    label: action.label,
+    category: action.group,
+    ...shape,
+    undoable: true,
+  });
+}
+
+function buildPhotoshopQuickActionCatalogSummary(
+  descriptors: readonly PhotoshopQuickActionCapabilityDescriptor[],
+): PhotoshopQuickActionCatalogSummary {
+  const byCategory = createCategoryCounts();
+  const byInput = createInputCounts();
+  const byOutput = createOutputCounts();
+  const undoable = { undoable: 0, notUndoable: 0 };
+  const mutatesDocument = { mutating: 0, nonMutating: 0 };
+
+  for (const descriptor of descriptors) {
+    byCategory[descriptor.category] += 1;
+    byOutput[descriptor.output] += 1;
+    for (const input of descriptor.input) {
+      byInput[input] += 1;
+    }
+    if (descriptor.undoable) {
+      undoable.undoable += 1;
+    } else {
+      undoable.notUndoable += 1;
+    }
+    if (descriptor.mutatesDocument) {
+      mutatesDocument.mutating += 1;
+    } else {
+      mutatesDocument.nonMutating += 1;
+    }
+  }
+
+  return {
+    total: descriptors.length,
+    byCategory,
+    byInput,
+    byOutput,
+    undoable,
+    mutatesDocument,
+    warnings: descriptors
+      .filter((descriptor) => descriptor.warning)
+      .map((descriptor) => ({
+        id: descriptor.id,
+        label: descriptor.label,
+        warning: descriptor.warning ?? '',
+      })),
+  };
+}
+
+function getGeneratedQuickActionCapability(
+  action: GeneratedQuickActionDefinition,
+): QuickActionCapabilityShape {
+  switch (action.kind) {
+    case 'selectionMorphology':
+      return capability(SELECTION_INPUT, SELECTION_OUTPUT);
+    case 'selectionGrid':
+    case 'selectionEdge':
+    case 'selectionInset':
+    case 'selectionBorderRing':
+      return capability(DOCUMENT_INPUT, SELECTION_OUTPUT);
+    case 'layerOpacity':
+    case 'layerBlend':
+      return capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT);
+    case 'nudge':
+      return capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT);
+    case 'layerScale':
+      return capability(EDITABLE_PIXELS_INPUT, LAYER_OUTPUT);
+    case 'brightness':
+    case 'pixelAlpha':
+      return capability(EDITABLE_PIXELS_INPUT, PAINT_OUTPUT);
+  }
+}
+
+function getFallbackQuickActionCapability(action: PhotoshopQuickAction): QuickActionCapabilityShape {
+  switch (action.group) {
+    case 'Selection':
+      return capability(DOCUMENT_INPUT, SELECTION_OUTPUT);
+    case 'Pixels':
+      return capability(EDITABLE_PIXELS_INPUT, PAINT_OUTPUT);
+    case 'Layer':
+      return capability(ACTIVE_LAYER_INPUT, LAYER_OUTPUT);
+    case 'Transform':
+      return capability(MOVABLE_LAYER_INPUT, TRANSFORM_OUTPUT);
+    case 'Canvas':
+      return capability(DOCUMENT_INPUT, DOCUMENT_OUTPUT);
+  }
+}
+
+function createCategoryCounts(): Record<PhotoshopQuickActionCategory, number> {
+  return QUICK_ACTION_CATEGORIES.reduce(
+    (counts, category) => ({ ...counts, [category]: 0 }),
+    {} as Record<PhotoshopQuickActionCategory, number>,
+  );
+}
+
+function createInputCounts(): Record<PhotoshopQuickActionCapabilityInput, number> {
+  return QUICK_ACTION_INPUTS.reduce(
+    (counts, input) => ({ ...counts, [input]: 0 }),
+    {} as Record<PhotoshopQuickActionCapabilityInput, number>,
+  );
+}
+
+function createOutputCounts(): Record<PhotoshopQuickActionCapabilityOutput, number> {
+  return QUICK_ACTION_OUTPUTS.reduce(
+    (counts, output) => ({ ...counts, [output]: 0 }),
+    {} as Record<PhotoshopQuickActionCapabilityOutput, number>,
+  );
+}
+
+function capability(
+  input: readonly PhotoshopQuickActionCapabilityInput[],
+  outputShape: {
+    readonly output: PhotoshopQuickActionCapabilityOutput;
+    readonly mutatesDocument: boolean;
+  },
+): QuickActionCapabilityShape {
+  return {
+    input,
+    output: outputShape.output,
+    mutatesDocument: outputShape.mutatesDocument,
+    ...DETERMINISTIC_IMPLEMENTATION,
+  };
+}

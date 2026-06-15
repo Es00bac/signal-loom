@@ -357,6 +357,51 @@ describe('source bin live workspace sync', () => {
     });
   });
 
+  it('sends blob-backed generated video bytes through the native scratch bridge without re-fetching the renderer blob url', async () => {
+    const materializeSourceAsset = vi.fn().mockResolvedValue({
+      item: {
+        id: 'direct-video-1',
+        label: 'composition result.mp4',
+        kind: 'video',
+        mimeType: 'video/mp4',
+        assetUrl: 'signal-loom-asset://asset/direct-video-1',
+        nativeFilePath: '/project/project.signal-loom-scratch/direct-video-1-composition-result.mp4',
+        scratchFileName: 'direct-video-1-composition-result.mp4',
+        createdAt: 11,
+      },
+    });
+    const fetchMock = vi.fn();
+    const blob = new Blob([new Uint8Array([0, 1, 2, 3])], { type: 'video/mp4' });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('window', {
+      signalLoomNative: {
+        materializeSourceAsset,
+      },
+    });
+
+    await useSourceBinStore.getState().addAssetItem({
+      id: 'direct-video-1',
+      label: 'composition result.mp4',
+      kind: 'video',
+      mimeType: 'video/mp4',
+      dataUrl: 'blob:file:///rendered-video-preview',
+      blob,
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(materializeSourceAsset).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'direct-video-1',
+      kind: 'video',
+      mimeType: 'video/mp4',
+      dataUrl: 'blob:file:///rendered-video-preview',
+      binaryData: expect.any(Uint8Array),
+    }));
+    const materializeRequest = materializeSourceAsset.mock.calls[0]?.[0];
+    expect(materializeRequest.binaryData).toBeInstanceOf(Uint8Array);
+    expect(Array.from(materializeRequest.binaryData)).toEqual([0, 1, 2, 3]);
+    expect(mocks.saveImportedAsset).not.toHaveBeenCalled();
+  });
+
   it('broadcasts Flow-generated connected media after source-library ingestion', async () => {
     await useSourceBinStore.getState().ingestConnectedItems([
       {

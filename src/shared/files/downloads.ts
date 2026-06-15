@@ -1,4 +1,6 @@
 import { inferDownloadExtension } from '../../lib/mediaFormatRegistry';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
 
 export interface DownloadRuntime {
   document?: Document;
@@ -21,6 +23,33 @@ export function downloadBlob(
   fileName: string,
   runtime: DownloadRuntime = {},
 ): void {
+  if (Capacitor.isNativePlatform()) {
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      try {
+        const base64data = reader.result as string;
+        const base64 = base64data.split(',')[1];
+        
+        // Request permissions if needed
+        const perm = await Filesystem.checkPermissions();
+        if (perm.publicStorage !== 'granted') {
+          await Filesystem.requestPermissions();
+        }
+
+        const result = await Filesystem.writeFile({
+          path: fileName,
+          data: base64,
+          directory: Directory.Documents,
+        });
+        console.log(`[Capacitor] Saved file successfully to: ${result.uri}`);
+      } catch (err) {
+        console.error('[Capacitor] Failed to save file:', err);
+      }
+    };
+    reader.readAsDataURL(blob);
+    return;
+  }
+
   const { document, setTimeout, url } = resolveRuntime(runtime);
   const objectUrl = url.createObjectURL(blob);
   triggerHrefDownload(objectUrl, fileName, { document });

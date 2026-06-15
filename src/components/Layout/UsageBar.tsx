@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { Activity, RefreshCw, Wallet } from 'lucide-react';
+import { Activity, RefreshCw, Wallet, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   collectActualUsageRollup,
   estimateCanvasRunCosts,
@@ -11,8 +11,37 @@ import { useProjectUsageStore } from '../../store/projectUsageStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import type { ProjectUsageLedgerBucket, ProjectUsageLedgerSummary } from '../../lib/projectUsageLedger';
 import type { ProviderBalance } from '../../lib/providerBalance';
+import type { WorkspaceView } from '../../types/flow';
 
-export function UsageBar() {
+interface UsageBarProps {
+  workspaceView?: WorkspaceView;
+  placement?: UsageBarPlacement;
+}
+
+type UsageBarPlacement = 'overlay' | 'topbar' | 'mobile-drawer';
+
+const flowUsageBarPositionClassName = 'pointer-events-none absolute left-1/2 top-20 z-[60] -translate-x-1/2';
+const topbarUsageBarPositionClassName = 'pointer-events-auto relative min-w-0 shrink-0';
+const mobileDrawerUsageBarPositionClassName = 'relative min-w-0';
+
+export function getUsageBarPositionClassName(
+  workspaceView: WorkspaceView = 'flow',
+  placement?: UsageBarPlacement,
+): string {
+  const resolvedPlacement = placement ?? 'topbar';
+  if (resolvedPlacement === 'overlay') {
+    return flowUsageBarPositionClassName;
+  }
+
+  if (resolvedPlacement === 'mobile-drawer') {
+    return mobileDrawerUsageBarPositionClassName;
+  }
+
+  void workspaceView;
+  return topbarUsageBarPositionClassName;
+}
+
+export function UsageBar({ placement, workspaceView = 'flow' }: UsageBarProps) {
   const nodes = useFlowStore((state) => state.nodes);
   const edges = useFlowStore((state) => state.edges);
   const apiKeys = useSettingsStore((state) => state.apiKeys);
@@ -22,7 +51,12 @@ export function UsageBar() {
   const balances = useProjectUsageStore((state) => state.balances);
   const balancesLoading = useProjectUsageStore((state) => state.balancesLoading);
   const refreshBalances = useProjectUsageStore((state) => state.refreshBalances);
+
+  const [isMinimized, setIsMinimized] = useState(() => {
+    return localStorage.getItem('signal-loom-usage-bar-minimized') === 'true';
+  });
   const [detailsOpen, setDetailsOpen] = useState(false);
+
   const settings = useMemo(
     () => ({
       apiKeys,
@@ -38,10 +72,89 @@ export function UsageBar() {
   );
   const actualUsage = useMemo(() => collectActualUsageRollup(nodes), [nodes]);
   const projectSpendSummary = formatProjectSpendSummary(projectSummary);
+  const resolvedPlacement = placement ?? 'topbar';
+  const positionClassName = getUsageBarPositionClassName(workspaceView, resolvedPlacement);
+
+  const toggleMinimize = () => {
+    setIsMinimized((prev) => {
+      const next = !prev;
+      localStorage.setItem('signal-loom-usage-bar-minimized', String(next));
+      return next;
+    });
+  };
+
+  if (resolvedPlacement === 'topbar' || resolvedPlacement === 'mobile-drawer') {
+    const compact = resolvedPlacement === 'topbar';
+    return (
+      <div
+        className={positionClassName}
+        data-signal-loom-usage-bar="true"
+        data-signal-loom-usage-bar-placement={resolvedPlacement}
+        data-signal-loom-usage-bar-workspace={workspaceView}
+      >
+        <button
+          aria-expanded={detailsOpen}
+          aria-label="Toggle usage estimator"
+          className={`pointer-events-auto inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-cyan-300/15 bg-[#101a29]/80 px-2.5 text-[11px] font-semibold text-cyan-100/75 transition-colors hover:border-cyan-300/40 hover:text-white ${
+            compact ? 'max-w-44' : 'w-full'
+          }`}
+          onClick={() => setDetailsOpen((open) => !open)}
+          title="Usage estimator and project spend"
+          type="button"
+        >
+          <Wallet size={13} className="shrink-0 text-cyan-300" />
+          <span className="min-w-0 truncate">{compact ? formatUsd(projectSummary.totalKnownCostUsd) : projectSpendSummary}</span>
+          <ChevronDown className={`shrink-0 transition-transform ${detailsOpen ? 'rotate-180' : ''}`} size={12} />
+        </button>
+        {detailsOpen ? (
+          <ProjectSpendPopover
+            balances={balances}
+            balancesLoading={balancesLoading}
+            onRefreshBalances={() => void refreshBalances(apiKeys)}
+            placement={resolvedPlacement}
+            summary={projectSummary}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
+  if (isMinimized) {
+    return (
+      <div
+        className={positionClassName}
+        data-signal-loom-usage-bar="true"
+        data-signal-loom-usage-bar-placement={resolvedPlacement}
+        data-signal-loom-usage-bar-workspace={workspaceView}
+      >
+        <button
+          aria-expanded={false}
+          aria-label="Show usage estimator"
+          onClick={toggleMinimize}
+          className="pointer-events-auto flex items-center gap-2 rounded-full border border-cyan-500/30 bg-[#171922]/95 px-3 py-1.5 text-[11px] font-medium text-cyan-100/90 shadow-2xl hover:border-cyan-400/60 hover:bg-[#1c1f2c]/95 transition-all duration-200"
+          title="Show full cost estimator and usage details"
+        >
+          <span className="flex items-center gap-1">
+            <Wallet size={12} className="text-cyan-400" />
+            <span>Project:</span>
+            <span className="font-mono text-cyan-300 font-bold">{formatUsd(projectSummary.totalKnownCostUsd)}</span>
+          </span>
+          <span className="text-gray-600">|</span>
+          <span className="text-[10px] text-gray-400">Expand Estimator</span>
+          <ChevronDown size={12} className="text-cyan-400" />
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="absolute left-1/2 top-20 z-[60] -translate-x-1/2" data-signal-loom-usage-bar="true">
-      <div className="flex min-w-[420px] max-w-[86vw] items-center gap-2 rounded-2xl border border-gray-700/70 bg-[#171922]/90 px-3 py-2 shadow-2xl backdrop-blur-md">
+    <div
+      className={positionClassName}
+      data-signal-loom-usage-bar="true"
+      data-signal-loom-usage-bar-placement={resolvedPlacement}
+      data-signal-loom-usage-bar-workspace={workspaceView}
+    >
+      <div className="pointer-events-none flex min-w-[420px] max-w-[86vw] items-center gap-2 rounded-2xl border border-gray-700/70 bg-[#171922]/90 px-3 py-2 shadow-2xl backdrop-blur-md">
         <UsagePill
           icon={<Wallet size={14} />}
           summary={formatRollupSummary(canvasEstimate, 'Canvas estimate')}
@@ -53,18 +166,30 @@ export function UsageBar() {
           toneClassName="border-emerald-500/25 bg-emerald-500/10 text-emerald-50"
         />
         <UsagePill
+          ariaExpanded={detailsOpen}
+          ariaLabel="Toggle project spend details"
           button
           icon={<Wallet size={14} />}
           onClick={() => setDetailsOpen((open) => !open)}
           summary={projectSpendSummary}
           toneClassName={projectSummary.unknownCostEntryCount > 0 ? 'border-fuchsia-400/25 bg-fuchsia-400/10 text-fuchsia-50' : 'border-cyan-400/25 bg-cyan-400/10 text-cyan-50'}
         />
+        <button
+          aria-expanded={true}
+          aria-label="Minimize usage estimator"
+          onClick={toggleMinimize}
+          className="pointer-events-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-gray-700/60 bg-gray-800/20 text-gray-400 hover:border-gray-500 hover:bg-gray-700/30 hover:text-gray-200 transition-all"
+          title="Minimize usage estimator"
+        >
+          <ChevronUp size={14} />
+        </button>
       </div>
       {detailsOpen ? (
         <ProjectSpendPopover
           balances={balances}
           balancesLoading={balancesLoading}
           onRefreshBalances={() => void refreshBalances(apiKeys)}
+          placement={resolvedPlacement}
           summary={projectSummary}
         />
       ) : null}
@@ -73,6 +198,8 @@ export function UsageBar() {
 }
 
 interface UsagePillProps {
+  ariaExpanded?: boolean;
+  ariaLabel?: string;
   button?: boolean;
   icon: ReactNode;
   onClick?: () => void;
@@ -80,7 +207,7 @@ interface UsagePillProps {
   toneClassName: string;
 }
 
-function UsagePill({ button = false, icon, onClick, summary, toneClassName }: UsagePillProps) {
+function UsagePill({ ariaExpanded, ariaLabel, button = false, icon, onClick, summary, toneClassName }: UsagePillProps) {
   const className = `min-w-0 flex-1 rounded-xl border px-3 py-2 text-left ${toneClassName}`;
   const content = (
       <div className="flex items-center gap-2 text-[11px] leading-relaxed">
@@ -90,13 +217,19 @@ function UsagePill({ button = false, icon, onClick, summary, toneClassName }: Us
   );
   if (button) {
     return (
-      <button className={`${className} transition hover:border-cyan-200/50`} onClick={onClick} type="button">
+      <button
+        aria-expanded={ariaExpanded}
+        aria-label={ariaLabel}
+        className={`pointer-events-auto ${className} transition hover:border-cyan-200/50`}
+        onClick={onClick}
+        type="button"
+      >
         {content}
       </button>
     );
   }
   return (
-    <div className={className}>
+    <div className={`pointer-events-none ${className}`}>
       {content}
     </div>
   );
@@ -106,15 +239,26 @@ function ProjectSpendPopover({
   balances,
   balancesLoading,
   onRefreshBalances,
+  placement = 'overlay',
   summary,
 }: {
   balances: ProviderBalance[];
   balancesLoading: boolean;
   onRefreshBalances: () => void;
+  placement?: UsageBarPlacement;
   summary: ProjectUsageLedgerSummary;
 }) {
+  const placementClassName = placement === 'topbar'
+    ? 'absolute right-0 top-full z-[95] mt-2 w-[min(860px,86vw)]'
+    : placement === 'mobile-drawer'
+      ? 'mt-2 w-full'
+      : 'mt-2 w-[min(860px,86vw)]';
+
   return (
-    <div className="mt-2 w-[min(860px,86vw)] rounded-xl border border-cyan-300/15 bg-[#111620]/95 p-3 text-xs text-cyan-50 shadow-2xl shadow-black/50 backdrop-blur-md">
+    <div
+      className={`pointer-events-auto rounded-xl border border-cyan-300/15 bg-[#111620]/95 p-3 text-xs text-cyan-50 shadow-2xl shadow-black/50 backdrop-blur-md ${placementClassName}`}
+      data-usage-spend-popover="true"
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100/55">Project Spend Ledger</div>

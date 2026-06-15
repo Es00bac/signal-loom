@@ -113,5 +113,17 @@ describe('GenerativeFillArtifacts', () => {
       202,
       200,
     ]);
+    expect(artifacts.manifest).toEqual({
+      descriptorId: 'generative-fill-request-artifacts:v1',
+      documentId: 'doc-1',
+      documentSize: { width: 300, height: 220 },
+      placementBounds: { x: 54, y: 4, width: 202, height: 200 },
+      selectionBounds: { x: 150, y: 100, width: 10, height: 8 },
+      localSelectionBounds: { x: 96, y: 96, width: 10, height: 8 },
+      selectedPixels: 80,
+      source: { mimeType: 'image/png', width: 202, height: 200 },
+      mask: { mimeType: 'image/png', width: 202, height: 200 },
+      previewSignature: 'generative-fill-request-artifacts:v1:{"documentId":"doc-1","placementBounds":{"x":54,"y":4,"width":202,"height":200},"selectionBounds":{"x":150,"y":100,"width":10,"height":8},"selectedPixels":80,"source":{"width":202,"height":200},"mask":{"width":202,"height":200}}',
+    });
   });
 });

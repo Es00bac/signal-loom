@@ -1,17 +1,32 @@
 import { create } from 'zustand';
 import {
   DEFAULT_BRUSH_SETTINGS,
+  DEFAULT_CROP_TOOL_SETTINGS,
+  DEFAULT_GRADIENT_TOOL_SETTINGS,
+  DEFAULT_QUICK_MASK_SETTINGS,
+  DEFAULT_RETOUCH_TOOL_SETTINGS,
+  DEFAULT_SHAPE_TOOL_SETTINGS,
+  DEFAULT_SELECT_AND_MASK_SETTINGS,
   DEFAULT_SELECTION_TOOL_SETTINGS,
   DEFAULT_TEXT_TOOL_SETTINGS,
   DEFAULT_VIEWPORT,
   type BrushSettings,
+  type CropToolSettings,
   type DocumentViewport,
   type EditorOperation,
   type EditorTool,
   type ImageDocument,
   type ImageDocumentSnapshot,
+  type ImageLayerEditTarget,
   type ImageLayer,
+  type ImageQuickActionMacro,
+  type ImageQuickActionMacroStep,
+  type GradientToolSettings,
+  type QuickMaskSettings,
+  type RetouchToolSettings,
+  type SelectAndMaskSettings,
   type SelectionToolSettings,
+  type ShapeToolSettings,
   type TextLayerStyle,
 } from '../types/imageEditor';
 import { normalizeBrushSettings } from '../components/ImageEditor/ImageBrushEngine';
@@ -23,25 +38,46 @@ import {
 } from '../components/ImageEditor/ImageDocumentGeometry';
 import { sanitizeImageEditorSnapshot } from '../lib/projectValidation';
 import { rasterizeSvgToBitmapAtResolution } from '../components/ImageEditor/ImageFileFormats';
+import {
+  DEFAULT_IMAGE_EDITOR_TOOLBAR_FLYOUT_ORDER,
+  sanitizeImageEditorToolbarFlyoutOrder,
+  type ImageEditorToolbarFlyoutGroupId,
+} from '../components/ImageEditor/imageEditorTools';
 
 const MAX_HISTORY = 50;
+const DEFAULT_IMAGE_BACKGROUND_COLOR = '#000000';
 
 interface ImageEditorState {
   documents: ImageDocument[];
   activeDocId: string | null;
   tool: EditorTool;
+  backgroundColor: string;
   brushSettings: BrushSettings;
+  cropToolSettings: CropToolSettings;
+  gradientToolSettings: GradientToolSettings;
+  retouchToolSettings: RetouchToolSettings;
+  shapeToolSettings: ShapeToolSettings;
+  quickMaskSettings: QuickMaskSettings;
+  selectAndMaskSettings: SelectAndMaskSettings;
   selectionToolSettings: SelectionToolSettings;
   textToolSettings: TextLayerStyle;
   viewportContainerSize: { width: number; height: number };
   undoStacks: Record<string, EditorOperation[]>;
   redoStacks: Record<string, EditorOperation[]>;
+  quickActionMacros: ImageQuickActionMacro[];
+  activeQuickActionRecording: {
+    startedAt: number;
+    steps: ImageQuickActionMacroStep[];
+  } | null;
+  toolbarFlyoutOrder: ImageEditorToolbarFlyoutGroupId[];
+  generativeFillDismissedByDocId: Record<string, boolean>;
   isDraggingSlider: boolean;
 }
 
 export interface ImageEditorProjectSnapshot {
   documents: ImageDocument[];
   activeDocId: string | null;
+  quickActionMacros?: ImageQuickActionMacro[];
 }
 
 interface ImageEditorActions {
@@ -61,12 +97,26 @@ interface ImageEditorActions {
   markDocumentClean: (id: string) => void;
   markDocumentDirty: (id: string) => void;
   setTool: (tool: EditorTool) => void;
+  setBackgroundColor: (color: string) => void;
+  swapForegroundBackgroundColors: () => void;
+  resetForegroundBackgroundColors: () => void;
   setBrushSettings: (patch: Partial<BrushSettings>) => void;
+  setCropToolSettings: (patch: Partial<CropToolSettings>) => void;
+  setGradientToolSettings: (patch: Partial<GradientToolSettings>) => void;
+  setRetouchToolSettings: (patch: Partial<RetouchToolSettings>) => void;
+  setShapeToolSettings: (patch: Partial<ShapeToolSettings>) => void;
+  setQuickMaskSettings: (patch: Partial<QuickMaskSettings>) => void;
+  toggleQuickMask: () => void;
+  setSelectAndMaskSettings: (patch: Partial<SelectAndMaskSettings>) => void;
+  toggleSelectAndMask: () => void;
   setSelectionToolSettings: (patch: Partial<SelectionToolSettings>) => void;
   setTextToolSettings: (patch: Partial<TextLayerStyle>) => void;
+  setToolbarFlyoutOrder: (order: readonly string[]) => void;
+  resetToolbarFlyoutOrder: () => void;
   setViewportContainerSize: (size: { width: number; height: number }) => void;
   setViewport: (id: string, patch: Partial<DocumentViewport>) => void;
   setHasSelection: (id: string, hasSelection: boolean) => void;
+  setGenerativeFillDismissed: (id: string, dismissed: boolean) => void;
   bumpSelectionVersion: (id: string) => void;
   addLayer: (docId: string, layer: ImageLayer, index?: number) => void;
   removeLayer: (docId: string, layerId: string) => void;
@@ -75,10 +125,17 @@ interface ImageEditorActions {
   bumpLayerBitmapVersion: (docId: string, layerId: string) => void;
   reorderLayer: (docId: string, layerId: string, newIndex: number) => void;
   setActiveLayer: (docId: string, layerId: string | null) => void;
+  setActiveLayerEditTarget: (docId: string, target: ImageLayerEditTarget) => void;
   pushOperation: (op: EditorOperation) => void;
   popUndo: (docId: string) => EditorOperation | undefined;
   popRedo: (docId: string) => EditorOperation | undefined;
   clearHistory: (docId: string) => void;
+  startQuickActionRecording: () => void;
+  appendQuickActionRecordingStep: (actionId: string) => void;
+  saveQuickActionRecording: () => ImageQuickActionMacro | null;
+  cancelQuickActionRecording: () => void;
+  renameQuickActionMacro: (id: string, name: string) => void;
+  deleteQuickActionMacro: (id: string) => void;
   getActiveDocument: () => ImageDocument | undefined;
   exportProjectSnapshot: () => ImageEditorProjectSnapshot;
   restoreProjectSnapshot: (snapshot?: ImageEditorProjectSnapshot) => void;
@@ -90,12 +147,23 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     documents: [],
     activeDocId: null,
     tool: 'move',
+    backgroundColor: DEFAULT_IMAGE_BACKGROUND_COLOR,
     brushSettings: { ...DEFAULT_BRUSH_SETTINGS },
+    cropToolSettings: { ...DEFAULT_CROP_TOOL_SETTINGS },
+    gradientToolSettings: { ...DEFAULT_GRADIENT_TOOL_SETTINGS },
+    retouchToolSettings: { ...DEFAULT_RETOUCH_TOOL_SETTINGS },
+    shapeToolSettings: { ...DEFAULT_SHAPE_TOOL_SETTINGS },
+    quickMaskSettings: { ...DEFAULT_QUICK_MASK_SETTINGS },
+    selectAndMaskSettings: { ...DEFAULT_SELECT_AND_MASK_SETTINGS },
     selectionToolSettings: { ...DEFAULT_SELECTION_TOOL_SETTINGS },
     textToolSettings: { ...DEFAULT_TEXT_TOOL_SETTINGS },
     viewportContainerSize: { width: 0, height: 0 },
     undoStacks: {},
     redoStacks: {},
+    quickActionMacros: [],
+    activeQuickActionRecording: null,
+    toolbarFlyoutOrder: [...DEFAULT_IMAGE_EDITOR_TOOLBAR_FLYOUT_ORDER],
+    generativeFillDismissedByDocId: {},
     isDraggingSlider: false,
 
     setIsDraggingSlider: (isDraggingSlider) => set({ isDraggingSlider }),
@@ -117,12 +185,22 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
       set((state) => ({
         documents: state.documents.map((d) =>
           d.id === docId
-            ? {
-                ...d,
-                layers,
-                activeLayerId: activeLayerId !== undefined ? activeLayerId : (layers.some((l) => l.id === d.activeLayerId) ? d.activeLayerId : (layers[layers.length - 1]?.id ?? null)),
-                dirty: true,
-              }
+            ? (() => {
+                const nextActiveLayerId = activeLayerId !== undefined
+                  ? activeLayerId
+                  : (layers.some((l) => l.id === d.activeLayerId) ? d.activeLayerId : (layers[layers.length - 1]?.id ?? null));
+                return {
+                  ...d,
+                  layers,
+                  activeLayerId: nextActiveLayerId,
+                  activeLayerEditTarget: resolveActiveLayerEditTarget({
+                    ...d,
+                    layers,
+                    activeLayerId: nextActiveLayerId,
+                  }),
+                  dirty: true,
+                };
+              })()
             : d,
         ),
       })),
@@ -137,9 +215,11 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
         }
         const undoStacks = { ...state.undoStacks };
         const redoStacks = { ...state.redoStacks };
+        const generativeFillDismissedByDocId = { ...state.generativeFillDismissedByDocId };
         delete undoStacks[id];
         delete redoStacks[id];
-        return { documents: docs, activeDocId, undoStacks, redoStacks };
+        delete generativeFillDismissedByDocId[id];
+        return { documents: docs, activeDocId, undoStacks, redoStacks, generativeFillDismissedByDocId };
       }),
 
     setActiveDocument: (id) =>
@@ -250,6 +330,36 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     setTool: (tool) =>
       set((state) => (state.tool === tool ? state : { tool })),
 
+    setBackgroundColor: (color) =>
+      set((state) => {
+        const backgroundColor = normalizePaletteColor(color, state.backgroundColor);
+        return state.backgroundColor === backgroundColor ? state : { backgroundColor };
+      }),
+
+    swapForegroundBackgroundColors: () =>
+      set((state) => {
+        const foregroundColor = normalizePaletteColor(state.brushSettings.color, DEFAULT_BRUSH_SETTINGS.color);
+        const backgroundColor = normalizePaletteColor(state.backgroundColor, DEFAULT_IMAGE_BACKGROUND_COLOR);
+        return {
+          backgroundColor: foregroundColor,
+          brushSettings: normalizeBrushSettings({
+            ...state.brushSettings,
+            color: backgroundColor,
+            presetId: undefined,
+          }),
+        };
+      }),
+
+    resetForegroundBackgroundColors: () =>
+      set((state) => ({
+        backgroundColor: DEFAULT_IMAGE_BACKGROUND_COLOR,
+        brushSettings: normalizeBrushSettings({
+          ...state.brushSettings,
+          color: DEFAULT_BRUSH_SETTINGS.color,
+          presetId: undefined,
+        }),
+      })),
+
     setBrushSettings: (patch) =>
       set((state) => {
         const brushSettings = normalizeBrushSettings({ ...state.brushSettings, ...patch });
@@ -257,6 +367,85 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
           ? { brushSettings }
           : state;
       }),
+
+    setCropToolSettings: (patch) =>
+      set((state) => {
+        if (!hasShallowPatchChange(state.cropToolSettings, patch)) return state;
+        return {
+          cropToolSettings: { ...state.cropToolSettings, ...patch },
+        };
+      }),
+
+    setGradientToolSettings: (patch) =>
+      set((state) => {
+        if (!hasShallowPatchChange(state.gradientToolSettings, patch)) return state;
+        return {
+          gradientToolSettings: {
+            ...state.gradientToolSettings,
+            ...patch,
+          },
+        };
+      }),
+
+    setRetouchToolSettings: (patch) =>
+      set((state) => {
+        if (!hasShallowPatchChange(state.retouchToolSettings, patch)) return state;
+        return {
+          retouchToolSettings: {
+            ...state.retouchToolSettings,
+            ...patch,
+          },
+        };
+      }),
+
+    setShapeToolSettings: (patch) =>
+      set((state) => {
+        if (!hasShallowPatchChange(state.shapeToolSettings, patch)) return state;
+        return {
+          shapeToolSettings: {
+            ...state.shapeToolSettings,
+            ...patch,
+          },
+        };
+      }),
+
+    setQuickMaskSettings: (patch) =>
+      set((state) => {
+        if (!hasShallowPatchChange(state.quickMaskSettings, patch)) return state;
+        return {
+          quickMaskSettings: {
+            ...state.quickMaskSettings,
+            ...patch,
+          },
+        };
+      }),
+
+    toggleQuickMask: () =>
+      set((state) => ({
+        quickMaskSettings: {
+          ...state.quickMaskSettings,
+          enabled: !state.quickMaskSettings.enabled,
+        },
+      })),
+
+    setSelectAndMaskSettings: (patch) =>
+      set((state) => {
+        if (!hasShallowPatchChange(state.selectAndMaskSettings, patch)) return state;
+        return {
+          selectAndMaskSettings: {
+            ...state.selectAndMaskSettings,
+            ...patch,
+          },
+        };
+      }),
+
+    toggleSelectAndMask: () =>
+      set((state) => ({
+        selectAndMaskSettings: {
+          ...state.selectAndMaskSettings,
+          enabled: !state.selectAndMaskSettings.enabled,
+        },
+      })),
 
     setSelectionToolSettings: (patch) =>
       set((state) => {
@@ -273,6 +462,19 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
           textToolSettings: { ...state.textToolSettings, ...patch },
         };
       }),
+
+    setToolbarFlyoutOrder: (order) =>
+      set((state) => {
+        const toolbarFlyoutOrder = sanitizeImageEditorToolbarFlyoutOrder(order);
+        return arraysEqual(state.toolbarFlyoutOrder, toolbarFlyoutOrder)
+          ? state
+          : { toolbarFlyoutOrder };
+      }),
+
+    resetToolbarFlyoutOrder: () =>
+      set((state) => arraysEqual(state.toolbarFlyoutOrder, DEFAULT_IMAGE_EDITOR_TOOLBAR_FLYOUT_ORDER)
+        ? state
+        : { toolbarFlyoutOrder: [...DEFAULT_IMAGE_EDITOR_TOOLBAR_FLYOUT_ORDER] }),
 
     setViewportContainerSize: (size) =>
       set((state) => {
@@ -299,17 +501,38 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
       }),
 
     setHasSelection: (id, hasSelection) =>
-      set((state) => ({
-        documents: state.documents.map((d) =>
-          d.id === id
-            ? {
-                ...d,
-                hasSelection,
-                selectionVersion: d.selectionVersion + 1,
-              }
-            : d,
-        ),
-      })),
+      set((state) => {
+        const nextDismissedByDocId = { ...state.generativeFillDismissedByDocId };
+        if (!hasSelection) {
+          delete nextDismissedByDocId[id];
+        }
+        return {
+          documents: state.documents.map((d) =>
+            d.id === id
+              ? {
+                  ...d,
+                  hasSelection,
+                  selectionVersion: d.selectionVersion + 1,
+                }
+              : d,
+          ),
+          generativeFillDismissedByDocId: nextDismissedByDocId,
+        };
+      }),
+
+    setGenerativeFillDismissed: (id, dismissed) =>
+      set((state) => {
+        if (!state.documents.some((document) => document.id === id)) return state;
+        const current = Boolean(state.generativeFillDismissedByDocId[id]);
+        if (current === dismissed) return state;
+        const generativeFillDismissedByDocId = { ...state.generativeFillDismissedByDocId };
+        if (dismissed) {
+          generativeFillDismissedByDocId[id] = true;
+        } else {
+          delete generativeFillDismissedByDocId[id];
+        }
+        return { generativeFillDismissedByDocId };
+      }),
 
     bumpSelectionVersion: (id) =>
       set((state) => ({
@@ -349,7 +572,17 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
               ? (layers[layers.length - 1]?.id ?? null)
               : d.activeLayerId;
           changed = true;
-          return { ...d, layers, activeLayerId, dirty: true };
+          return {
+            ...d,
+            layers,
+            activeLayerId,
+            activeLayerEditTarget: resolveActiveLayerEditTarget({
+              ...d,
+              layers,
+              activeLayerId,
+            }),
+            dirty: true,
+          };
         });
         return changed ? { documents } : state;
       }),
@@ -370,7 +603,7 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
           const layers = [...d.layers];
           layers.splice(idx + 1, 0, copy);
           changed = true;
-          return { ...d, layers, activeLayerId: copy.id, dirty: true };
+          return { ...d, layers, activeLayerId: copy.id, activeLayerEditTarget: 'layer' as const, dirty: true };
         });
         return changed ? { documents } : state;
       }),
@@ -387,12 +620,18 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
               Object.prototype.hasOwnProperty.call(patch, 'bitmap') &&
               patch.bitmap !== l.bitmap &&
               typeof patch.bitmapVersion !== 'number';
-            if (!bitmapChanged && !hasShallowPatchChange(l, patch)) return l;
+            const maskChanged =
+              Object.prototype.hasOwnProperty.call(patch, 'mask') &&
+              patch.mask !== l.mask &&
+              typeof patch.bitmapVersion !== 'number';
+            if (!bitmapChanged && !maskChanged && !hasShallowPatchChange(l, patch)) return l;
             layerChanged = true;
             return {
               ...l,
               ...patch,
-              bitmapVersion: bitmapChanged ? l.bitmapVersion + 1 : (patch.bitmapVersion ?? l.bitmapVersion),
+              bitmapVersion: (bitmapChanged || maskChanged)
+                ? l.bitmapVersion + 1
+                : (patch.bitmapVersion ?? l.bitmapVersion),
             };
           });
           if (!layerChanged) return d;
@@ -440,7 +679,27 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
         const documents = state.documents.map((d) => {
           if (d.id !== docId || d.activeLayerId === layerId) return d;
           changed = true;
-          return { ...d, activeLayerId: layerId };
+          return {
+            ...d,
+            activeLayerId: layerId,
+            activeLayerEditTarget: resolveActiveLayerEditTarget({
+              ...d,
+              activeLayerId: layerId,
+            }),
+          };
+        });
+        return changed ? { documents } : state;
+      }),
+
+    setActiveLayerEditTarget: (docId, target) =>
+      set((state) => {
+        let changed = false;
+        const documents = state.documents.map((d) => {
+          if (d.id !== docId) return d;
+          const nextTarget = resolveActiveLayerEditTarget(d, target);
+          if ((d.activeLayerEditTarget ?? 'layer') === nextTarget) return d;
+          changed = true;
+          return { ...d, activeLayerEditTarget: nextTarget };
         });
         return changed ? { documents } : state;
       }),
@@ -491,6 +750,76 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
         redoStacks: { ...state.redoStacks, [docId]: [] },
       })),
 
+    startQuickActionRecording: () =>
+      set((state) => (
+        state.activeQuickActionRecording
+          ? state
+          : {
+              activeQuickActionRecording: {
+                startedAt: Date.now(),
+                steps: [],
+              },
+            }
+      )),
+
+    appendQuickActionRecordingStep: (actionId) =>
+      set((state) => {
+        const recording = state.activeQuickActionRecording;
+        if (!recording || !actionId.trim()) return state;
+        return {
+          activeQuickActionRecording: {
+            ...recording,
+            steps: [...recording.steps, { actionId }],
+          },
+        };
+      }),
+
+    saveQuickActionRecording: () => {
+      const state = get();
+      const recording = state.activeQuickActionRecording;
+      if (!recording || recording.steps.length === 0) return null;
+
+      const createdAt = Date.now();
+      const macro: ImageQuickActionMacro = {
+        id: `quick-action-macro-${createdAt}`,
+        name: `Action ${state.quickActionMacros.length + 1}`,
+        createdAt,
+        updatedAt: createdAt,
+        steps: recording.steps.map((step) => ({ ...step })),
+      };
+
+      set({
+        quickActionMacros: [...state.quickActionMacros, macro],
+        activeQuickActionRecording: null,
+      });
+
+      return macro;
+    },
+
+    cancelQuickActionRecording: () => set({ activeQuickActionRecording: null }),
+
+    renameQuickActionMacro: (id, name) =>
+      set((state) => {
+        const normalizedName = name.trim();
+        if (!normalizedName) return state;
+        let changed = false;
+        const quickActionMacros = state.quickActionMacros.map((macro) => {
+          if (macro.id !== id || macro.name === normalizedName) return macro;
+          changed = true;
+          return {
+            ...macro,
+            name: normalizedName,
+            updatedAt: Date.now(),
+          };
+        });
+        return changed ? { quickActionMacros } : state;
+      }),
+
+    deleteQuickActionMacro: (id) =>
+      set((state) => ({
+        quickActionMacros: state.quickActionMacros.filter((macro) => macro.id !== id),
+      })),
+
     getActiveDocument: () => {
       const { documents, activeDocId } = get();
       return documents.find((d) => d.id === activeDocId);
@@ -505,6 +834,7 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
           snapshots: document.snapshots?.map(stripImageSnapshotRuntimePixels) ?? [],
         })),
         activeDocId: state.activeDocId,
+        quickActionMacros: state.quickActionMacros.map(cloneImageQuickActionMacro),
       };
     },
 
@@ -519,6 +849,9 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
         activeDocId,
         undoStacks: {},
         redoStacks: {},
+        quickActionMacros: safeSnapshot?.quickActionMacros?.map(cloneImageQuickActionMacro) ?? [],
+        activeQuickActionRecording: null,
+        generativeFillDismissedByDocId: {},
       });
     },
   }),
@@ -542,17 +875,32 @@ export function createEmptyImageDocument(params: {
     height: params.height,
     layers: [],
     activeLayerId: null,
+    activeLayerEditTarget: 'layer',
     hasSelection: false,
     selectionVersion: 0,
     viewport: { ...DEFAULT_VIEWPORT },
     dirty: false,
     sourceBinItemId: params.sourceBinItemId,
+    savedSelectionChannels: [],
+    spotChannels: [],
     snapshots: [],
   };
 }
 
 function hasShallowPatchChange<T extends object>(current: T, patch: Partial<T>): boolean {
   return Object.entries(patch).some(([key, value]) => !Object.is(current[key as keyof T], value));
+}
+
+function arraysEqual<T>(a: readonly T[], b: readonly T[]): boolean {
+  return a.length === b.length && a.every((item, index) => Object.is(item, b[index]));
+}
+
+function normalizePaletteColor(color: string, fallback: string): string {
+  const trimmed = color.trim();
+  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed.toLowerCase();
+  const short = trimmed.match(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i);
+  if (short) return `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`.toLowerCase();
+  return fallback;
 }
 
 function applyDocumentResizeState(
@@ -617,6 +965,13 @@ function stripImageSnapshotRuntimePixels(snapshot: ImageDocumentSnapshot): Image
   };
 }
 
+function cloneImageQuickActionMacro(macro: ImageQuickActionMacro): ImageQuickActionMacro {
+  return {
+    ...macro,
+    steps: macro.steps.map((step) => ({ ...step })),
+  };
+}
+
 function cloneSerializableValue<T>(value: T): T {
   if (value === undefined || value === null) return value;
   if (typeof structuredClone === 'function') {
@@ -624,4 +979,14 @@ function cloneSerializableValue<T>(value: T): T {
   }
 
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function resolveActiveLayerEditTarget(
+  doc: Pick<ImageDocument, 'layers' | 'activeLayerId' | 'activeLayerEditTarget'>,
+  requestedTarget?: ImageLayerEditTarget,
+): ImageLayerEditTarget {
+  const target = requestedTarget ?? doc.activeLayerEditTarget ?? 'layer';
+  if (target !== 'mask') return 'layer';
+  const activeLayer = doc.layers.find((layer) => layer.id === doc.activeLayerId) ?? null;
+  return activeLayer?.mask ? 'mask' : 'layer';
 }

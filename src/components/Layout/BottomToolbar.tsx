@@ -89,7 +89,7 @@ function NodeCategoryMenu({
         title={category.description}
       >
         {CATEGORY_ICONS[category.id]}
-        <span className={compact ? 'hidden 2xl:inline' : undefined}>{category.label}</span>
+        <span className={compact ? 'hidden 2xl:inline max-[1999px]:!hidden' : undefined}>{category.label}</span>
         <ChevronDown size={13} />
       </summary>
       <div className={menuClassName}>

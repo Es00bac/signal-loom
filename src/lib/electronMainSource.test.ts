@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -14,6 +14,26 @@ describe('Electron main process source guards', () => {
 
     expect(source).toContain('SIGNAL_LOOM_ELECTRON_USER_DATA_DIR');
     expect(source).toMatch(/app\.setPath\('userData', resolve\(isolatedUserDataDir\)\)/);
+  });
+
+  it('applies the shared Linux windowing compatibility policy in the packaged Electron main process', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+
+    expect(source).toContain('applyElectronMainLinuxWindowingCompatibility(app, process.env, process.platform)');
+  });
+
+  it('shows a packaged splash image while the first workspace window is launching', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+    const splashAssetPath = join(process.cwd(), 'electron/assets/signal-loom-splash.png');
+
+    expect(source).toContain('SIGNAL_LOOM_SPLASH_IMAGE_PATH');
+    expect(source).toContain("resolve(__dirname, 'assets', 'signal-loom-splash.png')");
+    expect(source).toContain('function createStartupSplashWindow()');
+    expect(source).toContain('pathToFileURL(SIGNAL_LOOM_SPLASH_IMAGE_PATH).href');
+    expect(source).toMatch(/new BrowserWindow\(\{[\s\S]*frame: false[\s\S]*resizable: false[\s\S]*skipTaskbar: true[\s\S]*show: true/);
+    expect(source).toMatch(/workspaceWindow\.once\('ready-to-show'[\s\S]*workspaceWindow\.show\(\)[\s\S]*closeStartupSplashWindow\(\)/);
+    expect(source).toMatch(/app\.whenReady\(\)\.then\(async \(\) => \{[\s\S]*createStartupSplashWindow\(\)[\s\S]*await resolveRendererEntryUrl\(\)/);
+    expect(existsSync(splashAssetPath)).toBe(true);
   });
 
   it('exposes a Vertex video bridge that polls Veo without Gemini API key headers', () => {
@@ -81,6 +101,15 @@ describe('Electron main process source guards', () => {
     expect(source).toMatch(/for \(const capability of collectNativeAssetCapabilitiesFromSourceBin\(sourceBin\)\)[\s\S]*registerNativeAssetCapability\(capability\.filePath[\s\S]*assetId: capability\.assetId/);
     expect(source).toMatch(/registerNativeAssetCapability\(targetPath, \{ assetId: item\.id }\)/);
     expect(source).toMatch(/registerNativeAssetCapability\(storedPath, \{ allowExternal: true, assetId: id }\)/);
+  });
+
+  it('materializes renderer-provided binary asset payloads directly into the active scratch folder', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+
+    expect(source).toMatch(/const binaryData = request\.binaryData instanceof Uint8Array/);
+    expect(source).toMatch(/if \(binaryData\)[\s\S]*buildNativeScratchFileName\(item\)/);
+    expect(source).toMatch(/if \(binaryData\)[\s\S]*writeFile\(targetPath, Buffer\.from\(binaryData\)\)/);
+    expect(source).toMatch(/if \(binaryData\)[\s\S]*assetUrl: buildNativeAssetUrl\(targetPath, item\.id\)/);
   });
 
   it('keeps a manually selected scratch directory in the active capability roots', () => {

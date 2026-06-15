@@ -433,6 +433,7 @@ describe('executeNodeRequest advanced image providers', () => {
   });
 
   it('routes Atlas Cloud native text-to-image models through generateImage and prediction polling', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-generated');
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ data: { id: 'atlas-job' } }))
       .mockResolvedValueOnce(jsonResponse({
@@ -440,7 +441,8 @@ describe('executeNodeRequest advanced image providers', () => {
           status: 'succeeded',
           outputs: ['https://cdn.atlascloud.ai/generated.png'],
         },
-      }));
+      }))
+      .mockResolvedValueOnce(imageResponse('ATLAS'));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await executeNodeRequest(
@@ -463,7 +465,8 @@ describe('executeNodeRequest advanced image providers', () => {
       },
     );
 
-    expect(result.result).toBe('https://cdn.atlascloud.ai/generated.png');
+    expect(result.result).toBe('blob:atlas-generated');
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
     expect(result.usage).toMatchObject({
       provider: 'atlas',
       modelId: 'black-forest-labs/flux-schnell',
@@ -480,6 +483,7 @@ describe('executeNodeRequest advanced image providers', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, 'https://api.atlascloud.ai/api/v1/model/prediction/atlas-job', expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer atlas-key' }),
     }));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, 'https://cdn.atlascloud.ai/generated.png');
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body).toMatchObject({
       model: 'black-forest-labs/flux-schnell',
@@ -494,7 +498,42 @@ describe('executeNodeRequest advanced image providers', () => {
     });
   });
 
+  it('downloads Atlas Cloud native remote outputs before returning the Flow image result', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-downloaded-result');
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ data: { id: 'atlas-job' } }))
+      .mockResolvedValueOnce(jsonResponse({
+        data: {
+          status: 'succeeded',
+          outputs: ['https://cdn.atlascloud.ai/generated.png'],
+        },
+      }))
+      .mockResolvedValueOnce(imageResponse('ATLAS'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await executeNodeRequest(
+      createImageNode('atlas', 'black-forest-labs/flux-schnell'),
+      {
+        prompt: 'cyberpunk mage raising a luminous compiler sigil',
+        config: { ...DEFAULT_EXECUTION_CONFIG, imageOutputFormat: 'png' },
+      },
+      {
+        ...baseSettings,
+        apiKeys: { ...baseSettings.apiKeys, atlas: 'atlas-key' },
+        providerSettings: {
+          ...baseSettings.providerSettings,
+          atlasBaseUrl: 'https://api.atlascloud.ai/api/v1',
+        },
+      },
+    );
+
+    expect(result.result).toBe('blob:atlas-downloaded-result');
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, 'https://cdn.atlascloud.ai/generated.png');
+  });
+
   it('uploads source and mask images before running Atlas Cloud native edit models', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-edit');
     let uploadCount = 0;
     const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       void init;
@@ -519,6 +558,9 @@ describe('executeNodeRequest advanced image providers', () => {
             output: 'https://cdn.atlascloud.ai/edit.png',
           },
         });
+      }
+      if (stringUrl === 'https://cdn.atlascloud.ai/edit.png') {
+        return imageResponse('EDIT');
       }
       return jsonResponse({});
     });
@@ -545,7 +587,8 @@ describe('executeNodeRequest advanced image providers', () => {
       },
     );
 
-    expect(result.result).toBe('https://cdn.atlascloud.ai/edit.png');
+    expect(result.result).toBe('blob:atlas-edit');
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
     expect(result.usage).toMatchObject({
       provider: 'atlas',
       modelId: 'atlascloud/qwen-image/edit',

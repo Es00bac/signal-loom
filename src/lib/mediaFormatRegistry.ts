@@ -27,9 +27,9 @@ export const MEDIA_FORMAT_REGISTRY: MediaFormatDefinition[] = [
   {
     kind: 'image',
     label: 'Images',
-    extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif', 'bmp', 'tiff', 'tif', 'svg', 'psd', 'psb', 'xcf', 'exr'],
-    mimeTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'image/tiff', 'image/svg+xml', 'image/vnd.adobe.photoshop', 'image/x-photoshop', 'image/x-xcf', 'image/x-exr', 'image/exr'],
-    preferredMimeTypes: ['image/png', 'image/jpeg', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'image/tiff', 'image/tiff', 'image/svg+xml', 'image/vnd.adobe.photoshop', 'image/vnd.adobe.photoshop', 'image/x-xcf', 'image/x-exr'],
+    extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif', 'bmp', 'tiff', 'tif', 'svg', 'psd', 'psb', 'xcf', 'exr', 'dng', 'cr2', 'cr3', 'nef', 'nrw', 'arw', 'raf', 'orf', 'rw2', 'pef', 'srw', 'x3f'],
+    mimeTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'image/tiff', 'image/svg+xml', 'image/vnd.adobe.photoshop', 'image/x-photoshop', 'image/x-xcf', 'image/x-exr', 'image/exr', 'image/x-adobe-dng', 'image/x-canon-cr2', 'image/x-canon-cr3', 'image/x-nikon-nef', 'image/x-nikon-nrw', 'image/x-sony-arw', 'image/x-fuji-raf', 'image/x-olympus-orf', 'image/x-panasonic-rw2', 'image/x-pentax-pef', 'image/x-samsung-srw', 'image/x-sigma-x3f'],
+    preferredMimeTypes: ['image/png', 'image/jpeg', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'image/tiff', 'image/tiff', 'image/svg+xml', 'image/vnd.adobe.photoshop', 'image/vnd.adobe.photoshop', 'image/x-xcf', 'image/x-exr', 'image/x-adobe-dng', 'image/x-canon-cr2', 'image/x-canon-cr3', 'image/x-nikon-nef', 'image/x-nikon-nrw', 'image/x-sony-arw', 'image/x-fuji-raf', 'image/x-olympus-orf', 'image/x-panasonic-rw2', 'image/x-pentax-pef', 'image/x-samsung-srw', 'image/x-sigma-x3f'],
     capabilities: { importable: true, downloadable: true, previewable: true, timelineMedia: true, paperPlaceable: true, package: false },
   },
   {

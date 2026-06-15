@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 interface ElectronMenuModule {
   SIGNAL_LOOM_MENU_COMMANDS: Record<string, string>;
+  DESKTOP_WORKSPACE_MENU_DESCRIPTORS: DesktopWorkspaceMenuDescriptor[];
   createApplicationMenuTemplate: (options: {
     appName: string;
     isMac?: boolean;
@@ -18,6 +19,15 @@ interface ElectronMenuItem {
   role?: string;
   click?: () => void;
   submenu?: ElectronMenuItem[];
+}
+
+interface DesktopWorkspaceMenuDescriptor {
+  workspace: string;
+  menuLabel: string;
+  launchLabel: string;
+  launchCommand: string;
+  accelerator: string;
+  launchSurface: string;
 }
 
 async function loadMenuModule(): Promise<ElectronMenuModule> {
@@ -81,6 +91,23 @@ describe('Electron native menu template', () => {
 
     expect(SIGNAL_LOOM_MENU_COMMANDS.viewActivityTrail).toBe('view:activity-trail');
     expect(commands).toEqual(['view:activity-trail']);
+  });
+
+  it('exposes the interface toggle as a native View command with Tab accelerator', async () => {
+    const { SIGNAL_LOOM_MENU_COMMANDS, createApplicationMenuTemplate } = await loadMenuModule();
+    const commands: string[] = [];
+    const template = createApplicationMenuTemplate({
+      appName: 'Signal Loom',
+      sendCommand: (command) => commands.push(command),
+    });
+    const viewMenu = template.find((entry) => entry.label === 'View');
+    const toggleInterface = viewMenu?.submenu?.find((entry) => entry.label === 'Toggle Interface');
+
+    toggleInterface?.click?.();
+
+    expect(SIGNAL_LOOM_MENU_COMMANDS.viewToggleInterface).toBe('view:toggle-interface');
+    expect(toggleInterface?.accelerator).toBe('Tab');
+    expect(commands).toEqual(['view:toggle-interface']);
   });
 
   it('keeps editor undo/redo and clipboard actions as app commands', async () => {
@@ -282,5 +309,93 @@ describe('Electron native menu template', () => {
       'view:layout-focus',
       'view:layout-all-panels',
     ]);
+  });
+
+  it('exposes first-class launch commands in each native workspace menu', async () => {
+    const { createApplicationMenuTemplate } = await loadMenuModule();
+    const commands: string[] = [];
+    const template = createApplicationMenuTemplate({
+      appName: 'Signal Loom',
+      activeWorkspace: 'image',
+      sendCommand: (command) => commands.push(command),
+    });
+
+    const expected = [
+      ['Flow', 'Open/Focus Flow Window', 'view:flow', 'CommandOrControl+1'],
+      ['Video', 'Open/Focus Video Window', 'view:editor', 'CommandOrControl+2'],
+      ['Image', 'Open/Focus Image Window', 'view:image', 'CommandOrControl+3'],
+      ['Paper', 'Open/Focus Paper Window', 'view:paper', 'CommandOrControl+4'],
+    ] as const;
+
+    for (const [menuLabel, itemLabel, command, accelerator] of expected) {
+      const item = template.find((entry) => entry.label === menuLabel)?.submenu?.[0];
+      expect(item?.label).toBe(itemLabel);
+      expect(item?.accelerator).toBe(accelerator);
+      item?.click?.();
+      expect(commands.at(-1)).toBe(command);
+    }
+
+    expect(commands).toEqual(['view:flow', 'view:editor', 'view:image', 'view:paper']);
+  });
+
+  it('publishes deterministic workspace menu descriptors aligned with launch menu items', async () => {
+    const { DESKTOP_WORKSPACE_MENU_DESCRIPTORS, createApplicationMenuTemplate } = await loadMenuModule();
+    const template = createApplicationMenuTemplate({
+      appName: 'Signal Loom',
+      activeWorkspace: 'flow',
+      sendCommand: () => undefined,
+    });
+
+    expect(DESKTOP_WORKSPACE_MENU_DESCRIPTORS).toEqual([
+      {
+        workspace: 'flow',
+        menuLabel: 'Flow',
+        launchLabel: 'Open/Focus Flow Window',
+        launchCommand: 'view:flow',
+        accelerator: 'CommandOrControl+1',
+        launchSurface: 'electron-native-menu',
+      },
+      {
+        workspace: 'editor',
+        menuLabel: 'Video',
+        launchLabel: 'Open/Focus Video Window',
+        launchCommand: 'view:editor',
+        accelerator: 'CommandOrControl+2',
+        launchSurface: 'electron-native-menu',
+      },
+      {
+        workspace: 'image',
+        menuLabel: 'Image',
+        launchLabel: 'Open/Focus Image Window',
+        launchCommand: 'view:image',
+        accelerator: 'CommandOrControl+3',
+        launchSurface: 'electron-native-menu',
+      },
+      {
+        workspace: 'paper',
+        menuLabel: 'Paper',
+        launchLabel: 'Open/Focus Paper Window',
+        launchCommand: 'view:paper',
+        accelerator: 'CommandOrControl+4',
+        launchSurface: 'electron-native-menu',
+      },
+    ]);
+
+    for (const descriptor of DESKTOP_WORKSPACE_MENU_DESCRIPTORS) {
+      const menu = template.find((entry) => entry.label === descriptor.menuLabel);
+      const launchItem = menu?.submenu?.find((entry) => entry.label === descriptor.launchLabel);
+
+      expect(launchItem?.accelerator).toBe(descriptor.accelerator);
+      const commands: string[] = [];
+      createApplicationMenuTemplate({
+        appName: 'Signal Loom',
+        activeWorkspace: descriptor.workspace,
+        sendCommand: (command) => commands.push(command),
+      })
+        .find((entry) => entry.label === descriptor.menuLabel)
+        ?.submenu?.find((entry) => entry.label === descriptor.launchLabel)
+        ?.click?.();
+      expect(commands).toEqual([descriptor.launchCommand]);
+    }
   });
 });

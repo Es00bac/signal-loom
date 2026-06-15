@@ -6,8 +6,11 @@ export type EditorTool =
   | 'marquee'
   | 'lasso'
   | 'magicWand'
+  | 'pen'
   | 'brush'
   | 'eraser'
+  | 'backgroundEraser'
+  | 'magicEraser'
   | 'cloneStamp'
   | 'spotHeal'
   | 'blurBrush'
@@ -28,10 +31,26 @@ export type EditorTool =
 export type MarqueeShape = 'rectangle' | 'ellipse';
 export type LassoShape = 'freehand' | 'polygonal';
 
-export type LayerType = 'image' | 'mask' | 'text' | 'adjustment' | 'vector';
+export type LayerType = 'image' | 'mask' | 'text' | 'adjustment' | 'vector' | 'group';
+export type ImageLayerColorLabel = 'none' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'violet' | 'gray';
 
-export type LayerEffectKind = 'stroke' | 'dropShadow' | 'outerGlow' | 'colorOverlay';
+export interface ImageLayerLocks {
+  pixels?: boolean;
+  position?: boolean;
+}
+
+export type LayerEffectKind =
+  | 'stroke'
+  | 'dropShadow'
+  | 'innerShadow'
+  | 'outerGlow'
+  | 'innerGlow'
+  | 'colorOverlay'
+  | 'satin'
+  | 'patternOverlay'
+  | 'gradientOverlay';
 export type LayerFilterKind = 'blur' | 'sharpen' | 'grayscale' | 'sepia' | 'invert' | 'noise' | 'pixelate';
+export type PatternOverlayPattern = 'checker' | 'diagonal' | 'dots' | 'grid';
 
 export interface BaseLayerEffect {
   id: string;
@@ -56,8 +75,24 @@ export interface DropShadowLayerEffect extends BaseLayerEffect {
   size: number;
 }
 
+export interface InnerShadowLayerEffect extends BaseLayerEffect {
+  kind: 'innerShadow';
+  color: string;
+  opacity: number;
+  angle: number;
+  distance: number;
+  size: number;
+}
+
 export interface OuterGlowLayerEffect extends BaseLayerEffect {
   kind: 'outerGlow';
+  color: string;
+  opacity: number;
+  size: number;
+}
+
+export interface InnerGlowLayerEffect extends BaseLayerEffect {
+  kind: 'innerGlow';
   color: string;
   opacity: number;
   size: number;
@@ -69,17 +104,53 @@ export interface ColorOverlayLayerEffect extends BaseLayerEffect {
   opacity: number;
 }
 
+export interface SatinLayerEffect extends BaseLayerEffect {
+  kind: 'satin';
+  color: string;
+  opacity: number;
+  angle: number;
+  distance: number;
+  size: number;
+  invert: boolean;
+}
+
+export interface PatternOverlayLayerEffect extends BaseLayerEffect {
+  kind: 'patternOverlay';
+  color: string;
+  backgroundColor: string;
+  opacity: number;
+  pattern: PatternOverlayPattern;
+  scale: number;
+}
+
+export interface GradientOverlayLayerEffect extends BaseLayerEffect {
+  kind: 'gradientOverlay';
+  color: string;
+  secondaryColor: string;
+  opacity: number;
+  angle: number;
+  scale: number;
+  reverse: boolean;
+}
+
 export type ImageLayerEffect =
   | StrokeLayerEffect
   | DropShadowLayerEffect
+  | InnerShadowLayerEffect
   | OuterGlowLayerEffect
-  | ColorOverlayLayerEffect;
+  | InnerGlowLayerEffect
+  | ColorOverlayLayerEffect
+  | SatinLayerEffect
+  | PatternOverlayLayerEffect
+  | GradientOverlayLayerEffect;
 
 export interface ImageLayerFilter {
   id: string;
   kind: LayerFilterKind;
   enabled: boolean;
   amount: number;
+  opacity: number;
+  blendMode: BlendMode;
 }
 
 export type AdjustmentLayerKind =
@@ -151,6 +222,11 @@ export interface ImageSourceLinkMetadata {
 export interface ImageLayerMetadata {
   editableText?: boolean;
   comicSfxDesign?: PaperComicSfxDesign;
+  retouchOutput?: {
+    sourceLayerId: string;
+    tool: 'dodge' | 'burn' | 'spongeSaturate' | 'spongeDesaturate';
+    outputMode: 'newLayer';
+  };
   smartLinkedSourceId?: string;
   sourceLabel?: string;
   sourceLink?: ImageSourceLinkMetadata;
@@ -158,6 +234,13 @@ export interface ImageLayerMetadata {
   sourceMimeType?: string;
   sourceWarnings?: string[];
   originalSvgSource?: string;
+  vectorShape?: ImageVectorShape;
+  vectorBooleanSource?: {
+    operation: 'union' | 'intersect' | 'subtract' | 'xor';
+    sourceLayerIds: string[];
+    supportedSubset: 'axis-aligned-rectangles' | 'identical-simple-polygons' | 'non-overlapping-simple-polygons' | 'none';
+    previewSignature: string;
+  };
 }
 
 export type BlendMode =
@@ -179,6 +262,41 @@ export type BlendMode =
   | 'luminosity';
 
 export type SelectionMode = 'replace' | 'add' | 'subtract' | 'intersect';
+export type QuickMaskViewMode = 'maskedAreas' | 'selectedAreas';
+export type SelectAndMaskPreviewMode = 'maskedAreas' | 'selectedAreas' | 'onBlack' | 'onWhite' | 'blackWhite';
+export type SelectAndMaskOutputMode = 'selection' | 'quickMask' | 'layerMask' | 'newAlphaChannel';
+export type ImageLayerEditTarget = 'layer' | 'mask';
+export type ImageColorChannel = 'rgb' | 'red' | 'green' | 'blue';
+export type ImageColorChannelComponent = Exclude<ImageColorChannel, 'rgb'>;
+
+export interface ImageChannelEditTarget {
+  kind: 'colorChannel';
+  channel: ImageColorChannel;
+  components: ImageColorChannelComponent[];
+}
+
+export type ImageLayerTransformCorner = 'nw' | 'ne' | 'se' | 'sw';
+
+export interface ImageTransformPoint {
+  x: number;
+  y: number;
+}
+
+export interface ImageLayerTransformCornerOffsets {
+  nw: ImageTransformPoint;
+  ne: ImageTransformPoint;
+  se: ImageTransformPoint;
+  sw: ImageTransformPoint;
+}
+
+export interface ImageLayerWarpOffsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+export type BrushSymmetryMode = 'none' | 'vertical' | 'horizontal' | 'both';
 
 export interface BrushSettings {
   presetId?: string;
@@ -196,6 +314,29 @@ export interface BrushSettings {
   pressureOpacity: number;
   pressureFlow: number;
   tipShape: 'round' | 'square';
+  symmetryMode?: BrushSymmetryMode;
+  velocitySize?: number;
+  velocityOpacity?: number;
+  velocityFlow?: number;
+  velocitySpacing?: number;
+  texture?: string;
+  textureScale?: number;
+  textureDepth?: number;
+  dualBrush?: boolean;
+  wetEdges?: boolean;
+  wetMedia?: boolean;
+  wetMix?: number;
+  wetLoad?: number;
+  wetPull?: number;
+  gpuBrushEngine?: boolean;
+  gpuAcceleration?: boolean;
+  androidBrushControls?: boolean;
+  androidStylusControls?: boolean;
+  gamepadBrushControls?: boolean;
+  gamepadPressure?: boolean;
+  abrSourceHash?: string;
+  abrPresetId?: string;
+  abrVersion?: number;
 }
 
 export interface SelectionToolSettings {
@@ -205,6 +346,185 @@ export interface SelectionToolSettings {
   marqueeShape: MarqueeShape;
   lassoShape: LassoShape;
   magicWandTolerance: number;
+  sampleAllLayers: boolean;
+  contiguous: boolean;
+  paintBucketBlendMode: BlendMode;
+  paintBucketPreserveTransparency: boolean;
+  backgroundEraserTolerance?: number;
+  backgroundEraserContiguous?: boolean;
+  backgroundEraserSampling?: 'once' | 'continuous';
+  backgroundEraserUseBackgroundSwatch?: boolean;
+  backgroundEraserLimits?: 'contiguous' | 'discontiguous';
+  backgroundEraserProtectForeground?: boolean;
+}
+
+export type RetouchSampleMode = 'currentLayer' | 'currentAndBelow' | 'allLayers';
+export type RetouchToneRange = 'all' | 'shadows' | 'midtones' | 'highlights';
+
+export interface RetouchToolSettings {
+  sampleMode: RetouchSampleMode;
+  aligned: boolean;
+  outputMode: 'activeLayer' | 'newLayer';
+  toneRange: RetouchToneRange;
+  protectTones: boolean;
+  spongeVibrance: number;
+  spongePreserveLuminosity: boolean;
+  airbrush: boolean;
+  rate: number;
+}
+
+export interface QuickMaskSettings {
+  enabled: boolean;
+  viewMode: QuickMaskViewMode;
+  overlayOpacity: number;
+}
+
+export interface SelectAndMaskSettings {
+  enabled: boolean;
+  previewMode: SelectAndMaskPreviewMode;
+  smooth: number;
+  feather: number;
+  contrast: number;
+  shiftEdge: number;
+  refineRadius: number;
+  decontaminateColors: boolean;
+  decontaminateAmount: number;
+  outputMode: SelectAndMaskOutputMode;
+}
+
+export type GradientToolMode = 'linear' | 'radial' | 'angle' | 'reflected' | 'diamond';
+export type GradientToolColorMode = 'foregroundToTransparent' | 'foregroundToBackground' | 'multiStop';
+export type VectorShapeKind = 'rect' | 'ellipse' | 'path';
+
+export interface GradientToolColorStop {
+  offset: number;
+  color: string;
+  opacity?: number;
+}
+
+export interface GradientToolPreset {
+  id: string;
+  label: string;
+  colorStops: GradientToolColorStop[];
+}
+
+export interface GradientToolSettings {
+  mode: GradientToolMode;
+  colorMode: GradientToolColorMode;
+  reverse: boolean;
+  dither: boolean;
+  presetId?: string;
+  colorStops?: GradientToolColorStop[];
+}
+
+export type CustomVectorShapePresetKind = 'line' | 'triangle' | 'diamond' | 'polygon' | 'star';
+export type ShapeToolPresetKind = 'rect' | CustomVectorShapePresetKind;
+
+export interface CustomVectorShapePreset {
+  kind: CustomVectorShapePresetKind;
+  polygonSides?: number;
+  starInnerRadius?: number;
+}
+
+export interface VectorShapeStyle {
+  fillColor: string;
+  fillOpacity: number;
+  strokeColor: string;
+  strokeOpacity: number;
+  strokeWidth: number;
+}
+
+export interface ShapeToolSettings extends VectorShapeStyle {
+  presetKind: ShapeToolPresetKind;
+  polygonSides: number;
+  starInnerRadius: number;
+}
+
+export interface ImageVectorPathPoint {
+  x: number;
+  y: number;
+  inHandle?: {
+    x: number;
+    y: number;
+  };
+  outHandle?: {
+    x: number;
+    y: number;
+  };
+}
+
+export interface TextLayerPathReferenceMetadata {
+  kind: 'vector-layer' | 'svg-path' | 'external-path';
+  layerId?: string;
+  pathId?: string;
+  revision?: number;
+  sourceId?: string;
+}
+
+export interface TextLayerBezierSegment {
+  from: ImageVectorPathPoint;
+  control1: ImageVectorPathPoint;
+  control2: ImageVectorPathPoint;
+  to: ImageVectorPathPoint;
+}
+
+export interface TextLayerPathLayout {
+  sourceLayerId?: string;
+  geometry?: 'straight-segment-path' | 'bezier-sampled-path';
+  points: ImageVectorPathPoint[];
+  bezierSegments?: TextLayerBezierSegment[];
+  closed: boolean;
+  startOffset: number;
+  reverse: boolean;
+  pathLength: number;
+  bounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  previewSignature: string;
+}
+
+export interface ImageVectorShapeBase extends VectorShapeStyle {
+  width: number;
+  height: number;
+}
+
+export interface ImageRectVectorShape extends ImageVectorShapeBase {
+  kind: 'rect';
+}
+
+export interface ImageEllipseVectorShape extends ImageVectorShapeBase {
+  kind: 'ellipse';
+}
+
+export interface ImagePathVectorShape extends ImageVectorShapeBase {
+  kind: 'path';
+  points: ImageVectorPathPoint[];
+  closed: boolean;
+  preset?: CustomVectorShapePreset;
+}
+
+export type ImageVectorShape =
+  | ImageRectVectorShape
+  | ImageEllipseVectorShape
+  | ImagePathVectorShape;
+
+export type CropAspectPreset = 'free' | 'original' | '1:1' | '4:3' | '3:2' | '4:5' | '16:9';
+export type CropGuideMode = 'none' | 'thirds' | 'grid';
+
+export interface CropToolSettings {
+  aspectPreset: CropAspectPreset;
+  guideMode: CropGuideMode;
+  deleteCroppedPixels: boolean;
+  rotationDeg: number;
+}
+
+export interface TextLayerOpenTypeFeatures {
+  enabled: string[];
+  disabled: string[];
+  unsupported?: string[];
 }
 
 export interface TextLayerStyle {
@@ -213,7 +533,10 @@ export interface TextLayerStyle {
   fontSize: number;
   fontWeight: string;
   fontStyle: 'normal' | 'italic';
+  fontKerning: 'auto' | 'normal' | 'none';
+  fontVariantCaps: 'normal' | 'small-caps' | 'all-small-caps';
   letterSpacing: number;
+  baselineShift: number;
   boxWidth: number | null;
   boxHeight: number | null;
   wrap: boolean;
@@ -221,7 +544,11 @@ export interface TextLayerStyle {
   lineHeight: number;
   align: 'left' | 'center' | 'right' | 'justify';
   verticalAlign: 'top' | 'middle' | 'bottom';
+  orientation?: 'horizontal' | 'vertical-rl' | 'vertical-lr';
   warp: 'none' | 'arc' | 'flag';
+  openTypeFeatures?: TextLayerOpenTypeFeatures;
+  pathReference?: TextLayerPathReferenceMetadata | null;
+  pathLayout?: TextLayerPathLayout | null;
 }
 
 /**
@@ -237,18 +564,34 @@ export interface ImageLayer {
   type: LayerType;
   visible: boolean;
   locked: boolean;
+  locks?: ImageLayerLocks;
   opacity: number;
   blendMode: BlendMode;
   x: number;
   y: number;
   rotationDeg?: number;
+  skewXDeg?: number;
+  skewYDeg?: number;
+  perspectiveX?: number;
+  perspectiveY?: number;
+  warp?: ImageLayerWarpOffsets;
+  cornerOffsets?: ImageLayerTransformCornerOffsets;
+  transformOriginX?: number;
+  transformOriginY?: number;
   bitmap: LayerBitmap | null;
   bitmapVersion: number;
   mask: LayerBitmap | null;
+  maskDensity?: number;
+  maskFeather?: number;
   text?: TextLayerStyle;
   adjustment?: ImageAdjustmentSettings;
   effects?: ImageLayerEffect[];
   filters?: ImageLayerFilter[];
+  colorLabel?: ImageLayerColorLabel;
+  clippingMask?: boolean;
+  groupId?: string;
+  groupExpanded?: boolean;
+  linkGroupId?: string;
   metadata?: ImageLayerMetadata;
   vectorRecipe?: string;
 }
@@ -259,6 +602,40 @@ export interface DocumentViewport {
   panY: number;
 }
 
+export type ImageColorProofMode = 'rgb' | 'grayscale-soft-proof' | 'cmyk-soft-proof';
+export type ImageColorProofIntent = 'screen-rgb' | 'grayscale-luminance' | 'relative-colorimetric' | 'perceptual';
+export type ImageArtboardPagePreset = 'custom' | 'us-letter' | 'us-legal' | 'tabloid' | 'a4' | 'a5' | 'comic-book';
+
+export interface ImageColorProofMetadata {
+  mode: ImageColorProofMode;
+  intent: ImageColorProofIntent;
+  profileLabel?: string;
+}
+
+export interface ImageArtboardPageMetadata {
+  preset: ImageArtboardPagePreset;
+  widthMm: number;
+  heightMm: number;
+  bleedMm: number;
+  dpi: number;
+}
+
+export interface ImageArtboardMetadata {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  proofLabel?: string;
+  page: ImageArtboardPageMetadata;
+}
+
+export interface ImageArtboardsMetadata {
+  activeArtboardId?: string;
+  artboards: ImageArtboardMetadata[];
+}
+
 export interface ImageDocument {
   id: string;
   title: string;
@@ -266,15 +643,22 @@ export interface ImageDocument {
   height: number;
   layers: ImageLayer[];
   activeLayerId: string | null;
+  activeLayerEditTarget?: ImageLayerEditTarget;
+  activeColorChannel?: ImageColorChannel;
   hasSelection: boolean;
   selectionVersion: number;
   viewport: DocumentViewport;
   dirty: boolean;
   sourceBinItemId?: string;
+  savedSelectionChannels?: ImageSavedSelectionChannel[];
+  spotChannels?: ImageSpotChannel[];
   metadata?: {
     sourceFormat?: string;
     sourceMimeType?: string;
+    sourceBitDepth?: 8 | 16 | 32;
     warnings?: string[];
+    colorProof?: ImageColorProofMetadata;
+    artboards?: ImageArtboardsMetadata;
   };
   snapshots?: ImageDocumentSnapshot[];
 }
@@ -283,6 +667,7 @@ export interface ImageDocumentSnapshot {
   id: string;
   name: string;
   createdAt: number;
+  updatedAt?: number;
   width: number;
   height: number;
   layers: ImageLayer[];
@@ -297,11 +682,67 @@ export interface SelectionMaskSnapshot {
   data: Uint8ClampedArray;
 }
 
+export interface ImageSavedSelectionChannel {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  dataBase64: string;
+  createdAt: number;
+}
+
+export interface ImageSpotChannelColor {
+  r: number;
+  g: number;
+  b: number;
+}
+
+export interface ImageSpotChannel {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  color: ImageSpotChannelColor;
+  opacity: number;
+  solidity: number;
+  visible: boolean;
+  dataBase64: string;
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export interface ImageQuickActionMacroStep {
+  actionId: string;
+}
+
+export interface ImageQuickActionMacro {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  steps: ImageQuickActionMacroStep[];
+}
+
+export interface ImageLayerTransformState {
+  x: number;
+  y: number;
+  rotationDeg?: number;
+  skewXDeg?: number;
+  skewYDeg?: number;
+  perspectiveX?: number;
+  perspectiveY?: number;
+  warp?: ImageLayerWarpOffsets;
+  cornerOffsets?: ImageLayerTransformCornerOffsets;
+  transformOriginX?: number;
+  transformOriginY?: number;
+}
+
 export type EditorOperation =
   | {
       kind: 'paint';
       docId: string;
       layerId: string;
+      paintTarget?: ImageLayerEditTarget;
       before: LayerBitmap | null;
       after: LayerBitmap | null;
     }
@@ -315,8 +756,8 @@ export type EditorOperation =
       kind: 'transform';
       docId: string;
       layerId: string;
-      before: { x: number; y: number; rotationDeg?: number };
-      after: { x: number; y: number; rotationDeg?: number };
+      before: ImageLayerTransformState;
+      after: ImageLayerTransformState;
     }
   | {
       kind: 'layerOp';
@@ -327,8 +768,8 @@ export type EditorOperation =
   | {
       kind: 'docResize';
       docId: string;
-      before: { width: number; height: number; layers: ImageLayer[] };
-      after: { width: number; height: number; layers: ImageLayer[] };
+      before: { width: number; height: number; layers: ImageLayer[]; activeLayerId?: string | null };
+      after: { width: number; height: number; layers: ImageLayer[]; activeLayerId?: string | null };
     }
   | {
       kind: 'documentState';
@@ -353,6 +794,29 @@ export const DEFAULT_BRUSH_SETTINGS: BrushSettings = {
   pressureOpacity: 0,
   pressureFlow: 0.35,
   tipShape: 'round',
+  symmetryMode: 'none',
+  velocitySize: 0,
+  velocityOpacity: 0,
+  velocityFlow: 0,
+  velocitySpacing: 0,
+  texture: undefined,
+  textureScale: 1,
+  textureDepth: 0,
+  dualBrush: false,
+  wetEdges: false,
+  wetMedia: false,
+  wetMix: 0,
+  wetLoad: 1,
+  wetPull: 0,
+  gpuBrushEngine: false,
+  gpuAcceleration: false,
+  androidBrushControls: false,
+  androidStylusControls: false,
+  gamepadBrushControls: false,
+  gamepadPressure: false,
+  abrSourceHash: undefined,
+  abrPresetId: undefined,
+  abrVersion: undefined,
 };
 
 export const DEFAULT_SELECTION_TOOL_SETTINGS: SelectionToolSettings = {
@@ -362,6 +826,111 @@ export const DEFAULT_SELECTION_TOOL_SETTINGS: SelectionToolSettings = {
   marqueeShape: 'rectangle',
   lassoShape: 'freehand',
   magicWandTolerance: 32,
+  sampleAllLayers: true,
+  contiguous: true,
+  paintBucketBlendMode: 'normal',
+  paintBucketPreserveTransparency: false,
+  backgroundEraserTolerance: 32,
+  backgroundEraserContiguous: true,
+  backgroundEraserSampling: 'once',
+  backgroundEraserUseBackgroundSwatch: false,
+  backgroundEraserLimits: 'contiguous',
+  backgroundEraserProtectForeground: false,
+};
+
+export const DEFAULT_RETOUCH_TOOL_SETTINGS: RetouchToolSettings = {
+  sampleMode: 'currentLayer',
+  aligned: true,
+  outputMode: 'activeLayer',
+  toneRange: 'midtones',
+  protectTones: true,
+  spongeVibrance: 0.65,
+  spongePreserveLuminosity: true,
+  airbrush: false,
+  rate: 0.5,
+};
+
+export const DEFAULT_QUICK_MASK_SETTINGS: QuickMaskSettings = {
+  enabled: false,
+  viewMode: 'maskedAreas',
+  overlayOpacity: 0.5,
+};
+
+export const DEFAULT_SELECT_AND_MASK_SETTINGS: SelectAndMaskSettings = {
+  enabled: false,
+  previewMode: 'maskedAreas',
+  smooth: 0,
+  feather: 0,
+  contrast: 0,
+  shiftEdge: 0,
+  refineRadius: 0,
+  decontaminateColors: false,
+  decontaminateAmount: 0,
+  outputMode: 'selection',
+};
+
+export const DEFAULT_GRADIENT_TOOL_SETTINGS: GradientToolSettings = {
+  mode: 'linear',
+  colorMode: 'foregroundToTransparent',
+  reverse: false,
+  dither: false,
+};
+
+export const STANDARD_GRADIENT_TOOL_PRESETS: GradientToolPreset[] = [
+  {
+    id: 'warm-sunset',
+    label: 'Warm Sunset',
+    colorStops: [
+      { offset: 0, color: '#2d1b69', opacity: 1 },
+      { offset: 0.35, color: '#f97316', opacity: 0.86 },
+      { offset: 1, color: '#fde68a', opacity: 1 },
+    ],
+  },
+  {
+    id: 'cool-dawn',
+    label: 'Cool Dawn',
+    colorStops: [
+      { offset: 0, color: '#0f172a', opacity: 1 },
+      { offset: 0.52, color: '#38bdf8', opacity: 0.82 },
+      { offset: 1, color: '#e0f2fe', opacity: 1 },
+    ],
+  },
+  {
+    id: 'neon-magenta-cyan',
+    label: 'Neon Magenta / Cyan',
+    colorStops: [
+      { offset: 0, color: '#ff00aa', opacity: 1 },
+      { offset: 0.5, color: '#7c3aed', opacity: 0.78 },
+      { offset: 1, color: '#22d3ee', opacity: 1 },
+    ],
+  },
+  {
+    id: 'ink-wash',
+    label: 'Ink Wash',
+    colorStops: [
+      { offset: 0, color: '#111827', opacity: 0.96 },
+      { offset: 0.48, color: '#64748b', opacity: 0.58 },
+      { offset: 1, color: '#f8fafc', opacity: 0.18 },
+    ],
+  },
+];
+
+export const DEFAULT_SHAPE_TOOL_SETTINGS: ShapeToolSettings = {
+  fillColor: '#ffffff',
+  fillOpacity: 1,
+  strokeColor: '#000000',
+  strokeOpacity: 1,
+  strokeWidth: 0,
+  presetKind: 'rect',
+  polygonSides: 6,
+  starInnerRadius: 0.5,
+};
+
+export const DEFAULT_CROP_TOOL_SETTINGS: CropToolSettings = {
+  aspectPreset: 'free',
+  guideMode: 'thirds',
+  deleteCroppedPixels: false,
+  rotationDeg: 0,
 };
 
 export const DEFAULT_TEXT_TOOL_SETTINGS: TextLayerStyle = {
@@ -370,7 +939,10 @@ export const DEFAULT_TEXT_TOOL_SETTINGS: TextLayerStyle = {
   fontSize: 48,
   fontWeight: '400',
   fontStyle: 'normal',
+  fontKerning: 'auto',
+  fontVariantCaps: 'normal',
   letterSpacing: 0,
+  baselineShift: 0,
   boxWidth: null,
   boxHeight: null,
   wrap: true,

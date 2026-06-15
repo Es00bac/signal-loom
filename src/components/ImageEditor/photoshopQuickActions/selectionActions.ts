@@ -236,6 +236,24 @@ export function smoothSelection(selection: SelectionMask): SelectionMask {
   return out;
 }
 
+export function nudgeSelection(selection: SelectionMask, dx: number, dy: number): SelectionMask {
+  const offsetX = Number.isFinite(dx) ? Math.round(dx) : 0;
+  const offsetY = Number.isFinite(dy) ? Math.round(dy) : 0;
+  const out = createMask(selection.width, selection.height);
+
+  for (let y = 0; y < selection.height; y += 1) {
+    const targetY = y + offsetY;
+    if (targetY < 0 || targetY >= selection.height) continue;
+    for (let x = 0; x < selection.width; x += 1) {
+      const targetX = x + offsetX;
+      if (targetX < 0 || targetX >= selection.width) continue;
+      out.data[targetY * out.width + targetX] = selection.data[y * selection.width + x];
+    }
+  }
+
+  return out;
+}
+
 
 function neighborhoodSelection(
   selection: SelectionMask,

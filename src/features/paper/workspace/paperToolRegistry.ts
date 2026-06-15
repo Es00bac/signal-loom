@@ -12,7 +12,7 @@ export const PAPER_TOOL_DEFINITIONS: PaperToolDefinition[] = [
   { tool: 'select', label: 'Select', shortcut: 'V', frameKind: null, add: false },
   { tool: 'hand', label: 'Hand', shortcut: 'H', frameKind: null, add: false },
   { tool: 'text', label: 'Text frame', shortcut: 'T', frameKind: 'text', add: true },
-  { tool: 'image', label: 'Image frame', shortcut: 'I', frameKind: 'image', add: true },
+  { tool: 'image', label: 'Image frame', shortcut: 'Shift+I', frameKind: 'image', add: true },
   { tool: 'panel', label: 'Comic panel', frameKind: 'panel', add: true },
   { tool: 'line', label: 'Line', frameKind: 'shape', add: true },
   { tool: 'ellipse', label: 'Ellipse / circle', frameKind: 'shape', add: true },
@@ -23,5 +23,6 @@ export const PAPER_TOOL_DEFINITIONS: PaperToolDefinition[] = [
   { tool: 'speech', label: 'Speech bubble', frameKind: 'speechBubble', add: true },
   { tool: 'thought', label: 'Thought bubble', frameKind: 'thoughtBubble', add: true },
   { tool: 'caption', label: 'Caption', frameKind: 'caption', add: true },
+  { tool: 'eyedropper', label: 'Eyedropper', shortcut: 'I', frameKind: null, add: false },
   { tool: 'gutterKnife', label: 'Gutter knife', shortcut: 'K', frameKind: null, add: false },
 ];

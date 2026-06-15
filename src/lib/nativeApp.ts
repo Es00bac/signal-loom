@@ -28,6 +28,7 @@ export const NATIVE_MENU_COMMANDS = [
   'file:export-project',
   'file:export-assets',
   'settings:keyboard-shortcuts',
+  'settings:gamepad-bindings',
   'edit:undo',
   'edit:redo',
   'edit:cut',
@@ -43,6 +44,7 @@ export const NATIVE_MENU_COMMANDS = [
   'view:paper',
   'view:toggle-source-bin',
   'view:toggle-inspector',
+  'view:toggle-interface',
   'view:command-palette',
   'view:activity-trail',
   'view:layout-reset',
@@ -57,7 +59,10 @@ export const NATIVE_MENU_COMMANDS = [
   'image:tool-lasso',
   'image:tool-magic-wand',
   'image:tool-brush',
+  'image:tool-pen',
   'image:tool-eraser',
+  'image:tool-background-eraser',
+  'image:tool-magic-eraser',
   'image:tool-clone-stamp',
   'image:tool-spot-heal',
   'image:tool-blur-brush',
@@ -87,6 +92,7 @@ export const NATIVE_MENU_COMMANDS = [
   'paper:tool-hand',
   'paper:tool-text',
   'paper:tool-image',
+  'paper:tool-eyedropper',
   'paper:new-document',
   'paper:add-page',
   'paper:export-pdf',
@@ -133,6 +139,85 @@ export const NATIVE_MENU_COMMANDS = [
 ] as const;
 
 export type NativeMenuCommand = typeof NATIVE_MENU_COMMANDS[number];
+export type NativeWorkspaceStandaloneEntryMode = 'shared-binary-window';
+export type NativeWorkspaceStandaloneEntryStatus = 'ready';
+export type NativeWorkspacePackageTarget = 'macos' | 'windows' | 'linux';
+export type NativeWorkspaceSuiteHandoffMode = 'shared-binary-deep-link';
+
+export interface NativeWorkspaceStandaloneEntryPoint {
+  workspace: WorkspaceWindowView;
+  command: Extract<NativeMenuCommand, 'view:flow' | 'view:editor' | 'view:image' | 'view:paper'>;
+  entryPoint: `signal-loom://workspace/${WorkspaceWindowView}`;
+  mode: NativeWorkspaceStandaloneEntryMode;
+}
+
+export interface NativeWorkspaceStandaloneEntryReadiness extends NativeWorkspaceStandaloneEntryPoint {
+  status: NativeWorkspaceStandaloneEntryStatus;
+  unsupportedStandaloneExecutable: true;
+  suiteHandoffMode: NativeWorkspaceSuiteHandoffMode;
+  packageTargets: readonly NativeWorkspacePackageTarget[];
+  packageCaveats: string[];
+  caveat: string;
+  signature: string;
+}
+
+export const NATIVE_WORKSPACE_STANDALONE_ENTRY_POINTS: readonly NativeWorkspaceStandaloneEntryPoint[] = [
+  {
+    workspace: 'flow',
+    command: 'view:flow',
+    entryPoint: 'signal-loom://workspace/flow',
+    mode: 'shared-binary-window',
+  },
+  {
+    workspace: 'editor',
+    command: 'view:editor',
+    entryPoint: 'signal-loom://workspace/editor',
+    mode: 'shared-binary-window',
+  },
+  {
+    workspace: 'image',
+    command: 'view:image',
+    entryPoint: 'signal-loom://workspace/image',
+    mode: 'shared-binary-window',
+  },
+  {
+    workspace: 'paper',
+    command: 'view:paper',
+    entryPoint: 'signal-loom://workspace/paper',
+    mode: 'shared-binary-window',
+  },
+] as const;
+
+export function buildNativeStandaloneEntryReadiness(
+  workspace: WorkspaceWindowView,
+): NativeWorkspaceStandaloneEntryReadiness {
+  const entry = NATIVE_WORKSPACE_STANDALONE_ENTRY_POINTS.find((candidate) => candidate.workspace === workspace);
+  if (!entry) {
+    throw new Error(`Unknown native standalone workspace entry: ${workspace}`);
+  }
+
+  return {
+    ...entry,
+    status: 'ready',
+    unsupportedStandaloneExecutable: true,
+    suiteHandoffMode: 'shared-binary-deep-link',
+    packageTargets: ['macos', 'windows', 'linux'],
+    packageCaveats: [
+      'Standalone Image handoff stays inside the shared Signal Loom desktop package; separate signed single-workspace executables are not produced.',
+    ],
+    caveat: 'Standalone workspace entry uses the shared Signal Loom desktop binary and focused workspace windows; separate signed executables are not packaged.',
+    signature: [
+      'native-standalone-entry:v2',
+      entry.workspace,
+      entry.command,
+      entry.entryPoint,
+      entry.mode,
+      'suite-handoff=shared-binary-deep-link',
+      'targets=macos,windows,linux',
+      'separate-exe=false',
+    ].join('|'),
+  };
+}
 
 export interface NativeState {
   currentProjectPath?: string;
@@ -249,6 +334,7 @@ export interface NativeMaterializeSourceAssetRequest {
   kind: Exclude<SourceBinLibraryItem['kind'], 'text'>;
   mimeType: string;
   dataUrl: string;
+  binaryData?: Uint8Array;
   isGenerated?: boolean;
   pixelWidth?: number;
   pixelHeight?: number;

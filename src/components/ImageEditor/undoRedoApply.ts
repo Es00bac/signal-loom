@@ -16,7 +16,11 @@ export function applyOperation(op: EditorOperation, direction: Direction): void 
   switch (op.kind) {
     case 'paint': {
       const targetBitmap = direction === 'undo' ? op.before : op.after;
-      state.updateLayer(docId, op.layerId, { bitmap: targetBitmap });
+      if (op.paintTarget === 'mask') {
+        state.updateLayer(docId, op.layerId, { mask: targetBitmap });
+      } else {
+        state.updateLayer(docId, op.layerId, { bitmap: targetBitmap });
+      }
       break;
     }
     case 'transform': {
@@ -25,6 +29,14 @@ export function applyOperation(op: EditorOperation, direction: Direction): void 
         x: target.x,
         y: target.y,
         rotationDeg: target.rotationDeg ?? 0,
+        ...('skewXDeg' in target ? { skewXDeg: target.skewXDeg ?? 0 } : {}),
+        ...('skewYDeg' in target ? { skewYDeg: target.skewYDeg ?? 0 } : {}),
+        ...('perspectiveX' in target ? { perspectiveX: target.perspectiveX ?? 0 } : {}),
+        ...('perspectiveY' in target ? { perspectiveY: target.perspectiveY ?? 0 } : {}),
+        ...('warp' in target ? { warp: target.warp } : {}),
+        ...('cornerOffsets' in target ? { cornerOffsets: target.cornerOffsets } : {}),
+        ...('transformOriginX' in target ? { transformOriginX: target.transformOriginX } : {}),
+        ...('transformOriginY' in target ? { transformOriginY: target.transformOriginY } : {}),
       });
       break;
     }
@@ -56,12 +68,7 @@ export function applyOperation(op: EditorOperation, direction: Direction): void 
       const target = direction === 'undo' ? op.before : op.after;
       const current = useImageEditorStore.getState().documents.find((d) => d.id === docId);
       if (!current) return;
-      for (const layer of current.layers) {
-        state.removeLayer(docId, layer.id);
-      }
-      for (const layer of target.layers) {
-        state.addLayer(docId, layer);
-      }
+      state.setLayers(docId, target.layers, target.activeLayerId);
       state.setDocumentDimensions(docId, target.width, target.height);
       break;
     }
@@ -89,4 +96,25 @@ export function redo(docId: string): boolean {
   if (!op) return false;
   applyOperation(op, 'redo');
   return true;
+}
+
+export function jumpToHistoryUndoCount(docId: string, targetUndoCount: number): boolean {
+  const state = useImageEditorStore.getState();
+  const currentUndoCount = state.undoStacks[docId]?.length ?? 0;
+  const currentRedoCount = state.redoStacks[docId]?.length ?? 0;
+  const maxUndoCount = currentUndoCount + currentRedoCount;
+
+  if (targetUndoCount < 0 || targetUndoCount > maxUndoCount) return false;
+  if (targetUndoCount === currentUndoCount) return true;
+
+  let changed = false;
+  while ((useImageEditorStore.getState().undoStacks[docId]?.length ?? 0) > targetUndoCount) {
+    if (!undo(docId)) return changed;
+    changed = true;
+  }
+  while ((useImageEditorStore.getState().undoStacks[docId]?.length ?? 0) < targetUndoCount) {
+    if (!redo(docId)) return changed;
+    changed = true;
+  }
+  return changed;
 }

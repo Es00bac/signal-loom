@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   clampContextMenuPosition,
+  estimateContextMenuHeight,
   getContextMenuMaxHeight,
   getContextMenuPortalTarget,
   normalizeContextMenuItems,
+  resolveContextMenuLayout,
 } from './sharedContextMenu';
 
 describe('shared context menu helpers', () => {
@@ -27,6 +29,71 @@ describe('shared context menu helpers', () => {
     ).toEqual({ x: 200, y: 380 });
   });
 
+  it('clamps tall menus opened near the bottom edge fully into the viewport', () => {
+    const height = estimateContextMenuHeight(
+      Array.from({ length: 40 }, (_, index) => ({
+        id: `item-${index}`,
+        label: `Action ${index + 1}`,
+      })),
+      {
+        headerHeight: 34,
+        itemHeight: 36,
+        maxHeight: getContextMenuMaxHeight({ width: 1280, height: 720 }),
+        paddingY: 16,
+      },
+    );
+
+    expect(
+      clampContextMenuPosition(
+        { x: 240, y: 708 },
+        { width: 1280, height: 720 },
+        { width: 256, height },
+      ),
+    ).toEqual({ x: 240, y: 12 });
+  });
+
+  it('clamps tall menus opened near the right edge fully into the viewport', () => {
+    const height = estimateContextMenuHeight(
+      Array.from({ length: 18 }, (_, index) => ({
+        id: `item-${index}`,
+        label: `Action ${index + 1}`,
+      })),
+      {
+        headerHeight: 34,
+        itemHeight: 36,
+        maxHeight: getContextMenuMaxHeight({ width: 320, height: 720 }),
+        paddingY: 16,
+      },
+    );
+
+    expect(
+      clampContextMenuPosition(
+        { x: 316, y: 320 },
+        { width: 320, height: 720 },
+        { width: 256, height },
+      ),
+    ).toEqual({ x: 52, y: 12 });
+  });
+
+  it('reclamps from the measured menu size when the rendered menu is taller than the estimate', () => {
+    expect(
+      resolveContextMenuLayout({
+        point: { x: 316, y: 220 },
+        viewport: { width: 320, height: 240 },
+        menuWidth: 256,
+        estimatedHeight: 120,
+        maxHeight: 216,
+        headerHeight: 34,
+        measuredSize: { width: 256, height: 420 },
+      }),
+    ).toEqual({
+      position: { x: 52, y: 12 },
+      menuSize: { width: 256, height: 216 },
+      maxHeight: 216,
+      contentMaxHeight: 182,
+    });
+  });
+
   it('keeps hidden items out and preserves disabled items without actions', () => {
     const action = vi.fn();
     const items = normalizeContextMenuItems([
@@ -44,6 +111,10 @@ describe('shared context menu helpers', () => {
   it('caps tall context menus to the viewport with padding', () => {
     expect(getContextMenuMaxHeight({ width: 3840, height: 2160 })).toBe(2136);
     expect(getContextMenuMaxHeight({ width: 800, height: 160 })).toBe(136);
+  });
+
+  it('does not make tiny viewport menus taller than the available screen space', () => {
+    expect(getContextMenuMaxHeight({ width: 320, height: 80 })).toBe(56);
   });
 
   it('uses document.body when a browser document exists', () => {
