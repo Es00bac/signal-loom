@@ -328,6 +328,28 @@ export interface NativeVertexVideoResult {
   error?: string;
 }
 
+export interface NativeVertexAuthRequest {
+  auth?: VertexNativeAuthConfig;
+}
+
+export interface NativeVertexLoginResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface NativeVertexDetectResult {
+  ok: boolean;
+  hasToken: boolean;
+  account?: string;
+  error?: string;
+}
+
+export interface NativeVertexProjectsResult {
+  ok: boolean;
+  projects: Array<{ projectId: string; name: string }>;
+  error?: string;
+}
+
 export interface NativeMaterializeSourceAssetRequest {
   id?: string;
   label: string;
@@ -386,6 +408,9 @@ export interface SignalLoomNativeBridge {
   generateVertexImage: (request: NativeVertexImageRequest) => Promise<NativeVertexImageResult>;
   generateVertexText: (request: NativeVertexTextRequest) => Promise<NativeVertexTextResult>;
   generateVertexVideo: (request: NativeVertexVideoRequest) => Promise<NativeVertexVideoResult>;
+  loginVertex: (request: NativeVertexAuthRequest) => Promise<NativeVertexLoginResult>;
+  detectVertexAdc: (request: NativeVertexAuthRequest) => Promise<NativeVertexDetectResult>;
+  listVertexProjects: (request: NativeVertexAuthRequest) => Promise<NativeVertexProjectsResult>;
   materializeSourceAsset: (request: NativeMaterializeSourceAssetRequest) => Promise<NativeMaterializeSourceAssetResult>;
   chooseScratchDirectory: () => Promise<NativeScratchDirectoryResult>;
   openWorkspaceWindow: (workspace: WorkspaceWindowView) => Promise<{ ok?: boolean; workspace?: WorkspaceWindowView; error?: string }>;

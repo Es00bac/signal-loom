@@ -64,6 +64,9 @@ const {
 } = startupProjectModule;
 const {
   buildVertexAccessTokenCommand,
+  buildVertexLoginCommand,
+  buildVertexListProjectsCommand,
+  parseGcloudProjectsList,
   buildVertexAuthEnvironment,
   parseVertexEnvironmentVariables,
 } = vertexAuthModule;
@@ -2331,6 +2334,43 @@ function installIpcHandlers() {
 
   ipcMain.handle('signal-loom:vertex-generate-video', async (_event, request) => {
     return generateVertexVideo(request);
+  });
+
+  ipcMain.handle('signal-loom:vertex-login', async (_event, request = {}) => {
+    try {
+      const { command, args } = buildVertexLoginCommand(request?.auth);
+      await execFileAsync(command, args, {
+        env: buildVertexAuthEnvironment(request?.auth, process.env),
+        timeout: 180000,
+        maxBuffer: 1024 * 1024,
+      });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('signal-loom:vertex-detect-adc', async (_event, request = {}) => {
+    try {
+      const token = await getGcloudAccessToken(request?.auth);
+      return { ok: true, hasToken: Boolean(token) };
+    } catch (error) {
+      return { ok: false, hasToken: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('signal-loom:vertex-list-projects', async (_event, request = {}) => {
+    try {
+      const { command, args } = buildVertexListProjectsCommand(request?.auth);
+      const { stdout } = await execFileAsync(command, args, {
+        env: buildVertexAuthEnvironment(request?.auth, process.env),
+        timeout: 60000,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      return { ok: true, projects: parseGcloudProjectsList(stdout) };
+    } catch (error) {
+      return { ok: false, projects: [], error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   ipcMain.handle('signal-loom:source-asset-materialize', async (_event, request) => {
