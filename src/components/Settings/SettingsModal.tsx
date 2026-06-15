@@ -8,7 +8,6 @@ import {
   PAPER_PDF_RASTER_PRESET_OPTIONS,
   PAPER_PRINT_UPSCALE_METHOD_OPTIONS,
   RENDER_BACKEND_OPTIONS,
-  VERTEX_AUTH_MODE_OPTIONS,
 } from '../../lib/providerCatalog';
 import { INTERFACE_THEMES, type InterfaceTheme } from '../../lib/interfaceThemes';
 import {
@@ -48,10 +47,13 @@ import {
   Section,
   TextInput,
   NumberInput,
-  TextAreaInput,
   SelectInput,
   type InputProps,
 } from './SettingsInputs';
+import { Capacitor } from '@capacitor/core';
+import { getSignalLoomNativeBridge } from '../../lib/nativeApp';
+import { VertexAuthPanel } from './VertexAuthPanel';
+import { useVertexAuth } from './useVertexAuth';
 
 export const SettingsModal: React.FC = () => {
   const {
@@ -75,6 +77,10 @@ export const SettingsModal: React.FC = () => {
     openSettings,
   } = useSettingsStore();
   const keyStorageStatus = getApiKeyStorageStatus(apiKeys);
+  const vertexPlatform: 'desktop' | 'mobile' = getSignalLoomNativeBridge()
+    ? 'desktop'
+    : (Capacitor.getPlatform?.() === 'android' ? 'mobile' : 'desktop');
+  const vertexAuth = useVertexAuth({ providerSettings, setProviderSetting, platform: vertexPlatform });
   const {
     modelCatalog,
     elevenLabsVoices,
@@ -321,57 +327,24 @@ export const SettingsModal: React.FC = () => {
               />
 
               {providerSettings.geminiCredentialMode === 'vertex-adc' ? (
-                <>
-                  <TextInput
-                    label="Vertex AI project ID"
-                    value={providerSettings.vertexProjectId}
-                    onChange={(value) => setProviderSetting('vertexProjectId', value)}
-                    placeholder="gen-lang-client-0529114074"
+                <div className="md:col-span-2">
+                  <VertexAuthPanel
+                    platform={vertexPlatform}
+                    providerSettings={providerSettings}
+                    setProviderSetting={setProviderSetting}
+                    status={vertexAuth.status}
+                    projects={vertexAuth.projects}
+                    busy={vertexAuth.busy}
+                    testResult={vertexAuth.testResult}
+                    serviceAccountError={vertexAuth.serviceAccountError}
+                    onSignIn={vertexAuth.onSignIn}
+                    onDetect={vertexAuth.onDetect}
+                    onRefreshProjects={vertexAuth.onRefreshProjects}
+                    onTestConnection={vertexAuth.onTestConnection}
+                    onServiceAccountFile={vertexAuth.onServiceAccountFile}
+                    onServiceAccountText={vertexAuth.onServiceAccountText}
                   />
-
-                  <TextInput
-                    label="Vertex AI location"
-                    value={providerSettings.vertexLocation}
-                    onChange={(value) => setProviderSetting('vertexLocation', value)}
-                    placeholder="us-central1"
-                  />
-
-                  <SelectInput
-                    label="Vertex authentication"
-                    onChange={(value) => setProviderSetting('vertexAuthMode', value as ProviderSettings['vertexAuthMode'])}
-                    options={VERTEX_AUTH_MODE_OPTIONS}
-                    value={providerSettings.vertexAuthMode}
-                  />
-
-                  <TextInput
-                    label="Vertex quota project override"
-                    value={providerSettings.vertexQuotaProjectId}
-                    onChange={(value) => setProviderSetting('vertexQuotaProjectId', value)}
-                    placeholder="Optional billing/quota project"
-                  />
-
-                  <div className="md:col-span-2">
-                    <TextAreaInput
-                    label="Vertex environment variables"
-                      onChange={(value) => setProviderSetting('vertexEnvironmentVariables', value)}
-                      placeholder={[
-                        'GCLOUD_BIN=/home/me/google-cloud-sdk/bin/gcloud',
-                        'GCLOUD_ACCOUNT=jgoogly02@gmail.com',
-                        'GOOGLE_APPLICATION_CREDENTIALS=/home/me/vertex-service-account.json',
-                        'GOOGLE_CLOUD_PROJECT=my-project-id',
-                        'GOOGLE_CLOUD_LOCATION=global',
-                        'CLOUDSDK_CORE_PROJECT=my-project-id',
-                        'GOOGLE_CLOUD_QUOTA_PROJECT=my-billing-project',
-                        'CLOUDSDK_CONFIG=/home/me/.config/gcloud',
-                      ].join('\n')}
-                      value={providerSettings.vertexEnvironmentVariables}
-                    />
-                  </div>
-
-                  <div className="md:col-span-2 rounded-xl border border-gray-800 bg-[#111217]/50 px-4 py-3 text-xs leading-5 text-gray-400">
-                    Vertex mode runs in the desktop app. Use <span className="text-gray-200">gcloud auth login</span> for user credentials, or <span className="text-gray-200">gcloud auth application-default login</span> for ADC/service-account workflows. Enable <span className="text-gray-200">aiplatform.googleapis.com</span> on the selected project and set a quota project when Google Cloud asks for billing attribution. If the desktop launcher cannot find <span className="text-gray-200">gcloud</span>, add <span className="text-gray-200">GCLOUD_BIN</span> with the full executable path.
-                  </div>
-                </>
+                </div>
               ) : null}
 
               <SelectInput
