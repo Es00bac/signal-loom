@@ -224,6 +224,7 @@ export const useSettingsStore = create<SettingsState>()(
         vertexLocation: DEFAULT_PROVIDER_SETTINGS.vertexLocation,
         vertexQuotaProjectId: DEFAULT_PROVIDER_SETTINGS.vertexQuotaProjectId,
         vertexEnvironmentVariables: DEFAULT_PROVIDER_SETTINGS.vertexEnvironmentVariables,
+        vertexServiceAccountJson: DEFAULT_PROVIDER_SETTINGS.vertexServiceAccountJson,
         paperPrintUpscaleMethod: DEFAULT_PROVIDER_SETTINGS.paperPrintUpscaleMethod,
         paperPdfRasterPreset: DEFAULT_PROVIDER_SETTINGS.paperPdfRasterPreset,
         localOpenImageEndpointUrl: DEFAULT_PROVIDER_SETTINGS.localOpenImageEndpointUrl,

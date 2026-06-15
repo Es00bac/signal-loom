@@ -52,6 +52,7 @@ const baseSettings: RuntimeSettingsSnapshot = {
     vertexLocation: 'global',
     vertexQuotaProjectId: '',
     vertexEnvironmentVariables: '',
+    vertexServiceAccountJson: '',
     paperPrintUpscaleMethod: 'auto',
     paperPdfRasterPreset: 'balanced-jpeg',
     localOpenImageEndpointUrl: 'http://127.0.0.1:8188/signal-loom-image-edit',

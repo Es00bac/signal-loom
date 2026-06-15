@@ -52,6 +52,7 @@ const baseSettings: RuntimeSettingsSnapshot = {
     vertexLocation: 'us-central1',
     vertexQuotaProjectId: '',
     vertexEnvironmentVariables: '',
+    vertexServiceAccountJson: '',
     paperPrintUpscaleMethod: 'auto',
     paperPdfRasterPreset: 'balanced-jpeg',
     localOpenImageEndpointUrl: '',

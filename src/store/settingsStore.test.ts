@@ -265,4 +265,8 @@ describe('settingsStore image provider settings', () => {
     expect(mergedState3.providerSettings.vertexLocation).toBe('europe-west9');
   });
 
+  it('defaults vertexServiceAccountJson to an empty string', () => {
+    expect(useSettingsStore.getState().providerSettings.vertexServiceAccountJson).toBe('');
+  });
+
 });

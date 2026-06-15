@@ -20,6 +20,7 @@ const baseSettings: ProviderSettings = {
   vertexLocation: 'us-central1',
   vertexQuotaProjectId: '',
   vertexEnvironmentVariables: '',
+  vertexServiceAccountJson: '',
   paperPrintUpscaleMethod: 'auto',
   paperPdfRasterPreset: 'balanced-jpeg',
   localOpenImageEndpointUrl: '',

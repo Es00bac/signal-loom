@@ -76,6 +76,7 @@ export const DEFAULT_PROVIDER_SETTINGS = {
   vertexLocation: 'us-central1',
   vertexQuotaProjectId: '',
   vertexEnvironmentVariables: '',
+  vertexServiceAccountJson: '',
   paperPrintUpscaleMethod: 'auto',
   paperPdfRasterPreset: 'balanced-jpeg',
   localOpenImageEndpointUrl: '',

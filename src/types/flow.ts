@@ -669,6 +669,7 @@ export interface ProviderSettings {
   vertexLocation: string;
   vertexQuotaProjectId: string;
   vertexEnvironmentVariables: string;
+  vertexServiceAccountJson: string;
   paperPrintUpscaleMethod: PaperPrintUpscaleMethod;
   paperPdfRasterPreset: PaperPdfRasterPreset;
   localOpenImageEndpointUrl?: string;
