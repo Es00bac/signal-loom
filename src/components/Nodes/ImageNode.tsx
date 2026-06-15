@@ -170,7 +170,10 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
     ? Math.max(4, Math.min(160, parsedMaskBrushSize))
     : 36;
   const maskPainterMode = hasControl('outpaintMargins') && !hasControl('mask') ? 'outpaint' : 'mask';
-  const canOpenMaskPainter = Boolean(editSourcePreviewUrl);
+  const maskPainterSourceUrl = editSourcePreviewUrl
+    ?? (typeof data.result === 'string' ? data.result : undefined)
+    ?? (typeof data.sourceAssetUrl === 'string' ? data.sourceAssetUrl : undefined);
+  const canOpenMaskPainter = Boolean(maskPainterSourceUrl);
   const isVideoFrameMode = mediaMode === 'generate' && hasVideoSourceConnection;
   const isEditingMode = mediaMode === 'generate' && hasEditSourceConnection;
   const isReferenceGuidedMode = mediaMode === 'generate' && !isEditingMode && hasReferenceConnections;
@@ -799,7 +802,7 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
           src={assetUrl}
         />
       ) : null}
-      {isMaskPainterOpen && editSourcePreviewUrl ? (
+      {isMaskPainterOpen && maskPainterSourceUrl ? (
         <ImageMaskPainterDialog
           brushSize={maskBrushSize}
           initialMaskDataUrl={paintedMaskUrl}
@@ -811,7 +814,7 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
             data.onChange?.('imagePaintedMaskUpdatedAt', Date.now());
             setMaskPainterOpen(false);
           }}
-          sourceImageUrl={editSourcePreviewUrl}
+          sourceImageUrl={maskPainterSourceUrl}
         />
       ) : null}
     </BaseNode>
