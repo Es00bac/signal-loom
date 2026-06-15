@@ -28,6 +28,15 @@
     "gate:android-localdream": "node scripts/android-localdream-gate.mjs",
     "setup:android-localdream": "node scripts/android-localdream-setup.mjs",
     "gate:release": "node scripts/release-gate.mjs release",
+    "android:prepare-localdream-runtime": "node scripts/prepare-android-localdream-runtime.mjs",
+    "sync:catalog": "node scripts/sync-provider-catalog.mjs",
+    "sync:android": "npm run build && cap sync android",
+    "build:android": "npm run android:prepare-localdream-runtime && npm run sync:android && cd android && ./gradlew assembleDebug",
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip",
+    "dist:mac:zip": "npm run build && electron-builder --mac zip",
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb",
+    "icons:mac": "bash scripts/create-mac-icon.sh",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -62,6 +71,7 @@
     "@vitejs/plugin-react": "^6.0.1",
     "autoprefixer": "^10.5.0",
     "electron": "^41.3.0",
+    "electron-builder": "^26.15.2",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
@@ -72,5 +82,63 @@
     "typescript-eslint": "^8.58.2",
     "vite": "^8.0.9",
     "vitest": "^4.1.5"
+  },
+  "build": {
+    "appId": "com.spac3.signalloom",
+    "productName": "Signal Loom",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "shared/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "ops/native-render",
+        "to": "ops/native-render",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "icon": "build/icons/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "category": "public.app-category.graphics-design",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/mac/entitlements.mac.plist",
+      "entitlementsInherit": "build/mac/entitlements.mac.plist",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "linux": {
+      "category": "AudioVideo",
+      "icon": "build/icons/icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    }
   }
 }
