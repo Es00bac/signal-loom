@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyPinch,
   clampZoom,
   docRectToScreen,
   docToScreen,
@@ -134,5 +135,24 @@ describe('viewport — zoomViewportStepAroundCenter', () => {
     expect(next.zoom).toBeCloseTo(1.5);
     expect(after.x).toBeCloseTo(before.x);
     expect(after.y).toBeCloseTo(before.y);
+  });
+});
+
+describe('viewport — applyPinch (two-finger pinch-zoom + pan)', () => {
+  it('zooms in when the fingers spread apart', () => {
+    const out = applyPinch({ zoom: 1, panX: 0, panY: 0 }, { dist: 100, midX: 50, midY: 50 }, { dist: 200, midX: 50, midY: 50 });
+    expect(out.zoom).toBeGreaterThan(1);
+  });
+
+  it('zooms out when the fingers pinch together', () => {
+    const out = applyPinch({ zoom: 2, panX: 0, panY: 0 }, { dist: 200, midX: 50, midY: 50 }, { dist: 100, midX: 50, midY: 50 });
+    expect(out.zoom).toBeLessThan(2);
+  });
+
+  it('pans by the midpoint translation when the distance is unchanged', () => {
+    const out = applyPinch({ zoom: 1, panX: 0, panY: 0 }, { dist: 100, midX: 50, midY: 50 }, { dist: 100, midX: 70, midY: 90 });
+    expect(out.zoom).toBe(1);
+    expect(out.panX).toBe(20);
+    expect(out.panY).toBe(40);
   });
 });

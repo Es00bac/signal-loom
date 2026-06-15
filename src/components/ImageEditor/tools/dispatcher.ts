@@ -1,12 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { useImageEditorStore } from '../../../store/imageEditorStore';
-import { screenToDoc as screenToDocMath, docToScreen as docToScreenMath } from '../viewport';
+import { applyPinch, screenToDoc as screenToDocMath, docToScreen as docToScreenMath } from '../viewport';
 import type { CompositeRenderer } from '../CompositeRenderer';
 import type { EditorTool } from '../../../types/imageEditor';
 import type { ToolEnv, ToolHandler, Point, Modifiers } from './types';
 import { modsFrom, resolveModeFromMods } from './types';
 import { moveTool } from './moveTool';
-import { brushTool, eraserTool, brushKeyResize } from './brushTool';
+import { brushTool, eraserTool, backgroundEraserTool, magicEraserTool, brushKeyResize } from './brushTool';
 import { cloneStampTool } from './cloneStampTool';
 import { spotHealTool } from './spotHealTool';
 import { blurBrushTool } from './blurBrushTool';
@@ -20,6 +20,7 @@ import { ellipseShapeTool, rectShapeTool } from './shapeTool';
 import { marqueeTool } from './marqueeTool';
 import { lassoTool, lassoIsPolygonalActive, lassoPolygonalDoubleClick } from './lassoTool';
 import { magicWandTool } from './magicWandTool';
+import { penTool } from './penTool';
 import { eyedropperTool } from './eyedropperTool';
 import { cropTool } from './cropTool';
 import { textTool } from './textTool';
@@ -32,8 +33,11 @@ const HANDLERS: Record<EditorTool, ToolHandler> = {
   marquee: marqueeTool,
   lasso: lassoTool,
   magicWand: magicWandTool,
+  pen: penTool,
   brush: brushTool,
   eraser: eraserTool,
+  backgroundEraser: backgroundEraserTool,
+  magicEraser: magicEraserTool,
   cloneStamp: cloneStampTool,
   spotHeal: spotHealTool,
   blurBrush: blurBrushTool,
@@ -52,9 +56,87 @@ const HANDLERS: Record<EditorTool, ToolHandler> = {
   eyedropper: eyedropperTool,
 };
 
+export type ImageToolDispatcherMethod = 'pointerDown' | 'pointerMove' | 'pointerUp' | 'keyDown' | 'cancel';
+export type ImageToolDispatcherSupportStatus = 'full' | 'partial' | 'inactive';
+
+export interface ImageToolDispatcherSupportItem {
+  tool: EditorTool;
+  support: ImageToolDispatcherSupportStatus;
+  methods: ImageToolDispatcherMethod[];
+  caveat: string;
+}
+
+export interface ImageToolDispatcherSupportDescriptor {
+  descriptorId: 'image-tool-dispatcher-support:v1';
+  version: 1;
+  tools: ImageToolDispatcherSupportItem[];
+  unsupportedTools: EditorTool[];
+  partialTools: EditorTool[];
+  signature: string;
+}
+
+const DISPATCHER_METHOD_ORDER: ImageToolDispatcherMethod[] = [
+  'pointerDown',
+  'pointerMove',
+  'pointerUp',
+  'keyDown',
+  'cancel',
+];
+
+function listDispatcherMethods(handler: ToolHandler): ImageToolDispatcherMethod[] {
+  const methods: ImageToolDispatcherMethod[] = [];
+  if (handler.onPointerDown) methods.push('pointerDown');
+  if (handler.onPointerMove) methods.push('pointerMove');
+  if (handler.onPointerUp) methods.push('pointerUp');
+  if (handler.onKeyDown) methods.push('keyDown');
+  if (handler.onCancel) methods.push('cancel');
+  return methods;
+}
+
+function describeDispatcherSupport(methods: ImageToolDispatcherMethod[]): ImageToolDispatcherSupportStatus {
+  if (methods.length === 0) return 'inactive';
+  return DISPATCHER_METHOD_ORDER.every((method) => methods.includes(method)) ? 'full' : 'partial';
+}
+
+export function describeImageToolDispatcherSupport(): ImageToolDispatcherSupportDescriptor {
+  const tools = (Object.entries(HANDLERS) as Array<[EditorTool, ToolHandler]>).map(([tool, handler]) => {
+    const methods = listDispatcherMethods(handler);
+    const support = describeDispatcherSupport(methods);
+    return {
+      tool,
+      support,
+      methods,
+      caveat:
+        support === 'inactive'
+          ? 'Toolbar/shortcut selection exists, but no canvas ToolHandler callbacks are registered.'
+          : support === 'partial'
+            ? 'Tool has a canvas handler, but not every pointer/key/cancel callback is registered.'
+            : 'Tool has pointer, keyboard, and cancel canvas handler callbacks registered.',
+    };
+  });
+
+  return {
+    descriptorId: 'image-tool-dispatcher-support:v1',
+    version: 1,
+    tools,
+    unsupportedTools: tools.filter((tool) => tool.support === 'inactive').map((tool) => tool.tool),
+    partialTools: tools.filter((tool) => tool.support === 'partial').map((tool) => tool.tool),
+    signature: tools
+      .map((tool) => `${tool.tool}:${tool.methods.length ? tool.methods.join(',') : 'none'}`)
+      .join('|'),
+  };
+}
+
 interface DispatcherOptions {
   wrapperRef: React.RefObject<HTMLDivElement | null>;
   rendererRef: React.RefObject<CompositeRenderer | null>;
+}
+
+export const IMAGE_CANVAS_INTERACTION_OVERLAY_ATTRIBUTE = 'data-image-canvas-interaction-overlay';
+
+export function shouldIgnoreImageCanvasToolEvent(event: Event): boolean {
+  const target = event.target;
+  return target instanceof Element && target.closest(`[${IMAGE_CANVAS_INTERACTION_OVERLAY_ATTRIBUTE}="true"]`) !== null;
 }
 
 /**
@@ -74,13 +156,18 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       if (!doc) return null;
       const activeLayer = doc.layers.find((l) => l.id === doc.activeLayerId) ?? null;
       const viewport = doc.viewport;
-      const requestRender = () => {
-        rendererRef.current?.requestRender();
+      const requestRender: ToolEnv['requestRender'] = (options) => {
+        rendererRef.current?.requestRender(options);
       };
       return {
         doc,
         activeLayer,
+        backgroundColor: state.backgroundColor,
         brushSettings: state.brushSettings,
+        cropToolSettings: state.cropToolSettings,
+        gradientToolSettings: state.gradientToolSettings,
+        retouchToolSettings: state.retouchToolSettings,
+        shapeToolSettings: state.shapeToolSettings,
         selectionToolSettings: state.selectionToolSettings,
         screenToDoc: (point: Point) => screenToDocMath(point, viewport),
         docToScreen: (point: Point) => docToScreenMath(point, viewport),
@@ -97,7 +184,52 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       return { x: event.clientX - rect.left, y: event.clientY - rect.top };
     };
 
+    // Two-finger pinch-zoom + pan. Works regardless of touch-navigation mode:
+    // one finger still draws (pen mode); two fingers always navigate the canvas.
+    const activeTouches = new Map<number, Point>();
+    let pinchActive = false;
+    let lastPinch: { dist: number; midX: number; midY: number } | null = null;
+    const pinchSample = () => {
+      const pts = [...activeTouches.values()];
+      const dx = pts[0].x - pts[1].x;
+      const dy = pts[0].y - pts[1].y;
+      return { dist: Math.hypot(dx, dy), midX: (pts[0].x + pts[1].x) / 2, midY: (pts[0].y + pts[1].y) / 2 };
+    };
+    const cancelActiveTool = () => {
+      const env = buildEnv();
+      if (env) HANDLERS[useImageEditorStore.getState().tool].onCancel?.(env);
+    };
+    const applyPinchStep = () => {
+      if (activeTouches.size < 2 || !lastPinch) return;
+      const sample = pinchSample();
+      const state = useImageEditorStore.getState();
+      const doc = state.documents.find((d) => d.id === state.activeDocId);
+      if (doc) {
+        state.setViewport(doc.id, applyPinch(doc.viewport, lastPinch, sample));
+        rendererRef.current?.requestRender();
+      }
+      lastPinch = sample;
+    };
+
     const onDown = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') {
+        activeTouches.set(event.pointerId, screenPoint(event));
+        if (activeTouches.size >= 2) {
+          if (!pinchActive) {
+            pinchActive = true;
+            cancelActiveTool(); // a single-finger stroke may have started; abort it
+          }
+          try { el.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+          lastPinch = pinchSample();
+          event.preventDefault();
+          return;
+        }
+        if (pinchActive) {
+          event.preventDefault();
+          return;
+        }
+      }
+      if (shouldIgnoreImageCanvasToolEvent(event)) return;
       const env = buildEnv();
       if (!env) return;
       const handler = currentHandler();
@@ -106,6 +238,15 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       handler.onPointerDown?.(env, docPoint, modsFrom(event), event);
     };
     const onMove = (event: PointerEvent) => {
+      if (event.pointerType === 'touch' && activeTouches.has(event.pointerId)) {
+        activeTouches.set(event.pointerId, screenPoint(event));
+      }
+      if (pinchActive) {
+        applyPinchStep();
+        event.preventDefault();
+        return;
+      }
+      if (shouldIgnoreImageCanvasToolEvent(event)) return;
       const env = buildEnv();
       if (!env) return;
       const handler = currentHandler();
@@ -113,6 +254,18 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       handler.onPointerMove?.(env, docPoint, modsFrom(event), event);
     };
     const onUp = (event: PointerEvent) => {
+      if (event.pointerType === 'touch' && activeTouches.has(event.pointerId)) {
+        activeTouches.delete(event.pointerId);
+        const wasPinching = pinchActive;
+        if (activeTouches.size < 2) lastPinch = null;
+        if (activeTouches.size === 0) pinchActive = false;
+        if (wasPinching) {
+          try { el.releasePointerCapture(event.pointerId); } catch { /* ignore */ }
+          event.preventDefault();
+          return; // part of the two-finger gesture — don't end a drawing stroke
+        }
+      }
+      if (shouldIgnoreImageCanvasToolEvent(event)) return;
       const env = buildEnv();
       if (!env) return;
       const handler = currentHandler();
@@ -124,7 +277,8 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       }
       handler.onPointerUp?.(env, docPoint, modsFrom(event), event);
     };
-    const onDouble = () => {
+    const onDouble = (event: MouseEvent) => {
+      if (shouldIgnoreImageCanvasToolEvent(event)) return;
       // Polygonal lasso: double-click closes the polygon.
       if (lassoIsPolygonalActive()) {
         const fakeEnv = buildEnv();
@@ -144,6 +298,7 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       if (
         (tool === 'brush' ||
           tool === 'eraser' ||
+          tool === 'backgroundEraser' ||
           tool === 'cloneStamp' ||
           tool === 'spotHeal' ||
           tool === 'blurBrush' ||
@@ -172,13 +327,18 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
           return {
             doc,
             activeLayer: doc.layers.find((l) => l.id === doc.activeLayerId) ?? null,
+            backgroundColor: state.backgroundColor,
             brushSettings: state.brushSettings,
+            cropToolSettings: state.cropToolSettings,
+            gradientToolSettings: state.gradientToolSettings,
+            retouchToolSettings: state.retouchToolSettings,
+            shapeToolSettings: state.shapeToolSettings,
             selectionToolSettings: state.selectionToolSettings,
             screenToDoc: (point: Point) => screenToDocMath(point, doc.viewport),
             docToScreen: (point: Point) => docToScreenMath(point, doc.viewport),
             pushOperation: state.pushOperation,
             store: state,
-            requestRender: () => rendererRef.current?.requestRender(),
+            requestRender: (options) => rendererRef.current?.requestRender(options),
             resolveSelectionMode: (mods: Modifiers) =>
               resolveModeFromMods(state.selectionToolSettings.mode, mods),
           } as ToolEnv;

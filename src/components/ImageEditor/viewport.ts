@@ -83,6 +83,28 @@ export function panBy(viewport: DocumentViewport, dx: number, dy: number): Docum
   };
 }
 
+/** A two-finger sample: distance between fingers and their midpoint (screen coords). */
+export interface PinchSample {
+  dist: number;
+  midX: number;
+  midY: number;
+}
+
+/**
+ * Apply one incremental two-finger pinch step: zoom by the change in finger
+ * distance anchored at the new midpoint, then pan by the midpoint translation.
+ * Drives two-finger pinch-zoom + pan on the image canvas.
+ */
+export function applyPinch(
+  viewport: DocumentViewport,
+  prev: PinchSample,
+  next: PinchSample,
+): DocumentViewport {
+  const factor = prev.dist > 0 ? next.dist / prev.dist : 1;
+  const zoomed = zoomAround(viewport, { x: next.midX, y: next.midY }, factor);
+  return panBy(zoomed, next.midX - prev.midX, next.midY - prev.midY);
+}
+
 /**
  * Compute a screen-space rectangle for a document-space rectangle. Useful for
  * selection bounding boxes and the floating generative-fill prompt anchor.
