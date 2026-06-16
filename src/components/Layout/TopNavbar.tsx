@@ -17,6 +17,7 @@ import {
 } from '../../lib/videoDockablePanelVisibility';
 import { fitToContainer, zoomViewportStepAroundCenter } from '../ImageEditor/viewport';
 import { PAPER_TOPBAR_SLOT_ID } from '../../lib/paperTopbarSlot';
+import { IMAGE_TOPBAR_CENTER_SLOT_ID, IMAGE_TOPBAR_RIGHT_SLOT_ID } from '../../lib/imageTopbarSlots';
 import { BottomToolbar } from './BottomToolbar';
 import type { FlowNodeType, NodeData, WorkspaceView } from '../../types/flow';
 import { FunctionLibraryDrawer } from '../Common/FunctionLibraryDrawer';
@@ -698,10 +699,23 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         />
       ) : null}
 
+      {workspaceView === 'image' ? (
+        <div
+          className="pointer-events-auto relative z-10 flex min-w-0 flex-1 items-center justify-center gap-1 overflow-x-auto [scrollbar-width:none]"
+          id={IMAGE_TOPBAR_CENTER_SLOT_ID}
+        />
+      ) : null}
+
       <div
         className={`pointer-events-none relative z-20 flex min-w-0 items-center justify-end gap-2 ${primaryControlsFlexClass}`}
         data-topbar-primary-controls="true"
       >
+        {workspaceView === 'image' ? (
+          <div
+            className="pointer-events-auto flex shrink-0 items-center"
+            id={IMAGE_TOPBAR_RIGHT_SLOT_ID}
+          />
+        ) : null}
         {workspaceView === 'editor' ? (
           <EditorTitlebarControls
             activeCompositionId={activeComposition?.id}

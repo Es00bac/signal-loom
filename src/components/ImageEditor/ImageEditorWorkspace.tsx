@@ -1,5 +1,7 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import { IMAGE_TOPBAR_CENTER_SLOT_ID, IMAGE_TOPBAR_RIGHT_SLOT_ID, observeTopbarSlot } from '../../lib/imageTopbarSlots';
 import { GripHorizontal, Hand, Maximize2, Minus, PanelBottomOpen, PanelLeftOpen, PanelRightOpen, Plus, X } from 'lucide-react';
 import { ImageEditorToolbar } from './ImageEditorToolbar';
 import { ImageEditorCanvas } from './ImageEditorCanvas';
@@ -94,6 +96,15 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
   const [helpVisible, setHelpVisible] = useState(false);
   const [showNewDocModal, setShowNewDocModal] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<'editor' | 'automation'>('editor');
+  // Top-nav-bar slots the desktop workspace controls are portaled into (zoom -> right, the rest -> center).
+  const [imageTopbarCenterSlot, setImageTopbarCenterSlot] = useState<HTMLElement | null>(null);
+  const [imageTopbarRightSlot, setImageTopbarRightSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const disposeCenter = observeTopbarSlot(document, IMAGE_TOPBAR_CENTER_SLOT_ID, setImageTopbarCenterSlot);
+    const disposeRight = observeTopbarSlot(document, IMAGE_TOPBAR_RIGHT_SLOT_ID, setImageTopbarRightSlot);
+    return () => { disposeCenter(); disposeRight(); };
+  }, []);
   const [openingLocalImage, setOpeningLocalImage] = useState(false);
   const [localImageOpenStatus, setLocalImageOpenStatus] = useState<string | null>(null);
   const [selectedLayoutPresetId, setSelectedLayoutPresetId] = useState<ImageLayoutPresetId | 'custom'>(() =>
@@ -653,6 +664,114 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
     workspaceMode,
   ]);
 
+  // Workspace controls, shared between the desktop top-nav-bar slots (zoom -> right, the rest -> centre)
+  // and the inline mobile row.
+  const workspaceControlsStatus = localImageOpenStatus ? (
+    <div className="max-w-[28vw] shrink-0 truncate px-2 text-[11px] text-cyan-100/55" title={localImageOpenStatus}>
+      {localImageOpenStatus}
+    </div>
+  ) : null;
+  const workspaceControlsZoom = workspaceMode === 'editor' ? (
+    <ImageNavigationControls disabled={!activeDocId} onCommand={runNavigationCommand} />
+  ) : null;
+  const workspaceControlsButtons = workspaceMode === 'editor' ? (
+    <>
+      {!mobilePhoneInterface.enabled ? (
+        <>
+          <ImageLayoutButton
+            active={toolsVisible}
+            label="Tools"
+            onClick={() => {
+              setSelectedLayoutPresetId('custom');
+              setImageLayout({ toolbarVisible: !toolsVisible });
+              setImagePanelGroupVisible([IMAGE_DOCKABLE_PANEL_IDS.tools], !toolsVisible, hidePanel, dockPanel, floatPanel);
+            }}
+          />
+          <ImageLayoutButton
+            active={rightPanelsVisible}
+            label="Panels"
+            onClick={() => {
+              setSelectedLayoutPresetId('custom');
+              setImageLayout({ rightPanelVisible: !rightPanelsVisible });
+              setImagePanelGroupVisible(
+                [IMAGE_DOCKABLE_PANEL_IDS.layers, IMAGE_DOCKABLE_PANEL_IDS.properties, IMAGE_DOCKABLE_PANEL_IDS.brushes, IMAGE_DOCKABLE_PANEL_IDS.channels, IMAGE_DOCKABLE_PANEL_IDS.paths, IMAGE_DOCKABLE_PANEL_IDS.history],
+                !rightPanelsVisible,
+                hidePanel,
+                dockPanel,
+                floatPanel,
+              );
+            }}
+          />
+          <ImageLayoutButton
+            active={assetsVisible}
+            label="Assets"
+            onClick={() => {
+              setSelectedLayoutPresetId('custom');
+              setImageLayout({ assetBarVisible: !assetsVisible });
+              setImagePanelGroupVisible([IMAGE_DOCKABLE_PANEL_IDS.assets], !assetsVisible, hidePanel, dockPanel, floatPanel);
+            }}
+          />
+        </>
+      ) : null}
+      <label className="mr-2 flex items-center gap-1.5 rounded border border-cyan-300/10 bg-[#101a29]/70 px-2 py-1 text-[11px] font-semibold text-cyan-100/55">
+        <span>Layout</span>
+        <select
+          aria-label="Image layout preset"
+          className="max-w-28 bg-transparent text-[11px] font-semibold text-cyan-100 outline-none"
+          onChange={(event) => {
+            const presetId = event.target.value as ImageLayoutPresetId | 'custom';
+            if (presetId !== 'custom') {
+              applyLayoutPreset(presetId);
+            }
+          }}
+          value={selectedLayoutPresetId}
+        >
+          {selectedLayoutPresetId === 'custom' ? <option className="bg-[#101a29]" value="custom">Custom</option> : null}
+          {IMAGE_LAYOUT_PRESETS.map((preset) => (
+            <option className="bg-[#101a29]" key={preset.id} value={preset.id}>
+              {preset.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <ImageLayoutButton
+        active={false}
+        label="Reset Panels"
+        onClick={() => {
+          resetWorkspacePanels(IMAGE_DOCKABLE_WORKSPACE_ID);
+          setSelectedLayoutPresetId('full-suite');
+          setImageLayout({ toolbarVisible: true, rightPanelVisible: true, assetBarVisible: true });
+        }}
+      />
+    </>
+  ) : null;
+  const workspaceModeToggle = (
+    <div className="flex shrink-0 items-center gap-1 rounded border border-cyan-300/10 bg-[#101a29]/70 p-1 text-[11px] font-semibold">
+      <button
+        className={`rounded px-2 py-1 ${
+          workspaceMode === 'editor'
+            ? 'bg-cyan-400/15 text-cyan-100'
+            : 'text-cyan-100/45 hover:text-cyan-100'
+        }`}
+        onClick={() => setWorkspaceMode('editor')}
+        type="button"
+      >
+        Editor
+      </button>
+      <button
+        className={`rounded px-2 py-1 ${
+          workspaceMode === 'automation'
+            ? 'bg-emerald-400/15 text-emerald-100'
+            : 'text-cyan-100/45 hover:text-emerald-100'
+        }`}
+        onClick={() => setWorkspaceMode('automation')}
+        type="button"
+      >
+        Automation
+      </button>
+    </div>
+  );
+
   return (
     <div className={`signal-loom-themed absolute inset-0 z-30 flex flex-col ${workspaceChromePaddingClassName}`}>
       <NewDocumentModal
@@ -674,115 +793,30 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
             </div>
             </div>
           </div>
-          <div className="theme-surface theme-border relative z-40 flex shrink-0 overflow-x-auto border-b" data-image-workspace-controls-bar="true">
-            <div className="flex min-w-max flex-1 items-center gap-1 px-2 py-1" data-image-workspace-controls-track="true">
-            {localImageOpenStatus ? (
-              <div className="max-w-[28vw] shrink-0 truncate px-2 text-[11px] text-cyan-100/55" title={localImageOpenStatus}>
-                {localImageOpenStatus}
+          {mobilePhoneInterface.enabled ? (
+            <div className="theme-surface theme-border relative z-40 flex shrink-0 overflow-x-auto border-b" data-image-workspace-controls-bar="true">
+              <div className="flex min-w-max flex-1 items-center gap-1 px-2 py-1" data-image-workspace-controls-track="true">
+                {workspaceControlsStatus}
+                {workspaceControlsZoom}
+                {workspaceControlsButtons}
+                <div className="ml-auto">{workspaceModeToggle}</div>
               </div>
-            ) : null}
-            {workspaceMode === 'editor' ? (
-              <>
-                <ImageNavigationControls
-                  disabled={!activeDocId}
-                  onCommand={runNavigationCommand}
-                />
-                {/* On phone these are redundant with the source/panels/assets edge drawer handles. */}
-                {!mobilePhoneInterface.enabled ? (
-                  <>
-                    <ImageLayoutButton
-                      active={toolsVisible}
-                      label="Tools"
-                      onClick={() => {
-                        setSelectedLayoutPresetId('custom');
-                        setImageLayout({ toolbarVisible: !toolsVisible });
-                        setImagePanelGroupVisible([IMAGE_DOCKABLE_PANEL_IDS.tools], !toolsVisible, hidePanel, dockPanel, floatPanel);
-                      }}
-                    />
-                    <ImageLayoutButton
-                      active={rightPanelsVisible}
-                      label="Panels"
-                      onClick={() => {
-                        setSelectedLayoutPresetId('custom');
-                        setImageLayout({ rightPanelVisible: !rightPanelsVisible });
-                        setImagePanelGroupVisible(
-                          [IMAGE_DOCKABLE_PANEL_IDS.layers, IMAGE_DOCKABLE_PANEL_IDS.properties, IMAGE_DOCKABLE_PANEL_IDS.brushes, IMAGE_DOCKABLE_PANEL_IDS.channels, IMAGE_DOCKABLE_PANEL_IDS.paths, IMAGE_DOCKABLE_PANEL_IDS.history],
-                          !rightPanelsVisible,
-                          hidePanel,
-                          dockPanel,
-                          floatPanel,
-                        );
-                      }}
-                    />
-                    <ImageLayoutButton
-                      active={assetsVisible}
-                      label="Assets"
-                      onClick={() => {
-                        setSelectedLayoutPresetId('custom');
-                        setImageLayout({ assetBarVisible: !assetsVisible });
-                        setImagePanelGroupVisible([IMAGE_DOCKABLE_PANEL_IDS.assets], !assetsVisible, hidePanel, dockPanel, floatPanel);
-                      }}
-                    />
-                  </>
-                ) : null}
-                <label className="mr-2 flex items-center gap-1.5 rounded border border-cyan-300/10 bg-[#101a29]/70 px-2 py-1 text-[11px] font-semibold text-cyan-100/55">
-                  <span>Layout</span>
-                  <select
-                    aria-label="Image layout preset"
-                    className="max-w-28 bg-transparent text-[11px] font-semibold text-cyan-100 outline-none"
-                    onChange={(event) => {
-                      const presetId = event.target.value as ImageLayoutPresetId | 'custom';
-                      if (presetId !== 'custom') {
-                        applyLayoutPreset(presetId);
-                      }
-                    }}
-                    value={selectedLayoutPresetId}
-                  >
-                    {selectedLayoutPresetId === 'custom' ? <option className="bg-[#101a29]" value="custom">Custom</option> : null}
-                    {IMAGE_LAYOUT_PRESETS.map((preset) => (
-                      <option className="bg-[#101a29]" key={preset.id} value={preset.id}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <ImageLayoutButton
-                  active={false}
-                  label="Reset Panels"
-                  onClick={() => {
-                    resetWorkspacePanels(IMAGE_DOCKABLE_WORKSPACE_ID);
-                    setSelectedLayoutPresetId('full-suite');
-                    setImageLayout({ toolbarVisible: true, rightPanelVisible: true, assetBarVisible: true });
-                  }}
-                />
-              </>
-            ) : null}
-            <div className="ml-auto flex shrink-0 items-center gap-1 rounded border border-cyan-300/10 bg-[#101a29]/70 p-1 text-[11px] font-semibold">
-              <button
-                className={`rounded px-2 py-1 ${
-                  workspaceMode === 'editor'
-                    ? 'bg-cyan-400/15 text-cyan-100'
-                    : 'text-cyan-100/45 hover:text-cyan-100'
-                }`}
-                onClick={() => setWorkspaceMode('editor')}
-                type="button"
-              >
-                Editor
-              </button>
-              <button
-                className={`rounded px-2 py-1 ${
-                  workspaceMode === 'automation'
-                    ? 'bg-emerald-400/15 text-emerald-100'
-                    : 'text-cyan-100/45 hover:text-emerald-100'
-                }`}
-                onClick={() => setWorkspaceMode('automation')}
-                type="button"
-              >
-                Automation
-              </button>
             </div>
-            </div>
-          </div>
+          ) : null}
+          {/* Desktop: the controls live in the top nav bar — zoom in the right region, the rest in the centre. */}
+          {!mobilePhoneInterface.enabled && imageTopbarRightSlot
+            ? createPortal(workspaceControlsZoom, imageTopbarRightSlot)
+            : null}
+          {!mobilePhoneInterface.enabled && imageTopbarCenterSlot
+            ? createPortal(
+                <div className="flex items-center gap-1.5" data-image-workspace-controls-track="true">
+                  {workspaceControlsStatus}
+                  {workspaceControlsButtons}
+                  {workspaceModeToggle}
+                </div>,
+                imageTopbarCenterSlot,
+              )
+            : null}
           </>
           ) : null}
           {workspaceMode === 'automation' ? (

@@ -44,6 +44,13 @@ describe('ImageEditorWorkspace navigation controls', () => {
     });
     container = document.createElement('div');
     document.body.append(container);
+    // The desktop workspace portals its controls into top-nav-bar slots; provide them so the
+    // portaled zoom/nav controls render (they live in document.body, not the workspace container).
+    for (const id of ['signal-loom-image-topbar-center-slot', 'signal-loom-image-topbar-right-slot']) {
+      const slot = document.createElement('div');
+      slot.id = id;
+      document.body.append(slot);
+    }
     root = createRoot(container);
     useImageEditorStore.setState({
       documents: [],
@@ -57,6 +64,8 @@ describe('ImageEditorWorkspace navigation controls', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    document.getElementById('signal-loom-image-topbar-center-slot')?.remove();
+    document.getElementById('signal-loom-image-topbar-right-slot')?.remove();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -68,10 +77,10 @@ describe('ImageEditorWorkspace navigation controls', () => {
       root.render(<ImageEditorWorkspace getNewFlowNodePosition={() => ({ x: 0, y: 0 })} />);
     });
 
-    expect(container.querySelector('button[aria-label="Fit image to view"]')).not.toBeNull();
-    expect(container.querySelector('button[aria-label="Set image zoom to 100%"]')).not.toBeNull();
-    expect(container.querySelector('button[aria-label="Zoom image out"]')).not.toBeNull();
-    expect(container.querySelector('button[aria-label="Zoom image in"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label="Fit image to view"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label="Set image zoom to 100%"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label="Zoom image out"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label="Zoom image in"]')).not.toBeNull();
   });
 
   it('enables the default Layers/Channels/Paths tab group in the desktop Image workspace', () => {
@@ -92,22 +101,22 @@ describe('ImageEditorWorkspace navigation controls', () => {
     });
 
     act(() => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="Fit image to view"]')?.click();
+      document.querySelector<HTMLButtonElement>('button[aria-label="Fit image to view"]')?.click();
     });
     expect(activeViewport()).toEqual({ zoom: 2, panX: 0, panY: 100 });
 
     act(() => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="Set image zoom to 100%"]')?.click();
+      document.querySelector<HTMLButtonElement>('button[aria-label="Set image zoom to 100%"]')?.click();
     });
     expect(activeViewport().zoom).toBe(1);
 
     act(() => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="Zoom image in"]')?.click();
+      document.querySelector<HTMLButtonElement>('button[aria-label="Zoom image in"]')?.click();
     });
     expect(activeViewport().zoom).toBeCloseTo(1.5);
 
     act(() => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="Zoom image out"]')?.click();
+      document.querySelector<HTMLButtonElement>('button[aria-label="Zoom image out"]')?.click();
     });
     expect(activeViewport().zoom).toBe(1);
   });
