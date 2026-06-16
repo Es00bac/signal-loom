@@ -7,6 +7,7 @@ export const IMAGE_DOCKABLE_PANEL_IDS = {
   tools: 'tools',
   layers: 'layers',
   properties: 'properties',
+  brushes: 'brushes',
   channels: 'channels',
   paths: 'paths',
   history: 'history',
@@ -69,6 +70,7 @@ const IMAGE_TOOLS_PALETTE_HEIGHT_PX = 492;
 export const IMAGE_DOCKED_PANEL_COLUMN_PANEL_IDS = [
   IMAGE_DOCKABLE_PANEL_IDS.layers,
   IMAGE_DOCKABLE_PANEL_IDS.properties,
+  IMAGE_DOCKABLE_PANEL_IDS.brushes,
   IMAGE_DOCKABLE_PANEL_IDS.channels,
   IMAGE_DOCKABLE_PANEL_IDS.paths,
   IMAGE_DOCKABLE_PANEL_IDS.history,
@@ -106,6 +108,15 @@ const IMAGE_DOCKABLE_PANEL_BASE_DEFINITIONS: ImageDockablePanelDefinitionInput[]
     dockZone: 'right',
     floatingRect: { x: 1120, y: 680, width: 300, height: 380 },
     minSize: { width: 224, height: 180 },
+    allowedDockZones: ['right', 'left', 'bottom'],
+  },
+  {
+    workspaceId: IMAGE_DOCKABLE_WORKSPACE_ID,
+    panelId: IMAGE_DOCKABLE_PANEL_IDS.brushes,
+    title: 'Brushes',
+    dockZone: 'right',
+    floatingRect: { x: 1120, y: 300, width: 300, height: 360 },
+    minSize: { width: 224, height: 200 },
     allowedDockZones: ['right', 'left', 'bottom'],
   },
   {
@@ -281,6 +292,7 @@ export const IMAGE_LAYOUT_PRESETS: ImageLayoutPreset[] = [
     layout: { toolbarVisible: true, rightPanelVisible: false, assetBarVisible: false },
     panelModes: {
       tools: 'floating',
+      brushes: 'hidden',
       layers: 'hidden',
       properties: 'hidden',
       channels: 'hidden',
@@ -296,6 +308,7 @@ export const IMAGE_LAYOUT_PRESETS: ImageLayoutPreset[] = [
     layout: { toolbarVisible: true, rightPanelVisible: true, assetBarVisible: true },
     panelModes: {
       tools: 'floating',
+      brushes: 'docked',
       layers: 'docked',
       properties: 'docked',
       channels: 'docked',
@@ -311,6 +324,7 @@ export const IMAGE_LAYOUT_PRESETS: ImageLayoutPreset[] = [
     layout: { toolbarVisible: true, rightPanelVisible: true, assetBarVisible: false },
     panelModes: {
       tools: 'floating',
+      brushes: 'docked',
       layers: 'docked',
       properties: 'docked',
       channels: 'docked',
@@ -326,6 +340,7 @@ export const IMAGE_LAYOUT_PRESETS: ImageLayoutPreset[] = [
     layout: { toolbarVisible: true, rightPanelVisible: true, assetBarVisible: false },
     panelModes: {
       tools: 'floating',
+      brushes: 'docked',
       layers: 'docked',
       properties: 'docked',
       channels: 'docked',
@@ -341,6 +356,7 @@ export const IMAGE_LAYOUT_PRESETS: ImageLayoutPreset[] = [
     layout: { toolbarVisible: true, rightPanelVisible: true, assetBarVisible: false },
     panelModes: {
       tools: 'floating',
+      brushes: 'docked',
       layers: 'docked',
       properties: 'docked',
       channels: 'docked',
@@ -356,6 +372,7 @@ export const IMAGE_LAYOUT_PRESETS: ImageLayoutPreset[] = [
     layout: { toolbarVisible: true, rightPanelVisible: true, assetBarVisible: true },
     panelModes: {
       tools: 'floating',
+      brushes: 'docked',
       layers: 'docked',
       properties: 'docked',
       channels: 'docked',

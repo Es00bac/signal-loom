@@ -21,6 +21,7 @@ describe('ImageDockablePanels', () => {
       IMAGE_DOCKABLE_PANEL_IDS.tools,
       IMAGE_DOCKABLE_PANEL_IDS.layers,
       IMAGE_DOCKABLE_PANEL_IDS.properties,
+      IMAGE_DOCKABLE_PANEL_IDS.brushes,
       IMAGE_DOCKABLE_PANEL_IDS.channels,
       IMAGE_DOCKABLE_PANEL_IDS.paths,
       IMAGE_DOCKABLE_PANEL_IDS.history,
@@ -75,6 +76,7 @@ describe('ImageDockablePanels', () => {
       'tools',
       'layers',
       'properties',
+      'brushes',
       'channels',
       'paths',
       'history',
@@ -109,7 +111,7 @@ describe('ImageDockablePanels', () => {
         properties: { mode: 'docked', dockZone: 'right', zOrder: 3 },
         channels: { mode: 'docked', dockZone: 'right', zOrder: 4 },
       }).panelIds,
-    ).toEqual(['history', 'layers', 'paths', 'properties', 'channels']);
+    ).toEqual(['history', 'layers', 'brushes', 'paths', 'properties', 'channels']);
   });
 
   it('resolves shared-column side-docked panels without per-panel width or scroll traps', () => {
@@ -200,5 +202,20 @@ describe('ImageDockablePanels', () => {
     expect(getImageLayoutPresetIdForLayout({ toolbarVisible: false, rightPanelVisible: true, assetBarVisible: false })).toBe(
       'custom',
     );
+  });
+});
+
+describe('brushes panel registration', () => {
+  it('registers a brushes panel definition', () => {
+    expect(IMAGE_DOCKABLE_PANEL_IDS.brushes).toBe('brushes');
+    expect(IMAGE_DOCKABLE_PANEL_DEFINITIONS.some((panel) => panel.panelId === 'brushes')).toBe(true);
+    expect(IMAGE_DOCKED_PANEL_COLUMN_PANEL_IDS).toContain('brushes');
+  });
+
+  it('shows the brushes panel docked in the painting layout preset and hidden in quick-edit', () => {
+    const painting = IMAGE_LAYOUT_PRESETS.find((preset) => preset.id === 'painting');
+    expect(painting?.panelModes.brushes).toBe('docked');
+    const quickEdit = IMAGE_LAYOUT_PRESETS.find((preset) => preset.id === 'quick-edit');
+    expect(quickEdit?.panelModes.brushes).toBe('hidden');
   });
 });
