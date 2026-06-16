@@ -765,7 +765,7 @@ export function DockablePanel({
             resetKeys={[layout.workspaceId, layout.panelId, layout.mode]}
             title={`${title} Panel`}
           >
-            <DockExpandContext.Provider value={!isFloating && isVerticalDock}>
+            <DockExpandContext.Provider value={!isCollapsed}>
               {children}
             </DockExpandContext.Provider>
           </ErrorBoundary>
