@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { clampContextMenuPosition } from '../../lib/sharedContextMenu';
+import { clampContextMenuPosition, shouldOpenContextMenuForPointerType } from '../../lib/sharedContextMenu';
 import { getKeyboardShortcutLabel } from '../../lib/keyboardShortcuts';
 import { useSettingsStore } from '../../store/settingsStore';
 import type { NativeMenuCommand } from '../../lib/nativeApp';
@@ -54,9 +54,15 @@ export function ImageEditorContextMenu({
 }: Props) {
   const [menu, setMenu] = useState<ContextMenuState>({ x: 0, y: 0, visible: false });
   const keyboardShortcuts = useSettingsStore((state) => state.keyboardShortcuts);
+  const lastPointerTypeRef = useRef<string | null>(null);
 
   const handleContextMenu = useCallback((e: MouseEvent) => {
     e.preventDefault();
+    // A pen/stylus long-press must keep drawing, not open the context menu — only a
+    // finger long-press or a mouse right-click opens it. (See shouldOpenContextMenuForPointerType.)
+    if (!shouldOpenContextMenuForPointerType(lastPointerTypeRef.current)) {
+      return;
+    }
     setMenu({ x: e.clientX, y: e.clientY, visible: true });
   }, []);
 
@@ -65,8 +71,17 @@ export function ImageEditorContextMenu({
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    // Record the pointer type that precedes a `contextmenu` event so the handler can tell a
+    // stylus long-press (suppress) from a finger long-press / mouse right-click (open).
+    const recordPointer = (event: PointerEvent) => {
+      lastPointerTypeRef.current = event.pointerType || null;
+    };
+    el.addEventListener('pointerdown', recordPointer, true);
     el.addEventListener('contextmenu', handleContextMenu);
-    return () => el.removeEventListener('contextmenu', handleContextMenu);
+    return () => {
+      el.removeEventListener('pointerdown', recordPointer, true);
+      el.removeEventListener('contextmenu', handleContextMenu);
+    };
   }, [containerRef, handleContextMenu]);
 
   useEffect(() => {

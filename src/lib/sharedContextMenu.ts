@@ -126,3 +126,15 @@ function countContextMenuRows(items: SharedContextMenuItem[]): number {
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
+
+/**
+ * Whether a `contextmenu` event raised by the given pointer type should open the menu.
+ *
+ * A stylus/pen long-press must NOT open the context menu — the pen should keep drawing
+ * on the canvas. Only a finger long-press (touch) or a mouse right-click opens it. An
+ * unknown pointer type (e.g. the keyboard menu key, where no pointer preceded the event)
+ * is allowed through.
+ */
+export function shouldOpenContextMenuForPointerType(pointerType: string | null | undefined): boolean {
+  return pointerType !== 'pen';
+}

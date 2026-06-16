@@ -6,7 +6,28 @@ import {
   getContextMenuPortalTarget,
   normalizeContextMenuItems,
   resolveContextMenuLayout,
+  shouldOpenContextMenuForPointerType,
 } from './sharedContextMenu';
+
+describe('shouldOpenContextMenuForPointerType', () => {
+  it('suppresses the context menu for a pen/stylus long-press so it keeps drawing', () => {
+    expect(shouldOpenContextMenuForPointerType('pen')).toBe(false);
+  });
+
+  it('opens for a finger long-press (touch)', () => {
+    expect(shouldOpenContextMenuForPointerType('touch')).toBe(true);
+  });
+
+  it('opens for a mouse right-click', () => {
+    expect(shouldOpenContextMenuForPointerType('mouse')).toBe(true);
+  });
+
+  it('opens when the pointer type is unknown (e.g. keyboard menu key)', () => {
+    expect(shouldOpenContextMenuForPointerType(undefined)).toBe(true);
+    expect(shouldOpenContextMenuForPointerType(null)).toBe(true);
+    expect(shouldOpenContextMenuForPointerType('')).toBe(true);
+  });
+});
 
 describe('shared context menu helpers', () => {
   it('clamps the menu inside the viewport with padding', () => {
