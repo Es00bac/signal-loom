@@ -14,6 +14,9 @@ import {
 } from '../ImageSelectionTransform';
 import { getSelection } from '../selectionRegistry';
 import { maskBoundingBox, type SelectionMask } from '../SelectionMask';
+import { cloneBitmap } from '../LayerBitmap';
+import { liftSelectionPixels, renderMovedSelectionIntoBitmap, type LiftedSelection } from './selectionPixelMove';
+import type { LayerBitmap } from '../../../types/imageEditor';
 
 interface MoveLayerState {
   kind: 'layer';
@@ -29,6 +32,14 @@ interface MoveSelectionState {
   docId: string;
   startPoint: Point;
   origin: SelectionTransformBounds;
+  /** Set when the active image layer's selected pixels were lifted so the drag moves pixels too. */
+  pixels: {
+    layerId: string;
+    target: LayerBitmap;
+    before: LayerBitmap;
+    lifted: LiftedSelection;
+  } | null;
+  moved: boolean;
 }
 
 type MoveState = MoveLayerState | MoveSelectionState;
@@ -580,12 +591,18 @@ export const moveTool: ToolHandler = {
       else dx = 0;
     }
     if (active.kind === 'selection') {
-      if (updateSelectionTransformBounds(active.docId, {
+      const boundsChanged = updateSelectionTransformBounds(active.docId, {
         x: active.origin.x + dx,
         y: active.origin.y + dy,
         width: active.origin.width,
         height: active.origin.height,
-      })) {
+      });
+      if (active.pixels) {
+        renderMovedSelectionIntoBitmap(active.pixels.target, active.pixels.lifted, dx, dy);
+        env.store.bumpLayerBitmapVersion(active.docId, active.pixels.layerId);
+        active.moved = true;
+        env.requestRender({ invalidateBitmapCache: true });
+      } else if (boundsChanged) {
         env.requestRender();
       }
       return;
@@ -608,6 +625,16 @@ export const moveTool: ToolHandler = {
   onPointerUp(env) {
     if (!active) return;
     if (active.kind === 'selection') {
+      if (active.pixels && active.moved) {
+        env.pushOperation({
+          kind: 'paint',
+          docId: active.docId,
+          layerId: active.pixels.layerId,
+          before: active.pixels.before,
+          after: cloneBitmap(active.pixels.target),
+        });
+        env.store.markDocumentDirty(active.docId);
+      }
       applySelectionTransformSession(active.docId, env.requestRender);
       active = null;
       return;
@@ -661,6 +688,14 @@ export const moveTool: ToolHandler = {
 
   onCancel(env) {
     if (active?.kind === 'selection') {
+      if (active.pixels && active.moved) {
+        const ctx = active.pixels.target.getContext('2d');
+        if (ctx) {
+          ctx.clearRect(0, 0, active.pixels.target.width, active.pixels.target.height);
+          ctx.drawImage(active.pixels.before, 0, 0);
+        }
+        env.store.bumpLayerBitmapVersion(active.docId, active.pixels.layerId);
+      }
       cancelSelectionTransformSession(active.docId, env.requestRender);
       active = null;
       return;
@@ -675,11 +710,25 @@ function beginMoveToolSelectionDrag(env: ToolEnv, point: Point): MoveSelectionSt
   if (!selection || !pointHitsSelectionMask(selection, point)) return null;
   const session = getSelectionTransformSession(env.doc.id) ?? beginSelectionTransformSession(env.doc.id);
   if (!session) return null;
+
+  // Lift the active image layer's selected pixels so dragging moves the image content, not just the
+  // marching-ants outline. The mask itself is translated by the transform session below.
+  let pixels: MoveSelectionState['pixels'] = null;
+  const layer = env.activeLayer;
+  if (layer && layer.type === 'image' && layer.bitmap && canMoveImageLayer(layer)) {
+    const lifted = liftSelectionPixels(layer, selection);
+    if (lifted) {
+      pixels = { layerId: layer.id, target: layer.bitmap, before: cloneBitmap(layer.bitmap), lifted };
+    }
+  }
+
   return {
     kind: 'selection',
     docId: env.doc.id,
     startPoint: point,
     origin: session.currentBounds,
+    pixels,
+    moved: false,
   };
 }
 
