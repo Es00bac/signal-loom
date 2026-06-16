@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-import { renderToStaticMarkup } from 'react-dom/server';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -46,27 +45,34 @@ describe('DockablePanel compact floating chrome', () => {
     }
   });
 
-  it('renders a movable fixed palette without dock buttons or resize handles', () => {
-    const html = renderToStaticMarkup(
-      <DockablePanel
-        chrome="compact-floating"
-        fixedSize
-        layout={{
-          workspaceId: 'image',
-          panelId: 'tools',
-          mode: 'floating',
-          dockZone: 'left',
-          floatingRect: { x: 20, y: 30, width: 66, height: 120 },
-          minSize: { width: 66, height: 120 },
-          zOrder: 10,
-        }}
-        title="Tools"
-      >
-        <div>Palette</div>
-      </DockablePanel>,
-    );
+  it('renders a movable fixed palette without dock buttons or resize handles', async () => {
+    // Compact palettes portal to <body> (so they stack above everything), so render client-side and
+    // inspect the portaled panel rather than a server-rendered string (portals are skipped in SSR).
+    await act(async () => {
+      root?.render(
+        <DockablePanel
+          chrome="compact-floating"
+          fixedSize
+          layout={{
+            workspaceId: 'image',
+            panelId: 'tools',
+            mode: 'floating',
+            dockZone: 'left',
+            floatingRect: { x: 20, y: 30, width: 66, height: 120 },
+            minSize: { width: 66, height: 120 },
+            zOrder: 10,
+          }}
+          title="Tools"
+        >
+          <div>Palette</div>
+        </DockablePanel>,
+      );
+      await Promise.resolve();
+    });
 
-    expect(html).toContain('data-dockable-panel-chrome="compact-floating"');
+    const panel = document.querySelector('[data-dockable-panel-chrome="compact-floating"]');
+    expect(panel).not.toBeNull();
+    const html = panel?.outerHTML ?? '';
     expect(html).toContain('aria-label="Tools drag handle"');
     expect(html).not.toContain('data-dockable-tab-target="true"');
     expect(html).not.toContain('Dock</button>');
@@ -74,26 +80,32 @@ describe('DockablePanel compact floating chrome', () => {
     expect(html).not.toContain('Resize right');
   });
 
-  it('renders compact palette chrome without resizable flex-fill body behavior', () => {
-    const html = renderToStaticMarkup(
-      <DockablePanel
-        chrome="compact-floating"
-        fixedSize
-        layout={{
-          workspaceId: 'image',
-          panelId: 'tools',
-          mode: 'floating',
-          dockZone: 'left',
-          floatingRect: { x: 20, y: 30, width: 66, height: 456 },
-          minSize: { width: 66, height: 456 },
-          zOrder: 10,
-        }}
-        title="Tools"
-      >
-        <div>Palette</div>
-      </DockablePanel>,
-    );
+  it('renders compact palette chrome without resizable flex-fill body behavior', async () => {
+    await act(async () => {
+      root?.render(
+        <DockablePanel
+          chrome="compact-floating"
+          fixedSize
+          layout={{
+            workspaceId: 'image',
+            panelId: 'tools',
+            mode: 'floating',
+            dockZone: 'left',
+            floatingRect: { x: 20, y: 30, width: 66, height: 456 },
+            minSize: { width: 66, height: 456 },
+            zOrder: 10,
+          }}
+          title="Tools"
+        >
+          <div>Palette</div>
+        </DockablePanel>,
+      );
+      await Promise.resolve();
+    });
 
+    const panel = document.querySelector('[data-dockable-panel-chrome="compact-floating"]');
+    expect(panel).not.toBeNull();
+    const html = panel?.outerHTML ?? '';
     expect(html).not.toContain('role="separator"');
     expect(html).not.toContain('flex-1');
     expect(html).toContain('flex-none');
@@ -172,10 +184,10 @@ describe('DockablePanel compact floating chrome', () => {
     });
 
     expect(open).not.toHaveBeenCalled();
-    const panel = host?.querySelector('[data-dockable-workspace-id="image"][data-dockable-panel-id="tools"]');
+    const panel = document.querySelector('[data-dockable-workspace-id="image"][data-dockable-panel-id="tools"]');
     expect(panel).not.toBeNull();
-    expect(host?.textContent).toContain('Palette');
-    expect(host?.querySelector('[aria-label="Tools drag handle"]')).not.toBeNull();
+    expect(document.body.textContent).toContain('Palette');
+    expect(document.querySelector('[aria-label="Tools drag handle"]')).not.toBeNull();
   });
 
   it('renders compact native chrome in-window even when fixedSize is omitted', async () => {
@@ -204,10 +216,10 @@ describe('DockablePanel compact floating chrome', () => {
     });
 
     expect(open).not.toHaveBeenCalled();
-    const panel = host?.querySelector('[data-dockable-panel-chrome="compact-floating"]');
+    const panel = document.querySelector('[data-dockable-panel-chrome="compact-floating"]');
     expect(panel).not.toBeNull();
     expect(panel?.textContent).not.toContain('Dock');
-    expect(host?.textContent).toContain('Palette');
+    expect(document.body.textContent).toContain('Palette');
   });
 
   it('opens native floating dialogs at explicit desktop-screen coordinates without owner offset drift', async () => {
@@ -299,7 +311,7 @@ describe('DockablePanel compact floating chrome', () => {
       );
     });
 
-    const handle = host?.querySelector('[aria-label="Tools drag handle"]');
+    const handle = document.querySelector('[aria-label="Tools drag handle"]');
     expect(handle).not.toBeNull();
     const before = useDockablePanelStore.getState().layouts['image/tools'];
 
@@ -383,7 +395,7 @@ describe('DockablePanel compact floating chrome', () => {
     // No native popup is opened, so there is no OS-minimum-width surface and no empty strip: the
     // in-window panel is sized exactly to its content.
     expect(open).not.toHaveBeenCalled();
-    const panel = host?.querySelector('[data-dockable-workspace-id="image"][data-dockable-panel-id="tools"]') as HTMLElement | null;
+    const panel = document.querySelector('[data-dockable-workspace-id="image"][data-dockable-panel-id="tools"]') as HTMLElement | null;
     expect(panel).not.toBeNull();
     expect(panel?.getAttribute('style')).toContain('width: 66px');
     expect(panel?.getAttribute('style')).toContain('height: 456px');
@@ -417,7 +429,7 @@ describe('DockablePanel compact floating chrome', () => {
 
     // The palette is moved by dragging its handle within the owner window; no native popup is created.
     expect(open).not.toHaveBeenCalled();
-    expect(host?.querySelector('[aria-label="Tools drag handle"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="Tools drag handle"]')).not.toBeNull();
   });
 
   it('reasserts standard native floating dialog size while dragging if the popup surface drifts larger', async () => {

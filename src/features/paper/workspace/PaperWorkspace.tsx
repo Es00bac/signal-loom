@@ -5040,10 +5040,12 @@ function PaperFloatingToolsPalette({
   const boundedMaxHeight = `calc(100dvh - ${Math.max(PAPER_TOOLS_PALETTE_VIEWPORT_MARGIN, topInsetPx + PAPER_TOOLS_PALETTE_VIEWPORT_MARGIN)}px)`;
   const boundedBodyMaxHeight = `calc(100dvh - ${Math.max(PAPER_TOOLS_PALETTE_VIEWPORT_MARGIN, topInsetPx + PAPER_TOOLS_PALETTE_VIEWPORT_MARGIN + 12)}px)`;
 
-  return (
+  // Portal to <body> so the pinned z wins globally and the palette is never covered by the source bin
+  // or other panels (otherwise it is trapped inside the Paper workspace's z-30 stacking context).
+  return typeof document === 'undefined' ? null : createPortal(
     <div
       aria-label="Paper tools"
-      className="fixed z-[95] w-[64px] select-none overflow-hidden rounded-[3px] border border-cyan-300/25 bg-[#11131a] shadow-2xl shadow-black/45"
+      className="fixed z-[75] w-[64px] select-none overflow-hidden rounded-[3px] border border-cyan-300/25 bg-[#11131a] shadow-2xl shadow-black/45"
       data-compact-tool-palette="true"
       data-paper-floating-tools-palette="true"
       data-paper-tools-dockable="false"
@@ -5066,7 +5068,8 @@ function PaperFloatingToolsPalette({
       <div className="overflow-x-hidden overflow-y-auto" style={{ maxHeight: boundedBodyMaxHeight }}>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -105,7 +105,8 @@ describe('PaperWorkspace mobile shell', () => {
       root.render(<PaperWorkspace />);
     });
 
-    const palette = container.querySelector<HTMLElement>('[data-paper-floating-tools-palette="true"]');
+    // The palette portals to <body> (so it stacks above the source bin), not into the workspace container.
+    const palette = document.body.querySelector<HTMLElement>('[data-paper-floating-tools-palette="true"]');
     expect(palette).not.toBeNull();
     // The left source-bin handle no longer blocks the palette: it can sit at the small
     // viewport margin (8px) like the right side, instead of being pushed to a 40px gutter.

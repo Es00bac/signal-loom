@@ -31,7 +31,7 @@ import {
   shouldUseExternalFloatingPanelWindow,
 } from '../../lib/floatingPanelWindow';
 import { getSignalLoomNativeBridge } from '../../lib/nativeApp';
-import { zIndexForFloatingPanel } from '../../lib/zIndex';
+import { Z_INDEX, zIndexForFloatingPanel } from '../../lib/zIndex';
 import { useDockablePanelStore } from '../../store/dockablePanelStore';
 import { ErrorBoundary } from '../Recovery/ErrorBoundary';
 
@@ -230,7 +230,9 @@ export function DockablePanel({
         height: isCollapsed ? undefined : renderedFloatingRect.height,
         minWidth: layout.minSize.width,
         minHeight: isCollapsed ? undefined : layout.minSize.height,
-        zIndex: zIndexForFloatingPanel(layout.zOrder),
+        // Compact tool palettes are pinned above all other panels + the source bin (and portaled to
+        // <body> below so this z wins globally instead of being trapped in the workspace's stacking).
+        zIndex: isCompactFloatingChrome ? Z_INDEX.pinnedPalette : zIndexForFloatingPanel(layout.zOrder),
       }
     : {
         ...resolveDockedPanelStyleMetrics(layout),
@@ -802,6 +804,12 @@ export function DockablePanel({
 
   if (shouldUseExternalWindow && externalPanelRoot && !shouldRenderInOwnerWindow) {
     return createPortal(panel, externalPanelRoot);
+  }
+
+  // Pin the compact tool palette above everything (source bin, docked + floating panels) by escaping
+  // the workspace's z-30 stacking context: portal it to <body> where its pinnedPalette z wins globally.
+  if (isCompactFloatingChrome && typeof document !== 'undefined') {
+    return createPortal(panel, document.body);
   }
 
   return panel;
