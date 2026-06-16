@@ -288,19 +288,20 @@ describe('ImageEditorPropertiesPanel', () => {
     expect(html).toContain('aria-label="Gradient middle stop opacity"');
   });
 
-  it('renders brush preset management controls and preview tiles when the brush tool is active', () => {
+  it('renders brush tool-options (without the preset library) when the brush tool is active', () => {
     useImageEditorStore.getState().setTool('brush');
 
     const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
 
-    expect(html).toContain('Save Preset');
-    expect(html).toContain('Export Presets');
-    expect(html).toContain('Import Presets');
-    expect(html).toContain('Brush preset pack JSON');
-    expect(html).toContain('data-brush-preset-preview=');
+    // Tool options (and the active-brush header) live in the Properties panel.
+    expect(html).toContain('Soft Round');
     expect(html).toContain('Symmetry');
     expect(html).toContain('Vertical');
     expect(html).toContain('Four-Way');
+    // The brush library (preset grid + pack import/export) moved to the Brushes palette.
+    expect(html).not.toContain('Save Preset');
+    expect(html).not.toContain('Brush preset pack JSON');
+    expect(html).not.toContain('data-brush-preset-preview=');
   });
 
   it('renders transform-selection controls in the Move panel when a selection session is active', () => {

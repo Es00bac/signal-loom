@@ -9,6 +9,7 @@ import { ImageEditorChannelsPanel } from './ImageEditorChannelsPanel';
 import { ImageEditorHistoryPanel } from './ImageEditorHistoryPanel';
 import { ImageEditorPathsPanel } from './ImageEditorPathsPanel';
 import { ImageEditorPropertiesPanel } from './ImageEditorPropertiesPanel';
+import { BrushSelectionPalette } from './BrushSelectionPalette';
 import { ImageEditorAssetBar } from './ImageEditorAssetBar';
 import { ImageEditorContextMenu } from './ImageEditorContextMenu';
 import { ImageEditorHelp } from './ImageEditorHelp';
@@ -116,7 +117,7 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
 
   useEffect(() => {
     setImagePanelGroupVisible(
-      [IMAGE_DOCKABLE_PANEL_IDS.layers, IMAGE_DOCKABLE_PANEL_IDS.properties, IMAGE_DOCKABLE_PANEL_IDS.channels, IMAGE_DOCKABLE_PANEL_IDS.paths, IMAGE_DOCKABLE_PANEL_IDS.history],
+      [IMAGE_DOCKABLE_PANEL_IDS.layers, IMAGE_DOCKABLE_PANEL_IDS.properties, IMAGE_DOCKABLE_PANEL_IDS.brushes, IMAGE_DOCKABLE_PANEL_IDS.channels, IMAGE_DOCKABLE_PANEL_IDS.paths, IMAGE_DOCKABLE_PANEL_IDS.history],
       imageLayout.rightPanelVisible,
       hidePanel,
       dockPanel,
@@ -131,7 +132,7 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
   const toolsVisible = isImagePanelGroupVisible(dockableLayouts, [IMAGE_DOCKABLE_PANEL_IDS.tools], imageLayout.toolbarVisible);
   const rightPanelsVisible = isImagePanelGroupVisible(
     dockableLayouts,
-    [IMAGE_DOCKABLE_PANEL_IDS.layers, IMAGE_DOCKABLE_PANEL_IDS.properties, IMAGE_DOCKABLE_PANEL_IDS.channels, IMAGE_DOCKABLE_PANEL_IDS.paths, IMAGE_DOCKABLE_PANEL_IDS.history],
+    [IMAGE_DOCKABLE_PANEL_IDS.layers, IMAGE_DOCKABLE_PANEL_IDS.properties, IMAGE_DOCKABLE_PANEL_IDS.brushes, IMAGE_DOCKABLE_PANEL_IDS.channels, IMAGE_DOCKABLE_PANEL_IDS.paths, IMAGE_DOCKABLE_PANEL_IDS.history],
     imageLayout.rightPanelVisible,
   );
   const assetsVisible = isImagePanelGroupVisible(dockableLayouts, [IMAGE_DOCKABLE_PANEL_IDS.assets], imageLayout.assetBarVisible);
@@ -703,7 +704,7 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
                         setSelectedLayoutPresetId('custom');
                         setImageLayout({ rightPanelVisible: !rightPanelsVisible });
                         setImagePanelGroupVisible(
-                          [IMAGE_DOCKABLE_PANEL_IDS.layers, IMAGE_DOCKABLE_PANEL_IDS.properties, IMAGE_DOCKABLE_PANEL_IDS.channels, IMAGE_DOCKABLE_PANEL_IDS.paths, IMAGE_DOCKABLE_PANEL_IDS.history],
+                          [IMAGE_DOCKABLE_PANEL_IDS.layers, IMAGE_DOCKABLE_PANEL_IDS.properties, IMAGE_DOCKABLE_PANEL_IDS.brushes, IMAGE_DOCKABLE_PANEL_IDS.channels, IMAGE_DOCKABLE_PANEL_IDS.paths, IMAGE_DOCKABLE_PANEL_IDS.history],
                           !rightPanelsVisible,
                           hidePanel,
                           dockPanel,
@@ -837,6 +838,8 @@ function renderImageDockablePanel(panelId: ImageDockablePanelId, getNewFlowNodeP
       return <ImageEditorLayersPanel />;
     case IMAGE_DOCKABLE_PANEL_IDS.properties:
       return <ImageEditorPropertiesPanel />;
+    case IMAGE_DOCKABLE_PANEL_IDS.brushes:
+      return <BrushSelectionPalette />;
     case IMAGE_DOCKABLE_PANEL_IDS.channels:
       return <ImageEditorChannelsPanel />;
     case IMAGE_DOCKABLE_PANEL_IDS.paths:
@@ -851,6 +854,7 @@ function renderImageDockablePanel(panelId: ImageDockablePanelId, getNewFlowNodeP
 const MOBILE_IMAGE_RIGHT_PANEL_IDS = [
   IMAGE_DOCKABLE_PANEL_IDS.layers,
   IMAGE_DOCKABLE_PANEL_IDS.properties,
+  IMAGE_DOCKABLE_PANEL_IDS.brushes,
   IMAGE_DOCKABLE_PANEL_IDS.channels,
   IMAGE_DOCKABLE_PANEL_IDS.paths,
   IMAGE_DOCKABLE_PANEL_IDS.history,
