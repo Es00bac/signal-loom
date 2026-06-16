@@ -232,7 +232,7 @@ export function BrushPanel() {
         max={256}
         min={1}
         step={1}
-        onChange={(v) => set({ size: v, presetId: undefined })}
+        onChange={(v) => set({ size: v })}
         format={(v) => `${Math.round(v)}px`}
       />
       <Slider
@@ -241,7 +241,7 @@ export function BrushPanel() {
         max={1}
         min={0}
         step={0.01}
-        onChange={(v) => set({ opacity: v, presetId: undefined })}
+        onChange={(v) => set({ opacity: v })}
         format={(v) => `${Math.round(v * 100)}%`}
       />
       <Slider
@@ -250,7 +250,7 @@ export function BrushPanel() {
         max={1}
         min={0}
         step={0.01}
-        onChange={(v) => set({ hardness: v, presetId: undefined })}
+        onChange={(v) => set({ hardness: v })}
         format={(v) => `${Math.round(v * 100)}%`}
       />
       <Slider
@@ -259,7 +259,7 @@ export function BrushPanel() {
         max={1}
         min={0}
         step={0.01}
-        onChange={(v) => set({ flow: v, presetId: undefined })}
+        onChange={(v) => set({ flow: v })}
         format={(v) => `${Math.round(v * 100)}%`}
       />
       <Slider
@@ -268,7 +268,7 @@ export function BrushPanel() {
         max={1.5}
         min={0.02}
         step={0.01}
-        onChange={(v) => set({ spacing: v, presetId: undefined })}
+        onChange={(v) => set({ spacing: v })}
         format={(v) => `${Math.round(v * 100)}%`}
       />
       <Slider
@@ -277,7 +277,7 @@ export function BrushPanel() {
         max={1}
         min={0.05}
         step={0.01}
-        onChange={(v) => set({ roundness: v, presetId: undefined })}
+        onChange={(v) => set({ roundness: v })}
         format={(v) => `${Math.round(v * 100)}%`}
       />
       <Slider
@@ -286,7 +286,7 @@ export function BrushPanel() {
         max={359}
         min={0}
         step={1}
-        onChange={(v) => set({ angleDeg: v, presetId: undefined })}
+        onChange={(v) => set({ angleDeg: v })}
         format={(v) => `${Math.round(v)}°`}
       />
       <Slider
@@ -295,7 +295,7 @@ export function BrushPanel() {
         max={2}
         min={0}
         step={0.01}
-        onChange={(v) => set({ scatter: v, presetId: undefined })}
+        onChange={(v) => set({ scatter: v })}
         format={(v) => `${Math.round(v * 100)}%`}
       />
       <Slider
@@ -304,7 +304,7 @@ export function BrushPanel() {
         max={1}
         min={0}
         step={0.01}
-        onChange={(v) => set({ smoothing: v, presetId: undefined })}
+        onChange={(v) => set({ smoothing: v })}
         format={(v) => `${Math.round(v * 100)}%`}
       />
       <div className="rounded border border-cyan-300/10 bg-[#10131b] p-2">
@@ -323,7 +323,7 @@ export function BrushPanel() {
                   : 'border-cyan-300/10 bg-[#252630] text-cyan-100/65'
               }`}
               key={option.value}
-              onClick={() => set({ symmetryMode: option.value as typeof settings.symmetryMode, presetId: undefined })}
+              onClick={() => set({ symmetryMode: option.value as typeof settings.symmetryMode })}
               type="button"
             >
               {option.label}
@@ -336,7 +336,7 @@ export function BrushPanel() {
         <label className="w-16">Tip</label>
         <select
           className="flex-1 rounded border border-cyan-300/10 bg-[#252630] px-1.5 py-0.5 text-xs text-cyan-100/80"
-          onChange={(event) => set({ tipShape: event.target.value as typeof settings.tipShape, presetId: undefined })}
+          onChange={(event) => set({ tipShape: event.target.value as typeof settings.tipShape })}
           value={settings.tipShape}
         >
           <option value="round">Round</option>
@@ -351,7 +351,7 @@ export function BrushPanel() {
           max={1}
           min={0}
           step={0.01}
-          onChange={(v) => set({ pressureSize: v, presetId: undefined })}
+          onChange={(v) => set({ pressureSize: v })}
           format={(v) => `${Math.round(v * 100)}%`}
         />
         <Slider
@@ -360,7 +360,7 @@ export function BrushPanel() {
           max={1}
           min={0}
           step={0.01}
-          onChange={(v) => set({ pressureOpacity: v, presetId: undefined })}
+          onChange={(v) => set({ pressureOpacity: v })}
           format={(v) => `${Math.round(v * 100)}%`}
         />
         <Slider
@@ -369,7 +369,7 @@ export function BrushPanel() {
           max={1}
           min={0}
           step={0.01}
-          onChange={(v) => set({ pressureFlow: v, presetId: undefined })}
+          onChange={(v) => set({ pressureFlow: v })}
           format={(v) => `${Math.round(v * 100)}%`}
         />
       </div>
@@ -382,7 +382,7 @@ export function BrushPanel() {
           max={1}
           min={0}
           step={0.01}
-          onChange={(v) => set({ velocitySize: v, presetId: undefined })}
+          onChange={(v) => set({ velocitySize: v })}
           format={(v) => `${Math.round(v * 100)}%`}
         />
         <Slider
@@ -392,7 +392,7 @@ export function BrushPanel() {
           max={1}
           min={0}
           step={0.01}
-          onChange={(v) => set({ velocityOpacity: v, presetId: undefined })}
+          onChange={(v) => set({ velocityOpacity: v })}
           format={(v) => `${Math.round(v * 100)}%`}
         />
         <Slider
@@ -402,7 +402,7 @@ export function BrushPanel() {
           max={1}
           min={0}
           step={0.01}
-          onChange={(v) => set({ velocityFlow: v, presetId: undefined })}
+          onChange={(v) => set({ velocityFlow: v })}
           format={(v) => `${Math.round(v * 100)}%`}
         />
         <Slider
@@ -412,7 +412,7 @@ export function BrushPanel() {
           max={1}
           min={0}
           step={0.01}
-          onChange={(v) => set({ velocitySpacing: v, presetId: undefined })}
+          onChange={(v) => set({ velocitySpacing: v })}
           format={(v) => `${Math.round(v * 100)}%`}
         />
         <div className="mt-2 space-y-2">
@@ -420,7 +420,7 @@ export function BrushPanel() {
           <input
             aria-label="Brush texture name"
             className="w-full rounded border border-cyan-300/10 bg-[#252630] px-2 py-1 text-xs text-cyan-100/80"
-            onChange={(event) => set({ texture: event.target.value || undefined, presetId: undefined })}
+            onChange={(event) => set({ texture: event.target.value || undefined })}
             placeholder="Texture name"
             type="text"
             value={settings.texture ?? ''}
@@ -432,7 +432,7 @@ export function BrushPanel() {
             max={4}
             min={0.05}
             step={0.05}
-            onChange={(v) => set({ textureScale: v, presetId: undefined })}
+            onChange={(v) => set({ textureScale: v })}
             format={(v) => `${Math.round(v * 100)}%`}
           />
           <Slider
@@ -442,7 +442,7 @@ export function BrushPanel() {
             max={1}
             min={0}
             step={0.01}
-            onChange={(v) => set({ textureDepth: v, presetId: undefined })}
+            onChange={(v) => set({ textureDepth: v })}
             format={(v) => `${Math.round(v * 100)}%`}
           />
           <label className="flex items-center gap-2 text-[11px] text-cyan-100/55">
@@ -450,7 +450,7 @@ export function BrushPanel() {
               aria-label="Dual-brush composition"
               checked={Boolean(settings.dualBrush)}
               className="h-3.5 w-3.5 accent-cyan-300"
-              onChange={(event) => set({ dualBrush: event.target.checked, presetId: undefined })}
+              onChange={(event) => set({ dualBrush: event.target.checked })}
               type="checkbox"
             />
             Dual-brush composition
@@ -462,7 +462,7 @@ export function BrushPanel() {
               aria-label="Wet media"
               checked={Boolean(settings.wetMedia)}
               className="h-3.5 w-3.5 accent-cyan-300"
-              onChange={(event) => set({ wetMedia: event.target.checked, wetEdges: event.target.checked, presetId: undefined })}
+              onChange={(event) => set({ wetMedia: event.target.checked, wetEdges: event.target.checked })}
               type="checkbox"
             />
             Wet media
@@ -474,7 +474,7 @@ export function BrushPanel() {
             max={1}
             min={0}
             step={0.01}
-            onChange={(v) => set({ wetMix: v, presetId: undefined })}
+            onChange={(v) => set({ wetMix: v })}
             format={(v) => `${Math.round(v * 100)}%`}
           />
           <Slider
@@ -484,7 +484,7 @@ export function BrushPanel() {
             max={1}
             min={0}
             step={0.01}
-            onChange={(v) => set({ wetLoad: v, presetId: undefined })}
+            onChange={(v) => set({ wetLoad: v })}
             format={(v) => `${Math.round(v * 100)}%`}
           />
           <Slider
@@ -494,7 +494,7 @@ export function BrushPanel() {
             max={1}
             min={0}
             step={0.01}
-            onChange={(v) => set({ wetPull: v, presetId: undefined })}
+            onChange={(v) => set({ wetPull: v })}
             format={(v) => `${Math.round(v * 100)}%`}
           />
         </div>
@@ -504,7 +504,7 @@ export function BrushPanel() {
               aria-label="GPU brush engine"
               checked={Boolean(settings.gpuBrushEngine)}
               className="h-3.5 w-3.5 accent-cyan-300"
-              onChange={(event) => set({ gpuBrushEngine: event.target.checked, gpuAcceleration: event.target.checked, presetId: undefined })}
+              onChange={(event) => set({ gpuBrushEngine: event.target.checked, gpuAcceleration: event.target.checked })}
               type="checkbox"
             />
             GPU brush engine
@@ -514,7 +514,7 @@ export function BrushPanel() {
               aria-label="Android brush controls"
               checked={Boolean(settings.androidBrushControls)}
               className="h-3.5 w-3.5 accent-cyan-300"
-              onChange={(event) => set({ androidBrushControls: event.target.checked, androidStylusControls: event.target.checked, presetId: undefined })}
+              onChange={(event) => set({ androidBrushControls: event.target.checked, androidStylusControls: event.target.checked })}
               type="checkbox"
             />
             Android brush controls
@@ -524,7 +524,7 @@ export function BrushPanel() {
               aria-label="Gamepad brush controls"
               checked={Boolean(settings.gamepadBrushControls)}
               className="h-3.5 w-3.5 accent-cyan-300"
-              onChange={(event) => set({ gamepadBrushControls: event.target.checked, gamepadPressure: event.target.checked, presetId: undefined })}
+              onChange={(event) => set({ gamepadBrushControls: event.target.checked, gamepadPressure: event.target.checked })}
               type="checkbox"
             />
             Gamepad brush controls
@@ -534,7 +534,7 @@ export function BrushPanel() {
           <input
             aria-label="ABR preset id"
             className="min-w-0 rounded border border-cyan-300/10 bg-[#252630] px-2 py-1 text-xs text-cyan-100/80"
-            onChange={(event) => set({ abrPresetId: event.target.value || undefined, presetId: undefined })}
+            onChange={(event) => set({ abrPresetId: event.target.value || undefined })}
             placeholder="ABR preset id"
             type="text"
             value={settings.abrPresetId ?? ''}
@@ -543,7 +543,7 @@ export function BrushPanel() {
             aria-label="ABR version"
             className="min-w-0 rounded border border-cyan-300/10 bg-[#252630] px-2 py-1 text-xs text-cyan-100/80"
             min={0}
-            onChange={(event) => set({ abrVersion: Number.parseInt(event.target.value, 10) || undefined, presetId: undefined })}
+            onChange={(event) => set({ abrVersion: Number.parseInt(event.target.value, 10) || undefined })}
             placeholder="ABR version"
             type="number"
             value={settings.abrVersion ?? ''}
@@ -556,12 +556,12 @@ export function BrushPanel() {
           className="h-6 w-12"
           buttonClassName="rounded border border-cyan-300/10"
           label="Brush color"
-          onChange={(color) => set({ color, presetId: undefined })}
+          onChange={(color) => set({ color })}
           value={settings.color}
         />
         <input
           className="flex-1 rounded border border-cyan-300/10 bg-[#252630] px-1.5 py-0.5 text-xs text-cyan-100/80"
-          onChange={(e) => set({ color: e.target.value, presetId: undefined })}
+          onChange={(e) => set({ color: e.target.value })}
           type="text"
           value={settings.color}
         />
