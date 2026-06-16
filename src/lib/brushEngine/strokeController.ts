@@ -38,6 +38,11 @@ export class BrushStrokeController {
     this.strength = options.strength;
   }
 
+  /** Set the stroke's starting point WITHOUT stamping a dab (pointer-down anchor). */
+  anchor(point: Point): void {
+    this.lastPoint = point;
+  }
+
   moveTo(point: Point): void {
     if (!this.lastPoint) {
       this.session.stampDab({ op: this.op, from: point, to: point, size: this.size, strength: this.strength });

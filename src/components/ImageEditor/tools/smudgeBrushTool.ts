@@ -1,6 +1,5 @@
-import { cloneBitmap, getBitmapImageData, putBitmapImageData } from '../LayerBitmap';
+import { cloneBitmap, createBitmap, getBitmapImageData } from '../LayerBitmap';
 import {
-  applySmudgeBrushToBitmap,
   buildRetouchSampleSource,
   describeRetouchBrushToolPlan,
   type RetouchSampleSource,
@@ -8,14 +7,13 @@ import {
 import { canEditImageLayerPixels } from '../../../lib/imageLayerLocks';
 import { DEFAULT_RETOUCH_TOOL_SETTINGS, type LayerBitmap, type RetouchSampleMode } from '../../../types/imageEditor';
 import { resolveRetouchTargetLayer } from './retouchTargetLayer';
-import type { Point, ToolEnv, ToolHandler } from './types';
+import { BrushStrokeController, detectBrushBackend } from '../../../lib/brushEngine';
+import type { ToolHandler } from './types';
 
 interface SmudgeBrushStroke {
   layerId: string;
   bitmapBefore: OffscreenCanvas;
-  sampleSource: RetouchSampleSource;
-  sampleMode: RetouchSampleMode;
-  lastPoint: Point;
+  controller: BrushStrokeController;
 }
 
 let stroke: SmudgeBrushStroke | null = null;
@@ -145,24 +143,32 @@ export const smudgeBrushTool: ToolHandler = {
     if (!canEditImageLayerPixels(layer) || !layer?.bitmap) return;
     const bitmapBefore = cloneBitmap(layer.bitmap);
     const retouchSettings = env.retouchToolSettings ?? DEFAULT_RETOUCH_TOOL_SETTINGS;
-    stroke = {
-      layerId: layer.id,
-      bitmapBefore,
-      sampleSource: buildRetouchSampleSource({
-        doc: env.doc,
-        layer,
-        layerSnapshot: bitmapBefore,
-        sampleMode: retouchSettings.sampleMode,
-      }),
+    const sampleSource = buildRetouchSampleSource({
+      doc: env.doc,
+      layer,
+      layerSnapshot: bitmapBefore,
       sampleMode: retouchSettings.sampleMode,
-      lastPoint: point,
-    };
+    });
+    const selection = detectBrushBackend(env.brushSettings.gpuBrushEngine ? 'auto' : 'cpu');
+    const controller = new BrushStrokeController(selection.backend, {
+      source: getBitmapImageData(layer.bitmap),
+      sampleSource: { imageData: buildLayerLocalSampleImageData(sampleSource, layer.bitmap, layer.x, layer.y) },
+      width: layer.bitmap.width,
+      height: layer.bitmap.height,
+      op: 'smudge',
+      size: env.brushSettings.size,
+      strength: env.brushSettings.opacity,
+    });
+    controller.anchor({ x: point.x - layer.x, y: point.y - layer.y });
+    stroke = { layerId: layer.id, bitmapBefore, controller };
   },
 
   onPointerMove(env, point) {
     if (!stroke) return;
-    smudgeBetween(env, stroke.lastPoint, point);
-    stroke.lastPoint = point;
+    const layer = env.doc.layers.find((candidate) => candidate.id === stroke?.layerId);
+    if (!layer?.bitmap) return;
+    stroke.controller.moveTo({ x: point.x - layer.x, y: point.y - layer.y });
+    stroke.controller.previewInto(layer.bitmap);
     env.requestRender({ invalidateBitmapCache: true });
   },
 
@@ -170,6 +176,7 @@ export const smudgeBrushTool: ToolHandler = {
     if (!stroke) return;
     const layer = env.doc.layers.find((candidate) => candidate.id === stroke?.layerId);
     if (layer?.bitmap) {
+      stroke.controller.commit(layer.bitmap);
       env.pushOperation({
         kind: 'paint',
         docId: env.doc.id,
@@ -186,6 +193,7 @@ export const smudgeBrushTool: ToolHandler = {
 
   onCancel(env) {
     if (!stroke) return;
+    stroke.controller.cancel();
     const layer = env.doc.layers.find((candidate) => candidate.id === stroke?.layerId);
     if (layer?.bitmap) {
       layer.bitmap.getContext('2d')?.drawImage(stroke.bitmapBefore, 0, 0);
@@ -195,117 +203,19 @@ export const smudgeBrushTool: ToolHandler = {
   },
 };
 
-function smudgeBetween(env: ToolEnv, from: Point, to: Point): void {
-  const distance = Math.hypot(to.x - from.x, to.y - from.y);
-  const step = Math.max(1, env.brushSettings.size / 3);
-  const steps = Math.max(1, Math.ceil(distance / step));
-  let source = from;
-
-  for (let index = 1; index <= steps; index += 1) {
-    const amount = index / steps;
-    const target = {
-      x: from.x + (to.x - from.x) * amount,
-      y: from.y + (to.y - from.y) * amount,
-    };
-    smudgeAt(env, source, target);
-    source = target;
-  }
-}
-
-function smudgeAt(env: ToolEnv, sourcePoint: Point, targetPoint: Point): void {
-  if (!stroke) return;
-  const layer = env.doc.layers.find((candidate) => candidate.id === stroke?.layerId);
-  if (!layer?.bitmap) return;
-  const sourceLayerPoint = {
-    x: sourcePoint.x - layer.x,
-    y: sourcePoint.y - layer.y,
-  };
-  const targetLayerPoint = {
-    x: targetPoint.x - layer.x,
-    y: targetPoint.y - layer.y,
-  };
-  if (stroke.sampleSource.coordinateSpace === 'document') {
-    const liveSampleSource = buildRetouchSampleSource({
-      doc: env.doc,
-      layer,
-      layerSnapshot: cloneBitmap(layer.bitmap),
-      sampleMode: stroke.sampleMode,
-    });
-    applySmudgeBrushToBitmapWithSource(layer.bitmap, {
-      sourceBitmap: liveSampleSource.bitmap,
-      sourcePoint,
-      targetPoint: targetLayerPoint,
-      size: env.brushSettings.size,
-      strength: env.brushSettings.opacity,
-    });
-    return;
-  }
-  applySmudgeBrushToBitmap(layer.bitmap, {
-    sourcePoint: sourceLayerPoint,
-    targetPoint: targetLayerPoint,
-    size: env.brushSettings.size,
-    strength: env.brushSettings.opacity,
-  });
-}
-
-function applySmudgeBrushToBitmapWithSource(
-  bitmap: LayerBitmap,
-  options: {
-    sourceBitmap: LayerBitmap;
-    sourcePoint: Point;
-    targetPoint: Point;
-    size: number;
-    strength: number;
-  },
-): void {
-  const next = applySmudgeBrushWithSourceImageData(
-    getBitmapImageData(bitmap),
-    getBitmapImageData(options.sourceBitmap),
-    options,
-  );
-  putBitmapImageData(bitmap, next);
-}
-
-function applySmudgeBrushWithSourceImageData(
-  targetImageData: ImageData,
-  sourceImageData: ImageData,
-  options: {
-    sourcePoint: Point;
-    targetPoint: Point;
-    size: number;
-    strength: number;
-  },
+/** A single layer-local snapshot of the smudge sample source (composite modes are aligned once). */
+function buildLayerLocalSampleImageData(
+  sampleSource: RetouchSampleSource,
+  layerBitmap: LayerBitmap,
+  layerX: number,
+  layerY: number,
 ): ImageData {
-  const output = cloneImageData(targetImageData);
-  const radius = Math.max(0, (options.size - 1) / 2);
-  const integerRadius = Math.ceil(radius);
-  const strength = clamp01(options.strength);
-  const sourceCenterX = Math.round(options.sourcePoint.x);
-  const sourceCenterY = Math.round(options.sourcePoint.y);
-  const targetCenterX = Math.round(options.targetPoint.x);
-  const targetCenterY = Math.round(options.targetPoint.y);
-
-  for (let y = -integerRadius; y <= integerRadius; y += 1) {
-    for (let x = -integerRadius; x <= integerRadius; x += 1) {
-      const distance = Math.sqrt(x * x + y * y);
-      if (distance > radius + 0.001) continue;
-
-      const sourceX = sourceCenterX + x;
-      const sourceY = sourceCenterY + y;
-      const targetX = targetCenterX + x;
-      const targetY = targetCenterY + y;
-      if (!contains(sourceImageData, sourceX, sourceY) || !contains(targetImageData, targetX, targetY)) continue;
-
-      const sourceOffset = (sourceY * sourceImageData.width + sourceX) * 4;
-      const targetOffset = (targetY * output.width + targetX) * 4;
-      output.data[targetOffset] = mixByte(targetImageData.data[targetOffset], sourceImageData.data[sourceOffset], strength);
-      output.data[targetOffset + 1] = mixByte(targetImageData.data[targetOffset + 1], sourceImageData.data[sourceOffset + 1], strength);
-      output.data[targetOffset + 2] = mixByte(targetImageData.data[targetOffset + 2], sourceImageData.data[sourceOffset + 2], strength);
-      output.data[targetOffset + 3] = mixByte(targetImageData.data[targetOffset + 3], sourceImageData.data[sourceOffset + 3], strength);
-    }
+  if (sampleSource.coordinateSpace === 'document') {
+    const aligned = createBitmap(layerBitmap.width, layerBitmap.height);
+    aligned.getContext('2d')?.drawImage(sampleSource.bitmap, -layerX, -layerY);
+    return getBitmapImageData(aligned);
   }
-
-  return output;
+  return getBitmapImageData(sampleSource.bitmap);
 }
 
 function buildSmudgeFinishingReadinessSignature({
@@ -325,23 +235,3 @@ function buildSmudgeFinishingReadinessSignature({
   })}`;
 }
 
-function cloneImageData(imageData: ImageData): ImageData {
-  return {
-    width: imageData.width,
-    height: imageData.height,
-    data: new Uint8ClampedArray(imageData.data),
-  } as ImageData;
-}
-
-function contains(imageData: ImageData, x: number, y: number): boolean {
-  return x >= 0 && y >= 0 && x < imageData.width && y < imageData.height;
-}
-
-function mixByte(from: number | undefined, to: number | undefined, amount: number): number {
-  return Math.round((from ?? 0) + ((to ?? 0) - (from ?? 0)) * amount);
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
-}

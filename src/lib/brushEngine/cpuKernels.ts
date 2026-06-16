@@ -40,16 +40,20 @@ function falloff(x: number, y: number, rect: Rect, size: number): number {
  */
 export function smudgeRegion(target: ImageData, source: ImageData, params: SmudgeKernelParams): void {
   const { width, height } = target;
-  const dx = params.from.x - params.to.x;
-  const dy = params.from.y - params.to.y;
+  // Match the existing tool: uniform strength within a hard disc of radius (size-1)/2,
+  // integer-centered on `to`, sampling `source` displaced by round(from) - round(to).
+  const radius = Math.max(0, (params.size - 1) / 2);
+  const t = params.strength;
+  const targetCx = Math.round(params.to.x);
+  const targetCy = Math.round(params.to.y);
+  const dx = Math.round(params.from.x) - targetCx;
+  const dy = Math.round(params.from.y) - targetCy;
   const rect = params.rect;
   for (let y = rect.y; y < rect.y + rect.height; y += 1) {
     if (y < 0 || y >= height) continue;
     for (let x = rect.x; x < rect.x + rect.width; x += 1) {
       if (x < 0 || x >= width) continue;
-      const f = falloff(x, y, rect, params.size);
-      if (f <= 0) continue;
-      const t = params.strength * f;
+      if (Math.hypot(x - targetCx, y - targetCy) > radius + 0.001) continue;
       const offset = (y * width + x) * 4;
       for (let c = 0; c < 4; c += 1) {
         const origin = sample(source.data, source.width, source.height, x + dx, y + dy, c);

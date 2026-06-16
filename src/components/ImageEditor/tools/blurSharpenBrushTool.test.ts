@@ -414,7 +414,7 @@ describe('blur and sharpen brush retouch sampling', () => {
     expect(env.store.bumpLayerBitmapVersion).toHaveBeenCalledWith(doc.id, raster.id);
   });
 
-  it('smudge resamples live composite output between drag dabs instead of freezing the stroke-start snapshot', () => {
+  it('smudge samples the stroke-start composite snapshot (no per-dab live resample) for bounded performance', () => {
     const lower = makeLayer({ id: 'lower', name: 'Lower' });
     const active = makeLayer({ id: 'active', name: 'Active' });
     setPixel(lower.bitmap!, 1, 0, [18, 144, 220, 255]);
@@ -429,8 +429,11 @@ describe('blur and sharpen brush retouch sampling', () => {
     smudgeBrushTool.onPointerMove?.(env, { x: 3, y: 0 }, mods, pointerEvent());
     smudgeBrushTool.onPointerUp?.(env, { x: 3, y: 0 }, mods, pointerEvent());
 
+    // x=2 pulls in the lower-layer colour that was under the drag origin (x=1) at stroke start.
     expect(getPixel(active.bitmap!, 2, 0)).toEqual([18, 144, 220, 255]);
-    expect(getPixel(active.bitmap!, 3, 0)).toEqual([18, 144, 220, 255]);
+    // x=3 samples the *original* snapshot at x=2 (transparent), NOT the freshly-smeared colour:
+    // the engine freezes the stroke-start sample source so it never re-reads the whole canvas per dab.
+    expect(getPixel(active.bitmap!, 3, 0)).toEqual([0, 0, 0, 0]);
     expect(env.store.bumpLayerBitmapVersion).toHaveBeenCalledWith(doc.id, active.id);
   });
 
