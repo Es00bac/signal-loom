@@ -15,6 +15,11 @@ export function hasImageClipboard(): boolean {
   return clipboard !== null;
 }
 
+/** A clone of the current internal clipboard bitmap (for "New from clipboard"), or null. */
+export function getImageClipboardBitmap(): LayerBitmap | null {
+  return clipboard ? cloneBitmap(clipboard.bitmap) : null;
+}
+
 export function clearImageClipboard(): void {
   clipboard = null;
 }

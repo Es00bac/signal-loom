@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { X, Plus, FolderOpen } from 'lucide-react';
+import { X, Plus, FolderOpen, ClipboardPaste } from 'lucide-react';
 import { useImageEditorStore } from '../../store/imageEditorStore';
 
 const OPEN_IMAGE_ACCEPT = [
@@ -27,9 +27,10 @@ interface ImageEditorTabsProps {
   disabled?: boolean;
   onOpenImageFile?: (file: File) => void | Promise<void>;
   onNewCanvas?: () => void;
+  onNewFromClipboard?: () => void | Promise<void>;
 }
 
-export function ImageEditorTabs({ disabled = false, onOpenImageFile, onNewCanvas }: ImageEditorTabsProps) {
+export function ImageEditorTabs({ disabled = false, onOpenImageFile, onNewCanvas, onNewFromClipboard }: ImageEditorTabsProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const documents = useImageEditorStore((s) => s.documents);
   const activeDocId = useImageEditorStore((s) => s.activeDocId);
@@ -71,6 +72,18 @@ export function ImageEditorTabs({ disabled = false, onOpenImageFile, onNewCanvas
       >
         <FolderOpen size={14} />
       </button>
+      {onNewFromClipboard && (
+        <button
+          aria-label="New image from clipboard"
+          className="flex h-full items-center px-3 text-cyan-100/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-45 border-r border-cyan-300/10"
+          disabled={disabled}
+          onClick={() => void onNewFromClipboard()}
+          title="New image from clipboard"
+          type="button"
+        >
+          <ClipboardPaste size={14} />
+        </button>
+      )}
       {documents.map((doc) => (
         <div
           key={doc.id}

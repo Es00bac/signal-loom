@@ -2,6 +2,7 @@ import type { SourceBinLibraryItem } from '../../store/sourceBinStore';
 import { createEmptyImageDocument } from '../../store/imageEditorStore';
 import type { ImageDocument, ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import { bitmapFromUrl, createBitmap, fillBitmap } from './LayerBitmap';
+import { getImageClipboardBitmap } from './ImageEditorClipboard';
 import {
   CAMERA_RAW_SUPPORTED_HANDOFF_FORMATS,
   describeCameraRawDevelopFirstMetadata,
@@ -1315,6 +1316,78 @@ export function createNewBlankDocument(options: {
     dirty: true,
     snapshots: [],
   };
+}
+
+/**
+ * Build a new single-layer document sized exactly to a bitmap, with the layer at
+ * the origin (Photoshop "New from clipboard" behaviour).
+ */
+function buildSingleLayerImageDocumentFromBitmap(bitmap: LayerBitmap, title: string): ImageDocument {
+  const stamp = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const layer: ImageLayer = {
+    id: `layer-clip-${stamp}`,
+    name: title,
+    type: 'image',
+    visible: true,
+    locked: false,
+    opacity: 1,
+    blendMode: 'normal',
+    x: 0,
+    y: 0,
+    bitmap,
+    bitmapVersion: 0,
+    mask: null,
+  };
+  return {
+    id: `doc-clip-${stamp}`,
+    title,
+    width: bitmap.width,
+    height: bitmap.height,
+    layers: [layer],
+    activeLayerId: layer.id,
+    hasSelection: false,
+    selectionVersion: 0,
+    viewport: { zoom: 1, panX: 0, panY: 0 },
+    dirty: true,
+    snapshots: [],
+  };
+}
+
+/** Read the first image on the OS clipboard into a bitmap, or null if none/denied. */
+async function readOsClipboardImageBitmap(): Promise<LayerBitmap | null> {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.read) return null;
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const type = item.types.find((candidate) => candidate.startsWith('image/'));
+      if (!type) continue;
+      const blob = await item.getType(type);
+      const imageBitmap = await createImageBitmap(blob);
+      try {
+        const bitmap = createBitmap(imageBitmap.width, imageBitmap.height);
+        bitmap.getContext('2d')?.drawImage(imageBitmap, 0, 0);
+        return bitmap;
+      } finally {
+        imageBitmap.close();
+      }
+    }
+  } catch {
+    // Clipboard read can be denied or unsupported; treat as "no image".
+  }
+  return null;
+}
+
+/**
+ * Create a new document from clipboard image content. Prefers the in-app
+ * clipboard (last Copy within the Image editor), then falls back to the OS
+ * clipboard. Returns null when no image content is available.
+ */
+export async function createImageDocumentFromClipboard(
+  options: { title?: string } = {},
+): Promise<ImageDocument | null> {
+  const bitmap = getImageClipboardBitmap() ?? (await readOsClipboardImageBitmap());
+  if (!bitmap) return null;
+  return buildSingleLayerImageDocumentFromBitmap(bitmap, options.title ?? 'Clipboard');
 }
 
 export async function createImageDocumentFromFile(

@@ -67,7 +67,7 @@ import {
   IMAGE_PSD_MIME_TYPE,
   imageDocumentToPsdBlob,
 } from './ImagePsdInterop';
-import { createImageDocumentFromFile, createNewBlankDocument } from './ImageSourceDocument';
+import { createImageDocumentFromClipboard, createImageDocumentFromFile, createNewBlankDocument } from './ImageSourceDocument';
 import { NewDocumentModal } from './NewDocumentModal';
 import {
   getDraggedSourceLibraryItemId,
@@ -581,6 +581,21 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
     setLocalImageOpenStatus(`Created new canvas "${doc.title}".`);
   }, [openDocument]);
 
+  const handleCreateFromClipboard = useCallback(async () => {
+    setLocalImageOpenStatus(null);
+    try {
+      const doc = await createImageDocumentFromClipboard();
+      if (!doc) {
+        setLocalImageOpenStatus('No image on the clipboard. Copy an image (here or from another app) first.');
+        return;
+      }
+      openDocument(doc);
+      setLocalImageOpenStatus(`Created "${doc.title}" from the clipboard (${doc.width}×${doc.height}).`);
+    } catch {
+      setLocalImageOpenStatus('Could not read an image from the clipboard.');
+    }
+  }, [openDocument]);
+
   const handleSourceLibraryDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     if (!hasDraggedSourceLibraryItem(event.dataTransfer)) return;
     event.preventDefault();
@@ -789,6 +804,7 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
                 disabled={openingLocalImage}
                 onOpenImageFile={handleOpenLocalImageFile}
                 onNewCanvas={() => setShowNewDocModal(true)}
+                onNewFromClipboard={handleCreateFromClipboard}
               />
             </div>
             </div>

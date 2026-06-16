@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import type { SourceBinLibraryItem } from '../../store/sourceBinStore';
 import {
+  createImageDocumentFromClipboard,
   createImageDocumentFromFile,
   createImageDocumentFromSourceItem,
   createSourceBackedImageDocumentShell,
@@ -12,6 +13,7 @@ import {
   loadSourceLinkedLayerBitmap,
   replaceSourceLinkedLayerBitmap,
 } from './ImageSourceDocument';
+import { clearImageClipboard, copyLayerPixelsToClipboard } from './ImageEditorClipboard';
 
 class FakeContext {
   drawImage() {}
@@ -1162,6 +1164,47 @@ describe('ImageSourceDocument', () => {
       'PNG source is 16-bit/channel, but browser image decoding and canvas editing reduce it to 8-bit RGBA pixels.',
     ]);
     expect(doc.layers[0].metadata?.sourceWarnings).toEqual(doc.metadata?.warnings);
+  });
+});
+
+describe('createImageDocumentFromClipboard', () => {
+  beforeEach(() => {
+    globalThis.OffscreenCanvas = FakeOffscreenCanvas as unknown as typeof OffscreenCanvas;
+    clearImageClipboard();
+  });
+
+  it('returns null when there is no clipboard image', async () => {
+    const doc = await createImageDocumentFromClipboard();
+    expect(doc).toBeNull();
+  });
+
+  it('builds a new document sized to the in-app clipboard image, layer at the origin', async () => {
+    const layer: ImageLayer = {
+      id: 'layer-src',
+      name: 'Selection',
+      type: 'image',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      blendMode: 'normal',
+      x: 17,
+      y: 23,
+      bitmap: new FakeOffscreenCanvas(80, 40) as unknown as LayerBitmap,
+      bitmapVersion: 0,
+      mask: null,
+    };
+    expect(copyLayerPixelsToClipboard({} as never, layer, null)).toBe(true);
+
+    const doc = await createImageDocumentFromClipboard({ title: 'Pasted' });
+    expect(doc).not.toBeNull();
+    expect(doc?.width).toBe(80);
+    expect(doc?.height).toBe(40);
+    expect(doc?.layers).toHaveLength(1);
+    expect(doc?.layers[0]).toMatchObject({ type: 'image', x: 0, y: 0 });
+    expect(doc?.layers[0].bitmap?.width).toBe(80);
+    expect(doc?.layers[0].bitmap?.height).toBe(40);
+    expect(doc?.activeLayerId).toBe(doc?.layers[0].id);
+    expect(doc?.title).toBe('Pasted');
   });
 });
 
