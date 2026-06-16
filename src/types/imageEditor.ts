@@ -221,6 +221,8 @@ export interface ImageSourceLinkMetadata {
 
 export interface ImageLayerMetadata {
   editableText?: boolean;
+  /** A text layer just dropped by the Type tool, not yet committed with content. */
+  freshlyPlaced?: boolean;
   comicSfxDesign?: PaperComicSfxDesign;
   retouchOutput?: {
     sourceLayerId: string;

@@ -136,7 +136,10 @@ export function ImageEditorCanvas() {
   const addLayer = useImageEditorStore((s) => s.addLayer);
   const setActiveLayer = useImageEditorStore((s) => s.setActiveLayer);
   const updateLayer = useImageEditorStore((s) => s.updateLayer);
+  const removeLayer = useImageEditorStore((s) => s.removeLayer);
   const pushOperation = useImageEditorStore((s) => s.pushOperation);
+  const pendingTextEditLayerId = useImageEditorStore((s) => s.pendingTextEditLayerId);
+  const setPendingTextEditLayerId = useImageEditorStore((s) => s.setPendingTextEditLayerId);
   const [editingTextLayerId, setEditingTextLayerId] = useState<string | null>(null);
   const [editingTextDraft, setEditingTextDraft] = useState('');
   const [cropPreviewVersion, setCropPreviewVersion] = useState(0);
@@ -232,9 +235,20 @@ export function ImageEditorCanvas() {
   }, []);
 
   const cancelTextEditing = useCallback(() => {
+    const layerId = editingTextLayerId;
     setEditingTextLayerId(null);
     setEditingTextDraft('');
-  }, []);
+    if (!layerId) return;
+    // Discard a freshly-placed Type-tool layer that was dismissed before any
+    // text was committed, so a stray click never leaves an empty text layer.
+    const state = useImageEditorStore.getState();
+    const doc = state.documents.find((candidate) => candidate.id === state.activeDocId);
+    const layer = doc?.layers.find((candidate) => candidate.id === layerId);
+    if (doc && layer?.metadata?.freshlyPlaced && !(layer.text?.content ?? '').trim()) {
+      removeLayer(doc.id, layer.id);
+      rendererRef.current?.requestRender();
+    }
+  }, [editingTextLayerId, removeLayer]);
 
   const commitTextEditing = useCallback(() => {
     if (!editingTextLayerId) return;
@@ -252,13 +266,29 @@ export function ImageEditorCanvas() {
     }
 
     const before = doc.layers;
-    const nextLayer = updateTextLayerFromStyle(layer, { content: editingTextDraft });
+    const restyled = updateTextLayerFromStyle(layer, { content: editingTextDraft });
+    // Once a freshly-placed layer gets real content it becomes a normal text
+    // layer; clear the flag so future edits/cancels don't discard it.
+    const nextLayer = restyled.metadata?.freshlyPlaced
+      ? { ...restyled, metadata: { ...restyled.metadata, freshlyPlaced: false } }
+      : restyled;
     const after = doc.layers.map((candidate) => candidate.id === layer.id ? nextLayer : candidate);
     pushOperation({ kind: 'layerOp', docId: doc.id, before, after });
     updateLayer(doc.id, layer.id, nextLayer);
     cancelTextEditing();
     rendererRef.current?.requestRender();
   }, [cancelTextEditing, editingTextDraft, editingTextLayerId, pushOperation, updateLayer]);
+
+  // The Type tool drops a new layer and flags it for editing; open the on-canvas
+  // editor for it, then clear the flag so it fires exactly once per placement.
+  useEffect(() => {
+    if (!pendingTextEditLayerId) return;
+    const layer = activeDoc?.layers.find((candidate) => candidate.id === pendingTextEditLayerId);
+    if (layer?.text && !layer.locked) {
+      startTextEditing(layer);
+    }
+    setPendingTextEditLayerId(null);
+  }, [activeDoc, pendingTextEditLayerId, setPendingTextEditLayerId, startTextEditing]);
 
   const commitCropEditing = useCallback(() => {
     const state = useImageEditorStore.getState();
@@ -1440,6 +1470,7 @@ function ImageTextEditOverlay({
   return (
     <div
       className="pointer-events-auto absolute z-30 rounded-md border border-cyan-300/45 bg-[#080b12]/75 p-1 shadow-2xl shadow-black/40"
+      data-image-text-edit-overlay="true"
       onBlurCapture={(event) => {
         const nextTarget = event.relatedTarget;
         if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;

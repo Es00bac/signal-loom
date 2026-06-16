@@ -61,6 +61,12 @@ interface ImageEditorState {
   selectAndMaskSettings: SelectAndMaskSettings;
   selectionToolSettings: SelectionToolSettings;
   textToolSettings: TextLayerStyle;
+  /**
+   * When the Text tool drops a new text layer, it stores the new layer id here so
+   * the canvas can open the on-canvas text editor immediately (type-to-place).
+   * The canvas clears it once editing starts.
+   */
+  pendingTextEditLayerId: string | null;
   viewportContainerSize: { width: number; height: number };
   undoStacks: Record<string, EditorOperation[]>;
   redoStacks: Record<string, EditorOperation[]>;
@@ -111,6 +117,7 @@ interface ImageEditorActions {
   toggleSelectAndMask: () => void;
   setSelectionToolSettings: (patch: Partial<SelectionToolSettings>) => void;
   setTextToolSettings: (patch: Partial<TextLayerStyle>) => void;
+  setPendingTextEditLayerId: (layerId: string | null) => void;
   setToolbarFlyoutOrder: (order: readonly string[]) => void;
   resetToolbarFlyoutOrder: () => void;
   setViewportContainerSize: (size: { width: number; height: number }) => void;
@@ -157,6 +164,7 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     selectAndMaskSettings: { ...DEFAULT_SELECT_AND_MASK_SETTINGS },
     selectionToolSettings: { ...DEFAULT_SELECTION_TOOL_SETTINGS },
     textToolSettings: { ...DEFAULT_TEXT_TOOL_SETTINGS },
+    pendingTextEditLayerId: null,
     viewportContainerSize: { width: 0, height: 0 },
     undoStacks: {},
     redoStacks: {},
@@ -462,6 +470,9 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
           textToolSettings: { ...state.textToolSettings, ...patch },
         };
       }),
+
+    setPendingTextEditLayerId: (layerId) =>
+      set((state) => (state.pendingTextEditLayerId === layerId ? state : { pendingTextEditLayerId: layerId })),
 
     setToolbarFlyoutOrder: (order) =>
       set((state) => {

@@ -15,6 +15,7 @@ import {
   type LayerBitmap,
 } from '../../types/imageEditor';
 import { ImageCropActionOverlay, ImageEditorCanvas, ImageLayerTransformOverlay, ImageTransformActionOverlay, ImageVectorPathAnchorOverlay } from './ImageEditorCanvas';
+import { normalizeImageTextStyle } from './ImageTextLayer';
 import { clearCropPreview, cropTool } from './tools/cropTool';
 import type { ToolEnv } from './tools/types';
 import { createMask } from './SelectionMask';
@@ -706,5 +707,74 @@ describe('ImageEditorCanvas tools', () => {
     expect(distortHtml).toContain('data-image-selection-transform-distort-handle="ne"');
     expect(distortHtml).toContain('data-image-selection-transform-distort-handle="se"');
     expect(distortHtml).toContain('data-image-selection-transform-distort-handle="sw"');
+  });
+
+  it('opens the on-canvas text editor when the Type tool requests a pending edit', async () => {
+    const textLayer = imageLayer({
+      id: 'text-layer-1',
+      type: 'text',
+      bitmap: bitmap(80, 30),
+      text: normalizeImageTextStyle({ content: 'Hello' }),
+      metadata: { editableText: true },
+    });
+    useImageEditorStore.getState().openDocument(imageDoc(textLayer));
+    useImageEditorStore.getState().setTool('text');
+    // The Type tool sets this after dropping a new layer; the canvas should
+    // consume it, open the editor, and clear it.
+    useImageEditorStore.getState().setPendingTextEditLayerId('text-layer-1');
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root: Root = createRoot(container);
+
+    await act(async () => {
+      root.render(<ImageEditorCanvas />);
+    });
+
+    expect(container.querySelector('[data-image-text-edit-overlay="true"]')).not.toBeNull();
+    expect(container.querySelector('textarea')).not.toBeNull();
+    expect(useImageEditorStore.getState().pendingTextEditLayerId).toBeNull();
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it('discards a freshly-placed text layer when its editor is cancelled empty', async () => {
+    const textLayer = imageLayer({
+      id: 'text-layer-fresh',
+      type: 'text',
+      bitmap: bitmap(80, 30),
+      text: normalizeImageTextStyle({ content: '' }),
+      metadata: { editableText: true, freshlyPlaced: true },
+    });
+    useImageEditorStore.getState().openDocument(imageDoc(textLayer));
+    useImageEditorStore.getState().setTool('text');
+    useImageEditorStore.getState().setPendingTextEditLayerId('text-layer-fresh');
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root: Root = createRoot(container);
+
+    await act(async () => {
+      root.render(<ImageEditorCanvas />);
+    });
+
+    const cancelButton = container.querySelector('[title="Cancel text edit"]') as HTMLButtonElement | null;
+    expect(cancelButton).not.toBeNull();
+
+    await act(async () => {
+      cancelButton?.click();
+    });
+
+    // The empty, freshly-placed layer is removed rather than left behind.
+    const doc = useImageEditorStore.getState().getActiveDocument();
+    expect(doc?.layers.some((layer) => layer.id === 'text-layer-fresh')).toBe(false);
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
   });
 });

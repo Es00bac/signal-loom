@@ -5,30 +5,13 @@ import {
   rasterizeImageTextStyle,
 } from '../ImageTextLayer';
 import type { ImageLayer } from '../../../types/imageEditor';
-import { useTextInputDialogStore } from '../../../store/textInputDialogStore';
 
 export const textTool: ToolHandler = {
+  // Photoshop-style "click and type": dropping the Type tool creates an empty
+  // text layer at the click point and immediately opens the on-canvas text
+  // editor (the canvas consumes pendingTextEditLayerId). No modal dialog.
   onPointerDown(env, point) {
-    const current = env.store.textToolSettings;
-    const style = normalizeImageTextStyle(current);
-
-    if (!style.content.trim()) {
-      void (async () => {
-        const content = await useTextInputDialogStore.getState().requestTextInput({
-          title: 'Add Image Text',
-          message: 'Enter the text to place on the active image document.',
-          label: 'Text content',
-          initialValue: current.content || 'Text',
-          placeholder: 'Text',
-          confirmLabel: 'Place Text',
-        });
-        if (!content?.trim()) return;
-        env.store.setTextToolSettings({ content });
-        addTextLayer(env, point, normalizeImageTextStyle({ ...current, content }));
-      })();
-      return;
-    }
-
+    const style = normalizeImageTextStyle({ ...env.store.textToolSettings, content: '' });
     addTextLayer(env, point, style);
   },
 };
@@ -54,8 +37,11 @@ function addTextLayer(
     bitmapVersion: 0,
     mask: null,
     text: style,
-    metadata: { editableText: true },
+    // freshlyPlaced marks a brand-new empty layer so the canvas can discard it
+    // if the user dismisses the editor without typing anything.
+    metadata: { editableText: true, freshlyPlaced: true },
   };
   env.store.addLayer(env.doc.id, layer);
+  env.store.setPendingTextEditLayerId(layer.id);
   env.requestRender();
 }
