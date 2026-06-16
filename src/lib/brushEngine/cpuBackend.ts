@@ -4,7 +4,12 @@ import { clampRect, dabRect, isEmptyRect, unionRect } from './dirtyRect';
 import { blurRegion, sharpenRegion, smudgeRegion } from './cpuKernels';
 
 function cloneImageData(source: ImageData): ImageData {
-  return { width: source.width, height: source.height, data: new Uint8ClampedArray(source.data) } as ImageData;
+  const data = new Uint8ClampedArray(source.data);
+  // Real ImageData is required by the browser's putImageData; fall back to a plain shape under Node tests.
+  if (typeof ImageData !== 'undefined') {
+    return new ImageData(data, source.width, source.height);
+  }
+  return { width: source.width, height: source.height, data } as ImageData;
 }
 
 /**
