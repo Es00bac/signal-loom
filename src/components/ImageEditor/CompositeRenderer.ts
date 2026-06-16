@@ -1076,14 +1076,28 @@ export class CompositeRenderer {
     const doc = this.currentDoc;
     if (!doc) return;
 
-    ctx.save();
-    ctx.scale(this.dpr, this.dpr);
-    ctx.translate(doc.viewport.panX, doc.viewport.panY);
-    ctx.scale(doc.viewport.zoom, doc.viewport.zoom);
+    // Snap the document to a whole-device-pixel rect before drawing the
+    // checkerboard + composited pixels. At fractional zoom / DPR an unsnapped
+    // document antialiases its top and bottom edges against the dark checker
+    // backdrop, which reads as a thin transparency strip — the canvas looking
+    // larger than the image. Drawing into an integer device rect keeps all four
+    // edges crisp. Selection/mask overlays are drawn afterwards in document
+    // space anchored to the same snapped origin.
+    const dpr = this.dpr;
+    const zoom = doc.viewport.zoom;
+    const x0 = Math.round(doc.viewport.panX * dpr);
+    const y0 = Math.round(doc.viewport.panY * dpr);
+    const x1 = Math.round((doc.viewport.panX + doc.width * zoom) * dpr);
+    const y1 = Math.round((doc.viewport.panY + doc.height * zoom) * dpr);
+    const dw = Math.max(1, x1 - x0);
+    const dh = Math.max(1, y1 - y0);
 
-    drawTransparencyCheckerboard(ctx, doc.width, doc.height);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    drawTransparencyCheckerboard(ctx, x0, y0, dw, dh, 16 * zoom * dpr);
 
     const store = useImageEditorStore.getState();
+    let composite: ImageBitmap | HTMLCanvasElement | LayerBitmap | null = null;
     if (store.isDraggingSlider) {
       if (!this.lowResDoc) {
         this.prepareLowResDoc(doc);
@@ -1101,24 +1115,28 @@ export class CompositeRenderer {
         });
         this.lowResDoc = { ...this.lowResDoc, layers: updatedLayers };
       }
-
-      ctx.save();
-      ctx.scale(1 / this.lowResScale, 1 / this.lowResScale);
-      if (this.lowResDoc) {
-        ctx.drawImage(renderImageDocumentLayersToBitmap(this.lowResDoc), 0, 0);
-      }
-      ctx.restore();
+      composite = this.lowResDoc ? renderImageDocumentLayersToBitmap(this.lowResDoc) : null;
     } else {
       this.lowResDoc = null;
       const signature = this.buildDocSignature(doc);
       if (this.workerDocSignature === signature && this.workerResultBitmap) {
-        ctx.drawImage(this.workerResultBitmap, 0, 0);
+        composite = this.workerResultBitmap;
       } else {
         // Fallback to sync render while worker processes, or start worker
-        ctx.drawImage(renderImageDocumentLayersToBitmap(doc), 0, 0);
+        composite = renderImageDocumentLayersToBitmap(doc);
         this.runHighResWorker(doc).catch(console.error);
       }
     }
+    if (composite) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(composite, 0, 0, composite.width, composite.height, x0, y0, dw, dh);
+    }
+    ctx.restore();
+
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.translate(x0 / dpr, y0 / dpr);
+    ctx.scale(zoom, zoom);
 
     const { quickMaskSettings, selectAndMaskSettings } = useImageEditorStore.getState();
     const activeLayer = doc.layers.find((layer) => layer.id === doc.activeLayerId) ?? null;
@@ -1257,21 +1275,29 @@ function getLayerVectorMaskMetadata(layer: ImageLayer) {
 
 function drawTransparencyCheckerboard(
   ctx: CanvasRenderingContext2D,
+  originX: number,
+  originY: number,
   width: number,
   height: number,
+  tile: number,
 ): void {
-  const size = 16;
+  // Drawn in device space within the document's snapped integer rect
+  // [originX, originY, width, height]. `tile` is the checker square size in
+  // device pixels (16 document px scaled by zoom * dpr) so the pattern still
+  // tracks the document like before, while the rect's edges stay pixel-crisp.
   ctx.fillStyle = '#1a1b23';
-  ctx.fillRect(0, 0, width, height);
+  ctx.fillRect(originX, originY, width, height);
   ctx.fillStyle = '#222637';
-  for (let y = 0; y < height; y += size) {
-    for (let x = 0; x < width; x += size) {
-      if (((x / size) + (y / size)) % 2 === 0) {
-        // Clamp the final row/column so tiles never overshoot the document edge when a dimension
-        // is not a multiple of `size` (otherwise a dashed checker strip sticks out past the
-        // composited layers — looks like the image doesn't fill the document).
-        ctx.fillRect(x, y, Math.min(size, width - x), Math.min(size, height - y));
-      }
+  const step = Math.max(1, tile);
+  const cols = Math.ceil(width / step);
+  const rows = Math.ceil(height / step);
+  for (let j = 0; j < rows; j += 1) {
+    for (let i = 0; i < cols; i += 1) {
+      if ((i + j) % 2 !== 0) continue;
+      const tx = originX + i * step;
+      const ty = originY + j * step;
+      // Clamp the final row/column so tiles never overshoot the rect.
+      ctx.fillRect(tx, ty, Math.min(step, originX + width - tx), Math.min(step, originY + height - ty));
     }
   }
 }
