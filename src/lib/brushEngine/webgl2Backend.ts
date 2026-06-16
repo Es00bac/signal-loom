@@ -100,40 +100,42 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
 
 function createGlContext(): GlContext | null {
   if (typeof OffscreenCanvas === 'undefined') return null;
-  let canvas: OffscreenCanvas;
+  // The whole setup is wrapped: a missing/partial/stubbed WebGL2 implementation (jsdom test stubs,
+  // headless drivers, blocklisted GPUs) can return a truthy context whose methods throw. Any failure
+  // here must cleanly return null so detection falls back to the CPU backend instead of crashing.
   try {
-    canvas = new OffscreenCanvas(1, 1);
+    const canvas = new OffscreenCanvas(1, 1);
+    const gl = canvas.getContext('webgl2', { premultipliedAlpha: false, preserveDrawingBuffer: false }) as WebGL2RenderingContext | null;
+    if (!gl || typeof gl.createShader !== 'function') return null;
+    const vs = compile(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
+    const fs = compile(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
+    if (!vs || !fs) return null;
+    const program = gl.createProgram();
+    if (!program) return null;
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return null;
+
+    const vao = gl.createVertexArray();
+    const buffer = gl.createBuffer();
+    if (!vao || !buffer) return null;
+    gl.bindVertexArray(vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    const aPos = gl.getAttribLocation(program, 'aPos');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
+
+    const uniforms: GlContext['uniforms'] = {};
+    for (const name of ['uWorking', 'uSample', 'uTarget', 'uDrag', 'uBrushRadius', 'uStrength', 'uBlurRadius', 'uOp', 'uSize']) {
+      uniforms[name] = gl.getUniformLocation(program, name);
+    }
+    return { gl, canvas, program, vao, uniforms };
   } catch {
     return null;
   }
-  const gl = canvas.getContext('webgl2', { premultipliedAlpha: false, preserveDrawingBuffer: false }) as WebGL2RenderingContext | null;
-  if (!gl) return null;
-  const vs = compile(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
-  const fs = compile(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
-  if (!vs || !fs) return null;
-  const program = gl.createProgram();
-  if (!program) return null;
-  gl.attachShader(program, vs);
-  gl.attachShader(program, fs);
-  gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return null;
-
-  const vao = gl.createVertexArray();
-  const buffer = gl.createBuffer();
-  if (!vao || !buffer) return null;
-  gl.bindVertexArray(vao);
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-  const aPos = gl.getAttribLocation(program, 'aPos');
-  gl.enableVertexAttribArray(aPos);
-  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
-  gl.bindVertexArray(null);
-
-  const uniforms: GlContext['uniforms'] = {};
-  for (const name of ['uWorking', 'uSample', 'uTarget', 'uDrag', 'uBrushRadius', 'uStrength', 'uBlurRadius', 'uOp', 'uSize']) {
-    uniforms[name] = gl.getUniformLocation(program, name);
-  }
-  return { gl, canvas, program, vao, uniforms };
 }
 
 export function isWebgl2BrushBackendAvailable(): boolean {

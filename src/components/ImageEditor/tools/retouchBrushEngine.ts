@@ -22,6 +22,9 @@ export function createRetouchStrokeController(
     layerSnapshot: bitmapBefore,
     sampleMode: retouchSettings.sampleMode,
   });
+  // GPU acceleration is on by default (DEFAULT_BRUSH_SETTINGS.gpuBrushEngine === true): 'auto' picks the
+  // fastest available backend (WebGL2 GPU when present, region-bounded CPU fallback otherwise). Turning the
+  // toggle off forces CPU — a real escape hatch for misbehaving GPU drivers. Both paths are dirty-rect bounded.
   const selection = detectBrushBackend(env.brushSettings.gpuBrushEngine ? 'auto' : 'cpu');
   return new BrushStrokeController(selection.backend, {
     source: getBitmapImageData(bitmapBefore),

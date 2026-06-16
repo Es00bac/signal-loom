@@ -136,8 +136,9 @@ describe('BrushPanel', () => {
       dualBrush: true,
       wetMedia: true,
       wetMix: 0.35,
-      gpuBrushEngine: true,
-      gpuAcceleration: true,
+      // GPU acceleration is on by default, so the single click toggles it off (and clears gpuAcceleration).
+      gpuBrushEngine: false,
+      gpuAcceleration: false,
       androidBrushControls: true,
       androidStylusControls: true,
       gamepadBrushControls: true,
