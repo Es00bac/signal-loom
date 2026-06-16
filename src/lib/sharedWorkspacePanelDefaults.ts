@@ -45,7 +45,10 @@ const SOURCE_BIN_DEFAULTS: Record<SharedWorkspaceId, SharedWorkspacePanelDefault
 
 const SHARED_WORKSPACE_PANEL_TOP_OFFSET_PX: Record<SharedWorkspaceId, number> = {
   flow: 64,
-  image: 112,
+  // Image has an extra workspace-controls row (zoom / Tools / Panels / Assets / Layout) below the
+  // document-tab line; shared docked panels (e.g. the Source Bin) must start below it (~139px) so
+  // they don't cover those controls.
+  image: 144,
   paper: 64,
 };
 
