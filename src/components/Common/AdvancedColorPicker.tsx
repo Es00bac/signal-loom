@@ -1,6 +1,40 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Pipette } from 'lucide-react';
 import { createPortal } from 'react-dom';
+
+type AdvancedColorPickerMode = 'square' | 'wheel';
+type EyeDropperResult = { sRGBHex: string };
+type EyeDropperConstructor = new () => { open: (options?: { signal?: AbortSignal }) => Promise<EyeDropperResult> };
+
+function getEyeDropperConstructor(): EyeDropperConstructor | null {
+  if (typeof window === 'undefined') return null;
+  const ctor = (window as unknown as { EyeDropper?: EyeDropperConstructor }).EyeDropper;
+  return typeof ctor === 'function' ? ctor : null;
+}
+
+/** Drives a pointer drag over a color field: fires onMove for the initial press and every move until release. */
+function startColorFieldDrag(
+  event: ReactPointerEvent<HTMLDivElement>,
+  onMove: (clientX: number, clientY: number) => void,
+): void {
+  event.preventDefault();
+  event.stopPropagation();
+  onMove(event.clientX, event.clientY);
+  if (typeof window === 'undefined') return;
+  const move = (moveEvent: PointerEvent) => {
+    moveEvent.preventDefault();
+    onMove(moveEvent.clientX, moveEvent.clientY);
+  };
+  const stop = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', stop);
+    window.removeEventListener('pointercancel', stop);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', stop);
+  window.addEventListener('pointercancel', stop);
+}
 
 export interface HsvColor {
   h: number;
@@ -79,7 +113,7 @@ interface PanelViewport {
 }
 
 const PANEL_WIDTH = 272;
-const PANEL_HEIGHT = 432;
+const PANEL_HEIGHT = 520;
 const PANEL_GAP = 8;
 const VIEWPORT_PADDING = 8;
 const TOUCH_COMPACT_MAX_WIDTH = 420;
@@ -117,6 +151,9 @@ export function AdvancedColorPicker({
   const color = normalizePickerHex(value);
   const [draftHex, setDraftHex] = useState(color);
   const [draftAlpha, setDraftAlpha] = useState(() => pickAlphaFromValue(value));
+  const [pickerMode, setPickerMode] = useState<AdvancedColorPickerMode>('square');
+  const eyeDropperCtor = getEyeDropperConstructor();
+  const hasEyeDropper = Boolean(onEyeDropper) || eyeDropperCtor !== null;
   const hsv = useMemo(() => hexToHsv(color), [color]);
   const rgb = useMemo(() => hexToRgb(color), [color]);
 
@@ -174,6 +211,24 @@ export function AdvancedColorPicker({
     setDraftAlpha(clamp(Math.round(nextValue), 0, 100));
   };
 
+  const handleEyeDropper = () => {
+    if (eyeDropperCtor) {
+      void (async () => {
+        try {
+          const result = await new eyeDropperCtor().open();
+          if (result?.sRGBHex) applyColor(result.sRGBHex);
+        } catch {
+          // user cancelled the screen sampler
+        }
+      })();
+      return;
+    }
+    // No native screen sampler: hand off to the host (e.g. activate the canvas
+    // eyedropper tool) and close the popover so it doesn't block the sample target.
+    onEyeDropper?.();
+    setOpen(false);
+  };
+
   function updatePanelPosition() {
     if (typeof window === 'undefined') return;
     const rect = buttonRef.current?.getBoundingClientRect();
@@ -195,7 +250,7 @@ export function AdvancedColorPicker({
   const panel = open ? (
     <div
       className={joinClasses(
-        'z-[10000] w-[272px] max-w-[calc(100vw-16px)] rounded-lg border border-cyan-300/20 bg-[#0b1018] p-3 text-xs text-cyan-100 shadow-2xl shadow-black/60',
+        'z-[10000] max-h-[calc(100vh-16px)] w-[272px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain rounded-lg border border-cyan-300/20 bg-[#0b1018] p-3 text-xs text-cyan-100 shadow-2xl shadow-black/60',
       )}
       data-advanced-color-picker-panel="true"
       data-advanced-color-picker-compact-layout={compactLayout}
@@ -214,12 +269,13 @@ export function AdvancedColorPicker({
           <div className="font-semibold text-cyan-50">{label}</div>
           <div className="font-mono text-[11px] text-cyan-100/55">{color}</div>
         </div>
-        {onEyeDropper ? (
+        {hasEyeDropper ? (
           <button
             aria-label={`${label} eyedropper`}
             className="inline-flex h-6 w-6 items-center justify-center rounded border border-cyan-300/20 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/15 active:bg-cyan-300/25"
             data-advanced-color-picker-eyedropper="true"
-            onClick={onEyeDropper}
+            onClick={handleEyeDropper}
+            title={`${label} eyedropper — sample a colour from anywhere on screen`}
             type="button"
           >
             <Pipette size={13} />
@@ -247,13 +303,53 @@ export function AdvancedColorPicker({
         />
       </label>
 
-      <div
-        className={joinClasses('mb-3 rounded border border-cyan-300/15', compactLayout ? 'h-14' : 'h-20')}
-        style={{
-          background:
-            `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${hsv.h}, 100%, 50%))`,
-        }}
-      />
+      <div className="mb-2 flex items-center gap-2" role="tablist" aria-label={`${label} picker mode`}>
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/45">{label} picker</span>
+        <div className="ml-auto flex gap-1">
+          <button
+            aria-label={`${label} square picker`}
+            aria-pressed={pickerMode === 'square'}
+            className={joinClasses(
+              'rounded border px-2 py-0.5 text-[11px] font-semibold transition',
+              pickerMode === 'square'
+                ? 'border-cyan-300/60 bg-cyan-300/15 text-cyan-50'
+                : 'border-cyan-300/15 bg-[#141b25] text-cyan-100/55 hover:text-cyan-50',
+            )}
+            data-advanced-color-picker-mode="square"
+            onClick={() => setPickerMode('square')}
+            type="button"
+          >
+            Square
+          </button>
+          <button
+            aria-label={`${label} wheel picker`}
+            aria-pressed={pickerMode === 'wheel'}
+            className={joinClasses(
+              'rounded border px-2 py-0.5 text-[11px] font-semibold transition',
+              pickerMode === 'wheel'
+                ? 'border-cyan-300/60 bg-cyan-300/15 text-cyan-50'
+                : 'border-cyan-300/15 bg-[#141b25] text-cyan-100/55 hover:text-cyan-50',
+            )}
+            data-advanced-color-picker-mode="wheel"
+            onClick={() => setPickerMode('wheel')}
+            type="button"
+          >
+            Wheel
+          </button>
+        </div>
+      </div>
+
+      {pickerMode === 'square' ? (
+        <div className="mb-3 flex gap-2">
+          <ColorSaturationValueField compact={compactLayout} hsv={hsv} label={label} onChange={applyHsv} />
+          <ColorHueBar compact={compactLayout} hsv={hsv} label={label} onChange={applyHsv} />
+        </div>
+      ) : (
+        <div className="mb-3 space-y-2">
+          <ColorHueWheel compact={compactLayout} hsv={hsv} label={label} onChange={applyHsv} />
+          <ColorSaturationValueField compact={compactLayout} hsv={hsv} label={label} onChange={applyHsv} />
+        </div>
+      )}
 
       <RangeRow
         compact={compactLayout}
@@ -572,6 +668,116 @@ function NumberRow({
         value={value}
       />
     </label>
+  );
+}
+
+interface ColorFieldProps {
+  label: string;
+  hsv: HsvColor;
+  compact: boolean;
+  onChange: (patch: Partial<HsvColor>) => void;
+}
+
+/** Photoshop-style saturation/value square: drag horizontally for saturation, vertically for value. */
+function ColorSaturationValueField({ label, hsv, compact, onChange }: ColorFieldProps) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const pick = (clientX: number, clientY: number) => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return;
+    onChange({
+      s: clamp(((clientX - rect.left) / rect.width) * 100, 0, 100),
+      v: clamp((1 - (clientY - rect.top) / rect.height) * 100, 0, 100),
+    });
+  };
+  return (
+    <div
+      aria-label={`${label} saturation and value field`}
+      className={joinClasses('relative flex-1 cursor-crosshair touch-none rounded border border-cyan-300/15', compact ? 'h-24' : 'h-32')}
+      data-advanced-color-picker-sv-field="true"
+      onPointerDown={(event) => startColorFieldDrag(event, pick)}
+      ref={ref}
+      role="slider"
+      style={{
+        background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${hsv.h}, 100%, 50%))`,
+      }}
+    >
+      <span
+        className="pointer-events-none absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.7)]"
+        style={{ backgroundColor: hsvToHex(hsv), left: `${clamp(hsv.s, 0, 100)}%`, top: `${100 - clamp(hsv.v, 0, 100)}%` }}
+      />
+    </div>
+  );
+}
+
+/** Vertical hue strip alongside the saturation/value square. */
+function ColorHueBar({ label, hsv, compact, onChange }: ColorFieldProps) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const pick = (_clientX: number, clientY: number) => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect || rect.height <= 0) return;
+    onChange({ h: clamp(((clientY - rect.top) / rect.height) * 360, 0, 360) });
+  };
+  return (
+    <div
+      aria-label={`${label} hue bar`}
+      className={joinClasses('relative w-4 shrink-0 cursor-pointer touch-none rounded border border-cyan-300/15', compact ? 'h-24' : 'h-32')}
+      data-advanced-color-picker-hue-bar="true"
+      onPointerDown={(event) => startColorFieldDrag(event, pick)}
+      ref={ref}
+      role="slider"
+      style={{
+        background: 'linear-gradient(to bottom, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%)',
+      }}
+    >
+      <span
+        className="pointer-events-none absolute left-1/2 h-1.5 w-[150%] -translate-x-1/2 -translate-y-1/2 rounded-sm border border-white shadow-[0_0_0_1px_rgba(0,0,0,0.6)]"
+        style={{ top: `${(clamp(hsv.h, 0, 360) / 360) * 100}%` }}
+      />
+    </div>
+  );
+}
+
+/** GIMP-style hue wheel: click/drag around the ring to set hue by angle. */
+function ColorHueWheel({ label, hsv, compact, onChange }: ColorFieldProps) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const size = compact ? 104 : 132;
+  const pick = (clientX: number, clientY: number) => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return;
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const deg = (Math.atan2(clientY - cy, clientX - cx) * 180) / Math.PI;
+    onChange({ h: (deg + 360) % 360 });
+  };
+  const radians = (clamp(hsv.h, 0, 360) * Math.PI) / 180;
+  const thumbRadiusPct = 42;
+  return (
+    <div className="flex justify-center">
+      <div
+        aria-label={`${label} hue wheel`}
+        className="relative cursor-pointer touch-none rounded-full"
+        data-advanced-color-picker-hue-wheel="true"
+        onPointerDown={(event) => startColorFieldDrag(event, pick)}
+        ref={ref}
+        role="slider"
+        style={{
+          background: 'conic-gradient(from 90deg, hsl(0,100%,50%), hsl(60,100%,50%), hsl(120,100%,50%), hsl(180,100%,50%), hsl(240,100%,50%), hsl(300,100%,50%), hsl(360,100%,50%))',
+          height: size,
+          maskImage: 'radial-gradient(circle, transparent 55%, #000 57%)',
+          WebkitMaskImage: 'radial-gradient(circle, transparent 55%, #000 57%)',
+          width: size,
+        }}
+      >
+        <span
+          className="pointer-events-none absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.7)]"
+          style={{
+            backgroundColor: `hsl(${clamp(hsv.h, 0, 360)}, 100%, 50%)`,
+            left: `${50 + Math.cos(radians) * thumbRadiusPct}%`,
+            top: `${50 + Math.sin(radians) * thumbRadiusPct}%`,
+          }}
+        />
+      </div>
+    </div>
   );
 }
 

@@ -261,6 +261,7 @@ export function ImageEditorToolbar() {
           buttonClassName="rounded-none border border-white/85 shadow-[0_0_0_1px_rgba(0,0,0,0.85)]"
           label="Foreground color"
           onChange={(color) => setBrushSettings({ color, presetId: undefined })}
+          onEyeDropper={() => setTool('eyedropper')}
           title="Foreground color"
           value={foregroundColor}
         />

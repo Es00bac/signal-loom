@@ -172,6 +172,22 @@ describe('AdvancedColorPicker', () => {
     expect(html).toContain('aria-label="Foreground color eyedropper"');
   });
 
+  it('offers square and wheel picker modes so users can pick from a large field', () => {
+    const html = renderToStaticMarkup(
+      <AdvancedColorPicker
+        defaultOpen
+        label="Foreground color"
+        onChange={vi.fn()}
+        value="#336699"
+      />,
+    );
+
+    expect(html).toContain('data-advanced-color-picker-mode="square"');
+    expect(html).toContain('data-advanced-color-picker-mode="wheel"');
+    // The square mode renders an interactive saturation/value field by default.
+    expect(html).toContain('aria-label="Foreground color saturation and value field"');
+  });
+
   it('keeps swatch quick-select controls and avoids type-only color fallback', () => {
     const html = renderToStaticMarkup(
       <AdvancedColorPicker
