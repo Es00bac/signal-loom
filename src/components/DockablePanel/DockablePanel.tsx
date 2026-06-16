@@ -165,10 +165,15 @@ export function DockablePanel({
   const hasFixedFloatingGeometry = fixedSize || isCompactFloatingChrome;
   const floatingRectSpace = layout.floatingRectSpace === 'screen' ? 'screen' : 'owner';
   const floatingWindowKey = externalWindowKey ?? layout.panelId;
+  // The compact tools palette (~66px wide) must NOT become its own native OS window: the window
+  // manager enforces a minimum window width (~100px), so a 66px palette gets a ~101px window and an
+  // empty strip to the right of the content. Render it in the owner window instead — identical to the
+  // browser and mobile shells (which is why the strip only ever appeared on desktop Electron). Wider
+  // fixed palettes (e.g. Color, 180px) stay above the OS minimum and remain real native windows.
   const shouldUseExternalWindow = shouldUseExternalFloatingPanelWindow({
     isNative: Boolean(getSignalLoomNativeBridge()),
     mode: layout.mode,
-  });
+  }) && !isCompactFloatingChrome;
   const shouldRenderInOwnerWindow = shouldRenderFloatingPanelInOwnerWindow({
     shouldUseExternalWindow,
     externalPanelRootAvailable: Boolean(externalPanelRoot),

@@ -143,27 +143,11 @@ describe('DockablePanel compact floating chrome', () => {
     expect(popupDocument.querySelector('[data-dockable-workspace-id="image"]')?.textContent).not.toContain('Dock');
   });
 
-  it('opens fixed native compact palettes at the real palette size without native resize affordances', async () => {
+  it('renders the compact tools palette in the owner window instead of a native popup', async () => {
+    // A ~66px palette cannot be its own native OS window (the window manager enforces a minimum width
+    // of ~100px, leaving an empty strip beside the content), so compact chrome renders in-window.
     window.signalLoomNative = {} as never;
-    Object.defineProperty(window, 'screenX', { configurable: true, value: 2000 });
-    Object.defineProperty(window, 'screenY', { configurable: true, value: 80 });
-    const popupDocument = document.implementation.createHTMLDocument('Tools');
-    const popup = {
-      closed: false,
-      document: popupDocument,
-      screenX: 2368,
-      screenY: 192,
-      innerWidth: 66,
-      innerHeight: 456,
-      outerWidth: 66,
-      outerHeight: 456,
-      addEventListener: vi.fn(),
-      close: vi.fn(),
-      moveTo: vi.fn(),
-      removeEventListener: vi.fn(),
-      resizeTo: vi.fn(),
-    };
-    const open = vi.spyOn(window, 'open').mockImplementation(() => popup as unknown as Window);
+    const open = vi.spyOn(window, 'open');
 
     await act(async () => {
       root?.render(
@@ -187,34 +171,16 @@ describe('DockablePanel compact floating chrome', () => {
       await Promise.resolve();
     });
 
-    expect(open).toHaveBeenCalledWith(
-      '',
-      'signal-loom-image-tools',
-      'popup=yes,frame=false,width=66,height=456,left=2368,top=192,resizable=no',
-    );
+    expect(open).not.toHaveBeenCalled();
+    const panel = host?.querySelector('[data-dockable-workspace-id="image"][data-dockable-panel-id="tools"]');
+    expect(panel).not.toBeNull();
+    expect(host?.textContent).toContain('Palette');
+    expect(host?.querySelector('[aria-label="Tools drag handle"]')).not.toBeNull();
   });
 
-  it('treats compact native chrome as fixed-size even if fixedSize is omitted', async () => {
+  it('renders compact native chrome in-window even when fixedSize is omitted', async () => {
     window.signalLoomNative = {} as never;
-    Object.defineProperty(window, 'screenX', { configurable: true, value: 2000 });
-    Object.defineProperty(window, 'screenY', { configurable: true, value: 80 });
-    const popupDocument = document.implementation.createHTMLDocument('Tools');
-    const popup = {
-      closed: false,
-      document: popupDocument,
-      screenX: 2368,
-      screenY: 192,
-      innerWidth: 66,
-      innerHeight: 456,
-      outerWidth: 66,
-      outerHeight: 456,
-      addEventListener: vi.fn(),
-      close: vi.fn(),
-      moveTo: vi.fn(),
-      removeEventListener: vi.fn(),
-      resizeTo: vi.fn(),
-    };
-    const open = vi.spyOn(window, 'open').mockImplementation(() => popup as unknown as Window);
+    const open = vi.spyOn(window, 'open');
 
     await act(async () => {
       root?.render(
@@ -237,14 +203,11 @@ describe('DockablePanel compact floating chrome', () => {
       await Promise.resolve();
     });
 
-    expect(open).toHaveBeenCalledWith(
-      '',
-      'signal-loom-image-tools',
-      'popup=yes,frame=false,width=66,height=456,left=2368,top=192,resizable=no',
-    );
-    expect(popupDocument.querySelector('[data-dockable-workspace-id="image"]')?.textContent).not.toContain('Dock');
-    expect(popupDocument.documentElement.style.width).toBe('66px');
-    expect(popupDocument.documentElement.style.height).toBe('456px');
+    expect(open).not.toHaveBeenCalled();
+    const panel = host?.querySelector('[data-dockable-panel-chrome="compact-floating"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.textContent).not.toContain('Dock');
+    expect(host?.textContent).toContain('Palette');
   });
 
   it('opens native floating dialogs at explicit desktop-screen coordinates without owner offset drift', async () => {
@@ -391,27 +354,9 @@ describe('DockablePanel compact floating chrome', () => {
     expect(resizeFloatingPanelSpy).not.toHaveBeenCalled();
   });
 
-  it('repairs fixed native compact palette popup size when the OS surface is larger than the saved content size', async () => {
+  it('renders the compact palette in-window at its content size (no oversized native popup, no empty strip)', async () => {
     window.signalLoomNative = {} as never;
-    Object.defineProperty(window, 'screenX', { configurable: true, value: 2000 });
-    Object.defineProperty(window, 'screenY', { configurable: true, value: 80 });
-    const popupDocument = document.implementation.createHTMLDocument('Tools');
-    const popup = {
-      closed: false,
-      document: popupDocument,
-      screenX: 2368,
-      screenY: 192,
-      innerWidth: 102,
-      innerHeight: 457,
-      outerWidth: 102,
-      outerHeight: 457,
-      addEventListener: vi.fn(),
-      close: vi.fn(),
-      moveTo: vi.fn(),
-      removeEventListener: vi.fn(),
-      resizeTo: vi.fn(),
-    };
-    vi.spyOn(window, 'open').mockImplementation(() => popup as unknown as Window);
+    const open = vi.spyOn(window, 'open');
 
     await act(async () => {
       root?.render(
@@ -435,50 +380,18 @@ describe('DockablePanel compact floating chrome', () => {
       await Promise.resolve();
     });
 
-    const externalPanel = popupDocument.querySelector('[data-dockable-workspace-id="image"][data-dockable-panel-id="tools"]');
-
-    expect(externalPanel?.getAttribute('style')).toContain('width: 66px');
-    expect(externalPanel?.getAttribute('style')).toContain('height: 456px');
-    expect(popupDocument.documentElement.style.width).toBe('66px');
-    expect(popupDocument.documentElement.style.height).toBe('456px');
-    expect(popupDocument.body.style.width).toBe('66px');
-    expect(popupDocument.body.style.height).toBe('456px');
-    expect(popupDocument.body.style.background).toBe('transparent');
-    const externalRoot = popupDocument.getElementById('signal-loom-floating-panel-root');
-    expect(externalRoot?.style.width).toBe('66px');
-    expect(externalRoot?.style.height).toBe('456px');
-    expect(popup.resizeTo).toHaveBeenCalledWith(66, 456);
+    // No native popup is opened, so there is no OS-minimum-width surface and no empty strip: the
+    // in-window panel is sized exactly to its content.
+    expect(open).not.toHaveBeenCalled();
+    const panel = host?.querySelector('[data-dockable-workspace-id="image"][data-dockable-panel-id="tools"]') as HTMLElement | null;
+    expect(panel).not.toBeNull();
+    expect(panel?.getAttribute('style')).toContain('width: 66px');
+    expect(panel?.getAttribute('style')).toContain('height: 456px');
   });
 
-  it('reasserts fixed compact palette size while dragging if the native popup surface drifts larger', async () => {
+  it('keeps the compact palette draggable in-window without opening a native popup', async () => {
     window.signalLoomNative = {} as never;
-    Object.defineProperty(window, 'screenX', { configurable: true, value: 2000 });
-    Object.defineProperty(window, 'screenY', { configurable: true, value: 80 });
-    const popupDocument = document.implementation.createHTMLDocument('Tools');
-    const listeners = new Map<string, Set<(event: Record<string, unknown>) => void>>();
-    const popup = {
-      closed: false,
-      document: popupDocument,
-      screenX: 2368,
-      screenY: 192,
-      innerWidth: 66,
-      innerHeight: 456,
-      outerWidth: 66,
-      outerHeight: 456,
-      addEventListener: vi.fn((type: string, listener: (event: Record<string, unknown>) => void) => {
-        const set = listeners.get(type) ?? new Set<(event: Record<string, unknown>) => void>();
-        set.add(listener);
-        listeners.set(type, set);
-      }),
-      close: vi.fn(),
-      moveTo: vi.fn(),
-      removeEventListener: vi.fn((type: string, listener: (event: Record<string, unknown>) => void) => {
-        listeners.get(type)?.delete(listener);
-      }),
-      resizeTo: vi.fn(),
-    };
-    Object.defineProperty(popupDocument, 'defaultView', { configurable: true, value: popup });
-    vi.spyOn(window, 'open').mockImplementation(() => popup as unknown as Window);
+    const open = vi.spyOn(window, 'open');
 
     await act(async () => {
       root?.render(
@@ -502,43 +415,9 @@ describe('DockablePanel compact floating chrome', () => {
       await Promise.resolve();
     });
 
-    const handle = popupDocument.querySelector('[aria-label="Tools drag handle"]') as HTMLElement | null;
-    expect(handle).not.toBeNull();
-
-    const pointerDown = new MouseEvent('pointerdown', {
-      bubbles: true,
-      clientX: 390,
-      clientY: 120,
-      screenX: 2390,
-      screenY: 200,
-    });
-    Object.defineProperty(pointerDown, 'pointerId', { configurable: true, value: 7 });
-
-    act(() => {
-      handle?.dispatchEvent(pointerDown);
-    });
-
-    popup.innerWidth = 224;
-    popup.innerHeight = 640;
-    popup.outerWidth = 224;
-    popup.outerHeight = 640;
-
-    const pointerMove = {
-      pointerId: 7,
-      clientX: 420,
-      clientY: 156,
-      screenX: 2420,
-      screenY: 236,
-      preventDefault: vi.fn(),
-      stopPropagation: vi.fn(),
-    };
-
-    act(() => {
-      listeners.get('pointermove')?.forEach((listener) => listener(pointerMove));
-    });
-
-    expect(popup.moveTo).toHaveBeenCalled();
-    expect(popup.resizeTo).toHaveBeenCalledWith(66, 456);
+    // The palette is moved by dragging its handle within the owner window; no native popup is created.
+    expect(open).not.toHaveBeenCalled();
+    expect(host?.querySelector('[aria-label="Tools drag handle"]')).not.toBeNull();
   });
 
   it('reasserts standard native floating dialog size while dragging if the popup surface drifts larger', async () => {
