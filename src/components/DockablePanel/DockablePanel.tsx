@@ -1,6 +1,6 @@
 import { type AriaRole, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { GripHorizontal } from 'lucide-react';
+import { GripHorizontal, PanelLeft, PanelRight } from 'lucide-react';
 import { DockExpandContext } from './dockExpandContext';
 import {
   attachDockablePanelGlobalPointerDragListeners,
@@ -176,6 +176,7 @@ export function DockablePanel({
   const [externalPanelRoot, setExternalPanelRoot] = useState<HTMLElement | null>(null);
   const floatPanel = useDockablePanelStore((state) => state.floatPanel);
   const setPanelMode = useDockablePanelStore((state) => state.setPanelMode);
+  const setPanelDockColumn = useDockablePanelStore((state) => state.setPanelDockColumn);
   const snapPanelToDockTarget = useDockablePanelStore((state) => state.snapPanelToDockTarget);
   const groupPanelWithPanel = useDockablePanelStore((state) => state.groupPanelWithPanel);
   const moveFloatingPanel = useDockablePanelStore((state) => state.moveFloatingPanel);
@@ -749,6 +750,38 @@ export function DockablePanel({
             <span className="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100/80">
               {title}
             </span>
+            {isVerticalDock && !isFloating ? (
+              <>
+                {(layout.dockColumn ?? 0) > 0 ? (
+                  <button
+                    aria-label={`Move ${title} to previous column`}
+                    className="theme-button flex h-6 w-6 items-center justify-center rounded border border-cyan-300/15 text-cyan-100/60 hover:border-cyan-200/50 hover:text-white"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setPanelDockColumn(layout.workspaceId, layout.panelId, (layout.dockColumn ?? 0) - 1);
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    title="Move to previous column"
+                    type="button"
+                  >
+                    <PanelLeft aria-hidden size={13} />
+                  </button>
+                ) : null}
+                <button
+                  aria-label={`Move ${title} to next column`}
+                  className="theme-button flex h-6 w-6 items-center justify-center rounded border border-cyan-300/15 text-cyan-100/60 hover:border-cyan-200/50 hover:text-white"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setPanelDockColumn(layout.workspaceId, layout.panelId, (layout.dockColumn ?? 0) + 1);
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  title="Move to next column"
+                  type="button"
+                >
+                  <PanelRight aria-hidden size={13} />
+                </button>
+              </>
+            ) : null}
             {canDockExternalPanel ? (
               <button
                 className="theme-button rounded border border-cyan-300/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100/70 hover:border-cyan-200/50 hover:text-white"

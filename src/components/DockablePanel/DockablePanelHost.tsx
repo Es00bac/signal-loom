@@ -1,4 +1,5 @@
 import { Fragment, type AriaRole, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   createDockablePanelDefaultSignature,
   sortDockedPanels,
@@ -138,6 +139,8 @@ function DockZoneStack({
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
   const splitResizeRef = useRef<{ pointerId: number; panelId: string; workspaceId: string; lastX: number; lastY: number } | null>(null);
   const resizeDockedPanel = useDockablePanelStore((state) => state.resizeDockedPanel);
+  const collapsedDockColumns = useDockablePanelStore((state) => state.collapsedDockColumns);
+  const toggleDockColumnCollapsed = useDockablePanelStore((state) => state.toggleDockColumnCollapsed);
   const activeLayout = resolveActiveDockZoneLayout(zoneEntries.map(getRenderEntryHostLayout), activePanelId);
   const activeEntry = activeLayout ? zoneEntries.find((entry) => renderEntryContainsPanel(entry, activeLayout.panelId)) : undefined;
   const shouldSplitCenter = shouldSplitDockZoneLayouts(
@@ -146,15 +149,23 @@ function DockZoneStack({
     (panelId) => definitions.get(panelId)?.centerDockPresentation === 'split',
   ) && zoneEntries.every((entry) => entry.type === 'panel');
   const isSideDockZone = zone === 'left' || zone === 'right';
-  const sideDockStackWidth = isSideDockZone
-    ? Math.max(...zoneEntries.map((entry) => {
-        const layout = getRenderEntryHostLayout(entry);
-        return Math.max(layout.minSize.width, layout.floatingRect.width);
-      }))
-    : undefined;
+  // Group side-zone panels into columns (by dockColumn), ordered left→right.
+  const sideColumns: { column: number; entries: typeof zoneEntries }[] = isSideDockZone
+    ? (() => {
+        const byColumn = new Map<number, typeof zoneEntries>();
+        for (const entry of zoneEntries) {
+          const column = Math.max(0, Math.round(getRenderEntryHostLayout(entry).dockColumn ?? 0));
+          const list = byColumn.get(column);
+          if (list) list.push(entry);
+          else byColumn.set(column, [entry]);
+        }
+        return [...byColumn.keys()].sort((a, b) => a - b).map((column) => ({ column, entries: byColumn.get(column)! }));
+      })()
+    : [];
 
   if (zoneEntries.length === 0) return null;
   if (!activeLayout) return null;
+  const hostWorkspaceId = activeLayout.workspaceId;
 
   const startSplitResize = (event: PointerEvent<HTMLDivElement>, layout: DockablePanelLayout) => {
     event.preventDefault();
@@ -257,62 +268,107 @@ function DockZoneStack({
           })}
         </div>
       ) : null}
-      {shouldSplitCenter ? null : zoneEntries.length > 1 && zone !== 'center' && zone !== 'overlay' ? (
-        <div
-          data-dock-zone-stack={zone}
-          className={`flex h-full min-h-0 min-w-0 gap-0 ${
-            isSideDockZone
-              ? 'flex-col items-stretch overflow-y-auto overscroll-contain'
-              : 'flex-row'
-          }`}
-          style={sideDockStackWidth ? { width: sideDockStackWidth } : undefined}
-        >
-          {zoneEntries.map((entry, index) => {
-            const layout = getRenderEntryHostLayout(entry);
-            const renderLayout = sideDockStackWidth
-              ? {
-                  ...layout,
-                  floatingRect: {
-                    ...layout.floatingRect,
-                    width: sideDockStackWidth,
-                  },
-                  minSize: {
-                    ...layout.minSize,
-                    width: Math.max(layout.minSize.width, sideDockStackWidth),
-                  },
-                }
-              : layout;
-            return (
-              <Fragment key={entry.key}>
-                <div
-                  className={isSideDockZone ? 'min-h-0 min-w-0 w-full shrink-0' : 'min-w-0 flex-1'}
-                  style={isSideDockZone ? { flex: `${Math.max(1, layout.floatingRect.height)} 1 0`, minHeight: DOCKED_SIDE_PANEL_MIN_HEIGHT } : undefined}
-                  data-dock-zone-stack-panel={zone}
+      {shouldSplitCenter ? null
+        : isSideDockZone && zoneEntries.length > 1 ? (
+        <div data-dock-zone-columns={zone} className="flex h-full min-h-0 min-w-0 flex-row gap-0">
+          {sideColumns.map(({ column, entries: columnEntries }) => {
+            const columnKey = `${hostWorkspaceId}:${zone}:${column}`;
+            const collapsed = Boolean(collapsedDockColumns[columnKey]);
+            const columnWidth = Math.max(...columnEntries.map((entry) => {
+              const layout = getRenderEntryHostLayout(entry);
+              return Math.max(layout.minSize.width, layout.floatingRect.width);
+            }));
+            if (collapsed) {
+              const railLabel = columnEntries
+                .map((entry) => definitions.get(getRenderEntryHostLayout(entry).panelId)?.title ?? '')
+                .filter(Boolean)
+                .join('   ·   ');
+              return (
+                <button
+                  key={column}
+                  type="button"
+                  data-dock-zone-column-rail={column}
+                  aria-label={`Expand ${zone} dock column ${column + 1}`}
+                  className="flex h-full w-6 shrink-0 flex-col items-center gap-2 border-l border-cyan-300/10 bg-[#0a1018]/85 py-2 text-cyan-100/55 hover:text-white"
+                  onClick={() => toggleDockColumnCollapsed(hostWorkspaceId, zone, column)}
+                  title="Expand column"
                 >
-                  {renderPanelEntry(
-                    entry.type === 'panel'
-                      ? { ...entry, layout: renderLayout }
-                      : { ...entry, activeLayout: renderLayout },
-                    definitions,
-                    viewport,
-                    isSideDockZone ? 'w-full' : 'min-w-0 flex-1',
-                  )}
+                  <ChevronLeft size={14} />
+                  <span className="text-[10px] uppercase tracking-wider [writing-mode:vertical-rl]">{railLabel}</span>
+                </button>
+              );
+            }
+            return (
+              <div
+                key={column}
+                data-dock-zone-column={column}
+                className="relative flex h-full min-h-0 shrink-0 flex-row border-l border-cyan-300/5 first:border-l-0"
+              >
+                <div
+                  data-dock-zone-stack={zone}
+                  className="flex h-full min-h-0 min-w-0 flex-col items-stretch gap-0 overflow-y-auto overscroll-contain"
+                  style={{ width: columnWidth }}
+                >
+                  {columnEntries.map((entry, index) => {
+                    const layout = getRenderEntryHostLayout(entry);
+                    const renderLayout = {
+                      ...layout,
+                      floatingRect: { ...layout.floatingRect, width: columnWidth },
+                      minSize: { ...layout.minSize, width: Math.max(layout.minSize.width, columnWidth) },
+                    };
+                    return (
+                      <Fragment key={entry.key}>
+                        <div
+                          className="min-h-0 min-w-0 w-full shrink-0"
+                          style={{ flex: `${Math.max(1, layout.floatingRect.height)} 1 0`, minHeight: DOCKED_SIDE_PANEL_MIN_HEIGHT }}
+                          data-dock-zone-stack-panel={zone}
+                        >
+                          {renderPanelEntry(
+                            entry.type === 'panel'
+                              ? { ...entry, layout: renderLayout }
+                              : { ...entry, activeLayout: renderLayout },
+                            definitions,
+                            viewport,
+                            'w-full',
+                          )}
+                        </div>
+                        {index < columnEntries.length - 1 ? (
+                          <div
+                            aria-label="Vertical resize divider"
+                            className="h-2 w-full shrink-0 cursor-row-resize touch-none rounded-full border-y border-cyan-200/0 bg-cyan-300/0 transition-colors hover:border-cyan-200/60 hover:bg-cyan-300/25"
+                            onPointerCancel={endSplitResize}
+                            onPointerDown={(event) => startSplitResize(event, layout)}
+                            onPointerMove={(e) => continueSplitResize(e, true)}
+                            onPointerUp={endSplitResize}
+                            role="separator"
+                            title="Resize stacked panels"
+                          />
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
                 </div>
-                {isSideDockZone && index < zoneEntries.length - 1 ? (
-                  <div
-                    aria-label="Vertical resize divider"
-                    className="h-2 w-full shrink-0 cursor-row-resize touch-none rounded-full border-y border-cyan-200/0 bg-cyan-300/0 transition-colors hover:border-cyan-200/60 hover:bg-cyan-300/25"
-                    onPointerCancel={endSplitResize}
-                    onPointerDown={(event) => startSplitResize(event, layout)}
-                    onPointerMove={(e) => continueSplitResize(e, true)}
-                    onPointerUp={endSplitResize}
-                    role="separator"
-                    title="Resize stacked panels"
-                  />
-                ) : null}
-              </Fragment>
+                <button
+                  type="button"
+                  data-dock-zone-column-collapse={column}
+                  aria-label={`Collapse ${zone} dock column ${column + 1}`}
+                  className="flex h-full w-3.5 shrink-0 items-center justify-center border-l border-cyan-300/10 bg-[#0a1018]/60 text-cyan-100/40 transition-colors hover:bg-cyan-300/15 hover:text-white"
+                  onClick={() => toggleDockColumnCollapsed(hostWorkspaceId, zone, column)}
+                  title="Collapse column"
+                >
+                  <ChevronRight size={11} />
+                </button>
+              </div>
             );
           })}
+        </div>
+      ) : zoneEntries.length > 1 && zone !== 'center' && zone !== 'overlay' ? (
+        <div data-dock-zone-stack={zone} className="flex h-full min-h-0 min-w-0 flex-row gap-0">
+          {zoneEntries.map((entry) => (
+            <div key={entry.key} className="min-w-0 flex-1" data-dock-zone-stack-panel={zone}>
+              {renderPanelEntry(entry, definitions, viewport, 'min-w-0 flex-1')}
+            </div>
+          ))}
         </div>
       ) : activeEntry ? renderPanelEntry(activeEntry, definitions, viewport) : null}
     </aside>

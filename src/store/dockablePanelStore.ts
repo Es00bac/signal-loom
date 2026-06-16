@@ -29,8 +29,12 @@ export interface DockablePanelSnapshot {
 
 interface DockablePanelState extends DockablePanelSnapshot {
   defaults: Record<string, DockablePanelLayout>;
+  /** Collapsed side-dock columns, keyed by `${workspaceId}:${zone}:${column}`. */
+  collapsedDockColumns: Record<string, boolean>;
   registerPanelDefaults: (defaults: DockablePanelDefault[]) => void;
   setPanelMode: (workspaceId: string, panelId: string, mode: DockablePanelMode) => void;
+  setPanelDockColumn: (workspaceId: string, panelId: string, column: number) => void;
+  toggleDockColumnCollapsed: (workspaceId: string, zone: DockZone, column: number) => void;
   dockPanel: (workspaceId: string, panelId: string, zone: DockZone) => void;
   snapPanelToDockTarget: (workspaceId: string, panelId: string, target: DockablePanelSnapTarget) => void;
   floatPanel: (workspaceId: string, panelId: string, rect?: Partial<PanelRect>, viewport?: ViewportSize, options?: { constrainSize?: boolean; floatingRectSpace?: DockablePanelFloatingRectSpace }) => void;
@@ -57,6 +61,7 @@ export const useDockablePanelStore = create<DockablePanelState>()(
     (set, get) => ({
       defaults: {},
       layouts: {},
+      collapsedDockColumns: {},
       registerPanelDefaults: (defaults) => {
         const registered = buildRegisteredPanelDefaults(get(), defaults);
         if (!registered.changed) return;
@@ -64,6 +69,20 @@ export const useDockablePanelStore = create<DockablePanelState>()(
       },
       setPanelMode: (workspaceId, panelId, mode) => {
         updatePanelGroup(set, get, workspaceId, panelId, (layout) => ({ ...layout, mode }));
+      },
+      setPanelDockColumn: (workspaceId, panelId, column) => {
+        const dockColumn = Math.max(0, Math.round(column));
+        updatePanelGroup(set, get, workspaceId, panelId, (layout) => ({
+          ...layout,
+          mode: 'docked',
+          dockColumn,
+        }), { syncDockedSideContainerWidth: true });
+      },
+      toggleDockColumnCollapsed: (workspaceId, zone, column) => {
+        const key = `${workspaceId}:${zone}:${Math.max(0, Math.round(column))}`;
+        set((state) => ({
+          collapsedDockColumns: { ...state.collapsedDockColumns, [key]: !state.collapsedDockColumns[key] },
+        }));
       },
       dockPanel: (workspaceId, panelId, zone) => {
         updatePanelGroup(set, get, workspaceId, panelId, (layout) => ({
@@ -287,7 +306,10 @@ export const useDockablePanelStore = create<DockablePanelState>()(
               layouts[key] = layout;
             }
           }
-          return { layouts };
+          const collapsedDockColumns = Object.fromEntries(
+            Object.entries(state.collapsedDockColumns).filter(([key]) => !key.startsWith(`${workspaceId}:`)),
+          );
+          return { layouts, collapsedDockColumns };
         });
       },
       applyWorkspaceViewDefault: (workspaceId, preset) => {
@@ -301,16 +323,19 @@ export const useDockablePanelStore = create<DockablePanelState>()(
         });
       },
       resetAllPanelLayouts: () => {
-        set((state) => ({ layouts: { ...state.defaults } }));
+        set((state) => ({ layouts: { ...state.defaults }, collapsedDockColumns: {} }));
       },
     }),
     {
       name: 'signal-loom-dockable-panels',
       storage: createJSONStorage(() => getPanelLayoutStorage()),
-      partialize: (state) => ({ layouts: state.layouts }),
+      partialize: (state) => ({ layouts: state.layouts, collapsedDockColumns: state.collapsedDockColumns }),
       merge: (persisted, current) => ({
         ...current,
         layouts: sanitizePersistedLayouts((persisted as Partial<DockablePanelSnapshot> | undefined)?.layouts, current.layouts),
+        collapsedDockColumns:
+          (persisted as { collapsedDockColumns?: Record<string, boolean> } | undefined)?.collapsedDockColumns
+          ?? current.collapsedDockColumns,
       }),
     },
   ),

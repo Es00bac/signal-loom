@@ -249,6 +249,61 @@ describe('DockablePanelHost active center panels', () => {
     expect(stackPanels.every((panel) => Number.parseFloat(panel.style.minHeight) >= 100)).toBe(true);
   });
 
+  it('renders side-docked panels in separate columns by dockColumn and collapses a column to a rail', () => {
+    const panels: DockablePanelDefinition[] = [
+      createTestDockedPanelDefinition('layers', 300, 320),
+      createTestDockedPanelDefinition('history', 260, 320),
+    ];
+    const defaults = Object.fromEntries(
+      panels.map((panel, index) => {
+        const key = panelKey(panel.workspaceId, panel.panelId);
+        const built = createDefaultDockablePanelLayout(
+          {
+            workspaceId: panel.workspaceId,
+            panelId: panel.panelId,
+            mode: panel.mode,
+            dockZone: panel.dockZone,
+            dockColumn: panel.panelId === 'history' ? 1 : 0,
+            floatingRect: panel.floatingRect,
+            minSize: panel.minSize,
+          } satisfies DockablePanelDefault,
+          index,
+        );
+        return [key, built];
+      }),
+    ) as Record<string, DockablePanelLayout>;
+
+    useDockablePanelStore.setState({ defaults, layouts: defaults, collapsedDockColumns: {} });
+
+    act(() => {
+      root.render(
+        createElement(DockablePanelHost, { workspaceId: 'image', panels }, createElement('div', null, 'Canvas')),
+      );
+    });
+
+    // Two columns, each with a collapse handle.
+    expect(Array.from(container.querySelectorAll('[data-dock-zone-column]'))).toHaveLength(2);
+    expect(container.querySelectorAll('[data-dock-zone-column-collapse]')).toHaveLength(2);
+    expect(container.querySelector('[data-dockable-panel-body="history"]')).not.toBeNull();
+
+    // Collapsing column 1 turns it into a rail (and removes its expanded body).
+    act(() => {
+      useDockablePanelStore.getState().toggleDockColumnCollapsed('image', 'right', 1);
+    });
+    expect(container.querySelector('[data-dock-zone-column-rail="1"]')).not.toBeNull();
+    expect(container.querySelector('[data-dock-zone-column="1"]')).toBeNull();
+    expect(container.querySelector('[data-dockable-panel-body="history"]')).toBeNull();
+    // The other column stays expanded.
+    expect(container.querySelector('[data-dock-zone-column="0"]')).not.toBeNull();
+
+    // Expanding it again restores the column.
+    act(() => {
+      useDockablePanelStore.getState().toggleDockColumnCollapsed('image', 'right', 1);
+    });
+    expect(container.querySelector('[data-dock-zone-column="1"]')).not.toBeNull();
+    expect(container.querySelector('[data-dockable-panel-body="history"]')).not.toBeNull();
+  });
+
   it('renders grouped side panels as one dock slot with tabs and only the active tab body', () => {
     const panels: DockablePanelDefinition[] = [
       createTestDockedPanelDefinition('layers', 220, 320),

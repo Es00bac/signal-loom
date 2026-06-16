@@ -31,6 +31,8 @@ export interface DockablePanelLayout {
   panelId: string;
   mode: DockablePanelMode;
   dockZone: DockZone;
+  /** Which column (0-based) this panel occupies within a side dock zone. */
+  dockColumn?: number;
   floatingRect: PanelRect;
   floatingRectSpace?: DockablePanelFloatingRectSpace;
   minSize: PanelSize;
@@ -63,6 +65,7 @@ export interface DockablePanelDefault {
   panelId: string;
   mode?: DockablePanelMode;
   dockZone?: DockZone;
+  dockColumn?: number;
   floatingRect?: Partial<PanelRect>;
   floatingRectSpace?: DockablePanelFloatingRectSpace;
   minSize?: Partial<PanelSize>;
@@ -213,6 +216,7 @@ export function createDefaultDockablePanelLayout(
       panelId: input.panelId,
       mode: input.mode ?? 'docked',
       dockZone: input.dockZone ?? 'right',
+      dockColumn: normalizeDockColumn(input.dockColumn),
       floatingRect: {
         ...DEFAULT_FLOATING_RECT,
         ...input.floatingRect,
@@ -244,6 +248,7 @@ export function normalizeDockablePanelLayout(
   const tabGroupId = normalizeTabGroupId(layout.tabGroupId);
   return {
     ...layout,
+    dockColumn: normalizeDockColumn(layout.dockColumn),
     ...(floatingRectSpace ? { floatingRectSpace } : { floatingRectSpace: undefined }),
     ...(tabGroupId ? { tabGroupId } : { tabGroupId: undefined }),
     tabGroupOrder: tabGroupId && Number.isFinite(layout.tabGroupOrder)
@@ -299,6 +304,7 @@ export function sanitizeDockablePanelLayout(
       ...defaultLayout,
       mode,
       dockZone,
+      dockColumn: normalizeDockColumn(input.dockColumn ?? defaultLayout.dockColumn),
       floatingRectSpace,
       minSize: {
         width: finiteOrUnknown(minSizeInput.width, defaultLayout.minSize.width),
@@ -866,6 +872,11 @@ function normalizeViewport(viewport: ViewportSize): ViewportSize {
 
 function normalizeZOrder(value: number): number {
   return Math.max(0, Math.round(finiteOr(value, 0)));
+}
+
+/** Clamp a side-dock column index to a non-negative integer (default 0). */
+export function normalizeDockColumn(value: unknown): number {
+  return Math.max(0, Math.round(finiteOr(typeof value === 'number' ? value : Number.NaN, 0)));
 }
 
 function clampNumber(value: number, min: number, max: number): number {
