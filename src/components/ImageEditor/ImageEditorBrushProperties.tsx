@@ -2,6 +2,7 @@ import { useSettingsStore } from '../../store/settingsStore';
 import { AdvancedColorPicker } from '../Common/AdvancedColorPicker';
 import { IMAGE_BRUSH_PRESETS } from './ImageBrushPresets';
 import { resolveActiveBrushState } from './brushActiveState';
+import { detectBrushBackend } from '../../lib/brushEngine';
 import { normalizeBrushSettings } from './ImageBrushEngine';
 import { Slider } from './ImageEditorPropertyControls';
 import { useImageEditorStore } from '../../store/imageEditorStore';
@@ -28,6 +29,8 @@ export function BrushPanel() {
   const setRetouchToolSettings = useImageEditorStore((s) => s.setRetouchToolSettings);
   const customBrushPresets = useSettingsStore((s) => s.customBrushPresets);
   const activeBrush = resolveActiveBrushState(settings, [...IMAGE_BRUSH_PRESETS, ...customBrushPresets]);
+  const brushBackend = detectBrushBackend(settings.gpuBrushEngine ? 'auto' : 'cpu').id;
+  const brushBackendLabel = brushBackend === 'cpu' ? 'CPU · region-bounded' : brushBackend === 'webgl2' ? 'WebGL2' : 'WebGPU';
 
   return (
     <div className="space-y-3 text-xs text-cyan-100/60">
@@ -315,7 +318,7 @@ export function BrushPanel() {
               onChange={(event) => set({ gpuBrushEngine: event.target.checked, gpuAcceleration: event.target.checked })}
               type="checkbox"
             />
-            GPU brush engine
+            GPU acceleration ({brushBackendLabel})
           </label>
           <label className="flex items-center gap-2 text-[11px] text-cyan-100/55">
             <input
