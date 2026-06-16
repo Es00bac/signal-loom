@@ -97,12 +97,18 @@ describe('ImageEditorToolbar', () => {
     const panel = doc.querySelector('[data-image-editor-tools-panel="true"]');
     const toolGrid = doc.querySelector('[data-image-editor-tools-grid="true"]');
     const colorWell = doc.querySelector('[data-image-editor-color-well="true"]');
+    const editActions = doc.querySelector('[data-image-editor-edit-actions="true"]');
 
     expect(panel).not.toBeNull();
     expect(toolGrid).not.toBeNull();
     expect(colorWell).not.toBeNull();
+    expect(editActions).not.toBeNull();
 
-    expect(panel?.children).toHaveLength(2);
+    // edit-actions row (Undo/Redo/Cut/Copy/Paste) + tool grid + colour well
+    expect(panel?.children).toHaveLength(3);
+    for (const label of ['Undo', 'Redo', 'Cut', 'Copy', 'Paste']) {
+      expect(editActions?.querySelector(`button[aria-label="${label}"]`)).not.toBeNull();
+    }
 
     const toolButtons = toolGrid?.querySelectorAll('button[aria-label$=" tool"]') ?? [];
     const slotButtons = toolGrid?.querySelectorAll('[data-image-editor-tool-slot-button="true"]') ?? [];

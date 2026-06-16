@@ -23,8 +23,15 @@ import {
   Sun,
   Type,
   Wand2,
+  Undo2,
+  Redo2,
+  Scissors,
+  Copy,
+  ClipboardPaste,
 } from 'lucide-react';
 import { useImageEditorStore } from '../../store/imageEditorStore';
+import { copyActiveImageSelection, cutActiveImageSelection, pasteImageClipboard } from './imageClipboardActions';
+import { redo, undo } from './undoRedoApply';
 import { recordActivityTrailWorkspaceEvent } from '../../store/activityTrailStore';
 import type { EditorTool } from '../../types/imageEditor';
 import { AdvancedColorPicker } from '../Common/AdvancedColorPicker';
@@ -50,7 +57,17 @@ export function ImageEditorToolbar() {
   const resetForegroundBackgroundColors = useImageEditorStore((s) => s.resetForegroundBackgroundColors);
   const toolbarFlyoutOrder = useImageEditorStore((s) => s.toolbarFlyoutOrder);
   const setToolbarFlyoutOrder = useImageEditorStore((s) => s.setToolbarFlyoutOrder);
+  const activeDocId = useImageEditorStore((s) => s.activeDocId);
+  const canUndo = useImageEditorStore((s) => (s.activeDocId ? (s.undoStacks[s.activeDocId]?.length ?? 0) > 0 : false));
+  const canRedo = useImageEditorStore((s) => (s.activeDocId ? (s.redoStacks[s.activeDocId]?.length ?? 0) > 0 : false));
   const toolbarFlyoutGroups = getImageEditorToolbarFlyoutGroups(toolbarFlyoutOrder);
+  const editActions: Array<{ id: string; label: string; icon: React.ReactNode; onActivate: () => void; disabled?: boolean }> = [
+    { id: 'undo', label: 'Undo', icon: <Undo2 size={16} />, onActivate: () => { if (activeDocId) undo(activeDocId); }, disabled: !canUndo },
+    { id: 'redo', label: 'Redo', icon: <Redo2 size={16} />, onActivate: () => { if (activeDocId) redo(activeDocId); }, disabled: !canRedo },
+    { id: 'cut', label: 'Cut', icon: <Scissors size={16} />, onActivate: () => { cutActiveImageSelection(); }, disabled: !activeDocId },
+    { id: 'copy', label: 'Copy', icon: <Copy size={16} />, onActivate: () => { copyActiveImageSelection(); }, disabled: !activeDocId },
+    { id: 'paste', label: 'Paste', icon: <ClipboardPaste size={16} />, onActivate: () => { pasteImageClipboard(); }, disabled: !activeDocId },
+  ];
   const toolbarOrderSignature = getImageEditorToolbarCustomOrderSignature(toolbarFlyoutOrder);
   const icons: Record<EditorTool, React.ReactNode> = {
     move: <MousePointer2 size={16} />,
@@ -111,6 +128,21 @@ export function ImageEditorToolbar() {
       data-image-editor-tools-panel="true"
       role="toolbar"
     >
+      <div className="grid grid-cols-2 gap-0 border-b border-[#252936]" data-image-editor-edit-actions="true">
+        {editActions.map((action) => (
+          <button
+            aria-label={action.label}
+            className="flex h-8 w-8 items-center justify-center rounded-none border border-[#252936] bg-[#151720] text-cyan-100/55 transition-colors hover:bg-cyan-400/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+            disabled={action.disabled}
+            key={action.id}
+            onClick={action.onActivate}
+            title={action.label}
+            type="button"
+          >
+            {action.icon}
+          </button>
+        ))}
+      </div>
       <div className="grid grid-cols-2 gap-0" data-image-editor-tools-grid="true">
         {toolbarFlyoutGroups.map((group) => {
           const activeTool = group.tools.includes(tool) ? tool : group.primaryTool;

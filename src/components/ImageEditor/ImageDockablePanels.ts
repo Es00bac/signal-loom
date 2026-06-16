@@ -65,7 +65,8 @@ const IMAGE_FLOATING_PANEL_WIDTH_CLASS_NAME = 'w-72';
 const IMAGE_SHARED_DOCKED_COLUMN_WIDTH_CLASS_NAME = 'w-full';
 const IMAGE_FLOATING_PANEL_BODY_CLASS_NAME = 'min-h-0 overflow-hidden p-0';
 const IMAGE_SHARED_DOCKED_COLUMN_BODY_CLASS_NAME = 'min-h-0 overflow-visible p-0';
-const IMAGE_TOOLS_PALETTE_HEIGHT_PX = 492;
+// Includes the edit-actions row (Undo/Redo/Cut/Copy/Paste, ~96px) above the tool grid + the colour well.
+const IMAGE_TOOLS_PALETTE_HEIGHT_PX = 588;
 
 export const IMAGE_DOCKED_PANEL_COLUMN_PANEL_IDS = [
   IMAGE_DOCKABLE_PANEL_IDS.layers,

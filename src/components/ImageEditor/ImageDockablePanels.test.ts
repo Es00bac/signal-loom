@@ -40,8 +40,8 @@ describe('ImageDockablePanels', () => {
 
     expect(layouts[panelKey('image', 'tools')]).toMatchObject({
       mode: 'floating',
-      floatingRect: { x: 368, y: 112, width: 66, height: 492 },
-      minSize: { width: 66, height: 492 },
+      floatingRect: { x: 368, y: 112, width: 66, height: 588 },
+      minSize: { width: 66, height: 588 },
     });
     expect(layouts[panelKey('image', 'layers')]).toMatchObject({ mode: 'docked', dockZone: 'right' });
     expect(layouts[panelKey('image', 'properties')]).toMatchObject({ mode: 'docked', dockZone: 'right' });
