@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Expand, Loader2, Maximize2, MoveDiagonal2 } from 'lucide-react';
 import { useImageEditorStore } from '../../store/imageEditorStore';
+import { useDockExpandToContent } from '../DockablePanel/dockExpandContext';
 import { useSettingsStore } from '../../store/settingsStore';
 import type {
   EditorTool,
@@ -60,9 +61,11 @@ import { ImageLiquifyWorkspacePanel } from './ImageLiquifyWorkspacePanel';
 export function ImageEditorPropertiesPanel() {
   const subscribedTool = useImageEditorStore((s) => s.tool);
   const tool = useImageEditorStore.getState().tool ?? subscribedTool;
+  // When side-docked, expand to content so only the whole sidebar scrolls (no inner scroll region).
+  const expandToContent = useDockExpandToContent();
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto border-t border-cyan-300/10 bg-[#1a1b23] p-3">
+    <div className={`min-h-0 border-t border-cyan-300/10 bg-[#1a1b23] p-3 ${expandToContent ? '' : 'h-full overflow-y-auto'}`}>
       <div className="mb-3 text-xs font-semibold text-cyan-100/70">
         {sectionTitle(tool)}
       </div>

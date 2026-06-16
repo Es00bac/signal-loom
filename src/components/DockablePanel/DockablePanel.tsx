@@ -1,6 +1,7 @@
 import { type AriaRole, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { GripHorizontal } from 'lucide-react';
+import { DockExpandContext } from './dockExpandContext';
 import {
   attachDockablePanelGlobalPointerDragListeners,
   DEFAULT_VIEWPORT_MARGIN,
@@ -764,7 +765,9 @@ export function DockablePanel({
             resetKeys={[layout.workspaceId, layout.panelId, layout.mode]}
             title={`${title} Panel`}
           >
-            {children}
+            <DockExpandContext.Provider value={!isFloating && isVerticalDock}>
+              {children}
+            </DockExpandContext.Provider>
           </ErrorBoundary>
         </div>
       ) : null}

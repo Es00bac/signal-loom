@@ -1,6 +1,7 @@
 import { Circle, History, Play, Redo2, RotateCcw, Save, Trash2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useImageEditorStore } from '../../store/imageEditorStore';
+import { useDockExpandToContent } from '../DockablePanel/dockExpandContext';
 import type { ImageDocument } from '../../types/imageEditor';
 import {
   addImageDocumentSnapshot,
@@ -22,6 +23,7 @@ import { jumpToHistoryUndoCount, redo, undo } from './undoRedoApply';
 const EMPTY_HISTORY_STACK = Object.freeze([]) as ReadonlyArray<never>;
 
 export function ImageEditorHistoryPanel() {
+  const expandToContent = useDockExpandToContent();
   const doc = useImageEditorStore((state) => state.documents.find((candidate) => candidate.id === state.activeDocId) ?? null);
   const pushOperation = useImageEditorStore((state) => state.pushOperation);
   const clearHistory = useImageEditorStore((state) => state.clearHistory);
@@ -68,7 +70,7 @@ export function ImageEditorHistoryPanel() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#1a1b23]">
+    <div className={`flex min-h-0 flex-col bg-[#1a1b23] ${expandToContent ? '' : 'h-full'}`}>
       <div className="border-b border-cyan-300/10 p-2">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-100/65">
@@ -119,7 +121,7 @@ export function ImageEditorHistoryPanel() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      <div className={`min-h-0 flex-1 p-2 ${expandToContent ? '' : 'overflow-y-auto'}`}>
         <div className="space-y-1">
           {entries.map((entry) => {
             const active = entry.targetUndoCount === currentUndoCount;

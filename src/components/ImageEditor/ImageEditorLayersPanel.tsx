@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useImageEditorStore } from '../../store/imageEditorStore';
+import { useDockExpandToContent } from '../DockablePanel/dockExpandContext';
 import { useSourceBinStore } from '../../store/sourceBinStore';
 import { createEmptyLayer, flattenDocument, mergeLayersDown, mergeVisibleLayers } from './LayerOps';
 import { createAdjustmentLayer, renderImageDocumentLayersToBitmap } from './ImageAdjustmentLayer';
@@ -140,6 +141,7 @@ export function ImageEditorLayersPanel() {
 }
 
 function LayersPanelInner({ doc }: { doc: ImageDocument }) {
+  const expandToContent = useDockExpandToContent();
   const addLayer = useImageEditorStore((s) => s.addLayer);
   const removeLayer = useImageEditorStore((s) => s.removeLayer);
   const duplicateLayer = useImageEditorStore((s) => s.duplicateLayer);
@@ -612,7 +614,7 @@ function LayersPanelInner({ doc }: { doc: ImageDocument }) {
   };
 
   return (
-    <div className="flex h-full flex-col bg-[#1a1b23]">
+    <div className={`flex flex-col bg-[#1a1b23] ${expandToContent ? '' : 'h-full'}`}>
       <div className="flex items-center justify-between border-b border-cyan-300/10 px-3 py-2">
         <span className="flex items-center gap-1.5 text-xs font-semibold text-cyan-100/70">
           <LayersIcon size={12} /> Layers
@@ -662,7 +664,7 @@ function LayersPanelInner({ doc }: { doc: ImageDocument }) {
       ) : null}
 
       {activeLayer && (
-        <div className="max-h-28 shrink-0 overflow-y-auto overscroll-contain border-b border-cyan-300/10 px-3 py-2 pr-2 text-xs text-cyan-100/50">
+        <div className={`shrink-0 border-b border-cyan-300/10 px-3 py-2 pr-2 text-xs text-cyan-100/50 ${expandToContent ? '' : 'max-h-28 overflow-y-auto overscroll-contain'}`}>
           <div className="mb-2 flex items-center gap-2">
             <label className="w-12 text-cyan-100/40">Mode</label>
             <select
@@ -1047,7 +1049,7 @@ function LayersPanelInner({ doc }: { doc: ImageDocument }) {
         ) : null}
       </div>
 
-      <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1">
+      <div className={expandToContent ? 'min-h-0 space-y-0.5 p-1' : 'min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1'}>
         {filteredVisualLayerRows.map(({ layer, depth }) => (
           <LayerRow
             key={layer.id}
