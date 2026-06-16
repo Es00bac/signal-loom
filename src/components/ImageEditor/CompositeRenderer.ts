@@ -1267,7 +1267,10 @@ function drawTransparencyCheckerboard(
   for (let y = 0; y < height; y += size) {
     for (let x = 0; x < width; x += size) {
       if (((x / size) + (y / size)) % 2 === 0) {
-        ctx.fillRect(x, y, size, size);
+        // Clamp the final row/column so tiles never overshoot the document edge when a dimension
+        // is not a multiple of `size` (otherwise a dashed checker strip sticks out past the
+        // composited layers — looks like the image doesn't fill the document).
+        ctx.fillRect(x, y, Math.min(size, width - x), Math.min(size, height - y));
       }
     }
   }
