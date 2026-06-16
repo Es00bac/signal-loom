@@ -144,7 +144,7 @@ describe('DockablePanelHost active center panels', () => {
     expect(stack!.className).toContain('flex-col');
   });
 
-  it('renders side-docked stacks as one scroll surface with same-width static panel items', () => {
+  it('renders side-docked stacks as height-filling, same-width panels that scroll their own bodies', () => {
     const panels: DockablePanelDefinition[] = [
       createTestDockedPanelDefinition('paths', 220, 280),
       createTestDockedPanelDefinition('history', 260, 320),
@@ -185,16 +185,19 @@ describe('DockablePanelHost active center panels', () => {
     const dockedPanels = Array.from(container.querySelectorAll<HTMLElement>('[data-dockable-panel-mode="docked"]'));
 
     expect(stack).not.toBeNull();
+    // The column keeps an overflow-y fallback for when the stacked minimums don't fit.
     expect(stack!.className).toContain('overflow-y-auto');
     expect(stackItems).toHaveLength(3);
     expect(stackItems.every((item) => item.className.includes('shrink-0'))).toBe(true);
-    expect(stackItems.some((item) => item.className.includes('flex-1'))).toBe(false);
+    // Panels are the same width and fill the height they're allotted, so each
+    // body scrolls within that height rather than the whole column scrolling.
     expect(new Set(dockedPanels.map((panel) => panel.style.width))).toEqual(new Set(['360px']));
-    expect(dockedPanels.every((panel) => panel.style.height === '')).toBe(true);
-    expect(dockedPanels.some((panel) => panel.className.includes('h-full'))).toBe(false);
+    expect(dockedPanels.every((panel) => panel.className.includes('h-full'))).toBe(true);
+    const bodies = Array.from(container.querySelectorAll<HTMLElement>('[data-dockable-panel-body]'));
+    expect(bodies.every((body) => /overflow-(y-)?auto/.test(body.className))).toBe(true);
   });
 
-  it('lets default side-docked panel bodies expand instead of creating per-panel scroll regions', () => {
+  it('scrolls each side-docked panel body within its column height and keeps a usable minimum height', () => {
     const panels: DockablePanelDefinition[] = [
       createTestDockedPanelDefinition('layers', 300, 320),
       createTestDockedPanelDefinition('history', 260, 320),
@@ -232,8 +235,18 @@ describe('DockablePanelHost active center panels', () => {
     const panelBodies = Array.from(container.querySelectorAll<HTMLElement>('[data-dockable-panel-body]'));
 
     expect(panelBodies).toHaveLength(2);
-    expect(panelBodies.every((body) => body.className.includes('overflow-visible'))).toBe(true);
-    expect(panelBodies.some((body) => body.className.includes('overflow-auto'))).toBe(false);
+    // Each side-docked body scrolls its own content within the column height
+    // (so resizing a stacked panel grows/shrinks its content), instead of the
+    // whole content expanding.
+    expect(panelBodies.every((body) => /overflow-(y-)?auto/.test(body.className))).toBe(true);
+    expect(panelBodies.some((body) => body.className.includes('overflow-visible'))).toBe(false);
+    // The body fills the panel height so resizing changes what's visible.
+    expect(panelBodies.every((body) => body.className.includes('flex-1'))).toBe(true);
+
+    // Stacked panels keep a usable minimum height.
+    const stackPanels = Array.from(container.querySelectorAll<HTMLElement>('[data-dock-zone-stack-panel]'));
+    expect(stackPanels.length).toBeGreaterThan(0);
+    expect(stackPanels.every((panel) => Number.parseFloat(panel.style.minHeight) >= 100)).toBe(true);
   });
 
   it('renders grouped side panels as one dock slot with tabs and only the active tab body', () => {

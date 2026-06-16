@@ -167,6 +167,13 @@ export const MAX_DOCKED_HORIZONTAL_PANEL_VIEWPORT_RATIO = 0.62;
 export const COLLAPSED_DOCKED_SIDE_PANEL_WIDTH = 44;
 export const COLLAPSED_DOCKED_HORIZONTAL_PANEL_HEIGHT = 38;
 export const DOCK_SNAP_EDGE_SIZE = 56;
+/**
+ * Minimum on-screen height (header + a few rows of body) for a panel stacked in
+ * a docked side column, so it always stays usable when several panels share the
+ * column. When the stacked minimums exceed the column height the column itself
+ * scrolls (the panels don't get crushed).
+ */
+export const DOCKED_SIDE_PANEL_MIN_HEIGHT = 112;
 
 const VALID_PANEL_MODES: readonly DockablePanelMode[] = ['docked', 'floating', 'hidden', 'collapsed'];
 const VALID_DOCK_ZONES: readonly DockZone[] = ['left', 'right', 'top', 'bottom', 'center', 'overlay'];

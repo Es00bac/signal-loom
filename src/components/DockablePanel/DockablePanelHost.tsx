@@ -4,6 +4,7 @@ import {
   sortDockedPanels,
   sortPanelsByZOrder,
   sanitizeDockablePanelLayout,
+  DOCKED_SIDE_PANEL_MIN_HEIGHT,
   type DockZone,
   type DockablePanelDefault,
   type DockablePanelLayout,
@@ -285,7 +286,7 @@ function DockZoneStack({
               <Fragment key={entry.key}>
                 <div
                   className={isSideDockZone ? 'min-h-0 min-w-0 w-full shrink-0' : 'min-w-0 flex-1'}
-                  style={isSideDockZone ? { flex: `${Math.max(1, layout.floatingRect.height)} 1 0` } : undefined}
+                  style={isSideDockZone ? { flex: `${Math.max(1, layout.floatingRect.height)} 1 0`, minHeight: DOCKED_SIDE_PANEL_MIN_HEIGHT } : undefined}
                   data-dock-zone-stack-panel={zone}
                 >
                   {renderPanelEntry(

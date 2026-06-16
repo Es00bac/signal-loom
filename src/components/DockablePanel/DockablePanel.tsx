@@ -128,7 +128,30 @@ const FLOATING_PANEL_THEME_CSS_VARIABLES = [
   '--sl-danger',
 ];
 const DEFAULT_DOCKABLE_PANEL_BODY_CLASS_NAME = 'min-h-0 overflow-auto p-3';
-const SIDE_DOCKED_DOCKABLE_PANEL_BODY_CLASS_NAME = 'min-h-0 overflow-visible p-3';
+// Scroll-region classes added to a side-docked panel body (padding is supplied by
+// the caller's bodyClassName). A side-docked panel's body scrolls within the
+// height the column gives it, so resizing a stacked panel grows/shrinks its
+// content (e.g. the Layers list) instead of pushing the whole column.
+const SIDE_DOCKED_BODY_SCROLL_CLASS_NAME = 'min-h-0 overflow-y-auto overscroll-contain';
+
+/**
+ * Library guarantee for side-docked (vertically stacked) panels: the body fills
+ * the height it's given and scrolls its own content. Strips any flex/overflow
+ * hints the caller passed (which targeted the older "expand to content"
+ * behaviour) and adds a scroll region — unless the panel manages its own scroll
+ * (opted out via overflow-hidden / overflow-auto), in which case its overflow is
+ * preserved. Reused by every workspace host (Image / Paper / Video).
+ */
+function resolveSideDockedBodyClassName(bodyClassName: string): string {
+  const tokens = bodyClassName.split(/\s+/).filter(Boolean);
+  const managesOwnScroll = tokens.some(
+    (token) => token === 'overflow-hidden' || token === 'overflow-auto' || token === 'overflow-y-auto',
+  );
+  const content = tokens
+    .filter((token) => token !== 'flex-none' && token !== 'flex-1' && token !== 'overflow-visible' && token !== 'min-h-0')
+    .join(' ');
+  return managesOwnScroll ? `min-h-0 ${content}`.trim() : `${SIDE_DOCKED_BODY_SCROLL_CLASS_NAME} ${content}`.trim();
+}
 
 export function DockablePanel({
   layout,
@@ -237,14 +260,17 @@ export function DockablePanel({
     : {
         ...resolveDockedPanelStyleMetrics(layout),
       };
-  const dockedFullHeightClassName = !isFloating && !isHorizontalDock && !isVerticalDock ? 'h-full' : '';
-  const bodyFlexClassName = isCompactFloatingChrome
-    ? 'flex-none'
-    : !isFloating && isVerticalDock
-      ? 'flex-none'
-      : 'flex-1';
-  const resolvedBodyClassName = !isFloating && isVerticalDock && bodyClassName === DEFAULT_DOCKABLE_PANEL_BODY_CLASS_NAME
-    ? SIDE_DOCKED_DOCKABLE_PANEL_BODY_CLASS_NAME
+  // Side-docked (vertical) and centre docks fill their allotted height so the
+  // body's scroll region is bounded; horizontal docks and floating panels stay
+  // content-sized.
+  const dockedFullHeightClassName = !isFloating && !isHorizontalDock ? 'h-full' : '';
+  const isSideDockedBody = !isFloating && isVerticalDock;
+  // Side-docked panels fill the height they're given in the column so resizing a
+  // stacked panel grows/shrinks its content; compact floating palettes stay
+  // content-sized.
+  const bodyFlexClassName = isCompactFloatingChrome ? 'flex-none' : 'flex-1';
+  const resolvedBodyClassName = isSideDockedBody
+    ? resolveSideDockedBodyClassName(bodyClassName)
     : bodyClassName;
   const dockedResizeHandle = !isFloating && !isCollapsed ? DOCKED_RESIZE_HANDLES[layout.dockZone] : undefined;
   const canDockExternalPanel = shouldUseExternalWindow && !hasFixedFloatingGeometry;
