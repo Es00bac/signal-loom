@@ -7,7 +7,7 @@ import { useImageEditorStore } from '../../store/imageEditorStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { BrushPanel } from './ImageEditorBrushProperties';
 
-function setInputValue(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
+function setInputValue(input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
   const prototype = Object.getPrototypeOf(input);
   const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
   descriptor?.set?.call(input, value);
@@ -92,7 +92,7 @@ describe('BrushPanel', () => {
     });
 
     const velocitySize = container.querySelector<HTMLInputElement>('input[aria-label="Velocity size"]');
-    const textureName = container.querySelector<HTMLInputElement>('input[aria-label="Brush texture name"]');
+    const textureName = container.querySelector<HTMLSelectElement>('select[aria-label="Brush texture"]');
     const textureDepth = container.querySelector<HTMLInputElement>('input[aria-label="Texture depth"]');
     const dualBrush = container.querySelector<HTMLInputElement>('input[aria-label="Dual-brush composition"]');
     const wetMedia = container.querySelector<HTMLInputElement>('input[aria-label="Wet media"]');

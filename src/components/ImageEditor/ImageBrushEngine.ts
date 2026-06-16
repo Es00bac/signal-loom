@@ -1,4 +1,5 @@
 import type { BrushSettings, BrushSymmetryMode } from '../../types/imageEditor';
+import { sampleBrushTexture } from './ImageBrushTextures';
 import type { Point } from './tools/types';
 
 export interface BrushDynamics {
@@ -1823,9 +1824,8 @@ function resolveBrushTextureAlpha(settings: BrushSettings, seed: number, index: 
   if (!isBrushTextureActive(settings)) return 1;
   const depth = clamp(settings.textureDepth ?? 0, 0, 1);
   const scale = clamp(settings.textureScale ?? 1, 0.05, 4);
-  const base = seededNoise(seed + Math.round(scale * 997), index);
-  const dual = settings.dualBrush ? seededNoise(seed + 7919, index * 3 + 1) : 1;
-  const modulation = settings.dualBrush ? (base + dual) / 2 : base;
+  // The named texture selects the modulation pattern; depth controls its strength.
+  const modulation = sampleBrushTexture(settings.texture, seed, index, scale, Boolean(settings.dualBrush));
   return round(clamp(1 - depth * 0.55 + modulation * depth * 0.55, 0.08, 1));
 }
 

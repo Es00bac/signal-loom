@@ -1,6 +1,7 @@
 import { useSettingsStore } from '../../store/settingsStore';
 import { AdvancedColorPicker } from '../Common/AdvancedColorPicker';
 import { IMAGE_BRUSH_PRESETS } from './ImageBrushPresets';
+import { BRUSH_TEXTURE_PRESETS, isBuiltInBrushTexture } from './ImageBrushTextures';
 import { resolveActiveBrushState } from './brushActiveState';
 import { detectBrushBackend } from '../../lib/brushEngine';
 import { normalizeBrushSettings } from './ImageBrushEngine';
@@ -228,14 +229,22 @@ export function BrushPanel() {
         />
         <div className="mt-2 space-y-2">
           <label className="block text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Texture</label>
-          <input
-            aria-label="Brush texture name"
+          <select
+            aria-label="Brush texture"
             className="w-full rounded border border-cyan-300/10 bg-[#252630] px-2 py-1 text-xs text-cyan-100/80"
             onChange={(event) => set({ texture: event.target.value || undefined })}
-            placeholder="Texture name"
-            type="text"
             value={settings.texture ?? ''}
-          />
+          >
+            <option value="">None</option>
+            {BRUSH_TEXTURE_PRESETS.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {preset.label}
+              </option>
+            ))}
+            {settings.texture && !isBuiltInBrushTexture(settings.texture) ? (
+              <option value={settings.texture}>{`Custom: ${settings.texture}`}</option>
+            ) : null}
+          </select>
           <Slider
             ariaLabel="Texture scale"
             label="Scale"
