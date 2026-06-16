@@ -6,6 +6,7 @@ import { drawCropPreviewOverlay } from './ImageCropOverlay';
 import { getCropPreview } from './tools/cropTool';
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import { createBitmap } from './LayerBitmap';
+import { generateGridLines, type ImageViewSettings } from './ImageRulersGuides';
 import { createLayerMaskOverlayMask } from './ImageLayerMask';
 import {
   applyPerspectiveToPoint,
@@ -1138,7 +1139,8 @@ export class CompositeRenderer {
     ctx.translate(x0 / dpr, y0 / dpr);
     ctx.scale(zoom, zoom);
 
-    const { quickMaskSettings, selectAndMaskSettings } = useImageEditorStore.getState();
+    const { quickMaskSettings, selectAndMaskSettings, imageViewSettings } = useImageEditorStore.getState();
+    this.drawDocumentGridAndGuides(doc, imageViewSettings, zoom);
     const activeLayer = doc.layers.find((layer) => layer.id === doc.activeLayerId) ?? null;
     if (selectAndMaskSettings.enabled && this.currentSelection) {
       this.drawSelectAndMaskPreview(
@@ -1177,6 +1179,45 @@ export class CompositeRenderer {
         preview: cropPreview,
         viewport: doc.viewport,
       });
+      ctx.restore();
+    }
+  }
+
+  private drawDocumentGridAndGuides(doc: ImageDocument, settings: ImageViewSettings, zoom: number): void {
+    const ctx = this.ctx;
+    const lineWidth = 1 / Math.max(zoom, 0.0001);
+    if (settings.grid) {
+      const { xs, ys } = generateGridLines(doc.width, doc.height, settings.gridSpacing);
+      ctx.save();
+      ctx.lineWidth = lineWidth;
+      ctx.strokeStyle = 'rgba(120,165,230,0.45)';
+      ctx.beginPath();
+      for (const x of xs) {
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, doc.height);
+      }
+      for (const y of ys) {
+        ctx.moveTo(0, y);
+        ctx.lineTo(doc.width, y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (settings.guides && doc.guides && doc.guides.length > 0) {
+      ctx.save();
+      ctx.lineWidth = lineWidth;
+      ctx.strokeStyle = 'rgba(0,200,255,0.9)';
+      ctx.beginPath();
+      for (const guide of doc.guides) {
+        if (guide.axis === 'x') {
+          ctx.moveTo(guide.position, 0);
+          ctx.lineTo(guide.position, doc.height);
+        } else {
+          ctx.moveTo(0, guide.position);
+          ctx.lineTo(doc.width, guide.position);
+        }
+      }
+      ctx.stroke();
       ctx.restore();
     }
   }

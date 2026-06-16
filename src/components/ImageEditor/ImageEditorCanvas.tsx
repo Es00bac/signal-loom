@@ -14,6 +14,8 @@ import { usePaperTouchNavigationAvailabilityDescriptor } from '../../lib/paperTo
 import { CompositeRenderer } from './CompositeRenderer';
 import { bitmapFromUrl, cloneBitmap, createBitmap } from './LayerBitmap';
 import { docToScreen, fitToContainer, screenToDoc, zoomAround, type Point } from './viewport';
+import { ImageEditorRulers } from './ImageEditorRulers';
+import { snapGuidePosition } from './ImageRulersGuides';
 import { CanvasViewportGesture } from './imageCanvasGestures';
 import { getSelection } from './selectionRegistry';
 import { useToolDispatcher } from './tools/dispatcher';
@@ -140,6 +142,8 @@ export function ImageEditorCanvas() {
   const pushOperation = useImageEditorStore((s) => s.pushOperation);
   const pendingTextEditLayerId = useImageEditorStore((s) => s.pendingTextEditLayerId);
   const setPendingTextEditLayerId = useImageEditorStore((s) => s.setPendingTextEditLayerId);
+  const imageViewSettings = useImageEditorStore((s) => s.imageViewSettings);
+  const showRulers = imageViewSettings.rulers;
   const [editingTextLayerId, setEditingTextLayerId] = useState<string | null>(null);
   const [editingTextDraft, setEditingTextDraft] = useState('');
   const [cropPreviewVersion, setCropPreviewVersion] = useState(0);
@@ -359,6 +363,25 @@ export function ImageEditorCanvas() {
     startTextEditing(hitLayer);
   }, [activeDoc, setActiveLayer, startTextEditing]);
 
+  // Dropping a drag started from a ruler creates a guide at the release point
+  // (snapped to the grid when snapping is on). Releasing off the document cancels.
+  const handleCreateGuide = useCallback((axis: 'x' | 'y', clientX: number, clientY: number) => {
+    const wrapper = wrapperRef.current;
+    const state = useImageEditorStore.getState();
+    const doc = state.documents.find((candidate) => candidate.id === state.activeDocId);
+    if (!wrapper || !doc) return;
+    const rect = wrapper.getBoundingClientRect();
+    const docPoint = screenToDoc({ x: clientX - rect.left, y: clientY - rect.top }, doc.viewport);
+    if (axis === 'y') {
+      if (docPoint.y < 0 || docPoint.y > doc.height) return;
+      state.addImageGuide(doc.id, 'y', snapGuidePosition(docPoint.y, state.imageViewSettings));
+    } else {
+      if (docPoint.x < 0 || docPoint.x > doc.width) return;
+      state.addImageGuide(doc.id, 'x', snapGuidePosition(docPoint.x, state.imageViewSettings));
+    }
+    rendererRef.current?.requestRender();
+  }, []);
+
   // Mount/unmount the renderer.
   useEffect(() => {
     const canvas = canvasElRef.current;
@@ -401,6 +424,12 @@ export function ImageEditorCanvas() {
     const selection = activeDoc ? getSelection(activeDoc.id) ?? null : null;
     renderer.setInputs(activeDoc, selection);
   }, [activeDoc]);
+
+  // The renderer draws the grid + guides from the view settings, but it only
+  // repaints on demand — request a repaint when those settings change.
+  useEffect(() => {
+    rendererRef.current?.requestRender();
+  }, [imageViewSettings]);
 
   useEffect(() => subscribeCropPreview(() => {
     setCropPreviewVersion((version) => version + 1);
@@ -633,6 +662,14 @@ export function ImageEditorCanvas() {
       style={{ touchAction: 'none' }}
     >
       <canvas ref={canvasElRef} className="block h-full w-full" style={{ touchAction: 'none' }} />
+
+      {showRulers && activeDoc ? (
+        <ImageEditorRulers
+          cursor={null}
+          onCreateGuide={handleCreateGuide}
+          viewport={activeDoc.viewport}
+        />
+      ) : null}
 
       {activeTextLayer && activeTextBounds && !editingTextLayer && !activeTextLayer.locked ? (
         <button

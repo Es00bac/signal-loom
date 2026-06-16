@@ -16,6 +16,7 @@ import {
   type EditorOperation,
   type EditorTool,
   type ImageDocument,
+  type ImageGuide,
   type ImageDocumentSnapshot,
   type ImageLayerEditTarget,
   type ImageLayer,
@@ -29,6 +30,13 @@ import {
   type ShapeToolSettings,
   type TextLayerStyle,
 } from '../types/imageEditor';
+import {
+  clampGridSpacing,
+  createImageGuide,
+  DEFAULT_IMAGE_VIEW_SETTINGS,
+  type ImageViewSettings,
+  type ImageViewToggleKey,
+} from '../components/ImageEditor/ImageRulersGuides';
 import { normalizeBrushSettings } from '../components/ImageEditor/ImageBrushEngine';
 import { cloneBitmap } from '../components/ImageEditor/LayerBitmap';
 import {
@@ -67,6 +75,8 @@ interface ImageEditorState {
    * The canvas clears it once editing starts.
    */
   pendingTextEditLayerId: string | null;
+  /** Rulers / grid / guides view options (shared across documents). */
+  imageViewSettings: ImageViewSettings;
   viewportContainerSize: { width: number; height: number };
   undoStacks: Record<string, EditorOperation[]>;
   redoStacks: Record<string, EditorOperation[]>;
@@ -118,6 +128,12 @@ interface ImageEditorActions {
   setSelectionToolSettings: (patch: Partial<SelectionToolSettings>) => void;
   setTextToolSettings: (patch: Partial<TextLayerStyle>) => void;
   setPendingTextEditLayerId: (layerId: string | null) => void;
+  toggleImageViewSetting: (key: ImageViewToggleKey) => void;
+  setImageGridSpacing: (spacing: number) => void;
+  addImageGuide: (docId: string, axis: ImageGuide['axis'], position: number) => void;
+  updateImageGuidePosition: (docId: string, guideId: string, position: number) => void;
+  removeImageGuide: (docId: string, guideId: string) => void;
+  clearImageGuides: (docId: string) => void;
   setToolbarFlyoutOrder: (order: readonly string[]) => void;
   resetToolbarFlyoutOrder: () => void;
   setViewportContainerSize: (size: { width: number; height: number }) => void;
@@ -165,6 +181,7 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     selectionToolSettings: { ...DEFAULT_SELECTION_TOOL_SETTINGS },
     textToolSettings: { ...DEFAULT_TEXT_TOOL_SETTINGS },
     pendingTextEditLayerId: null,
+    imageViewSettings: { ...DEFAULT_IMAGE_VIEW_SETTINGS },
     viewportContainerSize: { width: 0, height: 0 },
     undoStacks: {},
     redoStacks: {},
@@ -473,6 +490,39 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
 
     setPendingTextEditLayerId: (layerId) =>
       set((state) => (state.pendingTextEditLayerId === layerId ? state : { pendingTextEditLayerId: layerId })),
+
+    toggleImageViewSetting: (key: ImageViewToggleKey) =>
+      set((state) => ({
+        imageViewSettings: { ...state.imageViewSettings, [key]: !state.imageViewSettings[key] },
+      })),
+
+    setImageGridSpacing: (spacing) =>
+      set((state) => {
+        const gridSpacing = clampGridSpacing(spacing);
+        if (gridSpacing === state.imageViewSettings.gridSpacing) return state;
+        return { imageViewSettings: { ...state.imageViewSettings, gridSpacing } };
+      }),
+
+    addImageGuide: (docId, axis, position) =>
+      set((state) => updateDocumentGuides(state, docId, (guides) => [
+        ...guides,
+        createImageGuide(axis, position),
+      ])),
+
+    updateImageGuidePosition: (docId, guideId, position) =>
+      set((state) => updateDocumentGuides(state, docId, (guides) =>
+        guides.map((guide) => (guide.id === guideId ? { ...guide, position: Math.round(position) } : guide)),
+      )),
+
+    removeImageGuide: (docId, guideId) =>
+      set((state) => updateDocumentGuides(state, docId, (guides) => guides.filter((guide) => guide.id !== guideId))),
+
+    clearImageGuides: (docId) =>
+      set((state) => {
+        const document = state.documents.find((candidate) => candidate.id === docId);
+        if (!document?.guides?.length) return state;
+        return updateDocumentGuides(state, docId, () => []);
+      }),
 
     setToolbarFlyoutOrder: (order) =>
       set((state) => {
@@ -900,6 +950,23 @@ export function createEmptyImageDocument(params: {
 
 function hasShallowPatchChange<T extends object>(current: T, patch: Partial<T>): boolean {
   return Object.entries(patch).some(([key, value]) => !Object.is(current[key as keyof T], value));
+}
+
+function updateDocumentGuides(
+  state: ImageEditorState,
+  docId: string,
+  mapper: (guides: readonly ImageGuide[]) => ImageGuide[],
+): Partial<ImageEditorState> | ImageEditorState {
+  let changed = false;
+  const documents = state.documents.map((document) => {
+    if (document.id !== docId) return document;
+    const current = document.guides ?? [];
+    const next = mapper(current);
+    if (next === current) return document;
+    changed = true;
+    return { ...document, guides: next, dirty: true };
+  });
+  return changed ? { documents } : state;
 }
 
 function arraysEqual<T>(a: readonly T[], b: readonly T[]): boolean {

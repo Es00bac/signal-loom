@@ -638,6 +638,13 @@ export interface ImageArtboardsMetadata {
   artboards: ImageArtboardMetadata[];
 }
 
+/** A single ruler guide line. `axis: 'x'` is a vertical guide at document x = position. */
+export interface ImageGuide {
+  id: string;
+  axis: 'x' | 'y';
+  position: number;
+}
+
 export interface ImageDocument {
   id: string;
   title: string;
@@ -650,6 +657,7 @@ export interface ImageDocument {
   hasSelection: boolean;
   selectionVersion: number;
   viewport: DocumentViewport;
+  guides?: ImageGuide[];
   dirty: boolean;
   sourceBinItemId?: string;
   savedSelectionChannels?: ImageSavedSelectionChannel[];

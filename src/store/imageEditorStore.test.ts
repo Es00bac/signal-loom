@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { createEmptyImageDocument, useImageEditorStore } from './imageEditorStore';
 import { DEFAULT_IMAGE_EDITOR_TOOLBAR_FLYOUT_ORDER } from '../components/ImageEditor/imageEditorTools';
+import { DEFAULT_IMAGE_VIEW_SETTINGS } from '../components/ImageEditor/ImageRulersGuides';
 import {
   DEFAULT_BRUSH_SETTINGS,
   DEFAULT_GRADIENT_TOOL_SETTINGS,
@@ -842,5 +843,51 @@ describe('imageEditorStore — undo/redo log', () => {
     useImageEditorStore.getState().clearHistory('doc-1');
     expect(useImageEditorStore.getState().undoStacks['doc-1']).toEqual([]);
     expect(useImageEditorStore.getState().redoStacks['doc-1']).toEqual([]);
+  });
+});
+
+describe('imageEditorStore — view settings and guides', () => {
+  beforeEach(() => {
+    resetStore();
+    useImageEditorStore.setState({ imageViewSettings: { ...DEFAULT_IMAGE_VIEW_SETTINGS } });
+    const doc = createEmptyImageDocument({ id: 'doc-g', title: 'Guides', width: 400, height: 300 });
+    useImageEditorStore.getState().openDocument(doc);
+  });
+
+  it('toggles rulers/grid/guides/snap view settings', () => {
+    const before = useImageEditorStore.getState().imageViewSettings.rulers;
+    useImageEditorStore.getState().toggleImageViewSetting('rulers');
+    expect(useImageEditorStore.getState().imageViewSettings.rulers).toBe(!before);
+    useImageEditorStore.getState().toggleImageViewSetting('grid');
+    expect(useImageEditorStore.getState().imageViewSettings.grid).toBe(true);
+  });
+
+  it('clamps grid spacing', () => {
+    useImageEditorStore.getState().setImageGridSpacing(0);
+    expect(useImageEditorStore.getState().imageViewSettings.gridSpacing).toBeGreaterThanOrEqual(2);
+    useImageEditorStore.getState().setImageGridSpacing(120);
+    expect(useImageEditorStore.getState().imageViewSettings.gridSpacing).toBe(120);
+  });
+
+  it('adds, moves, removes, and clears document guides', () => {
+    const store = useImageEditorStore.getState();
+    store.addImageGuide('doc-g', 'x', 100);
+    store.addImageGuide('doc-g', 'y', 50);
+    let guides = useImageEditorStore.getState().documents.find((d) => d.id === 'doc-g')?.guides ?? [];
+    expect(guides).toHaveLength(2);
+    expect(guides.find((g) => g.axis === 'x')?.position).toBe(100);
+
+    const xGuideId = guides.find((g) => g.axis === 'x')!.id;
+    useImageEditorStore.getState().updateImageGuidePosition('doc-g', xGuideId, 175.6);
+    guides = useImageEditorStore.getState().documents.find((d) => d.id === 'doc-g')?.guides ?? [];
+    expect(guides.find((g) => g.id === xGuideId)?.position).toBe(176);
+
+    useImageEditorStore.getState().removeImageGuide('doc-g', xGuideId);
+    guides = useImageEditorStore.getState().documents.find((d) => d.id === 'doc-g')?.guides ?? [];
+    expect(guides).toHaveLength(1);
+
+    useImageEditorStore.getState().clearImageGuides('doc-g');
+    guides = useImageEditorStore.getState().documents.find((d) => d.id === 'doc-g')?.guides ?? [];
+    expect(guides).toHaveLength(0);
   });
 });

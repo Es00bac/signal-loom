@@ -116,6 +116,9 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
   const updateLayer = useImageEditorStore((s) => s.updateLayer);
   const openDocument = useImageEditorStore((s) => s.openDocument);
   const activeDocId = useImageEditorStore((s) => s.activeDocId);
+  const imageViewSettings = useImageEditorStore((s) => s.imageViewSettings);
+  const toggleImageViewSetting = useImageEditorStore((s) => s.toggleImageViewSetting);
+  const clearImageGuides = useImageEditorStore((s) => s.clearImageGuides);
   const imageLayout = useWorkspaceLayoutStore((s) => s.image);
   const setImageLayout = useWorkspaceLayoutStore((s) => s.setImageLayout);
   const dockableLayouts = useDockablePanelStore((s) => s.layouts);
@@ -726,6 +729,29 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
               setImagePanelGroupVisible([IMAGE_DOCKABLE_PANEL_IDS.assets], !assetsVisible, hidePanel, dockPanel, floatPanel);
             }}
           />
+          <span className="mx-0.5 h-5 w-px bg-cyan-300/10" />
+          <ImageLayoutButton
+            active={imageViewSettings.rulers}
+            label="Rulers"
+            onClick={() => toggleImageViewSetting('rulers')}
+          />
+          <ImageLayoutButton
+            active={imageViewSettings.grid}
+            label="Grid"
+            onClick={() => toggleImageViewSetting('grid')}
+          />
+          <ImageLayoutButton
+            active={imageViewSettings.guides}
+            label="Guides"
+            onClick={() => toggleImageViewSetting('guides')}
+          />
+          {activeDocId ? (
+            <ImageLayoutButton
+              active={false}
+              label="Clear Guides"
+              onClick={() => clearImageGuides(activeDocId)}
+            />
+          ) : null}
         </>
       ) : null}
       <label className="mr-2 flex items-center gap-1.5 rounded border border-cyan-300/10 bg-[#101a29]/70 px-2 py-1 text-[11px] font-semibold text-cyan-100/55">
