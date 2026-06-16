@@ -24,15 +24,17 @@ describe('cpuKernels', () => {
 
   it('blurRegion averages neighbours, leaving outside-rect pixels unchanged', () => {
     const target = imageData(3, 1, (i) => (i === 1 ? [0, 0, 0, 255] : [255, 255, 255, 255]));
+    const source = imageData(3, 1, (i) => (i === 1 ? [0, 0, 0, 255] : [255, 255, 255, 255]));
     const before0 = target.data[0];
-    blurRegion(target, { size: 3, strength: 1, rect: { x: 1, y: 0, width: 1, height: 1 } });
+    blurRegion(target, source, { to: { x: 1, y: 0 }, size: 3, strength: 1, rect: { x: 1, y: 0, width: 1, height: 1 } });
     expect(target.data[0]).toBe(before0);          // outside rect untouched
     expect(target.data[1 * 4]).toBeGreaterThan(0); // center blurred toward white
   });
 
   it('sharpenRegion increases center contrast inside the rect', () => {
     const target = imageData(3, 1, (i) => (i === 1 ? [120, 120, 120, 255] : [110, 110, 110, 255]));
-    sharpenRegion(target, { size: 3, strength: 1, rect: { x: 1, y: 0, width: 1, height: 1 } });
+    const source = imageData(3, 1, (i) => (i === 1 ? [120, 120, 120, 255] : [110, 110, 110, 255]));
+    sharpenRegion(target, source, { to: { x: 1, y: 0 }, size: 3, strength: 1, rect: { x: 1, y: 0, width: 1, height: 1 } });
     expect(target.data[1 * 4]).toBeGreaterThanOrEqual(120);
   });
 });

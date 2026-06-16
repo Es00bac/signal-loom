@@ -1,13 +1,10 @@
-import { cloneBitmap, createBitmap, getBitmapImageData } from '../LayerBitmap';
-import {
-  buildRetouchSampleSource,
-  describeRetouchBrushToolPlan,
-  type RetouchSampleSource,
-} from '../ImageRetouch';
+import { cloneBitmap } from '../LayerBitmap';
+import { describeRetouchBrushToolPlan, type RetouchSampleSource } from '../ImageRetouch';
 import { canEditImageLayerPixels } from '../../../lib/imageLayerLocks';
-import { DEFAULT_RETOUCH_TOOL_SETTINGS, type LayerBitmap, type RetouchSampleMode } from '../../../types/imageEditor';
+import { DEFAULT_RETOUCH_TOOL_SETTINGS, type RetouchSampleMode } from '../../../types/imageEditor';
 import { resolveRetouchTargetLayer } from './retouchTargetLayer';
-import { BrushStrokeController, detectBrushBackend } from '../../../lib/brushEngine';
+import { BrushStrokeController } from '../../../lib/brushEngine';
+import { createRetouchStrokeController } from './retouchBrushEngine';
 import type { ToolHandler } from './types';
 
 interface SmudgeBrushStroke {
@@ -142,23 +139,7 @@ export const smudgeBrushTool: ToolHandler = {
     const layer = resolveRetouchTargetLayer(env, point);
     if (!canEditImageLayerPixels(layer) || !layer?.bitmap) return;
     const bitmapBefore = cloneBitmap(layer.bitmap);
-    const retouchSettings = env.retouchToolSettings ?? DEFAULT_RETOUCH_TOOL_SETTINGS;
-    const sampleSource = buildRetouchSampleSource({
-      doc: env.doc,
-      layer,
-      layerSnapshot: bitmapBefore,
-      sampleMode: retouchSettings.sampleMode,
-    });
-    const selection = detectBrushBackend(env.brushSettings.gpuBrushEngine ? 'auto' : 'cpu');
-    const controller = new BrushStrokeController(selection.backend, {
-      source: getBitmapImageData(layer.bitmap),
-      sampleSource: { imageData: buildLayerLocalSampleImageData(sampleSource, layer.bitmap, layer.x, layer.y) },
-      width: layer.bitmap.width,
-      height: layer.bitmap.height,
-      op: 'smudge',
-      size: env.brushSettings.size,
-      strength: env.brushSettings.opacity,
-    });
+    const controller = createRetouchStrokeController(env, layer, bitmapBefore, 'smudge');
     controller.anchor({ x: point.x - layer.x, y: point.y - layer.y });
     stroke = { layerId: layer.id, bitmapBefore, controller };
   },
@@ -202,21 +183,6 @@ export const smudgeBrushTool: ToolHandler = {
     stroke = null;
   },
 };
-
-/** A single layer-local snapshot of the smudge sample source (composite modes are aligned once). */
-function buildLayerLocalSampleImageData(
-  sampleSource: RetouchSampleSource,
-  layerBitmap: LayerBitmap,
-  layerX: number,
-  layerY: number,
-): ImageData {
-  if (sampleSource.coordinateSpace === 'document') {
-    const aligned = createBitmap(layerBitmap.width, layerBitmap.height);
-    aligned.getContext('2d')?.drawImage(sampleSource.bitmap, -layerX, -layerY);
-    return getBitmapImageData(aligned);
-  }
-  return getBitmapImageData(sampleSource.bitmap);
-}
 
 function buildSmudgeFinishingReadinessSignature({
   sampleMode,

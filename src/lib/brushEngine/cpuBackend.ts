@@ -40,9 +40,9 @@ export function createCpuBrushBackend(): BrushBackend {
               rect,
             });
           } else if (dab.op === 'blur') {
-            blurRegion(working, { size: dab.size, strength: dab.strength, rect });
+            blurRegion(working, sampleSource.imageData, { to: dab.to, size: dab.size, strength: dab.strength, rect });
           } else {
-            sharpenRegion(working, { size: dab.size, strength: dab.strength, rect });
+            sharpenRegion(working, sampleSource.imageData, { to: dab.to, size: dab.size, strength: dab.strength, rect });
           }
           dirty = unionRect(dirty, rect);
         },
