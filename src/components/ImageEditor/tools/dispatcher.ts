@@ -78,6 +78,10 @@ export const STROKE_PAINT_TOOLS = new Set<EditorTool>([
   'spongeSaturateBrush', 'spongeDesaturateBrush',
 ]);
 
+/** How long the live-stroke fast composite path stays warm after a dab, so rapid successive
+ * sketch strokes don't each kick the full-quality worker render. */
+const PAINT_SETTLE_MS = 220;
+
 export type ImageToolDispatcherMethod = 'pointerDown' | 'pointerMove' | 'pointerUp' | 'keyDown' | 'cancel';
 export type ImageToolDispatcherSupportStatus = 'full' | 'partial' | 'inactive';
 
@@ -220,6 +224,18 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
     // overhead since the canvas position is stable during a stroke. Refresh on pointer-down and
     // invalidate on scroll/resize so it stays correct.
     let cachedRect: DOMRect | null = null;
+    // While sketching, the user lifts and re-touches the pen many times a second. Rather than drop
+    // out of the cheap live-stroke composite path and kick the full-quality worker after every tiny
+    // dab (which is what overloads rapid sketching), we keep the paint path "warm" for a short
+    // settle window after each stroke; a new stroke within it cancels the cool-down, and only a
+    // genuine pause triggers the one full-quality render. This is how Krita-style apps stay snappy.
+    let paintSettleTimer: ReturnType<typeof setTimeout> | null = null;
+    const cancelPaintSettle = (): void => {
+      if (paintSettleTimer !== null) {
+        clearTimeout(paintSettleTimer);
+        paintSettleTimer = null;
+      }
+    };
     const getRect = (): DOMRect => (cachedRect ??= el.getBoundingClientRect());
     const invalidateRect = (): void => {
       cachedRect = null;
@@ -247,6 +263,7 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       }
       eyedropperOverride = false;
       if (STROKE_PAINT_TOOLS.has(useImageEditorStore.getState().tool)) {
+        cancelPaintSettle(); // a new dab within the settle window keeps the fast path warm
         env.store.setPaintingStroke(true);
       }
       currentHandler().onPointerDown?.(env, docPoint, mods, event);
@@ -289,10 +306,20 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       }
       const wasStroke = STROKE_PAINT_TOOLS.has(useImageEditorStore.getState().tool);
       currentHandler().onPointerUp?.(env, docPoint, modsFrom(event), event);
-      // Leave the fast preview path and force one normal full-quality render of the committed
-      // result. Always clearing is safe (idempotent) even if the gesture wasn't a paint stroke.
-      env.store.setPaintingStroke(false);
-      if (wasStroke) rendererRef.current?.requestRender();
+      if (wasStroke) {
+        // Stay on the fast composite path briefly so rapid successive dabs don't each trigger the
+        // full-quality worker render. Show the committed dab now (fast path), then settle to the
+        // full-quality render only once the user actually pauses.
+        rendererRef.current?.requestRender();
+        cancelPaintSettle();
+        paintSettleTimer = setTimeout(() => {
+          paintSettleTimer = null;
+          useImageEditorStore.getState().setPaintingStroke(false);
+          rendererRef.current?.requestRender();
+        }, PAINT_SETTLE_MS);
+      } else {
+        env.store.setPaintingStroke(false);
+      }
     };
     const onDouble = (event: MouseEvent) => {
       if (shouldIgnoreImageCanvasToolEvent(event)) return;
@@ -392,6 +419,7 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('scroll', invalidateRect, { capture: true } as EventListenerOptions);
       window.removeEventListener('resize', invalidateRect);
+      cancelPaintSettle();
     };
   }, [wrapperRef, rendererRef]);
 }
