@@ -15,8 +15,12 @@ import { BrushSelectionPalette } from './BrushSelectionPalette';
 import { ImageEditorAssetBar } from './ImageEditorAssetBar';
 import { ImageEditorContextMenu } from './ImageEditorContextMenu';
 import { ImageEditorHelp } from './ImageEditorHelp';
+import { ImageAdjustmentsDialog, IMAGE_ADJUSTMENTS_DIALOG_ID } from './ImageAdjustmentsDialog';
+import { addAdjustmentLayerUndoable } from './imageAdjustmentActions';
 import { GenerativeFillBar } from './GenerativeFillBar';
 import { useImageEditorStore } from '../../store/imageEditorStore';
+import { useIsWorkspaceDialogOpen, useWorkspaceDialogStore } from '../../store/workspaceDialogStore';
+import type { AdjustmentLayerKind } from '../../types/imageEditor';
 import { useSourceBinStore } from '../../store/sourceBinStore';
 import { useWorkspaceLayoutStore } from '../../store/workspaceLayoutStore';
 import { useDockablePanelStore } from '../../store/dockablePanelStore';
@@ -92,9 +96,26 @@ interface ImageEditorWorkspaceProps {
 
 const IMAGE_NATIVE_MENU_COMMAND_PREFIXES = ['image:', 'edit:'] as const;
 
+/** Image > Adjustments menu commands -> the non-destructive adjustment kind they open. */
+const ADJUSTMENT_COMMAND_KINDS: Record<string, AdjustmentLayerKind> = {
+  'image:adjust-brightness-contrast': 'brightnessContrast',
+  'image:adjust-levels': 'levels',
+  'image:adjust-curves': 'curves',
+  'image:adjust-hue-saturation': 'hueSaturation',
+  'image:adjust-exposure': 'exposure',
+  'image:adjust-temperature-tint': 'temperatureTint',
+  'image:adjust-black-white': 'blackWhite',
+  'image:adjust-invert': 'invert',
+};
+
 export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWorkspaceProps) {
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const [helpVisible, setHelpVisible] = useState(false);
+  const adjustmentsDialogOpen = useIsWorkspaceDialogOpen(
+    IMAGE_DOCKABLE_WORKSPACE_ID,
+    IMAGE_ADJUSTMENTS_DIALOG_ID,
+  );
+  const closeWorkspaceDialog = useWorkspaceDialogStore((state) => state.closeDialog);
   const [showNewDocModal, setShowNewDocModal] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<'editor' | 'automation'>('editor');
   // Top-nav-bar slots the desktop workspace controls are portaled into (zoom -> right, the rest -> center).
@@ -433,6 +454,19 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
   }, [runNavigationCommand, setTool, setSelectionToolSettings, toggleQuickMask, updateLayer]);
 
   const handleNativeMenuCommand = useCallback((command: NativeMenuCommand) => {
+    const adjustmentKind = ADJUSTMENT_COMMAND_KINDS[command];
+    if (adjustmentKind) {
+      // Reuse the active layer when it is already this adjustment, otherwise add
+      // a fresh non-destructive adjustment layer; then surface the dialog.
+      const state = useImageEditorStore.getState();
+      const doc = state.getActiveDocument();
+      const active = doc?.layers.find((layer) => layer.id === doc.activeLayerId) ?? null;
+      const alreadyTargeting =
+        active?.type === 'adjustment' && active.adjustment?.kind === adjustmentKind;
+      if (doc && !alreadyTargeting) addAdjustmentLayerUndoable(adjustmentKind);
+      useWorkspaceDialogStore.getState().openDialog(IMAGE_DOCKABLE_WORKSPACE_ID, IMAGE_ADJUSTMENTS_DIALOG_ID);
+      return;
+    }
     switch (command) {
       case 'edit:undo': {
         const docId = useImageEditorStore.getState().activeDocId;
@@ -953,6 +987,10 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
         />
       ) : null}
       <ImageEditorHelp visible={helpVisible} onClose={() => setHelpVisible(false)} />
+      <ImageAdjustmentsDialog
+        open={adjustmentsDialogOpen}
+        onClose={() => closeWorkspaceDialog(IMAGE_DOCKABLE_WORKSPACE_ID, IMAGE_ADJUSTMENTS_DIALOG_ID)}
+      />
     </div>
   );
 }

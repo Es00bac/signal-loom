@@ -95,6 +95,21 @@
       "items": [
         { "command": "image:tool-crop", "label": "Crop", "accelerator": "C" },
         { "type": "separator" },
+        {
+          "label": "Adjustments",
+          "items": [
+            { "command": "image:adjust-brightness-contrast", "label": "Brightness/Contrast..." },
+            { "command": "image:adjust-levels", "label": "Levels...", "accelerator": "Ctrl+L" },
+            { "command": "image:adjust-curves", "label": "Curves...", "accelerator": "Ctrl+M" },
+            { "command": "image:adjust-hue-saturation", "label": "Hue/Saturation...", "accelerator": "Ctrl+U" },
+            { "type": "separator" },
+            { "command": "image:adjust-exposure", "label": "Exposure..." },
+            { "command": "image:adjust-temperature-tint", "label": "Color Temperature..." },
+            { "command": "image:adjust-black-white", "label": "Black & White..." },
+            { "command": "image:adjust-invert", "label": "Invert" }
+          ]
+        },
+        { "type": "separator" },
         { "command": "image:export-visible", "label": "Download Image File..." },
         { "command": "image:export-psd", "label": "Download PSD..." }
       ]

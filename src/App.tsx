@@ -1448,6 +1448,14 @@ function FlowApp() {
       case 'image:tool-eyedropper':
       case 'image:export-visible':
       case 'image:export-psd':
+      case 'image:adjust-brightness-contrast':
+      case 'image:adjust-levels':
+      case 'image:adjust-curves':
+      case 'image:adjust-hue-saturation':
+      case 'image:adjust-black-white':
+      case 'image:adjust-exposure':
+      case 'image:adjust-temperature-tint':
+      case 'image:adjust-invert':
       case 'timeline:select':
       case 'timeline:cut':
       case 'timeline:slip':
