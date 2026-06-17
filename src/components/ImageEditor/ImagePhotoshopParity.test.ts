@@ -196,6 +196,9 @@ describe('ImagePhotoshopParity', () => {
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'crop')?.signalLoom).toContain('destructive/non-destructive commit descriptors');
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'crop')?.signalLoom).toContain('content-aware corner-fill unsupported warning');
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'crop')?.signalLoom).not.toContain('straighten and rotate-crop behavior remain incomplete');
+    // Custom crop preset management shipped — claimed as done, not as a remaining gap.
+    expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'crop')?.signalLoom).toContain('custom aspect-ratio preset management');
+    expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'crop')?.signalLoom).not.toContain('and preset management remain incomplete');
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'crop')?.parityEstimate).toBeGreaterThanOrEqual(49);
   });
 
