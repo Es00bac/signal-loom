@@ -698,6 +698,7 @@ export function DockablePanel({
         ? `theme-popover fixed flex min-h-0 flex-col overflow-hidden rounded-[3px] border border-cyan-300/25 bg-[#11131a]/95 text-cyan-50 shadow-2xl ${className}`
         : `theme-popover ${isFloating ? 'fixed flex min-h-0 flex-col' : `relative flex min-h-0 flex-col ${dockedFullHeightClassName}`} overflow-hidden rounded-xl border border-cyan-300/15 bg-[#0d1522]/95 text-cyan-50 shadow-2xl ${className}`}
       data-dock-zone={layout.dockZone}
+      data-dockable-dock-column={layout.dockColumn ?? 0}
       data-dockable-panel-chrome={chrome}
       data-dockable-panel-mode={layout.mode}
       data-dockable-panel-id={layout.panelId}
@@ -1004,10 +1005,12 @@ function collectDockedPanelStackRects(workspaceId: string, activePanelId: string
     if (!isDockZone(dockZone)) return;
     const rect = readElementRect(element);
     if (!rect) return;
+    const columnValue = Number.parseInt(element.dataset.dockableDockColumn ?? '', 10);
     rects.push({
       panelId,
       dockZone,
       rect,
+      dockColumn: Number.isFinite(columnValue) ? Math.max(0, columnValue) : undefined,
     });
   });
 

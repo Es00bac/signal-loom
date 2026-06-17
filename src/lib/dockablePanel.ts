@@ -132,6 +132,7 @@ export interface DockablePanelStackRect {
   panelId: string;
   dockZone: DockZone;
   rect: PanelRect;
+  dockColumn?: number;
 }
 
 export type DockablePanelSnapTarget =
@@ -148,6 +149,7 @@ export type DockablePanelSnapTarget =
       dockZone: DockZone;
       placement: DockablePanelPlacement;
       referencePanelId?: string;
+      dockColumn?: number;
     };
 
 export const DEFAULT_FLOATING_RECT: PanelRect = {
@@ -695,6 +697,8 @@ export function resolveDockablePanelSnapTarget(
       dockZone: stackRect.dockZone,
       placement: before ? 'before' : 'after',
       referencePanelId: stackRect.panelId,
+      // Dropping onto a side-docked panel joins that panel's column.
+      dockColumn: stackRect.dockColumn,
     };
   }
 

@@ -171,6 +171,7 @@ export const useDockablePanelStore = create<DockablePanelState>()(
             ...current,
             mode: 'docked',
             dockZone: target.dockZone,
+            dockColumn: target.dockColumn ?? 0,
             floatingRectSpace: undefined,
           };
 

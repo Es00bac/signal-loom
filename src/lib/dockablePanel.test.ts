@@ -478,6 +478,26 @@ describe('dockablePanel helpers', () => {
     });
   });
 
+  it('joins the target panel\'s column when dropping onto a side-docked panel', () => {
+    const stackRects = [
+      { panelId: 'brushes', dockZone: 'right' as const, rect: { x: 1200, y: 40, width: 320, height: 300 }, dockColumn: 1 },
+    ];
+    expect(
+      resolveDockablePanelSnapTarget(
+        { x: 1360, y: 60 },
+        { width: 1600, height: 1000 },
+        stackRects,
+        ['right'],
+      ),
+    ).toMatchObject({
+      mode: 'docked',
+      dockZone: 'right',
+      placement: 'before',
+      referencePanelId: 'brushes',
+      dockColumn: 1,
+    });
+  });
+
   it('resolves a tab-group snap target when the pointer is centered inside a panel', () => {
     const stackRects = [
       {
