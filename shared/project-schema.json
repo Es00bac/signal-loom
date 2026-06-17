@@ -45,6 +45,7 @@
     "dialogueScriptSplitterNode",
     "numberNode",
     "colorSwatchNode",
+    "doodleNode",
     "groupNode",
     "functionNode",
     "functionInputNode",

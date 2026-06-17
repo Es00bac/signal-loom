@@ -87,6 +87,13 @@ const nodeThemes: Record<FlowNodeType, NodeTheme> = {
     headerClassName: 'bg-[linear-gradient(90deg,rgba(244,114,182,0.20),rgba(37,40,48,0.82))] border-pink-400/25',
     iconClassName: 'text-pink-200',
   },
+  doodleNode: {
+    accentColor: '#5b8def',
+    hoverAccentColor: '#93b9f7',
+    containerClassName: 'bg-[linear-gradient(155deg,rgba(91,141,239,0.14),#1e2027_34%,#131a26)] border-sky-400/35 shadow-sky-950/20',
+    headerClassName: 'bg-[linear-gradient(90deg,rgba(91,141,239,0.20),rgba(37,40,48,0.82))] border-sky-400/25',
+    iconClassName: 'text-sky-200',
+  },
   list: {
     accentColor: '#14b8a6',
     hoverAccentColor: '#2dd4bf',

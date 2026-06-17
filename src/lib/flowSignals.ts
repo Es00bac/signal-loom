@@ -126,6 +126,16 @@ export function evaluateNodeSignal(
       return scalarSignal('text', formatColorSwatchPrompt(node.data), node.id, {
         label: node.data.customTitle as string | undefined,
       });
+    case 'doodleNode': {
+      // The description is the doodle's text half of its asset package; an
+      // attached Text node (upstream) overrides the typed box.
+      const own = String(node.data.doodleDescription ?? '').trim();
+      const incomingEdge = edges.find((edge) => edge.target === node.id);
+      const upstream = incomingEdge
+        ? signalToText(evaluateNodeSignal(incomingEdge.source, nodes, edges, nextVisited, nodesById)).trim()
+        : '';
+      return scalarSignal('text', upstream || own, node.id);
+    }
     case 'stringTemplateNode':
       return evaluateStringTemplateNode(node, nodes, edges, nextVisited, nodesById);
     case 'promptsJoinerNode':

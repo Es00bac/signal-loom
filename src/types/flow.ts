@@ -45,6 +45,7 @@ export const FLOW_NODE_TYPES = [
   'dialogueScriptSplitterNode',
   'numberNode',
   'colorSwatchNode',
+  'doodleNode',
   'groupNode',
   'functionNode',
   'functionInputNode',
@@ -766,6 +767,8 @@ export interface NodeData {
   value?: DynamicValue;
   colorSwatchColors?: string[];
   colorSwatchDraftColor?: string;
+  doodleSketch?: string;
+  doodleDescription?: string;
   colorSwatchSelectedIndex?: number;
   colorSwatchUsageMode?: ColorSwatchUsageMode;
   loopBreakReason?: string;

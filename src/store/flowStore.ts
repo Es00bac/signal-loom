@@ -1168,6 +1168,7 @@ function collectTextInputsFromSource(
     'valueMonitorNode',
     'numberNode',
     'functionNode',
+    'doodleNode',
   ];
 
   if (listAndUtilityNodeTypes.includes(node.type)) {
@@ -1729,6 +1730,11 @@ function collectImageInputFromSource(
   if (node.type === 'packageNode') {
     const pkg = resolvePackageNodeData(node.id, Array.from(nodesById.values()), edges);
     return pkg.image;
+  }
+
+  if (node.type === 'doodleNode') {
+    const sketch = node.data.doodleSketch;
+    return typeof sketch === 'string' && sketch ? sketch : undefined;
   }
 
   if (node.type === 'envelope') {

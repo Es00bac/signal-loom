@@ -328,6 +328,8 @@ function getEnvelopeSourceLabel(node: AppNode): string {
       return 'Number';
     case 'colorSwatchNode':
       return 'Color Swatch';
+    case 'doodleNode':
+      return 'Doodle';
     case 'functionNode':
       return 'Function';
     case 'groupNode':

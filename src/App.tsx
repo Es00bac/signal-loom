@@ -68,6 +68,7 @@ import { DialogueScriptSplitterNode } from './components/Nodes/DialogueScriptSpl
 import { FunctionNode } from './components/Nodes/FunctionNode';
 import { GroupNode } from './components/Nodes/GroupNode';
 import { ColorSwatchNode } from './components/Nodes/ColorSwatchNode';
+import { DoodleNode } from './components/Nodes/DoodleNode';
 import { FunctionInputNode } from './components/Nodes/FunctionInputNode';
 import { FunctionOutputNode } from './components/Nodes/FunctionOutputNode';
 import { JavaScriptNode } from './components/Nodes/JavaScriptNode';
@@ -272,6 +273,7 @@ const nodeTypes = {
   dialogueScriptSplitterNode: DialogueScriptSplitterNode,
   numberNode: NumberNode,
   colorSwatchNode: ColorSwatchNode,
+  doodleNode: DoodleNode,
   functionNode: FunctionNode,
   groupNode: GroupNode,
   functionInputNode: FunctionInputNode,

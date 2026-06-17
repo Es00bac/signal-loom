@@ -509,4 +509,18 @@ describe('flow signal evaluation', () => {
     expect(yamlFormatResult.kind).toBe('text');
     expect((yamlFormatResult.value as string).trim().replace(/\r?\n/g, '\n')).toBe('user:\n  id: 1\n  name: Alice');
   });
+
+  it('uses a doodle node\'s typed description as its text signal when nothing is attached', () => {
+    const nodes = [createNode({ id: 'doodle', type: 'doodleNode', data: { doodleDescription: 'a sleepy fox' } })];
+    expect(signalToTextList(evaluateNodeSignal('doodle', nodes, []))).toEqual(['a sleepy fox']);
+  });
+
+  it('lets a Text node attached to a doodle node override its typed description', () => {
+    const nodes = [
+      createNode({ id: 'caption', type: 'textNode', data: { prompt: 'a fox in a raincoat' } }),
+      createNode({ id: 'doodle', type: 'doodleNode', data: { doodleDescription: 'typed fallback' } }),
+    ];
+    const edges: Edge[] = [{ id: 'e1', source: 'caption', target: 'doodle' }];
+    expect(signalToTextList(evaluateNodeSignal('doodle', nodes, edges))).toEqual(['a fox in a raincoat']);
+  });
 });
