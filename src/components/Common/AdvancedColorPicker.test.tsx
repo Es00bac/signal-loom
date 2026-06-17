@@ -49,9 +49,7 @@ describe('AdvancedColorPicker', () => {
   it('exposes compact-layout advanced controls on Android/touch-sized viewports', () => {
     const hadWindow = typeof window !== 'undefined';
     const workingWindow = hadWindow ? window : {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       addEventListener: () => undefined,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       removeEventListener: () => undefined,
       innerHeight: 800,
       innerWidth: 390,
@@ -61,7 +59,6 @@ describe('AdvancedColorPicker', () => {
     const originalMatchMedia = workingWindow.matchMedia;
 
     if (!hadWindow) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (globalThis as any).window = workingWindow;
     }
 
@@ -113,7 +110,6 @@ describe('AdvancedColorPicker', () => {
           value: originalMatchMedia,
         });
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         delete (globalThis as any).window;
       }
     }

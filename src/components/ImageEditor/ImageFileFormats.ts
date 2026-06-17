@@ -581,7 +581,7 @@ export function describeSourceImageFormatPolicy(policy: SourceImageFormatPolicy)
           flattenedExport: false,
         },
       });
-    case 'tiff':
+    case 'tiff': {
       const highBitTiff = Boolean(policy.highBitDepth && (policy.sourceBitsPerChannel ?? 0) > 8);
       return makeSourceImageFormatPolicyDescription({
         formatLabel: 'TIFF',
@@ -611,6 +611,7 @@ export function describeSourceImageFormatPolicy(policy: SourceImageFormatPolicy)
             }
           : undefined,
       });
+    }
     case 'svg':
       return makeSourceImageFormatPolicyDescription({
         formatLabel: 'SVG',
@@ -690,7 +691,7 @@ export function describeSourceImageFormatPolicy(policy: SourceImageFormatPolicy)
         bitDepth: createNotDecodedBitDepthDescriptor('camera-raw'),
       });
     case 'raster':
-    default:
+    default: {
       const rasterWarnings = policy.highBitDepth ? [createHighBitDepthRasterWarning(policy)] : [];
       return makeSourceImageFormatPolicyDescription({
         formatLabel: policy.sourceFormatLabel ?? 'Raster image',
@@ -708,6 +709,7 @@ export function describeSourceImageFormatPolicy(policy: SourceImageFormatPolicy)
         sourceFormatLimits: createRasterSourceFormatLimits(policy),
         bitDepth: createBrowserRasterBitDepthDescriptor(policy),
       });
+    }
   }
 }
 

@@ -1,7 +1,7 @@
 import { useShallow } from 'zustand/react/shallow';
 import { useFlowStore, type FlowState } from '../flowStore';
 
-export interface FlowRuntimeStoreSlice extends Pick<
+export type FlowRuntimeStoreSlice = Pick<
   FlowState,
   | 'nodes'
   | 'edges'
@@ -20,7 +20,7 @@ export interface FlowRuntimeStoreSlice extends Pick<
   | 'collapseSelectionToFunction'
   | 'registerCenterOnNodeCallback'
   | 'insertTemplate'
-> {}
+>;
 
 export function useFlowRuntimeStore(): FlowRuntimeStoreSlice {
   return useFlowStore(useShallow((state) => ({

@@ -1260,7 +1260,7 @@ describe('ImageRetouch', () => {
     expect(readiness.blockers).toEqual([]);
     expect(readiness.previewSignature).toContain('"rate":1');
     expect(readiness.previewSignature).toContain('"output":"activeLayer"');
-    expect(readiness.previewSignature).not.toContain('\"airbrush-rate-unsupported\"');
+    expect(readiness.previewSignature).not.toContain('"airbrush-rate-unsupported"');
   });
 
   it('describes retouch sample source state with stable routing signatures', () => {

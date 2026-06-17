@@ -7,11 +7,12 @@ import {
   type OnConnectStart,
   type OnEdgesChange,
   type OnNodesChange,
+  type NodeTypes,
   ReactFlow,
   useReactFlow,
   useStoreApi,
 } from '@xyflow/react';
-import type { ComponentType, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from 'react';
+import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { computePinchViewport, pinchSampleFromPoints, type PinchSample } from './flowPinchZoom';
 import { AlertTriangle, Braces, Bug, Loader2, Sparkles, X } from 'lucide-react';
@@ -29,7 +30,7 @@ export interface FlowWorkspaceShellProps {
   flowOrganizeJob: { title: string; detail: string } | null;
   flowRecoveryKey: string;
   librarySearchMenu: { x: number; y: number } | null;
-  nodeTypes: Record<string, ComponentType<any>>;
+  nodeTypes: NodeTypes;
   nodes: AppNode[];
   onCancelFlowAutoOrganize: () => void;
   onCloseDiagnostics: () => void;

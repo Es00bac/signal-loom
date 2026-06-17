@@ -285,7 +285,7 @@ export function estimateGenerativeFillCostUsd(
         outputMegapixels: megapixels,
         textInputTokens,
       }).costUsd ?? 0.045;
-    case 'stability':
+    case 'stability': {
       const selectedModelId = modelId ?? 'stable-image-edit-inpaint';
       const stabilityDefinition = getImageModelDefinition('stability', selectedModelId);
       const stabilityOperation = resolveStabilityOperationForModel(stabilityDefinition.supportedOperations);
@@ -296,6 +296,7 @@ export function estimateGenerativeFillCostUsd(
         outputMegapixels: megapixels,
         textInputTokens,
       }).costUsd ?? 0.05;
+    }
     case 'localOpen':
       return 0;
     case 'generic':

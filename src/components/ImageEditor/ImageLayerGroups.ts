@@ -191,7 +191,7 @@ export interface ImageLayerGroupedStackGroupDescriptor {
   caveats: ImageLayerGroupedStackCaveat[];
 }
 
-export interface ImageLayerGroupedStackReadinessOptions extends ImageLayerGroupHierarchyReadinessOptions {}
+export type ImageLayerGroupedStackReadinessOptions = ImageLayerGroupHierarchyReadinessOptions;
 
 export interface ImageLayerGroupedStackReadiness {
   descriptorId: 'image-layer-grouped-stack-readiness:v1';

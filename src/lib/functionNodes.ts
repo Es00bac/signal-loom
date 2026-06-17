@@ -2,6 +2,8 @@ import type { Edge, XYPosition } from '@xyflow/react';
 import type {
   AppNode,
   DynamicValue,
+  FunctionBoundaryLink,
+  FunctionInputBinding,
   FunctionNodeConfig,
   FunctionOutputBinding,
   FunctionPortKind,
@@ -368,10 +370,10 @@ export function buildCollapsedFunctionNode(input: CollapseFunctionInput): Collap
 
   let inputPorts: FunctionPortKind[] = [];
   let outputPorts: FunctionPortKind[] = [];
-  let inputBoundaryLinks: any[] = [];
-  let outputBoundaryLinks: any[] = [];
-  let inputBindings: any[] = [];
-  let outputBindings: any[] = [];
+  const inputBoundaryLinks: FunctionBoundaryLink[] = [];
+  const outputBoundaryLinks: FunctionBoundaryLink[] = [];
+  const inputBindings: FunctionInputBinding[] = [];
+  const outputBindings: FunctionOutputBinding[] = [];
   const nextEdges: Edge[] = [];
 
   if (hasMarkers) {

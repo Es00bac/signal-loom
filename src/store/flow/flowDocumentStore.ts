@@ -1,13 +1,13 @@
 import { useShallow } from 'zustand/react/shallow';
 import { useFlowStore, type FlowState } from '../flowStore';
 
-export interface FlowDocumentStoreSlice extends Pick<
+export type FlowDocumentStoreSlice = Pick<
   FlowState,
   | 'exportProjectFlowSnapshot'
   | 'replaceFlowSnapshot'
   | 'restoreImportedAssets'
   | 'removeEditorSourceReferences'
-> {}
+>;
 
 export function useFlowDocumentStore(): FlowDocumentStoreSlice {
   return useFlowStore(useShallow((state) => ({
