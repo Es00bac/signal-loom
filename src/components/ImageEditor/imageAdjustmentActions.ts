@@ -1,5 +1,6 @@
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import { createAdjustmentLayer } from './ImageAdjustmentLayer';
+import { addImageLayerUndoable } from './imageLayerInsert';
 import type {
   AdjustmentLayerKind,
   ImageAdjustmentSettings,
@@ -18,15 +19,9 @@ import type {
  * layer, or `null` when there is no active document.
  */
 export function addAdjustmentLayerUndoable(kind: AdjustmentLayerKind): ImageLayer | null {
-  const store = useImageEditorStore.getState();
-  const doc = store.getActiveDocument();
+  const doc = useImageEditorStore.getState().getActiveDocument();
   if (!doc) return null;
-  const before = doc.layers;
-  const layer = createAdjustmentLayer(doc, kind);
-  store.addLayer(doc.id, layer); // addLayer also sets the new layer active
-  const after = useImageEditorStore.getState().documents.find((d) => d.id === doc.id)?.layers;
-  if (after) store.pushOperation({ kind: 'layerOp', docId: doc.id, before, after });
-  return layer;
+  return addImageLayerUndoable(createAdjustmentLayer(doc, kind));
 }
 
 /**

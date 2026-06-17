@@ -79,6 +79,7 @@ import {
   hasDraggedSourceLibraryItem,
 } from '../../lib/sourceLibraryWorkspaceActions';
 import { openSourceLibraryImageDocument } from '../../lib/sourceLibraryImageOpen';
+import { insertSourceItemAsImageLayer } from './imageLayerInsert';
 import { showAlertDialog } from '../../store/alertDialogStore';
 import { ImageAutomationWorkspace } from '../../features/imageAutomation/ImageAutomationWorkspace';
 import {
@@ -693,6 +694,21 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
 
     if (!item) {
       setLocalImageOpenStatus('That Source Library item could not be found in the current project.');
+      return;
+    }
+
+    // Dropping an image onto an already-open document inserts it as a new,
+    // canvas-fitted layer; otherwise (or for non-image items) open it as a doc.
+    const activeDoc = useImageEditorStore.getState().getActiveDocument();
+    if (activeDoc && item.kind === 'image' && item.assetUrl) {
+      const label = item.label ?? 'image';
+      void insertSourceItemAsImageLayer(item, activeDoc)
+        .then((layer) => {
+          setLocalImageOpenStatus(
+            layer ? `Inserted "${label}" as a new layer.` : `Could not insert "${label}" as a layer.`,
+          );
+        })
+        .catch(() => setLocalImageOpenStatus(`Could not insert "${label}" as a layer.`));
       return;
     }
 
