@@ -1,5 +1,6 @@
 import type { BrushSettings, BrushSymmetryMode } from '../../types/imageEditor';
 import { sampleBrushTexture } from './ImageBrushTextures';
+import { applyBrushTiltDynamics, resolveBrushTiltState, type BrushTiltState } from './brushTiltGeometry';
 import type { Point } from './tools/types';
 
 export interface BrushDynamics {
@@ -24,7 +25,10 @@ export interface BrushDab extends BrushDynamics {
 export interface BuildBrushDabsOptions {
   seed?: number;
   startIndex?: number;
+  /** Legacy 1D tilt → angle override (degrees). Superseded by `tilt`. */
   tiltAngle?: number | null;
+  /** Full stylus tilt + barrel-rotation state (drives angle, elongation, size). */
+  tilt?: BrushTiltState | null;
   velocityPxPerMs?: number;
 }
 
@@ -60,7 +64,7 @@ export interface BrushStrokePreviewMetadata {
   tilt: {
     active: boolean;
     angleDeg: number | null;
-    affects: Array<'angle'>;
+    affects: Array<'angle' | 'roundness' | 'size'>;
   };
   velocity: {
     pxPerMs: number;
@@ -142,7 +146,7 @@ export interface BrushWorkflowSupportDescriptor {
     };
     tilt: {
       supported: true;
-      affects: Array<'angle'>;
+      affects: Array<'angle' | 'roundness' | 'size'>;
       unsupportedAffects: string[];
     };
     randomization: {
@@ -275,7 +279,7 @@ export interface BrushDynamicsSupportMatrixDescriptor {
     tilt: {
       supported: true;
       state: BrushDynamicsSupportState;
-      affects: Array<'angle'>;
+      affects: Array<'angle' | 'roundness' | 'size'>;
       tiltEventsObserved: boolean;
       unsupportedAffects: string[];
     };
@@ -564,7 +568,7 @@ export interface BrushEngineReadinessDescriptor {
     };
     tilt: {
       supported: true;
-      affects: Array<'angle'>;
+      affects: Array<'angle' | 'roundness' | 'size'>;
     };
     symmetry: BrushWorkflowSupportDescriptor['symmetry'] & {
       supported: boolean;
@@ -646,6 +650,10 @@ export function normalizeBrushSettings(settings: Partial<BrushSettings>): BrushS
     pressureSize: clamp(merged.pressureSize, 0, 1),
     pressureOpacity: clamp(merged.pressureOpacity, 0, 1),
     pressureFlow: clamp(merged.pressureFlow, 0, 1),
+    tiltAngle: clamp(merged.tiltAngle ?? 0.7, 0, 1),
+    tiltRoundness: clamp(merged.tiltRoundness ?? 0.6, 0, 1),
+    tiltSize: clamp(merged.tiltSize ?? 0.2, 0, 1),
+    rotationFollowsTwist: merged.rotationFollowsTwist !== false,
     tipShape: merged.tipShape === 'square' ? 'square' : 'round',
     symmetryMode: normalizeBrushSymmetryMode(merged.symmetryMode),
     velocitySize: clamp(merged.velocitySize ?? 0, 0, 1),
@@ -678,6 +686,7 @@ export function resolveBrushDynamics(
   pressure: number,
   tiltAngle?: number | null,
   velocityPxPerMs = 0,
+  tilt?: BrushTiltState | null,
 ): BrushDynamics {
   const normalized = normalizeBrushSettings(settings);
   const pressureValue = clamp(pressure, 0.05, 1);
@@ -689,11 +698,31 @@ export function resolveBrushDynamics(
   const sizeFactor = (1 - normalized.pressureSize + normalized.pressureSize * pressureValue) * velocityGrowth;
   const opacityFactor = (1 - normalized.pressureOpacity + normalized.pressureOpacity * pressureValue) * velocityOpacity;
   const flowFactor = (1 - normalized.pressureFlow + normalized.pressureFlow * pressureValue) * velocityFlow;
-  const size = Math.max(1, normalized.size * sizeFactor);
+  let size = Math.max(1, normalized.size * sizeFactor);
 
-  const angleDeg = (tiltAngle !== undefined && tiltAngle !== null)
-    ? tiltAngle
-    : normalized.angleDeg;
+  // Legacy explicit angle override still wins (callers that pre-resolve an angle).
+  let angleDeg = (tiltAngle !== undefined && tiltAngle !== null) ? tiltAngle : normalized.angleDeg;
+  let roundness = normalized.roundness;
+
+  // Full stylus tilt + barrel rotation: flatten the tip, grow it, and steer/rotate its
+  // long axis. Only applied when a tilt/twist state is actually present.
+  if (tilt && (tilt.hasTilt || tilt.hasTwist)) {
+    const tiltResult = applyBrushTiltDynamics({
+      baseAngleDeg: angleDeg,
+      baseRoundness: roundness,
+      baseSize: size,
+      tilt,
+      settings: {
+        tiltAngle: normalized.tiltAngle ?? 0,
+        tiltRoundness: normalized.tiltRoundness ?? 0,
+        tiltSize: normalized.tiltSize ?? 0,
+        rotationFollowsTwist: normalized.rotationFollowsTwist ?? false,
+      },
+    });
+    angleDeg = tiltResult.angleDeg;
+    roundness = tiltResult.roundness;
+    size = Math.max(1, tiltResult.size);
+  }
 
   return {
     size: round(size),
@@ -701,7 +730,7 @@ export function resolveBrushDynamics(
     flow: round(clamp(normalized.flow * flowFactor, 0, 1)),
     spacingPx: round(Math.max(1, size * normalized.spacing * velocitySpacing)),
     hardness: normalized.hardness,
-    roundness: normalized.roundness,
+    roundness: clamp(roundness, 0.05, 1),
     angleDeg: normalizeAngle(angleDeg),
     tipShape: normalized.tipShape,
   };
@@ -715,7 +744,7 @@ export function buildBrushDabs(
   options: BuildBrushDabsOptions = {},
 ): BrushDab[] {
   const normalized = normalizeBrushSettings(settings);
-  const dynamics = resolveBrushDynamics(normalized, pressure, options.tiltAngle, options.velocityPxPerMs);
+  const dynamics = resolveBrushDynamics(normalized, pressure, options.tiltAngle, options.velocityPxPerMs, options.tilt);
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const distance = Math.hypot(dx, dy);
@@ -759,7 +788,7 @@ export function buildBrushStrokePreviewMetadata(
   const shouldSmooth = options.applySmoothing !== false;
   const smoothedTo = shouldSmooth ? smoothBrushPoint(from, to, normalized.smoothing) : roundPoint(to);
   const velocity = normalizeBrushVelocity(options.velocityPxPerMs ?? 0);
-  const dynamics = resolveBrushDynamics(normalized, pressure, options.tiltAngle, options.velocityPxPerMs ?? 0);
+  const dynamics = resolveBrushDynamics(normalized, pressure, options.tiltAngle, options.velocityPxPerMs ?? 0, options.tilt);
   const dabs = buildBrushDabs(from, smoothedTo, normalized, pressure, {
     seed,
     startIndex: options.startIndex ?? 0,
@@ -799,7 +828,7 @@ export function buildBrushStrokePreviewMetadata(
       angleDeg: options.tiltAngle === undefined || options.tiltAngle === null
         ? null
         : normalizeAngle(options.tiltAngle),
-      affects: ['angle'],
+      affects: ['angle', 'roundness', 'size'],
     },
     velocity: {
       pxPerMs: round(options.velocityPxPerMs ?? 0),
@@ -942,7 +971,7 @@ export function describeBrushWorkflowSupport(
       },
       tilt: {
         supported: true,
-        affects: ['angle'],
+        affects: ['angle', 'roundness', 'size'],
         unsupportedAffects: uniqueStrings(tiltUnsupportedAffects),
       },
       randomization: {
@@ -1530,6 +1559,26 @@ export function readBrushTilt(event: Pick<PointerEvent, 'tiltX' | 'tiltY'>): num
   return round(((angleDeg % 360) + 360) % 360);
 }
 
+/**
+ * Reads the full stylus tilt + barrel-rotation state from a PointerEvent: prefers the
+ * altitude/azimuth angles (Apple Pencil / modern), falls back to tiltX/tiltY (Wacom), and
+ * picks up barrel `twist`. Returns an upright/no-tilt state for a mouse or touch.
+ */
+export function readBrushTiltState(
+  event: Pick<PointerEvent, 'tiltX' | 'tiltY' | 'twist'> & {
+    altitudeAngle?: number;
+    azimuthAngle?: number;
+  },
+): BrushTiltState {
+  return resolveBrushTiltState({
+    tiltX: event.tiltX,
+    tiltY: event.tiltY,
+    twist: event.twist,
+    altitudeAngle: event.altitudeAngle,
+    azimuthAngle: event.azimuthAngle,
+  });
+}
+
 export function paintBrushDab(
   context: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
   dab: BrushDab,
@@ -1619,6 +1668,9 @@ const IMPLEMENTED_DYNAMIC_FIELDS = new Set([
   'pressureOpacity',
   'pressureFlow',
   'tiltAngle',
+  'tiltSize',
+  'tiltRoundness',
+  'rotationFollowsTwist',
   'scatter',
   'symmetryMode',
   'roundness',
@@ -1662,10 +1714,8 @@ const UNSUPPORTED_DYNAMIC_FIELDS = [
   'pressureRoundness',
   'pressureHardness',
   'pressureScatter',
-  'tiltSize',
   'tiltOpacity',
   'tiltFlow',
-  'tiltRoundness',
   'tiltScatter',
 ];
 
@@ -1723,25 +1773,15 @@ const UNSUPPORTED_BRUSH_FIELD_WARNINGS: Record<string, BrushCapabilityWarning> =
     category: 'pressure',
     message: 'Pressure scatter dynamics are not implemented; scatter is deterministic from the stroke seed.',
   },
-  tiltSize: {
-    field: 'tiltSize',
-    category: 'tilt',
-    message: 'Tilt size dynamics are not implemented; tilt currently maps to dab angle only.',
-  },
   tiltOpacity: {
     field: 'tiltOpacity',
     category: 'tilt',
-    message: 'Tilt opacity dynamics are not implemented; tilt currently maps to dab angle only.',
+    message: 'Tilt opacity dynamics are not implemented; tilt maps to dab angle, elongation, and size.',
   },
   tiltFlow: {
     field: 'tiltFlow',
     category: 'tilt',
-    message: 'Tilt flow dynamics are not implemented; tilt currently maps to dab angle only.',
-  },
-  tiltRoundness: {
-    field: 'tiltRoundness',
-    category: 'tilt',
-    message: 'Tilt roundness dynamics are not implemented; tilt currently maps to dab angle only.',
+    message: 'Tilt flow dynamics are not implemented; tilt maps to dab angle, elongation, and size.',
   },
   tiltScatter: {
     field: 'tiltScatter',

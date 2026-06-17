@@ -38,7 +38,7 @@ import {
   normalizeBrushSettings,
   paintBrushDab,
   readBrushPressure,
-  readBrushTilt,
+  readBrushTiltState,
   smoothBrushPoint,
 } from '../ImageBrushEngine';
 import {
@@ -377,12 +377,12 @@ function paintQuickMaskStrokeSegment(
 ): void {
   const settings = normalizeBrushSettings(env.brushSettings);
   const pressure = readBrushPressure(event);
-  const tiltAngle = readBrushTilt(event);
+  const tilt = readBrushTiltState(event);
   const velocityPxPerMs = resolveActiveBrushStrokeVelocity(from, to, event);
   const dabs = buildBrushDabs(from, to, settings, pressure, {
     seed: stroke?.seed ?? 0,
     startIndex: stroke?.dabIndex ?? 0,
-    tiltAngle,
+    tilt,
     velocityPxPerMs,
   });
   if (stroke) {
@@ -409,12 +409,12 @@ function paintLayerMaskStrokeSegment(
 ): void {
   const settings = normalizeBrushSettings(env.brushSettings);
   const pressure = readBrushPressure(event);
-  const tiltAngle = readBrushTilt(event);
+  const tilt = readBrushTiltState(event);
   const velocityPxPerMs = resolveActiveBrushStrokeVelocity(from, to, event);
   const dabs = buildBrushDabs(from, to, settings, pressure, {
     seed: stroke?.seed ?? 0,
     startIndex: stroke?.dabIndex ?? 0,
-    tiltAngle,
+    tilt,
     velocityPxPerMs,
   });
   if (stroke) {
@@ -452,12 +452,12 @@ function paintStrokeSegment(
     : null;
   const compositeOperation = stroke?.isEraser && !routeColorComponents ? 'destination-out' : 'source-over';
   const pressure = readBrushPressure(event);
-  const tiltAngle = readBrushTilt(event);
+  const tilt = readBrushTiltState(event);
   const velocityPxPerMs = resolveActiveBrushStrokeVelocity(from, to, event);
   const dabs = buildBrushDabs(from, to, settings, pressure, {
     seed: stroke?.seed ?? 0,
     startIndex: stroke?.dabIndex ?? 0,
-    tiltAngle,
+    tilt,
     velocityPxPerMs,
   });
 

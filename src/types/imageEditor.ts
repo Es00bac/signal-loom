@@ -315,6 +315,14 @@ export interface BrushSettings {
   pressureSize: number;
   pressureOpacity: number;
   pressureFlow: number;
+  /** Stylus tilt → brush angle steering (0..1). */
+  tiltAngle?: number;
+  /** Stylus tilt → tip flattening / elongation (0..1). */
+  tiltRoundness?: number;
+  /** Stylus tilt → footprint growth (0..1). */
+  tiltSize?: number;
+  /** Barrel rotation (twist) rotates the tip. */
+  rotationFollowsTwist?: boolean;
   tipShape: 'round' | 'square';
   symmetryMode?: BrushSymmetryMode;
   velocitySize?: number;
@@ -812,6 +820,10 @@ export const DEFAULT_BRUSH_SETTINGS: BrushSettings = {
   pressureSize: 0.65,
   pressureOpacity: 0,
   pressureFlow: 0.35,
+  tiltAngle: 0.7,
+  tiltRoundness: 0.6,
+  tiltSize: 0.2,
+  rotationFollowsTwist: true,
   tipShape: 'round',
   symmetryMode: 'none',
   velocitySize: 0,

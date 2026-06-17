@@ -17,6 +17,12 @@ import { docToScreen, fitToContainer, screenToDoc, zoomAround, type Point } from
 import { ImageEditorRulers } from './ImageEditorRulers';
 import { snapGuidePosition } from './ImageRulersGuides';
 import { computeBrushCursorRings } from './brushCursorGeometry';
+import {
+  computeBrushTiltPreview,
+  resolveBrushTiltState,
+  type BrushTiltDynamicsSettings,
+  type BrushTiltState,
+} from './brushTiltGeometry';
 import { CanvasViewportGesture } from './imageCanvasGestures';
 import { getSelection } from './selectionRegistry';
 import { useToolDispatcher } from './tools/dispatcher';
@@ -692,6 +698,10 @@ export function ImageEditorCanvas() {
           roundness={brushSettings.roundness}
           sizePx={brushSettings.size * brushCursorZoom}
           square={brushSettings.tipShape === 'square'}
+          tiltAngle={brushSettings.tiltAngle ?? 0.7}
+          tiltRoundness={brushSettings.tiltRoundness ?? 0.6}
+          tiltSize={brushSettings.tiltSize ?? 0.2}
+          rotationFollowsTwist={brushSettings.rotationFollowsTwist ?? true}
           wrapperRef={wrapperRef}
         />
       ) : null}
@@ -841,6 +851,10 @@ function BrushCursorOverlay({
   roundness,
   sizePx,
   square,
+  tiltAngle,
+  tiltRoundness,
+  tiltSize,
+  rotationFollowsTwist,
   wrapperRef,
 }: {
   angleDeg: number;
@@ -849,19 +863,84 @@ function BrushCursorOverlay({
   roundness: number;
   sizePx: number;
   square: boolean;
+  tiltAngle: number;
+  tiltRoundness: number;
+  tiltSize: number;
+  rotationFollowsTwist: boolean;
   wrapperRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const footprintRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const shaftRef = useRef<HTMLDivElement>(null);
+  const handleRef = useRef<HTMLDivElement>(null);
+
+  const tiltSettings = useMemo<BrushTiltDynamicsSettings>(
+    () => ({ tiltAngle, tiltRoundness, tiltSize, rotationFollowsTwist }),
+    [tiltAngle, tiltRoundness, tiltSize, rotationFollowsTwist],
+  );
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
     const el = ref.current;
-    if (!wrapper || !el) return undefined;
+    if (!wrapper || !el || eyedropper) return undefined;
+
+    // Live geometry is applied via direct style mutation (like the position update) to
+    // avoid a React re-render on every high-frequency stylus sample.
+    const applyGeometry = (event: PointerEvent) => {
+      const tilt: BrushTiltState = resolveBrushTiltState({
+        tiltX: event.tiltX,
+        tiltY: event.tiltY,
+        twist: event.twist,
+        altitudeAngle: (event as PointerEvent & { altitudeAngle?: number }).altitudeAngle,
+        azimuthAngle: (event as PointerEvent & { azimuthAngle?: number }).azimuthAngle,
+      });
+      const preview = computeBrushTiltPreview({ sizePx, baseRoundness: roundness, tilt, settings: tiltSettings });
+      const rot = angleDeg + preview.footprint.rotationDeg;
+      const radius = square ? '0' : '9999px';
+
+      const footprint = footprintRef.current;
+      if (footprint) {
+        footprint.style.width = `${preview.footprint.width}px`;
+        footprint.style.height = `${preview.footprint.height}px`;
+        footprint.style.borderRadius = radius;
+        footprint.style.transform = `translate(-50%, -50%) rotate(${rot}deg)`;
+      }
+      const innerEl = innerRef.current;
+      if (innerEl) {
+        const showInner = hardness < 0.99;
+        innerEl.style.opacity = showInner ? '1' : '0';
+        innerEl.style.width = `${Math.max(2, preview.footprint.width * hardness)}px`;
+        innerEl.style.height = `${Math.max(2, preview.footprint.height * hardness)}px`;
+        innerEl.style.borderRadius = radius;
+        innerEl.style.transform = `translate(-50%, -50%) rotate(${rot}deg)`;
+      }
+      // Pen-shaft indicator: a stick standing out of the contact point toward the held
+      // end of the pen, lengthening as the pen lays down (Krita-style 3D tip cue).
+      const shaft = shaftRef.current;
+      const handle = handleRef.current;
+      if (shaft && handle) {
+        if (preview.shaft) {
+          const { angleDeg: shaftAngle, lengthPx } = preview.shaft;
+          shaft.style.opacity = '1';
+          shaft.style.width = `${lengthPx}px`;
+          shaft.style.transform = `rotate(${shaftAngle}deg)`;
+          const rad = (shaftAngle * Math.PI) / 180;
+          handle.style.opacity = '1';
+          handle.style.transform = `translate(${Math.cos(rad) * lengthPx}px, ${Math.sin(rad) * lengthPx}px) translate(-50%, -50%)`;
+        } else {
+          shaft.style.opacity = '0';
+          handle.style.opacity = '0';
+        }
+      }
+    };
+
     const move = (event: PointerEvent) => {
       const rect = wrapper.getBoundingClientRect();
       el.style.left = `${event.clientX - rect.left}px`;
       el.style.top = `${event.clientY - rect.top}px`;
       el.style.opacity = '1';
+      applyGeometry(event);
     };
     const hide = () => { el.style.opacity = '0'; };
     wrapper.addEventListener('pointermove', move, { passive: true });
@@ -874,13 +953,14 @@ function BrushCursorOverlay({
       wrapper.removeEventListener('pointerdown', move);
       wrapper.removeEventListener('pointerleave', hide);
     };
-  }, [wrapperRef]);
+  }, [wrapperRef, eyedropper, angleDeg, hardness, roundness, sizePx, square, tiltSettings]);
 
+  // Initial (upright) geometry; the live handler refines it per pointer sample.
   const { outer, inner } = computeBrushCursorRings({ sizePx, roundness, hardness });
 
-  return (
-    <div ref={ref} className="pointer-events-none absolute left-0 top-0 z-30 opacity-0">
-      {eyedropper ? (
+  if (eyedropper) {
+    return (
+      <div ref={ref} className="pointer-events-none absolute left-0 top-0 z-30 opacity-0">
         <svg width="24" height="24" viewBox="0 0 24 24" style={{ transform: 'translate(-50%, -50%)' }} aria-hidden>
           <g stroke="#fff" strokeWidth="1.5" style={{ filter: 'drop-shadow(0 0 1px rgba(0,0,0,0.9))' }}>
             <line x1="12" y1="2" x2="12" y2="9" />
@@ -890,35 +970,76 @@ function BrushCursorOverlay({
             <circle cx="12" cy="12" r="2.5" fill="none" />
           </g>
         </svg>
-      ) : (
-        <>
-          <div
-            style={{
-              width: `${outer.width}px`,
-              height: `${outer.height}px`,
-              borderRadius: square ? '0' : '9999px',
-              // Dual-tone outline so it reads on both light and dark pixels.
-              border: '1px solid rgba(0,0,0,0.78)',
-              boxShadow: '0 0 0 1px rgba(255,255,255,0.85)',
-              transform: `translate(-50%, -50%) rotate(${angleDeg}deg)`,
-            }}
-          />
-          {inner ? (
-            // Fainter hard-core ring so soft brushes read as soft (Photoshop-style).
-            <div
-              className="absolute left-0 top-0"
-              style={{
-                width: `${inner.width}px`,
-                height: `${inner.height}px`,
-                borderRadius: square ? '0' : '9999px',
-                border: '1px dashed rgba(0,0,0,0.45)',
-                boxShadow: '0 0 0 1px rgba(255,255,255,0.45)',
-                transform: `translate(-50%, -50%) rotate(${angleDeg}deg)`,
-              }}
-            />
-          ) : null}
-        </>
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <div ref={ref} className="pointer-events-none absolute left-0 top-0 z-30 opacity-0">
+      {/* Pen-shaft line: anchored at the cursor point, drawn outward; hidden when upright. */}
+      <div
+        ref={shaftRef}
+        className="absolute left-0 top-0 opacity-0"
+        style={{
+          height: '2.5px',
+          width: '0px',
+          transformOrigin: '0 50%',
+          background: 'linear-gradient(90deg, rgba(80,180,255,0.95), rgba(80,180,255,0.35))',
+          boxShadow: '0 0 0 1px rgba(0,0,0,0.5)',
+          borderRadius: '2px',
+        }}
+      />
+      <div
+        ref={handleRef}
+        className="absolute left-0 top-0 opacity-0"
+        style={{
+          width: '9px',
+          height: '9px',
+          borderRadius: '9999px',
+          background: 'rgba(80,180,255,0.95)',
+          boxShadow: '0 0 0 1px rgba(0,0,0,0.6), 0 0 0 2px rgba(255,255,255,0.6)',
+        }}
+      />
+      {/* Tipped footprint (flattens + rotates with tilt/twist). Contains a top notch so
+          orientation/rotation reads even for near-round tips. */}
+      <div
+        ref={footprintRef}
+        className="absolute left-0 top-0"
+        style={{
+          width: `${outer.width}px`,
+          height: `${outer.height}px`,
+          borderRadius: square ? '0' : '9999px',
+          border: '1px solid rgba(0,0,0,0.78)',
+          boxShadow: '0 0 0 1px rgba(255,255,255,0.85)',
+          transform: `translate(-50%, -50%) rotate(${angleDeg}deg)`,
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            left: '50%',
+            top: '-6px',
+            width: '2px',
+            height: '7px',
+            transform: 'translateX(-50%)',
+            background: 'rgba(0,0,0,0.7)',
+            boxShadow: '0 0 0 1px rgba(255,255,255,0.8)',
+          }}
+        />
+      </div>
+      <div
+        ref={innerRef}
+        className="absolute left-0 top-0"
+        style={{
+          width: `${inner?.width ?? 2}px`,
+          height: `${inner?.height ?? 2}px`,
+          opacity: inner ? 1 : 0,
+          borderRadius: square ? '0' : '9999px',
+          border: '1px dashed rgba(0,0,0,0.45)',
+          boxShadow: '0 0 0 1px rgba(255,255,255,0.45)',
+          transform: `translate(-50%, -50%) rotate(${angleDeg}deg)`,
+        }}
+      />
     </div>
   );
 }

@@ -304,7 +304,7 @@ describe('ImageBrushEngine', () => {
       pressureFlow: 0.4,
       scatter: 0.25,
       pressureAngle: 0.8,
-      tiltRoundness: 0.45,
+      tiltOpacity: 0.45,
       angleJitter: 0.2,
       colorJitter: 0.3,
     };
@@ -314,7 +314,7 @@ describe('ImageBrushEngine', () => {
       category: warning.category,
     }))).toEqual([
       { field: 'pressureAngle', category: 'pressure' },
-      { field: 'tiltRoundness', category: 'tilt' },
+      { field: 'tiltOpacity', category: 'tilt' },
       { field: 'angleJitter', category: 'randomization' },
       { field: 'colorJitter', category: 'randomization' },
     ]);
@@ -330,7 +330,7 @@ describe('ImageBrushEngine', () => {
 
     expect(summary.unsupportedWarnings.map((warning) => `${warning.presetId}:${warning.field}`)).toEqual([
       'imported-mixer:pressureAngle',
-      'imported-mixer:tiltRoundness',
+      'imported-mixer:tiltOpacity',
       'imported-mixer:angleJitter',
       'imported-mixer:colorJitter',
     ]);
@@ -366,7 +366,7 @@ describe('ImageBrushEngine', () => {
         },
         tilt: {
           supported: true,
-          affects: ['angle'],
+          affects: ['angle', 'roundness', 'size'],
           unsupportedAffects: ['opacity'],
         },
         randomization: {
@@ -459,7 +459,7 @@ describe('ImageBrushEngine', () => {
         flow: { supported: true, value: 0.64 },
         smoothing: { supported: true, value: 0.4 },
         pressure: { supported: true, affects: ['size', 'opacity', 'flow'] },
-        tilt: { supported: true, affects: ['angle'] },
+        tilt: { supported: true, affects: ['angle', 'roundness', 'size'] },
         symmetry: { supported: true, mode: 'vertical', mirroredDabMultiplier: 2 },
         presets: { supported: true, totalPresets: IMAGE_BRUSH_PRESETS.length, unsupportedWarnings: 0 },
       },
@@ -508,7 +508,7 @@ describe('ImageBrushEngine', () => {
         ...DEFAULT_BRUSH_SETTINGS,
         size: 16,
         pressureAngle: 0.5,
-        tiltRoundness: 0.4,
+        tiltScatter: 0.4,
       },
       presets: [],
       presetPack: {
@@ -567,7 +567,7 @@ describe('ImageBrushEngine', () => {
     });
     expect(readiness.limitations.advancedDynamics.unsupportedFields).toEqual([
       'pressureAngle',
-      'tiltRoundness',
+      'tiltScatter',
     ]);
     expect(readiness.signature).toContain('blockers=no-open-document,no-editable-pixel-target,target-pixels-locked,target-layer-hidden,invalid-canvas-bounds');
   });
@@ -798,7 +798,7 @@ describe('ImageBrushEngine', () => {
         tilt: {
           supported: true,
           state: 'browser-or-device-unavailable',
-          affects: ['angle'],
+          affects: ['angle', 'roundness', 'size'],
         },
         velocity: {
           supported: true,
