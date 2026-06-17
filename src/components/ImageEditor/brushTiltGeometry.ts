@@ -35,6 +35,8 @@ export interface BrushTiltState {
 }
 
 const RAD2DEG = 180 / Math.PI;
+/** A fully laid-down tip (side of the lead) widens up to (1 + this) times its base size. */
+const MAX_TILT_SIZE_GROWTH = 3;
 
 function isFiniteNum(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value);
@@ -127,8 +129,9 @@ export function applyBrushTiltDynamics(input: BrushTiltDynamicsInput): BrushTilt
     // Flatten: a fully tilted pen squashes the tip toward `1 - tiltRoundness` of its base.
     const squash = 1 - clamp(settings.tiltRoundness, 0, 1) * amount;
     roundness = clamp(roundness * squash, 0.05, 1);
-    // Grow with tilt (a laid-down brush covers more).
-    size = size * (1 + clamp(settings.tiltSize, 0, 1) * amount);
+    // Grow with tilt: a laid-down tip covers much more (drawing with the side of the lead,
+    // not just the point). tiltSize 1 widens up to ~4x at full tilt.
+    size = size * (1 + clamp(settings.tiltSize, 0, 1) * amount * MAX_TILT_SIZE_GROWTH);
     // Steer the tip's long axis toward the lean direction.
     const steer = clamp(settings.tiltAngle, 0, 1) * amount;
     angleDeg = angleDeg + shortestAngleDelta(angleDeg, tilt.azimuthDeg) * steer;
@@ -199,11 +202,13 @@ export function computeBrushTiltPreview(input: {
     rotationDeg: dyn.angleDeg,
   };
 
-  // Shaft points opposite the lean (toward the held end of the pen) and lengthens as the
-  // pen lays down, so the indicator reads as a stick standing up out of the contact point.
+  // The shaft points toward the pen body. azimuth (the projection of the pen onto the
+  // surface, per the PointerEvent spec) already points from the tip toward the held end,
+  // so the indicator must use the azimuth directly — NOT azimuth+180, which made the
+  // indicator lean opposite the physical pen. It lengthens as the pen lays down.
   const shaft = input.tilt.hasTilt
     ? {
-        angleDeg: normalizeDegrees(input.tilt.azimuthDeg + 180),
+        angleDeg: normalizeDegrees(input.tilt.azimuthDeg),
         lengthPx: (input.sizePx / 2) + input.tilt.tiltAmount * input.sizePx,
       }
     : null;

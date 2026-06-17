@@ -430,7 +430,12 @@ export const IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     id: 'pencil',
     label: 'Pencil',
     group: 'Sketch',
-    settings: { size: 4, opacity: 1, hardness: 0.95, flow: 1, spacing: 0.08, pressureSize: 0.75, pressureFlow: 0.2 },
+    // Tilt draws with the side of the lead: a laid-down pen widens + flattens the tip and
+    // aligns it to the lean direction, like a real graphite pencil.
+    settings: {
+      size: 4, opacity: 1, hardness: 0.95, flow: 1, spacing: 0.08, pressureSize: 0.75, pressureFlow: 0.2,
+      tiltSize: 1, tiltRoundness: 0.85, tiltAngle: 1,
+    },
   },
   {
     id: 'marker',

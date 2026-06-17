@@ -93,8 +93,20 @@ describe('computeBrushTiltPreview', () => {
     expect(p.footprint.height).toBeLessThan(p.footprint.width); // flattened ellipse
     expect(p.shaft).not.toBeNull();
     expect(p.shaft?.lengthPx).toBeGreaterThan(60);
-    // shaft points opposite the lean (azimuth 90 -> shaft 270)
-    expect(p.shaft ? normalizeDegrees(p.shaft.angleDeg) : null).toBeCloseTo(270, 4);
+    // shaft points toward the pen body, i.e. along the azimuth (90), matching the
+    // physical pen — NOT the opposite direction.
+    expect(p.shaft ? normalizeDegrees(p.shaft.angleDeg) : null).toBeCloseTo(90, 4);
+  });
+
+  it('points the shaft toward the physical pen body, not opposite it', () => {
+    // Pen leaning toward the upper-left (body up-left, tip down-right): tiltX<0, tiltY<0.
+    // The shaft indicator must lean the same way (up-left), not mirror it (down-right).
+    const tilt = resolveBrushTiltState({ tiltX: -40, tiltY: -40 });
+    const p = computeBrushTiltPreview({ sizePx: 120, baseRoundness: 1, tilt, settings: SETTINGS });
+    expect(p.shaft).not.toBeNull();
+    const rad = ((p.shaft!.angleDeg) * Math.PI) / 180;
+    expect(Math.cos(rad)).toBeLessThan(0); // points left (−X)
+    expect(Math.sin(rad)).toBeLessThan(0); // points up (−Y on screen)
   });
 
   it('has no shaft when upright', () => {
