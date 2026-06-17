@@ -56,7 +56,7 @@ import { PHOTOSHOP_QUICK_ACTIONS } from './PhotoshopQuickActions';
 import { runPhotoshopQuickAction } from './PhotoshopQuickActionRunner';
 import { nudgeSelection } from './photoshopQuickActions/selectionActions';
 import { redo, undo } from './undoRedoApply';
-import type { NativeMenuCommand } from '../../lib/nativeApp';
+import { dispatchNativeRendererCommand, type NativeMenuCommand } from '../../lib/nativeApp';
 import { buildDownloadFilename, downloadBlob } from '../../lib/downloadAsset';
 import { useNativeMenuCommand } from '../../shared/native/useNativeMenuCommand';
 import {
@@ -363,6 +363,23 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
             }
             state.bumpSelectionVersion(docId);
             state.setHasSelection(docId, true);
+            return;
+          }
+          // Photoshop adjustment accelerators (declared in the menu, bound here
+          // for the renderer/web/Android path; Electron binds them natively).
+          if (k === 'l' && !e.shiftKey) {
+            e.preventDefault();
+            dispatchNativeRendererCommand('image:adjust-levels');
+            return;
+          }
+          if (k === 'm' && !e.shiftKey) {
+            e.preventDefault();
+            dispatchNativeRendererCommand('image:adjust-curves');
+            return;
+          }
+          if (k === 'u' && !e.shiftKey) {
+            e.preventDefault();
+            dispatchNativeRendererCommand('image:adjust-hue-saturation');
             return;
           }
         }

@@ -8,6 +8,7 @@ import type { ImageLayer } from '../../types/imageEditor';
 import { createMask, maskBoundingBox } from './SelectionMask';
 import { ImageEditorWorkspace } from './ImageEditorWorkspace';
 import { getSelection, setSelection } from './selectionRegistry';
+import { onNativeRendererCommand, type NativeMenuCommand } from '../../lib/nativeApp';
 
 vi.mock('./ImageEditorToolbar', () => ({ ImageEditorToolbar: () => null }));
 vi.mock('./ImageEditorCanvas', () => ({ ImageEditorCanvas: () => null }));
@@ -187,6 +188,56 @@ describe('ImageEditorWorkspace navigation controls', () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowDown', shiftKey: true }));
     });
     expect(maskBoundingBox(getSelection(docId)!)).toEqual({ x: 3, y: 12, width: 2, height: 1 });
+  });
+
+  it('binds Ctrl+L / Ctrl+M / Ctrl+U to the Levels / Curves / Hue-Saturation adjustment commands', () => {
+    openNavigationDocument();
+
+    act(() => {
+      root.render(<ImageEditorWorkspace getNewFlowNodePosition={() => ({ x: 0, y: 0 })} />);
+    });
+
+    const commands: NativeMenuCommand[] = [];
+    const off = onNativeRendererCommand((command) => commands.push(command));
+
+    try {
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ctrlKey: true, key: 'l' }));
+        document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ctrlKey: true, key: 'm' }));
+        document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ctrlKey: true, key: 'u' }));
+      });
+    } finally {
+      off();
+    }
+
+    expect(commands).toEqual([
+      'image:adjust-levels',
+      'image:adjust-curves',
+      'image:adjust-hue-saturation',
+    ]);
+  });
+
+  it('does not fire adjustment commands for plain L / M / U (tool shortcuts) without Ctrl', () => {
+    openNavigationDocument();
+
+    act(() => {
+      root.render(<ImageEditorWorkspace getNewFlowNodePosition={() => ({ x: 0, y: 0 })} />);
+    });
+
+    const commands: NativeMenuCommand[] = [];
+    const off = onNativeRendererCommand((command) => commands.push(command));
+
+    try {
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'l' }));
+        document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'm' }));
+        document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'u' }));
+      });
+    } finally {
+      off();
+    }
+
+    expect(commands).toEqual([]);
   });
 });
 
