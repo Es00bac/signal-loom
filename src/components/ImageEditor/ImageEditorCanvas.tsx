@@ -715,6 +715,8 @@ export function ImageEditorCanvas() {
         />
       ) : null}
 
+      {brushCursorActive ? <BrushQuickSizeControl zoom={brushCursorZoom} /> : null}
+
       {showRulers && activeDoc ? (
         <ImageEditorRulers
           cursor={null}
@@ -854,6 +856,58 @@ export function ImageEditorCanvas() {
  * re-render per move); the inner element carries the React-managed shape. While
  * Ctrl is held it becomes a sampler crosshair (the eyedropper modifier).
  */
+const BRUSH_QUICK_SIZE_MIN = 1;
+const BRUSH_QUICK_SIZE_MAX = 512;
+const BRUSH_QUICK_PREVIEW_BOX = 44;
+
+/**
+ * Always-on quick brush-size control, pinned to the lower-left of the canvas (mirroring the
+ * lower-right Touch Nav button) and visible whenever a brush-class tool is active — including in
+ * fullscreen with the rest of the chrome hidden, since it lives on the canvas overlay layer. Drags
+ * the base brush size with a live footprint preview (scaled to the current zoom, capped to a small
+ * box) and the exact size in pixels, so size can be tweaked without opening the Tool Options dialog.
+ * Marked as an interaction overlay so adjusting it never paints on the canvas underneath.
+ */
+function BrushQuickSizeControl({ zoom }: { zoom: number }) {
+  const size = useImageEditorStore((s) => s.brushSettings.size);
+  const setBrushSettings = useImageEditorStore((s) => s.setBrushSettings);
+  const roundedSize = Math.round(size);
+  // Footprint preview at on-screen scale, capped so large brushes still fit the swatch.
+  const previewDiameter = Math.max(3, Math.min(BRUSH_QUICK_PREVIEW_BOX - 6, size * zoom));
+  return (
+    <div
+      className="pointer-events-auto absolute bottom-3 left-3 z-[65] flex items-center gap-2 rounded-full border border-cyan-300/20 bg-[#08111d]/90 px-2.5 py-1.5 shadow-xl shadow-black/40 backdrop-blur-md"
+      data-image-canvas-interaction-overlay="true"
+      data-image-brush-size-quick-slider="true"
+      style={{ touchAction: 'auto' }}
+      title="Brush size — drag to adjust"
+    >
+      <span
+        className="relative flex shrink-0 items-center justify-center rounded-full border border-cyan-300/15 bg-[#0d1320]"
+        style={{ width: BRUSH_QUICK_PREVIEW_BOX, height: BRUSH_QUICK_PREVIEW_BOX }}
+      >
+        <span
+          className="rounded-full bg-cyan-200/85 shadow-[0_0_0_1px_rgba(8,11,18,0.9)]"
+          style={{ width: previewDiameter, height: previewDiameter }}
+        />
+      </span>
+      <input
+        aria-label="Brush size"
+        className="h-1.5 w-24 cursor-pointer accent-cyan-300 sm:w-32"
+        max={BRUSH_QUICK_SIZE_MAX}
+        min={BRUSH_QUICK_SIZE_MIN}
+        onChange={(event) => setBrushSettings({ size: Number(event.target.value) })}
+        step={1}
+        type="range"
+        value={Math.min(BRUSH_QUICK_SIZE_MAX, Math.max(BRUSH_QUICK_SIZE_MIN, roundedSize))}
+      />
+      <span className="w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums text-cyan-100/80">
+        {roundedSize}px
+      </span>
+    </div>
+  );
+}
+
 function BrushCursorOverlay({
   angleDeg,
   eyedropper,
