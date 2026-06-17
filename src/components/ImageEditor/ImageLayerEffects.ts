@@ -1213,7 +1213,70 @@ function buildLayerEffectPresetCompatibilitySignature(
   ].join(':');
 }
 
+interface LayerEffectRenderCacheEntry {
+  signature: string;
+  result: RenderedLayerWithEffects;
+}
+
+/**
+ * Memoizes the (expensive) styled-bitmap render per layer id. `renderLayerWithEffects`
+ * is called from many hot paths — the composite renderer alone invokes it twice per
+ * frame (the synchronous fallback AND the worker-prep), plus layer-panel thumbnails,
+ * the eyedropper, crop, and PSD/XCF export. Recomputing the per-pixel effect stack
+ * every time made unrelated re-renders (panel toggle, pan, zoom) re-run the full
+ * stroke/shadow/glow computation, which is why "toggling the interface takes minutes".
+ *
+ * The cache key mirrors exactly the fields `CompositeRenderer.buildDocSignature` uses to
+ * decide whether a layer's composited appearance changed, so it shares the codebase's
+ * existing invalidation contract (bitmapVersion is bumped on any pixel/mask edit). The
+ * cached bitmap is only ever read by callers, never mutated, so sharing it is safe.
+ */
+const layerEffectRenderCache = new Map<string, LayerEffectRenderCacheEntry>();
+const MAX_LAYER_EFFECT_CACHE_ENTRIES = 64;
+
+function buildLayerEffectRenderSignature(layer: ImageLayer): string {
+  return JSON.stringify({
+    width: layer.bitmap?.width ?? 0,
+    height: layer.bitmap?.height ?? 0,
+    bitmapVersion: layer.bitmapVersion,
+    hasMask: Boolean(layer.mask),
+    maskDensity: layer.maskDensity,
+    maskFeather: layer.maskFeather,
+    effects: layer.effects ?? null,
+    filters: layer.filters ?? null,
+  });
+}
+
+/** Clears the layer-effect render memo. Exposed for tests and for callers that need to
+ * force a recompute (e.g. after disposing of a document). */
+export function clearLayerEffectRenderCache(): void {
+  layerEffectRenderCache.clear();
+}
+
 export function renderLayerWithEffects(layer: ImageLayer): RenderedLayerWithEffects | null {
+  if (!layer.bitmap) return null;
+
+  const signature = buildLayerEffectRenderSignature(layer);
+  const cached = layerEffectRenderCache.get(layer.id);
+  if (cached && cached.signature === signature) {
+    return cached.result;
+  }
+
+  const result = computeLayerWithEffects(layer);
+  if (result) {
+    // Bound the cache so long sessions with many transient layers don't grow it
+    // without limit. Layer ids are stable, so the common case is a steady set of
+    // entries far below this cap.
+    if (!layerEffectRenderCache.has(layer.id) && layerEffectRenderCache.size >= MAX_LAYER_EFFECT_CACHE_ENTRIES) {
+      const oldestKey = layerEffectRenderCache.keys().next().value;
+      if (oldestKey !== undefined) layerEffectRenderCache.delete(oldestKey);
+    }
+    layerEffectRenderCache.set(layer.id, { signature, result });
+  }
+  return result;
+}
+
+function computeLayerWithEffects(layer: ImageLayer): RenderedLayerWithEffects | null {
   if (!layer.bitmap) return null;
 
   const enabledEffects = (layer.effects ?? []).filter((effect) => effect.enabled);
@@ -1298,6 +1361,17 @@ function renderEffectInto(
   }
 }
 
+/**
+ * Stroke via an O(W×H) Euclidean distance transform instead of the old
+ * O(opaquePixels × radius²) per-pixel disk scan. We build the source coverage in
+ * the padded target space, compute the exact Euclidean distance from every pixel to
+ * the nearest opaque pixel (and, for inside strokes, to the nearest transparent
+ * pixel), then paint the band whose distance falls within `radius`. The feather curve
+ * and the inside/outside/center positioning match the previous renderer's behaviour
+ * (a round, dilation-style stroke), but the cost no longer explodes with radius — a
+ * 200px stroke on a multi-megapixel layer is now a few linear passes, not billions of
+ * synchronous main-thread operations.
+ */
 function renderStroke(
   target: ImageData,
   source: ImageData,
@@ -1309,25 +1383,46 @@ function renderStroke(
   const radius = Math.max(0, Math.round(effect.size));
   if (radius === 0 || effect.opacity <= 0) return;
 
-  forEachOpaquePixel(source, (x, y, alpha) => {
-    for (let dy = -radius; dy <= radius; dy += 1) {
-      for (let dx = -radius; dx <= radius; dx += 1) {
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance > radius + 0.001) continue;
-        const sx = x + dx;
-        const sy = y + dy;
-        const sourceAlphaAtTarget = sampleAlpha(source, sx, sy);
-        const isInside = sourceAlphaAtTarget > 0;
-        if (effect.position === 'outside' && isInside) continue;
-        if (effect.position === 'inside' && !isInside) continue;
-        const feather = radius <= 1 ? 1 : clamp01(1 - Math.max(0, distance - radius + 1));
-        const effectAlpha = alpha * effect.opacity * feather;
-        blendPixel(target, originX + sx, originY + sy, color, effectAlpha);
-      }
+  const W = target.width;
+  const H = target.height;
+  const coverage = buildCoverageField(source, W, H, originX, originY, 0, 0);
+
+  // Distance from every target pixel to the nearest opaque source pixel.
+  const distToOpaque = euclideanDistanceField(coverage, W, H, (value) => value > 0);
+  // Inside strokes additionally need the distance to the nearest transparent pixel.
+  const distToEmpty = effect.position === 'inside'
+    ? euclideanDistanceField(coverage, W, H, (value) => value <= 0)
+    : null;
+
+  for (let i = 0; i < W * H; i += 1) {
+    const isInside = coverage[i] > 0;
+    let edgeDistance: number;
+    if (effect.position === 'outside') {
+      if (isInside) continue;
+      edgeDistance = distToOpaque[i];
+    } else if (effect.position === 'inside') {
+      if (!isInside) continue;
+      edgeDistance = distToEmpty ? distToEmpty[i] : distToOpaque[i];
+    } else {
+      // center: dilation-style band covering inside content plus an outer ring.
+      edgeDistance = distToOpaque[i];
     }
-  });
+    if (edgeDistance > radius + 0.001) continue;
+    const feather = radius <= 1 ? 1 : clamp01(1 - Math.max(0, edgeDistance - radius + 1));
+    const effectAlpha = effect.opacity * feather;
+    if (effectAlpha <= 0) continue;
+    blendPixel(target, i % W, Math.floor(i / W), color, effectAlpha);
+  }
 }
 
+/**
+ * Drop shadow / outer glow via a separable box blur of the alpha channel — O(W×H) per
+ * pass — replacing the old O(opaquePixels × radius²) disk accumulation. A box blur
+ * applied twice approximates the previous linear (cone) falloff while spreading roughly
+ * `radius` pixels; a zero radius is an exact identity so the unblurred (size 0) cases
+ * are unchanged. The blurred alpha is colorized, offset, and (for outer glow) masked to
+ * the area outside the source content, matching the prior compositing.
+ */
 function renderSpreadAlphaEffect(
   target: ImageData,
   source: ImageData,
@@ -1344,27 +1439,214 @@ function renderSpreadAlphaEffect(
 ): void {
   const color = parseCssColor(options.color);
   const radius = Math.max(0, Math.round(options.radius));
+  if (options.opacity <= 0) return;
 
-  forEachOpaquePixel(source, (x, y, alpha) => {
-    const spread = Math.max(0, radius);
-    for (let dy = -spread; dy <= spread; dy += 1) {
-      for (let dx = -spread; dx <= spread; dx += 1) {
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance > spread + 0.001) continue;
-        const sx = x + options.offsetX + dx;
-        const sy = y + options.offsetY + dy;
-        if (options.outsideOnly && sampleAlpha(source, sx, sy) > 0) continue;
-        const falloff = spread === 0 ? 1 : clamp01(1 - distance / (spread + 1));
-        blendPixel(
-          target,
-          options.originX + sx,
-          options.originY + sy,
-          color,
-          alpha * options.opacity * falloff,
-        );
+  const W = target.width;
+  const H = target.height;
+  const field = buildCoverageField(source, W, H, options.originX, options.originY, options.offsetX, options.offsetY);
+
+  if (radius > 0) {
+    // Two box-blur passes ≈ a triangular (cone) falloff reaching ~radius. Halving the
+    // radius per pass keeps the combined spread close to the requested size.
+    const halfWidth = Math.max(1, Math.round(radius / 2));
+    separableBoxBlur(field, W, H, halfWidth, 2);
+  }
+
+  for (let i = 0; i < W * H; i += 1) {
+    const spread = field[i];
+    if (spread <= 0) continue;
+    if (options.outsideOnly) {
+      const sourceCoverage = sampleAlpha(source, (i % W) - options.originX, Math.floor(i / W) - options.originY);
+      if (sourceCoverage > 0) continue;
+    }
+    const effectAlpha = spread * options.opacity;
+    if (effectAlpha <= 0) continue;
+    blendPixel(target, i % W, Math.floor(i / W), color, effectAlpha);
+  }
+}
+
+/**
+ * Builds an alpha-coverage field (0..1) at the padded target size, placing the source
+ * layer's alpha at (originX + offsetX, originY + offsetY). Used as the input to the
+ * distance transform (stroke) and the blur (shadow/glow).
+ */
+function buildCoverageField(
+  source: ImageData,
+  width: number,
+  height: number,
+  originX: number,
+  originY: number,
+  offsetX: number,
+  offsetY: number,
+): Float32Array {
+  const field = new Float32Array(width * height);
+  const baseX = originX + offsetX;
+  const baseY = originY + offsetY;
+  for (let y = 0; y < source.height; y += 1) {
+    const ty = baseY + y;
+    if (ty < 0 || ty >= height) continue;
+    for (let x = 0; x < source.width; x += 1) {
+      const tx = baseX + x;
+      if (tx < 0 || tx >= width) continue;
+      const alpha = source.data[(y * source.width + x) * 4 + 3] / 255;
+      if (alpha > 0) field[ty * width + tx] = alpha;
+    }
+  }
+  return field;
+}
+
+const EDT_INF = 1e20;
+
+/**
+ * Exact Euclidean distance transform (Felzenszwalb & Huttenlocher). Returns, for every
+ * cell, the Euclidean distance to the nearest cell for which `isSeed` is true. Runs in
+ * O(W×H) via two passes of the 1-D squared-distance transform.
+ */
+function euclideanDistanceField(
+  coverage: Float32Array,
+  width: number,
+  height: number,
+  isSeed: (value: number) => boolean,
+): Float32Array {
+  const grid = new Float64Array(width * height);
+  for (let i = 0; i < grid.length; i += 1) {
+    grid[i] = isSeed(coverage[i]) ? 0 : EDT_INF;
+  }
+
+  const maxDim = Math.max(width, height);
+  const f = new Float64Array(maxDim);
+  const d = new Float64Array(maxDim);
+  const v = new Int32Array(maxDim);
+  const z = new Float64Array(maxDim + 1);
+
+  // Vertical passes (columns).
+  for (let x = 0; x < width; x += 1) {
+    for (let y = 0; y < height; y += 1) f[y] = grid[y * width + x];
+    edt1d(f, height, d, v, z);
+    for (let y = 0; y < height; y += 1) grid[y * width + x] = d[y];
+  }
+  // Horizontal passes (rows).
+  for (let y = 0; y < height; y += 1) {
+    const base = y * width;
+    for (let x = 0; x < width; x += 1) f[x] = grid[base + x];
+    edt1d(f, width, d, v, z);
+    for (let x = 0; x < width; x += 1) grid[base + x] = d[x];
+  }
+
+  const result = new Float32Array(width * height);
+  for (let i = 0; i < result.length; i += 1) {
+    result[i] = Math.sqrt(grid[i]);
+  }
+  return result;
+}
+
+/**
+ * Euclidean distance from every pixel to the nearest transparent cell, where everything
+ * outside the image bounds counts as transparent (matching the old `sampleAlpha`
+ * out-of-bounds-is-0 behaviour that inner glow/shadow relied on). This is the inner
+ * counterpart used by content effects; it is O(W×H) like `euclideanDistanceField`.
+ */
+function distanceToEmptyField(coverage: Float32Array, width: number, height: number): Float32Array {
+  const internal = euclideanDistanceField(coverage, width, height, (value) => value <= 0);
+  for (let y = 0; y < height; y += 1) {
+    // Distance to the nearest cell just outside each edge (always orthogonal).
+    const borderY = Math.min(y + 1, height - y);
+    for (let x = 0; x < width; x += 1) {
+      const border = Math.min(x + 1, width - x, borderY);
+      const idx = y * width + x;
+      if (border < internal[idx]) internal[idx] = border;
+    }
+  }
+  return internal;
+}
+
+/** Samples a distance field at integer coords; out-of-bounds reads as 0 (transparent). */
+function sampleDistanceField(field: Float32Array, x: number, y: number, width: number, height: number): number {
+  if (x < 0 || y < 0 || x >= width || y >= height) return 0;
+  return field[y * width + x];
+}
+
+/** 1-D squared distance transform of a sampled function (Felzenszwalb & Huttenlocher). */
+function edt1d(f: Float64Array, n: number, d: Float64Array, v: Int32Array, z: Float64Array): void {
+  let k = 0;
+  v[0] = 0;
+  z[0] = -EDT_INF;
+  z[1] = EDT_INF;
+  for (let q = 1; q < n; q += 1) {
+    let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    while (s <= z[k]) {
+      k -= 1;
+      s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    }
+    k += 1;
+    v[k] = q;
+    z[k] = s;
+    z[k + 1] = EDT_INF;
+  }
+  k = 0;
+  for (let q = 0; q < n; q += 1) {
+    while (z[k + 1] < q) k += 1;
+    const dq = q - v[k];
+    d[q] = dq * dq + f[v[k]];
+  }
+}
+
+/**
+ * Separable box blur of a single-channel field, with clamp-to-edge sampling. Each pass
+ * is O(W×H) thanks to a sliding-window running sum. Applying it `passes` times
+ * approximates a Gaussian (two passes ≈ a triangular kernel).
+ */
+function separableBoxBlur(field: Float32Array, width: number, height: number, radius: number, passes: number): void {
+  if (radius <= 0 || passes <= 0) return;
+  const scratch = new Float32Array(field.length);
+  for (let p = 0; p < passes; p += 1) {
+    // Each pass writes field -> scratch (horizontal) then scratch -> field (vertical),
+    // so the final result is always back in `field`.
+    boxBlurAxis(field, scratch, width, height, radius, true);
+    boxBlurAxis(scratch, field, width, height, radius, false);
+  }
+}
+
+function boxBlurAxis(
+  src: Float32Array,
+  dst: Float32Array,
+  width: number,
+  height: number,
+  radius: number,
+  horizontal: boolean,
+): void {
+  const windowSize = 2 * radius + 1;
+  const inv = 1 / windowSize;
+  if (horizontal) {
+    for (let y = 0; y < height; y += 1) {
+      const base = y * width;
+      let sum = 0;
+      for (let k = -radius; k <= radius; k += 1) {
+        sum += src[base + clampIndex(k, width)];
+      }
+      for (let x = 0; x < width; x += 1) {
+        dst[base + x] = sum * inv;
+        sum += src[base + clampIndex(x + radius + 1, width)] - src[base + clampIndex(x - radius, width)];
       }
     }
-  });
+  } else {
+    for (let x = 0; x < width; x += 1) {
+      let sum = 0;
+      for (let k = -radius; k <= radius; k += 1) {
+        sum += src[clampIndex(k, height) * width + x];
+      }
+      for (let y = 0; y < height; y += 1) {
+        dst[y * width + x] = sum * inv;
+        sum += src[clampIndex(y + radius + 1, height) * width + x] - src[clampIndex(y - radius, height) * width + x];
+      }
+    }
+  }
+}
+
+function clampIndex(index: number, length: number): number {
+  if (index < 0) return 0;
+  if (index >= length) return length - 1;
+  return index;
 }
 
 function applyContentEffects(source: ImageData, effects: ImageLayerEffect[]): ImageData {
@@ -1429,23 +1711,24 @@ function applyInnerShadowToContent(
   const offsetY = Math.round(Math.sin((effect.angle * Math.PI) / 180) * effect.distance);
   if (effect.opacity <= 0) return;
 
+  // The old per-pixel disk scan found the closest transparent pixel within `radius` of
+  // the light-shifted position; that is exactly the distance to the nearest transparent
+  // cell, which an O(W×H) distance transform gives directly.
+  const W = sourceAlpha.width;
+  const H = sourceAlpha.height;
+  const coverage = buildCoverageField(sourceAlpha, W, H, 0, 0, 0, 0);
+  const distToEmpty = distanceToEmptyField(coverage, W, H);
+  const denom = radius + 1;
+
   for (let y = 0; y < output.height; y += 1) {
     for (let x = 0; x < output.width; x += 1) {
       const offset = (y * output.width + x) * 4;
       const alpha = sourceAlpha.data[offset + 3] / 255;
       if (alpha <= 0) continue;
 
-      let strength = 0;
-      for (let dy = -radius; dy <= radius; dy += 1) {
-        for (let dx = -radius; dx <= radius; dx += 1) {
-          const distance = Math.sqrt(dx * dx + dy * dy);
-          if (distance > radius + 0.001) continue;
-          const shadowAlpha = 1 - sampleAlpha(sourceAlpha, x - offsetX + dx, y - offsetY + dy);
-          if (shadowAlpha <= 0) continue;
-          const falloff = radius === 0 ? 1 : clamp01(1 - distance / (radius + 1));
-          strength = Math.max(strength, shadowAlpha * falloff);
-        }
-      }
+      const dist = sampleDistanceField(distToEmpty, x - offsetX, y - offsetY, W, H);
+      if (dist > radius) continue;
+      const strength = clamp01(1 - dist / denom);
 
       const opacity = clamp01(effect.opacity * alpha * strength);
       if (opacity <= 0) continue;
@@ -1466,23 +1749,24 @@ function applyInnerGlowToContent(
   const opacity = clamp01(effect.opacity);
   if (opacity <= 0) return;
 
+  // Inner glow brightens inward from the shape's edge; the strength at a pixel is set by
+  // how close the nearest transparent cell is. Replaces the old O(W×H × radius²) disk
+  // scan with one O(W×H) distance transform.
+  const W = sourceAlpha.width;
+  const H = sourceAlpha.height;
+  const coverage = buildCoverageField(sourceAlpha, W, H, 0, 0, 0, 0);
+  const distToEmpty = distanceToEmptyField(coverage, W, H);
+  const denom = radius + 1;
+
   for (let y = 0; y < output.height; y += 1) {
     for (let x = 0; x < output.width; x += 1) {
       const offset = (y * output.width + x) * 4;
       const alpha = sourceAlpha.data[offset + 3] / 255;
       if (alpha <= 0) continue;
 
-      let strength = 0;
-      for (let dy = -radius; dy <= radius; dy += 1) {
-        for (let dx = -radius; dx <= radius; dx += 1) {
-          const distance = Math.sqrt(dx * dx + dy * dy);
-          if (distance > radius + 0.001) continue;
-          const outsideAlpha = 1 - sampleAlpha(sourceAlpha, x + dx, y + dy);
-          if (outsideAlpha <= 0) continue;
-          const falloff = radius === 0 ? 1 : clamp01(1 - distance / (radius + 1));
-          strength = Math.max(strength, outsideAlpha * falloff);
-        }
-      }
+      const dist = distToEmpty[y * W + x];
+      if (dist > radius) continue;
+      const strength = clamp01(1 - dist / denom);
 
       const mix = clamp01(strength * opacity * alpha);
       if (mix <= 0) continue;
@@ -1696,18 +1980,6 @@ function compositeImageData(target: ImageData, source: ImageData, dx: number, dy
         source.data[offset + 1],
         source.data[offset + 2],
       ], alpha);
-    }
-  }
-}
-
-function forEachOpaquePixel(
-  imageData: ImageData,
-  callback: (x: number, y: number, alpha: number) => void,
-): void {
-  for (let y = 0; y < imageData.height; y += 1) {
-    for (let x = 0; x < imageData.width; x += 1) {
-      const alpha = imageData.data[(y * imageData.width + x) * 4 + 3] / 255;
-      if (alpha > 0) callback(x, y, alpha);
     }
   }
 }

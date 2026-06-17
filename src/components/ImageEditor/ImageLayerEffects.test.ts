@@ -9,6 +9,7 @@ import {
   getLayerEffectCapabilityCatalog,
   getUnsupportedLayerEffectWarnings,
   renderLayerWithEffects,
+  clearLayerEffectRenderCache,
   synchronizeLayerEffectsGlobalLight,
 } from './ImageLayerEffects';
 
@@ -483,6 +484,106 @@ describe('ImageLayerEffects', () => {
     const imageData = rendered?.bitmap.getContext('2d')?.getImageData(0, 0, rendered.bitmap.width, rendered.bitmap.height);
 
     expect(imageData ? getPixel(imageData, 1, 1) : null).toEqual([20, 40, 60, 255]);
+  });
+
+  it('memoizes rendered effects until an invalidating input changes', () => {
+    clearLayerEffectRenderCache();
+    const effects = [{
+      id: 'overlay',
+      kind: 'colorOverlay' as const,
+      enabled: true,
+      color: '#ff0000',
+      opacity: 1,
+    }];
+
+    const first = renderLayerWithEffects(makeLayer({ effects }));
+    const second = renderLayerWithEffects(makeLayer({ effects }));
+    // Same layer id + identical invalidation signature => exact same cached object.
+    expect(second).toBe(first);
+
+    // Bumping bitmapVersion invalidates the cache and forces a recompute.
+    const third = renderLayerWithEffects(makeLayer({ effects, bitmapVersion: 1 }));
+    expect(third).not.toBe(first);
+
+    // A different effect color also invalidates.
+    const recolored = [{ ...effects[0], color: '#00ff00' }];
+    const fourth = renderLayerWithEffects(makeLayer({ effects: recolored, bitmapVersion: 1 }));
+    expect(fourth).not.toBe(third);
+
+    clearLayerEffectRenderCache();
+  });
+
+  it('renders large-radius stroke + shadow on a big layer in O(W×H) time', () => {
+    // Regression guard: the previous per-pixel disk scan was O(opaquePixels × radius²),
+    // which on a layer this size with these radii was tens of billions of synchronous
+    // operations (minutes, fully blocking the UI). The distance-transform + separable
+    // blur rewrite is linear in the pixel count, so this completes in well under the
+    // generous bound below. A regression to the quadratic algorithm would blow past it.
+    clearLayerEffectRenderCache();
+    const size = 900;
+    const bitmap = new OffscreenCanvas(size, size) as LayerBitmap;
+    const imageData = makeImageData(size, size);
+    imageData.data.fill(255); // fully opaque content
+    bitmap.getContext('2d')?.putImageData(imageData, 0, 0);
+    const layer = makeLayer({
+      bitmap,
+      effects: [
+        {
+          id: 'stroke',
+          kind: 'stroke',
+          enabled: true,
+          color: '#00ff00',
+          opacity: 1,
+          size: 120,
+          position: 'outside',
+        },
+        {
+          id: 'shadow',
+          kind: 'dropShadow',
+          enabled: true,
+          color: '#000000',
+          opacity: 0.6,
+          angle: 45,
+          distance: 30,
+          size: 120,
+        },
+      ],
+    });
+
+    const start = Date.now();
+    const rendered = renderLayerWithEffects(layer);
+    const elapsed = Date.now() - start;
+
+    expect(rendered).not.toBeNull();
+    expect(elapsed).toBeLessThan(3000);
+    clearLayerEffectRenderCache();
+  });
+
+  it('strokes a round band within the radius for larger strokes', () => {
+    const layer = makeLayer({
+      effects: [{
+        id: 'stroke',
+        kind: 'stroke',
+        enabled: true,
+        color: '#00ff00',
+        opacity: 1,
+        size: 3,
+        position: 'outside',
+      }],
+    });
+
+    const rendered = renderLayerWithEffects(layer);
+    const imageData = rendered?.bitmap.getContext('2d')?.getImageData(0, 0, rendered.bitmap.width, rendered.bitmap.height);
+
+    // Padding of 3 around a 3x3 layer => 9x9 output, opaque content maps to (4,4).
+    expect(rendered?.offsetX).toBe(-3);
+    expect(rendered?.bitmap.width).toBe(9);
+    // 2px out from the content edge is inside the radius => fully stroked.
+    expect(imageData ? getPixel(imageData, 4, 2) : null).toEqual([0, 255, 0, 255]);
+    // The opaque content itself stays the source colour (outside stroke skips inside).
+    expect(imageData ? getPixel(imageData, 4, 4) : null).toEqual([20, 40, 60, 255]);
+    // A corner ~5.6px away is well beyond the radius => untouched/transparent.
+    expect(imageData ? getPixel(imageData, 0, 0) : null).toEqual([0, 0, 0, 0]);
   });
 
   it('synchronizes drop and inner shadow angles to a shared global light value', () => {
