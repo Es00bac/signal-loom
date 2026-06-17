@@ -7,6 +7,22 @@ import {
 import type { ToolEnv, ToolHandler, Point, Modifiers } from './types';
 import { createMask, setPolygon, type SelectionMask } from '../SelectionMask';
 import { describeSelectionModeSemantics, SelectionInteraction, type SelectionModeOperation } from './selectionInteraction';
+import { buildEdgeMagnitudeField, snapToStrongestEdge } from './magneticLassoEdge';
+import { renderImageDocumentLayersToBitmap } from '../ImageAdjustmentLayer';
+
+const MAGNETIC_SNAP_RADIUS_PX = 16;
+const MAGNETIC_CONTRAST_THRESHOLD = 0.15;
+/** Append a magnetic anchor only after the pointer travels this far, so the
+ * snapped path samples the edge rather than every jittery pointer event. */
+const MAGNETIC_MIN_SAMPLE_DISTANCE_PX = 4;
+
+interface MagneticEdgeField {
+  data: Float32Array;
+  width: number;
+  height: number;
+  radius: number;
+  contrast: number;
+}
 
 export type LassoSelectionLimitationCode =
   | 'freehand-smoothing-unsupported'
@@ -286,7 +302,7 @@ export function describeLassoSelectionWorkflow(
   const points = settings.lassoShape === 'polygonal' && options.cursor
     ? [...committedPoints, options.cursor]
     : committedPoints;
-  const closed = options.closed ?? settings.lassoShape === 'freehand';
+  const closed = options.closed ?? settings.lassoShape !== 'polygonal';
   const featherPx = normalizePixels(settings.feather);
   const smoothingPx = normalizePixels(options.smoothingRequested ?? 0);
   const descriptor = {
@@ -465,11 +481,15 @@ export function describeLassoSelectionReadiness(
   };
 }
 
-interface FreehandState {
-  kind: 'freehand';
+interface AccumulatingState {
+  // Freehand drops sampled pointer positions directly; magnetic snaps each one
+  // toward the nearest strong edge (live-wire-style). Both auto-close on up.
+  kind: 'freehand' | 'magnetic';
   points: Point[];
   previewed: boolean;
   interaction: SelectionInteraction;
+  field: MagneticEdgeField | null;
+  lastSampled: Point;
 }
 
 interface PolygonalState {
@@ -480,43 +500,48 @@ interface PolygonalState {
   cursor: Point;
 }
 
-let state: FreehandState | PolygonalState | null = null;
+let state: AccumulatingState | PolygonalState | null = null;
 
 export const lassoTool: ToolHandler = {
   onPointerDown(env, point, mods) {
     if (env.selectionToolSettings.lassoShape === 'polygonal') {
       handlePolygonalDown(env, point, mods);
+    } else if (env.selectionToolSettings.lassoShape === 'magnetic') {
+      handleAccumulatingDown(env, point, mods, 'magnetic');
     } else {
-      handleFreehandDown(env, point, mods);
+      handleAccumulatingDown(env, point, mods, 'freehand');
     }
   },
 
   onPointerMove(env, point) {
     if (!state) return;
-    if (state.kind === 'freehand') {
-      state.points.push(point);
-      previewFreehand(env);
-    } else {
+    if (state.kind === 'polygonal') {
       state.cursor = point;
       previewPolygonal(env);
+      return;
     }
+    const sampled = sampleAccumulatingPoint(state, point);
+    if (!sampled) return;
+    state.points.push(sampled);
+    state.lastSampled = sampled;
+    previewAccumulating(env);
   },
 
   onPointerUp(env, _point, mods) {
     if (!state) return;
-    if (state.kind === 'freehand') {
-      const current = state;
-      previewFreehand(env);
-      if (current.previewed) {
-        current.interaction.commit(env);
-      } else {
-        current.interaction.cancel(env);
-      }
-      state = null;
-    } else {
+    if (state.kind === 'polygonal') {
       // polygonal: do nothing on regular up; double-click or Enter closes.
       if (mods.alt) finalizePolygonal(env);
+      return;
     }
+    const current = state;
+    previewAccumulating(env);
+    if (current.previewed) {
+      current.interaction.commit(env);
+    } else {
+      current.interaction.cancel(env);
+    }
+    state = null;
   },
 
   onKeyDown(env, key) {
@@ -543,14 +568,76 @@ export const lassoTool: ToolHandler = {
   },
 };
 
-function handleFreehandDown(env: ToolEnv, point: Point, mods: Modifiers): void {
+function handleAccumulatingDown(
+  env: ToolEnv,
+  point: Point,
+  mods: Modifiers,
+  kind: 'freehand' | 'magnetic',
+): void {
   const mode = env.resolveSelectionMode(mods);
+  const field = kind === 'magnetic' ? buildMagneticField(env) : null;
+  const start = field ? snapPoint(field, point) : point;
   state = {
-    kind: 'freehand',
-    points: [point],
+    kind,
+    points: [start],
     previewed: false,
     interaction: new SelectionInteraction(env, mode),
+    field,
+    lastSampled: start,
   };
+}
+
+/** Resolve the next accumulated point: snapped to an edge for magnetic mode (and
+ * distance-throttled so the snapped path samples the edge), raw for freehand. */
+function sampleAccumulatingPoint(current: AccumulatingState, point: Point): Point | null {
+  if (!current.field) return point;
+  if (distance(current.lastSampled, point) < MAGNETIC_MIN_SAMPLE_DISTANCE_PX) return null;
+  return snapPoint(current.field, point);
+}
+
+function snapPoint(field: MagneticEdgeField, point: Point): Point {
+  return snapToStrongestEdge(field.data, field.width, field.height, point, field.radius, field.contrast);
+}
+
+function previewAccumulating(env: ToolEnv): void {
+  if (!state || state.kind === 'polygonal') return;
+  if (state.points.length < 3) return;
+  const shape: SelectionMask = createMask(env.doc.width, env.doc.height);
+  setPolygon(shape, state.points);
+  state.interaction.preview(env, shape);
+  state.previewed = true;
+}
+
+/** Build the edge-magnitude field from the document composite. Returns null when
+ * no canvas/composite is available (tests, empty docs) so magnetic gracefully
+ * degrades to freehand. */
+function buildMagneticField(env: ToolEnv): MagneticEdgeField | null {
+  try {
+    const bitmap = renderImageDocumentLayersToBitmap(env.doc);
+    if (!bitmap) return null;
+    const width = env.doc.width;
+    const height = env.doc.height;
+    if (width < 3 || height < 3 || typeof OffscreenCanvas === 'undefined') return null;
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(bitmap as CanvasImageSource, 0, 0);
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const data = buildEdgeMagnitudeField(imageData.data, width, height);
+    return {
+      data,
+      width,
+      height,
+      radius: MAGNETIC_SNAP_RADIUS_PX,
+      contrast: MAGNETIC_CONTRAST_THRESHOLD,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function distance(a: Point, b: Point): number {
+  return Math.hypot(b.x - a.x, b.y - a.y);
 }
 
 function handlePolygonalDown(env: ToolEnv, point: Point, mods: Modifiers): void {
@@ -568,15 +655,6 @@ function handlePolygonalDown(env: ToolEnv, point: Point, mods: Modifiers): void 
     cursor: point,
     interaction: new SelectionInteraction(env, mode),
   };
-}
-
-function previewFreehand(env: ToolEnv): void {
-  if (!state || state.kind !== 'freehand') return;
-  if (state.points.length < 3) return;
-  const shape: SelectionMask = createMask(env.doc.width, env.doc.height);
-  setPolygon(shape, state.points);
-  state.interaction.preview(env, shape);
-  state.previewed = true;
 }
 
 function previewPolygonal(env: ToolEnv): void {
@@ -614,7 +692,7 @@ function getLassoClosure(
   workflow: LassoShape,
   closed: boolean,
 ): LassoSelectionWorkflowDescriptor['geometry']['closure'] {
-  if (workflow === 'freehand') return 'auto-closes-on-pointer-up';
+  if (workflow !== 'polygonal') return 'auto-closes-on-pointer-up';
   if (closed) return 'closes-on-enter-alt-or-double-click';
   return 'open-preview-closes-only-on-enter-alt-or-double-click';
 }

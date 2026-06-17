@@ -111,7 +111,7 @@ export function SelectionPanel({ showShape, showTolerance }: { showShape?: boole
         <div>
           <label className="mb-1 block">Lasso</label>
           <div className="flex gap-1">
-            {(['freehand', 'polygonal'] as const).map((shape) => (
+            {(['freehand', 'polygonal', 'magnetic'] as const).map((shape) => (
               <button
                 key={shape}
                 className={`flex-1 rounded border px-2 py-1 text-xs capitalize ${

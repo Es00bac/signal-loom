@@ -476,4 +476,21 @@ describe('lassoTool workflow descriptors', () => {
     expect(operations[0]).toMatchObject({ kind: 'selection', docId: env.doc.id });
     expect(setHasSelection).toHaveBeenCalledWith(env.doc.id, true);
   });
+
+  it('commits a magnetic-lasso selection, degrading to freehand when no edge field is available', async () => {
+    const { lassoTool } = await import('./lassoTool');
+    const { env, operations, setHasSelection } = createLassoEnv('replace');
+    env.selectionToolSettings.lassoShape = 'magnetic';
+
+    lassoTool.onPointerDown?.(env, { x: 4, y: 4 }, NO_MODIFIERS, {} as PointerEvent);
+    lassoTool.onPointerMove?.(env, { x: 14, y: 4 }, NO_MODIFIERS, {} as PointerEvent);
+    lassoTool.onPointerMove?.(env, { x: 4, y: 14 }, NO_MODIFIERS, {} as PointerEvent);
+    lassoTool.onPointerUp?.(env, { x: 4, y: 14 }, NO_MODIFIERS, {} as PointerEvent);
+
+    const selection = getSelection(env.doc.id);
+    expect(selection).not.toBeNull();
+    expect(operations).toHaveLength(1);
+    expect(operations[0]).toMatchObject({ kind: 'selection', docId: env.doc.id });
+    expect(setHasSelection).toHaveBeenCalledWith(env.doc.id, true);
+  });
 });

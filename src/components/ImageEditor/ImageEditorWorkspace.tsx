@@ -419,10 +419,9 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
         case 'l':
           setTool('lasso');
           if (e.shiftKey) {
-            const next =
-              useImageEditorStore.getState().selectionToolSettings.lassoShape === 'freehand'
-                ? 'polygonal'
-                : 'freehand';
+            const order = ['freehand', 'polygonal', 'magnetic'] as const;
+            const current = useImageEditorStore.getState().selectionToolSettings.lassoShape;
+            const next = order[(order.indexOf(current) + 1) % order.length];
             setSelectionToolSettings({ lassoShape: next });
           }
           break;

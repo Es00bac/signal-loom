@@ -29,7 +29,7 @@ export type EditorTool =
   | 'eyedropper';
 
 export type MarqueeShape = 'rectangle' | 'ellipse';
-export type LassoShape = 'freehand' | 'polygonal';
+export type LassoShape = 'freehand' | 'polygonal' | 'magnetic';
 
 export type LayerType = 'image' | 'mask' | 'text' | 'adjustment' | 'vector' | 'group';
 export type ImageLayerColorLabel = 'none' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'violet' | 'gray';
