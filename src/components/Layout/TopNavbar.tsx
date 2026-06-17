@@ -142,6 +142,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   const hideMobileInterface = useMobileInterfaceStore((state) => state.hideInterface);
   const restoreMobileInterface = useMobileInterfaceStore((state) => state.restoreInterface);
   const appMenuRef = React.useRef<HTMLDivElement | null>(null);
+  const mobileMenuRef = React.useRef<HTMLDivElement | null>(null);
   const sourceBinNodeCount = React.useMemo(
     () => nodes.filter((node) => node.type === 'sourceBin').length,
     [nodes],
@@ -197,7 +198,11 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
     }
 
     const closeMenu = (event: PointerEvent) => {
-      if (appMenuRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      // Guard BOTH the desktop menu bar and the mobile interface drawer — the
+      // expanded phone app-menu renders in the drawer, not inside appMenuRef, so
+      // without this every drawer tap counted as "outside" and dismissed it.
+      if (appMenuRef.current?.contains(target) || mobileMenuRef.current?.contains(target)) {
         return;
       }
 
@@ -470,6 +475,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
           <div
             className="flex max-h-[calc(100vh-3rem)] flex-col gap-2 overflow-y-auto border-t border-cyan-300/15 p-2"
             data-mobile-interface-drawer-panel="true"
+            ref={mobileMenuRef}
           >
             {showIntegratedMenu ? (
               <div className="grid grid-cols-3 gap-1" data-mobile-app-menu="true">
