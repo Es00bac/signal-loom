@@ -37,9 +37,10 @@ describe('application smoke tests', () => {
   });
 
   it('keeps all workspace window routes and open/focus menu commands reachable', () => {
-    const viewMenu = buildAppMenuGroups('flow').find((group) => group.id === 'view');
+    // Cross-app window launchers live in the per-workspace Window menu.
+    const windowMenu = buildAppMenuGroups('flow').find((group) => group.id === 'window');
 
-    expect(viewMenu?.items.slice(0, 4).map((item) => item.command)).toEqual([
+    expect(windowMenu?.items.slice(0, 4).map((item) => item.command)).toEqual([
       'view:flow',
       'view:editor',
       'view:image',

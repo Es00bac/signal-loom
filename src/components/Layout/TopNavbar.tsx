@@ -475,12 +475,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
               <div className="grid grid-cols-3 gap-1" data-mobile-app-menu="true">
                 {appMenuGroups.map((group) => (
                   <button
-                    className={`rounded-md border px-2 py-2 text-xs font-semibold transition-colors ${
-                      group.enabled
-                        ? 'border-cyan-300/15 bg-cyan-400/10 text-cyan-50 hover:border-cyan-300/40'
-                        : 'border-cyan-300/5 bg-cyan-400/5 text-cyan-100/25'
-                    }`}
-                    disabled={!group.enabled}
+                    className="rounded-md border border-cyan-300/15 bg-cyan-400/10 px-2 py-2 text-xs font-semibold text-cyan-50 transition-colors hover:border-cyan-300/40"
                     key={group.id}
                     onClick={() => setOpenMenuId((current) => current === group.id ? null : group.id)}
                     type="button"
@@ -621,12 +616,9 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
               <div className="relative" key={group.id}>
                 <button
                   aria-expanded={openMenuId === group.id}
-                  className={`rounded px-2 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:text-cyan-100/25 ${
-                    group.enabled ? 'text-cyan-100/70 hover:bg-cyan-400/10 hover:text-white' : 'text-cyan-100/25'
-                  } ${
+                  className={`rounded px-2 py-1 text-xs font-medium text-cyan-100/70 transition-colors hover:bg-cyan-400/10 hover:text-white ${
                     openMenuId === group.id ? 'bg-cyan-400/10 text-white' : ''
                   }`}
-                  disabled={!group.enabled}
                   onClick={() => setOpenMenuId((current) => current === group.id ? null : group.id)}
                   type="button"
                 >

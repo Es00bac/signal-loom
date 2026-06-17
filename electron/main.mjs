@@ -833,11 +833,9 @@ function createWorkspaceWindow(workspace = 'flow') {
     void workspaceWindow.loadURL(buildWorkspaceRendererUrl(workspace));
   });
 
-  if (applicationMenu) {
-    workspaceWindow.setMenu(applicationMenu);
-    workspaceWindow.setAutoHideMenuBar(false);
-    workspaceWindow.setMenuBarVisibility(true);
-  }
+  workspaceWindow.setMenu(menuForWorkspace(workspace));
+  workspaceWindow.setAutoHideMenuBar(false);
+  workspaceWindow.setMenuBarVisibility(true);
 
   workspaceWindows.set(workspace, workspaceWindow);
   if (workspace === 'flow') {
@@ -856,7 +854,9 @@ function createWorkspaceWindow(workspace = 'flow') {
 
   workspaceWindow.on('focus', () => {
     activeWorkspace = workspace;
-    installApplicationMenu();
+    // The focused workspace's menu drives the macOS bar + KDE global menu.
+    applicationMenu = menuForWorkspace(workspace);
+    Menu.setApplicationMenu(applicationMenu);
   });
 
   workspaceWindow.on('closed', () => {
@@ -875,24 +875,32 @@ function createWorkspaceWindow(workspace = 'flow') {
   return workspaceWindow;
 }
 
-function installApplicationMenu() {
-  const template = createApplicationMenuTemplate({
+/** Build a fresh native menu showing only the given workspace's bar. */
+function menuForWorkspace(workspace) {
+  return Menu.buildFromTemplate(createApplicationMenuTemplate({
     appName,
     isMac: process.platform === 'darwin',
-    activeWorkspace,
+    activeWorkspace: workspace,
     keyboardShortcuts,
     sendCommand: sendRendererCommand,
-  });
+  }));
+}
 
-  applicationMenu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(applicationMenu);
-  for (const window of workspaceWindows.values()) {
+// Each window shows its own workspace's menu bar; the focused window's menu is
+// also set as the application menu so the macOS bar and the KDE Plasma global
+// menu follow the focused workspace.
+function installApplicationMenu() {
+  for (const [workspace, window] of workspaceWindows.entries()) {
     if (!window.isDestroyed()) {
-      window.setMenu(applicationMenu);
+      window.setMenu(menuForWorkspace(workspace));
       window.setAutoHideMenuBar(false);
       window.setMenuBarVisibility(true);
     }
   }
+  const focused = BrowserWindow.getFocusedWindow();
+  const focusedWorkspace = (focused && getWorkspaceForWindow(focused)) || activeWorkspace;
+  applicationMenu = menuForWorkspace(focusedWorkspace);
+  Menu.setApplicationMenu(applicationMenu);
 }
 
 function getInstalledApplicationMenuLabels() {
@@ -2405,15 +2413,24 @@ function installIpcHandlers() {
     return { ok: true, workspace };
   });
 
-  ipcMain.handle('signal-loom:set-active-workspace', async (_event, workspace) => {
+  ipcMain.handle('signal-loom:set-active-workspace', async (event, workspace) => {
     if (!['flow', 'editor', 'image', 'paper'].includes(workspace)) {
       return { error: 'Unknown workspace.' };
     }
 
-    if (activeWorkspace !== workspace) {
-      activeWorkspace = workspace;
-      installApplicationMenu();
+    activeWorkspace = workspace;
+    // The sending window is now showing this workspace (covers single-window
+    // tab-switching in place); give it that workspace's menu, and update the
+    // application menu so the macOS bar + KDE global menu follow.
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    const workspaceMenu = menuForWorkspace(workspace);
+    if (senderWindow && !senderWindow.isDestroyed()) {
+      senderWindow.setMenu(workspaceMenu);
+      senderWindow.setAutoHideMenuBar(false);
+      senderWindow.setMenuBarVisibility(true);
     }
+    applicationMenu = workspaceMenu;
+    Menu.setApplicationMenu(workspaceMenu);
 
     return { ok: true };
   });
