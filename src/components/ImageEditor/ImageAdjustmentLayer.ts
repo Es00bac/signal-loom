@@ -1852,11 +1852,60 @@ function composeLayerWithClippingMask(
   return bitmap;
 }
 
+interface MaskedLayerCacheEntry {
+  signature: string;
+  result: LayerBitmap;
+}
+
+// Applying a layer mask is a full getImageData → per-pixel loop → putImageData round-trip with a
+// fresh bitmap allocation. Without memoization it re-ran on EVERY composite (every brush frame) for
+// any masked layer — the cliff behind "a second, masked/differently-sized layer makes the brush
+// sluggish", since that layer isn't even being edited. Cache it the same way layer effects are
+// cached (keyed by the fields that change its appearance; bitmapVersion bumps on any pixel/mask
+// edit). The cached bitmap is only read by callers, never mutated, so sharing it is safe.
+const maskedLayerCache = new Map<string, MaskedLayerCacheEntry>();
+const MAX_MASKED_LAYER_CACHE_ENTRIES = 64;
+let liveMaskBypassLayerId: string | null = null;
+
+/**
+ * During a live stroke the active layer's pixels/mask change in place without a bitmapVersion bump,
+ * so the compositor marks that layer here to bypass the cache and recompute it fresh each frame —
+ * keeping painting through a layer mask crisp. Every other masked layer stays a cache hit.
+ */
+export function setLiveMaskBypassLayer(layerId: string | null): void {
+  liveMaskBypassLayerId = layerId;
+}
+
+/** Clears the masked-layer composite memo (tests / document disposal). */
+export function clearMaskedLayerCache(): void {
+  maskedLayerCache.clear();
+}
+
+function buildMaskedLayerSignature(layer: ImageLayer): string {
+  return JSON.stringify({
+    w: layer.bitmap?.width ?? 0,
+    h: layer.bitmap?.height ?? 0,
+    bitmapVersion: layer.bitmapVersion,
+    maskW: layer.mask?.width ?? 0,
+    maskH: layer.mask?.height ?? 0,
+    maskDensity: layer.maskDensity ?? null,
+    maskFeather: layer.maskFeather ?? null,
+    vectorMask: getLayerVectorMaskDescriptor(layer) ?? null,
+  });
+}
+
 export function composeLayerBitmapWithLiveMasks(layer: ImageLayer): LayerBitmap | null {
   if (!layer.bitmap) return null;
   const vectorMaskDescriptor = getLayerVectorMaskDescriptor(layer);
   const hasVectorMask = Boolean(vectorMaskDescriptor?.enabled);
   if (!layer.mask && !hasVectorMask) return layer.bitmap;
+
+  // The layer being actively painted recomputes fresh; all others hit the memo.
+  const signature = liveMaskBypassLayerId === layer.id ? null : buildMaskedLayerSignature(layer);
+  if (signature !== null) {
+    const cached = maskedLayerCache.get(layer.id);
+    if (cached && cached.signature === signature) return cached.result;
+  }
 
   const output = createBitmap(layer.bitmap.width, layer.bitmap.height);
   const rasterMasked = layer.mask
@@ -1869,6 +1918,14 @@ export function composeLayerBitmapWithLiveMasks(layer: ImageLayer): LayerBitmap 
   }
 
   putBitmapImageData(output, rasterMasked);
+
+  if (signature !== null) {
+    if (!maskedLayerCache.has(layer.id) && maskedLayerCache.size >= MAX_MASKED_LAYER_CACHE_ENTRIES) {
+      const oldest = maskedLayerCache.keys().next().value;
+      if (oldest !== undefined) maskedLayerCache.delete(oldest);
+    }
+    maskedLayerCache.set(layer.id, { signature, result: output });
+  }
   return output;
 }
 

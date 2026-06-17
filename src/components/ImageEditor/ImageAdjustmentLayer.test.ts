@@ -16,6 +16,9 @@ import {
   getUnsupportedAdjustmentLayerPlanningWarnings,
   renderImageDocumentLayersToBitmap,
   compositeLayerRangeInto,
+  composeLayerBitmapWithLiveMasks,
+  setLiveMaskBypassLayer,
+  clearMaskedLayerCache,
   serializeAdjustmentLayerPreset,
 } from './ImageAdjustmentLayer';
 import { createBitmap } from './LayerBitmap';
@@ -1170,6 +1173,38 @@ describe('ImageAdjustmentLayer', () => {
     const rendered = bitmap.getContext('2d')?.getImageData(0, 0, bitmap.width, bitmap.height);
 
     expect(rendered ? getPixel(rendered, 0, 0) : null).toEqual([0, 0, 0, 0]);
+  });
+});
+
+describe('composeLayerBitmapWithLiveMasks memoization', () => {
+  function maskedLayer(): ImageLayer {
+    const layer = makeLayer('masked', [10, 20, 30, 255]);
+    layer.mask = new OffscreenCanvas(2, 1) as LayerBitmap;
+    return layer;
+  }
+
+  it('returns a cached result until the layer changes, and recomputes after a bitmapVersion bump', () => {
+    clearMaskedLayerCache();
+    setLiveMaskBypassLayer(null);
+    const layer = maskedLayer();
+    const first = composeLayerBitmapWithLiveMasks(layer);
+    const second = composeLayerBitmapWithLiveMasks(layer);
+    expect(first).not.toBeNull();
+    expect(second).toBe(first); // cache hit — same masked bitmap reused
+
+    const edited = { ...layer, bitmapVersion: layer.bitmapVersion + 1 };
+    const third = composeLayerBitmapWithLiveMasks(edited);
+    expect(third).not.toBe(first); // bitmapVersion bump invalidates the cache
+  });
+
+  it('bypasses the cache for the layer being actively painted (live mask preview stays fresh)', () => {
+    clearMaskedLayerCache();
+    const layer = maskedLayer();
+    setLiveMaskBypassLayer(layer.id);
+    const a = composeLayerBitmapWithLiveMasks(layer);
+    const b = composeLayerBitmapWithLiveMasks(layer);
+    expect(a).not.toBe(b); // recomputed each time while live (no stale masked composite)
+    setLiveMaskBypassLayer(null);
   });
 });
 

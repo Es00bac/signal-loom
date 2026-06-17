@@ -30,6 +30,7 @@ import type { ImageLayerWithVectorMask } from './ImageVectorMasks';
 import {
   renderImageDocumentLayersToBitmap,
   compositeLayerRangeInto,
+  setLiveMaskBypassLayer,
   composeLayerBitmapWithLiveMasks,
   applyAdjustmentToImageData,
   applyAdjustmentToPixel,
@@ -1107,15 +1108,22 @@ export class CompositeRenderer {
     ctx.globalCompositeOperation = 'source-over';
     ctx.clearRect(0, 0, scratch.width, scratch.height);
     ctx.drawImage(this.strokeBackdrop, 0, 0);
-    compositeLayerRangeInto(
-      scratch,
-      doc.layers,
-      doc.width,
-      doc.height,
-      activeIndex,
-      doc.layers.length,
-      this.strokeBackdropState,
-    );
+    // The active layer's pixels/mask are changing live, so recompute its masked composite fresh
+    // each frame; the cached backdrop already covers the (unchanged) layers below it.
+    setLiveMaskBypassLayer(doc.activeLayerId);
+    try {
+      compositeLayerRangeInto(
+        scratch,
+        doc.layers,
+        doc.width,
+        doc.height,
+        activeIndex,
+        doc.layers.length,
+        this.strokeBackdropState,
+      );
+    } finally {
+      setLiveMaskBypassLayer(null);
+    }
     return scratch;
   }
 
