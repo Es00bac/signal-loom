@@ -654,6 +654,8 @@ export function normalizeBrushSettings(settings: Partial<BrushSettings>): BrushS
     tiltRoundness: clamp(merged.tiltRoundness ?? 0.6, 0, 1),
     tiltSize: clamp(merged.tiltSize ?? 0.2, 0, 1),
     rotationFollowsTwist: merged.rotationFollowsTwist !== false,
+    pressureColor: clamp(merged.pressureColor ?? 0, 0, 1),
+    tiltColor: clamp(merged.tiltColor ?? 0, 0, 1),
     tipShape: merged.tipShape === 'square' ? 'square' : 'round',
     symmetryMode: normalizeBrushSymmetryMode(merged.symmetryMode),
     velocitySize: clamp(merged.velocitySize ?? 0, 0, 1),
@@ -1579,6 +1581,44 @@ export function readBrushTiltState(
   });
 }
 
+function parseBrushRgb(color: string): [number, number, number] | null {
+  const t = color.trim();
+  if (/^#[0-9a-f]{6}$/i.test(t)) {
+    return [parseInt(t.slice(1, 3), 16), parseInt(t.slice(3, 5), 16), parseInt(t.slice(5, 7), 16)];
+  }
+  if (/^#[0-9a-f]{3}$/i.test(t)) {
+    return [parseInt(t[1] + t[1], 16), parseInt(t[2] + t[2], 16), parseInt(t[3] + t[3], 16)];
+  }
+  const m = t.match(/rgba?\(\s*([0-9.]+)[\s,]+([0-9.]+)[\s,]+([0-9.]+)/i);
+  if (m) return [Math.round(+m[1]), Math.round(+m[2]), Math.round(+m[3])];
+  return null;
+}
+
+/**
+ * Krita-style colour dynamics: blends the dab colour from the foreground (primary)
+ * toward the background (secondary) by `pressure*pressureColor + tiltAmount*tiltColor`.
+ * Returns the primary colour unchanged when colour dynamics are off or the inputs can't
+ * be parsed.
+ */
+export function resolveBrushDabColor(input: {
+  primaryColor: string;
+  secondaryColor: string;
+  pressure: number;
+  tiltAmount: number;
+  pressureColor: number;
+  tiltColor: number;
+}): string {
+  const t = clamp(input.pressure * input.pressureColor + input.tiltAmount * input.tiltColor, 0, 1);
+  if (t <= 0) return input.primaryColor;
+  const a = parseBrushRgb(input.primaryColor);
+  const b = parseBrushRgb(input.secondaryColor);
+  if (!a || !b) return input.primaryColor;
+  const r = Math.round(a[0] + (b[0] - a[0]) * t);
+  const g = Math.round(a[1] + (b[1] - a[1]) * t);
+  const bl = Math.round(a[2] + (b[2] - a[2]) * t);
+  return `rgb(${r}, ${g}, ${bl})`;
+}
+
 export function paintBrushDab(
   context: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
   dab: BrushDab,
@@ -1671,6 +1711,8 @@ const IMPLEMENTED_DYNAMIC_FIELDS = new Set([
   'tiltSize',
   'tiltRoundness',
   'rotationFollowsTwist',
+  'pressureColor',
+  'tiltColor',
   'scatter',
   'symmetryMode',
   'roundness',

@@ -186,6 +186,69 @@ export function BrushPanel() {
         />
       </div>
       <div className="rounded border border-cyan-300/10 bg-[#10131b] p-2">
+        <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Tilt &amp; Rotation</div>
+        <Slider
+          label="Tilt Angle"
+          value={settings.tiltAngle ?? 0.7}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ tiltAngle: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+        <Slider
+          label="Tilt Squash"
+          value={settings.tiltRoundness ?? 0.6}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ tiltRoundness: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+        <Slider
+          label="Tilt Size"
+          value={settings.tiltSize ?? 0.2}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ tiltSize: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+        <label className="mt-2 flex items-center gap-2 text-xs text-cyan-100/80">
+          <input
+            type="checkbox"
+            aria-label="Rotate tip with barrel twist"
+            checked={settings.rotationFollowsTwist ?? true}
+            onChange={(event) => set({ rotationFollowsTwist: event.target.checked })}
+          />
+          Rotate tip with barrel twist
+        </label>
+      </div>
+      <div className="rounded border border-cyan-300/10 bg-[#10131b] p-2">
+        <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Color Dynamics</div>
+        <Slider
+          label="Pressure → Color"
+          value={settings.pressureColor ?? 0}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ pressureColor: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+        <Slider
+          label="Tilt → Color"
+          value={settings.tiltColor ?? 0}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ tiltColor: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+        <div className="mt-1 text-[10px] leading-snug text-cyan-100/35">
+          Blends each dab from the foreground toward the background colour as pressure/tilt increases.
+        </div>
+      </div>
+      <div className="rounded border border-cyan-300/10 bg-[#10131b] p-2">
         <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Advanced Dynamics</div>
         <Slider
           ariaLabel="Velocity size"

@@ -12,6 +12,7 @@ import {
   getUnsupportedBrushCapabilityWarnings,
   normalizeBrushSettings,
   resolveBrushDynamics,
+  resolveBrushDabColor,
   summarizeBrushPresetCapabilities,
   smoothBrushPoint,
   readBrushPressure,
@@ -334,6 +335,22 @@ describe('ImageBrushEngine', () => {
       'imported-mixer:angleJitter',
       'imported-mixer:colorJitter',
     ]);
+  });
+
+  it('blends the dab colour between foreground and background by pressure/tilt', () => {
+    const base = { primaryColor: '#000000', secondaryColor: '#ffffff' };
+    // Colour dynamics off => foreground unchanged.
+    expect(resolveBrushDabColor({ ...base, pressure: 1, tiltAmount: 1, pressureColor: 0, tiltColor: 0 }))
+      .toBe('#000000');
+    // Full pressure with full pressure-colour => fully the background.
+    expect(resolveBrushDabColor({ ...base, pressure: 1, tiltAmount: 0, pressureColor: 1, tiltColor: 0 }))
+      .toBe('rgb(255, 255, 255)');
+    // Half pressure => midpoint grey.
+    expect(resolveBrushDabColor({ ...base, pressure: 0.5, tiltAmount: 0, pressureColor: 1, tiltColor: 0 }))
+      .toBe('rgb(128, 128, 128)');
+    // Tilt drives the blend independently.
+    expect(resolveBrushDabColor({ ...base, pressure: 0, tiltAmount: 1, pressureColor: 0, tiltColor: 1 }))
+      .toBe('rgb(255, 255, 255)');
   });
 
   it('describes deterministic brush workflow support for planning consumers', () => {

@@ -323,6 +323,10 @@ export interface BrushSettings {
   tiltSize?: number;
   /** Barrel rotation (twist) rotates the tip. */
   rotationFollowsTwist?: boolean;
+  /** Pressure → blend the dab colour from the foreground toward the background (0..1). */
+  pressureColor?: number;
+  /** Tilt → blend the dab colour from the foreground toward the background (0..1). */
+  tiltColor?: number;
   tipShape: 'round' | 'square';
   symmetryMode?: BrushSymmetryMode;
   velocitySize?: number;
@@ -824,6 +828,8 @@ export const DEFAULT_BRUSH_SETTINGS: BrushSettings = {
   tiltRoundness: 0.6,
   tiltSize: 0.2,
   rotationFollowsTwist: true,
+  pressureColor: 0,
+  tiltColor: 0,
   tipShape: 'round',
   symmetryMode: 'none',
   velocitySize: 0,

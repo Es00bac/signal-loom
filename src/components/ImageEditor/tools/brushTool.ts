@@ -39,6 +39,7 @@ import {
   paintBrushDab,
   readBrushPressure,
   readBrushTiltState,
+  resolveBrushDabColor,
   smoothBrushPoint,
 } from '../ImageBrushEngine';
 import {
@@ -444,7 +445,6 @@ function paintStrokeSegment(
   const ctx = bitmap.getContext('2d');
   if (!ctx) return;
   const settings = normalizeBrushSettings(env.brushSettings);
-  const color = stroke?.isEraser ? 'rgba(0,0,0,1)' : settings.color;
   const channelEditTarget = getImageChannelEditTarget(env.doc);
   const routeColorComponents = channelEditTarget.channel !== 'rgb';
   const beforeChannelRoute = routeColorComponents
@@ -453,6 +453,18 @@ function paintStrokeSegment(
   const compositeOperation = stroke?.isEraser && !routeColorComponents ? 'destination-out' : 'source-over';
   const pressure = readBrushPressure(event);
   const tilt = readBrushTiltState(event);
+  // Krita-style colour dynamics: blend the dab colour from foreground toward the
+  // background (the two-colour picker) by pressure/tilt.
+  const color = stroke?.isEraser
+    ? 'rgba(0,0,0,1)'
+    : resolveBrushDabColor({
+        primaryColor: settings.color,
+        secondaryColor: env.backgroundColor ?? settings.color,
+        pressure,
+        tiltAmount: tilt.tiltAmount,
+        pressureColor: settings.pressureColor ?? 0,
+        tiltColor: settings.tiltColor ?? 0,
+      });
   const velocityPxPerMs = resolveActiveBrushStrokeVelocity(from, to, event);
   const dabs = buildBrushDabs(from, to, settings, pressure, {
     seed: stroke?.seed ?? 0,
