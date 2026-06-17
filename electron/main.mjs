@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, shell } from 'electron';
+import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, shell } from 'electron';
 import { execFile } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { copyFile, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
@@ -2471,6 +2471,19 @@ function installIpcHandlers() {
 
     const error = await shell.openPath(filePath);
     return error ? { error } : { ok: true };
+  });
+
+  // The async web Clipboard API (navigator.clipboard.read) is permission-gated
+  // and unreliable for images inside Electron, so read the OS clipboard image
+  // natively and hand the renderer a PNG data URL (null when there is none).
+  ipcMain.handle('signal-loom:read-clipboard-image', async () => {
+    try {
+      const image = clipboard.readImage();
+      if (!image || image.isEmpty()) return null;
+      return image.toDataURL();
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
   });
 }
 

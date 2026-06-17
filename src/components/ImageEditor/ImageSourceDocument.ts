@@ -3,6 +3,7 @@ import { createEmptyImageDocument } from '../../store/imageEditorStore';
 import type { ImageDocument, ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import { bitmapFromUrl, createBitmap, fillBitmap } from './LayerBitmap';
 import { getImageClipboardBitmap } from './ImageEditorClipboard';
+import { getSignalLoomNativeBridge } from '../../lib/nativeApp';
 import {
   CAMERA_RAW_SUPPORTED_HANDOFF_FORMATS,
   describeCameraRawDevelopFirstMetadata,
@@ -1355,6 +1356,25 @@ function buildSingleLayerImageDocumentFromBitmap(bitmap: LayerBitmap, title: str
 
 /** Read the first image on the OS clipboard into a bitmap, or null if none/denied. */
 async function readOsClipboardImageBitmap(): Promise<LayerBitmap | null> {
+  // Prefer Electron's native clipboard: the async web Clipboard API is
+  // permission-gated and frequently denied for images inside Electron (its
+  // default permission handler rejects `clipboard-read`), which previously
+  // surfaced as a false "no image on the clipboard".
+  const bridge = getSignalLoomNativeBridge();
+  if (bridge?.readClipboardImage) {
+    try {
+      const result = await bridge.readClipboardImage();
+      if (typeof result === 'string' && result.startsWith('data:image/')) {
+        return await bitmapFromUrl(result);
+      }
+      if (result && typeof result === 'object' && 'error' in result && result.error) {
+        console.warn('[clipboard] native readClipboardImage failed:', result.error);
+      }
+    } catch (error) {
+      console.warn('[clipboard] native readClipboardImage threw:', error);
+    }
+  }
+
   try {
     if (typeof navigator === 'undefined' || !navigator.clipboard?.read) return null;
     const items = await navigator.clipboard.read();
@@ -1371,8 +1391,11 @@ async function readOsClipboardImageBitmap(): Promise<LayerBitmap | null> {
         imageBitmap.close();
       }
     }
-  } catch {
-    // Clipboard read can be denied or unsupported; treat as "no image".
+    console.warn('[clipboard] no image/* item found on the clipboard; available types were read but none matched.');
+  } catch (error) {
+    // Clipboard read can be denied or unsupported; surface the reason so a
+    // false "no image" is debuggable instead of silently swallowed.
+    console.warn('[clipboard] navigator.clipboard.read failed:', error);
   }
   return null;
 }

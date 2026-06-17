@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('signalLoomNative', {
   exportPaperPdf: (request) => ipcRenderer.invoke('signal-loom:paper-export-pdf', request),
   exportPaperImages: (request) => ipcRenderer.invoke('signal-loom:paper-export-images', request),
   captureCurrentWindowPng: () => ipcRenderer.invoke('signal-loom:capture-current-window-png'),
+  readClipboardImage: () => ipcRenderer.invoke('signal-loom:read-clipboard-image'),
   generateVertexImage: (request) => ipcRenderer.invoke('signal-loom:vertex-generate-image', request),
   generateVertexText: (request) => ipcRenderer.invoke('signal-loom:vertex-generate-text', request),
   generateVertexVideo: (request) => ipcRenderer.invoke('signal-loom:vertex-generate-video', request),
