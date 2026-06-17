@@ -770,6 +770,12 @@ export function ImageEditorCanvas() {
       {showBrushStatus ? (
         <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2">
           <div className="flex gap-3 rounded-md border border-cyan-300/10 bg-[#1a1b23] px-3 py-1.5 text-xs text-cyan-100/50">
+            {tool === 'cloneStamp' ? (
+              <>
+                <span className="font-medium text-cyan-200/90">Alt-click (Option-click) a source, then paint to clone</span>
+                <span>|</span>
+              </>
+            ) : null}
             <span>Brush: {brushSettings.size}px</span>
             <span>|</span>
             <span>Opacity: {Math.round(brushSettings.opacity * 100)}%</span>
