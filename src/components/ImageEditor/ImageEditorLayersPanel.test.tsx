@@ -238,6 +238,51 @@ describe('ImageEditorLayersPanel', () => {
     expect(html).toContain('Red label');
   });
 
+  it('ctrl-clicks a layer row to extend the multi-layer selection used by linked move', () => {
+    useImageEditorStore.getState().openDocument({
+      ...createEmptyImageDocument({
+        id: 'doc-multi',
+        title: 'Multi select',
+        width: 256,
+        height: 256,
+      }),
+      layers: [
+        layer({ id: 'back', name: 'Back plate' }),
+        layer({ id: 'mid', name: 'Mid plate' }),
+        layer({ id: 'front', name: 'Front plate' }),
+      ],
+      activeLayerId: 'front',
+    });
+
+    act(() => {
+      root.render(<ImageEditorLayersPanel />);
+    });
+
+    const midRow = Array.from(container.querySelectorAll('[draggable="true"]')).find((element) =>
+      element.textContent?.includes('Mid plate'),
+    );
+    expect(midRow).toBeTruthy();
+
+    act(() => {
+      midRow?.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    });
+
+    const doc = useImageEditorStore.getState().documents.find((candidate) => candidate.id === 'doc-multi');
+    expect(doc?.selectedLayerIds).toEqual(['front', 'mid']);
+    expect(doc?.activeLayerId).toBe('mid');
+
+    // A plain click then collapses the multi-selection back to a single layer.
+    const backRow = Array.from(container.querySelectorAll('[draggable="true"]')).find((element) =>
+      element.textContent?.includes('Back plate'),
+    );
+    act(() => {
+      backRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const collapsed = useImageEditorStore.getState().documents.find((candidate) => candidate.id === 'doc-multi');
+    expect(collapsed?.selectedLayerIds).toEqual(['back']);
+    expect(collapsed?.activeLayerId).toBe('back');
+  });
+
   it('toggles clipping masks through an undoable layer operation', () => {
     useImageEditorStore.getState().openDocument({
       ...createEmptyImageDocument({

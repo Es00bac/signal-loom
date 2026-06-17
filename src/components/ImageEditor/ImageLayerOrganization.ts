@@ -181,6 +181,7 @@ export type ImageLayerOrganizationSupportedState =
   | 'single-layer-labels'
   | 'full-pixel-position-locks'
   | 'pairwise-linked-layer-movement'
+  | 'multi-select-linked-movement'
   | 'single-level-layer-groups'
   | 'one-level-clipping-mask-rendering';
 export type ImageLayerOrganizationUnsupportedPhotoshopState =
@@ -636,6 +637,7 @@ export function describeImageLayerOrganizationParityReadiness(
     'single-layer-labels',
     'full-pixel-position-locks',
     'pairwise-linked-layer-movement',
+    'multi-select-linked-movement',
     'single-level-layer-groups',
     'one-level-clipping-mask-rendering',
   ];

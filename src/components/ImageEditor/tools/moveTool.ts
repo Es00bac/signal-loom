@@ -2,6 +2,7 @@ import type { ToolHandler, Point, ToolEnv } from './types';
 import type { ImageDocument, ImageLayer } from '../../../types/imageEditor';
 import { canMoveImageLayer } from '../../../lib/imageLayerLocks';
 import { getImageLayerLinkGroupMembers } from '../../../lib/imageLayerLinks';
+import { resolveSelectedLayerIds } from '../ImageGroupTransform';
 import { resolveImageLayerTransformOrigin } from '../ImageLayerTransform';
 import { applyTransformPreviewSession, cancelTransformPreviewSession, getTransformPreviewSession } from '../ImageTransformPreview';
 import {
@@ -549,6 +550,30 @@ export function calculateMoveToolSnappedDelta(
   };
 }
 
+/**
+ * The movable layer origins for a Move drag: the union of the ad-hoc multi-selection
+ * (`selectedLayerIds`) and each selected layer's explicit link-group members, restricted to
+ * layers that can actually move. With a single selection this collapses to the active layer's
+ * link group (the prior behaviour); with several layers selected they translate as one group.
+ */
+export function resolveMoveToolLinkedOrigins(
+  doc: Pick<ImageDocument, 'layers' | 'activeLayerId' | 'selectedLayerIds'>,
+): Array<{ layerId: string; x: number; y: number }> {
+  const seen = new Set<string>();
+  const origins: Array<{ layerId: string; x: number; y: number }> = [];
+  for (const id of resolveSelectedLayerIds(doc)) {
+    const layer = doc.layers.find((candidate) => candidate.id === id);
+    if (!layer) continue;
+    for (const member of getImageLayerLinkGroupMembers(layer, doc.layers)) {
+      if (canMoveImageLayer(member) && !seen.has(member.id)) {
+        seen.add(member.id);
+        origins.push({ layerId: member.id, x: member.x, y: member.y });
+      }
+    }
+  }
+  return origins;
+}
+
 export const moveTool: ToolHandler = {
   onPointerDown(env, point) {
     applyTransformPreviewSession(env.doc.id, env.requestRender);
@@ -562,9 +587,7 @@ export const moveTool: ToolHandler = {
       active = null;
       return;
     }
-    const linkedOrigins = getImageLayerLinkGroupMembers(env.activeLayer, env.doc.layers)
-      .filter(canMoveImageLayer)
-      .map((layer) => ({ layerId: layer.id, x: layer.x, y: layer.y }));
+    const linkedOrigins = resolveMoveToolLinkedOrigins(env.doc);
     active = {
       kind: 'layer',
       layerId: env.activeLayer.id,

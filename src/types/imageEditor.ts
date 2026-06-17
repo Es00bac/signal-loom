@@ -689,6 +689,8 @@ export interface ImageDocument {
   height: number;
   layers: ImageLayer[];
   activeLayerId: string | null;
+  /** Multi-selection for linked transforms; always includes activeLayerId. Absent = just the active layer. */
+  selectedLayerIds?: string[];
   activeLayerEditTarget?: ImageLayerEditTarget;
   activeColorChannel?: ImageColorChannel;
   hasSelection: boolean;

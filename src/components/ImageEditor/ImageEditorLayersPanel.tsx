@@ -14,7 +14,7 @@ import {
   X,
   Trash2,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import { useDockExpandToContent } from '../DockablePanel/dockExpandContext';
 import { useSourceBinStore } from '../../store/sourceBinStore';
@@ -46,6 +46,7 @@ import {
   type ImageLayerPanelTypeFilter,
   type ImageLayerPanelVisibilityFilter,
 } from './ImageLayerOrganization';
+import { rangeLayerSelection, resolveSelectedLayerIds } from './ImageGroupTransform';
 import { SharedContextMenu } from '../Common/SharedContextMenu';
 import { getKeyboardShortcutLabel } from '../../lib/keyboardShortcuts';
 import { canEditImageLayerPixels, setImageLayerLockVariant, type ImageLayerLockKey } from '../../lib/imageLayerLocks';
@@ -149,6 +150,8 @@ function LayersPanelInner({ doc }: { doc: ImageDocument }) {
   const reorderLayer = useImageEditorStore((s) => s.reorderLayer);
   const setActiveLayer = useImageEditorStore((s) => s.setActiveLayer);
   const setActiveLayerEditTarget = useImageEditorStore((s) => s.setActiveLayerEditTarget);
+  const toggleLayerSelection = useImageEditorStore((s) => s.toggleLayerSelection);
+  const setSelectedLayers = useImageEditorStore((s) => s.setSelectedLayers);
   const setLayers = useImageEditorStore((s) => s.setLayers);
   const pushOperation = useImageEditorStore((s) => s.pushOperation);
   const sourceBins = useSourceBinStore((s) => s.bins);
@@ -184,6 +187,7 @@ function LayersPanelInner({ doc }: { doc: ImageDocument }) {
   ), [doc, activeLayer]);
   const sourceItems = useMemo(() => sourceBins.flatMap((bin) => bin.items), [sourceBins]);
 
+  const selectionAnchorRef = useRef<string | null>(null);
   const [dragLayerId, setDragLayerId] = useState<string | null>(null);
   const [layerMenu, setLayerMenu] = useState<{ x: number; y: number; layerId: string } | null>(null);
   const [styleClipboard, setStyleClipboard] = useState<ImageLayerStyleClipboard | null>(null);
@@ -585,6 +589,28 @@ function LayersPanelInner({ doc }: { doc: ImageDocument }) {
     reorderLayer(doc.id, dragLayerId, overIdx);
     setDragLayerId(null);
   };
+
+  const handleLayerRowClick = (layerId: string) => (event: React.MouseEvent) => {
+    // Shift-click extends a contiguous range from the anchor; Ctrl/Cmd-click toggles a
+    // single layer in/out; a plain click selects just this layer (collapsing any group).
+    if (event.shiftKey && selectionAnchorRef.current) {
+      const orderedIds = filteredVisualLayerRows.map(({ layer }) => layer.id);
+      setSelectedLayers(doc.id, rangeLayerSelection(orderedIds, selectionAnchorRef.current, layerId));
+      setActiveLayerEditTarget(doc.id, 'layer');
+      return;
+    }
+    if (event.ctrlKey || event.metaKey) {
+      toggleLayerSelection(doc.id, layerId);
+      setActiveLayerEditTarget(doc.id, 'layer');
+      selectionAnchorRef.current = layerId;
+      return;
+    }
+    selectionAnchorRef.current = layerId;
+    setActiveLayer(doc.id, layerId);
+    setActiveLayerEditTarget(doc.id, 'layer');
+  };
+
+  const selectedLayerIdSet = new Set(resolveSelectedLayerIds(doc));
 
   const contextLayer = layerMenu ? doc.layers.find((layer) => layer.id === layerMenu.layerId) ?? null : null;
   const contextVectorBooleanPartner = contextLayer ? getVectorBooleanPartner(contextLayer) : null;
@@ -1054,14 +1080,12 @@ function LayersPanelInner({ doc }: { doc: ImageDocument }) {
           <LayerRow
             key={layer.id}
             active={layer.id === doc.activeLayerId}
+            selected={selectedLayerIdSet.has(layer.id) && layer.id !== doc.activeLayerId}
             activeEditTarget={layer.id === doc.activeLayerId ? activeLayerEditTarget : 'layer'}
             dragging={layer.id === dragLayerId}
             indentLevel={depth}
             layer={layer}
-            onClick={() => {
-              setActiveLayer(doc.id, layer.id);
-              setActiveLayerEditTarget(doc.id, 'layer');
-            }}
+            onClick={handleLayerRowClick(layer.id)}
             onDragOver={handleDragOver}
             onDragStart={handleDragStart(layer.id)}
             onDrop={handleDropOnLayer(layer.id)}

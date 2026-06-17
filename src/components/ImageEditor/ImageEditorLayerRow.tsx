@@ -15,6 +15,7 @@ const LAYER_TYPE_COLORS: Record<LayerType, string> = {
 
 export function LayerRow({
   active,
+  selected = false,
   activeEditTarget = 'layer',
   dragging,
   indentLevel = 0,
@@ -32,11 +33,12 @@ export function LayerRow({
   onToggleVisible,
 }: {
   active: boolean;
+  selected?: boolean;
   activeEditTarget?: ImageLayerEditTarget;
   dragging: boolean;
   indentLevel?: number;
   layer: ImageLayer;
-  onClick: () => void;
+  onClick: (event: React.MouseEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDragStart: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -59,7 +61,9 @@ export function LayerRow({
       className={`flex cursor-pointer items-center gap-2 rounded px-2 py-0.5 text-xs ${
         active
           ? 'bg-cyan-400/10 text-cyan-50'
-          : 'text-cyan-100/70 hover:bg-cyan-400/5'
+          : selected
+            ? 'bg-cyan-400/5 text-cyan-50 ring-1 ring-inset ring-cyan-300/20'
+            : 'text-cyan-100/70 hover:bg-cyan-400/5'
       } ${dragging ? 'opacity-40' : ''}`}
       draggable
       onClick={onClick}

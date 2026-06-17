@@ -171,6 +171,34 @@ describe('moveTool layer locks', () => {
     expect(env.store.updateLayer).not.toHaveBeenCalledWith('doc-1', 'loose', expect.anything());
   });
 
+  it('moves all ad-hoc multi-selected layers by the same drag delta', () => {
+    const paint = layer({ id: 'paint', x: 10, y: 20 });
+    const text = layer({ id: 'text', x: 50, y: 60 });
+    const loose = layer({ id: 'loose', x: 200, y: 200 });
+    const doc = { ...docWithLayers([paint, text, loose], 'paint'), selectedLayerIds: ['paint', 'text'] };
+    const env = envWith(paint, doc);
+
+    moveTool.onPointerDown?.(env, { x: 10, y: 10 }, mods, {} as PointerEvent);
+    moveTool.onPointerMove?.(env, { x: 25, y: 30 }, mods, {} as PointerEvent);
+
+    expect(env.store.updateLayer).toHaveBeenCalledWith('doc-1', 'paint', { x: 25, y: 40 });
+    expect(env.store.updateLayer).toHaveBeenCalledWith('doc-1', 'text', { x: 65, y: 80 });
+    expect(env.store.updateLayer).not.toHaveBeenCalledWith('doc-1', 'loose', expect.anything());
+  });
+
+  it('skips position-locked layers inside an ad-hoc multi-selection', () => {
+    const paint = layer({ id: 'paint', x: 10, y: 20 });
+    const fixed = layer({ id: 'fixed', x: 50, y: 60, locks: { position: true } } as Partial<ImageLayer>);
+    const doc = { ...docWithLayers([paint, fixed], 'paint'), selectedLayerIds: ['paint', 'fixed'] };
+    const env = envWith(paint, doc);
+
+    moveTool.onPointerDown?.(env, { x: 10, y: 10 }, mods, {} as PointerEvent);
+    moveTool.onPointerMove?.(env, { x: 25, y: 30 }, mods, {} as PointerEvent);
+
+    expect(env.store.updateLayer).toHaveBeenCalledWith('doc-1', 'paint', { x: 25, y: 40 });
+    expect(env.store.updateLayer).not.toHaveBeenCalledWith('doc-1', 'fixed', expect.anything());
+  });
+
   it('applies smart snap deltas during live move dragging', () => {
     const paint = layer({ id: 'paint', name: 'Paint', x: 9, y: 20, bitmap: testBitmap(40, 30) });
     const loose = layer({ id: 'loose', name: 'Loose', x: 120, y: 50, bitmap: testBitmap(24, 18) });

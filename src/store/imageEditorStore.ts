@@ -38,6 +38,7 @@ import {
   type ImageViewToggleKey,
 } from '../components/ImageEditor/ImageRulersGuides';
 import { normalizeBrushSettings } from '../components/ImageEditor/ImageBrushEngine';
+import { toggleLayerInSelection } from '../components/ImageEditor/ImageGroupTransform';
 import { cloneBitmap } from '../components/ImageEditor/LayerBitmap';
 import { buildPerspectiveCroppedImageDocumentState } from '../components/ImageEditor/tools/perspectiveCropDocument';
 import type { CropPoint as PerspectiveCropCorner } from '../components/ImageEditor/tools/perspectiveCrop';
@@ -152,6 +153,8 @@ interface ImageEditorActions {
   bumpLayerBitmapVersion: (docId: string, layerId: string) => void;
   reorderLayer: (docId: string, layerId: string, newIndex: number) => void;
   setActiveLayer: (docId: string, layerId: string | null) => void;
+  setSelectedLayers: (docId: string, layerIds: string[]) => void;
+  toggleLayerSelection: (docId: string, layerId: string) => void;
   setActiveLayerEditTarget: (docId: string, target: ImageLayerEditTarget) => void;
   pushOperation: (op: EditorOperation) => void;
   popUndo: (docId: string) => EditorOperation | undefined;
@@ -757,16 +760,54 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
       set((state) => {
         let changed = false;
         const documents = state.documents.map((d) => {
-          if (d.id !== docId || d.activeLayerId === layerId) return d;
+          if (d.id !== docId) return d;
+          const nextSelection = layerId ? [layerId] : [];
+          const prevSelection = d.selectedLayerIds ?? [];
+          const selectionSame = d.activeLayerId === layerId
+            && prevSelection.length === nextSelection.length
+            && prevSelection.every((id, i) => id === nextSelection[i]);
+          if (selectionSame) return d;
           changed = true;
+          // A plain selection collapses any multi-selection to just this layer.
           return {
             ...d,
             activeLayerId: layerId,
+            selectedLayerIds: nextSelection,
             activeLayerEditTarget: resolveActiveLayerEditTarget({
               ...d,
               activeLayerId: layerId,
             }),
           };
+        });
+        return changed ? { documents } : state;
+      }),
+
+    setSelectedLayers: (docId, layerIds) =>
+      set((state) => {
+        let changed = false;
+        const documents = state.documents.map((d) => {
+          if (d.id !== docId) return d;
+          const existing = new Set(d.layers.map((l) => l.id));
+          const ids = layerIds.filter((id, i) => existing.has(id) && layerIds.indexOf(id) === i);
+          if (ids.length === 0) return d;
+          const activeLayerId = ids.includes(d.activeLayerId ?? '') ? d.activeLayerId : ids[ids.length - 1];
+          changed = true;
+          return { ...d, selectedLayerIds: ids, activeLayerId };
+        });
+        return changed ? { documents } : state;
+      }),
+
+    toggleLayerSelection: (docId, layerId) =>
+      set((state) => {
+        let changed = false;
+        const documents = state.documents.map((d) => {
+          if (d.id !== docId || !d.layers.some((l) => l.id === layerId)) return d;
+          const current = (d.selectedLayerIds && d.selectedLayerIds.length > 0)
+            ? d.selectedLayerIds
+            : (d.activeLayerId ? [d.activeLayerId] : []);
+          const next = toggleLayerInSelection(current, d.activeLayerId, layerId);
+          changed = true;
+          return { ...d, selectedLayerIds: next.selectedLayerIds, activeLayerId: next.activeLayerId };
         });
         return changed ? { documents } : state;
       }),
