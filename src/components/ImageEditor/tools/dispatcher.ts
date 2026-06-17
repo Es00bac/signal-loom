@@ -56,6 +56,18 @@ const HANDLERS: Record<EditorTool, ToolHandler> = {
   eyedropper: eyedropperTool,
 };
 
+/**
+ * Tools where holding Ctrl temporarily acts as the eyedropper — quick colour
+ * sampling without switching tools (à la Photoshop/GIMP's Alt-pick).
+ */
+export const EYEDROPPER_MODIFIER_TOOLS = new Set<EditorTool>([
+  'brush', 'eraser', 'paintBucket', 'gradientTool', 'rectShape', 'ellipseShape', 'pen',
+]);
+
+export function shouldUseEyedropperOverride(tool: EditorTool, mods: Pick<Modifiers, 'ctrl'>): boolean {
+  return mods.ctrl && EYEDROPPER_MODIFIER_TOOLS.has(tool);
+}
+
 export type ImageToolDispatcherMethod = 'pointerDown' | 'pointerMove' | 'pointerUp' | 'keyDown' | 'cancel';
 export type ImageToolDispatcherSupportStatus = 'full' | 'partial' | 'inactive';
 
@@ -184,35 +196,52 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       return { x: event.clientX - rect.left, y: event.clientY - rect.top };
     };
 
+    // True for the duration of a Ctrl-held stroke that started on a paint tool —
+    // the whole interaction samples colour (eyedropper) instead of painting.
+    let eyedropperOverride = false;
     const onDown = (event: PointerEvent) => {
       if (shouldIgnoreImageCanvasToolEvent(event)) return;
       const env = buildEnv();
       if (!env) return;
-      const handler = currentHandler();
       const docPoint = env.screenToDoc(screenPoint(event));
+      const mods = modsFrom(event);
       el.setPointerCapture(event.pointerId);
-      handler.onPointerDown?.(env, docPoint, modsFrom(event), event);
+      if (shouldUseEyedropperOverride(useImageEditorStore.getState().tool, mods)) {
+        eyedropperOverride = true;
+        eyedropperTool.onPointerDown?.(env, docPoint, mods, event);
+        return;
+      }
+      eyedropperOverride = false;
+      currentHandler().onPointerDown?.(env, docPoint, mods, event);
     };
     const onMove = (event: PointerEvent) => {
       if (shouldIgnoreImageCanvasToolEvent(event)) return;
       const env = buildEnv();
       if (!env) return;
-      const handler = currentHandler();
       const docPoint = env.screenToDoc(screenPoint(event));
-      handler.onPointerMove?.(env, docPoint, modsFrom(event), event);
+      const mods = modsFrom(event);
+      if (eyedropperOverride) {
+        // Continuous sampling while Ctrl-dragging.
+        eyedropperTool.onPointerDown?.(env, docPoint, mods, event);
+        return;
+      }
+      currentHandler().onPointerMove?.(env, docPoint, mods, event);
     };
     const onUp = (event: PointerEvent) => {
       if (shouldIgnoreImageCanvasToolEvent(event)) return;
       const env = buildEnv();
       if (!env) return;
-      const handler = currentHandler();
       const docPoint = env.screenToDoc(screenPoint(event));
       try {
         el.releasePointerCapture(event.pointerId);
       } catch {
         // ignore: pointer was already released or never captured
       }
-      handler.onPointerUp?.(env, docPoint, modsFrom(event), event);
+      if (eyedropperOverride) {
+        eyedropperOverride = false;
+        return;
+      }
+      currentHandler().onPointerUp?.(env, docPoint, modsFrom(event), event);
     };
     const onDouble = (event: MouseEvent) => {
       if (shouldIgnoreImageCanvasToolEvent(event)) return;

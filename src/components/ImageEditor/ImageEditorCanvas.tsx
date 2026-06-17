@@ -115,6 +115,9 @@ const BRUSH_SYMMETRY_TOOLS = new Set<EditorTool>(['brush', 'eraser']);
 export function ImageEditorCanvas() {
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  // Ctrl temporarily turns a paint tool into the eyedropper; the brush cursor
+  // shows a sampler crosshair while it's held.
+  const [eyedropperModifierHeld, setEyedropperModifierHeld] = useState(false);
   const rendererRef = useRef<CompositeRenderer | null>(null);
 
   useToolDispatcher({ wrapperRef, rendererRef });
@@ -654,14 +657,42 @@ export function ImageEditorCanvas() {
 
   void docToScreen; // re-export hint for tooling
 
+  // Track Ctrl for the brush -> eyedropper temporary-tool modifier.
+  useEffect(() => {
+    const sync = (event: KeyboardEvent) => setEyedropperModifierHeld(event.ctrlKey);
+    window.addEventListener('keydown', sync);
+    window.addEventListener('keyup', sync);
+    const blur = () => setEyedropperModifierHeld(false);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('keydown', sync);
+      window.removeEventListener('keyup', sync);
+      window.removeEventListener('blur', blur);
+    };
+  }, []);
+
+  const brushCursorActive = BRUSH_STATUS_TOOLS.has(tool);
+  const brushCursorZoom = activeDoc?.viewport.zoom ?? 1;
+
   return (
     <div
       ref={wrapperRef}
-      className={`theme-surface relative flex-1 ${tool === 'hand' ? 'cursor-grab' : ''}`}
+      className={`theme-surface relative flex-1 ${tool === 'hand' ? 'cursor-grab' : brushCursorActive ? 'cursor-none' : ''}`}
       onDoubleClick={handleCanvasDoubleClick}
       style={{ touchAction: 'none' }}
     >
       <canvas ref={canvasElRef} className="block h-full w-full" style={{ touchAction: 'none' }} />
+
+      {brushCursorActive ? (
+        <BrushCursorOverlay
+          angleDeg={brushSettings.angleDeg}
+          eyedropper={eyedropperModifierHeld}
+          roundness={brushSettings.roundness}
+          sizePx={brushSettings.size * brushCursorZoom}
+          square={brushSettings.tipShape === 'square'}
+          wrapperRef={wrapperRef}
+        />
+      ) : null}
 
       {showRulers && activeDoc ? (
         <ImageEditorRulers
@@ -790,6 +821,85 @@ export function ImageEditorCanvas() {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Photoshop/GIMP-style brush cursor: an outline that follows the pointer and
+ * shows the brush size/shape (round/square, roundness, angle), replacing the
+ * system cursor. Position is updated imperatively on the outer element (no
+ * re-render per move); the inner element carries the React-managed shape. While
+ * Ctrl is held it becomes a sampler crosshair (the eyedropper modifier).
+ */
+function BrushCursorOverlay({
+  angleDeg,
+  eyedropper,
+  roundness,
+  sizePx,
+  square,
+  wrapperRef,
+}: {
+  angleDeg: number;
+  eyedropper: boolean;
+  roundness: number;
+  sizePx: number;
+  square: boolean;
+  wrapperRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    const el = ref.current;
+    if (!wrapper || !el) return undefined;
+    const move = (event: PointerEvent) => {
+      const rect = wrapper.getBoundingClientRect();
+      el.style.left = `${event.clientX - rect.left}px`;
+      el.style.top = `${event.clientY - rect.top}px`;
+      el.style.opacity = '1';
+    };
+    const hide = () => { el.style.opacity = '0'; };
+    wrapper.addEventListener('pointermove', move, { passive: true });
+    wrapper.addEventListener('pointerenter', move, { passive: true });
+    wrapper.addEventListener('pointerdown', move, { passive: true });
+    wrapper.addEventListener('pointerleave', hide, { passive: true });
+    return () => {
+      wrapper.removeEventListener('pointermove', move);
+      wrapper.removeEventListener('pointerenter', move);
+      wrapper.removeEventListener('pointerdown', move);
+      wrapper.removeEventListener('pointerleave', hide);
+    };
+  }, [wrapperRef]);
+
+  const diameter = Math.max(4, Math.min(2000, sizePx));
+  const height = Math.max(4, diameter * (roundness > 0 ? roundness : 1));
+
+  return (
+    <div ref={ref} className="pointer-events-none absolute left-0 top-0 z-30 opacity-0">
+      {eyedropper ? (
+        <svg width="24" height="24" viewBox="0 0 24 24" style={{ transform: 'translate(-50%, -50%)' }} aria-hidden>
+          <g stroke="#fff" strokeWidth="1.5" style={{ filter: 'drop-shadow(0 0 1px rgba(0,0,0,0.9))' }}>
+            <line x1="12" y1="2" x2="12" y2="9" />
+            <line x1="12" y1="15" x2="12" y2="22" />
+            <line x1="2" y1="12" x2="9" y2="12" />
+            <line x1="15" y1="12" x2="22" y2="12" />
+            <circle cx="12" cy="12" r="2.5" fill="none" />
+          </g>
+        </svg>
+      ) : (
+        <div
+          style={{
+            width: `${diameter}px`,
+            height: `${height}px`,
+            borderRadius: square ? '0' : '9999px',
+            // Dual-tone outline so it reads on both light and dark pixels.
+            border: '1px solid rgba(0,0,0,0.78)',
+            boxShadow: '0 0 0 1px rgba(255,255,255,0.85)',
+            transform: `translate(-50%, -50%) rotate(${angleDeg}deg)`,
+          }}
+        />
+      )}
     </div>
   );
 }
