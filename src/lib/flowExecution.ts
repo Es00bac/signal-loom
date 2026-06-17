@@ -1249,7 +1249,7 @@ async function executeAtlasNativeImageNode(input: {
   const immediateOutput = extractAtlasOutputUrl(created);
   const predictionId = extractAtlasPredictionId(created);
   const resultUrl = immediateOutput ?? (predictionId
-    ? await pollAtlasImageResult(baseUrl, apiKey, predictionId, input.onStatus)
+    ? await pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'image')
     : undefined);
 
   if (!resultUrl) {
@@ -1335,13 +1335,16 @@ async function uploadAtlasMedia(
   return uploadedUrl;
 }
 
-async function pollAtlasImageResult(
+async function pollAtlasPredictionResult(
   baseUrl: string,
   apiKey: string,
   predictionId: string,
   onStatus?: (statusMessage: string) => void,
+  mediaLabel: 'image' | 'video' = 'image',
 ): Promise<string> {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  // Video jobs take longer than images, so allow a longer poll window.
+  const maxAttempts = mediaLabel === 'video' ? 300 : 120;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const response = await fetch(`${baseUrl}/model/prediction/${encodeURIComponent(predictionId)}`, {
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -1349,7 +1352,7 @@ async function pollAtlasImageResult(
     });
 
     if (!response.ok) {
-      throw new Error(await extractErrorBody(response, 'Atlas image polling failed'));
+      throw new Error(await extractErrorBody(response, `Atlas ${mediaLabel} polling failed`));
     }
 
     const payload = (await response.json()) as AtlasPollResponse;
@@ -1357,7 +1360,7 @@ async function pollAtlasImageResult(
     const status = extractAtlasPredictionStatus(payload);
 
     if (status && isAtlasFailureStatus(status)) {
-      throw new Error(extractProviderError(payload.error ?? payload.data?.error ?? status, 'Atlas image generation failed.'));
+      throw new Error(extractProviderError(payload.error ?? payload.data?.error ?? status, `Atlas ${mediaLabel} generation failed.`));
     }
 
     if (outputUrl && (!status || isAtlasSuccessStatus(status))) {
@@ -1365,14 +1368,14 @@ async function pollAtlasImageResult(
     }
 
     if (status && isAtlasSuccessStatus(status)) {
-      throw new Error('Atlas completed the image job without an output URL.');
+      throw new Error(`Atlas completed the ${mediaLabel} job without an output URL.`);
     }
 
-    onStatus?.(`Atlas image is still in progress... ${attempt + 1} check${attempt === 0 ? '' : 's'} so far`);
+    onStatus?.(`Atlas ${mediaLabel} is still in progress... ${attempt + 1} check${attempt === 0 ? '' : 's'} so far`);
     await sleep(2000);
   }
 
-  throw new Error('Atlas image generation timed out after 240 seconds.');
+  throw new Error(`Atlas ${mediaLabel} generation timed out.`);
 }
 
 function extractAtlasPredictionId(payload: AtlasCreateResponse): string | undefined {
@@ -1413,6 +1416,19 @@ function firstStringFromUnknown(value: unknown): string | undefined {
       const itemString = firstStringFromUnknown(item);
       if (itemString) {
         return itemString;
+      }
+    }
+    return undefined;
+  }
+
+  // Atlas video predictions can nest the URL under an object, e.g.
+  // `{ outputs: [url] }` or `{ url: ... }` — probe the common output keys.
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    for (const key of ['outputs', 'output', 'url', 'video', 'videos', 'download_url']) {
+      const nested = firstStringFromUnknown(record[key]);
+      if (nested) {
+        return nested;
       }
     }
   }
@@ -2489,6 +2505,89 @@ async function executeVideoNode(
         statusMessage: `Generated with ${modelId}`,
       };
     }
+    case 'atlas': {
+      return executeAtlasVideoNode({ modelId, prompt, context, node, settings, onStatus });
+    }
+  }
+}
+
+async function executeAtlasVideoNode(input: {
+  modelId: string;
+  prompt: string;
+  context: ExecutionContext;
+  node: AppNode;
+  settings: RuntimeSettingsSnapshot;
+  onStatus?: (statusMessage: string) => void;
+}): Promise<ExecutionResult> {
+  const apiKey = requireApiKey(input.settings.apiKeys.atlas ?? '', 'Atlas');
+  const baseUrl = normalizeAtlasBaseUrl(input.settings.providerSettings.atlasBaseUrl);
+  // Image-to-video models take an uploaded start frame; text-to-video does not.
+  const startImage = input.context.startImageInput
+    ? await uploadAtlasMedia(baseUrl, apiKey, input.context.startImageInput, 'flow-atlas-video-start.png')
+    : undefined;
+  const body: Record<string, unknown> = {
+    model: input.modelId,
+    prompt: input.prompt,
+    duration: input.context.config.durationSeconds,
+    resolution: input.context.config.videoResolution,
+    aspect_ratio: input.context.config.aspectRatio,
+    generate_audio: input.node.data.videoGenerateAudio ?? true,
+  };
+  const seed = coerceOptionalNumber(input.node.data.videoSeed);
+  if (seed !== undefined) body.seed = seed;
+  const negativePrompt = normalizeOptionalString(input.node.data.videoNegativePrompt as string | undefined);
+  if (negativePrompt) body.negative_prompt = negativePrompt;
+  if (startImage) body.image = startImage;
+
+  input.onStatus?.('Generating video with Atlas Cloud…');
+  const response = await fetch(`${baseUrl}/model/generateVideo`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(await extractErrorBody(response, 'Atlas video generation failed'));
+  }
+
+  const created = (await response.json()) as AtlasCreateResponse;
+  if (created.error || created.data?.error) {
+    throw new Error(extractProviderError(created.error ?? created.data?.error, 'Atlas video generation failed.'));
+  }
+
+  const immediateOutput = extractAtlasOutputUrl(created);
+  const predictionId = extractAtlasPredictionId(created);
+  const resultUrl = immediateOutput ?? (predictionId
+    ? await pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'video')
+    : undefined);
+
+  if (!resultUrl) {
+    throw new Error('Atlas did not return a prediction ID or video output.');
+  }
+
+  const materialized = await materializeAtlasVideoResult(resultUrl);
+  return {
+    result: materialized.result,
+    resultType: 'video',
+    mimeType: materialized.mimeType,
+    statusMessage: `Generated ${input.context.config.durationSeconds}s ${input.context.config.videoResolution} video with ${input.modelId}`,
+  };
+}
+
+// Atlas video result files can sit on a CORS-restricted CDN; fetch+inline when
+// possible, otherwise hand back the remote URL (a <video src> still plays it).
+async function materializeAtlasVideoResult(resultUrl: string): Promise<{ result: string; mimeType?: string }> {
+  if (!/^https?:\/\//i.test(resultUrl)) {
+    return { result: resultUrl, mimeType: resultUrl.match(/^data:([^;,]+)/)?.[1] };
+  }
+  try {
+    const blob = await fetchImageResultBlob(resultUrl, 'Atlas video download failed');
+    return { result: await toResultUrl(blob), mimeType: blob.type || undefined };
+  } catch {
+    return { result: resultUrl, mimeType: 'video/mp4' };
   }
 }
 

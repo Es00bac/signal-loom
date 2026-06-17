@@ -32,6 +32,7 @@ const baseSettings: RuntimeSettingsSnapshot = {
     video: {
       gemini: 'veo-3.1-generate-preview',
       huggingface: 'Wan-AI/Wan2.2-T2V-A14B',
+      atlas: 'google/veo3.1/text-to-video',
     },
     audio: {
       gemini: 'gemini-3.1-flash-tts-preview',

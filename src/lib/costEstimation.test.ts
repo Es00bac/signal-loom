@@ -46,6 +46,7 @@ const settings: RuntimeSettingsSnapshot = {
     video: {
       gemini: 'veo-3.1-fast-generate-preview',
       huggingface: 'hf-video',
+      atlas: 'google/veo3.1/text-to-video',
     },
     audio: {
       gemini: 'gemini-2.5-flash-preview-tts',

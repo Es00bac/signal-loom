@@ -30,7 +30,7 @@ export const PROVIDER_LABELS = {
 export const CAPABILITY_PROVIDERS = {
   text: ['gemini', 'openai', 'huggingface'],
   image: ['gemini', 'openai', 'atlas', 'huggingface', 'bfl', 'stability', 'localOpen', 'android'],
-  video: ['gemini', 'huggingface'],
+  video: ['gemini', 'huggingface', 'atlas'],
   audio: ['gemini', 'elevenlabs', 'huggingface'],
 } as const;
 
@@ -53,6 +53,7 @@ export const DEFAULT_MODELS: DefaultModelSettings = {
   video: {
     gemini: 'veo-3.1-generate-001',
     huggingface: 'Wan-AI/Wan2.2-T2V-A14B',
+    atlas: 'google/veo3.1/text-to-video',
   },
   audio: {
     gemini: 'gemini-3.1-flash-tts-preview',
@@ -325,6 +326,17 @@ export const FALLBACK_MODEL_OPTIONS: ModelCatalog = {
       { value: 'genmo/mochi-1-preview', label: 'Mochi 1 Preview' },
       { value: 'Lightricks/LTX-Video', label: 'LTX Video' },
     ],
+    // Live Atlas Cloud video slugs (verified against the account /models list).
+    atlas: [
+      { value: 'google/veo3.1/text-to-video', label: 'Atlas Veo 3.1' },
+      { value: 'google/veo3.1/image-to-video', label: 'Atlas Veo 3.1 (Image→Video)' },
+      { value: 'google/veo3.1-fast/text-to-video', label: 'Atlas Veo 3.1 Fast' },
+      { value: 'bytedance/seedance-2.0/text-to-video', label: 'Atlas Seedance 2.0' },
+      { value: 'bytedance/seedance-2.0/image-to-video', label: 'Atlas Seedance 2.0 (Image→Video)' },
+      { value: 'alibaba/wan-2.7/text-to-video', label: 'Atlas Wan 2.7' },
+      { value: 'alibaba/wan-2.7/image-to-video', label: 'Atlas Wan 2.7 (Image→Video)' },
+      { value: 'xai/grok-imagine-video/text-to-video', label: 'Atlas Grok Imagine Video' },
+    ],
   },
   audio: {
     gemini: [
@@ -375,6 +387,7 @@ export function buildEmptyModelCatalog(): ModelCatalog {
     video: {
       gemini: [],
       huggingface: [],
+      atlas: [],
     },
     audio: {
       gemini: [],
@@ -404,6 +417,7 @@ export function cloneModelCatalog(modelCatalog: ModelCatalog): ModelCatalog {
     video: {
       gemini: [...modelCatalog.video.gemini],
       huggingface: [...modelCatalog.video.huggingface],
+      atlas: [...modelCatalog.video.atlas],
     },
     audio: {
       gemini: [...modelCatalog.audio.gemini],

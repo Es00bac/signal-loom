@@ -41,7 +41,9 @@ ws.on('message', (data) => {
 ws.on('open', async () => {
   await send('Runtime.enable');
   const result = await send('Runtime.evaluate', {
-    expression: `JSON.stringify((() => { ${expression} })())`,
+    // Wrap in an async IIFE so the expression may `await` (e.g. fetch), then
+    // stringify the resolved value. awaitPromise makes CDP wait for it.
+    expression: `Promise.resolve((async () => { ${expression} })()).then((v) => JSON.stringify(v))`,
     awaitPromise: true,
     returnByValue: true,
   });
