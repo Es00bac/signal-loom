@@ -152,6 +152,20 @@ export function shouldIgnoreImageCanvasToolEvent(event: Event): boolean {
 }
 
 /**
+ * The sub-frame pointer samples the OS batched into one `pointermove`. High-rate styli (Wacom
+ * Cintiq, S Pen) and trackpads emit several samples per display frame; `getCoalescedEvents()`
+ * exposes them so a fast stroke is sampled accurately instead of as straight segments between
+ * frame-spaced points. Falls back to the event itself where the API is unavailable (older WebKit)
+ * or returns nothing.
+ */
+export function coalescedPointerEvents(event: PointerEvent): PointerEvent[] {
+  const getter = (event as PointerEvent & { getCoalescedEvents?: () => PointerEvent[] }).getCoalescedEvents;
+  if (typeof getter !== 'function') return [event];
+  const samples = getter.call(event);
+  return samples && samples.length > 0 ? samples : [event];
+}
+
+/**
  * Wires pointer/keyboard events on the canvas wrapper to the active tool's
  * handler. Builds a ToolEnv per-event with the current store snapshot.
  */
@@ -228,14 +242,23 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       if (shouldIgnoreImageCanvasToolEvent(event)) return;
       const env = buildEnv();
       if (!env) return;
-      const docPoint = env.screenToDoc(screenPoint(event));
       const mods = modsFrom(event);
       if (eyedropperOverride) {
-        // Continuous sampling while Ctrl-dragging.
-        eyedropperTool.onPointerDown?.(env, docPoint, mods, event);
+        // Continuous sampling while Ctrl-dragging — a single sample is enough for colour pick.
+        eyedropperTool.onPointerDown?.(env, env.screenToDoc(screenPoint(event)), mods, event);
         return;
       }
-      currentHandler().onPointerMove?.(env, docPoint, mods, event);
+      // Replay every sub-frame pointer sample the browser batched into this event. On a 120-240Hz
+      // stylus (Cintiq / S Pen) the OS coalesces several moves per frame; feeding each one (with its
+      // own pressure/tilt/timestamp) keeps fast strokes smooth instead of cutting corners into
+      // polygons. The composite is still rAF-coalesced downstream, so this adds dab accuracy, not
+      // extra repaints.
+      const handler = currentHandler();
+      const onPointerMove = handler.onPointerMove;
+      if (!onPointerMove) return;
+      for (const sample of coalescedPointerEvents(event)) {
+        onPointerMove.call(handler, env, env.screenToDoc(screenPoint(sample)), mods, sample);
+      }
     };
     const onUp = (event: PointerEvent) => {
       if (shouldIgnoreImageCanvasToolEvent(event)) return;
