@@ -58,6 +58,27 @@ export function CropPanel() {
     return `${Math.round(activeDoc.width / gcd)}:${Math.round(activeDoc.height / gcd)}`;
   }, [activeDoc]);
   const rotationDeg = Number.isFinite(settings.rotationDeg) ? settings.rotationDeg : 0;
+
+  const applyPerspectiveCrop = useImageEditorStore((state) => state.applyPerspectiveCrop);
+  const docWidth = activeDoc?.width ?? 0;
+  const docHeight = activeDoc?.height ?? 0;
+  // Perspective-crop quad corners (TL, TR, BR, BL) in document pixels; null = at
+  // the document bounds. The user pulls corners over a skewed rectangle, then
+  // Apply rectifies the flattened composite to a straight rectangle.
+  const [perspectiveCorners, setPerspectiveCorners] = useState<Array<{ x: number; y: number }> | null>(null);
+  const effectiveCorners = perspectiveCorners ?? [
+    { x: 0, y: 0 },
+    { x: docWidth, y: 0 },
+    { x: docWidth, y: docHeight },
+    { x: 0, y: docHeight },
+  ];
+  const setCornerCoord = (index: number, axis: 'x' | 'y', value: number) => {
+    const next = effectiveCorners.map((corner, i) =>
+      i === index ? { ...corner, [axis]: Number.isFinite(value) ? value : corner[axis] } : corner,
+    );
+    setPerspectiveCorners(next);
+  };
+  const cornersAreDefault = !perspectiveCorners;
   const updateRotationDeg = (value: number) => {
     setCropToolSettings({ rotationDeg: clampCropRotationDeg(value) });
   };
@@ -207,11 +228,57 @@ export function CropPanel() {
         />
         <span>Delete Cropped Pixels</span>
       </label>
+      <div className="rounded border border-cyan-300/10 bg-[#23242e] p-2">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-cyan-100/70">Perspective Crop</span>
+          {!cornersAreDefault && (
+            <button
+              className="rounded border border-cyan-300/10 px-1.5 py-0.5 text-[10px] text-cyan-100/60 hover:border-cyan-400/40"
+              onClick={() => setPerspectiveCorners(null)}
+              type="button"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          {(['Top-Left', 'Top-Right', 'Bottom-Right', 'Bottom-Left'] as const).map((label, index) => (
+            <div key={label} className="rounded bg-[#1c1d25] p-1">
+              <div className="mb-0.5 text-[10px] text-cyan-100/45">{label}</div>
+              <div className="flex gap-1">
+                {(['x', 'y'] as const).map((axis) => (
+                  <input
+                    key={axis}
+                    aria-label={`${label} ${axis.toUpperCase()}`}
+                    className="w-full rounded border border-cyan-300/10 bg-[#252630] px-1 py-0.5 text-[11px] text-cyan-50"
+                    onChange={(event) => setCornerCoord(index, axis, Math.round(Number(event.target.value)))}
+                    type="number"
+                    value={Math.round(effectiveCorners[index][axis])}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <button
+          className="mt-1.5 w-full rounded border border-cyan-400/40 bg-cyan-400/15 px-2 py-1 text-xs text-cyan-50 enabled:hover:bg-cyan-400/25 disabled:opacity-40"
+          disabled={!activeDoc || cornersAreDefault}
+          onClick={() => {
+            if (activeDoc) {
+              applyPerspectiveCrop(activeDoc.id, effectiveCorners);
+              setPerspectiveCorners(null);
+            }
+          }}
+          type="button"
+        >
+          Apply Perspective Crop
+        </button>
+      </div>
       <p className="text-cyan-100/35">
         Drag to place the crop. Enter applies, Esc cancels, and the on-canvas controls stay with the crop box.
         Rotate the crop to straighten tilted artwork before committing.
         Leave cropped pixels off to keep hidden image data for later reframing.
-        Perspective crop and content-aware corner fill remain planning-only warnings, so rotated empty corners still need later repair before export or handoff.
+        Perspective Crop pulls the four corner coordinates over a skewed rectangle and rectifies the flattened image to a straight rectangle (content-aware corner fill still remains a planning-only warning for rotated empty corners).
       </p>
     </div>
   );

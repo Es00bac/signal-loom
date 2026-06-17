@@ -39,6 +39,8 @@ import {
 } from '../components/ImageEditor/ImageRulersGuides';
 import { normalizeBrushSettings } from '../components/ImageEditor/ImageBrushEngine';
 import { cloneBitmap } from '../components/ImageEditor/LayerBitmap';
+import { buildPerspectiveCroppedImageDocumentState } from '../components/ImageEditor/tools/perspectiveCropDocument';
+import type { CropPoint as PerspectiveCropCorner } from '../components/ImageEditor/tools/perspectiveCrop';
 import {
   resizeImageCanvas,
   resizeImageDocumentPixels,
@@ -103,6 +105,8 @@ interface ImageEditorActions {
   setDocumentTitle: (id: string, title: string) => void;
   setLayers: (docId: string, layers: ImageLayer[], activeLayerId?: string | null) => void;
   setDocumentDimensions: (id: string, width: number, height: number) => void;
+  /** Rectify the document through a 4-corner quad (TL,TR,BR,BL) into a straight rectangle (undoable). */
+  applyPerspectiveCrop: (docId: string, corners: PerspectiveCropCorner[]) => void;
   resizeDocumentPixels: (id: string, width: number, height: number) => void;
   resizeDocumentCanvas: (
     id: string,
@@ -274,6 +278,21 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
         });
         return changed ? { documents } : state;
       }),
+
+    applyPerspectiveCrop: (docId, corners) => {
+      const doc = get().documents.find((candidate) => candidate.id === docId);
+      if (!doc) return;
+      const result = buildPerspectiveCroppedImageDocumentState(doc, corners);
+      if (!result) return;
+      get().pushOperation({
+        kind: 'docResize',
+        docId,
+        before: { width: doc.width, height: doc.height, layers: doc.layers, activeLayerId: doc.activeLayerId },
+        after: { width: result.width, height: result.height, layers: result.layers, activeLayerId: result.activeLayerId },
+      });
+      get().setLayers(docId, result.layers, result.activeLayerId);
+      get().setDocumentDimensions(docId, result.width, result.height);
+    },
 
     resizeDocumentPixels: (id, width, height) =>
       set((state) => {
