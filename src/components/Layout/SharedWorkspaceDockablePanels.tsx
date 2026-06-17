@@ -132,9 +132,15 @@ function SharedDockZoneStack({
   }
 
   const edgeClassName = zone === 'right' ? 'right-0' : 'left-0';
+  // Only stretch the edge container full-height when a panel is actually
+  // expanded (its `flex-1` child needs the room). When every panel is a
+  // collapsed handle, anchoring both top AND bottom turned the rail into a
+  // full-height invisible strip; dropping `bottom-0` lets it be content-height,
+  // i.e. a genuine compact handle rail.
+  const edgeHasExpandedPanel = zoneEntries.some((entry) => entry.layout.mode !== 'collapsed');
   return (
     <div
-      className={`absolute bottom-0 ${edgeClassName} flex min-h-0 flex-col gap-0 pointer-events-none`}
+      className={`absolute ${edgeHasExpandedPanel ? 'bottom-0' : ''} ${edgeClassName} flex min-h-0 flex-col gap-0 pointer-events-none`}
       style={{ top: topOffsetPx }}
     >
       {zoneEntries.map((entry, index) => renderSharedPanel(
