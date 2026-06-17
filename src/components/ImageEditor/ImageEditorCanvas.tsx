@@ -26,6 +26,7 @@ import {
 import { CanvasViewportGesture } from './imageCanvasGestures';
 import { getSelection } from './selectionRegistry';
 import { useToolDispatcher } from './tools/dispatcher';
+import { isPenSessionActive } from './tools/penTool';
 import type { EditorTool, ImageDocument, ImageLayer, ImageVectorPathPoint, LayerBitmap } from '../../types/imageEditor';
 import {
   getImageTextEditOverlayBounds,
@@ -763,7 +764,8 @@ export function ImageEditorCanvas() {
         />
       ) : null}
 
-      {activeDoc && activeVectorPathLayer && !editingTextLayer && (tool === 'move' || tool === 'pen') ? (
+      {activeDoc && activeVectorPathLayer && !editingTextLayer
+        && (tool === 'move' || (tool === 'pen' && !isPenSessionActive(activeDoc.id))) ? (
         <ImageVectorPathAnchorOverlay
           doc={activeDoc}
           layer={activeVectorPathLayer}

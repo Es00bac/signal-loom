@@ -17,6 +17,22 @@ interface PenSession {
 let session: PenSession | null = null;
 const PEN_CLOSE_ANCHOR_HIT_RADIUS_PX = 8;
 
+/**
+ * True while the Pen tool is mid-creation on this document (one or more anchors placed, not yet
+ * committed/cancelled). The canvas uses this to suppress the committed-path anchor-editing overlay
+ * during creation, so its draggable handles can't intercept the clicks that add the next anchor.
+ */
+export function isPenSessionActive(docId: string): boolean {
+  return session !== null && session.docId === docId;
+}
+
+/** Commit the active Pen path (e.g. on double-click) if one is in progress. Returns true if it ran. */
+export function commitActivePenPath(env: ToolEnv): boolean {
+  if (!session || session.docId !== env.doc.id) return false;
+  commitPath(env);
+  return true;
+}
+
 export type PenToolWorkflowCapabilityKind =
   | 'add-straight-anchor'
   | 'close-straight-path'

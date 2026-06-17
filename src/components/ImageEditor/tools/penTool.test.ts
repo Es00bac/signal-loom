@@ -161,6 +161,31 @@ describe('penTool', () => {
     });
   });
 
+  it('reports an active creation session and commits the path on double-click', async () => {
+    const { penTool, isPenSessionActive, commitActivePenPath } = await import('./penTool');
+    useImageEditorStore.getState().openDocument({
+      ...createEmptyImageDocument({ id: 'doc-pen-dbl', title: 'Pen Dbl', width: 320, height: 240 }),
+      layers: [makeLayer({ id: 'background', name: 'Background' })],
+      activeLayerId: 'background',
+    });
+    const env = makeEnv('doc-pen-dbl');
+    const mods = { shift: false, alt: false, ctrl: false, meta: false };
+
+    expect(isPenSessionActive('doc-pen-dbl')).toBe(false);
+    penTool.onPointerDown?.(env, { x: 20, y: 20 }, mods, {} as PointerEvent);
+    penTool.onPointerDown?.(env, { x: 90, y: 20 }, mods, {} as PointerEvent);
+    // A session is active during creation — the canvas uses this to suppress the editing overlay
+    // so its handles can't swallow the clicks that add the next anchor.
+    expect(isPenSessionActive('doc-pen-dbl')).toBe(true);
+    expect(isPenSessionActive('other-doc')).toBe(false);
+
+    // Double-click finishes the path.
+    expect(commitActivePenPath(env)).toBe(true);
+    expect(isPenSessionActive('doc-pen-dbl')).toBe(false);
+    const doc = useImageEditorStore.getState().documents.find((d) => d.id === 'doc-pen-dbl');
+    expect(doc?.layers.some((l) => l.type === 'vector')).toBe(true);
+  });
+
   it('cancels an in-progress path session without leaving preview vector layers behind', async () => {
     const { penTool } = await import('./penTool');
     useImageEditorStore.getState().openDocument({

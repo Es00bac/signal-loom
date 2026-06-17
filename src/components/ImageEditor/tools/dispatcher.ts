@@ -20,7 +20,7 @@ import { ellipseShapeTool, rectShapeTool } from './shapeTool';
 import { marqueeTool } from './marqueeTool';
 import { lassoTool, lassoIsPolygonalActive, lassoPolygonalDoubleClick } from './lassoTool';
 import { magicWandTool } from './magicWandTool';
-import { penTool } from './penTool';
+import { penTool, commitActivePenPath } from './penTool';
 import { eyedropperTool } from './eyedropperTool';
 import { cropTool } from './cropTool';
 import { textTool } from './textTool';
@@ -300,6 +300,13 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       if (lassoIsPolygonalActive()) {
         const fakeEnv = buildEnv();
         if (fakeEnv) lassoPolygonalDoubleClick(fakeEnv);
+        return;
+      }
+      // Pen: double-click finishes (commits) the path in progress — the familiar finish gesture, so
+      // users aren't stuck pressing Escape to get out of path creation.
+      if (useImageEditorStore.getState().tool === 'pen') {
+        const env = buildEnv();
+        if (env) commitActivePenPath(env);
       }
     };
 
