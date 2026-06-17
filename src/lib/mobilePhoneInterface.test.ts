@@ -125,10 +125,25 @@ describe('mobile phone interface detection', () => {
       maxTouchPoints: 0,
     });
 
+    // The real Aluminium_Desktop AVD reports a generic Android emulator UA (no
+    // "Desktop" marker) on a large display — verified live 2026-06-17 to render
+    // the desktop layout (full menu bar + panels, no phone edge handles).
+    const alosEmulator = describeMobilePhoneInterface({
+      userAgent: 'Mozilla/5.0 (Linux; Android 14; sdk_gpc_x86_64 Build/UE2A.240712.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/138.0 Mobile Safari/537.36',
+      innerWidth: 1800,
+      innerHeight: 950,
+      screenWidth: 1920,
+      screenHeight: 1080,
+      devicePixelRatio: 1,
+      maxTouchPoints: 10,
+    });
+
     expect(alosDesktop.enabled).toBe(false);
     expect(alosDesktop.surface).toBe('tablet-or-dex');
     expect(chromeOs.enabled).toBe(false);
     expect(chromeOs.surface).toBe('desktop');
+    expect(alosEmulator.enabled).toBe(false);
+    expect(alosEmulator.surface).toBe('tablet-or-dex');
   });
 
   it('keeps desktop browsers out of phone mode', () => {
