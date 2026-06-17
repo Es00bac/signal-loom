@@ -7,6 +7,7 @@ import type {
 import { createBitmap, getBitmapImageData, putBitmapImageData } from './LayerBitmap';
 import { applyLayerFiltersToImageData } from './ImageLayerFilters';
 import { applyLayerMaskToImageData } from './ImageLayerMask';
+import { tryRenderLayerEffectsGpu } from './ImageLayerEffectsGpu';
 
 export interface RenderedLayerWithEffects {
   bitmap: LayerBitmap;
@@ -1282,6 +1283,26 @@ function computeLayerWithEffects(layer: ImageLayer): RenderedLayerWithEffects | 
   const enabledEffects = (layer.effects ?? []).filter((effect) => effect.enabled);
   const source = getLayerSourceImageData(layer);
   const padding = resolveEffectPadding(source, enabledEffects);
+
+  // Try the GPU compositor first (stroke/shadow/glow/colorOverlay). It returns null for
+  // any unsupported effect, an oversized layer, or a GL failure, so we transparently fall
+  // back to the CPU path below — correctness is identical on every device.
+  const gpu = tryRenderLayerEffectsGpu(source, enabledEffects, padding);
+  if (gpu) return gpu;
+
+  return renderLayerEffectsCpu(source, enabledEffects, padding);
+}
+
+/**
+ * Pure CPU render of the layer effect stack. This is the canonical/reference
+ * implementation and the fallback when the GPU path is unavailable; it is also exported
+ * so GPU output can be parity-checked against it.
+ */
+export function renderLayerEffectsCpu(
+  source: ImageData,
+  enabledEffects: ImageLayerEffect[],
+  padding: { left: number; right: number; top: number; bottom: number },
+): RenderedLayerWithEffects {
   const output = createBitmap(source.width + padding.left + padding.right, source.height + padding.top + padding.bottom);
   const ctx = output.getContext('2d');
   if (!ctx) throw new Error('Failed to acquire layer effect render context');
@@ -1380,21 +1401,45 @@ function renderStroke(
   originY: number,
 ): void {
   const color = parseCssColor(effect.color);
-  const radius = Math.max(0, Math.round(effect.size));
-  if (radius === 0 || effect.opacity <= 0) return;
-
+  if (effect.opacity <= 0) return;
   const W = target.width;
   const H = target.height;
-  const coverage = buildCoverageField(source, W, H, originX, originY, 0, 0);
-
-  // Distance from every target pixel to the nearest opaque source pixel.
-  const distToOpaque = euclideanDistanceField(coverage, W, H, (value) => value > 0);
-  // Inside strokes additionally need the distance to the nearest transparent pixel.
-  const distToEmpty = effect.position === 'inside'
-    ? euclideanDistanceField(coverage, W, H, (value) => value <= 0)
-    : null;
+  const feather = computeStrokeFeatherField(source, effect, W, H, originX, originY);
+  if (!feather) return;
 
   for (let i = 0; i < W * H; i += 1) {
+    const effectAlpha = effect.opacity * feather[i];
+    if (effectAlpha <= 0) continue;
+    blendPixel(target, i % W, Math.floor(i / W), color, effectAlpha);
+  }
+}
+
+/**
+ * Per-output-pixel stroke coverage (0..1, the feathered band before colour/opacity), or
+ * null for a no-op (radius 0). Shared by the CPU `renderStroke` and the GPU effect path
+ * so both use the same tested distance-transform band logic.
+ */
+export function computeStrokeFeatherField(
+  source: ImageData,
+  effect: Extract<ImageLayerEffect, { kind: 'stroke' }>,
+  width: number,
+  height: number,
+  originX: number,
+  originY: number,
+): Float32Array | null {
+  const radius = Math.max(0, Math.round(effect.size));
+  if (radius === 0) return null;
+
+  const coverage = buildCoverageField(source, width, height, originX, originY, 0, 0);
+  // Distance from every target pixel to the nearest opaque source pixel.
+  const distToOpaque = euclideanDistanceField(coverage, width, height, (value) => value > 0);
+  // Inside strokes additionally need the distance to the nearest transparent pixel.
+  const distToEmpty = effect.position === 'inside'
+    ? euclideanDistanceField(coverage, width, height, (value) => value <= 0)
+    : null;
+
+  const out = new Float32Array(width * height);
+  for (let i = 0; i < width * height; i += 1) {
     const isInside = coverage[i] > 0;
     let edgeDistance: number;
     if (effect.position === 'outside') {
@@ -1408,11 +1453,9 @@ function renderStroke(
       edgeDistance = distToOpaque[i];
     }
     if (edgeDistance > radius + 0.001) continue;
-    const feather = radius <= 1 ? 1 : clamp01(1 - Math.max(0, edgeDistance - radius + 1));
-    const effectAlpha = effect.opacity * feather;
-    if (effectAlpha <= 0) continue;
-    blendPixel(target, i % W, Math.floor(i / W), color, effectAlpha);
+    out[i] = radius <= 1 ? 1 : clamp01(1 - Math.max(0, edgeDistance - radius + 1));
   }
+  return out;
 }
 
 /**
