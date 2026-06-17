@@ -109,20 +109,24 @@ export function LayerEffectsControls({
           {effects.filter((effect) => effect.enabled).length} active
         </span>
       </div>
-      <div className="mb-2 grid grid-cols-2 gap-1">
+      <select
+        aria-label="Add layer effect"
+        className="mb-2 w-full rounded border border-cyan-300/10 bg-[#252630] px-1.5 py-1 text-[11px] text-cyan-100/70 disabled:cursor-not-allowed disabled:opacity-40"
+        disabled={disabled}
+        onChange={(event) => {
+          if (!event.target.value) return;
+          addEffect(event.target.value as LayerEffectKind);
+          event.target.value = '';
+        }}
+        value=""
+      >
+        <option value="">Add effect…</option>
         {LAYER_EFFECT_KINDS.map((kind) => (
-          <button
-            className="rounded border border-cyan-300/10 px-1.5 py-1 text-[10px] text-cyan-100/60 hover:bg-cyan-400/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={disabled}
-            key={kind}
-            onClick={() => addEffect(kind)}
-            title={`Add ${layerEffectLabel(kind)}`}
-            type="button"
-          >
+          <option key={kind} value={kind}>
             {layerEffectLabel(kind)}
-          </button>
+          </option>
         ))}
-      </div>
+      </select>
       {showGlobalLight ? (
         <div className="mb-2 rounded border border-cyan-300/10 bg-[#10131b] p-1.5">
           <MiniEffectSlider
@@ -233,20 +237,24 @@ export function LayerFiltersControls({
           {filters.filter((filter) => filter.enabled).length} active
         </span>
       </div>
-      <div className="mb-2 grid grid-cols-3 gap-1">
+      <select
+        aria-label="Add layer filter"
+        className="mb-2 w-full rounded border border-cyan-300/10 bg-[#252630] px-1.5 py-1 text-[11px] text-cyan-100/70 disabled:cursor-not-allowed disabled:opacity-40"
+        disabled={disabled}
+        onChange={(event) => {
+          if (!event.target.value) return;
+          addFilter(event.target.value as LayerFilterKind);
+          event.target.value = '';
+        }}
+        value=""
+      >
+        <option value="">Add filter…</option>
         {LAYER_FILTER_KINDS.map((kind) => (
-          <button
-            className="rounded border border-cyan-300/10 px-1.5 py-1 text-[10px] text-cyan-100/60 hover:bg-cyan-400/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={disabled}
-            key={kind}
-            onClick={() => addFilter(kind)}
-            title={`Add ${layerFilterLabel(kind)}`}
-            type="button"
-          >
+          <option key={kind} value={kind}>
             {layerFilterLabel(kind)}
-          </button>
+          </option>
         ))}
-      </div>
+      </select>
       <div className="space-y-1.5">
         {filters.map((filter, index) => (
           <LayerFilterRow
