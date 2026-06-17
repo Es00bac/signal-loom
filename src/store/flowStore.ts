@@ -16,6 +16,7 @@ import type {
   OnNodesChange,
 } from '@xyflow/react';
 import { loadImportedAsset } from '../lib/assetStore';
+import { parseSignalLoomAssetId } from '../lib/signalLoomAssetUrl';
 import {
   COMPOSITION_AUDIO_HANDLES,
   COMPOSITION_VIDEO_HANDLE,
@@ -2778,7 +2779,9 @@ export const useFlowStore = create<FlowState>()(
               typeof sourceBinPatch?.sourceAssetId === 'string' && sourceBinPatch.sourceAssetId.trim()
                 ? sourceBinPatch.sourceAssetId
                 : undefined;
-            const assetId = patchedAssetId ?? node.data.sourceAssetId;
+            const assetId = patchedAssetId
+              ?? node.data.sourceAssetId
+              ?? parseSignalLoomAssetId(node.data.sourceAssetUrl);
 
             if (!assetId) {
               const patch = combineNodeDataPatches(sourceBinPatch, generatedResultPatch);

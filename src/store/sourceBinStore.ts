@@ -18,6 +18,7 @@ import {
   materializeAndroidSourceAsset,
 } from '../lib/androidSourceAssetStorage';
 import { buildMediaAssetSignaturePart } from '../lib/mediaAssetSignature';
+import { parseSignalLoomAssetId } from '../lib/signalLoomAssetUrl';
 import { getSignalLoomNativeBridge } from '../lib/nativeApp';
 import {
   applySourceLibraryNativeChange,
@@ -634,11 +635,15 @@ export const useSourceBinStore = create<SourceBinState>()(
                   }
                 }
 
-                if (!item.assetId) {
+                // Resolve by assetId, or by the id embedded in a
+                // `signal-loom-asset://asset/<id>` URL (that scheme only loads
+                // natively on Electron — Android/web need the local bytes).
+                const lookupId = item.assetId ?? parseSignalLoomAssetId(item.assetUrl);
+                if (!lookupId) {
                   return item;
                 }
 
-                const storedAsset = await loadImportedAsset(item.assetId).catch(() => undefined);
+                const storedAsset = await loadImportedAsset(lookupId).catch(() => undefined);
 
                 if (!storedAsset) {
                   return item;
@@ -646,6 +651,7 @@ export const useSourceBinStore = create<SourceBinState>()(
 
                 return {
                   ...item,
+                  assetId: item.assetId ?? lookupId,
                   assetUrl: storedAsset.dataUrl,
                   mimeType: storedAsset.mimeType ?? item.mimeType,
                   label: storedAsset.name ?? item.label,
@@ -825,8 +831,12 @@ export const useSourceBinStore = create<SourceBinState>()(
                   }
                 }
 
-                if (item.assetId) {
-                  const storedAsset = await loadImportedAsset(item.assetId).catch(() => undefined);
+                // Resolve by assetId, or by the id in a `signal-loom-asset://asset/<id>`
+                // URL — that scheme only loads on Electron, so Android/web items must
+                // be backed by local bytes here or they render MISSING.
+                const lookupId = item.assetId ?? parseSignalLoomAssetId(item.assetUrl);
+                if (lookupId) {
+                  const storedAsset = await loadImportedAsset(lookupId).catch(() => undefined);
 
                   if (storedAsset) {
                     return {
@@ -834,7 +844,7 @@ export const useSourceBinStore = create<SourceBinState>()(
                       label: item.label,
                       kind: item.kind,
                       mimeType: storedAsset.mimeType,
-                      assetId: item.assetId,
+                      assetId: item.assetId ?? lookupId,
                       scratchFileName: item.scratchFileName,
                       nativeFilePath: item.nativeFilePath,
                       assetUrl: storedAsset.dataUrl,
