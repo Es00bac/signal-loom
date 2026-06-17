@@ -1456,20 +1456,34 @@ function normalizeAtlasResultUrl(resultUrl: string, outputFormat: ExecutionConfi
   return `data:image/${outputFormat};base64,${resultUrl}`;
 }
 
-async function materializeAtlasImageResult(resultUrl: string): Promise<{ result: string; mimeType?: string }> {
+/**
+ * Turn a provider's remote result URL into a node result. Downloads + inlines
+ * the bytes so the asset embeds/persists; but provider result CDNs (Atlas
+ * `static.atlascloud.ai`, BFL `delivery.bfl.ai`, …) don't send CORS headers, so
+ * a renderer `fetch()` is blocked under the default web-security policy
+ * (Electron + Android WebView). When the download fails we fall back to the
+ * remote URL itself — an `<img>`/`<video src>` loads it cross-origin without
+ * CORS, so the generated media still appears instead of vanishing.
+ */
+async function materializeRemoteMediaResult(
+  resultUrl: string,
+  downloadErrorLabel: string,
+  fallbackMimeType?: string,
+): Promise<{ result: string; mimeType?: string }> {
   if (!/^https?:\/\//i.test(resultUrl)) {
-    const inlineMimeType = resultUrl.match(/^data:([^;,]+)/)?.[1];
-    return {
-      result: resultUrl,
-      mimeType: inlineMimeType,
-    };
+    return { result: resultUrl, mimeType: resultUrl.match(/^data:([^;,]+)/)?.[1] ?? fallbackMimeType };
   }
+  try {
+    const blob = await fetchImageResultBlob(resultUrl, downloadErrorLabel);
+    return { result: await toResultUrl(blob), mimeType: blob.type || fallbackMimeType };
+  } catch {
+    // CORS/network: hand back the remote URL so the media still displays.
+    return { result: resultUrl, mimeType: fallbackMimeType };
+  }
+}
 
-  const blob = await fetchImageResultBlob(resultUrl, 'Atlas result download failed');
-  return {
-    result: await toResultUrl(blob),
-    mimeType: blob.type || undefined,
-  };
+function materializeAtlasImageResult(resultUrl: string): Promise<{ result: string; mimeType?: string }> {
+  return materializeRemoteMediaResult(resultUrl, 'Atlas result download failed');
 }
 
 function parseAtlasLoraWeights(value: unknown): unknown {
@@ -1574,9 +1588,7 @@ async function executeBflImageNode(input: {
 
   input.onStatus?.('Waiting for BFL image result…');
   const resultUrl = await pollBflImageResult(created.polling_url, input.apiKey, input.onStatus);
-  const result = resultUrl.startsWith('data:')
-    ? resultUrl
-    : await toResultUrl(await fetchImageResultBlob(resultUrl, 'BFL result download failed'));
+  const result = (await materializeRemoteMediaResult(resultUrl, 'BFL result download failed')).result;
   const estimatedCost = created.cost !== null && created.cost !== undefined
     ? created.cost * 0.01
     : built.estimatedCostUsd;
@@ -2577,18 +2589,8 @@ async function executeAtlasVideoNode(input: {
   };
 }
 
-// Atlas video result files can sit on a CORS-restricted CDN; fetch+inline when
-// possible, otherwise hand back the remote URL (a <video src> still plays it).
-async function materializeAtlasVideoResult(resultUrl: string): Promise<{ result: string; mimeType?: string }> {
-  if (!/^https?:\/\//i.test(resultUrl)) {
-    return { result: resultUrl, mimeType: resultUrl.match(/^data:([^;,]+)/)?.[1] };
-  }
-  try {
-    const blob = await fetchImageResultBlob(resultUrl, 'Atlas video download failed');
-    return { result: await toResultUrl(blob), mimeType: blob.type || undefined };
-  } catch {
-    return { result: resultUrl, mimeType: 'video/mp4' };
-  }
+function materializeAtlasVideoResult(resultUrl: string): Promise<{ result: string; mimeType?: string }> {
+  return materializeRemoteMediaResult(resultUrl, 'Atlas video download failed', 'video/mp4');
 }
 
 async function executeVertexVeoVideoNode(input: {

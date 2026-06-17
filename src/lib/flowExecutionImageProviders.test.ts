@@ -500,6 +500,24 @@ describe('executeNodeRequest advanced image providers', () => {
     });
   });
 
+  it('falls back to the remote URL when the result CDN blocks the download (CORS) so the image still appears', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ data: { id: 'atlas-job' } }))
+      .mockResolvedValueOnce(jsonResponse({ data: { status: 'succeeded', outputs: ['https://cdn.atlascloud.ai/generated.png'] } }))
+      .mockRejectedValueOnce(new TypeError('Failed to fetch')); // CDN download is CORS-blocked under webSecurity
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await executeNodeRequest(
+      createImageNode('atlas', 'black-forest-labs/flux-schnell'),
+      { prompt: 'neon alley', config: { ...DEFAULT_EXECUTION_CONFIG, aspectRatio: '16:9' } },
+      { ...baseSettings, apiKeys: { ...baseSettings.apiKeys, atlas: 'atlas-key' } },
+    );
+
+    expect(result.resultType).toBe('image');
+    // The generated image still appears (via the remote URL) instead of vanishing.
+    expect(result.result).toBe('https://cdn.atlascloud.ai/generated.png');
+  });
+
   it('downloads Atlas Cloud native remote outputs before returning the Flow image result', async () => {
     const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-downloaded-result');
     const fetchMock = vi.fn()
