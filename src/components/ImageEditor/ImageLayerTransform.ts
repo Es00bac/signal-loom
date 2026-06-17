@@ -6,6 +6,12 @@ import type {
   LayerBitmap,
 } from '../../types/imageEditor';
 import { createBitmap } from './LayerBitmap';
+import {
+  isWarpMeshDeformed,
+  normalizeWarpMesh,
+  sampleWarpMeshDisplacement,
+  type WarpMesh,
+} from './ImageWarpMesh';
 
 export const DEFAULT_TRANSFORM_ORIGIN = 0.5;
 
@@ -16,6 +22,7 @@ type TransformLayerLike = Pick<
   baseWidth?: number;
   baseHeight?: number;
   warp?: ImageLayerWarpOffsets;
+  warpMesh?: WarpMesh | null;
 };
 
 export interface ImageLayerTransformOrigin {
@@ -45,6 +52,7 @@ export interface ImageLayerBitmapDrawMetrics {
   perspectiveX: number;
   perspectiveY: number;
   warp: ImageLayerWarpOffsets;
+  warpMesh: WarpMesh | null;
   cornerOffsets: ImageLayerTransformCornerOffsets;
 }
 
@@ -471,6 +479,7 @@ export function getImageLayerBitmapDrawMetrics(
     perspectiveX: normalizePerspective(layer.perspectiveX),
     perspectiveY: normalizePerspective(layer.perspectiveY),
     warp: normalizeWarpLocal(layer.warp),
+    warpMesh: normalizeWarpMesh(layer.warpMesh),
     cornerOffsets: normalizeCornerOffsetsLocal(layer.cornerOffsets),
   };
 }
@@ -778,7 +787,7 @@ export function drawLayerBitmapTransformed(
   const hasRotation = metrics.rotationDeg !== 0;
   const hasSkew = metrics.skewXDeg !== 0 || metrics.skewYDeg !== 0;
   const hasPerspective = metrics.perspectiveX !== 0 || metrics.perspectiveY !== 0;
-  const hasWarp = hasImageLayerWarp(metrics.warp);
+  const hasWarp = hasImageLayerWarp(metrics.warp) || isWarpMeshDeformed(metrics.warpMesh);
   const hasDistort = (['nw', 'ne', 'se', 'sw'] as ImageLayerTransformCorner[]).some((corner) => (
     metrics.cornerOffsets[corner].x !== 0 || metrics.cornerOffsets[corner].y !== 0
   ));
@@ -890,6 +899,13 @@ export function transformSourcePoint(
     x: sourceX - metrics.sourcePivotX,
     y: sourceY - metrics.sourcePivotY,
   };
+  // Control-point warp mesh deforms the layer in its own (source-local) space before the
+  // affine transforms; displacement is normalized to the layer dimensions.
+  if (metrics.warpMesh && isWarpMeshDeformed(metrics.warpMesh)) {
+    const displacement = sampleWarpMeshDisplacement(metrics.warpMesh, u, v);
+    local.x += displacement.x * metrics.drawWidth;
+    local.y += displacement.y * metrics.drawHeight;
+  }
   const warped = applyWarpToPoint(local, metrics.drawWidth, metrics.drawHeight, u, v, metrics.warp);
   const perspectiveAdjusted = applyPerspectiveToPoint(
     warped,

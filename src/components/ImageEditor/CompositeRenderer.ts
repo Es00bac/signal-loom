@@ -23,6 +23,7 @@ import {
   transformSourcePoint,
 } from './ImageLayerTransform';
 import { renderLayerWithEffects } from './ImageLayerEffects';
+import { isWarpMeshDeformed, sampleWarpMeshDisplacement } from './ImageWarpMesh';
 import { isImageLayerEffectivelyVisible } from './ImageLayerGroups';
 import type { ImageLayerWithVectorMask } from './ImageVectorMasks';
 
@@ -617,6 +618,8 @@ function getHighResWorkerBlobUrl(): string {
     ${applyPerspectiveToPoint.toString()}
     ${interpolateCornerOffset.toString()}
     ${hasImageLayerWarp.toString()}
+    ${isWarpMeshDeformed.toString()}
+    ${sampleWarpMeshDisplacement.toString()}
     ${transformSourcePoint.toString()}
     ${buildTransformedCornersFromMetrics.toString()}
     ${getImageLayerBitmapDrawMetrics.toString()}
@@ -839,6 +842,7 @@ export class CompositeRenderer {
         perspectiveX: l.perspectiveX,
         perspectiveY: l.perspectiveY,
         warp: l.warp,
+        warpMesh: l.warpMesh,
         cornerOffsets: l.cornerOffsets,
         transformOriginX: l.transformOriginX,
         transformOriginY: l.transformOriginY,
@@ -1029,6 +1033,7 @@ export class CompositeRenderer {
           perspectiveX: layer.perspectiveX,
           perspectiveY: layer.perspectiveY,
           warp: layer.warp,
+          warpMesh: layer.warpMesh,
           cornerOffsets: layer.cornerOffsets,
           transformOriginX: layer.transformOriginX,
           transformOriginY: layer.transformOriginY,

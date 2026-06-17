@@ -298,6 +298,20 @@ export interface ImageLayerWarpOffsets {
   left: number;
 }
 
+/** One control-point displacement in a warp mesh, normalized to layer width/height. */
+export interface WarpMeshPoint {
+  x: number;
+  y: number;
+}
+
+/** A Photoshop-style warp control mesh: an (columns+1)×(rows+1) grid of displacements. */
+export interface WarpMesh {
+  columns: number;
+  rows: number;
+  /** (rows+1)×(columns+1) node displacements, row-major. */
+  points: WarpMeshPoint[];
+}
+
 export type BrushSymmetryMode = 'none' | 'vertical' | 'horizontal' | 'both';
 
 export interface BrushSettings {
@@ -598,6 +612,8 @@ export interface ImageLayer {
   perspectiveX?: number;
   perspectiveY?: number;
   warp?: ImageLayerWarpOffsets;
+  /** Photoshop-style interactive warp: a grid of normalized control-point displacements. */
+  warpMesh?: WarpMesh | null;
   cornerOffsets?: ImageLayerTransformCornerOffsets;
   transformOriginX?: number;
   transformOriginY?: number;
