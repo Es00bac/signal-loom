@@ -61,7 +61,12 @@ export function buildPerspectiveCroppedImageDocumentState(
   const outBitmap = createBitmap(width, height);
   const outCtx = outBitmap.getContext('2d');
   if (!outCtx) return null;
-  outCtx.putImageData(new ImageData(warped.data, width, height), 0, 0);
+  // Build via createImageData + set() rather than `new ImageData(buffer, …)` so
+  // the typed-array buffer variance (ArrayBufferLike vs ArrayBuffer) doesn't trip
+  // the strict DOM lib types under the production `tsc -b` build.
+  const outImageData = outCtx.createImageData(width, height);
+  outImageData.data.set(warped.data);
+  outCtx.putImageData(outImageData, 0, 0);
 
   const template = doc.layers[doc.layers.length - 1];
   const layer: ImageLayer = {
