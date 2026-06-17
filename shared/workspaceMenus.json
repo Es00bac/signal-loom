@@ -1,0 +1,368 @@
+{
+  "_comment": "Single source of truth for per-workspace application menus. Consumed by electron/menu.cjs (native, require) and src/lib/appMenuModel.ts (integrated, import). Item kinds: command {command,label,accelerator?}; separator {type:'separator'}; submenu {label,items}; role {role, nativeOnly:true}. Accelerators in neutral Ctrl+ form. See docs/superpowers/specs/2026-06-16-per-workspace-application-menus-design.md",
+  "flow": [
+    {
+      "id": "project",
+      "label": "Project",
+      "items": [
+        { "command": "file:new", "label": "New Project", "accelerator": "Ctrl+N" },
+        { "command": "file:open", "label": "Open...", "accelerator": "Ctrl+O" },
+        { "command": "file:save", "label": "Save", "accelerator": "Ctrl+S" },
+        { "command": "file:save-as", "label": "Save As...", "accelerator": "Ctrl+Shift+S" },
+        { "type": "separator" },
+        { "command": "file:import-media", "label": "Import Media...", "accelerator": "Ctrl+I" },
+        { "command": "file:set-scratch-folder", "label": "Set Scratch Folder..." },
+        { "command": "settings:keyboard-shortcuts", "label": "Keyboard Shortcuts..." },
+        { "command": "settings:gamepad-bindings", "label": "Gamepad Bindings..." },
+        { "type": "separator" },
+        { "command": "file:export-project", "label": "Export .sloom Project..." },
+        { "command": "file:export-assets", "label": "Export Assets..." },
+        { "type": "separator" },
+        { "role": "close", "nativeOnly": true },
+        { "role": "quit", "nativeOnly": true }
+      ]
+    },
+    {
+      "id": "flow",
+      "label": "Flow",
+      "items": [
+        { "command": "flow:add-source-bin", "label": "Add Source Bin Node" },
+        { "type": "separator" },
+        { "command": "file:export-assets", "label": "Export Flow Assets..." }
+      ]
+    },
+    { "id": "view", "label": "View", "items": "$viewBase" },
+    { "id": "window", "label": "Window", "items": "$window" },
+    { "id": "help", "label": "Help", "items": "$help" }
+  ],
+  "editor": [
+    { "id": "project", "label": "Project", "items": "$project" },
+    {
+      "id": "edit",
+      "label": "Edit",
+      "items": [
+        { "command": "edit:undo", "label": "Undo", "accelerator": "Ctrl+Z" },
+        { "command": "edit:redo", "label": "Redo", "accelerator": "Ctrl+Shift+Z" },
+        { "type": "separator" },
+        { "command": "edit:cut", "label": "Cut", "accelerator": "Ctrl+X" },
+        { "command": "edit:copy", "label": "Copy", "accelerator": "Ctrl+C" },
+        { "command": "edit:paste", "label": "Paste", "accelerator": "Ctrl+V" },
+        { "command": "edit:delete", "label": "Delete", "accelerator": "Del" }
+      ]
+    },
+    {
+      "id": "timeline",
+      "label": "Timeline",
+      "items": [
+        { "command": "timeline:select", "label": "Select Tool", "accelerator": "V" },
+        { "command": "timeline:cut", "label": "Cut Tool", "accelerator": "C" },
+        { "command": "timeline:slip", "label": "Slip Tool", "accelerator": "S" },
+        { "command": "timeline:hand", "label": "Hand Tool", "accelerator": "H" },
+        { "command": "timeline:snap", "label": "Snap Marker Tool", "accelerator": "M" }
+      ]
+    },
+    {
+      "id": "keyframes",
+      "label": "Keyframes",
+      "items": [
+        { "command": "timeline:add-keyframe", "label": "Add or Update Keyframe", "accelerator": "K" },
+        { "command": "timeline:previous-keyframe", "label": "Previous Keyframe", "accelerator": "[" },
+        { "command": "timeline:next-keyframe", "label": "Next Keyframe", "accelerator": "]" }
+      ]
+    },
+    { "id": "view", "label": "View", "items": "$viewBase" },
+    { "id": "window", "label": "Window", "items": "$window" },
+    { "id": "help", "label": "Help", "items": "$help" }
+  ],
+  "image": [
+    { "id": "project", "label": "Project", "items": "$project" },
+    {
+      "id": "edit",
+      "label": "Edit",
+      "items": [
+        { "command": "edit:undo", "label": "Undo", "accelerator": "Ctrl+Z" },
+        { "command": "edit:redo", "label": "Redo", "accelerator": "Ctrl+Shift+Z" },
+        { "type": "separator" },
+        { "command": "edit:cut", "label": "Cut", "accelerator": "Ctrl+X" },
+        { "command": "edit:copy", "label": "Copy", "accelerator": "Ctrl+C" },
+        { "command": "edit:paste", "label": "Paste", "accelerator": "Ctrl+V" },
+        { "command": "edit:delete", "label": "Delete", "accelerator": "Del" }
+      ]
+    },
+    {
+      "id": "image",
+      "label": "Image",
+      "items": [
+        { "command": "image:tool-crop", "label": "Crop", "accelerator": "C" },
+        { "type": "separator" },
+        { "command": "image:export-visible", "label": "Download Image File..." },
+        { "command": "image:export-psd", "label": "Download PSD..." }
+      ]
+    },
+    {
+      "id": "select",
+      "label": "Select",
+      "items": [
+        { "command": "edit:select-all", "label": "Select All", "accelerator": "Ctrl+A" },
+        { "command": "edit:deselect", "label": "Deselect", "accelerator": "Ctrl+D" },
+        { "command": "edit:invert-selection", "label": "Invert Selection", "accelerator": "Ctrl+Shift+I" }
+      ]
+    },
+    {
+      "id": "tools",
+      "label": "Tools",
+      "items": [
+        {
+          "label": "Selection",
+          "items": [
+            { "command": "image:tool-hand", "label": "Hand Tool", "accelerator": "H" },
+            { "command": "image:tool-move", "label": "Move Tool", "accelerator": "V" },
+            { "command": "image:tool-marquee", "label": "Marquee Tool", "accelerator": "M" },
+            { "command": "image:tool-lasso", "label": "Lasso Tool", "accelerator": "L" },
+            { "command": "image:tool-magic-wand", "label": "Magic Wand Tool", "accelerator": "W" }
+          ]
+        },
+        {
+          "label": "Paint",
+          "items": [
+            { "command": "image:tool-brush", "label": "Brush Tool", "accelerator": "B" },
+            { "command": "image:tool-pen", "label": "Pen Tool", "accelerator": "Shift+B" },
+            { "command": "image:tool-eraser", "label": "Eraser Tool", "accelerator": "E" },
+            { "command": "image:tool-background-eraser", "label": "Background Eraser Tool", "accelerator": "Alt+E" },
+            { "command": "image:tool-magic-eraser", "label": "Magic Eraser Tool", "accelerator": "Shift+E" },
+            { "command": "image:tool-paint-bucket", "label": "Paint Bucket Tool", "accelerator": "G" },
+            { "command": "image:tool-gradient", "label": "Gradient Tool", "accelerator": "Shift+G" }
+          ]
+        },
+        {
+          "label": "Retouch",
+          "items": [
+            { "command": "image:tool-clone-stamp", "label": "Clone Stamp Tool", "accelerator": "S" },
+            { "command": "image:tool-spot-heal", "label": "Spot Heal Tool", "accelerator": "J" },
+            { "command": "image:tool-blur-brush", "label": "Blur Brush", "accelerator": "R" },
+            { "command": "image:tool-sharpen-brush", "label": "Sharpen Brush", "accelerator": "Shift+R" },
+            { "command": "image:tool-smudge-brush", "label": "Smudge Brush", "accelerator": "U" },
+            { "command": "image:tool-dodge-brush", "label": "Dodge Brush", "accelerator": "O" },
+            { "command": "image:tool-burn-brush", "label": "Burn Brush", "accelerator": "Shift+O" },
+            { "command": "image:tool-sponge-saturate", "label": "Sponge Saturate Brush", "accelerator": "P" },
+            { "command": "image:tool-sponge-desaturate", "label": "Sponge Desaturate Brush", "accelerator": "Shift+P" }
+          ]
+        },
+        {
+          "label": "Shape & Type",
+          "items": [
+            { "command": "image:tool-rectangle-shape", "label": "Rectangle Shape Tool", "accelerator": "X" },
+            { "command": "image:tool-ellipse-shape", "label": "Ellipse Shape Tool", "accelerator": "Shift+X" },
+            { "command": "image:tool-text", "label": "Text Tool", "accelerator": "T" },
+            { "command": "image:tool-eyedropper", "label": "Eyedropper Tool", "accelerator": "I" }
+          ]
+        }
+      ]
+    },
+    { "id": "view", "label": "View", "items": "$viewBase" },
+    { "id": "window", "label": "Window", "items": "$window" },
+    { "id": "help", "label": "Help", "items": "$help" }
+  ],
+  "paper": [
+    {
+      "id": "project",
+      "label": "Project",
+      "items": [
+        { "command": "file:new", "label": "New Project", "accelerator": "Ctrl+N" },
+        { "command": "file:open", "label": "Open...", "accelerator": "Ctrl+O" },
+        { "command": "file:save", "label": "Save", "accelerator": "Ctrl+S" },
+        { "command": "file:save-as", "label": "Save As...", "accelerator": "Ctrl+Shift+S" },
+        { "type": "separator" },
+        { "command": "file:import-media", "label": "Import Media...", "accelerator": "Ctrl+I" },
+        { "command": "file:set-scratch-folder", "label": "Set Scratch Folder..." },
+        { "command": "settings:keyboard-shortcuts", "label": "Keyboard Shortcuts..." },
+        { "command": "settings:gamepad-bindings", "label": "Gamepad Bindings..." },
+        { "type": "separator" },
+        {
+          "label": "Export",
+          "items": [
+            { "command": "paper:export-pdf", "label": "Export Print PDF...", "accelerator": "Ctrl+P" },
+            { "command": "paper:export-reader-spreads-pdf", "label": "Export Reader Spreads PDF..." },
+            { "command": "paper:export-booklet-proof-pdf", "label": "Export Booklet Proof PDF..." },
+            { "command": "paper:export-kdp-assets", "label": "Export KDP Assets..." },
+            { "command": "paper:export-webcomic-images", "label": "Export Webcomic Page Images..." },
+            { "command": "paper:export-cbz", "label": "Export CBZ..." },
+            { "command": "paper:export-idml", "label": "Export IDML..." },
+            { "type": "separator" },
+            { "command": "paper:export-html", "label": "Export Print HTML..." },
+            { "command": "paper:export-reader-spreads-html", "label": "Export Reader Spreads HTML..." },
+            { "command": "paper:export-booklet-proof-html", "label": "Export Booklet Proof HTML..." },
+            { "type": "separator" },
+            {
+              "label": "Stories",
+              "items": [
+                { "command": "paper:export-stories-txt", "label": "Export Stories TXT..." },
+                { "command": "paper:export-stories-html", "label": "Export Stories HTML..." },
+                { "command": "paper:export-stories-rtf", "label": "Export Stories RTF..." },
+                { "command": "paper:export-stories-docx", "label": "Export Stories DOCX..." }
+              ]
+            },
+            { "type": "separator" },
+            { "command": "paper:package-print", "label": "Package for Print..." },
+            { "command": "paper:export-json", "label": "Export Paper JSON..." },
+            { "command": "paper:import-json", "label": "Import Paper JSON..." }
+          ]
+        },
+        { "command": "file:export-project", "label": "Export .sloom Project..." },
+        { "command": "file:export-assets", "label": "Export Assets..." },
+        { "type": "separator" },
+        { "role": "close", "nativeOnly": true },
+        { "role": "quit", "nativeOnly": true }
+      ]
+    },
+    {
+      "id": "edit",
+      "label": "Edit",
+      "items": [
+        { "command": "edit:undo", "label": "Undo", "accelerator": "Ctrl+Z" },
+        { "command": "edit:redo", "label": "Redo", "accelerator": "Ctrl+Shift+Z" },
+        { "type": "separator" },
+        { "command": "edit:cut", "label": "Cut", "accelerator": "Ctrl+X" },
+        { "command": "edit:copy", "label": "Copy", "accelerator": "Ctrl+C" },
+        { "command": "edit:paste", "label": "Paste", "accelerator": "Ctrl+V" },
+        { "command": "edit:delete", "label": "Delete", "accelerator": "Del" },
+        { "type": "separator" },
+        { "command": "edit:select-all", "label": "Select All", "accelerator": "Ctrl+A" },
+        { "command": "edit:deselect", "label": "Deselect", "accelerator": "Ctrl+D" },
+        { "command": "edit:invert-selection", "label": "Invert Selection", "accelerator": "Ctrl+Shift+I" }
+      ]
+    },
+    {
+      "id": "layout",
+      "label": "Layout",
+      "items": [
+        { "command": "paper:new-document", "label": "New Paper Document", "accelerator": "Ctrl+Alt+N" },
+        { "command": "paper:add-page", "label": "Add Page", "accelerator": "Ctrl+Alt+P" },
+        { "type": "separator" },
+        { "command": "paper:toggle-spreads", "label": "Toggle Spreads" },
+        { "command": "paper:toggle-start-on-right", "label": "Toggle Start on Right" }
+      ]
+    },
+    {
+      "id": "insert",
+      "label": "Insert",
+      "items": [
+        { "command": "paper:add-text-frame", "label": "Add Text Frame" },
+        { "command": "paper:add-image-frame", "label": "Add Image Frame" },
+        { "type": "separator" },
+        { "command": "paper:add-speech-bubble", "label": "Add Speech Bubble" },
+        { "command": "paper:add-thought-bubble", "label": "Add Thought Bubble" },
+        { "command": "paper:add-caption", "label": "Add Caption" }
+      ]
+    },
+    {
+      "id": "tools",
+      "label": "Tools",
+      "items": [
+        { "command": "paper:tool-select", "label": "Select Tool", "accelerator": "V" },
+        { "command": "paper:tool-hand", "label": "Hand Tool", "accelerator": "H" },
+        { "command": "paper:tool-text", "label": "Text Tool", "accelerator": "T" },
+        { "command": "paper:tool-image", "label": "Image Tool", "accelerator": "Shift+I" },
+        { "command": "paper:tool-eyedropper", "label": "Eyedropper Tool", "accelerator": "I" }
+      ]
+    },
+    {
+      "id": "view",
+      "label": "View",
+      "items": [
+        { "command": "paper:toggle-rulers", "label": "Toggle Rulers" },
+        { "command": "paper:toggle-guides", "label": "Toggle Guides" },
+        { "command": "paper:toggle-grid", "label": "Toggle Grid" },
+        { "type": "separator" },
+        { "command": "paper:toggle-snap-to-guides", "label": "Toggle Snap to Guides" },
+        { "command": "paper:toggle-snap-to-grid", "label": "Toggle Snap to Grid" },
+        { "type": "separator" },
+        {
+          "label": "Panels",
+          "items": [
+            { "command": "paper:toggle-tools-panel", "label": "Toggle Paper Tools Panel" },
+            { "command": "paper:toggle-document-strip-panel", "label": "Document / Export Bar (Pinned)" },
+            { "command": "paper:toggle-inspector-panel", "label": "Toggle Inspector Panel" },
+            { "command": "paper:toggle-preflight-panel", "label": "Toggle Preflight Panel" },
+            { "command": "paper:toggle-linked-assets-panel", "label": "Toggle Linked Assets Panel" },
+            { "command": "paper:toggle-dtp-parity-panel", "label": "Toggle Print Production Panel" },
+            { "command": "paper:reset-panels", "label": "Reset Paper Panels" }
+          ]
+        },
+        { "type": "separator" },
+        { "command": "view:toggle-interface", "label": "Toggle Interface", "accelerator": "Tab" },
+        { "command": "view:toggle-source-bin", "label": "Toggle Source Bin" },
+        { "command": "view:toggle-inspector", "label": "Toggle Inspector" },
+        { "type": "separator" },
+        {
+          "label": "Workspace Layout Defaults",
+          "items": [
+            { "command": "view:layout-reset", "label": "Reset Current Workspace Panels" },
+            { "command": "view:layout-balanced", "label": "Balanced Default" },
+            { "command": "view:layout-focus", "label": "Focus Canvas" },
+            { "command": "view:layout-all-panels", "label": "Show All Panels" }
+          ]
+        },
+        { "type": "separator" },
+        { "role": "togglefullscreen", "nativeOnly": true },
+        { "role": "reload", "nativeOnly": true }
+      ]
+    },
+    { "id": "window", "label": "Window", "items": "$window" },
+    { "id": "help", "label": "Help", "items": "$help" }
+  ],
+  "$shared": {
+    "project": [
+      { "command": "file:new", "label": "New Project", "accelerator": "Ctrl+N" },
+      { "command": "file:open", "label": "Open...", "accelerator": "Ctrl+O" },
+      { "command": "file:save", "label": "Save", "accelerator": "Ctrl+S" },
+      { "command": "file:save-as", "label": "Save As...", "accelerator": "Ctrl+Shift+S" },
+      { "type": "separator" },
+      { "command": "file:import-media", "label": "Import Media...", "accelerator": "Ctrl+I" },
+      { "command": "file:set-scratch-folder", "label": "Set Scratch Folder..." },
+      { "command": "settings:keyboard-shortcuts", "label": "Keyboard Shortcuts..." },
+      { "command": "settings:gamepad-bindings", "label": "Gamepad Bindings..." },
+      { "type": "separator" },
+      { "command": "file:export-project", "label": "Export .sloom Project..." },
+      { "command": "file:export-assets", "label": "Export Assets..." },
+      { "type": "separator" },
+      { "role": "close", "nativeOnly": true },
+      { "role": "quit", "nativeOnly": true }
+    ],
+    "window": [
+      { "command": "view:flow", "label": "Open/Focus Flow Window", "accelerator": "Ctrl+1" },
+      { "command": "view:editor", "label": "Open/Focus Video Window", "accelerator": "Ctrl+2" },
+      { "command": "view:image", "label": "Open/Focus Image Window", "accelerator": "Ctrl+3" },
+      { "command": "view:paper", "label": "Open/Focus Paper Window", "accelerator": "Ctrl+4" },
+      { "type": "separator" },
+      { "command": "view:command-palette", "label": "Command Palette...", "accelerator": "Ctrl+K" },
+      { "command": "view:activity-trail", "label": "Activity Trail..." }
+    ],
+    "viewBase": [
+      { "command": "view:toggle-interface", "label": "Toggle Interface", "accelerator": "Tab" },
+      { "command": "view:toggle-source-bin", "label": "Toggle Source Bin" },
+      { "command": "view:toggle-inspector", "label": "Toggle Inspector" },
+      { "type": "separator" },
+      {
+        "label": "Workspace Layout Defaults",
+        "items": [
+          { "command": "view:layout-reset", "label": "Reset Current Workspace Panels" },
+          { "command": "view:layout-balanced", "label": "Balanced Default" },
+          { "command": "view:layout-focus", "label": "Focus Canvas" },
+          { "command": "view:layout-all-panels", "label": "Show All Panels" }
+        ]
+      },
+      { "type": "separator" },
+      { "role": "togglefullscreen", "nativeOnly": true },
+      { "role": "reload", "nativeOnly": true }
+    ],
+    "help": [
+      { "command": "help:project-documentation", "label": "Project Documentation" },
+      { "command": "help:tutorial", "label": "Tutorial" },
+      { "command": "help:feature-help", "label": "Feature Help" },
+      { "type": "separator" },
+      { "command": "help:keyboard-shortcuts", "label": "Keyboard Shortcuts", "accelerator": "F1" },
+      { "command": "help:about", "label": "About Signal Loom" }
+    ]
+  }
+}
