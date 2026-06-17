@@ -16,6 +16,7 @@ import { bitmapFromUrl, cloneBitmap, createBitmap } from './LayerBitmap';
 import { docToScreen, fitToContainer, screenToDoc, zoomAround, type Point } from './viewport';
 import { ImageEditorRulers } from './ImageEditorRulers';
 import { snapGuidePosition } from './ImageRulersGuides';
+import { computeBrushCursorRings } from './brushCursorGeometry';
 import { CanvasViewportGesture } from './imageCanvasGestures';
 import { getSelection } from './selectionRegistry';
 import { useToolDispatcher } from './tools/dispatcher';
@@ -687,6 +688,7 @@ export function ImageEditorCanvas() {
         <BrushCursorOverlay
           angleDeg={brushSettings.angleDeg}
           eyedropper={eyedropperModifierHeld}
+          hardness={brushSettings.hardness}
           roundness={brushSettings.roundness}
           sizePx={brushSettings.size * brushCursorZoom}
           square={brushSettings.tipShape === 'square'}
@@ -835,6 +837,7 @@ export function ImageEditorCanvas() {
 function BrushCursorOverlay({
   angleDeg,
   eyedropper,
+  hardness,
   roundness,
   sizePx,
   square,
@@ -842,6 +845,7 @@ function BrushCursorOverlay({
 }: {
   angleDeg: number;
   eyedropper: boolean;
+  hardness: number;
   roundness: number;
   sizePx: number;
   square: boolean;
@@ -872,8 +876,7 @@ function BrushCursorOverlay({
     };
   }, [wrapperRef]);
 
-  const diameter = Math.max(4, Math.min(2000, sizePx));
-  const height = Math.max(4, diameter * (roundness > 0 ? roundness : 1));
+  const { outer, inner } = computeBrushCursorRings({ sizePx, roundness, hardness });
 
   return (
     <div ref={ref} className="pointer-events-none absolute left-0 top-0 z-30 opacity-0">
@@ -888,17 +891,33 @@ function BrushCursorOverlay({
           </g>
         </svg>
       ) : (
-        <div
-          style={{
-            width: `${diameter}px`,
-            height: `${height}px`,
-            borderRadius: square ? '0' : '9999px',
-            // Dual-tone outline so it reads on both light and dark pixels.
-            border: '1px solid rgba(0,0,0,0.78)',
-            boxShadow: '0 0 0 1px rgba(255,255,255,0.85)',
-            transform: `translate(-50%, -50%) rotate(${angleDeg}deg)`,
-          }}
-        />
+        <>
+          <div
+            style={{
+              width: `${outer.width}px`,
+              height: `${outer.height}px`,
+              borderRadius: square ? '0' : '9999px',
+              // Dual-tone outline so it reads on both light and dark pixels.
+              border: '1px solid rgba(0,0,0,0.78)',
+              boxShadow: '0 0 0 1px rgba(255,255,255,0.85)',
+              transform: `translate(-50%, -50%) rotate(${angleDeg}deg)`,
+            }}
+          />
+          {inner ? (
+            // Fainter hard-core ring so soft brushes read as soft (Photoshop-style).
+            <div
+              className="absolute left-0 top-0"
+              style={{
+                width: `${inner.width}px`,
+                height: `${inner.height}px`,
+                borderRadius: square ? '0' : '9999px',
+                border: '1px dashed rgba(0,0,0,0.45)',
+                boxShadow: '0 0 0 1px rgba(255,255,255,0.45)',
+                transform: `translate(-50%, -50%) rotate(${angleDeg}deg)`,
+              }}
+            />
+          ) : null}
+        </>
       )}
     </div>
   );
