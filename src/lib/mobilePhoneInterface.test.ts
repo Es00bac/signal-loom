@@ -102,6 +102,35 @@ describe('mobile phone interface detection', () => {
     expect(dex.surface).toBe('tablet-or-dex');
   });
 
+  it('treats an Aluminum OS / ChromeOS desktop-class surface as desktop, not the phone shell', () => {
+    // ALOS: Android-based, large desktop display, touch present. Must use the
+    // desktop host (tablet-or-dex), never the compact phone chrome.
+    const alosDesktop = describeMobilePhoneInterface({
+      userAgent: 'Mozilla/5.0 (Linux; Android 17; Desktop) AppleWebKit/537.36 Safari/537.36',
+      innerWidth: 2560,
+      innerHeight: 1440,
+      screenWidth: 2560,
+      screenHeight: 1440,
+      devicePixelRatio: 1,
+      maxTouchPoints: 10,
+    });
+    // ChromeOS proper (CrOS UA, non-Android) is plain desktop.
+    const chromeOs = describeMobilePhoneInterface({
+      userAgent: 'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 Safari/537.36',
+      innerWidth: 1920,
+      innerHeight: 1080,
+      screenWidth: 1920,
+      screenHeight: 1080,
+      devicePixelRatio: 1,
+      maxTouchPoints: 0,
+    });
+
+    expect(alosDesktop.enabled).toBe(false);
+    expect(alosDesktop.surface).toBe('tablet-or-dex');
+    expect(chromeOs.enabled).toBe(false);
+    expect(chromeOs.surface).toBe('desktop');
+  });
+
   it('keeps desktop browsers out of phone mode', () => {
     const descriptor = describeMobilePhoneInterface({
       userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/125 Safari/537.36',
