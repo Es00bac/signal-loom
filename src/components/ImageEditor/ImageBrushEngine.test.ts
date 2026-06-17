@@ -117,7 +117,14 @@ describe('ImageBrushEngine', () => {
   it('reads brush pressure with relaxed checks for Wacom pointer types', () => {
     // Normal pen should work as expected
     expect(readBrushPressure({ pointerType: 'pen', pressure: 0.7 })).toBe(0.7);
-    expect(readBrushPressure({ pointerType: 'pen', pressure: 0 })).toBe(1);
+
+    // A pressure pen at the moment of contact/release reports ~0 pressure and must
+    // stay light, not snap to full size (that produced full-size blobs at the ends
+    // of strokes on Wacom/Cintiq displays).
+    expect(readBrushPressure({ pointerType: 'pen', pressure: 0 })).toBe(0.05);
+    expect(readBrushPressure({ pointerType: 'pen', pressure: -0.2 })).toBe(0.05);
+    // A no-pressure-support pen reports 0.5 when down; the clamp keeps it usable.
+    expect(readBrushPressure({ pointerType: 'pen', pressure: 0.5 })).toBe(0.5);
 
     // Mouse or touch reporting valid high-precision pressure should be allowed (Wacom relaxation)
     expect(readBrushPressure({ pointerType: 'mouse', pressure: 0.35 })).toBe(0.35);

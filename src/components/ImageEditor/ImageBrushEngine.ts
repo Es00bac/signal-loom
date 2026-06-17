@@ -1497,7 +1497,13 @@ export function readBrushPressure(event: Pick<PointerEvent, 'pointerType' | 'pre
   const pressure = event.pressure;
 
   if (pointerType === 'pen') {
-    if (pressure <= 0) return 1;
+    // A pressure-supporting pen reports ~0 pressure at the moment of contact and
+    // release. Returning full pressure (1) there produced full-size "blobs" at
+    // the ends of every stroke on Wacom/Cintiq displays. Keep those low-contact
+    // moments light instead. (Pens WITHOUT pressure support report 0.5 when
+    // down per the Pointer Events spec, which the clamp below preserves, so a
+    // pen pressure of 0 unambiguously means a pressure pen at light contact.)
+    if (pressure <= 0) return 0.05;
     return clamp(pressure, 0.05, 1);
   }
 
