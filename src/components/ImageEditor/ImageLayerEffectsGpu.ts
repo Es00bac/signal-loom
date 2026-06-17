@@ -36,8 +36,8 @@ export interface EffectPadding {
  * `outerGlow` is intentionally excluded: its GPU result diverged from the CPU reference
  * by ~30% within the glow band on parity testing (the masked-outside falloff profile
  * differs), so it falls back to the (correct, O(W×H)) CPU renderer until the glow shader
- * matches. stroke/dropShadow/colorOverlay are parity-verified (0 / ~0.2 / 0 avg channel
- * diff vs CPU on the real GPU).
+ * matches. stroke (GPU jump-flood distance for outside/center; CPU field for inside),
+ * dropShadow, and colorOverlay are parity-verified vs CPU on the real GPU.
  */
 const GPU_SUPPORTED_KINDS = new Set<ImageLayerEffect['kind']>([
   'stroke',
@@ -86,9 +86,13 @@ uniform sampler2D uContent;
 uniform sampler2D uShadow;
 uniform sampler2D uGlow;
 uniform sampler2D uStroke;
-uniform bool uHasShadow;
-uniform bool uHasGlow;
-uniform bool uHasStroke;
+// Up to three canvas effects are composited behind the content in this order (back to
+// front); each slot is -1 (none), 0 (drop shadow), 1 (outer glow) or 2 (stroke). The
+// order mirrors the layer's enabledEffects array so the GPU result matches the CPU
+// renderer where effects overlap.
+uniform int uSlot0;
+uniform int uSlot1;
+uniform int uSlot2;
 uniform bool uHasOverlay;
 uniform vec3 uShadowColor;
 uniform vec3 uGlowColor;
@@ -106,24 +110,32 @@ vec4 over(vec4 dst, vec4 src) {
   return src + dst * (1.0 - src.a);
 }
 
-void main() {
-  vec4 acc = vec4(0.0);
-  float contentAlpha = texture(uContent, vUv).a;
-
-  if (uHasShadow) {
+// Premultiplied contribution of one canvas effect. Reads a fixed sampler per kind (no
+// dynamic sampler indexing, which GLSL ES 3.0 forbids).
+vec4 effectColor(int kind, float contentAlpha) {
+  if (kind == 0) {
     float a = texture(uShadow, vUv).a * uShadowOpacity;
-    acc = over(acc, vec4(uShadowColor * a, a));
+    return vec4(uShadowColor * a, a);
   }
-  if (uHasGlow) {
+  if (kind == 1) {
     // Outer glow only shows outside the source content (matches the CPU outsideOnly).
     float mask = contentAlpha > 0.0 ? 0.0 : 1.0;
     float a = texture(uGlow, vUv).a * uGlowOpacity * mask;
-    acc = over(acc, vec4(uGlowColor * a, a));
+    return vec4(uGlowColor * a, a);
   }
-  if (uHasStroke) {
+  if (kind == 2) {
     float a = texture(uStroke, vUv).r * uStrokeOpacity;
-    acc = over(acc, vec4(uStrokeColor * a, a));
+    return vec4(uStrokeColor * a, a);
   }
+  return vec4(0.0);
+}
+
+void main() {
+  float contentAlpha = texture(uContent, vUv).a;
+  vec4 acc = vec4(0.0);
+  if (uSlot0 >= 0) acc = over(acc, effectColor(uSlot0, contentAlpha));
+  if (uSlot1 >= 0) acc = over(acc, effectColor(uSlot1, contentAlpha));
+  if (uSlot2 >= 0) acc = over(acc, effectColor(uSlot2, contentAlpha));
 
   vec4 content = texture(uContent, vUv);
   if (uHasOverlay && content.a > 0.0) {
@@ -134,11 +146,113 @@ void main() {
   fragColor = acc.a > 0.0 ? vec4(acc.rgb / acc.a, acc.a) : vec4(0.0);
 }`;
 
+// Non-flipped vertex for the jump-flood passes. JFA computes pixel coordinates
+// (`floor(vUv*size)`) that MUST equal the texel a fragment samples; the flipped vertex
+// above samples the vertically-mirrored texel, which scrambles JFA propagation (only the
+// centre row resolves). The seed/coverage textures it produces are therefore in the same
+// content-space layout as the directly-uploaded content texture, so the flipped composite
+// reads them aligned with the content.
+const VERTEX_SHADER_NOFLIP = `#version 300 es
+in vec2 aPos;
+out vec2 vUv;
+void main() {
+  vUv = aPos * 0.5 + 0.5;
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}`;
+
+// Seed-coordinate packing for the jump-flood distance transform. Coordinates up to 65535
+// pack into RGBA8 (hi/lo bytes per axis) — NO float render target needed (the
+// portability-critical choice for mobile Adreno GPUs).
+const JFA_CODEC = `
+const float INVALID = 65535.0;
+vec4 encodeSeed(vec2 p) {
+  float x = floor(p.x + 0.5); float y = floor(p.y + 0.5);
+  float xhi = floor(x / 256.0); float xlo = x - xhi * 256.0;
+  float yhi = floor(y / 256.0); float ylo = y - yhi * 256.0;
+  return vec4(xhi / 255.0, xlo / 255.0, yhi / 255.0, ylo / 255.0);
+}
+vec2 decodeSeed(vec4 c) {
+  float x = floor(c.r * 255.0 + 0.5) * 256.0 + floor(c.g * 255.0 + 0.5);
+  float y = floor(c.b * 255.0 + 0.5) * 256.0 + floor(c.a * 255.0 + 0.5);
+  return vec2(x, y);
+}
+`;
+
+const JFA_INIT_FRAGMENT = `#version 300 es
+precision highp float;
+uniform sampler2D uContent;
+uniform vec2 uSize;
+in vec2 vUv;
+out vec4 fragColor;
+${JFA_CODEC}
+void main() {
+  // Seeds are the opaque content pixels (stroke distance is measured to the edge).
+  float a = texture(uContent, vUv).a;
+  fragColor = a > 0.0 ? encodeSeed(floor(vUv * uSize)) : vec4(1.0);
+}`;
+
+const JFA_STEP_FRAGMENT = `#version 300 es
+precision highp float;
+uniform sampler2D uSeed;
+uniform vec2 uTexel;
+uniform vec2 uSize;
+uniform float uStep;
+in vec2 vUv;
+out vec4 fragColor;
+${JFA_CODEC}
+void main() {
+  vec2 cur = floor(vUv * uSize);
+  vec4 best = texture(uSeed, vUv);
+  vec2 bestSeed = decodeSeed(best);
+  float bestDist = bestSeed.x >= INVALID ? 1.0e20 : distance(cur, bestSeed);
+  for (int dy = -1; dy <= 1; dy++) {
+    for (int dx = -1; dx <= 1; dx++) {
+      vec4 s = texture(uSeed, vUv + vec2(float(dx), float(dy)) * uStep * uTexel);
+      vec2 sd = decodeSeed(s);
+      if (sd.x >= INVALID) continue;
+      float d = distance(cur, sd);
+      if (d < bestDist) { bestDist = d; best = s; }
+    }
+  }
+  fragColor = best;
+}`;
+
+const STROKE_RESOLVE_FRAGMENT = `#version 300 es
+precision highp float;
+uniform sampler2D uSeed;
+uniform sampler2D uContent;
+uniform vec2 uSize;
+uniform float uRadius;
+uniform bool uCenter;   // false = outside (skip inside pixels), true = center (keep all)
+in vec2 vUv;
+out vec4 fragColor;
+${JFA_CODEC}
+void main() {
+  vec2 cur = floor(vUv * uSize);
+  vec2 seed = decodeSeed(texture(uSeed, vUv));
+  float contentAlpha = texture(uContent, vUv).a;
+  float coverage = 0.0;
+  if (seed.x < INVALID) {
+    bool inside = contentAlpha > 0.0;
+    bool eligible = uCenter ? true : !inside;
+    if (eligible) {
+      float dist = distance(cur, seed);
+      if (dist <= uRadius + 0.001) {
+        coverage = uRadius <= 1.0 ? 1.0 : clamp(1.0 - max(0.0, dist - uRadius + 1.0), 0.0, 1.0);
+      }
+    }
+  }
+  fragColor = vec4(coverage, 0.0, 0.0, 1.0);
+}`;
+
 interface GpuResources {
   gl: WebGL2RenderingContext;
   canvas: OffscreenCanvas;
   blur: WebGLProgram;
   composite: WebGLProgram;
+  jfaInit: WebGLProgram;
+  jfaStep: WebGLProgram;
+  strokeResolve: WebGLProgram;
   vao: WebGLVertexArrayObject;
   maxTexture: number;
 }
@@ -167,7 +281,11 @@ function createResources(): GpuResources | null {
 
     const blur = linkProgram(gl, VERTEX_SHADER, BLUR_FRAGMENT);
     const composite = linkProgram(gl, VERTEX_SHADER, COMPOSITE_FRAGMENT);
-    if (!blur || !composite) return null;
+    // JFA passes use the non-flipped vertex (see VERTEX_SHADER_NOFLIP).
+    const jfaInit = linkProgram(gl, VERTEX_SHADER_NOFLIP, JFA_INIT_FRAGMENT);
+    const jfaStep = linkProgram(gl, VERTEX_SHADER_NOFLIP, JFA_STEP_FRAGMENT);
+    const strokeResolve = linkProgram(gl, VERTEX_SHADER_NOFLIP, STROKE_RESOLVE_FRAGMENT);
+    if (!blur || !composite || !jfaInit || !jfaStep || !strokeResolve) return null;
 
     const vao = gl.createVertexArray();
     const buffer = gl.createBuffer();
@@ -182,7 +300,7 @@ function createResources(): GpuResources | null {
     gl.bindVertexArray(null);
 
     const maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
-    return { gl, canvas, blur, composite, vao, maxTexture };
+    return { gl, canvas, blur, composite, jfaInit, jfaStep, strokeResolve, vao, maxTexture };
   } catch {
     return null;
   }
@@ -239,14 +357,20 @@ function parseColor(color: string): [number, number, number] {
  * oversized output, or GL failure) so the caller uses the CPU path. `source` is the
  * already mask/filter-resolved layer pixels.
  */
+// Internal diagnostic for the last GPU attempt (handy when debugging fallbacks via the
+// console; not part of the public API).
+const __gpuDiag = { attempts: 0, reason: '' };
+
 export function tryRenderLayerEffectsGpu(
   source: ImageData,
   enabledEffects: readonly ImageLayerEffect[],
   padding: EffectPadding,
 ): RenderedLayerWithEffects | null {
-  if (enabledEffects.length === 0) return null;
+  __gpuDiag.attempts += 1;
+  const fail = (r: string): null => { __gpuDiag.reason = r; return null; };
+  if (enabledEffects.length === 0) return fail('empty');
   for (const effect of enabledEffects) {
-    if (!GPU_SUPPORTED_KINDS.has(effect.kind)) return null;
+    if (!GPU_SUPPORTED_KINDS.has(effect.kind)) return fail('unsupported:' + effect.kind);
   }
 
   // v1 composites at most one of each kind; multiple of a kind => CPU fallback.
@@ -265,17 +389,24 @@ export function tryRenderLayerEffectsGpu(
   const overlay = enabledEffects.find((e) => e.kind === 'colorOverlay') as Of<'colorOverlay'> | undefined;
 
   const res = getResources();
-  if (!res) return null;
+  if (!res) return fail('no-resources');
   const { gl } = res;
   if (gl.isContextLost()) {
     resetLayerEffectGpu();
-    return null;
+    return fail('context-lost');
   }
 
   const width = source.width + padding.left + padding.right;
   const height = source.height + padding.top + padding.bottom;
-  if (width <= 0 || height <= 0) return null;
-  if (width > res.maxTexture || height > res.maxTexture) return null;
+  if (width <= 0 || height <= 0) return fail('bad-size');
+  if (width > res.maxTexture || height > res.maxTexture) return fail('too-big:' + width + 'x' + height);
+
+  // Upload the source via the ArrayBufferView overload (source.data) rather than the
+  // TexImageSource overload — callers (cloneImageData) hand us a plain {width,height,data}
+  // object cast to ImageData, which the TexImageSource overload of texSubImage2D rejects.
+  const sourceBytes = source.data instanceof Uint8Array
+    ? source.data
+    : new Uint8Array(source.data.buffer, source.data.byteOffset, source.data.byteLength);
 
   const created: WebGLTexture[] = [];
   const createdFbos: WebGLFramebuffer[] = [];
@@ -301,7 +432,7 @@ export function tryRenderLayerEffectsGpu(
     // Content texture: transparent W×H with the source placed at the padding origin.
     const contentTex = makeTex();
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, padding.left, padding.top, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, padding.left, padding.top, source.width, source.height, gl.RGBA, gl.UNSIGNED_BYTE, sourceBytes);
 
     // Drop-shadow blurred alpha.
     let shadowTex: WebGLTexture | null = null;
@@ -312,8 +443,8 @@ export function tryRenderLayerEffectsGpu(
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
       const px = padding.left + offsetX;
       const py = padding.top + offsetY;
-      if (px < width && py < height && px + source.width > 0 && py + source.height > 0) {
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, Math.max(0, px), Math.max(0, py), gl.RGBA, gl.UNSIGNED_BYTE, source);
+      if (px >= 0 && py >= 0 && px + source.width <= width && py + source.height <= height) {
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, px, py, source.width, source.height, gl.RGBA, gl.UNSIGNED_BYTE, sourceBytes);
       }
       shadowTex = blurAlpha(res, placed, width, height, Math.max(0, Math.round(shadow.size)), created, createdFbos);
     }
@@ -324,17 +455,32 @@ export function tryRenderLayerEffectsGpu(
       glowTex = blurAlpha(res, contentTex, width, height, Math.max(0, Math.round(glow.size)), created, createdFbos);
     }
 
-    // Stroke coverage from the shared/tested CPU distance transform.
+    // Stroke coverage. Outside/center use the GPU jump-flood distance transform; inside
+    // strokes need the border-aware CPU field (out-of-bounds counts as transparent),
+    // which the JFA — operating only within the texture — can't express.
     let strokeTex: WebGLTexture | null = null;
     if (stroke && Math.round(stroke.size) > 0) {
-      const feather = computeStrokeFeatherField(source, stroke, width, height, padding.left, padding.top);
-      if (feather) {
-        const bytes = new Uint8Array(width * height * 4);
-        for (let i = 0; i < feather.length; i += 1) {
-          bytes[i * 4] = Math.round(Math.max(0, Math.min(1, feather[i])) * 255);
+      if (stroke.position === 'inside') {
+        const feather = computeStrokeFeatherField(source, stroke, width, height, padding.left, padding.top);
+        if (feather) {
+          const bytes = new Uint8Array(width * height * 4);
+          for (let i = 0; i < feather.length; i += 1) {
+            bytes[i * 4] = Math.round(Math.max(0, Math.min(1, feather[i])) * 255);
+          }
+          strokeTex = makeTex();
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
         }
-        strokeTex = makeTex();
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+      } else {
+        strokeTex = strokeCoverageGpu(
+          res,
+          contentTex,
+          width,
+          height,
+          Math.round(stroke.size),
+          stroke.position === 'center',
+          created,
+          createdFbos,
+        );
       }
     }
 
@@ -351,9 +497,18 @@ export function tryRenderLayerEffectsGpu(
     bindTexUnit(gl, res.composite, 'uGlow', glowTex ?? contentTex, 2);
     bindTexUnit(gl, res.composite, 'uStroke', strokeTex ?? contentTex, 3);
 
-    setBool(gl, res.composite, 'uHasShadow', !!shadowTex);
-    setBool(gl, res.composite, 'uHasGlow', !!glowTex);
-    setBool(gl, res.composite, 'uHasStroke', !!strokeTex);
+    // Composite the canvas effects back-to-front in the layer's effect order, so overlaps
+    // match the CPU renderer (which draws enabledEffects in array order).
+    const kindFor = (effect: ImageLayerEffect): number => {
+      if (effect.kind === 'dropShadow' && shadowTex) return 0;
+      if (effect.kind === 'outerGlow' && glowTex) return 1;
+      if (effect.kind === 'stroke' && strokeTex) return 2;
+      return -1;
+    };
+    const slots = enabledEffects.map(kindFor).filter((k) => k >= 0);
+    setInt(gl, res.composite, 'uSlot0', slots[0] ?? -1);
+    setInt(gl, res.composite, 'uSlot1', slots[1] ?? -1);
+    setInt(gl, res.composite, 'uSlot2', slots[2] ?? -1);
     setBool(gl, res.composite, 'uHasOverlay', !!overlay);
 
     setColor(gl, res.composite, 'uShadowColor', shadow ? shadow.color : '#000000');
@@ -376,16 +531,17 @@ export function tryRenderLayerEffectsGpu(
     // Single GPU canvas copy into a fresh output bitmap (no per-pixel readback).
     const output = createBitmap(width, height);
     const ctx = output.getContext('2d');
-    if (!ctx) return null;
+    if (!ctx) return fail('no-2d-ctx');
     ctx.drawImage(res.canvas as unknown as CanvasImageSource, 0, 0);
 
+    __gpuDiag.reason = 'ok';
     return {
       bitmap: output as LayerBitmap,
       offsetX: padding.left === 0 ? 0 : -padding.left,
       offsetY: padding.top === 0 ? 0 : -padding.top,
     };
-  } catch {
-    return null;
+  } catch (e) {
+    return fail('threw:' + (e instanceof Error ? e.message : String(e)));
   } finally {
     for (const fbo of createdFbos) gl.deleteFramebuffer(fbo);
     for (const tex of created) gl.deleteTexture(tex);
@@ -458,6 +614,100 @@ function runBlurPass(
   gl.bindVertexArray(null);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   return dst;
+}
+
+/** Allocates an RGBA8 texture (NEAREST is required for exact JFA seed reads). */
+function allocTexture(gl: WebGL2RenderingContext, width: number, height: number, created: WebGLTexture[]): WebGLTexture {
+  const tex = gl.createTexture();
+  if (!tex) throw new Error('texture');
+  created.push(tex);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
+
+/** Renders `program` (full-screen triangle) into `target` after `setup` sets its uniforms. */
+function renderTo(
+  res: GpuResources,
+  target: WebGLTexture,
+  createdFbos: WebGLFramebuffer[],
+  program: WebGLProgram,
+  width: number,
+  height: number,
+  setup: (program: WebGLProgram) => void,
+): void {
+  const { gl } = res;
+  const fbo = gl.createFramebuffer();
+  if (!fbo) throw new Error('fbo');
+  createdFbos.push(fbo);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target, 0);
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('fbo-incomplete');
+  gl.viewport(0, 0, width, height);
+  gl.useProgram(program);
+  gl.bindVertexArray(res.vao);
+  setup(program);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.bindVertexArray(null);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+/**
+ * Stroke coverage via the GPU jump-flood distance transform (outside/center positions).
+ * ~ceil(log2(maxDim)) ping-pong passes, all RGBA8, then a resolve that applies the same
+ * band + feather as the CPU path. Returns a texture whose .r is the stroke coverage,
+ * in content-space layout (so the flipped composite reads it aligned with the content).
+ */
+function strokeCoverageGpu(
+  res: GpuResources,
+  contentTex: WebGLTexture,
+  width: number,
+  height: number,
+  radius: number,
+  center: boolean,
+  created: WebGLTexture[],
+  createdFbos: WebGLFramebuffer[],
+): WebGLTexture {
+  const { gl } = res;
+  const texA = allocTexture(gl, width, height, created);
+  const texB = allocTexture(gl, width, height, created);
+
+  renderTo(res, texA, createdFbos, res.jfaInit, width, height, (p) => {
+    bindTexUnit(gl, p, 'uContent', contentTex, 0);
+    setVec2(gl, p, 'uSize', width, height);
+  });
+
+  let src = texA;
+  let dst = texB;
+  let step = 1;
+  while (step < Math.max(width, height)) step <<= 1;
+  step >>= 1;
+  for (; step >= 1; step = Math.floor(step / 2)) {
+    const from = src;
+    const currentStep = step;
+    renderTo(res, dst, createdFbos, res.jfaStep, width, height, (p) => {
+      bindTexUnit(gl, p, 'uSeed', from, 0);
+      setVec2(gl, p, 'uTexel', 1 / width, 1 / height);
+      setVec2(gl, p, 'uSize', width, height);
+      setFloat(gl, p, 'uStep', currentStep);
+    });
+    const swap = src; src = dst; dst = swap;
+  }
+
+  const coverage = allocTexture(gl, width, height, created);
+  const seedTex = src;
+  renderTo(res, coverage, createdFbos, res.strokeResolve, width, height, (p) => {
+    bindTexUnit(gl, p, 'uSeed', seedTex, 0);
+    bindTexUnit(gl, p, 'uContent', contentTex, 1);
+    setVec2(gl, p, 'uSize', width, height);
+    setFloat(gl, p, 'uRadius', radius);
+    setBool(gl, p, 'uCenter', center);
+  });
+  return coverage;
 }
 
 function bindTexUnit(gl: WebGL2RenderingContext, program: WebGLProgram, name: string, tex: WebGLTexture, unit: number): void {
