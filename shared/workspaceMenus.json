@@ -175,7 +175,35 @@
       ]
     },
     { "id": "view", "label": "View", "items": "$viewBase" },
-    { "id": "window", "label": "Window", "items": "$window" },
+    {
+      "id": "window",
+      "label": "Window",
+      "items": [
+        { "command": "view:flow", "label": "Open/Focus Flow Window", "accelerator": "Ctrl+1" },
+        { "command": "view:editor", "label": "Open/Focus Video Window", "accelerator": "Ctrl+2" },
+        { "command": "view:image", "label": "Open/Focus Image Window", "accelerator": "Ctrl+3" },
+        { "command": "view:paper", "label": "Open/Focus Paper Window", "accelerator": "Ctrl+4" },
+        { "type": "separator" },
+        { "command": "view:command-palette", "label": "Command Palette...", "accelerator": "Ctrl+K" },
+        { "command": "view:activity-trail", "label": "Activity Trail..." },
+        { "type": "separator" },
+        {
+          "label": "Panels",
+          "items": [
+            { "command": "image:toggle-tools-panel", "label": "Tools" },
+            { "command": "image:toggle-brushes-panel", "label": "Brushes" },
+            { "command": "image:toggle-layers-panel", "label": "Layers" },
+            { "command": "image:toggle-channels-panel", "label": "Channels" },
+            { "command": "image:toggle-paths-panel", "label": "Paths" },
+            { "command": "image:toggle-properties-panel", "label": "Properties" },
+            { "command": "image:toggle-history-panel", "label": "History" },
+            { "command": "image:toggle-assets-panel", "label": "Assets" },
+            { "type": "separator" },
+            { "command": "image:reset-panels", "label": "Reset Image Panels" }
+          ]
+        }
+      ]
+    },
     { "id": "help", "label": "Help", "items": "$help" }
   ],
   "paper": [

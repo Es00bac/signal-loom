@@ -9,6 +9,9 @@ import { createMask, maskBoundingBox } from './SelectionMask';
 import { ImageEditorWorkspace } from './ImageEditorWorkspace';
 import { getSelection, setSelection } from './selectionRegistry';
 import { onNativeRendererCommand, type NativeMenuCommand } from '../../lib/nativeApp';
+import { useDockablePanelStore } from '../../store/dockablePanelStore';
+import { panelKey } from '../../lib/dockablePanel';
+import { IMAGE_DOCKABLE_WORKSPACE_ID } from './ImageDockablePanels';
 
 vi.mock('./ImageEditorToolbar', () => ({ ImageEditorToolbar: () => null }));
 vi.mock('./ImageEditorCanvas', () => ({ ImageEditorCanvas: () => null }));
@@ -28,8 +31,9 @@ vi.mock('../DockablePanel/DockablePanelHost', () => ({
     <div data-tabbed-panel-count={panels?.filter((panel) => panel.tabGroupId).length ?? 0}>{children}</div>
   ),
 }));
+const nativeMenuMock = vi.hoisted(() => ({ handler: null as ((command: string) => void) | null }));
 vi.mock('../../shared/native/useNativeMenuCommand', () => ({
-  useNativeMenuCommand: () => undefined,
+  useNativeMenuCommand: (handler: (command: string) => void) => { nativeMenuMock.handler = handler; },
 }));
 
 describe('ImageEditorWorkspace navigation controls', () => {
@@ -238,6 +242,29 @@ describe('ImageEditorWorkspace navigation controls', () => {
     }
 
     expect(commands).toEqual([]);
+  });
+
+  it('toggles a dockable panel visibility from the Window > Panels menu command', () => {
+    openNavigationDocument();
+
+    act(() => {
+      root.render(<ImageEditorWorkspace getNewFlowNodePosition={() => ({ x: 0, y: 0 })} />);
+    });
+
+    const key = panelKey(IMAGE_DOCKABLE_WORKSPACE_ID, 'channels');
+    const modeOf = () => {
+      const panels = useDockablePanelStore.getState();
+      return panels.layouts[key]?.mode ?? panels.defaults[key]?.mode;
+    };
+    const startShown = modeOf() !== 'hidden';
+
+    // First toggle hides a shown panel (or shows a hidden one).
+    act(() => nativeMenuMock.handler?.('image:toggle-channels-panel'));
+    expect(modeOf() === 'hidden').toBe(startShown);
+
+    // Second toggle flips it back.
+    act(() => nativeMenuMock.handler?.('image:toggle-channels-panel'));
+    expect(modeOf() === 'hidden').toBe(!startShown);
   });
 });
 

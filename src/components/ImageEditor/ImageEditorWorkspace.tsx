@@ -26,6 +26,7 @@ import { useWorkspaceLayoutStore } from '../../store/workspaceLayoutStore';
 import { useDockablePanelStore } from '../../store/dockablePanelStore';
 import { useTextInputDialogStore } from '../../store/textInputDialogStore';
 import { panelKey, type DockZone, type DockablePanelLayout } from '../../lib/dockablePanel';
+import { getDockablePanelToggleMode, resolveDockablePanelMode } from '../../lib/dockablePanelVisibility';
 import { canMoveImageLayer } from '../../lib/imageLayerLocks';
 import { isImageLayerLinked, translateLinkedImageLayers } from '../../lib/imageLayerLinks';
 import { DockablePanelHost } from '../DockablePanel/DockablePanelHost';
@@ -107,6 +108,18 @@ const ADJUSTMENT_COMMAND_KINDS: Record<string, AdjustmentLayerKind> = {
   'image:adjust-temperature-tint': 'temperatureTint',
   'image:adjust-black-white': 'blackWhite',
   'image:adjust-invert': 'invert',
+};
+
+/** Window > Panels menu commands -> the dockable panel they show/hide. */
+const PANEL_TOGGLE_COMMANDS: Record<string, string> = {
+  'image:toggle-tools-panel': IMAGE_DOCKABLE_PANEL_IDS.tools,
+  'image:toggle-brushes-panel': IMAGE_DOCKABLE_PANEL_IDS.brushes,
+  'image:toggle-layers-panel': IMAGE_DOCKABLE_PANEL_IDS.layers,
+  'image:toggle-channels-panel': IMAGE_DOCKABLE_PANEL_IDS.channels,
+  'image:toggle-paths-panel': IMAGE_DOCKABLE_PANEL_IDS.paths,
+  'image:toggle-properties-panel': IMAGE_DOCKABLE_PANEL_IDS.properties,
+  'image:toggle-history-panel': IMAGE_DOCKABLE_PANEL_IDS.history,
+  'image:toggle-assets-panel': IMAGE_DOCKABLE_PANEL_IDS.assets,
 };
 
 export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWorkspaceProps) {
@@ -483,6 +496,23 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
         active?.type === 'adjustment' && active.adjustment?.kind === adjustmentKind;
       if (doc && !alreadyTargeting) addAdjustmentLayerUndoable(adjustmentKind);
       useWorkspaceDialogStore.getState().openDialog(IMAGE_DOCKABLE_WORKSPACE_ID, IMAGE_ADJUSTMENTS_DIALOG_ID);
+      return;
+    }
+    const togglePanelId = PANEL_TOGGLE_COMMANDS[command];
+    if (togglePanelId) {
+      // Window > Panels toggle: hide a shown panel, restore a hidden one to docked.
+      const panels = useDockablePanelStore.getState();
+      const key = panelKey(IMAGE_DOCKABLE_WORKSPACE_ID, togglePanelId);
+      const mode = resolveDockablePanelMode(panels.layouts[key]?.mode, panels.defaults[key]?.mode);
+      if (getDockablePanelToggleMode(mode) === 'hidden') {
+        panels.hidePanel(IMAGE_DOCKABLE_WORKSPACE_ID, togglePanelId);
+      } else {
+        panels.setPanelMode(IMAGE_DOCKABLE_WORKSPACE_ID, togglePanelId, 'docked');
+      }
+      return;
+    }
+    if (command === 'image:reset-panels') {
+      useDockablePanelStore.getState().resetWorkspacePanels(IMAGE_DOCKABLE_WORKSPACE_ID);
       return;
     }
     switch (command) {

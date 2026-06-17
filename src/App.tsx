@@ -1458,6 +1458,15 @@ function FlowApp() {
       case 'image:adjust-exposure':
       case 'image:adjust-temperature-tint':
       case 'image:adjust-invert':
+      case 'image:toggle-tools-panel':
+      case 'image:toggle-brushes-panel':
+      case 'image:toggle-layers-panel':
+      case 'image:toggle-channels-panel':
+      case 'image:toggle-paths-panel':
+      case 'image:toggle-properties-panel':
+      case 'image:toggle-history-panel':
+      case 'image:toggle-assets-panel':
+      case 'image:reset-panels':
       case 'timeline:select':
       case 'timeline:cut':
       case 'timeline:slip':
