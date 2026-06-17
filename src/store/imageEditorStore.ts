@@ -91,6 +91,10 @@ interface ImageEditorState {
   toolbarFlyoutOrder: ImageEditorToolbarFlyoutGroupId[];
   generativeFillDismissedByDocId: Record<string, boolean>;
   isDraggingSlider: boolean;
+  /** True while a brush/eraser/retouch stroke is mutating the active layer in place. Lets the
+   * compositor use a fast cached-backdrop path for live previews; cleared on pointer-up so the
+   * final committed frame goes through the normal full render. */
+  isPaintingStroke: boolean;
 }
 
 export interface ImageEditorProjectSnapshot {
@@ -170,6 +174,7 @@ interface ImageEditorActions {
   exportProjectSnapshot: () => ImageEditorProjectSnapshot;
   restoreProjectSnapshot: (snapshot?: ImageEditorProjectSnapshot) => void;
   setIsDraggingSlider: (dragging: boolean) => void;
+  setPaintingStroke: (painting: boolean) => void;
 }
 
 export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>()(
@@ -197,8 +202,10 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     toolbarFlyoutOrder: [...DEFAULT_IMAGE_EDITOR_TOOLBAR_FLYOUT_ORDER],
     generativeFillDismissedByDocId: {},
     isDraggingSlider: false,
+    isPaintingStroke: false,
 
     setIsDraggingSlider: (isDraggingSlider) => set({ isDraggingSlider }),
+    setPaintingStroke: (isPaintingStroke) => set((state) => (state.isPaintingStroke === isPaintingStroke ? state : { isPaintingStroke })),
 
     openDocument: (doc) =>
       set((state) => {

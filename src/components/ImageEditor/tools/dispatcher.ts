@@ -68,6 +68,16 @@ export function shouldUseEyedropperOverride(tool: EditorTool, mods: Pick<Modifie
   return mods.ctrl && EYEDROPPER_MODIFIER_TOOLS.has(tool);
 }
 
+/**
+ * Tools whose stroke repeatedly mutates the active layer's bitmap in place across pointer-moves.
+ * While one of these is dragging, the compositor uses the fast cached-backdrop preview path.
+ */
+export const STROKE_PAINT_TOOLS = new Set<EditorTool>([
+  'brush', 'eraser', 'backgroundEraser', 'cloneStamp', 'spotHeal',
+  'blurBrush', 'sharpenBrush', 'smudgeBrush', 'dodgeBrush', 'burnBrush',
+  'spongeSaturateBrush', 'spongeDesaturateBrush',
+]);
+
 export type ImageToolDispatcherMethod = 'pointerDown' | 'pointerMove' | 'pointerUp' | 'keyDown' | 'cancel';
 export type ImageToolDispatcherSupportStatus = 'full' | 'partial' | 'inactive';
 
@@ -236,6 +246,9 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
         return;
       }
       eyedropperOverride = false;
+      if (STROKE_PAINT_TOOLS.has(useImageEditorStore.getState().tool)) {
+        env.store.setPaintingStroke(true);
+      }
       currentHandler().onPointerDown?.(env, docPoint, mods, event);
     };
     const onMove = (event: PointerEvent) => {
@@ -274,7 +287,12 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
         eyedropperOverride = false;
         return;
       }
+      const wasStroke = STROKE_PAINT_TOOLS.has(useImageEditorStore.getState().tool);
       currentHandler().onPointerUp?.(env, docPoint, modsFrom(event), event);
+      // Leave the fast preview path and force one normal full-quality render of the committed
+      // result. Always clearing is safe (idempotent) even if the gesture wasn't a paint stroke.
+      env.store.setPaintingStroke(false);
+      if (wasStroke) rendererRef.current?.requestRender();
     };
     const onDouble = (event: MouseEvent) => {
       if (shouldIgnoreImageCanvasToolEvent(event)) return;

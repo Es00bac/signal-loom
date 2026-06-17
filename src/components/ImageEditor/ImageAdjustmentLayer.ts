@@ -1473,12 +1473,35 @@ export function renderImageDocumentLayersToBitmap(doc: ImageDocument): LayerBitm
   const bitmap = createBitmap(doc.width, doc.height);
   const ctx = getCtx(bitmap);
   ctx.clearRect(0, 0, bitmap.width, bitmap.height);
-  let clippingBaseMask: LayerBitmap | null = null;
+  compositeLayerRangeInto(bitmap, doc.layers, doc.width, doc.height, 0, doc.layers.length, null);
+  return bitmap;
+}
 
-  for (const layer of doc.layers) {
-    if (!isImageLayerEffectivelyVisible(layer, doc.layers)) continue;
+/**
+ * Composite a contiguous slice of the layer stack — `layers[startIndex, endIndex)` — into an
+ * already-prepared `bitmap`, resuming from a given `clippingBaseMask` state and returning the
+ * updated state. Splitting the full render at any boundary `k` and running [0,k) then [k,n) yields
+ * exactly the same pixels as [0,n) (verified by test), which lets a live brush stroke recomposite
+ * only the active layer and everything above it over a cached backdrop of the layers below.
+ *
+ * `layers` is always the FULL stack (visibility/group/clipping resolution needs every layer); only
+ * the [startIndex, endIndex) window is painted. The caller clears/prepares `bitmap` before [0, …).
+ */
+export function compositeLayerRangeInto(
+  bitmap: LayerBitmap,
+  layers: readonly ImageLayer[],
+  docWidth: number,
+  docHeight: number,
+  startIndex: number,
+  endIndex: number,
+  clippingBaseMask: LayerBitmap | null,
+): LayerBitmap | null {
+  const ctx = getCtx(bitmap);
+  for (let i = startIndex; i < endIndex; i += 1) {
+    const layer = layers[i];
+    if (!layer || !isImageLayerEffectivelyVisible(layer, layers)) continue;
     if (layer.type === 'group') {
-      clippingBaseMask = renderGroupAlphaMask(layer, doc.layers, doc.width, doc.height);
+      clippingBaseMask = renderGroupAlphaMask(layer, layers, docWidth, docHeight);
       continue;
     }
     if (layer.type === 'adjustment' && layer.adjustment) {
@@ -1493,18 +1516,17 @@ export function renderImageDocumentLayersToBitmap(doc: ImageDocument): LayerBitm
     }
     if (layer.clippingMask) {
       if (clippingBaseMask) {
-        paintPixelLayer(ctx, layer, { clippingMask: clippingBaseMask, documentWidth: doc.width, documentHeight: doc.height });
+        paintPixelLayer(ctx, layer, { clippingMask: clippingBaseMask, documentWidth: docWidth, documentHeight: docHeight });
       }
       continue;
     }
     paintPixelLayer(ctx, layer);
-    const nextBaseMask = renderLayerAlphaMask(layer, doc.width, doc.height);
+    const nextBaseMask = renderLayerAlphaMask(layer, docWidth, docHeight);
     if (nextBaseMask) {
       clippingBaseMask = nextBaseMask;
     }
   }
-
-  return bitmap;
+  return clippingBaseMask;
 }
 
 export function applyAdjustmentLayerToBitmap(

@@ -15,8 +15,10 @@ import {
   describeAdjustmentLayerPlan,
   getUnsupportedAdjustmentLayerPlanningWarnings,
   renderImageDocumentLayersToBitmap,
+  compositeLayerRangeInto,
   serializeAdjustmentLayerPreset,
 } from './ImageAdjustmentLayer';
+import { createBitmap } from './LayerBitmap';
 import { attachVectorMaskToLayer } from './ImageVectorMasks';
 
 const ADJUSTMENT_LAYER_KINDS = [
@@ -1168,5 +1170,52 @@ describe('ImageAdjustmentLayer', () => {
     const rendered = bitmap.getContext('2d')?.getImageData(0, 0, bitmap.width, bitmap.height);
 
     expect(rendered ? getPixel(rendered, 0, 0) : null).toEqual([0, 0, 0, 0]);
+  });
+});
+
+describe('compositeLayerRangeInto split-transparency', () => {
+  function renderFull(doc: ImageDocument): ImageData {
+    const bitmap = renderImageDocumentLayersToBitmap(doc);
+    return bitmap.getContext('2d')!.getImageData(0, 0, bitmap.width, bitmap.height);
+  }
+
+  function renderSplit(doc: ImageDocument, k: number): ImageData {
+    // Mirrors the live-stroke fast path: render the backdrop [0,k), then resume [k,n) from the
+    // returned clipping state. Must match the unsplit full render exactly.
+    const bitmap = createBitmap(doc.width, doc.height);
+    const ctx = bitmap.getContext('2d')!;
+    ctx.clearRect(0, 0, bitmap.width, bitmap.height);
+    const state = compositeLayerRangeInto(bitmap, doc.layers, doc.width, doc.height, 0, k, null);
+    compositeLayerRangeInto(bitmap, doc.layers, doc.width, doc.height, k, doc.layers.length, state);
+    return bitmap.getContext('2d')!.getImageData(0, 0, bitmap.width, bitmap.height);
+  }
+
+  // Mirrors CompositeRenderer.compositeActiveAware exactly: render the backdrop [0,k) into one
+  // canvas, drawImage-copy it into a scratch canvas, then resume [k,n) on the scratch.
+  function renderViaBackdropCopy(doc: ImageDocument, k: number): ImageData {
+    const backdrop = createBitmap(doc.width, doc.height);
+    const bctx = backdrop.getContext('2d')!;
+    bctx.clearRect(0, 0, backdrop.width, backdrop.height);
+    const state = compositeLayerRangeInto(backdrop, doc.layers, doc.width, doc.height, 0, k, null);
+
+    const scratch = createBitmap(doc.width, doc.height);
+    const sctx = scratch.getContext('2d')!;
+    sctx.clearRect(0, 0, scratch.width, scratch.height);
+    sctx.drawImage(backdrop, 0, 0);
+    compositeLayerRangeInto(scratch, doc.layers, doc.width, doc.height, k, doc.layers.length, state);
+    return scratch.getContext('2d')!.getImageData(0, 0, scratch.width, scratch.height);
+  }
+
+  it('produces identical pixels regardless of where the stack is split (incl. a clipping chain)', () => {
+    const base = makeLayer('base', [200, 40, 40, 255]);
+    const clipped: ImageLayer = { ...makeLayer('clipped', [40, 200, 40, 255]), clippingMask: true };
+    const top = makeLayer('top', [40, 40, 200, 128]);
+    const doc = makeDoc({ layers: [base, clipped, top], activeLayerId: 'clipped' });
+
+    const full = renderFull(doc);
+    for (let k = 0; k <= doc.layers.length; k += 1) {
+      expect(Array.from(renderSplit(doc, k).data), `split at k=${k}`).toEqual(Array.from(full.data));
+      expect(Array.from(renderViaBackdropCopy(doc, k).data), `backdrop-copy at k=${k}`).toEqual(Array.from(full.data));
+    }
   });
 });

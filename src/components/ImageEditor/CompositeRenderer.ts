@@ -29,6 +29,7 @@ import type { ImageLayerWithVectorMask } from './ImageVectorMasks';
 
 import {
   renderImageDocumentLayersToBitmap,
+  compositeLayerRangeInto,
   composeLayerBitmapWithLiveMasks,
   applyAdjustmentToImageData,
   applyAdjustmentToPixel,
@@ -695,6 +696,14 @@ export class CompositeRenderer {
   private workerObj: Worker | null = null;
   private workerBlobUrl: string | null = null;
 
+  // Live-stroke fast path (used while isPaintingStroke): cache the composite of the layers BELOW
+  // the active layer so each frame only recomposites the active layer + everything above it.
+  private strokeBackdrop: LayerBitmap | null = null;
+  private strokeScratch: LayerBitmap | null = null;
+  private strokeBackdropState: LayerBitmap | null = null; // clippingBaseMask after the backdrop range
+  private strokeBackdropLayers: readonly ImageLayer[] | null = null; // identity refs of [0, activeIndex)
+  private strokeBackdropActiveId: string | null = null;
+
   constructor(canvas: HTMLCanvasElement, wrapper: HTMLElement) {
     this.canvas = canvas;
     this.wrapper = wrapper;
@@ -1070,6 +1079,91 @@ export class CompositeRenderer {
     });
   }
 
+  /**
+   * Live-stroke composite: recomposite only the active layer + everything above it over a cached
+   * backdrop of the layers below. Produces pixel-identical output to a full render (the backdrop
+   * range + the live range together cover the whole stack), but skips recompositing the unchanged
+   * layers below the one being painted — the common, expensive case when painting on an upper layer.
+   */
+  private compositeActiveAware(doc: ImageDocument): ImageBitmap | HTMLCanvasElement | LayerBitmap {
+    const activeIndex = doc.activeLayerId
+      ? doc.layers.findIndex((layer) => layer.id === doc.activeLayerId)
+      : -1;
+    if (activeIndex < 0) return renderImageDocumentLayersToBitmap(doc);
+
+    if (
+      !this.strokeBackdrop ||
+      this.strokeBackdropActiveId !== doc.activeLayerId ||
+      !this.strokeBackdropLayersMatch(doc.layers, activeIndex)
+    ) {
+      this.rebuildStrokeBackdrop(doc, activeIndex);
+    }
+
+    const scratch = this.ensureStrokeCanvas('scratch', doc.width, doc.height);
+    const ctx = scratch.getContext('2d') as OffscreenCanvasRenderingContext2D | null;
+    if (!ctx || !this.strokeBackdrop) return renderImageDocumentLayersToBitmap(doc);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.clearRect(0, 0, scratch.width, scratch.height);
+    ctx.drawImage(this.strokeBackdrop, 0, 0);
+    compositeLayerRangeInto(
+      scratch,
+      doc.layers,
+      doc.width,
+      doc.height,
+      activeIndex,
+      doc.layers.length,
+      this.strokeBackdropState,
+    );
+    return scratch;
+  }
+
+  private rebuildStrokeBackdrop(doc: ImageDocument, activeIndex: number): void {
+    const backdrop = this.ensureStrokeCanvas('backdrop', doc.width, doc.height);
+    const ctx = backdrop.getContext('2d') as OffscreenCanvasRenderingContext2D | null;
+    if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.clearRect(0, 0, backdrop.width, backdrop.height);
+    this.strokeBackdropState = compositeLayerRangeInto(
+      backdrop,
+      doc.layers,
+      doc.width,
+      doc.height,
+      0,
+      activeIndex,
+      null,
+    );
+    this.strokeBackdropLayers = doc.layers.slice(0, activeIndex);
+    this.strokeBackdropActiveId = doc.activeLayerId;
+  }
+
+  /**
+   * The below-active backdrop cache is valid iff every layer object below the active one is the
+   * same reference it was when cached. Zustand replaces a layer's object on any metadata change, and
+   * below-layer bitmaps are not mutated in place during an active-layer stroke, so reference
+   * equality is a correct, allocation-free validity check.
+   */
+  private strokeBackdropLayersMatch(layers: readonly ImageLayer[], activeIndex: number): boolean {
+    const cached = this.strokeBackdropLayers;
+    if (!cached || cached.length !== activeIndex) return false;
+    for (let i = 0; i < activeIndex; i += 1) {
+      if (cached[i] !== layers[i]) return false;
+    }
+    return true;
+  }
+
+  private ensureStrokeCanvas(which: 'backdrop' | 'scratch', width: number, height: number): LayerBitmap {
+    const existing = which === 'backdrop' ? this.strokeBackdrop : this.strokeScratch;
+    if (existing && existing.width === width && existing.height === height) return existing;
+    const canvas = createBitmap(width, height);
+    if (which === 'backdrop') this.strokeBackdrop = canvas;
+    else this.strokeScratch = canvas;
+    return canvas;
+  }
+
   private draw(): void {
     const ctx = this.ctx;
     ctx.save();
@@ -1122,6 +1216,13 @@ export class CompositeRenderer {
         this.lowResDoc = { ...this.lowResDoc, layers: updatedLayers };
       }
       composite = this.lowResDoc ? renderImageDocumentLayersToBitmap(this.lowResDoc) : null;
+    } else if (store.isPaintingStroke) {
+      // Live brush/eraser/retouch stroke: composite the active layer + everything above it over a
+      // cached backdrop of the layers below, reflecting the in-place bitmap mutation every frame.
+      // Don't run the off-thread worker here — it would re-snapshot every layer per frame, and the
+      // committed full-quality render happens on pointer-up (see dispatcher onUp).
+      this.lowResDoc = null;
+      composite = this.compositeActiveAware(doc);
     } else {
       this.lowResDoc = null;
       const signature = this.buildDocSignature(doc);
