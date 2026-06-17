@@ -85,8 +85,19 @@ describe('ImageEditorPropertiesPanel', () => {
     });
   });
 
-  it('fills dockable panel height instead of imposing a nested viewport-height scroll box', () => {
+  it('separates Tool Options from a collapsed-by-default Document Properties section', () => {
     const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    // Tool Options always lead the panel.
+    expect(html).toContain('Tool Options');
+    // Document-level properties are tucked behind a collapsed disclosure, not stacked open.
+    expect(html).toContain('Document Properties');
+    expect(html).not.toContain('aria-label="Histogram channel"');
+    expect(html).not.toContain('Color Proof');
+    expect(html).not.toContain('Source / Bit Depth');
+  });
+
+  it('fills dockable panel height instead of imposing a nested viewport-height scroll box', () => {
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(html).toContain('h-full');
     expect(html).toContain('min-h-0');
@@ -102,7 +113,7 @@ describe('ImageEditorPropertiesPanel', () => {
       height: 768,
     }));
 
-    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(html).toContain('Image Size');
     expect(html).toContain('Canvas Size');
@@ -112,7 +123,7 @@ describe('ImageEditorPropertiesPanel', () => {
   it('renders pen-path styling controls and placement guidance when the Pen tool is active', () => {
     useImageEditorStore.getState().setTool('pen' as never);
 
-    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(html).toContain('Pen');
     expect(html).toContain('Fill Opacity');
@@ -128,7 +139,7 @@ describe('ImageEditorPropertiesPanel', () => {
       height: 1,
     }));
 
-    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(html).toContain('aria-label="Histogram channel"');
     expect(html).toContain('<option value="red">Red</option>');
@@ -145,7 +156,7 @@ describe('ImageEditorPropertiesPanel', () => {
       height: 1,
     }));
 
-    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(html).toContain('Color Proof');
     expect(html).toContain('aria-label="Image color proof mode"');
@@ -171,7 +182,7 @@ describe('ImageEditorPropertiesPanel', () => {
       },
     });
 
-    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(html).toContain('Source / Bit Depth');
     expect(html).toContain('TIFF');
@@ -191,7 +202,7 @@ describe('ImageEditorPropertiesPanel', () => {
       height: 768,
     }));
 
-    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(html).toContain('Android accelerator: NPU/GPU upscaler');
     expect(html).toContain('upscaler_anime');
@@ -200,7 +211,7 @@ describe('ImageEditorPropertiesPanel', () => {
   it('renders crop aspect and guide controls when the crop tool is active', () => {
     useImageEditorStore.getState().setTool('crop');
 
-    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(html).toContain('Aspect');
     expect(html).toContain('Original');
@@ -216,13 +227,13 @@ describe('ImageEditorPropertiesPanel', () => {
 
   it('renders sample-all-layers and contiguous controls for Magic Wand, Background Eraser, Magic Eraser, and Paint Bucket', () => {
     useImageEditorStore.getState().setTool('magicWand');
-    const wandHtml = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const wandHtml = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
     useImageEditorStore.getState().setTool('backgroundEraser' as never);
-    const backgroundEraserHtml = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const backgroundEraserHtml = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
     useImageEditorStore.getState().setTool('magicEraser' as never);
-    const magicEraserHtml = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const magicEraserHtml = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
     useImageEditorStore.getState().setTool('paintBucket');
-    const bucketHtml = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const bucketHtml = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(wandHtml).toContain('Sample All Layers');
     expect(wandHtml).toContain('Contiguous');
@@ -246,7 +257,7 @@ describe('ImageEditorPropertiesPanel', () => {
   it('renders persisted gradient mode, preset, and reverse controls when the gradient tool is active', () => {
     useImageEditorStore.getState().setTool('gradientTool');
 
-    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(html).toContain('Gradient Mode');
     expect(html).toContain('Foreground → Background');
@@ -259,7 +270,7 @@ describe('ImageEditorPropertiesPanel', () => {
   it('renders typography controls when the Text tool is active', () => {
     useImageEditorStore.getState().setTool('text');
 
-    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(html).toContain('Baseline');
     expect(html).toContain('Kerning');
@@ -271,7 +282,7 @@ describe('ImageEditorPropertiesPanel', () => {
   it('renders bounded gradient stop controls when the gradient tool is active', () => {
     useImageEditorStore.getState().setTool('gradientTool');
 
-    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(html).toContain('Gradient Stops');
     expect(html).toContain('Gradient Preset');
@@ -291,7 +302,7 @@ describe('ImageEditorPropertiesPanel', () => {
   it('renders brush tool-options (without the preset library) when the brush tool is active', () => {
     useImageEditorStore.getState().setTool('brush');
 
-    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     // Tool options (and the active-brush header) live in the Properties panel.
     expect(html).toContain('Soft Round');
@@ -321,7 +332,7 @@ describe('ImageEditorPropertiesPanel', () => {
     useImageEditorStore.getState().setHasSelection(doc.id, true);
     beginSelectionTransformSession(doc.id);
 
-    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(html).toContain('Transform Selection');
     expect(html).toContain('aria-label="Selection X"');
@@ -349,7 +360,7 @@ describe('ImageEditorPropertiesPanel', () => {
     setSelection(doc.id, selection);
     useImageEditorStore.getState().setHasSelection(doc.id, true);
 
-    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel />);
+    const html = renderToStaticMarkup(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
 
     expect(html).toContain('Generative Edit');
     expect(html).toContain('Hide Generative Edit');

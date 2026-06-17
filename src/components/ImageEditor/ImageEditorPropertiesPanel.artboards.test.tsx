@@ -104,7 +104,7 @@ describe('ImageEditorPropertiesPanel artboards', () => {
     }));
 
     act(() => {
-      root.render(<ImageEditorPropertiesPanel />);
+      root.render(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
     });
 
     expect(container.textContent).toContain('Artboards / Print Proof');
@@ -176,7 +176,7 @@ describe('ImageEditorPropertiesPanel artboards', () => {
     }));
 
     act(() => {
-      root.render(<ImageEditorPropertiesPanel />);
+      root.render(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
     });
 
     expect(container.textContent).toContain('Media Box 1619 x 2189 px');
@@ -225,7 +225,7 @@ describe('ImageEditorPropertiesPanel artboards', () => {
     }));
 
     act(() => {
-      root.render(<ImageEditorPropertiesPanel />);
+      root.render(<ImageEditorPropertiesPanel documentPropertiesDefaultOpen />);
     });
 
     expect(container.textContent).toContain('Filename policy: 01-cover-custom-300dpi-3mm-bleed');

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Expand, Loader2, Maximize2, MoveDiagonal2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Expand, Loader2, Maximize2, MoveDiagonal2 } from 'lucide-react';
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import { useDockExpandToContent } from '../DockablePanel/dockExpandContext';
 import { useSettingsStore } from '../../store/settingsStore';
@@ -58,25 +58,50 @@ import {
 import { ImageArtboardsPanel } from './ImageArtboardsPanel';
 import { ImageLiquifyWorkspacePanel } from './ImageLiquifyWorkspacePanel';
 
-export function ImageEditorPropertiesPanel() {
+export function ImageEditorPropertiesPanel({
+  documentPropertiesDefaultOpen = false,
+}: {
+  documentPropertiesDefaultOpen?: boolean;
+} = {}) {
   const subscribedTool = useImageEditorStore((s) => s.tool);
   const tool = useImageEditorStore.getState().tool ?? subscribedTool;
   // When side-docked, expand to content so only the whole sidebar scrolls (no inner scroll region).
   const expandToContent = useDockExpandToContent();
+  // Document-level properties (histogram, soft-proof, bit depth, artboards,
+  // geometry, comic/manga) are collapsed by default so the panel leads with the
+  // active tool's options instead of stacking every document section at once.
+  const [documentPropsOpen, setDocumentPropsOpen] = useState(documentPropertiesDefaultOpen);
 
   return (
     <div className={`min-h-0 border-t border-cyan-300/10 bg-[#1a1b23] p-3 ${expandToContent ? '' : 'h-full overflow-y-auto'}`}>
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-cyan-100/35">Tool Options</div>
       <div className="mb-3 text-xs font-semibold text-cyan-100/70">
         {sectionTitle(tool)}
       </div>
       {renderForTool(tool)}
       <ImageLiquifyWorkspacePanel />
-      <DocumentHistogramPanel />
-      <DocumentColorProofPanel />
-      <DocumentSourceBitDepthPanel />
-      <ImageArtboardsPanel />
-      <DocumentGeometryPanel />
-      <ComicMangaPanel />
+
+      <div className="mt-3 border-t border-cyan-300/10 pt-2">
+        <button
+          aria-expanded={documentPropsOpen}
+          className="flex w-full items-center gap-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-cyan-100/35 hover:text-cyan-100/60"
+          onClick={() => setDocumentPropsOpen((open) => !open)}
+          type="button"
+        >
+          {documentPropsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          Document Properties
+        </button>
+        {documentPropsOpen ? (
+          <div className="mt-1">
+            <DocumentHistogramPanel />
+            <DocumentColorProofPanel />
+            <DocumentSourceBitDepthPanel />
+            <ImageArtboardsPanel />
+            <DocumentGeometryPanel />
+            <ComicMangaPanel />
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
