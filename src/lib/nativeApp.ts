@@ -414,6 +414,7 @@ export interface SignalLoomNativeBridge {
   exportPaperImages: (request: NativePaperImageExportRequest) => Promise<NativePaperImageExportResult>;
   captureCurrentWindowPng: () => Promise<NativeWindowCaptureResult>;
   readClipboardImage: () => Promise<string | null | { error: string }>;
+  downloadRemoteMedia: (url: string) => Promise<{ base64?: string; mimeType?: string; error?: string } | null>;
   generateVertexImage: (request: NativeVertexImageRequest) => Promise<NativeVertexImageResult>;
   generateVertexText: (request: NativeVertexTextRequest) => Promise<NativeVertexTextResult>;
   generateVertexVideo: (request: NativeVertexVideoRequest) => Promise<NativeVertexVideoResult>;

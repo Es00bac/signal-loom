@@ -70,6 +70,7 @@ import {
   mapAspectRatioToImageSize,
 } from './providerCatalog';
 import { getSignalLoomNativeBridge } from './nativeApp';
+import { fetchRemoteMediaAsDataUrl } from './remoteMediaFetch';
 import { getVertexProjectConfig } from './vertexProviderSettings';
 import {
   buildVertexGeminiImageRequestBody,
@@ -1150,8 +1151,6 @@ const ATLAS_NATIVE_IMAGE_MODEL_IDS = new Set([
   'black-forest-labs/flux-kontext-dev',
   'bytedance/seedream-v5.0-lite/edit',
   'atlascloud/qwen-image/edit',
-  'atlascloud/qwen-image/edit-2511',
-  'fireredteam/firered-image-edit-1.0',
 ]);
 
 async function executeAtlasNativeImageNode(input: {
@@ -1477,7 +1476,16 @@ async function materializeRemoteMediaResult(
     const blob = await fetchImageResultBlob(resultUrl, downloadErrorLabel);
     return { result: await toResultUrl(blob), mimeType: blob.type || fallbackMimeType };
   } catch {
-    // CORS/network: hand back the remote URL so the media still displays.
+    // The renderer fetch is CORS-blocked (provider result CDNs send no CORS
+    // headers). The raw URL won't display either — those CDNs force-download
+    // (Content-Disposition: attachment), so an <img src> of it refuses to
+    // render. Pull the bytes through a non-CORS-bound native path (Electron
+    // main net.fetch / Android CapacitorHttp) and inline them as a data URL.
+    const native = await fetchRemoteMediaAsDataUrl(resultUrl);
+    if (native) {
+      return { result: native.dataUrl, mimeType: native.mimeType ?? fallbackMimeType };
+    }
+    // Last resort (plain web/dev with no native bridge): hand back the URL.
     return { result: resultUrl, mimeType: fallbackMimeType };
   }
 }

@@ -104,10 +104,23 @@ describe('FALLBACK_MODEL_OPTIONS', () => {
         'black-forest-labs/flux-kontext-dev',
         'bytedance/seedream-v5.0-lite/edit',
         'atlascloud/qwen-image/edit',
-        'atlascloud/qwen-image/edit-2511',
-        'fireredteam/firered-image-edit-1.0',
+        'qwen/qwen-image-2.0-pro/text-to-image',
+        'google/imagen4',
+        'bytedance/seedream-v4.5',
+        'black-forest-labs/flux-2-pro/text-to-image',
+        'openai/gpt-image-2/text-to-image',
+        'openai/gpt-image-1/text-to-image',
       ]),
     );
+  });
+
+  it('no longer offers Atlas image slugs that are absent from the live /models catalog', () => {
+    const atlasValues = FALLBACK_MODEL_OPTIONS.image.atlas.map((option) => option.value);
+    expect(atlasValues).not.toContain('atlascloud/qwen-image/edit-2511');
+    expect(atlasValues).not.toContain('fireredteam/firered-image-edit-1.0');
+    // Bare OpenAI slugs aren't valid Atlas model ids — Atlas namespaces them.
+    expect(atlasValues).not.toContain('gpt-image-2');
+    expect(atlasValues).not.toContain('gpt-image-1');
   });
 });
 

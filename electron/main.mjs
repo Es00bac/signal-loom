@@ -2332,6 +2332,34 @@ function installIpcHandlers() {
     }
   });
 
+  // Download a remote media URL through the main process (net.fetch is not
+  // bound by the renderer's CORS policy and ignores Content-Disposition), so
+  // provider result CDNs that block fetch() and force-download can still be
+  // inlined and displayed in the renderer. Returns base64 bytes + mime type.
+  ipcMain.handle('signal-loom:download-remote-media', async (_event, url) => {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+      return { error: 'A valid http(s) URL is required.' };
+    }
+
+    try {
+      const response = await net.fetch(url);
+      if (!response.ok) {
+        return { error: `Remote media download failed with status ${response.status}.` };
+      }
+
+      const mimeType = (response.headers.get('content-type') || '').split(';', 1)[0].trim()
+        || 'application/octet-stream';
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length === 0) {
+        return { error: 'Remote media download returned no bytes.' };
+      }
+
+      return { base64: buffer.toString('base64'), mimeType };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Remote media download failed.' };
+    }
+  });
+
   ipcMain.handle('signal-loom:vertex-generate-image', async (_event, request) => {
     return generateVertexImage(request);
   });
