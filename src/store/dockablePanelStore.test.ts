@@ -833,4 +833,43 @@ describe('dockablePanelStore', () => {
     applyWorkspaceViewDefault?.('video', 'reset');
     expect(useDockablePanelStore.getState().layouts[panelKey('video', 'program-monitor')].mode).toBe('docked');
   });
+
+  it('saves, applies, and deletes named custom layouts per workspace', () => {
+    useDockablePanelStore.setState({ defaults: {}, layouts: {}, collapsedDockColumns: {}, savedLayouts: [] });
+    const store = useDockablePanelStore.getState();
+    store.registerPanelDefaults(defaults);
+
+    // Arrange: move layers to column 1 and collapse that column.
+    store.setPanelDockColumn('image', 'layers', 1);
+    store.toggleDockColumnCollapsed('image', 'right', 1);
+    const id = store.saveCurrentLayout('image', 'Two Column');
+    expect(useDockablePanelStore.getState().savedLayouts).toHaveLength(1);
+    expect(useDockablePanelStore.getState().savedLayouts[0]).toMatchObject({ id, workspaceId: 'image', name: 'Two Column' });
+
+    // Change the arrangement, then re-apply the saved layout.
+    store.setPanelDockColumn('image', 'layers', 0);
+    store.toggleDockColumnCollapsed('image', 'right', 1);
+    expect(useDockablePanelStore.getState().layouts[panelKey('image', 'layers')].dockColumn).toBe(0);
+    expect(useDockablePanelStore.getState().collapsedDockColumns['image:right:1']).toBe(false);
+
+    useDockablePanelStore.getState().applySavedLayout(id);
+    expect(useDockablePanelStore.getState().layouts[panelKey('image', 'layers')].dockColumn).toBe(1);
+    expect(useDockablePanelStore.getState().collapsedDockColumns['image:right:1']).toBe(true);
+
+    useDockablePanelStore.getState().deleteSavedLayout(id);
+    expect(useDockablePanelStore.getState().savedLayouts).toHaveLength(0);
+  });
+
+  it('only captures the target workspace when saving a layout', () => {
+    useDockablePanelStore.setState({ defaults: {}, layouts: {}, collapsedDockColumns: {}, savedLayouts: [] });
+    const store = useDockablePanelStore.getState();
+    store.registerPanelDefaults([
+      ...defaults,
+      { workspaceId: 'paper', panelId: 'inspector', dockZone: 'right' as const, floatingRect: { x: 0, y: 0, width: 280, height: 320 } },
+    ]);
+    const id = store.saveCurrentLayout('image', 'Image Only');
+    const saved = useDockablePanelStore.getState().savedLayouts.find((entry) => entry.id === id);
+    expect(Object.values(saved!.layouts).every((layout) => layout.workspaceId === 'image')).toBe(true);
+    expect(Object.keys(saved!.layouts)).not.toContain(panelKey('paper', 'inspector'));
+  });
 });

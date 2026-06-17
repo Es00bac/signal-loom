@@ -20,6 +20,7 @@ import { useImageEditorStore } from '../../store/imageEditorStore';
 import { useSourceBinStore } from '../../store/sourceBinStore';
 import { useWorkspaceLayoutStore } from '../../store/workspaceLayoutStore';
 import { useDockablePanelStore } from '../../store/dockablePanelStore';
+import { useTextInputDialogStore } from '../../store/textInputDialogStore';
 import { panelKey, type DockZone, type DockablePanelLayout } from '../../lib/dockablePanel';
 import { canMoveImageLayer } from '../../lib/imageLayerLocks';
 import { isImageLayerLinked, translateLinkedImageLayers } from '../../lib/imageLayerLinks';
@@ -110,6 +111,7 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
   const [selectedLayoutPresetId, setSelectedLayoutPresetId] = useState<ImageLayoutPresetId | 'custom'>(() =>
     getImageLayoutPresetIdForLayout(useWorkspaceLayoutStore.getState().image),
   );
+  const [selectedSavedLayoutId, setSelectedSavedLayoutId] = useState<string | null>(null);
   const setTool = useImageEditorStore((s) => s.setTool);
   const setSelectionToolSettings = useImageEditorStore((s) => s.setSelectionToolSettings);
   const toggleQuickMask = useImageEditorStore((s) => s.toggleQuickMask);
@@ -126,6 +128,11 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
   const dockPanel = useDockablePanelStore((s) => s.dockPanel);
   const floatPanel = useDockablePanelStore((s) => s.floatPanel);
   const resetWorkspacePanels = useDockablePanelStore((s) => s.resetWorkspacePanels);
+  const savedLayouts = useDockablePanelStore((s) => s.savedLayouts);
+  const saveCurrentLayout = useDockablePanelStore((s) => s.saveCurrentLayout);
+  const applySavedLayout = useDockablePanelStore((s) => s.applySavedLayout);
+  const deleteSavedLayout = useDockablePanelStore((s) => s.deleteSavedLayout);
+  const imageSavedLayouts = savedLayouts.filter((entry) => entry.workspaceId === IMAGE_DOCKABLE_WORKSPACE_ID);
 
   useEffect(() => {
     setImagePanelGroupVisible([IMAGE_DOCKABLE_PANEL_IDS.tools], imageLayout.toolbarVisible, hidePanel, dockPanel, floatPanel);
@@ -599,6 +606,40 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
     }
   }, [openDocument]);
 
+  const handleSaveCurrentLayout = useCallback(async () => {
+    const name = await useTextInputDialogStore.getState().requestTextInput({
+      title: 'Save Layout',
+      message: 'Save the current panel arrangement (columns, sizes, collapsed columns) as a named layout.',
+      label: 'Layout name',
+      initialValue: '',
+      placeholder: 'My layout',
+      confirmLabel: 'Save Layout',
+    });
+    if (!name?.trim()) return;
+    const id = saveCurrentLayout(IMAGE_DOCKABLE_WORKSPACE_ID, name);
+    setSelectedSavedLayoutId(id);
+  }, [saveCurrentLayout]);
+
+  const handleLayoutSelection = useCallback((value: string) => {
+    if (value.startsWith('saved:')) {
+      const id = value.slice('saved:'.length);
+      applySavedLayout(id);
+      setSelectedSavedLayoutId(id);
+      return;
+    }
+    setSelectedSavedLayoutId(null);
+    const presetId = value as ImageLayoutPresetId | 'custom';
+    if (presetId !== 'custom') {
+      applyLayoutPreset(presetId);
+    }
+  }, [applySavedLayout, applyLayoutPreset]);
+
+  const handleDeleteSelectedLayout = useCallback(() => {
+    if (!selectedSavedLayoutId) return;
+    deleteSavedLayout(selectedSavedLayoutId);
+    setSelectedSavedLayoutId(null);
+  }, [deleteSavedLayout, selectedSavedLayoutId]);
+
   const handleSourceLibraryDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     if (!hasDraggedSourceLibraryItem(event.dataTransfer)) return;
     event.preventDefault();
@@ -754,27 +795,35 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
           ) : null}
         </>
       ) : null}
-      <label className="mr-2 flex items-center gap-1.5 rounded border border-cyan-300/10 bg-[#101a29]/70 px-2 py-1 text-[11px] font-semibold text-cyan-100/55">
+      <label className="mr-1 flex items-center gap-1.5 rounded border border-cyan-300/10 bg-[#101a29]/70 px-2 py-1 text-[11px] font-semibold text-cyan-100/55">
         <span>Layout</span>
         <select
           aria-label="Image layout preset"
           className="max-w-28 bg-transparent text-[11px] font-semibold text-cyan-100 outline-none"
-          onChange={(event) => {
-            const presetId = event.target.value as ImageLayoutPresetId | 'custom';
-            if (presetId !== 'custom') {
-              applyLayoutPreset(presetId);
-            }
-          }}
-          value={selectedLayoutPresetId}
+          onChange={(event) => handleLayoutSelection(event.target.value)}
+          value={selectedSavedLayoutId ? `saved:${selectedSavedLayoutId}` : selectedLayoutPresetId}
         >
-          {selectedLayoutPresetId === 'custom' ? <option className="bg-[#101a29]" value="custom">Custom</option> : null}
+          {selectedLayoutPresetId === 'custom' && !selectedSavedLayoutId ? <option className="bg-[#101a29]" value="custom">Custom</option> : null}
           {IMAGE_LAYOUT_PRESETS.map((preset) => (
             <option className="bg-[#101a29]" key={preset.id} value={preset.id}>
               {preset.label}
             </option>
           ))}
+          {imageSavedLayouts.length > 0 ? (
+            <optgroup className="bg-[#101a29]" label="Saved Layouts">
+              {imageSavedLayouts.map((entry) => (
+                <option className="bg-[#101a29]" key={entry.id} value={`saved:${entry.id}`}>
+                  {entry.name}
+                </option>
+              ))}
+            </optgroup>
+          ) : null}
         </select>
       </label>
+      <ImageLayoutButton active={false} label="Save Layout" onClick={handleSaveCurrentLayout} />
+      {selectedSavedLayoutId ? (
+        <ImageLayoutButton active={false} label="Delete Layout" onClick={handleDeleteSelectedLayout} />
+      ) : null}
       <ImageLayoutButton
         active={false}
         label="Reset Panels"

@@ -27,10 +27,24 @@ export interface DockablePanelSnapshot {
   layouts: Record<string, DockablePanelLayout>;
 }
 
+/** A named snapshot of one workspace's panel arrangement, saved by the user. */
+export interface SavedDockableLayout {
+  id: string;
+  workspaceId: string;
+  name: string;
+  layouts: Record<string, DockablePanelLayout>;
+  collapsedDockColumns: Record<string, boolean>;
+}
+
 interface DockablePanelState extends DockablePanelSnapshot {
   defaults: Record<string, DockablePanelLayout>;
   /** Collapsed side-dock columns, keyed by `${workspaceId}:${zone}:${column}`. */
   collapsedDockColumns: Record<string, boolean>;
+  /** User-saved named layouts (all workspaces). */
+  savedLayouts: SavedDockableLayout[];
+  saveCurrentLayout: (workspaceId: string, name: string) => string;
+  applySavedLayout: (id: string) => void;
+  deleteSavedLayout: (id: string) => void;
   registerPanelDefaults: (defaults: DockablePanelDefault[]) => void;
   setPanelMode: (workspaceId: string, panelId: string, mode: DockablePanelMode) => void;
   setPanelDockColumn: (workspaceId: string, panelId: string, column: number) => void;
@@ -62,6 +76,51 @@ export const useDockablePanelStore = create<DockablePanelState>()(
       defaults: {},
       layouts: {},
       collapsedDockColumns: {},
+      savedLayouts: [],
+      saveCurrentLayout: (workspaceId, name) => {
+        const id = `saved-${workspaceId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        set((state) => {
+          const layouts = Object.fromEntries(
+            Object.entries(state.layouts).filter(([, layout]) => layout.workspaceId === workspaceId),
+          );
+          const collapsedDockColumns = Object.fromEntries(
+            Object.entries(state.collapsedDockColumns).filter(([key]) => key.startsWith(`${workspaceId}:`)),
+          );
+          const entry: SavedDockableLayout = {
+            id,
+            workspaceId,
+            name: name.trim() || `Layout ${state.savedLayouts.filter((l) => l.workspaceId === workspaceId).length + 1}`,
+            layouts,
+            collapsedDockColumns,
+          };
+          return { savedLayouts: [...state.savedLayouts, entry] };
+        });
+        return id;
+      },
+      applySavedLayout: (id) => {
+        set((state) => {
+          const entry = state.savedLayouts.find((layout) => layout.id === id);
+          if (!entry) return state;
+          // Replace this workspace's panels + collapsed columns; leave other workspaces intact.
+          const layouts = { ...state.layouts };
+          for (const key of Object.keys(layouts)) {
+            if (layouts[key].workspaceId === entry.workspaceId) delete layouts[key];
+          }
+          for (const [key, layout] of Object.entries(entry.layouts)) {
+            layouts[key] = layout;
+          }
+          const collapsedDockColumns = Object.fromEntries(
+            Object.entries(state.collapsedDockColumns).filter(([key]) => !key.startsWith(`${entry.workspaceId}:`)),
+          );
+          for (const [key, value] of Object.entries(entry.collapsedDockColumns)) {
+            collapsedDockColumns[key] = value;
+          }
+          return { layouts, collapsedDockColumns };
+        });
+      },
+      deleteSavedLayout: (id) => {
+        set((state) => ({ savedLayouts: state.savedLayouts.filter((layout) => layout.id !== id) }));
+      },
       registerPanelDefaults: (defaults) => {
         const registered = buildRegisteredPanelDefaults(get(), defaults);
         if (!registered.changed) return;
@@ -329,13 +388,20 @@ export const useDockablePanelStore = create<DockablePanelState>()(
     {
       name: 'signal-loom-dockable-panels',
       storage: createJSONStorage(() => getPanelLayoutStorage()),
-      partialize: (state) => ({ layouts: state.layouts, collapsedDockColumns: state.collapsedDockColumns }),
+      partialize: (state) => ({
+        layouts: state.layouts,
+        collapsedDockColumns: state.collapsedDockColumns,
+        savedLayouts: state.savedLayouts,
+      }),
       merge: (persisted, current) => ({
         ...current,
         layouts: sanitizePersistedLayouts((persisted as Partial<DockablePanelSnapshot> | undefined)?.layouts, current.layouts),
         collapsedDockColumns:
           (persisted as { collapsedDockColumns?: Record<string, boolean> } | undefined)?.collapsedDockColumns
           ?? current.collapsedDockColumns,
+        savedLayouts:
+          (persisted as { savedLayouts?: SavedDockableLayout[] } | undefined)?.savedLayouts
+          ?? current.savedLayouts,
       }),
     },
   ),
