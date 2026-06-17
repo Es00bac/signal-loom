@@ -191,8 +191,17 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       };
     };
 
+    // Cache the canvas client rect for the duration of a gesture. `getBoundingClientRect()` can
+    // force a synchronous layout, and calling it on every (120-240Hz) stylus sample is pure
+    // overhead since the canvas position is stable during a stroke. Refresh on pointer-down and
+    // invalidate on scroll/resize so it stays correct.
+    let cachedRect: DOMRect | null = null;
+    const getRect = (): DOMRect => (cachedRect ??= el.getBoundingClientRect());
+    const invalidateRect = (): void => {
+      cachedRect = null;
+    };
     const screenPoint = (event: PointerEvent): Point => {
-      const rect = el.getBoundingClientRect();
+      const rect = getRect();
       return { x: event.clientX - rect.left, y: event.clientY - rect.top };
     };
 
@@ -201,6 +210,7 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
     let eyedropperOverride = false;
     const onDown = (event: PointerEvent) => {
       if (shouldIgnoreImageCanvasToolEvent(event)) return;
+      invalidateRect(); // start of a gesture — re-measure once, then reuse for every move
       const env = buildEnv();
       if (!env) return;
       const docPoint = env.screenToDoc(screenPoint(event));
@@ -321,6 +331,9 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
     el.addEventListener('pointercancel', onUp);
     el.addEventListener('dblclick', onDouble);
     window.addEventListener('keydown', onKey);
+    // Scrolling or resizing can move the canvas; drop the cached rect so it re-measures lazily.
+    window.addEventListener('scroll', invalidateRect, { capture: true, passive: true });
+    window.addEventListener('resize', invalidateRect);
 
     return () => {
       el.removeEventListener('pointerdown', onDown);
@@ -329,6 +342,8 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       el.removeEventListener('pointercancel', onUp);
       el.removeEventListener('dblclick', onDouble);
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', invalidateRect, { capture: true } as EventListenerOptions);
+      window.removeEventListener('resize', invalidateRect);
     };
   }, [wrapperRef, rendererRef]);
 }

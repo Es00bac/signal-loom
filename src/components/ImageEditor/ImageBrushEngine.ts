@@ -1,6 +1,12 @@
 import type { BrushSettings, BrushSymmetryMode } from '../../types/imageEditor';
 import { sampleBrushTexture } from './ImageBrushTextures';
 import { applyBrushTiltDynamics, resolveBrushTiltState, type BrushTiltState } from './brushTiltGeometry';
+import {
+  STAMP_CANONICAL_RADIUS,
+  getBrushStamp,
+  quantizeStampHardness,
+  shouldUseBrushStamp,
+} from './ImageBrushStamp';
 import type { Point } from './tools/types';
 
 export interface BrushDynamics {
@@ -1640,6 +1646,20 @@ export function paintBrushDab(
     context.fillRect(-radius, -radius, radius * 2, radius * 2);
     context.restore();
     return;
+  }
+
+  // Soft round dabs blit a cached tip stamp instead of rebuilding a radial gradient per dab.
+  // The outer scale(1, roundness) is already applied; folding in radius/canonical gives the dab
+  // its size (and elongation), and globalAlpha applies opacity/flow/texture/wetness as before.
+  if (shouldUseBrushStamp(dab, compositeOperation)) {
+    const stamp = getBrushStamp(color, quantizeStampHardness(dab.hardness));
+    if (stamp) {
+      const scale = radius / STAMP_CANONICAL_RADIUS;
+      context.scale(scale, scale);
+      context.drawImage(stamp, -STAMP_CANONICAL_RADIUS, -STAMP_CANONICAL_RADIUS);
+      context.restore();
+      return;
+    }
   }
 
   context.beginPath();

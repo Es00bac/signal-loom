@@ -86,6 +86,21 @@ type StrokeState = BitmapStrokeState | LayerMaskStrokeState | QuickMaskStrokeSta
 
 let stroke: StrokeState | null = null;
 
+// Identity-memoized brush-settings normalization. `env.brushSettings` is a stable object across a
+// stroke (the Zustand store replaces it only when the user changes a setting), so normalizing once
+// and reusing it avoids ~40-field validation + an object allocation on every pointer-move. The
+// returned object is only read by the paint paths below, never mutated, so sharing it is safe; a
+// mid-stroke change (e.g. `[`/`]` resize) swaps the object identity and triggers a recompute.
+let memoRawBrushSettings: BrushSettings | undefined;
+let memoNormalizedBrushSettings: ReturnType<typeof normalizeBrushSettings> | null = null;
+function normalizedBrushSettings(raw: BrushSettings): ReturnType<typeof normalizeBrushSettings> {
+  if (raw !== memoRawBrushSettings || !memoNormalizedBrushSettings) {
+    memoNormalizedBrushSettings = normalizeBrushSettings(raw);
+    memoRawBrushSettings = raw;
+  }
+  return memoNormalizedBrushSettings;
+}
+
 interface RgbaColor {
   r: number;
   g: number;
@@ -268,7 +283,7 @@ function makeBrushTool(isEraser: boolean): ToolHandler {
       if (!activeStroke) return;
       if (activeStroke.quickMask) {
         const selection = ensureQuickMaskSelection(env);
-        const settings = normalizeBrushSettings(env.brushSettings);
+        const settings = normalizedBrushSettings(env.brushSettings);
         const smoothedPoint = smoothBrushPoint(activeStroke.lastPoint, point, settings.smoothing);
         paintQuickMaskStrokeSegment(env, selection, activeStroke.lastPoint, smoothedPoint, event);
         activeStroke.lastPoint = smoothedPoint;
@@ -281,7 +296,7 @@ function makeBrushTool(isEraser: boolean): ToolHandler {
       const layer = env.doc.layers.find((l) => l.id === activeStroke.layerId);
       if (activeStroke.paintTarget === 'mask') {
         if (!canEditLayerMask(layer)) return;
-        const settings = normalizeBrushSettings(env.brushSettings);
+        const settings = normalizedBrushSettings(env.brushSettings);
         const smoothedPoint = smoothBrushPoint(activeStroke.lastPoint, point, settings.smoothing);
         paintLayerMaskStrokeSegment(env, layer, layer.mask, activeStroke.lastPoint, smoothedPoint, event);
         activeStroke.lastPoint = smoothedPoint;
@@ -290,7 +305,7 @@ function makeBrushTool(isEraser: boolean): ToolHandler {
         return;
       }
       if (!layer || !layer.bitmap) return;
-      const settings = normalizeBrushSettings(env.brushSettings);
+      const settings = normalizedBrushSettings(env.brushSettings);
       const smoothedPoint = smoothBrushPoint(activeStroke.lastPoint, point, settings.smoothing);
       paintStrokeSegment(env, layer, layer.bitmap, activeStroke.lastPoint, smoothedPoint, event);
       activeStroke.lastPoint = smoothedPoint;
@@ -376,7 +391,7 @@ function paintQuickMaskStrokeSegment(
   to: Point,
   event: PointerEvent,
 ): void {
-  const settings = normalizeBrushSettings(env.brushSettings);
+  const settings = normalizedBrushSettings(env.brushSettings);
   const pressure = readBrushPressure(event);
   const tilt = readBrushTiltState(event);
   const velocityPxPerMs = resolveActiveBrushStrokeVelocity(from, to, event);
@@ -408,7 +423,7 @@ function paintLayerMaskStrokeSegment(
   to: Point,
   event: PointerEvent,
 ): void {
-  const settings = normalizeBrushSettings(env.brushSettings);
+  const settings = normalizedBrushSettings(env.brushSettings);
   const pressure = readBrushPressure(event);
   const tilt = readBrushTiltState(event);
   const velocityPxPerMs = resolveActiveBrushStrokeVelocity(from, to, event);
@@ -444,7 +459,7 @@ function paintStrokeSegment(
 ): void {
   const ctx = bitmap.getContext('2d');
   if (!ctx) return;
-  const settings = normalizeBrushSettings(env.brushSettings);
+  const settings = normalizedBrushSettings(env.brushSettings);
   const channelEditTarget = getImageChannelEditTarget(env.doc);
   const routeColorComponents = channelEditTarget.channel !== 'rgb';
   const beforeChannelRoute = routeColorComponents
@@ -540,7 +555,7 @@ export const backgroundEraserTool: ToolHandler = {
     if (!activeStroke) return;
     const layer = env.doc.layers.find((l) => l.id === activeStroke.layerId);
     if (!layer?.bitmap) return;
-    const settings = normalizeBrushSettings(env.brushSettings);
+    const settings = normalizedBrushSettings(env.brushSettings);
     const smoothedPoint = smoothBrushPoint(activeStroke.lastPoint, point, settings.smoothing);
     paintBackgroundEraserPoint(env, layer, layer.bitmap, smoothedPoint, event);
     activeStroke.lastPoint = smoothedPoint;
@@ -620,7 +635,7 @@ function paintBackgroundEraserPoint(
 ): void {
   const activeStroke = backgroundEraserStroke;
   if (!activeStroke) return;
-  const settings = normalizeBrushSettings(env.brushSettings);
+  const settings = normalizedBrushSettings(env.brushSettings);
   const result = applyBackgroundEraserToBitmap(bitmap, {
     x: point.x - layer.x,
     y: point.y - layer.y,
