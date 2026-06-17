@@ -1,5 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { X } from 'lucide-react';
 import { useImageEditorStore } from '../../store/imageEditorStore';
+import { useSettingsStore } from '../../store/settingsStore';
+import {
+  cropCustomPresetValue,
+  formatCropRatioLabel,
+  parseCropRatioInput,
+} from './cropPresets';
 import type { CropAspectPreset, CropGuideMode } from '../../types/imageEditor';
 
 const ASPECT_OPTIONS: Array<{ value: CropAspectPreset; label: string }> = [
@@ -27,6 +34,23 @@ export function CropPanel() {
   );
   const settings = useImageEditorStore((state) => state.cropToolSettings);
   const setCropToolSettings = useImageEditorStore((state) => state.setCropToolSettings);
+  const customCropPresets = useSettingsStore((state) => state.customCropPresets);
+  const saveCustomCropPreset = useSettingsStore((state) => state.saveCustomCropPreset);
+  const deleteCustomCropPreset = useSettingsStore((state) => state.deleteCustomCropPreset);
+  const [presetDraft, setPresetDraft] = useState('');
+  const [presetError, setPresetError] = useState<string | null>(null);
+
+  const saveAndApplyPreset = () => {
+    const ratio = parseCropRatioInput(presetDraft);
+    if (ratio === null) {
+      setPresetError('Enter a ratio like 16:9, 4x5, or 1.85.');
+      return;
+    }
+    saveCustomCropPreset(presetDraft, ratio);
+    setCropToolSettings({ aspectPreset: cropCustomPresetValue(ratio) });
+    setPresetDraft('');
+    setPresetError(null);
+  };
 
   const originalRatioLabel = useMemo(() => {
     if (!activeDoc || activeDoc.width <= 0 || activeDoc.height <= 0) return 'Current document ratio';
@@ -59,6 +83,63 @@ export function CropPanel() {
             </button>
           ))}
         </div>
+      </div>
+      <div>
+        <label className="mb-1 block">Custom Presets</label>
+        {customCropPresets.length > 0 ? (
+          <div className="mb-1.5 flex flex-wrap gap-1">
+            {customCropPresets.map((preset) => {
+              const value = cropCustomPresetValue(preset.ratio);
+              const active = settings.aspectPreset === value;
+              return (
+                <span
+                  key={preset.id}
+                  className={`flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] ${
+                    active
+                      ? 'border-cyan-400 bg-cyan-400/20 text-cyan-50'
+                      : 'border-cyan-300/10 bg-[#252630] text-cyan-100/60'
+                  }`}
+                >
+                  <button
+                    className="hover:text-cyan-50"
+                    onClick={() => setCropToolSettings({ aspectPreset: value })}
+                    title={`Apply ${formatCropRatioLabel(preset.ratio)}`}
+                    type="button"
+                  >
+                    {preset.label}
+                  </button>
+                  <button
+                    aria-label={`Delete ${preset.label} crop preset`}
+                    className="text-cyan-100/35 hover:text-red-300"
+                    onClick={() => deleteCustomCropPreset(preset.id)}
+                    type="button"
+                  >
+                    <X size={11} />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        ) : null}
+        <div className="grid grid-cols-[1fr_auto] gap-1">
+          <input
+            aria-label="Custom crop ratio"
+            className="min-w-0 rounded border border-cyan-300/10 bg-[#10131b] px-2 py-1 text-cyan-50 placeholder:text-cyan-100/30"
+            onChange={(event) => { setPresetDraft(event.target.value); setPresetError(null); }}
+            onKeyDown={(event) => { if (event.key === 'Enter') saveAndApplyPreset(); }}
+            placeholder="e.g. 21:9, 4x5, 1.85"
+            value={presetDraft}
+          />
+          <button
+            className="rounded border border-cyan-300/15 px-2 py-1 text-[11px] text-cyan-100/70 hover:border-cyan-300/45 hover:text-cyan-50 disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={!presetDraft.trim()}
+            onClick={saveAndApplyPreset}
+            type="button"
+          >
+            Save
+          </button>
+        </div>
+        {presetError ? <p className="mt-1 text-[11px] text-red-300/80">{presetError}</p> : null}
       </div>
       <div>
         <label className="mb-1 block">Guides</label>

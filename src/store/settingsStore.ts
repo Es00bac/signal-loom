@@ -2,6 +2,12 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEFAULT_INTERFACE_THEME_ID, resolveInterfaceTheme } from '../lib/interfaceThemes';
 import { sanitizeKeyboardShortcutMap, type KeyboardShortcutMap } from '../lib/keyboardShortcuts';
+import {
+  createCropPreset,
+  renameCropPreset,
+  sanitizeCropPresets,
+  type CropCustomPreset,
+} from '../components/ImageEditor/cropPresets';
 import type { BrushSettings } from '../types/imageEditor';
 import {
   createDefaultGamepadBindings,
@@ -169,6 +175,7 @@ interface SettingsState {
   keyboardShortcuts: KeyboardShortcutMap;
   gamepadBindings: GamepadBindingProfile;
   customBrushPresets: ImageBrushPreset[];
+  customCropPresets: CropCustomPreset[];
   setApiKey: (provider: keyof ApiKeys, key: string) => void;
   setDefaultModel: <
     TCategory extends keyof DefaultModelSettings,
@@ -188,6 +195,9 @@ interface SettingsState {
   renameCustomBrushPreset: (id: string, label: string) => void;
   deleteCustomBrushPreset: (id: string) => void;
   setCustomBrushPresets: (presets: ImageBrushPreset[]) => void;
+  saveCustomCropPreset: (label: string, ratio: number) => void;
+  renameCustomCropPreset: (id: string, label: string) => void;
+  deleteCustomCropPreset: (id: string) => void;
   isSettingsOpen: boolean;
   settingsPanel: 'providers' | 'keyboard' | 'gamepad';
   openSettings: (panel?: SettingsState['settingsPanel']) => void;
@@ -246,6 +256,7 @@ export const useSettingsStore = create<SettingsState>()(
       keyboardShortcuts: {},
       gamepadBindings: createDefaultGamepadBindings(),
       customBrushPresets: [],
+      customCropPresets: [],
       setApiKey: (provider, key) =>
         set((state) => ({
           apiKeys: { ...state.apiKeys, [provider]: key },
@@ -313,6 +324,22 @@ export const useSettingsStore = create<SettingsState>()(
       setCustomBrushPresets: (presets) =>
         set(() => ({
           customBrushPresets: sanitizeUserBrushPresets(presets),
+        })),
+      saveCustomCropPreset: (label, ratio) =>
+        set((state) => ({
+          customCropPresets: [
+            ...state.customCropPresets,
+            createCropPreset(label, ratio, state.customCropPresets.map((preset) => preset.id)),
+          ],
+        })),
+      renameCustomCropPreset: (id, label) =>
+        set((state) => ({
+          customCropPresets: state.customCropPresets.map((preset) =>
+            preset.id === id ? renameCropPreset(preset, label) : preset),
+        })),
+      deleteCustomCropPreset: (id) =>
+        set((state) => ({
+          customCropPresets: state.customCropPresets.filter((preset) => preset.id !== id),
         })),
       isSettingsOpen: false,
       settingsPanel: 'providers',
@@ -400,6 +427,7 @@ export const useSettingsStore = create<SettingsState>()(
           keyboardShortcuts: sanitizeKeyboardShortcutMap(typedPersistedState?.keyboardShortcuts ?? {}),
           gamepadBindings: normalizeGamepadBindings(typedPersistedState?.gamepadBindings),
           customBrushPresets: sanitizeUserBrushPresets(typedPersistedState?.customBrushPresets),
+          customCropPresets: sanitizeCropPresets(typedPersistedState?.customCropPresets),
           settingsPanel: typedPersistedState?.settingsPanel === 'keyboard' || typedPersistedState?.settingsPanel === 'gamepad'
             ? typedPersistedState.settingsPanel
             : 'providers',

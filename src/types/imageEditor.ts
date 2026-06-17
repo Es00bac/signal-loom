@@ -513,7 +513,16 @@ export type ImageVectorShape =
   | ImageEllipseVectorShape
   | ImagePathVectorShape;
 
-export type CropAspectPreset = 'free' | 'original' | '1:1' | '4:3' | '3:2' | '4:5' | '16:9';
+export type CropAspectPreset =
+  | 'free'
+  | 'original'
+  | '1:1'
+  | '4:3'
+  | '3:2'
+  | '4:5'
+  | '16:9'
+  // User-saved custom aspect ratios, encoded as `custom:<width/height>`.
+  | `custom:${number}`;
 export type CropGuideMode = 'none' | 'thirds' | 'grid';
 
 export interface CropToolSettings {

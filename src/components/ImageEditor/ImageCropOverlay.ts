@@ -1,4 +1,5 @@
 import type { CropAspectPreset, CropGuideMode, CropToolSettings, DocumentViewport, ImageDocument } from '../../types/imageEditor';
+import { parseCropCustomPresetRatio } from './cropPresets';
 import type { CropPreviewRect } from './tools/cropTool';
 import { docRectToScreen } from './viewport';
 
@@ -805,7 +806,7 @@ function resolveCropAspectRatio(
     case '16:9':
       return 16 / 9;
     default:
-      return null;
+      return parseCropCustomPresetRatio(preset);
   }
 }
 

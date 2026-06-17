@@ -3,6 +3,7 @@ import { createBitmap } from '../LayerBitmap';
 import { drawLayerBitmapTransformed } from '../ImageLayerTransform';
 import { composeLayerBitmapWithMask } from '../ImageLayerMask';
 import { renderLayerWithEffects } from '../ImageLayerEffects';
+import { parseCropCustomPresetRatio } from '../cropPresets';
 import type { CropAspectPreset, CropGuideMode, CropToolSettings, ImageDocument, ImageLayer } from '../../../types/imageEditor';
 import { useImageEditorStore } from '../../../store/imageEditorStore';
 
@@ -423,7 +424,7 @@ export function resolveCropPreviewAspectRatio(
     case '16:9':
       return 16 / 9;
     default:
-      return null;
+      return parseCropCustomPresetRatio(preset);
   }
 }
 
