@@ -224,6 +224,9 @@ function canEditLayerMask(layer: ImageLayer | null | undefined): layer is ImageL
 function makeBrushTool(isEraser: boolean): ToolHandler {
   return {
     onPointerDown(env, point, _mods, event) {
+      // Drop the per-stroke selection-mask cache so a selection changed since the last stroke is
+      // re-read (within a stroke the selection is stable, so the cache stays valid there).
+      selectionMaskCache = null;
       if (env.store.quickMaskSettings.enabled) {
         const selection = ensureQuickMaskSelection(env);
         stroke = {
@@ -449,6 +452,59 @@ function paintLayerMaskStrokeSegment(
   );
 }
 
+// Reused across stroke segments so painting inside a selection doesn't allocate a full-document
+// temp canvas (and rebuild the selection→mask canvas) on every pointer-move — the big per-segment
+// GC cost, worst on mobile. The mask is cached by selection identity (a paint stroke never changes
+// the selection); the scratch is cleared before each reuse so no stale pixels leak.
+let selectionPaintScratch: OffscreenCanvas | null = null;
+let selectionMaskCache: { selection: SelectionMask; canvas: ReturnType<typeof maskToCanvas> } | null = null;
+
+function getSelectionPaintScratch(width: number, height: number): OffscreenCanvas {
+  if (!selectionPaintScratch || selectionPaintScratch.width !== width || selectionPaintScratch.height !== height) {
+    selectionPaintScratch = createBitmap(width, height);
+  }
+  return selectionPaintScratch;
+}
+
+function getSelectionMaskCanvas(selection: SelectionMask): ReturnType<typeof maskToCanvas> {
+  if (!selectionMaskCache || selectionMaskCache.selection !== selection) {
+    selectionMaskCache = { selection, canvas: maskToCanvas(selection, 255, 255, 255) };
+  }
+  return selectionMaskCache.canvas;
+}
+
+/** Bitmap-local bounding box of a set of dabs (expanded by radius), clamped to the bitmap, or null
+ * if nothing falls inside. Used to bound the channel-route read-back/write-back to the painted area
+ * instead of the whole document. */
+function dabsBitmapRect(
+  dabs: ReturnType<typeof buildBrushDabs>,
+  layer: ImageLayer,
+  bitmap: OffscreenCanvas,
+): { x: number; y: number; width: number; height: number } | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const dab of dabs) {
+    const r = dab.size / 2 + 2;
+    const cx = dab.x - layer.x;
+    const cy = dab.y - layer.y;
+    minX = Math.min(minX, cx - r);
+    minY = Math.min(minY, cy - r);
+    maxX = Math.max(maxX, cx + r);
+    maxY = Math.max(maxY, cy + r);
+  }
+  if (!Number.isFinite(minX)) return null;
+  const x = Math.max(0, Math.floor(minX));
+  const y = Math.max(0, Math.floor(minY));
+  const right = Math.min(bitmap.width, Math.ceil(maxX));
+  const bottom = Math.min(bitmap.height, Math.ceil(maxY));
+  const width = right - x;
+  const height = bottom - y;
+  if (width <= 0 || height <= 0) return null;
+  return { x, y, width, height };
+}
+
 function paintStrokeSegment(
   env: ToolEnv,
   layer: ImageLayer,
@@ -462,9 +518,6 @@ function paintStrokeSegment(
   const settings = normalizedBrushSettings(env.brushSettings);
   const channelEditTarget = getImageChannelEditTarget(env.doc);
   const routeColorComponents = channelEditTarget.channel !== 'rgb';
-  const beforeChannelRoute = routeColorComponents
-    ? ctx.getImageData(0, 0, bitmap.width, bitmap.height)
-    : null;
   const compositeOperation = stroke?.isEraser && !routeColorComponents ? 'destination-out' : 'source-over';
   const pressure = readBrushPressure(event);
   const tilt = readBrushTiltState(event);
@@ -496,13 +549,22 @@ function paintStrokeSegment(
     y: env.doc.height / 2,
   });
 
-  // If a selection exists, restrict painting to its mask.
+  // Channel routing only rewrites the painted pixels, so capture/restore just the dab's bounding
+  // box instead of the whole document.
+  const channelRect = routeColorComponents ? dabsBitmapRect(symmetryDabs, layer, bitmap) : null;
+  const beforeChannelRoute = channelRect
+    ? ctx.getImageData(channelRect.x, channelRect.y, channelRect.width, channelRect.height)
+    : null;
+
+  // If a selection exists, restrict painting to its mask (reusing a cleared scratch canvas and a
+  // mask canvas cached for the stroke, rather than allocating both per segment).
   const selection = getSelection(env.doc.id);
   if (selection) {
-    const temp = createBitmap(bitmap.width, bitmap.height);
+    const temp = getSelectionPaintScratch(bitmap.width, bitmap.height);
     const tempCtx = temp.getContext('2d');
     if (!tempCtx) return;
-    const maskCanvas = maskToCanvas(selection, 255, 255, 255);
+    tempCtx.clearRect(0, 0, temp.width, temp.height);
+    const maskCanvas = getSelectionMaskCanvas(selection);
     paintDabs(tempCtx, symmetryDabs, layer, color, 'source-over');
     tempCtx.save();
     tempCtx.globalCompositeOperation = 'destination-in';
@@ -518,10 +580,10 @@ function paintStrokeSegment(
     paintDabs(ctx, symmetryDabs, layer, color, compositeOperation);
   }
 
-  if (beforeChannelRoute) {
-    const afterChannelRoute = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+  if (beforeChannelRoute && channelRect) {
+    const afterChannelRoute = ctx.getImageData(channelRect.x, channelRect.y, channelRect.width, channelRect.height);
     applyColorChannelRoute(beforeChannelRoute, afterChannelRoute, channelEditTarget.components);
-    ctx.putImageData(afterChannelRoute, 0, 0);
+    ctx.putImageData(afterChannelRoute, channelRect.x, channelRect.y);
   }
 }
 
