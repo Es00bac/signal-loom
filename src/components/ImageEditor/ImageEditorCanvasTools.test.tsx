@@ -533,7 +533,7 @@ describe('ImageEditorCanvas tools', () => {
     expect(perspectiveHtml).toContain('data-image-layer-transform-perspective-handle="sw"');
   });
 
-  it('renders direct warp handles for the active layer transform mode', () => {
+  it('renders the warp control-point mesh for the active layer transform mode', () => {
     const layer = imageLayer();
     const doc = imageDoc(layer);
     useImageEditorStore.getState().openDocument(doc);
@@ -542,10 +542,12 @@ describe('ImageEditorCanvas tools', () => {
     setTransformPreviewMode(doc.id, 'warp');
     const warpHtml = renderToStaticMarkup(<ImageEditorCanvas />);
 
-    expect(warpHtml).toContain('data-image-layer-transform-warp-handle="n"');
-    expect(warpHtml).toContain('data-image-layer-transform-warp-handle="e"');
-    expect(warpHtml).toContain('data-image-layer-transform-warp-handle="s"');
-    expect(warpHtml).toContain('data-image-layer-transform-warp-handle="w"');
+    // Warp mode shows the full NxN control-point mesh (cage grid + draggable nodes),
+    // including the four corners and an interior control point.
+    expect(warpHtml).toContain('data-image-layer-warp-mesh-grid="true"');
+    expect(warpHtml).toContain('data-image-layer-warp-mesh-handle="0-0"');
+    expect(warpHtml).toContain('data-image-layer-warp-mesh-handle="3-3"');
+    expect(warpHtml).toContain('data-image-layer-warp-mesh-handle="1-1"');
   });
 
   it('renders visible apply and cancel controls for an active crop preview', () => {

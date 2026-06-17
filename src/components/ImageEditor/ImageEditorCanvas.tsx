@@ -51,8 +51,16 @@ import {
 } from './ImageLayerTransformControls';
 import {
   getImageLayerPivotPoint,
+  getImageLayerBitmapDrawMetrics,
+  transformSourcePoint,
   resolveImageLayerTransformOrigin,
 } from './ImageLayerTransform';
+import {
+  createIdentityWarpMesh,
+  normalizeWarpMesh,
+  warpMeshNodeIndex,
+  type WarpMesh,
+} from './ImageWarpMesh';
 import {
   applyTransformPreviewSession,
   beginTransformPreviewSession,
@@ -1983,6 +1991,25 @@ export function ImageLayerTransformOverlay({
     : null;
   const handlePoints = screenCorners ? getImageLayerTransformHandlePoints(screenCorners, mode) : [];
   const rotateHandlePoint = screenCorners ? getImageLayerTransformRotateHandlePoint(screenCorners) : null;
+
+  // Warp-mesh control points: in warp mode, show the full NxN deformation grid at the
+  // current (warped) node positions, replacing the coarse 4-edge warp handles.
+  const warpMesh = mode === 'warp' ? (normalizeWarpMesh(layer.warpMesh) ?? createIdentityWarpMesh()) : null;
+  const warpMeshNodes = (() => {
+    if (!warpMesh || !intrinsicSize || !layer.bitmap) return [] as { column: number; row: number; screen: Point }[];
+    const metrics = getImageLayerBitmapDrawMetrics(layer.bitmap, layer);
+    const nodes: { column: number; row: number; screen: Point }[] = [];
+    for (let r = 0; r <= warpMesh.rows; r += 1) {
+      for (let c = 0; c <= warpMesh.columns; c += 1) {
+        const sx = warpMesh.columns > 0 ? (c / warpMesh.columns) * metrics.drawWidth : 0;
+        const sy = warpMesh.rows > 0 ? (r / warpMesh.rows) * metrics.drawHeight : 0;
+        nodes.push({ column: c, row: r, screen: docToScreen(transformSourcePoint(metrics, sx, sy), doc.viewport) });
+      }
+    }
+    return nodes;
+  })();
+  const warpMeshNodeScreen = (column: number, row: number): Point | null =>
+    warpMeshNodes.find((n) => n.column === column && n.row === row)?.screen ?? null;
   const pivotScreenPoint = pivot ? docToScreen({ x: pivot.pivotX, y: pivot.pivotY }, doc.viewport) : null;
   const relativePoint = useCallback((point: Point) => {
     if (!screenBounds) {
@@ -2145,6 +2172,30 @@ export function ImageLayerTransformOverlay({
     };
   }, [canTransform, doc, intrinsicSize, layer, pointFromEvent]);
 
+  const startWarpMesh = useCallback((column: number, row: number) => (
+    event: ReactPointerEvent<HTMLButtonElement>
+  ) => {
+    if (!canTransform || !intrinsicSize) return;
+    const startPoint = pointFromEvent(event);
+    if (!startPoint) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    beginTransformPreviewSession(doc, layer);
+
+    dragRef.current = {
+      kind: 'warpMesh',
+      pointerId: event.pointerId,
+      layerId: layer.id,
+      column,
+      row,
+      origin: { x: layer.x, y: layer.y, width: intrinsicSize.width, height: intrinsicSize.height },
+      rotationDeg: layer.rotationDeg ?? 0,
+      startPoint,
+      startMesh: normalizeWarpMesh(layer.warpMesh) ?? createIdentityWarpMesh(),
+    };
+  }, [canTransform, doc, intrinsicSize, layer, pointFromEvent]);
+
   const startRotate = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     if (!canTransform || !pivot) return;
     const startPoint = pointFromEvent(event);
@@ -2298,6 +2349,30 @@ export function ImageLayerTransformOverlay({
       return;
     }
 
+    if (drag.kind === 'warpMesh') {
+      const delta = { x: point.x - drag.startPoint.x, y: point.y - drag.startPoint.y };
+      // Inverse-rotate the doc-space drag into the layer's source-local space, then
+      // normalize to the layer dimensions to update the dragged control point.
+      const rad = (drag.rotationDeg * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+      const sourceDx = delta.x * cos + delta.y * sin;
+      const sourceDy = -delta.x * sin + delta.y * cos;
+      const ndx = drag.origin.width > 0 ? sourceDx / drag.origin.width : 0;
+      const ndy = drag.origin.height > 0 ? sourceDy / drag.origin.height : 0;
+      const nextMesh: WarpMesh = {
+        columns: drag.startMesh.columns,
+        rows: drag.startMesh.rows,
+        points: drag.startMesh.points.map((p) => ({ x: p.x, y: p.y })),
+      };
+      const idx = warpMeshNodeIndex(nextMesh, drag.column, drag.row);
+      const base = drag.startMesh.points[idx] ?? { x: 0, y: 0 };
+      nextMesh.points[idx] = { x: base.x + ndx, y: base.y + ndy };
+      state.updateLayer(currentDoc.id, currentLayer.id, { warpMesh: nextMesh });
+      requestRender();
+      return;
+    }
+
     const rect = resizeLayerRectFromHandle({
       handle: drag.handle,
       origin: drag.origin,
@@ -2382,7 +2457,50 @@ export function ImageLayerTransformOverlay({
           strokeWidth="1"
         />
       </svg>
-      {handlePoints.map(({ kind, handle, point, cursor }) => {
+      {warpMesh && warpMeshNodes.length > 0 ? (
+        <>
+          <svg
+            className="pointer-events-none absolute inset-0 overflow-visible"
+            data-image-layer-warp-mesh-grid="true"
+            height={Math.max(1, screenBounds.height)}
+            width={Math.max(1, screenBounds.width)}
+          >
+            {/* Horizontal + vertical cage lines between adjacent control points. */}
+            {warpMeshNodes.flatMap((node) => {
+              const segments: React.ReactElement[] = [];
+              const here = relativePoint(node.screen);
+              const right = node.column < warpMesh.columns ? warpMeshNodeScreen(node.column + 1, node.row) : null;
+              const down = node.row < warpMesh.rows ? warpMeshNodeScreen(node.column, node.row + 1) : null;
+              if (right) {
+                const r = relativePoint(right);
+                segments.push(<line key={`h-${node.column}-${node.row}`} x1={here.x} y1={here.y} x2={r.x} y2={r.y} stroke="rgba(165,243,252,0.55)" strokeWidth="1" />);
+              }
+              if (down) {
+                const d = relativePoint(down);
+                segments.push(<line key={`v-${node.column}-${node.row}`} x1={here.x} y1={here.y} x2={d.x} y2={d.y} stroke="rgba(165,243,252,0.55)" strokeWidth="1" />);
+              }
+              return segments;
+            })}
+          </svg>
+          {warpMeshNodes.map((node) => {
+            const relative = relativePoint(node.screen);
+            return (
+              <button
+                {...handleProps}
+                aria-label={`Warp control point ${node.column},${node.row}`}
+                className="pointer-events-auto absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-50/80 bg-cyan-300 shadow-[0_0_0_1px_rgba(8,11,18,0.95)]"
+                data-image-layer-warp-mesh-handle={`${node.column}-${node.row}`}
+                key={`warpmesh-${node.column}-${node.row}`}
+                onPointerDown={startWarpMesh(node.column, node.row)}
+                style={{ left: relative.x, top: relative.y, cursor: 'grab' }}
+                title={`Warp control point ${node.column},${node.row}`}
+                type="button"
+              />
+            );
+          })}
+        </>
+      ) : null}
+      {handlePoints.filter((entry) => entry.kind !== 'warp').map(({ kind, handle, point, cursor }) => {
         const relative = relativePoint(point);
         const dataProps = kind === 'resize'
           ? { 'data-image-layer-transform-handle': String(handle) }
@@ -2542,6 +2660,17 @@ type TransformDragState =
         bottom: number;
         left: number;
       };
+    }
+  | {
+      kind: 'warpMesh';
+      pointerId: number;
+      layerId: string;
+      column: number;
+      row: number;
+      origin: ImageLayerTransformRect;
+      rotationDeg: number;
+      startPoint: Point;
+      startMesh: WarpMesh;
     };
 
 function resizeBitmapToLayerRect(source: LayerBitmap, rect: ImageLayerTransformRect): LayerBitmap {
