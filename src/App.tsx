@@ -182,6 +182,7 @@ import type { SharedContextMenuItem } from './lib/sharedContextMenu';
 import { getAcceptStringForAllImportableFormats } from './lib/mediaFormatRegistry';
 import { useImageEditorStore } from './store/imageEditorStore';
 import { saveImageDocumentAsSlimg, openSlimgDocument } from './components/ImageEditor/ImageSlimgCodec';
+import { classifyOpenedFile } from './lib/signalLoomFileRouting';
 import { serializeSlppr, deserializeSlppr } from './features/paper/SlpprFormat';
 import { usePaperStore } from './store/paperStore';
 import { useDockablePanelStore } from './store/dockablePanelStore';
@@ -1696,18 +1697,40 @@ function FlowApp() {
     }
 
     try {
+      // Route by the file's real content, not just its name — OS pickers (esp. Android) ignore the
+      // `accept` filter, so a `.slimg`/`.slppr` (ZIP container) can land here. Without this the
+      // project opener JSON.parses the ZIP and throws "Unexpected token 'P', \"PK\"...".
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const kind = classifyOpenedFile(bytes, file.name);
+
+      if (kind === 'image') {
+        const doc = await openSlimgDocument(bytes);
+        useImageEditorStore.getState().openDocument(doc);
+        setWorkspaceView('image');
+        return;
+      }
+      if (kind === 'paper') {
+        const doc = deserializeSlppr(bytes);
+        usePaperStore.getState().importDocumentJson(JSON.stringify(doc));
+        setWorkspaceView('paper');
+        return;
+      }
+      if (kind === 'unknown') {
+        throw new Error('This file is not a Signal Loom project (.sloom), image (.slimg), or layout (.slppr).');
+      }
+
       const document = await parseProjectDocument(file);
       resetSourceLibraryNativeSyncTracking();
       await restoreProjectDocument(document);
       setNativeProjectPath(undefined);
     } catch (error) {
       await showAlertDialog({
-        title: 'Open Project Failed',
-        message: error instanceof Error ? error.message : 'The selected project file could not be opened.',
+        title: 'Open Failed',
+        message: error instanceof Error ? error.message : 'The selected file could not be opened.',
         tone: 'danger',
       });
     }
-  }, [resetSourceLibraryNativeSyncTracking]);
+  }, [resetSourceLibraryNativeSyncTracking, setWorkspaceView]);
 
   const handleBrowserMediaImportChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.currentTarget.files ?? []);
@@ -2041,7 +2064,7 @@ function FlowApp() {
       />
       <input
         ref={browserProjectOpenInputRef}
-        accept=".sloom"
+        accept=".sloom,.slimg,.slppr"
         className="hidden"
         onChange={(event) => void handleBrowserProjectFileChange(event)}
         type="file"
