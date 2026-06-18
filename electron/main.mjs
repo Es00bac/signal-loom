@@ -2254,6 +2254,46 @@ function installIpcHandlers() {
     return writeProjectDocument(filePath, document);
   });
 
+  ipcMain.handle('signal-loom:image-open', async (event) => {
+    const result = await dialog.showOpenDialog(getIpcWindow(event), {
+      title: 'Open Signal Loom Image',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Signal Loom Image', extensions: ['slimg'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true };
+    }
+
+    const path = result.filePaths[0];
+    const bytes = await readFile(path);
+    return { canceled: false, bytes, path };
+  });
+
+  ipcMain.handle('signal-loom:image-save-as', async (event, bytes) => {
+    const result = await dialog.showSaveDialog(getIpcWindow(event), {
+      title: 'Save Signal Loom Image',
+      filters: [
+        { name: 'Signal Loom Image', extensions: ['slimg'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (result.canceled || !result.filePath) {
+      return { canceled: true };
+    }
+
+    const path = result.filePath.toLowerCase().endsWith('.slimg')
+      ? result.filePath
+      : `${result.filePath}.slimg`;
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, Buffer.from(bytes));
+    return { canceled: false, path };
+  });
+
   ipcMain.handle('signal-loom:normalize-imported-media-batch', async (_event, items) => {
     return normalizeImportedMediaBatchInMain(items);
   });

@@ -9,6 +9,8 @@ const SIGNAL_LOOM_MENU_COMMANDS = Object.freeze({
   fileSetScratchFolder: 'file:set-scratch-folder',
   fileExportProject: 'file:export-project',
   fileExportAssets: 'file:export-assets',
+  imageFileOpen: 'image:file-open',
+  imageFileSaveAs: 'image:file-save-as',
   settingsKeyboardShortcuts: 'settings:keyboard-shortcuts',
   settingsGamepadBindings: 'settings:gamepad-bindings',
   editUndo: 'edit:undo',

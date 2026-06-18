@@ -80,6 +80,8 @@ export const NATIVE_MENU_COMMANDS = [
   'image:tool-eyedropper',
   'image:export-visible',
   'image:export-psd',
+  'image:file-open',
+  'image:file-save-as',
   'image:adjust-brightness-contrast',
   'image:adjust-levels',
   'image:adjust-curves',
@@ -257,6 +259,17 @@ export interface NativeScratchDirectoryResult {
   directoryPath?: string;
 }
 
+export interface NativeImageOpenResult {
+  canceled: boolean;
+  bytes?: Uint8Array;
+  path?: string;
+}
+
+export interface NativeImageSaveResult {
+  canceled: boolean;
+  path?: string;
+}
+
 export interface NativePaperPdfExportResult {
   canceled: boolean;
   filePath?: string;
@@ -415,6 +428,8 @@ export interface SignalLoomNativeBridge {
   openProjectFile: () => Promise<NativeProjectFileResult>;
   saveProjectFile: (document: FlowProjectDocument) => Promise<NativeProjectFileResult>;
   saveProjectFileAs: (document: FlowProjectDocument) => Promise<NativeProjectFileResult>;
+  openImageDocumentFile: () => Promise<NativeImageOpenResult>;
+  saveImageDocumentFileAs: (bytes: Uint8Array) => Promise<NativeImageSaveResult>;
   importMediaFiles: (options?: { scratchDirectoryPath?: string }) => Promise<NativeImportMediaResult>;
   normalizeImportedMediaBatch: (
     items: ImportedMediaBatchNormalizationRequestItem[],

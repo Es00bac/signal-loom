@@ -181,6 +181,7 @@ import type { AppNode, FlowNodeType, NodeData, WorkspaceView } from './types/flo
 import type { SharedContextMenuItem } from './lib/sharedContextMenu';
 import { getAcceptStringForAllImportableFormats } from './lib/mediaFormatRegistry';
 import { useImageEditorStore } from './store/imageEditorStore';
+import { saveImageDocumentAsSlimg, openSlimgDocument } from './components/ImageEditor/ImageSlimgCodec';
 import { usePaperStore } from './store/paperStore';
 import { useDockablePanelStore } from './store/dockablePanelStore';
 import { useFlowWorkspaceStore } from './store/flowWorkspaceStore';
@@ -1220,6 +1221,49 @@ function FlowApp() {
             await restoreProjectDocument(result.document);
           }
           setNativeProjectPath(result.filePath);
+        }
+        return;
+      }
+      case 'image:file-open': {
+        if (!bridge?.openImageDocumentFile) {
+          return;
+        }
+
+        try {
+          const result = await bridge.openImageDocumentFile();
+          if (!result.canceled && result.bytes) {
+            const doc = await openSlimgDocument(new Uint8Array(result.bytes));
+            useImageEditorStore.getState().openDocument(doc);
+          }
+        } catch (error) {
+          await showAlertDialog({
+            title: 'Open Image Failed',
+            message: error instanceof Error ? error.message : 'The selected .slimg file could not be opened.',
+            tone: 'danger',
+          });
+        }
+        return;
+      }
+      case 'image:file-save-as': {
+        if (!bridge?.saveImageDocumentFileAs) {
+          return;
+        }
+
+        try {
+          const imageState = useImageEditorStore.getState();
+          const activeDoc = imageState.documents.find((doc) => doc.id === imageState.activeDocId);
+          if (!activeDoc) {
+            return;
+          }
+
+          const bytes = await saveImageDocumentAsSlimg(activeDoc);
+          await bridge.saveImageDocumentFileAs(bytes);
+        } catch (error) {
+          await showAlertDialog({
+            title: 'Save Image Failed',
+            message: error instanceof Error ? error.message : 'The active image could not be saved as a .slimg file.',
+            tone: 'danger',
+          });
         }
         return;
       }

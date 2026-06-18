@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('signalLoomNative', {
   openProjectFile: () => ipcRenderer.invoke('signal-loom:project-open'),
   saveProjectFile: (document) => ipcRenderer.invoke('signal-loom:project-save', document),
   saveProjectFileAs: (document) => ipcRenderer.invoke('signal-loom:project-save-as', document),
+  openImageDocumentFile: () => ipcRenderer.invoke('signal-loom:image-open'),
+  saveImageDocumentFileAs: (bytes) => ipcRenderer.invoke('signal-loom:image-save-as', bytes),
   importMediaFiles: (options) => ipcRenderer.invoke('signal-loom:import-media-files', options),
   normalizeImportedMediaBatch: (items) => ipcRenderer.invoke('signal-loom:normalize-imported-media-batch', items),
   exportPaperPdf: (request) => ipcRenderer.invoke('signal-loom:paper-export-pdf', request),

@@ -77,6 +77,14 @@
   "image": [
     { "id": "project", "label": "Project", "items": "$project" },
     {
+      "id": "file",
+      "label": "File",
+      "items": [
+        { "command": "image:file-open", "label": "Open...", "accelerator": "Ctrl+O" },
+        { "command": "image:file-save-as", "label": "Save As...", "accelerator": "Ctrl+Shift+S" }
+      ]
+    },
+    {
       "id": "edit",
       "label": "Edit",
       "items": [

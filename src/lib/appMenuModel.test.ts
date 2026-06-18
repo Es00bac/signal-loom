@@ -10,7 +10,7 @@ import {
 describe('renderer app menu model (per-workspace)', () => {
   it('returns only the active workspace\'s idiomatic top-level menus', () => {
     expect(buildAppMenuGroups('image').map((group) => group.label))
-      .toEqual(['Project', 'Edit', 'Image', 'Select', 'Tools', 'View', 'Window', 'Help']);
+      .toEqual(['Project', 'File', 'Edit', 'Image', 'Select', 'Tools', 'View', 'Window', 'Help']);
     expect(buildAppMenuGroups('paper').map((group) => group.label))
       .toEqual(['Project', 'Edit', 'Layout', 'Insert', 'Tools', 'View', 'Window', 'Help']);
     expect(buildAppMenuGroups('editor').map((group) => group.label))

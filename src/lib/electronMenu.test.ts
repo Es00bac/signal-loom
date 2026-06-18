@@ -47,7 +47,7 @@ describe('Electron native menu template (per-workspace)', () => {
     const send = () => undefined;
 
     expect(labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'image', sendCommand: send })))
-      .toEqual(['Project', 'Edit', 'Image', 'Select', 'Tools', 'View', 'Window', 'Help']);
+      .toEqual(['Project', 'File', 'Edit', 'Image', 'Select', 'Tools', 'View', 'Window', 'Help']);
     expect(labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'paper', sendCommand: send })))
       .toEqual(['Project', 'Edit', 'Layout', 'Insert', 'Tools', 'View', 'Window', 'Help']);
     expect(labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'editor', sendCommand: send })))
@@ -115,6 +115,24 @@ describe('Electron native menu template (per-workspace)', () => {
     expect(brush?.accelerator).toBe('B');
     brush?.click?.();
     expect(commands).toEqual(['edit:cut', 'image:tool-brush']);
+  });
+
+  it('wires the Image-only File menu to the .slimg open/save-as commands', async () => {
+    const { createApplicationMenuTemplate } = await loadMenuModule();
+    const commands: string[] = [];
+    const template = createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'image', sendCommand: (c) => commands.push(c) });
+    const file = template.find((entry) => entry.label === 'File');
+    expect(file).toBeTruthy();
+    const open = findItem(file?.submenu, 'Open...');
+    const saveAs = findItem(file?.submenu, 'Save As...');
+    open?.click?.();
+    saveAs?.click?.();
+    expect(commands).toEqual(['image:file-open', 'image:file-save-as']);
+    // The File menu is Image-only — other workspaces must not gain it.
+    for (const ws of ['flow', 'editor', 'paper']) {
+      const other = labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: ws, sendCommand: () => undefined }));
+      expect(other).not.toContain('File');
+    }
   });
 
   it('puts Paper exports under Project > Export and dispatches them', async () => {
