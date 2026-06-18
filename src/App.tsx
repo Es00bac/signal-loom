@@ -182,6 +182,7 @@ import type { SharedContextMenuItem } from './lib/sharedContextMenu';
 import { getAcceptStringForAllImportableFormats } from './lib/mediaFormatRegistry';
 import { useImageEditorStore } from './store/imageEditorStore';
 import { saveImageDocumentAsSlimg, openSlimgDocument } from './components/ImageEditor/ImageSlimgCodec';
+import { serializeSlppr, deserializeSlppr } from './features/paper/SlpprFormat';
 import { usePaperStore } from './store/paperStore';
 import { useDockablePanelStore } from './store/dockablePanelStore';
 import { useFlowWorkspaceStore } from './store/flowWorkspaceStore';
@@ -1262,6 +1263,45 @@ function FlowApp() {
           await showAlertDialog({
             title: 'Save Image Failed',
             message: error instanceof Error ? error.message : 'The active image could not be saved as a .slimg file.',
+            tone: 'danger',
+          });
+        }
+        return;
+      }
+      case 'paper:file-open': {
+        if (!bridge?.openPaperDocumentFile) {
+          return;
+        }
+
+        try {
+          const result = await bridge.openPaperDocumentFile();
+          if (!result.canceled && result.bytes) {
+            const doc = deserializeSlppr(new Uint8Array(result.bytes));
+            // Route through importDocumentJson so the loaded layout passes the same
+            // parse/sanitize validation as the Paper JSON import path.
+            usePaperStore.getState().importDocumentJson(JSON.stringify(doc));
+          }
+        } catch (error) {
+          await showAlertDialog({
+            title: 'Open Paper Failed',
+            message: error instanceof Error ? error.message : 'The selected .slppr file could not be opened.',
+            tone: 'danger',
+          });
+        }
+        return;
+      }
+      case 'paper:file-save-as': {
+        if (!bridge?.savePaperDocumentFileAs) {
+          return;
+        }
+
+        try {
+          const bytes = serializeSlppr(usePaperStore.getState().document);
+          await bridge.savePaperDocumentFileAs(bytes);
+        } catch (error) {
+          await showAlertDialog({
+            title: 'Save Paper Failed',
+            message: error instanceof Error ? error.message : 'The active layout could not be saved as a .slppr file.',
             tone: 'danger',
           });
         }

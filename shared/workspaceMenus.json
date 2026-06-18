@@ -267,6 +267,14 @@
       ]
     },
     {
+      "id": "file",
+      "label": "File",
+      "items": [
+        { "command": "paper:file-open", "label": "Open...", "accelerator": "Ctrl+O" },
+        { "command": "paper:file-save-as", "label": "Save As...", "accelerator": "Ctrl+Shift+S" }
+      ]
+    },
+    {
       "id": "edit",
       "label": "Edit",
       "items": [

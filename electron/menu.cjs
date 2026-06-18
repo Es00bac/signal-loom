@@ -78,6 +78,8 @@ const SIGNAL_LOOM_MENU_COMMANDS = Object.freeze({
   paperToolEyedropper: 'paper:tool-eyedropper',
   paperNewDocument: 'paper:new-document',
   paperAddPage: 'paper:add-page',
+  paperFileOpen: 'paper:file-open',
+  paperFileSaveAs: 'paper:file-save-as',
   paperExportPdf: 'paper:export-pdf',
   paperExportKdpAssets: 'paper:export-kdp-assets',
   paperExportReaderSpreadsPdf: 'paper:export-reader-spreads-pdf',

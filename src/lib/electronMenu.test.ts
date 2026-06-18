@@ -49,7 +49,7 @@ describe('Electron native menu template (per-workspace)', () => {
     expect(labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'image', sendCommand: send })))
       .toEqual(['Project', 'File', 'Edit', 'Image', 'Select', 'Tools', 'View', 'Window', 'Help']);
     expect(labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'paper', sendCommand: send })))
-      .toEqual(['Project', 'Edit', 'Layout', 'Insert', 'Tools', 'View', 'Window', 'Help']);
+      .toEqual(['Project', 'File', 'Edit', 'Layout', 'Insert', 'Tools', 'View', 'Window', 'Help']);
     expect(labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'editor', sendCommand: send })))
       .toEqual(['Project', 'Edit', 'Timeline', 'Keyframes', 'View', 'Window', 'Help']);
     expect(labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'flow', sendCommand: send })))
@@ -117,7 +117,7 @@ describe('Electron native menu template (per-workspace)', () => {
     expect(commands).toEqual(['edit:cut', 'image:tool-brush']);
   });
 
-  it('wires the Image-only File menu to the .slimg open/save-as commands', async () => {
+  it('wires the Image File menu to the .slimg open/save-as commands', async () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
     const commands: string[] = [];
     const template = createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'image', sendCommand: (c) => commands.push(c) });
@@ -128,8 +128,24 @@ describe('Electron native menu template (per-workspace)', () => {
     open?.click?.();
     saveAs?.click?.();
     expect(commands).toEqual(['image:file-open', 'image:file-save-as']);
-    // The File menu is Image-only — other workspaces must not gain it.
-    for (const ws of ['flow', 'editor', 'paper']) {
+  });
+
+  it('wires the Paper File menu to the .slppr open/save-as commands', async () => {
+    const { createApplicationMenuTemplate } = await loadMenuModule();
+    const commands: string[] = [];
+    const template = createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'paper', sendCommand: (c) => commands.push(c) });
+    const file = template.find((entry) => entry.label === 'File');
+    expect(file).toBeTruthy();
+    const open = findItem(file?.submenu, 'Open...');
+    const saveAs = findItem(file?.submenu, 'Save As...');
+    open?.click?.();
+    saveAs?.click?.();
+    expect(commands).toEqual(['paper:file-open', 'paper:file-save-as']);
+  });
+
+  it('keeps the per-document File menu out of the Flow and Video workspaces', async () => {
+    const { createApplicationMenuTemplate } = await loadMenuModule();
+    for (const ws of ['flow', 'editor']) {
       const other = labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: ws, sendCommand: () => undefined }));
       expect(other).not.toContain('File');
     }

@@ -114,6 +114,8 @@ export const NATIVE_MENU_COMMANDS = [
   'paper:tool-eyedropper',
   'paper:new-document',
   'paper:add-page',
+  'paper:file-open',
+  'paper:file-save-as',
   'paper:export-pdf',
   'paper:export-kdp-assets',
   'paper:export-reader-spreads-pdf',
@@ -266,6 +268,17 @@ export interface NativeImageOpenResult {
 }
 
 export interface NativeImageSaveResult {
+  canceled: boolean;
+  path?: string;
+}
+
+export interface NativePaperOpenResult {
+  canceled: boolean;
+  bytes?: Uint8Array;
+  path?: string;
+}
+
+export interface NativePaperSaveResult {
   canceled: boolean;
   path?: string;
 }
@@ -430,6 +443,8 @@ export interface SignalLoomNativeBridge {
   saveProjectFileAs: (document: FlowProjectDocument) => Promise<NativeProjectFileResult>;
   openImageDocumentFile: () => Promise<NativeImageOpenResult>;
   saveImageDocumentFileAs: (bytes: Uint8Array) => Promise<NativeImageSaveResult>;
+  openPaperDocumentFile: () => Promise<NativePaperOpenResult>;
+  savePaperDocumentFileAs: (bytes: Uint8Array) => Promise<NativePaperSaveResult>;
   importMediaFiles: (options?: { scratchDirectoryPath?: string }) => Promise<NativeImportMediaResult>;
   normalizeImportedMediaBatch: (
     items: ImportedMediaBatchNormalizationRequestItem[],

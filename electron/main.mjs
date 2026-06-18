@@ -2294,6 +2294,46 @@ function installIpcHandlers() {
     return { canceled: false, path };
   });
 
+  ipcMain.handle('signal-loom:paper-open', async (event) => {
+    const result = await dialog.showOpenDialog(getIpcWindow(event), {
+      title: 'Open Signal Loom Paper',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Signal Loom Paper', extensions: ['slppr'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true };
+    }
+
+    const path = result.filePaths[0];
+    const bytes = await readFile(path);
+    return { canceled: false, bytes, path };
+  });
+
+  ipcMain.handle('signal-loom:paper-save-as', async (event, bytes) => {
+    const result = await dialog.showSaveDialog(getIpcWindow(event), {
+      title: 'Save Signal Loom Paper',
+      filters: [
+        { name: 'Signal Loom Paper', extensions: ['slppr'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (result.canceled || !result.filePath) {
+      return { canceled: true };
+    }
+
+    const path = result.filePath.toLowerCase().endsWith('.slppr')
+      ? result.filePath
+      : `${result.filePath}.slppr`;
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, Buffer.from(bytes));
+    return { canceled: false, path };
+  });
+
   ipcMain.handle('signal-loom:normalize-imported-media-batch', async (_event, items) => {
     return normalizeImportedMediaBatchInMain(items);
   });

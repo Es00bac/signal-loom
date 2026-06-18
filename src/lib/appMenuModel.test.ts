@@ -12,7 +12,7 @@ describe('renderer app menu model (per-workspace)', () => {
     expect(buildAppMenuGroups('image').map((group) => group.label))
       .toEqual(['Project', 'File', 'Edit', 'Image', 'Select', 'Tools', 'View', 'Window', 'Help']);
     expect(buildAppMenuGroups('paper').map((group) => group.label))
-      .toEqual(['Project', 'Edit', 'Layout', 'Insert', 'Tools', 'View', 'Window', 'Help']);
+      .toEqual(['Project', 'File', 'Edit', 'Layout', 'Insert', 'Tools', 'View', 'Window', 'Help']);
     expect(buildAppMenuGroups('editor').map((group) => group.label))
       .toEqual(['Project', 'Edit', 'Timeline', 'Keyframes', 'View', 'Window', 'Help']);
     expect(buildAppMenuGroups('flow').map((group) => group.label))
