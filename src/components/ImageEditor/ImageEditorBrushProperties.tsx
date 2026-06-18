@@ -433,6 +433,103 @@ export function BrushPanel() {
           />
         </div>
       </div>
+      <div className="rounded border border-cyan-300/10 bg-[#10131b] p-2">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Mixer</div>
+          <label className="flex items-center gap-1.5 text-[11px] text-cyan-100/55">
+            <input
+              aria-label="Mixer enabled"
+              checked={settings.mixerEnabled ?? false}
+              className="h-3.5 w-3.5 accent-cyan-300"
+              onChange={(event) => set({ mixerEnabled: event.target.checked })}
+              type="checkbox"
+            />
+            Enable
+          </label>
+        </div>
+        <Slider
+          ariaLabel="Mixer smudge length"
+          label="Smudge Len"
+          value={settings.smudgeLength ?? 0.5}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ smudgeLength: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+        <Slider
+          ariaLabel="Mixer smudge radius"
+          label="Smudge Rad"
+          value={settings.smudgeRadius ?? 12}
+          max={64}
+          min={1}
+          step={1}
+          onChange={(v) => set({ smudgeRadius: v })}
+          format={(v) => `${Math.round(v)}px`}
+        />
+        <Slider
+          ariaLabel="Mixer color rate"
+          label="Color Rate"
+          value={settings.colorRate ?? 0.5}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ colorRate: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+        <div className="mt-2">
+          <label className="mb-1 block text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Mix Mode</label>
+          <div className="grid grid-cols-2 gap-1">
+            {([{ label: 'RGB', value: 'rgb' }, { label: 'Spectral', value: 'spectral' }] as const).map((option) => (
+              <button
+                className={`rounded border px-2 py-1 text-left text-[11px] hover:border-cyan-400/40 hover:text-white ${
+                  (settings.mixMode ?? 'rgb') === option.value
+                    ? 'border-cyan-300/60 bg-cyan-400/15 text-cyan-50'
+                    : 'border-cyan-300/10 bg-[#252630] text-cyan-100/65'
+                }`}
+                key={option.value}
+                onClick={() => set({ mixMode: option.value })}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="rounded border border-cyan-300/10 bg-[#10131b] p-2">
+        <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Dry Brush</div>
+        <Slider
+          ariaLabel="Dry brush fade length"
+          label="Fade Length"
+          value={settings.fadeLength ?? 0}
+          max={40}
+          min={0}
+          step={1}
+          onChange={(v) => set({ fadeLength: v })}
+          format={(v) => `${Math.round(v)} dabs`}
+        />
+        <Slider
+          ariaLabel="Dry brush paint load"
+          label="Paint Load"
+          value={settings.paintLoad ?? 1}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ paintLoad: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+        <Slider
+          ariaLabel="Dry brush load falloff"
+          label="Load Falloff"
+          value={settings.loadFalloff ?? 0}
+          max={0.02}
+          min={0}
+          step={0.001}
+          onChange={(v) => set({ loadFalloff: v })}
+          format={(v) => v.toFixed(3)}
+        />
+      </div>
       <div className="flex items-center gap-2">
         <label className="w-16">Color</label>
         <AdvancedColorPicker
