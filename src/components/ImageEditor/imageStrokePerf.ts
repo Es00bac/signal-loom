@@ -7,7 +7,7 @@
  * the per-segment paint time + dab count. That tells us exactly which stage is the
  * bottleneck on the real machine instead of guessing.
  *
- * Toggle with Ctrl+Shift+P (persisted to localStorage). Default ON for now.
+ * Toggle with Ctrl+Shift+P (persisted to localStorage). Default OFF — developer overlay only.
  */
 
 import { useImageEditorStore } from '../../store/imageEditorStore';
@@ -138,9 +138,11 @@ export function isStrokePerfEnabled(): boolean {
 }
 
 if (typeof window !== 'undefined') {
-  let initial = true;
+  let initial = false;
   try {
-    initial = localStorage.getItem('sloom.strokePerf') !== '0'; // default ON unless explicitly off
+    // Default OFF — this is a developer overlay; only show it when explicitly enabled
+    // (Ctrl+Shift+P, persisted). Shipping users shouldn't see debug telemetry while painting.
+    initial = localStorage.getItem('sloom.strokePerf') === '1';
   } catch {
     /* ignore */
   }
