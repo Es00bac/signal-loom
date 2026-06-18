@@ -100,7 +100,7 @@ export interface ImageBrushPresetPreviewDescriptor {
     angleDeg: number;
     tipShape: BrushSettings['tipShape'];
   };
-  pressureAffects: Array<'size' | 'opacity' | 'flow'>;
+  pressureAffects: Array<'size' | 'opacity' | 'flow' | 'roundness' | 'hardness'>;
   scatterPx: number;
 }
 
@@ -108,7 +108,7 @@ export interface ImageBrushPresetDynamicsDescriptor {
   implemented: {
     brushDabs: true;
     smoothing: boolean;
-    pressureAffects: Array<'size' | 'opacity' | 'flow'>;
+    pressureAffects: Array<'size' | 'opacity' | 'flow' | 'roundness' | 'hardness'>;
     tiltAffects: Array<'angle'>;
     symmetryMode: BrushSettings['symmetryMode'];
   };

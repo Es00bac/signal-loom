@@ -21,10 +21,15 @@ function fakeDoc(): PaperDocument {
 describe('SlpprFormat', () => {
   it('round-trips a paper doc, carrying data-URL assets as binary (structure + pixels preserved)', () => {
     const bytes = serializeSlppr(fakeDoc());
-    const out = deserializeSlppr(bytes) as unknown as ReturnType<typeof fakeDoc>;
+    // The serializer is structure-generic, so assert against the synthetic shape we put in
+    // (PaperDocument itself does not declare these test-only fields).
+    const out = deserializeSlppr(bytes) as unknown as {
+      name: string;
+      pages: Array<{ frames: Array<{ text?: string; asset?: { src: string } }> }>;
+    };
     expect(out.name).toBe('Zine');
     expect(out.pages[0].frames[1].text).toBe('hello (not a data url)'); // non-asset strings untouched
-    expect(out.pages[0].frames[0].asset.src).toBe(PNG_DATA_URL);        // data URL restored exactly
+    expect(out.pages[0].frames[0].asset?.src).toBe(PNG_DATA_URL);       // data URL restored exactly
   });
 
   it('stores assets as decoded binary, not inline base64 (lean container)', () => {
