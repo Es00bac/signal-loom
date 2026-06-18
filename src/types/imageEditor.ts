@@ -341,6 +341,16 @@ export interface BrushSettings {
   pressureColor?: number;
   /** Tilt → blend the dab colour from the foreground toward the background (0..1). */
   tiltColor?: number;
+  /** Color-smudge / mixer mode: brush also samples + mixes the canvas it passes over. */
+  mixerEnabled?: boolean;
+  /** Mixer: how much the picked-up colour persists/drags (0..1). */
+  smudgeLength?: number;
+  /** Mixer: radius (px) of the canvas-sampling disc. */
+  smudgeRadius?: number;
+  /** Mixer: how much foreground colour is added per dab (0..1). 0 = pure smudge. */
+  colorRate?: number;
+  /** Mixer colour blending: 'rgb' (default) or 'spectral' (realistic pigment). */
+  mixMode?: 'rgb' | 'spectral';
   tipShape: 'round' | 'square';
   symmetryMode?: BrushSymmetryMode;
   velocitySize?: number;

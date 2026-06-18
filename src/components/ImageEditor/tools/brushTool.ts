@@ -48,6 +48,8 @@ import {
   resolveQuickMaskBrushTargetValue,
 } from '../ImageQuickMask';
 import { getImageChannelEditTarget } from '../ImageSelectionChannels';
+import { paintMixerDabs } from './brushMixerPaint';
+import type { MixerColor } from '../ImageBrushMixer';
 
 interface BitmapStrokeState {
   quickMask: false;
@@ -59,6 +61,8 @@ interface BitmapStrokeState {
   dabIndex: number;
   seed: number;
   lastTime: number;
+  /** Running colour-smudge / mixer state, carried across stroke segments (mixer mode only). */
+  mixerState: MixerColor;
 }
 
 interface LayerMaskStrokeState {
@@ -277,6 +281,7 @@ function makeBrushTool(isEraser: boolean): ToolHandler {
         dabIndex: 0,
         seed: Date.now() % 100000,
         lastTime: event.timeStamp,
+        mixerState: [0, 0, 0, 0],
       };
       paintStrokeSegment(env, layer, bitmap, point, point, event);
       env.requestRender();
@@ -538,6 +543,9 @@ function paintStrokeSegment(
   const ctx = bitmap.getContext('2d');
   if (!ctx) return;
   const paintStartedAt = performance.now();
+  // `paintStrokeSegment` is only invoked on the bitmap-layer path, so the active stroke (if any) is
+  // a BitmapStrokeState; narrow it once here so the mixer branch can read/write `mixerState`.
+  const bitmapStroke = stroke && !stroke.quickMask && stroke.paintTarget === 'layer' ? stroke : null;
   const settings = normalizedBrushSettings(env.brushSettings);
   const channelEditTarget = getImageChannelEditTarget(env.doc);
   const routeColorComponents = channelEditTarget.channel !== 'rgb';
@@ -604,6 +612,25 @@ function paintStrokeSegment(
     ctx.globalCompositeOperation = compositeOperation;
     ctx.drawImage(temp, 0, 0);
     ctx.restore();
+  } else if (settings.mixerEnabled && bitmapStroke && !bitmapStroke.isEraser) {
+    // Color-smudge / mixer mode: each dab samples the canvas it passes over, mixes the picked-up
+    // colour into a running smudge state, blends with the foreground, and paints that. Gated by
+    // `mixerEnabled` (default off) so the normal brush path is untouched when the mode is disabled.
+    const fg = cssColorToRgba(color);
+    bitmapStroke.mixerState = paintMixerDabs(ctx, symmetryDabs, {
+      state: bitmapStroke.mixerState,
+      fg,
+      smudgeLength: settings.smudgeLength ?? 0.5,
+      colorRate: settings.colorRate ?? 0.5,
+      smudgeRadius: settings.smudgeRadius ?? 12,
+      mixMode: settings.mixMode ?? 'rgb',
+      layerX: layer.x,
+      layerY: layer.y,
+      width: bitmap.width,
+      height: bitmap.height,
+      paintDab: (c, dab, css) =>
+        paintDabs(c as OffscreenCanvasRenderingContext2D, [dab as unknown as (typeof symmetryDabs)[number]], layer, css, compositeOperation),
+    });
   } else {
     paintDabs(ctx, symmetryDabs, layer, color, compositeOperation);
   }
@@ -1498,6 +1525,27 @@ function parseCssHexColor(color: string | undefined): RgbaColor | null {
     };
   }
   return null;
+}
+
+/** Parse a CSS colour string (`rgba(...)`, `rgb(...)`, `#rgb`, `#rrggbb`) into a MixerColor
+ *  (0..255, alpha 0..255). Falls back to opaque black `[0,0,0,255]` when it can't parse. */
+function cssColorToRgba(css: string): MixerColor {
+  const t = css.trim();
+  const rgbaMatch = /rgba?\(\s*([0-9.]+)[\s,]+([0-9.]+)[\s,]+([0-9.]+)(?:[\s,/]+([0-9.]+))?\s*\)/i.exec(t);
+  if (rgbaMatch) {
+    const r = Math.round(Number(rgbaMatch[1]));
+    const g = Math.round(Number(rgbaMatch[2]));
+    const b = Math.round(Number(rgbaMatch[3]));
+    const a = rgbaMatch[4] !== undefined ? Math.round(Math.min(1, Number(rgbaMatch[4])) * 255) : 255;
+    return [r, g, b, a];
+  }
+  if (/^#[0-9a-f]{6}$/i.test(t)) {
+    return [parseInt(t.slice(1, 3), 16), parseInt(t.slice(3, 5), 16), parseInt(t.slice(5, 7), 16), 255];
+  }
+  if (/^#[0-9a-f]{3}$/i.test(t)) {
+    return [parseInt(t[1] + t[1], 16), parseInt(t[2] + t[2], 16), parseInt(t[3] + t[3], 16), 255];
+  }
+  return [0, 0, 0, 255];
 }
 
 function colorDistance(a: RgbaColor, b: RgbaColor): number {
