@@ -184,6 +184,26 @@ export function BrushPanel() {
           onChange={(v) => set({ pressureFlow: v })}
           format={(v) => `${Math.round(v * 100)}%`}
         />
+        <Slider
+          label="Roundness"
+          ariaLabel="Pressure roundness"
+          value={settings.pressureRoundness ?? 0}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ pressureRoundness: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+        <Slider
+          label="Hardness"
+          ariaLabel="Pressure hardness"
+          value={settings.pressureHardness ?? 0}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ pressureHardness: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
         <div className="mt-2">
           <label className="mb-1 block text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Curve</label>
           <div className="grid grid-cols-4 gap-1">

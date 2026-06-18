@@ -98,6 +98,36 @@ describe('ImageBrushEngine', () => {
     expect(resolveBrushDynamics({ ...base }, 0.5).size).toBe(linear.size);
   });
 
+  it('drives roundness and hardness from pen pressure when enabled', () => {
+    const base = {
+      ...DEFAULT_BRUSH_SETTINGS,
+      roundness: 1,
+      hardness: 1,
+      pressureSize: 0,
+      pressureRoundness: 1,
+      pressureHardness: 1,
+    } as const;
+
+    const light = resolveBrushDynamics(base, 0.2);
+    const heavy = resolveBrushDynamics(base, 1);
+
+    // Light pressure flattens the tip and softens the edge; full pressure restores the base.
+    expect(light.roundness).toBeLessThan(1);
+    expect(light.hardness).toBeLessThan(1);
+    expect(heavy.roundness).toBeCloseTo(1, 6);
+    expect(heavy.hardness).toBeCloseTo(1, 6);
+
+    // With the dynamics off, roundness/hardness are pinned to the base regardless of pressure.
+    const off = { ...DEFAULT_BRUSH_SETTINGS, roundness: 1, hardness: 1, pressureRoundness: 0, pressureHardness: 0 };
+    expect(resolveBrushDynamics(off, 0.2).roundness).toBe(1);
+    expect(resolveBrushDynamics(off, 0.2).hardness).toBe(1);
+
+    // The workflow descriptor now reports roundness/hardness as pressure-affected (not unsupported).
+    const descriptor = describeBrushWorkflowSupport(base);
+    expect(descriptor.support.pressure.affects).toEqual(expect.arrayContaining(['roundness', 'hardness']));
+    expect(descriptor.support.pressure.unsupportedAffects).not.toEqual(expect.arrayContaining(['roundness', 'hardness']));
+  });
+
   it('applies deterministic per-dab jitter to size, opacity, flow, and roundness', () => {
     const stroke = (settings: Partial<typeof DEFAULT_BRUSH_SETTINGS>) =>
       buildBrushDabs(

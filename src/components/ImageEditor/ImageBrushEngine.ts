@@ -69,7 +69,7 @@ export interface BrushStrokePreviewMetadata {
   pressure: {
     input: number;
     resolved: number;
-    affects: Array<'size' | 'opacity' | 'flow'>;
+    affects: Array<'size' | 'opacity' | 'flow' | 'roundness' | 'hardness'>;
   };
   tilt: {
     active: boolean;
@@ -151,7 +151,7 @@ export interface BrushWorkflowSupportDescriptor {
     };
     pressure: {
       supported: true;
-      affects: Array<'size' | 'opacity' | 'flow'>;
+      affects: Array<'size' | 'opacity' | 'flow' | 'roundness' | 'hardness'>;
       unsupportedAffects: string[];
     };
     tilt: {
@@ -277,7 +277,7 @@ export interface BrushDynamicsSupportMatrixDescriptor {
     pressure: {
       supported: true;
       state: BrushDynamicsSupportState;
-      affects: Array<'size' | 'opacity' | 'flow'>;
+      affects: Array<'size' | 'opacity' | 'flow' | 'roundness' | 'hardness'>;
       trueTabletPressure: {
         supported: boolean;
         state: BrushDynamicsSupportState;
@@ -574,7 +574,7 @@ export interface BrushEngineReadinessDescriptor {
     };
     pressure: {
       supported: true;
-      affects: Array<'size' | 'opacity' | 'flow'>;
+      affects: Array<'size' | 'opacity' | 'flow' | 'roundness' | 'hardness'>;
     };
     tilt: {
       supported: true;
@@ -660,6 +660,8 @@ export function normalizeBrushSettings(settings: Partial<BrushSettings>): BrushS
     pressureSize: clamp(merged.pressureSize, 0, 1),
     pressureOpacity: clamp(merged.pressureOpacity, 0, 1),
     pressureFlow: clamp(merged.pressureFlow, 0, 1),
+    pressureRoundness: clamp(merged.pressureRoundness ?? 0, 0, 1),
+    pressureHardness: clamp(merged.pressureHardness ?? 0, 0, 1),
     pressureCurve: normalizeResponseCurve(merged.pressureCurve),
     tiltAngle: clamp(merged.tiltAngle ?? 0.7, 0, 1),
     tiltRoundness: clamp(merged.tiltRoundness ?? 0.6, 0, 1),
@@ -728,11 +730,15 @@ export function resolveBrushDynamics(
   const sizeFactor = (1 - normalized.pressureSize + normalized.pressureSize * shapedPressure) * velocityGrowth;
   const opacityFactor = (1 - normalized.pressureOpacity + normalized.pressureOpacity * shapedPressure) * velocityOpacity;
   const flowFactor = (1 - normalized.pressureFlow + normalized.pressureFlow * shapedPressure) * velocityFlow;
+  const pressureRoundness = normalized.pressureRoundness ?? 0;
+  const pressureHardness = normalized.pressureHardness ?? 0;
+  const roundnessFactor = 1 - pressureRoundness + pressureRoundness * shapedPressure;
+  const hardnessFactor = 1 - pressureHardness + pressureHardness * shapedPressure;
   let size = Math.max(1, normalized.size * sizeFactor);
 
   // Legacy explicit angle override still wins (callers that pre-resolve an angle).
   let angleDeg = (tiltAngle !== undefined && tiltAngle !== null) ? tiltAngle : normalized.angleDeg;
-  let roundness = normalized.roundness;
+  let roundness = normalized.roundness * roundnessFactor;
 
   // Full stylus tilt + barrel rotation: flatten the tip, grow it, and steer/rotate its
   // long axis. Only applied when a tilt/twist state is actually present.
@@ -759,7 +765,7 @@ export function resolveBrushDynamics(
     opacity: round(clamp(normalized.opacity * opacityFactor, 0, 1)),
     flow: round(clamp(normalized.flow * flowFactor, 0, 1)),
     spacingPx: round(Math.max(1, size * normalized.spacing * velocitySpacing)),
-    hardness: normalized.hardness,
+    hardness: round(clamp(normalized.hardness * hardnessFactor, 0, 1)),
     roundness: clamp(roundness, 0.05, 1),
     angleDeg: normalizeAngle(angleDeg),
     tipShape: normalized.tipShape,
@@ -1776,6 +1782,8 @@ const IMPLEMENTED_DYNAMIC_FIELDS = new Set([
   'pressureOpacity',
   'pressureFlow',
   'pressureCurve',
+  'pressureRoundness',
+  'pressureHardness',
   'tiltAngle',
   'tiltSize',
   'tiltRoundness',
@@ -1822,8 +1830,6 @@ const IMPLEMENTED_DYNAMIC_FIELDS = new Set([
 const UNSUPPORTED_DYNAMIC_FIELDS = [
   'colorJitter',
   'pressureAngle',
-  'pressureRoundness',
-  'pressureHardness',
   'pressureScatter',
   'tiltOpacity',
   'tiltFlow',
@@ -1868,16 +1874,6 @@ const UNSUPPORTED_BRUSH_FIELD_WARNINGS: Record<string, BrushCapabilityWarning> =
     field: 'pressureAngle',
     category: 'pressure',
     message: 'Pressure angle dynamics are not implemented; pressure currently affects size, opacity, and flow only.',
-  },
-  pressureRoundness: {
-    field: 'pressureRoundness',
-    category: 'pressure',
-    message: 'Pressure roundness dynamics are not implemented; pressure currently affects size, opacity, and flow only.',
-  },
-  pressureHardness: {
-    field: 'pressureHardness',
-    category: 'pressure',
-    message: 'Pressure hardness dynamics are not implemented; pressure currently affects size, opacity, and flow only.',
   },
   pressureScatter: {
     field: 'pressureScatter',
@@ -2487,6 +2483,8 @@ function getPressureAffectedDynamics(settings: BrushSettings): BrushStrokePrevie
   if (settings.pressureSize > 0) affects.push('size');
   if (settings.pressureOpacity > 0) affects.push('opacity');
   if (settings.pressureFlow > 0) affects.push('flow');
+  if ((settings.pressureRoundness ?? 0) > 0) affects.push('roundness');
+  if ((settings.pressureHardness ?? 0) > 0) affects.push('hardness');
   return affects;
 }
 

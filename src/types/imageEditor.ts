@@ -347,6 +347,10 @@ export interface BrushSettings {
    * transfer). Defaults to 'linear' (identity) — no change unless configured.
    */
   pressureCurve?: BrushResponseCurve;
+  /** Pressure → tip roundness (0..1): light pressure flattens the tip, full pressure restores it. */
+  pressureRoundness?: number;
+  /** Pressure → edge hardness (0..1): light pressure softens the edge, full pressure restores it. */
+  pressureHardness?: number;
   /** Stylus tilt → brush angle steering (0..1). */
   tiltAngle?: number;
   /** Stylus tilt → tip flattening / elongation (0..1). */

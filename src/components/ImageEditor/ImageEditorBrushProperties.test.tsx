@@ -86,6 +86,27 @@ describe('BrushPanel', () => {
     expect(useImageEditorStore.getState().brushSettings.symmetryMode).toBe('both');
   });
 
+  it('updates pressure-driven roundness and hardness from the Pressure panel', () => {
+    act(() => {
+      root.render(<BrushPanel />);
+    });
+
+    const roundness = container.querySelector<HTMLInputElement>('input[aria-label="Pressure roundness"]');
+    const hardness = container.querySelector<HTMLInputElement>('input[aria-label="Pressure hardness"]');
+    expect(roundness).not.toBeNull();
+    expect(hardness).not.toBeNull();
+
+    act(() => {
+      setInputValue(roundness!, '0.7');
+      setInputValue(hardness!, '0.4');
+    });
+
+    expect(useImageEditorStore.getState().brushSettings).toMatchObject({
+      pressureRoundness: 0.7,
+      pressureHardness: 0.4,
+    });
+  });
+
   it('selects a pressure response curve preset from the Pressure panel', () => {
     act(() => {
       root.render(<BrushPanel />);
