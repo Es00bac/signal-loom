@@ -250,6 +250,49 @@ export function BrushPanel() {
         </label>
       </div>
       <div className="rounded border border-cyan-300/10 bg-[#10131b] p-2">
+        <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Jitter (Randomization)</div>
+        <Slider
+          label="Size jitter"
+          ariaLabel="Size jitter"
+          value={settings.sizeJitter ?? 0}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ sizeJitter: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+        <Slider
+          label="Opacity jitter"
+          ariaLabel="Opacity jitter"
+          value={settings.opacityJitter ?? 0}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ opacityJitter: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+        <Slider
+          label="Flow jitter"
+          ariaLabel="Flow jitter"
+          value={settings.flowJitter ?? 0}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ flowJitter: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+        <Slider
+          label="Roundness jitter"
+          ariaLabel="Roundness jitter"
+          value={settings.roundnessJitter ?? 0}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ roundnessJitter: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+      </div>
+      <div className="rounded border border-cyan-300/10 bg-[#10131b] p-2">
         <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Color Dynamics</div>
         <Slider
           label="Pressure → Color"

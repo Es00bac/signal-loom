@@ -107,6 +107,35 @@ describe('BrushPanel', () => {
     expect(useImageEditorStore.getState().brushSettings.pressureCurve).toBe('linear');
   });
 
+  it('updates per-dab Shape/Transfer jitter sliders from the Jitter panel', () => {
+    act(() => {
+      root.render(<BrushPanel />);
+    });
+
+    const sizeJitter = container.querySelector<HTMLInputElement>('input[aria-label="Size jitter"]');
+    const opacityJitter = container.querySelector<HTMLInputElement>('input[aria-label="Opacity jitter"]');
+    const flowJitter = container.querySelector<HTMLInputElement>('input[aria-label="Flow jitter"]');
+    const roundnessJitter = container.querySelector<HTMLInputElement>('input[aria-label="Roundness jitter"]');
+    expect(sizeJitter).not.toBeNull();
+    expect(opacityJitter).not.toBeNull();
+    expect(flowJitter).not.toBeNull();
+    expect(roundnessJitter).not.toBeNull();
+
+    act(() => {
+      setInputValue(sizeJitter!, '0.6');
+      setInputValue(opacityJitter!, '0.4');
+      setInputValue(flowJitter!, '0.3');
+      setInputValue(roundnessJitter!, '0.2');
+    });
+
+    expect(useImageEditorStore.getState().brushSettings).toMatchObject({
+      sizeJitter: 0.6,
+      opacityJitter: 0.4,
+      flowJitter: 0.3,
+      roundnessJitter: 0.2,
+    });
+  });
+
   it('updates advanced brush engine controls for velocity, texture, wet media, GPU, device routes, and ABR fidelity', () => {
     act(() => {
       root.render(<BrushPanel />);
