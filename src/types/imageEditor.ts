@@ -377,6 +377,15 @@ export interface BrushSettings {
   velocityOpacity?: number;
   velocityFlow?: number;
   velocitySpacing?: number;
+  /**
+   * Shape/Transfer "jitter": per-dab deterministic randomization (seeded from the
+   * stroke seed). Each value 0..1 is the maximum fraction by which that property is
+   * randomly reduced per dab. 0 = off. Same seed → identical dabs (reproducible).
+   */
+  sizeJitter?: number;
+  opacityJitter?: number;
+  flowJitter?: number;
+  roundnessJitter?: number;
   /** Dry-brush / taper: fade dab opacity in over the first N dabs of a stroke (0 = off). */
   fadeLength?: number;
   /** Dry-brush paint load 0..1 (how much "paint" the brush starts with). Default 1 = full. */

@@ -98,6 +98,40 @@ describe('ImageBrushEngine', () => {
     expect(resolveBrushDynamics({ ...base }, 0.5).size).toBe(linear.size);
   });
 
+  it('applies deterministic per-dab jitter to size, opacity, flow, and roundness', () => {
+    const stroke = (settings: Partial<typeof DEFAULT_BRUSH_SETTINGS>) =>
+      buildBrushDabs(
+        { x: 0, y: 0 },
+        { x: 200, y: 0 },
+        { ...DEFAULT_BRUSH_SETTINGS, size: 40, opacity: 1, flow: 1, roundness: 1, spacing: 0.1, ...settings },
+        1,
+        { seed: 9 },
+      );
+
+    // No jitter => every dab keeps the base property values.
+    const flat = stroke({});
+    expect(flat.every((d) => d.size === flat[0].size)).toBe(true);
+    expect(flat.every((d) => d.opacity === 1 && d.flow === 1 && d.roundness === 1)).toBe(true);
+    const baseSize = flat[0].size;
+
+    // Size jitter => sizes vary, never exceed the base, and at least one is reduced.
+    const jittered = stroke({ sizeJitter: 0.6 });
+    expect(jittered.every((d) => d.size <= baseSize + 1e-9)).toBe(true);
+    expect(jittered.some((d) => d.size < baseSize)).toBe(true);
+    expect(new Set(jittered.map((d) => d.size)).size).toBeGreaterThan(1);
+
+    // Deterministic: same seed reproduces identical dabs.
+    const again = stroke({ sizeJitter: 0.6 });
+    expect(again.map((d) => d.size)).toEqual(jittered.map((d) => d.size));
+
+    // Opacity / flow / roundness jitter each reduce their own channel below the base.
+    expect(stroke({ opacityJitter: 0.5 }).some((d) => d.opacity < 1)).toBe(true);
+    expect(stroke({ flowJitter: 0.5 }).some((d) => d.flow < 1)).toBe(true);
+    expect(stroke({ roundnessJitter: 0.5 }).some((d) => d.roundness < 1)).toBe(true);
+    // Channels are independent: size jitter alone leaves opacity/flow/roundness pinned.
+    expect(jittered.every((d) => d.opacity === 1 && d.flow === 1 && d.roundness === 1)).toBe(true);
+  });
+
   it('builds deterministic spaced dabs with scatter and tip rotation', () => {
     const dabs = buildBrushDabs(
       { x: 0, y: 0 },
