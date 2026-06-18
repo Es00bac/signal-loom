@@ -291,6 +291,16 @@ export function BrushPanel() {
           onChange={(v) => set({ roundnessJitter: v })}
           format={(v) => `${Math.round(v * 100)}%`}
         />
+        <Slider
+          label="Angle jitter"
+          ariaLabel="Angle jitter"
+          value={settings.angleJitter ?? 0}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ angleJitter: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
       </div>
       <div className="rounded border border-cyan-300/10 bg-[#10131b] p-2">
         <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Color Dynamics</div>

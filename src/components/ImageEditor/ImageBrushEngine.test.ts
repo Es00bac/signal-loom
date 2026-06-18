@@ -128,6 +128,10 @@ describe('ImageBrushEngine', () => {
     expect(stroke({ opacityJitter: 0.5 }).some((d) => d.opacity < 1)).toBe(true);
     expect(stroke({ flowJitter: 0.5 }).some((d) => d.flow < 1)).toBe(true);
     expect(stroke({ roundnessJitter: 0.5 }).some((d) => d.roundness < 1)).toBe(true);
+    // Angle jitter rotates the tip per dab (around the base 0°), producing varied angles.
+    const angled = stroke({ angleJitter: 0.5 });
+    expect(new Set(angled.map((d) => d.angleDeg)).size).toBeGreaterThan(1);
+    expect(angled.some((d) => d.angleDeg !== flat[0].angleDeg)).toBe(true);
     // Channels are independent: size jitter alone leaves opacity/flow/roundness pinned.
     expect(jittered.every((d) => d.opacity === 1 && d.flow === 1 && d.roundness === 1)).toBe(true);
   });
@@ -350,8 +354,8 @@ describe('ImageBrushEngine', () => {
       'gamepadBrushControls',
       'abrSourceHash',
     ]));
-    expect(summary.unsupportedDynamics).toEqual(expect.arrayContaining(['colorJitter', 'angleJitter']));
-    expect(summary.unsupportedDynamics).not.toEqual(expect.arrayContaining(['texture', 'dualBrush']));
+    expect(summary.unsupportedDynamics).toEqual(expect.arrayContaining(['colorJitter']));
+    expect(summary.unsupportedDynamics).not.toEqual(expect.arrayContaining(['texture', 'dualBrush', 'angleJitter', 'sizeJitter']));
     expect(summary.unsupportedWarnings).toEqual([]);
   });
 
@@ -363,7 +367,6 @@ describe('ImageBrushEngine', () => {
       scatter: 0.25,
       pressureAngle: 0.8,
       tiltOpacity: 0.45,
-      angleJitter: 0.2,
       colorJitter: 0.3,
     };
 
@@ -373,7 +376,6 @@ describe('ImageBrushEngine', () => {
     }))).toEqual([
       { field: 'pressureAngle', category: 'pressure' },
       { field: 'tiltOpacity', category: 'tilt' },
-      { field: 'angleJitter', category: 'randomization' },
       { field: 'colorJitter', category: 'randomization' },
     ]);
 
@@ -389,7 +391,6 @@ describe('ImageBrushEngine', () => {
     expect(summary.unsupportedWarnings.map((warning) => `${warning.presetId}:${warning.field}`)).toEqual([
       'imported-mixer:pressureAngle',
       'imported-mixer:tiltOpacity',
-      'imported-mixer:angleJitter',
       'imported-mixer:colorJitter',
     ]);
   });
@@ -482,7 +483,7 @@ describe('ImageBrushEngine', () => {
         symmetryMode: 'vertical',
         texture: 'canvas-grain',
         dualBrush: true,
-        angleJitter: 0.2,
+        colorJitter: 0.2,
       },
       presets: IMAGE_BRUSH_PRESETS,
       presetPack: {
@@ -540,7 +541,7 @@ describe('ImageBrushEngine', () => {
       limitations: {
         advancedDynamics: {
           supported: false,
-          unsupportedFields: ['angleJitter'],
+          unsupportedFields: ['colorJitter'],
         },
         texture: { supported: true, requested: true },
         scatter: {
@@ -800,7 +801,6 @@ describe('ImageBrushEngine', () => {
       texture: 'canvas-grain',
       dualBrush: true,
       pressureScatter: 0.5,
-      angleJitter: 0.25,
       colorJitter: 0.3,
     });
 
@@ -819,16 +819,15 @@ describe('ImageBrushEngine', () => {
         value: 0.45,
         deterministicOnly: true,
         state: 'deterministic-scatter-with-jitter-fallback',
-        unsupportedJitterFields: ['pressureScatter', 'angleJitter', 'colorJitter'],
+        unsupportedJitterFields: ['pressureScatter', 'colorJitter'],
       },
     });
     expect(dynamics.warnings.map((warning) => `${warning.field}:${warning.category}`)).toEqual([
       'pressureScatter:pressure',
-      'angleJitter:randomization',
       'colorJitter:randomization',
     ]);
     expect(dynamics.signature).toBe(
-      'brush-unsupported-dynamics:v1:texture=texture,textureScale,dualBrush:scatter=0.45:scatter-state=deterministic-scatter-with-jitter-fallback:jitter=pressureScatter,angleJitter,colorJitter:warnings=pressureScatter,angleJitter,colorJitter',
+      'brush-unsupported-dynamics:v1:texture=texture,textureScale,dualBrush:scatter=0.45:scatter-state=deterministic-scatter-with-jitter-fallback:jitter=pressureScatter,colorJitter:warnings=pressureScatter,colorJitter',
     );
   });
 

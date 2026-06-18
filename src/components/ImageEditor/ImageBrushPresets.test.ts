@@ -494,7 +494,7 @@ describe('ImageBrushPresets', () => {
       scatter: 0.5,
       texture: 'paper-grain',
       dualBrush: true,
-      angleJitter: 0.35,
+      colorJitter: 0.35,
     };
     const descriptor = BrushPresets.describeImageBrushPreset({
       id: 'user-imported-grain',
@@ -522,12 +522,12 @@ describe('ImageBrushPresets', () => {
         deterministicOnly: true,
         value: 0.5,
         state: 'deterministic-scatter-with-jitter-fallback',
-        unsupportedJitterFields: ['angleJitter'],
+        unsupportedJitterFields: ['colorJitter'],
       },
     });
     expect(descriptor.dynamics.previewSignature).toBe(descriptor.preview.signature);
     expect(descriptor.dynamics.unsupportedWarnings.map((warning) => `${warning.field}:${warning.category}`)).toEqual([
-      'angleJitter:randomization',
+      'colorJitter:randomization',
     ]);
     expect(descriptor.tags).toEqual(expect.arrayContaining([
       'warning:unsupported-dynamics',

@@ -116,16 +116,19 @@ describe('BrushPanel', () => {
     const opacityJitter = container.querySelector<HTMLInputElement>('input[aria-label="Opacity jitter"]');
     const flowJitter = container.querySelector<HTMLInputElement>('input[aria-label="Flow jitter"]');
     const roundnessJitter = container.querySelector<HTMLInputElement>('input[aria-label="Roundness jitter"]');
+    const angleJitter = container.querySelector<HTMLInputElement>('input[aria-label="Angle jitter"]');
     expect(sizeJitter).not.toBeNull();
     expect(opacityJitter).not.toBeNull();
     expect(flowJitter).not.toBeNull();
     expect(roundnessJitter).not.toBeNull();
+    expect(angleJitter).not.toBeNull();
 
     act(() => {
       setInputValue(sizeJitter!, '0.6');
       setInputValue(opacityJitter!, '0.4');
       setInputValue(flowJitter!, '0.3');
       setInputValue(roundnessJitter!, '0.2');
+      setInputValue(angleJitter!, '0.5');
     });
 
     expect(useImageEditorStore.getState().brushSettings).toMatchObject({
@@ -133,6 +136,7 @@ describe('BrushPanel', () => {
       opacityJitter: 0.4,
       flowJitter: 0.3,
       roundnessJitter: 0.2,
+      angleJitter: 0.5,
     });
   });
 

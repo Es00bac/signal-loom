@@ -683,6 +683,7 @@ export function normalizeBrushSettings(settings: Partial<BrushSettings>): BrushS
     opacityJitter: clamp(merged.opacityJitter ?? 0, 0, 1),
     flowJitter: clamp(merged.flowJitter ?? 0, 0, 1),
     roundnessJitter: clamp(merged.roundnessJitter ?? 0, 0, 1),
+    angleJitter: clamp(merged.angleJitter ?? 0, 0, 1),
     fadeLength: Math.max(0, merged.fadeLength ?? 0),
     paintLoad: clamp(merged.paintLoad ?? 1, 0, 1),
     loadFalloff: Math.max(0, merged.loadFalloff ?? 0),
@@ -788,6 +789,7 @@ export function buildBrushDabs(
   const opacityJitter = normalized.opacityJitter ?? 0;
   const flowJitter = normalized.flowJitter ?? 0;
   const roundnessJitter = normalized.roundnessJitter ?? 0;
+  const angleJitter = normalized.angleJitter ?? 0;
 
   return Array.from({ length: count }, (_, offset) => {
     const index = startIndex + offset;
@@ -810,11 +812,13 @@ export function buildBrushDabs(
     const opacityJitterFactor = opacityJitter > 0 ? 1 - opacityJitter * seededNoise(seed + 211, index) : 1;
     const flowJitterFactor = flowJitter > 0 ? 1 - flowJitter * seededNoise(seed + 307, index) : 1;
     const roundnessJitterFactor = roundnessJitter > 0 ? 1 - roundnessJitter * seededNoise(seed + 419, index) : 1;
+    const angleJitterOffset = angleJitter > 0 ? (seededNoise(seed + 523, index) * 2 - 1) * angleJitter * 180 : 0;
 
     return {
       ...dynamics,
       size: Math.max(1, round(dynamics.size * sizeJitterFactor)),
       roundness: clamp(dynamics.roundness * roundnessJitterFactor, 0.05, 1),
+      angleDeg: angleJitter > 0 ? normalizeAngle(dynamics.angleDeg + angleJitterOffset) : dynamics.angleDeg,
       opacity: round(clamp(dynamics.opacity * fade * load * opacityJitterFactor, 0, 1)),
       flow: round(clamp(dynamics.flow * load * flowJitterFactor, 0, 1)),
       x: round(from.x + dx * t + normalX * scatter),
@@ -1790,6 +1794,7 @@ const IMPLEMENTED_DYNAMIC_FIELDS = new Set([
   'opacityJitter',
   'flowJitter',
   'roundnessJitter',
+  'angleJitter',
   'texture',
   'dualBrush',
   'textureScale',
@@ -1816,7 +1821,6 @@ const IMPLEMENTED_DYNAMIC_FIELDS = new Set([
 
 const UNSUPPORTED_DYNAMIC_FIELDS = [
   'colorJitter',
-  'angleJitter',
   'pressureAngle',
   'pressureRoundness',
   'pressureHardness',
@@ -1894,11 +1898,6 @@ const UNSUPPORTED_BRUSH_FIELD_WARNINGS: Record<string, BrushCapabilityWarning> =
     field: 'tiltScatter',
     category: 'tilt',
     message: 'Tilt scatter dynamics are not implemented; tilt currently maps to dab angle only.',
-  },
-  angleJitter: {
-    field: 'angleJitter',
-    category: 'randomization',
-    message: 'Angle jitter is not implemented; the brush engine currently supports deterministic scatter only.',
   },
   colorJitter: {
     field: 'colorJitter',

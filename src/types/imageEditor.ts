@@ -386,6 +386,8 @@ export interface BrushSettings {
   opacityJitter?: number;
   flowJitter?: number;
   roundnessJitter?: number;
+  /** Angle jitter: per-dab random tip rotation, 0..1 scaled to ±180°. 0 = off. */
+  angleJitter?: number;
   /** Dry-brush / taper: fade dab opacity in over the first N dabs of a stroke (0 = off). */
   fadeLength?: number;
   /** Dry-brush paint load 0..1 (how much "paint" the brush starts with). Default 1 = full. */
