@@ -5,7 +5,7 @@ media — and run it. Think of it as a wiring diagram for a generation pipeline:
 re-typing a prompt and re-uploading a reference every time, you build the pipeline once and re-run
 or tweak it.
 
-![Flow workspace — a multi-node generation graph](../../release/play-store/screenshots/desktop/flow-workspace.png)
+![Flow workspace — a multi-node generation graph](images/flow-workspace.png)
 
 ## The canvas
 
