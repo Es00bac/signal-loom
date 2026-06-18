@@ -347,6 +347,12 @@ export interface BrushSettings {
   velocityOpacity?: number;
   velocityFlow?: number;
   velocitySpacing?: number;
+  /** Dry-brush / taper: fade dab opacity in over the first N dabs of a stroke (0 = off). */
+  fadeLength?: number;
+  /** Dry-brush paint load 0..1 (how much "paint" the brush starts with). Default 1 = full. */
+  paintLoad?: number;
+  /** Dry-brush load depletion rate per pixel of stroke distance (0 = never runs out). */
+  loadFalloff?: number;
   texture?: string;
   textureScale?: number;
   textureDepth?: number;

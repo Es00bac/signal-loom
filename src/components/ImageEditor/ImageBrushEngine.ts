@@ -1,6 +1,7 @@
 import type { BrushSettings, BrushSymmetryMode } from '../../types/imageEditor';
 import { sampleBrushTexture } from './ImageBrushTextures';
 import { applyBrushTiltDynamics, resolveBrushTiltState, type BrushTiltState } from './brushTiltGeometry';
+import { fadeInFactor, depletePaintLoad } from './ImageBrushDryDynamics';
 import {
   STAMP_CANONICAL_RADIUS,
   getBrushStamp,
@@ -36,6 +37,8 @@ export interface BuildBrushDabsOptions {
   /** Full stylus tilt + barrel-rotation state (drives angle, elongation, size). */
   tilt?: BrushTiltState | null;
   velocityPxPerMs?: number;
+  /** Accumulated stroke distance in px before this segment (for dry-brush load depletion). */
+  accumulatedDistancePx?: number;
 }
 
 export interface BrushStrokePreviewOptions extends BuildBrushDabsOptions {
@@ -668,6 +671,9 @@ export function normalizeBrushSettings(settings: Partial<BrushSettings>): BrushS
     velocityOpacity: clamp(merged.velocityOpacity ?? 0, 0, 1),
     velocityFlow: clamp(merged.velocityFlow ?? 0, 0, 1),
     velocitySpacing: clamp(merged.velocitySpacing ?? 0, 0, 1),
+    fadeLength: Math.max(0, merged.fadeLength ?? 0),
+    paintLoad: clamp(merged.paintLoad ?? 1, 0, 1),
+    loadFalloff: Math.max(0, merged.loadFalloff ?? 0),
     texture: normalizeOptionalBrushText(merged.texture),
     textureScale: clamp(merged.textureScale ?? 1, 0.05, 4),
     textureDepth: clamp(merged.textureDepth ?? 0, 0, 1),
@@ -771,9 +777,17 @@ export function buildBrushDabs(
       : 0;
     const textureAlpha = resolveBrushTextureAlpha(normalized, seed, index);
     const wetness = resolveBrushWetness(normalized, index);
+    const fade = fadeInFactor(index, normalized.fadeLength ?? 0);
+    const load = depletePaintLoad(
+      normalized.paintLoad ?? 1,
+      (options.accumulatedDistancePx ?? 0) + offset * dynamics.spacingPx,
+      normalized.loadFalloff ?? 0,
+    );
 
     return {
       ...dynamics,
+      opacity: round(clamp(dynamics.opacity * fade * load, 0, 1)),
+      flow: round(clamp(dynamics.flow * load, 0, 1)),
       x: round(from.x + dx * t + normalX * scatter),
       y: round(from.y + dy * t + normalY * scatter),
       index,
