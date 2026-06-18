@@ -624,6 +624,7 @@ function paintStrokeSegment(
       colorRate: settings.colorRate ?? 0.5,
       smudgeRadius: settings.smudgeRadius ?? 12,
       mixMode: settings.mixMode ?? 'rgb',
+      smudgeMode: settings.smudgeMode ?? 'dulling',
       layerX: layer.x,
       layerY: layer.y,
       width: bitmap.width,

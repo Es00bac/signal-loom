@@ -496,6 +496,25 @@ export function BrushPanel() {
             ))}
           </div>
         </div>
+        <div className="mt-2">
+          <label className="mb-1 block text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Smudge Mode</label>
+          <div className="grid grid-cols-2 gap-1">
+            {([{ label: 'Dulling', value: 'dulling' }, { label: 'Smearing', value: 'smearing' }] as const).map((option) => (
+              <button
+                className={`rounded border px-2 py-1 text-left text-[11px] hover:border-cyan-400/40 hover:text-white ${
+                  (settings.smudgeMode ?? 'dulling') === option.value
+                    ? 'border-cyan-300/60 bg-cyan-400/15 text-cyan-50'
+                    : 'border-cyan-300/10 bg-[#252630] text-cyan-100/65'
+                }`}
+                key={option.value}
+                onClick={() => set({ smudgeMode: option.value })}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
       <div className="rounded border border-cyan-300/10 bg-[#10131b] p-2">
         <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Dry Brush</div>

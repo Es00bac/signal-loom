@@ -26,6 +26,7 @@ export interface MixerPaintParams {
   colorRate: number;
   smudgeRadius: number;
   mixMode: 'rgb' | 'spectral';
+  smudgeMode?: 'dulling' | 'smearing';
   layerX: number; layerY: number; width: number; height: number;
   /** Paint one dab at its (doc-space) position with the given css colour. Injected so this module
    *  stays testable without the full brush engine. */
@@ -36,8 +37,9 @@ export interface MixerPaintParams {
  *  Returns the updated smudge state to carry into the next call. */
 export function paintMixerDabs(ctx: Ctx, dabs: MixerDabInput[], params: MixerPaintParams): MixerColor {
   let state = params.state;
+  const sampleRadius = (params.smudgeMode ?? 'dulling') === 'smearing' ? Math.min(2, params.smudgeRadius) : params.smudgeRadius;
   for (const dab of dabs) {
-    const sampled = sampleCanvasAverage(ctx, dab.x - params.layerX, dab.y - params.layerY, params.smudgeRadius, params.width, params.height);
+    const sampled = sampleCanvasAverage(ctx, dab.x - params.layerX, dab.y - params.layerY, sampleRadius, params.width, params.height);
     state = updateSmudgeState(state, sampled, params.smudgeLength);
     const dabColor = params.mixMode === 'spectral'
       ? mixSpectral(state, params.fg, params.colorRate)

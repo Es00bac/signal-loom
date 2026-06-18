@@ -351,6 +351,8 @@ export interface BrushSettings {
   colorRate?: number;
   /** Mixer colour blending: 'rgb' (default) or 'spectral' (realistic pigment). */
   mixMode?: 'rgb' | 'spectral';
+  /** Mixer sampling: 'dulling' (average disc) or 'smearing' (streaky drag). */
+  smudgeMode?: 'dulling' | 'smearing';
   tipShape: 'round' | 'square';
   symmetryMode?: BrushSymmetryMode;
   velocitySize?: number;

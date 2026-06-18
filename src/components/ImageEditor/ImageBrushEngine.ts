@@ -670,6 +670,7 @@ export function normalizeBrushSettings(settings: Partial<BrushSettings>): BrushS
     smudgeRadius: Math.max(1, merged.smudgeRadius ?? 12),
     colorRate: clamp(merged.colorRate ?? 0.5, 0, 1),
     mixMode: merged.mixMode ?? 'rgb',
+    smudgeMode: merged.smudgeMode ?? 'dulling',
     tipShape: merged.tipShape === 'square' ? 'square' : 'round',
     symmetryMode: normalizeBrushSymmetryMode(merged.symmetryMode),
     velocitySize: clamp(merged.velocitySize ?? 0, 0, 1),

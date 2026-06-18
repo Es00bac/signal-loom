@@ -197,6 +197,53 @@ describe('paintMixerDabs', () => {
     expect(next.map((c) => Math.round(c))).toEqual([100, 100, 100, 255]);
   });
 
+  it('smudgeMode "smearing" and "dulling" produce different sampled colours on a spot-vs-disc canvas', () => {
+    // Canvas: a tiny bright-red centre spot (3×3 px centred at 20,20) surrounded by pure blue.
+    // Dulling samples a large disc → average skews heavily toward blue.
+    // Smearing samples only ≤2 px → picks up mostly the red centre spot.
+    const W = 40, H = 40;
+    const canvas = newCanvas(W, H, [0, 0, 255, 255]); // fill blue
+    const ctx = canvas.getContext('2d')! as unknown as FakeCtx;
+    // Paint red 3×3 patch centred at (20,20)
+    const spot = new Uint8ClampedArray(3 * 3 * 4);
+    for (let i = 0; i < 9; i++) spot.set([255, 0, 0, 255], i * 4);
+    ctx.putImageData(new FakeImageData(spot, 3, 3), 19, 19);
+
+    const baseParams = {
+      state: [0, 0, 0, 0] as MixerColor,
+      fg: [0, 0, 0, 255] as MixerColor,
+      smudgeLength: 0,
+      colorRate: 0,
+      smudgeRadius: 15, // large disc for dulling; capped to 2 for smearing
+      mixMode: 'rgb' as const,
+      layerX: 0, layerY: 0, width: W, height: H,
+    };
+
+    const capturedDulling: string[] = [];
+    paintMixerDabs(canvas.getContext('2d')!, [{ x: 20, y: 20 }], {
+      ...baseParams,
+      smudgeMode: 'dulling',
+      paintDab: (_c, _dab, css) => capturedDulling.push(css),
+    });
+
+    const capturedSmearing: string[] = [];
+    paintMixerDabs(canvas.getContext('2d')!, [{ x: 20, y: 20 }], {
+      ...baseParams,
+      smudgeMode: 'smearing',
+      paintDab: (_c, _dab, css) => capturedSmearing.push(css),
+    });
+
+    const [rD, , bD] = parseRgba(capturedDulling[0]);
+    const [rS, , bS] = parseRgba(capturedSmearing[0]);
+
+    // Dulling averages a large disc → blue dominant
+    expect(bD).toBeGreaterThan(rD);
+    // Smearing samples only the tiny centre → red dominant
+    expect(rS).toBeGreaterThan(bS);
+    // The two modes must yield different colours
+    expect(capturedDulling[0]).not.toBe(capturedSmearing[0]);
+  });
+
   it('mixMode "spectral" with blue state + yellow fg at colorRate 0.5 yields a green-dominant colour', () => {
     // Blue canvas, yellow foreground. Spectral (pigment) mix of blue + yellow is green.
     const canvas = newCanvas(40, 40, [0, 0, 255, 255]);
