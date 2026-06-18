@@ -1,4 +1,5 @@
 import type { ImageDocument, ImageLayer, LayerBitmap } from '../../types/imageEditor';
+import { recordStrokeDraw } from './imageStrokePerf';
 import { maskToCanvas, type SelectionMask } from './SelectionMask';
 import { createQuickMaskOverlayMask } from './ImageQuickMask';
 import { buildSelectAndMaskPreviewMask, createSelectAndMaskMatteMask } from './ImageSelectAndMask';
@@ -673,6 +674,23 @@ function getHighResWorkerBlobUrl(): string {
   return URL.createObjectURL(blob);
 }
 
+/**
+ * Whether the layer range [startIndex, end) can be safely recomposited within a dab-sized dirty
+ * rect alone. Layer effects (drop shadow / outer glow / stroke) and adjustments bleed outside the
+ * painted pixels, and groups/adjustment layers transform the whole region — for those we fall back
+ * to a full recomposite so the dirty-rect fast path never produces a stale edge.
+ */
+function rangeIsDirtyRectSafe(layers: readonly ImageLayer[], startIndex: number): boolean {
+  for (let i = startIndex; i < layers.length; i += 1) {
+    const layer = layers[i];
+    if (!layer) continue;
+    if (layer.type === 'group' || layer.type === 'adjustment') return false;
+    if (layer.adjustment) return false;
+    if (layer.effects && layer.effects.length > 0) return false;
+  }
+  return true;
+}
+
 export class CompositeRenderer {
   private canvas: HTMLCanvasElement;
   private wrapper: HTMLElement;
@@ -704,11 +722,24 @@ export class CompositeRenderer {
   private strokeBackdropState: LayerBitmap | null = null; // clippingBaseMask after the backdrop range
   private strokeBackdropLayers: readonly ImageLayer[] | null = null; // identity refs of [0, activeIndex)
   private strokeBackdropActiveId: string | null = null;
+  // Dirty-rect live compositing (the Krita/GIMP "projection" model): the paint tools report the
+  // doc-space region they touched each frame; we recomposite ONLY that region into the persistent
+  // scratch instead of the whole document. This is the difference between O(document) and O(dab)
+  // per frame — the entire reason fast sketching was unusable at 4K.
+  private strokeDirtyRect: { x: number; y: number; width: number; height: number } | null = null;
+  private strokeProjectionValid = false; // does the scratch hold a full, current composite to update?
+  private wasPaintingStroke = false;
+  private lastCompositeIncremental = false; // diagnostic: did the last stroke composite use the dirty-rect path?
 
   constructor(canvas: HTMLCanvasElement, wrapper: HTMLElement) {
     this.canvas = canvas;
     this.wrapper = wrapper;
-    const ctx = canvas.getContext('2d');
+    // Low-latency "desynchronized" 2D context: lets the browser present this canvas
+    // straight to the screen, bypassing the DOM compositor's frame queue. Measured
+    // neutral on this hardware (present is already 60fps every backend) but harmless
+    // and helps latency once per-frame compute is cheap. Falls back where unsupported.
+    const ctx =
+      canvas.getContext('2d', { desynchronized: true }) ?? canvas.getContext('2d');
     if (!ctx) {
       throw new Error('Failed to acquire 2D context for composite renderer');
     }
@@ -1086,6 +1117,40 @@ export class CompositeRenderer {
    * range + the live range together cover the whole stack), but skips recompositing the unchanged
    * layers below the one being painted — the common, expensive case when painting on an upper layer.
    */
+  /** Paint tools call this with the doc-space region they touched so the next frame only
+   * recomposites that region instead of the whole document. */
+  markStrokeDirty(x: number, y: number, width: number, height: number): void {
+    if (width <= 0 || height <= 0) return;
+    const right = x + width;
+    const bottom = y + height;
+    if (!this.strokeDirtyRect) {
+      this.strokeDirtyRect = { x, y, width, height };
+      return;
+    }
+    const r = this.strokeDirtyRect;
+    const nx = Math.min(r.x, x);
+    const ny = Math.min(r.y, y);
+    r.width = Math.max(r.x + r.width, right) - nx;
+    r.height = Math.max(r.y + r.height, bottom) - ny;
+    r.x = nx;
+    r.y = ny;
+  }
+
+  private consumeStrokeDirtyRect(
+    docWidth: number,
+    docHeight: number,
+  ): { x: number; y: number; width: number; height: number } | null {
+    const r = this.strokeDirtyRect;
+    this.strokeDirtyRect = null;
+    if (!r) return null;
+    const x = Math.max(0, Math.floor(r.x));
+    const y = Math.max(0, Math.floor(r.y));
+    const right = Math.min(docWidth, Math.ceil(r.x + r.width));
+    const bottom = Math.min(docHeight, Math.ceil(r.y + r.height));
+    if (right <= x || bottom <= y) return null;
+    return { x, y, width: right - x, height: bottom - y };
+  }
+
   private compositeActiveAware(doc: ImageDocument): ImageBitmap | HTMLCanvasElement | LayerBitmap {
     const activeIndex = doc.activeLayerId
       ? doc.layers.findIndex((layer) => layer.id === doc.activeLayerId)
@@ -1103,24 +1168,54 @@ export class CompositeRenderer {
     const scratch = this.ensureStrokeCanvas('scratch', doc.width, doc.height);
     const ctx = scratch.getContext('2d') as OffscreenCanvasRenderingContext2D | null;
     if (!ctx || !this.strokeBackdrop) return renderImageDocumentLayersToBitmap(doc);
+
+    // Dirty-rect update: if the scratch already holds a current full composite and the paint tool
+    // reported a touched region (and no layer at/above the active one has effects/adjustments that
+    // bleed outside the dab), recomposite ONLY that region over the cached backdrop. Everything
+    // outside it is retained from the previous frame. ~50-200x cheaper than a full recomposite.
+    const dirty = this.consumeStrokeDirtyRect(doc.width, doc.height);
+    const incremental =
+      this.strokeProjectionValid && dirty !== null && rangeIsDirtyRectSafe(doc.layers, activeIndex);
+    this.lastCompositeIncremental = incremental && dirty !== null;
+
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-    ctx.clearRect(0, 0, scratch.width, scratch.height);
-    ctx.drawImage(this.strokeBackdrop, 0, 0);
     // The active layer's pixels/mask are changing live, so recompute its masked composite fresh
     // each frame; the cached backdrop already covers the (unchanged) layers below it.
     setLiveMaskBypassLayer(doc.activeLayerId);
     try {
-      compositeLayerRangeInto(
-        scratch,
-        doc.layers,
-        doc.width,
-        doc.height,
-        activeIndex,
-        doc.layers.length,
-        this.strokeBackdropState,
-      );
+      if (incremental && dirty) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(dirty.x, dirty.y, dirty.width, dirty.height);
+        ctx.clip();
+        ctx.clearRect(dirty.x, dirty.y, dirty.width, dirty.height);
+        ctx.drawImage(this.strokeBackdrop, 0, 0);
+        compositeLayerRangeInto(
+          scratch,
+          doc.layers,
+          doc.width,
+          doc.height,
+          activeIndex,
+          doc.layers.length,
+          this.strokeBackdropState,
+        );
+        ctx.restore();
+      } else {
+        ctx.clearRect(0, 0, scratch.width, scratch.height);
+        ctx.drawImage(this.strokeBackdrop, 0, 0);
+        compositeLayerRangeInto(
+          scratch,
+          doc.layers,
+          doc.width,
+          doc.height,
+          activeIndex,
+          doc.layers.length,
+          this.strokeBackdropState,
+        );
+        this.strokeProjectionValid = true;
+      }
     } finally {
       setLiveMaskBypassLayer(null);
     }
@@ -1146,6 +1241,8 @@ export class CompositeRenderer {
     );
     this.strokeBackdropLayers = doc.layers.slice(0, activeIndex);
     this.strokeBackdropActiveId = doc.activeLayerId;
+    // Backdrop changed → the scratch projection is stale; force a full recomposite next frame.
+    this.strokeProjectionValid = false;
   }
 
   /**
@@ -1205,6 +1302,7 @@ export class CompositeRenderer {
     drawTransparencyCheckerboard(ctx, x0, y0, dw, dh, 16 * zoom * dpr);
 
     const store = useImageEditorStore.getState();
+    const perfCompositeStart = performance.now();
     let composite: ImageBitmap | HTMLCanvasElement | LayerBitmap | null = null;
     if (store.isDraggingSlider) {
       if (!this.lowResDoc) {
@@ -1230,8 +1328,15 @@ export class CompositeRenderer {
       // Don't run the off-thread worker here — it would re-snapshot every layer per frame, and the
       // committed full-quality render happens on pointer-up (see dispatcher onUp).
       this.lowResDoc = null;
+      // First frame of a new stroke: force a full composite so the dirty-rect projection starts
+      // from a correct, complete scratch before incremental dab updates take over.
+      if (!this.wasPaintingStroke) {
+        this.strokeProjectionValid = false;
+        this.wasPaintingStroke = true;
+      }
       composite = this.compositeActiveAware(doc);
     } else {
+      this.wasPaintingStroke = false;
       this.lowResDoc = null;
       const signature = this.buildDocSignature(doc);
       if (this.workerDocSignature === signature && this.workerResultBitmap) {
@@ -1242,11 +1347,13 @@ export class CompositeRenderer {
         this.runHighResWorker(doc).catch(console.error);
       }
     }
+    const perfBlitStart = performance.now();
     if (composite) {
       ctx.imageSmoothingEnabled = true;
       ctx.drawImage(composite, 0, 0, composite.width, composite.height, x0, y0, dw, dh);
     }
     ctx.restore();
+    const perfOverlayStart = performance.now();
 
     ctx.save();
     ctx.scale(dpr, dpr);
@@ -1295,6 +1402,13 @@ export class CompositeRenderer {
       });
       ctx.restore();
     }
+
+    recordStrokeDraw(
+      perfBlitStart - perfCompositeStart,
+      perfOverlayStart - perfBlitStart,
+      performance.now() - perfOverlayStart,
+      this.lastCompositeIncremental,
+    );
   }
 
   private drawDocumentGridAndGuides(doc: ImageDocument, settings: ImageViewSettings, zoom: number): void {
@@ -1428,6 +1542,27 @@ function getLayerVectorMaskMetadata(layer: ImageLayer) {
   return (layer as ImageLayerWithVectorMask).metadata?.vectorMask ?? null;
 }
 
+// Cached 2x2-tile checker bitmap, keyed by device tile size. Rebuilt only when the
+// zoom/dpr-derived tile size changes — NOT per frame.
+let checkerTileCache: { step: number; canvas: LayerBitmap } | null = null;
+
+function getCheckerTile(step: number): LayerBitmap {
+  const size = Math.max(1, Math.round(step));
+  if (checkerTileCache && checkerTileCache.step === size) return checkerTileCache.canvas;
+  const canvas = createBitmap(size * 2, size * 2);
+  const tctx = canvas.getContext('2d') as OffscreenCanvasRenderingContext2D | null;
+  if (tctx) {
+    tctx.fillStyle = '#1a1b23';
+    tctx.fillRect(0, 0, size * 2, size * 2);
+    tctx.fillStyle = '#222637';
+    // (i+j) even tiles get the lighter colour → light squares at (0,0) and (1,1).
+    tctx.fillRect(0, 0, size, size);
+    tctx.fillRect(size, size, size, size);
+  }
+  checkerTileCache = { step: size, canvas };
+  return canvas;
+}
+
 function drawTransparencyCheckerboard(
   ctx: CanvasRenderingContext2D,
   originX: number,
@@ -1436,25 +1571,23 @@ function drawTransparencyCheckerboard(
   height: number,
   tile: number,
 ): void {
-  // Drawn in device space within the document's snapped integer rect
-  // [originX, originY, width, height]. `tile` is the checker square size in
-  // device pixels (16 document px scaled by zoom * dpr) so the pattern still
-  // tracks the document like before, while the rect's edges stay pixel-crisp.
-  ctx.fillStyle = '#1a1b23';
-  ctx.fillRect(originX, originY, width, height);
-  ctx.fillStyle = '#222637';
+  // Drawn in device space within the document's snapped integer rect. The checker used
+  // to be a nested fillRect loop — tens of thousands of fillRects per frame at 4K/DPR,
+  // re-run every frame even though it never changes and is painted over by an opaque
+  // image. Now it's a cached tile stamped as a repeating pattern: one fillRect.
   const step = Math.max(1, tile);
-  const cols = Math.ceil(width / step);
-  const rows = Math.ceil(height / step);
-  for (let j = 0; j < rows; j += 1) {
-    for (let i = 0; i < cols; i += 1) {
-      if ((i + j) % 2 !== 0) continue;
-      const tx = originX + i * step;
-      const ty = originY + j * step;
-      // Clamp the final row/column so tiles never overshoot the rect.
-      ctx.fillRect(tx, ty, Math.min(step, originX + width - tx), Math.min(step, originY + height - ty));
-    }
+  const pattern = ctx.createPattern(getCheckerTile(step), 'repeat');
+  ctx.save();
+  if (pattern) {
+    // Translate so the pattern's tile boundary aligns to the document origin (tracks pan).
+    ctx.translate(originX, originY);
+    ctx.fillStyle = pattern;
+    ctx.fillRect(0, 0, width, height);
+  } else {
+    ctx.fillStyle = '#1a1b23';
+    ctx.fillRect(originX, originY, width, height);
   }
+  ctx.restore();
 }
 
 interface Edge {

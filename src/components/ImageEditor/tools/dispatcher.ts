@@ -199,6 +199,9 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       const requestRender: ToolEnv['requestRender'] = (options) => {
         rendererRef.current?.requestRender(options);
       };
+      const markDirty: ToolEnv['markDirty'] = (rect) => {
+        rendererRef.current?.markStrokeDirty(rect.x, rect.y, rect.width, rect.height);
+      };
       return {
         doc,
         activeLayer,
@@ -214,6 +217,7 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
         pushOperation: state.pushOperation,
         store: state,
         requestRender,
+        markDirty,
         resolveSelectionMode: (mods: Modifiers) =>
           resolveModeFromMods(state.selectionToolSettings.mode, mods),
       };

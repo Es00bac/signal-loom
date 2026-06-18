@@ -56,6 +56,34 @@ import {
 } from '../components/ImageEditor/imageEditorTools';
 
 const MAX_HISTORY = 50;
+// Undo snapshots store layer bitmaps; at 4K a single paint op holds ~134MB (full-layer
+// before+after). Capping only by op count (50) let history grow toward gigabytes, which
+// degrades brush responsiveness over a session (GC/memory pressure). Also bound by bytes so
+// large docs stop growing while small docs still keep deep history.
+const MAX_HISTORY_BYTES = 768 * 1024 * 1024;
+
+function operationSnapshotBytes(op: EditorOperation): number {
+  let bytes = 0;
+  const before = (op as { before?: { width?: number; height?: number } }).before;
+  const after = (op as { after?: { width?: number; height?: number } }).after;
+  if (before?.width && before?.height) bytes += before.width * before.height * 4;
+  if (after?.width && after?.height) bytes += after.width * after.height * 4;
+  return bytes;
+}
+
+function trimHistory(stack: EditorOperation[]): EditorOperation[] {
+  const trimmed = stack.length > MAX_HISTORY ? stack.slice(stack.length - MAX_HISTORY) : stack;
+  let total = 0;
+  for (const op of trimmed) total += operationSnapshotBytes(op);
+  if (total <= MAX_HISTORY_BYTES) return trimmed;
+  let start = 0;
+  while (start < trimmed.length - 1 && total > MAX_HISTORY_BYTES) {
+    total -= operationSnapshotBytes(trimmed[start]);
+    start += 1;
+  }
+  return start > 0 ? trimmed.slice(start) : trimmed;
+}
+
 const DEFAULT_IMAGE_BACKGROUND_COLOR = '#000000';
 
 interface ImageEditorState {
@@ -835,7 +863,7 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     pushOperation: (op) =>
       set((state) => {
         const docId = op.docId;
-        const stack = [...(state.undoStacks[docId] ?? []), op].slice(-MAX_HISTORY);
+        const stack = trimHistory([...(state.undoStacks[docId] ?? []), op]);
         return {
           undoStacks: { ...state.undoStacks, [docId]: stack },
           redoStacks: { ...state.redoStacks, [docId]: [] },

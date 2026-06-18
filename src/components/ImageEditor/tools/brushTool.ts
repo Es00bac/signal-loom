@@ -15,6 +15,7 @@ import type {
 } from './types';
 import type { BrushSettings, ImageLayer } from '../../../types/imageEditor';
 import { canEditImageLayerPixels } from '../../../lib/imageLayerLocks';
+import { recordStrokePaint } from '../imageStrokePerf';
 import { cloneBitmap, createBitmap, getBitmapImageData, putBitmapImageData } from '../LayerBitmap';
 import {
   paintLayerMaskDabs,
@@ -505,6 +506,27 @@ function dabsBitmapRect(
   return { x, y, width, height };
 }
 
+/** Document-space bounding box of a set of dabs (expanded by radius), for dirty-rect compositing.
+ * Unlike dabsBitmapRect this is in document coordinates (no layer offset) since the renderer's
+ * composite/scratch is document-sized. */
+function dabsDocRect(
+  dabs: ReturnType<typeof buildBrushDabs>,
+): { x: number; y: number; width: number; height: number } | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const dab of dabs) {
+    const r = dab.size / 2 + 2;
+    minX = Math.min(minX, dab.x - r);
+    minY = Math.min(minY, dab.y - r);
+    maxX = Math.max(maxX, dab.x + r);
+    maxY = Math.max(maxY, dab.y + r);
+  }
+  if (!Number.isFinite(minX)) return null;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
 function paintStrokeSegment(
   env: ToolEnv,
   layer: ImageLayer,
@@ -515,6 +537,7 @@ function paintStrokeSegment(
 ): void {
   const ctx = bitmap.getContext('2d');
   if (!ctx) return;
+  const paintStartedAt = performance.now();
   const settings = normalizedBrushSettings(env.brushSettings);
   const channelEditTarget = getImageChannelEditTarget(env.doc);
   const routeColorComponents = channelEditTarget.channel !== 'rgb';
@@ -548,6 +571,11 @@ function paintStrokeSegment(
     x: env.doc.width / 2,
     y: env.doc.height / 2,
   });
+
+  // Tell the renderer which document region changed so it recomposites only that rectangle this
+  // frame (dirty-rect compositing) instead of the whole 4K canvas.
+  const dirtyRect = dabsDocRect(symmetryDabs);
+  if (dirtyRect) env.markDirty?.(dirtyRect);
 
   // Channel routing only rewrites the painted pixels, so capture/restore just the dab's bounding
   // box instead of the whole document.
@@ -585,6 +613,7 @@ function paintStrokeSegment(
     applyColorChannelRoute(beforeChannelRoute, afterChannelRoute, channelEditTarget.components);
     ctx.putImageData(afterChannelRoute, channelRect.x, channelRect.y);
   }
+  recordStrokePaint(performance.now() - paintStartedAt, symmetryDabs.length);
 }
 
 export const brushTool: ToolHandler = makeBrushTool(false);

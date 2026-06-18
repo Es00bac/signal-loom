@@ -50,6 +50,9 @@ export interface ToolEnv {
   store: ReturnType<typeof useImageEditorStore.getState>;
   /** Schedule a re-render of the canvas, optionally invalidating cached bitmap composites. */
   requestRender: (options?: { invalidateBitmapCache?: boolean }) => void;
+  /** Report the doc-space region a paint stroke touched this frame so the renderer can recomposite
+   * only that rectangle (dirty-rect compositing) instead of the whole document. */
+  markDirty?: (rect: { x: number; y: number; width: number; height: number }) => void;
   /** Resolve the effective selection mode for this stroke (modifiers override settings). */
   resolveSelectionMode: (mods: Modifiers) => SelectionMode;
 }

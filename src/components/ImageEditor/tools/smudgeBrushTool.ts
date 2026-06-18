@@ -3,6 +3,7 @@ import { describeRetouchBrushToolPlan, type RetouchSampleSource } from '../Image
 import { canEditImageLayerPixels } from '../../../lib/imageLayerLocks';
 import { DEFAULT_RETOUCH_TOOL_SETTINGS, type RetouchSampleMode } from '../../../types/imageEditor';
 import { resolveRetouchTargetLayer } from './retouchTargetLayer';
+import { recordStrokePaint } from '../imageStrokePerf';
 import { BrushStrokeController } from '../../../lib/brushEngine';
 import { createRetouchStrokeController } from './retouchBrushEngine';
 import type { ToolHandler } from './types';
@@ -148,9 +149,21 @@ export const smudgeBrushTool: ToolHandler = {
     if (!stroke) return;
     const layer = env.doc.layers.find((candidate) => candidate.id === stroke?.layerId);
     if (!layer?.bitmap) return;
+    const startedAt = performance.now();
     stroke.controller.moveTo({ x: point.x - layer.x, y: point.y - layer.y });
-    stroke.controller.previewInto(layer.bitmap);
-    env.requestRender({ invalidateBitmapCache: true });
+    const dirty = stroke.controller.previewInto(layer.bitmap);
+    // Bound the recomposite to the touched region (dirty-rect), like the brush — instead of a full
+    // document recomposite every move. layer-local rect → document space for the renderer.
+    if (dirty) {
+      env.markDirty?.({
+        x: dirty.x + layer.x,
+        y: dirty.y + layer.y,
+        width: dirty.width,
+        height: dirty.height,
+      });
+    }
+    recordStrokePaint(performance.now() - startedAt, 1);
+    env.requestRender();
   },
 
   onPointerUp(env) {

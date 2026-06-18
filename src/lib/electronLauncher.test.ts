@@ -37,6 +37,9 @@ describe('Electron launcher environment', () => {
     expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBe('x11');
     expect(env.GDK_BACKEND).toBe('x11');
     expect(getElectronLaunchArgs(env, 'linux')).toEqual([
+      '--disable-gpu',
+      '--disable-gpu-sandbox',
+      '--in-process-gpu',
       '--ozone-platform=x11',
       '.',
     ]);
@@ -54,6 +57,31 @@ describe('Electron launcher environment', () => {
     expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBeUndefined();
     expect(env.GDK_BACKEND).toBeUndefined();
     expect(getElectronLaunchArgs(env, 'linux')).toEqual([
+      '--disable-gpu',
+      '--disable-gpu-sandbox',
+      '--in-process-gpu',
+      '.',
+    ]);
+  });
+
+  it('defaults Linux to software rendering (GPU readbacks tank the Canvas2D paint path)', async () => {
+    const { getElectronLaunchArgs } = await loadLauncherModule();
+
+    expect(getElectronLaunchArgs({}, 'linux')).toEqual([
+      '--disable-gpu',
+      '--disable-gpu-sandbox',
+      '--in-process-gpu',
+      '.',
+    ]);
+  });
+
+  it('uses the stable ANGLE GL/EGL backend when GPU is explicitly opted in', async () => {
+    const { getElectronLaunchArgs } = await loadLauncherModule();
+
+    expect(getElectronLaunchArgs({ SIGNAL_LOOM_ELECTRON_ENABLE_GPU: '1' }, 'linux')).toEqual([
+      '--use-gl=angle',
+      '--use-angle=gl-egl',
+      '--disable-gpu-sandbox',
       '.',
     ]);
   });

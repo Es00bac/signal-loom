@@ -452,17 +452,22 @@ describe('blur and sharpen brush retouch sampling', () => {
     expect(env.requestRender).toHaveBeenCalledTimes(2);
   });
 
-  it('invalidates renderer bitmap caches for live smudge drag previews', () => {
+  it('reports the touched region for a bounded live smudge drag preview (dirty-rect, not a full recomposite)', () => {
     const active = makeLayer({ id: 'active', name: 'Active' });
     setPixel(active.bitmap!, 1, 0, [255, 0, 0, 255]);
     setPixel(active.bitmap!, 2, 0, [0, 0, 255, 255]);
     const doc = makeDoc([active], active.id);
     const env = makeEnv(doc, active, { ...DEFAULT_RETOUCH_TOOL_SETTINGS, sampleMode: 'currentLayer' });
+    const markDirty = vi.fn();
+    env.markDirty = markDirty;
 
     smudgeBrushTool.onPointerDown?.(env, { x: 1, y: 0 }, mods, pointerEvent());
     smudgeBrushTool.onPointerMove?.(env, { x: 2, y: 0 }, mods, pointerEvent());
 
-    expect(env.requestRender).toHaveBeenLastCalledWith({ invalidateBitmapCache: true });
+    // The live preview reports a dirty rect (bounding the recomposite) and requests a plain render —
+    // no per-move full bitmap-cache invalidation, which forced a full-document worker render.
+    expect(markDirty).toHaveBeenCalled();
+    expect(env.requestRender).toHaveBeenLastCalledWith();
   });
 
   it('restores smudged preview pixels when a stroke is canceled before commit', () => {

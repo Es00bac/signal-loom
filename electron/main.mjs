@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, shell } from 'electron';
 import { execFile } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { copyFile, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -84,6 +84,8 @@ const {
 } = automationPathModule;
 const {
   applyElectronMainLinuxWindowingCompatibility,
+  applyLinuxGpuCommandLine,
+  resolveLinuxGpuPolicy,
 } = linuxWindowingModule;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -131,17 +133,54 @@ const VIEW_COMMAND_WORKSPACES = {
 
 applyElectronMainLinuxWindowingCompatibility(app, process.env, process.platform);
 
-if (process.platform === 'linux' && process.env.SIGNAL_LOOM_ELECTRON_ENABLE_GPU !== '1') {
-  app.disableHardwareAcceleration();
-  app.commandLine.appendSwitch('disable-gpu');
-  app.commandLine.appendSwitch('disable-gpu-sandbox');
-  app.commandLine.appendSwitch('in-process-gpu');
-}
-
 app.setName(appName);
 const isolatedUserDataDir = process.env.SIGNAL_LOOM_ELECTRON_USER_DATA_DIR?.trim();
 if (isolatedUserDataDir) {
   app.setPath('userData', resolve(isolatedUserDataDir));
+}
+
+// Linux GPU acceleration policy. Default ON via the stable ANGLE GL/EGL backend so
+// the Image workspace's canvas compositing runs on the GPU instead of SwiftShader.
+// If the GPU process ever crashes (some AMD/Mesa + ANGLE combos segfault on init),
+// we drop a sentinel and relaunch in software mode so the user always gets a working
+// window; the sentinel self-expires after a cooldown so a transient hiccup recovers.
+const gpuFallbackSentinelPath = join(app.getPath('userData'), 'gpu-fallback.flag');
+let gpuFallbackSentinelTimestamp = null;
+try {
+  if (existsSync(gpuFallbackSentinelPath)) {
+    gpuFallbackSentinelTimestamp = statSync(gpuFallbackSentinelPath).mtimeMs;
+  }
+} catch {
+  gpuFallbackSentinelTimestamp = null;
+}
+const linuxGpuPolicy = resolveLinuxGpuPolicy(
+  process.env,
+  { sentinelTimestamp: gpuFallbackSentinelTimestamp },
+  process.platform,
+);
+if (linuxGpuPolicy.clearSentinel) {
+  try {
+    rmSync(gpuFallbackSentinelPath, { force: true });
+  } catch {
+    /* best effort */
+  }
+}
+applyLinuxGpuCommandLine(app, { disabled: linuxGpuPolicy.disabled }, process.platform);
+if (process.platform === 'linux' && !linuxGpuPolicy.disabled) {
+  let gpuFallbackTriggered = false;
+  app.on('child-process-gone', (_event, details) => {
+    if (gpuFallbackTriggered || details?.type !== 'GPU' || details.reason === 'clean-exit') {
+      return;
+    }
+    gpuFallbackTriggered = true;
+    try {
+      writeFileSync(gpuFallbackSentinelPath, String(Date.now()));
+    } catch {
+      /* best effort */
+    }
+    app.relaunch();
+    app.exit(0);
+  });
 }
 
 protocol.registerSchemesAsPrivileged([
