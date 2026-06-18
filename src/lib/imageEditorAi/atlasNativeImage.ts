@@ -3,6 +3,8 @@
 // /model/generateImage → poll), so native Atlas models (e.g. google/nano-banana-2/edit)
 // work in the editor instead of being misrouted to OpenAI's images.edit endpoint.
 
+import { fetchProviderResultBlob } from '../remoteMediaFetch';
+
 export function normalizeAtlasBaseUrl(baseUrl: string | undefined): string {
   const trimmed = baseUrl?.trim().replace(/\/+$/, '');
   if (!trimmed) return 'https://api.atlascloud.ai/api/v1';
@@ -191,9 +193,8 @@ export async function runAtlasNativeGenerativeFill(input: AtlasNativeFillInput):
   const normalized = /^(https?:|blob:|data:)/i.test(resultUrl)
     ? resultUrl
     : `data:image/${outputFormat};base64,${resultUrl}`;
-  const fetched = await fetch(normalized, { signal: input.signal });
-  if (!fetched.ok) {
-    throw new Error(`Atlas result download failed (${fetched.status}).`);
-  }
-  return fetched.blob();
+  // Atlas results are signed CDN URLs with no CORS headers. On Android the patched-fetch proxy
+  // re-encodes the signed query string and the CDN returns 403, so download through the direct,
+  // non-proxied native path (CapacitorHttp.get / Electron net.fetch).
+  return fetchProviderResultBlob(normalized, 'Atlas result download failed', input.signal);
 }

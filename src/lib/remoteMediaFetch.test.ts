@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-import { fetchRemoteMediaAsDataUrl } from './remoteMediaFetch';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fetchProviderResultBlob, fetchRemoteMediaAsDataUrl } from './remoteMediaFetch';
 
 const ATLAS_URL = 'https://atlas-media.oss-us-west-1.aliyuncs.com/flux/generated.png';
 
@@ -78,5 +78,44 @@ describe('fetchRemoteMediaAsDataUrl', () => {
     });
 
     expect(result).toBeUndefined();
+  });
+});
+
+describe('fetchProviderResultBlob', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('returns the renderer fetch blob when the download succeeds (desktop / permissive CORS)', async () => {
+    const blob = new Blob(['hello'], { type: 'image/png' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, blob: async () => blob }));
+
+    const result = await fetchProviderResultBlob(`${ATLAS_URL}?Signature=x`, 'X failed');
+
+    expect(result).toBe(blob);
+  });
+
+  it('falls back to the direct native download when the proxied fetch returns 403 (Android signed-CDN fix)', async () => {
+    // On Android the patched-fetch proxy mangles the signed URL → 403; the helper must then pull
+    // the bytes through the direct native path instead of throwing.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403, blob: async () => new Blob() }));
+    const get = vi.fn().mockResolvedValue({ status: 200, data: 'AAAA', headers: { 'content-type': 'image/png' } });
+
+    const result = await fetchProviderResultBlob(
+      `${ATLAS_URL}?Signature=abc&Expires=1`,
+      'Atlas result download failed',
+      undefined,
+      { isAndroidNative: true, capacitorHttp: { get } },
+    );
+
+    expect(get).toHaveBeenCalled();
+    expect(result.type).toBe('image/png');
+    expect(result.size).toBe(3); // "AAAA" base64 decodes to 3 bytes
+  });
+
+  it('throws the labelled error when neither the renderer fetch nor a native path can download', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403 }));
+
+    await expect(
+      fetchProviderResultBlob(`${ATLAS_URL}?Signature=z`, 'Boom', undefined, {}),
+    ).rejects.toThrow('Boom');
   });
 });

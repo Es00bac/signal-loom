@@ -117,3 +117,58 @@ export async function fetchRemoteMediaAsDataUrl(
 
   return undefined;
 }
+
+function base64DataUrlToBlob(dataUrl: string, fallbackMimeType = 'application/octet-stream'): Blob {
+  const comma = dataUrl.indexOf(',');
+  const mimeType = comma > 5 ? dataUrl.slice(5, comma).split(';', 1)[0] || fallbackMimeType : fallbackMimeType;
+  const binary = atob(dataUrl.slice(comma + 1));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes as BlobPart], { type: mimeType });
+}
+
+/**
+ * Download a provider *result* image as a Blob through a path that survives the Android WebView.
+ *
+ * Provider result CDNs (Atlas `aliyuncs`/`static.atlascloud.ai`, BFL `delivery.bfl.ai`, …) serve
+ * **signed** URLs and send no CORS headers. A renderer `fetch()` works on desktop (Electron
+ * bypasses CORS), but on Android — where CapacitorHttp patches `fetch` and routes GETs through a
+ * proxy URL — the signed query string gets re-encoded and the CDN rejects it (**HTTP 403**).
+ * `fetchRemoteMediaAsDataUrl` pulls the bytes through a direct, non-proxied native GET
+ * (`CapacitorHttp.get` / Electron `net.fetch`) that preserves the URL untouched. This mirrors
+ * flowExecution's `materializeRemoteMediaResult` for the Image-editor adapters.
+ */
+export async function fetchProviderResultBlob(
+  url: string,
+  errorLabel: string,
+  signal?: AbortSignal,
+  runtime?: RemoteMediaFetchRuntime,
+): Promise<Blob> {
+  if (/^(blob:|data:)/i.test(url)) {
+    const response = await fetch(url, { signal });
+    if (!response.ok) {
+      throw new Error(`${errorLabel} (${response.status}).`);
+    }
+    return response.blob();
+  }
+
+  // Try the renderer fetch first — succeeds on desktop and on permissive-CORS web. On Android this
+  // hits the CapacitorHttp proxy and a signed CDN URL comes back 403; we then fall through.
+  try {
+    const response = await fetch(url, { signal });
+    if (response.ok) {
+      return await response.blob();
+    }
+  } catch {
+    // CORS / network error — fall through to the native path.
+  }
+
+  const native = runtime ? await fetchRemoteMediaAsDataUrl(url, runtime) : await fetchRemoteMediaAsDataUrl(url);
+  if (native) {
+    return base64DataUrlToBlob(native.dataUrl, native.mimeType);
+  }
+
+  throw new Error(`${errorLabel}.`);
+}

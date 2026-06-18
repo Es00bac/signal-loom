@@ -1,5 +1,6 @@
 import { useSettingsStore } from '../../store/settingsStore';
 import type { GenerativeFillRequest, GenerativeFillResult } from '../imageEditorAi';
+import { fetchProviderResultBlob } from '../remoteMediaFetch';
 import { blobToDataUrl, dataUrlToBlob } from './blobUtils';
 import { buildBflFlux2Request } from './requestBuilders';
 
@@ -107,12 +108,9 @@ async function pollBflResult(
 }
 
 async function fetchBflResultBlob(resultUrl: string, abortSignal: AbortSignal | undefined): Promise<Blob> {
-  const response = await fetch(resultUrl, { signal: abortSignal });
-  if (!response.ok) {
-    throw new Error(`BFL result download failed (${response.status}): ${await response.text()}`);
-  }
-
-  return response.blob();
+  // BFL delivery URLs (delivery.bfl.ai) are signed and CORS-less; on Android the patched-fetch
+  // proxy mangles the signature → 403. Download through the direct, non-proxied native path.
+  return fetchProviderResultBlob(resultUrl, 'BFL result download failed', abortSignal);
 }
 
 function extractBflError(error: BflCreateResponse['error'] | BflPollResponse['error']): string {
