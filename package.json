@@ -57,6 +57,7 @@
     "openai": "^6.34.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
+    "spectral.js": "^3.0.0",
     "tailwind-merge": "^3.5.0",
     "zustand": "^5.0.12"
   },
