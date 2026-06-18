@@ -314,6 +314,18 @@ export interface WarpMesh {
 
 export type BrushSymmetryMode = 'none' | 'vertical' | 'horizontal' | 'both';
 
+/** A single control point of a brush response curve (input/output both 0..1). */
+export interface BrushCurvePoint {
+  x: number;
+  y: number;
+}
+
+/** Named response-curve shapes (resolved to control points by the brush engine). */
+export type BrushResponseCurvePreset = 'linear' | 'soft' | 'hard' | 'sshape';
+
+/** A pressure/sensor response curve: a named preset or explicit control points. */
+export type BrushResponseCurve = BrushResponseCurvePreset | BrushCurvePoint[];
+
 export interface BrushSettings {
   presetId?: string;
   size: number;
@@ -329,6 +341,12 @@ export interface BrushSettings {
   pressureSize: number;
   pressureOpacity: number;
   pressureFlow: number;
+  /**
+   * Pressure response curve. Remaps pen pressure through a transfer function
+   * before it drives size/opacity/flow (Krita pressure curve / Photoshop
+   * transfer). Defaults to 'linear' (identity) — no change unless configured.
+   */
+  pressureCurve?: BrushResponseCurve;
   /** Stylus tilt → brush angle steering (0..1). */
   tiltAngle?: number;
   /** Stylus tilt → tip flattening / elongation (0..1). */
@@ -860,6 +878,7 @@ export const DEFAULT_BRUSH_SETTINGS: BrushSettings = {
   pressureSize: 0.65,
   pressureOpacity: 0,
   pressureFlow: 0.35,
+  pressureCurve: 'linear',
   tiltAngle: 0.7,
   tiltRoundness: 0.6,
   tiltSize: 0.2,

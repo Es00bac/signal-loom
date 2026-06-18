@@ -75,6 +75,29 @@ describe('ImageBrushEngine', () => {
     expect(DEFAULT_BRUSH_SETTINGS.size).toBe(12);
   });
 
+  it('reshapes pressure through the response curve (soft damps, hard lifts, linear unchanged)', () => {
+    const base = {
+      ...DEFAULT_BRUSH_SETTINGS,
+      size: 100,
+      pressureSize: 1,
+      pressureOpacity: 0,
+      pressureFlow: 0,
+      smoothing: 0,
+    } as const;
+
+    const linear = resolveBrushDynamics({ ...base, pressureCurve: 'linear' }, 0.5);
+    const soft = resolveBrushDynamics({ ...base, pressureCurve: 'soft' }, 0.5);
+    const hard = resolveBrushDynamics({ ...base, pressureCurve: 'hard' }, 0.5);
+
+    // pressureSize=1 so size == base.size * shapedPressure. Linear: 100 * 0.5 = 50.
+    expect(linear.size).toBe(50);
+    // soft (ease-in) damps mid-pressure below linear; hard (ease-out) lifts it above.
+    expect(soft.size).toBeLessThan(linear.size);
+    expect(hard.size).toBeGreaterThan(linear.size);
+    // Omitting the curve entirely is identical to linear (back-compat).
+    expect(resolveBrushDynamics({ ...base }, 0.5).size).toBe(linear.size);
+  });
+
   it('builds deterministic spaced dabs with scatter and tip rotation', () => {
     const dabs = buildBrushDabs(
       { x: 0, y: 0 },

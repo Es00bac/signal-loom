@@ -2,6 +2,7 @@ import type { BrushSettings, BrushSymmetryMode } from '../../types/imageEditor';
 import { sampleBrushTexture } from './ImageBrushTextures';
 import { applyBrushTiltDynamics, resolveBrushTiltState, type BrushTiltState } from './brushTiltGeometry';
 import { fadeInFactor, depletePaintLoad } from './ImageBrushDryDynamics';
+import { evalResponseCurve, resolveResponseCurve } from './ImageBrushResponseCurve';
 import {
   STAMP_CANONICAL_RADIUS,
   getBrushStamp,
@@ -659,6 +660,7 @@ export function normalizeBrushSettings(settings: Partial<BrushSettings>): BrushS
     pressureSize: clamp(merged.pressureSize, 0, 1),
     pressureOpacity: clamp(merged.pressureOpacity, 0, 1),
     pressureFlow: clamp(merged.pressureFlow, 0, 1),
+    pressureCurve: resolveResponseCurve(merged.pressureCurve),
     tiltAngle: clamp(merged.tiltAngle ?? 0.7, 0, 1),
     tiltRoundness: clamp(merged.tiltRoundness ?? 0.6, 0, 1),
     tiltSize: clamp(merged.tiltSize ?? 0.2, 0, 1),
@@ -710,14 +712,17 @@ export function resolveBrushDynamics(
 ): BrushDynamics {
   const normalized = normalizeBrushSettings(settings);
   const pressureValue = clamp(pressure, 0.05, 1);
+  // Remap raw pressure through the response curve before it drives any dynamic.
+  // Default 'linear' curve is the identity, so this is a no-op unless configured.
+  const shapedPressure = evalResponseCurve(normalized.pressureCurve, pressureValue);
   const velocity = normalizeBrushVelocity(velocityPxPerMs);
   const velocityGrowth = 1 + velocity * (normalized.velocitySize ?? 0);
   const velocityOpacity = 1 - velocity * (normalized.velocityOpacity ?? 0) * 0.5;
   const velocityFlow = 1 + velocity * (normalized.velocityFlow ?? 0);
   const velocitySpacing = 1 + velocity * (normalized.velocitySpacing ?? 0);
-  const sizeFactor = (1 - normalized.pressureSize + normalized.pressureSize * pressureValue) * velocityGrowth;
-  const opacityFactor = (1 - normalized.pressureOpacity + normalized.pressureOpacity * pressureValue) * velocityOpacity;
-  const flowFactor = (1 - normalized.pressureFlow + normalized.pressureFlow * pressureValue) * velocityFlow;
+  const sizeFactor = (1 - normalized.pressureSize + normalized.pressureSize * shapedPressure) * velocityGrowth;
+  const opacityFactor = (1 - normalized.pressureOpacity + normalized.pressureOpacity * shapedPressure) * velocityOpacity;
+  const flowFactor = (1 - normalized.pressureFlow + normalized.pressureFlow * shapedPressure) * velocityFlow;
   let size = Math.max(1, normalized.size * sizeFactor);
 
   // Legacy explicit angle override still wins (callers that pre-resolve an angle).
@@ -1713,6 +1718,7 @@ const DEFAULT_NORMALIZED_BRUSH_SETTINGS: BrushSettings = {
   pressureSize: 0.65,
   pressureOpacity: 0,
   pressureFlow: 0.35,
+  pressureCurve: 'linear',
   tipShape: 'round',
   symmetryMode: 'none',
   velocitySize: 0,
@@ -1747,6 +1753,7 @@ const IMPLEMENTED_DYNAMIC_FIELDS = new Set([
   'pressureSize',
   'pressureOpacity',
   'pressureFlow',
+  'pressureCurve',
   'tiltAngle',
   'tiltSize',
   'tiltRoundness',
