@@ -255,7 +255,7 @@ describe('ImageBrushEngine', () => {
     expect(summary.groups).toMatchObject({
       Sketch: 4,
       Ink: 4,
-      Paint: 6,
+      Paint: 9,
       'Comic / Manga': 5,
       FX: 3,
       Utility: 4,

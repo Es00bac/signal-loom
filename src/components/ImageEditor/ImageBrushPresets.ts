@@ -526,6 +526,24 @@ export const IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     settings: { size: 110, opacity: 0.18, hardness: 0.02, flow: 0.14, spacing: 0.07, scatter: 0.04, smoothing: 0.45, pressureFlow: 0.9 },
   },
   {
+    id: 'wet-mixer',
+    label: 'Wet Mixer',
+    group: 'Paint',
+    settings: { size: 30, opacity: 1, hardness: 0.7, flow: 0.9, spacing: 0.06, mixerEnabled: true, smudgeLength: 0.7, smudgeRadius: 14, colorRate: 0.45 },
+  },
+  {
+    id: 'spectral-mixer',
+    label: 'Spectral Mixer',
+    group: 'Paint',
+    settings: { size: 30, opacity: 1, hardness: 0.7, flow: 0.9, spacing: 0.06, mixerEnabled: true, smudgeLength: 0.7, smudgeRadius: 14, colorRate: 0.35, mixMode: 'spectral' },
+  },
+  {
+    id: 'dry-bristle',
+    label: 'Dry Bristle',
+    group: 'Paint',
+    settings: { size: 18, opacity: 1, hardness: 0.85, flow: 0.85, spacing: 0.07, scatter: 0.15, fadeLength: 6, paintLoad: 1, loadFalloff: 0.004 },
+  },
+  {
     id: 'mangaInker',
     label: 'Manga Inker',
     group: 'Comic / Manga',
