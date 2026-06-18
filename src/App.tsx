@@ -2306,6 +2306,14 @@ function AppBootSplashDismissor() {
 
     const timeoutId = window.setTimeout(() => {
       document.documentElement.dataset.appReady = 'true';
+      // Release the Android native splash now that the first frame is up, so it covered the
+      // whole cold start (held by MainActivity#setKeepOnScreenCondition) and hands straight to
+      // the workspace. No-op off-Android.
+      try {
+        (window as unknown as { AndroidSplash?: { onWebReady?: () => void } }).AndroidSplash?.onWebReady?.();
+      } catch {
+        // ignore — bridge only exists in the Android WebView
+      }
     }, 450);
 
     return () => window.clearTimeout(timeoutId);

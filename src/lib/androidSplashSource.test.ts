@@ -39,7 +39,9 @@ describe('Android launch splash source guards', () => {
     const styles = readFileSync(stylesPath, 'utf8');
     expect(styles).toContain('<style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">');
     expect(styles).toContain('<item name="windowSplashScreenBackground">#020711</item>');
-    expect(styles).toContain('<item name="windowSplashScreenAnimatedIcon">@drawable/signal_loom_splash</item>');
+    // The Android 12 splash icon is the brand mark (rings), not the full splash art (which gets
+    // circle-masked); the full art remains the windowBackground for the post-splash handoff.
+    expect(styles).toContain('<item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>');
     expect(styles).toContain('<item name="windowSplashScreenIconBackgroundColor">#020711</item>');
     expect(styles).toContain('<item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>');
     expect(styles).toContain('<item name="android:background">@drawable/signal_loom_launch_splash</item>');
@@ -50,5 +52,9 @@ describe('Android launch splash source guards', () => {
     const mainActivity = readFileSync(mainActivityPath, 'utf8');
     expect(mainActivity).toContain('import androidx.core.splashscreen.SplashScreen;');
     expect(mainActivity).toMatch(/SplashScreen\.installSplashScreen\(this\);[\s\S]*super\.onCreate\(savedInstanceState\);/);
+    // The native splash is held on screen until the web app reports its first paint, so it covers
+    // the whole cold start instead of flashing to a blank webview.
+    expect(mainActivity).toContain('setKeepOnScreenCondition');
+    expect(mainActivity).toContain('AndroidSplash');
   });
 });
