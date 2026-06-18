@@ -86,6 +86,27 @@ describe('BrushPanel', () => {
     expect(useImageEditorStore.getState().brushSettings.symmetryMode).toBe('both');
   });
 
+  it('updates tilt-driven opacity and flow from the Tilt panel', () => {
+    act(() => {
+      root.render(<BrushPanel />);
+    });
+
+    const tiltOpacity = container.querySelector<HTMLInputElement>('input[aria-label="Tilt opacity"]');
+    const tiltFlow = container.querySelector<HTMLInputElement>('input[aria-label="Tilt flow"]');
+    expect(tiltOpacity).not.toBeNull();
+    expect(tiltFlow).not.toBeNull();
+
+    act(() => {
+      setInputValue(tiltOpacity!, '0.6');
+      setInputValue(tiltFlow!, '0.3');
+    });
+
+    expect(useImageEditorStore.getState().brushSettings).toMatchObject({
+      tiltOpacity: 0.6,
+      tiltFlow: 0.3,
+    });
+  });
+
   it('updates pressure-driven roundness and hardness from the Pressure panel', () => {
     act(() => {
       root.render(<BrushPanel />);

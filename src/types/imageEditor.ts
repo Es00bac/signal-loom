@@ -357,6 +357,10 @@ export interface BrushSettings {
   tiltRoundness?: number;
   /** Stylus tilt → footprint growth (0..1). */
   tiltSize?: number;
+  /** Stylus tilt → opacity reduction (0..1): more tilt lays down lighter (pencil/charcoal shading). */
+  tiltOpacity?: number;
+  /** Stylus tilt → flow reduction (0..1): more tilt deposits less paint per dab. */
+  tiltFlow?: number;
   /** Barrel rotation (twist) rotates the tip. */
   rotationFollowsTwist?: boolean;
   /** Pressure → blend the dab colour from the foreground toward the background (0..1). */

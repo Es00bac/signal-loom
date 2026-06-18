@@ -98,6 +98,34 @@ describe('ImageBrushEngine', () => {
     expect(resolveBrushDynamics({ ...base }, 0.5).size).toBe(linear.size);
   });
 
+  it('reduces opacity and flow with stylus tilt when enabled', () => {
+    const tilt = { hasTilt: true, altitudeDeg: 45, azimuthDeg: 0, hasTwist: false, twistDeg: 0, tiltAmount: 0.5 };
+    const base = {
+      ...DEFAULT_BRUSH_SETTINGS,
+      opacity: 1,
+      flow: 1,
+      pressureOpacity: 0,
+      pressureFlow: 0,
+      tiltOpacity: 1,
+      tiltFlow: 1,
+    } as const;
+
+    // Half-tilt with full tilt→opacity/flow halves both channels.
+    const tilted = resolveBrushDynamics(base, 1, undefined, 0, tilt);
+    expect(tilted.opacity).toBeCloseTo(0.5, 6);
+    expect(tilted.flow).toBeCloseTo(0.5, 6);
+
+    // No tilt state => no reduction.
+    const flat = resolveBrushDynamics(base, 1, undefined, 0, null);
+    expect(flat.opacity).toBe(1);
+    expect(flat.flow).toBe(1);
+
+    // The workflow descriptor reports opacity/flow as tilt-affected (not unsupported).
+    const descriptor = describeBrushWorkflowSupport(base);
+    expect(descriptor.support.tilt.affects).toEqual(expect.arrayContaining(['opacity', 'flow']));
+    expect(descriptor.support.tilt.unsupportedAffects).not.toEqual(expect.arrayContaining(['opacity', 'flow']));
+  });
+
   it('drives roundness and hardness from pen pressure when enabled', () => {
     const base = {
       ...DEFAULT_BRUSH_SETTINGS,
@@ -396,7 +424,7 @@ describe('ImageBrushEngine', () => {
       pressureFlow: 0.4,
       scatter: 0.25,
       pressureAngle: 0.8,
-      tiltOpacity: 0.45,
+      tiltScatter: 0.45,
       colorJitter: 0.3,
     };
 
@@ -405,7 +433,7 @@ describe('ImageBrushEngine', () => {
       category: warning.category,
     }))).toEqual([
       { field: 'pressureAngle', category: 'pressure' },
-      { field: 'tiltOpacity', category: 'tilt' },
+      { field: 'tiltScatter', category: 'tilt' },
       { field: 'colorJitter', category: 'randomization' },
     ]);
 
@@ -420,7 +448,7 @@ describe('ImageBrushEngine', () => {
 
     expect(summary.unsupportedWarnings.map((warning) => `${warning.presetId}:${warning.field}`)).toEqual([
       'imported-mixer:pressureAngle',
-      'imported-mixer:tiltOpacity',
+      'imported-mixer:tiltScatter',
       'imported-mixer:colorJitter',
     ]);
   });
@@ -453,7 +481,7 @@ describe('ImageBrushEngine', () => {
       scatter: 0.18,
       symmetryMode: 'both',
       pressureAngle: 0.5,
-      tiltOpacity: 0.3,
+      tiltScatter: 0.3,
       colorJitter: 0.4,
     });
 
@@ -472,7 +500,7 @@ describe('ImageBrushEngine', () => {
         tilt: {
           supported: true,
           affects: ['angle', 'roundness', 'size'],
-          unsupportedAffects: ['opacity'],
+          unsupportedAffects: ['scatter'],
         },
         randomization: {
           supported: true,
@@ -489,10 +517,10 @@ describe('ImageBrushEngine', () => {
     });
     expect(descriptor.warnings.map((warning) => `${warning.field}:${warning.category}`)).toEqual([
       'pressureAngle:pressure',
-      'tiltOpacity:tilt',
+      'tiltScatter:tilt',
       'colorJitter:randomization',
     ]);
-    expect(descriptor.signature).toBe('brush-support:v1:32:0.32:0.45:0.7,0.2,0:angle,opacity:color:both');
+    expect(descriptor.signature).toBe('brush-support:v1:32:0.32:0.45:0.7,0.2,0:angle,scatter:color:both');
     expect(describeBrushWorkflowSupport(descriptor.settings)).toEqual(descriptor);
   });
 

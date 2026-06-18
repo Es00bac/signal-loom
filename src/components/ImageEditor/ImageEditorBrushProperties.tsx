@@ -259,6 +259,26 @@ export function BrushPanel() {
           onChange={(v) => set({ tiltSize: v })}
           format={(v) => `${Math.round(v * 100)}%`}
         />
+        <Slider
+          label="Tilt Opacity"
+          ariaLabel="Tilt opacity"
+          value={settings.tiltOpacity ?? 0}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ tiltOpacity: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
+        <Slider
+          label="Tilt Flow"
+          ariaLabel="Tilt flow"
+          value={settings.tiltFlow ?? 0}
+          max={1}
+          min={0}
+          step={0.01}
+          onChange={(v) => set({ tiltFlow: v })}
+          format={(v) => `${Math.round(v * 100)}%`}
+        />
         <label className="mt-2 flex items-center gap-2 text-xs text-cyan-100/80">
           <input
             type="checkbox"

@@ -74,7 +74,7 @@ export interface BrushStrokePreviewMetadata {
   tilt: {
     active: boolean;
     angleDeg: number | null;
-    affects: Array<'angle' | 'roundness' | 'size'>;
+    affects: Array<'angle' | 'roundness' | 'size' | 'opacity' | 'flow'>;
   };
   velocity: {
     pxPerMs: number;
@@ -156,7 +156,7 @@ export interface BrushWorkflowSupportDescriptor {
     };
     tilt: {
       supported: true;
-      affects: Array<'angle' | 'roundness' | 'size'>;
+      affects: Array<'angle' | 'roundness' | 'size' | 'opacity' | 'flow'>;
       unsupportedAffects: string[];
     };
     randomization: {
@@ -289,7 +289,7 @@ export interface BrushDynamicsSupportMatrixDescriptor {
     tilt: {
       supported: true;
       state: BrushDynamicsSupportState;
-      affects: Array<'angle' | 'roundness' | 'size'>;
+      affects: Array<'angle' | 'roundness' | 'size' | 'opacity' | 'flow'>;
       tiltEventsObserved: boolean;
       unsupportedAffects: string[];
     };
@@ -578,7 +578,7 @@ export interface BrushEngineReadinessDescriptor {
     };
     tilt: {
       supported: true;
-      affects: Array<'angle' | 'roundness' | 'size'>;
+      affects: Array<'angle' | 'roundness' | 'size' | 'opacity' | 'flow'>;
     };
     symmetry: BrushWorkflowSupportDescriptor['symmetry'] & {
       supported: boolean;
@@ -666,6 +666,8 @@ export function normalizeBrushSettings(settings: Partial<BrushSettings>): BrushS
     tiltAngle: clamp(merged.tiltAngle ?? 0.7, 0, 1),
     tiltRoundness: clamp(merged.tiltRoundness ?? 0.6, 0, 1),
     tiltSize: clamp(merged.tiltSize ?? 0.2, 0, 1),
+    tiltOpacity: clamp(merged.tiltOpacity ?? 0, 0, 1),
+    tiltFlow: clamp(merged.tiltFlow ?? 0, 0, 1),
     rotationFollowsTwist: merged.rotationFollowsTwist !== false,
     pressureColor: clamp(merged.pressureColor ?? 0, 0, 1),
     tiltColor: clamp(merged.tiltColor ?? 0, 0, 1),
@@ -727,9 +729,13 @@ export function resolveBrushDynamics(
   const velocityOpacity = 1 - velocity * (normalized.velocityOpacity ?? 0) * 0.5;
   const velocityFlow = 1 + velocity * (normalized.velocityFlow ?? 0);
   const velocitySpacing = 1 + velocity * (normalized.velocitySpacing ?? 0);
+  // Tilt → opacity/flow reduction: a more-tilted pen lays down lighter (pencil/charcoal feel).
+  const tiltAmount = tilt?.tiltAmount ?? 0;
+  const tiltOpacityFactor = 1 - (normalized.tiltOpacity ?? 0) * tiltAmount;
+  const tiltFlowFactor = 1 - (normalized.tiltFlow ?? 0) * tiltAmount;
   const sizeFactor = (1 - normalized.pressureSize + normalized.pressureSize * shapedPressure) * velocityGrowth;
-  const opacityFactor = (1 - normalized.pressureOpacity + normalized.pressureOpacity * shapedPressure) * velocityOpacity;
-  const flowFactor = (1 - normalized.pressureFlow + normalized.pressureFlow * shapedPressure) * velocityFlow;
+  const opacityFactor = (1 - normalized.pressureOpacity + normalized.pressureOpacity * shapedPressure) * velocityOpacity * tiltOpacityFactor;
+  const flowFactor = (1 - normalized.pressureFlow + normalized.pressureFlow * shapedPressure) * velocityFlow * tiltFlowFactor;
   const pressureRoundness = normalized.pressureRoundness ?? 0;
   const pressureHardness = normalized.pressureHardness ?? 0;
   const roundnessFactor = 1 - pressureRoundness + pressureRoundness * shapedPressure;
@@ -889,7 +895,7 @@ export function buildBrushStrokePreviewMetadata(
       angleDeg: options.tiltAngle === undefined || options.tiltAngle === null
         ? null
         : normalizeAngle(options.tiltAngle),
-      affects: ['angle', 'roundness', 'size'],
+      affects: getTiltAffectedDynamics(normalized),
     },
     velocity: {
       pxPerMs: round(options.velocityPxPerMs ?? 0),
@@ -1032,7 +1038,7 @@ export function describeBrushWorkflowSupport(
       },
       tilt: {
         supported: true,
-        affects: ['angle', 'roundness', 'size'],
+        affects: getTiltAffectedDynamics(normalized),
         unsupportedAffects: uniqueStrings(tiltUnsupportedAffects),
       },
       randomization: {
@@ -1787,6 +1793,8 @@ const IMPLEMENTED_DYNAMIC_FIELDS = new Set([
   'tiltAngle',
   'tiltSize',
   'tiltRoundness',
+  'tiltOpacity',
+  'tiltFlow',
   'rotationFollowsTwist',
   'pressureColor',
   'tiltColor',
@@ -1831,8 +1839,6 @@ const UNSUPPORTED_DYNAMIC_FIELDS = [
   'colorJitter',
   'pressureAngle',
   'pressureScatter',
-  'tiltOpacity',
-  'tiltFlow',
   'tiltScatter',
 ];
 
@@ -1879,16 +1885,6 @@ const UNSUPPORTED_BRUSH_FIELD_WARNINGS: Record<string, BrushCapabilityWarning> =
     field: 'pressureScatter',
     category: 'pressure',
     message: 'Pressure scatter dynamics are not implemented; scatter is deterministic from the stroke seed.',
-  },
-  tiltOpacity: {
-    field: 'tiltOpacity',
-    category: 'tilt',
-    message: 'Tilt opacity dynamics are not implemented; tilt maps to dab angle, elongation, and size.',
-  },
-  tiltFlow: {
-    field: 'tiltFlow',
-    category: 'tilt',
-    message: 'Tilt flow dynamics are not implemented; tilt maps to dab angle, elongation, and size.',
   },
   tiltScatter: {
     field: 'tiltScatter',
@@ -2485,6 +2481,14 @@ function getPressureAffectedDynamics(settings: BrushSettings): BrushStrokePrevie
   if (settings.pressureFlow > 0) affects.push('flow');
   if ((settings.pressureRoundness ?? 0) > 0) affects.push('roundness');
   if ((settings.pressureHardness ?? 0) > 0) affects.push('hardness');
+  return affects;
+}
+
+function getTiltAffectedDynamics(settings: BrushSettings): BrushStrokePreviewMetadata['tilt']['affects'] {
+  // Tilt always steers angle, flattens the tip (roundness), and grows the footprint (size).
+  const affects: BrushStrokePreviewMetadata['tilt']['affects'] = ['angle', 'roundness', 'size'];
+  if ((settings.tiltOpacity ?? 0) > 0) affects.push('opacity');
+  if ((settings.tiltFlow ?? 0) > 0) affects.push('flow');
   return affects;
 }
 
