@@ -23,10 +23,15 @@ as part of the larger `.sloom` project.
 The brush is a full pressure/tilt engine designed to feel like a natural-media tool, not a
 hard-edged stamp. Brush properties live in the **Brushes** / brush-properties panel.
 
-![A portrait sketched in the Image workspace, with the brush tool options (size, opacity,
-hardness, flow, spacing, roundness, angle, scatter, smoothing, symmetry) and the brush preset
-library — Pencil, Marker, Charcoal, Ink, Watercolor, Wet/Spectral Mixer, Dry Bristle, and
-screentones.](images/image-brush-engine.png)
+![A finished portrait painted in the Image workspace — colored and shaded with the brush engine,
+shown with the layer stack and brush controls.](images/image-brush-engine.png)
+
+The same portrait started as a rough line sketch and was built up to a finished, shaded painting
+entirely with the brush engine and layers — from blocking in tones to refining detail:
+
+![The same portrait as an early line sketch, with the brush tool options (size, opacity, hardness,
+flow, spacing, roundness, angle, scatter, smoothing, symmetry) and the brush preset library
+visible.](images/image-sketch.png)
 
 **Dynamics — pen pressure and tilt drive the brush:**
 
