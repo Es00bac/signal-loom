@@ -66,6 +66,21 @@ function sanitizePoints(points: BrushCurvePoint[]): BrushCurvePoint[] {
   return cleaned.length > 0 ? cleaned : RESPONSE_CURVE_PRESETS.linear;
 }
 
+/**
+ * Normalize a curve *setting* while preserving its form: a known preset name
+ * stays a string (so the UI and serialization keep the preset identity), an
+ * explicit point array is sanitized, and anything missing/invalid becomes
+ * 'linear'. Use this for storage; use `resolveResponseCurve` / `evalResponseCurve`
+ * when you need concrete points.
+ */
+export function normalizeResponseCurve(curve: BrushResponseCurve | undefined | null): BrushResponseCurve {
+  if (curve == null) return 'linear';
+  if (typeof curve === 'string') {
+    return (curve in RESPONSE_CURVE_PRESETS ? curve : 'linear') as BrushResponseCurvePreset;
+  }
+  return sanitizePoints(curve);
+}
+
 /** Resolve a curve setting (preset name, point array, or undefined) into clean points. */
 export function resolveResponseCurve(curve: BrushResponseCurve | undefined | null): BrushCurvePoint[] {
   if (curve == null) return RESPONSE_CURVE_PRESETS.linear;

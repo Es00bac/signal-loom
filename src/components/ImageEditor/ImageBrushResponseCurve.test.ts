@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   RESPONSE_CURVE_PRESETS,
   evalResponseCurve,
+  normalizeResponseCurve,
   resolveResponseCurve,
   type BrushCurvePoint,
 } from './ImageBrushResponseCurve';
@@ -68,6 +69,24 @@ describe('ImageBrushResponseCurve', () => {
     expect(resolveResponseCurve([])).toEqual(RESPONSE_CURVE_PRESETS.linear);
     // @ts-expect-error — exercising the runtime guard for an unknown preset string
     expect(resolveResponseCurve('nonsense')).toEqual(RESPONSE_CURVE_PRESETS.linear);
+  });
+
+  it('normalizeResponseCurve preserves the curve form (preset string stays a string)', () => {
+    // known preset stays its string form (UI + serialization keep the identity)
+    expect(normalizeResponseCurve('soft')).toBe('soft');
+    expect(normalizeResponseCurve('hard')).toBe('hard');
+    // missing / unknown collapse to 'linear'
+    expect(normalizeResponseCurve(undefined)).toBe('linear');
+    expect(normalizeResponseCurve(null)).toBe('linear');
+    // @ts-expect-error — runtime guard for an unknown preset string
+    expect(normalizeResponseCurve('bogus')).toBe('linear');
+    // an explicit array is sanitized (sorted, clamped) but stays an array
+    const normalized = normalizeResponseCurve([
+      { x: 1, y: 1 },
+      { x: 0, y: 0 },
+    ]);
+    expect(Array.isArray(normalized)).toBe(true);
+    expect(normalized).toEqual([{ x: 0, y: 0 }, { x: 1, y: 1 }]);
   });
 
   it('exposes the four named presets', () => {

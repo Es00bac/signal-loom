@@ -86,6 +86,27 @@ describe('BrushPanel', () => {
     expect(useImageEditorStore.getState().brushSettings.symmetryMode).toBe('both');
   });
 
+  it('selects a pressure response curve preset from the Pressure panel', () => {
+    act(() => {
+      root.render(<BrushPanel />);
+    });
+
+    const soft = container.querySelector<HTMLButtonElement>('button[aria-label="Pressure curve Soft"]');
+    const linear = container.querySelector<HTMLButtonElement>('button[aria-label="Pressure curve Linear"]');
+    expect(soft).not.toBeNull();
+    expect(linear).not.toBeNull();
+
+    act(() => {
+      soft!.click();
+    });
+    expect(useImageEditorStore.getState().brushSettings.pressureCurve).toBe('soft');
+
+    act(() => {
+      linear!.click();
+    });
+    expect(useImageEditorStore.getState().brushSettings.pressureCurve).toBe('linear');
+  });
+
   it('updates advanced brush engine controls for velocity, texture, wet media, GPU, device routes, and ABR fidelity', () => {
     act(() => {
       root.render(<BrushPanel />);

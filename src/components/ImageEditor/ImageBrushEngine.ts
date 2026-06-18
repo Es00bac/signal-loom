@@ -2,7 +2,7 @@ import type { BrushSettings, BrushSymmetryMode } from '../../types/imageEditor';
 import { sampleBrushTexture } from './ImageBrushTextures';
 import { applyBrushTiltDynamics, resolveBrushTiltState, type BrushTiltState } from './brushTiltGeometry';
 import { fadeInFactor, depletePaintLoad } from './ImageBrushDryDynamics';
-import { evalResponseCurve, resolveResponseCurve } from './ImageBrushResponseCurve';
+import { evalResponseCurve, normalizeResponseCurve } from './ImageBrushResponseCurve';
 import {
   STAMP_CANONICAL_RADIUS,
   getBrushStamp,
@@ -660,7 +660,7 @@ export function normalizeBrushSettings(settings: Partial<BrushSettings>): BrushS
     pressureSize: clamp(merged.pressureSize, 0, 1),
     pressureOpacity: clamp(merged.pressureOpacity, 0, 1),
     pressureFlow: clamp(merged.pressureFlow, 0, 1),
-    pressureCurve: resolveResponseCurve(merged.pressureCurve),
+    pressureCurve: normalizeResponseCurve(merged.pressureCurve),
     tiltAngle: clamp(merged.tiltAngle ?? 0.7, 0, 1),
     tiltRoundness: clamp(merged.tiltRoundness ?? 0.6, 0, 1),
     tiltSize: clamp(merged.tiltSize ?? 0.2, 0, 1),

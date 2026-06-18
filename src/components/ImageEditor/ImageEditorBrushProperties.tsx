@@ -184,6 +184,31 @@ export function BrushPanel() {
           onChange={(v) => set({ pressureFlow: v })}
           format={(v) => `${Math.round(v * 100)}%`}
         />
+        <div className="mt-2">
+          <label className="mb-1 block text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Curve</label>
+          <div className="grid grid-cols-4 gap-1">
+            {([
+              { label: 'Linear', value: 'linear' },
+              { label: 'Soft', value: 'soft' },
+              { label: 'Hard', value: 'hard' },
+              { label: 'S-Curve', value: 'sshape' },
+            ] as const).map((option) => (
+              <button
+                aria-label={`Pressure curve ${option.label}`}
+                className={`rounded border px-2 py-1 text-center text-[11px] hover:border-cyan-400/40 hover:text-white ${
+                  (typeof settings.pressureCurve === 'string' ? settings.pressureCurve : 'linear') === option.value
+                    ? 'border-cyan-300/60 bg-cyan-400/15 text-cyan-50'
+                    : 'border-cyan-300/10 bg-[#252630] text-cyan-100/65'
+                }`}
+                key={option.value}
+                onClick={() => set({ pressureCurve: option.value })}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
       <div className="rounded border border-cyan-300/10 bg-[#10131b] p-2">
         <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">Tilt &amp; Rotation</div>
