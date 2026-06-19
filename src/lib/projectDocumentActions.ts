@@ -85,6 +85,12 @@ export async function restoreProjectDocument(document: unknown): Promise<void> {
     projectUsageStore.restoreSnapshot(resolvedDocument.usageLedger);
     paperStore.restoreSnapshot(resolvedDocument.paper);
     imageEditorStore.restoreProjectSnapshot(resolvedDocument.imageEditor);
+    // Multi-window desktop: the source-bin restore above replaced the Source Library with the
+    // saved project bin (resolved against flow media refs first). The native main process holds
+    // the authoritative live snapshot — which also contains assets generated in *other* windows
+    // since the last save — so reconcile to recover them instead of leaving them clobbered.
+    // No-op without the native bridge (web / mobile single-window).
+    await sourceBinStore.reconcileWithNativeSourceLibrarySnapshot();
   } catch (error) {
     flowStore.replaceFlowSnapshot(previous.flow);
     flowWorkspaceStore.hydrateProjectSnapshot({

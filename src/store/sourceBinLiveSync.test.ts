@@ -70,6 +70,48 @@ describe('source bin live workspace sync', () => {
     });
   });
 
+  it('reconciles a freshly-restored window with the authoritative native snapshot (recovers cross-window generated assets)', async () => {
+    // Reproduce the post-restore state of a workspace window opened *after* another window
+    // generated an asset: restoreProjectSnapshot replaced the Source Library with the saved
+    // project bin, which is missing the unsaved generated asset.
+    useSourceBinStore.setState({
+      bins: [{
+        id: 'default', name: 'Source Library', collapsed: false, createdAt: 1,
+        items: [{ id: 'saved-1', label: 'Saved.png', kind: 'image', mimeType: 'image/png', assetUrl: 'signal-loom-asset://file/saved', createdAt: 1 }],
+      }],
+    });
+
+    // The native main process holds the live snapshot: the saved asset + the generated one.
+    const getSourceLibrarySnapshot = vi.fn().mockResolvedValue({
+      version: 7,
+      snapshot: {
+        bins: [{
+          id: 'default', name: 'Source Library', collapsed: false, createdAt: 1,
+          items: [
+            { id: 'gen-1', label: 'Flux result.png', kind: 'image', mimeType: 'image/png', assetUrl: 'signal-loom-asset://file/gen', nativeFilePath: '/p/gen.png', scratchFileName: 'gen.png', isGenerated: true, envelopeId: 'env-1', createdAt: 2 },
+            { id: 'saved-1', label: 'Saved.png', kind: 'image', mimeType: 'image/png', assetUrl: 'signal-loom-asset://file/saved', createdAt: 1 },
+          ],
+        }],
+        dismissedSourceKeys: [],
+      },
+    });
+    vi.stubGlobal('window', { signalLoomNative: { getSourceLibrarySnapshot } });
+
+    await useSourceBinStore.getState().reconcileWithNativeSourceLibrarySnapshot();
+
+    const ids = useSourceBinStore.getState().bins.flatMap((bin) => bin.items).map((item) => item.id);
+    expect(getSourceLibrarySnapshot).toHaveBeenCalled();
+    expect(ids).toContain('gen-1'); // cross-window generated asset recovered
+    expect(ids).toContain('saved-1'); // saved asset retained
+  });
+
+  it('reconcile is a no-op without the native source-library bridge (web / mobile single-window)', async () => {
+    vi.stubGlobal('window', {});
+    await expect(useSourceBinStore.getState().reconcileWithNativeSourceLibrarySnapshot()).resolves.toBeUndefined();
+    const ids = useSourceBinStore.getState().bins.flatMap((bin) => bin.items).map((item) => item.id);
+    expect(ids).toEqual([]);
+  });
+
   it('broadcasts directly added source-library assets to other workspace windows', async () => {
     await useSourceBinStore.getState().addAssetItem({
       id: 'direct-image-1',

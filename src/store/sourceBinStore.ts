@@ -121,6 +121,7 @@ export interface SourceBinState {
   setNativeScratchDirectoryPath: (nativeScratchDirectoryPath: string | undefined) => void;
   migrateAssetsToScratch: (scratchDirectoryHandle: FileSystemDirectoryHandle) => Promise<number>;
   hydrateAssets: () => Promise<void>;
+  reconcileWithNativeSourceLibrarySnapshot: () => Promise<void>;
   exportProjectSnapshot: (options?: { includeAssetData?: boolean }) => Promise<SourceBinProjectSnapshot>;
   restoreProjectSnapshot: (snapshot?: SourceBinProjectSnapshot, options?: { publishNative?: boolean }) => Promise<void>;
   getAllItems: () => SourceBinLibraryItem[];
@@ -937,6 +938,38 @@ export const useSourceBinStore = create<SourceBinState>()(
         syncRevocableObjectUrls(previousBins, restoredBins);
         if (publishNative) {
           syncNativeSourceLibrarySnapshot(restoredSnapshot);
+        }
+      },
+      reconcileWithNativeSourceLibrarySnapshot: async () => {
+        // In the desktop multi-window app each workspace opens in its own window/store, and the
+        // Source Library is a *global* resource whose authoritative state lives in the native main
+        // process (`sourceLibrarySnapshot` = the project's saved bin + anything generated/added in
+        // other windows since the last save). A freshly-opened window's `restoreProjectSnapshot`
+        // replaces the Source Library with the *static* saved-project bin, which clobbers those
+        // live cross-window assets. Re-apply the authoritative native snapshot so they survive.
+        // No-op without the native bridge (web / mobile single-window — nothing to reconcile).
+        const bridge = getSignalLoomNativeBridge();
+        if (!bridge?.getSourceLibrarySnapshot) {
+          return;
+        }
+
+        const result = await bridge.getSourceLibrarySnapshot().catch(() => undefined);
+        if (!result?.snapshot || !(result.version > 0)) {
+          return;
+        }
+
+        let changed = false;
+        set((state) => {
+          const nextState = applySourceLibraryNativeChange(
+            { bins: state.bins, dismissedSourceKeys: state.dismissedSourceKeys },
+            { type: 'source-library-snapshot', snapshot: result.snapshot },
+          );
+          changed = nextState.bins !== state.bins || nextState.dismissedSourceKeys !== state.dismissedSourceKeys;
+          return changed ? nextState : {};
+        });
+
+        if (changed) {
+          await get().hydrateAssets().catch(() => undefined);
         }
       },
       addAssetItem: async (item, targetBinId) => {
