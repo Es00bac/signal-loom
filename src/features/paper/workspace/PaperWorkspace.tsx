@@ -152,7 +152,7 @@ import { resolveFrameWrapSpacers, type PaperWrapSpacer } from '../../../lib/pape
 import { PAPER_BUBBLE_PRESETS } from '../../../lib/paperBubblePresets';
 import type { PaperAlignEdge, PaperDistributeAxis } from '../../../lib/paperAlignDistribute';
 import { PAPER_DEFAULT_SWATCHES } from '../../../lib/paperSwatchCatalog';
-import { parseHexColor, resolveSwatchCssColor, rgbToCmyk } from '../../../lib/paperSwatches';
+import { cmykToRgb, parseHexColor, resolveSwatchCssColor, rgbToCmyk, rgbToCss, totalInkPercent } from '../../../lib/paperSwatches';
 import {
   estimateGenerativeFillCostUsd,
   type GenerativeFillProvider,
@@ -9153,6 +9153,36 @@ function PaperInspector({
                     />
                   ))}
                 </div>
+                {(() => {
+                  const rgb = parseHexColor(cssColorToPickerValue(frame.fillColor)) ?? { r: 0, g: 0, b: 0 };
+                  const cmyk = rgbToCmyk(rgb);
+                  const ink = totalInkPercent(cmyk);
+                  const channels: { key: 'c' | 'm' | 'y' | 'k'; label: string }[] = [
+                    { key: 'c', label: 'C' },
+                    { key: 'm', label: 'M' },
+                    { key: 'y', label: 'Y' },
+                    { key: 'k', label: 'K' },
+                  ];
+                  return (
+                    <div className="mt-2">
+                      <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-cyan-100/30">Fill CMYK %</div>
+                      <div className="grid grid-cols-4 gap-1">
+                        {channels.map(({ key, label }) => (
+                          <NumberField
+                            key={key}
+                            label={label}
+                            onChange={(value) => onUpdateFrame({ fillColor: rgbToCss(cmykToRgb({ ...cmyk, [key]: Math.round(clamp(value, 0, 100)) })) })}
+                            step={1}
+                            value={cmyk[key]}
+                          />
+                        ))}
+                      </div>
+                      <div className={`mt-1 tabular-nums text-[10px] ${ink > 300 ? 'text-amber-300' : 'text-cyan-100/40'}`}>
+                        Total ink {ink}%{ink > 300 ? ' — exceeds 300% coverage limit' : ''}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
               <label className="flex items-center gap-2 text-xs text-cyan-100/55">
                 <input
