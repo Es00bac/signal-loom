@@ -109,6 +109,20 @@ export function rgbToCss(rgb: PaperRgb): string {
   return `rgb(${clampByte(rgb.r)}, ${clampByte(rgb.g)}, ${clampByte(rgb.b)})`;
 }
 
+/** Parse a `#rgb`/`#rrggbb` hex string to RGB (for CMYK readouts of an existing colour). */
+export function parseHexColor(value: string): PaperRgb | undefined {
+  const hex = value.trim().replace(/^#/, '');
+  const full = hex.length === 3 ? hex.split('').map((character) => character + character).join('') : hex;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) {
+    return undefined;
+  }
+  return {
+    r: parseInt(full.slice(0, 2), 16),
+    g: parseInt(full.slice(2, 4), 16),
+    b: parseInt(full.slice(4, 6), 16),
+  };
+}
+
 export function resolveSwatchCssColor(swatch: PaperSwatch, tintPercent = 100): string {
   return rgbToCss(applyTint(swatchScreenRgb(swatch), tintPercent));
 }

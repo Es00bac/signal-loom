@@ -150,6 +150,8 @@ import { computePaperThreadSlices } from '../../../lib/paperThreadFlow';
 import { createPaperCanvasMeasurer } from '../../../lib/paperCanvasMeasurer';
 import { PAPER_BUBBLE_PRESETS } from '../../../lib/paperBubblePresets';
 import type { PaperAlignEdge, PaperDistributeAxis } from '../../../lib/paperAlignDistribute';
+import { PAPER_DEFAULT_SWATCHES } from '../../../lib/paperSwatchCatalog';
+import { parseHexColor, resolveSwatchCssColor, rgbToCmyk } from '../../../lib/paperSwatches';
 import {
   estimateGenerativeFillCostUsd,
   type GenerativeFillProvider,
@@ -9040,6 +9042,31 @@ function PaperInspector({
               <Field label="Stroke Color">
                 <AdvancedColorPicker className="h-8 w-full" buttonClassName="rounded border border-cyan-300/15 bg-[#0b121d]" label="Frame stroke color" onChange={(color) => onUpdateFrame({ strokeColor: color })} value={cssColorToPickerValue(frame.strokeColor)} />
               </Field>
+              <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
+                <div className="mb-1.5 flex items-center justify-between">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Swatches (CMYK)</div>
+                  {(() => {
+                    const rgb = parseHexColor(cssColorToPickerValue(frame.fillColor));
+                    if (!rgb) return null;
+                    const cmyk = rgbToCmyk(rgb);
+                    return <div className="tabular-nums text-[10px] text-cyan-100/45">C{cmyk.c} M{cmyk.m} Y{cmyk.y} K{cmyk.k}</div>;
+                  })()}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {PAPER_DEFAULT_SWATCHES.map((swatch) => (
+                    <button
+                      className="h-5 w-5 rounded border border-cyan-300/25 hover:ring-2 hover:ring-cyan-300/50"
+                      key={swatch.id}
+                      onClick={(event) => onUpdateFrame(event.altKey
+                        ? { strokeColor: resolveSwatchCssColor(swatch) }
+                        : { fillColor: resolveSwatchCssColor(swatch) })}
+                      style={{ backgroundColor: resolveSwatchCssColor(swatch) }}
+                      title={`${swatch.name}${swatch.cmyk ? ` — C${swatch.cmyk.c} M${swatch.cmyk.m} Y${swatch.cmyk.y} K${swatch.cmyk.k}` : ''} (tap: fill, Alt: stroke)`}
+                      type="button"
+                    />
+                  ))}
+                </div>
+              </div>
               <label className="flex items-center gap-2 text-xs text-cyan-100/55">
                 <input
                   checked={Boolean(frame.fillGradient)}

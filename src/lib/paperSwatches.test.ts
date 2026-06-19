@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   cmykToRgb,
+  parseHexColor,
   resolveSwatchCssColor,
   rgbToCmyk,
   rgbToCss,
@@ -44,5 +45,11 @@ describe('paper swatch color math (matches the Image naive RGB↔CMYK formula)',
 
   it('formats an RGB triple as a CSS color', () => {
     expect(rgbToCss({ r: 12, g: 34, b: 56 })).toBe('rgb(12, 34, 56)');
+  });
+
+  it('parses hex colors (3- and 6-digit) and rejects invalid input', () => {
+    expect(parseHexColor('#ff0000')).toEqual({ r: 255, g: 0, b: 0 });
+    expect(parseHexColor('0f0')).toEqual({ r: 0, g: 255, b: 0 });
+    expect(parseHexColor('rgb(1,2,3)')).toBeUndefined();
   });
 });
