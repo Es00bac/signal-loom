@@ -15,6 +15,8 @@ export interface PaperBubbleConnectorSegment {
   to: PaperPoint;
   control: PaperPoint;
   dots: PaperPoint[];
+  /** For the 'bridge' style: the filled neck polygon that merges the two bubbles (same speaker). */
+  bridgePolygon: PaperPoint[];
 }
 
 interface ChainCandidate {
@@ -62,6 +64,7 @@ export function buildPaperBubbleConnectorSegments(frames: PaperFrame[]): PaperBu
         to,
         control: resolveConnectorControlPoint(from, to),
         dots: style === 'thought-dots' ? resolveThoughtConnectorDots(from, to) : [],
+        bridgePolygon: style === 'bridge' ? resolveBridgePolygon(fromFrame, toFrame, from, to) : [],
       };
     });
   });
@@ -157,6 +160,37 @@ function resolveThoughtConnectorDots(from: PaperPoint, to: PaperPoint): PaperPoi
       yMm: roundMm(from.yMm + (to.yMm - from.yMm) * t),
     };
   });
+}
+
+function resolveBridgePolygon(
+  fromFrame: PaperFrame,
+  toFrame: PaperFrame,
+  from: PaperPoint,
+  to: PaperPoint,
+): PaperPoint[] {
+  const dirX = to.xMm - from.xMm;
+  const dirY = to.yMm - from.yMm;
+  const length = Math.hypot(dirX, dirY) || 1;
+  const ux = dirX / length;
+  const uy = dirY / length;
+  const px = -uy;
+  const py = ux;
+  const halfWidth = Math.max(2, Math.min(
+    Math.min(fromFrame.widthMm, fromFrame.heightMm),
+    Math.min(toFrame.widthMm, toFrame.heightMm),
+  ) * 0.28);
+  // Tuck the band's ends a little into each bubble so (drawn behind the frames) the bubbles cover
+  // the seams and the two balloons read as one continuous shape — the classic same-speaker neck.
+  const overlap = halfWidth * 0.8;
+  const fromExt = { xMm: from.xMm - ux * overlap, yMm: from.yMm - uy * overlap };
+  const toExt = { xMm: to.xMm + ux * overlap, yMm: to.yMm + uy * overlap };
+
+  return [
+    { xMm: roundMm(fromExt.xMm + px * halfWidth), yMm: roundMm(fromExt.yMm + py * halfWidth) },
+    { xMm: roundMm(toExt.xMm + px * halfWidth), yMm: roundMm(toExt.yMm + py * halfWidth) },
+    { xMm: roundMm(toExt.xMm - px * halfWidth), yMm: roundMm(toExt.yMm - py * halfWidth) },
+    { xMm: roundMm(fromExt.xMm - px * halfWidth), yMm: roundMm(fromExt.yMm - py * halfWidth) },
+  ];
 }
 
 function roundMm(value: number): number {

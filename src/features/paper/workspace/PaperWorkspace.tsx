@@ -7224,6 +7224,21 @@ function PaperBubbleConnectorsOverlay({
         const stroke = fromFrame?.strokeColor ?? '#111827';
         const strokeWidth = Math.max(0.25, fromFrame?.strokeWidthMm ?? 0.35);
 
+        if (segment.style === 'bridge') {
+          return (
+            <polygon
+              fill={fromFrame?.fillColor ?? '#ffffff'}
+              fillOpacity={fromFrame?.fillOpacity ?? 1}
+              key={segment.id}
+              points={segment.bridgePolygon.map((point) => `${point.xMm},${point.yMm}`).join(' ')}
+              stroke={stroke}
+              strokeLinejoin="round"
+              strokeWidth={strokeWidth}
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        }
+
         if (segment.style === 'thought-dots') {
           return (
             <g key={segment.id}>
@@ -9238,6 +9253,7 @@ function PaperInspector({
                           <option value="line">Line</option>
                           <option value="tail">Curved tail</option>
                           <option value="thought-dots">Thought dots</option>
+                          <option value="bridge">Same-speaker bridge</option>
                         </select>
                       </Field>
                       <Field label="Anchor">

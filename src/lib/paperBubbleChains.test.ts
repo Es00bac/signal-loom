@@ -90,4 +90,23 @@ describe('paper bubble chains', () => {
     });
     expect(segments[1].dots.length).toBeGreaterThanOrEqual(3);
   });
+
+  it('builds a merged neck polygon for the bridge (same-speaker) style', () => {
+    const segments = buildPaperBubbleConnectorSegments([
+      frame({ id: 'a', xMm: 10, yMm: 20, widthMm: 30, heightMm: 18, bubbleChainId: 'spk', bubbleChainOrder: 1, bubbleConnectorStyle: 'bridge' }),
+      frame({ id: 'b', xMm: 60, yMm: 20, widthMm: 30, heightMm: 18, bubbleChainId: 'spk', bubbleChainOrder: 2, bubbleConnectorStyle: 'bridge' }),
+    ]);
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0].style).toBe('bridge');
+    const polygon = segments[0].bridgePolygon;
+    expect(polygon).toHaveLength(4);
+    const xs = polygon.map((point) => point.xMm);
+    const ys = polygon.map((point) => point.yMm);
+    // A horizontal neck centred on the shared baseline, tucked into both bubbles.
+    expect(Math.min(...xs)).toBeCloseTo(35.968, 1);
+    expect(Math.max(...xs)).toBeCloseTo(64.032, 1);
+    expect(Math.min(...ys)).toBeCloseTo(23.96, 1);
+    expect(Math.max(...ys)).toBeCloseTo(34.04, 1);
+  });
 });
