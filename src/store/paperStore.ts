@@ -23,6 +23,7 @@ import {
 } from '../lib/paperDocument';
 import type { PaperPoint } from '../lib/paperLayoutTools';
 import { alignPaperFrames, distributePaperFrames, type PaperAlignEdge, type PaperDistributeAxis } from '../lib/paperAlignDistribute';
+import { findPaperMatches, replaceAllInText, type PaperFindOptions } from '../lib/paperFindChange';
 import {
   applyPaperFrameContextAction,
   applyPaperFrameGroupContextAction,
@@ -110,6 +111,7 @@ interface PaperActions {
   unthreadSelectedFrames: () => void;
   alignSelectedFrames: (edge: PaperAlignEdge) => void;
   distributeSelectedFrames: (axis: PaperDistributeAxis) => void;
+  replaceAllInPaperText: (query: string, replacement: string, options?: PaperFindOptions) => number;
   addComicSfx: (
     presetId: PaperComicSfxPresetId,
     options?: { pageId?: string; point?: PaperPoint; text?: string; design?: PaperComicSfxDesign },
@@ -543,6 +545,13 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           return patch ? withPaperHistory(state, patch) : state;
         }),
 
+      replaceAllInPaperText: (query, replacement, options = {}) => {
+        const state = get();
+        const { patch, count } = replaceAllInPaperTextPatch(state, query, replacement, options);
+        if (patch) set(withPaperHistory(state, patch));
+        return count;
+      },
+
       addComicSfx: (presetId, options) => {
         const state = get();
         const pageId = options?.pageId || state.selectedPageId || state.document.pages[0]?.id;
@@ -886,6 +895,30 @@ function deletePaperSelectionPatch(state: PaperState): Pick<PaperState, 'documen
     selectedFrameId: null,
     selectedFrameIds: [],
   };
+}
+
+function replaceAllInPaperTextPatch(
+  state: PaperState,
+  query: string,
+  replacement: string,
+  options: PaperFindOptions,
+): { patch?: Pick<PaperState, 'document'>; count: number } {
+  const refs = state.document.pages.flatMap((page) =>
+    page.frames.filter((frame) => frame.kind === 'text').map((frame) => ({ pageId: page.id, frameId: frame.id, text: frame.text ?? '' })));
+  const count = findPaperMatches(refs, query, options).length;
+  if (count === 0) return { count: 0 };
+
+  const document = {
+    ...state.document,
+    pages: state.document.pages.map((page) => ({
+      ...page,
+      frames: page.frames.map((frame) => (frame.kind === 'text' && frame.text
+        ? { ...frame, text: replaceAllInText(frame.text, query, replacement, options) }
+        : frame)),
+    })),
+    updatedAt: Date.now(),
+  };
+  return { patch: { document }, count };
 }
 
 function arrangeSelectedPaperFramesPatch(
