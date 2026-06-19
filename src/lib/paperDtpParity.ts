@@ -48,9 +48,9 @@ export const PAPER_DTP_PARITY_FEATURES: PaperDtpParityFeature[] = [
     feature: 'Color management / output intent',
     priority: 'highest',
     indesign: 'Document CMYK/RGB policies, PDF/X presets, ICC output intents, overprint preview, separations, and ink-limit warnings',
-    signalLoom: 'Document-level PDF target, output-intent profile metadata, ink-limit/black/spot policies, package metadata, and honest preflight warnings for the browser PDF proof path',
+    signalLoom: 'A document swatch library (process CMYK + spot defaults plus saved custom swatches), a numeric CMYK fill editor with total-ink coverage warnings, document-level PDF target, output-intent profile metadata, ink-limit/black/spot policies, package metadata, and honest preflight warnings for the browser PDF proof path (true ICC separations land with PDF/X export)',
     status: 'partial',
-    comicImpact: 'Makes press targets explicit and keeps generated RGB artwork from being mistaken for a certified PDF/X deliverable.',
+    comicImpact: 'Lets letterers build a reusable press palette and dial fills in CMYK, while keeping generated RGB artwork from being mistaken for a certified PDF/X deliverable.',
     actionTarget: 'preflight',
   },
   {
