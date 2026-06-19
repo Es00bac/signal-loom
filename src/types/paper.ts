@@ -132,6 +132,8 @@ export interface PaperTypography {
   smallCaps?: boolean;
   /** OpenType figure style (CSS font-variant-numeric). */
   numericStyle?: PaperNumericStyle;
+  /** Drop-cap height in lines (0 / undefined = no drop cap). */
+  dropCapLines?: number;
 }
 
 export interface PaperFrameAsset {

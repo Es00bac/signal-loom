@@ -8173,8 +8173,18 @@ function PaperInlineText({
     );
   }
 
+  const dropCapLines = frame.typography.dropCapLines && frame.typography.dropCapLines >= 2
+    ? Math.min(8, Math.round(frame.typography.dropCapLines))
+    : 0;
+  const textStyle = dropCapLines
+    ? ({ ...style, '--sl-dropcap-lines': String(dropCapLines) } as React.CSSProperties)
+    : style;
   return (
-    <div className={className} onDoubleClick={onBeginEdit} style={style}>
+    <div
+      className={dropCapLines ? `${className} paper-dropcap` : className}
+      onDoubleClick={onBeginEdit}
+      style={textStyle}
+    >
       <PaperWrapFloats spacers={wrapSpacers} zoom={zoom} />
       {displayText ?? frame.text}
     </div>
@@ -9600,6 +9610,12 @@ function PaperInspector({
                         <option value="justify">Justify</option>
                       </select>
                     </Field>
+                    <NumberField
+                      label="Drop cap lines"
+                      onChange={(dropCapLines) => onUpdateFrame({ typography: { ...frame.typography, dropCapLines: Math.max(0, Math.round(dropCapLines)) } })}
+                      step={1}
+                      value={frame.typography.dropCapLines ?? 0}
+                    />
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     <label className="flex items-center gap-2 text-xs text-cyan-100/55">

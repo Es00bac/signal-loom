@@ -272,6 +272,15 @@
     border-color: color-mix(in srgb, var(--sl-accent) 62%, transparent) !important;
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--sl-accent) 20%, transparent);
   }
+
+  .paper-dropcap::first-letter {
+    float: left;
+    font-size: calc(var(--sl-dropcap-lines, 3) * 1em);
+    line-height: 0.78;
+    padding-right: 0.08em;
+    padding-top: 0.02em;
+    font-weight: 600;
+  }
 }
 
 @layer utilities {
