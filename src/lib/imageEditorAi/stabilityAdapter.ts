@@ -1,6 +1,6 @@
 import { useSettingsStore } from '../../store/settingsStore';
 import type { GenerativeFillRequest, GenerativeFillResult } from '../imageEditorAi';
-import { blobToFile } from './blobUtils';
+import { blobToFile, readBinaryImageResponseBlob } from './blobUtils';
 import {
   buildStabilityEditRequest,
   type StabilityEditRequestInput,
@@ -49,7 +49,7 @@ export async function runStabilityInpaint(
   }
 
   return {
-    png: await response.blob(),
+    png: await readBinaryImageResponseBlob(response),
     modelUsed: request.model ?? stabilityModelForOperation(operation),
     approximateCostUsd: built.estimatedCostUsd,
   };

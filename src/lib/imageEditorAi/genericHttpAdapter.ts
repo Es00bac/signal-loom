@@ -1,5 +1,6 @@
 import type { GenerativeFillRequest, GenerativeFillResult } from '../imageEditorAi';
 import { useSettingsStore } from '../../store/settingsStore';
+import { readBinaryImageResponseBlob } from './blobUtils';
 
 /**
  * Generic HTTP inpaint adapter. Posts JSON to a user-configurable endpoint
@@ -48,7 +49,7 @@ export async function runGenericHttpInpaint(
 
   const contentType = response.headers.get('content-type') ?? '';
   if (contentType.startsWith('image/')) {
-    return { png: await response.blob(), modelUsed: request.model ?? 'generic' };
+    return { png: await readBinaryImageResponseBlob(response), modelUsed: request.model ?? 'generic' };
   }
 
   const json = (await response.json()) as { image?: string };

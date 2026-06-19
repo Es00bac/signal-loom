@@ -1,5 +1,6 @@
 import { useSettingsStore } from '../../store/settingsStore';
 import type { GenerativeFillRequest, GenerativeFillResult } from '../imageEditorAi';
+import { readBinaryImageResponseBlob } from './blobUtils';
 
 const DEFAULT_MODEL = 'runwayml/stable-diffusion-inpainting';
 
@@ -44,7 +45,7 @@ export async function runHuggingFaceInpaint(
     throw new Error(`Hugging Face inpaint failed (${response.status}): ${text}`);
   }
 
-  const blob = await response.blob();
+  const blob = await readBinaryImageResponseBlob(response);
   return {
     png: blob,
     modelUsed: model,

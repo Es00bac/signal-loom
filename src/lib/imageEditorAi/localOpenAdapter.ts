@@ -1,6 +1,6 @@
 import { useSettingsStore } from '../../store/settingsStore';
 import type { GenerativeFillRequest, GenerativeFillResult } from '../imageEditorAi';
-import { base64ToBlob, blobToBase64 } from './blobUtils';
+import { base64ToBlob, blobToBase64, readBinaryImageResponseBlob } from './blobUtils';
 import { buildLocalOpenImageEditRequest } from './requestBuilders';
 
 export async function runLocalOpenInpaint(
@@ -51,7 +51,7 @@ export async function runLocalOpenInpaint(
   const contentType = response.headers.get('content-type') ?? '';
   if (contentType.startsWith('image/')) {
     return {
-      png: await response.blob(),
+      png: await readBinaryImageResponseBlob(response),
       modelUsed: model,
     };
   }
