@@ -22,6 +22,7 @@ import {
   updatePaperFrame,
 } from '../lib/paperDocument';
 import type { PaperPoint } from '../lib/paperLayoutTools';
+import { alignPaperFrames, distributePaperFrames, type PaperAlignEdge, type PaperDistributeAxis } from '../lib/paperAlignDistribute';
 import {
   applyPaperFrameContextAction,
   applyPaperFrameGroupContextAction,
@@ -107,6 +108,8 @@ interface PaperActions {
   unchainSelectedBubbles: () => void;
   threadSelectedFrames: () => void;
   unthreadSelectedFrames: () => void;
+  alignSelectedFrames: (edge: PaperAlignEdge) => void;
+  distributeSelectedFrames: (axis: PaperDistributeAxis) => void;
   addComicSfx: (
     presetId: PaperComicSfxPresetId,
     options?: { pageId?: string; point?: PaperPoint; text?: string; design?: PaperComicSfxDesign },
@@ -528,6 +531,18 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           return patch ? withPaperHistory(state, patch) : state;
         }),
 
+      alignSelectedFrames: (edge) =>
+        set((state) => {
+          const patch = arrangeSelectedPaperFramesPatch(state, (frames) => alignPaperFrames(frames, edge));
+          return patch ? withPaperHistory(state, patch) : state;
+        }),
+
+      distributeSelectedFrames: (axis) =>
+        set((state) => {
+          const patch = arrangeSelectedPaperFramesPatch(state, (frames) => distributePaperFrames(frames, axis));
+          return patch ? withPaperHistory(state, patch) : state;
+        }),
+
       addComicSfx: (presetId, options) => {
         const state = get();
         const pageId = options?.pageId || state.selectedPageId || state.document.pages[0]?.id;
@@ -871,6 +886,27 @@ function deletePaperSelectionPatch(state: PaperState): Pick<PaperState, 'documen
     selectedFrameId: null,
     selectedFrameIds: [],
   };
+}
+
+function arrangeSelectedPaperFramesPatch(
+  state: PaperState,
+  compute: (frames: { id: string; xMm: number; yMm: number; widthMm: number; heightMm: number }[]) => Map<string, { xMm?: number; yMm?: number }>,
+): Pick<PaperState, 'document'> | undefined {
+  const page = state.document.pages.find((candidate) => candidate.id === state.selectedPageId);
+  if (!page) return undefined;
+  const selectedIds = new Set(getSelectedPaperFrameIds(state));
+  const selected = page.frames.filter((frame) => selectedIds.has(frame.id) && !frame.locked && !frame.inherited);
+  const patches = compute(selected.map((frame) => ({ id: frame.id, xMm: frame.xMm, yMm: frame.yMm, widthMm: frame.widthMm, heightMm: frame.heightMm })));
+  if (patches.size === 0) return undefined;
+
+  const document = {
+    ...state.document,
+    pages: state.document.pages.map((candidate) => candidate.id === page.id
+      ? { ...candidate, frames: candidate.frames.map((frame) => patches.has(frame.id) ? { ...frame, ...patches.get(frame.id) } : frame) }
+      : candidate),
+    updatedAt: Date.now(),
+  };
+  return { document };
 }
 
 function threadSelectedPaperFramesPatch(state: PaperState): Pick<PaperState, 'document'> | undefined {
