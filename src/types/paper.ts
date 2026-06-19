@@ -1,6 +1,7 @@
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import type { PaperComicSfxDesign } from '../lib/paperComicSfx';
 import type { PaperSwatch } from '../lib/paperSwatches';
+import type { PaperTableSpec } from '../lib/paperTables';
 
 export type PaperPagePreset =
   | 'custom'
@@ -247,6 +248,7 @@ export interface PaperFrame {
   comicSfxDesign?: PaperComicSfxDesign;
   vertices?: PaperFrameVertex[];
   textWrap?: PaperTextWrap;
+  table?: PaperTableSpec;
   tailXPercent?: number;
   tailYPercent?: number;
   zIndex: number;

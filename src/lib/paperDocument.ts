@@ -25,6 +25,7 @@ import {
 } from './paperLayoutTools';
 import { buildPaperBubblePath, resolveBubbleTailCurveHandle } from './paperBubblePaths';
 import { buildPaperBubbleConnectorSegments } from './paperBubbleChains';
+import { normalizePaperTable } from './paperTables';
 import {
   appendPaperTextEffectTransform,
   buildPaperTextPaintEffectCssText,
@@ -901,6 +902,7 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     shapeKind: frame.shapeKind ?? (kind === 'shape' ? 'triangle' : undefined),
     vertices: frame.vertices ?? defaultVerticesForKind(kind, frame.shapeKind),
     textWrap: sanitizePaperTextWrap(frame.textWrap),
+    table: frame.table ? normalizePaperTable(frame.table) : undefined,
     tailXPercent: frame.tailXPercent ?? (kind === 'speechBubble' || kind === 'thoughtBubble' ? 72 : undefined),
     tailYPercent: frame.tailYPercent ?? (kind === 'speechBubble' || kind === 'thoughtBubble' ? 92 : undefined),
     zIndex: frame.zIndex ?? 0,

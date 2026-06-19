@@ -153,6 +153,14 @@ import { resolveFrameWrapSpacers, type PaperWrapSpacer } from '../../../lib/pape
 import { findPaperMatches, type PaperFindOptions } from '../../../lib/paperFindChange';
 import { resolvePaperFolioText } from '../../../lib/paperFolios';
 import { buildPaperTextArcPath } from '../../../lib/paperTextPath';
+import {
+  addPaperTableColumn,
+  addPaperTableRow,
+  createPaperTable,
+  removePaperTableColumn,
+  removePaperTableRow,
+  setPaperTableCell,
+} from '../../../lib/paperTables';
 import { PAPER_BUBBLE_PRESETS } from '../../../lib/paperBubblePresets';
 import type { PaperAlignEdge, PaperDistributeAxis } from '../../../lib/paperAlignDistribute';
 import { PAPER_DEFAULT_SWATCHES } from '../../../lib/paperSwatchCatalog';
@@ -7536,7 +7544,7 @@ function PaperFrameView({
   const allowsVisibleOverflow = frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble';
   const showFrameTransformHandles = isSelected && !frame.inherited && !showVertexHandles;
   // A threaded continuation frame is read-only (the story is edited on the thread's head frame).
-  const editableTextFrame = isPaperInlineTextFrame(frame) && !isThreadContinuation;
+  const editableTextFrame = isPaperInlineTextFrame(frame) && !isThreadContinuation && !frame.table;
 
   const beginTextEdit = (event: React.MouseEvent<HTMLElement>) => {
     if (!editableTextFrame || frame.locked || frame.inherited || tool !== 'select') return;
@@ -7639,7 +7647,9 @@ function PaperFrameView({
         className={`absolute inset-0 ${allowsVisibleOverflow ? 'overflow-visible' : 'overflow-hidden'}`}
         style={contentStyle}
       >
-        {hasImageContent && frame.asset?.src ? (
+        {frame.table ? (
+          <PaperTableView frame={frame} zoom={zoom} />
+        ) : hasImageContent && frame.asset?.src ? (
           <img
             alt={frame.asset.label}
             className="h-full w-full"
@@ -8117,6 +8127,52 @@ function PaperBubbleText({
     >
       {frame.text}
     </div>
+  );
+}
+
+function PaperTableView({ frame, zoom }: { frame: PaperFrame; zoom: number }) {
+  const table = frame.table;
+  if (!table) return null;
+  const borderPx = Math.max(0.5, table.borderWidthMm * PX_PER_MM * zoom);
+  const padPx = Math.max(0, table.cellPaddingMm * PX_PER_MM * zoom);
+  const border = `${borderPx}px solid ${frame.strokeColor}`;
+  return (
+    <table
+      className="absolute inset-0 h-full w-full border-collapse"
+      style={{
+        color: frame.typography.color,
+        fontFamily: frame.typography.fontFamily,
+        fontSize: frame.typography.fontSizePt * 1.333 * zoom,
+        lineHeight: 1.25,
+        tableLayout: 'fixed',
+      }}
+    >
+      <tbody>
+        {table.cells.map((row, r) => (
+          <tr key={r}>
+            {row.map((cell, c) => {
+              const isHeader = table.headerRow && r === 0;
+              return (
+                <td
+                  key={c}
+                  style={{
+                    border,
+                    padding: padPx,
+                    verticalAlign: 'top',
+                    fontWeight: isHeader ? 700 : undefined,
+                    background: isHeader ? 'rgba(148,163,184,0.18)' : undefined,
+                    overflow: 'hidden',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {cell}
+                </td>
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -9364,6 +9420,61 @@ function PaperInspector({
                       </Field>
                     ) : null}
                   </div>
+                ) : null}
+              </div>
+              <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Table</div>
+                  {frame.table ? (
+                    <button className="rounded border border-cyan-300/20 px-1.5 py-0.5 text-[10px] text-cyan-100/60 hover:border-cyan-300/50 hover:text-white" onClick={() => onUpdateFrame({ table: undefined })} type="button">Remove</button>
+                  ) : (
+                    <button className="rounded border border-cyan-300/20 px-1.5 py-0.5 text-[10px] text-cyan-100/60 hover:border-cyan-300/50 hover:text-white" onClick={() => onUpdateFrame({ table: createPaperTable(3, 3) })} type="button">Add table</button>
+                  )}
+                </div>
+                {frame.table ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-2 text-[11px] text-cyan-100/55">
+                      <div className="flex items-center justify-between gap-1">
+                        <span>Rows</span>
+                        <span className="flex items-center gap-1">
+                          <button className="rounded border border-cyan-300/20 px-1.5" onClick={() => onUpdateFrame({ table: removePaperTableRow(frame.table!, frame.table!.rows - 1) })} type="button">−</button>
+                          <span className="tabular-nums">{frame.table.rows}</span>
+                          <button className="rounded border border-cyan-300/20 px-1.5" onClick={() => onUpdateFrame({ table: addPaperTableRow(frame.table!) })} type="button">+</button>
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-1">
+                        <span>Cols</span>
+                        <span className="flex items-center gap-1">
+                          <button className="rounded border border-cyan-300/20 px-1.5" onClick={() => onUpdateFrame({ table: removePaperTableColumn(frame.table!, frame.table!.cols - 1) })} type="button">−</button>
+                          <span className="tabular-nums">{frame.table.cols}</span>
+                          <button className="rounded border border-cyan-300/20 px-1.5" onClick={() => onUpdateFrame({ table: addPaperTableColumn(frame.table!) })} type="button">+</button>
+                        </span>
+                      </div>
+                    </div>
+                    <label className="mt-2 flex items-center gap-2 text-xs text-cyan-100/55">
+                      <input checked={frame.table.headerRow} onChange={(event) => onUpdateFrame({ table: { ...frame.table!, headerRow: event.target.checked } })} type="checkbox" />
+                      Header row
+                    </label>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <NumberField label="Border mm" onChange={(borderWidthMm) => onUpdateFrame({ table: { ...frame.table!, borderWidthMm: Math.max(0, borderWidthMm) } })} step={0.1} value={frame.table.borderWidthMm} />
+                      <NumberField label="Padding mm" onChange={(cellPaddingMm) => onUpdateFrame({ table: { ...frame.table!, cellPaddingMm: Math.max(0, cellPaddingMm) } })} step={0.5} value={frame.table.cellPaddingMm} />
+                    </div>
+                    <div className="mt-2 space-y-1">
+                      {frame.table.cells.map((row, r) => (
+                        <div className="flex gap-1" key={r}>
+                          {row.map((cell, c) => (
+                            <input
+                              className="paper-input min-w-0 flex-1 px-1 py-0.5 text-[11px]"
+                              key={c}
+                              onChange={(event) => onUpdateFrame({ table: setPaperTableCell(frame.table!, r, c, event.target.value) })}
+                              placeholder={`${r + 1},${c + 1}`}
+                              value={cell}
+                            />
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 ) : null}
               </div>
               <div className="grid grid-cols-2 gap-2">
