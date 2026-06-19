@@ -151,6 +151,7 @@ import { computePaperThreadSlices } from '../../../lib/paperThreadFlow';
 import { createPaperCanvasMeasurer } from '../../../lib/paperCanvasMeasurer';
 import { resolveFrameWrapSpacers, type PaperWrapSpacer } from '../../../lib/paperTextWrap';
 import { findPaperMatches, type PaperFindOptions } from '../../../lib/paperFindChange';
+import { resolvePaperFolioText } from '../../../lib/paperFolios';
 import { PAPER_BUBBLE_PRESETS } from '../../../lib/paperBubblePresets';
 import type { PaperAlignEdge, PaperDistributeAxis } from '../../../lib/paperAlignDistribute';
 import { PAPER_DEFAULT_SWATCHES } from '../../../lib/paperSwatchCatalog';
@@ -6410,7 +6411,7 @@ function PaperConnectedSpreadView({
                 {frameLayers.map(({ frame, canvasZIndex }) => (
                   <PaperFrameView
                     canvasZIndex={canvasZIndex}
-                    displayText={threadSlices.get(frame.id)?.sourceText}
+                    displayText={resolvePaperFolioText(threadSlices.get(frame.id)?.sourceText ?? frame.text ?? '', slot.page!.pageNumber, doc.pages.length)}
                     isThreadContinuation={threadSlices.get(frame.id) ? !threadSlices.get(frame.id)!.isHead : false}
                     isOverset={threadSlices.get(frame.id)?.isOverset ?? false}
                     frame={frame}
@@ -9639,6 +9640,7 @@ function PaperInspector({
                       </select>
                     </Field>
                   </div>
+                  <div className="mt-2 text-[10px] text-cyan-100/35">Folios: type {'{page}'} or {'{pages}'} for live page numbers (great on master pages).</div>
                 </div>
                 {frame.kind === 'text' ? (
                   <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
