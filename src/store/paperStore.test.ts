@@ -475,6 +475,58 @@ describe('paperStore interaction actions', () => {
     ]);
   });
 
+  it('threads and unthreads selected text frames in one undoable edit', () => {
+    let document = createDefaultPaperDocument({ title: 'Text Threads' });
+    const pageId = document.pages[0].id;
+    for (const [index, id] of ['text-a', 'text-b', 'text-c'].entries()) {
+      document = addFrameToPaperPage(document, pageId, {
+        id,
+        kind: 'text',
+        label: id,
+        xMm: 12 + index * 36,
+        yMm: 24,
+        widthMm: 30,
+        heightMm: 40,
+        zIndex: index,
+      }).document;
+    }
+    usePaperStore.setState({
+      document,
+      selectedPageId: pageId,
+      selectedFrameId: 'text-a',
+      selectedFrameIds: ['text-a', 'text-b', 'text-c'],
+      undoStack: [],
+      redoStack: [],
+    });
+
+    paperEditActions().threadSelectedFrames();
+
+    const threadedState = usePaperStore.getState();
+    const frames = threadedState.document.pages[0].frames;
+    const threadId = frames.find((frame) => frame.id === 'text-a')?.threadId;
+    expect(threadId).toMatch(/^text-thread-/);
+    expect(frames.map((frame) => [frame.id, frame.threadId, frame.threadOrder])).toEqual([
+      ['text-a', threadId, 1],
+      ['text-b', threadId, 2],
+      ['text-c', threadId, 3],
+    ]);
+    expect(threadedState.undoStack).toHaveLength(1);
+
+    paperEditActions().unthreadSelectedFrames();
+    expect(usePaperStore.getState().document.pages[0].frames.map((frame) => frame.threadId)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+
+    paperEditActions().undo();
+    expect(usePaperStore.getState().document.pages[0].frames.map((frame) => frame.threadId)).toEqual([
+      threadId,
+      threadId,
+      threadId,
+    ]);
+  });
+
   it('restores a safe default from malformed paper document and layout state', () => {
     usePaperStore.getState().restoreSnapshot({
       document: {

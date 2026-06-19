@@ -89,6 +89,15 @@ export const PAPER_DTP_PARITY_FEATURES: PaperDtpParityFeature[] = [
     status: 'done',
     comicImpact: 'Supports editorial pages, letters columns, and text-heavy backmatter in comic collections.',
   },
+  {
+    id: 'text-threading',
+    feature: 'Threaded text frames',
+    priority: 'high',
+    indesign: 'Linked text frames with a continuing story and overset flow ports',
+    signalLoom: 'Thread membership model, a pure column/frame text-composition core with overset, and thread/unthread store actions; on-canvas flow rendering and ports are in progress',
+    status: 'partial',
+    comicImpact: 'Lets long letters pages, prose backmatter, and recap text flow across columns and pages.',
+  },
 ];
 
 export function getPaperDtpParityPriorities(features = PAPER_DTP_PARITY_FEATURES): PaperDtpParityFeature[] {

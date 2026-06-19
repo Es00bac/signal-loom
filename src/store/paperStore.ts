@@ -105,6 +105,8 @@ interface PaperActions {
   clearSelectedStyleOverrides: () => void;
   chainSelectedBubbles: (style?: PaperBubbleConnectorStyle) => void;
   unchainSelectedBubbles: () => void;
+  threadSelectedFrames: () => void;
+  unthreadSelectedFrames: () => void;
   addComicSfx: (
     presetId: PaperComicSfxPresetId,
     options?: { pageId?: string; point?: PaperPoint; text?: string; design?: PaperComicSfxDesign },
@@ -514,6 +516,18 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           return patch ? withPaperHistory(state, patch) : state;
         }),
 
+      threadSelectedFrames: () =>
+        set((state) => {
+          const patch = threadSelectedPaperFramesPatch(state);
+          return patch ? withPaperHistory(state, patch) : state;
+        }),
+
+      unthreadSelectedFrames: () =>
+        set((state) => {
+          const patch = unthreadSelectedPaperFramesPatch(state);
+          return patch ? withPaperHistory(state, patch) : state;
+        }),
+
       addComicSfx: (presetId, options) => {
         const state = get();
         const pageId = options?.pageId || state.selectedPageId || state.document.pages[0]?.id;
@@ -857,6 +871,55 @@ function deletePaperSelectionPatch(state: PaperState): Pick<PaperState, 'documen
     selectedFrameId: null,
     selectedFrameIds: [],
   };
+}
+
+function threadSelectedPaperFramesPatch(state: PaperState): Pick<PaperState, 'document'> | undefined {
+  const page = state.document.pages.find((candidate) => candidate.id === state.selectedPageId);
+  if (!page) return undefined;
+  const selectedOrder = getSelectedPaperFrameIds(state);
+  const selectedOrderIndex = new Map(selectedOrder.map((frameId, index) => [frameId, index]));
+  const selectedTextFrames = page.frames
+    .filter((frame) => selectedOrderIndex.has(frame.id) && frame.kind === 'text')
+    .sort((a, b) => selectedOrderIndex.get(a.id)! - selectedOrderIndex.get(b.id)!);
+
+  if (selectedTextFrames.length < 2) return undefined;
+
+  const threadId = makePaperRuntimeId('text-thread');
+  const order = new Map(selectedTextFrames.map((frame, index) => [frame.id, index + 1]));
+  const document = {
+    ...state.document,
+    pages: state.document.pages.map((candidate) => candidate.id === page.id
+      ? {
+          ...candidate,
+          frames: candidate.frames.map((frame) => order.has(frame.id)
+            ? { ...frame, threadId, threadOrder: order.get(frame.id)! }
+            : frame),
+        }
+      : candidate),
+    updatedAt: Date.now(),
+  };
+  return { document };
+}
+
+function unthreadSelectedPaperFramesPatch(state: PaperState): Pick<PaperState, 'document'> | undefined {
+  const page = state.document.pages.find((candidate) => candidate.id === state.selectedPageId);
+  if (!page) return undefined;
+  const selectedIds = new Set(getSelectedPaperFrameIds(state));
+  if (!page.frames.some((frame) => selectedIds.has(frame.id) && Boolean(frame.threadId))) return undefined;
+
+  const document = {
+    ...state.document,
+    pages: state.document.pages.map((candidate) => candidate.id === page.id
+      ? {
+          ...candidate,
+          frames: candidate.frames.map((frame) => selectedIds.has(frame.id) && frame.threadId
+            ? { ...frame, threadId: undefined, threadOrder: undefined }
+            : frame),
+        }
+      : candidate),
+    updatedAt: Date.now(),
+  };
+  return { document };
 }
 
 function chainSelectedPaperBubblesPatch(
