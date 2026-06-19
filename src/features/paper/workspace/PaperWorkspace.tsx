@@ -320,6 +320,7 @@ import type {
   ProviderSettings,
 } from '../../../types/flow';
 import type {
+  PaperBubbleConnectorStyle,
   PaperDocument,
   PaperFrame,
   PaperFrameKind,
@@ -3803,10 +3804,14 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           hasStyleClipboard={Boolean(styleClipboard)}
           onAddComicSfx={(presetId, pageId, point) => openComicSfxDesigner(presetId, pageId, point)}
           onClose={() => setContextMenu(null)}
-          onChainSelectedBubbles={() => {
-            chainSelectedBubbles();
+          onChainSelectedBubbles={(style) => {
+            chainSelectedBubbles(style);
             setContextMenu(null);
-            setStatus('Chained selected speech/thought bubbles.');
+            setStatus(
+              style === 'bridge'
+                ? 'Merged the selected bubbles as one speaker.'
+                : 'Linked the selected speech/thought bubbles.',
+            );
           }}
           onCopyFrameStyle={() => {
             copyActiveFrameStyle();
@@ -8383,7 +8388,7 @@ export function PaperContextMenu({
   onAddComicSfx: (presetId: PaperComicSfxPresetId, pageId: string, point: PaperPoint) => void;
   onApplyFrameAction: (pageId: string, frameId: string, actionId: PaperFrameContextActionId) => void;
   onApplyPageAction: (pageId: string, actionId: PaperPageContextActionId, point: PaperPoint, sourceItem?: SourceBinLibraryItem) => void;
-  onChainSelectedBubbles: () => void;
+  onChainSelectedBubbles: (style?: PaperBubbleConnectorStyle) => void;
   onClose: () => void;
   onCopyFrameStyle: () => void;
   onEditComicSfxFrame: (pageId: string, frame: PaperFrame | undefined) => void;
@@ -8510,7 +8515,10 @@ export function PaperContextMenu({
           </MenuGroup>
           {selectedBubbleCount >= 2 ? (
             <MenuGroup label="Bubble Chain">
-              <MenuButton label={`Chain ${selectedBubbleCount} Selected Bubbles`} onClick={onChainSelectedBubbles} />
+              <MenuButton label={`Same Speaker — Merge ${selectedBubbleCount} Bubbles`} onClick={() => onChainSelectedBubbles('bridge')} />
+              <MenuButton label="Link with Connector Line" onClick={() => onChainSelectedBubbles('line')} />
+              <MenuButton label="Link with Tail" onClick={() => onChainSelectedBubbles('tail')} />
+              <MenuButton label="Link as Thought Trail" onClick={() => onChainSelectedBubbles('thought-dots')} />
               <MenuButton label="Unchain Selected Bubbles" onClick={onUnchainSelectedBubbles} />
             </MenuGroup>
           ) : frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble' ? (
