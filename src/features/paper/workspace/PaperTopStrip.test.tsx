@@ -32,6 +32,8 @@ describe('PaperTopStrip titlebar placement', () => {
         onPackagePrint={noop}
         onShowPreflight={noop}
         showPreflight={false}
+        onShowFindChange={noop}
+        showFindChange={false}
         onToggleGrid={noop}
         onToggleGuides={noop}
         onToggleSnapToGrid={noop}
@@ -107,6 +109,8 @@ describe('PaperTopStrip titlebar placement', () => {
         onPackagePrint={noop}
         onShowPreflight={noop}
         showPreflight
+        onShowFindChange={noop}
+        showFindChange={false}
         onToggleGrid={noop}
         onToggleGuides={noop}
         onToggleSnapToGrid={noop}

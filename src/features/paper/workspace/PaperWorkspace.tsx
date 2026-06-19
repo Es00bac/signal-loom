@@ -36,6 +36,7 @@ import {
   RotateCw,
   Ruler,
   Scissors,
+  Search,
   ShieldCheck,
   Sparkles,
   Square,
@@ -149,6 +150,7 @@ import { DEFAULT_PAPER_COLUMN_GUTTER_MM, resolvePaperColumnGutterMm } from '../.
 import { computePaperThreadSlices } from '../../../lib/paperThreadFlow';
 import { createPaperCanvasMeasurer } from '../../../lib/paperCanvasMeasurer';
 import { resolveFrameWrapSpacers, type PaperWrapSpacer } from '../../../lib/paperTextWrap';
+import { findPaperMatches, type PaperFindOptions } from '../../../lib/paperFindChange';
 import { PAPER_BUBBLE_PRESETS } from '../../../lib/paperBubblePresets';
 import type { PaperAlignEdge, PaperDistributeAxis } from '../../../lib/paperAlignDistribute';
 import { PAPER_DEFAULT_SWATCHES } from '../../../lib/paperSwatchCatalog';
@@ -618,6 +620,7 @@ export function PaperWorkspace() {
   const unchainSelectedBubbles = usePaperStore((s) => s.unchainSelectedBubbles);
   const addPaperSwatch = usePaperStore((s) => s.addPaperSwatch);
   const removePaperSwatch = usePaperStore((s) => s.removePaperSwatch);
+  const replaceAllInPaperText = usePaperStore((s) => s.replaceAllInPaperText);
   const addComicSfx = usePaperStore((s) => s.addComicSfx);
   const placeSourceAssetAt = usePaperStore((s) => s.placeSourceAssetAt);
   const runFrameContextAction = usePaperStore((s) => s.runFrameContextAction);
@@ -3384,8 +3387,20 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           />
         ),
       },
+      {
+        ...withDefault(PAPER_DOCKABLE_PANEL_IDS.findChange),
+        title: 'Find / Change',
+        allowedDockZones: ['right', 'left', 'bottom', 'overlay'],
+        content: (
+          <PaperFindChangePanel
+            document={document}
+            onReplaceAll={(query, replacement, options) => replaceAllInPaperText(query, replacement, options)}
+            onSelectMatch={(target) => selectPaperTarget(target)}
+          />
+        ),
+      },
     ];
-  }, [addFrameToParentPage, addParentPage, assignParentPage, clearSelectedStyleLinks, clearSelectedStyleOverrides, copyActiveFrameStyle, deletePage, document, openComicSfxFrameDesigner, paperDockableDefaults, pasteCopiedFrameStyle, preflightReport, redefineSelectedStyle, runMenuCommand, selectPaperTarget, selectedFrame, selectedPage, sourceItems, status, styleClipboard, toggleViewOption, updateDocumentSetup, updateSelectedFrame]);
+  }, [addFrameToParentPage, addParentPage, assignParentPage, clearSelectedStyleLinks, clearSelectedStyleOverrides, copyActiveFrameStyle, deletePage, document, openComicSfxFrameDesigner, paperDockableDefaults, pasteCopiedFrameStyle, preflightReport, redefineSelectedStyle, replaceAllInPaperText, runMenuCommand, selectPaperTarget, selectedFrame, selectedPage, sourceItems, status, styleClipboard, toggleViewOption, updateDocumentSetup, updateSelectedFrame]);
   const paperMobileRightPanels = useMemo<PaperMobileDrawerPanel[]>(() =>
     dockablePanels
       .filter((panel) => panel.panelId !== PAPER_DOCKABLE_PANEL_IDS.linkedAssets)
@@ -3481,6 +3496,8 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           onNew={() => runPaperTopStripCommand('paper:new-document')}
           onShowPreflight={showPreflightFromTopbar}
           showPreflight={isPanelVisible(PAPER_DOCKABLE_PANEL_IDS.preflight, { treatCollapsedAsShown: false })}
+          onShowFindChange={() => runPaperWorkspaceActionFromTopStrip('Toggle Find / Change panel', () => togglePanelVisibility(PAPER_DOCKABLE_PANEL_IDS.findChange))}
+          showFindChange={isPanelVisible(PAPER_DOCKABLE_PANEL_IDS.findChange, { treatCollapsedAsShown: false })}
           onToggleGrid={() => togglePaperViewOptionFromTopStrip('showGrid', 'Grid')}
           onToggleGuides={() => togglePaperViewOptionFromTopStrip('showGuides', 'Guides')}
           onToggleSnapToGrid={() => togglePaperSnapFromTopStrip('snapToGrid', 'snap to grid')}
@@ -5665,6 +5682,8 @@ export function PaperTopStrip({
   onPackagePrint,
   onShowPreflight,
   showPreflight,
+  onShowFindChange,
+  showFindChange,
   onToggleGrid,
   onToggleGuides,
   onToggleSnapToGrid,
@@ -5716,6 +5735,8 @@ export function PaperTopStrip({
   onPackagePrint: () => void;
   onShowPreflight: () => void;
   showPreflight: boolean;
+  onShowFindChange: () => void;
+  showFindChange: boolean;
   onToggleGrid: () => void;
   onToggleGuides: () => void;
   onToggleSnapToGrid: () => void;
@@ -6029,6 +6050,7 @@ export function PaperTopStrip({
             <span className="hidden min-[1600px]:inline">Touch Nav</span>
           </button>
         ) : null}
+        <ToggleStripButton active={showFindChange} icon={<Search size={13} />} label="Find" onClick={onShowFindChange} />
         <ToggleStripButton active={showInspector} icon={showInspector ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />} label="Inspector" onClick={onToggleInspector} />
         <div className="mx-1 h-5 w-px shrink-0 bg-cyan-300/15" />
         <button className="shrink-0 rounded-md border border-cyan-300/15 px-2 py-1 text-xs text-cyan-100/70 hover:text-white" onClick={onZoomOut} type="button">-</button>
@@ -8665,6 +8687,84 @@ function groupContextActions<TActionId extends string>(
     groups[action.group] = [...(groups[action.group] ?? []), action];
     return groups;
   }, {});
+}
+
+function PaperFindChangePanel({
+  document,
+  onReplaceAll,
+  onSelectMatch,
+}: {
+  document: PaperDocument;
+  onReplaceAll: (query: string, replacement: string, options: PaperFindOptions) => number;
+  onSelectMatch: (target: { pageNumber: number; frameId: string }) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [replacement, setReplacement] = useState('');
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [wholeWord, setWholeWord] = useState(false);
+  const [lastStatus, setLastStatus] = useState<string | null>(null);
+
+  const { matches, pageNumberById } = useMemo(() => {
+    const refs: { pageId: string; frameId: string; text: string }[] = [];
+    const pageNumbers = new Map<string, number>();
+    for (const page of document.pages) {
+      pageNumbers.set(page.id, page.pageNumber);
+      for (const pageFrame of page.frames) {
+        if (typeof pageFrame.text === 'string' && pageFrame.text.length > 0) {
+          refs.push({ pageId: page.id, frameId: pageFrame.id, text: pageFrame.text });
+        }
+      }
+    }
+    return { matches: findPaperMatches(refs, query, { caseSensitive, wholeWord }), pageNumberById: pageNumbers };
+  }, [document.pages, query, caseSensitive, wholeWord]);
+
+  return (
+    <div className="flex h-full flex-col gap-2 p-2 text-xs text-cyan-100/80">
+      <input className="paper-input" onChange={(event) => setQuery(event.target.value)} placeholder="Find…" value={query} />
+      <input className="paper-input" onChange={(event) => setReplacement(event.target.value)} placeholder="Change to…" value={replacement} />
+      <div className="flex gap-3 text-cyan-100/55">
+        <label className="flex items-center gap-1">
+          <input checked={caseSensitive} onChange={(event) => setCaseSensitive(event.target.checked)} type="checkbox" />
+          Case
+        </label>
+        <label className="flex items-center gap-1">
+          <input checked={wholeWord} onChange={(event) => setWholeWord(event.target.checked)} type="checkbox" />
+          Whole word
+        </label>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-cyan-100/50">{query ? `${matches.length} match${matches.length === 1 ? '' : 'es'}` : 'Enter a search term'}</span>
+        <button
+          className="rounded border border-cyan-300/20 px-2 py-1 text-cyan-100/70 hover:border-cyan-300/50 hover:text-white disabled:opacity-40"
+          disabled={!query || matches.length === 0}
+          onClick={() => {
+            const replaced = onReplaceAll(query, replacement, { caseSensitive, wholeWord });
+            setLastStatus(`Replaced ${replaced} occurrence${replaced === 1 ? '' : 's'}.`);
+          }}
+          type="button"
+        >
+          Replace All
+        </button>
+      </div>
+      {lastStatus ? <div className="text-emerald-300/80">{lastStatus}</div> : null}
+      <div className="min-h-0 flex-1 overflow-auto rounded border border-cyan-300/10">
+        {matches.slice(0, 200).map((match, index) => {
+          const pageNumber = pageNumberById.get(match.pageId) ?? 1;
+          return (
+            <button
+              className="flex w-full items-center justify-between gap-2 border-b border-cyan-300/5 px-2 py-1 text-left hover:bg-cyan-300/5"
+              key={`${match.frameId}-${match.index}-${index}`}
+              onClick={() => onSelectMatch({ pageNumber, frameId: match.frameId })}
+              type="button"
+            >
+              <span className="truncate">p{pageNumber} · {match.frameId}</span>
+              <span className="text-cyan-100/40">@{match.index}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function PaperInspector({

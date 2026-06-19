@@ -9,6 +9,7 @@ export const PAPER_DOCKABLE_PANEL_IDS = {
   preflight: 'preflight',
   linkedAssets: 'linked-assets',
   dtpParity: 'dtp-parity',
+  findChange: 'find-change',
 } as const;
 
 export type PaperDockablePanelId = typeof PAPER_DOCKABLE_PANEL_IDS[keyof typeof PAPER_DOCKABLE_PANEL_IDS];
@@ -45,6 +46,14 @@ export function createPaperDockablePanelDefaults(): DockablePanelDefault[] {
       dockZone: 'right',
       floatingRect: { x: 1060, y: 208, width: 360, height: 520 },
       minSize: { width: 280, height: 260 },
+    },
+    {
+      workspaceId: PAPER_DOCKABLE_WORKSPACE_ID,
+      panelId: PAPER_DOCKABLE_PANEL_IDS.findChange,
+      mode: 'hidden',
+      dockZone: 'right',
+      floatingRect: { x: 1000, y: 148, width: 340, height: 400 },
+      minSize: { width: 280, height: 240 },
     },
   ];
 }

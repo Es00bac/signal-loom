@@ -21,6 +21,7 @@ describe('paperDockablePanels', () => {
       PAPER_DOCKABLE_PANEL_IDS.preflight,
       PAPER_DOCKABLE_PANEL_IDS.linkedAssets,
       PAPER_DOCKABLE_PANEL_IDS.dtpParity,
+      PAPER_DOCKABLE_PANEL_IDS.findChange,
     ]);
     expect(defaults.some((panel) => panel.panelId === PAPER_DOCKABLE_PANEL_IDS.documentStrip)).toBe(false);
     expect(defaults.some((panel) => panel.panelId === PAPER_DOCKABLE_PANEL_IDS.tools)).toBe(false);
