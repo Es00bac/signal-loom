@@ -105,6 +105,7 @@ export interface PaperGuide {
 }
 
 export type PaperTextAlignLast = 'auto' | 'left' | 'center' | 'right' | 'justify';
+export type PaperNumericStyle = 'normal' | 'oldstyle' | 'lining' | 'tabular';
 
 export interface PaperTypography {
   fontFamily: string;
@@ -120,6 +121,10 @@ export interface PaperTypography {
   firstLineIndentMm?: number;
   /** Alignment of the last line of justified paragraphs (CSS text-align-last). */
   alignLast?: PaperTextAlignLast;
+  /** OpenType small caps (CSS font-variant-caps: small-caps). */
+  smallCaps?: boolean;
+  /** OpenType figure style (CSS font-variant-numeric). */
+  numericStyle?: PaperNumericStyle;
 }
 
 export interface PaperFrameAsset {

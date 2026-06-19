@@ -328,6 +328,7 @@ import type {
   PaperFrameKind,
   PaperFramePatch,
   PaperGuide,
+  PaperNumericStyle,
   PaperPage,
   PaperPagePreset,
   PaperTextAlignLast,
@@ -7488,6 +7489,8 @@ function PaperFrameView({
     textAlignLast: frame.typography.alignLast && frame.typography.alignLast !== 'auto'
       ? frame.typography.alignLast
       : undefined,
+    fontVariantCaps: frame.typography.smallCaps ? 'small-caps' : undefined,
+    fontVariantNumeric: paperNumericStyleToCss(frame.typography.numericStyle),
     hyphens: frame.typography.hyphenate ? 'auto' : 'manual',
     columnCount: frame.kind === 'text' ? Math.max(1, frame.columns) : 1,
     columnGap: `${resolvePaperColumnGutterMm(frame) * PX_PER_MM * zoom}px`,
@@ -8696,6 +8699,19 @@ function groupContextActions<TActionId extends string>(
   }, {});
 }
 
+function paperNumericStyleToCss(style: PaperNumericStyle | undefined): React.CSSProperties['fontVariantNumeric'] {
+  switch (style) {
+    case 'oldstyle':
+      return 'oldstyle-nums';
+    case 'lining':
+      return 'lining-nums';
+    case 'tabular':
+      return 'tabular-nums';
+    default:
+      return undefined;
+  }
+}
+
 function PaperFindChangePanel({
   document,
   onReplaceAll,
@@ -9549,6 +9565,28 @@ function PaperInspector({
                         <option value="center">Center</option>
                         <option value="right">Right</option>
                         <option value="justify">Justify</option>
+                      </select>
+                    </Field>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <label className="flex items-center gap-2 text-xs text-cyan-100/55">
+                      <input
+                        checked={Boolean(frame.typography.smallCaps)}
+                        onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, smallCaps: event.target.checked } })}
+                        type="checkbox"
+                      />
+                      Small caps
+                    </label>
+                    <Field label="Figures">
+                      <select
+                        className="paper-input"
+                        onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, numericStyle: event.target.value as PaperNumericStyle } })}
+                        value={frame.typography.numericStyle ?? 'normal'}
+                      >
+                        <option value="normal">Default</option>
+                        <option value="lining">Lining</option>
+                        <option value="oldstyle">Oldstyle</option>
+                        <option value="tabular">Tabular</option>
                       </select>
                     </Field>
                   </div>

@@ -63,6 +63,8 @@ export const DEFAULT_PAPER_TYPOGRAPHY: PaperTypography = {
   fontStyle: 'normal',
   firstLineIndentMm: 0,
   alignLast: 'auto',
+  smallCaps: false,
+  numericStyle: 'normal',
 };
 
 export const DEFAULT_PAPER_BACKGROUND: PaperBackgroundSpec = {
