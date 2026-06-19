@@ -6349,6 +6349,16 @@ function PaperConnectedSpreadView({
                   }}
                 />
               ) : null}
+              {doc.view.showBaselineGrid ? (
+                <div
+                  className="pointer-events-none absolute inset-0"
+                  data-paper-editor-overlay="baseline-grid"
+                  style={{
+                    backgroundImage: `repeating-linear-gradient(to bottom, rgba(56,189,248,0.3) 0, rgba(56,189,248,0.3) 1px, transparent 1px, transparent ${Math.max(2, doc.layout.baselineGrid.incrementMm * PX_PER_MM * zoom)}px)`,
+                    backgroundPositionY: `${doc.layout.baselineGrid.startMm * PX_PER_MM * zoom}px`,
+                  }}
+                />
+              ) : null}
               <div
                 className="pointer-events-none absolute border border-dashed border-cyan-500/45"
                 data-paper-editor-overlay="margins"
@@ -6848,6 +6858,16 @@ function PaperPageView({
                 style={{
                   backgroundImage: paperGridOverlayBackground(doc.view.snapToGrid),
                   backgroundSize: `${gridSizePx}px ${gridSizePx}px`,
+                }}
+              />
+            ) : null}
+            {doc.view.showBaselineGrid ? (
+              <div
+                className="pointer-events-none absolute inset-0"
+                data-paper-editor-overlay="baseline-grid"
+                style={{
+                  backgroundImage: `repeating-linear-gradient(to bottom, rgba(56,189,248,0.3) 0, rgba(56,189,248,0.3) 1px, transparent 1px, transparent ${Math.max(2, doc.layout.baselineGrid.incrementMm * PX_PER_MM * zoom)}px)`,
+                  backgroundPositionY: `${doc.layout.baselineGrid.startMm * PX_PER_MM * zoom}px`,
                 }}
               />
             ) : null}
@@ -8929,6 +8949,19 @@ function PaperInspector({
               />
               Snap grid
             </label>
+          </div>
+          <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Baseline Grid</div>
+              <label className="flex items-center gap-1 text-xs text-cyan-100/55">
+                <input checked={document.view.showBaselineGrid} onChange={() => onToggleViewOption('showBaselineGrid')} type="checkbox" />
+                Show
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <NumberField label="Start mm" onChange={(startMm) => onUpdateDocumentSetup({ baselineGrid: { startMm: Math.max(0, startMm) } })} step={0.5} value={document.layout.baselineGrid.startMm} />
+              <NumberField label="Step mm" onChange={(incrementMm) => onUpdateDocumentSetup({ baselineGrid: { incrementMm: Math.max(0.5, incrementMm) } })} step={0.1} value={document.layout.baselineGrid.incrementMm} />
+            </div>
           </div>
           <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
             <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Document Background</div>

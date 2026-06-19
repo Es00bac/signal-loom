@@ -78,6 +78,13 @@ export interface PaperGridSpec {
   subdivisions: number;
 }
 
+export interface PaperBaselineGridSpec {
+  /** Offset (mm) of the first baseline line from the page top. */
+  startMm: number;
+  /** Distance (mm) between baseline lines — usually the body leading. */
+  incrementMm: number;
+}
+
 export interface PaperBackgroundSpec {
   type: PaperBackgroundType;
   color: string;
@@ -297,12 +304,14 @@ export interface PaperDocument {
     marginsMm: PaperMarginSpec;
     columns: PaperColumnSpec;
     grid: PaperGridSpec;
+    baselineGrid: PaperBaselineGridSpec;
   };
   background: PaperBackgroundSpec;
   printProduction: PaperPrintProductionSpec;
   view: {
     showRulers: boolean;
     showGrid: boolean;
+    showBaselineGrid: boolean;
     showGuides: boolean;
     showBleed: boolean;
     showSpreads: boolean;

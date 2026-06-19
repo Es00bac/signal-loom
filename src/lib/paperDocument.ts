@@ -127,12 +127,14 @@ export function createDefaultPaperDocument({
       marginsMm: { top: 12.7, right: 12.7, bottom: 12.7, left: 12.7 },
       columns: { count: 2, gutterMm: 5 },
       grid: { enabled: true, sizeMm: 5, subdivisions: 5 },
+      baselineGrid: { startMm: 12.7, incrementMm: 4.6 },
     },
     background: DEFAULT_PAPER_BACKGROUND,
     printProduction: DEFAULT_PAPER_PRINT_PRODUCTION,
     view: {
       showRulers: true,
       showGrid: true,
+      showBaselineGrid: false,
       showGuides: true,
       showBleed: true,
       showSpreads: false,
@@ -163,6 +165,7 @@ export function updatePaperDocumentSetup(
     marginsMm?: Partial<PaperDocument['layout']['marginsMm']>;
     columns?: Partial<PaperDocument['layout']['columns']>;
     grid?: Partial<PaperDocument['layout']['grid']>;
+    baselineGrid?: Partial<PaperDocument['layout']['baselineGrid']>;
     background?: Partial<PaperDocument['background']>;
     printProduction?: Partial<PaperPrintProductionSpec>;
   },
@@ -191,6 +194,10 @@ export function updatePaperDocumentSetup(
       ...doc.layout.grid,
       ...patch.grid,
     },
+    baselineGrid: {
+      ...(doc.layout.baselineGrid ?? { startMm: 12.7, incrementMm: 4.6 }),
+      ...patch.baselineGrid,
+    },
   };
 
   layout.marginsMm = {
@@ -207,6 +214,10 @@ export function updatePaperDocumentSetup(
     enabled: Boolean(layout.grid.enabled),
     sizeMm: clampMm(layout.grid.sizeMm, 0.5, 100),
     subdivisions: Math.max(1, Math.min(32, Math.round(layout.grid.subdivisions))),
+  };
+  layout.baselineGrid = {
+    startMm: clampMm(layout.baselineGrid.startMm, 0, page.heightMm),
+    incrementMm: clampMm(layout.baselineGrid.incrementMm, 0.5, 100),
   };
   const background = normalizePaperBackground({
     ...(doc.background ?? DEFAULT_PAPER_BACKGROUND),
@@ -686,9 +697,14 @@ export function parsePaperDocument(json: string): PaperDocument {
   return {
     ...parsed,
     page: pageSpec,
+    layout: {
+      ...parsed.layout,
+      baselineGrid: parsed.layout?.baselineGrid ?? { startMm: 12.7, incrementMm: 4.6 },
+    },
     view: {
       showRulers: parsed.view?.showRulers ?? true,
       showGrid: parsed.view?.showGrid ?? true,
+      showBaselineGrid: parsed.view?.showBaselineGrid ?? false,
       showGuides: parsed.view?.showGuides ?? true,
       showBleed: parsed.view?.showBleed ?? true,
       showSpreads: parsed.view?.showSpreads ?? false,
