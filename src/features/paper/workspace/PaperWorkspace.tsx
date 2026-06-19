@@ -148,6 +148,7 @@ import { buildPaperBubbleConnectorSegments } from '../../../lib/paperBubbleChain
 import { DEFAULT_PAPER_COLUMN_GUTTER_MM, resolvePaperColumnGutterMm } from '../../../lib/paperColumns';
 import { computePaperThreadSlices } from '../../../lib/paperThreadFlow';
 import { createPaperCanvasMeasurer } from '../../../lib/paperCanvasMeasurer';
+import { PAPER_BUBBLE_PRESETS } from '../../../lib/paperBubblePresets';
 import {
   estimateGenerativeFillCostUsd,
   type GenerativeFillProvider,
@@ -9276,6 +9277,22 @@ function PaperInspector({
                 </div>
                 {frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble' ? (
                   <>
+                    <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
+                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Bubble Presets</div>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {PAPER_BUBBLE_PRESETS.map((preset) => (
+                          <button
+                            className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-[11px] text-cyan-100/75 hover:border-cyan-300/40 hover:text-white"
+                            key={preset.id}
+                            onClick={() => onUpdateFrame(preset.patch)}
+                            title={preset.description}
+                            type="button"
+                          >
+                            {preset.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <Field label="Bubble Shape">
                       <select
                         className="paper-input"
