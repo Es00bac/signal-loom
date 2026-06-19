@@ -4038,16 +4038,27 @@ function persistPaperKdpExportSettings(settings: PaperKdpExportSettings): void {
   }
 }
 
+function defaultPaperToolsPalettePosition(): PaperToolsPalettePosition {
+  // On narrow viewports the centered artboard fills the width, so the roomy desktop default (x:368)
+  // lands on the page itself. Anchor flush-left there (in the ruler/margin gutter) so it doesn't
+  // cover the artboard; keep the desktop position where there's pasteboard to the left.
+  if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+    return { x: PAPER_TOOLS_PALETTE_VIEWPORT_MARGIN, y: 96 };
+  }
+  return PAPER_TOOLS_PALETTE_DEFAULT_POSITION;
+}
+
 function loadPaperToolsPalettePosition(): PaperToolsPalettePosition {
+  const fallback = defaultPaperToolsPalettePosition();
   try {
     const raw = globalThis.localStorage?.getItem(PAPER_TOOLS_PALETTE_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
     return clampPaperToolsPalettePosition({
-      x: typeof parsed?.x === 'number' && Number.isFinite(parsed.x) ? parsed.x : PAPER_TOOLS_PALETTE_DEFAULT_POSITION.x,
-      y: typeof parsed?.y === 'number' && Number.isFinite(parsed.y) ? parsed.y : PAPER_TOOLS_PALETTE_DEFAULT_POSITION.y,
+      x: typeof parsed?.x === 'number' && Number.isFinite(parsed.x) ? parsed.x : fallback.x,
+      y: typeof parsed?.y === 'number' && Number.isFinite(parsed.y) ? parsed.y : fallback.y,
     });
   } catch {
-    return PAPER_TOOLS_PALETTE_DEFAULT_POSITION;
+    return fallback;
   }
 }
 

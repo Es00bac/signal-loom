@@ -268,13 +268,19 @@ export function GenerativeFillBar() {
   const belowAnchorTop = anchor.y + anchor.height + 8;
   const aboveAnchorTop = anchor.y - estimatedPanelHeight - 8;
   const maxTop = Math.max(horizontalMargin, containerHeight - estimatedPanelHeight - horizontalMargin);
-  const top = placeAbove
-    ? Math.max(horizontalMargin, aboveAnchorTop)
-    : Math.min(maxTop, Math.max(horizontalMargin, belowAnchorTop));
-  const left = Math.min(
-    Math.max(horizontalMargin, anchor.x),
-    Math.max(horizontalMargin, containerWidth - panelWidth - horizontalMargin),
-  );
+  // On narrow screens dock the bar as a full-width sheet pinned to the top, clear of the left-edge
+  // tool palette (a vertical strip lower on the canvas). Otherwise anchor it near the selection.
+  const top = compactPanel
+    ? horizontalMargin
+    : (placeAbove
+      ? Math.max(horizontalMargin, aboveAnchorTop)
+      : Math.min(maxTop, Math.max(horizontalMargin, belowAnchorTop)));
+  const left = compactPanel
+    ? horizontalMargin
+    : Math.min(
+      Math.max(horizontalMargin, anchor.x),
+      Math.max(horizontalMargin, containerWidth - panelWidth - horizontalMargin),
+    );
   const maxHeight = Math.max(96, containerHeight - top - horizontalMargin);
   const primaryControlsClassName = compactPanel ? 'grid grid-cols-2 gap-2' : 'grid grid-cols-4 gap-2';
   const referenceControlsClassName = compactPanel

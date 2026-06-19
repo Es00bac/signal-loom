@@ -958,6 +958,38 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
     </div>
   );
 
+  const canvasEmptyState = !activeDocId ? (
+    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6">
+      <div className="pointer-events-auto flex w-full max-w-sm flex-col items-center gap-4 rounded-2xl border border-cyan-300/20 bg-[#0b1421]/85 p-6 text-center shadow-2xl backdrop-blur">
+        <div className="text-base font-semibold text-cyan-50">Start an image</div>
+        <p className="text-xs leading-relaxed text-cyan-100/55">Create a blank canvas or open an image — then edit with layers, masks, brushes, and model-in-the-loop generative fill.</p>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <button
+            className="rounded-lg bg-cyan-400 px-3.5 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-300"
+            onClick={() => setShowNewDocModal(true)}
+            type="button"
+          >
+            New Document
+          </button>
+          <label className={`cursor-pointer rounded-lg border border-cyan-300/30 bg-cyan-500/10 px-3.5 py-2 text-sm font-semibold text-cyan-50 transition-colors hover:bg-cyan-500/20 ${openingLocalImage ? 'pointer-events-none opacity-50' : ''}`}>
+            Open Image…
+            <input
+              accept="image/*"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void handleOpenLocalImageFile(file);
+              }}
+              type="file"
+            />
+          </label>
+        </div>
+        {localImageOpenStatus ? <div className="text-[11px] text-amber-200/80">{localImageOpenStatus}</div> : null}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className={`signal-loom-themed absolute inset-0 z-30 flex flex-col ${workspaceChromePaddingClassName}`}>
       <NewDocumentModal
@@ -1020,6 +1052,7 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
               >
                 <ImageEditorCanvas />
                 <GenerativeFillBar />
+                {canvasEmptyState}
               </div>
             </ImageMobileWorkspaceShell>
           ) : (
@@ -1037,6 +1070,7 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
               >
                 <ImageEditorCanvas />
                 <GenerativeFillBar />
+                {canvasEmptyState}
               </div>
             </DockablePanelHost>
           )}

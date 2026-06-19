@@ -5190,7 +5190,7 @@ export function ProgramMonitorPanel({
             </div>
           ) : (
             <div className="flex flex-col h-full w-full min-h-0 justify-center">
-              {monitorParityNotices.length > 0 ? (
+              {stageMode === 'rendered' && monitorParityNotices.length > 0 ? (
                 <div className="mb-2 shrink-0 space-y-1.5">
                   {monitorParityNotices.map((notice) => (
                     <div
