@@ -329,6 +329,7 @@ import type {
   PaperFrameKind,
   PaperFramePatch,
   PaperGuide,
+  PaperLineBreak,
   PaperNumericStyle,
   PaperPage,
   PaperPagePreset,
@@ -7512,6 +7513,9 @@ function PaperFrameView({
       : undefined,
     fontVariantCaps: frame.typography.smallCaps ? 'small-caps' : undefined,
     fontVariantNumeric: paperNumericStyleToCss(frame.typography.numericStyle),
+    textWrapStyle: frame.typography.lineBreak && frame.typography.lineBreak !== 'auto'
+      ? frame.typography.lineBreak
+      : undefined,
     hyphens: frame.typography.hyphenate ? 'auto' : 'manual',
     columnCount: frame.kind === 'text' ? Math.max(1, frame.columns) : 1,
     columnGap: `${resolvePaperColumnGutterMm(frame) * PX_PER_MM * zoom}px`,
@@ -9669,6 +9673,17 @@ function PaperInspector({
                         <option value="lining">Lining</option>
                         <option value="oldstyle">Oldstyle</option>
                         <option value="tabular">Tabular</option>
+                      </select>
+                    </Field>
+                    <Field label="Line break">
+                      <select
+                        className="paper-input"
+                        onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, lineBreak: event.target.value as PaperLineBreak } })}
+                        value={frame.typography.lineBreak ?? 'auto'}
+                      >
+                        <option value="auto">Auto</option>
+                        <option value="balance">Balance</option>
+                        <option value="pretty">Pretty</option>
                       </select>
                     </Field>
                   </div>

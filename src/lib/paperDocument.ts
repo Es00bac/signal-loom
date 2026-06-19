@@ -68,6 +68,7 @@ export const DEFAULT_PAPER_TYPOGRAPHY: PaperTypography = {
   dropCapLines: 0,
   spaceBeforeMm: 0,
   spaceAfterMm: 0,
+  lineBreak: 'auto',
 };
 
 export const DEFAULT_PAPER_BACKGROUND: PaperBackgroundSpec = {

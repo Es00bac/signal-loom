@@ -113,6 +113,7 @@ export interface PaperGuide {
 
 export type PaperTextAlignLast = 'auto' | 'left' | 'center' | 'right' | 'justify';
 export type PaperNumericStyle = 'normal' | 'oldstyle' | 'lining' | 'tabular';
+export type PaperLineBreak = 'auto' | 'balance' | 'pretty';
 
 export interface PaperTypography {
   fontFamily: string;
@@ -138,6 +139,8 @@ export interface PaperTypography {
   spaceBeforeMm?: number;
   /** Space (mm) after each paragraph. */
   spaceAfterMm?: number;
+  /** Line-breaking style (CSS text-wrap-style): balanced ragging or orphan-aware "pretty". */
+  lineBreak?: PaperLineBreak;
 }
 
 export interface PaperFrameAsset {
