@@ -15,9 +15,16 @@ describe('TopNavbar hit-test layering', () => {
     const source = readFileSync(new URL('./TopNavbar.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('pointer-events-none relative z-20 flex min-w-0 max-w-[58vw] shrink items-center gap-3 overflow-x-auto');
-    expect(source).toContain('pointer-events-auto flex shrink-0 items-center gap-0.5');
+    // The menu bar scrolls internally so menu-heavy workspaces (Image) never push the workspace
+    // switcher out of view; it stays interactive (pointer-events-auto).
+    expect(source).toContain('pointer-events-auto flex min-w-0 shrink items-center gap-0.5 overflow-x-auto');
     expect(source).toContain('pointer-events-none relative z-20 flex min-w-0 items-center justify-end');
     expect(source).toContain('theme-control pointer-events-auto flex shrink-0 items-center gap-2');
+  });
+
+  it('contains the Flow node toolbar in a bounded horizontal scroller so it cannot spill into neighbors', () => {
+    const source = readFileSync(new URL('./TopNavbar.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('pointer-events-auto flex min-w-0 max-w-full items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none]');
   });
 
   it('places the Flow toolbar in the flex gap between topbar control groups', () => {

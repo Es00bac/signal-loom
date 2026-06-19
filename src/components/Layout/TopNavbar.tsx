@@ -621,7 +621,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         {showIntegratedMenu ? (
           <div
             ref={appMenuRef}
-            className="pointer-events-auto flex shrink-0 items-center gap-0.5 border-r border-cyan-300/15 pr-3"
+            className="pointer-events-auto flex min-w-0 shrink items-center gap-0.5 overflow-x-auto overflow-y-hidden [scrollbar-width:none] border-r border-cyan-300/15 pr-3"
             onKeyDown={(event) => {
               if (event.key === 'Escape') {
                 setOpenMenuId(null);
@@ -629,7 +629,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             }}
           >
             {appMenuGroups.map((group) => (
-              <div className="relative" key={group.id}>
+              <div className="relative shrink-0" key={group.id}>
                 <button
                   aria-expanded={openMenuId === group.id}
                   className={`rounded px-2 py-1 text-xs font-medium text-cyan-100/70 transition-colors hover:bg-cyan-400/10 hover:text-white ${
@@ -706,7 +706,9 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
           className="pointer-events-none relative z-10 flex min-w-0 flex-1 justify-center"
           data-flow-node-toolbar-layer="true"
         >
-          <BottomToolbar onAddNode={addFlowNodeFromTopbar} variant="topbar" />
+          <div className="pointer-events-auto flex min-w-0 max-w-full items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none]">
+            <BottomToolbar onAddNode={addFlowNodeFromTopbar} variant="topbar" />
+          </div>
         </div>
       ) : null}
 
