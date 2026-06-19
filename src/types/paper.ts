@@ -249,6 +249,8 @@ export interface PaperFrame {
   vertices?: PaperFrameVertex[];
   textWrap?: PaperTextWrap;
   table?: PaperTableSpec;
+  /** Optional hyperlink target (URL) — shown on canvas and exported as a link in HTML. */
+  hyperlink?: string;
   tailXPercent?: number;
   tailYPercent?: number;
   zIndex: number;

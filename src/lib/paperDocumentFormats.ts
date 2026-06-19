@@ -179,7 +179,11 @@ export function exportPaperStoryText(document: PaperDocument, format: PaperStory
   const baseName = safePathPart(document.title || 'paper-stories');
   const stories = extractPaperStoryText(document);
   if (format === 'html') {
-    const text = `<!doctype html>\n<html><head><meta charset="utf-8"><title>${escapeHtml(document.title)}</title></head><body>\n${stories.map((story) => `<section data-page="${story.pageNumber}" data-frame="${escapeHtml(story.frameId)}"><h2>Page ${story.pageNumber}: ${escapeHtml(story.label)}</h2><p>${escapeHtml(story.text).replaceAll('\n', '<br>')}</p></section>`).join('\n')}\n</body></html>\n`;
+    const text = `<!doctype html>\n<html><head><meta charset="utf-8"><title>${escapeHtml(document.title)}</title></head><body>\n${stories.map((story) => {
+      const body = escapeHtml(story.text).replaceAll('\n', '<br>');
+      const paragraph = story.hyperlink ? `<p><a href="${escapeHtml(story.hyperlink)}">${body}</a></p>` : `<p>${body}</p>`;
+      return `<section data-page="${story.pageNumber}" data-frame="${escapeHtml(story.frameId)}"><h2>Page ${story.pageNumber}: ${escapeHtml(story.label)}</h2>${paragraph}</section>`;
+    }).join('\n')}\n</body></html>\n`;
     return { fileName: `${baseName}.html`, mimeType: 'text/html', text, blob: new Blob([text], { type: 'text/html' }) };
   }
   if (format === 'rtf') {
@@ -355,11 +359,11 @@ function rtfToText(rtf: string): string {
     .trim();
 }
 
-function extractPaperStoryText(document: PaperDocument): Array<{ pageNumber: number; frameId: string; label: string; text: string }> {
+function extractPaperStoryText(document: PaperDocument): Array<{ pageNumber: number; frameId: string; label: string; text: string; hyperlink?: string }> {
   return document.pages.flatMap((page) => page.frames.flatMap((frame) => {
     if (!['text', 'caption', 'speechBubble', 'thoughtBubble'].includes(frame.kind)) return [];
     const text = (frame.text ?? frame.asset?.text ?? '').trim();
-    return text ? [{ pageNumber: page.pageNumber, frameId: frame.id, label: frame.label, text }] : [];
+    return text ? [{ pageNumber: page.pageNumber, frameId: frame.id, label: frame.label, text, hyperlink: frame.hyperlink }] : [];
   }));
 }
 

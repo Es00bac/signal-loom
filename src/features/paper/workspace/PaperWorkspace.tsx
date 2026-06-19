@@ -7718,6 +7718,14 @@ function PaperFrameView({
           +
         </div>
       ) : null}
+      {frame.hyperlink ? (
+        <div
+          className="pointer-events-none absolute -left-1 -top-1 flex h-3.5 items-center justify-center rounded-sm bg-cyan-500 px-1 text-[9px] font-bold leading-none text-white shadow"
+          title={`Links to ${frame.hyperlink}`}
+        >
+          ↗
+        </div>
+      ) : null}
       {hasShapeStrokeOverlay ? <PaperFrameShapeStroke frame={frame} zoom={zoom} /> : null}
       {isSelected && !frame.inherited ? (
         <>
@@ -9477,6 +9485,14 @@ function PaperInspector({
                   </>
                 ) : null}
               </div>
+              <Field label="Link URL">
+                <input
+                  className="paper-input"
+                  onChange={(event) => onUpdateFrame({ hyperlink: event.target.value || undefined })}
+                  placeholder="https://…"
+                  value={frame.hyperlink ?? ''}
+                />
+              </Field>
               <div className="grid grid-cols-2 gap-2">
                 <NumberField label="Opacity" onChange={(opacity) => onUpdateFrame({ opacity: clamp(opacity, 0, 1) })} step={0.05} value={effectiveFrame?.opacity ?? frame.opacity} />
                 <NumberField label="Fill Opacity" onChange={(fillOpacity) => onUpdateFrame({ fillOpacity: clamp(fillOpacity, 0, 1) })} step={0.05} value={effectiveFrame?.fillOpacity ?? frame.fillOpacity} />

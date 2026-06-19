@@ -903,6 +903,7 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     vertices: frame.vertices ?? defaultVerticesForKind(kind, frame.shapeKind),
     textWrap: sanitizePaperTextWrap(frame.textWrap),
     table: frame.table ? normalizePaperTable(frame.table) : undefined,
+    hyperlink: typeof frame.hyperlink === 'string' && frame.hyperlink.trim() ? frame.hyperlink.trim() : undefined,
     tailXPercent: frame.tailXPercent ?? (kind === 'speechBubble' || kind === 'thoughtBubble' ? 72 : undefined),
     tailYPercent: frame.tailYPercent ?? (kind === 'speechBubble' || kind === 'thoughtBubble' ? 92 : undefined),
     zIndex: frame.zIndex ?? 0,

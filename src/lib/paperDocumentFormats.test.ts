@@ -44,6 +44,21 @@ describe('paperDocumentFormats', () => {
     expect('blocks' in imported ? imported.blocks.map((block) => block.text) : []).toEqual(expect.arrayContaining(['First paragraph', 'Second paragraph']));
   });
 
+  it('wraps a hyperlinked text frame in an <a> in the HTML story export', () => {
+    const base = createDefaultPaperDocument({ title: 'Links' });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'text',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 80,
+      heightMm: 25,
+      text: 'Visit the site',
+      hyperlink: 'https://example.com/docs',
+    });
+    const exported = exportPaperStoryText(document, 'html');
+    expect('text' in exported ? exported.text : '').toContain('<a href="https://example.com/docs">Visit the site</a>');
+  });
+
   it('roundtrips IDML-like interchange with setup, pages, styles, links, and guides', () => {
     const item = pdfItem();
     const base = createDefaultPaperDocument({ title: 'Interchange' });
