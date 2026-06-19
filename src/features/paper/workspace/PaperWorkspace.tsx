@@ -145,6 +145,7 @@ import {
 } from '../../../lib/paperWorkspaceVirtualization';
 import { buildPaperBubblePath, resolveBubbleTailCurveHandle } from '../../../lib/paperBubblePaths';
 import { buildPaperBubbleConnectorSegments } from '../../../lib/paperBubbleChains';
+import { DEFAULT_PAPER_COLUMN_GUTTER_MM, resolvePaperColumnGutterMm } from '../../../lib/paperColumns';
 import {
   estimateGenerativeFillCostUsd,
   type GenerativeFillProvider,
@@ -7377,7 +7378,12 @@ function PaperFrameView({
     letterSpacing: `${frame.typography.tracking / 1000}em`,
     hyphens: frame.typography.hyphenate ? 'auto' : 'manual',
     columnCount: frame.kind === 'text' ? Math.max(1, frame.columns) : 1,
-    columnGap: `${5 * PX_PER_MM * zoom}px`,
+    columnGap: `${resolvePaperColumnGutterMm(frame) * PX_PER_MM * zoom}px`,
+    columnFill: frame.kind === 'text' && frame.columnBalance ? 'balance' : 'auto',
+    columnRule:
+      frame.kind === 'text' && frame.columnRule && frame.columns > 1
+        ? `${Math.max(1, 0.2 * PX_PER_MM * zoom)}px solid ${frame.strokeColor}`
+        : undefined,
     borderStyle: frame.kind === 'thoughtBubble' ? 'dashed' : frame.strokeStyle,
     clipPath: effectiveClipPath,
     padding: paperFrameContentPaddingPx(frame, zoom),
@@ -9083,7 +9089,27 @@ function PaperInspector({
                   />
                   Hyphenation
                 </label>
-                <NumberField label="Columns" onChange={(columns) => onUpdateFrame({ columns: Math.max(1, Math.round(columns)) })} value={frame.columns} />
+                {frame.kind === 'text' ? (
+                  <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
+                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Columns</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <NumberField label="Count" onChange={(columns) => onUpdateFrame({ columns: Math.max(1, Math.round(columns)) })} step={1} value={frame.columns} />
+                      <NumberField label="Gutter mm" onChange={(columnGutterMm) => onUpdateFrame({ columnGutterMm: Math.max(0, columnGutterMm) })} step={0.5} value={frame.columnGutterMm ?? DEFAULT_PAPER_COLUMN_GUTTER_MM} />
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <label className="flex items-center gap-2 text-xs text-cyan-100/55">
+                        <input checked={Boolean(frame.columnBalance)} onChange={(event) => onUpdateFrame({ columnBalance: event.target.checked })} type="checkbox" />
+                        Balance
+                      </label>
+                      <label className="flex items-center gap-2 text-xs text-cyan-100/55">
+                        <input checked={Boolean(frame.columnRule)} onChange={(event) => onUpdateFrame({ columnRule: event.target.checked })} type="checkbox" />
+                        Rule
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <NumberField label="Columns" onChange={(columns) => onUpdateFrame({ columns: Math.max(1, Math.round(columns)) })} value={frame.columns} />
+                )}
                 <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
                   <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Text Effects</div>
                   <div className="grid grid-cols-2 gap-2">

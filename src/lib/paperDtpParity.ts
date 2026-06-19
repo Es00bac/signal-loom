@@ -80,6 +80,15 @@ export const PAPER_DTP_PARITY_FEATURES: PaperDtpParityFeature[] = [
     status: 'done',
     comicImpact: 'Provides a practical printer handoff artifact alongside PDF proofs.',
   },
+  {
+    id: 'multi-column-text',
+    feature: 'Multi-column text frames',
+    priority: 'high',
+    indesign: 'Per-frame column count, gutter, balancing, and column rules',
+    signalLoom: 'Per-frame column count and gutter with optional balanced fill and a column-rule divider in the canvas renderer',
+    status: 'done',
+    comicImpact: 'Supports editorial pages, letters columns, and text-heavy backmatter in comic collections.',
+  },
 ];
 
 export function getPaperDtpParityPriorities(features = PAPER_DTP_PARITY_FEATURES): PaperDtpParityFeature[] {

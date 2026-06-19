@@ -161,6 +161,9 @@ export interface PaperFrame {
   imageFlipX?: boolean;
   imageFlipY?: boolean;
   columns: number;
+  columnGutterMm?: number;
+  columnRule?: boolean;
+  columnBalance?: boolean;
   typography: PaperTypography;
   fillColor: string;
   fillOpacity: number;
