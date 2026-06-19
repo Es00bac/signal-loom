@@ -232,6 +232,8 @@ export interface PaperFrame {
   textSkewYDeg?: number;
   textScaleX?: number;
   textScaleY?: number;
+  /** Curve the text baseline along an arc (-100..100; 0 = straight). Renders via SVG textPath. */
+  textArcPercent?: number;
   bubbleShape?: PaperBubbleShape;
   bubbleWarp?: number;
   bubblePinchXPercent?: number;

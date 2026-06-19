@@ -152,6 +152,7 @@ import { createPaperCanvasMeasurer } from '../../../lib/paperCanvasMeasurer';
 import { resolveFrameWrapSpacers, type PaperWrapSpacer } from '../../../lib/paperTextWrap';
 import { findPaperMatches, type PaperFindOptions } from '../../../lib/paperFindChange';
 import { resolvePaperFolioText } from '../../../lib/paperFolios';
+import { buildPaperTextArcPath } from '../../../lib/paperTextPath';
 import { PAPER_BUBBLE_PRESETS } from '../../../lib/paperBubblePresets';
 import type { PaperAlignEdge, PaperDistributeAxis } from '../../../lib/paperAlignDistribute';
 import { PAPER_DEFAULT_SWATCHES } from '../../../lib/paperSwatchCatalog';
@@ -7677,6 +7678,8 @@ function PaperFrameView({
               zoom={zoom}
             />
           </>
+        ) : frame.textArcPercent && !textEditing && isPaperInlineTextFrame(frame) ? (
+          <PaperTextArc frame={frame} text={displayText ?? frame.text ?? ''} zoom={zoom} />
         ) : editableTextFrame ? (
           <PaperInlineText
             displayText={displayText}
@@ -8114,6 +8117,39 @@ function PaperBubbleText({
     >
       {frame.text}
     </div>
+  );
+}
+
+function PaperTextArc({ frame, text, zoom }: { frame: PaperFrame; text: string; zoom: number }) {
+  const widthPx = frame.widthMm * PX_PER_MM * zoom;
+  const heightPx = frame.heightMm * PX_PER_MM * zoom;
+  const arc = buildPaperTextArcPath(widthPx, heightPx, frame.textArcPercent ?? 0);
+  if (!arc) return null;
+  const pathId = `paper-textarc-${frame.id}`;
+  return (
+    <svg
+      className="pointer-events-none absolute inset-0 overflow-visible"
+      height={heightPx}
+      viewBox={`0 0 ${widthPx} ${heightPx}`}
+      width={widthPx}
+    >
+      <defs>
+        <path d={arc.d} id={pathId} />
+      </defs>
+      <text
+        fill={frame.typography.color}
+        fontFamily={frame.typography.fontFamily}
+        fontSize={frame.typography.fontSizePt * 1.333 * zoom}
+        fontStyle={frame.typography.fontStyle}
+        fontWeight={frame.typography.fontWeight}
+        letterSpacing={`${frame.typography.tracking / 1000}em`}
+        textAnchor="middle"
+      >
+        <textPath href={`#${pathId}`} startOffset="50%">
+          {text}
+        </textPath>
+      </text>
+    </svg>
   );
 }
 
@@ -9793,6 +9829,12 @@ function PaperInspector({
                       step={0.05}
                       value={frame.textScaleY ?? 1}
                     />
+                    <NumberField
+                      label="Arc %"
+                      onChange={(textArcPercent) => onUpdateFrame({ textArcPercent: Math.max(-100, Math.min(100, Math.round(textArcPercent))) })}
+                      step={5}
+                      value={frame.textArcPercent ?? 0}
+                    />
                   </div>
                   <button
                     className="mt-2 w-full rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs text-cyan-100/70"
@@ -9807,6 +9849,7 @@ function PaperInspector({
                       textSkewYDeg: undefined,
                       textScaleX: undefined,
                       textScaleY: undefined,
+                      textArcPercent: undefined,
                     })}
                     type="button"
                   >

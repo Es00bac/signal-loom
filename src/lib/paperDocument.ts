@@ -886,6 +886,7 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     textSkewYDeg: frame.textSkewYDeg,
     textScaleX: frame.textScaleX,
     textScaleY: frame.textScaleY,
+    textArcPercent: frame.textArcPercent,
     bubbleShape: frame.bubbleShape ?? (kind === 'speechBubble' ? 'organic' : kind === 'thoughtBubble' ? 'cloud' : undefined),
     bubbleWarp: frame.bubbleWarp ?? (kind === 'speechBubble' || kind === 'thoughtBubble' ? 0.18 : undefined),
     bubblePinchXPercent: frame.bubblePinchXPercent ?? (kind === 'speechBubble' || kind === 'thoughtBubble' ? 58 : undefined),
