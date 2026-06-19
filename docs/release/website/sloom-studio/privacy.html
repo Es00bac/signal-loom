@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy Policy &mdash; Signal Loom</title>
+  <meta name="description" content="Privacy policy for Signal Loom, a local-first, bring-your-own-key generative AI media studio. No accounts, no servers, no data collection." />
+  <meta name="robots" content="index,follow" />
+  <meta name="theme-color" content="#020711" />
+  <meta property="og:title" content="Privacy Policy &mdash; Signal Loom" />
+  <meta property="og:description" content="Signal Loom is local-first with no user accounts and no Sloom servers. We do not collect, store, sell, or share your personal information." />
+  <meta property="og:image" content="/assets/graphics/feature-graphic-1024x500.png" />
+  <link rel="icon" type="image/png" href="assets/graphics/icon-512.png" />
+  <link rel="stylesheet" href="assets/site.css" />
+  <style>
+    body {
+      background:
+        radial-gradient(ellipse 50% 28% at 30% 5%, rgba(41,217,255,.09) 0%, transparent 55%),
+        linear-gradient(180deg, #07111f 0%, var(--bg) 60%);
+    }
+
+    .privacy-layout {
+      max-width: 780px;
+      margin-inline: auto;
+      padding-block: clamp(56px, 8vw, 100px);
+    }
+
+    .privacy-layout h1 {
+      font-size: clamp(2rem, 5vw, 3.4rem);
+      margin-bottom: 8px;
+    }
+
+    .updated {
+      font-size: .88rem;
+      color: var(--dim);
+      margin-bottom: 32px;
+    }
+
+    /* Short version callout */
+    .lede-box {
+      border: 1px solid rgba(114,246,177,.28);
+      border-left: 3px solid var(--green);
+      background: rgba(114,246,177,.07);
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+      padding: 18px 22px;
+      margin-bottom: 40px;
+    }
+    .lede-box p { color: var(--text); margin: 0; font-size: .97rem; line-height: 1.7; }
+    .lede-box strong { color: #fff; }
+
+    /* Section headings */
+    .privacy-layout h2 {
+      font-size: 1.18rem;
+      margin-top: 40px;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+      color: #fff;
+    }
+    .privacy-layout p  { margin-bottom: 14px; font-size: .96rem; line-height: 1.72; }
+    .privacy-layout ul { margin-bottom: 14px; display: grid; gap: 6px; }
+    .privacy-layout li { font-size: .94rem; color: var(--muted); line-height: 1.65; }
+    .privacy-layout strong { color: var(--text); }
+
+    code {
+      background: rgba(41,217,255,.1);
+      border: 1px solid rgba(41,217,255,.18);
+      border-radius: 5px;
+      padding: .15em .42em;
+      font-family: "SF Mono", "Fira Code", ui-monospace, monospace;
+      font-size: .87em;
+      color: var(--cyan);
+    }
+
+    .privacy-footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+      font-size: .86rem;
+      color: var(--dim);
+    }
+    .privacy-footer a { color: var(--muted); }
+    .privacy-footer a:hover { color: var(--cyan); }
+  </style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav-inner wrap" aria-label="Primary navigation">
+    <a class="brand" href="index.html" aria-label="Signal Loom home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Signal Loom
+    </a>
+    <div class="nav-links" id="nav-links">
+      <a href="index.html">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="examples.html">Examples</a>
+      <a href="index.html#pricing">Download</a>
+      <a href="privacy.html" aria-current="page">Privacy</a>
+    </div>
+    <a class="nav-cta" href="index.html#pricing">Get Signal Loom</a>
+    <button class="nav-hamburger" aria-label="Toggle navigation" onclick="document.getElementById('nav-links').classList.toggle('open')">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="privacy-layout">
+
+      <h1>Privacy Policy</h1>
+      <p class="updated">Last updated: 17 June 2026 &middot; Published by Sloom Software</p>
+
+      <div class="lede-box">
+        <p><strong>The short version.</strong> Signal Loom is a <strong>local-first</strong> application with
+        <strong>no user accounts</strong> and <strong>no Sloom servers</strong>. We do <strong>not</strong>
+        collect, store, sell, or share your personal information. Your projects, media, and API keys stay on
+        your device. The only time your content leaves your device is when <strong>you</strong> choose to send
+        it to a third-party AI provider using <strong>your own</strong> credentials.</p>
+      </div>
+
+      <h2>1. Information we collect</h2>
+      <p><strong>We (Sloom Software) collect no personal data.</strong> Signal Loom contains no analytics,
+      advertising SDKs, tracking, or crash-reporting that sends data to us. We operate no backend that
+      receives your data.</p>
+
+      <h2>2. Data stored on your device</h2>
+      <p>Signal Loom stores the following <strong>locally on your device</strong> so the app can work. This
+      data is not transmitted to us:</p>
+      <ul>
+        <li><strong>Provider API keys and settings</strong> you enter, kept in local app storage so you don&rsquo;t re-enter them.</li>
+        <li><strong>Projects</strong> (<code>.sloom</code> files) and the media you import or generate.</li>
+        <li><strong>App preferences</strong> (layout, tool, and UI settings).</li>
+      </ul>
+      <p>You can remove this data at any time by deleting your projects, clearing the app&rsquo;s storage, or
+      uninstalling the app.</p>
+
+      <h2>3. Data you send to third-party AI providers</h2>
+      <p>Signal Loom is a <strong>bring-your-own-key</strong> tool. When you run a generation, edit, or other
+      AI action, the app sends the inputs needed for that action &mdash; for example your prompt text, and any image,
+      video, or audio you selected &mdash; <strong>directly from your device to the AI provider you chose for that
+      action</strong>, authenticated with the API key <strong>you</strong> supplied. Depending on your
+      configuration this may include Google (Gemini&nbsp;/&nbsp;Vertex AI), OpenAI or OpenAI-compatible endpoints,
+      Hugging Face, Stability AI, Black Forest Labs, Atlas Cloud, ElevenLabs, and similar AI providers you
+      configure.</p>
+      <p>These providers are independent companies. Your use of them is governed by <strong>their</strong>
+      terms and privacy policies, and any usage is billed to <strong>you</strong> by them. We are not a party
+      to that relationship and never receive a copy of that content. Please review each provider&rsquo;s privacy
+      policy before sending content to it. These transfers happen <strong>only as a result of an action you
+      initiate</strong> and only to the destination you selected. Signal Loom does not send your content
+      anywhere on its own.</p>
+
+      <h2>4. Permissions</h2>
+      <ul>
+        <li><strong>Internet</strong> &mdash; to communicate with the AI providers you configure.</li>
+        <li><strong>Storage (legacy, older Android only)</strong> &mdash; to save your projects and exported files
+        to a shared folder. On modern Android (13+) no storage permission is requested at all.</li>
+      </ul>
+      <p>When you import media, you choose the file through the standard Android file picker, which grants
+      Signal Loom access only to the file you selected &mdash; no broad photo/media permission is requested. All
+      media is processed on your device.</p>
+
+      <h2>5. Children&rsquo;s privacy</h2>
+      <p>Signal Loom is a professional creative tool intended for general/older audiences. It is not directed
+      to children under 13, and we do not knowingly collect any information from children.</p>
+
+      <h2>6. Data security</h2>
+      <p>Because your data stays on your device and we hold none of it, there is no Sloom-side database to
+      breach. Network requests to AI providers are made over encrypted (HTTPS) connections. Protecting the
+      device itself (lock screen, OS updates, who has access) is your responsibility.</p>
+
+      <h2>7. Data deletion</h2>
+      <p>You are in control of all data. To delete it: delete individual <code>.sloom</code> projects, clear
+      Signal Loom&rsquo;s app storage in Android Settings, and/or uninstall the app. To delete content you
+      previously sent to an AI provider, use that provider&rsquo;s own controls.</p>
+
+      <h2>8. Changes to this policy</h2>
+      <p>If we change this policy we will update the &ldquo;Last updated&rdquo; date above and post the new version at
+      this URL.</p>
+
+      <h2>9. Contact</h2>
+      <p>Questions about this policy: <a href="mailto:privacy@sloom.studio" style="color: var(--cyan)">privacy@sloom.studio</a>.</p>
+
+      <div class="privacy-footer">
+        &copy; 2026 Sloom Software. Signal Loom is a local-first, bring-your-own-key creative suite. &middot;
+        <a href="index.html">sloom.studio</a>
+      </div>
+
+    </div>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Signal Loom
+    </a>
+    <nav class="footer-links" aria-label="Footer navigation">
+      <a href="index.html">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="examples.html">Examples</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="mailto:support@sloom.studio">support@sloom.studio</a>
+    </nav>
+    <span>&copy; 2026 Sloom Software</span>
+  </div>
+</footer>
+
+</body>
+</html>

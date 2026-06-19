@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Documentation &mdash; Signal Loom</title>
+  <meta name="description" content="Signal Loom documentation: getting started, workspace guides for Flow, Image, Paper, and Video, Android / DeX setup, and bring-your-own-keys configuration." />
+  <meta name="theme-color" content="#020711" />
+  <meta property="og:title" content="Signal Loom Documentation" />
+  <meta property="og:description" content="Getting started, per-workspace guides, Android / DeX setup, and BYO API key configuration." />
+  <meta property="og:image" content="/assets/graphics/feature-graphic-1024x500.png" />
+  <link rel="icon" type="image/png" href="assets/graphics/icon-512.png" />
+  <link rel="stylesheet" href="assets/site.css" />
+  <style>
+    body {
+      background:
+        radial-gradient(ellipse 60% 30% at 20% 10%, rgba(41,217,255,.10) 0%, transparent 55%),
+        linear-gradient(180deg, #07111f 0%, var(--bg) 50%);
+    }
+
+    /* ── Docs layout ── */
+    .docs-layout {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 0;
+      align-items: start;
+      padding-block: 48px;
+    }
+
+    /* Sidebar */
+    .docs-sidebar {
+      position: sticky;
+      top: 82px;
+      padding-right: 32px;
+    }
+    .sidebar-group { margin-bottom: 28px; }
+    .sidebar-group-label {
+      font-size: .7rem; font-weight: 900; letter-spacing: .18em;
+      text-transform: uppercase; color: var(--dim);
+      margin-bottom: 8px; padding-left: 10px;
+    }
+    .sidebar-link {
+      display: block;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      font-size: .88rem; color: var(--muted); font-weight: 600;
+      transition: color .15s, background .15s;
+      border-left: 2px solid transparent;
+    }
+    .sidebar-link:hover {
+      color: #fff; background: var(--cyan-soft);
+      border-left-color: var(--cyan);
+    }
+    .sidebar-link.active {
+      color: var(--cyan); background: var(--cyan-soft);
+      border-left-color: var(--cyan);
+    }
+
+    /* Content */
+    .docs-content { min-width: 0; }
+    .docs-content section {
+      padding-block: 52px;
+      border-top: 1px solid var(--line);
+    }
+    .docs-content section:first-child { border-top: none; padding-top: 0; }
+
+    .docs-content h2 {
+      font-size: clamp(1.6rem, 3vw, 2.4rem);
+      margin-bottom: 18px;
+    }
+    .docs-content h3 {
+      font-size: 1.18rem;
+      margin-top: 32px; margin-bottom: 12px;
+    }
+    .docs-content h4 {
+      font-size: .82rem; font-weight: 900; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--cyan);
+      margin-top: 24px; margin-bottom: 8px;
+    }
+    .docs-content p { margin-bottom: 16px; font-size: .97rem; line-height: 1.7; }
+    .docs-content ul, .docs-content ol {
+      margin-bottom: 16px; display: grid; gap: 6px;
+    }
+    .docs-content li { font-size: .95rem; color: var(--muted); line-height: 1.6; }
+
+    /* Callout boxes */
+    .callout {
+      border-left: 3px solid var(--cyan);
+      background: var(--cyan-soft);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      padding: 14px 18px;
+      margin-bottom: 20px;
+    }
+    .callout.note  { border-color: var(--cyan); background: var(--cyan-soft); }
+    .callout.warn  { border-color: var(--gold); background: var(--gold-soft); }
+    .callout.tip   { border-color: var(--green); background: rgba(114,246,177,.1); }
+    .callout p { margin: 0; font-size: .92rem; color: var(--text); }
+    .callout strong { color: #fff; }
+
+    /* Code / inline code */
+    code {
+      background: rgba(41,217,255,.1);
+      border: 1px solid rgba(41,217,255,.18);
+      border-radius: 5px;
+      padding: .15em .42em;
+      font-family: "SF Mono", "Fira Code", ui-monospace, monospace;
+      font-size: .87em;
+      color: var(--cyan);
+    }
+
+    /* Step list */
+    .steps { list-style: none; padding: 0; display: grid; gap: 16px; }
+    .steps li {
+      display: grid;
+      grid-template-columns: 32px 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+    .step-num {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      border: 1px solid var(--line-strong);
+      background: rgba(41,217,255,.1);
+      color: var(--cyan);
+      font-weight: 900; font-size: .82rem;
+      display: grid; place-items: center;
+      flex-shrink: 0;
+    }
+    .step-body { padding-top: 4px; }
+    .step-body strong { display: block; color: #fff; margin-bottom: 4px; font-size: .95rem; }
+    .step-body p { margin: 0; font-size: .9rem; }
+
+    /* Screenshot inline */
+    .doc-shot {
+      margin-block: 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+      background: #000;
+    }
+    .doc-shot img { width: 100%; display: block; }
+    .doc-shot figcaption {
+      padding: 10px 16px;
+      font-size: .8rem; color: var(--dim);
+      border-top: 1px solid var(--line);
+    }
+
+    /* Feature table */
+    .feat-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+    .feat-table th {
+      text-align: left; padding: 10px 14px;
+      border-bottom: 1px solid var(--line-strong);
+      font-size: .78rem; font-weight: 900; letter-spacing: .1em;
+      text-transform: uppercase; color: var(--cyan);
+    }
+    .feat-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: .9rem; color: var(--muted);
+      vertical-align: top;
+    }
+    .feat-table tr:last-child td { border-bottom: none; }
+
+    @media (max-width: 840px) {
+      .docs-layout { grid-template-columns: 1fr; }
+      .docs-sidebar {
+        position: static;
+        padding-right: 0;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 24px;
+        margin-bottom: 24px;
+        display: flex; flex-wrap: wrap; gap: 6px;
+      }
+      .sidebar-group { margin: 0; }
+      .sidebar-group-label { display: none; }
+      .sidebar-link { padding: 7px 12px; }
+    }
+  </style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav-inner wrap" aria-label="Primary navigation">
+    <a class="brand" href="index.html" aria-label="Signal Loom home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Signal Loom
+    </a>
+    <div class="nav-links" id="nav-links">
+      <a href="index.html">Home</a>
+      <a href="docs.html" aria-current="page">Docs</a>
+      <a href="examples.html">Examples</a>
+      <a href="index.html#pricing">Download</a>
+      <a href="privacy.html">Privacy</a>
+    </div>
+    <a class="nav-cta" href="index.html#pricing">Get Signal Loom</a>
+    <button class="nav-hamburger" aria-label="Toggle navigation" onclick="document.getElementById('nav-links').classList.toggle('open')">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="docs-layout">
+
+    <!-- ── Sidebar ── -->
+    <aside class="docs-sidebar" aria-label="Documentation navigation">
+      <div class="sidebar-group">
+        <div class="sidebar-group-label">Getting started</div>
+        <a class="sidebar-link active" href="#getting-started">Overview</a>
+        <a class="sidebar-link" href="#install">Install</a>
+        <a class="sidebar-link" href="#projects">Projects &amp; files</a>
+        <a class="sidebar-link" href="#api-keys">API keys</a>
+      </div>
+      <div class="sidebar-group">
+        <div class="sidebar-group-label">Workspaces</div>
+        <a class="sidebar-link" href="#flow">Flow</a>
+        <a class="sidebar-link" href="#image">Image</a>
+        <a class="sidebar-link" href="#paper">Paper</a>
+        <a class="sidebar-link" href="#video">Video</a>
+      </div>
+      <div class="sidebar-group">
+        <div class="sidebar-group-label">Source library</div>
+        <a class="sidebar-link" href="#library">Shared library</a>
+      </div>
+      <div class="sidebar-group">
+        <div class="sidebar-group-label">Android</div>
+        <a class="sidebar-link" href="#android-install">Install &amp; setup</a>
+        <a class="sidebar-link" href="#dex">Samsung DeX</a>
+        <a class="sidebar-link" href="#lan-host">Phone as LAN host</a>
+      </div>
+    </aside>
+
+    <!-- ── Content ── -->
+    <div class="docs-content">
+
+      <section id="getting-started">
+        <p class="eyebrow">Getting started</p>
+        <h2>Signal Loom documentation</h2>
+        <p>Signal Loom is a local-first creative suite with four connected workspaces. Your projects are <code>.sloom</code> files that live on your device. There are no Sloom accounts, no cloud sync services, and no Sloom servers. Everything you generate or edit stays in your project unless you export it.</p>
+        <div class="callout note">
+          <p><strong>Bring your own keys.</strong> Signal Loom does not include AI usage credits or a built-in model. You connect to AI providers using your own API keys. Usage is billed directly to you by each provider.</p>
+        </div>
+        <p>The four workspaces &mdash; Flow, Image, Paper, and Video &mdash; all open the same <code>.sloom</code> project and share one source library. A clip you generate in Flow is available in Image, Paper, and Video without any import step.</p>
+      </section>
+
+      <section id="install">
+        <h2>Installation</h2>
+        <ul class="steps">
+          <li>
+            <span class="step-num">1</span>
+            <div class="step-body">
+              <strong>Open Google Play</strong>
+              <p>Search for &ldquo;Signal Loom&rdquo; or follow the link from <a href="index.html#pricing" style="color: var(--cyan)">sloom.studio</a>. The app is a one-time purchase at $9.99 USD with no subscription or in-app purchases.</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">2</span>
+            <div class="step-body">
+              <strong>Purchase and install</strong>
+              <p>Complete the Google Play purchase. The app installs like any Android app. No account with Sloom is created or required.</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">3</span>
+            <div class="step-body">
+              <strong>Open Signal Loom and enter your API keys</strong>
+              <p>On first launch, tap the Settings icon to open the provider configuration panel. Add at least one API key to enable AI generation features. See <a href="#api-keys" style="color: var(--cyan)">API keys</a> for details.</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">4</span>
+            <div class="step-body">
+              <strong>Create or open a project</strong>
+              <p>Tap <strong>New Project</strong> to create a fresh <code>.sloom</code> file, or <strong>Open</strong> to load an existing one from your device storage. Projects can live anywhere accessible to Android (internal storage, SD card, or a folder you choose).</p>
+            </div>
+          </li>
+        </ul>
+
+        <div class="callout tip">
+          <p><strong>Tip:</strong> On Android 13 and later, Signal Loom does not request broad storage permissions. It uses the standard file picker to access only the files you choose.</p>
+        </div>
+      </section>
+
+      <section id="projects">
+        <h2>Projects and files</h2>
+        <p>Every Signal Loom project is a single <code>.sloom</code> file. The file contains your project graph, workspace state, layer data, page layouts, timeline arrangements, and embedded or referenced source assets.</p>
+
+        <h3>Creating a project</h3>
+        <p>From any workspace, tap the Signal Loom icon in the top-left corner to open the project menu. Select <strong>New</strong> to create a project, or <strong>Open</strong> to load an existing <code>.sloom</code> file.</p>
+
+        <h3>Saving</h3>
+        <p>Signal Loom saves your project automatically as you work. You can also trigger a manual save from the project menu. The project file is always on your device &mdash; it is never uploaded to any Sloom server.</p>
+
+        <h3>Exporting</h3>
+        <p>Each workspace has its own export options suited to its content type:</p>
+        <ul>
+          <li><strong>Flow:</strong> Export generated assets individually to your source library or device gallery.</li>
+          <li><strong>Image:</strong> Export as PNG, JPEG, or other formats from the export panel.</li>
+          <li><strong>Paper:</strong> Export pages as raster images or as a print-ready PDF.</li>
+          <li><strong>Video:</strong> Export the assembled timeline as a video file.</li>
+        </ul>
+
+        <div class="callout warn">
+          <p><strong>File size note:</strong> Large <code>.sloom</code> projects can become sizable because generated images and media are embedded. If you work with high-resolution outputs, use the source library&rsquo;s external-reference mode to keep the project file smaller.</p>
+        </div>
+      </section>
+
+      <section id="api-keys">
+        <h2>Configuring API keys</h2>
+        <p>Open the Settings panel from any workspace (tap the settings icon in the top bar). Each provider has its own configuration section.</p>
+
+        <table class="feat-table">
+          <thead>
+            <tr><th>Provider</th><th>What you need</th><th>Notes</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Google Gemini</td><td>Gemini API key from Google AI Studio</td><td>Free tier available for testing</td></tr>
+            <tr><td>Google Vertex AI</td><td>Service account JSON or API key + project ID</td><td>Enterprise; billed per-project in GCP</td></tr>
+            <tr><td>OpenAI</td><td>OpenAI API key</td><td>Also works with compatible endpoints</td></tr>
+            <tr><td>Hugging Face</td><td>HF Inference API token</td><td>Many open models available</td></tr>
+            <tr><td>Stability AI</td><td>Stability AI API key</td><td>Stable Diffusion image generation</td></tr>
+            <tr><td>Black Forest Labs</td><td>BFL API key</td><td>FLUX model family</td></tr>
+            <tr><td>Atlas Cloud</td><td>Atlas API key</td><td>Atlas generation gateway</td></tr>
+            <tr><td>ElevenLabs</td><td>ElevenLabs API key</td><td>Audio / voice generation in Flow</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout note">
+          <p><strong>Keys stay on your device.</strong> API keys are stored in Android&rsquo;s local app storage and are never transmitted to Sloom. They are sent only to the provider you configured for a specific action.</p>
+        </div>
+
+        <h3>Choosing a provider for a generation action</h3>
+        <p>In Flow, each generation node has a <strong>Provider</strong> dropdown. Select the provider and model you want to use for that specific node. In Image, the generative fill and reference-guided generation panels have their own provider selectors. Paper and Video do not run generation directly; they consume assets produced in Flow and Image.</p>
+      </section>
+
+      <!-- ──────── WORKSPACES ──────── -->
+
+      <section id="flow">
+        <span class="tag" style="margin-bottom: 16px;">Flow</span>
+        <h2>Flow workspace</h2>
+        <p>The Flow workspace is a visual node graph editor for building AI generation pipelines. You wire together prompt nodes, model nodes, transformation nodes, and output nodes to create repeatable, cost-tracked generation chains.</p>
+
+        <figure class="doc-shot">
+          <img src="assets/screenshots/06-flow-nodes.png"
+               alt="Flow node graph on Android showing connected prompt, generate, and export nodes" />
+          <figcaption>Flow node graph on Android. Edge drawers give access to the source library (left), panels (right), and assets (bottom).</figcaption>
+        </figure>
+
+        <h3>Node types</h3>
+        <ul>
+          <li><strong>Prompt node</strong> &mdash; Text input that feeds into a generation node</li>
+          <li><strong>Text node</strong> &mdash; Static or parameterised text for prompts and labels</li>
+          <li><strong>Image generation node</strong> &mdash; Calls your chosen provider to produce an image</li>
+          <li><strong>Video generation node</strong> &mdash; Generates a video clip from a prompt or source image</li>
+          <li><strong>Audio node</strong> &mdash; Voice or sound generation via ElevenLabs or compatible</li>
+          <li><strong>Composition node</strong> &mdash; Combines or layers generated outputs</li>
+          <li><strong>Export node</strong> &mdash; Sends a result to the source library or device storage</li>
+        </ul>
+
+        <h3>Running a graph</h3>
+        <p>Tap <strong>Run</strong> in the top bar. Flow executes nodes in dependency order. Each generation node shows its provider, model, and cost estimate before and after execution. Results appear in the node output thumbnail and are added to the source library automatically.</p>
+
+        <h3>Cost tracking</h3>
+        <p>The run summary panel shows estimated cost (in provider tokens or dollars, depending on what the provider API reports) for the current run and a cumulative total for the project session. This helps you stay aware of spending without switching to a provider dashboard.</p>
+
+        <div class="callout tip">
+          <p><strong>Tip:</strong> Use the source library&rsquo;s <strong>Generated Pool</strong> bin to review all outputs from a flow run and drag them directly into Image, Paper, or Video.</p>
+        </div>
+      </section>
+
+      <section id="image">
+        <span class="tag pink" style="margin-bottom: 16px;">Image</span>
+        <h2>Image workspace</h2>
+        <p>The Image workspace is a full layered image editor with AI-assisted tools including generative fill and reference-guided generation. It supports all standard layer operations plus a brush engine designed for stylus input.</p>
+
+        <figure class="doc-shot">
+          <img src="assets/screenshots/01-portrait-painting.png"
+               alt="Image workspace showing a portrait painting on Android with floating tool palette" />
+          <figcaption>Portrait painting in the Image workspace. The floating palette gives quick access to brush, selection, transform, and eyedropper tools.</figcaption>
+        </figure>
+
+        <h3>Layers</h3>
+        <p>The Image workspace supports raster layers, vector layers, text layers, adjustment layers, and group layers. Each layer can have masks, effects (stroke, shadow, glow), and blend modes. The layers panel is accessible from the right-side drawer on phone, or as a persistent panel on tablet and DeX.</p>
+
+        <h3>Brush engine</h3>
+        <p>The brush engine reads full stylus input: pressure (size and opacity), tilt (spread and direction), and rotation (stamp angle). Colour dynamics let you map foreground-to-background colour transitions to pressure or pen direction. A 3D tip preview shows the current brush shape before you paint.</p>
+
+        <figure class="doc-shot">
+          <img src="assets/screenshots/image-brush-engine.png"
+               alt="Brush engine panel on desktop showing tilt, pressure, and colour dynamics" />
+          <figcaption>Brush engine panel on desktop. Pressure, tilt, rotation, and colour dynamics are all configurable per brush.</figcaption>
+        </figure>
+
+        <h3>Generative fill</h3>
+        <p>Select a region on the canvas using any selection tool, then open the generative fill panel. Enter a description of what you want in that region and choose a provider. The result blends into the layer at the selected location.</p>
+
+        <figure class="doc-shot">
+          <img src="assets/screenshots/image-generative-fill.png"
+               alt="Generative fill result on desktop: a region replaced with AI-generated content" />
+          <figcaption>Generative fill on desktop. Select a region, describe the content, and the model fills it in-place on the active layer.</figcaption>
+        </figure>
+
+        <h3>Reference-guided generation</h3>
+        <p>Drag a source image from the source library into the reference panel, then run a generation action. Models that support reference images (such as certain FLUX variants and Gemini image editing modes) will use the reference to guide style, composition, or subject identity.</p>
+
+        <h3>Export</h3>
+        <p>Open the Export panel to save the flattened composite or individual layers as PNG, JPEG, or WebP. You can also send the result to Paper or Video as a source asset without leaving the project.</p>
+      </section>
+
+      <section id="paper">
+        <span class="tag gold" style="margin-bottom: 16px;">Paper</span>
+        <h2>Paper workspace</h2>
+        <p>Paper is a page-based layout workspace designed for comics, illustrated books, webcomics, and long-form printed documents. Pages are composed of placed images, text frames, and comic-specific elements such as panels, speech bubbles, caption boxes, and SFX decals.</p>
+
+        <figure class="doc-shot">
+          <img src="assets/screenshots/05-paper-layout.png"
+               alt="Paper workspace showing a comic page with panels and speech bubbles on Android" />
+          <figcaption>Comic page layout in the Paper workspace on Android. Panel grids, speech tooling, and text frames are all available from the toolbar.</figcaption>
+        </figure>
+
+        <h3>Page setup</h3>
+        <p>Create a new page from the Paper toolbar. Set the page size, orientation, margin, and bleed settings. Pages can be standard print sizes or custom dimensions for webcomic exports.</p>
+
+        <h3>Panel grids</h3>
+        <p>Insert a panel grid onto a page to divide it into comic panels. Adjust gutter width, row and column counts, and individual panel sizes by dragging handles. Each panel is an independent frame that can contain an image from the source library or a raster paint layer.</p>
+
+        <h3>Speech and caption tooling</h3>
+        <p>Add speech bubbles, thought bubbles, caption boxes, and SFX text decals from the Insert menu. Each element has its own text, tail direction, and style settings. Speech bubbles can be linked in reading-order chains for scripting workflow.</p>
+
+        <h3>Linked text frames</h3>
+        <p>For long-form text (book chapters, article layouts), create a text frame and link it to subsequent frames on the same or following pages. Overflow text flows automatically through the chain.</p>
+
+        <h3>Export</h3>
+        <p>Export individual pages or full spreads as high-resolution PNG or JPEG. Export a full document as a print-ready PDF with embedded bleed marks. Webcomic mode exports each page as a standalone image at web resolution.</p>
+      </section>
+
+      <section id="video">
+        <span class="tag green" style="margin-bottom: 16px;">Video</span>
+        <h2>Video workspace</h2>
+        <p>The Video workspace is a timeline-based editor for assembling generated clips, Paper pages, and imported footage into finished video sequences. It supports multi-track arrangement, keyframe animation, text overlays, and export.</p>
+
+        <figure class="doc-shot">
+          <img src="assets/screenshots/04-video-timeline.png"
+               alt="Video workspace showing multi-track timeline with clip thumbnails on Android" />
+          <figcaption>Multi-track timeline in the Video workspace on Android. Source bins appear in the left drawer; the preview monitor is above the timeline.</figcaption>
+        </figure>
+
+        <h3>Timeline and tracks</h3>
+        <p>Add video, audio, image, and text tracks to the timeline. Clips snap to the playhead and to each other. Resize clips by dragging their edges. Move clips by dragging. The timeline supports as many tracks as your project requires.</p>
+
+        <h3>Keyframe animation</h3>
+        <p>Select a clip, open the Properties panel, and add keyframes for opacity, scale, position, and rotation. Keyframes appear as diamonds on the timeline track. Drag to adjust timing; double-tap to edit a value.</p>
+
+        <h3>Text and shape overlays</h3>
+        <p>Insert a text track and add timed text clips. Each text clip has its own font, size, colour, and position. Use shape overlays for lower-thirds, title cards, and graphic elements that travel with the timeline.</p>
+
+        <h3>Source bins and Paper pages</h3>
+        <p>The left drawer contains source bins shared with the rest of the project. Drag generated clips or images from Flow directly onto a video track. Paper pages can be placed on a video track as still frames, making it straightforward to animate a comic sequence or slideshow.</p>
+
+        <h3>Export</h3>
+        <p>Open the Export panel when your timeline is ready. Choose resolution, frame rate, and format, then tap Export. The render happens on your device.</p>
+      </section>
+
+      <section id="library">
+        <h2>Shared source library</h2>
+        <p>The source library is a project-wide asset manager accessible from every workspace. It holds everything you import or generate: images, clips, audio files, Paper pages, and masks.</p>
+        <p>Assets are organised into named bins. The default bins are <strong>Generated Pool</strong> (outputs from Flow), <strong>Imported Media</strong>, and <strong>Project Pages</strong>. You can create additional bins to organise your work.</p>
+        <p>To use an asset from the library in any workspace, open the left-edge drawer (phone) or the Source Library panel (tablet/DeX) and drag the asset onto the canvas, timeline, or node graph.</p>
+        <div class="callout tip">
+          <p><strong>Tip:</strong> Assets generated in Flow appear in the source library immediately. You do not need to export and re-import them before using them in Image, Paper, or Video.</p>
+        </div>
+      </section>
+
+      <!-- ──────── ANDROID ──────── -->
+
+      <section id="android-install">
+        <p class="eyebrow">Android</p>
+        <h2>Android installation and setup</h2>
+        <p>Signal Loom is an Android application available on Google Play. It runs on Android phones and tablets. For the best experience with a stylus, use an S Pen-equipped device or a tablet with Wacom-protocol stylus support.</p>
+
+        <h3>System requirements</h3>
+        <ul>
+          <li>Android 13 or later recommended (Android 10 minimum)</li>
+          <li>4 GB RAM or more recommended for large projects</li>
+          <li>A device with a GPU that supports OpenGL ES 3.0 or later (virtually all modern devices)</li>
+        </ul>
+
+        <h3>Phone interface</h3>
+        <p>On a phone, Signal Loom uses an edge-drawer layout:</p>
+        <ul>
+          <li><strong>Left edge</strong> &mdash; Source library (your assets and generated outputs)</li>
+          <li><strong>Right edge</strong> &mdash; Workspace panels (layers, properties, history, channels)</li>
+          <li><strong>Bottom edge</strong> &mdash; Quick asset browser</li>
+          <li><strong>Top bar</strong> &mdash; Workspace switcher, project actions, zoom, and settings</li>
+        </ul>
+        <p>A floating tool palette provides quick access to the current workspace&rsquo;s primary tools. Tap the <strong>&times;</strong> button in the top bar to hide all chrome and work full-screen; a restore button appears at the edge to bring the interface back.</p>
+
+        <figure class="doc-shot">
+          <img src="assets/screenshots/phone-chrome-portrait.png"
+               alt="Signal Loom phone interface in portrait mode showing the workspace chrome" />
+          <figcaption>Phone chrome in portrait mode. The top bar has the workspace tabs and project controls; the floating palette is visible at the left.</figcaption>
+        </figure>
+      </section>
+
+      <section id="dex">
+        <h2>Samsung DeX and external displays</h2>
+        <p>When connected to an external display via HDMI or DeX Station, Signal Loom automatically switches to a desktop-style layout with persistent side panels, a larger canvas, and full keyboard and mouse support.</p>
+
+        <figure class="doc-shot">
+          <img src="assets/screenshots/dex-image-workspace.png"
+               alt="Image workspace in Samsung DeX showing persistent panels and large canvas" />
+          <figcaption>Image workspace in Samsung DeX. Panels are persistent, the canvas fills the display, and keyboard shortcuts are fully active.</figcaption>
+        </figure>
+
+        <h3>Keyboard shortcuts</h3>
+        <p>Standard shortcuts work in DeX mode: <code>Ctrl+Z</code> / <code>Ctrl+Shift+Z</code> for undo/redo, <code>B</code> for brush, <code>S</code> for selection, <code>H</code> for hand tool, <code>Ctrl+S</code> to save, <code>Space</code> to pan, and modifier keys for constrained transforms.</p>
+
+        <h3>Mouse and pen</h3>
+        <p>A Wacom-compatible pen connected via USB to the DeX dock sends full pressure and tilt data to the brush engine. Mouse scroll zooms the canvas. Right-click opens context menus.</p>
+      </section>
+
+      <section id="lan-host">
+        <h2>Phone as LAN host</h2>
+        <p>Signal Loom can serve the full desktop interface from your Android phone to any browser on the same local network. This means you can open the complete Signal Loom UI on a laptop or desktop PC browser without installing anything on the PC &mdash; your phone handles all the computation and project storage.</p>
+
+        <h3>Starting the LAN server</h3>
+        <ul class="steps">
+          <li>
+            <span class="step-num">1</span>
+            <div class="step-body">
+              <strong>Open the LAN host panel</strong>
+              <p>In Signal Loom settings, scroll to <strong>LAN Host</strong> and tap <strong>Start server</strong>. The app displays a local IP address and port, such as <code>http://192.168.1.42:7700</code>.</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">2</span>
+            <div class="step-body">
+              <strong>Open the address in a browser on your PC</strong>
+              <p>Type the address shown on your phone into any modern browser on the same Wi-Fi network. The full Signal Loom desktop workspace loads in the browser tab.</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">3</span>
+            <div class="step-body">
+              <strong>Work at the PC</strong>
+              <p>Use your keyboard, mouse, or Wacom tablet attached to the PC. The project data lives on your phone; the browser renders the UI.</p>
+            </div>
+          </li>
+        </ul>
+
+        <div class="callout warn">
+          <p><strong>Keep your phone on the same Wi-Fi network</strong> as the PC. If your phone goes to sleep or changes networks, the connection will drop. Keep the screen awake during a LAN session.</p>
+        </div>
+      </section>
+
+    </div><!-- /docs-content -->
+  </div><!-- /docs-layout -->
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Signal Loom
+    </a>
+    <nav class="footer-links" aria-label="Footer navigation">
+      <a href="index.html">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="examples.html">Examples</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="mailto:support@sloom.studio">support@sloom.studio</a>
+    </nav>
+    <span>&copy; 2026 Sloom Software</span>
+  </div>
+</footer>
+
+</body>
+</html>

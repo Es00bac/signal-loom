@@ -1,1344 +1,605 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Signal Loom | AI Post-Production Studio</title>
-    <meta
-      name="description"
-      content="Signal Loom is an AI post-production studio for flow-based generation, image editing, publishing layout, video finishing, and Android/DeX creative work."
-    />
-    <meta name="theme-color" content="#020711" />
-    <meta property="og:title" content="Signal Loom" />
-    <meta
-      property="og:description"
-      content="Flow, Image, Paper, and Video workspaces in one AI post-production studio."
-    />
-    <meta property="og:image" content="/assets/generated/signal-loom-hero.png" />
-    <style>
-      :root {
-        color-scheme: dark;
-        --bg: #020711;
-        --bg-2: #07111f;
-        --panel: rgba(10, 18, 32, 0.82);
-        --panel-strong: rgba(11, 21, 38, 0.96);
-        --line: rgba(42, 215, 255, 0.22);
-        --line-strong: rgba(42, 215, 255, 0.44);
-        --cyan: #29d9ff;
-        --cyan-soft: rgba(41, 217, 255, 0.15);
-        --pink: #ff3fb4;
-        --pink-soft: rgba(255, 63, 180, 0.16);
-        --gold: #ffb13d;
-        --green: #72f6b1;
-        --text: #e8fbff;
-        --muted: rgba(232, 251, 255, 0.68);
-        --dim: rgba(232, 251, 255, 0.46);
-        --shadow: 0 30px 90px rgba(0, 0, 0, 0.44);
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      html {
-        scroll-behavior: smooth;
-      }
-
-      body {
-        margin: 0;
-        overflow-x: hidden;
-        background:
-          radial-gradient(circle at 50% 4%, rgba(41, 217, 255, 0.19), transparent 31rem),
-          radial-gradient(circle at 90% 20%, rgba(255, 63, 180, 0.11), transparent 28rem),
-          linear-gradient(180deg, #07111f 0%, var(--bg) 42%, #040810 100%);
-        color: var(--text);
-        font-family:
-          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-          sans-serif;
-      }
-
-      body::before {
-        content: "";
-        position: fixed;
-        inset: 0;
-        z-index: -2;
-        pointer-events: none;
-        background-image:
-          linear-gradient(rgba(41, 217, 255, 0.055) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(41, 217, 255, 0.055) 1px, transparent 1px);
-        background-size: 46px 46px;
-        mask-image: linear-gradient(to bottom, black 0%, black 70%, transparent 100%);
-      }
-
-      body::after {
-        content: "";
-        position: fixed;
-        inset: 0;
-        z-index: -1;
-        pointer-events: none;
-        background: linear-gradient(90deg, rgba(2, 7, 17, 0.9), transparent 16%, transparent 84%, rgba(2, 7, 17, 0.9));
-      }
-
-      a {
-        color: inherit;
-        text-decoration: none;
-      }
-
-      img {
-        display: block;
-        max-width: 100%;
-      }
-
-      .site-header {
-        position: sticky;
-        top: 0;
-        z-index: 50;
-        border-bottom: 1px solid rgba(42, 215, 255, 0.14);
-        background: rgba(2, 7, 17, 0.76);
-        backdrop-filter: blur(18px);
-      }
-
-      .nav {
-        display: flex;
-        width: min(1220px, calc(100vw - 32px));
-        min-height: 68px;
-        margin: 0 auto;
-        align-items: center;
-        justify-content: space-between;
-        gap: 18px;
-      }
-
-      .brand {
-        display: inline-flex;
-        align-items: center;
-        gap: 12px;
-        font-weight: 900;
-        letter-spacing: 0.04em;
-      }
-
-      .brand-mark {
-        display: grid;
-        width: 38px;
-        height: 38px;
-        place-items: center;
-        border: 1px solid var(--line);
-        border-radius: 10px;
-        background: rgba(41, 217, 255, 0.07);
-        box-shadow: 0 0 22px rgba(41, 217, 255, 0.14);
-      }
-
-      .brand-mark svg {
-        width: 24px;
-        height: 24px;
-      }
-
-      .nav-links {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-      }
-
-      .nav-links a {
-        border-radius: 999px;
-        padding: 9px 12px;
-        color: var(--muted);
-        font-size: 0.9rem;
-        font-weight: 750;
-      }
-
-      .nav-links a:hover {
-        background: rgba(41, 217, 255, 0.08);
-        color: white;
-      }
-
-      .cta {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border: 1px solid rgba(41, 217, 255, 0.38);
-        border-radius: 999px;
-        background: linear-gradient(135deg, rgba(41, 217, 255, 0.16), rgba(255, 63, 180, 0.16));
-        color: white;
-        padding: 10px 15px;
-        font-weight: 850;
-        box-shadow: 0 0 24px rgba(41, 217, 255, 0.13);
-      }
-
-      main {
-        overflow: hidden;
-      }
-
-      .section {
-        width: min(1220px, calc(100vw - 32px));
-        margin: 0 auto;
-        padding: clamp(58px, 8vw, 112px) 0;
-      }
-
-      .hero {
-        display: grid;
-        min-height: calc(100vh - 68px);
-        align-items: center;
-        gap: 42px;
-        grid-template-columns: minmax(0, 1fr) minmax(360px, 0.88fr);
-      }
-
-      .eyebrow {
-        margin: 0 0 16px;
-        color: var(--cyan);
-        font-size: 0.78rem;
-        font-weight: 900;
-        letter-spacing: 0.2em;
-        text-transform: uppercase;
-      }
-
-      h1,
-      h2,
-      h3,
-      p {
-        margin-top: 0;
-      }
-
-      h1 {
-        max-width: 760px;
-        margin-bottom: 22px;
-        font-size: clamp(3.4rem, 8vw, 7.5rem);
-        line-height: 0.9;
-        letter-spacing: 0;
-      }
-
-      .lead {
-        max-width: 720px;
-        color: var(--muted);
-        font-size: clamp(1.12rem, 2vw, 1.42rem);
-        line-height: 1.55;
-      }
-
-      .hero-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-top: 28px;
-      }
-
-      .button {
-        display: inline-flex;
-        min-height: 44px;
-        align-items: center;
-        justify-content: center;
-        border: 1px solid rgba(41, 217, 255, 0.28);
-        border-radius: 999px;
-        background: rgba(8, 19, 35, 0.78);
-        color: var(--text);
-        padding: 11px 16px;
-        font-weight: 820;
-      }
-
-      .button.primary {
-        border-color: rgba(255, 63, 180, 0.5);
-        background: linear-gradient(135deg, rgba(255, 63, 180, 0.24), rgba(41, 217, 255, 0.2));
-      }
-
-      .hero-card {
-        position: relative;
-        overflow: hidden;
-        border: 1px solid var(--line);
-        border-radius: 28px;
-        background: var(--panel);
-        box-shadow: var(--shadow), 0 0 42px rgba(41, 217, 255, 0.12);
-      }
-
-      .hero-card img {
-        width: 100%;
-        min-height: 520px;
-        object-fit: cover;
-      }
-
-      .hero-card .caption {
-        position: absolute;
-        left: 18px;
-        right: 18px;
-        bottom: 18px;
-        display: grid;
-        gap: 8px;
-        border: 1px solid rgba(41, 217, 255, 0.22);
-        border-radius: 16px;
-        background: rgba(2, 7, 17, 0.78);
-        padding: 14px;
-        backdrop-filter: blur(16px);
-      }
-
-      .caption strong {
-        color: white;
-      }
-
-      .caption span {
-        color: var(--muted);
-        font-size: 0.92rem;
-      }
-
-      .metrics {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 12px;
-        margin-top: 28px;
-      }
-
-      .metric {
-        border: 1px solid rgba(41, 217, 255, 0.16);
-        border-radius: 16px;
-        background: rgba(8, 18, 32, 0.68);
-        padding: 15px;
-      }
-
-      .metric strong {
-        display: block;
-        color: white;
-        font-size: 1.24rem;
-      }
-
-      .metric span {
-        color: var(--dim);
-        font-size: 0.82rem;
-      }
-
-      .section-heading {
-        display: grid;
-        max-width: 760px;
-        gap: 12px;
-        margin-bottom: 28px;
-      }
-
-      .section-heading h2 {
-        margin-bottom: 0;
-        font-size: clamp(2rem, 4.4vw, 4.4rem);
-        line-height: 0.98;
-        letter-spacing: 0;
-      }
-
-      .section-heading p {
-        margin-bottom: 0;
-        color: var(--muted);
-        font-size: 1.08rem;
-        line-height: 1.6;
-      }
-
-      .feature-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 14px;
-      }
-
-      .feature-card,
-      .workspace-card,
-      .platform-card {
-        border: 1px solid rgba(41, 217, 255, 0.15);
-        border-radius: 18px;
-        background: rgba(8, 17, 31, 0.72);
-        padding: 20px;
-      }
-
-      .feature-card h3,
-      .workspace-card h3,
-      .platform-card h3 {
-        margin-bottom: 8px;
-        color: white;
-        font-size: 1.08rem;
-      }
-
-      .feature-card p,
-      .workspace-card p,
-      .platform-card p {
-        margin-bottom: 0;
-        color: var(--muted);
-        line-height: 1.55;
-      }
-
-      .tag {
-        display: inline-flex;
-        width: fit-content;
-        margin-bottom: 14px;
-        border: 1px solid rgba(41, 217, 255, 0.2);
-        border-radius: 999px;
-        background: rgba(41, 217, 255, 0.08);
-        color: var(--cyan);
-        padding: 6px 9px;
-        font-size: 0.75rem;
-        font-weight: 900;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-
-      .workspaces {
-        display: grid;
-        align-items: center;
-        gap: 28px;
-        grid-template-columns: minmax(320px, 0.86fr) minmax(0, 1fr);
-      }
-
-      .workspace-art {
-        overflow: hidden;
-        border: 1px solid var(--line);
-        border-radius: 22px;
-        background: #000;
-        box-shadow: var(--shadow);
-      }
-
-      .workspace-list {
-        display: grid;
-        gap: 12px;
-      }
-
-      .demo-wrap {
-        display: grid;
-        align-items: start;
-        gap: 24px;
-        grid-template-columns: minmax(330px, 430px) minmax(0, 1fr);
-      }
-
-      .phone {
-        position: sticky;
-        top: 88px;
-        overflow: hidden;
-        border: 1px solid rgba(41, 217, 255, 0.35);
-        border-radius: 34px;
-        background: #050913;
-        box-shadow: var(--shadow), 0 0 44px rgba(41, 217, 255, 0.15);
-        aspect-ratio: 9 / 19.5;
-      }
-
-      .phone-screen {
-        position: absolute;
-        inset: 10px;
-        overflow: hidden;
-        border: 1px solid rgba(41, 217, 255, 0.18);
-        border-radius: 26px;
-        background: #090d16;
-      }
-
-      .phone-status {
-        position: absolute;
-        inset: 0 0 auto;
-        z-index: 10;
-        display: flex;
-        height: 34px;
-        align-items: center;
-        justify-content: space-between;
-        border-bottom: 1px solid rgba(41, 217, 255, 0.11);
-        background: rgba(4, 8, 16, 0.9);
-        padding: 0 14px;
-        color: rgba(232, 251, 255, 0.64);
-        font-size: 0.75rem;
-        font-weight: 800;
-      }
-
-      .mobile-ui {
-        position: absolute;
-        inset: 34px 0 0;
-        overflow: hidden;
-      }
-
-      .mobile-ui.is-hidden .demo-topbar,
-      .mobile-ui.is-hidden .edge,
-      .mobile-ui.is-hidden .palette,
-      .mobile-ui.is-hidden .drawer,
-      .mobile-ui.is-hidden .touch-pill {
-        opacity: 0;
-        pointer-events: none;
-        transform: scale(0.96);
-      }
-
-      .restore {
-        position: absolute;
-        top: 18px;
-        left: 18px;
-        z-index: 35;
-        display: none;
-        width: 52px;
-        height: 52px;
-        place-items: center;
-        border: 1px solid rgba(41, 217, 255, 0.35);
-        border-radius: 50%;
-        background: rgba(9, 26, 44, 0.92);
-        color: var(--cyan);
-        font-size: 1.6rem;
-      }
-
-      .mobile-ui.is-hidden .restore {
-        display: grid;
-      }
-
-      .demo-topbar {
-        position: absolute;
-        inset: 0 0 auto;
-        z-index: 25;
-        border-bottom: 1px solid rgba(41, 217, 255, 0.24);
-        background: rgba(6, 12, 22, 0.95);
-        transition: transform 0.18s ease, opacity 0.18s ease;
-      }
-
-      .top-row {
-        display: flex;
-        height: 54px;
-        align-items: center;
-        gap: 8px;
-        padding: 8px;
-      }
-
-      .demo-icon,
-      .round-button {
-        display: grid;
-        width: 38px;
-        height: 38px;
-        flex: 0 0 auto;
-        place-items: center;
-        border: 1px solid rgba(41, 217, 255, 0.22);
-        border-radius: 12px;
-        background: rgba(41, 217, 255, 0.08);
-        color: var(--cyan);
-        font-weight: 900;
-      }
-
-      .workspace-tabs {
-        display: flex;
-        min-width: 0;
-        flex: 1;
-        gap: 6px;
-        overflow-x: auto;
-        border: 1px solid rgba(41, 217, 255, 0.13);
-        border-radius: 999px;
-        background: rgba(4, 8, 16, 0.7);
-        padding: 5px;
-        scrollbar-width: none;
-      }
-
-      .workspace-tabs button,
-      .demo-tabs button {
-        flex: 0 0 auto;
-        border: 0;
-        border-radius: 999px;
-        background: transparent;
-        color: rgba(232, 251, 255, 0.56);
-        cursor: pointer;
-        font: inherit;
-        font-size: 0.74rem;
-        font-weight: 850;
-        padding: 8px 10px;
-      }
-
-      .workspace-tabs button.active,
-      .demo-tabs button.active {
-        background: rgba(255, 63, 180, 0.18);
-        color: white;
-        box-shadow: inset 0 0 0 1px rgba(255, 63, 180, 0.28);
-      }
-
-      .top-tools {
-        display: flex;
-        gap: 8px;
-        overflow-x: auto;
-        border-top: 1px solid rgba(41, 217, 255, 0.12);
-        padding: 7px 8px;
-        scrollbar-width: none;
-      }
-
-      .chip {
-        flex: 0 0 auto;
-        border: 1px solid rgba(41, 217, 255, 0.18);
-        border-radius: 10px;
-        background: rgba(41, 217, 255, 0.07);
-        color: rgba(232, 251, 255, 0.78);
-        padding: 7px 10px;
-        font-size: 0.72rem;
-        font-weight: 850;
-      }
-
-      .stage {
-        position: absolute;
-        inset: 98px 0 0;
-        overflow: hidden;
-        background:
-          linear-gradient(rgba(41, 217, 255, 0.05) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(41, 217, 255, 0.05) 1px, transparent 1px),
-          #090d16;
-        background-size: 26px 26px;
-      }
-
-      .mock-doc {
-        position: absolute;
-        inset: 22px 18px 108px;
-        overflow: hidden;
-        border: 1px solid rgba(42, 215, 255, 0.2);
-        border-radius: 18px;
-        background: rgba(2, 7, 17, 0.55);
-      }
-
-      .mock-doc::before {
-        content: "Mock project";
-        position: absolute;
-        left: 12px;
-        top: 10px;
-        z-index: 2;
-        border: 1px solid rgba(41, 217, 255, 0.18);
-        border-radius: 999px;
-        background: rgba(2, 7, 17, 0.7);
-        color: rgba(232, 251, 255, 0.62);
-        padding: 6px 9px;
-        font-size: 0.66rem;
-        font-weight: 900;
-      }
-
-      .scene {
-        position: absolute;
-        inset: 0;
-        display: none;
-        padding: 48px 18px 18px;
-      }
-
-      .scene.active {
-        display: block;
-      }
-
-      .node {
-        position: absolute;
-        width: 96px;
-        border: 1px solid rgba(41, 217, 255, 0.24);
-        border-radius: 12px;
-        background: rgba(8, 20, 34, 0.95);
-        padding: 10px;
-        color: white;
-        font-size: 0.66rem;
-        font-weight: 850;
-      }
-
-      .node::after {
-        content: "";
-        position: absolute;
-        top: 50%;
-        right: -74px;
-        width: 72px;
-        height: 1px;
-        background: linear-gradient(90deg, var(--cyan), transparent);
-        transform: rotate(8deg);
-      }
-
-      .image-canvas {
-        height: 100%;
-        border-radius: 14px;
-        background:
-          radial-gradient(circle at 70% 36%, rgba(255, 63, 180, 0.42), transparent 26%),
-          radial-gradient(circle at 35% 55%, rgba(41, 217, 255, 0.42), transparent 30%),
-          linear-gradient(135deg, #111827, #030712);
-      }
-
-      .paper-page {
-        width: 72%;
-        height: 90%;
-        margin: 0 auto;
-        border: 8px solid white;
-        border-radius: 6px;
-        background: white;
-        color: #0b1020;
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        grid-template-rows: 1fr 0.8fr 1.1fr;
-        gap: 6px;
-        padding: 6px;
-      }
-
-      .panel {
-        border: 3px solid #111827;
-        background: linear-gradient(135deg, #89f7fe, #fb7bcf);
-      }
-
-      .panel:nth-child(3) {
-        grid-column: span 2;
-      }
-
-      .timeline {
-        position: absolute;
-        left: 18px;
-        right: 18px;
-        bottom: 18px;
-        display: grid;
-        gap: 8px;
-      }
-
-      .track {
-        height: 22px;
-        border-radius: 6px;
-        background: rgba(41, 217, 255, 0.13);
-      }
-
-      .track:nth-child(2) {
-        width: 76%;
-        background: rgba(255, 63, 180, 0.18);
-      }
-
-      .track:nth-child(3) {
-        width: 88%;
-        background: rgba(255, 177, 61, 0.16);
-      }
-
-      .edge {
-        position: absolute;
-        z-index: 24;
-        border: 1px solid rgba(41, 217, 255, 0.28);
-        background: rgba(9, 26, 44, 0.92);
-        color: var(--cyan);
-        cursor: pointer;
-        font: inherit;
-        font-weight: 900;
-      }
-
-      .edge.left,
-      .edge.right {
-        top: 48%;
-        width: 34px;
-        height: 80px;
-        transform: translateY(-50%);
-      }
-
-      .edge.left {
-        left: 0;
-        border-radius: 0 16px 16px 0;
-      }
-
-      .edge.right {
-        right: 0;
-        border-radius: 16px 0 0 16px;
-      }
-
-      .edge.bottom {
-        left: 50%;
-        bottom: 0;
-        width: 80px;
-        height: 34px;
-        border-radius: 16px 16px 0 0;
-        transform: translateX(-50%);
-      }
-
-      .drawer {
-        position: absolute;
-        z-index: 30;
-        border: 1px solid rgba(41, 217, 255, 0.24);
-        background: rgba(6, 13, 24, 0.97);
-        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.36);
-        transition: transform 0.2s ease, opacity 0.2s ease;
-      }
-
-      .drawer h4 {
-        margin: 0;
-        color: white;
-        font-size: 0.72rem;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-      }
-
-      .drawer p,
-      .drawer li {
-        color: var(--muted);
-        font-size: 0.72rem;
-        line-height: 1.45;
-      }
-
-      .drawer.top {
-        inset: 0 0 auto;
-        padding: 66px 12px 12px;
-        transform: translateY(-100%);
-      }
-
-      .drawer.left {
-        top: 100px;
-        bottom: 0;
-        left: 0;
-        width: 74%;
-        padding: 16px;
-        transform: translateX(-102%);
-      }
-
-      .drawer.right {
-        top: 100px;
-        right: 0;
-        bottom: 0;
-        width: 72%;
-        padding: 16px;
-        transform: translateX(102%);
-      }
-
-      .drawer.bottom {
-        left: 0;
-        right: 0;
-        bottom: 0;
-        padding: 14px;
-        transform: translateY(102%);
-      }
-
-      .drawer.open {
-        transform: translate(0, 0);
-      }
-
-      .drawer-stack {
-        display: grid;
-        gap: 8px;
-        margin-top: 12px;
-      }
-
-      .drawer-item {
-        border: 1px solid rgba(41, 217, 255, 0.13);
-        border-radius: 10px;
-        background: rgba(41, 217, 255, 0.06);
-        padding: 10px;
-      }
-
-      .palette {
-        position: absolute;
-        left: 22px;
-        bottom: 96px;
-        z-index: 26;
-        width: 86px;
-        overflow: hidden;
-        border: 1px solid rgba(41, 217, 255, 0.36);
-        border-radius: 12px;
-        background: rgba(5, 12, 22, 0.95);
-        transition: transform 0.18s ease, opacity 0.18s ease;
-      }
-
-      .handle {
-        height: 24px;
-        display: grid;
-        place-items: center;
-        color: var(--cyan);
-        border-bottom: 1px solid rgba(41, 217, 255, 0.18);
-      }
-
-      .tool-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-      }
-
-      .tool-grid button {
-        display: grid;
-        width: 42px;
-        height: 42px;
-        place-items: center;
-        border: 0;
-        border-right: 1px solid rgba(41, 217, 255, 0.14);
-        border-bottom: 1px solid rgba(41, 217, 255, 0.14);
-        background: rgba(41, 217, 255, 0.08);
-        color: var(--cyan);
-        cursor: pointer;
-        font-size: 1rem;
-      }
-
-      .tool-grid button.active {
-        background: rgba(255, 63, 180, 0.2);
-        color: white;
-      }
-
-      .touch-pill {
-        position: absolute;
-        right: 20px;
-        bottom: 26px;
-        z-index: 26;
-        border: 1px solid rgba(114, 246, 177, 0.38);
-        border-radius: 999px;
-        background: rgba(20, 91, 66, 0.82);
-        color: #dfffee;
-        padding: 12px 14px;
-        font-size: 0.78rem;
-        font-weight: 900;
-      }
-
-      .demo-panel {
-        border: 1px solid rgba(41, 217, 255, 0.16);
-        border-radius: 22px;
-        background: rgba(8, 17, 31, 0.72);
-        padding: 22px;
-      }
-
-      .demo-tabs {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-bottom: 18px;
-      }
-
-      .demo-copy {
-        color: var(--muted);
-        line-height: 1.62;
-      }
-
-      .demo-copy ul {
-        display: grid;
-        gap: 10px;
-        padding-left: 20px;
-      }
-
-      .platform-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 14px;
-      }
-
-      .footer {
-        border-top: 1px solid rgba(41, 217, 255, 0.14);
-        padding: 28px 0 44px;
-      }
-
-      .footer-inner {
-        display: flex;
-        width: min(1220px, calc(100vw - 32px));
-        margin: 0 auto;
-        align-items: center;
-        justify-content: space-between;
-        gap: 18px;
-        color: var(--dim);
-        font-size: 0.9rem;
-      }
-
-      @media (max-width: 980px) {
-        .hero,
-        .workspaces,
-        .demo-wrap {
-          grid-template-columns: 1fr;
-        }
-
-        .hero {
-          min-height: auto;
-          padding-top: 56px;
-        }
-
-        .hero-card img {
-          min-height: 380px;
-        }
-
-        .metrics,
-        .feature-grid,
-        .platform-grid {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-
-        .phone {
-          position: relative;
-          top: auto;
-          width: min(430px, 100%);
-          margin: 0 auto;
-        }
-      }
-
-      @media (max-width: 680px) {
-        .nav {
-          min-height: 62px;
-        }
-
-        .nav-links {
-          display: none;
-        }
-
-        .section {
-          width: min(100vw - 24px, 1220px);
-          padding: 54px 0;
-        }
-
-        .metrics,
-        .feature-grid,
-        .platform-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .footer-inner {
-          flex-direction: column;
-          align-items: flex-start;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <header class="site-header">
-      <nav class="nav" aria-label="Primary navigation">
-        <a class="brand" href="#top" aria-label="Signal Loom home">
-          <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 64 64" role="img">
-              <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" fill="none" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)" />
-              <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" fill="none" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)" />
-            </svg>
-          </span>
-          <span>Signal Loom</span>
-        </a>
-        <div class="nav-links" aria-label="Page sections">
-          <a href="#features">Features</a>
-          <a href="#workspaces">Workspaces</a>
-          <a href="#mobile-demo">Mobile demo</a>
-          <a href="#platform">Platform</a>
-        </div>
-        <a class="cta" href="#mobile-demo">Try the UI demo</a>
-      </nav>
-    </header>
-
-    <main id="top">
-      <section class="section hero" data-site-section="hero">
-        <div>
-          <p class="eyebrow">AI post-production studio</p>
-          <h1>One studio for every frame, page, and generated branch.</h1>
-          <p class="lead">
-            Signal Loom combines a node-based AI Flow workspace with Image editing, Paper layout,
-            and Video finishing. It is built for artists who need automation, asset continuity,
-            and production controls without bouncing between disconnected tools.
-          </p>
-          <div class="hero-actions">
-            <a class="button primary" href="#features">Explore features</a>
-            <a class="button" href="#mobile-demo">Open mobile interface demo</a>
-          </div>
-          <div class="metrics" aria-label="Signal Loom workspace summary">
-            <div class="metric"><strong>4</strong><span>creative workspaces</span></div>
-            <div class="metric"><strong>AI</strong><span>provider-aware generation</span></div>
-            <div class="metric"><strong>DeX</strong><span>Android desktop mode</span></div>
-            <div class="metric"><strong>.sloom</strong><span>suite project format</span></div>
-          </div>
-        </div>
-        <aside class="hero-card" aria-label="Signal Loom generated hero art">
-          <img
-            src="assets/generated/signal-loom-hero.png"
-            alt="Dark futuristic creative workstation generated for the Signal Loom website"
-          />
-          <div class="caption">
-            <strong>Built around continuity.</strong>
-            <span>Sources, generated assets, edits, layouts, and timelines stay connected across the suite.</span>
-          </div>
-        </aside>
-      </section>
-
-      <section class="section" id="features" data-site-section="features">
-        <div class="section-heading">
-          <p class="eyebrow">Application overview</p>
-          <h2>Designed as a production suite, not a prompt box.</h2>
-          <p>
-            Signal Loom is structured around real project work: reusable source bins, cost-aware provider routing,
-            generated asset history, workspace-specific panels, native packaging, and Android/desktop workflows.
-          </p>
-        </div>
-        <div class="feature-grid">
-          <article class="feature-card">
-            <span class="tag">Flow</span>
-            <h3>Node-based media automation</h3>
-            <p>Build generation chains with prompts, lists, branches, portals, source assets, validation, and reusable function-style flow blocks.</p>
-          </article>
-          <article class="feature-card">
-            <span class="tag">Image</span>
-            <h3>Layered image editor</h3>
-            <p>Edit raster, vector, text, masks, channels, layer effects, selections, retouch tools, generative fills, and source-linked assets.</p>
-          </article>
-          <article class="feature-card">
-            <span class="tag">Paper</span>
-            <h3>Publishing and comics layout</h3>
-            <p>Create pages, spreads, comic panels, captions, speech bubbles, SFX decals, export-ready page images, and raster-aligned PDFs.</p>
-          </article>
-          <article class="feature-card">
-            <span class="tag">Video</span>
-            <h3>Timeline finishing</h3>
-            <p>Arrange source media, Paper pages, generated clips, captions, effects, preview monitors, and export-focused timeline structures.</p>
-          </article>
-          <article class="feature-card">
-            <span class="tag">Source library</span>
-            <h3>Project-wide asset continuity</h3>
-            <p>Keep generated outputs and imported media in named bins that can move across Flow, Image, Paper, and Video without losing context.</p>
-          </article>
-          <article class="feature-card">
-            <span class="tag">Automation</span>
-            <h3>Batch and suite workflows</h3>
-            <p>Use flow logic for media generation and dedicated Image automation surfaces for repeated edit operations and batch processing.</p>
-          </article>
-        </div>
-      </section>
-
-      <section class="section workspaces" id="workspaces" data-site-section="workspaces">
-        <div class="workspace-art">
-          <img
-            src="assets/generated/signal-loom-workspaces.png"
-            alt="Generated artwork showing four abstract Signal Loom workspace screens"
-          />
-        </div>
-        <div>
-          <div class="section-heading">
-            <p class="eyebrow">Workspace model</p>
-            <h2>Each app stands alone and still belongs to the same project.</h2>
-            <p>
-              Open a quick image edit, build a complete comic issue, organize a large generative flow,
-              or assemble a video. The workspaces share source assets and project state while keeping
-              their own tools, panels, and keyboard workflows.
-            </p>
-          </div>
-          <div class="workspace-list">
-            <article class="workspace-card">
-              <h3>Flow workspace</h3>
-              <p>Visual logic, provider-aware generation, model settings, verification loops, source bins, bookmarks, and reusable graph structure.</p>
-            </article>
-            <article class="workspace-card">
-              <h3>Image workspace</h3>
-              <p>Photoshop/GIMP-style capability adapted to Signal Loom: layers, brushes, masks, effects, vectors, channels, history, and automation.</p>
-            </article>
-            <article class="workspace-card">
-              <h3>Paper workspace</h3>
-              <p>Page composition for comics, print layouts, webcomic exports, PDF evidence, speech chains, image placement, and production text controls.</p>
-            </article>
-            <article class="workspace-card">
-              <h3>Video workspace</h3>
-              <p>Timeline assembly for generated media, storyboard pages, monitors, clip effects, render previews, and export readiness.</p>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="section" id="mobile-demo" data-site-section="mobile-demo">
-        <div class="section-heading">
-          <p class="eyebrow">Mobile interface prototype</p>
-          <h2>A phone UI built around drawers, floating tools, and pen-first work.</h2>
-          <p>
-            This demo is a simulated version of the Android phone interface direction. It is not the real app,
-            but it shows the intended UI behavior: top, left, right, and bottom drawers; a floating tools palette;
-            workspace switching; mock documents; touch navigation; and a single control to hide the interface.
-          </p>
-        </div>
-        <div class="demo-wrap">
-          <div class="phone" aria-label="Simulated Signal Loom mobile interface">
-            <div class="phone-screen">
-              <div class="phone-status"><span>9:56</span><span>Wi-Fi  68%</span></div>
-              <div class="mobile-ui" data-mobile-demo-shell="true">
-                <button class="restore" data-demo-action="restore-interface" type="button" aria-label="Restore interface">=</button>
-                <div class="demo-topbar">
-                  <div class="top-row">
-                    <div class="demo-icon" aria-hidden="true">SL</div>
-                    <div class="workspace-tabs" aria-label="Demo workspace tabs">
-                      <button class="active" data-demo-workspace="flow" type="button">Flow</button>
-                      <button data-demo-workspace="image" type="button">Image</button>
-                      <button data-demo-workspace="paper" type="button">Paper</button>
-                      <button data-demo-workspace="video" type="button">Video</button>
-                    </div>
-                    <button class="round-button" data-demo-drawer-toggle="top" type="button" aria-label="Open top drawer">v</button>
-                    <button class="round-button" data-demo-action="hide-interface" type="button" aria-label="Hide interface">x</button>
-                  </div>
-                  <div class="top-tools" aria-label="Top toolbar">
-                    <span class="chip">New</span>
-                    <span class="chip">Open</span>
-                    <span class="chip">Panels</span>
-                    <span class="chip">Assets</span>
-                    <span class="chip">100%</span>
-                    <span class="chip">Settings</span>
-                  </div>
-                </div>
-
-                <div class="stage">
-                  <div class="mock-doc">
-                    <div class="scene active" data-scene="flow">
-                      <div class="node" style="left: 16px; top: 62px">Prompt</div>
-                      <div class="node" style="left: 136px; top: 118px">Generate</div>
-                      <div class="node" style="left: 240px; top: 76px">Verify</div>
-                      <div class="node" style="left: 168px; top: 216px">Export</div>
-                    </div>
-                    <div class="scene" data-scene="image">
-                      <div class="image-canvas" aria-label="Mock image canvas"></div>
-                    </div>
-                    <div class="scene" data-scene="paper">
-                      <div class="paper-page" aria-label="Mock comic page">
-                        <div class="panel"></div>
-                        <div class="panel"></div>
-                        <div class="panel"></div>
-                        <div class="panel"></div>
-                        <div class="panel"></div>
-                      </div>
-                    </div>
-                    <div class="scene" data-scene="video">
-                      <div class="image-canvas"></div>
-                      <div class="timeline">
-                        <div class="track"></div>
-                        <div class="track"></div>
-                        <div class="track"></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <button class="edge left" data-demo-drawer-toggle="left" type="button" aria-label="Open left source drawer">S</button>
-                <button class="edge right" data-demo-drawer-toggle="right" type="button" aria-label="Open right panels drawer">P</button>
-                <button class="edge bottom" data-demo-drawer-toggle="bottom" type="button" aria-label="Open bottom assets drawer">A</button>
-
-                <aside class="drawer top" data-demo-drawer="top">
-                  <h4>Top drawer</h4>
-                  <div class="drawer-stack">
-                    <div class="drawer-item"><strong>Project:</strong> Neon Grimoire mock project</div>
-                    <div class="drawer-item">Workspace tools, project actions, zoom, provider settings, and command access live here.</div>
-                  </div>
-                </aside>
-                <aside class="drawer left" data-demo-drawer="left">
-                  <h4>Source Library</h4>
-                  <div class="drawer-stack">
-                    <div class="drawer-item">Generated Pool: 12 mock assets</div>
-                    <div class="drawer-item">Panels, references, clips, pages, masks</div>
-                    <div class="drawer-item">Drag assets into Flow, Image, Paper, or Video.</div>
-                  </div>
-                </aside>
-                <aside class="drawer right" data-demo-drawer="right">
-                  <h4>Panels</h4>
-                  <div class="drawer-stack">
-                    <div class="drawer-item">Layers</div>
-                    <div class="drawer-item">Properties / Tool Options</div>
-                    <div class="drawer-item">History</div>
-                    <div class="drawer-item">Channels and Paths</div>
-                  </div>
-                </aside>
-                <aside class="drawer bottom" data-demo-drawer="bottom">
-                  <h4>Assets</h4>
-                  <p>Bottom drawer for media thumbnails, references, generated frames, source documents, and quick handoff targets.</p>
-                </aside>
-
-                <div class="palette" aria-label="Floating tool palette">
-                  <div class="handle">...</div>
-                  <div class="tool-grid">
-                    <button class="active" type="button" aria-label="Move tool">P</button>
-                    <button type="button" aria-label="Hand tool">H</button>
-                    <button type="button" aria-label="Selection tool">S</button>
-                    <button type="button" aria-label="Brush tool">B</button>
-                    <button type="button" aria-label="Text tool">T</button>
-                    <button type="button" aria-label="Eyedropper tool">I</button>
-                  </div>
-                </div>
-                <div class="touch-pill">Touch Nav</div>
-              </div>
-            </div>
-          </div>
-
-          <aside class="demo-panel">
-            <div class="demo-tabs" aria-label="Demo explanation tabs">
-              <button class="active" data-demo-workspace="flow" type="button">Flow</button>
-              <button data-demo-workspace="image" type="button">Image</button>
-              <button data-demo-workspace="paper" type="button">Paper</button>
-              <button data-demo-workspace="video" type="button">Video</button>
-            </div>
-            <div class="demo-copy">
-              <h3 id="demo-title">Flow mock document</h3>
-              <p id="demo-body">
-                The Flow screen shows a static node graph with source and panel drawers available at the edges.
-                It demonstrates navigation and workspace chrome, not actual graph execution.
-              </p>
-              <ul>
-                <li>Tap workspace tabs to switch the mock document.</li>
-                <li>Open the top, source, panels, or assets drawers from the phone shell.</li>
-                <li>Use the hide button to collapse all chrome, then restore with the floating circle.</li>
-              </ul>
-            </div>
-          </aside>
-        </div>
-      </section>
-
-      <section class="section" id="platform" data-site-section="platform">
-        <div class="section-heading">
-          <p class="eyebrow">Platform targets</p>
-          <h2>Desktop power, Android mobility, and Samsung DeX workflows.</h2>
-          <p>
-            Signal Loom is being hardened for desktop windows, Android phones, tablets, external displays,
-            pen input, Wacom devices, keyboard shortcuts, gamepads, and Samsung DeX sessions.
-          </p>
-        </div>
-        <div class="platform-grid">
-          <article class="platform-card">
-            <h3>Android phone</h3>
-            <p>Drawer-first interface, visible floating tool palettes, touch navigation, pen-focused editing, and hide-all chrome controls.</p>
-          </article>
-          <article class="platform-card">
-            <h3>Tablet and Samsung DeX</h3>
-            <p>Desktop-like panels, larger canvas layouts, keyboard/mouse support, and responsive topbar and side panel behavior.</p>
-          </article>
-          <article class="platform-card">
-            <h3>Desktop builds</h3>
-            <p>Electron app workflow with native file handling, local project storage, workspace windows, source library sync, and packaging paths.</p>
-          </article>
-        </div>
-      </section>
-    </main>
-
-    <footer class="footer">
-      <div class="footer-inner">
-        <div class="brand">
-          <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 64 64" role="img">
-              <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" fill="none" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)" />
-              <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" fill="none" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)" />
-            </svg>
-          </span>
-          <span>Signal Loom</span>
-        </div>
-        <span>sloom.studio | Site preview deployed while DNS/HTTPS finish propagating.</span>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Signal Loom — Own Your AI Media Studio</title>
+  <meta name="description" content="Signal Loom is a local-first AI media studio: Flow node graphs, Image editing, Paper layout, and Video finishing in one project. One-time purchase. Bring your own keys." />
+  <meta name="theme-color" content="#020711" />
+  <meta property="og:title" content="Signal Loom — Own Your AI Media Studio" />
+  <meta property="og:description" content="Four connected workspaces. One .sloom project. Bring your own API keys. No subscription, no ads, no accounts." />
+  <meta property="og:image" content="/assets/graphics/feature-graphic-1024x500.png" />
+  <meta property="og:url" content="https://sloom.studio/" />
+  <meta property="og:type" content="website" />
+  <link rel="icon" type="image/png" href="assets/graphics/icon-512.png" />
+  <link rel="stylesheet" href="assets/site.css" />
+  <style>
+    /* ── Page-specific ambient gradients ── */
+    body {
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(41,217,255,.14) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 88% 18%, rgba(255,63,180,.10) 0%, transparent 50%),
+        linear-gradient(180deg, #07111f 0%, var(--bg) 40%, #040810 100%);
+    }
+
+    /* ── Hero ── */
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1fr minmax(0, .9fr);
+      align-items: center;
+      gap: 52px;
+      padding-block: clamp(72px, 10vw, 130px);
+    }
+    .hero-headline { margin-bottom: 24px; }
+    .hero-headline strong { color: var(--cyan); }
+    .hero-lead {
+      font-size: clamp(1.05rem, 1.8vw, 1.32rem);
+      line-height: 1.58;
+      max-width: 560px;
+      color: var(--muted);
+      margin-bottom: 32px;
+    }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 48px; }
+    .hero-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+    .metric {
+      border: 1px solid rgba(41,217,255,.15);
+      border-radius: var(--radius-md);
+      background: rgba(8,18,32,.7);
+      padding: 14px 13px;
+    }
+    .metric strong { display: block; font-size: 1.3rem; color: #fff; margin-bottom: 2px; }
+    .metric span   { font-size: .78rem; color: var(--dim); }
+
+    .hero-visual {
+      position: relative;
+    }
+    .hero-shot {
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      overflow: hidden;
+      box-shadow: var(--shadow), 0 0 56px rgba(41,217,255,.12);
+      background: #000;
+    }
+    .hero-shot img {
+      width: 100%;
+      display: block;
+      object-fit: cover;
+      max-height: 620px;
+    }
+    .hero-badge {
+      position: absolute;
+      bottom: -18px; left: 24px;
+      display: flex; align-items: center; gap: 12px;
+      border: 1px solid rgba(41,217,255,.28);
+      border-radius: var(--radius-md);
+      background: rgba(2,7,17,.90);
+      backdrop-filter: blur(16px);
+      padding: 12px 16px;
+      box-shadow: var(--shadow-sm);
+    }
+    .hero-badge-icon {
+      width: 36px; height: 36px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, rgba(41,217,255,.25), rgba(255,63,180,.2));
+      border: 1px solid var(--line-strong);
+      display: grid; place-items: center;
+      flex-shrink: 0;
+    }
+    .hero-badge-text strong { display: block; color: #fff; font-size: .9rem; }
+    .hero-badge-text span   { color: var(--dim); font-size: .78rem; }
+
+    /* ── Workspace sections ── */
+    .ws-section {
+      padding-block: clamp(56px, 7vw, 100px);
+      border-top: 1px solid var(--line);
+    }
+    .ws-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 52px;
+      align-items: center;
+    }
+    .ws-grid.reverse { direction: rtl; }
+    .ws-grid.reverse > * { direction: ltr; }
+    .ws-shot {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      background: #000;
+    }
+    .ws-shot img { width: 100%; display: block; }
+    .ws-tag { margin-bottom: 16px; }
+    .ws-headline { margin-bottom: 16px; }
+    .ws-body { margin-bottom: 24px; font-size: 1rem; line-height: 1.68; }
+    .ws-features {
+      list-style: none; padding: 0;
+      display: grid; gap: 8px;
+    }
+    .ws-features li {
+      display: flex; align-items: flex-start; gap: 10px;
+      font-size: .92rem; color: var(--muted); line-height: 1.5;
+    }
+    .ws-features li::before {
+      content: "";
+      flex-shrink: 0;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--cyan);
+      margin-top: 7px;
+    }
+    .ws-features.pink  li::before { background: var(--pink); }
+    .ws-features.gold  li::before { background: var(--gold); }
+    .ws-features.green li::before { background: var(--green); }
+
+    /* ── Providers strip ── */
+    .providers-section { padding-block: clamp(56px, 7vw, 96px); border-top: 1px solid var(--line); }
+    .providers-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+      margin-top: 40px;
+    }
+    .provider-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: rgba(8,17,31,.72);
+      padding: 18px 16px;
+      display: flex; flex-direction: column; gap: 6px;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .provider-card:hover {
+      border-color: rgba(41,217,255,.32);
+      box-shadow: 0 0 24px rgba(41,217,255,.09);
+    }
+    .provider-name { color: #fff; font-weight: 800; font-size: .95rem; }
+    .provider-note { color: var(--dim); font-size: .78rem; }
+
+    /* ── Android / DeX section ── */
+    .android-section { padding-block: clamp(56px, 7vw, 100px); border-top: 1px solid var(--line); }
+    .android-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 52px;
+      align-items: center;
+    }
+    .phone-mockup {
+      position: relative;
+      display: flex;
+      justify-content: center;
+    }
+    .phone-shots {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .phone-shot {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      overflow: hidden;
+      background: #000;
+      box-shadow: var(--shadow-sm), 0 0 24px rgba(41,217,255,.1);
+    }
+    .phone-shot.tall { grid-row: span 2; }
+    .phone-shot img { width: 100%; display: block; }
+
+    /* ── Phone-as-host highlight ── */
+    .host-section { padding-block: clamp(48px, 6vw, 88px); border-top: 1px solid var(--line); }
+    .host-card {
+      border: 1px solid rgba(114,246,177,.28);
+      border-radius: var(--radius-lg);
+      background: rgba(20,50,40,.36);
+      padding: clamp(28px, 4vw, 52px);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 32px;
+      align-items: center;
+    }
+    .host-badge {
+      padding: 18px 26px;
+      border: 1px solid rgba(114,246,177,.3);
+      border-radius: var(--radius-md);
+      background: rgba(114,246,177,.08);
+      text-align: center;
+      white-space: nowrap;
+    }
+    .host-badge strong { display: block; font-size: 1.5rem; color: var(--green); }
+    .host-badge span   { font-size: .78rem; color: var(--dim); }
+
+    /* ── Pricing / Download ── */
+    .pricing-section { padding-block: clamp(56px, 8vw, 112px); border-top: 1px solid var(--line); }
+    .pricing-card {
+      max-width: 580px;
+      margin-inline: auto;
+      border: 1px solid rgba(255,63,180,.36);
+      border-radius: 28px;
+      background: linear-gradient(160deg, rgba(255,63,180,.1) 0%, rgba(41,217,255,.08) 100%);
+      padding: clamp(32px, 5vw, 56px);
+      text-align: center;
+      box-shadow: 0 0 64px rgba(255,63,180,.14);
+    }
+    .pricing-amount {
+      font-size: clamp(3.2rem, 6vw, 5rem);
+      font-weight: 900;
+      line-height: 1;
+      color: #fff;
+      margin-block: 16px 8px;
+    }
+    .pricing-amount sup { font-size: .45em; vertical-align: top; margin-top: .3em; color: var(--muted); }
+    .pricing-note { color: var(--muted); margin-bottom: 28px; font-size: .96rem; }
+    .pricing-perks {
+      list-style: none; padding: 0;
+      display: grid; gap: 10px;
+      text-align: left;
+      margin-bottom: 32px;
+    }
+    .pricing-perks li {
+      display: flex; align-items: center; gap: 10px;
+      font-size: .93rem; color: var(--muted);
+    }
+    .pricing-perks li::before {
+      content: "";
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      flex-shrink: 0;
+    }
+    .pricing-actions { display: flex; flex-direction: column; gap: 12px; }
+    .pricing-disclaimer { margin-top: 16px; font-size: .8rem; color: var(--dim); }
+
+    /* ── Responsiveness ── */
+    @media (max-width: 980px) {
+      .hero-grid { grid-template-columns: 1fr; }
+      .hero-visual { display: none; }
+      .hero-metrics { grid-template-columns: repeat(2, 1fr); }
+      .ws-grid, .ws-grid.reverse, .android-grid { grid-template-columns: 1fr; direction: ltr; }
+      .host-card { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 600px) {
+      .hero-metrics { grid-template-columns: repeat(2, 1fr); }
+      .providers-grid { grid-template-columns: repeat(2, 1fr); }
+      .phone-shots { grid-template-columns: 1fr; }
+      .phone-shot.tall { grid-row: auto; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ════════ NAV ════════ -->
+<header class="site-header">
+  <nav class="nav-inner wrap" aria-label="Primary navigation">
+    <a class="brand" href="index.html" aria-label="Signal Loom home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Signal Loom
+    </a>
+    <div class="nav-links" id="nav-links">
+      <a href="index.html" aria-current="page">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="examples.html">Examples</a>
+      <a href="index.html#pricing">Download</a>
+      <a href="privacy.html">Privacy</a>
+    </div>
+    <a class="nav-cta" href="index.html#pricing">Get Signal Loom</a>
+    <button class="nav-hamburger" aria-label="Toggle navigation" onclick="document.getElementById('nav-links').classList.toggle('open')">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+</header>
+
+<main>
+
+<!-- ════════ HERO ════════ -->
+<section class="wrap">
+  <div class="hero-grid">
+    <div>
+      <p class="eyebrow">AI Media Studio &mdash; One-time purchase</p>
+      <h1 class="hero-headline">Own your<br><strong>AI media</strong><br>studio.</h1>
+      <p class="hero-lead">
+        Signal Loom is a local-first creative suite with four connected workspaces &mdash; Flow node graphs, Image editing, Paper layout, and Video finishing &mdash; all in one project. Bring your own API keys. No subscription, no ads, no account.
+      </p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="index.html#pricing">Download &mdash; $9.99</a>
+        <a class="btn btn-ghost" href="docs.html">Read the docs</a>
+        <a class="btn btn-ghost" href="examples.html">See examples</a>
       </div>
-    </footer>
+      <div class="hero-metrics" aria-label="Signal Loom at a glance">
+        <div class="metric"><strong>4</strong><span>workspaces</span></div>
+        <div class="metric"><strong>BYO</strong><span>API keys</span></div>
+        <div class="metric"><strong>$9.99</strong><span>one-time</span></div>
+        <div class="metric"><strong>.sloom</strong><span>project format</span></div>
+      </div>
+    </div>
+    <div class="hero-visual" aria-hidden="true">
+      <div class="hero-shot">
+        <img src="assets/screenshots/06-flow-nodes.png"
+             alt="Signal Loom Flow workspace showing a node graph on Android" />
+      </div>
+      <div class="hero-badge">
+        <div class="hero-badge-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="10" r="8" stroke="#29d9ff" stroke-width="2"/>
+            <path d="M7 10l2 2 4-4" stroke="#29d9ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="hero-badge-text">
+          <strong>Local-first &amp; private</strong>
+          <span>No Sloom servers. Your work stays on your device.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
-    <script>
-      const mobileShell = document.querySelector('[data-mobile-demo-shell="true"]');
-      const drawerButtons = document.querySelectorAll('[data-demo-drawer-toggle]');
-      const workspaceButtons = document.querySelectorAll('[data-demo-workspace]');
-      const scenes = document.querySelectorAll('[data-scene]');
-      const demoTitle = document.getElementById('demo-title');
-      const demoBody = document.getElementById('demo-body');
+<div class="divider"></div>
 
-      const copy = {
-        flow: {
-          title: 'Flow mock document',
-          body: 'The Flow screen shows a static node graph with source and panel drawers available at the edges. It demonstrates navigation and workspace chrome, not actual graph execution.',
-        },
-        image: {
-          title: 'Image mock document',
-          body: 'The Image screen shows a mock canvas with a compact Photoshop-style floating tool palette, top document controls, and right-side layer/property panels.',
-        },
-        paper: {
-          title: 'Paper mock document',
-          body: 'The Paper screen shows a mock comic page with page-focused controls, source assets, and the same touch navigation model used for pen-first layout work.',
-        },
-        video: {
-          title: 'Video mock document',
-          body: 'The Video screen shows a mock monitor and timeline so the mobile shell can demonstrate timeline-oriented chrome without running an editor.',
-        },
-      };
+<!-- ════════ FLOW ════════ -->
+<section class="ws-section" id="flow">
+  <div class="wrap ws-grid">
+    <div class="ws-shot shot-frame">
+      <img src="assets/screenshots/06-flow-nodes.png"
+           alt="Flow workspace: node graph with prompt, generate, and export nodes on Android phone" />
+    </div>
+    <div>
+      <span class="tag ws-tag">Flow</span>
+      <h2 class="ws-headline">Build AI pipelines with node graphs.</h2>
+      <p class="ws-body">
+        Wire prompts, text, image, audio, video, and composition nodes together into reusable generation chains. Track provider cost per run, keep every result in the shared source library, and iterate without losing your history.
+      </p>
+      <ul class="ws-features">
+        <li>Visual node graph editor &mdash; connect any node type to any other</li>
+        <li>Provider-aware generation: route to Gemini, OpenAI, FLUX, HuggingFace, and more</li>
+        <li>Run cost tracking per model call</li>
+        <li>Results go directly into the shared source library</li>
+        <li>Reusable graph blocks for repeated workflows</li>
+        <li>Source bins, bookmarks, and graph history</li>
+      </ul>
+    </div>
+  </div>
+</section>
 
-      function closeDrawers(except) {
-        document.querySelectorAll('[data-demo-drawer]').forEach((drawer) => {
-          if (drawer.dataset.demoDrawer !== except) drawer.classList.remove('open');
-        });
-      }
+<!-- ════════ IMAGE ════════ -->
+<section class="ws-section" id="image">
+  <div class="wrap ws-grid reverse">
+    <div class="ws-shot shot-frame">
+      <img src="assets/screenshots/01-portrait-painting.png"
+           alt="Image workspace: layered portrait painting with brush tools on Android" />
+    </div>
+    <div>
+      <span class="tag pink ws-tag">Image</span>
+      <h2 class="ws-headline">A real layered image editor.</h2>
+      <p class="ws-body">
+        Masks, region tools, canvas transforms, multiple export formats, and model-in-the-loop editing &mdash; including generative fill and reference-guided image models. Full stylus pressure, tilt, and rotation support.
+      </p>
+      <ul class="ws-features pink">
+        <li>Layered editing with masks, channels, and blending</li>
+        <li>Generative fill: select a region, describe the replacement</li>
+        <li>Reference-guided generation using source assets</li>
+        <li>Brush engine with pressure, tilt, rotation, and colour dynamics</li>
+        <li>Layer effects, transforms, and warp mesh</li>
+        <li>Multiple export formats from the same project</li>
+      </ul>
+    </div>
+  </div>
+</section>
 
-      drawerButtons.forEach((button) => {
-        button.addEventListener('click', () => {
-          const target = button.dataset.demoDrawerToggle;
-          const drawer = document.querySelector(`[data-demo-drawer="${target}"]`);
-          if (!drawer) return;
-          const willOpen = !drawer.classList.contains('open');
-          closeDrawers(willOpen ? target : undefined);
-          drawer.classList.toggle('open', willOpen);
-        });
-      });
+<!-- ════════ PAPER ════════ -->
+<section class="ws-section" id="paper">
+  <div class="wrap ws-grid">
+    <div class="ws-shot shot-frame">
+      <img src="assets/screenshots/05-paper-layout.png"
+           alt="Paper workspace: comic page layout with panels, speech bubbles, and text" />
+    </div>
+    <div>
+      <span class="tag gold ws-tag">Paper</span>
+      <h2 class="ws-headline">Page layout for comics, books, and print.</h2>
+      <p class="ws-body">
+        Page-based publishing and print-ready layout for comics, books, and long-form documents. Grids, rulers, guides, linked frames, speech tooling, and export-ready page images.
+      </p>
+      <ul class="ws-features gold">
+        <li>Panel grids, rulers, and guide snapping</li>
+        <li>Speech bubbles, caption boxes, and SFX decals</li>
+        <li>Linked text frames for long-form layout</li>
+        <li>Image placement tied to the shared source library</li>
+        <li>Raster-aligned PDF export and print-ready page images</li>
+        <li>Webcomic and long-form document workflows</li>
+      </ul>
+    </div>
+  </div>
+</section>
 
-      workspaceButtons.forEach((button) => {
-        button.addEventListener('click', () => {
-          const workspace = button.dataset.demoWorkspace;
-          workspaceButtons.forEach((candidate) => {
-            candidate.classList.toggle('active', candidate.dataset.demoWorkspace === workspace);
-          });
-          scenes.forEach((scene) => {
-            scene.classList.toggle('active', scene.dataset.scene === workspace);
-          });
-          if (copy[workspace]) {
-            demoTitle.textContent = copy[workspace].title;
-            demoBody.textContent = copy[workspace].body;
-          }
-        });
-      });
+<!-- ════════ VIDEO ════════ -->
+<section class="ws-section" id="video">
+  <div class="wrap ws-grid reverse">
+    <div class="ws-shot shot-frame">
+      <img src="assets/screenshots/04-video-timeline.png"
+           alt="Video workspace: multi-track timeline with clips, text overlays, and source bins" />
+    </div>
+    <div>
+      <span class="tag green ws-tag">Video</span>
+      <h2 class="ws-headline">Timeline finishing for generated media.</h2>
+      <p class="ws-body">
+        Multi-track sequencing with source bins, text and shape overlays, crop, snapping, keyframes, opacity, volume, and transform animation. Assemble generated clips, Paper pages, and imported footage in one timeline.
+      </p>
+      <ul class="ws-features green">
+        <li>Multi-track timeline with clip sequencing and snapping</li>
+        <li>Keyframe animation for opacity, transform, and volume</li>
+        <li>Text and shape overlays with timing controls</li>
+        <li>Source bins shared with Flow, Image, and Paper</li>
+        <li>Preview monitor with render progress</li>
+        <li>Paper pages usable directly as video frames</li>
+      </ul>
+    </div>
+  </div>
+</section>
 
-      document.querySelector('[data-demo-action="hide-interface"]').addEventListener('click', () => {
-        closeDrawers();
-        mobileShell.classList.add('is-hidden');
-      });
+<!-- ════════ PROVIDERS ════════ -->
+<section class="providers-section" id="providers">
+  <div class="wrap">
+    <div class="sh">
+      <p class="eyebrow">Bring your own keys</p>
+      <h2>Your providers. Your cost. Your control.</h2>
+      <p>Signal Loom connects directly to the AI providers you already have accounts with. Your keys are stored on your device only &mdash; they never pass through Sloom servers. Any usage is billed directly to you by the provider.</p>
+    </div>
+    <div class="providers-grid">
+      <div class="provider-card">
+        <span class="provider-name">Google Gemini</span>
+        <span class="provider-note">Gemini API via AI Studio</span>
+      </div>
+      <div class="provider-card">
+        <span class="provider-name">Google Vertex AI</span>
+        <span class="provider-note">Enterprise Vertex endpoint</span>
+      </div>
+      <div class="provider-card">
+        <span class="provider-name">OpenAI</span>
+        <span class="provider-note">OpenAI + compatible endpoints</span>
+      </div>
+      <div class="provider-card">
+        <span class="provider-name">Hugging Face</span>
+        <span class="provider-note">Inference API</span>
+      </div>
+      <div class="provider-card">
+        <span class="provider-name">Stability AI</span>
+        <span class="provider-note">Stable Diffusion models</span>
+      </div>
+      <div class="provider-card">
+        <span class="provider-name">Black Forest Labs</span>
+        <span class="provider-note">FLUX model family</span>
+      </div>
+      <div class="provider-card">
+        <span class="provider-name">Atlas Cloud</span>
+        <span class="provider-note">Atlas generation gateway</span>
+      </div>
+      <div class="provider-card">
+        <span class="provider-name">ElevenLabs</span>
+        <span class="provider-note">Audio generation</span>
+      </div>
+    </div>
+  </div>
+</section>
 
-      document.querySelector('[data-demo-action="restore-interface"]').addEventListener('click', () => {
-        mobileShell.classList.remove('is-hidden');
-      });
-    </script>
-  </body>
+<!-- ════════ ANDROID / DEX ════════ -->
+<section class="android-section" id="android">
+  <div class="wrap android-grid">
+    <div>
+      <p class="eyebrow">Android &amp; Samsung DeX</p>
+      <h2>Desktop power on Android.</h2>
+      <p style="margin-bottom: 28px;">Signal Loom is built for Android: drawer-first phone interface, S Pen pressure and tilt support, and a full desktop layout on Samsung DeX or any external display. The same project, the same source library, wherever you are.</p>
+      <div style="display:grid; gap: 14px;">
+        <div class="card">
+          <h4 style="margin-bottom: 8px;">Android Phone</h4>
+          <p style="margin:0; font-size:.92rem;">Floating tool palettes, edge drawers for sources and panels, touch navigation overlay, and a one-tap chrome-hide for distraction-free work with a stylus.</p>
+        </div>
+        <div class="card">
+          <h4 style="margin-bottom: 8px;">Samsung DeX &amp; Tablet</h4>
+          <p style="margin:0; font-size:.92rem;">Desktop-class panel layout, keyboard and mouse support, large-canvas image editing, and full multi-track video timelines on a 4K display.</p>
+        </div>
+        <div class="card">
+          <h4 style="margin-bottom: 8px;">S Pen &amp; Stylus</h4>
+          <p style="margin:0; font-size:.92rem;">Full pressure, tilt, and rotation from the brush engine. Response curves, colour dynamics, and a 3D tip preview. Designed for illustration and painting workflows.</p>
+        </div>
+      </div>
+    </div>
+    <div class="phone-shots">
+      <div class="phone-shot tall">
+        <img src="assets/screenshots/02-atlas-ink-color.png"
+             alt="Atlas ink and colour painting on Android phone" />
+      </div>
+      <div class="phone-shot">
+        <img src="assets/screenshots/03-sketch-workflow.png"
+             alt="Sketch workflow in the Image workspace on Android" />
+      </div>
+      <div class="phone-shot">
+        <img src="assets/screenshots/dex-image-workspace.png"
+             alt="Image workspace in Samsung DeX desktop mode" />
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ PHONE AS HOST ════════ -->
+<section class="host-section" id="phone-host">
+  <div class="wrap">
+    <div class="host-card">
+      <div>
+        <p class="eyebrow">Phone as LAN host</p>
+        <h2 style="margin-bottom: 16px;">Your phone serves the full desktop app to any PC browser.</h2>
+        <p style="margin-bottom: 0; max-width: 560px;">
+          Signal Loom can run a local server from your Android phone and make the complete desktop interface available to any browser on your LAN &mdash; no installation needed on the PC. Your phone handles the computation and project storage; the PC gets the full workspace UI. Ideal for working at a desk without a cable.
+        </p>
+      </div>
+      <div class="host-badge">
+        <strong>LAN</strong>
+        <span>Phone &rarr; PC browser</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ PRICING ════════ -->
+<section class="pricing-section" id="pricing">
+  <div class="wrap">
+    <div class="sh" style="margin-inline: auto; text-align: center; max-width: 100%;">
+      <p class="eyebrow">Download</p>
+      <h2>One price. Yours forever.</h2>
+    </div>
+    <div class="pricing-card">
+      <span class="tag">Launch price</span>
+      <div class="pricing-amount"><sup>$</sup>9.99</div>
+      <p class="pricing-note">One-time purchase &mdash; USD. No subscription, no in-app purchases, no ads.</p>
+      <ul class="pricing-perks">
+        <li>All four workspaces: Flow, Image, Paper, Video</li>
+        <li>Shared source library across all workspaces</li>
+        <li>Connect your own API keys &mdash; 7 provider paths</li>
+        <li>Local-first: your projects are your files</li>
+        <li>Android phone, tablet, and Samsung DeX</li>
+        <li>LAN hosting: serve the desktop app from your phone</li>
+        <li>All future updates included</li>
+      </ul>
+      <div class="pricing-actions">
+        <a class="btn btn-primary" href="https://play.google.com/store/apps/details?id=studio.sloom.app" style="justify-content: center;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 20.5v-17A1.5 1.5 0 0 1 5.1 2.1L18.5 12 5.1 21.9A1.5 1.5 0 0 1 3 20.5Z"/></svg>
+          Get on Google Play
+        </a>
+        <a class="btn btn-ghost" href="docs.html" style="justify-content: center;">Read the documentation first</a>
+      </div>
+      <p class="pricing-disclaimer">Signal Loom does not include AI usage credits. You supply your own provider accounts and keys; any model usage is billed to you by that provider under their terms.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ════════ FOOTER ════════ -->
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Signal Loom
+    </a>
+    <nav class="footer-links" aria-label="Footer navigation">
+      <a href="index.html">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="examples.html">Examples</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="mailto:support@sloom.studio">support@sloom.studio</a>
+    </nav>
+    <span>&copy; 2026 Sloom Software</span>
+  </div>
+</footer>
+
+</body>
 </html>
