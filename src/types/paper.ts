@@ -104,6 +104,8 @@ export interface PaperGuide {
   label?: string;
 }
 
+export type PaperTextAlignLast = 'auto' | 'left' | 'center' | 'right' | 'justify';
+
 export interface PaperTypography {
   fontFamily: string;
   fontSizePt: number;
@@ -114,6 +116,10 @@ export interface PaperTypography {
   color: string;
   fontWeight: string;
   fontStyle: 'normal' | 'italic';
+  /** First-line indent (mm) applied to each paragraph (CSS text-indent each-line). */
+  firstLineIndentMm?: number;
+  /** Alignment of the last line of justified paragraphs (CSS text-align-last). */
+  alignLast?: PaperTextAlignLast;
 }
 
 export interface PaperFrameAsset {

@@ -330,6 +330,7 @@ import type {
   PaperGuide,
   PaperPage,
   PaperPagePreset,
+  PaperTextAlignLast,
   PaperTextWrapMode,
   PaperTool,
 } from '../../../types/paper';
@@ -7481,6 +7482,12 @@ function PaperFrameView({
     fontStyle: frame.typography.fontStyle,
     textAlign: frame.typography.align,
     letterSpacing: `${frame.typography.tracking / 1000}em`,
+    textIndent: frame.typography.firstLineIndentMm
+      ? `${(frame.typography.firstLineIndentMm * PX_PER_MM * zoom).toFixed(2)}px each-line`
+      : undefined,
+    textAlignLast: frame.typography.alignLast && frame.typography.alignLast !== 'auto'
+      ? frame.typography.alignLast
+      : undefined,
     hyphens: frame.typography.hyphenate ? 'auto' : 'manual',
     columnCount: frame.kind === 'text' ? Math.max(1, frame.columns) : 1,
     columnGap: `${resolvePaperColumnGutterMm(frame) * PX_PER_MM * zoom}px`,
@@ -9522,6 +9529,30 @@ function PaperInspector({
                   />
                   Hyphenation
                 </label>
+                <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Paragraph</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <NumberField
+                      label="Indent mm"
+                      onChange={(firstLineIndentMm) => onUpdateFrame({ typography: { ...frame.typography, firstLineIndentMm: Math.max(0, firstLineIndentMm) } })}
+                      step={0.5}
+                      value={frame.typography.firstLineIndentMm ?? 0}
+                    />
+                    <Field label="Last line">
+                      <select
+                        className="paper-input"
+                        onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, alignLast: event.target.value as PaperTextAlignLast } })}
+                        value={frame.typography.alignLast ?? 'auto'}
+                      >
+                        <option value="auto">Auto</option>
+                        <option value="left">Left</option>
+                        <option value="center">Center</option>
+                        <option value="right">Right</option>
+                        <option value="justify">Justify</option>
+                      </select>
+                    </Field>
+                  </div>
+                </div>
                 {frame.kind === 'text' ? (
                   <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
                     <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Columns</div>
