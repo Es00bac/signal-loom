@@ -1,5 +1,6 @@
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import type { PaperComicSfxDesign } from '../lib/paperComicSfx';
+import type { PaperSwatch } from '../lib/paperSwatches';
 
 export type PaperPagePreset =
   | 'custom'
@@ -300,6 +301,8 @@ export interface PaperDocument {
   };
   parentPages: PaperParentPage[];
   styles: PaperStyleCatalogs;
+  /** Document swatch library (custom CMYK/spot/process colors) layered on the built-in defaults. */
+  swatches?: PaperSwatch[];
   pages: PaperPage[];
   createdAt: number;
   updatedAt: number;

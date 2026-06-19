@@ -548,3 +548,28 @@ describe('paperStore interaction actions', () => {
     expect(state.zoom).toBe(0.8);
   });
 });
+
+describe('paperStore document swatches', () => {
+  beforeEach(resetPaperStore);
+
+  it('adds and removes document swatches with undo history', () => {
+    expect(usePaperStore.getState().document.swatches ?? []).toEqual([]);
+
+    usePaperStore.getState().addPaperSwatch({
+      id: 'sw1',
+      name: 'Hot Pink',
+      type: 'process',
+      model: 'cmyk',
+      rgb: { r: 255, g: 0, b: 128 },
+      cmyk: { c: 0, m: 100, y: 50, k: 0 },
+    });
+    expect(usePaperStore.getState().document.swatches?.map((swatch) => swatch.id)).toEqual(['sw1']);
+
+    usePaperStore.getState().removePaperSwatch('sw1');
+    expect(usePaperStore.getState().document.swatches).toEqual([]);
+
+    // History is preserved: undoing the removal brings the swatch back.
+    usePaperStore.getState().undo();
+    expect(usePaperStore.getState().document.swatches?.map((swatch) => swatch.id)).toEqual(['sw1']);
+  });
+});

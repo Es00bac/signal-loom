@@ -24,6 +24,7 @@ import {
 import type { PaperPoint } from '../lib/paperLayoutTools';
 import { alignPaperFrames, distributePaperFrames, type PaperAlignEdge, type PaperDistributeAxis } from '../lib/paperAlignDistribute';
 import { findPaperMatches, replaceAllInText, type PaperFindOptions } from '../lib/paperFindChange';
+import type { PaperSwatch } from '../lib/paperSwatches';
 import {
   applyPaperFrameContextAction,
   applyPaperFrameGroupContextAction,
@@ -107,6 +108,8 @@ interface PaperActions {
   clearSelectedStyleOverrides: () => void;
   chainSelectedBubbles: (style?: PaperBubbleConnectorStyle) => void;
   unchainSelectedBubbles: () => void;
+  addPaperSwatch: (swatch: PaperSwatch) => void;
+  removePaperSwatch: (swatchId: string) => void;
   threadSelectedFrames: () => void;
   unthreadSelectedFrames: () => void;
   alignSelectedFrames: (edge: PaperAlignEdge) => void;
@@ -520,6 +523,16 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           const patch = unchainSelectedPaperBubblesPatch(state);
           return patch ? withPaperHistory(state, patch) : state;
         }),
+
+      addPaperSwatch: (swatch) =>
+        set((state) => withPaperHistory(state, {
+          document: { ...state.document, swatches: [...(state.document.swatches ?? []), swatch] },
+        })),
+
+      removePaperSwatch: (swatchId) =>
+        set((state) => withPaperHistory(state, {
+          document: { ...state.document, swatches: (state.document.swatches ?? []).filter((swatch) => swatch.id !== swatchId) },
+        })),
 
       threadSelectedFrames: () =>
         set((state) => {

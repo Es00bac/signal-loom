@@ -616,6 +616,8 @@ export function PaperWorkspace() {
   const distributeSelectedFrames = usePaperStore((s) => s.distributeSelectedFrames);
   const chainSelectedBubbles = usePaperStore((s) => s.chainSelectedBubbles);
   const unchainSelectedBubbles = usePaperStore((s) => s.unchainSelectedBubbles);
+  const addPaperSwatch = usePaperStore((s) => s.addPaperSwatch);
+  const removePaperSwatch = usePaperStore((s) => s.removePaperSwatch);
   const addComicSfx = usePaperStore((s) => s.addComicSfx);
   const placeSourceAssetAt = usePaperStore((s) => s.placeSourceAssetAt);
   const runFrameContextAction = usePaperStore((s) => s.runFrameContextAction);
@@ -3304,6 +3306,8 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
             onDeletePage={deletePage}
             onUpdateDocumentSetup={updateDocumentSetup}
             onUpdateFrame={updateSelectedFrame}
+            onAddSwatch={addPaperSwatch}
+            onRemoveSwatch={removePaperSwatch}
             onToggleViewOption={toggleViewOption}
             onAddParentPage={() => {
               void (async () => {
@@ -8670,6 +8674,8 @@ function PaperInspector({
   onDeletePage,
   onUpdateDocumentSetup,
   onUpdateFrame,
+  onAddSwatch,
+  onRemoveSwatch,
   onToggleViewOption,
   onAddParentPage,
   onAddSelectedFrameToParent,
@@ -8692,6 +8698,8 @@ function PaperInspector({
   onDeletePage: () => void;
   onUpdateDocumentSetup: ReturnType<typeof usePaperStore.getState>['updateDocumentSetup'];
   onUpdateFrame: (patch: PaperFramePatch) => void;
+  onAddSwatch: ReturnType<typeof usePaperStore.getState>['addPaperSwatch'];
+  onRemoveSwatch: ReturnType<typeof usePaperStore.getState>['removePaperSwatch'];
   onToggleViewOption: ReturnType<typeof usePaperStore.getState>['toggleViewOption'];
   onAddParentPage: () => void;
   onAddSelectedFrameToParent: (parentPageId: string) => void;
@@ -9132,12 +9140,34 @@ function PaperInspector({
               <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
                 <div className="mb-1.5 flex items-center justify-between">
                   <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Swatches (CMYK)</div>
-                  {(() => {
-                    const rgb = parseHexColor(cssColorToPickerValue(frame.fillColor));
-                    if (!rgb) return null;
-                    const cmyk = rgbToCmyk(rgb);
-                    return <div className="tabular-nums text-[10px] text-cyan-100/45">C{cmyk.c} M{cmyk.m} Y{cmyk.y} K{cmyk.k}</div>;
-                  })()}
+                  <div className="flex items-center gap-2">
+                    {(() => {
+                      const rgb = parseHexColor(cssColorToPickerValue(frame.fillColor));
+                      if (!rgb) return null;
+                      const cmyk = rgbToCmyk(rgb);
+                      return <span className="tabular-nums text-[10px] text-cyan-100/45">C{cmyk.c} M{cmyk.m} Y{cmyk.y} K{cmyk.k}</span>;
+                    })()}
+                    <button
+                      className="rounded border border-cyan-300/20 px-1.5 py-0.5 text-[10px] text-cyan-100/60 hover:border-cyan-300/50 hover:text-white"
+                      onClick={() => {
+                        const rgb = parseHexColor(cssColorToPickerValue(frame.fillColor));
+                        if (!rgb) return;
+                        const cmyk = rgbToCmyk(rgb);
+                        onAddSwatch({
+                          id: `swatch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+                          name: `CMYK ${cmyk.c}/${cmyk.m}/${cmyk.y}/${cmyk.k}`,
+                          type: 'process',
+                          model: 'cmyk',
+                          rgb,
+                          cmyk,
+                        });
+                      }}
+                      title="Add the current fill to the document swatch library"
+                      type="button"
+                    >
+                      + Add
+                    </button>
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-1">
                   {PAPER_DEFAULT_SWATCHES.map((swatch) => (
@@ -9153,6 +9183,31 @@ function PaperInspector({
                     />
                   ))}
                 </div>
+                {(document.swatches ?? []).length > 0 ? (
+                  <div className="mt-1.5">
+                    <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-cyan-100/30">Document swatches</div>
+                    <div className="flex flex-wrap gap-1">
+                      {(document.swatches ?? []).map((swatch) => (
+                        <button
+                          className="h-5 w-5 rounded border border-cyan-300/25 hover:ring-2 hover:ring-cyan-300/50"
+                          key={swatch.id}
+                          onClick={(event) => {
+                            if (event.shiftKey) {
+                              onRemoveSwatch(swatch.id);
+                              return;
+                            }
+                            onUpdateFrame(event.altKey
+                              ? { strokeColor: resolveSwatchCssColor(swatch) }
+                              : { fillColor: resolveSwatchCssColor(swatch) });
+                          }}
+                          style={{ backgroundColor: resolveSwatchCssColor(swatch) }}
+                          title={`${swatch.name} (tap: fill, Alt: stroke, Shift: remove)`}
+                          type="button"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 {(() => {
                   const rgb = parseHexColor(cssColorToPickerValue(frame.fillColor)) ?? { r: 0, g: 0, b: 0 };
                   const cmyk = rgbToCmyk(rgb);
