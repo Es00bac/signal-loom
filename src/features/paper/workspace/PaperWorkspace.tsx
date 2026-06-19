@@ -149,6 +149,7 @@ import { DEFAULT_PAPER_COLUMN_GUTTER_MM, resolvePaperColumnGutterMm } from '../.
 import { computePaperThreadSlices } from '../../../lib/paperThreadFlow';
 import { createPaperCanvasMeasurer } from '../../../lib/paperCanvasMeasurer';
 import { PAPER_BUBBLE_PRESETS } from '../../../lib/paperBubblePresets';
+import type { PaperAlignEdge, PaperDistributeAxis } from '../../../lib/paperAlignDistribute';
 import {
   estimateGenerativeFillCostUsd,
   type GenerativeFillProvider,
@@ -606,6 +607,8 @@ export function PaperWorkspace() {
   const clearSelectedStyleOverrides = usePaperStore((s) => s.clearSelectedStyleOverrides);
   const threadSelectedFrames = usePaperStore((s) => s.threadSelectedFrames);
   const unthreadSelectedFrames = usePaperStore((s) => s.unthreadSelectedFrames);
+  const alignSelectedFrames = usePaperStore((s) => s.alignSelectedFrames);
+  const distributeSelectedFrames = usePaperStore((s) => s.distributeSelectedFrames);
   const chainSelectedBubbles = usePaperStore((s) => s.chainSelectedBubbles);
   const unchainSelectedBubbles = usePaperStore((s) => s.unchainSelectedBubbles);
   const addComicSfx = usePaperStore((s) => s.addComicSfx);
@@ -723,6 +726,11 @@ export function PaperWorkspace() {
     if (!selectedPage) return 0;
     const selectedIds = new Set(selectedFrameIds.length ? selectedFrameIds : selectedFrameId ? [selectedFrameId] : []);
     return selectedPage.frames.filter((frame) => selectedIds.has(frame.id) && frame.kind === 'text').length;
+  }, [selectedFrameId, selectedFrameIds, selectedPage]);
+  const selectedFrameCount = useMemo(() => {
+    if (!selectedPage) return 0;
+    const selectedIds = new Set(selectedFrameIds.length ? selectedFrameIds : selectedFrameId ? [selectedFrameId] : []);
+    return selectedPage.frames.filter((frame) => selectedIds.has(frame.id) && !frame.inherited).length;
   }, [selectedFrameId, selectedFrameIds, selectedPage]);
   const resolveFrameImageNaturalSize = useCallback((pageId: string, frame: PaperFrame, naturalWidth: number, naturalHeight: number) => {
     if (frame.inherited) return;
@@ -3842,8 +3850,19 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
             setContextMenu(null);
             setStatus('Removed text threading from the selected frames.');
           }}
+          onAlignSelectedFrames={(edge) => {
+            alignSelectedFrames(edge);
+            setContextMenu(null);
+            setStatus('Aligned the selected frames.');
+          }}
+          onDistributeSelectedFrames={(axis) => {
+            distributeSelectedFrames(axis);
+            setContextMenu(null);
+            setStatus('Distributed the selected frames.');
+          }}
           selectedBubbleCount={selectedBubbleCount}
           selectedTextFrameCount={selectedTextFrameCount}
+          selectedFrameCount={selectedFrameCount}
           sourceItems={sourceItems}
         />
       ) : null}
@@ -8314,8 +8333,11 @@ export function PaperContextMenu({
   onUnchainSelectedBubbles,
   onThreadSelectedFrames,
   onUnthreadSelectedFrames,
+  onAlignSelectedFrames,
+  onDistributeSelectedFrames,
   selectedBubbleCount,
   selectedTextFrameCount,
+  selectedFrameCount,
   sourceItems,
 }: {
   context: PaperContextMenuState;
@@ -8339,8 +8361,11 @@ export function PaperContextMenu({
   onUnchainSelectedBubbles: () => void;
   onThreadSelectedFrames: () => void;
   onUnthreadSelectedFrames: () => void;
+  onAlignSelectedFrames: (edge: PaperAlignEdge) => void;
+  onDistributeSelectedFrames: (axis: PaperDistributeAxis) => void;
   selectedBubbleCount: number;
   selectedTextFrameCount: number;
+  selectedFrameCount: number;
   sourceItems: SourceBinLibraryItem[];
 }) {
   const imageItems = sourceItems.filter((item) => item.kind === 'image').slice(0, 8);
@@ -8464,6 +8489,36 @@ export function PaperContextMenu({
           ) : frame && frame.kind === 'text' && frame.threadId ? (
             <MenuGroup label="Text Thread">
               <MenuButton label="Unthread This Frame" onClick={onUnthreadSelectedFrames} />
+            </MenuGroup>
+          ) : null}
+          {selectedFrameCount >= 2 ? (
+            <MenuGroup label="Align & Distribute">
+              <div className="grid grid-cols-3 gap-1 px-2 py-1">
+                {(([['Left', 'left'], ['Center', 'centerX'], ['Right', 'right'], ['Top', 'top'], ['Middle', 'centerY'], ['Bottom', 'bottom']]) as Array<[string, PaperAlignEdge]>).map(([label, edge]) => (
+                  <button
+                    className="rounded border border-cyan-300/15 bg-[#101a29]/70 px-1.5 py-1 text-[11px] text-cyan-100/75 hover:border-cyan-300/40 hover:text-white"
+                    key={edge}
+                    onClick={() => onAlignSelectedFrames(edge)}
+                    type="button"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {selectedFrameCount >= 3 ? (
+                <div className="grid grid-cols-2 gap-1 px-2 pb-2">
+                  {(([['Distribute H', 'horizontal'], ['Distribute V', 'vertical']]) as Array<[string, PaperDistributeAxis]>).map(([label, axis]) => (
+                    <button
+                      className="rounded border border-cyan-300/15 bg-[#101a29]/70 px-1.5 py-1 text-[11px] text-cyan-100/75 hover:border-cyan-300/40 hover:text-white"
+                      key={axis}
+                      onClick={() => onDistributeSelectedFrames(axis)}
+                      type="button"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </MenuGroup>
           ) : null}
           {imageItems.length || textItems.length ? (

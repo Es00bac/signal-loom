@@ -26,9 +26,12 @@ describe('PaperContextMenu', () => {
         onUnchainSelectedBubbles={noop}
         onThreadSelectedFrames={noop}
         onUnthreadSelectedFrames={noop}
+        onAlignSelectedFrames={noop}
+        onDistributeSelectedFrames={noop}
         onUpscaleFrameForPrint={noop}
         selectedBubbleCount={0}
         selectedTextFrameCount={0}
+        selectedFrameCount={0}
         sourceItems={[]}
       />,
     );
