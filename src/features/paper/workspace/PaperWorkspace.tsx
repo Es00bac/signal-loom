@@ -148,6 +148,7 @@ import { buildPaperBubbleConnectorSegments } from '../../../lib/paperBubbleChain
 import { DEFAULT_PAPER_COLUMN_GUTTER_MM, resolvePaperColumnGutterMm } from '../../../lib/paperColumns';
 import { computePaperThreadSlices } from '../../../lib/paperThreadFlow';
 import { createPaperCanvasMeasurer } from '../../../lib/paperCanvasMeasurer';
+import { resolveFrameWrapSpacers, type PaperWrapSpacer } from '../../../lib/paperTextWrap';
 import { PAPER_BUBBLE_PRESETS } from '../../../lib/paperBubblePresets';
 import type { PaperAlignEdge, PaperDistributeAxis } from '../../../lib/paperAlignDistribute';
 import { PAPER_DEFAULT_SWATCHES } from '../../../lib/paperSwatchCatalog';
@@ -326,6 +327,7 @@ import type {
   PaperGuide,
   PaperPage,
   PaperPagePreset,
+  PaperTextWrapMode,
   PaperTool,
 } from '../../../types/paper';
 import type { SourceBinLibraryItem } from '../../../store/sourceBinStore';
@@ -6369,6 +6371,7 @@ function PaperConnectedSpreadView({
                     isThreadContinuation={threadSlices.get(frame.id) ? !threadSlices.get(frame.id)!.isHead : false}
                     isOverset={threadSlices.get(frame.id)?.isOverset ?? false}
                     frame={frame}
+                    wrapSpacers={resolveFrameWrapSpacers(frame, outputFrames)}
                     isSelected={frame.id === selectedFrameId || selectedFrameIds.includes(frame.id)}
                     key={frame.id}
                     showVertexHandles={shouldShowPaperVertexHandles(frame, {
@@ -7341,6 +7344,7 @@ function PaperFrameView({
   canvasZIndex,
   frame,
   displayText,
+  wrapSpacers = [],
   isThreadContinuation = false,
   isOverset = false,
   isSelected,
@@ -7376,6 +7380,7 @@ function PaperFrameView({
   canvasZIndex: number;
   frame: PaperFrame;
   displayText?: string;
+  wrapSpacers?: PaperWrapSpacer[];
   isThreadContinuation?: boolean;
   isOverset?: boolean;
   isSelected: boolean;
@@ -7616,10 +7621,14 @@ function PaperFrameView({
             onCancel={cancelTextEdit}
             onCommit={commitTextEdit}
             onDraftChange={setTextDraft}
+            wrapSpacers={wrapSpacers}
             zoom={zoom}
           />
         ) : (
-          <div className="whitespace-pre-wrap break-words">{displayText ?? frame.text}</div>
+          <div className="whitespace-pre-wrap break-words">
+            <PaperWrapFloats spacers={wrapSpacers} zoom={zoom} />
+            {displayText ?? frame.text}
+          </div>
         )}
       </div>
       {isOverset ? (
@@ -8042,10 +8051,34 @@ function PaperBubbleText({
   );
 }
 
+function PaperWrapFloats({ spacers, zoom }: { spacers: PaperWrapSpacer[]; zoom: number }) {
+  if (!spacers || spacers.length === 0) return null;
+  return (
+    <>
+      {spacers.map((spacer) => (
+        <div
+          aria-hidden
+          key={spacer.id}
+          style={{
+            float: spacer.side,
+            width: Math.max(0, spacer.widthMm * PX_PER_MM * zoom),
+            height: Math.max(0, spacer.heightMm * PX_PER_MM * zoom),
+            marginTop: Math.max(0, spacer.topMm * PX_PER_MM * zoom),
+            shapeOutside: spacer.shapeOutside,
+            shapeMargin: Math.max(0, spacer.shapeMarginMm * PX_PER_MM * zoom),
+            pointerEvents: 'none',
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
 function PaperInlineText({
   draft,
   frame,
   displayText,
+  wrapSpacers = [],
   isEditing,
   onBeginEdit,
   onCancel,
@@ -8056,6 +8089,7 @@ function PaperInlineText({
   draft: string;
   frame: PaperFrame;
   displayText?: string;
+  wrapSpacers?: PaperWrapSpacer[];
   isEditing: boolean;
   onBeginEdit: (event: React.MouseEvent<HTMLElement>) => void;
   onCancel: () => void;
@@ -8080,6 +8114,7 @@ function PaperInlineText({
 
   return (
     <div className={className} onDoubleClick={onBeginEdit} style={style}>
+      <PaperWrapFloats spacers={wrapSpacers} zoom={zoom} />
       {displayText ?? frame.text}
     </div>
   );
@@ -9032,6 +9067,50 @@ function PaperInspector({
                   <option value="hexagon">Hexagon</option>
                 </select>
               </Field>
+              <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Text Wrap</div>
+                <Field label="Wrap surrounding text">
+                  <select
+                    className="paper-input"
+                    onChange={(event) => {
+                      const mode = event.target.value as PaperTextWrapMode;
+                      onUpdateFrame({
+                        textWrap: mode === 'none'
+                          ? undefined
+                          : { mode, standoffMm: frame.textWrap?.standoffMm ?? 2, contourSource: frame.textWrap?.contourSource },
+                      });
+                    }}
+                    value={frame.textWrap?.mode ?? 'none'}
+                  >
+                    <option value="none">None</option>
+                    <option value="boundingBox">Bounding box</option>
+                    <option value="jumpObject">Jump object (skip below)</option>
+                    <option value="contour">Contour (shape)</option>
+                  </select>
+                </Field>
+                {frame.textWrap && frame.textWrap.mode !== 'none' ? (
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <NumberField
+                      label="Standoff mm"
+                      onChange={(standoffMm) => onUpdateFrame({ textWrap: { ...frame.textWrap!, standoffMm: Math.max(0, standoffMm) } })}
+                      step={0.5}
+                      value={frame.textWrap.standoffMm}
+                    />
+                    {frame.textWrap.mode === 'contour' ? (
+                      <Field label="Contour from">
+                        <select
+                          className="paper-input"
+                          onChange={(event) => onUpdateFrame({ textWrap: { ...frame.textWrap!, contourSource: event.target.value as 'frameShape' | 'vertices' } })}
+                          value={frame.textWrap.contourSource ?? 'frameShape'}
+                        >
+                          <option value="frameShape">Frame shape</option>
+                          <option value="vertices">Vertices only</option>
+                        </select>
+                      </Field>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <NumberField label="Opacity" onChange={(opacity) => onUpdateFrame({ opacity: clamp(opacity, 0, 1) })} step={0.05} value={effectiveFrame?.opacity ?? frame.opacity} />
                 <NumberField label="Fill Opacity" onChange={(fillOpacity) => onUpdateFrame({ fillOpacity: clamp(fillOpacity, 0, 1) })} step={0.05} value={effectiveFrame?.fillOpacity ?? frame.fillOpacity} />

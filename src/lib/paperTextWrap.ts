@@ -99,3 +99,85 @@ export function resolveExclusionsForTextFrame(
   }
   return exclusions;
 }
+
+/**
+ * A CSS `shape-outside` float spacer (geometry in the text frame's local mm, zoom-independent) that
+ * makes the browser flow a text frame's copy around an overlapping obstacle. The renderer prepends
+ * these floats before the text and scales mm → px at the current zoom.
+ */
+export interface PaperWrapSpacer {
+  id: string;
+  side: 'left' | 'right';
+  topMm: number;
+  widthMm: number;
+  heightMm: number;
+  shapeMarginMm: number;
+  /** CSS `shape-outside` value (percentages of the float box) for contour wrap, else undefined (rect). */
+  shapeOutside?: string;
+}
+
+const clampNumber = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+
+function contourShapeOutside(
+  polygonDocMm: PaperTextFlowPoint[],
+  textFrame: Pick<PaperFrame, 'xMm' | 'yMm'>,
+  box: { x0: number; y0: number; w: number; h: number },
+): string {
+  const pts = polygonDocMm.map((p) => {
+    const localX = p.xMm - textFrame.xMm;
+    const localY = p.yMm - textFrame.yMm;
+    const fx = clampNumber(((localX - box.x0) / box.w) * 100, 0, 100);
+    const fy = clampNumber(((localY - box.y0) / box.h) * 100, 0, 100);
+    return `${fx.toFixed(2)}% ${fy.toFixed(2)}%`;
+  });
+  return `polygon(${pts.join(', ')})`;
+}
+
+/**
+ * Float spacers that wrap `textFrame`'s copy around every overlapping obstacle on the page. An
+ * obstacle on the left half of the frame floats left (text to its right) and vice-versa; contour
+ * wrap carries a `shape-outside` polygon so the text hugs round / free-form / SVG shapes.
+ */
+export function resolveFrameWrapSpacers(
+  textFrame: Pick<PaperFrame, 'id' | 'xMm' | 'yMm' | 'widthMm' | 'heightMm'>,
+  frames: WrapFrame[],
+): PaperWrapSpacer[] {
+  const textW = textFrame.widthMm;
+  const textH = textFrame.heightMm;
+  if (textW <= 0 || textH <= 0) return [];
+
+  const spacers: PaperWrapSpacer[] = [];
+  for (const frame of frames) {
+    if (frame.id === textFrame.id) continue;
+    const wrap = frame.textWrap;
+    if (!wrap || wrap.mode === 'none') continue;
+
+    // Obstacle bounding box in the text frame's local mm, clipped to the frame.
+    const oxL = frame.xMm - textFrame.xMm;
+    const oyT = frame.yMm - textFrame.yMm;
+    const oxR = oxL + frame.widthMm;
+    const oyB = oyT + frame.heightMm;
+    const clipL = clampNumber(oxL, 0, textW);
+    const clipR = clampNumber(oxR, 0, textW);
+    const clipT = clampNumber(oyT, 0, textH);
+    const clipB = clampNumber(oyB, 0, textH);
+    if (clipR - clipL <= 0 || clipB - clipT <= 0) continue; // no overlap
+
+    const onLeft = (oxL + oxR) / 2 < textW / 2;
+    const box = onLeft
+      ? { x0: 0, y0: clipT, w: Math.max(1, clipR), h: Math.max(1, clipB - clipT) }
+      : { x0: clipL, y0: clipT, w: Math.max(1, textW - clipL), h: Math.max(1, clipB - clipT) };
+
+    const polygon = wrap.mode === 'contour' ? resolveFrameWrapPolygon(frame) : null;
+    spacers.push({
+      id: frame.id,
+      side: onLeft ? 'left' : 'right',
+      topMm: box.y0,
+      widthMm: box.w,
+      heightMm: box.h,
+      shapeMarginMm: Math.max(0, wrap.standoffMm),
+      shapeOutside: polygon ? contourShapeOutside(polygon, textFrame, box) : undefined,
+    });
+  }
+  return spacers;
+}

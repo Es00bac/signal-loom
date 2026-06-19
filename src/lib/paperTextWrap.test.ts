@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   resolveExclusionsForTextFrame,
   resolveFrameWrapPolygon,
+  resolveFrameWrapSpacers,
   toFrameLocalExclusion,
 } from './paperTextWrap';
 import type { PaperTextWrap } from '../types/paper';
@@ -91,5 +92,36 @@ describe('text-frame exclusions', () => {
     expect(exclusions).toHaveLength(1);
     expect(exclusions[0].standoffMm).toBe(2);
     expect(exclusions[0].points[0]).toEqual({ xMm: 10, yMm: 20 });
+  });
+});
+
+describe('resolveFrameWrapSpacers (CSS shape-outside floats)', () => {
+  const textFrame = { id: 't', xMm: 0, yMm: 0, widthMm: 100, heightMm: 100 };
+
+  it('floats a left-half obstacle left (text to its right) as a rectangular spacer', () => {
+    const spacers = resolveFrameWrapSpacers(textFrame, [
+      { id: 'o', xMm: 0, yMm: 0, widthMm: 30, heightMm: 40, textWrap: wrap('boundingBox', { standoffMm: 2 }) },
+    ]);
+    expect(spacers).toEqual([
+      { id: 'o', side: 'left', topMm: 0, widthMm: 30, heightMm: 40, shapeMarginMm: 2, shapeOutside: undefined },
+    ]);
+  });
+
+  it('floats a right-half obstacle right (text to its left)', () => {
+    const [spacer] = resolveFrameWrapSpacers(textFrame, [
+      { id: 'o', xMm: 70, yMm: 10, widthMm: 30, heightMm: 20, textWrap: wrap('jumpObject') },
+    ]);
+    expect(spacer).toMatchObject({ side: 'right', topMm: 10, widthMm: 30, heightMm: 20 });
+  });
+
+  it('emits a shape-outside polygon for contour wrap and ignores non-overlapping / non-wrapping frames', () => {
+    const spacers = resolveFrameWrapSpacers(textFrame, [
+      { id: 'round', xMm: 0, yMm: 0, widthMm: 40, heightMm: 40, shapeKind: 'ellipse', textWrap: wrap('contour') },
+      { id: 'far', xMm: 500, yMm: 500, widthMm: 10, heightMm: 10, textWrap: wrap('boundingBox') }, // off-frame
+      { id: 'plain', xMm: 0, yMm: 0, widthMm: 10, heightMm: 10 }, // no wrap
+    ]);
+    expect(spacers).toHaveLength(1);
+    expect(spacers[0].id).toBe('round');
+    expect(spacers[0].shapeOutside).toMatch(/^polygon\(/);
   });
 });
