@@ -52,17 +52,28 @@ config includes:
 try_files $uri $uri/ $uri.html =404;
 ```
 
-## Deploy command
+## Deploy
+
+Use the wrapper — it runs the verification gate first, excludes the source-only
+files (`verify-site.mjs`, `deploy.sh`, `README.md`, the nginx conf), and confirms
+the privacy URL is live afterward:
+
+```sh
+./deploy.sh user@vpn-host          # DRY RUN — shows what would change, touches nothing
+./deploy.sh user@vpn-host --go     # real deploy (rsync --delete) + privacy-URL check
+```
+
+In a Claude Code session you can run it inline so the output lands in chat:
+`! ./deploy.sh user@vpn-host` (dry run) then `! ./deploy.sh user@vpn-host --go`.
+
+Or the raw equivalent:
 
 ```sh
 rsync -avz --delete \
+  --exclude verify-site.mjs --exclude deploy.sh --exclude README.md --exclude nginx-sloom.studio.conf \
   /home/cabewse/work_SPaC3/flow/docs/release/website/sloom-studio/ \
   <user>@<vpn-host>:/var/www/sloom.studio/html/
 ```
-
-Replace `<user>` and `<vpn-host>` with your actual VPN server credentials.
-The `--delete` flag removes stale files from the remote. Omit it on a first
-run if you want to be cautious.
 
 ## Privacy page note
 
