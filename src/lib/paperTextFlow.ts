@@ -12,6 +12,8 @@ export interface PaperTextFlowTypeSpec {
   leadingPt: number;
   tracking: number;
   align: 'left' | 'center' | 'right' | 'justify';
+  fontWeight?: string;
+  fontStyle?: string;
 }
 
 export interface PaperTextFlowColumn {

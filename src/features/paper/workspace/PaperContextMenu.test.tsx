@@ -24,8 +24,11 @@ describe('PaperContextMenu', () => {
         onSendFrameSourceToFlow={noop}
         onSendFrameSourceToVideo={noop}
         onUnchainSelectedBubbles={noop}
+        onThreadSelectedFrames={noop}
+        onUnthreadSelectedFrames={noop}
         onUpscaleFrameForPrint={noop}
         selectedBubbleCount={0}
+        selectedTextFrameCount={0}
         sourceItems={[]}
       />,
     );

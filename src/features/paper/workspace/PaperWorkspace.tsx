@@ -146,6 +146,8 @@ import {
 import { buildPaperBubblePath, resolveBubbleTailCurveHandle } from '../../../lib/paperBubblePaths';
 import { buildPaperBubbleConnectorSegments } from '../../../lib/paperBubbleChains';
 import { DEFAULT_PAPER_COLUMN_GUTTER_MM, resolvePaperColumnGutterMm } from '../../../lib/paperColumns';
+import { computePaperThreadSlices } from '../../../lib/paperThreadFlow';
+import { createPaperCanvasMeasurer } from '../../../lib/paperCanvasMeasurer';
 import {
   estimateGenerativeFillCostUsd,
   type GenerativeFillProvider,
@@ -601,6 +603,8 @@ export function PaperWorkspace() {
   const redefineSelectedStyle = usePaperStore((s) => s.redefineSelectedStyle);
   const clearSelectedStyleLinks = usePaperStore((s) => s.clearSelectedStyleLinks);
   const clearSelectedStyleOverrides = usePaperStore((s) => s.clearSelectedStyleOverrides);
+  const threadSelectedFrames = usePaperStore((s) => s.threadSelectedFrames);
+  const unthreadSelectedFrames = usePaperStore((s) => s.unthreadSelectedFrames);
   const chainSelectedBubbles = usePaperStore((s) => s.chainSelectedBubbles);
   const unchainSelectedBubbles = usePaperStore((s) => s.unchainSelectedBubbles);
   const addComicSfx = usePaperStore((s) => s.addComicSfx);
@@ -713,6 +717,11 @@ export function PaperWorkspace() {
     return selectedPage.frames.filter((frame) =>
       selectedIds.has(frame.id) && (frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble')
     ).length;
+  }, [selectedFrameId, selectedFrameIds, selectedPage]);
+  const selectedTextFrameCount = useMemo(() => {
+    if (!selectedPage) return 0;
+    const selectedIds = new Set(selectedFrameIds.length ? selectedFrameIds : selectedFrameId ? [selectedFrameId] : []);
+    return selectedPage.frames.filter((frame) => selectedIds.has(frame.id) && frame.kind === 'text').length;
   }, [selectedFrameId, selectedFrameIds, selectedPage]);
   const resolveFrameImageNaturalSize = useCallback((pageId: string, frame: PaperFrame, naturalWidth: number, naturalHeight: number) => {
     if (frame.inherited) return;
@@ -3822,7 +3831,18 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
             setContextMenu(null);
             setStatus('Removed bubble chain links from selected bubbles.');
           }}
+          onThreadSelectedFrames={() => {
+            threadSelectedFrames();
+            setContextMenu(null);
+            setStatus('Threaded the selected text frames — copy now flows between them.');
+          }}
+          onUnthreadSelectedFrames={() => {
+            unthreadSelectedFrames();
+            setContextMenu(null);
+            setStatus('Removed text threading from the selected frames.');
+          }}
           selectedBubbleCount={selectedBubbleCount}
+          selectedTextFrameCount={selectedTextFrameCount}
           sourceItems={sourceItems}
         />
       ) : null}
@@ -6308,6 +6328,7 @@ function PaperConnectedSpreadView({
             const outputFrames = resolvePaperPageFramesForOutput(doc, slot.page);
             const frameLayers = buildPaperCanvasFrameLayers(outputFrames);
             const guidesForView = [...resolvePaperPageInheritedGuides(doc, slot.page), ...slot.page.guides];
+            const threadSlices = computePaperThreadSlices(outputFrames, paperThreadTextMeasurer);
 
             return (
               <div key={`${slot.page.id}-content`}>
@@ -6322,6 +6343,9 @@ function PaperConnectedSpreadView({
                 {frameLayers.map(({ frame, canvasZIndex }) => (
                   <PaperFrameView
                     canvasZIndex={canvasZIndex}
+                    displayText={threadSlices.get(frame.id)?.sourceText}
+                    isThreadContinuation={threadSlices.get(frame.id) ? !threadSlices.get(frame.id)!.isHead : false}
+                    isOverset={threadSlices.get(frame.id)?.isOverset ?? false}
                     frame={frame}
                     isSelected={frame.id === selectedFrameId || selectedFrameIds.includes(frame.id)}
                     key={frame.id}
@@ -7289,9 +7313,14 @@ function PaperBubbleConnectorsOverlay({
   );
 }
 
+const paperThreadTextMeasurer = createPaperCanvasMeasurer();
+
 function PaperFrameView({
   canvasZIndex,
   frame,
+  displayText,
+  isThreadContinuation = false,
+  isOverset = false,
   isSelected,
   onBeginImageCropPan,
   onBeginImageCropRotate,
@@ -7324,6 +7353,9 @@ function PaperFrameView({
 }: {
   canvasZIndex: number;
   frame: PaperFrame;
+  displayText?: string;
+  isThreadContinuation?: boolean;
+  isOverset?: boolean;
   isSelected: boolean;
   onBeginImageCropPan: (event: React.PointerEvent<HTMLElement>) => void;
   onBeginImageCropRotate: (event: React.PointerEvent<HTMLElement>) => void;
@@ -7409,7 +7441,8 @@ function PaperFrameView({
   };
   const allowsVisibleOverflow = frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble';
   const showFrameTransformHandles = isSelected && !frame.inherited && !showVertexHandles;
-  const editableTextFrame = isPaperInlineTextFrame(frame);
+  // A threaded continuation frame is read-only (the story is edited on the thread's head frame).
+  const editableTextFrame = isPaperInlineTextFrame(frame) && !isThreadContinuation;
 
   const beginTextEdit = (event: React.MouseEvent<HTMLElement>) => {
     if (!editableTextFrame || frame.locked || frame.inherited || tool !== 'select') return;
@@ -7553,6 +7586,7 @@ function PaperFrameView({
           </>
         ) : editableTextFrame ? (
           <PaperInlineText
+            displayText={displayText}
             draft={textDraft}
             frame={frame}
             isEditing={textEditing}
@@ -7563,9 +7597,17 @@ function PaperFrameView({
             zoom={zoom}
           />
         ) : (
-          <div className="whitespace-pre-wrap break-words">{frame.text}</div>
+          <div className="whitespace-pre-wrap break-words">{displayText ?? frame.text}</div>
         )}
       </div>
+      {isOverset ? (
+        <div
+          className="pointer-events-none absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-sm bg-red-500 text-[9px] font-bold leading-none text-white shadow"
+          title="Overset text — thread another frame to continue the story"
+        >
+          +
+        </div>
+      ) : null}
       {hasShapeStrokeOverlay ? <PaperFrameShapeStroke frame={frame} zoom={zoom} /> : null}
       {isSelected && !frame.inherited ? (
         <>
@@ -7981,6 +8023,7 @@ function PaperBubbleText({
 function PaperInlineText({
   draft,
   frame,
+  displayText,
   isEditing,
   onBeginEdit,
   onCancel,
@@ -7990,6 +8033,7 @@ function PaperInlineText({
 }: {
   draft: string;
   frame: PaperFrame;
+  displayText?: string;
   isEditing: boolean;
   onBeginEdit: (event: React.MouseEvent<HTMLElement>) => void;
   onCancel: () => void;
@@ -8014,7 +8058,7 @@ function PaperInlineText({
 
   return (
     <div className={className} onDoubleClick={onBeginEdit} style={style}>
-      {frame.text}
+      {displayText ?? frame.text}
     </div>
   );
 }
@@ -8267,7 +8311,10 @@ export function PaperContextMenu({
   onLocateFrameSourceInFlow,
   onSendFrameSourceToVideo,
   onUnchainSelectedBubbles,
+  onThreadSelectedFrames,
+  onUnthreadSelectedFrames,
   selectedBubbleCount,
+  selectedTextFrameCount,
   sourceItems,
 }: {
   context: PaperContextMenuState;
@@ -8289,7 +8336,10 @@ export function PaperContextMenu({
   onLocateFrameSourceInFlow?: (frame: PaperFrame | undefined) => void;
   onSendFrameSourceToVideo: (frame: PaperFrame | undefined) => void;
   onUnchainSelectedBubbles: () => void;
+  onThreadSelectedFrames: () => void;
+  onUnthreadSelectedFrames: () => void;
   selectedBubbleCount: number;
+  selectedTextFrameCount: number;
   sourceItems: SourceBinLibraryItem[];
 }) {
   const imageItems = sourceItems.filter((item) => item.kind === 'image').slice(0, 8);
@@ -8403,6 +8453,16 @@ export function PaperContextMenu({
           ) : frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble' ? (
             <MenuGroup label="Bubble Chain">
               <MenuButton label="Unchain This Bubble" onClick={onUnchainSelectedBubbles} />
+            </MenuGroup>
+          ) : null}
+          {selectedTextFrameCount >= 2 ? (
+            <MenuGroup label="Text Thread">
+              <MenuButton label={`Thread ${selectedTextFrameCount} Text Frames`} onClick={onThreadSelectedFrames} />
+              <MenuButton label="Unthread Selected Frames" onClick={onUnthreadSelectedFrames} />
+            </MenuGroup>
+          ) : frame && frame.kind === 'text' && frame.threadId ? (
+            <MenuGroup label="Text Thread">
+              <MenuButton label="Unthread This Frame" onClick={onUnthreadSelectedFrames} />
             </MenuGroup>
           ) : null}
           {imageItems.length || textItems.length ? (

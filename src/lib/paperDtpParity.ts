@@ -94,8 +94,8 @@ export const PAPER_DTP_PARITY_FEATURES: PaperDtpParityFeature[] = [
     feature: 'Threaded text frames',
     priority: 'high',
     indesign: 'Linked text frames with a continuing story and overset flow ports',
-    signalLoom: 'Thread membership model, a pure column/frame text-composition core with overset, and thread/unthread store actions; on-canvas flow rendering and ports are in progress',
-    status: 'partial',
+    signalLoom: 'Thread/unthread selected text frames so a head-frame story flows across linked frames and columns, rendered on canvas with per-frame slices and an overset indicator on the last frame',
+    status: 'available',
     comicImpact: 'Lets long letters pages, prose backmatter, and recap text flow across columns and pages.',
   },
 ];
