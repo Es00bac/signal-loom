@@ -39,6 +39,8 @@ export interface PaperTextFlowLine {
 export interface PaperTextFlowFrameResult {
   frameId: string;
   lines: PaperTextFlowLine[];
+  /** The contiguous slice of the original text that flowed into this frame (for threaded rendering). */
+  sourceText: string;
 }
 
 export interface PaperTextFlowResult {
@@ -141,6 +143,7 @@ export function flowPaperText(
   let index = 0;
 
   const frameResults: PaperTextFlowFrameResult[] = frames.map((frame) => {
+    const frameStartIndex = index;
     const lines: PaperTextFlowLine[] = [];
 
     for (const column of frame.columns) {
@@ -170,7 +173,12 @@ export function flowPaperText(
       }
     }
 
-    return { frameId: frame.id, lines };
+    const lastTokenIndex = index - 1;
+    const sourceText = frameStartIndex < index
+      ? text.slice(tokens[frameStartIndex].start, tokens[lastTokenIndex].start + tokens[lastTokenIndex].text.length)
+      : '';
+
+    return { frameId: frame.id, lines, sourceText };
   });
 
   const overset = index < tokens.length ? text.slice(tokens[index].start) : '';

@@ -833,6 +833,8 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     columnGutterMm: frame.columnGutterMm,
     columnRule: frame.columnRule,
     columnBalance: frame.columnBalance,
+    threadId: frame.threadId,
+    threadOrder: frame.threadOrder,
     typography: { ...DEFAULT_PAPER_TYPOGRAPHY, ...frame.typography },
     fillColor: frame.fillColor ?? defaultFillForKind(kind),
     fillOpacity: frame.fillOpacity ?? 1,

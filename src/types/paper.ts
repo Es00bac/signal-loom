@@ -164,6 +164,8 @@ export interface PaperFrame {
   columnGutterMm?: number;
   columnRule?: boolean;
   columnBalance?: boolean;
+  threadId?: string;
+  threadOrder?: number;
   typography: PaperTypography;
   fillColor: string;
   fillOpacity: number;

@@ -47,6 +47,17 @@ describe('flowPaperText', () => {
     expect(result.overset).toBe('');
   });
 
+  it('reports the contiguous source slice that flowed into each frame (threaded rendering)', () => {
+    const result = flowPaperText(
+      'aa bb cc dd',
+      spec,
+      [frame('f1', col(0, 0, 10, 5)), frame('f2', col(0, 0, 10, 5))],
+      measure,
+    );
+    expect(result.frames[0].sourceText).toBe('aa bb');
+    expect(result.frames[1].sourceText).toBe('cc dd');
+  });
+
   it('fills column one before column two within a frame', () => {
     const result = flowPaperText(
       'aa bb cc dd',
