@@ -65,7 +65,9 @@ describe('TopNavbar hit-test layering', () => {
     const appSource = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
 
     expect(topbarSource).toContain('theme-topbar absolute top-0 left-0 right-0 z-[80]');
-    expect(topbarSource).toContain('absolute left-0 top-full z-[70]');
+    // The app-menu dropdown is portaled to <body> as a high-z fixed layer so it escapes the
+    // horizontally-scrollable nav-bar container (which clipped it and stacked it under the canvas).
+    expect(topbarSource).toContain('fixed z-[200] min-w-56');
     expect(topbarSource).toContain('<UsageBar placement="topbar" workspaceView={workspaceView} />');
     expect(topbarSource).toContain('<UsageBar placement="mobile-drawer" workspaceView={workspaceView} />');
     expect(usageBarSource).not.toContain('top-2 z-[90]');

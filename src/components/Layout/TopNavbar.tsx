@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronUp, Command, Download, EyeOff, FolderOpen, Library, Maximize2, Menu, Minimize2, Minus, Play, Plus, Redo2, Settings, Undo2 } from 'lucide-react';
 import { useReactFlow, useViewport } from '@xyflow/react';
 import { useSettingsStore } from '../../store/settingsStore';
@@ -132,6 +133,11 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   const [isFunctionLibraryOpen, setFunctionLibraryOpen] = React.useState(false);
   const [isFullscreen, setFullscreen] = React.useState(Boolean(document.fullscreenElement));
   const [openMenuId, setOpenMenuId] = React.useState<string | null>(null);
+  // The desktop app-menu dropdown is portaled to <body> so it escapes the horizontally-scrollable,
+  // z-20 nav-bar container (which otherwise clips it and stacks it behind the workspace surface —
+  // making the menu unusable on web/DeX). `menuAnchorRect` positions the portal under its button.
+  const [menuAnchorRect, setMenuAnchorRect] = React.useState<DOMRect | null>(null);
+  const menuPortalRef = React.useRef<HTMLDivElement | null>(null);
   const [showIntegratedMenu] = React.useState(() =>
     shouldShowIntegratedAppMenu(Boolean(getSignalLoomNativeBridge())),
   );
@@ -202,7 +208,11 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
       // Guard BOTH the desktop menu bar and the mobile interface drawer — the
       // expanded phone app-menu renders in the drawer, not inside appMenuRef, so
       // without this every drawer tap counted as "outside" and dismissed it.
-      if (appMenuRef.current?.contains(target) || mobileMenuRef.current?.contains(target)) {
+      if (
+        appMenuRef.current?.contains(target)
+        || mobileMenuRef.current?.contains(target)
+        || menuPortalRef.current?.contains(target)
+      ) {
         return;
       }
 
@@ -625,28 +635,38 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                   className={`rounded px-2 py-1 text-xs font-medium text-cyan-100/70 transition-colors hover:bg-cyan-400/10 hover:text-white ${
                     openMenuId === group.id ? 'bg-cyan-400/10 text-white' : ''
                   }`}
-                  onClick={() => setOpenMenuId((current) => current === group.id ? null : group.id)}
+                  onClick={(event) => {
+                    setMenuAnchorRect(event.currentTarget.getBoundingClientRect());
+                    setOpenMenuId((current) => current === group.id ? null : group.id);
+                  }}
                   type="button"
                 >
                   {group.label}
                 </button>
-                {openMenuId === group.id ? (
-                  <div className="absolute left-0 top-full z-[70] mt-2 min-w-56 overflow-hidden rounded-md border border-cyan-300/20 bg-[#0d1725] py-1 shadow-2xl shadow-black/40">
-                    {group.items.map((item) => (
-                      <button
-                        className="flex w-full items-center justify-between gap-5 px-3 py-2 text-left text-sm text-cyan-50/80 transition-colors hover:bg-cyan-400/10 hover:text-white"
-                        key={item.command}
-                        onClick={() => handleMenuCommand(item.command)}
-                        type="button"
+                {openMenuId === group.id && menuAnchorRect
+                  ? createPortal(
+                      <div
+                        className="fixed z-[200] min-w-56 overflow-hidden rounded-md border border-cyan-300/20 bg-[#0d1725] py-1 shadow-2xl shadow-black/40"
+                        ref={menuPortalRef}
+                        style={{ top: menuAnchorRect.bottom + 6, left: menuAnchorRect.left }}
                       >
-                        <span>{item.label}</span>
-                        {item.shortcut ? (
-                          <span className="text-xs text-cyan-100/35">{item.shortcut}</span>
-                        ) : null}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
+                        {group.items.map((item) => (
+                          <button
+                            className="flex w-full items-center justify-between gap-5 px-3 py-2 text-left text-sm text-cyan-50/80 transition-colors hover:bg-cyan-400/10 hover:text-white"
+                            key={item.command}
+                            onClick={() => handleMenuCommand(item.command)}
+                            type="button"
+                          >
+                            <span>{item.label}</span>
+                            {item.shortcut ? (
+                              <span className="text-xs text-cyan-100/35">{item.shortcut}</span>
+                            ) : null}
+                          </button>
+                        ))}
+                      </div>,
+                      document.body,
+                    )
+                  : null}
               </div>
             ))}
           </div>
