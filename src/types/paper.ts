@@ -141,6 +141,17 @@ export interface PaperFrameVertex {
   yPercent: number;
 }
 
+/** How surrounding text flows around this frame (the obstacle). */
+export type PaperTextWrapMode = 'none' | 'boundingBox' | 'jumpObject' | 'contour';
+
+export interface PaperTextWrap {
+  mode: PaperTextWrapMode;
+  /** Gap (mm) kept clear between the wrapped text and this frame on every side. */
+  standoffMm: number;
+  /** For contour wrap: trace the frame's own shape (vertices/ellipse) or just its vertices. */
+  contourSource?: 'frameShape' | 'vertices';
+}
+
 export interface PaperFrame {
   id: string;
   kind: PaperFrameKind;
@@ -205,6 +216,7 @@ export interface PaperFrame {
   bubbleConnectorAnchor?: PaperBubbleConnectorAnchor;
   comicSfxDesign?: PaperComicSfxDesign;
   vertices?: PaperFrameVertex[];
+  textWrap?: PaperTextWrap;
   tailXPercent?: number;
   tailYPercent?: number;
   zIndex: number;

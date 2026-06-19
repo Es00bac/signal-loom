@@ -16,6 +16,7 @@ import type {
   PaperParagraphStyle,
   PaperParentPage,
   PaperStyleCatalogs,
+  PaperTextWrap,
 } from '../types/paper';
 import {
   buildPaperImageRenderStyle,
@@ -874,6 +875,7 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     comicSfxDesign: frame.comicSfxDesign,
     shapeKind: frame.shapeKind ?? (kind === 'shape' ? 'triangle' : undefined),
     vertices: frame.vertices ?? defaultVerticesForKind(kind, frame.shapeKind),
+    textWrap: sanitizePaperTextWrap(frame.textWrap),
     tailXPercent: frame.tailXPercent ?? (kind === 'speechBubble' || kind === 'thoughtBubble' ? 72 : undefined),
     tailYPercent: frame.tailYPercent ?? (kind === 'speechBubble' || kind === 'thoughtBubble' ? 92 : undefined),
     zIndex: frame.zIndex ?? 0,
@@ -1372,6 +1374,18 @@ function defaultCornerRadiusForKind(kind: PaperFrameKind): number {
   if (kind === 'speechBubble' || kind === 'thoughtBubble') return 100;
   if (kind === 'caption') return 1.5;
   return 0;
+}
+
+function sanitizePaperTextWrap(value: PaperFrame['textWrap']): PaperTextWrap | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const modes: PaperTextWrap['mode'][] = ['none', 'boundingBox', 'jumpObject', 'contour'];
+  const mode = modes.includes(value.mode) ? value.mode : 'none';
+  if (mode === 'none') return undefined;
+  const standoffMm = Number.isFinite(value.standoffMm) ? Math.max(0, value.standoffMm) : 0;
+  const contourSource = value.contourSource === 'vertices' || value.contourSource === 'frameShape'
+    ? value.contourSource
+    : undefined;
+  return { mode, standoffMm, contourSource };
 }
 
 function defaultVerticesForKind(kind: PaperFrameKind, shapeKind: PaperFrame['shapeKind']): PaperFrame['vertices'] {

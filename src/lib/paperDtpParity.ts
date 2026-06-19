@@ -98,6 +98,15 @@ export const PAPER_DTP_PARITY_FEATURES: PaperDtpParityFeature[] = [
     status: 'available',
     comicImpact: 'Lets long letters pages, prose backmatter, and recap text flow across columns and pages.',
   },
+  {
+    id: 'text-wrap',
+    feature: 'Text wrap / runaround',
+    priority: 'high',
+    indesign: 'Wrap text around an object — bounding box, jump object, or its contour (incl. free-form and image shapes) — with a standoff offset',
+    signalLoom: 'Per-object text wrap (bounding box, jump-object, or contour from a shape’s vertices/ellipse) with a standoff; the text-flow core narrows each line box to the widest clear band around the obstacle',
+    status: 'available',
+    comicImpact: 'Flows captions and editorial copy around panels, logos, and free-form art the way letterers expect.',
+  },
 ];
 
 export function getPaperDtpParityPriorities(features = PAPER_DTP_PARITY_FEATURES): PaperDtpParityFeature[] {

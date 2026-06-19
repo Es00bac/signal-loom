@@ -26,6 +26,23 @@ export interface PaperTextFlowColumn {
 export interface PaperTextFlowFrame {
   id: string;
   columns: PaperTextFlowColumn[];
+  /** Obstacles to flow around inside THIS frame (frame-local mm). Overrides the call-wide default. */
+  exclusions?: PaperTextFlowExclusion[];
+}
+
+export interface PaperTextFlowPoint {
+  xMm: number;
+  yMm: number;
+}
+
+/**
+ * An obstacle outline (in the same frame-local mm space as the columns) that text must flow around,
+ * with an optional standoff gap kept clear on every side. Powers text wrap / runaround: each line's
+ * usable box is narrowed to the widest sub-interval of its column not covered by an exclusion band.
+ */
+export interface PaperTextFlowExclusion {
+  points: PaperTextFlowPoint[];
+  standoffMm?: number;
 }
 
 /** Width in mm of a rendered text fragment at the given type spec. */
@@ -123,22 +140,92 @@ function buildNextLine(
   return { text, widthMm: text ? measure(text, spec) : 0, nextIndex: index };
 }
 
-function alignLineX(column: PaperTextFlowColumn, widthMm: number, align: PaperTextFlowTypeSpec['align']): number {
+function alignLineX(box: { xMm: number; widthMm: number }, widthMm: number, align: PaperTextFlowTypeSpec['align']): number {
   switch (align) {
     case 'right':
-      return column.xMm + column.widthMm - widthMm;
+      return box.xMm + box.widthMm - widthMm;
     case 'center':
-      return column.xMm + (column.widthMm - widthMm) / 2;
+      return box.xMm + (box.widthMm - widthMm) / 2;
     default:
-      return column.xMm;
+      return box.xMm;
   }
 }
+
+/**
+ * Horizontal extent [leftMm, rightMm] of a polygon's boundary across the vertical band [yTop, yBot],
+ * or null when the polygon does not occupy the band. Sampling endpoints-in-band plus the edge crossings
+ * at the band edges yields the exact extreme x for piecewise-linear (polygon) boundaries.
+ */
+function polygonBandExtent(points: PaperTextFlowPoint[], yTop: number, yBot: number): [number, number] | null {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let hit = false;
+  const consider = (x: number) => {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    hit = true;
+  };
+
+  const n = points.length;
+  for (let i = 0; i < n; i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    const edgeTop = Math.min(a.yMm, b.yMm);
+    const edgeBot = Math.max(a.yMm, b.yMm);
+    if (edgeBot < yTop - EPSILON_MM || edgeTop > yBot + EPSILON_MM) continue;
+
+    if (a.yMm >= yTop - EPSILON_MM && a.yMm <= yBot + EPSILON_MM) consider(a.xMm);
+    if (b.yMm >= yTop - EPSILON_MM && b.yMm <= yBot + EPSILON_MM) consider(b.xMm);
+
+    const dy = b.yMm - a.yMm;
+    if (Math.abs(dy) > EPSILON_MM) {
+      for (const yy of [yTop, yBot]) {
+        if (yy >= edgeTop - EPSILON_MM && yy <= edgeBot + EPSILON_MM) {
+          consider(a.xMm + ((b.xMm - a.xMm) * (yy - a.yMm)) / dy);
+        }
+      }
+    }
+  }
+
+  return hit ? [minX, maxX] : null;
+}
+
+/** The blocked x-interval an exclusion imposes on the band [yTop, yBot], inflated by its standoff. */
+function bandBlockedInterval(exclusion: PaperTextFlowExclusion, yTop: number, yBot: number): [number, number] | null {
+  const standoff = Math.max(0, exclusion.standoffMm ?? 0);
+  const extent = polygonBandExtent(exclusion.points, yTop - standoff, yBot + standoff);
+  if (!extent) return null;
+  return [extent[0] - standoff, extent[1] + standoff];
+}
+
+/** Free sub-intervals of `base` after removing every blocked interval (sorted, left to right). */
+function subtractIntervals(base: [number, number], blocks: [number, number][]): [number, number][] {
+  const merged = blocks
+    .map(([l, r]): [number, number] => [Math.max(l, base[0]), Math.min(r, base[1])])
+    .filter(([l, r]) => r - l > EPSILON_MM)
+    .sort((a, b) => a[0] - b[0]);
+
+  const free: [number, number][] = [];
+  let cursor = base[0];
+  for (const [l, r] of merged) {
+    if (r <= cursor) continue;
+    if (l > cursor) free.push([cursor, l]);
+    cursor = Math.max(cursor, r);
+    if (cursor >= base[1]) break;
+  }
+  if (cursor < base[1] - EPSILON_MM) free.push([cursor, base[1]]);
+  return free.filter(([l, r]) => r - l > EPSILON_MM);
+}
+
+/** A band narrower than this (mm) is treated as fully blocked — text skips down past the obstacle. */
+const MIN_RUNAROUND_LINE_MM = 2;
 
 export function flowPaperText(
   text: string,
   spec: PaperTextFlowTypeSpec,
   frames: PaperTextFlowFrame[],
   measure: PaperTextMeasurer,
+  exclusions: PaperTextFlowExclusion[] = [],
 ): PaperTextFlowResult {
   const tokens = tokenize(text);
   const leadingMm = ptToMm(spec.leadingPt > 0 ? spec.leadingPt : spec.fontSizePt * 1.2);
@@ -147,13 +234,37 @@ export function flowPaperText(
   const frameResults: PaperTextFlowFrameResult[] = frames.map((frame) => {
     const frameStartIndex = index;
     const lines: PaperTextFlowLine[] = [];
+    const frameExclusions = frame.exclusions ?? exclusions;
 
     for (const column of frame.columns) {
       const columnBottom = column.yMm + column.heightMm;
       let y = column.yMm;
 
       while (index < tokens.length && y + leadingMm <= columnBottom + EPSILON_MM) {
-        const line = buildNextLine(tokens, index, column.widthMm, measure, spec);
+        // Narrow the line's usable box to the widest part of the column left clear by any exclusion
+        // band; a fully blocked band is skipped so the text resumes below the obstacle.
+        let lineBox: { xMm: number; widthMm: number } = { xMm: column.xMm, widthMm: column.widthMm };
+        if (frameExclusions.length > 0) {
+          const blocks: [number, number][] = [];
+          for (const exclusion of frameExclusions) {
+            const blocked = bandBlockedInterval(exclusion, y, y + leadingMm);
+            if (blocked) blocks.push(blocked);
+          }
+          if (blocks.length > 0) {
+            const free = subtractIntervals([column.xMm, column.xMm + column.widthMm], blocks);
+            const widest = free.reduce<[number, number] | null>(
+              (best, cur) => (best === null || cur[1] - cur[0] > best[1] - best[0] ? cur : best),
+              null,
+            );
+            if (!widest || widest[1] - widest[0] < MIN_RUNAROUND_LINE_MM) {
+              y += leadingMm;
+              continue;
+            }
+            lineBox = { xMm: widest[0], widthMm: widest[1] - widest[0] };
+          }
+        }
+
+        const line = buildNextLine(tokens, index, lineBox.widthMm, measure, spec);
         if (line.nextIndex === index) {
           break;
         }
@@ -166,7 +277,7 @@ export function flowPaperText(
 
         lines.push({
           text: line.text,
-          xMm: alignLineX(column, line.widthMm, spec.align),
+          xMm: alignLineX(lineBox, line.widthMm, spec.align),
           yMm: y,
           widthMm: line.widthMm,
         });

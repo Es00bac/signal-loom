@@ -2,6 +2,7 @@ import type { PaperFrame, PaperTypography } from '../types/paper';
 import { resolvePaperTextColumns } from './paperColumns';
 import { flowPaperText, type PaperTextFlowTypeSpec, type PaperTextMeasurer } from './paperTextFlow';
 import { getPaperTextThreadFrames, isPaperTextThreadFrame } from './paperTextThreads';
+import { resolveExclusionsForTextFrame } from './paperTextWrap';
 
 export interface PaperThreadSlice {
   sourceText: string;
@@ -45,7 +46,11 @@ export function computePaperThreadSlices(
     const flow = flowPaperText(
       members[0].text ?? '',
       paperTypographyToTextFlowSpec(members[0].typography),
-      members.map((frame) => ({ id: frame.id, columns: resolvePaperTextColumns(frame, paddingMm) })),
+      members.map((frame) => ({
+        id: frame.id,
+        columns: resolvePaperTextColumns(frame, paddingMm),
+        exclusions: resolveExclusionsForTextFrame(frame, frames),
+      })),
       measure,
     );
 
