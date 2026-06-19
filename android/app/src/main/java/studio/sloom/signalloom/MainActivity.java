@@ -20,6 +20,7 @@ public class MainActivity extends BridgeActivity {
         SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
         registerPlugin(SignalLoomImageUpscalerPlugin.class);
         registerPlugin(SignalLoomSystemUiPlugin.class);
+        registerPlugin(SignalLoomLanServerPlugin.class);
         super.onCreate(savedInstanceState);
 
         // Keep the native splash up until the web app reports its first paint (AndroidSplash.onWebReady).
