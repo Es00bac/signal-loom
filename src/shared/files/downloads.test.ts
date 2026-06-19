@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildDownloadFilename,
+  buildWorkspaceDownloadFilename,
   downloadBlob,
   downloadJsonFile,
   downloadUrlAsFile,
@@ -9,6 +10,13 @@ import {
 describe('shared browser downloads', () => {
   it('sanitizes filenames through the media registry', () => {
     expect(buildDownloadFilename('Scene 01/final!', 'image/jpeg', 'png')).toBe('Scene-01-final.jpg');
+  });
+
+  it('keeps Signal Loom container extensions literal (no MIME inference)', () => {
+    expect(buildWorkspaceDownloadFilename('Untitled-1', 'slimg')).toBe('Untitled-1.slimg');
+    expect(buildWorkspaceDownloadFilename('My Zine!', '.SLPPR')).toBe('My-Zine.slppr');
+    expect(buildWorkspaceDownloadFilename('', 'slimg')).toBe('signal-loom.slimg');
+    expect(buildWorkspaceDownloadFilename(undefined, 'slppr')).toBe('signal-loom.slppr');
   });
 
   it('downloads blob payloads through one DOM anchor path and revokes object URLs', () => {

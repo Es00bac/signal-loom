@@ -118,6 +118,8 @@ import {
   downloadJsonFile,
   parseProjectDocument,
 } from './lib/projectLibrary';
+import { downloadBlob, buildWorkspaceDownloadFilename } from './shared/files/downloads';
+import { registerAndroidFileOpenHandler } from './lib/androidFileOpen';
 import {
   dispatchNativeRendererCommand,
   getSignalLoomNativeBridge,
@@ -1228,6 +1230,9 @@ function FlowApp() {
       }
       case 'image:file-open': {
         if (!bridge?.openImageDocumentFile) {
+          // Browser / Android: no Electron file bridge — use the content-aware open picker,
+          // which classifies the chosen file and routes it to the right workspace.
+          browserProjectOpenInputRef.current?.click();
           return;
         }
 
@@ -1247,10 +1252,6 @@ function FlowApp() {
         return;
       }
       case 'image:file-save-as': {
-        if (!bridge?.saveImageDocumentFileAs) {
-          return;
-        }
-
         try {
           const imageState = useImageEditorStore.getState();
           const activeDoc = imageState.documents.find((doc) => doc.id === imageState.activeDocId);
@@ -1259,7 +1260,16 @@ function FlowApp() {
           }
 
           const bytes = await saveImageDocumentAsSlimg(activeDoc);
-          await bridge.saveImageDocumentFileAs(bytes);
+          if (bridge?.saveImageDocumentFileAs) {
+            await bridge.saveImageDocumentFileAs(bytes);
+          } else {
+            // Browser / Android: no Electron bridge — stream the .slimg to the device's
+            // Downloads folder (Documents on Android via the Filesystem plugin).
+            downloadBlob(
+              new Blob([bytes as BlobPart], { type: 'application/octet-stream' }),
+              buildWorkspaceDownloadFilename(activeDoc.title, 'slimg'),
+            );
+          }
         } catch (error) {
           await showAlertDialog({
             title: 'Save Image Failed',
@@ -1271,6 +1281,9 @@ function FlowApp() {
       }
       case 'paper:file-open': {
         if (!bridge?.openPaperDocumentFile) {
+          // Browser / Android: no Electron file bridge — use the content-aware open picker,
+          // which classifies the chosen file and routes it to the right workspace.
+          browserProjectOpenInputRef.current?.click();
           return;
         }
 
@@ -1292,13 +1305,19 @@ function FlowApp() {
         return;
       }
       case 'paper:file-save-as': {
-        if (!bridge?.savePaperDocumentFileAs) {
-          return;
-        }
-
         try {
-          const bytes = serializeSlppr(usePaperStore.getState().document);
-          await bridge.savePaperDocumentFileAs(bytes);
+          const paperDocument = usePaperStore.getState().document;
+          const bytes = serializeSlppr(paperDocument);
+          if (bridge?.savePaperDocumentFileAs) {
+            await bridge.savePaperDocumentFileAs(bytes);
+          } else {
+            // Browser / Android: no Electron bridge — stream the .slppr to the device's
+            // Downloads folder (Documents on Android via the Filesystem plugin).
+            downloadBlob(
+              new Blob([bytes as BlobPart], { type: 'application/octet-stream' }),
+              buildWorkspaceDownloadFilename(paperDocument.title, 'slppr'),
+            );
+          }
         } catch (error) {
           await showAlertDialog({
             title: 'Save Paper Failed',
@@ -1688,6 +1707,35 @@ function FlowApp() {
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
   }, [activeWorkspaceView, handleAppMenuCommand, keyboardShortcuts]);
 
+  const openSignalLoomFileBytes = useCallback(async (bytes: Uint8Array, fileName: string) => {
+    // Route by the file's real content, not just its name — OS pickers (esp. Android) and
+    // file-manager "open with" intents ignore extension filters, so a `.slimg`/`.slppr` (ZIP
+    // container) can arrive here. Without this the project opener JSON.parses the ZIP and throws
+    // "Unexpected token 'P', \"PK\"...".
+    const kind = classifyOpenedFile(bytes, fileName);
+
+    if (kind === 'image') {
+      const doc = await openSlimgDocument(bytes);
+      useImageEditorStore.getState().openDocument(doc);
+      setWorkspaceView('image');
+      return;
+    }
+    if (kind === 'paper') {
+      const doc = deserializeSlppr(bytes);
+      usePaperStore.getState().importDocumentJson(JSON.stringify(doc));
+      setWorkspaceView('paper');
+      return;
+    }
+    if (kind === 'unknown') {
+      throw new Error('This file is not a Signal Loom project (.sloom), image (.slimg), or layout (.slppr).');
+    }
+
+    const document = await parseProjectDocument(new File([bytes as BlobPart], fileName));
+    resetSourceLibraryNativeSyncTracking();
+    await restoreProjectDocument(document);
+    setNativeProjectPath(undefined);
+  }, [resetSourceLibraryNativeSyncTracking, setWorkspaceView]);
+
   const handleBrowserProjectFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = '';
@@ -1697,32 +1745,8 @@ function FlowApp() {
     }
 
     try {
-      // Route by the file's real content, not just its name — OS pickers (esp. Android) ignore the
-      // `accept` filter, so a `.slimg`/`.slppr` (ZIP container) can land here. Without this the
-      // project opener JSON.parses the ZIP and throws "Unexpected token 'P', \"PK\"...".
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const kind = classifyOpenedFile(bytes, file.name);
-
-      if (kind === 'image') {
-        const doc = await openSlimgDocument(bytes);
-        useImageEditorStore.getState().openDocument(doc);
-        setWorkspaceView('image');
-        return;
-      }
-      if (kind === 'paper') {
-        const doc = deserializeSlppr(bytes);
-        usePaperStore.getState().importDocumentJson(JSON.stringify(doc));
-        setWorkspaceView('paper');
-        return;
-      }
-      if (kind === 'unknown') {
-        throw new Error('This file is not a Signal Loom project (.sloom), image (.slimg), or layout (.slppr).');
-      }
-
-      const document = await parseProjectDocument(file);
-      resetSourceLibraryNativeSyncTracking();
-      await restoreProjectDocument(document);
-      setNativeProjectPath(undefined);
+      await openSignalLoomFileBytes(bytes, file.name);
     } catch (error) {
       await showAlertDialog({
         title: 'Open Failed',
@@ -1730,7 +1754,22 @@ function FlowApp() {
         tone: 'danger',
       });
     }
-  }, [resetSourceLibraryNativeSyncTracking, setWorkspaceView]);
+  }, [openSignalLoomFileBytes]);
+
+  // Android: open Signal Loom files tapped in a file manager / "Open with" (ACTION_VIEW intent).
+  useEffect(() => {
+    return registerAndroidFileOpenHandler(async ({ bytes, fileName }) => {
+      try {
+        await openSignalLoomFileBytes(bytes, fileName);
+      } catch (error) {
+        await showAlertDialog({
+          title: 'Open Failed',
+          message: error instanceof Error ? error.message : 'The opened file could not be loaded.',
+          tone: 'danger',
+        });
+      }
+    });
+  }, [openSignalLoomFileBytes]);
 
   const handleBrowserMediaImportChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.currentTarget.files ?? []);

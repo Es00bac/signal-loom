@@ -18,6 +18,17 @@ export function buildDownloadFilename(
   return `${safeBaseName}.${inferDownloadExtension(mimeType, fallbackExtension)}`;
 }
 
+/**
+ * Build a download filename for a Signal Loom container format (`.slimg` / `.slppr`).
+ * Unlike {@link buildDownloadFilename}, the extension is taken literally — these are our own
+ * container types, not media MIME types, so they must not pass through MIME/extension inference.
+ */
+export function buildWorkspaceDownloadFilename(baseName: string | undefined, extension: string): string {
+  const safeBaseName = (baseName ?? '').replace(/[^a-z0-9-_]+/gi, '-').replace(/^-+|-+$/g, '') || 'signal-loom';
+  const safeExtension = extension.replace(/^\.+/, '').toLowerCase();
+  return `${safeBaseName}.${safeExtension}`;
+}
+
 export function downloadBlob(
   blob: Blob,
   fileName: string,
