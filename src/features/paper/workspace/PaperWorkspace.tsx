@@ -9007,6 +9007,9 @@ function PaperInspector({
                   <option value="solid">Solid</option>
                   <option value="dashed">Dashed</option>
                   <option value="dotted">Dotted</option>
+                  <option value="double">Double</option>
+                  <option value="groove">Groove</option>
+                  <option value="ridge">Ridge</option>
                 </select>
               </Field>
               <Field label="Frame Shape">
