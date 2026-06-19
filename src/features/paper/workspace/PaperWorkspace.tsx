@@ -8177,6 +8177,38 @@ function PaperInlineText({
   const dropCapLines = frame.typography.dropCapLines && frame.typography.dropCapLines >= 2
     ? Math.min(8, Math.round(frame.typography.dropCapLines))
     : 0;
+  const spaceBeforePx = Math.max(0, frame.typography.spaceBeforeMm ?? 0) * PX_PER_MM * zoom;
+  const spaceAfterPx = Math.max(0, frame.typography.spaceAfterMm ?? 0) * PX_PER_MM * zoom;
+  const text = displayText ?? frame.text ?? '';
+
+  // Paragraph spacing needs real paragraph boxes, so split on hard breaks when space-before/after is
+  // set; otherwise keep the single pre-wrap block (cheaper, and drop cap rides the whole block).
+  if (spaceBeforePx > 0 || spaceAfterPx > 0) {
+    const paragraphs = text.split('\n');
+    return (
+      <div className={className} onDoubleClick={onBeginEdit} style={style}>
+        <PaperWrapFloats spacers={wrapSpacers} zoom={zoom} />
+        {paragraphs.map((paragraph, index) => {
+          const isFirst = index === 0;
+          const paragraphDropCap = isFirst && dropCapLines > 0;
+          return (
+            <div
+              className={paragraphDropCap ? 'paper-dropcap' : undefined}
+              key={index}
+              style={{
+                marginTop: isFirst ? 0 : spaceBeforePx,
+                marginBottom: index === paragraphs.length - 1 ? 0 : spaceAfterPx,
+                ...(paragraphDropCap ? { '--sl-dropcap-lines': String(dropCapLines) } : {}),
+              } as React.CSSProperties}
+            >
+              {paragraph || ' '}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   const textStyle = dropCapLines
     ? ({ ...style, '--sl-dropcap-lines': String(dropCapLines) } as React.CSSProperties)
     : style;
@@ -8187,7 +8219,7 @@ function PaperInlineText({
       style={textStyle}
     >
       <PaperWrapFloats spacers={wrapSpacers} zoom={zoom} />
-      {displayText ?? frame.text}
+      {text}
     </div>
   );
 }
@@ -9639,6 +9671,20 @@ function PaperInspector({
                         <option value="tabular">Tabular</option>
                       </select>
                     </Field>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <NumberField
+                      label="Space before mm"
+                      onChange={(spaceBeforeMm) => onUpdateFrame({ typography: { ...frame.typography, spaceBeforeMm: Math.max(0, spaceBeforeMm) } })}
+                      step={0.5}
+                      value={frame.typography.spaceBeforeMm ?? 0}
+                    />
+                    <NumberField
+                      label="Space after mm"
+                      onChange={(spaceAfterMm) => onUpdateFrame({ typography: { ...frame.typography, spaceAfterMm: Math.max(0, spaceAfterMm) } })}
+                      step={0.5}
+                      value={frame.typography.spaceAfterMm ?? 0}
+                    />
                   </div>
                   <div className="mt-2 text-[10px] text-cyan-100/35">Folios: type {'{page}'} or {'{pages}'} for live page numbers (great on master pages).</div>
                 </div>

@@ -134,6 +134,10 @@ export interface PaperTypography {
   numericStyle?: PaperNumericStyle;
   /** Drop-cap height in lines (0 / undefined = no drop cap). */
   dropCapLines?: number;
+  /** Space (mm) before each paragraph. */
+  spaceBeforeMm?: number;
+  /** Space (mm) after each paragraph. */
+  spaceAfterMm?: number;
 }
 
 export interface PaperFrameAsset {

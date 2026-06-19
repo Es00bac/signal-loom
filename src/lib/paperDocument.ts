@@ -66,6 +66,8 @@ export const DEFAULT_PAPER_TYPOGRAPHY: PaperTypography = {
   smallCaps: false,
   numericStyle: 'normal',
   dropCapLines: 0,
+  spaceBeforeMm: 0,
+  spaceAfterMm: 0,
 };
 
 export const DEFAULT_PAPER_BACKGROUND: PaperBackgroundSpec = {
