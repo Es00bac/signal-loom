@@ -1,8 +1,13 @@
 {
   "name": "signal-loom",
   "private": true,
-  "version": "0.0.0",
-  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "description": "A studio for generative media: node-based Flow, a layered Image editor, print/comic Paper layout, and a Video timeline — local-first, bring-your-own-key.",
+  "license": "SEE LICENSE IN LICENSE",
+  "author": {
+    "name": "Sloom Software",
+    "email": "support@sloom.studio"
+  },
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -78,6 +83,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.5.0",
+    "googleapis": "^173.0.0",
     "postcss": "^8.5.10",
     "tailwindcss": "^4.2.2",
     "typescript": "~6.0.2",
