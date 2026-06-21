@@ -29,7 +29,10 @@ export function Slider({
       </label>
       <input
         aria-label={ariaLabel}
-        className="w-full cursor-pointer accent-cyan-400"
+        // touch-pan-y: let a vertical swipe scroll the panel even when it starts on the slider
+        // (Android WebView otherwise lets the range input claim the gesture, freezing the scroll).
+        // Horizontal drags still adjust the value.
+        className="w-full cursor-pointer accent-cyan-400 touch-pan-y"
         max={max}
         min={min}
         onChange={(e) => handleInput(e.currentTarget.value)}
