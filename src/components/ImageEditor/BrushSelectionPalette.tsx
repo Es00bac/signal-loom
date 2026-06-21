@@ -234,6 +234,11 @@ function PresetTile({
   const descriptor = describeImageBrushPreset(preset, preset.group === 'User' ? 'user' : 'built-in');
   const fill = preset.settings.color ?? '#9be7ff';
 
+  // Reflect the brush's character in the thumbnail: a soft edge (low hardness) blurs the stroke,
+  // and texture depth breaks it into a granular, patchy trail (pencil/charcoal/dry brush/screentone).
+  const soft = Math.max(0, 1 - settings.hardness);
+  const grain = Math.max(0, Math.min(1, settings.textureDepth ?? 0));
+
   const previewSize = Math.max(1, Math.min(14, settings.size / 4));
   const step = Math.max(1, previewSize * Math.max(0.01, settings.spacing));
   const curveLength = 64;
@@ -257,42 +262,58 @@ function PresetTile({
         role="img"
         viewBox="0 0 72 18"
       >
+        <defs>
+          {soft > 0.25 ? (
+            <filter height="200%" id={`brush-soft-${preset.id}`} width="160%" x="-30%" y="-50%">
+              <feGaussianBlur stdDeviation={0.35 + soft * 1.7} />
+            </filter>
+          ) : null}
+        </defs>
         <rect fill="#10131b" height="18" rx="3" width="72" x="0" y="0" />
-        {Array.from({ length: numSteps }, (_, index) => {
-          const t = numSteps > 1 ? index / (numSteps - 1) : 0.5;
-          const u = 1 - t;
+        <g filter={soft > 0.25 ? `url(#brush-soft-${preset.id})` : undefined}>
+          {Array.from({ length: numSteps }, (_, index) => {
+            const t = numSteps > 1 ? index / (numSteps - 1) : 0.5;
+            const u = 1 - t;
 
-          // Bezier curve P0(6, 12), P1(26, 2), P2(46, 16), P3(66, 6)
-          const x = u*u*u*6 + 3*u*u*t*26 + 3*u*t*t*46 + t*t*t*66;
-          let y = u*u*u*12 + 3*u*u*t*2 + 3*u*t*t*16 + t*t*t*6;
+            // Bezier curve P0(6, 12), P1(26, 2), P2(46, 16), P3(66, 6)
+            const x = u*u*u*6 + 3*u*u*t*26 + 3*u*t*t*46 + t*t*t*66;
+            let y = u*u*u*12 + 3*u*u*t*2 + 3*u*t*t*16 + t*t*t*6;
 
-          const hash = Math.sin(index * 12.9898) * 43758.5453;
-          const rand = hash - Math.floor(hash);
-          y += (rand - 0.5) * 2 * settings.scatter * 8;
+            const hash = Math.sin(index * 12.9898) * 43758.5453;
+            const rand = hash - Math.floor(hash);
+            y += (rand - 0.5) * 2 * settings.scatter * 8;
 
-          const pressure = Math.sin(t * Math.PI); // 0 at ends, 1 in middle
-          const sizeMod = 1 - (settings.pressureSize || 0) * (1 - pressure);
-          const opacityMod = 1 - (settings.pressureOpacity || 0) * (1 - Math.pow(pressure, 0.5));
+            const pressure = Math.sin(t * Math.PI); // 0 at ends, 1 in middle
+            const sizeMod = 1 - (settings.pressureSize || 0) * (1 - pressure);
+            const opacityMod = 1 - (settings.pressureOpacity || 0) * (1 - Math.pow(pressure, 0.5));
 
-          const currentSize = previewSize * sizeMod;
-          const currentOpacity = Math.max(0, Math.min(1, settings.opacity * settings.flow * opacityMod));
-          const strokeHeight = Math.max(1, (settings.hardness * 2 + 1) * currentSize * 0.5);
-          const stretchY = Math.max(0.1, settings.roundness);
-          const width = Math.max(1, currentSize * 0.5 * (settings.tipShape === 'square' ? 1.15 : 1));
+            // Texture grain: jitter each dab's opacity + size so a textured brush reads as granular
+            // (paper tooth / dots / spatter) instead of a smooth ribbon.
+            const grainHash = Math.sin(index * 78.233 + 1.7) * 43758.5453;
+            const grainRand = grainHash - Math.floor(grainHash);
+            const grainOpacity = 1 - grain * (0.35 + 0.65 * grainRand);
+            const sizeJitter = 1 - grain * 0.4 * grainRand;
 
-          return (
-            <ellipse
-              cx={x}
-              cy={y}
-              fill={fill}
-              fillOpacity={currentOpacity}
-              key={`${preset.id}-${index}`}
-              rx={width}
-              ry={strokeHeight * stretchY}
-              transform={`rotate(${settings.angleDeg} ${x} ${y})`}
-            />
-          );
-        })}
+            const currentSize = Math.max(0.4, previewSize * sizeMod * sizeJitter);
+            const currentOpacity = Math.max(0, Math.min(1, settings.opacity * settings.flow * opacityMod * grainOpacity));
+            const stretchY = Math.max(0.1, settings.roundness);
+            const rx = Math.max(0.5, currentSize * 0.55 * (settings.tipShape === 'square' ? 1.15 : 1));
+            const ry = Math.max(0.5, currentSize * stretchY);
+
+            return (
+              <ellipse
+                cx={x}
+                cy={y}
+                fill={fill}
+                fillOpacity={currentOpacity}
+                key={`${preset.id}-${index}`}
+                rx={rx}
+                ry={ry}
+                transform={`rotate(${settings.angleDeg} ${x} ${y})`}
+              />
+            );
+          })}
+        </g>
       </svg>
       <span className="block truncate">
         {preset.label}

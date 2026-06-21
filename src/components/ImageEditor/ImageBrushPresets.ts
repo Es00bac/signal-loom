@@ -430,10 +430,14 @@ export const IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     id: 'pencil',
     label: 'Pencil',
     group: 'Sketch',
-    // Tilt draws with the side of the lead: a laid-down pen widens + flattens the tip and
-    // aligns it to the lean direction, like a real graphite pencil.
+    // Graphite on paper: tone builds up rather than laying down flat (flow < 1), pressure mostly
+    // darkens (pressureOpacity) with only a little width gain, a fine paper-tooth grain breaks the
+    // stroke, and a soft-ish edge avoids the hard ink look. Tilt lays the lead on its side —
+    // widening + flattening the tip toward the lean direction, like a real pencil.
     settings: {
-      size: 4, opacity: 1, hardness: 0.95, flow: 1, spacing: 0.08, pressureSize: 0.75, pressureFlow: 0.2,
+      size: 4, opacity: 1, hardness: 0.82, flow: 0.9, spacing: 0.06,
+      pressureSize: 0.55, pressureOpacity: 0.6, pressureFlow: 0.4, scatter: 0.05,
+      texture: 'fine-grain', textureScale: 0.7, textureDepth: 0.4,
       tiltSize: 1, tiltRoundness: 0.85, tiltAngle: 1,
     },
   },
@@ -441,29 +445,26 @@ export const IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     id: 'marker',
     label: 'Marker',
     group: 'Sketch',
+    // Felt marker: ink is nearly pressure-insensitive and pools darker at the stroke edge
+    // (wetEdges); a chisel-ish tip with a crisp felt edge.
     settings: {
-      size: 24,
-      opacity: 0.7,
-      hardness: 0.65,
-      flow: 0.8,
-      spacing: 0.14,
-      roundness: 0.72,
-      angleDeg: 8,
-      pressureSize: 0.25,
-      pressureOpacity: 0.2,
+      size: 24, opacity: 0.72, hardness: 0.7, flow: 0.85, spacing: 0.12,
+      roundness: 0.7, angleDeg: 8, pressureSize: 0.08, pressureOpacity: 0.1, wetEdges: true,
     },
   },
   {
     id: 'charcoal',
     label: 'Charcoal',
     group: 'Sketch',
-    settings: { size: 34, opacity: 0.62, hardness: 0.18, flow: 0.52, spacing: 0.18, scatter: 0.18, roundness: 0.65, pressureOpacity: 0.45, pressureFlow: 0.55 },
+    // Charcoal stick: dusty chalk grain, laid on its side via tilt; pressure mostly darkens.
+    settings: { size: 34, opacity: 0.62, hardness: 0.2, flow: 0.52, spacing: 0.16, scatter: 0.22, roundness: 0.65, pressureOpacity: 0.5, pressureFlow: 0.55, texture: 'chalk', textureScale: 1, textureDepth: 0.55, tiltSize: 0.8, tiltRoundness: 0.7, tiltAngle: 1 },
   },
   {
     id: 'textureStipple',
     label: 'Texture Stipple',
     group: 'Sketch',
-    settings: { size: 22, opacity: 0.74, hardness: 0.6, flow: 0.48, spacing: 0.22, scatter: 0.52, pressureFlow: 0.35, roundness: 0.78 },
+    // Stipple: real broken grain from a spatter texture, not just scattered round dabs.
+    settings: { size: 22, opacity: 0.74, hardness: 0.6, flow: 0.48, spacing: 0.2, scatter: 0.55, pressureFlow: 0.35, roundness: 0.78, texture: 'spatter', textureScale: 1, textureDepth: 0.6 },
   },
   {
     id: 'inker',
@@ -487,7 +488,8 @@ export const IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     id: 'technicalLiner',
     label: 'Technical Liner',
     group: 'Ink',
-    settings: { size: 6, opacity: 1, hardness: 1, flow: 1, spacing: 0.04, pressureSize: 0.2, smoothing: 0.18 },
+    // Technical pen (Rapidograph): perfectly constant width — pressure must not change the line.
+    settings: { size: 6, opacity: 1, hardness: 1, flow: 1, spacing: 0.03, pressureSize: 0, smoothing: 0.22 },
   },
   {
     id: 'airbrush',
@@ -499,25 +501,30 @@ export const IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     id: 'dryBrush',
     label: 'Dry Brush',
     group: 'Paint',
-    settings: { size: 42, opacity: 0.8, hardness: 0.55, flow: 0.42, spacing: 0.22, scatter: 0.28, roundness: 0.5, angleDeg: 18, pressureFlow: 0.6 },
+    // Dry brush: paint skips over the canvas tooth, leaving a broken grainy stroke.
+    settings: { size: 42, opacity: 0.8, hardness: 0.55, flow: 0.42, spacing: 0.2, scatter: 0.3, roundness: 0.5, angleDeg: 18, pressureFlow: 0.6, texture: 'canvas-grain', textureScale: 1, textureDepth: 0.6 },
   },
   {
     id: 'watercolorWash',
     label: 'Watercolor Wash',
     group: 'Paint',
-    settings: { size: 96, opacity: 0.28, hardness: 0.03, flow: 0.18, spacing: 0.08, scatter: 0.05, pressureFlow: 0.85, smoothing: 0.4 },
+    // Watercolor: transparent pigment that pools darker at the drying edge (wetEdges) and settles
+    // into the paper grain.
+    settings: { size: 96, opacity: 0.28, hardness: 0.03, flow: 0.18, spacing: 0.08, scatter: 0.05, pressureFlow: 0.85, smoothing: 0.4, wetEdges: true, texture: 'canvas-grain', textureScale: 1.4, textureDepth: 0.18 },
   },
   {
     id: 'gouacheFlat',
     label: 'Gouache Flat',
     group: 'Paint',
-    settings: { size: 48, opacity: 0.92, hardness: 0.62, flow: 0.62, spacing: 0.12, tipShape: 'square', roundness: 0.58, angleDeg: 6, pressureFlow: 0.4 },
+    // Gouache: flat, fully opaque matte paint with a faint canvas tooth.
+    settings: { size: 48, opacity: 1, hardness: 0.66, flow: 0.65, spacing: 0.1, tipShape: 'square', roundness: 0.58, angleDeg: 6, pressureFlow: 0.35, texture: 'canvas-grain', textureScale: 1.2, textureDepth: 0.15 },
   },
   {
     id: 'oilBristle',
     label: 'Oil Bristle',
     group: 'Paint',
-    settings: { size: 58, opacity: 0.88, hardness: 0.5, flow: 0.54, spacing: 0.18, scatter: 0.14, roundness: 0.66, angleDeg: 14, pressureFlow: 0.52, smoothing: 0.28 },
+    // Oil bristle: thick paint dragged by stiff bristles, raking the canvas grain.
+    settings: { size: 58, opacity: 0.9, hardness: 0.5, flow: 0.54, spacing: 0.16, scatter: 0.16, roundness: 0.66, angleDeg: 14, pressureFlow: 0.52, smoothing: 0.28, texture: 'canvas-grain', textureScale: 0.9, textureDepth: 0.4 },
   },
   {
     id: 'cloudGlaze',
@@ -541,19 +548,22 @@ export const IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     id: 'dry-bristle',
     label: 'Dry Bristle',
     group: 'Paint',
-    settings: { size: 18, opacity: 1, hardness: 0.85, flow: 0.85, spacing: 0.07, scatter: 0.15, fadeLength: 6, paintLoad: 1, loadFalloff: 0.004 },
+    // Dry bristle: separates into individual bristle streaks over the canvas tooth as paint runs out.
+    settings: { size: 18, opacity: 1, hardness: 0.85, flow: 0.85, spacing: 0.07, scatter: 0.18, fadeLength: 6, paintLoad: 1, loadFalloff: 0.004, texture: 'canvas-grain', textureScale: 0.8, textureDepth: 0.5 },
   },
   {
     id: 'mangaInker',
     label: 'Manga Inker',
     group: 'Comic / Manga',
-    settings: { size: 14, opacity: 1, hardness: 0.92, flow: 1, spacing: 0.045, pressureSize: 1, pressureFlow: 0.15, smoothing: 0.35 },
+    // G-pen manga ink: razor-crisp edge with dramatic pressure-driven line weight.
+    settings: { size: 14, opacity: 1, hardness: 1, flow: 1, spacing: 0.04, pressureSize: 1, pressureFlow: 0, smoothing: 0.4 },
   },
   {
     id: 'screentoneDots',
     label: 'Screentone Dots',
     group: 'Comic / Manga',
-    settings: { size: 9, opacity: 0.55, hardness: 1, flow: 1, spacing: 0.9, scatter: 0.2, pressureSize: 0, pressureOpacity: 0 },
+    // Screentone: lay an even tone and let the halftone-dots texture punch the real dot pattern.
+    settings: { size: 28, opacity: 0.85, hardness: 1, flow: 1, spacing: 0.12, scatter: 0, pressureSize: 0, pressureOpacity: 0, texture: 'dots', textureScale: 1, textureDepth: 0.9 },
   },
   {
     id: 'speedLine',
@@ -565,19 +575,22 @@ export const IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     id: 'storyboardBlue',
     label: 'Storyboard Blue',
     group: 'Comic / Manga',
-    settings: { size: 8, opacity: 0.85, hardness: 0.75, flow: 0.9, spacing: 0.08, pressureSize: 0.65, color: '#38bdf8' },
+    // Non-photo blue pencil: a blue graphite — same paper tooth + pressure-darkening as the Pencil.
+    settings: { size: 8, opacity: 0.9, hardness: 0.8, flow: 0.85, spacing: 0.06, pressureSize: 0.5, pressureOpacity: 0.5, scatter: 0.05, texture: 'fine-grain', textureScale: 0.7, textureDepth: 0.35, color: '#38bdf8' },
   },
   {
     id: 'halftoneBlock',
     label: 'Halftone Block',
     group: 'Comic / Manga',
-    settings: { size: 18, opacity: 0.62, hardness: 1, flow: 0.92, spacing: 0.36, tipShape: 'square', roundness: 0.72, scatter: 0.1, pressureSize: 0.12 },
+    // Halftone block: blocky tone broken by a coarse halftone-dot texture.
+    settings: { size: 18, opacity: 0.7, hardness: 1, flow: 0.92, spacing: 0.18, tipShape: 'square', roundness: 0.72, scatter: 0.08, pressureSize: 0.12, texture: 'dots', textureScale: 1.2, textureDepth: 0.6 },
   },
   {
     id: 'fxSpark',
     label: 'FX Spark',
     group: 'FX',
-    settings: { size: 16, opacity: 0.9, hardness: 0.8, flow: 0.84, spacing: 0.22, scatter: 1.2, pressureSize: 0.24, pressureOpacity: 0.1 },
+    // Sparks: flung specks of light — a spatter texture sharpens the broken-particle look.
+    settings: { size: 16, opacity: 0.9, hardness: 0.8, flow: 0.84, spacing: 0.22, scatter: 1.2, pressureSize: 0.24, pressureOpacity: 0.1, texture: 'spatter', textureScale: 1, textureDepth: 0.5 },
   },
   {
     id: 'rimLight',

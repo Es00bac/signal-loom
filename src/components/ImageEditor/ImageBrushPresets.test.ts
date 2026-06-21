@@ -155,11 +155,11 @@ describe('ImageBrushPresets', () => {
     expect(applyBrushPreset(current, getBrushPreset('marker')!)).toMatchObject({
       presetId: 'marker',
       size: 24,
-      opacity: 0.7,
-      hardness: 0.65,
-      flow: 0.8,
-      spacing: 0.14,
-      roundness: 0.72,
+      opacity: 0.72,
+      hardness: 0.7,
+      flow: 0.85,
+      spacing: 0.12,
+      roundness: 0.7,
       color: '#ff00ff',
     });
     expect(applyBrushPreset(current, getBrushPreset('storyboardBlue')!).color).toBe('#38bdf8');
@@ -319,7 +319,7 @@ describe('ImageBrushPresets', () => {
       },
       unsupportedWarnings: [],
     });
-    expect(pencil?.preview.signature).toBe('4:0.08:0.72:0.15:17:6,9->66,9:61');
+    expect(pencil?.preview.signature).toBe('4:0.06:0.72:0.15:17:6,9->66,9:61');
 
     const user = descriptor?.presets.find((preset) => preset.id === 'user-imported-mixer');
     expect(user?.tags).toEqual(expect.arrayContaining([
