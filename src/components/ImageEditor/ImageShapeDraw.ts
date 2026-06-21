@@ -228,11 +228,11 @@ function parseHexColor(color: string): [number, number, number] {
 }
 
 function cloneImageData(imageData: ImageData): ImageData {
-  return {
-    width: imageData.width,
-    height: imageData.height,
-    data: new Uint8ClampedArray(imageData.data),
-  } as ImageData;
+  // Must be a real ImageData — the result is written back via ctx.putImageData(), which rejects a
+  // plain object cast `as ImageData`. Structural fallback only for pure-node tests lacking ImageData.
+  const data = new Uint8ClampedArray(imageData.data);
+  if (typeof ImageData !== 'undefined') return new ImageData(data, imageData.width, imageData.height);
+  return { width: imageData.width, height: imageData.height, data } as ImageData;
 }
 
 function mixByte(before: number, after: number, amount: number): number {

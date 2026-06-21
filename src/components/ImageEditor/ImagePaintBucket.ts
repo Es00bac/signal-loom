@@ -1382,11 +1382,14 @@ function contains(imageData: ImageData, x: number, y: number): boolean {
 }
 
 function cloneImageData(imageData: ImageData): ImageData {
-  return {
-    width: imageData.width,
-    height: imageData.height,
-    data: new Uint8ClampedArray(imageData.data),
-  } as ImageData;
+  const data = new Uint8ClampedArray(imageData.data);
+  // Must be a REAL ImageData instance: the result is handed to ctx.putImageData(), which rejects a
+  // plain {width,height,data} object ("parameter 1 is not of type 'ImageData'") — that bug made the
+  // paint bucket silently no-op in the browser while node tests (which only read .data) passed.
+  if (typeof ImageData !== 'undefined') {
+    return new ImageData(data, imageData.width, imageData.height);
+  }
+  return { width: imageData.width, height: imageData.height, data } as ImageData;
 }
 
 function mixByte(before: number, after: number, amount: number): number {
