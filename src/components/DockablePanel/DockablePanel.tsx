@@ -912,7 +912,7 @@ function readElementRect(element: Element | null): PanelRect | undefined {
   };
 }
 
-function prepareExternalPanelDocument(targetDocument: Document): void {
+export function prepareExternalPanelDocument(targetDocument: Document): void {
   const themedRoot = document.querySelector<HTMLElement>('.signal-loom-themed');
   const themedRootStyle = themedRoot ? getComputedStyle(themedRoot) : null;
 
@@ -940,6 +940,16 @@ function prepareExternalPanelDocument(targetDocument: Document): void {
   let copiedStyle = false;
   for (const node of document.querySelectorAll('style, link[rel="stylesheet"]')) {
     const clone = node.cloneNode(true) as HTMLElement;
+    if (clone.tagName === 'LINK') {
+      // The popup opens as about:blank, so a cloned relative/root-relative href
+      // (e.g. "./assets/index-*.css" in a production build) would resolve against
+      // about:blank and fail to load, leaving the panel completely unstyled.
+      // Reading the live element's .href yields the already-resolved absolute URL.
+      const absoluteHref = (node as HTMLLinkElement).href;
+      if (absoluteHref) {
+        clone.setAttribute('href', absoluteHref);
+      }
+    }
     if (!copiedStyle && clone.tagName === 'STYLE') {
       clone.id = 'signal-loom-floating-panel-style-copy';
       copiedStyle = true;
