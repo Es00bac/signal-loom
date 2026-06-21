@@ -45,6 +45,21 @@ describe('ImageWarpMesh', () => {
     expect(mesh.points[8]).toEqual({ x: 0, y: 0 }); // missing -> identity
   });
 
+  it('normalizeWarpMesh is self-contained so it survives stringification into the composite worker', () => {
+    // getImageLayerBitmapDrawMetrics() calls normalizeWarpMesh(), and that metrics function is
+    // serialised with .toString() into the composite-render Web Worker. If normalizeWarpMesh
+    // references any module-level helper (it used to call `clampNumber`), the worker throws
+    // "X is not defined" on EVERY drawn layer — which silently broke the Type tool, because a
+    // placed text layer renders through the transformed draw path. Guard against regressing that.
+    const src = normalizeWarpMesh.toString();
+    expect(src).not.toMatch(/clampNumber\s*\(/); // must not CALL the module-level helper
+    // Rebuild it with no surrounding scope (exactly the worker's situation) and confirm it runs.
+    const isolated = new Function(`return (${src});`)() as typeof normalizeWarpMesh;
+    const out = isolated({ columns: 2, rows: 2, points: [{ x: 99, y: NaN }] } as never)!;
+    expect(out.points).toHaveLength(9);
+    expect(out.points[0]).toEqual({ x: 2, y: 0 }); // clamp to ±2 + NaN -> 0, still applied
+  });
+
   it('generates deforming presets and an identity for none', () => {
     expect(isWarpMeshDeformed(createWarpMeshPreset('none'))).toBe(false);
     for (const preset of ['arc', 'arcUpper', 'arcLower', 'flag', 'wave', 'bulge', 'fisheye', 'twist'] as const) {

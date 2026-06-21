@@ -30,6 +30,7 @@ import { isPenSessionActive } from './tools/penTool';
 import type { EditorTool, ImageDocument, ImageLayer, ImageVectorPathPoint, LayerBitmap } from '../../types/imageEditor';
 import {
   getImageTextEditOverlayBounds,
+  shouldRefocusTextEditorOnBlur,
   imageTextLayerContainsPoint,
 } from './ImageTextPresets';
 import { updateTextLayerFromStyle } from './ImageTextLayer';
@@ -1813,6 +1814,7 @@ function ImageTextEditOverlay({
   zoom: number;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const justOpenedRef = useRef(false);
   const text = layer.text;
 
   useEffect(() => {
@@ -1820,6 +1822,14 @@ function ImageTextEditOverlay({
     if (!textarea) return;
     textarea.focus();
     textarea.select();
+    // The same pointer gesture that places the text layer finishes just after this editor
+    // opens and can pull focus back to <body>. Mark a brief "just opened" window so that a
+    // blur to nothing (focus fell through, not a click on a real control) is treated as
+    // transient and refocused — otherwise the freshly-placed empty layer is committed-then-
+    // discarded the instant it appears, and the Type tool looks completely dead.
+    justOpenedRef.current = true;
+    const settle = window.setTimeout(() => { justOpenedRef.current = false; }, 400);
+    return () => window.clearTimeout(settle);
   }, [layer.id]);
 
   if (!text) return null;
@@ -1831,6 +1841,12 @@ function ImageTextEditOverlay({
       onBlurCapture={(event) => {
         const nextTarget = event.relatedTarget;
         if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+        if (shouldRefocusTextEditorOnBlur(justOpenedRef.current, nextTarget)) {
+          // Transient focus loss to <body> during the opening gesture — keep editing.
+          const textarea = textareaRef.current;
+          if (textarea) requestAnimationFrame(() => { if (textarea.isConnected) textarea.focus(); });
+          return;
+        }
         onCommit();
       }}
       onDoubleClick={(event) => event.stopPropagation()}

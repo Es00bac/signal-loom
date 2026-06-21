@@ -24,7 +24,7 @@ import {
   transformSourcePoint,
 } from './ImageLayerTransform';
 import { renderLayerWithEffects } from './ImageLayerEffects';
-import { isWarpMeshDeformed, sampleWarpMeshDisplacement } from './ImageWarpMesh';
+import { isWarpMeshDeformed, normalizeWarpMesh, sampleWarpMeshDisplacement } from './ImageWarpMesh';
 import { isImageLayerEffectivelyVisible } from './ImageLayerGroups';
 import type { ImageLayerWithVectorMask } from './ImageVectorMasks';
 
@@ -622,6 +622,7 @@ function getHighResWorkerBlobUrl(): string {
     ${interpolateCornerOffset.toString()}
     ${hasImageLayerWarp.toString()}
     ${isWarpMeshDeformed.toString()}
+    ${normalizeWarpMesh.toString()}
     ${sampleWarpMeshDisplacement.toString()}
     ${transformSourcePoint.toString()}
     ${buildTransformedCornersFromMetrics.toString()}

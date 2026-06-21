@@ -48,16 +48,28 @@ function clampNumber(value: number | undefined): number {
   return value < -2 ? -2 : value > 2 ? 2 : value;
 }
 
-/** Coerces an arbitrary value into a valid mesh (defensive for imported/persisted data). */
+/**
+ * Coerces an arbitrary value into a valid mesh (defensive for imported/persisted data).
+ *
+ * Self-contained (no external function references) so it can be stringified into the
+ * composite-render Web Worker alongside `getImageLayerBitmapDrawMetrics`, which calls it
+ * for every drawn layer. A stray reference here crashes the whole worker render.
+ */
 export function normalizeWarpMesh(mesh: WarpMesh | null | undefined): WarpMesh | null {
   if (!mesh) return null;
+  // Inlined clamp (kept local so this function carries no external reference into the worker).
+  // Bounds displacements to ±2 layer-widths, matching the module-level helper used elsewhere.
+  const clampDisplacement = (value: number | undefined): number => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+    return value < -2 ? -2 : value > 2 ? 2 : value;
+  };
   const cols = Math.max(1, Math.round(mesh.columns));
   const rws = Math.max(1, Math.round(mesh.rows));
   const count = (cols + 1) * (rws + 1);
   const points: WarpMeshPoint[] = new Array(count);
   for (let i = 0; i < count; i += 1) {
     const p = mesh.points?.[i];
-    points[i] = { x: clampNumber(p?.x), y: clampNumber(p?.y) };
+    points[i] = { x: clampDisplacement(p?.x), y: clampDisplacement(p?.y) };
   }
   return { columns: cols, rows: rws, points };
 }

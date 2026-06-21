@@ -330,6 +330,21 @@ export function getImageTextEditOverlayBounds(
   };
 }
 
+/**
+ * Whether a blur out of the on-canvas text editor should be treated as transient focus loss
+ * (refocus the editor) rather than a click-away commit. The pointer gesture that *places* a new
+ * text layer finishes just after the editor opens and can pull focus to <body> (relatedTarget
+ * null); during that brief "just opened" window we must not commit-then-discard the freshly
+ * placed empty layer — that made the Type tool look completely dead. Focus landing on a real
+ * control (an HTMLElement) is always a genuine blur and should commit.
+ */
+export function shouldRefocusTextEditorOnBlur(
+  justOpened: boolean,
+  nextFocusTarget: EventTarget | null,
+): boolean {
+  return justOpened && !(nextFocusTarget instanceof HTMLElement);
+}
+
 export function imageTextLayerContainsPoint(
   layer: ImageLayer,
   point: { x: number; y: number },
