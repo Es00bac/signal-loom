@@ -121,6 +121,66 @@ export function docRectToScreen(
   };
 }
 
+export interface DocumentBlitRegion {
+  /** Source sub-rectangle in document (composite) pixels. */
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+  /** Destination sub-rectangle in device (canvas backing-store) pixels. */
+  dx: number;
+  dy: number;
+  dw: number;
+  dh: number;
+}
+
+/**
+ * Given the document's full device-space placement rect `(x0, y0, rectW, rectH)` (already snapped +
+ * DPR-scaled) and the device canvas size, return only the part of the document that actually lands
+ * on the canvas — as a source rect in document pixels and a destination rect in device pixels.
+ *
+ * Why: at high zoom the full document maps to a destination far larger than the canvas
+ * (rectW ≈ docWidth × zoom × DPR). Blitting the whole composite into that giant off-canvas rect is
+ * wasteful and — on a real GPU compositor surface (Electron/native Wayland, worst at HiDPI) — the
+ * oversized scaled drawImage can be dropped entirely, leaving only the checkerboard (a plain
+ * fillRect, which the GPU clips fine). Clamping the blit to the visible region keeps the destination
+ * within the canvas, so the image always draws. Returns null when the document is fully off-canvas.
+ */
+export function computeVisibleDocumentBlit(
+  x0: number,
+  y0: number,
+  rectW: number,
+  rectH: number,
+  docWidth: number,
+  docHeight: number,
+  deviceWidth: number,
+  deviceHeight: number,
+): DocumentBlitRegion | null {
+  if (!(rectW > 0) || !(rectH > 0) || !(docWidth > 0) || !(docHeight > 0)) return null;
+  if (!(deviceWidth > 0) || !(deviceHeight > 0)) return null;
+
+  const vx0 = Math.max(0, x0);
+  const vy0 = Math.max(0, y0);
+  const vx1 = Math.min(deviceWidth, x0 + rectW);
+  const vy1 = Math.min(deviceHeight, y0 + rectH);
+  if (vx1 <= vx0 || vy1 <= vy0) return null;
+
+  const scaleX = rectW / docWidth;
+  const scaleY = rectH / docHeight;
+  const sx = Math.max(0, (vx0 - x0) / scaleX);
+  const sy = Math.max(0, (vy0 - y0) / scaleY);
+  return {
+    sx,
+    sy,
+    sw: Math.min(docWidth - sx, (vx1 - vx0) / scaleX),
+    sh: Math.min(docHeight - sy, (vy1 - vy0) / scaleY),
+    dx: vx0,
+    dy: vy0,
+    dw: vx1 - vx0,
+    dh: vy1 - vy0,
+  };
+}
+
 /**
  * Snap zoom to the nearest "preset" step (used by Ctrl+= / Ctrl+-).
  * Steps grow geometrically so each press feels like an even jump on screen.

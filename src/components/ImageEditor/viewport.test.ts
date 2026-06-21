@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyPinch,
   clampZoom,
+  computeVisibleDocumentBlit,
   docRectToScreen,
   docToScreen,
   fitToContainer,
@@ -154,5 +155,63 @@ describe('viewport — applyPinch (two-finger pinch-zoom + pan)', () => {
     expect(out.zoom).toBe(1);
     expect(out.panX).toBe(20);
     expect(out.panY).toBe(40);
+  });
+});
+
+describe('viewport — computeVisibleDocumentBlit (bounded zoom blit)', () => {
+  it('returns the whole document when it fits entirely on the canvas', () => {
+    const r = computeVisibleDocumentBlit(100, 50, 400, 300, 800, 600, 1852, 928)!;
+    expect(r).not.toBeNull();
+    expect(r.sx).toBe(0);
+    expect(r.sy).toBe(0);
+    expect(r.sw).toBe(800);
+    expect(r.sh).toBe(600);
+    expect(r.dx).toBe(100);
+    expect(r.dy).toBe(50);
+    expect(r.dw).toBe(400);
+    expect(r.dh).toBe(300);
+  });
+
+  it('clamps an extreme zoom-in blit to the canvas (the disappearing-image case)', () => {
+    // A real zoom-in frame captured live: 800x600 doc, device 1852x928, doc rect far larger than
+    // the canvas. The old code blit the full composite into this giant rect (dropped by the GPU).
+    const r = computeVisibleDocumentBlit(-4863, -3878, 11578, 8684, 800, 600, 1852, 928)!;
+    expect(r).not.toBeNull();
+    // Destination is fully bounded by the canvas — never the unbounded off-screen rect.
+    expect(r.dx).toBe(0);
+    expect(r.dy).toBe(0);
+    expect(r.dw).toBe(1852);
+    expect(r.dh).toBe(928);
+    expect(r.dx + r.dw).toBeLessThanOrEqual(1852);
+    expect(r.dy + r.dh).toBeLessThanOrEqual(928);
+    // Source stays inside the document bounds.
+    expect(r.sx).toBeGreaterThanOrEqual(0);
+    expect(r.sy).toBeGreaterThanOrEqual(0);
+    expect(r.sx + r.sw).toBeLessThanOrEqual(800 + 1e-6);
+    expect(r.sy + r.sh).toBeLessThanOrEqual(600 + 1e-6);
+  });
+
+  it('preserves the source->destination mapping exactly (clamp draws identical pixels)', () => {
+    const x0 = -200, y0 = -100, rectW = 1600, rectH = 1200, docW = 800, docH = 600, DW = 900, DH = 500;
+    const r = computeVisibleDocumentBlit(x0, y0, rectW, rectH, docW, docH, DW, DH)!;
+    const scaleX = rectW / docW;
+    const scaleY = rectH / docH;
+    // Each destination edge maps back to the same source edge as the original full-rect transform.
+    expect(x0 + r.sx * scaleX).toBeCloseTo(r.dx, 5);
+    expect(y0 + r.sy * scaleY).toBeCloseTo(r.dy, 5);
+    expect(x0 + (r.sx + r.sw) * scaleX).toBeCloseTo(r.dx + r.dw, 5);
+    expect(y0 + (r.sy + r.sh) * scaleY).toBeCloseTo(r.dy + r.dh, 5);
+  });
+
+  it('returns null when the document is entirely off-canvas', () => {
+    expect(computeVisibleDocumentBlit(-5000, 0, 1000, 800, 800, 600, 1852, 928)).toBeNull();
+    expect(computeVisibleDocumentBlit(2000, 0, 100, 100, 800, 600, 1852, 928)).toBeNull();
+    expect(computeVisibleDocumentBlit(0, -5000, 1000, 800, 800, 600, 1852, 928)).toBeNull();
+  });
+
+  it('returns null for degenerate sizes', () => {
+    expect(computeVisibleDocumentBlit(0, 0, 0, 300, 800, 600, 1852, 928)).toBeNull();
+    expect(computeVisibleDocumentBlit(0, 0, 400, 300, 0, 600, 1852, 928)).toBeNull();
+    expect(computeVisibleDocumentBlit(0, 0, 400, 300, 800, 600, 0, 928)).toBeNull();
   });
 });

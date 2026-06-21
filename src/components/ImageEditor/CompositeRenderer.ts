@@ -4,6 +4,7 @@ import { maskToCanvas, type SelectionMask } from './SelectionMask';
 import { createQuickMaskOverlayMask } from './ImageQuickMask';
 import { buildSelectAndMaskPreviewMask, createSelectAndMaskMatteMask } from './ImageSelectAndMask';
 import { drawCropPreviewOverlay } from './ImageCropOverlay';
+import { computeVisibleDocumentBlit } from './viewport';
 import { getCropPreview } from './tools/cropTool';
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import { createBitmap } from './LayerBitmap';
@@ -1351,7 +1352,17 @@ export class CompositeRenderer {
     const perfBlitStart = performance.now();
     if (composite) {
       ctx.imageSmoothingEnabled = true;
-      ctx.drawImage(composite, 0, 0, composite.width, composite.height, x0, y0, dw, dh);
+      // Blit only the on-canvas portion of the document. Drawing the entire composite into the full
+      // (x0,y0,dw,dh) rect means a destination far larger than the canvas at high zoom (dw ≈
+      // docWidth × zoom × DPR). On a real GPU compositor surface (Electron / native Wayland, worst at
+      // HiDPI) that oversized scaled drawImage can be dropped entirely, leaving only the checkerboard
+      // (a plain fillRect, which the GPU clips fine) — i.e. the image "disappears" on zoom-in.
+      // Clamping source + destination to the visible region keeps the draw on-canvas and is also
+      // cheaper. Identical visible pixels when the document fully fits.
+      const blit = computeVisibleDocumentBlit(x0, y0, dw, dh, composite.width, composite.height, this.deviceWidth, this.deviceHeight);
+      if (blit) {
+        ctx.drawImage(composite, blit.sx, blit.sy, blit.sw, blit.sh, blit.dx, blit.dy, blit.dw, blit.dh);
+      }
     }
     ctx.restore();
     const perfOverlayStart = performance.now();
