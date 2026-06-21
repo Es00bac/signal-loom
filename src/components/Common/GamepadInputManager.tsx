@@ -59,6 +59,18 @@ export function GamepadInputManager({
 
     const tick = () => {
       if (!mounted) return;
+      // On desktop each workspace is its own Electron window, and every window mounts its own
+      // GamepadInputManager polling the same physical controller. Only the focused window may act
+      // on it — otherwise one button press fires in every open workspace at once.
+      if (
+        typeof document !== 'undefined' &&
+        typeof document.hasFocus === 'function' &&
+        !document.hasFocus()
+      ) {
+        activeControlsRef.current = new Set();
+        animationFrame = window.requestAnimationFrame(tick);
+        return;
+      }
       const gamepad = findActiveGamepad(navigator.getGamepads());
       if (!gamepad) {
         activeControlsRef.current = new Set();

@@ -123,3 +123,77 @@ describe('GamepadInputManager binding scaffold', () => {
     }));
   });
 });
+
+describe('GamepadInputManager runtime input routing', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('only dispatches gamepad commands when its own window is focused', () => {
+    const onCommand = vi.fn();
+    const pressedPad = {
+      connected: true,
+      id: 'test-pad',
+      index: 0,
+      mapping: 'standard' as const,
+      timestamp: 1,
+      axes: [0, 0, 0, 0],
+      buttons: Array.from({ length: 17 }, (_, i) => ({
+        pressed: i === 0,
+        touched: i === 0,
+        value: i === 0 ? 1 : 0,
+      })),
+    };
+
+    vi.stubGlobal('navigator', { userAgent: 'test', getGamepads: () => [pressedPad] });
+
+    let frame: FrameRequestCallback | null = null;
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      frame = cb;
+      return 1;
+    });
+    vi.stubGlobal('cancelAnimationFrame', () => undefined);
+
+    const hasFocus = vi.spyOn(document, 'hasFocus');
+
+    act(() => {
+      root.render(
+        <GamepadInputManager
+          activeWorkspace="flow"
+          bindings={createDefaultGamepadBindings()}
+          onCommand={onCommand}
+        />,
+      );
+    });
+
+    // Background window (not focused): the shared controller must be ignored.
+    hasFocus.mockReturnValue(false);
+    act(() => {
+      frame?.(0);
+    });
+    expect(onCommand).not.toHaveBeenCalled();
+
+    // Focused window: the Flow binding for "A / Cross" (view:command-palette) fires once.
+    hasFocus.mockReturnValue(true);
+    act(() => {
+      frame?.(0);
+    });
+    expect(onCommand).toHaveBeenCalledTimes(1);
+    expect(onCommand.mock.calls[0]?.[0]).toBe('view:command-palette');
+  });
+});
