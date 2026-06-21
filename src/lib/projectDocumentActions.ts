@@ -40,7 +40,7 @@ export async function buildCurrentProjectDocument(options: {
     }),
     usageLedger: useProjectUsageStore.getState().exportSnapshot(),
     paper: usePaperStore.getState().exportSnapshot(),
-    imageEditor: useImageEditorStore.getState().exportProjectSnapshot(),
+    imageEditor: await useImageEditorStore.getState().exportProjectSnapshotWithPixels(),
   };
 
   return normalizeProjectMediaReferencesForSave(document).document;
@@ -84,7 +84,7 @@ export async function restoreProjectDocument(document: unknown): Promise<void> {
     editorStore.restoreWorkspaceSnapshot(resolvedDocument.editor);
     projectUsageStore.restoreSnapshot(resolvedDocument.usageLedger);
     paperStore.restoreSnapshot(resolvedDocument.paper);
-    imageEditorStore.restoreProjectSnapshot(resolvedDocument.imageEditor);
+    await imageEditorStore.restoreProjectSnapshotWithPixels(resolvedDocument.imageEditor);
     // Multi-window desktop: the source-bin restore above replaced the Source Library with the
     // saved project bin (resolved against flow media refs first). The native main process holds
     // the authoritative live snapshot — which also contains assets generated in *other* windows

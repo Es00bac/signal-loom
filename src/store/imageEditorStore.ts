@@ -40,6 +40,7 @@ import {
 import { normalizeBrushSettings } from '../components/ImageEditor/ImageBrushEngine';
 import { toggleLayerInSelection } from '../components/ImageEditor/ImageGroupTransform';
 import { cloneBitmap } from '../components/ImageEditor/LayerBitmap';
+import { decodeImageLayerProjectPixels, encodeImageLayerProjectPixels } from '../components/ImageEditor/ImageLayerProjectPixels';
 import { buildPerspectiveCroppedImageDocumentState } from '../components/ImageEditor/tools/perspectiveCropDocument';
 import type { CropPoint as PerspectiveCropCorner } from '../components/ImageEditor/tools/perspectiveCrop';
 import {
@@ -201,6 +202,8 @@ interface ImageEditorActions {
   getActiveDocument: () => ImageDocument | undefined;
   exportProjectSnapshot: () => ImageEditorProjectSnapshot;
   restoreProjectSnapshot: (snapshot?: ImageEditorProjectSnapshot) => void;
+  exportProjectSnapshotWithPixels: () => Promise<ImageEditorProjectSnapshot>;
+  restoreProjectSnapshotWithPixels: (snapshot?: ImageEditorProjectSnapshot) => Promise<void>;
   setIsDraggingSlider: (dragging: boolean) => void;
   setPaintingStroke: (painting: boolean) => void;
 }
@@ -997,6 +1000,46 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     restoreProjectSnapshot: (snapshot) => {
       const safeSnapshot = sanitizeImageEditorSnapshot(snapshot);
       const documents = safeSnapshot?.documents ?? [];
+      const activeDocId = safeSnapshot?.activeDocId && documents.some((document) => document.id === safeSnapshot.activeDocId)
+        ? safeSnapshot.activeDocId
+        : documents[0]?.id ?? null;
+      set({
+        documents,
+        activeDocId,
+        undoStacks: {},
+        redoStacks: {},
+        quickActionMacros: safeSnapshot?.quickActionMacros?.map(cloneImageQuickActionMacro) ?? [],
+        activeQuickActionRecording: null,
+        generativeFillDismissedByDocId: {},
+      });
+    },
+
+    // Asset-complete variants used when a project document is written to / read from disk: the
+    // live layer pixels are encoded into base64 (bitmapData/maskData) so the active canvas
+    // survives a save, instead of being stripped to null and lost. See ImageLayerProjectPixels.
+    exportProjectSnapshotWithPixels: async () => {
+      const state = get();
+      const documents = await Promise.all(state.documents.map(async (document) => ({
+        ...document,
+        layers: await Promise.all(document.layers.map((layer) => encodeImageLayerProjectPixels(layer))),
+        // Undo-history snapshots stay pixel-stripped (not persisted) to bound file size; only the
+        // live document layers carry their pixels into the saved project.
+        snapshots: document.snapshots?.map(stripImageSnapshotRuntimePixels) ?? [],
+      })));
+      return {
+        documents,
+        activeDocId: state.activeDocId,
+        quickActionMacros: state.quickActionMacros.map(cloneImageQuickActionMacro),
+      };
+    },
+
+    restoreProjectSnapshotWithPixels: async (snapshot) => {
+      const safeSnapshot = sanitizeImageEditorSnapshot(snapshot);
+      const rawDocuments = safeSnapshot?.documents ?? [];
+      const documents = await Promise.all(rawDocuments.map(async (document) => ({
+        ...document,
+        layers: await Promise.all(document.layers.map((layer) => decodeImageLayerProjectPixels(layer))),
+      })));
       const activeDocId = safeSnapshot?.activeDocId && documents.some((document) => document.id === safeSnapshot.activeDocId)
         ? safeSnapshot.activeDocId
         : documents[0]?.id ?? null;

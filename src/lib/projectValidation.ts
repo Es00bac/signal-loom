@@ -588,6 +588,10 @@ function sanitizeImageLayer(layer: UnknownRecord, layerIndex: number): ImageLaye
     transformOriginY: type === 'group' ? undefined : transformOriginY,
     bitmap: null,
     mask: null,
+    // Serialized pixel payloads carry the actual layer pixels across a project save/open; keep
+    // them through sanitize so the image isn't wiped on restore (decoded back into bitmap/mask).
+    bitmapData: typeof layer.bitmapData === 'string' ? layer.bitmapData : undefined,
+    maskData: typeof layer.maskData === 'string' ? layer.maskData : undefined,
     ...(maskDensity !== undefined ? { maskDensity } : {}),
     ...(maskFeather !== undefined ? { maskFeather } : {}),
     bitmapVersion: finiteNumber(layer.bitmapVersion, 0),

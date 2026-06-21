@@ -60,6 +60,22 @@ export async function bitmapToBlob(
   return bitmap.convertToBlob({ type });
 }
 
+/**
+ * Encode a layer bitmap to a base64 PNG data URL for serialization into a project file
+ * (.sloom / .slimg). Chunked base64 so multi-megabyte 4K layers don't blow the call stack.
+ * Decode the result back into a live bitmap with `bitmapFromUrl`.
+ */
+export async function bitmapToPngDataUrl(bitmap: LayerBitmap): Promise<string> {
+  const blob = await bitmap.convertToBlob({ type: 'image/png' });
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return `data:image/png;base64,${btoa(binary)}`;
+}
+
 export async function bitmapFromImageSource(image: CanvasImageSource): Promise<LayerBitmap> {
   const width = (image as { width?: number }).width ?? 0;
   const height = (image as { height?: number }).height ?? 0;

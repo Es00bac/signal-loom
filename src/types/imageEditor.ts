@@ -675,6 +675,14 @@ export interface ImageLayer {
   bitmap: LayerBitmap | null;
   bitmapVersion: number;
   mask: LayerBitmap | null;
+  /**
+   * Serialized pixel payloads (base64 PNG data URLs), present only while a project document is
+   * written to / read from disk (.sloom / .slimg). `bitmap`/`mask` are live OffscreenCanvas
+   * buffers that can't be JSON-serialized; these carry the actual pixels across a save so the
+   * active canvas survives, and are cleared back to undefined once decoded into `bitmap`/`mask`.
+   */
+  bitmapData?: string | null;
+  maskData?: string | null;
   maskDensity?: number;
   maskFeather?: number;
   text?: TextLayerStyle;
