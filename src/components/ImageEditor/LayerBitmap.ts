@@ -41,7 +41,15 @@ export function putBitmapImageData(
   dx = 0,
   dy = 0,
 ): void {
-  getCtx(bitmap).putImageData(imageData, dx, dy);
+  // Defensive coercion: code across the editor sometimes builds a plain {width,height,data} object
+  // cast `as ImageData` (looks correct to TypeScript). The browser's putImageData() rejects those
+  // ("parameter 1 is not of type 'ImageData'"), silently breaking whatever tool/effect produced it.
+  // Wrap such an object in a real ImageData here so every caller routed through this helper is safe.
+  const like = imageData as { data: Uint8ClampedArray; width: number; height: number };
+  const real = typeof ImageData !== 'undefined' && !(imageData instanceof ImageData)
+    ? new ImageData(new Uint8ClampedArray(like.data), like.width, like.height)
+    : imageData;
+  getCtx(bitmap).putImageData(real, dx, dy);
 }
 
 export function blitInto(
