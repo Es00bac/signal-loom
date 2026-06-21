@@ -201,6 +201,12 @@ export function buildAppMenuGroups(activeWorkspace: WorkspaceView, shortcuts: Ke
 
 export const APP_MENU_GROUPS: AppMenuGroup[] = buildAppMenuGroups('flow');
 
-export function shouldShowIntegratedAppMenu(hasNativeBridge: boolean): boolean {
-  return !hasNativeBridge;
+export function shouldShowIntegratedAppMenu(hasNativeBridge: boolean, platform?: string): boolean {
+  // Web / Android (no native shell) always render the integrated React menu.
+  // In an Electron shell we normally defer to the native menu — but on Linux the native menu
+  // is unreliable: Wayland/AppImage builds can drop the in-window menu bar entirely, and the
+  // global-menu export only works on desktops running a global-menu applet. So render the
+  // integrated menu on Linux too. macOS keeps its reliable global menu bar; Windows keeps its
+  // in-window native bar.
+  return !hasNativeBridge || platform === 'linux';
 }

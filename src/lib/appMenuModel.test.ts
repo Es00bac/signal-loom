@@ -115,8 +115,15 @@ describe('renderer app menu model (per-workspace)', () => {
     });
   });
 
-  it('hides the integrated renderer menu when Electron exposes the native bridge', () => {
+  it('renders the integrated menu on web/Android and Linux Electron, but defers to the native menu on macOS/Windows', () => {
+    // Web / Android — no native shell, always show the integrated menu.
     expect(shouldShowIntegratedAppMenu(false)).toBe(true);
+    // Electron shell, platform unknown — defer to the native menu (back-compat default).
     expect(shouldShowIntegratedAppMenu(true)).toBe(false);
+    // Linux Electron — native menu bar is unreliable (Wayland/AppImage), show the integrated menu.
+    expect(shouldShowIntegratedAppMenu(true, 'linux')).toBe(true);
+    // macOS / Windows Electron — keep the reliable native menu.
+    expect(shouldShowIntegratedAppMenu(true, 'darwin')).toBe(false);
+    expect(shouldShowIntegratedAppMenu(true, 'win32')).toBe(false);
   });
 });
