@@ -736,12 +736,23 @@ export class CompositeRenderer {
   constructor(canvas: HTMLCanvasElement, wrapper: HTMLElement) {
     this.canvas = canvas;
     this.wrapper = wrapper;
-    // Low-latency "desynchronized" 2D context: lets the browser present this canvas
-    // straight to the screen, bypassing the DOM compositor's frame queue. Measured
-    // neutral on this hardware (present is already 60fps every backend) but harmless
-    // and helps latency once per-frame compute is cheap. Falls back where unsupported.
+    // The visible composite canvas uses a SYNCHRONIZED 2D context by default. A
+    // `desynchronized: true` (low-latency) context presents this canvas through a separate
+    // overlay surface that, on a real GPU compositor (Linux/Wayland + AMD especially), can
+    // present an INCOMPLETE frame on a full-canvas redraw: the transparency checkerboard
+    // (drawn first, synchronously, via fillRect) appears WITHOUT the composited image on top
+    // (a deferred drawImage of a worker ImageBitmap). That is the long-standing "image
+    // disappears to the checkerboard on zoom" bug — the backing store is correct
+    // (getImageData reads the image) but the presented frame is stale, which is why it never
+    // reproduced in a headless screenshot or pixel readback. Desync measured no perf win on
+    // this hardware (present is already 60fps), so it is now opt-in only via the
+    // __SIGNAL_LOOM_DESYNC_CANVAS__ window flag for A/B testing brush latency.
+    const wantDesyncCanvas =
+      typeof window !== 'undefined' &&
+      (window as { __SIGNAL_LOOM_DESYNC_CANVAS__?: boolean }).__SIGNAL_LOOM_DESYNC_CANVAS__ === true;
     const ctx =
-      canvas.getContext('2d', { desynchronized: true }) ?? canvas.getContext('2d');
+      (wantDesyncCanvas ? canvas.getContext('2d', { desynchronized: true }) : null) ??
+      canvas.getContext('2d');
     if (!ctx) {
       throw new Error('Failed to acquire 2D context for composite renderer');
     }
