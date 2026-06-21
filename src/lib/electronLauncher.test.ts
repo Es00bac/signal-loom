@@ -18,34 +18,39 @@ async function loadLauncherModule(): Promise<ElectronLauncherModule> {
 }
 
 describe('Electron launcher environment', () => {
-  it('loads KDE appmenu support before Electron starts on Linux', async () => {
+  it('keeps the menu in-window by default on Linux (no appmenu/global-menu export)', async () => {
     const { buildElectronEnvironment } = await loadLauncherModule();
     const env = buildElectronEnvironment({}, 'linux');
+
+    expect(env.GTK_MODULES).toBeUndefined();
+    expect(env.UBUNTU_MENUPROXY).toBeUndefined();
+  });
+
+  it('loads KDE appmenu support only when the global menu is opted in', async () => {
+    const { buildElectronEnvironment } = await loadLauncherModule();
+    const env = buildElectronEnvironment({ SIGNAL_LOOM_ELECTRON_GLOBAL_MENU: '1' }, 'linux');
 
     expect(env.GTK_MODULES).toBe('appmenu-gtk-module');
     expect(env.UBUNTU_MENUPROXY).toBe('1');
   });
 
-  it('forces XWayland on KDE Wayland so Plasma globalmenu can consume Electron menus', async () => {
+  it('defaults to native Wayland on KDE Wayland, forcing XWayland only when opted in', async () => {
     const { buildElectronEnvironment, getElectronLaunchArgs } = await loadLauncherModule();
-    const env = buildElectronEnvironment({
-      DISPLAY: ':1',
-      XDG_CURRENT_DESKTOP: 'KDE',
-      XDG_SESSION_TYPE: 'wayland',
-    }, 'linux');
+    const base = { DISPLAY: ':1', XDG_CURRENT_DESKTOP: 'KDE', XDG_SESSION_TYPE: 'wayland' };
 
-    expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBe('x11');
-    expect(env.GDK_BACKEND).toBe('x11');
-    expect(getElectronLaunchArgs(env, 'linux')).toEqual([
-      '--disable-gpu',
-      '--disable-gpu-sandbox',
-      '--in-process-gpu',
-      '--ozone-platform=x11',
-      '.',
-    ]);
+    const nativeEnv = buildElectronEnvironment(base, 'linux');
+    expect(nativeEnv.ELECTRON_OZONE_PLATFORM_HINT).toBe('auto');
+    expect(nativeEnv.GDK_BACKEND).toBeUndefined();
+    expect(getElectronLaunchArgs(nativeEnv, 'linux')).toContain('--ozone-platform-hint=auto');
+    expect(getElectronLaunchArgs(nativeEnv, 'linux')).not.toContain('--ozone-platform=x11');
+
+    const forcedEnv = buildElectronEnvironment({ ...base, SIGNAL_LOOM_ELECTRON_FORCE_XWAYLAND: '1' }, 'linux');
+    expect(forcedEnv.ELECTRON_OZONE_PLATFORM_HINT).toBe('x11');
+    expect(forcedEnv.GDK_BACKEND).toBe('x11');
+    expect(getElectronLaunchArgs(forcedEnv, 'linux')).toContain('--ozone-platform=x11');
   });
 
-  it('allows native Wayland opt-out for Electron if explicitly requested', async () => {
+  it('honors the legacy native Wayland opt-out (stays native Wayland, never XWayland)', async () => {
     const { buildElectronEnvironment, getElectronLaunchArgs } = await loadLauncherModule();
     const env = buildElectronEnvironment({
       DISPLAY: ':1',
@@ -54,39 +59,45 @@ describe('Electron launcher environment', () => {
       XDG_SESSION_TYPE: 'wayland',
     }, 'linux');
 
-    expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBeUndefined();
+    expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBe('auto');
     expect(env.GDK_BACKEND).toBeUndefined();
-    expect(getElectronLaunchArgs(env, 'linux')).toEqual([
-      '--disable-gpu',
-      '--disable-gpu-sandbox',
-      '--in-process-gpu',
-      '.',
-    ]);
+    expect(getElectronLaunchArgs(env, 'linux')).not.toContain('--ozone-platform=x11');
+    expect(getElectronLaunchArgs(env, 'linux')).toContain('--ozone-platform-hint=auto');
   });
 
-  it('defaults Linux to software rendering (GPU readbacks tank the Canvas2D paint path)', async () => {
+  it('defaults Linux to GPU rendering on native Wayland', async () => {
     const { getElectronLaunchArgs } = await loadLauncherModule();
 
     expect(getElectronLaunchArgs({}, 'linux')).toEqual([
-      '--disable-gpu',
+      '--use-gl=angle',
+      '--use-angle=vulkan',
       '--disable-gpu-sandbox',
-      '--in-process-gpu',
+      '--ignore-gpu-blocklist',
+      '--enable-gpu-rasterization',
+      '--enable-zero-copy',
+      '--enable-features=CanvasOopRasterization',
+      '--ozone-platform-hint=auto',
       '.',
     ]);
   });
 
-  it('uses the stable ANGLE GL/EGL backend when GPU is explicitly opted in', async () => {
+  it('uses the ANGLE Vulkan backend with the Canvas2D-GPU flags', async () => {
     const { getElectronLaunchArgs } = await loadLauncherModule();
 
     expect(getElectronLaunchArgs({ SIGNAL_LOOM_ELECTRON_ENABLE_GPU: '1' }, 'linux')).toEqual([
       '--use-gl=angle',
-      '--use-angle=gl-egl',
+      '--use-angle=vulkan',
       '--disable-gpu-sandbox',
+      '--ignore-gpu-blocklist',
+      '--enable-gpu-rasterization',
+      '--enable-zero-copy',
+      '--enable-features=CanvasOopRasterization',
+      '--ozone-platform-hint=auto',
       '.',
     ]);
   });
 
-  it('allows Linux GPU to be explicitly disabled via env', async () => {
+  it('allows Linux GPU to be explicitly disabled via env (still native Wayland)', async () => {
     const { buildElectronEnvironment, getElectronLaunchArgs } = await loadLauncherModule();
     const env = buildElectronEnvironment({
       SIGNAL_LOOM_ELECTRON_DISABLE_GPU: '1',
@@ -96,19 +107,30 @@ describe('Electron launcher environment', () => {
       '--disable-gpu',
       '--disable-gpu-sandbox',
       '--in-process-gpu',
+      '--ozone-platform-hint=auto',
       '.',
     ]);
   });
 
-  it('preserves existing GTK modules while adding appmenu once', async () => {
+  it('strips appmenu from existing GTK modules in the default in-window mode', async () => {
     const { buildElectronEnvironment } = await loadLauncherModule();
     const env = buildElectronEnvironment({
       GTK_MODULES: 'canberra-gtk-module:appmenu-gtk-module',
       ELECTRON_FORCE_WINDOW_MENU_BAR: '1',
     }, 'linux');
 
-    expect(env.GTK_MODULES).toBe('canberra-gtk-module:appmenu-gtk-module');
+    expect(env.GTK_MODULES).toBe('canberra-gtk-module');
     expect(env.ELECTRON_FORCE_WINDOW_MENU_BAR).toBeUndefined();
+  });
+
+  it('preserves existing GTK modules while adding appmenu once when the global menu is opted in', async () => {
+    const { buildElectronEnvironment } = await loadLauncherModule();
+    const env = buildElectronEnvironment({
+      GTK_MODULES: 'canberra-gtk-module:appmenu-gtk-module',
+      SIGNAL_LOOM_ELECTRON_GLOBAL_MENU: '1',
+    }, 'linux');
+
+    expect(env.GTK_MODULES).toBe('canberra-gtk-module:appmenu-gtk-module');
   });
 
   it('keeps non-Linux environments unchanged except dev renderer mode', async () => {

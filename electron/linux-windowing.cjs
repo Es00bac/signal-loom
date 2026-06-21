@@ -6,12 +6,16 @@ function isKdeDesktop(value) {
 }
 
 function shouldForceXWaylandForGlobalMenu(env, platform = process.platform) {
+  // Native Wayland is the default now. Forcing XWayland blocked GPU EGL init on AMD/Mesa
+  // ("No suitable EGL configs found") which pinned the Canvas2D composite to SwiftShader and
+  // tanked sketching to single-digit FPS. The in-window React menu renders on any platform, so
+  // XWayland is no longer needed for the menu — it's opt-in only (SIGNAL_LOOM_ELECTRON_FORCE_XWAYLAND)
+  // for stacks where native-Wayland chrome misbehaves. The legacy NATIVE_WAYLAND var still wins.
   return (
     platform === 'linux' &&
     env[NATIVE_WAYLAND_OPT_OUT] !== '1' &&
-    env.XDG_SESSION_TYPE === 'wayland' &&
-    isKdeDesktop(env.XDG_CURRENT_DESKTOP) &&
-    Boolean(env.DISPLAY)
+    env.SIGNAL_LOOM_ELECTRON_FORCE_XWAYLAND === '1' &&
+    isKdeDesktop(env.XDG_CURRENT_DESKTOP)
   );
 }
 
@@ -22,36 +26,54 @@ function buildElectronEnvironment(env = process.env, platform = process.platform
     return nextEnv;
   }
 
-  const gtkModules = new Set(
-    (nextEnv.GTK_MODULES ?? '')
-      .split(':')
-      .map((entry) => entry.trim())
-      .filter(Boolean),
-  );
-  gtkModules.add(APPMENU_GTK_MODULE);
+  // The menu stays IN-WINDOW by default. Exporting it to a desktop "global menu" via the
+  // appmenu GTK module + UBUNTU_MENUPROXY hoists the menu OUT of the window — so on any desktop
+  // WITHOUT a global-menu applet (the common case across GNOME/XFCE/most KDE panels) the menu
+  // vanishes entirely: it is neither in-window nor anywhere else. The workspace windows are
+  // framed and call setMenuBarVisibility(true), so the in-window menu bar works everywhere once
+  // we don't hand the menu off. The KDE Plasma global menu is available opt-in via
+  // SIGNAL_LOOM_ELECTRON_GLOBAL_MENU=1.
+  const ambientGtkModules = (nextEnv.GTK_MODULES ?? '')
+    .split(':')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 
-  nextEnv.GTK_MODULES = [...gtkModules].join(':');
-  nextEnv.UBUNTU_MENUPROXY = nextEnv.UBUNTU_MENUPROXY || '1';
+  if (env.SIGNAL_LOOM_ELECTRON_GLOBAL_MENU === '1') {
+    const gtkModules = new Set(ambientGtkModules);
+    gtkModules.add(APPMENU_GTK_MODULE);
+    nextEnv.GTK_MODULES = [...gtkModules].join(':');
+    nextEnv.UBUNTU_MENUPROXY = nextEnv.UBUNTU_MENUPROXY || '1';
+  } else {
+    const gtkModules = ambientGtkModules.filter((entry) => entry !== APPMENU_GTK_MODULE);
+    // Use `undefined` (not `delete`) so applyElectronMainLinuxWindowingCompatibility strips any
+    // ambient appmenu export from the LIVE process env, not just from this copy.
+    nextEnv.GTK_MODULES = gtkModules.length > 0 ? gtkModules.join(':') : undefined;
+    nextEnv.UBUNTU_MENUPROXY = undefined;
+  }
+
   delete nextEnv.ELECTRON_FORCE_WINDOW_MENU_BAR;
 
+  // Default to native Wayland. Electron's Linux default is X11/XWayland, which can't get a GPU
+  // EGL config on some AMD/Mesa stacks and pins the canvas to software; 'auto' picks Wayland when
+  // available (exactly what Chrome does) and X11 otherwise. XWayland is opt-in (see above).
   if (shouldForceXWaylandForGlobalMenu(nextEnv, platform)) {
     nextEnv.ELECTRON_OZONE_PLATFORM_HINT = 'x11';
     nextEnv.GDK_BACKEND = 'x11';
+  } else {
+    nextEnv.ELECTRON_OZONE_PLATFORM_HINT = nextEnv.ELECTRON_OZONE_PLATFORM_HINT || 'auto';
   }
 
   return nextEnv;
 }
 
-// Software rendering is the DEFAULT on Linux, and intentionally so: this is a
-// Canvas2D-heavy paint app. A GPU-backed canvas makes drawImage compositing nearly
-// free, but it makes the pixel READBACKS the paint/composite path depends on
-// (getImageData, and createImageBitmap at every stroke commit) ~7x slower — measured
-// ~60ms vs ~8ms for a region at 4K — which drops live sketching (rapid short strokes,
-// each triggering a commit) to single-digit FPS. Software compositing is already ~60fps
-// at 4K, so the GPU's only win (free drawImage) doesn't matter here while its readback
-// penalty is fatal. GPU is available opt-in via SIGNAL_LOOM_ELECTRON_ENABLE_GPU=1 for
-// GPU-bound workloads, and then uses the stable ANGLE GL/EGL backend (Chromium's
-// auto-selected backend segfaults the GPU process on this AMD/Mesa stack, exit 139).
+// GPU rendering is the DEFAULT on Linux (opt out with SIGNAL_LOOM_ELECTRON_DISABLE_GPU=1). The
+// old software default existed because GPU pixel READBACKS at every stroke commit measured ~7x
+// slower — but that was while the GPU was crippled by the forced XWayland session (no usable EGL
+// config → SwiftShader). On native Wayland the GPU inits properly, dirty-rect paint keeps readbacks
+// tiny (~0.2ms), and the canvas composite drops from ~25-90ms to <1ms (a flat 60fps, like Chrome).
+// Uses the ANGLE Vulkan backend (overridable via SIGNAL_LOOM_ELECTRON_ANGLE_BACKEND) + the
+// un-blocklist/raster flags so the Canvas2D composite is GPU-accelerated. A GPU-process crash drops
+// to software via the sentinel and self-heals after a cooldown.
 function getLinuxGpuSwitches(disabled) {
   if (disabled) {
     return [
@@ -61,10 +83,23 @@ function getLinuxGpuSwitches(disabled) {
     ];
   }
 
+  // ANGLE over Vulkan. The gl-egl backend can't find a GPU-capable EGL config on this AMD/Mesa
+  // stack ("No suitable EGL configs found") so it silently drops to SwiftShader; Vulkan (RADV) is
+  // rock-solid on RDNA cards and sidesteps the EGL-config path. Overridable via
+  // SIGNAL_LOOM_ELECTRON_ANGLE_BACKEND (e.g. gl, gl-egl) if a given stack prefers another.
+  const angleBackend = (process.env.SIGNAL_LOOM_ELECTRON_ANGLE_BACKEND || 'vulkan').trim() || 'vulkan';
   return [
     { name: 'use-gl', value: 'angle' },
-    { name: 'use-angle', value: 'gl-egl' },
+    { name: 'use-angle', value: angleBackend },
     { name: 'disable-gpu-sandbox' },
+    // ANGLE alone only accelerates WebGL; the Image workspace is a Canvas2D app, and Mesa is on
+    // Chromium's GPU blocklist for accelerated 2D canvas + raster — so without these the layer
+    // composite (drawImage) silently stays on SwiftShader. These move it onto the GPU like a real
+    // Chrome tab (which holds a flat 60fps on the identical bundle while software dips on one layer).
+    { name: 'ignore-gpu-blocklist' },
+    { name: 'enable-gpu-rasterization' },
+    { name: 'enable-zero-copy' },
+    { name: 'enable-features', value: 'CanvasOopRasterization' },
   ];
 }
 
@@ -81,13 +116,8 @@ function resolveLinuxGpuPolicy(env = process.env, context = {}, platform = proce
     return { disabled: true, reason: 'env-opt-out', clearSentinel: false };
   }
 
-  // GPU is opt-in only (see getLinuxGpuSwitches): software is the right default for a
-  // readback-heavy Canvas2D paint app.
-  if (env.SIGNAL_LOOM_ELECTRON_ENABLE_GPU !== '1') {
-    return { disabled: true, reason: 'default-software', clearSentinel: false };
-  }
-
-  // GPU explicitly opted in — keep the crash sentinel/cooldown safety net.
+  // GPU is the default (see the comment on getLinuxGpuSwitches). Keep the crash sentinel/cooldown
+  // safety net so a GPU-process death drops to software and self-heals.
   const {
     sentinelTimestamp = null,
     now = Date.now(),
@@ -101,7 +131,8 @@ function resolveLinuxGpuPolicy(env = process.env, context = {}, platform = proce
     return { disabled: false, reason: 'crash-fallback-expired', clearSentinel: true };
   }
 
-  return { disabled: false, reason: 'enabled-opt-in', clearSentinel: false };
+  const reason = env.SIGNAL_LOOM_ELECTRON_ENABLE_GPU === '1' ? 'enabled-opt-in' : 'default-gpu';
+  return { disabled: false, reason, clearSentinel: false };
 }
 
 // Applies the resolved GPU policy to the Electron `app` in the main process.
@@ -128,8 +159,7 @@ function getElectronLaunchArgs(env = process.env, platform = process.platform) {
   const args = [];
 
   if (platform === 'linux') {
-    const disabled =
-      env.SIGNAL_LOOM_ELECTRON_ENABLE_GPU !== '1' || env.SIGNAL_LOOM_ELECTRON_DISABLE_GPU === '1';
+    const disabled = env.SIGNAL_LOOM_ELECTRON_DISABLE_GPU === '1';
     for (const sw of getLinuxGpuSwitches(disabled)) {
       args.push(sw.value !== undefined ? `--${sw.name}=${sw.value}` : `--${sw.name}`);
     }
@@ -137,6 +167,8 @@ function getElectronLaunchArgs(env = process.env, platform = process.platform) {
 
   if (shouldForceXWaylandForGlobalMenu(env, platform)) {
     args.push('--ozone-platform=x11');
+  } else if (platform === 'linux') {
+    args.push('--ozone-platform-hint=auto');
   }
 
   args.push('.');
@@ -160,6 +192,8 @@ function applyElectronMainLinuxWindowingCompatibility(app, env = process.env, pl
 
   if (shouldForceXWaylandForGlobalMenu(nextEnv, platform)) {
     app.commandLine?.appendSwitch?.('ozone-platform', 'x11');
+  } else if (platform === 'linux') {
+    app.commandLine?.appendSwitch?.('ozone-platform-hint', 'auto');
   }
 
   return nextEnv;

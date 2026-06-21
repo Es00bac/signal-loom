@@ -39,7 +39,7 @@ async function loadElectronLinuxWindowingModule(): Promise<ElectronLinuxWindowin
 }
 
 describe('Electron Linux windowing compatibility', () => {
-  it('forces packaged Electron startup onto x11 on KDE Wayland so external floating panels keep their supported windowing model', async () => {
+  it('keeps the menu in-window by default (no global-menu export) and defaults to native Wayland on KDE', async () => {
     const { applyElectronMainLinuxWindowingCompatibility } = await loadElectronLinuxWindowingModule();
     const appendSwitch = vi.fn();
     const env: Record<string, string | undefined> = {
@@ -50,11 +50,46 @@ describe('Electron Linux windowing compatibility', () => {
 
     applyElectronMainLinuxWindowingCompatibility({ commandLine: { appendSwitch } }, env, 'linux');
 
+    // No appmenu/global-menu export by default — the menu must stay in-window.
+    expect(env.GTK_MODULES).toBeUndefined();
+    expect(env.UBUNTU_MENUPROXY).toBeUndefined();
+    // Default is native Wayland (auto) so the GPU initializes; XWayland is opt-in only.
+    expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBe('auto');
+    expect(env.GDK_BACKEND).toBeUndefined();
+    expect(appendSwitch).toHaveBeenCalledWith('ozone-platform-hint', 'auto');
+  });
+
+  it('opts into the KDE global menu (appmenu export) only when SIGNAL_LOOM_ELECTRON_GLOBAL_MENU=1', async () => {
+    const { applyElectronMainLinuxWindowingCompatibility } = await loadElectronLinuxWindowingModule();
+    const appendSwitch = vi.fn();
+    const env: Record<string, string | undefined> = {
+      DISPLAY: ':1',
+      XDG_CURRENT_DESKTOP: 'KDE',
+      XDG_SESSION_TYPE: 'wayland',
+      SIGNAL_LOOM_ELECTRON_GLOBAL_MENU: '1',
+    };
+
+    applyElectronMainLinuxWindowingCompatibility({ commandLine: { appendSwitch } }, env, 'linux');
+
     expect(env.GTK_MODULES).toBe('appmenu-gtk-module');
     expect(env.UBUNTU_MENUPROXY).toBe('1');
-    expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBe('x11');
-    expect(env.GDK_BACKEND).toBe('x11');
-    expect(appendSwitch).toHaveBeenCalledWith('ozone-platform', 'x11');
+    // Global-menu export no longer pins XWayland — native Wayland (auto) for GPU perf.
+    expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBe('auto');
+    expect(env.GDK_BACKEND).toBeUndefined();
+  });
+
+  it('strips a stale appmenu-gtk-module from the ambient env in the default in-window mode', async () => {
+    const { applyElectronMainLinuxWindowingCompatibility } = await loadElectronLinuxWindowingModule();
+    const env: Record<string, string | undefined> = {
+      GTK_MODULES: 'canberra-gtk-module:appmenu-gtk-module',
+      UBUNTU_MENUPROXY: '1',
+      XDG_SESSION_TYPE: 'x11',
+    };
+
+    applyElectronMainLinuxWindowingCompatibility({ commandLine: { appendSwitch: vi.fn() } }, env, 'linux');
+
+    expect(env.GTK_MODULES).toBe('canberra-gtk-module');
+    expect(env.UBUNTU_MENUPROXY).toBeUndefined();
   });
 
   it('honors the explicit native Wayland opt-out for packaged Electron startup', async () => {
@@ -69,9 +104,9 @@ describe('Electron Linux windowing compatibility', () => {
 
     applyElectronMainLinuxWindowingCompatibility({ commandLine: { appendSwitch } }, env, 'linux');
 
-    expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBeUndefined();
+    expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBe('auto');
     expect(env.GDK_BACKEND).toBeUndefined();
-    expect(appendSwitch).not.toHaveBeenCalled();
+    expect(appendSwitch).toHaveBeenCalledWith('ozone-platform-hint', 'auto');
   });
 });
 
@@ -81,8 +116,14 @@ describe('Electron Linux GPU policy', () => {
 
     expect(getLinuxGpuSwitches(false)).toEqual([
       { name: 'use-gl', value: 'angle' },
-      { name: 'use-angle', value: 'gl-egl' },
+      { name: 'use-angle', value: 'vulkan' },
       { name: 'disable-gpu-sandbox' },
+      // Force the Canvas2D composite onto the GPU (ANGLE alone only accelerates WebGL; Mesa is
+      // blocklisted for accelerated 2D canvas/raster, which kept it on SwiftShader).
+      { name: 'ignore-gpu-blocklist' },
+      { name: 'enable-gpu-rasterization' },
+      { name: 'enable-zero-copy' },
+      { name: 'enable-features', value: 'CanvasOopRasterization' },
     ]);
   });
 
@@ -96,10 +137,10 @@ describe('Electron Linux GPU policy', () => {
     ]);
   });
 
-  it('defaults to software rendering on Linux (GPU readbacks tank the Canvas2D paint path)', async () => {
+  it('defaults to GPU rendering on Linux (native Wayland makes the canvas composite GPU-fast)', async () => {
     const { resolveLinuxGpuPolicy } = await loadElectronLinuxWindowingModule();
 
-    expect(resolveLinuxGpuPolicy({}, {}, 'linux')).toMatchObject({ disabled: true, reason: 'default-software' });
+    expect(resolveLinuxGpuPolicy({}, {}, 'linux')).toMatchObject({ disabled: false, reason: 'default-gpu' });
   });
 
   it('enables the GPU only when explicitly opted in', async () => {
@@ -168,7 +209,7 @@ describe('Electron Linux GPU policy', () => {
 
     expect(disableHardwareAcceleration).not.toHaveBeenCalled();
     expect(appendSwitch).toHaveBeenCalledWith('use-gl', 'angle');
-    expect(appendSwitch).toHaveBeenCalledWith('use-angle', 'gl-egl');
+    expect(appendSwitch).toHaveBeenCalledWith('use-angle', 'vulkan');
     expect(appendSwitch).toHaveBeenCalledWith('disable-gpu-sandbox');
   });
 
