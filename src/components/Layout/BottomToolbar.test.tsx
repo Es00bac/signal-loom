@@ -19,8 +19,9 @@ describe('BottomToolbar topbar presentation', () => {
   it('keeps compact topbar category labels hidden until extra-wide desktops', () => {
     const html = renderToStaticMarkup(<BottomToolbar onAddNode={() => undefined} variant="topbar" />);
 
-    expect(html).toContain('hidden 2xl:inline');
+    expect(html).toContain('hidden min-[3200px]:inline');
     expect(html).not.toContain('hidden xl:inline');
+    expect(html).not.toContain('hidden 2xl:inline');
   });
 
   it('surfaces provider-specific Image node templates from the toolbar', () => {

@@ -2073,7 +2073,7 @@ function FlowApp() {
     ? 'pt-0'
     : mobilePhoneInterface.enabled
       ? mobilePhoneInterface.collapsedTopPaddingClassName
-      : 'pt-16';
+      : 'pt-0';
   const showSharedWorkspacePanels = shouldShowSharedWorkspacePanels({
     applicationChromeHidden,
     mobilePhoneInterfaceEnabled: mobilePhoneInterface.enabled,
@@ -2117,7 +2117,7 @@ function FlowApp() {
         type="file"
       />
 
-      <div className={`flex-1 w-full h-full relative ${workspaceTopPaddingClassName}`} ref={flowViewportRef}>
+      <div className={`flex-1 w-full min-h-0 relative ${workspaceTopPaddingClassName}`} ref={flowViewportRef}>
         {activeWorkspaceView === 'flow' ? (
           <FlowWorkspaceShell
             blockingFlowDiagnosticCount={blockingFlowDiagnosticCount}

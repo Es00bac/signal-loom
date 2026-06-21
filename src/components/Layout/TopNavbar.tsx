@@ -138,9 +138,18 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   // making the menu unusable on web/DeX). `menuAnchorRect` positions the portal under its button.
   const [menuAnchorRect, setMenuAnchorRect] = React.useState<DOMRect | null>(null);
   const menuPortalRef = React.useRef<HTMLDivElement | null>(null);
-  const [showIntegratedMenu] = React.useState(() =>
-    shouldShowIntegratedAppMenu(Boolean(getSignalLoomNativeBridge())),
-  );
+  const [showIntegratedMenu] = React.useState(() => {
+    const bridge = getSignalLoomNativeBridge();
+    // Detect the desktop OS from the Electron renderer userAgent (synchronous + reliable). On
+    // Linux the native menu bar is unreliable, so we render the integrated React menu instead.
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    const platform = /Android/.test(ua) ? 'android'
+      : /Mac OS X|Macintosh/.test(ua) ? 'darwin'
+        : /Windows/.test(ua) ? 'win32'
+          : /Linux/.test(ua) ? 'linux'
+            : undefined;
+    return shouldShowIntegratedAppMenu(Boolean(bridge), platform);
+  });
   const mobilePhoneInterface = useMobilePhoneInterfaceDescriptor();
   const mobileChromeMode = useMobileInterfaceStore((state) => state.chromeMode);
   const activeMobileEdgeDrawer = useMobileInterfaceStore((state) => state.activeEdgeDrawer);
@@ -177,9 +186,10 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
     imageViewportContainerSize.height > 0;
   const visibleZoom =
     isImageWorkspace && activeImageDocument ? activeImageDocument.viewport.zoom : zoom;
-  const primaryControlsFlexClass = isPaperWorkspace
-    ? 'max-w-[48vw] shrink-0 overflow-x-auto overflow-y-hidden [scrollbar-width:none]'
-    : 'flex-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none]';
+  // The bar wraps to extra rows when it can't fit one line (never scroll/overlap), so the primary
+  // controls flow + wrap naturally rather than competing for flex space. No `ml-auto` — in a
+  // flex-wrap row it forces a phantom early wrap (an empty second row even when everything fits).
+  const primaryControlsFlexClass = 'flex-wrap';
   const flowWorkspaceCommands = useFlowWorkspaceCommands();
   const flowTargetBinId = React.useMemo(() => {
     if (activeFlowSourceBinId && sourceBins.some((bin) => bin.id === activeFlowSourceBinId)) {
@@ -605,9 +615,9 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   }
 
   return (
-    <div className="theme-topbar absolute top-0 left-0 right-0 z-[80] flex h-16 items-center gap-3 border-b px-4 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
+    <div className="theme-topbar relative z-[80] flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 border-b px-3 py-2 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
       <div
-        className="pointer-events-none relative z-20 flex min-w-0 max-w-[58vw] shrink items-center gap-3 overflow-x-auto overflow-y-hidden [scrollbar-width:none]"
+        className="pointer-events-none relative z-20 flex items-center gap-2"
         data-topbar-left-controls="true"
       >
         <div className="pointer-events-auto flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-cyan-300/25 bg-[#0b1421] shadow-[0_0_18px_rgba(34,211,238,0.16)]" data-testid="app-icon-container" title={`${workspaceView.charAt(0).toUpperCase() + workspaceView.slice(1)} Workspace`}>
@@ -621,40 +631,49 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         {showIntegratedMenu ? (
           <div
             ref={appMenuRef}
-            className="pointer-events-auto flex min-w-0 shrink items-center gap-0.5 overflow-x-auto overflow-y-hidden [scrollbar-width:none] border-r border-cyan-300/15 pr-3"
+            className="pointer-events-auto relative flex shrink-0 items-center border-r border-cyan-300/15 pr-2"
             onKeyDown={(event) => {
               if (event.key === 'Escape') {
                 setOpenMenuId(null);
               }
             }}
           >
-            {appMenuGroups.map((group) => (
-              <div className="relative shrink-0" key={group.id}>
-                <button
-                  aria-expanded={openMenuId === group.id}
-                  className={`rounded px-2 py-1 text-xs font-medium text-cyan-100/70 transition-colors hover:bg-cyan-400/10 hover:text-white ${
-                    openMenuId === group.id ? 'bg-cyan-400/10 text-white' : ''
-                  }`}
-                  onClick={(event) => {
-                    setMenuAnchorRect(event.currentTarget.getBoundingClientRect());
-                    setOpenMenuId((current) => current === group.id ? null : group.id);
-                  }}
-                  type="button"
-                >
-                  {group.label}
-                </button>
-                {openMenuId === group.id && menuAnchorRect
-                  ? createPortal(
-                      <div
-                        className="fixed z-[200] min-w-56 overflow-hidden rounded-md border border-cyan-300/20 bg-[#0d1725] py-1 shadow-2xl shadow-black/40"
-                        ref={menuPortalRef}
-                        style={{ top: menuAnchorRect.bottom + 6, left: menuAnchorRect.left }}
-                      >
+            <button
+              aria-expanded={openMenuId === '__app__'}
+              aria-label="Application menu"
+              className={`flex items-center gap-1 rounded px-2 py-1.5 text-cyan-100/70 transition-colors hover:bg-cyan-400/10 hover:text-white ${
+                openMenuId === '__app__' ? 'bg-cyan-400/10 text-white' : ''
+              }`}
+              onClick={(event) => {
+                setMenuAnchorRect(event.currentTarget.getBoundingClientRect());
+                setOpenMenuId((current) => (current === '__app__' ? null : '__app__'));
+              }}
+              title="Menu"
+              type="button"
+            >
+              <Menu size={16} />
+              <ChevronDown size={12} className="opacity-60" />
+            </button>
+            {openMenuId === '__app__' && menuAnchorRect
+              ? createPortal(
+                  <div
+                    className="fixed z-[200] max-h-[72vh] min-w-60 overflow-y-auto rounded-md border border-cyan-300/20 bg-[#0d1725] py-1 shadow-2xl shadow-black/40"
+                    ref={menuPortalRef}
+                    style={{ top: menuAnchorRect.bottom + 6, left: menuAnchorRect.left }}
+                  >
+                    {appMenuGroups.map((group, groupIndex) => (
+                      <div className={groupIndex > 0 ? 'mt-1 border-t border-cyan-300/10 pt-1' : ''} key={group.id}>
+                        <div className="px-3 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100/40">
+                          {group.label}
+                        </div>
                         {group.items.map((item) => (
                           <button
-                            className="flex w-full items-center justify-between gap-5 px-3 py-2 text-left text-sm text-cyan-50/80 transition-colors hover:bg-cyan-400/10 hover:text-white"
+                            className="flex w-full items-center justify-between gap-5 px-3 py-1.5 text-left text-sm text-cyan-50/80 transition-colors hover:bg-cyan-400/10 hover:text-white"
                             key={item.command}
-                            onClick={() => handleMenuCommand(item.command)}
+                            onClick={() => {
+                              handleMenuCommand(item.command);
+                              setOpenMenuId(null);
+                            }}
                             type="button"
                           >
                             <span>{item.label}</span>
@@ -663,12 +682,12 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                             ) : null}
                           </button>
                         ))}
-                      </div>,
-                      document.body,
-                    )
-                  : null}
-              </div>
-            ))}
+                      </div>
+                    ))}
+                  </div>,
+                  document.body,
+                )
+              : null}
           </div>
         ) : null}
 
@@ -703,10 +722,10 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
 
       {workspaceView === 'flow' ? (
         <div
-          className="pointer-events-none relative z-10 flex min-w-0 flex-1 justify-center"
+          className="pointer-events-none relative z-10 flex min-w-0 shrink items-center"
           data-flow-node-toolbar-layer="true"
         >
-          <div className="pointer-events-auto flex min-w-0 max-w-full items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none]">
+          <div className="pointer-events-auto flex flex-wrap items-center">
             <BottomToolbar onAddNode={addFlowNodeFromTopbar} variant="topbar" />
           </div>
         </div>
@@ -726,8 +745,13 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         />
       ) : null}
 
+      {/* Empty, collapsible spacer right-pins the primary controls without a content-bearing
+          flex-grow element eating the line (which wrapped them to a phantom row, worse the wider
+          the window). basis-0 means it can't push anything to a new line; it just fills slack. */}
+      {workspaceView === 'flow' ? <div className="pointer-events-none flex-1" aria-hidden="true" /> : null}
+
       <div
-        className={`pointer-events-none relative z-20 flex min-w-0 items-center justify-end gap-2 ${primaryControlsFlexClass}`}
+        className={`pointer-events-none relative z-20 flex shrink-0 items-center justify-end gap-2 ${primaryControlsFlexClass}`}
         data-topbar-primary-controls="true"
       >
         {workspaceView === 'image' ? (
