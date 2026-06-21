@@ -630,6 +630,9 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
       case 'image:export-psd':
         void downloadActiveImagePsd();
         return;
+      case 'image:file-new':
+        setShowNewDocModal(true);
+        return;
       default:
         return;
     }
@@ -767,11 +770,17 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
   const mobilePhoneInterface = useMobilePhoneInterfaceDescriptor();
   const mobileChromeMode = useMobileInterfaceStore((state) => state.chromeMode);
   const workspaceChromeHidden = mobileChromeMode === 'hidden';
+  // The desktop top bar is now in normal flow (position: relative), so the workspace area already
+  // sits directly below it — no top padding is needed to clear it. The old `pt-16` dated from when
+  // the top bar was `absolute` and overlaid the workspace; with the in-flow bar it became a 64px
+  // dead band between the top bar and the tab bar. When the top bar wraps (real overflow) it grows
+  // in flow and pushes this area down automatically, which is the correct behavior. Mobile keeps its
+  // own collapsed-chrome padding.
   const workspaceChromePaddingClassName = workspaceChromeHidden
     ? 'pt-0'
     : mobilePhoneInterface.enabled
       ? mobilePhoneInterface.collapsedTopPaddingClassName
-      : 'pt-16';
+      : 'pt-0';
   const showWorkspaceChrome = !workspaceChromeHidden;
   const visibleDockablePanels = workspaceChromeHidden
     ? []

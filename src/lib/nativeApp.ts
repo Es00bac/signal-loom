@@ -80,6 +80,7 @@ export const NATIVE_MENU_COMMANDS = [
   'image:tool-eyedropper',
   'image:export-visible',
   'image:export-psd',
+  'image:file-new',
   'image:file-open',
   'image:file-save-as',
   'image:adjust-brightness-contrast',

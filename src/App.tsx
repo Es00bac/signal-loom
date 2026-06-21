@@ -1526,6 +1526,7 @@ function FlowApp() {
       case 'edit:undo':
       case 'edit:redo':
       case 'edit:invert-selection':
+      case 'image:file-new':
       case 'image:tool-hand':
       case 'image:tool-text':
       case 'image:tool-move':
