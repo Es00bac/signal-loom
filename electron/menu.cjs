@@ -163,6 +163,14 @@ function commandItem(label, command, sendCommand, extra = {}) {
 
   if (!accelerator) {
     delete itemExtra.accelerator;
+  } else if (!acceleratorHasCommandModifier(accelerator)) {
+    // Bare-letter / Shift+letter / Alt+letter accelerators (B, V, Shift+B, Del, …) would fire from
+    // the native menu GLOBALLY — even while the user is typing in a text field — switching tools
+    // mid-word, because native menu accelerators bypass the renderer entirely. Keep them visible as
+    // hints but do NOT register them with the OS; the keystroke then reaches the renderer, whose
+    // shortcut resolver already ignores keys aimed at editable fields. Ctrl/Cmd accelerators can't be
+    // typed characters, so they stay natively registered.
+    itemExtra.registerAccelerator = false;
   }
 
   return {
@@ -170,6 +178,12 @@ function commandItem(label, command, sendCommand, extra = {}) {
     click: () => sendCommand(command),
     ...itemExtra,
   };
+}
+
+/** True when an Electron accelerator carries a Ctrl/Cmd/Meta modifier (so it is not a plain typed
+ *  character and is safe to keep as a globally registered native-menu accelerator). */
+function acceleratorHasCommandModifier(accelerator) {
+  return /(^|\+)(CommandOrControl|CmdOrCtrl|Command|Control|Ctrl|Cmd|Meta|Super)(\+|$)/i.test(accelerator);
 }
 
 function resolveCommandAccelerator(command, fallback) {

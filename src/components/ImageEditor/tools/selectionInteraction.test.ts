@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SELECTION_TOOL_SETTINGS, type EditorOperation } from '../../../types/imageEditor';
 import { createMask, setRect, type SelectionMask } from '../SelectionMask';
-import { clearAllSelections, getSelection, setSelection } from '../selectionRegistry';
+import {
+  clearAllSelections,
+  getFloatingSelection,
+  getSelection,
+  setFloatingSelection,
+  setSelection,
+} from '../selectionRegistry';
 import { SelectionInteraction } from './selectionInteraction';
 import type { Point, ToolEnv } from './types';
 
@@ -79,5 +85,22 @@ describe('SelectionInteraction', () => {
     expect(operations).toHaveLength(1);
     expect(operations[0]).toMatchObject({ kind: 'selection', docId: env.doc.id });
     expect(setHasSelection).toHaveBeenCalledWith(env.doc.id, true);
+  });
+
+  it('clears any floating-selection association when a new selection is committed', () => {
+    // A prior Move drag floated the selection onto layer "float-1". Drawing a fresh selection must
+    // break that association so the next move lifts from the source instead of grabbing the old
+    // float layer (the guard behind the non-destructive move fix).
+    const { env } = createSelectionEnv(0);
+    setFloatingSelection(env.doc.id, { layerId: 'float-1' });
+    expect(getFloatingSelection(env.doc.id)).toEqual({ layerId: 'float-1' });
+
+    const shape = createMask(env.doc.width, env.doc.height);
+    setRect(shape, 2, 2, 3, 3, 255, false);
+    const interaction = new SelectionInteraction(env, 'replace');
+    interaction.preview(env, shape);
+    interaction.commit(env);
+
+    expect(getFloatingSelection(env.doc.id)).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useImageEditorStore } from '../../../store/imageEditorStore';
+import { isTypingIntoEditableTarget } from '../../../lib/keyboardShortcuts';
 import { screenToDoc as screenToDocMath, docToScreen as docToScreenMath } from '../viewport';
 import type { CompositeRenderer } from '../CompositeRenderer';
 import type { EditorTool } from '../../../types/imageEditor';
@@ -77,6 +78,17 @@ export const STROKE_PAINT_TOOLS = new Set<EditorTool>([
   'blurBrush', 'sharpenBrush', 'smudgeBrush', 'dodgeBrush', 'burnBrush',
   'spongeSaturateBrush', 'spongeDesaturateBrush',
 ]);
+
+/**
+ * Selection shape tools rebuild a full-document selection mask on every preview (createMask +
+ * rasterize + cloneMask + combineMasks — all O(W*H)). Replaying that for each coalesced sub-sample
+ * AND each sub-frame pointermove backs the main thread into a multi-second queue on a 4K document
+ * (a 1-second drag takes 10-20s to drain). Only the latest pointer position matters for the shape,
+ * so for these tools we coalesce pointermove to at most one preview per animation frame
+ * (latest-wins) and skip the coalesced sub-samples. Paint tools are excluded — they need every
+ * sub-sample for dab accuracy and already run the cheap dirty-rect fast path.
+ */
+const RAF_THROTTLED_MOVE_TOOLS = new Set<EditorTool>(['marquee', 'lasso']);
 
 /** How long the live-stroke fast composite path stays warm after a dab, so rapid successive
  * sketch strokes don't each kick the full-quality worker render. */
@@ -240,6 +252,27 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
         paintSettleTimer = null;
       }
     };
+    // rAF coalescing for selection shape tools (see RAF_THROTTLED_MOVE_TOOLS): hold only the latest
+    // pointer event and run one preview per frame. flush before pointer-up so the final position is
+    // applied before the selection commits.
+    let pendingSelectionMoveEvent: PointerEvent | null = null;
+    let selectionMoveRafId: number | null = null;
+    const runPendingSelectionMove = (): void => {
+      const ev = pendingSelectionMoveEvent;
+      pendingSelectionMoveEvent = null;
+      if (!ev) return;
+      const env = buildEnv();
+      if (!env) return;
+      const handler = currentHandler();
+      handler.onPointerMove?.(env, env.screenToDoc(screenPoint(ev)), modsFrom(ev), ev);
+    };
+    const flushSelectionMove = (): void => {
+      if (selectionMoveRafId !== null) {
+        cancelAnimationFrame(selectionMoveRafId);
+        selectionMoveRafId = null;
+      }
+      runPendingSelectionMove();
+    };
     const getRect = (): DOMRect => (cachedRect ??= el.getBoundingClientRect());
     const invalidateRect = (): void => {
       cachedRect = null;
@@ -282,6 +315,17 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
         eyedropperTool.onPointerDown?.(env, env.screenToDoc(screenPoint(event)), mods, event);
         return;
       }
+      if (RAF_THROTTLED_MOVE_TOOLS.has(useImageEditorStore.getState().tool)) {
+        // Coalesce to one preview per frame, latest position wins — see RAF_THROTTLED_MOVE_TOOLS.
+        pendingSelectionMoveEvent = event;
+        if (selectionMoveRafId === null) {
+          selectionMoveRafId = requestAnimationFrame(() => {
+            selectionMoveRafId = null;
+            runPendingSelectionMove();
+          });
+        }
+        return;
+      }
       // Replay every sub-frame pointer sample the browser batched into this event. On a 120-240Hz
       // stylus (Cintiq / S Pen) the OS coalesces several moves per frame; feeding each one (with its
       // own pressure/tilt/timestamp) keeps fast strokes smooth instead of cutting corners into
@@ -296,6 +340,7 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
     };
     const onUp = (event: PointerEvent) => {
       if (shouldIgnoreImageCanvasToolEvent(event)) return;
+      flushSelectionMove(); // apply the final throttled selection position before committing
       const env = buildEnv();
       if (!env) return;
       const docPoint = env.screenToDoc(screenPoint(event));
@@ -342,8 +387,9 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
     };
 
     const onKey = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement) return;
-      if (event.target instanceof HTMLTextAreaElement) return;
+      // Ignore key events that belong to text entry (input/textarea/select/contenteditable, and the
+      // focused element) so brush-size / tool keys don't fire while typing.
+      if (isTypingIntoEditableTarget(event)) return;
       const env = buildEnv();
       if (!env) return;
       const handler = currentHandler();
@@ -424,6 +470,11 @@ export function useToolDispatcher({ wrapperRef, rendererRef }: DispatcherOptions
       window.removeEventListener('scroll', invalidateRect, { capture: true } as EventListenerOptions);
       window.removeEventListener('resize', invalidateRect);
       cancelPaintSettle();
+      if (selectionMoveRafId !== null) {
+        cancelAnimationFrame(selectionMoveRafId);
+        selectionMoveRafId = null;
+      }
+      pendingSelectionMoveEvent = null;
     };
   }, [wrapperRef, rendererRef]);
 }

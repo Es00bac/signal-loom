@@ -171,6 +171,20 @@ export function isEditableShortcutTarget(target: EventTarget | null): boolean {
   return Boolean(target.closest('[contenteditable="true"], [contenteditable="plaintext-only"]'));
 }
 
+/**
+ * True when a keystroke should be treated as text entry rather than a shortcut: the event target OR
+ * the currently focused element is an editable field (input/textarea/select/contenteditable). Checks
+ * `document.activeElement` too because focus and the keydown target can differ inside overlays/portals
+ * — relying on `event.target` alone is what let tool hotkeys fire while typing in some fields.
+ */
+export function isTypingIntoEditableTarget(
+  event: { target?: EventTarget | null } | null | undefined,
+): boolean {
+  if (isEditableShortcutTarget(event?.target ?? null)) return true;
+  if (typeof document !== 'undefined' && isEditableShortcutTarget(document.activeElement)) return true;
+  return false;
+}
+
 export function resolveKeyboardShortcutMap(overrides: KeyboardShortcutMap = {}): KeyboardShortcutMap {
   return {
     ...DEFAULT_KEYBOARD_SHORTCUTS,

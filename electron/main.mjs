@@ -845,6 +845,13 @@ function createWorkspaceWindow(workspace = 'flow') {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // Keep painting even when Chromium thinks the window is occluded/backgrounded. On Linux
+      // (Wayland + multi-monitor especially) that occlusion check misfires, so the compositor stops
+      // presenting new frames while the window is actually visible and focused: the DOM/canvas
+      // updates (a panel scrolls, the canvas zooms) but the screen doesn't repaint until an input
+      // event — moving the pointer out of the window and back — wakes it. Disabling throttling keeps
+      // frames presenting on their own.
+      backgroundThrottling: false,
     },
   });
 
@@ -2602,13 +2609,33 @@ function installIpcHandlers() {
   ipcMain.handle('signal-loom:source-library-apply-change', async (_event, change) => applySourceLibraryChange(change));
 
   ipcMain.handle('signal-loom:show-about', async (event) => {
-    await dialog.showMessageBox(getIpcWindow(event), {
+    const win = getIpcWindow(event);
+    const version = app.getVersion();
+    const result = await dialog.showMessageBox(win, {
       type: 'info',
       title: `About ${appName}`,
-      message: appName,
-      detail: 'Generative AI media flow builder and timeline editor.',
-      buttons: ['OK'],
+      message: `${appName} ${version}`,
+      detail:
+        'A local-first studio for generative media — node-based Flow, a layered Image editor, '
+        + 'print/comic Paper layout, and a Video timeline. Bring your own API keys; Signal Loom '
+        + 'never sees your keys or your work.\n\n'
+        + 'Early access (beta) — expect rough edges, and thank you for trying it.\n\n'
+        + 'Staying up to date: the newest builds are always at https://sloom.studio/downloads. '
+        + 'Click "Check for Updates" below, or just re-download the latest installer and run it over '
+        + 'your current version — your projects are kept.\n\n'
+        + 'Support: support@sloom.studio',
+      buttons: ['Check for Updates', 'Get the Latest', 'Visit sloom.studio', 'Close'],
+      defaultId: 3,
+      cancelId: 3,
+      noLink: true,
     });
+    if (result.response === 0) {
+      await signalLoomCheckForUpdates(win, version);
+    } else if (result.response === 1) {
+      await shell.openExternal('https://sloom.studio/downloads');
+    } else if (result.response === 2) {
+      await shell.openExternal('https://sloom.studio');
+    }
   });
 
   ipcMain.handle('signal-loom:open-path', async (_event, filePath) => {
@@ -2632,6 +2659,76 @@ function installIpcHandlers() {
       return { error: error instanceof Error ? error.message : String(error) };
     }
   });
+}
+
+/**
+ * Desktop "Check for Updates": fetch a tiny manifest from the site, compare versions, and either
+ * point the user at the download (install-over-current keeps their projects) or confirm up-to-date.
+ * Kept deliberately simple — no silent auto-install, since the indie builds are unsigned and a
+ * surprise replace is worse than a one-click "Download".
+ */
+async function signalLoomCheckForUpdates(win, currentVersion) {
+  let manifest = null;
+  try {
+    const response = await fetch('https://sloom.studio/downloads/latest.json', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    manifest = await response.json();
+  } catch (error) {
+    const r = await dialog.showMessageBox(win, {
+      type: 'warning',
+      title: 'Check for Updates',
+      message: 'Could not check for updates',
+      detail: 'Couldn\'t reach the update server. You can always download the latest at '
+        + `https://sloom.studio/downloads.\n\n(${error instanceof Error ? error.message : String(error)})`,
+      buttons: ['Open Downloads', 'Close'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (r.response === 0) await shell.openExternal('https://sloom.studio/downloads');
+    return;
+  }
+  const latest = typeof manifest?.version === 'string' ? manifest.version : null;
+  if (latest && signalLoomIsVersionNewer(latest, currentVersion)) {
+    const notes = typeof manifest.notes === 'string' && manifest.notes.trim()
+      ? `\n\nWhat's new:\n${manifest.notes.trim()}`
+      : '';
+    const r = await dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'Update Available',
+      message: `${appName} ${latest} is available`,
+      detail: `You're on ${currentVersion}.${notes}\n\nDownload it and install over your current `
+        + 'version — your projects are kept.',
+      buttons: ['Download', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (r.response === 0) {
+      await shell.openExternal(typeof manifest.url === 'string' && manifest.url ? manifest.url : 'https://sloom.studio/downloads');
+    }
+  } else {
+    await dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'Check for Updates',
+      message: 'You\'re up to date',
+      detail: `${appName} ${currentVersion} is the latest version.`,
+      buttons: ['Close'],
+    });
+  }
+}
+
+/** Numeric-segment version compare; true when `a` is newer than `b` (ignores any -beta suffix). */
+function signalLoomIsVersionNewer(a, b) {
+  const parse = (v) => String(v).split('-')[0].split('.').map((n) => parseInt(n, 10) || 0);
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const x = pa[i] || 0;
+    const y = pb[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return false;
 }
 
 app.whenReady().then(async () => {

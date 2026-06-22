@@ -28,6 +28,7 @@ import { useTextInputDialogStore } from '../../store/textInputDialogStore';
 import { panelKey, type DockZone, type DockablePanelLayout } from '../../lib/dockablePanel';
 import { getDockablePanelToggleMode, resolveDockablePanelMode } from '../../lib/dockablePanelVisibility';
 import { canMoveImageLayer } from '../../lib/imageLayerLocks';
+import { isTypingIntoEditableTarget } from '../../lib/keyboardShortcuts';
 import { isImageLayerLinked, translateLinkedImageLayers } from '../../lib/imageLayerLinks';
 import { DockablePanelHost } from '../DockablePanel/DockablePanelHost';
 import {
@@ -240,7 +241,9 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      // Don't let tool/edit hotkeys fire while the user is typing in a field (input/textarea/select/
+      // contenteditable) — checks the focused element too, not just the event target.
+      if (isTypingIntoEditableTarget(e)) return;
 
       const ctrl = e.ctrlKey || e.metaKey;
       const docId = useImageEditorStore.getState().activeDocId;

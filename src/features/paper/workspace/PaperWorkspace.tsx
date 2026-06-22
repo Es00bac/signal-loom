@@ -711,7 +711,10 @@ export function PaperWorkspace() {
     ? mobilePhoneInterface.hiddenTopPaddingClassName
     : mobilePhoneInterface.enabled
       ? mobilePhoneInterface.collapsedTopPaddingClassName
-    : 'pt-16';
+    // Desktop: the shared top bar is in-flow (the workspace sits below it already) and Paper portals
+    // its controls up into that bar, so this used to add a 64px empty band under it — same dead
+    // padding that was removed from the Image editor. No top padding needed.
+    : 'pt-0';
   const showWorkspaceChrome = !workspaceChromeHidden;
   const usePaperPhoneShell = mobilePhoneInterface.enabled;
   const activePaperEdgeDrawer: PaperMobileEdgeDrawerId | null =

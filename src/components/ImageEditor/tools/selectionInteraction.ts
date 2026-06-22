@@ -4,7 +4,7 @@ import {
   createMask,
   type SelectionMask,
 } from '../SelectionMask';
-import { getSelection, setSelection } from '../selectionRegistry';
+import { clearFloatingSelection, getSelection, setSelection } from '../selectionRegistry';
 import { featherSelection } from '../photoshopQuickActions/selectionActions';
 import type { ToolEnv } from './types';
 import type { SelectionMode } from '../../../types/imageEditor';
@@ -114,6 +114,9 @@ export class SelectionInteraction {
    * pixels. The undo entry captures the before/after snapshots.
    */
   commit(env: ToolEnv): void {
+    // A freshly drawn/edited selection breaks any association with pixels floated by a prior Move
+    // drag, so the next move lifts from the source again instead of grabbing the old float layer.
+    clearFloatingSelection(this.docId);
     const finalMask = getSelection(this.docId);
     if (!finalMask) return;
     const isEmpty = !maskHasAlpha(finalMask);

@@ -13,10 +13,15 @@ import {
   updateSelectionTransformBounds,
   type SelectionTransformBounds,
 } from '../ImageSelectionTransform';
-import { getSelection } from '../selectionRegistry';
+import {
+  clearFloatingSelection,
+  getFloatingSelection,
+  getSelection,
+  setFloatingSelection,
+} from '../selectionRegistry';
 import { maskBoundingBox, type SelectionMask } from '../SelectionMask';
-import { cloneBitmap } from '../LayerBitmap';
-import { liftSelectionPixels, renderMovedSelectionIntoBitmap, type LiftedSelection } from './selectionPixelMove';
+import { createBitmap } from '../LayerBitmap';
+import { liftSelectionPixels } from './selectionPixelMove';
 import type { LayerBitmap } from '../../../types/imageEditor';
 
 interface MoveLayerState {
@@ -33,12 +38,27 @@ interface MoveSelectionState {
   docId: string;
   startPoint: Point;
   origin: SelectionTransformBounds;
-  /** Set when the active image layer's selected pixels were lifted so the drag moves pixels too. */
-  pixels: {
+  /** Layers snapshot at gesture start, so the lift + move commits as one undoable layerOp. */
+  beforeLayers: ImageLayer[];
+  /** The active image layer the selected pixels are lifted from (null when nothing is liftable). */
+  sourceLayerId: string | null;
+  /** The selection mask at gesture start — used for the lift bounding box and cancel-restore. */
+  selection: SelectionMask;
+  /**
+   * Photoshop-style floating selection: dragging the selected pixels lifts them onto a NEW layer
+   * (the source keeps a clean hole) instead of compositing them back into the source — which used
+   * to overwrite, then on the next drag re-cut, whatever sat beneath the previous drop. Set lazily
+   * on the first actual movement (a click alone must not float), or carried over from a prior drag
+   * via the registry so re-moves translate the SAME layer.
+   */
+  float: {
     layerId: string;
-    target: LayerBitmap;
-    before: LayerBitmap;
-    lifted: LiftedSelection;
+    startX: number;
+    startY: number;
+    /** True when THIS gesture created the float (so cancel removes it + restores the source). */
+    createdThisGesture: boolean;
+    /** The source layer's bitmap before the lift erased it — for cancel-restore. */
+    originalSourceBitmap: LayerBitmap | null;
   } | null;
   moved: boolean;
 }
@@ -620,11 +640,24 @@ export const moveTool: ToolHandler = {
         width: active.origin.width,
         height: active.origin.height,
       });
-      if (active.pixels) {
-        renderMovedSelectionIntoBitmap(active.pixels.target, active.pixels.lifted, dx, dy);
-        env.store.bumpLayerBitmapVersion(active.docId, active.pixels.layerId);
+      // Lift on the first real movement — a click that never moves must not spawn a float layer.
+      if (!active.float && active.sourceLayerId && (dx !== 0 || dy !== 0)) {
+        const created = liftSelectionToNewLayer(env, active);
+        if (created) {
+          active.float = created;
+          setFloatingSelection(active.docId, { layerId: created.layerId });
+        } else {
+          active.sourceLayerId = null; // nothing liftable (e.g. no canvas) — fall back to mask-only
+        }
+      }
+      if (active.float) {
+        // The floated pixels are an ordinary layer now; moving the selection just translates it.
+        env.store.updateLayer(active.docId, active.float.layerId, {
+          x: active.float.startX + dx,
+          y: active.float.startY + dy,
+        });
         active.moved = true;
-        env.requestRender({ invalidateBitmapCache: true });
+        env.requestRender();
       } else if (boundsChanged) {
         env.requestRender();
       }
@@ -648,17 +681,20 @@ export const moveTool: ToolHandler = {
   onPointerUp(env) {
     if (!active) return;
     if (active.kind === 'selection') {
-      if (active.pixels && active.moved) {
+      const sel = active; // capture the narrowed value so it stays typed inside the find() closure
+      if (sel.float && sel.moved) {
+        // One undoable step for the whole gesture: the source's cut + the new float layer + its
+        // move (when this gesture created the float), or just the float's reposition (re-move).
+        const currentDoc = env.store.documents.find((candidate) => candidate.id === sel.docId) ?? env.doc;
         env.pushOperation({
-          kind: 'paint',
-          docId: active.docId,
-          layerId: active.pixels.layerId,
-          before: active.pixels.before,
-          after: cloneBitmap(active.pixels.target),
+          kind: 'layerOp',
+          docId: sel.docId,
+          before: sel.beforeLayers,
+          after: currentDoc.layers,
         });
-        env.store.markDocumentDirty(active.docId);
+        env.store.markDocumentDirty(sel.docId);
       }
-      applySelectionTransformSession(active.docId, env.requestRender);
+      applySelectionTransformSession(sel.docId, env.requestRender);
       active = null;
       return;
     }
@@ -711,13 +747,21 @@ export const moveTool: ToolHandler = {
 
   onCancel(env) {
     if (active?.kind === 'selection') {
-      if (active.pixels && active.moved) {
-        const ctx = active.pixels.target.getContext('2d');
-        if (ctx) {
-          ctx.clearRect(0, 0, active.pixels.target.width, active.pixels.target.height);
-          ctx.drawImage(active.pixels.before, 0, 0);
+      if (active.float?.createdThisGesture) {
+        // Undo the lift made this gesture: restore the source pixels and drop the float layer.
+        if (active.sourceLayerId && active.float.originalSourceBitmap) {
+          env.store.updateLayer(active.docId, active.sourceLayerId, {
+            bitmap: active.float.originalSourceBitmap,
+          });
         }
-        env.store.bumpLayerBitmapVersion(active.docId, active.pixels.layerId);
+        env.store.removeLayer(active.docId, active.float.layerId);
+        clearFloatingSelection(active.docId);
+      } else if (active.float) {
+        // A float carried over from a prior drag — just restore its starting position.
+        env.store.updateLayer(active.docId, active.float.layerId, {
+          x: active.float.startX,
+          y: active.float.startY,
+        });
       }
       cancelSelectionTransformSession(active.docId, env.requestRender);
       active = null;
@@ -734,24 +778,107 @@ function beginMoveToolSelectionDrag(env: ToolEnv, point: Point): MoveSelectionSt
   const session = getSelectionTransformSession(env.doc.id) ?? beginSelectionTransformSession(env.doc.id);
   if (!session) return null;
 
-  // Lift the active image layer's selected pixels so dragging moves the image content, not just the
-  // marching-ants outline. The mask itself is translated by the transform session below.
-  let pixels: MoveSelectionState['pixels'] = null;
-  const layer = env.activeLayer;
-  if (layer && layer.type === 'image' && layer.bitmap && canMoveImageLayer(layer)) {
-    const lifted = liftSelectionPixels(layer, selection);
-    if (lifted) {
-      pixels = { layerId: layer.id, target: layer.bitmap, before: cloneBitmap(layer.bitmap), lifted };
+  // If a prior drag already floated this selection onto its own layer, keep moving THAT layer rather
+  // than cutting a fresh hole in the source — this is what stops a second move from deleting whatever
+  // sat beneath the first drop.
+  let float: MoveSelectionState['float'] = null;
+  const existing = getFloatingSelection(env.doc.id);
+  if (existing) {
+    const floatLayer = env.doc.layers.find((candidate) => candidate.id === existing.layerId);
+    if (floatLayer && floatLayer.type === 'image' && canMoveImageLayer(floatLayer)) {
+      float = {
+        layerId: floatLayer.id,
+        startX: floatLayer.x,
+        startY: floatLayer.y,
+        createdThisGesture: false,
+        originalSourceBitmap: null,
+      };
+    } else {
+      clearFloatingSelection(env.doc.id); // stale association (layer deleted/undone)
     }
   }
+
+  // First move of this selection: remember which active image layer to lift from. The lift itself is
+  // deferred to the first real movement (onPointerMove) so a click that never drags doesn't float.
+  const source = env.activeLayer;
+  const sourceLayerId = float
+    ? null
+    : source && source.type === 'image' && source.bitmap && canMoveImageLayer(source)
+      ? source.id
+      : null;
 
   return {
     kind: 'selection',
     docId: env.doc.id,
     startPoint: point,
     origin: session.currentBounds,
-    pixels,
+    beforeLayers: env.doc.layers,
+    sourceLayerId,
+    selection,
+    float,
     moved: false,
+  };
+}
+
+/**
+ * Lift the selected pixels of the source layer onto a NEW image layer inserted just above it (and
+ * made active), leaving the source with a clean transparent hole. Returns the float descriptor, or
+ * null when there is nothing liftable (e.g. no canvas in a non-DOM environment), in which case the
+ * caller degrades to translating only the marching-ants outline.
+ */
+function liftSelectionToNewLayer(
+  env: ToolEnv,
+  state: MoveSelectionState,
+): MoveSelectionState['float'] | null {
+  if (!state.sourceLayerId) return null;
+  const doc = env.store.documents.find((candidate) => candidate.id === state.docId) ?? env.doc;
+  const source = doc.layers.find((candidate) => candidate.id === state.sourceLayerId);
+  if (!source || source.type !== 'image' || !source.bitmap) return null;
+
+  const lifted = liftSelectionPixels(source, state.selection);
+  if (!lifted) return null; // canvas unavailable — caller degrades to a mask-only move
+  const bbox = maskBoundingBox(state.selection);
+  if (!bbox) return null;
+
+  // Crop the lifted (document-space) pixels down to the selection bounds for a tidy layer.
+  let cropped: LayerBitmap;
+  try {
+    cropped = createBitmap(bbox.width, bbox.height);
+    const cctx = cropped.getContext('2d');
+    if (!cctx) return null;
+    cctx.drawImage(lifted.floating, -bbox.x, -bbox.y);
+  } catch {
+    return null;
+  }
+
+  const originalSourceBitmap = source.bitmap;
+  // Cut the selected region out of the source layer.
+  env.store.updateLayer(state.docId, source.id, { bitmap: lifted.clearedLocal });
+
+  // Create the floating layer just above the source, inheriting its compositing so it looks the same.
+  const floatLayer: ImageLayer = {
+    id: `layer-float-${Date.now()}`,
+    name: `${source.name} (floating)`,
+    type: 'image',
+    visible: true,
+    locked: false,
+    opacity: source.opacity,
+    blendMode: source.blendMode,
+    x: bbox.x,
+    y: bbox.y,
+    bitmap: cropped,
+    bitmapVersion: 0,
+    mask: null,
+  };
+  const sourceIndex = doc.layers.findIndex((candidate) => candidate.id === source.id);
+  env.store.addLayer(state.docId, floatLayer, sourceIndex + 1);
+
+  return {
+    layerId: floatLayer.id,
+    startX: floatLayer.x,
+    startY: floatLayer.y,
+    createdThisGesture: true,
+    originalSourceBitmap,
   };
 }
 

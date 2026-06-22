@@ -703,6 +703,17 @@ export class CompositeRenderer {
   private antsStart = 0;
   private currentDoc: ImageDocument | null = null;
   private currentSelection: SelectionMask | null = null;
+  // Marching-ants overlay cache. The selection mask is a fresh object only when the user edits the
+  // selection (bumpSelectionVersion does an immutable doc update, so the registry pushes a new mask
+  // per edit); the continuous ants animation runs every frame but only advances the dash offset.
+  // Rebuilding the full-document tint raster (maskToCanvas: an O(W*H) loop + a ~W*H*4-byte
+  // allocation) and the per-pixel boundary (computeMaskOutline: O(W*H)) on EVERY animation frame
+  // pinned the main thread — merely having a selection on a 4K document dropped the editor to
+  // sub-1fps, and drawing/moving one stacked per-event mask rebuilds on top. Cache both, keyed by
+  // mask identity, and rebuild only when the mask object actually changes (≈ once per edit).
+  private antsCacheMask: SelectionMask | null = null;
+  private antsTintCanvas: OffscreenCanvas | null = null;
+  private antsOutline: Edge[] | null = null;
   private deviceWidth = 0;
   private deviceHeight = 0;
   private cssWidth = 0;
@@ -776,6 +787,7 @@ export class CompositeRenderer {
     this.antsRafId = null;
     this.currentDoc = null;
     this.currentSelection = null;
+    this.invalidateAntsCache();
     this.cleanupWorker();
   }
 
@@ -874,9 +886,16 @@ export class CompositeRenderer {
   }
 
   private stopAntsLoop(): void {
+    this.invalidateAntsCache();
     if (this.antsRafId === null) return;
     cancelAnimationFrame(this.antsRafId);
     this.antsRafId = null;
+  }
+
+  private invalidateAntsCache(): void {
+    this.antsCacheMask = null;
+    this.antsTintCanvas = null;
+    this.antsOutline = null;
   }
 
   private buildDocSignature(doc: ImageDocument): string {
@@ -1474,6 +1493,13 @@ export class CompositeRenderer {
   }
 
   private drawSelectionAnts(mask: SelectionMask): void {
+    // Rebuild the expensive O(W*H) tint raster + per-pixel outline only when the mask object
+    // changes; the per-frame animation below reuses the cache and only moves the dash offset.
+    if (this.antsCacheMask !== mask) {
+      this.antsTintCanvas = maskToCanvas(mask, 60, 220, 240);
+      this.antsOutline = computeMaskOutline(mask);
+      this.antsCacheMask = mask;
+    }
     const elapsed = performance.now() - this.antsStart;
     const phase = (elapsed / ANTS_PERIOD_MS) * (ANTS_DASH_LENGTH * 2);
     const ctx = this.ctx;
@@ -1481,11 +1507,11 @@ export class CompositeRenderer {
     ctx.lineWidth = 1 / Math.max(this.currentDoc?.viewport.zoom ?? 1, 0.01);
 
     ctx.globalAlpha = 0.4;
-    ctx.drawImage(maskToCanvas(mask, 60, 220, 240), 0, 0);
+    if (this.antsTintCanvas) ctx.drawImage(this.antsTintCanvas, 0, 0);
     ctx.globalAlpha = 1;
 
-    const outline = computeMaskOutline(mask);
-    if (outline.length > 0) {
+    const outline = this.antsOutline;
+    if (outline && outline.length > 0) {
       ctx.lineWidth = 1 / Math.max(this.currentDoc?.viewport.zoom ?? 1, 0.01);
       ctx.setLineDash([ANTS_DASH_LENGTH, ANTS_DASH_LENGTH]);
       ctx.lineDashOffset = -phase;
