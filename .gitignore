@@ -62,3 +62,13 @@ ops/dev-dashboard/artifacts/
 /paper-mobile-source-drawer-handle-mcp.png
 /sloom-studio-live-desktop-1920x1080-posthardening.png
 /sloom-studio-live-mobile-412x915-posthardening.png
+
+# Large desktop build artifacts staged for site deploy (not source)
+docs/release/website/sloom-studio/downloads/*.exe
+docs/release/website/sloom-studio/downloads/*.AppImage
+docs/release/website/sloom-studio/downloads/*.deb
+docs/release/website/sloom-studio/downloads/*.blockmap
+
+# Loose QA/screenshot artifacts dumped at repo root (not project files)
+/*.png
+/*.jpeg

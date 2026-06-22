@@ -1,0 +1,6 @@
+{
+  "version": "0.9.1",
+  "channel": "beta",
+  "url": "https://sloom.studio/downloads",
+  "notes": "Faster marquee/selection (no more sub-1fps), non-destructive move (floats the selection to a new layer), fixes for tool hotkeys firing while typing, a canvas repaint/present stall, and the Paper top-bar layout."
+}
