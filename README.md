@@ -120,6 +120,6 @@ Signal Loom is **source-available** under the [PolyForm Noncommercial License 1.
 
 In plain terms: you're welcome to read the code, build it, and use it for any **noncommercial** purpose — personal projects, study, hobby tinkering, research, education, and nonprofit use. What the license does **not** grant is the right to sell it, redistribute it commercially, or publish it on an app store. Official, supported builds — and the only place to buy the app — come from the developer through [sloom.studio](https://sloom.studio) and the official Samsung Galaxy Store and Google Play listings.
 
-**"Signal Loom" is a trademark of Jarrod Cary.** The license covers copyright only; it grants no right to use the name, logo, or branding.
+**"Signal Loom" is a trademark of Sloom Software.** The license covers copyright only; it grants no right to use the name, logo, or branding.
 
 Earlier releases were published under the GNU Affero General Public License v3.0; those specific releases remain available under AGPL-3.0. Everything from the relicensing commit onward is under PolyForm Noncommercial.
