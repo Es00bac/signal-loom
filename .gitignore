@@ -74,6 +74,12 @@ docs/release/website/sloom-studio/downloads/*.AppImage
 docs/release/website/sloom-studio/downloads/*.deb
 docs/release/website/sloom-studio/downloads/*.blockmap
 
+# Proprietary mobile build artifacts — NEVER commit. The Android APK is a sold product and
+# AABs are Play Store uploads; anyone who wants the build can compile it themselves. Local
+# copies stay on disk (for VPS deploy / Play upload) but are kept out of git entirely.
+*.apk
+*.aab
+
 # Loose QA/screenshot artifacts dumped at repo root (not project files)
 /*.png
 /*.jpeg
