@@ -11,7 +11,9 @@ Signal Loom is a local-first AI media suite with four applications sharing one p
 
 The suite runs from the same `.sloom` project and automatically synchronizes media between apps so Flow outputs can be consumed in Image, Paper, or Video without re-importing assets.
 
-The app runs in a normal browser through Vite and also ships as an Electron desktop app with native file dialogs and a KDE Plasma global menu.
+The app runs in a normal browser through Vite, ships as an Electron desktop app with native file dialogs and a KDE Plasma global menu, and ships as an Android/DeX app (Capacitor) with file-manager intents, volume-key modifiers, an on-device LAN app server, and an on-device upscaler.
+
+> **Complete, code-audited feature inventory** (every node, tool, capability, provider, and Desktop/Android availability): [`docs/FEATURE_BREAKDOWN.md`](docs/FEATURE_BREAKDOWN.md).
 
 ## Screenshots
 
@@ -32,15 +34,14 @@ The app runs in a normal browser through Vite and also ships as an Electron desk
 
 ## Features
 
-- Node-based workflow canvas built with React Flow.
-- Prompt, text, image, video, audio, and composition nodes.
-- Layered Image editor with masks, region tools, canvas transforms, multiple export formats, and model-in-the-loop operations.
-- Paper workspace with page grids/rulers/guides, linked-frame placement, comic bubble and speech tooling, and print-ready export options.
-- Timeline editor with source bins, editor assets, text and shape overlays, crop controls, clip cuts, gaps, snapping, keyframes, opacity, volume, and transform animation.
-- Browser and Electron project workflows that can save and reopen `.sloom` project files.
-- Shared Source Library and project scratch references so generated/imported assets are reused across all four apps.
-- Optional local native render helper for FFmpeg-backed rendering.
-- Optional remote preview gateway for self-hosted browser access.
+- **Flow:** node graph (React Flow) of **60 node types** in 10 categories — Generate (image/video/audio/composition), Inputs & Data, Lists & Envelopes, Flow Control, Logic & Math (JS/Python/SQL/regex/JSON/HTTP/CSV/XML-YAML/math), Text & Story tools, Reuse & Layout (functions/groups/portals/aliases), Monitor, and Settings; per-node cost + execution telemetry.
+- **Image:** **26 tools** with selection modes + Quick Mask + Select & Mask; layers with **16 blend modes**, **9 layer effects**, **8 adjustment layers**, **7 filters**; full pressure/tilt/symmetry brush engine; gradients and vector shapes; artboards + CMYK soft-proof; **model-in-the-loop AI** (text-to-image, edit, mask-inpaint, outpaint, erase, search-replace/recolor, remove-background, relight, upscale); PNG/PSD/`.slimg` export.
+- **Paper:** **16 tools**, 8 frame kinds; page presets (Letter→Webtoon), columns, document + baseline grids, spreads; threaded text with runaround, OpenType, hyphenation, drop caps, styles, find/change, hyperlinks, tables; comic bubbles (with same-speaker bridge), captions, panels, gutter knife, Comic SFX Designer; CMYK/spot swatches and **PDF/X-4 / X-1a** print production; export to PDF, KDP, reader-spreads, booklet, webcomic, HTML, IDML, CBZ, stories (TXT/HTML/RTF/DOCX), JSON.
+- **Video:** multitrack timeline (visual + 4 audio tracks), transitions, 8 clip filters, stage objects with blend modes; keyframe animation of transform/opacity/crop/volume; **10 render presets** (H.264/HEVC/ProRes/VP9/GIF/PNG-JPEG sequences) over AMD-VAAPI → native-CPU → browser-FFmpeg backends.
+- Browser, Electron, and Android project workflows that save/reopen `.sloom` (plus `.slimg`/`.slppr`).
+- Shared Source Library + per-project scratch so generated/imported assets are reused across all four apps.
+- Optional local native FFmpeg render helper (desktop); optional remote preview gateway / Android LAN app server.
+- API keys encrypted at rest (OS keychain on desktop, WebCrypto on web/Android).
 
 ## Providers
 
@@ -49,9 +50,10 @@ Signal Loom uses your own provider accounts and model access. Provider keys are 
 Currently wired provider paths include:
 
 - Text: Google Gemini, OpenAI-compatible chat, Hugging Face chat completion.
-- Image: Google Gemini image generation, OpenAI image generation, Hugging Face diffusion.
-- Video: Google Veo through Gemini long-running jobs, Hugging Face text-to-video.
-- Audio: ElevenLabs text-to-speech, Hugging Face text-to-speech.
+- Image: Google Gemini, OpenAI, Atlas Cloud, Hugging Face, Black Forest Labs, Stability AI, Local/Open models, and the Android Accelerator (on-device).
+- Video: Google Veo (via Gemini long-running jobs and Atlas), Hugging Face text-to-video.
+- Audio: Google Gemini, ElevenLabs, Hugging Face — speech, sound-effect, and voice-change modes.
+- Desktop also bridges Google Vertex AI (Imagen/Gemini/Veo) via `gcloud` login or ADC/service account.
 
 In browser mode, provider keys are entered in the app settings and stored in local browser storage. In Electron mode, the renderer uses the same settings flow with native project/file integration.
 
@@ -110,6 +112,7 @@ The systemd units under `ops/` are examples for local native rendering and optio
 
 ## Documentation
 
+- Complete code-audited feature inventory: `docs/FEATURE_BREAKDOWN.md`
 - Full user guide and feature help: `docs/PROJECT_DOCUMENTATION.md`
 - Current task list: `docs/TASK_LIST.md`
 - Handoff and architecture notes: `docs/HANDOFF.md`

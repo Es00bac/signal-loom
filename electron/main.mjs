@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, shell } from 'electron';
+import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
 import { execFile } from 'node:child_process';
 import { existsSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { copyFile, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
@@ -16,6 +16,8 @@ import vertexAuthModule from './vertex-auth.cjs';
 import windowOptionsModule from './window-options.cjs';
 import automationPathModule from './automation-paths.cjs';
 import linuxWindowingModule from './linux-windowing.cjs';
+import globalMenuControllerModule from './globalMenu/globalMenuController.cjs';
+import x11WindowIdModule from './globalMenu/x11WindowId.cjs';
 
 const { createApplicationMenuTemplate, SIGNAL_LOOM_MENU_COMMANDS } = menuModule;
 const {
@@ -87,6 +89,8 @@ const {
   applyLinuxGpuCommandLine,
   resolveLinuxGpuPolicy,
 } = linuxWindowingModule;
+const { createGlobalMenuController } = globalMenuControllerModule;
+const { resolveX11WindowId } = x11WindowIdModule;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PRODUCTION_RENDERER_URL = pathToFileURL(resolve(__dirname, '../dist/index.html')).toString();
@@ -109,6 +113,9 @@ let currentAssetCapabilityRootPaths = [];
 let startupProject = undefined;
 let activeWorkspace = 'flow';
 let keyboardShortcuts = {};
+// Lazily-created KDE Plasma global-menu controller (opt-in; null when unsupported/disabled). It
+// exports each workspace window's menu over DBus, fully decoupled from the GPU/render process.
+let globalMenuController = null;
 let sourceLibraryVersion = 0;
 let sourceLibrarySnapshot = createEmptySourceLibrarySnapshot();
 const nativeAssetCapabilityRegistry = createNativeAssetCapabilityRegistry();
@@ -173,6 +180,12 @@ if (process.platform === 'linux' && !linuxGpuPolicy.disabled) {
       return;
     }
     gpuFallbackTriggered = true;
+    // Boundary 1 (GPU process → main process): a GPU crash here relaunches the whole app into
+    // software mode, which also tears down any registered global menu. Logged so we can tell a
+    // "menu vanished" report apart from a silent GPU-crash relaunch.
+    console.log(
+      `[gmenu] GPU process gone (reason=${details.reason ?? 'unknown'}) → writing fallback sentinel + relaunching in software`,
+    );
     try {
       writeFileSync(gpuFallbackSentinelPath, String(Date.now()));
     } catch {
@@ -896,6 +909,8 @@ function createWorkspaceWindow(workspace = 'flow') {
     if (workspace === 'flow') {
       closeStartupSplashWindow();
     }
+    // Export this window's menu to the KDE Plasma global-menu applet (opt-in; no-op otherwise).
+    void registerWorkspaceWindowGlobalMenu(workspaceWindow, workspace);
   });
 
   workspaceWindow.on('focus', () => {
@@ -947,6 +962,108 @@ function installApplicationMenu() {
   const focusedWorkspace = (focused && getWorkspaceForWindow(focused)) || activeWorkspace;
   applicationMenu = menuForWorkspace(focusedWorkspace);
   Menu.setApplicationMenu(applicationMenu);
+}
+
+// ── KDE Plasma global menu (opt-in, GPU-decoupled) ───────────────────────────────────────────────
+// The controller exports each workspace window's menu over the session DBus to KDE's AppMenu
+// registrar. KDE shows the focused window's registered menu in the panel automatically — no focus
+// juggling. Everything here is best-effort desktop chrome: failures degrade to the in-window menu bar.
+
+/** The DBusMenu has no Electron "roles", so role items carry synthetic `role:*` commands we perform
+ *  here natively (the in-window menu gets these for free from Electron's role mechanism). */
+function performGlobalMenuRole(command) {
+  const focused = BrowserWindow.getFocusedWindow() ?? mainWindow;
+  switch (command) {
+    case 'role:quit':
+      app.quit();
+      return;
+    case 'role:reload':
+      focused?.webContents?.reload();
+      return;
+    case 'role:togglefullscreen':
+      if (focused) focused.setFullScreen(!focused.isFullScreen());
+      return;
+    default:
+      // Unknown role — route it through the normal command bus rather than dropping it.
+      sendRendererCommand(command);
+  }
+}
+
+function getGlobalMenuController() {
+  if (globalMenuController) return globalMenuController;
+  globalMenuController = createGlobalMenuController({
+    onCommand: (command) => {
+      if (typeof command === 'string' && command.startsWith('role:')) {
+        performGlobalMenuRole(command);
+        return;
+      }
+      sendRendererCommand(command);
+    },
+    getKeyboardShortcuts: () => keyboardShortcuts,
+    isMac: process.platform === 'darwin',
+    // The controller only runs when the global menu is explicitly opted in, so always surface its
+    // lifecycle (bus connect, registrar round-trip, Plasma adoption) — not just in dev builds.
+    logger: (...args) => console.log('[gmenu]', ...args),
+  });
+  return globalMenuController;
+}
+
+/** Best-effort: get the toplevel's real X11 id. getNativeWindowHandle is the real XID on a normal
+ *  X11/XWayland desktop; when it comes back as the 0x1 placeholder we correlate via pid + window
+ *  title (the resolver never returns a window that isn't confidently ours). */
+function resolveWorkspaceWindowXid(workspaceWindow, workspace) {
+  // Boundary 3 (main process → XWayland window): log which path produced the XID and its value, so
+  // we can see whether the native handle works on the user's real session or we fall to correlation.
+  try {
+    const handle = workspaceWindow.getNativeWindowHandle?.();
+    if (handle && handle.length >= 4) {
+      const handleXid = handle.readUInt32LE(0);
+      console.log(`[gmenu] ${workspace}: getNativeWindowHandle → 0x${handleXid.toString(16)}`);
+      if (handleXid > 1) return handleXid;
+    } else {
+      console.log(`[gmenu] ${workspace}: getNativeWindowHandle returned no usable handle`);
+    }
+  } catch (err) {
+    console.log(`[gmenu] ${workspace}: getNativeWindowHandle threw (${String(err)}) → X11 correlation`);
+  }
+  const title = getWorkspaceWindowTitle(workspace);
+  const correlated = resolveX11WindowId({ pid: process.pid, titleIncludes: title });
+  console.log(
+    `[gmenu] ${workspace}: X11 correlation (title="${title}") → ${correlated ? `0x${correlated.toString(16)}` : 'null'}`,
+  );
+  return correlated;
+}
+
+/** Register a workspace window with the KDE global menu (no-op unless opted in + supported). */
+async function registerWorkspaceWindowGlobalMenu(workspaceWindow, workspace) {
+  const controller = getGlobalMenuController();
+  if (!controller.isSupported()) return;
+  try {
+    // Boundary 2 (main process → session DBus): did the bus connect + registrar proxy come up?
+    const started = await controller.start();
+    if (!started) {
+      console.log(`[gmenu] ${workspace}: controller.start() returned false (bus/registrar unavailable)`);
+      return;
+    }
+    const xid = resolveWorkspaceWindowXid(workspaceWindow, workspace);
+    if (!xid) {
+      // No confident XID → leave the in-window menu as the working fallback.
+      console.log(`[gmenu] ${workspace}: no confident XID → skipping registration (in-window menu only)`);
+      return;
+    }
+    // Boundary 4 (main process → AppMenu registrar): did KDE accept our window+menu registration?
+    const registered = await controller.registerWindow(workspace, xid);
+    console.log(`[gmenu] ${workspace}: registerWindow(0x${xid.toString(16)}) → ${registered}`);
+    if (registered) {
+      workspaceWindow.once('closed', () => {
+        console.log(`[gmenu] ${workspace}: window closed → unregister 0x${xid.toString(16)}`);
+        void controller.unregisterWindow(xid);
+      });
+    }
+  } catch (err) {
+    // The global menu is optional chrome — never let it break window startup — but DO say why.
+    console.log(`[gmenu] ${workspace}: registration error — ${String(err && err.stack ? err.stack : err)}`);
+  }
 }
 
 function getInstalledApplicationMenuLabels() {
@@ -2592,6 +2709,8 @@ function installIpcHandlers() {
   ipcMain.handle('signal-loom:set-keyboard-shortcuts', async (_event, shortcuts) => {
     keyboardShortcuts = sanitizeKeyboardShortcutsForMenu(shortcuts);
     installApplicationMenu();
+    // Rebuild the KDE global menu too so its accelerators track the in-window menu (no-op if off).
+    globalMenuController?.refreshShortcuts();
 
     return { ok: true };
   });
@@ -2645,6 +2764,33 @@ function installIpcHandlers() {
 
     const error = await shell.openPath(filePath);
     return error ? { error } : { ok: true };
+  });
+
+  // At-rest encryption for the renderer's persisted settings (API keys). safeStorage binds the
+  // ciphertext to the OS user account (DPAPI / Keychain / libsecret-kwallet). Returns null when the
+  // platform keyring is unavailable so the renderer falls back to its WebCrypto path.
+  ipcMain.handle('signal-loom:secret-available', () => {
+    try {
+      return safeStorage.isEncryptionAvailable();
+    } catch {
+      return false;
+    }
+  });
+  ipcMain.handle('signal-loom:secret-encrypt', (_event, plaintext) => {
+    try {
+      if (!safeStorage.isEncryptionAvailable()) return null;
+      return safeStorage.encryptString(String(plaintext ?? '')).toString('base64');
+    } catch {
+      return null;
+    }
+  });
+  ipcMain.handle('signal-loom:secret-decrypt', (_event, ciphertextBase64) => {
+    try {
+      if (!safeStorage.isEncryptionAvailable()) return null;
+      return safeStorage.decryptString(Buffer.from(String(ciphertextBase64 ?? ''), 'base64'));
+    } catch {
+      return null;
+    }
   });
 
   // The async web Clipboard API (navigator.clipboard.read) is permission-gated
@@ -2770,6 +2916,11 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+// Tear down the global-menu DBus export cleanly so KDE drops our registrations on exit.
+app.on('will-quit', () => {
+  void globalMenuController?.stop();
 });
 
 export { SIGNAL_LOOM_MENU_COMMANDS };

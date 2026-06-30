@@ -1,6 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, Command, Download, EyeOff, FolderOpen, Library, Maximize2, Menu, Minimize2, Minus, Play, Plus, Redo2, Settings, Undo2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Command, Download, EyeOff, FolderOpen, Library, Maximize2, Menu, Minimize2, Minus, Play, Plus, Redo2, Settings, Undo2, Wifi, WifiOff } from 'lucide-react';
 import { useReactFlow, useViewport } from '@xyflow/react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useFlowStore } from '../../store/flowStore';
@@ -20,6 +20,8 @@ import { fitToContainer, zoomViewportStepAroundCenter } from '../ImageEditor/vie
 import { PAPER_TOPBAR_SLOT_ID } from '../../lib/paperTopbarSlot';
 import { IMAGE_TOPBAR_CENTER_SLOT_ID, IMAGE_TOPBAR_RIGHT_SLOT_ID } from '../../lib/imageTopbarSlots';
 import { BottomToolbar } from './BottomToolbar';
+import { AppClassicMenuBar } from './AppClassicMenuBar';
+import { EditBatonControl } from './EditBatonControl';
 import type { FlowNodeType, NodeData, WorkspaceView } from '../../types/flow';
 import { FunctionLibraryDrawer } from '../Common/FunctionLibraryDrawer';
 import { FlowWorkspaceSwitcher } from '../../features/flow/workspace/FlowWorkspaceSwitcher';
@@ -33,6 +35,7 @@ import {
 import { useMobileInterfaceStore } from '../../store/mobileInterfaceStore';
 import { useMobilePhoneInterfaceDescriptor } from '../../lib/mobilePhoneInterface';
 import { isAndroidNativeFullscreenAvailable, setAndroidFullscreen } from '../../lib/androidSystemUi';
+import { isAndroidLanServerAvailable } from '../../lib/androidLanServer';
 import { UsageBar } from './UsageBar';
 
 const flowIcon = new URL('../../assets/icon-flow.png', import.meta.url).href;
@@ -102,6 +105,12 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
 }) => {
   const toggleSettings = useSettingsStore((state) => state.toggleSettings);
   const keyboardShortcuts = useSettingsStore((state) => state.keyboardShortcuts);
+  const appMenuStyle = useSettingsStore((state) => state.appMenuStyle);
+  const setAppMenuStyle = useSettingsStore((state) => state.setAppMenuStyle);
+  const lanServerEnabled = useSettingsStore((state) => Boolean(state.providerSettings.androidLanServerEnabled));
+  const setProviderSetting = useSettingsStore((state) => state.setProviderSetting);
+  // Only the native Android phone app can host the LAN server; the toggle is hidden everywhere else.
+  const lanServerAvailable = isAndroidLanServerAvailable();
   const exportFlow = useFlowStore((state) => state.exportFlow);
   const nodes = useFlowStore((state) => state.nodes);
   const addNode = useFlowStore((state) => state.addNode);
@@ -561,6 +570,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             ) : null}
 
             <div className="grid grid-cols-2 gap-2" data-mobile-primary-actions="true">
+              <EditBatonControl variant="mobile" />
               {showGenericViewportControls ? (
                 <div className="theme-control col-span-2 flex items-center justify-between rounded-lg border px-2 py-1">
                   <span className="px-2 text-sm font-semibold text-cyan-100/70">{Math.round(visibleZoom * 100)}%</span>
@@ -593,6 +603,14 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
               <MobileDrawerActionButton icon={<FolderOpen size={16} />} label="Projects" onClick={() => setProjectLibraryOpen(true)} />
               <MobileDrawerActionButton icon={isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />} label={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'} onClick={() => void toggleFullscreen()} />
               <MobileDrawerActionButton icon={<Settings size={16} />} label="Settings" onClick={toggleSettings} />
+              {lanServerAvailable ? (
+                <MobileDrawerActionButton
+                  active={lanServerEnabled}
+                  icon={lanServerEnabled ? <Wifi size={16} /> : <WifiOff size={16} />}
+                  label={lanServerEnabled ? 'Serving · On' : 'Serve to Desktop'}
+                  onClick={() => setProviderSetting('androidLanServerEnabled', !lanServerEnabled)}
+                />
+              ) : null}
 
               {workspaceView === 'flow' ? (
                 <>
@@ -615,6 +633,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   }
 
   return (
+    <>
     <div className="theme-topbar relative z-[80] flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 border-b px-3 py-2 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
       <div
         className="pointer-events-none relative z-20 flex items-center gap-2"
@@ -628,7 +647,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
           />
         </div>
 
-        {showIntegratedMenu ? (
+        {showIntegratedMenu && appMenuStyle === 'compact' ? (
           <div
             ref={appMenuRef}
             className="pointer-events-auto relative flex shrink-0 items-center border-r border-cyan-300/15 pr-2"
@@ -684,6 +703,19 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                         ))}
                       </div>
                     ))}
+                    <div className="mt-1 border-t border-cyan-300/10 pt-1">
+                      <button
+                        className="flex w-full items-center px-3 py-1.5 text-left text-xs font-medium text-cyan-100/55 transition-colors hover:bg-cyan-400/10 hover:text-white"
+                        data-app-menu-style-switch="menubar"
+                        onClick={() => {
+                          setAppMenuStyle('menubar');
+                          setOpenMenuId(null);
+                        }}
+                        type="button"
+                      >
+                        Switch to classic menu bar
+                      </button>
+                    </div>
                   </div>,
                   document.body,
                 )
@@ -754,6 +786,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         className={`pointer-events-none relative z-20 flex shrink-0 items-center justify-end gap-2 ${primaryControlsFlexClass}`}
         data-topbar-primary-controls="true"
       >
+        <EditBatonControl />
         {workspaceView === 'image' ? (
           <div
             className="pointer-events-auto flex shrink-0 items-center"
@@ -920,6 +953,14 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         open={isFunctionLibraryOpen}
       />
     </div>
+    {showIntegratedMenu && appMenuStyle === 'menubar' ? (
+      <AppClassicMenuBar
+        groups={appMenuGroups}
+        onCommand={(command) => handleMenuCommand(command)}
+        onSwitchToCompact={() => setAppMenuStyle('compact')}
+      />
+    ) : null}
+    </>
   );
 };
 
@@ -1150,17 +1191,21 @@ function MobileEditorPanelControls({
 }
 
 function MobileDrawerActionButton({
+  active = false,
   icon,
   label,
   onClick,
 }: {
+  active?: boolean;
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
 }) {
   return (
     <button
-      className="theme-control inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-semibold text-cyan-100/80 transition-colors hover:text-white"
+      className={`theme-control inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-semibold transition-colors ${
+        active ? 'border-cyan-300/60 bg-cyan-400/15 text-white' : 'text-cyan-100/80 hover:text-white'
+      }`}
       onClick={onClick}
       type="button"
     >

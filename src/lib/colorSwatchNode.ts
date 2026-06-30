@@ -102,6 +102,82 @@ export function formatColorSwatchPrompt(data: ColorSwatchPromptData): string {
   return `Color swatch: ${colors.join(', ')}. ${option.instruction}`;
 }
 
+// ---- Color Swatch node (labelled subset fed by Color Palette color handles) ----
+
+export interface ColorSwatchListEntry {
+  /** Stable key: `${sourcePaletteNodeId}:${sourceHandleId}`. */
+  key: string;
+  /** Live hex color resolved from the connected Color Palette. */
+  color: string;
+  /** User label for this entry (e.g. "hair", "skin", "shirt"). */
+  label: string;
+}
+
+interface ColorSwatchListNodeLike {
+  id: string;
+  data: Pick<NodeData, 'colorSwatchEntryLabels'>;
+}
+interface PaletteNodeLike {
+  id: string;
+  type?: string;
+  data: Pick<NodeData, 'colorSwatchColors'>;
+}
+interface ColorEdgeLike {
+  source: string;
+  sourceHandle?: string | null;
+  target: string;
+}
+
+/** Build a stable per-color source handle id for the Color Palette node. */
+export function paletteColorHandleId(index: number): string {
+  return `palette-color-${index}`;
+}
+
+/**
+ * Resolve a Color Swatch node's entries from the graph: each incoming edge from a Color Palette color
+ * handle becomes a `{ live color, label }` entry. The swatch is a labelled SUBSET — only connected
+ * colors appear, and a color the user removes from the palette simply drops out.
+ */
+export function resolveColorSwatchListEntries(
+  node: ColorSwatchListNodeLike,
+  nodes: ReadonlyArray<PaletteNodeLike>,
+  edges: ReadonlyArray<ColorEdgeLike>,
+): ColorSwatchListEntry[] {
+  const labels = node.data.colorSwatchEntryLabels ?? {};
+  const entries: ColorSwatchListEntry[] = [];
+  const seen = new Set<string>();
+
+  for (const edge of edges) {
+    if (edge.target !== node.id) continue;
+    const handle = edge.sourceHandle ?? '';
+    const match = /^palette-color-(\d+)$/.exec(handle);
+    if (!match) continue;
+    const source = nodes.find((candidate) => candidate.id === edge.source);
+    if (!source || source.type !== 'colorSwatchNode') continue;
+    const color = normalizeColorSwatchColors(source.data.colorSwatchColors)[Number(match[1])];
+    if (!color) continue;
+    const key = `${edge.source}:${handle}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    entries.push({ key, color, label: typeof labels[key] === 'string' ? labels[key] : '' });
+  }
+
+  return entries;
+}
+
+export function formatColorSwatchListPrompt(
+  node: ColorSwatchListNodeLike,
+  nodes: ReadonlyArray<PaletteNodeLike>,
+  edges: ReadonlyArray<ColorEdgeLike>,
+): string {
+  const entries = resolveColorSwatchListEntries(node, nodes, edges);
+  if (entries.length === 0) {
+    return '';
+  }
+  const parts = entries.map((entry) => (entry.label.trim() ? `${entry.label.trim()}: ${entry.color}` : entry.color));
+  return `Color swatch — ${parts.join(', ')}.`;
+}
+
 export function resolveColorSwatchDraftColor(value: unknown): string {
   return normalizeHexColor(value) ?? DEFAULT_COLOR_SWATCH_DRAFT_COLOR;
 }

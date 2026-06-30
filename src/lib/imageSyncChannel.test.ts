@@ -1,0 +1,212 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { ImageDocument, ImageLayer, LayerBitmap } from '../types/imageEditor';
+import type { ImageDocumentNativeChange } from './imageDocumentNativeSync';
+
+/**
+ * Task #53, increment 3: the Image sync **channel** (policy layer). The pure op model, the store seam, and
+ * the out-of-band transport each have their own tests; this verifies the channel that stitches them — that
+ * an emit encodes a layer's pixels to the out-of-band store *before* publishing the pointer op, that an
+ * inbound pointer op fetches + decodes + flips those pixels in, that a re-applied version is deduped, and
+ * that `snapshot` pre-publishes every layer's bytes so a seeding client can fetch them.
+ *
+ * Canvas is replaced by an injected codec (`encode` → a tag string, `decode` → a sentinel) and an in-memory
+ * asset map, so the round-trip runs under jsdom with no `OffscreenCanvas`.
+ */
+
+const h = vi.hoisted(() => ({ host: true }));
+
+const notifyLanProjectChange = vi.fn<(channel: string, change: unknown) => void>();
+
+vi.mock('./androidLanServer', () => ({
+  isAndroidLanServerAvailable: () => h.host,
+  notifyLanProjectChange: (channel: string, change: unknown) => notifyLanProjectChange(channel, change),
+  setServedProjectMutationPublisher: () => undefined,
+}));
+vi.mock('./remoteHostClient', () => ({
+  isServedLanSession: () => false,
+  remoteHostFetch: vi.fn(),
+}));
+vi.mock('./projectSyncClient', () => ({
+  ensureProjectSyncChannelStarted: vi.fn(async () => undefined),
+}));
+
+import { useImageEditorStore } from '../store/imageEditorStore';
+import { getProjectSyncChannel } from './projectSyncService';
+import {
+  IMAGE_SYNC_CHANNEL,
+  initializeImageSyncChannel,
+  __resetImageSyncChannelForTests,
+  __setImageSyncDepsForTests,
+  __flushImageSyncEmitForTests,
+} from './imageSyncChannel';
+
+// Sentinel "bitmap" — identity/tag is all the fake codec and the assertions care about.
+const fakeBitmap = (tag: string): LayerBitmap => ({ __tag: tag } as unknown as LayerBitmap);
+
+const codec = {
+  encode: async (bitmap: LayerBitmap) => `enc:${(bitmap as unknown as { __tag: string }).__tag}`,
+  decode: async (url: string) => ({ __decoded: url } as unknown as LayerBitmap),
+};
+
+// In-memory stand-in for the out-of-band asset store, keyed `${channel}/${assetId}`.
+const assets = new Map<string, string>();
+const putAsset = vi.fn(async (channel: string, assetId: string, dataUrl: string) => {
+  assets.set(`${channel}/${assetId}`, dataUrl);
+});
+const getAsset = vi.fn(async (channel: string, assetId: string) => assets.get(`${channel}/${assetId}`) ?? null);
+
+function makeLayer(id: string, patch: Partial<ImageLayer> = {}): ImageLayer {
+  return {
+    id,
+    name: id,
+    type: 'image',
+    visible: true,
+    locked: false,
+    opacity: 1,
+    blendMode: 'normal',
+    x: 0,
+    y: 0,
+    bitmap: fakeBitmap(`bitmap-${id}`),
+    bitmapVersion: 1,
+    mask: null,
+    ...patch,
+  };
+}
+
+function makeDocument(layers: ImageLayer[]): ImageDocument {
+  return {
+    id: 'doc-1',
+    title: 'Doc',
+    width: 64,
+    height: 64,
+    layers,
+    activeLayerId: layers[0]?.id ?? null,
+    hasSelection: false,
+    selectionVersion: 0,
+    viewport: { zoom: 1, panX: 0, panY: 0 },
+    dirty: false,
+  };
+}
+
+function openDoc(layers: ImageLayer[]): void {
+  useImageEditorStore.setState({ documents: [], activeDocId: null });
+  useImageEditorStore.getState().openDocument(makeDocument(layers));
+}
+
+const activeLayer = (id: string): ImageLayer => {
+  const doc = useImageEditorStore.getState().getActiveDocument();
+  const layer = doc?.layers.find((l) => l.id === id);
+  if (!layer) throw new Error(`no layer ${id}`);
+  return layer;
+};
+
+beforeEach(() => {
+  __resetImageSyncChannelForTests();
+  h.host = true;
+  notifyLanProjectChange.mockClear();
+  putAsset.mockClear();
+  getAsset.mockClear();
+  assets.clear();
+  useImageEditorStore.setState({ documents: [], activeDocId: null });
+});
+
+describe('imageSyncChannel emit (outbound)', () => {
+  it('PUTs a layer’s encoded pixels before publishing the pixel-pointer op', async () => {
+    openDoc([makeLayer('a', { bitmapVersion: 1 })]);
+    initializeImageSyncChannel();
+    __setImageSyncDepsForTests({ codec, putAsset, getAsset });
+
+    // Establish the baseline at v1, then simulate a local brush stroke committing v2 with new pixels.
+    await __flushImageSyncEmitForTests();
+    notifyLanProjectChange.mockClear();
+    putAsset.mockClear();
+
+    // The pointer op must only go out once its bytes are already in the store.
+    let assetPresentAtPublish = false;
+    notifyLanProjectChange.mockImplementation(() => {
+      assetPresentAtPublish = assets.has(`${IMAGE_SYNC_CHANNEL}/a@2`);
+    });
+
+    useImageEditorStore.setState((state) => ({
+      documents: state.documents.map((doc) =>
+        doc.id === 'doc-1'
+          ? { ...doc, layers: doc.layers.map((l) => (l.id === 'a' ? { ...l, bitmap: fakeBitmap('a2'), bitmapVersion: 2 } : l)) }
+          : doc,
+      ),
+    }));
+    await __flushImageSyncEmitForTests();
+
+    expect(putAsset).toHaveBeenCalledWith(IMAGE_SYNC_CHANNEL, 'a@2', 'enc:a2');
+    expect(assets.get(`${IMAGE_SYNC_CHANNEL}/a@2`)).toBe('enc:a2');
+    const op = notifyLanProjectChange.mock.calls.at(-1)?.[1] as ImageDocumentNativeChange;
+    expect(op).toMatchObject({ type: 'image-layer-pixels-updated', layerId: 'a', bitmapVersion: 2, hasBitmap: true, hasMask: false });
+    expect(assetPresentAtPublish).toBe(true); // bytes-before-pointer ordering
+  });
+
+  it('does not emit from a served client until it has synced once (canEmit gate)', async () => {
+    h.host = false; // not the authority
+    openDoc([makeLayer('a')]);
+    initializeImageSyncChannel();
+    __setImageSyncDepsForTests({ codec, putAsset, getAsset });
+
+    useImageEditorStore.setState((state) => ({
+      documents: state.documents.map((doc) =>
+        doc.id === 'doc-1'
+          ? { ...doc, layers: doc.layers.map((l) => ({ ...l, bitmap: fakeBitmap('a2'), bitmapVersion: 2 })) }
+          : doc,
+      ),
+    }));
+    await __flushImageSyncEmitForTests();
+
+    expect(notifyLanProjectChange).not.toHaveBeenCalled();
+    expect(putAsset).not.toHaveBeenCalled();
+  });
+});
+
+describe('imageSyncChannel apply (inbound)', () => {
+  it('fetches + decodes out-of-band bytes and flips a layer’s pixels in', async () => {
+    openDoc([makeLayer('a', { bitmapVersion: 1 })]);
+    initializeImageSyncChannel();
+    __setImageSyncDepsForTests({ codec, putAsset, getAsset });
+    assets.set(`${IMAGE_SYNC_CHANNEL}/a@2`, 'enc:a2'); // host already PUT these bytes
+
+    const channel = getProjectSyncChannel(IMAGE_SYNC_CHANNEL)!;
+    const change: ImageDocumentNativeChange = {
+      type: 'image-layer-pixels-updated', layerId: 'a', bitmapVersion: 2, hasBitmap: true, hasMask: false,
+    };
+    const changed = await channel.applyRemote(change);
+
+    expect(changed).toBe(true);
+    expect(getAsset).toHaveBeenCalledWith(IMAGE_SYNC_CHANNEL, 'a@2');
+    const layer = activeLayer('a');
+    expect(layer.bitmapVersion).toBe(2);
+    expect(layer.bitmap).toEqual({ __decoded: 'enc:a2' });
+
+    // Re-applying the same version is deduped — no second fetch, reported as no change.
+    getAsset.mockClear();
+    const again = await channel.applyRemote(change);
+    expect(again).toBe(false);
+    expect(getAsset).not.toHaveBeenCalled();
+  });
+});
+
+describe('imageSyncChannel snapshot (seed)', () => {
+  it('pre-publishes every layer’s bytes so a seeding client can fetch them', async () => {
+    openDoc([
+      makeLayer('a', { bitmapVersion: 3 }),
+      makeLayer('b', { bitmapVersion: 5, mask: fakeBitmap('mask-b') }),
+    ]);
+    initializeImageSyncChannel();
+    __setImageSyncDepsForTests({ codec, putAsset, getAsset });
+
+    const channel = getProjectSyncChannel(IMAGE_SYNC_CHANNEL)!;
+    const snap = (await channel.snapshot()) as Extract<ImageDocumentNativeChange, { type: 'image-document-snapshot' }>;
+
+    expect(snap.type).toBe('image-document-snapshot');
+    expect(snap.document.layers.map((l) => l.id)).toEqual(['a', 'b']);
+    expect(assets.get(`${IMAGE_SYNC_CHANNEL}/a@3`)).toBe('enc:bitmap-a');
+    expect(assets.get(`${IMAGE_SYNC_CHANNEL}/b@5`)).toBe('enc:bitmap-b');
+    expect(assets.get(`${IMAGE_SYNC_CHANNEL}/b@5:mask`)).toBe('enc:mask-b');
+  });
+});

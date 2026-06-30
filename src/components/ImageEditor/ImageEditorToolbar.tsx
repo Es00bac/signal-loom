@@ -9,6 +9,7 @@ import {
   Eraser,
   Focus,
   Hand,
+  ImageOff,
   Lasso,
   MousePointer2,
   Moon,
@@ -18,11 +19,14 @@ import {
   PenTool,
   Pipette,
   RotateCcw,
+  Sparkles,
   Stamp,
   Square,
+  SquareDashed,
   Sun,
   Type,
   Wand2,
+  Wind,
   Undo2,
   Redo2,
   Scissors,
@@ -60,6 +64,7 @@ export function ImageEditorToolbar() {
   const activeDocId = useImageEditorStore((s) => s.activeDocId);
   const canUndo = useImageEditorStore((s) => (s.activeDocId ? (s.undoStacks[s.activeDocId]?.length ?? 0) > 0 : false));
   const canRedo = useImageEditorStore((s) => (s.activeDocId ? (s.redoStacks[s.activeDocId]?.length ?? 0) > 0 : false));
+  const toolsCollapsed = useImageEditorStore((s) => s.toolsCollapsed);
   const toolbarFlyoutGroups = getImageEditorToolbarFlyoutGroups(toolbarFlyoutOrder);
   const editActions: Array<{ id: string; label: string; icon: React.ReactNode; onActivate: () => void; disabled?: boolean }> = [
     { id: 'undo', label: 'Undo', icon: <Undo2 size={16} />, onActivate: () => { if (activeDocId) undo(activeDocId); }, disabled: !canUndo },
@@ -72,18 +77,18 @@ export function ImageEditorToolbar() {
   const icons: Record<EditorTool, React.ReactNode> = {
     move: <MousePointer2 size={16} />,
     hand: <Hand size={16} />,
-    marquee: <Square size={16} />,
+    marquee: <SquareDashed size={16} />,
     lasso: <Lasso size={16} />,
     magicWand: <Wand2 size={16} />,
     brush: <Paintbrush size={16} />,
     eraser: <Eraser size={16} />,
-    backgroundEraser: <Eraser size={16} />,
-    magicEraser: <Wand2 size={16} />,
+    backgroundEraser: <ImageOff size={16} />,
+    magicEraser: <Sparkles size={16} />,
     cloneStamp: <Stamp size={16} />,
     spotHeal: <Bandage size={16} />,
     blurBrush: <Droplet size={16} />,
     sharpenBrush: <Focus size={16} />,
-    smudgeBrush: <Hand size={16} />,
+    smudgeBrush: <Wind size={16} />,
     dodgeBrush: <Sun size={16} />,
     burnBrush: <Moon size={16} />,
     spongeSaturateBrush: <Palette size={16} />,
@@ -128,7 +133,8 @@ export function ImageEditorToolbar() {
       data-image-editor-tools-panel="true"
       role="toolbar"
     >
-      <div className="grid grid-cols-2 gap-0 border-b border-[#252936]" data-image-editor-edit-actions="true">
+      {!toolsCollapsed && (
+        <div className="grid grid-cols-2 gap-0 border-b border-[#252936]" data-image-editor-edit-actions="true">
         {editActions.map((action) => (
           <button
             aria-label={action.label}
@@ -143,7 +149,9 @@ export function ImageEditorToolbar() {
           </button>
         ))}
       </div>
-      <div className="grid grid-cols-2 gap-0" data-image-editor-tools-grid="true">
+      )}
+      {!toolsCollapsed && (
+        <div className="grid grid-cols-2 gap-0" data-image-editor-tools-grid="true">
         {toolbarFlyoutGroups.map((group) => {
           const activeTool = group.tools.includes(tool) ? tool : group.primaryTool;
           const activeDefinition = TOOL_DEFINITION_BY_TOOL.get(activeTool);
@@ -243,7 +251,8 @@ export function ImageEditorToolbar() {
             </div>
           );
         })}
-      </div>
+        </div>
+      )}
       <div
         className="relative h-[60px] w-16 border-x border-b border-[#252936] bg-[#151720]"
         data-image-editor-color-well="true"

@@ -87,6 +87,27 @@ const nodeThemes: Record<FlowNodeType, NodeTheme> = {
     headerClassName: 'bg-[linear-gradient(90deg,rgba(244,114,182,0.20),rgba(37,40,48,0.82))] border-pink-400/25',
     iconClassName: 'text-pink-200',
   },
+  colorSwatchListNode: {
+    accentColor: '#a78bfa',
+    hoverAccentColor: '#c4b5fd',
+    containerClassName: 'bg-[linear-gradient(155deg,rgba(167,139,250,0.14),#1e2027_34%,#1b1830)] border-violet-400/35 shadow-violet-950/20',
+    headerClassName: 'bg-[linear-gradient(90deg,rgba(167,139,250,0.20),rgba(37,40,48,0.82))] border-violet-400/25',
+    iconClassName: 'text-violet-200',
+  },
+  loraSpecNode: {
+    accentColor: '#fbbf24',
+    hoverAccentColor: '#fcd34d',
+    containerClassName: 'bg-[linear-gradient(155deg,rgba(251,191,36,0.14),#1e2027_34%,#2a2010)] border-amber-400/35 shadow-amber-950/20',
+    headerClassName: 'bg-[linear-gradient(90deg,rgba(251,191,36,0.20),rgba(37,40,48,0.82))] border-amber-400/25',
+    iconClassName: 'text-amber-200',
+  },
+  slimgNode: {
+    accentColor: '#38bdf8',
+    hoverAccentColor: '#7dd3fc',
+    containerClassName: 'bg-[linear-gradient(155deg,rgba(56,189,248,0.14),#1e2027_34%,#0c2533)] border-sky-400/35 shadow-sky-950/20',
+    headerClassName: 'bg-[linear-gradient(90deg,rgba(56,189,248,0.20),rgba(37,40,48,0.82))] border-sky-400/25',
+    iconClassName: 'text-sky-200',
+  },
   doodleNode: {
     accentColor: '#5b8def',
     hoverAccentColor: '#93b9f7',

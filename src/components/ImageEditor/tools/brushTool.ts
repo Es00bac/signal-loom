@@ -50,6 +50,7 @@ import {
 import { getImageChannelEditTarget } from '../ImageSelectionChannels';
 import { paintMixerDabs } from './brushMixerPaint';
 import type { MixerColor } from '../ImageBrushMixer';
+import { brushStraightLineStart, recordBrushStrokeAnchor } from './brushLineAnchor';
 
 interface BitmapStrokeState {
   quickMask: false;
@@ -228,10 +229,13 @@ function canEditLayerMask(layer: ImageLayer | null | undefined): layer is ImageL
 
 function makeBrushTool(isEraser: boolean): ToolHandler {
   return {
-    onPointerDown(env, point, _mods, event) {
+    onPointerDown(env, point, mods, event) {
       // Drop the per-stroke selection-mask cache so a selection changed since the last stroke is
       // re-read (within a stroke the selection is stable, so the cache stays valid there).
       selectionMaskCache = null;
+      // Photoshop Shift straight-line: when Shift is held, start the stroke from the previous stroke's
+      // end point so the first segment is a straight connecting line (else from this point = one dab).
+      const lineStart = brushStraightLineStart(isEraser ? 'eraser' : 'brush', env.doc.id, mods) ?? point;
       if (env.store.quickMaskSettings.enabled) {
         const selection = ensureQuickMaskSelection(env);
         stroke = {
@@ -243,7 +247,7 @@ function makeBrushTool(isEraser: boolean): ToolHandler {
           seed: Date.now() % 100000,
           lastTime: event.timeStamp,
         };
-        paintQuickMaskStrokeSegment(env, selection, point, point, event);
+        paintQuickMaskStrokeSegment(env, selection, lineStart, point, event);
         env.store.bumpSelectionVersion(env.doc.id);
         env.requestRender();
         return;
@@ -263,7 +267,7 @@ function makeBrushTool(isEraser: boolean): ToolHandler {
           seed: Date.now() % 100000,
           lastTime: event.timeStamp,
         };
-        paintLayerMaskStrokeSegment(env, layer, layer.mask, point, point, event);
+        paintLayerMaskStrokeSegment(env, layer, layer.mask, lineStart, point, event);
         env.requestRender();
         return;
       }
@@ -283,7 +287,7 @@ function makeBrushTool(isEraser: boolean): ToolHandler {
         lastTime: event.timeStamp,
         mixerState: [0, 0, 0, 0],
       };
-      paintStrokeSegment(env, layer, bitmap, point, point, event);
+      paintStrokeSegment(env, layer, bitmap, lineStart, point, event);
       env.requestRender();
     },
 
@@ -325,6 +329,8 @@ function makeBrushTool(isEraser: boolean): ToolHandler {
     onPointerUp(env) {
       const activeStroke = stroke;
       if (!activeStroke) return;
+      // Remember where this stroke ended so a following Shift+click draws a straight line to it.
+      recordBrushStrokeAnchor(isEraser ? 'eraser' : 'brush', env.doc.id, activeStroke.lastPoint);
       if (activeStroke.quickMask) {
         const after = getSelection(env.doc.id) ?? createMask(env.doc.width, env.doc.height);
         env.pushOperation({

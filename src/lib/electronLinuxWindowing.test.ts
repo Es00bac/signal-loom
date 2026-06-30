@@ -59,7 +59,7 @@ describe('Electron Linux windowing compatibility', () => {
     expect(appendSwitch).toHaveBeenCalledWith('ozone-platform-hint', 'auto');
   });
 
-  it('opts into the KDE global menu (appmenu export) only when SIGNAL_LOOM_ELECTRON_GLOBAL_MENU=1', async () => {
+  it('forces XWayland (not the dead GTK appmenu module) when SIGNAL_LOOM_ELECTRON_GLOBAL_MENU=1 on KDE', async () => {
     const { applyElectronMainLinuxWindowingCompatibility } = await loadElectronLinuxWindowingModule();
     const appendSwitch = vi.fn();
     const env: Record<string, string | undefined> = {
@@ -71,11 +71,14 @@ describe('Electron Linux windowing compatibility', () => {
 
     applyElectronMainLinuxWindowingCompatibility({ commandLine: { appendSwitch } }, env, 'linux');
 
-    expect(env.GTK_MODULES).toBe('appmenu-gtk-module');
-    expect(env.UBUNTU_MENUPROXY).toBe('1');
-    // Global-menu export no longer pins XWayland — native Wayland (auto) for GPU perf.
-    expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBe('auto');
-    expect(env.GDK_BACKEND).toBeUndefined();
+    // The appmenu GTK module is a dead end for Electron — never set it, even in global-menu mode.
+    expect(env.GTK_MODULES).toBeUndefined();
+    expect(env.UBUNTU_MENUPROXY).toBeUndefined();
+    // The KDE AppMenu registrar keys on an X11 window id, so the global menu forces XWayland. The
+    // ANGLE-Vulkan GPU path survives XWayland, so this no longer costs the GPU.
+    expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBe('x11');
+    expect(env.GDK_BACKEND).toBe('x11');
+    expect(appendSwitch).toHaveBeenCalledWith('ozone-platform', 'x11');
   });
 
   it('strips a stale appmenu-gtk-module from the ambient env in the default in-window mode', async () => {

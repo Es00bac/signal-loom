@@ -8,6 +8,7 @@ import {
 
 export type ImageEditorOperationId =
   | 'inpaint'
+  | 'editImage'
   | 'outpaint'
   | 'searchReplace'
   | 'searchRecolor'
@@ -69,6 +70,18 @@ const OPERATION_DEFINITIONS: ImageEditorOperationDefinition[] = [
     localOnly: false,
     requiresSourceLayer: true,
     requiresSelection: true,
+    supportsPrompt: true,
+    supportsSearchPrompt: false,
+    supportsReferenceImages: true,
+  },
+  {
+    id: 'editImage',
+    label: 'Edit (whole image)',
+    description: 'Edit the entire image from a prompt and optional references. This model has no mask support, so it does not preserve an unselected region — use a true Inpaint model for localized fills.',
+    providerOperation: 'image-edit',
+    localOnly: false,
+    requiresSourceLayer: true,
+    requiresSelection: false,
     supportsPrompt: true,
     supportsSearchPrompt: false,
     supportsReferenceImages: true,
@@ -304,10 +317,9 @@ function resolveProviderOperationForModel(
     return operation.providerOperation;
   }
 
-  if (operation.id === 'inpaint' && model.supportedOperations.includes('image-edit')) {
-    return 'image-edit';
-  }
-
+  // Inpaint intentionally has NO fallback: only models that truly honour a mask ('mask-inpaint') may
+  // offer it. Edit-capable models without a mask surface the honest 'Edit (whole image)' operation
+  // instead, so the user never paints a mask that the model silently ignores.
   return null;
 }
 

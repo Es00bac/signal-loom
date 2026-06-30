@@ -26,12 +26,21 @@ describe('Electron launcher environment', () => {
     expect(env.UBUNTU_MENUPROXY).toBeUndefined();
   });
 
-  it('loads KDE appmenu support only when the global menu is opted in', async () => {
+  it('forces XWayland (not the dead appmenu GTK module) when the global menu is opted in on KDE', async () => {
     const { buildElectronEnvironment } = await loadLauncherModule();
-    const env = buildElectronEnvironment({ SIGNAL_LOOM_ELECTRON_GLOBAL_MENU: '1' }, 'linux');
+    const env = buildElectronEnvironment(
+      { XDG_CURRENT_DESKTOP: 'KDE', SIGNAL_LOOM_ELECTRON_GLOBAL_MENU: '1' },
+      'linux',
+    );
 
-    expect(env.GTK_MODULES).toBe('appmenu-gtk-module');
-    expect(env.UBUNTU_MENUPROXY).toBe('1');
+    // appmenu-gtk-module is a dead end for Electron (Chromium draws its own menus) — never set it.
+    // The KDE global menu is exported over pure DBus from the main process instead.
+    expect(env.GTK_MODULES).toBeUndefined();
+    expect(env.UBUNTU_MENUPROXY).toBeUndefined();
+    // The AppMenu registrar keys on an X11 window id, so the global menu forces XWayland; the
+    // ANGLE-Vulkan GPU path survives XWayland so this no longer costs hardware acceleration.
+    expect(env.ELECTRON_OZONE_PLATFORM_HINT).toBe('x11');
+    expect(env.GDK_BACKEND).toBe('x11');
   });
 
   it('defaults to native Wayland on KDE Wayland, forcing XWayland only when opted in', async () => {
@@ -123,14 +132,17 @@ describe('Electron launcher environment', () => {
     expect(env.ELECTRON_FORCE_WINDOW_MENU_BAR).toBeUndefined();
   });
 
-  it('preserves existing GTK modules while adding appmenu once when the global menu is opted in', async () => {
+  it('still strips the dead appmenu GTK module even when the global menu is opted in', async () => {
     const { buildElectronEnvironment } = await loadLauncherModule();
     const env = buildElectronEnvironment({
       GTK_MODULES: 'canberra-gtk-module:appmenu-gtk-module',
+      XDG_CURRENT_DESKTOP: 'KDE',
       SIGNAL_LOOM_ELECTRON_GLOBAL_MENU: '1',
     }, 'linux');
 
-    expect(env.GTK_MODULES).toBe('canberra-gtk-module:appmenu-gtk-module');
+    // The global menu no longer rides the GTK module, so the stale appmenu entry is dropped in every
+    // mode — the real export is the DBus path. Other ambient modules are preserved.
+    expect(env.GTK_MODULES).toBe('canberra-gtk-module');
   });
 
   it('keeps non-Linux environments unchanged except dev renderer mode', async () => {

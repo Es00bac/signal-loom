@@ -16,21 +16,23 @@ vi.mock('../../lib/imageEditorAi', () => ({
   runGenerativeFill: vi.fn(),
 }));
 
-vi.mock('../../lib/imageEditorOperations', () => ({
-  canRunImageEditorOperation: () => ({ ok: true }),
-  estimateImageEditorOperationCostUsd: () => ({ unitLabel: 'provider-defined' }),
-  getImageEditorOperationsForModel: () => [
-    {
-      id: 'inpaint',
-      label: 'Inpaint',
-      description: 'Fill the selected area.',
-      localOnly: false,
-      supportsReferenceImages: false,
-      supportsPrompt: true,
-      supportsSearchPrompt: false,
-    },
-  ],
-}));
+vi.mock('../../lib/imageEditorOperations', () => {
+  const inpaintOp = {
+    id: 'inpaint',
+    label: 'Inpaint',
+    description: 'Fill the selected area.',
+    localOnly: false,
+    supportsReferenceImages: false,
+    supportsPrompt: true,
+    supportsSearchPrompt: false,
+  };
+  return {
+    canRunImageEditorOperation: () => ({ ok: true }),
+    estimateImageEditorOperationCostUsd: () => ({ unitLabel: 'provider-defined' }),
+    getImageEditorOperationsForModel: () => [inpaintOp],
+    listImageEditorOperationDefinitions: () => [inpaintOp],
+  };
+});
 
 vi.mock('../../lib/imageProviderCapabilities', () => ({
   listImageModelDefinitions: (providerId: string) => providerId === 'atlas'
@@ -46,6 +48,13 @@ vi.mock('../../lib/imageProviderCapabilities', () => ({
           label: 'Test Inpaint Model',
         },
       ],
+  getImageModelCapabilities: () => ({ referenceImages: true, maxReferenceImages: 3 }),
+}));
+
+vi.mock('../../lib/providerCatalog', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/providerCatalog')>()),
+  // Treat Atlas as a configured provider so the cross-provider model list includes its models.
+  getConfiguredProviders: () => ['atlas'],
 }));
 
 describe('GenerativeFillBar reference slot descriptors', () => {
@@ -237,24 +246,29 @@ describe('GenerativeFillBar dismissal behavior', () => {
     expect(reopenButton).not.toBeUndefined();
   });
 
-  it('offers Atlas Cloud edit models in the quick edit provider picker', async () => {
+  it('lists models capability-first across configured providers, labelled by provider', async () => {
     openSelectedDocument('doc-generative-atlas-picker');
 
     act(() => {
       root.render(<GenerativeFillBar />);
     });
 
-    const [providerSelect, modelSelect] = Array.from(container.querySelectorAll('select'));
-    expect(providerSelect).toBeInstanceOf(HTMLSelectElement);
-    expect(Array.from(providerSelect.options).map((option) => option.textContent)).toContain('Atlas Cloud');
-
+    // The panel opens collapsed (a pill); expand it to reveal the controls.
     await act(async () => {
-      providerSelect.value = 'atlas';
-      providerSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent?.includes('Generative Edit'))
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       await Promise.resolve();
     });
 
-    expect(Array.from(modelSelect.options).map((option) => option.textContent)).toContain('Atlas Qwen Image Edit');
+    // No provider chooser: selectors are operation → model, and the model list spans configured
+    // providers with each option labelled by its provider.
+    const selects = Array.from(container.querySelectorAll('select'));
+    const operationSelect = selects[0];
+    const modelSelect = selects[1];
+    expect(Array.from(operationSelect.options).map((option) => option.textContent)).toContain('Inpaint');
+    const modelLabels = Array.from(modelSelect.options).map((option) => option.textContent ?? '');
+    expect(modelLabels.some((label) => label.includes('Atlas Qwen Image Edit') && label.includes('Atlas Cloud'))).toBe(true);
   });
 
   it('keeps the quick edit panel inside a portrait phone viewport', () => {
@@ -265,6 +279,13 @@ describe('GenerativeFillBar dismissal behavior', () => {
 
     act(() => {
       root.render(<GenerativeFillBar />);
+    });
+
+    // Expand the collapsed pill into the full panel (which carries the width/maxHeight layout).
+    act(() => {
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent?.includes('Generative Edit'))
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
     const dismissButton = container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss generative edit"]');

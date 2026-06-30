@@ -1,7 +1,7 @@
 {
   "name": "signal-loom",
   "private": true,
-  "version": "0.9.1",
+  "version": "0.9.7",
   "description": "A studio for generative media: node-based Flow, a layered Image editor, print/comic Paper layout, and a Video timeline — local-first, bring-your-own-key.",
   "license": "SEE LICENSE IN LICENSE",
   "author": {
@@ -57,14 +57,18 @@
     "@xyflow/react": "^12.10.2",
     "ag-psd": "^30.1.1",
     "clsx": "^2.1.1",
+    "dbus-next": "^0.10.2",
     "fabric": "^7.3.1",
     "fflate": "^0.8.3",
     "lucide-react": "^1.8.0",
     "openai": "^6.34.0",
+    "peerjs": "^1.5.5",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "spectral.js": "^3.0.0",
     "tailwind-merge": "^3.5.0",
+    "y-webrtc": "^10.3.0",
+    "yjs": "^13.6.31",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

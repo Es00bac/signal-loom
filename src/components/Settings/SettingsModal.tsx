@@ -1,5 +1,5 @@
 import React from 'react';
-import { LoaderCircle, RefreshCcw, X } from 'lucide-react';
+import { ChevronRight, Download, LoaderCircle, RefreshCcw, ShieldCheck, Upload, X } from 'lucide-react';
 import {
   ensureVoiceOption,
   getConfiguredProviders,
@@ -75,6 +75,9 @@ export const SettingsModal: React.FC = () => {
     resetKeyboardShortcuts,
     resetGamepadBindings,
     openSettings,
+    exportSettingsBackup,
+    importSettingsBackup,
+    settingsBackupSupported,
   } = useSettingsStore();
   const keyStorageStatus = getApiKeyStorageStatus(apiKeys);
   const vertexPlatform: 'desktop' | 'mobile' = getSignalLoomNativeBridge()
@@ -272,6 +275,12 @@ export const SettingsModal: React.FC = () => {
                 placeholder="sk-atlas-..."
               />
               <ApiKeyInput
+                label="BytePlus (Seedream)"
+                value={apiKeys.byteplus ?? ''}
+                onChange={(value) => setApiKey('byteplus', value)}
+                placeholder="ModelArk API key"
+              />
+              <ApiKeyInput
                 label="Hugging Face"
                 value={apiKeys.huggingface}
                 onChange={(value) => setApiKey('huggingface', value)}
@@ -297,6 +306,12 @@ export const SettingsModal: React.FC = () => {
               />
             </div>
           </Section>
+
+          <SettingsBackupSection
+            exportSettingsBackup={exportSettingsBackup}
+            importSettingsBackup={importSettingsBackup}
+            supported={settingsBackupSupported}
+          />
 
           <ImageProviderHelpSection entries={imageProviderHelpEntries} />
           <ImageModelPricingSection entries={imageModelPricingEntries} />
@@ -544,6 +559,34 @@ export const SettingsModal: React.FC = () => {
               lastRefreshedAt={lastRefreshedAt}
             />
           </Section>
+
+          {vertexPlatform === 'mobile' && (
+            <Section title="Android LAN Server">
+              <div className="rounded-xl border border-gray-800 bg-[#111217]/50 px-4 py-3 text-sm text-gray-400 mb-4">
+                Serve your projects and assets to other devices on your local Wi-Fi network (port 8723).
+                Access is protected by pairing: the phone shows a one-time PIN and a desktop browser must
+                enter it to connect — no certificates, no browser warnings. Set a fixed PIN below to reuse
+                the same code, or leave it blank to auto-generate a new PIN each time the server starts.
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <SelectInput
+                  label="LAN Server Toggle"
+                  value={providerSettings.androidLanServerEnabled ? 'enabled' : 'disabled'}
+                  onChange={(val) => setProviderSetting('androidLanServerEnabled', val === 'enabled')}
+                  options={[
+                    { value: 'enabled', label: 'Enabled' },
+                    { value: 'disabled', label: 'Disabled (Auto-start off)' }
+                  ]}
+                />
+                <TextInput
+                  label="Pairing PIN (optional fixed code)"
+                  value={providerSettings.androidLanServerPin ?? ''}
+                  onChange={(val) => setProviderSetting('androidLanServerPin', val)}
+                  placeholder="Auto-generated each session if empty"
+                />
+              </div>
+            </Section>
+          )}
 
           <Section title="Default Text Models">
             <ConfiguredProviderGrid
@@ -848,79 +891,395 @@ function formatShortcutCommandLabel(command: NativeMenuCommand): string {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+type SettingsBackupStatus = { tone: 'ok' | 'error' | 'info'; message: string } | null;
+
+function backupErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message
+    : 'Something went wrong with the settings backup.';
+}
+
+function downloadTextFile(filename: string, contents: string): void {
+  const blob = new Blob([contents], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/**
+ * Optional, user-initiated encrypted backup of API keys + provider credentials. The blob is sealed
+ * with a passphrase the user chooses (portable across machines) and never leaves the device except as
+ * the file the user explicitly saves. See lib/settingsBackup.ts for the crypto.
+ */
+function SettingsBackupSection({
+  exportSettingsBackup,
+  importSettingsBackup,
+  supported,
+}: {
+  exportSettingsBackup: (passphrase: string) => Promise<string>;
+  importSettingsBackup: (envelopeText: string, passphrase: string) => Promise<void>;
+  supported: boolean;
+}) {
+  const [mode, setMode] = React.useState<'export' | 'import'>('export');
+  const [passphrase, setPassphrase] = React.useState('');
+  const [confirmPassphrase, setConfirmPassphrase] = React.useState('');
+  const [importText, setImportText] = React.useState('');
+  const [importFileName, setImportFileName] = React.useState('');
+  const [exportedBlob, setExportedBlob] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [status, setStatus] = React.useState<SettingsBackupStatus>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const resetFeedback = () => {
+    setStatus(null);
+    setExportedBlob('');
+  };
+
+  const switchMode = (next: 'export' | 'import') => {
+    setMode(next);
+    setPassphrase('');
+    setConfirmPassphrase('');
+    setImportText('');
+    setImportFileName('');
+    resetFeedback();
+  };
+
+  const handleExport = async () => {
+    resetFeedback();
+    if (passphrase.length < 8) {
+      setStatus({ tone: 'error', message: 'Choose a passphrase of at least 8 characters — you will need it to restore.' });
+      return;
+    }
+    if (passphrase !== confirmPassphrase) {
+      setStatus({ tone: 'error', message: 'The two passphrases do not match.' });
+      return;
+    }
+    setBusy(true);
+    try {
+      const blob = await exportSettingsBackup(passphrase);
+      setExportedBlob(blob);
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadTextFile(`signal-loom-settings-${stamp}.slbackup`, blob);
+      setStatus({
+        tone: 'ok',
+        message: 'Encrypted backup saved. Keep the file and its passphrase somewhere safe — the passphrase cannot be recovered.',
+      });
+      setPassphrase('');
+      setConfirmPassphrase('');
+    } catch (error) {
+      setStatus({ tone: 'error', message: backupErrorMessage(error) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleFile = async (file: File | null) => {
+    if (!file) return;
+    resetFeedback();
+    try {
+      const text = await file.text();
+      setImportText(text);
+      setImportFileName(file.name);
+      setStatus({ tone: 'info', message: `Loaded ${file.name}. Enter its passphrase, then Restore.` });
+    } catch {
+      setStatus({ tone: 'error', message: 'Could not read that file.' });
+    }
+  };
+
+  const handleImport = async () => {
+    setStatus(null);
+    if (!importText.trim()) {
+      setStatus({ tone: 'error', message: 'Choose a backup file or paste its contents first.' });
+      return;
+    }
+    setBusy(true);
+    try {
+      await importSettingsBackup(importText, passphrase);
+      setStatus({ tone: 'ok', message: 'Settings restored — your keys and credentials are back in place.' });
+      setImportText('');
+      setImportFileName('');
+      setPassphrase('');
+    } catch (error) {
+      setStatus({ tone: 'error', message: backupErrorMessage(error) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const statusToneClass = status?.tone === 'ok'
+    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'
+    : status?.tone === 'error'
+      ? 'border-red-500/30 bg-red-500/10 text-red-100'
+      : 'border-blue-500/30 bg-blue-500/10 text-blue-100';
+
+  return (
+    <Section title="Settings Backup">
+      <div className="space-y-4 rounded-xl border border-gray-800 bg-[#111217]/50 p-4">
+        <div className="flex items-start gap-3 text-sm text-gray-400">
+          <ShieldCheck className="mt-0.5 shrink-0 text-emerald-300" size={18} />
+          <p className="leading-5">
+            Save an encrypted copy of your API keys, provider credentials, and editor preferences so you can
+            restore them if the app data is ever lost. The backup is locked with a passphrase you choose and is
+            useless without it — Signal Loom never uploads it anywhere. This is optional.
+          </p>
+        </div>
+
+        {!supported ? (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+            Encrypted backups aren’t available in this environment (no Web Crypto support).
+          </div>
+        ) : (
+          <>
+            <div className="flex w-fit rounded-lg border border-gray-800 bg-[#0b1018] p-1">
+              {([['export', 'Export'], ['import', 'Restore']] as const).map(([value, label]) => (
+                <button
+                  className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
+                    mode === value ? 'bg-blue-500/20 text-blue-100' : 'text-gray-400 hover:text-gray-100'
+                  }`}
+                  key={value}
+                  onClick={() => switchMode(value)}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {mode === 'export' ? (
+              <form className="space-y-3" onSubmit={(event) => event.preventDefault()}>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <BackupPassphraseInput
+                    autoComplete="new-password"
+                    label="Backup passphrase"
+                    onChange={setPassphrase}
+                    placeholder="At least 8 characters"
+                    value={passphrase}
+                  />
+                  <BackupPassphraseInput
+                    autoComplete="new-password"
+                    label="Confirm passphrase"
+                    onChange={setConfirmPassphrase}
+                    placeholder="Re-enter passphrase"
+                    value={confirmPassphrase}
+                  />
+                </div>
+                <button
+                  className="inline-flex items-center gap-2 rounded-lg border border-blue-400/50 bg-blue-500/15 px-3 py-2 text-sm font-semibold text-blue-100 transition-colors hover:border-blue-300/70 disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => void handleExport()}
+                  type="button"
+                >
+                  {busy ? <LoaderCircle className="animate-spin" size={14} /> : <Download size={14} />}
+                  Export encrypted backup
+                </button>
+                {exportedBlob ? (
+                  <div className="space-y-2">
+                    <div className="text-xs text-gray-500">
+                      If the download didn’t start, copy this text and save it as a <span className="text-gray-300">.slbackup</span> file:
+                    </div>
+                    <textarea
+                      className="h-28 w-full resize-y rounded-lg border border-gray-700 bg-[#0d0f15] p-2 font-mono text-[11px] text-gray-300 outline-none"
+                      readOnly
+                      value={exportedBlob}
+                    />
+                    <button
+                      className="rounded-lg border border-gray-700 bg-[#0d0f15] px-3 py-1.5 text-xs font-medium text-gray-200 hover:border-gray-500 hover:text-white"
+                      onClick={() => void navigator.clipboard?.writeText(exportedBlob)}
+                      type="button"
+                    >
+                      Copy to clipboard
+                    </button>
+                  </div>
+                ) : null}
+              </form>
+            ) : (
+              <form className="space-y-3" onSubmit={(event) => event.preventDefault()}>
+                <div className="flex flex-wrap items-center gap-3">
+                  <input
+                    accept=".slbackup,.json,application/json,text/plain"
+                    className="hidden"
+                    onChange={(event) => void handleFile(event.target.files?.[0] ?? null)}
+                    ref={fileInputRef}
+                    type="file"
+                  />
+                  <button
+                    className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-[#0d0f15] px-3 py-2 text-sm font-medium text-gray-200 hover:border-gray-500 hover:text-white"
+                    onClick={() => fileInputRef.current?.click()}
+                    type="button"
+                  >
+                    <Upload size={14} />
+                    Choose backup file
+                  </button>
+                  {importFileName ? <span className="text-xs text-gray-400">{importFileName}</span> : null}
+                </div>
+                <textarea
+                  className="h-24 w-full resize-y rounded-lg border border-gray-700 bg-[#0d0f15] p-2 font-mono text-[11px] text-gray-300 outline-none focus:border-blue-500"
+                  onChange={(event) => setImportText(event.target.value)}
+                  placeholder="…or paste the backup file contents here"
+                  value={importText}
+                />
+                <BackupPassphraseInput
+                  autoComplete="off"
+                  label="Backup passphrase"
+                  onChange={setPassphrase}
+                  placeholder="The passphrase used to create this backup"
+                  value={passphrase}
+                />
+                <button
+                  className="inline-flex items-center gap-2 rounded-lg border border-blue-400/50 bg-blue-500/15 px-3 py-2 text-sm font-semibold text-blue-100 transition-colors hover:border-blue-300/70 disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => void handleImport()}
+                  type="button"
+                >
+                  {busy ? <LoaderCircle className="animate-spin" size={14} /> : <Upload size={14} />}
+                  Restore from backup
+                </button>
+                <div className="text-xs text-gray-500">
+                  Restoring overwrites your current keys and credentials with the ones in the backup.
+                </div>
+              </form>
+            )}
+
+            {status ? (
+              <div className={`rounded-lg border px-3 py-2 text-xs ${statusToneClass}`}>{status.message}</div>
+            ) : null}
+          </>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+function BackupPassphraseInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  autoComplete,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  autoComplete?: string;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-sm font-medium text-gray-300">{label}</span>
+      <input
+        autoComplete={autoComplete}
+        className="w-full rounded-lg border border-gray-700 bg-[#111217] p-2.5 text-sm text-gray-200 outline-none transition-shadow focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        type="password"
+        value={value}
+      />
+    </label>
+  );
+}
+
 function ImageProviderHelpSection({ entries }: { entries: ImageProviderHelpEntry[] }) {
   return (
     <Section title="Image Provider Setup & Costs">
+      <p className="text-xs text-gray-500">
+        Tap a provider to expand its setup steps, costs, and troubleshooting — most of this is only needed
+        once, when you first sign up.
+      </p>
       <div className="grid gap-3 lg:grid-cols-2">
         {entries.map((entry) => (
-          <article
-            className="rounded-xl border border-gray-800 bg-[#111217]/50 p-4 text-sm text-gray-300"
-            key={entry.providerId}
-          >
-            <div className="mb-2 flex items-start justify-between gap-3">
-              <div>
-                <h4 className="font-semibold text-gray-100">{entry.label}</h4>
-                <p className="mt-1 text-xs leading-5 text-gray-400">{entry.capabilitySummary}</p>
-                <p className="mt-1 text-[11px] text-gray-500">Pricing verified {entry.lastVerifiedDate}</p>
-              </div>
-              <div className="flex shrink-0 gap-2 text-xs">
-                <a className="text-blue-300 hover:text-blue-100" href={entry.signupUrl} rel="noreferrer" target="_blank">
-                  Sign up
-                </a>
-                <a className="text-blue-300 hover:text-blue-100" href={entry.pricingUrl} rel="noreferrer" target="_blank">
-                  Pricing
-                </a>
-              </div>
-            </div>
-            <div className="space-y-2 text-xs leading-5 text-gray-400">
-              <div>
-                <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Configure</div>
-                <ol className="mt-1 list-decimal space-y-1 pl-4">
-                  {entry.setupSteps.map((step) => (
-                    <li key={step}>{step}</li>
-                  ))}
-                </ol>
-              </div>
-              <div>
-                <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Cost</div>
-                <ul className="mt-1 list-disc space-y-1 pl-4">
-                  {entry.costNotes.map((note) => (
-                    <li key={note}>{note}</li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Operations</div>
-                <p className="mt-1 text-gray-400">
-                  {entry.supportedOperations.join(', ')}
-                </p>
-              </div>
-              <div>
-                <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Spend Controls</div>
-                <ul className="mt-1 list-disc space-y-1 pl-4">
-                  {entry.spendControls.map((note) => (
-                    <li key={note}>{note}</li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Troubleshooting</div>
-                <ul className="mt-1 list-disc space-y-1 pl-4">
-                  {entry.troubleshooting.map((note) => (
-                    <li key={note}>{note}</li>
-                  ))}
-                </ul>
-              </div>
-              {entry.apiKeyUrl ? (
-                <a className="inline-flex text-blue-300 hover:text-blue-100" href={entry.apiKeyUrl} rel="noreferrer" target="_blank">
-                  Open API key page
-                </a>
-              ) : null}
-            </div>
-          </article>
+          <ImageProviderHelpCard entry={entry} key={entry.providerId} />
         ))}
       </div>
     </Section>
+  );
+}
+
+function ImageProviderHelpCard({ entry }: { entry: ImageProviderHelpEntry }) {
+  // Collapsed by default: the setup instructions are bulky and only relevant during first-time signup,
+  // so the card shows just the identity + sign-up/pricing links until the user expands it.
+  const [expanded, setExpanded] = React.useState(false);
+
+  return (
+    <article className="rounded-xl border border-gray-800 bg-[#111217]/50 text-sm text-gray-300">
+      <div className="flex items-start justify-between gap-3 p-4">
+        <button
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-start gap-2 text-left"
+          onClick={() => setExpanded((value) => !value)}
+          type="button"
+        >
+          <ChevronRight
+            className={`mt-0.5 shrink-0 text-gray-500 transition-transform ${expanded ? 'rotate-90' : ''}`}
+            size={16}
+          />
+          <span className="min-w-0">
+            <span className="block font-semibold text-gray-100">{entry.label}</span>
+            <span className="mt-1 block text-xs leading-5 text-gray-400">{entry.capabilitySummary}</span>
+            <span className="mt-1 block text-[11px] text-gray-500">Pricing verified {entry.lastVerifiedDate}</span>
+          </span>
+        </button>
+        <div className="flex shrink-0 gap-2 text-xs">
+          <a className="text-blue-300 hover:text-blue-100" href={entry.signupUrl} rel="noreferrer" target="_blank">
+            Sign up
+          </a>
+          <a className="text-blue-300 hover:text-blue-100" href={entry.pricingUrl} rel="noreferrer" target="_blank">
+            Pricing
+          </a>
+        </div>
+      </div>
+      {expanded ? (
+        <div className="space-y-2 border-t border-gray-800 px-4 pb-4 pt-3 text-xs leading-5 text-gray-400">
+          <div>
+            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Configure</div>
+            <ol className="mt-1 list-decimal space-y-1 pl-4">
+              {entry.setupSteps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+          </div>
+          <div>
+            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Cost</div>
+            <ul className="mt-1 list-disc space-y-1 pl-4">
+              {entry.costNotes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Operations</div>
+            <p className="mt-1 text-gray-400">
+              {entry.supportedOperations.join(', ')}
+            </p>
+          </div>
+          <div>
+            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Spend Controls</div>
+            <ul className="mt-1 list-disc space-y-1 pl-4">
+              {entry.spendControls.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Troubleshooting</div>
+            <ul className="mt-1 list-disc space-y-1 pl-4">
+              {entry.troubleshooting.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          </div>
+          {entry.apiKeyUrl ? (
+            <a className="inline-flex text-blue-300 hover:text-blue-100" href={entry.apiKeyUrl} rel="noreferrer" target="_blank">
+              Open API key page
+            </a>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
   );
 }
 

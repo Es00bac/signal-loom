@@ -5,6 +5,12 @@ export interface DetectedObject {
   label: string;
   /** Gemini box_2d: [ymin, xmin, ymax, xmax] in 0-1000 normalized space. */
   box: [number, number, number, number];
+  /**
+   * Optional Gemini segmentation mask: a base64 PNG (bare base64 or a `data:` URL) probability map
+   * sized to the object's bounding box. When present we composite it for a pixel-precise mask; when
+   * absent we fall back to filling the box rectangle.
+   */
+  mask?: string;
 }
 
 export interface DetectedMask {
@@ -55,6 +61,7 @@ const GEMINI_SEGMENTATION_MODEL = 'gemini-2.5-flash';
 interface GeminiSegmentRecord {
   label?: string;
   box_2d?: [number, number, number, number];
+  mask?: string;
 }
 
 // The detector reads the key via a module-level setter so it has no store import cycle.
@@ -74,11 +81,75 @@ export function parseGeminiSegments(text: string): DetectedObject[] {
   try { records = JSON.parse(match[0]) as GeminiSegmentRecord[]; } catch { return []; }
   return records
     .filter((r) => Array.isArray(r.box_2d) && r.box_2d.length === 4)
-    .map((r) => ({ label: r.label ?? 'object', box: r.box_2d as [number, number, number, number] }));
+    .map((r) => ({
+      label: r.label ?? 'object',
+      box: r.box_2d as [number, number, number, number],
+      mask: typeof r.mask === 'string' && r.mask.trim() ? r.mask.trim() : undefined,
+    }));
 }
 
-async function buildMaskDataUrl(objects: DetectedObject[], width: number, height: number): Promise<string> {
-  const alpha = compositeBoxesToCanonicalAlpha(objects, width, height);
+function decodeMaskImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Unable to decode segmentation mask.'));
+    img.src = src.startsWith('data:') ? src : `data:image/png;base64,${src}`;
+  });
+}
+
+/**
+ * Pixel-precise alpha from Gemini segmentation masks: each object's mask PNG (a grayscale probability
+ * map sized to its bounding box) is drawn — scaled — into the box and thresholded. Objects WITHOUT a
+ * mask fall back to a filled box so the result is never empty. Browser-only (needs canvas + Image).
+ */
+async function compositeSegmentationMasksToAlpha(
+  objects: DetectedObject[],
+  width: number,
+  height: number,
+): Promise<Uint8ClampedArray> {
+  const alpha = new Uint8ClampedArray(width * height);
+  for (const obj of objects) {
+    const [ymin, xmin, ymax, xmax] = obj.box;
+    const x0 = Math.max(0, Math.floor((xmin / 1000) * width));
+    const x1 = Math.min(width, Math.ceil((xmax / 1000) * width));
+    const y0 = Math.max(0, Math.floor((ymin / 1000) * height));
+    const y1 = Math.min(height, Math.ceil((ymax / 1000) * height));
+    const bw = x1 - x0;
+    const bh = y1 - y0;
+    if (bw <= 0 || bh <= 0) continue;
+
+    if (!obj.mask) {
+      for (let y = y0; y < y1; y += 1) for (let x = x0; x < x1; x += 1) alpha[y * width + x] = 255;
+      continue;
+    }
+    let maskData: Uint8ClampedArray;
+    try {
+      const img = await decodeMaskImage(obj.mask);
+      const tmp = document.createElement('canvas');
+      tmp.width = bw;
+      tmp.height = bh;
+      const tctx = tmp.getContext('2d');
+      if (!tctx) throw new Error('mask canvas unavailable');
+      tctx.drawImage(img, 0, 0, bw, bh);
+      maskData = tctx.getImageData(0, 0, bw, bh).data;
+    } catch {
+      // Mask failed to decode — fall back to the box for this object.
+      for (let y = y0; y < y1; y += 1) for (let x = x0; x < x1; x += 1) alpha[y * width + x] = 255;
+      continue;
+    }
+    for (let yy = 0; yy < bh; yy += 1) {
+      for (let xx = 0; xx < bw; xx += 1) {
+        const i = (yy * bw + xx) * 4;
+        // Probability lives in luminance (R≈G≈B for a grayscale map); the alpha channel also carries it.
+        const prob = Math.max(maskData[i], maskData[i + 3]);
+        if (prob > 127) alpha[(y0 + yy) * width + (x0 + xx)] = 255;
+      }
+    }
+  }
+  return alpha;
+}
+
+function alphaToCanonicalPng(alpha: Uint8ClampedArray, width: number, height: number): string {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -93,6 +164,14 @@ async function buildMaskDataUrl(objects: DetectedObject[], width: number, height
   }
   ctx.putImageData(imageData, 0, 0);
   return canvas.toDataURL('image/png');
+}
+
+async function buildMaskDataUrl(objects: DetectedObject[], width: number, height: number): Promise<string> {
+  // Pixel-precise when Gemini returned segmentation masks; otherwise the proven box-fill path.
+  const alpha = objects.some((obj) => obj.mask)
+    ? await compositeSegmentationMasksToAlpha(objects, width, height)
+    : compositeBoxesToCanonicalAlpha(objects, width, height);
+  return alphaToCanonicalPng(alpha, width, height);
 }
 
 export const geminiSegmentationDetector: ObjectMaskDetector = {
@@ -110,7 +189,7 @@ export const geminiSegmentationDetector: ObjectMaskDetector = {
       model: GEMINI_SEGMENTATION_MODEL,
       contents: [{
         parts: [
-          { text: `Detect "${input.phrase}". Return ONLY a JSON array; each item has "label" and "box_2d" ([ymin,xmin,ymax,xmax] scaled 0-1000).` },
+          { text: `Give the segmentation masks for "${input.phrase}". Return ONLY a JSON array; each item has "label", "box_2d" ([ymin,xmin,ymax,xmax] scaled 0-1000), and "mask" (a base64-encoded PNG segmentation mask for that object, sized to its bounding box). If you cannot produce a per-pixel mask, omit "mask" and the box will be used.` },
           { inlineData: { mimeType: 'image/png', data: base64 } },
         ],
       }],

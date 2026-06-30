@@ -46,4 +46,12 @@ describe('parseGeminiSegments', () => {
   it('returns [] when no JSON array is present', () => {
     expect(parseGeminiSegments('no objects found')).toEqual([]);
   });
+  it('captures a per-object segmentation mask when present', () => {
+    const out = parseGeminiSegments('[{"label":"sky","box_2d":[0,0,500,1000],"mask":"iVBORw0KGgo="}]');
+    expect(out).toEqual([{ label: 'sky', box: [0, 0, 500, 1000], mask: 'iVBORw0KGgo=' }]);
+  });
+  it('leaves mask undefined when the model returns only a box', () => {
+    const [obj] = parseGeminiSegments('[{"label":"cat","box_2d":[10,20,30,40]}]');
+    expect(obj.mask).toBeUndefined();
+  });
 });

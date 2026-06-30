@@ -12,7 +12,7 @@ describe('BottomToolbar topbar presentation', () => {
     expect(html).toContain('Flow Control');
     expect(html).toContain('Stop When');
     expect(html).toContain('Value');
-    expect(html).toContain('Color Swatch');
+    expect(html).toContain('Color Palette');
     expect(html).toContain('Crop Image');
   });
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Sparkles, X } from 'lucide-react';
+import { ChevronDown, Loader2, Sparkles, X } from 'lucide-react';
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import { useProjectUsageStore } from '../../store/projectUsageStore';
 import {
@@ -12,10 +12,13 @@ import {
   canRunImageEditorOperation,
   estimateImageEditorOperationCostUsd,
   getImageEditorOperationsForModel,
+  listImageEditorOperationDefinitions,
+  type ImageEditorOperationDefinition,
   type ImageEditorOperationId,
   type ImageEditorProviderId,
 } from '../../lib/imageEditorOperations';
 import {
+  getImageModelCapabilities,
   listImageModelDefinitions,
   type FirstClassImageProviderId,
 } from '../../lib/imageProviderCapabilities';
@@ -24,18 +27,14 @@ import { cloneMask, createMask, maskBoundingBox } from './SelectionMask';
 import { docRectToScreen } from './viewport';
 import { buildGenerativeFillRequestArtifacts } from './GenerativeFillArtifacts';
 import { createGenerativeFillLayerFromBlob } from './GenerativeFillLayer';
+import { GenerativeFillReferences } from './GenerativeFillReferences';
 import { renderImageDocumentLayersToBitmap } from './ImageAdjustmentLayer';
 import { createBitmap } from './LayerBitmap';
 import { configureDetectorKeys, listConfiguredDetectors } from '../../lib/imageMask/objectMaskDetectors';
 import { useSettingsStore } from '../../store/settingsStore';
-import type { RuntimeSettingsSnapshot } from '../../types/flow';
-import {
-  getDraggedSourceLibraryItemId,
-  hasDraggedSourceLibraryItem,
-} from '../../lib/sourceLibraryWorkspaceActions';
-import { useSourceBinStore } from '../../store/sourceBinStore';
+import type { ApiKeys, ProviderSettings, RuntimeSettingsSnapshot } from '../../types/flow';
+import { getConfiguredProviders } from '../../lib/providerCatalog';
 import { useConfirmationStore } from '../../store/confirmationStore';
-import { showAlertDialog } from '../../store/alertDialogStore';
 
 const COST_THRESHOLD_USD = 0.5;
 
@@ -92,6 +91,9 @@ export function GenerativeFillBar() {
   const [provider, setProvider] = useState<GenerativeFillProvider>('gemini');
   const [model, setModel] = useState(() => getDefaultModelForProvider('gemini'));
   const [operation, setOperation] = useState<ImageEditorOperationId>('inpaint');
+  // Minimal-by-default: the panel shows as a small pill that does not cover the canvas, and expands to
+  // the full controls only on demand, so it never gets in the way of selection/transform work.
+  const [expanded, setExpanded] = useState(false);
   const [searchPrompt, setSearchPrompt] = useState('');
   const [outpaint, setOutpaint] = useState({
     left: 0,
@@ -101,8 +103,6 @@ export function GenerativeFillBar() {
     creativity: 0.5,
   });
   const [edgeFeatherPx, setEdgeFeatherPx] = useState(3);
-  const [referenceDescription, setReferenceDescription] = useState('');
-  const [referenceImageUrl, setReferenceImageUrl] = useState('');
   const [references, setReferences] = useState<GenerativeFillReferenceInput[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -168,59 +168,6 @@ export function GenerativeFillBar() {
     }
   };
   const abortRef = useRef<AbortController | null>(null);
-  const refFileInputRef = useRef<HTMLInputElement | null>(null);
-
-  const handleRefDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!hasDraggedSourceLibraryItem(event.dataTransfer)) return;
-    event.preventDefault();
-    event.stopPropagation();
-
-    const itemId = getDraggedSourceLibraryItemId(event.dataTransfer);
-    const item = itemId
-      ? useSourceBinStore.getState().getAllItems().find((candidate) => candidate.id === itemId)
-      : undefined;
-
-    if (item && item.kind === 'image' && item.assetUrl) {
-      setReferences((current) => [
-        ...current,
-        {
-          id: `ref-drag-${Date.now()}-${current.length}`,
-          label: item.label,
-          imageUrl: item.assetUrl,
-        },
-      ]);
-    }
-  };
-
-  const handleRefFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result ?? ''));
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(file);
-      });
-
-      setReferences((current) => [
-        ...current,
-        {
-          id: `ref-file-${Date.now()}-${current.length}`,
-          label: file.name,
-          imageUrl: dataUrl,
-        },
-      ]);
-    } catch (err: unknown) {
-      await showAlertDialog({
-        title: 'Reference File Failed',
-        message: `Failed to read the local reference file. ${err instanceof Error ? err.message : ''}`.trim(),
-        tone: 'danger',
-      });
-    }
-  };
-
   const visible = Boolean(activeDoc?.hasSelection) && !dismissed;
 
   const anchor = useMemo(() => {
@@ -239,19 +186,37 @@ export function GenerativeFillBar() {
     }
   }, [visible]);
 
-  const modelOptions = useMemo(() => getModelOptions(provider), [provider]);
-  const effectiveModel = modelOptions.some((candidate) => candidate.modelId === model)
-    ? model
-    : (modelOptions[0]?.modelId ?? 'generic-http');
-  const operationOptions = useMemo(
-    () => getImageEditorOperationsForModel(provider as ImageEditorProviderId, effectiveModel)
-      .filter((candidate) => !candidate.localOnly),
-    [effectiveModel, provider],
+  // Capability-first across ALL configured providers: pick an operation, then see EVERY model that can
+  // perform it from every provider you have credentials for (each labelled with its provider) — no
+  // separate provider chooser. Selecting a model sets its provider + id.
+  const configuredProviders = useMemo(
+    () => getConfiguredImageProviders(apiKeys, providerSettings),
+    [apiKeys, providerSettings],
   );
-  const referenceSlots = useMemo(() => describeGenerativeFillBarReferenceSlots(references), [references]);
+  const operationOptions = useMemo(
+    () => getAllEditorOperations(configuredProviders).filter((candidate) => !candidate.localOnly),
+    [configuredProviders],
+  );
   const effectiveOperationId = operationOptions.some((candidate) => candidate.id === operation)
     ? operation
     : operationOptions[0]?.id;
+  const modelOptions = useMemo(
+    () => getModelsForOperation(configuredProviders, effectiveOperationId),
+    [configuredProviders, effectiveOperationId],
+  );
+  const selectedModelEntry = modelOptions.find((entry) => entry.providerId === provider && entry.modelId === model)
+    ?? modelOptions[0];
+  const effectiveProvider = selectedModelEntry?.providerId ?? 'generic';
+  const effectiveModel = selectedModelEntry?.modelId ?? 'generic-http';
+  // Reference images: only offer them when the SELECTED MODEL actually accepts reference images
+  // (maxReferenceImages > 0) — Generic HTTP has no capability metadata, so it allows them uncapped.
+  const maxReferenceImages = useMemo(
+    () => (effectiveProvider === 'generic'
+      ? Number.POSITIVE_INFINITY
+      : getImageModelCapabilities(effectiveProvider as FirstClassImageProviderId, effectiveModel).maxReferenceImages),
+    [effectiveProvider, effectiveModel],
+  );
+  const modelAcceptsReferences = effectiveProvider === 'generic' || maxReferenceImages > 0;
 
   if (!visible || !activeDoc || !anchor) return null;
 
@@ -282,19 +247,13 @@ export function GenerativeFillBar() {
       Math.max(horizontalMargin, containerWidth - panelWidth - horizontalMargin),
     );
   const maxHeight = Math.max(96, containerHeight - top - horizontalMargin);
-  const primaryControlsClassName = compactPanel ? 'grid grid-cols-2 gap-2' : 'grid grid-cols-4 gap-2';
-  const referenceControlsClassName = compactPanel
-    ? 'grid grid-cols-2 gap-1.5'
-    : 'grid grid-cols-[1fr_1fr_auto_auto] gap-1.5';
-  const referenceInputClassName = compactPanel
-    ? 'col-span-2 min-w-0 rounded border border-cyan-300/10 bg-[#070a10] px-2 py-1 text-xs text-cyan-50 placeholder:text-cyan-100/30 text-left'
-    : 'min-w-0 rounded border border-cyan-300/10 bg-[#070a10] px-2 py-1 text-xs text-cyan-50 placeholder:text-cyan-100/30 text-left';
+  const primaryControlsClassName = compactPanel ? 'grid grid-cols-2 gap-2' : 'grid grid-cols-3 gap-2';
 
   const selectedOperation = operationOptions.find((candidate) => candidate.id === effectiveOperationId) ?? operationOptions[0];
   const runCheck = selectedOperation
     ? canRunImageEditorOperation({
         operationId: selectedOperation.id,
-        providerId: provider as ImageEditorProviderId,
+        providerId: effectiveProvider as ImageEditorProviderId,
         modelId: effectiveModel,
         hasActiveLayer: Boolean(activeDoc.activeLayerId),
         hasSelection: Boolean(activeDoc.hasSelection),
@@ -303,7 +262,7 @@ export function GenerativeFillBar() {
   const cost = selectedOperation
     ? estimateImageEditorOperationCostUsd({
         operationId: selectedOperation.id,
-        providerId: provider as ImageEditorProviderId,
+        providerId: effectiveProvider as ImageEditorProviderId,
         modelId: effectiveModel,
       })
     : undefined;
@@ -348,7 +307,7 @@ export function GenerativeFillBar() {
         source,
         mask,
         prompt: effectivePrompt,
-        provider,
+        provider: effectiveProvider,
         model: effectiveModel,
         operation: selectedOperation.id,
         searchPrompt: searchPrompt.trim(),
@@ -374,7 +333,7 @@ export function GenerativeFillBar() {
         usage: {
           source: 'actual',
           confidence: cost?.costUsd === undefined ? 'unknown' : 'fixed',
-          provider,
+          provider: effectiveProvider,
           modelId: effectiveModel,
           imageCount: 1,
           costUsd: cost?.costUsd,
@@ -396,27 +355,44 @@ export function GenerativeFillBar() {
     abortRef.current?.abort();
   };
 
-  const addReference = () => {
-    const description = referenceDescription.trim();
-    const imageUrl = referenceImageUrl.trim();
-    if (!description && !imageUrl) return;
-    setReferences((current) => [
-      ...current,
-      {
-        id: `ref-${Date.now()}-${current.length}`,
-        label: imageUrl ? `Reference ${current.length + 1}` : undefined,
-        description,
-        imageUrl: imageUrl || undefined,
-      },
-    ]);
-    setReferenceDescription('');
-    setReferenceImageUrl('');
-  };
+  // Collapsed state: a small pill that doesn't cover the canvas. Expands to the full panel on click.
+  if (!expanded) {
+    return (
+      <div
+        data-image-generative-fill-bar="true"
+        className="absolute z-[70] flex items-center gap-1 rounded-full border border-cyan-300/30 bg-[#10151f]/95 px-2 py-1 shadow-2xl backdrop-blur"
+        style={{ left, top }}
+      >
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-xs font-semibold text-cyan-50 hover:text-white"
+          title="Open generative edit"
+        >
+          <Sparkles className="text-cyan-400" size={14} />
+          Generative Edit
+        </button>
+        <button
+          aria-label="Dismiss generative edit"
+          className="rounded-full p-0.5 text-cyan-100/40 hover:text-white"
+          onClick={() => {
+            useImageEditorStore.getState().setGenerativeFillDismissed(activeDoc.id, true);
+          }}
+          type="button"
+        >
+          <X size={13} />
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div
       data-image-generative-fill-bar="true"
-      className="absolute z-50 flex flex-col gap-2 rounded-xl border border-cyan-300/30 bg-[#10151f]/95 p-2 shadow-2xl backdrop-blur"
+      // z above the floating tool palette (z-60) and brush quick control (z-65): when this panel is open
+      // it must be the topmost layer, otherwise on a narrow portrait phone the left-edge tool palette
+      // overlaps and hides its left column (provider/operation selectors), forcing a rotate to landscape.
+      className="absolute z-[70] flex flex-col gap-2 rounded-xl border border-cyan-300/30 bg-[#10151f]/95 p-2 shadow-2xl backdrop-blur"
       style={{
         left,
         maxHeight,
@@ -446,16 +422,27 @@ export function GenerativeFillBar() {
           type="text"
           value={prompt}
         />
-        <button
-          aria-label="Dismiss generative edit"
-          className="rounded p-1 text-cyan-100/40 hover:text-white"
-          onClick={() => {
-            useImageEditorStore.getState().setGenerativeFillDismissed(activeDoc.id, true);
-          }}
-          type="button"
-        >
-          <X size={14} />
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button
+            aria-label="Collapse generative edit"
+            className="rounded p-1 text-cyan-100/40 hover:text-white"
+            onClick={() => setExpanded(false)}
+            title="Collapse"
+            type="button"
+          >
+            <ChevronDown size={14} />
+          </button>
+          <button
+            aria-label="Dismiss generative edit"
+            className="rounded p-1 text-cyan-100/40 hover:text-white"
+            onClick={() => {
+              useImageEditorStore.getState().setGenerativeFillDismissed(activeDoc.id, true);
+            }}
+            type="button"
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
 
       {maskDetector ? (
@@ -480,34 +467,7 @@ export function GenerativeFillBar() {
 
       <div className={primaryControlsClassName}>
         <select
-          className="min-w-0 rounded border border-cyan-300/10 bg-[#0d0f15] px-2 py-1 text-xs text-cyan-100/80"
-          disabled={running}
-          onChange={(e) => {
-            const nextProvider = e.target.value as GenerativeFillProvider;
-            setProvider(nextProvider);
-            setModel(getDefaultModelForProvider(nextProvider));
-          }}
-          value={provider}
-        >
-          {PROVIDER_LABELS.map(({ value, label }) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <select
-          className="min-w-0 rounded border border-cyan-300/10 bg-[#0d0f15] px-2 py-1 text-xs text-cyan-100/80"
-          disabled={running}
-          onChange={(e) => setModel(e.target.value)}
-          value={effectiveModel}
-        >
-          {modelOptions.map((option) => (
-            <option key={option.modelId} value={option.modelId}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <select
+          aria-label="Operation"
           className="min-w-0 rounded border border-cyan-300/10 bg-[#0d0f15] px-2 py-1 text-xs text-cyan-100/80"
           disabled={running || operationOptions.length === 0}
           onChange={(e) => setOperation(e.target.value as ImageEditorOperationId)}
@@ -515,6 +475,27 @@ export function GenerativeFillBar() {
         >
           {operationOptions.map((option) => (
             <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Model"
+          className="min-w-0 rounded border border-cyan-300/10 bg-[#0d0f15] px-2 py-1 text-xs text-cyan-100/80"
+          disabled={running || modelOptions.length === 0}
+          onChange={(e) => {
+            const [nextProvider, ...rest] = e.target.value.split('|');
+            setProvider(nextProvider as GenerativeFillProvider);
+            setModel(rest.join('|'));
+          }}
+          value={`${effectiveProvider}|${effectiveModel}`}
+          title={`${modelOptions.length} model${modelOptions.length === 1 ? '' : 's'} (across configured providers) can ${selectedOperation?.label ?? 'do this'}`}
+        >
+          {modelOptions.length === 0 && (
+            <option value="generic|generic-http">No configured provider has a model for this operation</option>
+          )}
+          {modelOptions.map((option) => (
+            <option key={`${option.providerId}|${option.modelId}`} value={`${option.providerId}|${option.modelId}`}>
               {option.label}
             </option>
           ))}
@@ -604,74 +585,14 @@ export function GenerativeFillBar() {
         </div>
       ) : null}
 
-      {selectedOperation?.supportsReferenceImages && (
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'copy';
-          }}
-          onDrop={handleRefDrop}
-          className="space-y-1.5 rounded border border-dashed border-cyan-400/25 bg-[#0d0f15]/80 p-2 text-center"
-        >
-          <div className="text-[10px] text-cyan-400/65 font-medium mb-1">
-            Drag images from Source Library here or use options below:
-          </div>
-          <div className={referenceControlsClassName}>
-            <input
-              className={referenceInputClassName}
-              disabled={running}
-              onChange={(event) => setReferenceDescription(event.target.value)}
-              placeholder="Description"
-              value={referenceDescription}
-            />
-            <input
-              className={referenceInputClassName}
-              disabled={running}
-              onChange={(event) => setReferenceImageUrl(event.target.value)}
-              placeholder="Image URL"
-              value={referenceImageUrl}
-            />
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              ref={refFileInputRef}
-              onChange={handleRefFileUpload}
-            />
-            <button
-              className="rounded border border-cyan-300/15 bg-[#1b2230] px-2 py-1 text-xs font-semibold text-cyan-50 hover:border-cyan-300/40 disabled:opacity-40 cursor-pointer"
-              disabled={running}
-              onClick={() => refFileInputRef.current?.click()}
-              title="Upload reference file from your machine"
-              type="button"
-            >
-              Upload...
-            </button>
-            <button
-              className="rounded border border-cyan-300/15 bg-[#1b2230] px-2 py-1 text-xs font-semibold text-cyan-50 hover:border-cyan-300/40 disabled:opacity-40 cursor-pointer"
-              disabled={running || (!referenceDescription.trim() && !referenceImageUrl.trim())}
-              onClick={addReference}
-              type="button"
-            >
-              Add
-            </button>
-          </div>
-          {referenceSlots.length > 0 && (
-            <div className="flex flex-wrap gap-1 pt-1.5">
-              {referenceSlots.map((reference) => (
-                <button
-                  className="max-w-[14rem] truncate rounded border border-cyan-300/10 bg-cyan-400/10 px-2 py-0.5 text-left text-[11px] text-cyan-100/70 hover:border-red-300/40 hover:text-red-100 cursor-pointer"
-                  key={reference.id}
-                  onClick={() => setReferences((current) => current.filter((item) => item.id !== reference.id))}
-                  title={reference.removeTitle}
-                  type="button"
-                >
-                  {reference.chipLabel}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+      {selectedOperation?.supportsReferenceImages && modelAcceptsReferences && (
+        <GenerativeFillReferences
+          references={references}
+          onChange={setReferences}
+          maxReferenceImages={maxReferenceImages}
+          disabled={running}
+          compact={compactPanel}
+        />
       )}
 
       <div className="flex items-center justify-between gap-2 text-[11px] text-cyan-100/40">
@@ -722,21 +643,89 @@ function describeReferenceSlotSource(
   return 'empty reference';
 }
 
-function getModelOptions(provider: GenerativeFillProvider): Array<{ modelId: string; label: string }> {
+// Every edit operation that AT LEAST ONE of the provider's models can perform, in canonical order.
+// Drives the operation dropdown so it never offers an operation with zero capable models.
+function getProviderEditorOperations(provider: GenerativeFillProvider): ImageEditorOperationDefinition[] {
+  if (provider === 'generic') {
+    return getImageEditorOperationsForModel('generic', 'generic-http');
+  }
+  const order = new Map(listImageEditorOperationDefinitions().map((operation, index) => [operation.id, index]));
+  const seen = new Map<ImageEditorOperationId, ImageEditorOperationDefinition>();
+  for (const definition of listImageModelDefinitions(provider as FirstClassImageProviderId)) {
+    for (const operation of getImageEditorOperationsForModel(provider as ImageEditorProviderId, definition.modelId)) {
+      if (!seen.has(operation.id)) seen.set(operation.id, operation);
+    }
+  }
+  return [...seen.values()].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+}
+
+// Only the provider's models that can actually perform `operationId` — so the model dropdown never
+// lists a model that can't do the selected operation (e.g. a whole-image-edit model under "Inpaint").
+function getModelOptionsForOperation(
+  provider: GenerativeFillProvider,
+  operationId: ImageEditorOperationId | undefined,
+): Array<{ modelId: string; label: string }> {
   if (provider === 'generic') {
     return [{ modelId: 'generic-http', label: 'Generic HTTP' }];
   }
-
+  if (!operationId) return [];
   return listImageModelDefinitions(provider as FirstClassImageProviderId)
     .filter((definition) =>
       getImageEditorOperationsForModel(provider as ImageEditorProviderId, definition.modelId)
-        .some((operation) => !operation.localOnly),
+        .some((operation) => operation.id === operationId && !operation.localOnly),
     )
     .map((definition) => ({ modelId: definition.modelId, label: definition.label }));
 }
 
 function getDefaultModelForProvider(provider: GenerativeFillProvider): string {
-  return getModelOptions(provider)[0]?.modelId ?? 'generic-http';
+  const firstOperation = getProviderEditorOperations(provider).find((operation) => !operation.localOnly);
+  return getModelOptionsForOperation(provider, firstOperation?.id)[0]?.modelId ?? 'generic-http';
+}
+
+const PROVIDER_DISPLAY_LABEL = new Map(PROVIDER_LABELS.map((entry) => [entry.value, entry.label]));
+function providerDisplayLabel(provider: GenerativeFillProvider): string {
+  return PROVIDER_DISPLAY_LABEL.get(provider) ?? provider;
+}
+
+export interface CrossProviderModelOption {
+  providerId: GenerativeFillProvider;
+  modelId: string;
+  label: string;
+}
+
+// Providers the user actually has credentials/endpoints for (image capability), plus the Generic HTTP
+// fallback. The dialog lists models from these — never models you can't run.
+function getConfiguredImageProviders(apiKeys: ApiKeys, providerSettings: ProviderSettings): GenerativeFillProvider[] {
+  const configured = getConfiguredProviders('image', apiKeys, providerSettings) as GenerativeFillProvider[];
+  return [...configured, 'generic'];
+}
+
+// Every edit operation that AT LEAST ONE model of ANY configured provider can perform (canonical order),
+// so the operation list spans providers and never offers an operation no configured model supports.
+function getAllEditorOperations(providers: GenerativeFillProvider[]): ImageEditorOperationDefinition[] {
+  const order = new Map(listImageEditorOperationDefinitions().map((operation, index) => [operation.id, index]));
+  const seen = new Map<ImageEditorOperationId, ImageEditorOperationDefinition>();
+  for (const provider of providers) {
+    for (const operation of getProviderEditorOperations(provider)) {
+      if (!seen.has(operation.id)) seen.set(operation.id, operation);
+    }
+  }
+  return [...seen.values()].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+}
+
+// Capability-first flat list: every model that can perform `operationId` across ALL configured providers,
+// each labelled with its provider (so you choose by what the model does, not by provider).
+function getModelsForOperation(
+  providers: GenerativeFillProvider[],
+  operationId: ImageEditorOperationId | undefined,
+): CrossProviderModelOption[] {
+  const out: CrossProviderModelOption[] = [];
+  for (const provider of providers) {
+    for (const model of getModelOptionsForOperation(provider, operationId)) {
+      out.push({ providerId: provider, modelId: model.modelId, label: `${model.label} · ${providerDisplayLabel(provider)}` });
+    }
+  }
+  return out;
 }
 
 function promptPlaceholder(operation: ImageEditorOperationId): string {
@@ -760,6 +749,8 @@ function promptPlaceholder(operation: ImageEditorOperationId): string {
       return 'Use the document controls in Properties';
     case 'inpaint':
       return 'Describe what to fill the selection with…';
+    case 'editImage':
+      return 'Describe how to edit the whole image…';
     case 'erase':
       return 'No prompt required';
   }

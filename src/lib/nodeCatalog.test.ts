@@ -31,7 +31,7 @@ describe('node catalog', () => {
     });
     expect(getNodeCatalogEntry('colorSwatchNode')).toMatchObject({
       categoryId: 'inputs-data',
-      label: 'Color Swatch',
+      label: 'Color Palette',
     });
     expect(getNodeCatalogEntry('cropImageNode')).toMatchObject({
       categoryId: 'inputs-data',

@@ -48,9 +48,12 @@ export const FLOW_NODE_CATALOG_ENTRIES: FlowNodeCatalogEntry[] = [
 
   entry('textNode', 'Text Prompt', 'Write a prompt or generate text for downstream nodes.', 'inputs-data', ['text', 'prompt', 'primitive']),
   entry('valueNode', 'Value', 'Create a typed primitive value: text, number, boolean, or JSON.', 'inputs-data', ['primitive', 'boolean', 'json', 'number']),
-  entry('colorSwatchNode', 'Color Swatch', 'Build a reusable palette that guides image and video color consistency.', 'inputs-data', ['color', 'palette', 'swatch', 'theme', 'consistency']),
+  entry('colorSwatchNode', 'Color Palette', 'Build a master palette of colors that guides image and video color consistency; drag colors into a Color Swatch to label them per scene.', 'inputs-data', ['color', 'palette', 'swatch', 'theme', 'consistency']),
+  entry('colorSwatchListNode', 'Color Swatch', 'A labeled subset of a Color Palette: drag palette colors in and name each one (hair, skin, shirt) for a scene or panel.', 'inputs-data', ['color', 'swatch', 'palette', 'label', 'scene', 'panel']),
+  entry('loraSpecNode', 'LoRA Spec', 'Build the JSON LoRA weights (path + scale, up to 3) that FLUX LoRA models accept; connect it to a FLUX LoRA image node for consistency.', 'inputs-data', ['lora', 'flux', 'kontext', 'weights', 'consistency', 'json']),
   entry('doodleNode', 'Doodle', 'Sketch a blue-pencil reference image plus a description, packaged for an Image node.', 'inputs-data', ['sketch', 'doodle', 'draw', 'reference', 'blue pencil'], { aspectRatio: '1:1', doodleDescription: '' }),
   entry('cropImageNode', 'Crop Image', 'Crop one connected image locally and output the cropped image downstream.', 'inputs-data', ['crop', 'image', 'asset', 'reference', 'storyboard']),
+  entry('slimgNode', '.slimg', 'Save the connected image as a new editable .slimg and open it in Image; outputs the flattened result live (re-flattens as you edit it).', 'inputs-data', ['slimg', 'image', 'save', 'edit', 'flatten', 'bridge']),
   entry('numberNode', 'Number', 'Legacy numeric value node for math and list workflows.', 'inputs-data', ['number', 'primitive']),
   entry('sourceBin', 'Source Bin', 'Expose project source-bin assets to the Flow canvas.', 'inputs-data', ['asset', 'source']),
   entry('packageNode', 'Asset Package', 'Bundle an image/media asset with descriptive text.', 'inputs-data', ['package', 'asset']),

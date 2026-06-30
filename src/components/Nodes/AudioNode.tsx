@@ -4,6 +4,7 @@ import { AttemptHistory } from './AttemptHistory';
 import { BaseNode } from './BaseNode';
 import { ExecutionTelemetryPanel } from './ExecutionTelemetryPanel';
 import { MediaLoadingOverlay } from './MediaLoadingOverlay';
+import { useLiveNodeResultAssetUrl } from './useLiveNodeResultAssetUrl';
 import { saveImportedAsset } from '../../lib/assetStore';
 import { buildDownloadFilename, downloadAsset } from '../../lib/downloadAsset';
 import { EXPORT_BASENAME } from '../../lib/brand';
@@ -85,7 +86,20 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
   const availableProviders = getConfiguredProviders('audio', apiKeys, providerSettings);
   const provider = ((data.provider as AudioProvider | undefined) ?? availableProviders[0] ?? 'elevenlabs') as AudioProvider;
   const audioMode = ((data.audioGenerationMode as AudioGenerationMode | undefined) ?? 'speech') as AudioGenerationMode;
-  const assetUrl = mediaMode === 'import' ? data.sourceAssetUrl : data.result;
+  // The store-owned `blob:` URL cached in `data.result` is revoked on rehydration, leaving a dead
+  // preview; resolve the source-bin item's live URL instead (see useLiveNodeResultAssetUrl).
+  const selectedResultAttempt = Array.isArray(data.resultHistory)
+    ? (data.resultHistory.find((attempt) => attempt.id === data.selectedResultId)
+      ?? data.resultHistory[data.resultHistory.length - 1])
+    : undefined;
+  const resultSourceBinItemId = selectedResultAttempt?.sourceBinItemId
+    ?? (typeof data.sourceBinItemId === 'string' ? data.sourceBinItemId : undefined);
+  const liveResultAssetUrl = useLiveNodeResultAssetUrl({
+    nodeId: id,
+    enabled: mediaMode === 'generate',
+    resultSourceBinItemId,
+  });
+  const assetUrl = mediaMode === 'import' ? data.sourceAssetUrl : (liveResultAssetUrl ?? data.result);
   const assetMimeType =
     mediaMode === 'import'
       ? data.sourceAssetMimeType

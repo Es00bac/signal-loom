@@ -137,7 +137,13 @@ export function getNodeTypeLabel(type: FlowNodeType): string {
     case 'numberNode':
       return 'Number';
     case 'colorSwatchNode':
+      return 'Color Palette';
+    case 'colorSwatchListNode':
       return 'Color Swatch';
+    case 'loraSpecNode':
+      return 'LoRA Spec';
+    case 'slimgNode':
+      return '.slimg';
     case 'doodleNode':
       return 'Doodle';
     case 'functionNode':

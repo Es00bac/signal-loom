@@ -1,7 +1,71 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { sanitizePersistedSourceBinState, useSourceBinStore } from './sourceBinStore';
+import {
+  persistableSourceBinAssetUrl,
+  sanitizePersistedSourceBinState,
+  useSourceBinStore,
+} from './sourceBinStore';
+import { fetchRemoteHostSourceAssetDataUrl, isServedLanSession } from '../lib/remoteHostClient';
+
+// hydrateAssets dynamically imports the remote-host client to resolve a served desktop session's
+// thumbnails through the phone. Mock it so the served-client branch is exercised deterministically;
+// the default impl (not served) leaves every other test on the unchanged local-hydration path.
+vi.mock('../lib/remoteHostClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/remoteHostClient')>();
+  return {
+    ...actual,
+    isServedLanSession: vi.fn(() => false),
+    fetchRemoteHostSourceAssetDataUrl: vi.fn(async () => null),
+  };
+});
 
 const originalRevokeObjectUrl = URL.revokeObjectURL;
+
+describe('persistableSourceBinAssetUrl (quota-safe persistence)', () => {
+  // Regression: on a phone-served desktop session, hydrateAssets replaces a native-file item's
+  // unreachable capacitor assetUrl with the multi-MB `data:` thumbnail streamed from the host (the
+  // nativeFilePath stays set). Persisting those base64 thumbnails blew the localStorage 5MB quota,
+  // and the setItem throw cascaded out of every setState — surfacing as broken live-sync AND an
+  // "Image Export Failed — The quota has been exceeded." dialog. The persisted payload must never
+  // include a re-derivable `data:`/`blob:` URL; those are streamed back via /source-asset/:itemId.
+  it('persists a native item\'s stable (non-data) capacitor URL', () => {
+    expect(
+      persistableSourceBinAssetUrl({
+        nativeFilePath: 'file:///storage/emulated/0/Pictures/Untitled-1.png',
+        assetUrl: 'https://localhost/_capacitor_file_/storage/emulated/0/Pictures/Untitled-1.png',
+      }),
+    ).toBe('https://localhost/_capacitor_file_/storage/emulated/0/Pictures/Untitled-1.png');
+  });
+
+  it('drops a multi-MB data: thumbnail so it can never blow the persist quota', () => {
+    expect(
+      persistableSourceBinAssetUrl({
+        nativeFilePath: 'file:///storage/emulated/0/Pictures/Untitled-1.png',
+        assetUrl: 'data:image/png;base64,AAAA'.padEnd(2_000_000, 'A'),
+      }),
+    ).toBeUndefined();
+  });
+
+  it('drops a blob: URL (process-local, not persistable)', () => {
+    expect(
+      persistableSourceBinAssetUrl({
+        nativeFilePath: 'file:///storage/emulated/0/Pictures/Untitled-1.png',
+        assetUrl: 'blob:https://localhost/8f3c-7a21',
+      }),
+    ).toBeUndefined();
+  });
+
+  it('persists nothing for an item without a nativeFilePath', () => {
+    expect(
+      persistableSourceBinAssetUrl({
+        nativeFilePath: undefined,
+        assetUrl: 'https://localhost/_capacitor_file_/whatever.png',
+      }),
+    ).toBeUndefined();
+    expect(
+      persistableSourceBinAssetUrl({ nativeFilePath: undefined, assetUrl: undefined }),
+    ).toBeUndefined();
+  });
+});
 
 describe('source bin native file integration', () => {
   beforeEach(() => {
@@ -12,6 +76,8 @@ describe('source bin native file integration', () => {
       scratchDirectoryHandle: undefined,
       nativeScratchDirectoryPath: undefined,
     });
+    vi.mocked(isServedLanSession).mockReturnValue(false);
+    vi.mocked(fetchRemoteHostSourceAssetDataUrl).mockReset().mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -344,6 +410,144 @@ describe('source bin native file integration', () => {
     await hydration;
 
     expect(useSourceBinStore.getState().bins[0].items.map((item) => item.id)).toEqual(['restored-1']);
+  });
+
+  it('served LAN client resolves a native-file-backed item through the host source-asset endpoint', async () => {
+    // A phone-native item carries an unreachable phone-local capacitor assetUrl and has no assetId,
+    // so its thumbnail <img> fails with ERR_CONNECTION_REFUSED in the served desktop browser. The
+    // served-client hydration path must stream the bytes from the phone instead.
+    vi.mocked(isServedLanSession).mockReturnValue(true);
+    vi.mocked(fetchRemoteHostSourceAssetDataUrl).mockImplementation(async (itemId) =>
+      itemId === 'native-1' ? 'data:image/png;base64,HOSTEDBYTES' : null,
+    );
+
+    useSourceBinStore.setState({
+      bins: [{
+        id: 'default',
+        name: 'Source Library',
+        collapsed: false,
+        createdAt: 1,
+        items: [{
+          id: 'native-1',
+          label: 'Phone image',
+          kind: 'image',
+          mimeType: 'image/png',
+          assetUrl: 'https://localhost/_capacitor_file_/storage/emulated/0/native-1.png',
+          nativeFilePath: '/storage/emulated/0/native-1.png',
+          createdAt: 1,
+        }],
+      }],
+      dismissedSourceKeys: [],
+    });
+
+    await useSourceBinStore.getState().hydrateAssets();
+
+    expect(vi.mocked(fetchRemoteHostSourceAssetDataUrl)).toHaveBeenCalledWith('native-1');
+    expect(useSourceBinStore.getState().bins[0].items[0].assetUrl).toBe('data:image/png;base64,HOSTEDBYTES');
+  });
+
+  it('served LAN client does not re-stream an item already resolved to a hosted data URL', async () => {
+    vi.mocked(isServedLanSession).mockReturnValue(true);
+    vi.mocked(fetchRemoteHostSourceAssetDataUrl).mockResolvedValue('data:image/png;base64,SHOULDNOTBEUSED');
+
+    useSourceBinStore.setState({
+      bins: [{
+        id: 'default',
+        name: 'Source Library',
+        collapsed: false,
+        createdAt: 1,
+        items: [{
+          id: 'already-1',
+          label: 'Resolved image',
+          kind: 'image',
+          mimeType: 'image/png',
+          assetUrl: 'data:image/png;base64,ALREADYHOSTED',
+          createdAt: 1,
+        }],
+      }],
+      dismissedSourceKeys: [],
+    });
+
+    await useSourceBinStore.getState().hydrateAssets();
+
+    expect(vi.mocked(fetchRemoteHostSourceAssetDataUrl)).not.toHaveBeenCalled();
+    expect(useSourceBinStore.getState().bins[0].items[0].assetUrl).toBe('data:image/png;base64,ALREADYHOSTED');
+  });
+
+  it('served LAN client still resolves a newly added native-file item when a concurrent bins change lands during hydration', async () => {
+    // Live-sync path (an item drawn in Image and exported to Flow on the phone AFTER pairing):
+    // `applyHostSourceLibraryEvent` fires `hydrateAssets()` on every event, and those overlap. While
+    // the new native-file item's bytes are being streamed from the host (a real LAN round-trip), a
+    // second live event lands and changes the bins signature. The all-or-nothing stale guard used to
+    // discard the WHOLE resolved pass, so the new item kept its unreachable phone-local capacitor
+    // assetUrl -> no thumbnail + "Preview unavailable" on open. The resolution must survive a
+    // concurrent change as long as the item still exists with the same pre-resolution assetUrl.
+    vi.mocked(isServedLanSession).mockReturnValue(true);
+
+    let resolveHostFetch: () => void = () => {};
+    let signalFetchStarted: () => void = () => {};
+    const fetchStarted = new Promise<void>((resolve) => {
+      signalFetchStarted = resolve;
+    });
+    vi.mocked(fetchRemoteHostSourceAssetDataUrl).mockImplementation((itemId) => {
+      if (itemId !== 'native-D') return Promise.resolve(null);
+      signalFetchStarted();
+      return new Promise<string>((resolve) => {
+        resolveHostFetch = () => resolve('data:image/png;base64,DRAWNBYTES');
+      });
+    });
+
+    const capacitorUrl = 'https://localhost/_capacitor_file_/storage/emulated/0/native-D.png';
+    useSourceBinStore.setState({
+      bins: [{
+        id: 'default',
+        name: 'Source Library',
+        collapsed: false,
+        createdAt: 1,
+        items: [{
+          id: 'native-D',
+          label: 'Drawn export',
+          kind: 'image',
+          mimeType: 'image/png',
+          assetUrl: capacitorUrl,
+          nativeFilePath: '/storage/emulated/0/native-D.png',
+          createdAt: 1,
+        }],
+      }],
+      dismissedSourceKeys: [],
+    });
+
+    const hydration = useSourceBinStore.getState().hydrateAssets();
+
+    // Wait until hydrateAssets is mid-flight on the host fetch, then land a concurrent bins change
+    // (a second live event appended item E) that shifts the hydration signature.
+    await fetchStarted;
+    useSourceBinStore.setState((state) => ({
+      bins: state.bins.map((bin) => ({
+        ...bin,
+        items: [
+          ...bin.items,
+          {
+            id: 'native-E',
+            label: 'Second export',
+            kind: 'image' as const,
+            mimeType: 'image/png',
+            assetUrl: 'data:image/png;base64,ALREADYHOSTED-E',
+            createdAt: 2,
+          },
+        ],
+      })),
+    }));
+
+    resolveHostFetch();
+    await hydration;
+
+    const items = useSourceBinStore.getState().bins[0].items;
+    const drawn = items.find((item) => item.id === 'native-D');
+    const second = items.find((item) => item.id === 'native-E');
+    expect(drawn?.assetUrl).toBe('data:image/png;base64,DRAWNBYTES');
+    // The concurrent change must not be lost either.
+    expect(second?.assetUrl).toBe('data:image/png;base64,ALREADYHOSTED-E');
   });
 
   it('persists envelope grouping metadata through project snapshots', async () => {

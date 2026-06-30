@@ -8,6 +8,7 @@ import {
 import { canEditImageLayerPixels } from '../../../lib/imageLayerLocks';
 import { createRetouchOutputLayer, insertRetouchOutputLayer } from './retouchOutputLayer';
 import { resolveRetouchTargetLayer } from './retouchTargetLayer';
+import { brushStraightLineStart, recordBrushStrokeAnchor } from './brushLineAnchor';
 import type { Point, ToolEnv, ToolHandler } from './types';
 
 interface ToneBrushStroke {
@@ -39,6 +40,7 @@ export const toneBrushCapabilityDescriptors = {
 
 function makeToneBrushTool(mode: ToneBrushMode): ToolHandler {
   let stroke: ToneBrushStroke | null = null;
+  const toolKey = mode === 'dodge' ? 'dodgeBrush' : 'burnBrush';
 
   const toneAt = (env: ToolEnv, targetPoint: Point) => {
     if (!stroke) return;
@@ -77,9 +79,11 @@ function makeToneBrushTool(mode: ToneBrushMode): ToolHandler {
   };
 
   return {
-    onPointerDown(env, point) {
+    onPointerDown(env, point, mods) {
       const layer = resolveRetouchTargetLayer(env, point);
       if (!canEditImageLayerPixels(layer) || !layer?.bitmap) return;
+      // Shift straight-line: tone a straight segment from the previous stroke's end to this point.
+      const lineStart = brushStraightLineStart(toolKey, env.doc.id, mods) ?? point;
       const outputMode = env.retouchToolSettings?.outputMode ?? 'activeLayer';
       const layersBefore = [...env.doc.layers];
       const targetLayer = outputMode === 'newLayer'
@@ -99,9 +103,14 @@ function makeToneBrushTool(mode: ToneBrushMode): ToolHandler {
         bitmapBefore: outputMode === 'newLayer' ? null : cloneBitmap(layer.bitmap),
         layersBefore,
         outputMode,
-        lastPoint: point,
+        lastPoint: lineStart,
       };
-      toneAt(env, point);
+      if (lineStart !== point) {
+        toneBetween(env, lineStart, point);
+      } else {
+        toneAt(env, point);
+      }
+      stroke.lastPoint = point;
       env.requestRender({ invalidateBitmapCache: true });
     },
 
@@ -114,6 +123,7 @@ function makeToneBrushTool(mode: ToneBrushMode): ToolHandler {
 
     onPointerUp(env) {
       if (!stroke) return;
+      recordBrushStrokeAnchor(toolKey, env.doc.id, stroke.lastPoint);
       const layer = stroke.targetLayer;
       if (layer?.bitmap && stroke.outputMode === 'newLayer') {
         const afterLayers = insertRetouchOutputLayer(stroke.layersBefore, stroke.sourceLayerId, layer);

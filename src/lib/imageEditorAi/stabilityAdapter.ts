@@ -73,6 +73,7 @@ function stabilityOperationForRequest(
     case 'relight':
       return 'replace-background-relight';
     case 'inpaint':
+    case 'editImage':
     case 'upscale':
     case 'resizeImage':
     case 'resizeCanvas':

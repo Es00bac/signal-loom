@@ -10,6 +10,7 @@ describe('imageEditorOperations', () => {
   it('defines the full image editor operation matrix', () => {
     expect(listImageEditorOperationDefinitions().map((operation) => operation.id)).toEqual([
       'inpaint',
+      'editImage',
       'erase',
       'outpaint',
       'searchReplace',
@@ -24,8 +25,10 @@ describe('imageEditorOperations', () => {
   });
 
   it('maps model capabilities into image editor operations with local geometry actions always available', () => {
+    // gpt-image-1 truly honours a mask, so it offers BOTH localized Inpaint and whole-image Edit.
     expect(getImageEditorOperationsForModel('openai', 'gpt-image-1').map((operation) => operation.id)).toEqual([
       'inpaint',
+      'editImage',
       'resizeImage',
       'resizeCanvas',
     ]);
@@ -41,11 +44,14 @@ describe('imageEditorOperations', () => {
       'resizeCanvas',
     ]);
 
+    // flux-2-pro can edit but has no mask field, so it must NOT offer Inpaint — only the honest
+    // whole-image Edit — so a painted mask is never silently ignored.
     expect(getImageEditorOperationsForModel('bfl', 'flux-2-pro').map((operation) => operation.id)).toEqual([
-      'inpaint',
+      'editImage',
       'resizeImage',
       'resizeCanvas',
     ]);
+    expect(getImageEditorOperationsForModel('bfl', 'flux-2-pro').map((operation) => operation.id)).not.toContain('inpaint');
   });
 
   it('gates source-layer and selection requirements before allowing a provider edit', () => {
@@ -107,7 +113,7 @@ describe('imageEditorOperations', () => {
 
     expect(
       estimateImageEditorOperationCostUsd({
-        operationId: 'inpaint',
+        operationId: 'editImage',
         providerId: 'bfl',
         modelId: 'flux-2-pro',
       }),

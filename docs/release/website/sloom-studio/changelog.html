@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Changelog &mdash; Signal Loom</title>
+  <meta name="description" content="Signal Loom release notes and development changelog — what changed in each beta build across the Flow, Image, Paper, and Video workspaces, desktop and Android." />
+  <meta name="theme-color" content="#020711" />
+  <meta property="og:title" content="Signal Loom Changelog" />
+  <meta property="og:description" content="Release notes for every Signal Loom beta build — desktop and Android." />
+  <meta property="og:image" content="/assets/graphics/feature-graphic-1024x500.png" />
+  <link rel="icon" type="image/png" href="assets/graphics/icon-512.png" />
+  <link rel="stylesheet" href="assets/site.css" />
+  <style>
+    body {
+      background:
+        radial-gradient(ellipse 55% 30% at 25% 6%, rgba(41,217,255,.10) 0%, transparent 55%),
+        linear-gradient(180deg, #07111f 0%, var(--bg) 50%);
+    }
+    .cl-header { padding-block: clamp(56px, 8vw, 96px) 36px; max-width: 760px; }
+    .cl-header h1 { font-size: clamp(2rem, 5vw, 3.2rem); margin-bottom: 14px; }
+    .cl-header p  { font-size: 1.06rem; max-width: 60ch; }
+
+    /* timeline rail */
+    .cl-list { max-width: 880px; margin-bottom: clamp(64px, 9vw, 120px); }
+    .release {
+      position: relative;
+      border-top: 1px solid var(--line);
+      padding-block: clamp(34px, 5vw, 56px);
+    }
+    .release-head {
+      display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+    .release-ver {
+      font-size: clamp(1.4rem, 3vw, 2rem); font-weight: 900; letter-spacing: -.02em; color: #fff;
+    }
+    .release-date {
+      font-family: var(--mono); font-size: .7rem; letter-spacing: .12em; text-transform: uppercase;
+      color: var(--dim);
+    }
+    .release-summary { color: var(--muted); font-size: .98rem; line-height: 1.65; margin-bottom: 22px; max-width: 64ch; }
+
+    .cl-group { margin-bottom: 18px; }
+    .cl-group h3 {
+      font-size: .76rem; font-weight: 900; letter-spacing: .14em; text-transform: uppercase;
+      color: var(--cyan); margin-bottom: 10px;
+    }
+    .cl-group.fix h3   { color: var(--gold); }
+    .cl-group.android h3 { color: var(--green); }
+    .cl-items { list-style: none; padding: 0; display: grid; gap: 8px; }
+    .cl-items li {
+      position: relative; padding-left: 20px; color: var(--muted);
+      font-size: .93rem; line-height: 1.55;
+    }
+    .cl-items li::before {
+      content: ""; position: absolute; left: 2px; top: .62em;
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--cyan); box-shadow: 0 0 8px rgba(52,217,255,.5);
+    }
+    .cl-group.fix .cl-items li::before   { background: var(--gold); box-shadow: 0 0 8px rgba(255,181,61,.5); }
+    .cl-group.android .cl-items li::before { background: var(--green); box-shadow: 0 0 8px rgba(103,240,173,.5); }
+    .cl-items li strong { color: #fff; font-weight: 650; }
+
+    .current-badge {
+      font-family: var(--mono); font-size: .58rem; letter-spacing: .12em; text-transform: uppercase;
+      color: #021018; background: var(--cyan); border-radius: 5px; padding: 3px 8px; font-weight: 700;
+    }
+    .cl-note {
+      margin-top: 8px; border: 1px dashed var(--line-2); border-radius: 12px;
+      padding: 16px 18px; color: var(--dim); font-size: .86rem; line-height: 1.6; max-width: 70ch;
+    }
+  </style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav-inner wrap" aria-label="Primary navigation">
+    <a class="brand" href="index.html" aria-label="Signal Loom home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Signal Loom
+    </a>
+    <div class="nav-links" id="nav-links">
+      <a href="index.html">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="examples.html">Examples</a>
+      <a href="changelog.html" aria-current="page">Changelog</a>
+      <a href="index.html#license">Download</a>
+      <a href="privacy.html">Privacy</a>
+    </div>
+    <a class="nav-cta" href="index.html#license">Get it — $9.99</a>
+    <button class="nav-hamburger" aria-label="Toggle navigation" onclick="document.getElementById('nav-links').classList.toggle('open')">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="cl-header">
+    <p class="eyebrow">Release notes</p>
+    <h1>Changelog</h1>
+    <p>What changed in each Signal Loom build, newest first. Signal Loom is in open beta (0.9.x) — desktop (Windows / Linux) and Android share one version line. Dates are when each build was cut.</p>
+  </div>
+
+  <div class="cl-list">
+
+    <!-- ───── 0.9.7 ───── -->
+    <section class="release" id="v0-9-7">
+      <div class="release-head">
+        <span class="release-ver">0.9.7</span>
+        <span class="current-badge">Current</span>
+        <span class="release-date">June 2026</span>
+      </div>
+      <p class="release-summary">The cross-device release. Your phone and a desktop browser can now open the <em>same</em> live project, with a one-tap baton so edits never collide — plus a reworked in-window menu and a wave of editor polish.</p>
+
+      <div class="cl-group">
+        <h3>New</h3>
+        <ul class="cl-items">
+          <li><strong>Cross-device sync.</strong> Run the phone's LAN host and open the project in a desktop browser at the same time — Flow graphs, Paper pages, the Image canvas, and the source library all stay in step over your local network.</li>
+          <li><strong>"Working here ⇄ Phone" baton.</strong> Only one device holds the edit lock at a time; hand it off from the top bar and the other device drops to a read-only mirror, so two screens never fight over the same change.</li>
+          <li><strong>In-window menu.</strong> A new menu that lives inside the app window — switch between a compact menu button and a classic always-visible menu bar (replaces the unreliable Linux global-menu path).</li>
+          <li><strong>Live presence.</strong> The top bar shows when another device is viewing the same project, instead of forcing a project open "read-only."</li>
+        </ul>
+      </div>
+      <div class="cl-group fix">
+        <h3>Fixed &amp; improved</h3>
+        <ul class="cl-items">
+          <li>Served-session source images now load over a dedicated host-asset endpoint, and persisted state no longer trips a storage-quota cascade that broke thumbnails and exports.</li>
+          <li>Hardened the sync channels against a module-init test flake; build and test gates are green.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───── 0.9.5 ───── -->
+    <section class="release" id="v0-9-5">
+      <div class="release-head">
+        <span class="release-ver">0.9.5</span>
+        <span class="release-date">June 2026</span>
+      </div>
+      <p class="release-summary">Brush-and-tools wave: the Image editor gained the modifier gestures painters expect, every workspace got its own tool iconography, and your settings can now travel encrypted.</p>
+
+      <div class="cl-group">
+        <h3>New</h3>
+        <ul class="cl-items">
+          <li><strong>Brush straight-lines.</strong> Hold <strong>Shift</strong> to snap a point-to-point straight stroke with any brush-family tool.</li>
+          <li><strong>Healing / clone source.</strong> <strong>Alt-click</strong> to set a source point for the spot-heal and clone tools.</li>
+          <li><strong>Distinct tool icons per workspace.</strong> No more shared glyphs — Flow, Image, Paper, and Video each have their own unambiguous tool set.</li>
+          <li><strong>Encrypted settings backup.</strong> Export and re-import your full configuration as an encrypted backup file.</li>
+          <li><strong>Fuller Atlas image-model coverage.</strong> Mapped each Atlas image model's capabilities and request shape, with Flow nodes and generative-fill gating reconciled to match.</li>
+        </ul>
+      </div>
+      <div class="cl-group fix">
+        <h3>Fixed &amp; improved</h3>
+        <ul class="cl-items">
+          <li>Audited tool-hotkey and gamepad coverage so every tool is reachable from the keyboard and a controller.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───── 0.9.3 ───── -->
+    <section class="release" id="v0-9-3">
+      <div class="release-head">
+        <span class="release-ver">0.9.3</span>
+        <span class="release-date">June 2026</span>
+      </div>
+      <p class="release-summary">Security and Android-ergonomics wave.</p>
+
+      <div class="cl-group">
+        <h3>New</h3>
+        <ul class="cl-items">
+          <li><strong>API keys encrypted at rest.</strong> Keys are sealed with the OS secure store on desktop (safeStorage) and WebCrypto on web/Android — still never sent to Sloom, now encrypted on disk too.</li>
+          <li><strong>Collapsible toolbars</strong> to reclaim canvas space on small screens.</li>
+        </ul>
+      </div>
+      <div class="cl-group android">
+        <h3>Android</h3>
+        <ul class="cl-items">
+          <li>Fixed silent failures in File Save / Open and the Save-As download fallback.</li>
+          <li>Corrected the Atlas image request shape (per-model source field; reference images attached correctly).</li>
+          <li>Volume keys can drive brush size; vertical swipes scroll past property sliders instead of snagging.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───── 0.9.2 ───── -->
+    <section class="release" id="v0-9-2">
+      <div class="release-head">
+        <span class="release-ver">0.9.2</span>
+        <span class="release-date">June 2026</span>
+      </div>
+      <p class="release-summary">Image-editor stability and performance.</p>
+
+      <div class="cl-group fix">
+        <h3>Fixed &amp; improved</h3>
+        <ul class="cl-items">
+          <li>Marquee / selection drawing is dramatically faster (the freehand lasso no longer drops to sub-1&nbsp;fps).</li>
+          <li>Moving a selection now floats it to a new layer (non-destructive, Photoshop-style).</li>
+          <li>Zoom no longer flashes to a checkerboard until the next draw — the GPU blit is clamped and the canvas present is synchronized.</li>
+          <li>Removed the dead empty band under the top bar and added <strong>File ▸ New</strong>.</li>
+          <li>Tool hotkeys no longer fire while you're typing in a field or dialog.</li>
+          <li>Fixed a canvas repaint / present stall that froze the UI until the pointer moved in or out of the window.</li>
+          <li>Layer pixels persist correctly so saving a project no longer wipes the canvas.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───── 0.9.1 ───── -->
+    <section class="release" id="v0-9-1">
+      <div class="release-head">
+        <span class="release-ver">0.9.1</span>
+        <span class="release-date">June 2026</span>
+      </div>
+      <div class="cl-group fix">
+        <h3>Fixed &amp; improved</h3>
+        <ul class="cl-items">
+          <li>First Windows / Linux desktop downloads published to sloom.studio with an in-app About + update check.</li>
+          <li>Top bar stays a single row at 1080p and up; Linux Electron defaults to native Wayland + GPU for a 60&nbsp;fps canvas.</li>
+          <li>Repaired the text tool (worker crash + click-to-place self-dismiss); retuned brush defaults with accurate previews.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───── 0.9.0 ───── -->
+    <section class="release" id="v0-9-0">
+      <div class="release-head">
+        <span class="release-ver">0.9.0</span>
+        <span class="release-date">June 2026 · first public beta</span>
+      </div>
+      <p class="release-summary">The first public beta: four connected workspaces — node-graph <strong>Flow</strong>, a layered <strong>Image</strong> editor with a stylus brush engine and generative fill, print-ready <strong>Paper</strong> layout (threaded text, baseline grid, CMYK swatches, speech bubbles, tables, text-on-path), and a multi-track <strong>Video</strong> timeline — all sharing one <code>.sloom</code> project and source library, on desktop and Android with a phone-as-LAN-host mode, gamepad support, and bring-your-own-key for every provider.</p>
+    </section>
+
+  </div>
+
+  <p class="cl-note">Signal Loom is independent software in active beta — expect frequent builds. The desktop app checks this version line for updates; on Android, store builds update themselves. Spot something off? <a href="mailto:support@sloom.studio" style="color:var(--cyan)">support@sloom.studio</a>.</p>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Signal Loom
+    </a>
+    <nav class="footer-links" aria-label="Footer navigation">
+      <a href="index.html">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="examples.html">Examples</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="mailto:support@sloom.studio">support@sloom.studio</a>
+    </nav>
+    <span>&copy; 2026 Sloom Software</span>
+  </div>
+</footer>
+
+</body>
+</html>

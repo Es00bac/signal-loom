@@ -1,6 +1,6 @@
 {
-  "version": "0.9.1",
+  "version": "0.9.7",
   "channel": "beta",
   "url": "https://sloom.studio/downloads",
-  "notes": "Faster marquee/selection (no more sub-1fps), non-destructive move (floats the selection to a new layer), fixes for tool hotkeys firing while typing, a canvas repaint/present stall, and the Paper top-bar layout."
+  "notes": "Cross-device sync: open the same project on your phone and a desktop browser at once, with a 'Working here ⇄ Phone' baton so only one device edits at a time. New in-window menu (compact menu button or a classic menu bar), distinct tool icons per workspace, brush straight-lines (hold Shift) and a healing/clone source (Alt-click), encrypted API keys at rest plus encrypted settings backup/restore, fuller Atlas image-model coverage, and Image-editor stability fixes (zoom no longer flashes to checkerboard, the dead band under the top bar is gone, File > New)."
 }

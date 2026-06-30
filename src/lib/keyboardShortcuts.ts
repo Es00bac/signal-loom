@@ -150,24 +150,36 @@ export function resolveKeyboardShortcutCommand(
   return undefined;
 }
 
+// `<input>` types you can't TYPE into — a focused slider / checkbox / button must NOT block keyboard
+// shortcuts. This is what broke volume-key and `[`/`]` brush sizing: the bottom-left brush size is an
+// `<input type="range">`, and once focused it was treated as "typing", so the shortcut handler bailed.
+const NON_TEXT_INPUT_TYPES = new Set([
+  'range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file', 'image',
+]);
+
+function isTextEntryInput(type: string | null | undefined): boolean {
+  return !NON_TEXT_INPUT_TYPES.has((type ?? 'text').toLowerCase());
+}
+
 export function isEditableShortcutTarget(target: EventTarget | null): boolean {
   if (typeof Element === 'undefined') {
     const candidate = target as
       | {
           tagName?: string;
+          type?: string;
           isContentEditable?: boolean;
           closest?: (selector: string) => unknown;
         }
       | null;
     const tagName = candidate?.tagName?.toLowerCase();
-    if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') return true;
+    if (tagName === 'input') return isTextEntryInput(candidate?.type);
+    if (tagName === 'textarea' || tagName === 'select') return true;
     if (candidate?.isContentEditable) return true;
     return Boolean(candidate?.closest?.('[contenteditable="true"], [contenteditable="plaintext-only"]'));
   }
   if (!(target instanceof Element)) return false;
-  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
-    return true;
-  }
+  if (target instanceof HTMLInputElement) return isTextEntryInput(target.type);
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return true;
   return Boolean(target.closest('[contenteditable="true"], [contenteditable="plaintext-only"]'));
 }
 

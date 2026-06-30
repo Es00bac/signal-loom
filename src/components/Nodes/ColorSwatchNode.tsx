@@ -1,5 +1,6 @@
-import { memo } from 'react';
-import { Palette, Plus, Trash2 } from 'lucide-react';
+import { memo, useEffect } from 'react';
+import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
+import { Palette, Plus, X } from 'lucide-react';
 import { AdvancedColorPicker } from '../Common/AdvancedColorPicker';
 import { BaseNode } from './BaseNode';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
@@ -9,76 +10,62 @@ import {
   formatColorSwatchPrompt,
   normalizeColorSwatchColors,
   normalizeHexColor,
-  resolveColorSwatchDraftColor,
-  resolveColorSwatchSelectedIndex,
+  paletteColorHandleId,
   resolveColorSwatchUsageMode,
 } from '../../lib/colorSwatchNode';
 import { useFlowStore } from '../../store/flowStore';
 import type { AppNodeProps, ColorSwatchUsageMode } from '../../types/flow';
 
-function ColorSwatchNodeComponent({ id, data }: AppNodeProps) {
+// Returns a color not already in the palette so each "+" adds a fresh, editable chip (palette colors are
+// de-duplicated, so appending a duplicate would silently no-op).
+function nextUniqueColor(colors: string[]): string {
+  if (!colors.includes(DEFAULT_COLOR_SWATCH_DRAFT_COLOR)) {
+    return DEFAULT_COLOR_SWATCH_DRAFT_COLOR;
+  }
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const candidate = `#${Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0').toUpperCase()}`;
+    if (!colors.includes(candidate)) {
+      return candidate;
+    }
+  }
+  return DEFAULT_COLOR_SWATCH_DRAFT_COLOR;
+}
+
+// NOTE: the node type id stays `colorSwatchNode` for back-compat with saved projects (no node-type
+// migration exists); this node is now the master "Color Palette". The labelled subset lives in the
+// separate Color Swatch node.
+function ColorPaletteNodeComponent({ id, data }: AppNodeProps) {
   const patchNodeData = useFlowStore((state) => state.patchNodeData);
+  const updateNodeInternals = useUpdateNodeInternals();
   const colors = normalizeColorSwatchColors(data.colorSwatchColors);
-  const selectedIndex = resolveColorSwatchSelectedIndex(data.colorSwatchSelectedIndex, colors.length);
-  const draftColor = selectedIndex !== undefined
-    ? colors[selectedIndex]
-    : resolveColorSwatchDraftColor(data.colorSwatchDraftColor);
+  // React Flow caches each node's handle positions; color chips (and their source handles) added AFTER
+  // the node was first measured stay unconnectable (the "only the first N colors give an edge" bug) until
+  // we ask it to re-measure. Re-measure on mount and whenever the color count changes so every color's
+  // handle is draggable.
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, colors.length, updateNodeInternals]);
   const usageMode = resolveColorSwatchUsageMode(data.colorSwatchUsageMode);
   const promptText = formatColorSwatchPrompt({
     colorSwatchColors: colors,
     colorSwatchUsageMode: usageMode,
   });
 
-  const patchColors = (nextColors: string[], nextSelectedIndex?: number) => {
-    patchNodeData(id, {
-      colorSwatchColors: nextColors,
-      colorSwatchSelectedIndex: nextSelectedIndex ?? -1,
-      colorSwatchDraftColor: nextSelectedIndex !== undefined
-        ? nextColors[nextSelectedIndex] ?? DEFAULT_COLOR_SWATCH_DRAFT_COLOR
-        : draftColor,
-    });
+  const setColors = (nextColors: string[]) => patchNodeData(id, { colorSwatchColors: nextColors });
+  const updateColor = (index: number, value: string) => {
+    const nextColor = normalizeHexColor(value);
+    if (!nextColor) return;
+    setColors(colors.map((color, colorIndex) => (colorIndex === index ? nextColor : color)));
   };
-
-  const handleColorChange = (value: string) => {
-    const nextColor = normalizeHexColor(value) ?? DEFAULT_COLOR_SWATCH_DRAFT_COLOR;
-    if (selectedIndex === undefined) {
-      patchNodeData(id, { colorSwatchDraftColor: nextColor });
-      return;
-    }
-
-    const nextColors = colors.map((color, index) => index === selectedIndex ? nextColor : color);
-    patchNodeData(id, {
-      colorSwatchColors: nextColors,
-      colorSwatchDraftColor: nextColor,
-    });
-  };
-
-  const addColor = () => {
-    const nextColor = normalizeHexColor(draftColor) ?? DEFAULT_COLOR_SWATCH_DRAFT_COLOR;
-    const existingIndex = colors.indexOf(nextColor);
-    if (existingIndex >= 0) {
-      patchNodeData(id, {
-        colorSwatchSelectedIndex: existingIndex,
-        colorSwatchDraftColor: nextColor,
-      });
-      return;
-    }
-
-    patchColors([...colors, nextColor], colors.length);
-  };
-
-  const removeColor = (index: number) => {
-    const nextColors = colors.filter((_, colorIndex) => colorIndex !== index);
-    const nextSelectedIndex = nextColors.length === 0 ? undefined : Math.min(index, nextColors.length - 1);
-    patchColors(nextColors, nextSelectedIndex);
-  };
+  const addColor = () => setColors([...colors, nextUniqueColor(colors)]);
+  const removeColor = (index: number) => setColors(colors.filter((_, colorIndex) => colorIndex !== index));
 
   return (
     <BaseNode
       nodeId={id}
       nodeType="colorSwatchNode"
       icon={Palette}
-      title="Color Swatch"
+      title="Color Palette"
       hasInput={false}
       hasOutput
       error={data.error}
@@ -86,6 +73,53 @@ function ColorSwatchNodeComponent({ id, data }: AppNodeProps) {
       retryState={data.retryState}
     >
       <div className="space-y-3 rounded-lg border border-pink-400/20 bg-pink-400/5 p-3 text-xs">
+        <div>
+          <span className="mb-1.5 block font-semibold text-gray-200">Colors</span>
+          <div className="flex flex-wrap items-start gap-2">
+            {colors.map((color, index) => (
+              <div className="group relative flex flex-col items-center" key={`${color}-${index}`}>
+                <AdvancedColorPicker
+                  buttonClassName={withFlowNodeInteractionClasses('rounded-md border border-black/45 transition-transform hover:scale-105')}
+                  className="h-9 w-9"
+                  label={`Edit color ${index + 1}`}
+                  onChange={(value) => updateColor(index, value)}
+                  value={color}
+                />
+                {/* Per-color source handle — drag to a Color Swatch node to label this color per scene. */}
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={paletteColorHandleId(index)}
+                  className="!h-2.5 !w-2.5 !min-w-0 !border !border-pink-100 !bg-pink-400"
+                  style={{ top: 18, right: -7 }}
+                  title={`Connect ${color} to a Color Swatch`}
+                />
+                <button
+                  aria-label={`Remove color ${index + 1}`}
+                  className={withFlowNodeInteractionClasses('absolute -right-1.5 -top-1.5 hidden h-4 w-4 items-center justify-center rounded-full border border-gray-700 bg-gray-950 text-gray-300 transition-colors hover:text-red-200 group-hover:flex')}
+                  onClick={() => removeColor(index)}
+                  title="Remove color"
+                  type="button"
+                >
+                  <X size={10} />
+                </button>
+                <code className="mt-0.5 block text-center font-mono text-[9px] text-gray-400">{color}</code>
+              </div>
+            ))}
+            <button
+              className={withFlowNodeInteractionClasses('flex h-9 w-9 items-center justify-center rounded-md border border-dashed border-pink-400/50 bg-pink-400/10 text-pink-100 transition-colors hover:bg-pink-400/20')}
+              onClick={addColor}
+              title="Add color"
+              type="button"
+            >
+              <Plus size={16} />
+            </button>
+          </div>
+          {colors.length === 0 && (
+            <p className="mt-1.5 text-[10px] text-gray-500">Click + to add your first color, then click a chip to set its hex.</p>
+          )}
+        </div>
+
         <label className="block">
           <span className="mb-1.5 block font-semibold text-gray-200">Usage</span>
           <select
@@ -101,85 +135,6 @@ function ColorSwatchNodeComponent({ id, data }: AppNodeProps) {
           </select>
         </label>
 
-        <label className="block">
-          <span className="mb-1.5 block font-semibold text-gray-200">Swatch</span>
-          <select
-            className={withFlowNodeInteractionClasses('w-full rounded-md border border-gray-700 bg-gray-950 px-2 py-1.5 text-gray-100 outline-none focus:border-pink-300')}
-            onChange={(event) => {
-              if (event.target.value === 'new') {
-                patchNodeData(id, { colorSwatchSelectedIndex: -1 });
-                return;
-              }
-              const nextIndex = Number(event.target.value);
-              patchNodeData(id, {
-                colorSwatchSelectedIndex: nextIndex,
-                colorSwatchDraftColor: colors[nextIndex] ?? DEFAULT_COLOR_SWATCH_DRAFT_COLOR,
-              });
-            }}
-            value={selectedIndex === undefined ? 'new' : String(selectedIndex)}
-          >
-            <option value="new">New color</option>
-            {colors.map((color, index) => (
-              <option key={`${color}-${index}`} value={index}>
-                {`Color ${index + 1} ${color}`}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <div className="flex items-center gap-2">
-          <AdvancedColorPicker
-            buttonClassName={withFlowNodeInteractionClasses('rounded-md border border-gray-700 bg-gray-950')}
-            className="h-9 w-12"
-            label="Pick swatch color"
-            onChange={handleColorChange}
-            value={draftColor}
-          />
-          <code className="min-w-0 flex-1 rounded-md border border-gray-700 bg-gray-950 px-2 py-2 font-mono text-[11px] text-gray-100">
-            {draftColor}
-          </code>
-          <button
-            className={withFlowNodeInteractionClasses('flex h-9 w-9 items-center justify-center rounded-md border border-pink-400/40 bg-pink-400/10 text-pink-100 transition-colors hover:bg-pink-400/20')}
-            onClick={addColor}
-            title="Add color"
-            type="button"
-          >
-            <Plus size={15} />
-          </button>
-          <button
-            className={withFlowNodeInteractionClasses('flex h-9 w-9 items-center justify-center rounded-md border border-gray-700 bg-gray-950 text-gray-300 transition-colors hover:border-red-400/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-40')}
-            disabled={selectedIndex === undefined}
-            onClick={() => selectedIndex !== undefined && removeColor(selectedIndex)}
-            title="Remove selected color"
-            type="button"
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
-
-        <div className="grid grid-cols-6 gap-1.5">
-          {colors.length > 0 ? colors.map((color, index) => (
-            <button
-              aria-label={`Select ${color}`}
-              className={withFlowNodeInteractionClasses(`h-8 rounded-md border transition-transform hover:scale-105 ${
-                index === selectedIndex ? 'border-white shadow-[0_0_0_1px_rgba(255,255,255,0.65)]' : 'border-black/45'
-              }`)}
-              key={`${color}-${index}`}
-              onClick={() => patchNodeData(id, {
-                colorSwatchSelectedIndex: index,
-                colorSwatchDraftColor: color,
-              })}
-              style={{ backgroundColor: color }}
-              title={color}
-              type="button"
-            />
-          )) : (
-            <div className="col-span-6 rounded-md border border-dashed border-gray-700 bg-gray-950 px-2 py-3 text-center text-[10px] text-gray-500">
-              No colors selected
-            </div>
-          )}
-        </div>
-
         <div className="rounded-md border border-gray-700/70 bg-gray-950 p-2">
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">Output</div>
           <p className="max-h-24 overflow-y-auto text-[10px] leading-4 text-gray-300">
@@ -191,4 +146,4 @@ function ColorSwatchNodeComponent({ id, data }: AppNodeProps) {
   );
 }
 
-export const ColorSwatchNode = memo(ColorSwatchNodeComponent);
+export const ColorSwatchNode = memo(ColorPaletteNodeComponent);

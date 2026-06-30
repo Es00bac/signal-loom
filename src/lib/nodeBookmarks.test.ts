@@ -52,6 +52,6 @@ describe('node bookmarks', () => {
 
   it('uses concrete labels for primitive and consistency helper nodes', () => {
     expect(getNodeTypeLabel('numberNode')).toBe('Number');
-    expect(getNodeTypeLabel('colorSwatchNode')).toBe('Color Swatch');
+    expect(getNodeTypeLabel('colorSwatchNode')).toBe('Color Palette');
   });
 });

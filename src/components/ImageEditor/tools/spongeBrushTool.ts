@@ -8,6 +8,7 @@ import {
 import { canEditImageLayerPixels } from '../../../lib/imageLayerLocks';
 import { createRetouchOutputLayer, insertRetouchOutputLayer, type RetouchOutputLayerTool } from './retouchOutputLayer';
 import { resolveRetouchTargetLayer } from './retouchTargetLayer';
+import { brushStraightLineStart, recordBrushStrokeAnchor } from './brushLineAnchor';
 import type { Point, ToolEnv, ToolHandler } from './types';
 
 interface SpongeBrushStroke {
@@ -31,6 +32,7 @@ export const spongeBrushCapabilityDescriptor = describeRetouchBrushToolPlan({
 
 function makeSpongeBrushTool(mode: SpongeBrushMode): ToolHandler {
   let stroke: SpongeBrushStroke | null = null;
+  const toolKey = mode === 'saturate' ? 'spongeSaturateBrush' : 'spongeDesaturateBrush';
 
   const spongeAt = (env: ToolEnv, targetPoint: Point) => {
     if (!stroke) return;
@@ -69,9 +71,11 @@ function makeSpongeBrushTool(mode: SpongeBrushMode): ToolHandler {
   };
 
   return {
-    onPointerDown(env, point) {
+    onPointerDown(env, point, mods) {
       const layer = resolveRetouchTargetLayer(env, point);
       if (!canEditImageLayerPixels(layer) || !layer?.bitmap) return;
+      // Shift straight-line: sponge a straight segment from the previous stroke's end to this point.
+      const lineStart = brushStraightLineStart(toolKey, env.doc.id, mods) ?? point;
       const outputMode = env.retouchToolSettings?.outputMode ?? 'activeLayer';
       const layersBefore = [...env.doc.layers];
       const targetLayer = outputMode === 'newLayer'
@@ -91,9 +95,14 @@ function makeSpongeBrushTool(mode: SpongeBrushMode): ToolHandler {
         bitmapBefore: outputMode === 'newLayer' ? null : cloneBitmap(layer.bitmap),
         layersBefore,
         outputMode,
-        lastPoint: point,
+        lastPoint: lineStart,
       };
-      spongeAt(env, point);
+      if (lineStart !== point) {
+        spongeBetween(env, lineStart, point);
+      } else {
+        spongeAt(env, point);
+      }
+      stroke.lastPoint = point;
       env.requestRender({ invalidateBitmapCache: true });
     },
 
@@ -106,6 +115,7 @@ function makeSpongeBrushTool(mode: SpongeBrushMode): ToolHandler {
 
     onPointerUp(env) {
       if (!stroke) return;
+      recordBrushStrokeAnchor(toolKey, env.doc.id, stroke.lastPoint);
       const layer = stroke.targetLayer;
       if (layer?.bitmap && stroke.outputMode === 'newLayer') {
         const afterLayers = insertRetouchOutputLayer(stroke.layersBefore, stroke.sourceLayerId, layer);

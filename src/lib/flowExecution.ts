@@ -46,6 +46,8 @@ import {
   buildStabilityUpscaleRequest,
   type StabilityEditRequestInput,
 } from './imageEditorAi/requestBuilders';
+import { applyAtlasImageInputs, atlasModelSupportsMask, resolveAtlasDimensionBody, applyAtlasModelParams, filterAtlasBodyToAcceptedFields, getAtlasModelParams } from './imageEditorAi/atlasNativeImage';
+import { normalizeBytePlusBaseUrl, bytePlusGenerateImage } from './imageEditorAi/bytePlusImage';
 import { buildGeminiImagePrompt } from './geminiImagePrompt';
 import { buildGeminiTtsPrompt } from './geminiTtsPrompt';
 import { validateGeminiVideoRequest } from './geminiVideoValidation';
@@ -130,6 +132,8 @@ export interface ExecutionContext {
   refImageInput?: string;
   editMaskImageInput?: string;
   editReferenceImageInputs?: string[];
+  /** loras JSON from a connected LoRA Spec node (feeds FLUX LoRA models' `loras` field). */
+  loraWeightsJson?: string;
   audioSourceInput?: string;
   sourceVideoInput?: string;
   startImageInput?: string;
@@ -179,6 +183,12 @@ interface ExecutionResult {
   extension?: string;
   fileName?: string;
   outputMetadata?: Record<string, unknown>;
+  /**
+   * Extra outputs beyond `result` when a SINGLE call returns multiple images — e.g. Seedream Sequential
+   * (`max_images` up to 15 cohesive images from one prompt). The run path expands these into an envelope so
+   * every image lands in the Source Library / downstream list instead of being dropped.
+   */
+  additionalResults?: Array<{ result: string; mimeType?: string }>;
 }
 
 interface GeminiVideoOperation {
@@ -984,6 +994,30 @@ async function executeImageNode(
         onStatus,
       });
     }
+    case 'byteplus': {
+      // FIRST-PARTY BytePlus/ModelArk (Seedream). Generation only for now; masked edit/reference guidance
+      // is pending confirmation of the ModelArk edit API (see memory byteplus-first-party-provider).
+      if (sourceImageInput || referenceImageInputs.length > 0) {
+        throw new Error('BytePlus Seedream currently supports text-to-image generation in Signal Loom; image editing and reference guidance are pending the ModelArk edit API.');
+      }
+      onStatus?.('Generating image with BytePlus…');
+      const apiKey = requireApiKey(settings.apiKeys.byteplus ?? '', 'BytePlus');
+      const baseUrl = normalizeBytePlusBaseUrl(settings.providerSettings.bytePlusBaseUrl);
+      const urlOrData = await bytePlusGenerateImage({
+        apiKey,
+        baseUrl,
+        modelId,
+        prompt: operationPrompt,
+        seed: coerceOptionalNumber(node.data.imageSeed),
+      });
+      const bytePlusResult = urlOrData.startsWith('data:')
+        ? { result: urlOrData, resultType: 'image' as const, statusMessage: `Generated with ${modelId}` }
+        : await (async () => {
+            const materialized = await materializeRemoteMediaResult(urlOrData, 'BytePlus result download failed');
+            return { result: materialized.result, resultType: 'image' as const, mimeType: materialized.mimeType, statusMessage: `Generated with ${modelId}` };
+          })();
+      return applyConfiguredAutoUpscaleIfRequested({ node, settings, context, result: bytePlusResult, onStatus });
+    }
     case 'huggingface': {
       if (sourceImageInput || referenceImageInputs.length > 0) {
         throw new Error('Upstream image editing and reference-image guidance are currently supported for Gemini image models only, with OpenAI supporting single-source editing.');
@@ -1174,7 +1208,15 @@ async function executeAtlasNativeImageNode(input: {
   const apiKey = requireApiKey(input.settings.apiKeys.atlas ?? '', 'Atlas');
   const baseUrl = normalizeAtlasBaseUrl(input.settings.providerSettings.atlasBaseUrl);
   const aspectRatio = getSupportedImageAspectRatio('atlas', input.modelId, input.context.config.aspectRatio);
-  const { width, height } = mapAspectRatioToImageDimensions(aspectRatio);
+  // Custom width/height (px) from the node override the aspect-ratio preset for models that accept an
+  // arbitrary output size (capabilities.customDimensions); clamp to a sane 64–4096 range, else fall back.
+  const presetDimensions = mapAspectRatioToImageDimensions(aspectRatio);
+  const customDimension = (value: unknown): number | undefined => {
+    const parsed = coerceOptionalNumber(value);
+    return parsed !== undefined && parsed >= 64 && parsed <= 4096 ? Math.round(parsed) : undefined;
+  };
+  const width = customDimension(input.node.data.imageWidth) ?? presetDimensions.width;
+  const height = customDimension(input.node.data.imageHeight) ?? presetDimensions.height;
   const sourceImage = input.sourceImageInput
     ? await uploadAtlasMedia(baseUrl, apiKey, input.sourceImageInput, 'flow-atlas-source.png')
     : undefined;
@@ -1193,17 +1235,29 @@ async function executeAtlasNativeImageNode(input: {
   const seed = coerceOptionalNumber(input.node.data.imageSeed);
   const guidanceScale = coerceOptionalNumber(input.node.data.imageGuidanceScale);
   const editStrength = coerceOptionalNumber(input.node.data.imageEditStrength);
-  const loraWeights = parseAtlasLoraWeights(input.node.data.imageLoraWeightsJson);
+  // Prefer the node's own LoRA field; otherwise use loras JSON from a connected LoRA Spec node.
+  const loraWeights = parseAtlasLoraWeights(input.node.data.imageLoraWeightsJson || input.context.loraWeightsJson);
+  // Set the output size using the model's OWN documented field — `size:"W*H"`/`"WxH"`, a `"1K"/"2K"` tier,
+  // or `aspect_ratio:"16:9"` — NOT the generic width/height the API ignores (which left every size/aspect
+  // model defaulting to a square). Aspect-ratio presets and custom W×H both flow through here.
+  const dimensionBody = resolveAtlasDimensionBody(input.modelId, { width, height, aspectRatio });
   const body: Record<string, unknown> = {
     model: input.modelId,
     prompt: input.prompt,
-    width,
-    height,
-    steps: input.context.config.steps,
+    ...dimensionBody,
+    // Atlas image models name the step field `num_inference_steps` (the old `steps` was silently ignored).
+    num_inference_steps: input.context.config.steps,
     output_format: input.context.config.imageOutputFormat,
-    enable_safety_checker: input.node.data.imageSafetyCheckerEnabled ?? true,
+    // Censorship/safety checker is OFF by default; the node exposes a toggle to turn it on.
+    enable_safety_checker: input.node.data.imageSafetyCheckerEnabled ?? false,
   };
 
+  const negativePrompt = typeof input.node.data.imageNegativePrompt === 'string'
+    ? input.node.data.imageNegativePrompt.trim()
+    : '';
+  if (negativePrompt) {
+    body.negative_prompt = negativePrompt;
+  }
   if (seed !== undefined) {
     body.seed = seed;
   }
@@ -1216,24 +1270,41 @@ async function executeAtlasNativeImageNode(input: {
   if (loraWeights !== undefined) {
     body.loras = loraWeights;
   }
-  if (sourceImage) {
-    body.image = sourceImage;
+  // Model-specific documented inputs the user set (resolution, quality, n, thinking_mode, input_fidelity,
+  // web search, stylize, …) — each coerced to its schema type and sent only when the model documents it.
+  applyAtlasModelParams(body, input.modelId, input.node.data.atlasParams as Record<string, unknown> | undefined);
+  // Censorship off by default across EVERY safety/moderation field a model documents, unless the user
+  // overrode it: numeric `safety_tolerance` → the most-permissive value the schema allows; OpenAI's
+  // `moderation` → "low" (its least-strict setting). (`enable_safety_checker` already defaults to false
+  // above.) Note: some providers — BFL FLUX.2, Google, OpenAI — also enforce a hard model-level filter that
+  // no API parameter can disable; use an uncensored model for explicit content.
+  if (body.safety_tolerance === undefined) {
+    const safetyParam = getAtlasModelParams(input.modelId).find((param) => param.name === 'safety_tolerance');
+    if (safetyParam && typeof safetyParam.max === 'number') {
+      body.safety_tolerance = safetyParam.max;
+    }
   }
-  if (maskImage) {
+  if (body.moderation === undefined && getAtlasModelParams(input.modelId).some((param) => param.name === 'moderation')) {
+    body.moderation = 'low';
+  }
+  // Place source + references under the model's ACTUAL input field (images[] / image / image_urls).
+  // Sending the wrong field is silently IGNORED by Atlas — an "edit" degrades to text-to-image and
+  // references do nothing (there is no `reference_images` field on any model). See docs/notes/732.
+  applyAtlasImageInputs(body, input.modelId, { source: sourceImage, references: referenceImages });
+  if (maskImage && atlasModelSupportsMask(input.modelId)) {
     body.mask_image = maskImage;
-  }
-  if (referenceImages.length > 0) {
-    body.reference_images = referenceImages;
   }
 
   input.onStatus?.(isEditOperation ? 'Editing image with Atlas Cloud...' : 'Generating image with Atlas Cloud...');
+  // Send ONLY the fields this model documents — undocumented fields make some models reject the request.
+  const requestBody = filterAtlasBodyToAcceptedFields(body, input.modelId);
   const response = await fetch(`${baseUrl}/model/generateImage`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {
@@ -1245,13 +1316,15 @@ async function executeAtlasNativeImageNode(input: {
     throw new Error(extractProviderError(created.error ?? created.data?.error, 'Atlas image generation failed.'));
   }
 
-  const immediateOutput = extractAtlasOutputUrl(created);
+  // Capture EVERY output URL — sequential/batch models (Seedream `max_images`) return several images in one
+  // response, and dropping all but the first defeats their purpose.
+  const immediateOutputs = extractAllAtlasOutputUrls(created);
   const predictionId = extractAtlasPredictionId(created);
-  const resultUrl = immediateOutput ?? (predictionId
-    ? await pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'image')
-    : undefined);
+  const outputUrls = immediateOutputs.length > 0
+    ? immediateOutputs
+    : (predictionId ? await pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'image') : []);
 
-  if (!resultUrl) {
+  if (outputUrls.length === 0) {
     throw new Error('Atlas did not return a prediction ID or image output.');
   }
 
@@ -1260,18 +1333,19 @@ async function executeAtlasNativeImageNode(input: {
     providerId: 'atlas',
     modelId: input.modelId,
     operation,
-    imageCount: 1,
+    imageCount: outputUrls.length,
   });
 
-  const materializedResult = await materializeAtlasImageResult(
-    normalizeAtlasResultUrl(resultUrl, input.context.config.imageOutputFormat),
-  );
+  const materialized = await Promise.all(outputUrls.map((url) =>
+    materializeAtlasImageResult(normalizeAtlasResultUrl(url, input.context.config.imageOutputFormat))));
 
+  const countLabel = materialized.length > 1 ? ` (${materialized.length} images)` : '';
   return {
-    result: materializedResult.result,
+    result: materialized[0].result,
     resultType: 'image',
-    mimeType: materializedResult.mimeType,
-    statusMessage: `${isEditOperation ? 'Edited' : 'Generated'} with ${input.modelId}`,
+    mimeType: materialized[0].mimeType,
+    additionalResults: materialized.slice(1).map((item) => ({ result: item.result, mimeType: item.mimeType })),
+    statusMessage: `${isEditOperation ? 'Edited' : 'Generated'} with ${input.modelId}${countLabel}`,
     usage: buildImageUsage('atlas', input.modelId, {
       costUsd: estimate.costUsd,
       confidence: imageUsageConfidenceFromEstimate(estimate.confidence),
@@ -1340,7 +1414,7 @@ async function pollAtlasPredictionResult(
   predictionId: string,
   onStatus?: (statusMessage: string) => void,
   mediaLabel: 'image' | 'video' = 'image',
-): Promise<string> {
+): Promise<string[]> {
   // Video jobs take longer than images, so allow a longer poll window.
   const maxAttempts = mediaLabel === 'video' ? 300 : 120;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -1355,15 +1429,15 @@ async function pollAtlasPredictionResult(
     }
 
     const payload = (await response.json()) as AtlasPollResponse;
-    const outputUrl = extractAtlasOutputUrl(payload);
+    const outputUrls = extractAllAtlasOutputUrls(payload);
     const status = extractAtlasPredictionStatus(payload);
 
     if (status && isAtlasFailureStatus(status)) {
       throw new Error(extractProviderError(payload.error ?? payload.data?.error ?? status, `Atlas ${mediaLabel} generation failed.`));
     }
 
-    if (outputUrl && (!status || isAtlasSuccessStatus(status))) {
-      return outputUrl;
+    if (outputUrls.length > 0 && (!status || isAtlasSuccessStatus(status))) {
+      return outputUrls;
     }
 
     if (status && isAtlasSuccessStatus(status)) {
@@ -1403,6 +1477,35 @@ function extractAtlasOutputUrl(payload: AtlasCreateResponse): string | undefined
     firstStringFromUnknown(payload.image),
     firstStringFromUnknown(payload.result),
   );
+}
+
+/** Flatten a string or (nested) array of strings into a flat list of non-empty URLs, de-duplicated. */
+function collectStringsFromUnknown(value: unknown, out: string[]): void {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed) out.push(trimmed);
+  } else if (Array.isArray(value)) {
+    for (const item of value) collectStringsFromUnknown(item, out);
+  } else if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    for (const key of ['outputs', 'output', 'url', 'image', 'images']) {
+      if (key in record) collectStringsFromUnknown(record[key], out);
+    }
+  }
+}
+
+/**
+ * ALL output URLs from an Atlas image response. Sequential/batch models (e.g. Seedream Sequential's
+ * `max_images`) return several images in one response under `outputs`/`images`; we must keep every one,
+ * not just the first (which `extractAtlasOutputUrl` returns).
+ */
+function extractAllAtlasOutputUrls(payload: AtlasCreateResponse): string[] {
+  const out: string[] = [];
+  collectStringsFromUnknown(payload.data?.outputs ?? payload.data?.images ?? payload.data?.output ?? payload.data?.image, out);
+  if (out.length === 0) {
+    collectStringsFromUnknown(payload.outputs ?? payload.images ?? payload.output ?? payload.image, out);
+  }
+  return [...new Set(out)];
 }
 
 function firstStringFromUnknown(value: unknown): string | undefined {
@@ -2581,7 +2684,7 @@ async function executeAtlasVideoNode(input: {
   const immediateOutput = extractAtlasOutputUrl(created);
   const predictionId = extractAtlasPredictionId(created);
   const resultUrl = immediateOutput ?? (predictionId
-    ? await pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'video')
+    ? (await pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'video'))[0]
     : undefined);
 
   if (!resultUrl) {
@@ -3569,9 +3672,13 @@ async function executeOpenAiCompatibleImageNode(input: {
     input.provider === 'atlas' ? (input.settings.apiKeys.atlas ?? '') : input.settings.apiKeys.openai,
     providerLabel,
   );
+  // The provider — NOT the model slug — decides the endpoint. Atlas-hosted OpenAI-compatible models
+  // (e.g. `openai/gpt-image-1/edit`) must hit Atlas's base URL with the Atlas key; resolve through
+  // normalizeAtlasBaseUrl so an empty `atlasBaseUrl` setting can never fall back to api.openai.com
+  // (which would send the Atlas key to OpenAI and get rejected).
   const baseUrl = input.provider === 'atlas'
-    ? input.settings.providerSettings.atlasBaseUrl
-    : input.settings.providerSettings.openaiBaseUrl;
+    ? normalizeAtlasBaseUrl(input.settings.providerSettings.atlasBaseUrl)
+    : normalizeOptionalString(input.settings.providerSettings.openaiBaseUrl);
   const aspectRatio = getSupportedImageAspectRatio('openai', input.modelId, input.context.config.aspectRatio);
   const { default: OpenAI } = await loadProviderModule(
     () => import('openai'),
@@ -3581,7 +3688,7 @@ async function executeOpenAiCompatibleImageNode(input: {
   input.onStatus?.(input.sourceImageInput ? `Editing image with ${providerLabel}…` : `Generating image with ${providerLabel}…`);
   const client = new OpenAI({
     apiKey,
-    baseURL: normalizeOptionalString(baseUrl),
+    baseURL: baseUrl,
     dangerouslyAllowBrowser: true,
   });
   const response = input.sourceImageInput
@@ -3615,13 +3722,19 @@ async function executeOpenAiCompatibleImageNode(input: {
   }
 
   if (image?.url) {
+    // Materialize the remote URL the same way every other provider result does: a raw provider CDN URL
+    // (no CORS + Content-Disposition: attachment) refuses to render in an <img>, so download + inline it
+    // (renderer fetch, else native net.fetch / CapacitorHttp) to a data: URL. Without this an OpenAI /
+    // Atlas-OpenAI-compatible model that returns a `url` instead of `b64_json` shows a broken-image glyph.
+    const materialized = await materializeRemoteMediaResult(image.url, `${providerLabel} result download failed`);
     return applyConfiguredAutoUpscaleIfRequested({
       node: input.node,
       settings: input.settings,
       context: input.context,
       result: {
-        result: image.url,
+        result: materialized.result,
         resultType: 'image',
+        mimeType: materialized.mimeType,
         statusMessage: `Generated with ${input.modelId}`,
         usage: extractOpenAIImageUsage(response, input.modelId, input.provider),
       },

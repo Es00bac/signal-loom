@@ -76,7 +76,26 @@ function openDatabase(): Promise<IDBDatabase> {
   return cachedDatabasePromise;
 }
 
-async function persistAssetRecord(record: StoredAssetRecord): Promise<StoredAssetPayload> {
+import { isRemoteLanClient } from './projectLibrary';
+import { initializeLanServerProxy } from './androidLanServer';
+import { isServedLanSession, remoteHostFetch } from './remoteHostClient';
+
+// Phone host: serve assets to a served browser as data URLs (JSON-serializable across the relay), and
+// — Phase B — accept additive asset uploads pushed by a served client so a desktop-created image can
+// render on the phone. Uploads are append-by-id only; they never touch projects, so there is no
+// clobber surface (project writes remain Phase C).
+initializeLanServerProxy({
+  getAsset: loadImportedAssetAsDataUrl,
+  putAsset: async (id, record) => {
+    const stored = record as StoredAssetRecord;
+    if (!stored || (!stored.dataUrl && !stored.blob)) return;
+    await persistAssetRecord({ ...stored, id, createdAt: stored.createdAt ?? Date.now() });
+  },
+});
+
+export async function persistAssetRecord(record: StoredAssetRecord): Promise<StoredAssetPayload> {
+  // On a served (read-only mirror) session there is no write-back to the phone yet (Phase A), so any
+  // asset created in the session persists to this browser's own origin storage instead.
   const database = await openDatabase();
 
   await new Promise<void>((resolve, reject) => {
@@ -161,6 +180,57 @@ export async function loadImportedAssetAsDataUrl(id: string): Promise<StoredAsse
   };
 }
 
+/**
+ * Resolve an imported asset's bytes to a data URL, with a served-LAN-session fallback to the phone host.
+ *
+ * On the phone (authority), and on a standalone desktop/web session, the asset lives in this origin's
+ * IndexedDB, so the local lookup wins. On a *served* browser session the Flow sync strips the inline
+ * `sourceAssetUrl` from every node before shipping it (the multi-MB data URL would bloat every op),
+ * sending only the stable `sourceAssetId` — so the bytes never entered this browser's store. When the
+ * local lookup misses in a served session we fetch them from the host's `GET /asset/:id` endpoint (the
+ * same id space `saveImportedAsset` writes, the same byte path the source library already rides) and
+ * cache them into this origin so subsequent reads — and React re-renders — are local and synchronous.
+ */
+export async function resolveImportedAssetDataUrl(id: string): Promise<string | undefined> {
+  if (!id) {
+    return undefined;
+  }
+
+  const local = await loadImportedAssetAsDataUrl(id).catch(() => undefined);
+  if (local?.dataUrl) {
+    return local.dataUrl;
+  }
+
+  if (!isServedLanSession()) {
+    return undefined;
+  }
+
+  try {
+    const res = await remoteHostFetch(`/asset/${encodeURIComponent(id)}`, { timeoutMs: 15_000 });
+    if (!res || !res.ok) {
+      return undefined;
+    }
+
+    const payload = (await res.json()) as Partial<StoredAssetPayload> | null;
+    if (!payload?.dataUrl) {
+      return undefined;
+    }
+
+    // Cache into this origin so the next read is local; best-effort, since a quota miss must not block display.
+    await persistAssetRecord({
+      id: payload.id ?? id,
+      name: payload.name ?? id,
+      mimeType: payload.mimeType ?? 'image/png',
+      dataUrl: payload.dataUrl,
+      createdAt: Date.now(),
+    }).catch(() => undefined);
+
+    return payload.dataUrl;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function loadImportedAssetBlob(id: string): Promise<StoredAssetBlobPayload | undefined> {
   const record = await loadImportedAssetRecord(id);
 
@@ -229,7 +299,21 @@ export function materializeStoredAssetPayload(
   };
 }
 
-async function loadImportedAssetRecord(id: string): Promise<StoredAssetRecord | undefined> {
+export async function loadImportedAssetRecord(id: string): Promise<StoredAssetRecord | undefined> {
+  if (isRemoteLanClient()) {
+    // Resolve from the phone host first (authenticated); fall back to this browser's own storage for
+    // any asset that was imported locally within the served session.
+    try {
+      const res = await remoteHostFetch(`/asset/${encodeURIComponent(id)}`);
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data) return data as StoredAssetRecord;
+      }
+    } catch {
+      // fall through to local storage
+    }
+  }
+
   const database = await openDatabase();
   const result = await new Promise<StoredAssetRecord | undefined>((resolve, reject) => {
     const transaction = database.transaction(STORE_NAME, 'readonly');

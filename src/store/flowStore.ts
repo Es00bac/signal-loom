@@ -16,6 +16,7 @@ import type {
   OnNodesChange,
 } from '@xyflow/react';
 import { loadImportedAsset } from '../lib/assetStore';
+import { buildLoraWeightsJson } from '../lib/loraSpecNode';
 import { parseSignalLoomAssetId } from '../lib/signalLoomAssetUrl';
 import {
   COMPOSITION_AUDIO_HANDLES,
@@ -101,6 +102,7 @@ import {
 } from '../lib/flowNodeResultRestore';
 import { recordProjectUsageFromExecution } from '../lib/projectUsageRecording';
 import type { FlowProjectFlowSnapshot, FlowProjectFlowSnapshotInput } from '../lib/flowProjectWorkspaces';
+import { applyFlowGraphNativeChange, type FlowGraphNativeChange } from '../lib/flowGraphNativeSync';
 import {
   getDefaultGeminiTextMimeType,
   isGeminiTextMediaInputSupported,
@@ -175,6 +177,14 @@ export interface FlowState {
   exportFlow: () => string;
   exportProjectFlowSnapshot: () => FlowProjectFlowSnapshot;
   replaceFlowSnapshot: (snapshot: FlowProjectFlowSnapshotInput) => void;
+  /**
+   * Apply a remote Flow-graph op from the unified cross-device sync (task #51; channel `'flow'` on
+   * [[projectSyncService]]). Mutates the live graph WITHOUT re-broadcasting — the echo guard lives in
+   * the sync layer (`flowSyncChannel`), not here. Newly-added nodes get their runtime callbacks
+   * re-attached. Returns whether the graph actually changed (idempotent ops on missing/unchanged
+   * targets are no-ops, so a self-echoed op doesn't thrash the store).
+   */
+  applyRemoteFlowGraphChange: (change: FlowGraphNativeChange) => boolean;
   insertTemplate: (template: { nodes: Partial<AppNode>[]; edges: Partial<Edge>[] }, position: { x: number; y: number }) => void;
   copySelection: () => boolean;
   cutSelection: () => Promise<boolean>;
@@ -360,13 +370,16 @@ function createInitialNodeData(type: FlowNodeType, settings: RuntimeSettingsSnap
         provider: 'gemini',
         modelId: settings.defaultModels.text.gemini,
       };
-    case 'imageGen':
+    case 'imageGen': {
+      // Use the user-pinned default image model (set via the node's "default" checkbox) when present.
+      const pinnedImageModel = useSettingsStore.getState().defaultImageNodeModel;
       return {
         mediaMode: 'generate',
-        provider: 'gemini',
-        modelId: settings.defaultModels.image.gemini,
+        provider: pinnedImageModel?.provider ?? 'gemini',
+        modelId: pinnedImageModel?.modelId ?? settings.defaultModels.image.gemini,
         videoFrameSelection: 'last',
       };
+    }
     case 'cropImageNode':
       return {
         cropXPercent: 10,
@@ -1277,7 +1290,7 @@ export function collectUpstreamImageInput(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
       : undefined;
 
-    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'packageNode', 'envelope', 'expander', 'functionNode'];
+    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'slimgNode', 'packageNode', 'envelope', 'expander', 'functionNode'];
     if (!sourceNode || !allowedTypes.includes(sourceNode.type)) {
       continue;
     }
@@ -1289,6 +1302,22 @@ export function collectUpstreamImageInput(
     }
   }
 
+  return undefined;
+}
+
+// loras JSON from a connected LoRA Spec node (first one wins), for FLUX LoRA image models.
+function collectUpstreamLoraJson(
+  nodeId: string,
+  nodesById: Map<string, AppNode>,
+  edges: Edge[],
+): string | undefined {
+  for (const edge of edges) {
+    if (edge.target !== nodeId) continue;
+    const sourceNode = nodesById.get(edge.source);
+    if (sourceNode?.type !== 'loraSpecNode') continue;
+    const json = buildLoraWeightsJson(sourceNode.data.loraEntries);
+    if (json) return json;
+  }
   return undefined;
 }
 
@@ -1309,7 +1338,7 @@ export function collectUpstreamImageInputForHandles(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
       : undefined;
 
-    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'packageNode', 'envelope', 'expander', 'functionNode'];
+    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'slimgNode', 'packageNode', 'envelope', 'expander', 'functionNode'];
     if (!sourceNode || !allowedTypes.includes(sourceNode.type)) {
       continue;
     }
@@ -1736,6 +1765,10 @@ function collectImageInputFromSource(
   if (node.type === 'doodleNode') {
     const sketch = node.data.doodleSketch;
     return typeof sketch === 'string' && sketch ? sketch : undefined;
+  }
+
+  if (node.type === 'slimgNode') {
+    return typeof node.data.result === 'string' && node.data.result ? node.data.result : undefined;
   }
 
   if (node.type === 'envelope') {
@@ -2860,6 +2893,25 @@ export const useFlowStore = create<FlowState>()(
           normalizeFlowEdges,
         ));
       },
+      applyRemoteFlowGraphChange: (change) => {
+        // A full snapshot reuses the existing restore path (runtime re-attach + edge normalization).
+        if (change.type === 'flow-graph-snapshot') {
+          get().replaceFlowSnapshot(change.snapshot);
+          return true;
+        }
+        let changed = false;
+        set((state) => {
+          const next = applyFlowGraphNativeChange({ nodes: state.nodes, edges: state.edges }, change);
+          if (next.nodes === state.nodes && next.edges === state.edges) return {};
+          changed = true;
+          // Re-attach runtime callbacks (a remote `flow-node-added` arrives stripped); idempotent for
+          // already-attached nodes, so a move/patch/remove only re-runs the cheap identity checks.
+          const nodes =
+            next.nodes === state.nodes ? state.nodes : attachRuntimeDataToNodes(next.nodes, get);
+          return { nodes, edges: next.edges };
+        });
+        return changed;
+      },
       runNode: async (nodeId: string) => {
         const preflightState = get();
         const preflightSettings = useSettingsStore.getState();
@@ -3037,6 +3089,7 @@ export const useFlowStore = create<FlowState>()(
                 nodesById,
                 latestState.edges,
               ),
+              loraWeightsJson: collectUpstreamLoraJson(currentId, nodesById, latestState.edges),
               audioSourceInput: collectUpstreamAudioInput(currentId, nodesById, latestState.edges),
               sourceVideoInput: collectUpstreamVideoInput(currentId, nodesById, latestState.edges),
               startImageInput: collectImageInputForHandle(
@@ -3226,6 +3279,7 @@ export const useFlowStore = create<FlowState>()(
                 resultType: firstItem.kind,
                 statusMessage,
                 usage,
+                sourceBinItemId: firstItem.sourceBinItemId,
               });
 
               latestState.patchNodeData(currentId, {
@@ -3255,7 +3309,10 @@ export const useFlowStore = create<FlowState>()(
                 mimeType: existingAsset.mimeType,
               };
 
-              const nextAttemptState = appendResultAttempt(latestNode.data.resultHistory ?? [], execution);
+              const nextAttemptState = appendResultAttempt(latestNode.data.resultHistory ?? [], {
+                ...execution,
+                sourceBinItemId: existingAsset.id,
+              });
 
               latestState.patchNodeData(currentId, {
                 result: execution.result,
@@ -3291,6 +3348,61 @@ export const useFlowStore = create<FlowState>()(
               recordUsage: useProjectUsageStore.getState().recordUsage,
             });
 
+            // Multi-image output from a SINGLE call (e.g. Seedream Sequential's `max_images`): surface every
+            // image as an envelope so they all land in the Source Library + downstream list, not just the first.
+            if (isAssetSourceKind(execution.resultType) && execution.additionalResults && execution.additionalResults.length > 0) {
+              const allOutputs = [{ result: execution.result, mimeType: execution.mimeType }, ...execution.additionalResults];
+              const baseLabel = (latestNode.data.title as string) || `${latestNode.type} result`;
+              const envelopeItems: EnvelopeItem[] = [];
+              for (let index = 0; index < allOutputs.length; index += 1) {
+                throwIfRunAborted();
+                const output = allOutputs[index];
+                const sourceItem = await useSourceBinStore.getState().addAssetItem({
+                  label: `${baseLabel} ${index + 1}`,
+                  kind: execution.resultType,
+                  mimeType: output.mimeType ?? execution.mimeType ?? 'application/octet-stream',
+                  dataUrl: output.result,
+                  originNodeId: currentId,
+                  envelopeId,
+                  envelopeLabel: baseLabel,
+                  envelopeIndex: index,
+                  envelopeCollapsed: false,
+                });
+                envelopeItems.push({
+                  id: `${currentId}-envelope-${Date.now()}-${index}`,
+                  index,
+                  kind: execution.resultType,
+                  label: `${baseLabel} ${index + 1}`,
+                  value: sourceItem.assetUrl ?? output.result,
+                  mimeType: output.mimeType ?? execution.mimeType ?? getResultMimeType(execution.resultType),
+                  sourceNodeId: currentId,
+                  sourceBinItemId: sourceItem.id,
+                  usage: index === 0 ? execution.usage : undefined,
+                });
+              }
+              const firstItem = envelopeItems[0];
+              const multiAttemptState = appendResultAttempt(latestNode.data.resultHistory ?? [], {
+                result: firstItem.value,
+                resultType: execution.resultType,
+                statusMessage: execution.statusMessage,
+                usage: execution.usage,
+                sourceBinItemId: firstItem.sourceBinItemId,
+              });
+              latestState.patchNodeData(currentId, {
+                result: firstItem.value,
+                resultType: execution.resultType,
+                resultMimeType: firstItem.mimeType,
+                envelopeItems,
+                resultHistory: multiAttemptState.attempts,
+                selectedResultId: multiAttemptState.selectedAttemptId,
+                usage: execution.usage,
+                error: undefined,
+                statusMessage: execution.statusMessage,
+              });
+              return;
+            }
+
+            let generatedSourceBinItemId: string | undefined;
             if (isAssetSourceKind(execution.resultType)) {
               const sourceItem = await useSourceBinStore.getState().addAssetItem({
                 label: (latestNode.data.title as string) || `${latestNode.type} result`,
@@ -3305,9 +3417,13 @@ export const useFlowStore = create<FlowState>()(
                 envelopeCollapsed: false,
               });
               execution.result = sourceItem.assetUrl ?? execution.result;
+              generatedSourceBinItemId = sourceItem.id;
             }
 
-            const nextAttemptState = appendResultAttempt(latestNode.data.resultHistory ?? [], execution);
+            const nextAttemptState = appendResultAttempt(latestNode.data.resultHistory ?? [], {
+              ...execution,
+              sourceBinItemId: generatedSourceBinItemId,
+            });
 
             latestState.patchNodeData(currentId, {
               result: execution.result,
@@ -3379,3 +3495,15 @@ export const useFlowStore = create<FlowState>()(
     },
   ),
 );
+
+// Tie the unified cross-device sync's Flow channel (task #51) to this store's lifetime: registering it
+// here means sync activates exactly when the Flow workspace is present, at no app-startup cost. Dynamic
+// import keeps the static dependency one-way (`flowSyncChannel` → `flowStore`), avoiding an import cycle.
+// Skipped under the test runner so a unit test importing this store can't spawn a floating channel-init
+// side-effect that races vitest's multi-file module evaluation; the channel's own tests init explicitly.
+if (import.meta.env?.MODE !== 'test') {
+  void import('../lib/flowSyncChannel')
+    .then((module) => module.initializeFlowSyncChannel())
+    .catch(() => undefined);
+}
+

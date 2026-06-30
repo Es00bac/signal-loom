@@ -77,11 +77,17 @@ export function collectGlobalSourceBinItems(
 export function buildSourceBinItems(node: AppNode, nodes?: AppNode[], edges?: Edge[]): SourceBinItem[] {
   const sourceNodesById = nodes ? new Map(nodes.map((item) => [item.id, item])) : undefined;
   const isEnvelopeBacked = node.type === 'envelope' || node.type === 'list' || node.type === 'expander';
+  // A generation/media node carries its OWN multi-result batch (loop) output in `data.envelopeItems`.
+  // Expand those so all N images of a batch are recognised as connected source items — otherwise the
+  // source-bin reconciliation (ingestConnectedItems) sees only the node's single `result` and prunes every
+  // batch result but the first. Only when there are 2+ (a real batch): a single run collapses to one
+  // node-level item (see sourceBin.test.ts), matching the long-standing single-generation behaviour.
+  const ownEnvelopeItems = normalizeEnvelopeItems(node.data.envelopeItems);
   const envelopeItems = isEnvelopeBacked
     ? (nodes && edges
         ? collectEnvelopeItemsFromSourceNode(node, nodes, edges)
-        : normalizeEnvelopeItems(node.data.envelopeItems))
-    : [];
+        : ownEnvelopeItems)
+    : (ownEnvelopeItems.length > 1 ? ownEnvelopeItems : []);
 
   if (envelopeItems.length > 0) {
     const envelopeLabel = node.data.customTitle ?? getEnvelopeSourceLabel(node);

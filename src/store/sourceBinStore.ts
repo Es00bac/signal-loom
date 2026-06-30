@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import {
   deleteImportedAsset,
   loadImportedAsset,
@@ -20,6 +20,8 @@ import {
 import { buildMediaAssetSignaturePart } from '../lib/mediaAssetSignature';
 import { parseSignalLoomAssetId } from '../lib/signalLoomAssetUrl';
 import { getSignalLoomNativeBridge } from '../lib/nativeApp';
+import { initializeLanServerProxy, notifyLanSourceLibraryChange } from '../lib/androidLanServer';
+import { getHostSourceLibraryVersion } from '../lib/lanHostService';
 import {
   applySourceLibraryNativeChange,
   buildSourceLibraryNativeSyncStatus,
@@ -106,6 +108,65 @@ export type PersistedSourceBinState = {
   nativeScratchDirectoryPath?: string;
 };
 
+/**
+ * Decide which `assetUrl` (if any) is safe to PERSIST to localStorage for a source-bin item.
+ *
+ * Persistence must only ever store a small, durable POINTER — never resolved asset bytes. A
+ * native-file item carries a tiny native/capacitor pointer (`file://…` / `https://localhost/
+ * _capacitor_file_/…`, ~150 chars) worth persisting so the native file can be re-opened. But a
+ * `data:` / `blob:` URL is resolved bytes: on a phone-served LAN desktop client, `hydrateAssets`
+ * REPLACES a native item's (unreachable) capacitor `assetUrl` with the multi-MB `data:` thumbnail
+ * it streamed from the host — while `nativeFilePath` stays set. Persisting those base64 thumbnails
+ * (one per item, several MB each) blows the ~5 MB localStorage quota; the `setItem` then throws,
+ * which propagates through zustand's persist into EVERY subsequent `setState` — breaking live-sync
+ * apply (the item never lands → no thumbnail → "Preview unavailable") and Image export ("The quota
+ * has been exceeded"). Those bytes are re-derivable at runtime (re-streamed via
+ * `/source-asset/:itemId`, keyed by the persisted `item.id`), so we never persist them.
+ */
+export function persistableSourceBinAssetUrl(
+  item: Pick<SourceBinLibraryItem, 'nativeFilePath' | 'assetUrl'>,
+): string | undefined {
+  const url = item.assetUrl;
+  if (!url || !item.nativeFilePath) {
+    return undefined;
+  }
+  if (url.startsWith('data:') || url.startsWith('blob:')) {
+    return undefined;
+  }
+  return url;
+}
+
+/**
+ * Defense-in-depth: a persist write must NEVER throw into `setState`. zustand's persist middleware
+ * calls `storage.setItem` synchronously inside the state update; a `QuotaExceededError` (or any
+ * storage failure) thrown there propagates out of `set(...)` and breaks the action that triggered
+ * it — which is precisely how a full quota turned into broken live-sync and an "Image Export Failed"
+ * dialog. With {@link persistableSourceBinAssetUrl} the persisted payload is tiny, but we still wrap
+ * `setItem` so any future overflow/availability error degrades to "skip this persist tick" instead
+ * of corrupting the running session. Returns `undefined` (persistence disabled) when there is no
+ * window, matching zustand's default behavior.
+ */
+function createQuotaSafeJSONStorage() {
+  return createJSONStorage(() => {
+    // Reference window.localStorage directly (like zustand's default): if it's unavailable (SSR /
+    // node tests) this throws, createJSONStorage catches it and returns undefined, and persist
+    // no-ops gracefully — matching prior behavior. When it IS available we wrap setItem so a quota
+    // overflow degrades to a skipped persist tick instead of throwing into setState.
+    const base = window.localStorage;
+    return {
+      getItem: (name: string) => base.getItem(name),
+      setItem: (name: string, value: string) => {
+        try {
+          base.setItem(name, value);
+        } catch (error) {
+          console.warn('[sourceBinStore] persist skipped (storage quota/availability):', error);
+        }
+      },
+      removeItem: (name: string) => base.removeItem(name),
+    };
+  });
+}
+
 export interface SourceBinState {
   bins: SourceBin[];
   dismissedSourceKeys: string[];
@@ -188,36 +249,6 @@ function createDefaultBin(name = 'Source Library'): SourceBin {
     collapsed: false,
     createdAt: Date.now(),
   };
-}
-
-function buildSourceBinHydrationSignature(bins: SourceBin[]): string {
-  return JSON.stringify(bins.map((bin) => ({
-    id: bin.id,
-    name: bin.name,
-    collapsed: bin.collapsed,
-    createdAt: bin.createdAt,
-    items: bin.items.map((item) => ({
-      id: item.id,
-      label: item.label,
-      kind: item.kind,
-      mimeType: item.mimeType,
-      assetId: item.assetId,
-      assetUrl: item.assetUrl,
-      scratchFileName: item.scratchFileName,
-      nativeFilePath: item.nativeFilePath,
-      text: item.text,
-      createdAt: item.createdAt,
-      sourceKey: item.sourceKey,
-      originNodeId: item.originNodeId,
-      isGenerated: item.isGenerated,
-      starred: item.starred,
-      collapsed: item.collapsed,
-      envelopeId: item.envelopeId,
-      envelopeLabel: item.envelopeLabel,
-      envelopeIndex: item.envelopeIndex,
-      envelopeCollapsed: item.envelopeCollapsed,
-    })),
-  })));
 }
 
 function collectRevocableObjectUrlItems(bins: SourceBin[]): Map<string, string> {
@@ -322,6 +353,7 @@ function broadcastSourceBinItemsAdded(items: SourceBinLibraryItem[], targetBinId
 
   postWorkspaceWindowCommand(change);
   publishNativeSourceLibraryChange(change);
+  notifyLanSourceLibraryChange(change);
 }
 
 function broadcastSourceBinItemRenamed(itemId: string, label: string): void {
@@ -338,6 +370,7 @@ function broadcastSourceBinItemRenamed(itemId: string, label: string): void {
 
   postWorkspaceWindowCommand(change);
   publishNativeSourceLibraryChange(change);
+  notifyLanSourceLibraryChange(change);
 }
 
 function broadcastSourceBinItemRemoved(item: SourceBinLibraryItem): void {
@@ -349,6 +382,7 @@ function broadcastSourceBinItemRemoved(item: SourceBinLibraryItem): void {
 
   postWorkspaceWindowCommand(change);
   publishNativeSourceLibraryChange(change);
+  notifyLanSourceLibraryChange(change);
 }
 
 function syncNativeSourceLibrarySnapshot(snapshot: SourceBinProjectSnapshot): void {
@@ -618,12 +652,30 @@ export const useSourceBinStore = create<SourceBinState>()(
       hydrateAssets: async () => {
         const scratchDirectoryHandle = get().scratchDirectoryHandle;
         const startingBins = get().bins;
-        const startingSignature = buildSourceBinHydrationSignature(startingBins);
+
+        // Phone-served desktop session: the phone is the single source of truth. The local stores
+        // (scratch dir, IndexedDB) don't hold the phone's bytes, and a native-file-backed item carries
+        // an unreachable phone-local `https://localhost/_capacitor_file_/…` assetUrl — so its thumbnail
+        // `<img>` fails with ERR_CONNECTION_REFUSED. Resolve every non-text item through the host's
+        // universal `/source-asset/:itemId` endpoint so the thumbnail (and any other assetUrl consumer)
+        // renders the SAME file the phone uses. Already-resolved items keep a `data:` assetUrl, so we
+        // skip them to avoid re-streaming the bytes on every live-sync tick. Dynamic import keeps this
+        // central store free of a static dependency on the remote-host client (cycle-avoidance).
+        const { isServedLanSession, fetchRemoteHostSourceAssetDataUrl } = await import('../lib/remoteHostClient');
+        const servedClient = isServedLanSession();
 
         const nextBins = await Promise.all(
           startingBins.map(async (bin) => {
             const hydratedItems = await Promise.all(
               bin.items.map(async (item) => {
+                if (servedClient) {
+                  if (item.kind === 'text' || (typeof item.assetUrl === 'string' && item.assetUrl.startsWith('data:'))) {
+                    return item;
+                  }
+                  const hosted = await fetchRemoteHostSourceAssetDataUrl(item.id).catch(() => null);
+                  return hosted ? { ...item, assetUrl: hosted } : item;
+                }
+
                 if (item.scratchFileName && scratchDirectoryHandle) {
                   const file = await loadScratchAssetBlob(scratchDirectoryHandle, item.scratchFileName).catch(() => undefined);
 
@@ -664,13 +716,66 @@ export const useSourceBinStore = create<SourceBinState>()(
           }),
         );
 
-        if (buildSourceBinHydrationSignature(get().bins) !== startingSignature) {
+        // Collect only the items hydration actually resolved, keyed by id, remembering each item's
+        // PRE-resolution assetUrl. We merge these back into whatever bins are current NOW rather than
+        // committing the whole `nextBins` snapshot wholesale. The live-sync path fires hydrateAssets()
+        // on every host event (`applyHostSourceLibraryEvent`), so those calls overlap and a concurrent
+        // change — a second exported item, an overlapping hydrate that set() first — routinely lands
+        // during the async host-fetch window. The old all-or-nothing stale guard discarded the ENTIRE
+        // pass whenever the bins signature shifted, so a freshly drawn Image→Flow export kept its
+        // unreachable phone-local capacitor assetUrl (no thumbnail + "Preview unavailable" on open).
+        // Per-item merge fixes that without resurrecting stale state:
+        //  - an item that no longer exists (a whole-document swap / project restore) is skipped, so a
+        //    stale pass can't bring it back (preserves the "newer restored snapshot wins" contract);
+        //  - an item whose assetUrl changed independently since we snapshotted is left untouched;
+        //  - every other resolved item still receives its streamed bytes, even if some OTHER item
+        //    changed meanwhile.
+        const resolutions = new Map<string, { before: string | undefined; resolved: SourceBinLibraryItem }>();
+        startingBins.forEach((bin, binIndex) => {
+          bin.items.forEach((item, itemIndex) => {
+            const resolved = nextBins[binIndex].items[itemIndex];
+            if (resolved !== item) {
+              resolutions.set(item.id, { before: item.assetUrl, resolved });
+            }
+          });
+        });
+
+        if (resolutions.size === 0) {
           return;
         }
 
         const previousBins = get().bins;
-        set({ bins: nextBins });
-        syncRevocableObjectUrls(previousBins, nextBins);
+        let mutated = false;
+        const mergedBins = previousBins.map((bin) => {
+          let binChanged = false;
+          const items = bin.items.map((item) => {
+            const resolution = resolutions.get(item.id);
+            if (!resolution || item.assetUrl !== resolution.before) {
+              return item;
+            }
+            binChanged = true;
+            const { resolved } = resolution;
+            return {
+              ...item,
+              assetUrl: resolved.assetUrl,
+              mimeType: resolved.mimeType ?? item.mimeType,
+              assetId: resolved.assetId ?? item.assetId,
+              label: resolved.label ?? item.label,
+            };
+          });
+          if (binChanged) {
+            mutated = true;
+            return { ...bin, items };
+          }
+          return bin;
+        });
+
+        if (!mutated) {
+          return;
+        }
+
+        set({ bins: mergedBins });
+        syncRevocableObjectUrls(previousBins, mergedBins);
       },
       exportProjectSnapshot: async (options) => {
         const includeAssetData = Boolean(options?.includeAssetData);
@@ -1124,9 +1229,24 @@ export const useSourceBinStore = create<SourceBinState>()(
           }
         }
 
+        // Any source-bin item id referenced by a currently-connected item, across ALL envelopes. A batch
+        // run tags its generated items with a per-run envelope hash that differs from the node-id envelope
+        // the connected set reports, so the per-envelope match below misses them — this global id set keeps
+        // every still-connected result (all N images of a batch), not just the first.
+        const globalConnectedIds = new Set(
+          connectedItems
+            .map((item) => item.sourceBinItemId)
+            .filter((id): id is string => Boolean(id)),
+        );
+
         const itemsToRemove = allExistingItems.filter((item) => {
           // If the item doesn't have an envelopeId, it wasn't ingested from an envelope. Keep it.
           if (!item.envelopeId) {
+            return false;
+          }
+
+          // Still referenced by a connected item anywhere (e.g. a batch result) — keep it.
+          if (globalConnectedIds.has(item.id)) {
             return false;
           }
 
@@ -1533,6 +1653,7 @@ export const useSourceBinStore = create<SourceBinState>()(
     {
       name: STORAGE_KEY,
       version: 1,
+      storage: createQuotaSafeJSONStorage(),
       migrate: (persistedState, version) => {
         const persisted = sanitizePersistedSourceBinState(persistedState);
         if (version === 0 || !Array.isArray(persisted.bins)) {
@@ -1586,7 +1707,7 @@ export const useSourceBinStore = create<SourceBinState>()(
             assetId: item.assetId,
             scratchFileName: item.scratchFileName,
             nativeFilePath: item.nativeFilePath,
-            assetUrl: item.nativeFilePath ? item.assetUrl : undefined,
+            assetUrl: persistableSourceBinAssetUrl(item),
             text: item.text,
                   createdAt: item.createdAt,
                   sourceKey: item.sourceKey,
@@ -1608,6 +1729,47 @@ export const useSourceBinStore = create<SourceBinState>()(
 function getDefaultMimeType(kind: EditorSourceKind): string {
   return getDefaultMimeTypeForKind(kind);
 }
+
+// Phone-as-host: serve this device's live source library to a served desktop browser, and (Phase B)
+// apply source-library mutations a served client pushes back. The seed carries the authority's current
+// version so the client can tail the change log from the right point. Asset bytes are excluded from the
+// seed — the served client streams them on demand via `/__loom/api/asset/:id`. No-op off native Android.
+initializeLanServerProxy({
+  getSourceLibrary: async () => {
+    const snapshot = await useSourceBinStore.getState().exportProjectSnapshot({
+      includeAssetData: false,
+    });
+    return { version: getHostSourceLibraryVersion(), snapshot };
+  },
+  // The seed ships without asset bytes, and a served browser can't reach the phone-local `assetUrl`
+  // of native-file/scratch-backed items (nor blob: URLs). So resolve any item's bytes here by its
+  // source-item id through the universal resolver and hand back a same-origin data URL.
+  getSourceAsset: async (itemId) => {
+    const state = useSourceBinStore.getState();
+    const item = state.bins.flatMap((bin) => bin.items).find((candidate) => candidate.id === itemId);
+    if (!item) return null;
+    const dataUrl = await loadItemAsDataUrl(item, state.scratchDirectoryHandle);
+    return dataUrl ? { dataUrl, mimeType: item.mimeType } : null;
+  },
+  applySourceLibraryMutation: async (change) => {
+    // Apply via the reducer (not the public actions) so this incoming change isn't re-broadcast back
+    // through the normal hooks, then record it on the host log so other served clients tail it. Reducer
+    // ops are idempotent by id, so the originating client's own long-poll echo is harmless.
+    let changed = false;
+    useSourceBinStore.setState((state) => {
+      const next = applySourceLibraryNativeChange(
+        { bins: state.bins, dismissedSourceKeys: state.dismissedSourceKeys },
+        change,
+      );
+      changed = next.bins !== state.bins || next.dismissedSourceKeys !== state.dismissedSourceKeys;
+      return changed ? next : {};
+    });
+    if (changed) {
+      notifyLanSourceLibraryChange(change);
+      void useSourceBinStore.getState().hydrateAssets();
+    }
+  },
+});
 
 export function sanitizePersistedSourceBinState(value: unknown): PersistedSourceBinState {
   const input = isRecord(value) ? value : {};

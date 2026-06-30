@@ -7,6 +7,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
  */
 export interface SignalLoomSystemUiPlugin {
   setFullscreen(options: { enabled: boolean }): Promise<{ enabled: boolean }>;
+  setInterceptVolumeKeys(options: { enabled: boolean }): Promise<{ enabled: boolean }>;
 }
 
 const SIGNAL_LOOM_SYSTEM_UI_PLUGIN_KEY = '__signalLoomSystemUiPlugin';
@@ -32,5 +33,12 @@ export function isAndroidNativeFullscreenAvailable(): boolean {
 /** Toggle Android immersive fullscreen. Returns the applied state. */
 export async function setAndroidFullscreen(enabled: boolean): Promise<boolean> {
   const result = await getSignalLoomSystemUiPlugin().setFullscreen({ enabled });
+  return Boolean(result?.enabled ?? enabled);
+}
+
+/** Intercept/block Android hardware volume keys. Returns the applied state. */
+export async function setAndroidInterceptVolumeKeys(enabled: boolean): Promise<boolean> {
+  if (Capacitor.getPlatform() !== 'android') return false;
+  const result = await getSignalLoomSystemUiPlugin().setInterceptVolumeKeys({ enabled });
   return Boolean(result?.enabled ?? enabled);
 }

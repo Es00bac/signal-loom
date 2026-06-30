@@ -261,6 +261,14 @@ export function estimateGenerativeFillCostUsd(
         outputMegapixels: megapixels,
         textInputTokens,
       }).costUsd ?? 0.04;
+    case 'byteplus':
+      return estimateImageModelCostUsd({
+        providerId: 'byteplus',
+        modelId: modelId ?? 'seedream-4.5',
+        operation: 'text-to-image',
+        outputMegapixels: megapixels,
+        textInputTokens,
+      }).costUsd ?? 0;
     case 'gemini':
       return estimateImageModelCostUsd({
         providerId: 'gemini',

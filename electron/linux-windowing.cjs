@@ -6,15 +6,17 @@ function isKdeDesktop(value) {
 }
 
 function shouldForceXWaylandForGlobalMenu(env, platform = process.platform) {
-  // Native Wayland is the default now. Forcing XWayland blocked GPU EGL init on AMD/Mesa
-  // ("No suitable EGL configs found") which pinned the Canvas2D composite to SwiftShader and
-  // tanked sketching to single-digit FPS. The in-window React menu renders on any platform, so
-  // XWayland is no longer needed for the menu — it's opt-in only (SIGNAL_LOOM_ELECTRON_FORCE_XWAYLAND)
-  // for stacks where native-Wayland chrome misbehaves. The legacy NATIVE_WAYLAND var still wins.
+  // Native Wayland is the default now. Forcing XWayland once blocked GPU EGL init on AMD/Mesa
+  // ("No suitable EGL configs found") which pinned the Canvas2D composite to SwiftShader and tanked
+  // sketching to single-digit FPS — but that was the gl-egl ANGLE backend. The current ANGLE-Vulkan
+  // backend gets a GPU surface under XWayland too, so XWayland is safe to force when a feature needs
+  // it. Two opt-ins force it: SIGNAL_LOOM_ELECTRON_GLOBAL_MENU (the KDE Plasma global menu registers
+  // against an X11 window id, so the app must be an XWayland toplevel) and the older
+  // SIGNAL_LOOM_ELECTRON_FORCE_XWAYLAND escape hatch. The legacy NATIVE_WAYLAND var still wins.
   return (
     platform === 'linux' &&
     env[NATIVE_WAYLAND_OPT_OUT] !== '1' &&
-    env.SIGNAL_LOOM_ELECTRON_FORCE_XWAYLAND === '1' &&
+    (env.SIGNAL_LOOM_ELECTRON_GLOBAL_MENU === '1' || env.SIGNAL_LOOM_ELECTRON_FORCE_XWAYLAND === '1') &&
     isKdeDesktop(env.XDG_CURRENT_DESKTOP)
   );
 }
@@ -26,30 +28,22 @@ function buildElectronEnvironment(env = process.env, platform = process.platform
     return nextEnv;
   }
 
-  // The menu stays IN-WINDOW by default. Exporting it to a desktop "global menu" via the
-  // appmenu GTK module + UBUNTU_MENUPROXY hoists the menu OUT of the window — so on any desktop
-  // WITHOUT a global-menu applet (the common case across GNOME/XFCE/most KDE panels) the menu
-  // vanishes entirely: it is neither in-window nor anywhere else. The workspace windows are
-  // framed and call setMenuBarVisibility(true), so the in-window menu bar works everywhere once
-  // we don't hand the menu off. The KDE Plasma global menu is available opt-in via
-  // SIGNAL_LOOM_ELECTRON_GLOBAL_MENU=1.
+  // The in-window menu bar is the universal fallback and must always render. The appmenu GTK module +
+  // UBUNTU_MENUPROXY are a DEAD END for Electron — Chromium draws its own menus, not GTK menus, so the
+  // module never exports anything; worse, on a desktop without a global-menu applet it hoists the menu
+  // OUT of the window and it vanishes entirely. So we never set it, and we strip any ambient copy from
+  // the live env. The real KDE Plasma global menu (opt-in via SIGNAL_LOOM_ELECTRON_GLOBAL_MENU=1) is
+  // exported over pure DBus from the main process (electron/globalMenu/*), independent of GTK modules;
+  // that path also forces XWayland below so the AppMenu registrar can key on a real X11 window id.
   const ambientGtkModules = (nextEnv.GTK_MODULES ?? '')
     .split(':')
     .map((entry) => entry.trim())
     .filter(Boolean);
-
-  if (env.SIGNAL_LOOM_ELECTRON_GLOBAL_MENU === '1') {
-    const gtkModules = new Set(ambientGtkModules);
-    gtkModules.add(APPMENU_GTK_MODULE);
-    nextEnv.GTK_MODULES = [...gtkModules].join(':');
-    nextEnv.UBUNTU_MENUPROXY = nextEnv.UBUNTU_MENUPROXY || '1';
-  } else {
-    const gtkModules = ambientGtkModules.filter((entry) => entry !== APPMENU_GTK_MODULE);
-    // Use `undefined` (not `delete`) so applyElectronMainLinuxWindowingCompatibility strips any
-    // ambient appmenu export from the LIVE process env, not just from this copy.
-    nextEnv.GTK_MODULES = gtkModules.length > 0 ? gtkModules.join(':') : undefined;
-    nextEnv.UBUNTU_MENUPROXY = undefined;
-  }
+  const gtkModules = ambientGtkModules.filter((entry) => entry !== APPMENU_GTK_MODULE);
+  // Use `undefined` (not `delete`) so applyElectronMainLinuxWindowingCompatibility strips any
+  // ambient appmenu export from the LIVE process env, not just from this copy.
+  nextEnv.GTK_MODULES = gtkModules.length > 0 ? gtkModules.join(':') : undefined;
+  nextEnv.UBUNTU_MENUPROXY = undefined;
 
   delete nextEnv.ELECTRON_FORCE_WINDOW_MENU_BAR;
 

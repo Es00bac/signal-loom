@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { IMAGE_TOPBAR_CENTER_SLOT_ID, IMAGE_TOPBAR_RIGHT_SLOT_ID, observeTopbarSlot } from '../../lib/imageTopbarSlots';
-import { GripHorizontal, Hand, Maximize2, Minus, PanelBottomOpen, PanelLeftOpen, PanelRightOpen, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, GripHorizontal, Hand, Maximize2, Minus, PanelBottomOpen, PanelLeftOpen, PanelRightOpen, Plus, X } from 'lucide-react';
 import { ImageEditorToolbar } from './ImageEditorToolbar';
 import { ImageEditorCanvas } from './ImageEditorCanvas';
 import { ImageEditorTabs } from './ImageEditorTabs';
@@ -19,6 +19,7 @@ import { ImageAdjustmentsDialog, IMAGE_ADJUSTMENTS_DIALOG_ID } from './ImageAdju
 import { addAdjustmentLayerUndoable } from './imageAdjustmentActions';
 import { GenerativeFillBar } from './GenerativeFillBar';
 import { useImageEditorStore } from '../../store/imageEditorStore';
+import { setAndroidInterceptVolumeKeys } from '../../lib/androidSystemUi';
 import { useIsWorkspaceDialogOpen, useWorkspaceDialogStore } from '../../store/workspaceDialogStore';
 import type { AdjustmentLayerKind } from '../../types/imageEditor';
 import { useSourceBinStore } from '../../store/sourceBinStore';
@@ -169,6 +170,15 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
   const applySavedLayout = useDockablePanelStore((s) => s.applySavedLayout);
   const deleteSavedLayout = useDockablePanelStore((s) => s.deleteSavedLayout);
   const imageSavedLayouts = savedLayouts.filter((entry) => entry.workspaceId === IMAGE_DOCKABLE_WORKSPACE_ID);
+
+  const androidBrushControls = useImageEditorStore((s) => s.brushSettings.androidBrushControls);
+
+  useEffect(() => {
+    setAndroidInterceptVolumeKeys(Boolean(androidBrushControls));
+    return () => {
+      setAndroidInterceptVolumeKeys(false);
+    };
+  }, [androidBrushControls]);
 
   useEffect(() => {
     setImagePanelGroupVisible([IMAGE_DOCKABLE_PANEL_IDS.tools], imageLayout.toolbarVisible, hidePanel, dockPanel, floatPanel);
@@ -479,6 +489,48 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
           e.preventDefault();
           setHelpVisible((v) => !v);
           break;
+        case '[':
+        case 'volumedown':
+        case 'audiovolumedown': {
+          const state = useImageEditorStore.getState();
+          const isVolumeKey = e.key.toLowerCase().includes('volume');
+          if (isVolumeKey && !state.brushSettings.androidBrushControls) break;
+          e.preventDefault();
+          const currentSize = state.brushSettings.size ?? 32;
+          const step = Math.max(1, Math.round(currentSize * 0.15));
+          const nextSize = Math.max(1, currentSize - step);
+          state.setBrushSettings({ size: nextSize });
+          break;
+        }
+        case ']':
+        case 'volumeup':
+        case 'audiovolumeup': {
+          const state = useImageEditorStore.getState();
+          const isVolumeKey = e.key.toLowerCase().includes('volume');
+          if (isVolumeKey && !state.brushSettings.androidBrushControls) break;
+          e.preventDefault();
+          const currentSize = state.brushSettings.size ?? 32;
+          const step = Math.max(1, Math.round(currentSize * 0.15));
+          const nextSize = Math.min(256, currentSize + step);
+          state.setBrushSettings({ size: nextSize });
+          break;
+        }
+        case '{': {
+          // Shift+[ — brush hardness down (Photoshop/Krita-standard)
+          const state = useImageEditorStore.getState();
+          e.preventDefault();
+          const next = Math.max(0, Math.round(((state.brushSettings.hardness ?? 1) - 0.1) * 100) / 100);
+          state.setBrushSettings({ hardness: next });
+          break;
+        }
+        case '}': {
+          // Shift+] — brush hardness up
+          const state = useImageEditorStore.getState();
+          e.preventDefault();
+          const next = Math.min(1, Math.round(((state.brushSettings.hardness ?? 1) + 0.1) * 100) / 100);
+          state.setBrushSettings({ hardness: next });
+          break;
+        }
       }
     };
 
@@ -1142,6 +1194,8 @@ function ImageMobileWorkspaceShell({
   getNewFlowNodePosition: () => { x: number; y: number };
   visible: boolean;
 }) {
+  const toolsCollapsed = useImageEditorStore((s) => s.toolsCollapsed);
+  const setToolsCollapsed = useImageEditorStore((s) => s.setToolsCollapsed);
   const activeEdgeDrawer = useMobileInterfaceStore((state) => state.activeEdgeDrawer);
   const setActiveEdgeDrawer = useMobileInterfaceStore((state) => state.setActiveEdgeDrawer);
   const toggleEdgeDrawer = useMobileInterfaceStore((state) => state.toggleEdgeDrawer);
@@ -1304,11 +1358,16 @@ function ImageMobileWorkspaceShell({
       <div
         className="absolute z-[60] flex w-16 max-h-[calc(100%-0.5rem)] flex-col overflow-hidden rounded-[3px] border border-cyan-300/30 bg-[#11131a]/95 text-cyan-50 shadow-2xl"
         data-image-mobile-tools-palette="true"
-        style={{ left: toolsPosition.x, top: toolsPosition.y }}
+        style={{
+          left: toolsPosition.x,
+          top: toolsPosition.y,
+          height: toolsCollapsed ? 80 : undefined,
+          maxHeight: toolsCollapsed ? 80 : undefined,
+        }}
       >
         <div
           aria-label="Move Image tools palette"
-          className="flex h-5 shrink-0 touch-none items-center justify-center border-b border-cyan-300/20 bg-[#101826] text-cyan-200"
+          className="relative flex h-5 shrink-0 touch-none items-center justify-center border-b border-cyan-300/20 bg-[#101826] text-cyan-200"
           data-image-mobile-tools-handle="true"
           onPointerCancel={endToolsDrag}
           onPointerDown={beginToolsDrag}
@@ -1319,6 +1378,22 @@ function ImageMobileWorkspaceShell({
           title="Move tools"
         >
           <GripHorizontal size={14} />
+          <button
+            className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center text-cyan-100/50 hover:text-cyan-400 active:text-cyan-500 rounded bg-cyan-950/20 hover:bg-cyan-950/40 p-0.5 transition-colors pointer-events-auto"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setToolsCollapsed(!toolsCollapsed);
+            }}
+            title={toolsCollapsed ? "Expand Tools" : "Collapse Tools"}
+            type="button"
+          >
+            {toolsCollapsed ? (
+              <ChevronDown size={10} />
+            ) : (
+              <ChevronUp size={10} />
+            )}
+          </button>
         </div>
         <div className="min-h-0 overflow-x-hidden overflow-y-auto" data-image-mobile-tools-body="true">
           <ImageEditorToolbar />

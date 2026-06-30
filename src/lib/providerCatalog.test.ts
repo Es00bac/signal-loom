@@ -132,7 +132,7 @@ describe('getConfiguredProviders', () => {
         { gemini: '', openai: '', huggingface: '', elevenlabs: '' },
         { backendProxyEnabled: true, backendProxyBaseUrl: 'http://127.0.0.1:8787' },
       ),
-    ).toEqual(['gemini', 'openai', 'atlas', 'huggingface', 'bfl', 'stability', 'localOpen']);
+    ).toEqual(['gemini', 'openai', 'atlas', 'byteplus', 'huggingface', 'bfl', 'stability', 'localOpen']);
   });
 
   it('exposes Android image generation only when the phone accelerator URL is configured', () => {

@@ -195,6 +195,7 @@
       <a href="index.html">Home</a>
       <a href="docs.html" aria-current="page">Docs</a>
       <a href="examples.html">Examples</a>
+      <a href="changelog.html">Changelog</a>
       <a href="index.html#license">Download</a>
       <a href="privacy.html">Privacy</a>
     </div>
@@ -233,6 +234,7 @@
         <a class="sidebar-link" href="#android-install">Install &amp; setup</a>
         <a class="sidebar-link" href="#dex">Samsung DeX</a>
         <a class="sidebar-link" href="#lan-host">Phone as LAN host</a>
+        <a class="sidebar-link" href="#cross-device">Cross-device sync</a>
         <a class="sidebar-link" href="#gamepad">Game controllers</a>
       </div>
     </aside>
@@ -333,8 +335,11 @@
         </table>
 
         <div class="callout note">
-          <p><strong>Keys stay on your device.</strong> API keys are stored in Android&rsquo;s local app storage and are never transmitted to Sloom. They are sent only to the provider you configured for a specific action.</p>
+          <p><strong>Keys stay on your device &mdash; and are encrypted at rest.</strong> API keys are sealed with the operating system&rsquo;s secure store on desktop (Electron <code>safeStorage</code>) and with WebCrypto on web and Android. They are never transmitted to Sloom, and are sent only to the provider you configured for a specific action.</p>
         </div>
+
+        <h3>Encrypted settings backup</h3>
+        <p>From Settings you can <strong>export an encrypted backup</strong> of your full configuration &mdash; provider keys, preferences, and gamepad profiles &mdash; and re-import it on another machine. The backup file is encrypted with a passphrase you choose, so it is safe to store or move between devices.</p>
 
         <h3>Choosing a provider for a generation action</h3>
         <p>In Flow, each generation node has a <strong>Provider</strong> dropdown. Select the provider and model you want to use for that specific node. In Image, the generative fill and reference-guided generation panels have their own provider selectors. Paper and Video do not run generation directly; they consume assets produced in Flow and Image.</p>
@@ -391,6 +396,14 @@
 
         <h3>Brush engine</h3>
         <p>The brush engine reads full stylus input: pressure (size and opacity), tilt (spread and direction), and rotation (stamp angle). Colour dynamics let you map foreground-to-background colour transitions to pressure or pen direction. A 3D tip preview shows the current brush shape before you paint.</p>
+        <h4>Modifier gestures</h4>
+        <ul>
+          <li><strong>Shift &mdash; straight lines.</strong> Hold <code>Shift</code> while painting with any brush-family tool to lay a clean point-to-point straight stroke. Tap from point to point to chain connected segments.</li>
+          <li><strong>Alt &mdash; heal / clone source.</strong> <code>Alt</code>-click (or long-press the source button on touch) to set the sample point for the spot-heal and clone tools, then paint to copy or blend from that source.</li>
+        </ul>
+        <div class="callout tip">
+          <p><strong>Tip:</strong> On Android, the hardware volume keys can be bound to brush size, so you can resize without leaving the canvas.</p>
+        </div>
 
         <figure class="doc-shot">
           <img src="assets/screenshots/image-brush-engine.png"
@@ -439,6 +452,12 @@
 
         <h3>Export</h3>
         <p>Export individual pages or full spreads as high-resolution PNG or JPEG. Export a full document as a print-ready PDF with embedded bleed marks. Webcomic mode exports each page as a standalone image at web resolution.</p>
+
+        <figure class="doc-shot">
+          <img src="assets/screenshots/paper-comic-spread.png"
+               alt="A finished comic spread laid out in the Paper workspace on the desktop app" />
+          <figcaption>A finished comic spread composed in the Paper workspace on desktop &mdash; panel grids, linked speech bubbles, and caption boxes on a print-ready page.</figcaption>
+        </figure>
       </section>
 
       <section id="video">
@@ -560,6 +579,41 @@
         </div>
       </section>
 
+      <section id="cross-device">
+        <h2>Cross-device sync and the edit baton</h2>
+        <p>The LAN host does more than mirror a screen &mdash; the phone and the desktop browser open the <strong>same live project</strong>. Changes flow both ways across the four workspaces: Flow graph edits, Paper page layouts, Image strokes and layer operations, and the shared source library all stay in step over your local network.</p>
+
+        <h3>One editor at a time: the baton</h3>
+        <p>To keep two screens from fighting over the same change, Signal Loom uses a single edit lock &mdash; the <strong>baton</strong>. Only the device holding the baton can make changes; the other follows along as a live, read-only mirror. The phone is the project&rsquo;s home and starts with the baton.</p>
+        <ul class="steps">
+          <li>
+            <span class="step-num">1</span>
+            <div class="step-body">
+              <strong>Hand off from the top bar</strong>
+              <p>Tap <strong>Working here&nbsp;&rlarr;&nbsp;Phone</strong> in the top bar to pass the baton to the other device. The current view is snapshotted so the receiving device picks up exactly where you left off.</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">2</span>
+            <div class="step-body">
+              <strong>The other device mirrors</strong>
+              <p>Whichever device doesn&rsquo;t hold the baton shows a read-only overlay and keeps updating live, so you can watch progress or review on a big screen while editing on the small one.</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">3</span>
+            <div class="step-body">
+              <strong>Presence, not lockout</strong>
+              <p>When another device is viewing the same project, the top bar shows it as present &mdash; you are no longer forced to open the project &ldquo;read-only.&rdquo;</p>
+            </div>
+          </li>
+        </ul>
+
+        <div class="callout note">
+          <p><strong>Handoff, not live co-editing.</strong> Sync is a baton handoff with a snapshot on switch &mdash; it is not real-time multi-cursor merging. One device edits at a time, by design, which keeps the project&rsquo;s state unambiguous. The Video workspace syncs project structure; large media renders stay on the device that produced them.</p>
+        </div>
+      </section>
+
       <section id="gamepad">
         <h2>Game controller support</h2>
         <p>Signal Loom has built-in support for game controllers. Connect a standard Xbox, PlayStation, or generic gamepad over USB or Bluetooth and drive the interface with physical buttons and sticks instead of reaching across the screen. It is especially handy on <strong>Android and Samsung DeX</strong>, where a paired Bluetooth controller gives you fast, eyes-up, tactile control of the app.</p>
@@ -600,6 +654,7 @@
       <a href="index.html">Home</a>
       <a href="docs.html">Docs</a>
       <a href="examples.html">Examples</a>
+      <a href="changelog.html">Changelog</a>
       <a href="privacy.html">Privacy</a>
       <a href="mailto:support@sloom.studio">support@sloom.studio</a>
     </nav>

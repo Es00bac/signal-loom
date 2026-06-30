@@ -158,6 +158,59 @@ export function FlowWorkspaceShell({
     };
   }, [reactFlow, store]);
 
+  useEffect(() => {
+    const wrapper = pinchWrapperRef.current;
+    if (!wrapper) return undefined;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept if user is typing in an input
+      if (
+        document.activeElement instanceof HTMLInputElement ||
+        document.activeElement instanceof HTMLTextAreaElement ||
+        (document.activeElement as HTMLElement).isContentEditable
+      ) {
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+      
+      const isZoomIn = key === '+' || key === '=' || key === 'volumeup' || key === 'audiovolumeup';
+      const isZoomOut = key === '-' || key === '_' || key === 'volumedown' || key === 'audiovolumedown';
+
+      if (!isZoomIn && !isZoomOut) return;
+
+      e.preventDefault();
+      
+      const { minZoom, maxZoom } = store.getState();
+      const currentZoom = reactFlow.getZoom();
+      
+      // Step size matching typical browser/editor zoom steps (15%)
+      const step = isZoomIn ? 1.15 : 1 / 1.15;
+      const targetZoom = Math.min(maxZoom, Math.max(minZoom, currentZoom * step));
+
+      // Get the bounding rect to zoom towards the center of the canvas instead of the top-left origin
+      const rect = wrapper.getBoundingClientRect();
+      const midX = rect.width / 2;
+      const midY = rect.height / 2;
+
+      // Extract current viewport
+      const current = reactFlow.getViewport();
+      
+      // Scale about the midpoint
+      const scale = targetZoom / currentZoom;
+      const x = midX - (midX - current.x) * scale;
+      const y = midY - (midY - current.y) * scale;
+
+      reactFlow.setViewport({ x, y, zoom: targetZoom });
+    };
+
+    // Use capturing phase so we intercept before nodes might swallow it (if focused)
+    wrapper.addEventListener('keydown', onKeyDown, { capture: true });
+    return () => {
+      wrapper.removeEventListener('keydown', onKeyDown, { capture: true });
+    };
+  }, [reactFlow, store]);
+
   return (
     <div className="absolute inset-0" data-testid="flow-workspace-shell" ref={pinchWrapperRef}>
       <ErrorBoundary className="absolute inset-0" level="canvas" resetKeys={[flowRecoveryKey]} title="Flow Canvas">

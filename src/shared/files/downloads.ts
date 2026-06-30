@@ -1,6 +1,7 @@
 import { inferDownloadExtension } from '../../lib/mediaFormatRegistry';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
+import { showUserNotice } from '../ui/userNotice';
 
 export interface DownloadRuntime {
   document?: Document;
@@ -35,29 +36,15 @@ export function downloadBlob(
   runtime: DownloadRuntime = {},
 ): void {
   if (Capacitor.isNativePlatform()) {
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      try {
-        const base64data = reader.result as string;
-        const base64 = base64data.split(',')[1];
-        
-        // Request permissions if needed
-        const perm = await Filesystem.checkPermissions();
-        if (perm.publicStorage !== 'granted') {
-          await Filesystem.requestPermissions();
-        }
-
-        const result = await Filesystem.writeFile({
-          path: fileName,
-          data: base64,
-          directory: Directory.Documents,
-        });
-        console.log(`[Capacitor] Saved file successfully to: ${result.uri}`);
-      } catch (err) {
-        console.error('[Capacitor] Failed to save file:', err);
-      }
-    };
-    reader.readAsDataURL(blob);
+    // Fire-and-forget for callers, but NEVER silent: report where it saved, or the real error.
+    void saveBlobOnDevice(blob, fileName)
+      .then(({ location }) => showUserNotice(`Saved “${fileName}” to ${location}.`, 'success'))
+      .catch((error) =>
+        showUserNotice(
+          `Couldn’t save “${fileName}”: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        ),
+      );
     return;
   }
 
@@ -65,6 +52,66 @@ export function downloadBlob(
   const objectUrl = url.createObjectURL(blob);
   triggerHrefDownload(objectUrl, fileName, { document });
   setTimeout(() => url.revokeObjectURL(objectUrl), 1000);
+}
+
+/**
+ * Write a blob to device storage on Capacitor. Public `Documents` is preferred (user-visible), but
+ * scoped storage silently blocks raw writes there on many Android 13+ devices (targetSdk 33+), so we
+ * fall back to the app's external files dir, then app-private data. Returns where it landed; throws
+ * only if every target fails — so the caller surfaces a real error instead of failing silently.
+ */
+async function saveBlobOnDevice(blob: Blob, fileName: string): Promise<{ uri: string; location: string }> {
+  const targets: Array<{ directory: Directory; location: string }> = [
+    { directory: Directory.Documents, location: 'Documents' },
+    { directory: Directory.External, location: 'app storage (Android ▸ data ▸ studio.sloom.signalloom ▸ files)' },
+    { directory: Directory.Data, location: 'app private storage' },
+  ];
+  let lastError: unknown;
+  for (const target of targets) {
+    try {
+      await writeBlobInChunks(blob, fileName, target.directory);
+      const { uri } = await Filesystem.getUri({ directory: target.directory, path: fileName });
+      return { uri, location: target.location };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Device storage is not writable.');
+}
+
+// Capacitor's `writeFile` takes the WHOLE file as a single base64 string and decodes it again in Java.
+// For a large `.sloom` (mostly embedded base64 assets) that's a ~1.3× blob-sized string on top of the
+// blob and the bridge copy — which OOMs the app heap (observed: tried to allocate ~70MB with ~6MB free).
+// Stream it in heap-bounded chunks instead: writeFile the first chunk (create/truncate), append the rest.
+// 3 MiB is a multiple of 3 bytes, so the per-chunk base64 strings concatenate to the exact file bytes.
+const WRITE_CHUNK_BYTES = 3 * 1024 * 1024;
+
+async function writeBlobInChunks(blob: Blob, path: string, directory: Directory): Promise<void> {
+  if (blob.size <= WRITE_CHUNK_BYTES) {
+    await Filesystem.writeFile({ path, data: await blobToBase64Data(blob), directory, recursive: true });
+    return;
+  }
+  for (let offset = 0; offset < blob.size; offset += WRITE_CHUNK_BYTES) {
+    const slice = blob.slice(offset, Math.min(offset + WRITE_CHUNK_BYTES, blob.size));
+    const data = await blobToBase64Data(slice);
+    if (offset === 0) {
+      await Filesystem.writeFile({ path, data, directory, recursive: true });
+    } else {
+      await Filesystem.appendFile({ path, data, directory });
+    }
+  }
+}
+
+function blobToBase64Data(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      resolve(result.split(',')[1] ?? '');
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read the file for saving.'));
+    reader.readAsDataURL(blob);
+  });
 }
 
 export function downloadTextFile(

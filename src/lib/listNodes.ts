@@ -9,7 +9,8 @@ import {
   isFlowResultKind,
   serializeManualEnvelopeValue,
 } from './flowValueTypes';
-import { formatColorSwatchPrompt } from './colorSwatchNode';
+import { formatColorSwatchListPrompt, formatColorSwatchPrompt } from './colorSwatchNode';
+import { buildLoraWeightsJson } from './loraSpecNode';
 
 export const LIST_ITEM_HANDLE_PREFIX = 'list-item-';
 
@@ -254,6 +255,14 @@ export function evaluateNodeTextForMonitor(
 
   if (node.type === 'colorSwatchNode') {
     return formatColorSwatchPrompt(node.data);
+  }
+
+  if (node.type === 'colorSwatchListNode') {
+    return formatColorSwatchListPrompt(node, nodes, edges);
+  }
+
+  if (node.type === 'loraSpecNode') {
+    return buildLoraWeightsJson(node.data.loraEntries);
   }
 
   if (node.type === 'stringTemplateNode') {
@@ -635,7 +644,7 @@ export function buildListItemFromNode(
     };
   }
 
-  if (node.type === 'imageGen' || node.type === 'cropImageNode') {
+  if (node.type === 'imageGen' || node.type === 'cropImageNode' || node.type === 'slimgNode') {
     const assetUrl = resolveMediaNodeAsset(node);
 
     if (!assetUrl) {
@@ -648,7 +657,7 @@ export function buildListItemFromNode(
       targetHandle,
       nodeId: node.id,
       kind: 'image',
-      label: node.type === 'cropImageNode' ? node.data.customTitle ?? 'Cropped image' : node.data.sourceAssetName ?? node.data.modelId ?? 'Image',
+      label: node.type === 'cropImageNode' ? node.data.customTitle ?? 'Cropped image' : node.type === 'slimgNode' ? node.data.customTitle ?? '.slimg' : node.data.sourceAssetName ?? node.data.modelId ?? 'Image',
       value: assetUrl,
       mimeType: node.data.sourceAssetMimeType ?? node.data.resultMimeType ?? 'image/png',
     };
@@ -738,7 +747,43 @@ export function buildListItemFromNode(
       targetHandle,
       nodeId: node.id,
       kind: 'text',
+      label: node.data.customTitle ?? 'Color palette',
+      value,
+      mimeType: 'text/plain',
+    };
+  }
+
+  if (node.type === 'colorSwatchListNode') {
+    const value = formatColorSwatchListPrompt(node, nodes ?? [], edges ?? []);
+    if (!value) {
+      return undefined;
+    }
+
+    return {
+      id: `${node.id}-${index}`,
+      index,
+      targetHandle,
+      nodeId: node.id,
+      kind: 'text',
       label: node.data.customTitle ?? 'Color swatch',
+      value,
+      mimeType: 'text/plain',
+    };
+  }
+
+  if (node.type === 'loraSpecNode') {
+    const value = buildLoraWeightsJson(node.data.loraEntries);
+    if (!value) {
+      return undefined;
+    }
+
+    return {
+      id: `${node.id}-${index}`,
+      index,
+      targetHandle,
+      nodeId: node.id,
+      kind: 'text',
+      label: node.data.customTitle ?? 'LoRA spec',
       value,
       mimeType: 'text/plain',
     };
@@ -1095,6 +1140,10 @@ function resolveMediaNodeAsset(node: AppNode): string | undefined {
   }
 
   if (node.type === 'composition') {
+    return node.data.result;
+  }
+
+  if (node.type === 'slimgNode') {
     return node.data.result;
   }
 

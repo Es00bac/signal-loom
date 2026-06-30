@@ -51,4 +51,13 @@ public class SignalLoomSystemUiPlugin extends Plugin {
             call.resolve(result);
         });
     }
+
+    @PluginMethod
+    public void setInterceptVolumeKeys(PluginCall call) {
+        final boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", Boolean.FALSE));
+        MainActivity.interceptVolumeKeys = enabled;
+        final JSObject result = new JSObject();
+        result.put("enabled", enabled);
+        call.resolve(result);
+    }
 }

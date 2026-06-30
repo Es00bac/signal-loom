@@ -14,11 +14,13 @@ import type {
   VideoResolution,
   VoiceOption,
 } from '../types/flow';
+import { ATLAS_IMAGE_MODEL_OPTIONS } from './atlasImageModelOptions.generated';
 
 export const PROVIDER_LABELS = {
   gemini: 'Google Gemini',
   openai: 'OpenAI / Compatible',
   atlas: 'Atlas Cloud',
+  byteplus: 'BytePlus',
   huggingface: 'Hugging Face',
   bfl: 'Black Forest Labs',
   stability: 'Stability AI',
@@ -29,7 +31,7 @@ export const PROVIDER_LABELS = {
 
 export const CAPABILITY_PROVIDERS = {
   text: ['gemini', 'openai', 'huggingface'],
-  image: ['gemini', 'openai', 'atlas', 'huggingface', 'bfl', 'stability', 'localOpen', 'android'],
+  image: ['gemini', 'openai', 'atlas', 'byteplus', 'huggingface', 'bfl', 'stability', 'localOpen', 'android'],
   video: ['gemini', 'huggingface', 'atlas'],
   audio: ['gemini', 'elevenlabs', 'huggingface'],
 } as const;
@@ -49,6 +51,7 @@ export const DEFAULT_MODELS: DefaultModelSettings = {
     stability: 'stable-image-edit-inpaint',
     localOpen: 'Qwen/Qwen-Image-Edit',
     android: 'local-dream-active',
+    byteplus: 'seedream-4.5',
   },
   video: {
     gemini: 'veo-3.1-generate-001',
@@ -65,6 +68,7 @@ export const DEFAULT_MODELS: DefaultModelSettings = {
 export const DEFAULT_PROVIDER_SETTINGS = {
   openaiBaseUrl: '',
   atlasBaseUrl: '',
+  bytePlusBaseUrl: '',
   elevenlabsVoiceId: '',
   renderBackendPreference: 'auto' as RenderBackendPreference,
   localNativeRenderUrl: 'http://127.0.0.1:41736',
@@ -94,6 +98,8 @@ export const DEFAULT_PROVIDER_SETTINGS = {
   androidAcceleratorDefaultImageModel: 'local-dream-active',
   batchMaxRetries: 10,
   batchRetryBaseDelayMs: 30000,
+  androidLanServerEnabled: false,
+  androidLanServerPin: '',
 } as ProviderSettings;
 
 export const RENDER_BACKEND_OPTIONS: SelectOption[] = [
@@ -251,31 +257,15 @@ export const FALLBACK_MODEL_OPTIONS: ModelCatalog = {
       { value: 'gpt-image-2', label: 'GPT Image 2' },
       { value: 'gpt-image-1', label: 'GPT Image 1' },
     ],
-    atlas: [
-      { value: 'google/nano-banana-2/text-to-image', label: 'Atlas Nano Banana 2' },
-      { value: 'google/nano-banana-2/edit', label: 'Atlas Nano Banana 2 Edit' },
-      { value: 'google/nano-banana-2/reference-to-image', label: 'Atlas Nano Banana 2 Reference' },
-      { value: 'qwen/qwen-image-2.0/text-to-image', label: 'Atlas Qwen Image 2.0' },
-      { value: 'qwen/qwen-image-2.0/edit', label: 'Atlas Qwen Image 2.0 Edit' },
-      { value: 'alibaba/wan-2.7/text-to-image', label: 'Atlas Wan 2.7' },
-      { value: 'alibaba/wan-2.7/image-edit', label: 'Atlas Wan 2.7 Edit' },
-      { value: 'xai/grok-imagine-image-quality/text-to-image', label: 'Atlas Grok Imagine' },
-      { value: 'baidu/ERNIE-Image-Turbo/text-to-image', label: 'Atlas ERNIE Image Turbo' },
-      { value: 'black-forest-labs/flux-schnell', label: 'Atlas FLUX Schnell' },
-      { value: 'black-forest-labs/flux-dev', label: 'Atlas FLUX Dev' },
-      { value: 'black-forest-labs/flux-dev-lora', label: 'Atlas FLUX Dev LoRA' },
-      { value: 'z-image/turbo', label: 'Atlas Z-Image Turbo' },
-      { value: 'bytedance/seedream-v5.0-lite', label: 'Atlas Seedream v5.0 Lite' },
-      { value: 'google/nano-banana-pro/text-to-image', label: 'Atlas Nano Banana Pro' },
-      { value: 'black-forest-labs/flux-kontext-dev', label: 'Atlas FLUX Kontext Dev' },
-      { value: 'bytedance/seedream-v5.0-lite/edit', label: 'Atlas Seedream Image-to-Image' },
-      { value: 'atlascloud/qwen-image/edit', label: 'Atlas Qwen Image Edit' },
-      { value: 'qwen/qwen-image-2.0-pro/text-to-image', label: 'Atlas Qwen Image 2.0 Pro' },
-      { value: 'google/imagen4', label: 'Atlas Imagen 4' },
-      { value: 'bytedance/seedream-v4.5', label: 'Atlas Seedream v4.5' },
-      { value: 'black-forest-labs/flux-2-pro/text-to-image', label: 'Atlas FLUX.2 Pro' },
-      { value: 'openai/gpt-image-2/text-to-image', label: 'Atlas GPT Image 2' },
-      { value: 'openai/gpt-image-1/text-to-image', label: 'Atlas GPT Image 1' },
+    // Every documented Atlas 2D image model (generated from the live catalog) so every model — and thus
+    // every feature it exposes (references, edit, mask, custom size, …) — is selectable from the node.
+    atlas: ATLAS_IMAGE_MODEL_OPTIONS,
+    // BytePlus / ModelArk (ByteDance) Seedream — FIRST-PARTY. Model IDs from public ModelArk docs;
+    // confirm exact IDs/tiers with BytePlus (Jack Su) when the trial key lands. See docs/notes + memory.
+    byteplus: [
+      { value: 'seedream-4.5', label: 'Seedream 4.5' },
+      { value: 'seedream-4.0', label: 'Seedream 4.0' },
+      { value: 'seedream-3.0', label: 'Seedream 3.0' },
     ],
     bfl: [
       { value: 'flux-2-klein-4b', label: 'FLUX.2 Klein 4B' },
@@ -380,6 +370,7 @@ export function buildEmptyModelCatalog(): ModelCatalog {
       gemini: [],
       openai: [],
       atlas: [],
+      byteplus: [],
       huggingface: [],
       bfl: [],
       stability: [],
@@ -410,6 +401,7 @@ export function cloneModelCatalog(modelCatalog: ModelCatalog): ModelCatalog {
       gemini: [...modelCatalog.image.gemini],
       openai: [...modelCatalog.image.openai],
       atlas: [...modelCatalog.image.atlas],
+      byteplus: [...modelCatalog.image.byteplus],
       huggingface: [...modelCatalog.image.huggingface],
       bfl: [...modelCatalog.image.bfl],
       stability: [...modelCatalog.image.stability],
@@ -455,6 +447,8 @@ export function getConfiguredProviders<TCapability extends Capability>(
         return Boolean(apiKeys.openai.trim());
       case 'atlas':
         return Boolean(apiKeys.atlas?.trim());
+      case 'byteplus':
+        return capability === 'image' && Boolean(apiKeys.byteplus?.trim());
       case 'huggingface':
         return Boolean(apiKeys.huggingface.trim());
       case 'bfl':
@@ -540,6 +534,7 @@ export function getImageAspectRatioOptions(
     case 'bfl':
     case 'localOpen':
     case 'android':
+    case 'byteplus':
       return IMAGE_ASPECT_RATIO_OPTIONS;
     case 'stability':
       if ((modelId ?? '').includes('-edit-')) {

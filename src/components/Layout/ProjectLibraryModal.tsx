@@ -651,7 +651,10 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
               ) : null}
 
               <input
-                accept=".sloom"
+                // `.sloom` has no registered MIME type, so Android's file picker greys the files out
+                // when `accept` is just the extension. Add the octet-stream/json types Android maps
+                // them to so they stay selectable; the picked file is still validated by content.
+                accept=".sloom,application/json,application/octet-stream"
                 className="hidden"
                 onChange={(event) => {
                   const file = event.target.files?.[0];

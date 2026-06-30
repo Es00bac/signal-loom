@@ -42,6 +42,7 @@ const settings: RuntimeSettingsSnapshot = {
       stability: 'stable-image-edit-inpaint',
       localOpen: 'Qwen/Qwen-Image-Edit',
       android: 'local-dream-active',
+      byteplus: 'seedream-4.5',
     },
     video: {
       gemini: 'veo-3.1-fast-generate-preview',
@@ -74,7 +75,7 @@ const settings: RuntimeSettingsSnapshot = {
     localOpenImageAuthHeader: '',
     localOpenImageDefaultModel: 'Qwen/Qwen-Image-Edit',
     batchMaxRetries: 10,
-    batchRetryBaseDelayMs: 30000,
+    batchRetryBaseDelayMs: 30000, androidLanServerEnabled: false, androidLanServerPin: "",
   },
 };
 

@@ -3,6 +3,19 @@ import { executeNodeRequest } from './flowExecution';
 import { DEFAULT_EXECUTION_CONFIG } from './providerCatalog';
 import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
 
+// Capture the baseURL the OpenAI SDK client is constructed with, so we can prove Atlas OpenAI-compatible
+// models (gpt-image) never get pointed at api.openai.com (which would send the Atlas key to OpenAI).
+const openAiCapture = vi.hoisted(() => ({ baseURL: undefined as string | undefined }));
+vi.mock('openai', () => ({
+  default: class {
+    constructor(opts: { baseURL?: string }) { openAiCapture.baseURL = opts.baseURL; }
+    images = {
+      generate: async () => ({ data: [{ b64_json: 'aW1n' }] }),
+      edit: async () => ({ data: [{ b64_json: 'aW1n' }] }),
+    };
+  },
+}));
+
 const baseSettings: RuntimeSettingsSnapshot = {
   apiKeys: {
     gemini: '',
@@ -28,6 +41,7 @@ const baseSettings: RuntimeSettingsSnapshot = {
       stability: 'stable-image-core',
       localOpen: 'Qwen/Qwen-Image-Edit',
       android: 'local-dream-active',
+      byteplus: 'seedream-4.5',
     },
     video: {
       gemini: 'veo-3.1-generate-preview',
@@ -60,7 +74,7 @@ const baseSettings: RuntimeSettingsSnapshot = {
     localOpenImageAuthHeader: 'Bearer local-token',
     localOpenImageDefaultModel: 'Qwen/Qwen-Image-Edit',
     batchMaxRetries: 10,
-    batchRetryBaseDelayMs: 30000,
+    batchRetryBaseDelayMs: 30000, androidLanServerEnabled: false, androidLanServerPin: "",
   },
 };
 
@@ -490,14 +504,69 @@ describe('executeNodeRequest advanced image providers', () => {
     expect(body).toMatchObject({
       model: 'black-forest-labs/flux-schnell',
       prompt: 'cinematic desert observatory at sunrise',
-      width: 1376,
-      height: 768,
-      steps: 20,
+      // flux-schnell documents a free-range `size` ("W*H") — only that is sent (no undocumented width/height).
+      size: '1376*768',
       seed: 77,
-      guidance_scale: 2.5,
-      output_format: 'webp',
       enable_safety_checker: false,
     });
+    expect(body.width).toBeUndefined();
+    expect(body.height).toBeUndefined();
+    // flux-schnell's schema has no num_inference_steps/guidance_scale/output_format — the body filter drops
+    // these undocumented fields so the model never rejects the request.
+    expect(body.num_inference_steps).toBeUndefined();
+    expect(body.guidance_scale).toBeUndefined();
+    expect(body.output_format).toBeUndefined();
+  });
+
+  it('sends custom width/height (overriding the aspect-ratio preset) for size-capable Atlas models', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ data: { id: 'atlas-job' } }))
+      .mockResolvedValueOnce(jsonResponse({ data: { status: 'succeeded', outputs: ['https://cdn.atlascloud.ai/generated.png'] } }))
+      .mockResolvedValueOnce(imageResponse('ATLAS'));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-generated');
+
+    await executeNodeRequest(
+      createImageNode('atlas', 'black-forest-labs/flux-schnell', {
+        imageWidth: 1024,
+        imageHeight: 1536,
+      }),
+      {
+        prompt: 'portrait poster',
+        // 16:9 preset would be 1376×768; the custom size must win.
+        config: { ...DEFAULT_EXECUTION_CONFIG, aspectRatio: '16:9' },
+      },
+      {
+        ...baseSettings,
+        apiKeys: { ...baseSettings.apiKeys, atlas: 'atlas-key' },
+        providerSettings: { ...baseSettings.providerSettings, atlasBaseUrl: 'https://api.atlascloud.ai/api/v1' },
+      },
+    );
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    // Custom W×H flow through as the model's documented `size` string (free-range).
+    expect(body.size).toBe('1024*1536');
+    expect(body.width).toBeUndefined();
+  });
+
+  it('routes Atlas OpenAI-compatible models (gpt-image) to the Atlas endpoint even when atlasBaseUrl is unset — never api.openai.com', async () => {
+    openAiCapture.baseURL = undefined;
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-gpt');
+
+    await executeNodeRequest(
+      createImageNode('atlas', 'gpt-image-2'),
+      { prompt: 'a test render', config: { ...DEFAULT_EXECUTION_CONFIG } },
+      {
+        ...baseSettings,
+        apiKeys: { ...baseSettings.apiKeys, atlas: 'atlas-key' },
+        // atlasBaseUrl intentionally EMPTY (the default). The Atlas key must still hit Atlas, so the SDK
+        // must be constructed with the Atlas base URL — not fall back to the OpenAI default endpoint.
+        providerSettings: { ...baseSettings.providerSettings, atlasBaseUrl: '' },
+      },
+    );
+
+    expect(openAiCapture.baseURL).toBe('https://api.atlascloud.ai/api/v1');
+    expect(openAiCapture.baseURL).not.toContain('openai');
   });
 
   it('falls back to the remote URL when the result CDN blocks the download (CORS) so the image still appears', async () => {
@@ -552,32 +621,19 @@ describe('executeNodeRequest advanced image providers', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(3, 'https://cdn.atlascloud.ai/generated.png');
   });
 
-  it('uploads source and mask images before running Atlas Cloud native edit models', async () => {
+  it('uploads the source image and builds a singular-`image` Atlas edit request (qwen edit has no mask field)', async () => {
     const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-edit');
-    let uploadCount = 0;
     const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       void init;
       const stringUrl = String(url);
       if (stringUrl.includes('/model/uploadMedia')) {
-        uploadCount += 1;
-        return jsonResponse({
-          data: {
-            download_url: uploadCount === 1
-              ? 'https://static.atlascloud.ai/source.png'
-              : 'https://static.atlascloud.ai/mask.png',
-          },
-        });
+        return jsonResponse({ data: { download_url: 'https://static.atlascloud.ai/source.png' } });
       }
       if (stringUrl.includes('/model/generateImage')) {
         return jsonResponse({ data: { id: 'atlas-edit-job' } });
       }
       if (stringUrl.includes('/model/prediction/atlas-edit-job')) {
-        return jsonResponse({
-          data: {
-            status: 'completed',
-            output: 'https://cdn.atlascloud.ai/edit.png',
-          },
-        });
+        return jsonResponse({ data: { status: 'completed', output: 'https://cdn.atlascloud.ai/edit.png' } });
       }
       if (stringUrl === 'https://cdn.atlascloud.ai/edit.png') {
         return imageResponse('EDIT');
@@ -594,7 +650,6 @@ describe('executeNodeRequest advanced image providers', () => {
       {
         prompt: 'Modify the storefront without changing the person.',
         editImageInput: 'data:image/png;base64,U09VUkNF',
-        editMaskImageInput: 'data:image/png;base64,TUFTSw==',
         config: { ...DEFAULT_EXECUTION_CONFIG, imageOutputFormat: 'png' },
       },
       {
@@ -612,22 +667,92 @@ describe('executeNodeRequest advanced image providers', () => {
     expect(result.usage).toMatchObject({
       provider: 'atlas',
       modelId: 'atlascloud/qwen-image/edit',
-      costUsd: 0.025,
+      costUsd: 0.032,
       imageCount: 1,
     });
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/model/uploadMedia'))).toHaveLength(2);
+    // Only the source is uploaded — qwen edit has no mask field, so no second (mask) upload.
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/model/uploadMedia'))).toHaveLength(1);
     const generateCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/model/generateImage'));
     expect(generateCall).toBeTruthy();
     const body = JSON.parse(String(generateCall?.[1]?.body));
+    // qwen-image/edit takes a singular `image` field, not an `images` array, and no mask_image.
     expect(body).toMatchObject({
       model: 'atlascloud/qwen-image/edit',
       image: 'https://static.atlascloud.ai/source.png',
-      mask_image: 'https://static.atlascloud.ai/mask.png',
-      strength: 0.65,
-      output_format: 'png',
     });
+    // Its schema documents no strength/output_format — the body filter drops them so it isn't rejected.
+    expect(body.strength).toBeUndefined();
+    expect(body.output_format).toBeUndefined();
+    expect(body.mask_image).toBeUndefined();
+    expect(body.images).toBeUndefined();
+    expect(body.reference_images).toBeUndefined();
     expect(body.prompt).toContain('Modify the storefront without changing the person.');
     expect(body.prompt).toContain('OPEN LATE');
+  });
+
+  it('feeds the source + reference images into the `images` array for array-field Atlas edit models', async () => {
+    // The core character-consistency fix: array-field models (e.g. nano-banana-2/edit) must receive
+    // [source, ...references] under `images` — NOT a singular `image` or a (nonexistent) `reference_images`
+    // field. Sending the wrong field made Atlas silently ignore the source/references (docs/notes/732).
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-ref');
+    let uploadCount = 0;
+    const uploadUrls = [
+      'https://static.atlascloud.ai/source.png',
+      'https://static.atlascloud.ai/ref-1.png',
+      'https://static.atlascloud.ai/ref-2.png',
+    ];
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      void init;
+      const stringUrl = String(url);
+      if (stringUrl.includes('/model/uploadMedia')) {
+        const next = uploadUrls[uploadCount] ?? `https://static.atlascloud.ai/extra-${uploadCount}.png`;
+        uploadCount += 1;
+        return jsonResponse({ data: { download_url: next } });
+      }
+      if (stringUrl.includes('/model/generateImage')) {
+        return jsonResponse({ data: { id: 'atlas-ref-job' } });
+      }
+      if (stringUrl.includes('/model/prediction/atlas-ref-job')) {
+        return jsonResponse({ data: { status: 'completed', output: 'https://cdn.atlascloud.ai/ref.png' } });
+      }
+      if (stringUrl === 'https://cdn.atlascloud.ai/ref.png') {
+        return imageResponse('REF');
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await executeNodeRequest(
+      createImageNode('atlas', 'google/nano-banana-2/edit'),
+      {
+        prompt: 'Place the same character at a desk reading a book.',
+        editImageInput: 'data:image/png;base64,U09VUkNF',
+        editReferenceImageInputs: [
+          'data:image/png;base64,UkVGMQ==',
+          'data:image/png;base64,UkVGMg==',
+        ],
+        config: { ...DEFAULT_EXECUTION_CONFIG, imageOutputFormat: 'png' },
+      },
+      {
+        ...baseSettings,
+        apiKeys: { ...baseSettings.apiKeys, atlas: 'atlas-key' },
+        providerSettings: {
+          ...baseSettings.providerSettings,
+          atlasBaseUrl: 'https://api.atlascloud.ai/api/v1',
+        },
+      },
+    );
+
+    expect(result.result).toBe('blob:atlas-ref');
+    const generateCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/model/generateImage'));
+    const body = JSON.parse(String(generateCall?.[1]?.body));
+    expect(body.images).toEqual([
+      'https://static.atlascloud.ai/source.png',
+      'https://static.atlascloud.ai/ref-1.png',
+      'https://static.atlascloud.ai/ref-2.png',
+    ]);
+    expect(body.image).toBeUndefined();
+    expect(body.reference_images).toBeUndefined();
   });
 
   it('posts Local/Open image edits to the configured endpoint with auth and mask data', async () => {

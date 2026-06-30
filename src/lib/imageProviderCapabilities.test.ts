@@ -119,15 +119,15 @@ describe('imageProviderCapabilities', () => {
     const fluxDevLora = getImageNodeControlModel('atlas', 'black-forest-labs/flux-dev-lora');
 
     expect(fluxDevLora.supportedOperations).toContain('text-to-image');
+    // Controls derive from the documented flux-dev-lora schema: prompt/size(+custom dimensions)/seed/
+    // guidance_scale/loras + exact-colour prompt. It has no num_inference_steps or output_format field.
     expect(fluxDevLora.visibleControls).toEqual(expect.arrayContaining([
       'prompt',
       'aspectRatio',
-      'steps',
+      'dimensions',
       'seed',
       'guidanceScale',
       'loraWeights',
-      'safetyChecker',
-      'outputFormat',
     ]));
 
     expect(estimateImageModelCostUsd({
@@ -158,39 +158,39 @@ describe('imageProviderCapabilities', () => {
       operation: 'text-to-image',
       imageCount: 1,
     })).toMatchObject({
-      costUsd: 0.01,
+      costUsd: 0.005,
       confidence: 'published-fixed',
-      unitLabel: '$0.01/image',
+      unitLabel: '$0.005/image',
     });
   });
 
   it('describes Atlas Cloud native edit models with source, mask, reference, and text editing controls', () => {
+    // flux-kontext-dev takes a SINGLE `image` (its documented schema) — an edit/source control, not a
+    // multi-reference budget. (The previous catalog wrongly advertised 4 reference images.)
     const kontext = getImageNodeControlModel('atlas', 'black-forest-labs/flux-kontext-dev');
     expect(kontext.supportedOperations).toContain('image-edit');
+    expect(kontext.capabilities.referenceImages).toBe(false);
     expect(kontext.visibleControls).toEqual(expect.arrayContaining([
       'prompt',
       'sourceImage',
-      'referenceImages',
       'guidanceScale',
-      'editStrength',
       'seed',
-      'outputFormat',
     ]));
 
     const qwenEdit = getImageNodeControlModel('atlas', 'atlascloud/qwen-image/edit');
     expect(qwenEdit.supportedOperations).toContain('image-edit');
+    // Qwen edit has no mask field in its Atlas schema — no 'mask' control, no maskInpaint capability.
+    expect(qwenEdit.supportedOperations).not.toContain('mask-inpaint');
     expect(qwenEdit.visibleControls).toEqual(expect.arrayContaining([
       'prompt',
       'sourceImage',
-      'mask',
-      'referenceImages',
       'textEditPrompt',
-      'outputFormat',
     ]));
+    expect(qwenEdit.visibleControls).not.toContain('mask');
     expect(getImageModelCapabilities('atlas', 'atlascloud/qwen-image/edit')).toMatchObject({
       imageToImage: true,
       promptEdit: true,
-      maskInpaint: true,
+      maskInpaint: false,
       textInImageEditing: true,
     });
 
@@ -200,9 +200,9 @@ describe('imageProviderCapabilities', () => {
       operation: 'image-edit',
       imageCount: 1,
     })).toMatchObject({
-      costUsd: 0.025,
+      costUsd: 0.032,
       confidence: 'published-fixed',
-      unitLabel: '$0.025/edit',
+      unitLabel: '$0.032/edit',
     });
   });
 

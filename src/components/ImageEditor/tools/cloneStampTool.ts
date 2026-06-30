@@ -13,6 +13,7 @@ import {
 import { canEditImageLayerPixels } from '../../../lib/imageLayerLocks';
 import { DEFAULT_RETOUCH_TOOL_SETTINGS } from '../../../types/imageEditor';
 import { resolveRetouchTargetLayer } from './retouchTargetLayer';
+import { brushStraightLineStart, recordBrushStrokeAnchor } from './brushLineAnchor';
 import type { Point, ToolEnv, ToolHandler } from './types';
 
 interface CloneStampStroke {
@@ -73,26 +74,34 @@ export const cloneStampTool: ToolHandler = {
     if (!canEditImageLayerPixels(layer) || !layer?.bitmap || !samplePoint) return;
     const bitmapBefore = cloneBitmap(layer.bitmap);
     const settings = env.retouchToolSettings ?? DEFAULT_RETOUCH_TOOL_SETTINGS;
+    // Shift straight-line: anchor the stroke at the previous stamp's end so this press lays a
+    // straight cloned line to the new point, carrying the source offset along the way.
+    const lineStart = brushStraightLineStart('cloneStamp', env.doc.id, mods) ?? point;
     if (settings.aligned && !alignedOffset) {
       alignedOffset = {
-        x: samplePoint.x - point.x,
-        y: samplePoint.y - point.y,
+        x: samplePoint.x - lineStart.x,
+        y: samplePoint.y - lineStart.y,
       };
     }
     stroke = {
       layerId: layer.id,
       bitmapBefore,
       samplePoint,
-      strokeStart: point,
+      strokeStart: lineStart,
       sampleSource: buildRetouchSampleSource({
         doc: env.doc,
         layer,
         layerSnapshot: bitmapBefore,
         sampleMode: settings.sampleMode,
       }),
-      lastPoint: point,
+      lastPoint: lineStart,
     };
-    stampAt(env, point);
+    if (lineStart !== point) {
+      stampBetween(env, lineStart, point);
+    } else {
+      stampAt(env, point);
+    }
+    stroke.lastPoint = point;
     env.requestRender({ invalidateBitmapCache: true });
   },
 
@@ -105,6 +114,7 @@ export const cloneStampTool: ToolHandler = {
 
   onPointerUp(env) {
     if (!stroke) return;
+    recordBrushStrokeAnchor('cloneStamp', env.doc.id, stroke.lastPoint);
     const layer = env.doc.layers.find((candidate) => candidate.id === stroke?.layerId);
     if (layer?.bitmap) {
       env.pushOperation({

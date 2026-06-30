@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Become a tester &mdash; Signal Loom</title>
+  <meta name="description" content="Apply to test the Signal Loom Android build through Google Play's official closed test. Your email is used only to add you to the test." />
+  <meta name="robots" content="index,follow" />
+  <meta name="theme-color" content="#020711" />
+  <meta property="og:title" content="Become a tester &mdash; Signal Loom" />
+  <meta property="og:description" content="Help bring the Signal Loom Android build to Google Play. Apply privately to join the official closed test." />
+  <meta property="og:image" content="/assets/graphics/feature-graphic-1024x500.png" />
+  <link rel="icon" type="image/png" href="assets/graphics/icon-512.png" />
+  <link rel="stylesheet" href="assets/site.css" />
+  <style>
+    body {
+      background:
+        radial-gradient(ellipse 50% 28% at 30% 5%, rgba(41,217,255,.09) 0%, transparent 55%),
+        linear-gradient(180deg, #07111f 0%, var(--bg) 60%);
+    }
+
+    .tester-layout {
+      max-width: 720px;
+      margin-inline: auto;
+      padding-block: clamp(56px, 8vw, 100px);
+    }
+    .tester-layout h1 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      margin-bottom: 8px;
+    }
+    .tester-layout .updated { font-size: .88rem; color: var(--dim); margin-bottom: 32px; }
+
+    .lede-box {
+      border: 1px solid rgba(114,246,177,.28);
+      border-left: 3px solid var(--green);
+      background: rgba(114,246,177,.07);
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+      padding: 18px 22px;
+      margin-bottom: 36px;
+    }
+    .lede-box p { color: var(--text); margin: 0 0 10px; font-size: .97rem; line-height: 1.7; }
+    .lede-box p:last-child { margin-bottom: 0; }
+    .lede-box strong { color: #fff; }
+
+    .tester-layout h2 {
+      font-size: 1.18rem;
+      margin-top: 36px;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+      color: #fff;
+    }
+    .tester-layout p  { margin-bottom: 14px; font-size: .96rem; line-height: 1.72; color: var(--muted); }
+    .tester-layout ul { margin-bottom: 14px; display: grid; gap: 8px; padding-left: 2px; }
+    .tester-layout li { font-size: .94rem; color: var(--muted); line-height: 1.6; list-style: none; padding-left: 22px; position: relative; }
+    .tester-layout li::before { content: "›"; position: absolute; left: 6px; color: var(--cyan); }
+    .tester-layout strong { color: var(--text); }
+
+    /* ── Form ── */
+    .signup {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: rgba(8,16,28,.55);
+      padding: clamp(20px, 4vw, 32px);
+    }
+    .field { margin-bottom: 20px; }
+    .field label { display: block; font-size: .9rem; color: var(--text); margin-bottom: 6px; font-weight: 600; }
+    .field .hint { font-size: .82rem; color: var(--dim); margin: 0 0 8px; line-height: 1.55; }
+    .field input[type="email"],
+    .field input[type="text"] {
+      width: 100%;
+      box-sizing: border-box;
+      background: rgba(2,7,17,.7);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: var(--text);
+      font-size: .98rem;
+      padding: 12px 14px;
+      font-family: inherit;
+    }
+    .field input:focus { outline: none; border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(41,217,255,.14); }
+
+    .consent { display: flex; gap: 11px; align-items: flex-start; margin-bottom: 22px; }
+    .consent input { margin-top: 3px; flex: none; width: 17px; height: 17px; accent-color: var(--green); }
+    .consent label { font-size: .9rem; color: var(--muted); line-height: 1.6; }
+
+    /* honeypot — hidden from people, tempting to bots */
+    .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+
+    .submit-btn {
+      appearance: none; border: 0; cursor: pointer;
+      background: linear-gradient(135deg, var(--green), var(--cyan));
+      color: #02121a; font-weight: 700; font-size: 1rem; font-family: inherit;
+      padding: 13px 26px; border-radius: 10px; width: 100%;
+    }
+    .submit-btn:disabled { opacity: .55; cursor: progress; }
+
+    .form-status { margin-top: 16px; font-size: .94rem; line-height: 1.6; min-height: 1.2em; }
+    .form-status.ok  { color: var(--green); }
+    .form-status.err { color: #ff8a8a; }
+
+    .fineprint {
+      margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--line);
+      font-size: .84rem; color: var(--dim); line-height: 1.6;
+    }
+    .fineprint a { color: var(--muted); }
+    .fineprint a:hover { color: var(--cyan); }
+  </style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav-inner wrap" aria-label="Primary navigation">
+    <a class="brand" href="index.html" aria-label="Signal Loom home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Signal Loom
+    </a>
+    <div class="nav-links" id="nav-links">
+      <a href="index.html">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="examples.html">Examples</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="index.html#license">Download</a>
+      <a href="privacy.html">Privacy</a>
+    </div>
+    <a class="nav-cta" href="index.html#license">Get it &mdash; $9.99</a>
+    <button class="nav-hamburger" aria-label="Toggle navigation" onclick="document.getElementById('nav-links').classList.toggle('open')">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="tester-layout">
+
+      <h1>Become a tester</h1>
+      <p class="updated">Help bring the Signal Loom Android build to Google Play</p>
+
+      <div class="lede-box">
+        <p><strong>Signal Loom is finishing Google Play's closed test.</strong> Before the Android &amp; Samsung DeX
+        build can go live, Google requires <strong>12 testers</strong> to have it installed for <strong>14 days</strong>.
+        If you have an Android device, you can help &mdash; and you get early access to the full studio.</p>
+        <p>This is the <strong>official Google Play test</strong>, not a sideloaded APK. You install from the Play
+        Store like any app, through your own Google account.</p>
+      </div>
+
+      <h2>What's involved</h2>
+      <ul>
+        <li>You need a <strong>real Android device</strong> and a <strong>genuine Google account</strong> (no emulators).</li>
+        <li>Once you're approved, you'll get a private opt-in link to join the test and install from Google Play.</li>
+        <li>Just <strong>leave it installed for the 14 days</strong> &mdash; you don't have to use it daily (though feedback is very welcome).</li>
+        <li>Samsung DeX and S&nbsp;Pen users especially wanted &mdash; the build has native support for both.</li>
+      </ul>
+
+      <h2>Why a form instead of posting your email publicly</h2>
+      <p>So you never have to paste your email into a public thread. This form sends your application
+      <strong>straight to the developer's inbox over an encrypted connection</strong> &mdash; it isn't stored in any
+      database, shown to other testers, or shared with anyone. Other testers never see who else applied.</p>
+
+      <h2>Apply</h2>
+      <form class="signup" id="tester-form" method="post" action="/api/tester-signup" novalidate>
+        <div class="field">
+          <label for="email">Your Google account email <span aria-hidden="true">*</span></label>
+          <p class="hint">The Gmail / Google account you use on your Android device &mdash; this is the address Google adds to the test. Nothing else works for Play testing.</p>
+          <input type="email" id="email" name="email" required autocomplete="email" placeholder="you@gmail.com" />
+        </div>
+
+        <div class="field">
+          <label for="device">Your device(s) <span style="color:var(--dim);font-weight:400">(optional)</span></label>
+          <p class="hint">Helps us know our testers. e.g. &ldquo;Galaxy S23 + Tab S9, I use DeX&rdquo;</p>
+          <input type="text" id="device" name="device" maxlength="160" autocomplete="off" placeholder="Galaxy S23, occasional DeX user" />
+        </div>
+
+        <!-- honeypot: humans never see or fill this; bots usually do -->
+        <div class="hp" aria-hidden="true">
+          <label for="company">Company (leave blank)</label>
+          <input type="text" id="company" name="company" tabindex="-1" autocomplete="off" />
+        </div>
+
+        <div class="consent">
+          <input type="checkbox" id="consent" name="consent" required />
+          <label for="consent">I understand my email will be used <strong>only</strong> to add me to the Google Play
+          closed test and to contact me about it, and I can ask to be removed at any time.</label>
+        </div>
+
+        <button type="submit" class="submit-btn" id="submit-btn">Apply to test</button>
+        <p class="form-status" id="form-status" role="status" aria-live="polite"></p>
+      </form>
+
+      <div class="fineprint">
+        Your email is used solely to run the closed test and is deleted from our records when the test ends or on
+        request. See the <a href="privacy.html">Privacy Policy</a> (&ldquo;Tester program&rdquo;) for details, or email
+        <a href="mailto:support@sloom.studio">support@sloom.studio</a>.
+      </div>
+
+    </div>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Signal Loom
+    </a>
+    <nav class="footer-links" aria-label="Footer navigation">
+      <a href="index.html">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="examples.html">Examples</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="mailto:support@sloom.studio">support@sloom.studio</a>
+    </nav>
+    <span>&copy; 2026 Sloom Software</span>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var form = document.getElementById('tester-form');
+    var btn = document.getElementById('submit-btn');
+    var status = document.getElementById('form-status');
+
+    function setStatus(msg, kind) {
+      status.textContent = msg;
+      status.className = 'form-status' + (kind ? ' ' + kind : '');
+    }
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      setStatus('', '');
+
+      var email = form.email.value.trim();
+      if (!email || form.email.validity.typeMismatch || email.indexOf('@') < 1) {
+        setStatus('Please enter a valid email address.', 'err');
+        form.email.focus();
+        return;
+      }
+      if (!form.consent.checked) {
+        setStatus('Please check the box so we can add you to the test.', 'err');
+        return;
+      }
+
+      btn.disabled = true;
+      setStatus('Sending…', '');
+
+      fetch('/api/tester-signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Signal-Loom': '1' },
+        body: JSON.stringify({
+          email: email,
+          device: form.device.value.trim(),
+          consent: form.consent.checked,
+          company: form.company.value // honeypot
+        })
+      })
+        .then(function (r) { return r.json().catch(function () { return { ok: r.ok }; }); })
+        .then(function (data) {
+          if (data && data.ok) {
+            form.reset();
+            setStatus("You're on the list — thank you! We'll email your private Play test link when the closed test opens. 🙏", 'ok');
+          } else {
+            setStatus((data && data.error) || 'Something went wrong. Please email support@sloom.studio and we’ll add you.', 'err');
+            btn.disabled = false;
+          }
+        })
+        .catch(function () {
+          setStatus('Network error. Please email support@sloom.studio and we’ll add you directly.', 'err');
+          btn.disabled = false;
+        });
+    });
+  })();
+</script>
+
+</body>
+</html>

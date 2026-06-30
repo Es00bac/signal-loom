@@ -6,12 +6,14 @@ import { resolveRetouchTargetLayer } from './retouchTargetLayer';
 import { recordStrokePaint } from '../imageStrokePerf';
 import { BrushStrokeController } from '../../../lib/brushEngine';
 import { createRetouchStrokeController } from './retouchBrushEngine';
-import type { ToolHandler } from './types';
+import { brushStraightLineStart, recordBrushStrokeAnchor } from './brushLineAnchor';
+import type { Point, ToolHandler } from './types';
 
 interface SmudgeBrushStroke {
   layerId: string;
   bitmapBefore: OffscreenCanvas;
   controller: BrushStrokeController;
+  lastDocPoint: Point;
 }
 
 let stroke: SmudgeBrushStroke | null = null;
@@ -136,13 +138,29 @@ export const smudgeBrushReadinessDescriptor = describeSmudgeBrushReadiness();
 export const smudgeBrushFinishingReadinessSignature = smudgeBrushReadinessDescriptor.actionReadiness.signature;
 
 export const smudgeBrushTool: ToolHandler = {
-  onPointerDown(env, point) {
+  onPointerDown(env, point, mods) {
     const layer = resolveRetouchTargetLayer(env, point);
     if (!canEditImageLayerPixels(layer) || !layer?.bitmap) return;
     const bitmapBefore = cloneBitmap(layer.bitmap);
     const controller = createRetouchStrokeController(env, layer, bitmapBefore, 'smudge');
-    controller.anchor({ x: point.x - layer.x, y: point.y - layer.y });
-    stroke = { layerId: layer.id, bitmapBefore, controller };
+    // Shift straight-line: anchor at the previous stroke's end and drag to here, smudging a
+    // connecting line. Without Shift we just anchor at the press point (smudge dabs on move).
+    const lineStart = brushStraightLineStart('smudgeBrush', env.doc.id, mods) ?? point;
+    controller.anchor({ x: lineStart.x - layer.x, y: lineStart.y - layer.y });
+    stroke = { layerId: layer.id, bitmapBefore, controller, lastDocPoint: point };
+    if (lineStart !== point) {
+      controller.moveTo({ x: point.x - layer.x, y: point.y - layer.y });
+      const dirty = controller.previewInto(layer.bitmap);
+      if (dirty) {
+        env.markDirty?.({
+          x: dirty.x + layer.x,
+          y: dirty.y + layer.y,
+          width: dirty.width,
+          height: dirty.height,
+        });
+      }
+      env.requestRender();
+    }
   },
 
   onPointerMove(env, point) {
@@ -151,6 +169,7 @@ export const smudgeBrushTool: ToolHandler = {
     if (!layer?.bitmap) return;
     const startedAt = performance.now();
     stroke.controller.moveTo({ x: point.x - layer.x, y: point.y - layer.y });
+    stroke.lastDocPoint = point;
     const dirty = stroke.controller.previewInto(layer.bitmap);
     // Bound the recomposite to the touched region (dirty-rect), like the brush — instead of a full
     // document recomposite every move. layer-local rect → document space for the renderer.
@@ -168,6 +187,7 @@ export const smudgeBrushTool: ToolHandler = {
 
   onPointerUp(env) {
     if (!stroke) return;
+    recordBrushStrokeAnchor('smudgeBrush', env.doc.id, stroke.lastDocPoint);
     const layer = env.doc.layers.find((candidate) => candidate.id === stroke?.layerId);
     if (layer?.bitmap) {
       stroke.controller.commit(layer.bitmap);

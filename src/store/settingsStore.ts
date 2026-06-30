@@ -1,5 +1,17 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
+import {
+  decryptSecret,
+  encryptSecret,
+  isEncryptedSecretEnvelope,
+  isSecretEncryptionActive,
+} from '../lib/secretCipher';
+import {
+  decryptSettingsBackup,
+  encryptSettingsBackup,
+  isSettingsBackupSupported,
+  SettingsBackupError,
+} from '../lib/settingsBackup';
 import { DEFAULT_INTERFACE_THEME_ID, resolveInterfaceTheme } from '../lib/interfaceThemes';
 import { sanitizeKeyboardShortcutMap, type KeyboardShortcutMap } from '../lib/keyboardShortcuts';
 import {
@@ -28,8 +40,15 @@ import {
 import type {
   ApiKeys,
   DefaultModelSettings,
+  ImageProvider,
   ProviderSettings,
 } from '../types/flow';
+
+/** The provider+model a new Image node starts on, when the user has pinned one as default. */
+export interface DefaultImageNodeModel {
+  provider: ImageProvider;
+  modelId: string;
+}
 
 const API_KEY_PROVIDERS = ['openai', 'gemini', 'huggingface', 'elevenlabs', 'bfl', 'stability', 'atlas'] as const;
 type ApiKeyProvider = (typeof API_KEY_PROVIDERS)[number];
@@ -42,6 +61,7 @@ const API_KEY_REDACTION = '[redacted]';
 const SETTINGS_STORAGE_KEY = 'flow-settings-storage';
 const LOCAL_STORAGE_CAVEAT = 'API keys are stored in browser localStorage without at-rest encryption in this app.';
 const MEMORY_ONLY_CAVEAT = 'API keys are currently not persisted to browser storage in this session.';
+const ENCRYPTED_CAVEAT = 'API keys are encrypted at rest (the OS keychain on desktop, WebCrypto on web and mobile) and only decrypted in memory while the app is open.';
 
 const API_KEY_REDACTED_LABEL: ApiKeyValueMap = {
   openai: API_KEY_REDACTION,
@@ -60,19 +80,19 @@ export interface ApiKeyStorageDescriptor {
   configured: boolean;
   redacted: string;
   storageMedium: ApiKeyStorageMedium;
-  encryptedAtRest: false;
+  encryptedAtRest: boolean;
 }
 
 export interface ApiKeyStorageStatus {
-  encryptedAtRest: false;
+  encryptedAtRest: boolean;
   storageMedium: ApiKeyStorageMedium;
   browserStorageAvailable: boolean;
   caveat: string;
   descriptors: ApiKeyStorageDescriptorMap;
 }
 
-export function isApiKeyStorageEncryptedAtRest(): false {
-  return false;
+export function isApiKeyStorageEncryptedAtRest(): boolean {
+  return isSecretEncryptionActive();
 }
 
 export function getApiKeyStorageMedium(): ApiKeyStorageMedium {
@@ -80,7 +100,8 @@ export function getApiKeyStorageMedium(): ApiKeyStorageMedium {
 }
 
 export function getApiKeyStorageCaveat(storageMedium: ApiKeyStorageMedium = getApiKeyStorageMedium()): string {
-  return storageMedium === 'local-storage' ? LOCAL_STORAGE_CAVEAT : MEMORY_ONLY_CAVEAT;
+  if (storageMedium === 'memory-only') return MEMORY_ONLY_CAVEAT;
+  return isSecretEncryptionActive() ? ENCRYPTED_CAVEAT : LOCAL_STORAGE_CAVEAT;
 }
 
 export function sanitizePersistedApiKeys(input: unknown): ApiKeys {
@@ -93,6 +114,7 @@ export function sanitizePersistedApiKeys(input: unknown): ApiKeys {
     bfl: '',
     stability: '',
     atlas: '',
+    byteplus: '',
   };
 
   for (const provider of API_KEY_PROVIDERS) {
@@ -120,6 +142,7 @@ export function redactApiKeysForDiagnostics(apiKeys: ApiKeys): ApiKeyValueMap {
 export function getApiKeyStorageStatus(apiKeys: ApiKeys): ApiKeyStorageStatus {
   const storageMedium = getApiKeyStorageMedium();
   const browserStorageAvailable = storageMedium === 'local-storage';
+  const encryptedAtRest = isSecretEncryptionActive();
   const descriptors: ApiKeyStorageDescriptorMap = {} as ApiKeyStorageDescriptorMap;
 
   for (const provider of API_KEY_PROVIDERS) {
@@ -129,12 +152,12 @@ export function getApiKeyStorageStatus(apiKeys: ApiKeys): ApiKeyStorageStatus {
       configured: hasValue,
       redacted: hasValue ? API_KEY_REDACTION : '',
       storageMedium,
-      encryptedAtRest: false,
+      encryptedAtRest,
     };
   }
 
   return {
-    encryptedAtRest: false,
+    encryptedAtRest,
     storageMedium,
     browserStorageAvailable,
     caveat: getApiKeyStorageCaveat(storageMedium),
@@ -167,7 +190,12 @@ function buildRedactedApiKeys(apiKeys: ApiKeys): ApiKeyValueMap {
   };
 }
 
-interface SettingsState {
+/**
+ * The user-meaningful slice of settings carried in an encrypted backup — everything worth restoring
+ * after a reinstall/profile loss, including the bring-your-own-key API tokens and provider credentials.
+ * The ephemeral UI flags (isSettingsOpen / settingsPanel) are intentionally excluded.
+ */
+export interface SettingsBackupData {
   apiKeys: ApiKeys;
   defaultModels: DefaultModelSettings;
   providerSettings: ProviderSettings;
@@ -176,6 +204,27 @@ interface SettingsState {
   gamepadBindings: GamepadBindingProfile;
   customBrushPresets: ImageBrushPreset[];
   customCropPresets: CropCustomPreset[];
+}
+
+/** Desktop integrated app-menu presentation: a single ☰ button, or a classic horizontal menu bar. */
+export type AppMenuStyle = 'compact' | 'menubar';
+
+interface SettingsState {
+  apiKeys: ApiKeys;
+  defaultModels: DefaultModelSettings;
+  providerSettings: ProviderSettings;
+  interfaceThemeId: string;
+  /** Desktop integrated-menu presentation: 'compact' (single ☰) or 'menubar' (classic File/Edit/… row). */
+  appMenuStyle: AppMenuStyle;
+  keyboardShortcuts: KeyboardShortcutMap;
+  gamepadBindings: GamepadBindingProfile;
+  customBrushPresets: ImageBrushPreset[];
+  customCropPresets: CropCustomPreset[];
+  /** Encrypt the current settings (keys + credentials) into a portable, passphrase-locked backup blob. */
+  exportSettingsBackup: (passphrase: string) => Promise<string>;
+  /** Decrypt + restore a settings backup blob produced by exportSettingsBackup. */
+  importSettingsBackup: (envelopeText: string, passphrase: string) => Promise<void>;
+  settingsBackupSupported: boolean;
   setApiKey: (provider: keyof ApiKeys, key: string) => void;
   setDefaultModel: <
     TCategory extends keyof DefaultModelSettings,
@@ -185,8 +234,12 @@ interface SettingsState {
     provider: TProvider,
     value: string,
   ) => void;
+  /** The provider+model new Image nodes start on (pinned via the node's "default" checkbox); null = built-in. */
+  defaultImageNodeModel: DefaultImageNodeModel | null;
+  setDefaultImageNodeModel: (value: DefaultImageNodeModel | null) => void;
   setProviderSetting: <TKey extends keyof ProviderSettings>(key: TKey, value: ProviderSettings[TKey]) => void;
   setInterfaceThemeId: (themeId: string) => void;
+  setAppMenuStyle: (style: AppMenuStyle) => void;
   setKeyboardShortcut: (command: NativeMenuCommand, shortcut: string) => void;
   resetKeyboardShortcuts: () => void;
   setGamepadBinding: (workspace: GamepadWorkspace, controlId: GamepadControlId, patch: Partial<GamepadControlBinding>) => void;
@@ -214,11 +267,65 @@ const INITIAL_API_KEYS: ApiKeys = {
   atlas: '',
 };
 
+/**
+ * Persist storage that encrypts the serialized settings blob at rest (see secretCipher) and migrates
+ * any pre-existing plaintext on first read. Decryption happens in memory during hydration; the value
+ * on disk (localStorage) is opaque ciphertext.
+ */
+function createEncryptedSettingsStorage(): StateStorage {
+  const backing = (): Storage | null => {
+    try {
+      return typeof window !== 'undefined' && window.localStorage ? window.localStorage : null;
+    } catch {
+      return null;
+    }
+  };
+  return {
+    getItem: async (name) => {
+      const store = backing();
+      if (!store) return null;
+      const raw = store.getItem(name);
+      if (raw == null) return null;
+      if (isEncryptedSecretEnvelope(raw)) {
+        // null => can't decrypt (e.g. profile copied to another machine) -> hydrate from defaults.
+        return await decryptSecret(raw);
+      }
+      // Legacy plaintext from before encryption shipped: use it, then re-write it encrypted.
+      void encryptSecret(raw).then((envelope) => {
+        try {
+          backing()?.setItem(name, envelope);
+        } catch {
+          /* ignore */
+        }
+      });
+      return raw;
+    },
+    setItem: async (name, value) => {
+      const store = backing();
+      if (!store) return;
+      const envelope = await encryptSecret(value);
+      try {
+        store.setItem(name, envelope);
+      } catch {
+        /* quota / availability */
+      }
+    },
+    removeItem: (name) => {
+      try {
+        backing()?.removeItem(name);
+      } catch {
+        /* ignore */
+      }
+    },
+  };
+}
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       apiKeys: INITIAL_API_KEYS,
       defaultModels: DEFAULT_MODELS,
+      defaultImageNodeModel: null,
       providerSettings: {
         openaiBaseUrl: DEFAULT_PROVIDER_SETTINGS.openaiBaseUrl,
         atlasBaseUrl: DEFAULT_PROVIDER_SETTINGS.atlasBaseUrl,
@@ -251,8 +358,11 @@ export const useSettingsStore = create<SettingsState>()(
         androidAcceleratorDefaultImageModel: DEFAULT_PROVIDER_SETTINGS.androidAcceleratorDefaultImageModel,
         batchMaxRetries: DEFAULT_PROVIDER_SETTINGS.batchMaxRetries,
         batchRetryBaseDelayMs: DEFAULT_PROVIDER_SETTINGS.batchRetryBaseDelayMs,
+        androidLanServerEnabled: DEFAULT_PROVIDER_SETTINGS.androidLanServerEnabled,
+        androidLanServerPin: DEFAULT_PROVIDER_SETTINGS.androidLanServerPin,
       },
       interfaceThemeId: DEFAULT_INTERFACE_THEME_ID,
+      appMenuStyle: 'compact',
       keyboardShortcuts: {},
       gamepadBindings: createDefaultGamepadBindings(),
       customBrushPresets: [],
@@ -271,6 +381,7 @@ export const useSettingsStore = create<SettingsState>()(
             },
           },
         })),
+      setDefaultImageNodeModel: (value) => set({ defaultImageNodeModel: value }),
       setProviderSetting: (key, value) =>
         set((state) => ({
           providerSettings: {
@@ -280,6 +391,8 @@ export const useSettingsStore = create<SettingsState>()(
         })),
       setInterfaceThemeId: (themeId) =>
         set({ interfaceThemeId: resolveInterfaceTheme(themeId).id }),
+      setAppMenuStyle: (style) =>
+        set({ appMenuStyle: style === 'menubar' ? 'menubar' : 'compact' }),
       setKeyboardShortcut: (command, shortcut) =>
         set((state) => ({
           keyboardShortcuts: sanitizeKeyboardShortcutMap({
@@ -341,6 +454,35 @@ export const useSettingsStore = create<SettingsState>()(
         set((state) => ({
           customCropPresets: state.customCropPresets.filter((preset) => preset.id !== id),
         })),
+      exportSettingsBackup: async (passphrase) => {
+        const state = get();
+        const data: SettingsBackupData = {
+          apiKeys: { ...state.apiKeys },
+          defaultModels: state.defaultModels,
+          providerSettings: state.providerSettings,
+          interfaceThemeId: state.interfaceThemeId,
+          keyboardShortcuts: state.keyboardShortcuts,
+          gamepadBindings: state.gamepadBindings,
+          customBrushPresets: state.customBrushPresets,
+          customCropPresets: state.customCropPresets,
+        };
+        return encryptSettingsBackup(JSON.stringify(data), passphrase);
+      },
+      importSettingsBackup: async (envelopeText, passphrase) => {
+        const plaintext = await decryptSettingsBackup(envelopeText, passphrase);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(plaintext);
+        } catch {
+          // Decryption succeeded but the payload wasn't JSON — a corrupted or tampered backup.
+          throw new SettingsBackupError('decrypt-failed', 'The backup contents were unreadable.');
+        }
+        // The sanitizers below defend every field, so the structural cast is safe even on a
+        // hand-edited or corrupt payload (same trust model as the persist `merge` above).
+        const data = (isRecord(parsed) ? parsed : {}) as Partial<SettingsBackupData>;
+        set((current) => mergeSettingsBackupData(current, data));
+      },
+      settingsBackupSupported: isSettingsBackupSupported(),
       isSettingsOpen: false,
       settingsPanel: 'providers',
       openSettings: (panel = 'providers') => set({ isSettingsOpen: true, settingsPanel: panel }),
@@ -349,6 +491,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: SETTINGS_STORAGE_KEY,
+      storage: createJSONStorage(() => createEncryptedSettingsStorage()),
       merge: (persistedState, currentState) => {
         const typedPersistedState = persistedState as Partial<SettingsState> | undefined;
         const persistedApiKeys = sanitizePersistedApiKeys(typedPersistedState?.apiKeys);
@@ -424,6 +567,7 @@ export const useSettingsStore = create<SettingsState>()(
             ...(localOpenImageAuthHeader ? { localOpenImageAuthHeader } : {}),
           },
           interfaceThemeId: resolveInterfaceTheme(typedPersistedState?.interfaceThemeId).id,
+          appMenuStyle: typedPersistedState?.appMenuStyle === 'menubar' ? 'menubar' : 'compact',
           keyboardShortcuts: sanitizeKeyboardShortcutMap(typedPersistedState?.keyboardShortcuts ?? {}),
           gamepadBindings: normalizeGamepadBindings(typedPersistedState?.gamepadBindings),
           customBrushPresets: sanitizeUserBrushPresets(typedPersistedState?.customBrushPresets),
@@ -436,6 +580,43 @@ export const useSettingsStore = create<SettingsState>()(
     },
   ),
 );
+
+/**
+ * Sanitize + merge a decrypted settings-backup payload onto the current state. Mirrors the persist
+ * `merge` config so an imported backup is validated exactly like a rehydrated profile: unknown
+ * providers/shortcuts/presets are dropped, the theme falls back to a known one, and credentials layer
+ * over the current values rather than wiping them.
+ */
+function mergeSettingsBackupData(
+  current: SettingsState,
+  data: Partial<SettingsBackupData>,
+): Partial<SettingsState> {
+  return {
+    apiKeys: {
+      ...current.apiKeys,
+      ...sanitizePersistedApiKeys(data.apiKeys),
+    },
+    defaultModels: {
+      text: { ...current.defaultModels.text, ...data.defaultModels?.text },
+      image: { ...current.defaultModels.image, ...data.defaultModels?.image },
+      video: { ...current.defaultModels.video, ...data.defaultModels?.video },
+      audio: { ...current.defaultModels.audio, ...data.defaultModels?.audio },
+    },
+    providerSettings: {
+      ...current.providerSettings,
+      ...(isRecord(data.providerSettings) ? data.providerSettings : {}),
+    },
+    interfaceThemeId: resolveInterfaceTheme(
+      typeof data.interfaceThemeId === 'string' ? data.interfaceThemeId : undefined,
+    ).id,
+    keyboardShortcuts: sanitizeKeyboardShortcutMap(
+      isRecord(data.keyboardShortcuts) ? data.keyboardShortcuts : {},
+    ),
+    gamepadBindings: normalizeGamepadBindings(data.gamepadBindings),
+    customBrushPresets: sanitizeUserBrushPresets(data.customBrushPresets),
+    customCropPresets: sanitizeCropPresets(data.customCropPresets),
+  };
+}
 
 const IMAGE_BUILT_IN_BRUSH_IDS = new Set<string>([
   'pencil',

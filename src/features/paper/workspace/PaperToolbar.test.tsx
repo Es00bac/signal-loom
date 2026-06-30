@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PaperMobileEdgeShell, PaperToolbar, PaperTopStrip } from './PaperWorkspace';
+import { PAPER_TOOL_DEFINITIONS } from './paperToolRegistry';
 import type { PaperTool } from '../../../types/paper';
 
 let mountedRoot: Root | null = null;
@@ -78,6 +79,46 @@ describe('PaperToolbar', () => {
     expect(html).toContain('aria-label="Frame stroke color"');
     expect(html).not.toContain('gap-2');
     expect(html).not.toContain('rounded-lg');
+  });
+
+  it('gives every tool a visually distinct icon (no two tools share a glyph)', () => {
+    const noop = () => {};
+    const html = renderToStaticMarkup(
+      <PaperToolbar
+        activeTool="select"
+        canPasteStyle={false}
+        onAddComicSfx={noop}
+        onAddFrame={noop}
+        onCopy={noop}
+        onCopyStyle={noop}
+        onCut={noop}
+        onPaste={noop}
+        onPasteStyle={noop}
+        onRedo={noop}
+        onSetTool={noop}
+        onUndo={noop}
+      />,
+    );
+    const doc = document.createElement('div');
+    doc.innerHTML = html;
+
+    const iconByTool = new Map<string, string>();
+    for (const definition of PAPER_TOOL_DEFINITIONS) {
+      const button = doc.querySelector(`button[aria-label="${definition.label}"]`);
+      expect(button, `no toolbar button for ${definition.tool}`).not.toBeNull();
+      const svg = button!.querySelector('svg');
+      expect(svg, `no icon svg for ${definition.tool}`).not.toBeNull();
+      const signature = Array.from(svg!.classList)
+        .filter((cls) => cls.startsWith('lucide-'))
+        .sort()
+        .join(' ');
+      expect(signature, `no lucide icon class for ${definition.tool}`).toBeTruthy();
+      iconByTool.set(definition.tool, signature);
+    }
+
+    const distinct = new Set(iconByTool.values());
+    expect(distinct.size, `shared icons across tools: ${JSON.stringify([...iconByTool])}`)
+      .toBe(iconByTool.size);
   });
 
   it('activates Paper tools from primary pointer release without relying on synthesized click', () => {

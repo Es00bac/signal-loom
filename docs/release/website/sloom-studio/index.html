@@ -224,6 +224,7 @@
     <a href="#android">Android</a>
     <a href="docs.html">Docs</a>
     <a href="examples.html">Examples</a>
+    <a href="changelog.html">Changelog</a>
   </nav>
   <a class="btn btn-primary" href="#license">Get it — $9.99</a>
 </div></header>
@@ -329,11 +330,11 @@
   <p class="sub">A full layered raster editor with a real pressure-, tilt-, and rotation-sensitive brush engine — then mask a region, describe the change, and let a model render it in place. One canvas does both.</p>
   <div class="shots">
     <figure>
-      <img src="assets/screenshots/image-brush-engine.png" alt="The Signal Loom brush engine: a hand-painted portrait beside the sketch it grew from" loading="lazy" />
+      <img src="assets/screenshots/desktop-image-hero.png" alt="The Signal Loom Image workspace: a hand-painted figure on the canvas with the brush palette open" loading="lazy" />
       <figcaption>
         <b>The brush engine</b>
-        <span class="cap">Pressure, tilt, and rotation response with foreground-to-background colour dynamics and a live 3D tip preview — built for an S&nbsp;Pen or any Wacom-protocol stylus.</span>
-        <div class="tagrow"><em>Pressure + tilt</em><em>Layers &amp; masks</em><em>Stylus-native</em></div>
+        <span class="cap">Pressure, tilt, and rotation response with foreground-to-background colour dynamics and a live 3D tip preview — built for an S&nbsp;Pen or any Wacom-protocol stylus. Hold <b>Shift</b> for straight lines; <b>Alt-click</b> to set a heal/clone source.</span>
+        <div class="tagrow"><em>Pressure + tilt</em><em>Shift-lines &amp; healing</em><em>Stylus-native</em></div>
       </figcaption>
     </figure>
     <figure>
@@ -362,14 +363,14 @@
       <div class="balabel bl3"><b>3</b> AI-coloured · Atlas Wan 2.7</div>
     </div></div>
     <div>
-      <h3 style="font-size:1.25rem;margin:0 0 8px">Your phone serves the desktop app</h3>
-      <p style="color:var(--ink-2);margin:0 0 18px">Turn on the LAN host and your phone serves the full desktop interface to any browser on your network — open the studio on a PC, driven by the device in your hand.</p>
+      <h3 style="font-size:1.25rem;margin:0 0 8px">One project, two screens, live</h3>
+      <p style="color:var(--ink-2);margin:0 0 18px">Turn on the LAN host and your phone serves the full desktop interface to any browser on your network. It's the <em>same</em> project, syncing both ways — and a one-tap <b>Working&nbsp;here&nbsp;⇄&nbsp;Phone</b> baton hands the edit lock between devices so the two screens never collide.</p>
       <div class="diagram"><div class="flowline">
-        <div class="node"><b>Phone</b>hosts the build</div>
-        <span class="arrow">──▶</span>
+        <div class="node"><b>Phone</b>hosts &amp; holds the project</div>
+        <span class="arrow">◀──▶</span>
         <div class="node"><b>LAN</b>:8723</div>
-        <span class="arrow">──▶</span>
-        <div class="node"><b>PC browser</b>full desktop UI</div>
+        <span class="arrow">◀──▶</span>
+        <div class="node"><b>PC browser</b>same live project</div>
       </div></div>
     </div>
   </div>
@@ -454,33 +455,13 @@
     <a class="buy" href="https://buy.stripe.com/cNi4gz2pA3p525p6br7Re01"><span class="lab">Name your price</span><span class="amt">Pay what it's worth to you (from $1)</span></a>
   </div>
 
-  <details class="free">
-    <summary>Can't pay right now? You can still get the desktop builds free →</summary>
-    <div class="freebox">
-      No judgment, truly — Signal Loom is free if you need it to be. If it earns a place in your toolkit, even a dollar later means a lot to a one-person studio. If you can chip in anything now, it's what keeps this alive:
-      <div class="row">
-        <a class="btn btn-primary" href="https://buy.stripe.com/cNi4gz2pA3p525p6br7Re01" style="justify-content:center">Pay any amount</a>
-      </div>
-      <details class="free">
-        <summary>No thanks — just take me to the free downloads →</summary>
-        <div class="freebox">
-          <div class="dl">
-            <div class="dlcard"><small>Windows 10 / 11</small><b>Installer (.exe)</b><span class="meta">NSIS installer, 64-bit. ~148&nbsp;MB.</span><a class="get" href="/downloads/SignalLoom-Setup-0.9.1.exe" download>Download for Windows</a></div>
-            <div class="dlcard"><small>Any Linux</small><b>AppImage</b><span class="meta">Portable — <code>chmod +x</code> and run. ~171&nbsp;MB.</span><a class="get" href="/downloads/SignalLoom-0.9.1.AppImage" download>Download AppImage</a></div>
-            <div class="dlcard"><small>Debian / Ubuntu</small><b>Package (.deb)</b><span class="meta">Installs via apt / dpkg. ~127&nbsp;MB.</span><a class="get" href="/downloads/SignalLoom-0.9.1-amd64.deb" download>Download .deb</a></div>
-          </div>
-          <div class="exp"><b>On a Mac?</b> No native Mac build yet (it needs a signed build on Apple hardware — coming later). You can run Signal Loom in the browser or from source — see the <a href="docs.html" style="color:var(--cyan)">docs</a> — but treat the macOS route as <b>experimental and untested</b>.</div>
-          <p class="dlnote">First launch, Windows SmartScreen may warn the publisher is unverified — normal for an indie app without a paid signing certificate; choose <em>More info → Run anyway</em>. On Linux, <code>chmod +x</code> the AppImage. Verify downloads with the <a href="/downloads/SHA256SUMS.txt" style="color:var(--cyan)">SHA-256 checksums</a>. Bring-your-own-key — Signal&nbsp;Loom never sees your keys or your work. Anything misbehaves → <a href="mailto:support@sloom.studio" style="color:var(--cyan)">support@sloom.studio</a>.</p>
-        </div>
-      </details>
-    </div>
-  </details>
+  <p style="margin-top:20px;font-size:.86rem;color:var(--ink-3)">Signal Loom is source-available. Prefer to build it yourself or grab a free community build? It's all on <a href="https://github.com/Es00bac/signal-loom" style="color:var(--ink-2)">GitHub</a> — no judgment.</p>
 </div></section>
 
 <footer><div class="wrap">
   <span>© 2026 Signal Loom · A studio for generative media</span>
   <nav>
-    <a href="docs.html">Docs</a><a href="examples.html">Examples</a><a href="privacy.html">Privacy</a>
+    <a href="docs.html">Docs</a><a href="examples.html">Examples</a><a href="changelog.html">Changelog</a><a href="privacy.html">Privacy</a><a href="https://github.com/Es00bac/signal-loom">GitHub</a>
     <a href="mailto:support@sloom.studio">support@sloom.studio</a>
   </nav>
 </div></footer>

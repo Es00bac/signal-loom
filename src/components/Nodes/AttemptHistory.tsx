@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import { Archive, Music, Type } from 'lucide-react';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
+import { fetchRemoteHostSourceAssetDataUrl, isServedLanSession } from '../../lib/remoteHostClient';
 import type { NodeResultAttempt } from '../../types/flow';
 
 interface AttemptHistoryProps {
@@ -15,6 +17,53 @@ export function AttemptHistory({
   onSelectAttempt,
   onAssignVariable,
 }: AttemptHistoryProps) {
+  // Each attempt's `result` is the phone-local source-bin asset URL — unfetchable from a served browser.
+  // On a served session, resolve image/video thumbnails out-of-band by the attempt's `sourceBinItemId`
+  // (the universal `/source-asset/:id` path) and render those instead of broken thumbnails.
+  const [resolvedThumbs, setResolvedThumbs] = useState<Record<string, string>>({});
+
+  const servedSession = isServedLanSession();
+  const resolvableKey = servedSession
+    ? attempts
+        .filter((attempt) => attempt.resultType === 'image' || attempt.resultType === 'video')
+        .map((attempt) => `${attempt.id}:${attempt.sourceBinItemId ?? ''}`)
+        .join('|')
+    : '';
+
+  useEffect(() => {
+    if (!servedSession) {
+      setResolvedThumbs((current) => (Object.keys(current).length === 0 ? current : {}));
+      return;
+    }
+
+    let cancelled = false;
+    const targets = attempts.filter(
+      (attempt) =>
+        (attempt.resultType === 'image' || attempt.resultType === 'video') &&
+        typeof attempt.sourceBinItemId === 'string' &&
+        attempt.sourceBinItemId.length > 0,
+    );
+
+    void Promise.all(
+      targets.map(async (attempt) => {
+        const url = await fetchRemoteHostSourceAssetDataUrl(attempt.sourceBinItemId as string);
+        return url ? ([attempt.id, url] as const) : null;
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      const next: Record<string, string> = {};
+      for (const entry of entries) {
+        if (entry) next[entry[0]] = entry[1];
+      }
+      setResolvedThumbs(next);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [servedSession, resolvableKey]);
+
   if (attempts.length === 0 || (!onSelectAttempt && !onAssignVariable)) {
     return null;
   }
@@ -43,7 +92,7 @@ export function AttemptHistory({
                   title={`Run ${index + 1} · ${new Date(attempt.createdAt).toLocaleString()}`}
                   type="button"
                 >
-                  {renderAttemptPreview(attempt, index)}
+                  {renderAttemptPreview(attempt, index, resolvedThumbs[attempt.id])}
                 </button>
               );
             })}
@@ -65,9 +114,11 @@ export function AttemptHistory({
   );
 }
 
-function renderAttemptPreview(attempt: NodeResultAttempt, index: number) {
+function renderAttemptPreview(attempt: NodeResultAttempt, index: number, resolvedThumb?: string) {
+  const previewSrc = resolvedThumb ?? attempt.result;
+
   if (attempt.resultType === 'image') {
-    return <img alt={`Run ${index + 1}`} className="h-full w-full object-cover" src={attempt.result} />;
+    return <img alt={`Run ${index + 1}`} className="h-full w-full object-cover" src={previewSrc} />;
   }
 
   if (attempt.resultType === 'video') {
@@ -77,7 +128,7 @@ function renderAttemptPreview(attempt: NodeResultAttempt, index: number) {
         muted
         playsInline
         preload="metadata"
-        src={attempt.result}
+        src={previewSrc}
       />
     );
   }

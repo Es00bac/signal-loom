@@ -53,6 +53,9 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 const track = String(args.track || 'internal');
+const releaseNotes = typeof args.notes === 'string'
+  ? args.notes
+  : 'Initial release of Signal Loom — local-first AI media suite: Flow, Image, Video, Paper.';
 const keyPath = process.env.PLAY_SA_KEY || args.key;
 const aabPath = resolve(String(args.aab || 'android/app/build/outputs/bundle/release/app-release.aab'));
 
@@ -100,7 +103,7 @@ try {
         versionCodes: [String(versionCode)],
         releaseNotes: [{
           language: 'en-US',
-          text: 'Initial release of Signal Loom — local-first AI media suite: Flow, Image, Video, Paper.',
+          text: releaseNotes,
         }],
       }],
     },

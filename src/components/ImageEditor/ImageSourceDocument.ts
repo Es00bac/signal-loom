@@ -4,6 +4,10 @@ import type { ImageDocument, ImageLayer, LayerBitmap } from '../../types/imageEd
 import { bitmapFromUrl, createBitmap, fillBitmap } from './LayerBitmap';
 import { getImageClipboardBitmap } from './ImageEditorClipboard';
 import { getSignalLoomNativeBridge } from '../../lib/nativeApp';
+import { isRemoteLanClient } from '../../lib/projectLibrary';
+import { loadImportedAssetRecord, materializeStoredAssetPayload } from '../../lib/assetStore';
+import { parseSignalLoomAssetId } from '../../lib/signalLoomAssetUrl';
+import { fetchRemoteHostSourceAssetDataUrl } from '../../lib/remoteHostClient';
 import {
   CAMERA_RAW_SUPPORTED_HANDOFF_FORMATS,
   describeCameraRawDevelopFirstMetadata,
@@ -1440,6 +1444,44 @@ export async function createImageDocumentFromFile(
   return createRasterImageDocumentFromBlob(file, params, policyDescription.warnings);
 }
 
+/**
+ * Resolve a directly fetchable URL for a source item's image bytes.
+ *
+ * In a served LAN (phone-host) session the synced item's `assetUrl` is a phone-local URL
+ * (`blob:` / `signal-loom-asset://`) that the served desktop browser cannot reach — a raw
+ * `fetch()` of it throws "NetworkError when attempting to fetch resource". Route through the
+ * authenticated host API instead and hand back a same-origin data URL.
+ *
+ * Primary path: {@link fetchRemoteHostSourceAssetDataUrl} asks the host to resolve the item by its
+ * source-item id through the universal `loadItemAsDataUrl`, so it serves *every* backing the phone
+ * knows — native-file- and scratch-backed items included, which carry no `assetId` and so could never
+ * be reached via `/asset/:id`. That is the actual fix for the open-NetworkError. The `/asset/:id`
+ * lookup (via {@link loadImportedAssetRecord}) is kept as a fallback for IndexedDB/assetId-backed items
+ * and for older hosts that predate the `/source-asset/:id` endpoint. Desktop / Electron / native
+ * sessions are not remote LAN clients, so they fall straight through to the item's own `assetUrl`.
+ */
+async function resolveSourceItemFetchUrl(item: SourceBinLibraryItem): Promise<string | undefined> {
+  if (isRemoteLanClient()) {
+    try {
+      const hosted = await fetchRemoteHostSourceAssetDataUrl(item.id);
+      if (hosted) return hosted;
+    } catch {
+      // Fall through to the assetId / item.assetUrl paths below.
+    }
+    const lookupId = item.assetId ?? parseSignalLoomAssetId(item.assetUrl);
+    if (lookupId) {
+      try {
+        const record = await loadImportedAssetRecord(lookupId);
+        const payload = record ? materializeStoredAssetPayload(record) : undefined;
+        if (payload?.dataUrl) return payload.dataUrl;
+      } catch {
+        // Fall through to the item's own assetUrl below.
+      }
+    }
+  }
+  return item.assetUrl;
+}
+
 export async function createImageDocumentFromSourceItem(
   item: SourceBinLibraryItem,
   options: CreateSourceImageDocumentOptions = {},
@@ -1447,8 +1489,11 @@ export async function createImageDocumentFromSourceItem(
   const shell = createSourceBackedImageDocumentShell(item, options);
   if (item.kind !== 'image' || !item.assetUrl) return shell;
 
+  const fetchUrl = await resolveSourceItemFetchUrl(item);
+  if (!fetchUrl) return shell;
+
   if (!options.loadBitmap) {
-    const response = await fetch(item.assetUrl);
+    const response = await fetch(fetchUrl);
     if (!response.ok) throw new Error(`Failed to fetch image source: ${response.status} ${response.statusText}`);
     const blob = await response.blob();
     const buffer = await blob.arrayBuffer();
@@ -1474,7 +1519,7 @@ export async function createImageDocumentFromSourceItem(
     return createRasterImageDocumentFromBlob(blob, params, policyDescription.warnings);
   }
 
-  const bitmap = await (options.loadBitmap ?? bitmapFromUrl)(item.assetUrl);
+  const bitmap = await (options.loadBitmap ?? bitmapFromUrl)(fetchUrl);
   const layer: ImageLayer = {
     id: `layer-${sanitizeSourceId(item.id)}`,
     name: item.label ?? 'Background',
@@ -1511,7 +1556,8 @@ export async function loadSourceLinkedLayerBitmap(
   if (item.kind !== 'image' || !item.assetUrl) {
     throw new Error('Source-linked layer can only update from an image Source Bin item with an asset URL.');
   }
-  return loadBitmap(item.assetUrl);
+  const fetchUrl = (await resolveSourceItemFetchUrl(item)) ?? item.assetUrl;
+  return loadBitmap(fetchUrl);
 }
 
 export function replaceSourceLinkedLayerBitmap(

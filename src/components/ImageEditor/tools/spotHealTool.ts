@@ -12,6 +12,7 @@ import {
 import { canEditImageLayerPixels } from '../../../lib/imageLayerLocks';
 import { DEFAULT_RETOUCH_TOOL_SETTINGS } from '../../../types/imageEditor';
 import { resolveRetouchTargetLayer } from './retouchTargetLayer';
+import { brushStraightLineStart, recordBrushStrokeAnchor } from './brushLineAnchor';
 import type { Point, ToolEnv, ToolHandler } from './types';
 
 interface SpotHealStroke {
@@ -19,8 +20,15 @@ interface SpotHealStroke {
   bitmapBefore: OffscreenCanvas;
   sampleSource: RetouchSampleSource;
   lastPoint: Point;
+  /** Document-space healing-brush source (Alt set), or null for in-place spot-heal sampling. */
+  healSource: Point | null;
+  strokeStart: Point;
 }
 
+// Healing-brush mode: Alt+click sets an explicit source point (Photoshop's healing brush). When no
+// source is set the tool behaves as the spot-healing brush, sampling the target's own neighbourhood.
+let healSourcePoint: Point | null = null;
+let healAlignedOffset: Point | null = null;
 let stroke: SpotHealStroke | null = null;
 
 export const spotHealWorkflowCapabilityDescriptor = describeSpotHealToolWorkflow({
@@ -48,11 +56,26 @@ export const spotHealRouteSupportDescriptor = describeRetouchBrushRouteSupport({
 });
 
 export const spotHealTool: ToolHandler = {
-  onPointerDown(env, point) {
+  onPointerDown(env, point, mods) {
+    // Alt sets the healing-brush source point (Photoshop convention); it persists until re-set.
+    if (mods.alt) {
+      healSourcePoint = point;
+      healAlignedOffset = null;
+      return;
+    }
+
     const layer = resolveRetouchTargetLayer(env, point);
     if (!canEditImageLayerPixels(layer) || !layer?.bitmap) return;
     const bitmapBefore = cloneBitmap(layer.bitmap);
     const settings = env.retouchToolSettings ?? DEFAULT_RETOUCH_TOOL_SETTINGS;
+    // Shift straight-line: heal a straight segment from the previous stroke's end to this point.
+    const lineStart = brushStraightLineStart('spotHeal', env.doc.id, mods) ?? point;
+    if (healSourcePoint && settings.aligned && !healAlignedOffset) {
+      healAlignedOffset = {
+        x: healSourcePoint.x - lineStart.x,
+        y: healSourcePoint.y - lineStart.y,
+      };
+    }
     stroke = {
       layerId: layer.id,
       bitmapBefore,
@@ -62,9 +85,16 @@ export const spotHealTool: ToolHandler = {
         layerSnapshot: bitmapBefore,
         sampleMode: settings.sampleMode,
       }),
-      lastPoint: point,
+      lastPoint: lineStart,
+      healSource: healSourcePoint ? { x: healSourcePoint.x, y: healSourcePoint.y } : null,
+      strokeStart: lineStart,
     };
-    healAt(env, point);
+    if (lineStart !== point) {
+      healBetween(env, lineStart, point);
+    } else {
+      healAt(env, point);
+    }
+    stroke.lastPoint = point;
     env.requestRender({ invalidateBitmapCache: true });
   },
 
@@ -77,6 +107,7 @@ export const spotHealTool: ToolHandler = {
 
   onPointerUp(env) {
     if (!stroke) return;
+    recordBrushStrokeAnchor('spotHeal', env.doc.id, stroke.lastPoint);
     const layer = env.doc.layers.find((candidate) => candidate.id === stroke?.layerId);
     if (layer?.bitmap) {
       env.pushOperation({
@@ -121,11 +152,22 @@ function healAt(env: ToolEnv, targetPoint: Point): void {
   if (!stroke) return;
   const layer = env.doc.layers.find((candidate) => candidate.id === stroke?.layerId);
   if (!layer?.bitmap) return;
+  const settings = env.retouchToolSettings ?? DEFAULT_RETOUCH_TOOL_SETTINGS;
+  // Healing-brush mode (Alt source set): map the source by the stroke offset like the clone stamp.
+  // Spot-heal mode (no source): heal in place from the target's own neighbourhood (source = target).
+  const sourceDocPoint = stroke.healSource
+    ? settings.aligned && healAlignedOffset
+      ? { x: targetPoint.x + healAlignedOffset.x, y: targetPoint.y + healAlignedOffset.y }
+      : {
+          x: stroke.healSource.x + (targetPoint.x - stroke.strokeStart.x),
+          y: stroke.healSource.y + (targetPoint.y - stroke.strokeStart.y),
+        }
+    : targetPoint;
   const sourcePoint = stroke.sampleSource.coordinateSpace === 'document'
-    ? targetPoint
+    ? sourceDocPoint
     : {
-        x: targetPoint.x - layer.x,
-        y: targetPoint.y - layer.y,
+        x: sourceDocPoint.x - layer.x,
+        y: sourceDocPoint.y - layer.y,
       };
   applySpotHealToBitmap(layer.bitmap, {
     targetPoint: {

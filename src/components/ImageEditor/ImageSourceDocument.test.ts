@@ -1,6 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import type { SourceBinLibraryItem } from '../../store/sourceBinStore';
+
+// Mock the served-LAN-session predicate and the host asset loader so the served path can be exercised
+// deterministically. Both default to "not a served session" (matching desktop/Electron/native), so the
+// rest of the suite is unaffected; the served tests opt in via mockReturnValue/mockResolvedValue.
+vi.mock('../../lib/projectLibrary', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/projectLibrary')>();
+  return { ...actual, isRemoteLanClient: vi.fn(() => false) };
+});
+vi.mock('../../lib/assetStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/assetStore')>();
+  return { ...actual, loadImportedAssetRecord: vi.fn() };
+});
+// The host's universal source-asset endpoint is the primary served-session resolver (it serves
+// native-file/scratch-backed items too). Default it to "no hosted bytes" so the existing assetId
+// fallback tests still exercise loadImportedAssetRecord; the native-file test opts in.
+vi.mock('../../lib/remoteHostClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/remoteHostClient')>();
+  return { ...actual, fetchRemoteHostSourceAssetDataUrl: vi.fn(() => Promise.resolve(null)) };
+});
+
 import {
   createImageDocumentFromClipboard,
   createImageDocumentFromFile,
@@ -14,6 +34,9 @@ import {
   replaceSourceLinkedLayerBitmap,
 } from './ImageSourceDocument';
 import { clearImageClipboard, copyLayerPixelsToClipboard } from './ImageEditorClipboard';
+import { isRemoteLanClient } from '../../lib/projectLibrary';
+import { loadImportedAssetRecord } from '../../lib/assetStore';
+import { fetchRemoteHostSourceAssetDataUrl } from '../../lib/remoteHostClient';
 
 class FakeContext {
   drawImage() {}
@@ -53,6 +76,11 @@ describe('ImageSourceDocument', () => {
       height: 27,
       close: vi.fn(),
     })) as unknown as typeof createImageBitmap;
+    // Default every test to a non-served (desktop/Electron/native) session.
+    vi.mocked(isRemoteLanClient).mockReturnValue(false);
+    vi.mocked(loadImportedAssetRecord).mockReset();
+    vi.mocked(fetchRemoteHostSourceAssetDataUrl).mockReset();
+    vi.mocked(fetchRemoteHostSourceAssetDataUrl).mockResolvedValue(null);
   });
 
   it('creates a source-backed shell for lazy image loading fallbacks', () => {
@@ -638,6 +666,120 @@ describe('ImageSourceDocument', () => {
         relinkHistory: [],
       },
     });
+  });
+
+  it('routes served LAN-session source opens through the authenticated host asset API', async () => {
+    // In a phone-served browser session the synced item's assetUrl is a phone-local blob: URL the
+    // desktop browser cannot fetch (the cause of the "NetworkError" open failure). The bytes must be
+    // resolved through the host asset API by assetId instead.
+    vi.mocked(isRemoteLanClient).mockReturnValue(true);
+    vi.mocked(loadImportedAssetRecord).mockResolvedValue({
+      id: 'asset-cover',
+      name: 'Cover Art',
+      mimeType: 'image/png',
+      dataUrl: 'data:image/png;base64,HOSTRESOLVED',
+      createdAt: 1,
+    });
+
+    const seenUrls: string[] = [];
+    const bitmap = { width: 320, height: 180 } as LayerBitmap;
+    const doc = await createImageDocumentFromSourceItem(
+      {
+        ...imageItem(),
+        assetId: 'asset-cover',
+        assetUrl: 'blob:http://192.168.1.50:8723/abc-phone-local',
+      },
+      {
+        loadBitmap: async (url) => {
+          seenUrls.push(url);
+          return bitmap;
+        },
+      },
+    );
+
+    expect(loadImportedAssetRecord).toHaveBeenCalledWith('asset-cover');
+    // The bitmap loaded from the host-resolved data URL, not the unreachable phone-local blob URL.
+    expect(seenUrls).toEqual(['data:image/png;base64,HOSTRESOLVED']);
+    expect(doc.layers[0].bitmap).toBe(bitmap);
+  });
+
+  it('refreshes source-linked layer bitmaps through the host asset API in served LAN sessions', async () => {
+    vi.mocked(isRemoteLanClient).mockReturnValue(true);
+    vi.mocked(loadImportedAssetRecord).mockResolvedValue({
+      id: 'asset-cover',
+      name: 'Cover Art',
+      mimeType: 'image/png',
+      dataUrl: 'data:image/png;base64,HOSTREFRESH',
+      createdAt: 1,
+    });
+
+    const seenUrls: string[] = [];
+    const bitmap = { width: 64, height: 64 } as LayerBitmap;
+    await loadSourceLinkedLayerBitmap(
+      { ...imageItem(), assetId: 'asset-cover', assetUrl: 'blob:http://192.168.1.50:8723/local' },
+      async (url) => {
+        seenUrls.push(url);
+        return bitmap;
+      },
+    );
+
+    expect(loadImportedAssetRecord).toHaveBeenCalledWith('asset-cover');
+    expect(seenUrls).toEqual(['data:image/png;base64,HOSTREFRESH']);
+  });
+
+  it('opens native-file-backed served items via the host source-asset endpoint (no assetId)', async () => {
+    // The failing real-world case: a phone item backed by a native file path carries no assetId, so it
+    // could never resolve through /asset/:id. The host's /source-asset/:itemId endpoint resolves it by
+    // source-item id through the universal loadItemAsDataUrl and hands back a same-origin data URL.
+    vi.mocked(isRemoteLanClient).mockReturnValue(true);
+    vi.mocked(fetchRemoteHostSourceAssetDataUrl).mockResolvedValue('data:image/png;base64,HOSTITEM');
+
+    const seenUrls: string[] = [];
+    const bitmap = { width: 200, height: 100 } as LayerBitmap;
+    const doc = await createImageDocumentFromSourceItem(
+      {
+        ...imageItem(),
+        assetId: undefined,
+        nativeFilePath: '/storage/emulated/0/Pictures/cover.png',
+        assetUrl: 'signal-loom-asset://native/cover.png',
+      },
+      {
+        loadBitmap: async (url) => {
+          seenUrls.push(url);
+          return bitmap;
+        },
+      },
+    );
+
+    expect(fetchRemoteHostSourceAssetDataUrl).toHaveBeenCalledWith('cover-art');
+    // Resolved purely by item id — the assetId-keyed IndexedDB path is never consulted.
+    expect(loadImportedAssetRecord).not.toHaveBeenCalled();
+    expect(seenUrls).toEqual(['data:image/png;base64,HOSTITEM']);
+    expect(doc.layers[0].bitmap).toBe(bitmap);
+  });
+
+  it('refreshes native-file-backed served layers via the host source-asset endpoint', async () => {
+    vi.mocked(isRemoteLanClient).mockReturnValue(true);
+    vi.mocked(fetchRemoteHostSourceAssetDataUrl).mockResolvedValue('data:image/png;base64,HOSTITEMREFRESH');
+
+    const seenUrls: string[] = [];
+    const bitmap = { width: 64, height: 64 } as LayerBitmap;
+    await loadSourceLinkedLayerBitmap(
+      {
+        ...imageItem(),
+        assetId: undefined,
+        nativeFilePath: '/storage/emulated/0/Pictures/cover.png',
+        assetUrl: 'signal-loom-asset://native/cover.png',
+      },
+      async (url) => {
+        seenUrls.push(url);
+        return bitmap;
+      },
+    );
+
+    expect(fetchRemoteHostSourceAssetDataUrl).toHaveBeenCalledWith('cover-art');
+    expect(loadImportedAssetRecord).not.toHaveBeenCalled();
+    expect(seenUrls).toEqual(['data:image/png;base64,HOSTITEMREFRESH']);
   });
 
   it('updates source-linked layer bitmaps while preserving transforms, masks, effects, and filters', () => {

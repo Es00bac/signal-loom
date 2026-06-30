@@ -10,6 +10,8 @@ import type { ProjectUsageLedgerSnapshot } from './projectUsageLedger';
 import { downloadJsonFile } from '../shared/files/downloads';
 import { CURRENT_PROJECT_SCHEMA_VERSION } from './projectSchema';
 import { sanitizeProjectDocument } from './projectValidation';
+import { initializeLanServerProxy } from './androidLanServer';
+import { isServedLanSession, remoteHostFetch } from './remoteHostClient';
 
 const DB_NAME = 'flow-project-library';
 const DB_VERSION = 1;
@@ -47,6 +49,16 @@ function stripProjectFileExtension(fileName: string): string {
   return fileName.replace(/\.sloom$/i, '');
 }
 
+/**
+ * True when this page is a desktop browser served from a phone's LAN host (the "phone as data
+ * authority" mirror). Detection lives in `remoteHostClient` (a boot-time `/__loom/api/health` probe),
+ * which is more robust than the old hardcoded port check and cannot mistake a normal web visitor
+ * (e.g. sloom.studio) for a served session.
+ */
+export function isRemoteLanClient(): boolean {
+  return isServedLanSession();
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const timeoutId = setTimeout(() => {
@@ -81,17 +93,32 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
+// Ensure the Android host serves projects (read-only mirror; no save handler by design).
+initializeLanServerProxy({
+  getProjects: listProjectSummaries,
+  getProject: loadProjectDocument,
+});
+
+
 export async function saveProjectDocument(
   document: Omit<FlowProjectDocument, 'id' | 'savedAt' | 'schemaVersion'>
     & Partial<Pick<FlowProjectDocument, 'id' | 'savedAt' | 'schemaVersion'>>,
 ): Promise<FlowProjectDocument> {
-  const database = await openDatabase();
   const record: FlowProjectDocument = {
     ...document,
     schemaVersion: document.schemaVersion ?? CURRENT_PROJECT_SCHEMA_VERSION,
     id: document.id ?? globalThis.crypto?.randomUUID?.() ?? `project-${Date.now()}`,
     savedAt: document.savedAt ?? Date.now(),
   };
+
+  if (isRemoteLanClient()) {
+    // Phase A is a read-only mirror: a served session must never write back to the phone's project
+    // (that is Phase C). Return the in-memory record so callers/autosave don't error, but persist
+    // nothing. The read-only state is surfaced to the user by the served-session banner.
+    return record;
+  }
+
+  const database = await openDatabase();
 
   await new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(STORE_NAME, 'readwrite');
@@ -109,6 +136,12 @@ export async function saveProjectDocument(
 }
 
 export async function listProjectSummaries(): Promise<FlowProjectSummary[]> {
+  if (isRemoteLanClient()) {
+    const res = await remoteHostFetch('/projects');
+    if (!res || !res.ok) return [];
+    return res.json();
+  }
+
   const database = await openDatabase();
   const rows = await new Promise<FlowProjectDocument[]>((resolve, reject) => {
     const transaction = database.transaction(STORE_NAME, 'readonly');
@@ -132,7 +165,14 @@ export async function listProjectSummaries(): Promise<FlowProjectSummary[]> {
     .sort((left, right) => right.savedAt - left.savedAt);
 }
 
-export async function loadProjectDocument(id: string): Promise<FlowProjectDocument | undefined> {
+export async function loadProjectDocument(id: string): Promise<FlowProjectDocument | null> {
+  if (isRemoteLanClient()) {
+    const res = await remoteHostFetch(`/projects/${encodeURIComponent(id)}`);
+    if (!res || !res.ok) return null;
+    const data = await res.json();
+    return data ? sanitizeProjectDocument(data) : null;
+  }
+
   const database = await openDatabase();
   const result = await new Promise<FlowProjectDocument | undefined>((resolve, reject) => {
     const transaction = database.transaction(STORE_NAME, 'readonly');
@@ -145,7 +185,7 @@ export async function loadProjectDocument(id: string): Promise<FlowProjectDocume
   });
 
   database.close();
-  return result;
+  return result ?? null;
 }
 
 export async function deleteProjectDocument(id: string): Promise<void> {

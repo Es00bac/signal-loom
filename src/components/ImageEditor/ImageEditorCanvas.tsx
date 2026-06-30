@@ -4,7 +4,7 @@ import type {
   PointerEvent as ReactPointerEvent,
   RefObject,
 } from 'react';
-import { Check, Pencil, X } from 'lucide-react';
+import { Check, GripVertical, Pencil, X } from 'lucide-react';
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import { useSourceBinStore } from '../../store/sourceBinStore';
 import { useTouchNavigationStore } from '../../store/touchNavigationStore';
@@ -823,23 +823,18 @@ export function ImageEditorCanvas() {
         />
       ) : null}
 
-      {showBrushStatus ? (
-        <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2">
-          <div className="flex gap-3 rounded-md border border-cyan-300/10 bg-[#1a1b23] px-3 py-1.5 text-xs text-cyan-100/50">
+      {showBrushStatus && (tool === 'cloneStamp' || (brushSettings.symmetryMode && brushSettings.symmetryMode !== 'none')) ? (
+        // Size / opacity / hardness now live in the lower-left quick control, so this readout only
+        // appears for the contextual hints (clone-stamp source, active symmetry) — and only then does it
+        // take a row above the bottom controls on phones (md+ centres it at the bottom).
+        <div className="pointer-events-none absolute bottom-20 left-1/2 max-w-[92vw] -translate-x-1/2 md:bottom-3">
+          <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 rounded-md border border-cyan-300/10 bg-[#1a1b23] px-3 py-1.5 text-xs text-cyan-100/50">
             {tool === 'cloneStamp' ? (
-              <>
-                <span className="font-medium text-cyan-200/90">Alt-click (Option-click) a source, then paint to clone</span>
-                <span>|</span>
-              </>
+              <span className="font-medium text-cyan-200/90">Alt-click (Option-click) a source, then paint to clone</span>
             ) : null}
-            <span>Brush: {brushSettings.size}px</span>
-            <span>|</span>
-            <span>Opacity: {Math.round(brushSettings.opacity * 100)}%</span>
-            <span>|</span>
-            <span>Hardness: {Math.round(brushSettings.hardness * 100)}%</span>
             {brushSettings.symmetryMode && brushSettings.symmetryMode !== 'none' ? (
               <>
-                <span>|</span>
+                {tool === 'cloneStamp' ? <span>|</span> : null}
                 <span>Symmetry: {brushSettings.symmetryMode === 'both' ? 'Four-Way' : brushSettings.symmetryMode === 'vertical' ? 'Vertical' : 'Horizontal'}</span>
               </>
             ) : null}
@@ -871,41 +866,187 @@ const BRUSH_QUICK_PREVIEW_BOX = 44;
  */
 function BrushQuickSizeControl({ zoom }: { zoom: number }) {
   const size = useImageEditorStore((s) => s.brushSettings.size);
+  const opacity = useImageEditorStore((s) => s.brushSettings.opacity);
+  const hardness = useImageEditorStore((s) => s.brushSettings.hardness);
   const setBrushSettings = useImageEditorStore((s) => s.setBrushSettings);
   const roundedSize = Math.round(size);
-  // Footprint preview at on-screen scale, capped so large brushes still fit the swatch.
+  const opacityPct = Math.round(opacity * 100);
+  const hardnessPct = Math.round(hardness * 100);
+  // Footprint preview at on-screen scale, capped so large brushes still fit the swatch; the dot also
+  // reflects opacity (alpha) and hardness (soft edge) so the preview shows all three at a glance —
+  // which is why the separate brush-status text box is gone.
   const previewDiameter = Math.max(3, Math.min(BRUSH_QUICK_PREVIEW_BOX - 6, size * zoom));
+
+  // Free-floating + collapsible: a left-side grip handle (same thickness as the tools dialog handle)
+  // drags the whole panel and, on a tap, collapses the horizontal body leftward into just the handle.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startLeft: number;
+    startTop: number;
+    moved: boolean;
+  } | null>(null);
+
+  const beginHandleDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const el = rootRef.current;
+    if (!el) return;
+    const parent = el.offsetParent as HTMLElement | null;
+    const parentRect = parent?.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
+    const startLeft = parentRect ? rect.left - parentRect.left : el.offsetLeft;
+    const startTop = parentRect ? rect.top - parentRect.top : el.offsetTop;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, startLeft, startTop, moved: false };
+    if (!pos) setPos({ left: startLeft, top: startTop });
+  };
+  const moveHandleDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
+    const el = rootRef.current;
+    const parent = el?.offsetParent as HTMLElement | null;
+    const pw = parent?.clientWidth ?? window.innerWidth;
+    const ph = parent?.clientHeight ?? window.innerHeight;
+    const ew = el?.offsetWidth ?? 0;
+    const eh = el?.offsetHeight ?? 0;
+    setPos({
+      left: Math.min(Math.max(drag.startLeft + dx, 4), Math.max(4, pw - ew - 4)),
+      top: Math.min(Math.max(drag.startTop + dy, 4), Math.max(4, ph - eh - 4)),
+    });
+  };
+  const endHandleDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    if (!drag.moved) setCollapsed((value) => !value); // a tap (no drag) toggles collapse
+    dragRef.current = null;
+  };
+
   return (
     <div
-      className="pointer-events-auto absolute bottom-3 left-3 z-[65] flex items-center gap-2 rounded-full border border-cyan-300/20 bg-[#08111d]/90 px-2.5 py-1.5 shadow-xl shadow-black/40 backdrop-blur-md"
+      ref={rootRef}
+      className={`pointer-events-auto absolute z-[65] flex items-stretch overflow-hidden rounded-2xl border border-cyan-300/20 bg-[#08111d]/90 shadow-xl shadow-black/40 backdrop-blur-md ${pos ? '' : 'bottom-3 left-3'}`}
+      style={pos ? { left: pos.left, top: pos.top } : undefined}
       data-image-canvas-interaction-overlay="true"
       data-image-brush-size-quick-slider="true"
-      style={{ touchAction: 'auto' }}
-      title="Brush size — drag to adjust"
     >
-      <span
-        className="relative flex shrink-0 items-center justify-center rounded-full border border-cyan-300/15 bg-[#0d1320]"
-        style={{ width: BRUSH_QUICK_PREVIEW_BOX, height: BRUSH_QUICK_PREVIEW_BOX }}
+      <div
+        className="flex w-5 shrink-0 cursor-grab touch-none items-center justify-center border-r border-cyan-300/15 bg-[#101826] text-cyan-200/80 active:cursor-grabbing"
+        data-image-brush-quick-handle="true"
+        onPointerCancel={endHandleDrag}
+        onPointerDown={beginHandleDrag}
+        onPointerMove={moveHandleDrag}
+        onPointerUp={endHandleDrag}
+        role="button"
+        style={{ minHeight: '2.75rem' }}
+        tabIndex={0}
+        title={collapsed ? 'Brush controls — tap to expand, drag to move' : 'Brush controls — tap to collapse, drag to move'}
       >
-        <span
-          className="rounded-full bg-cyan-200/85 shadow-[0_0_0_1px_rgba(8,11,18,0.9)]"
-          style={{ width: previewDiameter, height: previewDiameter }}
-        />
-      </span>
-      <input
-        aria-label="Brush size"
-        className="h-1.5 w-24 cursor-pointer accent-cyan-300 sm:w-32"
-        max={BRUSH_QUICK_SIZE_MAX}
-        min={BRUSH_QUICK_SIZE_MIN}
-        onChange={(event) => setBrushSettings({ size: Number(event.target.value) })}
-        step={1}
-        type="range"
-        value={Math.min(BRUSH_QUICK_SIZE_MAX, Math.max(BRUSH_QUICK_SIZE_MIN, roundedSize))}
-      />
-      <span className="w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums text-cyan-100/80">
-        {roundedSize}px
-      </span>
+        <GripVertical size={14} />
+      </div>
+      {collapsed ? null : (
+        <div className="flex items-center gap-2 px-2.5 py-1.5">
+          <span
+            className="relative flex shrink-0 items-center justify-center rounded-full border border-cyan-300/15 bg-[#0d1320]"
+            style={{ width: BRUSH_QUICK_PREVIEW_BOX, height: BRUSH_QUICK_PREVIEW_BOX }}
+          >
+            <span
+              className="rounded-full shadow-[0_0_0_1px_rgba(8,11,18,0.9)]"
+              style={{
+                width: previewDiameter,
+                height: previewDiameter,
+                opacity: Math.max(0.12, opacity),
+                background: `radial-gradient(circle, rgba(186,230,253,0.95) ${Math.max(0, hardnessPct - 15)}%, rgba(186,230,253,0) 100%)`,
+              }}
+            />
+          </span>
+          <div className="flex flex-col gap-1">
+            <BrushQuickRow
+              ariaLabel="Brush size"
+              label="S"
+              min={BRUSH_QUICK_SIZE_MIN}
+              max={BRUSH_QUICK_SIZE_MAX}
+              step={1}
+              value={Math.min(BRUSH_QUICK_SIZE_MAX, Math.max(BRUSH_QUICK_SIZE_MIN, roundedSize))}
+              display={`${roundedSize}px`}
+              onChange={(value) => setBrushSettings({ size: value })}
+            />
+            <BrushQuickRow
+              ariaLabel="Brush opacity"
+              label="O"
+              min={0}
+              max={100}
+              step={1}
+              value={opacityPct}
+              display={`${opacityPct}%`}
+              onChange={(value) => setBrushSettings({ opacity: value / 100 })}
+            />
+            <BrushQuickRow
+              ariaLabel="Brush hardness"
+              label="H"
+              min={0}
+              max={100}
+              step={1}
+              value={hardnessPct}
+              display={`${hardnessPct}%`}
+              onChange={(value) => setBrushSettings({ hardness: value / 100 })}
+            />
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+/** One labelled mini-slider row inside the lower-left brush quick control (size / opacity / hardness). */
+function BrushQuickRow({
+  ariaLabel,
+  label,
+  min,
+  max,
+  step,
+  value,
+  display,
+  onChange,
+}: {
+  ariaLabel: string;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  display: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="flex items-center gap-1.5" title={`${ariaLabel} — drag to adjust`}>
+      <span className="w-2.5 shrink-0 text-center text-[9px] font-bold text-cyan-100/45">{label}</span>
+      <input
+        aria-label={ariaLabel}
+        className="h-1 w-20 cursor-pointer accent-cyan-300 sm:w-28"
+        max={max}
+        min={min}
+        onChange={(event) => onChange(Number(event.target.value))}
+        step={step}
+        type="range"
+        value={value}
+      />
+      <span className="w-9 shrink-0 text-right text-[10px] font-semibold tabular-nums text-cyan-100/80">
+        {display}
+      </span>
+    </label>
   );
 }
 

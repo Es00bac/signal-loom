@@ -1,9 +1,11 @@
 import { inferImageModelCapabilities } from './imageModelInference';
+import { ATLAS_GENERATED_IMAGE_MODELS } from './atlasImageCatalog.generated';
 
 export type FirstClassImageProviderId =
   | 'gemini'
   | 'openai'
   | 'atlas'
+  | 'byteplus'
   | 'huggingface'
   | 'bfl'
   | 'stability'
@@ -50,7 +52,8 @@ export type ImageNodeVisibleControl =
   | 'guidanceScale'
   | 'editStrength'
   | 'loraWeights'
-  | 'safetyChecker';
+  | 'safetyChecker'
+  | 'dimensions';
 
 export interface ImageModelCapabilities {
   textToImage: boolean;
@@ -70,6 +73,8 @@ export interface ImageModelCapabilities {
   typography: boolean;
   textInImageEditing: boolean;
   localEndpoint: boolean;
+  /** Model accepts an arbitrary output `size` (W×H) rather than only fixed aspect-ratio presets. */
+  customDimensions: boolean;
   maxOutputMegapixels?: number;
 }
 
@@ -170,6 +175,7 @@ const DEFAULT_CAPABILITIES: ImageModelCapabilities = {
   typography: false,
   textInImageEditing: false,
   localEndpoint: false,
+  customDimensions: false,
 };
 
 const PRICING_LAST_VERIFIED_DATE = '2026-05-24';
@@ -178,6 +184,7 @@ const PROVIDER_FREE_TIER_NOTES: Record<FirstClassImageProviderId, string> = {
   gemini: 'Google lists a Free tier for some Gemini API usage, but the visible paid image models in Signal Loom are marked not available on the free tier.',
   openai: 'OpenAI API usage is billed separately from ChatGPT subscriptions; no free image API tier is assumed.',
   atlas: 'Atlas Cloud native image models bill through your Atlas account; GPT Image routes remain token-priced when selected.',
+  byteplus: 'BytePlus (ModelArk) Seedream image models bill through your own BytePlus account (bring your own key); a free trial may be available.',
   huggingface: 'Hugging Face Inference Providers include small monthly credits, then pay-as-you-go or custom provider-key billing.',
   bfl: 'BFL uses credits where 1 credit equals $0.01 USD; [dev] is free and Playground credits are prepaid.',
   stability: 'Stability AI uses credits where 1 credit equals $0.01 USD; trial credits may vary by account and region.',
@@ -200,6 +207,11 @@ const PROVIDER_SPEND_CONTROLS: Record<FirstClassImageProviderId, string[]> = {
     'Use your Atlas Cloud billing dashboard and model-level policy to monitor and limit image usage.',
     'Use Atlas model IDs consistently across generated scenes to keep spend predictable.',
     'Prefer FLUX Schnell for cheap iteration, then switch to FLUX Dev, Z-Image Turbo, or edit-specific models for final passes.',
+  ],
+  byteplus: [
+    'Set spend limits and monitor usage in the BytePlus / ModelArk console.',
+    'Use the free-trial / startup credits for development and QA before enabling production batches.',
+    'Prefer a lower-tier Seedream resolution (2K) for iteration and reserve 4K for finals.',
   ],
   huggingface: [
     'Start with monthly credits for tests, then buy credits before production runs.',
@@ -243,6 +255,11 @@ const PROVIDER_TROUBLESHOOTING: Record<FirstClassImageProviderId, string[]> = {
     'Verify the Atlas API key is active and has native image model access before adding it to Settings.',
     'If a native model errors, confirm the Atlas model ID in the picker matches the model slug enabled for your account.',
     'If GPT Image routes error, confirm whether your Atlas base URL is an OpenAI-compatible endpoint or the native Atlas API URL.',
+  ],
+  byteplus: [
+    'Verify your BytePlus API key (ModelArk → API Keys) is active and image model access is enabled.',
+    'If requests fail, confirm the ModelArk base URL/region in Settings matches your account.',
+    'Confirm the Seedream model ID matches one enabled for your account.',
   ],
   huggingface: [
     'If routed calls fail, check token scopes and whether the selected provider is enabled for your account.',
@@ -316,43 +333,10 @@ const OPENAI_CONTROLS: ImageNodeVisibleControl[] = [
   'outputFormat',
 ];
 
-const ATLAS_TEXT_TO_IMAGE_CONTROLS: ImageNodeVisibleControl[] = [
-  'prompt',
-  'aspectRatio',
-  'steps',
-  'seed',
-  'guidanceScale',
-  'safetyChecker',
-  'outputFormat',
-];
-
-const ATLAS_LORA_TEXT_TO_IMAGE_CONTROLS: ImageNodeVisibleControl[] = [
-  ...ATLAS_TEXT_TO_IMAGE_CONTROLS,
-  'loraWeights',
-];
-
-const ATLAS_IMAGE_EDIT_CONTROLS: ImageNodeVisibleControl[] = [
-  'prompt',
-  'sourceImage',
-  'referenceImages',
-  'guidanceScale',
-  'editStrength',
-  'seed',
-  'safetyChecker',
-  'outputFormat',
-];
-
-const ATLAS_QWEN_EDIT_CONTROLS: ImageNodeVisibleControl[] = [
-  'prompt',
-  'sourceImage',
-  'mask',
-  'referenceImages',
-  'textEditPrompt',
-  'guidanceScale',
-  'editStrength',
-  'safetyChecker',
-  'outputFormat',
-];
+// Atlas image-model node controls are now derived per model in `atlasImageCatalog.generated.ts`
+// directly from each model's documented Atlas OpenAPI schema (verified 2026-06-28), so the hand-written
+// ATLAS_*_CONTROLS arrays were removed — they could not track per-model differences (e.g. flux-kontext-dev
+// takes a single image, flux-2 up to 8 references) and drifted from the docs.
 
 const MODEL_DEFINITIONS: ImageModelDefinition[] = [
   {
@@ -521,314 +505,7 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
     cost: { imageEditUsd: 0.04, textToImageUsd: 0.04, unitLabel: '~$0.04/image', confidence: 'heuristic' },
     docsUrl: 'https://platform.openai.com/docs/guides/image-generation',
   },
-  {
-    providerId: 'atlas',
-    modelId: 'gpt-image-2',
-    label: 'GPT Image 2',
-    recommendedUse: 'High-fidelity OpenAI-compatible generation and image edits with token-based pricing.',
-    capabilities: caps({
-      textToImage: true,
-      imageToImage: true,
-      promptEdit: true,
-      maskInpaint: true,
-      typography: true,
-      textInImageEditing: true,
-      maxOutputMegapixels: 4,
-    }),
-    supportedOperations: ['text-to-image', 'image-edit', 'mask-inpaint'],
-    visibleControls: OPENAI_CONTROLS,
-    cost: { unitLabel: 'token priced', confidence: 'token-estimate' },
-    docsUrl: 'https://developers.openai.com/api/docs/models/gpt-image-2',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'gpt-image-1',
-    label: 'GPT Image 1',
-    recommendedUse: 'Atlas-compatible OpenAI image generation/edit path.',
-    capabilities: caps({
-      textToImage: true,
-      imageToImage: true,
-      promptEdit: true,
-      maskInpaint: true,
-    }),
-    supportedOperations: ['text-to-image', 'image-edit', 'mask-inpaint'],
-    visibleControls: OPENAI_CONTROLS,
-    cost: { imageEditUsd: 0.04, textToImageUsd: 0.04, unitLabel: '~$0.04/image', confidence: 'heuristic' },
-    docsUrl: 'https://platform.openai.com/docs/guides/image-generation',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'black-forest-labs/flux-schnell',
-    label: 'Atlas FLUX Schnell',
-    recommendedUse: 'Fast, low-cost Atlas text-to-image batch generation.',
-    capabilities: caps({
-      textToImage: true,
-      maxOutputMegapixels: 2,
-    }),
-    supportedOperations: ['text-to-image'],
-    visibleControls: ATLAS_TEXT_TO_IMAGE_CONTROLS,
-    cost: { textToImageUsd: 0.003, unitLabel: '$0.003/image', confidence: 'published-fixed' },
-    docsUrl: 'https://www.atlascloud.ai/docs/more-models/black-forest-labs/flux-schnell/generateImage',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'black-forest-labs/flux-dev',
-    label: 'Atlas FLUX Dev',
-    recommendedUse: 'Higher-quality Atlas FLUX generation with stronger anatomy, lighting, and texture handling.',
-    capabilities: caps({
-      textToImage: true,
-      exactColorControl: true,
-      typography: true,
-      maxOutputMegapixels: 2,
-    }),
-    supportedOperations: ['text-to-image'],
-    visibleControls: ATLAS_TEXT_TO_IMAGE_CONTROLS,
-    cost: { textToImageUsd: 0.012, unitLabel: '$0.012/image', confidence: 'published-fixed' },
-    docsUrl: 'https://www.atlascloud.ai/models/black-forest-labs/flux-dev',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'black-forest-labs/flux-dev-lora',
-    label: 'Atlas FLUX Dev LoRA',
-    recommendedUse: 'Atlas FLUX Dev base with LoRA style, character, or appearance conditioning.',
-    capabilities: caps({
-      textToImage: true,
-      referenceImages: true,
-      maxReferenceImages: 1,
-      exactColorControl: true,
-      typography: true,
-      maxOutputMegapixels: 2,
-    }),
-    supportedOperations: ['text-to-image'],
-    visibleControls: ATLAS_LORA_TEXT_TO_IMAGE_CONTROLS,
-    cost: { textToImageUsd: 0.012, unitLabel: '$0.012/image', confidence: 'published-fixed' },
-    docsUrl: 'https://www.atlascloud.ai/models/black-forest-labs/flux-dev-lora',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'z-image/turbo',
-    label: 'Atlas Z-Image Turbo',
-    recommendedUse: 'Fast Atlas high-resolution text-to-image generation between Schnell and Dev quality lanes.',
-    capabilities: caps({
-      textToImage: true,
-      typography: true,
-      maxOutputMegapixels: 2,
-    }),
-    supportedOperations: ['text-to-image'],
-    visibleControls: ATLAS_TEXT_TO_IMAGE_CONTROLS,
-    cost: { textToImageUsd: 0.01, unitLabel: '$0.01/image', confidence: 'published-fixed' },
-    docsUrl: 'https://www.atlascloud.ai/models/z-image/turbo',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'bytedance/seedream-v5.0-lite',
-    label: 'Atlas Seedream v5.0 Lite',
-    recommendedUse: 'Lightweight Atlas text-to-image generation with fast creative prompt adherence.',
-    capabilities: caps({
-      textToImage: true,
-      maxOutputMegapixels: 2,
-    }),
-    supportedOperations: ['text-to-image'],
-    visibleControls: ATLAS_TEXT_TO_IMAGE_CONTROLS,
-    cost: { unitLabel: 'Atlas account billed', confidence: 'provider-defined' },
-    docsUrl: 'https://www.atlascloud.ai/models/bytedance/seedream-v5.0-lite',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'google/nano-banana-pro/text-to-image',
-    label: 'Atlas Nano Banana Pro',
-    recommendedUse: 'Stylized Atlas text-to-image generation for flexible aesthetic alternatives.',
-    capabilities: caps({
-      textToImage: true,
-      typography: true,
-      maxOutputMegapixels: 2,
-    }),
-    supportedOperations: ['text-to-image'],
-    visibleControls: ATLAS_TEXT_TO_IMAGE_CONTROLS,
-    cost: { unitLabel: 'Atlas account billed', confidence: 'provider-defined' },
-    docsUrl: 'https://www.atlascloud.ai/models/google/nano-banana-pro/text-to-image',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'google/nano-banana-2/text-to-image',
-    label: 'Atlas Nano Banana 2 (Text→Image)',
-    recommendedUse: 'Google Nano Banana 2 high-fidelity Atlas text-to-image.',
-    capabilities: caps({ textToImage: true, typography: true, maxOutputMegapixels: 2 }),
-    supportedOperations: ['text-to-image'],
-    visibleControls: ATLAS_TEXT_TO_IMAGE_CONTROLS,
-    cost: { unitLabel: 'Atlas account billed', confidence: 'provider-defined' },
-    docsUrl: 'https://www.atlascloud.ai/collections/nanobanana-2',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'google/nano-banana-2/edit',
-    label: 'Atlas Nano Banana 2 (Edit)',
-    recommendedUse: 'Google Nano Banana 2 prompt + reference image editing on Atlas.',
-    capabilities: caps({
-      imageToImage: true,
-      promptEdit: true,
-      referenceImages: true,
-      maxReferenceImages: 14,
-      typography: true,
-      textInImageEditing: true,
-      maxOutputMegapixels: 2,
-    }),
-    supportedOperations: ['image-edit'],
-    visibleControls: ATLAS_IMAGE_EDIT_CONTROLS,
-    cost: { unitLabel: 'Atlas account billed', confidence: 'provider-defined' },
-    docsUrl: 'https://www.atlascloud.ai/collections/nanobanana-2',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'google/nano-banana-2/reference-to-image',
-    label: 'Atlas Nano Banana 2 (Reference→Image)',
-    recommendedUse: 'Google Nano Banana 2 multi-reference guided generation on Atlas.',
-    capabilities: caps({
-      imageToImage: true,
-      promptEdit: true,
-      referenceImages: true,
-      maxReferenceImages: 14,
-      typography: true,
-      textInImageEditing: true,
-      maxOutputMegapixels: 2,
-    }),
-    supportedOperations: ['image-edit'],
-    visibleControls: ATLAS_IMAGE_EDIT_CONTROLS,
-    cost: { unitLabel: 'Atlas account billed', confidence: 'provider-defined' },
-    docsUrl: 'https://www.atlascloud.ai/collections/nanobanana-2',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'qwen/qwen-image-2.0/text-to-image',
-    label: 'Atlas Qwen Image 2.0 (Text→Image)',
-    recommendedUse: 'Alibaba Qwen Image 2.0 text-to-image with strong text rendering.',
-    capabilities: caps({ textToImage: true, typography: true, maxOutputMegapixels: 2 }),
-    supportedOperations: ['text-to-image'],
-    visibleControls: ATLAS_TEXT_TO_IMAGE_CONTROLS,
-    cost: { unitLabel: 'Atlas account billed', confidence: 'provider-defined' },
-    docsUrl: 'https://www.atlascloud.ai/collections/qwen-image',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'qwen/qwen-image-2.0/edit',
-    label: 'Atlas Qwen Image 2.0 (Edit)',
-    recommendedUse: 'Alibaba Qwen Image 2.0 editing with mask-guided and text edits.',
-    capabilities: caps({
-      imageToImage: true,
-      promptEdit: true,
-      maskInpaint: true,
-      referenceImages: true,
-      maxReferenceImages: 1,
-      typography: true,
-      textInImageEditing: true,
-      maxOutputMegapixels: 2,
-    }),
-    supportedOperations: ['image-edit', 'mask-inpaint'],
-    visibleControls: ATLAS_QWEN_EDIT_CONTROLS,
-    cost: { unitLabel: 'Atlas account billed', confidence: 'provider-defined' },
-    docsUrl: 'https://www.atlascloud.ai/collections/qwen-image',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'alibaba/wan-2.7/text-to-image',
-    label: 'Atlas Wan 2.7 (Text→Image)',
-    recommendedUse: 'Alibaba Wan 2.7 Atlas text-to-image.',
-    capabilities: caps({ textToImage: true, maxOutputMegapixels: 2 }),
-    supportedOperations: ['text-to-image'],
-    visibleControls: ATLAS_TEXT_TO_IMAGE_CONTROLS,
-    cost: { unitLabel: 'Atlas account billed', confidence: 'provider-defined' },
-    docsUrl: 'https://www.atlascloud.ai/models',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'alibaba/wan-2.7/image-edit',
-    label: 'Atlas Wan 2.7 (Edit)',
-    recommendedUse: 'Alibaba Wan 2.7 Atlas image editing.',
-    capabilities: caps({ imageToImage: true, promptEdit: true, maxOutputMegapixels: 2 }),
-    supportedOperations: ['image-edit'],
-    visibleControls: ATLAS_IMAGE_EDIT_CONTROLS,
-    cost: { unitLabel: 'Atlas account billed', confidence: 'provider-defined' },
-    docsUrl: 'https://www.atlascloud.ai/models',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'xai/grok-imagine-image-quality/text-to-image',
-    label: 'Atlas Grok Imagine (Text→Image)',
-    recommendedUse: 'xAI Grok Imagine Atlas text-to-image.',
-    capabilities: caps({ textToImage: true, maxOutputMegapixels: 2 }),
-    supportedOperations: ['text-to-image'],
-    visibleControls: ATLAS_TEXT_TO_IMAGE_CONTROLS,
-    cost: { unitLabel: 'Atlas account billed', confidence: 'provider-defined' },
-    docsUrl: 'https://www.atlascloud.ai/models',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'baidu/ERNIE-Image-Turbo/text-to-image',
-    label: 'Atlas ERNIE Image Turbo (Text→Image)',
-    recommendedUse: 'Baidu ERNIE Image Turbo Atlas text-to-image.',
-    capabilities: caps({ textToImage: true, maxOutputMegapixels: 2 }),
-    supportedOperations: ['text-to-image'],
-    visibleControls: ATLAS_TEXT_TO_IMAGE_CONTROLS,
-    cost: { unitLabel: 'Atlas account billed', confidence: 'provider-defined' },
-    docsUrl: 'https://www.atlascloud.ai/models',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'black-forest-labs/flux-kontext-dev',
-    label: 'Atlas FLUX Kontext Dev',
-    recommendedUse: 'Atlas image-to-image edits that modify a source image while preserving baseline details.',
-    capabilities: caps({
-      imageToImage: true,
-      promptEdit: true,
-      referenceImages: true,
-      maxReferenceImages: 4,
-      exactColorControl: true,
-      typography: true,
-      textInImageEditing: true,
-      maxOutputMegapixels: 2,
-    }),
-    supportedOperations: ['image-edit'],
-    visibleControls: ATLAS_IMAGE_EDIT_CONTROLS,
-    cost: { unitLabel: 'Atlas account billed', confidence: 'provider-defined' },
-    docsUrl: 'https://www.atlascloud.ai/models/black-forest-labs/flux-kontext-dev',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'bytedance/seedream-v5.0-lite/edit',
-    label: 'Atlas Seedream Image-to-Image',
-    recommendedUse: 'Atlas image variation and editing while keeping structure and faces intact.',
-    capabilities: caps({
-      imageToImage: true,
-      promptEdit: true,
-      referenceImages: true,
-      maxReferenceImages: 2,
-      maxOutputMegapixels: 2,
-    }),
-    supportedOperations: ['image-edit'],
-    visibleControls: ATLAS_IMAGE_EDIT_CONTROLS,
-    cost: { unitLabel: 'Atlas account billed', confidence: 'provider-defined' },
-    docsUrl: 'https://www.atlascloud.ai/models/bytedance/seedream-v5.0-lite/edit',
-  },
-  {
-    providerId: 'atlas',
-    modelId: 'atlascloud/qwen-image/edit',
-    label: 'Atlas Qwen Image Edit',
-    recommendedUse: 'Atlas Qwen editing for complex re-posing, text rendering, and mask-guided edits.',
-    capabilities: caps({
-      imageToImage: true,
-      promptEdit: true,
-      maskInpaint: true,
-      referenceImages: true,
-      maxReferenceImages: 1,
-      typography: true,
-      textInImageEditing: true,
-      maxOutputMegapixels: 2,
-    }),
-    supportedOperations: ['image-edit', 'mask-inpaint'],
-    visibleControls: ATLAS_QWEN_EDIT_CONTROLS,
-    cost: { imageEditUsd: 0.025, fixedByOperationUsd: { 'mask-inpaint': 0.025 }, unitLabel: '$0.025/edit', confidence: 'published-fixed' },
-    docsUrl: 'https://www.atlascloud.ai/models/atlascloud/qwen-image/edit',
-  },
+  ...ATLAS_GENERATED_IMAGE_MODELS,
   {
     providerId: 'huggingface',
     modelId: 'black-forest-labs/FLUX.1-dev',

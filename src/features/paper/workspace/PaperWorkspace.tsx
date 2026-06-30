@@ -5,7 +5,9 @@ import {
   BookOpen,
   Captions,
   ChevronDown,
+  ChevronUp,
   Circle,
+  Cloud,
   Columns3,
   Copy,
   ClipboardPaste,
@@ -14,8 +16,10 @@ import {
   FilePlus2,
   FlipHorizontal,
   FlipVertical,
+  Frame,
   Grid3X3,
   Hand,
+  Hexagon,
   Image as ImageIcon,
   Loader2,
   Magnet,
@@ -25,9 +29,9 @@ import {
   MousePointer2,
   Move,
   Palette,
-  PenLine,
   PanelBottomOpen,
   PanelLeftOpen,
+  Pentagon,
   Pipette,
   Plus,
   PanelRightClose,
@@ -38,12 +42,13 @@ import {
   Scissors,
   Search,
   ShieldCheck,
+  Slice,
   Sparkles,
-  Square,
   Triangle,
   Type,
   Undo2,
   Redo2,
+  Waypoints,
   X,
 } from 'lucide-react';
 import { useImageEditorStore } from '../../../store/imageEditorStore';
@@ -58,6 +63,7 @@ import { useProjectUsageStore } from '../../../store/projectUsageStore';
 import { recordActivityTrailWorkspaceEvent } from '../../../store/activityTrailStore';
 import { showAlertDialog } from '../../../store/alertDialogStore';
 import { resolveSourceNodeId } from '../../../lib/virtualNodes';
+import { setAndroidInterceptVolumeKeys } from '../../../lib/androidSystemUi';
 import { AdvancedColorPicker } from '../../../components/Common/AdvancedColorPicker';
 import { FlowSourceBinSidebar } from '../../../components/Layout/FlowSourceBinSidebar';
 import { ComicSfxDesigner } from '../../../components/Paper/ComicSfxDesigner';
@@ -573,6 +579,7 @@ export function PaperWorkspace() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const [topbarSlot, setTopbarSlot] = useState<HTMLElement | null>(null);
+  const [paperToolsCollapsed, setPaperToolsCollapsed] = useState(false);
   const workspacePanRef = useRef<{
     pointerId: number;
     startX: number;
@@ -694,6 +701,10 @@ export function PaperWorkspace() {
   const [kdpExportSettings, setKdpExportSettings] = useState<PaperKdpExportSettings>(() => loadPaperKdpExportSettings());
   const [polygonPoints, setPolygonPoints] = useState<Array<PaperPoint & { pageId: string }>>([]);
   const [modifierState, setModifierState] = useState({ ctrlKey: false, metaKey: false });
+  // On Android, holding Volume Down acts as a Ctrl-equivalent modifier for frame reshaping (handle
+  // grabbing / dragging sides / adding points). Tracked separately because the forwarded synthetic
+  // volume key events don't carry a real ctrlKey flag. See the volume-key effect + MainActivity.
+  const [volumeCtrlHeld, setVolumeCtrlHeld] = useState(false);
   const [paperViewport, setPaperViewport] = useState({ scrollTop: 0, viewportHeight: 1200 });
   const [paperToolsVisible, setPaperToolsVisible] = useState(true);
   const [paperToolsPosition, setPaperToolsPosition] = useState<PaperToolsPalettePosition>(() => loadPaperToolsPalettePosition());
@@ -882,7 +893,7 @@ export function PaperWorkspace() {
     () => new Map(spreadVirtualMetrics.map((metric) => [metric.id, metric])),
     [spreadVirtualMetrics],
   );
-  const vertexEditModifierActive = modifierState.ctrlKey || modifierState.metaKey;
+  const vertexEditModifierActive = modifierState.ctrlKey || modifierState.metaKey || volumeCtrlHeld;
 
   const updatePaperViewportFromElement = useCallback((element: HTMLElement | null) => {
     if (!element) return;
@@ -982,12 +993,22 @@ export function PaperWorkspace() {
 
   useEffect(() => {
     const updateModifiers = (event: KeyboardEvent) => {
+      const key = event.key?.toLowerCase();
+      // Android forwards held Volume Down as synthetic keydown/keyup (no real ctrlKey on the event) —
+      // treat it as the Ctrl-equivalent reshape modifier for the duration of the hold.
+      if (key === 'volumedown' || key === 'audiovolumedown') {
+        setVolumeCtrlHeld(event.type === 'keydown');
+        return;
+      }
       setModifierState((current) => {
         const next = { ctrlKey: event.ctrlKey, metaKey: event.metaKey };
         return current.ctrlKey === next.ctrlKey && current.metaKey === next.metaKey ? current : next;
       });
     };
-    const resetModifiers = () => setModifierState({ ctrlKey: false, metaKey: false });
+    const resetModifiers = () => {
+      setModifierState({ ctrlKey: false, metaKey: false });
+      setVolumeCtrlHeld(false);
+    };
 
     window.addEventListener('keydown', updateModifiers);
     window.addEventListener('keyup', updateModifiers);
@@ -996,6 +1017,16 @@ export function PaperWorkspace() {
       window.removeEventListener('keydown', updateModifiers);
       window.removeEventListener('keyup', updateModifiers);
       window.removeEventListener('blur', resetModifiers);
+    };
+  }, []);
+
+  // On Android, capture the hardware volume keys while the Paper workspace is open so Volume Down can
+  // act as the Ctrl-equivalent reshape modifier (MainActivity forwards them as synthetic key events).
+  // No-op off native; released on unmount so volume keys return to normal elsewhere.
+  useEffect(() => {
+    void setAndroidInterceptVolumeKeys(true);
+    return () => {
+      void setAndroidInterceptVolumeKeys(false);
     };
   }, []);
 
@@ -3544,8 +3575,10 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
         topbarSlot,
       ) : null}
       <PaperFloatingToolsPalette
+        collapsed={paperToolsCollapsed}
         leftInsetPx={paperFloatingToolsLeftInsetPx}
         onPositionChange={setPaperToolsPosition}
+        onToggleCollapsed={() => setPaperToolsCollapsed(!paperToolsCollapsed)}
         position={paperToolsPosition}
         topInsetPx={paperFloatingToolsTopInsetPx}
         visible={paperToolsVisible || (mobilePhoneInterface.enabled && mobileChromeMode !== 'expanded')}
@@ -3553,6 +3586,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
         <PaperToolbar
           activeTool={tool}
           canPasteStyle={Boolean(styleClipboard)}
+          collapsed={paperToolsCollapsed}
           colorPickersDisabled={!selectedFrame || selectedFrame.locked || Boolean(selectedFrame.inherited)}
           fillColor={selectedFrame?.fillColor ?? '#ffffff'}
           onAddFrame={addFrameForTool}
@@ -4075,7 +4109,7 @@ function persistPaperToolsPalettePosition(position: PaperToolsPalettePosition): 
 
 function clampPaperToolsPalettePosition(
   position: PaperToolsPalettePosition,
-  size: { width: number; height: number } = { width: 64, height: 560 },
+  size: { width: number; height: number } = { width: 96, height: 560 },
   options: { leftInsetPx?: number; rightInsetPx?: number; topInsetPx?: number } = {},
 ): PaperToolsPalettePosition {
   if (typeof window === 'undefined') {
@@ -5084,15 +5118,19 @@ function PaperWorkspaceViewportHost({
 
 function PaperFloatingToolsPalette({
   children,
+  collapsed,
   leftInsetPx,
   onPositionChange,
+  onToggleCollapsed,
   position,
   topInsetPx,
   visible,
 }: {
   children: React.ReactNode;
+  collapsed: boolean;
   leftInsetPx: number;
   onPositionChange: (position: PaperToolsPalettePosition) => void;
+  onToggleCollapsed: () => void;
   position: PaperToolsPalettePosition;
   topInsetPx: number;
   visible: boolean;
@@ -5107,7 +5145,7 @@ function PaperFloatingToolsPalette({
     const startPosition = position;
     const rect = paletteRef.current?.getBoundingClientRect();
     const paletteSize = {
-      width: Math.round(rect?.width ?? 64),
+      width: Math.round(rect?.width ?? 96),
       height: Math.round(rect?.height ?? 560),
     };
 
@@ -5143,18 +5181,23 @@ function PaperFloatingToolsPalette({
   return typeof document === 'undefined' ? null : createPortal(
     <div
       aria-label="Paper tools"
-      className="fixed z-[75] w-[64px] select-none overflow-hidden rounded-[3px] border border-cyan-300/25 bg-[#11131a] shadow-2xl shadow-black/45"
+      className="fixed z-[75] w-[96px] select-none overflow-hidden rounded-[3px] border border-cyan-300/25 bg-[#11131a] shadow-2xl shadow-black/45"
       data-compact-tool-palette="true"
       data-paper-floating-tools-palette="true"
       data-paper-tools-dockable="false"
       data-paper-tools-resizable="false"
       ref={paletteRef}
       role="toolbar"
-      style={{ left: position.x, maxHeight: boundedMaxHeight, top: position.y }}
+      style={{
+        left: position.x,
+        height: collapsed ? 76 : undefined,
+        maxHeight: collapsed ? 76 : boundedMaxHeight,
+        top: position.y,
+      }}
     >
       <div
         aria-label="Paper tools drag handle"
-        className="flex h-3 touch-none cursor-grab items-center justify-center border-b border-cyan-300/20 bg-[#171a22] active:cursor-grabbing"
+        className="relative flex h-4 touch-none cursor-grab items-center justify-center border-b border-cyan-300/20 bg-[#171a22] active:cursor-grabbing"
         data-paper-tools-drag-handle="true"
         onPointerDown={startDrag}
         role="button"
@@ -5162,6 +5205,22 @@ function PaperFloatingToolsPalette({
         title="Move Paper tools"
       >
         <span className="h-1 w-3 rounded-full bg-cyan-200/55" />
+        <button
+          className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center text-cyan-100/50 hover:text-cyan-400 active:text-cyan-500 rounded bg-cyan-950/20 hover:bg-cyan-950/40 p-0.5 transition-colors pointer-events-auto"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCollapsed();
+          }}
+          title={collapsed ? "Expand Tools" : "Collapse Tools"}
+          type="button"
+        >
+          {collapsed ? (
+            <ChevronDown size={10} />
+          ) : (
+            <ChevronUp size={10} />
+          )}
+        </button>
       </div>
       <div className="overflow-x-hidden overflow-y-auto" style={{ maxHeight: boundedBodyMaxHeight }}>
         {children}
@@ -5174,6 +5233,7 @@ function PaperFloatingToolsPalette({
 export function PaperToolbar({
   activeTool,
   canPasteStyle,
+  collapsed = false,
   colorPickersDisabled = false,
   fillColor = '#ffffff',
   onAddComicSfx,
@@ -5192,6 +5252,7 @@ export function PaperToolbar({
 }: {
   activeTool: PaperTool;
   canPasteStyle: boolean;
+  collapsed?: boolean;
   colorPickersDisabled?: boolean;
   fillColor?: string;
   onAddComicSfx: (presetId: PaperComicSfxPresetId) => void;
@@ -5213,23 +5274,24 @@ export function PaperToolbar({
     hand: <Hand size={18} />,
     text: <Type size={18} />,
     image: <ImageIcon size={18} />,
-    panel: <Square size={18} />,
+    panel: <Frame size={18} />,
     line: <Minus size={18} />,
     ellipse: <Circle size={18} />,
     triangle: <Triangle size={18} />,
-    pentagon: <PenLine size={18} />,
-    hexagon: <PenLine size={18} />,
-    shape: <PenLine size={18} />,
+    pentagon: <Pentagon size={18} />,
+    hexagon: <Hexagon size={18} />,
+    shape: <Waypoints size={18} />,
     speech: <MessageCircle size={18} />,
-    thought: <MessageCircle size={18} />,
+    thought: <Cloud size={18} />,
     caption: <Captions size={18} />,
     eyedropper: <Pipette size={18} />,
-    gutterKnife: <Scissors size={18} />,
+    gutterKnife: <Slice size={18} />,
   };
 
   return (
-    <div className="w-[64px] bg-[#151720]" data-paper-tools-panel="true">
-      <div className="grid grid-cols-2 justify-items-center gap-0" data-paper-tools-grid="true">
+    <div className="w-[96px] bg-[#151720]" data-paper-tools-panel="true">
+      {!collapsed && (
+        <div className="grid grid-cols-3 justify-items-center gap-0" data-paper-tools-grid="true">
         <PaperToolbarButton icon={<Undo2 size={18} />} label="Undo" onActivate={onUndo} />
         <PaperToolbarButton icon={<Redo2 size={18} />} label="Redo" onActivate={onRedo} />
         <PaperToolbarButton icon={<Scissors size={18} />} label="Cut" onActivate={onCut} />
@@ -5265,13 +5327,14 @@ export function PaperToolbar({
           );
         })}
       </div>
+      )}
       <div
-        className="relative h-[60px] w-16 border-x border-b border-[#252936] bg-[#151720]"
+        className="relative h-[60px] w-24 border-x border-b border-[#252936] bg-[#151720]"
         data-paper-color-well="true"
       >
         <AdvancedColorPicker
           buttonClassName="rounded-none border border-black"
-          className="absolute bottom-2 right-2 h-7 w-7 cursor-pointer rounded-none border border-black bg-transparent p-0"
+          className="absolute bottom-2 right-6 h-7 w-7 cursor-pointer rounded-none border border-black bg-transparent p-0"
           disabled={colorPickersDisabled}
           label="Frame stroke color"
           onChange={onStrokeColorChange}
@@ -5280,7 +5343,7 @@ export function PaperToolbar({
         />
         <AdvancedColorPicker
           buttonClassName="rounded-none border border-white/85 shadow-[0_0_0_1px_rgba(0,0,0,0.85)]"
-          className="absolute left-2 top-2 z-10 h-8 w-8 cursor-pointer rounded-none border border-white/85 bg-transparent p-0 shadow-[0_0_0_1px_rgba(0,0,0,0.85)]"
+          className="absolute left-6 top-2 z-10 h-8 w-8 cursor-pointer rounded-none border border-white/85 bg-transparent p-0 shadow-[0_0_0_1px_rgba(0,0,0,0.85)]"
           disabled={colorPickersDisabled}
           label="Frame fill color"
           onChange={onFillColorChange}
@@ -5861,7 +5924,7 @@ export function PaperTopStrip({
           <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-100/45">Paper layout and print export</div>
         </div>
       </div>
-      <div className={`flex items-center gap-1.5 ${isTitlebar ? 'min-w-max flex-1 overflow-x-auto overflow-y-hidden pr-2 [scrollbar-width:none]' : 'min-w-0'}`}>
+      <div className={`flex items-center gap-1.5 ${isTitlebar ? 'min-w-max flex-1 overflow-x-auto overflow-y-hidden pr-2 [scrollbar-width:none]' : 'min-w-0 overflow-x-auto overflow-y-hidden [scrollbar-width:thin]'}`}>
         <StripButton icon={<FilePlus2 size={13} />} label="New" onClick={onNew} />
         <StripButton icon={<FilePlus2 size={13} />} label="Page" onClick={onAddPage} />
         <StripButton icon={<FileJson size={13} />} label="Duplicate" onClick={onDuplicatePage} />

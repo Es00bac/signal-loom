@@ -25,9 +25,11 @@ export const HELP_SECTIONS: HelpContentSection[] = [
       {
         title: 'Core Workspaces',
         items: [
-          'Flow workspace: build generation graphs with text, image, video, audio, settings, source-bin, composition, and alias nodes.',
-          'Editor workspace: assemble source-bin media and editor assets into a sequenced program timeline.',
-          'Source bin: keep project-owned media, generated assets, text, shapes, and imported files available for reuse.',
+          'Flow workspace: build generation graphs from 60 node types (generate, inputs/data, lists, flow-control, logic/math, text/story, reuse/layout, monitor, settings).',
+          'Video (Editor) workspace: assemble source-bin media and editor assets into a sequenced, keyframed program timeline and render to 10 export presets.',
+          'Image workspace: layer-based raster editor with 26 tools, masks, adjustment layers, effects, a full brush engine, and model-in-the-loop AI fill.',
+          'Paper workspace: page layout and comics DTP with frames, threaded text, styles, swatches, print production (PDF/X), and book/webcomic export.',
+          'Source bin: keep project-owned media, generated assets, text, shapes, and imported files available for reuse across all four workspaces.',
         ],
       },
       {

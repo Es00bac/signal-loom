@@ -8,12 +8,14 @@ import { DEFAULT_RETOUCH_TOOL_SETTINGS } from '../../../types/imageEditor';
 import { resolveRetouchTargetLayer } from './retouchTargetLayer';
 import { BrushStrokeController } from '../../../lib/brushEngine';
 import { createRetouchStrokeController } from './retouchBrushEngine';
-import type { ToolHandler } from './types';
+import { brushStraightLineStart, recordBrushStrokeAnchor } from './brushLineAnchor';
+import type { Point, ToolHandler } from './types';
 
 interface SharpenBrushStroke {
   layerId: string;
   bitmapBefore: OffscreenCanvas;
   controller: BrushStrokeController;
+  lastDocPoint: Point;
 }
 
 let stroke: SharpenBrushStroke | null = null;
@@ -32,14 +34,17 @@ export const sharpenBrushReadinessDescriptor = describeRetouchToolReadiness({
 export const sharpenBrushFinishingReadinessSignature = sharpenBrushReadinessDescriptor.actionReadiness.signature;
 
 export const sharpenBrushTool: ToolHandler = {
-  onPointerDown(env, point) {
+  onPointerDown(env, point, mods) {
     const layer = resolveRetouchTargetLayer(env, point);
     if (!canEditImageLayerPixels(layer) || !layer?.bitmap) return;
     const bitmapBefore = cloneBitmap(layer.bitmap);
     const controller = createRetouchStrokeController(env, layer, bitmapBefore, 'sharpen');
+    // Shift straight-line: anchor at the previous stroke's end so this move draws a connecting line.
+    const lineStart = brushStraightLineStart('sharpenBrush', env.doc.id, mods);
+    if (lineStart) controller.anchor({ x: lineStart.x - layer.x, y: lineStart.y - layer.y });
     controller.moveTo({ x: point.x - layer.x, y: point.y - layer.y });
     controller.previewInto(layer.bitmap);
-    stroke = { layerId: layer.id, bitmapBefore, controller };
+    stroke = { layerId: layer.id, bitmapBefore, controller, lastDocPoint: point };
     env.requestRender({ invalidateBitmapCache: true });
   },
 
@@ -49,11 +54,13 @@ export const sharpenBrushTool: ToolHandler = {
     if (!layer?.bitmap) return;
     stroke.controller.moveTo({ x: point.x - layer.x, y: point.y - layer.y });
     stroke.controller.previewInto(layer.bitmap);
+    stroke.lastDocPoint = point;
     env.requestRender({ invalidateBitmapCache: true });
   },
 
   onPointerUp(env) {
     if (!stroke) return;
+    recordBrushStrokeAnchor('sharpenBrush', env.doc.id, stroke.lastDocPoint);
     const layer = env.doc.layers.find((candidate) => candidate.id === stroke?.layerId);
     if (layer?.bitmap) {
       stroke.controller.commit(layer.bitmap);

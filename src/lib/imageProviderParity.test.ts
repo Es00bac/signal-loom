@@ -10,10 +10,16 @@ describe('cross-provider nano-banana reference parity', () => {
     expect(getImageModelCapabilities('atlas', 'google/nano-banana-2/edit').referenceImages).toBe(true);
   });
 
-  it('gives the Atlas nano-banana edit route a comparable reference budget', () => {
-    const atlas = getImageModelCapabilities('atlas', 'google/nano-banana-2/reference-to-image');
+  it('gives the Atlas nano-banana routes a comparable reference budget (per documented schemas)', () => {
     const gemini = getImageModelCapabilities('gemini', 'gemini-3-pro-image');
-    expect(atlas.maxReferenceImages).toBe(gemini.maxReferenceImages);
+    // Atlas nano-banana-2/edit accepts up to 14 images — the same budget as the Gemini route.
+    expect(getImageModelCapabilities('atlas', 'google/nano-banana-2/edit').maxReferenceImages).toBe(
+      gemini.maxReferenceImages,
+    );
+    // The reference-to-image route documents a 10-image budget (still a strong multi-reference count).
+    expect(
+      getImageModelCapabilities('atlas', 'google/nano-banana-2/reference-to-image').maxReferenceImages,
+    ).toBeGreaterThanOrEqual(10);
   });
 });
 

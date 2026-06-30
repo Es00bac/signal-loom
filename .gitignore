@@ -21,6 +21,11 @@ dist-ssr
 *.p12
 *.pfx
 
+# nginx server configs — operator/server infra, not source. Keep out of the
+# public repo (they disclose server paths/hostnames; live copies stay on the VPS).
+nginx-*.conf
+ops/remote-access/nginx/*.conf
+
 # Local runtime state, browser automation artifacts, and generated output
 .codex
 .cache

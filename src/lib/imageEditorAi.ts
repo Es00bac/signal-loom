@@ -8,6 +8,7 @@
 import type { ImageProvider } from '../types/flow';
 import { runOpenAiInpaint } from './imageEditorAi/openAiAdapter';
 import { runAtlasInpaint } from './imageEditorAi/atlasAdapter';
+import { runBytePlusImage } from './imageEditorAi/bytePlusImage';
 import { runGeminiInpaint } from './imageEditorAi/geminiAdapter';
 import { runHuggingFaceInpaint } from './imageEditorAi/huggingFaceAdapter';
 import { runGenericHttpInpaint } from './imageEditorAi/genericHttpAdapter';
@@ -71,6 +72,7 @@ export type GenerativeFillAdapter = (
 const ADAPTERS: Record<GenerativeFillProvider, GenerativeFillAdapter> = {
   openai: runOpenAiInpaint,
   atlas: runAtlasInpaint,
+  byteplus: runBytePlusImage,
   gemini: runGeminiInpaint,
   huggingface: runHuggingFaceInpaint,
   bfl: runBflInpaint,

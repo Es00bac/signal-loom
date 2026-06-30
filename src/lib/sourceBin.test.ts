@@ -253,6 +253,30 @@ describe('collectGlobalSourceBinItems', () => {
     ]);
   });
 
+  it('expands a generator node\'s multi-result BATCH (2+ envelopeItems) into all N connected items', () => {
+    const nodes = [
+      createNode({
+        id: 'image-1',
+        type: 'imageGen',
+        data: {
+          result: 'data:image/png;base64,AAA',
+          envelopeItems: [
+            { id: 'image-1-envelope-0', index: 0, kind: 'image', label: 'Image 1', value: 'data:image/png;base64,AAA', mimeType: 'image/png', sourceBinItemId: 'sb-a' },
+            { id: 'image-1-envelope-1', index: 1, kind: 'image', label: 'Image 2', value: 'data:image/png;base64,BBB', mimeType: 'image/png', sourceBinItemId: 'sb-b' },
+            { id: 'image-1-envelope-2', index: 2, kind: 'image', label: 'Image 3', value: 'data:image/png;base64,CCC', mimeType: 'image/png', sourceBinItemId: 'sb-c' },
+          ],
+        },
+      }),
+      createNode({ id: 'bin-1', type: 'sourceBin' }),
+    ];
+    const edges: Edge[] = [{ id: 'edge-1', source: 'image-1', target: 'bin-1' }];
+
+    const items = collectGlobalSourceBinItems(nodes, edges);
+    // All three batch results are surfaced (so the source-bin reconciliation keeps them, not just the first).
+    expect(items).toHaveLength(3);
+    expect(items.map((item) => item.sourceBinItemId)).toEqual(['sb-a', 'sb-b', 'sb-c']);
+  });
+
   it('expands envelope outputs into individually draggable source-bin items when explicitly routed through an envelope node', () => {
     const nodes = [
       createNode({

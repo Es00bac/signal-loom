@@ -46,6 +46,10 @@ import {
   type PaperComicSfxDesign,
   type PaperComicSfxPresetId,
 } from '../lib/paperComicSfx';
+import {
+  applyPaperDocumentNativeChange,
+  type PaperDocumentNativeChange,
+} from '../lib/paperDocumentNativeSync';
 import type {
   PaperDocument,
   PaperDocumentSnapshot,
@@ -141,6 +145,13 @@ interface PaperActions {
   toggleViewOption: (option: keyof PaperDocument['view']) => void;
   exportSnapshot: () => PaperDocumentSnapshot;
   restoreSnapshot: (snapshot?: Partial<PaperDocumentSnapshot>) => void;
+  /**
+   * Apply a remote Paper op from the unified cross-device sync (#52) to the live document, **without
+   * pushing undo history or re-broadcasting** (the echo guard lives in `paperSyncChannel`). Reconciles
+   * the local selection if a selected frame/page was removed by the op. Returns whether the document
+   * actually changed (so a self-echoed op never thrashes).
+   */
+  applyRemotePaperDocumentChange: (change: PaperDocumentNativeChange) => boolean;
 }
 
 const initialDocument = createDefaultPaperDocument({ title: 'Untitled Paper Layout' });
@@ -794,6 +805,17 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           styleClipboard: get().styleClipboard,
         });
       },
+
+      applyRemotePaperDocumentChange: (change) => {
+        let changed = false;
+        set((state) => {
+          const nextDocument = applyPaperDocumentNativeChange(state.document, change);
+          if (nextDocument === state.document) return {};
+          changed = true;
+          return { document: nextDocument, ...reconcilePaperSelection(state, nextDocument) };
+        });
+        return changed;
+      },
     }),
     {
       name: 'signal-loom-paper-workspace',
@@ -864,6 +886,25 @@ function withPaperHistory<TPatch extends Partial<PaperState>>(state: PaperState,
     undoStack: pushPaperHistory(state),
     redoStack: [],
   };
+}
+
+/**
+ * After a remote op replaces the document, keep the local selection valid: fall back to the first page
+ * if the selected page vanished, and drop any selected frame ids that no longer exist on the selected
+ * page. View state (tool/zoom) is intentionally left alone — each client keeps its own viewport.
+ */
+function reconcilePaperSelection(
+  state: PaperState,
+  document: PaperDocument,
+): Pick<PaperState, 'selectedPageId' | 'selectedFrameId' | 'selectedFrameIds'> {
+  const pageExists = document.pages.some((page) => page.id === state.selectedPageId);
+  const selectedPageId = pageExists ? state.selectedPageId : document.pages[0]?.id ?? state.selectedPageId;
+  const page = document.pages.find((candidate) => candidate.id === selectedPageId);
+  const validFrameIds = new Set(page?.frames.map((frame) => frame.id) ?? []);
+  const selectedFrameId =
+    state.selectedFrameId && validFrameIds.has(state.selectedFrameId) ? state.selectedFrameId : null;
+  const selectedFrameIds = state.selectedFrameIds.filter((frameId) => validFrameIds.has(frameId));
+  return { selectedPageId, selectedFrameId, selectedFrameIds };
 }
 
 function getSelectedPaperFrameIds(state: PaperState): string[] {
@@ -1130,6 +1171,16 @@ function defaultFrameWidth(kind: PaperFrameKind): number {
   if (kind === 'shape') return 48;
   if (kind === 'document') return 96;
   return 84;
+}
+
+// Register the Paper workspace on the unified cross-device sync (#52) lazily when this store loads, so
+// channel-init is tied to the Paper workspace being present with zero app-startup cost. Mirrors flowStore.
+// Skipped under the test runner so a unit test importing this store can't spawn a floating channel-init
+// side-effect that races vitest's multi-file module evaluation; the channel's own tests init explicitly.
+if (import.meta.env?.MODE !== 'test') {
+  void import('../lib/paperSyncChannel')
+    .then((module) => module.initializePaperSyncChannel())
+    .catch(() => undefined);
 }
 
 function defaultFrameHeight(kind: PaperFrameKind): number {

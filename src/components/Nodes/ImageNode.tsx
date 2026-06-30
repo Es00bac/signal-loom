@@ -10,7 +10,10 @@ import { ImagePreviewPane } from './ImagePreviewPane';
 import { MediaLoadingOverlay } from './MediaLoadingOverlay';
 import { MediaPreviewModal } from './MediaPreviewModal';
 import { ImageMaskPainterDialog } from './ImageMaskPainterDialog';
-import { saveImportedAsset } from '../../lib/assetStore';
+import { resolveImportedAssetDataUrl, saveImportedAsset } from '../../lib/assetStore';
+import { fetchRemoteHostSourceAssetDataUrl, isServedLanSession } from '../../lib/remoteHostClient';
+import { useLiveNodeResultAssetUrl } from './useLiveNodeResultAssetUrl';
+import { getAtlasModelParams, getAtlasDimensionSpec, atlasModelAcceptsField } from '../../lib/imageEditorAi/atlasNativeImage';
 import { buildDownloadFilename, downloadAsset } from '../../lib/downloadAsset';
 import { EXPORT_BASENAME } from '../../lib/brand';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
@@ -87,6 +90,8 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
   const apiKeys = useSettingsStore((state) => state.apiKeys);
   const providerSettings = useSettingsStore((state) => state.providerSettings);
   const defaultModels = useSettingsStore((state) => state.defaultModels.image);
+  const defaultImageNodeModel = useSettingsStore((state) => state.defaultImageNodeModel);
+  const setDefaultImageNodeModel = useSettingsStore((state) => state.setDefaultImageNodeModel);
   const modelCatalog = useCatalogStore((state) => state.modelCatalog);
   const mediaMode = (data.mediaMode ?? 'generate') as MediaNodeMode;
   const isCollapsed = Boolean(data.collapsed);
@@ -94,6 +99,8 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
   const currentAspectRatio = data.aspectRatio;
   const [isPreviewOpen, setPreviewOpen] = useState(false);
   const [isMaskPainterOpen, setMaskPainterOpen] = useState(false);
+  const [resolvedImportUrl, setResolvedImportUrl] = useState<string | undefined>(undefined);
+  const [resolvedResultUrl, setResolvedResultUrl] = useState<string | undefined>(undefined);
   const availableProviders = useMemo(
     () => getConfiguredProviders('image', apiKeys, providerSettings),
     [apiKeys, providerSettings],
@@ -124,7 +131,116 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
     0,
     Math.max(0, Math.min(IMAGE_REFERENCE_HANDLES.length, controlModel.capabilities.maxReferenceImages)),
   );
-  const assetUrl = mediaMode === 'import' ? data.sourceAssetUrl : data.result;
+  const servedSession = isServedLanSession();
+  const sourceAssetId = typeof data.sourceAssetId === 'string' ? data.sourceAssetId : undefined;
+  const nodeSourceBinItemId = typeof data.sourceBinItemId === 'string' ? data.sourceBinItemId : undefined;
+
+  // A URL we can actually paint in THIS origin. On a served browser the node's own URLs are phone-local
+  // (capacitor / blob / `signal-loom-asset:` / the inline `sourceAssetUrl` that read-only project-open
+  // restores) and fail to load — only a `data:` URL is safe. Off a served session every URL is local, so
+  // anything paints. Painting an unloadable URL is what produced the broken-image glyph on the desktop.
+  const canPaint = (url: string | undefined): url is string =>
+    typeof url === 'string' && url.length > 0 && (!servedSession || url.startsWith('data:'));
+
+  // Import mode. A node dragged from the source library carries `sourceBinItemId` (the library item id)
+  // and/or `sourceAssetId`; a directly-imported file carries `sourceAssetId` (IndexedDB). On a served
+  // browser the inline `sourceAssetUrl` can't paint, so resolve the bytes from the host: prefer the
+  // library item id over the UNIVERSAL `/source-asset/:id` (the only path that covers native-file- and
+  // scratch-backed items, which have no `assetId`), falling back to the imported-asset id over
+  // `/asset/:id`. This is the same byte path the working source-library panel already rides.
+  const needsImportResolution =
+    mediaMode === 'import' && !canPaint(data.sourceAssetUrl) && (Boolean(nodeSourceBinItemId) || Boolean(sourceAssetId));
+
+  useEffect(() => {
+    if (!needsImportResolution) {
+      setResolvedImportUrl(undefined);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      let url: string | undefined;
+      if (servedSession && nodeSourceBinItemId) {
+        url = (await fetchRemoteHostSourceAssetDataUrl(nodeSourceBinItemId).catch(() => null)) ?? undefined;
+      }
+      if (!url && sourceAssetId) {
+        url = await resolveImportedAssetDataUrl(sourceAssetId).catch(() => undefined);
+      }
+      if (!cancelled) {
+        setResolvedImportUrl(url);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [needsImportResolution, servedSession, nodeSourceBinItemId, sourceAssetId]);
+
+  // Generate mode renders `data.result`, the selected attempt's source-bin asset URL — a phone-local URL
+  // that survives Flow sync but a served browser can't fetch. The selected attempt carries the stable
+  // `sourceBinItemId`, so on a served session resolve the bytes from the host by item id (the universal
+  // `/source-asset/:id` path the source library rides) and render that instead of a blank placeholder.
+  const selectedResultAttempt = Array.isArray(data.resultHistory)
+    ? (data.resultHistory.find((attempt) => attempt.id === data.selectedResultId)
+      ?? data.resultHistory[data.resultHistory.length - 1])
+    : undefined;
+  const resultSourceBinItemId = selectedResultAttempt?.sourceBinItemId ?? nodeSourceBinItemId;
+  const needsResultResolution =
+    mediaMode === 'generate' && Boolean(resultSourceBinItemId) && servedSession && !canPaint(data.result);
+
+  useEffect(() => {
+    if (!needsResultResolution || !resultSourceBinItemId) {
+      setResolvedResultUrl(undefined);
+      return;
+    }
+
+    let cancelled = false;
+    void fetchRemoteHostSourceAssetDataUrl(resultSourceBinItemId).then((url) => {
+      if (!cancelled) {
+        setResolvedResultUrl(url ?? undefined);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [needsResultResolution, resultSourceBinItemId]);
+
+  // Served-session linkage fallback. An EXISTING project's nodes predate the per-attempt `sourceBinItemId`
+  // plumbing, and their own URLs are unreachable in a served browser (import: the inline `sourceAssetUrl`
+  // is stripped by sync and `/asset/:id` is IndexedDB-only, so native-file-backed imports miss; generate:
+  // `data.result` is a phone-local URL). But `hydrateAssets()` already resolved EVERY source-library item
+  // to a `data:` URL through the universal `/source-asset/:itemId` endpoint, and the node's asset is linked
+  // there structurally — directly by `sourceBinItemId` (the most reliable link, set on every node dragged
+  // from the library), else generated items by `originNodeId`, imported items by `assetId`. Reuse that
+  // already-resolved `data:` URL so the node renders the SAME bytes the library panel does, no refetch.
+  const servedLinkedAssetUrl = useSourceBinStore((state) => {
+    if (!servedSession) return undefined;
+    const linked = state.getAllItems().filter(
+      (item) =>
+        (Boolean(nodeSourceBinItemId) && item.id === nodeSourceBinItemId) ||
+        item.originNodeId === id ||
+        (typeof item.originNodeId === 'string' && item.originNodeId.startsWith(`${id}:`)) ||
+        (Boolean(sourceAssetId) && item.assetId === sourceAssetId),
+    );
+    if (linked.length === 0) return undefined;
+    const latest = linked.reduce((best, item) => (item.createdAt > best.createdAt ? item : best));
+    return canPaint(latest.assetUrl) ? latest.assetUrl : undefined;
+  });
+
+  // Live generated-result URL from the source-bin store (the asset's authority). `data.result` caches the
+  // `assetUrl` from generation time, which for IndexedDB-/scratch-backed assets is a `blob:` URL the store
+  // revokes on rehydration — leaving the cached value pointing at a dead blob (the broken-image glyph). See
+  // useLiveNodeResultAssetUrl for the full rationale; resolving reactively always yields the still-valid URL.
+  const liveResultAssetUrl = useLiveNodeResultAssetUrl({
+    nodeId: id,
+    enabled: mediaMode === 'generate',
+    resultSourceBinItemId,
+  });
+
+  const assetUrl = mediaMode === 'import'
+    ? ((canPaint(data.sourceAssetUrl) ? data.sourceAssetUrl : undefined) ?? resolvedImportUrl ?? servedLinkedAssetUrl)
+    : (resolvedResultUrl ?? liveResultAssetUrl ?? servedLinkedAssetUrl ?? (canPaint(data.result) ? data.result : undefined));
   const assetMimeType = mediaMode === 'import' ? data.sourceAssetMimeType : 'image/png';
   const isImageGenerating = Boolean(data.isRunning);
 
@@ -191,6 +307,36 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
     data.aspectRatio as string | undefined,
   );
   const aspectRatioOptions = getImageAspectRatioOptions(provider, selectedModelId);
+  // Documented model-specific parameters (resolution, quality, n, thinking_mode, …) for the selected Atlas
+  // model — rendered as a generic section so every feature the model exposes is reachable from the node.
+  const atlasModelParams = provider === 'atlas' ? getAtlasModelParams(selectedModelId) : [];
+  // Only show output-size controls the SELECTED model actually supports (from its documented schema):
+  // aspect-ratio presets when the model takes an aspect_ratio or a W×H `size`; custom width/height only for
+  // free-range `size`. Tier-only models (e.g. Wan 2.7 — resolution 1K/2K, aspect follows the source) and
+  // models with no size field show neither (their `size`/resolution appears in Model parameters instead).
+  const atlasDimSpec = provider === 'atlas' ? getAtlasDimensionSpec(selectedModelId) : undefined;
+  const atlasIsSizeField = atlasDimSpec?.field === 'size' || atlasDimSpec?.field === 'image_size';
+  const atlasAspectControllable = provider !== 'atlas'
+    ? true
+    : atlasDimSpec?.field === 'aspect_ratio'
+      || atlasDimSpec?.field === 'wh'
+      || (atlasIsSizeField && atlasDimSpec?.format !== 'tier');
+  const atlasCustomDimsControllable = provider !== 'atlas'
+    ? true
+    : (atlasIsSizeField && Boolean(atlasDimSpec?.free)) || atlasDimSpec?.field === 'wh';
+  // The boolean "safety checker" toggle only applies to models that document `enable_safety_checker`.
+  // Models with a numeric `safety_tolerance` (e.g. FLUX.2) expose that in Model parameters instead.
+  const atlasAcceptsSafetyToggle = provider !== 'atlas' || atlasModelAcceptsField(selectedModelId, 'enable_safety_checker');
+  const atlasParamValues = (data.atlasParams ?? {}) as Record<string, string | number | boolean>;
+  const setAtlasParam = (name: string, value: string | number | boolean | undefined) => {
+    const next: Record<string, string | number | boolean> = { ...atlasParamValues };
+    if (value === undefined || value === '') {
+      delete next[name];
+    } else {
+      next[name] = value;
+    }
+    data.onChange?.('atlasParams', next);
+  };
 
   useEffect(() => {
     if (mediaMode !== 'generate' || availableProviders.length === 0 || availableProviders.includes(provider)) {
@@ -481,6 +627,18 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
                   </option>
                 ))}
               </select>
+
+              <label className={withFlowNodeInteractionClasses('flex items-center gap-2 text-[11px] text-gray-400')}>
+                <input
+                  checked={defaultImageNodeModel?.provider === provider && defaultImageNodeModel?.modelId === selectedModelId}
+                  className="h-3.5 w-3.5 shrink-0 accent-blue-400"
+                  onChange={(event) => setDefaultImageNodeModel(
+                    event.target.checked ? { provider, modelId: selectedModelId } : null,
+                  )}
+                  type="checkbox"
+                />
+                Default for new image nodes
+              </label>
             </>
           ) : (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
@@ -493,7 +651,7 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
 
           {!isVideoFrameMode ? (
             <>
-              {hasControl('aspectRatio') && aspectRatioOptions.length > 0 ? (
+              {hasControl('aspectRatio') && atlasAspectControllable && aspectRatioOptions.length > 0 ? (
                 <select
                   className={selectClassName}
                   onChange={(event) => data.onChange?.('aspectRatio', event.target.value)}
@@ -505,6 +663,39 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
                     </option>
                   ))}
                 </select>
+              ) : null}
+
+              {hasControl('dimensions') && atlasCustomDimsControllable ? (
+                <div className="flex gap-2">
+                  <input
+                    aria-label="Custom width (px)"
+                    className={textInputClassName}
+                    max={4096}
+                    min={64}
+                    onChange={(event) => data.onChange?.(
+                      'imageWidth',
+                      event.target.value === '' ? undefined : Number(event.target.value),
+                    )}
+                    placeholder="Width"
+                    step={8}
+                    type="number"
+                    value={data.imageWidth === undefined ? '' : String(data.imageWidth)}
+                  />
+                  <input
+                    aria-label="Custom height (px)"
+                    className={textInputClassName}
+                    max={4096}
+                    min={64}
+                    onChange={(event) => data.onChange?.(
+                      'imageHeight',
+                      event.target.value === '' ? undefined : Number(event.target.value),
+                    )}
+                    placeholder="Height"
+                    step={8}
+                    type="number"
+                    value={data.imageHeight === undefined ? '' : String(data.imageHeight)}
+                  />
+                </div>
               ) : null}
 
               {hasControl('steps') ? (
@@ -575,10 +766,10 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
                 />
               ) : null}
 
-              {hasControl('safetyChecker') ? (
+              {hasControl('safetyChecker') && atlasAcceptsSafetyToggle ? (
                 <label className={withFlowNodeInteractionClasses('flex items-start gap-2 rounded-lg border border-gray-700/50 bg-[#111217]/30 px-2.5 py-2 text-[11px] text-gray-300 hover:border-gray-600')}>
                   <input
-                    checked={data.imageSafetyCheckerEnabled ?? true}
+                    checked={data.imageSafetyCheckerEnabled ?? false}
                     className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-blue-400"
                     onChange={(event) => data.onChange?.('imageSafetyCheckerEnabled', event.target.checked)}
                     type="checkbox"
@@ -634,6 +825,75 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
                   type="text"
                   value={data.imageTextEditPrompt ?? ''}
                 />
+              ) : null}
+
+              {hasControl('negativePrompt') ? (
+                <input
+                  className={textInputClassName}
+                  onChange={(event) => data.onChange?.('imageNegativePrompt', event.target.value)}
+                  placeholder="Negative prompt, e.g. blurry, extra fingers"
+                  type="text"
+                  value={data.imageNegativePrompt ?? ''}
+                />
+              ) : null}
+
+              {atlasModelParams.length > 0 ? (
+                <div className="space-y-1.5 rounded-md border border-gray-700/50 p-2">
+                  <span className="block text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                    Model parameters
+                  </span>
+                  {atlasModelParams.map((param) => {
+                    const current = atlasParamValues[param.name];
+                    const defaultHint = param.default !== undefined ? ` (default ${param.default})` : '';
+                    if (param.type === 'boolean') {
+                      const checked = current === undefined ? Boolean(param.default) : Boolean(current);
+                      return (
+                        <label key={param.name} className="flex items-center gap-2 text-[11px] text-gray-300" title={param.description}>
+                          <input
+                            checked={checked}
+                            onChange={(event) => setAtlasParam(param.name, event.target.checked)}
+                            type="checkbox"
+                          />
+                          {param.label}
+                        </label>
+                      );
+                    }
+                    if (param.type === 'enum') {
+                      return (
+                        <select
+                          key={param.name}
+                          className={selectClassName}
+                          onChange={(event) => setAtlasParam(param.name, event.target.value || undefined)}
+                          title={param.description}
+                          value={current === undefined ? '' : String(current)}
+                        >
+                          <option value="">{`${param.label}${defaultHint}`}</option>
+                          {(param.enum ?? []).map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      );
+                    }
+                    return (
+                      <input
+                        key={param.name}
+                        className={textInputClassName}
+                        max={param.max}
+                        min={param.min}
+                        onChange={(event) => setAtlasParam(
+                          param.name,
+                          event.target.value === ''
+                            ? undefined
+                            : (param.type === 'string' ? event.target.value : Number(event.target.value)),
+                        )}
+                        placeholder={`${param.label}${defaultHint}`}
+                        title={param.description}
+                        type={param.type === 'string' ? 'text' : 'number'}
+                        value={current === undefined ? '' : String(current)}
+                      />
+                    );
+                  })}
+                </div>
               ) : null}
 
               {hasControl('outpaintMargins') ? (

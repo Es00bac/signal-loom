@@ -1,5 +1,6 @@
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
+import { showUserNotice } from '../shared/ui/userNotice';
 
 export interface OpenedNativeFile {
   bytes: Uint8Array;
@@ -81,6 +82,10 @@ export function registerAndroidFileOpenHandler(
       await onOpen({ bytes, fileName: fileNameFromUri(uri) });
     } catch (error) {
       console.error('[Signal Loom] Failed to open file from intent:', uri, error);
+      showUserNotice(
+        `Couldn’t open “${fileNameFromUri(uri)}”: ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+      );
     }
   };
 

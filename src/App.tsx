@@ -18,6 +18,7 @@ import { ConfirmationDialog } from './components/Common/ConfirmationDialog';
 import { TextInputDialog } from './components/Common/TextInputDialog';
 import { AlertDialog } from './components/Common/AlertDialog';
 import { TopNavbar } from './components/Layout/TopNavbar';
+import { EditBatonReadOnlyOverlay } from './components/Layout/EditBatonReadOnlyOverlay';
 import { CommandPalette } from './components/Common/CommandPalette';
 import { ActivityTrailPanel } from './components/Common/ActivityTrailPanel';
 import { GamepadInputManager } from './components/Common/GamepadInputManager';
@@ -68,6 +69,10 @@ import { DialogueScriptSplitterNode } from './components/Nodes/DialogueScriptSpl
 import { FunctionNode } from './components/Nodes/FunctionNode';
 import { GroupNode } from './components/Nodes/GroupNode';
 import { ColorSwatchNode } from './components/Nodes/ColorSwatchNode';
+import { ColorSwatchListNode } from './components/Nodes/ColorSwatchListNode';
+import { LoraSpecNode } from './components/Nodes/LoraSpecNode';
+import { SlimgNode } from './components/Nodes/SlimgNode';
+import { useSlimgLiveSync } from './components/Nodes/useSlimgLiveSync';
 import { DoodleNode } from './components/Nodes/DoodleNode';
 import { FunctionInputNode } from './components/Nodes/FunctionInputNode';
 import { FunctionOutputNode } from './components/Nodes/FunctionOutputNode';
@@ -278,6 +283,9 @@ const nodeTypes = {
   dialogueScriptSplitterNode: DialogueScriptSplitterNode,
   numberNode: NumberNode,
   colorSwatchNode: ColorSwatchNode,
+  colorSwatchListNode: ColorSwatchListNode,
+  loraSpecNode: LoraSpecNode,
+  slimgNode: SlimgNode,
   doodleNode: DoodleNode,
   functionNode: FunctionNode,
   groupNode: GroupNode,
@@ -334,6 +342,9 @@ function FlowApp() {
   const lastConnectorBookmarkNodeIdRef = useRef<string | undefined>(undefined);
   const workspaceView = useEditorStore((state) => state.workspaceView);
   const setWorkspaceView = useEditorStore((state) => state.setWorkspaceView);
+
+  // Keep every .slimg Flow node's output in sync with its bound Image document (runs app-wide).
+  useSlimgLiveSync();
   const sourceBinVisible = useEditorStore((state) => state.sourceBinVisible);
   const inspectorVisible = useEditorStore((state) => state.inspectorVisible);
   const setPanelVisibility = useEditorStore((state) => state.setPanelVisibility);
@@ -2241,6 +2252,7 @@ function FlowApp() {
             y={flowContextMenu.y}
           />
         ) : null}
+        <EditBatonReadOnlyOverlay />
       </div>
 
       <SettingsModal />

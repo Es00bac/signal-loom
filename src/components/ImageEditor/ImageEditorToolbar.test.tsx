@@ -33,6 +33,32 @@ describe('ImageEditorToolbar', () => {
     expect(html).not.toContain('Dock</button>');
   });
 
+  it('gives every tool a visually distinct icon (no two tools share a glyph)', () => {
+    const html = renderToStaticMarkup(<ImageEditorToolbar />);
+    const doc = document.createElement('div');
+    doc.innerHTML = html;
+
+    const iconByTool = new Map<string, string>();
+    for (const definition of IMAGE_EDITOR_TOOL_DEFINITIONS) {
+      const button = doc.querySelector(`button[aria-label="${definition.label} tool"]`);
+      expect(button, `no toolbar button for ${definition.tool}`).not.toBeNull();
+      const svg = button!.querySelector('svg');
+      expect(svg, `no icon svg for ${definition.tool}`).not.toBeNull();
+      // lucide stamps a `lucide-<name>` class (sometimes an alias + canonical pair); the full set
+      // is a stable per-icon signature, so two different glyphs can never collide.
+      const signature = Array.from(svg!.classList)
+        .filter((cls) => cls.startsWith('lucide-'))
+        .sort()
+        .join(' ');
+      expect(signature, `no lucide icon class for ${definition.tool}`).toBeTruthy();
+      iconByTool.set(definition.tool, signature);
+    }
+
+    const distinct = new Set(iconByTool.values());
+    expect(distinct.size, `shared icons across tools: ${JSON.stringify([...iconByTool])}`)
+      .toBe(iconByTool.size);
+  });
+
   it('makes related tool flyout groups discoverable without adding palette dock or resize chrome', () => {
     const html = renderToStaticMarkup(<ImageEditorToolbar />);
     const doc = document.createElement('div');

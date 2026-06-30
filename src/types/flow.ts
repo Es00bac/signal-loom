@@ -45,6 +45,9 @@ export const FLOW_NODE_TYPES = [
   'dialogueScriptSplitterNode',
   'numberNode',
   'colorSwatchNode',
+  'colorSwatchListNode',
+  'loraSpecNode',
+  'slimgNode',
   'doodleNode',
   'groupNode',
   'functionNode',
@@ -68,7 +71,7 @@ export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
 export type TextNodeMode = 'prompt' | 'generate';
 export type MediaNodeMode = 'generate' | 'import';
 export type TextProvider = 'gemini' | 'openai' | 'huggingface';
-export type ImageProvider = 'gemini' | 'openai' | 'huggingface' | 'bfl' | 'stability' | 'localOpen' | 'android' | 'atlas';
+export type ImageProvider = 'gemini' | 'openai' | 'huggingface' | 'bfl' | 'stability' | 'localOpen' | 'android' | 'atlas' | 'byteplus';
 export type VideoProvider = 'gemini' | 'huggingface' | 'atlas';
 export type AudioProvider = 'gemini' | 'elevenlabs' | 'huggingface';
 export type ColorSwatchUsageMode = 'primary' | 'theme' | 'brand' | 'grade';
@@ -606,6 +609,12 @@ export interface NodeResultAttempt {
   createdAt: string;
   usage?: UsageTelemetry;
   variableName?: string;
+  /**
+   * The source-bin item id backing this attempt's asset, when the result was stored in the source bin.
+   * `result` is a phone-local asset URL that a served browser can't fetch; this stable id lets the
+   * served second screen re-resolve the bytes by item id (the universal `/source-asset/:id` path).
+   */
+  sourceBinItemId?: string;
 }
 
 export interface EnvelopeItem {
@@ -654,6 +663,7 @@ export interface ApiKeys {
   bfl?: string;
   stability?: string;
   atlas?: string;
+  byteplus?: string;
 }
 
 export interface ProviderSettings {
@@ -682,12 +692,15 @@ export interface ProviderSettings {
   localAiCpuAuthHeader?: string;
   localAiCpuModel?: string;
   atlasBaseUrl?: string;
+  bytePlusBaseUrl?: string;
   androidAcceleratorBaseUrl?: string;
   androidAcceleratorAuthToken?: string;
   androidAcceleratorDefaultUpscaler?: string;
   androidAcceleratorDefaultImageModel?: string;
   batchMaxRetries: number;
   batchRetryBaseDelayMs: number;
+  androidLanServerEnabled: boolean;
+  androidLanServerPin: string;
 }
 
 export interface VertexNativeAuthConfig {
@@ -771,6 +784,12 @@ export interface NodeData {
   doodleDescription?: string;
   colorSwatchSelectedIndex?: number;
   colorSwatchUsageMode?: ColorSwatchUsageMode;
+  /** Color Swatch node: per-entry labels keyed by `${sourcePaletteNodeId}:${sourceHandleId}`. */
+  colorSwatchEntryLabels?: Record<string, string>;
+  /** LoRA Spec node: up to 3 `{ path, scale }` weights for FLUX LoRA models. */
+  loraEntries?: Array<{ path: string; scale: number }>;
+  /** .slimg node: id of the bound Image document it saved/opened (drives live re-flatten). */
+  slimgBoundDocId?: string;
   loopBreakReason?: string;
   prompt?: string;
   systemPrompt?: string;
@@ -792,6 +811,13 @@ export interface NodeData {
   imageSeed?: number;
   imageGuidanceScale?: number;
   imageEditStrength?: number;
+  /** Optional custom output size (px) for models that accept an arbitrary `size`; overrides the aspect-ratio preset when both are set. */
+  imageWidth?: number;
+  imageHeight?: number;
+  /** Negative prompt for models whose Atlas schema accepts `negative_prompt` (qwen, wan, imagen, …). */
+  imageNegativePrompt?: string;
+  /** Per-model documented input parameters (resolution, quality, n, thinking_mode, …) keyed by schema field name. */
+  atlasParams?: Record<string, string | number | boolean>;
   imageLoraWeightsJson?: string;
   imageSafetyCheckerEnabled?: boolean;
   imageOutpaintLeft?: number;

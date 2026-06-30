@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import { create } from 'zustand';
 import {
   DEFAULT_BRUSH_SETTINGS,
@@ -20,6 +21,7 @@ import {
   type ImageDocumentSnapshot,
   type ImageLayerEditTarget,
   type ImageLayer,
+  type LayerBitmap,
   type ImageQuickActionMacro,
   type ImageQuickActionMacroStep,
   type GradientToolSettings,
@@ -49,6 +51,12 @@ import {
   type CanvasResizeAnchor,
 } from '../components/ImageEditor/ImageDocumentGeometry';
 import { sanitizeImageEditorSnapshot } from '../lib/projectValidation';
+import {
+  applyImageDocumentNativeChange,
+  toImageDocumentWire,
+  type ImageDocumentNativeChange,
+  type ImageDocumentWire,
+} from '../lib/imageDocumentNativeSync';
 import { rasterizeSvgToBitmapAtResolution } from '../components/ImageEditor/ImageFileFormats';
 import {
   DEFAULT_IMAGE_EDITOR_TOOLBAR_FLYOUT_ORDER,
@@ -124,6 +132,7 @@ interface ImageEditorState {
    * compositor use a fast cached-backdrop path for live previews; cleared on pointer-up so the
    * final committed frame goes through the normal full render. */
   isPaintingStroke: boolean;
+  toolsCollapsed: boolean;
 }
 
 export interface ImageEditorProjectSnapshot {
@@ -206,6 +215,23 @@ interface ImageEditorActions {
   restoreProjectSnapshotWithPixels: (snapshot?: ImageEditorProjectSnapshot) => Promise<void>;
   setIsDraggingSlider: (dragging: boolean) => void;
   setPaintingStroke: (painting: boolean) => void;
+  setToolsCollapsed: (collapsed: boolean) => void;
+  /**
+   * Cross-device sync seam (task #53): apply one **non-pixel** op from the unified op-sync to the active
+   * document, preserving every surviving layer's live `bitmap`/`mask` `OffscreenCanvas` by id. Pixel ops
+   * carry only a version pointer; their bytes arrive out-of-band via {@link applyRemoteLayerPixels}.
+   * Returns true if the document changed. Non-broadcasting: the Image channel wraps it in its echo guard.
+   */
+  applyRemoteImageDocumentChange: (change: ImageDocumentNativeChange) => boolean;
+  /**
+   * Cross-device sync seam (task #53): atomically flip one layer's pixels — its live `bitmap`/`mask` and
+   * `bitmapVersion` together — once the channel has fetched + decoded the out-of-band bytes. Keeping the
+   * version and the pixels in one `set` means a layer never advertises version N while still showing N−1.
+   */
+  applyRemoteLayerPixels: (
+    layerId: string,
+    pixels: { bitmap: LayerBitmap | null; mask: LayerBitmap | null; bitmapVersion: number },
+  ) => boolean;
 }
 
 export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>()(
@@ -214,7 +240,10 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     activeDocId: null,
     tool: 'move',
     backgroundColor: DEFAULT_IMAGE_BACKGROUND_COLOR,
-    brushSettings: { ...DEFAULT_BRUSH_SETTINGS },
+    // Volume-key brush sizing is opt-in via DEFAULT_BRUSH_SETTINGS, but on a native (Android/DeX) build
+    // it's the expected drawing-app behaviour — default it on so volume keys resize the brush in the Image
+    // editor out of the box (scoped to the editor; toggle off in Brush properties to restore volume control).
+    brushSettings: { ...DEFAULT_BRUSH_SETTINGS, androidBrushControls: Capacitor.isNativePlatform() },
     cropToolSettings: { ...DEFAULT_CROP_TOOL_SETTINGS },
     gradientToolSettings: { ...DEFAULT_GRADIENT_TOOL_SETTINGS },
     retouchToolSettings: { ...DEFAULT_RETOUCH_TOOL_SETTINGS },
@@ -234,9 +263,11 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     generativeFillDismissedByDocId: {},
     isDraggingSlider: false,
     isPaintingStroke: false,
+    toolsCollapsed: false,
 
     setIsDraggingSlider: (isDraggingSlider) => set({ isDraggingSlider }),
     setPaintingStroke: (isPaintingStroke) => set((state) => (state.isPaintingStroke === isPaintingStroke ? state : { isPaintingStroke })),
+    setToolsCollapsed: (toolsCollapsed) => set({ toolsCollapsed }),
 
     openDocument: (doc) =>
       set((state) => {
@@ -1053,8 +1084,70 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
         generativeFillDismissedByDocId: {},
       });
     },
+
+    applyRemoteImageDocumentChange: (change) => {
+      let changed = false;
+      set((state) => {
+        const doc = state.documents.find((d) => d.id === state.activeDocId);
+        if (!doc) return state; // no open document to apply to (first pass syncs the active doc only)
+        const wire = toImageDocumentWire(doc);
+        const nextWire = applyImageDocumentNativeChange(wire, change);
+        if (nextWire === wire) return state; // reducer no-op (idempotent op / nothing changed)
+        changed = true;
+        const nextDoc = reconcileLiveDocumentToWire(doc, nextWire);
+        return { documents: state.documents.map((d) => (d.id === doc.id ? nextDoc : d)) };
+      });
+      return changed;
+    },
+
+    applyRemoteLayerPixels: (layerId, pixels) => {
+      let changed = false;
+      set((state) => {
+        const doc = state.documents.find((d) => d.id === state.activeDocId);
+        if (!doc) return state;
+        const index = doc.layers.findIndex((l) => l.id === layerId);
+        if (index < 0) return state;
+        const layers = doc.layers.slice();
+        layers[index] = {
+          ...layers[index],
+          bitmap: pixels.bitmap,
+          mask: pixels.mask,
+          bitmapVersion: pixels.bitmapVersion,
+          // The live buffers are now authoritative; drop any stale serialized payload for this layer.
+          bitmapData: undefined,
+          maskData: undefined,
+        };
+        changed = true;
+        return { documents: state.documents.map((d) => (d.id === doc.id ? { ...d, layers } : d)) };
+      });
+      return changed;
+    },
   }),
 );
+
+/**
+ * Rebuild a live {@link ImageDocument} from a canvas-free {@link ImageDocumentWire} produced by the op
+ * reducer, **preserving every surviving layer's live `bitmap`/`mask` `OffscreenCanvas` by id** (the wire
+ * dropped them). A layer present in the wire but not live yet (a remote add) becomes a null-bitmap shell;
+ * the Image channel fills its pixels afterward via {@link ImageEditorActions.applyRemoteLayerPixels}.
+ * Undo `snapshots` are not synced, so the live history is carried across untouched.
+ */
+function reconcileLiveDocumentToWire(live: ImageDocument, wire: ImageDocumentWire): ImageDocument {
+  const liveById = new Map(live.layers.map((layer) => [layer.id, layer] as const));
+  const layers: ImageLayer[] = wire.layers.map((wireLayer) => {
+    const { hasBitmap: _hasBitmap, hasMask: _hasMask, ...meta } = wireLayer;
+    const existing = liveById.get(wireLayer.id);
+    return {
+      ...meta,
+      bitmap: existing?.bitmap ?? null,
+      mask: existing?.mask ?? null,
+      bitmapData: existing?.bitmapData,
+      maskData: existing?.maskData,
+    };
+  });
+  const { layers: _wireLayers, ...docMeta } = wire;
+  return { ...docMeta, layers, snapshots: live.snapshots };
+}
 
 /**
  * Build a fresh ImageDocument shell. Layer bitmaps are not created here —
@@ -1205,4 +1298,17 @@ function resolveActiveLayerEditTarget(
   if (target !== 'mask') return 'layer';
   const activeLayer = doc.layers.find((layer) => layer.id === doc.activeLayerId) ?? null;
   return activeLayer?.mask ? 'mask' : 'layer';
+}
+
+// Register the Image workspace on the unified cross-device sync (#53) lazily when this store loads, so
+// channel-init is tied to the Image workspace being present with zero app-startup cost. Mirrors flow/paper.
+// Skipped under the test runner: a unit test merely importing this store must not spawn a live, floating
+// channel-init side-effect. Across vitest's multi-file worker that unawaited bootstrap can resolve into a
+// half-evaluated module context and throw a TDZ error ("Cannot access 'applyingRemote' before
+// initialization"). The channel's own tests drive `initializeImageSyncChannel()` explicitly; the real app
+// (which imports this store exactly once, after the module graph settles) is unaffected.
+if (import.meta.env?.MODE !== 'test') {
+  void import('../lib/imageSyncChannel')
+    .then((module) => module.initializeImageSyncChannel())
+    .catch(() => undefined);
 }

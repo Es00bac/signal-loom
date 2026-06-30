@@ -1,7 +1,8 @@
 import { type AriaRole, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { GripHorizontal, PanelLeft, PanelRight } from 'lucide-react';
+import { GripHorizontal, PanelLeft, PanelRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { DockExpandContext } from './dockExpandContext';
+import { useImageEditorStore } from '../../store/imageEditorStore';
 import {
   attachDockablePanelGlobalPointerDragListeners,
   DEFAULT_VIEWPORT_MARGIN,
@@ -183,6 +184,9 @@ export function DockablePanel({
   const resizeFloatingPanel = useDockablePanelStore((state) => state.resizeFloatingPanel);
   const resizeDockedPanel = useDockablePanelStore((state) => state.resizeDockedPanel);
   const bringPanelToFront = useDockablePanelStore((state) => state.bringPanelToFront);
+  const toolsCollapsed = useImageEditorStore((s) => s.toolsCollapsed);
+  const setToolsCollapsed = useImageEditorStore((s) => s.setToolsCollapsed);
+  const isImageToolsCollapsed = layout.workspaceId === 'image' && layout.panelId === 'tools' && toolsCollapsed;
   const resolvedViewport = useMemo(() => viewport ?? readViewport(), [viewport]);
   const isFloating = layout.mode === 'floating';
   const isCompactFloatingChrome = chrome === 'compact-floating' && isFloating;
@@ -251,9 +255,9 @@ export function DockablePanel({
         left: renderedFloatingRect.x,
         top: renderedFloatingRect.y,
         width: renderedFloatingRect.width,
-        height: isCollapsed ? undefined : renderedFloatingRect.height,
+        height: isCollapsed ? undefined : isImageToolsCollapsed ? 76 : renderedFloatingRect.height,
         minWidth: layout.minSize.width,
-        minHeight: isCollapsed ? undefined : layout.minSize.height,
+        minHeight: isCollapsed ? undefined : isImageToolsCollapsed ? 76 : layout.minSize.height,
         // Compact tool palettes are pinned above all other panels + the source bin (and portaled to
         // <body> below so this z wins globally instead of being trapped in the workspace's stacking).
         zIndex: isCompactFloatingChrome ? Z_INDEX.pinnedPalette : zIndexForFloatingPanel(layout.zOrder),
@@ -725,13 +729,29 @@ export function DockablePanel({
         isCompactFloatingChrome ? (
           <div
             aria-label={`${title} drag handle`}
-            className="relative z-10 flex h-3 shrink-0 touch-none cursor-grab items-center justify-center border-b border-cyan-300/20 bg-[#171a22] active:cursor-grabbing"
+            className="relative z-10 flex h-4 shrink-0 touch-none cursor-grab items-center justify-center border-b border-cyan-300/20 bg-[#171a22] active:cursor-grabbing"
             onPointerDown={startDrag}
             role="button"
             tabIndex={0}
             title={`${title} drag handle`}
           >
             <GripHorizontal aria-hidden size={11} className="shrink-0 text-cyan-100/50" />
+            <button
+              className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center text-cyan-100/50 hover:text-cyan-400 active:text-cyan-500 rounded bg-cyan-950/20 hover:bg-cyan-950/40 p-0.5 transition-colors pointer-events-auto"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setToolsCollapsed(!toolsCollapsed);
+              }}
+              title={toolsCollapsed ? "Expand Tools" : "Collapse Tools"}
+              type="button"
+            >
+              {toolsCollapsed ? (
+                <ChevronDown size={10} />
+              ) : (
+                <ChevronUp size={10} />
+              )}
+            </button>
           </div>
         ) : (
           <div

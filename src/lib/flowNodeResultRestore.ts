@@ -56,6 +56,7 @@ export function sourceBinItemToResultAttempt(item: RestorableSourceBinItem, inde
     resultType,
     statusMessage: `Restored ${item.label || resultType} from project source bin`,
     createdAt: new Date(item.createdAt || 0).toISOString(),
+    sourceBinItemId: item.id || undefined,
   };
 }
 

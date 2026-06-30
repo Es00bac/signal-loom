@@ -36,7 +36,7 @@ const baseSettings: ProviderSettings = {
   androidAcceleratorDefaultUpscaler: 'upscaler_realistic',
   androidAcceleratorDefaultImageModel: 'local-dream-active',
   batchMaxRetries: 10,
-  batchRetryBaseDelayMs: 30000,
+  batchRetryBaseDelayMs: 30000, androidLanServerEnabled: false, androidLanServerPin: "",
 };
 
 function installWindowTimers() {

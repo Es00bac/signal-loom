@@ -5,6 +5,7 @@ interface AttemptPayload {
   resultType: ResultType;
   statusMessage: string;
   usage?: UsageTelemetry;
+  sourceBinItemId?: string;
 }
 
 export function appendResultAttempt(
@@ -18,6 +19,7 @@ export function appendResultAttempt(
     statusMessage: payload.statusMessage,
     createdAt: new Date().toISOString(),
     usage: payload.usage,
+    sourceBinItemId: payload.sourceBinItemId,
   };
 
   return {
