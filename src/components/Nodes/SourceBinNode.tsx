@@ -45,7 +45,7 @@ function SourceBinNodeComponent({ id, data }: AppNodeProps) {
           type="button"
         >
           <ExternalLink size={12} />
-          Open Editor
+          Open in Video
         </button>
       }
     >

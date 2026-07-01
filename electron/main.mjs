@@ -2418,6 +2418,20 @@ function installIpcHandlers() {
     return { canceled: false, path };
   });
 
+  // Re-read a .slimg the renderer already knows the path of (e.g. the .slimg Flow node's "Read disk"),
+  // with no dialog. The path originates from a prior open/save dialog the user authorized.
+  ipcMain.handle('signal-loom:image-read-path', async (_event, path) => {
+    try {
+      if (typeof path !== 'string' || !path) {
+        return { error: 'No file path provided.' };
+      }
+      const bytes = await readFile(path);
+      return { bytes };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   ipcMain.handle('signal-loom:paper-open', async (event) => {
     const result = await dialog.showOpenDialog(getIpcWindow(event), {
       title: 'Open Signal Loom Paper',

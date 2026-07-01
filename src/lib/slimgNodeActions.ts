@@ -1,31 +1,23 @@
-// Action behind the .slimg Flow node's Run button. Turns the connected image into a real, editable
-// .slimg document, saves it through the native save-as dialog (or a browser/Android download), opens
-// it as a tab in the Image workspace, and returns the new doc id (so the Flow node can bind to it for
-// live sync) plus the flattened output. Kept free of React/flow-store imports so it composes cleanly.
+// Actions behind the .slimg Flow node — a FILE-CENTRIC bridge between Flow and Image (no live in-memory
+// sync). Three explicit operations:
+//   • saveImageAsSlimg  — capture a connected image into a NEW .slimg (save-as dialog) and open it to edit
+//   • importSlimgFromDisk — pick an EXISTING .slimg, open it in Image to edit, and set the node's output
+//   • readSlimgFromDisk — (re)read a saved .slimg from disk and flatten it to the output (run after editing)
+// Output is always explicit (set by these actions), never auto-synced. Kept free of React/flow-store
+// imports so it composes cleanly.
 import { createImageDocumentFromFile } from '../components/ImageEditor/ImageSourceDocument';
-import { saveImageDocumentAsSlimg } from '../components/ImageEditor/ImageSlimgCodec';
+import { saveImageDocumentAsSlimg, openSlimgDocument } from '../components/ImageEditor/ImageSlimgCodec';
 import { imageDocumentToDataUrl } from '../components/ImageEditor/ImageDocumentExport';
 import { useImageEditorStore } from '../store/imageEditorStore';
 import { useEditorStore } from '../store/editorStore';
 import { getSignalLoomNativeBridge } from './nativeApp';
 import { downloadBlob, buildWorkspaceDownloadFilename } from '../shared/files/downloads';
 
-export interface RunSlimgNodeInput {
-  /** The resolved upstream image (data:/blob:/http/asset URL) to capture into the .slimg. */
-  inputImageUrl: string;
-  /** Optional title (e.g. the node's custom name); falls back to "Flow Image". */
-  title?: string;
-}
-
-export interface RunSlimgNodeResult {
-  /** Id of the opened Image document — the Flow node stores this to bind for live re-flatten. */
-  docId: string;
-  /** Flattened PNG data URL captured right after open (live-sync refreshes it on later edits). */
+export interface SlimgNodeOutput {
+  /** Flattened PNG data URL — the node's output for downstream image inputs. */
   flattened: string;
-}
-
-function makeSlimgDocId(): string {
-  return `slimg-flow-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  /** Absolute file path of the .slimg on disk, when known (Electron). */
+  filePath?: string;
 }
 
 function extensionForMimeType(mimeType: string): string {
@@ -34,31 +26,34 @@ function extensionForMimeType(mimeType: string): string {
   return 'png';
 }
 
-export async function runSlimgNode(input: RunSlimgNodeInput): Promise<RunSlimgNodeResult> {
-  const inputImageUrl = input.inputImageUrl?.trim();
-  if (!inputImageUrl) {
-    throw new Error('Connect an image to the .slimg node before saving.');
-  }
+function makeSlimgDocId(): string {
+  return `slimg-flow-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+}
 
-  // 1. Resolve the connected image to a File the Image document loader understands.
-  const response = await fetch(inputImageUrl);
-  if (!response.ok) {
-    throw new Error(`Could not read the input image (HTTP ${response.status}).`);
-  }
+/** Capture the connected image as a NEW .slimg (save-as dialog) and open it in Image to edit. */
+export async function saveImageAsSlimg(
+  inputImageUrl: string,
+  title?: string,
+): Promise<SlimgNodeOutput | null> {
+  const url = inputImageUrl?.trim();
+  if (!url) throw new Error('Connect an image to the .slimg node before saving.');
+
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Could not read the input image (HTTP ${response.status}).`);
   const blob = await response.blob();
   const mimeType = blob.type || 'image/png';
-  const title = input.title?.trim() || 'Flow Image';
-  const file = new File([blob], `${title}.${extensionForMimeType(mimeType)}`, { type: mimeType });
+  const docTitle = title?.trim() || 'Flow Image';
+  const file = new File([blob], `${docTitle}.${extensionForMimeType(mimeType)}`, { type: mimeType });
 
-  // 2. Build a real ImageDocument with a stable id so the Flow node can bind to this exact tab.
-  const docId = makeSlimgDocId();
-  const doc = await createImageDocumentFromFile(file, { id: docId });
-
-  // 3. Serialize + save-as. Electron gets the native dialog; browser/Android streams the download.
+  const doc = await createImageDocumentFromFile(file, { id: makeSlimgDocId() });
   const bytes = await saveImageDocumentAsSlimg(doc);
+
   const bridge = getSignalLoomNativeBridge();
+  let filePath: string | undefined;
   if (bridge?.saveImageDocumentFileAs) {
-    await bridge.saveImageDocumentFileAs(bytes);
+    const result = await bridge.saveImageDocumentFileAs(bytes);
+    if (result?.canceled) return null;
+    filePath = result?.path;
   } else {
     downloadBlob(
       new Blob([bytes as BlobPart], { type: 'application/octet-stream' }),
@@ -66,11 +61,51 @@ export async function runSlimgNode(input: RunSlimgNodeInput): Promise<RunSlimgNo
     );
   }
 
-  // 4. Open it as a tab in Image and switch the workspace to show it.
   useImageEditorStore.getState().openDocument(doc);
   useEditorStore.getState().setWorkspaceView('image');
-
-  // 5. Flatten for the node's initial output; the live-sync bridge keeps it current after edits.
   const flattened = await imageDocumentToDataUrl(doc);
-  return { docId, flattened };
+  return { flattened, filePath };
+}
+
+async function pickSlimgBytes(): Promise<{ bytes: Uint8Array; filePath?: string } | null> {
+  const bridge = getSignalLoomNativeBridge();
+  if (!bridge?.openImageDocumentFile) {
+    throw new Error('Reading a .slimg from disk needs the desktop app.');
+  }
+  const result = await bridge.openImageDocumentFile();
+  if (result.canceled || !result.bytes) return null;
+  return { bytes: new Uint8Array(result.bytes), filePath: result.path };
+}
+
+/** Pick an existing .slimg from disk, open it in Image to edit, and set the node's output. */
+export async function importSlimgFromDisk(): Promise<SlimgNodeOutput | null> {
+  const picked = await pickSlimgBytes();
+  if (!picked) return null;
+  const doc = await openSlimgDocument(picked.bytes);
+  useImageEditorStore.getState().openDocument(doc);
+  useEditorStore.getState().setWorkspaceView('image');
+  const flattened = await imageDocumentToDataUrl(doc);
+  return { flattened, filePath: picked.filePath };
+}
+
+/**
+ * Re-read the node's OWN saved .slimg (by its known path, no dialog) and flatten it to the output.
+ * Run after editing + saving the file in Image to refresh what flows downstream.
+ */
+export async function readSlimgFromDisk(filePath: string): Promise<SlimgNodeOutput | null> {
+  const path = filePath?.trim();
+  if (!path) {
+    throw new Error('Save or import a .slimg on this node first — then "Read disk" re-reads that file.');
+  }
+  const bridge = getSignalLoomNativeBridge();
+  if (!bridge?.readImageDocumentFile) {
+    throw new Error('Reading a .slimg by path needs the desktop app.');
+  }
+  const result = await bridge.readImageDocumentFile(path);
+  if (result.error || !result.bytes) {
+    throw new Error(result.error || 'Could not read the .slimg file from disk.');
+  }
+  const doc = await openSlimgDocument(new Uint8Array(result.bytes));
+  const flattened = await imageDocumentToDataUrl(doc);
+  return { flattened, filePath: path };
 }

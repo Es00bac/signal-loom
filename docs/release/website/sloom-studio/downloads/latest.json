@@ -1,6 +1,6 @@
 {
-  "version": "0.9.7",
+  "version": "0.9.8",
   "channel": "beta",
   "url": "https://sloom.studio/downloads",
-  "notes": "Cross-device sync: open the same project on your phone and a desktop browser at once, with a 'Working here ⇄ Phone' baton so only one device edits at a time. New in-window menu (compact menu button or a classic menu bar), distinct tool icons per workspace, brush straight-lines (hold Shift) and a healing/clone source (Alt-click), encrypted API keys at rest plus encrypted settings backup/restore, fuller Atlas image-model coverage, and Image-editor stability fixes (zoom no longer flashes to checkerboard, the dead band under the top bar is gone, File > New)."
+  "notes": "New Flow nodes: .slimg (round-trip an image through the Image editor and back into your graph), LoRA Spec (FLUX LoRA weights), and Color Palette + Color Swatch. New BytePlus (Seedream) image provider. Google via Vertex now surfaces nano-banana image and Gemini text whenever you're signed in (including projects set via a GOOGLE_CLOUD_PROJECT env var), and detecting/signing in auto-selects your project. Collapsed nodes keep their connections visible. Polish: node-category labels show on normal-width monitors, node titles wrap to two lines, and the Video workspace + Source Library are named consistently."
 }

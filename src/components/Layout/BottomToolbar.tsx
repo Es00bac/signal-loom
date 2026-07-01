@@ -89,11 +89,10 @@ function NodeCategoryMenu({
         title={category.description}
       >
         {CATEGORY_ICONS[category.id]}
-        {/* Node-category text labels only appear once the window is wide enough that labelled
-            buttons (~1588px) PLUS the right-side controls actually fit on one row (~3200px+).
-            Below that they stay icon-only, so the top bar is a single row at 1080p/1440p and only
-            wraps to a second row when it genuinely cannot fit. */}
-        <span className={compact ? 'hidden min-[3200px]:inline' : undefined}>{category.label}</span>
+        {/* Category labels show on standard-width monitors (≥1600px keeps labelled buttons on one
+            row); below that the bar stays icon-only so 1080p/1440p don't wrap to a second row.
+            (UX review F02: the old 3200px gate hid labels on virtually every laptop and monitor.) */}
+        <span className={compact ? 'hidden min-[1600px]:inline' : undefined}>{category.label}</span>
         <ChevronDown size={13} />
       </summary>
       <div className={menuClassName}>

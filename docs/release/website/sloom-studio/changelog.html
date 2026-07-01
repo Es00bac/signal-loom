@@ -110,11 +110,38 @@
 
   <div class="cl-list">
 
+    <!-- ───── 0.9.8 ───── -->
+    <section class="release" id="v0-9-8">
+      <div class="release-head">
+        <span class="release-ver">0.9.8</span>
+        <span class="current-badge">Current</span>
+        <span class="release-date">July 2026</span>
+      </div>
+      <p class="release-summary">New Flow building blocks plus provider and editor fixes: a <code>.slimg</code> node that round-trips an image through the Image editor, a FLUX LoRA weights node, Color Palette / Color Swatch nodes, the BytePlus (Seedream) provider, and Google-via-Vertex fixes so nano-banana and Gemini text appear whenever you're signed in.</p>
+
+      <div class="cl-group">
+        <h3>New</h3>
+        <ul class="cl-items">
+          <li><strong>.slimg node.</strong> Save a connected image as an editable <code>.slimg</code>, open it in the Image editor, then feed the flattened result back into your Flow graph — with an explicit "Read disk" so the output refreshes exactly when you want.</li>
+          <li><strong>LoRA Spec node.</strong> Build the JSON LoRA weights (path + scale, up to 3) that FLUX LoRA models accept, wired straight into a FLUX image node.</li>
+          <li><strong>Color Palette + Color Swatch nodes.</strong> A master palette that guides image/video colour, plus labelled per-scene swatches you drag out of it.</li>
+          <li><strong>BytePlus (Seedream) provider.</strong> First-party image generation via BytePlus ModelArk.</li>
+        </ul>
+      </div>
+      <div class="cl-group fix">
+        <h3>Fixed &amp; improved</h3>
+        <ul class="cl-items">
+          <li><strong>Google via Vertex.</strong> nano-banana image and Gemini text now appear whenever Vertex is authenticated — including projects set through a <code>GOOGLE_CLOUD_PROJECT</code> environment variable — and detecting / signing in auto-selects your project.</li>
+          <li><strong>Collapsed nodes keep their wiring.</strong> Shrink a node to save space and its connected edges stay drawn instead of vanishing.</li>
+          <li>Node-category labels now show on normal-width monitors (not just ultra-wide), node titles wrap to two lines instead of clipping the unique part, and the Video workspace and Source Library are named consistently across the app.</li>
+        </ul>
+      </div>
+    </section>
+
     <!-- ───── 0.9.7 ───── -->
     <section class="release" id="v0-9-7">
       <div class="release-head">
         <span class="release-ver">0.9.7</span>
-        <span class="current-badge">Current</span>
         <span class="release-date">June 2026</span>
       </div>
       <p class="release-summary">The cross-device release. Your phone and a desktop browser can now open the <em>same</em> live project, with a one-tap baton so edits never collide — plus a reworked in-window menu and a wave of editor polish.</p>

@@ -102,5 +102,5 @@ function findConnectedImageInputSource(
 }
 
 function isImageInputSource(node: AppNode | undefined): node is AppNode {
-  return node?.type === 'imageGen' || node?.type === 'cropImageNode';
+  return node?.type === 'imageGen' || node?.type === 'cropImageNode' || node?.type === 'slimgNode';
 }

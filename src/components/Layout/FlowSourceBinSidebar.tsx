@@ -488,7 +488,7 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-blue-200/80">
-                  {isSourceLibraryMode ? 'Project Source Bins' : 'Generated Asset Pool'}
+                  {isSourceLibraryMode ? 'Saved Assets' : 'Generated Asset Pool'}
                 </div>
                 <div className="mt-1 text-base font-semibold text-white">
                   {isSourceLibraryMode ? 'Source Library' : 'Generated Outputs'}

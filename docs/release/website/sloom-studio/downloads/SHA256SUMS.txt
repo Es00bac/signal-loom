@@ -1,4 +1,3 @@
-dbe951de44f498c56100ffc501c5a66a24479c4e4150a2abbcd32d557479a03c  SignalLoom-Setup-0.9.7.exe
-5effcd76cfa4f63b6a80ecbad5d49cbd57d29650c533ec3c90e4634324f088c7  SignalLoom-0.9.7.AppImage
-ad973e54cedfa1f88ad4eace9eac74f24ea6267a989a59ee41b3c2cfa66878b2  SignalLoom-0.9.7-amd64.deb
-20f1e6ae8d83daffc032e691937e4b0b2ce24acf2503ff2e6d22e3bcbae13043  SignalLoom-0.9.7.apk
+b812392bb0adc47e101821aa06bd762aaa86364938ac2a839797d584831f4a2f  SignalLoom-Setup-0.9.8.exe
+b5095f4ab374f03308550de64f612b60b61abfd2d65966137bb55def8af1207a  SignalLoom-0.9.8.AppImage
+ad415c95c3f418abbed3ff3b61d62480b107cb9f87d0917da0f6d1a9e9a1096c  SignalLoom-0.9.8-amd64.deb

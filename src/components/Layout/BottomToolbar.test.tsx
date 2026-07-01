@@ -16,10 +16,10 @@ describe('BottomToolbar topbar presentation', () => {
     expect(html).toContain('Crop Image');
   });
 
-  it('keeps compact topbar category labels hidden until extra-wide desktops', () => {
+  it('shows compact topbar category labels on standard monitors (>=1600px), icon-only below', () => {
     const html = renderToStaticMarkup(<BottomToolbar onAddNode={() => undefined} variant="topbar" />);
 
-    expect(html).toContain('hidden min-[3200px]:inline');
+    expect(html).toContain('hidden min-[1600px]:inline');
     expect(html).not.toContain('hidden xl:inline');
     expect(html).not.toContain('hidden 2xl:inline');
   });

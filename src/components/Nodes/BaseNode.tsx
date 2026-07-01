@@ -278,7 +278,7 @@ return (
         <div className="flex items-center gap-2 overflow-hidden">
           <Icon size={14} className={`${theme.iconClassName} shrink-0`} />
           <span
-            className={withFlowNodeInteractionClasses(`text-xs font-semibold text-gray-200 tracking-wide truncate ${nodeId ? 'cursor-context-menu' : ''}`)}
+            className={withFlowNodeInteractionClasses(`text-xs font-semibold text-gray-200 tracking-wide line-clamp-2 ${nodeId ? 'cursor-context-menu' : ''}`)}
             onContextMenu={(event) => {
               if (shouldOpenNodeTitleContextMenu({ nodeSelected: currentNodeSelected, target: event.target })) {
                 openTitleContextMenu(event);

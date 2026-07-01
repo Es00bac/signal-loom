@@ -444,6 +444,8 @@ export interface SignalLoomNativeBridge {
   saveProjectFileAs: (document: FlowProjectDocument) => Promise<NativeProjectFileResult>;
   openImageDocumentFile: () => Promise<NativeImageOpenResult>;
   saveImageDocumentFileAs: (bytes: Uint8Array) => Promise<NativeImageSaveResult>;
+  /** Re-read a .slimg by a known path (no dialog) — used by the .slimg Flow node's "Read disk". */
+  readImageDocumentFile?: (path: string) => Promise<{ bytes?: Uint8Array; error?: string }>;
   openPaperDocumentFile: () => Promise<NativePaperOpenResult>;
   savePaperDocumentFileAs: (bytes: Uint8Array) => Promise<NativePaperSaveResult>;
   importMediaFiles: (options?: { scratchDirectoryPath?: string }) => Promise<NativeImportMediaResult>;

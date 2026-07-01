@@ -1013,7 +1013,7 @@ function EditorTitlebarControls({
   return (
     <div className="pointer-events-auto hidden min-w-0 flex-1 items-center justify-end gap-1.5 overflow-hidden xl:flex">
       <div className="hidden shrink-0 rounded-md border border-cyan-300/15 bg-[#101a29]/85 px-2 py-1 text-[11px] font-medium text-cyan-100/75 min-[1800px]:block">
-        Source Pool · {sourceBinCount} asset{sourceBinCount === 1 ? '' : 's'} · {sourceBinNodeCount} bin{sourceBinNodeCount === 1 ? '' : 's'}
+        Source Library · {sourceBinCount} asset{sourceBinCount === 1 ? '' : 's'} · {sourceBinNodeCount} bin{sourceBinNodeCount === 1 ? '' : 's'}
       </div>
       <select
         className="hidden h-8 max-w-52 rounded-md border border-cyan-300/15 bg-[#0b121d] px-2 text-[11px] font-semibold text-gray-200 outline-none transition-colors hover:border-cyan-300/35 focus:border-cyan-300/60 min-[1800px]:block"

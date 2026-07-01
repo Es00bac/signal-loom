@@ -1,9 +1,10 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Handle, Position } from '@xyflow/react';
+import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
 import { Download, Image as ImageIcon, Maximize2, Upload, X } from 'lucide-react';
 import { AttemptHistory } from './AttemptHistory';
 import { BaseNode } from './BaseNode';
+import { CollapsedConnectionHandles } from './CollapsedConnectionHandles';
 import { ExecutionTelemetryPanel } from './ExecutionTelemetryPanel';
 import { ImageGenerationProgressBackdrop } from './ImageGenerationProgressBackdrop';
 import { ImagePreviewPane } from './ImagePreviewPane';
@@ -95,6 +96,12 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
   const modelCatalog = useCatalogStore((state) => state.modelCatalog);
   const mediaMode = (data.mediaMode ?? 'generate') as MediaNodeMode;
   const isCollapsed = Boolean(data.collapsed);
+  const updateNodeInternals = useUpdateNodeInternals();
+  // Re-measure handle positions when collapsing/expanding so edges re-anchor to the collapsed stub
+  // handles (collapsed) or the full per-row handles (expanded); see CollapsedConnectionHandles.
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, isCollapsed, updateNodeInternals]);
   const onDataChange = data.onChange;
   const currentAspectRatio = data.aspectRatio;
   const [isPreviewOpen, setPreviewOpen] = useState(false);
@@ -538,6 +545,7 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
         <div className="space-y-2">
           {previewPanel}
           {importedAssetNamePanel}
+          <CollapsedConnectionHandles nodeId={id} />
         </div>
       }
       nodeId={id}

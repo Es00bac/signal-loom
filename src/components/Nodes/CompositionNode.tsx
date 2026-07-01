@@ -238,7 +238,7 @@ function CompositionNodeComponent({ id, data }: AppNodeProps) {
         <>
           <button className={actionButtonClassName} onClick={() => openEditorForComposition(id)} type="button">
             <ExternalLink size={12} />
-            Open Editor
+            Open in Video
           </button>
           {data.result ? (
             <button className={actionButtonClassName} onClick={() => void handleDownload()} type="button">

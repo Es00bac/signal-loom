@@ -15,6 +15,7 @@ import type {
   VoiceOption,
 } from '../types/flow';
 import { ATLAS_IMAGE_MODEL_OPTIONS } from './atlasImageModelOptions.generated';
+import { getVertexProjectConfig } from './vertexProviderSettings';
 
 export const PROVIDER_LABELS = {
   gemini: 'Google Gemini',
@@ -424,10 +425,7 @@ export function cloneModelCatalog(modelCatalog: ModelCatalog): ModelCatalog {
 export function getConfiguredProviders<TCapability extends Capability>(
   capability: TCapability,
   apiKeys: ApiKeys,
-  providerSettings?: Partial<Pick<
-    ProviderSettings,
-    'backendProxyEnabled' | 'backendProxyBaseUrl' | 'geminiCredentialMode' | 'vertexProjectId' | 'localOpenImageEndpointUrl' | 'androidAcceleratorBaseUrl'
-  >>,
+  providerSettings?: Partial<ProviderSettings>,
 ): ProviderForCapability<TCapability>[] {
   if (providerSettings?.backendProxyEnabled && providerSettings.backendProxyBaseUrl?.trim()) {
     return CAPABILITY_PROVIDERS[capability].filter((provider) =>
@@ -438,10 +436,15 @@ export function getConfiguredProviders<TCapability extends Capability>(
   return CAPABILITY_PROVIDERS[capability].filter((provider) => {
     switch (provider) {
       case 'gemini':
+        // Google is available with a Gemini API key, OR via Vertex ADC for image + text (both
+        // execution paths support Vertex). Resolve the project the SAME way the auth status does —
+        // through getVertexProjectConfig, which also reads GOOGLE_CLOUD_PROJECT / CLOUDSDK_* env vars —
+        // so a project set anywhere (not just the raw field) still surfaces the provider.
         return Boolean(apiKeys.gemini.trim()) || (
-          capability === 'image'
-          && providerSettings?.geminiCredentialMode === 'vertex-adc'
-          && Boolean(providerSettings.vertexProjectId?.trim())
+          providerSettings != null
+          && (capability === 'image' || capability === 'text')
+          && providerSettings.geminiCredentialMode === 'vertex-adc'
+          && Boolean(getVertexProjectConfig({ ...DEFAULT_PROVIDER_SETTINGS, ...providerSettings }).projectId)
         );
       case 'openai':
         return Boolean(apiKeys.openai.trim());

@@ -160,7 +160,25 @@ describe('getConfiguredProviders', () => {
     ).toEqual(['gemini']);
   });
 
-  it('does not expose Gemini text generation from Vertex image-only ADC settings', () => {
+  it('exposes Gemini image generation when the Vertex project comes only from a GOOGLE_CLOUD_PROJECT env var', () => {
+    // Regression: the gate used to read the raw vertexProjectId field only, so a project set via
+    // env var (as getVertexProjectConfig / the auth-status badge resolve it) dropped Google entirely.
+    expect(
+      getConfiguredProviders(
+        'image',
+        { gemini: '', openai: '', huggingface: '', elevenlabs: '' },
+        {
+          geminiCredentialMode: 'vertex-adc',
+          vertexProjectId: '',
+          vertexEnvironmentVariables: 'GOOGLE_CLOUD_PROJECT=env-project-123',
+        },
+      ),
+    ).toContain('gemini');
+  });
+
+  it('exposes Gemini text generation when Vertex ADC is configured', () => {
+    // Vertex ADC drives both nano-banana image AND Gemini text (executeVertexGeminiTextContent),
+    // so an authenticated Vertex project must surface Google as a text provider too.
     expect(
       getConfiguredProviders(
         'text',
@@ -172,7 +190,7 @@ describe('getConfiguredProviders', () => {
           vertexProjectId: 'gen-lang-client-0529114074',
         },
       ),
-    ).toEqual([]);
+    ).toEqual(['gemini']);
   });
 
   it('exposes BFL, Stability, and Local/Open when their cloud keys or endpoint are configured', () => {

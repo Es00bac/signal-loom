@@ -1,12 +1,11 @@
 import { memo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Handle, Position } from '@xyflow/react';
-import { FileImage, ImageOff, Loader2, Save } from 'lucide-react';
+import { FileImage, FolderOpen, ImageOff, Loader2, RefreshCw, Save } from 'lucide-react';
 import { BaseNode } from './BaseNode';
 import { collectUpstreamImageInputForHandles, useFlowStore } from '../../store/flowStore';
-import { useImageEditorStore } from '../../store/imageEditorStore';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
-import { runSlimgNode } from '../../lib/slimgNodeActions';
+import { importSlimgFromDisk, readSlimgFromDisk, saveImageAsSlimg } from '../../lib/slimgNodeActions';
 import { showUserNotice } from '../../shared/ui/userNotice';
 import type { AppNodeProps } from '../../types/flow';
 
@@ -25,10 +24,14 @@ function PreviewBox({ label, url }: { label: string; url: string | undefined }) 
   );
 }
 
-// The .slimg node bridges Flow → Image: it captures the connected image into a real, editable .slimg
-// document (save-as dialog + opens a tab in Image), then outputs the bound document's flattened image
-// — which stays live (re-flattens as you edit it in Image; see useSlimgLiveSync) and falls back to the
-// last snapshot if the document is closed.
+const actionButtonClass = withFlowNodeInteractionClasses(
+  'flex w-full items-center justify-center gap-1.5 rounded-md border border-sky-400/40 bg-sky-500/15 px-2 py-2 font-semibold text-sky-100 transition-colors hover:bg-sky-500/25 disabled:cursor-not-allowed disabled:opacity-50',
+);
+
+// The .slimg node is a FILE-CENTRIC bridge between Flow and Image (no auto-sync). It can capture a
+// connected image into a new .slimg, import an existing .slimg to edit, and explicitly (re)read a saved
+// .slimg from disk to produce its flattened output. Edit in Image, save the file, then click "Read from
+// disk" to refresh what flows downstream.
 function SlimgNodeComponent({ id, data }: AppNodeProps) {
   const inputUrl = useFlowStore(
     useShallow((state) =>
@@ -41,39 +44,27 @@ function SlimgNodeComponent({ id, data }: AppNodeProps) {
     ),
   );
   const outputUrl = typeof data.result === 'string' && data.result ? data.result : undefined;
-  const boundDocId = typeof data.slimgBoundDocId === 'string' ? data.slimgBoundDocId : undefined;
-  const isLive = useImageEditorStore(
-    useShallow((state) => Boolean(boundDocId) && state.documents.some((doc) => doc.id === boundDocId)),
-  );
-  // Live count of committed edits on the BOUND document — rises as you paint the doc this node tracks.
-  // If it stays flat while you draw, the strokes are landing on a different document than the node is
-  // bound to (the real failure mode after an app restart re-opens the .slimg with a fresh id).
-  const boundEditCount = useImageEditorStore((state) =>
-    boundDocId ? (state.undoStacks[boundDocId]?.length ?? 0) + (state.redoStacks[boundDocId]?.length ?? 0) : 0,
-  );
+  const filePath = typeof data.slimgFilePath === 'string' && data.slimgFilePath ? data.slimgFilePath : undefined;
+  const fileName = filePath ? filePath.split(/[\\/]/).pop() : undefined;
   const [busy, setBusy] = useState(false);
 
-  const handleRun = async () => {
-    if (!inputUrl || busy) return;
+  const run = async (action: () => Promise<{ flattened: string; filePath?: string } | null>) => {
+    if (busy) return;
     setBusy(true);
     try {
-      const title =
-        typeof data.customTitle === 'string' && data.customTitle.trim() ? data.customTitle.trim() : undefined;
-      const result = await runSlimgNode({ inputImageUrl: inputUrl, title });
-      data.onChange?.('slimgBoundDocId', result.docId);
+      const result = await action();
+      if (!result) return; // canceled
       data.onChange?.('result', result.flattened);
+      if (result.filePath) data.onChange?.('slimgFilePath', result.filePath);
     } catch (error) {
-      showUserNotice(error instanceof Error ? error.message : 'Could not save the .slimg file.', 'error');
+      showUserNotice(error instanceof Error ? error.message : 'The .slimg operation failed.', 'error');
     } finally {
       setBusy(false);
     }
   };
 
-  const status = !boundDocId
-    ? 'Run to save a .slimg and open it in Image.'
-    : isLive
-      ? `Live · ${boundEditCount} edit${boundEditCount === 1 ? '' : 's'} in Image`
-      : 'Snapshot — the .slimg was closed in Image. Re-save to re-open + re-bind.';
+  const title =
+    typeof data.customTitle === 'string' && data.customTitle.trim() ? data.customTitle.trim() : undefined;
 
   return (
     <BaseNode
@@ -93,30 +84,64 @@ function SlimgNodeComponent({ id, data }: AppNodeProps) {
           position={Position.Left}
           className="!h-6 !w-6 !border-[3px] !border-[#1e2027] !-ml-3 !bg-sky-400"
           style={{ top: 96 }}
-          title="Image input"
+          title="Image input (optional)"
         />
       )}
     >
-      <div className="w-[220px] space-y-3 rounded-lg border border-sky-400/20 bg-sky-400/5 p-3 text-xs">
-        <button
-          type="button"
-          onClick={handleRun}
-          disabled={!inputUrl || busy}
-          className={withFlowNodeInteractionClasses(
-            'flex w-full items-center justify-center gap-1.5 rounded-md border border-sky-400/40 bg-sky-500/15 px-2 py-2 font-semibold text-sky-100 transition-colors hover:bg-sky-500/25 disabled:cursor-not-allowed disabled:opacity-50',
-          )}
-          title={inputUrl ? 'Save as .slimg and open in Image' : 'Connect an image first'}
-        >
-          {busy ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-          {busy ? 'Saving…' : boundDocId ? 'Re-save .slimg' : 'Save .slimg & Open'}
-        </button>
+      <div className="w-[230px] space-y-3 rounded-lg border border-sky-400/20 bg-sky-400/5 p-3 text-xs">
+        {inputUrl ? (
+          <button
+            type="button"
+            onClick={() => run(() => saveImageAsSlimg(inputUrl, title))}
+            disabled={busy}
+            className={actionButtonClass}
+            title="Save the connected image as a new .slimg and open it in Image"
+          >
+            {busy ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+            Save .slimg & Open
+          </button>
+        ) : null}
+
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => run(importSlimgFromDisk)}
+            disabled={busy}
+            className={actionButtonClass}
+            title="Open an existing .slimg from disk to edit in Image"
+          >
+            <FolderOpen size={12} />
+            Import
+          </button>
+          <button
+            type="button"
+            onClick={() => run(() => readSlimgFromDisk(filePath ?? ''))}
+            disabled={busy || !filePath}
+            className={actionButtonClass}
+            title={
+              filePath
+                ? 'Re-read this node’s saved .slimg from disk into the output (run after editing + saving)'
+                : 'Save or import a .slimg first'
+            }
+          >
+            <RefreshCw size={12} />
+            Read disk
+          </button>
+        </div>
 
         <div className="grid grid-cols-2 gap-2">
           <PreviewBox label="Input" url={inputUrl} />
           <PreviewBox label="Output" url={outputUrl} />
         </div>
 
-        <p className="text-[10px] leading-4 text-gray-400">{status}</p>
+        {fileName ? (
+          <p className="truncate text-[10px] text-gray-400" title={filePath}>
+            📄 {fileName}
+          </p>
+        ) : null}
+        <p className="text-[10px] leading-4 text-gray-500">
+          Edit in Image, save the file, then “Read disk” to refresh the output.
+        </p>
       </div>
     </BaseNode>
   );

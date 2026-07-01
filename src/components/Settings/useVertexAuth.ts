@@ -30,14 +30,24 @@ export function useVertexAuth({ providerSettings, setProviderSetting, platform }
     setBusy((prev) => ({ ...prev, projects: true }));
     try {
       const result = await bridge.listVertexProjects({ auth: authConfig });
-      setProjects(result.ok ? result.projects : []);
+      const list = result.ok ? result.projects : [];
+      setProjects(list);
       if (!result.ok && result.error) {
         setTestResult({ ok: false, message: result.error });
+      }
+      // Auto-select a project so there's a COMMITTED vertexProjectId. A controlled <select> visually
+      // shows the first option even when nothing was chosen, which otherwise leaves the status stuck at
+      // "no-project" and hides Google/Vertex from every provider list until the user re-picks by hand.
+      if (list.length > 0) {
+        const current = providerSettings.vertexProjectId.trim();
+        if (!current || !list.some((project) => project.projectId === current)) {
+          setProviderSetting('vertexProjectId', list[0].projectId);
+        }
       }
     } finally {
       setBusy((prev) => ({ ...prev, projects: false }));
     }
-  }, [authConfig]);
+  }, [authConfig, providerSettings.vertexProjectId, setProviderSetting]);
 
   const signIn = useCallback(async () => {
     const bridge = getSignalLoomNativeBridge();
@@ -65,10 +75,15 @@ export function useVertexAuth({ providerSettings, setProviderSetting, platform }
       setTestResult(result.ok && result.hasToken
         ? { ok: true, message: 'Credentials detected.' }
         : { ok: false, message: result.error ?? 'No usable credentials found.' });
+      // A successful detect should also pull + auto-select a project, so detecting alone leaves the app
+      // actually ready instead of stuck at "no-project".
+      if (result.ok && result.hasToken) {
+        await refreshProjects();
+      }
     } finally {
       setBusy((prev) => ({ ...prev, detect: false }));
     }
-  }, [authConfig]);
+  }, [authConfig, refreshProjects]);
 
   const testConnection = useCallback(async () => {
     setBusy((prev) => ({ ...prev, test: true }));

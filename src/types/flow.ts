@@ -788,8 +788,8 @@ export interface NodeData {
   colorSwatchEntryLabels?: Record<string, string>;
   /** LoRA Spec node: up to 3 `{ path, scale }` weights for FLUX LoRA models. */
   loraEntries?: Array<{ path: string; scale: number }>;
-  /** .slimg node: id of the bound Image document it saved/opened (drives live re-flatten). */
-  slimgBoundDocId?: string;
+  /** .slimg node: path of the .slimg file it last saved / imported / read from disk. */
+  slimgFilePath?: string;
   loopBreakReason?: string;
   prompt?: string;
   systemPrompt?: string;

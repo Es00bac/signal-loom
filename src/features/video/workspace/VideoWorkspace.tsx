@@ -3661,7 +3661,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                       onClick={() => setSourceBinTab('editorAssets')}
                       type="button"
                     >
-                      Editor Assets
+                      Video Assets
                     </button>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
