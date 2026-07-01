@@ -23,8 +23,8 @@ The app runs in a normal browser through Vite, ships as an Electron desktop app 
 </figure>
 
 <figure>
-  <img src="docs/assets/signal-loom-flow.png" alt="Signal Loom flow workspace showing connected generation nodes, the persistent source bin, provider telemetry, and a composition node." />
-  <figcaption><strong>Flow workspace.</strong> Build reusable generation graphs with prompt, image, video, source-bin, and composition nodes while tracking run cost and keeping generated assets in the project library.</figcaption>
+  <img src="docs/assets/signal-loom-flow.png" alt="Signal Loom Flow workspace: a multi-provider brand-asset pipeline with prompt, colour, image-generation, asset-package, source-bin, portal, and Vision Verify nodes, several collapsed to their minimal size." />
+  <figcaption><strong>Flow workspace — a multi-provider brand-asset pipeline.</strong> <strong>Prompt Input</strong> and <strong>Color Palette / Color Swatch</strong> nodes drive a row of <strong>Image Generation</strong> nodes, each on a different provider — <strong>Atlas</strong> (Seedream v4.5), <strong>BytePlus</strong> (bytedance/seedream), <strong>Google</strong> (gemini-3-pro-image), and <strong>Black Forest Labs</strong> (FLUX) — rendering product shots that collect into an <strong>Asset Package</strong> and land in the shared <strong>Source Library</strong> via a <strong>Source Bin</strong> node as reusable assets. <strong>Portals</strong> carry shared style + colour tokens across the graph without redrawing edges. Two <strong>Vision Verify</strong> nodes run a vision model (Gemini) to QA each result against the reference — one returns ✓&nbsp;TRUE (logo consistent), the other ✗&nbsp;FALSE (inconsistent) — feeding <strong>Value Monitor</strong> nodes for pass/fail gating. Several nodes are <strong>collapsed to their minimal size</strong> to keep the canvas readable while every connection stays wired.</figcaption>
 </figure>
 
 <figure>
