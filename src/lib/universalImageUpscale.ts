@@ -8,6 +8,7 @@ import {
   STABILITY_CONSERVATIVE_UPSCALE_COST_USD,
   STABILITY_FAST_UPSCALE_COST_USD,
 } from './paperImageUpscale';
+import { ATLAS_IMAGE_UPSCALE_COST_USD } from './cloudImageUpscale';
 import { isVertexProjectConfigured } from './vertexProviderSettings';
 
 export type UniversalConfiguredUpscaleProvider =
@@ -16,6 +17,7 @@ export type UniversalConfiguredUpscaleProvider =
   | 'stability-fast'
   | 'stability-conservative'
   | 'vertex-imagen'
+  | 'atlas-image-upscaler'
   | 'local-ai-cpu'
   | 'browser';
 
@@ -315,6 +317,25 @@ const UNIVERSAL_IMAGE_UPSCALE_WORKFLOW_DESCRIPTORS: readonly UniversalImageUpsca
       usesCloudProvider: true,
     },
     notes: ['Runs Vertex Imagen through the configured desktop Vertex project; exact cost is not mapped locally.'],
+    warnings: [FLATTENED_AI_UPSCALE_WARNING],
+  },
+  {
+    provider: 'atlas-image-upscaler',
+    family: 'cloud',
+    methodLabel: 'Atlas Image Upscaler',
+    costUsd: ATLAS_IMAGE_UPSCALE_COST_USD,
+    costLabel: `$${ATLAS_IMAGE_UPSCALE_COST_USD.toFixed(2)}`,
+    capabilities: {
+      aiUpscale: true,
+      directTargetDimensions: false,
+      fixedScaleFactors: ['x2', 'x3', 'x4'],
+      preservesImageDocumentLayers: false,
+      requiresCloudCredentials: true,
+      requiresConfiguredEndpoint: false,
+      runsInAndroidApp: false,
+      usesCloudProvider: true,
+    },
+    notes: ['Runs the dedicated Atlas Cloud image upscaler (documented outscale 1-4) with fixed provider pricing per image.'],
     warnings: [FLATTENED_AI_UPSCALE_WARNING],
   },
   {
@@ -985,7 +1006,9 @@ function plan(
       ? STABILITY_CONSERVATIVE_UPSCALE_COST_USD
       : provider === 'vertex-imagen'
         ? undefined
-        : 0;
+        : provider === 'atlas-image-upscaler'
+          ? ATLAS_IMAGE_UPSCALE_COST_USD
+          : 0;
   const label = describeUniversalConfiguredUpscaleProvider(provider);
 
   return {

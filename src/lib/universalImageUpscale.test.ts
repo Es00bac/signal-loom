@@ -17,6 +17,7 @@ describe('universalImageUpscale', () => {
       'stability-fast',
       'stability-conservative',
       'vertex-imagen',
+      'atlas-image-upscaler',
       'browser',
     ]);
 
@@ -95,6 +96,22 @@ describe('universalImageUpscale', () => {
       },
     });
     expect(vertex.costUsd).toBeUndefined();
+
+    expect(describeUniversalImageUpscaleWorkflow('atlas-image-upscaler')).toMatchObject({
+      provider: 'atlas-image-upscaler',
+      family: 'cloud',
+      methodLabel: 'Atlas Image Upscaler',
+      costUsd: 0.01,
+      costLabel: '$0.01',
+      capabilities: {
+        aiUpscale: true,
+        directTargetDimensions: false,
+        fixedScaleFactors: ['x2', 'x3', 'x4'],
+        requiresCloudCredentials: true,
+        requiresConfiguredEndpoint: false,
+        usesCloudProvider: true,
+      },
+    });
 
     expect(describeUniversalImageUpscaleWorkflow('browser')).toMatchObject({
       provider: 'browser',

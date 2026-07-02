@@ -1,12 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PROVIDER_SETTINGS } from './providerCatalog';
 import type { NativeVertexImageRequest, NativeVertexImageResult } from './nativeApp';
-import { runStabilityImageUpscale, runVertexImagenImageUpscale } from './cloudImageUpscale';
+import { estimateImageModelCostUsd } from './imageProviderCapabilities';
+import {
+  ATLAS_IMAGE_UPSCALE_COST_USD,
+  ATLAS_IMAGE_UPSCALER_MODEL_ID,
+  runAtlasImageUpscale,
+  runStabilityImageUpscale,
+  runVertexImagenImageUpscale,
+} from './cloudImageUpscale';
 
 function imageResponse(body: string): Response {
   return new Response(new Blob([body], { type: 'image/png' }), {
     status: 200,
     headers: { 'content-type': 'image/png' },
+  });
+}
+
+function jsonResponse(payload: unknown): Response {
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
   });
 }
 
@@ -141,5 +155,133 @@ describe('runVertexImagenImageUpscale', () => {
       outputFormat: 'png',
       generateVertexImage,
     })).rejects.toThrow('quota exceeded');
+  });
+});
+
+describe('runAtlasImageUpscale', () => {
+  it('uploads the source, posts ONLY the schema-documented fields, and returns an object URL', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-upscaled');
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const stringUrl = String(url);
+      if (stringUrl.startsWith('data:')) {
+        return imageResponse('SOURCE');
+      }
+      if (stringUrl.includes('/model/uploadMedia')) {
+        return jsonResponse({ data: { download_url: 'https://atlas.example/upload.png' } });
+      }
+      expect(stringUrl).toBe('https://api.atlascloud.ai/api/v1/model/generateImage');
+      return jsonResponse({ data: { status: 'succeeded', outputs: ['https://cdn.example/out.png'] } });
+    }) as unknown as typeof fetch;
+    const downloadResultBlob = vi.fn(async (url: string) => {
+      expect(url).toBe('https://cdn.example/out.png');
+      return new Blob(['UPSCALED'], { type: 'image/png' });
+    });
+
+    const result = await runAtlasImageUpscale({
+      sourceImage: 'data:image/png;base64,c291cmNl',
+      apiKey: 'atlas-key',
+      outscale: 2,
+      outputFormat: 'png',
+      fetchImpl,
+      downloadResultBlob,
+    });
+
+    expect(result).toEqual({ result: 'blob:atlas-upscaled', mimeType: 'image/png' });
+    const generateCall = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([callUrl]) => String(callUrl).includes('/model/generateImage'),
+    );
+    expect(generateCall).toBeTruthy();
+    const requestInit = generateCall?.[1] as RequestInit;
+    expect((requestInit.headers as Record<string, string>).Authorization).toBe('Bearer atlas-key');
+    const body = JSON.parse(String(requestInit.body)) as Record<string, unknown>;
+    // Schema-exact: the generated accepted-fields artifact documents ONLY these inputs.
+    expect(Object.keys(body).sort()).toEqual(['image', 'model', 'output_format', 'outscale']);
+    expect(body).toEqual({
+      model: ATLAS_IMAGE_UPSCALER_MODEL_ID,
+      image: 'https://atlas.example/upload.png',
+      outscale: 2,
+      output_format: 'png',
+    });
+    createObjectURL.mockRestore();
+  });
+
+  it('polls the prediction endpoint until the upscale succeeds', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-polled');
+    let pollCount = 0;
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const stringUrl = String(url);
+      if (stringUrl.startsWith('data:')) {
+        return imageResponse('SOURCE');
+      }
+      if (stringUrl.includes('/model/uploadMedia')) {
+        return jsonResponse({ url: 'https://atlas.example/upload.png' });
+      }
+      if (stringUrl.includes('/model/generateImage')) {
+        return jsonResponse({ data: { id: 'pred-1' } });
+      }
+      expect(stringUrl).toBe('https://api.atlascloud.ai/api/v1/model/prediction/pred-1');
+      pollCount += 1;
+      return pollCount === 1
+        ? jsonResponse({ data: { status: 'processing' } })
+        : jsonResponse({ data: { status: 'succeeded', output: 'https://cdn.example/polled.png' } });
+    }) as unknown as typeof fetch;
+
+    const result = await runAtlasImageUpscale({
+      sourceImage: 'data:image/png;base64,c291cmNl',
+      apiKey: 'atlas-key',
+      outputFormat: 'png',
+      fetchImpl,
+      downloadResultBlob: async () => new Blob(['UPSCALED'], { type: 'image/png' }),
+      sleepImpl: async () => {},
+    });
+
+    expect(pollCount).toBe(2);
+    expect(result.result).toBe('blob:atlas-polled');
+  });
+
+  it('clamps outscale into the documented 1-4 range', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-clamped');
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const stringUrl = String(url);
+      if (stringUrl.startsWith('data:')) return imageResponse('SOURCE');
+      if (stringUrl.includes('/model/uploadMedia')) {
+        return jsonResponse({ url: 'https://atlas.example/upload.png' });
+      }
+      return jsonResponse({ data: { status: 'succeeded', output: 'https://cdn.example/out.png' } });
+    }) as unknown as typeof fetch;
+
+    await runAtlasImageUpscale({
+      sourceImage: 'data:image/png;base64,c291cmNl',
+      apiKey: 'atlas-key',
+      outscale: 9,
+      outputFormat: 'png',
+      fetchImpl,
+      downloadResultBlob: async () => new Blob(['UPSCALED'], { type: 'image/png' }),
+    });
+
+    const generateCall = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([callUrl]) => String(callUrl).includes('/model/generateImage'),
+    );
+    const body = JSON.parse(String((generateCall?.[1] as RequestInit).body)) as Record<string, unknown>;
+    expect(body.outscale).toBe(4);
+  });
+
+  it('throws when the Atlas API key is missing', async () => {
+    await expect(runAtlasImageUpscale({
+      sourceImage: 'data:image/png;base64,c291cmNl',
+      apiKey: '   ',
+      outputFormat: 'png',
+    })).rejects.toThrow('Atlas API key is missing. Add it in Settings.');
+  });
+
+  it('keeps the published cost constant consistent with the generated Atlas catalog', () => {
+    const estimate = estimateImageModelCostUsd({
+      providerId: 'atlas',
+      modelId: ATLAS_IMAGE_UPSCALER_MODEL_ID,
+      operation: 'upscale',
+      imageCount: 1,
+    });
+    expect(estimate.costUsd).toBe(ATLAS_IMAGE_UPSCALE_COST_USD);
+    expect(estimate.confidence).toBe('published-fixed');
   });
 });

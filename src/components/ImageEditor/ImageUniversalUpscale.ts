@@ -26,6 +26,7 @@ import {
   type UniversalImageUpscaleWorkflowSourceKind,
 } from '../../lib/universalImageUpscale';
 import {
+  runAtlasImageUpscale,
   runStabilityImageUpscale,
   runVertexImagenImageUpscale,
 } from '../../lib/cloudImageUpscale';
@@ -42,15 +43,23 @@ export type UniversalImageUpscaleProvider =
   | 'stability-fast'
   | 'stability-conservative'
   | 'vertex-imagen'
+  | 'atlas-image-upscaler'
   | 'browser';
 
 /** The paid cloud upscalers the Image editor can run when explicitly selected. */
-export type UniversalImageUpscaleCloudProvider = 'stability-fast' | 'stability-conservative' | 'vertex-imagen';
+export type UniversalImageUpscaleCloudProvider =
+  | 'stability-fast'
+  | 'stability-conservative'
+  | 'vertex-imagen'
+  | 'atlas-image-upscaler';
 
 export function isUniversalImageUpscaleCloudProvider(
   provider: UniversalImageUpscaleProvider | undefined,
 ): provider is UniversalImageUpscaleCloudProvider {
-  return provider === 'stability-fast' || provider === 'stability-conservative' || provider === 'vertex-imagen';
+  return provider === 'stability-fast'
+    || provider === 'stability-conservative'
+    || provider === 'vertex-imagen'
+    || provider === 'atlas-image-upscaler';
 }
 
 export interface UniversalImageUpscaleRuntimeMetadata {
@@ -79,8 +88,8 @@ export interface UniversalImageUpscaleInput {
    * own). Local/Android/browser providers still resolve via the silent chain.
    */
   provider?: UniversalImageUpscaleProvider;
-  /** Stability API key holder; required for the Stability cloud routes. */
-  apiKeys?: Pick<ApiKeys, 'stability'>;
+  /** Stability/Atlas API key holders; required for their cloud routes. */
+  apiKeys?: Pick<ApiKeys, 'stability' | 'atlas'>;
   /** Output image format for cloud upscalers (defaults to png). */
   outputFormat?: ImageOutputFormat;
   /** Optional prompt used only by the Stability Conservative repair pass. */
@@ -91,6 +100,7 @@ export interface UniversalImageUpscaleInput {
   localAiCpuUpscale?: (input: LocalCpuUpscalerInput) => Promise<LocalCpuUpscalerImageResult>;
   stabilityUpscale?: typeof runStabilityImageUpscale;
   vertexImagenUpscale?: typeof runVertexImagenImageUpscale;
+  atlasUpscale?: typeof runAtlasImageUpscale;
   documentToDataUrl?: (doc: ImageDocument) => Promise<string>;
   dataUrlToBitmap?: (dataUrl: string) => Promise<LayerBitmap>;
 }
@@ -251,13 +261,22 @@ async function upscaleImageDocumentWithCloudProvider(
         providerSettings: input.providerSettings,
         outputFormat,
       })
-    : await (input.stabilityUpscale ?? runStabilityImageUpscale)({
-        sourceImage: sourceDataUrl,
-        mode: provider === 'stability-conservative' ? 'conservative' : 'fast',
-        outputFormat,
-        apiKey: (input.apiKeys?.stability ?? '').trim(),
-        prompt: input.prompt,
-      });
+    : provider === 'atlas-image-upscaler'
+      ? await (input.atlasUpscale ?? runAtlasImageUpscale)({
+          sourceImage: sourceDataUrl,
+          apiKey: (input.apiKeys?.atlas ?? '').trim(),
+          baseUrl: input.providerSettings.atlasBaseUrl,
+          // The documented `outscale` multiplier (1–4) derived from the requested scale (200% → 2).
+          outscale: Math.min(4, Math.max(1, (input.scalePercent ?? 200) / 100)),
+          outputFormat,
+        })
+      : await (input.stabilityUpscale ?? runStabilityImageUpscale)({
+          sourceImage: sourceDataUrl,
+          mode: provider === 'stability-conservative' ? 'conservative' : 'fast',
+          outputFormat,
+          apiKey: (input.apiKeys?.stability ?? '').trim(),
+          prompt: input.prompt,
+        });
 
   const bitmap = await dataUrlToBitmap(cloud.result);
   const width = readBitmapDimension(bitmap, 'width', target.width);

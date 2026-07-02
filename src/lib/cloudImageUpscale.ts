@@ -1,13 +1,15 @@
 // Shared cloud image-upscale execution — the single source of truth for the
-// Stability AI and Vertex Imagen upscalers used by BOTH the Flow auto-upscale
-// (flowExecution.ts `runConfiguredFlowImageUpscale`) and the Image editor's
-// universal upscale (ImageUniversalUpscale.ts). Extracted verbatim from the
-// original Flow configured-upscale branch so behaviour is byte-identical: same
-// request builders, endpoints, error wording, and result URLs.
+// Stability AI, Vertex Imagen, and Atlas Cloud upscalers used by the Flow
+// auto-upscale (flowExecution.ts `runConfiguredFlowImageUpscale`) and the Image
+// editor's universal upscale (ImageUniversalUpscale.ts). The Stability/Vertex
+// routes are extracted verbatim from the original Flow configured-upscale
+// branch so behaviour is byte-identical: same request builders, endpoints,
+// error wording, and result URLs. The Atlas route mirrors the proven native
+// Atlas execution path and the model's generated schema artifacts (see below).
 //
-// Both routes are PAID. Callers must gate them on configured credentials
-// (Stability API key / Vertex project + bridge-or-service-account) and surface
-// a cost label before running — these helpers never decide to spend on their own.
+// All routes are PAID. Callers must gate them on configured credentials
+// (Stability/Atlas API key / Vertex project + bridge-or-service-account) and
+// surface a cost label before running — these helpers never spend on their own.
 import type { ImageOutputFormat, ProviderSettings } from '../types/flow';
 import { buildStabilityUpscaleRequest } from './imageEditorAi/requestBuilders';
 import { getVertexProjectConfig } from './vertexProviderSettings';
@@ -21,6 +23,12 @@ import {
   type VertexImagenUpscaleFactor,
 } from './vertexImageRequests';
 import { blobToDataUrl } from './imageEditorAi/blobUtils';
+import {
+  extractAtlasOutputUrl,
+  filterAtlasBodyToAcceptedFields,
+  normalizeAtlasBaseUrl,
+} from './imageEditorAi/atlasNativeImage';
+import { fetchProviderResultBlob } from './remoteMediaFetch';
 
 export interface CloudImageUpscaleOutput {
   result: string;
@@ -152,6 +160,187 @@ export async function runVertexImagenImageUpscale(
     result: result.result,
     mimeType: result.mimeType,
   };
+}
+
+// ── Atlas Cloud dedicated upscaler ──────────────────────────────────────────
+// Ground truth (in-repo generated schema artifacts, pulled from the live Atlas
+// catalog 2026-06-28):
+//  - accepted input fields: `model, image, outscale, output_format`
+//    (atlasImageAcceptedFields.generated.ts) — NO prompt, NO safety fields.
+//  - single `image` string source field (ATLAS_SINGLE_IMAGE_MODELS,
+//    atlasNativeImage.ts) — not `images[]`.
+//  - `outscale`: number, min 1, max 4, default 1
+//    (atlasImageModelParams.generated.ts).
+//  - no dimension field (atlasImageDimensions.generated.ts: field null) —
+//    output size = source × outscale.
+//  - native route (vendor-slugged, not `openai/*`): upload media →
+//    POST /model/generateImage → poll /model/prediction/{id}, exactly like the
+//    proven flow-execution / generative-fill Atlas paths.
+
+export const ATLAS_IMAGE_UPSCALER_MODEL_ID = 'atlascloud/image-upscaler';
+/**
+ * Published Atlas price for atlascloud/image-upscaler ($0.01/edit,
+ * published-fixed in atlasImageCatalog.generated.ts) — kept consistent with
+ * `estimateImageModelCostUsd` by a unit test.
+ */
+export const ATLAS_IMAGE_UPSCALE_COST_USD = 0.01;
+
+const ATLAS_SUCCESS_STATUSES = ['succeeded', 'success', 'completed', 'complete', 'done', 'ready'];
+const ATLAS_FAILURE_STATUSES = ['failed', 'failure', 'error', 'cancelled', 'canceled'];
+
+export interface AtlasImageUpscaleInput {
+  sourceImage: string;
+  apiKey: string;
+  baseUrl?: string;
+  /** Documented `outscale` multiplier (number 1–4); defaults to 2 for the standard 2x upscale. */
+  outscale?: number;
+  outputFormat: ImageOutputFormat;
+  fetchImpl?: typeof fetch;
+  /** Result download override (default handles Atlas's signed no-CORS CDN URLs). */
+  downloadResultBlob?: (url: string) => Promise<Blob>;
+  sleepImpl?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Run the dedicated Atlas Cloud image upscaler (`atlascloud/image-upscaler`).
+ * Mirrors the proven native-Atlas execution path (upload media →
+ * POST /model/generateImage → poll) and sends ONLY the fields the model's
+ * documented schema accepts, enforced via `filterAtlasBodyToAcceptedFields`.
+ */
+export async function runAtlasImageUpscale(input: AtlasImageUpscaleInput): Promise<CloudImageUpscaleOutput> {
+  const apiKey = input.apiKey.trim();
+  if (!apiKey) {
+    throw new Error('Atlas API key is missing. Add it in Settings.');
+  }
+
+  const doFetch = input.fetchImpl ?? fetch;
+  const sleepImpl = input.sleepImpl ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const baseUrl = normalizeAtlasBaseUrl(input.baseUrl);
+  const outscale = Math.min(4, Math.max(1, Number.isFinite(input.outscale ?? 2) ? (input.outscale ?? 2) : 2));
+  const image = await uploadAtlasUpscaleSource(doFetch, baseUrl, apiKey, input.sourceImage);
+
+  // Schema-exact body: `model, image, outscale, output_format` and nothing else.
+  const body = filterAtlasBodyToAcceptedFields({
+    model: ATLAS_IMAGE_UPSCALER_MODEL_ID,
+    image,
+    outscale,
+    output_format: input.outputFormat,
+  }, ATLAS_IMAGE_UPSCALER_MODEL_ID);
+
+  const response = await doFetch(`${baseUrl}/model/generateImage`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await extractCloudUpscaleErrorBody(response, 'Atlas image upscale failed'));
+  }
+
+  const created = (await response.json()) as AtlasUpscaleResponse;
+  if (created.error || created.data?.error) {
+    throw new Error('Atlas image upscale failed.');
+  }
+
+  const immediate = extractAtlasOutputUrl(created);
+  const predictionId = created.data?.id ?? created.data?.prediction_id ?? created.id ?? created.prediction_id;
+  const resultUrl = immediate
+    ?? (predictionId ? await pollAtlasUpscaleResult(doFetch, sleepImpl, baseUrl, apiKey, predictionId) : undefined);
+  if (!resultUrl) {
+    throw new Error('Atlas did not return an upscaled image output.');
+  }
+
+  const normalized = /^(https?:|blob:|data:)/i.test(resultUrl)
+    ? resultUrl
+    : `data:image/${input.outputFormat};base64,${resultUrl}`;
+  // Atlas results are signed CDN URLs without CORS headers — download through
+  // the direct native path (Electron net.fetch / CapacitorHttp), like the
+  // generative-fill Atlas path does.
+  const downloadResultBlob = input.downloadResultBlob
+    ?? ((url: string) => fetchProviderResultBlob(url, 'Atlas upscale result download failed'));
+  const blob = await downloadResultBlob(normalized);
+  return {
+    result: URL.createObjectURL(blob),
+    mimeType: blob.type || `image/${input.outputFormat}`,
+  };
+}
+
+interface AtlasUpscaleResponse {
+  id?: string;
+  prediction_id?: string;
+  status?: string;
+  error?: unknown;
+  data?: {
+    id?: string;
+    prediction_id?: string;
+    status?: string;
+    error?: unknown;
+  };
+}
+
+async function uploadAtlasUpscaleSource(
+  doFetch: typeof fetch,
+  baseUrl: string,
+  apiKey: string,
+  sourceImage: string,
+): Promise<string> {
+  if (/^https?:\/\//i.test(sourceImage)) {
+    return sourceImage;
+  }
+
+  const sourceResponse = await doFetch(sourceImage);
+  const sourceBlob = await sourceResponse.blob();
+  const formData = new FormData();
+  formData.append('file', new File([sourceBlob], 'image-upscale-source.png', { type: sourceBlob.type || 'image/png' }));
+  const response = await doFetch(`${baseUrl}/model/uploadMedia`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: formData,
+  });
+  if (!response.ok) {
+    throw new Error(await extractCloudUpscaleErrorBody(response, 'Atlas media upload failed'));
+  }
+
+  const payload = (await response.json()) as {
+    url?: string;
+    download_url?: string;
+    data?: { url?: string; download_url?: string };
+  };
+  const uploadedUrl = payload.data?.download_url ?? payload.data?.url ?? payload.download_url ?? payload.url;
+  if (!uploadedUrl) {
+    throw new Error('Atlas media upload did not return a URL.');
+  }
+  return uploadedUrl;
+}
+
+async function pollAtlasUpscaleResult(
+  doFetch: typeof fetch,
+  sleepImpl: (ms: number) => Promise<void>,
+  baseUrl: string,
+  apiKey: string,
+  predictionId: string,
+): Promise<string> {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const response = await doFetch(`${baseUrl}/model/prediction/${encodeURIComponent(predictionId)}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!response.ok) {
+      throw new Error(await extractCloudUpscaleErrorBody(response, 'Atlas image upscale polling failed'));
+    }
+    const payload = (await response.json()) as AtlasUpscaleResponse;
+    const url = extractAtlasOutputUrl(payload);
+    const status = (payload.data?.status ?? payload.status)?.toLowerCase();
+    if (status && ATLAS_FAILURE_STATUSES.includes(status)) {
+      throw new Error('Atlas image upscale failed.');
+    }
+    if (url && (!status || ATLAS_SUCCESS_STATUSES.includes(status))) {
+      return url;
+    }
+    await sleepImpl(2000);
+  }
+  throw new Error('Atlas image upscale timed out.');
 }
 
 /**

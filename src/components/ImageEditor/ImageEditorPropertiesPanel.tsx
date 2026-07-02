@@ -942,11 +942,13 @@ function DocumentGeometryPanel() {
         ? 'local-ai-cpu'
         : 'browser';
   const hasStabilityKey = Boolean(apiKeys.stability?.trim());
+  const hasAtlasKey = Boolean(apiKeys.atlas?.trim());
   const isVertexUpscaleConfigured = Boolean(getVertexProjectConfig(providerSettings).projectId)
     && Boolean(resolveVertexImageGenerator(providerSettings));
   const cloudUpscaleOptions: UniversalImageUpscaleProvider[] = [
     ...(hasStabilityKey ? (['stability-fast', 'stability-conservative'] as const) : []),
     ...(isVertexUpscaleConfigured ? (['vertex-imagen'] as const) : []),
+    ...(hasAtlasKey ? (['atlas-image-upscaler'] as const) : []),
   ];
   // Selecting a cloud option that later loses its key falls back to Auto so we never claim a paid route is ready.
   const effectiveUpscaler: 'auto' | UniversalImageUpscaleProvider =
@@ -1067,7 +1069,11 @@ function DocumentGeometryPanel() {
           {isCloudUpscaleSelected && cloudUpscaleWorkflow ? (
             <div className="text-amber-200/80">
               Paid cloud upscaler · provider cost {cloudUpscaleWorkflow.costLabel} per image, billed to your{' '}
-              {effectiveUpscaler === 'vertex-imagen' ? 'Google Cloud project' : 'Stability AI account'}.
+              {effectiveUpscaler === 'vertex-imagen'
+                ? 'Google Cloud project'
+                : effectiveUpscaler === 'atlas-image-upscaler'
+                  ? 'Atlas Cloud account'
+                  : 'Stability AI account'}.
             </div>
           ) : upscaleProvider === 'android-accelerator' ? (
             <div>Upscaler: {providerSettings.androidAcceleratorDefaultUpscaler ?? 'upscaler_realistic'} · provider cost $0.00</div>

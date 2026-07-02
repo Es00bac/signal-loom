@@ -246,6 +246,52 @@ describe('ImageUniversalUpscale', () => {
     expect(describeUniversalImageUpscaleProvider('stability-fast')).toBe('Stability Fast Upscale');
     expect(describeUniversalImageUpscaleProvider('stability-conservative')).toBe('Stability Conservative Upscale');
     expect(describeUniversalImageUpscaleProvider('vertex-imagen')).toBe('Vertex Imagen Upscale');
+    expect(describeUniversalImageUpscaleProvider('atlas-image-upscaler')).toBe('Atlas Image Upscaler');
+  });
+
+  it('runs the Atlas Cloud dedicated upscaler when selected, mapping the 2x scale to outscale 2', async () => {
+    const doc = {
+      ...createEmptyImageDocument({ id: 'doc-atlas', title: 'sprite.png', width: 256, height: 256 }),
+      layers: [makeLayer()],
+      activeLayerId: 'layer-1',
+    };
+    const atlasUpscale = vi.fn(async (request) => {
+      expect(request).toMatchObject({
+        sourceImage: 'data:image/png;base64,source',
+        apiKey: 'atlas-key',
+        outscale: 2,
+        outputFormat: 'png',
+      });
+      return { result: 'data:image/png;base64,atlas-upscaled', mimeType: 'image/png' };
+    });
+
+    const result = await upscaleImageDocumentUniversal({
+      doc,
+      scalePercent: 200,
+      provider: 'atlas-image-upscaler',
+      providerSettings: providerSettings(),
+      apiKeys: { atlas: 'atlas-key' },
+      atlasUpscale,
+      documentToDataUrl: async () => 'data:image/png;base64,source',
+      dataUrlToBitmap: async (dataUrl) => {
+        expect(dataUrl).toBe('data:image/png;base64,atlas-upscaled');
+        return { width: 512, height: 512 } as LayerBitmap;
+      },
+    });
+
+    expect(atlasUpscale).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      provider: 'atlas-image-upscaler',
+      estimatedCostUsd: 0.01,
+      statusMessage: 'Upscaled "sprite.png" to 512 x 512px with Atlas Image Upscaler ($0.01).',
+      runtime: { kind: 'cloud', modelUsed: 'Atlas Image Upscaler' },
+    });
+    expect(result.document.layers[0].metadata).toMatchObject({
+      sourceFormat: 'atlas-image-upscaler-upscale',
+      sourceWarnings: expect.arrayContaining([
+        'Atlas Image Upscaler is a paid cloud upscaler; provider cost $0.01.',
+      ]),
+    });
   });
 
   it('runs the selected Stability Fast cloud upscaler and reports its paid cost label', async () => {
@@ -368,17 +414,20 @@ describe('ImageUniversalUpscale', () => {
     };
     const stabilityUpscale = vi.fn();
     const vertexImagenUpscale = vi.fn();
+    const atlasUpscale = vi.fn();
 
     const result = await upscaleImageDocumentUniversal({
       doc,
       providerSettings: providerSettings({ vertexProjectId: 'proj-1', vertexLocation: 'us-central1' }),
-      apiKeys: { stability: 'stability-key' },
+      apiKeys: { stability: 'stability-key', atlas: 'atlas-key' },
       stabilityUpscale,
       vertexImagenUpscale,
+      atlasUpscale,
     });
 
     expect(stabilityUpscale).not.toHaveBeenCalled();
     expect(vertexImagenUpscale).not.toHaveBeenCalled();
+    expect(atlasUpscale).not.toHaveBeenCalled();
     expect(result.provider).toBe('browser');
   });
 
