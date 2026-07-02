@@ -90,4 +90,11 @@ describe('VideoWorkspaceMobileShell', () => {
     const tabLabels = [...document.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent);
     expect(tabLabels).not.toContain('Program Monitor');
   });
+
+  it('renders an honest phone gate notice about the reduced experience (F10)', () => {
+    render();
+    const gate = document.querySelector('[data-mobile-video-gate="true"]');
+    expect(gate).not.toBeNull();
+    expect(gate?.textContent).toContain('desktop or a tablet');
+  });
 });

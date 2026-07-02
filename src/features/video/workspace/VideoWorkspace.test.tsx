@@ -36,6 +36,9 @@ function renderProgramMonitor({
   stageClips = [],
   stageMode = 'stage',
   selectedClip = stageClips[0]?.clip,
+  hasActiveComposition = true,
+  onCreateStarterSequence,
+  onRevealSourceBin,
 }: {
   aspectRatio?: AspectRatio;
   videoResolution?: VideoResolution;
@@ -52,6 +55,9 @@ function renderProgramMonitor({
   stageMode?: 'stage' | 'rendered';
   selectedClip?: ProgramStageClip['clip'];
   stageClips?: ProgramStageClip[];
+  hasActiveComposition?: boolean;
+  onCreateStarterSequence?: () => void;
+  onRevealSourceBin?: () => void;
 } = {}): string {
   const visualClips = stageClips.map((stageClip) => stageClip.clip);
   const durationSeconds = Math.max(0, ...stageClips.map((stageClip) => stageClip.durationSeconds));
@@ -66,7 +72,10 @@ function renderProgramMonitor({
       exportPresetPlan={{ presetId: 'review-h264-1080p' }}
       exportReadiness={exportReadiness}
       frameRate={30}
+      hasActiveComposition={hasActiveComposition}
       hasCaptionCues={false}
+      onCreateStarterSequence={onCreateStarterSequence}
+      onRevealSourceBin={onRevealSourceBin}
       incrementalRenderSummary={incrementalRenderSummary}
       isRunning={isRunning}
       monitorParityNotices={[]}
@@ -429,6 +438,19 @@ describe('SourceItemCard', () => {
     expect(html).toContain('Video 4');
     // The bare "V1" cryptic buttons are gone (the visible label is now "Video 1").
     expect(html).not.toContain('>V1<');
+  });
+});
+
+describe('ProgramMonitorPanel empty state (F10)', () => {
+  it('offers actionable starter templates and a Source Library shortcut when no composition exists', () => {
+    const html = renderProgramMonitor({
+      hasActiveComposition: false,
+      onCreateStarterSequence: vi.fn(),
+      onRevealSourceBin: vi.fn(),
+    });
+
+    expect(html).toContain('Create 1080p sequence');
+    expect(html).toContain('Add media from the Source Library');
   });
 });
 

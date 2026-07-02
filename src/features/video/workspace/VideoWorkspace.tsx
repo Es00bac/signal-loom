@@ -414,6 +414,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
   const setSelectedVisualClipId = useEditorStore((state) => state.setSelectedVisualClipId);
   const setSelectedAudioClipId = useEditorStore((state) => state.setSelectedAudioClipId);
   const setSourceBinTab = useEditorStore((state) => state.setSourceBinTab);
+  const setPanelVisibility = useEditorStore((state) => state.setPanelVisibility);
   const setWorkspaceView = useEditorStore((state) => state.setWorkspaceView);
   const clearTimelineSelection = useEditorStore((state) => state.clearTimelineSelection);
   const sourceMonitorVisible = useEditorStore((state) => state.sourceMonitorVisible);
@@ -1429,6 +1430,25 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     });
     setActiveCompositionId(compositionId);
     recordActivityTrailWorkspaceEvent('editor', 'Create Video Composition', 'composition', 'toolbar');
+  };
+
+  // F10 starter template — creates a composition pre-set to a 1080p 16:9 sequence.
+  const handleCreateStarterSequence = () => {
+    const compositionId = addNode('composition', getNewFlowNodePosition());
+    patchNodeData(compositionId, {
+      customTitle: '1080p Sequence',
+      editorAssets: [],
+      aspectRatio: '16:9',
+      videoResolution: '1080p',
+    });
+    setActiveCompositionId(compositionId);
+    recordActivityTrailWorkspaceEvent('editor', 'Create 1080p starter sequence', 'composition', 'toolbar');
+  };
+
+  // F10 empty-state action — reveals the Source Library media panel so the user can add media.
+  const handleRevealSourceBin = () => {
+    setPanelVisibility('sourceBinVisible', true);
+    setSourceBinTab('media');
   };
 
   const addEditorAsset = (kind: EditorAssetKind) => {
@@ -3427,6 +3447,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
             renderCacheDetailLines={renderCacheDetailLines}
             hasActiveComposition={Boolean(activeComposition)}
             onCreateComposition={handleCreateComposition}
+            onCreateStarterSequence={handleCreateStarterSequence}
+            onRevealSourceBin={handleRevealSourceBin}
             onAspectRatioChange={(aspectRatio) => updateActiveCompositionSettings({ aspectRatio })}
             onOpenClipContextMenu={openVisualClipContextMenu}
             onOpenContextMenu={(event) => {
@@ -3955,6 +3977,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                         renderCacheDetailLines={renderCacheDetailLines}
                         hasActiveComposition={Boolean(activeComposition)}
                         onCreateComposition={handleCreateComposition}
+                        onCreateStarterSequence={handleCreateStarterSequence}
+                        onRevealSourceBin={handleRevealSourceBin}
                         onAspectRatioChange={(aspectRatio) =>
                           updateActiveCompositionSettings({ aspectRatio })
                         }
@@ -4980,6 +5004,8 @@ export function ProgramMonitorPanel({
   errorMessage,
   hasActiveComposition = true,
   onCreateComposition,
+  onCreateStarterSequence,
+  onRevealSourceBin,
 }: {
   stageMode: 'stage' | 'rendered';
   previewUrl?: string;
@@ -5024,6 +5050,8 @@ export function ProgramMonitorPanel({
   errorMessage?: string;
   hasActiveComposition?: boolean;
   onCreateComposition?: () => void;
+  onCreateStarterSequence?: () => void;
+  onRevealSourceBin?: () => void;
 }) {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const imageSequenceFrameCount = getImageSequenceFrameCount(previewOutputMetadata);
@@ -5221,19 +5249,44 @@ export function ProgramMonitorPanel({
                 <Film size={24} />
               </div>
               <h3 className="text-sm font-semibold text-white">No Active Composition</h3>
-              <p className="mt-1 max-w-[260px] text-xs text-gray-500 leading-normal">
-                Initialize a video composition node to begin sequencing video, images, audio, and captions.
+              <p className="mt-1 max-w-[280px] text-xs text-gray-500 leading-normal">
+                Start from a template, or add media from the Source Library to begin sequencing
+                video, images, audio, and captions.
               </p>
-              {onCreateComposition && (
-                <button
-                  onClick={onCreateComposition}
-                  className="mt-5 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-semibold text-white shadow-lg transition-all"
-                  type="button"
-                >
-                  <Plus size={14} />
-                  Create Video Composition
-                </button>
-              )}
+              <div className="mt-5 flex flex-col items-center gap-2">
+                {(onCreateStarterSequence ?? onCreateComposition) && (
+                  <button
+                    onClick={onCreateStarterSequence ?? onCreateComposition}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-semibold text-white shadow-lg transition-all"
+                    type="button"
+                  >
+                    <Plus size={14} />
+                    Create 1080p sequence
+                  </button>
+                )}
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {onCreateComposition && (
+                    <button
+                      onClick={onCreateComposition}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700/60 bg-[#0f131b] px-3 py-1.5 text-[11px] font-semibold text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
+                      type="button"
+                    >
+                      <Plus size={12} />
+                      Blank composition
+                    </button>
+                  )}
+                  {onRevealSourceBin && (
+                    <button
+                      onClick={onRevealSourceBin}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700/60 bg-[#0f131b] px-3 py-1.5 text-[11px] font-semibold text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
+                      type="button"
+                    >
+                      <Archive size={12} />
+                      Add media from the Source Library
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           ) : (
             <div className="flex flex-col h-full w-full min-h-0 justify-center">

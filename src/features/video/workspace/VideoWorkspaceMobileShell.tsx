@@ -54,6 +54,19 @@ export function VideoWorkspaceMobileShell({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2" data-mobile-video-shell="true">
+      {/*
+        F10 phone gate — the desktop multi-pane NLE can't fully fit a phone, so this shell is
+        an honestly reduced experience (preview + core panels). This notice sets that
+        expectation instead of pretending the full editor is available here.
+      */}
+      <div
+        className="shrink-0 rounded-xl border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-[11px] leading-snug text-amber-100/90"
+        data-mobile-video-gate="true"
+      >
+        Phone Video is a focused preview plus core editing panels. Multi-track trimming and
+        rendering work best on desktop or a tablet.
+      </div>
+
       {previewPanel ? (
         <div
           className="min-h-0 shrink-0 overflow-hidden rounded-xl border border-gray-700/60 bg-black/50"
