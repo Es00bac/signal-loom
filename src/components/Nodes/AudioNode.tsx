@@ -74,6 +74,19 @@ const AUDIO_MODE_OPTIONS: Array<{ value: AudioGenerationMode; label: string }> =
 const DEFAULT_SOUND_EFFECT_MODEL = 'eleven_text_to_sound_v2';
 const DEFAULT_VOICE_CHANGER_MODEL = 'eleven_multilingual_sts_v2';
 
+const VOICE_SETTING_INPUTS: Array<{
+  field: 'audioStability' | 'audioSimilarityBoost' | 'audioStyleExaggeration' | 'audioSpeed';
+  label: string;
+  title: string;
+  min: number;
+  max: number;
+}> = [
+  { field: 'audioStability', label: 'Stability 0–1', title: 'Lower = broader emotional range, higher = steadier delivery', min: 0, max: 1 },
+  { field: 'audioSimilarityBoost', label: 'Similarity 0–1', title: 'How closely the output sticks to the original voice', min: 0, max: 1 },
+  { field: 'audioStyleExaggeration', label: 'Style 0–1', title: 'Style exaggeration; high values can reduce stability', min: 0, max: 1 },
+  { field: 'audioSpeed', label: 'Speed 0.7–1.2', title: 'Playback speed of the generated speech', min: 0.7, max: 1.2 },
+];
+
 function AudioNodeComponent({ id, data }: AppNodeProps) {
   const apiKeys = useSettingsStore((state) => state.apiKeys);
   const providerSettings = useSettingsStore((state) => state.providerSettings);
@@ -414,17 +427,63 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
           {provider === 'elevenlabs' ? (
             <>
               {audioMode === 'speech' ? (
-                <select
-                  className={selectClassName}
-                  onChange={(event) => data.onChange?.('audioOutputFormat', event.target.value)}
-                  value={data.audioOutputFormat ?? 'mp3_44100_128'}
-                >
-                  {AUDIO_OUTPUT_FORMAT_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                <>
+                  <select
+                    className={selectClassName}
+                    onChange={(event) => data.onChange?.('audioOutputFormat', event.target.value)}
+                    value={data.audioOutputFormat ?? 'mp3_44100_128'}
+                  >
+                    {AUDIO_OUTPUT_FORMAT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="space-y-1.5 rounded-md border border-gray-700/50 p-2">
+                    <span className="block text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                      Voice settings (blank = voice default)
+                    </span>
+                    <div className="grid grid-cols-2 gap-2">
+                      {VOICE_SETTING_INPUTS.map((setting) => (
+                        <input
+                          key={setting.field}
+                          aria-label={setting.label}
+                          className={selectClassName}
+                          inputMode="decimal"
+                          max={setting.max}
+                          min={setting.min}
+                          onChange={(event) =>
+                            data.onChange?.(
+                              setting.field,
+                              event.target.value.trim() ? Number(event.target.value) : undefined,
+                            )
+                          }
+                          placeholder={setting.label}
+                          step={0.05}
+                          title={setting.title}
+                          type="number"
+                          value={(data[setting.field] as number | undefined) ?? ''}
+                        />
+                      ))}
+                    </div>
+                    <input
+                      aria-label="Seed"
+                      className={selectClassName}
+                      inputMode="numeric"
+                      min={0}
+                      onChange={(event) =>
+                        data.onChange?.(
+                          'audioSeed',
+                          event.target.value.trim() ? Number(event.target.value) : undefined,
+                        )
+                      }
+                      placeholder="Seed (repeatable takes)"
+                      type="number"
+                      value={data.audioSeed ?? ''}
+                    />
+                  </div>
+                </>
               ) : null}
 
               {audioMode === 'soundEffect' ? (
@@ -555,7 +614,7 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
 
 export const AudioNode = memo(AudioNodeComponent);
 
-function filterAudioModelOptions(
+export function filterAudioModelOptions(
   provider: AudioProvider,
   audioMode: AudioGenerationMode,
   options: SelectOption[],
@@ -575,7 +634,9 @@ function filterAudioModelOptions(
       return modelId.includes('_sts_');
     }
 
-    return !modelId.includes('_sts_') && !modelId.includes('sound');
+    // `_ttv_` models are Text-to-Voice DESIGN models (voice creation), not TTS — the
+    // /v1/text-to-speech endpoint rejects them, so never offer them in Speech mode.
+    return !modelId.includes('_sts_') && !modelId.includes('sound') && !modelId.includes('_ttv_');
   });
 }
 
