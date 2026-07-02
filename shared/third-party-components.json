@@ -1,0 +1,72 @@
+{
+  "$comment": "Hand-maintained inventory of third-party components that are NOT npm dependencies (native binaries, runtime downloads, embedded runtimes). Merged into the in-app Open-Source Licenses screen by scripts/generate-oss-licenses.mjs. Keep this honest: every bundled or runtime-downloaded third-party component belongs here.",
+  "components": [
+    {
+      "name": "Electron",
+      "version": "36",
+      "license": "MIT",
+      "url": "https://github.com/electron/electron",
+      "scope": "desktop",
+      "notes": "Desktop application shell. Bundles Chromium (BSD-style licenses) and Node.js (MIT); their full third-party notices ship inside the Electron distribution (LICENSES.chromium.html)."
+    },
+    {
+      "name": "realesrgan-ncnn-vulkan",
+      "version": "20220424",
+      "license": "MIT",
+      "url": "https://github.com/xinntao/Real-ESRGAN",
+      "scope": "desktop-runtime-download",
+      "notes": "Local AI upscaler engine. Downloaded on demand by the one-click 'Install & start local upscaler' flow; not bundled in the installer."
+    },
+    {
+      "name": "ncnn",
+      "version": "20220424 (embedded in realesrgan-ncnn-vulkan)",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/Tencent/ncnn",
+      "scope": "desktop-runtime-download",
+      "notes": "Tencent's neural-network inference framework, statically embedded in the realesrgan-ncnn-vulkan binary."
+    },
+    {
+      "name": "Real-ESRGAN models (realesrgan-x4plus, realesrgan-x4plus-anime)",
+      "version": "0.2.5.0 release assets",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/xinntao/Real-ESRGAN",
+      "scope": "desktop-runtime-download",
+      "notes": "Upscaling model weights downloaded with the desktop local upscaler."
+    },
+    {
+      "name": "Local Dream native runtime (libstable_diffusion_core.so + QNN startup path)",
+      "version": "2.6.4",
+      "license": "CC-BY-NC-4.0",
+      "url": "https://github.com/xororz/local-dream",
+      "scope": "android-bundled",
+      "flagged": true,
+      "notes": "On-device NPU upscaler backend by xororz, extracted unmodified from the Local Dream release APK. Attribution-NonCommercial license — commercial-distribution compatibility is under review (docs/notes/803)."
+    },
+    {
+      "name": "Qualcomm QNN / Hexagon HTP runtime libraries",
+      "version": "as shipped in Local Dream 2.6.4",
+      "license": "Proprietary (Qualcomm Technologies, Inc.)",
+      "url": "https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk",
+      "scope": "android-bundled",
+      "flagged": true,
+      "notes": "Accelerator runtime libraries redistributed via the Local Dream APK. Redistribution terms under review (docs/notes/803)."
+    },
+    {
+      "name": "On-device upscaler models (4x-UltraSharpV2-Lite by Kim2091; realesrgan-x4plus-anime-6b)",
+      "version": "huggingface.co/xororz/upscaler",
+      "license": "Kim2091 model: upstream license unverified; realesrgan-x4plus-anime-6b: BSD-3-Clause",
+      "url": "https://huggingface.co/xororz/upscaler",
+      "scope": "android-runtime-download",
+      "flagged": true,
+      "notes": "Downloaded on demand for on-device Android upscaling; per-chipset compiled variants hosted by the Local Dream author."
+    },
+    {
+      "name": "FFmpeg (ffmpeg.wasm core, @ffmpeg/core)",
+      "version": "0.12.10",
+      "license": "LGPL-2.1-or-later (FFmpeg); MIT (ffmpeg.wasm wrapper)",
+      "url": "https://github.com/ffmpegwasm/ffmpeg.wasm",
+      "scope": "runtime-download",
+      "notes": "WebAssembly FFmpeg core fetched at runtime from jsDelivr for video composition; not bundled with the app."
+    }
+  ]
+}

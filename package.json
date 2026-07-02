@@ -34,6 +34,7 @@
     "setup:android-localdream": "node scripts/android-localdream-setup.mjs",
     "gate:release": "node scripts/release-gate.mjs release",
     "android:prepare-localdream-runtime": "node scripts/prepare-android-localdream-runtime.mjs",
+    "generate:oss-licenses": "node scripts/generate-oss-licenses.mjs",
     "sync:catalog": "node scripts/sync-provider-catalog.mjs",
     "sync:android": "npm run build && cap sync android",
     "build:android": "npm run android:prepare-localdream-runtime && npm run sync:android && cd android && ./gradlew assembleDebug",

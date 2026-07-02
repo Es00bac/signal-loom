@@ -53,6 +53,7 @@ import {
 import { Capacitor } from '@capacitor/core';
 import { getSignalLoomNativeBridge } from '../../lib/nativeApp';
 import { VertexAuthPanel } from './VertexAuthPanel';
+import { OssLicensesSection } from './OssLicensesSection';
 import { useVertexAuth } from './useVertexAuth';
 
 export const SettingsModal: React.FC = () => {
@@ -635,6 +636,7 @@ export const SettingsModal: React.FC = () => {
               }
             />
           </Section>
+          <OssLicensesSection />
             </>
           )}
         </div>
