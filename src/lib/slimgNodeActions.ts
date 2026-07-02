@@ -61,6 +61,11 @@ export async function saveImageAsSlimg(
     );
   }
 
+  // Linked edit: with a known path, closing the tab in Image (or "Save & Return")
+  // overwrites the .slimg and refreshes this node's output automatically.
+  if (filePath) {
+    doc.linkedEdit = { kind: 'slimg-node', filePath };
+  }
   useImageEditorStore.getState().openDocument(doc);
   useEditorStore.getState().setWorkspaceView('image');
   const flattened = await imageDocumentToDataUrl(doc);
@@ -82,6 +87,9 @@ export async function importSlimgFromDisk(): Promise<SlimgNodeOutput | null> {
   const picked = await pickSlimgBytes();
   if (!picked) return null;
   const doc = await openSlimgDocument(picked.bytes);
+  if (picked.filePath) {
+    doc.linkedEdit = { kind: 'slimg-node', filePath: picked.filePath };
+  }
   useImageEditorStore.getState().openDocument(doc);
   useEditorStore.getState().setWorkspaceView('image');
   const flattened = await imageDocumentToDataUrl(doc);

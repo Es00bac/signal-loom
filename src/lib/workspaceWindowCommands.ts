@@ -36,6 +36,22 @@ export type WorkspaceWindowCommand =
       type: 'video-select-source-item';
       item: SourceBinLibraryItem;
       targetWorkspace: 'editor';
+    }
+  | {
+      /** A linked image edit returning to its Paper frame: merge the item, place it in the frame. */
+      type: 'paper-place-source-asset';
+      item: SourceBinLibraryItem;
+      pageId: string;
+      frameId: string;
+      targetWorkspace: 'paper';
+    }
+  | {
+      /** A linked .slimg edit was written to disk: refresh Flow nodes bound to that file. */
+      type: 'flow-slimg-file-updated';
+      filePath: string;
+      /** Flattened PNG data URL — becomes the node output without another disk read. */
+      flattened: string;
+      targetWorkspace: 'flow';
     };
 
 export interface WorkspaceWindowCommandEnvelope {

@@ -140,7 +140,8 @@ function SlimgNodeComponent({ id, data }: AppNodeProps) {
           </p>
         ) : null}
         <p className="text-[10px] leading-4 text-gray-500">
-          Edit in Image, save the file, then “Read disk” to refresh the output.
+          Edits in Image return here automatically when you close the tab (or “Save &amp; Return”).
+          “Read disk” re-reads the file manually.
         </p>
       </div>
     </BaseNode>

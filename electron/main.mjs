@@ -2418,6 +2418,21 @@ function installIpcHandlers() {
     return { canceled: false, path };
   });
 
+  // Overwrite a .slimg the renderer already knows the path of (the linked-edit round-trip's
+  // "close tab → save & return"), with no dialog. Like image-read-path, the path originates
+  // from a prior open/save dialog the user authorized, and only .slimg targets are accepted.
+  ipcMain.handle('signal-loom:image-write-path', async (_event, path, bytes) => {
+    try {
+      if (typeof path !== 'string' || !path.toLowerCase().endsWith('.slimg')) {
+        return { error: 'Only .slimg paths from a prior dialog can be overwritten.' };
+      }
+      await writeFile(path, Buffer.from(bytes));
+      return { ok: true };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   // Re-read a .slimg the renderer already knows the path of (e.g. the .slimg Flow node's "Read disk"),
   // with no dialog. The path originates from a prior open/save dialog the user authorized.
   ipcMain.handle('signal-loom:image-read-path', async (_event, path) => {

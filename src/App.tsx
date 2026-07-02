@@ -191,6 +191,7 @@ import { saveImageDocumentAsSlimg, openSlimgDocument } from './components/ImageE
 import { classifyOpenedFile } from './lib/signalLoomFileRouting';
 import { serializeSlppr, deserializeSlppr } from './features/paper/SlpprFormat';
 import { usePaperStore } from './store/paperStore';
+import { applySlimgFileUpdateToLocalFlow } from './lib/imageLinkedEdit';
 import { useDockablePanelStore } from './store/dockablePanelStore';
 import { useFlowWorkspaceStore } from './store/flowWorkspaceStore';
 import {
@@ -382,6 +383,10 @@ function FlowApp() {
   const connectedSourceBinSignature = useMemo(
     () => buildSourceBinIngestSignature(connectedSourceBinItems),
     [connectedSourceBinItems],
+  );
+  const flowGraphNodeIds = useMemo(
+    () => new Set(nodes.map((node) => node.id)),
+    [nodes],
   );
   const selectedFlowNodeCount = useMemo(
     () => nodes.filter((node) => node.selected).length,
@@ -1028,6 +1033,36 @@ function FlowApp() {
           setSelectedSourceItemId(command.item.id);
           setSourceBinTab('editorAssets');
           return;
+        case 'paper-place-source-asset': {
+          // A linked image edit coming home: merge the edited asset, rebind the frame.
+          mergeCommandSourceBinItems([command.item]);
+          usePaperStore.getState().placeSourceAssetAt({
+            item: command.item,
+            pageId: command.pageId,
+            targetFrameId: command.frameId,
+          });
+          recordActivityTrailEvent({
+            kind: 'workspace',
+            workspace: 'paper',
+            label: 'Applied linked image edit to frame',
+            detail: command.item.label,
+            source: 'system',
+          });
+          return;
+        }
+        case 'flow-slimg-file-updated': {
+          const updated = applySlimgFileUpdateToLocalFlow(command.filePath, command.flattened);
+          if (updated > 0) {
+            recordActivityTrailEvent({
+              kind: 'workspace',
+              workspace: 'flow',
+              label: 'Refreshed .slimg node from Image edit',
+              detail: command.filePath.split(/[\\/]/).pop() ?? command.filePath,
+              source: 'system',
+            });
+          }
+          return;
+        }
       }
     };
 
@@ -1087,7 +1122,9 @@ function FlowApp() {
     }
 
     activeIngestSignatureRef.current = connectedSourceBinSignature;
-    void ingestConnectedItems(connectedSourceBinItems, flowImportTargetBinId).finally(() => {
+    void ingestConnectedItems(connectedSourceBinItems, flowImportTargetBinId, {
+      graphNodeIds: flowGraphNodeIds,
+    }).finally(() => {
       if (activeIngestSignatureRef.current === connectedSourceBinSignature) {
         activeIngestSignatureRef.current = undefined;
       }
@@ -1096,6 +1133,7 @@ function FlowApp() {
     activeWorkspaceView,
     connectedSourceBinItems,
     connectedSourceBinSignature,
+    flowGraphNodeIds,
     flowImportTargetBinId,
     ingestConnectedItems,
   ]);

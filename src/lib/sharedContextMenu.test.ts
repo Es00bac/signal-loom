@@ -40,6 +40,23 @@ describe('shared context menu helpers', () => {
     ).toEqual({ x: 548, y: 408 });
   });
 
+  it('never clamps a tall menu underneath the fixed top chrome (viewport.top inset)', () => {
+    // Chrome occupies y<96 and paints above popovers — a menu clamped to y=12 hides
+    // its first items behind the bars (the Paper right-click regression).
+    expect(
+      clampContextMenuPosition(
+        { x: 40, y: 300 },
+        { width: 800, height: 600, top: 96 },
+        { width: 240, height: 560 },
+      ),
+    ).toEqual({ x: 40, y: 108 });
+  });
+
+  it('caps the menu max height below the top chrome inset', () => {
+    expect(getContextMenuMaxHeight({ width: 800, height: 600, top: 96 })).toBe(600 - 96 - 24);
+    expect(getContextMenuMaxHeight({ width: 800, height: 600 })).toBe(600 - 24);
+  });
+
   it('opens upward from the pointer when there is not enough room below', () => {
     expect(
       clampContextMenuPosition(

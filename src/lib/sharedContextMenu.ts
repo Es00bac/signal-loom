@@ -21,6 +21,16 @@ export interface ContextMenuSize {
   height: number;
 }
 
+/**
+ * The area a context menu may occupy. `top` is the y where usable space begins —
+ * fixed app chrome (top navbar + menu row) paints ABOVE popovers by design
+ * (z-90/z-200 vs z-80), so clamping to y=0 hides a tall menu's first items
+ * behind the bars. Callers pass the top of their content region instead.
+ */
+export interface ContextMenuViewport extends ContextMenuSize {
+  top?: number;
+}
+
 export interface ContextMenuHeightEstimateOptions {
   headerHeight: number;
   itemHeight: number;
@@ -30,7 +40,7 @@ export interface ContextMenuHeightEstimateOptions {
 
 export interface ContextMenuLayoutOptions {
   point: ContextMenuPoint;
-  viewport: ContextMenuSize;
+  viewport: ContextMenuViewport;
   menuWidth: number;
   estimatedHeight: number;
   maxHeight: number;
@@ -61,17 +71,18 @@ export function normalizeContextMenuItems(items: SharedContextMenuItem[]): Share
 
 export function clampContextMenuPosition(
   point: ContextMenuPoint,
-  viewport: ContextMenuSize,
+  viewport: ContextMenuViewport,
   menuSize: ContextMenuSize,
 ): ContextMenuPoint {
+  const minY = (viewport.top ?? 0) + VIEWPORT_PADDING;
   const maxX = Math.max(VIEWPORT_PADDING, viewport.width - menuSize.width - VIEWPORT_PADDING);
-  const maxY = Math.max(VIEWPORT_PADDING, viewport.height - menuSize.height - VIEWPORT_PADDING);
+  const maxY = Math.max(minY, viewport.height - menuSize.height - VIEWPORT_PADDING);
   const opensUpward = point.y + menuSize.height + VIEWPORT_PADDING > viewport.height;
   const preferredY = opensUpward ? point.y - menuSize.height : point.y;
 
   return {
     x: clamp(point.x, VIEWPORT_PADDING, maxX),
-    y: clamp(preferredY, VIEWPORT_PADDING, maxY),
+    y: clamp(preferredY, minY, maxY),
   };
 }
 
@@ -94,8 +105,8 @@ export function resolveContextMenuLayout(options: ContextMenuLayoutOptions): Con
   };
 }
 
-export function getContextMenuMaxHeight(viewport: ContextMenuSize): number {
-  return Math.max(1, viewport.height - VIEWPORT_PADDING * 2);
+export function getContextMenuMaxHeight(viewport: ContextMenuViewport): number {
+  return Math.max(1, viewport.height - (viewport.top ?? 0) - VIEWPORT_PADDING * 2);
 }
 
 export function getContextMenuMaxWidth(viewport: ContextMenuSize): number {

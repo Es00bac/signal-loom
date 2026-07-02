@@ -1,6 +1,12 @@
-import { useRef } from 'react';
-import { X, Plus, FolderOpen, ClipboardPaste } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { X, Plus, FolderOpen, ClipboardPaste, CornerDownLeft, Loader2 } from 'lucide-react';
 import { useImageEditorStore } from '../../store/imageEditorStore';
+import {
+  closeLinkedImageDocument,
+  describeLinkedEditTarget,
+  saveLinkedImageEdit,
+} from '../../lib/imageLinkedEdit';
+import { showUserNotice } from '../../shared/ui/userNotice';
 
 const OPEN_IMAGE_ACCEPT = [
   'image/png',
@@ -36,6 +42,20 @@ export function ImageEditorTabs({ disabled = false, onOpenImageFile, onNewCanvas
   const activeDocId = useImageEditorStore((s) => s.activeDocId);
   const setActiveDocument = useImageEditorStore((s) => s.setActiveDocument);
   const closeDocument = useImageEditorStore((s) => s.closeDocument);
+  const [linkedBusyDocId, setLinkedBusyDocId] = useState<string | null>(null);
+
+  const activeDoc = documents.find((doc) => doc.id === activeDocId);
+  const activeLinkedTarget = describeLinkedEditTarget(activeDoc?.linkedEdit);
+
+  const runLinkedAction = (docId: string, action: () => Promise<unknown>, failure: string) => {
+    if (linkedBusyDocId) return;
+    setLinkedBusyDocId(docId);
+    void action()
+      .catch((error: unknown) => {
+        showUserNotice(error instanceof Error ? error.message : failure, 'error');
+      })
+      .finally(() => setLinkedBusyDocId(null));
+  };
 
   return (
     <div className="flex h-8 items-center border-b border-cyan-300/10 bg-[#14151d]">
@@ -102,14 +122,43 @@ export function ImageEditorTabs({ disabled = false, onOpenImageFile, onNewCanvas
             className="text-cyan-100/30 hover:text-white"
             onClick={(e) => {
               e.stopPropagation();
+              // Linked edits (Paper frame / Flow .slimg) auto-return on close —
+              // that's the whole contract of the round-trip.
+              if (doc.linkedEdit) {
+                runLinkedAction(
+                  doc.id,
+                  () => closeLinkedImageDocument(doc),
+                  'Could not return the edit to its workspace.',
+                );
+                return;
+              }
               closeDocument(doc.id);
             }}
+            title={doc.linkedEdit ? `Close — saves back to ${describeLinkedEditTarget(doc.linkedEdit)}` : 'Close'}
             type="button"
           >
-            <X size={12} />
+            {linkedBusyDocId === doc.id ? <Loader2 className="animate-spin" size={12} /> : <X size={12} />}
           </button>
         </div>
       ))}
+      {activeDoc && activeLinkedTarget ? (
+        <button
+          className="ml-auto mr-2 flex h-6 shrink-0 items-center gap-1.5 rounded border border-cyan-400/40 bg-cyan-500/15 px-2.5 text-[11px] font-semibold text-cyan-100 transition-colors hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={disabled || linkedBusyDocId !== null || !activeDoc.dirty}
+          onClick={() => runLinkedAction(
+            activeDoc.id,
+            () => saveLinkedImageEdit(activeDoc),
+            `Could not save the edit back to ${activeLinkedTarget}.`,
+          )}
+          title={`Apply this edit back to ${activeLinkedTarget} and keep working here`}
+          type="button"
+        >
+          {linkedBusyDocId === activeDoc.id
+            ? <Loader2 className="animate-spin" size={12} />
+            : <CornerDownLeft size={12} />}
+          Save &amp; Return to {activeLinkedTarget}
+        </button>
+      ) : null}
     </div>
   );
 }

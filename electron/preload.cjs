@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('signalLoomNative', {
   openImageDocumentFile: () => ipcRenderer.invoke('signal-loom:image-open'),
   saveImageDocumentFileAs: (bytes) => ipcRenderer.invoke('signal-loom:image-save-as', bytes),
   readImageDocumentFile: (path) => ipcRenderer.invoke('signal-loom:image-read-path', path),
+  writeImageDocumentFile: (path, bytes) => ipcRenderer.invoke('signal-loom:image-write-path', path, bytes),
   openPaperDocumentFile: () => ipcRenderer.invoke('signal-loom:paper-open'),
   savePaperDocumentFileAs: (bytes) => ipcRenderer.invoke('signal-loom:paper-save-as', bytes),
   importMediaFiles: (options) => ipcRenderer.invoke('signal-loom:import-media-files', options),

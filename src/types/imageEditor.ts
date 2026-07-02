@@ -745,6 +745,26 @@ export interface ImageGuide {
   position: number;
 }
 
+/**
+ * Marks an image document as a LINKED EDIT of content owned by another workspace.
+ * Closing the document's tab (or "Save & Return") flattens it and hands the result
+ * back to its origin automatically — a Paper image frame, or a Flow .slimg node's
+ * file — instead of the manual save-then-refresh dance.
+ */
+export type ImageDocumentLinkedEdit =
+  | {
+      kind: 'paper-frame';
+      pageId: string;
+      frameId: string;
+      /** Label of the source item the frame held when the edit began (for naming the result). */
+      sourceLabel: string;
+    }
+  | {
+      kind: 'slimg-node';
+      /** Absolute .slimg path the Flow node owns; the return overwrites this file. */
+      filePath: string;
+    };
+
 export interface ImageDocument {
   id: string;
   title: string;
@@ -762,6 +782,8 @@ export interface ImageDocument {
   guides?: ImageGuide[];
   dirty: boolean;
   sourceBinItemId?: string;
+  /** Present when this document round-trips back to Paper or a Flow .slimg node on close. */
+  linkedEdit?: ImageDocumentLinkedEdit;
   savedSelectionChannels?: ImageSavedSelectionChannel[];
   spotChannels?: ImageSpotChannel[];
   metadata?: {

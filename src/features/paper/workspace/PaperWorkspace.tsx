@@ -2141,18 +2141,28 @@ export function PaperWorkspace() {
       : `Placed "${item.label}" on the page.`);
   };
 
-  const openPaperFrameImageInImageWorkspace = useCallback((frame: PaperFrame | undefined) => {
+  const openPaperFrameImageInImageWorkspace = useCallback((
+    pageId: string,
+    frameId: string | undefined,
+    frame: PaperFrame | undefined,
+  ) => {
     const sourceItemId = frame?.asset?.sourceBinItemId;
     const sourceItem = sourceItems.find((item) => item.id === sourceItemId);
     if (!sourceItem || sourceItem.kind !== 'image') return;
+    // Linked edit: the Image document remembers this frame, so closing its tab (or
+    // "Save & Return") flattens the edit and places it straight back here.
+    const linkedEdit = frameId
+      ? { kind: 'paper-frame' as const, pageId, frameId, sourceLabel: sourceItem.label }
+      : undefined;
     setStatus(`Opening "${sourceItem.label}" in the Image workspace...`);
     void (async () => {
       try {
         const doc = await createImageDocumentFromSourceItem(sourceItem);
-        openImageDocument(doc);
+        openImageDocument(linkedEdit ? { ...doc, linkedEdit } : doc);
         setStatus(`Opened "${sourceItem.label}" as an editable image document.`);
       } catch (error) {
-        openImageDocument(createSourceBackedImageDocumentShell(sourceItem));
+        const shell = createSourceBackedImageDocumentShell(sourceItem);
+        openImageDocument(linkedEdit ? { ...shell, linkedEdit } : shell);
         setStatus(error instanceof Error
           ? `Opened "${sourceItem.label}" as a linked image shell; bitmap load failed: ${error.message}`
           : `Opened "${sourceItem.label}" as a linked image shell; bitmap load failed.`);
@@ -8626,10 +8636,19 @@ function PaperBubbleHandles({
   );
 }
 
-function readPaperContextMenuViewport(): { width: number; height: number } {
+function readPaperContextMenuViewport(): { width: number; height: number; top: number } {
+  if (typeof window === 'undefined') {
+    return { width: 1024, height: 768, top: 0 };
+  }
+  // The fixed top chrome (navbar + menu row) paints above popovers, so the menu must
+  // never be clamped underneath it — usable space starts at the canvas region's top.
+  const canvasTop = document
+    .querySelector('[data-paper-scroll-container="true"]')
+    ?.getBoundingClientRect().top ?? 0;
   return {
-    width: typeof window === 'undefined' ? 1024 : window.innerWidth,
-    height: typeof window === 'undefined' ? 768 : window.innerHeight,
+    width: window.innerWidth,
+    height: window.innerHeight,
+    top: Math.max(0, Math.round(canvasTop)),
   };
 }
 
@@ -8672,7 +8691,7 @@ export function PaperContextMenu({
   onClose: () => void;
   onCopyFrameStyle: () => void;
   onEditComicSfxFrame: (pageId: string, frame: PaperFrame | undefined) => void;
-  onOpenImageFrame: (frame: PaperFrame | undefined) => void;
+  onOpenImageFrame: (pageId: string, frameId: string | undefined, frame: PaperFrame | undefined) => void;
   onQuickEditImageFrame: (pageId: string, frameId: string) => void;
   onUpscaleFrameForPrint: (pageId: string, frame: PaperFrame | undefined) => void;
   onPasteFrameStyle: () => void;
@@ -8757,8 +8776,8 @@ export function PaperContextMenu({
                 if (context.frameId) onQuickEditImageFrame(context.pageId, context.frameId);
                 onClose();
               }} />
-              <MenuButton label="Open Image in Image Tab" onClick={() => {
-                onOpenImageFrame(frame);
+              <MenuButton label="Edit in Image Workspace" onClick={() => {
+                onOpenImageFrame(context.pageId, context.frameId, frame);
                 onClose();
               }} />
               <MenuButton label="Upscale for Print" onClick={() => {

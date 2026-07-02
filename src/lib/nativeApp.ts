@@ -446,6 +446,8 @@ export interface SignalLoomNativeBridge {
   saveImageDocumentFileAs: (bytes: Uint8Array) => Promise<NativeImageSaveResult>;
   /** Re-read a .slimg by a known path (no dialog) — used by the .slimg Flow node's "Read disk". */
   readImageDocumentFile?: (path: string) => Promise<{ bytes?: Uint8Array; error?: string }>;
+  /** Overwrite a .slimg at a known path (no dialog) — the linked-edit round-trip's save. */
+  writeImageDocumentFile?: (path: string, bytes: Uint8Array) => Promise<{ ok?: boolean; error?: string }>;
   openPaperDocumentFile: () => Promise<NativePaperOpenResult>;
   savePaperDocumentFileAs: (bytes: Uint8Array) => Promise<NativePaperSaveResult>;
   importMediaFiles: (options?: { scratchDirectoryPath?: string }) => Promise<NativeImportMediaResult>;
