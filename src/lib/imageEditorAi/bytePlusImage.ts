@@ -64,12 +64,24 @@ export async function bytePlusGenerateImage(request: BytePlusImageRequest): Prom
 /**
  * Generative-fill adapter. The Seedream masked-edit request shape isn't confirmed yet, so for now this
  * runs prompt-driven GENERATION (the Flow image node is the primary BytePlus surface). Wire masked inpaint
- * here once the ModelArk edit API is confirmed with BytePlus.
+ * AND reference images here once the ModelArk edit/i2i API is confirmed with BytePlus.
+ *
+ * BytePlus is not offered as a Generative Fill Bar provider (no confirmed edit endpoint to route an
+ * op to), and every catalog capability for it correctly reports `referenceImages: false` /
+ * `maxReferenceImages: 0`, so the editor never lets a user attach references here. If a caller ever
+ * supplies them anyway (a future capability change, a direct API caller, etc.), fail loudly instead
+ * of silently generating a reference-free image — matching the "silent degrade" bug class fixed for
+ * the other adapters in commit 0bae7b2.
  */
 export async function runBytePlusImage(request: GenerativeFillRequest): Promise<GenerativeFillResult> {
   const apiKey = useSettingsStore.getState().apiKeys.byteplus?.trim();
   if (!apiKey) {
     throw new Error('BytePlus API key not configured. Set it in Settings → API Keys.');
+  }
+  if (request.references && request.references.length > 0) {
+    throw new Error(
+      'BytePlus Seedream has no confirmed reference-image endpoint in Signal Loom yet; remove the attached references or choose a provider that supports them (Gemini, OpenAI, Atlas, BFL, Stability, or Local/Open).',
+    );
   }
   const baseUrl = normalizeBytePlusBaseUrl(useSettingsStore.getState().providerSettings.bytePlusBaseUrl);
   const modelUsed = request.model ?? 'seedream-4.5';
