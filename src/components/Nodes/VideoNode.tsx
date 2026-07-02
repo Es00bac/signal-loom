@@ -473,15 +473,20 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
             value={data.videoSeed ?? ''}
           />
 
+          {provider === 'gemini' || provider === 'atlas' ? (
+            // Atlas video execution sends negative_prompt too — the field was Gemini-gated in the UI
+            // even though the Atlas request honored it.
+            <input
+              className={selectClassName}
+              onChange={(event) => data.onChange?.('videoNegativePrompt', event.target.value)}
+              placeholder="Negative prompt (optional: blur, artifacts, low detail)"
+              type="text"
+              value={typeof data.videoNegativePrompt === 'string' ? data.videoNegativePrompt : ''}
+            />
+          ) : null}
+
           {provider === 'gemini' ? (
             <>
-              <input
-                className={selectClassName}
-                onChange={(event) => data.onChange?.('videoNegativePrompt', event.target.value)}
-                placeholder="Negative prompt (optional: blur, artifacts, low detail)"
-                type="text"
-                value={typeof data.videoNegativePrompt === 'string' ? data.videoNegativePrompt : ''}
-              />
               <label className={withFlowNodeInteractionClasses('grid grid-cols-[1fr_auto] items-center gap-3 rounded-lg border border-gray-700/60 bg-[#111217]/50 px-2.5 py-2 text-[11px] text-gray-300 shadow-inner')}>
                 <span>Videos per request</span>
                 <input
