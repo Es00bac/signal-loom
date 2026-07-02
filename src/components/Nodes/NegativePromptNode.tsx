@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { Filter } from 'lucide-react';
 import { BaseNode } from './BaseNode';
+import { NodeHelpText } from './NodeHelpText';
 import type { AppNodeProps } from '../../types/flow';
 
 function NegativePromptNodeComponent({ id, data }: AppNodeProps) {
@@ -43,9 +44,9 @@ function NegativePromptNodeComponent({ id, data }: AppNodeProps) {
         <div className="leading-5 text-gray-300">
           Strips locally specified negative words out of the description prompt.
         </div>
-        <div className="mt-1 leading-5 text-gray-400">
+        <NodeHelpText helpKey="negativePromptNode" summary="How to connect TEXT and EXCLUDE">
           Connect your main prompt to the <span className="text-purple-400 font-semibold">TEXT</span> port and words to exclude to the <span className="text-rose-400 font-semibold">EXCLUDE</span> port.
-        </div>
+        </NodeHelpText>
       </div>
     </BaseNode>
   );

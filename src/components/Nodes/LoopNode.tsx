@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { Repeat } from 'lucide-react';
 import { BaseNode } from './BaseNode';
+import { NodeHelpText } from './NodeHelpText';
 import { useFlowStore } from '../../store/flowStore';
 import type { AppNodeProps } from '../../types/flow';
 
@@ -44,9 +45,9 @@ function LoopNodeComponent({ id, data }: AppNodeProps) {
             <span className="font-semibold text-gray-400">runs</span>
           </div>
         </div>
-        <div className="mt-1 leading-5 text-gray-400">
+        <NodeHelpText helpKey="loopNode" summary={`Repeats the upstream item ${count}x`}>
           Repeats the upstream connected item <span className="text-amber-400 font-bold">{count} times</span> into a loop list. Connect this node downstream to run generation batches and select the best run.
-        </div>
+        </NodeHelpText>
       </div>
     </BaseNode>
   );

@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { Hash } from 'lucide-react';
 import { BaseNode } from './BaseNode';
+import { NodeHelpText } from './NodeHelpText';
 import type { AppNodeProps } from '../../types/flow';
 
 function ListLengthNodeComponent({ id, data }: AppNodeProps) {
@@ -20,9 +21,9 @@ function ListLengthNodeComponent({ id, data }: AppNodeProps) {
         <div className="leading-5 text-gray-300">
           Counts the number of items currently stored in the connected list or envelope.
         </div>
-        <div className="mt-1 leading-5 text-gray-400">
+        <NodeHelpText helpKey="listLengthNode" summary="How to connect and read output">
           Connect a list or envelope output to this node's input, and it will output the count as a numeric string (e.g. <span className="text-purple-400 font-bold">"4"</span>).
-        </div>
+        </NodeHelpText>
       </div>
     </BaseNode>
   );

@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { Box } from 'lucide-react';
 import { BaseNode } from './BaseNode';
+import { NodeHelpText } from './NodeHelpText';
 import type { AppNodeProps } from '../../types/flow';
 
 function ArrayFlatNodeComponent({ id, data }: AppNodeProps) {
@@ -50,9 +51,9 @@ function ArrayFlatNodeComponent({ id, data }: AppNodeProps) {
         <div className="leading-5 text-gray-300">
           Combines nested sub-lists or individual prompt pools into one continuous flat list.
         </div>
-        <div className="mt-1 leading-5 text-gray-400">
+        <NodeHelpText helpKey="arrayFlatNode" summary="How to connect inputs">
           Connect your nested lists to <span className="text-purple-400 font-semibold">L1, L2, L3</span> inputs.
-        </div>
+        </NodeHelpText>
       </div>
     </BaseNode>
   );

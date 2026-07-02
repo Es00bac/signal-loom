@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { FileSearch } from 'lucide-react';
 import { BaseNode } from './BaseNode';
+import { NodeHelpText } from './NodeHelpText';
 import { useFlowStore } from '../../store/flowStore';
 import type { AppNodeProps } from '../../types/flow';
 
@@ -60,9 +61,9 @@ function RegexParseNodeComponent({ id, data }: AppNodeProps) {
             className="rounded-md border border-gray-700 bg-gray-950 px-2 py-1.5 font-mono text-[11px] text-gray-100 focus:border-pink-400 focus:outline-none"
           />
         </div>
-        <div className="mt-1 leading-5 text-gray-400">
+        <NodeHelpText helpKey="regexParseNode" summary="What this node outputs">
           Parses connected text using a Regular Expression pattern. Outputs a single captured match, or a list of matches if the <code className="text-pink-400 font-mono">/g</code> flag is enabled.
-        </div>
+        </NodeHelpText>
       </div>
     </BaseNode>
   );

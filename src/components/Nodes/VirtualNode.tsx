@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { GitBranch, Link2 } from 'lucide-react';
 import { BaseNode } from './BaseNode';
+import { NodeHelpText } from './NodeHelpText';
 import { getCompatibleNodeActions } from '../../lib/nodeActionMenu';
 import { resolveNodeDisplayTitle } from '../../lib/nodeBookmarks';
 import { resolveVirtualSourceNode } from '../../lib/virtualNodes';
@@ -42,9 +43,9 @@ function VirtualNodeComponent({ id, data }: AppNodeProps) {
           <Link2 size={13} />
           {derived.sourceTitle ? `Alias of ${derived.sourceTitle}` : 'Waiting for a linked source'}
         </div>
-        <div className="mt-2 leading-5 text-fuchsia-50/75">
+        <NodeHelpText className="mt-2 text-fuchsia-50/75" helpKey="virtual" summary="How virtual aliasing works">
           Connect any completed or runnable node into this virtual node, then connect this node downstream. Downstream edges resolve as if they came from the linked source.
-        </div>
+        </NodeHelpText>
       </div>
     </BaseNode>
   );
@@ -142,6 +143,12 @@ function getDefaultNodeTitle(type: FlowNodeType): string {
       return 'Number';
     case 'colorSwatchNode':
       return 'Color Swatch';
+    case 'colorSwatchListNode':
+      return 'Color Swatch List';
+    case 'loraSpecNode':
+      return 'LoRA Spec';
+    case 'slimgNode':
+      return '.slimg';
     case 'doodleNode':
       return 'Doodle';
     case 'functionNode':
