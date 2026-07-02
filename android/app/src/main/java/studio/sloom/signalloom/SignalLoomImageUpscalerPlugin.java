@@ -58,6 +58,11 @@ public class SignalLoomImageUpscalerPlugin extends Plugin {
     }
 
     private Process bundledUpscalerProcess;
+    // After a definitive backend startup failure, skip the spawn + 15s health poll on
+    // subsequent calls for a short window so batch upscales (Paper print export) do not
+    // stall per image; the TTL keeps the path self-healing without an app restart.
+    private static final long BACKEND_FAILURE_RETRY_MS = 5 * 60_000L;
+    private volatile long backendFailedAtMs = 0L;
 
     @PluginMethod
     public void upscale(PluginCall call) {
@@ -160,7 +165,13 @@ public class SignalLoomImageUpscalerPlugin extends Plugin {
 
     private synchronized void startBundledLocalDreamUpscalerBackend() throws Exception {
         if (isLocalDreamBackendHealthy()) {
+            backendFailedAtMs = 0L;
             return;
+        }
+        long failedAt = backendFailedAtMs;
+        if (failedAt > 0L && System.currentTimeMillis() - failedAt < BACKEND_FAILURE_RETRY_MS) {
+            throw new IllegalStateException(
+                "Bundled Local Dream QNN backend failed to start recently; skipping retry for a few minutes.");
         }
 
         Context context = getContext();
@@ -193,10 +204,12 @@ public class SignalLoomImageUpscalerPlugin extends Plugin {
         long deadline = System.currentTimeMillis() + 15_000L;
         while (System.currentTimeMillis() < deadline) {
             if (isLocalDreamBackendHealthy()) {
+                backendFailedAtMs = 0L;
                 return;
             }
             Thread.sleep(500L);
         }
+        backendFailedAtMs = System.currentTimeMillis();
         throw new IllegalStateException("Bundled Local Dream QNN backend did not become ready on 127.0.0.1:8081.");
     }
 
