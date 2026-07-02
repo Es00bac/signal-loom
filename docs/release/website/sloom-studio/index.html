@@ -2293,7 +2293,7 @@ function makeSim(rootId, TOTAL, script, finalState){
       try{ p1.currentTime = 0; p1.play(); }catch(e){}
       var lanes = sim.rel(v1);
       var tl0 = sim.rel(sim.stage.querySelector('.vd-tl'));
-      var t0 = performance.now(), DUR = 9000, p2started = false;
+      var t0 = performance.now(), DUR = 9000, p2started = false, p1done = false, p2done = false;
       ph.style.transition = 'none';
       phT = sim.every(50, function(){
         var t = Math.min(1, (performance.now()-t0)/DUR);
@@ -2303,12 +2303,20 @@ function makeSim(rootId, TOTAL, script, finalState){
         ph.style.left = (lanes.x - tl0.x + lanes.w*t)+'px';
         var pct = t*100;
         tc.textContent = '00:00:' + String(Math.floor(t*12)).padStart(2, '0');
-        if(pct < 34){ p1.style.opacity = 1; p2.style.opacity = 0; }
+        if(pct < 2){ p1.style.opacity = 0; p2.style.opacity = 0; } /* before clip 1's in-point: black */
+        else if(pct < 34){ p1.style.opacity = 1; p2.style.opacity = 0; }
         else if(pct < 44){
           if(!p2started){ p2started = true; try{ p2.currentTime = 0; p2.play(); }catch(e){} }
           var f = (pct-34)/10; p1.style.opacity = 1-f; p2.style.opacity = f;
         }
-        else { p1.style.opacity = 0; p2.style.opacity = 1; }
+        else if(pct <= 76){ /* clip 2 alone until its out-point at lane 76% ≈ 9.1s */
+          if(!p1done){ p1done = true; try{ p1.pause(); }catch(e){} }
+          p1.style.opacity = 0; p2.style.opacity = 1;
+        }
+        else { /* past the last visual clip: only audio remains — the monitor goes black */
+          p1.style.opacity = 0; p2.style.opacity = 0;
+          if(!p2done){ p2done = true; try{ p2.pause(); }catch(e){} }
+        }
         if(pct >= 34 && pct <= 76){ var k = (pct-34)/42;
           var kk = Math.min(1, Math.max(0, (k-.1)/.8));
           p2.style.transform = 'scale('+(1+.26*kk)+')';
