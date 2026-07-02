@@ -453,7 +453,7 @@
   .pp-ok{color:#5ce6a1;font-family:var(--mono);font-size:.8em;letter-spacing:.08em;text-transform:uppercase}
 
   /* paper page */
-  .pp-page{position:absolute;left:4cqw;top:2.2cqw;width:52cqw;height:37.4cqw;background:#fff;border-radius:.3em;
+  .pp-page{position:absolute;left:13cqw;top:2.2cqw;width:47cqw;height:37.4cqw;background:#fff;border-radius:.3em;
     box-shadow:0 1.6em 3em -1.4em #000;transition:background .8s}
   .pp-page svg{position:absolute;inset:0;width:100%;height:100%}
   .pp-frame{fill:rgba(255,255,255,0);stroke:#181b20;stroke-width:1.6;transition:stroke .5s}
@@ -464,7 +464,7 @@
   .pp-handles.on i{opacity:1}
 
   /* sfx stage */
-  .sx-panelart{position:absolute;left:4cqw;top:2.4cqw;width:56cqw;height:36.6cqw;border-radius:.4em;overflow:hidden;
+  .sx-panelart{position:absolute;left:12cqw;top:2.4cqw;width:49cqw;height:36.6cqw;border-radius:.4em;overflow:hidden;
     background:#101318 url(assets/demo/wnm-aisle.jpg) center/cover;box-shadow:0 1.6em 3em -1.4em #000;border:.35em solid #fff}
   .sx-burst{position:absolute;inset:-20%;background:repeating-conic-gradient(from 0deg,rgba(255,210,61,.16) 0deg 7deg,transparent 7deg 16deg);
     opacity:0;transition:opacity .5s;transform-origin:50% 52%}
@@ -478,29 +478,60 @@
   #sx-decal.copies .e2{opacity:.26;transform:translate(-20px,14px)}
   #sx-decal.copies .e3{opacity:.14;transform:translate(-30px,21px)}
   .sx-echo,#sx-main{transition:transform .5s var(--ease),opacity .5s,stroke-width .5s}
-  .sx-presets{display:flex;flex-wrap:wrap;gap:.45em}
-  .sx-presets b{font-family:var(--display);font-weight:700;font-size:.9em;color:#ffd23d;border:1px solid rgba(255,210,61,.35);
-    border-radius:.4em;padding:.25em .55em;background:rgba(255,210,61,.07);transition:.25s}
-  .sx-presets b.pick{background:rgba(255,210,61,.25);color:#fff;box-shadow:0 0 .8em -0.2em rgba(255,210,61,.8)}
-  .sx-presets.pulse b{box-shadow:0 0 .9em -0.25em rgba(255,210,61,.9)}
   .sx-step{border:1px solid var(--line-2);border-radius:.4em;padding:.15em .7em}
 
   /* brush stage */
-  .br-rail{position:absolute;left:1em;top:1em;bottom:1.6em;width:3.4cqw;background:rgba(13,15,21,.94);
-    border:1px solid rgba(110,125,150,.4);border-radius:.8em;display:flex;flex-direction:column;align-items:center;
-    gap:.5em;padding:.8em 0;font-size:1.15em;color:var(--ink-3)}
-  .br-rail b{font-weight:400;width:2em;height:2em;display:grid;place-items:center;border-radius:.4em;filter:saturate(.4)}
-  .br-rail b.on{background:rgba(63,214,255,.15);border:1px solid rgba(63,214,255,.4);filter:none}
-  .br-canvas{position:absolute;left:6.5cqw;top:2.2cqw;width:52cqw;height:37.4cqw;background:#f4f2ee;border-radius:.3em;
+  .br-canvas{position:absolute;left:9cqw;top:2.2cqw;width:50cqw;height:37.4cqw;background:#f4f2ee;border-radius:.3em;
     box-shadow:0 1.6em 3em -1.4em #000}
-  .br-tip{height:5.2em;border:1px solid var(--line);border-radius:.5em;display:grid;place-items:center;background:#0a0d13}
-  .br-tip i{width:2.6em;height:2.6em;border-radius:50%;background:radial-gradient(circle at 38% 34%,#3a4655,#141a22);
+  .br-tip{height:4.2em;border:1px solid var(--line);border-radius:.5em;display:grid;place-items:center;background:#0a0d13}
+  .br-tip i{width:2.4em;height:2.4em;border-radius:50%;background:radial-gradient(circle at 38% 34%,#3a4655,#141a22);
     border:1px solid rgba(150,182,220,.35);transition:transform .6s var(--ease)}
+  .br-c2{background:transparent;pointer-events:none}
+  .br-panel{bottom:auto}
+  .br-layers{top:auto;bottom:1.6em;height:auto}
+  .br-layers .pp-ih{display:flex;align-items:center}
+  .br-add{margin-left:auto;font-family:var(--mono);font-size:.68em;letter-spacing:.06em;color:#bfefff;
+    border:1px solid rgba(63,214,255,.4);border-radius:.4em;padding:.25em .6em;background:rgba(63,214,255,.08);font-weight:500;
+    text-transform:none}
+  .br-lrows{display:grid;gap:.4em}
+  .br-lrow{display:flex;align-items:center;gap:.55em;border:1px solid var(--line);border-radius:.45em;padding:.32em .5em;
+    font-size:.88em;color:var(--ink-2);background:#0a0f18}
+  .br-lrow.on{border-color:rgba(63,214,255,.5);color:var(--ink)}
+  .br-lrow canvas,.br-lrow .br-bgthumb{width:2.7em;height:2em;border-radius:.25em;background:#f4f2ee;border:1px solid var(--line);flex:none}
+  .br-lrow u{text-decoration:none;filter:saturate(.4);font-size:.9em}
+  .br-lrow.hidden u{opacity:.28}
+  .br-lrow span{flex:1;white-space:nowrap;overflow:hidden}
+  .br-lrow em{font-style:normal;font-family:var(--mono);font-size:.72em;color:var(--ink-3);border:1px solid var(--line);
+    border-radius:99em;padding:.1em .5em}
   .br-stylus{position:absolute;z-index:9;transition:left .1s linear,top .1s linear;transform-origin:20% 92%;filter:drop-shadow(0 3px 6px #0009)}
   .br-stylus svg{display:block;transform:rotate(24deg);transform-origin:50% 95%;transition:transform .7s var(--ease)}
   .br-stylus i{position:absolute;left:50%;top:88%;width:2.2em;height:2.2em;margin:-1.1em;border-radius:50%;
     border:2px solid rgba(63,214,255,.75);transform:scale(.4);transition:transform .12s linear;pointer-events:none}
   #br-key{position:absolute}
+
+  /* real floating tool palettes (mirrors the app's toolbars) */
+  .tp{position:absolute;left:2.4em;top:1em;background:rgba(16,20,27,.97);border:1px solid rgba(110,125,150,.4);
+    border-radius:.7em;padding:.5em;z-index:4;display:grid;gap:.28em}
+  .tp.cols2{grid-template-columns:repeat(2,auto)}
+  .tp.cols3{grid-template-columns:repeat(3,auto)}
+  .tp b{width:2em;height:2em;display:grid;place-items:center;border-radius:.35em;font-weight:400;
+    color:#9fb0c4;font-size:1em;border:1px solid transparent;filter:saturate(.45);line-height:1}
+  .tp b.on{background:rgba(63,214,255,.2);border-color:rgba(63,214,255,.55);color:#dff6ff;filter:none}
+  .tp b.sfx{font-size:.5em;font-weight:700;color:#ffd23d;border:1px solid rgba(255,210,61,.3);letter-spacing:.02em;
+    width:4em;height:4em;filter:none}
+  .tp.pulse b.sfx{box-shadow:0 0 .9em -0.25em rgba(255,210,61,.9)}
+  .tp .chips{grid-column:1/-1;position:relative;height:2.5em;margin-top:.2em}
+  .tp .chips i{position:absolute;width:1.5em;height:1.5em;border:1px solid rgba(255,255,255,.35);border-radius:.25em}
+  .tp .chips .fgc{left:.25em;top:.1em;z-index:2}
+  .tp .chips .bgc{left:1.15em;top:1em}
+  .pp-bintab{position:absolute;left:0;top:44%;z-index:3;writing-mode:vertical-rl;transform:rotate(180deg);
+    border:1px solid var(--line-2);border-right:0;border-radius:.5em 0 0 .5em;padding:.8em .3em;
+    background:rgba(11,17,29,.95);font-family:var(--mono);font-size:.8em;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--ink-3)}
+  .pp-ruler{position:absolute;width:1.3em;font-family:var(--mono);font-size:.6em;color:var(--ink-3);
+    background:rgba(16,20,27,.9);border:1px solid var(--line);border-radius:.3em;overflow:hidden;
+    background-image:repeating-linear-gradient(180deg,rgba(150,182,220,.35) 0 1px,transparent 1px 8%)}
+  .pp-ruler span{position:absolute;left:.35em}
 
   /* video stage */
   .vd-lib{position:absolute;left:1em;top:1em;width:17.5cqw;background:rgba(13,15,21,.94);border:1px solid rgba(110,125,150,.4);
@@ -783,13 +814,31 @@
       <div class="fd-stage pp" id="pp" role="img" aria-label="Animated replay of the Signal Loom Paper workspace: three comic panel frames are drawn on a page, one is reshaped with Ctrl vertex handles, border width and colour are changed in the Inspector, the page is tinted, and a speech bubble with a draggable tail is added.">
         <div class="fd-chrome"><i></i><span>issue-01.slppr — paper</span><span class="fd-ws"><b>F</b><b>I</b><b class="on">P</b><b>V</b></span></div>
         <div class="fd-canvas">
+          <div class="pp-bintab">Source Bin</div>
+          <div class="tp cols3" aria-hidden="true">
+            <b>↶</b><b>↷</b><b>✂</b>
+            <b>⧉</b><b>⎘</b><b>🎨</b>
+            <b>⇥</b><b class="on" id="pp-tool-select">▷</b><b>✋</b>
+            <b>T</b><b id="pp-tool-frame">🖼</b><b>▦</b>
+            <b>─</b><b>○</b><b>△</b>
+            <b>⬠</b><b>⬡</b><b>✎</b>
+            <b id="pp-tool-bubble">💬</b><b>☁</b><b>▭</b>
+            <b>💉</b><b>🖋</b><b class="sfx">BANG</b>
+            <b class="sfx">KAPO</b><b class="sfx">SCRE</b><b class="sfx">WHIR</b>
+            <b class="sfx">BOOM</b><b class="sfx">CRAS</b><b class="sfx">ZAP</b>
+            <b class="sfx">SLAM</b><b></b><b></b>
+            <span class="chips"><i class="fgc" style="background:#fff"></i><i class="bgc" style="background:#0a0d13"></i></span>
+          </div>
+          <div class="pp-ruler" style="left:11.3cqw;top:2.2cqw;height:37.4cqw"><span style="top:8%">5</span><span style="top:28%">15</span><span style="top:48%">25</span><span style="top:68%">35</span><span style="top:88%">45</span></div>
           <div class="pp-page" id="pp-page">
             <svg id="pp-svg" viewBox="0 0 640 460" preserveAspectRatio="none">
               <defs>
                 <clipPath id="ppc1"><polygon id="ppc1p" points="18,16 318,16 318,256 18,256"/></clipPath>
+                <clipPath id="ppc2"><polygon id="ppc2p" points="338,16 622,16 622,256 338,256"/></clipPath>
                 <clipPath id="ppc3"><polygon id="ppc3p" points="18,272 622,272 622,444 18,444"/></clipPath>
               </defs>
               <image id="pp-art1" href="assets/demo/wnm-tank.jpg" x="18" y="16" width="300" height="300" preserveAspectRatio="xMidYMin slice" clip-path="url(#ppc1)" opacity="0"/>
+              <image id="pp-art2" href="assets/demo/wnm-fountain.jpg" x="338" y="16" width="284" height="284" preserveAspectRatio="xMidYMin slice" clip-path="url(#ppc2)" opacity="0"/>
               <image id="pp-art3" href="assets/demo/wnm-town.jpg" x="18" y="272" width="604" height="172" preserveAspectRatio="xMidYMid slice" clip-path="url(#ppc3)" opacity="0"/>
               <polygon id="ppF1" class="pp-frame" points="18,16 318,16 318,256 18,256" opacity="0"/>
               <polygon id="ppF2" class="pp-frame" points="338,16 622,16 622,256 338,256" opacity="0"/>
@@ -828,11 +877,26 @@
   <div class="node-head"><span class="nid">05 · sfx-demo</span><span class="ntype">replay</span><span class="nstate"><span class="txt"></span><i></i></span></div>
   <div class="node-body">
     <h2 data-reveal>Make it <em>LOUD.</em></h2>
-    <p class="sub" data-reveal>Paper's <b>Comic SFX designer</b>: seven presets — BANG!, KAPOW!, SCREECH, WHIRRRR, BOOM!, CRASH!, ZAP! — then every parameter is yours: fill, stroke and shadow measured in millimetres, skew and rotation, letter tracking, and <b>trailing copies</b> that sell the motion.</p>
+    <p class="sub" data-reveal>Paper's <b>Comic SFX designer</b>: eight presets — BANG!, KAPOW!, SCREECH, WHIRRRR, BOOM!, CRASH!, ZAP!, SLAM! — then every parameter is yours: fill, stroke and shadow measured in millimetres, skew and rotation, letter tracking, and <b>trailing copies</b> that sell the motion.</p>
     <div class="fd-wrap" data-reveal>
       <div class="fd-stage sx" id="sx" role="img" aria-label="Animated replay of Paper's Comic SFX designer: the KAPOW! preset is stamped over comic art, then skewed, its stroke and shadow thickened in millimetres, and trailing echo copies added.">
         <div class="fd-chrome"><i></i><span>issue-01.slppr — paper · comic sfx</span><span class="fd-ws"><b>F</b><b>I</b><b class="on">P</b><b>V</b></span></div>
         <div class="fd-canvas">
+          <div class="pp-bintab">Source Bin</div>
+          <div class="tp cols3" id="sx-tp" aria-hidden="true">
+            <b>↶</b><b>↷</b><b>✂</b>
+            <b>⧉</b><b>⎘</b><b>🎨</b>
+            <b>⇥</b><b>▷</b><b>✋</b>
+            <b>T</b><b>🖼</b><b>▦</b>
+            <b>─</b><b>○</b><b>△</b>
+            <b>⬠</b><b>⬡</b><b>✎</b>
+            <b>💬</b><b>☁</b><b>▭</b>
+            <b>💉</b><b>🖋</b><b class="sfx">BANG</b>
+            <b class="sfx" id="sx-pick">KAPO</b><b class="sfx">SCRE</b><b class="sfx">WHIR</b>
+            <b class="sfx">BOOM</b><b class="sfx">CRAS</b><b class="sfx">ZAP</b>
+            <b class="sfx">SLAM</b><b></b><b></b>
+            <span class="chips"><i class="fgc" style="background:#fff"></i><i class="bgc" style="background:#0a0d13"></i></span>
+          </div>
           <div class="sx-panelart">
             <div class="sx-burst" id="sx-burst"></div>
             <svg id="sx-svg" viewBox="0 0 560 360">
@@ -846,9 +910,7 @@
           </div>
           <div class="pp-inspector sx-designer">
             <div class="pp-ih">SFX Designer</div>
-            <div class="pp-sec">Preset</div>
-            <div class="sx-presets" id="sx-presets"><b>BANG!</b><b id="sx-pick">KAPOW!</b><b>BOOM!</b><b>ZAP!</b></div>
-            <div class="pp-sec">Design</div>
+            <div class="pp-sec">Design · KAPOW!</div>
             <div class="pp-row"><span>Stroke width</span><div class="pp-slider"><i id="sx-sl-stroke" style="width:30%"></i></div><b id="sx-stroke-val">1.2 mm</b></div>
             <div class="pp-row"><span>Skew X</span><div class="pp-slider"><i id="sx-sl-skew" style="width:0%"></i></div><b id="sx-skew-val">0°</b></div>
             <div class="pp-row"><span>Tracking</span><div class="pp-slider"><i id="sx-sl-track" style="width:10%"></i></div><b id="sx-track-val">0</b></div>
@@ -876,8 +938,21 @@
       <div class="fd-stage br" id="br" role="img" aria-label="Animated replay of the Signal Loom brush engine: a simulated stylus paints strokes whose width follows pen pressure, tilts to shade broadly, blends foreground to background colour along a stroke, and rules a straight line with Shift held.">
         <div class="fd-chrome"><i></i><span>portrait.slimg — image · brush</span><span class="fd-ws"><b>F</b><b class="on">I</b><b>P</b><b>V</b></span></div>
         <div class="fd-canvas">
-          <div class="br-rail"><b>↶</b><b>↷</b><b class="on">🖌</b><b>◻</b><b>🧽</b><b>🖋</b><b>T</b><b>⌖</b></div>
+          <div class="tp cols2" style="left:1em" aria-hidden="true">
+            <b>↶</b><b>↷</b>
+            <b>✂</b><b>⧉</b>
+            <b>⎘</b><b></b>
+            <b>▷</b><b>✋</b>
+            <b>⬚</b><b class="on">🖌</b>
+            <b>◪</b><b>⌆</b>
+            <b>💧</b><b>☀</b>
+            <b>◨</b><b>🖋</b>
+            <b>⬓</b><b>T</b>
+            <b>💉</b><b></b>
+            <span class="chips"><i class="fgc" style="background:#22b8d4"></i><i class="bgc" style="background:#d436a8"></i></span>
+          </div>
           <canvas id="br-canvas" class="br-canvas"></canvas>
+          <canvas id="br-canvas2" class="br-canvas br-c2"></canvas>
           <div class="pp-inspector br-panel">
             <div class="pp-ih">Brush</div>
             <div class="pp-sec">Dynamics</div>
@@ -890,6 +965,15 @@
             <div class="pp-sec">Tip</div>
             <div class="br-tip"><i id="br-tip-disc"></i></div>
             <div class="pp-row"><span class="pp-ok" id="br-gpu">GPU brush engine · WebGL2</span></div>
+          </div>
+          <div class="pp-inspector br-layers">
+            <div class="pp-ih">Layers<b class="br-add" id="br-add">＋ Add layer</b></div>
+            <div class="br-lrows" id="br-lrows">
+              <div class="br-lrow on" id="br-lrow-line"><u>👁</u><canvas width="46" height="34" id="br-th-line"></canvas><span>Line art</span><em>Normal</em></div>
+              <div class="br-lrow"><u>👁</u><i class="br-bgthumb"></i><span>Background</span><em>Normal</em></div>
+            </div>
+            <div class="pp-row"><span>Opacity</span><div class="pp-slider"><i id="br-sl-op" style="width:100%"></i></div><b id="br-op-val">100%</b></div>
+            <div class="pp-row"><span class="pp-ok">Masks · groups · clipping</span></div>
           </div>
           <div class="br-stylus" id="br-stylus"><i id="br-ring"></i><svg viewBox="0 0 40 40" width="34" height="34"><path d="M20 38 L16 26 L24 26 Z" fill="#e5e7eb"/><rect x="16.5" y="2" width="7" height="24" rx="2.5" fill="#94a3b8"/><rect x="16.5" y="18" width="7" height="4" fill="#3fd6ff"/></svg></div>
           <div class="pp-key" id="br-key">SHIFT</div>
@@ -1674,11 +1758,14 @@ function makeSim(rootId, TOTAL, script, finalState){
     void r;
   }
   var key = document.getElementById('pp-key');
-  makeSim('pp', 27, function(sim){
+  var TOOL_IDS = ['pp-tool-select', 'pp-tool-frame', 'pp-tool-bubble'];
+  function toolOn(id){ TOOL_IDS.forEach(function(t){ document.getElementById(t).classList.toggle('on', t === id); }); }
+  makeSim('pp', 29, function(sim){
     /* reset */
     F.forEach(function(el, i){ setPts(el, RECTS[i]); el.setAttribute('opacity', 0); });
-    setPts(document.getElementById('ppc1p'), RECTS[0]); setPts(document.getElementById('ppc3p'), RECTS[2]);
+    setPts(document.getElementById('ppc1p'), RECTS[0]); setPts(document.getElementById('ppc2p'), RECTS[1]); setPts(document.getElementById('ppc3p'), RECTS[2]);
     document.getElementById('pp-art1').setAttribute('opacity', 0);
+    document.getElementById('pp-art2').setAttribute('opacity', 0);
     document.getElementById('pp-art3').setAttribute('opacity', 0);
     document.getElementById('pp-bubble').setAttribute('opacity', 0);
     document.getElementById('pp-bubble-t1').textContent = ''; document.getElementById('pp-bubble-t2').textContent = '';
@@ -1691,60 +1778,72 @@ function makeSim(rootId, TOTAL, script, finalState){
     document.getElementById('pp-sw-page').style.background = '#ffffff';
     F.forEach(function(el){ el.style.stroke = '#181b20'; el.setAttribute('stroke-width', 1.6); });
     document.getElementById('pp-bubble-body').style.stroke = '#181b20';
+    toolOn('pp-tool-select');
     sim.home();
-    sim.cap('Rule the page into panels');
-    drawFrame(sim, F[0], RECTS[0], 0.6, .8, document.getElementById('ppc1p'));
-    drawFrame(sim, F[1], RECTS[1], 2.0, .8, null);
-    drawFrame(sim, F[2], RECTS[2], 3.4, .8, document.getElementById('ppc3p'));
-    sim.later(4.9, function(){ sim.cap('Frames clip their art automatically');
+    sim.cap('Grab the frame tool');
+    sim.later(.5, function(){ sim.moveTo(document.getElementById('pp-tool-frame'), .7); });
+    sim.later(1.3, function(){ sim.click(); toolOn('pp-tool-frame'); });
+    sim.later(1.6, function(){ sim.cap('Rule the page into panels'); });
+    drawFrame(sim, F[0], RECTS[0], 1.8, .8, document.getElementById('ppc1p'));
+    drawFrame(sim, F[1], RECTS[1], 3.2, .8, document.getElementById('ppc2p'));
+    drawFrame(sim, F[2], RECTS[2], 4.6, .8, document.getElementById('ppc3p'));
+    sim.later(6.1, function(){ sim.cap('Frames clip their art automatically');
       document.getElementById('pp-art1').setAttribute('opacity', 1);
+      document.getElementById('pp-art2').setAttribute('opacity', 1);
       document.getElementById('pp-art3').setAttribute('opacity', 1); });
-    sim.later(7.6, function(){ sim.cap('Hold Ctrl — vertex handles appear'); });
-    sim.later(8.0, function(){ key.classList.add('on');
+    sim.later(7.3, function(){ sim.moveTo(document.getElementById('pp-tool-select'), .6); });
+    sim.later(8.0, function(){ sim.click(); toolOn('pp-tool-select'); });
+    sim.later(8.3, function(){ sim.cap('Hold Ctrl — vertex handles appear'); });
+    sim.later(8.6, function(){ key.classList.add('on');
       var c = sim.rel(sim.canvas); key.style.left = (parseFloat(sim.cursor.style.left)+26)+'px';
       key.style.top = (parseFloat(sim.cursor.style.top)-8)+'px'; void c;
       buildHandles(sim, F[1]); handles.classList.add('on'); });
-    sim.later(8.6, function(){ var m = svgPt(sim, 480, 256); sim.move(m.x, m.y, .7); });
-    sim.later(9.5, function(){ sim.cap('Drag an edge midpoint — sculpt the frame'); sim.click();
-      animPts(sim, F[1], RECTS[1].concat([RECTS[1][3]]), F2_SCULPT, 1.4, null);
+    sim.later(9.2, function(){ var m = svgPt(sim, 480, 256); sim.move(m.x, m.y, .7); });
+    sim.later(10.1, function(){ sim.cap('Drag an edge midpoint — sculpt the frame'); sim.click();
+      animPts(sim, F[1], RECTS[1].concat([RECTS[1][3]]), F2_SCULPT, 1.4, document.getElementById('ppc2p'));
       var m = svgPt(sim, 470, 196); sim.move(m.x, m.y, 1.4);
       key.style.left = (m.x+26)+'px'; key.style.top = (m.y-8)+'px'; });
-    sim.later(11.2, function(){ buildHandles(sim, F[1]); });
-    sim.later(12.6, function(){ key.classList.remove('on'); handles.classList.remove('on'); });
-    sim.later(13.2, function(){ sim.cap('Border weight & colour — in millimetres');
+    sim.later(11.8, function(){ buildHandles(sim, F[1]); });
+    sim.later(13.2, function(){ key.classList.remove('on'); handles.classList.remove('on'); });
+    sim.later(13.8, function(){ sim.cap('Border weight & colour — in millimetres');
       sim.moveTo(document.getElementById('pp-sl-bw'), .8); });
-    sim.later(14.2, function(){ sim.click();
+    sim.later(14.8, function(){ sim.click();
       document.getElementById('pp-sl-bw').style.width = '62%';
       document.getElementById('pp-bw-val').textContent = '1.2 mm';
       F.forEach(function(el){ el.setAttribute('stroke-width', 3.4); }); });
-    sim.later(15.4, function(){ sim.moveTo(document.getElementById('pp-sw-border'), .6); });
-    sim.later(16.1, function(){ sim.click();
+    sim.later(16.0, function(){ sim.moveTo(document.getElementById('pp-sw-border'), .6); });
+    sim.later(16.7, function(){ sim.click();
       document.getElementById('pp-sw-border').style.background = '#1e3a5f';
       F.forEach(function(el){ el.style.stroke = '#1e3a5f'; });
       document.getElementById('pp-bubble-body').style.stroke = '#1e3a5f'; });
-    sim.later(17.0, function(){ sim.cap('Tint the page itself'); sim.moveTo(document.getElementById('pp-sw-page'), .6); });
-    sim.later(17.7, function(){ sim.click();
+    sim.later(17.6, function(){ sim.cap('Tint the page itself'); sim.moveTo(document.getElementById('pp-sw-page'), .6); });
+    sim.later(18.3, function(){ sim.click();
       document.getElementById('pp-sw-page').style.background = '#f6efe1';
       page.style.background = '#f6efe1'; });
-    sim.later(19.0, function(){ sim.cap('Speech bubbles, with draggable tails');
-      var b = svgPt(sim, 168, 64); sim.move(b.x, b.y, .8); });
-    sim.later(19.9, function(){ sim.click(); document.getElementById('pp-bubble').setAttribute('opacity', 1); });
-    sim.later(20.3, function(){
+    sim.later(19.4, function(){ sim.cap('Speech bubbles, with draggable tails');
+      sim.moveTo(document.getElementById('pp-tool-bubble'), .7); });
+    sim.later(20.2, function(){ sim.click(); toolOn('pp-tool-bubble'); });
+    sim.later(20.5, function(){ var b = svgPt(sim, 168, 64); sim.move(b.x, b.y, .8); });
+    sim.later(21.4, function(){ sim.click(); document.getElementById('pp-bubble').setAttribute('opacity', 1); });
+    sim.later(21.8, function(){
       var t1 = 'A town holding', t2 = 'its breath.', i = 0;
       sim.every(45, function(){ i++;
         document.getElementById('pp-bubble-t1').textContent = t1.slice(0, i);
         document.getElementById('pp-bubble-t2').textContent = i > t1.length ? t2.slice(0, i-t1.length) : ''; });
     });
-    sim.later(22.4, function(){ var tp = svgPt(sim, 84, 112); sim.move(tp.x, tp.y, .6); });
-    sim.later(23.1, function(){ sim.click();
+    sim.later(24.0, function(){ var tp = svgPt(sim, 84, 112); sim.move(tp.x, tp.y, .6); });
+    sim.later(24.7, function(){ sim.click();
       document.getElementById('pp-bubble-body').setAttribute('d',
         'M96,64 C96,42 130,30 168,30 C206,30 240,42 240,64 C240,86 206,98 168,98 C143,98 122,94 109,86 L64,132 L98,80 C96,75 96,70 96,64 Z');
       var tp = svgPt(sim, 64, 132); sim.move(tp.x, tp.y, .6); });
-    sim.later(24.6, function(){ sim.cap('Preflight ✓ — CMYK, print-ready'); });
+    sim.later(26.4, function(){ sim.cap('Preflight ✓ — CMYK, print-ready'); });
   }, function(sim){ /* reduced-motion final state */
+    toolOn('pp-tool-select');
     F.forEach(function(el, i){ el.setAttribute('opacity', 1); setPts(el, i === 1 ? F2_SCULPT : RECTS[i]);
       el.setAttribute('stroke-width', 3.4); el.style.stroke = '#1e3a5f'; });
     document.getElementById('pp-art1').setAttribute('opacity', 1);
+    document.getElementById('pp-art2').setAttribute('opacity', 1);
+    setPts(document.getElementById('ppc2p'), F2_SCULPT);
     document.getElementById('pp-art3').setAttribute('opacity', 1);
     document.getElementById('pp-bubble').setAttribute('opacity', 1);
     document.getElementById('pp-bubble-t1').textContent = 'A town holding';
@@ -1759,7 +1858,7 @@ function makeSim(rootId, TOTAL, script, finalState){
 (function(){
   var decal = document.getElementById('sx-decal'); if(!decal) return;
   var main = document.getElementById('sx-main');
-  var pick = document.getElementById('sx-pick'), presets = document.getElementById('sx-presets');
+  var pick = document.getElementById('sx-pick'), presets = document.getElementById('sx-tp');
   var burst = document.getElementById('sx-burst');
   function setDecal(skew, rot, track){
     decal.setAttribute('transform', 'rotate('+rot+' 280 190) skewX('+skew+')');
@@ -1769,7 +1868,7 @@ function makeSim(rootId, TOTAL, script, finalState){
     decal.setAttribute('opacity', 0); decal.classList.remove('copies');
     setDecal(0, 0, 0);
     main.style.strokeWidth = '6px'; main.style.filter = 'drop-shadow(4px 5px 0 #1f2937)';
-    pick.classList.remove('pick'); presets.classList.remove('pulse');
+    pick.classList.remove('on'); presets.classList.remove('pulse');
     burst.style.opacity = 0;
     document.getElementById('sx-sl-stroke').style.width = '30%'; document.getElementById('sx-stroke-val').textContent = '1.2 mm';
     document.getElementById('sx-sl-skew').style.width = '0%'; document.getElementById('sx-skew-val').textContent = '0°';
@@ -1778,7 +1877,7 @@ function makeSim(rootId, TOTAL, script, finalState){
     sim.home();
     sim.cap('Pick a Comic SFX preset');
     sim.later(.6, function(){ sim.moveTo(pick, .8); });
-    sim.later(1.5, function(){ sim.click(); pick.classList.add('pick'); });
+    sim.later(1.5, function(){ sim.click(); pick.classList.add('on'); });
     sim.later(2.0, function(){ decal.setAttribute('opacity', 1); burst.style.opacity = 1;
       var art = sim.rel(sim.stage.querySelector('.sx-panelart'));
       sim.move(art.cx, art.cy, .8); });
@@ -1802,72 +1901,102 @@ function makeSim(rootId, TOTAL, script, finalState){
     sim.later(13.4, function(){ sim.click(); document.getElementById('sx-copies').textContent = '2'; });
     sim.later(13.9, function(){ sim.click(); document.getElementById('sx-copies').textContent = '3';
       decal.classList.add('copies'); });
-    sim.later(16.4, function(){ sim.cap('BANG! KAPOW! SCREECH — seven presets, all yours');
+    sim.later(16.4, function(){ sim.cap('BANG! KAPOW! SLAM — eight presets, all yours');
       presets.classList.add('pulse'); });
   }, function(sim){
     decal.setAttribute('opacity', 1); decal.classList.add('copies');
-    setDecal(-14, -5, 3); pick.classList.add('pick'); burst.style.opacity = 1;
+    setDecal(-14, -5, 3); pick.classList.add('on'); burst.style.opacity = 1;
     main.style.strokeWidth = '11px';
     sim.cursor.style.opacity = 0;
-    sim.stage.querySelector('.fd-caption').textContent = 'BANG! KAPOW! SCREECH — seven presets, all yours';
+    sim.stage.querySelector('.fd-caption').textContent = 'BANG! KAPOW! SLAM — eight presets, all yours';
   });
 })();
 
 /* ───────── 06 · brush — the brush engine ───────── */
 (function(){
   var cv = document.getElementById('br-canvas'); if(!cv) return;
+  var cv2 = document.getElementById('br-canvas2');
   var stylus = document.getElementById('br-stylus'), ring = document.getElementById('br-ring');
   var pen = stylus.querySelector('svg'), tip = document.getElementById('br-tip-disc');
   var key = document.getElementById('br-key');
-  var ctx = null, DPR = Math.min(2, devicePixelRatio||1);
-  function sizeCanvas(){
+  var ctx = null, ctx2 = null, DPR = Math.min(2, devicePixelRatio||1);
+  var colourRow = null;
+  function sizeCanvases(){
     var r = cv.getBoundingClientRect(); if(r.width < 4) return;
-    cv.width = r.width*DPR; cv.height = r.height*DPR;
-    ctx = cv.getContext('2d'); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    ctx.fillStyle = '#f4f2ee'; ctx.fillRect(0, 0, r.width, r.height);
+    [[cv, '#f4f2ee'], [cv2, null]].forEach(function(pair){
+      pair[0].width = r.width*DPR; pair[0].height = r.height*DPR;
+      var c = pair[0].getContext('2d'); c.setTransform(DPR, 0, 0, DPR, 0, 0);
+      if(pair[1]){ c.fillStyle = pair[1]; c.fillRect(0, 0, r.width, r.height); }
+      else { c.clearRect(0, 0, r.width, r.height); }
+    });
+    ctx = cv.getContext('2d'); ctx2 = cv2.getContext('2d');
+  }
+  function updateThumb(canvas, thumbId){
+    var th = document.getElementById(thumbId); if(!th) return;
+    var c = th.getContext('2d'); if(!c) return;
+    c.clearRect(0, 0, th.width, th.height);
+    c.drawImage(canvas, 0, 0, th.width, th.height);
   }
   function lerp(a, b, t){ return a+(b-a)*t; }
   function hueMix(t){ /* FG #22b8d4 → BG #d436a8 */
     return 'rgba('+Math.round(lerp(34,212,t))+','+Math.round(lerp(184,54,t))+','+Math.round(lerp(212,168,t))+','; }
   /* one stroke = animate along a quadratic bezier, stamping like ImageBrushStamp */
   function stroke(sim, o){
-    var t0 = performance.now(), prev = null;
+    var t0 = performance.now(), prev = null, target = o.layer === 2 ? ctx2 : ctx;
     (function step(){
       var t = Math.min(1, (performance.now()-t0)/(o.dur*1000));
       var u = 1-t, x = u*u*o.p0[0] + 2*u*t*o.p1[0] + t*t*o.p2[0],
                   y = u*u*o.p0[1] + 2*u*t*o.p1[1] + t*t*o.p2[1];
       var press = o.pressure(t);
       var cvr = sim.rel(cv);
-      sim.cursor && 0;
       stylus.style.transition = 'none';
       stylus.style.left = (cvr.x + x - 8)+'px'; stylus.style.top = (cvr.y + y - 30)+'px';
       ring.style.transform = 'scale('+(0.3 + press*.9)+')';
-      if(ctx && prev){
+      if(target && prev){
         var dist = Math.hypot(x-prev.x, y-prev.y), steps = Math.max(1, Math.round(dist/2));
         for(var i2 = 1; i2 <= steps; i2++){
           var xx = lerp(prev.x, x, i2/steps), yy = lerp(prev.y, y, i2/steps);
           var r = o.base*press + .4, a = o.alpha*press + .02;
-          ctx.fillStyle = (o.mix ? hueMix(t) : o.color) + a + ')';
-          ctx.beginPath();
-          if(o.tilt){ ctx.ellipse(xx, yy, r*2.6, r*.85, o.tiltAngle, 0, 6.2832); }
-          else { ctx.arc(xx, yy, r, 0, 6.2832); }
-          ctx.fill();
+          target.fillStyle = (o.mix ? hueMix(t) : o.color) + a + ')';
+          target.beginPath();
+          if(o.tilt){ target.ellipse(xx, yy, r*2.6, r*.85, o.tiltAngle, 0, 6.2832); }
+          else { target.arc(xx, yy, r, 0, 6.2832); }
+          target.fill();
         }
       }
       prev = {x: x, y: y};
-      if(t < 1 && ctx) requestAnimationFrame(step);
-      else ring.style.transform = 'scale(.3)';
+      if(t < 1 && target) requestAnimationFrame(step);
+      else {
+        ring.style.transform = 'scale(.3)';
+        updateThumb(o.layer === 2 ? cv2 : cv, o.layer === 2 ? 'br-th-col' : 'br-th-line');
+      }
     })();
   }
   function pressSin(t){ return .18 + .82*Math.sin(t*Math.PI); }
   function pressWave(t){ return .3 + .55*Math.abs(Math.sin(t*Math.PI*2.2)); }
-  makeSim('br', 24, function(sim){
-    sizeCanvas();
+  function addColourLayer(){
+    colourRow = document.createElement('div');
+    colourRow.className = 'br-lrow on';
+    colourRow.id = 'br-lrow-col';
+    colourRow.innerHTML = '<u id="br-eye-col">👁</u><canvas width="46" height="34" id="br-th-col"></canvas><span>Colour</span><em id="br-mode-col">Normal</em>';
+    var rows = document.getElementById('br-lrows');
+    rows.insertBefore(colourRow, rows.firstChild);
+    document.getElementById('br-lrow-line').classList.remove('on');
+  }
+  makeSim('br', 32, function(sim){
+    sizeCanvases();
     pen.style.transform = 'rotate(24deg)';
     tip.style.transform = 'none';
     key.classList.remove('on');
+    stylus.style.opacity = 1;
     document.getElementById('br-sl-rate').style.width = '0%';
     document.getElementById('br-rate-val').textContent = '0%';
+    document.getElementById('br-sl-op').style.width = '100%';
+    document.getElementById('br-op-val').textContent = '100%';
+    if(colourRow){ colourRow.remove(); colourRow = null; }
+    document.getElementById('br-lrow-line').classList.add('on');
+    cv2.style.mixBlendMode = 'normal'; cv2.style.opacity = '1'; cv2.style.visibility = 'visible';
+    updateThumb(cv, 'br-th-line');
     sim.home();
     var W = cv.getBoundingClientRect().width, H = cv.getBoundingClientRect().height;
     sim.cap('Pressure drives size & flow');
@@ -1875,36 +2004,61 @@ function makeSim(rootId, TOTAL, script, finalState){
       dur:2.4, base:11, alpha:.5, color:'rgba(36,41,48,', pressure:pressSin}); });
     sim.later(3.6, function(){ stroke(sim, {p0:[W*.3,H*.85], p1:[W*.55,H*.35], p2:[W*.86,H*.7],
       dur:2.2, base:11, alpha:.5, color:'rgba(36,41,48,', pressure:pressWave}); });
-    sim.later(6.3, function(){ sim.cap('Tilt shades like the side of the lead');
+    sim.later(6.2, function(){ sim.cap('Tilt shades like the side of the lead');
       pen.style.transform = 'rotate(52deg)'; tip.style.transform = 'rotateX(58deg) rotate(18deg)'; });
-    sim.later(7.2, function(){ stroke(sim, {p0:[W*.14,H*.3], p1:[W*.44,H*.14], p2:[W*.78,H*.3],
-      dur:2.3, base:10, alpha:.16, color:'rgba(70,78,90,', pressure:function(t){ return .5+.4*Math.sin(t*Math.PI); },
+    sim.later(7.0, function(){ stroke(sim, {p0:[W*.14,H*.3], p1:[W*.44,H*.14], p2:[W*.78,H*.3],
+      dur:2.2, base:10, alpha:.16, color:'rgba(70,78,90,', pressure:function(t){ return .5+.4*Math.sin(t*Math.PI); },
       tilt:true, tiltAngle:.35}); });
-    sim.later(10.1, function(){ sim.cap('Colour Rate mixes FG → BG mid-stroke');
+    sim.later(9.7, function(){ sim.cap('A real layer stack — add one for colour');
       pen.style.transform = 'rotate(24deg)'; tip.style.transform = 'none';
+      var add = document.getElementById('br-add'), r = sim.rel(add);
+      stylus.style.transition = 'left .8s cubic-bezier(.22,.61,.2,1), top .8s cubic-bezier(.22,.61,.2,1)';
+      stylus.style.left = (r.cx-8)+'px'; stylus.style.top = (r.cy-30)+'px'; });
+    sim.later(10.8, function(){ addColourLayer(); });
+    sim.later(11.6, function(){ sim.cap('Colour Rate mixes FG → BG mid-stroke');
       document.getElementById('br-sl-rate').style.width = '65%';
       document.getElementById('br-rate-val').textContent = '65%'; });
-    sim.later(11.2, function(){ stroke(sim, {p0:[W*.12,H*.52], p1:[W*.5,H*.92], p2:[W*.88,H*.44],
-      dur:3.0, base:9, alpha:.6, mix:true, pressure:pressSin}); });
-    sim.later(14.9, function(){ sim.cap('Hold Shift — dead-straight, still pressure-live');
+    sim.later(12.4, function(){ stroke(sim, {p0:[W*.12,H*.52], p1:[W*.5,H*.92], p2:[W*.88,H*.44],
+      dur:3.0, base:9, alpha:.6, mix:true, pressure:pressSin, layer:2}); });
+    sim.later(16.0, function(){ sim.cap('Per-layer blend mode + opacity');
+      var mode = document.getElementById('br-mode-col');
+      if(mode){ mode.textContent = 'Multiply'; }
+      cv2.style.mixBlendMode = 'multiply'; });
+    sim.later(17.6, function(){
+      document.getElementById('br-sl-op').style.width = '70%';
+      document.getElementById('br-op-val').textContent = '70%';
+      cv2.style.opacity = '.7'; });
+    sim.later(19.2, function(){ sim.cap('Non-destructive — toggle the layer off…');
+      var row = document.getElementById('br-lrow-col');
+      if(row) row.classList.add('hidden');
+      cv2.style.visibility = 'hidden'; });
+    sim.later(21.0, function(){ sim.cap('…and back on');
+      var row = document.getElementById('br-lrow-col');
+      if(row) row.classList.remove('hidden');
+      cv2.style.visibility = 'visible'; });
+    sim.later(22.6, function(){ sim.cap('Hold Shift — dead-straight, still pressure-live');
       key.classList.add('on');
       var cvr = sim.rel(cv);
       key.style.left = (cvr.x + cvr.w*.5)+'px'; key.style.top = (cvr.y + cvr.h*.12)+'px'; });
-    sim.later(15.7, function(){ stroke(sim, {p0:[W*.15,H*.18], p1:[W*.5,H*.18], p2:[W*.85,H*.18],
-      dur:1.8, base:7, alpha:.55, color:'rgba(34,68,120,', pressure:function(t){ return .25+.65*Math.sin(t*Math.PI); }}); });
-    sim.later(18.2, function(){ key.classList.remove('on'); });
-    sim.later(18.8, function(){ sim.cap('GPU brush engine — WebGL2, dirty-rect fast');
+    sim.later(23.4, function(){ stroke(sim, {p0:[W*.15,H*.18], p1:[W*.5,H*.18], p2:[W*.85,H*.18],
+      dur:1.8, base:7, alpha:.55, color:'rgba(34,68,120,', pressure:function(t){ return .25+.65*Math.sin(t*Math.PI); }, layer:2}); });
+    sim.later(25.9, function(){ key.classList.remove('on'); });
+    sim.later(26.5, function(){ sim.cap('GPU brush engine — WebGL2, dirty-rect fast');
       document.getElementById('br-gpu').style.textShadow = '0 0 12px rgba(92,230,161,.9)'; });
-    sim.later(21.8, function(){ sim.cap('S Pen & Wacom native'); });
+    sim.later(29.4, function(){ sim.cap('Masks, groups, clipping — S Pen & Wacom native'); });
   }, function(sim){
-    sizeCanvas();
+    sizeCanvases();
     var W = cv.getBoundingClientRect().width, H = cv.getBoundingClientRect().height;
     [{p0:[W*.12,H*.72],p1:[W*.38,H*.05],p2:[W*.62,H*.62],base:11,alpha:.5,color:'rgba(36,41,48,',pressure:pressSin},
      {p0:[W*.14,H*.3],p1:[W*.44,H*.14],p2:[W*.78,H*.3],base:10,alpha:.16,color:'rgba(70,78,90,',pressure:pressSin,tilt:true,tiltAngle:.35},
-     {p0:[W*.12,H*.52],p1:[W*.5,H*.92],p2:[W*.88,H*.44],base:9,alpha:.6,mix:true,pressure:pressSin}
+     {p0:[W*.12,H*.52],p1:[W*.5,H*.92],p2:[W*.88,H*.44],base:9,alpha:.6,mix:true,pressure:pressSin,layer:2}
     ].forEach(function(o){ o.dur = 0.001; stroke(sim, o); });
+    addColourLayer();
+    var mode = document.getElementById('br-mode-col');
+    if(mode) mode.textContent = 'Multiply';
+    cv2.style.mixBlendMode = 'multiply';
     stylus.style.opacity = 0; if(sim.cursor) sim.cursor.style.opacity = 0;
-    sim.stage.querySelector('.fd-caption').textContent = 'Pressure · tilt · colour dynamics — S Pen & Wacom native';
+    sim.stage.querySelector('.fd-caption').textContent = 'Pressure · tilt · layers · colour dynamics — S Pen & Wacom native';
   });
 })();
 
