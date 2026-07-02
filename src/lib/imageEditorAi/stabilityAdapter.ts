@@ -5,6 +5,10 @@ import {
   buildStabilityEditRequest,
   type StabilityEditRequestInput,
 } from './requestBuilders';
+import {
+  extractStabilityGenerationId,
+  fetchStabilityAsyncResultBlob,
+} from './stabilityAsyncResult';
 
 export async function runStabilityInpaint(
   request: GenerativeFillRequest,
@@ -23,7 +27,7 @@ export async function runStabilityInpaint(
     outputFormat: 'png',
   });
   const formData = new FormData();
-  formData.append('image', await blobToFile(request.source, 'source.png'));
+  formData.append(built.imageFieldName, await blobToFile(request.source, 'source.png'));
   if (operation === 'mask-inpaint' || operation === 'erase') {
     const { normalizeMaskBlobForProvider } = await import('../imageMask/maskConventions');
     const normalizedMask = await normalizeMaskBlobForProvider(request.mask, { provider: 'stability', modelId: request.model });
@@ -38,7 +42,7 @@ export async function runStabilityInpaint(
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
-      Accept: 'image/*',
+      Accept: built.async ? 'application/json' : 'image/*',
     },
     body: formData,
     signal: request.abortSignal,
@@ -48,8 +52,24 @@ export async function runStabilityInpaint(
     throw new Error(`Stability AI inpaint failed (${response.status}): ${await response.text()}`);
   }
 
+  // Replace Background & Relight is async: the POST returns `{id}` and the finished image is polled
+  // from /v2beta/results/{id}; every other edit endpoint answers with the image bytes directly.
+  const resultBlob = built.async
+    ? await (async () => {
+        const generationId = extractStabilityGenerationId(await response.json());
+        if (!generationId) {
+          throw new Error('Stability AI did not return an async generation ID for this edit.');
+        }
+        return fetchStabilityAsyncResultBlob({
+          apiKey,
+          generationId,
+          signal: request.abortSignal,
+        });
+      })()
+    : await readBinaryImageResponseBlob(response);
+
   return {
-    png: await readBinaryImageResponseBlob(response),
+    png: resultBlob,
     modelUsed: request.model ?? stabilityModelForOperation(operation),
     approximateCostUsd: built.estimatedCostUsd,
   };

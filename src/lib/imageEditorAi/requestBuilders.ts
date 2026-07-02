@@ -51,6 +51,10 @@ export interface StabilityEditRequest {
   endpoint: string;
   fields: Record<string, string | number>;
   estimatedCostUsd?: number;
+  /** Form field name the source image must be appended under (`subject_image` for replace-background-relight). */
+  imageFieldName: 'image' | 'subject_image';
+  /** True when the endpoint is asynchronous: it returns `{id}` and the result must be polled at /v2beta/results/{id}. */
+  async: boolean;
 }
 
 export interface StabilityGenerationRequestInput {
@@ -209,11 +213,24 @@ export function buildStabilityEditRequest(input: StabilityEditRequestInput): Sta
   };
 
   if (input.prompt?.trim()) {
-    fields.prompt = input.prompt.trim();
+    // Replace Background & Relight has no generic `prompt` field — the text prompt describes the NEW
+    // background and must be sent as `background_prompt` (the API rejects/ignores `prompt`).
+    // Erase is prompt-less by design (image + mask only), so an upstream prompt must not ride along.
+    if (input.operation === 'replace-background-relight') {
+      fields.background_prompt = input.prompt.trim();
+    } else if (input.operation !== 'erase') {
+      fields.prompt = input.prompt.trim();
+    }
   }
 
   if (input.searchPrompt?.trim()) {
-    fields.search_prompt = input.searchPrompt.trim();
+    // Search & Replace names the selection field `search_prompt`; Search & Recolor names it
+    // `select_prompt` — sending the wrong one is a 400 (select_prompt is required for recolor).
+    if (input.operation === 'search-recolor') {
+      fields.select_prompt = input.searchPrompt.trim();
+    } else {
+      fields.search_prompt = input.searchPrompt.trim();
+    }
   }
 
   if (input.outpaint) {
@@ -239,6 +256,11 @@ export function buildStabilityEditRequest(input: StabilityEditRequestInput): Sta
     endpoint: STABILITY_EDIT_ENDPOINTS[input.operation],
     fields,
     estimatedCostUsd: estimate.costUsd,
+    // Replace Background & Relight is Stability's one ASYNC edit endpoint: the source rides as
+    // `subject_image` and the response is `{id}` to poll at /v2beta/results/{id} — treating it as a
+    // synchronous `image` upload (the old behavior) breaks the operation twice over.
+    imageFieldName: input.operation === 'replace-background-relight' ? 'subject_image' : 'image',
+    async: input.operation === 'replace-background-relight',
   };
 }
 

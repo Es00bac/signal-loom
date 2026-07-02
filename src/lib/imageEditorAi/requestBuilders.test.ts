@@ -74,6 +74,61 @@ describe('image editor AI request builders', () => {
     expect(request.estimatedCostUsd).toBe(0.05);
   });
 
+  it('keeps synchronous Stability edits on the plain image field with search_prompt for search-replace', () => {
+    const request = buildStabilityEditRequest({
+      operation: 'search-replace',
+      prompt: 'a blue ceramic mug',
+      searchPrompt: 'red mug',
+      outputFormat: 'png',
+    });
+
+    expect(request.endpoint).toBe('https://api.stability.ai/v2beta/stable-image/edit/search-and-replace');
+    expect(request.fields).toEqual({
+      prompt: 'a blue ceramic mug',
+      search_prompt: 'red mug',
+      output_format: 'png',
+    });
+    expect(request.imageFieldName).toBe('image');
+    expect(request.async).toBe(false);
+  });
+
+  it('sends select_prompt (not search_prompt) for Stability search-and-recolor', () => {
+    const request = buildStabilityEditRequest({
+      operation: 'search-recolor',
+      prompt: 'make it emerald green',
+      searchPrompt: 'the car',
+      outputFormat: 'png',
+    });
+
+    expect(request.endpoint).toBe('https://api.stability.ai/v2beta/stable-image/edit/search-and-recolor');
+    expect(request.fields).toEqual({
+      prompt: 'make it emerald green',
+      select_prompt: 'the car',
+      output_format: 'png',
+    });
+    expect(request.fields.search_prompt).toBeUndefined();
+    expect(request.imageFieldName).toBe('image');
+    expect(request.async).toBe(false);
+  });
+
+  it('marks replace-background-relight async with subject_image and background_prompt', () => {
+    const request = buildStabilityEditRequest({
+      operation: 'replace-background-relight',
+      prompt: 'sunlit scandinavian studio, soft window light',
+      searchPrompt: '',
+      outputFormat: 'webp',
+    });
+
+    expect(request.endpoint).toBe('https://api.stability.ai/v2beta/stable-image/edit/replace-background-and-relight');
+    expect(request.fields).toEqual({
+      background_prompt: 'sunlit scandinavian studio, soft window light',
+      output_format: 'webp',
+    });
+    expect(request.fields.prompt).toBeUndefined();
+    expect(request.imageFieldName).toBe('subject_image');
+    expect(request.async).toBe(true);
+  });
+
   it('builds Stability text-to-image requests with aspect ratio and published costs', () => {
     const request = buildStabilityGenerationRequest({
       modelId: 'stable-image-core',
