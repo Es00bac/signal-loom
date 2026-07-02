@@ -47,6 +47,7 @@ import {
   type StabilityEditRequestInput,
 } from './imageEditorAi/requestBuilders';
 import { applyAtlasImageInputs, atlasModelSupportsMask, resolveAtlasDimensionBody, applyAtlasModelParams, filterAtlasBodyToAcceptedFields, getAtlasModelParams } from './imageEditorAi/atlasNativeImage';
+import { extractStabilityGenerationId, fetchStabilityAsyncResultBlob } from './imageEditorAi/stabilityAsyncResult';
 import { normalizeBytePlusBaseUrl, bytePlusGenerateImage } from './imageEditorAi/bytePlusImage';
 import { buildGeminiImagePrompt } from './geminiImagePrompt';
 import { buildGeminiTtsPrompt } from './geminiTtsPrompt';
@@ -65,15 +66,27 @@ import {
 } from './mediaComposition';
 import { getVideoExportPresetOption } from './videoPremiereParity';
 import type { ManualEditorVisualSequenceClip } from './manualEditorSequence';
-import type { TimelineAutomationPoint } from '../types/flow';
+import type { ProviderSettings, TimelineAutomationPoint } from '../types/flow';
 import {
   getSupportedImageAspectRatio,
   mapAspectRatioToImageDimensions,
   mapAspectRatioToImageSize,
+  supportsGeminiImageSizeTiers,
 } from './providerCatalog';
 import { getSignalLoomNativeBridge } from './nativeApp';
+import type {
+  NativeVertexImageRequest,
+  NativeVertexTextRequest,
+  NativeVertexVideoRequest,
+} from './nativeApp';
 import { fetchRemoteMediaAsDataUrl } from './remoteMediaFetch';
 import { getVertexProjectConfig } from './vertexProviderSettings';
+import {
+  generateVertexImageDirect,
+  generateVertexTextDirect,
+  generateVertexVideoDirect,
+  isVertexDirectRestAvailable,
+} from './vertexDirectRest';
 import {
   buildVertexGeminiImageRequestBody,
   buildVertexImagenUpscaleRequestBody,
@@ -867,6 +880,11 @@ async function executeImageNode(
             : 'Generating image with Gemini…',
       );
       const geminiAspectRatio = getSupportedImageAspectRatio('gemini', modelId, context.config.aspectRatio);
+      // Gemini 3.x image models take image_size ('1K'/'2K'/'4K'); guard on the model so a stale node
+      // field can never reach a model (2.5 / Imagen) that rejects the parameter.
+      const geminiImageSize = supportsGeminiImageSizeTiers(modelId)
+        ? (node.data.imageResolutionTier as '1K' | '2K' | '4K' | undefined)
+        : undefined;
 
       if (isVertexImagenModelId(modelId) && settings.providerSettings.geminiCredentialMode !== 'vertex-adc') {
         throw new Error('Imagen models require Vertex AI mode. Enable Vertex mode in Settings and set the Vertex project ID.');
@@ -877,6 +895,7 @@ async function executeImageNode(
           modelId,
           prompt: operationPrompt,
           aspectRatio: geminiAspectRatio,
+          imageSize: geminiImageSize,
           sourceImageInput,
           referenceImageInputs,
           settings,
@@ -918,6 +937,7 @@ async function executeImageNode(
           responseModalities: ['IMAGE'],
           imageConfig: {
             aspectRatio: geminiAspectRatio,
+            ...(geminiImageSize ? { imageSize: geminiImageSize } : {}),
           },
         },
       });
@@ -1020,7 +1040,7 @@ async function executeImageNode(
     }
     case 'huggingface': {
       if (sourceImageInput || referenceImageInputs.length > 0) {
-        throw new Error('Upstream image editing and reference-image guidance are currently supported for Gemini image models only, with OpenAI supporting single-source editing.');
+        throw new Error('Hugging Face image models are text-to-image only in Signal Loom. For source or reference-image edits choose a Gemini, OpenAI, Atlas, BFL, Stability, or Local/Open edit model.');
       }
 
       onStatus?.('Generating image with Hugging Face…');
@@ -1031,6 +1051,11 @@ async function executeImageNode(
       const apiKey = requireApiKey(settings.apiKeys.huggingface, 'Hugging Face');
       const client = new HfInference(apiKey);
       const { width, height } = mapAspectRatioToImageDimensions(context.config.aspectRatio);
+      // negative_prompt / seed / guidance_scale are first-class HF text-to-image parameters; the
+      // node already collects them (they previously fed only Atlas), so pass them through when set.
+      const hfNegativePrompt = normalizeOptionalString(node.data.imageNegativePrompt as string | undefined);
+      const hfSeed = coerceOptionalNumber(node.data.imageSeed);
+      const hfGuidanceScale = coerceOptionalNumber(node.data.imageGuidanceScale);
       const blob = await client.textToImage({
         model: modelId,
         inputs: operationPrompt,
@@ -1038,6 +1063,9 @@ async function executeImageNode(
           num_inference_steps: context.config.steps,
           width,
           height,
+          ...(hfNegativePrompt ? { negative_prompt: hfNegativePrompt } : {}),
+          ...(hfSeed !== undefined ? { seed: Math.max(0, Math.floor(hfSeed)) } : {}),
+          ...(hfGuidanceScale !== undefined ? { guidance_scale: hfGuidanceScale } : {}),
         },
       });
 
@@ -1847,13 +1875,13 @@ async function runConfiguredFlowImageUpscale(input: {
 
   if (input.plan.provider === 'vertex-imagen') {
     const vertexConfig = getVertexProjectConfig(input.settings.providerSettings);
-    const bridge = getSignalLoomNativeBridge();
+    const generateVertexImage = resolveVertexImageGenerator(input.settings.providerSettings);
 
-    if (!vertexConfig.projectId || !bridge?.generateVertexImage) {
-      throw new Error('Vertex Imagen upscaling requires the desktop Vertex bridge and a configured project.');
+    if (!vertexConfig.projectId || !generateVertexImage) {
+      throw new Error('Vertex Imagen upscaling requires a configured project plus the desktop Vertex bridge or a service-account key (Settings > Providers > Vertex AI).');
     }
 
-    const result = await bridge.generateVertexImage({
+    const result = await generateVertexImage({
       projectId: vertexConfig.projectId,
       location: vertexConfig.location,
       auth: vertexConfig.auth,
@@ -2099,7 +2127,7 @@ async function executeStabilityImageNode(input: {
       : undefined,
   });
   const formData = formDataFromFields(built.fields);
-  formData.append('image', await dataUrlToFile(input.sourceImageInput, 'flow-stability-source.png'));
+  formData.append(built.imageFieldName, await dataUrlToFile(input.sourceImageInput, 'flow-stability-source.png'));
 
   if (input.maskImageInput) {
     const maskBlob = await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, 'stability', input.modelId);
@@ -2108,7 +2136,7 @@ async function executeStabilityImageNode(input: {
 
   const response = await fetch(built.endpoint, {
     method: 'POST',
-    headers,
+    headers: built.async ? { ...headers, Accept: 'application/json' } : headers,
     body: formData,
   });
 
@@ -2116,8 +2144,24 @@ async function executeStabilityImageNode(input: {
     throw new Error(await extractErrorBody(response, 'Stability AI image edit failed'));
   }
 
+  // Replace Background & Relight is async: the POST returns `{id}` and the finished image is
+  // polled from /v2beta/results/{id} (one poll per 10s per Stability's rate limit).
+  const resultBlob = built.async
+    ? await (async () => {
+        const generationId = extractStabilityGenerationId(await response.json());
+        if (!generationId) {
+          throw new Error('Stability AI did not return an async generation ID for this edit.');
+        }
+        return fetchStabilityAsyncResultBlob({
+          apiKey: input.apiKey,
+          generationId,
+          onStatus: input.onStatus,
+        });
+      })()
+    : await response.blob();
+
   return {
-    result: await toResultUrl(await response.blob()),
+    result: await toResultUrl(resultBlob),
     resultType: 'image',
     statusMessage: `Edited with ${input.modelId}`,
     usage: buildImageUsage('stability', input.modelId, {
@@ -2378,6 +2422,7 @@ async function executeVertexImageNode(input: {
   modelId: string;
   prompt: string;
   aspectRatio: AspectRatio;
+  imageSize?: '1K' | '2K' | '4K';
   sourceImageInput?: string;
   referenceImageInputs: string[];
   settings: RuntimeSettingsSnapshot;
@@ -2389,10 +2434,10 @@ async function executeVertexImageNode(input: {
     throw new Error('Vertex AI project ID is missing. Add it in Settings before running Vertex image models.');
   }
 
-  const bridge = getSignalLoomNativeBridge();
+  const generateVertexImage = resolveVertexImageGenerator(input.settings.providerSettings);
 
-  if (!bridge?.generateVertexImage) {
-    throw new Error('Vertex AI requires the Signal Loom desktop app with the native Vertex bridge.');
+  if (!generateVertexImage) {
+    throw new Error('Vertex AI needs the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
   }
 
   const route = getVertexImageRoute(input.modelId);
@@ -2401,13 +2446,14 @@ async function executeVertexImageNode(input: {
     modelId: input.modelId,
     prompt: input.prompt,
     aspectRatio: input.aspectRatio,
+    imageSize: input.imageSize,
     sourceImageInput: input.sourceImageInput,
     referenceImageInputs: input.referenceImageInputs,
   });
 
   input.onStatus?.(route === 'imagen-predict' ? 'Generating image with Vertex Imagen…' : 'Generating image with Vertex Gemini…');
 
-  const result = await bridge.generateVertexImage({
+  const result = await generateVertexImage({
     projectId: vertexConfig.projectId,
     location: vertexConfig.location,
     auth: vertexConfig.auth,
@@ -2440,6 +2486,7 @@ async function buildVertexImageRequestBody(input: {
   modelId: string;
   prompt: string;
   aspectRatio: AspectRatio;
+  imageSize?: '1K' | '2K' | '4K';
   sourceImageInput?: string;
   referenceImageInputs: string[];
 }): Promise<Record<string, unknown>> {
@@ -2465,9 +2512,41 @@ async function buildVertexImageRequestBody(input: {
       referenceImageCount: input.referenceImageInputs.length,
     }),
     aspectRatio: input.aspectRatio,
+    imageSize: input.imageSize,
     sourceImage,
     referenceImages,
   });
+}
+
+// Vertex execution resolvers: prefer the Electron bridge (gcloud auth), fall
+// back to direct REST with the user's service-account key (mobile standalone —
+// the same credential "Test connection" proves in Settings). Returns undefined
+// when neither path is available so callers keep their explicit errors.
+function resolveVertexImageGenerator(providerSettings: ProviderSettings) {
+  const bridge = getSignalLoomNativeBridge();
+  if (bridge?.generateVertexImage) return bridge.generateVertexImage;
+  if (isVertexDirectRestAvailable(providerSettings)) {
+    return (request: NativeVertexImageRequest) => generateVertexImageDirect(request, providerSettings);
+  }
+  return undefined;
+}
+
+function resolveVertexTextGenerator(providerSettings: ProviderSettings) {
+  const bridge = getSignalLoomNativeBridge();
+  if (bridge?.generateVertexText) return bridge.generateVertexText;
+  if (isVertexDirectRestAvailable(providerSettings)) {
+    return (request: NativeVertexTextRequest) => generateVertexTextDirect(request, providerSettings);
+  }
+  return undefined;
+}
+
+function resolveVertexVideoGenerator(providerSettings: ProviderSettings) {
+  const bridge = getSignalLoomNativeBridge();
+  if (bridge?.generateVertexVideo) return bridge.generateVertexVideo;
+  if (isVertexDirectRestAvailable(providerSettings)) {
+    return (request: NativeVertexVideoRequest) => generateVertexVideoDirect(request, providerSettings);
+  }
+  return undefined;
 }
 
 async function executeVertexGeminiTextContent(input: {
@@ -2482,13 +2561,13 @@ async function executeVertexGeminiTextContent(input: {
     throw new Error(`${input.label} requires a configured Vertex AI project ID in Settings.`);
   }
 
-  const bridge = getSignalLoomNativeBridge();
+  const generateVertexText = resolveVertexTextGenerator(input.settings.providerSettings);
 
-  if (!bridge?.generateVertexText) {
-    throw new Error(`${input.label} requires the Signal Loom desktop app with the native Vertex text bridge.`);
+  if (!generateVertexText) {
+    throw new Error(`${input.label} needs the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).`);
   }
 
-  const result = await bridge.generateVertexText({
+  const result = await generateVertexText({
     projectId: vertexConfig.projectId,
     location: vertexConfig.location,
     auth: vertexConfig.auth,
@@ -2607,7 +2686,7 @@ async function executeVideoNode(
     }
     case 'huggingface': {
       if (context.startImageInput || context.endImageInput) {
-        throw new Error('Start and end frame inputs are currently wired for Gemini Veo only.');
+        throw new Error('Hugging Face video models are text-to-video only in Signal Loom. For a start frame use Gemini Veo or an Atlas image-to-video model.');
       }
 
       const { HfInference } = await loadProviderModule(
@@ -2720,10 +2799,10 @@ async function executeVertexVeoVideoNode(input: {
     throw new Error('Vertex AI project ID is missing. Add it in Settings before running Vertex video models.');
   }
 
-  const bridge = getSignalLoomNativeBridge();
+  const generateVertexVideo = resolveVertexVideoGenerator(input.settings.providerSettings);
 
-  if (!bridge?.generateVertexVideo) {
-    throw new Error('Vertex AI video requires the Signal Loom desktop app with the native Vertex video bridge.');
+  if (!generateVertexVideo) {
+    throw new Error('Vertex AI video needs the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
   }
 
   validateGeminiVeoVideoRequest(input.modelId, input.prompt, input.context);
@@ -2744,7 +2823,7 @@ async function executeVertexVeoVideoNode(input: {
   );
 
   input.onStatus?.('Submitting video render to Vertex AI Veo…');
-  const result = await bridge.generateVertexVideo({
+  const result = await generateVertexVideo({
     projectId: vertexConfig.projectId,
     location: resolveVertexVideoLocation(vertexConfig.location),
     auth: vertexConfig.auth,
@@ -2789,10 +2868,10 @@ async function executeVertexOmniVideoNode(input: {
     throw new Error('Vertex AI project ID is missing. Add it in Settings before running Vertex Gemini Omni video.');
   }
 
-  const bridge = getSignalLoomNativeBridge();
+  const generateVertexVideo = resolveVertexVideoGenerator(input.settings.providerSettings);
 
-  if (!bridge?.generateVertexVideo) {
-    throw new Error('Vertex AI Gemini Omni video requires the Signal Loom desktop app with the native Vertex video bridge.');
+  if (!generateVertexVideo) {
+    throw new Error('Vertex AI Gemini Omni video needs the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
   }
 
   const media = await buildOmniVideoMediaParts(input.context);
@@ -2802,7 +2881,7 @@ async function executeVertexOmniVideoNode(input: {
   }
 
   input.onStatus?.('Submitting video render to Vertex Gemini Omni…');
-  const result = await bridge.generateVertexVideo({
+  const result = await generateVertexVideo({
     projectId: vertexConfig.projectId,
     location: resolveVertexVideoLocation(vertexConfig.location),
     auth: vertexConfig.auth,
@@ -3027,8 +3106,13 @@ async function executeAudioNode(
         throw new Error('Gemini audio nodes currently support text-to-speech only.');
       }
 
-      if (settings.providerSettings.geminiCredentialMode === 'vertex-adc') {
-        throw new Error('Gemini TTS requires Gemini API-key mode in this build. Vertex mode will not fall back to a Gemini API key automatically.');
+      // Gemini TTS runs on the Gemini API key even in Vertex mode (Vertex does not serve the TTS
+      // models in this build). Only fail when no key exists — the provider dropdown already lists
+      // Google for audio ONLY when a key is configured, so hard-throwing on vertex-adc mode
+      // (the default) made every listed Gemini TTS run fail.
+      if (!settings.apiKeys.gemini?.trim()) {
+        // Wording note: "requires" keeps this non-retryable for the backoff classifier.
+        throw new Error('Gemini TTS requires a Gemini API key (Vertex sign-in alone cannot run the TTS models). Add the key in Settings.');
       }
 
       onStatus?.('Synthesizing audio with Gemini TTS…');
@@ -3085,6 +3169,10 @@ async function executeAudioNode(
         }
 
         onStatus?.('Synthesizing audio with ElevenLabs…');
+        // voice_settings/seed ride along only when the user set them — otherwise the voice's own
+        // provider-side defaults apply (sending a partial object would override them with API defaults).
+        const voiceSettings = buildElevenLabsVoiceSettings(node.data);
+        const speechSeed = coerceOptionalNumber(node.data.audioSeed);
         const response = await fetch(
           `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=${context.config.audioOutputFormat}`,
           {
@@ -3096,6 +3184,8 @@ async function executeAudioNode(
             body: JSON.stringify({
               text: prompt,
               model_id: modelId,
+              ...(speechSeed !== undefined ? { seed: Math.max(0, Math.floor(speechSeed)) } : {}),
+              ...(voiceSettings ? { voice_settings: voiceSettings } : {}),
             }),
           },
         );
@@ -3663,8 +3753,12 @@ async function executeOpenAiCompatibleImageNode(input: {
   settings: RuntimeSettingsSnapshot;
   onStatus?: (statusMessage: string) => void;
 }): Promise<ExecutionResult> {
-  if (input.provider === 'openai' && input.sourceImageInput && input.referenceImageInputs?.length) {
-    throw new Error('OpenAI image nodes support source image and mask edits, but not separate reference-image guidance.');
+  // GPT image models accept up to 16 images on /images/edit (source + references). Only the
+  // first-party OpenAI endpoint is known to take the array shape, so Atlas's OpenAI-compatible
+  // route keeps the single-image contract it was verified against.
+  const referenceImageInputs = input.provider === 'openai' ? (input.referenceImageInputs ?? []) : [];
+  if (input.provider === 'atlas' && input.referenceImageInputs?.length) {
+    throw new Error('This Atlas GPT-image route supports source image and mask edits, but not separate reference-image guidance.');
   }
 
   const providerLabel = input.provider === 'atlas' ? 'Atlas' : 'OpenAI';
@@ -3691,20 +3785,50 @@ async function executeOpenAiCompatibleImageNode(input: {
     baseURL: baseUrl,
     dangerouslyAllowBrowser: true,
   });
-  const response = input.sourceImageInput
+  // GPT-image-only params, first-party OpenAI only: honor the node's output-format select (it was
+  // silently ignored before — everything came back as the API default), pass the optional quality
+  // pick, and keep moderation at its least-strict documented setting per the app-wide policy.
+  const isGptImageModel = input.modelId.toLowerCase().includes('gpt-image');
+  const outputFormat = input.context.config.imageOutputFormat;
+  const qualityValue = typeof input.node.data.imageQuality === 'string' && input.node.data.imageQuality !== 'auto'
+    ? input.node.data.imageQuality as 'low' | 'medium' | 'high'
+    : undefined;
+  const gptImageParams = input.provider === 'openai' && isGptImageModel
+    ? {
+        output_format: outputFormat,
+        ...(qualityValue ? { quality: qualityValue } : {}),
+      }
+    : {};
+  const useEditEndpoint = Boolean(input.sourceImageInput) || referenceImageInputs.length > 0;
+  const editImages: File[] = [];
+
+  if (useEditEndpoint) {
+    if (input.sourceImageInput) {
+      editImages.push(await dataUrlToFile(input.sourceImageInput, 'flow-image-edit.png'));
+    }
+    for (const [index, referenceInput] of referenceImageInputs.entries()) {
+      editImages.push(await dataUrlToFile(referenceInput, `flow-image-reference-${index + 1}.png`));
+    }
+  }
+
+  const response = useEditEndpoint
     ? await client.images.edit({
         model: input.modelId,
-        image: await dataUrlToFile(input.sourceImageInput, 'flow-image-edit.png'),
-        ...(input.maskImageInput ? { mask: new File([await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput!, input.provider, input.modelId)], 'flow-image-mask.png', { type: 'image/png' }) } : {}),
+        image: editImages.length === 1 ? editImages[0] : editImages,
+        ...(input.maskImageInput && input.sourceImageInput ? { mask: new File([await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, input.provider, input.modelId)], 'flow-image-mask.png', { type: 'image/png' }) } : {}),
         prompt: input.prompt,
         size: mapAspectRatioToImageSize(aspectRatio),
+        ...gptImageParams,
       })
     : await client.images.generate({
         model: input.modelId,
         prompt: input.prompt,
         size: mapAspectRatioToImageSize(aspectRatio),
+        ...(input.provider === 'openai' && isGptImageModel ? { moderation: 'low' as const } : {}),
+        ...gptImageParams,
       });
   const image = response.data?.[0];
+  const b64MimeType = input.provider === 'openai' && isGptImageModel ? `image/${outputFormat}` : 'image/png';
 
   if (image?.b64_json) {
     return applyConfiguredAutoUpscaleIfRequested({
@@ -3712,8 +3836,9 @@ async function executeOpenAiCompatibleImageNode(input: {
       settings: input.settings,
       context: input.context,
       result: {
-        result: `data:image/png;base64,${image.b64_json}`,
+        result: `data:${b64MimeType};base64,${image.b64_json}`,
         resultType: 'image',
+        mimeType: b64MimeType,
         statusMessage: `Generated with ${input.modelId}`,
         usage: extractOpenAIImageUsage(response, input.modelId, input.provider),
       },
@@ -3916,6 +4041,25 @@ function writeAscii(view: DataView, offset: number, value: string): void {
   for (let index = 0; index < value.length; index += 1) {
     view.setUint8(offset + index, value.charCodeAt(index));
   }
+}
+
+/**
+ * ElevenLabs voice_settings from the node's optional sliders. Returns undefined when the user set
+ * nothing so the voice's saved defaults stay in charge; each field is clamped to its documented range
+ * (stability/similarity/style 0–1, speed 0.7–1.2).
+ */
+function buildElevenLabsVoiceSettings(data: AppNode['data']): Record<string, number> | undefined {
+  const clamp = (value: number | undefined, min: number, max: number): number | undefined =>
+    value === undefined ? undefined : Math.min(max, Math.max(min, value));
+  const entries: Array<[string, number | undefined]> = [
+    ['stability', clamp(coerceOptionalNumber(data.audioStability), 0, 1)],
+    ['similarity_boost', clamp(coerceOptionalNumber(data.audioSimilarityBoost), 0, 1)],
+    ['style', clamp(coerceOptionalNumber(data.audioStyleExaggeration), 0, 1)],
+    ['speed', clamp(coerceOptionalNumber(data.audioSpeed), 0.7, 1.2)],
+  ];
+  const set = entries.filter((entry): entry is [string, number] => entry[1] !== undefined);
+
+  return set.length > 0 ? Object.fromEntries(set) : undefined;
 }
 
 function buildAudioUsage(
