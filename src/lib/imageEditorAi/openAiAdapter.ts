@@ -1,5 +1,6 @@
 import { useSettingsStore } from '../../store/settingsStore';
 import type { GenerativeFillRequest, GenerativeFillResult } from '../imageEditorAi';
+import { resolveReferenceImageInput } from './blobUtils';
 
 const DEFAULT_MODEL = 'gpt-image-1';
 
@@ -23,11 +24,14 @@ export async function runOpenAiInpaint(
 
   const sourceFile = await blobToFile(request.source, 'source.png');
   const maskFile = await blobToFile(request.mask, 'mask.png');
+  const referenceFiles = await resolveReferenceFiles(request);
 
   const response = await client.images.edit(
     {
       model,
-      image: sourceFile,
+      // gpt-image edits accept an array of input images: the source first, then any references —
+      // the mask applies to the first image only.
+      image: referenceFiles.length > 0 ? [sourceFile, ...referenceFiles] : sourceFile,
       mask: maskFile,
       prompt: request.prompt,
     },
@@ -54,4 +58,17 @@ export async function runOpenAiInpaint(
 
 async function blobToFile(blob: Blob, name: string): Promise<File> {
   return new File([blob], name, { type: blob.type || 'image/png' });
+}
+
+/**
+ * References arrive as browser-local URLs (blob:/signal-loom-asset://) the OpenAI API can't fetch;
+ * resolve them to bytes in-app and upload as additional input images.
+ */
+async function resolveReferenceFiles(request: GenerativeFillRequest): Promise<File[]> {
+  const files = await Promise.all((request.references ?? []).map(async (reference, index) => {
+    const resolved = await resolveReferenceImageInput(reference, { fetchHttp: true, signal: request.abortSignal });
+    if (!resolved || !('blob' in resolved)) return null;
+    return blobToFile(resolved.blob, `reference-${index + 1}.png`);
+  }));
+  return files.filter((file): file is File => Boolean(file));
 }

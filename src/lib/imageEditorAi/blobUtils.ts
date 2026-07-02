@@ -17,6 +17,41 @@ export async function blobToFile(blob: Blob, name: string): Promise<File> {
   return new File([blob], name, { type: blob.type || 'image/png' });
 }
 
+export type ResolvedReferenceImage = { blob: Blob } | { httpUrl: string };
+
+/**
+ * Resolve an editor reference image ({image?: Blob, imageUrl?: string}) to bytes an adapter can
+ * re-encode for its provider.
+ *
+ * The editor UI only ever supplies `imageUrl` — and Source Library entries hand out browser-local
+ * URLs (`blob:`, `data:`, `signal-loom-asset://`). A provider's SERVER can never fetch those, so
+ * passing them through verbatim silently degrades the request to prompt-only (the model "ignores"
+ * the reference). Anything that isn't public http(s) must be fetched HERE, inside the app, where
+ * those schemes actually resolve.
+ *
+ * Public http(s) URLs pass through untouched by default (several providers accept remote URLs and
+ * fetching them client-side risks CORS); pass `fetchHttp: true` when the provider needs inline
+ * bytes (e.g. Gemini inlineData).
+ */
+export async function resolveReferenceImageInput(
+  reference: { image?: Blob; imageUrl?: string },
+  options?: { fetchHttp?: boolean; signal?: AbortSignal },
+): Promise<ResolvedReferenceImage | null> {
+  if (reference.image) return { blob: reference.image };
+  const url = reference.imageUrl?.trim();
+  if (!url) return null;
+  if (/^https?:/i.test(url) && !options?.fetchHttp) return { httpUrl: url };
+  const response = await fetch(url, { signal: options?.signal });
+  if (!response.ok) {
+    throw new Error(`Reference image could not be loaded (${response.status}).`);
+  }
+  const blob = await response.blob();
+  if (blob.size === 0) {
+    throw new Error('Reference image resolved to empty data.');
+  }
+  return { blob };
+}
+
 export function base64ToBlob(base64: string, mimeType = 'image/png'): Blob {
   const bytes = Uint8Array.from(base64, (character) => character.charCodeAt(0));
   return new Blob([bytes as BlobPart], { type: mimeType });

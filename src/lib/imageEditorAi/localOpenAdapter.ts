@@ -1,6 +1,6 @@
 import { useSettingsStore } from '../../store/settingsStore';
 import type { GenerativeFillRequest, GenerativeFillResult } from '../imageEditorAi';
-import { base64ToBlob, blobToBase64, readBinaryImageResponseBlob } from './blobUtils';
+import { base64ToBlob, blobToBase64, readBinaryImageResponseBlob, resolveReferenceImageInput } from './blobUtils';
 import { buildLocalOpenImageEditRequest } from './requestBuilders';
 
 export async function runLocalOpenInpaint(
@@ -73,12 +73,13 @@ export async function runLocalOpenInpaint(
 async function resolveReferenceImages(
   references: GenerativeFillRequest['references'],
 ): Promise<string[]> {
+  // The self-hosted endpoint receives base64 image payloads. Browser-local reference URLs
+  // (blob:/signal-loom-asset://) must be resolved to bytes in-app — the endpoint can't fetch them.
   const resolved = await Promise.all((references ?? []).map(async (reference) => {
-    if (reference.image) return blobToBase64(reference.image);
-    const imageUrl = reference.imageUrl?.trim();
-    if (!imageUrl) return null;
-    const dataUrlMatch = imageUrl.match(/^data:[^;]+;base64,(.+)$/);
-    return dataUrlMatch?.[1] ?? imageUrl;
+    const input = await resolveReferenceImageInput(reference);
+    if (!input) return null;
+    if ('httpUrl' in input) return input.httpUrl;
+    return blobToBase64(input.blob);
   }));
   return resolved.filter((value): value is string => Boolean(value));
 }

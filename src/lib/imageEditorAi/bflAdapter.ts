@@ -1,7 +1,7 @@
 import { useSettingsStore } from '../../store/settingsStore';
 import type { GenerativeFillRequest, GenerativeFillResult } from '../imageEditorAi';
 import { fetchProviderResultBlob } from '../remoteMediaFetch';
-import { blobToDataUrl, dataUrlToBlob } from './blobUtils';
+import { blobToDataUrl, dataUrlToBlob, resolveReferenceImageInput } from './blobUtils';
 import { buildBflFlux2Request } from './requestBuilders';
 
 const DEFAULT_MODEL = 'flux-2-pro';
@@ -136,9 +136,14 @@ function sleep(ms: number, abortSignal: AbortSignal | undefined): Promise<void> 
 async function resolveReferenceImages(
   references: GenerativeFillRequest['references'],
 ): Promise<string[]> {
+  // BFL takes input_image_N as base64 data URLs. Editor references arrive as browser-local URLs
+  // (blob:/signal-loom-asset://) that api.bfl.ai can never fetch — resolve them to bytes in-app;
+  // only public http(s) URLs may pass through.
   const resolved = await Promise.all((references ?? []).map(async (reference) => {
-    if (reference.image) return blobToDataUrl(reference.image);
-    return reference.imageUrl?.trim() || null;
+    const input = await resolveReferenceImageInput(reference);
+    if (!input) return null;
+    if ('httpUrl' in input) return input.httpUrl;
+    return blobToDataUrl(input.blob);
   }));
   return resolved.filter((value): value is string => Boolean(value));
 }

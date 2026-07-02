@@ -5,6 +5,7 @@ import type { GenerativeFillRequest, GenerativeFillResult } from '../imageEditor
 import { buildVertexGeminiImageRequestBody } from '../vertexImageRequests';
 import { getVertexProjectConfig } from '../vertexProviderSettings';
 import { getProviderLimiter } from '../providerRateLimiter';
+import { resolveReferenceImageInput } from './blobUtils';
 
 const DEFAULT_MODEL = 'gemini-2.5-flash-image';
 
@@ -23,10 +24,14 @@ export async function runGeminiInpaint(
   const aspectRatio = await resolveBlobAspectRatio(request.source);
   const compositedSource = await stampMaskOnSource(request.source, request.mask);
   const compositeBase64 = await blobToBase64(compositedSource);
+  const referenceParts = await resolveGeminiReferenceParts(request.references, request.abortSignal);
   const augmentedPrompt = [
-    'Replace the magenta-stamped region of the image with: ',
+    'Replace the magenta-stamped region of the first image with: ',
     request.prompt,
     '. Match the surrounding lighting and texture.',
+    referenceParts.length > 0
+      ? ` The ${referenceParts.length === 1 ? 'second image is a reference image' : `other ${referenceParts.length} images are reference images`} — follow ${referenceParts.length === 1 ? 'it' : 'them'} for the identity, style, and setting the instruction refers to.`
+      : '',
   ].join('');
 
   if (settings.providerSettings.geminiCredentialMode === 'vertex-adc') {
@@ -34,6 +39,7 @@ export async function runGeminiInpaint(
       augmentedPrompt,
       aspectRatio,
       compositeBase64,
+      referenceParts,
       model,
     });
   }
@@ -54,6 +60,7 @@ export async function runGeminiInpaint(
         role: 'user',
         parts: [
           { inlineData: { data: compositeBase64, mimeType: 'image/png' } },
+          ...referenceParts.map((reference) => ({ inlineData: reference })),
           { text: augmentedPrompt },
         ],
       },
@@ -78,6 +85,7 @@ async function runVertexGeminiInpaint(input: {
   augmentedPrompt: string;
   aspectRatio: AspectRatio;
   compositeBase64: string;
+  referenceParts: Array<{ mimeType: string; data: string }>;
   model: string;
 }): Promise<GenerativeFillResult> {
   const { providerSettings } = useSettingsStore.getState();
@@ -107,6 +115,7 @@ async function runVertexGeminiInpaint(input: {
         mimeType: 'image/png',
         data: input.compositeBase64,
       },
+      referenceImages: input.referenceParts,
     }),
   }));
 
@@ -122,6 +131,27 @@ async function runVertexGeminiInpaint(input: {
     png: await dataUrlToBlob(result.result, result.mimeType ?? 'image/png'),
     modelUsed: input.model,
   };
+}
+
+/**
+ * Gemini takes reference images only as inlineData bytes — remote URLs cannot ride along, and the
+ * editor's Source Library hands out browser-local URLs (blob:/signal-loom-asset://) anyway. Resolve
+ * everything to base64 in-app; without this the references were silently dropped and the model
+ * behaved as if none were attached.
+ */
+async function resolveGeminiReferenceParts(
+  references: GenerativeFillRequest['references'],
+  signal: AbortSignal | undefined,
+): Promise<Array<{ mimeType: string; data: string }>> {
+  const parts = await Promise.all((references ?? []).map(async (reference) => {
+    const resolved = await resolveReferenceImageInput(reference, { fetchHttp: true, signal });
+    if (!resolved || !('blob' in resolved)) return null;
+    return {
+      mimeType: resolved.blob.type || 'image/png',
+      data: await blobToBase64(resolved.blob),
+    };
+  }));
+  return parts.filter((part): part is { mimeType: string; data: string } => Boolean(part));
 }
 
 async function resolveBlobAspectRatio(blob: Blob): Promise<AspectRatio> {

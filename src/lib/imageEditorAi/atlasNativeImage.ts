@@ -4,6 +4,7 @@
 // work in the editor instead of being misrouted to OpenAI's images.edit endpoint.
 
 import { fetchProviderResultBlob } from '../remoteMediaFetch';
+import { resolveReferenceImageInput } from './blobUtils';
 import { ATLAS_IMAGE_DIMENSION_SPECS, type AtlasDimensionSpec } from './atlasImageDimensions.generated';
 import { ATLAS_IMAGE_MODEL_PARAMS, type AtlasModelParam } from './atlasImageModelParams.generated';
 import { ATLAS_IMAGE_ACCEPTED_FIELDS } from './atlasImageAcceptedFields.generated';
@@ -409,11 +410,16 @@ export async function runAtlasNativeGenerativeFill(input: AtlasNativeFillInput):
 
   const sourceImage = await uploadAtlasBlob(baseUrl, apiKey, input.source, 'fill-source.png', input.signal);
   const maskImage = input.mask ? await uploadAtlasBlob(baseUrl, apiKey, input.mask, 'fill-mask.png', input.signal) : undefined;
+  // References arrive from the editor as browser-local URLs (blob:/data:/signal-loom-asset://) —
+  // Atlas's server cannot fetch those, so anything without public bytes must be resolved in-app
+  // and re-uploaded. Only real http(s) URLs may ride through as-is.
   const references = (
     await Promise.all(
       (input.references ?? []).map(async (reference, index) => {
-        if (reference.image) return uploadAtlasBlob(baseUrl, apiKey, reference.image, `fill-reference-${index + 1}.png`, input.signal);
-        return reference.imageUrl?.trim() || null;
+        const resolved = await resolveReferenceImageInput(reference, { signal: input.signal });
+        if (!resolved) return null;
+        if ('httpUrl' in resolved) return resolved.httpUrl;
+        return uploadAtlasBlob(baseUrl, apiKey, resolved.blob, `fill-reference-${index + 1}.png`, input.signal);
       }),
     )
   ).filter((url): url is string => Boolean(url));

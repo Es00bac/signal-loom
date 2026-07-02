@@ -1,6 +1,6 @@
 import { useSettingsStore } from '../../store/settingsStore';
 import type { GenerativeFillRequest, GenerativeFillResult } from '../imageEditorAi';
-import { blobToFile } from './blobUtils';
+import { blobToFile, resolveReferenceImageInput } from './blobUtils';
 import {
   isAtlasNativeImageModelId,
   normalizeAtlasBaseUrl,
@@ -50,11 +50,18 @@ export async function runAtlasInpaint(
 
   const sourceFile = await blobToFile(request.source, 'source.png');
   const maskFile = await blobToFile(normalizedMask, 'mask.png');
+  // gpt-image edits accept multiple input images — resolve browser-local reference URLs to bytes
+  // in-app (the server can't fetch blob:/signal-loom-asset:// URLs) and ride them after the source.
+  const referenceFiles = (await Promise.all((request.references ?? []).map(async (reference, index) => {
+    const resolved = await resolveReferenceImageInput(reference, { fetchHttp: true, signal: request.abortSignal });
+    if (!resolved || !('blob' in resolved)) return null;
+    return blobToFile(resolved.blob, `reference-${index + 1}.png`);
+  }))).filter((file): file is File => Boolean(file));
 
   const response = await client.images.edit(
     {
       model,
-      image: sourceFile,
+      image: referenceFiles.length > 0 ? [sourceFile, ...referenceFiles] : sourceFile,
       ...(request.mask ? { mask: maskFile } : {}),
       prompt: request.prompt,
     },
