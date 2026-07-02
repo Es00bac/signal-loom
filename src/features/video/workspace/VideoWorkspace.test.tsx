@@ -8,7 +8,7 @@ import { buildVideoParityDiagnostics, buildVideoSequenceSummary } from '../../..
 import type { VideoExportReadinessSummary } from '../../../lib/videoExportReadiness';
 import type { VideoRenderBackendSummary } from '../../../lib/videoRenderBackendStatus';
 import type { AspectRatio, VideoResolution } from '../../../types/flow';
-import { ProgramMonitorPanel, SourceItemCard } from './VideoWorkspace';
+import { ProgramMonitorPanel, SourceItemCard, TrackAddControl, buildTrackMenuOptions } from './VideoWorkspace';
 import type { SourceBinItem } from '../../../lib/sourceBin';
 
 function renderProgramMonitor({
@@ -410,5 +410,61 @@ describe('SourceItemCard', () => {
 
     expect(html).toContain('native-paper-os-drop.png');
     expect(html).toContain('Page 2 imports');
+  });
+
+  it('shows the primary "+Add" affordance instead of cryptic V1-V4 clip buttons (F05)', () => {
+    const html = renderSourceItemCard({
+      id: 'image-item-1',
+      nodeId: 'image-item-1',
+      label: 'hero-frame.png',
+      kind: 'image',
+      mimeType: 'image/png',
+      assetUrl: 'data:image/png;base64,stub',
+      createdAt: 1,
+    });
+
+    // Primary add + labelled track menu.
+    expect(html).toContain('Add Video');
+    expect(html).toContain('aria-label="Choose Video track"');
+    expect(html).toContain('Video 4');
+    // The bare "V1" cryptic buttons are gone (the visible label is now "Video 1").
+    expect(html).not.toContain('>V1<');
+  });
+});
+
+describe('buildTrackMenuOptions (F05)', () => {
+  it('produces labelled options for each track', () => {
+    expect(buildTrackMenuOptions(4, 'Video')).toEqual([
+      { trackIndex: 0, label: 'Video 1' },
+      { trackIndex: 1, label: 'Video 2' },
+      { trackIndex: 2, label: 'Video 3' },
+      { trackIndex: 3, label: 'Video 4' },
+    ]);
+    expect(buildTrackMenuOptions(0, 'Audio')).toEqual([]);
+  });
+});
+
+describe('TrackAddControl (F05)', () => {
+  const StubIcon = () => null;
+
+  it('renders a primary Add button plus a labelled track menu', () => {
+    const html = renderToStaticMarkup(
+      <TrackAddControl icon={StubIcon} noun="Video" onAdd={vi.fn()} trackCount={4} />,
+    );
+
+    expect(html).toContain('Add Video');
+    expect(html).toContain('title="Add to Video 1"');
+    expect(html).toContain('aria-label="Choose Video track"');
+    expect(html).toContain('Video 1');
+    expect(html).toContain('Video 4');
+  });
+
+  it('omits the track menu when there is a single track', () => {
+    const html = renderToStaticMarkup(
+      <TrackAddControl icon={StubIcon} noun="Audio" onAdd={vi.fn()} trackCount={1} />,
+    );
+
+    expect(html).toContain('Add Audio');
+    expect(html).not.toContain('aria-label="Choose Audio track"');
   });
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, ReactNode, RefObject } from 'react';
+import type { ComponentType, CSSProperties, ReactNode, RefObject } from 'react';
 import {
   Archive,
   BookOpen,
@@ -4890,32 +4890,22 @@ function SourceMonitorPanel({
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {canUseSourceItemAsVisual(item) ? (
-                    Array.from({ length: VISUAL_TRACK_COUNT }, (_, trackIndex) => (
-                      <button
-                        key={trackIndex}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700/60 bg-[#0f131b] px-2.5 py-1.5 text-[11px] font-semibold text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
-                        onClick={() => onAddVisual(item, trackIndex)}
-                        type="button"
-                      >
-                        <Film size={12} />
-                        V{trackIndex + 1}
-                      </button>
-                    ))
+                    <TrackAddControl
+                      icon={Film}
+                      noun="Video"
+                      onAdd={(trackIndex) => onAddVisual(item, trackIndex)}
+                      trackCount={VISUAL_TRACK_COUNT}
+                    />
                   ) : null}
 
-                  {canUseSourceItemAsAudio(item)
-                    ? Array.from({ length: AUDIO_TRACK_COUNT }, (_, trackIndex) => (
-                        <button
-                          key={trackIndex}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700/60 bg-[#0f131b] px-2.5 py-1.5 text-[11px] font-semibold text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
-                          onClick={() => onAddAudio(item, trackIndex)}
-                          type="button"
-                        >
-                          <Music2 size={12} />
-                          A{trackIndex + 1}
-                        </button>
-                      ))
-                    : null}
+                  {canUseSourceItemAsAudio(item) ? (
+                    <TrackAddControl
+                      icon={Music2}
+                      noun="Audio"
+                      onAdd={(trackIndex) => onAddAudio(item, trackIndex)}
+                      trackCount={AUDIO_TRACK_COUNT}
+                    />
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -8364,6 +8354,99 @@ function InspectorPanel({
   );
 }
 
+export interface TrackMenuOption {
+  trackIndex: number;
+  label: string;
+}
+
+export function buildTrackMenuOptions(trackCount: number, noun: string): TrackMenuOption[] {
+  return Array.from({ length: Math.max(0, trackCount) }, (_, trackIndex) => ({
+    trackIndex,
+    label: `${noun} ${trackIndex + 1}`,
+  }));
+}
+
+/**
+ * UX review F05 — replaces the cryptic V1–V4 / A1–A2 clip buttons with a primary "+Add"
+ * (drops onto the first track) plus a labelled track menu for picking a specific lane.
+ * The menu is a native <details> disclosure so it renders for tests and stays keyboard
+ * accessible.
+ */
+export function TrackAddControl({
+  icon: Icon,
+  noun,
+  trackCount,
+  onAdd,
+  compact = false,
+}: {
+  icon: ComponentType<{ size?: number }>;
+  noun: string;
+  trackCount: number;
+  onAdd: (trackIndex: number) => void;
+  compact?: boolean;
+}) {
+  const options = buildTrackMenuOptions(trackCount, noun);
+  if (options.length === 0) {
+    return null;
+  }
+
+  const primary = options[0];
+  const hasTrackMenu = options.length > 1;
+  const buttonPadding = compact ? 'px-2 py-1 text-[10px]' : 'px-2.5 py-1.5 text-[11px]';
+
+  return (
+    <div className="inline-flex items-stretch overflow-hidden rounded-lg border border-gray-700/60 bg-[#0f131b]">
+      <button
+        className={`inline-flex items-center gap-1 font-semibold text-gray-200 transition-colors hover:bg-[#161c26] hover:text-white ${buttonPadding}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onAdd(primary.trackIndex);
+        }}
+        title={`Add to ${primary.label}`}
+        type="button"
+      >
+        <Icon size={12} />
+        <Plus size={11} />
+        <span>Add {noun}</span>
+      </button>
+      {hasTrackMenu ? (
+        <details className="relative border-l border-gray-700/60">
+          <summary
+            aria-label={`Choose ${noun} track`}
+            className={`flex cursor-pointer list-none items-center justify-center text-gray-300 transition-colors hover:bg-[#161c26] hover:text-white [&::-webkit-details-marker]:hidden ${
+              compact ? 'px-1.5 py-1' : 'px-2 py-1.5'
+            }`}
+            onClick={(event) => event.stopPropagation()}
+            title={`Choose ${noun} track`}
+          >
+            <ChevronDown size={12} />
+          </summary>
+          <div className="absolute right-0 z-30 mt-1 w-36 rounded-lg border border-gray-700/60 bg-[#0d0f15] p-1 shadow-2xl">
+            <div className="px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+              {noun} tracks
+            </div>
+            {options.map((option) => (
+              <button
+                key={option.trackIndex}
+                className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[11px] font-medium text-gray-200 transition-colors hover:bg-[#1a212d] hover:text-white"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onAdd(option.trackIndex);
+                  event.currentTarget.closest('details')?.removeAttribute('open');
+                }}
+                type="button"
+              >
+                <Icon size={11} />
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 export function SourceItemCard({
   item,
   durationSeconds,
@@ -8467,38 +8550,12 @@ export function SourceItemCard({
       {!isCollapsed ? (
       <div className="mt-2 flex flex-wrap gap-1.5">
         {canUseSourceItemAsVisual(item) ? (
-          Array.from({ length: VISUAL_TRACK_COUNT }, (_, index) => (
-            <button
-              key={index}
-              className="inline-flex items-center gap-1 rounded-md border border-gray-700/60 bg-[#0d0f15] px-2 py-1 text-[10px] font-semibold text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
-              onClick={(event) => {
-                event.stopPropagation();
-                onAddVisual(index);
-              }}
-              type="button"
-            >
-              <Film size={12} />
-              V{index + 1}
-            </button>
-          ))
+          <TrackAddControl compact icon={Film} noun="Video" onAdd={onAddVisual} trackCount={VISUAL_TRACK_COUNT} />
         ) : null}
 
-        {canUseSourceItemAsAudio(item)
-          ? Array.from({ length: AUDIO_TRACK_COUNT }, (_, index) => (
-              <button
-                key={index}
-                className="inline-flex items-center gap-1 rounded-md border border-gray-700/60 bg-[#0d0f15] px-2 py-1 text-[10px] font-semibold text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onAddAudio(index);
-                }}
-                type="button"
-              >
-                <Music2 size={12} />
-                A{index + 1}
-              </button>
-            ))
-          : null}
+        {canUseSourceItemAsAudio(item) ? (
+          <TrackAddControl compact icon={Music2} noun="Audio" onAdd={onAddAudio} trackCount={AUDIO_TRACK_COUNT} />
+        ) : null}
       </div>
       ) : null}
     </div>
