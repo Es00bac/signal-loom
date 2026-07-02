@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
-import { Bookmark, Check, Clock, Maximize2, Minimize2, Play, RotateCcw, Square, Trash2, X } from 'lucide-react';
+import { Bookmark, Check, Clock, Maximize2, Minimize2, MoreHorizontal, Play, RotateCcw, Square, Trash2, X } from 'lucide-react';
 import { OutputPortMenu } from './OutputPortMenu';
+import { dispatchNodeContextMenu, getNodeContextMenuAnchor, useCoarsePointer } from './nodeContextMenuTrigger';
 import { SharedContextMenu } from '../Common/SharedContextMenu';
 import type { NodeActionTemplate } from '../../lib/nodeActionMenu';
 import { getNodeTheme } from '../../lib/nodeTheme';
@@ -122,6 +123,17 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
   const [renameDraft, setRenameDraft] = useState('');
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const coarsePointer = useCoarsePointer();
+
+  const openNodeActionsMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const anchor = getNodeContextMenuAnchor(rect);
+    // Re-dispatch the same native contextmenu event React Flow already listens for, so the
+    // existing node context menu opens at the button — no forked menu contents.
+    dispatchNodeContextMenu(containerRef.current, anchor.clientX, anchor.clientY);
+  };
 
   useEffect(() => {
     if (!contextMenu) {
@@ -291,6 +303,21 @@ return (
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
+          {nodeId ? (
+            <button
+              aria-label="Node actions"
+              className={withFlowNodeInteractionClasses(`rounded-md border border-gray-700/60 bg-[#111217]/40 p-1 text-gray-400 transition-all hover:border-gray-500 hover:text-white focus-visible:opacity-100 ${
+                coarsePointer || currentNodeSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+              }`)}
+              onClick={openNodeActionsMenu}
+              onContextMenu={openNodeActionsMenu}
+              onPointerDown={(event) => event.stopPropagation()}
+              title="Node actions"
+              type="button"
+            >
+              <MoreHorizontal size={12} />
+            </button>
+          ) : null}
           {nodeId ? (
             <button
               aria-label={currentBookmarkTitle ? 'Edit node bookmark' : 'Rename and bookmark node'}
