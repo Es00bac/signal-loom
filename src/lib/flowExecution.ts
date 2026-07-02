@@ -89,14 +89,12 @@ import {
 } from './vertexDirectRest';
 import {
   buildVertexGeminiImageRequestBody,
-  buildVertexImagenUpscaleRequestBody,
-  dataUrlToVertexInlineImage,
   buildVertexImagenPredictRequestBody,
   getVertexImageRoute,
   isVertexImagenModelId,
-  VERTEX_IMAGEN_UPSCALE_MODEL_ID,
   type VertexImageRoute,
 } from './vertexImageRequests';
+import { runStabilityImageUpscale, runVertexImagenImageUpscale } from './cloudImageUpscale';
 import {
   normalizeAndroidAcceleratorBaseUrl,
   runAndroidAcceleratorGenerate,
@@ -1845,65 +1843,25 @@ async function runConfiguredFlowImageUpscale(input: {
 
   if (input.plan.provider === 'stability-fast' || input.plan.provider === 'stability-conservative') {
     const isConservative = input.plan.provider === 'stability-conservative';
-    const apiKey = requireApiKey(input.settings.apiKeys.stability ?? '', 'Stability AI');
-    const built = buildStabilityUpscaleRequest({
+    return runStabilityImageUpscale({
+      sourceImage: input.sourceImage,
       mode: isConservative ? 'conservative' : 'fast',
-      prompt: isConservative ? input.prompt : undefined,
+      prompt: input.prompt,
       outputFormat: input.outputFormat,
+      apiKey: requireApiKey(input.settings.apiKeys.stability ?? '', 'Stability AI'),
+      sourceFilename: 'flow-auto-upscale-source.png',
+      errorLabel: 'Configured Stability image upscale failed',
     });
-    const formData = formDataFromFields(built.fields);
-    formData.append('image', await dataUrlToFile(input.sourceImage, 'flow-auto-upscale-source.png'));
-    const response = await fetch(built.endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: 'image/*',
-      },
-      body: formData,
-    });
-
-    if (!response.ok) {
-      throw new Error(await extractErrorBody(response, 'Configured Stability image upscale failed'));
-    }
-
-    const blob = await response.blob();
-    return {
-      result: await toResultUrl(blob),
-      mimeType: blob.type || `image/${input.outputFormat}`,
-    };
   }
 
   if (input.plan.provider === 'vertex-imagen') {
-    const vertexConfig = getVertexProjectConfig(input.settings.providerSettings);
-    const generateVertexImage = resolveVertexImageGenerator(input.settings.providerSettings);
-
-    if (!vertexConfig.projectId || !generateVertexImage) {
-      throw new Error('Vertex Imagen upscaling requires a configured project plus the desktop Vertex bridge or a service-account key (Settings > Providers > Vertex AI).');
-    }
-
-    const result = await generateVertexImage({
-      projectId: vertexConfig.projectId,
-      location: vertexConfig.location,
-      auth: vertexConfig.auth,
-      modelId: VERTEX_IMAGEN_UPSCALE_MODEL_ID,
-      route: 'imagen-predict',
-      body: buildVertexImagenUpscaleRequestBody({
-        image: dataUrlToVertexInlineImage(await normalizeRemoteImageInput(input.sourceImage)),
-        outputMimeType: input.outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png',
-        upscaleFactor: 'x2',
-      }),
+    return runVertexImagenImageUpscale({
+      sourceImage: input.sourceImage,
+      providerSettings: input.settings.providerSettings,
+      outputFormat: input.outputFormat,
+      generateVertexImage: resolveVertexImageGenerator(input.settings.providerSettings),
+      normalizeSourceImage: normalizeRemoteImageInput,
     });
-
-    if (result.error) {
-      throw new Error(result.error);
-    }
-    if (!result.result) {
-      throw new Error('Vertex Imagen did not return an upscaled image payload.');
-    }
-    return {
-      result: result.result,
-      mimeType: result.mimeType,
-    };
   }
 
   const dimensions = await resolveImageDimensions(input.sourceImage).catch(() => input.fallbackDimensions);
