@@ -430,6 +430,139 @@
     letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);border:1px solid var(--line);border-radius:99em;padding:.4em .8em;
     background:rgba(5,9,17,.7)}
 
+  /* ── nodes 04–07 · workspace replays (shared bits reuse the fd-* system) ── */
+  .pp .fd-canvas,.sx .fd-canvas,.br .fd-canvas,.vd .fd-canvas{background-image:none;background:#1b1e24}
+  .pp-key{z-index:9;font-family:var(--mono);font-size:.8em;letter-spacing:.14em;padding:.35em .7em;border-radius:.4em;
+    border:1px solid rgba(63,214,255,.5);background:rgba(63,214,255,.14);color:#bfefff;opacity:0;transition:opacity .25s;
+    box-shadow:0 0 .8em -0.2em rgba(63,214,255,.7)}
+  .pp-key.on{opacity:1}
+
+  /* inspector panel — shared by paper / sfx / brush / video mocks */
+  .pp-inspector{position:absolute;right:1em;top:1em;bottom:1.6em;width:23.5cqw;background:rgba(13,15,21,.94);
+    border:1px solid rgba(110,125,150,.4);border-radius:.9em;padding:1em;display:flex;flex-direction:column;gap:.55em;
+    font-size:1em;overflow:hidden}
+  .pp-ih{font-family:var(--mono);font-size:.95em;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3);
+    border-bottom:1px solid var(--line);padding-bottom:.6em}
+  .pp-sec{font-family:var(--mono);font-size:.75em;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-top:.4em}
+  .pp-row{display:flex;align-items:center;gap:.6em;font-size:.92em;color:var(--ink-2)}
+  .pp-row>span:first-child{flex:1;white-space:nowrap;overflow:hidden}
+  .pp-row b{font-family:var(--mono);font-size:.85em;color:var(--ink);white-space:nowrap}
+  .pp-slider{width:6.5cqw;height:.45em;border-radius:99em;background:rgba(150,182,220,.15);overflow:hidden;flex:none}
+  .pp-slider i{display:block;height:100%;background:var(--accent);border-radius:99em;transition:width .7s var(--ease)}
+  .pp-swatch{width:1.3em;height:1.3em;border-radius:.35em;border:1px solid rgba(255,255,255,.25);flex:none;transition:background .5s}
+  .pp-ok{color:#5ce6a1;font-family:var(--mono);font-size:.8em;letter-spacing:.08em;text-transform:uppercase}
+
+  /* paper page */
+  .pp-page{position:absolute;left:4cqw;top:2.2cqw;width:52cqw;height:37.4cqw;background:#fff;border-radius:.3em;
+    box-shadow:0 1.6em 3em -1.4em #000;transition:background .8s}
+  .pp-page svg{position:absolute;inset:0;width:100%;height:100%}
+  .pp-frame{fill:rgba(255,255,255,0);stroke:#181b20;stroke-width:1.6;transition:stroke .5s}
+  .pp-handles{position:absolute;inset:0;pointer-events:none}
+  .pp-handles i{position:absolute;width:.7em;height:.7em;margin:-.35em;border-radius:.15em;background:#3fd6ff;
+    border:1px solid #04070d;opacity:0;transition:opacity .3s}
+  .pp-handles i.mid{border-radius:50%;background:#0b111d;border:2px solid #3fd6ff}
+  .pp-handles.on i{opacity:1}
+
+  /* sfx stage */
+  .sx-panelart{position:absolute;left:4cqw;top:2.4cqw;width:56cqw;height:36.6cqw;border-radius:.4em;overflow:hidden;
+    background:#101318 url(assets/demo/wnm-aisle.jpg) center/cover;box-shadow:0 1.6em 3em -1.4em #000;border:.35em solid #fff}
+  .sx-burst{position:absolute;inset:-20%;background:repeating-conic-gradient(from 0deg,rgba(255,210,61,.16) 0deg 7deg,transparent 7deg 16deg);
+    opacity:0;transition:opacity .5s;transform-origin:50% 52%}
+  .sx-panelart svg{position:absolute;inset:0;width:100%;height:100%}
+  #sx-decal text{font-family:var(--display);font-weight:700;font-size:86px;text-anchor:middle;
+    paint-order:stroke fill;letter-spacing:0;transition:letter-spacing .6s}
+  #sx-main{fill:#ffd23d;stroke:#b91c1c;stroke-width:6px;filter:drop-shadow(4px 5px 0 #1f2937)}
+  .sx-echo{fill:none;stroke:#b91c1c;opacity:0}
+  .sx-echo.e1{stroke-width:4px}.sx-echo.e2{stroke-width:3px}.sx-echo.e3{stroke-width:2px}
+  #sx-decal.copies .e1{opacity:.42;transform:translate(-10px,7px)}
+  #sx-decal.copies .e2{opacity:.26;transform:translate(-20px,14px)}
+  #sx-decal.copies .e3{opacity:.14;transform:translate(-30px,21px)}
+  .sx-echo,#sx-main{transition:transform .5s var(--ease),opacity .5s,stroke-width .5s}
+  .sx-presets{display:flex;flex-wrap:wrap;gap:.45em}
+  .sx-presets b{font-family:var(--display);font-weight:700;font-size:.9em;color:#ffd23d;border:1px solid rgba(255,210,61,.35);
+    border-radius:.4em;padding:.25em .55em;background:rgba(255,210,61,.07);transition:.25s}
+  .sx-presets b.pick{background:rgba(255,210,61,.25);color:#fff;box-shadow:0 0 .8em -0.2em rgba(255,210,61,.8)}
+  .sx-presets.pulse b{box-shadow:0 0 .9em -0.25em rgba(255,210,61,.9)}
+  .sx-step{border:1px solid var(--line-2);border-radius:.4em;padding:.15em .7em}
+
+  /* brush stage */
+  .br-rail{position:absolute;left:1em;top:1em;bottom:1.6em;width:3.4cqw;background:rgba(13,15,21,.94);
+    border:1px solid rgba(110,125,150,.4);border-radius:.8em;display:flex;flex-direction:column;align-items:center;
+    gap:.5em;padding:.8em 0;font-size:1.15em;color:var(--ink-3)}
+  .br-rail b{font-weight:400;width:2em;height:2em;display:grid;place-items:center;border-radius:.4em;filter:saturate(.4)}
+  .br-rail b.on{background:rgba(63,214,255,.15);border:1px solid rgba(63,214,255,.4);filter:none}
+  .br-canvas{position:absolute;left:6.5cqw;top:2.2cqw;width:52cqw;height:37.4cqw;background:#f4f2ee;border-radius:.3em;
+    box-shadow:0 1.6em 3em -1.4em #000}
+  .br-tip{height:5.2em;border:1px solid var(--line);border-radius:.5em;display:grid;place-items:center;background:#0a0d13}
+  .br-tip i{width:2.6em;height:2.6em;border-radius:50%;background:radial-gradient(circle at 38% 34%,#3a4655,#141a22);
+    border:1px solid rgba(150,182,220,.35);transition:transform .6s var(--ease)}
+  .br-stylus{position:absolute;z-index:9;transition:left .1s linear,top .1s linear;transform-origin:20% 92%;filter:drop-shadow(0 3px 6px #0009)}
+  .br-stylus svg{display:block;transform:rotate(24deg);transform-origin:50% 95%;transition:transform .7s var(--ease)}
+  .br-stylus i{position:absolute;left:50%;top:88%;width:2.2em;height:2.2em;margin:-1.1em;border-radius:50%;
+    border:2px solid rgba(63,214,255,.75);transform:scale(.4);transition:transform .12s linear;pointer-events:none}
+  #br-key{position:absolute}
+
+  /* video stage */
+  .vd-lib{position:absolute;left:1em;top:1em;width:17.5cqw;background:rgba(13,15,21,.94);border:1px solid rgba(110,125,150,.4);
+    border-radius:.9em;padding:.9em;display:flex;flex-direction:column;gap:.55em}
+  .vd-lib .fd-lib-item{margin-left:0}
+  .vd-mon{position:absolute;left:20.5cqw;top:1em;width:29cqw;border:1px solid rgba(110,125,150,.4);border-radius:.9em;
+    overflow:hidden;background:#0a0d13}
+  .vd-mh{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:.85em;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);padding:.6em .9em;border-bottom:1px solid var(--line)}
+  .vd-mh b{color:#5ce6a1}
+  .vd-screen{position:relative;aspect-ratio:16/9;background:#000;overflow:hidden}
+  .vd-screen img,.vd-screen video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transition:opacity .3s linear}
+  #vd-p1{opacity:0}#vd-p2{opacity:0}
+  .vd-insp{top:1em;bottom:auto;height:auto;width:20.5cqw;padding-bottom:1em}
+  .vd-select{border:1px solid var(--line-2);border-radius:.4em;padding:.15em .7em;transition:.3s}
+  .vd-select.fade{border-color:rgba(63,214,255,.6);color:#bfefff;background:rgba(63,214,255,.1)}
+  .vd-addkey{border:1px solid rgba(63,214,255,.4);border-radius:.4em;padding:.25em .8em;color:#bfefff;background:rgba(63,214,255,.08)}
+  .vd-tl{position:absolute;left:1em;right:1em;bottom:1.6em;top:24.5cqw;background:rgba(13,15,21,.94);
+    border:1px solid rgba(110,125,150,.4);border-radius:.9em;padding:.7em .9em;overflow:hidden}
+  .vd-tools{display:flex;gap:.5em;align-items:center;font-family:var(--mono);font-size:.78em;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--ink-3);padding-bottom:.55em;border-bottom:1px solid var(--line)}
+  .vd-tools b{font-weight:500;border:1px solid var(--line);border-radius:.45em;padding:.25em .6em}
+  .vd-tools b.on{color:#bfefff;border-color:rgba(63,214,255,.45);background:rgba(63,214,255,.1)}
+  .vd-tools em{margin-left:auto;font-style:normal}
+  .vd-ruler{display:flex;justify-content:space-between;font-family:var(--mono);font-size:.68em;color:var(--ink-3);
+    padding:.5em 0 .3em 4.5em}
+  .vd-track{display:flex;align-items:center;gap:.6em;margin-top:.4em}
+  .vd-track u{text-decoration:none;font-family:var(--mono);font-size:.72em;letter-spacing:.1em;color:var(--ink-3);
+    width:4.8em;flex:none;text-transform:uppercase}
+  .vd-lane{position:relative;flex:1;height:3.1em;border:1px dashed rgba(150,182,220,.2);border-radius:.4em;background:rgba(8,11,17,.6)}
+  .vd-clip{position:absolute;top:.22em;bottom:.22em;border-radius:.35em;overflow:hidden;border:1px solid rgba(63,214,255,.45);
+    background:#12202b center/auto 100% repeat-x;opacity:0;transform:scale(.94);transition:opacity .4s,transform .4s var(--ease);
+    font-family:var(--mono);font-size:.7em;letter-spacing:.06em;color:#dff4ff}
+  .vd-clip.on{opacity:1;transform:none}
+  .vd-clip.sel{box-shadow:0 0 .9em -0.2em rgba(63,214,255,.9);border-color:#3fd6ff}
+  .vd-clip span{position:absolute;left:.6em;top:.35em;text-shadow:0 1px 2px #000}
+  .vd-clip .fadewedge{position:absolute;left:0;top:0;bottom:0;width:22%;background:linear-gradient(90deg,rgba(4,7,13,.85),transparent);
+    border-right:1px dashed rgba(63,214,255,.5);opacity:0;transition:opacity .4s}
+  .vd-clip.fade .fadewedge{opacity:1}
+  .vd-clip .kf{position:absolute;bottom:.25em;width:.8em;height:.8em;background:#3fd6ff;transform:rotate(45deg) scale(0);
+    transition:transform .3s var(--ease);box-shadow:0 0 .5em rgba(63,214,255,.8)}
+  .vd-clip .kf.on{transform:rotate(45deg) scale(1)}
+  .vd-aclip{position:absolute;top:.22em;bottom:.22em;border-radius:.35em;border:1px solid rgba(92,230,161,.45);
+    background:rgba(9,20,15,.9);opacity:0;transform:scale(.94);transition:opacity .4s,transform .4s var(--ease);overflow:hidden}
+  .vd-aclip.on{opacity:1;transform:none}
+  .vd-aclip svg{position:absolute;inset:0;width:100%;height:100%}
+  .vd-playhead{position:absolute;top:2.6em;bottom:.7em;left:6.2em;width:2px;background:#5ce6a1;
+    box-shadow:0 0 .6em rgba(92,230,161,.8);z-index:3}
+  .vd-playhead::before{content:"";position:absolute;top:-.5em;left:50%;margin-left:-.45em;border:.45em solid transparent;
+    border-top-color:#5ce6a1}
+  .vd-ghost{position:absolute;z-index:8;width:5.5em;height:3.4em;border-radius:.4em;overflow:hidden;
+    border:1px solid rgba(63,214,255,.6);box-shadow:0 0 1.2em -0.2em rgba(63,214,255,.8);opacity:0;
+    transition:left .9s var(--ease),top .9s var(--ease),opacity .25s;background:#0a0d13 center/cover}
+
+  .pp .fd-tag,.sx .fd-tag,.br .fd-tag,.vd .fd-tag{top:auto;bottom:.55em;right:1em;background:rgba(5,9,17,.9)}
+
+  @media(max-width:960px){
+    .pp-inspector,.vd-insp{width:31cqw}
+    .vd-lib{width:24cqw}
+    .vd-mon{left:27cqw;width:38cqw}
+  }
+
   /* ── reveal (JS-scoped) ── */
   .js [data-reveal]{opacity:0;transform:translateY(14px);transition:opacity .8s var(--ease),transform .8s var(--ease)}
   .js [data-reveal].in{opacity:1;transform:none}
@@ -639,10 +772,187 @@
   </div>
 </section>
 
-<!-- ═══════ NODE 04 · A REAL RUN ═══════ -->
+<!-- ═══════ NODE 04 · PAPER REPLAY — sculpting a comic page ═══════ -->
+<section class="node" id="paperdemo">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">04 · paper-demo</span><span class="ntype">replay</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>Sculpt a <em>comic page.</em></h2>
+    <p class="sub" data-reveal>The Paper workspace, replayed: rule out panel frames, hold <b>Ctrl</b> to reveal <b>vertex handles</b> and drag an edge midpoint into a custom shape, set border weight and colour <b>in millimetres</b>, tint the page, and drop in a speech bubble with a draggable tail — Preflight keeps it print-ready.</p>
+    <div class="fd-wrap" data-reveal>
+      <div class="fd-stage pp" id="pp" role="img" aria-label="Animated replay of the Signal Loom Paper workspace: three comic panel frames are drawn on a page, one is reshaped with Ctrl vertex handles, border width and colour are changed in the Inspector, the page is tinted, and a speech bubble with a draggable tail is added.">
+        <div class="fd-chrome"><i></i><span>issue-01.slppr — paper</span><span class="fd-ws"><b>F</b><b>I</b><b class="on">P</b><b>V</b></span></div>
+        <div class="fd-canvas">
+          <div class="pp-page" id="pp-page">
+            <svg id="pp-svg" viewBox="0 0 640 460" preserveAspectRatio="none">
+              <defs>
+                <clipPath id="ppc1"><polygon id="ppc1p" points="18,16 318,16 318,256 18,256"/></clipPath>
+                <clipPath id="ppc3"><polygon id="ppc3p" points="18,272 622,272 622,444 18,444"/></clipPath>
+              </defs>
+              <image id="pp-art1" href="assets/demo/wnm-tank.jpg" x="18" y="16" width="300" height="300" preserveAspectRatio="xMidYMin slice" clip-path="url(#ppc1)" opacity="0"/>
+              <image id="pp-art3" href="assets/demo/wnm-town.jpg" x="18" y="272" width="604" height="172" preserveAspectRatio="xMidYMid slice" clip-path="url(#ppc3)" opacity="0"/>
+              <polygon id="ppF1" class="pp-frame" points="18,16 318,16 318,256 18,256" opacity="0"/>
+              <polygon id="ppF2" class="pp-frame" points="338,16 622,16 622,256 338,256" opacity="0"/>
+              <polygon id="ppF3" class="pp-frame" points="18,272 622,272 622,444 18,444" opacity="0"/>
+              <g id="pp-bubble" opacity="0">
+                <path id="pp-bubble-body" d="M96,64 C96,42 130,30 168,30 C206,30 240,42 240,64 C240,86 206,98 168,98 C143,98 122,94 109,86 L84,112 L98,80 C96,75 96,70 96,64 Z" fill="#fff" stroke="#181b20" stroke-width="2.4"/>
+                <text x="168" y="60" text-anchor="middle" font-size="14" fill="#181b20" style="font-family:Inter,sans-serif;font-weight:600"><tspan id="pp-bubble-t1" x="168" y="58"></tspan><tspan id="pp-bubble-t2" x="168" y="76"></tspan></text>
+              </g>
+            </svg>
+            <div class="pp-handles" id="pp-handles"></div>
+          </div>
+          <div class="pp-inspector">
+            <div class="pp-ih">Inspector</div>
+            <div class="pp-sec">Frame</div>
+            <div class="pp-row"><span>Border width</span><div class="pp-slider"><i id="pp-sl-bw" style="width:24%"></i></div><b id="pp-bw-val">0.5 mm</b></div>
+            <div class="pp-row"><span>Border colour</span><span class="pp-swatch" id="pp-sw-border" style="background:#181b20"></span></div>
+            <div class="pp-sec">Page</div>
+            <div class="pp-row"><span>Background</span><span class="pp-swatch" id="pp-sw-page" style="background:#ffffff"></span></div>
+            <div class="pp-sec">Preflight</div>
+            <div class="pp-row"><span class="pp-ok">✓ No issues · CMYK ready</span></div>
+          </div>
+          <div class="fd-cursor"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M5 3l14 8-6.5 1.5L9 19z" fill="#fff" stroke="#04070d" stroke-width="1.4"/></svg><i></i></div>
+          <div class="pp-key" id="pp-key">CTRL</div>
+          <div class="fd-caption">Rule the page into panels</div>
+        </div>
+        <div class="fd-loop"><i></i></div>
+        <span class="fd-tag">replay · loops · non-interactive</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 05 · SFX REPLAY — comic sound-effect decals ═══════ -->
+<section class="node" id="sfxdemo">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">05 · sfx-demo</span><span class="ntype">replay</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>Make it <em>LOUD.</em></h2>
+    <p class="sub" data-reveal>Paper's <b>Comic SFX designer</b>: seven presets — BANG!, KAPOW!, SCREECH, WHIRRRR, BOOM!, CRASH!, ZAP! — then every parameter is yours: fill, stroke and shadow measured in millimetres, skew and rotation, letter tracking, and <b>trailing copies</b> that sell the motion.</p>
+    <div class="fd-wrap" data-reveal>
+      <div class="fd-stage sx" id="sx" role="img" aria-label="Animated replay of Paper's Comic SFX designer: the KAPOW! preset is stamped over comic art, then skewed, its stroke and shadow thickened in millimetres, and trailing echo copies added.">
+        <div class="fd-chrome"><i></i><span>issue-01.slppr — paper · comic sfx</span><span class="fd-ws"><b>F</b><b>I</b><b class="on">P</b><b>V</b></span></div>
+        <div class="fd-canvas">
+          <div class="sx-panelart">
+            <div class="sx-burst" id="sx-burst"></div>
+            <svg id="sx-svg" viewBox="0 0 560 360">
+              <g id="sx-decal" opacity="0" transform="translate(0,0)">
+                <text class="sx-echo e3" x="280" y="205">KAPOW!</text>
+                <text class="sx-echo e2" x="280" y="205">KAPOW!</text>
+                <text class="sx-echo e1" x="280" y="205">KAPOW!</text>
+                <text id="sx-main" x="280" y="205">KAPOW!</text>
+              </g>
+            </svg>
+          </div>
+          <div class="pp-inspector sx-designer">
+            <div class="pp-ih">SFX Designer</div>
+            <div class="pp-sec">Preset</div>
+            <div class="sx-presets" id="sx-presets"><b>BANG!</b><b id="sx-pick">KAPOW!</b><b>BOOM!</b><b>ZAP!</b></div>
+            <div class="pp-sec">Design</div>
+            <div class="pp-row"><span>Stroke width</span><div class="pp-slider"><i id="sx-sl-stroke" style="width:30%"></i></div><b id="sx-stroke-val">1.2 mm</b></div>
+            <div class="pp-row"><span>Skew X</span><div class="pp-slider"><i id="sx-sl-skew" style="width:0%"></i></div><b id="sx-skew-val">0°</b></div>
+            <div class="pp-row"><span>Tracking</span><div class="pp-slider"><i id="sx-sl-track" style="width:10%"></i></div><b id="sx-track-val">0</b></div>
+            <div class="pp-row"><span>Trailing copies</span><b class="sx-step" id="sx-copies">0</b></div>
+            <div class="pp-row"><span>Fill · Stroke · Shadow</span><span class="pp-swatch" style="background:#ffd23d"></span><span class="pp-swatch" style="background:#b91c1c"></span><span class="pp-swatch" style="background:#1f2937"></span></div>
+          </div>
+          <div class="fd-cursor"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M5 3l14 8-6.5 1.5L9 19z" fill="#fff" stroke="#04070d" stroke-width="1.4"/></svg><i></i></div>
+          <div class="fd-caption">Pick a Comic SFX preset</div>
+        </div>
+        <div class="fd-loop"><i></i></div>
+        <span class="fd-tag">replay · loops · non-interactive</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 06 · BRUSH REPLAY — the brush engine ═══════ -->
+<section class="node" id="brushdemo">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">06 · brush-demo</span><span class="ntype">replay</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>A brush that <em>listens.</em></h2>
+    <p class="sub" data-reveal>The Image workspace's brush engine, replayed with a simulated stylus: <b>pressure</b> drives size and flow, <b>tilt</b> shades like the side of the lead, <b>Colour Rate</b> mixes foreground into background mid-stroke, and <b>Shift</b> rules dead-straight lines — on the GPU brush engine (WebGL2, dirty-rect updates).</p>
+    <div class="fd-wrap" data-reveal>
+      <div class="fd-stage br" id="br" role="img" aria-label="Animated replay of the Signal Loom brush engine: a simulated stylus paints strokes whose width follows pen pressure, tilts to shade broadly, blends foreground to background colour along a stroke, and rules a straight line with Shift held.">
+        <div class="fd-chrome"><i></i><span>portrait.slimg — image · brush</span><span class="fd-ws"><b>F</b><b class="on">I</b><b>P</b><b>V</b></span></div>
+        <div class="fd-canvas">
+          <div class="br-rail"><b>↶</b><b>↷</b><b class="on">🖌</b><b>◻</b><b>🧽</b><b>🖋</b><b>T</b><b>⌖</b></div>
+          <canvas id="br-canvas" class="br-canvas"></canvas>
+          <div class="pp-inspector br-panel">
+            <div class="pp-ih">Brush</div>
+            <div class="pp-sec">Dynamics</div>
+            <div class="pp-row"><span>Size</span><div class="pp-slider"><i style="width:38%"></i></div><b>24 px</b></div>
+            <div class="pp-row"><span>Flow</span><div class="pp-slider"><i style="width:80%"></i></div><b>80%</b></div>
+            <div class="pp-row"><span>Hardness</span><div class="pp-slider"><i style="width:55%"></i></div><b>55%</b></div>
+            <div class="pp-row"><span>Colour Rate</span><div class="pp-slider"><i id="br-sl-rate" style="width:0%"></i></div><b id="br-rate-val">0%</b></div>
+            <div class="pp-sec">Colour</div>
+            <div class="pp-row"><span>FG → BG</span><span class="pp-swatch" id="br-fg" style="background:#22b8d4"></span><span class="pp-swatch" id="br-bg" style="background:#d436a8"></span></div>
+            <div class="pp-sec">Tip</div>
+            <div class="br-tip"><i id="br-tip-disc"></i></div>
+            <div class="pp-row"><span class="pp-ok" id="br-gpu">GPU brush engine · WebGL2</span></div>
+          </div>
+          <div class="br-stylus" id="br-stylus"><i id="br-ring"></i><svg viewBox="0 0 40 40" width="34" height="34"><path d="M20 38 L16 26 L24 26 Z" fill="#e5e7eb"/><rect x="16.5" y="2" width="7" height="24" rx="2.5" fill="#94a3b8"/><rect x="16.5" y="18" width="7" height="4" fill="#3fd6ff"/></svg></div>
+          <div class="pp-key" id="br-key">SHIFT</div>
+          <div class="fd-caption">A pressure-, tilt-, rotation-aware brush</div>
+        </div>
+        <div class="fd-loop"><i></i></div>
+        <span class="fd-tag">replay · loops · non-interactive</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 07 · VIDEO REPLAY — the sequencer timeline ═══════ -->
+<section class="node" id="videodemo">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">07 · video-demo</span><span class="ntype">replay</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>Cut it <em>together.</em></h2>
+    <p class="sub" data-reveal>The Video workspace, replayed: clips pulled from the <b>Source Library</b> onto stacked tracks in the <b>Sequencer Timeline</b>, a <b>Fade transition</b> crossfading V1 into V2, a score on the audio lane, and <b>opacity &amp; scale keyframes</b> (◇) animating a clip while the playhead scrubs the <b>Program Monitor</b> — playing two real Veo shots — the same character brought alive and cut between two angles.</p>
+    <div class="fd-wrap" data-reveal>
+      <div class="fd-stage vd" id="vd" role="img" aria-label="Animated replay of the Signal Loom Video workspace: clips are dragged from the Source Library onto timeline tracks V1 and V2, a Fade transition crossfades between them, an audio clip with a waveform is added, keyframes are set, and the playhead scrubs while the Program Monitor plays the result.">
+        <div class="fd-chrome"><i></i><span>cut-01 — video · sequencer</span><span class="fd-ws"><b>F</b><b>I</b><b>P</b><b class="on">V</b></span></div>
+        <div class="fd-canvas">
+          <div class="vd-lib" id="vd-lib">
+            <div class="fd-lib-h">Source Library</div>
+            <div class="fd-lib-item" id="vd-it1"><img src="assets/demo/poster-walk.jpg" alt=""/><span>walk-wide.mp4</span></div>
+            <div class="fd-lib-item" id="vd-it2"><img src="assets/demo/poster-turn.jpg" alt=""/><span>turn-cu.mp4</span></div>
+            <div class="fd-lib-item" id="vd-it3"><svg viewBox="0 0 24 14" width="22" height="14"><path d="M1 7 L4 3 L7 11 L10 5 L13 9 L16 2 L19 12 L23 7" stroke="#3fd6ff" fill="none" stroke-width="1.6"/></svg><span>score.wav</span></div>
+          </div>
+          <div class="vd-mon">
+            <div class="vd-mh">Program Monitor <b id="vd-tc">00:00:00</b></div>
+            <div class="vd-screen"><video id="vd-p1" src="assets/demo/veo-walk.mp4" poster="assets/demo/poster-walk.jpg" muted loop playsinline preload="metadata"></video><video id="vd-p2" src="assets/demo/veo-turn.mp4" poster="assets/demo/poster-turn.jpg" muted loop playsinline preload="metadata"></video></div>
+          </div>
+          <div class="pp-inspector vd-insp">
+            <div class="pp-ih">Clip</div>
+            <div class="pp-row"><span>Transition in</span><b class="vd-select" id="vd-trans">None</b></div>
+            <div class="pp-row"><span>Opacity</span><b id="vd-kf-o">100%</b></div>
+            <div class="pp-row"><span>Scale</span><b id="vd-kf-s">100%</b></div>
+            <div class="pp-row"><b class="vd-addkey" id="vd-addkey">◇ Add Key</b></div>
+          </div>
+          <div class="vd-tl">
+            <div class="vd-tools"><b class="on">▷ Select</b><b>✂ Cut</b><b>⇆ Slip</b><b>＋ Snap</b><b>◇ Key</b><em>Zoom 150%</em></div>
+            <div class="vd-ruler"><span>0s</span><span>2s</span><span>4s</span><span>6s</span><span>8s</span><span>10s</span><span>12s</span></div>
+            <div class="vd-track"><u>V2</u><div class="vd-lane" id="vd-v2"></div></div>
+            <div class="vd-track"><u>V1</u><div class="vd-lane" id="vd-v1"></div></div>
+            <div class="vd-track"><u>A1 · 100%</u><div class="vd-lane" id="vd-a1"></div></div>
+            <i class="vd-playhead" id="vd-playhead"></i>
+          </div>
+          <div class="vd-ghost" id="vd-ghost"></div>
+          <div class="fd-cursor"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M5 3l14 8-6.5 1.5L9 19z" fill="#fff" stroke="#04070d" stroke-width="1.4"/></svg><i></i></div>
+          <div class="fd-caption">Pull clips from the Source Library</div>
+        </div>
+        <div class="fd-loop"><i></i></div>
+        <span class="fd-tag">replay · loops · non-interactive</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 08 · A REAL RUN ═══════ -->
 <section class="node" id="showcase">
   <i class="port in"></i><i class="port out"></i>
-  <div class="node-head"><span class="nid">04 · flow-run</span><span class="ntype">image-gen × 4</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-head"><span class="nid">08 · flow-run</span><span class="ntype">image-gen × 4</span><span class="nstate"><span class="txt"></span><i></i></span></div>
   <div class="node-body">
     <h2 data-reveal>Start with a <em>consistency library.</em></h2>
     <p class="sub" data-reveal>The opening move of a project: a Flow graph that generates the low-level <b>consistency assets</b> — the recurring objects, props, and environments you reuse everywhere — so scenes stay visually consistent from shot to shot. It also tours most of the workspace.</p>
@@ -657,7 +967,7 @@
 <!-- ═══════ NODE 04 · PATCH BAY ═══════ -->
 <section class="node" id="keys">
   <i class="port in"></i><i class="port out"></i>
-  <div class="node-head"><span class="nid">05 · providers</span><span class="ntype">patch bay</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-head"><span class="nid">09 · providers</span><span class="ntype">patch bay</span><span class="nstate"><span class="txt"></span><i></i></span></div>
   <div class="node-body">
     <h2 data-reveal>Your providers. Your cost. <em>Your control.</em></h2>
     <p class="sub" data-reveal>Signal Loom has no account and no servers of its own. You connect the AI providers you already pay for with your own keys — your keys and your work stay on your device, and you talk to the providers directly. And if you'd rather work without AI, skip this panel entirely: nothing else in the studio depends on it.</p>
@@ -684,7 +994,7 @@
 <!-- ═══════ NODE 05 · IMAGE DESK ═══════ -->
 <section class="node" id="imagedesk">
   <i class="port in"></i><i class="port out"></i>
-  <div class="node-head"><span class="nid">06 · image-desk</span><span class="ntype">canvas</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-head"><span class="nid">10 · image-desk</span><span class="ntype">canvas</span><span class="nstate"><span class="txt"></span><i></i></span></div>
   <div class="node-body">
     <h2 data-reveal>Painted by hand. <em>Finished by AI.</em></h2>
     <p class="sub" data-reveal>A full layered raster editor with a real pressure-, tilt-, and rotation-sensitive brush engine — then mask a region, describe the change, and let a model render it in place. One canvas does both.</p>
@@ -712,7 +1022,7 @@
 <!-- ═══════ NODE 06 · IN THE FIELD ═══════ -->
 <section class="node" id="android">
   <i class="port in"></i><i class="port out"></i>
-  <div class="node-head"><span class="nid">07 · field</span><span class="ntype">device</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-head"><span class="nid">11 · field</span><span class="ntype">device</span><span class="nstate"><span class="txt"></span><i></i></span></div>
   <div class="node-body">
     <h2 data-reveal>The whole studio, <em>on Android &amp; DeX.</em></h2>
     <p class="sub" data-reveal>The same project, the same four workspaces — touch- and S&nbsp;Pen-ready on a phone, a full desktop layout in Samsung DeX, and game-controller support for fast, eyes-up control.</p>
@@ -750,7 +1060,7 @@
 <!-- ═══════ NODE 07 · OWNERSHIP ═══════ -->
 <section class="node" id="license">
   <i class="port in"></i><i class="port out"></i>
-  <div class="node-head"><span class="nid">08 · license</span><span class="ntype">output</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-head"><span class="nid">12 · license</span><span class="ntype">output</span><span class="nstate"><span class="txt"></span><i></i></span></div>
   <div class="node-body">
     <h2 data-reveal>One price. <em>Yours forever.</em></h2>
     <p class="sub" data-reveal>A perpetual license — no subscription, no in-app purchases, no ads. Signal Loom doesn't include model usage; you bring your own provider keys and pay them directly for what you use.</p>
@@ -781,7 +1091,7 @@
 <!-- ═══════ NODE 08 · QUESTIONS ═══════ -->
 <section class="node" id="faq">
   <i class="port in"></i><i class="port out"></i>
-  <div class="node-head"><span class="nid">09 · questions</span><span class="ntype">monitor</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-head"><span class="nid">13 · questions</span><span class="ntype">monitor</span><span class="nstate"><span class="txt"></span><i></i></span></div>
   <div class="node-body">
     <h2 data-reveal>Asked, <em>answered.</em></h2>
     <div class="faq" data-reveal>
@@ -816,7 +1126,7 @@
 <!-- ═══════ NODE 09 · TERMINAL ═══════ -->
 <section class="node" id="terminal">
   <i class="port in"></i>
-  <div class="node-head"><span class="nid">10 · stdout</span><span class="ntype">terminal</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-head"><span class="nid">14 · stdout</span><span class="ntype">terminal</span><span class="nstate"><span class="txt"></span><i></i></span></div>
   <div class="node-body">
     <div><span class="p">➜</span> run <span id="term-count">…</span> · cost <b>$0.0000</b> <span class="dim">— it ran on your hardware; that's the point.</span></div>
     <div><span class="p">➜</span> <span class="dim">demo thumbnails woven by nano-banana over vertex — the same call the app makes.</span></div>
@@ -1251,6 +1561,472 @@ else if('IntersectionObserver' in window){
 addEventListener('resize', function(){ if(!running) layoutWires(); });
 addEventListener('load', function(){ if(!running) layoutWires(); });
 layoutWires();
+})();
+
+/* ═══ nodes 04–07 · workspace replays — one tiny engine, four scripts ═══ */
+(function(){
+'use strict';
+var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function makeSim(rootId, TOTAL, script, finalState){
+  var stage = document.getElementById(rootId); if(!stage) return;
+  var canvas = stage.querySelector('.fd-canvas');
+  var cursor = stage.querySelector('.fd-cursor');
+  var caption = stage.querySelector('.fd-caption');
+  var loopbar = stage.querySelector('.fd-loop i');
+  var timers = [], intervals = [], visible = false, running = false;
+  var sim = {stage: stage, canvas: canvas, cursor: cursor};
+  sim.later = function(t, fn){ timers.push(setTimeout(fn, t*1000)); };
+  sim.every = function(ms, fn){ var iv = setInterval(fn, ms); intervals.push(iv); return iv; };
+  sim.clear = function(){ timers.forEach(clearTimeout); timers = []; intervals.forEach(clearInterval); intervals = []; };
+  sim.rel = function(el){ var c = canvas.getBoundingClientRect(), r = el.getBoundingClientRect();
+    return {x: r.left-c.left, y: r.top-c.top, w: r.width, h: r.height, cx: r.left-c.left+r.width/2, cy: r.top-c.top+r.height/2}; };
+  sim.move = function(x, y, dur){ if(!cursor) return;
+    cursor.style.transition = 'left '+dur+'s cubic-bezier(.22,.61,.2,1), top '+dur+'s cubic-bezier(.22,.61,.2,1)';
+    cursor.style.left = x+'px'; cursor.style.top = y+'px'; };
+  sim.moveTo = function(el, dur, dx, dy){ if(!cursor) return; var r = sim.rel(el); sim.move(r.cx+(dx||0), r.cy+(dy||0), dur||.8); };
+  sim.click = function(){ if(!cursor) return; cursor.classList.remove('click'); void cursor.offsetWidth; cursor.classList.add('click'); };
+  sim.cap = function(t){ caption.classList.add('off'); sim.later(.32, function(){ caption.textContent = t; caption.classList.remove('off'); }); };
+  sim.home = function(){ if(!cursor) return; cursor.style.transition = 'none';
+    var c = canvas.getBoundingClientRect();
+    cursor.style.left = (c.width*.5)+'px'; cursor.style.top = (c.height*.85)+'px'; };
+  function cycle(){
+    if(!visible || reduced){ running = false; return; }
+    running = true;
+    sim.clear();
+    loopbar.style.transition = 'none'; loopbar.style.width = '0%';
+    loopbar.getBoundingClientRect();
+    loopbar.style.transition = 'width '+TOTAL+'s linear'; loopbar.style.width = '100%';
+    script(sim);
+    sim.later(TOTAL, cycle);
+  }
+  if(reduced){ finalState(sim); return; }
+  if('IntersectionObserver' in window){
+    new IntersectionObserver(function(es){
+      es.forEach(function(e){
+        visible = e.isIntersecting;
+        if(visible && !running) cycle();
+        if(!visible && running){ sim.clear(); running = false; }
+      });
+    }, {threshold:.2}).observe(stage);
+  } else { visible = true; cycle(); }
+}
+
+/* ───────── 04 · paper — sculpt a comic page ───────── */
+(function(){
+  var svg = document.getElementById('pp-svg'); if(!svg) return;
+  var page = document.getElementById('pp-page'), handles = document.getElementById('pp-handles');
+  var F = [document.getElementById('ppF1'), document.getElementById('ppF2'), document.getElementById('ppF3')];
+  var RECTS = [
+    [[18,16],[318,16],[318,256],[18,256]],
+    [[338,16],[622,16],[622,256],[338,256]],
+    [[18,272],[622,272],[622,444],[18,444]]
+  ];
+  /* F2 sculpted: bottom edge midpoint pulled up-left into a fifth vertex (insertPaperFrameVertexPatch) */
+  var F2_SCULPT = [[338,16],[622,16],[622,256],[470,196],[338,256]];
+  function pts(a){ return a.map(function(p){ return p[0]+','+p[1]; }).join(' '); }
+  function setPts(el, a){ el.setAttribute('points', pts(a)); }
+  function lerpPts(a, b, t){ return b.map(function(p, i){ var q = a[Math.min(i, a.length-1)];
+    return [q[0]+(p[0]-q[0])*t, q[1]+(p[1]-q[1])*t]; }); }
+  function animPts(sim, el, from, to, dur, alsoClip){
+    var t0 = performance.now();
+    (function step(){
+      var t = Math.min(1, (performance.now()-t0)/(dur*1000));
+      var e = 1-Math.pow(1-t, 3);
+      var cur = lerpPts(from, to, e);
+      setPts(el, cur);
+      if(alsoClip) setPts(alsoClip, cur);
+      if(t < 1) requestAnimationFrame(step);
+    })();
+  }
+  function svgPt(sim, x, y){ /* svg viewBox coords → canvas px */
+    var r = sim.rel(page); var vb = [640,460];
+    return {x: r.x + x/vb[0]*r.w, y: r.y + y/vb[1]*r.h};
+  }
+  function drawFrame(sim, el, rect, t, dur, clip){
+    sim.later(t, function(){
+      var start = svgPt(sim, rect[0][0], rect[0][1]);
+      sim.move(start.x, start.y, .5);
+    });
+    sim.later(t+.55, function(){
+      sim.click(); el.setAttribute('opacity', 1);
+      var collapsed = [rect[0], rect[0], rect[0], rect[0]];
+      setPts(el, collapsed);
+      animPts(sim, el, collapsed, rect, dur, clip);
+      var end = svgPt(sim, rect[2][0], rect[2][1]);
+      sim.move(end.x, end.y, dur);
+    });
+  }
+  function buildHandles(sim, poly){
+    handles.innerHTML = '';
+    var arr = poly.getAttribute('points').split(' ').map(function(s2){ return s2.split(',').map(Number); });
+    var r = sim.rel(page), vb = [640,460];
+    function put(x, y, cls){
+      var i2 = document.createElement('i'); if(cls) i2.className = cls;
+      i2.style.left = (x/vb[0]*100)+'%'; i2.style.top = (y/vb[1]*100)+'%';
+      handles.appendChild(i2);
+    }
+    arr.forEach(function(p2, k){
+      put(p2[0], p2[1]);
+      var q = arr[(k+1)%arr.length];
+      put((p2[0]+q[0])/2, (p2[1]+q[1])/2, 'mid');
+    });
+    void r;
+  }
+  var key = document.getElementById('pp-key');
+  makeSim('pp', 27, function(sim){
+    /* reset */
+    F.forEach(function(el, i){ setPts(el, RECTS[i]); el.setAttribute('opacity', 0); });
+    setPts(document.getElementById('ppc1p'), RECTS[0]); setPts(document.getElementById('ppc3p'), RECTS[2]);
+    document.getElementById('pp-art1').setAttribute('opacity', 0);
+    document.getElementById('pp-art3').setAttribute('opacity', 0);
+    document.getElementById('pp-bubble').setAttribute('opacity', 0);
+    document.getElementById('pp-bubble-t1').textContent = ''; document.getElementById('pp-bubble-t2').textContent = '';
+    handles.classList.remove('on'); handles.innerHTML = '';
+    key.classList.remove('on');
+    page.style.background = '#ffffff';
+    document.getElementById('pp-sl-bw').style.width = '24%';
+    document.getElementById('pp-bw-val').textContent = '0.5 mm';
+    document.getElementById('pp-sw-border').style.background = '#181b20';
+    document.getElementById('pp-sw-page').style.background = '#ffffff';
+    F.forEach(function(el){ el.style.stroke = '#181b20'; el.setAttribute('stroke-width', 1.6); });
+    document.getElementById('pp-bubble-body').style.stroke = '#181b20';
+    sim.home();
+    sim.cap('Rule the page into panels');
+    drawFrame(sim, F[0], RECTS[0], 0.6, .8, document.getElementById('ppc1p'));
+    drawFrame(sim, F[1], RECTS[1], 2.0, .8, null);
+    drawFrame(sim, F[2], RECTS[2], 3.4, .8, document.getElementById('ppc3p'));
+    sim.later(4.9, function(){ sim.cap('Frames clip their art automatically');
+      document.getElementById('pp-art1').setAttribute('opacity', 1);
+      document.getElementById('pp-art3').setAttribute('opacity', 1); });
+    sim.later(7.6, function(){ sim.cap('Hold Ctrl — vertex handles appear'); });
+    sim.later(8.0, function(){ key.classList.add('on');
+      var c = sim.rel(sim.canvas); key.style.left = (parseFloat(sim.cursor.style.left)+26)+'px';
+      key.style.top = (parseFloat(sim.cursor.style.top)-8)+'px'; void c;
+      buildHandles(sim, F[1]); handles.classList.add('on'); });
+    sim.later(8.6, function(){ var m = svgPt(sim, 480, 256); sim.move(m.x, m.y, .7); });
+    sim.later(9.5, function(){ sim.cap('Drag an edge midpoint — sculpt the frame'); sim.click();
+      animPts(sim, F[1], RECTS[1].concat([RECTS[1][3]]), F2_SCULPT, 1.4, null);
+      var m = svgPt(sim, 470, 196); sim.move(m.x, m.y, 1.4);
+      key.style.left = (m.x+26)+'px'; key.style.top = (m.y-8)+'px'; });
+    sim.later(11.2, function(){ buildHandles(sim, F[1]); });
+    sim.later(12.6, function(){ key.classList.remove('on'); handles.classList.remove('on'); });
+    sim.later(13.2, function(){ sim.cap('Border weight & colour — in millimetres');
+      sim.moveTo(document.getElementById('pp-sl-bw'), .8); });
+    sim.later(14.2, function(){ sim.click();
+      document.getElementById('pp-sl-bw').style.width = '62%';
+      document.getElementById('pp-bw-val').textContent = '1.2 mm';
+      F.forEach(function(el){ el.setAttribute('stroke-width', 3.4); }); });
+    sim.later(15.4, function(){ sim.moveTo(document.getElementById('pp-sw-border'), .6); });
+    sim.later(16.1, function(){ sim.click();
+      document.getElementById('pp-sw-border').style.background = '#1e3a5f';
+      F.forEach(function(el){ el.style.stroke = '#1e3a5f'; });
+      document.getElementById('pp-bubble-body').style.stroke = '#1e3a5f'; });
+    sim.later(17.0, function(){ sim.cap('Tint the page itself'); sim.moveTo(document.getElementById('pp-sw-page'), .6); });
+    sim.later(17.7, function(){ sim.click();
+      document.getElementById('pp-sw-page').style.background = '#f6efe1';
+      page.style.background = '#f6efe1'; });
+    sim.later(19.0, function(){ sim.cap('Speech bubbles, with draggable tails');
+      var b = svgPt(sim, 168, 64); sim.move(b.x, b.y, .8); });
+    sim.later(19.9, function(){ sim.click(); document.getElementById('pp-bubble').setAttribute('opacity', 1); });
+    sim.later(20.3, function(){
+      var t1 = 'A town holding', t2 = 'its breath.', i = 0;
+      sim.every(45, function(){ i++;
+        document.getElementById('pp-bubble-t1').textContent = t1.slice(0, i);
+        document.getElementById('pp-bubble-t2').textContent = i > t1.length ? t2.slice(0, i-t1.length) : ''; });
+    });
+    sim.later(22.4, function(){ var tp = svgPt(sim, 84, 112); sim.move(tp.x, tp.y, .6); });
+    sim.later(23.1, function(){ sim.click();
+      document.getElementById('pp-bubble-body').setAttribute('d',
+        'M96,64 C96,42 130,30 168,30 C206,30 240,42 240,64 C240,86 206,98 168,98 C143,98 122,94 109,86 L64,132 L98,80 C96,75 96,70 96,64 Z');
+      var tp = svgPt(sim, 64, 132); sim.move(tp.x, tp.y, .6); });
+    sim.later(24.6, function(){ sim.cap('Preflight ✓ — CMYK, print-ready'); });
+  }, function(sim){ /* reduced-motion final state */
+    F.forEach(function(el, i){ el.setAttribute('opacity', 1); setPts(el, i === 1 ? F2_SCULPT : RECTS[i]);
+      el.setAttribute('stroke-width', 3.4); el.style.stroke = '#1e3a5f'; });
+    document.getElementById('pp-art1').setAttribute('opacity', 1);
+    document.getElementById('pp-art3').setAttribute('opacity', 1);
+    document.getElementById('pp-bubble').setAttribute('opacity', 1);
+    document.getElementById('pp-bubble-t1').textContent = 'A town holding';
+    document.getElementById('pp-bubble-t2').textContent = 'its breath.';
+    page.style.background = '#f6efe1';
+    sim.cursor.style.opacity = 0;
+    sim.stage.querySelector('.fd-caption').textContent = 'Preflight ✓ — CMYK, print-ready';
+  });
+})();
+
+/* ───────── 05 · sfx — comic sound-effect decals ───────── */
+(function(){
+  var decal = document.getElementById('sx-decal'); if(!decal) return;
+  var main = document.getElementById('sx-main');
+  var pick = document.getElementById('sx-pick'), presets = document.getElementById('sx-presets');
+  var burst = document.getElementById('sx-burst');
+  function setDecal(skew, rot, track){
+    decal.setAttribute('transform', 'rotate('+rot+' 280 190) skewX('+skew+')');
+    [].forEach.call(decal.querySelectorAll('text'), function(t){ t.style.letterSpacing = track+'px'; });
+  }
+  makeSim('sx', 20, function(sim){
+    decal.setAttribute('opacity', 0); decal.classList.remove('copies');
+    setDecal(0, 0, 0);
+    main.style.strokeWidth = '6px'; main.style.filter = 'drop-shadow(4px 5px 0 #1f2937)';
+    pick.classList.remove('pick'); presets.classList.remove('pulse');
+    burst.style.opacity = 0;
+    document.getElementById('sx-sl-stroke').style.width = '30%'; document.getElementById('sx-stroke-val').textContent = '1.2 mm';
+    document.getElementById('sx-sl-skew').style.width = '0%'; document.getElementById('sx-skew-val').textContent = '0°';
+    document.getElementById('sx-sl-track').style.width = '10%'; document.getElementById('sx-track-val').textContent = '0';
+    document.getElementById('sx-copies').textContent = '0';
+    sim.home();
+    sim.cap('Pick a Comic SFX preset');
+    sim.later(.6, function(){ sim.moveTo(pick, .8); });
+    sim.later(1.5, function(){ sim.click(); pick.classList.add('pick'); });
+    sim.later(2.0, function(){ decal.setAttribute('opacity', 1); burst.style.opacity = 1;
+      var art = sim.rel(sim.stage.querySelector('.sx-panelart'));
+      sim.move(art.cx, art.cy, .8); });
+    sim.later(4.0, function(){ sim.cap('Skew, rotate, track the letterforms');
+      sim.moveTo(document.getElementById('sx-sl-skew'), .7); });
+    sim.later(4.9, function(){ sim.click();
+      document.getElementById('sx-sl-skew').style.width = '58%'; document.getElementById('sx-skew-val').textContent = '−14°';
+      setDecal(-14, -5, 0); });
+    sim.later(6.4, function(){ sim.moveTo(document.getElementById('sx-sl-track'), .5); });
+    sim.later(7.0, function(){ sim.click();
+      document.getElementById('sx-sl-track').style.width = '46%'; document.getElementById('sx-track-val').textContent = '+3';
+      setDecal(-14, -5, 3); });
+    sim.later(8.4, function(){ sim.cap('Stroke & shadow — real millimetres');
+      sim.moveTo(document.getElementById('sx-sl-stroke'), .6); });
+    sim.later(9.2, function(){ sim.click();
+      document.getElementById('sx-sl-stroke').style.width = '66%'; document.getElementById('sx-stroke-val').textContent = '2.6 mm';
+      main.style.strokeWidth = '11px'; main.style.filter = 'drop-shadow(7px 8px 0 #1f2937)'; });
+    sim.later(12.0, function(){ sim.cap('Trailing copies sell the motion');
+      sim.moveTo(document.getElementById('sx-copies'), .7); });
+    sim.later(12.9, function(){ sim.click(); document.getElementById('sx-copies').textContent = '1'; });
+    sim.later(13.4, function(){ sim.click(); document.getElementById('sx-copies').textContent = '2'; });
+    sim.later(13.9, function(){ sim.click(); document.getElementById('sx-copies').textContent = '3';
+      decal.classList.add('copies'); });
+    sim.later(16.4, function(){ sim.cap('BANG! KAPOW! SCREECH — seven presets, all yours');
+      presets.classList.add('pulse'); });
+  }, function(sim){
+    decal.setAttribute('opacity', 1); decal.classList.add('copies');
+    setDecal(-14, -5, 3); pick.classList.add('pick'); burst.style.opacity = 1;
+    main.style.strokeWidth = '11px';
+    sim.cursor.style.opacity = 0;
+    sim.stage.querySelector('.fd-caption').textContent = 'BANG! KAPOW! SCREECH — seven presets, all yours';
+  });
+})();
+
+/* ───────── 06 · brush — the brush engine ───────── */
+(function(){
+  var cv = document.getElementById('br-canvas'); if(!cv) return;
+  var stylus = document.getElementById('br-stylus'), ring = document.getElementById('br-ring');
+  var pen = stylus.querySelector('svg'), tip = document.getElementById('br-tip-disc');
+  var key = document.getElementById('br-key');
+  var ctx = null, DPR = Math.min(2, devicePixelRatio||1);
+  function sizeCanvas(){
+    var r = cv.getBoundingClientRect(); if(r.width < 4) return;
+    cv.width = r.width*DPR; cv.height = r.height*DPR;
+    ctx = cv.getContext('2d'); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.fillStyle = '#f4f2ee'; ctx.fillRect(0, 0, r.width, r.height);
+  }
+  function lerp(a, b, t){ return a+(b-a)*t; }
+  function hueMix(t){ /* FG #22b8d4 → BG #d436a8 */
+    return 'rgba('+Math.round(lerp(34,212,t))+','+Math.round(lerp(184,54,t))+','+Math.round(lerp(212,168,t))+','; }
+  /* one stroke = animate along a quadratic bezier, stamping like ImageBrushStamp */
+  function stroke(sim, o){
+    var t0 = performance.now(), prev = null;
+    (function step(){
+      var t = Math.min(1, (performance.now()-t0)/(o.dur*1000));
+      var u = 1-t, x = u*u*o.p0[0] + 2*u*t*o.p1[0] + t*t*o.p2[0],
+                  y = u*u*o.p0[1] + 2*u*t*o.p1[1] + t*t*o.p2[1];
+      var press = o.pressure(t);
+      var cvr = sim.rel(cv);
+      sim.cursor && 0;
+      stylus.style.transition = 'none';
+      stylus.style.left = (cvr.x + x - 8)+'px'; stylus.style.top = (cvr.y + y - 30)+'px';
+      ring.style.transform = 'scale('+(0.3 + press*.9)+')';
+      if(ctx && prev){
+        var dist = Math.hypot(x-prev.x, y-prev.y), steps = Math.max(1, Math.round(dist/2));
+        for(var i2 = 1; i2 <= steps; i2++){
+          var xx = lerp(prev.x, x, i2/steps), yy = lerp(prev.y, y, i2/steps);
+          var r = o.base*press + .4, a = o.alpha*press + .02;
+          ctx.fillStyle = (o.mix ? hueMix(t) : o.color) + a + ')';
+          ctx.beginPath();
+          if(o.tilt){ ctx.ellipse(xx, yy, r*2.6, r*.85, o.tiltAngle, 0, 6.2832); }
+          else { ctx.arc(xx, yy, r, 0, 6.2832); }
+          ctx.fill();
+        }
+      }
+      prev = {x: x, y: y};
+      if(t < 1 && ctx) requestAnimationFrame(step);
+      else ring.style.transform = 'scale(.3)';
+    })();
+  }
+  function pressSin(t){ return .18 + .82*Math.sin(t*Math.PI); }
+  function pressWave(t){ return .3 + .55*Math.abs(Math.sin(t*Math.PI*2.2)); }
+  makeSim('br', 24, function(sim){
+    sizeCanvas();
+    pen.style.transform = 'rotate(24deg)';
+    tip.style.transform = 'none';
+    key.classList.remove('on');
+    document.getElementById('br-sl-rate').style.width = '0%';
+    document.getElementById('br-rate-val').textContent = '0%';
+    sim.home();
+    var W = cv.getBoundingClientRect().width, H = cv.getBoundingClientRect().height;
+    sim.cap('Pressure drives size & flow');
+    sim.later(.9, function(){ stroke(sim, {p0:[W*.12,H*.72], p1:[W*.38,H*.05], p2:[W*.62,H*.62],
+      dur:2.4, base:11, alpha:.5, color:'rgba(36,41,48,', pressure:pressSin}); });
+    sim.later(3.6, function(){ stroke(sim, {p0:[W*.3,H*.85], p1:[W*.55,H*.35], p2:[W*.86,H*.7],
+      dur:2.2, base:11, alpha:.5, color:'rgba(36,41,48,', pressure:pressWave}); });
+    sim.later(6.3, function(){ sim.cap('Tilt shades like the side of the lead');
+      pen.style.transform = 'rotate(52deg)'; tip.style.transform = 'rotateX(58deg) rotate(18deg)'; });
+    sim.later(7.2, function(){ stroke(sim, {p0:[W*.14,H*.3], p1:[W*.44,H*.14], p2:[W*.78,H*.3],
+      dur:2.3, base:10, alpha:.16, color:'rgba(70,78,90,', pressure:function(t){ return .5+.4*Math.sin(t*Math.PI); },
+      tilt:true, tiltAngle:.35}); });
+    sim.later(10.1, function(){ sim.cap('Colour Rate mixes FG → BG mid-stroke');
+      pen.style.transform = 'rotate(24deg)'; tip.style.transform = 'none';
+      document.getElementById('br-sl-rate').style.width = '65%';
+      document.getElementById('br-rate-val').textContent = '65%'; });
+    sim.later(11.2, function(){ stroke(sim, {p0:[W*.12,H*.52], p1:[W*.5,H*.92], p2:[W*.88,H*.44],
+      dur:3.0, base:9, alpha:.6, mix:true, pressure:pressSin}); });
+    sim.later(14.9, function(){ sim.cap('Hold Shift — dead-straight, still pressure-live');
+      key.classList.add('on');
+      var cvr = sim.rel(cv);
+      key.style.left = (cvr.x + cvr.w*.5)+'px'; key.style.top = (cvr.y + cvr.h*.12)+'px'; });
+    sim.later(15.7, function(){ stroke(sim, {p0:[W*.15,H*.18], p1:[W*.5,H*.18], p2:[W*.85,H*.18],
+      dur:1.8, base:7, alpha:.55, color:'rgba(34,68,120,', pressure:function(t){ return .25+.65*Math.sin(t*Math.PI); }}); });
+    sim.later(18.2, function(){ key.classList.remove('on'); });
+    sim.later(18.8, function(){ sim.cap('GPU brush engine — WebGL2, dirty-rect fast');
+      document.getElementById('br-gpu').style.textShadow = '0 0 12px rgba(92,230,161,.9)'; });
+    sim.later(21.8, function(){ sim.cap('S Pen & Wacom native'); });
+  }, function(sim){
+    sizeCanvas();
+    var W = cv.getBoundingClientRect().width, H = cv.getBoundingClientRect().height;
+    [{p0:[W*.12,H*.72],p1:[W*.38,H*.05],p2:[W*.62,H*.62],base:11,alpha:.5,color:'rgba(36,41,48,',pressure:pressSin},
+     {p0:[W*.14,H*.3],p1:[W*.44,H*.14],p2:[W*.78,H*.3],base:10,alpha:.16,color:'rgba(70,78,90,',pressure:pressSin,tilt:true,tiltAngle:.35},
+     {p0:[W*.12,H*.52],p1:[W*.5,H*.92],p2:[W*.88,H*.44],base:9,alpha:.6,mix:true,pressure:pressSin}
+    ].forEach(function(o){ o.dur = 0.001; stroke(sim, o); });
+    stylus.style.opacity = 0; if(sim.cursor) sim.cursor.style.opacity = 0;
+    sim.stage.querySelector('.fd-caption').textContent = 'Pressure · tilt · colour dynamics — S Pen & Wacom native';
+  });
+})();
+
+/* ───────── 07 · video — the sequencer timeline ───────── */
+(function(){
+  var v1 = document.getElementById('vd-v1'); if(!v1) return;
+  var v2 = document.getElementById('vd-v2'), a1 = document.getElementById('vd-a1');
+  var ghost = document.getElementById('vd-ghost'), ph = document.getElementById('vd-playhead');
+  var p1 = document.getElementById('vd-p1'), p2 = document.getElementById('vd-p2');
+  var tc = document.getElementById('vd-tc');
+  function mkClip(lane, name, left, width, img){
+    var d = document.createElement('div');
+    d.className = 'vd-clip';
+    d.style.left = left+'%'; d.style.width = width+'%';
+    if(img) d.style.backgroundImage = 'url('+img+')';
+    d.innerHTML = '<div class="fadewedge"></div><span>'+name+'</span><i class="kf" style="left:38%"></i><i class="kf" style="left:88%"></i>';
+    lane.appendChild(d); return d;
+  }
+  function mkAudio(lane){
+    var d = document.createElement('div');
+    d.className = 'vd-aclip'; d.style.left = '0%'; d.style.width = '92%';
+    var bars = '';
+    for(var i2 = 0; i2 < 60; i2++){ var h = 22+Math.round(20*Math.abs(Math.sin(i2*.7)+Math.sin(i2*.23))); bars += '<rect x="'+(i2*10+2)+'" y="'+(50-h/2)+'" width="5" height="'+h+'" fill="rgba(92,230,161,.65)"/>'; }
+    d.innerHTML = '<svg viewBox="0 0 600 100" preserveAspectRatio="none">'+bars+'</svg>';
+    lane.appendChild(d); return d;
+  }
+  var c1 = null, c2 = null, ac = null, phT = null;
+  function dragFromLib(sim, item, lane, atPct, img, t, onland){
+    sim.later(t, function(){ sim.moveTo(item, .7); });
+    sim.later(t+.8, function(){ sim.click();
+      var r = sim.rel(item);
+      ghost.style.transition = 'none';
+      ghost.style.backgroundImage = img ? 'url('+img+')' : 'none';
+      ghost.style.left = (r.cx-30)+'px'; ghost.style.top = (r.cy-18)+'px'; ghost.style.opacity = 1;
+      var lr = sim.rel(lane);
+      var gx = lr.x + lr.w*atPct/100 + 24, gy = lr.cy - 18;
+      ghost.getBoundingClientRect();
+      ghost.style.transition = 'left .9s cubic-bezier(.22,.61,.2,1), top .9s cubic-bezier(.22,.61,.2,1), opacity .25s';
+      ghost.style.left = gx+'px'; ghost.style.top = gy+'px';
+      sim.move(gx+30, gy+18, .9); });
+    sim.later(t+1.9, function(){ ghost.style.opacity = 0; onland(); });
+  }
+  makeSim('vd', 28, function(sim){
+    [c1, c2, ac].forEach(function(c){ if(c) c.remove(); }); c1 = c2 = ac = null;
+    if(phT){ clearInterval(phT); phT = null; }
+    ghost.style.transition = 'none'; ghost.style.opacity = 0;
+    ph.style.transition = 'none'; ph.style.left = '6.2em';
+    p1.style.opacity = 0; p2.style.opacity = 0; p2.style.transform = 'none';
+    p1.pause(); p2.pause(); try{ p1.currentTime = 0; p2.currentTime = 0; }catch(e){}
+    tc.textContent = '00:00:00';
+    document.getElementById('vd-trans').textContent = 'None';
+    document.getElementById('vd-trans').classList.remove('fade');
+    document.getElementById('vd-kf-o').textContent = '100%';
+    document.getElementById('vd-kf-s').textContent = '100%';
+    sim.home();
+    sim.cap('Pull clips from the Source Library');
+    dragFromLib(sim, document.getElementById('vd-it1'), v1, 2, 'assets/demo/poster-walk.jpg', .6, function(){
+      c1 = mkClip(v1, 'walk-wide.mp4 · 0:08', 2, 42, 'assets/demo/poster-walk.jpg');
+      requestAnimationFrame(function(){ c1.classList.add('on'); });
+      p1.style.opacity = 1; });
+    dragFromLib(sim, document.getElementById('vd-it2'), v2, 34, 'assets/demo/poster-turn.jpg', 3.4, function(){
+      c2 = mkClip(v2, 'turn-cu.mp4 · 0:08', 34, 42, 'assets/demo/poster-turn.jpg');
+      requestAnimationFrame(function(){ c2.classList.add('on'); });
+    });
+    sim.later(6.6, function(){ sim.cap('Stack V2 over V1 — set Transition in: Fade');
+      if(c2) c2.classList.add('sel');
+      sim.moveTo(document.getElementById('vd-trans'), .8); });
+    sim.later(7.8, function(){ sim.click();
+      var t = document.getElementById('vd-trans');
+      t.textContent = 'Fade'; t.classList.add('fade');
+      if(c2) c2.classList.add('fade'); });
+    sim.later(9.6, function(){ sim.cap('Score it on the audio lane'); });
+    dragFromLib(sim, document.getElementById('vd-it3'), a1, 4, null, 10.0, function(){
+      ac = mkAudio(a1);
+      requestAnimationFrame(function(){ ac.classList.add('on'); });
+    });
+    sim.later(13.0, function(){ sim.cap('◇ Keyframe opacity & scale on the clip');
+      sim.moveTo(document.getElementById('vd-addkey'), .7); });
+    sim.later(13.9, function(){ sim.click(); if(c2) c2.querySelectorAll('.kf')[0].classList.add('on'); });
+    sim.later(14.5, function(){ sim.click(); if(c2) c2.querySelectorAll('.kf')[1].classList.add('on');
+      document.getElementById('vd-kf-s').textContent = '100 → 126%'; });
+    sim.later(15.8, function(){ sim.cap('Scrub — the Program Monitor plays the cut');
+      sim.moveTo(ph, .6); });
+    sim.later(16.6, function(){
+      try{ p1.play(); p2.play(); }catch(e){}
+      var lanes = sim.rel(v1);
+      var t0 = performance.now(), DUR = 9000;
+      ph.style.transition = 'none';
+      phT = sim.every(50, function(){
+        var t = Math.min(1, (performance.now()-t0)/DUR);
+        ph.style.left = (6.2*10 + 0)+'px';
+        var tl = sim.rel(sim.stage.querySelector('.vd-tl'));
+        ph.style.left = (lanes.x - tl.x + lanes.w*t + 40)+'px';
+        void tl;
+        /* timeline math: clip1 2–44%, clip2 34–76% → fade overlap 34–44% */
+        var pct = t*80 + 2;
+        tc.textContent = '00:00:' + String(Math.floor(t*12)).padStart(2, '0');
+        if(pct < 34){ p1.style.opacity = 1; p2.style.opacity = 0; }
+        else if(pct < 44){ var f = (pct-34)/10; p1.style.opacity = 1-f; p2.style.opacity = f; }
+        else { p1.style.opacity = 0; p2.style.opacity = 1; }
+        if(pct >= 34 && pct <= 76){ var k = (pct-34)/42;
+          var sc = k < .38/0.42 ? 1 : 1; /* scale between keys at 38%..88% of clip2 */
+          var kk = Math.min(1, Math.max(0, (k-.1)/.8));
+          p2.style.transform = 'scale('+(1+.26*kk)+')';
+          document.getElementById('vd-kf-s').textContent = Math.round(100+26*kk)+' → 126%';
+        }
+        if(t >= 1 && phT){ clearInterval(phT); phT = null; }
+      });
+    });
+    sim.later(26.2, function(){ sim.cap('Export — FFmpeg native, or in the browser'); });
+  }, function(sim){
+    c1 = mkClip(v1, 'walk-wide.mp4 · 0:08', 2, 42, 'assets/demo/poster-walk.jpg'); c1.classList.add('on');
+    c2 = mkClip(v2, 'turn-cu.mp4 · 0:08', 34, 42, 'assets/demo/poster-turn.jpg'); c2.classList.add('on', 'fade', 'sel');
+    c2.querySelectorAll('.kf').forEach(function(k){ k.classList.add('on'); });
+    ac = mkAudio(a1); ac.classList.add('on');
+    document.getElementById('vd-trans').textContent = 'Fade';
+    document.getElementById('vd-trans').classList.add('fade');
+    p2.style.opacity = 1;
+    sim.cursor.style.opacity = 0;
+    sim.stage.querySelector('.fd-caption').textContent = 'Fade transitions · keyframes · audio lanes';
+  });
+})();
 })();
 </script>
 </body>
