@@ -285,6 +285,19 @@ function isWorkspaceWindowCommand(value: unknown): value is WorkspaceWindowComma
         && isSourceBinLibraryItem(value.item);
     case 'video-select-source-item':
       return value.targetWorkspace === 'editor' && isSourceBinLibraryItem(value.item);
+    case 'paper-place-source-asset':
+      return value.targetWorkspace === 'paper'
+        && typeof value.pageId === 'string'
+        && typeof value.frameId === 'string'
+        && isSourceBinLibraryItem(value.item);
+    case 'image-open-linked-document':
+      return value.targetWorkspace === 'image'
+        && isSourceBinLibraryItem(value.item)
+        && (value.linkedEdit === undefined || isImageDocumentLinkedEdit(value.linkedEdit));
+    case 'flow-slimg-file-updated':
+      return value.targetWorkspace === 'flow'
+        && typeof value.filePath === 'string'
+        && typeof value.flattened === 'string';
     default:
       return false;
   }
@@ -303,6 +316,24 @@ function isSourceBinLibraryItem(value: unknown): value is SourceBinLibraryItem {
       typeof value.assetUrl === 'string'
     )
   );
+}
+
+function isImageDocumentLinkedEdit(value: unknown): value is ImageDocumentLinkedEdit {
+  if (!isPlainRecord(value)) {
+    return false;
+  }
+
+  if (value.kind === 'paper-frame') {
+    return typeof value.pageId === 'string'
+      && typeof value.frameId === 'string'
+      && typeof value.sourceLabel === 'string';
+  }
+
+  if (value.kind === 'slimg-node') {
+    return typeof value.filePath === 'string';
+  }
+
+  return false;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

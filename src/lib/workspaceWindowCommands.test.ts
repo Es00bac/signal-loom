@@ -49,6 +49,59 @@ describe('workspace window commands', () => {
     expect(getWorkspaceWindowCommandForWorkspace(otherEnvelope, 'sender-a', 'image')).toEqual(otherEnvelope.command);
   });
 
+  it('routes a plain (non-linked) image-open command to the Image workspace window', () => {
+    // Paper page-export opens a flattened page as a standalone document — NOT a linked
+    // edit — so the command carries no `linkedEdit` field at all.
+    const envelope = createWorkspaceWindowCommandEnvelope('sender-paper', {
+      type: 'image-open-linked-document',
+      item: item('exported-page-1'),
+      targetWorkspace: 'image',
+    });
+
+    const routed = getWorkspaceWindowCommandForWorkspace(envelope, 'sender-image', 'image');
+    expect(routed).toEqual(envelope.command);
+    expect(routed && 'linkedEdit' in routed ? routed.linkedEdit : undefined).toBeUndefined();
+    expect(getWorkspaceWindowCommandForWorkspace(envelope, 'sender-image', 'paper')).toBeUndefined();
+  });
+
+  it('routes a linked Paper-frame image-open command, and rejects a malformed linkedEdit', () => {
+    const linked = createWorkspaceWindowCommandEnvelope('sender-paper', {
+      type: 'image-open-linked-document',
+      item: item('frame-source-1'),
+      linkedEdit: { kind: 'paper-frame', pageId: 'page-1', frameId: 'frame-1', sourceLabel: 'panel.png' },
+      targetWorkspace: 'image',
+    });
+    expect(getWorkspaceWindowCommandForWorkspace(linked, 'sender-image', 'image')).toEqual(linked.command);
+
+    const malformed = createWorkspaceWindowCommandEnvelope('sender-paper', {
+      type: 'image-open-linked-document',
+      item: item('frame-source-2'),
+      // @ts-expect-error — intentionally malformed to prove the validator rejects it
+      linkedEdit: { kind: 'paper-frame', pageId: 'page-1' },
+      targetWorkspace: 'image',
+    });
+    expect(getWorkspaceWindowCommandForWorkspace(malformed, 'sender-image', 'image')).toBeUndefined();
+  });
+
+  it('routes the linked-edit return trip and the .slimg refresh command', () => {
+    const returnTrip = createWorkspaceWindowCommandEnvelope('sender-image', {
+      type: 'paper-place-source-asset',
+      item: item('edited-frame-asset'),
+      pageId: 'page-3',
+      frameId: 'frame-9',
+      targetWorkspace: 'paper',
+    });
+    expect(getWorkspaceWindowCommandForWorkspace(returnTrip, 'sender-paper', 'paper')).toEqual(returnTrip.command);
+
+    const slimgUpdate = createWorkspaceWindowCommandEnvelope('sender-image', {
+      type: 'flow-slimg-file-updated',
+      filePath: '/tmp/x.slimg',
+      flattened: 'data:image/png;base64,AAAA',
+      targetWorkspace: 'flow',
+    });
+    expect(getWorkspaceWindowCommandForWorkspace(slimgUpdate, 'sender-flow', 'flow')).toEqual(slimgUpdate.command);
+  });
+
   it('merges incoming source-bin items without replacing the local library', () => {
     const current = [bin([item('local-1'), item('local-2')])];
     const next = mergeSourceBinItemsIntoBins(current, [item('remote-1'), item('local-1')]);

@@ -3254,6 +3254,24 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
     setStatus(`Flattening page ${selectedPage.pageNumber} for the Image workspace...`);
     void (async () => {
       const item = await exportPaperPageToSourceLibrary(selectedPage.id);
+      const bridge = getSignalLoomNativeBridge();
+      if (bridge?.openWorkspaceWindow) {
+        // Multi-window desktop: the Image WINDOW owns its own store, so writing the
+        // built ImageDocument into THIS window's store is invisible there. Open/focus
+        // the window first, then post the command (same ordering as
+        // openPaperFrameImageInImageWorkspace / sendPaperFrameSourceToFlow). This is
+        // NOT a linked edit (no `linkedEdit`) — the flattened page opens as a plain,
+        // standalone document; the receiver rebuilds it from the source item since an
+        // ImageDocument's OffscreenCanvas bitmaps can't ride the BroadcastChannel.
+        await bridge.openWorkspaceWindow('image');
+        window.setTimeout(() => postWorkspaceWindowCommand({
+          type: 'image-open-linked-document',
+          item,
+          targetWorkspace: 'image',
+        }), 250);
+        setStatus(`Opened "${item.label}" as an editable flattened page in Image.`);
+        return;
+      }
       try {
         openImageDocument(await createImageDocumentFromSourceItem(item));
         setStatus(`Opened "${item.label}" as an editable flattened page in Image.`);
@@ -3263,12 +3281,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           ? `Opened "${item.label}" as a linked image shell; bitmap load failed: ${error.message}`
           : `Opened "${item.label}" as a linked image shell; bitmap load failed.`);
       } finally {
-        const bridge = getSignalLoomNativeBridge();
-        if (bridge?.openWorkspaceWindow) {
-          await bridge.openWorkspaceWindow('image');
-        } else {
-          setWorkspaceView('image');
-        }
+        setWorkspaceView('image');
       }
     })().catch((error) => {
       setStatus(error instanceof Error ? error.message : 'Could not open the flattened page in Image.');
