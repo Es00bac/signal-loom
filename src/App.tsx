@@ -1673,6 +1673,16 @@ function FlowApp() {
       case 'paper:toggle-linked-assets-panel':
       case 'paper:toggle-dtp-parity-panel':
       case 'paper:reset-panels':
+      case 'editor:toggle-source-bin-panel':
+      case 'editor:toggle-source-monitor-panel':
+      case 'editor:toggle-program-monitor-panel':
+      case 'editor:toggle-inspector-panel':
+      case 'editor:toggle-timeline-panel':
+      case 'editor:toggle-premiere-parity-panel':
+      case 'editor:toggle-sequence-settings-panel':
+      case 'editor:toggle-export-preset-panel':
+      case 'editor:toggle-diagnostics-panel':
+      case 'editor:reset-panels':
         dispatchNativeRendererCommand(command);
         return;
     }

@@ -235,6 +235,8 @@ import {
 import { DockableDialog, DockablePanelHost, type DockablePanelDefinition } from '../../../components/DockablePanel';
 import { VideoWorkspaceMobileShell } from './VideoWorkspaceMobileShell';
 import { useDockablePanelStore } from '../../../store/dockablePanelStore';
+import { panelKey } from '../../../lib/dockablePanel';
+import { getDockablePanelToggleMode, resolveDockablePanelMode } from '../../../lib/dockablePanelVisibility';
 import {
   VIDEO_PANEL_IDS,
   VIDEO_WORKSPACE_ID,
@@ -296,6 +298,18 @@ const EDITOR_VIDEO_IMPORT_ACCEPT = getAcceptStringForKinds(['video']);
 const EDITOR_AUDIO_IMPORT_ACCEPT = getAcceptStringForKinds(['audio']);
 const EDITOR_IMAGE_IMPORT_ACCEPT = getAcceptStringForKinds(['image']);
 const EDITOR_CAPTION_IMPORT_ACCEPT = getAcceptStringForKinds(['subtitle']);
+const VIDEO_PANEL_TOGGLE_COMMANDS: Record<string, string> = {
+  'editor:toggle-source-bin-panel': VIDEO_PANEL_IDS.projectSourceBin,
+  'editor:toggle-source-monitor-panel': VIDEO_PANEL_IDS.sourceMonitor,
+  'editor:toggle-program-monitor-panel': VIDEO_PANEL_IDS.programMonitor,
+  'editor:toggle-inspector-panel': VIDEO_PANEL_IDS.inspector,
+  'editor:toggle-timeline-panel': VIDEO_PANEL_IDS.timeline,
+  'editor:toggle-premiere-parity-panel': VIDEO_PANEL_IDS.premiereParity,
+  'editor:toggle-sequence-settings-panel': VIDEO_PANEL_IDS.sequenceSettings,
+  'editor:toggle-export-preset-panel': VIDEO_PANEL_IDS.exportPreset,
+  'editor:toggle-diagnostics-panel': VIDEO_PANEL_IDS.diagnostics,
+};
+
 const VIDEO_NATIVE_MENU_COMMANDS = [
   'edit:undo',
   'edit:redo',
@@ -308,6 +322,16 @@ const VIDEO_NATIVE_MENU_COMMANDS = [
   'timeline:add-keyframe',
   'timeline:previous-keyframe',
   'timeline:next-keyframe',
+  'editor:toggle-source-bin-panel',
+  'editor:toggle-source-monitor-panel',
+  'editor:toggle-program-monitor-panel',
+  'editor:toggle-inspector-panel',
+  'editor:toggle-timeline-panel',
+  'editor:toggle-premiere-parity-panel',
+  'editor:toggle-sequence-settings-panel',
+  'editor:toggle-export-preset-panel',
+  'editor:toggle-diagnostics-panel',
+  'editor:reset-panels',
   'help:keyboard-shortcuts',
 ] satisfies readonly NativeMenuCommand[];
 const panelClassName = 'relative isolate rounded-xl border border-gray-700/60 bg-[#131821] shadow-2xl';
@@ -1861,6 +1885,24 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
   ]);
 
   const handleNativeMenuCommand = useCallback((command: NativeMenuCommand) => {
+    const togglePanelId = VIDEO_PANEL_TOGGLE_COMMANDS[command];
+    if (togglePanelId) {
+      // Window > Panels toggle: hide a shown panel, restore a hidden one to docked
+      // (same contract as the Image/Paper workspaces).
+      const panels = useDockablePanelStore.getState();
+      const key = panelKey(VIDEO_WORKSPACE_ID, togglePanelId);
+      const mode = resolveDockablePanelMode(panels.layouts[key]?.mode, panels.defaults[key]?.mode);
+      if (getDockablePanelToggleMode(mode) === 'hidden') {
+        panels.hidePanel(VIDEO_WORKSPACE_ID, togglePanelId);
+      } else {
+        panels.setPanelMode(VIDEO_WORKSPACE_ID, togglePanelId, 'docked');
+      }
+      return;
+    }
+    if (command === 'editor:reset-panels') {
+      useDockablePanelStore.getState().resetWorkspacePanels(VIDEO_WORKSPACE_ID);
+      return;
+    }
     switch (command) {
       case 'edit:undo':
         undoEditor();

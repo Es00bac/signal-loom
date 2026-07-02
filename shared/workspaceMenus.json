@@ -71,7 +71,36 @@
       ]
     },
     { "id": "view", "label": "View", "items": "$viewBase" },
-    { "id": "window", "label": "Window", "items": "$window" },
+    {
+      "id": "window",
+      "label": "Window",
+      "items": [
+        { "command": "view:flow", "label": "Open/Focus Flow Window", "accelerator": "Ctrl+1" },
+        { "command": "view:editor", "label": "Open/Focus Video Window", "accelerator": "Ctrl+2" },
+        { "command": "view:image", "label": "Open/Focus Image Window", "accelerator": "Ctrl+3" },
+        { "command": "view:paper", "label": "Open/Focus Paper Window", "accelerator": "Ctrl+4" },
+        { "type": "separator" },
+        { "command": "view:command-palette", "label": "Command Palette...", "accelerator": "Ctrl+K" },
+        { "command": "view:activity-trail", "label": "Activity Trail..." },
+        { "type": "separator" },
+        {
+          "label": "Panels",
+          "items": [
+            { "command": "editor:toggle-source-bin-panel", "label": "Project Source Bin" },
+            { "command": "editor:toggle-source-monitor-panel", "label": "Source Monitor" },
+            { "command": "editor:toggle-program-monitor-panel", "label": "Program Monitor" },
+            { "command": "editor:toggle-inspector-panel", "label": "Inspector" },
+            { "command": "editor:toggle-timeline-panel", "label": "Timeline" },
+            { "command": "editor:toggle-sequence-settings-panel", "label": "Sequence Settings" },
+            { "command": "editor:toggle-export-preset-panel", "label": "Export Presets" },
+            { "command": "editor:toggle-premiere-parity-panel", "label": "Editing Parity Checklist" },
+            { "command": "editor:toggle-diagnostics-panel", "label": "Diagnostics" },
+            { "type": "separator" },
+            { "command": "editor:reset-panels", "label": "Reset Video Panels" }
+          ]
+        }
+      ]
+    },
     { "id": "help", "label": "Help", "items": "$help" }
   ],
   "image": [

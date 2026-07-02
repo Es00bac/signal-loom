@@ -89,4 +89,24 @@ describe('workspaceMenus single source of truth', () => {
       }
     }
   });
+
+  it('gives the Video workspace a Window toggle for every dockable panel', () => {
+    const windowMenu = buildAppMenuGroups('editor').find((g) => g.label === 'Window');
+    const commands = windowMenu?.items.map((i) => i.command) ?? [];
+    const expected = [
+      'editor:toggle-source-bin-panel',
+      'editor:toggle-source-monitor-panel',
+      'editor:toggle-program-monitor-panel',
+      'editor:toggle-inspector-panel',
+      'editor:toggle-timeline-panel',
+      'editor:toggle-premiere-parity-panel',
+      'editor:toggle-sequence-settings-panel',
+      'editor:toggle-export-preset-panel',
+      'editor:toggle-diagnostics-panel',
+      'editor:reset-panels',
+    ];
+    for (const command of expected) {
+      expect(commands, `editor Window menu missing ${command}`).toContain(command);
+    }
+  });
 });
