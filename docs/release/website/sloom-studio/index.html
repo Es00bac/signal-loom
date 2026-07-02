@@ -637,7 +637,7 @@
   .vd-tools b.on{color:#bfefff;border-color:rgba(63,214,255,.45);background:rgba(63,214,255,.1)}
   .vd-tools em{margin-left:auto;font-style:normal}
   .vd-ruler{display:flex;justify-content:space-between;font-family:var(--mono);font-size:.68em;color:var(--ink-3);
-    padding:.5em 0 .3em 4.5em}
+    padding:.5em 0 .3em 5.4em}
   .vd-track{display:flex;align-items:center;gap:.6em;margin-top:.4em}
   .vd-track u{text-decoration:none;font-family:var(--mono);font-size:.72em;letter-spacing:.1em;color:var(--ink-3);
     width:4.8em;flex:none;text-transform:uppercase}
@@ -651,6 +651,11 @@
   .vd-clip .fadewedge{position:absolute;left:0;top:0;bottom:0;width:22%;background:linear-gradient(90deg,rgba(4,7,13,.85),transparent);
     border-right:1px dashed rgba(63,214,255,.5);opacity:0;transition:opacity .4s}
   .vd-clip.fade .fadewedge{opacity:1}
+  .vd-oline{position:absolute;inset:0;z-index:2;width:100%;height:100%}
+  .vd-oline polyline{fill:none;stroke:#7fe3ff;stroke-width:2;vector-effect:non-scaling-stroke;
+    filter:drop-shadow(0 0 3px rgba(63,214,255,.6))}
+  .vd-okf{position:absolute;width:.65em;height:.65em;background:#3fd6ff;z-index:3;
+    transform:translate(-50%,-50%) rotate(45deg);box-shadow:0 0 .5em rgba(63,214,255,.9)}
   .vd-clip .kf{position:absolute;bottom:.25em;width:.8em;height:.8em;background:#3fd6ff;transform:rotate(45deg) scale(0);
     transition:transform .3s var(--ease);box-shadow:0 0 .5em rgba(63,214,255,.8)}
   .vd-clip .kf.on{transform:rotate(45deg) scale(1)}
@@ -1093,9 +1098,9 @@
   <div class="node-head"><span class="nid">07 · video-demo</span><span class="ntype">replay</span><span class="nstate"><span class="txt"></span><i></i></span></div>
   <div class="node-body">
     <h2 data-reveal>Cut it <em>together.</em></h2>
-    <p class="sub" data-reveal>The Video workspace, replayed: clips pulled from the <b>Source Library</b> onto stacked tracks in the <b>Sequencer Timeline</b>, a <b>Fade transition</b> crossfading V1 into V2, a score on the audio lane, and <b>opacity &amp; scale keyframes</b> (◇) animating a clip while the playhead scrubs the <b>Program Monitor</b> — playing two real Veo shots — the same character brought alive and cut between two angles.</p>
+    <p class="sub" data-reveal>The Video workspace, replayed: clips pulled from the <b>Source Library</b> onto stacked tracks in the <b>Sequencer Timeline</b>, a crossfade built the real way — <b>opacity keyframes</b>, the first key dragged to 0% so the rubber-band line ramps V2 in over V1 — a score on the audio lane, and <b>scale keyframes</b> (◇) animating a push-in while the playhead scrubs the <b>Program Monitor</b> — playing two real Veo shots — the same character brought alive and cut between two angles.</p>
     <div class="fd-wrap" data-reveal>
-      <div class="fd-stage vd" id="vd" role="img" aria-label="Animated replay of the Signal Loom Video workspace: clips are dragged from the Source Library onto timeline tracks V1 and V2, a Fade transition crossfades between them, an audio clip with a waveform is added, keyframes are set, and the playhead scrubs while the Program Monitor plays the result.">
+      <div class="fd-stage vd" id="vd" role="img" aria-label="Animated replay of the Signal Loom Video workspace: clips are dragged from the Source Library onto timeline tracks V1 and V2, a crossfade is built with opacity keyframes whose line is dragged up from zero, an audio clip with a waveform is added, scale keyframes are set, and the playhead scrubs while the Program Monitor plays the result.">
         <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i>FL</i><i class="on">VD</i><i>IM</i><i>PA</i></span><span class="fd-chipbtn">↶</span><span class="fd-chipbtn">↷</span><span class="fd-chipbtn">▶</span><span class="fd-chipbtn hot">Bin</span><span class="fd-chipbtn hot">Source</span><span class="fd-chipbtn hot">Program</span><span class="fd-chipbtn hot">Inspector</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⌘</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
         <div class="fd-bar2"><b>Project</b><b>Edit</b><b>Timeline</b><b>Keyframes</b><b>View</b><b>Window</b><b>Help</b><span class="grow"></span><u>☰</u></div>
         <div class="fd-canvas">
@@ -1112,7 +1117,6 @@
           </div>
           <div class="pp-inspector vd-insp">
             <div class="pp-ih">Clip</div>
-            <div class="pp-row"><span>Transition in</span><b class="vd-select" id="vd-trans">None</b></div>
             <div class="pp-row"><span>Opacity</span><b id="vd-kf-o">100%</b></div>
             <div class="pp-row"><span>Scale</span><b id="vd-kf-s">100%</b></div>
             <div class="pp-row"><b class="vd-addkey" id="vd-addkey">◇ Add Key</b></div>
@@ -2183,6 +2187,25 @@ function makeSim(rootId, TOTAL, script, finalState){
     d.innerHTML = '<div class="fadewedge"></div><span>'+name+'</span><i class="kf" style="left:38%"></i><i class="kf" style="left:88%"></i>';
     lane.appendChild(d); return d;
   }
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  /* the real crossfade: an opacity rubber-band on the clip — two keys, the first
+     dragged to 0% so the line ramps V2 in across the V1/V2 overlap */
+  function addOpacityKey(clip, xPct, yPct){
+    var d = document.createElement('i');
+    d.className = 'vd-okf';
+    d.style.left = xPct+'%'; d.style.top = yPct+'%';
+    clip.appendChild(d); return d;
+  }
+  function addOpacityLine(clip){
+    var svg = document.createElementNS(SVGNS, 'svg');
+    svg.setAttribute('class', 'vd-oline');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    svg.setAttribute('preserveAspectRatio', 'none');
+    var pl = document.createElementNS(SVGNS, 'polyline');
+    pl.setAttribute('points', '0,14 100,14');
+    svg.appendChild(pl); clip.appendChild(svg);
+    return pl;
+  }
   function mkAudio(lane){
     var d = document.createElement('div');
     d.className = 'vd-aclip'; d.style.left = '0%'; d.style.width = '92%';
@@ -2211,12 +2234,12 @@ function makeSim(rootId, TOTAL, script, finalState){
     [c1, c2, ac].forEach(function(c){ if(c) c.remove(); }); c1 = c2 = ac = null;
     if(phT){ clearInterval(phT); phT = null; }
     ghost.style.transition = 'none'; ghost.style.opacity = 0;
-    ph.style.transition = 'none'; ph.style.left = '6.2em';
+    ph.style.transition = 'none';
+    var lr = sim.rel(v1), tlr = sim.rel(sim.stage.querySelector('.vd-tl'));
+    ph.style.left = (lr.w > 4 ? (lr.x - tlr.x) : 62)+'px';
     p1.style.opacity = 0; p2.style.opacity = 0; p2.style.transform = 'none';
     p1.pause(); p2.pause(); try{ p1.currentTime = 0; p2.currentTime = 0; }catch(e){}
     tc.textContent = '00:00:00';
-    document.getElementById('vd-trans').textContent = 'None';
-    document.getElementById('vd-trans').classList.remove('fade');
     document.getElementById('vd-kf-o').textContent = '100%';
     document.getElementById('vd-kf-s').textContent = '100%';
     sim.home();
@@ -2229,44 +2252,64 @@ function makeSim(rootId, TOTAL, script, finalState){
       c2 = mkClip(v2, 'turn-cu.mp4 · 0:08', 34, 42, 'assets/demo/poster-turn.jpg');
       requestAnimationFrame(function(){ c2.classList.add('on'); });
     });
-    sim.later(6.6, function(){ sim.cap('Stack V2 over V1 — set Transition in: Fade');
+    var opl = null, ok1 = null;
+    sim.later(6.6, function(){ sim.cap('Crossfade the overlap — two opacity keys');
       if(c2) c2.classList.add('sel');
-      sim.moveTo(document.getElementById('vd-trans'), .8); });
-    sim.later(7.8, function(){ sim.click();
-      var t = document.getElementById('vd-trans');
-      t.textContent = 'Fade'; t.classList.add('fade');
-      if(c2) c2.classList.add('fade'); });
-    sim.later(9.6, function(){ sim.cap('Score it on the audio lane'); });
-    dragFromLib(sim, document.getElementById('vd-it3'), a1, 4, null, 10.0, function(){
+      sim.moveTo(document.getElementById('vd-addkey'), .8); });
+    sim.later(7.6, function(){ sim.click();
+      if(!c2) return;
+      opl = addOpacityLine(c2);
+      ok1 = addOpacityKey(c2, 0, 14); });
+    sim.later(8.2, function(){ sim.click(); if(c2) addOpacityKey(c2, 23.8, 14); });
+    sim.later(8.8, function(){ sim.cap('Drag the first key to 0% — the line IS the fade');
+      if(c2){ var r = sim.rel(c2); sim.move(r.x + 4, r.y + r.h*.14, .6); } });
+    sim.later(9.5, function(){ sim.click();
+      if(!c2 || !opl) return;
+      var r = sim.rel(c2);
+      sim.move(r.x + 4, r.y + r.h*.86, .9);
+      var t0 = performance.now();
+      var dragT = sim.every(40, function(){
+        var t = Math.min(1, (performance.now()-t0)/900);
+        var y = 14 + (86-14)*t;
+        if(ok1) ok1.style.top = y+'%';
+        opl.setAttribute('points', '0,'+y+' 23.8,14 100,14');
+        document.getElementById('vd-kf-o').textContent = Math.round(100-100*t)+' → 100%';
+        if(t >= 1){ clearInterval(dragT); }
+      });
+    });
+    sim.later(11.0, function(){ sim.cap('Score it on the audio lane'); });
+    dragFromLib(sim, document.getElementById('vd-it3'), a1, 4, null, 11.4, function(){
       ac = mkAudio(a1);
       requestAnimationFrame(function(){ ac.classList.add('on'); });
     });
-    sim.later(13.0, function(){ sim.cap('◇ Keyframe opacity & scale on the clip');
+    sim.later(14.0, function(){ sim.cap('◇ Scale keyframes animate the push-in');
       sim.moveTo(document.getElementById('vd-addkey'), .7); });
-    sim.later(13.9, function(){ sim.click(); if(c2) c2.querySelectorAll('.kf')[0].classList.add('on'); });
-    sim.later(14.5, function(){ sim.click(); if(c2) c2.querySelectorAll('.kf')[1].classList.add('on');
+    sim.later(14.9, function(){ sim.click(); if(c2) c2.querySelectorAll('.kf')[0].classList.add('on'); });
+    sim.later(15.5, function(){ sim.click(); if(c2) c2.querySelectorAll('.kf')[1].classList.add('on');
       document.getElementById('vd-kf-s').textContent = '100 → 126%'; });
-    sim.later(15.8, function(){ sim.cap('Scrub — the Program Monitor plays the cut');
+    sim.later(16.6, function(){ sim.cap('Scrub — the Program Monitor plays the cut');
       sim.moveTo(ph, .6); });
-    sim.later(16.6, function(){
-      try{ p1.play(); p2.play(); }catch(e){}
+    sim.later(17.4, function(){
+      try{ p1.currentTime = 0; p1.play(); }catch(e){}
       var lanes = sim.rel(v1);
-      var t0 = performance.now(), DUR = 9000;
+      var tl0 = sim.rel(sim.stage.querySelector('.vd-tl'));
+      var t0 = performance.now(), DUR = 9000, p2started = false;
       ph.style.transition = 'none';
       phT = sim.every(50, function(){
         var t = Math.min(1, (performance.now()-t0)/DUR);
-        ph.style.left = (6.2*10 + 0)+'px';
-        var tl = sim.rel(sim.stage.querySelector('.vd-tl'));
-        ph.style.left = (lanes.x - tl.x + lanes.w*t + 40)+'px';
-        void tl;
-        /* timeline math: clip1 2–44%, clip2 34–76% → fade overlap 34–44% */
-        var pct = t*80 + 2;
+        /* ONE shared clock: playhead x, timecode, fade, and keyframes all read the
+           same lane fraction, so the monitor fades exactly while the scrubber
+           crosses the V1/V2 overlap (lane 34%–44% ≈ 4.1s–5.3s on the 12s ruler). */
+        ph.style.left = (lanes.x - tl0.x + lanes.w*t)+'px';
+        var pct = t*100;
         tc.textContent = '00:00:' + String(Math.floor(t*12)).padStart(2, '0');
         if(pct < 34){ p1.style.opacity = 1; p2.style.opacity = 0; }
-        else if(pct < 44){ var f = (pct-34)/10; p1.style.opacity = 1-f; p2.style.opacity = f; }
+        else if(pct < 44){
+          if(!p2started){ p2started = true; try{ p2.currentTime = 0; p2.play(); }catch(e){} }
+          var f = (pct-34)/10; p1.style.opacity = 1-f; p2.style.opacity = f;
+        }
         else { p1.style.opacity = 0; p2.style.opacity = 1; }
         if(pct >= 34 && pct <= 76){ var k = (pct-34)/42;
-          var sc = k < .38/0.42 ? 1 : 1; /* scale between keys at 38%..88% of clip2 */
           var kk = Math.min(1, Math.max(0, (k-.1)/.8));
           p2.style.transform = 'scale('+(1+.26*kk)+')';
           document.getElementById('vd-kf-s').textContent = Math.round(100+26*kk)+' → 126%';
@@ -2277,11 +2320,11 @@ function makeSim(rootId, TOTAL, script, finalState){
     sim.later(26.2, function(){ sim.cap('Export — FFmpeg native, or in the browser'); });
   }, function(sim){
     c1 = mkClip(v1, 'walk-wide.mp4 · 0:08', 2, 42, 'assets/demo/poster-walk.jpg'); c1.classList.add('on');
-    c2 = mkClip(v2, 'turn-cu.mp4 · 0:08', 34, 42, 'assets/demo/poster-turn.jpg'); c2.classList.add('on', 'fade', 'sel');
+    c2 = mkClip(v2, 'turn-cu.mp4 · 0:08', 34, 42, 'assets/demo/poster-turn.jpg'); c2.classList.add('on', 'sel');
     c2.querySelectorAll('.kf').forEach(function(k){ k.classList.add('on'); });
+    var fpl = addOpacityLine(c2); fpl.setAttribute('points', '0,86 23.8,14 100,14');
+    addOpacityKey(c2, 0, 86); addOpacityKey(c2, 23.8, 14);
     ac = mkAudio(a1); ac.classList.add('on');
-    document.getElementById('vd-trans').textContent = 'Fade';
-    document.getElementById('vd-trans').classList.add('fade');
     p2.style.opacity = 1;
     sim.cursor.style.opacity = 0;
     sim.stage.querySelector('.fd-caption').textContent = 'Fade transitions · keyframes · audio lanes';
