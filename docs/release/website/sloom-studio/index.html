@@ -7,7 +7,7 @@
 <meta name="description" content="Signal Loom is a local-first creative instrument: node-graph Flow, a layered Image editor, print-ready Paper layout, and a Video timeline — four standalone tools under one .sloom project. AI with your own keys, or none at all. One-time purchase." />
 <meta name="theme-color" content="#04070d" />
 <meta property="og:title" content="Signal Loom" />
-<meta property="og:description" content="A studio for generative media — one you own. Four workspaces, one project, bring your own keys. One-time $9.99, no subscription." />
+<meta property="og:description" content="A studio for generative media — one you own. Four standalone workspaces, one project, bring your own keys. One-time $9.99, no subscription." />
 <meta property="og:image" content="https://sloom.studio/assets/graphics/feature-graphic-1024x500.png" />
 <meta property="og:url" content="https://sloom.studio/" />
 <meta property="og:type" content="website" />
@@ -18,6 +18,9 @@
 <link rel="canonical" href="https://sloom.studio/" />
 <link rel="me" href="https://mastodon.social/@SloomStudio" />
 <link rel="icon" type="image/png" href="assets/graphics/icon-512.png" />
+<link rel="preload" href="assets/fonts/space-grotesk-latin-var.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="preload" href="assets/fonts/inter-latin-var.woff2?v=2" as="font" type="font/woff2" crossorigin />
+<script>document.documentElement.classList.add('js')</script>
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -25,7 +28,7 @@
   "name": "Signal Loom",
   "applicationCategory": "MultimediaApplication",
   "operatingSystem": "Windows, Linux",
-  "description": "A local-first, bring-your-own-key AI media studio: node-graph Flow, a layered image editor, a comic/print page layout, and a video timeline — one project, your own API keys. One-time purchase, no subscription.",
+  "description": "A local-first, bring-your-own-key AI media studio: node-graph Flow, a layered image editor, a comic/print page layout, and a video timeline — four standalone tools under one project. AI is optional. One-time purchase, no subscription.",
   "url": "https://sloom.studio/",
   "image": "https://sloom.studio/assets/graphics/feature-graphic-1024x500.png",
   "brand": { "@type": "Brand", "name": "Sloom Studio" },
@@ -39,187 +42,431 @@
 }
 </script>
 <style>
+  /* ── self-hosted type — no third-party requests, same as the app ── */
+  @font-face{font-family:"Space Grotesk";src:url("assets/fonts/space-grotesk-latin-var.woff2") format("woff2");
+    font-weight:300 700;font-style:normal;font-display:swap}
+  @font-face{font-family:"Inter";src:url("assets/fonts/inter-latin-var.woff2?v=2") format("woff2");
+    font-weight:100 900;font-style:normal;font-display:swap}
+
   :root{
-    --bg:#04070d; --bg-2:#070c16; --panel:#0a111e; --panel-2:#0c1422;
-    --ink:#e9f6ff; --ink-2:#9fb4cb; --ink-3:#5d728c;
-    --line:#16263b; --line-2:#22384f;
-    --cyan:#34d9ff; --pink:#ff45b1; --gold:#ffb53d; --green:#67f0ad;
+    color-scheme:dark;
+    --bg:#04070d; --panel:#080d17cc; --panel-2:#0b111d;
+    --ink:#edf3fa; --ink-2:#97a5ba; --ink-3:#5c6a80;
+    --line:rgba(150,182,220,.11); --line-2:rgba(150,182,220,.22);
+    --accent:#3fd6ff; --pink:#ff5cb8; --gold:#ffb53d; --green:#5ce6a1;
+    --wire:#2ea8cf;
+    --display:"Space Grotesk","Inter",system-ui,sans-serif;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
     --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
-    --sans:"Inter var",Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --ease:cubic-bezier(.22,.61,.2,1);
   }
   *{box-sizing:border-box}
-  html{scroll-behavior:smooth}
+  html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
   body{
     margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
-    -webkit-font-smoothing:antialiased;line-height:1.5;overflow-x:hidden;
+    font-size:16.5px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:clip;
+    font-feature-settings:"cv11","ss01";
   }
-  /* dot-grid like the app canvas */
+  ::selection{background:rgba(63,214,255,.25);color:#fff}
+  a{color:inherit;text-decoration:none}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+  .mono{font-family:var(--mono);letter-spacing:.14em;text-transform:uppercase}
+
+  /* ── the infinite node-editor canvas the whole site lives on ── */
   body::before{
     content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
-    background-image:radial-gradient(rgba(120,160,200,.10) 1px,transparent 1px);
-    background-size:30px 30px;mask-image:linear-gradient(180deg,#000,transparent 60%);opacity:.5;
+    background-image:radial-gradient(rgba(120,160,200,.13) 1px,transparent 1px);
+    background-size:30px 30px;
   }
-  a{color:inherit;text-decoration:none}
-  .wrap{width:min(1180px,92vw);margin-inline:auto;position:relative;z-index:1}
-  .mono{font-family:var(--mono);letter-spacing:.16em;text-transform:uppercase}
+  body::after{ /* vignette so the canvas breathes */
+    content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 0%,transparent 40%,rgba(2,4,8,.7) 100%);
+  }
 
-  /* ── instrument top bar ── */
-  header.bar{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);
-    background:linear-gradient(180deg,rgba(4,7,13,.92),rgba(4,7,13,.66));border-bottom:1px solid var(--line)}
-  .bar-in{display:flex;align-items:center;gap:18px;height:58px}
-  .brand{display:flex;align-items:center;gap:11px;font-weight:700;letter-spacing:.02em}
-  .brand img{width:30px;height:30px;border-radius:8px;border:1px solid var(--line-2)}
-  .brand b{font-size:.96rem}
-  .bar nav{margin-left:auto;display:flex;gap:4px}
-  .bar nav a{font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;
-    color:var(--ink-2);padding:8px 12px;border-radius:7px}
-  .bar nav a:hover{color:var(--ink);background:rgba(52,217,255,.08)}
-  .btn{display:inline-flex;align-items:center;gap:8px;font-weight:650;font-size:.86rem;
-    padding:10px 16px;border-radius:9px;border:1px solid transparent;cursor:pointer;transition:.16s}
-  .btn-primary{background:var(--cyan);color:#021018;box-shadow:0 0 0 1px rgba(52,217,255,.5),0 10px 30px -12px rgba(52,217,255,.7)}
-  .btn-primary:hover{background:#7be6ff;transform:translateY(-1px)}
-  .btn-ghost{border-color:var(--line-2);color:var(--ink);background:rgba(255,255,255,.02)}
-  .btn-ghost:hover{border-color:var(--cyan);color:#fff}
-  .bar .btn{padding:8px 14px;font-size:.78rem}
+  /* ── the wire that runs the page ── */
+  #wiresvg{position:absolute;top:0;left:0;width:100%;z-index:1;pointer-events:none;overflow:visible}
+  #wirepath{fill:none;stroke:var(--wire);stroke-width:1.6;opacity:.9;
+    filter:drop-shadow(0 0 6px rgba(63,214,255,.35))}
+  #wirepath.undrawn{opacity:0}
+  .pulse{fill:#bfefff;filter:drop-shadow(0 0 8px rgba(63,214,255,.9))}
 
-  /* ── hero ── */
-  .hero{position:relative;padding-block:clamp(56px,8vw,108px)}
-  #loom{position:absolute;inset:0;width:100%;height:100%;z-index:0;opacity:.9;pointer-events:none}
-  .hero .wrap{display:grid;grid-template-columns:1.04fr .96fr;gap:46px;align-items:center}
-  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.24em;color:var(--cyan);
-    display:flex;align-items:center;gap:10px;margin-bottom:22px}
-  .eyebrow::before{content:"";width:26px;height:1px;background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
-  h1.display{font-size:clamp(2.5rem,5.4vw,4.4rem);line-height:.98;letter-spacing:-.03em;
-    font-weight:800;margin:0 0 22px}
-  h1.display .dim{color:var(--ink-2);font-weight:300}
-  .lead{font-size:clamp(1.04rem,1.5vw,1.24rem);color:var(--ink-2);max-width:30em;margin:0 0 28px}
-  .cta{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:30px}
-  .spec{display:flex;flex-wrap:wrap;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;
-    font-family:var(--mono);font-size:.66rem;letter-spacing:.13em;color:var(--ink-2);background:rgba(8,14,24,.6)}
-  .spec span{padding:9px 14px;border-right:1px solid var(--line)}
-  .spec span:last-child{border-right:0}
-  .spec b{color:var(--ink)}
+  /* ── run bar (top) ── */
+  header.bar{position:fixed;top:0;left:0;right:0;z-index:50;backdrop-filter:blur(16px);
+    background:linear-gradient(180deg,rgba(4,7,13,.88),rgba(4,7,13,.55));border-bottom:1px solid var(--line)}
+  .bar-in{display:flex;align-items:center;gap:18px;height:56px;padding-inline:clamp(14px,3vw,28px)}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:640;font-size:.93rem}
+  .brand img{width:26px;height:26px;border-radius:6px}
+  .runchip{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:.6rem;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:6px 12px}
+  .runchip i{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px rgba(92,230,161,.9);
+    animation:blink 2.4s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+  .runchip b{color:var(--ink-2);font-weight:600}
+  .bar nav{margin-left:auto;display:flex;gap:2px}
+  .bar nav a{font-size:.82rem;font-weight:480;color:var(--ink-2);padding:8px 11px;border-radius:8px;transition:color .15s}
+  .bar nav a:hover{color:var(--ink)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:560;font-size:.9rem;
+    padding:11px 19px;border-radius:10px;border:1px solid transparent;cursor:pointer;
+    transition:transform .18s var(--ease),background .18s,border-color .18s;white-space:nowrap}
+  .btn-primary{background:var(--ink);color:#0a0f17;box-shadow:0 1px 0 rgba(255,255,255,.25) inset,0 14px 34px -18px rgba(180,220,255,.45)}
+  .btn-primary:hover{transform:translateY(-1px);background:#fff}
+  .btn-ghost{border-color:var(--line-2);color:var(--ink);background:rgba(8,13,23,.5)}
+  .btn-ghost:hover{border-color:rgba(150,182,220,.4)}
+  .bar .btn{padding:7px 14px;font-size:.8rem}
 
-  /* app-window "monitor" frame */
-  .monitor{border:1px solid var(--line-2);border-radius:14px;overflow:hidden;background:#050a13;
-    box-shadow:0 40px 90px -40px #000,0 0 60px -30px rgba(52,217,255,.4);position:relative}
-  .monitor .chrome{display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid var(--line);
-    background:linear-gradient(180deg,#0c1422,#080f1b)}
-  .dot{width:10px;height:10px;border-radius:50%}
-  .chrome .label{margin-left:10px;font-family:var(--mono);font-size:.64rem;letter-spacing:.16em;color:var(--ink-3)}
+  /* ── minimap (a node editor has one; so does the site) ── */
+  #minimap{position:fixed;right:16px;top:50%;transform:translateY(-50%);z-index:60;width:54px;
+    border:1px solid var(--line-2);border-radius:10px;background:rgba(5,9,17,.85);backdrop-filter:blur(8px);
+    padding:7px;cursor:pointer;display:none}
+  .js #minimap{display:block}
+  #minimap .mm-label{font-family:var(--mono);font-size:.42rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--ink-3);text-align:center;margin-bottom:6px}
+  #mm-track{position:relative;width:100%;height:280px}
+  #mm-track::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--line-2)}
+  .mm-node{position:absolute;left:14%;width:72%;border-radius:3px;background:rgba(150,182,220,.16);
+    border:1px solid rgba(150,182,220,.22);min-height:6px;transition:background .3s,border-color .3s}
+  .mm-node.ran{background:rgba(63,214,255,.3);border-color:rgba(63,214,255,.5)}
+  #mm-view{position:absolute;left:-4px;right:-4px;border:1px solid rgba(63,214,255,.7);border-radius:4px;
+    background:rgba(63,214,255,.07);box-shadow:0 0 10px -2px rgba(63,214,255,.4)}
+  @media(max-width:1220px){.js #minimap{display:none}}
+
+  /* ── nodes (every section IS a node) ── */
+  main{position:relative;z-index:2;padding-top:56px}
+  .graph{width:min(1120px,94vw);margin-inline:auto;position:relative}
+  .node{position:relative;margin-block:clamp(90px,14vh,170px);border:1px solid var(--line-2);border-radius:16px;
+    background:linear-gradient(180deg,rgba(9,14,24,.92),rgba(7,11,19,.88));backdrop-filter:blur(6px);
+    box-shadow:0 40px 90px -50px #000}
+  .node-head{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);
+    font-family:var(--mono);font-size:.62rem;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);
+    background:linear-gradient(180deg,rgba(150,182,220,.045),transparent);border-radius:16px 16px 0 0}
+  .node-head .nid{color:var(--accent);font-weight:600}
+  .node-head .ntype{border:1px solid var(--line);border-radius:999px;padding:2px 9px;color:var(--ink-3)}
+  .node-head .nstate{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .node-head .nstate i{width:6px;height:6px;border-radius:50%;background:var(--ink-3);transition:.4s}
+  .node-head .nstate .txt::after{content:"idle"}
+  .node.ran .node-head .nstate i{background:var(--green);box-shadow:0 0 8px rgba(92,230,161,.9)}
+  .node.ran .node-head .nstate .txt::after{content:"ran ✓";color:var(--green)}
+  .node-body{padding:clamp(26px,4.5vw,54px)}
+  /* ports — where the page's cable plugs in and out */
+  .port{position:absolute;width:12px;height:12px;border-radius:50%;background:#0a1420;border:2px solid var(--wire);
+    z-index:3;box-shadow:0 0 0 3px rgba(63,214,255,.08)}
+  .port.in{top:-7px} .port.out{bottom:-7px}
+  .node.ran .port.in,.node.done .port.out{background:var(--accent);box-shadow:0 0 12px rgba(63,214,255,.8)}
+
+  /* ── shared type inside nodes ── */
+  .kicker{font-family:var(--mono);font-size:.64rem;letter-spacing:.24em;text-transform:uppercase;color:var(--ink-3);
+    display:flex;align-items:center;gap:12px;margin:0 0 20px}
+  .kicker i{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent);flex:none}
+  h1.display{font-family:var(--display);font-weight:560;
+    font-size:clamp(2.6rem,5.5vw,4.5rem);line-height:1;letter-spacing:-.03em;margin:0 0 24px}
+  h1.display em,h2 em{font-style:normal;
+    background:linear-gradient(100deg,#66dfff,#8f7bff 90%);-webkit-background-clip:text;background-clip:text;color:transparent}
+  h2{font-family:var(--display);font-weight:540;
+    font-size:clamp(1.8rem,3.2vw,2.7rem);line-height:1.04;letter-spacing:-.025em;margin:0 0 16px}
+  .sub{color:var(--ink-2);max-width:46em;font-size:1rem;line-height:1.7;margin:0}
+  .sub b{color:var(--ink);font-weight:540}
+  .sub+.sub{margin-top:14px}
+
+  /* ── node 01 · prompt (hero) ── */
+  #prompt .node-body{display:grid;grid-template-columns:1.04fr .96fr;gap:clamp(36px,4.5vw,64px);align-items:center;position:relative;overflow:hidden;border-radius:0 0 16px 16px}
+  #loom{position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:.85}
+  #prompt .node-body>*:not(#loom){position:relative;z-index:1}
+  .lead{font-size:clamp(1rem,1.35vw,1.14rem);color:var(--ink-2);max-width:34em;margin:0 0 12px;line-height:1.72}
+  .lead b{color:var(--ink);font-weight:540}
+  .lead-2{font-size:.96rem;color:var(--ink-3);max-width:34em;margin:0 0 30px}
+  .lead-2 b{color:var(--ink-2);font-weight:520}
+  .cta{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:26px}
+  .weaveline{font-family:var(--mono);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);
+    border-top:1px solid var(--line);padding-top:16px;line-height:2}
+  .weaveline b{color:var(--ink-2)}
+  .weaveline a{color:var(--accent);cursor:pointer}
+  .facts{display:flex;flex-wrap:wrap;gap:8px 0;margin-top:6px;
+    font-family:var(--mono);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3)}
+  .facts span{display:flex;align-items:center}
+  .facts span+span::before{content:"";width:3px;height:3px;border-radius:50%;background:var(--ink-3);margin-inline:12px;opacity:.6}
+  .facts b{color:var(--ink-2);font-weight:600;margin-right:5px}
+
+  /* app-window frame */
+  .monitor{border:1px solid var(--line-2);border-radius:13px;overflow:hidden;background:#050a13;
+    box-shadow:0 50px 100px -48px #000,0 0 80px -50px rgba(63,214,255,.45);position:relative}
+  .monitor .chrome{display:flex;align-items:center;gap:10px;padding:10px 15px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#0a101c,#070c15)}
+  .monitor .chrome i{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px rgba(92,230,161,.8);flex:none}
+  .chrome .label{font-family:var(--mono);font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+  .chrome .meta{margin-left:auto;font-family:var(--mono);font-size:.56rem;letter-spacing:.12em;color:var(--ink-3);opacity:.7}
   .monitor img{display:block;width:100%}
-  .readout{position:absolute;right:-14px;bottom:-16px;border:1px solid var(--line-2);border-radius:10px;
-    background:rgba(4,8,16,.94);backdrop-filter:blur(10px);padding:11px 14px;font-family:var(--mono);
-    font-size:.62rem;letter-spacing:.12em;color:var(--ink-2);box-shadow:0 18px 40px -20px #000}
+  .readout{position:absolute;right:14px;bottom:14px;border:1px solid var(--line-2);border-radius:9px;
+    background:rgba(5,9,17,.92);backdrop-filter:blur(10px);padding:9px 13px;font-family:var(--mono);
+    font-size:.58rem;letter-spacing:.13em;color:var(--ink-2)}
   .readout b{color:var(--green)}
 
-  /* ── section scaffolding ── */
-  section{position:relative;padding-block:clamp(54px,7vw,96px);border-top:1px solid var(--line)}
-  .seclabel{font-family:var(--mono);font-size:.72rem;letter-spacing:.22em;color:var(--ink-3);
-    display:flex;align-items:center;gap:14px;margin-bottom:26px}
-  .seclabel b{color:var(--cyan)}
-  .seclabel::after{content:"";flex:1;height:1px;background:var(--line)}
-  h2{font-size:clamp(1.7rem,3vw,2.6rem);letter-spacing:-.02em;font-weight:750;margin:0 0 14px}
-  .sub{color:var(--ink-2);max-width:40em;font-size:1.04rem}
-
-  /* ── the workstation (interactive) ── */
-  .station{display:grid;grid-template-columns:230px 1fr;gap:26px;margin-top:34px}
+  /* ── node 02 · workstation ── */
+  .station{display:grid;grid-template-columns:230px 1fr;gap:26px;margin-top:38px}
   .tabs{display:flex;flex-direction:column;gap:8px}
   .tab{display:flex;gap:12px;align-items:flex-start;text-align:left;cursor:pointer;border:1px solid var(--line);
-    background:var(--panel);border-radius:11px;padding:13px 14px;transition:.15s;color:var(--ink-2)}
+    background:transparent;border-radius:12px;padding:13px 14px;transition:.18s var(--ease);color:var(--ink-2);font-family:var(--sans)}
   .tab:hover{border-color:var(--line-2);color:var(--ink)}
-  .tab[aria-selected="true"]{border-color:var(--accent,var(--cyan));color:#fff;
-    background:linear-gradient(180deg,rgba(52,217,255,.10),transparent)}
-  .tab .k{font-family:var(--mono);font-size:.62rem;letter-spacing:.1em;color:var(--accent,var(--cyan));margin-top:2px}
-  .tab .n{font-weight:680;font-size:.96rem;line-height:1.2}
-  .tab .d{font-size:.76rem;color:var(--ink-3);margin-top:3px}
+  .tab[aria-selected="true"]{border-color:var(--line-2);color:var(--ink);background:linear-gradient(180deg,rgba(150,182,220,.06),transparent)}
+  .tab .k{width:8px;height:8px;border-radius:50%;background:var(--accent,var(--accent));margin-top:7px;flex:none;
+    box-shadow:0 0 0 3px color-mix(in srgb,var(--accent,#3fd6ff) 14%,transparent);opacity:.45;transition:opacity .18s}
+  .tab[aria-selected="true"] .k,.tab:hover .k{opacity:1}
+  .tab .n{font-weight:560;font-size:.95rem;line-height:1.25}
+  .tab .d{display:block;font-size:.77rem;color:var(--ink-3);margin-top:3px;font-weight:420}
   .stage .monitor img{aspect-ratio:2560/1600;object-fit:cover}
-  .stage-info{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
-  .chip{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;color:var(--ink-2);
-    border:1px solid var(--line);border-radius:7px;padding:7px 11px;background:rgba(8,14,24,.5)}
-  .chip b{color:var(--accent,var(--cyan))}
+  .stage-info{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+  .chip{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);
+    border:1px solid var(--line);border-radius:999px;padding:6px 12px;display:inline-flex;align-items:center;gap:8px}
+  .chip::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--accent,#3fd6ff)}
+  .credo{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(22px,3vw,40px);margin-top:clamp(40px,5vw,60px)}
+  .credo>div{border-top:1px solid var(--line-2);padding-top:20px}
+  .credo .kick{font-family:var(--mono);font-size:.58rem;letter-spacing:.22em;text-transform:uppercase;color:var(--ink-3);margin-bottom:12px}
+  .credo h3{font-family:var(--display);font-weight:540;font-size:1.36rem;letter-spacing:-.02em;margin:0 0 9px;line-height:1.12}
+  .credo p{margin:0;color:var(--ink-2);font-size:.92rem;line-height:1.68}
 
-  /* ── patch bay (providers) ── */
-  .bay{margin-top:30px;border:1px solid var(--line);border-radius:14px;background:var(--panel);overflow:hidden}
-  .bay-head{display:flex;flex-wrap:wrap;gap:14px;align-items:baseline;justify-content:space-between;
-    padding:16px 20px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:.68rem;
-    letter-spacing:.14em;color:var(--ink-3)}
-  .jacks{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line)}
-  .jack{background:var(--panel);padding:18px 16px;display:flex;align-items:center;gap:12px}
-  .jack i{width:11px;height:11px;border-radius:50%;border:2px solid var(--cyan);box-shadow:0 0 0 2px rgba(52,217,255,.12);flex:none}
-  .jack span{font-size:.9rem;font-weight:600}
-  .jack small{display:block;font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;color:var(--ink-3);margin-top:2px}
+  /* ── node 04 · patch bay ── */
+  .jacks{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:13px;overflow:hidden;margin-top:34px}
+  .jack{background:#0a101b;padding:18px 16px;display:flex;flex-direction:column;gap:3px;transition:background .2s}
+  .jack:hover{background:var(--panel-2)}
+  .jack span{font-size:.9rem;font-weight:540;display:flex;align-items:center;gap:9px}
+  .jack span::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 8px rgba(63,214,255,.5);flex:none}
+  .jack small{font-family:var(--mono);font-size:.56rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);padding-left:15px}
+  .jack.quiet span::before{background:var(--ink-3);box-shadow:none}
+  .jack.quiet span{color:var(--ink-2);font-weight:460}
+  .mini{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px}
+  .card{border:1px solid var(--line);border-radius:13px;background:transparent;padding:22px;transition:border-color .2s}
+  .card:hover{border-color:var(--line-2)}
+  .card h3{margin:0 0 8px;font-size:.98rem;font-weight:560;display:flex;align-items:center;gap:10px}
+  .card .tag{font-family:var(--mono);font-size:.54rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent2,var(--accent));
+    border:1px solid var(--line);border-radius:999px;padding:3px 9px;font-weight:500}
+  .card p{margin:0;color:var(--ink-2);font-size:.88rem;line-height:1.65}
 
-  /* feature mini-grid */
-  .mini{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:30px}
-  .card{border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:20px}
-  .card h3{margin:0 0 7px;font-size:1.02rem;display:flex;align-items:center;gap:9px}
-  .card .tag{font-family:var(--mono);font-size:.58rem;letter-spacing:.12em;color:var(--accent,var(--cyan));
-    border:1px solid var(--line-2);border-radius:5px;padding:2px 7px}
-  .card p{margin:0;color:var(--ink-2);font-size:.9rem}
+  /* ── node 05 · image desk ── */
+  .shots{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:36px}
+  .shots figure{margin:0;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#0a101b;
+    display:flex;flex-direction:column;transition:border-color .2s}
+  .shots figure:hover{border-color:var(--line-2)}
+  .shots figure img{display:block;width:100%;height:auto}
+  .shots figcaption{padding:18px 20px 20px;border-top:1px solid var(--line)}
+  .shots figcaption b{display:block;font-family:var(--display);font-weight:540;font-size:1.12rem;letter-spacing:-.015em;margin-bottom:6px}
+  .shots .cap{color:var(--ink-2);font-size:.88rem;line-height:1.65}
+  .shots .cap b{display:inline;font-family:var(--sans);font-size:inherit;font-weight:560;color:var(--ink)}
+  .tagrow{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+  .tagrow em{font-style:normal;font-family:var(--mono);font-size:.55rem;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 10px}
 
-  /* field / phone-as-host */
-  .field{display:grid;grid-template-columns:1fr 1fr;gap:30px;align-items:center;margin-top:30px}
-  .diagram{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:26px}
-  .flowline{display:flex;align-items:center;justify-content:space-between;gap:10px;font-family:var(--mono);
-    font-size:.62rem;letter-spacing:.1em;color:var(--ink-2)}
-  .node{border:1px solid var(--line-2);border-radius:10px;padding:14px 12px;text-align:center;background:var(--panel-2);min-width:0;flex:1}
-  .node b{display:block;color:#fff;font-size:.84rem;letter-spacing:0;text-transform:none;margin-bottom:3px;font-family:var(--sans)}
-  .arrow{color:var(--cyan);flex:none}
-  .phonewrap img{width:100%;border:1px solid var(--line-2);border-radius:16px}
-  /* generative-fill demo: rough sketch → prompt → AI-coloured result */
+  /* ── node 06 · field ── */
+  .field{display:grid;grid-template-columns:.9fr 1.1fr;gap:clamp(30px,4vw,52px);align-items:center;margin-top:36px}
+  .diagram{border:1px solid var(--line);border-radius:13px;background:#0a101b;padding:24px}
+  .flowline{display:flex;align-items:center;justify-content:space-between;gap:12px;font-family:var(--mono);
+    font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2)}
+  .fnode{border:1px solid var(--line-2);border-radius:10px;padding:14px 11px;text-align:center;background:var(--panel-2);min-width:0;flex:1}
+  .fnode b{display:block;color:var(--ink);font-size:.84rem;letter-spacing:0;text-transform:none;margin-bottom:4px;font-family:var(--sans);font-weight:560}
+  .arrow{color:var(--accent);flex:none;opacity:.8}
   .bademo{position:relative;aspect-ratio:1344/2389;width:100%;border:1px solid var(--line-2);border-radius:16px;overflow:hidden;background:#04070d}
-  .bademo .fr{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border:0;border-radius:0;opacity:0;animation:baFade 13.5s infinite}
+  .bademo .fr{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;animation:baFade 13.5s infinite}
   .bademo .fr2{animation-delay:4.5s} .bademo .fr3{animation-delay:9s}
   .bademo .balabel{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);max-width:92%;text-align:center;white-space:nowrap;
-    font-family:var(--mono);font-size:.58rem;letter-spacing:.05em;color:var(--ink);background:rgba(4,8,16,.9);
+    font-family:var(--mono);font-size:.56rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);background:rgba(4,8,16,.9);
     border:1px solid var(--line-2);border-radius:999px;padding:7px 14px;opacity:0;animation:baFade 13.5s infinite;backdrop-filter:blur(6px)}
-  .bademo .balabel b{color:var(--cyan);margin-right:7px}
+  .bademo .balabel b{color:var(--accent);margin-right:8px;font-weight:600}
   .bademo .bl2{animation-delay:4.5s} .bademo .bl3{animation-delay:9s}
   @keyframes baFade{0%{opacity:0}6%{opacity:1}30%{opacity:1}36%{opacity:0}100%{opacity:0}}
   @media(prefers-reduced-motion:reduce){.bademo .fr,.bademo .balabel{animation:none}.bademo .fr3,.bademo .bl3{opacity:1}}
+  .fieldnote{display:flex;gap:16px;align-items:flex-start;margin-top:26px;padding:20px 22px;border:1px solid var(--line);border-radius:14px}
+  .fieldnote .ic{font-size:1.4rem;line-height:1.3;flex:none;filter:saturate(.7)}
+  .fieldnote b{display:block;font-size:.98rem;font-weight:560;margin-bottom:4px}
+  .fieldnote p{color:var(--ink-2);font-size:.88rem;line-height:1.65;margin:0}
+  .fieldnote a{color:var(--accent)}
 
-  /* license */
-  .license{margin-top:30px;display:grid;grid-template-columns:1.1fr .9fr;gap:0;border:1px solid var(--line-2);
-    border-radius:16px;overflow:hidden;background:var(--panel)}
-  .license .left{padding:30px 32px}
-  .license .price{font-size:clamp(3rem,6vw,4.4rem);font-weight:800;letter-spacing:-.03em;line-height:1}
-  .license .price small{font-size:1.1rem;color:var(--ink-2);font-weight:500;vertical-align:super}
-  .license .strike{font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;color:var(--ink-3);margin-top:8px}
+  /* ── node 07 · license ── */
+  .license{margin-top:36px;display:grid;grid-template-columns:1.08fr .92fr;gap:0;border:1px solid var(--line-2);
+    border-radius:15px;overflow:hidden;background:#0a101b}
+  .license .left{padding:32px 34px}
+  .license .price{font-family:var(--display);font-weight:600;font-size:clamp(3rem,5.5vw,4.2rem);letter-spacing:-.035em;line-height:1}
+  .license .price small{font-size:1.3rem;color:var(--ink-2);font-weight:400;vertical-align:38%}
+  .license .strike{font-family:var(--mono);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin-top:11px}
   .license .strike s{color:var(--ink-3)}
-  .license ul{list-style:none;padding:0;margin:18px 0 0;display:grid;gap:9px}
-  .license li{display:flex;gap:10px;color:var(--ink-2);font-size:.92rem}
-  .license li::before{content:"▸";color:var(--green)}
-  .license .right{border-left:1px solid var(--line);padding:30px 32px;background:linear-gradient(180deg,rgba(52,217,255,.05),transparent);
-    display:flex;flex-direction:column;justify-content:center;gap:14px}
-  .license .right .mono{font-size:.64rem;color:var(--ink-3)}
-  .fineprint{color:var(--ink-3);font-size:.78rem;margin-top:14px;max-width:42em}
+  .license ul{list-style:none;padding:0;margin:22px 0 0;display:grid;gap:10px}
+  .license li{display:flex;gap:12px;color:var(--ink-2);font-size:.91rem;line-height:1.55}
+  .license li::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--accent);margin-top:.62em;flex:none}
+  .license .right{border-left:1px solid var(--line);padding:32px 34px;background:linear-gradient(180deg,rgba(63,214,255,.045),transparent);
+    display:flex;flex-direction:column;justify-content:center;gap:11px}
+  .license .right .note{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--ink-3);line-height:1.9;margin-top:6px}
+  .license .right .note b{color:var(--ink-2)}
+  .fineprint{color:var(--ink-3);font-size:.79rem;margin-top:16px;max-width:46em;line-height:1.6}
+  .srcnote{margin-top:20px;color:var(--ink-3);font-size:.86rem;max-width:46em;line-height:1.65}
+  .srcnote a{color:var(--ink-2);border-bottom:1px solid var(--line-2)}
+  .srcnote a:hover{color:var(--ink)}
 
-  footer{border-top:1px solid var(--line);padding-block:34px;margin-top:10px}
-  footer .wrap{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between;
-    font-family:var(--mono);font-size:.66rem;letter-spacing:.1em;color:var(--ink-3)}
-  footer a{color:var(--ink-2)} footer a:hover{color:var(--cyan)}
-  footer nav{display:flex;gap:18px}
+  /* ── node 08 · faq ── */
+  .faq{margin-top:30px;max-width:760px}
+  .faq details{border-top:1px solid var(--line)}
+  .faq details:last-child{border-bottom:1px solid var(--line)}
+  .faq summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;justify-content:space-between;gap:20px;
+    padding:18px 4px;font-size:1rem;font-weight:520;color:var(--ink);transition:color .15s}
+  .faq summary::-webkit-details-marker{display:none}
+  .faq summary::after{content:"+";font-family:var(--display);font-size:1.3rem;font-weight:300;color:var(--ink-3);
+    transition:transform .25s var(--ease);flex:none;line-height:1}
+  .faq details[open] summary::after{transform:rotate(45deg);color:var(--accent)}
+  .faq .a{padding:0 4px 20px;color:var(--ink-2);font-size:.91rem;line-height:1.7;max-width:60ch}
+  .faq .a b{color:var(--ink);font-weight:540}
+  .faq .a a{color:var(--accent)}
 
-  @media(max-width:900px){
-    .hero .wrap,.field,.license{grid-template-columns:1fr}
+  /* ── terminal node (footer) ── */
+  #terminal .node-body{font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;line-height:2.2;color:var(--ink-2)}
+  #terminal .p{color:var(--green)}
+  #terminal .dim{color:var(--ink-3)}
+  #terminal a{color:var(--ink-2);border-bottom:1px solid var(--line-2)}
+  #terminal a:hover{color:var(--accent);border-color:var(--accent)}
+  .legal{width:min(1120px,94vw);margin:26px auto 40px;display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;
+    font-family:var(--mono);font-size:.58rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);position:relative;z-index:2}
+
+  /* ── node 03 · the flow-demo replay (a mock of the real workspace) ── */
+  .fd-wrap{margin-top:34px;border:1px solid var(--line-2);border-radius:14px;overflow:hidden;background:#050a13;
+    box-shadow:0 50px 100px -48px #000}
+  .fd-stage{position:relative;width:100%;aspect-ratio:1100/640;container-type:inline-size;
+    font-size:clamp(6px,1.1cqw,12px);overflow:hidden}
+  .fd-stage *{box-sizing:border-box}
+  .fd-chrome{position:absolute;inset:0 0 auto 0;height:6.2%;display:flex;align-items:center;gap:1em;
+    padding-inline:1.4em;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0a101c,#070c15);
+    font-family:var(--mono);font-size:.95em;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);z-index:6}
+  .fd-chrome i{width:.7em;height:.7em;border-radius:50%;background:var(--green);box-shadow:0 0 8px rgba(92,230,161,.8)}
+  .fd-ws{margin-left:auto;display:flex;gap:.4em}
+  .fd-ws b{width:2em;height:2em;display:grid;place-items:center;border:1px solid var(--line);border-radius:.4em;
+    font-weight:600;color:var(--ink-3)}
+  .fd-ws b.on{color:var(--accent);border-color:rgba(63,214,255,.4);background:rgba(63,214,255,.08)}
+  .fd-canvas{position:absolute;inset:6.2% 0 0 0;
+    background-image:radial-gradient(rgba(120,160,200,.14) 1px,transparent 1px);background-size:2.4em 2.4em}
+  /* stage coordinates: 1100 × 600 design units — 1 unit = 0.0909cqw */
+  .fd-canvas>*{position:absolute}
+  .fd-node{border:1px solid color-mix(in srgb,var(--nc,#6b7280) 35%,transparent);border-radius:.85em;z-index:3;
+    background:linear-gradient(155deg,color-mix(in srgb,var(--nc,#6b7280) 14%,#1e2027),#1e2027 34%,#15171d);
+    box-shadow:0 1.4em 3em -1.6em #000;opacity:0;transform:scale(.85);transition:opacity .45s var(--ease),transform .45s var(--ease);
+    width:15.3cqw}
+  .fd-node.on{opacity:1;transform:none}
+  .fd-node,.fd-node *{font-size:inherit}
+  .fd-nh{display:flex;align-items:center;gap:.6em;padding:.7em .9em;border-radius:.85em .85em 0 0;
+    background:linear-gradient(90deg,color-mix(in srgb,var(--nc,#6b7280) 20%,transparent),rgba(37,40,48,.82));
+    border-bottom:1px solid color-mix(in srgb,var(--nc,#6b7280) 25%,transparent);
+    font-family:var(--mono);font-size:.92em;letter-spacing:.08em;text-transform:uppercase;color:#e5e7eb;white-space:nowrap;overflow:hidden}
+  .fd-nh>b{margin-left:auto;font-weight:400;color:color-mix(in srgb,var(--nc,#6b7280) 80%,#fff)}
+  .fd-nh i{width:.6em;height:.6em;border-radius:50%;background:var(--nc);box-shadow:0 0 6px var(--nc);flex:none}
+  .fd-nh u{margin-left:auto;text-decoration:none;color:color-mix(in srgb,var(--nc,#6b7280) 85%,#fff);
+    border:1px solid color-mix(in srgb,var(--nc,#6b7280) 40%,transparent);border-radius:99em;padding:.05em .55em;font-size:.9em}
+  .fd-nh em{font-style:normal;color:var(--accent);opacity:0;margin-left:-.35em}
+  .fd-node.editing .fd-nh em{opacity:1;animation:fdblink .8s steps(1) infinite}
+  @keyframes fdblink{50%{opacity:0}}
+  .fd-thumb{margin:.6em;border-radius:.45em;overflow:hidden;background:#0a0f18}
+  .fd-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .fd-ta{margin:.6em;border:1px solid var(--line);border-radius:.45em;background:#0a0f18;min-height:5.4em;
+    padding:.6em .7em;font-family:var(--mono);font-size:.95em;color:var(--ink-2);line-height:1.5}
+  .fd-ta em{font-style:normal;color:var(--accent);animation:fdblink .8s steps(1) infinite}
+  .fd-prov{display:flex;align-items:baseline;gap:.6em;padding:.55em .9em;border-bottom:1px solid var(--line);
+    font-size:.95em;color:var(--ink)}
+  .fd-prov small{font-family:var(--mono);font-size:.78em;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+  .fd-result{position:relative;margin:.6em;height:14.5cqw;border-radius:.45em;overflow:hidden;background:#0a0f18;
+    border:1px dashed var(--line-2)}
+  .fd-result img{width:100%;height:100%;object-fit:cover;object-position:top;opacity:0;transition:opacity .6s;display:block}
+  .fd-result.done{border-style:solid}
+  .fd-result.done img{opacity:1}
+  .fd-await{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--mono);font-size:.85em;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);transition:opacity .3s}
+  .fd-result.done .fd-await,.fd-result.running .fd-await{opacity:0}
+  .fd-progress{position:absolute;left:8%;right:8%;top:50%;height:.5em;border-radius:99em;background:rgba(150,182,220,.12);
+    opacity:0;transition:opacity .3s}
+  .fd-result.running .fd-progress{opacity:1}
+  .fd-progress i{display:block;height:100%;width:0%;border-radius:99em;background:linear-gradient(90deg,var(--accent),#8f7bff);
+    box-shadow:0 0 8px rgba(63,214,255,.6);transition:width 2.4s linear}
+  .fd-result.running .fd-progress i{width:100%}
+  .fd-gen{display:block;margin:.35em .6em .7em;width:calc(100% - 1.2em);padding:.55em;border-radius:.45em;
+    border:1px solid rgba(63,214,255,.35);background:rgba(63,214,255,.1);color:var(--accent);
+    font-family:var(--mono);font-size:.9em;letter-spacing:.14em;text-transform:uppercase;pointer-events:none;transition:.15s}
+  .fd-gen.pressed{transform:scale(.96);background:rgba(63,214,255,.28);color:#fff}
+  .fd-port{position:absolute;width:1.3em;height:1.3em;border-radius:50%;background:#3b82f6;border:.24em solid #1e2027;z-index:4;transition:background .25s,box-shadow .25s}
+  .fd-port.out{right:-.75em;top:50%;margin-top:-.65em}
+  .fd-port.in{left:-.75em;top:50%;margin-top:-.65em}
+  .fd-port.in.i1{top:34%}.fd-port.in.i2{top:52%}.fd-port.in.i3{top:70%}
+  .fd-port.hot{background:#22c55e;box-shadow:0 0 .8em rgba(34,197,94,.8)}
+  .fd-svg{inset:0;width:100%;height:100%;z-index:2;overflow:visible;position:absolute}
+  .fd-svg path{fill:none;stroke-width:.18cqw;stroke-linecap:round}
+  .fd-items{padding:.5em .6em .7em;display:grid;gap:.5em}
+  .fd-item{display:flex;align-items:center;gap:.6em;border:1px solid var(--line);border-radius:.45em;padding:.4em .5em;
+    font-family:var(--mono);font-size:.85em;color:var(--ink-2);background:#0a0f18;overflow:hidden;white-space:nowrap}
+  .fd-item img{width:1.9em;height:1.9em;border-radius:.3em;object-fit:cover;flex:none}
+  .fd-item.new{border-color:rgba(63,214,255,.55);box-shadow:0 0 1em -0.2em rgba(63,214,255,.7);color:var(--ink)}
+  .fd-lib{top:1em;bottom:1.6em;left:1em;width:25.5cqw;background:rgba(13,15,21,.94);border:1px solid rgba(110,125,150,.4);
+    border-radius:1em;backdrop-filter:blur(8px);z-index:5;box-shadow:0 2em 4em -2em #000;
+    transform:translateX(calc(-100% - 2.5em));transition:transform .6s var(--ease);padding:1em;display:flex;flex-direction:column;gap:.6em}
+  .fd-lib.open{transform:none}
+  .fd-lib-h{font-family:var(--mono);font-size:.95em;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3);
+    border-bottom:1px solid var(--line);padding-bottom:.7em}
+  .fd-lib-env{font-family:var(--mono);font-size:.9em;letter-spacing:.06em;color:var(--ink);padding:.3em 0}
+  .fd-lib-env u{text-decoration:none;color:#d8b4fe;border:1px solid rgba(192,132,252,.45);border-radius:99em;padding:.02em .5em;margin-left:.4em}
+  .fd-lib-item{display:flex;align-items:center;gap:.6em;border:1px solid var(--line);border-radius:.45em;padding:.45em .55em;
+    font-family:var(--mono);font-size:.85em;color:var(--ink-2);background:#0a0f18;margin-left:1em;white-space:nowrap;overflow:hidden}
+  .fd-lib-item img{width:2em;height:2em;border-radius:.3em;object-fit:cover;flex:none}
+  .fd-lib-item.new{opacity:0;transform:translateY(.5em);transition:.5s var(--ease)}
+  .fd-lib.open .fd-lib-item.new{opacity:1;transform:none;border-color:rgba(63,214,255,.55);color:var(--ink);
+    box-shadow:0 0 1em -0.2em rgba(63,214,255,.7)}
+  .fd-libtab{top:38%;left:0;z-index:4;writing-mode:vertical-rl;transform:rotate(180deg);border:1px solid var(--line-2);border-right:0;
+    border-radius:.5em 0 0 .5em;padding:.8em .35em;background:rgba(11,17,29,.95);font-family:var(--mono);
+    font-size:.85em;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3)}
+  .fd-cursor{z-index:9;left:50%;top:80%;transition:left .8s var(--ease),top .8s var(--ease);filter:drop-shadow(0 2px 6px #000)}
+  .fd-cursor i{position:absolute;left:.2em;top:.2em;width:1.6em;height:1.6em;border-radius:50%;border:2px solid rgba(63,214,255,.9);
+    opacity:0;transform:scale(.4)}
+  .fd-cursor.click i{animation:fdclick .5s var(--ease)}
+  @keyframes fdclick{0%{opacity:.9;transform:scale(.3)}100%{opacity:0;transform:scale(1.4)}}
+  .fd-caption{left:50%;bottom:3.5%;transform:translateX(-50%);z-index:8;white-space:nowrap;
+    font-family:var(--mono);font-size:1em;letter-spacing:.14em;text-transform:uppercase;color:var(--ink);
+    background:rgba(4,8,16,.92);border:1px solid var(--line-2);border-radius:99em;padding:.7em 1.3em;
+    transition:opacity .4s;backdrop-filter:blur(6px)}
+  .fd-caption.off{opacity:0}
+  .fd-loop{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(150,182,220,.1);z-index:9}
+  .fd-loop i{display:block;height:100%;width:0%;background:var(--accent);opacity:.7}
+  .fd-tag{position:absolute;right:1em;top:calc(6.2% + .8em);z-index:6;font-family:var(--mono);font-size:.8em;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);border:1px solid var(--line);border-radius:99em;padding:.4em .8em;
+    background:rgba(5,9,17,.7)}
+
+  /* ── reveal (JS-scoped) ── */
+  .js [data-reveal]{opacity:0;transform:translateY(14px);transition:opacity .8s var(--ease),transform .8s var(--ease)}
+  .js [data-reveal].in{opacity:1;transform:none}
+  @media(prefers-reduced-motion:reduce){.js [data-reveal]{opacity:1;transform:none;transition:none}}
+
+  /* ── responsive ── */
+  @media(max-width:960px){
+    #prompt .node-body,.field,.license,.credo{grid-template-columns:1fr}
     .station{grid-template-columns:1fr}
-    .tabs{flex-direction:row;overflow-x:auto;scrollbar-width:none}
-    .tab{min-width:170px}
-    .jacks,.mini{grid-template-columns:repeat(2,1fr)}
+    .tabs{flex-direction:row;overflow-x:auto;scrollbar-width:none;padding-bottom:4px}
+    .tab{min-width:172px}
+    .jacks{grid-template-columns:repeat(2,1fr)}
+    .mini,.shots{grid-template-columns:1fr}
     .bar nav{display:none}
+    .runchip .lbl{display:none}
     .license .right{border-left:0;border-top:1px solid var(--line)}
-    .readout{position:static;margin-top:12px;display:inline-block}
+    .bademo{max-width:420px;margin-inline:auto}
+    .node{margin-block:76px}
   }
-  @media(max-width:560px){ .jacks,.mini{grid-template-columns:1fr} .spec{font-size:.6rem} }
-  @media(prefers-reduced-motion:reduce){ #loom{display:none} }
+  @media(max-width:700px){.runchip{display:none}}
+  @media(max-width:560px){
+    .jacks{grid-template-columns:1fr}.facts{font-size:.54rem}
+    .flowline{flex-direction:column;align-items:stretch}
+    .flowline .arrow{transform:rotate(90deg);align-self:center;padding-block:2px}
+  }
+  @media(prefers-reduced-motion:reduce){.runchip i{animation:none}}
 </style>
 </head>
 <body>
-<header class="bar"><div class="wrap bar-in">
+
+<svg id="wiresvg" aria-hidden="true"><path id="wirepath" class="undrawn" d=""/></svg>
+
+<header class="bar"><div class="bar-in">
   <a class="brand" href="/"><img src="assets/graphics/icon-512.png" alt="Signal Loom" /><b>Signal&nbsp;Loom</b></a>
+  <span class="runchip" title="This page is a flow graph. Scrolling runs it — on your hardware, like everything in Signal Loom."><i></i><span class="lbl">sloom.studio.sloom&nbsp;·&nbsp;</span><span id="runstat">running</span>&nbsp;·&nbsp;<b id="runcost">$0.0000</b></span>
   <nav>
-    <a href="#workstation">Workstation</a>
+    <a href="#workstation">Workspaces</a>
     <a href="#keys">Providers</a>
     <a href="#android">Android</a>
     <a href="docs.html">Docs</a>
@@ -229,302 +476,781 @@
   <a class="btn btn-primary" href="#license">Get it — $9.99</a>
 </div></header>
 
-<!-- ───────── HERO ───────── -->
-<div class="hero">
-  <canvas id="loom" aria-hidden="true"></canvas>
-  <div class="wrap">
+<div id="minimap" title="Minimap — click to travel the graph" aria-hidden="true">
+  <div class="mm-label">graph</div>
+  <div id="mm-track"></div>
+</div>
+
+<main><div class="graph" id="graph">
+
+<!-- ═══════ NODE 01 · PROMPT (hero) ═══════ -->
+<section class="node" id="prompt">
+  <i class="port out"></i>
+  <div class="node-head"><span class="nid">01 · prompt</span><span class="ntype">input</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <canvas id="loom" aria-hidden="true"></canvas>
     <div>
-      <div class="eyebrow">Local-first · Bring your own keys · Perpetual license</div>
-      <h1 class="display">A studio for<br>generative media.<br><span class="dim">One you own.</span></h1>
-      <p class="lead">Signal Loom is a creative instrument, not a service. Node-graph <b>Flow</b>, a layered <b>Image</b> editor, print-ready <b>Paper</b> layout, and a <b>Video</b> timeline — one project, your own API keys, bought once. Each workspace is a full tool on its own; AI is a choice, not a requirement.</p>
+      <div class="kicker"><i></i>An instrument, not a service</div>
+      <h1 class="display">A studio for<br>generative media.<br><em>One you own.</em></h1>
+      <p class="lead">Node-graph <b>Flow</b>, a layered <b>Image</b> editor, print-ready <b>Paper</b> layout, and a <b>Video</b> timeline — one project, your own API keys, bought once.</p>
+      <p class="lead-2">Each workspace is a full tool on its own; <b>AI is a choice, not a requirement.</b></p>
       <div class="cta">
         <a class="btn btn-primary" href="#license">Get Signal Loom — $9.99</a>
-        <a class="btn btn-ghost" href="docs.html">Read the docs →</a>
+        <a class="btn btn-ghost" href="docs.html">Read the docs</a>
       </div>
-      <div class="spec">
-        <span><b>4</b> workspaces</span><span><b>1</b> .sloom project</span><span><b>8</b> providers</span><span>No subscription</span>
+      <div class="weaveline">This node just wove the thread pattern behind this text — <b>seed <span id="seedhex">…</span></b>, generated only for you.<br>That's the whole idea here: media made on your machine is yours. <a id="keepweave">Keep it&nbsp;⬇</a></div>
+      <div class="facts">
+        <span><b>4</b> workspaces</span><span><b>1</b> .sloom project</span><span><b>8</b> providers + local</span><span>No subscription</span>
       </div>
     </div>
     <div class="monitor">
-      <div class="chrome"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="label">flow · main-flow.sloom</span></div>
+      <div class="chrome"><i></i><span class="label">flow · main-flow.sloom</span><span class="meta">local</span></div>
       <img src="assets/screenshots/flow-workspace.png" alt="Signal Loom Flow workspace — the start of a project, generating reusable low-level consistency assets (recurring objects and environments) across multiple providers, with Vision Verify QA and collapsed nodes" loading="eager" />
       <div class="readout">RUN&nbsp;COST&nbsp;<b>$0.0000</b>&nbsp;·&nbsp;LOCAL</div>
     </div>
   </div>
+</section>
+
+<!-- ═══════ NODE 02 · WORKSTATION ═══════ -->
+<section class="node" id="workstation">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">02 · workspaces</span><span class="ntype">suite</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>Four workspaces. <em>One project.</em></h2>
+    <p class="sub" data-reveal>Each workspace is a genuine standalone tool — Image and Paper even save their own file formats (<span class="mono" style="letter-spacing:.04em;text-transform:none">.slimg</span>, <span class="mono" style="letter-spacing:.04em;text-transform:none">.slppr</span>) — and the <span class="mono" style="letter-spacing:.04em;text-transform:none">.sloom</span> project is the umbrella that unites all four. Switch tools without switching files: a clip you generate in Flow appears in Image, Video, and Paper automatically, from one shared project and source library.</p>
+    <div class="station" data-reveal>
+      <div class="tabs" role="tablist" aria-label="Workspaces">
+        <button class="tab" role="tab" aria-selected="true" data-shot="tablet-01-flow-node-graph" data-accent="#3fd6ff"
+          data-title="Flow" data-chips="Multi-provider generation|Vision-Verify QA|Collapsible nodes + portals"
+          data-desc="Node-based generation graphs across every provider at once.">
+          <span class="k"></span><span><span class="n">Flow</span><span class="d">Node-based generation graphs</span></span></button>
+        <button class="tab" role="tab" aria-selected="false" data-shot="tablet-02-image-editor" data-accent="#ff5cb8"
+          data-title="Image" data-chips="Layers + masks|Generative fill|Region tools"
+          data-desc="A layered editor with masks, canvas transforms, and model-in-the-loop generative fill.">
+          <span class="k"></span><span><span class="n">Image</span><span class="d">Layered editor with model fill</span></span></button>
+        <button class="tab" role="tab" aria-selected="false" data-shot="tablet-04-paper-layout" data-accent="#ffb53d"
+          data-title="Paper" data-chips="Threaded text|CMYK + baseline grid|Speech bubbles"
+          data-desc="Page-based publishing for comics, books &amp; print — frames, grids, bubbles, CMYK.">
+          <span class="k"></span><span><span class="n">Paper</span><span class="d">Print-ready publishing layout</span></span></button>
+        <button class="tab" role="tab" aria-selected="false" data-shot="tablet-03-video-timeline" data-accent="#5ce6a1"
+          data-title="Video" data-chips="Multi-track timeline|Keyframes|Overlays + crop"
+          data-desc="A timeline editor with multi-track sequencing, keyframes, text/shape overlays.">
+          <span class="k"></span><span><span class="n">Video</span><span class="d">Multi-track timeline finishing</span></span></button>
+      </div>
+      <div class="stage">
+        <div class="monitor">
+          <div class="chrome"><i></i><span class="label" id="stage-label">flow</span><span class="meta">workspace</span></div>
+          <img id="stage-img" src="assets/screenshots/tablet-01-flow-node-graph.png" alt="Flow workspace" />
+        </div>
+        <div class="stage-info" id="stage-chips"></div>
+      </div>
+    </div>
+    <div class="credo">
+      <div data-reveal>
+        <div class="kick">The center of gravity</div>
+        <h3>Built around Flow.</h3>
+        <p>The generative node graph is what Signal Loom was designed around — wire providers into a graph once and every workspace downstream inherits the results.</p>
+      </div>
+      <div data-reveal>
+        <div class="kick">A deliberate choice</div>
+        <h3>AI is optional.</h3>
+        <p>Paint in Image, lay out a book in Paper, cut in Video. Import your media or make it by hand — you can build an entire project with zero AI and zero keys.</p>
+      </div>
+      <div data-reveal>
+        <div class="kick">No prescribed path</div>
+        <h3>Use one. Or all four.</h3>
+        <p>Each workspace is powerful alone; together is where they shine. There's no single prescribed way to use Signal Loom.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 03 · LIVE MOCK — a scripted replay of the real workflow ═══════ -->
+<section class="node" id="flowdemo">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">03 · flow-demo</span><span class="ntype">replay</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>Watch a <em>node run.</em></h2>
+    <p class="sub" data-reveal>A looping replay of the real Flow workflow, mocked in plain HTML — no video file. A sketch, a style reference, and a typed prompt get wired into <b>Image Generation</b>; the result is wired into an <b>Envelope</b> that already holds two assets, and lands in the shared <b>Source Library</b> the moment it arrives. <span style="color:var(--ink-3)">(The reference thumbnails were generated with nano-banana over Vertex — the same call the app makes.)</span></p>
+    <div class="fd-wrap" data-reveal>
+      <div class="fd-stage" id="fd" role="img" aria-label="Animated replay of the Signal Loom Flow workspace: a rough sketch, a style reference and a text prompt are connected to an Image Generation node, the run produces an inked and coloured portrait, and the result is connected into the brand-kit Envelope which then shows three items in the Source Library panel.">
+        <div class="fd-chrome"><i></i><span>brand-kit.sloom — flow</span><span class="fd-ws"><b class="on">F</b><b>I</b><b>P</b><b>V</b></span></div>
+        <div class="fd-canvas">
+          <svg class="fd-svg" id="fd-svg"></svg>
+          <!-- source sketch -->
+          <div class="fd-node" id="fdA" style="--nc:#22c55e;left:3.6cqw;top:6.4cqw;width:15.3cqw">
+            <div class="fd-nh"><i></i><span id="fdA-name">Image</span><em id="fdA-caret">|</em><b>▾</b></div>
+            <div class="fd-thumb" style="height:12.7cqw"><img src="assets/demo/sketch-crop.jpg" alt="" /></div>
+            <b class="fd-port out"></b>
+          </div>
+          <!-- style reference -->
+          <div class="fd-node" id="fdB" style="--nc:#22c55e;left:3.6cqw;top:27.3cqw;width:15.3cqw">
+            <div class="fd-nh"><i></i><span id="fdB-name">Reference Image</span><em id="fdB-caret">|</em><b>▾</b></div>
+            <div class="fd-thumb" style="height:10.9cqw"><img src="assets/demo/ref-style.jpg" alt="" /></div>
+            <b class="fd-port out"></b>
+          </div>
+          <!-- prompt -->
+          <div class="fd-node" id="fdC" style="--nc:#f59e0b;left:23.8cqw;top:38.5cqw;width:22.7cqw">
+            <div class="fd-nh"><i></i><span>Text Prompt</span><b>▾</b></div>
+            <div class="fd-ta"><span id="fd-prompt"></span><em id="fdC-caret">|</em></div>
+            <b class="fd-port out"></b>
+          </div>
+          <!-- image generation -->
+          <div class="fd-node" id="fdD" style="--nc:#22c55e;left:42.9cqw;top:10.9cqw;width:22.9cqw">
+            <div class="fd-nh"><i></i><span>Image Generation</span><b>▾</b></div>
+            <div class="fd-prov"><span>Google</span><small>nano-banana · vertex</small></div>
+            <div class="fd-result" id="fd-result">
+              <img src="assets/demo/result-crop.jpg" alt="" id="fd-result-img" />
+              <div class="fd-progress" id="fd-progress"><i></i></div>
+              <span class="fd-await" id="fd-await">awaiting inputs</span>
+            </div>
+            <button class="fd-gen" id="fd-gen" tabindex="-1">Generate</button>
+            <b class="fd-port in i1"></b>
+            <b class="fd-port in i2"></b>
+            <b class="fd-port in i3"></b>
+            <b class="fd-port out"></b>
+          </div>
+          <!-- envelope -->
+          <div class="fd-node" id="fdE" style="--nc:#c084fc;left:72.7cqw;top:13.6cqw;width:19.3cqw">
+            <div class="fd-nh"><i></i><span>Envelope · brand-kit</span><u class="fd-count" id="fd-count">2</u></div>
+            <div class="fd-items" id="fd-items">
+              <div class="fd-item"><img src="assets/demo/env-logo.jpg" alt="" /><span>loom-logo.png</span></div>
+              <div class="fd-item"><img src="assets/demo/env-pattern.jpg" alt="" /><span>weave-tile.png</span></div>
+            </div>
+            <b class="fd-port in"></b>
+          </div>
+          <!-- source library panel -->
+          <div class="fd-lib" id="fd-lib">
+            <div class="fd-lib-h">Source Library</div>
+            <div class="fd-lib-env">▾ Envelope — brand-kit <u id="fd-lib-count">3</u></div>
+            <div class="fd-lib-item"><img src="assets/demo/env-logo.jpg" alt="" /><span>loom-logo.png</span></div>
+            <div class="fd-lib-item"><img src="assets/demo/env-pattern.jpg" alt="" /><span>weave-tile.png</span></div>
+            <div class="fd-lib-item new" id="fd-lib-new"><img src="assets/demo/result-crop.jpg" alt="" /><span>portrait-inked.png</span></div>
+          </div>
+          <div class="fd-libtab" id="fd-libtab">Source Library</div>
+          <!-- cursor + caption -->
+          <div class="fd-cursor" id="fd-cursor"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M5 3l14 8-6.5 1.5L9 19z" fill="#fff" stroke="#04070d" stroke-width="1.4"/></svg><i></i></div>
+          <div class="fd-caption" id="fd-caption">Drop in a source image</div>
+        </div>
+        <div class="fd-loop"><i id="fd-loopbar"></i></div>
+        <span class="fd-tag">replay · loops · non-interactive</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 04 · A REAL RUN ═══════ -->
+<section class="node" id="showcase">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">04 · flow-run</span><span class="ntype">image-gen × 4</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>Start with a <em>consistency library.</em></h2>
+    <p class="sub" data-reveal>The opening move of a project: a Flow graph that generates the low-level <b>consistency assets</b> — the recurring objects, props, and environments you reuse everywhere — so scenes stay visually consistent from shot to shot. It also tours most of the workspace.</p>
+    <div class="monitor" style="margin-top:2rem" data-reveal>
+      <div class="chrome"><i></i><span class="label">flow · consistency-assets.sloom</span><span class="meta">4 providers</span></div>
+      <img src="assets/screenshots/flow-workspace.png" alt="A Signal Loom Flow graph generating reusable low-level consistency assets across multiple providers, with Vision Verify QA and several collapsed nodes" loading="lazy" />
+    </div>
+    <p class="sub" style="margin-top:1.5rem" data-reveal>Prompt and <b>Color Palette / Swatch</b> nodes drive <b>Image Generation</b> across four providers at once — <b>Atlas</b> (Seedream v4.5), <b>BytePlus</b> (bytedance/seedream), <b>Google</b> (gemini-3-pro-image) and <b>Black Forest Labs</b> (FLUX) — and the results collect into an <b>Asset Package</b> and the shared <b>Source Library</b>. <b>Portals</b> carry shared style and colour tokens across the graph; two <b>Vision Verify</b> nodes run a Gemini vision model to check each result against the reference (<b>✓&nbsp;TRUE</b> / <b>✗&nbsp;FALSE</b>) into <b>Value Monitors</b>; and several nodes are <b>collapsed</b> to their minimal size while every connection stays wired.</p>
+  </div>
+</section>
+
+<!-- ═══════ NODE 04 · PATCH BAY ═══════ -->
+<section class="node" id="keys">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">05 · providers</span><span class="ntype">patch bay</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>Your providers. Your cost. <em>Your control.</em></h2>
+    <p class="sub" data-reveal>Signal Loom has no account and no servers of its own. You connect the AI providers you already pay for with your own keys — your keys and your work stay on your device, and you talk to the providers directly. And if you'd rather work without AI, skip this panel entirely: nothing else in the studio depends on it.</p>
+    <div class="jacks" data-reveal>
+      <div class="jack"><span>Google Gemini</span><small>+ Vertex AI</small></div>
+      <div class="jack"><span>OpenAI</span><small>+ compatible</small></div>
+      <div class="jack"><span>BytePlus</span><small>Seedream · first-party</small></div>
+      <div class="jack"><span>Atlas Cloud</span><small>multi-model gateway</small></div>
+      <div class="jack"><span>Hugging Face</span><small>inference</small></div>
+      <div class="jack"><span>Black Forest Labs</span><small>FLUX</small></div>
+      <div class="jack"><span>Stability AI</span><small>image</small></div>
+      <div class="jack"><span>ElevenLabs</span><small>audio</small></div>
+      <div class="jack"><span>Local &amp; open models</span><small>your own endpoint</small></div>
+      <div class="jack quiet"><span>Capabilities follow</span><small>the model, not the menu</small></div>
+    </div>
+    <div class="mini">
+      <div class="card" style="--accent2:var(--pink)" data-reveal><h3>Generative fill <span class="tag">image</span></h3><p>Mask a region, describe the change, and edit with reference-guided models — billed to your own provider account.</p></div>
+      <div class="card" style="--accent2:var(--gold)" data-reveal><h3>Same model, any provider <span class="tag">capability</span></h3><p>Reference images and masks work wherever the model runs — through a direct key or a cloud gateway.</p></div>
+      <div class="card" style="--accent2:var(--green)" data-reveal><h3>Local-first &amp; private <span class="tag">data</span></h3><p>Projects are files you keep. No analytics. Nothing leaves your device except the request you choose to send.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 05 · IMAGE DESK ═══════ -->
+<section class="node" id="imagedesk">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">06 · image-desk</span><span class="ntype">canvas</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>Painted by hand. <em>Finished by AI.</em></h2>
+    <p class="sub" data-reveal>A full layered raster editor with a real pressure-, tilt-, and rotation-sensitive brush engine — then mask a region, describe the change, and let a model render it in place. One canvas does both.</p>
+    <div class="shots">
+      <figure data-reveal>
+        <img src="assets/screenshots/desktop-image-hero.png" alt="The Signal Loom Image workspace: a hand-painted figure on the canvas with the brush palette open" loading="lazy" />
+        <figcaption>
+          <b>The brush engine</b>
+          <span class="cap">Pressure, tilt, and rotation response with foreground-to-background colour dynamics and a live 3D tip preview — built for an S&nbsp;Pen or any Wacom-protocol stylus. Hold <b>Shift</b> for straight lines; <b>Alt-click</b> to set a heal/clone source.</span>
+          <div class="tagrow"><em>Pressure + tilt</em><em>Shift-lines &amp; healing</em><em>Stylus-native</em></div>
+        </figcaption>
+      </figure>
+      <figure data-reveal>
+        <img src="assets/screenshots/image-generative-fill.png" alt="Generative fill in the Signal Loom Image editor: a masked region regenerated by an AI model" loading="lazy" />
+        <figcaption>
+          <b>Generative fill</b>
+          <span class="cap">Mask any region, write a prompt, and edit with reference-guided models — billed straight to your own provider key. Inking and colouring a sketch is one prompt away.</span>
+          <div class="tagrow"><em>Masked-region edit</em><em>Reference-guided</em><em>Bring-your-own-key</em></div>
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 06 · IN THE FIELD ═══════ -->
+<section class="node" id="android">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">07 · field</span><span class="ntype">device</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>The whole studio, <em>on Android &amp; DeX.</em></h2>
+    <p class="sub" data-reveal>The same project, the same four workspaces — touch- and S&nbsp;Pen-ready on a phone, a full desktop layout in Samsung DeX, and game-controller support for fast, eyes-up control.</p>
+    <div class="field">
+      <div data-reveal><div class="bademo" role="img" aria-label="Generative fill on a phone: a rough pencil sketch is inked and coloured by Atlas Wan 2.7 in the Image editor, from the prompt ‘ink and colour this image’.">
+        <img class="fr fr1" src="assets/screenshots/02-sketch.jpg" alt="A rough pencil sketch of a portrait in the Signal Loom Image editor" loading="lazy" />
+        <img class="fr fr2" src="assets/screenshots/02-atlas-ink-color.png" alt="The Atlas generative-fill prompt: ink and colour this image" loading="lazy" />
+        <img class="fr fr3" src="assets/screenshots/02-atlas-ink-color-after.jpg" alt="The finished AI-coloured portrait" loading="lazy" />
+        <div class="balabel bl1"><b>1</b> Rough sketch</div>
+        <div class="balabel bl2"><b>2</b> Prompt · “ink &amp; colour this image”</div>
+        <div class="balabel bl3"><b>3</b> AI-coloured · Atlas Wan 2.7</div>
+      </div></div>
+      <div data-reveal>
+        <h3 style="font-family:var(--display);font-weight:540;font-size:1.36rem;letter-spacing:-.02em;margin:0 0 10px">One project, two screens, live</h3>
+        <p style="color:var(--ink-2);margin:0 0 20px;font-size:.94rem;line-height:1.7">Turn on the LAN host and your phone serves the full desktop interface to any browser on your network. It's the <em>same</em> project, syncing both ways — and a one-tap <b style="color:var(--ink);font-weight:560">Working&nbsp;here&nbsp;⇄&nbsp;Phone</b> baton hands the edit lock between devices so the two screens never collide.</p>
+        <div class="diagram"><div class="flowline">
+          <div class="fnode"><b>Phone</b>hosts &amp; holds the project</div>
+          <span class="arrow">◀──▶</span>
+          <div class="fnode"><b>LAN</b>:8723</div>
+          <span class="arrow">◀──▶</span>
+          <div class="fnode"><b>PC browser</b>same live project</div>
+        </div></div>
+        <div class="fieldnote">
+          <div class="ic" aria-hidden="true">🎮</div>
+          <div>
+            <b>Plug in a game controller</b>
+            <p>Pair an Xbox, PlayStation, or generic pad over Bluetooth and drive the studio with physical buttons and sticks — fully remappable per workspace. Scrub keyframes in Video, drop frames in Paper, switch tools in Image. <a href="docs.html#gamepad">See the bindings →</a></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 07 · OWNERSHIP ═══════ -->
+<section class="node" id="license">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">08 · license</span><span class="ntype">output</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>One price. <em>Yours forever.</em></h2>
+    <p class="sub" data-reveal>A perpetual license — no subscription, no in-app purchases, no ads. Signal Loom doesn't include model usage; you bring your own provider keys and pay them directly for what you use.</p>
+    <div class="license" data-reveal>
+      <div class="left">
+        <div class="price"><small>$</small>9.99</div>
+        <div class="strike">0.9 beta · early access · expect bugs · <s>$19.99</s> at 1.0</div>
+        <ul>
+          <li>All four workspaces — Flow, Image, Paper, Video — each a full tool on its own</li>
+          <li>One <span class="mono" style="letter-spacing:.03em;text-transform:none">.sloom</span> project + shared source library</li>
+          <li>Bring-your-own-key for every provider — or use no AI at all</li>
+          <li>Android, Samsung DeX, and the LAN desktop host</li>
+          <li>Buy once. No subscription, no ads, no account.</li>
+        </ul>
+      </div>
+      <div class="right" id="desktop">
+        <a class="btn btn-primary" href="https://buy.stripe.com/dRmeVd2pAcZF5hB6br7Re00">Buy for desktop — $9.99</a>
+        <a class="btn btn-ghost" href="https://buy.stripe.com/cNi4gz2pA3p525p6br7Re01">Name your price — from $1</a>
+        <a class="btn btn-ghost" href="https://sloomstudio.itch.io/signal-loom">Also on itch.io</a>
+        <div class="note">Instant download · <b>Windows &amp; Linux</b><br>📱 Android is coming to the <b>Samsung Galaxy Store</b> &amp; <b>Google Play</b> — the trusted way to install, no sideloading.<br>PKG · studio.sloom.signalloom</div>
+      </div>
+    </div>
+    <p class="fineprint">Signal Loom does not include AI usage or credits. You supply your own provider accounts/keys, and any model usage is billed to you by that provider under their terms.</p>
+    <p class="srcnote">Signal Loom is source-available under a noncommercial license. Prefer to build it yourself, or want to read exactly what the code does with your keys? It's all on <a href="https://github.com/Es00bac/signal-loom">GitHub</a> — no judgment. Now in the 0.9.x beta; see the <a href="changelog.html">changelog</a> for what's new.</p>
+  </div>
+</section>
+
+<!-- ═══════ NODE 08 · QUESTIONS ═══════ -->
+<section class="node" id="faq">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">09 · questions</span><span class="ntype">monitor</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>Asked, <em>answered.</em></h2>
+    <div class="faq" data-reveal>
+      <details>
+        <summary>Do I need API keys — or AI at all — to use Signal Loom?</summary>
+        <div class="a">No. <b>Every workspace works with zero keys configured.</b> Paint in Image, lay out pages in Paper, cut a timeline in Video, import any media you like. AI features simply wake up when you add a provider key — and stay out of the way when you don't.</div>
+      </details>
+      <details>
+        <summary>What exactly does $9.99 buy?</summary>
+        <div class="a">A perpetual license to the full desktop app for <b>Windows and Linux</b> — all four workspaces, nothing held back, no account required. It's a one-time purchase: no subscription, no in-app purchases, no ads. Model usage is separate — that's billed by your own AI provider, at their prices, only when you choose to generate.</div>
+      </details>
+      <details>
+        <summary>Where do my projects and keys live?</summary>
+        <div class="a">On your device. Projects are <span class="mono" style="letter-spacing:.03em;text-transform:none">.sloom</span> files you can copy, back up, and move like any other file. API keys are stored locally, and requests go from your machine straight to the provider — Signal Loom has no servers of its own and collects no analytics.</div>
+      </details>
+      <details>
+        <summary>Which AI providers are supported?</summary>
+        <div class="a">Eight cloud providers out of the box — Google Gemini (incl. Vertex AI), OpenAI and OpenAI-compatible endpoints, BytePlus (first-party Seedream), Atlas Cloud, Hugging Face, Black Forest Labs, Stability AI, and ElevenLabs — plus a lane for <b>local and open models</b> via your own self-hosted endpoint. Reference images and masks follow the model, not the menu: the same capability works wherever that model runs.</div>
+      </details>
+      <details>
+        <summary>What about Android?</summary>
+        <div class="a">The Android build — same project format, same four workspaces, with S&nbsp;Pen, Samsung DeX, and the LAN host built in — is coming to the <b>Samsung Galaxy Store and Google Play</b>. The desktop build is available today, above.</div>
+      </details>
+      <details>
+        <summary>Can I try it without paying?</summary>
+        <div class="a">Signal Loom is source-available under the PolyForm Noncommercial license — you can read every line and build it yourself for personal, noncommercial use from <a href="https://github.com/Es00bac/signal-loom">GitHub</a>. Buying a license is what funds the project (it's built by one person), and it's the polished, ready-to-run way in.</div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 09 · TERMINAL ═══════ -->
+<section class="node" id="terminal">
+  <i class="port in"></i>
+  <div class="node-head"><span class="nid">10 · stdout</span><span class="ntype">terminal</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <div><span class="p">➜</span> run <span id="term-count">…</span> · cost <b>$0.0000</b> <span class="dim">— it ran on your hardware; that's the point.</span></div>
+    <div><span class="p">➜</span> <span class="dim">demo thumbnails woven by nano-banana over vertex — the same call the app makes.</span></div>
+    <div><span class="p">➜</span> product&nbsp;&nbsp;<a href="docs.html">docs</a> · <a href="examples.html">examples</a> · <a href="changelog.html">changelog</a> · <a href="#license">buy — $9.99</a></div>
+    <div><span class="p">➜</span> elsewhere&nbsp;<a href="https://github.com/Es00bac/signal-loom">github</a> · <a href="https://sloomstudio.itch.io/signal-loom">itch.io</a> · <a rel="me" href="https://mastodon.social/@SloomStudio">mastodon</a> · <a href="mailto:support@sloom.studio">support@sloom.studio</a></div>
+    <div><span class="p">➜</span> <span class="dim">a studio for generative media — one you own.</span></div>
+  </div>
+</section>
+
+</div></main>
+
+<div class="legal">
+  <span>© 2026 Signal Loom · Sloom Studio</span>
+  <span><a href="privacy.html" style="color:var(--ink-2)">Privacy</a></span>
 </div>
 
-<!-- ───────── 01 WORKSTATION ───────── -->
-<section id="workstation"><div class="wrap">
-  <div class="seclabel"><b>01</b> The workstation</div>
-  <h2>Four workspaces. One&nbsp;project.</h2>
-  <p class="sub">Each workspace is a genuine standalone tool — Image and Paper even save their own file formats (<span class="mono" style="letter-spacing:.04em">.slimg</span>, <span class="mono" style="letter-spacing:.04em">.slppr</span>) — and the <span class="mono" style="letter-spacing:.04em">.sloom</span> project is the umbrella that unites all four. Switch tools without switching files: a clip you generate in Flow appears in Image, Video, and Paper automatically, from one shared project and source library.</p>
-  <div class="station">
-    <div class="tabs" role="tablist" aria-label="Workspaces">
-      <button class="tab" role="tab" aria-selected="true" data-shot="tablet-01-flow-node-graph" data-accent="#34d9ff"
-        data-title="Flow" data-chips="Multi-provider generation|Vision-Verify QA|Collapsible nodes + portals"
-        data-desc="Open a project by generating reusable low-level consistency assets — recurring objects &amp; environments — across multiple providers, QA them with Vision Verify (TRUE/FALSE), and bank them in the shared library so everything downstream stays consistent. Collapse nodes to declutter; every edge stays wired.">
-        <span class="k">F</span><span><span class="n">Flow</span><span class="d">Node-based generation graphs</span></span></button>
-      <button class="tab" role="tab" aria-selected="false" data-shot="tablet-02-image-editor" data-accent="#ff45b1"
-        data-title="Image" data-chips="Layers + masks|Generative fill|Region tools"
-        data-desc="A layered editor with masks, canvas transforms, and model-in-the-loop generative fill.">
-        <span class="k">I</span><span><span class="n">Image</span><span class="d">Layered editor with model fill</span></span></button>
-      <button class="tab" role="tab" aria-selected="false" data-shot="tablet-04-paper-layout" data-accent="#ffb53d"
-        data-title="Paper" data-chips="Threaded text|CMYK + baseline grid|Speech bubbles"
-        data-desc="Page-based publishing for comics, books &amp; print — frames, grids, bubbles, CMYK.">
-        <span class="k">P</span><span><span class="n">Paper</span><span class="d">Print-ready publishing layout</span></span></button>
-      <button class="tab" role="tab" aria-selected="false" data-shot="tablet-03-video-timeline" data-accent="#67f0ad"
-        data-title="Video" data-chips="Multi-track timeline|Keyframes|Overlays + crop"
-        data-desc="A timeline editor with multi-track sequencing, keyframes, text/shape overlays.">
-        <span class="k">V</span><span><span class="n">Video</span><span class="d">Multi-track timeline finishing</span></span></button>
-    </div>
-    <div class="stage">
-      <div class="monitor">
-        <div class="chrome"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="label" id="stage-label">flow</span></div>
-        <img id="stage-img" src="assets/screenshots/tablet-01-flow-node-graph.png" alt="Flow workspace" />
-      </div>
-      <div class="stage-info" id="stage-chips"></div>
-    </div>
-  </div>
-  <div class="mini">
-    <div class="card" style="--accent:var(--cyan)"><h3>Built around Flow <span class="tag">design center</span></h3><p>The generative node graph is Signal Loom's center of gravity — wire providers into a graph once and every workspace downstream inherits the results.</p></div>
-    <div class="card" style="--accent:var(--pink)"><h3>AI is optional <span class="tag">deliberately</span></h3><p>Paint in Image, lay out a book in Paper, cut in Video. Import your media or make it by hand — you can build an entire project with zero AI and zero keys.</p></div>
-    <div class="card" style="--accent:var(--gold)"><h3>Use one. Or all four. <span class="tag">your way</span></h3><p>Each workspace is powerful alone; together is where they shine. There's no single prescribed way to use Signal Loom.</p></div>
-  </div>
-</div></section>
-
-<!-- ───────── SHOWCASE · a real Flow ───────── -->
-<section id="showcase"><div class="wrap">
-  <div class="seclabel"><b>◆</b> A real project</div>
-  <h2>Start with a consistency&nbsp;library.</h2>
-  <p class="sub">The opening move of a project: a Flow graph that generates the low-level <b>consistency assets</b> — the recurring objects, props, and environments you reuse everywhere — so scenes stay visually consistent from shot to shot. It also tours most of the workspace.</p>
-  <div class="monitor" style="margin-top:1.5rem">
-    <div class="chrome"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="label">flow · consistency-assets.sloom</span></div>
-    <img src="assets/screenshots/flow-workspace.png" alt="A Signal Loom Flow graph generating reusable low-level consistency assets across multiple providers, with Vision Verify QA and several collapsed nodes" loading="lazy" />
-  </div>
-  <p class="sub" style="margin-top:1.25rem">Prompt and <b>Color Palette / Swatch</b> nodes drive <b>Image Generation</b> across four providers at once — <b>Atlas</b> (Seedream v4.5), <b>BytePlus</b> (bytedance/seedream), <b>Google</b> (gemini-3-pro-image) and <b>Black Forest Labs</b> (FLUX) — and the results collect into an <b>Asset Package</b> and the shared <b>Source Library</b>. <b>Portals</b> carry shared style and colour tokens across the graph; two <b>Vision Verify</b> nodes run a Gemini vision model to check each result against the reference (<b>✓&nbsp;TRUE</b> / <b>✗&nbsp;FALSE</b>) into <b>Value Monitors</b>; and several nodes are <b>collapsed</b> to their minimal size while every connection stays wired.</p>
-</div></section>
-
-<!-- ───────── 02 PROVIDERS ───────── -->
-<section id="keys"><div class="wrap">
-  <div class="seclabel"><b>02</b> The patch bay</div>
-  <h2>Your providers. Your cost. Your&nbsp;control.</h2>
-  <p class="sub">Signal Loom has no account and no servers of its own. You connect the AI providers you already pay for with your own keys — your keys and your work stay on your device, and you talk to the providers directly. And if you'd rather work without AI, skip this panel entirely: nothing else in the studio depends on it.</p>
-  <div class="bay">
-    <div class="bay-head"><span>PATCH&nbsp;BAY · BRING-YOUR-OWN-KEY</span><span>KEYS STORED ON-DEVICE</span></div>
-    <div class="jacks">
-      <div class="jack"><i></i><span>Google Gemini<small>+ Vertex AI</small></span></div>
-      <div class="jack"><i></i><span>OpenAI<small>+ compatible</small></span></div>
-      <div class="jack"><i></i><span>Hugging Face<small>inference</small></span></div>
-      <div class="jack"><i></i><span>Stability AI<small>image</small></span></div>
-      <div class="jack"><i></i><span>Black Forest Labs<small>FLUX</small></span></div>
-      <div class="jack"><i></i><span>Atlas Cloud<small>gateway</small></span></div>
-      <div class="jack"><i></i><span>ElevenLabs<small>audio</small></span></div>
-      <div class="jack"><i style="border-color:var(--ink-3);box-shadow:none"></i><span>Capabilities follow<small>the model, not the menu</small></span></div>
-    </div>
-  </div>
-  <div class="mini">
-    <div class="card" style="--accent:var(--pink)"><h3>Generative fill <span class="tag">image</span></h3><p>Mask a region, describe the change, and edit with reference-guided models — billed to your own provider account.</p></div>
-    <div class="card" style="--accent:var(--gold)"><h3>Same model, any provider <span class="tag">capability</span></h3><p>Reference images and masks work wherever the model runs — through a direct key or a cloud gateway.</p></div>
-    <div class="card" style="--accent:var(--green)"><h3>Local-first &amp; private <span class="tag">data</span></h3><p>Projects are files you keep. No analytics. Nothing leaves your device except the request you choose to send.</p></div>
-  </div>
-</div></section>
-
-<!-- ───────── 03 IMAGE DESK — BRUSH + GENERATIVE FILL ───────── -->
-<style>
-.showcase .shots{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:34px}
-@media(max-width:880px){.showcase .shots{grid-template-columns:1fr}}
-.showcase figure{margin:0;border:1px solid var(--line-2);border-radius:16px;overflow:hidden;background:#04070d;display:flex;flex-direction:column}
-.showcase figure img{display:block;width:100%;height:auto;border:0;border-radius:0}
-.showcase figcaption{padding:16px 18px 18px}
-.showcase figcaption b{display:block;font-size:1.02rem;margin-bottom:5px}
-.showcase figcaption .cap{color:var(--ink-2);font-size:.92rem;line-height:1.5}
-.showcase .tagrow{margin-top:11px;display:flex;gap:8px;flex-wrap:wrap}
-.showcase .tagrow em{font-style:normal;font-family:var(--mono);font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);border:1px solid var(--line-2);border-radius:999px;padding:3px 9px}
-</style>
-<section id="imagedesk" class="showcase"><div class="wrap">
-  <div class="seclabel"><b>03</b> The image desk</div>
-  <h2>Painted by hand. Finished by&nbsp;AI.</h2>
-  <p class="sub">A full layered raster editor with a real pressure-, tilt-, and rotation-sensitive brush engine — then mask a region, describe the change, and let a model render it in place. One canvas does both.</p>
-  <div class="shots">
-    <figure>
-      <img src="assets/screenshots/desktop-image-hero.png" alt="The Signal Loom Image workspace: a hand-painted figure on the canvas with the brush palette open" loading="lazy" />
-      <figcaption>
-        <b>The brush engine</b>
-        <span class="cap">Pressure, tilt, and rotation response with foreground-to-background colour dynamics and a live 3D tip preview — built for an S&nbsp;Pen or any Wacom-protocol stylus. Hold <b>Shift</b> for straight lines; <b>Alt-click</b> to set a heal/clone source.</span>
-        <div class="tagrow"><em>Pressure + tilt</em><em>Shift-lines &amp; healing</em><em>Stylus-native</em></div>
-      </figcaption>
-    </figure>
-    <figure>
-      <img src="assets/screenshots/image-generative-fill.png" alt="Generative fill in the Signal Loom Image editor: a masked region regenerated by an AI model" loading="lazy" />
-      <figcaption>
-        <b>Generative fill</b>
-        <span class="cap">Mask any region, write a prompt, and edit with reference-guided models — billed straight to your own provider key. Inking and colouring a sketch is one prompt away.</span>
-        <div class="tagrow"><em>Masked-region edit</em><em>Reference-guided</em><em>Bring-your-own-key</em></div>
-      </figcaption>
-    </figure>
-  </div>
-</div></section>
-
-<!-- ───────── 04 ANDROID / PHONE-AS-HOST ───────── -->
-<section id="android"><div class="wrap">
-  <div class="seclabel"><b>04</b> In the field</div>
-  <h2>The whole studio, on Android &amp; DeX.</h2>
-  <p class="sub">The same project, the same four workspaces — touch- and S&nbsp;Pen-ready on a phone, a full desktop layout in Samsung DeX, and <strong>game-controller support</strong> for fast, eyes-up control.</p>
-  <div class="field">
-    <div class="phonewrap"><div class="bademo" role="img" aria-label="Generative fill on a phone: a rough pencil sketch is inked and coloured by Atlas Wan 2.7 in the Image editor, from the prompt ‘ink and colour this image’.">
-      <img class="fr fr1" src="assets/screenshots/02-sketch.jpg" alt="A rough pencil sketch of a portrait in the Signal Loom Image editor" loading="lazy" />
-      <img class="fr fr2" src="assets/screenshots/02-atlas-ink-color.png" alt="The Atlas generative-fill prompt: ink and colour this image" loading="lazy" />
-      <img class="fr fr3" src="assets/screenshots/02-atlas-ink-color-after.jpg" alt="The finished AI-coloured portrait" loading="lazy" />
-      <div class="balabel bl1"><b>1</b> Rough sketch</div>
-      <div class="balabel bl2"><b>2</b> Prompt · “ink &amp; colour this image”</div>
-      <div class="balabel bl3"><b>3</b> AI-coloured · Atlas Wan 2.7</div>
-    </div></div>
-    <div>
-      <h3 style="font-size:1.25rem;margin:0 0 8px">One project, two screens, live</h3>
-      <p style="color:var(--ink-2);margin:0 0 18px">Turn on the LAN host and your phone serves the full desktop interface to any browser on your network. It's the <em>same</em> project, syncing both ways — and a one-tap <b>Working&nbsp;here&nbsp;⇄&nbsp;Phone</b> baton hands the edit lock between devices so the two screens never collide.</p>
-      <div class="diagram"><div class="flowline">
-        <div class="node"><b>Phone</b>hosts &amp; holds the project</div>
-        <span class="arrow">◀──▶</span>
-        <div class="node"><b>LAN</b>:8723</div>
-        <span class="arrow">◀──▶</span>
-        <div class="node"><b>PC browser</b>same live project</div>
-      </div></div>
-    </div>
-  </div>
-  <style>
-  .ctrlcard{display:flex;gap:16px;align-items:flex-start;margin-top:26px;padding:20px 22px;border:1px solid var(--line-2);border-radius:16px;background:#04070d}
-  .ctrlcard .ic{font-size:1.7rem;line-height:1;flex:none}
-  .ctrlcard b{display:block;font-size:1.05rem;margin-bottom:4px}
-  .ctrlcard p{color:var(--ink-2);font-size:.92rem;line-height:1.55;margin:0}
-  .ctrlcard a{color:var(--cyan);white-space:nowrap}
-  </style>
-  <div class="ctrlcard">
-    <div class="ic" aria-hidden="true">🎮</div>
-    <div>
-      <b>Plug in a game controller</b>
-      <p>Pair an Xbox, PlayStation, or generic pad over Bluetooth and drive the studio with physical buttons and sticks &mdash; fully remappable per workspace. Scrub keyframes in Video, drop frames in Paper, switch tools in Image, all eyes-up. Especially handy on Android &amp; DeX. <a href="docs.html#gamepad">See the bindings &rarr;</a></p>
-    </div>
-  </div>
-</div></section>
-
-<!-- ───────── 04 LICENSE ───────── -->
-<section id="license"><div class="wrap">
-  <div class="seclabel"><b>05</b> Ownership</div>
-  <h2>One price. Yours forever.</h2>
-  <p class="sub">A perpetual license — no subscription, no in-app purchases, no ads. Signal Loom doesn't include model usage; you bring your own provider keys and pay them directly for what you use.</p>
-  <div class="license">
-    <div class="left">
-      <div class="price"><small>$</small>9.99</div>
-      <div class="strike">0.9 BETA · EARLY ACCESS · EXPECT BUGS · <s>$19.99</s> AT 1.0</div>
-      <ul>
-        <li>All four workspaces — Flow, Image, Paper, Video — each a full tool on its own</li>
-        <li>One <span class="mono" style="letter-spacing:.03em">.sloom</span> project + shared source library</li>
-        <li>Bring-your-own-key for every provider</li>
-        <li>Android, Samsung DeX, and the LAN desktop host</li>
-        <li>Buy once. No subscription, no ads, no account.</li>
-      </ul>
-    </div>
-    <div class="right">
-      <a class="btn btn-primary" href="https://buy.stripe.com/dRmeVd2pAcZF5hB6br7Re00" style="justify-content:center">Buy for desktop — $9.99</a>
-      <a class="btn btn-ghost" href="https://buy.stripe.com/cNi4gz2pA3p525p6br7Re01" style="justify-content:center">Name your price</a>
-      <a class="btn btn-ghost" href="docs.html" style="justify-content:center">Read the documentation</a>
-      <div class="mono" style="line-height:1.65;color:var(--ink-2)">Instant download for Windows &amp; Linux.<br>📱 Android is coming to the <b>Samsung Galaxy Store</b> &amp; <b>Google Play</b> — the trusted way to install, no sideloading.</div>
-      <div class="mono">PKG · studio.sloom.signalloom</div>
-    </div>
-  </div>
-  <p class="fineprint">Signal Loom does not include AI usage or credits. You supply your own provider accounts/keys, and any model usage is billed to you by that provider under their terms.</p>
-</div></section>
-
-<!-- ───────── 06 DESKTOP ───────── -->
-<style>
-.desktop .buygrid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:28px;max-width:760px}
-@media(max-width:640px){.desktop .buygrid{grid-template-columns:1fr}}
-.desktop .buy{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line-2);border-radius:14px;padding:17px 20px;background:#04070d;text-decoration:none;transition:border-color .15s}
-.desktop .buy:hover{border-color:var(--cyan)}
-.desktop .buy .lab{font-weight:650;color:var(--ink);font-size:1.02rem}
-.desktop .buy .amt{color:var(--ink-3);font-size:.84rem}
-.desktop .buy.primary{background:var(--cyan);border-color:var(--cyan)}
-.desktop .buy.primary .lab{color:#021018}
-.desktop .buy.primary .amt{color:#064;font-weight:600}
-.desktop details.free{margin-top:26px;max-width:840px}
-.desktop details.free>summary{cursor:pointer;color:var(--ink-3);font-size:.9rem;list-style:none;padding:9px 0;border-top:1px solid var(--line-2)}
-.desktop details.free>summary::-webkit-details-marker{display:none}
-.desktop details.free>summary:hover{color:var(--ink-2)}
-.desktop .freebox{padding:16px 0 4px;color:var(--ink-2);font-size:.94rem;line-height:1.6}
-.desktop .freebox .row{margin:14px 0 4px;display:flex;gap:12px;flex-wrap:wrap}
-.desktop .dl{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:14px}
-@media(max-width:760px){.desktop .dl{grid-template-columns:1fr}}
-.desktop .dlcard{border:1px solid var(--line-2);border-radius:14px;padding:18px;background:#070b12;display:flex;flex-direction:column;gap:6px}
-.desktop .dlcard b{font-size:1.02rem}
-.desktop .dlcard small{color:var(--ink-3);font-family:var(--mono);font-size:.6rem;letter-spacing:.07em;text-transform:uppercase}
-.desktop .dlcard .meta{color:var(--ink-2);font-size:.82rem;flex:1;margin:2px 0 10px}
-.desktop .dlcard a.get{display:inline-flex;justify-content:center;align-items:center;padding:10px 14px;border-radius:10px;background:#0d2630;color:var(--cyan);border:1px solid var(--line-2);font-weight:600;text-decoration:none}
-.desktop .exp{margin-top:14px;border:1px dashed var(--line-2);border-radius:12px;padding:14px 16px;color:var(--ink-2);font-size:.87rem}
-.desktop .dlnote{margin-top:14px;color:var(--ink-3);font-size:.8rem;line-height:1.55}
-</style>
-<section id="desktop" class="desktop"><div class="wrap">
-  <div class="seclabel"><b>06</b> On the desktop</div>
-  <h2>The whole studio, on your desktop.</h2>
-  <p class="sub">The same four workspaces, native for Windows and Linux. There's no store taking a cut here — <b>pay what feels fair</b> and it goes straight to a solo dev who's pouring everything into this. (Android stays the $9.99 mobile build above.)</p>
-
-  <div class="buygrid">
-    <a class="buy primary" href="https://buy.stripe.com/dRmeVd2pAcZF5hB6br7Re00"><span class="lab">Buy the desktop studio</span><span class="amt">$9.99 · one-time · instant download</span></a>
-    <a class="buy" href="https://buy.stripe.com/cNi4gz2pA3p525p6br7Re01"><span class="lab">Name your price</span><span class="amt">Pay what it's worth to you (from $1)</span></a>
-  </div>
-
-  <p style="margin-top:20px;font-size:.86rem;color:var(--ink-3)">Signal Loom is source-available. Prefer to build it yourself or grab a free community build? It's all on <a href="https://github.com/Es00bac/signal-loom" style="color:var(--ink-2)">GitHub</a> — no judgment.</p>
-</div></section>
-
-<footer><div class="wrap">
-  <span>© 2026 Signal Loom · A studio for generative media</span>
-  <nav>
-    <a href="docs.html">Docs</a><a href="examples.html">Examples</a><a href="changelog.html">Changelog</a><a href="privacy.html">Privacy</a><a href="https://github.com/Es00bac/signal-loom">GitHub</a>
-    <a href="mailto:support@sloom.studio">support@sloom.studio</a>
-  </nav>
-</div></footer>
-
 <script>
-/* ── workstation tab switcher ── */
+/* ═══════════════════════════════════════════════════════════════════════
+   This page is a flow graph. Scrolling runs it.
+   1. a seeded loom weaves a unique artwork per visitor (downloadable)
+   2. one cable wires every node; it draws itself as you scroll
+   3. nodes flip idle → ran as the signal reaches them
+   4. a node-editor minimap tracks where you are in the graph
+   ═══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var tabs=[].slice.call(document.querySelectorAll('.tab'));
-  var img=document.getElementById('stage-img'), label=document.getElementById('stage-label'),
-      chips=document.getElementById('stage-chips'), stage=document.querySelector('.stage');
-  function sel(t){
-    tabs.forEach(function(x){x.setAttribute('aria-selected', x===t?'true':'false');});
-    var a=t.dataset.accent;
-    img.src='assets/screenshots/'+t.dataset.shot+'.png';
-    img.alt=t.dataset.title+' workspace';
-    label.textContent=t.dataset.title.toLowerCase();
-    stage.style.setProperty('--accent',a);
-    t.style.setProperty('--accent',a);
-    chips.innerHTML=t.dataset.chips.split('|').map(function(c){return '<span class="chip" style="--accent:'+a+'"><b>·</b> '+c+'</span>';}).join('');
+'use strict';
+var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ── seeded PRNG ── */
+var seed = (crypto.getRandomValues ? crypto.getRandomValues(new Uint32Array(1))[0] : (Math.random()*0xffffffff)) >>> 0;
+function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+var seedHex = '0x'+seed.toString(16).toUpperCase().padStart(8,'0');
+var el = document.getElementById('seedhex'); if(el) el.textContent = seedHex;
+
+/* ── the weave — generative artwork, unique to this visit ── */
+var PAL = [[63,214,255],[255,92,184],[255,181,61],[92,230,161],[150,182,220]];
+function drawWeave(x, W, H, rnd, boost){
+  boost = boost || 1;
+  x.clearRect(0,0,W,H);
+  var warp = Math.max(18, Math.round(W/30));
+  for(var i=0;i<warp;i++){
+    var c = PAL[rnd()<.55?0:(rnd()*PAL.length)|0];
+    var x0 = (i+.5)/warp*W + (rnd()*10-5);
+    var amp = 6+rnd()*26, f = .002+rnd()*.004, ph = rnd()*6.28;
+    x.strokeStyle = 'rgba('+c[0]+','+c[1]+','+c[2]+','+((.03+rnd()*.09)*boost)+')';
+    x.lineWidth = .7+rnd()*1.1;
+    x.beginPath();
+    for(var y=-10;y<=H+10;y+=12) x[y<0?'moveTo':'lineTo'](x0+Math.sin(y*f+ph)*amp, y);
+    x.stroke();
   }
-  tabs.forEach(function(t){t.addEventListener('click',function(){sel(t);});});
-  sel(tabs[0]);
+  var weft = Math.max(10, Math.round(H/44));
+  for(var j=0;j<weft;j++){
+    var c2 = PAL[rnd()<.5?4:(rnd()*PAL.length)|0];
+    var y0 = (j+.5)/weft*H + (rnd()*14-7);
+    var amp2 = 3+rnd()*12, f2 = .003+rnd()*.005, ph2 = rnd()*6.28;
+    x.strokeStyle = 'rgba('+c2[0]+','+c2[1]+','+c2[2]+','+((.025+rnd()*.06)*boost)+')';
+    x.lineWidth = .6+rnd()*.9;
+    x.beginPath();
+    for(var xx=-10;xx<=W+10;xx+=14) x[xx<0?'moveTo':'lineTo'](xx, y0+Math.sin(xx*f2+ph2)*amp2);
+    x.stroke();
+  }
+  for(var s=0;s<3;s++){ /* three bright signal threads */
+    var xs = W*(.15+rnd()*.7), amp3 = 10+rnd()*30, f3 = .0025+rnd()*.003, ph3 = rnd()*6.28;
+    x.strokeStyle = 'rgba(63,214,255,'+(.16*boost)+')';
+    x.lineWidth = 1.4; x.shadowColor = 'rgba(63,214,255,.8)'; x.shadowBlur = 7;
+    x.beginPath();
+    for(var yy=-10;yy<=H+10;yy+=10) x[yy<0?'moveTo':'lineTo'](xs+Math.sin(yy*f3+ph3)*amp3, yy);
+    x.stroke(); x.shadowBlur = 0;
+  }
+  var knots = Math.round(W*H/9000);
+  for(var k2=0;k2<knots;k2++){
+    var c3 = PAL[(rnd()*PAL.length)|0];
+    x.fillStyle = 'rgba('+c3[0]+','+c3[1]+','+c3[2]+','+((.10+rnd()*.22)*boost)+')';
+    x.beginPath(); x.arc(rnd()*W, rnd()*H, .6+rnd()*1.3, 0, 6.2832); x.fill();
+  }
+}
+var loom = document.getElementById('loom');
+function renderLoom(){
+  if(!loom) return;
+  var DPR = Math.min(2, devicePixelRatio||1), r = loom.getBoundingClientRect();
+  if(r.width<10) return;
+  loom.width = r.width*DPR; loom.height = r.height*DPR;
+  var ctx = loom.getContext('2d'); ctx.setTransform(DPR,0,0,DPR,0,0);
+  drawWeave(ctx, r.width, r.height, mulberry(seed), 1);
+}
+renderLoom();
+var keep = document.getElementById('keepweave');
+if(keep) keep.addEventListener('click', function(){
+  var W = 1200, H = 1600, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  var x = c.getContext('2d');
+  x.fillStyle = '#04070d'; x.fillRect(0,0,W,H);
+  drawWeave(x, W, H, mulberry(seed), 2.6);
+  x.fillStyle = 'rgba(237,243,250,.92)';
+  x.font = '500 44px "Space Grotesk", Inter, sans-serif';
+  x.fillText('One you own.', 64, H-140);
+  x.fillStyle = 'rgba(150,182,220,.55)';
+  x.font = '12px ui-monospace, Menlo, monospace';
+  x.fillText('WOVEN AT SLOOM.STUDIO · SEED '+seedHex+' · '+new Date().toISOString().slice(0,10)+' · YOURS', 64, H-92);
+  var a = document.createElement('a');
+  a.download = 'signal-loom-weave-'+seedHex+'.png';
+  a.href = c.toDataURL('image/png');
+  a.click();
+});
+
+/* ── workstation tab switcher ── */
+var tabs = [].slice.call(document.querySelectorAll('.tab'));
+var img = document.getElementById('stage-img'), label = document.getElementById('stage-label'),
+    chips = document.getElementById('stage-chips'), stage = document.querySelector('.stage');
+function sel(t){
+  tabs.forEach(function(x2){x2.setAttribute('aria-selected', x2===t?'true':'false');});
+  var a = t.dataset.accent;
+  img.src = 'assets/screenshots/'+t.dataset.shot+'.png';
+  img.alt = t.dataset.title+' workspace';
+  label.textContent = t.dataset.title.toLowerCase();
+  stage.style.setProperty('--accent', a);
+  chips.innerHTML = t.dataset.chips.split('|').map(function(c){return '<span class="chip" style="--accent:'+a+'">'+c+'</span>';}).join('');
+}
+tabs.forEach(function(t){ t.style.setProperty('--accent', t.dataset.accent); t.addEventListener('click', function(){sel(t);}); });
+if(tabs.length) sel(tabs[0]);
+
+/* ── reveal on scroll ── */
+if(!('IntersectionObserver' in window) || reduced){
+  [].forEach.call(document.querySelectorAll('[data-reveal]'), function(e2){e2.classList.add('in');});
+}else{
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e2){ if(e2.isIntersecting){ e2.target.classList.add('in'); io.unobserve(e2.target); } });
+  }, {threshold:.1, rootMargin:'0px 0px -5% 0px'});
+  [].forEach.call(document.querySelectorAll('[data-reveal]'), function(e2){io.observe(e2);});
+}
+
+/* ── the cable: one path wiring every node, drawn by scroll ── */
+var nodes = [].slice.call(document.querySelectorAll('.node'));
+var svg = document.getElementById('wiresvg'), path = document.getElementById('wirepath');
+var totalLen = 0, nodeInY = [], pulses = [];
+var NP = 4;
+for(var p2=0;p2<NP;p2++){
+  var c2 = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  c2.setAttribute('r', p2? 2.2 : 3); c2.setAttribute('class','pulse'); c2.style.opacity = 0;
+  svg.appendChild(c2); pulses.push(c2);
+}
+function side(k){ return k%2 ? .84 : .16; }
+function buildWire(){
+  var docH = document.documentElement.scrollHeight;
+  svg.setAttribute('width', innerWidth); svg.setAttribute('height', docH);
+  svg.style.height = docH+'px';
+  var d = '', prev = null;
+  nodeInY = [];
+  nodes.forEach(function(sec, k){
+    var r = sec.getBoundingClientRect(), top = r.top+scrollY, bot = r.bottom+scrollY;
+    var sx = r.left + r.width*side(k);
+    var pin = sec.querySelector('.port.in'), pout = sec.querySelector('.port.out');
+    if(pin){ pin.style.left = 'calc('+(side(k)*100)+'% - 6px)'; }
+    if(pout){ pout.style.left = 'calc('+(side(k)*100)+'% - 6px)'; }
+    nodeInY.push(top);
+    if(prev){
+      var dy = Math.max(60, Math.min(220, (top-prev.y)*.5));
+      d += ' M'+prev.x+','+prev.y+' C'+prev.x+','+(prev.y+dy)+' '+sx+','+(top-dy)+' '+sx+','+top;
+    }
+    prev = {x:sx, y:bot};
+  });
+  path.setAttribute('d', d);
+  totalLen = path.getTotalLength();
+  path.style.strokeDasharray = totalLen+' '+totalLen;
+  path.classList.remove('undrawn');
+  update(true);
+}
+var drawn = 0;
+function update(force){
+  if(!totalLen) return;
+  var docH = document.documentElement.scrollHeight - innerHeight;
+  var p3 = docH>0 ? Math.min(1, Math.max(0, (scrollY + innerHeight*.72) / (docH + innerHeight*.72))) : 1;
+  var target = totalLen * p3;
+  drawn = force ? target : drawn + (target-drawn)*.14;
+  path.style.strokeDashoffset = Math.max(0, totalLen - drawn);
+  var tip = path.getPointAtLength(Math.min(drawn, totalLen-1));
+  nodes.forEach(function(sec, k){
+    var hit = tip.y >= nodeInY[k]-4 || p3 > .985;
+    if(k===0) hit = true;
+    sec.classList.toggle('ran', hit);
+    if(sec.querySelector('.port.out') && tip.y >= (nodeInY[k+1]||Infinity)-4) sec.classList.add('done');
+  });
+  var ranN = document.querySelectorAll('.node.ran').length;
+  var tc = document.getElementById('term-count');
+  if(tc) tc.textContent = ranN+'/'+nodes.length+' nodes';
+  var rs = document.getElementById('runstat');
+  if(rs) rs.textContent = (ranN===nodes.length) ? 'run complete' : 'running';
+  mmView();
+  mmRan();
+}
+function animPulses(now){
+  if(totalLen && !reduced){
+    for(var i2=0;i2<pulses.length;i2++){
+      var t2 = ((now/2600) + i2/pulses.length) % 1;
+      var L2 = t2 * drawn;
+      if(L2 > 8 && drawn > 40){
+        var pt = path.getPointAtLength(L2);
+        pulses[i2].setAttribute('cx', pt.x); pulses[i2].setAttribute('cy', pt.y);
+        pulses[i2].style.opacity = .25 + .75*Math.sin(t2*Math.PI);
+      } else pulses[i2].style.opacity = 0;
+    }
+    if(Math.abs((totalLen*lastP())-drawn) > .5) update();
+  }
+  requestAnimationFrame(animPulses);
+}
+function lastP(){
+  var docH = document.documentElement.scrollHeight - innerHeight;
+  return docH>0 ? Math.min(1, Math.max(0, (scrollY + innerHeight*.72) / (docH + innerHeight*.72))) : 1;
+}
+
+/* ── minimap ── */
+var mmTrack = document.getElementById('mm-track'), mmNodes = [], mmV = null;
+function buildMM(){
+  if(!mmTrack) return;
+  mmTrack.innerHTML = '';
+  mmNodes = [];
+  var docH = document.documentElement.scrollHeight;
+  nodes.forEach(function(sec){
+    var r = sec.getBoundingClientRect(), top = r.top+scrollY;
+    var d2 = document.createElement('div');
+    d2.className = 'mm-node';
+    d2.style.top = (top/docH*100)+'%';
+    d2.style.height = Math.max(2.2, r.height/docH*100)+'%';
+    mmTrack.appendChild(d2); mmNodes.push(d2);
+  });
+  mmV = document.createElement('div'); mmV.id = 'mm-view';
+  mmTrack.appendChild(mmV);
+  mmView();
+}
+function mmView(){
+  if(!mmV) return;
+  var docH = document.documentElement.scrollHeight;
+  mmV.style.top = (scrollY/docH*100)+'%';
+  mmV.style.height = (innerHeight/docH*100)+'%';
+}
+function mmRan(){
+  nodes.forEach(function(sec,k){ if(mmNodes[k]) mmNodes[k].classList.toggle('ran', sec.classList.contains('ran')); });
+}
+var mm = document.getElementById('minimap');
+if(mm) mm.addEventListener('click', function(ev){
+  var r = mmTrack.getBoundingClientRect();
+  var f = Math.min(1, Math.max(0, (ev.clientY-r.top)/r.height));
+  scrollTo({top: f*document.documentElement.scrollHeight - innerHeight/2, behavior: reduced?'auto':'smooth'});
+});
+
+/* ── run-cost flicker: it never leaves zero — that's the joke and the promise ── */
+if(!reduced){
+  var rc = document.getElementById('runcost');
+  if(rc) setInterval(function(){
+    rc.textContent = '$0.000'+(Math.random()<.85?'0':(Math.random()*10|0));
+    setTimeout(function(){ rc.textContent = '$0.0000'; }, 140);
+  }, 3400);
+}
+
+/* ── wire everything up ── */
+function layout(){ renderLoom(); buildWire(); buildMM(); }
+addEventListener('scroll', function(){ update(); }, {passive:true});
+addEventListener('resize', function(){ clearTimeout(layout._t); layout._t = setTimeout(layout, 180); });
+addEventListener('load', layout);
+if('ResizeObserver' in window){ /* lazy images shift the graph; re-measure the cable when the page grows */
+  var ro = new ResizeObserver(function(){ clearTimeout(layout._t); layout._t = setTimeout(function(){ buildWire(); buildMM(); }, 220); });
+  ro.observe(document.body);
+}
+layout();
+requestAnimationFrame(animPulses);
 })();
 
-/* ── hero "loom" — woven signal threads between nodes ── */
+/* ═══ node 03 · flow-demo — a scripted replay of the real workflow ═══
+   Plays like a video but is plain DOM: nodes appear and get renamed, a
+   prompt types itself, wires connect port-to-port, a run executes, and
+   the result is dropped into a pre-populated Envelope + Source Library. */
 (function(){
-  var c=document.getElementById('loom'); if(!c) return;
-  var x=c.getContext('2d'), W,H,nodes=[],DPR=Math.min(2,window.devicePixelRatio||1);
-  var COL=['52,217,255','255,69,177','255,181,61'];
-  function size(){W=c.clientWidth;H=c.clientHeight;c.width=W*DPR;c.height=H*DPR;x.setTransform(DPR,0,0,DPR,0,0);build();}
-  function build(){nodes=[];var n=Math.round(Math.min(34,W/46));for(var i=0;i<n;i++){nodes.push({
-    x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.18,vy:(Math.random()-.5)*.18,
-    r:Math.random()*1.6+.6,c:COL[i%3],ph:Math.random()*6.28});}}
-  function frame(t){
-    x.clearRect(0,0,W,H);
-    for(var i=0;i<nodes.length;i++){var a=nodes[i];a.x+=a.vx;a.y+=a.vy;
-      if(a.x<0||a.x>W)a.vx*=-1; if(a.y<0||a.y>H)a.vy*=-1;
-      for(var j=i+1;j<nodes.length;j++){var b=nodes[j],dx=a.x-b.x,dy=a.y-b.y,d=Math.hypot(dx,dy);
-        if(d<150){var o=(1-d/150)*.22;x.strokeStyle='rgba('+a.c+','+o+')';x.lineWidth=.7;
-          x.beginPath();x.moveTo(a.x,a.y);x.lineTo(b.x,b.y);x.stroke();}}
-    }
-    for(var k=0;k<nodes.length;k++){var p=nodes[k],pulse=.5+.5*Math.sin(t/900+p.ph);
-      x.fillStyle='rgba('+p.c+','+(.25+pulse*.5)+')';x.beginPath();x.arc(p.x,p.y,p.r+pulse*.8,0,6.2832);x.fill();}
-    requestAnimationFrame(frame);
-  }
-  if(!matchMedia('(prefers-reduced-motion: reduce)').matches){size();requestAnimationFrame(frame);window.addEventListener('resize',size);}
+'use strict';
+var stage = document.getElementById('fd'); if(!stage) return;
+var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+var canvas = stage.querySelector('.fd-canvas'), svg = document.getElementById('fd-svg');
+var $ = function(id){ return document.getElementById(id); };
+var A=$('fdA'), B=$('fdB'), C=$('fdC'), D=$('fdD'), E=$('fdE');
+var cursor=$('fd-cursor'), caption=$('fd-caption'), loopbar=$('fd-loopbar');
+var timers=[], TOTAL=25.4, visible=false, running=false, typing=null;
+
+function later(t, fn){ timers.push(setTimeout(fn, t*1000)); }
+function clearTimers(){ timers.forEach(clearTimeout); timers=[];
+  if(typing){ clearInterval(typing); typing=null; } }
+function rel(el){ var c=canvas.getBoundingClientRect(), r=el.getBoundingClientRect();
+  return {x:r.left-c.left, y:r.top-c.top, w:r.width, h:r.height,
+          cx:r.left-c.left+r.width/2, cy:r.top-c.top+r.height/2}; }
+function port(node, sel){ return node.querySelector(sel); }
+function portXY(node, sel){ var r=rel(port(node,sel)); return {x:r.cx, y:r.cy}; }
+
+/* wires */
+var wires=[];
+function mkWire(f,fs,t,ts,color){
+  var p=document.createElementNS('http://www.w3.org/2000/svg','path');
+  p.setAttribute('stroke',color); svg.appendChild(p);
+  var w={path:p, f:f, fs:fs, t:t, ts:ts, drawn:false}; wires.push(w); return w;
+}
+var EDGE='rgba(163,178,199,.75)';
+var wAD=mkWire(A,'.fd-port.out',D,'.fd-port.in.i1',EDGE);
+var wBD=mkWire(B,'.fd-port.out',D,'.fd-port.in.i2',EDGE);
+var wCD=mkWire(C,'.fd-port.out',D,'.fd-port.in.i3',EDGE);
+var wDE=mkWire(D,'.fd-port.out',E,'.fd-port.in',EDGE);
+function layoutWires(){
+  wires.forEach(function(w){
+    var a=portXY(w.f,w.fs), b=portXY(w.t,w.ts), dx=Math.max(24,(b.x-a.x)*.5);
+    w.path.setAttribute('d','M'+a.x+','+a.y+' C'+(a.x+dx)+','+a.y+' '+(b.x-dx)+','+b.y+' '+b.x+','+b.y);
+    var L=w.path.getTotalLength();
+    w.path.style.transition='none';
+    w.path.style.strokeDasharray=L+' '+L;
+    w.path.style.strokeDashoffset=w.drawn?0:L;
+  });
+}
+function drawWire(w,dur){
+  w.drawn=true;
+  port(w.f,w.fs).classList.add('hot');
+  w.path.getBoundingClientRect();
+  w.path.style.transition='stroke-dashoffset '+dur+'s cubic-bezier(.22,.61,.2,1)';
+  w.path.style.strokeDashoffset=0;
+  later(dur*.9, function(){ port(w.t,w.ts).classList.add('hot'); });
+}
+
+/* cursor + captions + typing */
+function move(x,y,dur){
+  cursor.style.transition='left '+dur+'s cubic-bezier(.22,.61,.2,1), top '+dur+'s cubic-bezier(.22,.61,.2,1)';
+  cursor.style.left=x+'px'; cursor.style.top=y+'px';
+}
+function moveTo(el,dur){ var r=rel(el); move(r.cx, r.cy, dur||.8); }
+function click(){ cursor.classList.remove('click'); void cursor.offsetWidth; cursor.classList.add('click'); }
+function cap(t){ caption.classList.add('off'); later(.32, function(){ caption.textContent=t; caption.classList.remove('off'); }); }
+function typeInto(el, text, dur, node){
+  if(node) node.classList.add('editing');
+  el.textContent='';
+  var i=0, step=Math.max(18, dur*1000/text.length);
+  typing=setInterval(function(){
+    i++; el.textContent=text.slice(0,i);
+    if(i>=text.length){ clearInterval(typing); typing=null; if(node) later(.4,function(){node.classList.remove('editing');}); }
+  }, step);
+}
+
+/* the envelope's third item, added during the run */
+var newItem=null;
+function addEnvelopeItem(){
+  newItem=document.createElement('div');
+  newItem.className='fd-item new';
+  newItem.innerHTML='<img src="assets/demo/result-crop.jpg" alt=""/><span>portrait-inked.png</span>';
+  $('fd-items').appendChild(newItem);
+  $('fd-count').textContent='3';
+}
+
+function reset(){
+  clearTimers();
+  [A,B,C,D,E].forEach(function(n){ n.classList.remove('on','editing'); });
+  $('fdA-name').textContent='Image'; $('fdB-name').textContent='Reference Image';
+  $('fd-prompt').textContent='';
+  $('fd-result').classList.remove('running','done');
+  $('fd-gen').classList.remove('pressed');
+  if(newItem){ newItem.remove(); newItem=null; }
+  $('fd-count').textContent='2';
+  $('fd-lib').classList.remove('open');
+  stage.querySelectorAll('.fd-port.hot').forEach(function(p){ p.classList.remove('hot'); });
+  wires.forEach(function(w){ w.drawn=false; });
+  layoutWires();
+  cursor.style.transition='none'; cursor.style.opacity=1;
+  var c=canvas.getBoundingClientRect();
+  cursor.style.left=(c.width*.5)+'px'; cursor.style.top=(c.height*.82)+'px';
+  loopbar.style.transition='none'; loopbar.style.width='0%';
+}
+
+function finalState(){ /* reduced motion: show the finished graph, no animation */
+  reset();
+  [A,B,C,D,E].forEach(function(n){ n.classList.add('on'); });
+  $('fdA-name').textContent='rough sketch'; $('fdB-name').textContent='style ref';
+  $('fd-prompt').textContent='ink & colour this sketch — keep the slate-blue top';
+  $('fd-result').classList.add('done');
+  wires.forEach(function(w){ w.drawn=true; });
+  layoutWires();
+  addEnvelopeItem();
+  $('fd-lib').classList.add('open');
+  caption.textContent='The result lands in the Source Library';
+  cursor.style.opacity=0;
+}
+
+function cycle(){
+  if(!visible || reduced){ running=false; return; }
+  running=true;
+  reset();
+  loopbar.getBoundingClientRect();
+  loopbar.style.transition='width '+TOTAL+'s linear'; loopbar.style.width='100%';
+  cap('Drop in a source image');
+  later(.4,  function(){ E.classList.add('on'); });
+  later(.7,  function(){ moveTo(A,.8); });
+  later(1.0, function(){ A.classList.add('on'); click(); });
+  later(1.5, function(){ typeInto($('fdA-name'),'rough sketch',1.0,A); });
+  later(3.0, function(){ cap('Add references & a prompt'); moveTo(B,.7); });
+  later(3.4, function(){ B.classList.add('on'); click(); });
+  later(3.9, function(){ typeInto($('fdB-name'),'style ref',.9,B); });
+  later(5.2, function(){ moveTo(C,.7); });
+  later(5.6, function(){ C.classList.add('on'); click(); });
+  later(6.0, function(){ typeInto($('fd-prompt'),'ink & colour this sketch — keep the slate-blue top',2.5,C); });
+  later(8.8, function(){ cap('Wire it into Image Generation'); D.classList.add('on'); });
+  later(9.3, function(){ moveTo(port(A,'.fd-port.out'),.5); });
+  later(9.8, function(){ click(); drawWire(wAD,.7); moveTo(port(D,'.fd-port.in.i1'),.7); });
+  later(10.7,function(){ moveTo(port(B,'.fd-port.out'),.5); });
+  later(11.2,function(){ click(); drawWire(wBD,.7); moveTo(port(D,'.fd-port.in.i2'),.7); });
+  later(12.1,function(){ moveTo(port(C,'.fd-port.out'),.5); });
+  later(12.6,function(){ click(); drawWire(wCD,.7); moveTo(port(D,'.fd-port.in.i3'),.7); });
+  later(13.5,function(){ cap('Run it — your key, your cost'); moveTo($('fd-gen'),.6); });
+  later(14.2,function(){ click(); $('fd-gen').classList.add('pressed'); $('fd-result').classList.add('running'); });
+  later(16.8,function(){ $('fd-result').classList.remove('running'); $('fd-result').classList.add('done');
+                         $('fd-gen').classList.remove('pressed'); });
+  later(17.3,function(){ cap('Connect it to an Envelope'); moveTo(port(D,'.fd-port.out'),.6); });
+  later(18.1,function(){ click(); drawWire(wDE,.9); moveTo(port(E,'.fd-port.in'),.9); });
+  later(19.3,function(){ click(); addEnvelopeItem(); }); /* envelopes collect what's wired in */
+  later(20.3,function(){ cap('It lands in the Source Library'); moveTo($('fd-libtab'),.7); });
+  later(21.1,function(){ click(); $('fd-lib').classList.add('open'); });
+  later(23.2,function(){ cap('Every workspace sees it now'); });
+  later(24.6,function(){ $('fd-lib').classList.remove('open'); });
+  later(TOTAL, cycle);
+}
+
+/* only animate on screen; reduced motion gets the finished graph */
+if(reduced){ finalState(); }
+else if('IntersectionObserver' in window){
+  new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      visible = e.isIntersecting;
+      if(visible && !running) cycle();
+      if(!visible && running){ clearTimers(); running=false; }
+    });
+  },{threshold:.25}).observe(stage);
+}else{ visible=true; cycle(); }
+addEventListener('resize', function(){ if(!running) layoutWires(); });
+addEventListener('load', function(){ if(!running) layoutWires(); });
+layoutWires();
 })();
 </script>
 </body>

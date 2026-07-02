@@ -62,7 +62,7 @@ for (const p of pages) {
   const h = read(p);
   let m;
   while ((m = assetRe.exec(h))) {
-    const asset = m[1];
+    const asset = m[1].split('?')[0]; // cache-busting queries (?v=N) are not part of the file path
     if (seen.has(asset)) continue;
     seen.add(asset);
     const path = join(root, asset);
