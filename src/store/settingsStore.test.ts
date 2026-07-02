@@ -142,6 +142,7 @@ describe('settingsStore image provider settings', () => {
       bfl: '',
       stability: '',
       atlas: '',
+      byteplus: '',
     });
 
     expect(sanitizePersistedApiKeys('bad-api-state')).toEqual({
@@ -152,6 +153,7 @@ describe('settingsStore image provider settings', () => {
       bfl: '',
       stability: '',
       atlas: '',
+      byteplus: '',
     });
   });
 
@@ -269,4 +271,26 @@ describe('settingsStore image provider settings', () => {
     expect(useSettingsStore.getState().providerSettings.vertexServiceAccountJson).toBe('');
   });
 
+});
+
+describe('settingsStore interface density', () => {
+  it('defaults to compact and sanitizes the setter', () => {
+    expect(useSettingsStore.getState().interfaceDensity).toBe('compact');
+
+    useSettingsStore.getState().setInterfaceDensity('comfortable');
+    expect(useSettingsStore.getState().interfaceDensity).toBe('comfortable');
+
+    useSettingsStore.getState().setInterfaceDensity('bogus' as never);
+    expect(useSettingsStore.getState().interfaceDensity).toBe('compact');
+  });
+
+  it('rehydrates only known density values through the persist merge', () => {
+    const merge = (useSettingsStore as PersistableSettingsStore).persist?.getOptions?.().merge;
+    expect(merge).toBeTypeOf('function');
+    const current = useSettingsStore.getState();
+
+    expect(merge?.({ interfaceDensity: 'comfortable' }, current)?.interfaceDensity).toBe('comfortable');
+    expect(merge?.({ interfaceDensity: 'gigantic' }, current)?.interfaceDensity).toBe('compact');
+    expect(merge?.({}, current)?.interfaceDensity).toBe('compact');
+  });
 });

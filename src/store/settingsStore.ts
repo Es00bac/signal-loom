@@ -209,6 +209,13 @@ export interface SettingsBackupData {
 /** Desktop integrated app-menu presentation: a single ☰ button, or a classic horizontal menu bar. */
 export type AppMenuStyle = 'compact' | 'menubar';
 
+/**
+ * UI density: 'compact' keeps today's tight layout; 'comfortable' raises the
+ * smallest text sizes (sub-11px chips/labels) and lifts low-contrast secondary
+ * text via root-scoped CSS (see index.css `.density-comfortable`).
+ */
+export type InterfaceDensity = 'compact' | 'comfortable';
+
 interface SettingsState {
   apiKeys: ApiKeys;
   defaultModels: DefaultModelSettings;
@@ -216,6 +223,7 @@ interface SettingsState {
   interfaceThemeId: string;
   /** Desktop integrated-menu presentation: 'compact' (single ☰) or 'menubar' (classic File/Edit/… row). */
   appMenuStyle: AppMenuStyle;
+  interfaceDensity: InterfaceDensity;
   keyboardShortcuts: KeyboardShortcutMap;
   gamepadBindings: GamepadBindingProfile;
   customBrushPresets: ImageBrushPreset[];
@@ -240,6 +248,7 @@ interface SettingsState {
   setProviderSetting: <TKey extends keyof ProviderSettings>(key: TKey, value: ProviderSettings[TKey]) => void;
   setInterfaceThemeId: (themeId: string) => void;
   setAppMenuStyle: (style: AppMenuStyle) => void;
+  setInterfaceDensity: (density: InterfaceDensity) => void;
   setKeyboardShortcut: (command: NativeMenuCommand, shortcut: string) => void;
   resetKeyboardShortcuts: () => void;
   setGamepadBinding: (workspace: GamepadWorkspace, controlId: GamepadControlId, patch: Partial<GamepadControlBinding>) => void;
@@ -363,6 +372,7 @@ export const useSettingsStore = create<SettingsState>()(
       },
       interfaceThemeId: DEFAULT_INTERFACE_THEME_ID,
       appMenuStyle: 'compact',
+      interfaceDensity: 'compact',
       keyboardShortcuts: {},
       gamepadBindings: createDefaultGamepadBindings(),
       customBrushPresets: [],
@@ -393,6 +403,8 @@ export const useSettingsStore = create<SettingsState>()(
         set({ interfaceThemeId: resolveInterfaceTheme(themeId).id }),
       setAppMenuStyle: (style) =>
         set({ appMenuStyle: style === 'menubar' ? 'menubar' : 'compact' }),
+      setInterfaceDensity: (density) =>
+        set({ interfaceDensity: density === 'comfortable' ? 'comfortable' : 'compact' }),
       setKeyboardShortcut: (command, shortcut) =>
         set((state) => ({
           keyboardShortcuts: sanitizeKeyboardShortcutMap({
@@ -568,6 +580,7 @@ export const useSettingsStore = create<SettingsState>()(
           },
           interfaceThemeId: resolveInterfaceTheme(typedPersistedState?.interfaceThemeId).id,
           appMenuStyle: typedPersistedState?.appMenuStyle === 'menubar' ? 'menubar' : 'compact',
+          interfaceDensity: typedPersistedState?.interfaceDensity === 'comfortable' ? 'comfortable' : 'compact',
           keyboardShortcuts: sanitizeKeyboardShortcutMap(typedPersistedState?.keyboardShortcuts ?? {}),
           gamepadBindings: normalizeGamepadBindings(typedPersistedState?.gamepadBindings),
           customBrushPresets: sanitizeUserBrushPresets(typedPersistedState?.customBrushPresets),

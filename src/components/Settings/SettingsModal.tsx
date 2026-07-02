@@ -64,12 +64,14 @@ export const SettingsModal: React.FC = () => {
     defaultModels,
     providerSettings,
     interfaceThemeId,
+    interfaceDensity,
     keyboardShortcuts,
     gamepadBindings,
     settingsPanel,
     setApiKey,
     setDefaultModel,
     setInterfaceThemeId,
+    setInterfaceDensity,
     setKeyboardShortcut,
     setGamepadBinding,
     setProviderSetting,
@@ -408,6 +410,16 @@ export const SettingsModal: React.FC = () => {
                   label: theme.name,
                 }))}
                 value={interfaceThemeId}
+              />
+
+              <SelectInput
+                label="Interface density"
+                onChange={(value) => setInterfaceDensity(value === 'comfortable' ? 'comfortable' : 'compact')}
+                options={[
+                  { value: 'compact', label: 'Compact (default)' },
+                  { value: 'comfortable', label: 'Comfortable — larger small text, higher contrast' },
+                ]}
+                value={interfaceDensity}
               />
 
               <div className="md:col-span-2">

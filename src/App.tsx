@@ -354,6 +354,7 @@ function FlowApp() {
   const defaultModels = useSettingsStore((state) => state.defaultModels);
   const providerSettings = useSettingsStore((state) => state.providerSettings);
   const interfaceThemeId = useSettingsStore((state) => state.interfaceThemeId);
+  const interfaceDensity = useSettingsStore((state) => state.interfaceDensity);
   const keyboardShortcuts = useSettingsStore((state) => state.keyboardShortcuts);
   const gamepadBindings = useSettingsStore((state) => state.gamepadBindings);
   const openSettings = useSettingsStore((state) => state.openSettings);
@@ -2144,7 +2145,7 @@ function FlowApp() {
 
   return (
     <div
-      className="signal-loom-themed w-screen h-screen overflow-hidden flex flex-col relative font-sans"
+      className={`signal-loom-themed density-${interfaceDensity} w-screen h-screen overflow-hidden flex flex-col relative font-sans`}
       data-mobile-phone-interface={mobilePhoneInterface.enabled ? mobilePhoneInterface.orientation : undefined}
       data-mobile-phone-interface-mode={mobilePhoneInterface.enabled ? mobileChromeMode : undefined}
       data-source-library-renderer-item-ids={sourceLibraryRendererItemIds}
