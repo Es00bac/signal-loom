@@ -273,6 +273,7 @@ import {
 } from '../../../lib/paperTouchNavigation';
 import { getSharedSourceBinCanvasOffsetPx } from '../../../lib/sharedWorkspacePanelDefaults';
 import { clampContextMenuPosition, getContextMenuMaxHeight } from '../../../lib/sharedContextMenu';
+import { openLinkedImageDocumentFromItem } from '../../../lib/imageLinkedEdit';
 import { observePaperTopbarSlot } from '../../../lib/paperTopbarSlot';
 import {
   createImageDocumentFromSourceItem,
@@ -2155,27 +2156,32 @@ export function PaperWorkspace() {
       ? { kind: 'paper-frame' as const, pageId, frameId, sourceLabel: sourceItem.label }
       : undefined;
     setStatus(`Opening "${sourceItem.label}" in the Image workspace...`);
+    const bridge = getSignalLoomNativeBridge();
+    if (bridge?.openWorkspaceWindow) {
+      // Multi-window: the Image WINDOW owns its own store — the document must be
+      // built there. Open/focus the window first, then post the command (same
+      // ordering as sendPaperFrameSourceToFlow). An ImageDocument itself can't
+      // ride the channel (OffscreenCanvas bitmaps aren't cloneable).
+      void bridge.openWorkspaceWindow('image').then(() => {
+        window.setTimeout(() => postWorkspaceWindowCommand({
+          type: 'image-open-linked-document',
+          item: sourceItem,
+          linkedEdit,
+          targetWorkspace: 'image',
+        }), 250);
+      });
+      setStatus(`Opened "${sourceItem.label}" in the Image workspace.`);
+      return;
+    }
     void (async () => {
       try {
-        const doc = await createImageDocumentFromSourceItem(sourceItem);
-        openImageDocument(linkedEdit ? { ...doc, linkedEdit } : doc);
+        await openLinkedImageDocumentFromItem(sourceItem, linkedEdit);
         setStatus(`Opened "${sourceItem.label}" as an editable image document.`);
-      } catch (error) {
-        const shell = createSourceBackedImageDocumentShell(sourceItem);
-        openImageDocument(linkedEdit ? { ...shell, linkedEdit } : shell);
-        setStatus(error instanceof Error
-          ? `Opened "${sourceItem.label}" as a linked image shell; bitmap load failed: ${error.message}`
-          : `Opened "${sourceItem.label}" as a linked image shell; bitmap load failed.`);
       } finally {
-        const bridge = getSignalLoomNativeBridge();
-        if (bridge?.openWorkspaceWindow) {
-          await bridge.openWorkspaceWindow('image');
-        } else {
-          setWorkspaceView('image');
-        }
+        setWorkspaceView('image');
       }
     })();
-  }, [openImageDocument, setWorkspaceView, sourceItems]);
+  }, [setWorkspaceView, sourceItems]);
 
   const runPaperImageQuickEdit = useCallback(async ({
     abortSignal,

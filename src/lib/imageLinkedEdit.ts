@@ -16,6 +16,11 @@
  */
 import { imageDocumentToDataUrl } from '../components/ImageEditor/ImageDocumentExport';
 import { saveImageDocumentAsSlimg } from '../components/ImageEditor/ImageSlimgCodec';
+import {
+  createImageDocumentFromSourceItem,
+  createSourceBackedImageDocumentShell,
+} from '../components/ImageEditor/ImageSourceDocument';
+import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import { useImageEditorStore } from '../store/imageEditorStore';
 import { usePaperStore } from '../store/paperStore';
 import { useFlowStore } from '../store/flowStore';
@@ -72,6 +77,34 @@ export function buildPaperLinkedEditReturnItem(
 
 function isMultiWindowDesktop(): boolean {
   return Boolean(getSignalLoomNativeBridge()?.openWorkspaceWindow);
+}
+
+/** Deterministic id: re-opening the same source focuses the existing tab instead of duplicating it. */
+export function linkedImageDocumentId(itemId: string): string {
+  return `linked-${itemId}`;
+}
+
+/**
+ * Build and open a (linked) image document from a Source Library item in THIS
+ * window's store — used directly in single-window mode, and by the Image window
+ * when the `image-open-linked-document` command arrives from another window.
+ */
+export async function openLinkedImageDocumentFromItem(
+  item: SourceBinLibraryItem,
+  linkedEdit?: ImageDocumentLinkedEdit,
+): Promise<void> {
+  const id = linkedImageDocumentId(item.id);
+  let doc: ImageDocument;
+  try {
+    doc = await createImageDocumentFromSourceItem(item);
+  } catch {
+    doc = createSourceBackedImageDocumentShell(item);
+  }
+  useImageEditorStore.getState().openDocument({
+    ...doc,
+    id,
+    ...(linkedEdit ? { linkedEdit } : {}),
+  });
 }
 
 async function switchToWorkspace(target: LinkedEditTargetWorkspace): Promise<void> {

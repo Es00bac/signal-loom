@@ -1,4 +1,5 @@
 import type { SourceBin, SourceBinLibraryItem } from '../store/sourceBinStore';
+import type { ImageDocumentLinkedEdit } from '../types/imageEditor';
 import {
   isWorkspaceWindowView,
   type WorkspaceWindowView,
@@ -44,6 +45,17 @@ export type WorkspaceWindowCommand =
       pageId: string;
       frameId: string;
       targetWorkspace: 'paper';
+    }
+  | {
+      /**
+       * Open a Source Library image as an (optionally linked) document in the Image
+       * WINDOW. The document is rebuilt on the receiving side — ImageDocument holds
+       * OffscreenCanvas bitmaps, which cannot ride a BroadcastChannel.
+       */
+      type: 'image-open-linked-document';
+      item: SourceBinLibraryItem;
+      linkedEdit?: ImageDocumentLinkedEdit;
+      targetWorkspace: 'image';
     }
   | {
       /** A linked .slimg edit was written to disk: refresh Flow nodes bound to that file. */

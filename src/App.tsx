@@ -191,7 +191,7 @@ import { saveImageDocumentAsSlimg, openSlimgDocument } from './components/ImageE
 import { classifyOpenedFile } from './lib/signalLoomFileRouting';
 import { serializeSlppr, deserializeSlppr } from './features/paper/SlpprFormat';
 import { usePaperStore } from './store/paperStore';
-import { applySlimgFileUpdateToLocalFlow } from './lib/imageLinkedEdit';
+import { applySlimgFileUpdateToLocalFlow, openLinkedImageDocumentFromItem } from './lib/imageLinkedEdit';
 import { useDockablePanelStore } from './store/dockablePanelStore';
 import { useFlowWorkspaceStore } from './store/flowWorkspaceStore';
 import {
@@ -1033,6 +1033,12 @@ function FlowApp() {
           setSelectedSourceItemId(command.item.id);
           setSourceBinTab('editorAssets');
           return;
+        case 'image-open-linked-document': {
+          // Another window (Paper) asked THIS Image window to open a linked edit.
+          mergeCommandSourceBinItems([command.item]);
+          void openLinkedImageDocumentFromItem(command.item, command.linkedEdit);
+          return;
+        }
         case 'paper-place-source-asset': {
           // A linked image edit coming home: merge the edited asset, rebind the frame.
           mergeCommandSourceBinItems([command.item]);
