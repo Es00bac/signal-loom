@@ -121,7 +121,7 @@ export const PAPER_PRINT_UPSCALE_METHOD_OPTIONS: SelectOption[] = [
   { value: 'stability-fast', label: 'Stability Fast (AI 4x, 2 credits / $0.02, then exact local fit)' },
   { value: 'stability-conservative', label: 'Stability Conservative (AI 4MP, 40 credits / $0.40, then exact local fit)' },
   { value: 'vertex-imagen', label: 'Vertex Imagen upscale when available' },
-  { value: 'local-ai-cpu', label: 'Local CPU AI upscaler (requires installed runtime; avoids GPU)' },
+  { value: 'local-ai-cpu', label: 'Local AI upscaler (one-click install; runs on this machine)' },
   { value: 'local-browser', label: 'Local browser scaling only (free, no cloud call)' },
 ];
 
@@ -436,13 +436,15 @@ export function getConfiguredProviders<TCapability extends Capability>(
   return CAPABILITY_PROVIDERS[capability].filter((provider) => {
     switch (provider) {
       case 'gemini':
-        // Google is available with a Gemini API key, OR via Vertex ADC for image + text (both
-        // execution paths support Vertex). Resolve the project the SAME way the auth status does —
-        // through getVertexProjectConfig, which also reads GOOGLE_CLOUD_PROJECT / CLOUDSDK_* env vars —
-        // so a project set anywhere (not just the raw field) still surfaces the provider.
+        // Google is available with a Gemini API key, OR via Vertex ADC for image + text + video (all
+        // three execution paths support Vertex — video runs Veo/Omni through the desktop bridge, the
+        // same bridge the Vertex image path already requires). Resolve the project the SAME way the
+        // auth status does — through getVertexProjectConfig, which also reads GOOGLE_CLOUD_PROJECT /
+        // CLOUDSDK_* env vars — so a project set anywhere (not just the raw field) still surfaces
+        // the provider. Audio (Gemini TTS) still needs the API key.
         return Boolean(apiKeys.gemini.trim()) || (
           providerSettings != null
-          && (capability === 'image' || capability === 'text')
+          && (capability === 'image' || capability === 'text' || capability === 'video')
           && providerSettings.geminiCredentialMode === 'vertex-adc'
           && Boolean(getVertexProjectConfig({ ...DEFAULT_PROVIDER_SETTINGS, ...providerSettings }).projectId)
         );
@@ -640,6 +642,15 @@ function supportsGemini25FlashImageAspectRatios(modelId: string | undefined): bo
 function supportsGemini31FlashOrProImageAspectRatios(modelId: string | undefined): boolean {
   const normalized = (modelId ?? '').trim().toLowerCase();
   return normalized.includes('3.1-flash-image') || normalized.includes('3-pro-image');
+}
+
+/**
+ * Gemini 3.x image models accept `imageConfig.imageSize` ('1K' | '2K' | '4K', uppercase K required).
+ * 2.5-generation models and Imagen do not; 3.1 Flash-Lite Image is 1K-only, and its id does not
+ * match this predicate ('3.1-flash-lite-image' contains neither substring).
+ */
+export function supportsGeminiImageSizeTiers(modelId: string | undefined): boolean {
+  return supportsGemini31FlashOrProImageAspectRatios(modelId);
 }
 
 export function isVertexImagenModelId(modelId: string | undefined): boolean {

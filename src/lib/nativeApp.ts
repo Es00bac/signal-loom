@@ -436,6 +436,14 @@ export interface NativeWindowCaptureResult {
   error?: string;
 }
 
+export interface LocalUpscalerStatus {
+  installed: boolean;
+  running: boolean;
+  endpointUrl?: string;
+  authHeader?: string;
+  error?: string;
+}
+
 export interface SignalLoomNativeBridge {
   getNativeState: () => Promise<NativeState>;
   clearProjectPath: () => Promise<{ ok?: boolean }>;
@@ -446,6 +454,11 @@ export interface SignalLoomNativeBridge {
   saveImageDocumentFileAs: (bytes: Uint8Array) => Promise<NativeImageSaveResult>;
   /** Re-read a .slimg by a known path (no dialog) — used by the .slimg Flow node's "Read disk". */
   readImageDocumentFile?: (path: string) => Promise<{ bytes?: Uint8Array; error?: string }>;
+  /** One-click local AI upscaler runtime (Real-ESRGAN) managed by the main process. */
+  localUpscalerStatus?: () => Promise<LocalUpscalerStatus>;
+  localUpscalerInstall?: () => Promise<LocalUpscalerStatus>;
+  localUpscalerStart?: () => Promise<LocalUpscalerStatus>;
+  localUpscalerStop?: () => Promise<LocalUpscalerStatus>;
   /** Overwrite a .slimg at a known path (no dialog) — the linked-edit round-trip's save. */
   writeImageDocumentFile?: (path: string, bytes: Uint8Array) => Promise<{ ok?: boolean; error?: string }>;
   openPaperDocumentFile: () => Promise<NativePaperOpenResult>;

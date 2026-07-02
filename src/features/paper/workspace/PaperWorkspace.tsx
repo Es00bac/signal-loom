@@ -4246,6 +4246,31 @@ function PaperPrintUpscaleDialog({
   const [method, setMethod] = useState<PaperPrintUpscaleMethod>(providerSettings.paperPrintUpscaleMethod);
   const [prompt, setPrompt] = useState(DEFAULT_PAPER_PRINT_UPSCALE_PROMPT);
   const [creativity, setCreativity] = useState(0.2);
+  const [upscalerSetup, setUpscalerSetup] = useState<string | null>(null);
+
+  const nativeBridge = getSignalLoomNativeBridge();
+  const canSetUpLocalUpscaler = Boolean(nativeBridge?.localUpscalerInstall && nativeBridge?.localUpscalerStart);
+  const setUpLocalUpscaler = async () => {
+    if (!nativeBridge?.localUpscalerInstall || !nativeBridge.localUpscalerStart) return;
+    try {
+      setUpscalerSetup('Downloading the Real-ESRGAN runtime (~40 MB, one time)…');
+      const installed = await nativeBridge.localUpscalerInstall();
+      if (installed.error) throw new Error(installed.error);
+      setUpscalerSetup('Starting the local upscaler…');
+      const started = await nativeBridge.localUpscalerStart();
+      if (started.error || !started.endpointUrl) {
+        throw new Error(started.error ?? 'The local upscaler did not start.');
+      }
+      // Persisting the endpoint + token flips this dialog's readiness live and
+      // keeps working across app restarts (the runtime auto-starts with the app).
+      const settingsState = useSettingsStore.getState();
+      settingsState.setProviderSetting('localAiCpuEndpointUrl', started.endpointUrl);
+      settingsState.setProviderSetting('localAiCpuAuthHeader', started.authHeader ?? '');
+      setUpscalerSetup(null);
+    } catch (setupError) {
+      setUpscalerSetup(setupError instanceof Error ? setupError.message : 'Local upscaler setup failed.');
+    }
+  };
   const [error, setError] = useState<string | null>(null);
   const androidUpscalerId = providerSettings.androidAcceleratorDefaultUpscaler?.trim() || 'upscaler_realistic';
   const [androidAvailability, setAndroidAvailability] = useState<{
@@ -4476,9 +4501,26 @@ function PaperPrintUpscaleDialog({
               ) : null}
 
               {!plan.canRun || error || androidUnavailableReason ? (
-                <div className="rounded border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
-                  {error ?? androidUnavailableReason ?? plan.unavailableReason}
-                </div>
+                <>
+                  <div className="rounded border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+                    {error ?? androidUnavailableReason ?? plan.unavailableReason}
+                  </div>
+                  {canSetUpLocalUpscaler && !plan.canRun ? (
+                    <div className="flex flex-wrap items-center gap-2 rounded border border-cyan-300/15 bg-cyan-300/5 px-3 py-2">
+                      <button
+                        className="rounded-md bg-cyan-300 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-cyan-200 disabled:opacity-50"
+                        disabled={upscalerSetup !== null && !upscalerSetup.includes('failed') && !upscalerSetup.includes('not')}
+                        onClick={() => void setUpLocalUpscaler()}
+                        type="button"
+                      >
+                        Install &amp; start local upscaler
+                      </button>
+                      <span className="text-xs text-cyan-100/70">
+                        {upscalerSetup ?? 'One click: downloads Real-ESRGAN, runs it on this machine, and configures the endpoint for you.'}
+                      </span>
+                    </div>
+                  ) : null}
+                </>
               ) : checkingAndroidProvider ? (
                 <div className="rounded border border-cyan-300/10 bg-cyan-300/5 px-3 py-2 text-xs leading-5 text-cyan-100/70">
                   Checking Android accelerator readiness before sending this image to the phone...

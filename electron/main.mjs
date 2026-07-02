@@ -1,11 +1,12 @@
 import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
-import { execFile } from 'node:child_process';
-import { existsSync, statSync, writeFileSync, rmSync } from 'node:fs';
+import { execFile, spawn } from 'node:child_process';
+import { chmodSync, existsSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { copyFile, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
+import { unzipSync } from 'fflate';
 import menuModule from './menu.cjs';
 import paperPdfExportModule from './paper-pdf-export.cjs';
 import paperImageExportModule from './paper-image-export.cjs';
@@ -2418,6 +2419,11 @@ function installIpcHandlers() {
     return { canceled: false, path };
   });
 
+  ipcMain.handle('signal-loom:local-upscaler-status', () => getLocalUpscalerStatus());
+  ipcMain.handle('signal-loom:local-upscaler-install', () => installLocalUpscaler());
+  ipcMain.handle('signal-loom:local-upscaler-start', () => startLocalUpscaler());
+  ipcMain.handle('signal-loom:local-upscaler-stop', () => stopLocalUpscaler());
+
   // Overwrite a .slimg the renderer already knows the path of (the linked-edit round-trip's
   // "close tab → save & return"), with no dialog. Like image-read-path, the path originates
   // from a prior open/save dialog the user authorized, and only .slimg targets are accepted.
@@ -2906,9 +2912,184 @@ function signalLoomIsVersionNewer(a, b) {
   return false;
 }
 
+
+// ─── Local AI upscaler: one-click install + managed runtime ─────────────────
+// Downloads the pinned Real-ESRGAN ncnn release into userData, then runs
+// ops/local-upscaler/local-upscaler.mjs (bundled via extraResources) under
+// ELECTRON_RUN_AS_NODE with a persistent token, so the renderer's
+// localAiCpuEndpointUrl/localAiCpuAuthHeader keep working across restarts.
+const LOCAL_UPSCALER_PORT = 41797;
+const LOCAL_UPSCALER_RELEASES = {
+  linux: 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip',
+  win32: 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip',
+  darwin: 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-macos.zip',
+};
+let localUpscalerChild;
+
+function getLocalUpscalerPaths() {
+  const installDir = join(app.getPath('userData'), 'local-upscaler');
+  const binaryName = process.platform === 'win32' ? 'realesrgan-ncnn-vulkan.exe' : 'realesrgan-ncnn-vulkan';
+  return {
+    installDir,
+    binaryPath: join(installDir, binaryName),
+    modelsDir: join(installDir, 'models'),
+    metaPath: join(installDir, 'meta.json'),
+    runtimeScript: app.isPackaged
+      ? join(process.resourcesPath, 'ops', 'local-upscaler', 'local-upscaler.mjs')
+      : resolve(__dirname, '../ops/local-upscaler/local-upscaler.mjs'),
+  };
+}
+
+async function readLocalUpscalerMeta() {
+  const { metaPath } = getLocalUpscalerPaths();
+  try {
+    return JSON.parse(await readFile(metaPath, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+async function writeLocalUpscalerMeta(patch) {
+  const { installDir, metaPath } = getLocalUpscalerPaths();
+  await mkdir(installDir, { recursive: true });
+  const meta = { ...(await readLocalUpscalerMeta()), ...patch };
+  await writeFile(metaPath, JSON.stringify(meta, null, 2));
+  return meta;
+}
+
+function buildLocalUpscalerEndpoint(meta) {
+  const port = meta.port ?? LOCAL_UPSCALER_PORT;
+  return {
+    endpointUrl: `http://127.0.0.1:${port}`,
+    authHeader: meta.token ? `Bearer ${meta.token}` : undefined,
+  };
+}
+
+async function getLocalUpscalerStatus() {
+  const { binaryPath } = getLocalUpscalerPaths();
+  const meta = await readLocalUpscalerMeta();
+  const running = Boolean(localUpscalerChild && localUpscalerChild.exitCode === null);
+  return {
+    installed: existsSync(binaryPath),
+    running,
+    ...(running ? buildLocalUpscalerEndpoint(meta) : {}),
+  };
+}
+
+async function installLocalUpscaler() {
+  const releaseUrl = LOCAL_UPSCALER_RELEASES[process.platform];
+  if (!releaseUrl) {
+    return { installed: false, running: false, error: `No Real-ESRGAN build for platform "${process.platform}".` };
+  }
+  const { installDir, binaryPath, modelsDir } = getLocalUpscalerPaths();
+  try {
+    if (!existsSync(binaryPath)) {
+      const response = await net.fetch(releaseUrl);
+      if (!response.ok) {
+        return { installed: false, running: false, error: `Runtime download failed (HTTP ${response.status}).` };
+      }
+      const zipBytes = new Uint8Array(await response.arrayBuffer());
+      const entries = unzipSync(zipBytes);
+      await mkdir(modelsDir, { recursive: true });
+      const binaryName = basename(binaryPath);
+      for (const [name, bytes] of Object.entries(entries)) {
+        const flat = name.replace(/^[^/]*realesrgan[^/]*\//i, '');
+        const keep = flat === binaryName
+          || flat.startsWith('models/')
+          || flat.toLowerCase().endsWith('.dll');
+        if (!keep || flat.endsWith('/') || bytes.length === 0) continue;
+        const target = join(installDir, flat);
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, Buffer.from(bytes));
+      }
+      if (!existsSync(binaryPath)) {
+        return { installed: false, running: false, error: 'Runtime archive did not contain the upscaler binary.' };
+      }
+      if (process.platform !== 'win32') chmodSync(binaryPath, 0o755);
+    }
+    await writeLocalUpscalerMeta({ installedAt: Date.now() });
+    return getLocalUpscalerStatus();
+  } catch (error) {
+    return { installed: existsSync(binaryPath), running: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function startLocalUpscaler() {
+  const { binaryPath, modelsDir, runtimeScript } = getLocalUpscalerPaths();
+  if (!existsSync(binaryPath)) {
+    return { installed: false, running: false, error: 'Install the local upscaler runtime first.' };
+  }
+  if (!existsSync(runtimeScript)) {
+    return { installed: true, running: false, error: `Runtime script missing at ${runtimeScript}.` };
+  }
+  if (localUpscalerChild && localUpscalerChild.exitCode === null) {
+    return getLocalUpscalerStatus();
+  }
+
+  // The token persists in meta so saved renderer settings survive restarts.
+  let meta = await readLocalUpscalerMeta();
+  if (!meta.token) {
+    meta = await writeLocalUpscalerMeta({ token: globalThis.crypto?.randomUUID?.() ?? `sl-${Date.now()}` });
+  }
+  meta = await writeLocalUpscalerMeta({ port: meta.port ?? LOCAL_UPSCALER_PORT, autoStart: true });
+
+  const child = spawn(process.execPath, [
+    runtimeScript,
+    '--bin', binaryPath,
+    '--models', modelsDir,
+    '--port', String(meta.port),
+    '--token', meta.token,
+  ], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    stdio: 'ignore',
+    detached: false,
+  });
+  child.on('exit', () => {
+    if (localUpscalerChild === child) localUpscalerChild = undefined;
+  });
+  localUpscalerChild = child;
+
+  const { endpointUrl, authHeader } = buildLocalUpscalerEndpoint(meta);
+  const deadline = Date.now() + 12_000;
+  while (Date.now() < deadline) {
+    try {
+      const probe = await net.fetch(`${endpointUrl}/v1/capabilities`, {
+        headers: authHeader ? { Authorization: authHeader } : {},
+      });
+      if (probe.ok) return getLocalUpscalerStatus();
+    } catch {
+      // still booting
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 400));
+  }
+  return { installed: true, running: Boolean(localUpscalerChild), endpointUrl, authHeader, error: 'The local upscaler did not answer its health check in time.' };
+}
+
+async function stopLocalUpscaler() {
+  if (localUpscalerChild && localUpscalerChild.exitCode === null) {
+    localUpscalerChild.kill();
+  }
+  localUpscalerChild = undefined;
+  await writeLocalUpscalerMeta({ autoStart: false });
+  return getLocalUpscalerStatus();
+}
+
+async function maybeAutoStartLocalUpscaler() {
+  try {
+    const meta = await readLocalUpscalerMeta();
+    const { binaryPath } = getLocalUpscalerPaths();
+    if (meta.autoStart && existsSync(binaryPath)) {
+      await startLocalUpscaler();
+    }
+  } catch (error) {
+    console.warn('local-upscaler auto-start failed:', error);
+  }
+}
+
 app.whenReady().then(async () => {
   installProtocolHandlers();
   installIpcHandlers();
+  void maybeAutoStartLocalUpscaler();
   installApplicationMenu();
   if (process.env.SIGNAL_LOOM_ELECTRON_MENU_SMOKE === '1') {
     console.log(`Signal Loom application menu: ${getInstalledApplicationMenuLabels().join(', ')}`);
