@@ -19,6 +19,8 @@ export interface VertexGeneratedImage {
 export interface VertexGeminiImageRequestInput {
   prompt: string;
   aspectRatio: AspectRatio;
+  /** Gemini 3.x image_size tier ('1K' | '2K' | '4K'); omitted = provider default. */
+  imageSize?: '1K' | '2K' | '4K';
   sourceImage?: VertexInlineImage;
   referenceImages?: VertexInlineImage[];
 }
@@ -67,6 +69,7 @@ export function buildVertexGeminiImageRequestBody(input: VertexGeminiImageReques
       responseModalities: ['TEXT', 'IMAGE'],
       imageConfig: {
         aspectRatio: input.aspectRatio,
+        ...(input.imageSize ? { imageSize: input.imageSize } : {}),
       },
     },
   };

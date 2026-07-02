@@ -3,6 +3,29 @@ import { executeNodeRequest } from './flowExecution';
 import { DEFAULT_EXECUTION_CONFIG } from './providerCatalog';
 import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
 
+// Gemini TTS has no Vertex execution path, so (unlike text/image/video) it must run through the
+// Gemini API key even in vertex-adc mode. Capture the SDK construction to prove which key ran.
+const genAiCapture = vi.hoisted(() => ({
+  apiKey: undefined as string | undefined,
+  requests: [] as Array<Record<string, unknown>>,
+}));
+vi.mock('@google/genai', () => ({
+  GoogleGenAI: class {
+    models: { generateContent: (request: Record<string, unknown>) => Promise<unknown> };
+    constructor(opts: { apiKey?: string }) {
+      genAiCapture.apiKey = opts.apiKey;
+      this.models = {
+        generateContent: async (request: Record<string, unknown>) => {
+          genAiCapture.requests.push(request);
+          return {
+            candidates: [{ content: { parts: [{ inlineData: { data: 'AAAA', mimeType: 'audio/pcm' } }] } }],
+          };
+        },
+      };
+    }
+  },
+}));
+
 const baseSettings: RuntimeSettingsSnapshot = {
   apiKeys: {
     gemini: 'DO_NOT_USE_GEMINI_API_KEY',
@@ -117,7 +140,40 @@ describe('executeNodeRequest Vertex text routing', () => {
     });
   });
 
-  it('does not run Gemini TTS through an API key when Vertex mode is selected', async () => {
+  it('runs Gemini TTS through the API key even when Vertex mode is selected', async () => {
+    // Vertex serves text/image/video but NOT the TTS models; the audio provider dropdown already
+    // gates Google audio on the API key, so with a key present TTS must run — not hard-throw on
+    // the credential mode (the old behavior made every listed Gemini TTS run fail by default).
+    vi.stubGlobal('window', { signalLoomNative: {} });
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:gemini-tts');
+    genAiCapture.apiKey = undefined;
+    genAiCapture.requests = [];
+
+    const node: AppNode = {
+      id: 'audio-1',
+      type: 'audioGen',
+      position: { x: 0, y: 0 },
+      data: {
+        provider: 'gemini',
+        modelId: 'gemini-3.1-flash-tts-preview',
+      },
+    };
+
+    const result = await executeNodeRequest(
+      node,
+      {
+        prompt: 'Narrate this line.',
+        config: DEFAULT_EXECUTION_CONFIG,
+      },
+      baseSettings,
+    );
+
+    expect(result.resultType).toBe('audio');
+    expect(genAiCapture.apiKey).toBe('DO_NOT_USE_GEMINI_API_KEY');
+    expect(genAiCapture.requests[0]).toMatchObject({ model: 'gemini-3.1-flash-tts-preview' });
+  });
+
+  it('fails Gemini TTS with a key-focused error when no API key is configured', async () => {
     vi.stubGlobal('window', { signalLoomNative: {} });
 
     const node: AppNode = {
@@ -137,8 +193,8 @@ describe('executeNodeRequest Vertex text routing', () => {
           prompt: 'Narrate this line.',
           config: DEFAULT_EXECUTION_CONFIG,
         },
-        baseSettings,
+        { ...baseSettings, apiKeys: { ...baseSettings.apiKeys, gemini: '' } },
       ),
-    ).rejects.toThrow('Vertex mode will not fall back');
+    ).rejects.toThrow('Gemini TTS requires a Gemini API key');
   });
 });

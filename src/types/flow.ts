@@ -832,12 +832,21 @@ export interface NodeData {
   cropYPercent?: number;
   cropWidthPercent?: number;
   cropHeightPercent?: number;
+  /** GPT-image quality tier; 'auto' (default) lets the provider pick. */
+  imageQuality?: 'low' | 'medium' | 'high' | 'auto';
+  /** Gemini 3.x image output resolution (image_size); unset = provider default (1K). */
+  imageResolutionTier?: '1K' | '2K' | '4K';
   audioOutputFormat?: AudioOutputFormat;
   voiceId?: string;
   geminiVoiceName?: string;
   audioStyleDescription?: string;
   audioGenerationMode?: AudioGenerationMode;
   audioSeed?: number;
+  /** ElevenLabs voice_settings — sent only when the user sets a value (provider default otherwise). */
+  audioStability?: number;
+  audioSimilarityBoost?: number;
+  audioStyleExaggeration?: number;
+  audioSpeed?: number;
   audioLoop?: boolean;
   audioDurationSeconds?: number;
   audioPromptInfluence?: number;

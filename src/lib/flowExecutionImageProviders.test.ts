@@ -5,13 +5,23 @@ import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
 
 // Capture the baseURL the OpenAI SDK client is constructed with, so we can prove Atlas OpenAI-compatible
 // models (gpt-image) never get pointed at api.openai.com (which would send the Atlas key to OpenAI).
-const openAiCapture = vi.hoisted(() => ({ baseURL: undefined as string | undefined }));
+const openAiCapture = vi.hoisted(() => ({
+  baseURL: undefined as string | undefined,
+  generateArgs: undefined as Record<string, unknown> | undefined,
+  editArgs: undefined as Record<string, unknown> | undefined,
+}));
 vi.mock('openai', () => ({
   default: class {
     constructor(opts: { baseURL?: string }) { openAiCapture.baseURL = opts.baseURL; }
     images = {
-      generate: async () => ({ data: [{ b64_json: 'aW1n' }] }),
-      edit: async () => ({ data: [{ b64_json: 'aW1n' }] }),
+      generate: async (args: Record<string, unknown>) => {
+        openAiCapture.generateArgs = args;
+        return { data: [{ b64_json: 'aW1n' }] };
+      },
+      edit: async (args: Record<string, unknown>) => {
+        openAiCapture.editArgs = args;
+        return { data: [{ b64_json: 'aW1n' }] };
+      },
     };
   },
 }));
@@ -365,11 +375,135 @@ describe('executeNodeRequest advanced image providers', () => {
     );
     expect(apiCall).toBeTruthy();
     const body = apiCall?.[1]?.body as FormData;
-    expect(body.get('prompt')).toBe('remove the person from the lower-left corner');
+    // Erase is prompt-less (image + mask only) — an upstream prompt must never ride along.
+    expect(body.get('prompt')).toBeNull();
     expect(body.get('output_format')).toBe('png');
     expect(body.get('image')).toBeInstanceOf(File);
     expect(body.get('mask')).toBeInstanceOf(File);
     expect(result.usage).toMatchObject({ provider: 'stability', costUsd: 0.05 });
+  });
+
+  it('sends output_format, low moderation, and quality to first-party OpenAI gpt-image generation', async () => {
+    openAiCapture.generateArgs = undefined;
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:openai-gen');
+    vi.stubGlobal('fetch', vi.fn(async () => imageResponse('IMG')));
+
+    const result = await executeNodeRequest(
+      createImageNode('openai', 'gpt-image-2', { imageQuality: 'high' }),
+      {
+        prompt: 'a hero shot of a walnut desk organizer',
+        config: { ...DEFAULT_EXECUTION_CONFIG, imageOutputFormat: 'webp' },
+      },
+      { ...baseSettings, apiKeys: { ...baseSettings.apiKeys, openai: 'sk-openai' } },
+    );
+
+    // The node's format select used to be silently ignored for OpenAI — the result was labeled png
+    // regardless. Now the format rides on the request and the returned data URL is typed to match.
+    expect(openAiCapture.generateArgs).toMatchObject({
+      model: 'gpt-image-2',
+      output_format: 'webp',
+      moderation: 'low',
+      quality: 'high',
+    });
+    expect(result.result.startsWith('data:image/webp;base64,')).toBe(true);
+  });
+
+  it('sends source + reference images as an image array to OpenAI images.edit', async () => {
+    openAiCapture.editArgs = undefined;
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:openai-edit');
+    vi.stubGlobal('fetch', vi.fn(async () => imageResponse('IMG')));
+
+    await executeNodeRequest(
+      createImageNode('openai', 'gpt-image-2'),
+      {
+        prompt: 'place the character from the reference into the scene',
+        editImageInput: 'data:image/png;base64,U09VUkNF',
+        editReferenceImageInputs: [
+          'data:image/png;base64,UkVGMQ==',
+          'data:image/png;base64,UkVGMg==',
+        ],
+        config: DEFAULT_EXECUTION_CONFIG,
+      },
+      { ...baseSettings, apiKeys: { ...baseSettings.apiKeys, openai: 'sk-openai' } },
+    );
+
+    // gpt-image edits accept up to 16 input images; references used to be hard-rejected.
+    const editArgs = openAiCapture.editArgs as Record<string, unknown> | undefined;
+    const image = editArgs?.image as File[];
+    expect(Array.isArray(image)).toBe(true);
+    expect(image).toHaveLength(3);
+    expect(editArgs).toMatchObject({ model: 'gpt-image-2', output_format: 'png' });
+  });
+
+  it('keeps the Atlas OpenAI-compatible route on the single-image contract without gpt-image extras', async () => {
+    openAiCapture.editArgs = undefined;
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-edit');
+    vi.stubGlobal('fetch', vi.fn(async () => imageResponse('IMG')));
+
+    await executeNodeRequest(
+      createImageNode('atlas', 'openai/gpt-image-2/edit'),
+      {
+        prompt: 'swap the sign text',
+        editImageInput: 'data:image/png;base64,U09VUkNF',
+        config: DEFAULT_EXECUTION_CONFIG,
+      },
+      {
+        ...baseSettings,
+        apiKeys: { ...baseSettings.apiKeys, atlas: 'atlas-key' },
+        providerSettings: { ...baseSettings.providerSettings, atlasBaseUrl: 'https://api.atlascloud.ai/api/v1' },
+      },
+    );
+
+    const atlasEditArgs = openAiCapture.editArgs as Record<string, unknown> | undefined;
+    expect(atlasEditArgs?.image).toBeInstanceOf(File);
+    expect(atlasEditArgs?.output_format).toBeUndefined();
+    expect(atlasEditArgs?.moderation).toBeUndefined();
+  });
+
+  it('runs Stability replace-background-relight as an async job: subject_image, background_prompt, results polling', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:stability-relight');
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      void init;
+      const urlString = String(url);
+      if (urlString.startsWith('data:')) {
+        return imageResponse('SOURCE');
+      }
+      if (urlString.includes('/stable-image/edit/replace-background-and-relight')) {
+        return jsonResponse({ id: 'gen-123' });
+      }
+      if (urlString.includes('/v2beta/results/gen-123')) {
+        return imageResponse('RELIT');
+      }
+      throw new Error(`Unexpected fetch: ${urlString}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await executeNodeRequest(
+      createImageNode('stability', 'stable-image-edit-replace-background-relight', {}),
+      {
+        prompt: 'sunlit scandinavian studio, soft window light',
+        editImageInput: 'data:image/png;base64,U09VUkNF',
+        config: DEFAULT_EXECUTION_CONFIG,
+      },
+      baseSettings,
+    );
+
+    expect(result.result).toBe('blob:stability-relight');
+    expect(createObjectURL).toHaveBeenCalled();
+    const submit = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes('/stable-image/edit/replace-background-and-relight'),
+    );
+    expect(submit).toBeTruthy();
+    const body = submit?.[1]?.body as FormData;
+    // The async endpoint names the source `subject_image` and the prompt `background_prompt`;
+    // the old `image` + `prompt` shape was rejected outright.
+    expect(body.get('subject_image')).toBeInstanceOf(File);
+    expect(body.get('image')).toBeNull();
+    expect(body.get('background_prompt')).toBe('sunlit scandinavian studio, soft window light');
+    expect(body.get('prompt')).toBeNull();
+    const poll = fetchMock.mock.calls.find(([url]) => String(url).includes('/v2beta/results/gen-123'));
+    expect(poll).toBeTruthy();
+    expect(result.usage).toMatchObject({ provider: 'stability', costUsd: 0.08 });
   });
 
   it('runs Stability Fast Upscale through the upscale endpoint with exact pricing', async () => {

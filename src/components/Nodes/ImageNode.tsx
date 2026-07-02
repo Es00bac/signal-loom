@@ -791,6 +791,37 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
                 </label>
               ) : null}
 
+              {hasControl('imageSize') ? (
+                <select
+                  aria-label="Output resolution"
+                  className={selectClassName}
+                  onChange={(event) => data.onChange?.(
+                    'imageResolutionTier',
+                    event.target.value === 'default' ? undefined : event.target.value,
+                  )}
+                  value={data.imageResolutionTier ?? 'default'}
+                >
+                  <option value="default">Resolution: Default (1K)</option>
+                  <option value="1K">Resolution: 1K</option>
+                  <option value="2K">Resolution: 2K</option>
+                  <option value="4K">Resolution: 4K</option>
+                </select>
+              ) : null}
+
+              {hasControl('quality') ? (
+                <select
+                  aria-label="Image quality"
+                  className={selectClassName}
+                  onChange={(event) => data.onChange?.('imageQuality', event.target.value)}
+                  value={data.imageQuality ?? 'auto'}
+                >
+                  <option value="auto">Quality: Auto</option>
+                  <option value="low">Quality: Low (cheapest)</option>
+                  <option value="medium">Quality: Medium</option>
+                  <option value="high">Quality: High</option>
+                </select>
+              ) : null}
+
               {hasControl('outputFormat') ? (
                 <select
                   className={selectClassName}

@@ -39,6 +39,21 @@ describe('vertex image request helpers', () => {
     });
   });
 
+  it('includes the Gemini 3.x image_size tier only when requested', () => {
+    const withSize = buildVertexGeminiImageRequestBody({
+      prompt: 'Poster-resolution hero panel.',
+      aspectRatio: '16:9',
+      imageSize: '4K',
+    }) as { generationConfig: { imageConfig: Record<string, unknown> } };
+    expect(withSize.generationConfig.imageConfig).toEqual({ aspectRatio: '16:9', imageSize: '4K' });
+
+    const withoutSize = buildVertexGeminiImageRequestBody({
+      prompt: 'Default-resolution panel.',
+      aspectRatio: '16:9',
+    }) as { generationConfig: { imageConfig: Record<string, unknown> } };
+    expect(withoutSize.generationConfig.imageConfig).toEqual({ aspectRatio: '16:9' });
+  });
+
   it('builds the Vertex Imagen predict body with explicit aspect ratio and sample count', () => {
     expect(
       buildVertexImagenPredictRequestBody({

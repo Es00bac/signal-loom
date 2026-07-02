@@ -193,6 +193,41 @@ describe('getConfiguredProviders', () => {
     ).toEqual(['gemini']);
   });
 
+  it('exposes Gemini video generation when Vertex ADC is configured', () => {
+    // Vertex ADC also drives video (executeVertexVeoVideoNode / executeVertexOmniVideoNode via the
+    // desktop bridge), so an authenticated Vertex project must surface Google as a video provider —
+    // the 0.9.8 fix covered image + text only and left Veo unreachable for Vertex-only users.
+    expect(
+      getConfiguredProviders(
+        'video',
+        { gemini: '', openai: '', huggingface: '', elevenlabs: '' },
+        {
+          backendProxyEnabled: false,
+          backendProxyBaseUrl: '',
+          geminiCredentialMode: 'vertex-adc',
+          vertexProjectId: 'gen-lang-client-0529114074',
+        },
+      ),
+    ).toEqual(['gemini']);
+  });
+
+  it('keeps Gemini audio gated on the API key even when Vertex ADC is configured', () => {
+    // Gemini TTS has no Vertex execution path in this build; surfacing it on Vertex auth alone
+    // would list a provider every run of which fails.
+    expect(
+      getConfiguredProviders(
+        'audio',
+        { gemini: '', openai: '', huggingface: '', elevenlabs: '' },
+        {
+          backendProxyEnabled: false,
+          backendProxyBaseUrl: '',
+          geminiCredentialMode: 'vertex-adc',
+          vertexProjectId: 'gen-lang-client-0529114074',
+        },
+      ),
+    ).toEqual([]);
+  });
+
   it('exposes BFL, Stability, and Local/Open when their cloud keys or endpoint are configured', () => {
     expect(
       getConfiguredProviders(

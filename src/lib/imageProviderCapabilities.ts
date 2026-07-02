@@ -53,7 +53,9 @@ export type ImageNodeVisibleControl =
   | 'editStrength'
   | 'loraWeights'
   | 'safetyChecker'
-  | 'dimensions';
+  | 'dimensions'
+  | 'quality'
+  | 'imageSize';
 
 export interface ImageModelCapabilities {
   textToImage: boolean;
@@ -303,8 +305,11 @@ const TEXT_TO_IMAGE_CONTROLS: ImageNodeVisibleControl[] = [
 
 const HUGGING_FACE_TEXT_TO_IMAGE_CONTROLS: ImageNodeVisibleControl[] = [
   'prompt',
+  'negativePrompt',
   'aspectRatio',
   'steps',
+  'seed',
+  'guidanceScale',
   'outputFormat',
 ];
 
@@ -330,6 +335,8 @@ const OPENAI_CONTROLS: ImageNodeVisibleControl[] = [
   'aspectRatio',
   'sourceImage',
   'mask',
+  'referenceImages',
+  'quality',
   'outputFormat',
 ];
 
@@ -353,7 +360,7 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
       maxOutputMegapixels: 2,
     }),
     supportedOperations: ['text-to-image', 'image-edit'],
-    visibleControls: ['prompt', 'aspectRatio', 'sourceImage', 'referenceImages', 'outputFormat'],
+    visibleControls: ['prompt', 'aspectRatio', 'imageSize', 'sourceImage', 'referenceImages', 'outputFormat'],
     cost: { imageEditUsd: 0.067, textToImageUsd: 0.067, unitLabel: '$0.067/image', confidence: 'heuristic' },
     docsUrl: 'https://ai.google.dev/gemini-api/docs/image-generation',
   },
@@ -371,7 +378,7 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
       maxOutputMegapixels: 2,
     }),
     supportedOperations: ['text-to-image', 'image-edit'],
-    visibleControls: ['prompt', 'aspectRatio', 'sourceImage', 'referenceImages', 'outputFormat'],
+    visibleControls: ['prompt', 'aspectRatio', 'imageSize', 'sourceImage', 'referenceImages', 'outputFormat'],
     cost: { imageEditUsd: 0.067, textToImageUsd: 0.067, unitLabel: '$0.067/image', confidence: 'heuristic' },
     docsUrl: 'https://ai.google.dev/gemini-api/docs/image-generation',
   },
@@ -389,7 +396,7 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
       maxOutputMegapixels: 2,
     }),
     supportedOperations: ['text-to-image', 'image-edit'],
-    visibleControls: ['prompt', 'aspectRatio', 'sourceImage', 'referenceImages', 'outputFormat'],
+    visibleControls: ['prompt', 'aspectRatio', 'imageSize', 'sourceImage', 'referenceImages', 'outputFormat'],
     cost: { imageEditUsd: 0.101, textToImageUsd: 0.067, unitLabel: '$0.067-$0.101/image', confidence: 'heuristic' },
     docsUrl: 'https://ai.google.dev/gemini-api/docs/image-generation',
   },
@@ -407,7 +414,7 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
       maxOutputMegapixels: 2,
     }),
     supportedOperations: ['text-to-image', 'image-edit'],
-    visibleControls: ['prompt', 'aspectRatio', 'sourceImage', 'referenceImages', 'outputFormat'],
+    visibleControls: ['prompt', 'aspectRatio', 'imageSize', 'sourceImage', 'referenceImages', 'outputFormat'],
     cost: { imageEditUsd: 0.101, textToImageUsd: 0.067, unitLabel: '$0.067-$0.101/image', confidence: 'heuristic' },
     docsUrl: 'https://ai.google.dev/gemini-api/docs/image-generation',
   },
@@ -482,6 +489,9 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
       maskInpaint: true,
       typography: true,
       textInImageEditing: true,
+      // images.edit accepts up to 16 input images for GPT image models — source + 15 references.
+      referenceImages: true,
+      maxReferenceImages: 15,
       maxOutputMegapixels: 4,
     }),
     supportedOperations: ['text-to-image', 'image-edit', 'mask-inpaint'],
@@ -499,6 +509,9 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
       imageToImage: true,
       promptEdit: true,
       maskInpaint: true,
+      // images.edit accepts up to 16 input images for GPT image models — source + 15 references.
+      referenceImages: true,
+      maxReferenceImages: 15,
     }),
     supportedOperations: ['text-to-image', 'image-edit', 'mask-inpaint'],
     visibleControls: OPENAI_CONTROLS,

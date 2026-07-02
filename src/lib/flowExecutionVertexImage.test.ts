@@ -67,7 +67,7 @@ const baseSettings: RuntimeSettingsSnapshot = {
   },
 };
 
-function createImageNode(modelId: string): AppNode {
+function createImageNode(modelId: string, data: AppNode['data'] = {}): AppNode {
   return {
     id: 'image-1',
     type: 'imageGen',
@@ -75,6 +75,7 @@ function createImageNode(modelId: string): AppNode {
     data: {
       provider: 'gemini',
       modelId,
+      ...data,
     },
   };
 }
@@ -114,6 +115,34 @@ describe('executeNodeRequest Vertex image routing', () => {
         responseModalities: ['TEXT', 'IMAGE'],
         imageConfig: {
           aspectRatio: '16:9',
+        },
+      },
+    });
+  });
+
+  it('threads the node imageResolutionTier through to the Vertex imageConfig imageSize', async () => {
+    const generateVertexImage = vi.fn().mockResolvedValue({
+      result: 'data:image/png;base64,VERTEX',
+      resultType: 'image',
+      statusMessage: 'Generated with gemini-3-pro-image-preview',
+      mimeType: 'image/png',
+    });
+    vi.stubGlobal('window', { signalLoomNative: { generateVertexImage } });
+
+    await executeNodeRequest(
+      createImageNode('gemini-3-pro-image-preview', { imageResolutionTier: '2K' }),
+      {
+        prompt: 'A poster-resolution panel.',
+        config: { ...DEFAULT_EXECUTION_CONFIG, aspectRatio: '16:9' },
+      },
+      baseSettings,
+    );
+
+    expect(generateVertexImage.mock.calls[0][0].body).toMatchObject({
+      generationConfig: {
+        imageConfig: {
+          aspectRatio: '16:9',
+          imageSize: '2K',
         },
       },
     });
