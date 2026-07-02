@@ -21,6 +21,20 @@ interface SpongeBrushStroke {
   lastPoint: Point;
 }
 
+/** Document-space bounding box of a hard-edged circular dab (or a straight segment of them, since
+ * every point on the segment falls inside the two endpoints' bounding box) — same margin
+ * convention as brushTool's dabsDocRect, for the same seam (dirty-rect compositing). Sponge writes
+ * strictly within `(size-1)/2` of the target point (see applySpongeBrushToImageData), so the `+2`
+ * margin is a safe superset. */
+function spongeStrokeDocRect(from: Point, to: Point, size: number): { x: number; y: number; width: number; height: number } {
+  const r = size / 2 + 2;
+  const minX = Math.min(from.x, to.x) - r;
+  const minY = Math.min(from.y, to.y) - r;
+  const maxX = Math.max(from.x, to.x) + r;
+  const maxY = Math.max(from.y, to.y) + r;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
 export const spongeBrushCapabilityDescriptor = describeRetouchBrushToolPlan({
   tool: 'sponge',
   mode: 'saturate',
@@ -102,6 +116,10 @@ function makeSpongeBrushTool(mode: SpongeBrushMode): ToolHandler {
       } else {
         spongeAt(env, point);
       }
+      // Report the doc-space region this dab/segment touched so the renderer recomposites only
+      // that rect (dirty-rect compositing) instead of the whole document — same seam as brush/mask
+      // painting.
+      env.markDirty?.(spongeStrokeDocRect(lineStart, point, env.brushSettings.size));
       stroke.lastPoint = point;
       env.requestRender({ invalidateBitmapCache: true });
     },
@@ -109,6 +127,7 @@ function makeSpongeBrushTool(mode: SpongeBrushMode): ToolHandler {
     onPointerMove(env, point) {
       if (!stroke) return;
       spongeBetween(env, stroke.lastPoint, point);
+      env.markDirty?.(spongeStrokeDocRect(stroke.lastPoint, point, env.brushSettings.size));
       stroke.lastPoint = point;
       env.requestRender({ invalidateBitmapCache: true });
     },

@@ -43,7 +43,17 @@ export const blurBrushTool: ToolHandler = {
     const lineStart = brushStraightLineStart('blurBrush', env.doc.id, mods);
     if (lineStart) controller.anchor({ x: lineStart.x - layer.x, y: lineStart.y - layer.y });
     controller.moveTo({ x: point.x - layer.x, y: point.y - layer.y });
-    controller.previewInto(layer.bitmap);
+    const dirty = controller.previewInto(layer.bitmap);
+    // Bound the recomposite to the touched region (dirty-rect), like the brush/smudge paths —
+    // instead of a full document recomposite every move. Layer-local rect → document space.
+    if (dirty) {
+      env.markDirty?.({
+        x: dirty.x + layer.x,
+        y: dirty.y + layer.y,
+        width: dirty.width,
+        height: dirty.height,
+      });
+    }
     stroke = { layerId: layer.id, bitmapBefore, controller, lastDocPoint: point };
     env.requestRender({ invalidateBitmapCache: true });
   },
@@ -53,7 +63,15 @@ export const blurBrushTool: ToolHandler = {
     const layer = env.doc.layers.find((candidate) => candidate.id === stroke?.layerId);
     if (!layer?.bitmap) return;
     stroke.controller.moveTo({ x: point.x - layer.x, y: point.y - layer.y });
-    stroke.controller.previewInto(layer.bitmap);
+    const dirty = stroke.controller.previewInto(layer.bitmap);
+    if (dirty) {
+      env.markDirty?.({
+        x: dirty.x + layer.x,
+        y: dirty.y + layer.y,
+        width: dirty.width,
+        height: dirty.height,
+      });
+    }
     stroke.lastDocPoint = point;
     env.requestRender({ invalidateBitmapCache: true });
   },

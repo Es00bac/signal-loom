@@ -29,6 +29,21 @@ let samplePoint: Point | null = null;
 let alignedOffset: Point | null = null;
 let stroke: CloneStampStroke | null = null;
 
+/** Document-space bounding box of a hard-edged circular dab (or a straight segment of them, since
+ * every point on the segment falls inside the two endpoints' bounding box) — same margin
+ * convention as brushTool's dabsDocRect, for the same seam (dirty-rect compositing). Only the
+ * TARGET (write) side needs reporting — the source point is read-only. Clone stamp writes strictly
+ * within `(size-1)/2` of the target point (see applyCloneStampToImageData), so the `+2` margin is a
+ * safe superset. */
+function cloneStampStrokeDocRect(from: Point, to: Point, size: number): { x: number; y: number; width: number; height: number } {
+  const r = size / 2 + 2;
+  const minX = Math.min(from.x, to.x) - r;
+  const minY = Math.min(from.y, to.y) - r;
+  const maxX = Math.max(from.x, to.x) + r;
+  const maxY = Math.max(from.y, to.y) + r;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
 export const cloneStampWorkflowCapabilityDescriptor = describeCloneStampToolWorkflow({
   sampleMode: DEFAULT_RETOUCH_TOOL_SETTINGS.sampleMode,
   aligned: DEFAULT_RETOUCH_TOOL_SETTINGS.aligned,
@@ -101,6 +116,10 @@ export const cloneStampTool: ToolHandler = {
     } else {
       stampAt(env, point);
     }
+    // Report the doc-space region this dab/segment touched so the renderer recomposites only
+    // that rect (dirty-rect compositing) instead of the whole document — same seam as brush/mask
+    // painting.
+    env.markDirty?.(cloneStampStrokeDocRect(lineStart, point, env.brushSettings.size));
     stroke.lastPoint = point;
     env.requestRender({ invalidateBitmapCache: true });
   },
@@ -108,6 +127,7 @@ export const cloneStampTool: ToolHandler = {
   onPointerMove(env, point) {
     if (!stroke) return;
     stampBetween(env, stroke.lastPoint, point);
+    env.markDirty?.(cloneStampStrokeDocRect(stroke.lastPoint, point, env.brushSettings.size));
     stroke.lastPoint = point;
     env.requestRender({ invalidateBitmapCache: true });
   },

@@ -455,6 +455,14 @@ function paintLayerMaskStrokeSegment(
     x: env.doc.width / 2,
     y: env.doc.height / 2,
   });
+
+  // Same seam as pixel-layer painting (see dabsDocRect above): tell the renderer which document
+  // region this mask stroke touched so it recomposites only that rect instead of the whole
+  // document. Mask edits change what's visible through the active layer just like pixel edits do,
+  // so they benefit from the identical dirty-rect compositing fast path.
+  const dirtyRect = dabsDocRect(symmetryDabs);
+  if (dirtyRect) env.markDirty?.(dirtyRect);
+
   paintLayerMaskDabs(
     mask,
     layer,
