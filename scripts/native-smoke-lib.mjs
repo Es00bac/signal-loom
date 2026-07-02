@@ -249,6 +249,35 @@ export function buildNativeSmokeProjectDocument({ now = Date.now() } = {}) {
       }],
       dismissedSourceKeys: [],
     },
+    // Image document with a serialized pixel payload: the reopened project must
+    // still carry bitmapData or a saved Image canvas would blank on reopen
+    // (the .sloom bitmap-wipe data-loss class — see docs/notes on 2678f8c/5b1372d).
+    imageEditor: {
+      documents: [{
+        id: 'smoke-image-doc',
+        name: 'Smoke Canvas',
+        width: 2,
+        height: 2,
+        activeLayerId: 'smoke-image-layer',
+        layers: [{
+          id: 'smoke-image-layer',
+          name: 'Layer 1',
+          type: 'image',
+          visible: true,
+          locked: false,
+          opacity: 1,
+          blendMode: 'normal',
+          x: 0,
+          y: 0,
+          bitmap: null,
+          bitmapVersion: 1,
+          mask: null,
+          bitmapData: SMOKE_PNG_DATA_URL,
+        }],
+        snapshots: [],
+      }],
+      activeDocId: 'smoke-image-doc',
+    },
   };
 }
 
@@ -1039,6 +1068,7 @@ export function buildNativeSmokeBridgeExpression() {
           scratchDirectoryPath: open.scratchDirectoryPath,
           name: open.document?.name,
           sourceItems: open.document?.sourceBin?.bins?.[0]?.items?.length ?? 0,
+          imageLayerBitmapDataPrefix: (open.document?.imageEditor?.documents?.[0]?.layers?.[0]?.bitmapData ?? '').slice(0, 14),
         },
         imported: {
           canceled: imported.canceled,
@@ -1076,6 +1106,9 @@ export function assertNativeSmokeResult(result) {
   }
   if (result.open?.canceled || !result.open?.filePath || result.open?.name !== 'Native Smoke' || result.open.sourceItems < 1) {
     throw new Error('Native .sloom open did not restore the saved smoke project.');
+  }
+  if (result.open?.imageLayerBitmapDataPrefix !== 'data:image/png') {
+    throw new Error('Native .sloom round-trip dropped the Image layer pixel payload (bitmapData) — saved canvases would blank on reopen.');
   }
   if (result.imported?.canceled || result.imported?.count < 1) {
     throw new Error('Native media import did not return an item.');

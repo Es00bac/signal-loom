@@ -645,7 +645,7 @@ describe('native smoke helpers', () => {
   it('rejects incomplete native smoke bridge results', () => {
     expect(() => assertNativeSmokeResult({
       save: { canceled: false, filePath: '/tmp/native-smoke.sloom', sourceItems: 1 },
-      open: { canceled: false, filePath: '/tmp/native-smoke.sloom', name: 'Native Smoke', sourceItems: 1 },
+      open: { canceled: false, filePath: '/tmp/native-smoke.sloom', name: 'Native Smoke', sourceItems: 1, imageLayerBitmapDataPrefix: 'data:image/png' },
       imported: { canceled: false, count: 1 },
       pdf: { canceled: false, filePath: '/tmp/paper-proof.pdf', bytes: 100 },
       images: { canceled: false, directoryPath: '/tmp/pages', files: [{ fileName: 'Native-Smoke-Page-1.png', bytes: 68 }] },
@@ -655,7 +655,7 @@ describe('native smoke helpers', () => {
 
     expect(() => assertNativeSmokeResult({
       save: { canceled: false, filePath: '/tmp/native-smoke.sloom', sourceItems: 1 },
-      open: { canceled: false, filePath: '/tmp/native-smoke.sloom', name: 'Native Smoke', sourceItems: 1 },
+      open: { canceled: false, filePath: '/tmp/native-smoke.sloom', name: 'Native Smoke', sourceItems: 1, imageLayerBitmapDataPrefix: 'data:image/png' },
       imported: { canceled: false, count: 0 },
       pdf: { canceled: false, filePath: '/tmp/paper-proof.pdf', bytes: 100 },
       images: { canceled: false, directoryPath: '/tmp/pages', files: [{ fileName: 'Native-Smoke-Page-1.png', bytes: 68 }] },
@@ -670,12 +670,22 @@ describe('native smoke helpers', () => {
       pdf: { canceled: false, filePath: '/tmp/paper-proof.pdf', bytes: 100 },
       images: { canceled: false, directoryPath: '/tmp/pages', files: [{ fileName: 'Native-Smoke-Page-1.png', bytes: 68 }] },
       workspaceWindows: NATIVE_SMOKE_WORKSPACES.map((workspace) => ({ ok: true, workspace })),
+      bodyHasRecovery: false,
+    })).toThrow(/dropped the Image layer pixel payload/);
+
+    expect(() => assertNativeSmokeResult({
+      save: { canceled: false, filePath: '/tmp/native-smoke.sloom', sourceItems: 1 },
+      open: { canceled: false, filePath: '/tmp/native-smoke.sloom', name: 'Native Smoke', sourceItems: 1, imageLayerBitmapDataPrefix: 'data:image/png' },
+      imported: { canceled: false, count: 1 },
+      pdf: { canceled: false, filePath: '/tmp/paper-proof.pdf', bytes: 100 },
+      images: { canceled: false, directoryPath: '/tmp/pages', files: [{ fileName: 'Native-Smoke-Page-1.png', bytes: 68 }] },
+      workspaceWindows: NATIVE_SMOKE_WORKSPACES.map((workspace) => ({ ok: true, workspace })),
       bodyHasRecovery: true,
     })).toThrow(/recovery boundary/);
 
     expect(() => assertNativeSmokeResult({
       save: { canceled: false, filePath: '/tmp/native-smoke.sloom', sourceItems: 1 },
-      open: { canceled: false, filePath: '/tmp/native-smoke.sloom', name: 'Native Smoke', sourceItems: 1 },
+      open: { canceled: false, filePath: '/tmp/native-smoke.sloom', name: 'Native Smoke', sourceItems: 1, imageLayerBitmapDataPrefix: 'data:image/png' },
       imported: { canceled: false, count: 1 },
       pdf: { canceled: false, filePath: '/tmp/paper-proof.pdf', bytes: 100 },
       images: { canceled: false, directoryPath: '/tmp/pages', files: [{ fileName: 'Native-Smoke-Page-1.png', bytes: 68 }] },
