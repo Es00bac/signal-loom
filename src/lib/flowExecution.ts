@@ -2395,7 +2395,7 @@ async function executeVertexImageNode(input: {
   const generateVertexImage = resolveVertexImageGenerator(input.settings.providerSettings);
 
   if (!generateVertexImage) {
-    throw new Error('Vertex AI needs the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
+    throw new Error('Vertex AI requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
   }
 
   const route = getVertexImageRoute(input.modelId);
@@ -2522,7 +2522,7 @@ async function executeVertexGeminiTextContent(input: {
   const generateVertexText = resolveVertexTextGenerator(input.settings.providerSettings);
 
   if (!generateVertexText) {
-    throw new Error(`${input.label} needs the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).`);
+    throw new Error(`${input.label} requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).`);
   }
 
   const result = await generateVertexText({
@@ -2760,7 +2760,7 @@ async function executeVertexVeoVideoNode(input: {
   const generateVertexVideo = resolveVertexVideoGenerator(input.settings.providerSettings);
 
   if (!generateVertexVideo) {
-    throw new Error('Vertex AI video needs the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
+    throw new Error('Vertex AI video requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
   }
 
   validateGeminiVeoVideoRequest(input.modelId, input.prompt, input.context);
@@ -2829,7 +2829,7 @@ async function executeVertexOmniVideoNode(input: {
   const generateVertexVideo = resolveVertexVideoGenerator(input.settings.providerSettings);
 
   if (!generateVertexVideo) {
-    throw new Error('Vertex AI Gemini Omni video needs the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
+    throw new Error('Vertex AI Gemini Omni video requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
   }
 
   const media = await buildOmniVideoMediaParts(input.context);
