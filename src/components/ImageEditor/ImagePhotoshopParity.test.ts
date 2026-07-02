@@ -1553,7 +1553,7 @@ describe('ImagePhotoshopParity', () => {
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'raster-shapes')?.signalLoom).toContain('ellipse convert-to-path support for general boolean workflows');
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'raster-shapes')?.signalLoom).toContain('Convert Shape to Editable Path');
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'raster-shapes')?.signalLoom).toContain('materialization');
-    expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'raster-shapes')?.signalLoom).toContain('non-overlapping simple-polygon pairs');
+    expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'raster-shapes')?.signalLoom).toContain('overlapping simple-polygon pairs through real Greiner-Hormann polygon clipping');
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'raster-shapes')?.signalLoom).toContain('direct context-menu boolean actions');
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'raster-shapes')?.signalLoom).toContain('drawVectorPathOnImageData');
     expect(IMAGE_PHOTOSHOP_PARITY_ITEMS.find((item) => item.id === 'raster-shapes')?.signalLoom).toContain('open vector paths as stroke-only');

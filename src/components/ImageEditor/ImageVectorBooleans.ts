@@ -1,4 +1,5 @@
 import type { ImageVectorPathPoint } from '../../types/imageEditor';
+import { clipSimplePolygons } from './ImagePolygonBooleanClip';
 
 export type ImageVectorBooleanOperation = 'union' | 'intersect' | 'subtract' | 'xor';
 export type ImageVectorBooleanStatus = 'exact' | 'approximate' | 'unsupported';
@@ -6,8 +7,7 @@ export type ImageVectorBooleanFillRule = 'evenodd';
 export type ImageVectorBooleanSupportStatus = 'supported-exact-subset';
 export type ImageVectorBooleanUnsupportedStateCode =
   | 'bezier-segments-not-supported'
-  | 'live-boolean-stack-not-retained'
-  | 'overlapping-non-identical-simple-polygons-not-materialized';
+  | 'live-boolean-stack-not-retained';
 
 export interface ImageVectorBooleanPathDescriptor {
   closed: boolean;
@@ -20,7 +20,9 @@ export interface ImageVectorBooleanWarning {
     | 'empty-path'
     | 'open-path-not-supported'
     | 'non-simple-polygon-not-supported'
-    | 'simple-polygon-boolean-not-supported';
+    | 'simple-polygon-boolean-not-supported'
+    | 'compound-hole-result-evenodd'
+    | 'degenerate-inputs-approximated';
   message: string;
 }
 
@@ -29,7 +31,12 @@ export interface ImageVectorBooleanResult {
   status: ImageVectorBooleanStatus;
   descriptors: ImageVectorBooleanPathDescriptor[];
   warnings: ImageVectorBooleanWarning[];
-  supportedSubset: 'axis-aligned-rectangles' | 'identical-simple-polygons' | 'non-overlapping-simple-polygons' | 'none';
+  supportedSubset:
+    | 'axis-aligned-rectangles'
+    | 'identical-simple-polygons'
+    | 'non-overlapping-simple-polygons'
+    | 'overlapping-simple-polygons'
+    | 'none';
 }
 
 export interface ImageVectorBooleanOperationSupport {
@@ -104,7 +111,7 @@ export interface ImageVectorBooleanUnsupportedResultPolicy {
 }
 
 export interface ImageVectorBooleanBlockerMatrixEntry {
-  inputCase: 'bezier-segments' | 'overlapping-non-identical-simple-polygons' | 'live-boolean-stack';
+  inputCase: 'bezier-segments' | 'live-boolean-stack';
   severity: 'warning' | 'blocker';
   resultStatus: 'unsupported' | 'exact-materialized-with-warning';
   warningCode?: ImageVectorBooleanWarning['code'];
@@ -131,6 +138,7 @@ const VECTOR_BOOLEAN_EXACT_SUBSETS = [
   'axis-aligned-rectangles',
   'identical-simple-polygons',
   'non-overlapping-simple-polygons',
+  'overlapping-simple-polygons',
 ] satisfies Array<Exclude<ImageVectorBooleanResult['supportedSubset'], 'none'>>;
 const VECTOR_BOOLEAN_UNSUPPORTED_STATES: ImageVectorBooleanUnsupportedStateDescriptor[] = [
   {
@@ -145,12 +153,6 @@ const VECTOR_BOOLEAN_UNSUPPORTED_STATES: ImageVectorBooleanUnsupportedStateDescr
     message: 'Boolean results are materialized as output path descriptors without a live editable operation stack.',
     fallback: 'keep-source-layers-for-later-rebuild',
   },
-  {
-    code: 'overlapping-non-identical-simple-polygons-not-materialized',
-    severity: 'blocker',
-    message: 'Overlapping non-identical simple polygons need future polygon clipping before exact retained output.',
-    fallback: 'rasterize-duplicate-or-simplify-to-supported-subset',
-  },
 ];
 const VECTOR_BOOLEAN_UNSUPPORTED_RESULT_POLICY: ImageVectorBooleanUnsupportedResultPolicy = {
   nonMutating: true,
@@ -164,15 +166,6 @@ const VECTOR_BOOLEAN_BLOCKER_MATRIX: ImageVectorBooleanBlockerMatrixEntry[] = [
     severity: 'blocker',
     resultStatus: 'unsupported',
     unsupportedStateCode: 'bezier-segments-not-supported',
-    mutatesInputs: false,
-    materializesDescriptors: false,
-  },
-  {
-    inputCase: 'overlapping-non-identical-simple-polygons',
-    severity: 'blocker',
-    resultStatus: 'unsupported',
-    warningCode: 'simple-polygon-boolean-not-supported',
-    unsupportedStateCode: 'overlapping-non-identical-simple-polygons-not-materialized',
     mutatesInputs: false,
     materializesDescriptors: false,
   },
@@ -231,11 +224,38 @@ export function applyImageVectorBoolean(
     };
   }
 
-  return unsupported(operation, {
-    code: 'simple-polygon-boolean-not-supported',
-    message:
-      'Boolean operations currently support axis-aligned rectangles, identical simple polygons, and non-overlapping simple polygons exactly.',
-  });
+  // General overlapping simple polygons: real polygon clipping (Greiner–Hormann).
+  const clipped = clipSimplePolygons(
+    operation,
+    normalizedA.polygon.map((point) => ({ x: point.x, y: point.y })),
+    normalizedB.polygon.map((point) => ({ x: point.x, y: point.y })),
+  );
+  const warnings: ImageVectorBooleanWarning[] = [];
+  if (clipped.approximate) {
+    warnings.push({
+      code: 'degenerate-inputs-approximated',
+      message:
+        'Shared vertices or edge-touching inputs were minutely perturbed to resolve the boolean; the result is a close approximation.',
+    });
+  }
+  if (clipped.containsHoles) {
+    warnings.push({
+      code: 'compound-hole-result-evenodd',
+      message:
+        'The result encloses one or more holes; the output rings render correctly together under even-odd fill but are materialized as separate paths.',
+    });
+  }
+  return {
+    operation,
+    status: clipped.approximate ? 'approximate' : 'exact',
+    descriptors: clipped.rings.map((ring) => ({
+      closed: true,
+      fillRule: 'evenodd' as const,
+      points: ring.map((point) => ({ x: point.x, y: point.y })),
+    })),
+    warnings,
+    supportedSubset: 'overlapping-simple-polygons',
+  };
 }
 
 export function describeImageVectorBooleanSupport(): ImageVectorBooleanSupportDescriptor {
@@ -249,7 +269,7 @@ export function describeImageVectorBooleanSupport(): ImageVectorBooleanSupportDe
     limitations: [
       'compound-path-holes-preserve-evenodd-only',
       'curved-bezier-segments-rasterize-or-convert-before-boolean',
-      'overlapping-non-identical-simple-polygons-require-future-polygon-clipping',
+      'degenerate-shared-vertex-inputs-resolve-approximately',
     ],
     rasterizeWarnings: [
       'unsupported-polygons-are-not-rasterized-automatically',

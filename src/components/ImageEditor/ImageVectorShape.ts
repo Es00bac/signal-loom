@@ -583,7 +583,6 @@ export function describeImageRasterVectorShapeReadiness(
         ...booleanSupport.limitations,
         'ellipse-inputs-must-convert-to-polygon-path-first',
         'ellipse-retains-fill-stroke-until-converted-to-polygon-path-operands',
-        'overlapping-non-identical-polygons-not-materialized',
         'live-boolean-operation-stack-not-retained',
         'boolean-results-flatten-source-stack-to-output-paths',
         'custom-shape-live-parametric-overlap-editing-not-supported',
@@ -921,7 +920,9 @@ export function materializeImageVectorBooleanLayers(
 
   const plan = planImageVectorBooleanOperation(operation, descriptorA.descriptor, descriptorB.descriptor);
   const style = getEditableVectorShape(a) ?? fallbackShape();
-  const outputLayers = plan.status === 'exact'
+  // 'approximate' results (degeneracy-perturbed overlapping-polygon clips) are
+  // still real materialized paths — only truly unsupported inputs produce nothing.
+  const outputLayers = plan.status !== 'unsupported'
     ? plan.descriptors.map((descriptor, index) => {
         const layer = buildVectorPathLayer({
           doc: null,

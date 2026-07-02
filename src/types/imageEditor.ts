@@ -240,7 +240,7 @@ export interface ImageLayerMetadata {
   vectorBooleanSource?: {
     operation: 'union' | 'intersect' | 'subtract' | 'xor';
     sourceLayerIds: string[];
-    supportedSubset: 'axis-aligned-rectangles' | 'identical-simple-polygons' | 'non-overlapping-simple-polygons' | 'none';
+    supportedSubset: 'axis-aligned-rectangles' | 'identical-simple-polygons' | 'non-overlapping-simple-polygons' | 'overlapping-simple-polygons' | 'none';
     previewSignature: string;
   };
 }

@@ -154,7 +154,7 @@ describe('ImageVectorBooleans', () => {
     expect(xor.descriptors).toEqual([]);
   });
 
-  it('returns bounded unsupported metadata for non-identical simple polygons', () => {
+  it('materializes overlapping non-identical simple polygons through the clipper', () => {
     const triangle = polygon([
       { x: 0, y: 0 },
       { x: 6, y: 0 },
@@ -169,13 +169,41 @@ describe('ImageVectorBooleans', () => {
 
     const result = applyImageVectorBoolean('union', triangle, diamond);
 
-    expect(result.status).toBe('unsupported');
-    expect(result.descriptors).toEqual([]);
+    // The shapes share vertices, so the clipper resolves them via perturbation.
+    expect(result.status).toBe('approximate');
+    expect(result.supportedSubset).toBe('overlapping-simple-polygons');
+    expect(result.descriptors.length).toBeGreaterThan(0);
     expect(result.warnings).toEqual([
       expect.objectContaining({
-        code: 'simple-polygon-boolean-not-supported',
+        code: 'degenerate-inputs-approximated',
       }),
     ]);
+  });
+
+  it('materializes cleanly overlapping simple polygons exactly via polygon clipping', () => {
+    const square = rect(0, 0, 4, 4);
+    // Diamond overlapping the square's right edge with proper crossings only
+    // (no shared vertices, nothing on an edge endpoint): union area is
+    // 16 + 4.5 − 1 = 19.5.
+    const diamond = polygon([
+      { x: 4.5, y: 0.5 },
+      { x: 6, y: 2 },
+      { x: 4.5, y: 3.5 },
+      { x: 3, y: 2 },
+    ]);
+
+    const result = applyImageVectorBoolean('union', square, diamond);
+
+    expect(result.status).toBe('exact');
+    expect(result.supportedSubset).toBe('overlapping-simple-polygons');
+    expect(result.descriptors).toHaveLength(1);
+    expect(result.warnings).toEqual([]);
+    const ring = result.descriptors[0].points;
+    const area = Math.abs(ring.reduce((sum, point, index) => {
+      const next = ring[(index + 1) % ring.length];
+      return sum + point.x * next.y - next.x * point.y;
+    }, 0) / 2);
+    expect(area).toBeCloseTo(19.5, 6);
   });
 
   it('materializes disjoint simple polygon booleans exactly without rasterizing', () => {
@@ -263,7 +291,7 @@ describe('ImageVectorBooleans', () => {
     ]);
     expect(support.operations.every((entry) => entry.supported)).toBe(true);
     expect(support.operations[0]).toMatchObject({
-      exactSubsets: ['axis-aligned-rectangles', 'identical-simple-polygons', 'non-overlapping-simple-polygons'],
+      exactSubsets: ['axis-aligned-rectangles', 'identical-simple-polygons', 'non-overlapping-simple-polygons', 'overlapping-simple-polygons'],
       previewSignatureFields: ['operation', 'inputASignature', 'inputBSignature', 'supportedSubset'],
     });
     expect(support.limitations).toContain('curved-bezier-segments-rasterize-or-convert-before-boolean');
@@ -278,7 +306,7 @@ describe('ImageVectorBooleans', () => {
         expect.objectContaining({
           operation: 'union',
           status: 'supported-exact-subset',
-          exactSubsets: ['axis-aligned-rectangles', 'identical-simple-polygons', 'non-overlapping-simple-polygons'],
+          exactSubsets: ['axis-aligned-rectangles', 'identical-simple-polygons', 'non-overlapping-simple-polygons', 'overlapping-simple-polygons'],
         }),
         expect.objectContaining({ operation: 'intersect' }),
         expect.objectContaining({ operation: 'subtract' }),
@@ -297,12 +325,6 @@ describe('ImageVectorBooleans', () => {
           message: 'Boolean results are materialized as output path descriptors without a live editable operation stack.',
           fallback: 'keep-source-layers-for-later-rebuild',
         },
-        {
-          code: 'overlapping-non-identical-simple-polygons-not-materialized',
-          severity: 'blocker',
-          message: 'Overlapping non-identical simple polygons need future polygon clipping before exact retained output.',
-          fallback: 'rasterize-duplicate-or-simplify-to-supported-subset',
-        },
       ],
       handoffCaveats: {
         svg: [
@@ -315,7 +337,7 @@ describe('ImageVectorBooleans', () => {
         ],
       },
       previewSignatureFields: ['operations', 'exactSubsets', 'unsupportedStates'],
-      previewSignature: 'boolean-support|union,intersect,subtract,xor|axis-aligned-rectangles,identical-simple-polygons,non-overlapping-simple-polygons|bezier-segments-not-supported,live-boolean-stack-not-retained,overlapping-non-identical-simple-polygons-not-materialized',
+      previewSignature: 'boolean-support|union,intersect,subtract,xor|axis-aligned-rectangles,identical-simple-polygons,non-overlapping-simple-polygons,overlapping-simple-polygons|bezier-segments-not-supported,live-boolean-stack-not-retained',
     });
     expect(matrix.operations.every((operation) => operation.previewSignature === `${operation.operation}|${matrix.previewSignature}`)).toBe(true);
   });
@@ -337,15 +359,6 @@ describe('ImageVectorBooleans', () => {
         mutatesInputs: false,
         materializesDescriptors: false,
         unsupportedStateCode: 'bezier-segments-not-supported',
-      }),
-      expect.objectContaining({
-        inputCase: 'overlapping-non-identical-simple-polygons',
-        severity: 'blocker',
-        resultStatus: 'unsupported',
-        warningCode: 'simple-polygon-boolean-not-supported',
-        unsupportedStateCode: 'overlapping-non-identical-simple-polygons-not-materialized',
-        mutatesInputs: false,
-        materializesDescriptors: false,
       }),
       expect.objectContaining({
         inputCase: 'live-boolean-stack',
@@ -374,28 +387,30 @@ describe('ImageVectorBooleans', () => {
 
     expect(plan).toMatchObject({
       operation: 'union',
-      status: 'unsupported',
-      supportedSubset: 'none',
+      // The triangle shares (0,0) with the rectangle, so the clipper perturbs.
+      status: 'approximate',
+      supportedSubset: 'overlapping-simple-polygons',
       sourceMutation: 'none',
       unsupportedResultPolicy: {
         nonMutating: true,
-        descriptors: [],
         preservesInputs: true,
       },
       handoffSignatures: {
-        svg: 'svg|union|closed:4:0,0;10,0;10,10;0,10|closed:3:0,0;8,1;3,6|unsupported',
-        psd: 'psd|union|closed:4:0,0;10,0;10,10;0,10|closed:3:0,0;8,1;3,6|unsupported',
+        svg: 'svg|union|closed:4:0,0;10,0;10,10;0,10|closed:3:0,0;8,1;3,6|overlapping-simple-polygons',
+        psd: 'psd|union|closed:4:0,0;10,0;10,10;0,10|closed:3:0,0;8,1;3,6|overlapping-simple-polygons',
       },
-      previewSignature: 'union|closed:4:0,0;10,0;10,10;0,10|closed:3:0,0;8,1;3,6|none',
+      previewSignature: 'union|closed:4:0,0;10,0;10,10;0,10|closed:3:0,0;8,1;3,6|overlapping-simple-polygons',
     });
+    expect(plan.descriptors.length).toBeGreaterThan(0);
+    expect(plan.unsupportedResultPolicy.descriptors.length).toBe(plan.descriptors.length);
     expect(plan.warnings).toEqual([
       expect.objectContaining({
-        code: 'simple-polygon-boolean-not-supported',
+        code: 'degenerate-inputs-approximated',
       }),
     ]);
     expect(plan.handoffLimitations).toEqual([
-      'keep-source-paths-for-svg-psd-handoff',
-      'boolean-result-not-materialized-for-unsupported-inputs',
+      'boolean-result-is-flattened-to-output-path-descriptors',
+      'source-operation-stack-is-not-retained',
     ]);
   });
 });

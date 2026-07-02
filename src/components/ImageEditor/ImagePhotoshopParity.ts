@@ -332,10 +332,10 @@ export const IMAGE_PHOTOSHOP_PARITY_ITEMS: PhotoshopParityItem[] = [
     id: 'raster-shapes',
     area: 'Raster Shape Tools',
     photoshop: 'Vector-backed rectangles, ellipses, custom shapes, strokes, fills, booleans',
-    signalLoom: 'Vector-backed rectangles, Rectangle and ellipse tools, and the circle/ellipse shape tool now create editable vector-backed layers with retained strokes and fills; retained fill/stroke controls and direct Convert Shape to Editable Path actions now exist; custom shapes now have preset/library readiness descriptors and retained preset geometry metadata; drawVectorPathOnImageData renders open vector paths as stroke-only and closed paths with retained fill/stroke order; booleans now have supported exact materialization for rectangle, identical simple-polygon, and non-overlapping simple-polygon pairs, creating retained editable path results through direct context-menu boolean actions with export handoff descriptors; overlapping custom shape booleans, live boolean operation stacks, ellipse convert-to-path support for general boolean workflows, and general path boolean tooling remain missing',
+    signalLoom: 'Vector-backed rectangles, Rectangle and ellipse tools, and the circle/ellipse shape tool now create editable vector-backed layers with retained strokes and fills; retained fill/stroke controls and direct Convert Shape to Editable Path actions now exist; custom shapes now have preset/library readiness descriptors and retained preset geometry metadata; drawVectorPathOnImageData renders open vector paths as stroke-only and closed paths with retained fill/stroke order; booleans now have exact materialization for rectangle, identical, non-overlapping, and overlapping simple-polygon pairs through real Greiner-Hormann polygon clipping in ImagePolygonBooleanClip (degenerate shared-vertex inputs resolve approximately with an honest warning; even-odd hole outputs materialize as separate paths), creating retained editable path results through direct context-menu boolean actions with export handoff descriptors; live boolean operation stacks, ellipse convert-to-path support for general boolean workflows, Bezier-segment booleans, and general multi-path boolean tooling remain missing',
     priority: 'medium',
     status: 'partial',
-    parityEstimate: 64,
+    parityEstimate: 72,
     workflowReason: 'Shape tools need to become editable vectors instead of one-way raster pixels.',
   },
   {
