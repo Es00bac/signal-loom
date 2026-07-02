@@ -49,7 +49,10 @@ afterEach(() => {
 });
 
 describe('PaperToolbar', () => {
-  it('renders as a compact two-column tools palette with no icon gaps', () => {
+  // Asserts the SHIPPED three-column palette. (An earlier WIP draft of this test expected a
+  // two-column layout that was never built — if the palette moves to 2 columns, flip the
+  // grid-cols assertion below with it.)
+  it('renders as a compact three-column tools palette with no icon gaps', () => {
     const noop = () => {};
     const html = renderToStaticMarkup(
       <PaperToolbar
@@ -71,7 +74,7 @@ describe('PaperToolbar', () => {
     expect(html).toContain('data-paper-tools-panel="true"');
     expect(html).toContain('data-paper-tools-grid="true"');
     expect(html).toContain('data-paper-color-well="true"');
-    expect(html).toContain('grid-cols-2');
+    expect(html).toContain('grid-cols-3');
     expect(html).toContain('gap-0');
     expect(html).toContain('aria-label="Select"');
     expect(html).toContain('aria-label="Gutter knife"');
