@@ -67,6 +67,32 @@
                 <data android:pathPattern=".*\\..*\\..*\\.slppr" />
             </intent-filter>
 
+            <!-- "Share to Signal Loom" from another app's share sheet (e.g. Gallery -> Share ->
+                 Signal Loom, or a file manager's Share action). ACTION_SEND carries the shared
+                 item's content:// URI in EXTRA_STREAM, not the intent's data/path, so Android can
+                 only match it here by MIME type (@capacitor/app's appUrlOpen never sees this —
+                 SignalLoomShareIntentPlugin reads EXTRA_STREAM directly; see that class).
+                 image/* covers photos/generated images shared in as a source image; the
+                 octet-stream/zip entries cover our own .sloom/.slimg/.slppr containers (which,
+                 like the VIEW intent above, have no registered MIME type of their own — a sending
+                 app typically falls back to one of these generic types for an unrecognized
+                 extension). SEND_MULTIPLE is intentionally not registered (out of scope). -->
+            <intent-filter android:label="@string/app_name">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter android:label="@string/app_name">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter android:label="@string/app_name">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/zip" />
+            </intent-filter>
+
         </activity>
 
         <provider
