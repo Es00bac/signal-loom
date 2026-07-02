@@ -340,6 +340,9 @@ const inactiveTabClassName = 'rounded-md px-2 py-1.5 text-[11px] font-semibold t
 const smallEditorButtonClassName = 'inline-flex items-center gap-1.5 rounded-lg border border-gray-700/60 bg-[#0f131b] px-2.5 py-1.5 text-[11px] font-semibold text-gray-200 transition-colors hover:border-gray-500 hover:text-white';
 const miniTrackButtonClassName = 'rounded-md border border-gray-700/60 bg-[#0f131b] px-2 py-1 text-[10px] font-semibold text-gray-300 transition-colors hover:border-gray-500 hover:text-white';
 const sourceBinFilterButtonClassName = 'rounded-full border px-2 py-1 text-[10px] font-semibold transition-colors';
+// Shared SECTION-LABEL styling for the Program Tools clusters (UX review F09) so every
+// cluster heading reads as one consistent small-uppercase label.
+const PROGRAM_TOOLS_SECTION_LABEL_CLASS = 'text-[10px] font-bold uppercase tracking-wider text-gray-400';
 type SourceBinMediaPoolKind = 'image' | 'video' | 'audio';
 const SOURCE_BIN_KIND_FILTER_OPTIONS: Array<{ id: SourceBinKindFilter; label: string }> = [
   { id: 'all', label: 'All' },
@@ -351,6 +354,18 @@ const SOURCE_BIN_KIND_FILTER_OPTIONS: Array<{ id: SourceBinKindFilter; label: st
 ];
 const VISUAL_TRACK_COUNT = 4;
 const AUDIO_TRACK_COUNT = 4;
+
+/**
+ * Single source of truth for the selected clip's fit + transform at a playhead progress,
+ * shared by the Program Tools cluster and the Inspector (UX review F09) so the two surfaces
+ * always reflect the same fit/zoom state instead of deriving it independently.
+ */
+export function resolveClipFitState(clip: EditorVisualClip, progressPercent: number) {
+  return {
+    ...getVisualKeyframeStateAtProgress(clip, progressPercent),
+    fitMode: clip.fitMode,
+  };
+}
 const TIMELINE_PREVIEW_DEBOUNCE_MS = 220;
 const TIMELINE_PREVIEW_MAX_CLIPS = 32;
 const TIMELINE_PREVIEW_CONCURRENCY = 2;
@@ -5035,7 +5050,7 @@ export function ProgramMonitorPanel({
     : undefined;
 
   const selectedKeyframeState = selectedClip
-    ? getVisualKeyframeStateAtProgress(
+    ? resolveClipFitState(
         selectedClip,
         selectedStageClip ? getStageClipProgress(selectedStageClip) * 100 : 0,
       )
@@ -5383,7 +5398,7 @@ export function ProgramMonitorPanel({
 
                 {/* Add Elements Section */}
                 <div className="flex flex-col gap-1.5">
-                  <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Add Elements</div>
+                  <div className={PROGRAM_TOOLS_SECTION_LABEL_CLASS}>Add Elements</div>
                   <div className="flex gap-2">
                     <button
                       className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2.5 py-1.5 text-xs font-semibold text-gray-200 hover:border-gray-500 hover:text-white flex items-center justify-center gap-1.5 transition-colors"
@@ -5407,11 +5422,11 @@ export function ProgramMonitorPanel({
                 {/* Selected Clip Tools */}
                 {selectedClip && (
                   <div className="flex flex-col gap-3 border-t border-gray-800 pt-2.5">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Clip Fit & Align</div>
+                    <div className={PROGRAM_TOOLS_SECTION_LABEL_CLASS}>Clip Fit & Align</div>
                     <div className="flex flex-wrap gap-1.5">
                       <button
                         className={`px-2 py-1 text-[11px] font-semibold rounded border transition-colors ${
-                          selectedClip.fitMode === 'contain'
+                          (selectedKeyframeState?.fitMode ?? selectedClip.fitMode) === 'contain'
                             ? 'border-blue-400/50 bg-blue-500/20 text-blue-100'
                             : 'border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white'
                         }`}
@@ -5422,7 +5437,7 @@ export function ProgramMonitorPanel({
                       </button>
                       <button
                         className={`px-2 py-1 text-[11px] font-semibold rounded border transition-colors ${
-                          selectedClip.fitMode === 'cover'
+                          (selectedKeyframeState?.fitMode ?? selectedClip.fitMode) === 'cover'
                             ? 'border-blue-400/50 bg-blue-500/20 text-blue-100'
                             : 'border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white'
                         }`}
@@ -5433,7 +5448,7 @@ export function ProgramMonitorPanel({
                       </button>
                       <button
                         className={`px-2 py-1 text-[11px] font-semibold rounded border transition-colors ${
-                          selectedClip.fitMode === 'stretch'
+                          (selectedKeyframeState?.fitMode ?? selectedClip.fitMode) === 'stretch'
                             ? 'border-blue-400/50 bg-blue-500/20 text-blue-100'
                             : 'border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white'
                         }`}
@@ -5451,7 +5466,7 @@ export function ProgramMonitorPanel({
                       </button>
                     </div>
 
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Clip Transform</div>
+                    <div className={PROGRAM_TOOLS_SECTION_LABEL_CLASS}>Clip Transform</div>
                     <div className="grid grid-cols-2 gap-1.5">
                       <button
                         className="px-2 py-1.5 text-[11px] font-medium rounded border border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
@@ -5497,7 +5512,7 @@ export function ProgramMonitorPanel({
                       </button>
                     </div>
 
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Clip Position Nudge</div>
+                    <div className={PROGRAM_TOOLS_SECTION_LABEL_CLASS}>Clip Position Nudge</div>
                     <div className="flex items-center gap-1.5">
                       <button
                         className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2 py-1.5 text-xs font-semibold text-gray-200 hover:border-gray-500 hover:text-white flex items-center justify-center gap-1 transition-colors"
@@ -5571,7 +5586,7 @@ export function ProgramMonitorPanel({
                 {/* Selected Stage Object Tools */}
                 {selectedStageObject && (
                   <div className="flex flex-col gap-3 border-t border-gray-800 pt-2.5">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Object Transform</div>
+                    <div className={PROGRAM_TOOLS_SECTION_LABEL_CLASS}>Object Transform</div>
                     <div className="grid grid-cols-2 gap-1.5">
                       <button
                         className="px-2 py-1.5 text-[11px] font-medium rounded border border-gray-700/60 bg-[#131722] text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
@@ -5603,7 +5618,7 @@ export function ProgramMonitorPanel({
                       </button>
                     </div>
 
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Object Position Nudge</div>
+                    <div className={PROGRAM_TOOLS_SECTION_LABEL_CLASS}>Object Position Nudge</div>
                     <div className="flex items-center gap-1.5">
                       <button
                         className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2 py-1.5 text-xs font-semibold text-gray-200 hover:border-gray-500 hover:text-white flex items-center justify-center gap-1 transition-colors"
@@ -7604,7 +7619,7 @@ function InspectorPanel({
     ? getVisualClipProgressPercent(visualClip, visualDurationSeconds, timelineCursorSeconds)
     : 0;
   const visualCurrentState = visualClip
-    ? getVisualKeyframeStateAtProgress(visualClip, visualProgressPercent)
+    ? resolveClipFitState(visualClip, visualProgressPercent)
     : undefined;
   const chromaKey = visualClip ? normalizeClipChromaKey(visualClip.chromaKey) : undefined;
   const stroke = visualClip ? normalizeClipStroke(visualClip.stroke) : undefined;
@@ -7773,7 +7788,7 @@ function InspectorPanel({
                 <select
                   className="w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-3 py-2 text-sm text-gray-100 outline-none"
                   onChange={(event) => onUpdateVisualClip({ fitMode: event.target.value as EditorVisualClip['fitMode'] })}
-                  value={visualClip.fitMode}
+                  value={visualCurrentState?.fitMode ?? visualClip.fitMode}
                 >
                   <option value="contain">Contain</option>
                   <option value="cover">Cover / Crop</option>

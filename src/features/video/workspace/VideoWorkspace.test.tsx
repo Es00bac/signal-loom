@@ -8,7 +8,7 @@ import { buildVideoParityDiagnostics, buildVideoSequenceSummary } from '../../..
 import type { VideoExportReadinessSummary } from '../../../lib/videoExportReadiness';
 import type { VideoRenderBackendSummary } from '../../../lib/videoRenderBackendStatus';
 import type { AspectRatio, VideoResolution } from '../../../types/flow';
-import { ProgramMonitorPanel, SourceItemCard, TrackAddControl, buildTrackMenuOptions } from './VideoWorkspace';
+import { ProgramMonitorPanel, SourceItemCard, TrackAddControl, buildTrackMenuOptions, resolveClipFitState } from './VideoWorkspace';
 import type { SourceBinItem } from '../../../lib/sourceBin';
 
 function renderProgramMonitor({
@@ -429,6 +429,25 @@ describe('SourceItemCard', () => {
     expect(html).toContain('Video 4');
     // The bare "V1" cryptic buttons are gone (the visible label is now "Video 1").
     expect(html).not.toContain('>V1<');
+  });
+});
+
+describe('resolveClipFitState (F09 shared fit state)', () => {
+  it('reads fit mode from the single clip source of truth regardless of playhead progress', () => {
+    const clip = createEditorVisualClip('node-1', 'image', { fitMode: 'cover', scalePercent: 140 });
+
+    // The Program Tools panel and the Inspector call this helper at different playhead
+    // progress values — the fit mode must stay identical (one source of truth).
+    const programToolsView = resolveClipFitState(clip, 0);
+    const inspectorView = resolveClipFitState(clip, 75);
+
+    expect(programToolsView.fitMode).toBe('cover');
+    expect(inspectorView.fitMode).toBe('cover');
+    expect(programToolsView.fitMode).toBe(inspectorView.fitMode);
+    // It still carries the keyframe-derived transform fields both surfaces rely on.
+    expect(programToolsView).toHaveProperty('scalePercent');
+    expect(programToolsView).toHaveProperty('opacityPercent');
+    expect(programToolsView).toHaveProperty('rotationDeg');
   });
 });
 
