@@ -207,7 +207,11 @@ export interface SourceBinState {
     envelopeIndex?: number;
     envelopeCollapsed?: boolean;
   }, targetBinId?: string) => Promise<SourceBinLibraryItem>;
-  ingestConnectedItems: (items: SourceBinItem[], targetBinId?: string) => Promise<void>;
+  ingestConnectedItems: (
+    items: SourceBinItem[],
+    targetBinId?: string,
+    options?: { graphNodeIds?: ReadonlySet<string> },
+  ) => Promise<void>;
   importFiles: (files: File[] | FileList, targetBinId?: string) => Promise<SourceBinLibraryItem[]>;
   importNativeFiles: (items: Array<SourceBinLibraryItem & { nativeFilePath?: string }>, targetBinId?: string) => Promise<void>;
   toggleItemStarred: (id: string) => void;
@@ -1161,15 +1165,59 @@ export const useSourceBinStore = create<SourceBinState>()(
         broadcastSourceBinItemsAdded([resultItem], targetBinId);
         return resultItem;
       },
-      ingestConnectedItems: async (connectedItems, targetBinId) => {
+      ingestConnectedItems: async (connectedItems, targetBinId, ingestOptions) => {
         const initialState = get();
         const allExistingItems = initialState.bins.flatMap((bin) => bin.items);
+
+        // Upgrade legacy sourceKeys in place. Older builds/tooling wrote keys without the
+        // media-signature suffix (`kind:nodeId` only). When such an item owns the exact asset a
+        // connected item carries, it IS that item — but the exact-key checks below both miss it:
+        // the dedupe re-ingests it (duplicating the library one visited tab at a time) and the
+        // stale-envelope cleanup prunes it (docs/notes/802). Upgrading the stored key first makes
+        // every downstream exact-match path agree.
+        const upgradedSourceKeysById = new Map<string, string>();
+        for (const connectedItem of connectedItems) {
+          if (connectedItem.kind === 'text' || !connectedItem.assetUrl) {
+            continue;
+          }
+          const fullKey = buildConnectedItemSourceKey(connectedItem);
+          const legacyKey = `${connectedItem.kind}:${connectedItem.nodeId}`;
+          if (!fullKey || fullKey === legacyKey) {
+            continue;
+          }
+          const legacyMatch = allExistingItems.find((item) => item.sourceKey === legacyKey);
+          if (
+            legacyMatch?.assetUrl &&
+            buildMediaAssetSignaturePart(legacyMatch.assetUrl) === buildMediaAssetSignaturePart(connectedItem.assetUrl)
+          ) {
+            upgradedSourceKeysById.set(legacyMatch.id, fullKey);
+          }
+        }
+
+        if (upgradedSourceKeysById.size > 0) {
+          set((state) => ({
+            bins: state.bins.map((bin) => ({
+              ...bin,
+              items: bin.items.map((item) => {
+                const sourceKey = upgradedSourceKeysById.get(item.id);
+                return sourceKey ? { ...item, sourceKey } : item;
+              }),
+            })),
+          }));
+        }
+
+        const effectiveExistingItems = upgradedSourceKeysById.size > 0
+          ? allExistingItems.map((item) => {
+              const sourceKey = upgradedSourceKeysById.get(item.id);
+              return sourceKey ? { ...item, sourceKey } : item;
+            })
+          : allExistingItems;
 
         // Check for existing library items that need their envelope metadata updated:
         const updatedItemsById = new Map<string, Partial<SourceBinLibraryItem>>();
         for (const connectedItem of connectedItems) {
           if (connectedItem.sourceBinItemId) {
-            const existing = allExistingItems.find((x) => x.id === connectedItem.sourceBinItemId);
+            const existing = effectiveExistingItems.find((x) => x.id === connectedItem.sourceBinItemId);
             if (existing) {
               const needsUpdate =
                 existing.envelopeId !== connectedItem.envelopeId ||
@@ -1239,7 +1287,7 @@ export const useSourceBinStore = create<SourceBinState>()(
             .filter((id): id is string => Boolean(id)),
         );
 
-        const itemsToRemove = allExistingItems.filter((item) => {
+        const itemsToRemove = effectiveExistingItems.filter((item) => {
           // If the item doesn't have an envelopeId, it wasn't ingested from an envelope. Keep it.
           if (!item.envelopeId) {
             return false;
@@ -1250,9 +1298,16 @@ export const useSourceBinStore = create<SourceBinState>()(
             return false;
           }
 
-          // If the envelope itself is completely disconnected from any source bin, remove the item:
+          // The envelope isn't connected here. That means one of two very different things:
+          // (a) it was disconnected from the source bin in THIS graph — its ingested items are
+          //     stale, prune them — or (b) it was never part of this graph at all (an envelope in
+          //     another flow-workspace tab or window). The library is GLOBAL across workspaces, so
+          //     pruning (b) mass-deletes every other workspace's ingested assets the moment any
+          //     tab's source-bin node ingests (the WnM1 73→1 library wipe, docs/notes/801). Only
+          //     prune when the envelope node verifiably exists in the caller's graph; without
+          //     graph context, never prune.
           if (!connectedEnvelopeIds.has(item.envelopeId)) {
-            return true;
+            return ingestOptions?.graphNodeIds?.has(item.envelopeId) ?? false;
           }
 
           // The envelope is still connected.
@@ -1281,9 +1336,9 @@ export const useSourceBinStore = create<SourceBinState>()(
         }
 
         const pendingItems = takePendingSourceBinIngestItems(connectedItems, {
-          existingItemIds: new Set(allExistingItems.map((item) => item.id)),
+          existingItemIds: new Set(effectiveExistingItems.map((item) => item.id)),
           existingSourceKeys: new Set(
-            allExistingItems
+            effectiveExistingItems
               .map((item) => item.sourceKey)
               .filter((sourceKey): sourceKey is string => Boolean(sourceKey)),
           ),
