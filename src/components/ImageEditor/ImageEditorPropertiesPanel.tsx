@@ -16,7 +16,11 @@ import {
 import {
   describeUniversalImageUpscaleProvider,
   upscaleImageDocumentUniversal,
+  type UniversalImageUpscaleProvider,
 } from './ImageUniversalUpscale';
+import { describeUniversalImageUpscaleWorkflow } from '../../lib/universalImageUpscale';
+import { getVertexProjectConfig } from '../../lib/vertexProviderSettings';
+import { resolveVertexImageGenerator } from '../../lib/cloudImageUpscale';
 import { isAndroidAcceleratorConfigured } from '../../lib/androidAccelerator';
 import {
   isAndroidNativeImageUpscalerAvailable,
@@ -898,11 +902,13 @@ function DocumentGeometryPanel() {
   const providerSettings = isAndroidAcceleratorConfigured(providerSettingsSnapshot)
     ? providerSettingsSnapshot
     : subscribedProviderSettings;
+  const apiKeys = useSettingsStore((s) => s.apiKeys);
   const [imageDraft, setImageDraft] = useState<{ docId: string; width: number; height: number } | null>(null);
   const [canvasDraft, setCanvasDraft] = useState<{ docId: string; width: number; height: number } | null>(null);
   const [anchor, setAnchor] = useState<CanvasResizeAnchor>('center');
   const [upscaleStatus, setUpscaleStatus] = useState<string | null>(null);
   const [upscaleBusy, setUpscaleBusy] = useState(false);
+  const [selectedUpscaler, setSelectedUpscaler] = useState<'auto' | UniversalImageUpscaleProvider>('auto');
 
   if (!activeDoc) return null;
   const imageWidth = imageDraft?.docId === activeDoc.id ? imageDraft.width : activeDoc.width;
@@ -928,14 +934,29 @@ function DocumentGeometryPanel() {
   const isLocalCpuConfigured = isLocalCpuUpscalerConfigured(providerSettings);
   const isAndroidConfigured = isAndroidAcceleratorConfigured(providerSettings);
   const isAndroidNativeConfigured = !isAndroidConfigured && isAndroidNativeImageUpscalerAvailable();
-  const upscaleProvider = isAndroidConfigured
+  const autoUpscaleProvider = isAndroidConfigured
     ? 'android-accelerator'
     : isAndroidNativeConfigured
       ? 'android-native'
       : isLocalCpuConfigured
         ? 'local-ai-cpu'
         : 'browser';
+  const hasStabilityKey = Boolean(apiKeys.stability?.trim());
+  const isVertexUpscaleConfigured = Boolean(getVertexProjectConfig(providerSettings).projectId)
+    && Boolean(resolveVertexImageGenerator(providerSettings));
+  const cloudUpscaleOptions: UniversalImageUpscaleProvider[] = [
+    ...(hasStabilityKey ? (['stability-fast', 'stability-conservative'] as const) : []),
+    ...(isVertexUpscaleConfigured ? (['vertex-imagen'] as const) : []),
+  ];
+  // Selecting a cloud option that later loses its key falls back to Auto so we never claim a paid route is ready.
+  const effectiveUpscaler: 'auto' | UniversalImageUpscaleProvider =
+    selectedUpscaler !== 'auto' && cloudUpscaleOptions.includes(selectedUpscaler) ? selectedUpscaler : 'auto';
+  const isCloudUpscaleSelected = effectiveUpscaler !== 'auto';
+  const upscaleProvider = isCloudUpscaleSelected ? effectiveUpscaler : autoUpscaleProvider;
   const upscaleProviderLabel = describeUniversalImageUpscaleProvider(upscaleProvider);
+  const cloudUpscaleWorkflow = isCloudUpscaleSelected
+    ? describeUniversalImageUpscaleWorkflow(effectiveUpscaler)
+    : null;
 
   const upscale2x = () => {
     setUpscaleBusy(true);
@@ -943,7 +964,10 @@ function DocumentGeometryPanel() {
     void upscaleImageDocumentUniversal({
       doc: activeDoc,
       providerSettings,
+      apiKeys,
       scalePercent: 200,
+      outputFormat: 'png',
+      ...(isCloudUpscaleSelected ? { provider: effectiveUpscaler } : {}),
       localAiCpuUpscale: isLocalCpuConfigured
         ? async (input) => runLocalCpuUpscaler({
           ...input,
@@ -1022,8 +1046,30 @@ function DocumentGeometryPanel() {
           </button>
         </div>
           <div className="rounded border border-cyan-300/10 bg-[#070b12] px-2 py-1.5 text-[11px] leading-4 text-cyan-100/55">
+          <select
+            aria-label="Upscaler"
+            className="mb-1.5 w-full rounded border border-cyan-300/10 bg-[#0d0f15] px-2 py-1 text-cyan-100/80 disabled:opacity-60"
+            disabled={upscaleBusy}
+            onChange={(event) => setSelectedUpscaler(event.target.value as 'auto' | UniversalImageUpscaleProvider)}
+            value={effectiveUpscaler}
+          >
+            <option value="auto">Auto (on-device / local · free)</option>
+            {cloudUpscaleOptions.map((cloudProvider) => {
+              const workflow = describeUniversalImageUpscaleWorkflow(cloudProvider);
+              return (
+                <option key={cloudProvider} value={cloudProvider}>
+                  {`${workflow.methodLabel} · ${workflow.costLabel} (paid)`}
+                </option>
+              );
+            })}
+          </select>
           <div className="font-semibold text-cyan-100/75">{upscaleProviderLabel}</div>
-          {upscaleProvider === 'android-accelerator' ? (
+          {isCloudUpscaleSelected && cloudUpscaleWorkflow ? (
+            <div className="text-amber-200/80">
+              Paid cloud upscaler · provider cost {cloudUpscaleWorkflow.costLabel} per image, billed to your{' '}
+              {effectiveUpscaler === 'vertex-imagen' ? 'Google Cloud project' : 'Stability AI account'}.
+            </div>
+          ) : upscaleProvider === 'android-accelerator' ? (
             <div>Upscaler: {providerSettings.androidAcceleratorDefaultUpscaler ?? 'upscaler_realistic'} · provider cost $0.00</div>
           ) : upscaleProvider === 'android-native' ? (
             <div>Runs inside the Android app with provider cost $0.00.</div>

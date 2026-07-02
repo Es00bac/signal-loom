@@ -2,13 +2,19 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AndroidAcceleratorUpscaleInput } from '../../lib/androidAccelerator';
 import type { AndroidNativeImageUpscaleInput } from '../../lib/androidNativeImageUpscaler';
 import type { LocalCpuUpscalerInput } from '../../lib/localCpuUpscaler';
+import { DEFAULT_PROVIDER_SETTINGS } from '../../lib/providerCatalog';
 import { createEmptyImageDocument } from '../../store/imageEditorStore';
 import type { ImageLayer, LayerBitmap } from '../../types/imageEditor';
+import type { ProviderSettings } from '../../types/flow';
 import {
   describeImageDocumentUniversalUpscaleReadiness,
   describeUniversalImageUpscaleProvider,
   upscaleImageDocumentUniversal,
 } from './ImageUniversalUpscale';
+
+function providerSettings(overrides: Partial<ProviderSettings> = {}): ProviderSettings {
+  return { ...DEFAULT_PROVIDER_SETTINGS, ...overrides };
+}
 
 function makeLayer(overrides?: Partial<ImageLayer>): ImageLayer {
   return {
@@ -48,11 +54,11 @@ describe('ImageUniversalUpscale', () => {
     const result = await upscaleImageDocumentUniversal({
       doc,
       scalePercent: 200,
-      providerSettings: {
+      providerSettings: providerSettings({
         androidAcceleratorBaseUrl: ' http://192.168.1.42:8788/ ',
         androidAcceleratorAuthToken: 'pair-token',
         androidAcceleratorDefaultUpscaler: 'upscaler_anime',
-      },
+      }),
       androidUpscale,
       documentToDataUrl: async () => 'data:image/png;base64,source',
       dataUrlToBitmap: async (dataUrl) => {
@@ -105,11 +111,11 @@ describe('ImageUniversalUpscale', () => {
     const result = await upscaleImageDocumentUniversal({
       doc,
       scalePercent: 200,
-      providerSettings: {
+      providerSettings: providerSettings({
         androidAcceleratorBaseUrl: '   ',
         androidAcceleratorAuthToken: '',
         androidAcceleratorDefaultUpscaler: 'upscaler_realistic',
-      },
+      }),
       androidUpscale,
     });
 
@@ -144,10 +150,10 @@ describe('ImageUniversalUpscale', () => {
     const result = await upscaleImageDocumentUniversal({
       doc,
       scalePercent: 200,
-      providerSettings: {
+      providerSettings: providerSettings({
         androidAcceleratorBaseUrl: '',
         androidAcceleratorDefaultUpscaler: 'upscaler_realistic',
-      },
+      }),
       androidNativeUpscale,
       isAndroidNativeUpscalerAvailable: true,
       documentToDataUrl: async () => 'data:image/png;base64,source',
@@ -201,10 +207,10 @@ describe('ImageUniversalUpscale', () => {
     const result = await upscaleImageDocumentUniversal({
       doc,
       scalePercent: 200,
-      providerSettings: {
+      providerSettings: providerSettings({
         androidAcceleratorBaseUrl: '',
         androidAcceleratorDefaultUpscaler: 'upscaler_realistic',
-      },
+      }),
       androidNativeUpscale,
       isAndroidNativeUpscalerAvailable: true,
       documentToDataUrl: async () => 'data:image/png;base64,source',
@@ -237,6 +243,143 @@ describe('ImageUniversalUpscale', () => {
     expect(describeUniversalImageUpscaleProvider('android-native')).toBe('Android native image upscaler');
     expect(describeUniversalImageUpscaleProvider('browser')).toBe('Local image resize');
     expect(describeUniversalImageUpscaleProvider('local-ai-cpu')).toBe('Local CPU AI upscaler');
+    expect(describeUniversalImageUpscaleProvider('stability-fast')).toBe('Stability Fast Upscale');
+    expect(describeUniversalImageUpscaleProvider('stability-conservative')).toBe('Stability Conservative Upscale');
+    expect(describeUniversalImageUpscaleProvider('vertex-imagen')).toBe('Vertex Imagen Upscale');
+  });
+
+  it('runs the selected Stability Fast cloud upscaler and reports its paid cost label', async () => {
+    const doc = {
+      ...createEmptyImageDocument({ id: 'doc-cloud', title: 'render.png', width: 512, height: 512 }),
+      layers: [makeLayer(), makeLayer({ id: 'layer-2', name: 'Layer 2' })],
+      activeLayerId: 'layer-1',
+    };
+    const upscaledBitmap = { width: 2048, height: 2048 } as LayerBitmap;
+    const stabilityUpscale = vi.fn(async (request) => {
+      expect(request).toMatchObject({
+        sourceImage: 'data:image/png;base64,source',
+        mode: 'fast',
+        outputFormat: 'png',
+        apiKey: 'stability-key',
+      });
+      return { result: 'data:image/png;base64,cloud-upscaled', mimeType: 'image/png' };
+    });
+
+    const result = await upscaleImageDocumentUniversal({
+      doc,
+      scalePercent: 200,
+      provider: 'stability-fast',
+      providerSettings: providerSettings(),
+      apiKeys: { stability: 'stability-key' },
+      stabilityUpscale,
+      documentToDataUrl: async () => 'data:image/png;base64,source',
+      dataUrlToBitmap: async (dataUrl) => {
+        expect(dataUrl).toBe('data:image/png;base64,cloud-upscaled');
+        return upscaledBitmap;
+      },
+    });
+
+    expect(stabilityUpscale).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      provider: 'stability-fast',
+      estimatedCostUsd: 0.02,
+      statusMessage: 'Upscaled "render.png" to 2048 x 2048px with Stability Fast Upscale ($0.02).',
+      runtime: { kind: 'cloud', modelUsed: 'Stability Fast Upscale' },
+    });
+    expect(result.document).toMatchObject({
+      width: 2048,
+      height: 2048,
+      activeLayerId: 'cloud-upscale-doc-cloud',
+    });
+    expect(result.document.layers[0]).toMatchObject({
+      id: 'cloud-upscale-doc-cloud',
+      name: 'Stability Fast Upscale upscale',
+      metadata: {
+        sourceFormat: 'stability-fast-upscale',
+        sourceWarnings: expect.arrayContaining([
+          'The AI upscaler operates on the flattened visible image; undo restores the original layers.',
+          'Stability Fast Upscale is a paid cloud upscaler; provider cost $0.02.',
+        ]),
+      },
+    });
+  });
+
+  it('passes the conservative repair prompt through the Stability Conservative cloud upscaler', async () => {
+    const doc = {
+      ...createEmptyImageDocument({ id: 'doc-cons', title: 'poster.png', width: 300, height: 200 }),
+      layers: [makeLayer()],
+      activeLayerId: 'layer-1',
+    };
+    const stabilityUpscale = vi.fn(async (request) => {
+      expect(request).toMatchObject({ mode: 'conservative', prompt: 'Keep the logo crisp.' });
+      return { result: 'data:image/png;base64,cons-upscaled', mimeType: 'image/png' };
+    });
+
+    const result = await upscaleImageDocumentUniversal({
+      doc,
+      provider: 'stability-conservative',
+      providerSettings: providerSettings(),
+      apiKeys: { stability: 'stability-key' },
+      prompt: 'Keep the logo crisp.',
+      stabilityUpscale,
+      documentToDataUrl: async () => 'data:image/png;base64,source',
+      dataUrlToBitmap: async () => ({ width: 1200, height: 800 } as LayerBitmap),
+    });
+
+    expect(result.provider).toBe('stability-conservative');
+    expect(result.estimatedCostUsd).toBe(0.4);
+    expect(result.statusMessage).toContain('Stability Conservative Upscale ($0.40)');
+  });
+
+  it('runs the Vertex Imagen cloud upscaler when selected', async () => {
+    const doc = {
+      ...createEmptyImageDocument({ id: 'doc-vertex', title: 'art.png', width: 400, height: 400 }),
+      layers: [makeLayer()],
+      activeLayerId: 'layer-1',
+    };
+    const vertexImagenUpscale = vi.fn(async (request) => {
+      expect(request).toMatchObject({ sourceImage: 'data:image/png;base64,source', outputFormat: 'png' });
+      return { result: 'data:image/png;base64,vertex-upscaled', mimeType: 'image/png' };
+    });
+
+    const result = await upscaleImageDocumentUniversal({
+      doc,
+      provider: 'vertex-imagen',
+      providerSettings: providerSettings({ vertexProjectId: 'proj-1', vertexLocation: 'us-central1' }),
+      vertexImagenUpscale,
+      documentToDataUrl: async () => 'data:image/png;base64,source',
+      dataUrlToBitmap: async () => ({ width: 800, height: 800 } as LayerBitmap),
+    });
+
+    expect(vertexImagenUpscale).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      provider: 'vertex-imagen',
+      estimatedCostUsd: 0,
+      statusMessage: 'Upscaled "art.png" to 800 x 800px with Vertex Imagen Upscale (cost unknown).',
+      runtime: { kind: 'cloud' },
+    });
+  });
+
+  it('never spends on a cloud provider unless one is explicitly selected', async () => {
+    const doc = {
+      ...createEmptyImageDocument({ id: 'doc-auto', title: 'photo.png', width: 200, height: 150 }),
+      layers: [makeLayer()],
+      activeLayerId: 'layer-1',
+    };
+    const stabilityUpscale = vi.fn();
+    const vertexImagenUpscale = vi.fn();
+
+    const result = await upscaleImageDocumentUniversal({
+      doc,
+      providerSettings: providerSettings({ vertexProjectId: 'proj-1', vertexLocation: 'us-central1' }),
+      apiKeys: { stability: 'stability-key' },
+      stabilityUpscale,
+      vertexImagenUpscale,
+    });
+
+    expect(stabilityUpscale).not.toHaveBeenCalled();
+    expect(vertexImagenUpscale).not.toHaveBeenCalled();
+    expect(result.provider).toBe('browser');
   });
 
   it('uses local CPU upscaler when configured and callback provided', async () => {
@@ -259,10 +402,10 @@ describe('ImageUniversalUpscale', () => {
     const result = await upscaleImageDocumentUniversal({
       doc,
       scalePercent: 200,
-      providerSettings: {
+      providerSettings: providerSettings({
         localAiCpuEndpointUrl: 'http://127.0.0.1:8788',
         localAiCpuModel: 'realesrgan-4x',
-      },
+      }),
       localAiCpuUpscale,
       documentToDataUrl: async () => 'data:image/png;base64,source',
       dataUrlToBitmap: async () => upscaledBitmap,
