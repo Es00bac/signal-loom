@@ -5,6 +5,8 @@ import { useSourceBinStore } from '../store/sourceBinStore';
 import { useFlowWorkspaceStore } from '../store/flowWorkspaceStore';
 import { buildCurrentProjectDocument, restoreProjectDocument } from './projectDocumentActions';
 import { CURRENT_PROJECT_SCHEMA_VERSION } from './projectSchema';
+import { useImageEditorStore } from '../store/imageEditorStore';
+import type { ImageDocument } from '../types/imageEditor';
 
 const originalRestoreSourceBinSnapshot = useSourceBinStore.getState().restoreProjectSnapshot;
 const originalReplaceFlowSnapshot = useFlowStore.getState().replaceFlowSnapshot;
@@ -175,6 +177,51 @@ describe('restoreProjectDocument', () => {
     })).rejects.toThrow('could not be restored safely');
 
     expect(useFlowStore.getState().nodes.map((node) => node.id)).toEqual(['existing']);
+  });
+
+  it('keeps live Image bitmaps when a restore fails after the image section (lossless rollback)', async () => {
+    // A failed restore must put back the EXACT live document objects — a
+    // pixel-stripped snapshot rollback would blank every open Image canvas.
+    const liveBitmap = { __live: 'pixels' } as unknown as NonNullable<ImageDocument['layers'][number]['bitmap']>;
+    const liveDocument = {
+      id: 'doc-live',
+      name: 'Live Art',
+      width: 64,
+      height: 64,
+      activeLayerId: 'layer-live',
+      layers: [{
+        id: 'layer-live', name: 'Layer 1', type: 'image', visible: true, locked: false,
+        opacity: 1, blendMode: 'normal', x: 0, y: 0, bitmap: liveBitmap, bitmapVersion: 3, mask: null,
+      }],
+      snapshots: [],
+    } as unknown as ImageDocument;
+    useImageEditorStore.setState({ documents: [liveDocument], activeDocId: 'doc-live' });
+    const originalReconcile = useSourceBinStore.getState().reconcileWithNativeSourceLibrarySnapshot;
+    useSourceBinStore.setState({
+      reconcileWithNativeSourceLibrarySnapshot: async () => {
+        throw new Error('reconcile failed');
+      },
+    });
+
+    try {
+      await expect(restoreProjectDocument({
+        schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+        id: 'p2',
+        name: 'Image Rollback',
+        savedAt: 1,
+        flow: { version: 3, nodes: [], edges: [] },
+        sourceBin: { dismissedSourceKeys: [] },
+      })).rejects.toThrow('could not be restored safely');
+
+      const documents = useImageEditorStore.getState().documents;
+      expect(documents).toHaveLength(1);
+      expect(documents[0].id).toBe('doc-live');
+      expect(documents[0].layers[0].bitmap).toBe(liveBitmap);
+      expect(useImageEditorStore.getState().activeDocId).toBe('doc-live');
+    } finally {
+      useSourceBinStore.setState({ reconcileWithNativeSourceLibrarySnapshot: originalReconcile });
+      useImageEditorStore.getState().restoreProjectSnapshot(undefined);
+    }
   });
 
   it('restores the declared active Flow workspace instead of a stale top-level flow snapshot', async () => {

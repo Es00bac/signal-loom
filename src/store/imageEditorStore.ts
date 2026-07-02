@@ -213,6 +213,17 @@ interface ImageEditorActions {
   restoreProjectSnapshot: (snapshot?: ImageEditorProjectSnapshot) => void;
   exportProjectSnapshotWithPixels: () => Promise<ImageEditorProjectSnapshot>;
   restoreProjectSnapshotWithPixels: (snapshot?: ImageEditorProjectSnapshot) => Promise<void>;
+  /**
+   * Lossless rollback for a failed project restore: puts back the exact live
+   * document objects (bitmaps included) that were captured before the restore
+   * started. Never sanitizes — sanitize nulls live bitmaps, which is exactly
+   * the data loss this exists to prevent.
+   */
+  restoreLiveProjectRollback: (rollback: {
+    documents: ImageDocument[];
+    activeDocId: string | null;
+    quickActionMacros: ImageQuickActionMacro[];
+  }) => void;
   setIsDraggingSlider: (dragging: boolean) => void;
   setPaintingStroke: (painting: boolean) => void;
   setToolsCollapsed: (collapsed: boolean) => void;
@@ -1080,6 +1091,21 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
         undoStacks: {},
         redoStacks: {},
         quickActionMacros: safeSnapshot?.quickActionMacros?.map(cloneImageQuickActionMacro) ?? [],
+        activeQuickActionRecording: null,
+        generativeFillDismissedByDocId: {},
+      });
+    },
+
+    restoreLiveProjectRollback: (rollback) => {
+      set({
+        documents: rollback.documents,
+        activeDocId: rollback.activeDocId
+          && rollback.documents.some((document) => document.id === rollback.activeDocId)
+          ? rollback.activeDocId
+          : rollback.documents[0]?.id ?? null,
+        undoStacks: {},
+        redoStacks: {},
+        quickActionMacros: rollback.quickActionMacros,
         activeQuickActionRecording: null,
         generativeFillDismissedByDocId: {},
       });

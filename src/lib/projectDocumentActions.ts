@@ -66,7 +66,15 @@ export async function restoreProjectDocument(document: unknown): Promise<void> {
     sourceBin: await sourceBinStore.exportProjectSnapshot({ includeAssetData: false }),
     usageLedger: projectUsageStore.exportSnapshot(),
     paper: paperStore.exportSnapshot(),
-    imageEditor: imageEditorStore.exportProjectSnapshot(),
+  };
+  // Image rollback keeps the LIVE document objects (bitmaps included): a plain
+  // exportProjectSnapshot() strips pixels, so rolling back with it after a
+  // mid-restore failure would blank every open Image canvas — the exact data
+  // loss the "previous workspace left unchanged" promise forbids.
+  const previousImageEditorLive = {
+    documents: imageEditorStore.documents,
+    activeDocId: imageEditorStore.activeDocId,
+    quickActionMacros: imageEditorStore.quickActionMacros,
   };
 
   try {
@@ -101,7 +109,7 @@ export async function restoreProjectDocument(document: unknown): Promise<void> {
     await sourceBinStore.restoreProjectSnapshot(previous.sourceBin, { publishNative: false }).catch(() => undefined);
     projectUsageStore.restoreSnapshot(previous.usageLedger);
     paperStore.restoreSnapshot(previous.paper);
-    imageEditorStore.restoreProjectSnapshot(previous.imageEditor);
+    imageEditorStore.restoreLiveProjectRollback(previousImageEditorLive);
     const message = error instanceof Error ? error.message : 'Unknown restore error';
     throw new Error(`The selected project could not be restored safely. Previous workspace was left unchanged. ${message}`);
   }
