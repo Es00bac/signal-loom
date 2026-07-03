@@ -1,4 +1,5 @@
 import { zipSync, strToU8 } from 'fflate';
+import { applyImageExportProvenance } from './exportProvenance';
 import type { PaperDocument, PaperPage } from '../types/paper';
 import {
   buildFlattenedPaperPageSvgExportWithEmbeddedAssets,
@@ -105,7 +106,8 @@ export async function buildPaperWebcomicImageArchiveExport(
 
   for (const page of pages) {
     const entryName = `${plan.directoryName}/${page.fileName}`;
-    entries[entryName] = dataUrlToU8(page.dataUrl, page.mimeType);
+    // Invisible provenance metadata (licensing spec §6) — never drawn on pixels.
+    entries[entryName] = applyImageExportProvenance(dataUrlToU8(page.dataUrl, page.mimeType), page.mimeType);
     entryNames.push(entryName);
   }
 
