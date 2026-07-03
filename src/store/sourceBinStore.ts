@@ -1099,6 +1099,11 @@ export const useSourceBinStore = create<SourceBinState>()(
             ? state.bins.findIndex((bin) => bin.id === targetBinId)
             : 0;
           const binIndex = targetIndex >= 0 ? targetIndex : 0;
+          // An explicit add is the user intentionally (re-)creating this asset — clear any
+          // standing dismissal for its key so the ingest guard (811 F1) doesn't fight it.
+          const dismissedSourceKeys = nextItem.sourceKey && state.dismissedSourceKeys.includes(nextItem.sourceKey)
+            ? state.dismissedSourceKeys.filter((key) => key !== nextItem.sourceKey)
+            : state.dismissedSourceKeys;
 
           if (nextItem.sourceKey) {
             let didReplace = false;
@@ -1151,7 +1156,7 @@ export const useSourceBinStore = create<SourceBinState>()(
             });
 
             if (didReplace) {
-              return { bins };
+              return { bins, dismissedSourceKeys };
             }
           }
 
@@ -1159,6 +1164,7 @@ export const useSourceBinStore = create<SourceBinState>()(
             bins: state.bins.map((bin, index) =>
               index === binIndex ? { ...bin, items: [nextItem, ...bin.items] } : bin,
             ),
+            dismissedSourceKeys,
           };
         });
 
@@ -1336,6 +1342,7 @@ export const useSourceBinStore = create<SourceBinState>()(
         }
 
         const pendingItems = takePendingSourceBinIngestItems(connectedItems, {
+          dismissedSourceKeys: new Set(get().dismissedSourceKeys),
           existingItemIds: new Set(effectiveExistingItems.map((item) => item.id)),
           existingSourceKeys: new Set(
             effectiveExistingItems
@@ -1644,7 +1651,16 @@ export const useSourceBinStore = create<SourceBinState>()(
           return undefined;
         }
 
-        set({ bins: result.bins });
+        // Record the dismissal so the ingest effect can't resurrect a still-wired
+        // generated asset the user just deleted (docs/notes/811 F1). Bounded FIFO —
+        // dismissals only need to outlive the node connections that produced them.
+        const removedSourceKey = result.removedItem.sourceKey;
+        set((state) => ({
+          bins: result.bins,
+          dismissedSourceKeys: removedSourceKey && !state.dismissedSourceKeys.includes(removedSourceKey)
+            ? [...state.dismissedSourceKeys, removedSourceKey].slice(-300)
+            : state.dismissedSourceKeys,
+        }));
         revokeSourceBinItemObjectUrl(result.removedItem);
         broadcastSourceBinItemRemoved(result.removedItem);
 

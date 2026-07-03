@@ -63,6 +63,23 @@ describe('source-bin ingest coalescing', () => {
     ).toHaveLength(1);
   });
 
+  it('skips dismissed source keys so a user-deleted item stays deleted while its node is still wired', () => {
+    const item = createItem();
+    const dismissed = new Set([buildConnectedItemSourceKey(item) as string]);
+    const pendingSourceKeys = new Set<string>();
+
+    expect(
+      takePendingSourceBinIngestItems([item], {
+        dismissedSourceKeys: dismissed,
+        existingSourceKeys: new Set(),
+        pendingSourceKeys,
+      }),
+    ).toEqual([]);
+    // a dismissed key must not be marked pending either, or a later un-dismissed
+    // ingest of the same source would be silently swallowed
+    expect(pendingSourceKeys.size).toBe(0);
+  });
+
   it('builds a stable signature so unchanged connected outputs do not re-run ingestion on unrelated node edits', () => {
     const item = createItem({ label: 'Original label' });
     const renamed = createItem({ label: 'Renamed in UI' });

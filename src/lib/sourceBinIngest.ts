@@ -45,7 +45,10 @@ export function takePendingSourceBinIngestItems(
     if (
       !sourceKey ||
       options.existingSourceKeys.has(sourceKey) ||
-      options.pendingSourceKeys.has(sourceKey)
+      options.pendingSourceKeys.has(sourceKey) ||
+      // The user deleted this item from the library while its node stayed wired —
+      // don't resurrect it on the next ingest pass (docs/notes/811 F1).
+      options.dismissedSourceKeys?.has(sourceKey)
     ) {
       return [];
     }

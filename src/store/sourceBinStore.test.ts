@@ -110,6 +110,41 @@ describe('source bin native file integration', () => {
     ]);
   });
 
+  it('does not resurrect a user-deleted item while its node is still wired (811 F1)', async () => {
+    const connected = [{
+      id: 'source-image-1',
+      nodeId: 'image-node-1',
+      kind: 'image' as const,
+      label: 'Generated hero',
+      assetUrl: 'data:image/png;base64,aGVybw==',
+      mimeType: 'image/png',
+      isGenerated: true,
+    }];
+
+    await useSourceBinStore.getState().ingestConnectedItems(connected);
+    const ingested = useSourceBinStore.getState().getAllItems();
+    expect(ingested).toHaveLength(1);
+
+    useSourceBinStore.getState().removeItem(ingested[0].id);
+    expect(useSourceBinStore.getState().getAllItems()).toHaveLength(0);
+    expect(useSourceBinStore.getState().dismissedSourceKeys).toContain(ingested[0].sourceKey);
+
+    // The ingest effect re-runs on any graph change — the deleted item must stay deleted.
+    await useSourceBinStore.getState().ingestConnectedItems(connected);
+    expect(useSourceBinStore.getState().getAllItems()).toHaveLength(0);
+
+    // An explicit re-add with the same sourceKey is intentional: it lands and un-dismisses.
+    await useSourceBinStore.getState().addAssetItem({
+      label: 'Generated hero',
+      kind: 'image',
+      mimeType: 'image/png',
+      dataUrl: 'data:image/png;base64,aGVybw==',
+      sourceKey: ingested[0].sourceKey,
+    });
+    expect(useSourceBinStore.getState().getAllItems()).toHaveLength(1);
+    expect(useSourceBinStore.getState().dismissedSourceKeys).not.toContain(ingested[0].sourceKey);
+  });
+
   it('places browser file imports into the shared Project imports envelope', async () => {
     const file = new File(['image bytes'], 'imported-panel.png', { type: 'image/png', lastModified: 1710000000000 });
 
