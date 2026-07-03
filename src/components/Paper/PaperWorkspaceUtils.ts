@@ -11,6 +11,7 @@ import {
 } from '../../lib/paperWebcomicExport';
 import { resolveBubbleTailCurvePercent } from '../../lib/paperBubblePaths';
 import { getSignalLoomNativeBridge, type NativePaperPdfExportResult } from '../../lib/nativeApp';
+import { buildProvenanceLabel } from '../../lib/exportProvenance';
 import { downloadBlob as downloadSharedBlob, downloadTextFile } from '../../lib/downloadAsset';
 import { usePaperStore } from '../../store/paperStore';
 import {
@@ -827,7 +828,7 @@ export async function exportPaperPdfDocument(
     if (request) {
       setStatus('Preparing print-quality PDF...');
     }
-    result = await nativeBridge.exportPaperPdf(pdfRequest);
+    result = await nativeBridge.exportPaperPdf({ ...pdfRequest, provenanceLabel: buildProvenanceLabel() });
   } catch (error) {
     setStatus(error instanceof Error ? `PDF export failed: ${error.message}` : 'PDF export failed.');
     return;

@@ -27,6 +27,8 @@ export interface PaperPdfExportRequest {
   };
   mode: 'pages' | 'pages-raster' | 'reader-spreads' | 'reader-spreads-raster' | 'booklet-proof' | 'booklet-proof-raster';
   production: PaperPrintProductionMetadata;
+  /** Edition provenance for the PDF Producer field (licensing spec §6); set at the export call site. */
+  provenanceLabel?: string;
 }
 
 export interface PaperRasterPdfPage {

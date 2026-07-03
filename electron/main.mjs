@@ -1697,18 +1697,41 @@ async function exportPaperPdfToFile(request, filePath) {
       PAPER_PDF_PRINT_TIMEOUT_MS,
       'Paper PDF print',
     );
-    await writeFile(filePath, pdf);
+    const stampedPdf = await applyPdfProvenance(pdf, request.provenanceLabel);
+    await writeFile(filePath, stampedPdf);
 
     return {
       canceled: false,
       filePath,
-      bytes: pdf.byteLength ?? pdf.length ?? 0,
+      bytes: stampedPdf.byteLength ?? stampedPdf.length ?? 0,
     };
   } finally {
     if (!exportWindow.isDestroyed()) {
       exportWindow.destroy();
     }
     void rm(tempHtmlPath, { force: true }).catch(() => undefined);
+  }
+}
+
+/**
+ * PDF Producer/Creator provenance (licensing spec Part 2 §6). Chromium's printToPDF hardcodes its
+ * own Producer; pdf-lib rewrites the Info dictionary. The edition label comes from the renderer's
+ * offline license verification (sanitized here). Any failure returns the ORIGINAL bytes —
+ * provenance must never break an export.
+ */
+async function applyPdfProvenance(pdfBuffer, provenanceLabel) {
+  const label = typeof provenanceLabel === 'string' && provenanceLabel.trim()
+    ? provenanceLabel.trim().slice(0, 200)
+    : 'Signal Loom Community (unlicensed)';
+  try {
+    const { PDFDocument } = await import('pdf-lib');
+    const document = await PDFDocument.load(pdfBuffer, { updateMetadata: false });
+    document.setProducer(label);
+    document.setCreator('Signal Loom');
+    return Buffer.from(await document.save());
+  } catch (error) {
+    console.warn('[paper-pdf] provenance stamp skipped:', error);
+    return pdfBuffer;
   }
 }
 

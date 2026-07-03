@@ -1,4 +1,5 @@
 import { strToU8, zipSync } from 'fflate';
+import { applyImageExportProvenance } from './exportProvenance';
 import type { PaperDocument, PaperPage } from '../types/paper';
 import {
   buildFlattenedPaperPageSvgExportWithEmbeddedAssets,
@@ -229,7 +230,8 @@ export async function buildPaperKdpImageArchiveExport(
     const directory = page.role === 'front-cover' || page.role === 'back-cover' ? 'cover' : 'interior';
     const dataUrl = await renderKdpPage(kdpDocument, page, rasterize, resolveImageSrc);
     const entryName = `${plan.directoryName}/${directory}/${page.fileName}`;
-    entries[entryName] = dataUrlToU8(dataUrl, 'image/png');
+    // Invisible provenance metadata (licensing spec §6) — never drawn on pixels.
+    entries[entryName] = applyImageExportProvenance(dataUrlToU8(dataUrl, 'image/png'), 'image/png');
     entryNames.push(entryName);
     if (page.role === 'front-cover' || page.role === 'back-cover') {
       renderedCoverPages.set(page.role, dataUrl);
@@ -255,7 +257,7 @@ export async function buildPaperKdpImageArchiveExport(
         spineFillColor: options.spineFillColor ?? '#ffffff',
       }));
       const entryName = `${plan.directoryName}/cover/full-wrap-cover.png`;
-      entries[entryName] = dataUrlToU8(fullWrapDataUrl, 'image/png');
+      entries[entryName] = applyImageExportProvenance(dataUrlToU8(fullWrapDataUrl, 'image/png'), 'image/png');
       entryNames.unshift(entryName);
     }
   }
