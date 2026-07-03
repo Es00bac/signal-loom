@@ -185,6 +185,50 @@ describe('localNativeRender', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:41739/render', expect.any(Object));
   });
 
+  it('inserts container provenance metadata before the output path (licensing spec §6)', async () => {
+    installWindowTimers();
+    vi.stubGlobal('btoa', (value: string) => Buffer.from(value, 'binary').toString('base64'));
+    let postedCommand: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/health')) {
+        return new Response(JSON.stringify({ ok: true, availableBackends: ['cpu'], recommendedBackend: 'cpu' }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (url === 'blob:clip') {
+        return new Response(new Blob([new Uint8Array([1, 2, 3])], { type: 'video/mp4' }), { status: 200 });
+      }
+      if (url.endsWith('/render')) {
+        postedCommand = (JSON.parse(String(init?.body)) as { command: string[] }).command;
+        return new Response(new Blob([new Uint8Array([4, 5, 6])], { type: 'video/mp4' }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await renderViaLocalNativeFFmpeg({
+      providerSettings: baseSettings,
+      outputName: 'out.mp4',
+      command: ['-i', 'clip.mp4', '-c:v', 'copy', 'out.mp4'],
+      inputs: [{ name: 'clip.mp4', url: 'blob:clip' }],
+    });
+
+    const metadataIndex = postedCommand.indexOf('-metadata');
+    expect(metadataIndex).toBeGreaterThan(-1);
+    expect(postedCommand[metadataIndex + 1]).toMatch(/^comment=Signal Loom .*Community \(unlicensed\)$/);
+    expect(postedCommand[postedCommand.length - 1]).toBe('out.mp4');
+    // never break a render: unexpected command shapes pass through untouched
+    await renderViaLocalNativeFFmpeg({
+      providerSettings: baseSettings,
+      outputName: 'out.mp4',
+      command: ['-i', 'clip.mp4', '-f', 'null', '-'],
+      inputs: [{ name: 'clip.mp4', url: 'blob:clip' }],
+    });
+    expect(postedCommand).toEqual(['-i', 'clip.mp4', '-f', 'null', '-']);
+  });
+
   it('sends a native assembly manifest with render jobs when supplied', async () => {
     installWindowTimers();
     vi.stubGlobal('btoa', (value: string) => Buffer.from(value, 'binary').toString('base64'));

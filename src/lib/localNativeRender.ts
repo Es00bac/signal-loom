@@ -5,6 +5,7 @@ import type {
   VideoRenderAssemblyResultData,
 } from '../types/flow';
 import type { NativeRenderExecutionBackend } from './nativeRenderSupport';
+import { buildProvenanceLabel } from './exportProvenance';
 
 interface NativeRenderHealthResponse {
   ok: boolean;
@@ -98,10 +99,29 @@ export async function resolveNativeRenderTarget(
   };
 }
 
+/**
+ * Container-level provenance on video renders (licensing spec Part 2 §6): ffmpeg's output path is
+ * its final argument, so the `-metadata comment=` pair slots in right before it. Commands whose
+ * final argument is not the output file (unexpected shapes) pass through untouched — provenance
+ * must never break a render.
+ */
+function withProvenanceMetadata(command: string[], outputName: string): string[] {
+  if (command.length === 0 || command[command.length - 1] !== outputName) {
+    return command;
+  }
+
+  return [
+    ...command.slice(0, -1),
+    '-metadata',
+    `comment=${buildProvenanceLabel()}`,
+    outputName,
+  ];
+}
+
 export async function renderViaLocalNativeFFmpeg({
   providerSettings,
   outputName,
-  command,
+  command: rawCommand,
   inputs,
   assemblyManifest,
 }: {
@@ -111,6 +131,7 @@ export async function renderViaLocalNativeFFmpeg({
   inputs: NativeRenderInput[];
   assemblyManifest?: NativeRenderAssemblyManifest;
 }): Promise<Blob | null> {
+  const command = withProvenanceMetadata(rawCommand, outputName);
   const target = await resolveNativeRenderTarget(providerSettings);
 
   if (!target) {
@@ -143,7 +164,7 @@ export async function renderViaLocalNativeFFmpeg({
 export async function renderViaLocalNativeFFmpegWithArtifacts({
   providerSettings,
   outputName,
-  command,
+  command: rawCommand,
   inputs,
   assemblyManifest,
 }: {
@@ -153,6 +174,7 @@ export async function renderViaLocalNativeFFmpegWithArtifacts({
   inputs: NativeRenderInput[];
   assemblyManifest?: NativeRenderAssemblyManifest;
 }): Promise<NativeRenderWithArtifactsResult | null> {
+  const command = withProvenanceMetadata(rawCommand, outputName);
   const target = await resolveNativeRenderTarget(providerSettings);
 
   if (!target) {
