@@ -7,13 +7,13 @@
 <meta name="description" content="Signal Loom is a local-first creative instrument: node-graph Flow, a layered Image editor, print-ready Paper layout, and a Video timeline — four standalone tools under one .sloom project. AI with your own keys, or none at all. One-time purchase." />
 <meta name="theme-color" content="#04070d" />
 <meta property="og:title" content="Signal Loom" />
-<meta property="og:description" content="A studio for generative media — one you own. Four standalone workspaces, one project, bring your own keys. One-time $17.99, no subscription." />
+<meta property="og:description" content="A studio for generative media — one you own. Four standalone workspaces, one project, bring your own keys. Free to download; the $17.99 one-time commercial license unlocks pro print exports." />
 <meta property="og:image" content="https://sloom.studio/assets/graphics/feature-graphic-1024x500.png" />
 <meta property="og:url" content="https://sloom.studio/" />
 <meta property="og:type" content="website" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Signal Loom — a studio for generative media you own" />
-<meta name="twitter:description" content="Node-graph Flow, a layered Image editor, print-ready Paper layout, and a Video timeline — one project, your own API keys. One-time $17.99, no subscription." />
+<meta name="twitter:description" content="Node-graph Flow, a layered Image editor, print-ready Paper layout, and a Video timeline — one project, your own API keys. Free to download; $17.99 one-time commercial license, no subscription." />
 <meta name="twitter:image" content="https://sloom.studio/assets/graphics/feature-graphic-1024x500.png" />
 <link rel="canonical" href="https://sloom.studio/" />
 <link rel="me" href="https://mastodon.social/@SloomStudio" />
@@ -28,17 +28,28 @@
   "name": "Signal Loom",
   "applicationCategory": "MultimediaApplication",
   "operatingSystem": "Windows, Linux",
-  "description": "A local-first, bring-your-own-key AI media studio: node-graph Flow, a layered image editor, a comic/print page layout, and a video timeline — four standalone tools under one project. AI is optional. One-time purchase, no subscription.",
+  "description": "A local-first, bring-your-own-key AI media studio: node-graph Flow, a layered image editor, a comic/print page layout, and a video timeline — four standalone tools under one project. AI is optional. Free to download for noncommercial use; a one-time commercial license unlocks professional print-production exports. No subscription.",
   "url": "https://sloom.studio/",
   "image": "https://sloom.studio/assets/graphics/feature-graphic-1024x500.png",
   "brand": { "@type": "Brand", "name": "Sloom Studio" },
-  "offers": {
-    "@type": "Offer",
-    "price": "17.99",
-    "priceCurrency": "USD",
-    "availability": "https://schema.org/InStock",
-    "url": "https://sloom.studio/"
-  }
+  "offers": [
+    {
+      "@type": "Offer",
+      "name": "Community edition",
+      "price": "0",
+      "priceCurrency": "USD",
+      "availability": "https://schema.org/InStock",
+      "url": "https://sloom.studio/#license"
+    },
+    {
+      "@type": "Offer",
+      "name": "Commercial license",
+      "price": "17.99",
+      "priceCurrency": "USD",
+      "availability": "https://schema.org/InStock",
+      "url": "https://sloom.studio/#license"
+    }
+  ]
 }
 </script>
 <style>
@@ -797,7 +808,7 @@
     <a href="examples.html">Examples</a>
     <a href="changelog.html">Changelog</a>
   </nav>
-  <a class="btn btn-primary" href="#license">Get it — $17.99</a>
+  <a class="btn btn-primary" href="#license">Download free</a>
 </div></header>
 
 <div id="minimap" title="Minimap — click to travel the graph" aria-hidden="true">
@@ -819,7 +830,8 @@
       <p class="lead">Node-graph <b>Flow</b>, a layered <b>Image</b> editor, print-ready <b>Paper</b> layout, and a <b>Video</b> timeline — one project, your own API keys, bought once.</p>
       <p class="lead-2">Each workspace is a full tool on its own; <b>AI is a choice, not a requirement.</b></p>
       <div class="cta">
-        <a class="btn btn-primary" href="#license">Get Signal Loom — $17.99</a>
+        <a class="btn btn-primary" href="#license">Download free — Windows &amp; Linux</a>
+        <a class="btn btn-ghost" href="#license">Buy the commercial license — $17.99</a>
         <a class="btn btn-ghost" href="docs.html">Read the docs</a>
       </div>
       <div class="weaveline">This node just wove the thread pattern behind this text — <b>seed <span id="seedhex">…</span></b>, generated only for you.<br>That's the whole idea here: media made on your machine is yours. <a id="keepweave">Keep it&nbsp;⬇</a></div>
@@ -1392,24 +1404,37 @@
   <i class="port in"></i><i class="port out"></i>
   <div class="node-head"><span class="nid">12 · license</span><span class="ntype">output</span><span class="nstate"><span class="txt"></span><i></i></span></div>
   <div class="node-body">
-    <h2 data-reveal>One price. <em>Yours forever.</em></h2>
-    <p class="sub" data-reveal>A perpetual license — no subscription, no in-app purchases, no ads. Signal Loom doesn't include model usage; you bring your own provider keys and pay them directly for what you use.</p>
+    <h2 data-reveal>Free to learn on. <em>Fair to pay for.</em></h2>
+    <p class="sub" data-reveal>The whole app is free for personal and noncommercial use. One one-time license unlocks the professional print-production exports — and it's the legal license once your work starts earning. No subscription, no in-app purchases, no ads, no account.</p>
     <div class="license" data-reveal>
       <div class="left">
-        <div class="price"><small>$</small>17.99</div>
-        <div class="strike">0.9 beta · launch sale — <b>first 100 copies</b> at this price · then <b>$39</b></div>
+        <div class="strike"><b>Community — free</b> · personal &amp; noncommercial use</div>
         <ul>
           <li>All four workspaces — Flow, Image, Paper, Video — each a full tool on its own</li>
-          <li>One <span class="mono" style="letter-spacing:.03em;text-transform:none">.sloom</span> project + shared source library</li>
+          <li>Webcomics, CBZ, PNG/JPG, video renders, sharing — fully free, forever</li>
           <li>Bring-your-own-key for every provider — or use no AI at all</li>
-          <li>Android, Samsung DeX, and the LAN desktop host</li>
-          <li>Buy once. No subscription, no ads, no account.</li>
+          <li>No watermarks on your art, ever — Community exports carry only invisible metadata</li>
+          <li>Learn it, make things, share them — a license is due only once you earn with it</li>
         </ul>
+        <div class="cta" style="margin-top:22px">
+          <a class="btn btn-primary" href="downloads/SignalLoom-Setup-0.9.8.exe" download>Windows</a>
+          <a class="btn btn-primary" href="downloads/SignalLoom-0.9.8.AppImage" download>Linux AppImage</a>
+          <a class="btn btn-ghost" href="downloads/SignalLoom-0.9.8-amd64.deb" download>.deb</a>
+        </div>
+        <div class="strike" style="margin-top:14px">free download · <a href="downloads/SHA256SUMS.txt" style="color:var(--ink-2)">sha-256 checksums</a> · or <a href="https://github.com/Es00bac/signal-loom" style="color:var(--ink-2)">build from source</a></div>
       </div>
       <div class="right" id="desktop">
-        <a class="btn btn-primary" href="https://buy.stripe.com/7sY28rfcmaRxaBVgQ57Re02">Buy for desktop — $17.99</a>
+        <div class="price"><small>$</small>17.99</div>
+        <div class="strike">commercial license · 0.9 beta launch — <b>first 100 copies</b> · then <b>$39</b> at 1.0</div>
+        <ul>
+          <li>Unlocks KDP, PDF/X-4, PDF/X-1a, IDML, and CMYK/spot print production</li>
+          <li>Marks your exports&rsquo; metadata as licensed and removes the startup notice</li>
+          <li>The legal license once you earn with what you make here</li>
+          <li>One key — desktop <b>and</b> Android</li>
+        </ul>
+        <a class="btn btn-primary" href="https://buy.stripe.com/7sY28rfcmaRxaBVgQ57Re02" style="margin-top:18px">Buy the license — $17.99</a>
         <a class="btn btn-ghost" href="https://sloomstudio.itch.io/signal-loom">Also on itch.io</a>
-        <div class="note">Instant download · <b>Windows &amp; Linux</b><br>📱 Android is coming to the <b>Samsung Galaxy Store</b> &amp; <b>Google Play</b> — the trusted way to install, no sideloading.<br>PKG · studio.sloom.signalloom</div>
+        <div class="note">Your key arrives by email · works offline forever<br>📱 Android is coming to the <b>Samsung Galaxy Store</b> &amp; <b>Google Play</b> — the same key covers it.<br>PKG · studio.sloom.signalloom</div>
       </div>
     </div>
     <p class="fineprint">Signal Loom does not include AI usage or credits. You supply your own provider accounts/keys, and any model usage is billed to you by that provider under their terms.</p>
@@ -1430,7 +1455,7 @@
       </details>
       <details>
         <summary>What exactly does $17.99 buy?</summary>
-        <div class="a">A perpetual license to the full desktop app for <b>Windows and Linux</b> — all four workspaces, nothing held back, no account required. It's a one-time purchase: no subscription, no in-app purchases, no ads. Model usage is separate — that's billed by your own AI provider, at their prices, only when you choose to generate.</div>
+        <div class="a">The <b>commercial license</b> — a one-time key, sent by email, verified offline, yours forever. It unlocks the professional print-production exports (KDP, PDF/X-4, PDF/X-1a, IDML, CMYK/spot), marks your exports&rsquo; metadata as licensed, removes the startup notice, and is the legal license once you start earning with your work. One key covers desktop <b>and</b> Android. Everything else — all four workspaces, webcomics, video renders, sharing — is already free. Model usage is separate: billed by your own AI provider, only when you choose to generate.</div>
       </details>
       <details>
         <summary>Where do my projects and keys live?</summary>
@@ -1446,7 +1471,7 @@
       </details>
       <details>
         <summary>Can I try it without paying?</summary>
-        <div class="a">Yes. Signal Loom is source-available under the PolyForm Noncommercial license: you can read every line and build it yourself, free, for personal and noncommercial use from <a href="https://github.com/Es00bac/signal-loom">GitHub</a> — learn it, make things, no strings. When you start <b>earning</b> from what you make with it, that's when a license is due. Buying one also gets you the signed, ready-to-run build with updates and support, and it funds a solo dev. The idea is simple: free to learn on, fair to pay for once it's paying you.</div>
+        <div class="a">Yes — just <a href="#license">download it free</a>, no account, no trial clock. Signal Loom is free for personal and noncommercial use: learn it, make things, share them. It's also source-available under the PolyForm Noncommercial license, so you can read every line and build it yourself from <a href="https://github.com/Es00bac/signal-loom">GitHub</a>. When you start <b>earning</b> from what you make with it, that's when the $17.99 license is due — it unlocks the pro print exports and funds a solo dev. Free to learn on, fair to pay for once it's paying you.</div>
       </details>
     </div>
   </div>
@@ -1459,7 +1484,7 @@
   <div class="node-body">
     <div><span class="p">➜</span> run <span id="term-count">…</span> · cost <b>$0.0000</b> <span class="dim">— it ran on your hardware; that's the point.</span></div>
     <div><span class="p">➜</span> <span class="dim">demo thumbnails woven by nano-banana over vertex — the same call the app makes.</span></div>
-    <div><span class="p">➜</span> product&nbsp;&nbsp;<a href="docs.html">docs</a> · <a href="examples.html">examples</a> · <a href="changelog.html">changelog</a> · <a href="#license">buy — $17.99</a></div>
+    <div><span class="p">➜</span> product&nbsp;&nbsp;<a href="docs.html">docs</a> · <a href="examples.html">examples</a> · <a href="changelog.html">changelog</a> · <a href="#license">download free</a> · <a href="#license">license — $17.99</a></div>
     <div><span class="p">➜</span> elsewhere&nbsp;<a href="https://github.com/Es00bac/signal-loom">github</a> · <a href="https://sloomstudio.itch.io/signal-loom">itch.io</a> · <a rel="me" href="https://mastodon.social/@SloomStudio">mastodon</a> · <a href="mailto:support@sloom.studio">support@sloom.studio</a></div>
     <div><span class="p">➜</span> <span class="dim">a studio for generative media — one you own.</span></div>
   </div>

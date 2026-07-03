@@ -36,6 +36,11 @@ const indexMarkers = [
   ['license section', 'id="license"'],
   ['launch price', '17.99'],
   ['regular price strike', '39'],
+  // Two-path funnel (licensing spec Part 3): free Community download + commercial license.
+  ['free download CTA', 'Download free'],
+  ['Community column', 'Community — free'],
+  ['commercial license framing', 'commercial license'],
+  ['direct Windows installer link', 'downloads/SignalLoom-Setup-0.9.8.exe'],
 ];
 for (const [label, snippet] of indexMarkers) {
   if (!index.includes(snippet)) errors.push(`index.html missing ${label}: ${snippet}`);
