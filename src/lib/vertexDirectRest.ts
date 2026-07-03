@@ -21,6 +21,7 @@ import type {
 import type { ProviderSettings } from '../types/flow';
 import { getServiceAccountAccessToken, type MintAccessTokenDeps } from './vertex/vertexServiceAccountAuth';
 import { blobToDataUrl, readBinaryImageResponseBlob } from './imageEditorAi/blobUtils';
+import { NonRetryableError } from './exponentialBackoff';
 
 export interface VertexDirectRestDeps extends MintAccessTokenDeps {
   fetch?: typeof fetch;
@@ -34,11 +35,11 @@ export function isVertexDirectRestAvailable(providerSettings: ProviderSettings):
 
 function sanitizeVertexPathSegment(value: string | undefined, label: string): string {
   if (typeof value !== 'string' || !value.trim()) {
-    throw new Error(`${label} is required.`);
+    throw new NonRetryableError(`${label} is required.`);
   }
   const trimmed = value.trim();
   if (!/^[a-zA-Z0-9._-]+$/.test(trimmed)) {
-    throw new Error(`${label} contains unsupported characters.`);
+    throw new NonRetryableError(`${label} contains unsupported characters.`);
   }
   return trimmed;
 }
@@ -61,7 +62,7 @@ function buildImageEndpoint(request: NativeVertexImageRequest) {
       ? 'generateContent'
       : undefined;
   if (!method) {
-    throw new Error('Unsupported Vertex image route.');
+    throw new NonRetryableError('Unsupported Vertex image route.');
   }
   return {
     url: `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:${method}`,
@@ -91,7 +92,7 @@ function buildVideoEndpoint(request: NativeVertexVideoRequest) {
       ? 'veo-predict-long-running'
       : undefined;
   if (!route) {
-    throw new Error('Unsupported Vertex video route.');
+    throw new NonRetryableError('Unsupported Vertex video route.');
   }
   const apiVersion = route === 'gemini-generate-content'
     ? sanitizeVertexApiVersion(request.apiVersion || 'v1beta1')
@@ -125,7 +126,7 @@ async function getDirectAccessToken(
 ): Promise<string> {
   const raw = providerSettings.vertexServiceAccountJson?.trim();
   if (!raw) {
-    throw new Error(
+    throw new NonRetryableError(
       'Vertex AI on this device needs a service-account key. Import one in Settings > Providers > Vertex AI, then use "Test connection".',
     );
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { withExponentialBackoff } from './exponentialBackoff';
+import { NonRetryableError, withExponentialBackoff } from './exponentialBackoff';
 
 describe('withExponentialBackoff', () => {
   beforeEach(() => {
@@ -75,6 +75,46 @@ describe('withExponentialBackoff', () => {
 
     expect(operation).toHaveBeenCalledTimes(3); // Initial + 2 retries
     expect(onRetry).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry a NonRetryableError (type is the authoritative signal)', async () => {
+    const error = new NonRetryableError('Vertex AI video requires a service-account key on this device.');
+    const operation = vi.fn().mockRejectedValue(error);
+    const onRetry = vi.fn();
+
+    await expect(withExponentialBackoff({
+      operation,
+      maxRetries: 10,
+      baseDelayMs: 1000,
+      onRetry,
+    })).rejects.toBeInstanceOf(NonRetryableError);
+
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('DOES retry a plain Error whose message merely contains "require"', async () => {
+    // Regression guard: classification must key off the error TYPE, not the
+    // wording. The old heuristic sniffed the substring "require", so rewording a
+    // fail-closed message silently turned it retryable (and, worse, a transient
+    // error that happened to mention "required" was wrongly failed fast).
+    const operation = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary upstream blip (a required field was momentarily null)'))
+      .mockResolvedValueOnce('recovered');
+    const onRetry = vi.fn();
+
+    const promise = withExponentialBackoff({
+      operation,
+      maxRetries: 3,
+      baseDelayMs: 1000,
+      onRetry,
+    });
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(promise).resolves.toBe('recovered');
+    expect(operation).toHaveBeenCalledTimes(2);
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it('does not retry non-retryable Vertex 4xx configuration errors', async () => {

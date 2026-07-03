@@ -221,7 +221,7 @@ interface GeminiVideoOperation {
   };
 }
 
-import { withExponentialBackoff } from './exponentialBackoff';
+import { NonRetryableError, withExponentialBackoff } from './exponentialBackoff';
 import { getProviderLimiter } from './providerRateLimiter';
 
 export async function executeNodeRequest(
@@ -480,7 +480,7 @@ async function executeVisionVerifyNode(
   const refImage = context.refImageInput;
 
   if (!image) {
-    throw new Error('Vision Verification requires an input image to analyze. Connect an image to verify.');
+    throw new NonRetryableError('Vision Verification requires an input image to analyze. Connect an image to verify.');
   }
 
   let verificationPrompt = '';
@@ -557,7 +557,7 @@ async function executeVisionVerifyNode(
 
   const apiKey = settings.apiKeys.gemini?.trim();
   if (!apiKey) {
-    throw new Error('Gemini API key is required. Add it in settings.');
+    throw new NonRetryableError('Gemini API key is required. Add it in settings.');
   }
 
   const { GoogleGenAI } = await import('@google/genai');
@@ -885,7 +885,7 @@ async function executeImageNode(
         : undefined;
 
       if (isVertexImagenModelId(modelId) && settings.providerSettings.geminiCredentialMode !== 'vertex-adc') {
-        throw new Error('Imagen models require Vertex AI mode. Enable Vertex mode in Settings and set the Vertex project ID.');
+        throw new NonRetryableError('Imagen models require Vertex AI mode. Enable Vertex mode in Settings and set the Vertex project ID.');
       }
 
       if (settings.providerSettings.geminiCredentialMode === 'vertex-adc') {
@@ -2395,7 +2395,7 @@ async function executeVertexImageNode(input: {
   const generateVertexImage = resolveVertexImageGenerator(input.settings.providerSettings);
 
   if (!generateVertexImage) {
-    throw new Error('Vertex AI requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
+    throw new NonRetryableError('Vertex AI requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
   }
 
   const route = getVertexImageRoute(input.modelId);
@@ -2516,13 +2516,13 @@ async function executeVertexGeminiTextContent(input: {
   const vertexConfig = getVertexProjectConfig(input.settings.providerSettings);
 
   if (!vertexConfig.projectId) {
-    throw new Error(`${input.label} requires a configured Vertex AI project ID in Settings.`);
+    throw new NonRetryableError(`${input.label} requires a configured Vertex AI project ID in Settings.`);
   }
 
   const generateVertexText = resolveVertexTextGenerator(input.settings.providerSettings);
 
   if (!generateVertexText) {
-    throw new Error(`${input.label} requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).`);
+    throw new NonRetryableError(`${input.label} requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).`);
   }
 
   const result = await generateVertexText({
@@ -2760,7 +2760,7 @@ async function executeVertexVeoVideoNode(input: {
   const generateVertexVideo = resolveVertexVideoGenerator(input.settings.providerSettings);
 
   if (!generateVertexVideo) {
-    throw new Error('Vertex AI video requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
+    throw new NonRetryableError('Vertex AI video requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
   }
 
   validateGeminiVeoVideoRequest(input.modelId, input.prompt, input.context);
@@ -2829,7 +2829,7 @@ async function executeVertexOmniVideoNode(input: {
   const generateVertexVideo = resolveVertexVideoGenerator(input.settings.providerSettings);
 
   if (!generateVertexVideo) {
-    throw new Error('Vertex AI Gemini Omni video requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
+    throw new NonRetryableError('Vertex AI Gemini Omni video requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
   }
 
   const media = await buildOmniVideoMediaParts(input.context);
@@ -3070,7 +3070,7 @@ async function executeAudioNode(
       // (the default) made every listed Gemini TTS run fail.
       if (!settings.apiKeys.gemini?.trim()) {
         // Wording note: "requires" keeps this non-retryable for the backoff classifier.
-        throw new Error('Gemini TTS requires a Gemini API key (Vertex sign-in alone cannot run the TTS models). Add the key in Settings.');
+        throw new NonRetryableError('Gemini TTS requires a Gemini API key (Vertex sign-in alone cannot run the TTS models). Add the key in Settings.');
       }
 
       onStatus?.('Synthesizing audio with Gemini TTS…');
@@ -3447,7 +3447,7 @@ function requireApiKey(value: string, label: string): string {
   const trimmed = value.trim();
 
   if (!trimmed) {
-    throw new Error(`${label} API key is missing. Add it in Settings.`);
+    throw new NonRetryableError(`${label} API key is missing. Add it in Settings.`);
   }
 
   return trimmed;

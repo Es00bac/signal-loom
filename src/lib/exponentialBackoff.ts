@@ -6,6 +6,27 @@ export interface ExponentialBackoffOptions<T> {
   abortSignal?: AbortSignal;
 }
 
+/**
+ * A fail-closed error: a configuration, validation, auth, or missing-resource
+ * problem that a retry cannot fix. Throw this (rather than relying on the exact
+ * wording of a plain `Error`) anywhere inside a `withExponentialBackoff`
+ * operation that must surface immediately instead of backing off.
+ *
+ * This replaces the old, fragile heuristic of sniffing the message for the
+ * substring "require": rewording such a message silently turned a fail-fast
+ * config error into a retryable one (10x exponential backoff before the user
+ * ever saw it). Marking the error by type removes that trap.
+ */
+export class NonRetryableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'NonRetryableError';
+    // Keep `instanceof` reliable even when this class is transpiled down to ES5
+    // (extending built-ins otherwise breaks the prototype chain).
+    Object.setPrototypeOf(this, NonRetryableError.prototype);
+  }
+}
+
 export async function withExponentialBackoff<T>({
   operation,
   maxRetries,
@@ -58,16 +79,21 @@ export async function withExponentialBackoff<T>({
 }
 
 function isNonRetryableError(error: unknown): boolean {
+  // Our own fail-closed throws are marked by type — the authoritative signal.
+  if (error instanceof NonRetryableError) {
+    return true;
+  }
+
   if (!(error instanceof Error)) {
     return false;
   }
 
   const message = error.message.toLowerCase();
 
-  if (message.includes('require')) {
-    return true;
-  }
-
+  // Provider/library errors we don't author can't be retyped, so classify them
+  // by objective signals only. Vertex publisher-model access failures and HTTP
+  // 4xx (bad request / auth / forbidden / not found) are permanent — a retry
+  // cannot fix them.
   if (message.includes('publisher model') && (
     message.includes('not found') ||
     message.includes('does not have access')
