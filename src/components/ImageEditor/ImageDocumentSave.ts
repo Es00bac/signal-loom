@@ -23,6 +23,7 @@ import {
   buildNativeStandaloneEntryReadiness,
   type NativeWorkspaceStandaloneEntryReadiness,
 } from '../../lib/nativeApp';
+import { applyImageExportProvenanceToBlob } from '../../lib/exportProvenance';
 
 export type ImageDocumentSaveKind = 'visible' | 'layered';
 export type ImageDocumentWorkflowKind = 'quick-edit' | 'source-linked' | 'export-only';
@@ -546,8 +547,10 @@ export async function imageDocumentToSaveBlob(
     return { blob: await imageDocumentToXcfBlob(doc), format };
   }
 
+  // Invisible provenance metadata (licensing spec Part 2 §6): PNG tEXt / JPEG XMP records the
+  // edition; never drawn on pixels. Other formats pass through unchanged.
   return {
-    blob: await imageDocumentToBlob(doc, format.mimeType),
+    blob: await applyImageExportProvenanceToBlob(await imageDocumentToBlob(doc, format.mimeType)),
     format,
   };
 }

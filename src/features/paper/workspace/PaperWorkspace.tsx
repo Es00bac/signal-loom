@@ -121,6 +121,7 @@ import {
   type PaperPreflightStatusTone,
 } from '../../../lib/paperPreflight';
 import { PAPER_OUTPUT_INTENT_PROFILES } from '../../../lib/paperPrintProduction';
+import { isCommercialPrintProductionTarget, requestCommercialExportUnlock } from '../../../lib/licenseGates';
 import {
   buildPaperPrintUpscaledFramePatch,
   buildPaperPrintUpscaleUsageTelemetry,
@@ -1237,6 +1238,9 @@ export function PaperWorkspace() {
         setStatus('Added a page.');
         return;
       case 'paper:export-pdf':
+        // Plain browser-PDF stays free; a PDF/X standard or CMYK press intent is commercial.
+        if (isCommercialPrintProductionTarget(document.printProduction)
+          && !(await requestCommercialExportUnlock('PDF/X and CMYK print production'))) return;
         if (await confirmPreflightBeforeExport('PDF export')) {
           void exportPaperPdfDocument(document, setStatus, undefined, {
             rasterPreset: providerSettings.paperPdfRasterPreset,
@@ -1244,15 +1248,20 @@ export function PaperWorkspace() {
         }
         return;
       case 'paper:export-kdp-assets':
+        if (!(await requestCommercialExportUnlock('KDP export'))) return;
         setKdpExportOpen(true);
         setStatus('Configuring KDP comic asset export.');
         return;
       case 'paper:export-reader-spreads-pdf':
+        if (isCommercialPrintProductionTarget(document.printProduction)
+          && !(await requestCommercialExportUnlock('PDF/X and CMYK print production'))) return;
         if (await confirmPreflightBeforeExport('reader-spreads PDF export')) {
           void exportPaperPdfDocument(document, setStatus, buildPaperReaderSpreadPdfExportRequest(document));
         }
         return;
       case 'paper:export-booklet-proof-pdf':
+        if (isCommercialPrintProductionTarget(document.printProduction)
+          && !(await requestCommercialExportUnlock('PDF/X and CMYK print production'))) return;
         if (await confirmPreflightBeforeExport('booklet proof PDF export')) {
           void exportPaperPdfDocument(document, setStatus, buildPaperBookletProofPdfExportRequest(document));
         }
@@ -1281,6 +1290,8 @@ export function PaperWorkspace() {
         return;
       }
       case 'paper:package-print': {
+        if (isCommercialPrintProductionTarget(document.printProduction)
+          && !(await requestCommercialExportUnlock('CMYK/spot print-production packaging'))) return;
         if (!await confirmPreflightBeforeExport('package for print')) return;
         const pack = buildPaperPackageExport(document, sourceItems);
         downloadBlob(pack.fileName, pack.blob);
@@ -1288,6 +1299,7 @@ export function PaperWorkspace() {
         return;
       }
       case 'paper:export-idml':
+        if (!(await requestCommercialExportUnlock('IDML interchange export'))) return;
         downloadText(`${safeFileName(document.title)}.sloom-idml.json`, exportPaperIdmlInterchange(document), 'application/vnd.signal-loom.paper-idml+json');
         setStatus('Downloaded Paper IDML-like interchange JSON.');
         return;
