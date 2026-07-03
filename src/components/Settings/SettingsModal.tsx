@@ -54,6 +54,7 @@ import { Capacitor } from '@capacitor/core';
 import { getSignalLoomNativeBridge } from '../../lib/nativeApp';
 import { VertexAuthPanel } from './VertexAuthPanel';
 import { OssLicensesSection } from './OssLicensesSection';
+import { LicenseSection } from './LicenseSection';
 import { useVertexAuth } from './useVertexAuth';
 
 export const SettingsModal: React.FC = () => {
@@ -145,7 +146,9 @@ export const SettingsModal: React.FC = () => {
         ? 'Keyboard Shortcut Configuration'
         : settingsPanel === 'gamepad'
           ? 'Gamepad Binding Configuration'
-          : 'Provider Configuration'}
+          : settingsPanel === 'license'
+            ? 'License'
+            : 'Provider Configuration'}
       workspaceId="app-dialogs"
     >
       <div
@@ -154,7 +157,7 @@ export const SettingsModal: React.FC = () => {
         {phone ? (
           <div className="theme-surface theme-border flex items-center gap-2 overflow-x-auto border-b px-3 py-2">
             <div className="flex shrink-0 items-center gap-1 rounded-lg border border-gray-800 bg-[#0b1018] p-1">
-              {([['providers', 'Providers'], ['keyboard', 'Shortcuts'], ['gamepad', 'Gamepad']] as const).map(
+              {([['providers', 'Providers'], ['keyboard', 'Shortcuts'], ['gamepad', 'Gamepad'], ['license', 'License']] as const).map(
                 ([panel, label]) => (
                   <button
                     key={panel}
@@ -187,7 +190,9 @@ export const SettingsModal: React.FC = () => {
                 ? 'Customize command and tool shortcuts. Changes apply to browser/runtime shortcuts and integrated menu labels immediately.'
                 : settingsPanel === 'gamepad'
                   ? 'Bind gamepad controls for each workspace. Changes apply to Android and desktop controller input immediately.'
-                  : `Keys are ${keyStorageStatus.encryptedAtRest ? 'stored encrypted' : 'not encrypted'} in ${keyStorageStatus.storageMedium}. ${keyStorageStatus.caveat}`}
+                  : settingsPanel === 'license'
+                    ? 'Free forever for noncommercial use. One key unlocks the commercial print-production exports on desktop and Android.'
+                    : `Keys are ${keyStorageStatus.encryptedAtRest ? 'stored encrypted' : 'not encrypted'} in ${keyStorageStatus.storageMedium}. ${keyStorageStatus.caveat}`}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -225,6 +230,17 @@ export const SettingsModal: React.FC = () => {
               Gamepad
             </button>
             <button
+              className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                settingsPanel === 'license'
+                  ? 'border-blue-400/60 bg-blue-500/15 text-blue-100'
+                  : 'border-gray-700 bg-[#111217]/60 text-gray-200 hover:border-gray-500 hover:text-white'
+              }`}
+              onClick={() => openSettings('license')}
+              type="button"
+            >
+              License
+            </button>
+            <button
               className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-[#111217]/60 px-3 py-2 text-sm font-medium text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
               onClick={() => void handleRefresh()}
               type="button"
@@ -243,7 +259,9 @@ export const SettingsModal: React.FC = () => {
         </div>
 
         <div className={`overflow-y-auto space-y-8 ${phone ? 'p-4' : 'p-6'}`}>
-          {settingsPanel === 'keyboard' ? (
+          {settingsPanel === 'license' ? (
+            <LicenseSection />
+          ) : settingsPanel === 'keyboard' ? (
             <KeyboardShortcutsSection
               keyboardShortcuts={keyboardShortcuts}
               onChange={setKeyboardShortcut}

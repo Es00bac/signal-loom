@@ -13,6 +13,7 @@ import {
   SettingsBackupError,
 } from '../lib/settingsBackup';
 import { DEFAULT_INTERFACE_THEME_ID, resolveInterfaceTheme } from '../lib/interfaceThemes';
+import { verifyLicenseKey, type LicenseVerification } from '../lib/licenseKey';
 import { sanitizeKeyboardShortcutMap, type KeyboardShortcutMap } from '../lib/keyboardShortcuts';
 import {
   createCropPreset,
@@ -204,6 +205,8 @@ export interface SettingsBackupData {
   gamepadBindings: GamepadBindingProfile;
   customBrushPresets: ImageBrushPreset[];
   customCropPresets: CropCustomPreset[];
+  /** Commercial-license key; optional for backups created before licensing shipped. */
+  licenseKey?: string;
 }
 
 /** Desktop integrated app-menu presentation: a single ☰ button, or a classic horizontal menu bar. */
@@ -261,9 +264,18 @@ interface SettingsState {
   renameCustomCropPreset: (id: string, label: string) => void;
   deleteCustomCropPreset: (id: string) => void;
   isSettingsOpen: boolean;
-  settingsPanel: 'providers' | 'keyboard' | 'gamepad';
+  settingsPanel: 'providers' | 'keyboard' | 'gamepad' | 'license';
   openSettings: (panel?: SettingsState['settingsPanel']) => void;
   toggleSettings: () => void;
+  /** Raw commercial-license key string ('' = Community). Encrypted at rest with the settings blob. */
+  licenseKey: string;
+  /** Offline Ed25519 verification result for licenseKey; fail-closed {licensed:false} until revalidated. */
+  license: LicenseVerification;
+  /** Verify + store a pasted key. Invalid keys are NOT stored; the returned verification carries the reason. */
+  setLicenseKey: (key: string) => Promise<LicenseVerification>;
+  removeLicenseKey: () => void;
+  /** Re-verify the persisted key (app boot; license is fail-closed after rehydration). */
+  revalidateLicense: () => Promise<void>;
 }
 
 const INITIAL_API_KEYS: ApiKeys = {
@@ -477,6 +489,7 @@ export const useSettingsStore = create<SettingsState>()(
           gamepadBindings: state.gamepadBindings,
           customBrushPresets: state.customBrushPresets,
           customCropPresets: state.customCropPresets,
+          licenseKey: state.licenseKey,
         };
         return encryptSettingsBackup(JSON.stringify(data), passphrase);
       },
@@ -493,6 +506,8 @@ export const useSettingsStore = create<SettingsState>()(
         // hand-edited or corrupt payload (same trust model as the persist `merge` above).
         const data = (isRecord(parsed) ? parsed : {}) as Partial<SettingsBackupData>;
         set((current) => mergeSettingsBackupData(current, data));
+        // A restored license key re-verifies immediately (merge leaves it fail-closed).
+        void get().revalidateLicense();
       },
       settingsBackupSupported: isSettingsBackupSupported(),
       isSettingsOpen: false,
@@ -500,6 +515,24 @@ export const useSettingsStore = create<SettingsState>()(
       openSettings: (panel = 'providers') => set({ isSettingsOpen: true, settingsPanel: panel }),
       toggleSettings: () =>
         set((state) => ({ isSettingsOpen: !state.isSettingsOpen })),
+      licenseKey: '',
+      license: { licensed: false },
+      setLicenseKey: async (key) => {
+        const verification = await verifyLicenseKey(key);
+        if (verification.licensed) {
+          set({ licenseKey: key.trim(), license: verification });
+        }
+        return verification;
+      },
+      removeLicenseKey: () => set({ licenseKey: '', license: { licensed: false } }),
+      revalidateLicense: async () => {
+        const storedKey = get().licenseKey;
+        if (!storedKey) {
+          return;
+        }
+        const verification = await verifyLicenseKey(storedKey);
+        set({ license: verification });
+      },
     }),
     {
       name: SETTINGS_STORAGE_KEY,
@@ -585,9 +618,15 @@ export const useSettingsStore = create<SettingsState>()(
           gamepadBindings: normalizeGamepadBindings(typedPersistedState?.gamepadBindings),
           customBrushPresets: sanitizeUserBrushPresets(typedPersistedState?.customBrushPresets),
           customCropPresets: sanitizeCropPresets(typedPersistedState?.customCropPresets),
-          settingsPanel: typedPersistedState?.settingsPanel === 'keyboard' || typedPersistedState?.settingsPanel === 'gamepad'
+          settingsPanel: typedPersistedState?.settingsPanel === 'keyboard'
+            || typedPersistedState?.settingsPanel === 'gamepad'
+            || typedPersistedState?.settingsPanel === 'license'
             ? typedPersistedState.settingsPanel
             : 'providers',
+          licenseKey: typeof typedPersistedState?.licenseKey === 'string' ? typedPersistedState.licenseKey : '',
+          // Fail-closed: never trust a persisted verification result. App boot calls
+          // revalidateLicense(), which re-verifies the stored key offline in milliseconds.
+          license: { licensed: false },
         };
       },
     },
@@ -628,6 +667,10 @@ function mergeSettingsBackupData(
     gamepadBindings: normalizeGamepadBindings(data.gamepadBindings),
     customBrushPresets: sanitizeUserBrushPresets(data.customBrushPresets),
     customCropPresets: sanitizeCropPresets(data.customCropPresets),
+    // The license key travels with a settings backup; it is re-verified fail-closed on import.
+    ...(typeof data.licenseKey === 'string'
+      ? { licenseKey: data.licenseKey, license: { licensed: false } as LicenseVerification }
+      : {}),
   };
 }
 

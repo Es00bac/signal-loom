@@ -51,7 +51,7 @@ contextBridge.exposeInMainWorld('signalLoomNative', {
   getSourceLibrarySnapshot: () => ipcRenderer.invoke('signal-loom:source-library-get-snapshot'),
   syncSourceLibrarySnapshot: (snapshot) => ipcRenderer.invoke('signal-loom:source-library-sync-snapshot', snapshot),
   applySourceLibraryChange: (change) => ipcRenderer.invoke('signal-loom:source-library-apply-change', change),
-  showAbout: () => ipcRenderer.invoke('signal-loom:show-about'),
+  showAbout: (options) => ipcRenderer.invoke('signal-loom:show-about', options),
   openPath: (filePath) => ipcRenderer.invoke('signal-loom:open-path', filePath),
   secretAvailable: () => ipcRenderer.invoke('signal-loom:secret-available'),
   secretEncrypt: (plaintext) => ipcRenderer.invoke('signal-loom:secret-encrypt', plaintext),

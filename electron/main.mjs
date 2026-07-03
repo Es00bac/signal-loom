@@ -2779,13 +2779,18 @@ function installIpcHandlers() {
 
   ipcMain.handle('signal-loom:source-library-apply-change', async (_event, change) => applySourceLibraryChange(change));
 
-  ipcMain.handle('signal-loom:show-about', async (event) => {
+  ipcMain.handle('signal-loom:show-about', async (event, options) => {
     const win = getIpcWindow(event);
     const version = app.getVersion();
+    // Edition line comes from the renderer's offline license verification
+    // ("Community edition" / "Licensed to <email>"); sanitized, never trusted for gating.
+    const edition = typeof options?.edition === 'string' && options.edition.trim()
+      ? options.edition.trim().slice(0, 120)
+      : 'Community edition';
     const result = await dialog.showMessageBox(win, {
       type: 'info',
       title: `About ${appName}`,
-      message: `${appName} ${version}`,
+      message: `${appName} ${version} — ${edition}`,
       detail:
         'A local-first studio for generative media — node-based Flow, a layered Image editor, '
         + 'print/comic Paper layout, and a Video timeline. Bring your own API keys; Signal Loom '

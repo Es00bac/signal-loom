@@ -496,7 +496,7 @@ export interface SignalLoomNativeBridge {
   getSourceLibrarySnapshot: () => Promise<SourceLibraryNativeSnapshotResult>;
   syncSourceLibrarySnapshot: (snapshot: SourceLibraryNativeSnapshotResult['snapshot']) => Promise<{ ok?: boolean; version?: number; error?: string }>;
   applySourceLibraryChange: (change: SourceLibraryNativeChange) => Promise<{ ok?: boolean; version?: number; error?: string }>;
-  showAbout: () => Promise<void>;
+  showAbout: (options?: { edition?: string }) => Promise<void>;
   openPath: (filePath: string) => Promise<{ ok?: boolean; error?: string }>;
   // At-rest encryption via the OS keychain (safeStorage). Optional: only present on builds that
   // expose it; the renderer falls back to WebCrypto when absent. encrypt/decrypt exchange base64.

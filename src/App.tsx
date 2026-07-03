@@ -11,9 +11,11 @@ import '@xyflow/react/dist/style.css';
 
 import { useCatalogStore } from './store/catalogStore';
 import { useSettingsStore } from './store/settingsStore';
+import { describeLicenseEdition } from './lib/licenseKey';
 import { useConfirmationStore } from './store/confirmationStore';
 import { showAlertDialog } from './store/alertDialogStore';
 import { SettingsModal } from './components/Settings/SettingsModal';
+import { CommunityStartupNotice } from './components/Layout/CommunityStartupNotice';
 import { ConfirmationDialog } from './components/Common/ConfirmationDialog';
 import { TextInputDialog } from './components/Common/TextInputDialog';
 import { AlertDialog } from './components/Common/AlertDialog';
@@ -351,6 +353,11 @@ function FlowApp() {
   const setActiveFlowSourceBinId = useEditorStore((state) => state.setActiveFlowSourceBinId);
   const refreshCatalogs = useCatalogStore((state) => state.refreshCatalogs);
   const apiKeys = useSettingsStore((state) => state.apiKeys);
+  const licenseIsCommercial = useSettingsStore((state) => state.license.licensed);
+  // Edition in the title bar (licensing spec Part 2 §3). Licensed builds keep the clean title.
+  useEffect(() => {
+    document.title = licenseIsCommercial ? 'Signal Loom' : 'Signal Loom — Community';
+  }, [licenseIsCommercial]);
   const defaultModels = useSettingsStore((state) => state.defaultModels);
   const providerSettings = useSettingsStore((state) => state.providerSettings);
   const interfaceThemeId = useSettingsStore((state) => state.interfaceThemeId);
@@ -1509,11 +1516,11 @@ function FlowApp() {
         return;
       case 'help:about':
         if (bridge) {
-          await bridge.showAbout();
+          await bridge.showAbout({ edition: describeLicenseEdition(useSettingsStore.getState().license) });
         } else {
           await showAlertDialog({
             title: 'Signal Loom',
-            message: 'Generative AI media flow builder and timeline editor.',
+            message: `Generative AI media flow builder and timeline editor. ${describeLicenseEdition(useSettingsStore.getState().license)}.`,
             tone: 'info',
           });
         }
@@ -2307,6 +2314,7 @@ function FlowApp() {
       </div>
 
       <SettingsModal />
+      <CommunityStartupNotice />
       <CommandPalette
         entries={commandPaletteEntries}
         onClose={() => setCommandPaletteOpen(false)}
