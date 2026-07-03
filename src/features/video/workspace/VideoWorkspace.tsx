@@ -1935,7 +1935,9 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
       return;
     }
     if (command === 'editor:reset-panels') {
-      useDockablePanelStore.getState().resetWorkspacePanels(VIDEO_WORKSPACE_ID);
+      // Full reset (legacy workspace snapshot + dockable layout) — the same behavior the old
+      // floating "Reset Video Panels" pill performed before it was removed with the dead top band.
+      resetVideoPanelLayout();
       return;
     }
     switch (command) {
@@ -3688,7 +3690,10 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     ? mobileChromeMode === 'hidden'
       ? mobilePhoneInterface.hiddenTopPaddingClassName
       : mobilePhoneInterface.collapsedTopPaddingClassName
-    : 'pt-16';
+    // Desktop: the shared top bar is in-flow (the workspace mounts below it), so pt-16 here was a
+    // 64px dead band trapped under the menu bar — the same dead padding already removed from the
+    // Image and Paper workspaces. pt-3 keeps the gutter symmetric with px-3/pb-3.
+    : 'pt-3';
 
   if (mobilePhoneInterface.enabled) {
     // Phone: a multi-pane desktop NLE can't fit, so render the dedicated tabbed mobile
@@ -3704,15 +3709,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
 
   return (
     <div className={`absolute inset-0 z-30 bg-[radial-gradient(circle_at_top,#182236_0%,#0b0e14_45%,#06080d_100%)] px-3 pb-3 ${workspaceChromePaddingClassName}`}>
-      <div className={`absolute right-4 z-50 flex gap-2 ${mobilePhoneInterface.enabled ? 'top-14' : 'top-20'}`}>
-        <button
-          className="rounded-full border border-cyan-300/25 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 shadow-lg backdrop-blur transition-colors hover:border-cyan-200/70 hover:text-white"
-          onClick={resetVideoPanelLayout}
-          type="button"
-        >
-          Reset Video Panels
-        </button>
-      </div>
+      {/* The old floating "Reset Video Panels" pill lived in the (now removed) dead band and would
+          cover the Inspector's header; the action lives in Window > Panels > Reset Video Panels. */}
       <DockablePanelHost className="h-full" panels={videoPanels} workspaceId={VIDEO_WORKSPACE_ID}>
         {renderLegacyVideoFallback ? (
         <section className="flex h-full min-h-0 gap-3">
@@ -4492,7 +4490,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
         </section>
         ) : (
           <section className="flex h-full min-h-0 items-center justify-center rounded-xl border border-white/5 bg-black/20 p-6 text-center text-sm text-gray-500">
-            Dockable Video panels are the active editing surfaces. Use Reset Video Panels to restore the default source bin, monitors, inspector, and timeline layout.
+            Dockable Video panels are the active editing surfaces. Use Window &gt; Panels &gt; Reset Video Panels to restore the default source bin, monitors, inspector, and timeline layout.
           </section>
         )}
       </DockablePanelHost>

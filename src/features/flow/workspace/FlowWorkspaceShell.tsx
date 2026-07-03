@@ -239,8 +239,12 @@ export function FlowWorkspaceShell({
           zoomOnScroll={!flowOrganizeJob}
         >
           <Background color="#2d2d34" gap={24} size={2} />
+          {/* Bottom-CENTER, horizontal: the old bottom-left spot sat underneath the docked Source
+              Bin panel (and even its collapsed rail), so the zoom controls were invisible or
+              half-covered. Centered, they stay clear of both side docks in every panel state. */}
           <Controls
-            className="theme-popover !bottom-24 !left-4 !bg-[#252830] !border-gray-700 !text-gray-300 shadow-xl rounded-xl overflow-hidden"
+            className="theme-popover !bottom-4 !left-1/2 !-translate-x-1/2 !bg-[#252830] !border-gray-700 !text-gray-300 shadow-xl rounded-xl overflow-hidden"
+            orientation="horizontal"
             showInteractive={false}
           />
         </ReactFlow>
