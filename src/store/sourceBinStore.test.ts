@@ -19,6 +19,16 @@ vi.mock('../lib/remoteHostClient', async (importOriginal) => {
   };
 });
 
+// 811 F2: hydrateAssets must not re-read + re-mint scratch-backed items that are already resolved.
+vi.mock('../lib/fileSystemWorkspace', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/fileSystemWorkspace')>();
+  return {
+    ...actual,
+    loadScratchAssetBlob: vi.fn(async () => new File(['pixel bytes'], 'hero.png', { type: 'image/png' })),
+  };
+});
+import { loadScratchAssetBlob } from '../lib/fileSystemWorkspace';
+
 const originalRevokeObjectUrl = URL.revokeObjectURL;
 
 describe('persistableSourceBinAssetUrl (quota-safe persistence)', () => {
@@ -95,6 +105,58 @@ describe('broadcastableSourceBinItem (811 F3 — no bytes on the broadcast bus)'
   it('passes stable non-byte URLs through untouched', () => {
     const native = { ...base, assetUrl: 'signal-loom-asset://file/encoded', nativeFilePath: '/x.png' };
     expect(broadcastableSourceBinItem(native)).toBe(native);
+  });
+});
+
+describe('hydrateAssets re-resolution guard (811 F2)', () => {
+  it('mints a scratch blob once and skips the disk read on every later pass', async () => {
+    let mintCount = 0;
+    const originalCreateObjectUrl = URL.createObjectURL;
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: () => {
+        mintCount += 1;
+        return `blob:mock-${mintCount}`;
+      },
+    });
+
+    try {
+      useSourceBinStore.setState({
+        bins: [{
+          id: 'default',
+          name: 'Source Library',
+          collapsed: false,
+          createdAt: Date.now(),
+          items: [{
+            id: 'scratch-1',
+            label: 'hero.png',
+            kind: 'image',
+            scratchFileName: 'hero.png',
+            createdAt: 1,
+          }],
+        }],
+        scratchDirectoryHandle: {} as FileSystemDirectoryHandle,
+      });
+      vi.mocked(loadScratchAssetBlob).mockClear();
+
+      await useSourceBinStore.getState().hydrateAssets();
+      const afterFirst = useSourceBinStore.getState().getAllItems()[0].assetUrl;
+      expect(afterFirst).toBe('blob:mock-1');
+      expect(vi.mocked(loadScratchAssetBlob)).toHaveBeenCalledTimes(1);
+
+      // Any add/broadcast/reconcile fires hydrateAssets again — the resolved item must be skipped.
+      await useSourceBinStore.getState().hydrateAssets();
+      await useSourceBinStore.getState().hydrateAssets();
+      expect(useSourceBinStore.getState().getAllItems()[0].assetUrl).toBe('blob:mock-1');
+      expect(vi.mocked(loadScratchAssetBlob)).toHaveBeenCalledTimes(1);
+      expect(mintCount).toBe(1);
+    } finally {
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        value: originalCreateObjectUrl,
+      });
+      useSourceBinStore.setState({ scratchDirectoryHandle: undefined });
+    }
   });
 });
 

@@ -238,12 +238,15 @@ const PROJECT_IMPORT_ENVELOPE_ID = 'project-imports';
 const PROJECT_IMPORT_ENVELOPE_LABEL = 'Project imports';
 let androidSourceAssetPermissionAlertOpen = false;
 const revocableSourceAssetHandles = createSourceAssetHandlePool((url) => {
-  try {
-    URL.revokeObjectURL?.(url);
-  } catch {
-    // Object URL revocation is best-effort cleanup.
-  }
+  revokeObjectUrl(url);
 });
+
+// 811 F2: provenance of blob: URLs hydrateAssets minted from scratch files. Without it, every
+// hydrate pass (which fires on ANY library add/broadcast/reconcile) re-read every scratch item
+// from disk and re-minted a fresh blob URL — an O(N) I/O + allocation storm per single-item event
+// that also made every scratch item look "changed" and re-rendered all subscribers. A blob URL
+// whose recorded provenance still matches the item's scratchFileName is alive and correct: skip.
+const scratchBlobProvenance = new Map<string, string>();
 
 function createDefaultBin(name = 'Source Library'): SourceBin {
   return {
@@ -305,6 +308,7 @@ function isRevocableObjectUrl(url: string | undefined): url is string {
 }
 
 function revokeObjectUrl(url: string): void {
+  scratchBlobProvenance.delete(url);
   try {
     URL.revokeObjectURL?.(url);
   } catch {
@@ -705,15 +709,32 @@ export const useSourceBinStore = create<SourceBinState>()(
                 }
 
                 if (item.scratchFileName && scratchDirectoryHandle) {
+                  // Already minted for this exact scratch file on a previous pass — still live (F2).
+                  if (
+                    item.assetUrl?.startsWith('blob:')
+                    && scratchBlobProvenance.get(item.assetUrl) === item.scratchFileName
+                  ) {
+                    return item;
+                  }
+
                   const file = await loadScratchAssetBlob(scratchDirectoryHandle, item.scratchFileName).catch(() => undefined);
 
                   if (file) {
+                    const assetUrl = URL.createObjectURL(file);
+                    scratchBlobProvenance.set(assetUrl, item.scratchFileName);
                     return {
                       ...item,
-                      assetUrl: URL.createObjectURL(file),
+                      assetUrl,
                       mimeType: file.type || item.mimeType,
                     };
                   }
+                }
+
+                // Already carrying resolved bytes — a data: URL cannot go stale, and the overwrite
+                // path (updateAssetItemData) swaps in a fresh URL itself. Skip the IndexedDB
+                // round-trip that used to run for every such item on every pass (F2).
+                if (item.assetUrl?.startsWith('data:')) {
+                  return item;
                 }
 
                 // Resolve by assetId, or by the id embedded in a
@@ -1431,7 +1452,13 @@ export const useSourceBinStore = create<SourceBinState>()(
                 envelopeIndex: item.envelopeIndex,
                 envelopeCollapsed: item.envelopeCollapsed,
               }, get().scratchDirectoryHandle));
-            } catch {
+            } catch (error) {
+              // Keep the batch resilient, but never silently: a swallowed persist failure looks
+              // exactly like "my asset disappeared" to the user (docs/notes/811 F4).
+              console.warn(
+                `[sourceBin] ingest skipped "${item.label ?? item.nodeId}" (${item.kind}) — the asset was not added to the library:`,
+                error,
+              );
               continue;
             }
           }

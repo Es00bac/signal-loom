@@ -124,11 +124,14 @@ describe('source bin live workspace sync', () => {
     expect(mocks.postWorkspaceWindowCommand).toHaveBeenCalledWith({
       type: 'source-bin-items-added',
       items: [
+        // 811 F3: the broadcast carries the durable pointer, never the bytes — the receiving
+        // window re-resolves through its own hydrateAssets (shared IndexedDB / scratch dir).
         expect.objectContaining({
           id: 'direct-image-1',
           label: 'Paper reference.png',
           kind: 'image',
-          assetUrl: 'data:image/png;base64,DIRECT',
+          assetId: 'stored-Paper reference.png',
+          assetUrl: undefined,
         }),
       ],
     });
@@ -459,10 +462,12 @@ describe('source bin live workspace sync', () => {
     expect(mocks.postWorkspaceWindowCommand).toHaveBeenCalledWith({
       type: 'source-bin-items-added',
       items: [
+        // 811 F3: bytes stripped — the durable assetId travels; receivers re-resolve locally.
         expect.objectContaining({
           label: 'Generated panel option',
           kind: 'image',
-          assetUrl: 'data:image/png;base64,GENERATED',
+          assetId: 'stored-Generated panel option.png',
+          assetUrl: undefined,
           originNodeId: 'flow-image-node-1',
           sourceKey: 'image:flow-image-node-1:data:image/png;base64,GENERATED',
         }),
