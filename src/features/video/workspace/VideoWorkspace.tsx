@@ -21,6 +21,7 @@ import {
   Trash2,
   Type,
 } from 'lucide-react';
+import { advanceShuttleCursor, stepShuttleRate, toggleShuttlePlay } from './timelineTransport';
 import { useFlowStore } from '../../../store/flowStore';
 import { useConfirmationStore } from '../../../store/confirmationStore';
 import { showAlertDialog } from '../../../store/alertDialogStore';
@@ -608,6 +609,28 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     [libraryItems],
   );
   const [timelineCursorSeconds, setTimelineCursorSeconds] = useState(0);
+  // JKL shuttle transport: 0 = paused; ±1/±2/±4/±8 = play rate (see timelineTransport.ts).
+  const [shuttleRate, setShuttleRate] = useState(0);
+
+  useEffect(() => {
+    if (shuttleRate === 0) return undefined;
+    let frame = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const deltaMs = now - last;
+      last = now;
+      setTimelineCursorSeconds((current) => {
+        const { nextSeconds, stopped } = advanceShuttleCursor(current, shuttleRate, deltaMs, displayTimelineSecondsRef.current);
+        if (stopped) {
+          setShuttleRate(0);
+        }
+        return nextSeconds;
+      });
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [shuttleRate]);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -856,6 +879,40 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
 
       if (!isCommandShortcut && shortcutKey === 'm') {
         setTimelineToolWithActivity('snap', 'keyboard');
+        return;
+      }
+
+      // JKL shuttle + space transport (owner-approved pro-editor quartet, item 1).
+      if (event.key === ' ' && !isCommandShortcut) {
+        event.preventDefault();
+        setShuttleRate((current) => toggleShuttlePlay(current));
+        return;
+      }
+      if (!isCommandShortcut && shortcutKey === 'l') {
+        event.preventDefault();
+        setShuttleRate((current) => stepShuttleRate(current, 1));
+        return;
+      }
+      if (!isCommandShortcut && shortcutKey === 'j') {
+        event.preventDefault();
+        setShuttleRate((current) => stepShuttleRate(current, -1));
+        return;
+      }
+      if (!isCommandShortcut && shortcutKey === 'k') {
+        event.preventDefault();
+        setShuttleRate(0);
+        return;
+      }
+      if (event.key === 'Home') {
+        event.preventDefault();
+        setShuttleRate(0);
+        setTimelineCursorSeconds(0);
+        return;
+      }
+      if (event.key === 'End') {
+        event.preventDefault();
+        setShuttleRate(0);
+        setTimelineCursorSeconds(displayTimelineSecondsRef.current);
         return;
       }
 
@@ -3570,6 +3627,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
           selectedTimelineGap={selectedTimelineGap}
           selectedVisualClip={selectedVisualClip}
           sequenceDurationSeconds={sequenceDurationSeconds}
+          shuttleRate={shuttleRate}
           snapTimelineInteractionSeconds={snapTimelineInteractionSeconds}
           timelineAudioTrackHeight={timelineAudioTrackHeight}
           timelineCursorSeconds={timelineCursorSeconds}
@@ -4206,6 +4264,13 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                     <div className="rounded-full border border-gray-700/60 bg-[#111217]/45 px-3 py-1 text-xs text-gray-300">
                       {sequenceDurationSeconds > 0 ? `${sequenceDurationSeconds.toFixed(1)}s cut` : 'No clips yet'}
                     </div>
+                    <div
+                      className={`rounded-full border px-3 py-1 font-mono text-xs ${shuttleRate === 0 ? 'border-gray-700/60 bg-[#111217]/45 text-gray-500' : 'border-emerald-300/45 bg-emerald-400/10 text-emerald-200'}`}
+                      data-video-transport-rate={shuttleRate}
+                      title="J/K/L shuttle · Space play/pause · Home/End to sequence bounds"
+                    >
+                      {shuttleRate === 0 ? '⏸ JKL' : shuttleRate > 0 ? `▶ ${shuttleRate}×` : `◀ ${Math.abs(shuttleRate)}×`}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -4580,6 +4645,7 @@ interface SequencerTimelinePanelProps {
   selectedTimelineGap: TimelineGap | null;
   selectedVisualClip?: EditorVisualClip;
   sequenceDurationSeconds: number;
+  shuttleRate: number;
   snapTimelineInteractionSeconds: (seconds: number, shiftKey: boolean) => number;
   splitVisualClipAtSeconds: (id: string, splitSeconds: number, shiftKey: boolean) => void;
   slipVisualClip: (id: string, deltaSeconds: number) => void;
@@ -4640,6 +4706,7 @@ function SequencerTimelinePanel({
   selectedTimelineGap,
   selectedVisualClip,
   sequenceDurationSeconds,
+  shuttleRate,
   snapTimelineInteractionSeconds,
   splitVisualClipAtSeconds,
   slipVisualClip,
@@ -4732,6 +4799,13 @@ function SequencerTimelinePanel({
             </button>
             <div className="rounded-full border border-gray-700/60 bg-[#111217]/45 px-3 py-1 text-xs text-gray-300">
               {sequenceDurationSeconds > 0 ? `${sequenceDurationSeconds.toFixed(1)}s cut` : 'No clips yet'}
+            </div>
+            <div
+              className={`rounded-full border px-3 py-1 font-mono text-xs ${shuttleRate === 0 ? 'border-gray-700/60 bg-[#111217]/45 text-gray-500' : 'border-emerald-300/45 bg-emerald-400/10 text-emerald-200'}`}
+              data-video-transport-rate={shuttleRate}
+              title="J/K/L shuttle · Space play/pause · Home/End to sequence bounds"
+            >
+              {shuttleRate === 0 ? '⏸ JKL' : shuttleRate > 0 ? `▶ ${shuttleRate}×` : `◀ ${Math.abs(shuttleRate)}×`}
             </div>
           </div>
         </div>
