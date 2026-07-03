@@ -970,7 +970,7 @@
   <div class="node-head"><span class="nid">04 · paper-demo</span><span class="ntype">replay</span><span class="nstate"><span class="txt"></span><i></i></span></div>
   <div class="node-body">
     <h2 data-reveal>Sculpt a <em>comic page.</em></h2>
-    <p class="sub" data-reveal>The Paper workspace, replayed: rule out panel frames, hold <b>Ctrl</b> to reveal <b>vertex handles</b> and drag an edge midpoint into a custom shape, set border weight and colour <b>in millimetres</b>, tint the page, and drop in a speech bubble with a draggable tail — Preflight keeps it print-ready.</p>
+    <p class="sub" data-reveal>The Paper workspace, replayed: rule out panel frames, hold <b>Ctrl</b> to reveal <b>vertex handles</b> and drag an edge midpoint into a custom shape, <b>interlock the neighbouring frame</b> so the sculpt never traps white space (its art refits to the new bounds), set border weight and colour <b>in millimetres</b>, tint the page, and drop in a speech bubble with a draggable tail — Preflight keeps it print-ready.</p>
     <div class="fd-wrap" data-reveal>
       <div class="fd-stage pp" id="pp" role="img" aria-label="Animated replay of the Signal Loom Paper workspace: three comic panel frames are drawn on a page, one is reshaped with Ctrl vertex handles, border width and colour are changed in the Inspector, the page is tinted, and a speech bubble with a draggable tail is added.">
         <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i><img src="assets/demo/ws-editor.png" alt="Video"/></i><i><img src="assets/demo/ws-image.png" alt="Image"/></i><i class="on"><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">＋ New</span><span class="fd-chipbtn">Page</span><span class="fd-chipbtn">Duplicate</span><span class="fd-chipbtn">✓ 0 warnings</span><span class="fd-chipbtn hot">⬇ Export Document ▾</span><span class="fd-chipbtn">Place PDF/document</span><span class="fd-chipbtn">Rulers</span><span class="fd-chipbtn">Guides</span><span class="fd-chipbtn">Grid</span><span class="fd-chipbtn hot">Snap Guides</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
@@ -1953,6 +1953,20 @@ function makeSim(rootId, TOTAL, script, finalState){
   ];
   /* F2 sculpted: bottom edge midpoint pulled up-left into a fifth vertex (insertPaperFrameVertexPatch) */
   var F2_SCULPT = [[338,16],[622,16],[622,256],[470,196],[338,256]];
+  /* F3 answers with a complementary key: its top edge rises into F2's notch (constant gutter),
+     so the sculpt never traps white space — the two frames interlock. */
+  var F3_FROM = [[18,272],[480,272],[480,272],[480,272],[622,272],[622,444],[18,444]];
+  var F3_KEY  = [[18,272],[352,272],[470,212],[602,272],[622,272],[622,444],[18,444]];
+  function tweenArt(el, attrs, dur){
+    var t0 = performance.now(); var from = {};
+    Object.keys(attrs).forEach(function(k){ from[k] = parseFloat(el.getAttribute(k)); });
+    (function step(){
+      var t = Math.min(1, (performance.now()-t0)/(dur*1000));
+      var e = 1-Math.pow(1-t, 3);
+      Object.keys(attrs).forEach(function(k){ el.setAttribute(k, from[k]+(attrs[k]-from[k])*e); });
+      if(t < 1) requestAnimationFrame(step);
+    })();
+  }
   function pts(a){ return a.map(function(p){ return p[0]+','+p[1]; }).join(' '); }
   function setPts(el, a){ el.setAttribute('points', pts(a)); }
   function lerpPts(a, b, t){ return b.map(function(p, i){ var q = a[Math.min(i, a.length-1)];
@@ -2005,13 +2019,14 @@ function makeSim(rootId, TOTAL, script, finalState){
   var key = document.getElementById('pp-key');
   var TOOL_IDS = ['pp-tool-select', 'pp-tool-frame', 'pp-tool-bubble'];
   function toolOn(id){ TOOL_IDS.forEach(function(t){ document.getElementById(t).classList.toggle('on', t === id); }); }
-  makeSim('pp', 29, function(sim){
+  makeSim('pp', 32, function(sim){
     /* reset */
     F.forEach(function(el, i){ setPts(el, RECTS[i]); el.setAttribute('opacity', 0); });
     setPts(document.getElementById('ppc1p'), RECTS[0]); setPts(document.getElementById('ppc2p'), RECTS[1]); setPts(document.getElementById('ppc3p'), RECTS[2]);
     document.getElementById('pp-art1').setAttribute('opacity', 0);
     document.getElementById('pp-art2').setAttribute('opacity', 0);
     document.getElementById('pp-art3').setAttribute('opacity', 0);
+    var art3 = document.getElementById('pp-art3'); art3.setAttribute('y', 272); art3.setAttribute('height', 172);
     document.getElementById('pp-bubble').setAttribute('opacity', 0);
     document.getElementById('pp-bubble-t1').textContent = ''; document.getElementById('pp-bubble-t2').textContent = '';
     handles.classList.remove('on'); handles.innerHTML = '';
@@ -2049,43 +2064,58 @@ function makeSim(rootId, TOTAL, script, finalState){
       var m = svgPt(sim, 470, 196); sim.move(m.x, m.y, 1.4);
       key.style.left = (m.x+26)+'px'; key.style.top = (m.y-8)+'px'; });
     sim.later(11.8, function(){ buildHandles(sim, F[1]); });
-    sim.later(13.2, function(){ key.classList.remove('on'); handles.classList.remove('on'); });
-    sim.later(13.8, function(){ sim.cap('Border weight & colour — in millimetres');
+    /* the sculpt carved a notch — never leave that white space trapped: the neighbour interlocks */
+    sim.later(12.4, function(){ sim.cap('Interlock the neighbour — no trapped white space');
+      buildHandles(sim, F[2]);
+      var m = svgPt(sim, 480, 272); sim.move(m.x, m.y, .7);
+      key.style.left = (m.x+26)+'px'; key.style.top = (m.y-8)+'px'; });
+    sim.later(13.3, function(){ sim.click();
+      animPts(sim, F[2], F3_FROM, F3_KEY, 1.2, document.getElementById('ppc3p'));
+      /* refit the art's bounds so the new peak fills with image, composition intact */
+      tweenArt(document.getElementById('pp-art3'), { y: 212, height: 232 }, 1.2);
+      var m = svgPt(sim, 470, 212); sim.move(m.x, m.y, 1.2);
+      key.style.left = (m.x+26)+'px'; key.style.top = (m.y-8)+'px'; });
+    sim.later(14.7, function(){ buildHandles(sim, F[2]); });
+    sim.later(15.6, function(){ key.classList.remove('on'); handles.classList.remove('on'); });
+    sim.later(16.1, function(){ sim.cap('Border weight & colour — in millimetres');
       sim.moveTo(document.getElementById('pp-sl-bw'), .8); });
-    sim.later(14.8, function(){ sim.click();
+    sim.later(17.1, function(){ sim.click();
       document.getElementById('pp-sl-bw').style.width = '62%';
       document.getElementById('pp-bw-val').textContent = '1.2 mm';
       F.forEach(function(el){ el.setAttribute('stroke-width', 3.4); }); });
-    sim.later(16.0, function(){ sim.moveTo(document.getElementById('pp-sw-border'), .6); });
-    sim.later(16.7, function(){ sim.click();
+    sim.later(18.3, function(){ sim.moveTo(document.getElementById('pp-sw-border'), .6); });
+    sim.later(19.0, function(){ sim.click();
       document.getElementById('pp-sw-border').style.background = '#1e3a5f';
       F.forEach(function(el){ el.style.stroke = '#1e3a5f'; });
       document.getElementById('pp-bubble-body').style.stroke = '#1e3a5f'; });
-    sim.later(17.6, function(){ sim.cap('Tint the page itself'); sim.moveTo(document.getElementById('pp-sw-page'), .6); });
-    sim.later(18.3, function(){ sim.click();
+    sim.later(19.9, function(){ sim.cap('Tint the page itself'); sim.moveTo(document.getElementById('pp-sw-page'), .6); });
+    sim.later(20.6, function(){ sim.click();
       document.getElementById('pp-sw-page').style.background = '#f6efe1';
       page.style.background = '#f6efe1'; });
-    sim.later(19.4, function(){ sim.cap('Speech bubbles, with draggable tails');
+    sim.later(21.7, function(){ sim.cap('Speech bubbles, with draggable tails');
       sim.moveTo(document.getElementById('pp-tool-bubble'), .7); });
-    sim.later(20.2, function(){ sim.click(); toolOn('pp-tool-bubble'); });
-    sim.later(20.5, function(){ var b = svgPt(sim, 168, 64); sim.move(b.x, b.y, .8); });
-    sim.later(21.4, function(){ sim.click(); document.getElementById('pp-bubble').setAttribute('opacity', 1); });
-    sim.later(21.8, function(){
+    sim.later(22.5, function(){ sim.click(); toolOn('pp-tool-bubble'); });
+    sim.later(22.8, function(){ var b = svgPt(sim, 168, 64); sim.move(b.x, b.y, .8); });
+    sim.later(23.7, function(){ sim.click(); document.getElementById('pp-bubble').setAttribute('opacity', 1); });
+    sim.later(24.1, function(){
       var t1 = 'A town holding', t2 = 'its breath.', i = 0;
       sim.every(45, function(){ i++;
         document.getElementById('pp-bubble-t1').textContent = t1.slice(0, i);
         document.getElementById('pp-bubble-t2').textContent = i > t1.length ? t2.slice(0, i-t1.length) : ''; });
     });
-    sim.later(24.0, function(){ var tp = svgPt(sim, 84, 112); sim.move(tp.x, tp.y, .6); });
-    sim.later(24.7, function(){ sim.click();
+    sim.later(26.3, function(){ var tp = svgPt(sim, 84, 112); sim.move(tp.x, tp.y, .6); });
+    sim.later(27.0, function(){ sim.click();
       document.getElementById('pp-bubble-body').setAttribute('d',
         'M96,64 C96,42 130,30 168,30 C206,30 240,42 240,64 C240,86 206,98 168,98 C143,98 122,94 109,86 L64,132 L98,80 C96,75 96,70 96,64 Z');
       var tp = svgPt(sim, 64, 132); sim.move(tp.x, tp.y, .6); });
-    sim.later(26.4, function(){ sim.cap('Preflight ✓ — CMYK, print-ready'); });
+    sim.later(28.7, function(){ sim.cap('Preflight ✓ — CMYK, print-ready'); });
   }, function(sim){ /* reduced-motion final state */
     toolOn('pp-tool-select');
-    F.forEach(function(el, i){ el.setAttribute('opacity', 1); setPts(el, i === 1 ? F2_SCULPT : RECTS[i]);
+    F.forEach(function(el, i){ el.setAttribute('opacity', 1);
+      setPts(el, i === 1 ? F2_SCULPT : i === 2 ? F3_KEY : RECTS[i]);
       el.setAttribute('stroke-width', 3.4); el.style.stroke = '#1e3a5f'; });
+    setPts(document.getElementById('ppc3p'), F3_KEY);
+    var fArt3 = document.getElementById('pp-art3'); fArt3.setAttribute('y', 212); fArt3.setAttribute('height', 232);
     document.getElementById('pp-art1').setAttribute('opacity', 1);
     document.getElementById('pp-art2').setAttribute('opacity', 1);
     setPts(document.getElementById('ppc2p'), F2_SCULPT);
