@@ -39,6 +39,7 @@ function renderProgramMonitor({
   hasActiveComposition = true,
   onCreateStarterSequence,
   onRevealSourceBin,
+  initialSidebarTab,
 }: {
   aspectRatio?: AspectRatio;
   videoResolution?: VideoResolution;
@@ -58,6 +59,7 @@ function renderProgramMonitor({
   hasActiveComposition?: boolean;
   onCreateStarterSequence?: () => void;
   onRevealSourceBin?: () => void;
+  initialSidebarTab?: 'tools' | 'info' | 'output';
 } = {}): string {
   const visualClips = stageClips.map((stageClip) => stageClip.clip);
   const durationSeconds = Math.max(0, ...stageClips.map((stageClip) => stageClip.durationSeconds));
@@ -74,6 +76,7 @@ function renderProgramMonitor({
       frameRate={30}
       hasActiveComposition={hasActiveComposition}
       hasCaptionCues={false}
+      initialSidebarTab={initialSidebarTab}
       onCreateStarterSequence={onCreateStarterSequence}
       onRevealSourceBin={onRevealSourceBin}
       incrementalRenderSummary={incrementalRenderSummary}
@@ -248,6 +251,7 @@ describe('ProgramMonitorPanel', () => {
     });
     const html = renderProgramMonitor({
       incrementalRenderSummary: 'Incremental render plan: 1/3 timeline spans changed.',
+      initialSidebarTab: 'info',
       stageClips: [makeImageStageClip(clip)],
     });
 
@@ -261,6 +265,7 @@ describe('ProgramMonitorPanel', () => {
 
   it('renders export readiness and legacy analysis-only cache status in the program monitor', () => {
     const html = renderProgramMonitor({
+      initialSidebarTab: 'info',
       exportReadiness: {
         tone: 'info',
         label: 'Analysis only',
@@ -279,6 +284,7 @@ describe('ProgramMonitorPanel', () => {
 
   it('renders inspectable render-cache assembly details in the program monitor', () => {
     const html = renderProgramMonitor({
+      initialSidebarTab: 'info',
       incrementalRenderSummary: 'Segment artifact reuse: 1 reusable cached span, 1 queued dirty span.',
       renderCacheDetailLines: [
         'Reuse 0.0s-1.0s from cached segment (1 clip).',
@@ -295,6 +301,7 @@ describe('ProgramMonitorPanel', () => {
 
   it('renders the configured render backend in the program monitor', () => {
     const html = renderProgramMonitor({
+      initialSidebarTab: 'info',
       renderBackendStatus: {
         tone: 'gpu',
         label: 'AMD VAAPI',

@@ -5641,6 +5641,7 @@ export function ProgramMonitorPanel({
   onCreateComposition,
   onCreateStarterSequence,
   onRevealSourceBin,
+  initialSidebarTab,
 }: {
   stageMode: 'stage' | 'rendered';
   previewUrl?: string;
@@ -5688,11 +5689,13 @@ export function ProgramMonitorPanel({
   onCreateComposition?: () => void;
   onCreateStarterSequence?: () => void;
   onRevealSourceBin?: () => void;
+  /** Starting sidebar tab; defaults to Tools (static render paths and tests can pin Info/Output). */
+  initialSidebarTab?: 'tools' | 'info' | 'output';
 }) {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   // Owner-requested tabbed sidebar: Tools (program-stage editing incl. motion comics),
   // Info (specs/status/cache), Output (delivery settings). Render stays pinned below all tabs.
-  const [sidebarTab, setSidebarTab] = useState<'tools' | 'info' | 'output'>('tools');
+  const [sidebarTab, setSidebarTab] = useState<'tools' | 'info' | 'output'>(initialSidebarTab ?? 'tools');
   const imageSequenceFrameCount = getImageSequenceFrameCount(previewOutputMetadata);
   const isImageSequenceOutput = Boolean(imageSequenceFrameCount !== undefined);
   const renderedPreviewDescriptor = buildRenderedPreviewDescriptor({
