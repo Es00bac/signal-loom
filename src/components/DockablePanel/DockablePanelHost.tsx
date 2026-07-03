@@ -12,7 +12,7 @@ import {
 } from '../../lib/dockablePanel';
 import {
   resolveActiveDockZoneLayout,
-  shouldSplitDockZoneLayouts,
+  shouldSplitDockZoneEntries,
 } from '../../lib/dockablePanelStack';
 import { Z_INDEX } from '../../lib/zIndex';
 import { useDockablePanelStore } from '../../store/dockablePanelStore';
@@ -143,11 +143,17 @@ function DockZoneStack({
   const toggleDockColumnCollapsed = useDockablePanelStore((state) => state.toggleDockColumnCollapsed);
   const activeLayout = resolveActiveDockZoneLayout(zoneEntries.map(getRenderEntryHostLayout), activePanelId);
   const activeEntry = activeLayout ? zoneEntries.find((entry) => renderEntryContainsPanel(entry, activeLayout.panelId)) : undefined;
-  const shouldSplitCenter = shouldSplitDockZoneLayouts(
+  // Entry-based: a tab group holding a split-capable panel (e.g. Inspector tabbed onto the Source
+  // Monitor) keeps its split slot instead of degrading the whole center to a one-visible-tab strip.
+  const shouldSplitCenter = shouldSplitDockZoneEntries(
     zone,
-    zoneLayouts,
+    zoneEntries.map((entry) => ({
+      memberPanelIds: entry.type === 'panel'
+        ? [entry.layout.panelId]
+        : entry.layouts.map((member) => member.panelId),
+    })),
     (panelId) => definitions.get(panelId)?.centerDockPresentation === 'split',
-  ) && zoneEntries.every((entry) => entry.type === 'panel');
+  );
   const isSideDockZone = zone === 'left' || zone === 'right';
   // Group side-zone panels into columns (by dockColumn), ordered left→right.
   const sideColumns: { column: number; entries: typeof zoneEntries }[] = isSideDockZone
@@ -222,25 +228,27 @@ function DockZoneStack({
     <aside className={`min-h-0 min-w-0 ${className}`} style={{ zIndex: Z_INDEX.dockedPanel }}>
       {shouldSplitCenter ? (
         <div className="flex h-full min-h-0 min-w-0 gap-2">
-          {zoneLayouts.map((layout, index) => (
-            <Fragment key={layout.panelId}>
+          {zoneEntries.map((entry, index) => {
+            const hostLayout = getRenderEntryHostLayout(entry);
+            return (
+            <Fragment key={entry.key}>
               <div
                 className="flex min-h-0 min-w-0"
-                style={{ flex: `${Math.max(1, layout.floatingRect.width)} 1 0` }}
+                style={{ flex: `${Math.max(1, hostLayout.floatingRect.width)} 1 0` }}
               >
-                {renderPanel(
-                  layout,
+                {renderPanelEntry(
+                  entry,
                   definitions,
                   viewport,
                   'h-full min-w-0 flex-1',
                 )}
               </div>
-              {index < zoneLayouts.length - 1 ? (
+              {index < zoneEntries.length - 1 ? (
                 <div
-                  aria-label={`${definitions.get(layout.panelId)?.title ?? layout.panelId} split resize divider`}
+                  aria-label={`${definitions.get(hostLayout.panelId)?.title ?? hostLayout.panelId} split resize divider`}
                   className="w-2 shrink-0 cursor-col-resize touch-none rounded-full border-x border-cyan-200/0 bg-cyan-300/0 transition-colors hover:border-cyan-200/60 hover:bg-cyan-300/25"
                   onPointerCancel={endSplitResize}
-                  onPointerDown={(event) => startSplitResize(event, layout)}
+                  onPointerDown={(event) => startSplitResize(event, hostLayout)}
                   onPointerMove={(e) => continueSplitResize(e, false)}
                   onPointerUp={endSplitResize}
                   role="separator"
@@ -248,7 +256,8 @@ function DockZoneStack({
                 />
               ) : null}
             </Fragment>
-          ))}
+            );
+          })}
         </div>
       ) : zoneEntries.length > 1 && (zone === 'center' || zone === 'overlay') ? (
         <div className="mb-1 flex max-w-full gap-1 overflow-auto rounded-lg border border-cyan-300/10 bg-[#08111d]/90 p-1">

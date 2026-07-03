@@ -6,6 +6,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultDockablePanelLayout, panelKey, type DockablePanelDefault, type DockablePanelLayout } from '../../lib/dockablePanel';
 import {
   resolveActiveDockZoneLayout,
+  shouldSplitDockZoneEntries,
   shouldSplitDockZoneLayouts,
 } from '../../lib/dockablePanelStack';
 import { useDockablePanelStore } from '../../store/dockablePanelStore';
@@ -63,6 +64,39 @@ describe('DockablePanelHost active center panels', () => {
       'center',
       [layout('source-monitor', 1), layout('project-source-bin', 2)],
       (panelId) => panelId === 'source-monitor',
+    )).toBe(false);
+  });
+
+  it('keeps the center split when a tab group holds a split-capable monitor (Inspector tabbed onto Source Monitor)', () => {
+    // Regression: dropping the Inspector onto the Source Monitor forms a tab group. The center must
+    // stay split (group | Program Monitor) — previously it degraded to a one-visible-entry tab
+    // strip and the other monitor silently vanished from the layout.
+    const isMonitor = (panelId: string) => panelId === 'source-monitor' || panelId === 'program-monitor';
+
+    expect(shouldSplitDockZoneEntries(
+      'center',
+      [
+        { memberPanelIds: ['source-monitor', 'inspector'] },
+        { memberPanelIds: ['program-monitor'] },
+      ],
+      isMonitor,
+    )).toBe(true);
+
+    // A group with NO split-capable member still tabs the center.
+    expect(shouldSplitDockZoneEntries(
+      'center',
+      [
+        { memberPanelIds: ['inspector', 'project-source-bin'] },
+        { memberPanelIds: ['program-monitor'] },
+      ],
+      isMonitor,
+    )).toBe(false);
+
+    // A single entry (everything tabbed together) renders as one tabbed panel, not a split.
+    expect(shouldSplitDockZoneEntries(
+      'center',
+      [{ memberPanelIds: ['source-monitor', 'program-monitor', 'inspector'] }],
+      isMonitor,
     )).toBe(false);
   });
 

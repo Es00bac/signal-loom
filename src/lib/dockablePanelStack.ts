@@ -10,6 +10,23 @@ export function shouldSplitDockZoneLayouts<T extends { panelId: string }>(
     && zoneLayouts.every((layout) => isSplitCapablePanel(layout.panelId));
 }
 
+/**
+ * Entry-level split check for the center zone. Unlike the per-layout check above, this keeps the
+ * side-by-side monitor split alive when a tab GROUP occupies one of the slots: a group is
+ * split-capable when any member is (e.g. Inspector tabbed onto the Source Monitor). Without this,
+ * dropping a tabs-presentation panel onto a split-capable one degraded the whole center to a
+ * single-visible-entry tab strip — the other monitor silently vanished from the layout.
+ */
+export function shouldSplitDockZoneEntries<T extends { memberPanelIds: readonly string[] }>(
+  zone: string,
+  entries: T[],
+  isSplitCapablePanel: (panelId: string) => boolean,
+): boolean {
+  return zone === 'center'
+    && entries.length > 1
+    && entries.every((entry) => entry.memberPanelIds.some((panelId) => isSplitCapablePanel(panelId)));
+}
+
 export function resolveActiveDockZoneLayout<T extends { panelId: string }>(
   zoneLayouts: T[],
   activePanelId: string | null,
