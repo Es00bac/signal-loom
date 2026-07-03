@@ -439,9 +439,13 @@
   .pp-key.on{opacity:1}
 
   /* inspector panel — shared by paper / sfx / brush / video mocks */
-  .pp-inspector{position:absolute;right:1em;top:1em;bottom:1.6em;width:23.5cqw;background:rgba(13,15,21,.94);
-    border:1px solid rgba(110,125,150,.4);border-radius:.9em;padding:1em;display:flex;flex-direction:column;gap:.55em;
+  .pp-inspector{position:absolute;right:.3cqw;top:.3cqw;bottom:.3cqw;width:22cqw;background:rgba(12,17,25,.97);
+    border:1px solid rgba(110,125,150,.26);border-radius:.25em;padding:0 0 .8em;display:flex;flex-direction:column;gap:.55em;
     font-size:1em;overflow:hidden}
+  .pp-inspector>*{margin-inline:1em}
+  .pp-inspector>.vd-pbar{margin:0 0 .2em}
+  .pp-bin{left:.3cqw;top:.3cqw;bottom:.3cqw;width:12.4cqw}
+  .pp-bin .fd-lib-item{margin-left:0}
   .pp-ih{font-family:var(--mono);font-size:.95em;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3);
     border-bottom:1px solid var(--line);padding-bottom:.6em}
   .pp-sec{font-family:var(--mono);font-size:.75em;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-top:.4em}
@@ -454,7 +458,7 @@
   .pp-ok{color:#5ce6a1;font-family:var(--mono);font-size:.8em;letter-spacing:.08em;text-transform:uppercase}
 
   /* paper page */
-  .pp-page{position:absolute;left:13cqw;top:2.2cqw;width:47cqw;height:37.4cqw;background:#fff;border-radius:.3em;
+  .pp-page{position:absolute;left:26cqw;top:2.2cqw;width:47cqw;height:37.4cqw;background:#fff;border-radius:.3em;
     box-shadow:0 1.6em 3em -1.4em #000;transition:background .8s}
   .pp-page svg{position:absolute;inset:0;width:100%;height:100%}
   .pp-frame{fill:rgba(255,255,255,0);stroke:#181b20;stroke-width:1.6;transition:stroke .5s}
@@ -576,7 +580,7 @@
   /* real floating tool palettes (mirrors the app's toolbars) */
   .tp::before{content:"⋮⋮⋮";letter-spacing:-.1em;grid-column:1/-1;text-align:center;color:var(--ink-3);
     font-size:.75em;line-height:1;padding-bottom:.2em;border-bottom:1px solid rgba(150,182,220,.12);margin-bottom:.15em}
-  .tp{position:absolute;left:2.4em;top:1em;background:rgba(16,20,27,.97);border:1px solid rgba(110,125,150,.4);
+  .tp{position:absolute;left:13.4cqw;top:.8cqw;background:rgba(16,20,27,.97);border:1px solid rgba(110,125,150,.4);
     border-radius:.7em;padding:.5em;z-index:4;display:grid;gap:.28em}
   .tp.cols2{grid-template-columns:repeat(2,auto)}
   .tp.cols3{grid-template-columns:repeat(3,auto)}
@@ -689,10 +693,10 @@
   .vd-th span{color:var(--ink)}
   .vd-msl{display:inline-block;width:3.2em;height:.4em;border-radius:99em;background:rgba(150,182,220,.15);
     vertical-align:middle;margin-inline:.3em;position:relative;font-style:normal}
-  /* the vd top bar carries the app's full control row — tighter chips so it fits the stage */
-  .vd .fd-bar1{gap:.4em}
-  .vd .fd-bar1 .fd-chipbtn{font-size:.6em;padding:.24em .5em;flex:none}
-  .vd .fd-wsgroup,.vd .fd-wsgroup i,.vd .fd-appico,.vd .fd-zoom{flex:none}
+  /* every sim bar carries the app's real control row — tighter chips so they fit the stage */
+  .fd-stage .fd-bar1{gap:.4em}
+  .fd-stage .fd-bar1 .fd-chipbtn{font-size:.6em;padding:.24em .5em;flex:none}
+  .fd-stage .fd-wsgroup,.fd-stage .fd-wsgroup i,.fd-stage .fd-appico,.fd-stage .fd-zoom{flex:none}
   .vd-msl u{position:absolute;left:0;top:0;bottom:0;border-radius:99em;background:#3fd6ff;display:block}
   /* tool strip matches the app: title-case UI font, single row */
   .vd-tools{display:flex;flex-wrap:nowrap;gap:.4em;align-items:center;font-size:.68em;letter-spacing:.02em;
@@ -894,7 +898,7 @@
     <p class="sub" data-reveal>A looping replay of the real Flow workflow, mocked in plain HTML — no video file. A sketch, a style reference, and a typed prompt get wired into <b>Image Generation</b>; the result is wired into an <b>Envelope</b> that already holds two assets, and lands in the shared <b>Source Library</b> the moment it arrives. <span style="color:var(--ink-3)">(The reference thumbnails were generated with nano-banana over Vertex — the same call the app makes.)</span></p>
     <div class="fd-wrap" data-reveal>
       <div class="fd-stage" id="fd" role="img" aria-label="Animated replay of the Signal Loom Flow workspace: a rough sketch, a style reference and a text prompt are connected to an Image Generation node, the run produces an inked and coloured portrait, and the result is connected into the brand-kit Envelope which then shows three items in the Source Library panel.">
-        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i class="on"><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i><img src="assets/demo/ws-editor.png" alt="Video"/></i><i><img src="assets/demo/ws-image.png" alt="Image"/></i><i><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">✨ ▾</span><span class="fd-chipbtn">🗃 ▾</span><span class="fd-chipbtn">≡ ▾</span><span class="fd-chipbtn">⟳ ▾</span><span class="fd-chipbtn">Σ ▾</span><span class="fd-chipbtn">{ } ▾</span><span class="fd-chipbtn hot">Main Flow ▾</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⌘</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
+        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i class="on"><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i><img src="assets/demo/ws-editor.png" alt="Video"/></i><i><img src="assets/demo/ws-image.png" alt="Image"/></i><i><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">✨ Generate ▾</span><span class="fd-chipbtn">🗃 Inputs &amp; Data ▾</span><span class="fd-chipbtn">≡ Lists &amp; Envelopes ▾</span><span class="fd-chipbtn">⟳ Flow Control ▾</span><span class="fd-chipbtn">Σ Logic &amp; Math ▾</span><span class="fd-chipbtn">🖋 Story Tools ▾</span><span class="fd-chipbtn">⚙ Settings ▾</span><span class="fd-chipbtn hot">Main Flow ▾</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
         <div class="fd-bar2"><b>Project</b><b>Flow</b><b>View</b><b>Window</b><b>Help</b><span class="grow"></span><u>☰</u></div>
         <div class="fd-canvas">
           <svg class="fd-svg" id="fd-svg"></svg>
@@ -969,10 +973,21 @@
     <p class="sub" data-reveal>The Paper workspace, replayed: rule out panel frames, hold <b>Ctrl</b> to reveal <b>vertex handles</b> and drag an edge midpoint into a custom shape, set border weight and colour <b>in millimetres</b>, tint the page, and drop in a speech bubble with a draggable tail — Preflight keeps it print-ready.</p>
     <div class="fd-wrap" data-reveal>
       <div class="fd-stage pp" id="pp" role="img" aria-label="Animated replay of the Signal Loom Paper workspace: three comic panel frames are drawn on a page, one is reshaped with Ctrl vertex handles, border width and colour are changed in the Inspector, the page is tinted, and a speech bubble with a draggable tail is added.">
-        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i><img src="assets/demo/ws-editor.png" alt="Video"/></i><i><img src="assets/demo/ws-image.png" alt="Image"/></i><i class="on"><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">✓ 0 warnings</span><span class="fd-chipbtn hot">⬇ Export Document ▾</span><span class="fd-chipbtn">🖇</span><span class="fd-chipbtn">▥</span><span class="fd-chipbtn">▦</span><span class="fd-chipbtn">🔍</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⌘</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
+        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i><img src="assets/demo/ws-editor.png" alt="Video"/></i><i><img src="assets/demo/ws-image.png" alt="Image"/></i><i class="on"><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">＋ New</span><span class="fd-chipbtn">Page</span><span class="fd-chipbtn">Duplicate</span><span class="fd-chipbtn">✓ 0 warnings</span><span class="fd-chipbtn hot">⬇ Export Document ▾</span><span class="fd-chipbtn">Place PDF/document</span><span class="fd-chipbtn">Rulers</span><span class="fd-chipbtn">Guides</span><span class="fd-chipbtn">Grid</span><span class="fd-chipbtn hot">Snap Guides</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
         <div class="fd-bar2"><b>Project</b><b>File</b><b>Edit</b><b>Layout</b><b>Insert</b><b>Tools</b><b>View</b><b>Window</b><b>Help</b><span class="grow"></span><u>☰</u></div>
         <div class="fd-canvas">
-          <div class="pp-bintab">Source Bin</div>
+          <div class="vd-panel pp-bin">
+            <div class="vd-pbar">Source Bin<span class="grow"></span><s>⧉</s></div>
+            <div class="vd-libbody">
+              <div class="vd-libhead">🗄 Source Library<u>206</u></div>
+              <div class="vd-libsub">Organize assets into named bins. Anything added here stays with the current project.</div>
+              <div class="br-tabs"><b class="on">Source Library</b><b>Generated Pool</b></div>
+              <div class="vd-imp"><b>＋ New Bin</b><b>› Collapse All</b><b>⌄ Expand All</b></div>
+              <div class="fd-lib-item"><img src="assets/demo/wnm-tank.jpg" alt=""/><span>p02-panel-01</span></div>
+              <div class="fd-lib-item"><img src="assets/demo/wnm-fountain.jpg" alt=""/><span>p02-panel-02</span></div>
+              <div class="fd-lib-item"><img src="assets/demo/wnm-town.jpg" alt=""/><span>p01-panel-05</span></div>
+            </div>
+          </div>
           <div class="tp cols3" aria-hidden="true">
             <b>↶</b><b>↷</b><b>✂</b>
             <b>⧉</b><b>⎘</b><b>🎨</b>
@@ -1014,8 +1029,8 @@
             <div class="pp-handles" id="pp-handles"></div>
           </div>
           <div class="pp-inspector">
-            <div class="pp-ih">Inspector</div>
-            <div class="pp-sec" style="color:#bfefff">Paper Inspector</div>
+            <div class="vd-pbar">Inspector<span class="grow"></span><s>⧉</s></div>
+            <div class="pp-sec" style="color:#bfefff;margin-top:.2em">Paper Inspector</div>
             <div class="pp-row" style="font-size:.85em;color:var(--ink)">issue-01 — Page 1 of 4</div>
             <div class="pp-secbar">Document</div>
             <div class="pp-select">Comic Book (170 × 260 mm)</div>
@@ -1024,10 +1039,12 @@
             <div class="pp-secbar">Frame</div>
             <div class="pp-row"><span>Border width</span><div class="pp-slider"><i id="pp-sl-bw" style="width:24%"></i></div><b id="pp-bw-val">0.5 mm</b></div>
             <div class="pp-row"><span>Border colour</span><span class="pp-swatch" id="pp-sw-border" style="background:#181b20"></span></div>
-            <div class="pp-secbar">Page</div>
-            <div class="pp-row"><span>Background</span><span class="pp-swatch" id="pp-sw-page" style="background:#ffffff"></span></div>
-            <div class="pp-secbar">Preflight</div>
-            <div class="pp-row"><span class="pp-ok">✓ No issues · CMYK ready</span></div>
+            <div class="pp-secbar">Document Background</div>
+            <div class="pp-row"><span>Solid color</span><span class="pp-swatch" id="pp-sw-page" style="background:#ffffff"></span></div>
+            <div class="pp-secbar">Print Production</div>
+            <div class="pp-mini"><label>PDF Target<span>Browser PDF proof</span></label></div>
+            <div class="pp-mini"><label>Output Intent<span>sRGB IEC61966-2.1</span></label></div>
+            <div class="pp-row"><span class="pp-ok">✓ Preflight · CMYK ready</span></div>
           </div>
           <div class="fd-cursor"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M5 3l14 8-6.5 1.5L9 19z" fill="#fff" stroke="#04070d" stroke-width="1.4"/></svg><i></i></div>
           <div class="pp-key" id="pp-key">CTRL</div>
@@ -1049,7 +1066,7 @@
     <p class="sub" data-reveal>Paper's <b>Comic SFX designer</b>: eight presets — BANG!, KAPOW!, SCREECH, WHIRRRR, BOOM!, CRASH!, ZAP!, SLAM! — then every parameter is yours: fill, stroke and shadow measured in millimetres, skew and rotation, letter tracking, and <b>trailing copies</b> that sell the motion.</p>
     <div class="fd-wrap" data-reveal>
       <div class="fd-stage sx" id="sx" role="img" aria-label="Animated replay of Paper's Comic SFX designer: the KAPOW! preset is stamped over comic art, then skewed, its stroke and shadow thickened in millimetres, and trailing echo copies added.">
-        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i><img src="assets/demo/ws-editor.png" alt="Video"/></i><i><img src="assets/demo/ws-image.png" alt="Image"/></i><i class="on"><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">✓ 0 warnings</span><span class="fd-chipbtn hot">⬇ Export Document ▾</span><span class="fd-chipbtn">🖇</span><span class="fd-chipbtn">▥</span><span class="fd-chipbtn">▦</span><span class="fd-chipbtn">🔍</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⌘</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
+        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i><img src="assets/demo/ws-editor.png" alt="Video"/></i><i><img src="assets/demo/ws-image.png" alt="Image"/></i><i class="on"><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">＋ New</span><span class="fd-chipbtn">Page</span><span class="fd-chipbtn">Duplicate</span><span class="fd-chipbtn">✓ 0 warnings</span><span class="fd-chipbtn hot">⬇ Export Document ▾</span><span class="fd-chipbtn">Place PDF/document</span><span class="fd-chipbtn">Rulers</span><span class="fd-chipbtn">Guides</span><span class="fd-chipbtn">Grid</span><span class="fd-chipbtn hot">Snap Guides</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
         <div class="fd-bar2"><b>Project</b><b>File</b><b>Edit</b><b>Layout</b><b>Insert</b><b>Tools</b><b>View</b><b>Window</b><b>Help</b><span class="grow"></span><u>☰</u></div>
         <div class="fd-canvas">
           <div class="pp-bintab">Source Bin</div>
@@ -1106,7 +1123,7 @@
     <p class="sub" data-reveal>The Image workspace's brush engine, replayed with a simulated stylus: <b>pressure</b> drives size and flow, <b>tilt</b> shades like the side of the lead, <b>Colour Rate</b> mixes foreground into background mid-stroke, and <b>Shift</b> rules dead-straight lines — on the GPU brush engine (WebGL2, dirty-rect updates).</p>
     <div class="fd-wrap" data-reveal>
       <div class="fd-stage br" id="br" role="img" aria-label="Animated replay of the Signal Loom brush engine: a simulated stylus paints strokes whose width follows pen pressure, tilts to shade broadly, blends foreground to background colour along a stroke, and rules a straight line with Shift held.">
-        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i><img src="assets/demo/ws-editor.png" alt="Video"/></i><i class="on"><img src="assets/demo/ws-image.png" alt="Image"/></i><i><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">Tools</span><span class="fd-chipbtn">Panels</span><span class="fd-chipbtn">Assets</span><span class="fd-chipbtn">Rulers</span><span class="fd-chipbtn">Grid</span><span class="fd-chipbtn hot">Guides</span><span class="fd-chipbtn">Layout&nbsp;&nbsp;Painting ▾</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⌘</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
+        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i><img src="assets/demo/ws-editor.png" alt="Video"/></i><i class="on"><img src="assets/demo/ws-image.png" alt="Image"/></i><i><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">Panels</span><span class="fd-chipbtn">Assets</span><span class="fd-chipbtn">Rulers</span><span class="fd-chipbtn">Grid</span><span class="fd-chipbtn hot">Guides</span><span class="fd-chipbtn">Layout&nbsp;&nbsp;Full Suite ▾</span><span class="fd-chipbtn">Save Layout</span><span class="fd-chipbtn">Reset Panels</span><span class="grow"></span><span class="fd-zoom"><b>100%</b><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
         <div class="fd-bar2"><b>Project</b><b>File</b><b>Edit</b><b>Image</b><b>Select</b><b>Tools</b><b>View</b><b>Window</b><b>Help</b><span class="grow"></span><u>☰</u></div>
         <div class="fd-tabsrow"><b>＋</b><b>📂</b><b>⎘</b><span class="doctab"><i></i>portrait.slimg<b>×</b></span></div>
         <div class="fd-canvas">
@@ -1126,7 +1143,7 @@
           <canvas id="br-canvas" class="br-canvas"></canvas>
           <canvas id="br-canvas2" class="br-canvas br-c2"></canvas>
           <div class="pp-inspector br-panel">
-            <div class="pp-ih">Brush</div>
+            <div class="vd-pbar">Properties / Tool Options<span class="grow"></span><s>⧉</s></div>
             <div class="pp-sec">Dynamics</div>
             <div class="pp-row"><span>Size</span><div class="pp-slider"><i style="width:38%"></i></div><b>24 px</b></div>
             <div class="pp-row"><span>Flow</span><div class="pp-slider"><i style="width:80%"></i></div><b>80%</b></div>
@@ -1142,7 +1159,7 @@
             <div class="pp-row"><span class="pp-ok" id="br-gpu">GPU brush engine · WebGL2</span></div>
           </div>
           <div class="pp-inspector br-layers">
-            <div class="pp-ih">Layers</div>
+            <div class="vd-pbar">Layers<span class="grow"></span><s>⧉</s></div>
             <div class="br-tabs"><b class="on">Layers</b><b>Channels</b><b>Paths</b><i class="br-add" id="br-add">＋ Add layer</i></div>
             <div class="pp-row"><span>Mode</span><div class="pp-select" id="br-mode" style="flex:1">Normal</div></div>
             <div class="br-lrows" id="br-lrows">
@@ -1172,7 +1189,7 @@
     <p class="sub" data-reveal>The Video workspace, replayed with its real two-monitor layout: a clip from the <b>Project Source Bin</b> is previewed in the <b>Source Monitor</b> and sent to a lane with its <b>V1 track chip</b>, a second clip is dragged straight onto the <b>Sequencer Timeline</b>, a crossfade is built the real way — <b>opacity keyframes</b>, the first key dragged to 0% so the rubber-band line ramps V2 in over V1 — a score lands on the audio lane, and <b>scale keyframes</b> (◇) animate a push-in while the playhead scrubs the <b>Program Monitor</b> — playing two real Veo shots, the same character cut between two angles. <span style="color:var(--ink-3)">(Shown in one of the app’s 20+ themes.)</span></p>
     <div class="fd-wrap" data-reveal>
       <div class="fd-stage vd" id="vd" role="img" aria-label="Animated replay of the Signal Loom Video workspace with its dual monitors: a source clip is selected from the Project Source Bin, previewed in the Source Monitor, and added to track V1; a second clip is dragged onto V2; a crossfade is built with opacity keyframes whose line is dragged up from zero; an audio clip with a waveform is added; scale keyframes are set; and the playhead scrubs while the Program Monitor plays the result.">
-        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i class="on"><img src="assets/demo/ws-editor.png" alt="Video"/></i><i><img src="assets/demo/ws-image.png" alt="Image"/></i><i><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">Source Library · 3 assets · 1 bin</span><span class="fd-chipbtn">composition-04982a49… ▾</span><span class="fd-chipbtn">↶ Undo</span><span class="fd-chipbtn">↷ Redo</span><span class="fd-chipbtn">＋ Source Bin</span><span class="fd-chipbtn">＋ Composition</span><span class="fd-chipbtn lit">▶ Render</span><span class="fd-chipbtn">Bin</span><span class="fd-chipbtn">Source</span><span class="fd-chipbtn">Program</span><span class="fd-chipbtn">Inspector</span><span class="fd-chipbtn">Help</span><span class="grow"></span><span class="fd-zoom"><b>100%</b><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>📂 Projects</b><b>⚙</b></span><span class="fd-cost">$0.94</span></div>
+        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i class="on"><img src="assets/demo/ws-editor.png" alt="Video"/></i><i><img src="assets/demo/ws-image.png" alt="Image"/></i><i><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">Source Library · 3 assets</span><span class="fd-chipbtn">composition-04982a… ▾</span><span class="fd-chipbtn">↶ Undo</span><span class="fd-chipbtn">↷ Redo</span><span class="fd-chipbtn">＋ Source Bin</span><span class="fd-chipbtn">＋ Composition</span><span class="fd-chipbtn lit">▶ Render</span><span class="fd-chipbtn">Bin</span><span class="fd-chipbtn">Source</span><span class="fd-chipbtn">Program</span><span class="fd-chipbtn">Inspector</span><span class="fd-chipbtn">Help</span><span class="grow"></span><span class="fd-zoom"><b>100%</b><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>📂 Projects</b><b>⚙</b></span><span class="fd-cost">$0.94</span></div>
         <div class="fd-bar2"><b>Project</b><b>Edit</b><b>Timeline</b><b>Keyframes</b><b>View</b><b>Window</b><b>Help</b><span class="grow"></span><u>☰</u></div>
         <div class="fd-canvas">
           <div class="vd-panel vd-lib" id="vd-lib">
