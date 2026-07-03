@@ -344,6 +344,30 @@ function assignProjectImportEnvelopeMetadata(
   });
 }
 
+/**
+ * Cross-window / native-bridge / LAN broadcasts must not carry resolved asset bytes (811 F3): a
+ * multi-MB data: URL is structured-cloned into every window and serialized over the native bridge
+ * on each add, and a blob: URL is document-scoped — dead on arrival in every receiver. When the
+ * item has durable backing (assetId / scratchFileName / nativeFilePath) each receiver re-resolves
+ * it through its own hydrateAssets (or the host `/source-asset/:id` endpoint on LAN), so the bytes
+ * are pure overhead. A fallback item whose data: URL is all it has keeps it — that is the only
+ * copy. (blob: URLs are stripped unconditionally; they can never load outside this document.)
+ */
+export function broadcastableSourceBinItem(item: SourceBinLibraryItem): SourceBinLibraryItem {
+  const url = item.assetUrl;
+  if (!url) {
+    return item;
+  }
+
+  const hasDurableBacking = Boolean(item.assetId || item.scratchFileName || item.nativeFilePath);
+
+  if (url.startsWith('blob:') || (url.startsWith('data:') && hasDurableBacking)) {
+    return { ...item, assetUrl: undefined };
+  }
+
+  return item;
+}
+
 function broadcastSourceBinItemsAdded(items: SourceBinLibraryItem[], targetBinId?: string): void {
   if (items.length === 0) {
     return;
@@ -351,7 +375,7 @@ function broadcastSourceBinItemsAdded(items: SourceBinLibraryItem[], targetBinId
 
   const change = {
     type: 'source-bin-items-added',
-    items,
+    items: items.map(broadcastableSourceBinItem),
     ...(targetBinId ? { targetBinId } : {}),
   } satisfies SourceLibraryNativeChange;
 

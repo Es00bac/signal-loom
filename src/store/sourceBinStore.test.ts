@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  broadcastableSourceBinItem,
   persistableSourceBinAssetUrl,
   sanitizePersistedSourceBinState,
   useSourceBinStore,
@@ -64,6 +65,36 @@ describe('persistableSourceBinAssetUrl (quota-safe persistence)', () => {
     expect(
       persistableSourceBinAssetUrl({ nativeFilePath: undefined, assetUrl: undefined }),
     ).toBeUndefined();
+  });
+});
+
+describe('broadcastableSourceBinItem (811 F3 — no bytes on the broadcast bus)', () => {
+  const base = {
+    id: 'item-1',
+    label: 'Generated hero',
+    kind: 'image' as const,
+    createdAt: 1,
+  };
+
+  it('strips a data: URL when the item has durable backing to re-resolve from', () => {
+    expect(broadcastableSourceBinItem({ ...base, assetUrl: 'data:image/png;base64,AAAA', assetId: 'asset-1' }).assetUrl).toBeUndefined();
+    expect(broadcastableSourceBinItem({ ...base, assetUrl: 'data:image/png;base64,AAAA', scratchFileName: 'x.png' }).assetUrl).toBeUndefined();
+    expect(broadcastableSourceBinItem({ ...base, assetUrl: 'data:image/png;base64,AAAA', nativeFilePath: '/x.png' }).assetUrl).toBeUndefined();
+  });
+
+  it('keeps a data: URL on a fallback-only item — it is the only copy of the bytes', () => {
+    const fallback = { ...base, assetUrl: 'data:image/png;base64,AAAA' };
+    expect(broadcastableSourceBinItem(fallback)).toBe(fallback);
+  });
+
+  it('always strips blob: URLs — they can never load in another document', () => {
+    expect(broadcastableSourceBinItem({ ...base, assetUrl: 'blob:null/xyz' }).assetUrl).toBeUndefined();
+    expect(broadcastableSourceBinItem({ ...base, assetUrl: 'blob:null/xyz', assetId: 'asset-1' }).assetUrl).toBeUndefined();
+  });
+
+  it('passes stable non-byte URLs through untouched', () => {
+    const native = { ...base, assetUrl: 'signal-loom-asset://file/encoded', nativeFilePath: '/x.png' };
+    expect(broadcastableSourceBinItem(native)).toBe(native);
   });
 });
 

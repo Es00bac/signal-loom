@@ -203,8 +203,40 @@ export function mergeSourceBinItemsIntoBins(
   ];
 }
 
+// Every SourceBinLibraryItem field is a flat scalar, so a keyed compare is exhaustive. The
+// `satisfies Record<keyof …, true>` fails to compile when a field is added without being listed
+// here. This replaces a JSON.stringify comparison that serialized both items — including any
+// multi-MB data: assetUrl — on every incoming cross-window merge (docs/notes/811 F5).
+const SOURCE_BIN_ITEM_COMPARE_FIELDS = {
+  id: true,
+  label: true,
+  kind: true,
+  mimeType: true,
+  assetId: true,
+  assetUrl: true,
+  scratchFileName: true,
+  nativeFilePath: true,
+  text: true,
+  pixelWidth: true,
+  pixelHeight: true,
+  createdAt: true,
+  sourceKey: true,
+  originNodeId: true,
+  starred: true,
+  collapsed: true,
+  envelopeId: true,
+  envelopeLabel: true,
+  envelopeIndex: true,
+  envelopeCollapsed: true,
+  isGenerated: true,
+} satisfies Record<keyof SourceBinLibraryItem, true>;
+
+const SOURCE_BIN_ITEM_COMPARE_KEYS = Object.keys(
+  SOURCE_BIN_ITEM_COMPARE_FIELDS,
+) as Array<keyof SourceBinLibraryItem>;
+
 function sourceBinLibraryItemsEqual(left: SourceBinLibraryItem, right: SourceBinLibraryItem): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return SOURCE_BIN_ITEM_COMPARE_KEYS.every((key) => left[key] === right[key]);
 }
 
 export function renameSourceBinItemInBins(

@@ -121,6 +121,24 @@ describe('workspace window commands', () => {
     expect(next[0].items.map((sourceItem) => sourceItem.id)).toEqual(['remote-1', 'local-1']);
   });
 
+  it('keeps the local item reference when an incoming copy is scalar-equal (811 F5)', () => {
+    const local = item('local-1');
+    const current = [bin([local])];
+    // A structurally identical echo (re-broadcast/live-sync) must not churn the local reference.
+    const next = mergeSourceBinItemsIntoBins(current, [{ ...local }]);
+
+    expect(next[0].items[0]).toBe(local);
+  });
+
+  it('replaces the local item when any scalar field differs (811 F5)', () => {
+    const local = item('local-1');
+    const current = [bin([local])];
+    const renamed = { ...local, label: 'Renamed remotely' };
+    const next = mergeSourceBinItemsIntoBins(current, [renamed]);
+
+    expect(next[0].items[0]).toBe(renamed);
+  });
+
   it('skips incoming source-bin items that already exist under the same source key', () => {
     const current = [bin([{ ...item('local-1'), sourceKey: 'image:node-1:asset-a' }])];
     const next = mergeSourceBinItemsIntoBins(current, [
