@@ -902,7 +902,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
         setShuttleRate((current) => stepShuttleRate(current, -1));
         return;
       }
-      if (!isCommandShortcut && shortcutKey === 'k') {
+      if (!isCommandShortcut && shortcutKey === 'k' && !event.shiftKey) {
         event.preventDefault();
         setShuttleRate(0);
         return;
@@ -2284,7 +2284,9 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
         return;
       }
 
-      if (event.key.toLowerCase() === 'k') {
+      // Shift+K adds/updates a keyframe. Bare K became the JKL transport STOP (the NLE-standard
+      // binding) — without the shift requirement, stopping the shuttle also dropped a keyframe.
+      if (event.key.toLowerCase() === 'k' && event.shiftKey) {
         event.preventDefault();
         addOrUpdateKeyframeAtPlayhead();
       }
@@ -10291,11 +10293,19 @@ function EditorHelpModal({ onClose }: { onClose: () => void }) {
                 ['Ctrl/Cmd + Z', 'Undo the last editor timeline or program-stage edit'],
                 ['Ctrl/Cmd + Shift + Z', 'Redo the last undone editor edit'],
                 ['Ctrl + Y', 'Redo the last undone editor edit'],
+                ['Space', 'Play / pause the timeline (always resumes forward)'],
+                ['J / K / L', 'Shuttle: reverse / stop / forward — tap J or L again for 2x, 4x, 8x'],
+                ['Home / End', 'Jump the playhead to the start or end of the sequence'],
+                ['I / O', 'Mark in / out on the Source Monitor at its playhead'],
+                [', (comma)', 'Insert the marked source range at the playhead on V1 (ripples later clips right)'],
+                ['. (period)', 'Overwrite the timeline range at the playhead on V1 with the marked source range'],
+                ['Q / W', "Ripple-trim the selected clip's in / out edge to the playhead"],
+                ['E', "Roll the nearest cut on the selected clip's lane to the playhead"],
                 ['V', 'Select tool'],
                 ['C', 'Cut selected visual clip at the playhead, or enter cut mode if no valid clip is selected'],
                 ['S', 'Slip tool'],
                 ['H', 'Hand pan tool'],
-                ['K', 'Add or update a keyframe on the selected clip at the playhead'],
+                ['Shift + K', 'Add or update a keyframe on the selected clip at the playhead'],
                 ['[ / ]', 'Jump to the previous or next keyframe on the selected clip'],
                 ['Delete / Backspace', 'Remove the selected clip'],
                 ['Shift + / or F1', 'Open or close this help panel'],
