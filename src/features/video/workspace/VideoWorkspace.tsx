@@ -5690,6 +5690,9 @@ export function ProgramMonitorPanel({
   onRevealSourceBin?: () => void;
 }) {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
+  // Owner-requested tabbed sidebar: Tools (program-stage editing incl. motion comics),
+  // Info (specs/status/cache), Output (delivery settings). Render stays pinned below all tabs.
+  const [sidebarTab, setSidebarTab] = useState<'tools' | 'info' | 'output'>('tools');
   const imageSequenceFrameCount = getImageSequenceFrameCount(previewOutputMetadata);
   const isImageSequenceOutput = Boolean(imageSequenceFrameCount !== undefined);
   const renderedPreviewDescriptor = buildRenderedPreviewDescriptor({
@@ -6052,7 +6055,33 @@ export function ProgramMonitorPanel({
               </div>
             </div>
 
+            {/* Tab strip: grouped tool sets (owner request — motion comics live under Tools) */}
+            <div className="flex gap-1 rounded-lg border border-gray-800 bg-[#0a0d13] p-1" role="tablist">
+              {([
+                ['tools', 'Tools'],
+                ['info', 'Info'],
+                ['output', 'Output'],
+              ] as const).map(([tabId, label]) => (
+                <button
+                  key={tabId}
+                  aria-selected={sidebarTab === tabId}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                    sidebarTab === tabId
+                      ? 'bg-cyan-500/15 text-cyan-200 border border-cyan-400/30'
+                      : 'border border-transparent text-gray-500 hover:text-gray-200'
+                  }`}
+                  data-video-sidebar-tab={tabId}
+                  onClick={() => setSidebarTab(tabId)}
+                  role="tab"
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
             {/* Spec Row Grid */}
+            {sidebarTab === 'info' && (
             <div className="rounded-lg border border-gray-800 bg-[#12161f]/50 p-3 flex flex-col gap-2.5">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Composition Specs</div>
               <div className="flex flex-col gap-2">
@@ -6074,9 +6103,16 @@ export function ProgramMonitorPanel({
                 </div>
               </div>
             </div>
+            )}
 
             {/* PROGRAM TOOLS (MOVED TO SIDEBAR) */}
-            {stageMode === 'stage' && (
+            {sidebarTab === 'tools' && stageMode !== 'stage' && (
+              <div className="rounded-lg border border-gray-800 bg-[#12161f]/50 p-3 text-[11px] leading-relaxed text-gray-400">
+                Switch the Program Monitor to <span className="font-semibold text-gray-200">Stage</span> mode to
+                add and edit text, shapes, and motion-comic bubbles or captions.
+              </div>
+            )}
+            {sidebarTab === 'tools' && stageMode === 'stage' && (
               <div className="rounded-lg border border-cyan-500/20 bg-[#101520] p-3 flex flex-col gap-3">
                 <div className="flex items-center justify-between border-b border-gray-800 pb-2">
                   <div className="text-[11px] font-bold uppercase tracking-wider text-cyan-400">Program Tools</div>
@@ -6379,6 +6415,7 @@ export function ProgramMonitorPanel({
             )}
 
             {/* Section: Quick Controls */}
+            {sidebarTab === 'output' && (
             <div className="flex flex-col gap-2.5">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Settings</div>
               <ProgramMonitorQuickControls
@@ -6395,8 +6432,10 @@ export function ProgramMonitorPanel({
                 videoResolution={videoResolution}
               />
             </div>
+            )}
 
             {/* Section: Status */}
+            {sidebarTab === 'info' && (
             <div className="flex flex-col gap-2.5">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Status</div>
               <div className="flex flex-col gap-2">
@@ -6410,9 +6449,10 @@ export function ProgramMonitorPanel({
                 </div>
               )}
             </div>
+            )}
 
             {/* Section: Cache Manifest Details */}
-            {renderCacheDetailLines.length > 0 && (
+            {sidebarTab === 'info' && renderCacheDetailLines.length > 0 && (
               <div className="flex flex-col gap-1.5">
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Cache Manifest Details</div>
                 <div
