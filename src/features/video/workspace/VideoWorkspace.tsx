@@ -98,6 +98,8 @@ import {
   extractVideoFrameAtTime,
 } from '../../../lib/videoFrameExtraction';
 import { getAspectRatioValue, getVideoCanvasDimensions } from '../../../lib/videoCanvas';
+import { exportSequenceToFcpXml } from '../../../lib/fcpXmlInterchange';
+import { buildFcpXmlSequenceFromEditor, resolveFcpMediaPathFromAssetUrl } from '../../../lib/fcpXmlSequenceMapping';
 import { DEFAULT_EXECUTION_CONFIG } from '../../../lib/providerCatalog';
 import { EXPORT_BASENAME } from '../../../lib/brand';
 import { extractWaveformPeaks } from '../../../lib/audioWaveform';
@@ -1760,6 +1762,61 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
   const handleRevealSourceBin = () => {
     setPanelVisibility('sourceBinVisible', true);
     setSourceBinTab('media');
+  };
+
+  // Scoped Premiere interop (task #33): export the active sequence as FCP7 XML — the dialect
+  // Premiere round-trips via File > Import. Media with on-disk paths links directly; generated
+  // assets relink by name (standard interchange behavior, warned below).
+  const handleExportFcpXml = () => {
+    if (!activeComposition) {
+      return;
+    }
+
+    const sequenceName = typeof activeComposition.data.customTitle === 'string' && activeComposition.data.customTitle.trim()
+      ? activeComposition.data.customTitle.trim()
+      : 'Signal Loom Sequence';
+    const sequence = buildFcpXmlSequenceFromEditor({
+      name: sequenceName,
+      frameRate: compositionFrameRate,
+      widthPx: programCanvas.width,
+      heightPx: programCanvas.height,
+      visualClips,
+      audioClips,
+      resolveVisualMedia: (clip) => {
+        const item = sourceItemByNodeId.get(clip.sourceNodeId);
+        return {
+          label: item?.label ?? clip.sourceNodeId,
+          nativeFilePath: resolveFcpMediaPathFromAssetUrl(item?.assetUrl),
+          sourceDurationSeconds: getSourceItemDurationSeconds(item, durationMap) ?? 0,
+          timelineDurationSeconds: resolveVisualClipDuration(clip, sourceItemByNodeId, durationMap),
+        };
+      },
+      resolveAudioMedia: (clip) => {
+        const item = sourceItemByNodeId.get(clip.sourceNodeId);
+        return {
+          label: item?.label ?? clip.sourceNodeId,
+          nativeFilePath: resolveFcpMediaPathFromAssetUrl(item?.assetUrl),
+          sourceDurationSeconds: getSourceItemDurationSeconds(item, durationMap) ?? 0,
+        };
+      },
+    });
+
+    const { xml, warnings } = exportSequenceToFcpXml(sequence);
+    const blob = new Blob([xml], { type: 'application/xml' });
+    const url = URL.createObjectURL(blob);
+    const anchor = window.document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${sequenceName.replace(/[^a-zA-Z0-9 _-]/g, '_')}.xml`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+
+    if (warnings.length > 0) {
+      void showAlertDialog({
+        title: 'FCP7 XML exported with relink notes',
+        message: `${warnings.slice(0, 6).join('\n')}${warnings.length > 6 ? `\n…and ${warnings.length - 6} more.` : ''}`,
+        tone: 'info',
+      });
+    }
   };
 
   const addEditorAsset = (kind: EditorAssetKind) => {
@@ -3887,6 +3944,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
             onCreateComposition={handleCreateComposition}
             onCreateStarterSequence={handleCreateStarterSequence}
             onRevealSourceBin={handleRevealSourceBin}
+            onExportFcpXml={handleExportFcpXml}
             onAspectRatioChange={(aspectRatio) => updateActiveCompositionSettings({ aspectRatio })}
             onOpenClipContextMenu={openVisualClipContextMenu}
             onOpenContextMenu={(event) => {
@@ -4479,6 +4537,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                         onCreateComposition={handleCreateComposition}
                         onCreateStarterSequence={handleCreateStarterSequence}
                         onRevealSourceBin={handleRevealSourceBin}
+                        onExportFcpXml={handleExportFcpXml}
                         onAspectRatioChange={(aspectRatio) =>
                           updateActiveCompositionSettings({ aspectRatio })
                         }
@@ -5641,6 +5700,7 @@ export function ProgramMonitorPanel({
   onCreateComposition,
   onCreateStarterSequence,
   onRevealSourceBin,
+  onExportFcpXml,
   initialSidebarTab,
 }: {
   stageMode: 'stage' | 'rendered';
@@ -5689,6 +5749,8 @@ export function ProgramMonitorPanel({
   onCreateComposition?: () => void;
   onCreateStarterSequence?: () => void;
   onRevealSourceBin?: () => void;
+  /** Export the active sequence as FCP7 XML for Premiere (scoped interop, task #33). */
+  onExportFcpXml?: () => void;
   /** Starting sidebar tab; defaults to Tools (static render paths and tests can pin Info/Output). */
   initialSidebarTab?: 'tools' | 'info' | 'output';
 }) {
@@ -6434,6 +6496,17 @@ export function ProgramMonitorPanel({
                 parityDiagnostics={parityDiagnostics}
                 videoResolution={videoResolution}
               />
+              {onExportFcpXml ? (
+                <button
+                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-700/60 bg-[#0f131b] px-3 py-2 text-[11px] font-semibold text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
+                  data-video-export-fcpxml="true"
+                  onClick={onExportFcpXml}
+                  title="Export the sequence as FCP7 XML — Premiere imports it via File > Import"
+                  type="button"
+                >
+                  Export Premiere XML (FCP7)
+                </button>
+              ) : null}
             </div>
             )}
 

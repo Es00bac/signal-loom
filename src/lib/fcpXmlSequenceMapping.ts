@@ -18,6 +18,31 @@ export interface FcpXmlMediaResolution {
   timelineDurationSeconds?: number;
 }
 
+/**
+ * Derive an on-disk media path from a timeline item's assetUrl. Only genuinely file-backed
+ * sources yield a path (file:// URLs, signal-loom-asset file references, absolute paths);
+ * generated/blob/data sources return undefined and relink by name in Premiere.
+ */
+export function resolveFcpMediaPathFromAssetUrl(assetUrl: string | undefined): string | undefined {
+  if (!assetUrl) {
+    return undefined;
+  }
+  if (assetUrl.startsWith('/')) {
+    return assetUrl;
+  }
+  try {
+    if (assetUrl.startsWith('file://')) {
+      return decodeURIComponent(new URL(assetUrl).pathname);
+    }
+    if (assetUrl.startsWith('signal-loom-asset://file/')) {
+      return decodeURIComponent(assetUrl.slice('signal-loom-asset://file/'.length));
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 export function buildFcpXmlSequenceFromEditor({
   name,
   frameRate,
