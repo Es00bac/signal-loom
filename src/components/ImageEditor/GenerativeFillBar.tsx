@@ -695,7 +695,7 @@ export interface CrossProviderModelOption {
 
 // Providers the user actually has credentials/endpoints for (image capability), plus the Generic HTTP
 // fallback. The dialog lists models from these — never models you can't run.
-function getConfiguredImageProviders(apiKeys: ApiKeys, providerSettings: ProviderSettings): GenerativeFillProvider[] {
+export function getConfiguredImageProviders(apiKeys: ApiKeys, providerSettings: ProviderSettings): GenerativeFillProvider[] {
   const configured = getConfiguredProviders('image', apiKeys, providerSettings) as GenerativeFillProvider[];
   return [...configured, 'generic'];
 }
@@ -715,7 +715,7 @@ function getAllEditorOperations(providers: GenerativeFillProvider[]): ImageEdito
 
 // Capability-first flat list: every model that can perform `operationId` across ALL configured providers,
 // each labelled with its provider (so you choose by what the model does, not by provider).
-function getModelsForOperation(
+export function getModelsForOperation(
   providers: GenerativeFillProvider[],
   operationId: ImageEditorOperationId | undefined,
 ): CrossProviderModelOption[] {
