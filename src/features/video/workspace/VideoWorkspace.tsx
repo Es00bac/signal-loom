@@ -367,6 +367,21 @@ const AUDIO_TRACK_COUNT = 4;
  * shared by the Program Tools cluster and the Inspector (UX review F09) so the two surfaces
  * always reflect the same fit/zoom state instead of deriving it independently.
  */
+/** Friendly timeline label for clips without a bin item (comic bubbles/captions, text). */
+function visualBlockLabel(clip: EditorVisualClip, itemLabel?: string): string {
+  if (itemLabel) return itemLabel;
+  if (clip.sourceKind === 'comic') {
+    const text = clip.textContent?.trim();
+    if (text) return text.length > 24 ? `${text.slice(0, 24)}…` : text;
+    return clip.comicKind === 'caption' ? 'Caption' : clip.comicKind === 'thought-bubble' ? 'Thought Bubble' : 'Speech Bubble';
+  }
+  if (clip.sourceKind === 'text' && clip.textContent?.trim()) {
+    const text = clip.textContent.trim();
+    return text.length > 24 ? `${text.slice(0, 24)}…` : text;
+  }
+  return clip.sourceNodeId;
+}
+
 export function resolveClipFitState(clip: EditorVisualClip, progressPercent: number) {
   return {
     ...getVisualKeyframeStateAtProgress(clip, progressPercent),
@@ -4689,7 +4704,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                             .filter((block) => block.clip.trackIndex === trackIndex)
                             .map((block) => ({
                               id: block.clip.id,
-                              label: block.item?.label ?? block.clip.sourceNodeId,
+                              label: visualBlockLabel(block.clip, block.item?.label),
                               secondaryLabel: `${block.startSeconds.toFixed(1)}s -> ${block.endSeconds.toFixed(1)}s`,
                               startSeconds: block.startSeconds,
                               durationSeconds: block.durationSeconds,
@@ -5242,7 +5257,7 @@ function SequencerTimelinePanel({
                   automationLabel="Opacity"
                   blocks={visualBlocks.filter((block) => block.clip.trackIndex === trackIndex).map((block) => ({
                     id: block.clip.id,
-                    label: block.item?.label ?? block.clip.sourceNodeId,
+                    label: visualBlockLabel(block.clip, block.item?.label),
                     secondaryLabel: `${block.startSeconds.toFixed(1)}s -> ${block.endSeconds.toFixed(1)}s`,
                     startSeconds: block.startSeconds,
                     durationSeconds: block.durationSeconds,
