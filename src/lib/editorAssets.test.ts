@@ -172,6 +172,58 @@ describe('migrateStageObjectsToEditorAssets', () => {
     });
   });
 
+  it('migrates legacy comic stage objects into comic assets and clips (styling 1:1)', () => {
+    const migrated = migrateStageObjectsToEditorAssets([
+      {
+        id: 'stage-bubble',
+        kind: 'speech-bubble',
+        x: 40,
+        y: 60,
+        width: 300,
+        height: 160,
+        rotationDeg: 0,
+        opacityPercent: 90,
+        blendMode: 'normal',
+        text: 'Look out!',
+        fontFamily: 'Inter',
+        fontSizePx: 28,
+        textColor: '#111111',
+        fillColor: '#ffffff',
+        strokeColor: '#000000',
+        strokeWidthPx: 3,
+        tailAngleDeg: 120,
+        tailLengthPx: 46,
+        lineHeightPercent: 120,
+        letterSpacingPx: 0.5,
+        textAlign: 'center',
+      },
+    ], { durationSeconds: 4, trackIndex: 0 });
+
+    expect(migrated.assets).toHaveLength(1);
+    expect(migrated.assets[0]).toMatchObject({
+      kind: 'comic',
+      label: 'Look out!',
+      comicDefaults: expect.objectContaining({
+        comicKind: 'speech-bubble',
+        tailAngleDeg: 120,
+        textAlign: 'center',
+      }),
+    });
+    expect(migrated.clips[0]).toMatchObject({
+      sourceNodeId: 'asset-stage-bubble',
+      sourceKind: 'comic',
+      comicKind: 'speech-bubble',
+      comicTailAngleDeg: 120,
+      comicTailLengthPx: 46,
+      textContent: 'Look out!',
+      shapeFillColor: '#ffffff',
+      shapeBorderColor: '#000000',
+      positionX: 40,
+      positionY: 60,
+      opacityPercent: 90,
+    });
+  });
+
   it('returns an empty migration for already migrated projects', () => {
     const migrated = migrateStageObjectsToEditorAssets([], { durationSeconds: 4, trackIndex: 0 });
 

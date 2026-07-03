@@ -195,9 +195,62 @@ export function migrateStageObjectsToEditorAssets(
       continue;
     }
 
+    if (object.kind === 'speech-bubble' || object.kind === 'thought-bubble' || object.kind === 'caption') {
+      // Legacy motion-comic stage objects migrate into comic assets + clips, mirroring how
+      // addComicStageObject creates them fresh — every styling field maps 1:1.
+      const comicDefaults: EditorComicDefaults = {
+        comicKind: object.kind,
+        text: object.text,
+        fontFamily: object.fontFamily,
+        fontSizePx: object.fontSizePx,
+        textColor: object.textColor,
+        fillColor: object.fillColor,
+        strokeColor: object.strokeColor,
+        strokeWidthPx: object.strokeWidthPx,
+        tailAngleDeg: object.tailAngleDeg,
+        tailLengthPx: object.tailLengthPx,
+        lineHeightPercent: object.lineHeightPercent,
+        letterSpacingPx: object.letterSpacingPx,
+        textAlign: object.textAlign,
+      };
+
+      assets.push({
+        id: assetId,
+        kind: 'comic',
+        label: object.text
+          || (object.kind === 'thought-bubble' ? 'Thought Bubble' : object.kind === 'caption' ? 'Caption' : 'Speech Bubble'),
+        createdAt,
+        updatedAt: createdAt,
+        comicDefaults,
+      });
+      clips.push({
+        ...createEditorVisualClip(assetId, 'comic', {
+          trackIndex: options.trackIndex,
+          durationSeconds: options.durationSeconds,
+          positionX: object.x,
+          positionY: object.y,
+          rotationDeg: object.rotationDeg,
+          opacityPercent: object.opacityPercent,
+          comicKind: object.kind,
+          comicTailAngleDeg: object.tailAngleDeg,
+          comicTailLengthPx: object.tailLengthPx,
+          comicLineHeightPercent: object.lineHeightPercent,
+          comicLetterSpacingPx: object.letterSpacingPx,
+          comicTextAlign: object.textAlign,
+          textContent: object.text,
+          textFontFamily: object.fontFamily,
+          textSizePx: object.fontSizePx,
+          textColor: object.textColor,
+          shapeFillColor: object.fillColor,
+          shapeBorderColor: object.strokeColor,
+          shapeBorderWidth: object.strokeWidthPx,
+        }),
+        id: `visual-${object.id}`,
+      });
+      continue;
+    }
+
     if (object.kind !== 'rectangle') {
-      // Motion-comic stage objects (bubbles/captions) stay live stage objects — they have no
-      // shape-asset equivalent to convert into.
       continue;
     }
 
