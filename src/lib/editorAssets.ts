@@ -1,5 +1,6 @@
 import type {
   EditorAsset,
+  EditorComicDefaults,
   EditorAssetKind,
   EditorStageObject,
   EditorTextDefaults,
@@ -16,6 +17,7 @@ export interface CreateEditorAssetOptions {
   label?: string;
   imageSourceId?: string;
   createdAt?: number;
+  comicKind?: 'speech-bubble' | 'thought-bubble' | 'caption';
 }
 
 export function getEditorAssets(nodeData: Partial<NodeData>): EditorAsset[] {
@@ -85,6 +87,24 @@ export function getProjectEditorAssets(
   return [...editorAssets, ...sourceEditorAssets];
 }
 
+export function createComicDefaults(comicKind: 'speech-bubble' | 'thought-bubble' | 'caption'): EditorComicDefaults {
+  return {
+    comicKind,
+    text: comicKind === 'caption' ? 'MEANWHILE…' : comicKind === 'thought-bubble' ? 'Hmm…' : 'Speech',
+    fontFamily: 'Inter, system-ui, sans-serif',
+    fontSizePx: 64,
+    textColor: '#181b20',
+    fillColor: comicKind === 'caption' ? '#fef3c7' : '#ffffff',
+    strokeColor: '#181b20',
+    strokeWidthPx: 6,
+    tailAngleDeg: 115,
+    tailLengthPx: 90,
+    lineHeightPercent: 120,
+    letterSpacingPx: 0,
+    textAlign: comicKind === 'caption' ? 'left' : 'center',
+  };
+}
+
 export function createEditorAsset(
   kind: EditorAssetKind,
   options: CreateEditorAssetOptions = {},
@@ -110,6 +130,13 @@ export function createEditorAsset(
     return {
       ...base,
       shapeDefaults: createShapeDefaults(),
+    };
+  }
+
+  if (kind === 'comic') {
+    return {
+      ...base,
+      comicDefaults: createComicDefaults(options.comicKind ?? 'speech-bubble'),
     };
   }
 
@@ -165,6 +192,12 @@ export function migrateStageObjectsToEditorAssets(
         }),
         id: `visual-${object.id}`,
       });
+      continue;
+    }
+
+    if (object.kind !== 'rectangle') {
+      // Motion-comic stage objects (bubbles/captions) stay live stage objects — they have no
+      // shape-asset equivalent to convert into.
       continue;
     }
 
@@ -290,6 +323,7 @@ function createShapeDefaults(): EditorShapeDefaults {
 }
 
 function defaultAssetLabel(kind: EditorAssetKind): string {
+  if (kind === 'comic') return 'Speech Bubble';
   return kind === 'text' ? 'Text' : kind === 'shape' ? 'Rectangle' : 'Image';
 }
 

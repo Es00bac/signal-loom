@@ -90,3 +90,20 @@ describe('normalizeStageObjectBlendMode', () => {
     expect(normalizeStageObjectBlendMode('unknown')).toBe('normal');
   });
 });
+
+describe('motion-comic stage objects', () => {
+  it('create -> normalize round-trips a speech bubble intact', () => {
+    const created = createEditorStageObject('speech-bubble', { width: 1920, height: 1080 });
+    expect(created.kind).toBe('speech-bubble');
+    const normalized = getEditorStageObjects({ editorStageObjects: [created] });
+    expect(normalized).toHaveLength(1);
+    expect(normalized[0]).toMatchObject({ kind: 'speech-bubble', fillColor: '#ffffff', textAlign: 'center' });
+  });
+
+  it('caption defaults: yellow box, left-aligned, no tail semantics', () => {
+    const created = createEditorStageObject('caption', { width: 1920, height: 1080 });
+    expect(created).toMatchObject({ kind: 'caption', fillColor: '#fef3c7', textAlign: 'left' });
+    const normalized = getEditorStageObjects({ editorStageObjects: [created] });
+    expect(normalized[0].kind).toBe('caption');
+  });
+});

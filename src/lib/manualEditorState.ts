@@ -94,6 +94,12 @@ export function getEditorVisualClips(nodeData: NodeData): EditorVisualClip[] {
       textColor: typeof clip.textColor === 'string' ? clip.textColor : '#f3f4f6',
       textEffect: normalizeTextEffect(clip.textEffect),
       textBackgroundOpacityPercent: normalizeInteger(clip.textBackgroundOpacityPercent, 0),
+      comicKind: clip.comicKind === 'speech-bubble' || clip.comicKind === 'thought-bubble' || clip.comicKind === 'caption' ? clip.comicKind : undefined,
+      comicTailAngleDeg: typeof clip.comicTailAngleDeg === 'number' ? clip.comicTailAngleDeg : undefined,
+      comicTailLengthPx: typeof clip.comicTailLengthPx === 'number' ? Math.max(0, clip.comicTailLengthPx) : undefined,
+      comicLineHeightPercent: typeof clip.comicLineHeightPercent === 'number' ? clip.comicLineHeightPercent : undefined,
+      comicLetterSpacingPx: typeof clip.comicLetterSpacingPx === 'number' ? clip.comicLetterSpacingPx : undefined,
+      comicTextAlign: clip.comicTextAlign === 'left' || clip.comicTextAlign === 'center' || clip.comicTextAlign === 'right' ? clip.comicTextAlign : undefined,
       shapeFillColor: typeof clip.shapeFillColor === 'string' ? clip.shapeFillColor : undefined,
       shapeBorderColor: typeof clip.shapeBorderColor === 'string' ? clip.shapeBorderColor : undefined,
       shapeBorderWidth: typeof clip.shapeBorderWidth === 'number' ? Math.max(0, Math.round(clip.shapeBorderWidth)) : undefined,
@@ -182,7 +188,7 @@ export function createEditorVisualClip(
     sourceInMs: overrides.sourceInMs ?? overrides.trimStartMs ?? 0,
     sourceOutMs: overrides.sourceOutMs,
     durationSeconds:
-      overrides.durationSeconds ?? (sourceKind === 'image' || sourceKind === 'text' || sourceKind === 'shape' ? 4 : undefined),
+      overrides.durationSeconds ?? (sourceKind === 'image' || sourceKind === 'text' || sourceKind === 'shape' || sourceKind === 'comic' ? 4 : undefined),
     trimStartMs: overrides.trimStartMs ?? 0,
     trimEndMs: overrides.trimEndMs ?? 0,
     playbackRate: overrides.playbackRate ?? 1,
@@ -226,6 +232,12 @@ export function createEditorVisualClip(
     textColor: overrides.textColor ?? '#f3f4f6',
     textEffect: overrides.textEffect ?? 'shadow',
     textBackgroundOpacityPercent: overrides.textBackgroundOpacityPercent ?? 0,
+    comicKind: overrides.comicKind,
+    comicTailAngleDeg: overrides.comicTailAngleDeg,
+    comicTailLengthPx: overrides.comicTailLengthPx,
+    comicLineHeightPercent: overrides.comicLineHeightPercent,
+    comicLetterSpacingPx: overrides.comicLetterSpacingPx,
+    comicTextAlign: overrides.comicTextAlign,
     shapeFillColor: overrides.shapeFillColor,
     shapeBorderColor: overrides.shapeBorderColor,
     shapeBorderWidth: overrides.shapeBorderWidth,
@@ -276,7 +288,7 @@ export function createEditorAudioClip(
 function normalizeVisualSourceKind(
   value: unknown,
 ): EditorVisualSourceKind | undefined {
-  return value === 'text' || value === 'shape' || value === 'image' || value === 'video' || value === 'composition'
+  return value === 'text' || value === 'shape' || value === 'image' || value === 'video' || value === 'composition' || value === 'comic'
     ? value
     : undefined;
 }

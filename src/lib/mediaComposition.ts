@@ -135,6 +135,12 @@ interface ComposeSequenceVisualClip {
   shapeBorderColor?: string;
   shapeBorderWidth?: number;
   shapeCornerRadius?: number;
+  comicKind?: 'speech-bubble' | 'thought-bubble' | 'caption';
+  comicTailAngleDeg?: number;
+  comicTailLengthPx?: number;
+  comicLineHeightPercent?: number;
+  comicLetterSpacingPx?: number;
+  comicTextAlign?: 'left' | 'center' | 'right';
 }
 
 interface ComposeSequenceAudioTrack {
@@ -746,6 +752,15 @@ async function prepareVisualClipInput(
     };
   }
 
+  if (clip.sourceKind === 'comic') {
+    const renderedCard = await renderComicCard(clip);
+    const inputName = `sequence-comic-${index + 1}.png`;
+    return {
+      inputName,
+      sourceUrl: renderedCard,
+    };
+  }
+
   if (!clip.assetUrl) {
     throw new Error('A manual editor clip is missing its source media.');
   }
@@ -765,7 +780,7 @@ async function resolveSequenceVisualClipDuration(
   clip: ComposeSequenceVisualClip,
   resolveMediaDuration: MediaDurationLoader,
 ): Promise<number> {
-  if (clip.sourceKind === 'image' || clip.sourceKind === 'text' || clip.sourceKind === 'shape') {
+  if (clip.sourceKind === 'image' || clip.sourceKind === 'text' || clip.sourceKind === 'shape' || clip.sourceKind === 'comic') {
     return Math.max(0.25, clip.durationSeconds ?? 4);
   }
 
@@ -993,6 +1008,67 @@ function mapStageBlendModeToFFmpeg(mode: EditorStageBlendMode): string | undefin
   }
 }
 
+/**
+ * Motion-comic clip card: renders the bubble/caption to a canonical 1280x720 PNG through the
+ * SAME painter the stage preview uses (drawComicStageObject), so timeline clip, program stage,
+ * and encode all show identical pixels. The clip's fit/scale/position then place it on canvas.
+ */
+export async function renderComicCard(clip: {
+  comicKind?: 'speech-bubble' | 'thought-bubble' | 'caption';
+  textContent?: string;
+  textFontFamily: string;
+  textSizePx: number;
+  textColor: string;
+  shapeFillColor?: string;
+  shapeBorderColor?: string;
+  shapeBorderWidth?: number;
+  comicTailAngleDeg?: number;
+  comicTailLengthPx?: number;
+  comicLineHeightPercent?: number;
+  comicLetterSpacingPx?: number;
+  comicTextAlign?: 'left' | 'center' | 'right';
+}): Promise<string> {
+  const CARD_W = 1280;
+  const CARD_H = 720;
+  const canvas = document.createElement('canvas');
+  canvas.width = CARD_W;
+  canvas.height = CARD_H;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Could not create a canvas context for a motion-comic clip.');
+  }
+  const kind = clip.comicKind ?? 'speech-bubble';
+  const tailLengthPx = Math.max(0, clip.comicTailLengthPx ?? 90);
+  context.save();
+  context.translate(CARD_W / 2, CARD_H / 2);
+  drawComicStageObject(context, {
+    id: 'comic-card',
+    kind,
+    x: 0,
+    y: 0,
+    // leave headroom for the tail inside the card bounds
+    width: CARD_W - (tailLengthPx + 40) * 2,
+    height: CARD_H - (tailLengthPx + 40) * 2,
+    rotationDeg: 0,
+    opacityPercent: 100,
+    blendMode: 'normal',
+    text: clip.textContent ?? '',
+    fontFamily: clip.textFontFamily,
+    fontSizePx: clip.textSizePx,
+    textColor: clip.textColor,
+    fillColor: clip.shapeFillColor ?? (kind === 'caption' ? '#fef3c7' : '#ffffff'),
+    strokeColor: clip.shapeBorderColor ?? '#181b20',
+    strokeWidthPx: clip.shapeBorderWidth ?? 4,
+    tailAngleDeg: clip.comicTailAngleDeg ?? 115,
+    tailLengthPx,
+    lineHeightPercent: clip.comicLineHeightPercent ?? 120,
+    letterSpacingPx: clip.comicLetterSpacingPx ?? 0,
+    textAlign: clip.comicTextAlign ?? 'center',
+  });
+  context.restore();
+  return canvas.toDataURL('image/png');
+}
+
 async function renderStageObjectImage(
   object: EditorStageObject,
   canvasSize: SequenceCanvas,
@@ -1015,8 +1091,10 @@ async function renderStageObjectImage(
 
   if (object.kind === 'text') {
     drawTextStageObject(context, object);
-  } else {
+  } else if (object.kind === 'rectangle') {
     drawRectangleStageObject(context, object);
+  } else {
+    drawComicStageObject(context, object);
   }
 
   context.restore();
@@ -1054,6 +1132,112 @@ function drawTextStageObject(
 
   for (const [index, line] of lines.entries()) {
     context.fillText(line, 0, startY + index * lineHeight, object.width);
+  }
+}
+
+/**
+ * Motion-comic stage objects. One canvas painter serves BOTH the program-stage preview and the
+ * export render (renderStageObjectImage), so what you see is what encodes — no parity drift.
+ */
+export function drawComicStageObject(
+  context: CanvasRenderingContext2D,
+  object: Extract<EditorStageObject, { kind: 'speech-bubble' | 'thought-bubble' | 'caption' }>,
+) {
+  const halfW = object.width / 2;
+  const halfH = object.height / 2;
+  const stroke = Math.max(0, object.strokeWidthPx);
+
+  const tailRad = (object.tailAngleDeg * Math.PI) / 180;
+  const tailDir = { x: Math.cos(tailRad), y: Math.sin(tailRad) };
+  // The tail leaves from the body edge along its angle.
+  const edgeT = 1 / Math.max(Math.abs(tailDir.x) / halfW, Math.abs(tailDir.y) / halfH, 1e-6);
+  const tailBase = { x: tailDir.x * edgeT * 0.92, y: tailDir.y * edgeT * 0.92 };
+  const tailTip = {
+    x: tailDir.x * (edgeT + object.tailLengthPx),
+    y: tailDir.y * (edgeT + object.tailLengthPx),
+  };
+
+  context.fillStyle = object.fillColor;
+  context.strokeStyle = object.strokeColor;
+  context.lineWidth = stroke;
+  context.lineJoin = 'round';
+
+  if (object.kind === 'caption') {
+    // Classic rectangular caption box, square corners.
+    context.beginPath();
+    context.rect(-halfW, -halfH, object.width, object.height);
+    context.fill();
+    if (stroke > 0) context.stroke();
+  } else if (object.kind === 'speech-bubble') {
+    // Body + tail as ONE path so the outline stays continuous where they join.
+    const radius = Math.min(object.height * 0.45, object.width * 0.3);
+    const perp = { x: -tailDir.y, y: tailDir.x };
+    const baseHalf = Math.min(object.width, object.height) * 0.16;
+    const path = new Path2D();
+    path.roundRect(-halfW, -halfH, object.width, object.height, radius);
+    const tail = new Path2D();
+    tail.moveTo(tailBase.x + perp.x * baseHalf, tailBase.y + perp.y * baseHalf);
+    tail.lineTo(tailTip.x, tailTip.y);
+    tail.lineTo(tailBase.x - perp.x * baseHalf, tailBase.y - perp.y * baseHalf);
+    tail.closePath();
+    path.addPath(tail);
+    context.fill(path);
+    if (stroke > 0) context.stroke(path);
+    // Re-fill the body so the tail-join stroke segment inside the bubble disappears.
+    context.save();
+    context.lineWidth = 0;
+    const bodyOnly = new Path2D();
+    bodyOnly.roundRect(-halfW + stroke / 2, -halfH + stroke / 2, object.width - stroke, object.height - stroke, Math.max(0, radius - stroke / 2));
+    context.fill(bodyOnly);
+    context.restore();
+  } else {
+    // Thought bubble: elliptical cloud body + shrinking puffs toward the tail tip.
+    context.beginPath();
+    context.ellipse(0, 0, halfW, halfH, 0, 0, Math.PI * 2);
+    context.fill();
+    if (stroke > 0) context.stroke();
+    const puffCount = 3;
+    for (let index = 1; index <= puffCount; index += 1) {
+      const t = index / (puffCount + 1);
+      const px = tailBase.x + (tailTip.x - tailBase.x) * t;
+      const py = tailBase.y + (tailTip.y - tailBase.y) * t;
+      const pr = Math.max(3, (1 - t) * Math.min(halfW, halfH) * 0.22);
+      context.beginPath();
+      context.ellipse(px, py, pr, pr * 0.82, 0, 0, Math.PI * 2);
+      context.fill();
+      if (stroke > 0) context.stroke();
+    }
+  }
+
+  // Comic typesetting: wrapped text with line height, letter spacing, alignment.
+  const padX = Math.max(10, object.width * 0.08);
+  const maxTextWidth = object.width - padX * 2;
+  context.fillStyle = object.textColor;
+  context.textBaseline = 'middle';
+  context.font = `600 ${object.fontSizePx}px ${object.fontFamily}`;
+  if ('letterSpacing' in context) {
+    (context as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${object.letterSpacingPx}px`;
+  }
+  const lines: string[] = [];
+  for (const paragraph of object.text.split('\n')) {
+    let current = '';
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (context.measureText(candidate).width > maxTextWidth && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = candidate;
+      }
+    }
+    lines.push(current);
+  }
+  const lineHeight = object.fontSizePx * (object.lineHeightPercent / 100);
+  const startY = -((lines.length - 1) * lineHeight) / 2;
+  context.textAlign = object.textAlign;
+  const textX = object.textAlign === 'left' ? -halfW + padX : object.textAlign === 'right' ? halfW - padX : 0;
+  for (const [index, line] of lines.entries()) {
+    context.fillText(line, textX, startY + index * lineHeight, maxTextWidth);
   }
 }
 

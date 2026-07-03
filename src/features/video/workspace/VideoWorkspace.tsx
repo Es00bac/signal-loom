@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { addTimelineMarker, normalizeTimelineMarkers, removeTimelineMarker, type TimelineMarker } from '../../../lib/editorTimelineMarkers';
 import { applyAudioFade, resolveCrossfadePercents } from '../../../lib/editorAudioFades';
+import { drawComicStageObject } from '../../../lib/mediaComposition';
 import { isTrackLocked, normalizeLockedTracks, toggleLockedTrack } from '../../../lib/editorTrackLocks';
 import { advanceShuttleCursor, stepShuttleRate, toggleShuttlePlay } from './timelineTransport';
 import { normalizeSourceMarks, overwriteTrackRange, shiftTrackClipsForInsert } from './threePointEdit';
@@ -1617,6 +1618,43 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
   const performTrimEditRef = useRef(performTrimEdit);
   performTrimEditRef.current = performTrimEdit;
 
+  // Motion comics: a bubble/caption is an editor ASSET + a timeline CLIP at the playhead —
+  // clips inherit keyframes, opacity/position animation, transitions, and track rules.
+  // (Stage objects are a migrated-away concept: a legacy effect converts them to assets.)
+  const addComicStageObject = (kind: 'speech-bubble' | 'thought-bubble' | 'caption') => {
+    if (!activeComposition) return;
+    const asset = createEditorAsset('comic', { comicKind: kind });
+    const defaults = asset.comicDefaults;
+    const nextClip = createEditorVisualClip(asset.id, 'comic', {
+      trackIndex: 0,
+      startMs: Math.max(0, Math.round(timelineCursorSeconds * 1000)),
+      durationSeconds: 4,
+      comicKind: kind,
+      comicTailAngleDeg: defaults?.tailAngleDeg,
+      comicTailLengthPx: defaults?.tailLengthPx,
+      comicLineHeightPercent: defaults?.lineHeightPercent,
+      comicLetterSpacingPx: defaults?.letterSpacingPx,
+      comicTextAlign: defaults?.textAlign,
+      textContent: defaults?.text,
+      textFontFamily: defaults?.fontFamily,
+      textSizePx: defaults?.fontSizePx,
+      textColor: defaults?.textColor,
+      shapeFillColor: defaults?.fillColor,
+      shapeBorderColor: defaults?.strokeColor,
+      shapeBorderWidth: defaults?.strokeWidthPx,
+      scalePercent: 40,
+      positionX: -20,
+      positionY: -20,
+    });
+    commitActiveCompositionPatch({
+      editorAssets: [asset, ...compositionEditorAssets],
+      editorVisualClips: [...visualClips, nextClip],
+    }, kind === 'caption' ? 'Add caption' : kind === 'thought-bubble' ? 'Add thought bubble' : 'Add speech bubble');
+    setSelectedVisualClipId(nextClip.id);
+    setSelectedStageObjectId(undefined);
+    recordActivityTrailWorkspaceEvent('editor', 'Add motion-comic element', kind, 'toolbar');
+  };
+
   const markSourcePointRef = useRef(markSourcePoint);
   markSourcePointRef.current = markSourcePoint;
   const performThreePointEditRef = useRef(performThreePointEdit);
@@ -1704,7 +1742,9 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
         ? 'shape'
         : asset.kind === 'image'
           ? 'image'
-          : 'text';
+          : asset.kind === 'comic'
+            ? 'comic'
+            : 'text';
     const sourceNodeId = asset.kind === 'image' ? asset.imageSourceId ?? asset.id : asset.id;
     const nextClip = createEditorVisualClip(sourceNodeId, sourceKind, {
       trackIndex,
@@ -3727,6 +3767,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
             incrementalRenderSummary={incrementalRenderSummary}
             isRunning={isCompositionRendering}
             onAddEditorAsset={addEditorAsset}
+            onAddComicStageObject={addComicStageObject}
             renderStatusMessage={compositionRenderStatus ?? incrementalRenderSummary}
             renderBackendStatus={renderBackendStatus}
             renderCacheDetailLines={renderCacheDetailLines}
@@ -4314,6 +4355,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                         incrementalRenderSummary={incrementalRenderSummary}
                         isRunning={isCompositionRendering}
                         onAddEditorAsset={addEditorAsset}
+                        onAddComicStageObject={addComicStageObject}
                         renderStatusMessage={compositionRenderStatus ?? incrementalRenderSummary}
                         renderBackendStatus={renderBackendStatus}
                         renderCacheDetailLines={renderCacheDetailLines}
@@ -5443,6 +5485,7 @@ export function ProgramMonitorPanel({
   audioClipCount,
   onRun,
   onAddEditorAsset,
+  onAddComicStageObject = () => {},
   onSelectClip,
   onSelectStageObject,
   onUpdateClip,
@@ -5489,6 +5532,7 @@ export function ProgramMonitorPanel({
   audioClipCount: number;
   onRun: () => void;
   onAddEditorAsset: (kind: EditorAssetKind) => void;
+  onAddComicStageObject?: (kind: 'speech-bubble' | 'thought-bubble' | 'caption') => void;
   onSelectClip: (clipId: string) => void;
   onSelectStageObject: (objectId: string) => void;
   onUpdateClip: (clipId: string, patch: Partial<EditorVisualClip>) => void;
@@ -5928,6 +5972,33 @@ export function ProgramMonitorPanel({
                     >
                       <Square size={12} />
                       Rect
+                    </button>
+                  </div>
+                  <div className={PROGRAM_TOOLS_SECTION_LABEL_CLASS}>Motion Comic</div>
+                  <div className="flex gap-2">
+                    <button
+                      className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2 py-1.5 text-xs font-semibold text-gray-200 hover:border-cyan-400/60 hover:text-white transition-colors"
+                      onClick={() => onAddComicStageObject('speech-bubble')}
+                      title="Add a speech bubble to the program stage"
+                      type="button"
+                    >
+                      💬 Speech
+                    </button>
+                    <button
+                      className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2 py-1.5 text-xs font-semibold text-gray-200 hover:border-cyan-400/60 hover:text-white transition-colors"
+                      onClick={() => onAddComicStageObject('thought-bubble')}
+                      title="Add a thought bubble to the program stage"
+                      type="button"
+                    >
+                      ☁ Thought
+                    </button>
+                    <button
+                      className="flex-1 rounded-lg border border-gray-700/60 bg-[#131722] px-2 py-1.5 text-xs font-semibold text-gray-200 hover:border-cyan-400/60 hover:text-white transition-colors"
+                      onClick={() => onAddComicStageObject('caption')}
+                      title="Add a caption box to the program stage"
+                      type="button"
+                    >
+                      ▭ Caption
                     </button>
                   </div>
                 </div>
@@ -7500,6 +7571,10 @@ function ProgramStageObjectPreview({ object }: { object: EditorStageObject }) {
     );
   }
 
+  if (object.kind !== 'rectangle') {
+    return <ComicStageObjectPreview object={object} />;
+  }
+
   return (
     <div
       className="h-full w-full"
@@ -7510,6 +7585,37 @@ function ProgramStageObjectPreview({ object }: { object: EditorStageObject }) {
         borderStyle: object.borderWidth > 0 ? 'solid' : 'none',
         borderWidth: `${object.borderWidth}px`,
       }}
+    />
+  );
+}
+
+/**
+ * Edit-stage preview for motion-comic objects. Draws with the SAME canvas painter the export
+ * render uses (drawComicStageObject), so the stage is pixel-truthful to the encode.
+ */
+function ComicStageObjectPreview({ object }: { object: Extract<EditorStageObject, { kind: 'speech-bubble' | 'thought-bubble' | 'caption' }> }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const pad = Math.ceil(object.tailLengthPx + object.strokeWidthPx + 8);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.width = object.width + pad * 2;
+    canvas.height = object.height + pad * 2;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.save();
+    context.translate(canvas.width / 2, canvas.height / 2);
+    drawComicStageObject(context, object);
+    context.restore();
+  }, [object, pad]);
+
+  return (
+    <canvas
+      className="pointer-events-none absolute"
+      ref={canvasRef}
+      style={{ left: -pad, top: -pad, width: object.width + pad * 2, height: object.height + pad * 2 }}
     />
   );
 }
@@ -7810,7 +7916,7 @@ function StageObjectInspector({
             </label>
           </div>
         </div>
-      ) : (
+      ) : object.kind === 'rectangle' ? (
         <div className="space-y-3 rounded-xl border border-gray-700/60 bg-[#111217]/35 p-3">
           <div className="grid gap-3 md:grid-cols-2">
             <label className="block space-y-2 text-xs text-gray-400">
@@ -7851,6 +7957,118 @@ function StageObjectInspector({
               step={1}
               value={object.cornerRadius}
             />
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3 rounded-xl border border-gray-700/60 bg-[#111217]/35 p-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100/70">
+            {object.kind === 'caption' ? 'Caption' : object.kind === 'thought-bubble' ? 'Thought Bubble' : 'Speech Bubble'} · Motion Comic
+          </div>
+          <label className="block space-y-2 text-xs text-gray-400">
+            <span>Text</span>
+            <textarea
+              className="h-20 w-full resize-none rounded-xl border border-gray-700/60 bg-[#0f131b] p-2 text-sm text-gray-100"
+              onChange={(event) => onUpdate({ text: event.target.value } as Partial<EditorStageObject>)}
+              value={object.text}
+            />
+          </label>
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="block space-y-2 text-xs text-gray-400">
+              <span>Fill</span>
+              <AdvancedColorPicker
+                className="h-11 w-full"
+                buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                label="Bubble fill color"
+                onChange={(fillColor) => onUpdate({ fillColor } as Partial<EditorStageObject>)}
+                value={object.fillColor}
+              />
+            </label>
+            <label className="block space-y-2 text-xs text-gray-400">
+              <span>Outline</span>
+              <AdvancedColorPicker
+                className="h-11 w-full"
+                buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                label="Bubble outline color"
+                onChange={(strokeColor) => onUpdate({ strokeColor } as Partial<EditorStageObject>)}
+                value={object.strokeColor}
+              />
+            </label>
+            <label className="block space-y-2 text-xs text-gray-400">
+              <span>Text color</span>
+              <AdvancedColorPicker
+                className="h-11 w-full"
+                buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                label="Bubble text color"
+                onChange={(textColor) => onUpdate({ textColor } as Partial<EditorStageObject>)}
+                value={object.textColor}
+              />
+            </label>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <NumberField
+              label="Font size"
+              max={400}
+              min={8}
+              onChange={(value) => onUpdate({ fontSizePx: Math.max(8, Math.round(value)) } as Partial<EditorStageObject>)}
+              step={1}
+              value={object.fontSizePx}
+            />
+            <NumberField
+              label="Outline width"
+              max={40}
+              min={0}
+              onChange={(value) => onUpdate({ strokeWidthPx: Math.max(0, Math.round(value)) } as Partial<EditorStageObject>)}
+              step={1}
+              value={object.strokeWidthPx}
+            />
+            <NumberField
+              label="Line height %"
+              max={240}
+              min={80}
+              onChange={(value) => onUpdate({ lineHeightPercent: Math.max(80, Math.min(240, Math.round(value))) } as Partial<EditorStageObject>)}
+              step={5}
+              value={object.lineHeightPercent}
+            />
+            <NumberField
+              label="Letter spacing"
+              max={24}
+              min={-4}
+              onChange={(value) => onUpdate({ letterSpacingPx: Math.max(-4, Math.min(24, Math.round(value))) } as Partial<EditorStageObject>)}
+              step={1}
+              value={object.letterSpacingPx}
+            />
+          </div>
+          {object.kind !== 'caption' ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              <NumberField
+                label="Tail angle°"
+                max={360}
+                min={0}
+                onChange={(value) => onUpdate({ tailAngleDeg: Math.round(value) } as Partial<EditorStageObject>)}
+                step={5}
+                value={object.tailAngleDeg}
+              />
+              <NumberField
+                label="Tail length"
+                max={600}
+                min={0}
+                onChange={(value) => onUpdate({ tailLengthPx: Math.max(0, Math.round(value)) } as Partial<EditorStageObject>)}
+                step={5}
+                value={object.tailLengthPx}
+              />
+            </div>
+          ) : null}
+          <div className="flex gap-2">
+            {(['left', 'center', 'right'] as const).map((align) => (
+              <button
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${object.textAlign === align ? 'border-cyan-300/50 bg-cyan-500/10 text-cyan-100' : 'border-gray-700/60 text-gray-400 hover:text-gray-200'}`}
+                key={align}
+                onClick={() => onUpdate({ textAlign: align } as Partial<EditorStageObject>)}
+                type="button"
+              >
+                {align === 'left' ? 'Left' : align === 'center' ? 'Center' : 'Right'}
+              </button>
+            ))}
           </div>
         </div>
       )}

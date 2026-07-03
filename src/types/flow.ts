@@ -195,11 +195,11 @@ export type UsageTelemetrySource = 'estimate' | 'actual';
 export type UsageTelemetryConfidence = 'measured' | 'heuristic' | 'fixed' | 'unknown';
 export type WorkspaceView = 'flow' | 'editor' | 'image' | 'paper';
 export type EditorSourceKind = 'text' | 'image' | 'video' | 'audio' | 'composition' | 'document' | 'subtitle' | 'package';
-export type EditorVisualSourceKind = 'text' | 'shape' | 'image' | 'video' | 'composition';
+export type EditorVisualSourceKind = 'text' | 'shape' | 'image' | 'video' | 'composition' | 'comic';
 export type VisualClipTransition = 'none' | 'fade' | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down';
 export type EditorVisualFitMode = 'contain' | 'cover' | 'stretch';
 export type TextClipEffect = 'none' | 'shadow' | 'glow' | 'outline';
-export type EditorAssetKind = 'text' | 'shape' | 'image';
+export type EditorAssetKind = 'text' | 'shape' | 'image' | 'comic';
 export type EditorShapeKind = 'rectangle';
 export type EditorClipFilterKind =
   | 'brightness'
@@ -210,7 +210,7 @@ export type EditorClipFilterKind =
   | 'sepia'
   | 'invert'
   | 'hue-rotate';
-export type EditorStageObjectKind = 'text' | 'rectangle';
+export type EditorStageObjectKind = 'text' | 'rectangle' | 'speech-bubble' | 'thought-bubble' | 'caption';
 export type EditorStageBlendMode =
   | 'normal'
   | 'screen'
@@ -473,6 +473,22 @@ export interface EditorShapeDefaults {
   cornerRadius: number;
 }
 
+export interface EditorComicDefaults {
+  comicKind: 'speech-bubble' | 'thought-bubble' | 'caption';
+  text: string;
+  fontFamily: string;
+  fontSizePx: number;
+  textColor: string;
+  fillColor: string;
+  strokeColor: string;
+  strokeWidthPx: number;
+  tailAngleDeg: number;
+  tailLengthPx: number;
+  lineHeightPercent: number;
+  letterSpacingPx: number;
+  textAlign: 'left' | 'center' | 'right';
+}
+
 export interface EditorAsset {
   id: string;
   kind: EditorAssetKind;
@@ -482,6 +498,7 @@ export interface EditorAsset {
   imageSourceId?: string;
   textDefaults?: EditorTextDefaults;
   shapeDefaults?: EditorShapeDefaults;
+  comicDefaults?: EditorComicDefaults;
 }
 
 export interface EditorVisualClip {
@@ -538,6 +555,14 @@ export interface EditorVisualClip {
   shapeBorderColor?: string;
   shapeBorderWidth?: number;
   shapeCornerRadius?: number;
+  /** Motion-comic clips (sourceKind 'comic'): bubble/caption variant + comic typesetting.
+   *  Text content/font/size/color reuse the text* fields; fill/stroke reuse shape* fields. */
+  comicKind?: 'speech-bubble' | 'thought-bubble' | 'caption';
+  comicTailAngleDeg?: number;
+  comicTailLengthPx?: number;
+  comicLineHeightPercent?: number;
+  comicLetterSpacingPx?: number;
+  comicTextAlign?: 'left' | 'center' | 'right';
 }
 
 export interface EditorAudioClip {
@@ -579,7 +604,29 @@ export interface EditorRectangleStageObject extends EditorStageObjectBase {
   cornerRadius: number;
 }
 
-export type EditorStageObject = EditorTextStageObject | EditorRectangleStageObject;
+/**
+ * Motion-comic stage objects (speech/thought bubbles + caption boxes) — the Paper vocabulary,
+ * live on the Video program stage: placeable, keyframable like any stage object, with comic
+ * typesetting (font, line height, letter spacing, alignment) and a draggable tail.
+ */
+export interface EditorComicStageObject extends EditorStageObjectBase {
+  kind: 'speech-bubble' | 'thought-bubble' | 'caption';
+  text: string;
+  fontFamily: string;
+  fontSizePx: number;
+  textColor: string;
+  fillColor: string;
+  strokeColor: string;
+  strokeWidthPx: number;
+  /** Tail direction (degrees, 0 = right, 90 = down) and length; captions ignore both. */
+  tailAngleDeg: number;
+  tailLengthPx: number;
+  lineHeightPercent: number;
+  letterSpacingPx: number;
+  textAlign: 'left' | 'center' | 'right';
+}
+
+export type EditorStageObject = EditorTextStageObject | EditorRectangleStageObject | EditorComicStageObject;
 
 export interface UsageTelemetry {
   source: UsageTelemetrySource;

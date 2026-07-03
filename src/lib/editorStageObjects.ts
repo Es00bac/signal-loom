@@ -55,6 +55,25 @@ export function getEditorStageObjects(nodeData: Partial<NodeData>): EditorStageO
       } satisfies EditorStageObject];
     }
 
+    if (object.kind === 'speech-bubble' || object.kind === 'thought-bubble' || object.kind === 'caption') {
+      return [{
+        ...base,
+        kind: object.kind,
+        text: typeof object.text === 'string' ? object.text : '',
+        fontFamily: typeof object.fontFamily === 'string' ? object.fontFamily : 'Inter, system-ui, sans-serif',
+        fontSizePx: Math.max(8, normalizeNumber(object.fontSizePx, 40)),
+        textColor: normalizeColor(object.textColor, '#181b20'),
+        fillColor: normalizeColor(object.fillColor, object.kind === 'caption' ? '#fef3c7' : '#ffffff'),
+        strokeColor: normalizeColor(object.strokeColor, '#181b20'),
+        strokeWidthPx: Math.max(0, normalizeNumber(object.strokeWidthPx, 4)),
+        tailAngleDeg: normalizeNumber(object.tailAngleDeg, 115),
+        tailLengthPx: Math.max(0, normalizeNumber(object.tailLengthPx, 90)),
+        lineHeightPercent: Math.max(80, Math.min(240, normalizeNumber(object.lineHeightPercent, 120))),
+        letterSpacingPx: Math.max(-4, Math.min(24, normalizeNumber(object.letterSpacingPx, 0))),
+        textAlign: object.textAlign === 'left' || object.textAlign === 'right' ? object.textAlign : 'center',
+      } satisfies EditorStageObject];
+    }
+
     if (object.kind === 'rectangle') {
       return [{
         ...base,
@@ -92,6 +111,35 @@ export function createEditorStageObject(
       fontFamily: 'Inter, system-ui, sans-serif',
       fontSizePx: 72,
       color: '#f8fafc',
+    };
+  }
+
+  if (kind === 'speech-bubble' || kind === 'thought-bubble' || kind === 'caption') {
+    const width = Math.round(canvas.width * (kind === 'caption' ? 0.34 : 0.3));
+    const height = Math.round(canvas.height * (kind === 'caption' ? 0.12 : 0.18));
+
+    return {
+      id: createStageObjectId(kind),
+      kind,
+      x: Math.round(canvas.width * 0.08),
+      y: Math.round(canvas.height * 0.08),
+      width,
+      height,
+      rotationDeg: 0,
+      opacityPercent: 100,
+      blendMode: 'normal',
+      text: kind === 'caption' ? 'MEANWHILE…' : kind === 'thought-bubble' ? 'Hmm…' : 'Speech',
+      fontFamily: 'Inter, system-ui, sans-serif',
+      fontSizePx: Math.max(24, Math.round(canvas.height * 0.037)),
+      textColor: '#181b20',
+      fillColor: kind === 'caption' ? '#fef3c7' : '#ffffff',
+      strokeColor: '#181b20',
+      strokeWidthPx: 4,
+      tailAngleDeg: 115,
+      tailLengthPx: Math.round(canvas.height * 0.09),
+      lineHeightPercent: 120,
+      letterSpacingPx: 0,
+      textAlign: kind === 'caption' ? 'left' : 'center',
     };
   }
 

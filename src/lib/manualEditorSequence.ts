@@ -72,6 +72,12 @@ export interface ManualEditorVisualSequenceClip {
   shapeBorderColor?: string;
   shapeBorderWidth?: number;
   shapeCornerRadius?: number;
+  comicKind?: 'speech-bubble' | 'thought-bubble' | 'caption';
+  comicTailAngleDeg?: number;
+  comicTailLengthPx?: number;
+  comicLineHeightPercent?: number;
+  comicLetterSpacingPx?: number;
+  comicTextAlign?: 'left' | 'center' | 'right';
 }
 
 export function buildManualEditorVisualSequenceClip(
@@ -133,6 +139,12 @@ export function buildManualEditorVisualSequenceClip(
     shapeFillColor: clip.shapeFillColor,
     shapeBorderColor: clip.shapeBorderColor,
     shapeBorderWidth: clip.shapeBorderWidth,
+    comicKind: clip.comicKind,
+    comicTailAngleDeg: clip.comicTailAngleDeg,
+    comicTailLengthPx: clip.comicTailLengthPx,
+    comicLineHeightPercent: clip.comicLineHeightPercent,
+    comicLetterSpacingPx: clip.comicLetterSpacingPx,
+    comicTextAlign: clip.comicTextAlign,
     shapeCornerRadius: clip.shapeCornerRadius,
   };
 }

@@ -33,7 +33,7 @@ export interface ProgramStageClip {
   sourceHeight: number;
 }
 
-export type TimelineBlockKind = SourceBinItem['kind'] | 'shape';
+export type TimelineBlockKind = SourceBinItem['kind'] | 'shape' | 'comic';
 
 export interface TimelineClipEdgePreview {
   start?: string;
