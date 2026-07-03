@@ -25,6 +25,7 @@ import { addTimelineMarker, normalizeTimelineMarkers, removeTimelineMarker, type
 import { applyAudioFade, resolveCrossfadePercents } from '../../../lib/editorAudioFades';
 import { drawComicStageObject, renderComicCard } from '../../../lib/mediaComposition';
 import { isTrackLocked, normalizeLockedTracks, toggleLockedTrack } from '../../../lib/editorTrackLocks';
+import { isTrackCollapsed, normalizeCollapsedTracks, toggleCollapsedTrack } from '../../../lib/editorTrackCollapse';
 import { advanceShuttleCursor, stepShuttleRate, toggleShuttlePlay } from './timelineTransport';
 import { normalizeSourceMarks, overwriteTrackRange, shiftTrackClipsForInsert } from './threePointEdit';
 import { findNearestEditPoint, rippleTrimClipToTarget, rollEditPointToTarget } from './trimEdit';
@@ -643,6 +644,30 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     commitActiveCompositionPatch(
       { editorLockedAudioTracks: toggleLockedTrack(lockedAudioTracks, trackIndex) },
       isAudioTrackLocked(trackIndex) ? 'Unlock audio track' : 'Lock audio track',
+    );
+  };
+  const collapsedVisualTracks = useMemo(
+    () => normalizeCollapsedTracks(activeComposition?.data.editorCollapsedVisualTracks),
+    [activeComposition?.data.editorCollapsedVisualTracks],
+  );
+  const collapsedAudioTracks = useMemo(
+    () => normalizeCollapsedTracks(activeComposition?.data.editorCollapsedAudioTracks),
+    [activeComposition?.data.editorCollapsedAudioTracks],
+  );
+  const isVisualTrackCollapsed = (trackIndex: number) => isTrackCollapsed(collapsedVisualTracks, trackIndex);
+  const isAudioTrackCollapsed = (trackIndex: number) => isTrackCollapsed(collapsedAudioTracks, trackIndex);
+  const toggleVisualTrackCollapse = (trackIndex: number) => {
+    if (!activeComposition) return;
+    commitActiveCompositionPatch(
+      { editorCollapsedVisualTracks: toggleCollapsedTrack(collapsedVisualTracks, trackIndex) },
+      isVisualTrackCollapsed(trackIndex) ? 'Expand video track' : 'Collapse video track',
+    );
+  };
+  const toggleAudioTrackCollapse = (trackIndex: number) => {
+    if (!activeComposition) return;
+    commitActiveCompositionPatch(
+      { editorCollapsedAudioTracks: toggleCollapsedTrack(collapsedAudioTracks, trackIndex) },
+      isAudioTrackCollapsed(trackIndex) ? 'Expand audio track' : 'Collapse audio track',
     );
   };
   const editorAssetById = useMemo(
@@ -3965,6 +3990,10 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
           isAudioTrackLockedProp={isAudioTrackLocked}
           onToggleVisualTrackLock={toggleVisualTrackLock}
           onToggleAudioTrackLock={toggleAudioTrackLock}
+          isVisualTrackCollapsedProp={isVisualTrackCollapsed}
+          isAudioTrackCollapsedProp={isAudioTrackCollapsed}
+          onToggleVisualTrackCollapse={toggleVisualTrackCollapse}
+          onToggleAudioTrackCollapse={toggleAudioTrackCollapse}
           snapTimelineInteractionSeconds={snapTimelineInteractionSeconds}
           timelineAudioTrackHeight={timelineAudioTrackHeight}
           timelineCursorSeconds={timelineCursorSeconds}
@@ -4757,6 +4786,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                           timelineSeconds={displayTimelineSeconds}
                           locked={isVisualTrackLocked(trackIndex)}
                           onToggleLock={() => toggleVisualTrackLock(trackIndex)}
+                          collapsed={isVisualTrackCollapsed(trackIndex)}
+                          onToggleCollapse={() => toggleVisualTrackCollapse(trackIndex)}
                           trackLabel={`V${trackIndex + 1}`}
                         />
                       ))}
@@ -4832,6 +4863,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                           timelineSeconds={displayTimelineSeconds}
                           locked={isAudioTrackLocked(trackIndex)}
                           onToggleLock={() => toggleAudioTrackLock(trackIndex)}
+                          collapsed={isAudioTrackCollapsed(trackIndex)}
+                          onToggleCollapse={() => toggleAudioTrackCollapse(trackIndex)}
                           trackLabel={`A${trackIndex + 1}`}
                         />
                       ))}
@@ -5017,6 +5050,10 @@ interface SequencerTimelinePanelProps {
   isAudioTrackLockedProp: (trackIndex: number) => boolean;
   onToggleVisualTrackLock: (trackIndex: number) => void;
   onToggleAudioTrackLock: (trackIndex: number) => void;
+  isVisualTrackCollapsedProp: (trackIndex: number) => boolean;
+  isAudioTrackCollapsedProp: (trackIndex: number) => boolean;
+  onToggleVisualTrackCollapse: (trackIndex: number) => void;
+  onToggleAudioTrackCollapse: (trackIndex: number) => void;
   snapTimelineInteractionSeconds: (seconds: number, shiftKey: boolean) => number;
   splitVisualClipAtSeconds: (id: string, splitSeconds: number, shiftKey: boolean) => void;
   slipVisualClip: (id: string, deltaSeconds: number) => void;
@@ -5085,6 +5122,10 @@ function SequencerTimelinePanel({
   isAudioTrackLockedProp,
   onToggleVisualTrackLock,
   onToggleAudioTrackLock,
+  isVisualTrackCollapsedProp,
+  isAudioTrackCollapsedProp,
+  onToggleVisualTrackCollapse,
+  onToggleAudioTrackCollapse,
   snapTimelineInteractionSeconds,
   splitVisualClipAtSeconds,
   slipVisualClip,
@@ -5302,6 +5343,8 @@ function SequencerTimelinePanel({
                   toolMode={timelineTool}
                   locked={isVisualTrackLockedProp(trackIndex)}
                   onToggleLock={() => onToggleVisualTrackLock(trackIndex)}
+                  collapsed={isVisualTrackCollapsedProp(trackIndex)}
+                  onToggleCollapse={() => onToggleVisualTrackCollapse(trackIndex)}
                   trackLabel={`V${trackIndex + 1}`}
                 />
               ))}
@@ -5344,6 +5387,8 @@ function SequencerTimelinePanel({
                   toolMode={timelineTool === 'hand' ? 'hand' : 'select'}
                   locked={isAudioTrackLockedProp(trackIndex)}
                   onToggleLock={() => onToggleAudioTrackLock(trackIndex)}
+                  collapsed={isAudioTrackCollapsedProp(trackIndex)}
+                  onToggleCollapse={() => onToggleAudioTrackCollapse(trackIndex)}
                   trackLabel={`A${trackIndex + 1}`}
                   trackVolumePercent={audioTrackVolumes[trackIndex] ?? 100}
                   waveformById={audioWaveformMap}
@@ -9547,6 +9592,8 @@ function TimelineLane({
   trackLabel,
   locked = false,
   onToggleLock,
+  collapsed = false,
+  onToggleCollapse,
   timelineSeconds,
   blocks,
   emptyMessage,
@@ -9580,6 +9627,8 @@ function TimelineLane({
   trackLabel: string;
   locked?: boolean;
   onToggleLock?: () => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
   timelineSeconds: number;
   blocks: Array<{
     id: string;
@@ -9629,11 +9678,15 @@ function TimelineLane({
   previewById?: Record<string, TimelineClipEdgePreview>;
   waveformById?: Record<string, number[]>;
 }) {
+  // Drawer-style minimize (owner request): a collapsed lane renders as a thin strip regardless
+  // of the persisted laneHeight, so it can still be "kinda seen" without the full detail view.
+  const collapsedLaneHeight = 14;
+  const effectiveLaneHeight = collapsed ? collapsedLaneHeight : laneHeight;
   const laneInset = Math.max(3, Math.round(laneHeight * 0.08));
   const automationHeight = Math.max(24, Math.min(46, Math.round(laneHeight * 0.42)));
   const laneSizeStyle: CSSProperties = {
-    height: laneHeight,
-    minHeight: laneHeight,
+    height: effectiveLaneHeight,
+    minHeight: effectiveLaneHeight,
   };
   const snapLaneSeconds = (seconds: number, shiftKey: boolean) =>
     resolveTimelineSnapSeconds(seconds, {
@@ -9688,12 +9741,12 @@ function TimelineLane({
   return (
     <div className="group/lane relative grid grid-cols-[96px_minmax(0,1fr)] gap-2" style={laneSizeStyle}>
       <div
-        className="overflow-hidden rounded-lg border border-gray-700/60 bg-[#0f131b] px-2.5 py-2"
+        className={`overflow-hidden rounded-lg border border-gray-700/60 bg-[#0f131b] ${collapsed ? 'flex items-center px-2 py-0' : 'px-2.5 py-2'}`}
         style={laneSizeStyle}
       >
         <div className="flex items-center gap-1.5">
           <span className="text-[13px] font-semibold text-gray-100">{trackLabel}</span>
-          {onToggleLock ? (
+          {!collapsed && onToggleLock ? (
             <button
               aria-label={locked ? `Unlock ${trackLabel}` : `Lock ${trackLabel}`}
               className={`rounded px-1 text-[11px] leading-none transition-colors ${locked ? 'text-amber-300' : 'text-gray-600 hover:text-gray-300'}`}
@@ -9704,11 +9757,24 @@ function TimelineLane({
               {locked ? '🔒' : '🔓'}
             </button>
           ) : null}
+          {onToggleCollapse ? (
+            <button
+              aria-label={collapsed ? `Expand ${trackLabel}` : `Collapse ${trackLabel}`}
+              className="rounded px-1 text-[11px] leading-none text-gray-500 transition-colors hover:text-gray-200"
+              onClick={(event) => { event.stopPropagation(); onToggleCollapse(); }}
+              title={collapsed ? `Expand ${trackLabel} (show full lane)` : `Collapse ${trackLabel} (minimize to a thin strip)`}
+              type="button"
+            >
+              {collapsed ? '▸' : '▾'}
+            </button>
+          ) : null}
         </div>
-        <div className="mt-0.5 text-[10px] uppercase tracking-[0.16em] text-gray-500">
-          {blocks.length} clip{blocks.length === 1 ? '' : 's'}
-        </div>
-        {typeof trackVolumePercent === 'number' && onTrackVolumeChange ? (
+        {!collapsed ? (
+          <div className="mt-0.5 text-[10px] uppercase tracking-[0.16em] text-gray-500">
+            {blocks.length} clip{blocks.length === 1 ? '' : 's'}
+          </div>
+        ) : null}
+        {!collapsed && typeof trackVolumePercent === 'number' && onTrackVolumeChange ? (
           <label className="mt-2 block space-y-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/80">
             <span>Track {trackVolumePercent}%</span>
             <input
@@ -9726,7 +9792,8 @@ function TimelineLane({
       <div
         data-timeline-lane-body="true"
         data-timeline-lane-locked={locked ? 'true' : undefined}
-        className={`relative overflow-hidden rounded-lg border border-gray-700/60 bg-[#0f131b] ${locked ? 'pointer-events-none opacity-55 saturate-50' : ''}`}
+        data-timeline-lane-collapsed={collapsed ? 'true' : undefined}
+        className={`relative overflow-hidden rounded-lg border border-gray-700/60 bg-[#0f131b] ${locked ? 'pointer-events-none opacity-55 saturate-50' : ''} ${collapsed ? 'pointer-events-none' : ''}`}
         onDragOver={(event) => {
           if (!onDropSourceItem || !event.dataTransfer.types.includes('application/x-flow-source-bin-item')) {
             return;
@@ -9763,7 +9830,7 @@ function TimelineLane({
           className="absolute bottom-0 top-0 z-10 w-px bg-red-400/90"
           style={{ left: `${(playheadSeconds / timelineSeconds) * 100}%` }}
         />
-        {gaps.map((gap) => {
+        {!collapsed && gaps.map((gap) => {
           const isSelectedGap = gap.id === selectedGapId;
 
           return (
@@ -9791,7 +9858,29 @@ function TimelineLane({
             </button>
           );
         })}
-        {blocks.length > 0 ? (
+        {collapsed ? (
+          blocks.map((block) => (
+            // Collapsed drawer view: no waveform/label/automation, just a slim positioned bar
+            // so there's still a hint that "something is there" without the full detail view.
+            <div
+              className={`absolute rounded-sm ${
+                block.muted
+                  ? 'bg-gray-500/50'
+                  : block.selected
+                    ? 'bg-blue-300/80'
+                    : 'bg-cyan-400/60'
+              }`}
+              key={block.id}
+              style={{
+                left: `${(block.startSeconds / timelineSeconds) * 100}%`,
+                width: `max(${(block.durationSeconds / timelineSeconds) * 100}%, 3px)`,
+                top: 2,
+                bottom: 2,
+              }}
+              title={block.label}
+            />
+          ))
+        ) : blocks.length > 0 ? (
           blocks.map((block) => {
             const automationPoints = block.opacityAutomationPoints ?? [];
             const keyframePercents = block.keyframePercents ?? [];
@@ -10091,7 +10180,7 @@ function TimelineLane({
           <div className="flex h-full items-center px-4 text-sm text-gray-500">{emptyMessage}</div>
         )}
       </div>
-      {onResizeLane ? (
+      {onResizeLane && !collapsed ? (
         <button
           aria-label={`Resize ${trackLabel} track height`}
           className="absolute -bottom-1 left-0 right-0 z-30 h-2 cursor-row-resize rounded-full bg-transparent transition-colors hover:bg-blue-400/35 focus-visible:bg-blue-400/45 focus-visible:outline-none"
