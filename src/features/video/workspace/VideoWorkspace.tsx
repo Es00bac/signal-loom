@@ -22,6 +22,7 @@ import {
   Type,
 } from 'lucide-react';
 import { addTimelineMarker, normalizeTimelineMarkers, removeTimelineMarker, type TimelineMarker } from '../../../lib/editorTimelineMarkers';
+import { applyAudioFade, resolveCrossfadePercents } from '../../../lib/editorAudioFades';
 import { advanceShuttleCursor, stepShuttleRate, toggleShuttlePlay } from './timelineTransport';
 import { normalizeSourceMarks, overwriteTrackRange, shiftTrackClipsForInsert } from './threePointEdit';
 import { findNearestEditPoint, rippleTrimClipToTarget, rollEditPointToTarget } from './trimEdit';
@@ -3786,6 +3787,54 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
 
             if (item) {
               menuItems.push({ label: 'Send Source To Flow Workspace', action: () => sendSourceItemToFlow(item) });
+            }
+
+            // Fades write onto the clip's volume automation (renders through the shipped path).
+            const clipBlock = audioBlocks.find((candidate) => candidate.clip.id === id);
+            if (clipBlock && clipBlock.durationSeconds > 0) {
+              const fadeSeconds = Math.min(0.5, clipBlock.durationSeconds / 4);
+              const fadePercent = (fadeSeconds / clipBlock.durationSeconds) * 100;
+              const patchFade = (direction: 'in' | 'out') => {
+                updateAudioClips(
+                  audioClips.map((candidate) =>
+                    candidate.id === id
+                      ? { ...candidate, volumeAutomationPoints: applyAudioFade(candidate.volumeAutomationPoints, direction, fadePercent) }
+                      : candidate,
+                  ),
+                  direction === 'in' ? 'Audio fade in' : 'Audio fade out',
+                );
+                setContextMenu(null);
+              };
+              menuItems.push({ label: `Fade In (${fadeSeconds.toFixed(1)}s)`, action: () => patchFade('in') });
+              menuItems.push({ label: `Fade Out (${fadeSeconds.toFixed(1)}s)`, action: () => patchFade('out') });
+
+              // Crossfade with the previous overlapping clip on the same lane.
+              const previous = audioBlocks
+                .filter((candidate) => candidate.clip.trackIndex === clipBlock.clip.trackIndex
+                  && candidate.clip.id !== id
+                  && candidate.startSeconds < clipBlock.startSeconds)
+                .sort((a, b) => b.startSeconds - a.startSeconds)[0];
+              const crossfade = previous ? resolveCrossfadePercents(previous, clipBlock) : null;
+              if (previous && crossfade) {
+                menuItems.push({
+                  label: `Crossfade With Previous Clip (${crossfade.overlapSeconds.toFixed(1)}s overlap)`,
+                  action: () => {
+                    updateAudioClips(
+                      audioClips.map((candidate) => {
+                        if (candidate.id === previous.clip.id) {
+                          return { ...candidate, volumeAutomationPoints: applyAudioFade(candidate.volumeAutomationPoints, 'out', crossfade.aFadeOutPercent) };
+                        }
+                        if (candidate.id === id) {
+                          return { ...candidate, volumeAutomationPoints: applyAudioFade(candidate.volumeAutomationPoints, 'in', crossfade.bFadeInPercent) };
+                        }
+                        return candidate;
+                      }),
+                      'Audio crossfade',
+                    );
+                    setContextMenu(null);
+                  },
+                });
+              }
             }
 
             menuItems.push({
