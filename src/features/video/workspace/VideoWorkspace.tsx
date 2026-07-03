@@ -8846,6 +8846,119 @@ function InspectorPanel({
                 value={visualCurrentState?.positionY ?? visualClip.positionY}
               />
             </div>
+            {visualClip.sourceKind === 'comic' ? (
+              <div className="space-y-3 rounded-xl border border-gray-700/60 bg-[#111217]/35 p-3">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/70">
+                  {visualClip.comicKind === 'caption' ? 'Caption' : visualClip.comicKind === 'thought-bubble' ? 'Thought Bubble' : 'Speech Bubble'} · Motion Comic
+                </div>
+                <label className="block space-y-2 text-xs text-gray-400">
+                  <span>Text</span>
+                  <textarea
+                    className="h-20 w-full resize-none rounded-xl border border-gray-700/60 bg-[#0f131b] p-2 text-sm text-gray-100"
+                    onChange={(event) => onUpdateVisualClip({ textContent: event.target.value })}
+                    value={visualClip.textContent ?? ''}
+                  />
+                </label>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <label className="block space-y-2 text-xs text-gray-400">
+                    <span>Fill</span>
+                    <AdvancedColorPicker
+                      className="h-11 w-full"
+                      buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                      label="Bubble fill color"
+                      onChange={(shapeFillColor) => onUpdateVisualClip({ shapeFillColor })}
+                      value={visualClip.shapeFillColor ?? '#ffffff'}
+                    />
+                  </label>
+                  <label className="block space-y-2 text-xs text-gray-400">
+                    <span>Outline</span>
+                    <AdvancedColorPicker
+                      className="h-11 w-full"
+                      buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                      label="Bubble outline color"
+                      onChange={(shapeBorderColor) => onUpdateVisualClip({ shapeBorderColor })}
+                      value={visualClip.shapeBorderColor ?? '#181b20'}
+                    />
+                  </label>
+                  <label className="block space-y-2 text-xs text-gray-400">
+                    <span>Text color</span>
+                    <AdvancedColorPicker
+                      className="h-11 w-full"
+                      buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+                      label="Bubble text color"
+                      onChange={(textColor) => onUpdateVisualClip({ textColor })}
+                      value={visualClip.textColor}
+                    />
+                  </label>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <NumberField
+                    label="Font size"
+                    max={400}
+                    min={8}
+                    onChange={(value) => onUpdateVisualClip({ textSizePx: Math.max(8, Math.round(value)) })}
+                    step={1}
+                    value={visualClip.textSizePx}
+                  />
+                  <NumberField
+                    label="Outline width"
+                    max={40}
+                    min={0}
+                    onChange={(value) => onUpdateVisualClip({ shapeBorderWidth: Math.max(0, Math.round(value)) })}
+                    step={1}
+                    value={visualClip.shapeBorderWidth ?? 6}
+                  />
+                  <NumberField
+                    label="Line height %"
+                    max={240}
+                    min={80}
+                    onChange={(value) => onUpdateVisualClip({ comicLineHeightPercent: Math.max(80, Math.min(240, Math.round(value))) })}
+                    step={5}
+                    value={visualClip.comicLineHeightPercent ?? 120}
+                  />
+                  <NumberField
+                    label="Letter spacing"
+                    max={24}
+                    min={-4}
+                    onChange={(value) => onUpdateVisualClip({ comicLetterSpacingPx: Math.max(-4, Math.min(24, Math.round(value))) })}
+                    step={1}
+                    value={visualClip.comicLetterSpacingPx ?? 0}
+                  />
+                </div>
+                {visualClip.comicKind !== 'caption' ? (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <NumberField
+                      label="Tail angle°"
+                      max={360}
+                      min={0}
+                      onChange={(value) => onUpdateVisualClip({ comicTailAngleDeg: Math.round(value) })}
+                      step={5}
+                      value={visualClip.comicTailAngleDeg ?? 115}
+                    />
+                    <NumberField
+                      label="Tail length"
+                      max={600}
+                      min={0}
+                      onChange={(value) => onUpdateVisualClip({ comicTailLengthPx: Math.max(0, Math.round(value)) })}
+                      step={5}
+                      value={visualClip.comicTailLengthPx ?? 90}
+                    />
+                  </div>
+                ) : null}
+                <div className="flex gap-2">
+                  {(['left', 'center', 'right'] as const).map((align) => (
+                    <button
+                      className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${(visualClip.comicTextAlign ?? 'center') === align ? 'border-cyan-300/50 bg-cyan-500/10 text-cyan-100' : 'border-gray-700/60 text-gray-400 hover:text-gray-200'}`}
+                      key={align}
+                      onClick={() => onUpdateVisualClip({ comicTextAlign: align })}
+                      type="button"
+                    >
+                      {align === 'left' ? 'Left' : align === 'center' ? 'Center' : 'Right'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {visualClip.sourceKind === 'text' ? (
               <div className="space-y-3 rounded-xl border border-gray-700/60 bg-[#111217]/35 p-3">
                 <div className="flex items-center justify-between gap-3">
