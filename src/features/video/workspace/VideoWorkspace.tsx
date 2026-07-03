@@ -199,6 +199,7 @@ import {
   ensureVisualClipHasKeyframes,
   getAdjacentKeyframePercent,
   getAudioKeyframePercents,
+  getAudioKeyframeStateAtProgress,
   getVisualKeyframePercents,
   getVisualKeyframeStateAtProgress,
   normalizeAudioKeyframes,
@@ -823,6 +824,10 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     };
   }, [contextMenu]);
 
+  // Bridges the keydown effect (subscribed early in the component) to the opacity/volume nudge
+  // callback defined later, next to the other keyframe helpers — a direct dep would hit the TDZ.
+  const nudgeSelectedClipLevelAtPlayheadRef = useRef<(deltaPercent: number) => boolean>(() => false);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isEditableKeyboardTarget(event.target)) {
@@ -864,6 +869,18 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
         event.preventDefault();
         redoEditor();
         return;
+      }
+
+      if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && isCommandShortcut && event.altKey) {
+        // Ctrl/Cmd+Alt+Up/Down: opacity/volume nudge at the playhead (±5, Shift for ±1),
+        // creating a keyframe there when none exists. Checked before the position nudge so
+        // the modifier combo never doubles as a spatial move.
+        const deltaPercent = (event.key === 'ArrowUp' ? 1 : -1) * (event.shiftKey ? 1 : 5);
+
+        if (nudgeSelectedClipLevelAtPlayheadRef.current(deltaPercent)) {
+          event.preventDefault();
+          return;
+        }
       }
 
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
@@ -2172,6 +2189,61 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     updateVisualClips,
     visualClips,
   ]);
+
+  // Ctrl/Cmd+Alt+Up/Down: nudge opacity (visual clip) or volume (audio clip) at the playhead.
+  // upsertVisual/AudioKeyframe samples the interpolated state first, so when no keyframe exists
+  // at the playhead one is created there before the nudge lands — the owner's requested behavior.
+  const nudgeSelectedClipLevelAtPlayhead = useCallback((deltaPercent: number): boolean => {
+    if (selectedVisualClip && selectedVisualDurationSeconds) {
+      const progressPercent = getVisualClipProgressPercent(
+        selectedVisualClip,
+        selectedVisualDurationSeconds,
+        timelineCursorSeconds,
+      );
+      const currentOpacity = getVisualKeyframeStateAtProgress(selectedVisualClip, progressPercent).opacityPercent;
+      const nextClip = upsertVisualKeyframe(selectedVisualClip, progressPercent, {
+        opacityPercent: Math.max(0, Math.min(100, Math.round(currentOpacity + deltaPercent))),
+      });
+
+      updateVisualClips(
+        visualClips.map((clip) => (clip.id === selectedVisualClip.id ? nextClip : clip)),
+        'Nudge opacity keyframe',
+      );
+      return true;
+    }
+
+    if (selectedAudioClip && selectedAudioDurationSeconds) {
+      const progressPercent = getAudioClipProgressPercent(
+        selectedAudioClip,
+        selectedAudioDurationSeconds,
+        timelineCursorSeconds,
+      );
+      const currentVolume = getAudioKeyframeStateAtProgress(selectedAudioClip, progressPercent).volumePercent;
+      const nextClip = upsertAudioKeyframe(selectedAudioClip, progressPercent, {
+        volumePercent: Math.max(0, Math.min(150, Math.round(currentVolume + deltaPercent))),
+      });
+
+      updateAudioClips(
+        audioClips.map((clip) => (clip.id === selectedAudioClip.id ? nextClip : clip)),
+        'Nudge volume keyframe',
+      );
+      return true;
+    }
+
+    return false;
+  }, [
+    audioClips,
+    selectedAudioClip,
+    selectedAudioDurationSeconds,
+    selectedVisualClip,
+    selectedVisualDurationSeconds,
+    timelineCursorSeconds,
+    updateAudioClips,
+    updateVisualClips,
+    visualClips,
+  ]);
+
+  nudgeSelectedClipLevelAtPlayheadRef.current = nudgeSelectedClipLevelAtPlayhead;
 
   const jumpToAdjacentSelectedKeyframe = useCallback((direction: 'previous' | 'next') => {
     if (selectedVisualClip && selectedVisualDurationSeconds) {
@@ -4557,7 +4629,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                       className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-100 transition-colors hover:border-cyan-200/70 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                       disabled={!canKeyframeSelectedClip}
                       onClick={addOrUpdateKeyframeAtPlayhead}
-                      title="Add or update a keyframe at the playhead (K)"
+                      title="Add or update a keyframe at the playhead (Shift+K)"
                       type="button"
                     >
                       <Diamond size={12} />
@@ -5176,7 +5248,7 @@ function SequencerTimelinePanel({
               <ChevronLeft size={12} />
               Key
             </button>
-            <button className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-100 transition-colors hover:border-cyan-200/70 hover:text-white disabled:cursor-not-allowed disabled:opacity-40" disabled={!canKeyframeSelectedClip} onClick={addOrUpdateKeyframeAtPlayhead} title="Add or update a keyframe at the playhead (K)" type="button">
+            <button className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-100 transition-colors hover:border-cyan-200/70 hover:text-white disabled:cursor-not-allowed disabled:opacity-40" disabled={!canKeyframeSelectedClip} onClick={addOrUpdateKeyframeAtPlayhead} title="Add or update a keyframe at the playhead (Shift+K)" type="button">
               <Diamond size={12} />
               Add Key
             </button>
@@ -9683,7 +9755,9 @@ function TimelineLane({
   const collapsedLaneHeight = 14;
   const effectiveLaneHeight = collapsed ? collapsedLaneHeight : laneHeight;
   const laneInset = Math.max(3, Math.round(laneHeight * 0.08));
-  const automationHeight = Math.max(24, Math.min(46, Math.round(laneHeight * 0.42)));
+  // Give the automation band the clip's full vertical room (owner feedback: the old 42%/46px cap
+  // left only the top half draggable). 8px bottom margin keeps a 0% point inside the clip.
+  const automationHeight = Math.max(24, laneHeight - Math.max(5, laneInset) - 8);
   const laneSizeStyle: CSSProperties = {
     height: effectiveLaneHeight,
     minHeight: effectiveLaneHeight,
@@ -10166,7 +10240,7 @@ function TimelineLane({
                   </div>
                 ) : null}
 
-                <div className="absolute inset-x-2 bottom-1.5 z-20 rounded bg-[#09101a]/55 px-1.5 py-1 backdrop-blur-[1px]">
+                <div className="pointer-events-none absolute inset-x-2 bottom-1.5 z-20 rounded bg-[#09101a]/55 px-1.5 py-1 backdrop-blur-[1px]">
                   <div className="flex items-center gap-1.5 text-[11px] font-semibold">
                     {getSourceItemIcon(block.kind)}
                     <span className="truncate">{block.label}</span>
@@ -11000,6 +11074,7 @@ function EditorHelpModal({ onClose }: { onClose: () => void }) {
                 ['S', 'Slip tool'],
                 ['H', 'Hand pan tool'],
                 ['Shift + K', 'Add or update a keyframe on the selected clip at the playhead'],
+                ['Ctrl/Cmd + Alt + Up / Down', 'Nudge opacity (visual) or volume (audio) at the playhead by 5% — adds a keyframe there if none exists; add Shift for 1% steps'],
                 ['Shift + M', 'Drop a labeled marker at the playhead (click a flag to jump, Alt-click to remove)'],
                 ['[ / ]', 'Jump to the previous or next keyframe on the selected clip'],
                 ['Delete / Backspace', 'Remove the selected clip'],
@@ -11031,7 +11106,8 @@ function EditorHelpModal({ onClose }: { onClose: () => void }) {
               <li>`Cut` splits visual clips at the playhead.</li>
               <li>`Slip` shifts the source content inside a timed clip without moving the clip on the timeline.</li>
               <li>`Hand` drags the sequencer viewport when you are zoomed in.</li>
-              <li>Use the diamond buttons above the timeline or press `K` to keyframe the selected clip at the playhead.</li>
+              <li>Use the diamond buttons above the timeline or press `Shift+K` to keyframe the selected clip at the playhead.</li>
+              <li>With a clip selected, `Ctrl+Alt+Up/Down` nudges its opacity (or an audio clip's volume) right at the playhead — creating a keyframe there if the playhead isn't on one.</li>
               <li>Volume and opacity lines follow clip keyframes, and keyframe markers are shown inside timeline clips.</li>
               <li>Hold `Shift` while scrubbing, cutting, snapping, or dragging trim edges to use whole-second steps.</li>
               <li>Hold `Alt` while dragging a clip edge to RIPPLE the trim — later clips on the lane follow, keeping every cut tight.</li>
