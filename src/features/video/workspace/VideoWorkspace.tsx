@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { advanceShuttleCursor, stepShuttleRate, toggleShuttlePlay } from './timelineTransport';
 import { normalizeSourceMarks, overwriteTrackRange, shiftTrackClipsForInsert } from './threePointEdit';
+import { findNearestEditPoint, rippleTrimClipToTarget, rollEditPointToTarget } from './trimEdit';
 import { useFlowStore } from '../../../store/flowStore';
 import { useConfirmationStore } from '../../../store/confirmationStore';
 import { showAlertDialog } from '../../../store/alertDialogStore';
@@ -938,6 +939,21 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
         performThreePointEditRef.current('overwrite');
         return;
       }
+      if (!isCommandShortcut && shortcutKey === 'q') {
+        event.preventDefault();
+        performTrimEditRef.current('ripple-in');
+        return;
+      }
+      if (!isCommandShortcut && shortcutKey === 'w') {
+        event.preventDefault();
+        performTrimEditRef.current('ripple-out');
+        return;
+      }
+      if (!isCommandShortcut && shortcutKey === 'e') {
+        event.preventDefault();
+        performTrimEditRef.current('roll');
+        return;
+      }
 
       if (event.key === 'Delete' || event.key === 'Backspace') {
         if (selectedStageObjectId && activeComposition) {
@@ -1532,6 +1548,31 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     setSelectedVisualClipId(newClip.id);
     recordActivityTrailWorkspaceEvent('editor', mode === 'insert' ? 'Insert edit at playhead' : 'Overwrite edit at playhead', 'V1', 'toolbar');
   };
+
+  // Playhead-driven ripple/roll (quartet item 4): Q ripples the selected clip's IN edge to the
+  // playhead, W its OUT edge, E rolls the nearest cut on the clip's lane to the playhead.
+  const performTrimEdit = (kind: 'ripple-in' | 'ripple-out' | 'roll') => {
+    if (!activeComposition || !selectedVisualClipId) return;
+    const selected = visualClips.find((candidate) => candidate.id === selectedVisualClipId);
+    if (!selected) return;
+    const playheadMs = Math.max(0, Math.round(timelineCursorSeconds * 1000));
+    const blocksMs = visualBlocks.map((blockEntry) => ({
+      clip: blockEntry.clip,
+      startMs: Math.round(blockEntry.startSeconds * 1000),
+      durationMs: Math.round(blockEntry.durationSeconds * 1000),
+    }));
+    if (kind === 'roll') {
+      const editPoint = findNearestEditPoint(blocksMs, selected.trackIndex, playheadMs);
+      if (!editPoint) return;
+      const rolled = rollEditPointToTarget(blocksMs, editPoint.leftClipId, editPoint.rightClipId, playheadMs);
+      if (rolled) commitActiveCompositionPatch({ editorVisualClips: rolled }, 'Roll edit point');
+      return;
+    }
+    const trimmed = rippleTrimClipToTarget(blocksMs, selected.id, kind === 'ripple-in' ? 'in' : 'out', playheadMs);
+    if (trimmed) commitActiveCompositionPatch({ editorVisualClips: trimmed }, kind === 'ripple-in' ? 'Ripple trim in' : 'Ripple trim out');
+  };
+  const performTrimEditRef = useRef(performTrimEdit);
+  performTrimEditRef.current = performTrimEdit;
 
   const markSourcePointRef = useRef(markSourcePoint);
   markSourcePointRef.current = markSourcePoint;
