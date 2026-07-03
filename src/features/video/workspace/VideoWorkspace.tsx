@@ -2383,25 +2383,65 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     });
   };
 
+  // Alt-drag edge trims RIPPLE: later clips on the lane follow the length change. The lane fires
+  // phase 'start' on pointerdown so every move recomputes from this snapshot (nothing compounds).
+  const trimRippleBaseRef = useRef<EditorVisualClip[] | null>(null);
+
   const trimVisualClipFromEdge = (
     clip: EditorVisualClip,
     edge: TimelineClipEdge,
     deltaSeconds: number,
     shiftKey: boolean,
+    options?: { altKey?: boolean; phase?: 'start' | 'move' },
   ) => {
+    if (options?.phase === 'start') {
+      trimRippleBaseRef.current = visualClips;
+      return;
+    }
+    const baseClips = trimRippleBaseRef.current ?? visualClips;
+    const baseClip = baseClips.find((candidate) => candidate.id === clip.id) ?? clip;
     const sourceItem = sourceItemByNodeId.get(clip.sourceNodeId);
     const sourceDurationSeconds =
       sourceItem ? getSourceItemDurationSeconds(sourceItem, durationMap) ?? 0 : clip.durationSeconds ?? 4;
-    const nextClip = trimVisualClipEdge(clip, {
+    const nextClip = trimVisualClipEdge(baseClip, {
       edge,
       deltaSeconds,
       sourceDurationSeconds: Math.max(0.25, sourceDurationSeconds),
       shiftKey,
     });
 
+    if (!options?.altKey) {
+      updateVisualClips(
+        baseClips.map((candidate) => (candidate.id === clip.id ? nextClip : candidate)),
+        'Trim visual clip edge',
+      );
+      return;
+    }
+
+    // RIPPLE: timeline length of a clip = still duration, or source window / playback rate.
+    const lengthMs = (candidate: EditorVisualClip): number => {
+      if (candidate.sourceOutMs === undefined && (candidate.sourceKind === 'image' || candidate.sourceKind === 'text' || candidate.sourceKind === 'shape')) {
+        return Math.round((candidate.durationSeconds ?? 4) * 1000);
+      }
+      const rate = Math.max(0.25, candidate.playbackRate || 1);
+      const inMs = candidate.sourceInMs ?? candidate.trimStartMs ?? 0;
+      const outMs = candidate.sourceOutMs ?? Math.round(Math.max(0.25, sourceDurationSeconds) * 1000) - (candidate.trimEndMs ?? 0);
+      return Math.round(Math.max(40, outMs - inMs) / rate);
+    };
+    const lengthDeltaMs = lengthMs(nextClip) - lengthMs(baseClip);
+    // Ripple keeps the clip's own START anchored on both edges (the lib shifts startMs for
+    // start-edge trims to keep the end fixed — ripple wants the opposite).
+    const rippledClip = edge === 'start' ? { ...nextClip, startMs: baseClip.startMs } : nextClip;
+
     updateVisualClips(
-      visualClips.map((candidate) => (candidate.id === clip.id ? nextClip : candidate)),
-      'Trim visual clip edge',
+      baseClips.map((candidate) => {
+        if (candidate.id === clip.id) return rippledClip;
+        if (candidate.trackIndex === baseClip.trackIndex && candidate.startMs > baseClip.startMs) {
+          return { ...candidate, startMs: Math.max(0, candidate.startMs + lengthDeltaMs) };
+        }
+        return candidate;
+      }),
+      'Ripple trim visual clip edge',
     );
   };
 
@@ -9017,6 +9057,7 @@ function TimelineLane({
     edge: TimelineClipEdge,
     deltaSeconds: number,
     shiftKey: boolean,
+    options?: { altKey?: boolean; phase?: 'start' | 'move' },
   ) => void;
   onAddAutomationPoint?: (id: string, point: TimelineAutomationPoint) => void;
   onUpdateAutomationPoint?: (id: string, pointIndex: number, point: TimelineAutomationPoint) => void;
@@ -9079,10 +9120,12 @@ function TimelineLane({
 
     const startClientX = event.clientX;
     const startClip = block.trimClip;
+    // phase 'start' lets the workspace snapshot the lane for Alt-drag RIPPLE trims (stateless per move).
+    onTrimBlockEdge(startClip, edge, 0, event.shiftKey, { altKey: event.altKey, phase: 'start' });
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const deltaSeconds = ((moveEvent.clientX - startClientX) / laneRect.width) * timelineSeconds;
-      onTrimBlockEdge(startClip, edge, deltaSeconds, moveEvent.shiftKey);
+      onTrimBlockEdge(startClip, edge, deltaSeconds, moveEvent.shiftKey, { altKey: moveEvent.altKey, phase: 'move' });
     };
 
     const onPointerUp = () => {
@@ -9310,14 +9353,14 @@ function TimelineLane({
                       aria-label={`Trim start of ${block.label}`}
                       className="absolute bottom-1 top-1 left-0 z-30 w-2 cursor-ew-resize rounded-l bg-white/0 transition-colors hover:bg-cyan-200/45"
                       onPointerDown={(event) => startEdgeTrim(event, block, 'start')}
-                      title="Drag to trim or extend clip start. Hold Shift for 1s intervals."
+                      title="Drag to trim or extend clip start. Alt-drag to RIPPLE (later clips follow). Shift for 1s intervals."
                       type="button"
                     />
                     <button
                       aria-label={`Trim end of ${block.label}`}
                       className="absolute bottom-1 top-1 right-0 z-30 w-2 cursor-ew-resize rounded-r bg-white/0 transition-colors hover:bg-cyan-200/45"
                       onPointerDown={(event) => startEdgeTrim(event, block, 'end')}
-                      title="Drag to trim or extend clip end. Hold Shift for 1s intervals."
+                      title="Drag to trim or extend clip end. Alt-drag to RIPPLE (later clips follow). Shift for 1s intervals."
                       type="button"
                     />
                   </>
@@ -10339,6 +10382,7 @@ function EditorHelpModal({ onClose }: { onClose: () => void }) {
               <li>Use the diamond buttons above the timeline or press `K` to keyframe the selected clip at the playhead.</li>
               <li>Volume and opacity lines follow clip keyframes, and keyframe markers are shown inside timeline clips.</li>
               <li>Hold `Shift` while scrubbing, cutting, snapping, or dragging trim edges to use whole-second steps.</li>
+              <li>Hold `Alt` while dragging a clip edge to RIPPLE the trim — later clips on the lane follow, keeping every cut tight.</li>
             </ul>
           </section>
         </div>
