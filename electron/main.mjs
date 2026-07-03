@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
-import { chmodSync, existsSync, statSync, writeFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { copyFile, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -269,7 +269,15 @@ function isProductionRendererReady() {
 }
 
 function buildStartupSplashHtml() {
-  const imageUrl = pathToFileURL(SIGNAL_LOOM_SPLASH_IMAGE_PATH).href;
+  // Embed the artwork as a data URI. The splash page itself is a data: URL document, and in
+  // the packaged app the PNG lives inside app.asar — a file:// <img> from a data: origin is
+  // blocked there (blank 560x560 box), while main-process readFileSync reads through asar.
+  let imageUrl;
+  try {
+    imageUrl = `data:image/png;base64,${readFileSync(SIGNAL_LOOM_SPLASH_IMAGE_PATH).toString('base64')}`;
+  } catch {
+    imageUrl = pathToFileURL(SIGNAL_LOOM_SPLASH_IMAGE_PATH).href;
+  }
 
   return `<!doctype html>
 <html>
@@ -347,7 +355,16 @@ function createStartupSplashWindow() {
   splashWindow.on('closed', () => {
     splashWindow = null;
   });
-  void splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildStartupSplashHtml())}`);
+
+  // Serve the splash page from a real temp file: the embedded ~1.8MB data-URI artwork would
+  // put a data:text/html loadURL within a hair of Chromium's 2MB URL cap.
+  try {
+    const splashHtmlPath = join(app.getPath('temp'), 'signal-loom-splash.html');
+    writeFileSync(splashHtmlPath, buildStartupSplashHtml());
+    void splashWindow.loadFile(splashHtmlPath);
+  } catch {
+    void splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildStartupSplashHtml())}`);
+  }
 
   return splashWindow;
 }
