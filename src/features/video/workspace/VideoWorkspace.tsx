@@ -22,6 +22,7 @@ import {
   Type,
 } from 'lucide-react';
 import { advanceShuttleCursor, stepShuttleRate, toggleShuttlePlay } from './timelineTransport';
+import { normalizeSourceMarks, overwriteTrackRange, shiftTrackClipsForInsert } from './threePointEdit';
 import { useFlowStore } from '../../../store/flowStore';
 import { useConfirmationStore } from '../../../store/confirmationStore';
 import { showAlertDialog } from '../../../store/alertDialogStore';
@@ -611,6 +612,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
   const [timelineCursorSeconds, setTimelineCursorSeconds] = useState(0);
   // JKL shuttle transport: 0 = paused; ±1/±2/±4/±8 = play rate (see timelineTransport.ts).
   const [shuttleRate, setShuttleRate] = useState(0);
+  // Source monitor I/O marks for three-point editing (threePointEdit.ts); keyed to the marked item.
+  const [sourceMarks, setSourceMarks] = useState<{ itemId: string; inSeconds?: number; outSeconds?: number } | null>(null);
 
   useEffect(() => {
     if (shuttleRate === 0) return undefined;
@@ -913,6 +916,26 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
         event.preventDefault();
         setShuttleRate(0);
         setTimelineCursorSeconds(displayTimelineSecondsRef.current);
+        return;
+      }
+      if (!isCommandShortcut && shortcutKey === 'i') {
+        event.preventDefault();
+        markSourcePointRef.current('in');
+        return;
+      }
+      if (!isCommandShortcut && shortcutKey === 'o') {
+        event.preventDefault();
+        markSourcePointRef.current('out');
+        return;
+      }
+      if (!isCommandShortcut && event.key === ',') {
+        event.preventDefault();
+        performThreePointEditRef.current('insert');
+        return;
+      }
+      if (!isCommandShortcut && event.key === '.') {
+        event.preventDefault();
+        performThreePointEditRef.current('overwrite');
         return;
       }
 
@@ -1462,6 +1485,58 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     setSelectedSourceItemId(item.id);
     recordActivityTrailWorkspaceEvent('editor', 'Add audio clip to timeline', `A${trackIndex + 1}`, 'toolbar');
   };
+
+  const markSourcePoint = (which: 'in' | 'out') => {
+    if (!selectedSourceItem) return;
+    const atSeconds = sourceMonitorVideoRef.current?.currentTime ?? 0;
+    setSourceMarks((current) => ({
+      itemId: selectedSourceItem.id,
+      ...(current?.itemId === selectedSourceItem.id ? current : {}),
+      [which === 'in' ? 'inSeconds' : 'outSeconds']: atSeconds,
+    }));
+  };
+
+  // Three-point edit: marked source range lands on V1 at the playhead.
+  // Insert splits any straddling clip (zero-length overwrite) and ripples the rest right;
+  // Overwrite clears the landing range. Both are a single undo step.
+  const performThreePointEdit = (mode: 'insert' | 'overwrite') => {
+    if (!activeComposition || !selectedSourceItem) return;
+    if (!['image', 'video', 'composition'].includes(selectedSourceItem.kind)) return;
+    const trackIndex = 0;
+    const sourceDurationSeconds = getSourceItemDurationSeconds(selectedSourceItem, durationMap) ?? 4;
+    const marks = sourceMarks?.itemId === selectedSourceItem.id ? sourceMarks : {};
+    const { sourceInMs, sourceOutMs } = normalizeSourceMarks(marks, sourceDurationSeconds);
+    const editDurationMs = sourceOutMs - sourceInMs;
+    const playheadMs = Math.max(0, Math.round(timelineCursorSeconds * 1000));
+    // visualBlocks measure in seconds; the edit math runs in ms like the clip model.
+    const blocksMs = visualBlocks.map((blockEntry) => ({
+      clip: blockEntry.clip,
+      startMs: Math.round(blockEntry.startSeconds * 1000),
+      durationMs: Math.round(blockEntry.durationSeconds * 1000),
+    }));
+    const newClip = createEditorVisualClip(
+      selectedSourceItem.nodeId,
+      selectedSourceItem.kind as 'image' | 'video' | 'composition',
+      selectedSourceItem.kind === 'video'
+        ? { trackIndex, startMs: playheadMs, sourceInMs, sourceOutMs }
+        : { trackIndex, startMs: playheadMs, durationSeconds: editDurationMs / 1000 },
+    );
+    if (mode === 'overwrite') {
+      const { clips } = overwriteTrackRange(blocksMs, trackIndex, playheadMs, editDurationMs);
+      commitActiveCompositionPatch({ editorVisualClips: [...clips, newClip] }, 'Overwrite edit');
+    } else {
+      const { clips: splitClips } = overwriteTrackRange(blocksMs, trackIndex, playheadMs, 0);
+      const shifted = shiftTrackClipsForInsert(splitClips, trackIndex, playheadMs, editDurationMs);
+      commitActiveCompositionPatch({ editorVisualClips: [...shifted, newClip] }, 'Insert edit');
+    }
+    setSelectedVisualClipId(newClip.id);
+    recordActivityTrailWorkspaceEvent('editor', mode === 'insert' ? 'Insert edit at playhead' : 'Overwrite edit at playhead', 'V1', 'toolbar');
+  };
+
+  const markSourcePointRef = useRef(markSourcePoint);
+  markSourcePointRef.current = markSourcePoint;
+  const performThreePointEditRef = useRef(performThreePointEdit);
+  performThreePointEditRef.current = performThreePointEdit;
 
   const updateVisualClips = useCallback((nextClips: EditorVisualClip[], label = 'Update visual clips') => {
     commitActiveCompositionPatch({ editorVisualClips: nextClips }, label);
@@ -3464,9 +3539,14 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
         <div className="h-full min-h-0">
           <SourceMonitorPanel
             item={selectedSourceItem}
+            marks={selectedSourceItem && sourceMarks?.itemId === selectedSourceItem.id ? sourceMarks : undefined}
             mediaInfo={selectedSourceItem ? mediaInfoMap[selectedSourceItem.id] : undefined}
             onAddAudio={addAudioClip}
             onAddVisual={addVisualClip}
+            onMarkIn={() => markSourcePoint('in')}
+            onMarkOut={() => markSourcePoint('out')}
+            onInsertEdit={() => performThreePointEdit('insert')}
+            onOverwriteEdit={() => performThreePointEdit('overwrite')}
             onOpenContextMenu={(event) => {
               event.preventDefault();
               const menuItems: Array<{ label: string; action: () => void; tone?: 'danger' | 'default' }> = [];
@@ -3980,9 +4060,14 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                     >
                       <SourceMonitorPanel
                         item={selectedSourceItem}
+                        marks={selectedSourceItem && sourceMarks?.itemId === selectedSourceItem.id ? sourceMarks : undefined}
                         mediaInfo={selectedSourceItem ? mediaInfoMap[selectedSourceItem.id] : undefined}
                         onAddAudio={addAudioClip}
                         onAddVisual={addVisualClip}
+                        onMarkIn={() => markSourcePoint('in')}
+                        onMarkOut={() => markSourcePoint('out')}
+                        onInsertEdit={() => performThreePointEdit('insert')}
+                        onOverwriteEdit={() => performThreePointEdit('overwrite')}
                         onOpenContextMenu={(event) => {
                           event.preventDefault();
 
@@ -4962,18 +5047,28 @@ function SequencerTimelinePanel({
 
 function SourceMonitorPanel({
   item,
+  marks,
   mediaInfo,
   sourceDurationSeconds,
   onAddVisual,
   onAddAudio,
+  onMarkIn,
+  onMarkOut,
+  onInsertEdit,
+  onOverwriteEdit,
   onOpenContextMenu,
   videoRef,
 }: {
   item?: SourceBinItem;
+  marks?: { inSeconds?: number; outSeconds?: number };
   mediaInfo?: SourceMediaInfo;
   sourceDurationSeconds?: number;
   onAddVisual: (item: SourceBinItem, trackIndex: number) => void;
   onAddAudio: (item: SourceBinItem, trackIndex: number) => void;
+  onMarkIn: () => void;
+  onMarkOut: () => void;
+  onInsertEdit: () => void;
+  onOverwriteEdit: () => void;
   onOpenContextMenu: (event: React.MouseEvent<HTMLDivElement>) => void;
   videoRef: React.RefObject<HTMLVideoElement | null>;
 }) {
@@ -5000,6 +5095,42 @@ function SourceMonitorPanel({
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  {canUseSourceItemAsVisual(item) ? (
+                    <div className="inline-flex items-stretch gap-1" data-source-monitor-three-point>
+                      <button
+                        className="rounded-lg border border-gray-700/60 bg-[#0f131b] px-2 py-1 text-[11px] font-semibold text-gray-200 hover:bg-[#161c26] hover:text-white"
+                        onClick={onMarkIn}
+                        title="Mark In at the source playhead (I)"
+                        type="button"
+                      >
+                        ⟨I{marks?.inSeconds !== undefined ? ` ${marks.inSeconds.toFixed(1)}s` : ''}
+                      </button>
+                      <button
+                        className="rounded-lg border border-gray-700/60 bg-[#0f131b] px-2 py-1 text-[11px] font-semibold text-gray-200 hover:bg-[#161c26] hover:text-white"
+                        onClick={onMarkOut}
+                        title="Mark Out at the source playhead (O)"
+                        type="button"
+                      >
+                        O⟩{marks?.outSeconds !== undefined ? ` ${marks.outSeconds.toFixed(1)}s` : ''}
+                      </button>
+                      <button
+                        className="rounded-lg border border-cyan-300/40 bg-cyan-500/10 px-2 py-1 text-[11px] font-semibold text-cyan-100 hover:border-cyan-200/70 hover:text-white"
+                        onClick={onInsertEdit}
+                        title="Insert marked range at the timeline playhead on V1, rippling later clips right (,)"
+                        type="button"
+                      >
+                        Insert
+                      </button>
+                      <button
+                        className="rounded-lg border border-amber-300/40 bg-amber-400/10 px-2 py-1 text-[11px] font-semibold text-amber-100 hover:border-amber-200/70 hover:text-white"
+                        onClick={onOverwriteEdit}
+                        title="Overwrite the timeline range at the playhead on V1 with the marked range (.)"
+                        type="button"
+                      >
+                        Overwrite
+                      </button>
+                    </div>
+                  ) : null}
                   {canUseSourceItemAsVisual(item) ? (
                     <TrackAddControl
                       icon={Film}
