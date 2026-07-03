@@ -79,6 +79,23 @@ describe('paperPageFlattenExport', () => {
     expect(payload.dataUrl).toContain('data:image/svg+xml');
   });
 
+  it('produces a stable per-page sourceKey so re-sending the same page replaces rather than duplicates the library item', () => {
+    const doc = createDefaultPaperDocument({ title: 'Motion Comic', preset: 'comic-book', dpi: 300 });
+    const pageId = doc.pages[0].id;
+
+    const first = buildFlattenedPaperPageSourcePayload(doc, pageId);
+    const second = buildFlattenedPaperPageSourcePayload(doc, pageId, {
+      envelopeId: 'paper-envelope-9',
+      envelopeLabel: 'Chapter pages',
+      envelopeIndex: 0,
+    });
+
+    expect(first.sourceKey).toMatch(new RegExp(`^paper-page:${doc.id}:${pageId}:\\d+x\\d+:(bleed|trim)$`));
+    // Identity is anchored on the document/page (not envelope grouping), so the
+    // dedupe key stays constant across re-exports and addAssetItem replaces in place.
+    expect(second.sourceKey).toBe(first.sourceKey);
+  });
+
   it('can inline placed image assets before building the flattened SVG snapshot', async () => {
     const doc = createDefaultPaperDocument({ title: 'Inline Assets' });
     const pageId = doc.pages[0].id;

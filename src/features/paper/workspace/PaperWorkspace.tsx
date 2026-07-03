@@ -3131,15 +3131,21 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
     return item;
   }, [addSourceAssetItem, document, setSourceSidebarOpen]);
 
-  const exportSelectedPageToSourceLibrary = useCallback(() => {
-    if (!selectedPage) return;
-    setStatus(`Flattening page ${selectedPage.pageNumber} to the Source Library...`);
-    void exportPaperPageToSourceLibrary(selectedPage.id)
-      .then((item) => setStatus(`Exported "${item.label}" to the Source Library.`))
+  const sendPaperPageToSourceLibraryById = useCallback((pageId: string) => {
+    const page = document.pages.find((candidate) => candidate.id === pageId);
+    if (!page) return;
+    setStatus(`Flattening page ${page.pageNumber} to the Source Library...`);
+    void exportPaperPageToSourceLibrary(pageId)
+      .then((item) => setStatus(`Exported "${item.label}" to the Source Library — ready in Image, Video, and Flow.`))
       .catch((error) => {
         setStatus(error instanceof Error ? error.message : 'Could not export the flattened page.');
       });
-  }, [exportPaperPageToSourceLibrary, selectedPage]);
+  }, [document.pages, exportPaperPageToSourceLibrary]);
+
+  const exportSelectedPageToSourceLibrary = useCallback(() => {
+    if (!selectedPage) return;
+    sendPaperPageToSourceLibraryById(selectedPage.id);
+  }, [selectedPage, sendPaperPageToSourceLibraryById]);
 
   const exportAllPagesToSourceEnvelope = useCallback(() => {
     void (async () => {
@@ -3944,6 +3950,14 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           onSendFrameSourceToVideo={sendPaperFrameSourceToVideo}
           onSendFrameSourceToFlow={sendPaperFrameSourceToFlow}
           onLocateFrameSourceInFlow={locatePaperFrameSourceInFlow}
+          onSendPageToSourceLibrary={(pageId) => {
+            setContextMenu(null);
+            sendPaperPageToSourceLibraryById(pageId);
+          }}
+          onSendAllPagesToSourceLibrary={() => {
+            setContextMenu(null);
+            exportAllPagesToSourceEnvelope();
+          }}
           onUnchainSelectedBubbles={() => {
             unchainSelectedBubbles();
             setContextMenu(null);
@@ -6154,13 +6168,13 @@ export function PaperTopStrip({
                     <ExportMenuItem
                       icon={<Download size={13} />}
                       label="Source"
-                      description="Flatten page to local project Source Bin"
+                      description="Send this page to the Source Library for Image, Video, and Flow"
                       onClick={() => { onExportPageToSource(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
                       icon={<FilePlus2 size={13} />}
                       label="Envelope"
-                      description="Create list/envelope package file"
+                      description="Send all pages to the Source Library as one envelope"
                       onClick={() => { onExportPagesToEnvelope(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
@@ -8732,6 +8746,8 @@ export function PaperContextMenu({
   onSendFrameSourceToFlow,
   onLocateFrameSourceInFlow,
   onSendFrameSourceToVideo,
+  onSendPageToSourceLibrary,
+  onSendAllPagesToSourceLibrary,
   onUnchainSelectedBubbles,
   onThreadSelectedFrames,
   onUnthreadSelectedFrames,
@@ -8760,6 +8776,8 @@ export function PaperContextMenu({
   onSendFrameSourceToFlow: (frame: PaperFrame | undefined) => void;
   onLocateFrameSourceInFlow?: (frame: PaperFrame | undefined) => void;
   onSendFrameSourceToVideo: (frame: PaperFrame | undefined) => void;
+  onSendPageToSourceLibrary: (pageId: string) => void;
+  onSendAllPagesToSourceLibrary: () => void;
   onUnchainSelectedBubbles: () => void;
   onThreadSelectedFrames: () => void;
   onUnthreadSelectedFrames: () => void;
@@ -8941,6 +8959,16 @@ export function PaperContextMenu({
       ) : (
         <>
           <MenuHeading label="Page" />
+          <MenuGroup label="Send to Source Library">
+            <MenuButton
+              label="Send This Page to Source Library"
+              onClick={() => onSendPageToSourceLibrary(context.pageId)}
+            />
+            <MenuButton
+              label="Send All Pages to Source Library"
+              onClick={() => onSendAllPagesToSourceLibrary()}
+            />
+          </MenuGroup>
           <MenuGroup label="Comic SFX">
             {PAPER_COMIC_SFX_PRESET_IDS.map((presetId) => {
               const preset = getPaperComicSfxPreset(presetId);
