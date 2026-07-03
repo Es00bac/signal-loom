@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { addTimelineMarker, normalizeTimelineMarkers, removeTimelineMarker, type TimelineMarker } from '../../../lib/editorTimelineMarkers';
 import { applyAudioFade, resolveCrossfadePercents } from '../../../lib/editorAudioFades';
-import { drawComicStageObject } from '../../../lib/mediaComposition';
+import { drawComicStageObject, renderComicCard } from '../../../lib/mediaComposition';
 import { isTrackLocked, normalizeLockedTracks, toggleLockedTrack } from '../../../lib/editorTrackLocks';
 import { advanceShuttleCursor, stepShuttleRate, toggleShuttlePlay } from './timelineTransport';
 import { normalizeSourceMarks, overwriteTrackRange, shiftTrackClipsForInsert } from './threePointEdit';
@@ -7486,6 +7486,8 @@ function ProgramStageMedia({
         />
       </div>
     );
+  } else if (clip.clip.sourceKind === 'comic') {
+    content = <ComicClipStagePreview clip={clip.clip} />;
   } else if (isTextClip) {
     const text = layout.text;
     const fontSizePx = (text?.fontSizePx ?? Math.max(8, clip.clip.textSizePx || textDefaults?.fontSizePx || 64)) * (layout.scalePercent / 100) * stageScale;
@@ -7587,6 +7589,28 @@ function ProgramStageObjectPreview({ object }: { object: EditorStageObject }) {
       }}
     />
   );
+}
+
+/**
+ * Edit-stage preview for a motion-comic CLIP: renders the exact export card (renderComicCard)
+ * as the stage content, so the interactive stage matches the encode pixel-for-pixel.
+ */
+function ComicClipStagePreview({ clip }: { clip: EditorVisualClip }) {
+  const [src, setSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void renderComicCard(clip).then((url) => {
+      if (!cancelled) setSrc(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [clip]);
+
+  return src
+    ? <img alt={clip.textContent ?? 'Motion comic'} className="h-full w-full object-contain" src={src} />
+    : <div className="h-full w-full bg-transparent" />;
 }
 
 /**
