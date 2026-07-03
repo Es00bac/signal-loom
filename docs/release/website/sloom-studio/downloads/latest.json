@@ -1,6 +1,6 @@
 {
-  "version": "0.9.8",
+  "version": "0.9.9",
   "channel": "beta",
   "url": "https://sloom.studio/downloads",
-  "notes": "New Flow nodes: .slimg (round-trip an image through the Image editor and back into your graph), LoRA Spec (FLUX LoRA weights), and Color Palette + Color Swatch. New BytePlus (Seedream) image provider. Google via Vertex now surfaces nano-banana image and Gemini text whenever you're signed in (including projects set via a GOOGLE_CLOUD_PROJECT env var), and detecting/signing in auto-selects your project. Collapsed nodes keep their connections visible. Polish: node-category labels show on normal-width monitors, node titles wrap to two lines, and the Video workspace + Source Library are named consistently."
+  "notes": "The Community + license release. Signal Loom is now free for personal and noncommercial use; the one-time $17.99 commercial license (Settings → License, verified offline, one key for desktop and Android) unlocks the professional print-production exports. Motion comics: speech/thought bubbles and captions as keyframeable timeline clips with full typesetting. Pro editing: JKL shuttle, source in/out three-point insert/overwrite, ripple and roll trims, markers, audio fades, track locks, collapsible tracks, tabbed Program sidebar, and FCP7 XML export for Premiere. Paper: AI Fix Frame repaints a panel from correct sibling references (with region marquee), and whole pages export to the Source Library for panel-to-panel motion-comic animation. Fixed: Source Library deletes stick and sync is far lighter, splash artwork, panel snapping."
 }

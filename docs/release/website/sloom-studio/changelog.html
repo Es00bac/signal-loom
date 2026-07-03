@@ -110,11 +110,41 @@
 
   <div class="cl-list">
 
+    <!-- ───── 0.9.9 ───── -->
+    <section class="release" id="v0-9-9">
+      <div class="release-head">
+        <span class="release-ver">0.9.9</span>
+        <span class="current-badge">Current</span>
+        <span class="release-date">July 2026</span>
+      </div>
+      <p class="release-summary">The Community + license release, plus the biggest Video/Paper feature batch yet: free for noncommercial use with a one-time commercial license, motion-comic bubbles and captions on the timeline, pro three-point editing with JKL shuttle, Premiere XML export, and an AI frame-fix tool in Paper.</p>
+
+      <div class="cl-group">
+        <h3>New</h3>
+        <ul class="cl-items">
+          <li><strong>Community edition + commercial license.</strong> Signal Loom is free for personal and noncommercial use. The one-time $17.99 commercial license (Settings &rarr; License; verified offline, one key for desktop and Android) unlocks the professional print-production exports — KDP, PDF/X-4, PDF/X-1a, IDML, and CMYK/spot — and removes the once-a-day Community notice. No watermarks on anyone's art, ever: exports carry invisible provenance metadata instead (PNG/JPEG tags, PDF Producer, video container comment).</li>
+          <li><strong>Motion comics.</strong> Speech bubbles, thought bubbles, and caption boxes are first-class timeline clips — placed on the Program stage, keyframe-animatable, with full typesetting (font, colors, tail direction/length, line height, letter spacing, alignment) in the Inspector.</li>
+          <li><strong>Pro editing quartet.</strong> JKL shuttle with 2/4/8&times; speeds, Space/Home/End/arrow transport, Source Monitor in/out marks with three-point insert (<code>,</code>) and overwrite (<code>.</code>), and ripple/roll trims — including Alt-drag pointer ripple on clip edges.</li>
+          <li><strong>Timeline power tools.</strong> Markers (Shift+M), audio fades and crossfades, per-track locks, and collapsible drawer-style tracks that shrink to a slim strip with clip hints.</li>
+          <li><strong>Premiere interchange.</strong> Export the active sequence as FCP7 XML from the Output tab — Premiere imports it via File &gt; Import; file-backed media links directly.</li>
+          <li><strong>Paper: AI Fix Frame.</strong> Right-click a panel &rarr; point the model at correct sibling panels, describe what's right and wrong, optionally marquee just a region, and repaint with any configured edit model. Plus: Send Page / All Pages to the Source Library from the page menu — a comic layout becomes motion-comic source material in one click.</li>
+          <li><strong>Program Monitor sidebar tabs</strong> (Tools / Info / Output), a full-height opacity keyframe band, and Ctrl+Alt+&uarr;/&darr; opacity/volume nudges at the playhead.</li>
+        </ul>
+      </div>
+      <div class="cl-group fix">
+        <h3>Fixed &amp; improved</h3>
+        <ul class="cl-items">
+          <li><strong>Source Library reliability.</strong> Deleting a generated asset now sticks even while its node stays wired; cross-window sync no longer ships multi-MB payloads; the library stops re-reading every asset on each change; failed ingests are reported instead of vanishing.</li>
+          <li><strong>Splash screen artwork</strong> now loads in the packaged app.</li>
+          <li>Panel layout fixes across workspaces: undocked panel snapping, the Video menu-bar dead band, and Flow zoom controls no longer buried under the Source Library.</li>
+        </ul>
+      </div>
+    </section>
+
     <!-- ───── 0.9.8 ───── -->
     <section class="release" id="v0-9-8">
       <div class="release-head">
         <span class="release-ver">0.9.8</span>
-        <span class="current-badge">Current</span>
         <span class="release-date">July 2026</span>
       </div>
       <p class="release-summary">New Flow building blocks plus provider and editor fixes: a <code>.slimg</code> node that round-trips an image through the Image editor, a FLUX LoRA weights node, Color Palette / Color Swatch nodes, the BytePlus (Seedream) provider, and Google-via-Vertex fixes so nano-banana and Gemini text appear whenever you're signed in.</p>

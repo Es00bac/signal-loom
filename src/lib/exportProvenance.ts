@@ -8,7 +8,7 @@
  */
 import { useSettingsStore } from '../store/settingsStore';
 
-export const SIGNAL_LOOM_EXPORT_VERSION = '0.9.8';
+export const SIGNAL_LOOM_EXPORT_VERSION = '0.9.9';
 
 export function buildProvenanceLabel(license?: { licensed: boolean; email?: string }): string {
   const current = license ?? useSettingsStore.getState().license;
