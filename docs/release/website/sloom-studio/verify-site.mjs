@@ -25,17 +25,17 @@ const indexMarkers = [
   ['hero headline', 'One you own.'],
   ['workstation section', 'id="workstation"'],
   ['interactive workstation stage', 'id="stage-img"'],
-  ['Flow workstation tab', 'data-shot="tablet-01-flow-node-graph"'],
-  ['Image workstation tab', 'data-shot="tablet-02-image-editor"'],
-  ['Paper workstation tab', 'data-shot="tablet-04-paper-layout"'],
+  ['Flow workstation tab', 'data-shot="weights-and-measures-flow-graph"'],
+  ['Image workstation tab', 'data-shot="image-brush-engine"'],
+  ['Paper workstation tab', 'data-shot="weights-and-measures-paper-spread"'],
   ['Video workstation tab', 'data-shot="tablet-03-video-timeline"'],
   ['provider patch bay', 'id="keys"'],
   ['Android / phone-as-host section', 'id="android"'],
   ['LAN host port', ':8723'],
   ['Samsung DeX mention', 'Samsung DeX'],
   ['license section', 'id="license"'],
-  ['launch price', '9.99'],
-  ['regular price strike', '19.99'],
+  ['launch price', '17.99'],
+  ['regular price strike', '39'],
 ];
 for (const [label, snippet] of indexMarkers) {
   if (!index.includes(snippet)) errors.push(`index.html missing ${label}: ${snippet}`);
