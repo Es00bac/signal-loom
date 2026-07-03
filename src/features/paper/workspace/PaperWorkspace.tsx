@@ -122,6 +122,8 @@ import {
 } from '../../../lib/paperPreflight';
 import { PAPER_OUTPUT_INTENT_PROFILES } from '../../../lib/paperPrintProduction';
 import { isCommercialPrintProductionTarget, requestCommercialExportUnlock } from '../../../lib/licenseGates';
+import { canFrameBeAiFixed, collectFrameFixSiblingCandidates } from '../../../lib/paperFrameFix';
+import { PaperFrameFixDialog } from './PaperFrameFixDialog';
 import {
   buildPaperPrintUpscaledFramePatch,
   buildPaperPrintUpscaleUsageTelemetry,
@@ -645,6 +647,7 @@ export function PaperWorkspace() {
   const replaceAllInPaperText = usePaperStore((s) => s.replaceAllInPaperText);
   const addComicSfx = usePaperStore((s) => s.addComicSfx);
   const placeSourceAssetAt = usePaperStore((s) => s.placeSourceAssetAt);
+  const [frameFixTarget, setFrameFixTarget] = useState<{ pageId: string; frameId: string } | null>(null);
   const runFrameContextAction = usePaperStore((s) => s.runFrameContextAction);
   const runPageContextAction = usePaperStore((s) => s.runPageContextAction);
   const nudgeSelectedFrame = usePaperStore((s) => s.nudgeSelectedFrame);
@@ -3911,6 +3914,38 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       {printUpscaleBusy ? (
         <PaperPrintUpscaleBusyIndicator job={printUpscaleBusy} />
       ) : null}
+      {frameFixTarget ? (() => {
+        const fixPage = document.pages.find((page) => page.id === frameFixTarget.pageId);
+        const fixFrame = fixPage?.frames.find((frame) => frame.id === frameFixTarget.frameId);
+        if (!fixPage || !canFrameBeAiFixed(fixFrame)) {
+          return null;
+        }
+        return (
+          <PaperFrameFixDialog
+            frameLabel={fixFrame!.label || 'Image frame'}
+            frameImageUrl={fixFrame!.asset!.src!}
+            siblings={collectFrameFixSiblingCandidates(fixPage, frameFixTarget.frameId)}
+            onApply={(resultDataUrl) => {
+              void (async () => {
+                const item = await addSourceAssetItem({
+                  label: `${fixFrame!.label || 'Frame'} — AI fix`,
+                  kind: 'image',
+                  mimeType: 'image/png',
+                  dataUrl: resultDataUrl,
+                });
+                placeSourceAssetAt({
+                  item,
+                  pageId: frameFixTarget.pageId,
+                  targetFrameId: frameFixTarget.frameId,
+                });
+                setFrameFixTarget(null);
+                setStatus('Applied the AI frame fix; the previous art stays in undo history.');
+              })();
+            }}
+            onClose={() => setFrameFixTarget(null)}
+          />
+        );
+      })() : null}
       {contextMenu ? (
         <PaperContextMenu
           context={contextMenu}
@@ -3939,6 +3974,10 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           onOpenImageFrame={openPaperFrameImageInImageWorkspace}
           onQuickEditImageFrame={(pageId, frameId) => {
             setQuickEditTarget({ pageId, frameId });
+            setContextMenu(null);
+          }}
+          onAiFixImageFrame={(pageId, frameId) => {
+            setFrameFixTarget({ pageId, frameId });
             setContextMenu(null);
           }}
           onUpscaleFrameForPrint={(pageId, frame) => {
@@ -8752,6 +8791,7 @@ export function PaperContextMenu({
   onEditComicSfxFrame,
   onOpenImageFrame,
   onQuickEditImageFrame,
+  onAiFixImageFrame,
   onUpscaleFrameForPrint,
   onPasteFrameStyle,
   onPlaceSourceInFrame,
@@ -8782,6 +8822,7 @@ export function PaperContextMenu({
   onEditComicSfxFrame: (pageId: string, frame: PaperFrame | undefined) => void;
   onOpenImageFrame: (pageId: string, frameId: string | undefined, frame: PaperFrame | undefined) => void;
   onQuickEditImageFrame: (pageId: string, frameId: string) => void;
+  onAiFixImageFrame: (pageId: string, frameId: string) => void;
   onUpscaleFrameForPrint: (pageId: string, frame: PaperFrame | undefined) => void;
   onPasteFrameStyle: () => void;
   onPlaceSourceInFrame: (pageId: string, frameId: string, item: SourceBinLibraryItem) => void;
@@ -8865,6 +8906,10 @@ export function PaperContextMenu({
             <>
               <MenuButton label="Quick Edit Image..." onClick={() => {
                 if (context.frameId) onQuickEditImageFrame(context.pageId, context.frameId);
+                onClose();
+              }} />
+              <MenuButton label="AI Fix Frame..." onClick={() => {
+                if (context.frameId) onAiFixImageFrame(context.pageId, context.frameId);
                 onClose();
               }} />
               <MenuButton label="Edit in Image Workspace" onClick={() => {
