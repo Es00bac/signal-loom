@@ -21,6 +21,7 @@ import {
   Trash2,
   Type,
 } from 'lucide-react';
+import { addTimelineMarker, normalizeTimelineMarkers, removeTimelineMarker, type TimelineMarker } from '../../../lib/editorTimelineMarkers';
 import { advanceShuttleCursor, stepShuttleRate, toggleShuttlePlay } from './timelineTransport';
 import { normalizeSourceMarks, overwriteTrackRange, shiftTrackClipsForInsert } from './threePointEdit';
 import { findNearestEditPoint, rippleTrimClipToTarget, rollEditPointToTarget } from './trimEdit';
@@ -598,6 +599,10 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     () => normalizeTimelineSnapPoints(activeComposition?.data.editorTimelineSnapPoints),
     [activeComposition?.data.editorTimelineSnapPoints],
   );
+  const timelineMarkers = useMemo(
+    () => normalizeTimelineMarkers(activeComposition?.data.editorTimelineMarkers),
+    [activeComposition?.data.editorTimelineMarkers],
+  );
   const editorAssetById = useMemo(
     () => new Map(editorAssets.map((asset) => [asset.id, asset])),
     [editorAssets],
@@ -881,8 +886,13 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
         return;
       }
 
-      if (!isCommandShortcut && shortcutKey === 'm') {
+      if (!isCommandShortcut && shortcutKey === 'm' && !event.shiftKey) {
         setTimelineToolWithActivity('snap', 'keyboard');
+        return;
+      }
+      if (!isCommandShortcut && shortcutKey === 'm' && event.shiftKey) {
+        event.preventDefault();
+        addTimelineMarkerAtPlayheadRef.current();
         return;
       }
 
@@ -2301,13 +2311,32 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
 
   const snapTimelineInteractionSeconds = useCallback((seconds: number, shiftKey: boolean) =>
     resolveTimelineSnapSeconds(seconds, {
-      snapPoints: timelineSnapPoints,
+      // labeled markers snap like snap points do
+      snapPoints: [...timelineSnapPoints, ...timelineMarkers.map((marker) => marker.seconds)],
       shiftKey,
       maxSeconds: displayTimelineSeconds,
-    }), [displayTimelineSeconds, timelineSnapPoints]);
+    }), [displayTimelineSeconds, timelineMarkers, timelineSnapPoints]);
 
   const commitTimelineSnapPoints = (nextPoints: number[], label = 'Update timeline snap points') => {
     commitActiveCompositionPatch({ editorTimelineSnapPoints: nextPoints }, label);
+  };
+
+  const addTimelineMarkerAtPlayhead = () => {
+    if (!activeComposition) return;
+    commitActiveCompositionPatch(
+      { editorTimelineMarkers: addTimelineMarker(timelineMarkers, timelineCursorSeconds) },
+      'Add timeline marker',
+    );
+  };
+  const addTimelineMarkerAtPlayheadRef = useRef(addTimelineMarkerAtPlayhead);
+  addTimelineMarkerAtPlayheadRef.current = addTimelineMarkerAtPlayhead;
+
+  const removeTimelineMarkerById = (markerId: string) => {
+    if (!activeComposition) return;
+    commitActiveCompositionPatch(
+      { editorTimelineMarkers: removeTimelineMarker(timelineMarkers, markerId) },
+      'Remove timeline marker',
+    );
   };
 
   const addTimelineSnapAtSeconds = (seconds: number, shiftKey: boolean): number => {
@@ -3791,6 +3820,9 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
           selectedVisualClip={selectedVisualClip}
           sequenceDurationSeconds={sequenceDurationSeconds}
           shuttleRate={shuttleRate}
+          timelineMarkers={timelineMarkers}
+          onJumpToMarker={(seconds) => setTimelineCursorSeconds(seconds)}
+          onRemoveMarker={removeTimelineMarkerById}
           snapTimelineInteractionSeconds={snapTimelineInteractionSeconds}
           timelineAudioTrackHeight={timelineAudioTrackHeight}
           timelineCursorSeconds={timelineCursorSeconds}
@@ -4493,6 +4525,23 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                             </span>
                           </div>
                         ))}
+                        {timelineMarkers.map((marker) => (
+                          <button
+                            key={marker.id}
+                            className="absolute bottom-0 top-0 z-30 w-2 -translate-x-1/2 cursor-pointer bg-transparent"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (event.altKey) { removeTimelineMarkerById(marker.id); return; }
+                              setTimelineCursorSeconds(marker.seconds);
+                            }}
+                            style={{ left: `${(marker.seconds / displayTimelineSeconds) * 100}%` }}
+                            title={`${marker.label} · ${marker.seconds.toFixed(1)}s — click to jump, Alt-click to remove`}
+                            type="button"
+                          >
+                            <span className="absolute left-1/2 top-0 h-2.5 w-2.5 -translate-x-1/2 rotate-45 rounded-[2px]" style={{ background: marker.color }} />
+                            <span className="absolute bottom-0 left-1/2 top-2 w-px -translate-x-1/2" style={{ background: marker.color, opacity: 0.75 }} />
+                          </button>
+                        ))}
                         <div
                           className="absolute bottom-0 top-0 z-20 w-px bg-red-400/90"
                           style={{ left: `${(timelineCursorSeconds / displayTimelineSeconds) * 100}%` }}
@@ -4814,6 +4863,9 @@ interface SequencerTimelinePanelProps {
   selectedVisualClip?: EditorVisualClip;
   sequenceDurationSeconds: number;
   shuttleRate: number;
+  timelineMarkers: TimelineMarker[];
+  onJumpToMarker: (seconds: number) => void;
+  onRemoveMarker: (markerId: string) => void;
   snapTimelineInteractionSeconds: (seconds: number, shiftKey: boolean) => number;
   splitVisualClipAtSeconds: (id: string, splitSeconds: number, shiftKey: boolean) => void;
   slipVisualClip: (id: string, deltaSeconds: number) => void;
@@ -4875,6 +4927,9 @@ function SequencerTimelinePanel({
   selectedVisualClip,
   sequenceDurationSeconds,
   shuttleRate,
+  timelineMarkers,
+  onJumpToMarker,
+  onRemoveMarker,
   snapTimelineInteractionSeconds,
   splitVisualClipAtSeconds,
   slipVisualClip,
@@ -5014,6 +5069,23 @@ function SequencerTimelinePanel({
                       {snapSecond.toFixed(snapSecond % 1 === 0 ? 0 : 1)}s
                     </span>
                   </div>
+                ))}
+                {timelineMarkers.map((marker) => (
+                  <button
+                    key={marker.id}
+                    className="absolute bottom-0 top-0 z-30 w-2 -translate-x-1/2 cursor-pointer bg-transparent"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (event.altKey) { onRemoveMarker(marker.id); return; }
+                      onJumpToMarker(marker.seconds);
+                    }}
+                    style={{ left: `${(marker.seconds / displayTimelineSeconds) * 100}%` }}
+                    title={`${marker.label} · ${marker.seconds.toFixed(1)}s — click to jump, Alt-click to remove`}
+                    type="button"
+                  >
+                    <span className="absolute left-1/2 top-0 h-2.5 w-2.5 -translate-x-1/2 rotate-45 rounded-[2px]" style={{ background: marker.color }} />
+                    <span className="absolute bottom-0 left-1/2 top-2 w-px -translate-x-1/2" style={{ background: marker.color, opacity: 0.75 }} />
+                  </button>
                 ))}
                 <div className="absolute bottom-0 top-0 z-20 w-px bg-red-400/90" style={{ left: `${(timelineCursorSeconds / displayTimelineSeconds) * 100}%` }} />
               </div>
@@ -10349,6 +10421,7 @@ function EditorHelpModal({ onClose }: { onClose: () => void }) {
                 ['S', 'Slip tool'],
                 ['H', 'Hand pan tool'],
                 ['Shift + K', 'Add or update a keyframe on the selected clip at the playhead'],
+                ['Shift + M', 'Drop a labeled marker at the playhead (click a flag to jump, Alt-click to remove)'],
                 ['[ / ]', 'Jump to the previous or next keyframe on the selected clip'],
                 ['Delete / Backspace', 'Remove the selected clip'],
                 ['Shift + / or F1', 'Open or close this help panel'],
