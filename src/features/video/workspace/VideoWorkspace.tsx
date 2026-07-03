@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { addTimelineMarker, normalizeTimelineMarkers, removeTimelineMarker, type TimelineMarker } from '../../../lib/editorTimelineMarkers';
 import { applyAudioFade, resolveCrossfadePercents } from '../../../lib/editorAudioFades';
+import { isTrackLocked, normalizeLockedTracks, toggleLockedTrack } from '../../../lib/editorTrackLocks';
 import { advanceShuttleCursor, stepShuttleRate, toggleShuttlePlay } from './timelineTransport';
 import { normalizeSourceMarks, overwriteTrackRange, shiftTrackClipsForInsert } from './threePointEdit';
 import { findNearestEditPoint, rippleTrimClipToTarget, rollEditPointToTarget } from './trimEdit';
@@ -604,6 +605,30 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     () => normalizeTimelineMarkers(activeComposition?.data.editorTimelineMarkers),
     [activeComposition?.data.editorTimelineMarkers],
   );
+  const lockedVisualTracks = useMemo(
+    () => normalizeLockedTracks(activeComposition?.data.editorLockedVisualTracks),
+    [activeComposition?.data.editorLockedVisualTracks],
+  );
+  const lockedAudioTracks = useMemo(
+    () => normalizeLockedTracks(activeComposition?.data.editorLockedAudioTracks),
+    [activeComposition?.data.editorLockedAudioTracks],
+  );
+  const isVisualTrackLocked = (trackIndex: number) => isTrackLocked(lockedVisualTracks, trackIndex);
+  const isAudioTrackLocked = (trackIndex: number) => isTrackLocked(lockedAudioTracks, trackIndex);
+  const toggleVisualTrackLock = (trackIndex: number) => {
+    if (!activeComposition) return;
+    commitActiveCompositionPatch(
+      { editorLockedVisualTracks: toggleLockedTrack(lockedVisualTracks, trackIndex) },
+      isVisualTrackLocked(trackIndex) ? 'Unlock video track' : 'Lock video track',
+    );
+  };
+  const toggleAudioTrackLock = (trackIndex: number) => {
+    if (!activeComposition) return;
+    commitActiveCompositionPatch(
+      { editorLockedAudioTracks: toggleLockedTrack(lockedAudioTracks, trackIndex) },
+      isAudioTrackLocked(trackIndex) ? 'Unlock audio track' : 'Lock audio track',
+    );
+  };
   const editorAssetById = useMemo(
     () => new Map(editorAssets.map((asset) => [asset.id, asset])),
     [editorAssets],
@@ -978,6 +1003,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
 
         if (selectedVisualClipId && activeComposition) {
           event.preventDefault();
+          const deleteTarget = visualClips.find((candidate) => candidate.id === selectedVisualClipId);
+          if (deleteTarget && isVisualTrackLocked(deleteTarget.trackIndex)) return;
           commitActiveCompositionPatch({
             editorVisualClips: visualClips.filter((candidate) => candidate.id !== selectedVisualClipId),
           }, 'Remove visual clip');
@@ -987,6 +1014,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
 
         if (selectedAudioClipId && activeComposition) {
           event.preventDefault();
+          const deleteAudioTarget = audioClips.find((candidate) => candidate.id === selectedAudioClipId);
+          if (deleteAudioTarget && isAudioTrackLocked(deleteAudioTarget.trackIndex)) return;
           commitActiveCompositionPatch({
             editorAudioClips: audioClips.filter((candidate) => candidate.id !== selectedAudioClipId),
           }, 'Remove audio clip');
@@ -1479,6 +1508,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     if (!['image', 'video', 'composition', 'text'].includes(item.kind)) {
       return;
     }
+    if (isVisualTrackLocked(trackIndex)) return;
 
     const nextClip = createEditorVisualClip(
       item.nodeId,
@@ -1501,6 +1531,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     if (!activeComposition || !canUseSourceItemAsAudio(item)) {
       return;
     }
+    if (isAudioTrackLocked(trackIndex)) return;
 
     const nextClip = createEditorAudioClip(item.nodeId, trackIndex);
     nextClip.offsetMs = getAudioTrackEndMs(audioBlocks, trackIndex);
@@ -1530,6 +1561,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     if (!activeComposition || !selectedSourceItem) return;
     if (!['image', 'video', 'composition'].includes(selectedSourceItem.kind)) return;
     const trackIndex = 0;
+    if (isVisualTrackLocked(trackIndex)) return;
     const sourceDurationSeconds = getSourceItemDurationSeconds(selectedSourceItem, durationMap) ?? 4;
     const marks = sourceMarks?.itemId === selectedSourceItem.id ? sourceMarks : {};
     const { sourceInMs, sourceOutMs } = normalizeSourceMarks(marks, sourceDurationSeconds);
@@ -1565,7 +1597,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
   const performTrimEdit = (kind: 'ripple-in' | 'ripple-out' | 'roll') => {
     if (!activeComposition || !selectedVisualClipId) return;
     const selected = visualClips.find((candidate) => candidate.id === selectedVisualClipId);
-    if (!selected) return;
+    if (!selected || isVisualTrackLocked(selected.trackIndex)) return;
     const playheadMs = Math.max(0, Math.round(timelineCursorSeconds * 1000));
     const blocksMs = visualBlocks.map((blockEntry) => ({
       clip: blockEntry.clip,
@@ -2428,6 +2460,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
       trimRippleBaseRef.current = visualClips;
       return;
     }
+    if (isVisualTrackLocked(clip.trackIndex)) return;
     const baseClips = trimRippleBaseRef.current ?? visualClips;
     const baseClip = baseClips.find((candidate) => candidate.id === clip.id) ?? clip;
     const sourceItem = sourceItemByNodeId.get(clip.sourceNodeId);
@@ -3872,6 +3905,10 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
           timelineMarkers={timelineMarkers}
           onJumpToMarker={(seconds) => setTimelineCursorSeconds(seconds)}
           onRemoveMarker={removeTimelineMarkerById}
+          isVisualTrackLockedProp={isVisualTrackLocked}
+          isAudioTrackLockedProp={isAudioTrackLocked}
+          onToggleVisualTrackLock={toggleVisualTrackLock}
+          onToggleAudioTrackLock={toggleAudioTrackLock}
           snapTimelineInteractionSeconds={snapTimelineInteractionSeconds}
           timelineAudioTrackHeight={timelineAudioTrackHeight}
           timelineCursorSeconds={timelineCursorSeconds}
@@ -4661,6 +4698,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                             }
                           }}
                           timelineSeconds={displayTimelineSeconds}
+                          locked={isVisualTrackLocked(trackIndex)}
+                          onToggleLock={() => toggleVisualTrackLock(trackIndex)}
                           trackLabel={`V${trackIndex + 1}`}
                         />
                       ))}
@@ -4734,6 +4773,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                             }
                           }}
                           timelineSeconds={displayTimelineSeconds}
+                          locked={isAudioTrackLocked(trackIndex)}
+                          onToggleLock={() => toggleAudioTrackLock(trackIndex)}
                           trackLabel={`A${trackIndex + 1}`}
                         />
                       ))}
@@ -4915,6 +4956,10 @@ interface SequencerTimelinePanelProps {
   timelineMarkers: TimelineMarker[];
   onJumpToMarker: (seconds: number) => void;
   onRemoveMarker: (markerId: string) => void;
+  isVisualTrackLockedProp: (trackIndex: number) => boolean;
+  isAudioTrackLockedProp: (trackIndex: number) => boolean;
+  onToggleVisualTrackLock: (trackIndex: number) => void;
+  onToggleAudioTrackLock: (trackIndex: number) => void;
   snapTimelineInteractionSeconds: (seconds: number, shiftKey: boolean) => number;
   splitVisualClipAtSeconds: (id: string, splitSeconds: number, shiftKey: boolean) => void;
   slipVisualClip: (id: string, deltaSeconds: number) => void;
@@ -4979,6 +5024,10 @@ function SequencerTimelinePanel({
   timelineMarkers,
   onJumpToMarker,
   onRemoveMarker,
+  isVisualTrackLockedProp,
+  isAudioTrackLockedProp,
+  onToggleVisualTrackLock,
+  onToggleAudioTrackLock,
   snapTimelineInteractionSeconds,
   splitVisualClipAtSeconds,
   slipVisualClip,
@@ -5194,6 +5243,8 @@ function SequencerTimelinePanel({
                   snapPoints={timelineSnapPoints}
                   timelineSeconds={displayTimelineSeconds}
                   toolMode={timelineTool}
+                  locked={isVisualTrackLockedProp(trackIndex)}
+                  onToggleLock={() => onToggleVisualTrackLock(trackIndex)}
                   trackLabel={`V${trackIndex + 1}`}
                 />
               ))}
@@ -5234,6 +5285,8 @@ function SequencerTimelinePanel({
                   snapPoints={timelineSnapPoints}
                   timelineSeconds={displayTimelineSeconds}
                   toolMode={timelineTool === 'hand' ? 'hand' : 'select'}
+                  locked={isAudioTrackLockedProp(trackIndex)}
+                  onToggleLock={() => onToggleAudioTrackLock(trackIndex)}
                   trackLabel={`A${trackIndex + 1}`}
                   trackVolumePercent={audioTrackVolumes[trackIndex] ?? 100}
                   waveformById={audioWaveformMap}
@@ -9122,6 +9175,8 @@ function EditorAssetCard({
 
 function TimelineLane({
   trackLabel,
+  locked = false,
+  onToggleLock,
   timelineSeconds,
   blocks,
   emptyMessage,
@@ -9153,6 +9208,8 @@ function TimelineLane({
   waveformById,
 }: {
   trackLabel: string;
+  locked?: boolean;
+  onToggleLock?: () => void;
   timelineSeconds: number;
   blocks: Array<{
     id: string;
@@ -9264,7 +9321,20 @@ function TimelineLane({
         className="overflow-hidden rounded-lg border border-gray-700/60 bg-[#0f131b] px-2.5 py-2"
         style={laneSizeStyle}
       >
-        <div className="text-[13px] font-semibold text-gray-100">{trackLabel}</div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[13px] font-semibold text-gray-100">{trackLabel}</span>
+          {onToggleLock ? (
+            <button
+              aria-label={locked ? `Unlock ${trackLabel}` : `Lock ${trackLabel}`}
+              className={`rounded px-1 text-[11px] leading-none transition-colors ${locked ? 'text-amber-300' : 'text-gray-600 hover:text-gray-300'}`}
+              onClick={(event) => { event.stopPropagation(); onToggleLock(); }}
+              title={locked ? 'Unlock track (edits re-enabled)' : 'Lock track (blocks every edit on this lane)'}
+              type="button"
+            >
+              {locked ? '🔒' : '🔓'}
+            </button>
+          ) : null}
+        </div>
         <div className="mt-0.5 text-[10px] uppercase tracking-[0.16em] text-gray-500">
           {blocks.length} clip{blocks.length === 1 ? '' : 's'}
         </div>
@@ -9285,7 +9355,8 @@ function TimelineLane({
       </div>
       <div
         data-timeline-lane-body="true"
-        className="relative overflow-hidden rounded-lg border border-gray-700/60 bg-[#0f131b]"
+        data-timeline-lane-locked={locked ? 'true' : undefined}
+        className={`relative overflow-hidden rounded-lg border border-gray-700/60 bg-[#0f131b] ${locked ? 'pointer-events-none opacity-55 saturate-50' : ''}`}
         onDragOver={(event) => {
           if (!onDropSourceItem || !event.dataTransfer.types.includes('application/x-flow-source-bin-item')) {
             return;
