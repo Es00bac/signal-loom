@@ -524,17 +524,19 @@
     font-size:.95em;color:var(--ink-2)}
   .fd-appico{width:2.2em;height:2.2em;border:1px solid rgba(63,214,255,.5);border-radius:.45em;display:grid;
     place-items:center;color:#7fe3ff;font-size:.9em;flex:none;background:rgba(63,214,255,.06)}
+  /* workspace switcher = the app's real icon tabs (ws-*.png are the shipped workspace icons) */
   .fd-wsgroup{display:flex;gap:.35em;border:1px solid rgba(150,182,220,.18);border-radius:.6em;
     padding:.22em .35em;background:rgba(10,16,24,.8);flex:none}
-  .fd-wsgroup i{height:1.5em;padding:0 .6em;border-radius:.35em;border:1px solid rgba(150,182,220,.22);
-    display:grid;place-items:center;font-size:.62em;letter-spacing:.02em;color:var(--ink-3);
-    font-style:normal;white-space:nowrap;flex:none}
+  .fd-wsgroup i{height:1.5em;width:1.7em;border-radius:.35em;border:1px solid rgba(150,182,220,.22);
+    display:grid;place-items:center;font-style:normal;flex:none}
+  .fd-wsgroup i img{width:1.1em;height:1.1em;border-radius:.22em;display:block;object-fit:contain}
   .fd-wsgroup i.on{border-color:rgba(63,214,255,.65);color:#bfefff;background:rgba(63,214,255,.12);position:relative}
   .fd-wsgroup i.on::after{content:"";position:absolute;right:-.28em;top:-.28em;width:.5em;height:.5em;border-radius:50%;
     background:var(--pink)}
   .fd-chipbtn{border:1px solid rgba(150,182,220,.25);border-radius:.45em;padding:.3em .7em;font-size:.72em;
     color:var(--ink-2);white-space:nowrap}
   .fd-chipbtn.hot{color:#ffe9ad;border-color:rgba(255,181,61,.4)}
+  .fd-chipbtn.lit{background:#e8eef7;color:#0b1017;border-color:transparent;font-weight:620}
   .fd-bar1 .grow{flex:1}
   .fd-zoom{display:flex;gap:.3em;align-items:center;font-size:.72em}
   .fd-zoom b{border:1px solid rgba(150,182,220,.25);border-radius:.45em;padding:.28em .6em;font-weight:500;color:var(--ink-2)}
@@ -607,54 +609,83 @@
     background-image:repeating-linear-gradient(180deg,rgba(150,182,220,.35) 0 1px,transparent 1px 8%)}
   .pp-ruler span{position:absolute;left:.35em}
 
-  /* video stage — panels mirror the app: title bar (Float/Collapse/Reset/Close) on every dockable */
-  .vd-pbar{display:flex;align-items:center;gap:.45em;font-family:var(--mono);font-size:.6em;letter-spacing:.16em;
-    text-transform:uppercase;color:var(--ink-3);padding:.55em .9em;border-bottom:1px solid var(--line);
-    background:rgba(5,8,13,.6);white-space:nowrap;overflow:hidden}
+  /* video stage — the app's real tiled layout: panels fill the window edge-to-edge with thin
+     gaps and square-ish corners (shown in one theme of ~20; structure, not palette, is the point) */
+  .vd .fd-canvas{background:#04060a}
+  .vd-panel{position:absolute;background:rgba(12,17,25,.97);border:1px solid rgba(110,125,150,.26);
+    border-radius:.25em;overflow:hidden;display:flex;flex-direction:column}
+  .vd-pbar{display:flex;align-items:center;gap:.45em;font-family:var(--mono);font-size:.55em;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--ink-3);padding:.5em .9em;border-bottom:1px solid var(--line);
+    background:rgba(5,8,13,.6);white-space:nowrap;overflow:hidden;flex:none}
+  .vd-pbar::before{content:"⋮⋮";letter-spacing:-.12em}
   .vd-pbar .grow{flex:1}
   .vd-pbar s{text-decoration:none;border:1px solid rgba(150,182,220,.2);border-radius:.35em;padding:.1em .5em;
     letter-spacing:.04em;color:var(--ink-3);flex:none}
-  .vd-lib{position:absolute;left:1em;top:1em;width:14.5cqw;background:rgba(13,15,21,.94);border:1px solid rgba(110,125,150,.4);
-    border-radius:.9em;overflow:hidden;display:flex;flex-direction:column}
-  .vd-lib .vd-libbody{padding:.7em .8em;display:flex;flex-direction:column;gap:.55em;min-height:0}
+  /* top band ends at 31.9cqw; the timeline owns the rest — same split as the app */
+  .vd-lib{left:.3cqw;top:.3cqw;width:12.4cqw;height:25.75cqw}
+  .vd-lib .vd-libbody{padding:.55em .6em;display:flex;flex-direction:column;gap:.45em;min-height:0;overflow:hidden}
   .vd-lib .fd-lib-item{margin-left:0}
-  .vd-imp{display:flex;flex-wrap:wrap;gap:.3em;font-size:.6em;color:var(--ink-3)}
-  .vd-imp b{font-weight:450;border:1px solid rgba(150,182,220,.22);border-radius:.4em;padding:.22em .55em;white-space:nowrap}
-  .vd-mon{position:absolute;top:1em;border:1px solid rgba(110,125,150,.4);border-radius:.9em;
-    overflow:hidden;background:#0a0d13}
-  .vd-smon{left:16.5cqw;width:28.75cqw}
-  .vd-pmon{left:46.25cqw;width:28.75cqw}
-  .vd-mh{display:flex;justify-content:space-between;align-items:center;gap:.6em;font-size:.66em;
-    color:var(--ink-3);padding:.45em .9em;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden}
-  .vd-mh b{color:#5ce6a1;font-family:var(--mono)}
-  .vd-mtoggle{display:inline-flex;border:1px solid rgba(150,182,220,.25);border-radius:.5em;overflow:hidden}
+  .vd-libhead{display:flex;align-items:center;gap:.4em;font-size:.7em;font-weight:580;color:var(--ink)}
+  .vd-libhead u{text-decoration:none;margin-left:auto;font-family:var(--mono);font-size:.78em;color:var(--ink-3);
+    border:1px solid rgba(150,182,220,.25);border-radius:.4em;padding:.05em .45em}
+  .vd-libsub{font-size:.54em;color:var(--ink-3);line-height:1.4}
+  .vd-imp{display:flex;flex-wrap:wrap;gap:.3em;font-size:.54em;color:var(--ink-3)}
+  .vd-imp b{font-weight:450;border:1px solid rgba(150,182,220,.22);border-radius:.4em;padding:.18em .45em;white-space:nowrap}
+  .vd-tchips{display:flex;gap:.25em;margin-top:.3em}
+  .vd-tchips b{font-family:var(--mono);font-size:.52em;font-weight:500;color:var(--ink-3);
+    border:1px solid rgba(150,182,220,.25);border-radius:.35em;padding:.12em .4em}
+  .vd-smon{left:13cqw;top:.3cqw;width:31.5cqw;height:25.75cqw}
+  .vd-pmon{left:44.8cqw;top:.3cqw;width:44cqw;height:25.75cqw}
+  .vd-mh{display:flex;justify-content:space-between;align-items:center;gap:.6em;font-size:.6em;
+    color:var(--ink-3);padding:.4em .9em;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;flex:none}
+  .vd-mh .ttl{color:var(--ink);font-weight:580;font-size:1.12em}
+  .vd-mtoggle{display:inline-flex;border:1px solid rgba(150,182,220,.25);border-radius:.5em;overflow:hidden;flex:none}
   .vd-mtoggle b{font-weight:480;padding:.2em .7em;color:var(--ink-3)}
   .vd-mtoggle b.on{color:#bfefff;background:rgba(63,214,255,.14)}
-  .vd-screen{position:relative;aspect-ratio:16/9;background:#000;overflow:hidden}
+  .vd-pmbody{display:flex;flex:1;min-height:0}
+  .vd-pstage{flex:1;min-width:0;display:flex;flex-direction:column;padding:.45em .55em;gap:.4em}
+  .vd-banner{font-size:.55em;border:1px solid rgba(92,230,161,.4);background:rgba(92,230,161,.08);color:#bde9cd;
+    border-radius:.3em;padding:.35em .6em;white-space:nowrap;overflow:hidden;flex:none}
+  .vd-banner b{color:#5ce6a1;font-family:var(--mono);letter-spacing:.1em}
+  .vd-pctl{display:flex;align-items:center;gap:.6em;font-family:var(--mono);font-size:.6em;color:var(--ink-2);flex:none}
+  .vd-pctl i{font-style:normal;color:var(--ink)}
+  .vd-pinfo{width:12.6cqw;flex:none;border-left:1px solid var(--line);padding:.5em .6em;overflow:hidden;
+    display:flex;flex-direction:column;gap:.4em}
+  .vd-pinfo .ih{font-family:var(--mono);font-size:.52em;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3)}
+  .vd-pinfo .btn{font-size:.56em;text-align:center;border:1px solid rgba(150,182,220,.3);border-radius:.4em;
+    padding:.3em .5em;color:var(--ink-2)}
+  .vd-pinfo .btn.lit{background:#e8eef7;color:#0b1017;border-color:transparent;font-weight:600}
+  .vd-irow{display:flex;justify-content:space-between;gap:.5em;font-size:.56em;color:var(--ink-3);white-space:nowrap;overflow:hidden}
+  .vd-irow b{font-family:var(--mono);font-weight:500;color:var(--ink-2)}
+  .vd-screen{position:relative;background:#000;overflow:hidden;flex:none;aspect-ratio:16/9;min-height:0}
+  .vd-pstage .vd-screen{flex:1;aspect-ratio:auto}
   .vd-screen img,.vd-screen video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transition:opacity .3s linear}
   #vd-p1{opacity:0}#vd-p2{opacity:0}
   #vd-sm{opacity:0}
   .vd-smempty{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:1em;
-    color:var(--ink-3);font-size:.68em;transition:opacity .3s}
+    color:var(--ink-3);font-size:.62em;transition:opacity .3s}
   .vd-smempty b{display:block;color:var(--ink-2);font-size:1.15em;margin-bottom:.4em}
-  .vd-minfo{display:flex;align-items:center;gap:.6em;padding:.45em .8em;border-top:1px solid var(--line);
-    white-space:nowrap;overflow:hidden;transition:opacity .3s}
-  .vd-minfo .nm{font-size:.7em;font-weight:560;color:var(--ink)}
-  .vd-minfo .mt{font-family:var(--mono);font-size:.56em;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+  .vd-minfo{display:flex;align-items:center;gap:.5em;padding:.4em .7em;border-top:1px solid var(--line);
+    white-space:nowrap;overflow:hidden;transition:opacity .3s;flex:none}
+  .vd-minfo .nm{font-size:.64em;font-weight:560;color:var(--ink)}
+  .vd-minfo .mt{font-family:var(--mono);font-size:.52em;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
   .vd-minfo .grow{flex:1}
-  .vd-minfo .add{font-size:.58em;border:1px solid rgba(150,182,220,.3);border-radius:.45em;padding:.22em .45em;
-    color:var(--ink-2);background:#0f131b;flex:none}
+  .vd-minfo .add{font-family:var(--mono);font-size:.56em;border:1px solid rgba(150,182,220,.3);border-radius:.4em;
+    padding:.2em .5em;color:var(--ink-2);background:#0f131b;flex:none}
   .vd-minfo .add.hot{color:#bfefff;border-color:rgba(63,214,255,.45)}
-  .vd-insp{top:1em;bottom:auto;height:auto;width:21.5cqw;padding:0 0 1em;overflow:hidden}
-  .vd-insp .pp-ih,.vd-insp .pp-row{margin-inline:1em}
-  .vd-insp .inote{margin:.5em 1em .6em;font-size:.64em;color:var(--ink-3);line-height:1.45}
-  .vd-select{border:1px solid var(--line-2);border-radius:.4em;padding:.15em .7em;transition:.3s}
-  .vd-select.fade{border-color:rgba(63,214,255,.6);color:#bfefff;background:rgba(63,214,255,.1)}
-  .vd-addkey{border:1px solid rgba(63,214,255,.4);border-radius:.4em;padding:.25em .8em;color:#bfefff;background:rgba(63,214,255,.08)}
-  .vd-tl{position:absolute;left:1em;right:1em;bottom:1.6em;top:24.5cqw;background:rgba(13,15,21,.94);
-    border:1px solid rgba(110,125,150,.4);border-radius:.9em;padding:0 0 .5em;overflow:hidden}
-  .vd-tl .vd-tlbody{padding:.35em .9em 0}
-  .vd-th{font-size:.72em;color:var(--ink-2);padding-bottom:.35em;font-weight:560}
+  .vd-insp{left:89.1cqw;top:.3cqw;width:10.6cqw;height:25.75cqw}
+  .vd-insp .ibody{padding:.45em .6em;display:flex;flex-direction:column;gap:.32em;overflow:hidden}
+  .vd-insp .iname{font-size:.6em;font-weight:580;color:var(--ink);border:1px solid rgba(150,182,220,.2);
+    border-radius:.35em;padding:.25em .45em;white-space:nowrap;overflow:hidden}
+  .vd-insp .ih{font-family:var(--mono);font-size:.5em;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-top:.3em}
+  .vd-insp .inote{font-size:.54em;color:var(--ink-3);line-height:1.4}
+  .vd-islider{height:.35em;border-radius:99em;background:rgba(150,182,220,.15);position:relative}
+  .vd-islider u{position:absolute;left:0;top:0;bottom:0;width:100%;border-radius:99em;background:#3fd6ff;display:block}
+  .vd-addkey{border:1px solid rgba(63,214,255,.4);border-radius:.4em;padding:.22em .6em;color:#bfefff;
+    background:rgba(63,214,255,.08);font-size:.6em;text-align:center}
+  .vd-tl{left:.3cqw;right:.3cqw;bottom:.3cqw;top:26.35cqw}
+  .vd-tl .vd-tlbody{padding:.3em .8em 0;overflow:hidden;flex:1;min-height:0}
+  .vd-th{font-size:.66em;color:var(--ink-2);padding-bottom:.3em;font-weight:560}
   .vd-th span{color:var(--ink)}
   .vd-msl{display:inline-block;width:3.2em;height:.4em;border-radius:99em;background:rgba(150,182,220,.15);
     vertical-align:middle;margin-inline:.3em;position:relative;font-style:normal}
@@ -674,14 +705,14 @@
     background:rgba(23,42,58,.55);overflow:hidden}
   .vd-ruler span{flex:1;padding:.18em 0 .18em .45em;border-left:1px solid rgba(150,182,220,.18)}
   .vd-ruler span:first-child{border-left:0}
-  .vd-track{display:flex;align-items:stretch;gap:.6em;margin-top:.4em}
-  .vd-track u{text-decoration:none;font-family:var(--mono);font-size:.72em;letter-spacing:.08em;color:var(--ink-2);
-    width:6.7em;flex:none;text-transform:uppercase;border:1px solid rgba(150,182,220,.16);border-radius:.4em;
-    background:rgba(10,14,20,.8);padding:.3em .5em;display:flex;flex-direction:column;justify-content:center;gap:.15em}
+  .vd-track{display:flex;align-items:stretch;gap:.5em;margin-top:.26em}
+  .vd-track u{text-decoration:none;font-family:var(--mono);font-size:.66em;letter-spacing:.08em;color:var(--ink-2);
+    width:6em;flex:none;text-transform:uppercase;border:1px solid rgba(150,182,220,.16);border-radius:.3em;
+    background:rgba(10,14,20,.8);padding:.25em .5em;display:flex;flex-direction:column;justify-content:center;gap:.12em}
   .vd-track u i{font-style:normal;font-size:.72em;letter-spacing:.14em;color:var(--ink-3)}
-  .vd-lane{position:relative;flex:1;height:3.1em;border:1px dashed rgba(150,182,220,.2);border-radius:.4em;background:rgba(8,11,17,.6)}
-  .vd-hint{position:absolute;inset:0;display:flex;align-items:center;padding-left:1em;font-size:.62em;
-    color:var(--ink-3);opacity:.8;transition:opacity .3s;white-space:nowrap;overflow:hidden}
+  .vd-lane{position:relative;flex:1;height:2.3em;border:1px dashed rgba(150,182,220,.18);border-radius:.3em;background:rgba(8,11,17,.6)}
+  .vd-hint{position:absolute;inset:0;display:flex;align-items:center;padding-left:1em;font-size:.56em;
+    color:var(--ink-3);opacity:.75;transition:opacity .3s;white-space:nowrap;overflow:hidden}
   .vd-clip{position:absolute;top:.22em;bottom:.22em;border-radius:.35em;overflow:hidden;border:1px solid rgba(63,214,255,.45);
     background:#12202b center/auto 100% repeat-x;opacity:0;transform:scale(.94);transition:opacity .4s,transform .4s var(--ease);
     font-family:var(--mono);font-size:.7em;letter-spacing:.06em;color:#dff4ff}
@@ -703,10 +734,10 @@
     background:rgba(9,20,15,.9);opacity:0;transform:scale(.94);transition:opacity .4s,transform .4s var(--ease);overflow:hidden}
   .vd-aclip.on{opacity:1;transform:none}
   .vd-aclip svg{position:absolute;inset:0;width:100%;height:100%}
-  .vd-playhead{position:absolute;top:4.9em;bottom:.5em;left:7.4em;width:2px;background:#5ce6a1;
-    box-shadow:0 0 .6em rgba(92,230,161,.8);z-index:3}
+  .vd-playhead{position:absolute;top:4.4em;bottom:.4em;left:7.4em;width:2px;background:#f43f5e;
+    box-shadow:0 0 .5em rgba(244,63,94,.7);z-index:3}
   .vd-playhead::before{content:"";position:absolute;top:-.5em;left:50%;margin-left:-.45em;border:.45em solid transparent;
-    border-top-color:#5ce6a1}
+    border-top-color:#f43f5e}
   .vd-ghost{position:absolute;z-index:8;width:5.5em;height:3.4em;border-radius:.4em;overflow:hidden;
     border:1px solid rgba(63,214,255,.6);box-shadow:0 0 1.2em -0.2em rgba(63,214,255,.8);opacity:0;
     transition:left .9s var(--ease),top .9s var(--ease),opacity .25s;background:#0a0d13 center/cover}
@@ -863,7 +894,7 @@
     <p class="sub" data-reveal>A looping replay of the real Flow workflow, mocked in plain HTML — no video file. A sketch, a style reference, and a typed prompt get wired into <b>Image Generation</b>; the result is wired into an <b>Envelope</b> that already holds two assets, and lands in the shared <b>Source Library</b> the moment it arrives. <span style="color:var(--ink-3)">(The reference thumbnails were generated with nano-banana over Vertex — the same call the app makes.)</span></p>
     <div class="fd-wrap" data-reveal>
       <div class="fd-stage" id="fd" role="img" aria-label="Animated replay of the Signal Loom Flow workspace: a rough sketch, a style reference and a text prompt are connected to an Image Generation node, the run produces an inked and coloured portrait, and the result is connected into the brand-kit Envelope which then shows three items in the Source Library panel.">
-        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i class="on">Flow</i><i>Video</i><i>Image</i><i>Paper</i></span><span class="fd-chipbtn">✨ ▾</span><span class="fd-chipbtn">🗃 ▾</span><span class="fd-chipbtn">≡ ▾</span><span class="fd-chipbtn">⟳ ▾</span><span class="fd-chipbtn">Σ ▾</span><span class="fd-chipbtn">{ } ▾</span><span class="fd-chipbtn hot">Main Flow ▾</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⌘</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
+        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i class="on"><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i><img src="assets/demo/ws-editor.png" alt="Video"/></i><i><img src="assets/demo/ws-image.png" alt="Image"/></i><i><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">✨ ▾</span><span class="fd-chipbtn">🗃 ▾</span><span class="fd-chipbtn">≡ ▾</span><span class="fd-chipbtn">⟳ ▾</span><span class="fd-chipbtn">Σ ▾</span><span class="fd-chipbtn">{ } ▾</span><span class="fd-chipbtn hot">Main Flow ▾</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⌘</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
         <div class="fd-bar2"><b>Project</b><b>Flow</b><b>View</b><b>Window</b><b>Help</b><span class="grow"></span><u>☰</u></div>
         <div class="fd-canvas">
           <svg class="fd-svg" id="fd-svg"></svg>
@@ -938,7 +969,7 @@
     <p class="sub" data-reveal>The Paper workspace, replayed: rule out panel frames, hold <b>Ctrl</b> to reveal <b>vertex handles</b> and drag an edge midpoint into a custom shape, set border weight and colour <b>in millimetres</b>, tint the page, and drop in a speech bubble with a draggable tail — Preflight keeps it print-ready.</p>
     <div class="fd-wrap" data-reveal>
       <div class="fd-stage pp" id="pp" role="img" aria-label="Animated replay of the Signal Loom Paper workspace: three comic panel frames are drawn on a page, one is reshaped with Ctrl vertex handles, border width and colour are changed in the Inspector, the page is tinted, and a speech bubble with a draggable tail is added.">
-        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i>Flow</i><i>Video</i><i>Image</i><i class="on">Paper</i></span><span class="fd-chipbtn">✓ 0 warnings</span><span class="fd-chipbtn hot">⬇ Export Document ▾</span><span class="fd-chipbtn">🖇</span><span class="fd-chipbtn">▥</span><span class="fd-chipbtn">▦</span><span class="fd-chipbtn">🔍</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⌘</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
+        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i><img src="assets/demo/ws-editor.png" alt="Video"/></i><i><img src="assets/demo/ws-image.png" alt="Image"/></i><i class="on"><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">✓ 0 warnings</span><span class="fd-chipbtn hot">⬇ Export Document ▾</span><span class="fd-chipbtn">🖇</span><span class="fd-chipbtn">▥</span><span class="fd-chipbtn">▦</span><span class="fd-chipbtn">🔍</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⌘</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
         <div class="fd-bar2"><b>Project</b><b>File</b><b>Edit</b><b>Layout</b><b>Insert</b><b>Tools</b><b>View</b><b>Window</b><b>Help</b><span class="grow"></span><u>☰</u></div>
         <div class="fd-canvas">
           <div class="pp-bintab">Source Bin</div>
@@ -1018,7 +1049,7 @@
     <p class="sub" data-reveal>Paper's <b>Comic SFX designer</b>: eight presets — BANG!, KAPOW!, SCREECH, WHIRRRR, BOOM!, CRASH!, ZAP!, SLAM! — then every parameter is yours: fill, stroke and shadow measured in millimetres, skew and rotation, letter tracking, and <b>trailing copies</b> that sell the motion.</p>
     <div class="fd-wrap" data-reveal>
       <div class="fd-stage sx" id="sx" role="img" aria-label="Animated replay of Paper's Comic SFX designer: the KAPOW! preset is stamped over comic art, then skewed, its stroke and shadow thickened in millimetres, and trailing echo copies added.">
-        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i>Flow</i><i>Video</i><i>Image</i><i class="on">Paper</i></span><span class="fd-chipbtn">✓ 0 warnings</span><span class="fd-chipbtn hot">⬇ Export Document ▾</span><span class="fd-chipbtn">🖇</span><span class="fd-chipbtn">▥</span><span class="fd-chipbtn">▦</span><span class="fd-chipbtn">🔍</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⌘</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
+        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i><img src="assets/demo/ws-editor.png" alt="Video"/></i><i><img src="assets/demo/ws-image.png" alt="Image"/></i><i class="on"><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">✓ 0 warnings</span><span class="fd-chipbtn hot">⬇ Export Document ▾</span><span class="fd-chipbtn">🖇</span><span class="fd-chipbtn">▥</span><span class="fd-chipbtn">▦</span><span class="fd-chipbtn">🔍</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⌘</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
         <div class="fd-bar2"><b>Project</b><b>File</b><b>Edit</b><b>Layout</b><b>Insert</b><b>Tools</b><b>View</b><b>Window</b><b>Help</b><span class="grow"></span><u>☰</u></div>
         <div class="fd-canvas">
           <div class="pp-bintab">Source Bin</div>
@@ -1075,7 +1106,7 @@
     <p class="sub" data-reveal>The Image workspace's brush engine, replayed with a simulated stylus: <b>pressure</b> drives size and flow, <b>tilt</b> shades like the side of the lead, <b>Colour Rate</b> mixes foreground into background mid-stroke, and <b>Shift</b> rules dead-straight lines — on the GPU brush engine (WebGL2, dirty-rect updates).</p>
     <div class="fd-wrap" data-reveal>
       <div class="fd-stage br" id="br" role="img" aria-label="Animated replay of the Signal Loom brush engine: a simulated stylus paints strokes whose width follows pen pressure, tilts to shade broadly, blends foreground to background colour along a stroke, and rules a straight line with Shift held.">
-        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i>Flow</i><i>Video</i><i class="on">Image</i><i>Paper</i></span><span class="fd-chipbtn">Tools</span><span class="fd-chipbtn">Panels</span><span class="fd-chipbtn">Assets</span><span class="fd-chipbtn">Rulers</span><span class="fd-chipbtn">Grid</span><span class="fd-chipbtn hot">Guides</span><span class="fd-chipbtn">Layout&nbsp;&nbsp;Painting ▾</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⌘</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
+        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i><img src="assets/demo/ws-editor.png" alt="Video"/></i><i class="on"><img src="assets/demo/ws-image.png" alt="Image"/></i><i><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">Tools</span><span class="fd-chipbtn">Panels</span><span class="fd-chipbtn">Assets</span><span class="fd-chipbtn">Rulers</span><span class="fd-chipbtn">Grid</span><span class="fd-chipbtn hot">Guides</span><span class="fd-chipbtn">Layout&nbsp;&nbsp;Painting ▾</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⌘</b><b>📂</b><b>⚙</b></span><span class="fd-cost">$0.0000</span></div>
         <div class="fd-bar2"><b>Project</b><b>File</b><b>Edit</b><b>Image</b><b>Select</b><b>Tools</b><b>View</b><b>Window</b><b>Help</b><span class="grow"></span><u>☰</u></div>
         <div class="fd-tabsrow"><b>＋</b><b>📂</b><b>⎘</b><span class="doctab"><i></i>portrait.slimg<b>×</b></span></div>
         <div class="fd-canvas">
@@ -1138,54 +1169,86 @@
   <div class="node-head"><span class="nid">07 · video-demo</span><span class="ntype">replay</span><span class="nstate"><span class="txt"></span><i></i></span></div>
   <div class="node-body">
     <h2 data-reveal>Cut it <em>together.</em></h2>
-    <p class="sub" data-reveal>The Video workspace, replayed with its real two-monitor layout: a clip from the <b>Project Source Bin</b> is previewed in the <b>Source Monitor</b> and sent to a lane with <b>＋ Add Video</b>, a second clip is dragged straight onto the <b>Sequencer Timeline</b>, a crossfade is built the real way — <b>opacity keyframes</b>, the first key dragged to 0% so the rubber-band line ramps V2 in over V1 — a score lands on the audio lane, and <b>scale keyframes</b> (◇) animate a push-in while the playhead scrubs the <b>Program Monitor</b> — playing two real Veo shots, the same character cut between two angles.</p>
+    <p class="sub" data-reveal>The Video workspace, replayed with its real two-monitor layout: a clip from the <b>Project Source Bin</b> is previewed in the <b>Source Monitor</b> and sent to a lane with its <b>V1 track chip</b>, a second clip is dragged straight onto the <b>Sequencer Timeline</b>, a crossfade is built the real way — <b>opacity keyframes</b>, the first key dragged to 0% so the rubber-band line ramps V2 in over V1 — a score lands on the audio lane, and <b>scale keyframes</b> (◇) animate a push-in while the playhead scrubs the <b>Program Monitor</b> — playing two real Veo shots, the same character cut between two angles. <span style="color:var(--ink-3)">(Shown in one of the app’s 20+ themes.)</span></p>
     <div class="fd-wrap" data-reveal>
       <div class="fd-stage vd" id="vd" role="img" aria-label="Animated replay of the Signal Loom Video workspace with its dual monitors: a source clip is selected from the Project Source Bin, previewed in the Source Monitor, and added to track V1; a second clip is dragged onto V2; a crossfade is built with opacity keyframes whose line is dragged up from zero; an audio clip with a waveform is added; scale keyframes are set; and the playhead scrubs while the Program Monitor plays the result.">
-        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i>Flow</i><i class="on">Video</i><i>Image</i><i>Paper</i></span><span class="fd-chipbtn hot">Sequence 01 ▾</span><span class="fd-chipbtn">↶</span><span class="fd-chipbtn">↷</span><span class="fd-chipbtn">＋ Source Bin</span><span class="fd-chipbtn">＋ Composition</span><span class="fd-chipbtn hot">▶ Render</span><span class="fd-chipbtn">Bin</span><span class="fd-chipbtn">Source</span><span class="fd-chipbtn">Program</span><span class="fd-chipbtn">Inspector</span><span class="grow"></span><span class="fd-zoom"><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>⚙</b></span></div>
+        <div class="fd-bar1"><span class="fd-appico">◈</span><span class="fd-wsgroup"><i><img src="assets/demo/ws-flow.png" alt="Flow"/></i><i class="on"><img src="assets/demo/ws-editor.png" alt="Video"/></i><i><img src="assets/demo/ws-image.png" alt="Image"/></i><i><img src="assets/demo/ws-paper.png" alt="Paper"/></i></span><span class="fd-chipbtn">Source Library · 3 assets · 1 bin</span><span class="fd-chipbtn">composition-04982a49… ▾</span><span class="fd-chipbtn">↶ Undo</span><span class="fd-chipbtn">↷ Redo</span><span class="fd-chipbtn">＋ Source Bin</span><span class="fd-chipbtn">＋ Composition</span><span class="fd-chipbtn lit">▶ Render</span><span class="fd-chipbtn">Bin</span><span class="fd-chipbtn">Source</span><span class="fd-chipbtn">Program</span><span class="fd-chipbtn">Inspector</span><span class="fd-chipbtn">Help</span><span class="grow"></span><span class="fd-zoom"><b>100%</b><b>−</b><b>Fit</b><b>+</b><b>⤢</b><b>📂 Projects</b><b>⚙</b></span><span class="fd-cost">$0.94</span></div>
         <div class="fd-bar2"><b>Project</b><b>Edit</b><b>Timeline</b><b>Keyframes</b><b>View</b><b>Window</b><b>Help</b><span class="grow"></span><u>☰</u></div>
         <div class="fd-canvas">
-          <div class="vd-lib" id="vd-lib">
-            <div class="vd-pbar">Project Source Bin<span class="grow"></span><s>Float</s><s>Close</s></div>
+          <div class="vd-panel vd-lib" id="vd-lib">
+            <div class="vd-pbar">Project Source Bin<span class="grow"></span><s>⧉</s></div>
             <div class="vd-libbody">
-              <div class="br-tabs"><b class="on">Media</b><b>Editor Assets</b></div>
+              <div class="vd-libhead">🗄 Source Library<u>3</u></div>
+              <div class="vd-libsub">Mixed media, generated assets, captions and reusable timeline elements.</div>
+              <div class="br-tabs"><b class="on">Library</b><b>Design Assets</b></div>
               <div class="vd-imp"><b>⬆ Import Media</b><b>Video</b><b>Audio</b><b>Captions</b></div>
-              <div class="fd-lib-item" id="vd-it1"><img src="assets/demo/poster-walk.jpg" alt=""/><span>walk-wide.mp4</span></div>
-              <div class="fd-lib-item" id="vd-it2"><img src="assets/demo/poster-turn.jpg" alt=""/><span>turn-cu.mp4</span></div>
-              <div class="fd-lib-item" id="vd-it3"><svg viewBox="0 0 24 14" width="22" height="14"><path d="M1 7 L4 3 L7 11 L10 5 L13 9 L16 2 L19 12 L23 7" stroke="#3fd6ff" fill="none" stroke-width="1.6"/></svg><span>score.wav</span></div>
+              <div class="fd-lib-item" id="vd-it1"><img src="assets/demo/poster-walk.jpg" alt=""/><span>walk-wide.mp4<span class="vd-tchips"><b>V1</b><b>V2</b><b>V3</b><b>V4</b></span></span></div>
+              <div class="fd-lib-item" id="vd-it2"><img src="assets/demo/poster-turn.jpg" alt=""/><span>turn-cu.mp4<span class="vd-tchips"><b>V1</b><b>V2</b><b>V3</b><b>V4</b></span></span></div>
+              <div class="fd-lib-item" id="vd-it3"><svg viewBox="0 0 24 14" width="22" height="14"><path d="M1 7 L4 3 L7 11 L10 5 L13 9 L16 2 L19 12 L23 7" stroke="#3fd6ff" fill="none" stroke-width="1.6"/></svg><span>score.wav<span class="vd-tchips"><b>A1</b><b>A2</b></span></span></div>
             </div>
           </div>
-          <div class="vd-mon vd-smon">
-            <div class="vd-pbar">Source Monitor<span class="grow"></span><s>Float</s><s>Collapse</s><s>Reset</s><s>Close</s></div>
-            <div class="vd-mh"><span>Preview the selected source asset before dropping it into the cut.</span></div>
+          <div class="vd-panel vd-smon">
+            <div class="vd-pbar">Source Monitor<span class="grow"></span></div>
+            <div class="vd-mh" style="flex-direction:column;align-items:flex-start;gap:.1em"><span class="ttl">Source Monitor</span><span>Preview the selected source asset before dropping it into the cut.</span></div>
             <div class="vd-screen">
               <video id="vd-sm" src="assets/demo/veo-walk.mp4" poster="assets/demo/poster-walk.jpg" muted loop playsinline preload="metadata"></video>
               <div class="vd-smempty" id="vd-smempty"><span><b>No source selected</b>Select a source item from the source bin to inspect it here before you place it on the timeline.</span></div>
             </div>
-            <div class="vd-minfo" id="vd-minfo" style="opacity:0"><span class="nm">walk-wide.mp4</span><span class="mt">video · 8.0s</span><span class="grow"></span><span class="add hot" id="vd-addv">🎞 ＋ Add Video ▾</span><span class="add">♪ ＋ Add Audio ▾</span></div>
+            <div class="vd-minfo" id="vd-minfo" style="opacity:0"><span class="nm">walk-wide.mp4</span><span class="mt">video · video/mp4</span><span class="grow"></span><span class="add hot" id="vd-addv">🎞 V1</span><span class="add">🎞 V2</span><span class="add">🎞 V3</span><span class="add">🎞 V4</span></div>
           </div>
-          <div class="vd-mon vd-pmon">
-            <div class="vd-pbar">Program Monitor<span class="grow"></span><s>Float</s><s>Collapse</s><s>Reset</s><s>Close</s></div>
-            <div class="vd-mh"><span class="vd-mtoggle"><b class="on">Edit Stage</b><b>Rendered Preview</b></span> <b id="vd-tc">00:00:00</b></div>
-            <div class="vd-screen"><video id="vd-p1" src="assets/demo/veo-walk.mp4" poster="assets/demo/poster-walk.jpg" muted loop playsinline preload="metadata"></video><video id="vd-p2" src="assets/demo/veo-turn.mp4" poster="assets/demo/poster-turn.jpg" muted loop playsinline preload="metadata"></video></div>
+          <div class="vd-panel vd-pmon">
+            <div class="vd-pbar">Program Monitor<span class="grow"></span><s>＋ New Comp</s><s>Hide Controls</s></div>
+            <div class="vd-pmbody">
+              <div class="vd-pstage">
+                <div style="display:flex;align-items:center;gap:.6em;flex:none"><span class="vd-mtoggle"><b>Edit Stage</b><b class="on">Rendered Preview</b></span></div>
+                <div class="vd-banner"><b>PREVIEW READY</b> — Rendered editor sequence · 2 visual clips · 30 fps · Review H.264 1080p · <b>COMPLETED</b></div>
+                <div class="vd-screen"><video id="vd-p1" src="assets/demo/veo-walk.mp4" poster="assets/demo/poster-walk.jpg" muted loop playsinline preload="metadata"></video><video id="vd-p2" src="assets/demo/veo-turn.mp4" poster="assets/demo/poster-turn.jpg" muted loop playsinline preload="metadata"></video></div>
+                <div class="vd-pctl">▶&nbsp; <i id="vd-tc">0:00</i>&thinsp;/&thinsp;0:12<span style="flex:1"></span>🔊&nbsp;⛶</div>
+              </div>
+              <div class="vd-pinfo">
+                <span class="ih">Sequence Info</span>
+                <div class="vd-irow"><span>Canvas</span><b>16:9 · 1080p</b></div>
+                <div class="vd-irow"><span>Timebase</span><b>30 fps</b></div>
+                <div class="vd-irow"><span>Length</span><b>12.0s</b></div>
+                <div class="vd-irow"><span>Tracks</span><b>V:2 · A:1</b></div>
+                <span class="ih" style="margin-top:.35em">Settings</span>
+                <div class="vd-irow"><span>Size</span><b>1080p ▾</b></div>
+                <div class="vd-irow"><span>Codec</span><b>H.264 ▾</b></div>
+                <span style="flex:1"></span>
+                <span class="btn">Save Video</span>
+                <span class="btn lit">▶ Render</span>
+              </div>
+            </div>
           </div>
-          <div class="pp-inspector vd-insp">
-            <div class="vd-pbar">Inspector<span class="grow"></span><s>Float</s><s>Collapse</s><s>Reset</s><s>Close</s></div>
-            <div class="inote">Tune the selected clip, or inspect the currently selected source asset.</div>
-            <div class="pp-ih">Clip</div>
-            <div class="pp-row"><span>Opacity</span><b id="vd-kf-o">100%</b></div>
-            <div class="pp-row"><span>Scale</span><b id="vd-kf-s">100%</b></div>
-            <div class="pp-row"><b class="vd-addkey" id="vd-addkey">◇ Add Key</b></div>
+          <div class="vd-panel vd-insp">
+            <div class="vd-pbar">Inspector<span class="grow"></span></div>
+            <div class="ibody">
+              <div class="inote">Tune the selected clip, or inspect the currently selected source asset.</div>
+              <span class="ih">Selected Visual Clip</span>
+              <div class="iname">turn-cu.mp4</div>
+              <div class="vd-irow"><span>Track</span><b>Video 2</b></div>
+              <div class="vd-irow"><span>Start</span><b>4.1s</b></div>
+              <div class="vd-irow"><span>Duration</span><b>8.0s</b></div>
+              <div class="vd-irow"><span>Fit mode</span><b>Contain</b></div>
+              <div class="vd-irow"><span>Zoom</span><b id="vd-kf-s">100%</b></div>
+              <div class="vd-irow"><span>Opacity</span><b id="vd-kf-o">100%</b></div>
+              <div class="vd-islider"><u></u></div>
+              <span class="ih">Keyframes</span>
+              <div class="vd-addkey" id="vd-addkey">◇ Add Key</div>
+            </div>
           </div>
-          <div class="vd-tl">
-            <div class="vd-pbar">Timeline<span class="grow"></span><s>Float</s><s>Collapse</s><s>Reset</s><s>Close</s></div>
+          <div class="vd-panel vd-tl">
+            <div class="vd-pbar">Timeline<span class="grow"></span></div>
             <div class="vd-tlbody">
             <div class="vd-th">▦ Sequencer Timeline</div>
             <div class="vd-tools"><b class="on">▷ Select</b><b>✂ Cut</b><b>⇆ Slip</b><b>🖐 Hand</b><b>＋ Snap</b><b>‹ Key</b><b>◇ Add Key</b><b>Key ›</b><em>Zoom <i class="vd-msl"><u style="width:55%"></u></i> 150% · V H <i class="vd-msl"><u style="width:70%"></u></i> 84 · A H <i class="vd-msl"><u style="width:52%"></u></i> 64</em><b>Zoom To Fit</b><b id="vd-clipn">No clips yet</b></div>
             <div class="vd-ruler"><span>0s</span><span>2s</span><span>4s</span><span>6s</span><span>8s</span><span>10s</span><span>12s</span></div>
-            <div class="vd-track"><u><b>V2</b><i id="vd-n-v2">0 clips</i></u><div class="vd-lane" id="vd-v2"></div></div>
             <div class="vd-track"><u><b>V1</b><i id="vd-n-v1">0 clips</i></u><div class="vd-lane" id="vd-v1"><span class="vd-hint" id="vd-hint-v">Add image, video, composition, or text items from the source bin into this video lane.</span></div></div>
-            <div class="vd-track"><u><b>A1 · 100%</b><i id="vd-n-a1">0 clips</i></u><div class="vd-lane" id="vd-a1"><span class="vd-hint" id="vd-hint-a">Add audio items from the source bin into this audio lane.</span></div></div>
-            <i class="vd-playhead" id="vd-playhead"></i>
+            <div class="vd-track"><u><b>V2</b><i id="vd-n-v2">0 clips</i></u><div class="vd-lane" id="vd-v2"></div></div>
+            <div class="vd-track"><u><b>V3</b><i>0 clips</i></u><div class="vd-lane"><span class="vd-hint">Add image, video, composition, or text items from the source bin into this video lane.</span></div></div>
+            <div class="vd-track"><u><b>V4</b><i>0 clips</i></u><div class="vd-lane"><span class="vd-hint">Add image, video, composition, or text items from the source bin into this video lane.</span></div></div>
+            <div class="vd-track"><u><b>A1</b><i id="vd-n-a1">0 clips</i></u><div class="vd-lane" id="vd-a1"><span class="vd-hint" id="vd-hint-a">Add audio clips or video-with-audio clips from the source bin into this lane.</span></div></div>
+                        <i class="vd-playhead" id="vd-playhead"></i>
             </div>
           </div>
           <div class="vd-ghost" id="vd-ghost"></div>
@@ -2308,7 +2371,7 @@ function makeSim(rootId, TOTAL, script, finalState){
     it1.style.boxShadow = ''; it1.style.borderColor = '';
     hintV.style.opacity = .8; hintA.style.opacity = .8;
     setCount('vd-n-v1', 0); setCount('vd-n-v2', 0); setCount('vd-n-a1', 0); setClipN(0);
-    tc.textContent = '00:00:00';
+    tc.textContent = '0:00';
     document.getElementById('vd-kf-o').textContent = '100%';
     document.getElementById('vd-kf-s').textContent = '100%';
     sim.home();
@@ -2319,7 +2382,7 @@ function makeSim(rootId, TOTAL, script, finalState){
       it1.style.boxShadow = '0 0 .8em -0.2em rgba(63,214,255,.9)'; it1.style.borderColor = '#3fd6ff';
       smEmpty.style.opacity = 0; sm.style.opacity = 1; smInfo.style.opacity = 1;
       try{ sm.currentTime = 0; sm.play(); }catch(e){} });
-    sim.later(2.4, function(){ sim.cap('＋ Add Video drops it on a lane — V1');
+    sim.later(2.4, function(){ sim.cap('One tap on the V1 track chip drops it on the timeline');
       sim.moveTo(addV, .8); });
     sim.later(3.3, function(){ sim.click();
       c1 = mkClip(v1, 'walk-wide.mp4 · 0:08', 2, 42, 'assets/demo/poster-walk.jpg');
@@ -2384,7 +2447,7 @@ function makeSim(rootId, TOTAL, script, finalState){
            crosses the V1/V2 overlap (lane 34%–44% ≈ 4.1s–5.3s on the 12s ruler). */
         ph.style.left = (lanes.x - tl0.x + lanes.w*t)+'px';
         var pct = t*100;
-        tc.textContent = '00:00:' + String(Math.floor(t*12)).padStart(2, '0');
+        tc.textContent = '0:' + String(Math.floor(t*12)).padStart(2, '0');
         if(pct < 2){ p1.style.opacity = 0; p2.style.opacity = 0; } /* before clip 1's in-point: black */
         else if(pct < 34){ p1.style.opacity = 1; p2.style.opacity = 0; }
         else if(pct < 44){
