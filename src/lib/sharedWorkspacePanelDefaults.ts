@@ -49,7 +49,10 @@ const SHARED_WORKSPACE_PANEL_TOP_OFFSET_PX: Record<SharedWorkspaceId, number> = 
   // document-tab line; shared docked panels (e.g. the Source Bin) must start below it (~139px) so
   // they don't cover those controls.
   image: 144,
-  paper: 64,
+  // Paper's toolbar is portaled into the shared top bar, so nothing occupies the top of the
+  // workspace container — the old 64px offset just left the shared Source Bin hanging 64px below
+  // Paper's own panels (its Inspector starts flush at the container top).
+  paper: 0,
 };
 
 export function getSharedWorkspacePanelDefaults(workspaceId: SharedWorkspaceId): SharedWorkspacePanelDefault[] {

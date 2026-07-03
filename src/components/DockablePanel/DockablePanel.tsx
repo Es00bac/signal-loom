@@ -12,6 +12,7 @@ import {
   resolveDockablePanelSnapPreviewRect,
   resolveDockablePanelSnapTarget,
   type DockablePanelLayout,
+  type DockablePanelSnapTarget,
   type DockablePanelStackRect,
   type DockZone,
   type PanelRect,
@@ -51,6 +52,13 @@ export interface DockablePanelProps {
   onClose?: () => void;
   tabs?: ReactNode;
   externalWindowKey?: string;
+  /**
+   * Whether this panel may occupy its own split slot in the center zone
+   * (centerDockPresentation === 'split'). Panels that can't (e.g. Inspector) tab-join the
+   * reference panel when dropped ANYWHERE on a center panel — inserting them as a bare center
+   * sibling would degrade the whole center split to a one-visible-entry tab strip.
+   */
+  centerSplitCapable?: boolean;
 }
 
 export type DockablePanelChrome = 'standard' | 'compact-floating';
@@ -169,6 +177,7 @@ export function DockablePanel({
   onClose,
   tabs,
   externalWindowKey,
+  centerSplitCapable = true,
 }: DockablePanelProps) {
   const dragState = useRef<DragState | null>(null);
   const mountedRef = useRef(false);
@@ -180,6 +189,16 @@ export function DockablePanel({
   const setPanelDockColumn = useDockablePanelStore((state) => state.setPanelDockColumn);
   const snapPanelToDockTarget = useDockablePanelStore((state) => state.snapPanelToDockTarget);
   const groupPanelWithPanel = useDockablePanelStore((state) => state.groupPanelWithPanel);
+  // A non-split-capable panel dropped ANYWHERE on a center panel tab-joins it: inserting it as a
+  // bare center sibling (the before/after edge bands) would degrade the whole center split to a
+  // one-visible-entry tab strip, hiding a monitor.
+  const adjustCenterSnapTarget = (target: DockablePanelSnapTarget): DockablePanelSnapTarget =>
+    !centerSplitCapable
+      && target.mode === 'docked'
+      && target.dockZone === 'center'
+      && target.referencePanelId
+      ? { mode: 'tab', dockZone: 'center', referencePanelId: target.referencePanelId }
+      : target;
   const moveFloatingPanel = useDockablePanelStore((state) => state.moveFloatingPanel);
   const resizeFloatingPanel = useDockablePanelStore((state) => state.resizeFloatingPanel);
   const resizeDockedPanel = useDockablePanelStore((state) => state.resizeDockedPanel);
@@ -628,12 +647,17 @@ export function DockablePanel({
       }
       moveFloatingPanel(layout.workspaceId, layout.panelId, deltaX, deltaY, resolvedViewport);
       const stackRects = collectDockedPanelStackRects(layout.workspaceId, layout.panelId);
-      const snapTarget = resolveDockablePanelSnapTarget(
-        { x: event.clientX, y: event.clientY },
-        resolvedViewport,
-        stackRects,
-        allowedDockZones,
-      );
+      // Ctrl/Cmd-drag forces floating (the NLE convention): with the workspace fully tiled, the
+      // only snap-free drop area is the thin gutters between panels, so without a modifier there
+      // is effectively no gesture that leaves a panel floating.
+      const snapTarget = event.ctrlKey || event.metaKey
+        ? ({ mode: 'floating' } as const)
+        : adjustCenterSnapTarget(resolveDockablePanelSnapTarget(
+            { x: event.clientX, y: event.clientY },
+            resolvedViewport,
+            stackRects,
+            allowedDockZones,
+          ));
       if (mountedRef.current) {
         setSnapPreviewRect(resolveDockablePanelSnapPreviewRect(snapTarget, resolvedViewport, stackRects) ?? null);
       }
@@ -665,13 +689,14 @@ export function DockablePanel({
         floatingRectSpace: 'screen',
       });
       floatPanel(layout.workspaceId, layout.panelId, nextRect, resolvedViewport, { constrainSize: false, floatingRectSpace: 'screen' });
-    } else if (current.action === 'move' && current.detachedFromDock) {
-      const snapTarget = resolveDockablePanelSnapTarget(
+    } else if (current.action === 'move' && current.detachedFromDock && !(event.ctrlKey || event.metaKey)) {
+      // Ctrl/Cmd released the panel as floating — skip the snap entirely (matches the preview).
+      const snapTarget = adjustCenterSnapTarget(resolveDockablePanelSnapTarget(
         { x: event.clientX, y: event.clientY },
         resolvedViewport,
         collectDockedPanelStackRects(layout.workspaceId, layout.panelId),
         allowedDockZones,
-      );
+      ));
       if (snapTarget.mode === 'docked') {
         snapPanelToDockTarget(layout.workspaceId, layout.panelId, snapTarget);
       } else if (snapTarget.mode === 'tab') {
@@ -765,7 +790,7 @@ export function DockablePanel({
             }}
             role="button"
             tabIndex={0}
-            title={`${title} drag handle`}
+            title={`${title} — drag to move, Ctrl-drag to float`}
           >
             <GripHorizontal aria-hidden size={14} className="shrink-0 text-cyan-100/45" />
             <span className="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100/80">

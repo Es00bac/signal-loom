@@ -246,7 +246,7 @@ function DockZoneStack({
               {index < zoneEntries.length - 1 ? (
                 <div
                   aria-label={`${definitions.get(hostLayout.panelId)?.title ?? hostLayout.panelId} split resize divider`}
-                  className="w-2 shrink-0 cursor-col-resize touch-none rounded-full border-x border-cyan-200/0 bg-cyan-300/0 transition-colors hover:border-cyan-200/60 hover:bg-cyan-300/25"
+                  className="w-2 shrink-0 cursor-col-resize touch-none rounded-full border-x border-cyan-200/10 bg-cyan-300/10 transition-colors hover:border-cyan-200/60 hover:bg-cyan-300/25"
                   onPointerCancel={endSplitResize}
                   onPointerDown={(event) => startSplitResize(event, hostLayout)}
                   onPointerMove={(e) => continueSplitResize(e, false)}
@@ -344,7 +344,7 @@ function DockZoneStack({
                         {index < columnEntries.length - 1 ? (
                           <div
                             aria-label="Vertical resize divider"
-                            className="h-2 w-full shrink-0 cursor-row-resize touch-none rounded-full border-y border-cyan-200/0 bg-cyan-300/0 transition-colors hover:border-cyan-200/60 hover:bg-cyan-300/25"
+                            className="h-2 w-full shrink-0 cursor-row-resize touch-none rounded-full border-y border-cyan-200/10 bg-cyan-300/10 transition-colors hover:border-cyan-200/60 hover:bg-cyan-300/25"
                             onPointerCancel={endSplitResize}
                             onPointerDown={(event) => startSplitResize(event, layout)}
                             onPointerMove={(e) => continueSplitResize(e, true)}
@@ -409,6 +409,7 @@ function renderPanel(
     <DockablePanel
       allowedDockZones={definition.allowedDockZones}
       bodyClassName={definition.bodyClassName}
+      centerSplitCapable={definition.centerDockPresentation === 'split'}
       className={`${definition.className ?? ''} ${className}`}
       key={layout.panelId}
       layout={renderLayout}

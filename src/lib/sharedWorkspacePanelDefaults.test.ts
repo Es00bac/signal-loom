@@ -54,7 +54,12 @@ describe('shared workspace panel defaults', () => {
   });
 
   it('keeps Paper shared dock panels directly below the app topbar when Paper controls live in the titlebar', () => {
-    expect(getSharedWorkspacePanelTopOffsetPx('paper')).toBe(getSharedWorkspacePanelTopOffsetPx('flow'));
+    // The workspace container already sits BELOW the in-flow topbar, so "directly below the
+    // topbar" means zero offset. The old expectation (= flow's 64) copied Flow's offset, but Flow's
+    // 64 clears Flow's own in-container toolbar rows — Paper has none (its controls are portaled
+    // into the titlebar), so the copied offset left the shared Source Bin hanging 64px lower than
+    // Paper's flush-mounted Inspector.
+    expect(getSharedWorkspacePanelTopOffsetPx('paper')).toBe(0);
   });
 
   it('uses non-padding overflow chrome for scrollable dockable source-bin and bookmark content', () => {
