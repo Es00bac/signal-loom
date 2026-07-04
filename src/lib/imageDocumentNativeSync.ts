@@ -77,13 +77,13 @@ export function toImageLayerWire(layer: ImageLayer): ImageLayerWire {
 
 /** Project a live document to its canvas-free wire form (layers stripped, undo snapshots dropped). */
 export function toImageDocumentWire(document: ImageDocument): ImageDocumentWire {
-  const { layers, snapshots, ...rest } = document;
+  const { layers, snapshots: _snapshots, ...rest } = document;
   return { ...rest, layers: layers.map(toImageLayerWire) };
 }
 
 /** The non-pixel metadata of a wire layer (the comparable surface for a props diff). */
 function layerMetaPatch(layer: ImageLayerWire): ImageLayerWireMetaPatch {
-  const { bitmapVersion, hasBitmap, hasMask, ...meta } = layer;
+  const { bitmapVersion: _v, hasBitmap: _b, hasMask: _m, ...meta } = layer;
   return meta;
 }
 

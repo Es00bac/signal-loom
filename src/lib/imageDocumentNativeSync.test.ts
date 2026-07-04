@@ -216,7 +216,7 @@ describe('diffImageDocumentNativeChanges', () => {
   it('round-trips: applying the diff to prev reproduces next', () => {
     const prev = wireDoc([wireLayer('a', { bitmapVersion: 1 }), wireLayer('b', { opacity: 1 })], { activeLayerId: 'a' });
     // remove a, repaint b, add c on top, resize, change active
-    let next = wireDoc(
+    const next = wireDoc(
       [wireLayer('b', { opacity: 0.5, bitmapVersion: 9 }), wireLayer('c', { bitmapVersion: 1 })],
       { id: 'doc-1', title: 'Untitled', width: 4096, activeLayerId: 'c', selectedLayerIds: ['c'] },
     );

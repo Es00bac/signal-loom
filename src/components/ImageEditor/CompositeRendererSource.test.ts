@@ -220,10 +220,15 @@ describe('CompositeRenderer source guards', () => {
     expect(descriptor.signature).toContain('"activeModes":["normal","multiply","screen"]');
   });
 
-  it('embeds the default transform-origin constant into the high-res worker source', () => {
+  it('builds the high-res worker as a bundled module worker, never a Function.toString() blob', () => {
     const source = readFileSync(join(process.cwd(), 'src/components/ImageEditor/CompositeRenderer.ts'), 'utf8');
 
-    expect(source).toMatch(/const code = `[\s\S]*const DEFAULT_TRANSFORM_ORIGIN = \$\{DEFAULT_TRANSFORM_ORIGIN\};[\s\S]*\$\{clampImageLayerTransformOrigin\.toString\(\)\}/);
+    // The blob approach crashed in every minified build: a stringified function's internal
+    // calls reference its own module's minified names, which don't exist in the blob's scope
+    // (`_r is not defined`, docs/notes/820). Guard against reintroduction.
+    expect(source).toContain("new Worker(new URL('./highResComposite.worker.ts', import.meta.url), { type: 'module' })");
+    expect(source).not.toContain('.toString()}');
+    expect(source).not.toContain('createObjectURL');
   });
 
   it('propagates layer skew, perspective, warp, and distort state through the worker payload and document signature', () => {
@@ -250,14 +255,12 @@ describe('CompositeRenderer source guards', () => {
     expect(source).toContain('composeLayerBitmapWithLiveMasks(layer)');
   });
 
-  it('embeds the layer-warp helper chain into the high-res worker source', () => {
-    const source = readFileSync(join(process.cwd(), 'src/components/ImageEditor/CompositeRenderer.ts'), 'utf8');
+  it('worker module imports the real transform + adjustment helpers (warp chain rides drawLayerBitmapTransformed)', () => {
+    const worker = readFileSync(join(process.cwd(), 'src/components/ImageEditor/highResComposite.worker.ts'), 'utf8');
 
-    expect(source).toContain('applyWarpToPoint.toString()');
-    expect(source).toContain('applyPerspectiveToPoint.toString()');
-    expect(source).toContain('interpolateCornerOffset.toString()');
-    expect(source).toContain('hasImageLayerWarp.toString()');
-    expect(source).toContain('transformSourcePoint.toString()');
-    expect(source).toContain('buildTransformedCornersFromMetrics.toString()');
+    expect(worker).toContain("import { applyAdjustmentToImageData } from './ImageAdjustmentLayer'");
+    expect(worker).toContain('drawLayerBitmapTransformed');
+    expect(worker).toContain("from './ImageLayerTransform'");
+    expect(worker).toContain('transferToImageBitmap');
   });
 });

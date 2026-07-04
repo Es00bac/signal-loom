@@ -22,6 +22,11 @@ interface GenerativeFillReferencesProps {
  * from the library/canvas, or upload — each reference can ALSO carry a text description (some models use
  * described references), and references show as draggable thumbnail chips capped at the model's limit.
  */
+/** Mint a unique reference-chip id (module scope: called from event handlers, never render). */
+function mintReferenceId(index: number): string {
+  return `ref-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
 export function GenerativeFillReferences({
   references,
   onChange,
@@ -46,7 +51,7 @@ export function GenerativeFillReferences({
     if (atLimit) return;
     onChange([
       ...references,
-      { id: `ref-${Date.now()}-${references.length}-${Math.random().toString(36).slice(2, 6)}`, ...reference },
+      { id: mintReferenceId(references.length), ...reference },
     ]);
   };
   const updateReference = (id: string, patch: Partial<GenerativeFillReferenceInput>) => {

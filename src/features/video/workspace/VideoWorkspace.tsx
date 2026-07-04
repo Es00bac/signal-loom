@@ -1675,7 +1675,9 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     if (trimmed) commitActiveCompositionPatch({ editorVisualClips: trimmed }, kind === 'ripple-in' ? 'Ripple trim in' : 'Ripple trim out');
   };
   const performTrimEditRef = useRef(performTrimEdit);
-  performTrimEditRef.current = performTrimEdit;
+  useEffect(() => {
+    performTrimEditRef.current = performTrimEdit;
+  });
 
   // Motion comics: a bubble/caption is an editor ASSET + a timeline CLIP at the playhead —
   // clips inherit keyframes, opacity/position animation, transitions, and track rules.
@@ -1715,9 +1717,11 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
   };
 
   const markSourcePointRef = useRef(markSourcePoint);
-  markSourcePointRef.current = markSourcePoint;
   const performThreePointEditRef = useRef(performThreePointEdit);
-  performThreePointEditRef.current = performThreePointEdit;
+  useEffect(() => {
+    markSourcePointRef.current = markSourcePoint;
+    performThreePointEditRef.current = performThreePointEdit;
+  });
 
   const updateVisualClips = useCallback((nextClips: EditorVisualClip[], label = 'Update visual clips') => {
     commitActiveCompositionPatch({ editorVisualClips: nextClips }, label);
@@ -2300,7 +2304,9 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     visualClips,
   ]);
 
-  nudgeSelectedClipLevelAtPlayheadRef.current = nudgeSelectedClipLevelAtPlayhead;
+  useEffect(() => {
+    nudgeSelectedClipLevelAtPlayheadRef.current = nudgeSelectedClipLevelAtPlayhead;
+  });
 
   const jumpToAdjacentSelectedKeyframe = useCallback((direction: 'previous' | 'next') => {
     if (selectedVisualClip && selectedVisualDurationSeconds) {
@@ -2571,7 +2577,9 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     );
   };
   const addTimelineMarkerAtPlayheadRef = useRef(addTimelineMarkerAtPlayhead);
-  addTimelineMarkerAtPlayheadRef.current = addTimelineMarkerAtPlayhead;
+  useEffect(() => {
+    addTimelineMarkerAtPlayheadRef.current = addTimelineMarkerAtPlayhead;
+  });
 
   const removeTimelineMarkerById = (markerId: string) => {
     if (!activeComposition) return;

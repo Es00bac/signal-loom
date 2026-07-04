@@ -49,8 +49,9 @@ function makeDocument(layers: ImageLayer[]): ImageDocument {
 
 function openDoc(layers: ImageLayer[]): ImageDocument {
   const doc = makeDocument(layers);
-  // Reset to a single known document for each test.
-  useImageEditorStore.setState({ documents: [], activeDocId: null });
+  // Reset to a single known document for each test. Granular remote ops target the doc the
+  // last snapshot seeded (note 819) — mark this doc as that seed, as a paired session would.
+  useImageEditorStore.setState({ documents: [], activeDocId: null, syncedImageDocumentId: doc.id });
   useImageEditorStore.getState().openDocument(doc);
   return doc;
 }
@@ -62,7 +63,7 @@ const activeDoc = (): ImageDocument => {
 };
 
 beforeEach(() => {
-  useImageEditorStore.setState({ documents: [], activeDocId: null });
+  useImageEditorStore.setState({ documents: [], activeDocId: null, syncedImageDocumentId: null });
 });
 
 describe('applyRemoteImageDocumentChange (#53 store seam)', () => {
