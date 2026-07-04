@@ -4239,6 +4239,9 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
   ];
   const renderLegacyVideoFallback = false;
   const mobilePhoneInterface = useMobilePhoneInterfaceDescriptor();
+  const [phoneVideoAdvisoryDismissed, setPhoneVideoAdvisoryDismissed] = useState(() => {
+    try { return sessionStorage.getItem('signal-loom-video-phone-advisory') === 'dismissed'; } catch { return true; }
+  });
   const mobileChromeMode = useMobileInterfaceStore((state) => state.chromeMode);
   const workspaceChromePaddingClassName = mobilePhoneInterface.enabled
     ? mobileChromeMode === 'hidden'
@@ -4250,12 +4253,38 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     : 'pt-3';
 
   if (mobilePhoneInterface.enabled) {
-    // Phone: a multi-pane desktop NLE can't fit, so render the dedicated tabbed mobile
-    // shell over the same panel contents. Desktop layout below is left untouched.
+    // Phone: a multi-pane desktop NLE can't fit. Owner directive (2026-07-03): lead with an
+    // honest advisory pointing at the desktop app / served-browser session / DeX before showing
+    // the cut-down mobile shell — editing a full timeline on a phone screen is not the intent.
     return (
       <div
         className={`absolute inset-0 z-30 bg-[radial-gradient(circle_at_top,#182236_0%,#0b0e14_45%,#06080d_100%)] px-2 pb-2 ${workspaceChromePaddingClassName}`}
       >
+        {!phoneVideoAdvisoryDismissed ? (
+          <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 p-4" data-video-phone-advisory="true">
+            <div className="flex w-full max-w-sm flex-col gap-3 rounded-2xl border border-cyan-300/25 bg-[#0b1421] p-5 text-left shadow-2xl">
+              <div className="text-base font-semibold text-cyan-50">Video editing wants a bigger screen</div>
+              <p className="text-sm leading-6 text-cyan-100/70">
+                The full timeline editor doesn&rsquo;t fit a phone. Three good ways to cut video with this project:
+              </p>
+              <ul className="flex flex-col gap-2 text-sm leading-5 text-cyan-100/80">
+                <li><b className="text-cyan-50">Serve to any computer:</b> open the menu, turn <b>Serving on</b>, and open the shown address in a desktop browser — the full editor, this project, nothing to install.</li>
+                <li><b className="text-cyan-50">Desktop app:</b> Windows / Linux builds at sloom.studio share the same project format.</li>
+                <li><b className="text-cyan-50">Samsung DeX or a tablet:</b> the full layout works on big touch screens.</li>
+              </ul>
+              <button
+                className="mt-1 w-full rounded-lg border border-cyan-300/30 bg-cyan-500/10 px-3.5 py-2.5 text-sm font-semibold text-cyan-50 transition-colors hover:bg-cyan-500/20"
+                onClick={() => {
+                  setPhoneVideoAdvisoryDismissed(true);
+                  try { sessionStorage.setItem('signal-loom-video-phone-advisory', 'dismissed'); } catch { /* session-only */ }
+                }}
+                type="button"
+              >
+                Continue here anyway
+              </button>
+            </div>
+          </div>
+        ) : null}
         <VideoWorkspaceMobileShell panels={videoPanels} previewPanelId={VIDEO_PANEL_IDS.programMonitor} />
       </div>
     );

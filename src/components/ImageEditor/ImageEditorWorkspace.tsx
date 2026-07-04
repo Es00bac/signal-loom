@@ -84,6 +84,7 @@ import {
 import { openSourceLibraryImageDocument } from '../../lib/sourceLibraryImageOpen';
 import { insertSourceItemAsImageLayer } from './imageLayerInsert';
 import { showAlertDialog } from '../../store/alertDialogStore';
+import { listFreshBatonHandoffItems, openBatonHandoffItem } from '../../lib/batonHandoffSnapshot';
 import { ImageAutomationWorkspace } from '../../features/imageAutomation/ImageAutomationWorkspace';
 import {
   getImageNavigationCommandViewport,
@@ -155,6 +156,12 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
   const updateLayer = useImageEditorStore((s) => s.updateLayer);
   const openDocument = useImageEditorStore((s) => s.openDocument);
   const activeDocId = useImageEditorStore((s) => s.activeDocId);
+  const sourceBinsForHandoff = useSourceBinStore((s) => s.bins);
+  // Fresh cross-device handoff snapshots (baton transfer) offered on the empty state.
+  const freshHandoffItems = useMemo(
+    () => listFreshBatonHandoffItems(sourceBinsForHandoff.flatMap((bin) => bin.items)),
+    [sourceBinsForHandoff],
+  );
   const imageViewSettings = useImageEditorStore((s) => s.imageViewSettings);
   const toggleImageViewSetting = useImageEditorStore((s) => s.toggleImageViewSetting);
   const clearImageGuides = useImageEditorStore((s) => s.clearImageGuides);
@@ -1027,6 +1034,30 @@ export function ImageEditorWorkspace({ getNewFlowNodePosition }: ImageEditorWork
       <div className="pointer-events-auto flex w-full max-w-sm flex-col items-center gap-4 rounded-2xl border border-cyan-300/20 bg-[#0b1421]/85 p-6 text-center shadow-2xl backdrop-blur">
         <div className="text-base font-semibold text-cyan-50">Start an image</div>
         <p className="text-xs leading-relaxed text-cyan-100/55">Create a blank canvas or open an image — then edit with layers, masks, brushes, and model-in-the-loop generative fill.</p>
+        {freshHandoffItems.length > 0 ? (
+          <div className="flex w-full flex-col gap-1.5" data-image-handoff-continue="true">
+            {freshHandoffItems.slice(0, 3).map((item) => (
+              <button
+                key={item.id}
+                className="w-full rounded-lg border border-emerald-300/40 bg-emerald-500/15 px-3.5 py-2 text-sm font-semibold text-emerald-50 transition-colors hover:bg-emerald-500/25"
+                onClick={() => {
+                  void openBatonHandoffItem(item).then((opened) => {
+                    if (!opened) {
+                      void showAlertDialog({
+                        title: 'Handoff still syncing',
+                        message: 'That document has not finished arriving from your other device — give it a moment and try again.',
+                        tone: 'info',
+                      });
+                    }
+                  });
+                }}
+                type="button"
+              >
+                Continue “{item.label.replace(' — continue on another device', '')}” from your other device
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center justify-center gap-2">
           <button
             className="rounded-lg bg-cyan-400 px-3.5 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-300"

@@ -8,6 +8,7 @@ import { RemoteHostBanner } from './components/RemoteHostBanner.tsx'
 import { installResizeObserverLoopErrorFilter } from './lib/resizeObserverLoopErrorFilter.ts'
 import { initializeRemoteHostSession } from './lib/remoteHostClient.ts'
 import { initializeEditLockSync } from './lib/editLockSync.ts'
+import { initializeBatonHandoffSnapshots } from './lib/batonHandoffSnapshot.ts'
 
 installResizeObserverLoopErrorFilter()
 
@@ -31,5 +32,8 @@ function renderApp() {
 void initializeRemoteHostSession()
   .finally(() => {
     initializeEditLockSync()
+    // Snapshot open Image documents into the shared library the moment this device loses the
+    // baton, so the gaining device can continue the same work (layered .slimg handoff).
+    initializeBatonHandoffSnapshots()
   })
   .finally(renderApp)

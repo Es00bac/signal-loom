@@ -472,17 +472,18 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
               return (
                 <button
                   aria-label={`${tab.label} Workspace`}
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition-colors ${
+                  className={`flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full border px-3 transition-colors ${
                     isActive
                       ? tab.activeClass
-                      : `border-transparent text-cyan-100/50 ${tab.hoverClass}`
+                      : `border-transparent text-cyan-100/60 ${tab.hoverClass}`
                   }`}
                   key={tab.id}
                   onClick={() => handleMenuCommand(tab.command, 'topbar')}
                   title={`${tab.label} Workspace`}
                   type="button"
                 >
-                  <img src={tab.icon} alt="" className="h-5 w-5 rounded-md object-contain" />
+                  <img src={tab.icon} alt="" className="h-6 w-6 rounded-md object-contain" />
+                  <span className="text-xs font-semibold">{tab.label}</span>
                 </button>
               );
             })}
