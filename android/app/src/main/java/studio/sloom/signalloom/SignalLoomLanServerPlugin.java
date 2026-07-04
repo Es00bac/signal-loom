@@ -64,7 +64,14 @@ public class SignalLoomLanServerPlugin extends Plugin {
                 JSObject req = new JSObject();
                 req.put("id", id);
                 req.put("method", session.getMethod().name());
-                req.put("path", session.getUri());
+                // NanoHTTPD's getUri() strips the query string. The web handler parses cursor and
+                // baton-actor parameters out of req.path (`?since=`, `?device=`) — without the query,
+                // every served-client op was rejected as `edit-locked` and long-polls re-sent the
+                // whole event log (docs/notes/821).
+                String query = session.getQueryParameterString();
+                req.put("path", query != null && !query.isEmpty()
+                    ? session.getUri() + "?" + query
+                    : session.getUri());
                 try {
                     Map<String, String> headers = session.getHeaders();
                     String contentLengthStr = headers.get("content-length");
