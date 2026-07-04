@@ -157,6 +157,37 @@ public class SignalLoomLanServerPlugin extends Plugin {
         } catch (Exception error) {
             // Serving still works in the foreground without the keep-alive; never fail start() on it.
         }
+        keepWebViewResponsive();
+    }
+
+    /**
+     * The foreground service keeps the *process* alive, but Android still deprioritizes the
+     * WebView's renderer once the app is invisible — relayed data-API calls then hit the 40s
+     * latch timeout while native /health keeps answering (measured: 3/3 relay timeouts after
+     * 150s of screen-off). Pin the renderer's priority for invisibility and keep the WebView
+     * timers running while we're hosting.
+     */
+    private void keepWebViewResponsive() {
+        try {
+            final android.webkit.WebView webView = getBridge().getWebView();
+            webView.post(() -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    webView.setRendererPriorityPolicy(android.webkit.WebView.RENDERER_PRIORITY_IMPORTANT, false);
+                }
+                webView.onResume();
+                webView.resumeTimers();
+            });
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Capacitor pauses WebView timers with the activity; while serving, immediately undo it. */
+    @Override
+    protected void handleOnPause() {
+        super.handleOnPause();
+        if (server != null) {
+            keepWebViewResponsive();
+        }
     }
 
     private void stopKeepAliveService() {
