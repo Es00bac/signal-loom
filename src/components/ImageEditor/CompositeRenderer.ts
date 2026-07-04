@@ -10,22 +10,7 @@ import { useImageEditorStore } from '../../store/imageEditorStore';
 import { createBitmap } from './LayerBitmap';
 import { generateGridLines, type ImageViewSettings } from './ImageRulersGuides';
 import { createLayerMaskOverlayMask } from './ImageLayerMask';
-import {
-  applyPerspectiveToPoint,
-  applyWarpToPoint,
-  buildTransformedCornersFromMetrics,
-  DEFAULT_TRANSFORM_ORIGIN,
-  clampImageLayerTransformOrigin,
-  drawLayerBitmapTransformed,
-  getImageLayerBitmapDrawMetrics,
-  hasImageLayerWarp,
-  interpolateCornerOffset,
-  roundImageLayerTransformNumber,
-  resolveImageLayerTransformOrigin,
-  transformSourcePoint,
-} from './ImageLayerTransform';
 import { renderLayerWithEffects } from './ImageLayerEffects';
-import { isWarpMeshDeformed, normalizeWarpMesh, sampleWarpMeshDisplacement } from './ImageWarpMesh';
 import { isImageLayerEffectivelyVisible } from './ImageLayerGroups';
 import type { ImageLayerWithVectorMask } from './ImageVectorMasks';
 
@@ -34,29 +19,13 @@ import {
   compositeLayerRangeInto,
   setLiveMaskBypassLayer,
   composeLayerBitmapWithLiveMasks,
-  applyAdjustmentToImageData,
-  applyAdjustmentToPixel,
-  applyBlackWhite,
-  applyBrightnessContrast,
-  applyByChannel,
-  applyCurvesChannel,
-  applyExposure,
-  applyHueSaturation,
-  applyLevelsChannel,
-  applyTemperatureTint,
-  cloneImageData,
-  evaluateCurvePoints,
-  hslToRgb,
-  hueToRgb,
-  rgbToHsl,
-  clamp,
   clamp01,
-  clampByte,
-  wrap01,
 } from './ImageAdjustmentLayer';
 
 const ANTS_DASH_LENGTH = 4;
 const ANTS_PERIOD_MS = 600;
+/** After this many high-res worker crashes the renderer stays on the synchronous compositor. */
+const MAX_WORKER_FAILURES = 3;
 
 type ImageBlendMode = ImageLayer['blendMode'];
 
@@ -592,98 +561,14 @@ function uniqueBlendModes(modes: readonly ImageBlendMode[]): ImageBlendMode[] {
   return unique;
 }
 
-function getHighResWorkerBlobUrl(): string {
-  const code = `
-    const DEFAULT_TRANSFORM_ORIGIN = ${DEFAULT_TRANSFORM_ORIGIN};
-    ${imageBlendModeToCanvasCompositeOperation.toString()}
-    ${applyAdjustmentToImageData.toString()}
-    ${applyAdjustmentToPixel.toString()}
-    ${applyBlackWhite.toString()}
-    ${applyBrightnessContrast.toString()}
-    ${applyByChannel.toString()}
-    ${applyCurvesChannel.toString()}
-    ${applyExposure.toString()}
-    ${applyHueSaturation.toString()}
-    ${applyLevelsChannel.toString()}
-    ${applyTemperatureTint.toString()}
-    ${cloneImageData.toString()}
-    ${evaluateCurvePoints.toString()}
-    ${hslToRgb.toString()}
-    ${hueToRgb.toString()}
-    ${rgbToHsl.toString()}
-    ${clamp.toString()}
-    ${clamp01.toString()}
-    ${clampByte.toString()}
-    ${wrap01.toString()}
-    ${clampImageLayerTransformOrigin.toString()}
-    ${resolveImageLayerTransformOrigin.toString()}
-    ${roundImageLayerTransformNumber.toString()}
-    ${applyWarpToPoint.toString()}
-    ${applyPerspectiveToPoint.toString()}
-    ${interpolateCornerOffset.toString()}
-    ${hasImageLayerWarp.toString()}
-    ${isWarpMeshDeformed.toString()}
-    ${normalizeWarpMesh.toString()}
-    ${sampleWarpMeshDisplacement.toString()}
-    ${transformSourcePoint.toString()}
-    ${buildTransformedCornersFromMetrics.toString()}
-    ${getImageLayerBitmapDrawMetrics.toString()}
-    ${drawLayerBitmapTransformed.toString()}
-
-    // Stable aliases for the hand-written body below. Production minification renames the
-    // injected function declarations above (their bare names only exist in dev), so the raw
-    // code must never call them by literal source name — it broke with
-    // "clamp01 is not defined" in every minified build. The alias values are fresh copies
-    // whose internal helper calls still resolve against the (renamed) declarations above.
-    const __clamp01 = (${clamp01.toString()});
-    const __blendModeToCompositeOp = (${imageBlendModeToCanvasCompositeOperation.toString()});
-    const __applyAdjustmentToImageData = (${applyAdjustmentToImageData.toString()});
-    const __drawLayerBitmapTransformed = (${drawLayerBitmapTransformed.toString()});
-
-    self.onmessage = async function(e) {
-      const { docWidth, docHeight, layers } = e.data;
-      const canvas = new OffscreenCanvas(docWidth, docHeight);
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      for (const layer of layers) {
-        if (!layer.visible) continue;
-        if (layer.type === 'group') continue;
-
-        if (layer.type === 'adjustment' && layer.adjustment) {
-          const source = ctx.getImageData(0, 0, docWidth, docHeight);
-          let maskData = undefined;
-          if (layer.maskBitmap) {
-            const maskCanvas = new OffscreenCanvas(layer.maskBitmap.width, layer.maskBitmap.height);
-            const mCtx = maskCanvas.getContext('2d');
-            if (mCtx) {
-              mCtx.drawImage(layer.maskBitmap, 0, 0);
-              maskData = mCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
-            }
-          }
-          const adjusted = __applyAdjustmentToImageData(source, layer.adjustment, {
-            opacity: layer.opacity,
-            mask: maskData,
-          });
-          ctx.putImageData(adjusted, 0, 0);
-          continue;
-        }
-
-        if (layer.bitmap) {
-          ctx.save();
-          ctx.globalAlpha = __clamp01(layer.opacity);
-          ctx.globalCompositeOperation = __blendModeToCompositeOp(layer.blendMode);
-          __drawLayerBitmapTransformed(ctx, layer.bitmap, layer, layer.offsetX || 0, layer.offsetY || 0);
-          ctx.restore();
-        }
-      }
-
-      const outBitmap = canvas.transferToImageBitmap();
-      self.postMessage({ result: outBitmap }, [outBitmap]);
-    };
-  `;
-  const blob = new Blob([code], { type: 'application/javascript' });
-  return URL.createObjectURL(blob);
+/**
+ * The high-res compositor is a real Vite module worker (`highResComposite.worker.ts`). Its
+ * predecessor was a Blob URL assembled from `Function.toString()` of ~30 helpers, which broke in
+ * every minified build: a stringified function's internal calls reference its own module's
+ * minified names, which don't exist in the blob's scope (`_r is not defined`, docs/notes/820).
+ */
+function createHighResWorker(): Worker {
+  return new Worker(new URL('./highResComposite.worker.ts', import.meta.url), { type: 'module' });
 }
 
 /**
@@ -733,10 +618,10 @@ export class CompositeRenderer {
   private workerResultBitmap: ImageBitmap | HTMLCanvasElement | LayerBitmap | null = null;
   private workerDocSignature: string | null = null;
   private isWorkerRunning = false;
+  private workerFailureCount = 0;
   private lowResDoc: ImageDocument | null = null;
   private lowResScale = 1;
   private workerObj: Worker | null = null;
-  private workerBlobUrl: string | null = null;
 
   // Live-stroke fast path (used while isPaintingStroke): cache the composite of the layers BELOW
   // the active layer so each frame only recomposites the active layer + everything above it.
@@ -805,10 +690,6 @@ export class CompositeRenderer {
     if (this.workerObj) {
       this.workerObj.terminate();
       this.workerObj = null;
-    }
-    if (this.workerBlobUrl) {
-      URL.revokeObjectURL(this.workerBlobUrl);
-      this.workerBlobUrl = null;
     }
     this.isWorkerRunning = false;
     this.workerDocSignature = null;
@@ -1047,8 +928,14 @@ export class CompositeRenderer {
       return; // Already rendering or rendered this exact state
     }
 
-    if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') {
-      // Synchronous fallback
+    if (
+      typeof Worker === 'undefined'
+      || typeof OffscreenCanvas === 'undefined'
+      || typeof createImageBitmap === 'undefined'
+      || this.workerFailureCount >= MAX_WORKER_FAILURES
+    ) {
+      // Synchronous fallback (also the permanent path once the worker has proven broken —
+      // endless crash/retry churn is worse than main-thread compositing).
       this.closeWorkerResultBitmap();
       this.workerResultBitmap = renderImageDocumentLayersToBitmap(doc);
       this.workerDocSignature = signature;
@@ -1060,10 +947,7 @@ export class CompositeRenderer {
     this.workerDocSignature = signature;
 
     if (!this.workerObj) {
-      if (!this.workerBlobUrl) {
-        this.workerBlobUrl = getHighResWorkerBlobUrl();
-      }
-      this.workerObj = new Worker(this.workerBlobUrl);
+      this.workerObj = createHighResWorker();
     }
 
     // Prepare transferable data
@@ -1135,6 +1019,14 @@ export class CompositeRenderer {
       }
       this.workerObj.onmessage = (e) => {
         this.isWorkerRunning = false;
+        // The doc may have changed (or the cache been invalidated) while the worker ran — a
+        // result for a signature we no longer track must be dropped, never displayed.
+        if (this.workerDocSignature !== signature) {
+          (e.data.result as ImageBitmap | undefined)?.close?.();
+          this.requestRender();
+          resolve();
+          return;
+        }
         this.closeWorkerResultBitmap();
         this.workerResultBitmap = e.data.result;
         this.requestRender();
@@ -1142,6 +1034,13 @@ export class CompositeRenderer {
       };
       this.workerObj.onerror = (e) => {
         this.isWorkerRunning = false;
+        // Un-poison the signature: leaving it set would advertise a render we never produced,
+        // pinning the canvas to a stale (or blank) result until the next unrelated edit. The
+        // draw loop's synchronous composite remains correct either way.
+        this.workerDocSignature = null;
+        this.closeWorkerResultBitmap();
+        this.workerFailureCount += 1;
+        this.requestRender();
         reject(e);
       };
 

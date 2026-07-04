@@ -146,6 +146,7 @@ export function ImageEditorCanvas() {
   const activeDoc = subscribedActiveDoc
     ?? stateSnapshot.documents.find((d) => d.id === stateSnapshot.activeDocId)
     ?? null;
+  const remoteImageApplyEpoch = useImageEditorStore((s) => s.remoteImageApplyEpoch);
   const subscribedBrushSettings = useImageEditorStore((s) => s.brushSettings);
   const subscribedCropToolSettings = useImageEditorStore((s) => s.cropToolSettings);
   const subscribedQuickMaskSettings = useImageEditorStore((s) => s.quickMaskSettings);
@@ -444,6 +445,15 @@ export function ImageEditorCanvas() {
     const selection = activeDoc ? getSelection(activeDoc.id) ?? null : null;
     renderer.setInputs(activeDoc, selection);
   }, [activeDoc]);
+
+  // Cross-device sync applied remote pixels/structure: hard-invalidate the renderer's cached
+  // composite. Remote flips can land at a bitmapVersion the cache already has a composite for
+  // (devices bump versions independently), so the signature check alone would keep serving
+  // stale pixels — the canvas stayed blank/old until the next local stroke (docs/notes/820).
+  useEffect(() => {
+    if (remoteImageApplyEpoch === 0) return;
+    rendererRef.current?.requestRender({ invalidateBitmapCache: true });
+  }, [remoteImageApplyEpoch]);
 
   // The renderer draws the grid + guides from the view settings, but it only
   // repaints on demand — request a repaint when those settings change.

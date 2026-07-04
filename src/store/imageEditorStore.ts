@@ -100,6 +100,14 @@ interface ImageEditorState {
   activeDocId: string | null;
   /** The document id the cross-device sync's last snapshot seeded; granular remote ops target it. */
   syncedImageDocumentId: string | null;
+  /**
+   * Bumped whenever remote sync changes a document (structure or pixels). The canvas subscribes to
+   * it and hard-invalidates the CompositeRenderer's cached worker composite: remote pixel flips can
+   * land at a bitmapVersion the renderer has already cached a composite for (each device bumps
+   * versions independently), so a version-based signature alone would keep serving stale pixels
+   * (docs/notes/820 — "drawing vanished after taking the baton back").
+   */
+  remoteImageApplyEpoch: number;
   tool: EditorTool;
   backgroundColor: string;
   brushSettings: BrushSettings;
@@ -1114,6 +1122,7 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     },
 
     syncedImageDocumentId: null,
+    remoteImageApplyEpoch: 0,
 
     applyRemoteImageDocumentChange: (change) => {
       let changed = false;
@@ -1140,6 +1149,7 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
             return {
               documents: state.documents.map((d) => (d.id === existing.id ? nextDoc : d)),
               syncedImageDocumentId: wire.id,
+              remoteImageApplyEpoch: state.remoteImageApplyEpoch + 1,
             };
           }
           // The authority's document doesn't exist here yet — create it as a live shell (null
@@ -1156,6 +1166,7 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
             // contract); never steal focus from a document the user is actively editing.
             activeDocId: state.activeDocId ?? shell.id,
             syncedImageDocumentId: wire.id,
+            remoteImageApplyEpoch: state.remoteImageApplyEpoch + 1,
           };
         }
 
@@ -1166,7 +1177,10 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
         if (nextWire === wire) return state; // reducer no-op (idempotent op / nothing changed)
         changed = true;
         const nextDoc = reconcileLiveDocumentToWire(doc, nextWire);
-        return { documents: state.documents.map((d) => (d.id === doc.id ? nextDoc : d)) };
+        return {
+          documents: state.documents.map((d) => (d.id === doc.id ? nextDoc : d)),
+          remoteImageApplyEpoch: state.remoteImageApplyEpoch + 1,
+        };
       });
       return changed;
     },
@@ -1190,7 +1204,10 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
           maskData: undefined,
         };
         changed = true;
-        return { documents: state.documents.map((d) => (d.id === doc.id ? { ...d, layers } : d)) };
+        return {
+          documents: state.documents.map((d) => (d.id === doc.id ? { ...d, layers } : d)),
+          remoteImageApplyEpoch: state.remoteImageApplyEpoch + 1,
+        };
       });
       return changed;
     },

@@ -15,7 +15,7 @@ import {
 
 export const DEFAULT_TRANSFORM_ORIGIN = 0.5;
 
-type TransformLayerLike = Pick<
+export type TransformLayerLike = Pick<
   ImageLayer,
   'x' | 'y' | 'rotationDeg' | 'skewXDeg' | 'skewYDeg' | 'perspectiveX' | 'perspectiveY' | 'cornerOffsets' | 'transformOriginX' | 'transformOriginY' | 'bitmap'
 > & {

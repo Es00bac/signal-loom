@@ -293,6 +293,34 @@ describe('imageSyncChannel remote-document targeting (note 819)', () => {
     expect(after.bitmap).toBe(before); // untouched, not nulled
     expect(after.bitmapVersion).toBe(1); // version not advanced past the pixels we hold
   });
+
+  it('bumps remoteImageApplyEpoch on every applied remote change (display invalidation, note 820)', async () => {
+    initializeImageSyncChannel();
+    __setImageSyncDepsForTests({ codec, putAsset, getAsset });
+    const channel = getProjectSyncChannel(IMAGE_SYNC_CHANNEL)!;
+    useImageEditorStore.setState({
+      documents: [], activeDocId: null, syncedImageDocumentId: null, remoteImageApplyEpoch: 0,
+    });
+
+    const { toImageDocumentWire } = await import('./imageDocumentNativeSync');
+    const wire = toImageDocumentWire(makeDocument([makeLayer('layer-a')]));
+    assets.set(`${IMAGE_SYNC_CHANNEL}/layer-a@1`, 'enc:bitmap-layer-a');
+    await channel.applyRemote({ type: 'image-document-snapshot', document: wire });
+    const afterSeed = useImageEditorStore.getState().remoteImageApplyEpoch;
+    expect(afterSeed).toBeGreaterThan(0); // snapshot + inbound pixels each bumped it
+
+    // Remote pixels landing at a version this client might already advertise locally must STILL
+    // bump the epoch — the version-based render signature can't see the content change.
+    assets.set(`${IMAGE_SYNC_CHANNEL}/layer-a@2`, 'enc:bitmap-layer-a-v2');
+    await channel.applyRemote({
+      type: 'image-layer-pixels-updated',
+      layerId: 'layer-a',
+      bitmapVersion: 2,
+      hasBitmap: true,
+      hasMask: false,
+    });
+    expect(useImageEditorStore.getState().remoteImageApplyEpoch).toBeGreaterThan(afterSeed);
+  });
 });
 
 describe('imageSyncChannel document-switch broadcast (note 819)', () => {

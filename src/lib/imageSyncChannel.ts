@@ -121,7 +121,9 @@ async function publishLayerAssets(doc: ImageDocument, target: PixelTarget): Prom
   const layer = doc.layers.find((l) => l.id === target.layerId);
   if (!layer) return;
   if (target.hasBitmap && layer.bitmap) {
-    await putAsset(IMAGE_SYNC_CHANNEL, bitmapAssetId(target.layerId, target.version), await codec.encode(layer.bitmap));
+    const encoded = await codec.encode(layer.bitmap);
+    await putAsset(IMAGE_SYNC_CHANNEL, bitmapAssetId(target.layerId, target.version), encoded);
+    console.info(`[image-sync] published ${bitmapAssetId(target.layerId, target.version)} (${encoded.length}b)`);
   }
   if (target.hasMask && layer.mask) {
     await putAsset(IMAGE_SYNC_CHANNEL, maskAssetId(target.layerId, target.version), await codec.encode(layer.mask));
@@ -205,7 +207,12 @@ async function applyInboundPixels(target: PixelTarget): Promise<boolean> {
     if (url) { try { bitmap = await codec.decode(url); } catch { bitmap = null; } }
     // The op promised pixels we couldn't fetch/decode — do NOT flip a null over whatever the
     // layer currently shows; leave it for the retry the next op/seed provides.
-    if (!bitmap) return false;
+    if (!bitmap) {
+      console.warn(`[image-sync] inbound ${bitmapAssetId(target.layerId, target.version)}: `
+        + `${url ? 'decode failed' : 'asset missing'} — keeping current pixels`);
+      return false;
+    }
+    console.info(`[image-sync] applied inbound ${bitmapAssetId(target.layerId, target.version)} (${url?.length ?? 0}b url)`);
   }
   if (target.hasMask) {
     const url = await getAsset(IMAGE_SYNC_CHANNEL, maskAssetId(target.layerId, target.version));
