@@ -104,11 +104,27 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- Keeps the LAN app server (Serve to Desktop) alive while the app is backgrounded or
+             the screen is off; without it Android freezes the process and served browsers see
+             connection-refused mid-session (docs/notes/822). Started/stopped strictly with the
+             serving toggle. -->
+        <service
+            android:name=".LanServerForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
     <!-- Permissions -->
     <!-- Talk to the AI providers the user configures. -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Serve to Desktop keep-alive: the LAN host runs as a data-sync foreground service with a
+         partial wakelock + Wi-Fi lock so cross-device sync survives backgrounding/screen-off. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Legacy public-storage access for @capacitor/filesystem writes to the public
          Documents folder (project saves / exports). Scoped by maxSdkVersion to exactly

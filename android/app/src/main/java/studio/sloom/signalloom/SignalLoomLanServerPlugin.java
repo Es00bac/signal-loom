@@ -1,5 +1,9 @@
 package studio.sloom.signalloom;
 
+import android.content.Context;
+import android.content.Intent;
+import android.os.Build;
+
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -116,6 +120,12 @@ public class SignalLoomLanServerPlugin extends Plugin {
             activePort = port;
             activePin = pin;
 
+            // Keep the whole process (server socket + the WebView that answers relayed data-API
+            // calls) alive while the app is backgrounded or the screen is off — without this,
+            // Android freezes us minutes after HOME and served browsers see connection-refused
+            // mid-session (docs/notes/822).
+            startKeepAliveService();
+
             call.resolve(state(true));
         } catch (IOException error) {
             call.reject("Failed to start LAN server on port " + port + ": " + error.getMessage());
@@ -130,7 +140,31 @@ public class SignalLoomLanServerPlugin extends Plugin {
         }
         activePort = 0;
         activePin = "";
+        stopKeepAliveService();
         call.resolve(state(false));
+    }
+
+    private void startKeepAliveService() {
+        try {
+            Context context = getContext();
+            Intent intent = new Intent(context, LanServerForegroundService.class);
+            intent.putExtra(LanServerForegroundService.EXTRA_URL, "http://" + getLanIpAddress() + ":" + activePort + "/");
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent);
+            } else {
+                context.startService(intent);
+            }
+        } catch (Exception error) {
+            // Serving still works in the foreground without the keep-alive; never fail start() on it.
+        }
+    }
+
+    private void stopKeepAliveService() {
+        try {
+            Context context = getContext();
+            context.stopService(new Intent(context, LanServerForegroundService.class));
+        } catch (Exception ignored) {
+        }
     }
 
     @PluginMethod
