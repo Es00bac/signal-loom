@@ -55,6 +55,7 @@ import { getSignalLoomNativeBridge } from '../../lib/nativeApp';
 import { VertexAuthPanel } from './VertexAuthPanel';
 import { OssLicensesSection } from './OssLicensesSection';
 import { LicenseSection } from './LicenseSection';
+import { downloadTextFile } from '../../shared/files/downloads';
 import { useVertexAuth } from './useVertexAuth';
 
 export const SettingsModal: React.FC = () => {
@@ -931,17 +932,9 @@ function backupErrorMessage(error: unknown): string {
     : 'Something went wrong with the settings backup.';
 }
 
-function downloadTextFile(filename: string, contents: string): void {
-  const blob = new Blob([contents], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
+// Settings-backup export rides the shared Android-aware download helper: the plain anchor-click
+// this file used to hand-roll silently failed on Android WebViews (owner report, 0.9.7), while
+// shared/files/downloads.ts writes through the Capacitor Filesystem plugin there.
 
 /**
  * Optional, user-initiated encrypted backup of API keys + provider credentials. The blob is sealed

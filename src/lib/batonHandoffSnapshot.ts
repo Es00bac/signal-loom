@@ -103,8 +103,18 @@ async function captureImageHandoffSnapshots(): Promise<void> {
 export async function openBatonHandoffItem(item: SourceBinLibraryItem): Promise<boolean> {
   try {
     if (!item.assetUrl) return false;
-    const bytes = dataUrlToBytes(item.assetUrl);
-    if (!bytes) return false;
+    // The item's bytes may live behind ANY url shape: a data: URL (fresh capture / served
+    // hydrate), or a native/capacitor file URL on the device that persisted it. Resolve all.
+    let bytes = item.assetUrl.startsWith('data:') ? dataUrlToBytes(item.assetUrl) : null;
+    if (!bytes) {
+      try {
+        const response = await fetch(item.assetUrl);
+        if (response.ok) bytes = new Uint8Array(await response.arrayBuffer());
+      } catch {
+        bytes = null;
+      }
+    }
+    if (!bytes || bytes.length === 0) return false;
     const [{ useImageEditorStore }, { deserializeSlimg }, { slimgPixelCodec }] = await Promise.all([
       import('../store/imageEditorStore'),
       import('../components/ImageEditor/ImageSlimgFormat'),
