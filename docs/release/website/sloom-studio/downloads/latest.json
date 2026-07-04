@@ -1,6 +1,6 @@
 {
-  "version": "0.9.9",
+  "version": "0.9.10",
   "channel": "beta",
   "url": "https://sloom.studio/downloads",
-  "notes": "The Community + license release. Signal Loom is now free for personal and noncommercial use; the one-time $17.99 commercial license (Settings → License, verified offline, one key for desktop and Android) unlocks the professional print-production exports. Motion comics: speech/thought bubbles and captions as keyframeable timeline clips with full typesetting. Pro editing: JKL shuttle, source in/out three-point insert/overwrite, ripple and roll trims, markers, audio fades, track locks, collapsible tracks, tabbed Program sidebar, and FCP7 XML export for Premiere. Paper: AI Fix Frame repaints a panel from correct sibling references (with region marquee), and whole pages export to the Source Library for panel-to-panel motion-comic animation. Fixed: Source Library deletes stick and sync is far lighter, splash artwork, panel snapping."
+  "notes": "The cross-device release. Draw on your phone, take over in a served desktop browser, draw there, take it back — the Image baton pass now carries every stroke both ways, live, verified end-to-end on real hardware. Three deep fixes got it there: the high-resolution compositor worker no longer crashes in production builds (synced documents could render blank), synced pixels repaint immediately instead of waiting for your next brushstroke, and the phone's LAN relay no longer drops the request parameters that authorize a connected browser's edits. Licensing is verified on Android: the same offline key activates commercial exports on desktop and phone. Everything from 0.9.9 (motion comics, the pro-editing batch, the Community license model) rides along."
 }

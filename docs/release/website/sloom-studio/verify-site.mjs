@@ -40,7 +40,7 @@ const indexMarkers = [
   ['free download CTA', 'Download free'],
   ['Community column', 'Community — free'],
   ['commercial license framing', 'commercial license'],
-  ['direct Windows installer link', 'downloads/SignalLoom-Setup-0.9.9.exe'],
+  ['direct Windows installer link', 'downloads/SignalLoom-Setup-0.9.10.exe'],
 ];
 for (const [label, snippet] of indexMarkers) {
   if (!index.includes(snippet)) errors.push(`index.html missing ${label}: ${snippet}`);

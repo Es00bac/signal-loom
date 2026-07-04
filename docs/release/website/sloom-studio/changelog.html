@@ -110,11 +110,36 @@
 
   <div class="cl-list">
 
+    <!-- ───── 0.9.10 ───── -->
+    <section class="release" id="v0-9-10">
+      <div class="release-head">
+        <span class="release-ver">0.9.10</span>
+        <span class="current-badge">Current</span>
+        <span class="release-date">July 2026</span>
+      </div>
+      <p class="release-summary">The cross-device release: the phone &harr; browser Image baton pass now carries every stroke both ways, live, verified end-to-end on real hardware — and the commercial license activates on Android with the same offline key as desktop.</p>
+
+      <div class="cl-group">
+        <h3>New</h3>
+        <ul class="cl-items">
+          <li><strong>Cross-device drawing, for real.</strong> Draw on the phone, take over in a served desktop browser, draw there, take it back — the document, its layers, and every stroke travel both directions live. &ldquo;Continue from your other device&rdquo; cards pick a handed-off image up with its full layer stack.</li>
+          <li><strong>License activation on Android.</strong> Settings &rarr; License accepts the same key as desktop, verified fully offline (with a pure-JS fallback for older WebViews), and unlocks the commercial exports on the phone.</li>
+        </ul>
+      </div>
+      <div class="cl-group fix">
+        <h3>Fixed &amp; improved</h3>
+        <ul class="cl-items">
+          <li><strong>Synced documents no longer render blank.</strong> The high-resolution compositor worker crashed in production builds and pinned the canvas to an empty cached composite; it is now a properly bundled module worker with a safe fallback, and synced pixels repaint the moment they arrive instead of waiting for your next brushstroke.</li>
+          <li><strong>A connected browser's edits actually reach the phone.</strong> The phone's LAN relay dropped request parameters, so the edit-baton gate silently rejected every op a served browser pushed — and live-sync polls re-sent the whole event log each time. Both are one fix: the relay now forwards the full request.</li>
+          <li>Baton handoff snapshots no longer stack &ldquo;continue on another device&rdquo; onto their own titles on repeat handoffs, and handoff cards open from any storage backend.</li>
+        </ul>
+      </div>
+    </section>
+
     <!-- ───── 0.9.9 ───── -->
     <section class="release" id="v0-9-9">
       <div class="release-head">
         <span class="release-ver">0.9.9</span>
-        <span class="current-badge">Current</span>
         <span class="release-date">July 2026</span>
       </div>
       <p class="release-summary">The Community + license release, plus the biggest Video/Paper feature batch yet: free for noncommercial use with a one-time commercial license, motion-comic bubbles and captions on the timeline, pro three-point editing with JKL shuttle, Premiere XML export, and an AI frame-fix tool in Paper.</p>
