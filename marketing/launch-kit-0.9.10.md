@@ -120,6 +120,10 @@ account — it's your network.
 Free for personal use, no watermarks. One-time $17.99 license only if you sell what you make
 with it (unlocks KDP/PDF-X/CMYK print exports).
 
+Built in an unusual way, too: I'm one person voice-directing an AI coding agent — I steer,
+test on real hardware, and decide what ships; it writes the code. Public repo, co-signed
+commits, happy to talk about that workflow as much as the app.
+
 Android build is in closed testing on Play right now — comment or DM if you want in (it's the
 same free app; testers get it straight from Play). Desktop builds: https://sloom.studio
 ---
