@@ -1,110 +1,105 @@
 # Blog post — ready to publish. Posting steps at the bottom.
 
-**Suggested tags (dev.to):** `webdev`, `performance`, `javascript`, `indiedev`
+**Suggested tags (dev.to):** `ai`, `webdev`, `performance`, `indiedev`
 
 ---
 
-# Aggressive Laziness: Closing ImageBitmaps Like Your Rent Depends On It
+# Aggressive Laziness: I Didn't Write a Line of My App — I Talked It Into Existence
 
-I'm a solo dev building [Signal Loom](https://sloom.studio) — a local-first generative-media
-studio that crams a node graph, a layered raster editor, a comic page editor, and a video
-timeline into one app, sharing one project file. When people hear that, the polite ones ask
-"how?" and the honest ones ask "how has that not eaten your GPU whole?"
+Full disclosure before anything else: I did not write a single line of code in my app. Not the
+TypeScript, not the website's HTML, not one CSS rule. I don't actually know TypeScript — I've
+read the code, I know other languages, but I never sat down and learned it.
 
-Fair question. It runs on Chromium (Electron on desktop, a WebView on Android), which means I
-get a world-class compositor and a world-class opportunity to hold memory wrong. Here's the
-actual answer, including the bug that shipped three broken releases before I caught it.
+I have a button on my mouse that activates voice dictation. I press it and I talk to an AI
+coding agent. That's the workflow. That's the whole workflow. You know the scene in Star Trek
+IV where Scotty picks up the mouse and says "Hello, computer"? I literally do that, except
+it's "hey Claude, do the thing," and unlike Scotty I can't go back to a century where rent
+doesn't exist.
 
-## Rule 1: Only one thing is alive at a time
+What came out of it is [Signal Loom](https://sloom.studio) — a local-first generative-media
+studio: a node graph for wiring AI models together (bring your own keys), a layered raster
+editor with real brushes and stylus support, a comic/print page editor, and a video timeline.
+One app, one shared project file, four workspaces. It's free for personal use, it sells a
+one-time commercial license, and it shipped 0.9.10 this week. A team of humans would have
+taken years. It took me months of talking.
 
-The four workspaces aren't four engines — they're four views over one project model. Switch
-from the image editor to the video timeline and the image editor's render surfaces unmount:
-canvases, previews, the works. Its *state* stays (cheap), its *pixels on screen* don't
-(expensive). "Hot-swapping between editors" sounds unhinged until you realize it's just
-"one renderer at a time over shared data."
+So when someone in a thread asked me, quote, "how are you keeping this thing from eating a GPU
+whole?" — I want to be honest about what happened next: I asked the agent, because the agent
+wrote it. What follows is its answer, which I'm publishing because it's a better engineering
+writeup than most humans would give you, and because this is what "solo dev" actually looks
+like at my house.
 
-## Rule 2: Pixels live in exactly one place
+## What my agent says about not eating your GPU
 
-Early versions embedded generated assets into the project file as base64. When I profiled why
-project files were enormous, embedded assets were **97–98% of the bytes**. Not the node graph.
-Not the layer structure. Copies of pixels, re-encoded as text, inflating by a third.
+**Only one thing is alive at a time.** The four workspaces aren't four engines — they're four
+views over one project model. Switch from the image editor to the video timeline and the image
+editor's render surfaces unmount: canvases, previews, everything. Its *state* stays (cheap);
+its *pixels on screen* don't (expensive).
 
-Now everything is file-backed references. A clip you generate in the node graph isn't copied
-into the timeline — the timeline points at it. The shared asset library hands out URLs, and
-consumers resolve them live instead of caching their own copy. Decoded video frames are never
-cached by my code at all: clips are metadata, and the preview decodes on demand through the
-platform's media stack, which is better at this than I will ever be.
+**Pixels live in exactly one place.** Early versions embedded generated assets into the
+project file as base64, and when we profiled why project files were enormous, embedded assets
+were 97–98% of the bytes. Everything is file-backed references now. A clip generated in the
+node graph isn't copied into the timeline — the timeline points at it. Decoded video frames
+are never cached by the app at all; clips are metadata and previews decode on demand through
+the platform's media stack.
 
-## Rule 3: The raster editor fights dirty
+**The raster editor fights dirty, with techniques old enough to rent a car.** Mid-brushstroke,
+only the rectangle your dab touched gets recomposited — the active layer and everything above
+it over a cached backdrop of everything below. Slider scrubbing composites a downscaled proxy,
+not the full-res document. Full-quality composites happen off-thread in a worker that returns
+one `ImageBitmap`, and the previous one is explicitly `.close()`d before the new one lands —
+ImageBitmaps do not garbage-collect politely; skip that and you're curating a museum of your
+own frames. And at high zoom, blits are clamped to the visible region of the document, because
+asking a GPU compositor for a scaled destination far bigger than the screen is how artwork
+"disappears" into the checkerboard.
 
-The layered editor is where the real memory fight happens, and it's won with techniques old
-enough to rent a car:
+WebGL2 is used narrowly — layer effects like shadows and strokes, with a CPU fallback — not as
+a resident scene graph.
 
-- **Dirty-rect recompositing.** Mid-brushstroke, only the rectangle your dab touched gets
-  recomposited — the active layer plus everything above it, drawn over a cached backdrop of
-  everything below. The unchanged 95% of your document doesn't get looked at.
-- **Proxy compositing.** Dragging an opacity slider recomposites a downscaled copy of the
-  document, not the full-res one. Full quality returns the moment you let go.
-- **One result bitmap, ever.** Full-quality composites happen off the main thread in a worker
-  that returns a single `ImageBitmap`. The previous one is explicitly `.close()`d before the
-  new one takes its place. ImageBitmaps do not garbage-collect politely — if you don't close
-  them, you are building a museum of your own frames.
-- **Clamped blits.** At high zoom, naively drawing a scaled full-document composite asks the
-  GPU for a destination surface far bigger than the screen. Some compositors respond by
-  silently dropping the draw — your artwork "disappears" and only the checkerboard survives.
-  So the blit is clamped to the visible region of the document, always. The GPU only ever
-  gets asked for pixels someone can see.
+## The bug that shipped three times (and how a non-programmer debugged it)
 
-GPU acceleration (WebGL2) is used narrowly — layer effects like drop shadows and strokes,
-with a CPU fallback — not as a resident scene graph. Textures are RGBA8, allocated when an
-effect runs, not held forever "in case."
+Here's my favorite war story, because it shows what this workflow is actually like.
 
-## The bug that only existed in production
+For three releases, people syncing a drawing between devices would sometimes see a blank
+canvas. The pixels arrived perfectly. The screen lied. I tested it on my real phone, told the
+agent "zero change in behavior" in increasingly colorful language, and eventually did the most
+productive thing I've ever done as an engineering manager: I handed it my phone. Literally —
+the agent drove my Android over adb and a desktop browser with Playwright, drew strokes with
+synthetic stylus input on one device, took the editing baton on the other, and *looked at
+screenshots of both screens* until it caught the bug in the act.
 
-Here's the embarrassing one, as a payment for reading this far.
+The root cause was beautiful: the compositor worker was built the "clever" way — stringify ~30
+functions with `.toString()`, concatenate into a Blob, boot a Worker from the Blob URL. Worked
+perfectly in development. In production, the minifier renames identifiers *per module*, so the
+stringified functions called helper names from scopes that didn't come along for the ride —
+`ReferenceError: _r is not defined`, in production only, unreproducible in dev, three releases
+running. And the renderer had cached "I already composited this document state" *before* the
+worker ran, so when the worker died, the canvas served a stale — often blank — composite
+forever.
 
-My composite worker was built the "clever" way: take the compositing functions, call
-`.toString()` on ~30 of them, concatenate into a Blob, and boot a Worker from the Blob URL.
-Zero build configuration. Worked perfectly in dev.
+The fixes: a real bundled module worker (imports resolve under any minifier), the cache only
+trusts itself when a result bitmap actually exists, a crashing worker gets three strikes before
+the renderer stays on the synchronous path — and a test that fails the build if
+`Function.prototype.toString` ever gets near a Worker again, because the agent apparently
+doesn't trust its past self either. Fair.
 
-In production it crashed every single time with `ReferenceError: _r is not defined`.
+## What I actually do all day
 
-Because of course it did: the minifier renames identifiers *per module*. A stringified
-function's body still calls its helpers by their minified names — names that exist in the
-original module's scope and nowhere else. My Blob was a bag of functions from different
-modules, each calling names from a scope that didn't come along for the ride. Dev builds
-don't minify, so the bug was **unreproducible anywhere I looked** and shipped in three
-releases.
+I'm not going to pretend "vibe coding" means the machine does everything. My job, it turns
+out, is everything the code can't be: deciding what the app *is*, saying no, testing on real
+hardware, refusing to accept "fixed" until I can see it with my eyes, choosing what ships,
+and paying for all of it. The agent's job is the TypeScript. When it claims something works
+and it doesn't, I say so, loudly, and it instruments both devices and finds out why. That
+loop — me with taste and a phone, it with the codebase in its head — built in months what I
+could not have built alone in any number of years.
 
-The kicker: the worker crashing didn't throw anything user-visible. The renderer had cached
-"I already produced a composite for this document state" *before* the worker ran, so when it
-died, the canvas served a stale — sometimes empty — composite forever. Users saw synced
-drawings render as blank canvases. The pixels were perfect in memory. The display was lying.
+If you ask me something deep about the compositor in the comments, I'll be honest: the answer
+will come from the agent, checked against the actual source. That's not a gotcha. That's the
+workflow, working in public. The commit history is signed by both of us — you can go look.
 
-The fixes, in order of what I'd tell past-me:
-
-1. **Never build workers from stringified functions.** Bundlers have supported real module
-   workers (`new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })`) for
-   years. Imports resolve correctly under any minifier because they're actual imports.
-2. **Never mark work done before it's done.** The cache signature is now only trusted when a
-   result bitmap actually exists; a worker failure un-poisons it and falls back to a
-   synchronous composite. Blank-canvas-forever is no longer a reachable state.
-3. **A failing worker gets three strikes**, then the renderer stays on the synchronous path
-   instead of crash-looping a Worker boot loop in the background.
-
-And because I clearly can't be trusted, there's now a test that greps the renderer source and
-fails if `Function.prototype.toString` ever gets near a Worker again.
-
-## The philosophy, if you can call it that
-
-Most of this isn't clever. It's refusing to hold anything twice, refusing to render anything
-nobody can see, and refusing to trust "it works on my machine" from a machine that doesn't
-minify. Modern web APIs are genuinely great — OffscreenCanvas, ImageBitmap, module workers —
-but they hand you the exact same footguns 90s graphics programmers had, wearing nicer names.
-
-Aggressive laziness. The app is free for personal use if you want to see whether it holds up
-on your machine: [sloom.studio](https://sloom.studio). I'm the only dev, the rent line wasn't
-a joke, and I answer every comment.
+The app is free for personal use if you want to see whether any of this holds up on your
+machine: [sloom.studio](https://sloom.studio). The rent line wasn't a joke, and between the
+two of us, every comment gets answered.
 
 ---
 ---
@@ -115,15 +110,29 @@ a joke, and I answer every comment.
 1. Go to https://dev.to and log in (top-right **Log in** — you can use your GitHub account:
    click **Continue with GitHub**, then **Authorize**).
 2. Click **Create Post** (top-right button).
-3. In the **Title** field paste: `Aggressive Laziness: Closing ImageBitmaps Like Your Rent Depends On It`
+3. In the **Title** field paste: `Aggressive Laziness: I Didn't Write a Line of My App — I Talked It Into Existence`
 4. Click **Add up to 4 tags** and type, one at a time, pressing Enter after each:
-   `webdev` `performance` `javascript` `indiedev`
-5. Copy everything in this file between the FIRST `---` line and the DOUBLE `---` lines near
-   the bottom (i.e., the post body starting at "I'm a solo dev…" and ending at "…I answer
-   every comment.") and paste it into the big body field.
+   `ai` `webdev` `performance` `indiedev`
+5. Copy everything between the FIRST `---` line and the DOUBLE `---` lines near the bottom
+   (the post body, starting at "Full disclosure…" and ending at "…every comment gets
+   answered.") and paste it into the big body field.
 6. Click **Publish** (bottom-left). You should land on the live post.
-7. Copy the live URL — you can now link it from Reddit comments when anyone asks "how does
-   it not eat the GPU?"
+7. Copy the live URL — drop it in any thread where someone asks how the app is built or
+   whether it eats GPUs.
 
-**Optional second home, itch devlog (same steps as the launch kit's devlog #1, new post):**
-title it the same, paste the same body. itch followers get notified again.
+**Optional second home, itch devlog:** same title, same body, posted as a new devlog
+(steps are in launch-kit-0.9.10.md, item #1).
+
+## One more thing — a follow-up comment for your LIVE r/SideProject post
+
+Your r/SideProject post is already up and says "ask me anything about how it's built." Add
+this as a new comment on your own post (go to your post → comment box at the top → paste →
+**Comment**). It converts the authorship question into content before anyone else raises it:
+
+---
+Full disclosure, since I promised to answer anything: I didn't hand-write the code. I'm one
+person directing an AI coding agent — I literally use voice dictation, I talk and it builds,
+and I test everything on real hardware and refuse to accept "fixed" until I can see it. The
+commit history is co-signed by the agent, it's a public repo, go look. Happy to answer
+questions about that workflow too — honestly it's the part people ask most about.
+---
