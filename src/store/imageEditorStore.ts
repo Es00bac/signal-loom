@@ -98,6 +98,8 @@ const DEFAULT_IMAGE_BACKGROUND_COLOR = '#000000';
 interface ImageEditorState {
   documents: ImageDocument[];
   activeDocId: string | null;
+  /** The document id the cross-device sync's last snapshot seeded; granular remote ops target it. */
+  syncedImageDocumentId: string | null;
   tool: EditorTool;
   backgroundColor: string;
   brushSettings: BrushSettings;
@@ -1111,11 +1113,54 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
       });
     },
 
+    syncedImageDocumentId: null,
+
     applyRemoteImageDocumentChange: (change) => {
       let changed = false;
       set((state) => {
-        const doc = state.documents.find((d) => d.id === state.activeDocId);
-        if (!doc) return state; // no open document to apply to (first pass syncs the active doc only)
+        // Ops must NEVER target the blind activeDocId (owner bug 2026-07-03): a served client with
+        // no document open silently dropped the authority's seed forever, and one with a DIFFERENT
+        // document open had its layers wiped by id-mismatch reconciliation. Snapshots name their
+        // document — create-or-target by that id; granular ops target the doc the last snapshot
+        // seeded (tracked in syncedImageDocumentId).
+        if (change.type === 'image-document-snapshot') {
+          const wire = change.document;
+          if (!wire?.id) return state; // empty seed: the authority had no document open
+          const existing = state.documents.find((d) => d.id === wire.id);
+          if (existing) {
+            const prevWire = toImageDocumentWire(existing);
+            const nextWire = applyImageDocumentNativeChange(prevWire, change);
+            if (nextWire === prevWire) {
+              return state.syncedImageDocumentId === wire.id
+                ? state
+                : { ...state, syncedImageDocumentId: wire.id };
+            }
+            changed = true;
+            const nextDoc = reconcileLiveDocumentToWire(existing, nextWire);
+            return {
+              documents: state.documents.map((d) => (d.id === existing.id ? nextDoc : d)),
+              syncedImageDocumentId: wire.id,
+            };
+          }
+          // The authority's document doesn't exist here yet — create it as a live shell (null
+          // bitmaps; the channel streams the pixels out-of-band right after this op).
+          const { layers: _wireLayers, ...docMeta } = wire;
+          const shell = reconcileLiveDocumentToWire(
+            { ...docMeta, layers: [], snapshots: [] } as unknown as ImageDocument,
+            wire,
+          );
+          changed = true;
+          return {
+            documents: [...state.documents, shell],
+            // Surface the synced document when nothing else is open (the served-second-screen
+            // contract); never steal focus from a document the user is actively editing.
+            activeDocId: state.activeDocId ?? shell.id,
+            syncedImageDocumentId: wire.id,
+          };
+        }
+
+        const doc = state.documents.find((d) => d.id === state.syncedImageDocumentId);
+        if (!doc) return state; // granular op before any snapshot seed — the next seed reconciles
         const wire = toImageDocumentWire(doc);
         const nextWire = applyImageDocumentNativeChange(wire, change);
         if (nextWire === wire) return state; // reducer no-op (idempotent op / nothing changed)
@@ -1129,7 +1174,8 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     applyRemoteLayerPixels: (layerId, pixels) => {
       let changed = false;
       set((state) => {
-        const doc = state.documents.find((d) => d.id === state.activeDocId);
+        const doc = state.documents.find((d) => d.id === state.syncedImageDocumentId)
+          ?? state.documents.find((d) => d.layers.some((l) => l.id === layerId));
         if (!doc) return state;
         const index = doc.layers.findIndex((l) => l.id === layerId);
         if (index < 0) return state;

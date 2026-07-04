@@ -210,3 +210,87 @@ describe('imageSyncChannel snapshot (seed)', () => {
     expect(assets.get(`${IMAGE_SYNC_CHANNEL}/b@5:mask`)).toBe('enc:mask-b');
   });
 });
+
+// Owner bug (2026-07-03, note 819): a served client with no document open silently dropped the
+// authority's seed forever, and one with a DIFFERENT document open had its layers wiped by
+// blind-activeDocId reconciliation. Snapshots must create-or-target by wire id; granular ops
+// target the tracked synced document; a promised-but-unfetchable pixel never nulls a live bitmap.
+describe('imageSyncChannel remote-document targeting (note 819)', () => {
+  it('creates the authority document on a client with none open (and shows it)', async () => {
+    initializeImageSyncChannel();
+    __setImageSyncDepsForTests({ codec, putAsset, getAsset });
+    const channel = getProjectSyncChannel(IMAGE_SYNC_CHANNEL)!;
+    useImageEditorStore.setState({ documents: [], activeDocId: null, syncedImageDocumentId: null });
+
+    const { toImageDocumentWire } = await import('./imageDocumentNativeSync');
+    const wire = toImageDocumentWire(makeDocument([makeLayer('layer-a')]));
+    assets.set(`${IMAGE_SYNC_CHANNEL}/layer-a@1`, 'enc:bitmap-layer-a');
+
+    const changed = await channel.applyRemote({ type: 'image-document-snapshot', document: wire });
+
+    expect(changed).toBe(true);
+    const state = useImageEditorStore.getState();
+    expect(state.documents.map((d) => d.id)).toEqual(['doc-1']);
+    expect(state.activeDocId).toBe('doc-1');
+    expect(state.syncedImageDocumentId).toBe('doc-1');
+    expect(state.documents[0].layers.map((l) => l.id)).toEqual(['layer-a']);
+    // pixels arrived out-of-band and flipped in
+    expect((state.documents[0].layers[0].bitmap as unknown as { __decoded: string }).__decoded)
+      .toBe('enc:bitmap-layer-a');
+  });
+
+  it('never wipes an unrelated open document (ops target the synced id, not the active doc)', async () => {
+    initializeImageSyncChannel();
+    __setImageSyncDepsForTests({ codec, putAsset, getAsset });
+    const channel = getProjectSyncChannel(IMAGE_SYNC_CHANNEL)!;
+
+    // The user is editing their OWN document (different id) on this client.
+    useImageEditorStore.setState({ documents: [], activeDocId: null, syncedImageDocumentId: null });
+    useImageEditorStore.getState().openDocument({
+      ...makeDocument([makeLayer('mine-1')]),
+      id: 'doc-local',
+      title: 'My local doc',
+    });
+
+    const { toImageDocumentWire } = await import('./imageDocumentNativeSync');
+    const wire = toImageDocumentWire(makeDocument([makeLayer('layer-a')]));
+    await channel.applyRemote({ type: 'image-document-snapshot', document: wire });
+    await channel.applyRemote({ type: 'image-layer-removed', layerId: 'mine-1' });
+
+    const state = useImageEditorStore.getState();
+    const local = state.documents.find((d) => d.id === 'doc-local')!;
+    // local document untouched: still active, layers intact
+    expect(state.activeDocId).toBe('doc-local');
+    expect(local.layers.map((l) => l.id)).toEqual(['mine-1']);
+    // the authority's doc exists alongside, tracked as the synced target
+    expect(state.documents.some((d) => d.id === 'doc-1')).toBe(true);
+    expect(state.syncedImageDocumentId).toBe('doc-1');
+  });
+
+  it('does not null a live bitmap when the promised out-of-band bytes are unavailable', async () => {
+    initializeImageSyncChannel();
+    __setImageSyncDepsForTests({ codec, putAsset, getAsset });
+    const channel = getProjectSyncChannel(IMAGE_SYNC_CHANNEL)!;
+    useImageEditorStore.setState({ documents: [], activeDocId: null, syncedImageDocumentId: null });
+
+    const { toImageDocumentWire } = await import('./imageDocumentNativeSync');
+    const wire = toImageDocumentWire(makeDocument([makeLayer('layer-a')]));
+    assets.set(`${IMAGE_SYNC_CHANNEL}/layer-a@1`, 'enc:bitmap-layer-a');
+    await channel.applyRemote({ type: 'image-document-snapshot', document: wire });
+    const before = useImageEditorStore.getState().documents[0].layers[0].bitmap;
+    expect(before).not.toBeNull();
+
+    // a pixel pointer for a version whose bytes never arrive (asset store empty for @2)
+    await channel.applyRemote({
+      type: 'image-layer-pixels-updated',
+      layerId: 'layer-a',
+      bitmapVersion: 2,
+      hasBitmap: true,
+      hasMask: false,
+    });
+
+    const after = useImageEditorStore.getState().documents[0].layers[0];
+    expect(after.bitmap).toBe(before); // untouched, not nulled
+    expect(after.bitmapVersion).toBe(1); // version not advanced past the pixels we hold
+  });
+});

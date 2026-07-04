@@ -197,10 +197,14 @@ async function applyInboundPixels(target: PixelTarget): Promise<boolean> {
   if (target.hasBitmap) {
     const url = await getAsset(IMAGE_SYNC_CHANNEL, bitmapAssetId(target.layerId, target.version));
     if (url) { try { bitmap = await codec.decode(url); } catch { bitmap = null; } }
+    // The op promised pixels we couldn't fetch/decode — do NOT flip a null over whatever the
+    // layer currently shows; leave it for the retry the next op/seed provides.
+    if (!bitmap) return false;
   }
   if (target.hasMask) {
     const url = await getAsset(IMAGE_SYNC_CHANNEL, maskAssetId(target.layerId, target.version));
     if (url) { try { mask = await codec.decode(url); } catch { mask = null; } }
+    if (!mask) return false;
   }
   const changed = useImageEditorStore.getState().applyRemoteLayerPixels(target.layerId, {
     bitmap,
@@ -217,7 +221,12 @@ const imageChannel: ProjectSyncChannel<ImageDocumentNativeChange> = {
     applyingRemote = true;
     try {
       // 1. Structural/metadata: preserves surviving live bitmaps, null-shells the new/seeded layers.
-      let changed = useImageEditorStore.getState().applyRemoteImageDocumentChange(change);
+      //    A pure pixel-pointer op skips this step entirely — applyRemoteLayerPixels flips the
+      //    pixels AND the version in one set, so a layer never advertises a version whose bytes
+      //    it doesn't hold (e.g. when the out-of-band fetch fails and we keep the old pixels).
+      let changed = change.type === 'image-layer-pixels-updated'
+        ? false
+        : useImageEditorStore.getState().applyRemoteImageDocumentChange(change);
       // 2. Out-of-band pixels: fetch + decode + flip in for each target the op implies.
       for (const target of pixelTargets(change)) {
         if (await applyInboundPixels(target)) changed = true;
