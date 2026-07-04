@@ -150,9 +150,15 @@ async function flushEmit(): Promise<void> {
     return;
   }
   const next = toImageDocumentWire(liveDoc);
-  // A document switch (different id) is not a delta — reset the baseline rather than emit a remove-all/add-all.
+  // A document switch (different id) is not a delta — but connected clients still need to hear
+  // about it (owner flow: pair FIRST, open/draw SECOND — without this, nothing ever re-seeds and
+  // the client stares at a stale shell forever, note 819). Publish the new document as a full
+  // snapshot op, pixels-before-pointer like every other emit.
   if (lastDocument === null || lastDocument.id !== next.id) {
     lastDocument = next;
+    const snapshotOp: ImageDocumentNativeChange = { type: 'image-document-snapshot', document: next };
+    for (const target of pixelTargets(snapshotOp)) await publishLayerAssets(liveDoc, target);
+    notifyLanProjectChange(IMAGE_SYNC_CHANNEL, snapshotOp);
     return;
   }
   const ops = diffImageDocumentNativeChanges(lastDocument, next);

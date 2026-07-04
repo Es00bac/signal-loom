@@ -75,9 +75,14 @@ async function captureImageHandoffSnapshots(): Promise<void> {
     const documents = useImageEditorStore.getState().documents.slice(0, 8);
     for (const doc of documents) {
       try {
+        // A document with no pixel-bearing layers is a shell (e.g. a not-yet-synced remote doc)
+        // — snapshotting it would overwrite a good handoff with a hollow one.
+        if (!doc.layers.some((layer) => layer.bitmap || layer.bitmapData)) continue;
         const bytes = await serializeSlimg(doc, slimgPixelCodec);
+        // Re-handoffs must not stack the suffix onto an already-suffixed title.
+        const baseTitle = (doc.title || 'Image').replace(/ — continue on another device/g, '');
         await useSourceBinStore.getState().addAssetItem({
-          label: `${doc.title || 'Image'} — continue on another device`,
+          label: `${baseTitle} — continue on another device`,
           kind: 'image',
           mimeType: SLIMG_HANDOFF_MIME_TYPE,
           dataUrl: bytesToDataUrl(bytes, SLIMG_HANDOFF_MIME_TYPE),
@@ -106,6 +111,8 @@ export async function openBatonHandoffItem(item: SourceBinLibraryItem): Promise<
       import('../components/ImageEditor/ImageSlimgCodec'),
     ]);
     const doc = await deserializeSlimg(bytes, slimgPixelCodec);
+    // The handoff LABEL carries the suffix; the document title must not (double-suffix source).
+    doc.title = doc.title.replace(/ — continue on another device/g, '');
     useImageEditorStore.getState().openDocument(doc);
     return true;
   } catch (error) {

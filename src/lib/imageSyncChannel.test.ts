@@ -294,3 +294,33 @@ describe('imageSyncChannel remote-document targeting (note 819)', () => {
     expect(after.bitmapVersion).toBe(1); // version not advanced past the pixels we hold
   });
 });
+
+describe('imageSyncChannel document-switch broadcast (note 819)', () => {
+  it('publishes a full snapshot (pixels first) when the authority opens a different document', async () => {
+    initializeImageSyncChannel();
+    __setImageSyncDepsForTests({ codec, putAsset, getAsset });
+
+    openDoc([makeLayer('layer-a')]); // baseline document
+    await __flushImageSyncEmitForTests();
+    notifyLanProjectChange.mockClear();
+    putAsset.mockClear();
+
+    // The authority opens a DIFFERENT document (the owner's pair-first, draw-second flow).
+    useImageEditorStore.getState().openDocument({
+      ...makeDocument([makeLayer('layer-b')]),
+      id: 'doc-2',
+      title: 'Second doc',
+    });
+    await __flushImageSyncEmitForTests();
+
+    const snapshotCall = notifyLanProjectChange.mock.calls.find(
+      ([, change]) => (change as { type: string }).type === 'image-document-snapshot',
+    );
+    expect(snapshotCall).toBeTruthy();
+    const wire = (snapshotCall![1] as { document: { id: string; layers: Array<{ id: string }> } }).document;
+    expect(wire.id).toBe('doc-2');
+    expect(wire.layers.map((l) => l.id)).toEqual(['layer-b']);
+    // pixels published before the pointer op, under the content-addressed id
+    expect(putAsset).toHaveBeenCalledWith(IMAGE_SYNC_CHANNEL, 'layer-b@1', 'enc:bitmap-layer-b');
+  });
+});
