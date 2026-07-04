@@ -22,7 +22,7 @@ subscription, bring your own AI keys
 >
 > Everything shares one project + library, so a clip you make in Flow is instantly in the others. It's
 > **bring-your-own-key** (Gemini, OpenAI, FLUX, Stability, etc.) — your keys + work stay on device,
-> you pay providers directly, and it's a **one-time $9.99**, no subscription.
+> you pay providers directly, and it's **free for personal use** (one-time $17.99 commercial license if you sell what you make), no subscription.
 >
 > Demo (idea → finished comic page): `<DEMO GIF>`
 > Community / questions: `<DISCORD>`
@@ -53,7 +53,7 @@ in one app
 ## r/androidapps / r/AndroidApps  (🟡 read pinned rules; this is a showcase)
 
 **Title:** [Dev] Signal Loom — a generative-media studio for Android & DeX (node graphs, image editor,
-comic layout, video) — one-time $9.99, bring your own AI keys
+comic layout, video) — free for personal use ($17.99 one-time commercial license), bring your own AI keys
 
 **Body:**
 > Solo-built. Four creative workspaces in one app, shares one project + library, BYOK so your keys and

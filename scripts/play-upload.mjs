@@ -99,7 +99,9 @@ try {
     requestBody: {
       track,
       releases: [{
-        status: 'completed',
+        // --status draft registers the artifact with Play (e.g. to surface a new
+        // App-content declaration) without rolling anything out to testers.
+        status: String(args.status || 'completed'),
         versionCodes: [String(versionCode)],
         releaseNotes: [{
           language: 'en-US',
