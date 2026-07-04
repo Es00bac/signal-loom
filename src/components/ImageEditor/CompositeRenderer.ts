@@ -630,6 +630,16 @@ function getHighResWorkerBlobUrl(): string {
     ${getImageLayerBitmapDrawMetrics.toString()}
     ${drawLayerBitmapTransformed.toString()}
 
+    // Stable aliases for the hand-written body below. Production minification renames the
+    // injected function declarations above (their bare names only exist in dev), so the raw
+    // code must never call them by literal source name — it broke with
+    // "clamp01 is not defined" in every minified build. The alias values are fresh copies
+    // whose internal helper calls still resolve against the (renamed) declarations above.
+    const __clamp01 = (${clamp01.toString()});
+    const __blendModeToCompositeOp = (${imageBlendModeToCanvasCompositeOperation.toString()});
+    const __applyAdjustmentToImageData = (${applyAdjustmentToImageData.toString()});
+    const __drawLayerBitmapTransformed = (${drawLayerBitmapTransformed.toString()});
+
     self.onmessage = async function(e) {
       const { docWidth, docHeight, layers } = e.data;
       const canvas = new OffscreenCanvas(docWidth, docHeight);
@@ -651,7 +661,7 @@ function getHighResWorkerBlobUrl(): string {
               maskData = mCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
             }
           }
-          const adjusted = applyAdjustmentToImageData(source, layer.adjustment, {
+          const adjusted = __applyAdjustmentToImageData(source, layer.adjustment, {
             opacity: layer.opacity,
             mask: maskData,
           });
@@ -661,9 +671,9 @@ function getHighResWorkerBlobUrl(): string {
 
         if (layer.bitmap) {
           ctx.save();
-          ctx.globalAlpha = clamp01(layer.opacity);
-          ctx.globalCompositeOperation = imageBlendModeToCanvasCompositeOperation(layer.blendMode);
-          drawLayerBitmapTransformed(ctx, layer.bitmap, layer, layer.offsetX || 0, layer.offsetY || 0);
+          ctx.globalAlpha = __clamp01(layer.opacity);
+          ctx.globalCompositeOperation = __blendModeToCompositeOp(layer.blendMode);
+          __drawLayerBitmapTransformed(ctx, layer.bitmap, layer, layer.offsetX || 0, layer.offsetY || 0);
           ctx.restore();
         }
       }
