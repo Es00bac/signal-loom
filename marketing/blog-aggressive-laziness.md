@@ -38,10 +38,14 @@ its *pixels on screen* don't (expensive).
 
 **Pixels live in exactly one place.** Early versions embedded generated assets into the
 project file as base64, and when we profiled why project files were enormous, embedded assets
-were 97–98% of the bytes. Everything is file-backed references now. A clip generated in the
-node graph isn't copied into the timeline — the timeline points at it. Decoded video frames
-are never cached by the app at all; clips are metadata and previews decode on demand through
-the platform's media stack.
+were 97–98% of the bytes. That one was my fault, and it's a perfect specimen of how this
+workflow fails: I always *intended* the project file to be references into a scratch directory
+of media files — I just never said so, and the agent I was using at the time (a different one,
+early on) picked the default: embed everything. Under-specify and you inherit defaults; the
+invoice arrives months later, denominated in gigabytes. Everything is file-backed references
+now. A clip generated in the node graph isn't copied into the timeline — the timeline points
+at it. Decoded video frames are never cached by the app at all; clips are metadata and
+previews decode on demand through the platform's media stack.
 
 **The raster editor fights dirty, with techniques old enough to rent a car.** Mid-brushstroke,
 only the rectangle your dab touched gets recomposited — the active layer and everything above
