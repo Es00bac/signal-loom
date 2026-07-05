@@ -39,7 +39,9 @@ jobs:
         # signing when no cert is present, instead of failing the build.
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --mac dmg --x64 --arm64 -c.mac.icon=build/icons/icon.png
+        # --publish never: electron-builder auto-publishes when it detects CI, which needs a
+        # token and isn't what we want here (the release step below handles tag builds).
+        run: npx electron-builder --mac dmg --x64 --arm64 --publish never -c.mac.icon=build/icons/icon.png
 
       - name: List built artifacts
         run: ls -lh release/*.dmg
