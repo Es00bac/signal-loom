@@ -19,6 +19,7 @@ import automationPathModule from './automation-paths.cjs';
 import linuxWindowingModule from './linux-windowing.cjs';
 import globalMenuControllerModule from './globalMenu/globalMenuController.cjs';
 import x11WindowIdModule from './globalMenu/x11WindowId.cjs';
+import panelMenuServiceModule from './globalMenu/panelMenuService.cjs';
 
 const { createApplicationMenuTemplate, SIGNAL_LOOM_MENU_COMMANDS } = menuModule;
 const {
@@ -92,6 +93,7 @@ const {
 } = linuxWindowingModule;
 const { createGlobalMenuController } = globalMenuControllerModule;
 const { resolveX11WindowId } = x11WindowIdModule;
+const { createPanelMenuService } = panelMenuServiceModule;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PRODUCTION_RENDERER_URL = pathToFileURL(resolve(__dirname, '../dist/index.html')).toString();
@@ -117,6 +119,10 @@ let keyboardShortcuts = {};
 // Lazily-created KDE Plasma global-menu controller (opt-in; null when unsupported/disabled). It
 // exports each workspace window's menu over DBus, fully decoupled from the GPU/render process.
 let globalMenuController = null;
+// Lazily-created native-Wayland KDE panel-menu service (opt-in via SIGNAL_LOOM_ELECTRON_PANEL_MENU=1;
+// null when unsupported). Unlike the global-menu controller it needs no X11 window id, so it does NOT
+// force XWayland — the app keeps its native-Wayland GPU surface while the menu shows in the panel.
+let panelMenuService = null;
 let sourceLibraryVersion = 0;
 let sourceLibrarySnapshot = createEmptySourceLibrarySnapshot();
 const nativeAssetCapabilityRegistry = createNativeAssetCapabilityRegistry();
@@ -936,6 +942,15 @@ function createWorkspaceWindow(workspace = 'flow') {
     // The focused workspace's menu drives the macOS bar + KDE global menu.
     applicationMenu = menuForWorkspace(workspace);
     Menu.setApplicationMenu(applicationMenu);
+    // Show this workspace's menu in the native-Wayland panel applet (no-op when the flag is off).
+    panelMenuService?.setActive(true);
+    panelMenuService?.setActiveWorkspace(workspace);
+  });
+
+  workspaceWindow.on('blur', () => {
+    // Hide the panel menu when focus leaves Signal Loom (debounced in the service so opening the
+    // applet's own popup — which briefly steals focus — doesn't make the menu flicker away).
+    panelMenuService?.setActive(false);
   });
 
   workspaceWindow.on('closed', () => {
@@ -1024,6 +1039,30 @@ function getGlobalMenuController() {
     logger: (...args) => console.log('[gmenu]', ...args),
   });
   return globalMenuController;
+}
+
+// ── KDE panel menu, native-Wayland variant (opt-in, no XWayland) ─────────────────────────────────
+// Same menu content and command routing as the global-menu controller, but published over our own
+// `org.signalloom.PanelMenu` D-Bus service for the Signal Loom Plasma applet to render. No X11 window
+// id is involved, so this never forces XWayland: the app keeps hardware acceleration on native Wayland.
+function getPanelMenuService() {
+  if (panelMenuService) return panelMenuService;
+  panelMenuService = createPanelMenuService({
+    onCommand: (command) => {
+      if (typeof command === 'string' && command.startsWith('role:')) {
+        performGlobalMenuRole(command);
+        return;
+      }
+      sendRendererCommand(command);
+    },
+    getActiveWorkspace: () => activeWorkspace,
+    getKeyboardShortcuts: () => keyboardShortcuts,
+    isMac: process.platform === 'darwin',
+    // Best-effort identity hints for the applet (StartupWMClass varies between our two .desktop files).
+    appIdHints: ['signal-loom', 'Signal Loom', 'signalloom', 'studio.sloom.signalloom'],
+    logger: (...args) => console.log('[panelmenu]', ...args),
+  });
+  return panelMenuService;
 }
 
 /** Best-effort: get the toplevel's real X11 id. getNativeWindowHandle is the real XID on a normal
@@ -2786,6 +2825,7 @@ function installIpcHandlers() {
     installApplicationMenu();
     // Rebuild the KDE global menu too so its accelerators track the in-window menu (no-op if off).
     globalMenuController?.refreshShortcuts();
+    panelMenuService?.refresh();
 
     return { ok: true };
   });
@@ -3136,6 +3176,8 @@ app.whenReady().then(async () => {
   installIpcHandlers();
   void maybeAutoStartLocalUpscaler();
   installApplicationMenu();
+  // Bring up the native-Wayland panel-menu D-Bus service (no-op unless SIGNAL_LOOM_ELECTRON_PANEL_MENU=1).
+  void getPanelMenuService().start();
   if (process.env.SIGNAL_LOOM_ELECTRON_MENU_SMOKE === '1') {
     console.log(`Signal Loom application menu: ${getInstalledApplicationMenuLabels().join(', ')}`);
     app.quit();
@@ -3176,6 +3218,7 @@ app.on('window-all-closed', () => {
 // Tear down the global-menu DBus export cleanly so KDE drops our registrations on exit.
 app.on('will-quit', () => {
   void globalMenuController?.stop();
+  void panelMenuService?.stop();
 });
 
 export { SIGNAL_LOOM_MENU_COMMANDS };

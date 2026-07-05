@@ -3,6 +3,7 @@ import {
   getEditorVisualClips,
   getEditorAudioClips,
   getEditorAudioTrackVolumes,
+  migrateComicPolarTailToBezierTip,
 } from './manualEditorState';
 import type { NodeData } from '../types/flow';
 
@@ -146,6 +147,131 @@ describe('getEditorVisualClips', () => {
       color: '#ff00cc',
       widthPx: 80,
       opacityPercent: 100,
+    });
+  });
+});
+
+describe('migrateComicPolarTailToBezierTip', () => {
+  it('returns undefined when no polar tail data is present', () => {
+    expect(migrateComicPolarTailToBezierTip(undefined, undefined)).toBeUndefined();
+  });
+
+  it('converts a downward polar tail (90deg) to a below-center bezier tip', () => {
+    // distance = 30 + 50 * 0.2 = 40; tipX = 50 + cos(90deg)*40 ≈ 50; tipY = 50 + sin(90deg)*40 = 90.
+    const tip = migrateComicPolarTailToBezierTip(90, 50);
+
+    expect(tip?.tipXPercent).toBeCloseTo(50, 5);
+    expect(tip?.tipYPercent).toBe(90);
+  });
+
+  it('clamps a long rightward tail inside the 0..100 frame', () => {
+    // angle 0 = right; distance = 30 + 500*0.2 clamps to 72; tipX = 50 + 72 = 122 -> clamped 100.
+    const tip = migrateComicPolarTailToBezierTip(0, 500);
+
+    expect(tip?.tipXPercent).toBe(100);
+    expect(tip?.tipYPercent).toBeCloseTo(50, 5);
+  });
+});
+
+describe('getEditorVisualClips comic tail migration', () => {
+  it('migrates a legacy polar comic tail to a bezier tip while keeping the polar fields', () => {
+    const clips = getEditorVisualClips({
+      editorVisualClips: [
+        {
+          id: 'comic-1',
+          sourceNodeId: 'source-1',
+          sourceKind: 'comic',
+          comicKind: 'speech-bubble',
+          comicTailAngleDeg: 90,
+          comicTailLengthPx: 50,
+        },
+      ],
+    } as Partial<NodeData> as NodeData);
+
+    expect(clips[0].comicTailTipXPercent).toBeCloseTo(50, 5);
+    expect(clips[0].comicTailTipYPercent).toBe(90);
+    // Legacy polar fields are preserved for back-compat.
+    expect(clips[0].comicTailAngleDeg).toBe(90);
+    expect(clips[0].comicTailLengthPx).toBe(50);
+  });
+
+  it('prefers an explicit bezier tip over the legacy polar tail', () => {
+    const clips = getEditorVisualClips({
+      editorVisualClips: [
+        {
+          id: 'comic-2',
+          sourceNodeId: 'source-1',
+          sourceKind: 'comic',
+          comicKind: 'speech-bubble',
+          comicTailAngleDeg: 90,
+          comicTailLengthPx: 50,
+          comicTailTipXPercent: 33,
+          comicTailTipYPercent: 66,
+          comicTailCurvePercent: 70,
+        },
+      ],
+    } as Partial<NodeData> as NodeData);
+
+    expect(clips[0].comicTailTipXPercent).toBe(33);
+    expect(clips[0].comicTailTipYPercent).toBe(66);
+    expect(clips[0].comicTailCurvePercent).toBe(70);
+  });
+
+  it('leaves the bezier tail unset for clips with no tail data', () => {
+    const clips = getEditorVisualClips({
+      editorVisualClips: [
+        {
+          id: 'image-1',
+          sourceNodeId: 'source-1',
+          sourceKind: 'image',
+        },
+      ],
+    } as Partial<NodeData> as NodeData);
+
+    expect(clips[0].comicTailTipXPercent).toBeUndefined();
+    expect(clips[0].comicTailTipYPercent).toBeUndefined();
+  });
+
+  it('normalizes rich text typography and drops invalid fields', () => {
+    const clips = getEditorVisualClips({
+      editorVisualClips: [
+        {
+          id: 'text-1',
+          sourceNodeId: 'source-1',
+          sourceKind: 'text',
+          textTypography: {
+            fontWeight: 700,
+            fontStyle: 'italic',
+            lineHeightPercent: 120,
+            letterSpacingPx: 2,
+            textAlign: 'justify',
+            strokeColor: '#000000',
+            strokeWidthPx: 3,
+            shadowColor: '#101010',
+            shadowBlurPx: 6,
+            shadowOffsetXPx: 1,
+            shadowOffsetYPx: 2,
+            arcPercent: 25,
+            bogusField: 'ignored',
+            fontStyleInvalid: 'oblique',
+          },
+        },
+      ],
+    } as unknown as NodeData);
+
+    expect(clips[0].textTypography).toEqual({
+      fontWeight: 700,
+      fontStyle: 'italic',
+      lineHeightPercent: 120,
+      letterSpacingPx: 2,
+      textAlign: 'justify',
+      strokeColor: '#000000',
+      strokeWidthPx: 3,
+      shadowColor: '#101010',
+      shadowBlurPx: 6,
+      shadowOffsetXPx: 1,
+      shadowOffsetYPx: 2,
+      arcPercent: 25,
     });
   });
 });

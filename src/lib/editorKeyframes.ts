@@ -30,6 +30,9 @@ type VisualKeyframeClip = Pick<
   | 'opacityPercent'
   | 'opacityAutomationPoints'
   | 'keyframes'
+  | 'comicTailTipXPercent'
+  | 'comicTailTipYPercent'
+  | 'comicTailCurvePercent'
 >;
 type AudioKeyframeClip = Pick<
   EditorAudioClip,
@@ -371,6 +374,11 @@ function syncVisualClipToKeyframes(clip: EditorVisualClip): EditorVisualClip {
     rotationMotionEnabled: hasRotationMotion,
     endRotationDeg: last.rotationDeg,
     opacityPercent: first.opacityPercent,
+    // Mirror the first keyframe's tail back to the clip's static bezier tail so the two round-trip
+    // (undefined on non-comic clips leaves the static tail untouched).
+    comicTailTipXPercent: first.tailTipXPercent ?? clip.comicTailTipXPercent,
+    comicTailTipYPercent: first.tailTipYPercent ?? clip.comicTailTipYPercent,
+    comicTailCurvePercent: first.tailCurvePercent ?? clip.comicTailCurvePercent,
   };
 
   return {
@@ -412,6 +420,12 @@ function getLegacyVisualStateAtProgress(
       progress,
       clip.opacityPercent,
     )),
+    // Tail channels default to the clip's static bezier tail (undefined for non-comic clips, which
+    // `toEqual` treats as absent). Explicit tail keyframes override these; the painter applies its
+    // own sane defaults when both are undefined.
+    tailTipXPercent: normalizeOptionalNumber(clip.comicTailTipXPercent, undefined),
+    tailTipYPercent: normalizeOptionalNumber(clip.comicTailTipYPercent, undefined),
+    tailCurvePercent: normalizeOptionalNumber(clip.comicTailCurvePercent, undefined),
   };
 }
 
@@ -443,6 +457,9 @@ function normalizeVisualKeyframeCandidate(
     scalePercent: Math.max(1, normalizeNumber(keyframe.scalePercent, fallback.scalePercent)),
     rotationDeg: normalizeNumber(keyframe.rotationDeg, fallback.rotationDeg),
     opacityPercent: clampNumber(normalizeNumber(keyframe.opacityPercent, fallback.opacityPercent), 0, 100),
+    tailTipXPercent: normalizeOptionalNumber(keyframe.tailTipXPercent, fallback.tailTipXPercent),
+    tailTipYPercent: normalizeOptionalNumber(keyframe.tailTipYPercent, fallback.tailTipYPercent),
+    tailCurvePercent: normalizeOptionalNumber(keyframe.tailCurvePercent, fallback.tailCurvePercent),
   };
 }
 
@@ -474,6 +491,9 @@ function interpolateVisualKeyframes(
     scalePercent: roundNumber(interpolateValue(start.scalePercent, end.scalePercent, ratio)),
     rotationDeg: roundNumber(interpolateValue(start.rotationDeg, end.rotationDeg, ratio)),
     opacityPercent: roundNumber(interpolateValue(start.opacityPercent, end.opacityPercent, ratio)),
+    tailTipXPercent: interpolateOptionalValue(start.tailTipXPercent, end.tailTipXPercent, ratio),
+    tailTipYPercent: interpolateOptionalValue(start.tailTipYPercent, end.tailTipYPercent, ratio),
+    tailCurvePercent: interpolateOptionalValue(start.tailCurvePercent, end.tailCurvePercent, ratio),
   };
 }
 
@@ -559,6 +579,18 @@ function getVisualKeyframePatchFromClipPatch(
     keyframePatch.opacityPercent = clampNumber(normalizeNumber(patch.opacityPercent, 100), 0, 100);
   }
 
+  if ('comicTailTipXPercent' in patch && patch.comicTailTipXPercent !== undefined) {
+    keyframePatch.tailTipXPercent = normalizeNumber(patch.comicTailTipXPercent, 50);
+  }
+
+  if ('comicTailTipYPercent' in patch && patch.comicTailTipYPercent !== undefined) {
+    keyframePatch.tailTipYPercent = normalizeNumber(patch.comicTailTipYPercent, 50);
+  }
+
+  if ('comicTailCurvePercent' in patch && patch.comicTailCurvePercent !== undefined) {
+    keyframePatch.tailCurvePercent = normalizeNumber(patch.comicTailCurvePercent, 50);
+  }
+
   return keyframePatch;
 }
 
@@ -568,6 +600,38 @@ function normalizeTimePercent(value: unknown, fallback: number): number {
 
 function normalizeNumber(value: unknown, fallback: number): number {
   return roundNumber(typeof value === 'number' && Number.isFinite(value) ? value : fallback);
+}
+
+/** Rounds a finite candidate; otherwise inherits the fallback (which may itself be undefined). Used
+ *  for the optional comic-tail keyframe channels so absent values stay absent and round-trip. */
+function normalizeOptionalNumber(value: unknown, fallback: number | undefined): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return roundNumber(value);
+  }
+
+  return fallback;
+}
+
+/** Linear interpolation for the optional comic-tail channels: lerp when both ends are defined, hold
+ *  the single defined end otherwise, and stay undefined when neither is set. */
+function interpolateOptionalValue(
+  start: number | undefined,
+  end: number | undefined,
+  progress: number,
+): number | undefined {
+  if (typeof start === 'number' && typeof end === 'number') {
+    return roundNumber(interpolateValue(start, end, progress));
+  }
+
+  if (typeof end === 'number') {
+    return roundNumber(end);
+  }
+
+  if (typeof start === 'number') {
+    return roundNumber(start);
+  }
+
+  return undefined;
 }
 
 function clampNumber(value: number, min: number, max: number): number {

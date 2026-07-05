@@ -4,6 +4,7 @@ import type {
   EditorClipChromaKeySettings,
   EditorClipStrokeSettings,
   EditorStageBlendMode,
+  EditorTextTypography,
   EditorVisualKeyframe,
   EditorVisualClip,
   EditorVisualSourceKind,
@@ -68,6 +69,9 @@ export interface ManualEditorVisualSequenceClip {
   textColor: string;
   textEffect: 'none' | 'shadow' | 'glow' | 'outline';
   textBackgroundOpacityPercent: number;
+  /** Paper-grade typography (weight/style/leading/tracking/align incl. justify/stroke/shadow/arc),
+   *  carried by text AND comic clips — see `EditorVisualClip.textTypography`. */
+  textTypography?: EditorTextTypography;
   shapeFillColor?: string;
   shapeBorderColor?: string;
   shapeBorderWidth?: number;
@@ -75,6 +79,9 @@ export interface ManualEditorVisualSequenceClip {
   comicKind?: 'speech-bubble' | 'thought-bubble' | 'caption';
   comicTailAngleDeg?: number;
   comicTailLengthPx?: number;
+  comicTailTipXPercent?: number;
+  comicTailTipYPercent?: number;
+  comicTailCurvePercent?: number;
   comicLineHeightPercent?: number;
   comicLetterSpacingPx?: number;
   comicTextAlign?: 'left' | 'center' | 'right';
@@ -136,12 +143,16 @@ export function buildManualEditorVisualSequenceClip(
     textColor: clip.textColor,
     textEffect: clip.textEffect,
     textBackgroundOpacityPercent: clip.textBackgroundOpacityPercent,
+    textTypography: clip.textTypography ? { ...clip.textTypography } : undefined,
     shapeFillColor: clip.shapeFillColor,
     shapeBorderColor: clip.shapeBorderColor,
     shapeBorderWidth: clip.shapeBorderWidth,
     comicKind: clip.comicKind,
     comicTailAngleDeg: clip.comicTailAngleDeg,
     comicTailLengthPx: clip.comicTailLengthPx,
+    comicTailTipXPercent: clip.comicTailTipXPercent,
+    comicTailTipYPercent: clip.comicTailTipYPercent,
+    comicTailCurvePercent: clip.comicTailCurvePercent,
     comicLineHeightPercent: clip.comicLineHeightPercent,
     comicLetterSpacingPx: clip.comicLetterSpacingPx,
     comicTextAlign: clip.comicTextAlign,

@@ -5,6 +5,7 @@ import {
   buildCssClipBlendMode,
   mapClipBlendModeToFFmpeg,
   buildClipEffectDescriptor,
+  getClipBlendModes,
   normalizeClipCrop,
   normalizeClipBlendMode,
 } from './editorClipEffects';
@@ -118,8 +119,38 @@ describe('clip blend modes', () => {
   it('maps clip blend modes to CSS and FFmpeg names', () => {
     expect(buildCssClipBlendMode('color-dodge')).toBe('color-dodge');
     expect(buildCssClipBlendMode('normal')).toBe('normal');
-    expect(mapClipBlendModeToFFmpeg('color-dodge')).toBe('colordodge');
+    expect(mapClipBlendModeToFFmpeg('color-dodge')).toBe('dodge');
     expect(mapClipBlendModeToFFmpeg('normal')).toBeUndefined();
+  });
+
+  it('normalizes all 16 Image-parity blend modes and maps CSS 1:1', () => {
+    const modes = getClipBlendModes();
+    expect(modes).toHaveLength(16);
+    expect(modes).toEqual(expect.arrayContaining([
+      'normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten',
+      'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference',
+      'exclusion', 'hue', 'saturation', 'color', 'luminosity',
+    ]));
+
+    for (const mode of modes) {
+      expect(normalizeClipBlendMode(mode)).toBe(mode);
+      expect(buildCssClipBlendMode(mode)).toBe(mode);
+    }
+  });
+
+  it('maps FFmpeg blend= names for the modes that differ from the CSS spelling', () => {
+    expect(mapClipBlendModeToFFmpeg('color-burn')).toBe('burn');
+    expect(mapClipBlendModeToFFmpeg('hard-light')).toBe('hardlight');
+    expect(mapClipBlendModeToFFmpeg('soft-light')).toBe('softlight');
+    expect(mapClipBlendModeToFFmpeg('difference')).toBe('difference');
+    expect(mapClipBlendModeToFFmpeg('exclusion')).toBe('exclusion');
+  });
+
+  it('has no FFmpeg blend= equivalent for the non-separable HSL modes (falls back to normal)', () => {
+    expect(mapClipBlendModeToFFmpeg('hue')).toBeUndefined();
+    expect(mapClipBlendModeToFFmpeg('saturation')).toBeUndefined();
+    expect(mapClipBlendModeToFFmpeg('color')).toBeUndefined();
+    expect(mapClipBlendModeToFFmpeg('luminosity')).toBeUndefined();
   });
 });
 

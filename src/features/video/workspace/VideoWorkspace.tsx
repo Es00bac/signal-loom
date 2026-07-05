@@ -23,7 +23,20 @@ import {
 } from 'lucide-react';
 import { addTimelineMarker, normalizeTimelineMarkers, removeTimelineMarker, type TimelineMarker } from '../../../lib/editorTimelineMarkers';
 import { applyAudioFade, resolveCrossfadePercents } from '../../../lib/editorAudioFades';
-import { drawComicStageObject, renderComicCard } from '../../../lib/mediaComposition';
+import {
+  COMIC_CARD_BODY_HEIGHT,
+  COMIC_CARD_BODY_WIDTH,
+  COMIC_CARD_HEIGHT,
+  COMIC_CARD_WIDTH,
+  drawComicStageObject,
+  renderComicCard,
+} from '../../../lib/mediaComposition';
+import {
+  COMIC_BODY_RADIUS_PERCENT,
+  COMIC_TAIL_DEFAULT_TIP_X_PERCENT,
+  COMIC_TAIL_DEFAULT_TIP_Y_PERCENT,
+} from '../../../lib/videoComicTail';
+import { computeArcTextGlyphs, createVideoTextCanvasMeasurer } from '../../../lib/videoTextFlow';
 import { isTrackLocked, normalizeLockedTracks, toggleLockedTrack } from '../../../lib/editorTrackLocks';
 import { isTrackCollapsed, normalizeCollapsedTracks, toggleCollapsedTrack } from '../../../lib/editorTrackCollapse';
 import { advanceShuttleCursor, stepShuttleRate, toggleShuttlePlay } from './timelineTransport';
@@ -80,6 +93,7 @@ import type {
   EditorClipFilterKind,
   EditorStageBlendMode,
   EditorStageObject,
+  EditorTextTypography,
   EditorVisualClip,
   NodeData,
   TextClipEffect,
@@ -390,6 +404,31 @@ export function resolveClipFitState(clip: EditorVisualClip, progressPercent: num
   return {
     ...getVisualKeyframeStateAtProgress(clip, progressPercent),
     fitMode: clip.fitMode,
+  };
+}
+
+/**
+ * Maps a comic tail-tip percent (frame coords, 50/50 = body centre) to a CSS percent within the
+ * clip's stage frame, and its inverse for the tail-drag handle. Shared contract with the comic card
+ * in mediaComposition: the body box occupies `COMIC_CARD_BODY_*` of the `COMIC_CARD_*` card, and a
+ * tip at percent 50±COMIC_BODY_RADIUS_PERCENT lands on the body edge.
+ */
+const COMIC_TAIL_HANDLE_FACTOR_X =
+  (COMIC_CARD_BODY_WIDTH / COMIC_CARD_WIDTH) * (100 / (2 * COMIC_BODY_RADIUS_PERCENT));
+const COMIC_TAIL_HANDLE_FACTOR_Y =
+  (COMIC_CARD_BODY_HEIGHT / COMIC_CARD_HEIGHT) * (100 / (2 * COMIC_BODY_RADIUS_PERCENT));
+
+function comicTailTipToFrameCssPercent(tipXPercent: number, tipYPercent: number): { leftPercent: number; topPercent: number } {
+  return {
+    leftPercent: 50 + (tipXPercent - 50) * COMIC_TAIL_HANDLE_FACTOR_X,
+    topPercent: 50 + (tipYPercent - 50) * COMIC_TAIL_HANDLE_FACTOR_Y,
+  };
+}
+
+function comicTailFrameFractionToTipPercent(xFractionFromCenter: number, yFractionFromCenter: number): { tipXPercent: number; tipYPercent: number } {
+  return {
+    tipXPercent: 50 + (xFractionFromCenter * 100) / COMIC_TAIL_HANDLE_FACTOR_X,
+    tipYPercent: 50 + (yFractionFromCenter * 100) / COMIC_TAIL_HANDLE_FACTOR_Y,
   };
 }
 const TIMELINE_PREVIEW_DEBOUNCE_MS = 220;
@@ -7368,6 +7407,62 @@ function ProgramStage({
     window.addEventListener('pointerup', onUp);
   };
 
+  /**
+   * Drags the comic bubble's TAIL TIP. Writes `comicTailTip{X,Y}Percent` as a KEYFRAME at the
+   * current playhead (via applyVisualClipPatchAtProgress, same path as move/scale/rotate), so the
+   * tail tip animates independently of the bubble body. The tip percent is derived from the pointer
+   * position relative to the clip frame (inverse-rotated when the clip is rotated).
+   */
+  const startTailTipDrag = (event: React.PointerEvent<HTMLButtonElement>, stageClip: ProgramStageClip) => {
+    if (event.button !== 0 || activeTool !== 'select' || !stageRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const { clip } = stageClip;
+    onSelectClip(clip.id);
+
+    const stageBounds = stageRef.current.getBoundingClientRect();
+    const stageScale = stageBounds.width / canvas.width;
+    const layout = getStageClipLayout(stageClip, canvas);
+    const centerX = stageBounds.left + (layout.left + layout.width / 2) * stageScale;
+    const centerY = stageBounds.top + (layout.top + layout.height / 2) * stageScale;
+    const frameWidthPx = Math.max(1, layout.width * stageScale);
+    const frameHeightPx = Math.max(1, layout.height * stageScale);
+    const rotationRad = (layout.rotationDeg * Math.PI) / 180;
+    const cos = Math.cos(-rotationRad);
+    const sin = Math.sin(-rotationRad);
+    const progressPercent = getStageClipProgress(stageClip) * 100;
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - centerX;
+      const deltaY = moveEvent.clientY - centerY;
+      // Undo the frame rotation so the offset is in the bubble's own (unrotated) frame.
+      const localX = deltaX * cos - deltaY * sin;
+      const localY = deltaX * sin + deltaY * cos;
+      const { tipXPercent, tipYPercent } = comicTailFrameFractionToTipPercent(
+        localX / frameWidthPx,
+        localY / frameHeightPx,
+      );
+      onUpdateClip(
+        clip.id,
+        applyVisualClipPatchAtProgress(clip, progressPercent, {
+          comicTailTipXPercent: Math.round(tipXPercent * 10) / 10,
+          comicTailTipYPercent: Math.round(tipYPercent * 10) / 10,
+        }),
+      );
+    };
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   const startStageObjectMoveDrag = (
     event: React.PointerEvent<HTMLElement>,
     object: EditorStageObject,
@@ -7597,6 +7692,27 @@ function ProgramStage({
                           title="Resize / scale clip"
                           type="button"
                         />
+                        {stageClip.clip.sourceKind === 'comic' && stageClip.clip.comicKind !== 'caption'
+                          ? (() => {
+                              const tail = getVisualKeyframeStateAtProgress(
+                                stageClip.clip,
+                                getStageClipProgress(stageClip) * 100,
+                              );
+                              const tipCss = comicTailTipToFrameCssPercent(
+                                tail.tailTipXPercent ?? COMIC_TAIL_DEFAULT_TIP_X_PERCENT,
+                                tail.tailTipYPercent ?? COMIC_TAIL_DEFAULT_TIP_Y_PERCENT,
+                              );
+                              return (
+                                <button
+                                  className="absolute z-10 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-amber-200 bg-amber-400/90 shadow"
+                                  onPointerDown={(event) => startTailTipDrag(event, stageClip)}
+                                  style={{ left: `${tipCss.leftPercent}%`, top: `${tipCss.topPercent}%` }}
+                                  title="Drag speech tail tip (keyframes at the playhead)"
+                                  type="button"
+                                />
+                              );
+                            })()
+                          : null}
                       </div>
                     ) : null}
                   </div>
@@ -7772,25 +7888,40 @@ function ProgramStageMedia({
       </div>
     );
   } else if (clip.clip.sourceKind === 'comic') {
-    content = <ComicClipStagePreview clip={clip.clip} />;
+    content = <ComicClipStagePreview clip={clip.clip} progressPercent={getStageClipProgress(clip) * 100} />;
   } else if (isTextClip) {
     const text = layout.text;
     const fontSizePx = (text?.fontSizePx ?? Math.max(8, clip.clip.textSizePx || textDefaults?.fontSizePx || 64)) * (layout.scalePercent / 100) * stageScale;
+    const safeFontSizePx = Math.max(8, fontSizePx);
+    const textColor = text?.color ?? clip.clip.textColor ?? textDefaults?.color ?? '#f3f4f6';
+    const textFontFamily = text?.fontFamily ?? clip.clip.textFontFamily ?? textDefaults?.fontFamily ?? 'Inter, system-ui, sans-serif';
+    const textString = clip.clip.textContent ?? textDefaults?.text ?? clip.item?.text ?? 'Text';
+    const typography = clip.clip.textTypography;
 
     content = (
       <div className="flex h-full w-full items-center justify-center bg-transparent text-center">
-        <div
-          className="inline-block whitespace-pre font-semibold leading-tight"
-          style={{
-            color: text?.color ?? clip.clip.textColor ?? textDefaults?.color ?? '#f3f4f6',
-            fontFamily: text?.fontFamily ?? clip.clip.textFontFamily ?? textDefaults?.fontFamily ?? 'Inter, system-ui, sans-serif',
-            fontSize: `${Math.max(8, fontSizePx)}px`,
-            lineHeight: TEXT_LINE_HEIGHT,
-            ...getTextPreviewEffectStyle(text?.effect ?? clip.clip.textEffect ?? textDefaults?.textEffect ?? 'none'),
-          }}
-        >
-          {clip.clip.textContent ?? textDefaults?.text ?? clip.item?.text ?? 'Text'}
-        </div>
+        {typography?.arcPercent ? (
+          <ArcTextPreview
+            color={textColor}
+            fontFamily={textFontFamily}
+            fontSizePx={safeFontSizePx}
+            text={textString}
+            typography={typography}
+          />
+        ) : (
+          <div
+            className="inline-block whitespace-pre font-semibold leading-tight"
+            style={{
+              color: textColor,
+              fontFamily: textFontFamily,
+              fontSize: `${safeFontSizePx}px`,
+              lineHeight: TEXT_LINE_HEIGHT,
+              ...getTextTypographyStyle(typography, text?.effect ?? clip.clip.textEffect ?? textDefaults?.textEffect ?? 'none'),
+            }}
+          >
+            {textString}
+          </div>
+        )}
       </div>
     );
   } else {
@@ -7878,20 +8009,26 @@ function ProgramStageObjectPreview({ object }: { object: EditorStageObject }) {
 
 /**
  * Edit-stage preview for a motion-comic CLIP: renders the exact export card (renderComicCard)
- * as the stage content, so the interactive stage matches the encode pixel-for-pixel.
+ * as the stage content, so the interactive stage matches the encode pixel-for-pixel. The tail tip +
+ * funnel are resolved at the current playhead progress so a keyframed tail animates live and
+ * INDEPENDENTLY of the bubble body (the body's pos/scale/rotation is applied by the stage layout).
  */
-function ComicClipStagePreview({ clip }: { clip: EditorVisualClip }) {
+function ComicClipStagePreview({ clip, progressPercent }: { clip: EditorVisualClip; progressPercent: number }) {
   const [src, setSrc] = useState<string | null>(null);
+  const tailState = getVisualKeyframeStateAtProgress(clip, progressPercent);
+  const tipXPercent = tailState.tailTipXPercent;
+  const tipYPercent = tailState.tailTipYPercent;
+  const curvePercent = tailState.tailCurvePercent;
 
   useEffect(() => {
     let cancelled = false;
-    void renderComicCard(clip).then((url) => {
+    void renderComicCard(clip, { tipXPercent, tipYPercent, curvePercent }).then((url) => {
       if (!cancelled) setSrc(url);
     });
     return () => {
       cancelled = true;
     };
-  }, [clip]);
+  }, [clip, tipXPercent, tipYPercent, curvePercent]);
 
   return src
     ? <img alt={clip.textContent ?? 'Motion comic'} className="h-full w-full object-contain" src={src} />
@@ -7904,7 +8041,11 @@ function ComicClipStagePreview({ clip }: { clip: EditorVisualClip }) {
  */
 function ComicStageObjectPreview({ object }: { object: Extract<EditorStageObject, { kind: 'speech-bubble' | 'thought-bubble' | 'caption' }> }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const pad = Math.ceil(object.tailLengthPx + object.strokeWidthPx + 8);
+  // The bezier tail can poke ~0.6× the smaller body half-extent beyond the body, so pad for that
+  // as well as the legacy polar length so the tail is never clipped in the preview canvas.
+  const pad = Math.ceil(
+    Math.max(object.tailLengthPx, Math.min(object.width, object.height) * 0.65) + object.strokeWidthPx + 8,
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -7963,6 +8104,226 @@ function getTextPreviewEffectStyle(effect: TextClipEffect): CSSProperties {
   }
 
   return {};
+}
+
+/**
+ * Full Paper-grade typography CSS for a text/comic clip's live preview: starts from the legacy
+ * per-clip `TextClipEffect` look (so clips created before `textTypography` existed render
+ * unchanged), then layers explicit `textTypography` fields on top. Arc is handled separately by
+ * `ArcTextPreview` (CSS can't bend a text run along a curve) — this function is only used for the
+ * straight-line render path.
+ */
+function getTextTypographyStyle(
+  typography: EditorTextTypography | undefined,
+  legacyEffect: TextClipEffect,
+): CSSProperties {
+  const style: CSSProperties = { ...getTextPreviewEffectStyle(legacyEffect) };
+
+  if (typography?.fontWeight !== undefined) {
+    style.fontWeight = typography.fontWeight;
+  }
+  if (typography?.fontStyle) {
+    style.fontStyle = typography.fontStyle;
+  }
+  if (typography?.lineHeightPercent !== undefined) {
+    style.lineHeight = typography.lineHeightPercent / 100;
+  }
+  if (typography?.letterSpacingPx !== undefined) {
+    style.letterSpacing = `${typography.letterSpacingPx}px`;
+  }
+  if (typography?.textAlign) {
+    style.textAlign = typography.textAlign;
+  }
+  if ((typography?.strokeWidthPx ?? 0) > 0) {
+    style.WebkitTextStroke = `${typography?.strokeWidthPx}px ${typography?.strokeColor ?? '#000000'}`;
+  }
+  if ((typography?.shadowBlurPx ?? 0) > 0 || (typography?.shadowOffsetXPx ?? 0) !== 0 || (typography?.shadowOffsetYPx ?? 0) !== 0) {
+    style.textShadow = `${typography?.shadowOffsetXPx ?? 0}px ${typography?.shadowOffsetYPx ?? 0}px ${Math.max(0, typography?.shadowBlurPx ?? 0)}px ${typography?.shadowColor ?? 'rgba(0,0,0,0.6)'}`;
+  }
+
+  return style;
+}
+
+/**
+ * Lazily-created shared measurer for the LIVE preview's arc-text glyph placement — mirrors
+ * `mediaComposition.ts`'s `getVideoTextMeasurer()`, kept as a separate instance since this module
+ * can't import a canvas context across the preview/export boundary (nor should it: this one only
+ * ever runs in the browser/Electron renderer, same as the export path, just a different call site).
+ */
+let sharedVideoTextMeasurer: ReturnType<typeof createVideoTextCanvasMeasurer> | undefined;
+
+function getSharedVideoTextMeasurer(): ReturnType<typeof createVideoTextCanvasMeasurer> {
+  sharedVideoTextMeasurer ??= createVideoTextCanvasMeasurer();
+  return sharedVideoTextMeasurer;
+}
+
+/**
+ * Live-preview render for arc/curved text (`textTypography.arcPercent`): CSS can't bend a text run
+ * along a curve, so each character is measured and placed individually via `computeArcTextGlyphs` —
+ * the SAME pure geometry `mediaComposition.ts`'s canvas export uses, so the curve the user drags in
+ * the inspector matches the exported frame.
+ */
+function ArcTextPreview({
+  color,
+  fontFamily,
+  fontSizePx,
+  text,
+  typography,
+}: {
+  color: string;
+  fontFamily: string;
+  fontSizePx: number;
+  text: string;
+  typography: EditorTextTypography;
+}) {
+  const measurer = getSharedVideoTextMeasurer();
+  const fontWeight = typography.fontWeight ?? 600;
+  const fontStyle = typography.fontStyle ?? 'normal';
+  const letterSpacingPx = typography.letterSpacingPx ?? 0;
+  const font = { fontFamily, fontSizePx, fontWeight, fontStyle, letterSpacingPx };
+  const naturalWidthPx = Math.max(1, measurer(text, font));
+  const glyphs = computeArcTextGlyphs(text, naturalWidthPx, typography.arcPercent, (char) => measurer(char, font) + letterSpacingPx);
+  const glyphStyle = getTextTypographyStyle(typography, 'none');
+  const heightPx = fontSizePx * 2;
+
+  return (
+    <div className="relative" style={{ width: naturalWidthPx, height: heightPx }}>
+      {glyphs.map((glyph, index) => (
+        <span
+          className="absolute whitespace-pre"
+          key={index}
+          style={{
+            color,
+            fontFamily,
+            fontSize: `${fontSizePx}px`,
+            fontStyle,
+            fontWeight,
+            left: naturalWidthPx / 2 + glyph.xPx,
+            top: heightPx / 2 + glyph.yPx,
+            textShadow: glyphStyle.textShadow,
+            transform: `translate(-50%, -50%) rotate(${glyph.rotationDeg}deg)`,
+            WebkitTextStroke: glyphStyle.WebkitTextStroke,
+          }}
+        >
+          {glyph.char}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The Paper-grade typography controls shared by the text- and comic-clip inspectors: weight, style,
+ * arc/curve, and stroke/shadow — the fields `EditorTextTypography` carries beyond line-height/
+ * letter-spacing/align (which each inspector already has its own controls for, since comic bubbles
+ * had those first). All writes merge into the clip's `textTypography` via the caller's
+ * `updateTypography` (see `updateTextTypography` in the Inspector component), never overwriting
+ * fields this section doesn't own.
+ */
+function TypographyAdvancedControls({
+  typography,
+  updateTypography,
+}: {
+  typography: EditorTextTypography | undefined;
+  updateTypography: (patch: Partial<EditorTextTypography>) => void;
+}) {
+  const fontWeight = typography?.fontWeight ?? 600;
+  const fontStyle = typography?.fontStyle ?? 'normal';
+  const strokeWidthPx = typography?.strokeWidthPx ?? 0;
+  const shadowBlurPx = typography?.shadowBlurPx ?? 0;
+  const arcPercent = typography?.arcPercent ?? 0;
+
+  return (
+    <div className="space-y-3 rounded-lg border border-gray-700/60 bg-[#0f131b]/50 p-3">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Typography</div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <NumberField
+          label="Weight"
+          max={900}
+          min={100}
+          onChange={(value) => updateTypography({ fontWeight: Math.max(100, Math.min(900, Math.round(value / 100) * 100)) })}
+          step={100}
+          value={fontWeight}
+        />
+        <div className="flex items-end gap-2">
+          {(['normal', 'italic'] as const).map((style) => (
+            <button
+              className={`flex-1 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${fontStyle === style ? 'border-cyan-300/50 bg-cyan-500/10 text-cyan-100' : 'border-gray-700/60 text-gray-400 hover:text-gray-200'}`}
+              key={style}
+              onClick={() => updateTypography({ fontStyle: style })}
+              type="button"
+            >
+              {style === 'normal' ? 'Normal' : 'Italic'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <RangeControl
+        label="Curve (arc)"
+        max={100}
+        min={-100}
+        onChange={(value) => updateTypography({ arcPercent: Math.round(value) })}
+        value={arcPercent}
+        valueLabel={arcPercent === 0 ? 'straight' : `${arcPercent}`}
+      />
+      <div className="grid gap-3 md:grid-cols-2">
+        <NumberField
+          label="Stroke width"
+          max={20}
+          min={0}
+          onChange={(value) => updateTypography({ strokeWidthPx: Math.max(0, Math.round(value)) })}
+          step={1}
+          value={strokeWidthPx}
+        />
+        <label className="block space-y-2 text-xs text-gray-400">
+          <span>Stroke color</span>
+          <AdvancedColorPicker
+            className="h-10 w-full"
+            buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+            label="Text stroke color"
+            onChange={(strokeColor) => updateTypography({ strokeColor })}
+            value={typography?.strokeColor ?? '#000000'}
+          />
+        </label>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <NumberField
+          label="Shadow blur"
+          max={60}
+          min={0}
+          onChange={(value) => updateTypography({ shadowBlurPx: Math.max(0, Math.round(value)) })}
+          step={1}
+          value={shadowBlurPx}
+        />
+        <label className="block space-y-2 text-xs text-gray-400">
+          <span>Shadow color</span>
+          <AdvancedColorPicker
+            className="h-10 w-full"
+            buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+            label="Text shadow color"
+            onChange={(shadowColor) => updateTypography({ shadowColor })}
+            value={typography?.shadowColor ?? '#000000'}
+          />
+        </label>
+        <NumberField
+          label="Shadow offset X"
+          max={40}
+          min={-40}
+          onChange={(value) => updateTypography({ shadowOffsetXPx: Math.round(value) })}
+          step={1}
+          value={typography?.shadowOffsetXPx ?? 0}
+        />
+        <NumberField
+          label="Shadow offset Y"
+          max={40}
+          min={-40}
+          onChange={(value) => updateTypography({ shadowOffsetYPx: Math.round(value) })}
+          step={1}
+          value={typography?.shadowOffsetYPx ?? 0}
+        />
+      </div>
+    </div>
+  );
 }
 
 function ChromaKeyPreviewMedia({
@@ -8714,6 +9075,19 @@ function InspectorPanel({
       stroke: normalizeClipStroke({ ...stroke, ...patch }),
     });
   };
+  /** Merges a patch into the selected clip's Paper-grade typography (weight/style/leading/tracking/
+   *  align/stroke/shadow/arc), shared by the text- and comic-clip inspectors. `onUpdateVisualClip`
+   *  does a SHALLOW merge (`{...clip, ...patch}`), so `textTypography` must be spread here rather
+   *  than passed as a bare patch, or unrelated fields already set on it would be dropped. */
+  const updateTextTypography = (patch: Partial<EditorTextTypography>) => {
+    if (!visualClip) {
+      return;
+    }
+
+    onUpdateVisualClip({
+      textTypography: { ...visualClip.textTypography, ...patch },
+    });
+  };
 
   return (
     <aside className={`${panelClassName} flex h-full min-h-0 flex-col overflow-hidden`}>
@@ -9197,51 +9571,98 @@ function InspectorPanel({
                     label="Line height %"
                     max={240}
                     min={80}
-                    onChange={(value) => onUpdateVisualClip({ comicLineHeightPercent: Math.max(80, Math.min(240, Math.round(value))) })}
+                    onChange={(value) => updateTextTypography({ lineHeightPercent: Math.max(80, Math.min(240, Math.round(value))) })}
                     step={5}
-                    value={visualClip.comicLineHeightPercent ?? 120}
+                    value={visualClip.textTypography?.lineHeightPercent ?? visualClip.comicLineHeightPercent ?? 120}
                   />
                   <NumberField
                     label="Letter spacing"
                     max={24}
                     min={-4}
-                    onChange={(value) => onUpdateVisualClip({ comicLetterSpacingPx: Math.max(-4, Math.min(24, Math.round(value))) })}
+                    onChange={(value) => updateTextTypography({ letterSpacingPx: Math.max(-4, Math.min(24, Math.round(value))) })}
                     step={1}
-                    value={visualClip.comicLetterSpacingPx ?? 0}
+                    value={visualClip.textTypography?.letterSpacingPx ?? visualClip.comicLetterSpacingPx ?? 0}
                   />
                 </div>
-                {visualClip.comicKind !== 'caption' ? (
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <NumberField
-                      label="Tail angle°"
-                      max={360}
-                      min={0}
-                      onChange={(value) => onUpdateVisualClip({ comicTailAngleDeg: Math.round(value) })}
-                      step={5}
-                      value={visualClip.comicTailAngleDeg ?? 115}
-                    />
-                    <NumberField
-                      label="Tail length"
-                      max={600}
-                      min={0}
-                      onChange={(value) => onUpdateVisualClip({ comicTailLengthPx: Math.max(0, Math.round(value)) })}
-                      step={5}
-                      value={visualClip.comicTailLengthPx ?? 90}
-                    />
-                  </div>
-                ) : null}
+                {visualClip.comicKind !== 'caption'
+                  ? (() => {
+                      const tipXPercent = Math.round(
+                        visualCurrentState?.tailTipXPercent ?? visualClip.comicTailTipXPercent ?? COMIC_TAIL_DEFAULT_TIP_X_PERCENT,
+                      );
+                      const tipYPercent = Math.round(
+                        visualCurrentState?.tailTipYPercent ?? visualClip.comicTailTipYPercent ?? COMIC_TAIL_DEFAULT_TIP_Y_PERCENT,
+                      );
+                      const curvePercent = Math.round(
+                        visualCurrentState?.tailCurvePercent ?? visualClip.comicTailCurvePercent ?? 50,
+                      );
+                      const keyframeCount = visualClip.keyframes?.length ?? 0;
+                      const curveLabel =
+                        curvePercent === 50 ? 'straight' : curvePercent > 50 ? 'bows ▶' : 'bows ◀';
+                      return (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-100/70">
+                              Tail &amp; Funnel
+                            </span>
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                keyframeCount > 0
+                                  ? 'border-amber-300/50 bg-amber-500/10 text-amber-100'
+                                  : 'border-gray-700/60 text-gray-400'
+                              }`}
+                              title="The tail tip and funnel curvature keyframe at the current playhead, independently of the bubble body."
+                            >
+                              <span aria-hidden>◆</span>
+                              {keyframeCount > 0 ? `${keyframeCount} keyframes` : 'Static tail'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] leading-snug text-gray-500">
+                            Drag the amber handle on the stage to move the tail tip — it and the funnel curvature
+                            animate separately from the bubble body.
+                          </p>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <NumberField
+                              label="Tail tip X %"
+                              max={160}
+                              min={-60}
+                              onChange={(value) => onUpdateVisualClip({ comicTailTipXPercent: Math.round(value) })}
+                              step={1}
+                              value={tipXPercent}
+                            />
+                            <NumberField
+                              label="Tail tip Y %"
+                              max={160}
+                              min={-60}
+                              onChange={(value) => onUpdateVisualClip({ comicTailTipYPercent: Math.round(value) })}
+                              step={1}
+                              value={tipYPercent}
+                            />
+                          </div>
+                          <RangeControl
+                            label="Funnel curvature"
+                            max={100}
+                            min={0}
+                            onChange={(value) => onUpdateVisualClip({ comicTailCurvePercent: Math.round(value) })}
+                            value={curvePercent}
+                            valueLabel={`${curvePercent} · ${curveLabel}`}
+                          />
+                        </div>
+                      );
+                    })()
+                  : null}
                 <div className="flex gap-2">
-                  {(['left', 'center', 'right'] as const).map((align) => (
+                  {(['left', 'center', 'right', 'justify'] as const).map((align) => (
                     <button
-                      className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${(visualClip.comicTextAlign ?? 'center') === align ? 'border-cyan-300/50 bg-cyan-500/10 text-cyan-100' : 'border-gray-700/60 text-gray-400 hover:text-gray-200'}`}
+                      className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${(visualClip.textTypography?.textAlign ?? visualClip.comicTextAlign ?? 'center') === align ? 'border-cyan-300/50 bg-cyan-500/10 text-cyan-100' : 'border-gray-700/60 text-gray-400 hover:text-gray-200'}`}
                       key={align}
-                      onClick={() => onUpdateVisualClip({ comicTextAlign: align })}
+                      onClick={() => updateTextTypography({ textAlign: align })}
                       type="button"
                     >
-                      {align === 'left' ? 'Left' : align === 'center' ? 'Center' : 'Right'}
+                      {align === 'left' ? 'Left' : align === 'center' ? 'Center' : align === 'right' ? 'Right' : 'Justify'}
                     </button>
                   ))}
                 </div>
+                <TypographyAdvancedControls typography={visualClip.textTypography} updateTypography={updateTextTypography} />
               </div>
             ) : null}
             {visualClip.sourceKind === 'text' ? (
@@ -9313,6 +9734,37 @@ function InspectorPanel({
                     <option value="outline">Outline</option>
                   </select>
                 </label>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <NumberField
+                    label="Line height %"
+                    max={240}
+                    min={80}
+                    onChange={(value) => updateTextTypography({ lineHeightPercent: Math.max(80, Math.min(240, Math.round(value))) })}
+                    step={5}
+                    value={visualClip.textTypography?.lineHeightPercent ?? 112}
+                  />
+                  <NumberField
+                    label="Letter spacing"
+                    max={24}
+                    min={-4}
+                    onChange={(value) => updateTextTypography({ letterSpacingPx: Math.max(-4, Math.min(24, Math.round(value))) })}
+                    step={1}
+                    value={visualClip.textTypography?.letterSpacingPx ?? 0}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  {(['left', 'center', 'right', 'justify'] as const).map((align) => (
+                    <button
+                      className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${(visualClip.textTypography?.textAlign ?? 'center') === align ? 'border-cyan-300/50 bg-cyan-500/10 text-cyan-100' : 'border-gray-700/60 text-gray-400 hover:text-gray-200'}`}
+                      key={align}
+                      onClick={() => updateTextTypography({ textAlign: align })}
+                      type="button"
+                    >
+                      {align === 'left' ? 'Left' : align === 'center' ? 'Center' : align === 'right' ? 'Right' : 'Justify'}
+                    </button>
+                  ))}
+                </div>
+                <TypographyAdvancedControls typography={visualClip.textTypography} updateTypography={updateTextTypography} />
               </div>
             ) : null}
             {visualClip.sourceKind === 'shape' ? (

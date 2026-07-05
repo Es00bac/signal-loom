@@ -325,6 +325,166 @@ describe('editor visual keyframes', () => {
   });
 });
 
+describe('editor comic tail keyframes', () => {
+  it('linearly interpolates tail tip and curve across explicit keyframes', () => {
+    const clip = createVisualClip({
+      sourceKind: 'comic',
+      comicKind: 'speech-bubble',
+      keyframes: [
+        {
+          timePercent: 0,
+          positionX: 0,
+          positionY: 0,
+          scalePercent: 100,
+          rotationDeg: 0,
+          opacityPercent: 100,
+          tailTipXPercent: 20,
+          tailTipYPercent: 90,
+          tailCurvePercent: 40,
+        },
+        {
+          timePercent: 100,
+          positionX: 0,
+          positionY: 0,
+          scalePercent: 100,
+          rotationDeg: 0,
+          opacityPercent: 100,
+          tailTipXPercent: 60,
+          tailTipYPercent: 50,
+          tailCurvePercent: 80,
+        },
+      ],
+    });
+
+    const state = getVisualKeyframeStateAtProgress(clip, 50);
+
+    expect(state.tailTipXPercent).toBe(40);
+    expect(state.tailTipYPercent).toBe(70);
+    expect(state.tailCurvePercent).toBe(60);
+  });
+
+  it('falls back to the clip static bezier tail when a keyframe omits tail fields', () => {
+    const clip = createVisualClip({
+      sourceKind: 'comic',
+      comicKind: 'speech-bubble',
+      comicTailTipXPercent: 33,
+      comicTailTipYPercent: 88,
+      comicTailCurvePercent: 55,
+      keyframes: [
+        {
+          timePercent: 50,
+          positionX: 10,
+          positionY: 0,
+          scalePercent: 100,
+          rotationDeg: 0,
+          opacityPercent: 100,
+        },
+      ],
+    });
+
+    const state = getVisualKeyframeStateAtProgress(clip, 50);
+
+    expect(state.tailTipXPercent).toBe(33);
+    expect(state.tailTipYPercent).toBe(88);
+    expect(state.tailCurvePercent).toBe(55);
+  });
+
+  it('leaves tail fields undefined for clips without any tail data', () => {
+    const state = getVisualKeyframeStateAtProgress(createVisualClip(), 50);
+
+    expect(state.tailTipXPercent).toBeUndefined();
+    expect(state.tailTipYPercent).toBeUndefined();
+    expect(state.tailCurvePercent).toBeUndefined();
+  });
+
+  it('upserts a tail-tip keyframe at the playhead and holds the static tail at the anchors', () => {
+    const clip = createVisualClip({
+      sourceKind: 'comic',
+      comicKind: 'speech-bubble',
+      comicTailTipXPercent: 20,
+      comicTailTipYPercent: 80,
+      comicTailCurvePercent: 50,
+    });
+
+    const nextClip = upsertVisualKeyframe(clip, 50, { tailTipXPercent: 70 });
+
+    expect(getVisualKeyframeStateAtProgress(nextClip, 50).tailTipXPercent).toBe(70);
+    expect(getVisualKeyframeStateAtProgress(nextClip, 0).tailTipXPercent).toBe(20);
+    expect(getVisualKeyframeStateAtProgress(nextClip, 100).tailTipXPercent).toBe(20);
+  });
+
+  it('routes comic tail clip patches into a keyframe at the playhead', () => {
+    // With pre-existing tail keyframes, a mid-clip patch adds a distinct keyframe at the playhead
+    // instead of shifting the whole clip's static tail.
+    const clip = createVisualClip({
+      sourceKind: 'comic',
+      comicKind: 'speech-bubble',
+      keyframes: [
+        {
+          timePercent: 0,
+          positionX: 0,
+          positionY: 0,
+          scalePercent: 100,
+          rotationDeg: 0,
+          opacityPercent: 100,
+          tailTipYPercent: 80,
+        },
+        {
+          timePercent: 100,
+          positionX: 0,
+          positionY: 0,
+          scalePercent: 100,
+          rotationDeg: 0,
+          opacityPercent: 100,
+          tailTipYPercent: 80,
+        },
+      ],
+    });
+
+    const nextClip = applyVisualClipPatchAtProgress(clip, 50, { comicTailTipYPercent: 30 });
+
+    expect(getVisualKeyframeStateAtProgress(nextClip, 50).tailTipYPercent).toBe(30);
+    expect(getVisualKeyframeStateAtProgress(nextClip, 0).tailTipYPercent).toBe(80);
+  });
+
+  it('mirrors the first keyframe tail back onto the clip static tail on sync', () => {
+    const clip = createVisualClip({
+      sourceKind: 'comic',
+      comicKind: 'speech-bubble',
+      keyframes: [
+        {
+          timePercent: 0,
+          positionX: 0,
+          positionY: 0,
+          scalePercent: 100,
+          rotationDeg: 0,
+          opacityPercent: 100,
+          tailTipXPercent: 25,
+          tailTipYPercent: 75,
+          tailCurvePercent: 45,
+        },
+        {
+          timePercent: 100,
+          positionX: 0,
+          positionY: 0,
+          scalePercent: 100,
+          rotationDeg: 0,
+          opacityPercent: 100,
+          tailTipXPercent: 65,
+          tailTipYPercent: 55,
+          tailCurvePercent: 85,
+        },
+      ],
+    });
+
+    const synced = ensureVisualClipHasKeyframes(clip);
+
+    expect(synced.comicTailTipXPercent).toBe(25);
+    expect(synced.comicTailTipYPercent).toBe(75);
+    expect(synced.comicTailCurvePercent).toBe(45);
+  });
+});
+
 describe('editor audio keyframes', () => {
   it('evaluates and upserts volume keyframes from the existing volume automation line', () => {
     const clip = createAudioClip({

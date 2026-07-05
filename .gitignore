@@ -72,7 +72,15 @@ ops/dev-dashboard/artifacts/
 docs/release/website/sloom-studio/downloads/*.exe
 docs/release/website/sloom-studio/downloads/*.AppImage
 docs/release/website/sloom-studio/downloads/*.deb
+docs/release/website/sloom-studio/downloads/*.dmg
 docs/release/website/sloom-studio/downloads/*.blockmap
+
+# Out-of-tree KDE plasmoid build directories (CMake output; source lives beside them)
+desktop/kde/*/build/
+
+# Marketing sim replay renders — regenerable video outputs of the JS <sl-sim> engine
+# (the live site uses sims.js, not these staging .mp4s). Kept on disk, out of git.
+marketing/sim-videos/
 
 # Proprietary mobile build artifacts — NEVER commit. The Android APK is a sold product and
 # AABs are Play Store uploads; anyone who wants the build can compile it themselves. Local

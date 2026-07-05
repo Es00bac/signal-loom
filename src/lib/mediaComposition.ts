@@ -9,6 +9,7 @@ import type {
   EditorAudioKeyframe,
   EditorStageBlendMode,
   EditorStageObject,
+  EditorTextTypography,
   EditorVisualKeyframe,
   EditorVisualSourceKind,
   ProviderSettings,
@@ -22,7 +23,6 @@ import {
   visualKeyframesToOpacityAutomation,
 } from './editorKeyframes';
 import { buildClipEffectDescriptor, mapClipBlendModeToFFmpeg } from './editorClipEffects';
-import { buildTextOverlaySvgAsset } from './editorTextRender';
 import { buildShapeLayoutDescriptor } from './editorVisualLayout';
 import { resolveVisualClipSourceRangeMs } from './editorTimelineSourceRange';
 import { createMediaDurationResolver, type MediaDurationLoader } from './mediaDurationCache';
@@ -47,6 +47,20 @@ import {
   resolveVideoExportPreset,
   type VideoExportPresetOption,
 } from './videoPremiereParity';
+import {
+  COMIC_TAIL_DEFAULT_CURVE_PERCENT,
+  COMIC_TAIL_DEFAULT_TIP_X_PERCENT,
+  COMIC_TAIL_DEFAULT_TIP_Y_PERCENT,
+  comicPolarTailToTipPercent,
+  comicTailQuadraticPoint,
+  resolveComicTailGeometry,
+} from './videoComicTail';
+import {
+  computeArcTextGlyphs,
+  createVideoTextCanvasMeasurer,
+  layoutVideoText,
+  type VideoTextLayoutResult,
+} from './videoTextFlow';
 
 interface CompositionCommandTrack {
   inputName: string;
@@ -131,6 +145,9 @@ interface ComposeSequenceVisualClip {
   textColor: string;
   textEffect: 'none' | 'shadow' | 'glow' | 'outline';
   textBackgroundOpacityPercent: number;
+  /** Paper-grade typography (weight/style/leading/tracking/align incl. justify/stroke/shadow/arc),
+   *  carried by text AND comic clips — see `EditorVisualClip.textTypography`. */
+  textTypography?: EditorTextTypography;
   shapeFillColor?: string;
   shapeBorderColor?: string;
   shapeBorderWidth?: number;
@@ -138,6 +155,9 @@ interface ComposeSequenceVisualClip {
   comicKind?: 'speech-bubble' | 'thought-bubble' | 'caption';
   comicTailAngleDeg?: number;
   comicTailLengthPx?: number;
+  comicTailTipXPercent?: number;
+  comicTailTipYPercent?: number;
+  comicTailCurvePercent?: number;
   comicLineHeightPercent?: number;
   comicLetterSpacingPx?: number;
   comicTextAlign?: 'left' | 'center' | 'right';
@@ -729,6 +749,7 @@ async function prepareVisualClipInput(
       color: clip.textColor,
       effect: clip.textEffect,
       opacityPercent: 100,
+      typography: clip.textTypography,
     });
     const inputName = `sequence-text-${index + 1}.png`;
     return {
@@ -1009,46 +1030,79 @@ function mapStageBlendModeToFFmpeg(mode: EditorStageBlendMode): string | undefin
 }
 
 /**
- * Motion-comic clip card: renders the bubble/caption to a canonical 1280x720 PNG through the
- * SAME painter the stage preview uses (drawComicStageObject), so timeline clip, program stage,
- * and encode all show identical pixels. The clip's fit/scale/position then place it on canvas.
+ * Canonical motion-comic card dimensions. The card is a fixed 1280x720 frame; the bubble BODY is a
+ * fixed centred box (`COMIC_CARD_BODY_*`) leaving a uniform headroom margin so the bezier tail can
+ * poke out of the body without changing the body's size as the tail animates. The body-to-card ratio
+ * is the shared contract between this card and the stage tail-tip handle in VideoWorkspace — a tail
+ * tip at percent 95/5 lands on the body edge, which sits at ~80%/~64% of the card (x/y).
  */
-export async function renderComicCard(clip: {
-  comicKind?: 'speech-bubble' | 'thought-bubble' | 'caption';
-  textContent?: string;
-  textFontFamily: string;
-  textSizePx: number;
-  textColor: string;
-  shapeFillColor?: string;
-  shapeBorderColor?: string;
-  shapeBorderWidth?: number;
-  comicTailAngleDeg?: number;
-  comicTailLengthPx?: number;
-  comicLineHeightPercent?: number;
-  comicLetterSpacingPx?: number;
-  comicTextAlign?: 'left' | 'center' | 'right';
-}): Promise<string> {
-  const CARD_W = 1280;
-  const CARD_H = 720;
+export const COMIC_CARD_WIDTH = 1280;
+export const COMIC_CARD_HEIGHT = 720;
+export const COMIC_CARD_BODY_WIDTH = 1020;
+export const COMIC_CARD_BODY_HEIGHT = 460;
+
+/** Progress-resolved tail override for the preview so a keyframed tail animates per playhead. */
+export interface ComicCardTailSample {
+  tipXPercent?: number;
+  tipYPercent?: number;
+  curvePercent?: number;
+}
+
+/**
+ * Motion-comic clip card: renders the bubble/caption to the canonical card PNG through the SAME
+ * painter the stage preview uses (drawComicStageObject), so timeline clip, program stage, and encode
+ * all show identical pixels. The clip's fit/scale/position then place it on canvas.
+ *
+ * Tail keyframing: the preview passes `tailSample` (the tail tip + funnel resolved at the current
+ * playhead progress) so the tail animates live and INDEPENDENTLY of the body. The export path calls
+ * this WITHOUT a sample, baking the clip's static bezier tail (which Phase 1's
+ * `syncVisualClipToKeyframes` mirrors from the first keyframe) — see docs/notes/830 for the export
+ * per-frame-tail limitation.
+ */
+export async function renderComicCard(
+  clip: {
+    comicKind?: 'speech-bubble' | 'thought-bubble' | 'caption';
+    textContent?: string;
+    textFontFamily: string;
+    textSizePx: number;
+    textColor: string;
+    shapeFillColor?: string;
+    shapeBorderColor?: string;
+    shapeBorderWidth?: number;
+    comicTailAngleDeg?: number;
+    comicTailLengthPx?: number;
+    comicTailTipXPercent?: number;
+    comicTailTipYPercent?: number;
+    comicTailCurvePercent?: number;
+    comicLineHeightPercent?: number;
+    comicLetterSpacingPx?: number;
+    comicTextAlign?: 'left' | 'center' | 'right';
+    /** Paper-grade typography (weight/style/leading/tracking/align incl. justify/stroke/shadow/arc)
+     *  — wins over the flat `comicLineHeightPercent`/`comicLetterSpacingPx`/`comicTextAlign` above
+     *  when a field is set, per-field (see `EditorVisualClip.textTypography`'s doc). */
+    textTypography?: EditorTextTypography;
+  },
+  tailSample?: ComicCardTailSample,
+): Promise<string> {
   const canvas = document.createElement('canvas');
-  canvas.width = CARD_W;
-  canvas.height = CARD_H;
+  canvas.width = COMIC_CARD_WIDTH;
+  canvas.height = COMIC_CARD_HEIGHT;
   const context = canvas.getContext('2d');
   if (!context) {
     throw new Error('Could not create a canvas context for a motion-comic clip.');
   }
   const kind = clip.comicKind ?? 'speech-bubble';
-  const tailLengthPx = Math.max(0, clip.comicTailLengthPx ?? 90);
+  const typography = clip.textTypography;
   context.save();
-  context.translate(CARD_W / 2, CARD_H / 2);
+  context.translate(COMIC_CARD_WIDTH / 2, COMIC_CARD_HEIGHT / 2);
   drawComicStageObject(context, {
     id: 'comic-card',
     kind,
     x: 0,
     y: 0,
-    // leave headroom for the tail inside the card bounds
-    width: CARD_W - (tailLengthPx + 40) * 2,
-    height: CARD_H - (tailLengthPx + 40) * 2,
+    // Fixed body box with uniform tail headroom, so the body size is stable while the tail animates.
+    width: COMIC_CARD_BODY_WIDTH,
+    height: COMIC_CARD_BODY_HEIGHT,
     rotationDeg: 0,
     opacityPercent: 100,
     blendMode: 'normal',
@@ -1059,11 +1113,25 @@ export async function renderComicCard(clip: {
     fillColor: clip.shapeFillColor ?? (kind === 'caption' ? '#fef3c7' : '#ffffff'),
     strokeColor: clip.shapeBorderColor ?? '#181b20',
     strokeWidthPx: clip.shapeBorderWidth ?? 4,
+    // Legacy polar tail kept only as a fallback seed for the bezier tip.
     tailAngleDeg: clip.comicTailAngleDeg ?? 115,
-    tailLengthPx,
-    lineHeightPercent: clip.comicLineHeightPercent ?? 120,
-    letterSpacingPx: clip.comicLetterSpacingPx ?? 0,
-    textAlign: clip.comicTextAlign ?? 'center',
+    tailLengthPx: Math.max(0, clip.comicTailLengthPx ?? 90),
+    // Bezier tail: the progress-resolved sample wins (preview), else the clip's static tail (export).
+    tailTipXPercent: tailSample?.tipXPercent ?? clip.comicTailTipXPercent,
+    tailTipYPercent: tailSample?.tipYPercent ?? clip.comicTailTipYPercent,
+    tailCurvePercent: tailSample?.curvePercent ?? clip.comicTailCurvePercent,
+    lineHeightPercent: typography?.lineHeightPercent ?? clip.comicLineHeightPercent ?? 120,
+    letterSpacingPx: typography?.letterSpacingPx ?? clip.comicLetterSpacingPx ?? 0,
+    textAlign: typography?.textAlign ?? clip.comicTextAlign ?? 'center',
+    textFontWeight: typography?.fontWeight,
+    textFontStyle: typography?.fontStyle,
+    textStrokeColor: typography?.strokeColor,
+    textStrokeWidthPx: typography?.strokeWidthPx,
+    textShadowColor: typography?.shadowColor,
+    textShadowBlurPx: typography?.shadowBlurPx,
+    textShadowOffsetXPx: typography?.shadowOffsetXPx,
+    textShadowOffsetYPx: typography?.shadowOffsetYPx,
+    textArcPercent: typography?.arcPercent,
   });
   context.restore();
   return canvas.toDataURL('image/png');
@@ -1118,44 +1186,235 @@ function paintStageBlendNeutralBackground(
   context.fillRect(0, 0, canvasSize.width, canvasSize.height);
 }
 
-function drawTextStageObject(
-  context: CanvasRenderingContext2D,
-  object: Extract<EditorStageObject, { kind: 'text' }>,
-) {
-  context.fillStyle = object.color;
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-  context.font = `${object.fontSizePx}px ${object.fontFamily}`;
-  const lines = object.text.split('\n');
-  const lineHeight = object.fontSizePx * 1.15;
-  const startY = -((lines.length - 1) * lineHeight) / 2;
+/**
+ * Lazily-created shared canvas measurer for `videoTextFlow`'s layout engine (px-native, honors
+ * letter-spacing) — reused by every canvas-painted text surface (stage text objects, comic
+ * typesetting, and the text-clip export card) so wrapping/measurement stays consistent across them.
+ */
+let sharedVideoTextMeasurer: ReturnType<typeof createVideoTextCanvasMeasurer> | undefined;
 
-  for (const [index, line] of lines.entries()) {
-    context.fillText(line, 0, startY + index * lineHeight, object.width);
-  }
+function getVideoTextMeasurer(): ReturnType<typeof createVideoTextCanvasMeasurer> {
+  sharedVideoTextMeasurer ??= createVideoTextCanvasMeasurer();
+  return sharedVideoTextMeasurer;
+}
+
+/** Paint-time typography a `VideoTextLayoutResult` doesn't itself carry (color + stroke/shadow/arc,
+ *  which are rendering concerns, not layout concerns — see `videoTextFlow.ts`'s module doc). */
+interface TypesetPaintStyle {
+  fontFamily: string;
+  fontSizePx: number;
+  fontWeight: number;
+  fontStyle: 'normal' | 'italic';
+  letterSpacingPx: number;
+  color: string;
+  strokeColor?: string;
+  strokeWidthPx?: number;
+  shadowColor?: string;
+  shadowBlurPx?: number;
+  shadowOffsetXPx?: number;
+  shadowOffsetYPx?: number;
+  arcPercent?: number;
 }
 
 /**
+ * Paints a `videoTextFlow` layout onto a canvas, honoring weight/style/stroke/shadow/arc. `origin`
+ * places the layout's own (0,0) — the top-left of its content box, BEFORE per-line alignment offsets
+ * — in the caller's current canvas transform (which may already be translated/rotated to a bubble or
+ * object center). Isolated in its own save/restore so it never leaks font/shadow/stroke state into
+ * the caller. This is the ONE place Video text actually gets painted to a canvas — shared by
+ * `drawTextStageObject`, `drawComicStageObject`'s typesetting, and the text-clip export card
+ * (`renderTextCard`), so all three stay pixel-consistent with each other and with `videoTextFlow`'s
+ * layout math.
+ */
+function paintTypesetTextBlock(
+  context: CanvasRenderingContext2D,
+  layout: VideoTextLayoutResult,
+  style: TypesetPaintStyle,
+  origin: { xPx: number; yPx: number },
+): void {
+  context.save();
+  const stylePrefix = style.fontStyle === 'italic' ? 'italic ' : '';
+  context.font = `${stylePrefix}${style.fontWeight} ${style.fontSizePx}px ${style.fontFamily}`;
+  if ('letterSpacing' in context) {
+    (context as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${style.letterSpacingPx}px`;
+  }
+  context.fillStyle = style.color;
+  context.textAlign = 'left';
+  context.textBaseline = 'alphabetic';
+
+  const hasStroke = (style.strokeWidthPx ?? 0) > 0;
+  if (hasStroke) {
+    context.strokeStyle = style.strokeColor ?? '#000000';
+    context.lineWidth = style.strokeWidthPx as number;
+    context.lineJoin = 'round';
+  }
+
+  const hasShadow = (style.shadowBlurPx ?? 0) > 0 || (style.shadowOffsetXPx ?? 0) !== 0 || (style.shadowOffsetYPx ?? 0) !== 0;
+  if (hasShadow) {
+    context.shadowColor = style.shadowColor ?? 'rgba(0,0,0,0.6)';
+    context.shadowBlur = Math.max(0, style.shadowBlurPx ?? 0);
+    context.shadowOffsetX = style.shadowOffsetXPx ?? 0;
+    context.shadowOffsetY = style.shadowOffsetYPx ?? 0;
+  }
+
+  // Approximate ascent: converts a line's "top" (videoTextFlow's yPx reference) to its baseline.
+  const baselineOffsetPx = style.fontSizePx * 0.8;
+
+  for (const line of layout.lines) {
+    const lineY = origin.yPx + line.yPx + baselineOffsetPx;
+
+    if (style.arcPercent) {
+      paintArcTextRun(context, line.text, line.widthPx, origin.xPx + line.xPx + line.widthPx / 2, lineY, style, hasStroke);
+      continue;
+    }
+
+    const runs = line.words
+      ? line.words.map((word) => ({ text: word.text, xPx: origin.xPx + word.xPx }))
+      : [{ text: line.text, xPx: origin.xPx + line.xPx }];
+
+    for (const run of runs) {
+      if (hasStroke) {
+        context.strokeText(run.text, run.xPx, lineY);
+      }
+      context.fillText(run.text, run.xPx, lineY);
+    }
+  }
+
+  context.restore();
+}
+
+/** Draws one line's text as individually-placed, individually-rotated glyphs along an arc (see
+ *  `computeArcTextGlyphs`). `centerX`/`baselineY` is the line's own horizontal center / baseline. */
+function paintArcTextRun(
+  context: CanvasRenderingContext2D,
+  text: string,
+  lineWidthPx: number,
+  centerX: number,
+  baselineY: number,
+  style: TypesetPaintStyle,
+  hasStroke: boolean,
+): void {
+  const measurer = getVideoTextMeasurer();
+  const font = {
+    fontFamily: style.fontFamily,
+    fontSizePx: style.fontSizePx,
+    fontWeight: style.fontWeight,
+    fontStyle: style.fontStyle,
+    letterSpacingPx: style.letterSpacingPx,
+  };
+  const glyphs = computeArcTextGlyphs(
+    text,
+    lineWidthPx,
+    style.arcPercent,
+    (char) => measurer(char, font) + style.letterSpacingPx,
+  );
+
+  context.save();
+  context.textAlign = 'center';
+
+  for (const glyph of glyphs) {
+    context.save();
+    context.translate(centerX + glyph.xPx, baselineY + glyph.yPx);
+    context.rotate((glyph.rotationDeg * Math.PI) / 180);
+    if (hasStroke) {
+      context.strokeText(glyph.char, 0, 0);
+    }
+    context.fillText(glyph.char, 0, 0);
+    context.restore();
+  }
+
+  context.restore();
+}
+
+function drawTextStageObject(
+  context: CanvasRenderingContext2D,
+  object: Extract<EditorStageObject, { kind: 'text' }> & { typography?: EditorTextTypography },
+) {
+  const typography = object.typography;
+  const fontWeight = typography?.fontWeight ?? 400;
+  const fontStyle = typography?.fontStyle ?? 'normal';
+  const layout = layoutVideoText(
+    {
+      text: object.text,
+      fontFamily: object.fontFamily,
+      fontSizePx: object.fontSizePx,
+      typography: {
+        fontWeight,
+        fontStyle,
+        lineHeightPercent: typography?.lineHeightPercent ?? 115,
+        letterSpacingPx: typography?.letterSpacingPx ?? 0,
+        textAlign: typography?.textAlign ?? 'center',
+      },
+    },
+    getVideoTextMeasurer(),
+  );
+
+  paintTypesetTextBlock(
+    context,
+    layout,
+    {
+      fontFamily: object.fontFamily,
+      fontSizePx: object.fontSizePx,
+      fontWeight,
+      fontStyle,
+      letterSpacingPx: typography?.letterSpacingPx ?? 0,
+      color: object.color,
+      strokeColor: typography?.strokeColor,
+      strokeWidthPx: typography?.strokeWidthPx,
+      shadowColor: typography?.shadowColor,
+      shadowBlurPx: typography?.shadowBlurPx,
+      shadowOffsetXPx: typography?.shadowOffsetXPx,
+      shadowOffsetYPx: typography?.shadowOffsetYPx,
+      arcPercent: typography?.arcPercent,
+    },
+    { xPx: -layout.contentWidthPx / 2, yPx: -layout.contentHeightPx / 2 },
+  );
+}
+
+/**
+ * The comic painter input: an editor comic stage object plus the OPTIONAL Paper-style bezier tail
+ * channels and Paper-grade text typography. The bezier tail (tip position + funnel curvature, both
+ * as a percent of the bubble frame) is resolved per playhead progress from keyframes upstream and
+ * passed in here so the tail tip and funnel animate INDEPENDENTLY of the bubble body's
+ * position/scale/rotation. When the bezier fields are absent the painter falls back to the legacy
+ * polar tail (`tailAngleDeg`/`tailLengthPx`) and finally to a sane default tip. `textAlign` is
+ * widened to include `'justify'` (the base `EditorComicStageObject` only has left/center/right) via
+ * `Omit` + re-declare, which still lets a plain `EditorComicStageObject` (narrower `textAlign`)
+ * type-check here. Kept structural (not the flow.ts type) so callers passing a plain
+ * `EditorComicStageObject` still type-check.
+ */
+type ComicPaintObject = Omit<
+  Extract<EditorStageObject, { kind: 'speech-bubble' | 'thought-bubble' | 'caption' }>,
+  'textAlign'
+> & {
+  tailTipXPercent?: number;
+  tailTipYPercent?: number;
+  tailCurvePercent?: number;
+  textAlign: 'left' | 'center' | 'right' | 'justify';
+  textFontWeight?: number;
+  textFontStyle?: 'normal' | 'italic';
+  textStrokeColor?: string;
+  textStrokeWidthPx?: number;
+  textShadowColor?: string;
+  textShadowBlurPx?: number;
+  textShadowOffsetXPx?: number;
+  textShadowOffsetYPx?: number;
+  textArcPercent?: number;
+};
+
+/**
  * Motion-comic stage objects. One canvas painter serves BOTH the program-stage preview and the
- * export render (renderStageObjectImage), so what you see is what encodes — no parity drift.
+ * export render (renderStageObjectImage / renderComicCard), so what you see is what encodes — no
+ * parity drift. The tail is a real cubic-bezier funnel adopted from Paper's `buildSpeechBubblePath`
+ * (see `src/lib/videoComicTail.ts` for the pure geometry).
  */
 export function drawComicStageObject(
   context: CanvasRenderingContext2D,
-  object: Extract<EditorStageObject, { kind: 'speech-bubble' | 'thought-bubble' | 'caption' }>,
+  object: ComicPaintObject,
 ) {
   const halfW = object.width / 2;
   const halfH = object.height / 2;
   const stroke = Math.max(0, object.strokeWidthPx);
-
-  const tailRad = (object.tailAngleDeg * Math.PI) / 180;
-  const tailDir = { x: Math.cos(tailRad), y: Math.sin(tailRad) };
-  // The tail leaves from the body edge along its angle.
-  const edgeT = 1 / Math.max(Math.abs(tailDir.x) / halfW, Math.abs(tailDir.y) / halfH, 1e-6);
-  const tailBase = { x: tailDir.x * edgeT * 0.92, y: tailDir.y * edgeT * 0.92 };
-  const tailTip = {
-    x: tailDir.x * (edgeT + object.tailLengthPx),
-    y: tailDir.y * (edgeT + object.tailLengthPx),
-  };
 
   context.fillStyle = object.fillColor;
   context.strokeStyle = object.strokeColor;
@@ -1163,82 +1422,139 @@ export function drawComicStageObject(
   context.lineJoin = 'round';
 
   if (object.kind === 'caption') {
-    // Classic rectangular caption box, square corners.
+    // Classic rectangular caption box, square corners — captions never carry a tail.
     context.beginPath();
     context.rect(-halfW, -halfH, object.width, object.height);
     context.fill();
     if (stroke > 0) context.stroke();
-  } else if (object.kind === 'speech-bubble') {
-    // Body + tail as ONE path so the outline stays continuous where they join.
-    const radius = Math.min(object.height * 0.45, object.width * 0.3);
-    const perp = { x: -tailDir.y, y: tailDir.x };
-    const baseHalf = Math.min(object.width, object.height) * 0.16;
-    const path = new Path2D();
-    path.roundRect(-halfW, -halfH, object.width, object.height, radius);
-    const tail = new Path2D();
-    tail.moveTo(tailBase.x + perp.x * baseHalf, tailBase.y + perp.y * baseHalf);
-    tail.lineTo(tailTip.x, tailTip.y);
-    tail.lineTo(tailBase.x - perp.x * baseHalf, tailBase.y - perp.y * baseHalf);
-    tail.closePath();
-    path.addPath(tail);
-    context.fill(path);
-    if (stroke > 0) context.stroke(path);
-    // Re-fill the body so the tail-join stroke segment inside the bubble disappears.
-    context.save();
-    context.lineWidth = 0;
-    const bodyOnly = new Path2D();
-    bodyOnly.roundRect(-halfW + stroke / 2, -halfH + stroke / 2, object.width - stroke, object.height - stroke, Math.max(0, radius - stroke / 2));
-    context.fill(bodyOnly);
-    context.restore();
   } else {
-    // Thought bubble: elliptical cloud body + shrinking puffs toward the tail tip.
-    context.beginPath();
-    context.ellipse(0, 0, halfW, halfH, 0, 0, Math.PI * 2);
-    context.fill();
-    if (stroke > 0) context.stroke();
-    const puffCount = 3;
-    for (let index = 1; index <= puffCount; index += 1) {
-      const t = index / (puffCount + 1);
-      const px = tailBase.x + (tailTip.x - tailBase.x) * t;
-      const py = tailBase.y + (tailTip.y - tailBase.y) * t;
-      const pr = Math.max(3, (1 - t) * Math.min(halfW, halfH) * 0.22);
+    // Resolve the bezier tail (tip + funnel) from the keyframe-resolved bezier fields, falling back
+    // to the legacy polar tail and finally to a default tip. This is the ONLY tail model now.
+    const tail = resolveComicTailGeometryForObject(object, halfW, halfH);
+
+    if (object.kind === 'speech-bubble') {
+      // Body + bezier tail as ONE path so the outline stays continuous where they join.
+      const radius = Math.min(object.height * 0.45, object.width * 0.3);
+      const path = new Path2D();
+      path.roundRect(-halfW, -halfH, object.width, object.height, radius);
+      path.addPath(buildComicTailPath(tail));
+      context.fill(path);
+      if (stroke > 0) context.stroke(path);
+      // Re-fill the body so the tail-join stroke segment inside the bubble disappears.
+      context.save();
+      context.lineWidth = 0;
+      const bodyOnly = new Path2D();
+      bodyOnly.roundRect(-halfW + stroke / 2, -halfH + stroke / 2, object.width - stroke, object.height - stroke, Math.max(0, radius - stroke / 2));
+      context.fill(bodyOnly);
+      context.restore();
+    } else {
+      // Thought bubble: elliptical cloud body + shrinking puffs riding the tail's bezier curve.
       context.beginPath();
-      context.ellipse(px, py, pr, pr * 0.82, 0, 0, Math.PI * 2);
+      context.ellipse(0, 0, halfW, halfH, 0, 0, Math.PI * 2);
       context.fill();
       if (stroke > 0) context.stroke();
+      const puffCount = 3;
+      for (let index = 1; index <= puffCount; index += 1) {
+        const t = index / (puffCount + 1);
+        const puff = comicTailQuadraticPoint(tail.base, tail.curveHandle, tail.tip, t);
+        const pr = Math.max(3, (1 - t) * Math.min(halfW, halfH) * 0.22);
+        context.beginPath();
+        context.ellipse(puff.x, puff.y, pr, pr * 0.82, 0, 0, Math.PI * 2);
+        context.fill();
+        if (stroke > 0) context.stroke();
+      }
     }
   }
 
-  // Comic typesetting: wrapped text with line height, letter spacing, alignment.
+  // Comic typesetting: Paper-grade layout (leading, tracking, alignment incl. justify) plus
+  // weight/style/stroke/shadow/arc, via the shared `videoTextFlow` engine (see
+  // `paintTypesetTextBlock`) — the SAME engine `drawTextStageObject` and `renderTextCard` use, so a
+  // caption/bubble's text reads identically to a plain text clip's.
   const padX = Math.max(10, object.width * 0.08);
-  const maxTextWidth = object.width - padX * 2;
-  context.fillStyle = object.textColor;
-  context.textBaseline = 'middle';
-  context.font = `600 ${object.fontSizePx}px ${object.fontFamily}`;
-  if ('letterSpacing' in context) {
-    (context as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${object.letterSpacingPx}px`;
-  }
-  const lines: string[] = [];
-  for (const paragraph of object.text.split('\n')) {
-    let current = '';
-    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
-      const candidate = current ? `${current} ${word}` : word;
-      if (context.measureText(candidate).width > maxTextWidth && current) {
-        lines.push(current);
-        current = word;
-      } else {
-        current = candidate;
-      }
+  const maxTextWidth = Math.max(1, object.width - padX * 2);
+  const fontWeight = object.textFontWeight ?? 600;
+  const fontStyle = object.textFontStyle ?? 'normal';
+  const layout = layoutVideoText(
+    {
+      text: object.text,
+      fontFamily: object.fontFamily,
+      fontSizePx: object.fontSizePx,
+      maxWidthPx: maxTextWidth,
+      typography: {
+        fontWeight,
+        fontStyle,
+        lineHeightPercent: object.lineHeightPercent,
+        letterSpacingPx: object.letterSpacingPx,
+        textAlign: object.textAlign,
+      },
+    },
+    getVideoTextMeasurer(),
+  );
+
+  paintTypesetTextBlock(
+    context,
+    layout,
+    {
+      fontFamily: object.fontFamily,
+      fontSizePx: object.fontSizePx,
+      fontWeight,
+      fontStyle,
+      letterSpacingPx: object.letterSpacingPx,
+      color: object.textColor,
+      strokeColor: object.textStrokeColor,
+      strokeWidthPx: object.textStrokeWidthPx,
+      shadowColor: object.textShadowColor,
+      shadowBlurPx: object.textShadowBlurPx,
+      shadowOffsetXPx: object.textShadowOffsetXPx,
+      shadowOffsetYPx: object.textShadowOffsetYPx,
+      arcPercent: object.textArcPercent,
+    },
+    { xPx: -halfW + padX, yPx: -layout.contentHeightPx / 2 },
+  );
+}
+
+/**
+ * Resolves the bezier tail geometry for a comic bubble body of the given half-extents. Tip + curve
+ * come from the (keyframe-resolved) bezier fields; when absent they fall back to the legacy polar
+ * tail and finally to a default down-right tip.
+ */
+function resolveComicTailGeometryForObject(
+  object: ComicPaintObject,
+  halfW: number,
+  halfH: number,
+): ReturnType<typeof resolveComicTailGeometry> {
+  const polar = comicPolarTailToTipPercent(object.tailAngleDeg, object.tailLengthPx);
+  const tipXPercent = firstFiniteNumber(object.tailTipXPercent, polar?.tipXPercent, COMIC_TAIL_DEFAULT_TIP_X_PERCENT);
+  const tipYPercent = firstFiniteNumber(object.tailTipYPercent, polar?.tipYPercent, COMIC_TAIL_DEFAULT_TIP_Y_PERCENT);
+  const curvePercent = firstFiniteNumber(object.tailCurvePercent, COMIC_TAIL_DEFAULT_CURVE_PERCENT);
+
+  return resolveComicTailGeometry({
+    halfWidth: halfW,
+    halfHeight: halfH,
+    tipXPercent,
+    tipYPercent,
+    curvePercent,
+    bodyShape: object.kind === 'thought-bubble' ? 'ellipse' : 'rect',
+  });
+}
+
+/** Builds the closed cubic-bezier tail outline (baseLeft → tip → baseRight) as a Path2D. */
+function buildComicTailPath(tail: ReturnType<typeof resolveComicTailGeometry>): Path2D {
+  const path = new Path2D();
+  path.moveTo(tail.baseLeft.x, tail.baseLeft.y);
+  path.bezierCurveTo(tail.leftControl1.x, tail.leftControl1.y, tail.leftControl2.x, tail.leftControl2.y, tail.tip.x, tail.tip.y);
+  path.bezierCurveTo(tail.rightControl1.x, tail.rightControl1.y, tail.rightControl2.x, tail.rightControl2.y, tail.baseRight.x, tail.baseRight.y);
+  path.closePath();
+  return path;
+}
+
+function firstFiniteNumber(...values: Array<number | undefined>): number {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
     }
-    lines.push(current);
   }
-  const lineHeight = object.fontSizePx * (object.lineHeightPercent / 100);
-  const startY = -((lines.length - 1) * lineHeight) / 2;
-  context.textAlign = object.textAlign;
-  const textX = object.textAlign === 'left' ? -halfW + padX : object.textAlign === 'right' ? halfW - padX : 0;
-  for (const [index, line] of lines.entries()) {
-    context.fillText(line, textX, startY + index * lineHeight, maxTextWidth);
-  }
+  return 0;
 }
 
 function drawRectangleStageObject(
@@ -1772,6 +2088,55 @@ async function getMediaDuration(url: string, kind: 'audio' | 'video'): Promise<n
   });
 }
 
+/** Text-clip-specific typography defaults, matching this render path's PRE-existing look (a bold,
+ *  tightly-leaded title card) so clips created before `textTypography` existed don't visually shift
+ *  when this function switched from an SVG+CSS render to a direct canvas render. */
+const TEXT_CARD_DEFAULT_FONT_WEIGHT = 600;
+const TEXT_CARD_DEFAULT_LINE_HEIGHT_PERCENT = 112;
+/** Generous fixed padding baseline (independent of stroke/shadow/arc reach, added on top below) —
+ *  matches the old SVG render's safety-padding intent so normal (no-typography) clips keep their
+ *  existing card size. */
+const TEXT_CARD_BASE_PADDING_FACTOR = 0.16;
+
+/**
+ * Derives stroke/shadow typography from the legacy per-clip `TextClipEffect` (none/shadow/glow/
+ * outline), approximating `editorTextRender.ts`'s old CSS look (a single canvas shadow can't
+ * reproduce `glow`'s double CSS text-shadow exactly, so it uses the more prominent of the two).
+ * Only used as a FALLBACK for clips that predate `textTypography` — explicit typography fields
+ * always win (see the merge in `renderTextCard`).
+ */
+function legacyTextEffectTypography(effect: 'none' | 'shadow' | 'glow' | 'outline'): Pick<
+  EditorTextTypography,
+  'strokeColor' | 'strokeWidthPx' | 'shadowColor' | 'shadowBlurPx' | 'shadowOffsetXPx' | 'shadowOffsetYPx'
+> {
+  if (effect === 'outline') {
+    return {
+      strokeColor: 'rgba(0,0,0,0.75)',
+      strokeWidthPx: 2,
+      shadowColor: 'rgba(0,0,0,0.5)',
+      shadowBlurPx: 6,
+      shadowOffsetYPx: 2,
+    };
+  }
+  if (effect === 'shadow') {
+    return { shadowColor: 'rgba(0,0,0,0.65)', shadowBlurPx: 20, shadowOffsetYPx: 6 };
+  }
+  if (effect === 'glow') {
+    return { shadowColor: 'rgba(96,165,250,0.5)', shadowBlurPx: 32 };
+  }
+  return {};
+}
+
+/**
+ * Renders a text CLIP's title card as a flat PNG for FFmpeg export, via the same
+ * `paintTypesetTextBlock` canvas engine `drawTextStageObject`/`drawComicStageObject` use (this used
+ * to render an SVG+`foreignObject`+CSS asset instead — see `editorTextRender.ts`'s
+ * `buildTextOverlaySvgAsset`, still used for stage-object sizing elsewhere; switching to canvas here
+ * gives text clips the same weight/style/leading/tracking/align+justify/stroke/shadow/arc support as
+ * comic bubbles and stage text objects, from one shared paint routine). Auto-sized to the text's own
+ * content (no forced wrap — only explicit "\n" breaks), matching the free-floating-title-card
+ * behavior clips have always had.
+ */
 async function renderTextCard({
   text,
   fontFamily,
@@ -1779,6 +2144,7 @@ async function renderTextCard({
   color,
   effect,
   opacityPercent,
+  typography,
 }: {
   text: string;
   fontFamily: string;
@@ -1786,30 +2152,74 @@ async function renderTextCard({
   color: string;
   effect: 'none' | 'shadow' | 'glow' | 'outline';
   opacityPercent: number;
+  typography?: EditorTextTypography;
 }): Promise<string> {
-  const { bounds, svg } = buildTextOverlaySvgAsset({
-    text,
-    fontFamily,
-    fontSizePx,
-    color,
-    effect,
-    opacityPercent,
-  });
-  const svgUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-  const image = new Image();
-  image.src = svgUrl;
-  await image.decode();
+  const resolved: EditorTextTypography = { ...legacyTextEffectTypography(effect), ...(typography ?? {}) };
+  const fontWeight = resolved.fontWeight ?? TEXT_CARD_DEFAULT_FONT_WEIGHT;
+  const fontStyle = resolved.fontStyle ?? 'normal';
+  const letterSpacingPx = resolved.letterSpacingPx ?? 0;
+  const safeFontSizePx = Math.max(8, fontSizePx || 64);
+  const safeText = text || 'Text';
+
+  const layout = layoutVideoText(
+    {
+      text: safeText,
+      fontFamily: fontFamily || 'Inter, system-ui, sans-serif',
+      fontSizePx: safeFontSizePx,
+      typography: {
+        fontWeight,
+        fontStyle,
+        lineHeightPercent: resolved.lineHeightPercent ?? TEXT_CARD_DEFAULT_LINE_HEIGHT_PERCENT,
+        letterSpacingPx,
+        textAlign: resolved.textAlign ?? 'center',
+      },
+    },
+    getVideoTextMeasurer(),
+  );
+
+  const strokeWidthPx = Math.max(0, resolved.strokeWidthPx ?? 0);
+  const shadowBlurPx = Math.max(0, resolved.shadowBlurPx ?? 0);
+  const shadowOffsetXPx = resolved.shadowOffsetXPx ?? 0;
+  const shadowOffsetYPx = resolved.shadowOffsetYPx ?? 0;
+  const arcPercent = resolved.arcPercent ?? 0;
+  // Generous, independent-of-content padding: covers the base safety margin the old SVG render
+  // used, plus whatever room stroke/shadow/arc need so nothing clips at the canvas edge.
+  const basePaddingPx = Math.max(8, safeFontSizePx * TEXT_CARD_BASE_PADDING_FACTOR);
+  const strokeShadowPaddingPx = strokeWidthPx + shadowBlurPx + Math.max(Math.abs(shadowOffsetXPx), Math.abs(shadowOffsetYPx));
+  const arcPaddingPx = arcPercent ? safeFontSizePx * 1.5 : 0;
+  const paddingPx = Math.ceil(basePaddingPx + strokeShadowPaddingPx + arcPaddingPx);
 
   const canvas = document.createElement('canvas');
-  canvas.width = image.naturalWidth || bounds.width;
-  canvas.height = image.naturalHeight || bounds.height;
+  canvas.width = Math.max(1, Math.ceil(Math.max(safeFontSizePx, layout.contentWidthPx) + paddingPx * 2));
+  canvas.height = Math.max(1, Math.ceil(Math.max(safeFontSizePx, layout.contentHeightPx) + paddingPx * 2));
   const context = canvas.getContext('2d');
 
   if (!context) {
     throw new Error('Unable to create a text title card for the manual editor.');
   }
 
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  context.globalAlpha = Math.max(0.05, Math.min(1, opacityPercent / 100));
+  paintTypesetTextBlock(
+    context,
+    layout,
+    {
+      fontFamily: fontFamily || 'Inter, system-ui, sans-serif',
+      fontSizePx: safeFontSizePx,
+      fontWeight,
+      fontStyle,
+      letterSpacingPx,
+      color: color || '#f3f4f6',
+      strokeColor: resolved.strokeColor,
+      strokeWidthPx,
+      shadowColor: resolved.shadowColor,
+      shadowBlurPx,
+      shadowOffsetXPx,
+      shadowOffsetYPx,
+      arcPercent,
+    },
+    { xPx: paddingPx, yPx: paddingPx },
+  );
+
   return canvas.toDataURL('image/png');
 }
 
