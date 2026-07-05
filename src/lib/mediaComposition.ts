@@ -26,6 +26,8 @@ import { buildClipEffectDescriptor, mapClipBlendModeToFFmpeg } from './editorCli
 import { buildShapeLayoutDescriptor } from './editorVisualLayout';
 import { resolveVisualClipSourceRangeMs } from './editorTimelineSourceRange';
 import { createMediaDurationResolver, type MediaDurationLoader } from './mediaDurationCache';
+import { probeGifAnimation } from './gifFrames';
+import { isGifAssetReference } from './mediaFormatRegistry';
 import {
   renderViaLocalNativeFFmpeg,
   renderViaLocalNativeFFmpegWithArtifacts,
@@ -101,6 +103,9 @@ interface ComposeSequenceVisualClip {
   aspectRatio?: AspectRatio;
   assetUrl?: string;
   text?: string;
+  /** Source asset MIME type (e.g. `image/gif`) -- used to detect an animated GIF image clip so
+   *  the FFmpeg export can loop it instead of freezing it to its first frame. */
+  mimeType?: string;
   sourceInMs?: number;
   sourceOutMs?: number;
   durationSeconds?: number;
@@ -227,6 +232,10 @@ interface PreparedSequenceVisualClip {
   inputName: string;
   sourceUrl: string;
   clipDurationSeconds: number;
+  /** True when this is an `image` clip whose source is a real, multi-frame (animated) GIF --
+   *  set by `prepareVisualClipInput`'s `detectAnimatedGifClip` probe. Undefined/false for every
+   *  other clip, including static/non-animated GIFs, which keep the existing `-loop 1` behavior. */
+  isAnimatedGif?: boolean;
 }
 
 interface PreparedSequenceAudioTrack {
@@ -454,6 +463,7 @@ export async function composeSequenceMedia({
         inputIndex: index + 1,
         inputName: preparedInput.inputName,
         sourceUrl: preparedInput.sourceUrl,
+        isAnimatedGif: preparedInput.isAnimatedGif,
         clipDurationSeconds: await resolveSequenceVisualClipDuration(clip, resolveMediaDuration),
       } satisfies PreparedSequenceVisualClip;
     }),
@@ -740,7 +750,7 @@ async function getFFmpeg(): Promise<FFmpeg> {
 async function prepareVisualClipInput(
   clip: ComposeSequenceVisualClip,
   index: number,
-): Promise<{ inputName: string; sourceUrl: string }> {
+): Promise<{ inputName: string; sourceUrl: string; isAnimatedGif?: boolean }> {
   if (clip.sourceKind === 'text') {
     const renderedCard = await renderTextCard({
       text: clip.textContent ?? clip.text ?? '',
@@ -794,7 +804,28 @@ async function prepareVisualClipInput(
   return {
     inputName,
     sourceUrl: clip.assetUrl,
+    isAnimatedGif: await detectAnimatedGifClip(clip),
   };
+}
+
+/**
+ * Detects whether an `image` clip's source is a real, multi-frame (animated) GIF, so the FFmpeg
+ * sequence command can loop it instead of freezing it to its first frame (see
+ * `buildVisualClipInputArgs`). Cheaply gated by `isGifAssetReference` (mimeType/URL sniffing --
+ * no I/O) before paying for the byte fetch + frame-count probe; never throws, since a detection
+ * failure should just fall back to today's static-image behavior rather than break the export.
+ */
+async function detectAnimatedGifClip(clip: ComposeSequenceVisualClip): Promise<boolean> {
+  if (clip.sourceKind !== 'image' || !clip.assetUrl || !isGifAssetReference(clip.assetUrl, clip.mimeType)) {
+    return false;
+  }
+
+  try {
+    const bytes = await fetchFile(clip.assetUrl);
+    return (await probeGifAnimation(bytes)).isAnimated;
+  } catch {
+    return false;
+  }
 }
 
 async function resolveSequenceVisualClipDuration(
@@ -831,6 +862,34 @@ function resolveSequenceTimelineDurationSeconds(
 
 function getSequenceCanvas(aspectRatio: AspectRatio, videoResolution: VideoResolution): SequenceCanvas {
   return getVideoCanvasDimensions(aspectRatio, videoResolution);
+}
+
+/**
+ * Builds the FFmpeg input-side args for one visual clip's input file.
+ *
+ * Animated GIFs (`isAnimatedGif`) skip `-loop 1` entirely -- that flag forces the image2 "single
+ * still frame repeated forever" demuxer path, which is exactly what freezes a GIF to its first
+ * frame. Left un-looped, FFmpeg reads a GIF as a genuine multi-frame video stream; `-ignore_loop 0`
+ * additionally honors the GIF's own NETSCAPE loop-count header (instead of playing it through once
+ * and stopping), so the animation repeats to fill `clipDurationSeconds` -- `-t` still truncates it
+ * to the exact clip length either way. Every other case (including static/non-animated GIFs) keeps
+ * the exact previous behavior: unchanged for callers that never set `isAnimatedGif`.
+ */
+export function buildVisualClipInputArgs(
+  sourceKind: EditorVisualSourceKind,
+  inputName: string,
+  clipDurationSeconds: number,
+  isAnimatedGif?: boolean,
+): string[] {
+  if (sourceKind === 'image' && isAnimatedGif) {
+    return ['-ignore_loop', '0', '-t', formatSeconds(clipDurationSeconds), '-i', inputName];
+  }
+
+  if (sourceKind === 'image' || sourceKind === 'text' || sourceKind === 'shape') {
+    return ['-loop', '1', '-t', formatSeconds(clipDurationSeconds), '-i', inputName];
+  }
+
+  return ['-i', inputName];
 }
 
 export function buildSequenceCommand({
@@ -872,15 +931,12 @@ export function buildSequenceCommand({
   );
 
   for (const preparedClip of preparedClips) {
-    if (
-      preparedClip.clip.sourceKind === 'image' ||
-      preparedClip.clip.sourceKind === 'text' ||
-      preparedClip.clip.sourceKind === 'shape'
-    ) {
-      command.push('-loop', '1', '-t', formatSeconds(preparedClip.clipDurationSeconds), '-i', preparedClip.inputName);
-    } else {
-      command.push('-i', preparedClip.inputName);
-    }
+    command.push(...buildVisualClipInputArgs(
+      preparedClip.clip.sourceKind,
+      preparedClip.inputName,
+      preparedClip.clipDurationSeconds,
+      preparedClip.isAnimatedGif,
+    ));
   }
 
   for (const preparedStageObject of preparedStageObjects) {

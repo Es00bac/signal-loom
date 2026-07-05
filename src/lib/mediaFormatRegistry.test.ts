@@ -8,6 +8,8 @@ import {
   inferDownloadExtension,
   inferMimeTypeFromFile,
   inferSourceKindFromFile,
+  isGifAssetReference,
+  isGifMimeType,
   MEDIA_FORMAT_REGISTRY,
   type MediaFormatDefinition,
 } from './mediaFormatRegistry';
@@ -85,6 +87,25 @@ describe('mediaFormatRegistry', () => {
     expect(filters.find((filter) => filter.name === 'Projects & Packages')?.extensions).toContain('sloom-paper-package.json');
     expect(filters.find((filter) => filter.name === 'Projects & Packages')?.extensions).toContain('sloom-paper-package.zip');
     expect(filters.at(-1)).toEqual({ name: 'All Files', extensions: ['*'] });
+  });
+
+  it('detects GIF mime types case-insensitively and ignores charset suffixes', () => {
+    expect(isGifMimeType('image/gif')).toBe(true);
+    expect(isGifMimeType('IMAGE/GIF')).toBe(true);
+    expect(isGifMimeType('image/gif; charset=binary')).toBe(true);
+    expect(isGifMimeType('image/png')).toBe(false);
+    expect(isGifMimeType(undefined)).toBe(false);
+  });
+
+  it('trusts an explicit mimeType over the asset URL when detecting a GIF asset reference', () => {
+    expect(isGifAssetReference('blob:http://localhost/abc-123', 'image/gif')).toBe(true);
+    expect(isGifAssetReference('blob:http://localhost/abc-123.png', 'image/png')).toBe(false);
+    expect(isGifAssetReference('data:image/gif;base64,AAA', undefined)).toBe(true);
+    expect(isGifAssetReference('data:image/png;base64,AAA', undefined)).toBe(false);
+    expect(isGifAssetReference('https://example.com/anim.gif', undefined)).toBe(true);
+    expect(isGifAssetReference('https://example.com/anim.gif?v=2', undefined)).toBe(true);
+    expect(isGifAssetReference('blob:http://localhost/no-extension-no-mime', undefined)).toBe(false);
+    expect(isGifAssetReference(undefined, undefined)).toBe(false);
   });
 
   it('keeps the Electron CJS mirror aligned with the renderer registry', () => {

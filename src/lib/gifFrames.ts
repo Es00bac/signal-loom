@@ -352,6 +352,48 @@ export function describeGifForFfmpeg(result: GifDecodeResult): GifFfmpegDescript
   };
 }
 
+export interface GifAnimationProbe {
+  /** True when the source has more than one frame -- a real animation, not a static image. */
+  isAnimated: boolean;
+  /** Best-effort total frame count; 1 when no decode backend is available. */
+  frameCount: number;
+}
+
+/**
+ * Lightweight probe for "does this GIF actually animate?". Reads only a decode
+ * backend's frame-count metadata -- it never decodes any frame's pixels -- so
+ * it is cheap enough to run before deciding whether an FFmpeg export should
+ * loop the source (see `describeGifForFfmpeg`) or whether a full
+ * `decodeGifFrames` pass is worth the pixel-compositing cost. Never throws:
+ * any failure (or the absence of a decode backend) resolves to a
+ * single-frame, "not animated" result, matching `decodeGifFrames`'s
+ * graceful-fallback contract.
+ */
+export async function probeGifAnimation(
+  data: ArrayBuffer | Uint8Array | Blob,
+  options: Pick<DecodeGifFramesOptions, 'createBackend'> = {},
+): Promise<GifAnimationProbe> {
+  try {
+    const bytes = await toUint8Array(data);
+    const backend = options.createBackend
+      ? await options.createBackend(bytes)
+      : await createDefaultGifDecodeBackend(bytes);
+
+    if (!backend) {
+      return { isAnimated: false, frameCount: 1 };
+    }
+
+    try {
+      const frameCount = Math.max(1, Math.floor(backend.frameCount) || 1);
+      return { isAnimated: frameCount > 1, frameCount };
+    } finally {
+      backend.close?.();
+    }
+  } catch {
+    return { isAnimated: false, frameCount: 1 };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Decode backend seam (swappable I/O layer)
 // ---------------------------------------------------------------------------

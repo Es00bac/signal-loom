@@ -15,6 +15,9 @@ export interface ManualEditorVisualSequenceSource {
   assetUrl?: string;
   aspectRatio?: AspectRatio;
   text?: string;
+  /** Source asset MIME type (e.g. `image/gif`) -- lets downstream FFmpeg export detect an
+   *  animated GIF without guessing from the (often extension-less) blob: asset URL. */
+  mimeType?: string;
 }
 
 export interface ManualEditorVisualSequenceClip {
@@ -25,6 +28,7 @@ export interface ManualEditorVisualSequenceClip {
   aspectRatio?: AspectRatio;
   assetUrl?: string;
   text?: string;
+  mimeType?: string;
   sourceInMs: number;
   sourceOutMs?: number;
   durationSeconds?: number;
@@ -99,6 +103,7 @@ export function buildManualEditorVisualSequenceClip(
     aspectRatio: source.aspectRatio,
     assetUrl: source.assetUrl,
     text: source.text,
+    mimeType: source.mimeType,
     sourceInMs: clip.sourceInMs,
     sourceOutMs: clip.sourceOutMs,
     durationSeconds: clip.durationSeconds,

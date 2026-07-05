@@ -7,6 +7,7 @@ import {
   getGifFrameTimeline,
   getGifTotalDurationMs,
   planGifFrameComposition,
+  probeGifAnimation,
   requiresGifCompositing,
   selectGifFrameIndexAtTime,
   type GifCompositeSurface,
@@ -321,6 +322,62 @@ describe('describeGifForFfmpeg', () => {
       frameCount: 4,
       avgFrameDelayMs: 100,
     });
+  });
+});
+
+describe('probeGifAnimation', () => {
+  function makeProbeBackend(overrides: Partial<GifDecodeBackend> = {}): GifDecodeBackend {
+    return {
+      width: 10,
+      height: 10,
+      loopCount: 0,
+      frameCount: 1,
+      decodeFrame: vi.fn(async () => {
+        throw new Error('probeGifAnimation must never decode frame pixels');
+      }),
+      ...overrides,
+    };
+  }
+
+  it('reports a single-frame backend as not animated', async () => {
+    const backend = makeProbeBackend({ frameCount: 1 });
+
+    await expect(probeGifAnimation(new Uint8Array([1]), {
+      createBackend: async () => backend,
+    })).resolves.toEqual({ isAnimated: false, frameCount: 1 });
+    expect(backend.decodeFrame).not.toHaveBeenCalled();
+  });
+
+  it('reports a multi-frame backend as animated, without decoding any frame', async () => {
+    const backend = makeProbeBackend({ frameCount: 24 });
+
+    await expect(probeGifAnimation(new Uint8Array([1]), {
+      createBackend: async () => backend,
+    })).resolves.toEqual({ isAnimated: true, frameCount: 24 });
+    expect(backend.decodeFrame).not.toHaveBeenCalled();
+  });
+
+  it('closes the backend after probing', async () => {
+    const close = vi.fn();
+    const backend = makeProbeBackend({ frameCount: 3, close });
+
+    await probeGifAnimation(new Uint8Array([1]), { createBackend: async () => backend });
+
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves a graceful single-frame result when no backend is available', async () => {
+    await expect(probeGifAnimation(new Uint8Array([1]), {
+      createBackend: async () => null,
+    })).resolves.toEqual({ isAnimated: false, frameCount: 1 });
+  });
+
+  it('resolves a graceful single-frame result when backend creation rejects', async () => {
+    await expect(probeGifAnimation(new Uint8Array([1]), {
+      createBackend: async () => {
+        throw new Error('boom');
+      },
+    })).resolves.toEqual({ isAnimated: false, frameCount: 1 });
   });
 });
 

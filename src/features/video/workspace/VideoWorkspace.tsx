@@ -37,6 +37,7 @@ import {
   COMIC_TAIL_DEFAULT_TIP_Y_PERCENT,
 } from '../../../lib/videoComicTail';
 import { computeArcTextGlyphs, createVideoTextCanvasMeasurer } from '../../../lib/videoTextFlow';
+import { decodeGifFrames, selectGifFrameIndexAtTime, type GifDecodeResult } from '../../../lib/gifFrames';
 import { isTrackLocked, normalizeLockedTracks, toggleLockedTrack } from '../../../lib/editorTrackLocks';
 import { isTrackCollapsed, normalizeCollapsedTracks, toggleCollapsedTrack } from '../../../lib/editorTrackCollapse';
 import { advanceShuttleCursor, stepShuttleRate, toggleShuttlePlay } from './timelineTransport';
@@ -208,6 +209,7 @@ import {
   getAcceptStringForKinds,
   getBrowserPreviewSupportLabel,
   inferSourceKindFromFile,
+  isGifAssetReference,
 } from '../../../lib/mediaFormatRegistry';
 import {
   applyVisualClipPatchAtProgress,
@@ -7845,6 +7847,15 @@ function ProgramStageMedia({
           src={clip.item.assetUrl}
         />
       )
+      : isGifAssetReference(clip.item.assetUrl, clip.item.mimeType)
+      ? (
+        <GifStagePreview
+          className={mediaClassName}
+          label={clip.item.label}
+          localTimeSeconds={clip.localTimeSeconds}
+          src={clip.item.assetUrl}
+        />
+      )
       : <img alt={clip.item.label} className={mediaClassName} src={clip.item.assetUrl} />;
   } else if ((clip.item?.kind === 'video' || clip.item?.kind === 'composition') && clip.item.assetUrl) {
     content = effectDescriptor.chromaKey?.enabled
@@ -7968,6 +7979,86 @@ function ProgramStageMedia({
       </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Program Monitor preview for an image clip whose source is a GIF. A browser `<img>` free-runs a
+ * GIF on wall-clock time -- it ignores the timeline playhead entirely, so it shows the wrong frame
+ * whenever the sequence is paused, scrubbed, or the clip is trimmed/time-offset, and it can't be
+ * captured frame-accurately. This decodes the GIF once (`decodeGifFrames`) and repaints a canvas
+ * with whichever frame `selectGifFrameIndexAtTime` says corresponds to `localTimeSeconds` -- the
+ * same "elapsed time since this clip started on the timeline" clock `getStageClipProgress` already
+ * uses, and the same clock the FFmpeg export loops the GIF against (see `buildVisualClipInputArgs`
+ * in mediaComposition.ts), so preview and export agree on what the GIF looks like at any given
+ * playhead position. Works for static (single-frame) GIFs too -- they simply always resolve to
+ * frame 0, matching the previous `<img>` behavior.
+ */
+function GifStagePreview({
+  className,
+  label,
+  localTimeSeconds,
+  src,
+}: {
+  className: string;
+  label: string;
+  localTimeSeconds: number;
+  src: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [decoded, setDecoded] = useState<GifDecodeResult | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDecoded(null);
+
+    fetch(src)
+      .then((response) => response.blob())
+      .then((blob) => decodeGifFrames(blob))
+      .then((result) => {
+        if (!cancelled) {
+          setDecoded(result);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDecoded(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext('2d');
+
+    if (!canvas || !context || !decoded || decoded.frames.length === 0) {
+      return;
+    }
+
+    const frameIndex = selectGifFrameIndexAtTime(decoded.frames, Math.max(0, localTimeSeconds) * 1000);
+    const frame = decoded.frames[frameIndex];
+
+    canvas.width = decoded.width;
+    canvas.height = decoded.height;
+    context.clearRect(0, 0, decoded.width, decoded.height);
+
+    if (typeof ImageData !== 'undefined' && frame.bitmap instanceof ImageData) {
+      context.putImageData(frame.bitmap, 0, 0);
+    } else {
+      context.drawImage(frame.bitmap as CanvasImageSource, 0, 0, decoded.width, decoded.height);
+    }
+  }, [decoded, localTimeSeconds]);
+
+  return (
+    <canvas
+      aria-label={label}
+      className={className}
+      ref={canvasRef}
+    />
   );
 }
 

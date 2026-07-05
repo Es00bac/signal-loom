@@ -234,6 +234,36 @@ export function getBrowserPreviewSupportLabel(fileNameOrPath: string | undefined
     : 'Imported for native/FFmpeg use; browser preview may be unsupported';
 }
 
+export function isGifMimeType(mimeType: string | undefined): boolean {
+  return normalizeMimeType(mimeType) === 'image/gif';
+}
+
+/**
+ * True when an image asset reference is a GIF -- the signal the Video timeline uses to decide
+ * whether an "image" clip might actually be a (possibly animated) GIF that needs frame-aware
+ * handling instead of being treated as one static picture. Prefers an explicit `mimeType` (the
+ * only reliable signal for `blob:` asset URLs, which carry no usable file extension) and only
+ * falls back to sniffing the URL when no mimeType is known, checking the `data:` URL's own MIME
+ * type before the trailing file extension.
+ */
+export function isGifAssetReference(assetUrl: string | undefined, mimeType: string | undefined): boolean {
+  if (mimeType) {
+    return isGifMimeType(mimeType);
+  }
+
+  if (!assetUrl) {
+    return false;
+  }
+
+  const dataUrlMatch = /^data:([^;,]+)/i.exec(assetUrl);
+  if (dataUrlMatch) {
+    return isGifMimeType(dataUrlMatch[1]);
+  }
+
+  const pathOnly = assetUrl.split(/[?#]/)[0];
+  return getFileExtension(pathOnly) === 'gif';
+}
+
 export function getElectronDialogFilterGroups(): ElectronDialogFilterGroup[] {
   const mediaExtensions = getExtensionsForKinds(['image', 'video', 'audio']);
   const allExtensions = MEDIA_FORMAT_REGISTRY.flatMap((format) => format.extensions);
