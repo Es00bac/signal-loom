@@ -1,11 +1,15 @@
 import type { ImageDocument } from '../../types/imageEditor';
 import { canEditImageLayerPixels, canMoveImageLayer } from '../../lib/imageLayerLocks';
 import type { SelectionMask } from './SelectionMask';
+// Import via the explicit '/index' path: this file (PhotoshopQuickActions.ts) case-collides
+// with the sibling ./photoshopQuickActions/ directory on case-insensitive filesystems (macOS,
+// Windows). A bare './photoshopQuickActions' specifier resolves back to THIS file there instead
+// of the directory barrel, dropping PHOTOSHOP_QUICK_ACTIONS and cascading into build errors.
 import {
   getPhotoshopQuickActionCapabilityDescriptor as getBasePhotoshopQuickActionCapabilityDescriptor,
   planLocalContentAwareFillPatch,
   type PhotoshopQuickActionCapabilityDescriptor,
-} from './photoshopQuickActions';
+} from './photoshopQuickActions/index';
 import type {
   LocalContentAwareBounds,
   LocalContentAwarePatchTargetKind,
@@ -14,7 +18,7 @@ import type {
   LocalContentAwareRequestedOutputTarget,
 } from './ImageContentAware';
 
-export * from './photoshopQuickActions';
+export * from './photoshopQuickActions/index'; // explicit '/index' — case-collision, see note above
 
 export interface PhotoshopContentAwareQuickActionCompatibility {
   operation: LocalContentAwareRepairOperation;
