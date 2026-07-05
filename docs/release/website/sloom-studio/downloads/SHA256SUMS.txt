@@ -1,3 +1,5 @@
 48fb825275acf16cfad2eb22c06cb56cd0cf955896c37d2701cb8c690ee0c032  SignalLoom-Setup-0.9.10.exe
 a8346f4297726ac0a344d3154e53c8a653d33035d1cc0dcb94f5c9d10b71bd96  SignalLoom-0.9.10.AppImage
 e928725eb2fa77d7a8637fd8de314cfc21d3067f765bd223eebaa905bd66d5d6  SignalLoom-0.9.10-amd64.deb
+590f8061c670f88d3ae03c5373f27e048cd8bf255b87eb0e97dd578cb4d9a4a2  SignalLoom-0.9.10-mac-arm64.dmg
+d6d6ea23bd8e5de2a556b5dbcf41941ab7de2ba6458e6c9638e97caa4f46f8de  SignalLoom-0.9.10-mac-intel.dmg
