@@ -52,7 +52,7 @@ Version=1.0
 Name=Signal Loom
 GenericName=AI Multimedia Editor
 Comment=Generative AI media flow builder and timeline editor
-Exec=${install_dir}/signal-loom %U
+Exec=env SIGNAL_LOOM_ELECTRON_PANEL_MENU=1 ${install_dir}/signal-loom %U
 Icon=signal-loom
 Terminal=false
 Categories=AudioVideo;AudioVideoEditing;
