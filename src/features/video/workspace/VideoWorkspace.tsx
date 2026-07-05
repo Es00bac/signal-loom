@@ -40,6 +40,11 @@ import { computeArcTextGlyphs, createVideoTextCanvasMeasurer } from '../../../li
 import { decodeGifFrames, selectGifFrameIndexAtTime, type GifDecodeResult } from '../../../lib/gifFrames';
 import { isTrackLocked, normalizeLockedTracks, toggleLockedTrack } from '../../../lib/editorTrackLocks';
 import { isTrackCollapsed, normalizeCollapsedTracks, toggleCollapsedTrack } from '../../../lib/editorTrackCollapse';
+import {
+  resolveClipTrackIndexPatch,
+  resolveTimelineDropTrackIndex,
+  type TimelineLaneRect,
+} from '../../../lib/editorTimelineTrackDrag';
 import { advanceShuttleCursor, stepShuttleRate, toggleShuttlePlay } from './timelineTransport';
 import { normalizeSourceMarks, overwriteTrackRange, shiftTrackClipsForInsert } from './threePointEdit';
 import { findNearestEditPoint, rippleTrimClipToTarget, rollEditPointToTarget } from './trimEdit';
@@ -81,6 +86,9 @@ import {
   getEditorAudioTrackVolumes,
   getEditorAudioClips,
   getEditorVisualClips,
+  getEditorVisualTrackKinds,
+  selectOverlayTrackIndexForNewClip,
+  toggleEditorVisualTrackKind,
 } from '../../../lib/manualEditorState';
 import type {
   AppNode,
@@ -96,6 +104,7 @@ import type {
   EditorStageObject,
   EditorTextTypography,
   EditorVisualClip,
+  EditorVisualTrackKind,
   NodeData,
   TextClipEffect,
   TimelineAutomationPoint,
@@ -712,6 +721,21 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     commitActiveCompositionPatch(
       { editorCollapsedAudioTracks: toggleCollapsedTrack(collapsedAudioTracks, trackIndex) },
       isAudioTrackCollapsed(trackIndex) ? 'Expand audio track' : 'Collapse audio track',
+    );
+  };
+  // Overlay track kind (Phase 2D): a visual track can be designated 'overlay' so text/comic
+  // clips live on their own track, visually distinct from panel-art (image/video) tracks. It's
+  // metadata + placement preference + styling only — an overlay track is still a normal track.
+  const visualTrackKinds = useMemo(
+    () => getEditorVisualTrackKinds(activeComposition?.data ?? {}, VISUAL_TRACK_COUNT),
+    [activeComposition?.data.editorVisualTrackKinds],
+  );
+  const toggleVisualTrackKind = (trackIndex: number) => {
+    if (!activeComposition) return;
+    const isOverlay = visualTrackKinds[trackIndex] === 'overlay';
+    commitActiveCompositionPatch(
+      { editorVisualTrackKinds: toggleEditorVisualTrackKind(visualTrackKinds, trackIndex) },
+      isOverlay ? 'Unmark overlay track' : 'Mark overlay track',
     );
   };
   const editorAssetById = useMemo(
@@ -1727,8 +1751,12 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     if (!activeComposition) return;
     const asset = createEditorAsset('comic', { comicKind: kind });
     const defaults = asset.comicDefaults;
+    // Comic clips created from this toolbar action have no explicit track picker — prefer a
+    // dedicated overlay track when one exists, so captions/bubbles land as "a separate thing"
+    // without disturbing today's default (track 0) when no overlay track has been designated.
+    const overlayTrackIndex = selectOverlayTrackIndexForNewClip('comic', visualTrackKinds);
     const nextClip = createEditorVisualClip(asset.id, 'comic', {
-      trackIndex: 0,
+      trackIndex: overlayTrackIndex ?? 0,
       startMs: Math.max(0, Math.round(timelineCursorSeconds * 1000)),
       durationSeconds: 4,
       comicKind: kind,
@@ -2647,25 +2675,36 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     commitTimelineSnapPoints([], 'Clear timeline snap points');
   };
 
-  const moveVisualClip = (clipId: string, nextStartSeconds: number, shiftKey = false) => {
+  // nextTrackIndex is set only while a cross-track vertical drag is hovering a different lane
+  // (undefined keeps horizontal-only drags working exactly as before). A locked destination track
+  // rejects the move via resolveClipTrackIndexPatch, leaving the clip on its current track.
+  const moveVisualClip = (clipId: string, nextStartSeconds: number, shiftKey = false, nextTrackIndex?: number) => {
     const snappedStartSeconds = snapTimelineInteractionSeconds(nextStartSeconds, shiftKey);
 
     updateVisualClips(
       visualClips.map((clip) =>
         clip.id === clipId
-          ? { ...clip, startMs: Math.max(0, Math.round(snappedStartSeconds * 1000)) }
+          ? {
+              ...clip,
+              startMs: Math.max(0, Math.round(snappedStartSeconds * 1000)),
+              trackIndex: resolveClipTrackIndexPatch(clip.trackIndex, nextTrackIndex, isVisualTrackLocked),
+            }
           : clip,
       ),
     );
   };
 
-  const moveAudioClip = (clipId: string, nextStartSeconds: number, shiftKey = false) => {
+  const moveAudioClip = (clipId: string, nextStartSeconds: number, shiftKey = false, nextTrackIndex?: number) => {
     const snappedStartSeconds = snapTimelineInteractionSeconds(nextStartSeconds, shiftKey);
 
     updateAudioClips(
       audioClips.map((clip) =>
         clip.id === clipId
-          ? { ...clip, offsetMs: Math.max(0, Math.round(snappedStartSeconds * 1000)) }
+          ? {
+              ...clip,
+              offsetMs: Math.max(0, Math.round(snappedStartSeconds * 1000)),
+              trackIndex: resolveClipTrackIndexPatch(clip.trackIndex, nextTrackIndex, isAudioTrackLocked),
+            }
           : clip,
       ),
     );
@@ -4173,6 +4212,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
           isAudioTrackCollapsedProp={isAudioTrackCollapsed}
           onToggleVisualTrackCollapse={toggleVisualTrackCollapse}
           onToggleAudioTrackCollapse={toggleAudioTrackCollapse}
+          visualTrackKinds={visualTrackKinds}
+          onToggleVisualTrackKind={toggleVisualTrackKind}
           snapTimelineInteractionSeconds={snapTimelineInteractionSeconds}
           timelineAudioTrackHeight={timelineAudioTrackHeight}
           timelineCursorSeconds={timelineCursorSeconds}
@@ -5226,8 +5267,8 @@ interface SequencerTimelinePanelProps {
   displayTimelineSeconds: number;
   handleTimelineSourceDrop: (event: React.DragEvent<HTMLDivElement>, trackType: 'visual' | 'audio', trackIndex: number) => void;
   jumpToAdjacentSelectedKeyframe: (direction: 'previous' | 'next') => void;
-  moveAudioClip: (id: string, nextStartSeconds: number, shiftKey: boolean) => void;
-  moveVisualClip: (id: string, nextStartSeconds: number, shiftKey: boolean) => void;
+  moveAudioClip: (id: string, nextStartSeconds: number, shiftKey: boolean, nextTrackIndex?: number) => void;
+  moveVisualClip: (id: string, nextStartSeconds: number, shiftKey: boolean, nextTrackIndex?: number) => void;
   onCutSelectedVisualClipAtPlayhead: () => boolean;
   onOpenAudioClipContextMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void;
   onOpenTimelineGapContextMenu: (gap: TimelineGap, event: React.MouseEvent<HTMLElement>) => void;
@@ -5263,6 +5304,8 @@ interface SequencerTimelinePanelProps {
   isAudioTrackCollapsedProp: (trackIndex: number) => boolean;
   onToggleVisualTrackCollapse: (trackIndex: number) => void;
   onToggleAudioTrackCollapse: (trackIndex: number) => void;
+  visualTrackKinds: EditorVisualTrackKind[];
+  onToggleVisualTrackKind: (trackIndex: number) => void;
   snapTimelineInteractionSeconds: (seconds: number, shiftKey: boolean) => number;
   splitVisualClipAtSeconds: (id: string, splitSeconds: number, shiftKey: boolean) => void;
   slipVisualClip: (id: string, deltaSeconds: number) => void;
@@ -5335,6 +5378,8 @@ function SequencerTimelinePanel({
   isAudioTrackCollapsedProp,
   onToggleVisualTrackCollapse,
   onToggleAudioTrackCollapse,
+  visualTrackKinds,
+  onToggleVisualTrackKind,
   snapTimelineInteractionSeconds,
   splitVisualClipAtSeconds,
   slipVisualClip,
@@ -5500,11 +5545,15 @@ function SequencerTimelinePanel({
 
         <div className="min-h-0 overflow-auto px-2.5 py-2" ref={timelineScrollRef}>
           {activeComposition ? (
-            <div className="min-w-full space-y-1.5" style={{ width: `${timelineZoomPercent}%` }}>
+            <div className="min-w-full space-y-1.5" data-timeline-lanes-root="true" style={{ width: `${timelineZoomPercent}%` }}>
               {Array.from({ length: VISUAL_TRACK_COUNT }, (_, trackIndex) => (
                 <TimelineLane
                   key={`visual-${trackIndex}`}
                   automationLabel="Opacity"
+                  laneTrackIndex={trackIndex}
+                  laneTrackKind="visual"
+                  overlayKind={visualTrackKinds[trackIndex]}
+                  onToggleOverlayKind={() => onToggleVisualTrackKind(trackIndex)}
                   blocks={visualBlocks.filter((block) => block.clip.trackIndex === trackIndex).map((block) => ({
                     id: block.clip.id,
                     label: visualBlockLabel(block.clip, block.item?.label),
@@ -5562,6 +5611,8 @@ function SequencerTimelinePanel({
                 <TimelineLane
                   key={trackIndex}
                   automationLabel="Volume"
+                  laneTrackIndex={trackIndex}
+                  laneTrackKind="audio"
                   blocks={audioBlocks.filter((block) => block.clip.trackIndex === trackIndex).map((block) => ({
                     id: block.clip.id,
                     label: block.item?.label ?? block.clip.sourceNodeId,
@@ -10356,6 +10407,29 @@ function EditorAssetCard({
   );
 }
 
+// Cross-track vertical drag (Phase 2D): collects the viewport rects of every sibling lane of the
+// same kind (visual/audio) as `anchor`, tagged with each lane's own track index — the DOM-glue half
+// of the pure hit-test in editorTimelineTrackDrag.ts. Queried once per drag-start rather than on
+// every pointermove (lane positions don't change mid-drag).
+function collectTimelineLaneRects(anchor: Element, trackKind: 'visual' | 'audio'): TimelineLaneRect[] {
+  const root = anchor.closest('[data-timeline-lanes-root="true"]');
+
+  if (!root) {
+    return [];
+  }
+
+  return Array.from(root.querySelectorAll<HTMLElement>(`[data-timeline-track-kind="${trackKind}"]`)).flatMap((el) => {
+    const trackIndex = Number(el.dataset.timelineTrackIndex);
+
+    if (!Number.isInteger(trackIndex)) {
+      return [];
+    }
+
+    const rect = el.getBoundingClientRect();
+    return [{ trackIndex, top: rect.top, bottom: rect.bottom }];
+  });
+}
+
 function TimelineLane({
   trackLabel,
   locked = false,
@@ -10391,6 +10465,10 @@ function TimelineLane({
   onTrackVolumeChange,
   previewById,
   waveformById,
+  laneTrackIndex,
+  laneTrackKind,
+  overlayKind,
+  onToggleOverlayKind,
 }: {
   trackLabel: string;
   locked?: boolean;
@@ -10414,7 +10492,7 @@ function TimelineLane({
   }>;
   emptyMessage: string;
   onSelect: (id: string) => void;
-  onMoveBlock?: (id: string, nextStartSeconds: number, shiftKey: boolean) => void;
+  onMoveBlock?: (id: string, nextStartSeconds: number, shiftKey: boolean, nextTrackIndex?: number) => void;
   onCutBlock?: (id: string, splitSeconds: number, shiftKey: boolean) => void;
   onSlipBlock?: (id: string, deltaSeconds: number) => void;
   onTrimBlockEdge?: (
@@ -10445,6 +10523,14 @@ function TimelineLane({
   onTrackVolumeChange?: (volumePercent: number) => void;
   previewById?: Record<string, TimelineClipEdgePreview>;
   waveformById?: Record<string, number[]>;
+  // Cross-track vertical drag (Phase 2D): this lane's own track index/kind, tagged onto the DOM so
+  // a dragged block can hit-test sibling lanes of the same kind. Optional — a lane rendered without
+  // these (e.g. a legacy/unwired call site) simply keeps horizontal-only dragging.
+  laneTrackIndex?: number;
+  laneTrackKind?: 'visual' | 'audio';
+  // Overlay track kind (visual lanes only): renders a distinct label/tint and a toggle control.
+  overlayKind?: EditorVisualTrackKind;
+  onToggleOverlayKind?: () => void;
 }) {
   // Drawer-style minimize (owner request): a collapsed lane renders as a thin strip regardless
   // of the persisted laneHeight, so it can still be "kinda seen" without the full detail view.
@@ -10511,11 +10597,13 @@ function TimelineLane({
   return (
     <div className="group/lane relative grid grid-cols-[96px_minmax(0,1fr)] gap-2" style={laneSizeStyle}>
       <div
-        className={`overflow-hidden rounded-lg border border-gray-700/60 bg-[#0f131b] ${collapsed ? 'flex items-center px-2 py-0' : 'px-2.5 py-2'}`}
+        className={`overflow-hidden rounded-lg border ${overlayKind === 'overlay' ? 'border-fuchsia-400/40' : 'border-gray-700/60'} bg-[#0f131b] ${collapsed ? 'flex items-center px-2 py-0' : 'px-2.5 py-2'}`}
         style={laneSizeStyle}
       >
         <div className="flex items-center gap-1.5">
-          <span className="text-[13px] font-semibold text-gray-100">{trackLabel}</span>
+          <span className={`text-[13px] font-semibold ${overlayKind === 'overlay' ? 'text-fuchsia-200' : 'text-gray-100'}`}>
+            {trackLabel}{overlayKind === 'overlay' && !collapsed ? ' · Overlay' : ''}
+          </span>
           {!collapsed && onToggleLock ? (
             <button
               aria-label={locked ? `Unlock ${trackLabel}` : `Lock ${trackLabel}`}
@@ -10536,6 +10624,17 @@ function TimelineLane({
               type="button"
             >
               {collapsed ? '▸' : '▾'}
+            </button>
+          ) : null}
+          {!collapsed && onToggleOverlayKind ? (
+            <button
+              aria-label={overlayKind === 'overlay' ? `Make ${trackLabel} a standard track` : `Make ${trackLabel} an overlay track`}
+              className={`rounded px-1 text-[11px] leading-none transition-colors ${overlayKind === 'overlay' ? 'text-fuchsia-300' : 'text-gray-600 hover:text-gray-300'}`}
+              onClick={(event) => { event.stopPropagation(); onToggleOverlayKind(); }}
+              title={overlayKind === 'overlay' ? 'Overlay track (text/comic clips composite on top) — click to make standard' : 'Mark as overlay track (dedicated to text/comic clips)'}
+              type="button"
+            >
+              {overlayKind === 'overlay' ? '◆' : '◇'}
             </button>
           ) : null}
         </div>
@@ -10563,7 +10662,9 @@ function TimelineLane({
         data-timeline-lane-body="true"
         data-timeline-lane-locked={locked ? 'true' : undefined}
         data-timeline-lane-collapsed={collapsed ? 'true' : undefined}
-        className={`relative overflow-hidden rounded-lg border border-gray-700/60 bg-[#0f131b] ${locked ? 'pointer-events-none opacity-55 saturate-50' : ''} ${collapsed ? 'pointer-events-none' : ''}`}
+        data-timeline-track-index={laneTrackIndex}
+        data-timeline-track-kind={laneTrackKind}
+        className={`relative overflow-hidden rounded-lg border ${overlayKind === 'overlay' ? 'border-fuchsia-400/40' : 'border-gray-700/60'} bg-[#0f131b] ${locked ? 'pointer-events-none opacity-55 saturate-50' : ''} ${collapsed ? 'pointer-events-none' : ''} data-[timeline-drag-target=true]:ring-2 data-[timeline-drag-target=true]:ring-cyan-300/70`}
         onDragOver={(event) => {
           if (!onDropSourceItem || !event.dataTransfer.types.includes('application/x-flow-source-bin-item')) {
             return;
@@ -10736,13 +10837,46 @@ function TimelineLane({
 
                   const startClientX = event.clientX;
                   const startSeconds = block.startSeconds;
+                  // Cross-track drag: cache sibling lane rects (of the same kind) once at drag
+                  // start — lane positions don't move mid-drag, so there's no need to re-query on
+                  // every pointermove. A lane rendered without laneTrackKind (e.g. an unwired call
+                  // site) gets an empty list here, which keeps the drag horizontal-only exactly as
+                  // before (dropTrackIndex resolves to null → onMoveBlock's 4th arg stays undefined).
+                  const dragLanesRoot = laneTrackKind
+                    ? event.currentTarget.closest('[data-timeline-lanes-root="true"]')
+                    : null;
+                  const laneRects = laneTrackKind ? collectTimelineLaneRects(event.currentTarget, laneTrackKind) : [];
+                  let highlightedLaneEl: HTMLElement | null = null;
 
                   const onPointerMove = (moveEvent: PointerEvent) => {
                     const deltaSeconds = ((moveEvent.clientX - startClientX) / laneRect.width) * timelineSeconds;
-                    onMoveBlock(block.id, Math.max(0, startSeconds + deltaSeconds), moveEvent.shiftKey);
+                    const dropTrackIndex = laneRects.length > 0
+                      ? resolveTimelineDropTrackIndex(moveEvent.clientY, laneRects)
+                      : null;
+
+                    // Subtle visual cue: ring-highlight whichever lane the pointer is currently
+                    // hovering (the clip itself already jumps lanes live via onMoveBlock's commit).
+                    if (dragLanesRoot && laneTrackKind) {
+                      const nextLaneEl = dropTrackIndex !== null
+                        ? dragLanesRoot.querySelector<HTMLElement>(
+                            `[data-timeline-track-kind="${laneTrackKind}"][data-timeline-track-index="${dropTrackIndex}"]`,
+                          )
+                        : null;
+
+                      if (highlightedLaneEl && highlightedLaneEl !== nextLaneEl) {
+                        highlightedLaneEl.removeAttribute('data-timeline-drag-target');
+                      }
+                      if (nextLaneEl) {
+                        nextLaneEl.setAttribute('data-timeline-drag-target', 'true');
+                      }
+                      highlightedLaneEl = nextLaneEl;
+                    }
+
+                    onMoveBlock(block.id, Math.max(0, startSeconds + deltaSeconds), moveEvent.shiftKey, dropTrackIndex ?? undefined);
                   };
 
                   const onPointerUp = () => {
+                    highlightedLaneEl?.removeAttribute('data-timeline-drag-target');
                     window.removeEventListener('pointermove', onPointerMove);
                     window.removeEventListener('pointerup', onPointerUp);
                   };

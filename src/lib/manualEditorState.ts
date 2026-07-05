@@ -2,6 +2,7 @@ import type {
   EditorAudioClip,
   EditorVisualSourceKind,
   EditorVisualClip,
+  EditorVisualTrackKind,
   EditorTextTypography,
   NodeData,
   TimelineAutomationPoint,
@@ -181,6 +182,56 @@ export function getEditorAudioTrackVolumes(nodeData: NodeData, trackCount = 4): 
   return Array.from({ length: Math.max(0, trackCount) }, (_, index) =>
     normalizeTrackVolume(value[index]),
   );
+}
+
+/**
+ * Per-visual-track role (index-aligned with the visual tracks), defaulting every absent/invalid
+ * entry to `'standard'` — never crashes on a missing or short-array `editorVisualTrackKinds`.
+ * Mirrors `getEditorAudioTrackVolumes`'s dense-array-with-defaults shape (as opposed to the sparse
+ * index-set shape used by track lock/collapse, which are booleans rather than an enum per track).
+ */
+export function getEditorVisualTrackKinds(nodeData: NodeData, trackCount = 4): EditorVisualTrackKind[] {
+  const value = Array.isArray(nodeData.editorVisualTrackKinds) ? nodeData.editorVisualTrackKinds : [];
+
+  return Array.from({ length: Math.max(0, trackCount) }, (_, index) =>
+    normalizeVisualTrackKind(value[index]),
+  );
+}
+
+function normalizeVisualTrackKind(value: unknown): EditorVisualTrackKind {
+  return value === 'overlay' ? 'overlay' : 'standard';
+}
+
+/** Toggles a single track's kind between `'standard'` and `'overlay'`, leaving every other track
+ *  untouched. `trackKinds` is expected to already be the full, dense array (from
+ *  `getEditorVisualTrackKinds`); out-of-range indexes are a no-op. */
+export function toggleEditorVisualTrackKind(
+  trackKinds: readonly EditorVisualTrackKind[],
+  trackIndex: number,
+): EditorVisualTrackKind[] {
+  return trackKinds.map((kind, index) =>
+    index === trackIndex ? (kind === 'overlay' ? 'standard' : 'overlay') : kind,
+  );
+}
+
+/**
+ * Placement preference for a brand-new text/comic clip: when a dedicated `overlay` track exists,
+ * new text/comic clips should land there instead of the default track, so "text/captions are a
+ * separate thing" without migrating any existing clip. Returns `undefined` (meaning "no
+ * preference, keep today's default") for every other source kind, and whenever no overlay track
+ * exists — callers should fall back to their normal default trackIndex in that case.
+ */
+export function selectOverlayTrackIndexForNewClip(
+  sourceKind: EditorVisualSourceKind,
+  trackKinds: readonly EditorVisualTrackKind[],
+): number | undefined {
+  if (sourceKind !== 'text' && sourceKind !== 'comic') {
+    return undefined;
+  }
+
+  const overlayIndex = trackKinds.findIndex((kind) => kind === 'overlay');
+
+  return overlayIndex >= 0 ? overlayIndex : undefined;
 }
 
 export function createEditorVisualClip(

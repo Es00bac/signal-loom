@@ -3,9 +3,12 @@ import {
   getEditorVisualClips,
   getEditorAudioClips,
   getEditorAudioTrackVolumes,
+  getEditorVisualTrackKinds,
   migrateComicPolarTailToBezierTip,
+  selectOverlayTrackIndexForNewClip,
+  toggleEditorVisualTrackKind,
 } from './manualEditorState';
-import type { NodeData } from '../types/flow';
+import type { EditorVisualTrackKind, NodeData } from '../types/flow';
 
 describe('getEditorVisualClips', () => {
   it('normalizes saved visual keyframes and syncs opacity automation from them', () => {
@@ -338,5 +341,69 @@ describe('getEditorAudioTrackVolumes', () => {
         editorAudioTrackVolumes: [100, 25, -10, 140],
       } as Partial<NodeData> as NodeData, 5),
     ).toEqual([100, 25, 0, 100, 100]);
+  });
+});
+
+describe('getEditorVisualTrackKinds', () => {
+  it('defaults every track to standard when the field is absent', () => {
+    expect(getEditorVisualTrackKinds({} as NodeData, 4)).toEqual([
+      'standard',
+      'standard',
+      'standard',
+      'standard',
+    ]);
+  });
+
+  it('never crashes on a short array and pads the rest with standard', () => {
+    expect(
+      getEditorVisualTrackKinds({ editorVisualTrackKinds: ['overlay'] } as Partial<NodeData> as NodeData, 4),
+    ).toEqual(['overlay', 'standard', 'standard', 'standard']);
+  });
+
+  it('drops invalid/unknown entries back to standard', () => {
+    expect(
+      getEditorVisualTrackKinds(
+        { editorVisualTrackKinds: ['overlay', 'bogus', null, 42] } as unknown as NodeData,
+        4,
+      ),
+    ).toEqual(['overlay', 'standard', 'standard', 'standard']);
+  });
+
+  it('never crashes when the stored value is not an array', () => {
+    expect(
+      getEditorVisualTrackKinds({ editorVisualTrackKinds: 'overlay' } as unknown as NodeData, 2),
+    ).toEqual(['standard', 'standard']);
+  });
+});
+
+describe('toggleEditorVisualTrackKind', () => {
+  it('flips a standard track to overlay, leaving the others untouched', () => {
+    const kinds: EditorVisualTrackKind[] = ['standard', 'standard', 'standard', 'standard'];
+    expect(toggleEditorVisualTrackKind(kinds, 2)).toEqual(['standard', 'standard', 'overlay', 'standard']);
+  });
+
+  it('flips an overlay track back to standard', () => {
+    const kinds: EditorVisualTrackKind[] = ['standard', 'overlay', 'standard', 'standard'];
+    expect(toggleEditorVisualTrackKind(kinds, 1)).toEqual(['standard', 'standard', 'standard', 'standard']);
+  });
+});
+
+describe('selectOverlayTrackIndexForNewClip', () => {
+  it('returns undefined for non text/comic source kinds regardless of overlay tracks', () => {
+    expect(selectOverlayTrackIndexForNewClip('image', ['overlay', 'standard'])).toBeUndefined();
+    expect(selectOverlayTrackIndexForNewClip('video', ['overlay', 'standard'])).toBeUndefined();
+  });
+
+  it('returns undefined for text/comic when no overlay track exists (keep todays default)', () => {
+    expect(selectOverlayTrackIndexForNewClip('text', ['standard', 'standard'])).toBeUndefined();
+    expect(selectOverlayTrackIndexForNewClip('comic', ['standard', 'standard'])).toBeUndefined();
+  });
+
+  it('returns the first overlay track index for a new comic clip', () => {
+    expect(selectOverlayTrackIndexForNewClip('comic', ['standard', 'overlay', 'overlay'])).toBe(1);
+  });
+
+  it('returns the first overlay track index for a new text clip', () => {
+    expect(selectOverlayTrackIndexForNewClip('text', ['overlay', 'standard'])).toBe(0);
   });
 });
