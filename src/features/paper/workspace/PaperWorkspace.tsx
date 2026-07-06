@@ -124,6 +124,7 @@ import { PAPER_OUTPUT_INTENT_PROFILES, isPdfXProductionTarget } from '../../../l
 import { isCommercialPrintProductionTarget, requestCommercialExportUnlock } from '../../../lib/licenseGates';
 import { canFrameBeAiFixed, collectFrameFixSiblingCandidates } from '../../../lib/paperFrameFix';
 import { PaperFrameFixDialog } from './PaperFrameFixDialog';
+import { PaperSoftProofModal } from './PaperSoftProofModal';
 import {
   buildPaperPrintUpscaledFramePatch,
   buildPaperPrintUpscaleUsageTelemetry,
@@ -707,6 +708,7 @@ export function PaperWorkspace() {
   const [webcomicExportSettings, setWebcomicExportSettings] = useState<PaperWebcomicExportSettings>(DEFAULT_PAPER_WEBCOMIC_EXPORT_SETTINGS);
   const [kdpExportOpen, setKdpExportOpen] = useState(false);
   const [kdpExportSettings, setKdpExportSettings] = useState<PaperKdpExportSettings>(() => loadPaperKdpExportSettings());
+  const [softProofOpen, setSoftProofOpen] = useState(false);
   const [polygonPoints, setPolygonPoints] = useState<Array<PaperPoint & { pageId: string }>>([]);
   const [modifierState, setModifierState] = useState({ ctrlKey: false, metaKey: false });
   // On Android, holding Volume Down acts as a Ctrl-equivalent modifier for frame reshaping (handle
@@ -1326,6 +1328,9 @@ export function PaperWorkspace() {
             setStatus(`IDML export failed: ${error instanceof Error ? error.message : 'unknown error'}`);
           }
         }
+        return;
+      case 'paper:soft-proof':
+        setSoftProofOpen(true);
         return;
       case 'paper:export-stories-txt':
       case 'paper:export-stories-html':
@@ -3596,6 +3601,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           onExportPdf={() => runPaperTopStripCommand('paper:export-pdf')}
           onExportKdpAssets={() => runPaperTopStripCommand('paper:export-kdp-assets')}
           onExportKdpPdf={() => runPaperTopStripCommand('paper:export-kdp-pdf')}
+          onOpenSoftProof={() => runPaperTopStripCommand('paper:soft-proof')}
           onExportReaderSpreadsPdf={() => runPaperTopStripCommand('paper:export-reader-spreads-pdf')}
           onExportBookletProofPdf={() => runPaperTopStripCommand('paper:export-booklet-proof-pdf')}
           onExportWebcomicImages={() => runPaperTopStripCommand('paper:export-webcomic-images')}
@@ -4115,6 +4121,13 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           onClose={() => setKdpExportOpen(false)}
           onExport={runKdpImageExport}
           pendingPrintUpscaleCount={collectPaperPrintUpscaleFrameJobs(document, sourceItems).length}
+        />
+      ) : null}
+      {softProofOpen ? (
+        <PaperSoftProofModal
+          document={document}
+          onClose={() => setSoftProofOpen(false)}
+          pageId={selectedPage.id}
         />
       ) : null}
     </div>
@@ -5912,6 +5925,7 @@ export function PaperTopStrip({
   onExportJson,
   onExportIdml,
   onExportKdpPdf,
+  onOpenSoftProof,
   onExportStoriesTxt,
   onExportStoriesHtml,
   onExportStoriesRtf,
@@ -5966,6 +5980,7 @@ export function PaperTopStrip({
   onExportJson: () => void;
   onExportIdml: () => void;
   onExportKdpPdf?: () => void;
+  onOpenSoftProof?: () => void;
   onExportStoriesTxt: () => void;
   onExportStoriesHtml: () => void;
   onExportStoriesRtf: () => void;
@@ -6153,6 +6168,14 @@ export function PaperTopStrip({
                       description="Kindle Direct Publishing assets package"
                       onClick={() => { onExportKdpAssets(); setIsExportOpen(false); }}
                     />
+                    {onOpenSoftProof ? (
+                      <ExportMenuItem
+                        icon={<Printer size={13} />}
+                        label="Soft Proof"
+                        description="Preview this page in CMYK before printing"
+                        onClick={() => { onOpenSoftProof(); setIsExportOpen(false); }}
+                      />
+                    ) : null}
                     <ExportMenuItem
                       icon={<BookOpen size={13} />}
                       label="Spread PDF"

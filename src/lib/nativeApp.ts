@@ -128,6 +128,7 @@ export const NATIVE_MENU_COMMANDS = [
   'paper:export-booklet-proof-html',
   'paper:package-print',
   'paper:export-idml',
+  'paper:soft-proof',
   'paper:export-stories-txt',
   'paper:export-stories-html',
   'paper:export-stories-rtf',
