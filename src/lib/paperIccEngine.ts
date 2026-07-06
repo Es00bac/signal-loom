@@ -8,13 +8,14 @@
 import { instantiate, TYPE_CMYK_8, TYPE_RGB_8, cmsInfoDescription, type LcmsModule } from 'lcms-wasm';
 import type { IccCmykTransform } from './paperColorManagement';
 import type { PaperCmyk, PaperRgb } from './paperSwatches';
+import { resolveBundledAssetUrl } from './bundledAssetUrl';
 
 export type IccRenderingIntent = 'perceptual' | 'relative' | 'saturation' | 'absolute';
 const INTENT_CODE: Record<IccRenderingIntent, number> = { perceptual: 0, relative: 1, saturation: 2, absolute: 3 };
 const FLAGS_BLACKPOINTCOMPENSATION = 0x2000;
 
 let wasmLocator: ((file: string) => string) | null = null;
-/** App boot can point the engine at the bundled `/lcms.wasm` explicitly (belt-and-suspenders for Electron). */
+/** App boot can override where the engine loads `lcms.wasm` from (rarely needed — see the default below). */
 export function setIccWasmLocator(locate: (file: string) => string): void {
   wasmLocator = locate;
 }
@@ -24,7 +25,9 @@ let enginePromise: Promise<LcmsModule> | null = null;
 export function getIccEngine(): Promise<LcmsModule> {
   if (!enginePromise) {
     const browserRuntime = typeof window !== 'undefined' && typeof (globalThis as { process?: unknown }).process === 'undefined';
-    const locateFile = wasmLocator ?? (browserRuntime ? (file: string) => `/${file}` : undefined);
+    // Resolve `lcms.wasm` against the document base so it loads under both a served origin and the bare
+    // `file://` the packaged Electron renderer uses (a root-absolute `/lcms.wasm` 404s under file://).
+    const locateFile = wasmLocator ?? (browserRuntime ? (file: string) => resolveBundledAssetUrl(file) : undefined);
     enginePromise = instantiate(locateFile ? { locateFile } : undefined);
   }
   return enginePromise;

@@ -9,6 +9,7 @@ import {
   rasterizeFlattenedPaperPageToRgba,
 } from './paperPageFlattenExport';
 import { createRgbToCmykTransform } from './paperIccEngine';
+import { resolveBundledAssetUrl } from './bundledAssetUrl';
 import type { IccProfileRef } from './paperIccProfiles';
 import {
   exportPaperDocumentToPdfx,
@@ -19,7 +20,8 @@ import type { PaperDocument } from '../types/paper';
 
 async function fetchBundledIcc(profile: IccProfileRef): Promise<Uint8Array> {
   if (!profile.url) throw new Error(`Bundled profile "${profile.displayName}" has no URL to fetch.`);
-  const response = await fetch(profile.url);
+  // Resolve against the document base — a root-absolute `/icc/…` 404s under the packaged file:// origin.
+  const response = await fetch(resolveBundledAssetUrl(profile.url));
   if (!response.ok) {
     throw new Error(`Could not load ICC profile "${profile.displayName}" (${response.status}).`);
   }
