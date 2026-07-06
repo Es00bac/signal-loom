@@ -91,8 +91,8 @@ export const CommunityStartupNotice: React.FC = () => {
           Free for personal and noncommercial use. Learn it, make things, share them. If you start
           earning with what you make here, that&apos;s when a license is due
           <span className="text-gray-100 font-semibold"> ($17.99, one-time, first 100 copies — then $39)</span>.
-          It unlocks the commercial print-production exports (real CMYK PDF/X-1a and PDF/X-4, KDP and
-          print PDF today; Adobe IDML in active development) and removes this notice.
+          It unlocks the commercial print-production exports (real CMYK PDF/X-1a and PDF/X-4, a KDP-ready
+          print PDF, and real Adobe IDML) and removes this notice.
         </p>
         <div className="mt-5 flex flex-col gap-2">
           <a

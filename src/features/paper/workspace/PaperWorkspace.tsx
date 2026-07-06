@@ -96,12 +96,12 @@ import {
 } from '../../../lib/paperKdpExport';
 import {
   buildPaperCbzRasterExport,
-  exportPaperIdmlInterchange,
   exportPaperStoryText,
   importTextDocumentIntoPaper,
   inferPaperDocumentImportFormat,
   parsePaperDocumentImportFile,
 } from '../../../lib/paperDocumentFormats';
+import { buildPaperIdmlPackage } from '../../../lib/paperIdmlExport';
 import {
   PAPER_FRAME_CONTEXT_ACTIONS,
   PAPER_PAGE_CONTEXT_ACTIONS,
@@ -1316,9 +1316,16 @@ export function PaperWorkspace() {
         return;
       }
       case 'paper:export-idml':
-        if (!(await requestCommercialExportUnlock('IDML interchange export'))) return;
-        downloadText(`${safeFileName(document.title)}.sloom-idml.json`, exportPaperIdmlInterchange(document), 'application/vnd.signal-loom.paper-idml+json');
-        setStatus('Downloaded Paper IDML-like interchange JSON.');
+        if (!(await requestCommercialExportUnlock('Adobe IDML export'))) return;
+        if (await confirmPreflightBeforeExport('IDML export')) {
+          try {
+            const idmlBytes = buildPaperIdmlPackage(document);
+            downloadBlob(`${safeFileName(document.title)}.idml`, new Blob([new Uint8Array(idmlBytes)], { type: 'application/vnd.adobe.indesign-idml-package' }));
+            setStatus('Exported real Adobe IDML (.idml) — open in InDesign or Affinity Publisher. Images export as placeholder frames (relink on open).');
+          } catch (error) {
+            setStatus(`IDML export failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+          }
+        }
         return;
       case 'paper:export-stories-txt':
       case 'paper:export-stories-html':
@@ -6253,8 +6260,8 @@ export function PaperTopStrip({
                     />
                     <ExportMenuItem
                       icon={<Download size={13} />}
-                      label="IDML (beta)"
-                      description="Sloom layout interchange (JSON) — conformant Adobe .idml in development"
+                      label="Adobe IDML"
+                      description="Real .idml package — opens in InDesign / Affinity Publisher (images relink on open)"
                       onClick={() => { onExportIdml(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
