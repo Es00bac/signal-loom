@@ -101,5 +101,9 @@ export async function createRgbToCmykTransform(
       const out = lcms.cmsDoTransform(transform, new Uint8Array([clampByte(rgb.r), clampByte(rgb.g), clampByte(rgb.b)]), 1);
       return { c: to100(out[0]), m: to100(out[1]), y: to100(out[2]), k: to100(out[3]) };
     },
+    // Whole-image path for the raster PDF/X exporter: one lcms2 call converts the entire page. lcms
+    // returns raw 0–255 CMYK samples, which are exactly the DeviceCMYK image data a PDF wants.
+    transformRgbBuffer: (rgb: Uint8Array, pixelCount: number): Uint8Array =>
+      lcms.cmsDoTransform(transform, rgb, pixelCount),
   };
 }

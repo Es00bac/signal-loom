@@ -31,12 +31,32 @@ export interface IccCmykTransform {
   /** Human label for provenance/preflight (e.g. the profile name). */
   readonly profileName: string;
   rgbToCmyk(rgb: PaperRgb): PaperCmyk;
+  /**
+   * Bulk convert an interleaved 8-bit RGB image buffer (3 bytes/pixel, `pixelCount` pixels) to
+   * interleaved 8-bit CMYK (4 bytes/pixel, 0 = no ink … 255 = full ink — the raw DeviceCMYK sample
+   * form used directly as PDF image data). Present so the raster PDF/X exporter converts a whole page
+   * in one call; the ICC backend routes this straight through lcms2 (`cmsDoTransform` over the buffer).
+   */
+  transformRgbBuffer?(rgb: Uint8Array, pixelCount: number): Uint8Array;
 }
 
 export const APPROXIMATE_CMYK_TRANSFORM: IccCmykTransform = {
   kind: 'approximate',
   profileName: 'Naive device CMYK (not press-accurate)',
   rgbToCmyk: (rgb) => rgbToCmyk(rgb),
+  transformRgbBuffer: (rgb, pixelCount) => {
+    const out = new Uint8Array(pixelCount * 4);
+    for (let i = 0; i < pixelCount; i += 1) {
+      const s = i * 3;
+      const cmyk = rgbToCmyk({ r: rgb[s], g: rgb[s + 1], b: rgb[s + 2] });
+      const d = i * 4;
+      out[d] = Math.round((clampPercent(cmyk.c) / 100) * 255);
+      out[d + 1] = Math.round((clampPercent(cmyk.m) / 100) * 255);
+      out[d + 2] = Math.round((clampPercent(cmyk.y) / 100) * 255);
+      out[d + 3] = Math.round((clampPercent(cmyk.k) / 100) * 255);
+    }
+    return out;
+  },
 };
 
 export type PrintColorSpace = 'cmyk' | 'separation' | 'gray';
