@@ -41,7 +41,7 @@ export default defineConfig({
     exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
   },
   test: {
-    exclude: [...configDefaults.exclude, '**/.worktrees/**'],
+    exclude: [...configDefaults.exclude, '**/.worktrees/**', '**/.claude/**'],
   },
   server: {
     host: '127.0.0.1',

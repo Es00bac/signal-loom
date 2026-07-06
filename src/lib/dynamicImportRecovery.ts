@@ -17,7 +17,7 @@ export function describeDynamicImportLoadFailure(error: unknown, runtimeLabel: s
     return extractErrorMessage(error) || `${runtimeLabel} failed to load.`;
   }
 
-  return `The ${runtimeLabel} runtime could not be loaded because the app updated while this browser tab was open. Please refresh Signal Loom and run the node again.`;
+  return `The ${runtimeLabel} runtime could not be loaded because the app updated while this browser tab was open. Please refresh Sloom Studio and run the node again.`;
 }
 
 export async function loadProviderModule<TModule>(

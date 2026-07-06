@@ -7,14 +7,14 @@
 | **Android / DeX / ChromeOS** | Install from Google Play, or sideload the APK. On a tablet, in DeX, or on ChromeOS you get the desktop-class layout automatically. |
 | **Linux** | AppImage (run directly) or `.deb` (Debian/Ubuntu); Arch/Manjaro packages are also produced. |
 | **Windows** | Run the installer (`.exe`). |
-| **macOS** | Open the `.dmg` and drag Signal Loom to Applications. |
+| **macOS** | Open the `.dmg` and drag Sloom Studio to Applications. |
 
-Signal Loom is a one-time purchase. There is no sign-in step — when it opens, you're ready to
+Sloom Studio is a one-time purchase. There is no sign-in step — when it opens, you're ready to
 work.
 
 ## The lay of the land
 
-When Signal Loom opens you see:
+When Sloom Studio opens you see:
 
 - A **top bar** with the menu (Project, File, Edit, …), the **workspace switcher** (Flow, Video,
   Image, Paper), a layout control, zoom, and Settings.
@@ -52,7 +52,7 @@ Full details, including Google **Vertex AI** sign-in, are in [Providers & API ke
    file.
 
 That round trip — generate in Flow, refine in Image, lay out in Paper, all in one project with no
-exporting — is the core of how Signal Loom is meant to be used.
+exporting — is the core of how Sloom Studio is meant to be used.
 
 ## A good first habit: set a scratch folder
 

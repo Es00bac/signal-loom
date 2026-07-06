@@ -433,7 +433,7 @@ describe('ImageEditorLayersPanel', () => {
     expect(text).toContain('Pass-through folders do not have full Photoshop compositing semantics.');
     expect(text).toContain('Group masks stay metadata-only and can flatten through visible descendants on PSD handoff.');
     expect(text).toContain('Inherited folder locks can still block child and batch actions.');
-    expect(text).toContain('PSD handoff keeps clipping masks as Signal Loom metadata; native Photoshop clipping groups are not guaranteed.');
+    expect(text).toContain('PSD handoff keeps clipping masks as Sloom Studio metadata; native Photoshop clipping groups are not guaranteed.');
   });
 
   it('renders mask density and feather controls and commits them as undoable layer operations', () => {

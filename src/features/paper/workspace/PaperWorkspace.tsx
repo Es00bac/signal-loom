@@ -10480,7 +10480,7 @@ function PaperDtpParityPanel({
             </div>
             <div className="mt-1 grid grid-cols-2 gap-2 text-[10px] leading-4 text-cyan-100/45">
               <div><span className="font-semibold text-cyan-100/60">Print standard:</span> {feature.indesign}</div>
-              <div><span className="font-semibold text-cyan-100/60">Signal Loom:</span> {feature.signalLoom}</div>
+              <div><span className="font-semibold text-cyan-100/60">Sloom Studio:</span> {feature.signalLoom}</div>
             </div>
             <div className="mt-1 text-[11px] leading-4 text-cyan-100/50">{feature.comicImpact}</div>
             {feature.actionTarget ? (

@@ -51,7 +51,7 @@ describe('application smoke tests', () => {
       const url = buildWorkspaceWindowUrl('https://signal-loom.local/app?existing=1', workspace);
 
       expect(parseWorkspaceWindowSearch(new URL(url).search)).toBe(workspace);
-      expect(getWorkspaceWindowTitle(workspace)).toMatch(/^Signal Loom - /);
+      expect(getWorkspaceWindowTitle(workspace)).toMatch(/^Sloom Studio - /);
     }
   });
 

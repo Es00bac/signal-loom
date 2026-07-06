@@ -557,7 +557,7 @@ describe('ImageAdjustmentLayer', () => {
         },
       ],
       limitations: [
-        'Adjustment layers are represented non-destructively in Signal Loom state but exported raster formats flatten the visible result.',
+        'Adjustment layers are represented non-destructively in Sloom Studio state but exported raster formats flatten the visible result.',
         'CMYK adjustment math is not native; previews are RGB approximations only.',
         '16-bit adjustment input is reduced to 8-bit browser canvas precision.',
         'Raster masks support density and feather metadata, but mask editing parity is handled outside adjustment planning.',
@@ -856,17 +856,17 @@ describe('ImageAdjustmentLayer', () => {
         {
           code: 'adjustment-preset-serialization-unsupported',
           severity: 'blocker',
-          message: 'lookup-table presets cannot serialize as editable Signal Loom adjustment settings.',
+          message: 'lookup-table presets cannot serialize as editable Sloom Studio adjustment settings.',
         },
         {
           code: 'adjustment-preset-import-unsupported',
           severity: 'blocker',
-          message: 'psd-native adjustment presets do not import as editable Signal Loom adjustment settings.',
+          message: 'psd-native adjustment presets do not import as editable Sloom Studio adjustment settings.',
         },
         {
           code: 'adjustment-preset-export-unsupported',
           severity: 'blocker',
-          message: 'flattened-raster adjustment presets do not export as editable Signal Loom adjustment settings.',
+          message: 'flattened-raster adjustment presets do not export as editable Sloom Studio adjustment settings.',
         },
       ],
       unsupportedStates: [

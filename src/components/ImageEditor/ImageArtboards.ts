@@ -1610,7 +1610,7 @@ function buildImageArtboardImpositionCaveat(): ImageArtboardUnsupportedProductio
 function buildImageArtboardNativePsdArtboardCaveat(): ImageArtboardUnsupportedProductionFeature {
   return {
     supported: false,
-    warnings: ['Native multi-page PSD/artboard constructs are unsupported; Signal Loom preserves artboard intent as metadata and flattened/exported artboard outputs.'],
+    warnings: ['Native multi-page PSD/artboard constructs are unsupported; Sloom Studio preserves artboard intent as metadata and flattened/exported artboard outputs.'],
   };
 }
 

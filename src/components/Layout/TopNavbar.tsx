@@ -412,7 +412,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
     return (
       <>
         <button
-          aria-label="Show Signal Loom interface"
+          aria-label="Show Sloom Studio interface"
           className="theme-topbar absolute left-3 top-3 z-[90] flex h-11 w-11 items-center justify-center rounded-full border border-cyan-300/30 bg-[#0b1421]/95 text-cyan-100 shadow-[0_10px_28px_rgba(0,0,0,0.35)] backdrop-blur-md"
           data-application-chrome-restore="true"
           onClick={restoreMobileInterface}
@@ -432,7 +432,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
       return (
         <>
           <button
-            aria-label="Show Signal Loom interface"
+            aria-label="Show Sloom Studio interface"
             className="theme-topbar absolute left-3 top-3 z-[90] flex h-11 w-11 items-center justify-center rounded-full border border-cyan-300/30 bg-[#0b1421]/95 text-cyan-100 shadow-[0_10px_28px_rgba(0,0,0,0.35)] backdrop-blur-md"
             data-mobile-phone-topbar="hidden"
             data-mobile-phone-orientation={mobilePhoneInterface.orientation}

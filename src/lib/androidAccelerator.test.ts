@@ -175,7 +175,7 @@ describe('androidAccelerator', () => {
 
     expect(summary).toMatchObject({
       mode: 'integrated',
-      title: 'Galaxy S26 Ultra online via one-app Signal Loom Android',
+      title: 'Galaxy S26 Ultra online via one-app Sloom Studio Android',
       readyForGeneration: false,
       readyForUpscale: true,
     });
@@ -470,7 +470,7 @@ describe('androidAccelerator', () => {
       warnings: ['Local Dream backend is not reachable.'],
     }, 'local-dream-active')).toEqual({
       available: false,
-      reason: 'Android image model "local-dream-active" is not available. Open Local Dream on the phone, tap a downloaded NPU model, and wait for the Signal Loom companion bridge status to become reachable before retrying. Local Dream backend is not reachable.',
+      reason: 'Android image model "local-dream-active" is not available. Open Local Dream on the phone, tap a downloaded NPU model, and wait for the Sloom Studio companion bridge status to become reachable before retrying. Local Dream backend is not reachable.',
     });
 
     expect(resolveAndroidModelAvailability({

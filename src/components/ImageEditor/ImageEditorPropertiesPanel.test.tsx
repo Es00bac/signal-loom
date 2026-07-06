@@ -536,8 +536,8 @@ describe('ImageEditorPropertiesPanel', () => {
       'SVG source properties are metadata-only after import.',
       'SVG filters were rasterized on import.',
       'Layer comps are not editable.',
-      'Native effect parameter editing is limited to Signal Loom effect controls.',
-      'Vector path editing is available only for retained Signal Loom vector geometry.',
+      'Native effect parameter editing is limited to Sloom Studio effect controls.',
+      'Vector path editing is available only for retained Sloom Studio vector geometry.',
     ]);
     expect(descriptor?.preview).toEqual({
       label: 'Hero Title · Text layer',

@@ -547,10 +547,10 @@ export const SettingsModal: React.FC = () => {
 
               <div className="md:col-span-2 rounded-xl border border-gray-800 bg-[#111217]/50 px-4 py-3 text-xs leading-5 text-gray-400">
                 <div>
-                  Pair the Signal Loom Android Accelerator companion on the same Wi-Fi network, then paste its URL and token here. Image nodes can generate on the phone, and Paper, Image/Photos, and Flow auto-upscale paths use the Android NPU/GPU path first when configured, with $0 provider spend and final exact-DPI fit inside Signal Loom where needed.
+                  Pair the Sloom Studio Android Accelerator companion on the same Wi-Fi network, then paste its URL and token here. Image nodes can generate on the phone, and Paper, Image/Photos, and Flow auto-upscale paths use the Android NPU/GPU path first when configured, with $0 provider spend and final exact-DPI fit inside Sloom Studio where needed.
                 </div>
                 <div className="mt-2">
-                  For the current Local Dream Play Store downloads, connect to the standalone bridge companion. The one-app Signal Loom Android build is supported too, but Android private app storage means it must download its own model and upscaler files before it can replace the bridge.
+                  For the current Local Dream Play Store downloads, connect to the standalone bridge companion. The one-app Sloom Studio Android build is supported too, but Android private app storage means it must download its own model and upscaler files before it can replace the bridge.
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                   <button
@@ -1050,7 +1050,7 @@ function SettingsBackupSection({
           <p className="leading-5">
             Save an encrypted copy of your API keys, provider credentials, and editor preferences so you can
             restore them if the app data is ever lost. The backup is locked with a passphrase you choose and is
-            useless without it — Signal Loom never uploads it anywhere. This is optional.
+            useless without it — Sloom Studio never uploads it anywhere. This is optional.
           </p>
         </div>
 

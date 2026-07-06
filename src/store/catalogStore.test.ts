@@ -3,7 +3,7 @@ import { buildEmptyModelCatalog } from '../lib/providerCatalog';
 import { addGeminiModelRecordToCatalog, addOpenAICompatibleModelRecordToCatalog } from './catalogStore';
 
 describe('addGeminiModelRecordToCatalog', () => {
-  it('surfaces newly discovered Gemini Omni models across Signal Loom media categories', () => {
+  it('surfaces newly discovered Gemini Omni models across Sloom Studio media categories', () => {
     const catalog = buildEmptyModelCatalog();
 
     addGeminiModelRecordToCatalog(catalog, {

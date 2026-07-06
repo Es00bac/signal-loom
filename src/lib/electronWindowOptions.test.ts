@@ -22,7 +22,7 @@ async function loadWindowOptionsModule(): Promise<ElectronWindowOptionsModule> {
 }
 
 describe('Electron floating panel window options', () => {
-  it('parents Signal Loom popup windows to the owning workspace window', async () => {
+  it('parents Sloom Studio popup windows to the owning workspace window', async () => {
     const { buildWorkspaceWindowOpenResult } = await loadWindowOptionsModule();
     const parentWindow = { id: 1 };
     const result = buildWorkspaceWindowOpenResult({

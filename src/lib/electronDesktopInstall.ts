@@ -26,7 +26,7 @@ export function buildDesktopLauncherInstallPlan({
       '[Desktop Entry]',
       'Type=Application',
       'Version=1.0',
-      'Name=Signal Loom',
+      'Name=Sloom Studio',
       'GenericName=AI Multimedia Editor',
       'Comment=Generative AI media flow builder and timeline editor',
       `Exec=${binTarget}`,
@@ -35,7 +35,7 @@ export function buildDesktopLauncherInstallPlan({
       'Categories=AudioVideo;AudioVideoEditing;',
       'Keywords=video;audio;multimedia;editor;timeline;AI;generation;',
       'StartupNotify=true',
-      'StartupWMClass=Signal Loom',
+      'StartupWMClass=Sloom Studio',
       '',
     ].join('\n'),
   };

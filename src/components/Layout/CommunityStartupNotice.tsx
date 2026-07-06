@@ -86,7 +86,7 @@ export const CommunityStartupNotice: React.FC = () => {
   return (
     <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/60 backdrop-blur-[2px]" data-community-notice="true">
       <div className="mx-4 w-full max-w-md rounded-2xl border border-gray-700/70 bg-[#10141d] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.55)]">
-        <div className="text-lg font-semibold text-gray-100">Signal Loom Community</div>
+        <div className="text-lg font-semibold text-gray-100">Sloom Studio Community</div>
         <p className="mt-3 text-sm leading-6 text-gray-300">
           Free for personal and noncommercial use. Learn it, make things, share them. If you start
           earning with what you make here, that&apos;s when a license is due

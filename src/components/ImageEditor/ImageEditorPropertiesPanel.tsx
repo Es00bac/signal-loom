@@ -429,7 +429,7 @@ export function buildSelectedImageLayerPropertyDescriptor(
     transformOriginX: stableNumber(layer.transformOriginX ?? 0.5),
     transformOriginY: stableNumber(layer.transformOriginY ?? 0.5),
   };
-  const sourceFormat = layer.metadata?.sourceFormat ?? document.metadata?.sourceFormat ?? 'Signal Loom layer';
+  const sourceFormat = layer.metadata?.sourceFormat ?? document.metadata?.sourceFormat ?? 'Sloom Studio layer';
   const sourceMimeType = layer.metadata?.sourceMimeType ?? document.metadata?.sourceMimeType ?? 'application/x-signal-loom-layer';
   const sourceLink = layer.metadata?.sourceLink;
   const source = {
@@ -565,10 +565,10 @@ function buildUnsupportedLayerPropertyEditingCaveats(document: ImageDocument, la
     if (warning) caveats.add(warning);
   }
   if ((layer.effects ?? []).length > 0) {
-    caveats.add('Native effect parameter editing is limited to Signal Loom effect controls.');
+    caveats.add('Native effect parameter editing is limited to Sloom Studio effect controls.');
   }
   if (layer.metadata?.vectorShape || layer.vectorRecipe || layer.metadata?.originalSvgSource) {
-    caveats.add('Vector path editing is available only for retained Signal Loom vector geometry.');
+    caveats.add('Vector path editing is available only for retained Sloom Studio vector geometry.');
   }
   if (layer.metadata?.sourceLink?.status === 'missing') {
     caveats.add('Missing linked source must be relinked before source-backed edits can be refreshed.');

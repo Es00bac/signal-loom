@@ -103,7 +103,7 @@ export const DESKTOP_WORKSPACE_LAUNCH_READINESS: readonly DesktopWorkspaceLaunch
     accelerator: 'CommandOrControl+1',
     packageSurface: 'electron-native-menu',
     readiness: 'ready',
-    caveats: ['Launches the Flow workspace through the shared Signal Loom desktop binary.'],
+    caveats: ['Launches the Flow workspace through the shared Sloom Studio desktop binary.'],
   },
   {
     workspace: 'editor',
@@ -114,7 +114,7 @@ export const DESKTOP_WORKSPACE_LAUNCH_READINESS: readonly DesktopWorkspaceLaunch
     accelerator: 'CommandOrControl+2',
     packageSurface: 'electron-native-menu',
     readiness: 'ready',
-    caveats: ['Launches the Video workspace through the shared Signal Loom desktop binary.'],
+    caveats: ['Launches the Video workspace through the shared Sloom Studio desktop binary.'],
   },
   {
     workspace: 'image',
@@ -125,7 +125,7 @@ export const DESKTOP_WORKSPACE_LAUNCH_READINESS: readonly DesktopWorkspaceLaunch
     accelerator: 'CommandOrControl+3',
     packageSurface: 'electron-native-menu',
     readiness: 'ready',
-    caveats: ['Launches the Image workspace through the shared Signal Loom desktop binary.'],
+    caveats: ['Launches the Image workspace through the shared Sloom Studio desktop binary.'],
   },
   {
     workspace: 'paper',
@@ -136,7 +136,7 @@ export const DESKTOP_WORKSPACE_LAUNCH_READINESS: readonly DesktopWorkspaceLaunch
     accelerator: 'CommandOrControl+4',
     packageSurface: 'electron-native-menu',
     readiness: 'ready',
-    caveats: ['Launches the Paper workspace through the shared Signal Loom desktop binary.'],
+    caveats: ['Launches the Paper workspace through the shared Sloom Studio desktop binary.'],
   },
 ];
 
@@ -234,7 +234,7 @@ export function buildDesktopPackagingReadinessSummary(
     ],
     dependencyChecklist: buildDesktopPackagingDependencyChecklist(packageJson),
     installerLimitations: [
-      'Flow, Video, Image, and Paper are focusable workspaces inside one Signal Loom desktop app, not separate packaged executables.',
+      'Flow, Video, Image, and Paper are focusable workspaces inside one Sloom Studio desktop app, not separate packaged executables.',
       'Provider credentials, model downloads, and Android accelerator setup remain runtime/user configuration and are not bundled in desktop installers.',
     ],
   };

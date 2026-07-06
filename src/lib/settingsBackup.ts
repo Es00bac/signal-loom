@@ -26,7 +26,7 @@ const PBKDF2_SALT_BYTES = 16;
 export type SettingsBackupErrorCode =
   | 'unsupported' // no WebCrypto in this runtime
   | 'weak-passphrase' // empty / whitespace passphrase
-  | 'invalid-format' // not a Signal Loom settings backup
+  | 'invalid-format' // not a Sloom Studio settings backup
   | 'unsupported-version' // newer backup than this build understands
   | 'decrypt-failed'; // wrong passphrase or corrupted blob
 
@@ -119,25 +119,25 @@ export async function encryptSettingsBackup(plaintext: string, passphrase: strin
   return JSON.stringify(envelope, null, 2);
 }
 
-/** Validate that a string is a well-formed Signal Loom settings backup envelope. */
+/** Validate that a string is a well-formed Sloom Studio settings backup envelope. */
 export function parseSettingsBackupEnvelope(text: string): SettingsBackupEnvelope {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new SettingsBackupError('invalid-format', 'This file is not a Signal Loom settings backup.');
+    throw new SettingsBackupError('invalid-format', 'This file is not a Sloom Studio settings backup.');
   }
   if (
     typeof parsed !== 'object' || parsed === null
     || (parsed as { format?: unknown }).format !== SETTINGS_BACKUP_FORMAT
   ) {
-    throw new SettingsBackupError('invalid-format', 'This file is not a Signal Loom settings backup.');
+    throw new SettingsBackupError('invalid-format', 'This file is not a Sloom Studio settings backup.');
   }
   const envelope = parsed as SettingsBackupEnvelope;
   if (typeof envelope.version !== 'number' || envelope.version > SETTINGS_BACKUP_VERSION) {
     throw new SettingsBackupError(
       'unsupported-version',
-      'This backup was made by a newer version of Signal Loom. Update the app, then import again.',
+      'This backup was made by a newer version of Sloom Studio. Update the app, then import again.',
     );
   }
   if (

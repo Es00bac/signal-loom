@@ -68,7 +68,7 @@ describe('global menu — DBusMenu model builder', () => {
     const { nodes } = buildDbusMenuModel({ activeWorkspace: 'image', isMac: false });
 
     const quit = findByCommand(nodes, 'role:quit');
-    expect(quit?.label).toBe('Quit Signal Loom');
+    expect(quit?.label).toBe('Quit Sloom Studio');
     expect(findByCommand(nodes, 'role:reload')).toBeDefined();
     expect(findByCommand(nodes, 'role:togglefullscreen')).toBeDefined();
     // `close` has no ROLE_ITEMS entry on non-mac, so it must not surface as any command.
@@ -142,10 +142,10 @@ describe('global menu — strict X11 window-id resolver', () => {
     const { resolveX11WindowId } = await loadX11();
     const xid = resolveX11WindowId({
       pid: 1234,
-      titleIncludes: 'Signal Loom — Image',
+      titleIncludes: 'Sloom Studio — Image',
       exec: makeExec({
         pidSearch: '0x100\n0x200\n',
-        names: { 0x100: 'Signal Loom — Flow', 0x200: 'Signal Loom — Image' },
+        names: { 0x100: 'Sloom Studio — Flow', 0x200: 'Sloom Studio — Image' },
       }),
     });
     expect(xid).toBe(0x200);
@@ -156,7 +156,7 @@ describe('global menu — strict X11 window-id resolver', () => {
     // pid search surfaces only some unrelated app's window; the title does not match it.
     const xid = resolveX11WindowId({
       pid: 1234,
-      titleIncludes: 'Signal Loom',
+      titleIncludes: 'Sloom Studio',
       exec: makeExec({ pidSearch: '0x1000035\n', names: { 0x1000035: 'BulmaCAS.bot' } }),
     });
     expect(xid).toBeNull();
@@ -179,12 +179,12 @@ describe('global menu — strict X11 window-id resolver', () => {
 
   it('returns null when there are no candidates at all', async () => {
     const { resolveX11WindowId } = await loadX11();
-    expect(resolveX11WindowId({ pid: 1234, titleIncludes: 'Signal Loom', exec: makeExec({}) })).toBeNull();
+    expect(resolveX11WindowId({ pid: 1234, titleIncludes: 'Sloom Studio', exec: makeExec({}) })).toBeNull();
   });
 
   it('escapes regex metacharacters before handing a title to xdotool --name', async () => {
     const { escapeForXdotoolName } = await loadX11();
-    expect(escapeForXdotoolName('Signal Loom (probe)')).toBe('Signal Loom \\(probe\\)');
+    expect(escapeForXdotoolName('Sloom Studio (probe)')).toBe('Sloom Studio \\(probe\\)');
   });
 
   it('parseWindowId rejects the 0x1 placeholder and non-ids', async () => {

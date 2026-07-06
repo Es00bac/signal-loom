@@ -234,7 +234,7 @@ describe('ImageLayerStyleClipboard', () => {
     expect(descriptor.clipboardSuitability).toEqual({
       copyPaste: {
         status: 'warning',
-        summary: 'Copy/paste keeps the layer style inside Signal Loom, but unsupported advanced blending stays metadata-only.',
+        summary: 'Copy/paste keeps the layer style inside Sloom Studio, but unsupported advanced blending stays metadata-only.',
         reasonCodes: [
           'blend-if-unsupported',
           'fill-opacity-unsupported',
@@ -244,7 +244,7 @@ describe('ImageLayerStyleClipboard', () => {
       },
       signalLoomPreset: {
         status: 'blocked',
-        summary: 'Signal Loom presets cannot preserve unsupported advanced blending or non-portable style warnings.',
+        summary: 'Sloom Studio presets cannot preserve unsupported advanced blending or non-portable style warnings.',
         reasonCodes: [
           'blend-if-unsupported',
           'fill-opacity-unsupported',
@@ -365,12 +365,12 @@ describe('ImageLayerStyleClipboard', () => {
     ]);
     expect(descriptor.clipboardSuitability.copyPaste).toEqual({
       status: 'ready',
-      summary: 'Copy/paste keeps the layer style portable inside Signal Loom.',
+      summary: 'Copy/paste keeps the layer style portable inside Sloom Studio.',
       reasonCodes: [],
     });
     expect(descriptor.clipboardSuitability.signalLoomPreset).toEqual({
       status: 'blocked',
-      summary: 'Signal Loom presets cannot preserve unsupported advanced blending or non-portable style warnings.',
+      summary: 'Sloom Studio presets cannot preserve unsupported advanced blending or non-portable style warnings.',
       reasonCodes: [
         'effect-portability-warning',
         'filter-portability-warning',

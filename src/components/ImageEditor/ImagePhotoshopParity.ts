@@ -121,7 +121,7 @@ export const IMAGE_PHOTOSHOP_PARITY_ITEMS: PhotoshopParityItem[] = [
     priority: 'high',
     status: 'partial',
     parityEstimate: 63,
-    workflowReason: 'Signal Loom projects rely on generated source assets staying traceable through the suite.',
+    workflowReason: 'Sloom Studio projects rely on generated source assets staying traceable through the suite.',
   },
   {
     id: 'vector-layers',
@@ -386,7 +386,7 @@ export const IMAGE_PHOTOSHOP_PARITY_ITEMS: PhotoshopParityItem[] = [
     priority: 'medium',
     status: 'partial',
     parityEstimate: 64,
-    workflowReason: 'AI edits are a core Signal Loom differentiator but still need editor-grade control surfaces.',
+    workflowReason: 'AI edits are a core Sloom Studio differentiator but still need editor-grade control surfaces.',
   },
   {
     id: 'standalone-quick-edit',

@@ -265,7 +265,7 @@ describe('ImageLayerWorkflowMetadata smart source descriptors', () => {
       limitationWarnings: [
         {
           code: 'metadata-only-smart-filters',
-          message: 'Image filter stacks stay editable in Signal Loom metadata but are flattened for native PSD Smart Filter roundtrip.',
+          message: 'Image filter stacks stay editable in Sloom Studio metadata but are flattened for native PSD Smart Filter roundtrip.',
         },
         {
           code: 'smart-filter-mask-unsupported',
@@ -280,7 +280,7 @@ describe('ImageLayerWorkflowMetadata smart source descriptors', () => {
         opacity: 'layer-filter-opacity:v1:[{"order":0,"kind":"blur","opacity":0.75},{"order":1,"kind":"pixelate","opacity":1}]',
       },
       handoffWarnings: [
-        'Source Bin and Video handoff preserve flattened pixels plus Signal Loom metadata only; editable native smart-filter roundtrip is unavailable.',
+        'Source Bin and Video handoff preserve flattened pixels plus Sloom Studio metadata only; editable native smart-filter roundtrip is unavailable.',
         'Smart-filter masks and advanced parameters are flattened or dropped because native smart-filter roundtrip is unsupported.',
       ],
     });
@@ -294,7 +294,7 @@ describe('ImageLayerWorkflowMetadata smart source descriptors', () => {
     });
     expect(descriptor.externalAssetPackaging.required).toBe(true);
     expect(descriptor.externalAssetPackaging.caveats).toContain(
-      'Smart Filter stacks are flattened for native PSD handoff; keep Signal Loom metadata with the packaged source asset.',
+      'Smart Filter stacks are flattened for native PSD handoff; keep Sloom Studio metadata with the packaged source asset.',
     );
     expect(descriptor.suiteHandoffBlockers.map((blocker) => blocker.code)).toEqual([
       'metadata-only-psd-smart-object',
@@ -316,7 +316,7 @@ describe('ImageLayerWorkflowMetadata smart source descriptors', () => {
       warningCodes: [],
       caveats: [
         'Replace Contents can preserve transform, mask, layer effects, and source-link metadata.',
-        'Image filter stacks stay editable in Signal Loom metadata but are flattened for native PSD Smart Filter roundtrip.',
+        'Image filter stacks stay editable in Sloom Studio metadata but are flattened for native PSD Smart Filter roundtrip.',
         'Smart Filter masks are not preserved as native PSD smart-filter masks.',
       ],
     });
@@ -324,7 +324,7 @@ describe('ImageLayerWorkflowMetadata smart source descriptors', () => {
       suitable: false,
       operation: 'edit-original',
       warningCodes: [],
-      caveats: ['Edit Original is metadata-only; Signal Loom does not launch or round-trip native external editors.'],
+      caveats: ['Edit Original is metadata-only; Sloom Studio does not launch or round-trip native external editors.'],
     });
     expect(descriptor.batchSuitability).toEqual({
       suitable: true,
@@ -332,7 +332,7 @@ describe('ImageLayerWorkflowMetadata smart source descriptors', () => {
       warningCodes: [],
       caveats: [
         'Batch actions are suitable for deterministic source-linked bitmap replacement when each layer resolves to a durable Source Library asset.',
-        'Image filter stacks stay editable in Signal Loom metadata but are flattened for native PSD Smart Filter roundtrip.',
+        'Image filter stacks stay editable in Sloom Studio metadata but are flattened for native PSD Smart Filter roundtrip.',
         'Smart Filter masks are not preserved as native PSD smart-filter masks.',
       ],
     });
@@ -445,7 +445,7 @@ describe('ImageLayerWorkflowMetadata blend mode readiness descriptors', () => {
         supported: false,
         requested: true,
         value: 0.35,
-        caveat: 'Photoshop Fill Opacity is unsupported; Signal Loom applies only layer opacity for preview/export.',
+        caveat: 'Photoshop Fill Opacity is unsupported; Sloom Studio applies only layer opacity for preview/export.',
       },
       blendIf: {
         supported: false,
@@ -645,7 +645,7 @@ describe('ImageLayerWorkflowMetadata suite handoff readiness descriptors', () =>
         maskExport: {
           supported: true,
           format: 'alpha-masked-visible-raster',
-          caveats: ['Layer masks are flattened into exported visible pixels; editable masks stay in Signal Loom metadata.'],
+          caveats: ['Layer masks are flattened into exported visible pixels; editable masks stay in Sloom Studio metadata.'],
         },
       },
       sourceAssetPackaging: {

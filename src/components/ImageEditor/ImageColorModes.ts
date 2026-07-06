@@ -596,7 +596,7 @@ export function describeColorModeChannels(colorMode: ImageWorkflowColorMode): Co
         colorMode,
         previewKind: 'unsupported',
         channels: [],
-        warnings: ['Lab channel previews are not available because Signal Loom does not implement native Lab conversion or editing.'],
+        warnings: ['Lab channel previews are not available because Sloom Studio does not implement native Lab conversion or editing.'],
       };
     case 'indexed':
       return {
@@ -697,7 +697,7 @@ export function getColorModeOperationPolicy(
       constraintCode: 'lab-external-conversion',
       externalConversionRequired: true,
       exportImplication: 'external-export-required',
-      warnings: ['Lab workflows are not implemented, so exports must convert elsewhere before entering Signal Loom.'],
+      warnings: ['Lab workflows are not implemented, so exports must convert elsewhere before entering Sloom Studio.'],
     };
   }
 
@@ -759,7 +759,7 @@ export function buildColorModeConversionWarnings(input: ColorModeConversionWarni
   const warnings: string[] = [];
 
   if (input.fromMode === 'cmyk' && input.toMode === 'rgb') {
-    warnings.push('CMYK to RGB conversion inside Signal Loom is only a formula preview; use an external ICC-aware tool for press-accurate conversion.');
+    warnings.push('CMYK to RGB conversion inside Sloom Studio is only a formula preview; use an external ICC-aware tool for press-accurate conversion.');
   }
 
   if (input.fromMode === 'grayscale' && input.toMode === 'rgb') {
@@ -771,7 +771,7 @@ export function buildColorModeConversionWarnings(input: ColorModeConversionWarni
   }
 
   if (input.fromMode === 'lab') {
-    warnings.push('Lab conversion is not implemented in Signal Loom; move the document through an external color-managed app before editing here.');
+    warnings.push('Lab conversion is not implemented in Sloom Studio; move the document through an external color-managed app before editing here.');
   }
 
   if (input.fromBitDepth && input.toBitDepth === 8 && input.fromBitDepth in HIGH_BIT_DEPTH_WARNINGS) {
@@ -1311,7 +1311,7 @@ function buildNonRgbColorModeBlocker(
     'icc-transform-unavailable': 'ICC transforms are unavailable; profile labels are metadata only.',
     'lab-conversion-external': 'Lab conversion requires an external color-managed conversion to RGB.',
     'indexed-palette-preservation': 'Indexed palette tables, transparency tables, and exact index values are not preserved.',
-    'indexed-reindex-required': 'Palette re-indexing must happen outside Signal Loom after RGB export.',
+    'indexed-reindex-required': 'Palette re-indexing must happen outside Sloom Studio after RGB export.',
     'black-generation-unavailable': 'CMYK black generation/UCR/GCR decisions are not computed.',
     'total-area-coverage-unavailable': 'Total area coverage and ink-limit checks are not computed.',
     'high-bit-depth-downsample': 'High-bit sources are downgraded to 8-bit RGB canvas data before editing/export.',
@@ -1529,7 +1529,7 @@ function buildBitDepthDocumentExportCaveats(
 
   return [
     'Visible exports are flattened 8-bit RGB/RGBA derivatives, not high-bit TIFF/PSD/EXR masters.',
-    `Keep the original ${sourceFormat} high-bit master outside Signal Loom when ${sourceBitDepth}-bit precision must survive print or archive handoff.`,
+    `Keep the original ${sourceFormat} high-bit master outside Sloom Studio when ${sourceBitDepth}-bit precision must survive print or archive handoff.`,
   ];
 }
 
@@ -1676,7 +1676,7 @@ function buildHighBitFallbackRecommendations(
         route: '8bit-rgb-working-derivative',
         label: 'Use 8-bit RGB working document',
         preserves: 'native Image paint, adjustment, filter, and export behavior',
-        recommendedFor: 'Standard Signal Loom Image editing and suite handoff.',
+        recommendedFor: 'Standard Sloom Studio Image editing and suite handoff.',
         caveat: 'Profile transforms and press separations still require external color management.',
       },
     ];
@@ -1701,7 +1701,7 @@ function buildHighBitFallbackRecommendations(
       route: 'psd-metadata-working-copy',
       label: 'PSD metadata working copy',
       preserves: 'Image layer metadata and visible 8-bit RGB edit state',
-      recommendedFor: 'Layered Signal Loom reopening after high-bit conversion.',
+      recommendedFor: 'Layered Sloom Studio reopening after high-bit conversion.',
       caveat: 'PSD output is not a native high-bit master and profile transforms remain metadata-only.',
     },
   ];
@@ -1859,13 +1859,13 @@ function buildColorModeSuiteHandoffGuidance(
   } else if (colorMode === 'grayscale') {
     guidance.push('Treat grayscale proof/profile labels as handoff metadata only; downstream apps must perform real grayscale conversion.');
   } else if (colorMode === 'indexed') {
-    guidance.push('Re-index outside Signal Loom after export when palette fidelity matters to downstream apps.');
+    guidance.push('Re-index outside Sloom Studio after export when palette fidelity matters to downstream apps.');
   } else {
     guidance.push('RGB pixels can move between workspaces, but profile labels remain descriptive metadata only.');
   }
 
   if (bitDepth !== 8) {
-    guidance.push(`Keep a native master outside Signal Loom when ${bitDepth}-bit precision must survive handoff.`);
+    guidance.push(`Keep a native master outside Sloom Studio when ${bitDepth}-bit precision must survive handoff.`);
   }
 
   return guidance;
@@ -1991,7 +1991,7 @@ function buildColorModeReadinessPrintExport(
     nativeModeExportReady,
     pressReady: false,
     implications: [
-      'Lab output is unsupported; Signal Loom does not produce Lab channels, Lab profiles, or native Lab exports.',
+      'Lab output is unsupported; Sloom Studio does not produce Lab channels, Lab profiles, or native Lab exports.',
       'Convert Lab documents to RGB in an external ICC-aware tool before Image editing or export.',
     ],
   };
@@ -2065,7 +2065,7 @@ function buildColorModeOperationBitDepthCaveats(
 ): string[] {
   if (bitDepth === 8) return [];
   if (operation === 'export') {
-    return [`Export cannot preserve ${bitDepth}-bit source precision; keep a high-bit master outside Signal Loom.`];
+    return [`Export cannot preserve ${bitDepth}-bit source precision; keep a high-bit master outside Sloom Studio.`];
   }
 
   const operationLabel = labelForImageWorkflowOperation(operation);
@@ -2323,7 +2323,7 @@ function buildColorModeWorkflowLimitations(colorMode: ImageWorkflowColorMode): s
   if (colorMode === 'lab') {
     return [
       'Lab workflows cannot be previewed, edited, stored, or exported natively in this Image editor.',
-      'Convert Lab documents to RGB in an external ICC-aware application before using Signal Loom.',
+      'Convert Lab documents to RGB in an external ICC-aware application before using Sloom Studio.',
     ];
   }
 
@@ -2339,7 +2339,7 @@ function buildColorModeWorkflowLimitations(colorMode: ImageWorkflowColorMode): s
 
 function buildColorModeOutputWarnings(colorMode: ImageWorkflowColorMode): string[] {
   if (colorMode === 'cmyk') {
-    return ['Print/output warning: CMYK output is planning metadata only; create press-ready separations outside Signal Loom.'];
+    return ['Print/output warning: CMYK output is planning metadata only; create press-ready separations outside Sloom Studio.'];
   }
 
   if (colorMode === 'lab') {
@@ -2401,7 +2401,7 @@ function describeColorModeProfile(
     iccTransformAvailable: false,
     appliedPolicy: 'unsupported',
     limitations: [
-      `${labelForWorkflowColorMode(colorMode)} ICC workflows are not implemented in Signal Loom.`,
+      `${labelForWorkflowColorMode(colorMode)} ICC workflows are not implemented in Sloom Studio.`,
     ],
   };
 }
@@ -2437,7 +2437,7 @@ function describeColorModePrint(colorMode: ImageWorkflowColorMode): ColorModePri
   return {
     pressReady: false,
     warnings: [
-      `${labelForWorkflowColorMode(colorMode)} output is unsupported for print handoff inside Signal Loom.`,
+      `${labelForWorkflowColorMode(colorMode)} output is unsupported for print handoff inside Sloom Studio.`,
     ],
   };
 }
@@ -2595,7 +2595,7 @@ function describeColorModeConversionPlan(colorMode: ImageWorkflowColorMode): Col
     targetMode: 'rgb',
     targetBitDepth: 8,
     limitations: [
-      'Lab conversion requires an external color-managed flatten or conversion before editing in Signal Loom.',
+      'Lab conversion requires an external color-managed flatten or conversion before editing in Sloom Studio.',
     ],
   };
 }

@@ -325,7 +325,7 @@ describe('workspace launcher icons', () => {
       standaloneWorkspaceEntryReadiness: {
         readiness: 'ready-with-shared-binary',
         entryMode: 'native-bridge-window',
-        caveat: 'Flow, Video, Image, and Paper open as focusable workspaces inside the shared Signal Loom desktop app, not as separate signed executables.',
+        caveat: 'Flow, Video, Image, and Paper open as focusable workspaces inside the shared Sloom Studio desktop app, not as separate signed executables.',
       },
       iconChecks: WORKSPACE_LAUNCH_ICON_READINESS,
       packagingCaveats: [

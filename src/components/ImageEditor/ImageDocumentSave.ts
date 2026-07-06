@@ -382,7 +382,7 @@ export function describeImageDocumentSaveWorkflow(
     warnings.push({
       code: 'unsupported-native-roundtrip',
       formatExtension: format.extension,
-      message: `${format.label} save is not a complete native roundtrip for editable Signal Loom layer metadata; unsupported native constructs are preserved only as pixels and/or Signal Loom metadata where available.`,
+      message: `${format.label} save is not a complete native roundtrip for editable Sloom Studio layer metadata; unsupported native constructs are preserved only as pixels and/or Sloom Studio metadata where available.`,
     });
   }
 
@@ -728,7 +728,7 @@ function buildNativeRoundtripCaveats(
   return [{
     code: 'signal-loom-metadata-only',
     formatExtension: format.extension,
-    message: `${format.label} save keeps Signal Loom editability as metadata where possible, but native editors may only preserve unsupported constructs as pixels.`,
+    message: `${format.label} save keeps Sloom Studio editability as metadata where possible, but native editors may only preserve unsupported constructs as pixels.`,
   }];
 }
 
@@ -838,8 +838,8 @@ function buildSuiteHandoffDescriptor({
   const caveats = editableWorkfileState === 'flattened-export-only'
     ? ['Flattened exports package the visible composite only; keep the Image workfile and linked originals beside the Source Library derivative for suite handoff.']
     : editableWorkfileState === 'unsupported-native-roundtrip'
-      ? ['This layered save can be handed off as a Signal Loom workfile package, but native editable roundtrip is unsupported and linked originals should travel beside it.']
-      : ['This layered save remains a Signal Loom workfile package; linked originals should travel beside it when external suite provenance matters.'];
+      ? ['This layered save can be handed off as a Sloom Studio workfile package, but native editable roundtrip is unsupported and linked originals should travel beside it.']
+      : ['This layered save remains a Sloom Studio workfile package; linked originals should travel beside it when external suite provenance matters.'];
 
   return {
     ready,

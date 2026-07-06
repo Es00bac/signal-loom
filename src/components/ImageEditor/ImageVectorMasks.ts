@@ -853,7 +853,7 @@ function buildVectorMaskActionSuitability(
       preservesEditableVectorMask: true,
       requiresRasterization: false,
       blockingWarningCodes: stateActionBlockers,
-      caveats: ['Retained vector masks are Signal Loom metadata and may not reopen as editable PSD vector masks.'],
+      caveats: ['Retained vector masks are Sloom Studio metadata and may not reopen as editable PSD vector masks.'],
     },
     {
       kind: 'rasterize',
@@ -972,7 +972,7 @@ function getVectorMaskUnsupportedStates(): ImageVectorMaskUnsupportedState[] {
 
 function getVectorMaskHandoffCaveats(): string[] {
   return [
-    'Retained vector masks stay editable inside Signal Loom as path metadata.',
+    'Retained vector masks stay editable inside Sloom Studio as path metadata.',
     'Preview/export rasterizes vector masks to alpha for deterministic output.',
     'PSD handoff should be treated as metadata/raster-alpha preservation, not native editable vector-mask parity.',
     'Boolean vector-mask stacks, overlaps, and live PSD vector-mask states remain unsupported.',

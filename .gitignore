@@ -73,6 +73,7 @@ docs/release/website/sloom-studio/downloads/*.exe
 docs/release/website/sloom-studio/downloads/*.AppImage
 docs/release/website/sloom-studio/downloads/*.deb
 docs/release/website/sloom-studio/downloads/*.dmg
+docs/release/website/sloom-studio/downloads/*.zip
 docs/release/website/sloom-studio/downloads/*.blockmap
 
 # Out-of-tree KDE plasmoid build directories (CMake output; source lives beside them)

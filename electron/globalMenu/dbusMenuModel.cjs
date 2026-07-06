@@ -17,7 +17,7 @@ const WORKSPACE_MENUS = require('../../shared/workspaceMenus.json');
 // performs natively (quit/reload/fullscreen). `close` is intentionally dropped on non-mac to match
 // the in-window menu (which does `if (role === 'close' && !isMac) continue`).
 const ROLE_ITEMS = Object.freeze({
-  quit: { label: 'Quit Signal Loom', command: 'role:quit' },
+  quit: { label: 'Quit Sloom Studio', command: 'role:quit' },
   reload: { label: 'Reload', command: 'role:reload' },
   togglefullscreen: { label: 'Toggle Full Screen', command: 'role:togglefullscreen' },
 });

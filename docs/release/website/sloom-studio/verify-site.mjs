@@ -8,7 +8,7 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = new URL('.', import.meta.url).pathname;
-const pages = ['index.html', 'docs.html', 'examples.html', 'privacy.html', 'changelog.html'];
+const pages = ['index.html', 'docs.html', 'examples.html', 'privacy.html', 'changelog.html', 'print-ready-comics.html', 'macos-install.html', 'comic-software-you-own.html'];
 const errors = [];
 const read = (f) => readFileSync(join(root, f), 'utf8');
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex" />
-<title>Thank you — Signal Loom</title>
+<title>Thank you — Sloom Studio (Signal Loom)</title>
 <meta name="theme-color" content="#04070d" />
 <link rel="stylesheet" href="assets/site.css" />
 <style>
@@ -51,9 +51,10 @@
   </div>
 
   <div class="exp">
-    <b>On a Mac?</b> There's no native Mac build yet (it needs a signed build on Apple hardware — coming later).
-    For now you can run Signal Loom in your browser or from source — see the
-    <a href="docs.html" style="color:var(--cyan)">docs</a>. Treat that route as <b>experimental and untested</b> on macOS.
+    <b>On a Mac?</b> There are experimental Mac builds, and your license key works on them just the same:
+    <a href="/downloads/SignalLoom-0.9.10-mac-arm64.dmg" download style="color:var(--cyan)">Apple Silicon</a> or
+    <a href="/downloads/SignalLoom-0.9.10-mac-intel.dmg" download style="color:var(--cyan)">Intel</a>.
+    They aren't code-signed yet, so macOS blocks them on first launch — <a href="macos-install.html" style="color:var(--cyan)">here's how to open the Mac build the proper way</a>.
   </div>
 
   <p class="note">First launch, Windows SmartScreen may warn that the publisher is unverified — that's normal for an independent app without a paid signing certificate; choose <em>More info → Run anyway</em>. On Linux, make the AppImage executable (<code>chmod +x</code>). Verify your download against the <a href="/downloads/SHA256SUMS.txt" style="color:var(--cyan)">SHA-256 checksums</a>. Same bring-your-own-key model — Signal Loom never sees your keys or your work. Anything misbehaves? Email <a href="mailto:support@sloom.studio" style="color:var(--cyan)">support@sloom.studio</a> and it gets fixed fast.</p>

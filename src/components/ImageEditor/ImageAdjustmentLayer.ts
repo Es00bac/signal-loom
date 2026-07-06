@@ -876,7 +876,7 @@ function buildAdjustmentStackLimitations(
 ): string[] {
   const limitations = new Set<string>();
   if (options.exportFamily === 'flattened-raster' || options.exportFamily === 'psd-native') {
-    limitations.add('Adjustment layers are represented non-destructively in Signal Loom state but exported raster formats flatten the visible result.');
+    limitations.add('Adjustment layers are represented non-destructively in Sloom Studio state but exported raster formats flatten the visible result.');
   }
   for (const layer of layers) {
     for (const limitation of layer.workflow.documentPrecision.limitations) {
@@ -998,7 +998,7 @@ function describeAdjustmentImportReadiness(
       family,
       ready: true,
       status: 'supported',
-      reason: 'Signal Loom adjustment presets import as editable adjustment settings.',
+      reason: 'Sloom Studio adjustment presets import as editable adjustment settings.',
     };
   }
   if (family === 'psd-native') {
@@ -1025,7 +1025,7 @@ function describeAdjustmentExportReadiness(
       family,
       ready: true,
       status: 'supported',
-      reason: 'Signal Loom adjustment presets export as editable adjustment settings.',
+      reason: 'Sloom Studio adjustment presets export as editable adjustment settings.',
     };
   }
   if (family === 'flattened-raster') {
@@ -1086,21 +1086,21 @@ function buildAdjustmentReadinessBlockers(input: {
     blockers.push({
       code: 'adjustment-preset-serialization-unsupported',
       severity: 'blocker',
-      message: `${input.preset.serialization.family} presets cannot serialize as editable Signal Loom adjustment settings.`,
+      message: `${input.preset.serialization.family} presets cannot serialize as editable Sloom Studio adjustment settings.`,
     });
   }
   if (!input.preset.import.ready) {
     blockers.push({
       code: 'adjustment-preset-import-unsupported',
       severity: 'blocker',
-      message: `${input.preset.import.family} adjustment presets do not import as editable Signal Loom adjustment settings.`,
+      message: `${input.preset.import.family} adjustment presets do not import as editable Sloom Studio adjustment settings.`,
     });
   }
   if (!input.preset.export.ready) {
     blockers.push({
       code: 'adjustment-preset-export-unsupported',
       severity: 'blocker',
-      message: `${input.preset.export.family} adjustment presets do not export as editable Signal Loom adjustment settings.`,
+      message: `${input.preset.export.family} adjustment presets do not export as editable Sloom Studio adjustment settings.`,
     });
   }
   return blockers;
@@ -1132,7 +1132,7 @@ function buildAdjustmentUnsupportedStateDescriptors(
     add({
       code: 'photoshop-preset-family-parity-unsupported',
       status: 'unsupported',
-      message: 'Photoshop preset-family parity is not implemented; only Signal Loom single-adjustment presets serialize as editable settings.',
+      message: 'Photoshop preset-family parity is not implemented; only Sloom Studio single-adjustment presets serialize as editable settings.',
     });
   }
   if (options.colorMode === 'cmyk') {

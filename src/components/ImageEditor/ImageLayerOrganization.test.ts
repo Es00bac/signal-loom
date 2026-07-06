@@ -635,7 +635,7 @@ describe('ImageLayerOrganization', () => {
         ],
       },
       suiteHandoffCaveats: [
-        'PSD export preserves clipping-mask flags as Signal Loom metadata, but native Photoshop clipping groups are not guaranteed.',
+        'PSD export preserves clipping-mask flags as Sloom Studio metadata, but native Photoshop clipping groups are not guaranteed.',
         'Group-base clipping masks flatten through visible descendant alpha for preview/export handoff.',
       ],
       previewSignature: 'layer-organization-parity:v1|layers:7|selected:shade,adjust,texture|clipping:orphan->none,shade+adjust->base,texture->group-base|group-base-visibility:group-base=visible:child:none:none|invalid:clipping-mask-missing-base,clipping-mask-group-base-handoff|batch:multi-select-label-unsupported,multi-select-lock-unsupported,multi-select-link-unsupported,multi-select-group-unsupported|action:unsafe|handoff:psd-export',

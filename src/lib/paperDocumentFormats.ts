@@ -26,7 +26,7 @@ export interface ImportedPaperTextDocument {
 }
 
 export interface PaperIdmlInterchange {
-  app: 'Signal Loom Paper';
+  app: 'Sloom Studio Paper';
   format: 'sloom-idml-json';
   version: 1;
   manifest: {
@@ -145,7 +145,7 @@ export function placeDocumentSourceOnPaperPage(
 export function exportPaperIdmlInterchange(document: PaperDocument): string {
   const links = collectDocumentLinks(document);
   const interchange: PaperIdmlInterchange = {
-    app: 'Signal Loom Paper',
+    app: 'Sloom Studio Paper',
     format: 'sloom-idml-json',
     version: 1,
     manifest: {
@@ -170,7 +170,7 @@ export function exportPaperIdmlInterchange(document: PaperDocument): string {
 export function importPaperIdmlInterchange(json: string): PaperDocument {
   const parsed = JSON.parse(json) as Partial<PaperIdmlInterchange>;
   if (parsed.format !== 'sloom-idml-json' || !parsed.document) {
-    throw new Error('The selected file is not a Signal Loom Paper IDML-like interchange document.');
+    throw new Error('The selected file is not a Sloom Studio Paper IDML-like interchange document.');
   }
   return parsePaperDocument(JSON.stringify(parsed.document));
 }
@@ -230,7 +230,7 @@ export async function buildPaperCbzRasterExport(
   }
 
   const manifest = {
-    app: 'Signal Loom Paper',
+    app: 'Sloom Studio Paper',
     format: 'sloom-cbz-raster',
     title: document.title,
     pageCount,
@@ -251,7 +251,7 @@ export async function buildPaperCbzRasterExport(
 
 export function buildPaperCbzManifestExport(document: PaperDocument): PaperZipExport {
   const manifest = {
-    app: 'Signal Loom Paper',
+    app: 'Sloom Studio Paper',
     format: 'sloom-cbz-manifest',
     title: document.title,
     pageCount: document.pages.length,
@@ -273,7 +273,7 @@ export function buildPaperCbzManifestExport(document: PaperDocument): PaperZipEx
 }
 
 function buildComicInfoXml(document: PaperDocument, pageCount: number): string {
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<ComicInfo>\n  <Title>${escapeXml(document.title || 'Paper Pages')}</Title>\n  <PageCount>${pageCount}</PageCount>\n  <Format>Signal Loom Paper raster CBZ</Format>\n</ComicInfo>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<ComicInfo>\n  <Title>${escapeXml(document.title || 'Paper Pages')}</Title>\n  <PageCount>${pageCount}</PageCount>\n  <Format>Sloom Studio Paper raster CBZ</Format>\n</ComicInfo>\n`;
 }
 
 function dataUrlToU8(dataUrl: string, expectedMimeType: string): Uint8Array {

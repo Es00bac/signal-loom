@@ -920,7 +920,7 @@ function buildPsdExportLayerDescriptor(
         metadataOnlyPsdSmartObject: true,
         caveats: [
           'Native PSD Smart Object records are not written.',
-          'Smart Filter stacks are retained as Signal Loom metadata only.',
+          'Smart Filter stacks are retained as Sloom Studio metadata only.',
           'Package the original linked source asset beside the PSD for safer round-trip recovery.',
         ],
       },
@@ -1101,9 +1101,9 @@ function buildPsdRecommendedFallbackRoutes(
   return [
     {
       route: 'psd-signal-loom-metadata',
-      label: 'PSD with Signal Loom metadata',
-      preserves: 'raster layers plus retained Signal Loom text, effects, adjustment, source-link, and filter metadata',
-      recommendedFor: 'Best working master when Signal Loom will reopen the PSD.',
+      label: 'PSD with Sloom Studio metadata',
+      preserves: 'raster layers plus retained Sloom Studio text, effects, adjustment, source-link, and filter metadata',
+      recommendedFor: 'Best working master when Sloom Studio will reopen the PSD.',
       caveat: 'Photoshop and other PSD editors see text, effects, source links, and smart filters as flattened or metadata-only constructs where native PSD records are not written.',
     },
     {
@@ -1111,7 +1111,7 @@ function buildPsdRecommendedFallbackRoutes(
       label: 'Source Library package',
       preserves: 'original source-linked assets, snapshots, relink history, and filter metadata beside the PSD',
       recommendedFor: 'Recover linked-source context during suite handoff or future re-open.',
-      caveat: 'Requires keeping the packaged Signal Loom project and source assets with the PSD; external PSD tools still do not gain native Smart Object or source-link records.',
+      caveat: 'Requires keeping the packaged Sloom Studio project and source assets with the PSD; external PSD tools still do not gain native Smart Object or source-link records.',
     },
     {
       route: 'tiff-visible-composite',
@@ -1296,23 +1296,23 @@ function describePsdLayerWarningFallbackRoute(
 function describePsdLayerWarningMessage(code: SignalLoomPsdNativeConstructWarningCode): string {
   switch (code) {
     case 'native-smart-object':
-      return 'Source-linked layer metadata is retained by Signal Loom, but native PSD Smart Object records are not written; package the source asset for roundtrip safety.';
+      return 'Source-linked layer metadata is retained by Sloom Studio, but native PSD Smart Object records are not written; package the source asset for roundtrip safety.';
     case 'editable-text-layer':
-      return 'Retained text content and style are stored in Signal Loom metadata while PSD pixels are flattened instead of native editable text.';
+      return 'Retained text content and style are stored in Sloom Studio metadata while PSD pixels are flattened instead of native editable text.';
     case 'adjustment-layer':
-      return 'Adjustment settings are retained in Signal Loom metadata only; native PSD adjustment records are not written.';
+      return 'Adjustment settings are retained in Sloom Studio metadata only; native PSD adjustment records are not written.';
     case 'layer-effects':
-      return 'Layer effects are rendered into exported PSD pixels and retained as Signal Loom metadata rather than native PSD layer effects.';
+      return 'Layer effects are rendered into exported PSD pixels and retained as Sloom Studio metadata rather than native PSD layer effects.';
     case 'layer-mask':
       return 'Layer masks are composited into PSD pixels and described as metadata-only compatibility records.';
     case 'layer-group':
-      return 'Layer groups are preserved as Signal Loom metadata-only folders; native PSD group folders are not written.';
+      return 'Layer groups are preserved as Sloom Studio metadata-only folders; native PSD group folders are not written.';
     case 'metadata-only-smart-filters':
-      return 'Filter stacks stay editable in Signal Loom metadata but are flattened for native PSD Smart Filter roundtrip.';
+      return 'Filter stacks stay editable in Sloom Studio metadata but are flattened for native PSD Smart Filter roundtrip.';
     case 'smart-filter-mask-unsupported':
       return 'Smart Filter masks are not preserved as native PSD smart-filter masks.';
     default:
-      return 'Unsupported native PSD construct is retained only through Signal Loom compatibility metadata.';
+      return 'Unsupported native PSD construct is retained only through Sloom Studio compatibility metadata.';
   }
 }
 
@@ -1380,7 +1380,7 @@ function buildUnsupportedNativeConstructWarnings(layers: ImageLayer[]): SignalLo
       code: 'native-smart-object',
       flattened: true,
       nativePsdSmartObject: false,
-      message: 'Source-linked layers are exported as flattened raster pixels plus Signal Loom metadata-only link records; native PSD Smart Object semantics are not written.',
+      message: 'Source-linked layers are exported as flattened raster pixels plus Sloom Studio metadata-only link records; native PSD Smart Object semantics are not written.',
     });
   }
   if (layers.some((layer) => layer.type === 'text' || layer.text)) {
@@ -1388,7 +1388,7 @@ function buildUnsupportedNativeConstructWarnings(layers: ImageLayer[]): SignalLo
       code: 'editable-text-layer',
       flattened: true,
       nativePsdTextLayer: false,
-      message: 'Retained text style is stored as Signal Loom metadata-only data while the PSD layer pixels are flattened; native PSD editable text layers are not written.',
+      message: 'Retained text style is stored as Sloom Studio metadata-only data while the PSD layer pixels are flattened; native PSD editable text layers are not written.',
     });
   }
   if (layers.some((layer) => layer.type === 'adjustment' || layer.adjustment)) {
@@ -1396,7 +1396,7 @@ function buildUnsupportedNativeConstructWarnings(layers: ImageLayer[]): SignalLo
       code: 'adjustment-layer',
       flattened: true,
       nativePsdAdjustmentLayer: false,
-      message: 'Adjustment settings are stored as Signal Loom metadata-only data; native PSD adjustment layer records are not written.',
+      message: 'Adjustment settings are stored as Sloom Studio metadata-only data; native PSD adjustment layer records are not written.',
     });
   }
   if (layers.some((layer) => (layer.effects?.length ?? 0) > 0)) {
@@ -1404,7 +1404,7 @@ function buildUnsupportedNativeConstructWarnings(layers: ImageLayer[]): SignalLo
       code: 'layer-effects',
       flattened: true,
       nativePsdLayerEffects: false,
-      message: 'Layer effects are rendered into flattened PSD pixels and retained as Signal Loom metadata-only settings; native PSD layer effect records are not written.',
+      message: 'Layer effects are rendered into flattened PSD pixels and retained as Sloom Studio metadata-only settings; native PSD layer effect records are not written.',
     });
   }
   if (layers.some((layer) => layer.mask)) {
@@ -1412,7 +1412,7 @@ function buildUnsupportedNativeConstructWarnings(layers: ImageLayer[]): SignalLo
       code: 'layer-mask',
       flattened: true,
       nativePsdLayerMask: false,
-      message: 'Layer masks are composited into flattened PSD layer pixels and described in Signal Loom metadata-only compatibility records; native PSD layer masks are not written.',
+      message: 'Layer masks are composited into flattened PSD layer pixels and described in Sloom Studio metadata-only compatibility records; native PSD layer masks are not written.',
     });
   }
   return warnings;

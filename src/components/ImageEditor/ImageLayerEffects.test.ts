@@ -1116,10 +1116,10 @@ describe('ImageLayerEffects', () => {
           'native-photoshop-layer-style-roundtrip-unavailable',
         ],
         caveats: [
-          'Flattened export bakes Drop Shadow into pixels while keeping editable Signal Loom effect metadata.',
+          'Flattened export bakes Drop Shadow into pixels while keeping editable Sloom Studio effect metadata.',
           'Drop Shadow can expand raster bounds before export.',
           'Drop Shadow participates in shared global light metadata at 77.5 degrees.',
-          'Editable native Photoshop layer-style roundtrip is unavailable; export relies on flattened pixels plus Signal Loom metadata.',
+          'Editable native Photoshop layer-style roundtrip is unavailable; export relies on flattened pixels plus Sloom Studio metadata.',
         ],
         signature: 'layer-effect-export-caveat:v1:{"effectId":"drop-runtime","kind":"dropShadow","renderer":"canvas","target":"flattened","globalLight":77.5,"caveatCodes":["effect-flattened-for-export","canvas-effect-bounds-expansion","global-light-metadata-only","native-photoshop-layer-style-roundtrip-unavailable"]}',
       },
@@ -1140,9 +1140,9 @@ describe('ImageLayerEffects', () => {
           'native-photoshop-layer-style-roundtrip-unavailable',
         ],
         caveats: [
-          'Flattened export bakes Inner Glow into pixels while keeping editable Signal Loom effect metadata.',
+          'Flattened export bakes Inner Glow into pixels while keeping editable Sloom Studio effect metadata.',
           'Inner Glow is rendered into layer content before blend-mode compositing.',
-          'Editable native Photoshop layer-style roundtrip is unavailable; export relies on flattened pixels plus Signal Loom metadata.',
+          'Editable native Photoshop layer-style roundtrip is unavailable; export relies on flattened pixels plus Sloom Studio metadata.',
         ],
         signature: 'layer-effect-export-caveat:v1:{"effectId":"inner-glow-runtime","kind":"innerGlow","renderer":"content","target":"flattened","globalLight":77.5,"caveatCodes":["effect-flattened-for-export","content-effect-raster-approximation","native-photoshop-layer-style-roundtrip-unavailable"]}',
       },
@@ -1313,7 +1313,7 @@ describe('ImageLayerEffects', () => {
       {
         code: 'layer-effect-bevel-emboss-unsupported',
         severity: 'blocker',
-        message: 'Bevel & Emboss layer styles are metadata-only in Signal Loom; flatten before requiring pixel parity.',
+        message: 'Bevel & Emboss layer styles are metadata-only in Sloom Studio; flatten before requiring pixel parity.',
       },
       {
         code: 'layer-effect-blend-if-unsupported',
@@ -1340,7 +1340,7 @@ describe('ImageLayerEffects', () => {
       {
         code: 'layer-effect-preset-portability-limited',
         severity: 'warning',
-        message: 'Layer style presets remain portable inside Signal Loom only for supported effects; native Photoshop-only controls require metadata or flattened pixels.',
+        message: 'Layer style presets remain portable inside Sloom Studio only for supported effects; native Photoshop-only controls require metadata or flattened pixels.',
       },
     ]);
   });

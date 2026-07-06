@@ -1527,7 +1527,7 @@ function createLayerTransformWarning(code: ImageLayerTransformWarningCode): Imag
     return {
       code,
       severity: 'warning',
-      message: 'Source-link metadata is retained for relinking context, but transforms are stored on the Signal Loom layer rather than as editable Smart Object transforms.',
+      message: 'Source-link metadata is retained for relinking context, but transforms are stored on the Sloom Studio layer rather than as editable Smart Object transforms.',
     };
   }
 

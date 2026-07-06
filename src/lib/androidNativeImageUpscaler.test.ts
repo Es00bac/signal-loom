@@ -126,7 +126,7 @@ describe('androidNativeImageUpscaler', () => {
         readiness: 'ready',
         method: 'Single-app on-device accelerated model path through the Capacitor plugin with QNN, NNAPI, or equivalent execution proven.',
         costTier: 'local-device',
-        capability: 'Signal Loom single-app Android-native accelerated upscaling path through the Capacitor plugin.',
+        capability: 'Sloom Studio single-app Android-native accelerated upscaling path through the Capacitor plugin.',
       },
       {
         id: 'android-bitmap-fallback',
@@ -427,7 +427,7 @@ describe('androidNativeImageUpscaler', () => {
       available: false,
       secondAppDependencyRequired: true,
       readiness: 'blocked',
-      summary: 'Android native upscale readiness requires a single Signal Loom app runtime path with no second-app handoff.',
+      summary: 'Android native upscale readiness requires a single Sloom Studio app runtime path with no second-app handoff.',
     });
     expect(path.readiness).toBe('blocked');
     expect(path.blockers.map((blocker) => blocker.code)).toEqual([
@@ -472,7 +472,7 @@ describe('androidNativeImageUpscaler', () => {
       mode: 'accelerated-on-device-preferred',
       readiness: 'degraded',
       proven: false,
-      summary: 'Signal Loom is prepared to prefer an on-device accelerated model path (QNN/NNAPI or equivalent), but live accelerator inference is not yet proven by this helper.',
+      summary: 'Sloom Studio is prepared to prefer an on-device accelerated model path (QNN/NNAPI or equivalent), but live accelerator inference is not yet proven by this helper.',
       evidenceSource: 'descriptor-only',
     });
   });
@@ -496,7 +496,7 @@ describe('androidNativeImageUpscaler', () => {
       runtimeAssetsAvailable: false,
       upscalerModelAvailable: false,
       readiness: 'missing',
-      summary: 'The single-app accelerated path depends on bundled runtime assets plus an in-app upscaler model bundle or download owned by Signal Loom.',
+      summary: 'The single-app accelerated path depends on bundled runtime assets plus an in-app upscaler model bundle or download owned by Sloom Studio.',
     });
     expect(path.blockers.map((blocker) => blocker.code)).toEqual([
       'runtime-assets-missing',
@@ -553,7 +553,7 @@ describe('androidNativeImageUpscaler', () => {
     expect(descriptor.unsupportedStates).toEqual([
       {
         code: 'accelerated-on-device-execution-unproven',
-        summary: 'Accelerated on-device inference cannot be claimed until Signal Loom proves QNN, NNAPI, or an equivalent backend is executing inside the same app.',
+        summary: 'Accelerated on-device inference cannot be claimed until Sloom Studio proves QNN, NNAPI, or an equivalent backend is executing inside the same app.',
       },
       {
         code: 'cloud-fallback-unavailable',

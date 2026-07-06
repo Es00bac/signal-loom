@@ -217,7 +217,7 @@ describe('localNativeRender', () => {
 
     const metadataIndex = postedCommand.indexOf('-metadata');
     expect(metadataIndex).toBeGreaterThan(-1);
-    expect(postedCommand[metadataIndex + 1]).toMatch(/^comment=Signal Loom .*Community \(unlicensed\)$/);
+    expect(postedCommand[metadataIndex + 1]).toMatch(/^comment=Sloom Studio .*Community \(unlicensed\)$/);
     expect(postedCommand[postedCommand.length - 1]).toBe('out.mp4');
     // never break a render: unexpected command shapes pass through untouched
     await renderViaLocalNativeFFmpeg({

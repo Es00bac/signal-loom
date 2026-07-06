@@ -1,7 +1,7 @@
 # 4. Providers & API keys
 
-Signal Loom generates nothing on its own. It calls the AI **providers** you connect with your
-**own keys**, and talks to them directly from your device. There is no Signal Loom account and no
+Sloom Studio generates nothing on its own. It calls the AI **providers** you connect with your
+**own keys**, and talks to them directly from your device. There is no Sloom Studio account and no
 middle server — which means **you** control what each generation costs and where your data goes.
 
 ## Where to enter keys
@@ -28,14 +28,14 @@ enough to start.
 ## Google Vertex AI sign-in
 
 Vertex AI is the one provider with more than a paste-a-key step, because it uses Google Cloud
-authentication. Signal Loom supports three paths:
+authentication. Sloom Studio supports three paths:
 
 1. **Desktop — Sign in with gcloud.** Click **Sign in with gcloud** in the Vertex panel; Signal
    Loom runs the Google Cloud `application-default login` flow, detects your credentials, and lets
    you pick a **project** and **region** from a dropdown. (If you already have Application Default
    Credentials set up, use **Detect ADC**.)
 2. **Mobile, standalone — service account.** Import a Google Cloud **service-account JSON** key
-   and use **Test connection** to confirm it works. Signal Loom mints and caches access tokens on
+   and use **Test connection** to confirm it works. Sloom Studio mints and caches access tokens on
    device.
 3. **Advanced — environment variables.** If you run with ADC environment variables set, Signal
    Loom will use them; the env-var path is exposed under an advanced disclosure.
@@ -45,7 +45,7 @@ After signing in you can use Gemini image models ("Nano Banana") and Veo video o
 ## How cost works
 
 Because you call providers directly with your own key, **you are billed by the provider**, not by
-Signal Loom. Flow nodes show a **run-cost estimate** before you generate, and the run cost is
+Sloom Studio. Flow nodes show a **run-cost estimate** before you generate, and the run cost is
 tracked as you go, so there are no surprises. Pick cheaper or pricier models per node as the work
 demands.
 
@@ -53,12 +53,12 @@ demands.
 
 - Keys are stored **on your device** and sent only to the matching provider.
 - Your prompts and media go **only** to the provider you choose for that generation.
-- Signal Loom has **no account, no content telemetry, and no servers** that see your work.
+- Sloom Studio has **no account, no content telemetry, and no servers** that see your work.
 
 ## Same model, any provider
 
 Several models are reachable through more than one path (for example FLUX directly or through
-Atlas Cloud). Signal Loom reads each model's real **capabilities** — reference images, masks,
+Atlas Cloud). Sloom Studio reads each model's real **capabilities** — reference images, masks,
 image-to-video, and so on — and exposes the same controls wherever that model runs. Capabilities
 follow the model, not the menu.
 

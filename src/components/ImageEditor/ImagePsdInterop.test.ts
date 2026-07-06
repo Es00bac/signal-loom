@@ -181,7 +181,7 @@ describe('ImagePsdInterop', () => {
     installCanvasStub();
   });
 
-  it('exports Signal Loom raster layers into a PSD layer stack', () => {
+  it('exports Sloom Studio raster layers into a PSD layer stack', () => {
     const bottom = makeLayer({
       id: 'bottom',
       name: 'Background Plate',
@@ -228,7 +228,7 @@ describe('ImagePsdInterop', () => {
     expect(readSignalLoomPsdMetadata(psd).layers.map((layer) => layer.name)).toEqual(['Background Plate', 'Character Paint']);
   });
 
-  it('exports Signal Loom group layers as native PSD folders with nested children', () => {
+  it('exports Sloom Studio group layers as native PSD folders with nested children', () => {
     const group = makeLayer({
       id: 'group-1',
       name: 'Scene Group',
@@ -276,7 +276,7 @@ describe('ImagePsdInterop', () => {
     });
   });
 
-  it('imports native PSD folders as Signal Loom group layers with child membership', () => {
+  it('imports native PSD folders as Sloom Studio group layers with child membership', () => {
     const psd: Psd = {
       width: 8,
       height: 8,
@@ -327,7 +327,7 @@ describe('ImagePsdInterop', () => {
     });
   });
 
-  it('preserves Signal Loom text, source-link, and adjustment metadata on PSD model roundtrip', () => {
+  it('preserves Sloom Studio text, source-link, and adjustment metadata on PSD model roundtrip', () => {
     const textLayer = makeLayer({
       id: 'text',
       name: 'Caption',
@@ -806,7 +806,7 @@ describe('ImagePsdInterop', () => {
             limitationWarnings: [
               expect.objectContaining({
                 code: 'metadata-only-smart-filters',
-                message: 'Image filter stacks stay editable in Signal Loom metadata but are flattened for native PSD Smart Filter roundtrip.',
+                message: 'Image filter stacks stay editable in Sloom Studio metadata but are flattened for native PSD Smart Filter roundtrip.',
               }),
               expect.objectContaining({ code: 'smart-filter-mask-unsupported' }),
             ],
@@ -814,7 +814,7 @@ describe('ImagePsdInterop', () => {
               {
                 descriptorId: 'psd-smart-filter-caveat:v1|layer=paint-1|code=metadata-only-smart-filters',
                 code: 'metadata-only-smart-filters',
-                message: 'Image filter stacks stay editable in Signal Loom metadata but are flattened for native PSD Smart Filter roundtrip.',
+                message: 'Image filter stacks stay editable in Sloom Studio metadata but are flattened for native PSD Smart Filter roundtrip.',
               },
               {
                 descriptorId: 'psd-smart-filter-caveat:v1|layer=paint-1|code=smart-filter-mask-unsupported',
@@ -841,7 +841,7 @@ describe('ImagePsdInterop', () => {
             metadataOnlyPsdSmartObject: true,
             caveats: [
               'Native PSD Smart Object records are not written.',
-              'Smart Filter stacks are retained as Signal Loom metadata only.',
+              'Smart Filter stacks are retained as Sloom Studio metadata only.',
               'Package the original linked source asset beside the PSD for safer round-trip recovery.',
             ],
           },
@@ -886,14 +886,14 @@ describe('ImagePsdInterop', () => {
     ]);
     expect(metadata.exportManifest?.layers[1].sourceLink?.roundtripStrategy?.caveats).toEqual([
       'Native PSD Smart Object records are not written.',
-      'Smart Filter stacks are retained as Signal Loom metadata only.',
+      'Smart Filter stacks are retained as Sloom Studio metadata only.',
       'Package the original linked source asset beside the PSD for safer round-trip recovery.',
     ]);
     expect(metadata.exportManifest?.layers[1].sourceLink?.smartFilters?.metadataOnlyCaveats).toEqual([
       {
         descriptorId: 'psd-smart-filter-caveat:v1|layer=paint-1|code=metadata-only-smart-filters',
         code: 'metadata-only-smart-filters',
-        message: 'Image filter stacks stay editable in Signal Loom metadata but are flattened for native PSD Smart Filter roundtrip.',
+        message: 'Image filter stacks stay editable in Sloom Studio metadata but are flattened for native PSD Smart Filter roundtrip.',
       },
       {
         descriptorId: 'psd-smart-filter-caveat:v1|layer=paint-1|code=smart-filter-mask-unsupported',

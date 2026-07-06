@@ -106,7 +106,7 @@ describe('panel menu — JSON tree builder', () => {
   it('carries commands, formats shortcuts as compact display strings, and keeps role:* items', async () => {
     const { buildPanelMenu } = await loadModel();
     const menu = buildPanelMenu({ activeWorkspace: 'image', isMac: false });
-    expect(findNode(menu.groups.flatMap((g) => g.children), 'role:quit')?.label).toBe('Quit Signal Loom');
+    expect(findNode(menu.groups.flatMap((g) => g.children), 'role:quit')?.label).toBe('Quit Sloom Studio');
 
     const withShortcut = allNodes(menu).find((node) => typeof node.shortcut === 'string');
     expect(withShortcut?.shortcut).toMatch(/^[A-Za-z0-9+]+$/); // e.g. "Ctrl+Shift+S", never the aas form
@@ -173,7 +173,7 @@ describe('panel menu — D-Bus interface behavior', () => {
       getMenuBase64: () => 'BASE64',
       getState: () => ({ active: true, revision: 7 }),
       onActivate: (command) => activated.push(command),
-      appId: 'signal-loom\nSignal Loom',
+      appId: 'signal-loom\nSloom Studio',
     });
     expect(iface.State()).toBe('1:7');
     expect(iface.GetMenu()).toBe('BASE64');

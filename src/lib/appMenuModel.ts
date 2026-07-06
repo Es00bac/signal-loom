@@ -167,7 +167,7 @@ export function buildWorkspaceSuiteStandaloneHandoff(workspace: WorkspaceView): 
     standaloneEntryPoint: standalone.entryPoint,
     standaloneMode: standalone.mode,
     handoffStatus: 'ready',
-    caveat: `The ${descriptor.appName} workspace can be launched from the suite menu or deep-linked into the shared Signal Loom binary; it is not a separately signed standalone executable.`,
+    caveat: `The ${descriptor.appName} workspace can be launched from the suite menu or deep-linked into the shared Sloom Studio binary; it is not a separately signed standalone executable.`,
     signature: [
       'workspace-handoff:v1',
       workspace,

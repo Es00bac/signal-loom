@@ -464,8 +464,8 @@ export function describeXcfImportReadinessPolicy(
       masks: 'Layer masks are not read from XCF and are flattened into pixels during current XCF export.',
       groups: 'Native XCF group folders are not imported and Image currently exports a flat raster layer list.',
       text: 'Editable XCF text is not imported; Image text layers export as raster pixels.',
-      effects: 'Native GIMP effects or Signal Loom layer effects are not preserved as editable XCF effect state.',
-      filters: 'GIMP filter/plugin state and Signal Loom filter stacks are not round-tripped as native editable XCF filters.',
+      effects: 'Native GIMP effects or Sloom Studio layer effects are not preserved as editable XCF effect state.',
+      filters: 'GIMP filter/plugin state and Sloom Studio filter stacks are not round-tripped as native editable XCF filters.',
       sourceLinks: 'Source-linked layers and Smart Object-like relationships are metadata-only in Image and are not native XCF links.',
     },
     sourcePolicy: {
@@ -1044,7 +1044,7 @@ function describeXcfLayerWarningMessage(code: SignalLoomXcfExportWarningCode): s
     case 'xcf-import-unsupported':
       return 'Image can export XCF files, but importing or decoding existing GIMP XCF workfiles is unsupported.';
     case 'editable-text-flattened':
-      return 'Editable text exports to XCF as raster pixels; text remains editable only in the Signal Loom Image document.';
+      return 'Editable text exports to XCF as raster pixels; text remains editable only in the Sloom Studio Image document.';
     case 'layer-effects-flattened':
       return 'Layer effects are rasterized into XCF layer pixels instead of native editable GIMP effects.';
     case 'layer-masks-flattened':
@@ -1052,7 +1052,7 @@ function describeXcfLayerWarningMessage(code: SignalLoomXcfExportWarningCode): s
     case 'source-links-flattened':
       return 'Source-linked layer metadata is not written as native XCF link state; keep the original asset in the Source Library.';
     case 'filter-metadata-flattened':
-      return 'Filter stacks are retained as Signal Loom metadata but exported as flattened XCF pixels instead of native editable filters.';
+      return 'Filter stacks are retained as Sloom Studio metadata but exported as flattened XCF pixels instead of native editable filters.';
     case 'adjustment-layers-omitted':
       return 'Adjustment layers are omitted from native XCF layers; use a visible flattened format when baked color is required.';
     case 'layer-groups-omitted':
@@ -1176,7 +1176,7 @@ function buildXcfExportWarnings(
   appendXcfLayerWarning(warnings, layers, 'layer-effects-flattened', 'Layer effects are rasterized into XCF layer pixels instead of native editable GIMP effects.');
   appendXcfLayerWarning(warnings, layers, 'layer-masks-flattened', 'Layer masks are baked into XCF layer pixels instead of native editable GIMP masks.');
   appendXcfLayerWarning(warnings, layers, 'source-links-flattened', 'Source-linked layer editability is exported as raster pixels; native smart object/source-link semantics are not written to XCF.');
-  appendXcfLayerWarning(warnings, layers, 'filter-metadata-flattened', 'Filter stacks are retained as Signal Loom metadata but exported to XCF as flattened layer pixels instead of native editable filters.');
+  appendXcfLayerWarning(warnings, layers, 'filter-metadata-flattened', 'Filter stacks are retained as Sloom Studio metadata but exported to XCF as flattened layer pixels instead of native editable filters.');
   appendXcfLayerWarning(warnings, layers, 'adjustment-layers-omitted', 'Adjustment layers are not written as native XCF layers; export a visible flattened format for baked color adjustments.');
   appendXcfLayerWarning(warnings, layers, 'layer-groups-omitted', 'Layer groups are not written as native XCF folders; exported child raster layers remain flat.');
 

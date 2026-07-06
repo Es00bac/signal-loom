@@ -8,7 +8,7 @@ export interface OpenedNativeFile {
 }
 
 /**
- * Native shim for ACTION_SEND ("share to Signal Loom" from another app's share sheet).
+ * Native shim for ACTION_SEND ("share to Sloom Studio" from another app's share sheet).
  * `@capacitor/app`'s `appUrlOpen` only recognizes ACTION_VIEW + `intent.getData()` — a share
  * intent's URI lives in `EXTRA_STREAM` under ACTION_SEND instead, invisible to that plugin. See
  * SignalLoomShareIntentPlugin.java (android/app/.../SignalLoomShareIntentPlugin.java), which
@@ -66,7 +66,7 @@ export async function readOpenedUriBytes(uri: string): Promise<Uint8Array> {
 }
 
 /**
- * Wire up Android "Open with" / file-manager taps (ACTION_VIEW) and "Share to Signal Loom" from
+ * Wire up Android "Open with" / file-manager taps (ACTION_VIEW) and "Share to Sloom Studio" from
  * another app's share sheet (ACTION_SEND). Whether the app is launched (cold) or resumed (warm,
  * via `singleTask` → `onNewIntent`), read the bytes and hand them to `onOpen`. No-ops off native.
  * Returns a cleanup function.
@@ -100,7 +100,7 @@ export function registerAndroidFileOpenHandler(
       const bytes = await readOpenedUriBytes(uri);
       await onOpen({ bytes, fileName: fileNameFromUri(uri) });
     } catch (error) {
-      console.error('[Signal Loom] Failed to open file from intent:', uri, error);
+      console.error('[Sloom Studio] Failed to open file from intent:', uri, error);
       showUserNotice(
         `Couldn’t open “${fileNameFromUri(uri)}”: ${error instanceof Error ? error.message : String(error)}`,
         'error',

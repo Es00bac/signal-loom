@@ -1157,21 +1157,21 @@ function getLayerFilterSmartFilterStyleLimits(
       editable: true,
       portability: 'flattened-handoff',
       warning:
-        'Per-filter blend modes stay editable in Signal Loom but flatten into preview/export pixels for native smart-filter handoff.',
+        'Per-filter blend modes stay editable in Sloom Studio but flatten into preview/export pixels for native smart-filter handoff.',
     },
     {
       id: 'opacity',
       editable: true,
       portability: 'flattened-handoff',
       warning:
-        'Per-filter opacity stays editable in Signal Loom metadata but is baked into flattened preview/export pixels.',
+        'Per-filter opacity stays editable in Sloom Studio metadata but is baked into flattened preview/export pixels.',
     },
     {
       id: 'order',
       editable: true,
       portability: 'flattened-handoff',
       warning:
-        'Per-filter order stays deterministic in Signal Loom metadata but does not roundtrip as editable native smart-filter order.',
+        'Per-filter order stays deterministic in Sloom Studio metadata but does not roundtrip as editable native smart-filter order.',
     },
   );
   return limits;
@@ -1189,7 +1189,7 @@ function getLayerFilterStackPortability(
     warnings.push('Unsupported filter parameters require rasterization or lossy preset omission.');
   }
   warnings.push(
-    'Source Bin and Video handoff preserve flattened pixels plus Signal Loom metadata only; editable native smart-filter roundtrip is unavailable.',
+    'Source Bin and Video handoff preserve flattened pixels plus Sloom Studio metadata only; editable native smart-filter roundtrip is unavailable.',
   );
   return {
     portableWithinSignalLoom: warnings.length === 1,

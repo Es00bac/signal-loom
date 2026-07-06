@@ -100,7 +100,8 @@
   },
   "build": {
     "appId": "studio.sloom.signalloom",
-    "productName": "Signal Loom",
+    "productName": "Sloom Studio",
+    "artifactName": "SloomStudio-${version}-${arch}.${ext}",
     "asar": true,
     "directories": {
       "output": "release"
@@ -141,7 +142,8 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "SloomStudio-Setup-${version}.${ext}"
     },
     "mac": {
       "category": "public.app-category.graphics-design",

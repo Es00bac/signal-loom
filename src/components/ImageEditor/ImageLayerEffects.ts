@@ -714,7 +714,7 @@ export function describeLayerEffectUnsupportedStateDescriptors(
       capability: 'unsupported-effect',
       preservation: 'metadata-only',
       reasonCode: 'layer-effect-bevel-emboss-unsupported',
-      warning: capability?.warning ?? 'This Photoshop layer effect is not implemented in Signal Loom yet.',
+      warning: capability?.warning ?? 'This Photoshop layer effect is not implemented in Sloom Studio yet.',
     }));
   }
   if (options.blendIf === 'present') {
@@ -734,7 +734,7 @@ export function describeLayerEffectUnsupportedStateDescriptors(
       capability: 'native-psd-live-effect-fidelity',
       preservation: 'flattened-pixels-and-signal-loom-metadata',
       reasonCode: 'native-psd-live-effect-fidelity-unsupported',
-      warning: 'Native PSD live layer-effect fidelity is not supported; Signal Loom preserves deterministic metadata and flattened pixels for export.',
+      warning: 'Native PSD live layer-effect fidelity is not supported; Sloom Studio preserves deterministic metadata and flattened pixels for export.',
     }));
   }
   if (options.smartObjectEffectPreservation === 'required') {
@@ -744,7 +744,7 @@ export function describeLayerEffectUnsupportedStateDescriptors(
       capability: 'smart-object-effect-preservation',
       preservation: 'metadata-only',
       reasonCode: 'smart-object-effect-preservation-unsupported',
-      warning: 'Smart Object layer effect preservation is not supported; effects must be represented as Signal Loom metadata or flattened pixels.',
+      warning: 'Smart Object layer effect preservation is not supported; effects must be represented as Sloom Studio metadata or flattened pixels.',
     }));
   }
   return states;
@@ -792,7 +792,7 @@ function buildLayerEffectReadinessBlockers(input: {
     blockers.push({
       code: 'layer-effect-bevel-emboss-unsupported',
       severity: 'blocker',
-      message: 'Bevel & Emboss layer styles are metadata-only in Signal Loom; flatten before requiring pixel parity.',
+      message: 'Bevel & Emboss layer styles are metadata-only in Sloom Studio; flatten before requiring pixel parity.',
     });
   }
   if (input.blendIfPresent) {
@@ -840,7 +840,7 @@ function buildLayerEffectReadinessWarnings(
     warnings.push({
       code: 'layer-effect-preset-portability-limited',
       severity: 'warning',
-      message: 'Layer style presets remain portable inside Signal Loom only for supported effects; native Photoshop-only controls require metadata or flattened pixels.',
+      message: 'Layer style presets remain portable inside Sloom Studio only for supported effects; native Photoshop-only controls require metadata or flattened pixels.',
     });
   }
   return warnings;
@@ -1140,7 +1140,7 @@ function describeLayerEffectExportCaveatMessage(input: {
 }): string {
   switch (input.code) {
     case 'effect-flattened-for-export':
-      return `Flattened export bakes ${input.label} into pixels while keeping editable Signal Loom effect metadata.`;
+      return `Flattened export bakes ${input.label} into pixels while keeping editable Sloom Studio effect metadata.`;
     case 'canvas-effect-bounds-expansion':
       return `${input.label} can expand raster bounds before export.`;
     case 'content-effect-raster-approximation':
@@ -1150,7 +1150,7 @@ function describeLayerEffectExportCaveatMessage(input: {
         ? `${input.label} participates in shared global light metadata when an angle is available.`
         : `${input.label} participates in shared global light metadata at ${input.globalLightAngle} degrees.`;
     case 'native-photoshop-layer-style-roundtrip-unavailable':
-      return 'Editable native Photoshop layer-style roundtrip is unavailable; export relies on flattened pixels plus Signal Loom metadata.';
+      return 'Editable native Photoshop layer-style roundtrip is unavailable; export relies on flattened pixels plus Sloom Studio metadata.';
   }
 }
 

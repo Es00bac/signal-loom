@@ -1310,7 +1310,7 @@ export function buildImageQuickActionMacroPlaybackDiagnostics(input: {
       arbitraryCommandsSupported: false,
       parameterizedStepsSupported: false,
       fixedQuickActionIdsOnly: true,
-      message: 'Playback diagnostics assume fixed Signal Loom quick action ids only; arbitrary commands and parameter payloads remain descriptor-only caveats.',
+      message: 'Playback diagnostics assume fixed Sloom Studio quick action ids only; arbitrary commands and parameter payloads remain descriptor-only caveats.',
     },
     documents,
     preview: {

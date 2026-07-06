@@ -32,11 +32,11 @@ function makeImageItem(): SourceBinLibraryItem {
 describe('paperDocument', () => {
   it('creates a print-oriented document with pages, margins, grids, and guides enabled', () => {
     const doc = createDefaultPaperDocument({
-      title: 'Signal Loom Comic',
+      title: 'Sloom Studio Comic',
       preset: 'us-letter',
     });
 
-    expect(doc.title).toBe('Signal Loom Comic');
+    expect(doc.title).toBe('Sloom Studio Comic');
     expect(doc.pages).toHaveLength(1);
     expect(doc.pages[0].pageNumber).toBe(1);
     expect(doc.page.widthMm).toBe(215.9);

@@ -356,7 +356,7 @@ function FlowApp() {
   const licenseIsCommercial = useSettingsStore((state) => state.license.licensed);
   // Edition in the title bar (licensing spec Part 2 §3). Licensed builds keep the clean title.
   useEffect(() => {
-    document.title = licenseIsCommercial ? 'Signal Loom' : 'Signal Loom — Community';
+    document.title = licenseIsCommercial ? 'Sloom Studio' : 'Sloom Studio — Community';
   }, [licenseIsCommercial]);
   const defaultModels = useSettingsStore((state) => state.defaultModels);
   const providerSettings = useSettingsStore((state) => state.providerSettings);
@@ -441,7 +441,7 @@ function FlowApp() {
   const [activeHelpSectionId, setActiveHelpSectionId] = useState<HelpSectionId | null>(null);
   const [startupSplash, setStartupSplash] = useState(() => ({
     visible: Boolean(getSignalLoomNativeBridge()),
-    title: 'Starting Signal Loom',
+    title: 'Starting Sloom Studio',
     detail: 'Preparing workspace…',
   }));
   const [flowOrganizeJob, setFlowOrganizeJob] = useState<{
@@ -1519,7 +1519,7 @@ function FlowApp() {
           await bridge.showAbout({ edition: describeLicenseEdition(useSettingsStore.getState().license) });
         } else {
           await showAlertDialog({
-            title: 'Signal Loom',
+            title: 'Sloom Studio',
             message: `Generative AI media flow builder and timeline editor. ${describeLicenseEdition(useSettingsStore.getState().license)}.`,
             tone: 'info',
           });
@@ -1797,7 +1797,7 @@ function FlowApp() {
       return;
     }
     if (kind === 'unknown') {
-      throw new Error('This file is not a Signal Loom project (.sloom), image (.slimg), or layout (.slppr).');
+      throw new Error('This file is not a Sloom Studio project (.sloom), image (.slimg), or layout (.slppr).');
     }
 
     const document = await parseProjectDocument(new File([bytes as BlobPart], fileName));
@@ -1826,7 +1826,7 @@ function FlowApp() {
     }
   }, [openSignalLoomFileBytes]);
 
-  // Android: open Signal Loom files tapped in a file manager / "Open with" (ACTION_VIEW intent).
+  // Android: open Sloom Studio files tapped in a file manager / "Open with" (ACTION_VIEW intent).
   useEffect(() => {
     return registerAndroidFileOpenHandler(async ({ bytes, fileName }) => {
       try {
@@ -1899,7 +1899,7 @@ function FlowApp() {
           }
         }
       }).catch((error) => {
-        const message = error instanceof Error ? error.message : 'Signal Loom could not finish startup.';
+        const message = error instanceof Error ? error.message : 'Sloom Studio could not finish startup.';
         console.error(message);
       }).finally(() => {
         if (!cancelled) {
@@ -2348,7 +2348,7 @@ function StartupSplash({ title, detail }: { title: string; detail: string }) {
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-[#020711]">
       <img
-        alt="Signal Loom is starting"
+        alt="Sloom Studio is starting"
         className="h-full max-h-full w-full max-w-full object-contain"
         draggable={false}
         src="/signal-loom-splash.png"
@@ -2378,13 +2378,13 @@ function AppHelpModal({
       minSize={{ width: 520, height: 360 }}
       onClose={onClose}
       open
-      title="Signal Loom Help"
+      title="Sloom Studio Help"
       workspaceId="app-dialogs"
     >
       <div className="theme-card grid h-full min-h-0 overflow-hidden bg-[#101722] text-gray-100 md:grid-cols-[220px_minmax(0,1fr)]">
         <aside className="theme-card-soft border-b border-cyan-300/15 bg-[#0b121d] p-4 md:border-b-0 md:border-r">
           <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-200/70">Help</div>
-          <div className="mt-1 text-lg font-semibold text-white">Signal Loom</div>
+          <div className="mt-1 text-lg font-semibold text-white">Sloom Studio</div>
           <div className="mt-4 space-y-1">
             {HELP_SECTIONS.map((section) => (
               <button

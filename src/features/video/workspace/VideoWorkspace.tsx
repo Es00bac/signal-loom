@@ -1847,7 +1847,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
 
     const sequenceName = typeof activeComposition.data.customTitle === 'string' && activeComposition.data.customTitle.trim()
       ? activeComposition.data.customTitle.trim()
-      : 'Signal Loom Sequence';
+      : 'Sloom Studio Sequence';
     const sequence = buildFcpXmlSequenceFromEditor({
       name: sequenceName,
       frameRate: compositionFrameRate,
@@ -6222,7 +6222,7 @@ export function ProgramMonitorPanel({
                   </div>
                 </div>
                 <div className="mt-1 text-xs text-amber-50/85">
-                  {renderStatusMessage ?? 'Signal Loom is rendering the current composition.'}
+                  {renderStatusMessage ?? 'Sloom Studio is rendering the current composition.'}
                 </div>
               </div>
             </div>
@@ -6770,7 +6770,7 @@ function buildRenderedPreviewDescriptor({
     return {
       status: 'rendering',
       title: 'Rendering preview',
-      detail: renderStatusMessage?.trim() || 'Signal Loom is rendering the current composition.',
+      detail: renderStatusMessage?.trim() || 'Sloom Studio is rendering the current composition.',
       metadata,
     };
   }
@@ -6883,7 +6883,7 @@ function VideoPremiereParityPanel() {
             </div>
             <div className="mt-1 grid gap-1 text-[10px] leading-4 text-gray-400 md:grid-cols-2">
               <div><span className="text-gray-500">Premiere:</span> {row.premiere}</div>
-              <div><span className="text-gray-500">Signal Loom:</span> {row.signalLoom}</div>
+              <div><span className="text-gray-500">Sloom Studio:</span> {row.signalLoom}</div>
             </div>
             <div className="mt-1 text-[10px] leading-4 text-cyan-100/85">{row.workflowImpact}</div>
           </div>
@@ -6921,7 +6921,7 @@ function RenderedPreviewStatusPanel({
         ? 'Rendered preview unavailable'
         : 'No rendered preview yet';
   const detail = state === 'waiting'
-    ? (renderStatusMessage?.trim() || 'Signal Loom is rendering the current composition.')
+    ? (renderStatusMessage?.trim() || 'Sloom Studio is rendering the current composition.')
     : state === 'error'
       ? (errorMessage?.trim() || 'The last render did not produce a playable preview asset.')
       : state === 'empty'

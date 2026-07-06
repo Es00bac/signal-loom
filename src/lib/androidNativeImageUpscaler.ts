@@ -714,13 +714,13 @@ function buildAndroidOnDeviceReadinessCheck(
     'imported-file-edit-evidence': 'Imported-file edit evidence',
   };
   const summaries: Record<AndroidNativeOnDeviceUpscaleReadinessCheckCode, string> = {
-    'android-runtime': 'Requires the Signal Loom Capacitor app runtime on Android.',
+    'android-runtime': 'Requires the Sloom Studio Capacitor app runtime on Android.',
     'native-plugin': 'Requires the Android native image upscaler plugin to be registered in the same app.',
     'local-dream-service': 'Requires the bundled Local Dream upscaler service startup path to be available.',
     'accelerator-runtime': 'Prefers QNN/HTP, NNAPI, or an equivalent on-device accelerator runtime when proven available.',
-    'runtime-assets': 'Requires native runtime assets to be bundled with or owned by Signal Loom.',
-    'upscaler-model': 'Requires an in-app upscaler model bundle or download owned by Signal Loom.',
-    'single-app-runtime': 'Requires one Signal Loom Android app to own the runtime, model, and plugin path.',
+    'runtime-assets': 'Requires native runtime assets to be bundled with or owned by Sloom Studio.',
+    'upscaler-model': 'Requires an in-app upscaler model bundle or download owned by Sloom Studio.',
+    'single-app-runtime': 'Requires one Sloom Studio Android app to own the runtime, model, and plugin path.',
     'no-second-app-handoff': 'Blocks readiness when upscaling still depends on a second Android app.',
     'accelerated-execution': 'Reports whether live plugin evidence proves QNN, NNAPI, or equivalent accelerated inference.',
     'dex-1080p-evidence': 'Requires DeX or equivalent external-display evidence at 1920x1080 or higher.',
@@ -781,7 +781,7 @@ function buildAndroidImageParityRoutes(
         summary: 'Runs on the Android device through the bundled Local Dream/QNN route; no cloud usage cost.',
       },
       capability: {
-        summary: 'Signal Loom single-app Android-native accelerated upscaling path through the Capacitor plugin.',
+        summary: 'Sloom Studio single-app Android-native accelerated upscaling path through the Capacitor plugin.',
         requiresAndroidRuntime: true,
         requiresBundledModel: true,
         singleApplicationOnly: true,
@@ -790,7 +790,7 @@ function buildAndroidImageParityRoutes(
       },
       blockers: nativeBlockers,
       caveats: [
-        'Requires Android Capacitor runtime, registered native plugin, a single-app Signal Loom execution path, Local Dream service startup, bundled runtime assets, and an in-app upscaler model.',
+        'Requires Android Capacitor runtime, registered native plugin, a single-app Sloom Studio execution path, Local Dream service startup, bundled runtime assets, and an in-app upscaler model.',
         nativePath.execution.summary,
       ],
     },
@@ -913,7 +913,7 @@ export function describeAndroidNativeUpscalerPath(
       readiness: runtime.singleApplicationRuntimeAvailable !== false && runtime.secondAppDependencyRequired !== true
         ? 'ready'
         : 'blocked',
-      summary: 'Android native upscale readiness requires a single Signal Loom app runtime path with no second-app handoff.',
+      summary: 'Android native upscale readiness requires a single Sloom Studio app runtime path with no second-app handoff.',
     },
     preferredAccelerators: [...preferredAccelerators],
     accelerators: preferredAccelerators.map((acceleratorId) => ({
@@ -928,7 +928,7 @@ export function describeAndroidNativeUpscalerPath(
       readiness: runtime.bundledRuntimeAssetsAvailable !== false && runtime.bundledUpscalerModelAvailable !== false
         ? 'ready'
         : 'missing',
-      summary: 'The single-app accelerated path depends on bundled runtime assets plus an in-app upscaler model bundle or download owned by Signal Loom.',
+      summary: 'The single-app accelerated path depends on bundled runtime assets plus an in-app upscaler model bundle or download owned by Sloom Studio.',
     },
     execution: {
       mode: 'accelerated-on-device-preferred',
@@ -990,7 +990,7 @@ function buildAndroidNativeExecutionSummary(input: {
   if (input.evidenceSource === 'descriptor-flag') {
     return 'Single-app on-device accelerated model path through the Capacitor plugin with QNN, NNAPI, or equivalent execution proven.';
   }
-  return 'Signal Loom is prepared to prefer an on-device accelerated model path (QNN/NNAPI or equivalent), but live accelerator inference is not yet proven by this helper.';
+  return 'Sloom Studio is prepared to prefer an on-device accelerated model path (QNN/NNAPI or equivalent), but live accelerator inference is not yet proven by this helper.';
 }
 
 function buildCloudFallbackBlockers(
@@ -1012,7 +1012,7 @@ function buildAndroidImageParityBlocker(
     'accelerator-runtime-missing': 'QNN, NNAPI, or equivalent accelerator availability has not been proven.',
     'runtime-assets-missing': 'Bundled runtime assets required for the on-device path have not been proven.',
     'upscaler-model-missing': 'Bundled upscaler model availability has not been proven.',
-    'single-app-runtime-missing': 'The single-app Signal Loom runtime path has not been proven.',
+    'single-app-runtime-missing': 'The single-app Sloom Studio runtime path has not been proven.',
     'second-app-handoff-required': 'The current Android upscale path still depends on a second-app handoff.',
     'cloud-provider-missing': 'No configured cloud image fallback provider is available.',
     'dex-1080p-evidence-missing': 'Android DeX or equivalent 1080p opened-document evidence is missing or insufficient.',
@@ -1135,7 +1135,7 @@ function buildAndroidImageParityUnsupportedState(
   const summaries: Record<AndroidImageParityUnsupportedState['code'], string> = {
     'android-native-runtime-unavailable': 'Android-native Image parity cannot be claimed outside the Android Capacitor runtime.',
     'local-dream-qnn-upscale-unavailable': 'On-device QNN upscaling is unsupported until the plugin, Local Dream service, QNN runtime, and bundled upscaler model are all proven.',
-    'accelerated-on-device-execution-unproven': 'Accelerated on-device inference cannot be claimed until Signal Loom proves QNN, NNAPI, or an equivalent backend is executing inside the same app.',
+    'accelerated-on-device-execution-unproven': 'Accelerated on-device inference cannot be claimed until Sloom Studio proves QNN, NNAPI, or an equivalent backend is executing inside the same app.',
     'bitmap-fallback-unavailable': 'Bitmap fallback is unsupported until the Android runtime, plugin, and Local Dream service startup path are proven.',
     'cloud-fallback-unavailable': 'Cloud fallback is unsupported until provider credentials and a fallback image model are configured.',
     'dex-1080p-evidence-unproven': 'DeX or equivalent 1920x1080 opened-document evidence is required before Android Image parity can be marked covered.',

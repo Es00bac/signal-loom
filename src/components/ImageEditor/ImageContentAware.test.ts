@@ -462,7 +462,7 @@ describe('ImageContentAware', () => {
       approximationWarning: {
         code: 'ai-vs-local-approximation',
         severity: 'warning',
-        message: 'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
+        message: 'Uses Sloom Studio local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
       },
       selectionBounds: { x: 1, y: 1, width: 2, height: 1 },
       samplingRadius: 2,
@@ -479,7 +479,7 @@ describe('ImageContentAware', () => {
         {
           code: 'local-approximation',
           severity: 'warning',
-          message: 'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
+          message: 'Uses Sloom Studio local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
         },
       ],
     });
@@ -673,12 +673,12 @@ describe('ImageContentAware', () => {
         localEngine: 'deterministic-pixel-patch',
         aiEquivalent: 'Photoshop Content-Aware Fill / Generative Fill',
         severity: 'warning',
-        message: 'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
+        message: 'Uses Sloom Studio local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
       });
       expect(plan.approximationWarning).toEqual({
         code: 'ai-vs-local-approximation',
         severity: 'warning',
-        message: 'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
+        message: 'Uses Sloom Studio local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
       });
       expect(plan.commandCapability).toEqual(
         expect.objectContaining({
@@ -739,7 +739,7 @@ describe('ImageContentAware', () => {
       localEngine: 'deterministic-pixel-patch',
       aiEquivalent: 'Photoshop Content-Aware Fill / Generative Fill',
       severity: 'warning',
-      message: 'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
+      message: 'Uses Sloom Studio local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
     });
     expect(plan.commandCapability).toEqual({
       command: 'content-aware-remove',

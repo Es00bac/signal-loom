@@ -71,7 +71,7 @@ describe('workspaceMenus single source of truth', () => {
 
       // Native side: capture command IDs by clicking each command item in order.
       const nativeCommands: string[] = [];
-      const template = createApplicationMenuTemplate({ appName: 'Signal Loom', isMac: false, activeWorkspace: ws, sendCommand: (c) => nativeCommands.push(c) });
+      const template = createApplicationMenuTemplate({ appName: 'Sloom Studio', isMac: false, activeWorkspace: ws, sendCommand: (c) => nativeCommands.push(c) });
       const nativeLabels = template.map((g) => g.label);
       clickAllInOrder(template);
 

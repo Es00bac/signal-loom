@@ -18,7 +18,7 @@ describe('androidSourceAssetStorage', () => {
       checkPermissions: vi.fn(async () => ({ publicStorage: 'prompt' as const })),
       requestPermissions: vi.fn(async () => ({ publicStorage: 'granted' as const })),
       mkdir: vi.fn(async () => undefined),
-      writeFile: vi.fn(async () => ({ uri: 'file:///storage/emulated/0/Documents/Signal Loom/Source Library/panel.png' })),
+      writeFile: vi.fn(async () => ({ uri: 'file:///storage/emulated/0/Documents/Sloom Studio/Source Library/panel.png' })),
       getUri: vi.fn(),
     };
 
@@ -57,8 +57,8 @@ describe('androidSourceAssetStorage', () => {
       label: 'Panel One',
       kind: 'image',
       mimeType: 'image/png',
-      assetUrl: 'capacitor://file:///storage/emulated/0/Documents/Signal Loom/Source Library/panel.png',
-      nativeFilePath: 'file:///storage/emulated/0/Documents/Signal Loom/Source Library/panel.png',
+      assetUrl: 'capacitor://file:///storage/emulated/0/Documents/Sloom Studio/Source Library/panel.png',
+      nativeFilePath: 'file:///storage/emulated/0/Documents/Sloom Studio/Source Library/panel.png',
       isGenerated: true,
       originNodeId: 'image-node-1',
     });
@@ -69,7 +69,7 @@ describe('androidSourceAssetStorage', () => {
       checkPermissions: vi.fn(async () => ({ publicStorage: 'denied' as const })),
       requestPermissions: vi.fn(async () => ({ publicStorage: 'denied' as const })),
       mkdir: vi.fn(async () => undefined),
-      writeFile: vi.fn(async () => ({ uri: 'file:///data/user/0/studio.sloom.signalloom/files/Signal Loom/Source Library/panel-denied.png' })),
+      writeFile: vi.fn(async () => ({ uri: 'file:///data/user/0/studio.sloom.signalloom/files/Sloom Studio/Source Library/panel-denied.png' })),
       getUri: vi.fn(),
     };
 
@@ -102,8 +102,8 @@ describe('androidSourceAssetStorage', () => {
     });
     expect(item).toMatchObject({
       id: 'panel-denied',
-      assetUrl: 'file:///data/user/0/studio.sloom.signalloom/files/Signal Loom/Source Library/panel-denied.png',
-      nativeFilePath: 'file:///data/user/0/studio.sloom.signalloom/files/Signal Loom/Source Library/panel-denied.png',
+      assetUrl: 'file:///data/user/0/studio.sloom.signalloom/files/Sloom Studio/Source Library/panel-denied.png',
+      nativeFilePath: 'file:///data/user/0/studio.sloom.signalloom/files/Sloom Studio/Source Library/panel-denied.png',
     });
   });
 });

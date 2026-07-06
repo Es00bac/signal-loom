@@ -109,10 +109,10 @@ public class SignalLoomImageUpscalerPlugin extends Plugin {
                     payload = runLocalDreamQnnUpscale(source, targetWidthPx, targetHeightPx, outputFormat, quality, upscalerId);
                 } catch (Exception error) {
                     if (!allowBitmapFallback) {
-                        call.reject("Signal Loom bundled QNN upscaler is unavailable: " + readableMessage(error), error);
+                        call.reject("Sloom Studio bundled QNN upscaler is unavailable: " + readableMessage(error), error);
                         return;
                     }
-                    warnings.add("Signal Loom bundled QNN upscaler unavailable; used Android bitmap fallback instead. " + readableMessage(error));
+                    warnings.add("Sloom Studio bundled QNN upscaler unavailable; used Android bitmap fallback instead. " + readableMessage(error));
                 }
             }
 
@@ -178,7 +178,7 @@ public class SignalLoomImageUpscalerPlugin extends Plugin {
         File nativeDir = new File(context.getApplicationInfo().nativeLibraryDir);
         File executableFile = new File(nativeDir, "libstable_diffusion_core.so");
         if (!executableFile.exists()) {
-            throw new IllegalStateException("Bundled Local Dream QNN runtime is missing from this Signal Loom APK.");
+            throw new IllegalStateException("Bundled Local Dream QNN runtime is missing from this Sloom Studio APK.");
         }
 
         File runtimeDir = prepareQnnRuntimeDir(context);
@@ -216,13 +216,13 @@ public class SignalLoomImageUpscalerPlugin extends Plugin {
     private File prepareQnnRuntimeDir(Context context) throws Exception {
         File runtimeDir = new File(context.getFilesDir(), "runtime_libs");
         if (!runtimeDir.exists() && !runtimeDir.mkdirs()) {
-            throw new IllegalStateException("Could not create Signal Loom QNN runtime directory.");
+            throw new IllegalStateException("Could not create Sloom Studio QNN runtime directory.");
         }
 
         AssetManager assets = context.getAssets();
         String[] qnnAssets = assets.list("qnnlibs");
         if (qnnAssets == null || qnnAssets.length == 0) {
-            throw new IllegalStateException("Bundled QNN libraries are missing from Signal Loom assets.");
+            throw new IllegalStateException("Bundled QNN libraries are missing from Sloom Studio assets.");
         }
 
         for (String fileName : qnnAssets) {
@@ -250,7 +250,7 @@ public class SignalLoomImageUpscalerPlugin extends Plugin {
     private File ensureSignalLoomUpscalerModel(String upscalerId) throws Exception {
         File modelDir = new File(new File(getContext().getFilesDir(), "models"), upscalerId);
         if (!modelDir.exists() && !modelDir.mkdirs()) {
-            throw new IllegalStateException("Could not create Signal Loom upscaler model directory.");
+            throw new IllegalStateException("Could not create Sloom Studio upscaler model directory.");
         }
         File upscalerFile = new File(modelDir, "upscaler.bin");
         if (upscalerFile.exists() && upscalerFile.length() > 0) {
@@ -264,7 +264,7 @@ public class SignalLoomImageUpscalerPlugin extends Plugin {
             connection.setReadTimeout(300_000);
             int responseCode = connection.getResponseCode();
             if (responseCode < 200 || responseCode >= 300) {
-                throw new IllegalStateException("Could not download Signal Loom upscaler model (" + responseCode + "): " + readErrorBody(connection));
+                throw new IllegalStateException("Could not download Sloom Studio upscaler model (" + responseCode + "): " + readErrorBody(connection));
             }
             try (InputStream inputStream = connection.getInputStream();
                  OutputStream outputStream = new FileOutputStream(partialFile)) {
@@ -275,7 +275,7 @@ public class SignalLoomImageUpscalerPlugin extends Plugin {
         }
 
         if (!partialFile.renameTo(upscalerFile)) {
-            throw new IllegalStateException("Could not finalize downloaded Signal Loom upscaler model.");
+            throw new IllegalStateException("Could not finalize downloaded Sloom Studio upscaler model.");
         }
         return upscalerFile;
     }
@@ -328,7 +328,7 @@ public class SignalLoomImageUpscalerPlugin extends Plugin {
 
             int responseCode = connection.getResponseCode();
             if (responseCode != HttpURLConnection.HTTP_OK) {
-                throw new IllegalStateException("Signal Loom bundled QNN upscaler rejected request (" + responseCode + "): " + readErrorBody(connection));
+                throw new IllegalStateException("Sloom Studio bundled QNN upscaler rejected request (" + responseCode + "): " + readErrorBody(connection));
             }
 
             byte[] responseBytes;
@@ -337,7 +337,7 @@ public class SignalLoomImageUpscalerPlugin extends Plugin {
             }
             Bitmap decoded = BitmapFactory.decodeByteArray(responseBytes, 0, responseBytes.length);
             if (decoded == null) {
-                throw new IllegalStateException("Signal Loom bundled QNN upscaler returned an undecodable image.");
+                throw new IllegalStateException("Sloom Studio bundled QNN upscaler returned an undecodable image.");
             }
 
             Bitmap finalBitmap = decoded;

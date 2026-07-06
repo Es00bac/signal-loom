@@ -390,7 +390,7 @@ async function materializeVertexVideoDirect(input: {
   }
   const url = input.video.gcsUri ? vertexGcsUriToDownloadUrl(input.video.gcsUri) : input.video.uri;
   if (!url) {
-    throw new Error('Vertex AI returned a video reference that Signal Loom could not download.');
+    throw new Error('Vertex AI returned a video reference that Sloom Studio could not download.');
   }
   const response = await input.doFetch(url, {
     headers: {

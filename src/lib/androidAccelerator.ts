@@ -222,7 +222,7 @@ export function summarizeAndroidAcceleratorStatus(status: AndroidAcceleratorStat
 
   if (!readyForGeneration) {
     warnings.push(integrated
-      ? 'The one-app Signal Loom Android build needs at least one downloaded model inside that app before generation or backend-started upscaling can run.'
+      ? 'The one-app Sloom Studio Android build needs at least one downloaded model inside that app before generation or backend-started upscaling can run.'
       : 'No Android image model is currently available.');
   }
   if (!readyForUpscale) {
@@ -230,7 +230,7 @@ export function summarizeAndroidAcceleratorStatus(status: AndroidAcceleratorStat
   }
 
   const modeLabel = mode === 'integrated'
-    ? 'one-app Signal Loom Android'
+    ? 'one-app Sloom Studio Android'
     : mode === 'bridge'
       ? 'standalone companion bridge'
       : 'Android accelerator';
@@ -407,7 +407,7 @@ export function resolveAndroidModelAvailability(
   const warning = status.warnings?.length ? ` ${status.warnings.join(' ')}` : '';
   return {
     available: false,
-    reason: `Android image model "${selectedModelId}" is not available. Open Local Dream on the phone, tap a downloaded NPU model, and wait for the Signal Loom companion bridge status to become reachable before retrying.${warning}`,
+    reason: `Android image model "${selectedModelId}" is not available. Open Local Dream on the phone, tap a downloaded NPU model, and wait for the Sloom Studio companion bridge status to become reachable before retrying.${warning}`,
   };
 }
 

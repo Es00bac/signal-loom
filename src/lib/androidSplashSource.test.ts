@@ -12,7 +12,7 @@ function readPngSize(path: string): { width: number; height: number } {
 }
 
 describe('Android launch splash source guards', () => {
-  it('uses the Signal Loom splash artwork for the Android launch theme', () => {
+  it('uses the Sloom Studio splash artwork for the Android launch theme', () => {
     const root = process.cwd();
     const electronSplashPath = join(root, 'electron/assets/signal-loom-splash.png');
     const androidSplashPath = join(root, 'android/app/src/main/res/drawable-nodpi/signal_loom_splash.png');

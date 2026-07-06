@@ -164,7 +164,7 @@ describe('ImageSpotChannels', () => {
           warnings: ['Spot channel preview is an RGB tint overlay; it is not a native ink separation.'],
         },
         exportWarnings: [
-          '1 spot channel is preserved only as Signal Loom metadata; native spot plates and press-ready separations are not exported.',
+          '1 spot channel is preserved only as Sloom Studio metadata; native spot plates and press-ready separations are not exported.',
           'Use an external prepress tool for final spot-color separations before print handoff.',
         ],
       },
@@ -187,7 +187,7 @@ describe('ImageSpotChannels', () => {
 
     expect(buildSpotChannelExportWarnings([], { targetFormat: 'tiff' })).toEqual([]);
     expect(buildSpotChannelExportWarnings(channels, { targetFormat: 'tiff' })).toEqual([
-      '2 spot channels are preserved only as Signal Loom metadata; TIFF export cannot emit native spot plates or press-ready separations.',
+      '2 spot channels are preserved only as Sloom Studio metadata; TIFF export cannot emit native spot plates or press-ready separations.',
       'Use an external prepress tool for final spot-color separations before print handoff.',
     ]);
   });
@@ -243,10 +243,10 @@ describe('ImageSpotChannels', () => {
         },
         printSeparation: {
           supported: false,
-          warning: 'Signal Loom does not emit native spot plates or press-ready separations.',
+          warning: 'Sloom Studio does not emit native spot plates or press-ready separations.',
         },
         exportWarnings: [
-          '1 spot channel is preserved only as Signal Loom metadata; PSD export cannot emit native spot plates or press-ready separations.',
+          '1 spot channel is preserved only as Sloom Studio metadata; PSD export cannot emit native spot plates or press-ready separations.',
           'Use an external prepress tool for final spot-color separations before print handoff.',
         ],
         warnings: [],
@@ -295,10 +295,10 @@ describe('ImageSpotChannels', () => {
       printSeparation: {
         supported: false,
         status: 'metadata-only',
-        warning: 'Signal Loom does not emit native spot plates or press-ready separations.',
+        warning: 'Sloom Studio does not emit native spot plates or press-ready separations.',
       },
       exportWarnings: [
-        '1 spot channel is preserved only as Signal Loom metadata; TIFF export cannot emit native spot plates or press-ready separations.',
+        '1 spot channel is preserved only as Sloom Studio metadata; TIFF export cannot emit native spot plates or press-ready separations.',
         'Use an external prepress tool for final spot-color separations before print handoff.',
       ],
     });
@@ -340,17 +340,17 @@ describe('ImageSpotChannels', () => {
       printSeparation: {
         supported: false,
         status: 'metadata-only',
-        warning: 'Signal Loom does not emit native spot plates or press-ready separations.',
+        warning: 'Sloom Studio does not emit native spot plates or press-ready separations.',
       },
       warnings: [
         'Spot channel preview is an RGB tint overlay; it is not a native ink separation.',
-        '1 spot channel is preserved only as Signal Loom metadata; PSD export cannot emit native spot plates or press-ready separations.',
+        '1 spot channel is preserved only as Sloom Studio metadata; PSD export cannot emit native spot plates or press-ready separations.',
         'Use an external prepress tool for final spot-color separations before print handoff.',
       ],
       summaryLines: [
         'Spot channel preview is an RGB tint overlay; it is not a native ink separation.',
         'Direct spot-channel painting is not implemented; spot masks can be stored as metadata and previewed only.',
-        'Signal Loom does not emit native spot plates or press-ready separations.',
+        'Sloom Studio does not emit native spot plates or press-ready separations.',
       ],
       signature: 'spot-channel-panel:v1:psd:spot-varnish:2x2:warning-count=3',
     });
@@ -437,7 +437,7 @@ describe('ImageSpotChannels', () => {
       export: {
         ready: false,
         warnings: [
-          '2 spot channels are preserved only as Signal Loom metadata; JPEG export cannot emit native spot plates or press-ready separations.',
+          '2 spot channels are preserved only as Sloom Studio metadata; JPEG export cannot emit native spot plates or press-ready separations.',
           'Use an external prepress tool for final spot-color separations before print handoff.',
         ],
         signature: 'spot-export:jpeg:2:metadata-only:blocked',
@@ -452,7 +452,7 @@ describe('ImageSpotChannels', () => {
       printSeparation: {
         supported: false,
         status: 'metadata-only',
-        warning: 'Signal Loom does not emit native spot plates or press-ready separations.',
+        warning: 'Sloom Studio does not emit native spot plates or press-ready separations.',
       },
       blockers: [
         {
@@ -471,7 +471,7 @@ describe('ImageSpotChannels', () => {
         {
           code: 'spot-channel-export-metadata-only',
           severity: 'warning',
-          message: '2 spot channels are preserved only as Signal Loom metadata; JPEG export cannot emit native spot plates or press-ready separations.',
+          message: '2 spot channels are preserved only as Sloom Studio metadata; JPEG export cannot emit native spot plates or press-ready separations.',
         },
         {
           code: 'spot-channel-export-prepress-required',
@@ -486,7 +486,7 @@ describe('ImageSpotChannels', () => {
         {
           code: 'spot-channel-print-separation-unsupported',
           severity: 'warning',
-          message: 'Signal Loom does not emit native spot plates or press-ready separations.',
+          message: 'Sloom Studio does not emit native spot plates or press-ready separations.',
         },
       ],
     });
@@ -593,7 +593,7 @@ describe('ImageSpotChannels', () => {
           code: 'spot-channel-export-metadata-only',
           severity: 'warning',
           signature: 'spot-export-warning:spot-channel-export-metadata-only:none',
-          message: '1 spot channel is preserved only as Signal Loom metadata; TIFF export cannot emit native spot plates or press-ready separations.',
+          message: '1 spot channel is preserved only as Sloom Studio metadata; TIFF export cannot emit native spot plates or press-ready separations.',
         },
         {
           code: 'spot-channel-export-prepress-required',
@@ -611,7 +611,7 @@ describe('ImageSpotChannels', () => {
           code: 'spot-channel-print-separation-unsupported',
           severity: 'warning',
           signature: 'spot-export-warning:spot-channel-print-separation-unsupported:none',
-          message: 'Signal Loom does not emit native spot plates or press-ready separations.',
+          message: 'Sloom Studio does not emit native spot plates or press-ready separations.',
         },
       ],
       limitations: {

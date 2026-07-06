@@ -5,7 +5,7 @@ export type OpenedFileKind = 'project' | 'image' | 'paper' | 'unknown';
 /**
  * Classify a file chosen from an "Open" picker by its real content, not just its name.
  *
- * Signal Loom sub-documents (`.slimg` / `.slppr`) are ZIP containers — their first bytes are the
+ * Sloom Studio sub-documents (`.slimg` / `.slppr`) are ZIP containers — their first bytes are the
  * ZIP magic `PK` (0x50 0x4B). A `.sloom` project, by contrast, is plain-text JSON. OS file pickers
  * — especially on Android — routinely ignore the `accept` filter, so a user can pick a `.slimg` in
  * the project-open dialog. Without this routing the project opener does `JSON.parse` on the ZIP and

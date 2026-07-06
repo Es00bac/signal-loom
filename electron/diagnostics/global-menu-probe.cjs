@@ -18,8 +18,8 @@ const result = { steps: [], commandsReceived: [] };
 const step = (k, v) => { result.steps.push([k, v]); console.log('STEP', k, '=', JSON.stringify(v)); };
 
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ width: 640, height: 400, show: true, title: 'Signal Loom (probe)' });
-  await win.loadURL('data:text/html,<title>Signal Loom probe</title><h1>probe</h1>');
+  const win = new BrowserWindow({ width: 640, height: 400, show: true, title: 'Sloom Studio (probe)' });
+  await win.loadURL('data:text/html,<title>Sloom Studio probe</title><h1>probe</h1>');
   win.show();
   win.focus();
   await new Promise((r) => setTimeout(r, 600));
@@ -30,7 +30,7 @@ app.whenReady().then(async () => {
   step('nativeHandleBytes', handle.length);
 
   // getNativeWindowHandle is unreliable on this Ozone/X11 session (returns 0x1); resolve the real XID.
-  const resolved = resolveX11WindowId({ pid: process.pid, titleIncludes: 'Signal Loom (probe)' });
+  const resolved = resolveX11WindowId({ pid: process.pid, titleIncludes: 'Sloom Studio (probe)' });
   step('resolvedXid', resolved ? '0x' + resolved.toString(16) : null);
   const xid = (handleXid > 1 ? handleXid : resolved) || 0;
   step('xid', '0x' + xid.toString(16));

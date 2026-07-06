@@ -80,7 +80,7 @@ describe('remoteHostClient served-session detection', () => {
     expect(mod.isServedLanSession()).toBe(false);
   });
 
-  it('does not flag a served session when JSON lacks the Signal Loom identity', async () => {
+  it('does not flag a served session when JSON lacks the Sloom Studio identity', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => mockResponse({ ok: true, contentType: 'application/json', body: { name: 'Something Else' } })),
@@ -90,7 +90,7 @@ describe('remoteHostClient served-session detection', () => {
     expect(mod.isServedLanSession()).toBe(false);
   });
 
-  it('flags a served session only when /health returns the Signal Loom JSON identity', async () => {
+  it('flags a served session only when /health returns the Sloom Studio JSON identity', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
@@ -98,7 +98,7 @@ describe('remoteHostClient served-session detection', () => {
           return mockResponse({
             ok: true,
             contentType: 'application/json',
-            body: { name: 'Signal Loom', authRequired: false },
+            body: { name: 'Sloom Studio', authRequired: false },
           });
         }
         // source-library seed probe — return empty so the store import is skipped in this unit test
@@ -136,7 +136,7 @@ describe('remoteHostClient seed hydration', () => {
           return mockResponse({
             ok: true,
             contentType: 'application/json',
-            body: { name: 'Signal Loom', authRequired: false },
+            body: { name: 'Sloom Studio', authRequired: false },
           });
         }
         if (url.includes('/source-library') && !url.includes('/events')) {
@@ -183,7 +183,7 @@ describe('remoteHostClient pairing (security without HTTPS)', () => {
       'fetch',
       vi.fn(async (url: string) =>
         url.endsWith('/health')
-          ? mockResponse({ ok: true, contentType: 'application/json', body: { name: 'Signal Loom', authRequired: true } })
+          ? mockResponse({ ok: true, contentType: 'application/json', body: { name: 'Sloom Studio', authRequired: true } })
           : mockResponse({ ok: false }),
       ),
     );
@@ -203,7 +203,7 @@ describe('remoteHostClient pairing (security without HTTPS)', () => {
       vi.fn(async (url: string, init?: RequestInit) => {
         calls.push({ url, init });
         if (url.endsWith('/health')) {
-          return mockResponse({ ok: true, contentType: 'application/json', body: { name: 'Signal Loom', authRequired: true } });
+          return mockResponse({ ok: true, contentType: 'application/json', body: { name: 'Sloom Studio', authRequired: true } });
         }
         if (url.endsWith('/pair')) {
           return mockResponse({ ok: true, contentType: 'application/json', body: { token: 'tok-abc' } });
@@ -232,7 +232,7 @@ describe('remoteHostClient pairing (security without HTTPS)', () => {
       'fetch',
       vi.fn(async (url: string) => {
         if (url.endsWith('/health')) {
-          return mockResponse({ ok: true, contentType: 'application/json', body: { name: 'Signal Loom', authRequired: true } });
+          return mockResponse({ ok: true, contentType: 'application/json', body: { name: 'Sloom Studio', authRequired: true } });
         }
         if (url.endsWith('/pair')) {
           return mockResponse({ ok: false, status: 401, contentType: 'application/json', body: {} });
@@ -259,7 +259,7 @@ describe('remoteHostClient pairing (security without HTTPS)', () => {
       vi.fn(async (url: string, init?: RequestInit) => {
         calls.push({ url, init });
         if (url.endsWith('/health')) {
-          return mockResponse({ ok: true, contentType: 'application/json', body: { name: 'Signal Loom', authRequired: true } });
+          return mockResponse({ ok: true, contentType: 'application/json', body: { name: 'Sloom Studio', authRequired: true } });
         }
         if (url.endsWith('/projects')) {
           return mockResponse({ ok: false, status: 401 });

@@ -12,7 +12,7 @@ import {
 import { buildPaperPrintProductionMetadata, type PaperPrintProductionMetadata } from './paperPrintProduction';
 
 export interface PaperPackageManifest {
-  app: 'Signal Loom Paper';
+  app: 'Sloom Studio Paper';
   version: 1;
   title: string;
   createdAt: string;
@@ -64,7 +64,7 @@ export function buildPaperPackageExport(
     ...assetFiles.map(({ path, type, bytes }) => ({ path, type, bytes })),
   ];
   const manifest: PaperPackageManifest = {
-    app: 'Signal Loom Paper',
+    app: 'Sloom Studio Paper',
     version: 1,
     title: document.title,
     createdAt: new Date().toISOString(),

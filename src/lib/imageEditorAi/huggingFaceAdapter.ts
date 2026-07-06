@@ -25,7 +25,7 @@ export async function runHuggingFaceInpaint(
   }
   if (request.references && request.references.length > 0) {
     throw new Error(
-      'Hugging Face inpainting has no reference-image parameter in Signal Loom; remove the attached references or choose a provider that supports them (Gemini, OpenAI, Atlas, BFL, Stability, or Local/Open).',
+      'Hugging Face inpainting has no reference-image parameter in Sloom Studio; remove the attached references or choose a provider that supports them (Gemini, OpenAI, Atlas, BFL, Stability, or Local/Open).',
     );
   }
 

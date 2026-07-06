@@ -238,8 +238,8 @@ describe('ImageXcfInterop', () => {
         masks: 'Layer masks are not read from XCF and are flattened into pixels during current XCF export.',
         groups: 'Native XCF group folders are not imported and Image currently exports a flat raster layer list.',
         text: 'Editable XCF text is not imported; Image text layers export as raster pixels.',
-        effects: 'Native GIMP effects or Signal Loom layer effects are not preserved as editable XCF effect state.',
-        filters: 'GIMP filter/plugin state and Signal Loom filter stacks are not round-tripped as native editable XCF filters.',
+        effects: 'Native GIMP effects or Sloom Studio layer effects are not preserved as editable XCF effect state.',
+        filters: 'GIMP filter/plugin state and Sloom Studio filter stacks are not round-tripped as native editable XCF filters.',
         sourceLinks: 'Source-linked layers and Smart Object-like relationships are metadata-only in Image and are not native XCF links.',
       },
       sourcePolicy: {

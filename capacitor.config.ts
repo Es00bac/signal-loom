@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'studio.sloom.signalloom',
-  appName: 'Signal Loom',
+  appName: 'Sloom Studio',
   webDir: 'dist',
   plugins: {
     // Route http(s) requests through the native HTTP stack on Android/iOS so provider API calls

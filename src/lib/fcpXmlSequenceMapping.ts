@@ -1,7 +1,7 @@
 /**
  * Maps the editor's clip model to the FCP7-XML interchange shape (task #33). Uses the SAME
  * source-range resolver as the render pipeline (editorTimelineSourceRange), so what Premiere
- * receives matches what Signal Loom renders. Media resolution (labels, on-disk paths, durations)
+ * receives matches what Sloom Studio renders. Media resolution (labels, on-disk paths, durations)
  * is injected by the caller — this module stays pure and unit-testable.
  */
 import { resolveVisualClipSourceRangeMs } from './editorTimelineSourceRange';

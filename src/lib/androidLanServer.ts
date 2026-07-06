@@ -20,7 +20,7 @@ import { hostClaim, hostForceClaim, hostHeartbeat, hostRelease, hostYield } from
 
 /**
  * Bridge to the native SignalLoomLanServer plugin, which serves the bundled web app over the local
- * network so a desktop browser on the same Wi-Fi can open the full Signal Loom interface from the
+ * network so a desktop browser on the same Wi-Fi can open the full Sloom Studio interface from the
  * phone. The served app runs in plain web mode (no Capacitor bridge), like the Chrome build.
  *
  * Served over plain HTTP; the data API is secured by a pairing PIN → bearer token (see

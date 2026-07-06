@@ -112,7 +112,7 @@ export async function buildPaperWebcomicImageArchiveExport(
   }
 
   entries[`${plan.directoryName}/manifest.json`] = strToU8(`${JSON.stringify({
-    app: 'Signal Loom Paper',
+    app: 'Sloom Studio Paper',
     format: 'signal-loom-paper-webcomic-images',
     title: plan.title,
     directoryName: plan.directoryName,

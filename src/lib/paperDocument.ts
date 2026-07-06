@@ -696,7 +696,7 @@ export function serializePaperDocument(doc: PaperDocument): string {
 export function parsePaperDocument(json: string): PaperDocument {
   const parsed = JSON.parse(json) as PaperDocument;
   if (!parsed || !Array.isArray(parsed.pages) || !parsed.page) {
-    throw new Error('The selected file is not a Signal Loom Paper document.');
+    throw new Error('The selected file is not a Sloom Studio Paper document.');
   }
   const pageSpec = normalizePageSpec(parsed.page);
   return {

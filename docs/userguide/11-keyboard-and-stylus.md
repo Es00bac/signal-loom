@@ -2,7 +2,7 @@
 
 ## Stylus & pen input
 
-Signal Loom's Image brush engine is a full pen engine. It reads, where your hardware provides
+Sloom Studio's Image brush engine is a full pen engine. It reads, where your hardware provides
 them:
 
 - **Pressure** — drives brush size, opacity, flow, roundness, and hardness, shaped by the

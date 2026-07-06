@@ -20,7 +20,7 @@ export function buildDownloadFilename(
 }
 
 /**
- * Build a download filename for a Signal Loom container format (`.slimg` / `.slppr`).
+ * Build a download filename for a Sloom Studio container format (`.slimg` / `.slppr`).
  * Unlike {@link buildDownloadFilename}, the extension is taken literally — these are our own
  * container types, not media MIME types, so they must not pass through MIME/extension inference.
  */

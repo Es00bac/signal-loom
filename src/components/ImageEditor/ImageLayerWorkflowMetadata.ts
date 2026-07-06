@@ -173,7 +173,7 @@ const IMAGE_LAYER_BLEND_MODE_LABELS = {
 } satisfies Record<BlendMode, string>;
 
 const FILL_OPACITY_UNSUPPORTED_CAVEAT =
-  'Photoshop Fill Opacity is unsupported; Signal Loom applies only layer opacity for preview/export.';
+  'Photoshop Fill Opacity is unsupported; Sloom Studio applies only layer opacity for preview/export.';
 const BLEND_IF_UNSUPPORTED_CAVEAT =
   'Photoshop Blend If source/underlying tonal range splitting is unsupported and does not affect preview/export pixels.';
 const CHANNEL_TARGETING_UNSUPPORTED_CAVEAT =
@@ -1064,7 +1064,7 @@ export function describeImageLayerSuiteHandoffReadiness(
         supported: true,
         format: 'alpha-masked-visible-raster',
         caveats: maskLayerIds.length > 0
-          ? ['Layer masks are flattened into exported visible pixels; editable masks stay in Signal Loom metadata.']
+          ? ['Layer masks are flattened into exported visible pixels; editable masks stay in Sloom Studio metadata.']
           : [],
       },
     },
@@ -1465,7 +1465,7 @@ function describeSmartSourceLinkedLayerExternalAssetPackaging(
   }
   if (smartFilters.filterCount > 0) {
     caveats.push(
-      'Smart Filter stacks are flattened for native PSD handoff; keep Signal Loom metadata with the packaged source asset.',
+      'Smart Filter stacks are flattened for native PSD handoff; keep Sloom Studio metadata with the packaged source asset.',
     );
   }
   return {
@@ -1535,7 +1535,7 @@ function describeSmartFilterLimitations(layer: ImageLayer): ImageSmartSourceLink
     ? [
         {
           code: 'metadata-only-smart-filters' as const,
-          message: 'Image filter stacks stay editable in Signal Loom metadata but are flattened for native PSD Smart Filter roundtrip.',
+          message: 'Image filter stacks stay editable in Sloom Studio metadata but are flattened for native PSD Smart Filter roundtrip.',
         },
         {
           code: 'smart-filter-mask-unsupported' as const,
@@ -1555,7 +1555,7 @@ function describeSmartFilterLimitations(layer: ImageLayer): ImageSmartSourceLink
     stackSignatures: interop.stackSignatures,
     handoffWarnings: filters.length > 0
       ? [
-          'Source Bin and Video handoff preserve flattened pixels plus Signal Loom metadata only; editable native smart-filter roundtrip is unavailable.',
+          'Source Bin and Video handoff preserve flattened pixels plus Sloom Studio metadata only; editable native smart-filter roundtrip is unavailable.',
           'Smart-filter masks and advanced parameters are flattened or dropped because native smart-filter roundtrip is unsupported.',
         ]
       : [],
@@ -1607,7 +1607,7 @@ function describeSmartSourceLinkedLayerActionSuitability({
     suitable: false,
     operation: 'edit-original',
     warningCodes: warningCodes.filter((code) => code === 'missing-source-id' || code === 'missing-source-link'),
-    caveats: ['Edit Original is metadata-only; Signal Loom does not launch or round-trip native external editors.'],
+    caveats: ['Edit Original is metadata-only; Sloom Studio does not launch or round-trip native external editors.'],
   };
   const batchReplaceContents: ImageSmartSourceLinkedLayerAutomationSuitability = {
     suitable: replaceReady,

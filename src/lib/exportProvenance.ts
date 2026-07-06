@@ -13,8 +13,8 @@ export const SIGNAL_LOOM_EXPORT_VERSION = '0.9.9';
 export function buildProvenanceLabel(license?: { licensed: boolean; email?: string }): string {
   const current = license ?? useSettingsStore.getState().license;
   return current.licensed && current.email
-    ? `Signal Loom ${SIGNAL_LOOM_EXPORT_VERSION} (licensed to ${current.email})`
-    : `Signal Loom ${SIGNAL_LOOM_EXPORT_VERSION} Community (unlicensed)`;
+    ? `Sloom Studio ${SIGNAL_LOOM_EXPORT_VERSION} (licensed to ${current.email})`
+    : `Sloom Studio ${SIGNAL_LOOM_EXPORT_VERSION} Community (unlicensed)`;
 }
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];

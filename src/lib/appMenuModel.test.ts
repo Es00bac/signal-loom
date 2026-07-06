@@ -110,7 +110,7 @@ describe('renderer app menu model (per-workspace)', () => {
       standaloneEntryPoint: 'signal-loom://workspace/image',
       standaloneMode: 'shared-binary-window',
       handoffStatus: 'ready',
-      caveat: 'The Image workspace can be launched from the suite menu or deep-linked into the shared Signal Loom binary; it is not a separately signed standalone executable.',
+      caveat: 'The Image workspace can be launched from the suite menu or deep-linked into the shared Sloom Studio binary; it is not a separately signed standalone executable.',
       signature: 'workspace-handoff:v1|image|view:image|signal-loom://workspace/image|shared-binary-window',
     });
   });

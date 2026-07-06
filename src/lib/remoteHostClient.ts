@@ -43,7 +43,7 @@ let subscriberRunning = false;
 const pairingListeners = new Set<(state: RemoteHostPairingState) => void>();
 
 /**
- * True once a boot probe has confirmed this page is being served by a Signal Loom phone host.
+ * True once a boot probe has confirmed this page is being served by a Sloom Studio phone host.
  * Synchronous so the storage layers (`projectLibrary`, `assetStore`) can branch without awaiting;
  * `initializeRemoteHostSession()` resolves the probe before the app renders.
  */
@@ -183,7 +183,7 @@ export async function initializeRemoteHostSession(): Promise<void> {
     const contentType = res.headers.get('content-type') ?? '';
     if (!contentType.includes('application/json')) return;
     const data = (await res.json()) as { name?: string; authRequired?: boolean } | null;
-    if (!data || data.name !== 'Signal Loom') return;
+    if (!data || data.name !== 'Sloom Studio') return;
     servedSession = true;
     authRequired = Boolean(data.authRequired);
   } catch {

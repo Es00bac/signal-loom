@@ -492,7 +492,7 @@ function describeStylePortabilityChecks(input: {
       ? ['global-light-native-style-roundtrip-unavailable']
       : [];
   const globalLightWarnings = input.effectInterop.globalLightPortability.usesGlobalLight
-    ? ['Global light is preserved as Signal Loom style metadata and presets, but not as editable native Photoshop layer-style data.']
+    ? ['Global light is preserved as Sloom Studio style metadata and presets, but not as editable native Photoshop layer-style data.']
     : [];
 
   const filterReasonCodes: ImageLayerStylePortabilityCheckReasonCode[] = [];
@@ -658,15 +658,15 @@ function describeClipboardSuitabilitySummary(
     copyPaste: {
       status: copyPasteStatus,
       summary: copyPasteStatus === 'ready'
-        ? 'Copy/paste keeps the layer style portable inside Signal Loom.'
-        : 'Copy/paste keeps the layer style inside Signal Loom, but unsupported advanced blending stays metadata-only.',
+        ? 'Copy/paste keeps the layer style portable inside Sloom Studio.'
+        : 'Copy/paste keeps the layer style inside Sloom Studio, but unsupported advanced blending stays metadata-only.',
       reasonCodes: [...copyPasteBlockedReasons],
     },
     signalLoomPreset: {
       status: stylePortability.presetPortability.portable && presetReasons.length === 0 ? 'ready' : 'blocked',
       summary: stylePortability.presetPortability.portable && presetReasons.length === 0
-        ? 'Signal Loom presets preserve this layer style without extra portability caveats.'
-        : 'Signal Loom presets cannot preserve unsupported advanced blending or non-portable style warnings.',
+        ? 'Sloom Studio presets preserve this layer style without extra portability caveats.'
+        : 'Sloom Studio presets cannot preserve unsupported advanced blending or non-portable style warnings.',
       reasonCodes: [...presetReasons],
     },
     batchApplication: {

@@ -1,4 +1,4 @@
-// Native-Wayland KDE panel menu — a plain custom D-Bus service the Signal Loom Plasma applet reads.
+// Native-Wayland KDE panel menu — a plain custom D-Bus service the Sloom Studio Plasma applet reads.
 //
 // WHY THIS EXISTS — the companion to globalMenuController.cjs, but WITHOUT its fatal flaw. The stock
 // KDE global-menu path registers each window with `com.canonical.AppMenu.Registrar`, which is keyed on
@@ -24,8 +24,8 @@ const PANEL_MENU_SERVICE = 'org.signalloom.PanelMenu';
 const PANEL_MENU_PATH = '/org/signalloom/PanelMenu';
 const PANEL_MENU_INTERFACE = 'org.signalloom.PanelMenu';
 // A spec com.canonical.dbusmenu object mirroring the FOCUSED workspace's menu. This is what the
-// Signal Loom Global Menu applet fork (desktop/kde/signal-loom-globalmenu, a patched stock KDE
-// Global Menu) imports for Signal Loom windows — each workspace publishes its own full menu set
+// Sloom Studio Global Menu applet fork (desktop/kde/signal-loom-globalmenu, a patched stock KDE
+// Global Menu) imports for Sloom Studio windows — each workspace publishes its own full menu set
 // here, switched live on window focus, exactly like four separate applications.
 const ACTIVE_DBUSMENU_PATH = '/org/signalloom/menus/active';
 
@@ -103,7 +103,7 @@ SignalLoomPanelMenu.configureMembers({
 
 /**
  * Create the panel-menu service. Mirrors createGlobalMenuController's shape (isSupported/start/stop +
- * best-effort guards), but the state it tracks is "is a Signal Loom window focused" + a revision that
+ * best-effort guards), but the state it tracks is "is a Sloom Studio window focused" + a revision that
  * bumps whenever the menu content should be re-read (workspace switch, shortcut remap).
  */
 function createPanelMenuService(options = {}) {
@@ -197,7 +197,7 @@ function createPanelMenuService(options = {}) {
     }
   }
 
-  /** A Signal Loom workspace window gained/lost OS focus. Blur is debounced so opening the panel applet
+  /** A Sloom Studio workspace window gained/lost OS focus. Blur is debounced so opening the panel applet
    *  (which briefly steals focus) doesn't hide the menu out from under the pointer. */
   function setActive(next) {
     if (next) {

@@ -21,7 +21,7 @@ describe('workspace window helpers', () => {
     expect(getWorkspaceWindowLabel('editor')).toBe('Video');
     expect(getWorkspaceWindowLabel('image')).toBe('Image');
     expect(getWorkspaceWindowLabel('paper')).toBe('Paper');
-    expect(getWorkspaceWindowTitle('editor')).toBe('Signal Loom - Video');
+    expect(getWorkspaceWindowTitle('editor')).toBe('Sloom Studio - Video');
   });
 
   it('builds renderer urls that preserve existing search params and set the workspace', () => {

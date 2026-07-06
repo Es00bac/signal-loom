@@ -35,7 +35,7 @@ describe('resize observer loop error filter', () => {
     expect(resizeError.preventDefault).toHaveBeenCalledTimes(1);
     expect(resizeError.stopImmediatePropagation).toHaveBeenCalledTimes(1);
 
-    const realError = makeEvent({ message: 'Signal Loom real error' });
+    const realError = makeEvent({ message: 'Sloom Studio real error' });
     listeners.get('error')?.(realError);
     expect(realError.preventDefault).not.toHaveBeenCalled();
     expect(realError.stopImmediatePropagation).not.toHaveBeenCalled();

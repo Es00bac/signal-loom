@@ -299,7 +299,7 @@ function buildLayerEffectControlsReadinessSummary(effects: ImageLayerEffect[]): 
     label: `${globalLightLabel} / Photoshop live effects flatten on export`,
     signature: readiness.signatures.stack,
     status,
-    title: 'Layer effects are editable inside Signal Loom presets; native PSD live effects, Blend If, and Smart Object effect preservation remain unsupported.',
+    title: 'Layer effects are editable inside Sloom Studio presets; native PSD live effects, Blend If, and Smart Object effect preservation remain unsupported.',
   };
 }
 
@@ -309,11 +309,11 @@ function firstShadowAngle(effects: ImageLayerEffect[]): number {
 }
 
 function getLayerFilterParityTitle(): string {
-  return 'Editable in Signal Loom: amount, blend mode, opacity, enabled state, and stack order. Smart-filter masks, advanced parameters, and native smart-filter roundtrip remain unsupported.';
+  return 'Editable in Sloom Studio: amount, blend mode, opacity, enabled state, and stack order. Smart-filter masks, advanced parameters, and native smart-filter roundtrip remain unsupported.';
 }
 
 function getLayerEffectParityTitle(): string {
-  return 'Portable inside Signal Loom with deterministic preview/export signatures. Editable Photoshop Blend If and Bevel & Emboss parity remain unsupported or flattened.';
+  return 'Portable inside Sloom Studio with deterministic preview/export signatures. Editable Photoshop Blend If and Bevel & Emboss parity remain unsupported or flattened.';
 }
 
 export function LayerFilterRow({

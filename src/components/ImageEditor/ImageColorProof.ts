@@ -937,7 +937,7 @@ function buildProofHighBitFallbackRecommendations(
       label: 'External high-bit proof',
       preserves: `${sourceBitDepth}-bit precision, ICC soft-proof transform, gamut warning, and press separation checks`,
       recommendedFor: 'Production print proofing, archive masters, and color-critical review.',
-      caveat: 'Signal Loom proof metadata can guide setup, but it is not production proof evidence.',
+      caveat: 'Sloom Studio proof metadata can guide setup, but it is not production proof evidence.',
     },
     {
       route: '8bit-rgb-proof-derivative',
@@ -1062,14 +1062,14 @@ function buildProofSuiteHandoffGuidance(mode: ImageColorProofMode): string[] {
   if (mode === 'grayscale-soft-proof') {
     return [
       'Keep proof presets attached as metadata when handing work to Flow, Video, or external print apps.',
-      'Run final ICC grayscale conversion outside Signal Loom before production handoff.',
+      'Run final ICC grayscale conversion outside Sloom Studio before production handoff.',
       'Do not treat the soft-proof preview as native grayscale evidence in automated suites.',
     ];
   }
 
   return [
     'Keep proof presets attached as metadata when handing work to Flow, Video, or external print apps.',
-    'Run final ICC conversion and CMYK separation outside Signal Loom before production handoff.',
+    'Run final ICC conversion and CMYK separation outside Sloom Studio before production handoff.',
     'Do not treat the soft-proof preview as native CMYK evidence in automated suites.',
   ];
 }
@@ -1659,7 +1659,7 @@ function buildProofPrintOutputWarnings(mode: ImageColorProofMode): string[] {
   if (mode === 'grayscale-soft-proof') {
     return [
       'Print/output warning: grayscale soft proof is not a press-managed grayscale conversion; exported pixels remain RGB.',
-      'Print/output warning: convert to a target grayscale ICC profile outside Signal Loom before production handoff.',
+      'Print/output warning: convert to a target grayscale ICC profile outside Sloom Studio before production handoff.',
     ];
   }
 
@@ -1720,7 +1720,7 @@ function buildProofConversionDescriptor(mode: ImageColorProofMode): ImageColorPr
     return {
       flatteningRequiredForPress: true,
       limitations: [
-        'Press handoff requires external flattening and ICC-managed grayscale conversion; Signal Loom exports RGB pixels plus proof metadata.',
+        'Press handoff requires external flattening and ICC-managed grayscale conversion; Sloom Studio exports RGB pixels plus proof metadata.',
       ],
     };
   }
@@ -1728,7 +1728,7 @@ function buildProofConversionDescriptor(mode: ImageColorProofMode): ImageColorPr
   return {
     flatteningRequiredForPress: true,
     limitations: [
-      'Press handoff requires external flattening and ICC-managed CMYK separation; Signal Loom exports RGB pixels plus proof metadata.',
+      'Press handoff requires external flattening and ICC-managed CMYK separation; Sloom Studio exports RGB pixels plus proof metadata.',
     ],
   };
 }
