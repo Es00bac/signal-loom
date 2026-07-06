@@ -132,12 +132,13 @@ describe('AdvancedColorPicker', () => {
         hex: 'ready',
         hsv: 'ready',
         rgb: 'ready',
+        cmyk: 'ready',
         alpha: 'ready',
         swatches: 'ready',
         eyedropper: 'ready',
       },
       unsupportedStates: [],
-      stableSignature: 'advanced-color-picker-android-support:v1|platform=android|state=ready|compact=yes|native-input=no|controls=hex:ready,hsv:ready,rgb:ready,alpha:ready,swatches:ready,eyedropper:ready|unsupported=none',
+      stableSignature: 'advanced-color-picker-android-support:v1|platform=android|state=ready|compact=yes|native-input=no|controls=hex:ready,hsv:ready,rgb:ready,cmyk:ready,alpha:ready,swatches:ready,eyedropper:ready|unsupported=none',
     });
 
     expect(describeAdvancedColorPickerAndroidSupport({
@@ -212,6 +213,27 @@ describe('AdvancedColorPicker', () => {
 
     expect(html).toContain('aria-label="Foreground color recent #123456"');
     expect(html).toContain('aria-label="Foreground color preset #ec4899"');
+  });
+
+  it('exposes CMYK inputs, an ink-coverage readout, and print-safe palettes', () => {
+    const html = renderToStaticMarkup(
+      <AdvancedColorPicker
+        defaultOpen
+        label="Foreground color"
+        onChange={vi.fn()}
+        value="#336699"
+      />,
+    );
+
+    expect(html).toContain('Foreground color cyan');
+    expect(html).toContain('Foreground color magenta');
+    expect(html).toContain('Foreground color yellow');
+    expect(html).toContain('Foreground color key');
+    expect(html).toContain('% ink');
+    // Print-safe palette selector + at least one press-authored swatch.
+    expect(html).toContain('aria-label="Print-safe palette"');
+    expect(html).toContain('press-safe CMYK');
+    expect(html).toContain('C100 M0 Y0 K0'); // Cyan from the CMYK Process palette
   });
 
   it('positions compact-palette pickers beside the palette instead of covering it', () => {

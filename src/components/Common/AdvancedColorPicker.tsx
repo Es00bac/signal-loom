@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Pipette } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import { cmykToRgb, rgbToCmyk, totalInkPercent } from '../../lib/paperSwatches';
+import { PRINT_SAFE_PALETTES, findPrintSafePalette } from '../../lib/printSafePalettes';
 
 type AdvancedColorPickerMode = 'square' | 'wheel';
 type EyeDropperResult = { sRGBHex: string };
@@ -72,6 +74,7 @@ export interface AdvancedColorPickerAndroidSupportDescriptor {
     hex: AdvancedColorPickerControlSupportState;
     hsv: AdvancedColorPickerControlSupportState;
     rgb: AdvancedColorPickerControlSupportState;
+    cmyk: AdvancedColorPickerControlSupportState;
     alpha: AdvancedColorPickerControlSupportState;
     swatches: AdvancedColorPickerControlSupportState;
     eyedropper: AdvancedColorPickerControlSupportState;
@@ -152,6 +155,7 @@ export function AdvancedColorPicker({
   const [draftHex, setDraftHex] = useState(color);
   const [draftAlpha, setDraftAlpha] = useState(() => pickAlphaFromValue(value));
   const [pickerMode, setPickerMode] = useState<AdvancedColorPickerMode>('square');
+  const [paletteId, setPaletteId] = useState<string>(PRINT_SAFE_PALETTES[0].id);
   const eyeDropperCtor = getEyeDropperConstructor();
   const hasEyeDropper = Boolean(onEyeDropper) || eyeDropperCtor !== null;
   const hsv = useMemo(() => hexToHsv(color), [color]);
@@ -205,6 +209,12 @@ export function AdvancedColorPicker({
       ...rgb,
       [channel]: clamp(Math.round(nextValue), 0, 255),
     }));
+  };
+
+  const cmyk = useMemo(() => rgbToCmyk(rgb), [rgb]);
+  const inkTotal = totalInkPercent(cmyk);
+  const applyCmyk = (channel: 'c' | 'm' | 'y' | 'k', nextValue: number) => {
+    applyColor(rgbToHex(cmykToRgb({ ...cmyk, [channel]: clamp(Math.round(nextValue), 0, 100) })));
   };
 
   const applyAlpha = (nextValue: number) => {
@@ -387,6 +397,52 @@ export function AdvancedColorPicker({
         <NumberRow label={`${label} blue`} onChange={(next) => applyRgb('b', next)} value={rgb.b} />
       </div>
 
+      <div className="mt-3">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-[10px] uppercase tracking-[0.12em] text-cyan-100/45">CMYK</span>
+          <span className={joinClasses('tabular-nums text-[10px]', inkTotal > 300 ? 'text-amber-300' : 'text-cyan-100/40')} title="Total ink coverage">
+            {inkTotal}% ink{inkTotal > 300 ? ' — over limit' : ''}
+          </span>
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          <NumberRow label={`${label} cyan`} onChange={(next) => applyCmyk('c', next)} value={cmyk.c} />
+          <NumberRow label={`${label} magenta`} onChange={(next) => applyCmyk('m', next)} value={cmyk.m} />
+          <NumberRow label={`${label} yellow`} onChange={(next) => applyCmyk('y', next)} value={cmyk.y} />
+          <NumberRow label={`${label} key`} onChange={(next) => applyCmyk('k', next)} value={cmyk.k} />
+        </div>
+      </div>
+
+      {!compactLayout ? (
+        <div className="mt-3">
+          <select
+            aria-label="Print-safe palette"
+            className="mb-1.5 w-full rounded border border-cyan-300/15 bg-[#0b121d] px-1.5 py-1 text-[10px] text-cyan-100/70 hover:border-cyan-300/40"
+            onChange={(event) => setPaletteId(event.target.value)}
+            value={paletteId}
+          >
+            {PRINT_SAFE_PALETTES.map((palette) => (
+              <option key={palette.id} value={palette.id}>{palette.name} — press-safe CMYK</option>
+            ))}
+          </select>
+          <div className="grid grid-cols-10 gap-1">
+            {(findPrintSafePalette(paletteId) ?? PRINT_SAFE_PALETTES[0]).swatches.map((swatch) => {
+              const swatchHex = rgbToHex(cmykToRgb(swatch.cmyk));
+              return (
+                <button
+                  aria-label={`${swatch.name} (C${swatch.cmyk.c} M${swatch.cmyk.m} Y${swatch.cmyk.y} K${swatch.cmyk.k})`}
+                  className="h-5 rounded border border-white/20 hover:ring-2 hover:ring-cyan-300/50"
+                  key={swatch.name}
+                  onClick={() => applyColor(swatchHex)}
+                  style={{ backgroundColor: swatchHex }}
+                  title={`${swatch.name} — C${swatch.cmyk.c} M${swatch.cmyk.m} Y${swatch.cmyk.y} K${swatch.cmyk.k}`}
+                  type="button"
+                />
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
       <div className={joinClasses('mt-3 gap-1', compactLayout ? 'grid grid-cols-5' : 'grid grid-cols-10')}>
         {swatches.map(({ color: swatch, source }) => (
           <button
@@ -477,6 +533,7 @@ export function describeAdvancedColorPickerAndroidSupport(
     hex: 'ready',
     hsv: 'ready',
     rgb: 'ready',
+    cmyk: 'ready',
     alpha: 'ready',
     swatches: 'ready',
     eyedropper: input.hasEyeDropperCallback === true ? 'ready' : 'unavailable',
