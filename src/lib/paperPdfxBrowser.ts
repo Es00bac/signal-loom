@@ -28,6 +28,12 @@ async function fetchBundledIcc(profile: IccProfileRef): Promise<Uint8Array> {
   return new Uint8Array(await response.arrayBuffer());
 }
 
+async function fetchBundledFont(fontUrl: string): Promise<Uint8Array> {
+  const response = await fetch(resolveBundledAssetUrl(fontUrl));
+  if (!response.ok) throw new Error(`Could not load the embedded font "${fontUrl}" (${response.status}).`);
+  return new Uint8Array(await response.arrayBuffer());
+}
+
 /** Export a PaperDocument to a real PDF/X in the browser/Electron renderer. Returns the PDF bytes. */
 export function exportPaperDocumentToPdfxInBrowser(
   document: PaperDocument,
@@ -36,10 +42,12 @@ export function exportPaperDocumentToPdfxInBrowser(
   return exportPaperDocumentToPdfx(document, options, {
     loadIccBytes: fetchBundledIcc,
     createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
-    rasterizePage: async (pageId, outputDpi) => {
+    loadFontBytes: fetchBundledFont,
+    rasterizePage: async (pageId, outputDpi, rasterOptions) => {
       const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(document, pageId, {
         includeBleed: true,
         outputDpi,
+        backdropOnly: rasterOptions?.backdropOnly ?? false,
         resolveImageSrc: imageSourceToDataUrl,
       });
       const raster = await rasterizeFlattenedPaperPageToRgba(svgExport);

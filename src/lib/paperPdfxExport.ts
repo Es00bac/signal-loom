@@ -250,14 +250,24 @@ export async function buildPaperPdfx(
   // Fonts for the optional vector-text layer are embedded once per face and reused across pages.
   const hasVectorText = pages.some((page) => (page.textFrames?.length ?? 0) > 0);
   if (hasVectorText) doc.registerFontkit(fontkit);
-  const fontCache = new Map<string, PDFFont>();
-  const embedFace = async (fontId: string, fontBytes: Uint8Array): Promise<PDFFont> => {
-    let font = fontCache.get(fontId);
-    if (!font) {
-      font = await doc.embedFont(fontBytes, { subset: true });
-      fontCache.set(fontId, font);
+  const fontCache = new Map<string, { font: PDFFont; ascentRatio: number }>();
+  const embedFace = async (fontId: string, fontBytes: Uint8Array): Promise<{ font: PDFFont; ascentRatio: number }> => {
+    let entry = fontCache.get(fontId);
+    if (!entry) {
+      const font = await doc.embedFont(fontBytes, { subset: true });
+      // Read the real typographic ascent so the first baseline matches the CSS line box.
+      let ascentRatio = 0.8;
+      try {
+        const create = (fontkit as unknown as { create?: (b: Uint8Array) => { ascent?: number; unitsPerEm?: number } }).create;
+        const fk = create?.(fontBytes);
+        if (fk && typeof fk.ascent === 'number' && fk.unitsPerEm) ascentRatio = fk.ascent / fk.unitsPerEm;
+      } catch {
+        // Fall back to the 0.8·em approximation if the face can't be parsed for metrics.
+      }
+      entry = { font, ascentRatio };
+      fontCache.set(fontId, entry);
     }
-    return font;
+    return entry;
   };
 
   // --- Pages: each is one flattened DeviceCMYK image spanning the full media (trim + bleed) ---
@@ -301,15 +311,17 @@ export async function buildPaperPdfx(
     // --- Vector text layer (hybrid PDF/X): real embedded, selectable CMYK type over the raster ---
     for (const frame of page.textFrames ?? []) {
       if (!frame.text.trim()) continue;
-      const font = await embedFace(frame.fontId, frame.fontBytes);
+      const { font, ascentRatio } = await embedFace(frame.fontId, frame.fontBytes);
       const fill = cmykColor(frame.cmyk.c, frame.cmyk.m, frame.cmyk.y, frame.cmyk.k);
+      // First-baseline model matching a CSS line box: half the extra leading, then the font's ascent.
+      const ascentPt = frame.ascentPt ?? (frame.leadingPt - frame.fontSizePt) / 2 + ascentRatio * frame.fontSizePt;
       const layout = layoutParagraphText({
         text: frame.text,
         maxWidthPt: frame.widthPt,
         fontSizePt: frame.fontSizePt,
         leadingPt: frame.leadingPt,
         align: frame.align,
-        ascentPt: frame.ascentPt,
+        ascentPt,
         measureText: (t) => font.widthOfTextAtSize(t, frame.fontSizePt),
       });
       for (const line of layout.lines) {

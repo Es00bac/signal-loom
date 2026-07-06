@@ -3,7 +3,7 @@
 // injected dependencies (rasterizer, ICC loader, transform factory) so it is unit-testable in Node and
 // reused by the browser adapter (`paperPdfxBrowser.ts`) unchanged.
 
-import { buildPaperPdfx, type PdfxExportResult, type PdfxRasterPage, type PdfxStandard } from './paperPdfxExport';
+import { buildPaperPdfx, type PdfxExportResult, type PdfxRasterPage, type PdfxStandard, type PdfxVectorTextFrame } from './paperPdfxExport';
 import type { IccCmykTransform } from './paperColorManagement';
 import type { PaperDocument } from '../types/paper';
 import type { PaperOutputIntentProfileId } from '../types/paper';
@@ -12,6 +12,7 @@ import {
   findBundledProfile,
   type IccProfileRef,
 } from './paperIccProfiles';
+import { buildVectorTextFrameSpecs, pageTextIsVectorizable } from './paperPdfxVectorTextFrames';
 
 const PT_PER_MM = 72 / 25.4;
 
@@ -29,15 +30,28 @@ export interface PaperPdfxPipelineOptions {
   outputDpi?: number;
   title?: string;
   createdAt?: Date;
+  /**
+   * Draw text as real embedded vector type instead of baking it into the raster (docs/notes/840).
+   * Requires `deps.loadFontBytes`. Defaults to false so callers opt in explicitly. Pages with any
+   * rotated text frame fall back to a fully flattened raster.
+   */
+  vectorText?: boolean;
+}
+
+export interface RasterizePageOptions {
+  /** Exclude text frames from the raster (their text is drawn as vector on top). */
+  backdropOnly?: boolean;
 }
 
 export interface PaperPdfxPipelineDeps {
   /** Rasterize one page INCLUDING bleed to RGBA at the given DPI. */
-  rasterizePage: (pageId: string, outputDpi: number) => Promise<PaperPdfxPageRaster>;
+  rasterizePage: (pageId: string, outputDpi: number, options?: RasterizePageOptions) => Promise<PaperPdfxPageRaster>;
   /** Load the raw ICC bytes for the chosen profile. */
   loadIccBytes: (profile: IccProfileRef) => Promise<Uint8Array>;
   /** Build an sRGB→CMYK transform from ICC bytes (real lcms2 backend in the app). */
   createTransform: (bytes: Uint8Array) => Promise<IccCmykTransform>;
+  /** Load the bytes of a bundled font face by its public url (required when `vectorText` is on). */
+  loadFontBytes?: (fontUrl: string) => Promise<Uint8Array>;
 }
 
 /**
@@ -90,9 +104,33 @@ export async function exportPaperDocumentToPdfx(
   const trimWidthPt = document.page.widthMm * PT_PER_MM;
   const trimHeightPt = document.page.heightMm * PT_PER_MM;
 
+  const wantVectorText = options.vectorText === true && !!deps.loadFontBytes;
+  const fontBytesCache = new Map<string, Uint8Array>();
+  const loadFontOnce = async (url: string): Promise<Uint8Array> => {
+    let bytes = fontBytesCache.get(url);
+    if (!bytes) {
+      bytes = await deps.loadFontBytes!(url);
+      fontBytesCache.set(url, bytes);
+    }
+    return bytes;
+  };
+
   const pages: PdfxRasterPage[] = [];
   for (const page of document.pages) {
-    const raster = await deps.rasterizePage(page.id, dpi);
+    // A page gets vector text only when enabled and none of its text is rotated (rotated text stays
+    // in the raster, faithfully placed); otherwise it's a fully flattened raster as before.
+    const useVector = wantVectorText && pageTextIsVectorizable(page);
+    let textFrames: PdfxVectorTextFrame[] | undefined;
+    if (useVector) {
+      const specs = buildVectorTextFrameSpecs(page, document, transform);
+      if (specs.length > 0) {
+        textFrames = await Promise.all(
+          specs.map(async ({ fontUrl, ...rest }) => ({ ...rest, fontBytes: await loadFontOnce(fontUrl) })),
+        );
+      }
+    }
+
+    const raster = await deps.rasterizePage(page.id, dpi, { backdropOnly: textFrames !== undefined });
     pages.push({
       pageNumber: page.pageNumber,
       rgba: raster.rgba,
@@ -101,6 +139,7 @@ export async function exportPaperDocumentToPdfx(
       trimWidthPt,
       trimHeightPt,
       bleedPt,
+      textFrames,
     });
   }
 

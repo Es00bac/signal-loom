@@ -852,10 +852,17 @@ export async function exportPaperPdfDocument(
   setStatus(result.filePath ? `Saved PDF to ${result.filePath}${sizeLabel}.` : `Saved PDF${sizeLabel}.`);
 }
 
+/** True when any page carries a non-empty text frame (drives the "text as vector" export note). */
+function documentHasText(document: PaperDocument): boolean {
+  return document.pages.some((page) =>
+    page.frames.some((frame) => frame.kind === 'text' && (frame.text ?? '').trim().length > 0),
+  );
+}
+
 /**
  * Real PDF/X-1a / PDF/X-4 export path (docs/notes/836): renders each page to CMYK through the embedded
  * ICC output profile and writes a conformant PDF/X — not the RGB browser-PDF raster path. Used when the
- * document's print target is a PDF/X standard.
+ * document's print target is a PDF/X standard. Text is embedded as real vector type (docs/notes/840).
  */
 export async function exportPaperPdfxAndSave(
   document: PaperDocument,
@@ -872,6 +879,7 @@ export async function exportPaperPdfxAndSave(
       standard,
       iccProfileId: profile.id,
       title: document.title,
+      vectorText: true,
     });
     const report = await validatePaperPdfx(result.bytes, { standard });
     const pdfBlob = new Blob([new Uint8Array(result.bytes)], { type: 'application/pdf' });
@@ -881,7 +889,8 @@ export async function exportPaperPdfxAndSave(
       ? 'preflight OK'
       : `preflight flagged: ${report.checks.filter((c) => !c.pass).map((c) => c.label).join(', ')}`;
     const substituteNote = substituted ? ` (nearest bundled profile embedded)` : '';
-    setStatus(`Exported ${standardLabel} — embedded ${profile.displayName} ICC${substituteNote}, ${kb} KB, ${preflight}.`);
+    const textNote = documentHasText(document) ? ', text as embedded vector (Liberation)' : '';
+    setStatus(`Exported ${standardLabel} — embedded ${profile.displayName} ICC${substituteNote}${textNote}, ${kb} KB, ${preflight}.`);
   } catch (error) {
     const message = error instanceof Error ? error.message : `${standardLabel} export failed.`;
     setStatus(`${standardLabel} export failed: ${message}`);
@@ -910,6 +919,7 @@ export async function exportPaperKdpPdfAndSave(
       iccProfileId: profile.id,
       outputDpi: dpi,
       title: document.title,
+      vectorText: true,
     });
     const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-1a' });
     const pdfBlob = new Blob([new Uint8Array(result.bytes)], { type: 'application/pdf' });
