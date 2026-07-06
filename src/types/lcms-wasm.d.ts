@@ -11,6 +11,8 @@ declare module 'lcms-wasm' {
     cmsGetColorSpaceASCII(profile: number): string;
     cmsGetProfileInfoASCII(profile: number, info: number, lang: string, country: string): string;
     cmsCreateTransform(inProfile: number, inFormat: number, outProfile: number, outFormat: number, intent: number, flags: number): number;
+    /** Soft-proof transform: input→display simulating `proofing` (e.g. the CMYK press condition). */
+    cmsCreateProofingTransform(inProfile: number, inFormat: number, outProfile: number, outFormat: number, proofing: number, intent: number, proofingIntent: number, flags: number): number;
     cmsDeleteTransform(transform: number): void;
     cmsDoTransform(transform: number, input: Uint8Array, pixelCount: number): Uint8Array;
   }

@@ -13,6 +13,7 @@ import { resolveBundledAssetUrl } from './bundledAssetUrl';
 export type IccRenderingIntent = 'perceptual' | 'relative' | 'saturation' | 'absolute';
 const INTENT_CODE: Record<IccRenderingIntent, number> = { perceptual: 0, relative: 1, saturation: 2, absolute: 3 };
 const FLAGS_BLACKPOINTCOMPENSATION = 0x2000;
+const FLAGS_SOFTPROOFING = 0x4000;
 
 let wasmLocator: ((file: string) => string) | null = null;
 /** App boot can override where the engine loads `lcms.wasm` from (rarely needed — see the default below). */
@@ -108,5 +109,73 @@ export async function createRgbToCmykTransform(
     // returns raw 0–255 CMYK samples, which are exactly the DeviceCMYK image data a PDF wants.
     transformRgbBuffer: (rgb: Uint8Array, pixelCount: number): Uint8Array =>
       lcms.cmsDoTransform(transform, rgb, pixelCount),
+  };
+}
+
+export interface SoftProofOptions {
+  /** Source→CMYK rendering intent (how the design is mapped into the press gamut). Default relative. */
+  intent?: IccRenderingIntent;
+  /**
+   * Simulate the paper's white point on screen (Adobe's "Simulate Paper Color"). Uses an absolute
+   * colorimetric proof→display step so white shifts toward the stock's tint. Default false.
+   */
+  simulatePaperWhite?: boolean;
+}
+
+export interface SoftProofTransform {
+  profileName: string;
+  /** Simulate how one sRGB color will look printed on this CMYK condition; returns display sRGB. */
+  proofRgb(rgb: PaperRgb): PaperRgb;
+  /** Whole-image soft proof: RGB in → simulated display RGB out (0–255, same length). */
+  proofRgbBuffer(rgb: Uint8Array, pixelCount: number): Uint8Array;
+  /** Release the lcms2 transform + profiles (call when the preview is torn down). */
+  dispose(): void;
+}
+
+/**
+ * Build a press-accurate soft-proof: sRGB → display sRGB while simulating how the CMYK output profile
+ * will render it (lcms2 proofing transform with the SOFTPROOFING flag). This is what lets a pro *see*
+ * the gamut-mapped CMYK on screen before exporting — dull blues, muddy greens, and (optionally) the
+ * paper's off-white all show up, matching InDesign/Photoshop's soft-proof.
+ */
+export async function createSoftProofTransform(
+  cmykProfileBytes: Uint8Array,
+  options: SoftProofOptions = {},
+): Promise<SoftProofTransform> {
+  const lcms = await getIccEngine();
+  const sRGB = lcms.cmsCreate_sRGBProfile();
+  const cmyk = lcms.cmsOpenProfileFromMem(cmykProfileBytes, cmykProfileBytes.length);
+  if (!cmyk) throw new Error('Could not open the CMYK ICC profile.');
+  const space = lcms.cmsGetColorSpaceASCII(cmyk);
+  if (space !== 'CMYK') {
+    lcms.cmsCloseProfile(cmyk);
+    throw new Error(`Expected a CMYK output profile but got "${space}".`);
+  }
+  const intent = INTENT_CODE[options.intent ?? 'relative'];
+  // Paper-white simulation uses absolute colorimetric on the proof→display leg (and drops BPC, which
+  // absolute intent ignores anyway); otherwise relative with black-point compensation.
+  const simulatePaper = options.simulatePaperWhite === true;
+  const proofingIntent = simulatePaper ? INTENT_CODE.absolute : INTENT_CODE.relative;
+  const flags = FLAGS_SOFTPROOFING | (simulatePaper ? 0 : FLAGS_BLACKPOINTCOMPENSATION);
+  const transform = lcms.cmsCreateProofingTransform(sRGB, TYPE_RGB_8, sRGB, TYPE_RGB_8, cmyk, intent, proofingIntent, flags);
+  if (!transform) {
+    lcms.cmsCloseProfile(cmyk);
+    throw new Error('Could not create the ICC soft-proof transform.');
+  }
+  const profileName = safeProfileName(lcms, cmyk) || 'CMYK profile';
+  let disposed = false;
+  return {
+    profileName,
+    proofRgb: (rgb: PaperRgb): PaperRgb => {
+      const out = lcms.cmsDoTransform(transform, new Uint8Array([clampByte(rgb.r), clampByte(rgb.g), clampByte(rgb.b)]), 1);
+      return { r: out[0], g: out[1], b: out[2] };
+    },
+    proofRgbBuffer: (rgb: Uint8Array, pixelCount: number): Uint8Array => lcms.cmsDoTransform(transform, rgb, pixelCount),
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      lcms.cmsDeleteTransform(transform);
+      lcms.cmsCloseProfile(cmyk);
+    },
   };
 }
