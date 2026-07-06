@@ -218,6 +218,54 @@ export async function rasterizeFlattenedPaperPageToPng(
   };
 }
 
+export interface FlattenedPaperPageRgbaExport extends PaperPageExportDimensions {
+  pageId: string;
+  pageNumber: number;
+  label: string;
+  /** Interleaved RGBA, row-major top-to-bottom (canvas order). Length = widthPx*heightPx*4. */
+  rgba: Uint8ClampedArray;
+}
+
+/**
+ * Rasterize a flattened page SVG to raw RGBA pixels (for the real PDF/X exporter, which converts them
+ * to CMYK through an ICC profile). Same canvas path as the PNG raster, minus the PNG encode.
+ */
+export async function rasterizeFlattenedPaperPageToRgba(
+  exported: FlattenedPaperPageSvgExport,
+  browserDocument: Document = globalThis.document,
+): Promise<FlattenedPaperPageRgbaExport> {
+  if (!browserDocument) {
+    throw new Error('Paper page raster export needs a browser document.');
+  }
+  const image = new Image();
+  image.decoding = 'async';
+  image.src = exported.dataUrl;
+  await decodeImage(image);
+
+  const canvas = browserDocument.createElement('canvas');
+  canvas.width = exported.widthPx;
+  canvas.height = exported.heightPx;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Paper page raster export could not create a canvas context.');
+  }
+  context.drawImage(image, 0, 0, exported.widthPx, exported.heightPx);
+  const { data } = context.getImageData(0, 0, exported.widthPx, exported.heightPx);
+
+  return {
+    pageId: exported.pageId,
+    pageNumber: exported.pageNumber,
+    label: exported.label,
+    widthMm: exported.widthMm,
+    heightMm: exported.heightMm,
+    widthPx: exported.widthPx,
+    heightPx: exported.heightPx,
+    scale: exported.scale,
+    includeBleed: exported.includeBleed,
+    rgba: data,
+  };
+}
+
 function positiveNumber(value: number | undefined): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
 }

@@ -120,7 +120,7 @@ import {
   type PaperPreflightStatusSummary,
   type PaperPreflightStatusTone,
 } from '../../../lib/paperPreflight';
-import { PAPER_OUTPUT_INTENT_PROFILES } from '../../../lib/paperPrintProduction';
+import { PAPER_OUTPUT_INTENT_PROFILES, isPdfXProductionTarget } from '../../../lib/paperPrintProduction';
 import { isCommercialPrintProductionTarget, requestCommercialExportUnlock } from '../../../lib/licenseGates';
 import { canFrameBeAiFixed, collectFrameFixSiblingCandidates } from '../../../lib/paperFrameFix';
 import { PaperFrameFixDialog } from './PaperFrameFixDialog';
@@ -306,6 +306,7 @@ import {
   downloadBlob,
   downloadText,
   exportPaperPdfDocument,
+  exportPaperPdfxAndSave,
   exportPaperWebcomicImages,
   fileToDataUrl,
   frameFillCss,
@@ -1245,9 +1246,14 @@ export function PaperWorkspace() {
         if (isCommercialPrintProductionTarget(document.printProduction)
           && !(await requestCommercialExportUnlock('PDF/X and CMYK print production'))) return;
         if (await confirmPreflightBeforeExport('PDF export')) {
-          void exportPaperPdfDocument(document, setStatus, undefined, {
-            rasterPreset: providerSettings.paperPdfRasterPreset,
-          });
+          if (isPdfXProductionTarget(document.printProduction)) {
+            // Real CMYK PDF/X-1a / PDF/X-4 with an embedded ICC output intent (docs/notes/836).
+            void exportPaperPdfxAndSave(document, setStatus);
+          } else {
+            void exportPaperPdfDocument(document, setStatus, undefined, {
+              rasterPreset: providerSettings.paperPdfRasterPreset,
+            });
+          }
         }
         return;
       case 'paper:export-kdp-assets':
@@ -9432,8 +9438,8 @@ function PaperInspector({
                 value={document.printProduction.pdfStandard}
               >
                 <option value="browser-pdf">Browser PDF proof</option>
-                <option value="pdf-x-4">PDF/X-4 intent (in development)</option>
-                <option value="pdf-x-1a">PDF/X-1a intent (in development)</option>
+                <option value="pdf-x-4">PDF/X-4 (real CMYK + embedded ICC)</option>
+                <option value="pdf-x-1a">PDF/X-1a (real CMYK, flattened)</option>
               </select>
             </Field>
             <Field label="Output Intent">

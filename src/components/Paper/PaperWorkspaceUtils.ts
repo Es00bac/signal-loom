@@ -13,6 +13,10 @@ import { resolveBubbleTailCurvePercent } from '../../lib/paperBubblePaths';
 import { getSignalLoomNativeBridge, type NativePaperPdfExportResult } from '../../lib/nativeApp';
 import { buildProvenanceLabel } from '../../lib/exportProvenance';
 import { downloadBlob as downloadSharedBlob, downloadTextFile } from '../../lib/downloadAsset';
+import { exportPaperDocumentToPdfxInBrowser } from '../../lib/paperPdfxBrowser';
+import { bundledProfileForOutputIntent, isSubstitutedOutputIntent } from '../../lib/paperPdfxPipeline';
+import { validatePaperPdfx } from '../../lib/paperPdfxValidate';
+import { normalizePaperPrintProductionSpec } from '../../lib/paperPrintProduction';
 import { usePaperStore } from '../../store/paperStore';
 import {
   clientPointToPaperPoint,
@@ -846,6 +850,42 @@ export async function exportPaperPdfDocument(
 
   const sizeLabel = result.bytes ? ` (${Math.round(result.bytes / 1024)} KB)` : '';
   setStatus(result.filePath ? `Saved PDF to ${result.filePath}${sizeLabel}.` : `Saved PDF${sizeLabel}.`);
+}
+
+/**
+ * Real PDF/X-1a / PDF/X-4 export path (docs/notes/836): renders each page to CMYK through the embedded
+ * ICC output profile and writes a conformant PDF/X — not the RGB browser-PDF raster path. Used when the
+ * document's print target is a PDF/X standard.
+ */
+export async function exportPaperPdfxAndSave(
+  document: PaperDocument,
+  setStatus: (status: string) => void,
+): Promise<void> {
+  const production = normalizePaperPrintProductionSpec(document.printProduction);
+  const standard = production.pdfStandard === 'pdf-x-1a' ? 'pdf-x-1a' : 'pdf-x-4';
+  const standardLabel = standard === 'pdf-x-1a' ? 'PDF/X-1a' : 'PDF/X-4';
+  const profile = bundledProfileForOutputIntent(production.outputIntentProfileId);
+  const substituted = isSubstitutedOutputIntent(production.outputIntentProfileId);
+  try {
+    setStatus(`Rendering ${document.pages.length} page${document.pages.length === 1 ? '' : 's'} to CMYK and building ${standardLabel} (${profile.displayName})…`);
+    const result = await exportPaperDocumentToPdfxInBrowser(document, {
+      standard,
+      iccProfileId: profile.id,
+      title: document.title,
+    });
+    const report = await validatePaperPdfx(result.bytes, { standard });
+    const pdfBlob = new Blob([new Uint8Array(result.bytes)], { type: 'application/pdf' });
+    downloadSharedBlob(pdfBlob, `${safeFileName(document.title)}-${standard}.pdf`);
+    const kb = Math.round(result.bytes.length / 1024);
+    const preflight = report.pass
+      ? 'preflight OK'
+      : `preflight flagged: ${report.checks.filter((c) => !c.pass).map((c) => c.label).join(', ')}`;
+    const substituteNote = substituted ? ` (nearest bundled profile embedded)` : '';
+    setStatus(`Exported ${standardLabel} — embedded ${profile.displayName} ICC${substituteNote}, ${kb} KB, ${preflight}.`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : `${standardLabel} export failed.`;
+    setStatus(`${standardLabel} export failed: ${message}`);
+  }
 }
 
 export interface PaperPdfDocumentExportOptions {
