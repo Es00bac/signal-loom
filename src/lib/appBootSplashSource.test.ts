@@ -13,7 +13,10 @@ describe('app boot splash source guards', () => {
     expect(html).toContain('html[data-app-ready="true"] #app-boot-splash');
     expect(appSource).toContain('function AppBootSplashDismissor()');
     expect(appSource).toContain('<img');
-    expect(appSource).toContain('src="/signal-loom-splash.png"');
+    // The React StartupSplash resolves the asset via document.baseURI so it loads under the packaged
+    // file:// origin too (a bare root-absolute /… 404s there). index.html's pre-React splash is a build
+    // asset Vite rewrites to a relative URL, so it stays a plain src (checked above).
+    expect(appSource).toContain("resolveBundledAssetUrl('/signal-loom-splash.png')");
     expect(appSource).toContain('alt="Sloom Studio is starting"');
     expect(appSource).toContain("document.documentElement.dataset.appReady = 'true'");
     expect(appSource).toMatch(/window\.setTimeout\([\s\S]*450/);
