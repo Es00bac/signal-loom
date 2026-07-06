@@ -20,7 +20,7 @@
 
 import { strToU8, zipSync } from 'fflate';
 import type { PaperDocument, PaperFrame, PaperPage } from '../types/paper';
-import { parseHexColor } from './paperSwatches';
+import { parseHexColor, resolveSwatchCssColor, type PaperCmyk, type PaperRgb } from './paperSwatches';
 
 const IDPKG_NS = 'http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging';
 const MIMETYPE = 'application/vnd.adobe.indesign-idml-package';
@@ -91,24 +91,53 @@ interface ColorTable {
   ref: (css: string | undefined) => string;
 }
 
-function buildColorTable(ids: IdFactory): ColorTable {
+/** Parse a hex or rgb()/rgba() CSS color to 0–255 RGB. */
+function cssToRgb(css: string): PaperRgb | undefined {
+  const hex = parseHexColor(css);
+  if (hex) return hex;
+  const match = /rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(css);
+  if (!match) return undefined;
+  return { r: Math.round(+match[1]), g: Math.round(+match[2]), b: Math.round(+match[3]) };
+}
+
+/**
+ * Build the document colour table. CMYK is preserved natively: a frame colour that matches a document
+ * swatch carrying CMYK ink values is emitted as `Space="CMYK"` with the real ink values (IDML carries
+ * CMYK first-class), so palette/press colours survive the round-trip instead of degrading to RGB.
+ */
+function buildColorTable(ids: IdFactory, document: PaperDocument): ColorTable {
   const cache = new Map<string, string>();
   const entries: string[] = [];
+  // css (as stored on frames) → CMYK ink values, for every swatch that carries CMYK.
+  const cmykByCss = new Map<string, PaperCmyk>();
+  for (const swatch of document.swatches ?? []) {
+    if (swatch.cmyk) cmykByCss.set(resolveSwatchCssColor(swatch), swatch.cmyk);
+  }
+
   const ref = (css: string | undefined): string => {
     if (!css || css === 'transparent' || css === 'none') return 'Swatch/None';
-    const key = css.toLowerCase();
-    const cached = cache.get(key);
+    const cached = cache.get(css);
     if (cached) return cached;
-    const rgb = parseHexColor(css);
-    if (!rgb) return 'Color/Black';
     const self = `Color/${ids.next('c')}`;
-    const name = `R=${rgb.r} G=${rgb.g} B=${rgb.b}`;
-    entries.push(
-      `    <Color Self="${self}" Model="Process" Space="RGB" ColorValue="${rgb.r} ${rgb.g} ${rgb.b}" ` +
-      `ColorOverride="Normal" AlternateColorSpace="RGB" AlternateColorValue="${rgb.r} ${rgb.g} ${rgb.b}" ` +
-      `Name="${esc(name)}" ColorEditable="true" ColorRemovable="true" Visible="true" SwatchCreatorID="7937"/>`,
-    );
-    cache.set(key, self);
+    const cmyk = cmykByCss.get(css);
+    if (cmyk) {
+      const name = `C=${cmyk.c} M=${cmyk.m} Y=${cmyk.y} K=${cmyk.k}`;
+      entries.push(
+        `    <Color Self="${self}" Model="Process" Space="CMYK" ColorValue="${cmyk.c} ${cmyk.m} ${cmyk.y} ${cmyk.k}" ` +
+        `ColorOverride="Normal" AlternateColorSpace="NoAlternateColor" AlternateColorValue="" ` +
+        `Name="${esc(name)}" ColorEditable="true" ColorRemovable="true" Visible="true" SwatchCreatorID="7937"/>`,
+      );
+    } else {
+      const rgb = cssToRgb(css);
+      if (!rgb) return 'Color/Black';
+      const name = `R=${rgb.r} G=${rgb.g} B=${rgb.b}`;
+      entries.push(
+        `    <Color Self="${self}" Model="Process" Space="RGB" ColorValue="${rgb.r} ${rgb.g} ${rgb.b}" ` +
+        `ColorOverride="Normal" AlternateColorSpace="RGB" AlternateColorValue="${rgb.r} ${rgb.g} ${rgb.b}" ` +
+        `Name="${esc(name)}" ColorEditable="true" ColorRemovable="true" Visible="true" SwatchCreatorID="7937"/>`,
+      );
+    }
+    cache.set(css, self);
     return self;
   };
   return { entries, ref };
@@ -406,7 +435,7 @@ export function buildPaperIdmlParts(document: PaperDocument, options: PaperIdmlE
   const dom = options.domVersion ?? IDML_DOM_VERSION;
   const ids = makeIdFactory();
   const layerSelf = 'layer1';
-  const colors = buildColorTable(ids);
+  const colors = buildColorTable(ids, document);
   const widthPt = document.page.widthMm * PT_PER_MM;
   const heightPt = document.page.heightMm * PT_PER_MM;
 

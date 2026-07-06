@@ -4,6 +4,7 @@ import { unzipSync, strFromU8 } from 'fflate';
 import { createDefaultPaperDocument } from './paperDocument';
 import { addPaperPage } from './paperDocument';
 import type { PaperDocument, PaperFrame } from '../types/paper';
+import { resolveSwatchCssColor } from './paperSwatches';
 import { buildPaperIdmlPackage, buildPaperIdmlParts, IDML_DOM_VERSION } from './paperIdmlExport';
 
 function withFrames(base: PaperDocument, frames: Partial<PaperFrame>[]): PaperDocument {
@@ -103,6 +104,17 @@ describe('paperIdmlExport', () => {
 
     const out = process.env.SLOOM_IDML_OUT;
     if (out) writeFileSync(`${out}/sloom-sample.idml`, bytes);
+  });
+
+  it('preserves swatch CMYK ink values as Space="CMYK" (not RGB)', () => {
+    let doc = sampleDoc();
+    const cmyk = { c: 80, m: 0, y: 40, k: 0 };
+    const swatch = { id: 'sw1', name: 'Teal', type: 'process' as const, model: 'cmyk' as const, rgb: { r: 40, g: 160, b: 170 }, cmyk };
+    const css = resolveSwatchCssColor(swatch);
+    doc = { ...doc, swatches: [swatch] };
+    doc = { ...doc, pages: doc.pages.map((p, i) => (i === 0 ? { ...p, frames: p.frames.map((f, fi) => (fi === 1 ? { ...f, fillColor: css } : f)) } : p)) };
+    const parts = buildPaperIdmlParts(doc);
+    expect(parts['Resources/Graphic.xml']).toContain('Space="CMYK" ColorValue="80 0 40 0"');
   });
 
   it('handles a two-page document (two spreads)', () => {
