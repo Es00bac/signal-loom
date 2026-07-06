@@ -215,6 +215,28 @@ describe('paperPreflight', () => {
     }));
   });
 
+  it('discloses Liberation font substitution for PDF/X but not for browser PDF', () => {
+    const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Font subst', preset: 'comic-book' }), {
+      printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51' },
+    });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'caption', xMm: 10, yMm: 10, widthMm: 50, heightMm: 20, text: 'Hello',
+      typography: { fontFamily: 'Georgia', color: '#111111' },
+    });
+
+    const pdfxReport = analyzePaperPreflight(document, []);
+    const subst = pdfxReport.issues.find((i) => i.title === 'Fonts embedded as Liberation substitutes');
+    expect(subst).toBeDefined();
+    expect(subst?.severity).toBe('info');
+    expect(subst?.category).toBe('fonts');
+    expect(subst?.detail).toContain('Georgia → Liberation Serif');
+
+    // The plain browser-PDF target embeds nothing special, so no substitution disclosure.
+    const browserDoc = updatePaperDocumentSetup(document, { printProduction: { pdfStandard: 'browser-pdf' } });
+    const browserReport = analyzePaperPreflight(browserDoc, []);
+    expect(browserReport.issues.some((i) => i.title === 'Fonts embedded as Liberation substitutes')).toBe(false);
+  });
+
   it('flags invalid PDF/X output intent combinations before export', () => {
     const document = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Bad PDFX Target' }), {
       printProduction: {

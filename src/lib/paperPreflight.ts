@@ -4,6 +4,13 @@ import {
   buildPaperPrintProductionMetadata,
   isPdfXProductionTarget,
 } from './paperPrintProduction';
+import { classifyFontFamily } from './paperFontResolution';
+
+const LIBERATION_SUBSTITUTE_NAME: Record<'serif' | 'sans' | 'mono', string> = {
+  serif: 'Liberation Serif',
+  sans: 'Liberation Sans',
+  mono: 'Liberation Mono',
+};
 
 export type PaperPreflightSeverity = 'error' | 'warning' | 'info';
 export type PaperPreflightProfileId = 'generic-pdf' | 'comic-print' | 'manga-print' | 'webtoon';
@@ -116,6 +123,25 @@ export function analyzePaperPreflight(
   for (const font of fontInventory) {
     if (font.available === false) {
       issues.push(issue('warning', 'Font may be unavailable', `${font.family} is referenced but not reported as available by the browser.`, { category: 'fonts' }));
+    }
+  }
+  // Honest disclosure: PDF/X exports embed real vector text using metric-compatible Liberation faces
+  // (we can't legally embed arbitrary system fonts). Tell the user which of their fonts get substituted.
+  if (isPdfXProductionTarget(document.printProduction)) {
+    const substitutions = new Map<string, string>();
+    for (const font of fontInventory) {
+      const target = LIBERATION_SUBSTITUTE_NAME[classifyFontFamily(font.family)];
+      if (font.family.trim().toLowerCase() === target.toLowerCase()) continue; // already the substitute
+      substitutions.set(font.family, target);
+    }
+    if (substitutions.size > 0) {
+      const list = [...substitutions.entries()].map(([from, to]) => `${from} → ${to}`).join('; ');
+      issues.push(issue(
+        'info',
+        'Fonts embedded as Liberation substitutes',
+        `PDF/X embeds selectable vector text with metric-compatible open fonts: ${list}. Set text in Liberation Serif/Sans/Mono to match the print exactly.`,
+        { category: 'fonts' },
+      ));
     }
   }
   if (profile.warnRgbForPrint) {
