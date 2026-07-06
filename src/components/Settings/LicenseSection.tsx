@@ -56,7 +56,9 @@ export const LicenseSection: React.FC = () => {
             <>
               Sloom Studio is free for personal and noncommercial use — learn it, make things, share them.
               When you start earning with what you make here, a one-time commercial license is due.
-              It unlocks KDP, PDF/X, IDML, and CMYK print production.
+              It unlocks the commercial print-production exports — KDP and print PDF with CMYK/spot
+              swatches today; conformant PDF/X-1a, PDF/X-4 and Adobe IDML are in active development and
+              ship free to license holders across the 0.9.x beta.
             </>
           )}
         </div>

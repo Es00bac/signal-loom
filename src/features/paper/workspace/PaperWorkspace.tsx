@@ -6236,8 +6236,8 @@ export function PaperTopStrip({
                     />
                     <ExportMenuItem
                       icon={<Download size={13} />}
-                      label="IDML"
-                      description="InDesign compatible layout format"
+                      label="IDML (beta)"
+                      description="Sloom layout interchange (JSON) — conformant Adobe .idml in development"
                       onClick={() => { onExportIdml(); setIsExportOpen(false); }}
                     />
                   </div>
@@ -9432,8 +9432,8 @@ function PaperInspector({
                 value={document.printProduction.pdfStandard}
               >
                 <option value="browser-pdf">Browser PDF proof</option>
-                <option value="pdf-x-4">PDF/X-4 intent</option>
-                <option value="pdf-x-1a">PDF/X-1a intent</option>
+                <option value="pdf-x-4">PDF/X-4 intent (in development)</option>
+                <option value="pdf-x-1a">PDF/X-1a intent (in development)</option>
               </select>
             </Field>
             <Field label="Output Intent">
