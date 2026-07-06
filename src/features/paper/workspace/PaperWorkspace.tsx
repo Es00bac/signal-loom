@@ -174,6 +174,7 @@ import { PAPER_BUBBLE_PRESETS } from '../../../lib/paperBubblePresets';
 import type { PaperAlignEdge, PaperDistributeAxis } from '../../../lib/paperAlignDistribute';
 import { PAPER_DEFAULT_SWATCHES } from '../../../lib/paperSwatchCatalog';
 import { cmykToRgb, parseHexColor, resolveSwatchCssColor, rgbToCmyk, rgbToCss, totalInkPercent } from '../../../lib/paperSwatches';
+import { PRINT_SAFE_PALETTES, findPrintSafePalette, paletteToPaperSwatches } from '../../../lib/printSafePalettes';
 import {
   estimateGenerativeFillCostUsd,
   type GenerativeFillProvider,
@@ -9783,6 +9784,23 @@ function PaperInspector({
                     </button>
                   </div>
                 </div>
+                <select
+                  aria-label="Load a print-safe CMYK palette"
+                  className="mb-1.5 w-full rounded border border-cyan-300/15 bg-[#0b121d] px-1.5 py-1 text-[10px] text-cyan-100/70 hover:border-cyan-300/40"
+                  onChange={(event) => {
+                    const palette = findPrintSafePalette(event.target.value);
+                    if (palette) paletteToPaperSwatches(palette).forEach(onAddSwatch);
+                    event.target.value = '';
+                  }}
+                  value=""
+                >
+                  <option value="">Load print-safe palette…</option>
+                  {PRINT_SAFE_PALETTES.map((palette) => (
+                    <option key={palette.id} value={palette.id}>
+                      {palette.name} ({palette.swatches.length})
+                    </option>
+                  ))}
+                </select>
                 <div className="flex flex-wrap gap-1">
                   {PAPER_DEFAULT_SWATCHES.map((swatch) => (
                     <button
