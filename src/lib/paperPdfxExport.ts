@@ -19,12 +19,16 @@ import {
   PDFString,
   PDFHexString,
   PDFDict,
+  cmyk as cmykColor,
   concatTransformationMatrix,
   drawObject,
   popGraphicsState,
   pushGraphicsState,
+  type PDFFont,
 } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 import type { IccCmykTransform } from './paperColorManagement';
+import { layoutParagraphText, type PaperTextAlign } from './paperTextLayout';
 
 export type PdfxStandard = 'pdf-x-1a' | 'pdf-x-4';
 
@@ -41,6 +45,37 @@ export interface PdfxRasterPage {
   trimHeightPt: number;
   /** Symmetric bleed in points included on every side of the raster (0 when there is no bleed). */
   bleedPt?: number;
+  /**
+   * Optional real vector text drawn ON TOP of the raster (hybrid PDF/X). When present, these frames'
+   * text was excluded from `rgba` (rasterized backdrop-only) and is re-drawn here as embedded,
+   * selectable, resolution-independent CMYK type. Omit for a fully flattened page.
+   */
+  textFrames?: readonly PdfxVectorTextFrame[];
+}
+
+/** One text box drawn as embedded vector type over the CMYK raster. Geometry is in points, measured
+ * from the media (bleed) TOP-LEFT with y increasing downward — the exporter flips to PDF space. */
+export interface PdfxVectorTextFrame {
+  text: string;
+  /** Embed-cache key (the font face id, e.g. "LiberationSerif-Bold"). */
+  fontId: string;
+  /** TrueType/OpenType bytes to embed (subset). Only embedded once per `fontId`. */
+  fontBytes: Uint8Array;
+  fontSizePt: number;
+  leadingPt: number;
+  align: PaperTextAlign;
+  /** Fill colour as DeviceCMYK components in 0..1 (converted through the same output profile). */
+  cmyk: { c: number; m: number; y: number; k: number };
+  /** Content-box top-left X from the media left edge, in points. */
+  xPt: number;
+  /** Content-box top-left Y from the media TOP edge, in points (flipped internally). */
+  yTopPt: number;
+  /** Content-box width, in points (the wrap width). */
+  widthPt: number;
+  /** Content-box height, in points (used to clip overset lines). */
+  heightPt: number;
+  /** Baseline offset from the box top for the first line, in points (defaults to 0.8·fontSize). */
+  ascentPt?: number;
 }
 
 export interface PdfxOutputProfile {
@@ -212,6 +247,19 @@ export async function buildPaperPdfx(
   const iccStream = ctx.flateStream(options.profile.iccBytes, { N: 4 });
   const iccRef = ctx.register(iccStream);
 
+  // Fonts for the optional vector-text layer are embedded once per face and reused across pages.
+  const hasVectorText = pages.some((page) => (page.textFrames?.length ?? 0) > 0);
+  if (hasVectorText) doc.registerFontkit(fontkit);
+  const fontCache = new Map<string, PDFFont>();
+  const embedFace = async (fontId: string, fontBytes: Uint8Array): Promise<PDFFont> => {
+    let font = fontCache.get(fontId);
+    if (!font) {
+      font = await doc.embedFont(fontBytes, { subset: true });
+      fontCache.set(fontId, font);
+    }
+    return font;
+  };
+
   // --- Pages: each is one flattened DeviceCMYK image spanning the full media (trim + bleed) ---
   for (const page of pages) {
     const pixelCount = page.widthPx * page.heightPx;
@@ -249,6 +297,37 @@ export async function buildPaperPdfx(
     // TrimBox = the finished page inside the bleed; BleedBox = the full media.
     pdfPage.node.set(PDFName.of('TrimBox'), ctx.obj([bleedPt, bleedPt, bleedPt + page.trimWidthPt, bleedPt + page.trimHeightPt]));
     pdfPage.node.set(PDFName.of('BleedBox'), ctx.obj([0, 0, mediaWpt, mediaHpt]));
+
+    // --- Vector text layer (hybrid PDF/X): real embedded, selectable CMYK type over the raster ---
+    for (const frame of page.textFrames ?? []) {
+      if (!frame.text.trim()) continue;
+      const font = await embedFace(frame.fontId, frame.fontBytes);
+      const fill = cmykColor(frame.cmyk.c, frame.cmyk.m, frame.cmyk.y, frame.cmyk.k);
+      const layout = layoutParagraphText({
+        text: frame.text,
+        maxWidthPt: frame.widthPt,
+        fontSizePt: frame.fontSizePt,
+        leadingPt: frame.leadingPt,
+        align: frame.align,
+        ascentPt: frame.ascentPt,
+        measureText: (t) => font.widthOfTextAtSize(t, frame.fontSizePt),
+      });
+      for (const line of layout.lines) {
+        // Clip overset lines: skip baselines that fall past the frame's bottom edge.
+        if (line.baselineYPt > frame.heightPt + frame.fontSizePt) continue;
+        const yPt = mediaHpt - (frame.yTopPt + line.baselineYPt);
+        for (const segment of line.runs) {
+          if (!segment.text) continue;
+          pdfPage.drawText(segment.text, {
+            x: frame.xPt + segment.xPt,
+            y: yPt,
+            size: frame.fontSizePt,
+            font,
+            color: fill,
+          });
+        }
+      }
+    }
   }
 
   // --- OutputIntent (/S /GTS_PDFX) with the embedded DestOutputProfile ---
