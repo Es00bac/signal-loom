@@ -106,6 +106,7 @@ const PaperWorkspace = lazy(() =>
 import { useEditorStore } from './store/editorStore';
 import { useSourceBinStore, type SourceBinLibraryItem } from './store/sourceBinStore';
 import { useShallow } from 'zustand/react/shallow';
+import { resolveBundledAssetUrl } from './lib/bundledAssetUrl';
 import { collectGlobalSourceBinItems } from './lib/sourceBin';
 import { buildSourceBinIngestSignature } from './lib/sourceBinIngest';
 import {
@@ -2351,7 +2352,7 @@ function StartupSplash({ title, detail }: { title: string; detail: string }) {
         alt="Sloom Studio is starting"
         className="h-full max-h-full w-full max-w-full object-contain"
         draggable={false}
-        src="/signal-loom-splash.png"
+        src={resolveBundledAssetUrl('/signal-loom-splash.png')}
       />
       <div className="sr-only" role="status">
         {title}. {detail}
