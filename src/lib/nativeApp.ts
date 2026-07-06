@@ -119,6 +119,7 @@ export const NATIVE_MENU_COMMANDS = [
   'paper:file-save-as',
   'paper:export-pdf',
   'paper:export-kdp-assets',
+  'paper:export-kdp-pdf',
   'paper:export-reader-spreads-pdf',
   'paper:export-booklet-proof-pdf',
   'paper:export-webcomic-images',

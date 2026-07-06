@@ -1,4 +1,4 @@
-import { exportPaperDocumentToPrintHtml } from '../../lib/paperDocument';
+import { exportPaperDocumentToPrintHtml, updatePaperDocumentSetup } from '../../lib/paperDocument';
 import {
   buildPaperRasterPdfExportRequest,
   type PaperPdfExportRequest,
@@ -885,6 +885,41 @@ export async function exportPaperPdfxAndSave(
   } catch (error) {
     const message = error instanceof Error ? error.message : `${standardLabel} export failed.`;
     setStatus(`${standardLabel} export failed: ${message}`);
+  }
+}
+
+/** 0.125 inch KDP interior bleed, in millimetres. */
+const KDP_BLEED_MM = 3.175;
+
+/**
+ * Export a KDP-ready print interior PDF: a flattened CMYK PDF/X-1a at ≥300 DPI with the required 0.125"
+ * bleed and an embedded ICC output intent — the form Amazon KDP's print checker accepts. Reuses the
+ * real PDF/X pipeline; the document is cloned with the KDP bleed so the raster and the boxes agree.
+ */
+export async function exportPaperKdpPdfAndSave(
+  document: PaperDocument,
+  setStatus: (status: string) => void,
+): Promise<void> {
+  const dpi = Math.max(300, Math.round(document.page.dpi || 300));
+  const profile = bundledProfileForOutputIntent(normalizePaperPrintProductionSpec(document.printProduction).outputIntentProfileId);
+  try {
+    setStatus(`Rendering ${document.pages.length} page${document.pages.length === 1 ? '' : 's'} at ${dpi} DPI for a KDP-ready PDF/X-1a…`);
+    const kdpDocument = updatePaperDocumentSetup(document, { bleedMm: KDP_BLEED_MM });
+    const result = await exportPaperDocumentToPdfxInBrowser(kdpDocument, {
+      standard: 'pdf-x-1a',
+      iccProfileId: profile.id,
+      outputDpi: dpi,
+      title: document.title,
+    });
+    const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-1a' });
+    const pdfBlob = new Blob([new Uint8Array(result.bytes)], { type: 'application/pdf' });
+    downloadSharedBlob(pdfBlob, `${safeFileName(document.title)}-KDP-interior.pdf`);
+    const kb = Math.round(result.bytes.length / 1024);
+    const preflight = report.pass ? 'preflight OK' : 'preflight flagged — check page/ink warnings';
+    setStatus(`Exported KDP-ready PDF/X-1a — ${dpi} DPI, 0.125" bleed, ${profile.displayName} CMYK (${kb} KB, ${preflight}).`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'KDP PDF export failed.';
+    setStatus(`KDP PDF export failed: ${message}`);
   }
 }
 

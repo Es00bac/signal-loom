@@ -308,6 +308,7 @@ import {
   downloadText,
   exportPaperPdfDocument,
   exportPaperPdfxAndSave,
+  exportPaperKdpPdfAndSave,
   exportPaperWebcomicImages,
   fileToDataUrl,
   frameFillCss,
@@ -1261,6 +1262,12 @@ export function PaperWorkspace() {
         if (!(await requestCommercialExportUnlock('KDP export'))) return;
         setKdpExportOpen(true);
         setStatus('Configuring KDP comic asset export.');
+        return;
+      case 'paper:export-kdp-pdf':
+        if (!(await requestCommercialExportUnlock('KDP print PDF'))) return;
+        if (await confirmPreflightBeforeExport('KDP print PDF export')) {
+          void exportPaperKdpPdfAndSave(document, setStatus);
+        }
         return;
       case 'paper:export-reader-spreads-pdf':
         if (isCommercialPrintProductionTarget(document.printProduction)
@@ -3581,6 +3588,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           onDuplicatePage={duplicatePageFromTopStrip}
           onExportPdf={() => runPaperTopStripCommand('paper:export-pdf')}
           onExportKdpAssets={() => runPaperTopStripCommand('paper:export-kdp-assets')}
+          onExportKdpPdf={() => runPaperTopStripCommand('paper:export-kdp-pdf')}
           onExportReaderSpreadsPdf={() => runPaperTopStripCommand('paper:export-reader-spreads-pdf')}
           onExportBookletProofPdf={() => runPaperTopStripCommand('paper:export-booklet-proof-pdf')}
           onExportWebcomicImages={() => runPaperTopStripCommand('paper:export-webcomic-images')}
@@ -5896,6 +5904,7 @@ export function PaperTopStrip({
   onDuplicatePage,
   onExportJson,
   onExportIdml,
+  onExportKdpPdf,
   onExportStoriesTxt,
   onExportStoriesHtml,
   onExportStoriesRtf,
@@ -5949,6 +5958,7 @@ export function PaperTopStrip({
   onDuplicatePage: () => void;
   onExportJson: () => void;
   onExportIdml: () => void;
+  onExportKdpPdf?: () => void;
   onExportStoriesTxt: () => void;
   onExportStoriesHtml: () => void;
   onExportStoriesRtf: () => void;
@@ -6246,6 +6256,12 @@ export function PaperTopStrip({
                       label="IDML (beta)"
                       description="Sloom layout interchange (JSON) — conformant Adobe .idml in development"
                       onClick={() => { onExportIdml(); setIsExportOpen(false); }}
+                    />
+                    <ExportMenuItem
+                      icon={<Download size={13} />}
+                      label="KDP print PDF"
+                      description="KDP-ready PDF/X-1a — real CMYK, 300 DPI, 0.125&quot; bleed, embedded ICC"
+                      onClick={() => { onExportKdpPdf?.(); setIsExportOpen(false); }}
                     />
                   </div>
                 </div>
