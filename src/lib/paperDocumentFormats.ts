@@ -10,7 +10,7 @@ import {
   type FlattenedPaperPageSvgExport,
 } from './paperPageFlattenExport';
 
-export type PaperDocumentImportFormat = 'txt' | 'markdown' | 'rtf' | 'html' | 'docx' | 'pdf' | 'sloom-idml-json';
+export type PaperDocumentImportFormat = 'txt' | 'markdown' | 'rtf' | 'html' | 'docx' | 'pdf' | 'sloom-idml-json' | 'idml-package';
 export type PaperStoryExportFormat = 'txt' | 'html' | 'rtf' | 'docx';
 
 export interface ImportedPaperTextBlock {
@@ -60,6 +60,11 @@ export interface PaperCbzRasterExportOptions {
 export async function parsePaperDocumentImportFile(file: File): Promise<ImportedPaperTextDocument | PaperDocument> {
   const format = inferPaperDocumentImportFormat(file.name, file.type);
   if (format === 'sloom-idml-json') return importPaperIdmlInterchange(await file.text());
+  if (format === 'idml-package') {
+    // A genuine Adobe .idml ZIP. We EXPORT real .idml, but parsing one back is not built yet — say so
+    // plainly rather than mis-reading the binary ZIP as a text document.
+    throw new Error('Real Adobe .idml import is not supported yet. You can export your layout to .idml (it opens in InDesign / Affinity Publisher); to reopen a layout here, use your saved Sloom project file.');
+  }
   if (format === 'pdf') throw new Error('Use Place PDF/document from the Source Library to place PDFs as linked document frames; editable PDF import is not implemented.');
   if (format === 'docx') return parseDocxTextDocument(await file.arrayBuffer(), file.name);
   const text = await file.text();
@@ -294,6 +299,9 @@ export function inferPaperDocumentImportFormat(fileNameOrPath: string | undefine
   const lower = (fileNameOrPath ?? '').toLowerCase();
   const normalizedMime = mimeType?.split(';', 1)[0]?.toLowerCase();
   if (lower.endsWith('.sloom-idml.json')) return 'sloom-idml-json';
+  // A REAL Adobe .idml package (ZIP), distinct from our .sloom-idml.json interchange — so it can be given
+  // an honest "not supported yet" message instead of being silently mis-parsed as plain text.
+  if (lower.endsWith('.idml') || normalizedMime === 'application/vnd.adobe.indesign-idml-package') return 'idml-package';
   if (lower.endsWith('.docx') || normalizedMime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'docx';
   if (lower.endsWith('.pdf') || normalizedMime === 'application/pdf') return 'pdf';
   if (lower.endsWith('.md') || lower.endsWith('.markdown') || normalizedMime === 'text/markdown') return 'markdown';

@@ -10,6 +10,7 @@ import {
   exportPaperStoryText,
   importPaperIdmlInterchange,
   importTextDocumentIntoPaper,
+  inferPaperDocumentImportFormat,
   parsePaperDocumentImportFile,
   placeDocumentSourceOnPaperPage,
 } from './paperDocumentFormats';
@@ -25,6 +26,18 @@ describe('paperDocumentFormats', () => {
     expect(doc.title).toBe('script');
     expect(doc.pages.flatMap((page) => page.frames).map((frame) => frame.text)).toEqual(expect.arrayContaining(['Page One', 'Panel caption text.']));
     expect(doc.pages[0].frames[0].typography.fontWeight).toBe('700');
+  });
+
+  it('detects a real Adobe .idml package distinctly from the .sloom-idml.json interchange', () => {
+    expect(inferPaperDocumentImportFormat('layout.idml')).toBe('idml-package');
+    expect(inferPaperDocumentImportFormat('x', 'application/vnd.adobe.indesign-idml-package')).toBe('idml-package');
+    expect(inferPaperDocumentImportFormat('layout.sloom-idml.json')).toBe('sloom-idml-json');
+  });
+
+  it('gives an honest error for a real .idml import instead of silently mis-parsing the ZIP as text', async () => {
+    // A byte that is NOT valid UTF-8 text — proves we never try to read the binary package as a text doc.
+    const file = new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], 'brand.idml', { type: 'application/vnd.adobe.indesign-idml-package' });
+    await expect(parsePaperDocumentImportFile(file)).rejects.toThrow(/not supported yet/i);
   });
 
   it('extracts paragraph text from DOCX word/document.xml', async () => {
