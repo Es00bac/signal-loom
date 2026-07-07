@@ -1,9 +1,11 @@
 # Print Production — Status & Honest Assessment
 
-**Branch:** `feature/real-cmyk-pdfx-print` · **Tests:** 3946 passing · **Build:** clean (`tsc -b` + vite)
+**Branch:** `feature/real-cmyk-pdfx-print` · **Tests:** 3957 passing · **Build:** clean (`tsc -b` + vite)
 **Verified with:** our ISO 15930 validator + poppler (`pdfinfo`/`pdffonts`/`pdfimages`), **Ghostscript `tiffsep`** (spot plates), **`pdffonts`** (real font subset + proof that outlined text carries NO font), **Scribus 1.6.6** (IDML opens correctly), `pdftoppm` render.
 
 > **Update (later same session) — "is rasterized text professional?"** No — raster is the last-resort tier, and it's now smaller. Three follow-ups shipped: (1) **single-column is the default** for new text frames, so body text embeds as selectable vector out of the box (was dormant at 2 columns); (2) preflight now **warns exactly which imported-font glyphs are missing** (they fall back to raster); (3) a real **"convert to curves" tier** — stroked/outlined lettering that used to rasterize now draws as filled+stroked **vector glyph curves** (verified: "KA-BOOM!" renders as outlined lettering using *no font*, beside a selectable caption, still valid PDF/X-4). The hierarchy is now **embedded selectable type → outlined vector curves → raster (only when we lack the glyphs)**.
+
+> **Update — spot-coloured *text* now plates (not just fills).** The Type inspector gained a **"Spot Ink"** row: bind a text/caption frame's colour to a named spot swatch and, under "Preserve named spots", its glyphs **outline to vector curves and print on the swatch's own `/Separation` plate** — reusing both the glyph-outlining and spot-plate engines. gs-`tiffsep`-verified on a PANTONE 185 C caption: **7354px of glyphs on the named plate, all four CMYK process plates empty, no embedded font** (`pdffonts` clean). Preflight now names spot text among the kept plates. The only spot use that still converts is a spot on a stroke/border (disclosed).
 
 The through-line of all this work: kill the paywalled print feature that *looks* real but silently ships the wrong file. Below is what changed, an honest 0–99 professional-usability rating per piece, my confidence, and the gaps.
 
@@ -30,7 +32,7 @@ These are genuine PDF/X files: real CMYK through a real embedded ICC output inte
 | 5 | **Preflight** | — | Discloses matched fonts as "embedded as your imported font" (not a substitute). | `7fc6015` |
 | 6 | **Import UI** | — | "Import font…" in the Type inspector: vets + adds, live `FontFace` preview, "Imported fonts" picker group, undoable. | `6a4eccc` |
 | 7 | **Glyph coverage** | An imported font missing a glyph would draw `.notdef` boxes as vector. | Falls back to raster (browser font-fallback renders the glyph) instead of shipping tofu boxes. | `0c15d19` |
-| 8 | **Spot `/Separation`** | Spot always flattened to process. | Exporter emits **real named spot plates** — `gs tiffsep` produces a "PANTONE 185 C" plate; file still passes PDF/X-4. *(Exporter only — not yet reachable from the UI; see gaps.)* | `fd87177` |
+| 8 | **Spot `/Separation`** | Spot always flattened to process. | Exporter emits **real named spot plates** — `gs tiffsep` produces a "PANTONE 185 C" plate; file still passes PDF/X-4. Reachable from the UI for **fills and text** (see rows 73/74). | `fd87177` |
 
 *(These build on the prior session's real-CMYK / PDF/X / ink-limit / black-policy / vector-text foundation, commits `34e72c4`→`69d7048`.)*
 
@@ -50,10 +52,10 @@ Legend: **80–99** press-ready · **60–79** works, with caveats · **40–59*
 | **78** | Black policy (100% K text) | Rewrites near-black vector text to pure K, stopping registration fringing. Cap: vector text only. |
 | **77** | KDP-ready interior PDF | Correct form: flattened CMYK PDF/X-1a at ≥300 DPI, 0.125″ bleed, embedded intent. Cap: not yet run through KDP's own file checker. |
 | **79** | Selectable vector text | Real embedded subset fonts, correctly placed, captions included, searchable, coverage-guarded, and now **single-column by default** so body text is selectable vector out of the box. Caps: multi-column, rotated, and speech-bubble text still don't produce *selectable* type. |
-| **74** | Text as vector curves (convert-to-outlines) | **New.** Text we can't embed as live type but must keep crisp draws as **filled/stroked glyph curves** (the font's own outlines, quad→cubic), not raster. Live end-to-end for **stroked lettering, letter-spacing, and whole-frame rotation** (gs/render-verified: no font, no image — pure vector, correct spacing + tilt direction/pivot). Next: skew/scale, arc/on-a-curve, speech-bubble, text-only rotation. Not selectable (curves carry no text — by design). |
+| **74** | Text as vector curves (convert-to-outlines) | **New.** Text we can't embed as live type but must keep crisp draws as **filled/stroked glyph curves** (the font's own outlines, quad→cubic), not raster. Live end-to-end for **stroked lettering, letter-spacing, whole-frame rotation, and spot-coloured text** (gs/render-verified: no font, no image — pure vector, correct spacing + tilt direction/pivot; spot glyphs land on the named plate). Next: skew/scale, arc/on-a-curve, speech-bubble, text-only rotation. Not selectable (curves carry no text — by design). |
 | **76** | Soft proof (on-screen) | Real lcms proofing transform incl. optional paper-white sim. Preview quality; not a physical contract proof. |
 | **70** | IDML (InDesign interchange) — export | A real `.idml` that **opens correctly in professional DTP software** — independently verified in Scribus 1.6.6 (exact geometry + fills; fixed the half-page bug). Caps: import/round-trip not built; not opened in InDesign *specifically*. |
-| **73** | Spot / Pantone plates | **Real end-to-end.** Create a named spot swatch ("+ Spot"), fill a shape with it, set the spot policy to "Preserve named spots" → the export emits a real `/Separation` plate and knocks that fill out of the process raster. Handles the full shape family: solid, **tinted/screened** (fill opacity → tint), **rotated**, **rounded-corner**, and **polygon** fills. **gs-tiffsep-verified**: solid vs 40% measures ink 1.000 vs 0.400; a 25° rect plates rotated; a 14 mm-radius rect plates rounded; a 5-vertex frame plates a clean pentagon. Still valid PDF/X-4; preflight discloses kept vs converted. Caps: a spot on a stroke/border or spot TEXT still converts (disclosed); not yet proven in a real RIP/press by you. |
+| **73** | Spot / Pantone plates | **Real end-to-end.** Create a named spot swatch ("+ Spot"), apply it to a **fill** (any shape) or to **text** (the "Spot Ink" row in the Type inspector), set the spot policy to "Preserve named spots" → the export emits a real `/Separation` plate and knocks that art out of the process raster. Fills handle the full shape family: solid, **tinted/screened** (fill opacity → tint), **rotated**, **rounded-corner**, and **polygon**; **text** outlines to glyph curves and plates. **gs-tiffsep-verified**: solid vs 40% measures ink 1.000 vs 0.400; a 25° rect plates rotated; a 14 mm-radius rect plates rounded; a 5-vertex frame plates a clean pentagon; a PANTONE 185 C caption plates 7354px of glyphs with all four process plates empty and no embedded font. Still valid PDF/X-4; preflight discloses kept vs converted. Caps: a spot on a stroke/border still converts (disclosed); not yet proven in a real RIP/press by you. |
 
 ---
 
@@ -65,7 +67,7 @@ Legend: **80–99** press-ready · **60–79** works, with caveats · **40–59*
 | **PDF/X-4** | ✅ Real | Same color core, plus a selectable vector-text layer (your embedded fonts) over the raster art. |
 | **KDP interior PDF** | ✅ Real | PDF/X-1a shaped to Amazon KDP's spec (DPI + bleed). Form is right; uploader untested. |
 | **Adobe IDML** | ✅ Real (export) | Genuine package, Scribus-verified to open with correct geometry + fills. Import not built. |
-| **Spot-color PDF** | ✅ Real (solid fills) | Named spot swatch → solid fill → real `/Separation` plate, knocked out of the process raster, gs-verified. Solid rectangles only; other spot uses convert (disclosed). |
+| **Spot-color PDF** | ✅ Real (fills + text) | Named spot swatch → fill (any shape family) or text → real `/Separation` plate, knocked out of the process raster, gs-verified. Only a spot on a stroke/border still converts (disclosed). |
 
 ---
 
@@ -73,7 +75,7 @@ Legend: **80–99** press-ready · **60–79** works, with caveats · **40–59*
 
 - **Structurally / by construction:** high (≈85%). The files carry a real CMYK OutputIntent, correct boxes, enforced ink limits, embedded subset fonts (including your *own* font now), and pass our ISO 15930 validator + poppler. The classic amateur tells — RGB mislabeled as print, over-inked rich blacks, fringing black text, silently-swapped fonts, tofu boxes — are handled or openly disclosed.
 - **Will a real shop accept it:** confident for **process-color** jobs (≈80%). Held back only by the absence of a live Acrobat/Enfocus/shop/KDP round-trip.
-- **Where I'm *not* confident:** spot/Pantone jobs (exporter is ready but not wired to the UI), and any InDesign-specific IDML quirk (verified in Scribus, not InDesign itself).
+- **Where I'm *not* confident:** spot/Pantone jobs are now wired end-to-end (fills + text) and gs-verified, but **not yet proven in a real RIP/press by you**; and any InDesign-specific IDML quirk (verified in Scribus, not InDesign itself).
 
 **One-line pitch you can honestly make today:** *"Exports real CMYK PDF/X-1a & X-4 with an embedded ICC output intent, enforced ink limits, and selectable embedded text using your own fonts — the correct press format, not a labeled RGB image."* Every word of that is true now.
 
@@ -84,7 +86,7 @@ Legend: **80–99** press-ready · **60–79** works, with caveats · **40–59*
 | # | Gap | Priority | Why / next step |
 |:---:|---|---|---|
 | 1 | **Real-world validation round-trip** | Highest | Open a PDF/X in Acrobat/Enfocus, hand one to a shop, upload the KDP interior. The one test only you can run — the reason confidence caps at ~80%. |
-| 2 | **Spot color — broaden coverage** | Low | Solid, tinted, rotated, rounded-corner, and polygon spot fills now ship as plates. Still convert (disclosed): a spot on a stroke/border, and spot TEXT (needs raw `/Separation` text ops). Also: prove one plate in a real RIP. |
+| 2 | **Spot color — broaden coverage** | Low | Solid, tinted, rotated, rounded-corner, and polygon spot fills **and spot-coloured text** now ship as plates (text via glyph-outlining onto the plate). Only a spot on a stroke/border still converts (disclosed) — needs a `strokeSwatchId` data model + stroked `/Separation` ops. Also: prove one plate in a real RIP. |
 | 3 | **Font polish** | Medium | Faux-bold/italic when only one weight is imported; native WOFF2 (needs a brotli decompressor). *(The "your font is missing glyph X" preflight note is now done.)* |
 | 4 | **Vector-text reach** | Medium | Single-column is the default; **stroked, letter-spaced, and rotated** text now outline to vector curves instead of rasterizing. Still to reach vector: skew/scale, arc/on-a-curve, and speech-bubble text (the outline core handles them — remaining work is the exporter geometry + a live-editor overlay check for pixel-exact alignment). |
 | 5 | **IDML import + ink-reduction quality + PDF/A-2b hybrid** | Later | Round-trip IDML; profile-aware re-separation; optional GTS_PDFA intent so veraPDF passes too (archival). |
