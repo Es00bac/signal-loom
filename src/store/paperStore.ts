@@ -58,6 +58,7 @@ import type {
   PaperFramePatch,
   PaperFrameKind,
   PaperGuide,
+  PaperImportedFont,
   PaperPagePreset,
   PaperTool,
 } from '../types/paper';
@@ -114,6 +115,9 @@ interface PaperActions {
   unchainSelectedBubbles: () => void;
   addPaperSwatch: (swatch: PaperSwatch) => void;
   removePaperSwatch: (swatchId: string) => void;
+  /** Add (or replace, by family+weight+style) a vetted imported font on the document. */
+  addImportedFont: (font: PaperImportedFont) => void;
+  removeImportedFont: (fontId: string) => void;
   threadSelectedFrames: () => void;
   unthreadSelectedFrames: () => void;
   alignSelectedFrames: (edge: PaperAlignEdge) => void;
@@ -543,6 +547,22 @@ export const usePaperStore = create<PaperState & PaperActions>()(
       removePaperSwatch: (swatchId) =>
         set((state) => withPaperHistory(state, {
           document: { ...state.document, swatches: (state.document.swatches ?? []).filter((swatch) => swatch.id !== swatchId) },
+        })),
+
+      addImportedFont: (font) =>
+        set((state) => {
+          // Replace any existing import of the same family+weight+style so re-importing updates in place.
+          const kept = (state.document.importedFonts ?? []).filter(
+            (f) => !(f.familyName === font.familyName && f.bold === font.bold && f.italic === font.italic),
+          );
+          return withPaperHistory(state, {
+            document: { ...state.document, importedFonts: [...kept, font] },
+          });
+        }),
+
+      removeImportedFont: (fontId) =>
+        set((state) => withPaperHistory(state, {
+          document: { ...state.document, importedFonts: (state.document.importedFonts ?? []).filter((f) => f.id !== fontId) },
         })),
 
       threadSelectedFrames: () =>

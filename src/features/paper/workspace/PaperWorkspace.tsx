@@ -55,6 +55,7 @@ import { useImageEditorStore } from '../../../store/imageEditorStore';
 import { useEditorStore } from '../../../store/editorStore';
 import { useDockablePanelStore } from '../../../store/dockablePanelStore';
 import { usePaperStore } from '../../../store/paperStore';
+import { PaperFontImportControl, useRegisterImportedFonts } from './PaperFontImport';
 import { useSettingsStore } from '../../../store/settingsStore';
 import { useSourceBinStore } from '../../../store/sourceBinStore';
 import { useFlowStore } from '../../../store/flowStore';
@@ -598,6 +599,8 @@ export function PaperWorkspace() {
   const touchNavigationPointersRef = useRef<Map<number, PaperTouchNavigationPoint>>(new Map());
   const touchNavigationPinchRef = useRef<PaperTouchNavigationPinchState | null>(null);
   const document = usePaperStore((s) => s.document);
+  // Register the document's imported fonts as live browser faces so the editor renders them.
+  useRegisterImportedFonts(document.importedFonts);
   const selectedPageId = usePaperStore((s) => s.selectedPageId);
   const selectedFrameId = usePaperStore((s) => s.selectedFrameId);
   const selectedFrameIds = usePaperStore((s) => s.selectedFrameIds);
@@ -9304,7 +9307,9 @@ function PaperInspector({
   const currentPage = document.pages.find((page) => page.pageNumber === selectedPageNumber) ?? document.pages[0];
   const effectiveFrame = frame ? computeEffectivePaperFrame(document, frame) : null;
   const selectedFontFamily = frameTypography?.fontFamily ?? '';
-  const selectedFontIsPreset = PAPER_FONT_OPTIONS.some((option) => option.value === selectedFontFamily);
+  const importedFontFamilies = [...new Set((document.importedFonts ?? []).map((font) => font.familyName))];
+  const selectedFontIsPreset = PAPER_FONT_OPTIONS.some((option) => option.value === selectedFontFamily)
+    || importedFontFamilies.includes(selectedFontFamily);
 
   return (
     <div className="flex min-h-full flex-col bg-[#101722]">
@@ -10003,6 +10008,15 @@ function PaperInspector({
                     value={selectedFontFamily}
                   >
                     {!selectedFontIsPreset && selectedFontFamily ? <option value={selectedFontFamily}>Custom - {selectedFontFamily}</option> : null}
+                    {importedFontFamilies.length > 0 ? (
+                      <optgroup label="Imported fonts">
+                        {importedFontFamilies.map((family) => (
+                          <option key={`imported-${family}`} style={{ fontFamily: family }} value={family}>
+                            {family} (imported)
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null}
                     {PAPER_FONT_OPTIONS.map((font) => (
                       <option key={font.value} style={{ fontFamily: font.value }} value={font.value}>
                         {font.label}
@@ -10010,6 +10024,7 @@ function PaperInspector({
                     ))}
                   </select>
                 </Field>
+                <PaperFontImportControl />
                 <Field label="Custom Font Stack">
                   <input
                     className="paper-input"
