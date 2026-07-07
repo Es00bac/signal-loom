@@ -145,6 +145,13 @@ export interface PdfxOutlineTextFrame {
   /** Optional stroke around the glyphs (comic-style outlined lettering). */
   strokeCmyk?: { c: number; m: number; y: number; k: number };
   strokeWidthPt?: number;
+  /** Optional rotation of the whole block about the frame centre (matches CSS `transform: rotate`,
+   * clockwise-positive in screen space). Requires centreXPt + centreYTopPt. */
+  rotationDeg?: number;
+  /** Rotation pivot: frame-centre X from the media left edge, in points. */
+  centerXPt?: number;
+  /** Rotation pivot: frame-centre Y from the media TOP edge, in points (flipped internally). */
+  centerYTopPt?: number;
 }
 
 export interface PdfxOutputProfile {
@@ -538,10 +545,19 @@ export async function buildPaperPdfx(
         ? limitTotalAreaCoverage(frame.cmyk.c, frame.cmyk.m, frame.cmyk.y, frame.cmyk.k, inkLimitPercent / 100)
         : frame.cmyk;
       const hasStroke = !!frame.strokeCmyk && (frame.strokeWidthPt ?? 0) > 0;
-      const draw: PDFOperator[] = [
-        pushGraphicsState(),
-        contentOp('k', [PDFNumber.of(ink.c), PDFNumber.of(ink.m), PDFNumber.of(ink.y), PDFNumber.of(ink.k)]),
-      ];
+      const draw: PDFOperator[] = [pushGraphicsState()];
+      // Rotate the whole block about the frame centre to match the editor's CSS `transform: rotate`. CSS is
+      // clockwise-positive in screen space (y-down); PDF user space is y-up, so the same visual rotation is
+      // the negative angle. cm = T(cx,cy)·R(φ)·T(-cx,-cy).
+      if (frame.rotationDeg && frame.centerXPt !== undefined && frame.centerYTopPt !== undefined) {
+        const phi = (-frame.rotationDeg * Math.PI) / 180;
+        const cx = frame.centerXPt;
+        const cy = mediaHpt - frame.centerYTopPt;
+        const cos = Math.cos(phi);
+        const sin = Math.sin(phi);
+        draw.push(concatTransformationMatrix(cos, sin, -sin, cos, cx * (1 - cos) + cy * sin, cy * (1 - cos) - cx * sin));
+      }
+      draw.push(contentOp('k', [PDFNumber.of(ink.c), PDFNumber.of(ink.m), PDFNumber.of(ink.y), PDFNumber.of(ink.k)]));
       if (hasStroke) {
         const sInk = inkLimitPercent !== undefined
           ? limitTotalAreaCoverage(frame.strokeCmyk!.c, frame.strokeCmyk!.m, frame.strokeCmyk!.y, frame.strokeCmyk!.k, inkLimitPercent / 100)

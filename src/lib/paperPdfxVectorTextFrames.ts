@@ -190,16 +190,18 @@ export function buildVectorTextFrameSpecs(
 export function frameTextIsOutlineable(frame: PaperFrame, importedFonts?: readonly PaperImportedFont[]): boolean {
   if (!isVectorTextKind(frame.kind)) return false;
   if (frameTextIsVectorSafe(frame, importedFonts)) return false; // already handled as selectable type
-  // First tier of outlining handles the UPRIGHT blockers (no transform-origin ambiguity): a text stroke
-  // and/or letter-spacing (tracking). Rotation/skew/scale/arc/bubble are outlineable too but need the
-  // exporter to match the editor's transform geometry — a later slice.
+  // Outlining handles: the upright blockers (a text stroke, letter-spacing) and whole-frame ROTATION
+  // (drawn via a rotation matrix about the frame centre, matching the editor's CSS transform). Text-only
+  // rotation, skew/scale, arc, and bubble are outlineable too but need more exporter geometry — later.
   const hasStroke = num(frame.textStrokeWidthMm) > 0;
   const hasTracking = num(frame.typography.tracking) !== 0;
-  if (!hasStroke && !hasTracking) return false;
-  // Would it be vector-safe with those upright blockers neutralised? If so, they're the ONLY blockers.
+  const hasRotation = num(frame.rotationDeg) !== 0;
+  if (!hasStroke && !hasTracking && !hasRotation) return false;
+  // Would it be vector-safe with those blockers neutralised? If so, they're the ONLY blockers.
   const normalized: PaperFrame = {
     ...frame,
     textStrokeWidthMm: 0,
+    rotationDeg: 0,
     typography: { ...frame.typography, tracking: 0 },
   };
   return frameTextIsVectorSafe(normalized, importedFonts);
@@ -269,6 +271,10 @@ export function buildOutlineTextFrameSpecs(
       trackingPt: (num(typo.tracking) / 1000) * typo.fontSizePt,
       strokeCmyk: stroke,
       strokeWidthPt: num(frame.textStrokeWidthMm) * PT_PER_MM,
+      // Whole-frame rotation: pivot is the frame centre (matches CSS transform-origin: center).
+      rotationDeg: num(frame.rotationDeg) || undefined,
+      centerXPt: num(frame.rotationDeg) ? (bleedMm + frame.xMm + frame.widthMm / 2) * PT_PER_MM : undefined,
+      centerYTopPt: num(frame.rotationDeg) ? (bleedMm + frame.yMm + frame.heightMm / 2) * PT_PER_MM : undefined,
     });
   }
   return specs;

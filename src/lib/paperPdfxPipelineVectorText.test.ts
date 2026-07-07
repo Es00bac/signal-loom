@@ -91,11 +91,11 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
   });
 
   it('falls back to a full raster when a frame uses a feature neither vector nor outline can reproduce', async () => {
-    // vectorText is ON, but the frame is ROTATED — which neither the selectable-text path nor the (upright)
-    // outline path reproduces yet → its text stays baked into the raster (never a wrong layout), still valid
-    // PDF/X. (Tracking/stroke are no longer such features: they now draw as outlined vector curves.)
+    // vectorText is ON, but the frame uses ARC (on-a-curve) text — which neither the selectable-text path
+    // nor the outline path reproduces yet → its text stays baked into the raster (never a wrong layout),
+    // still valid PDF/X. (Tracking/stroke/rotation are no longer such features: they draw as vector curves.)
     const base = textDoc();
-    const gatedFrame = { ...base.pages[0].frames[0], rotationDeg: 15 } as PaperFrame;
+    const gatedFrame = { ...base.pages[0].frames[0], textArcPercent: 40 } as PaperFrame;
     const doc: PaperDocument = { ...base, pages: base.pages.map((p, i) => (i === 0 ? { ...p, frames: [gatedFrame] } : p)) };
 
     let excludedTextFrameIds: string[] | undefined = ['sentinel'];

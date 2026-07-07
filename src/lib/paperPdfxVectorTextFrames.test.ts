@@ -234,9 +234,23 @@ describe('outline-text (convert to curves) builder', () => {
     expect(frameTextIsOutlineable(doc.pages[0].frames[0])).toBe(false);
   });
 
-  it('does NOT outline a frame that is unsafe for another reason too (e.g. rotation)', () => {
-    const doc = docWithFrames([{ text: 'BOOM', textStrokeWidthMm: 0.4, rotationDeg: 12, typography: strokeTypo }]);
+  it('does NOT outline a frame that is unsafe for a reason outlining does not yet handle (e.g. arc)', () => {
+    // Arc / on-a-curve text needs per-glyph placement the outline path doesn't do yet → stays raster.
+    const doc = docWithFrames([{ text: 'BOOM', textStrokeWidthMm: 0.4, textArcPercent: 40, typography: strokeTypo }]);
     expect(frameTextIsOutlineable(doc.pages[0].frames[0])).toBe(false);
+  });
+
+  it('outlines a rotated text frame, carrying the angle + frame-centre pivot', () => {
+    const doc = docWithFrames([
+      { text: 'TILT', xMm: 40, yMm: 30, widthMm: 90, heightMm: 20, rotationDeg: 20, typography: strokeTypo },
+    ], 5);
+    // Rotation alone (no stroke) makes the frame outline-only, not selectable-vector.
+    expect(frameTextIsOutlineable(doc.pages[0].frames[0])).toBe(true);
+    const [spec] = buildOutlineTextFrameSpecs(doc.pages[0], doc, blackTransform);
+    expect(spec.rotationDeg).toBe(20);
+    // Pivot is the FRAME centre (bleed 5 + x/y + half w/h), matching CSS transform-origin: center.
+    expect(spec.centerXPt).toBeCloseTo((5 + 40 + 90 / 2) * PT_PER_MM, 4);
+    expect(spec.centerYTopPt).toBeCloseTo((5 + 30 + 20 / 2) * PT_PER_MM, 4);
   });
 
   it('outlines letter-spaced (tracked) text and bakes tracking into the advance (tracking/1000 em)', () => {
