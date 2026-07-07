@@ -239,6 +239,28 @@ describe('paperPreflight', () => {
     expect(browserReport.issues.some((i) => i.title === 'Fonts embedded as Liberation substitutes')).toBe(false);
   });
 
+  it('discloses an imported font as embedded-real, not a Liberation substitute', () => {
+    const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Imported', preset: 'comic-book' }), {
+      printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51' },
+    });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'caption', xMm: 10, yMm: 10, widthMm: 50, heightMm: 20, text: 'Hello',
+      typography: { fontFamily: 'Georgia', color: '#111111' },
+    });
+    const withFont: typeof document = {
+      ...document,
+      importedFonts: [{ id: 'geo', familyName: 'Georgia', bold: false, italic: false, format: 'truetype', embeddable: true, canSubset: true, dataBase64: 'AAAA' }],
+    };
+
+    const report = analyzePaperPreflight(withFont, []);
+    const real = report.issues.find((i) => i.title === 'Fonts embedded as your imported font');
+    expect(real).toBeDefined();
+    expect(real?.severity).toBe('info');
+    expect(real?.detail).toContain('Georgia');
+    // …and it must NOT also be reported as a Liberation substitute.
+    expect(report.issues.some((i) => i.title === 'Fonts embedded as Liberation substitutes')).toBe(false);
+  });
+
   it('discloses display fonts as rasterized (not substituted) for PDF/X', () => {
     const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'SFX subst', preset: 'comic-book' }), {
       printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51' },

@@ -1,16 +1,24 @@
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
-import type { PaperDocument, PaperFrame, PaperPage } from '../types/paper';
+import type { PaperDocument, PaperFrame, PaperImportedFont, PaperPage } from '../types/paper';
 import {
   buildPaperPrintProductionMetadata,
   isPdfXProductionTarget,
 } from './paperPrintProduction';
 import { classifyFontFamily, isDisplayFontFamily } from './paperFontResolution';
+import { normalizeFamilyName } from './paperFontLibrary';
 
 const LIBERATION_SUBSTITUTE_NAME: Record<'serif' | 'sans' | 'mono', string> = {
   serif: 'Liberation Serif',
   sans: 'Liberation Sans',
   mono: 'Liberation Mono',
 };
+
+/** True when a referenced family matches an embeddable imported font (so it embeds as the real face). */
+function familyHasImportedFace(family: string, importedFonts: readonly PaperImportedFont[] | undefined): boolean {
+  const norm = normalizeFamilyName(family);
+  if (!norm) return false;
+  return (importedFonts ?? []).some((f) => f.embeddable && normalizeFamilyName(f.familyName) === norm);
+}
 
 export type PaperPreflightSeverity = 'error' | 'warning' | 'info';
 export type PaperPreflightProfileId = 'generic-pdf' | 'comic-print' | 'manga-print' | 'webtoon';
@@ -125,14 +133,20 @@ export function analyzePaperPreflight(
       issues.push(issue('warning', 'Font may be unavailable', `${font.family} is referenced but not reported as available by the browser.`, { category: 'fonts' }));
     }
   }
-  // Honest disclosure: PDF/X exports embed real vector text using metric-compatible Liberation faces
-  // (we can't legally embed arbitrary system fonts). Tell the user which of their fonts get substituted.
-  // Display/decorative faces have no faithful Liberation stand-in, so their text is RASTERIZED (real
-  // glyphs) instead of substituted — disclosed separately so the two behaviours aren't conflated.
+  // Honest disclosure: PDF/X exports embed real vector text. A font the user IMPORTED is embedded as their
+  // actual face (subset); everything else falls back to a metric-compatible Liberation face (we can't
+  // legally embed arbitrary system fonts). Display/decorative faces have no faithful Liberation stand-in,
+  // so — unless the real font was imported — their text is RASTERIZED (real glyphs) instead of substituted.
+  // The three outcomes are disclosed separately so they're never conflated.
   if (isPdfXProductionTarget(document.printProduction)) {
     const substitutions = new Map<string, string>();
     const rasterized = new Set<string>();
+    const embeddedReal = new Set<string>();
     for (const font of fontInventory) {
+      if (familyHasImportedFace(font.family, document.importedFonts)) {
+        embeddedReal.add(font.family);
+        continue;
+      }
       if (isDisplayFontFamily(font.family)) {
         rasterized.add(font.family);
         continue;
@@ -140,6 +154,15 @@ export function analyzePaperPreflight(
       const target = LIBERATION_SUBSTITUTE_NAME[classifyFontFamily(font.family)];
       if (font.family.trim().toLowerCase() === target.toLowerCase()) continue; // already the substitute
       substitutions.set(font.family, target);
+    }
+    if (embeddedReal.size > 0) {
+      const list = [...embeddedReal].join('; ');
+      issues.push(issue(
+        'info',
+        'Fonts embedded as your imported font',
+        `${list}: your uploaded font is embedded as real, selectable vector text (subset) — no substitution.`,
+        { category: 'fonts' },
+      ));
     }
     if (substitutions.size > 0) {
       const list = [...substitutions.entries()].map(([from, to]) => `${from} → ${to}`).join('; ');
