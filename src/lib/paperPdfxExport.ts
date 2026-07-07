@@ -153,6 +153,9 @@ export interface PdfxOutlineTextFrame {
   /** Optional stroke around the glyphs (comic-style outlined lettering). */
   strokeCmyk?: { c: number; m: number; y: number; k: number };
   strokeWidthPt?: number;
+  /** When set, the glyphs fill with this named spot /Separation ink (tint 0..1) instead of process CMYK —
+   * the text becomes a real named plate. `cmyk` is the alternate at full strength. */
+  spot?: { name: string; cmyk: { c: number; m: number; y: number; k: number }; tint: number };
   /** Optional rotation of the whole block about the frame centre (matches CSS `transform: rotate`,
    * clockwise-positive in screen space). Requires centreXPt + centreYTopPt. */
   rotationDeg?: number;
@@ -508,8 +511,12 @@ export async function buildPaperPdfx(
     pdfPage.node.set(PDFName.of('TrimBox'), ctx.obj([bleedPt, bleedPt, bleedPt + page.trimWidthPt, bleedPt + page.trimHeightPt]));
     pdfPage.node.set(PDFName.of('BleedBox'), ctx.obj([0, 0, mediaWpt, mediaHpt]));
 
-    // --- Spot-colour /Separation fills (under the vector text): real named plates, not process. ---
-    if (page.spotFills && page.spotFills.length > 0) {
+    // Register a spot /Separation colorspace on THIS page's resources (cached per colorant), returning its
+    // /SpN resource name. Shared by spot FILLS and spot-coloured TEXT so both draw on the same named plate.
+    const spotResName = new Map<string, string>();
+    const ensureSpotCs = (name: string, ink: { c: number; m: number; y: number; k: number }): string => {
+      const existing = spotResName.get(name);
+      if (existing) return existing;
       const resources = pdfPage.node.Resources() ?? ctx.obj({});
       let csDict = resources.lookupMaybe(PDFName.of('ColorSpace'), PDFDict);
       if (!csDict) {
@@ -517,14 +524,16 @@ export async function buildPaperPdfx(
         resources.set(PDFName.of('ColorSpace'), csDict);
       }
       pdfPage.node.set(PDFName.of('Resources'), resources);
-      const resNameForSpot = new Map<string, string>();
+      const resName = `Sp${spotResName.size}`;
+      csDict.set(PDFName.of(resName), spotColorSpaceRef(name, ink));
+      spotResName.set(name, resName);
+      return resName;
+    };
+
+    // --- Spot-colour /Separation fills (under the vector text): real named plates, not process. ---
+    if (page.spotFills && page.spotFills.length > 0) {
       for (const spot of page.spotFills) {
-        let resName = resNameForSpot.get(spot.name);
-        if (!resName) {
-          resName = `Sp${resNameForSpot.size}`;
-          csDict.set(PDFName.of(resName), spotColorSpaceRef(spot.name, spot.cmyk));
-          resNameForSpot.set(spot.name, resName);
-        }
+        const resName = ensureSpotCs(spot.name, spot.cmyk);
         const yBottom = mediaHpt - (spot.yTopPt + spot.heightPt); // flip to PDF's bottom-left origin
         const tint = Math.max(0, Math.min(1, spot.tint));
         const spotRotate = rotateAboutPivotOp(spot.rotationDeg, spot.centerXPt, spot.centerYTopPt, mediaHpt);
@@ -624,7 +633,13 @@ export async function buildPaperPdfx(
       // Rotate the whole block about the frame centre to match the editor's CSS transform (see helper).
       const textRotate = rotateAboutPivotOp(frame.rotationDeg, frame.centerXPt, frame.centerYTopPt, mediaHpt);
       if (textRotate) draw.push(textRotate);
-      draw.push(contentOp('k', [PDFNumber.of(ink.c), PDFNumber.of(ink.m), PDFNumber.of(ink.y), PDFNumber.of(ink.k)]));
+      if (frame.spot) {
+        // Spot-coloured text: fill the glyph outlines with the named /Separation ink → a real plate.
+        const resName = ensureSpotCs(frame.spot.name, frame.spot.cmyk);
+        draw.push(contentOp('cs', [PDFName.of(resName)]), contentOp('scn', [PDFNumber.of(Math.max(0, Math.min(1, frame.spot.tint)))]));
+      } else {
+        draw.push(contentOp('k', [PDFNumber.of(ink.c), PDFNumber.of(ink.m), PDFNumber.of(ink.y), PDFNumber.of(ink.k)]));
+      }
       if (hasStroke) {
         const sInk = inkLimitPercent !== undefined
           ? limitTotalAreaCoverage(frame.strokeCmyk!.c, frame.strokeCmyk!.m, frame.strokeCmyk!.y, frame.strokeCmyk!.k, inkLimitPercent / 100)

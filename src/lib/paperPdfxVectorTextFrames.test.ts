@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createDefaultPaperDocument } from './paperDocument';
 import { updatePaperDocumentSetup } from './paperDocument';
 import type { PaperDocument, PaperFrame, PaperImportedFont } from '../types/paper';
+import type { PaperSwatch } from './paperSwatches';
 import type { IccCmykTransform } from './paperColorManagement';
 import { buildOutlineTextFrameSpecs, buildVectorTextFrameSpecs, frameTextIsOutlineable, pageTextIsVectorizable } from './paperPdfxVectorTextFrames';
 import { bytesToBase64 } from './paperFontLibrary';
@@ -238,6 +239,30 @@ describe('outline-text (convert to curves) builder', () => {
     // Arc / on-a-curve text needs per-glyph placement the outline path doesn't do yet → stays raster.
     const doc = docWithFrames([{ text: 'BOOM', textStrokeWidthMm: 0.4, textArcPercent: 40, typography: strokeTypo }]);
     expect(frameTextIsOutlineable(doc.pages[0].frames[0])).toBe(false);
+  });
+
+  const spotSwatch: PaperSwatch = { id: 'sw-spot', name: 'Brand', type: 'spot', model: 'cmyk', spotName: 'PANTONE 185 C', rgb: { r: 227, g: 6, b: 19 }, cmyk: { c: 0, m: 90, y: 85, k: 0 } };
+  const withSpotText = (policy: 'preserve-named' | 'warn') => {
+    let doc = docWithFrames([{ text: 'LOGO', typography: { ...strokeTypo, colorSwatchId: 'sw-spot' } }]);
+    return { ...doc, swatches: [spotSwatch], printProduction: { ...doc.printProduction, spotColorPolicy: policy } };
+  };
+
+  it('plates spot-coloured text as a /Separation outline and skips the selectable path', () => {
+    const doc = withSpotText('preserve-named');
+    // The selectable process-text path skips it (so it is not drawn twice)…
+    expect(buildVectorTextFrameSpecs(doc.pages[0], doc, blackTransform)).toHaveLength(0);
+    // …and the outline path plates it with the named spot ink at full tint.
+    const [spec] = buildOutlineTextFrameSpecs(doc.pages[0], doc, blackTransform);
+    expect(spec.spot?.name).toBe('PANTONE 185 C');
+    expect(spec.spot?.cmyk).toEqual({ c: 0, m: 0.9, y: 0.85, k: 0 });
+    expect(spec.spot?.tint).toBe(1);
+  });
+
+  it('leaves spot-coloured text as normal process type when the policy is not preserve-named', () => {
+    const doc = withSpotText('warn');
+    // Not preserving spots → normal selectable process text, no spot outline.
+    expect(buildVectorTextFrameSpecs(doc.pages[0], doc, blackTransform)).toHaveLength(1);
+    expect(buildOutlineTextFrameSpecs(doc.pages[0], doc, blackTransform)).toHaveLength(0);
   });
 
   it('outlines a rotated text frame, carrying the angle + frame-centre pivot', () => {

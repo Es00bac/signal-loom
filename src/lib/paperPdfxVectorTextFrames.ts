@@ -134,6 +134,9 @@ export function buildVectorTextFrameSpecs(
     if (!isVectorTextKind(frame.kind) || !frameTextIsVectorSafe(frame, document.importedFonts)) continue;
     const text = frame.text ?? '';
     if (!text.trim()) continue;
+    // Spot-coloured text becomes a /Separation plate (outlined) instead of selectable process type — the
+    // outline builder handles it, so skip it here to avoid drawing it twice.
+    if (resolveTextSpot(frame, document)) continue;
     const typo = frame.typography;
     // Prefer the user's imported font (real glyphs); fall back to the bundled Liberation substitute.
     const face = resolveTextFace(typo, document.importedFonts);
@@ -187,6 +190,19 @@ export function buildVectorTextFrameSpecs(
  * frame must otherwise be vector-safe (same font we hold, upright, single column, …); if it's unsafe for
  * any OTHER reason (a display font we don't have, rotation, columns) it stays raster for now.
  */
+/** True when a frame's text can be laid out by the linear engine once the outline-handled blockers (a text
+ * stroke, letter-spacing, whole-frame rotation) are neutralised — i.e. its glyphs CAN be drawn as outlines.
+ * False for features outlining can't reproduce yet (arc, bubble, skew/scale, text-only rotation). */
+function frameTextIsLinearizable(frame: PaperFrame, importedFonts?: readonly PaperImportedFont[]): boolean {
+  const normalized: PaperFrame = {
+    ...frame,
+    textStrokeWidthMm: 0,
+    rotationDeg: 0,
+    typography: { ...frame.typography, tracking: 0 },
+  };
+  return frameTextIsVectorSafe(normalized, importedFonts);
+}
+
 export function frameTextIsOutlineable(frame: PaperFrame, importedFonts?: readonly PaperImportedFont[]): boolean {
   if (!isVectorTextKind(frame.kind)) return false;
   if (frameTextIsVectorSafe(frame, importedFonts)) return false; // already handled as selectable type
@@ -198,13 +214,26 @@ export function frameTextIsOutlineable(frame: PaperFrame, importedFonts?: readon
   const hasRotation = num(frame.rotationDeg) !== 0;
   if (!hasStroke && !hasTracking && !hasRotation) return false;
   // Would it be vector-safe with those blockers neutralised? If so, they're the ONLY blockers.
-  const normalized: PaperFrame = {
-    ...frame,
-    textStrokeWidthMm: 0,
-    rotationDeg: 0,
-    typography: { ...frame.typography, tracking: 0 },
+  return frameTextIsLinearizable(frame, importedFonts);
+}
+
+/** Resolve a text frame's colour to a preserved SPOT ink, or undefined. A frame whose durable
+ * `colorSwatchId` points at a spot swatch with a CMYK alternate — and only when the doc preserves named
+ * spots — draws its glyphs as a real /Separation plate instead of process type. Solid (tint 1) for v1. */
+export function resolveTextSpot(
+  frame: PaperFrame,
+  document: PaperDocument,
+): { name: string; cmyk: { c: number; m: number; y: number; k: number }; tint: number } | undefined {
+  if (document.printProduction.spotColorPolicy !== 'preserve-named') return undefined;
+  const id = frame.typography.colorSwatchId;
+  if (!id) return undefined;
+  const swatch = (document.swatches ?? []).find((s) => s.id === id);
+  if (!swatch || swatch.type !== 'spot' || !swatch.cmyk) return undefined;
+  return {
+    name: swatch.spotName ?? swatch.name,
+    cmyk: { c: swatch.cmyk.c / 100, m: swatch.cmyk.m / 100, y: swatch.cmyk.y / 100, k: swatch.cmyk.k / 100 },
+    tint: 1,
   };
-  return frameTextIsVectorSafe(normalized, importedFonts);
 }
 
 /** A PdfxOutlineTextFrame minus resolved bytes — carries a bundled `fontUrl` OR inline `fontBytes` plus the
@@ -236,7 +265,12 @@ export function buildOutlineTextFrameSpecs(
   };
   const specs: PdfxOutlineTextFrameSpec[] = [];
   for (const frame of page.frames) {
-    if (!isVectorTextKind(frame.kind) || !frameTextIsOutlineable(frame, document.importedFonts)) continue;
+    if (!isVectorTextKind(frame.kind)) continue;
+    // Outline a frame when a stroke/tracking/rotation blocker forces it, OR when it's spot-coloured (so its
+    // glyphs can plate) and its layout is linear-reproducible.
+    const spot = resolveTextSpot(frame, document);
+    const outlineable = frameTextIsOutlineable(frame, document.importedFonts);
+    if (!outlineable && !(spot && frameTextIsLinearizable(frame, document.importedFonts))) continue;
     const text = frame.text ?? '';
     if (!text.trim()) continue;
     const typo = frame.typography;
@@ -271,6 +305,8 @@ export function buildOutlineTextFrameSpecs(
       trackingPt: (num(typo.tracking) / 1000) * typo.fontSizePt,
       strokeCmyk: stroke,
       strokeWidthPt: num(frame.textStrokeWidthMm) * PT_PER_MM,
+      // Spot-coloured text: fill the glyph outlines with the named /Separation ink (a real plate).
+      spot,
       // Whole-frame rotation: pivot is the frame centre (matches CSS transform-origin: center).
       rotationDeg: num(frame.rotationDeg) || undefined,
       centerXPt: num(frame.rotationDeg) ? (bleedMm + frame.xMm + frame.widthMm / 2) * PT_PER_MM : undefined,
