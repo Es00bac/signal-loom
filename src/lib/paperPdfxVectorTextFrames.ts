@@ -10,6 +10,7 @@
 // (Hyphenation is allowed: the raster doesn't actually hyphenate — `hyphens:auto` is a no-op without a
 // lang — and Liberation is metric-compatible, so the wrap matches; verified by render comparison.)
 
+import fontkit from '@pdf-lib/fontkit';
 import type { PaperDocument, PaperFrame, PaperImportedFont, PaperPage } from '../types/paper';
 import { applyBlackPolicy, type IccCmykTransform } from './paperColorManagement';
 import { parseHexColor, type PaperRgb } from './paperSwatches';
@@ -42,6 +43,27 @@ export type PdfxVectorTextFrameSpec = Omit<PdfxVectorTextFrame, 'fontBytes'> & {
   fontBytes?: Uint8Array;
   frameId: string;
 };
+
+/**
+ * True when a font has a glyph for every (non-whitespace) codepoint in the text. Used to keep an imported
+ * font that DOESN'T cover the text out of the vector layer — vectorizing it would draw .notdef boxes, so
+ * that frame falls back to raster instead (where the browser's font fallback renders the missing glyphs).
+ * Fails open: if the bytes can't be parsed here, let the exporter embed them and decide.
+ */
+function fontCoversText(bytes: Uint8Array, text: string): boolean {
+  try {
+    const font = fontkit.create(bytes as Buffer) as unknown as { hasGlyphForCodePoint?: (cp: number) => boolean };
+    if (typeof font.hasGlyphForCodePoint !== 'function') return true;
+    for (const ch of text) {
+      const cp = ch.codePointAt(0);
+      if (cp === undefined || cp === 0x20 || cp === 0x09 || cp === 0x0a || cp === 0x0d) continue;
+      if (!font.hasGlyphForCodePoint(cp)) return false;
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
 
 /** True when the frame's family+style matches an embeddable imported font (so we embed the real glyphs). */
 function frameHasImportedFace(frame: PaperFrame, importedFonts: readonly PaperImportedFont[] | undefined): boolean {
@@ -125,6 +147,9 @@ export function buildVectorTextFrameSpecs(
     const typo = frame.typography;
     // Prefer the user's imported font (real glyphs); fall back to the bundled Liberation substitute.
     const face = resolveTextFace(typo, document.importedFonts);
+    // An imported font that doesn't cover this text would draw .notdef boxes as vector — skip it so the
+    // frame rasters instead (the browser's font fallback renders the missing glyphs correctly).
+    if (face.bytes && !fontCoversText(face.bytes, text)) continue;
     const rgb = cssToRgb(typo.color) ?? { r: 0, g: 0, b: 0 };
     // Apply the document's black policy to this text: `force-100k-text` rewrites near-black text to pure
     // K (0/0/0/100) so small type doesn't fringe from 4-plate mis-registration at the press.

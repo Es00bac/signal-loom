@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createDefaultPaperDocument } from './paperDocument';
 import { updatePaperDocumentSetup } from './paperDocument';
@@ -196,5 +198,21 @@ describe('imported fonts in the vector-text builder', () => {
     expect(spec.fontId).toBe('LiberationSans-Regular');
     expect(spec.fontUrl).toBe('/fonts/liberation/LiberationSans-Regular.ttf');
     expect(spec.fontBytes).toBeUndefined();
+  });
+
+  it('rasters (skips vector) a frame whose text the imported font cannot render', () => {
+    // Liberation Sans covers Latin but not CJK; use it as the "imported" face for family 'Test Face'.
+    const bytes = readFileSync(resolve(process.cwd(), 'public/fonts/liberation/LiberationSans-Regular.ttf'));
+    const font = importedFace({ id: 'test', familyName: 'Test Face', dataBase64: bytesToBase64(new Uint8Array(bytes)) });
+
+    // Latin text is fully covered → vectorizes with the imported bytes.
+    const latin = withImports(docWithFrames([{ text: 'Hello world', typography: typo('Test Face') }]), [font]);
+    const latinSpecs = buildVectorTextFrameSpecs(latin.pages[0], latin, blackTransform);
+    expect(latinSpecs).toHaveLength(1);
+    expect(latinSpecs[0].fontId).toBe('imported-test');
+
+    // Text with a glyph the font lacks (CJK) → no vector spec; the frame falls back to raster.
+    const cjk = withImports(docWithFrames([{ text: 'Hello 日本語', typography: typo('Test Face') }]), [font]);
+    expect(buildVectorTextFrameSpecs(cjk.pages[0], cjk, blackTransform)).toHaveLength(0);
   });
 });
