@@ -9307,6 +9307,7 @@ function PaperInspector({
   const currentPage = document.pages.find((page) => page.pageNumber === selectedPageNumber) ?? document.pages[0];
   const effectiveFrame = frame ? computeEffectivePaperFrame(document, frame) : null;
   const selectedFontFamily = frameTypography?.fontFamily ?? '';
+  const [newSpotName, setNewSpotName] = useState('');
   const importedFontFamilies = [...new Set((document.importedFonts ?? []).map((font) => font.familyName))];
   const selectedFontIsPreset = PAPER_FONT_OPTIONS.some((option) => option.value === selectedFontFamily)
     || importedFontFamilies.includes(selectedFontFamily);
@@ -9834,6 +9835,36 @@ function PaperInspector({
                       + Add
                     </button>
                   </div>
+                </div>
+                <div className="mb-1.5 flex items-center gap-1">
+                  <input
+                    className="paper-input h-6 flex-1 text-[10px]"
+                    onChange={(event) => setNewSpotName(event.target.value)}
+                    placeholder="Spot name (e.g. PANTONE 185 C)"
+                    value={newSpotName}
+                  />
+                  <button
+                    className="whitespace-nowrap rounded border border-amber-300/30 px-1.5 py-0.5 text-[10px] text-amber-100/70 hover:border-amber-300/60 hover:text-white disabled:opacity-40"
+                    disabled={!newSpotName.trim() || !parseHexColor(cssColorToPickerValue(frame.fillColor))}
+                    onClick={() => {
+                      const rgb = parseHexColor(cssColorToPickerValue(frame.fillColor));
+                      if (!rgb || !newSpotName.trim()) return;
+                      onAddSwatch({
+                        id: `swatch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+                        name: newSpotName.trim(),
+                        type: 'spot',
+                        model: 'cmyk',
+                        rgb,
+                        cmyk: rgbToCmyk(rgb),
+                        spotName: newSpotName.trim(),
+                      });
+                      setNewSpotName('');
+                    }}
+                    title="Add the current fill as a named SPOT swatch — kept as a real /Separation plate in PDF/X when the spot policy is 'Preserve named spots'"
+                    type="button"
+                  >
+                    + Spot
+                  </button>
                 </div>
                 <select
                   aria-label="Load a print-safe CMYK palette"
