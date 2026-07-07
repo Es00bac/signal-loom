@@ -338,9 +338,34 @@ export interface PaperDocument {
   styles: PaperStyleCatalogs;
   /** Document swatch library (custom CMYK/spot/process colors) layered on the built-in defaults. */
   swatches?: PaperSwatch[];
+  /** User-imported fonts embedded in the document (vetted unbroken + embeddable) so they travel with it. */
+  importedFonts?: PaperImportedFont[];
   pages: PaperPage[];
   createdAt: number;
   updatedAt: number;
+}
+
+/**
+ * A font the user imported into the document. Vetted (unbroken + embeddable) at import time; the raw bytes
+ * are carried inline as base64 so the font travels with the .slppr file and can be embedded on export
+ * instead of substituting a bundled Liberation face.
+ */
+export interface PaperImportedFont {
+  /** Stable id (embed cache key). */
+  id: string;
+  /** Font family name as reported by the font (e.g. "Brandon Grotesque"). */
+  familyName: string;
+  subfamilyName?: string;
+  postscriptName?: string;
+  bold: boolean;
+  italic: boolean;
+  format: 'truetype' | 'opentype-cff' | 'collection';
+  /** OS/2 fsType permits embedding this face in a print PDF. */
+  embeddable: boolean;
+  /** OS/2 fsType permits subsetting (false → embed the whole font). */
+  canSubset: boolean;
+  /** Raw font bytes as base64 (no data: prefix). */
+  dataBase64: string;
 }
 
 export interface PaperDocumentSnapshot {
