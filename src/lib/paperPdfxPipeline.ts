@@ -131,7 +131,12 @@ export async function exportPaperDocumentToPdfx(
       if (specs.length > 0) {
         vectorFrameIds = specs.map((spec) => spec.frameId);
         textFrames = await Promise.all(
-          specs.map(async ({ fontUrl, frameId: _frameId, ...rest }) => ({ ...rest, fontBytes: await loadFontOnce(fontUrl) })),
+          specs.map(async ({ fontUrl, fontBytes, frameId: _frameId, ...rest }) => {
+            // Imported fonts carry inline bytes; bundled Liberation faces are fetched by URL (cached).
+            const bytes = fontBytes ?? (fontUrl ? await loadFontOnce(fontUrl) : undefined);
+            if (!bytes) throw new Error('Vector-text frame has neither font bytes nor a font URL.');
+            return { ...rest, fontBytes: bytes };
+          }),
         );
       }
     }

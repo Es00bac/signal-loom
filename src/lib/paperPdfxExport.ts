@@ -60,8 +60,11 @@ export interface PdfxVectorTextFrame {
   text: string;
   /** Embed-cache key (the font face id, e.g. "LiberationSerif-Bold"). */
   fontId: string;
-  /** TrueType/OpenType bytes to embed (subset). Only embedded once per `fontId`. */
+  /** TrueType/OpenType bytes to embed. Only embedded once per `fontId`. */
   fontBytes: Uint8Array;
+  /** Subset the embedded font (default true). False embeds the whole font — required when the font's
+   * OS/2 fsType disallows subsetting. */
+  subset?: boolean;
   fontSizePt: number;
   leadingPt: number;
   align: PaperTextAlign;
@@ -264,10 +267,10 @@ export async function buildPaperPdfx(
   const hasVectorText = pages.some((page) => (page.textFrames?.length ?? 0) > 0);
   if (hasVectorText) doc.registerFontkit(fontkit);
   const fontCache = new Map<string, { font: PDFFont; ascentRatio: number }>();
-  const embedFace = async (fontId: string, fontBytes: Uint8Array): Promise<{ font: PDFFont; ascentRatio: number }> => {
+  const embedFace = async (fontId: string, fontBytes: Uint8Array, subset = true): Promise<{ font: PDFFont; ascentRatio: number }> => {
     let entry = fontCache.get(fontId);
     if (!entry) {
-      const font = await doc.embedFont(fontBytes, { subset: true });
+      const font = await doc.embedFont(fontBytes, { subset });
       // Read the real typographic ascent so the first baseline matches the CSS line box.
       let ascentRatio = 0.8;
       try {
@@ -326,7 +329,7 @@ export async function buildPaperPdfx(
     // --- Vector text layer (hybrid PDF/X): real embedded, selectable CMYK type over the raster ---
     for (const frame of page.textFrames ?? []) {
       if (!frame.text.trim()) continue;
-      const { font, ascentRatio } = await embedFace(frame.fontId, frame.fontBytes);
+      const { font, ascentRatio } = await embedFace(frame.fontId, frame.fontBytes, frame.subset !== false);
       // Enforce the same total-ink ceiling on the vector text fill (frame.cmyk is 0..1 per channel).
       const ink = inkLimitPercent !== undefined
         ? limitTotalAreaCoverage(frame.cmyk.c, frame.cmyk.m, frame.cmyk.y, frame.cmyk.k, inkLimitPercent / 100)

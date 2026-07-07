@@ -863,7 +863,7 @@ function documentHasVectorizableText(document: PaperDocument): boolean {
     page.frames.some((frame) =>
       (frame.kind === 'text' || frame.kind === 'caption')
       && (frame.text ?? '').trim().length > 0
-      && frameTextIsVectorSafe(frame)),
+      && frameTextIsVectorSafe(frame, document.importedFonts)),
   );
 }
 

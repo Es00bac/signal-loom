@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultPaperDocument } from './paperDocument';
 import { updatePaperDocumentSetup } from './paperDocument';
-import type { PaperDocument, PaperFrame } from '../types/paper';
+import type { PaperDocument, PaperFrame, PaperImportedFont } from '../types/paper';
 import type { IccCmykTransform } from './paperColorManagement';
 import { buildVectorTextFrameSpecs, pageTextIsVectorizable } from './paperPdfxVectorTextFrames';
+import { bytesToBase64 } from './paperFontLibrary';
 
 const PT_PER_MM = 72 / 25.4;
 
@@ -141,5 +142,59 @@ describe('buildVectorTextFrameSpecs', () => {
     ], 0);
     const [textSpec] = buildVectorTextFrameSpecs(text.pages[0], text, blackTransform);
     expect(textSpec.verticalAlign).toBeUndefined();
+  });
+});
+
+describe('imported fonts in the vector-text builder', () => {
+  const typo = (fontFamily: string) => ({ fontFamily, fontSizePt: 14, leadingPt: 18, tracking: 0, hyphenate: false, align: 'left' as const, color: '#000', fontWeight: 'normal', fontStyle: 'normal' as const });
+  const importedFace = (patch: Partial<PaperImportedFont>): PaperImportedFont => ({
+    id: 'brandon', familyName: 'Brandon Grotesque', bold: false, italic: false, format: 'truetype',
+    embeddable: true, canSubset: true, dataBase64: bytesToBase64(new Uint8Array([1, 2, 3, 4])), ...patch,
+  });
+  const withImports = (doc: PaperDocument, fonts: PaperImportedFont[]): PaperDocument => ({ ...doc, importedFonts: fonts });
+
+  it('embeds the imported font inline (bytes, no URL) when a frame matches it', () => {
+    const doc = withImports(
+      docWithFrames([{ text: 'Hi', typography: typo('"Brandon Grotesque", sans-serif') }]),
+      [importedFace({})],
+    );
+    const [spec] = buildVectorTextFrameSpecs(doc.pages[0], doc, blackTransform);
+    expect(spec.fontId).toBe('imported-brandon');
+    expect(spec.fontBytes).toBeInstanceOf(Uint8Array);
+    expect(Array.from(spec.fontBytes!)).toEqual([1, 2, 3, 4]);
+    expect(spec.fontUrl).toBeUndefined();
+  });
+
+  it('lets an imported display font vectorize (real glyphs) instead of rasterizing', () => {
+    const doc = withImports(
+      docWithFrames([{ text: 'BOOM', typography: typo('Bangers, cursive') }]),
+      [importedFace({ id: 'bangers', familyName: 'Bangers' })],
+    );
+    // Without the import the display font rasterizes; with it, we embed the user's real face.
+    expect(pageTextIsVectorizable(doc.pages[0])).toBe(false);
+    expect(pageTextIsVectorizable(doc.pages[0], doc.importedFonts)).toBe(true);
+    const [spec] = buildVectorTextFrameSpecs(doc.pages[0], doc, blackTransform);
+    expect(spec.text).toBe('BOOM');
+    expect(spec.fontId).toBe('imported-bangers');
+  });
+
+  it('marks the spec whole-font (subset false) when the imported font disallows subsetting', () => {
+    const doc = withImports(
+      docWithFrames([{ text: 'x', typography: typo('Brandon Grotesque') }]),
+      [importedFace({ canSubset: false })],
+    );
+    const [spec] = buildVectorTextFrameSpecs(doc.pages[0], doc, blackTransform);
+    expect(spec.subset).toBe(false);
+  });
+
+  it('ignores an imported font whose licence forbids embedding (falls back to Liberation)', () => {
+    const doc = withImports(
+      docWithFrames([{ text: 'x', typography: typo('Brandon Grotesque') }]),
+      [importedFace({ embeddable: false })],
+    );
+    const [spec] = buildVectorTextFrameSpecs(doc.pages[0], doc, blackTransform);
+    expect(spec.fontId).toBe('LiberationSans-Regular');
+    expect(spec.fontUrl).toBe('/fonts/liberation/LiberationSans-Regular.ttf');
+    expect(spec.fontBytes).toBeUndefined();
   });
 });

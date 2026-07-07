@@ -10,10 +10,11 @@
 // (Hyphenation is allowed: the raster doesn't actually hyphenate — `hyphens:auto` is a no-op without a
 // lang — and Liberation is metric-compatible, so the wrap matches; verified by render comparison.)
 
-import type { PaperDocument, PaperFrame, PaperPage } from '../types/paper';
+import type { PaperDocument, PaperFrame, PaperImportedFont, PaperPage } from '../types/paper';
 import { applyBlackPolicy, type IccCmykTransform } from './paperColorManagement';
 import { parseHexColor, type PaperRgb } from './paperSwatches';
-import { resolveBundledFontFace, isDisplayFontFamily } from './paperFontResolution';
+import { isDisplayFontFamily, isBoldWeight } from './paperFontResolution';
+import { resolveTextFace, selectImportedFace, normalizeFamilyName } from './paperFontLibrary';
 import type { PdfxVectorTextFrame } from './paperPdfxExport';
 
 const PT_PER_MM = 72 / 25.4;
@@ -31,11 +32,26 @@ function isVectorTextKind(kind: PaperFrame['kind']): boolean {
 const CONTENT_PADDING_MM = 2;
 
 /**
- * A vector-text spec minus the font bytes (the adapter fetches `fontUrl` and adds `fontBytes`). Carries
- * the source `frameId` so the pipeline can exclude exactly the vectorized frames from the raster backdrop
- * (leaving unsafe/display-font text frames baked into the raster with their real glyphs).
+ * A vector-text spec minus the resolved font bytes. Carries EITHER a bundled `fontUrl` for the adapter to
+ * fetch, OR inline `fontBytes` (an imported font that lives in the document). Also carries the source
+ * `frameId` so the pipeline can exclude exactly the vectorized frames from the raster backdrop (leaving
+ * unsafe/display-font text frames baked into the raster with their real glyphs).
  */
-export type PdfxVectorTextFrameSpec = Omit<PdfxVectorTextFrame, 'fontBytes'> & { fontUrl: string; frameId: string };
+export type PdfxVectorTextFrameSpec = Omit<PdfxVectorTextFrame, 'fontBytes'> & {
+  fontUrl?: string;
+  fontBytes?: Uint8Array;
+  frameId: string;
+};
+
+/** True when the frame's family+style matches an embeddable imported font (so we embed the real glyphs). */
+function frameHasImportedFace(frame: PaperFrame, importedFonts: readonly PaperImportedFont[] | undefined): boolean {
+  const t = frame.typography;
+  const family = normalizeFamilyName(t.fontFamily ?? '');
+  if (!family) return false;
+  const bold = isBoldWeight(t.fontWeight);
+  const italic = (t.fontStyle ?? '').toLowerCase() === 'italic';
+  return !!selectImportedFace(family, bold, italic, importedFonts ?? []);
+}
 
 function cssToRgb(css: string): PaperRgb | undefined {
   const hex = parseHexColor(css);
@@ -53,11 +69,12 @@ function num(value: number | undefined): number {
  * True when a text frame can be faithfully drawn by the linear layout engine — i.e. it uses none of the
  * features the engine can't reproduce. Non-text frames never block a page.
  */
-export function frameTextIsVectorSafe(frame: PaperFrame): boolean {
+export function frameTextIsVectorSafe(frame: PaperFrame, importedFonts?: readonly PaperImportedFont[]): boolean {
   if (!isVectorTextKind(frame.kind)) return true;
-  // Display/decorative faces (Impact SFX, comic titles, …) have no faithful Liberation substitute —
-  // rasterize them (real glyphs) rather than vector-substitute a wrong-looking plain face.
-  if (isDisplayFontFamily(frame.typography.fontFamily)) return false;
+  // Display/decorative faces (Impact SFX, comic titles, …) have no faithful Liberation substitute — so
+  // rasterize them (real glyphs) rather than vector-substitute a wrong-looking plain face. BUT if the user
+  // imported that exact font, we embed its real glyphs as vector, so the display gate no longer applies.
+  if (isDisplayFontFamily(frame.typography.fontFamily) && !frameHasImportedFace(frame, importedFonts)) return false;
   // Frame-level text transforms / effects the linear engine doesn't reproduce.
   if (num(frame.rotationDeg) !== 0) return false;
   if (num(frame.textRotationDeg) !== 0) return false;
@@ -89,8 +106,8 @@ export function frameTextIsVectorSafe(frame: PaperFrame): boolean {
  * True when a page's text can be drawn as vector — every text frame is vector-safe. If any isn't, the
  * whole page falls back to a fully flattened raster (correct, never wrong).
  */
-export function pageTextIsVectorizable(page: PaperPage): boolean {
-  return page.frames.every(frameTextIsVectorSafe);
+export function pageTextIsVectorizable(page: PaperPage, importedFonts?: readonly PaperImportedFont[]): boolean {
+  return page.frames.every((frame) => frameTextIsVectorSafe(frame, importedFonts));
 }
 
 /** Build vector-text specs for every non-empty, vector-safe text frame on a page. */
@@ -102,11 +119,12 @@ export function buildVectorTextFrameSpecs(
   const bleedMm = document.page.bleedMm;
   const specs: PdfxVectorTextFrameSpec[] = [];
   for (const frame of page.frames) {
-    if (!isVectorTextKind(frame.kind) || !frameTextIsVectorSafe(frame)) continue;
+    if (!isVectorTextKind(frame.kind) || !frameTextIsVectorSafe(frame, document.importedFonts)) continue;
     const text = frame.text ?? '';
     if (!text.trim()) continue;
     const typo = frame.typography;
-    const face = resolveBundledFontFace(typo);
+    // Prefer the user's imported font (real glyphs); fall back to the bundled Liberation substitute.
+    const face = resolveTextFace(typo, document.importedFonts);
     const rgb = cssToRgb(typo.color) ?? { r: 0, g: 0, b: 0 };
     // Apply the document's black policy to this text: `force-100k-text` rewrites near-black text to pure
     // K (0/0/0/100) so small type doesn't fringe from 4-plate mis-registration at the press.
@@ -131,6 +149,8 @@ export function buildVectorTextFrameSpecs(
       frameId: frame.id,
       fontId: face.id,
       fontUrl: face.url,
+      fontBytes: face.bytes,
+      subset: face.noSubsetting ? false : undefined,
       fontSizePt: typo.fontSizePt,
       leadingPt: typo.leadingPt,
       align: typo.align,
