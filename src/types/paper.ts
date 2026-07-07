@@ -124,6 +124,10 @@ export interface PaperTypography {
   align: PaperTextAlign;
   hyphenate: boolean;
   color: string;
+  /** Durable reference to the swatch the text `color` came from. When it resolves to a SPOT swatch (and the
+   * spot policy preserves named spots), the text is drawn as a real /Separation plate instead of process.
+   * Auto-cleared whenever `color` changes by any other path (see patchPaperFrame), so it can't go stale. */
+  colorSwatchId?: string;
   fontWeight: string;
   fontStyle: 'normal' | 'italic';
   /** First-line indent (mm) applied to each paragraph (CSS text-indent each-line). */

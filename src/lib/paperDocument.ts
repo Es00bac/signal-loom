@@ -525,6 +525,14 @@ function patchPaperFrame(frame: PaperFrame, patch: PaperFramePatch): PaperFrame 
   if (framePatch.fillColor !== undefined && framePatch.fillSwatchId === undefined) {
     next.fillSwatchId = undefined;
   }
+  // Same for the text colour. Typography patches are usually spread (`{...typo, color}`), so — unlike the
+  // flat fill patch — the stale colorSwatchId rides along. Drop it whenever the colour actually changes,
+  // UNLESS the patch explicitly assigns a *different* swatch (i.e. the user picked a new one).
+  if (typography && typography.color !== undefined && !Object.is(typography.color, frame.typography.color)) {
+    const assignsNewSwatch =
+      typography.colorSwatchId !== undefined && !Object.is(typography.colorSwatchId, frame.typography.colorSwatchId);
+    if (!assignsNewSwatch) next.typography = { ...next.typography, colorSwatchId: undefined };
+  }
   return next;
 }
 

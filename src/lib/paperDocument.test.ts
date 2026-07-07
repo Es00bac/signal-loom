@@ -385,6 +385,22 @@ describe('paperDocument', () => {
     expect(frameOf(recolored).fillSwatchId).toBeUndefined();
   });
 
+  it('records a swatch id on the TEXT colour and auto-clears it when the colour changes another way', () => {
+    const doc = createDefaultPaperDocument({ title: 'Text spot ref', preset: 'us-letter' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame, frameId } = addFrameToPaperPage(doc, pageId, { kind: 'caption', xMm: 10, yMm: 10, widthMm: 40, heightMm: 20, text: 'Logo' });
+    const frameOf = (d: typeof doc) => d.pages.find((p) => p.id === pageId)!.frames.find((f) => f.id === frameId)!;
+
+    // Applying a swatch to the text colour records the durable link (color + colorSwatchId together).
+    const applied = updatePaperFrame(withFrame, pageId, frameId, { typography: { ...frameOf(withFrame).typography, color: '#e30613', colorSwatchId: 'sw-spot' } });
+    expect(frameOf(applied).typography.colorSwatchId).toBe('sw-spot');
+
+    // Recolouring the text any other way (no colorSwatchId in the patch) drops the link.
+    const recolored = updatePaperFrame(applied, pageId, frameId, { typography: { ...frameOf(applied).typography, color: '#123456' } });
+    expect(frameOf(recolored).typography.color).toBe('#123456');
+    expect(frameOf(recolored).typography.colorSwatchId).toBeUndefined();
+  });
+
   it('defaults a new text frame to a single column so its type vectorizes (real embedded font) by default', () => {
     const doc = createDefaultPaperDocument({ title: 'Columns default', preset: 'us-letter' });
     const pageId = doc.pages[0].id;
