@@ -160,5 +160,7 @@ export async function exportPaperDocumentToPdfx(
     transform,
     title: options.title ?? document.title,
     createdAt: options.createdAt,
+    // Enforce the document's press total-ink ceiling on the exported CMYK (raster + vector text).
+    totalInkLimitPercent: document.printProduction?.totalInkLimitPercent,
   });
 }

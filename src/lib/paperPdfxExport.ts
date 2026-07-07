@@ -29,6 +29,7 @@ import {
 import fontkit from '@pdf-lib/fontkit';
 import type { IccCmykTransform } from './paperColorManagement';
 import { layoutParagraphText, type PaperTextAlign } from './paperTextLayout';
+import { applyInkLimitToCmykBuffer, limitTotalAreaCoverage } from './paperInkLimit';
 
 export type PdfxStandard = 'pdf-x-1a' | 'pdf-x-4';
 
@@ -107,6 +108,12 @@ export interface PdfxExportOptions {
   createdAt?: Date;
   /** 16-byte hex document id for the trailer /ID (defaults to random). Fixed value keeps tests deterministic. */
   docId?: string;
+  /**
+   * Total-ink (TAC) ceiling as a percent, e.g. 280. When set (and < 400), every exported CMYK sample —
+   * both the flattened raster and the vector text fills — is reduced (UCR: keep K, scale CMY) so no
+   * colour exceeds it. This makes the preflight's "colours will be reduced on export" promise real.
+   */
+  totalInkLimitPercent?: number;
 }
 
 export interface PdfxExportResult {
@@ -240,6 +247,10 @@ export async function buildPaperPdfx(
   if (!bulk) {
     throw new Error('The provided ICC transform does not support bulk image conversion (transformRgbBuffer).');
   }
+  // A ceiling of 400% (the 4-channel max) can never be exceeded → treat it as "no limit".
+  const inkLimitPercent = options.totalInkLimitPercent !== undefined && options.totalInkLimitPercent < 400
+    ? options.totalInkLimitPercent
+    : undefined;
   const meta = STANDARD_META[options.standard];
   const date = options.createdAt ?? new Date();
   const doc = await PDFDocument.create();
@@ -283,6 +294,8 @@ export async function buildPaperPdfx(
     if (cmyk.length < pixelCount * 4) {
       throw new Error('ICC transform returned fewer CMYK samples than expected.');
     }
+    // Enforce the press total-ink ceiling on the flattened raster (makes the preflight promise real).
+    if (inkLimitPercent !== undefined) applyInkLimitToCmykBuffer(cmyk, inkLimitPercent);
 
     const bleedPt = page.bleedPt ?? 0;
     const mediaWpt = page.trimWidthPt + bleedPt * 2;
@@ -314,7 +327,11 @@ export async function buildPaperPdfx(
     for (const frame of page.textFrames ?? []) {
       if (!frame.text.trim()) continue;
       const { font, ascentRatio } = await embedFace(frame.fontId, frame.fontBytes);
-      const fill = cmykColor(frame.cmyk.c, frame.cmyk.m, frame.cmyk.y, frame.cmyk.k);
+      // Enforce the same total-ink ceiling on the vector text fill (frame.cmyk is 0..1 per channel).
+      const ink = inkLimitPercent !== undefined
+        ? limitTotalAreaCoverage(frame.cmyk.c, frame.cmyk.m, frame.cmyk.y, frame.cmyk.k, inkLimitPercent / 100)
+        : frame.cmyk;
+      const fill = cmykColor(ink.c, ink.m, ink.y, ink.k);
       // First-baseline model matching a CSS line box: half the extra leading, then the font's ascent.
       const ascentPt = frame.ascentPt ?? (frame.leadingPt - frame.fontSizePt) / 2 + ascentRatio * frame.fontSizePt;
       const layout = layoutParagraphText({
