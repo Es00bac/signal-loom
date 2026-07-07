@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createOutlineFont, glyphOpsToContentStream, outlineTextRun } from './paperGlyphOutlines';
+import { createOutlineFont, glyphOpsToContentStream, measureTextWidthPt, outlineTextRun } from './paperGlyphOutlines';
 
 const SERIF = resolve(process.cwd(), 'public/fonts/liberation/LiberationSerif-Regular.ttf');
 const serifBytes = (): Uint8Array => new Uint8Array(readFileSync(SERIF));
@@ -72,6 +72,22 @@ describe('outlineTextRun', () => {
     const { ops, advancePt } = outlineTextRun(font, '', 12, 0, 0);
     expect(ops).toEqual([]);
     expect(advancePt).toBe(0);
+  });
+});
+
+describe('measureTextWidthPt', () => {
+  it('matches the run advance so wrap uses the same metrics as drawing', () => {
+    const font = createOutlineFont(serifBytes())!;
+    const measured = measureTextWidthPt(font, 'Ag Vector', 12);
+    const drawn = outlineTextRun(font, 'Ag Vector', 12, 0, 0).advancePt;
+    expect(measured).toBeCloseTo(drawn, 3);
+  });
+
+  it('adds tracking once per glyph and returns 0 for empty text', () => {
+    const font = createOutlineFont(serifBytes())!;
+    const base = measureTextWidthPt(font, 'Ag', 12);
+    expect(measureTextWidthPt(font, 'Ag', 12, 5)).toBeCloseTo(base + 2 * 5, 3);
+    expect(measureTextWidthPt(font, '', 12)).toBe(0);
   });
 });
 

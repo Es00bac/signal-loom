@@ -73,6 +73,33 @@ describe('paperPdfxPipeline', () => {
     expect(report.pass, JSON.stringify(report.checks.filter((c) => !c.pass))).toBe(true);
   });
 
+  it('outlines stroked text to vector curves, knocks it out of the raster, and stays valid PDF/X-4', async () => {
+    let document = createDefaultPaperDocument({ title: 'Outline pipeline', preset: 'us-letter' });
+    const pageId = document.pages[0].id;
+    // A stroked caption is otherwise vector-safe → outlined (filled + stroked curves), not rasterized.
+    const added = addFrameToPaperPage(document, pageId, {
+      kind: 'caption', xMm: 20, yMm: 20, widthMm: 80, heightMm: 30, text: 'BOOM',
+      textStrokeWidthMm: 0.6, textStrokeColor: '#ffffff',
+      typography: { fontFamily: 'Georgia, serif', fontSizePt: 28, color: '#000000' },
+    });
+    document = added.document;
+
+    const seen: (RasterizePageOptions | undefined)[] = [];
+    const spyDeps: PaperPdfxPipelineDeps = {
+      ...deps(),
+      rasterizePage: async (_id, _dpi, opts) => { seen.push(opts); return stubRaster(); },
+      // Vector/outline text is opt-in and needs a font loader for bundled Liberation faces.
+      loadFontBytes: async (url) => new Uint8Array(readFileSync(`public${url}`)),
+    };
+    const result = await exportPaperDocumentToPdfx(document, { standard: 'pdf-x-4', iccProfileId: 'fogra39', outputDpi: 150, vectorText: true }, spyDeps);
+
+    // The stroked-text frame's text was knocked out of the raster backdrop (drawn as outlines instead).
+    expect(seen[0]?.excludeTextFrameIds).toContain(added.frameId);
+    // The exported file is still a conformant PDF/X-4.
+    const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-4' });
+    expect(report.pass, JSON.stringify(report.checks.filter((c) => !c.pass))).toBe(true);
+  });
+
   it('maps output-intent selections to bundled ICC profiles', () => {
     expect(bundledProfileForOutputIntent('gracol-2013-coated').id).toBe('gracol-tr006');
     expect(bundledProfileForOutputIntent('swop-coated-v2').id).toBe('swop-tr003');

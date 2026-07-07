@@ -27,6 +27,8 @@ export interface OutlinedRun {
 /** Minimal structural view of the bits of a fontkit face we use (there are no bundled type defs). */
 export interface FontkitOutlineFont {
   unitsPerEm: number;
+  /** Typographic ascent in font units (for the first-baseline model). May be absent on odd faces. */
+  ascent?: number;
   layout: (text: string) => {
     glyphs: Array<{ path?: { commands?: Array<{ command: string; args: number[] }> } }>;
     positions: Array<{ xAdvance: number; yAdvance: number; xOffset: number; yOffset: number }>;
@@ -121,6 +123,27 @@ export function outlineTextRun(
     penX += pos.xAdvance * scale + trackingPt;
   }
   return { ops, advancePt: penX - penXPt };
+}
+
+/** Advance width of a text run in pt (Σ glyph advances + tracking per glyph). Used as the layout engine's
+ * measureText so outlined text wraps by the SAME metrics it's drawn with. Fails soft to 0. */
+export function measureTextWidthPt(
+  font: FontkitOutlineFont,
+  text: string,
+  fontSizePt: number,
+  trackingPt = 0,
+): number {
+  if (!text || font.unitsPerEm <= 0) return 0;
+  const scale = fontSizePt / font.unitsPerEm;
+  let run: ReturnType<FontkitOutlineFont['layout']>;
+  try {
+    run = font.layout(text);
+  } catch {
+    return 0;
+  }
+  let width = 0;
+  for (const pos of run.positions) width += pos.xAdvance * scale;
+  return width + trackingPt * run.positions.length;
 }
 
 /** Serialize outline ops to a PDF content-stream path fragment (numbers fixed to 3 dp; ops end unfilled). */

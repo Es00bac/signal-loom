@@ -5,7 +5,7 @@ import { createDefaultPaperDocument } from './paperDocument';
 import { updatePaperDocumentSetup } from './paperDocument';
 import type { PaperDocument, PaperFrame, PaperImportedFont } from '../types/paper';
 import type { IccCmykTransform } from './paperColorManagement';
-import { buildVectorTextFrameSpecs, pageTextIsVectorizable } from './paperPdfxVectorTextFrames';
+import { buildOutlineTextFrameSpecs, buildVectorTextFrameSpecs, frameTextIsOutlineable, pageTextIsVectorizable } from './paperPdfxVectorTextFrames';
 import { bytesToBase64 } from './paperFontLibrary';
 
 const PT_PER_MM = 72 / 25.4;
@@ -214,5 +214,45 @@ describe('imported fonts in the vector-text builder', () => {
     // Text with a glyph the font lacks (CJK) → no vector spec; the frame falls back to raster.
     const cjk = withImports(docWithFrames([{ text: 'Hello 日本語', typography: typo('Test Face') }]), [font]);
     expect(buildVectorTextFrameSpecs(cjk.pages[0], cjk, blackTransform)).toHaveLength(0);
+  });
+});
+
+describe('outline-text (convert to curves) builder', () => {
+  const strokeTypo = { fontFamily: 'Georgia, serif', fontSizePt: 24, leadingPt: 28, tracking: 0, hyphenate: false, align: 'left' as const, color: '#000000', fontWeight: 'normal', fontStyle: 'normal' as const };
+
+  it('marks a stroked-but-otherwise-plain text frame outlineable (and NOT selectable-vector)', () => {
+    const frame = { text: 'BOOM', textStrokeWidthMm: 0.4, textStrokeColor: '#ffffff', typography: strokeTypo } as const;
+    const doc = docWithFrames([frame]);
+    const f = doc.pages[0].frames[0];
+    expect(frameTextIsOutlineable(f)).toBe(true);
+    // A stroke makes it NOT vector-safe (can't be selectable type), so it's handled as outlines instead.
+    expect(pageTextIsVectorizable(doc.pages[0])).toBe(false);
+  });
+
+  it('does NOT mark a plain (un-stroked) frame outlineable — that stays selectable vector', () => {
+    const doc = docWithFrames([{ text: 'body', typography: strokeTypo }]);
+    expect(frameTextIsOutlineable(doc.pages[0].frames[0])).toBe(false);
+  });
+
+  it('does NOT outline a frame that is unsafe for another reason too (e.g. rotation)', () => {
+    const doc = docWithFrames([{ text: 'BOOM', textStrokeWidthMm: 0.4, rotationDeg: 12, typography: strokeTypo }]);
+    expect(frameTextIsOutlineable(doc.pages[0].frames[0])).toBe(false);
+  });
+
+  it('builds an outline spec carrying the fill, the stroke, and the font url/geometry', () => {
+    const doc = docWithFrames([
+      { text: 'BOOM', xMm: 10, yMm: 20, widthMm: 50, heightMm: 30, textStrokeWidthMm: 0.5, textStrokeColor: '#ffffff', typography: strokeTypo },
+    ], 3);
+    const [spec] = buildOutlineTextFrameSpecs(doc.pages[0], doc, blackTransform);
+    expect(spec.text).toBe('BOOM');
+    expect(spec.fontUrl).toBe('/fonts/liberation/LiberationSerif-Regular.ttf');
+    // The fake blackTransform maps EVERY colour to pure K, so fill + stroke both resolve to K (this test
+    // exercises the plumbing/geometry, not colour fidelity — that's covered by the real ICC tests).
+    expect(spec.cmyk).toEqual({ c: 0, m: 0, y: 0, k: 1 });
+    expect(spec.strokeCmyk).toEqual({ c: 0, m: 0, y: 0, k: 1 });
+    expect(spec.strokeWidthPt).toBeCloseTo(0.5 * PT_PER_MM, 4);
+    // Geometry: bleed 3 + x/y 10/20 + 2mm padding (border 0).
+    expect(spec.xPt).toBeCloseTo((3 + 10 + 2) * PT_PER_MM, 4);
+    expect(spec.widthPt).toBeCloseTo((50 - 4) * PT_PER_MM, 4);
   });
 });

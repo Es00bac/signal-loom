@@ -33,6 +33,7 @@ import fontkit from '@pdf-lib/fontkit';
 import type { IccCmykTransform } from './paperColorManagement';
 import { layoutParagraphText, type PaperTextAlign } from './paperTextLayout';
 import { applyInkLimitToCmykBuffer, limitTotalAreaCoverage } from './paperInkLimit';
+import { createOutlineFont, measureTextWidthPt, outlineTextRun, type FontkitOutlineFont, type GlyphPathOp } from './paperGlyphOutlines';
 
 export type PdfxStandard = 'pdf-x-1a' | 'pdf-x-4';
 
@@ -61,6 +62,13 @@ export interface PdfxRasterPage {
    * survives as a separation instead of flattening to process CMYK. Drawn under the vector text.
    */
   spotFills?: readonly PdfxSpotFill[];
+  /**
+   * Optional text drawn as filled glyph OUTLINES (vector curves) rather than embedded selectable type —
+   * the "convert to curves" tier. Used when the text can't be embedded as live type (a stroked/decorated
+   * face) but must stay crisp vector, not raster. Like `textFrames`, these frames' text is knocked out of
+   * `rgba`; unlike them, the glyphs carry no font (they're geometry), so the text isn't selectable.
+   */
+  outlineFrames?: readonly PdfxOutlineTextFrame[];
 }
 
 /** One solid spot-colour fill emitted as a `/Separation` colorspace rectangle (a real named plate). */
@@ -106,6 +114,37 @@ export interface PdfxVectorTextFrame {
   ascentPt?: number;
   /** Vertical placement of the text block within the box (default top). */
   verticalAlign?: 'top' | 'middle' | 'bottom';
+}
+
+/** One text box drawn as filled glyph OUTLINES (vector curves) — same geometry model as
+ * `PdfxVectorTextFrame`, but the glyphs are painted as paths (optionally fill + stroke) instead of
+ * selectable embedded type. Used for stroked/decorated text the live-type path can't reproduce. */
+export interface PdfxOutlineTextFrame {
+  text: string;
+  /** Parse cache key for the outline font (distinct per face). */
+  fontId: string;
+  /** TrueType/OpenType bytes to outline glyphs from. */
+  fontBytes: Uint8Array;
+  fontSizePt: number;
+  leadingPt: number;
+  align: PaperTextAlign;
+  /** Fill colour as DeviceCMYK components in 0..1 (converted through the output profile). */
+  cmyk: { c: number; m: number; y: number; k: number };
+  /** Content-box top-left X from the media left edge, in points. */
+  xPt: number;
+  /** Content-box top-left Y from the media TOP edge, in points (flipped internally). */
+  yTopPt: number;
+  /** Content-box width (wrap width) in points. */
+  widthPt: number;
+  /** Content-box height in points (clips overset lines + drives vertical alignment). */
+  heightPt: number;
+  ascentPt?: number;
+  verticalAlign?: 'top' | 'middle' | 'bottom';
+  /** Extra advance per glyph (letter-spacing) in points. */
+  trackingPt?: number;
+  /** Optional stroke around the glyphs (comic-style outlined lettering). */
+  strokeCmyk?: { c: number; m: number; y: number; k: number };
+  strokeWidthPt?: number;
 }
 
 export interface PdfxOutputProfile {
@@ -342,6 +381,17 @@ export async function buildPaperPdfx(
     return ref;
   };
 
+  // Parsed outline fonts, cached per face across pages (fontkit parse is the costly step).
+  const outlineFontCache = new Map<string, FontkitOutlineFont | undefined>();
+  const outlineFontFor = (fontId: string, bytes: Uint8Array): FontkitOutlineFont | undefined => {
+    let font = outlineFontCache.get(fontId);
+    if (font === undefined && !outlineFontCache.has(fontId)) {
+      font = createOutlineFont(bytes);
+      outlineFontCache.set(fontId, font);
+    }
+    return font;
+  };
+
   // --- Pages: each is one flattened DeviceCMYK image spanning the full media (trim + bleed) ---
   for (const page of pages) {
     const pixelCount = page.widthPx * page.heightPx;
@@ -450,6 +500,65 @@ export async function buildPaperPdfx(
           });
         }
       }
+    }
+
+    // --- Outline text layer: glyphs painted as filled/stroked vector CURVES (not selectable type) ---
+    for (const frame of page.outlineFrames ?? []) {
+      if (!frame.text.trim()) continue;
+      const font = outlineFontFor(frame.fontId, frame.fontBytes);
+      if (!font) continue;
+      const tracking = frame.trackingPt ?? 0;
+      // Same first-baseline model as the selectable-text path (half the extra leading, then the ascent).
+      const ascentRatio = font.ascent && font.unitsPerEm ? font.ascent / font.unitsPerEm : 0.8;
+      const ascentPt = frame.ascentPt ?? (frame.leadingPt - frame.fontSizePt) / 2 + ascentRatio * frame.fontSizePt;
+      const layout = layoutParagraphText({
+        text: frame.text,
+        maxWidthPt: frame.widthPt,
+        fontSizePt: frame.fontSizePt,
+        leadingPt: frame.leadingPt,
+        align: frame.align,
+        ascentPt,
+        measureText: (t) => measureTextWidthPt(font, t, frame.fontSizePt, tracking),
+      });
+      const slack = Math.max(0, frame.heightPt - layout.totalHeightPt);
+      const vShift = frame.verticalAlign === 'middle' ? slack / 2 : frame.verticalAlign === 'bottom' ? slack : 0;
+      // Accumulate every glyph's outline into one path, then fill (or fill+stroke) it once.
+      const glyphOps: GlyphPathOp[] = [];
+      for (const line of layout.lines) {
+        if (line.baselineYPt > frame.heightPt + frame.fontSizePt) continue;
+        const baselineYPt = mediaHpt - (frame.yTopPt + vShift + line.baselineYPt);
+        for (const segment of line.runs) {
+          if (!segment.text) continue;
+          const run = outlineTextRun(font, segment.text, frame.fontSizePt, frame.xPt + segment.xPt, baselineYPt, tracking);
+          for (const glyphOp of run.ops) glyphOps.push(glyphOp);
+        }
+      }
+      if (glyphOps.length === 0) continue;
+      const ink = inkLimitPercent !== undefined
+        ? limitTotalAreaCoverage(frame.cmyk.c, frame.cmyk.m, frame.cmyk.y, frame.cmyk.k, inkLimitPercent / 100)
+        : frame.cmyk;
+      const hasStroke = !!frame.strokeCmyk && (frame.strokeWidthPt ?? 0) > 0;
+      const draw: PDFOperator[] = [
+        pushGraphicsState(),
+        contentOp('k', [PDFNumber.of(ink.c), PDFNumber.of(ink.m), PDFNumber.of(ink.y), PDFNumber.of(ink.k)]),
+      ];
+      if (hasStroke) {
+        const sInk = inkLimitPercent !== undefined
+          ? limitTotalAreaCoverage(frame.strokeCmyk!.c, frame.strokeCmyk!.m, frame.strokeCmyk!.y, frame.strokeCmyk!.k, inkLimitPercent / 100)
+          : frame.strokeCmyk!;
+        draw.push(contentOp('K', [PDFNumber.of(sInk.c), PDFNumber.of(sInk.m), PDFNumber.of(sInk.y), PDFNumber.of(sInk.k)]));
+        draw.push(contentOp('w', [PDFNumber.of(frame.strokeWidthPt!)]));
+        draw.push(contentOp('j', [PDFNumber.of(1)])); // round joins read cleaner on letterforms
+      }
+      for (const glyphOp of glyphOps) {
+        if (glyphOp.op === 'm') draw.push(contentOp('m', [PDFNumber.of(glyphOp.x), PDFNumber.of(glyphOp.y)]));
+        else if (glyphOp.op === 'l') draw.push(contentOp('l', [PDFNumber.of(glyphOp.x), PDFNumber.of(glyphOp.y)]));
+        else if (glyphOp.op === 'c') draw.push(contentOp('c', [PDFNumber.of(glyphOp.x1), PDFNumber.of(glyphOp.y1), PDFNumber.of(glyphOp.x2), PDFNumber.of(glyphOp.y2), PDFNumber.of(glyphOp.x), PDFNumber.of(glyphOp.y)]));
+        else draw.push(contentOp('h'));
+      }
+      draw.push(hasStroke ? contentOp('B') : contentOp('f')); // B = fill then stroke (nonzero winding)
+      draw.push(popGraphicsState());
+      pdfPage.pushOperators(...draw);
     }
   }
 

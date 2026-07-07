@@ -3,7 +3,7 @@
 // injected dependencies (rasterizer, ICC loader, transform factory) so it is unit-testable in Node and
 // reused by the browser adapter (`paperPdfxBrowser.ts`) unchanged.
 
-import { buildPaperPdfx, type PdfxExportResult, type PdfxRasterPage, type PdfxStandard, type PdfxVectorTextFrame } from './paperPdfxExport';
+import { buildPaperPdfx, type PdfxExportResult, type PdfxOutlineTextFrame, type PdfxRasterPage, type PdfxStandard, type PdfxVectorTextFrame } from './paperPdfxExport';
 import type { IccCmykTransform } from './paperColorManagement';
 import type { PaperDocument } from '../types/paper';
 import type { PaperOutputIntentProfileId } from '../types/paper';
@@ -12,7 +12,7 @@ import {
   findBundledProfile,
   type IccProfileRef,
 } from './paperIccProfiles';
-import { buildVectorTextFrameSpecs } from './paperPdfxVectorTextFrames';
+import { buildOutlineTextFrameSpecs, buildVectorTextFrameSpecs } from './paperPdfxVectorTextFrames';
 import { collectSpotFills } from './paperPdfxSpotFills';
 
 const PT_PER_MM = 72 / 25.4;
@@ -129,6 +129,8 @@ export async function exportPaperDocumentToPdfx(
     // baked into the raster with its real glyphs. Vector + raster text coexist on the same page.
     let textFrames: PdfxVectorTextFrame[] | undefined;
     let vectorFrameIds: string[] | undefined;
+    let outlineFrames: PdfxOutlineTextFrame[] | undefined;
+    let outlineFrameIds: string[] | undefined;
     if (wantVectorText) {
       const specs = buildVectorTextFrameSpecs(page, document, transform);
       if (specs.length > 0) {
@@ -142,6 +144,19 @@ export async function exportPaperDocumentToPdfx(
           }),
         );
       }
+      // Text that can't be live type but can be outlined (stroked lettering) → filled vector curves,
+      // also knocked out of the raster. Stays crisp vector instead of rasterizing.
+      const outlineSpecs = buildOutlineTextFrameSpecs(page, document, transform);
+      if (outlineSpecs.length > 0) {
+        outlineFrameIds = outlineSpecs.map((spec) => spec.frameId);
+        outlineFrames = await Promise.all(
+          outlineSpecs.map(async ({ fontUrl, fontBytes, frameId: _frameId, ...rest }) => {
+            const bytes = fontBytes ?? (fontUrl ? await loadFontOnce(fontUrl) : undefined);
+            if (!bytes) throw new Error('Outline-text frame has neither font bytes nor a font URL.');
+            return { ...rest, fontBytes: bytes };
+          }),
+        );
+      }
     }
 
     // Spot fills: solid spot-swatch rectangles become real /Separation plates; their fill is knocked out
@@ -150,9 +165,11 @@ export async function exportPaperDocumentToPdfx(
     const spotPlan = document.printProduction.spotColorPolicy === 'preserve-named'
       ? collectSpotFills(page, document)
       : { spotFills: [], knockoutFrameIds: [], preservedSpotNames: [] };
-    const rasterOptions: RasterizePageOptions | undefined = (vectorFrameIds || spotPlan.knockoutFrameIds.length)
+    // Both the selectable-text and outlined-text frames must be knocked out of the raster backdrop.
+    const excludeTextIds = [...(vectorFrameIds ?? []), ...(outlineFrameIds ?? [])];
+    const rasterOptions: RasterizePageOptions | undefined = (excludeTextIds.length || spotPlan.knockoutFrameIds.length)
       ? {
-          ...(vectorFrameIds ? { excludeTextFrameIds: vectorFrameIds } : {}),
+          ...(excludeTextIds.length ? { excludeTextFrameIds: excludeTextIds } : {}),
           ...(spotPlan.knockoutFrameIds.length ? { excludeFrameFillIds: spotPlan.knockoutFrameIds } : {}),
         }
       : undefined;
@@ -166,6 +183,7 @@ export async function exportPaperDocumentToPdfx(
       trimHeightPt,
       bleedPt,
       textFrames,
+      outlineFrames,
       spotFills: spotPlan.spotFills.length ? spotPlan.spotFills : undefined,
     });
   }

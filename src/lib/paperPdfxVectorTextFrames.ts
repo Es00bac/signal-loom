@@ -16,7 +16,7 @@ import { parseHexColor, type PaperRgb } from './paperSwatches';
 import { isDisplayFontFamily, isBoldWeight } from './paperFontResolution';
 import { findUncoveredCharacters } from './paperFontVetting';
 import { resolveTextFace, selectImportedFace, normalizeFamilyName } from './paperFontLibrary';
-import type { PdfxVectorTextFrame } from './paperPdfxExport';
+import type { PdfxOutlineTextFrame, PdfxVectorTextFrame } from './paperPdfxExport';
 
 const PT_PER_MM = 72 / 25.4;
 
@@ -175,6 +175,89 @@ export function buildVectorTextFrameSpecs(
       yTopPt: (bleedMm + boxYMm) * PT_PER_MM,
       widthPt: boxWMm * PT_PER_MM,
       heightPt: boxHMm * PT_PER_MM,
+    });
+  }
+  return specs;
+}
+
+/**
+ * True when a text frame can't be drawn as selectable type but CAN be drawn as filled glyph outlines
+ * (vector curves) — so it stays crisp vector instead of rasterizing. First slice: the only thing blocking
+ * live-type vectorization is a text STROKE (comic-style outlined lettering). Everything else about the
+ * frame must otherwise be vector-safe (same font we hold, upright, single column, …); if it's unsafe for
+ * any OTHER reason (a display font we don't have, rotation, columns) it stays raster for now.
+ */
+export function frameTextIsOutlineable(frame: PaperFrame, importedFonts?: readonly PaperImportedFont[]): boolean {
+  if (!isVectorTextKind(frame.kind)) return false;
+  if (frameTextIsVectorSafe(frame, importedFonts)) return false; // already handled as selectable type
+  if (num(frame.textStrokeWidthMm) <= 0) return false;
+  // Would it be vector-safe if we ignored the stroke? If so, the stroke is the ONLY blocker → outline it.
+  const withoutStroke: PaperFrame = { ...frame, textStrokeWidthMm: 0 };
+  return frameTextIsVectorSafe(withoutStroke, importedFonts);
+}
+
+/** A PdfxOutlineTextFrame minus resolved bytes — carries a bundled `fontUrl` OR inline `fontBytes` plus the
+ * source `frameId` (so the pipeline can knock exactly these frames' text out of the raster backdrop). */
+export type PdfxOutlineTextFrameSpec = Omit<PdfxOutlineTextFrame, 'fontBytes'> & {
+  fontUrl?: string;
+  fontBytes?: Uint8Array;
+  frameId: string;
+};
+
+/** Build outline-text specs for every non-empty, outline-only (stroked) text frame on a page. */
+export function buildOutlineTextFrameSpecs(
+  page: PaperPage,
+  document: PaperDocument,
+  transform: IccCmykTransform,
+): PdfxOutlineTextFrameSpec[] {
+  const bleedMm = document.page.bleedMm;
+  const blackPolicy = document.printProduction.blackPolicy;
+  const toCmyk01 = (css: string | undefined) => {
+    if (!css) return undefined;
+    const rgb = cssToRgb(css);
+    if (!rgb) return undefined;
+    const c = applyBlackPolicy(
+      { space: 'cmyk', cmyk: transform.rgbToCmyk(rgb), approximate: transform.kind !== 'icc', profileName: transform.profileName },
+      blackPolicy,
+      true,
+    ).cmyk;
+    return { c: c.c / 100, m: c.m / 100, y: c.y / 100, k: c.k / 100 };
+  };
+  const specs: PdfxOutlineTextFrameSpec[] = [];
+  for (const frame of page.frames) {
+    if (!isVectorTextKind(frame.kind) || !frameTextIsOutlineable(frame, document.importedFonts)) continue;
+    const text = frame.text ?? '';
+    if (!text.trim()) continue;
+    const typo = frame.typography;
+    const face = resolveTextFace(typo, document.importedFonts);
+    // A missing glyph would outline as .notdef — skip so the frame rasters (browser fallback draws it).
+    if (face.bytes && !fontCoversText(face.bytes, text)) continue;
+    const fill = toCmyk01(typo.color) ?? { c: 0, m: 0, y: 0, k: 1 };
+    const stroke = toCmyk01(frame.textStrokeColor);
+
+    const inset = num(frame.strokeWidthMm) + CONTENT_PADDING_MM;
+    const boxXMm = frame.xMm + inset;
+    const boxYMm = frame.yMm + inset;
+    const boxWMm = Math.max(0, frame.widthMm - 2 * inset);
+    const boxHMm = Math.max(0, frame.heightMm - 2 * inset);
+
+    specs.push({
+      text,
+      frameId: frame.id,
+      fontId: face.id,
+      fontUrl: face.url,
+      fontBytes: face.bytes,
+      fontSizePt: typo.fontSizePt,
+      leadingPt: typo.leadingPt,
+      align: typo.align,
+      verticalAlign: frame.kind === 'caption' ? frame.textVerticalAlign : undefined,
+      cmyk: fill,
+      xPt: (bleedMm + boxXMm) * PT_PER_MM,
+      yTopPt: (bleedMm + boxYMm) * PT_PER_MM,
+      widthPt: boxWMm * PT_PER_MM,
+      heightPt: boxHMm * PT_PER_MM,
+      strokeCmyk: stroke,
+      strokeWidthPt: num(frame.textStrokeWidthMm) * PT_PER_MM,
     });
   }
   return specs;
