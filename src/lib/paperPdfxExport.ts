@@ -90,6 +90,8 @@ export interface PdfxSpotFill {
   centerYTopPt?: number;
   /** Optional corner radius in points — the plate draws as a rounded rectangle instead of a sharp one. */
   cornerRadiusPt?: number;
+  /** Optional polygon (≥3 points, media TOP-left coords) — the plate draws this shape instead of the rect. */
+  polygon?: readonly { xPt: number; yTopPt: number }[];
 }
 
 /** One text box drawn as embedded vector type over the CMYK raster. Geometry is in points, measured
@@ -369,6 +371,17 @@ function roundedRectOps(xPt: number, yBottomPt: number, wPt: number, hPt: number
   ];
 }
 
+/** Path ops for a closed polygon given points in media TOP-left coords (y down); flips each to PDF y-up. */
+function polygonOps(points: readonly { xPt: number; yTopPt: number }[], mediaHpt: number): PDFOperator[] {
+  const ops: PDFOperator[] = [];
+  points.forEach((p, i) => {
+    const args = [PDFNumber.of(p.xPt), PDFNumber.of(mediaHpt - p.yTopPt)];
+    ops.push(contentOp(i === 0 ? 'm' : 'l', args));
+  });
+  ops.push(contentOp('h'));
+  return ops;
+}
+
 /** Encode a string as a PDF name body: chars outside the printable regular set become `#XX`. A spot name
  * like "PANTONE 185 C" → "PANTONE#20185#20C", so the colorant round-trips through Ghostscript/RIPs. */
 function encodePdfName(name: string): string {
@@ -520,8 +533,10 @@ export async function buildPaperPdfx(
         spotDraw.push(
           contentOp('cs', [PDFName.of(resName)]),
           contentOp('scn', [PDFNumber.of(tint)]),
-          // Rounded corners draw as a real path; a square rect stays a plain `re`.
-          ...roundedRectOps(spot.xPt, yBottom, spot.widthPt, spot.heightPt, spot.cornerRadiusPt ?? 0),
+          // A polygon draws its own path; else rounded corners draw a path; else a plain `re`.
+          ...(spot.polygon && spot.polygon.length >= 3
+            ? polygonOps(spot.polygon, mediaHpt)
+            : roundedRectOps(spot.xPt, yBottom, spot.widthPt, spot.heightPt, spot.cornerRadiusPt ?? 0)),
           contentOp('f'),
           popGraphicsState(),
         );

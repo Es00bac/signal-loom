@@ -1,11 +1,11 @@
 // Pure builder: find the frames on a page whose fill is a real SPOT swatch and turn each into a
 // PdfxSpotFill spec for the exporter's /Separation plate, plus the ids of the frames whose fill must be
 // knocked out of the flattened raster (so the spot ink lives ONLY on its named plate, not doubled as
-// process). Conservative by construction: only an un-stroked rectangle (optionally rotated about its centre
-// and/or rounded-cornered) can become a spot plate — the /Separation shape has to line up exactly with the
-// knocked-out region. A partial fill opacity is kept as the spot TINT (a screen of the ink). Anything
-// fancier (gradient, a border, a non-rectangular polygon, or a swatch with no CMYK alternate) stays process
-// CMYK and is disclosed in preflight. Framework-free + unit-testable.
+// process). Conservative by construction: an un-stroked rectangle (optionally rotated about its centre
+// and/or rounded-cornered) OR a closed polygon (≥3 vertices) can become a spot plate — the /Separation
+// shape has to line up exactly with the knocked-out region. A partial fill opacity is kept as the spot TINT
+// (a screen of the ink). Anything fancier (gradient, a border, or a swatch with no CMYK alternate) stays
+// process CMYK and is disclosed in preflight. Framework-free + unit-testable.
 
 import type { PaperDocument, PaperFrame, PaperPage } from '../types/paper';
 import type { PaperSwatch } from './paperSwatches';
@@ -29,8 +29,9 @@ const num = (v: number | undefined): number => (typeof v === 'number' ? v : 0);
  * ink), which is exactly what the plate's `scn <tint>` expresses. A fully transparent fill (opacity 0) is
  * nothing to plate. */
 function isPlateableRect(frame: PaperFrame): boolean {
-  // Rotation + rounded corners are allowed — the plate draws rotated/rounded to match the knockout.
-  if (frame.vertices && frame.vertices.length > 0) return false;
+  // Rotation, rounded corners, and closed polygons (≥3 vertices) are allowed — the plate draws the matching
+  // rotated/rounded/polygon shape. A degenerate 1–2 vertex "polygon" can't form a face → not plateable.
+  if (frame.vertices && frame.vertices.length > 0 && frame.vertices.length < 3) return false;
   if (frame.fillGradient) return false;
   if (num(frame.fillOpacity) <= 0) return false; // invisible fill — no plate
   if (frame.bubbleShape) return false;
@@ -64,6 +65,15 @@ export function collectSpotFills(page: PaperPage, document: PaperDocument): Spot
     if (!isPlateableRect(frame)) continue; // not faithfully replaceable → leave as process (disclosed)
 
     const rot = num(frame.rotationDeg);
+    // A polygon frame is a rectangle clipped to vertex percentages of its box (CSS clip-path: polygon) —
+    // map those to absolute plate points so the /Separation shape matches the knocked-out clip.
+    const verts = frame.vertices;
+    const polygon = verts && verts.length >= 3
+      ? verts.map((v) => ({
+          xPt: (bleedMm + frame.xMm + (v.xPercent / 100) * frame.widthMm) * PT_PER_MM,
+          yTopPt: (bleedMm + frame.yMm + (v.yPercent / 100) * frame.heightMm) * PT_PER_MM,
+        }))
+      : undefined;
     spotFills.push({
       name: swatch.spotName ?? swatch.name,
       cmyk: { c: swatch.cmyk.c / 100, m: swatch.cmyk.m / 100, y: swatch.cmyk.y / 100, k: swatch.cmyk.k / 100 },
@@ -72,11 +82,12 @@ export function collectSpotFills(page: PaperPage, document: PaperDocument): Spot
       yTopPt: (bleedMm + frame.yMm) * PT_PER_MM,
       widthPt: frame.widthMm * PT_PER_MM,
       heightPt: frame.heightMm * PT_PER_MM,
-      // Rotated plate rect: pivot is the frame centre (matches CSS transform-origin: center + the knockout).
+      // Rotated plate shape: pivot is the frame centre (matches CSS transform-origin: center + the knockout).
       rotationDeg: rot || undefined,
       centerXPt: rot ? (bleedMm + frame.xMm + frame.widthMm / 2) * PT_PER_MM : undefined,
       centerYTopPt: rot ? (bleedMm + frame.yMm + frame.heightMm / 2) * PT_PER_MM : undefined,
-      cornerRadiusPt: num(frame.cornerRadiusMm) ? frame.cornerRadiusMm! * PT_PER_MM : undefined,
+      cornerRadiusPt: !polygon && num(frame.cornerRadiusMm) ? frame.cornerRadiusMm! * PT_PER_MM : undefined,
+      polygon,
     });
     knockoutFrameIds.push(frame.id);
     preserved.add(swatch.spotName ?? swatch.name);

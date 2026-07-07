@@ -73,6 +73,26 @@ describe('collectSpotFills', () => {
     expect(plan.spotFills[0].cornerRadiusPt).toBeCloseTo(3 * PT_PER_MM, 4);
   });
 
+  it('plates a POLYGON spot shape from vertex percentages of the frame box', () => {
+    // A triangle: top-centre, bottom-right, bottom-left (percentages of the 60×40mm box at 20,30mm; bleed 0).
+    const { doc } = docWithSpotFrame({ vertices: [{ xPercent: 50, yPercent: 0 }, { xPercent: 100, yPercent: 100 }, { xPercent: 0, yPercent: 100 }] });
+    const plan = collectSpotFills(doc.pages[0], doc);
+    expect(plan.spotFills).toHaveLength(1);
+    const poly = plan.spotFills[0].polygon!;
+    expect(poly).toHaveLength(3);
+    // Apex = (20 + 0.5×60, 30 + 0×40) = (50, 30) mm.
+    expect(poly[0].xPt).toBeCloseTo(50 * PT_PER_MM, 4);
+    expect(poly[0].yTopPt).toBeCloseTo(30 * PT_PER_MM, 4);
+    // Bottom-left = (20, 30 + 40) = (20, 70) mm.
+    expect(poly[2].xPt).toBeCloseTo(20 * PT_PER_MM, 4);
+    expect(poly[2].yTopPt).toBeCloseTo(70 * PT_PER_MM, 4);
+  });
+
+  it('leaves a degenerate 2-vertex "polygon" as process', () => {
+    const { doc } = docWithSpotFrame({ vertices: [{ xPercent: 0, yPercent: 0 }, { xPercent: 100, yPercent: 100 }] });
+    expect(collectSpotFills(doc.pages[0], doc).spotFills).toHaveLength(0);
+  });
+
   it('plates a ROTATED spot rect, carrying the angle + frame-centre pivot', () => {
     const { doc, frameId } = docWithSpotFrame({ rotationDeg: 15 });
     const frame = doc.pages[0].frames.find((f) => f.id === frameId)!;
