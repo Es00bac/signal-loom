@@ -4,7 +4,7 @@ import {
   buildPaperPrintProductionMetadata,
   isPdfXProductionTarget,
 } from './paperPrintProduction';
-import { classifyFontFamily } from './paperFontResolution';
+import { classifyFontFamily, isDisplayFontFamily } from './paperFontResolution';
 
 const LIBERATION_SUBSTITUTE_NAME: Record<'serif' | 'sans' | 'mono', string> = {
   serif: 'Liberation Serif',
@@ -127,9 +127,16 @@ export function analyzePaperPreflight(
   }
   // Honest disclosure: PDF/X exports embed real vector text using metric-compatible Liberation faces
   // (we can't legally embed arbitrary system fonts). Tell the user which of their fonts get substituted.
+  // Display/decorative faces have no faithful Liberation stand-in, so their text is RASTERIZED (real
+  // glyphs) instead of substituted — disclosed separately so the two behaviours aren't conflated.
   if (isPdfXProductionTarget(document.printProduction)) {
     const substitutions = new Map<string, string>();
+    const rasterized = new Set<string>();
     for (const font of fontInventory) {
+      if (isDisplayFontFamily(font.family)) {
+        rasterized.add(font.family);
+        continue;
+      }
       const target = LIBERATION_SUBSTITUTE_NAME[classifyFontFamily(font.family)];
       if (font.family.trim().toLowerCase() === target.toLowerCase()) continue; // already the substitute
       substitutions.set(font.family, target);
@@ -140,6 +147,15 @@ export function analyzePaperPreflight(
         'info',
         'Fonts embedded as Liberation substitutes',
         `PDF/X embeds selectable vector text with metric-compatible open fonts: ${list}. Set text in Liberation Serif/Sans/Mono to match the print exactly.`,
+        { category: 'fonts' },
+      ));
+    }
+    if (rasterized.size > 0) {
+      const list = [...rasterized].join('; ');
+      issues.push(issue(
+        'info',
+        'Display fonts kept as raster',
+        `${list}: display/decorative faces have no faithful open substitute, so their text is rendered as high-resolution pixels (its real look is preserved, but it isn't selectable). Other text stays selectable vector.`,
         { category: 'fonts' },
       ));
     }

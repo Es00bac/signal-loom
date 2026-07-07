@@ -12,7 +12,7 @@ import {
   findBundledProfile,
   type IccProfileRef,
 } from './paperIccProfiles';
-import { buildVectorTextFrameSpecs, pageTextIsVectorizable } from './paperPdfxVectorTextFrames';
+import { buildVectorTextFrameSpecs } from './paperPdfxVectorTextFrames';
 
 const PT_PER_MM = 72 / 25.4;
 
@@ -32,15 +32,19 @@ export interface PaperPdfxPipelineOptions {
   createdAt?: Date;
   /**
    * Draw text as real embedded vector type instead of baking it into the raster (docs/notes/840).
-   * Requires `deps.loadFontBytes`. Defaults to false so callers opt in explicitly. Pages with any
-   * rotated text frame fall back to a fully flattened raster.
+   * Requires `deps.loadFontBytes`. Defaults to false so callers opt in explicitly. Only text frames the
+   * linear engine can faithfully reproduce are vectorized (see `frameTextIsVectorSafe`); any other text
+   * frame (rotation, columns, display fonts like Impact, bubbles, …) stays baked into the raster with
+   * its real glyphs. Vector and raster text can coexist on the same page (per-frame, not per-page).
    */
   vectorText?: boolean;
 }
 
 export interface RasterizePageOptions {
-  /** Exclude text frames from the raster (their text is drawn as vector on top). */
+  /** Exclude ALL text frames from the raster (their text is drawn as vector on top). */
   backdropOnly?: boolean;
+  /** Exclude only these specific text frames from the raster (the ones drawn as vector on top). */
+  excludeTextFrameIds?: string[];
 }
 
 export interface PaperPdfxPipelineDeps {
@@ -117,20 +121,22 @@ export async function exportPaperDocumentToPdfx(
 
   const pages: PdfxRasterPage[] = [];
   for (const page of document.pages) {
-    // A page gets vector text only when enabled and none of its text is rotated (rotated text stays
-    // in the raster, faithfully placed); otherwise it's a fully flattened raster as before.
-    const useVector = wantVectorText && pageTextIsVectorizable(page);
+    // Per-frame: each text frame the linear engine can faithfully reproduce is drawn as real vector and
+    // excluded from the raster; every other frame (rotation, columns, display fonts, bubbles, …) stays
+    // baked into the raster with its real glyphs. Vector + raster text coexist on the same page.
     let textFrames: PdfxVectorTextFrame[] | undefined;
-    if (useVector) {
+    let vectorFrameIds: string[] | undefined;
+    if (wantVectorText) {
       const specs = buildVectorTextFrameSpecs(page, document, transform);
       if (specs.length > 0) {
+        vectorFrameIds = specs.map((spec) => spec.frameId);
         textFrames = await Promise.all(
-          specs.map(async ({ fontUrl, ...rest }) => ({ ...rest, fontBytes: await loadFontOnce(fontUrl) })),
+          specs.map(async ({ fontUrl, frameId: _frameId, ...rest }) => ({ ...rest, fontBytes: await loadFontOnce(fontUrl) })),
         );
       }
     }
 
-    const raster = await deps.rasterizePage(page.id, dpi, { backdropOnly: textFrames !== undefined });
+    const raster = await deps.rasterizePage(page.id, dpi, vectorFrameIds ? { excludeTextFrameIds: vectorFrameIds } : undefined);
     pages.push({
       pageNumber: page.pageNumber,
       rgba: raster.rgba,

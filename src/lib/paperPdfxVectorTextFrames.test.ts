@@ -81,6 +81,24 @@ describe('buildVectorTextFrameSpecs', () => {
     expect(pageTextIsVectorizable(docWithFrames([{ text: 'x', typography: { ...baseTypo, dropCapLines: 3 } }]).pages[0])).toBe(false);
   });
 
+  it('rasterizes display/decorative fonts (no faithful Liberation substitute) but vectorizes text faces', () => {
+    const typo = (fontFamily: string) => ({ fontFamily, fontSizePt: 18, leadingPt: 20, tracking: 0, hyphenate: false, align: 'center' as const, color: '#000', fontWeight: '700', fontStyle: 'normal' as const });
+    // Text faces Liberation stands in for → vectorized.
+    expect(pageTextIsVectorizable(docWithFrames([{ text: 'x', typography: typo('Inter, system-ui, sans-serif') }]).pages[0])).toBe(true);
+    expect(pageTextIsVectorizable(docWithFrames([{ text: 'x', typography: typo('Georgia, serif') }]).pages[0])).toBe(true);
+    // Display/decorative faces → rasterized (real glyphs), not vector-substituted.
+    expect(pageTextIsVectorizable(docWithFrames([{ text: 'x', typography: typo('Impact, Haettenschweiler, sans-serif') }]).pages[0])).toBe(false);
+    expect(pageTextIsVectorizable(docWithFrames([{ text: 'x', typography: typo('Bangers, cursive') }]).pages[0])).toBe(false);
+    // A display frame is skipped by the spec builder even though it has non-empty text.
+    const mixed = docWithFrames([
+      { text: 'body', typography: typo('Georgia, serif') },
+      { text: 'BOOM', typography: typo('Impact, sans-serif') },
+    ]);
+    const specs = buildVectorTextFrameSpecs(mixed.pages[0], mixed, blackTransform);
+    expect(specs.map((s) => s.text)).toEqual(['body']);
+    expect(specs[0].frameId).toBe('f0'); // spec carries the source frame id for raster exclusion
+  });
+
   it('supports vertical alignment and a custom text sub-box in the geometry', () => {
     const doc = docWithFrames([
       { text: 'Mid', xMm: 0, yMm: 0, widthMm: 100, heightMm: 100, textVerticalAlign: 'middle',

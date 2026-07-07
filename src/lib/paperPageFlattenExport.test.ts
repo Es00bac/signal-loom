@@ -153,6 +153,30 @@ describe('paperPageFlattenExport', () => {
     expect(exported.svg).not.toContain('rgba(6, 182, 212');
   });
 
+  it('excludes only the named text frames from the raster (keeps display-font frames baked in)', () => {
+    const base = createDefaultPaperDocument({ title: 'Mixed', preset: 'comic-book', dpi: 150 });
+    const pageId = base.pages[0].id;
+    const withBody = addFrameToPaperPage(base, pageId, {
+      kind: 'caption', xMm: 10, yMm: 10, widthMm: 60, heightMm: 20, text: 'SELECTABLE-BODY',
+      typography: { fontFamily: 'Georgia', color: '#111111' },
+    }).document;
+    const withSfx = addFrameToPaperPage(withBody, pageId, {
+      kind: 'caption', xMm: 10, yMm: 60, widthMm: 60, heightMm: 20, text: 'RASTER-SFX',
+      typography: { fontFamily: 'Impact, Haettenschweiler, sans-serif', color: '#111111' },
+    }).document;
+    const bodyId = withSfx.pages[0].frames.find((frame) => frame.text === 'SELECTABLE-BODY')!.id;
+
+    // The vectorized body frame is dropped from the raster; the display SFX frame stays baked in.
+    const exported = buildFlattenedPaperPageSvgExport(withSfx, pageId, { excludeTextFrameIds: [bodyId] });
+    expect(exported.svg).not.toContain('SELECTABLE-BODY');
+    expect(exported.svg).toContain('RASTER-SFX');
+
+    // With no exclusion both are present (default full raster).
+    const full = buildFlattenedPaperPageSvgExport(withSfx, pageId);
+    expect(full.svg).toContain('SELECTABLE-BODY');
+    expect(full.svg).toContain('RASTER-SFX');
+  });
+
   it('can compute export dimensions with or without bleed', () => {
     const doc = updatePaperDocumentSetup(createDefaultPaperDocument({ preset: 'custom', dpi: 300 }), {
       widthMm: 25.4,

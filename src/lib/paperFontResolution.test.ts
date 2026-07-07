@@ -5,10 +5,25 @@ import fontkit from '@pdf-lib/fontkit';
 import {
   classifyFontFamily,
   isBoldWeight,
+  isDisplayFontFamily,
   resolveBundledFontFace,
 } from './paperFontResolution';
 
 describe('paperFontResolution', () => {
+  it('flags display/decorative faces Liberation cannot faithfully substitute', () => {
+    // The shipped SFX preset + common comic/display faces → raster (real glyphs), not vector substitute.
+    expect(isDisplayFontFamily('Impact, Haettenschweiler, sans-serif')).toBe(true);
+    expect(isDisplayFontFamily('Bangers')).toBe(true);
+    expect(isDisplayFontFamily('"Permanent Marker", cursive')).toBe(true);
+    expect(isDisplayFontFamily('Comic Sans MS')).toBe(true);
+    expect(isDisplayFontFamily('Some Handmade Face, fantasy')).toBe(true);
+    // Ordinary text faces (incl. the app defaults) are NOT display → they stay selectable vector.
+    expect(isDisplayFontFamily('Inter, system-ui, sans-serif')).toBe(false);
+    expect(isDisplayFontFamily('Georgia, serif')).toBe(false);
+    expect(isDisplayFontFamily('Arial, Helvetica, sans-serif')).toBe(false);
+    expect(isDisplayFontFamily('"Courier New", monospace')).toBe(false);
+  });
+
   it('classifies common font-family stacks into a bundled family', () => {
     expect(classifyFontFamily('Georgia, "Times New Roman", serif')).toBe('serif');
     expect(classifyFontFamily('Minion Pro')).toBe('serif');

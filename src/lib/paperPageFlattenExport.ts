@@ -34,7 +34,14 @@ export interface PaperPageFlattenExportOptions {
   outputDpi?: number;
   outputWidthPx?: number;
   outputHeightPx?: number;
+  /** Drop ALL text-kind frames (they're drawn as vector on top of this raster). */
   backdropOnly?: boolean;
+  /**
+   * Drop only these specific text-kind frames (the ones drawn as vector on top). Other text frames —
+   * e.g. display-font SFX with no faithful vector substitute — stay baked into the raster. Takes
+   * precedence over `backdropOnly` when both are set.
+   */
+  excludeTextFrameIds?: string[];
 }
 
 export interface PaperPageEmbeddedAssetExportOptions extends PaperPageFlattenExportOptions {
@@ -292,7 +299,11 @@ function buildOnePageExportDocument(
 ): PaperDocument {
   const includeBleed = options.includeBleed ?? true;
   let exportPage = page;
-  if (options.backdropOnly) {
+  const excluded = options.excludeTextFrameIds ? new Set(options.excludeTextFrameIds) : undefined;
+  if (excluded) {
+    // Frame-level: keep art frames and any text frame NOT being drawn as vector on top.
+    exportPage = { ...page, frames: page.frames.filter((frame) => !excluded.has(frame.id)) };
+  } else if (options.backdropOnly) {
     exportPage = {
       ...page,
       frames: page.frames.filter((frame) => {

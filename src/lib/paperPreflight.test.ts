@@ -237,6 +237,29 @@ describe('paperPreflight', () => {
     expect(browserReport.issues.some((i) => i.title === 'Fonts embedded as Liberation substitutes')).toBe(false);
   });
 
+  it('discloses display fonts as rasterized (not substituted) for PDF/X', () => {
+    const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'SFX subst', preset: 'comic-book' }), {
+      printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51' },
+    });
+    const { document: withBody } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'caption', xMm: 10, yMm: 10, widthMm: 60, heightMm: 20, text: 'Narration',
+      typography: { fontFamily: 'Georgia', color: '#111111' },
+    });
+    const { document } = addFrameToPaperPage(withBody, withBody.pages[0].id, {
+      kind: 'caption', xMm: 10, yMm: 60, widthMm: 60, heightMm: 20, text: 'KA-BOOM',
+      typography: { fontFamily: 'Impact, Haettenschweiler, sans-serif', color: '#111111' },
+    });
+
+    const report = analyzePaperPreflight(document, []);
+    // Impact is disclosed as rasterized, and NOT listed among the Liberation substitutions.
+    const raster = report.issues.find((i) => i.title === 'Display fonts kept as raster');
+    expect(raster?.severity).toBe('info');
+    expect(raster?.detail).toContain('Impact');
+    const subst = report.issues.find((i) => i.title === 'Fonts embedded as Liberation substitutes');
+    expect(subst?.detail).toContain('Georgia → Liberation Serif');
+    expect(subst?.detail ?? '').not.toContain('Impact');
+  });
+
   it('flags invalid PDF/X output intent combinations before export', () => {
     const document = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Bad PDFX Target' }), {
       printProduction: {

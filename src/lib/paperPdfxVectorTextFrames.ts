@@ -13,13 +13,17 @@
 import type { PaperDocument, PaperFrame, PaperPage } from '../types/paper';
 import type { IccCmykTransform } from './paperColorManagement';
 import { parseHexColor, type PaperRgb } from './paperSwatches';
-import { resolveBundledFontFace } from './paperFontResolution';
+import { resolveBundledFontFace, isDisplayFontFamily } from './paperFontResolution';
 import type { PdfxVectorTextFrame } from './paperPdfxExport';
 
 const PT_PER_MM = 72 / 25.4;
 
-/** A vector-text spec minus the font bytes (the adapter fetches `fontUrl` and adds `fontBytes`). */
-export type PdfxVectorTextFrameSpec = Omit<PdfxVectorTextFrame, 'fontBytes'> & { fontUrl: string };
+/**
+ * A vector-text spec minus the font bytes (the adapter fetches `fontUrl` and adds `fontBytes`). Carries
+ * the source `frameId` so the pipeline can exclude exactly the vectorized frames from the raster backdrop
+ * (leaving unsafe/display-font text frames baked into the raster with their real glyphs).
+ */
+export type PdfxVectorTextFrameSpec = Omit<PdfxVectorTextFrame, 'fontBytes'> & { fontUrl: string; frameId: string };
 
 function cssToRgb(css: string): PaperRgb | undefined {
   const hex = parseHexColor(css);
@@ -39,6 +43,9 @@ function num(value: number | undefined): number {
  */
 export function frameTextIsVectorSafe(frame: PaperFrame): boolean {
   if (frame.kind !== 'text') return true;
+  // Display/decorative faces (Impact SFX, comic titles, …) have no faithful Liberation substitute —
+  // rasterize them (real glyphs) rather than vector-substitute a wrong-looking plain face.
+  if (isDisplayFontFamily(frame.typography.fontFamily)) return false;
   // Frame-level text transforms / effects the linear engine doesn't reproduce.
   if (num(frame.rotationDeg) !== 0) return false;
   if (num(frame.textRotationDeg) !== 0) return false;
@@ -99,6 +106,7 @@ export function buildVectorTextFrameSpecs(
 
     specs.push({
       text,
+      frameId: frame.id,
       fontId: face.id,
       fontUrl: face.url,
       fontSizePt: typo.fontSizePt,

@@ -48,6 +48,7 @@ export function exportPaperDocumentToPdfxInBrowser(
         includeBleed: true,
         outputDpi,
         backdropOnly: rasterOptions?.backdropOnly ?? false,
+        excludeTextFrameIds: rasterOptions?.excludeTextFrameIds,
         resolveImageSrc: imageSourceToDataUrl,
       });
       const raster = await rasterizeFlattenedPaperPageToRgba(svgExport);

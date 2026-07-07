@@ -28,6 +28,24 @@ export function classifyFontFamily(cssFamily: string): LiberationFamily {
   return 'sans';
 }
 
+// Display / decorative faces whose distinctive silhouette a plain Liberation text face CANNOT stand in
+// for. Substituting these (e.g. a comic's Impact SFX → Liberation Sans) silently changes the artwork —
+// exactly the "amateur" look we refuse to ship. Text in these must be RASTERIZED (real glyphs), not
+// vector-substituted. The list is deliberately conservative: an un-listed display font simply keeps the
+// prior behaviour (vector substitute, disclosed in preflight) — so this only ever improves fidelity.
+const DISPLAY_FONT_HINT = /(impact|haettenschweiler|bebas|anton|bangers|badaboom|komika|luckiest|permanent\s?marker|lobster|pacifico|bungee|monoton|creepster|alfa\s?slab|titan\s?one|passion\s?one|archivo\s?black|black\s?ops|staatliches|shrikhand|righteous|bowlby|fredoka|sigmar|blackletter|fraktur|old\s?english|comic(\s|-)?(sans|neue))/;
+
+/**
+ * True when a CSS font-family names a display/decorative face Liberation can't faithfully substitute
+ * (so its text should be rasterized to preserve the real glyphs, not embedded as a vector substitute).
+ * Also true for the CSS generic decorative families `cursive` / `fantasy`.
+ */
+export function isDisplayFontFamily(cssFamily: string): boolean {
+  const f = (cssFamily || '').toLowerCase();
+  if (DISPLAY_FONT_HINT.test(f)) return true;
+  return /(^|,)\s*(cursive|fantasy)\s*(,|$)/.test(f);
+}
+
 /** A CSS font-weight (keyword or numeric string) counts as bold at >= 600 / bold / bolder. */
 export function isBoldWeight(weight: string | undefined): boolean {
   const w = (weight ?? '').trim().toLowerCase();

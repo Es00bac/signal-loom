@@ -38,9 +38,9 @@ function poppler(tool: string, args: string[]): string | null {
 }
 
 describe('exportPaperDocumentToPdfx with vectorText', () => {
-  it('rasterizes backdrop-only and embeds the document text as real vector', async () => {
+  it('excludes the text frame from the raster and embeds the document text as real vector', async () => {
     const doc = textDoc();
-    let backdropOnlyRequested = false;
+    let excludedTextFrameIds: string[] | undefined;
 
     const result = await exportPaperDocumentToPdfx(
       doc,
@@ -50,15 +50,15 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
         createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
         loadFontBytes: async (url) => new Uint8Array(readFileSync(`public${url}`)),
         rasterizePage: async (_pageId, _dpi, opts) => {
-          if (opts?.backdropOnly) backdropOnlyRequested = true;
-          // Backdrop-only white page (text excluded → drawn as vector on top).
+          excludedTextFrameIds = opts?.excludeTextFrameIds;
+          // White page with the text frame excluded → text drawn as vector on top.
           return { rgba: new Uint8Array(96 * 124 * 4).fill(255), widthPx: 96, heightPx: 124 };
         },
       },
     );
 
-    // The pipeline asked for a backdrop-only raster (so text isn't double-drawn).
-    expect(backdropOnlyRequested).toBe(true);
+    // The pipeline excluded exactly the vectorized frame from the raster (so text isn't double-drawn).
+    expect(excludedTextFrameIds).toEqual(['f0']);
 
     const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-4' });
     expect(report.pass, report.checks.filter((c) => !c.pass).map((c) => c.label).join('; ')).toBe(true);
@@ -97,7 +97,7 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
     const gatedFrame = { ...base.pages[0].frames[0], typography: { ...base.pages[0].frames[0].typography, tracking: 60 } } as PaperFrame;
     const doc: PaperDocument = { ...base, pages: base.pages.map((p, i) => (i === 0 ? { ...p, frames: [gatedFrame] } : p)) };
 
-    let backdropOnlyRequested = false;
+    let excludedTextFrameIds: string[] | undefined = ['sentinel'];
     const result = await exportPaperDocumentToPdfx(
       doc,
       { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, iccProfileId: 'fogra39' },
@@ -106,16 +106,53 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
         createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
         loadFontBytes: async (url) => new Uint8Array(readFileSync(`public${url}`)),
         rasterizePage: async (_pageId, _dpi, opts) => {
-          if (opts?.backdropOnly) backdropOnlyRequested = true;
+          excludedTextFrameIds = opts?.excludeTextFrameIds;
           return { rgba: new Uint8Array(96 * 124 * 4).fill(255), widthPx: 96, heightPx: 124 };
         },
       },
     );
 
-    // No backdrop-only request → the page was fully flattened (text baked into the raster, not vectorized).
-    expect(backdropOnlyRequested).toBe(false);
+    // Nothing excluded → the gated frame's text stayed baked into the full raster (not vectorized).
+    expect(excludedTextFrameIds).toBeUndefined();
     expect(Buffer.from(result.bytes).toString('latin1')).not.toContain('/FontFile2');
     // …and it's still a conformant PDF/X.
+    const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-4' });
+    expect(report.pass, report.checks.filter((c) => !c.pass).map((c) => c.label).join('; ')).toBe(true);
+  });
+
+  it('vectorizes body text but keeps a display-font SFX frame in the raster (same page)', async () => {
+    // The real comic case: Inter dialogue + an Impact SFX on ONE page. The body must become selectable
+    // vector; the SFX must stay raster (Liberation is not a faithful Impact substitute) — its real glyphs
+    // are preserved instead of silently becoming plain sans.
+    const base = textDoc();
+    const bodyFrame = base.pages[0].frames[0]; // id 'f0', Georgia serif → vector-safe
+    const sfxFrame = {
+      ...bodyFrame,
+      id: 'sfx', label: 'sfx', xMm: 15, yMm: 90, widthMm: 100, heightMm: 30,
+      text: 'KA-BOOM',
+      typography: { ...bodyFrame.typography, fontFamily: 'Impact, Haettenschweiler, sans-serif', fontWeight: '700' },
+    } as PaperFrame;
+    const doc: PaperDocument = { ...base, pages: base.pages.map((p, i) => (i === 0 ? { ...p, frames: [bodyFrame, sfxFrame] } : p)) };
+
+    let excludedTextFrameIds: string[] | undefined;
+    const result = await exportPaperDocumentToPdfx(
+      doc,
+      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, iccProfileId: 'fogra39' },
+      {
+        loadIccBytes: async () => fogra39,
+        createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
+        loadFontBytes: async (url) => new Uint8Array(readFileSync(`public${url}`)),
+        rasterizePage: async (_pageId, _dpi, opts) => {
+          excludedTextFrameIds = opts?.excludeTextFrameIds;
+          return { rgba: new Uint8Array(96 * 124 * 4).fill(255), widthPx: 96, heightPx: 124 };
+        },
+      },
+    );
+
+    // Only the body frame is excluded from the raster (vectorized); the Impact SFX stays baked in.
+    expect(excludedTextFrameIds).toEqual(['f0']);
+    const asText = Buffer.from(result.bytes).toString('latin1');
+    expect(asText).toContain('/FontFile2'); // the body text is real embedded vector
     const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-4' });
     expect(report.pass, report.checks.filter((c) => !c.pass).map((c) => c.label).join('; ')).toBe(true);
   });
