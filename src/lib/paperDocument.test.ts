@@ -385,6 +385,24 @@ describe('paperDocument', () => {
     expect(frameOf(recolored).fillSwatchId).toBeUndefined();
   });
 
+  it('defaults a new text frame to a single column so its type vectorizes (real embedded font) by default', () => {
+    const doc = createDefaultPaperDocument({ title: 'Columns default', preset: 'us-letter' });
+    const pageId = doc.pages[0].id;
+    const { document: withText, frameId } = addFrameToPaperPage(doc, pageId, {
+      kind: 'text',
+      xMm: 18,
+      yMm: 18,
+      widthMm: 90,
+      heightMm: 120,
+      text: 'Body copy that should embed as selectable vector text.',
+    });
+    const frame = withText.pages[0].frames.find((f) => f.id === frameId);
+    // A default text frame is single-column; the vector-text engine only vectorizes columns === 1, so this
+    // is what makes real-font embedding work for body text without the user changing anything. Multi-column
+    // is still available on demand (and correctly rasterizes).
+    expect(frame?.columns).toBe(1);
+  });
+
   it('exports print HTML with page size, bleed, crop marks, columns, and placed assets', () => {
     const doc = createDefaultPaperDocument({ title: 'Print Export', preset: 'us-letter' });
     const pageId = doc.pages[0].id;

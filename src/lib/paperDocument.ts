@@ -861,7 +861,10 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     imageRotationDeg: frame.imageRotationDeg ?? 0,
     imageFlipX: frame.imageFlipX ?? false,
     imageFlipY: frame.imageFlipY ?? false,
-    columns: frame.columns ?? (kind === 'text' ? 2 : 1),
+    // Default to a single column so body text vectorizes (real embedded, selectable type in PDF/X) by
+    // default — matching InDesign/Affinity. Multi-column is still available on demand (it rasterizes, since
+    // the linear vector-text engine doesn't flow columns).
+    columns: frame.columns ?? 1,
     columnGutterMm: frame.columnGutterMm,
     columnRule: frame.columnRule,
     columnBalance: frame.columnBalance,
