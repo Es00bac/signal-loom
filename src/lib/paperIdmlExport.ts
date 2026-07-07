@@ -264,13 +264,15 @@ interface FramePlacement {
   itemTransform: string;
   pathGeometry: string;
 }
-function framePlacement(frame: PaperFrame, pageHeightPt: number): FramePlacement {
+function framePlacement(frame: PaperFrame, pageWidthPt: number, pageHeightPt: number): FramePlacement {
   const wPt = frame.widthMm * PT_PER_MM;
   const hPt = frame.heightMm * PT_PER_MM;
   const xPt = frame.xMm * PT_PER_MM;
   const yPt = frame.yMm * PT_PER_MM;
-  // Spread space: page left edge at x=0, page vertical centre at y=0 (top at -H/2).
-  const cx = xPt + wPt / 2;
+  // Spread space: the single page is centred on the binding spine (origin) in BOTH axes — page left at
+  // x=-W/2, page top at y=-H/2. (InDesign/Scribus place a single-page spread centred on the spine; using
+  // x=0 for the left edge shifts every frame right by half a page and drops right-side frames off-page.)
+  const cx = -pageWidthPt / 2 + xPt + wPt / 2;
   const cy = -pageHeightPt / 2 + yPt + hPt / 2;
   const theta = (frame.rotationDeg || 0) * (Math.PI / 180);
   const cos = Math.cos(theta);
@@ -295,11 +297,17 @@ function framePlacement(frame: PaperFrame, pageHeightPt: number): FramePlacement
   return { itemTransform, pathGeometry };
 }
 
-function textFrameXml(frame: PaperFrame, storySelf: string, layerSelf: string, placement: FramePlacement): string {
+function textFrameXml(frame: PaperFrame, storySelf: string, layerSelf: string, placement: FramePlacement, colors: ColorTable): string {
   const self = `tf${storySelf}`;
   const columns = Math.max(1, frame.columns || 1);
+  // Caption / bubble frames have a visible box (fill + border); carry those into the IDML so the frame's
+  // background survives, not just its text.
+  const fill = colors.ref(frame.fillColor);
+  const stroke = colors.ref(frame.strokeColor);
+  const strokeWeight = num((frame.strokeWidthMm || 0) * PT_PER_MM);
   return [
     `    <TextFrame Self="${self}" ParentStory="${storySelf}" ContentType="TextType" ItemLayer="${layerSelf}" ` +
+      `FillColor="${fill}" StrokeColor="${stroke}" StrokeWeight="${strokeWeight}" ` +
       `PreviousTextFrame="n" NextTextFrame="n" AppliedObjectStyle="ObjectStyle/$ID/[Normal Text Frame]" ItemTransform="${placement.itemTransform}">`,
     '      <Properties>',
     placement.pathGeometry,
@@ -348,11 +356,11 @@ function spreadXml(
   const items: string[] = [];
 
   for (const frame of page.frames) {
-    const placement = framePlacement(frame, heightPt);
+    const placement = framePlacement(frame, widthPt, heightPt);
     if (isTextFrame(frame)) {
       const storySelf = ids.next('story');
       stories.push({ self: storySelf, xml: storyXml(dom, storySelf, frame, colors) });
-      items.push(textFrameXml(frame, storySelf, layerSelf, placement));
+      items.push(textFrameXml(frame, storySelf, layerSelf, placement, colors));
     } else {
       items.push(rectangleXml(frame, ids.next('rect'), layerSelf, placement, colors));
     }
@@ -361,7 +369,7 @@ function spreadXml(
   const inner = [
     `  <Spread Self="${spreadSelf}" FlattenerOverride="Default" ShowMasterItems="true" PageCount="1" BindingLocation="0" PageTransitionType="None" PageTransitionDirection="NotApplicable" PageTransitionDuration="Medium">`,
     '    <FlattenerPreference LineArtAndTextResolution="300" GradientAndMeshResolution="150" ClipComplexRegions="false" ConvertAllStrokesToOutlines="false" ConvertAllTextToOutlines="false"/>',
-    `    <Page Self="${pageSelf}" Name="${pageIndex + 1}" AppliedMaster="n" GeometricBounds="0 0 ${num(heightPt)} ${num(widthPt)}" ItemTransform="1 0 0 1 0 ${num(-heightPt / 2)}">`,
+    `    <Page Self="${pageSelf}" Name="${pageIndex + 1}" AppliedMaster="n" GeometricBounds="0 0 ${num(heightPt)} ${num(widthPt)}" ItemTransform="1 0 0 1 ${num(-widthPt / 2)} ${num(-heightPt / 2)}">`,
     `      <MarginPreference ColumnCount="1" ColumnGutter="12" Top="0" Bottom="0" Left="0" Right="0" ColumnDirection="Horizontal"/>`,
     '    </Page>',
     items.join('\n'),

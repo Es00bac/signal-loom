@@ -87,12 +87,17 @@ describe('paperIdmlExport', () => {
     expect(parts[spreadPath]).toContain('ContentType="GraphicType"');
   });
 
-  it('places a page with center-of-binding geometry (page top-left at y=-H/2)', () => {
+  it('centres the single page on the binding spine in BOTH axes (Scribus-verified geometry)', () => {
     const parts = buildPaperIdmlParts(sampleDoc());
     const spreadPath = Object.keys(parts).find((p) => p.startsWith('Spreads/'))!;
-    // US Letter = 279.4mm tall → 792pt; page ItemTransform ty = -396.
-    expect(parts[spreadPath]).toContain('ItemTransform="1 0 0 1 0 -396"');
+    // US Letter 612×792pt → page centred on the spine: ItemTransform tx=-W/2=-306, ty=-H/2=-396.
+    // (Using tx=0 shifted every frame +half-a-page right and dropped right-side frames off-page —
+    // caught by importing into Scribus 1.6; this locks the fix.)
+    expect(parts[spreadPath]).toContain('ItemTransform="1 0 0 1 -306 -396"');
     expect(parts[spreadPath]).toContain('GeometricBounds="0 0 792 612"');
+    // A frame authored at x=12mm,y=20mm,80x40mm has centre (-W/2 + x + w/2) = -306 + 34.0157 + 113.386.
+    // Its ItemTransform tx must be negative-of-half-width-relative, proving frames share the page origin.
+    expect(parts[spreadPath]).toMatch(/ItemTransform="1 0 0 1 -158\.5984 /);
   });
 
   it('builds a valid ZIP with mimetype first and round-trips', () => {
