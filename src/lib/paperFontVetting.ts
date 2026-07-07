@@ -203,3 +203,38 @@ export function vetFontBytes(bytes: Uint8Array): FontVetResult {
     warnings,
   };
 }
+
+/**
+ * The distinct non-whitespace characters in `text` that this font has NO glyph for. An empty array means
+ * full coverage. Single source of truth for glyph coverage: the exporter uses it to keep a font that can't
+ * render the text out of the vector layer (so that frame rasters, where browser font-fallback draws the
+ * missing glyphs), and preflight uses it to disclose *which* characters will rasterize instead of embedding
+ * as selectable vector. De-duplicated and order-stable (first appearance wins).
+ *
+ * Fails OPEN: if the bytes can't be parsed here, returns [] (assume covered — the exporter decides), so a
+ * quirk in this check can never wrongly demote a valid font to raster.
+ */
+export function findUncoveredCharacters(bytes: Uint8Array, text: string): string[] {
+  let font: { hasGlyphForCodePoint?: (cp: number) => boolean };
+  try {
+    font = fontkit.create(bytes as Buffer) as unknown as { hasGlyphForCodePoint?: (cp: number) => boolean };
+  } catch {
+    return [];
+  }
+  if (typeof font.hasGlyphForCodePoint !== 'function') return [];
+  const missing: string[] = [];
+  const seen = new Set<number>();
+  for (const ch of text) {
+    const cp = ch.codePointAt(0);
+    // Skip whitespace — a font legitimately need not carry a glyph for space/tab/newline/CR.
+    if (cp === undefined || cp === 0x20 || cp === 0x09 || cp === 0x0a || cp === 0x0d) continue;
+    if (seen.has(cp)) continue;
+    seen.add(cp);
+    try {
+      if (!font.hasGlyphForCodePoint(cp)) missing.push(ch);
+    } catch {
+      // A single failed lookup shouldn't fail the whole check — treat it as covered.
+    }
+  }
+  return missing;
+}

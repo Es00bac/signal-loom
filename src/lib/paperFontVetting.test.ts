@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { vetFontBytes } from './paperFontVetting';
+import { findUncoveredCharacters, vetFontBytes } from './paperFontVetting';
 
 const LIBERATION = resolve(process.cwd(), 'public/fonts/liberation/LiberationSerif-Regular.ttf');
 const validFont = (): Uint8Array => new Uint8Array(readFileSync(LIBERATION));
@@ -90,5 +90,33 @@ describe('vetFontBytes', () => {
     expect(vetFontBytes(patchFsType(validFont(), 0x0004)).embeddability).toBe('print-preview');
     expect(vetFontBytes(patchFsType(validFont(), 0x0008)).embeddable).toBe(true);
     expect(vetFontBytes(patchFsType(validFont(), 0x0004)).embeddable).toBe(true);
+  });
+});
+
+describe('findUncoveredCharacters', () => {
+  it('returns [] when the font covers all of the text', () => {
+    // Liberation Serif is a full Latin face — it covers ASCII plus common accents/punctuation.
+    expect(findUncoveredCharacters(validFont(), 'Hello, world! — café')).toEqual([]);
+  });
+
+  it('reports the distinct characters the font has no glyph for', () => {
+    // Liberation Serif has no CJK glyphs.
+    expect(findUncoveredCharacters(validFont(), '你好')).toEqual(['你', '好']);
+  });
+
+  it('de-duplicates repeated missing characters (first appearance order)', () => {
+    expect(findUncoveredCharacters(validFont(), '猫猫犬')).toEqual(['猫', '犬']);
+  });
+
+  it('ignores whitespace (a font need not carry a space glyph to "cover" text)', () => {
+    expect(findUncoveredCharacters(validFont(), 'a b\tc\nd')).toEqual([]);
+  });
+
+  it('reports only the uncovered characters from mixed covered/uncovered text', () => {
+    expect(findUncoveredCharacters(validFont(), 'Neko 猫 chan')).toEqual(['猫']);
+  });
+
+  it('fails open (returns []) when the bytes are not a parseable font', () => {
+    expect(findUncoveredCharacters(new TextEncoder().encode('not a font'), '你好')).toEqual([]);
   });
 });

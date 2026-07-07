@@ -1,7 +1,20 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import { addFrameToPaperPage, createDefaultPaperDocument, updatePaperDocumentSetup, updatePaperFrame } from './paperDocument';
 import { PAPER_PREFLIGHT_PROFILES, analyzePaperPreflight, collectPaperLinkedAssets, summarizePaperPreflightStatus, summarizePreflightForExport } from './paperPreflight';
+import { buildImportedFont } from './paperFontLibrary';
+import { vetFontBytes } from './paperFontVetting';
+
+const LIBERATION_SERIF = resolve(process.cwd(), 'public/fonts/liberation/LiberationSerif-Regular.ttf');
+/** A real imported-font record (Liberation Serif — a full Latin face with no CJK glyphs) for coverage tests. */
+function importedLiberationSerif() {
+  const bytes = new Uint8Array(readFileSync(LIBERATION_SERIF));
+  const font = buildImportedFont(vetFontBytes(bytes), bytes, 'lib-serif');
+  if (!font) throw new Error('fixture font failed to vet');
+  return font;
+}
 
 function sourceItem(id = 'image-1'): SourceBinLibraryItem {
   return {
@@ -259,6 +272,41 @@ describe('paperPreflight', () => {
     expect(real?.detail).toContain('Georgia');
     // …and it must NOT also be reported as a Liberation substitute.
     expect(report.issues.some((i) => i.title === 'Fonts embedded as Liberation substitutes')).toBe(false);
+  });
+
+  it('warns when an imported font is missing glyphs used in the text (they fall back to raster)', () => {
+    const font = importedLiberationSerif();
+    const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Missing glyph', preset: 'comic-book' }), {
+      printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51' },
+    });
+    // Text mixes covered Latin with a CJK character Liberation Serif has no glyph for.
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'caption', xMm: 10, yMm: 10, widthMm: 60, heightMm: 20, text: 'Neko 猫 chan',
+      typography: { fontFamily: font.familyName, color: '#111111' },
+    });
+    const withFont: typeof document = { ...document, importedFonts: [font] };
+
+    const report = analyzePaperPreflight(withFont, []);
+    const missing = report.issues.find((i) => i.title === 'Imported font is missing some glyphs');
+    expect(missing).toBeDefined();
+    expect(missing?.severity).toBe('warning');
+    expect(missing?.detail).toContain(font.familyName);
+    expect(missing?.detail).toContain('猫');
+  });
+
+  it('does not warn about missing glyphs when the imported font covers all of its text', () => {
+    const font = importedLiberationSerif();
+    const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Full coverage', preset: 'comic-book' }), {
+      printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51' },
+    });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'caption', xMm: 10, yMm: 10, widthMm: 60, heightMm: 20, text: 'Fully covered Latin text — café.',
+      typography: { fontFamily: font.familyName, color: '#111111' },
+    });
+    const withFont: typeof document = { ...document, importedFonts: [font] };
+
+    const report = analyzePaperPreflight(withFont, []);
+    expect(report.issues.some((i) => i.title === 'Imported font is missing some glyphs')).toBe(false);
   });
 
   it('discloses display fonts as rasterized (not substituted) for PDF/X', () => {

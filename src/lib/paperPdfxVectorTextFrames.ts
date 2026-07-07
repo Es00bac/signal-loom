@@ -10,11 +10,11 @@
 // (Hyphenation is allowed: the raster doesn't actually hyphenate — `hyphens:auto` is a no-op without a
 // lang — and Liberation is metric-compatible, so the wrap matches; verified by render comparison.)
 
-import fontkit from '@pdf-lib/fontkit';
 import type { PaperDocument, PaperFrame, PaperImportedFont, PaperPage } from '../types/paper';
 import { applyBlackPolicy, type IccCmykTransform } from './paperColorManagement';
 import { parseHexColor, type PaperRgb } from './paperSwatches';
 import { isDisplayFontFamily, isBoldWeight } from './paperFontResolution';
+import { findUncoveredCharacters } from './paperFontVetting';
 import { resolveTextFace, selectImportedFace, normalizeFamilyName } from './paperFontLibrary';
 import type { PdfxVectorTextFrame } from './paperPdfxExport';
 
@@ -48,21 +48,11 @@ export type PdfxVectorTextFrameSpec = Omit<PdfxVectorTextFrame, 'fontBytes'> & {
  * True when a font has a glyph for every (non-whitespace) codepoint in the text. Used to keep an imported
  * font that DOESN'T cover the text out of the vector layer — vectorizing it would draw .notdef boxes, so
  * that frame falls back to raster instead (where the browser's font fallback renders the missing glyphs).
- * Fails open: if the bytes can't be parsed here, let the exporter embed them and decide.
+ * Delegates to the shared `findUncoveredCharacters` so the exporter's decision and preflight's disclosure
+ * agree exactly. Fails open (empty = covered) when the bytes can't be parsed.
  */
 function fontCoversText(bytes: Uint8Array, text: string): boolean {
-  try {
-    const font = fontkit.create(bytes as Buffer) as unknown as { hasGlyphForCodePoint?: (cp: number) => boolean };
-    if (typeof font.hasGlyphForCodePoint !== 'function') return true;
-    for (const ch of text) {
-      const cp = ch.codePointAt(0);
-      if (cp === undefined || cp === 0x20 || cp === 0x09 || cp === 0x0a || cp === 0x0d) continue;
-      if (!font.hasGlyphForCodePoint(cp)) return false;
-    }
-    return true;
-  } catch {
-    return true;
-  }
+  return findUncoveredCharacters(bytes, text).length === 0;
 }
 
 /** True when the frame's family+style matches an embeddable imported font (so we embed the real glyphs). */

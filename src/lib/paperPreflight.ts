@@ -5,7 +5,8 @@ import {
   isPdfXProductionTarget,
 } from './paperPrintProduction';
 import { classifyFontFamily, isDisplayFontFamily } from './paperFontResolution';
-import { normalizeFamilyName } from './paperFontLibrary';
+import { normalizeFamilyName, resolveTextFace } from './paperFontLibrary';
+import { findUncoveredCharacters } from './paperFontVetting';
 import { collectSpotFills } from './paperPdfxSpotFills';
 
 const LIBERATION_SUBSTITUTE_NAME: Record<'serif' | 'sans' | 'mono', string> = {
@@ -19,6 +20,42 @@ function familyHasImportedFace(family: string, importedFonts: readonly PaperImpo
   const norm = normalizeFamilyName(family);
   if (!norm) return false;
   return (importedFonts ?? []).some((f) => f.embeddable && normalizeFamilyName(f.familyName) === norm);
+}
+
+/**
+ * For every text/caption frame whose font resolves to an imported face, collect the distinct characters the
+ * imported font can't render, keyed by the family that gets embedded. Those characters fall back to a
+ * substitute font (rendered as raster pixels, not embedded as selectable vector in the user's font), so the
+ * user should know before they hand the file off. Uses the SAME resolution + coverage the exporter uses, so
+ * the disclosure matches what actually happens. Empty map = every imported font covers all of its text.
+ */
+function collectUncoveredImportedGlyphs(document: PaperDocument): Map<string, string[]> {
+  const missingByFamily = new Map<string, string[]>();
+  const seenByFamily = new Map<string, Set<string>>();
+  for (const page of document.pages) {
+    for (const frame of page.frames) {
+      if (frame.kind !== 'text' && frame.kind !== 'caption') continue;
+      const text = frame.text ?? '';
+      if (!text.trim()) continue;
+      const face = resolveTextFace(frame.typography, document.importedFonts);
+      if (!face.embeddedReal || !face.bytes) continue; // only the user's own imported faces are at issue
+      const uncovered = findUncoveredCharacters(face.bytes, text);
+      if (uncovered.length === 0) continue;
+      let seen = seenByFamily.get(face.familyName);
+      if (!seen) {
+        seen = new Set();
+        seenByFamily.set(face.familyName, seen);
+        missingByFamily.set(face.familyName, []);
+      }
+      const list = missingByFamily.get(face.familyName)!;
+      for (const ch of uncovered) {
+        if (seen.has(ch)) continue;
+        seen.add(ch);
+        list.push(ch);
+      }
+    }
+  }
+  return missingByFamily;
 }
 
 export type PaperPreflightSeverity = 'error' | 'warning' | 'info';
@@ -162,6 +199,19 @@ export function analyzePaperPreflight(
         'info',
         'Fonts embedded as your imported font',
         `${list}: your uploaded font is embedded as real, selectable vector text (subset) — no substitution.`,
+        { category: 'fonts' },
+      ));
+    }
+    // Some of that imported-font text may use characters the font has no glyph for (e.g. an accented letter,
+    // a symbol, a dash). Those fall back to a substitute font as raster pixels — NOT embedded as selectable
+    // vector in the user's font — so disclose exactly which characters, per family, before hand-off.
+    for (const [family, chars] of collectUncoveredImportedGlyphs(document)) {
+      const shown = chars.slice(0, 12).map((c) => `“${c}”`).join(' ');
+      const more = chars.length > 12 ? ` (+${chars.length - 12} more)` : '';
+      issues.push(issue(
+        'warning',
+        'Imported font is missing some glyphs',
+        `${family} has no glyph for ${shown}${more}. That text falls back to another font as raster pixels — it won't be selectable vector in your font. Use a font that includes these characters, or accept the fallback.`,
         { category: 'fonts' },
       ));
     }
