@@ -239,6 +239,16 @@ describe('outline-text (convert to curves) builder', () => {
     expect(frameTextIsOutlineable(doc.pages[0].frames[0])).toBe(false);
   });
 
+  it('outlines letter-spaced (tracked) text and bakes tracking into the advance (tracking/1000 em)', () => {
+    const trackedTypo = { ...strokeTypo, tracking: 100 }; // 100/1000 em = 0.1em
+    const doc = docWithFrames([{ text: 'WIDE', xMm: 10, yMm: 10, widthMm: 80, heightMm: 20, typography: trackedTypo }]);
+    // Tracking alone (no stroke) makes it outline-only, not selectable-vector.
+    expect(frameTextIsOutlineable(doc.pages[0].frames[0])).toBe(true);
+    const [spec] = buildOutlineTextFrameSpecs(doc.pages[0], doc, blackTransform);
+    expect(spec.trackingPt).toBeCloseTo((100 / 1000) * trackedTypo.fontSizePt, 6); // 0.1 × 24 = 2.4pt
+    expect(spec.strokeWidthPt).toBe(0); // no stroke on this one
+  });
+
   it('builds an outline spec carrying the fill, the stroke, and the font url/geometry', () => {
     const doc = docWithFrames([
       { text: 'BOOM', xMm: 10, yMm: 20, widthMm: 50, heightMm: 30, textStrokeWidthMm: 0.5, textStrokeColor: '#ffffff', typography: strokeTypo },

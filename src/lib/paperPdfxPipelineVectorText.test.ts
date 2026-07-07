@@ -90,11 +90,12 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
     expect(Buffer.from(result.bytes).toString('latin1')).not.toContain('/FontFile2');
   });
 
-  it('falls back to a full raster when a frame uses a feature the vector engine cannot reproduce', async () => {
-    // vectorText is ON, but the frame uses letter-spacing (tracking) which the linear engine doesn't
-    // reproduce → the whole page must be rasterized (never a wrong vector layout), yet still a valid PDF/X.
+  it('falls back to a full raster when a frame uses a feature neither vector nor outline can reproduce', async () => {
+    // vectorText is ON, but the frame is ROTATED — which neither the selectable-text path nor the (upright)
+    // outline path reproduces yet → its text stays baked into the raster (never a wrong layout), still valid
+    // PDF/X. (Tracking/stroke are no longer such features: they now draw as outlined vector curves.)
     const base = textDoc();
-    const gatedFrame = { ...base.pages[0].frames[0], typography: { ...base.pages[0].frames[0].typography, tracking: 60 } } as PaperFrame;
+    const gatedFrame = { ...base.pages[0].frames[0], rotationDeg: 15 } as PaperFrame;
     const doc: PaperDocument = { ...base, pages: base.pages.map((p, i) => (i === 0 ? { ...p, frames: [gatedFrame] } : p)) };
 
     let excludedTextFrameIds: string[] | undefined = ['sentinel'];

@@ -190,10 +190,19 @@ export function buildVectorTextFrameSpecs(
 export function frameTextIsOutlineable(frame: PaperFrame, importedFonts?: readonly PaperImportedFont[]): boolean {
   if (!isVectorTextKind(frame.kind)) return false;
   if (frameTextIsVectorSafe(frame, importedFonts)) return false; // already handled as selectable type
-  if (num(frame.textStrokeWidthMm) <= 0) return false;
-  // Would it be vector-safe if we ignored the stroke? If so, the stroke is the ONLY blocker → outline it.
-  const withoutStroke: PaperFrame = { ...frame, textStrokeWidthMm: 0 };
-  return frameTextIsVectorSafe(withoutStroke, importedFonts);
+  // First tier of outlining handles the UPRIGHT blockers (no transform-origin ambiguity): a text stroke
+  // and/or letter-spacing (tracking). Rotation/skew/scale/arc/bubble are outlineable too but need the
+  // exporter to match the editor's transform geometry — a later slice.
+  const hasStroke = num(frame.textStrokeWidthMm) > 0;
+  const hasTracking = num(frame.typography.tracking) !== 0;
+  if (!hasStroke && !hasTracking) return false;
+  // Would it be vector-safe with those upright blockers neutralised? If so, they're the ONLY blockers.
+  const normalized: PaperFrame = {
+    ...frame,
+    textStrokeWidthMm: 0,
+    typography: { ...frame.typography, tracking: 0 },
+  };
+  return frameTextIsVectorSafe(normalized, importedFonts);
 }
 
 /** A PdfxOutlineTextFrame minus resolved bytes — carries a bundled `fontUrl` OR inline `fontBytes` plus the
@@ -256,6 +265,8 @@ export function buildOutlineTextFrameSpecs(
       yTopPt: (bleedMm + boxYMm) * PT_PER_MM,
       widthPt: boxWMm * PT_PER_MM,
       heightPt: boxHMm * PT_PER_MM,
+      // CSS letter-spacing is (tracking/1000)em, i.e. of the font size (PaperWorkspace applies it as such).
+      trackingPt: (num(typo.tracking) / 1000) * typo.fontSizePt,
       strokeCmyk: stroke,
       strokeWidthPt: num(frame.textStrokeWidthMm) * PT_PER_MM,
     });
