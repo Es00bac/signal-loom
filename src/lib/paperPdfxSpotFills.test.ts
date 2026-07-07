@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { addFrameToPaperPage, createDefaultPaperDocument, updatePaperDocumentSetup, updatePaperFrame } from './paperDocument';
 import type { PaperDocument, PaperFrame } from '../types/paper';
 import type { PaperSwatch } from './paperSwatches';
-import { collectSpotFills } from './paperPdfxSpotFills';
+import { collectSpotFills, collectSpotStrokes } from './paperPdfxSpotFills';
 
 const PT_PER_MM = 72 / 25.4;
 const spotSwatch: PaperSwatch = {
@@ -118,5 +118,60 @@ describe('collectSpotFills', () => {
     const pageId = doc.pages[0].id;
     doc = addFrameToPaperPage(doc, pageId, { kind: 'caption', xMm: 10, yMm: 10, widthMm: 30, heightMm: 20 }).document;
     expect(collectSpotFills(doc.pages[0], doc)).toEqual({ spotFills: [], knockoutFrameIds: [], preservedSpotNames: [] });
+  });
+});
+
+function docWithSpotStrokeFrame(patch: Partial<PaperFrame> = {}): { doc: PaperDocument; frameId: string } {
+  let doc = createDefaultPaperDocument({ title: 'spot-stroke', preset: 'us-letter' });
+  doc = updatePaperDocumentSetup(doc, { bleedMm: 0 });
+  doc = { ...doc, swatches: [spotSwatch, processSwatch] };
+  const pageId = doc.pages[0].id;
+  const added = addFrameToPaperPage(doc, pageId, {
+    kind: 'shape', xMm: 20, yMm: 30, widthMm: 60, heightMm: 40,
+    strokeWidthMm: 2, strokeColor: '#e30613', strokeOpacity: 1, strokeStyle: 'solid', cornerRadiusMm: 0, ...patch,
+  });
+  const doc2 = updatePaperFrame(added.document, pageId, added.frameId, { strokeColor: '#e30613', strokeSwatchId: 'sw-spot' });
+  return { doc: doc2, frameId: added.frameId };
+}
+
+describe('collectSpotStrokes', () => {
+  it('turns a solid spot-swatch border into a stroked /Separation spec + stroke knockout', () => {
+    const { doc, frameId } = docWithSpotStrokeFrame();
+    const plan = collectSpotStrokes(doc.pages[0], doc);
+    expect(plan.spotFills).toHaveLength(1);
+    const s = plan.spotFills[0];
+    expect(s.name).toBe('PANTONE 185 C');
+    expect(s.cmyk).toEqual({ c: 0, m: 0.9, y: 0.85, k: 0 });
+    expect(s.stroke?.widthPt).toBeCloseTo(2 * PT_PER_MM, 4);
+    expect(s.widthPt).toBeCloseTo(60 * PT_PER_MM, 4);
+    expect(plan.knockoutFrameIds).toEqual([frameId]);
+    expect(plan.preservedSpotNames).toEqual(['PANTONE 185 C']);
+  });
+
+  it('does NOT plate a dashed/dotted/double border (a solid /Separation stroke would mismatch)', () => {
+    for (const strokeStyle of ['dashed', 'dotted', 'double'] as const) {
+      const { doc } = docWithSpotStrokeFrame({ strokeStyle });
+      expect(collectSpotStrokes(doc.pages[0], doc).spotFills).toHaveLength(0);
+    }
+  });
+
+  it('does NOT plate an invisible (0-width / transparent / 0-opacity) border', () => {
+    expect(collectSpotStrokes(docWithSpotStrokeFrame({ strokeWidthMm: 0 }).doc.pages[0], docWithSpotStrokeFrame({ strokeWidthMm: 0 }).doc).spotFills).toHaveLength(0);
+    expect(collectSpotStrokes(docWithSpotStrokeFrame({ strokeOpacity: 0 }).doc.pages[0], docWithSpotStrokeFrame({ strokeOpacity: 0 }).doc).spotFills).toHaveLength(0);
+  });
+
+  it('plates a rotated spot border about the frame centre', () => {
+    const { doc } = docWithSpotStrokeFrame({ rotationDeg: 25 });
+    const s = collectSpotStrokes(doc.pages[0], doc).spotFills[0];
+    expect(s.rotationDeg).toBe(25);
+    expect(s.centerXPt).toBeCloseTo((20 + 30) * PT_PER_MM, 4);
+    expect(s.centerYTopPt).toBeCloseTo((30 + 20) * PT_PER_MM, 4);
+  });
+
+  it('a process fill with a spot border: the border plates, the fill is not knocked out', () => {
+    const { doc, frameId } = docWithSpotStrokeFrame();
+    // fill stays process (no fillSwatchId) — only the stroke is a spot.
+    expect(collectSpotFills(doc.pages[0], doc).knockoutFrameIds).toEqual([]);
+    expect(collectSpotStrokes(doc.pages[0], doc).knockoutFrameIds).toEqual([frameId]);
   });
 });

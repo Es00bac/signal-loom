@@ -13,7 +13,7 @@ import {
   type IccProfileRef,
 } from './paperIccProfiles';
 import { buildOutlineTextFrameSpecs, buildVectorTextFrameSpecs } from './paperPdfxVectorTextFrames';
-import { collectSpotFills } from './paperPdfxSpotFills';
+import { collectSpotFills, collectSpotStrokes } from './paperPdfxSpotFills';
 
 const PT_PER_MM = 72 / 25.4;
 
@@ -48,6 +48,8 @@ export interface RasterizePageOptions {
   excludeTextFrameIds?: string[];
   /** Knock the fill out of these frames (their spot ink is drawn as a /Separation plate on top). */
   excludeFrameFillIds?: string[];
+  /** Knock the stroke/border out of these frames (their spot border is drawn as a /Separation plate). */
+  excludeFrameStrokeIds?: string[];
 }
 
 export interface PaperPdfxPipelineDeps {
@@ -162,17 +164,23 @@ export async function exportPaperDocumentToPdfx(
     // Spot fills: solid spot-swatch rectangles become real /Separation plates; their fill is knocked out
     // of the raster so the ink lives only on the named plate, not doubled as process. Only when the user
     // opted in via the "preserve named" spot policy — otherwise spot converts to process (the default).
-    const spotPlan = document.printProduction.spotColorPolicy === 'preserve-named'
-      ? collectSpotFills(page, document)
-      : { spotFills: [], knockoutFrameIds: [], preservedSpotNames: [] };
+    const preserveSpot = document.printProduction.spotColorPolicy === 'preserve-named';
+    const emptyPlan = { spotFills: [], knockoutFrameIds: [], preservedSpotNames: [] };
+    const spotPlan = preserveSpot ? collectSpotFills(page, document) : emptyPlan;
+    // Spot BORDERS: a frame's stroke can plate too (its stroke is knocked out and drawn as a stroked
+    // /Separation path). Drawn AFTER the fills so a border sits on top of its own fill.
+    const strokePlan = preserveSpot ? collectSpotStrokes(page, document) : emptyPlan;
+    const allSpotDraws = [...spotPlan.spotFills, ...strokePlan.spotFills];
     // Both the selectable-text and outlined-text frames must be knocked out of the raster backdrop.
     const excludeTextIds = [...(vectorFrameIds ?? []), ...(outlineFrameIds ?? [])];
-    const rasterOptions: RasterizePageOptions | undefined = (excludeTextIds.length || spotPlan.knockoutFrameIds.length)
-      ? {
-          ...(excludeTextIds.length ? { excludeTextFrameIds: excludeTextIds } : {}),
-          ...(spotPlan.knockoutFrameIds.length ? { excludeFrameFillIds: spotPlan.knockoutFrameIds } : {}),
-        }
-      : undefined;
+    const rasterOptions: RasterizePageOptions | undefined =
+      (excludeTextIds.length || spotPlan.knockoutFrameIds.length || strokePlan.knockoutFrameIds.length)
+        ? {
+            ...(excludeTextIds.length ? { excludeTextFrameIds: excludeTextIds } : {}),
+            ...(spotPlan.knockoutFrameIds.length ? { excludeFrameFillIds: spotPlan.knockoutFrameIds } : {}),
+            ...(strokePlan.knockoutFrameIds.length ? { excludeFrameStrokeIds: strokePlan.knockoutFrameIds } : {}),
+          }
+        : undefined;
     const raster = await deps.rasterizePage(page.id, dpi, rasterOptions);
     pages.push({
       pageNumber: page.pageNumber,
@@ -184,7 +192,7 @@ export async function exportPaperDocumentToPdfx(
       bleedPt,
       textFrames,
       outlineFrames,
-      spotFills: spotPlan.spotFills.length ? spotPlan.spotFills : undefined,
+      spotFills: allSpotDraws.length ? allSpotDraws : undefined,
     });
   }
 

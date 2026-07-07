@@ -401,6 +401,22 @@ describe('paperDocument', () => {
     expect(frameOf(recolored).typography.colorSwatchId).toBeUndefined();
   });
 
+  it('records a swatch id on the STROKE colour and auto-clears it when the stroke changes another way', () => {
+    const doc = createDefaultPaperDocument({ title: 'Stroke spot ref', preset: 'us-letter' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame, frameId } = addFrameToPaperPage(doc, pageId, { kind: 'shape', xMm: 10, yMm: 10, widthMm: 40, heightMm: 20 });
+    const frameOf = (d: typeof doc) => d.pages.find((p) => p.id === pageId)!.frames.find((f) => f.id === frameId)!;
+
+    // Applying a swatch to the stroke records the durable link (strokeColor + strokeSwatchId together).
+    const applied = updatePaperFrame(withFrame, pageId, frameId, { strokeColor: '#e30613', strokeSwatchId: 'sw-spot' });
+    expect(frameOf(applied).strokeSwatchId).toBe('sw-spot');
+
+    // Changing the stroke any other way (no strokeSwatchId in the patch) drops the link so it can't go stale.
+    const recolored = updatePaperFrame(applied, pageId, frameId, { strokeColor: '#00aaff' });
+    expect(frameOf(recolored).strokeColor).toBe('#00aaff');
+    expect(frameOf(recolored).strokeSwatchId).toBeUndefined();
+  });
+
   it('defaults a new text frame to a single column so its type vectorizes (real embedded font) by default', () => {
     const doc = createDefaultPaperDocument({ title: 'Columns default', preset: 'us-letter' });
     const pageId = doc.pages[0].id;

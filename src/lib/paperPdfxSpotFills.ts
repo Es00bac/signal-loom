@@ -94,3 +94,72 @@ export function collectSpotFills(page: PaperPage, document: PaperDocument): Spot
   }
   return { spotFills, knockoutFrameIds, preservedSpotNames: [...preserved] };
 }
+
+/** True when a frame's BORDER can be faithfully replaced by a single stroked /Separation path. The shape
+ * must be a rect / rounded-rect / closed polygon (rotation allowed), and the stroke must be a visible SOLID
+ * line — a dashed/dotted/double/groove/ridge border can't be reproduced by one solid stroke, so it stays
+ * process (disclosed). The fill is irrelevant: it stays process in the raster; only the stroke is knocked
+ * out and re-drawn on the plate. */
+function isPlateableStroke(frame: PaperFrame): boolean {
+  if (frame.vertices && frame.vertices.length > 0 && frame.vertices.length < 3) return false;
+  if (frame.bubbleShape) return false;
+  if ((frame.strokeStyle ?? 'solid') !== 'solid') return false;
+  const visible = num(frame.strokeWidthMm) > 0 && frame.strokeColor !== 'transparent' && num(frame.strokeOpacity) > 0;
+  return visible;
+}
+
+/** The spot tint (0..1) a frame's STROKE contributes — its stroke opacity (defaults to solid). */
+function strokeTint(frame: PaperFrame): number {
+  const opacity = frame.strokeOpacity;
+  return typeof opacity === 'number' ? Math.max(0, Math.min(1, opacity)) : 1;
+}
+
+/** Find the frames whose BORDER is a real spot swatch and turn each into a stroked PdfxSpotFill spec, plus
+ * the ids whose stroke must be knocked out of the flatten raster. Mirrors {@link collectSpotFills} for the
+ * stroke; a frame can appear in both (a process fill with a spot border, or a spot fill with a spot border
+ * of a different ink). */
+export function collectSpotStrokes(page: PaperPage, document: PaperDocument): SpotFillPlan {
+  const spotById = new Map<string, PaperSwatch>();
+  for (const swatch of document.swatches ?? []) {
+    if (swatch.type === 'spot') spotById.set(swatch.id, swatch);
+  }
+  const spotFills: PdfxSpotFill[] = [];
+  const knockoutFrameIds: string[] = [];
+  const preserved = new Set<string>();
+  if (spotById.size === 0) return { spotFills, knockoutFrameIds, preservedSpotNames: [] };
+
+  const bleedMm = document.page.bleedMm;
+  for (const frame of page.frames) {
+    if (!frame.strokeSwatchId) continue;
+    const swatch = spotById.get(frame.strokeSwatchId);
+    if (!swatch || !swatch.cmyk) continue; // no CMYK alternate → can't build a plate
+    if (!isPlateableStroke(frame)) continue; // not faithfully replaceable → leave as process (disclosed)
+
+    const rot = num(frame.rotationDeg);
+    const verts = frame.vertices;
+    const polygon = verts && verts.length >= 3
+      ? verts.map((v) => ({
+          xPt: (bleedMm + frame.xMm + (v.xPercent / 100) * frame.widthMm) * PT_PER_MM,
+          yTopPt: (bleedMm + frame.yMm + (v.yPercent / 100) * frame.heightMm) * PT_PER_MM,
+        }))
+      : undefined;
+    spotFills.push({
+      name: swatch.spotName ?? swatch.name,
+      cmyk: { c: swatch.cmyk.c / 100, m: swatch.cmyk.m / 100, y: swatch.cmyk.y / 100, k: swatch.cmyk.k / 100 },
+      tint: strokeTint(frame),
+      xPt: (bleedMm + frame.xMm) * PT_PER_MM,
+      yTopPt: (bleedMm + frame.yMm) * PT_PER_MM,
+      widthPt: frame.widthMm * PT_PER_MM,
+      heightPt: frame.heightMm * PT_PER_MM,
+      rotationDeg: rot || undefined,
+      centerXPt: rot ? (bleedMm + frame.xMm + frame.widthMm / 2) * PT_PER_MM : undefined,
+      centerYTopPt: rot ? (bleedMm + frame.yMm + frame.heightMm / 2) * PT_PER_MM : undefined,
+      cornerRadiusPt: !polygon && num(frame.cornerRadiusMm) ? frame.cornerRadiusMm! * PT_PER_MM : undefined,
+      polygon,
+      stroke: { widthPt: num(frame.strokeWidthMm) * PT_PER_MM },
+    });
+    knockoutFrameIds.push(frame.id);
+    preserved.add(swatch.spotName ?? swatch.name);
+  }
+  return { spotFills, knockoutFrameIds, preservedSpotNames: [...preserved] };
+}

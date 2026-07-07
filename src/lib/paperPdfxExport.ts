@@ -92,6 +92,9 @@ export interface PdfxSpotFill {
   cornerRadiusPt?: number;
   /** Optional polygon (≥3 points, media TOP-left coords) — the plate draws this shape instead of the rect. */
   polygon?: readonly { xPt: number; yTopPt: number }[];
+  /** When set, the shape is STROKED (a spot border) at this line width instead of filled — the plate draws
+   * the outline with the stroking `/Separation` colour, matching a knocked-out frame border. */
+  stroke?: { widthPt: number };
 }
 
 /** One text box drawn as embedded vector type over the CMYK raster. Geometry is in points, measured
@@ -539,16 +542,30 @@ export async function buildPaperPdfx(
         const spotRotate = rotateAboutPivotOp(spot.rotationDeg, spot.centerXPt, spot.centerYTopPt, mediaHpt);
         const spotDraw: PDFOperator[] = [pushGraphicsState()];
         if (spotRotate) spotDraw.push(spotRotate); // rotate the plate rect about the frame centre
-        spotDraw.push(
-          contentOp('cs', [PDFName.of(resName)]),
-          contentOp('scn', [PDFNumber.of(tint)]),
-          // A polygon draws its own path; else rounded corners draw a path; else a plain `re`.
-          ...(spot.polygon && spot.polygon.length >= 3
-            ? polygonOps(spot.polygon, mediaHpt)
-            : roundedRectOps(spot.xPt, yBottom, spot.widthPt, spot.heightPt, spot.cornerRadiusPt ?? 0)),
-          contentOp('f'),
-          popGraphicsState(),
-        );
+        // A polygon draws its own path; else rounded corners draw a path; else a plain `re`.
+        const pathOps = spot.polygon && spot.polygon.length >= 3
+          ? polygonOps(spot.polygon, mediaHpt)
+          : roundedRectOps(spot.xPt, yBottom, spot.widthPt, spot.heightPt, spot.cornerRadiusPt ?? 0);
+        if (spot.stroke) {
+          // Spot BORDER: set the STROKING colour space/tint (uppercase CS/SCN), line width, then stroke (S).
+          spotDraw.push(
+            contentOp('CS', [PDFName.of(resName)]),
+            contentOp('SCN', [PDFNumber.of(tint)]),
+            contentOp('w', [PDFNumber.of(spot.stroke.widthPt)]),
+            ...pathOps,
+            contentOp('S'),
+            popGraphicsState(),
+          );
+        } else {
+          // Spot FILL: non-stroking colour space/tint (lowercase cs/scn), then fill (f).
+          spotDraw.push(
+            contentOp('cs', [PDFName.of(resName)]),
+            contentOp('scn', [PDFNumber.of(tint)]),
+            ...pathOps,
+            contentOp('f'),
+            popGraphicsState(),
+          );
+        }
         pdfPage.pushOperators(...spotDraw);
       }
     }

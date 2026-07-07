@@ -221,6 +221,13 @@ export interface PaperFrame {
   fillOpacity: number;
   fillGradient?: PaperFrameGradient;
   strokeColor: string;
+  /**
+   * Id of the document swatch this stroke came from, when it was applied from the swatch library. Mirrors
+   * {@link fillSwatchId} for the border: a SPOT stroke survives to PDF/X export as a real /Separation plate
+   * (strokeColor alone is just the RGB preview). Auto-cleared the moment the stroke colour changes by any
+   * other path.
+   */
+  strokeSwatchId?: string;
   strokeOpacity: number;
   strokeWidthMm: number;
   strokeStyle: PaperStrokeStyle;

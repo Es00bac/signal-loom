@@ -525,6 +525,10 @@ function patchPaperFrame(frame: PaperFrame, patch: PaperFramePatch): PaperFrame 
   if (framePatch.fillColor !== undefined && framePatch.fillSwatchId === undefined) {
     next.fillSwatchId = undefined;
   }
+  // Same for the stroke's durable spot-swatch link.
+  if (framePatch.strokeColor !== undefined && framePatch.strokeSwatchId === undefined) {
+    next.strokeSwatchId = undefined;
+  }
   // Same for the text colour. Typography patches are usually spread (`{...typo, color}`), so — unlike the
   // flat fill patch — the stale colorSwatchId rides along. Drop it whenever the colour actually changes,
   // UNLESS the patch explicitly assigns a *different* swatch (i.e. the user picked a new one).

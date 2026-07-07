@@ -48,6 +48,12 @@ export interface PaperPageFlattenExportOptions {
    * still render. Composes with `excludeTextFrameIds` (a frame can have both a spot fill and vector text).
    */
   excludeFrameFillIds?: string[];
+  /**
+   * Knock the STROKE/border out of these frames (render them stroke-less) — their spot ink is drawn on a
+   * real /Separation plate on top instead, so it must not also appear as process in the raster. Fill + text
+   * still render. Composes with the fill/text knockouts (a frame can have a process fill and a spot border).
+   */
+  excludeFrameStrokeIds?: string[];
 }
 
 export interface PaperPageEmbeddedAssetExportOptions extends PaperPageFlattenExportOptions {
@@ -307,16 +313,18 @@ function buildOnePageExportDocument(
   let exportPage = page;
   const excluded = options.excludeTextFrameIds ? new Set(options.excludeTextFrameIds) : undefined;
   const knockoutFills = options.excludeFrameFillIds ? new Set(options.excludeFrameFillIds) : undefined;
-  if (excluded || knockoutFills) {
+  const knockoutStrokes = options.excludeFrameStrokeIds ? new Set(options.excludeFrameStrokeIds) : undefined;
+  if (excluded || knockoutFills || knockoutStrokes) {
     // Frame-level: keep every frame (so a caption's border/box still renders) but BLANK the text of the
-    // text-excluded frames (drawn as vector on top) and REMOVE the fill of spot-knockout frames (drawn as a
-    // /Separation plate on top). The two compose — a frame can be in both sets.
+    // text-excluded frames (drawn as vector on top), REMOVE the fill of spot-fill-knockout frames, and REMOVE
+    // the stroke of spot-stroke-knockout frames (each drawn as a /Separation plate on top). All three compose.
     exportPage = {
       ...page,
       frames: page.frames.map((frame) => {
         let next = frame;
         if (excluded?.has(frame.id)) next = { ...next, text: '' };
         if (knockoutFills?.has(frame.id)) next = { ...next, fillColor: 'transparent', fillGradient: undefined, fillOpacity: 0 };
+        if (knockoutStrokes?.has(frame.id)) next = { ...next, strokeColor: 'transparent', strokeWidthMm: 0, strokeOpacity: 0 };
         return next;
       }),
     };
