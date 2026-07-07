@@ -19,12 +19,15 @@ import {
   PDFString,
   PDFHexString,
   PDFDict,
+  PDFNumber,
+  PDFOperator,
   cmyk as cmykColor,
   concatTransformationMatrix,
   drawObject,
   popGraphicsState,
   pushGraphicsState,
   type PDFFont,
+  type PDFRef,
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import type { IccCmykTransform } from './paperColorManagement';
@@ -52,6 +55,27 @@ export interface PdfxRasterPage {
    * selectable, resolution-independent CMYK type. Omit for a fully flattened page.
    */
   textFrames?: readonly PdfxVectorTextFrame[];
+  /**
+   * Optional solid spot-colour fills drawn as real `/Separation` plates on top of the raster. Each frame's
+   * fill was knocked out of `rgba` (rendered as paper) so the spot ink lives ONLY on its named plate — it
+   * survives as a separation instead of flattening to process CMYK. Drawn under the vector text.
+   */
+  spotFills?: readonly PdfxSpotFill[];
+}
+
+/** One solid spot-colour fill emitted as a `/Separation` colorspace rectangle (a real named plate). */
+export interface PdfxSpotFill {
+  /** Spot/Pantone name as it should appear on the plate (e.g. "PANTONE 185 C"). */
+  name: string;
+  /** Alternate DeviceCMYK at FULL strength (0..1) — how the spot previews/prints on a process press. */
+  cmyk: { c: number; m: number; y: number; k: number };
+  /** Tint 0..1 (1 = full strength). */
+  tint: number;
+  /** Rectangle in points from the media (bleed) TOP-LEFT, y increasing downward (flipped internally). */
+  xPt: number;
+  yTopPt: number;
+  widthPt: number;
+  heightPt: number;
 }
 
 /** One text box drawn as embedded vector type over the CMYK raster. Geometry is in points, measured
@@ -237,6 +261,24 @@ function utf8Bytes(text: string): Uint8Array {
   return new TextEncoder().encode(text);
 }
 
+/** Emit a raw PDF content operator pdf-lib doesn't expose a helper for (cs/scn/re/f for /Separation fills).
+ * pdf-lib types `of` to its own operator enum; these are valid operators it just doesn't enumerate. */
+function contentOp(name: string, args: (PDFName | PDFNumber)[] = []): PDFOperator {
+  return PDFOperator.of(name as unknown as Parameters<typeof PDFOperator.of>[0], args);
+}
+
+/** Encode a string as a PDF name body: chars outside the printable regular set become `#XX`. A spot name
+ * like "PANTONE 185 C" → "PANTONE#20185#20C", so the colorant round-trips through Ghostscript/RIPs. */
+function encodePdfName(name: string): string {
+  let out = '';
+  for (const ch of name) {
+    const code = ch.codePointAt(0) ?? 0;
+    const isRegular = code > 0x20 && code < 0x7f && !'#()<>[]{}/%'.includes(ch);
+    out += isRegular ? ch : `#${code.toString(16).toUpperCase().padStart(2, '0')}`;
+  }
+  return out;
+}
+
 /**
  * Build a conformant PDF/X (X-1a or X-4) from pre-rendered CMYK-bound page rasters.
  * Throws if the transform cannot do bulk image conversion.
@@ -286,6 +328,20 @@ export async function buildPaperPdfx(
     return entry;
   };
 
+  // Spot-colour /Separation colorspaces are built once per spot name and reused across pages. The alternate
+  // is DeviceCMYK with a Type-2 (exponential) tint transform mapping tint 0..1 → the spot's CMYK.
+  const spotCsCache = new Map<string, PDFRef>();
+  const spotColorSpaceRef = (name: string, ink: { c: number; m: number; y: number; k: number }): PDFRef => {
+    let ref = spotCsCache.get(name);
+    if (!ref) {
+      const tintFn = ctx.obj({ FunctionType: 2, Domain: [0, 1], C0: [0, 0, 0, 0], C1: [ink.c, ink.m, ink.y, ink.k], N: 1 });
+      const separation = ctx.obj([PDFName.of('Separation'), PDFName.of(encodePdfName(name)), PDFName.of('DeviceCMYK'), ctx.register(tintFn)]);
+      ref = ctx.register(separation);
+      spotCsCache.set(name, ref);
+    }
+    return ref;
+  };
+
   // --- Pages: each is one flattened DeviceCMYK image spanning the full media (trim + bleed) ---
   for (const page of pages) {
     const pixelCount = page.widthPx * page.heightPx;
@@ -325,6 +381,36 @@ export async function buildPaperPdfx(
     // TrimBox = the finished page inside the bleed; BleedBox = the full media.
     pdfPage.node.set(PDFName.of('TrimBox'), ctx.obj([bleedPt, bleedPt, bleedPt + page.trimWidthPt, bleedPt + page.trimHeightPt]));
     pdfPage.node.set(PDFName.of('BleedBox'), ctx.obj([0, 0, mediaWpt, mediaHpt]));
+
+    // --- Spot-colour /Separation fills (under the vector text): real named plates, not process. ---
+    if (page.spotFills && page.spotFills.length > 0) {
+      const resources = pdfPage.node.Resources() ?? ctx.obj({});
+      let csDict = resources.lookupMaybe(PDFName.of('ColorSpace'), PDFDict);
+      if (!csDict) {
+        csDict = ctx.obj({});
+        resources.set(PDFName.of('ColorSpace'), csDict);
+      }
+      pdfPage.node.set(PDFName.of('Resources'), resources);
+      const resNameForSpot = new Map<string, string>();
+      for (const spot of page.spotFills) {
+        let resName = resNameForSpot.get(spot.name);
+        if (!resName) {
+          resName = `Sp${resNameForSpot.size}`;
+          csDict.set(PDFName.of(resName), spotColorSpaceRef(spot.name, spot.cmyk));
+          resNameForSpot.set(spot.name, resName);
+        }
+        const yBottom = mediaHpt - (spot.yTopPt + spot.heightPt); // flip to PDF's bottom-left origin
+        const tint = Math.max(0, Math.min(1, spot.tint));
+        pdfPage.pushOperators(
+          pushGraphicsState(),
+          contentOp('cs', [PDFName.of(resName)]),
+          contentOp('scn', [PDFNumber.of(tint)]),
+          contentOp('re', [PDFNumber.of(spot.xPt), PDFNumber.of(yBottom), PDFNumber.of(spot.widthPt), PDFNumber.of(spot.heightPt)]),
+          contentOp('f'),
+          popGraphicsState(),
+        );
+      }
+    }
 
     // --- Vector text layer (hybrid PDF/X): real embedded, selectable CMYK type over the raster ---
     for (const frame of page.textFrames ?? []) {

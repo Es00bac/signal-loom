@@ -122,4 +122,22 @@ describe('buildPaperPdfx', () => {
     const transform = await fograTransform();
     await expect(buildPaperPdfx([], { standard: 'pdf-x-4', profile, transform })).rejects.toThrow();
   });
+
+  it('emits a spot fill as a real /Separation plate and stays valid PDF/X', async () => {
+    const transform = await fograTransform();
+    const page = { ...makePage(1, 32, 32), spotFills: [
+      { name: 'PANTONE 185 C', cmyk: { c: 0, m: 0.9, y: 0.85, k: 0 }, tint: 1, xPt: 20, yTopPt: 20, widthPt: 100, heightPt: 100 },
+    ] };
+    const result = await buildPaperPdfx([page], { standard: 'pdf-x-4', profile, transform, docId: '0123456789abcdef0123456789abcdef' });
+
+    // The named colorant survives as a Separation colorspace (verified externally with gs tiffsep →
+    // a "PANTONE 185 C" plate); the PDF name body escapes the spaces so RIPs read the colorant.
+    const raw = Buffer.from(result.bytes).toString('latin1');
+    expect(raw).toContain('/Separation');
+    expect(raw).toContain('PANTONE#20185#20C');
+
+    // Adding the spot colorspace + fill must not break PDF/X conformance.
+    const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-4' });
+    expect(report.pass, report.checks.filter((c) => !c.pass).map((c) => c.label).join('; ')).toBe(true);
+  });
 });
