@@ -177,6 +177,21 @@ describe('paperPageFlattenExport', () => {
     expect(full.svg).toContain('RASTER-SFX');
   });
 
+  it('knocks the fill out of excludeFrameFillIds frames (spot fill drawn as a plate on top)', () => {
+    const base = createDefaultPaperDocument({ title: 'SpotKnock', preset: 'comic-book', dpi: 150 });
+    const pageId = base.pages[0].id;
+    const added = addFrameToPaperPage(base, pageId, {
+      kind: 'caption', xMm: 10, yMm: 10, widthMm: 60, heightMm: 20, text: 'ON-SPOT', fillColor: '#e30613',
+    });
+    const frameId = added.frameId;
+
+    // Full raster keeps the fill colour; the knockout removes it (paper) but keeps the frame's text.
+    expect(buildFlattenedPaperPageSvgExport(added.document, pageId).svg).toContain('#e30613');
+    const knocked = buildFlattenedPaperPageSvgExport(added.document, pageId, { excludeFrameFillIds: [frameId] });
+    expect(knocked.svg).not.toContain('#e30613');
+    expect(knocked.svg).toContain('ON-SPOT');
+  });
+
   it('can compute export dimensions with or without bleed', () => {
     const doc = updatePaperDocumentSetup(createDefaultPaperDocument({ preset: 'custom', dpi: 300 }), {
       widthMm: 25.4,

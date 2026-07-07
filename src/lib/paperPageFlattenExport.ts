@@ -42,6 +42,12 @@ export interface PaperPageFlattenExportOptions {
    * precedence over `backdropOnly` when both are set.
    */
   excludeTextFrameIds?: string[];
+  /**
+   * Knock the FILL out of these frames (render them fill-less / paper) — their spot ink is drawn on a real
+   * /Separation plate on top instead, so it must not also appear as process in the raster. Stroke + text
+   * still render. Composes with `excludeTextFrameIds` (a frame can have both a spot fill and vector text).
+   */
+  excludeFrameFillIds?: string[];
 }
 
 export interface PaperPageEmbeddedAssetExportOptions extends PaperPageFlattenExportOptions {
@@ -300,11 +306,20 @@ function buildOnePageExportDocument(
   const includeBleed = options.includeBleed ?? true;
   let exportPage = page;
   const excluded = options.excludeTextFrameIds ? new Set(options.excludeTextFrameIds) : undefined;
-  if (excluded) {
-    // Frame-level: keep every frame (so a caption's fill/border/box still renders) but BLANK the text of
-    // the excluded frames — that text is drawn as vector on top. Filtering the frame out entirely would
-    // drop its background box.
-    exportPage = { ...page, frames: page.frames.map((frame) => (excluded.has(frame.id) ? { ...frame, text: '' } : frame)) };
+  const knockoutFills = options.excludeFrameFillIds ? new Set(options.excludeFrameFillIds) : undefined;
+  if (excluded || knockoutFills) {
+    // Frame-level: keep every frame (so a caption's border/box still renders) but BLANK the text of the
+    // text-excluded frames (drawn as vector on top) and REMOVE the fill of spot-knockout frames (drawn as a
+    // /Separation plate on top). The two compose — a frame can be in both sets.
+    exportPage = {
+      ...page,
+      frames: page.frames.map((frame) => {
+        let next = frame;
+        if (excluded?.has(frame.id)) next = { ...next, text: '' };
+        if (knockoutFills?.has(frame.id)) next = { ...next, fillColor: 'transparent', fillGradient: undefined, fillOpacity: 0 };
+        return next;
+      }),
+    };
   } else if (options.backdropOnly) {
     exportPage = {
       ...page,
