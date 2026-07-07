@@ -178,7 +178,7 @@ describe('paperPreflight', () => {
     expect(report.issues).toContainEqual(expect.objectContaining({ title: 'RGB color used for print', category: 'color' }));
   });
 
-  it('warns honestly when PDF/X and CMYK production targets exceed the browser export path', () => {
+  it('accurately describes the real PDF/X export and still flags RGB colors for CMYK proofing', () => {
     const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Press Target', preset: 'comic-book' }), {
       printProduction: {
         pdfStandard: 'pdf-x-4',
@@ -203,9 +203,11 @@ describe('paperPreflight', () => {
     const report = analyzePaperPreflight(document, [], 'comic-print');
 
     expect(report.groups.map((group) => group.category)).toEqual(expect.arrayContaining(['production', 'color']));
+    // The export is real now — no false "not certified" claim; an accurate info note instead.
+    expect(report.issues.some((i) => i.title === 'Browser PDF export is not PDF/X-certified')).toBe(false);
     expect(report.issues).toContainEqual(expect.objectContaining({
-      severity: 'warning',
-      title: 'Browser PDF export is not PDF/X-certified',
+      severity: 'info',
+      title: 'PDF/X export embeds a real ICC output intent',
       category: 'production',
     }));
     expect(report.issues).toContainEqual(expect.objectContaining({
@@ -258,6 +260,30 @@ describe('paperPreflight', () => {
     const subst = report.issues.find((i) => i.title === 'Fonts embedded as Liberation substitutes');
     expect(subst?.detail).toContain('Georgia → Liberation Serif');
     expect(subst?.detail ?? '').not.toContain('Impact');
+  });
+
+  it('discloses that named spot colors convert to process (only when preserve-named + spot is actually used)', () => {
+    const spotSwatch = {
+      id: 'spot-1', name: 'PANTONE 485 C', type: 'spot' as const, model: 'cmyk' as const,
+      rgb: { r: 218, g: 41, b: 28 }, cmyk: { c: 0, m: 95, y: 100, k: 0 }, spotName: 'PANTONE 485 C',
+    };
+    const withSwatch = (policy: 'preserve-named' | 'convert-process', useSpot: boolean) => {
+      let doc = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Spot', preset: 'comic-book' }), {
+        printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51', spotColorPolicy: policy },
+      });
+      doc = { ...doc, swatches: [spotSwatch] };
+      const { document } = addFrameToPaperPage(doc, doc.pages[0].id, {
+        kind: 'caption', xMm: 10, yMm: 10, widthMm: 50, heightMm: 20, text: 'Ink',
+        fillColor: useSpot ? 'spot-1' : '#ff0000',
+      });
+      return analyzePaperPreflight(document, []);
+    };
+    const hasSpotWarning = (report: ReturnType<typeof analyzePaperPreflight>) =>
+      report.issues.some((i) => i.title === 'Named spot colors will convert to process');
+
+    expect(hasSpotWarning(withSwatch('preserve-named', true))).toBe(true);   // promised preservation we can't keep → disclosed
+    expect(hasSpotWarning(withSwatch('convert-process', true))).toBe(false); // user already opted into conversion
+    expect(hasSpotWarning(withSwatch('preserve-named', false))).toBe(false); // spot defined but unused → no noise
   });
 
   it('flags invalid PDF/X output intent combinations before export', () => {

@@ -477,6 +477,20 @@ function groupIssuesByCategory(issues: PaperPreflightIssue[]): PaperPreflightRep
   return categories.map((category) => ({ category, issues: issues.filter((issue) => issue.category === category) })).filter((group) => group.issues.length > 0);
 }
 
+/** True when the document actually USES (not merely defines) a named spot swatch in a frame colour. */
+function documentUsesSpotColor(document: PaperDocument): boolean {
+  const spotIds = new Set((document.swatches ?? []).filter((swatch) => swatch.type === 'spot').map((swatch) => swatch.id));
+  if (spotIds.size === 0) return false;
+  for (const page of document.pages) {
+    for (const frame of page.frames) {
+      if (spotIds.has(frame.fillColor ?? '') || spotIds.has(frame.strokeColor ?? '') || spotIds.has(frame.typography?.color ?? '')) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function analyzePrintProduction(
   document: PaperDocument,
   colorInventory: PaperColorInventoryItem[],
@@ -498,11 +512,15 @@ function analyzePrintProduction(
   }
 
   if (isPdfXProductionTarget(production)) {
-    issues.push(issue('warning', 'Browser PDF export is not PDF/X-certified', `${production.pdfStandard.toUpperCase()} intent is recorded for handoff metadata, but the built-in browser PDF path does not embed ICC output profiles or validate conformance. Use a press-aware PDF/X converter for final delivery.`, { category: 'production' }));
+    issues.push(issue('info', 'PDF/X export embeds a real ICC output intent', `${production.pdfStandard.toUpperCase()} export converts each page to CMYK through the embedded ${production.outputIntentLabel} output intent, enforces the total-ink limit, and passes ISO 15930 structural validation. Do a final visual proof in Acrobat/Enfocus before press.`, { category: 'production' }));
   }
 
   if (production.outputIntentColorSpace === 'cmyk' && hasRgbColors) {
     issues.push(issue('warning', 'RGB colors need CMYK proofing', `${production.outputIntentLabel} is a CMYK press target, but editable Paper colors are CSS/RGB values. Check separations, rich black, and total ink coverage in a print-production tool before press handoff.`, { category: 'color' }));
+  }
+
+  if (production.spotColorPolicy === 'preserve-named' && documentUsesSpotColor(document)) {
+    issues.push(issue('warning', 'Named spot colors will convert to process', `This export flattens artwork to CMYK, so named spot inks are converted to process colour — they are NOT kept as separate spot plates. For a true spot/Pantone plate, hand the spot artwork to a press-production tool.`, { category: 'color' }));
   }
 
   if (production.totalInkLimitPercent > 340 && production.outputIntentColorSpace === 'cmyk') {
