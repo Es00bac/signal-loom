@@ -84,6 +84,10 @@ export interface PdfxSpotFill {
   yTopPt: number;
   widthPt: number;
   heightPt: number;
+  /** Optional rotation of the plate rect about the frame centre (matches CSS transform: rotate). */
+  rotationDeg?: number;
+  centerXPt?: number;
+  centerYTopPt?: number;
 }
 
 /** One text box drawn as embedded vector type over the CMYK raster. Geometry is in points, measured
@@ -313,6 +317,24 @@ function contentOp(name: string, args: (PDFName | PDFNumber)[] = []): PDFOperato
   return PDFOperator.of(name as unknown as Parameters<typeof PDFOperator.of>[0], args);
 }
 
+/** A `cm` operator that rotates content about a pivot given in media TOP-left coords, matching the editor's
+ * CSS `transform: rotate` (clockwise-positive on screen; PDF user space is y-up so the angle is negated)
+ * about `transform-origin: center`. Returns null when there's no rotation. cm = T(c)·R(-deg)·T(-c). */
+function rotateAboutPivotOp(
+  rotationDeg: number | undefined,
+  centerXPt: number | undefined,
+  centerYTopPt: number | undefined,
+  mediaHpt: number,
+): PDFOperator | null {
+  if (!rotationDeg || centerXPt === undefined || centerYTopPt === undefined) return null;
+  const phi = (-rotationDeg * Math.PI) / 180;
+  const cx = centerXPt;
+  const cy = mediaHpt - centerYTopPt;
+  const cos = Math.cos(phi);
+  const sin = Math.sin(phi);
+  return concatTransformationMatrix(cos, sin, -sin, cos, cx * (1 - cos) + cy * sin, cy * (1 - cos) - cx * sin);
+}
+
 /** Encode a string as a PDF name body: chars outside the printable regular set become `#XX`. A spot name
  * like "PANTONE 185 C" → "PANTONE#20185#20C", so the colorant round-trips through Ghostscript/RIPs. */
 function encodePdfName(name: string): string {
@@ -458,14 +480,17 @@ export async function buildPaperPdfx(
         }
         const yBottom = mediaHpt - (spot.yTopPt + spot.heightPt); // flip to PDF's bottom-left origin
         const tint = Math.max(0, Math.min(1, spot.tint));
-        pdfPage.pushOperators(
-          pushGraphicsState(),
+        const spotRotate = rotateAboutPivotOp(spot.rotationDeg, spot.centerXPt, spot.centerYTopPt, mediaHpt);
+        const spotDraw: PDFOperator[] = [pushGraphicsState()];
+        if (spotRotate) spotDraw.push(spotRotate); // rotate the plate rect about the frame centre
+        spotDraw.push(
           contentOp('cs', [PDFName.of(resName)]),
           contentOp('scn', [PDFNumber.of(tint)]),
           contentOp('re', [PDFNumber.of(spot.xPt), PDFNumber.of(yBottom), PDFNumber.of(spot.widthPt), PDFNumber.of(spot.heightPt)]),
           contentOp('f'),
           popGraphicsState(),
         );
+        pdfPage.pushOperators(...spotDraw);
       }
     }
 
@@ -546,17 +571,9 @@ export async function buildPaperPdfx(
         : frame.cmyk;
       const hasStroke = !!frame.strokeCmyk && (frame.strokeWidthPt ?? 0) > 0;
       const draw: PDFOperator[] = [pushGraphicsState()];
-      // Rotate the whole block about the frame centre to match the editor's CSS `transform: rotate`. CSS is
-      // clockwise-positive in screen space (y-down); PDF user space is y-up, so the same visual rotation is
-      // the negative angle. cm = T(cx,cy)·R(φ)·T(-cx,-cy).
-      if (frame.rotationDeg && frame.centerXPt !== undefined && frame.centerYTopPt !== undefined) {
-        const phi = (-frame.rotationDeg * Math.PI) / 180;
-        const cx = frame.centerXPt;
-        const cy = mediaHpt - frame.centerYTopPt;
-        const cos = Math.cos(phi);
-        const sin = Math.sin(phi);
-        draw.push(concatTransformationMatrix(cos, sin, -sin, cos, cx * (1 - cos) + cy * sin, cy * (1 - cos) - cx * sin));
-      }
+      // Rotate the whole block about the frame centre to match the editor's CSS transform (see helper).
+      const textRotate = rotateAboutPivotOp(frame.rotationDeg, frame.centerXPt, frame.centerYTopPt, mediaHpt);
+      if (textRotate) draw.push(textRotate);
       draw.push(contentOp('k', [PDFNumber.of(ink.c), PDFNumber.of(ink.m), PDFNumber.of(ink.y), PDFNumber.of(ink.k)]));
       if (hasStroke) {
         const sInk = inkLimitPercent !== undefined

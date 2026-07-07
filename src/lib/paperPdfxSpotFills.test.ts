@@ -58,13 +58,24 @@ describe('collectSpotFills', () => {
   });
 
   it.each([
-    ['rotated', { rotationDeg: 15 }],
     ['corner radius', { cornerRadiusMm: 2 }],
     ['a visible stroke', { strokeWidthMm: 0.5, strokeColor: '#000000', strokeOpacity: 1 }],
     ['a fully transparent fill', { fillOpacity: 0 }],
   ])('leaves a spot fill with %s as process (not faithfully a solid rectangle)', (_label, patch) => {
     const { doc } = docWithSpotFrame(patch);
     expect(collectSpotFills(doc.pages[0], doc).spotFills).toHaveLength(0);
+  });
+
+  it('plates a ROTATED spot rect, carrying the angle + frame-centre pivot', () => {
+    const { doc, frameId } = docWithSpotFrame({ rotationDeg: 15 });
+    const frame = doc.pages[0].frames.find((f) => f.id === frameId)!;
+    const plan = collectSpotFills(doc.pages[0], doc);
+    expect(plan.spotFills).toHaveLength(1);
+    const fill = plan.spotFills[0];
+    expect(fill.rotationDeg).toBe(15);
+    const bleedMm = doc.page.bleedMm;
+    expect(fill.centerXPt).toBeCloseTo((bleedMm + frame.xMm + frame.widthMm / 2) * PT_PER_MM, 4);
+    expect(fill.centerYTopPt).toBeCloseTo((bleedMm + frame.yMm + frame.heightMm / 2) * PT_PER_MM, 4);
   });
 
   it('keeps a partial-opacity spot fill as a TINTED plate (fill opacity → spot screen density)', () => {

@@ -1,11 +1,11 @@
 // Pure builder: find the frames on a page whose fill is a real SPOT swatch and turn each into a
 // PdfxSpotFill spec for the exporter's /Separation plate, plus the ids of the frames whose fill must be
 // knocked out of the flattened raster (so the spot ink lives ONLY on its named plate, not doubled as
-// process). Conservative by construction: only a plain, upright, un-stroked rectangle can become a spot
-// plate — the /Separation rect has to line up exactly with the knocked-out region. A partial fill opacity
-// is kept as the spot TINT (a screen of the ink). Anything fancier (rotation, corner radius, gradient, a
-// border, a non-rectangular polygon, or a swatch with no CMYK alternate) stays process CMYK and is
-// disclosed in preflight. Framework-free + unit-testable.
+// process). Conservative by construction: only an un-stroked rectangle (optionally rotated about its
+// centre) can become a spot plate — the /Separation rect has to line up exactly with the knocked-out
+// region. A partial fill opacity is kept as the spot TINT (a screen of the ink). Anything fancier (corner
+// radius, gradient, a border, a non-rectangular polygon, or a swatch with no CMYK alternate) stays process
+// CMYK and is disclosed in preflight. Framework-free + unit-testable.
 
 import type { PaperDocument, PaperFrame, PaperPage } from '../types/paper';
 import type { PaperSwatch } from './paperSwatches';
@@ -24,11 +24,12 @@ export interface SpotFillPlan {
 
 const num = (v: number | undefined): number => (typeof v === 'number' ? v : 0);
 
-/** True when a frame is a plain upright rectangle we can faithfully replace with a single /Separation rect.
- * A partial fill opacity is allowed — it becomes the spot TINT (a screen of the ink), which is exactly what
- * the plate's `scn <tint>` expresses. A fully transparent fill (opacity 0) is nothing to plate. */
-function isPlainUprightRect(frame: PaperFrame): boolean {
-  if (num(frame.rotationDeg) !== 0) return false;
+/** True when a frame is a rectangle we can faithfully replace with a single /Separation rect (optionally
+ * rotated about its centre). A partial fill opacity is allowed — it becomes the spot TINT (a screen of the
+ * ink), which is exactly what the plate's `scn <tint>` expresses. A fully transparent fill (opacity 0) is
+ * nothing to plate. */
+function isPlateableRect(frame: PaperFrame): boolean {
+  // Rotation is allowed — the plate rect is rotated about the frame centre to match the knockout.
   if (frame.vertices && frame.vertices.length > 0) return false;
   if (num(frame.cornerRadiusMm) !== 0) return false;
   if (frame.fillGradient) return false;
@@ -61,8 +62,9 @@ export function collectSpotFills(page: PaperPage, document: PaperDocument): Spot
     if (!frame.fillSwatchId) continue;
     const swatch = spotById.get(frame.fillSwatchId);
     if (!swatch || !swatch.cmyk) continue; // no CMYK alternate → can't build a plate
-    if (!isPlainUprightRect(frame)) continue; // not faithfully replaceable → leave as process (disclosed)
+    if (!isPlateableRect(frame)) continue; // not faithfully replaceable → leave as process (disclosed)
 
+    const rot = num(frame.rotationDeg);
     spotFills.push({
       name: swatch.spotName ?? swatch.name,
       cmyk: { c: swatch.cmyk.c / 100, m: swatch.cmyk.m / 100, y: swatch.cmyk.y / 100, k: swatch.cmyk.k / 100 },
@@ -71,6 +73,10 @@ export function collectSpotFills(page: PaperPage, document: PaperDocument): Spot
       yTopPt: (bleedMm + frame.yMm) * PT_PER_MM,
       widthPt: frame.widthMm * PT_PER_MM,
       heightPt: frame.heightMm * PT_PER_MM,
+      // Rotated plate rect: pivot is the frame centre (matches CSS transform-origin: center + the knockout).
+      rotationDeg: rot || undefined,
+      centerXPt: rot ? (bleedMm + frame.xMm + frame.widthMm / 2) * PT_PER_MM : undefined,
+      centerYTopPt: rot ? (bleedMm + frame.yMm + frame.heightMm / 2) * PT_PER_MM : undefined,
     });
     knockoutFrameIds.push(frame.id);
     preserved.add(swatch.spotName ?? swatch.name);
