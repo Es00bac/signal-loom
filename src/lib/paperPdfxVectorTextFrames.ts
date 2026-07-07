@@ -18,6 +18,18 @@ import type { PdfxVectorTextFrame } from './paperPdfxExport';
 
 const PT_PER_MM = 72 / 25.4;
 
+/** The kinds whose text the print/flatten render lays out as a paragraph (so we can draw it as vector). */
+function isVectorTextKind(kind: PaperFrame['kind']): boolean {
+  return kind === 'text' || kind === 'caption';
+}
+
+/**
+ * Content inset (mm) the print/flatten render applies to text — matches `printFrameContentPaddingMm`
+ * (2mm for text/caption). With CSS `box-sizing: border-box`, the text box is also inset by the frame's
+ * border, so the vector text must inset by border + padding to sit exactly on the rasterized backdrop.
+ */
+const CONTENT_PADDING_MM = 2;
+
 /**
  * A vector-text spec minus the font bytes (the adapter fetches `fontUrl` and adds `fontBytes`). Carries
  * the source `frameId` so the pipeline can exclude exactly the vectorized frames from the raster backdrop
@@ -42,7 +54,7 @@ function num(value: number | undefined): number {
  * features the engine can't reproduce. Non-text frames never block a page.
  */
 export function frameTextIsVectorSafe(frame: PaperFrame): boolean {
-  if (frame.kind !== 'text') return true;
+  if (!isVectorTextKind(frame.kind)) return true;
   // Display/decorative faces (Impact SFX, comic titles, …) have no faithful Liberation substitute —
   // rasterize them (real glyphs) rather than vector-substitute a wrong-looking plain face.
   if (isDisplayFontFamily(frame.typography.fontFamily)) return false;
@@ -90,7 +102,7 @@ export function buildVectorTextFrameSpecs(
   const bleedMm = document.page.bleedMm;
   const specs: PdfxVectorTextFrameSpec[] = [];
   for (const frame of page.frames) {
-    if (frame.kind !== 'text' || !frameTextIsVectorSafe(frame)) continue;
+    if (!isVectorTextKind(frame.kind) || !frameTextIsVectorSafe(frame)) continue;
     const text = frame.text ?? '';
     if (!text.trim()) continue;
     const typo = frame.typography;
@@ -104,11 +116,15 @@ export function buildVectorTextFrameSpecs(
       true,
     ).cmyk; // 0..100
 
-    // Text lives in a sub-box (percent of the frame); default is the full frame (0/0/100/100).
-    const boxXMm = frame.xMm + frame.widthMm * (num(frame.textBoxXPercent) / 100);
-    const boxYMm = frame.yMm + frame.heightMm * (num(frame.textBoxYPercent) / 100);
-    const boxWMm = frame.widthMm * ((frame.textBoxWidthPercent ?? 100) / 100);
-    const boxHMm = frame.heightMm * ((frame.textBoxHeightPercent ?? 100) / 100);
+    // Match the print/flatten render's geometry so the vector text sits exactly on the rasterized
+    // backdrop: text fills the frame inset by the border + 2mm content padding (box-sizing: border-box).
+    // The editor's text sub-box percentages are NOT applied by the print render, so we don't apply them
+    // here either. Only captions get a flex vertical-align in the raster; text frames are always top.
+    const inset = num(frame.strokeWidthMm) + CONTENT_PADDING_MM;
+    const boxXMm = frame.xMm + inset;
+    const boxYMm = frame.yMm + inset;
+    const boxWMm = Math.max(0, frame.widthMm - 2 * inset);
+    const boxHMm = Math.max(0, frame.heightMm - 2 * inset);
 
     specs.push({
       text,
@@ -118,7 +134,7 @@ export function buildVectorTextFrameSpecs(
       fontSizePt: typo.fontSizePt,
       leadingPt: typo.leadingPt,
       align: typo.align,
-      verticalAlign: frame.textVerticalAlign,
+      verticalAlign: frame.kind === 'caption' ? frame.textVerticalAlign : undefined,
       cmyk: { c: cmyk.c / 100, m: cmyk.m / 100, y: cmyk.y / 100, k: cmyk.k / 100 },
       xPt: (bleedMm + boxXMm) * PT_PER_MM,
       yTopPt: (bleedMm + boxYMm) * PT_PER_MM,

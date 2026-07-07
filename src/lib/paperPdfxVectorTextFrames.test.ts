@@ -50,10 +50,11 @@ describe('buildVectorTextFrameSpecs', () => {
     expect(spec.text).toBe('Hello');
     expect(spec.fontId).toBe('LiberationSerif-Regular');
     expect(spec.fontUrl).toBe('/fonts/liberation/LiberationSerif-Regular.ttf');
-    expect(spec.xPt).toBeCloseTo((5 + 10) * PT_PER_MM, 4);
-    expect(spec.yTopPt).toBeCloseTo((5 + 20) * PT_PER_MM, 4);
-    expect(spec.widthPt).toBeCloseTo(50 * PT_PER_MM, 4);
-    expect(spec.heightPt).toBeCloseTo(30 * PT_PER_MM, 4);
+    // Geometry matches the print/flatten render: frame inset by border(0) + 2mm content padding.
+    expect(spec.xPt).toBeCloseTo((5 + 10 + 2) * PT_PER_MM, 4);
+    expect(spec.yTopPt).toBeCloseTo((5 + 20 + 2) * PT_PER_MM, 4);
+    expect(spec.widthPt).toBeCloseTo((50 - 4) * PT_PER_MM, 4);
+    expect(spec.heightPt).toBeCloseTo((30 - 4) * PT_PER_MM, 4);
     expect(spec.cmyk).toEqual({ c: 0, m: 0, y: 0, k: 1 });
     expect(spec.align).toBe('left');
   });
@@ -119,18 +120,26 @@ describe('buildVectorTextFrameSpecs', () => {
     expect(allowedSpec.cmyk).toEqual({ c: 0.6, m: 0.4, y: 0.4, k: 1 }); // rich black preserved
   });
 
-  it('supports vertical alignment and a custom text sub-box in the geometry', () => {
-    const doc = docWithFrames([
-      { text: 'Mid', xMm: 0, yMm: 0, widthMm: 100, heightMm: 100, textVerticalAlign: 'middle',
-        textBoxXPercent: 10, textBoxYPercent: 20, textBoxWidthPercent: 50, textBoxHeightPercent: 40,
+  it('vectorizes caption frames with their vertical alignment; plain text frames stay top-aligned', () => {
+    // A caption is single-column text with a visible box; its text is vectorized and the raster keeps the
+    // box (blanked text). The caption gets a flex vertical-align in the raster, so the vector carries it.
+    const caption = docWithFrames([
+      { kind: 'caption', text: 'Narration', xMm: 10, yMm: 10, widthMm: 60, heightMm: 40, textVerticalAlign: 'middle',
+        typography: { fontFamily: 'Georgia, serif', fontSizePt: 10, leadingPt: 13, tracking: 0, hyphenate: false, align: 'left', color: '#000', fontWeight: 'normal', fontStyle: 'normal' } },
+    ], 0);
+    const [capSpec] = buildVectorTextFrameSpecs(caption.pages[0], caption, blackTransform);
+    expect(capSpec.text).toBe('Narration');
+    expect(capSpec.verticalAlign).toBe('middle');
+    // padding-inset geometry (border 0 + 2mm): x = 10+2, w = 60-4.
+    expect(capSpec.xPt).toBeCloseTo((10 + 2) * PT_PER_MM, 4);
+    expect(capSpec.widthPt).toBeCloseTo((60 - 4) * PT_PER_MM, 4);
+
+    // A plain text frame's vertical-align is NOT applied by the raster (block flow) → spec omits it.
+    const text = docWithFrames([
+      { kind: 'text', text: 'Body', textVerticalAlign: 'middle', columns: 1,
         typography: { fontFamily: 'Arial', fontSizePt: 12, leadingPt: 14, tracking: 0, hyphenate: false, align: 'left', color: '#000', fontWeight: 'normal', fontStyle: 'normal' } },
     ], 0);
-    const [spec] = buildVectorTextFrameSpecs(doc.pages[0], doc, blackTransform);
-    expect(spec.verticalAlign).toBe('middle');
-    // sub-box: x = 0 + 100*0.10 = 10mm; w = 100*0.50 = 50mm; h = 100*0.40 = 40mm
-    expect(spec.xPt).toBeCloseTo(10 * PT_PER_MM, 4);
-    expect(spec.yTopPt).toBeCloseTo(20 * PT_PER_MM, 4);
-    expect(spec.widthPt).toBeCloseTo(50 * PT_PER_MM, 4);
-    expect(spec.heightPt).toBeCloseTo(40 * PT_PER_MM, 4);
+    const [textSpec] = buildVectorTextFrameSpecs(text.pages[0], text, blackTransform);
+    expect(textSpec.verticalAlign).toBeUndefined();
   });
 });

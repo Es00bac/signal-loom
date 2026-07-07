@@ -16,6 +16,7 @@ import { downloadBlob as downloadSharedBlob, downloadTextFile } from '../../lib/
 import { exportPaperDocumentToPdfxInBrowser } from '../../lib/paperPdfxBrowser';
 import { bundledProfileForOutputIntent, isSubstitutedOutputIntent } from '../../lib/paperPdfxPipeline';
 import { validatePaperPdfx } from '../../lib/paperPdfxValidate';
+import { frameTextIsVectorSafe } from '../../lib/paperPdfxVectorTextFrames';
 import { normalizePaperPrintProductionSpec } from '../../lib/paperPrintProduction';
 import { usePaperStore } from '../../store/paperStore';
 import {
@@ -852,10 +853,17 @@ export async function exportPaperPdfDocument(
   setStatus(result.filePath ? `Saved PDF to ${result.filePath}${sizeLabel}.` : `Saved PDF${sizeLabel}.`);
 }
 
-/** True when any page carries a non-empty text frame (drives the "text as vector" export note). */
-function documentHasText(document: PaperDocument): boolean {
+/**
+ * True when any text/caption frame will actually be embedded as vector on export (non-empty AND
+ * vector-safe). Drives the export note honestly — a page whose text is all display-font/multi-column
+ * /gated rasterizes, so we must not claim "embedded vector" for it.
+ */
+function documentHasVectorizableText(document: PaperDocument): boolean {
   return document.pages.some((page) =>
-    page.frames.some((frame) => frame.kind === 'text' && (frame.text ?? '').trim().length > 0),
+    page.frames.some((frame) =>
+      (frame.kind === 'text' || frame.kind === 'caption')
+      && (frame.text ?? '').trim().length > 0
+      && frameTextIsVectorSafe(frame)),
   );
 }
 
@@ -889,7 +897,7 @@ export async function exportPaperPdfxAndSave(
       ? 'preflight OK'
       : `preflight flagged: ${report.checks.filter((c) => !c.pass).map((c) => c.label).join(', ')}`;
     const substituteNote = substituted ? ` (nearest bundled profile embedded)` : '';
-    const textNote = documentHasText(document) ? ', text as embedded vector (Liberation)' : '';
+    const textNote = documentHasVectorizableText(document) ? ', text as embedded vector where supported (Liberation)' : '';
     setStatus(`Exported ${standardLabel} — embedded ${profile.displayName} ICC${substituteNote}${textNote}, ${kb} KB, ${preflight}.`);
   } catch (error) {
     const message = error instanceof Error ? error.message : `${standardLabel} export failed.`;

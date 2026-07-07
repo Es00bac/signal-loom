@@ -301,8 +301,10 @@ function buildOnePageExportDocument(
   let exportPage = page;
   const excluded = options.excludeTextFrameIds ? new Set(options.excludeTextFrameIds) : undefined;
   if (excluded) {
-    // Frame-level: keep art frames and any text frame NOT being drawn as vector on top.
-    exportPage = { ...page, frames: page.frames.filter((frame) => !excluded.has(frame.id)) };
+    // Frame-level: keep every frame (so a caption's fill/border/box still renders) but BLANK the text of
+    // the excluded frames — that text is drawn as vector on top. Filtering the frame out entirely would
+    // drop its background box.
+    exportPage = { ...page, frames: page.frames.map((frame) => (excluded.has(frame.id) ? { ...frame, text: '' } : frame)) };
   } else if (options.backdropOnly) {
     exportPage = {
       ...page,
