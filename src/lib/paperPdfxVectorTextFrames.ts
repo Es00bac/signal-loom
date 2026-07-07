@@ -11,7 +11,7 @@
 // lang — and Liberation is metric-compatible, so the wrap matches; verified by render comparison.)
 
 import type { PaperDocument, PaperFrame, PaperPage } from '../types/paper';
-import type { IccCmykTransform } from './paperColorManagement';
+import { applyBlackPolicy, type IccCmykTransform } from './paperColorManagement';
 import { parseHexColor, type PaperRgb } from './paperSwatches';
 import { resolveBundledFontFace, isDisplayFontFamily } from './paperFontResolution';
 import type { PdfxVectorTextFrame } from './paperPdfxExport';
@@ -96,7 +96,13 @@ export function buildVectorTextFrameSpecs(
     const typo = frame.typography;
     const face = resolveBundledFontFace(typo);
     const rgb = cssToRgb(typo.color) ?? { r: 0, g: 0, b: 0 };
-    const cmyk = transform.rgbToCmyk(rgb); // 0..100
+    // Apply the document's black policy to this text: `force-100k-text` rewrites near-black text to pure
+    // K (0/0/0/100) so small type doesn't fringe from 4-plate mis-registration at the press.
+    const cmyk = applyBlackPolicy(
+      { space: 'cmyk', cmyk: transform.rgbToCmyk(rgb), approximate: transform.kind !== 'icc', profileName: transform.profileName },
+      document.printProduction.blackPolicy,
+      true,
+    ).cmyk; // 0..100
 
     // Text lives in a sub-box (percent of the frame); default is the full frame (0/0/100/100).
     const boxXMm = frame.xMm + frame.widthMm * (num(frame.textBoxXPercent) / 100);

@@ -14,6 +14,13 @@ const blackTransform: IccCmykTransform = {
   rgbToCmyk: () => ({ c: 0, m: 0, y: 0, k: 100 }),
 };
 
+// Fake transform: reports a RICH black (heavy CMY under the K) for any colour — exercises black policy.
+const richBlackTransform: IccCmykTransform = {
+  kind: 'icc',
+  profileName: 'test',
+  rgbToCmyk: () => ({ c: 60, m: 40, y: 40, k: 100 }),
+};
+
 function docWithFrames(frames: Partial<PaperFrame>[], bleedMm = 0): PaperDocument {
   let doc = createDefaultPaperDocument({ title: 'vec', preset: 'us-letter' });
   doc = updatePaperDocumentSetup(doc, { bleedMm });
@@ -97,6 +104,19 @@ describe('buildVectorTextFrameSpecs', () => {
     const specs = buildVectorTextFrameSpecs(mixed.pages[0], mixed, blackTransform);
     expect(specs.map((s) => s.text)).toEqual(['body']);
     expect(specs[0].frameId).toBe('f0'); // spec carries the source frame id for raster exclusion
+  });
+
+  it('applies the force-100k-text black policy to vector text (avoids rich-black fringing)', () => {
+    const serif = { fontFamily: 'Georgia', fontSizePt: 10, leadingPt: 13, tracking: 0, hyphenate: false, align: 'left' as const, color: '#111111', fontWeight: 'normal', fontStyle: 'normal' as const };
+    const doc = docWithFrames([{ text: 'body', typography: serif }], 0);
+
+    const forced = { ...doc, printProduction: { ...doc.printProduction, blackPolicy: 'force-100k-text' as const } };
+    const [forcedSpec] = buildVectorTextFrameSpecs(forced.pages[0], forced, richBlackTransform);
+    expect(forcedSpec.cmyk).toEqual({ c: 0, m: 0, y: 0, k: 1 }); // rewritten to pure K
+
+    const allowed = { ...doc, printProduction: { ...doc.printProduction, blackPolicy: 'allow-rich-black' as const } };
+    const [allowedSpec] = buildVectorTextFrameSpecs(allowed.pages[0], allowed, richBlackTransform);
+    expect(allowedSpec.cmyk).toEqual({ c: 0.6, m: 0.4, y: 0.4, k: 1 }); // rich black preserved
   });
 
   it('supports vertical alignment and a custom text sub-box in the geometry', () => {
