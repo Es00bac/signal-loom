@@ -72,10 +72,12 @@ export interface PdfxVectorTextFrame {
   yTopPt: number;
   /** Content-box width, in points (the wrap width). */
   widthPt: number;
-  /** Content-box height, in points (used to clip overset lines). */
+  /** Content-box height, in points (used to clip overset lines + vertical alignment). */
   heightPt: number;
   /** Baseline offset from the box top for the first line, in points (defaults to 0.8·fontSize). */
   ascentPt?: number;
+  /** Vertical placement of the text block within the box (default top). */
+  verticalAlign?: 'top' | 'middle' | 'bottom';
 }
 
 export interface PdfxOutputProfile {
@@ -324,10 +326,13 @@ export async function buildPaperPdfx(
         ascentPt,
         measureText: (t) => font.widthOfTextAtSize(t, frame.fontSizePt),
       });
+      // Vertical alignment: shift the whole text block down within the box (top = no shift).
+      const slack = Math.max(0, frame.heightPt - layout.totalHeightPt);
+      const vShift = frame.verticalAlign === 'middle' ? slack / 2 : frame.verticalAlign === 'bottom' ? slack : 0;
       for (const line of layout.lines) {
         // Clip overset lines: skip baselines that fall past the frame's bottom edge.
         if (line.baselineYPt > frame.heightPt + frame.fontSizePt) continue;
-        const yPt = mediaHpt - (frame.yTopPt + line.baselineYPt);
+        const yPt = mediaHpt - (frame.yTopPt + vShift + line.baselineYPt);
         for (const segment of line.runs) {
           if (!segment.text) continue;
           pdfPage.drawText(segment.text, {

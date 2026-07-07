@@ -67,4 +67,32 @@ describe('buildVectorTextFrameSpecs', () => {
     expect(pageTextIsVectorizable(rotated.pages[0])).toBe(false);
     expect(pageTextIsVectorizable(upright.pages[0])).toBe(true);
   });
+
+  it('gates features the linear engine cannot reproduce (raster fallback), but allows hyphenation', () => {
+    const baseTypo = { fontFamily: 'Arial', fontSizePt: 12, leadingPt: 14, tracking: 0, hyphenate: true, align: 'left' as const, color: '#000', fontWeight: 'normal', fontStyle: 'normal' as const };
+    // hyphenation alone stays vectorizable (raster doesn't actually hyphenate)
+    expect(pageTextIsVectorizable(docWithFrames([{ text: 'x', typography: baseTypo }]).pages[0])).toBe(true);
+    // each unsupported feature forces a raster fallback
+    expect(pageTextIsVectorizable(docWithFrames([{ text: 'x', columns: 2, typography: baseTypo }]).pages[0])).toBe(false);
+    expect(pageTextIsVectorizable(docWithFrames([{ text: 'x', textArcPercent: 40, typography: baseTypo }]).pages[0])).toBe(false);
+    expect(pageTextIsVectorizable(docWithFrames([{ text: 'x', bubbleShape: 'oval', typography: baseTypo }]).pages[0])).toBe(false);
+    expect(pageTextIsVectorizable(docWithFrames([{ text: 'x', textStrokeWidthMm: 0.3, typography: baseTypo }]).pages[0])).toBe(false);
+    expect(pageTextIsVectorizable(docWithFrames([{ text: 'x', typography: { ...baseTypo, tracking: 40 } }]).pages[0])).toBe(false);
+    expect(pageTextIsVectorizable(docWithFrames([{ text: 'x', typography: { ...baseTypo, dropCapLines: 3 } }]).pages[0])).toBe(false);
+  });
+
+  it('supports vertical alignment and a custom text sub-box in the geometry', () => {
+    const doc = docWithFrames([
+      { text: 'Mid', xMm: 0, yMm: 0, widthMm: 100, heightMm: 100, textVerticalAlign: 'middle',
+        textBoxXPercent: 10, textBoxYPercent: 20, textBoxWidthPercent: 50, textBoxHeightPercent: 40,
+        typography: { fontFamily: 'Arial', fontSizePt: 12, leadingPt: 14, tracking: 0, hyphenate: false, align: 'left', color: '#000', fontWeight: 'normal', fontStyle: 'normal' } },
+    ], 0);
+    const [spec] = buildVectorTextFrameSpecs(doc.pages[0], doc, blackTransform);
+    expect(spec.verticalAlign).toBe('middle');
+    // sub-box: x = 0 + 100*0.10 = 10mm; w = 100*0.50 = 50mm; h = 100*0.40 = 40mm
+    expect(spec.xPt).toBeCloseTo(10 * PT_PER_MM, 4);
+    expect(spec.yTopPt).toBeCloseTo(20 * PT_PER_MM, 4);
+    expect(spec.widthPt).toBeCloseTo(50 * PT_PER_MM, 4);
+    expect(spec.heightPt).toBeCloseTo(40 * PT_PER_MM, 4);
+  });
 });

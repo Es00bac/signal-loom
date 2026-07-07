@@ -89,4 +89,34 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
     );
     expect(Buffer.from(result.bytes).toString('latin1')).not.toContain('/FontFile2');
   });
+
+  it('falls back to a full raster when a frame uses a feature the vector engine cannot reproduce', async () => {
+    // vectorText is ON, but the frame uses letter-spacing (tracking) which the linear engine doesn't
+    // reproduce → the whole page must be rasterized (never a wrong vector layout), yet still a valid PDF/X.
+    const base = textDoc();
+    const gatedFrame = { ...base.pages[0].frames[0], typography: { ...base.pages[0].frames[0].typography, tracking: 60 } } as PaperFrame;
+    const doc: PaperDocument = { ...base, pages: base.pages.map((p, i) => (i === 0 ? { ...p, frames: [gatedFrame] } : p)) };
+
+    let backdropOnlyRequested = false;
+    const result = await exportPaperDocumentToPdfx(
+      doc,
+      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, iccProfileId: 'fogra39' },
+      {
+        loadIccBytes: async () => fogra39,
+        createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
+        loadFontBytes: async (url) => new Uint8Array(readFileSync(`public${url}`)),
+        rasterizePage: async (_pageId, _dpi, opts) => {
+          if (opts?.backdropOnly) backdropOnlyRequested = true;
+          return { rgba: new Uint8Array(96 * 124 * 4).fill(255), widthPx: 96, heightPx: 124 };
+        },
+      },
+    );
+
+    // No backdrop-only request → the page was fully flattened (text baked into the raster, not vectorized).
+    expect(backdropOnlyRequested).toBe(false);
+    expect(Buffer.from(result.bytes).toString('latin1')).not.toContain('/FontFile2');
+    // …and it's still a conformant PDF/X.
+    const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-4' });
+    expect(report.pass, report.checks.filter((c) => !c.pass).map((c) => c.label).join('; ')).toBe(true);
+  });
 });
