@@ -208,6 +208,12 @@ export interface PaperFrame {
   threadOrder?: number;
   typography: PaperTypography;
   fillColor: string;
+  /**
+   * Id of the document swatch this fill came from, when it was applied from the swatch library. Kept so a
+   * SPOT swatch fill survives to PDF/X export as a real /Separation plate (fillColor alone is just the RGB
+   * preview and loses the spot identity). Auto-cleared the moment the fill is changed by any other path.
+   */
+  fillSwatchId?: string;
   fillOpacity: number;
   fillGradient?: PaperFrameGradient;
   strokeColor: string;

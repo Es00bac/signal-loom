@@ -369,6 +369,22 @@ describe('paperDocument', () => {
     expect(frame?.widthMm).toBe(80);
   });
 
+  it('records a swatch id on the fill and auto-clears it when the fill changes another way', () => {
+    const doc = createDefaultPaperDocument({ title: 'Spot ref', preset: 'us-letter' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame, frameId } = addFrameToPaperPage(doc, pageId, { kind: 'caption', xMm: 10, yMm: 10, widthMm: 40, heightMm: 20 });
+    const frameOf = (d: typeof doc) => d.pages.find((p) => p.id === pageId)!.frames.find((f) => f.id === frameId)!;
+
+    // Applying a swatch records the durable link (fillColor + fillSwatchId set together).
+    const applied = updatePaperFrame(withFrame, pageId, frameId, { fillColor: '#ff8800', fillSwatchId: 'sw-spot' });
+    expect(frameOf(applied).fillSwatchId).toBe('sw-spot');
+
+    // Changing the fill by any other path (no fillSwatchId in the patch) drops the link so it can't go stale.
+    const recolored = updatePaperFrame(applied, pageId, frameId, { fillColor: '#00aaff' });
+    expect(frameOf(recolored).fillColor).toBe('#00aaff');
+    expect(frameOf(recolored).fillSwatchId).toBeUndefined();
+  });
+
   it('exports print HTML with page size, bleed, crop marks, columns, and placed assets', () => {
     const doc = createDefaultPaperDocument({ title: 'Print Export', preset: 'us-letter' });
     const pageId = doc.pages[0].id;

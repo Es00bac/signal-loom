@@ -513,13 +513,19 @@ function patchPaperFrame(frame: PaperFrame, patch: PaperFramePatch): PaperFrame 
 
   if (!frameChanged && !typographyChanged) return frame;
 
-  return {
+  const next: PaperFrame = {
     ...frame,
     ...framePatch,
     typography: typographyChanged
       ? { ...frame.typography, ...typography }
       : frame.typography,
   };
+  // Changing the fill by any path OTHER than applying a swatch drops the durable spot-swatch link, so it
+  // can never point at a swatch the fill no longer matches.
+  if (framePatch.fillColor !== undefined && framePatch.fillSwatchId === undefined) {
+    next.fillSwatchId = undefined;
+  }
+  return next;
 }
 
 function hasShallowPatchChange<T extends object>(current: T, patch: Partial<T>): boolean {

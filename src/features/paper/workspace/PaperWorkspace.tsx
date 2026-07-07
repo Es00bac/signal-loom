@@ -9859,7 +9859,7 @@ function PaperInspector({
                       key={swatch.id}
                       onClick={(event) => onUpdateFrame(event.altKey
                         ? { strokeColor: resolveSwatchCssColor(swatch) }
-                        : { fillColor: resolveSwatchCssColor(swatch) })}
+                        : { fillColor: resolveSwatchCssColor(swatch), fillSwatchId: swatch.id })}
                       style={{ backgroundColor: resolveSwatchCssColor(swatch) }}
                       title={`${swatch.name}${swatch.cmyk ? ` — C${swatch.cmyk.c} M${swatch.cmyk.m} Y${swatch.cmyk.y} K${swatch.cmyk.k}` : ''} (tap: fill, Alt: stroke)`}
                       type="button"
@@ -9881,7 +9881,7 @@ function PaperInspector({
                             }
                             onUpdateFrame(event.altKey
                               ? { strokeColor: resolveSwatchCssColor(swatch) }
-                              : { fillColor: resolveSwatchCssColor(swatch) });
+                              : { fillColor: resolveSwatchCssColor(swatch), fillSwatchId: swatch.id });
                           }}
                           style={{ backgroundColor: resolveSwatchCssColor(swatch) }}
                           title={`${swatch.name} (tap: fill, Alt: stroke, Shift: remove)`}
