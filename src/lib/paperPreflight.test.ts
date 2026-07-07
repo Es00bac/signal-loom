@@ -366,6 +366,25 @@ describe('paperPreflight', () => {
     const unused = build('preserve-named', { useSpot: false, plain: true });
     expect(unused).not.toContain('Spot colors kept as separation plates');
     expect(unused).not.toContain('Spot colors will convert to process');
+
+    // preserve-named + text coloured from a spot swatch (no plateable fill) → the outlined glyphs plate.
+    {
+      let doc = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'SpotText', preset: 'comic-book' }), {
+        printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51', spotColorPolicy: 'preserve-named' },
+      });
+      doc = { ...doc, swatches: [spotSwatch] };
+      const added = addFrameToPaperPage(doc, doc.pages[0].id, {
+        kind: 'caption', xMm: 10, yMm: 10, widthMm: 50, heightMm: 20, text: 'SPOT LOGO',
+      });
+      const addedTypo = added.document.pages[0].frames.find((f) => f.id === added.frameId)!.typography;
+      const withSpotText = updatePaperFrame(added.document, doc.pages[0].id, added.frameId, {
+        typography: { ...addedTypo, color: '#da291c', colorSwatchId: 'spot-1' },
+      });
+      const spotTextIssue = analyzePaperPreflight(withSpotText, []).issues.find((i) => i.title === 'Spot colors kept as separation plates');
+      expect(spotTextIssue).toBeDefined();
+      expect(spotTextIssue?.detail).toContain('PANTONE 485 C');
+      expect(spotTextIssue?.detail).toContain('spot-coloured text');
+    }
   });
 
   it('flags invalid PDF/X output intent combinations before export', () => {

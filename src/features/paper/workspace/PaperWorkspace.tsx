@@ -10105,6 +10105,43 @@ function PaperInspector({
                     />
                   </Field>
                 </div>
+                {(document.swatches ?? []).some((swatch) => swatch.type === 'spot') ? (
+                  <Field label="Spot Ink">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(document.swatches ?? [])
+                        .filter((swatch) => swatch.type === 'spot')
+                        .map((swatch) => {
+                          const active = frame.typography.colorSwatchId === swatch.id;
+                          return (
+                            <button
+                              key={swatch.id}
+                              type="button"
+                              className={`h-6 w-6 rounded border ${active ? 'border-cyan-300 ring-2 ring-cyan-300/60' : 'border-cyan-300/20 hover:border-cyan-300/50'}`}
+                              onClick={() =>
+                                onUpdateFrame({
+                                  typography: {
+                                    ...frame.typography,
+                                    color: resolveSwatchCssColor(swatch),
+                                    colorSwatchId: active ? undefined : swatch.id,
+                                  },
+                                })
+                              }
+                              style={{ backgroundColor: resolveSwatchCssColor(swatch) }}
+                              title={`${swatch.spotName ?? swatch.name} — text prints on its own named /Separation plate in PDF/X (needs spot policy "Preserve named spots"). Tap again to unbind.`}
+                            />
+                          );
+                        })}
+                      {frame.typography.colorSwatchId ? (
+                        <span className="ml-1 text-[10px] text-cyan-100/60">
+                          {(document.swatches ?? []).find((swatch) => swatch.id === frame.typography.colorSwatchId)?.spotName
+                            ?? (document.swatches ?? []).find((swatch) => swatch.id === frame.typography.colorSwatchId)?.name
+                            ?? 'spot'} plate
+                          {document.printProduction.spotColorPolicy !== 'preserve-named' ? ' (enable "Preserve named spots")' : ''}
+                        </span>
+                      ) : null}
+                    </div>
+                  </Field>
+                ) : null}
                 <div className="grid grid-cols-2 gap-2">
                   <Field label="Weight">
                     <select
