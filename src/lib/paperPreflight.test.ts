@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
-import { addFrameToPaperPage, createDefaultPaperDocument, updatePaperDocumentSetup } from './paperDocument';
+import { addFrameToPaperPage, createDefaultPaperDocument, updatePaperDocumentSetup, updatePaperFrame } from './paperDocument';
 import { PAPER_PREFLIGHT_PROFILES, analyzePaperPreflight, collectPaperLinkedAssets, summarizePaperPreflightStatus, summarizePreflightForExport } from './paperPreflight';
 
 function sourceItem(id = 'image-1'): SourceBinLibraryItem {
@@ -284,28 +284,40 @@ describe('paperPreflight', () => {
     expect(subst?.detail ?? '').not.toContain('Impact');
   });
 
-  it('discloses that named spot colors convert to process (only when preserve-named + spot is actually used)', () => {
+  it('discloses spot colors per policy — real /Separation plates when preservable, else honest conversion', () => {
     const spotSwatch = {
       id: 'spot-1', name: 'PANTONE 485 C', type: 'spot' as const, model: 'cmyk' as const,
       rgb: { r: 218, g: 41, b: 28 }, cmyk: { c: 0, m: 95, y: 100, k: 0 }, spotName: 'PANTONE 485 C',
     };
-    const withSwatch = (policy: 'preserve-named' | 'convert-process', useSpot: boolean) => {
+    const build = (policy: 'preserve-named' | 'convert-process' | 'warn', opts: { useSpot: boolean; plain?: boolean }) => {
       let doc = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Spot', preset: 'comic-book' }), {
         printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51', spotColorPolicy: policy },
       });
       doc = { ...doc, swatches: [spotSwatch] };
-      const { document } = addFrameToPaperPage(doc, doc.pages[0].id, {
+      const added = addFrameToPaperPage(doc, doc.pages[0].id, {
         kind: 'caption', xMm: 10, yMm: 10, widthMm: 50, heightMm: 20, text: 'Ink',
-        fillColor: useSpot ? 'spot-1' : '#ff0000',
+        strokeWidthMm: opts.plain ? 0 : 0.5, strokeColor: opts.plain ? 'transparent' : '#000000', strokeOpacity: 1, cornerRadiusMm: 0,
       });
-      return analyzePaperPreflight(document, []);
+      let document = added.document;
+      // The durable spot link is fillSwatchId (a fill applied from a spot swatch), not the RGB fillColor.
+      if (opts.useSpot) document = updatePaperFrame(document, doc.pages[0].id, added.frameId, { fillColor: '#da291c', fillSwatchId: 'spot-1' });
+      return analyzePaperPreflight(document, []).issues.map((i) => i.title);
     };
-    const hasSpotWarning = (report: ReturnType<typeof analyzePaperPreflight>) =>
-      report.issues.some((i) => i.title === 'Named spot colors will convert to process');
 
-    expect(hasSpotWarning(withSwatch('preserve-named', true))).toBe(true);   // promised preservation we can't keep → disclosed
-    expect(hasSpotWarning(withSwatch('convert-process', true))).toBe(false); // user already opted into conversion
-    expect(hasSpotWarning(withSwatch('preserve-named', false))).toBe(false); // spot defined but unused → no noise
+    // preserve-named + a plain solid spot rectangle → kept as a real /Separation plate.
+    expect(build('preserve-named', { useSpot: true, plain: true })).toContain('Spot colors kept as separation plates');
+    // preserve-named + spot on a stroked frame (not a faithful rectangle) → converts, disclosed.
+    expect(build('preserve-named', { useSpot: true, plain: false })).toContain('Spot colors will convert to process');
+    // 'warn' policy → warns that spot converts (with the "preserve named" hint).
+    expect(build('warn', { useSpot: true, plain: true })).toContain('Named spot colors will convert to process');
+    // 'convert-process' → the user opted into conversion, so no spot noise at all.
+    const cp = build('convert-process', { useSpot: true, plain: true });
+    expect(cp).not.toContain('Named spot colors will convert to process');
+    expect(cp).not.toContain('Spot colors kept as separation plates');
+    // Spot swatch defined but unused → no spot issue.
+    const unused = build('preserve-named', { useSpot: false, plain: true });
+    expect(unused).not.toContain('Spot colors kept as separation plates');
+    expect(unused).not.toContain('Spot colors will convert to process');
   });
 
   it('flags invalid PDF/X output intent combinations before export', () => {

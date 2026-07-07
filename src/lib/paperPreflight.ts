@@ -6,6 +6,7 @@ import {
 } from './paperPrintProduction';
 import { classifyFontFamily, isDisplayFontFamily } from './paperFontResolution';
 import { normalizeFamilyName } from './paperFontLibrary';
+import { collectSpotFills } from './paperPdfxSpotFills';
 
 const LIBERATION_SUBSTITUTE_NAME: Record<'serif' | 'sans' | 'mono', string> = {
   serif: 'Liberation Serif',
@@ -506,9 +507,9 @@ function documentUsesSpotColor(document: PaperDocument): boolean {
   if (spotIds.size === 0) return false;
   for (const page of document.pages) {
     for (const frame of page.frames) {
-      if (spotIds.has(frame.fillColor ?? '') || spotIds.has(frame.strokeColor ?? '') || spotIds.has(frame.typography?.color ?? '')) {
-        return true;
-      }
+      // The durable link: a fill applied from a spot swatch records its id in fillSwatchId (fillColor is
+      // only the RGB preview and can't identify the swatch).
+      if (frame.fillSwatchId && spotIds.has(frame.fillSwatchId)) return true;
     }
   }
   return false;
@@ -542,8 +543,18 @@ function analyzePrintProduction(
     issues.push(issue('warning', 'RGB colors need CMYK proofing', `${production.outputIntentLabel} is a CMYK press target, but editable Paper colors are CSS/RGB values. Check separations, rich black, and total ink coverage in a print-production tool before press handoff.`, { category: 'color' }));
   }
 
-  if (production.spotColorPolicy === 'preserve-named' && documentUsesSpotColor(document)) {
-    issues.push(issue('warning', 'Named spot colors will convert to process', `This export flattens artwork to CMYK, so named spot inks are converted to process colour — they are NOT kept as separate spot plates. For a true spot/Pantone plate, hand the spot artwork to a press-production tool.`, { category: 'color' }));
+  if (documentUsesSpotColor(document)) {
+    if (production.spotColorPolicy === 'preserve-named') {
+      const preserved = [...new Set(document.pages.flatMap((page) => collectSpotFills(page, document).preservedSpotNames))];
+      if (preserved.length > 0) {
+        issues.push(issue('info', 'Spot colors kept as separation plates', `${preserved.join('; ')} export as real /Separation plates (verify with a RIP/separations preview). A spot used on a stroke, a rotated / rounded / tinted shape, or on text still converts to process CMYK.`, { category: 'color' }));
+      } else {
+        issues.push(issue('warning', 'Spot colors will convert to process', `Spot policy is "preserve named", but no spot fill is a plain solid rectangle, so every spot ink converts to process. To keep a real /Separation plate, fill a solid, un-stroked, upright, full-opacity rectangle with the spot swatch.`, { category: 'color' }));
+      }
+    } else if (production.spotColorPolicy === 'warn') {
+      issues.push(issue('warning', 'Named spot colors will convert to process', `Spot inks convert to process CMYK — not kept as separate plates. Set the spot policy to "preserve named" to export solid spot fills as real /Separation plates.`, { category: 'color' }));
+    }
+    // 'convert-process': the user explicitly chose conversion — no warning.
   }
 
   if (production.totalInkLimitPercent > 340 && production.outputIntentColorSpace === 'cmyk') {
