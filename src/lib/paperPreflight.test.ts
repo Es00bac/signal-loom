@@ -385,6 +385,22 @@ describe('paperPreflight', () => {
       expect(spotTextIssue?.detail).toContain('PANTONE 485 C');
       expect(spotTextIssue?.detail).toContain('spot-coloured text');
     }
+
+    // preserve-named + a solid border coloured from a spot swatch → the border plates on the named plate.
+    {
+      let doc = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'SpotBorder', preset: 'comic-book' }), {
+        printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51', spotColorPolicy: 'preserve-named' },
+      });
+      doc = { ...doc, swatches: [spotSwatch] };
+      const added = addFrameToPaperPage(doc, doc.pages[0].id, {
+        kind: 'shape', xMm: 10, yMm: 10, widthMm: 50, heightMm: 30, strokeWidthMm: 2, strokeColor: '#da291c', strokeOpacity: 1, strokeStyle: 'solid',
+      });
+      const withSpotBorder = updatePaperFrame(added.document, doc.pages[0].id, added.frameId, { strokeColor: '#da291c', strokeSwatchId: 'spot-1' });
+      const spotBorderIssue = analyzePaperPreflight(withSpotBorder, []).issues.find((i) => i.title === 'Spot colors kept as separation plates');
+      expect(spotBorderIssue).toBeDefined();
+      expect(spotBorderIssue?.detail).toContain('PANTONE 485 C');
+      expect(spotBorderIssue?.detail).toContain('spot solid borders');
+    }
   });
 
   it('flags invalid PDF/X output intent combinations before export', () => {

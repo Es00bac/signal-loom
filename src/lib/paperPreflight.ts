@@ -7,7 +7,7 @@ import {
 import { classifyFontFamily, isDisplayFontFamily } from './paperFontResolution';
 import { normalizeFamilyName, resolveTextFace } from './paperFontLibrary';
 import { findUncoveredCharacters } from './paperFontVetting';
-import { collectSpotFills } from './paperPdfxSpotFills';
+import { collectSpotFills, collectSpotStrokes } from './paperPdfxSpotFills';
 import { resolveTextSpot } from './paperPdfxVectorTextFrames';
 
 const LIBERATION_SUBSTITUTE_NAME: Record<'serif' | 'sans' | 'mono', string> = {
@@ -563,6 +563,7 @@ function documentUsesSpotColor(document: PaperDocument): boolean {
       // from a spot swatch records typography.colorSwatchId (the CSS colour is only an RGB preview and can't
       // identify the swatch).
       if (frame.fillSwatchId && spotIds.has(frame.fillSwatchId)) return true;
+      if (frame.strokeSwatchId && spotIds.has(frame.strokeSwatchId)) return true;
       if (frame.typography?.colorSwatchId && spotIds.has(frame.typography.colorSwatchId)) return true;
     }
   }
@@ -615,12 +616,13 @@ function analyzePrintProduction(
   if (documentUsesSpotColor(document)) {
     if (production.spotColorPolicy === 'preserve-named') {
       const fillNames = document.pages.flatMap((page) => collectSpotFills(page, document).preservedSpotNames);
+      const strokeNames = document.pages.flatMap((page) => collectSpotStrokes(page, document).preservedSpotNames);
       const textNames = collectSpotTextNames(document);
-      const preserved = [...new Set([...fillNames, ...textNames])];
+      const preserved = [...new Set([...fillNames, ...strokeNames, ...textNames])];
       if (preserved.length > 0) {
-        issues.push(issue('info', 'Spot colors kept as separation plates', `${preserved.join('; ')} export as real /Separation plates (verify with a RIP/separations preview). Spot fills (solid, tinted, rotated, rounded, or polygon shapes) and spot-coloured text plate; a spot used on a stroke/border still converts to process CMYK.`, { category: 'color' }));
+        issues.push(issue('info', 'Spot colors kept as separation plates', `${preserved.join('; ')} export as real /Separation plates (verify with a RIP/separations preview). Spot fills (solid, tinted, rotated, rounded, or polygon shapes), spot solid borders, and spot-coloured text all plate; a dashed/dotted/double border or a speech-bubble shape still converts to process CMYK.`, { category: 'color' }));
       } else {
-        issues.push(issue('warning', 'Spot colors will convert to process', `Spot policy is "preserve named", but no spot fill is a plateable shape and no text uses a spot swatch, so every spot ink converts to process. To keep a real /Separation plate, apply the spot swatch to a fill (solid/tinted/rotated/rounded/polygon) or to text.`, { category: 'color' }));
+        issues.push(issue('warning', 'Spot colors will convert to process', `Spot policy is "preserve named", but no spot swatch is used on a plateable fill, solid border, or text, so every spot ink converts to process. To keep a real /Separation plate, apply the spot swatch to a fill, a solid border, or text.`, { category: 'color' }));
       }
     } else if (production.spotColorPolicy === 'warn') {
       issues.push(issue('warning', 'Named spot colors will convert to process', `Spot inks convert to process CMYK — not kept as separate plates. Set the spot policy to "preserve named" to export solid spot fills as real /Separation plates.`, { category: 'color' }));

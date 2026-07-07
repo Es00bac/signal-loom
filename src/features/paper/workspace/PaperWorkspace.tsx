@@ -9889,7 +9889,7 @@ function PaperInspector({
                       className="h-5 w-5 rounded border border-cyan-300/25 hover:ring-2 hover:ring-cyan-300/50"
                       key={swatch.id}
                       onClick={(event) => onUpdateFrame(event.altKey
-                        ? { strokeColor: resolveSwatchCssColor(swatch) }
+                        ? { strokeColor: resolveSwatchCssColor(swatch), strokeSwatchId: swatch.id }
                         : { fillColor: resolveSwatchCssColor(swatch), fillSwatchId: swatch.id })}
                       style={{ backgroundColor: resolveSwatchCssColor(swatch) }}
                       title={`${swatch.name}${swatch.cmyk ? ` — C${swatch.cmyk.c} M${swatch.cmyk.m} Y${swatch.cmyk.y} K${swatch.cmyk.k}` : ''} (tap: fill, Alt: stroke)`}
@@ -9911,11 +9911,11 @@ function PaperInspector({
                               return;
                             }
                             onUpdateFrame(event.altKey
-                              ? { strokeColor: resolveSwatchCssColor(swatch) }
+                              ? { strokeColor: resolveSwatchCssColor(swatch), strokeSwatchId: swatch.id }
                               : { fillColor: resolveSwatchCssColor(swatch), fillSwatchId: swatch.id });
                           }}
                           style={{ backgroundColor: resolveSwatchCssColor(swatch) }}
-                          title={`${swatch.name} (tap: fill, Alt: stroke, Shift: remove)`}
+                          title={`${swatch.name} (tap: fill, Alt: stroke${swatch.type === 'spot' ? ' → spot plate' : ''}, Shift: remove)`}
                           type="button"
                         />
                       ))}
