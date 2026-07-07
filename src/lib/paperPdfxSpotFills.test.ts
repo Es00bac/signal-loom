@@ -58,12 +58,19 @@ describe('collectSpotFills', () => {
   });
 
   it.each([
-    ['corner radius', { cornerRadiusMm: 2 }],
     ['a visible stroke', { strokeWidthMm: 0.5, strokeColor: '#000000', strokeOpacity: 1 }],
     ['a fully transparent fill', { fillOpacity: 0 }],
-  ])('leaves a spot fill with %s as process (not faithfully a solid rectangle)', (_label, patch) => {
+    ['a gradient fill', { fillGradient: { type: 'linear', fromColor: '#000000', toColor: '#ffffff', angleDeg: 0 } as PaperFrame['fillGradient'] }],
+  ])('leaves a spot fill with %s as process (not faithfully a plateable rectangle)', (_label, patch) => {
     const { doc } = docWithSpotFrame(patch);
     expect(collectSpotFills(doc.pages[0], doc).spotFills).toHaveLength(0);
+  });
+
+  it('plates a ROUNDED-corner spot rect, carrying the corner radius', () => {
+    const { doc } = docWithSpotFrame({ cornerRadiusMm: 3 });
+    const plan = collectSpotFills(doc.pages[0], doc);
+    expect(plan.spotFills).toHaveLength(1);
+    expect(plan.spotFills[0].cornerRadiusPt).toBeCloseTo(3 * PT_PER_MM, 4);
   });
 
   it('plates a ROTATED spot rect, carrying the angle + frame-centre pivot', () => {

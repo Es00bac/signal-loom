@@ -88,6 +88,8 @@ export interface PdfxSpotFill {
   rotationDeg?: number;
   centerXPt?: number;
   centerYTopPt?: number;
+  /** Optional corner radius in points — the plate draws as a rounded rectangle instead of a sharp one. */
+  cornerRadiusPt?: number;
 }
 
 /** One text box drawn as embedded vector type over the CMYK raster. Geometry is in points, measured
@@ -335,6 +337,38 @@ function rotateAboutPivotOp(
   return concatTransformationMatrix(cos, sin, -sin, cos, cx * (1 - cos) + cy * sin, cy * (1 - cos) - cx * sin);
 }
 
+/** Path ops for a rectangle with rounded corners (radius clamped to half the shorter side), from the
+ * bottom-left in PDF user space. Corners use the standard circle-to-Bézier constant. Falls back to a plain
+ * `re` rectangle when the radius is ~0. Coordinates in points. */
+function roundedRectOps(xPt: number, yBottomPt: number, wPt: number, hPt: number, rPt: number): PDFOperator[] {
+  const r = Math.max(0, Math.min(rPt, wPt / 2, hPt / 2));
+  if (r < 0.01) {
+    return [contentOp('re', [PDFNumber.of(xPt), PDFNumber.of(yBottomPt), PDFNumber.of(wPt), PDFNumber.of(hPt)])];
+  }
+  const k = 0.5522847498307936; // 4/3·(√2−1): quarter-circle Bézier control-point distance
+  const x0 = xPt;
+  const y0 = yBottomPt;
+  const x1 = xPt + wPt;
+  const y1 = yBottomPt + hPt;
+  const N = (v: number) => PDFNumber.of(v);
+  const m = (x: number, y: number) => contentOp('m', [N(x), N(y)]);
+  const l = (x: number, y: number) => contentOp('l', [N(x), N(y)]);
+  const c = (a: number, b: number, d: number, e: number, f: number, g: number) => contentOp('c', [N(a), N(b), N(d), N(e), N(f), N(g)]);
+  // Start after the bottom-left corner, go counter-clockwise, rounding each corner with one cubic.
+  return [
+    m(x0 + r, y0),
+    l(x1 - r, y0),
+    c(x1 - r + k * r, y0, x1, y0 + r - k * r, x1, y0 + r),
+    l(x1, y1 - r),
+    c(x1, y1 - r + k * r, x1 - r + k * r, y1, x1 - r, y1),
+    l(x0 + r, y1),
+    c(x0 + r - k * r, y1, x0, y1 - r + k * r, x0, y1 - r),
+    l(x0, y0 + r),
+    c(x0, y0 + r - k * r, x0 + r - k * r, y0, x0 + r, y0),
+    contentOp('h'),
+  ];
+}
+
 /** Encode a string as a PDF name body: chars outside the printable regular set become `#XX`. A spot name
  * like "PANTONE 185 C" → "PANTONE#20185#20C", so the colorant round-trips through Ghostscript/RIPs. */
 function encodePdfName(name: string): string {
@@ -486,7 +520,8 @@ export async function buildPaperPdfx(
         spotDraw.push(
           contentOp('cs', [PDFName.of(resName)]),
           contentOp('scn', [PDFNumber.of(tint)]),
-          contentOp('re', [PDFNumber.of(spot.xPt), PDFNumber.of(yBottom), PDFNumber.of(spot.widthPt), PDFNumber.of(spot.heightPt)]),
+          // Rounded corners draw as a real path; a square rect stays a plain `re`.
+          ...roundedRectOps(spot.xPt, yBottom, spot.widthPt, spot.heightPt, spot.cornerRadiusPt ?? 0),
           contentOp('f'),
           popGraphicsState(),
         );

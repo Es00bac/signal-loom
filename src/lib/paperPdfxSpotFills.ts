@@ -1,10 +1,10 @@
 // Pure builder: find the frames on a page whose fill is a real SPOT swatch and turn each into a
 // PdfxSpotFill spec for the exporter's /Separation plate, plus the ids of the frames whose fill must be
 // knocked out of the flattened raster (so the spot ink lives ONLY on its named plate, not doubled as
-// process). Conservative by construction: only an un-stroked rectangle (optionally rotated about its
-// centre) can become a spot plate — the /Separation rect has to line up exactly with the knocked-out
-// region. A partial fill opacity is kept as the spot TINT (a screen of the ink). Anything fancier (corner
-// radius, gradient, a border, a non-rectangular polygon, or a swatch with no CMYK alternate) stays process
+// process). Conservative by construction: only an un-stroked rectangle (optionally rotated about its centre
+// and/or rounded-cornered) can become a spot plate — the /Separation shape has to line up exactly with the
+// knocked-out region. A partial fill opacity is kept as the spot TINT (a screen of the ink). Anything
+// fancier (gradient, a border, a non-rectangular polygon, or a swatch with no CMYK alternate) stays process
 // CMYK and is disclosed in preflight. Framework-free + unit-testable.
 
 import type { PaperDocument, PaperFrame, PaperPage } from '../types/paper';
@@ -29,9 +29,8 @@ const num = (v: number | undefined): number => (typeof v === 'number' ? v : 0);
  * ink), which is exactly what the plate's `scn <tint>` expresses. A fully transparent fill (opacity 0) is
  * nothing to plate. */
 function isPlateableRect(frame: PaperFrame): boolean {
-  // Rotation is allowed — the plate rect is rotated about the frame centre to match the knockout.
+  // Rotation + rounded corners are allowed — the plate draws rotated/rounded to match the knockout.
   if (frame.vertices && frame.vertices.length > 0) return false;
-  if (num(frame.cornerRadiusMm) !== 0) return false;
   if (frame.fillGradient) return false;
   if (num(frame.fillOpacity) <= 0) return false; // invisible fill — no plate
   if (frame.bubbleShape) return false;
@@ -77,6 +76,7 @@ export function collectSpotFills(page: PaperPage, document: PaperDocument): Spot
       rotationDeg: rot || undefined,
       centerXPt: rot ? (bleedMm + frame.xMm + frame.widthMm / 2) * PT_PER_MM : undefined,
       centerYTopPt: rot ? (bleedMm + frame.yMm + frame.heightMm / 2) * PT_PER_MM : undefined,
+      cornerRadiusPt: num(frame.cornerRadiusMm) ? frame.cornerRadiusMm! * PT_PER_MM : undefined,
     });
     knockoutFrameIds.push(frame.id);
     preserved.add(swatch.spotName ?? swatch.name);
