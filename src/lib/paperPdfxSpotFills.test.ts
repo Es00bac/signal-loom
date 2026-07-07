@@ -61,10 +61,18 @@ describe('collectSpotFills', () => {
     ['rotated', { rotationDeg: 15 }],
     ['corner radius', { cornerRadiusMm: 2 }],
     ['a visible stroke', { strokeWidthMm: 0.5, strokeColor: '#000000', strokeOpacity: 1 }],
-    ['partial opacity', { fillOpacity: 0.5 }],
-  ])('leaves a spot fill with %s as process (not faithfully a rectangle)', (_label, patch) => {
+    ['a fully transparent fill', { fillOpacity: 0 }],
+  ])('leaves a spot fill with %s as process (not faithfully a solid rectangle)', (_label, patch) => {
     const { doc } = docWithSpotFrame(patch);
     expect(collectSpotFills(doc.pages[0], doc).spotFills).toHaveLength(0);
+  });
+
+  it('keeps a partial-opacity spot fill as a TINTED plate (fill opacity → spot screen density)', () => {
+    const { doc } = docWithSpotFrame({ fillOpacity: 0.4 });
+    const plan = collectSpotFills(doc.pages[0], doc);
+    expect(plan.spotFills).toHaveLength(1);
+    expect(plan.spotFills[0].tint).toBeCloseTo(0.4, 6);
+    expect(plan.knockoutFrameIds).toHaveLength(1); // still knocked out of the process raster
   });
 
   it('returns nothing when the document has no spot swatches', () => {
