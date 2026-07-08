@@ -116,6 +116,10 @@ let currentAssetCapabilityRootPaths = [];
 let startupProject = undefined;
 let activeWorkspace = 'flow';
 let keyboardShortcuts = {};
+// Interface language for menu labels (mirrors the renderer's settingsStore.locale, pushed over IPC).
+// The native in-window menu, the KDE global menu, and the panel menu all read this so their labels
+// track the app's language setting; defaults to English until the renderer reports its locale.
+let appLocale = 'en';
 // Lazily-created KDE Plasma global-menu controller (opt-in; null when unsupported/disabled). It
 // exports each workspace window's menu over DBus, fully decoupled from the GPU/render process.
 let globalMenuController = null;
@@ -285,6 +289,12 @@ function buildStartupSplashHtml() {
     imageUrl = pathToFileURL(SIGNAL_LOOM_SPLASH_IMAGE_PATH).href;
   }
 
+  // Bilingual, anime-title-style wordmark baked onto the splash: the Latin "Sloom Studio" over a faint
+  // oversized katakana ghost (スルーム・スタジオ) plus a small tracked katakana subtitle, on a scrim so
+  // it reads over the artwork. Kept in sync with the in-app BrandWordmark (src/components/Layout).
+  const BRAND_NAME = 'Sloom Studio';
+  const BRAND_KATAKANA = 'スルーム・スタジオ';
+
   return `<!doctype html>
 <html>
   <head>
@@ -302,8 +312,10 @@ function buildStartupSplashHtml() {
       }
 
       body {
+        position: relative;
         display: grid;
         place-items: center;
+        font-family: system-ui, -apple-system, 'Noto Sans JP', 'Noto Sans CJK JP', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif;
       }
 
       img {
@@ -314,10 +326,76 @@ function buildStartupSplashHtml() {
         user-select: none;
         -webkit-user-drag: none;
       }
+
+      .brand-scrim {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        justify-content: center;
+        padding: 16% 0 8%;
+        background: linear-gradient(to top, #020711 8%, rgba(2, 7, 17, 0.82) 42%, transparent);
+        pointer-events: none;
+      }
+
+      .brand { position: relative; text-align: center; line-height: 1; }
+      .brand__logo { position: relative; display: inline-block; padding-top: 0.35em; }
+      .brand__ghost {
+        position: absolute;
+        left: 50%;
+        top: -0.18em;
+        transform: translateX(-50%);
+        font-size: 76px;
+        font-weight: 800;
+        letter-spacing: 0.18em;
+        white-space: nowrap;
+        color: rgba(103, 232, 249, 0.10);
+      }
+      .brand__name {
+        position: relative;
+        display: block;
+        font-size: 40px;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+        color: #eef6ff;
+        text-shadow: 0 2px 18px rgba(4, 10, 24, 0.65);
+      }
+      .brand__sub {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        margin-top: 10px;
+      }
+      .brand__rule { height: 1px; width: 30px; }
+      .brand__rule--l { background: linear-gradient(90deg, transparent, rgba(103, 232, 249, 0.55)); }
+      .brand__rule--r { background: linear-gradient(90deg, rgba(103, 232, 249, 0.55), transparent); }
+      .brand__kana {
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.42em;
+        padding-left: 0.42em;
+        color: rgba(125, 224, 245, 0.92);
+        white-space: nowrap;
+      }
     </style>
   </head>
   <body>
     <img src="${imageUrl}" alt="Sloom Studio is starting" />
+    <div class="brand-scrim">
+      <div class="brand">
+        <div class="brand__logo">
+          <span class="brand__ghost">${BRAND_KATAKANA}</span>
+          <span class="brand__name">${BRAND_NAME}</span>
+        </div>
+        <div class="brand__sub">
+          <span class="brand__rule brand__rule--l"></span>
+          <span class="brand__kana">${BRAND_KATAKANA}</span>
+          <span class="brand__rule brand__rule--r"></span>
+        </div>
+      </div>
+    </div>
   </body>
 </html>`;
 }
@@ -976,6 +1054,7 @@ function menuForWorkspace(workspace) {
     isMac: process.platform === 'darwin',
     activeWorkspace: workspace,
     keyboardShortcuts,
+    locale: appLocale,
     sendCommand: sendRendererCommand,
   }));
 }
@@ -1033,6 +1112,7 @@ function getGlobalMenuController() {
       sendRendererCommand(command);
     },
     getKeyboardShortcuts: () => keyboardShortcuts,
+    getLocale: () => appLocale,
     isMac: process.platform === 'darwin',
     // The controller only runs when the global menu is explicitly opted in, so always surface its
     // lifecycle (bus connect, registrar round-trip, Plasma adoption) — not just in dev builds.
@@ -1057,6 +1137,7 @@ function getPanelMenuService() {
     },
     getActiveWorkspace: () => activeWorkspace,
     getKeyboardShortcuts: () => keyboardShortcuts,
+    getLocale: () => appLocale,
     isMac: process.platform === 'darwin',
     // Best-effort identity hints for the applet (StartupWMClass varies between our two .desktop files).
     appIdHints: ['signal-loom', 'Sloom Studio', 'signalloom', 'studio.sloom.signalloom'],
@@ -2830,6 +2911,18 @@ function installIpcHandlers() {
     return { ok: true };
   });
 
+  ipcMain.handle('signal-loom:set-locale', async (_event, locale) => {
+    // Mirror the renderer's interface-language setting into the native + KDE menus. Rebuilding the
+    // in-window menu is immediate; the global/panel menus re-read their model on the next fetch, so a
+    // revision bump + re-emit (refresh) is all Plasma needs to pick up the new labels. No-op when off.
+    appLocale = locale === 'ja' ? 'ja' : 'en';
+    installApplicationMenu();
+    globalMenuController?.refreshShortcuts();
+    panelMenuService?.refresh();
+
+    return { ok: true };
+  });
+
   ipcMain.handle('signal-loom:source-library-get-snapshot', async () => ({
     version: sourceLibraryVersion,
     snapshot: getSourceLibrarySnapshot(),
@@ -2855,7 +2948,7 @@ function installIpcHandlers() {
       title: `About ${appName}`,
       message: `${appName} ${version} — ${edition}`,
       detail:
-        'A local-first studio for generative media — node-based Flow, a layered Image editor, '
+        'A local-first multimedia studio — node-based Flow, a layered Image editor, '
         + 'print/comic Paper layout, and a Video timeline. Bring your own API keys; Sloom Studio '
         + 'never sees your keys or your work.\n\n'
         + 'Early access (beta) — expect rough edges, and thank you for trying it.\n\n'

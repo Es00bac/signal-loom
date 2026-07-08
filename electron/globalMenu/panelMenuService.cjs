@@ -110,6 +110,7 @@ function createPanelMenuService(options = {}) {
   const {
     getActiveWorkspace = () => 'flow',
     getKeyboardShortcuts = () => ({}),
+    getLocale = () => 'en',
     onCommand = () => {},
     isMac = false,
     appIdHints = [],
@@ -144,6 +145,7 @@ function createPanelMenuService(options = {}) {
         keyboardShortcuts: getKeyboardShortcuts() || {},
         isMac,
         revision,
+        locale: getLocale() || 'en',
       }),
     );
 
@@ -177,6 +179,7 @@ function createPanelMenuService(options = {}) {
             keyboardShortcuts: getKeyboardShortcuts() || {},
             isMac,
             revision,
+            locale: getLocale() || 'en',
           }),
         onCommand: (command) => {
           try { onCommand(command); } catch (err) { log('panel-menu: dbusmenu onCommand threw', String(err)); }

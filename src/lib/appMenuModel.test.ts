@@ -115,6 +115,28 @@ describe('renderer app menu model (per-workspace)', () => {
     });
   });
 
+  it('translates group + item labels when locale is ja, keeping brand names and English default', () => {
+    // Default (no locale arg) stays English — guards every other assertion in this file.
+    expect(buildAppMenuGroups('paper').map((g) => g.label))
+      .toEqual(['Project', 'File', 'Edit', 'Layout', 'Insert', 'Tools', 'View', 'Window', 'Help']);
+
+    // Japanese: chrome translates, command ids are unchanged.
+    const jaPaper = buildAppMenuGroups('paper', {}, 'ja');
+    expect(jaPaper.map((g) => g.label))
+      .toEqual(['プロジェクト', 'ファイル', '編集', 'レイアウト', '挿入', 'ツール', '表示', 'ウィンドウ', 'ヘルプ']);
+    const edit = jaPaper.find((g) => g.label === '編集');
+    expect(edit?.items.find((i) => i.command === 'edit:undo')?.label).toBe('元に戻す');
+    const project = jaPaper.find((g) => g.label === 'プロジェクト');
+    expect(project?.items.find((i) => i.command === 'paper:export-pdf')?.label).toBe('印刷用 PDF を書き出し...');
+    // Command ids never change with locale.
+    expect(edit?.items.map((i) => i.command)).toEqual(
+      buildAppMenuGroups('paper').find((g) => g.label === 'Edit')?.items.map((i) => i.command),
+    );
+
+    // The Flow workspace group is a product proper noun — it stays "Flow" even in Japanese.
+    expect(buildAppMenuGroups('flow', {}, 'ja').map((g) => g.label)).toContain('Flow');
+  });
+
   it('renders the integrated menu on web/Android and Linux Electron, but defers to the native menu on macOS/Windows', () => {
     // Web / Android — no native shell, always show the integrated menu.
     expect(shouldShowIntegratedAppMenu(false)).toBe(true);

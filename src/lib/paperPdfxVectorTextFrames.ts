@@ -16,6 +16,7 @@ import { parseHexColor, type PaperRgb } from './paperSwatches';
 import { isDisplayFontFamily, isBoldWeight } from './paperFontResolution';
 import { findUncoveredCharacters } from './paperFontVetting';
 import { resolveTextFace, selectImportedFace, normalizeFamilyName } from './paperFontLibrary';
+import { paperRichTextIsUniform } from './paperRichText';
 import type { PdfxOutlineTextFrame, PdfxVectorTextFrame } from './paperPdfxExport';
 
 const PT_PER_MM = 72 / 25.4;
@@ -111,6 +112,19 @@ export function frameTextIsVectorSafe(frame: PaperFrame, importedFonts?: readonl
   if (num(t.dropCapLines) !== 0) return false;
   if (num(t.spaceBeforeMm) !== 0 || num(t.spaceAfterMm) !== 0) return false;
   if (t.lineBreak && t.lineBreak !== 'auto') return false;
+  // Japanese features the linear/outline engine can't reproduce (it lays glyphs left-to-right, no ruby, no
+  // emphasis marks). Such frames rasterize instead, where the HTML print render draws vertical text, furigana,
+  // tate-chū-yoko and 圏点 correctly — the "never draw it wrong" gate. Covers the outline path too, since
+  // frameTextIsLinearizable re-checks this on the normalized frame (writing-mode/emphasis/text are preserved).
+  if (t.writingMode === 'vertical-rl') return false;
+  if (t.emphasis && t.emphasis !== 'none') return false;
+  if ((frame.text ?? '').includes('《')) return false; // furigana notation → would draw literal 《》 as glyphs
+  // Rich text with real per-run styling or paragraph formatting can't be drawn by the single-style vector/
+  // outline path (it would flatten every run to the frame's one style and lose bold/colour/font-swap runs,
+  // drop caps, shading, indents). Such frames rasterize instead, where the HTML print render draws every
+  // run correctly — the "never draw it wrong" gate the whole exporter is built on. Uniform richText (a lone
+  // plain run) is fully represented by the frame typography, so it stays vector-safe.
+  if (!paperRichTextIsUniform(frame.richText)) return false;
   return true;
 }
 

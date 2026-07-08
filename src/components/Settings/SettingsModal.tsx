@@ -10,6 +10,8 @@ import {
   RENDER_BACKEND_OPTIONS,
 } from '../../lib/providerCatalog';
 import { INTERFACE_THEMES, type InterfaceTheme } from '../../lib/interfaceThemes';
+import { APP_LOCALES, APP_LOCALE_ENDONYM, normalizeLocale, translate } from '../../lib/i18n';
+import { useI18n } from '../../lib/useI18n';
 import {
   listImageModelPricingEntries,
   listImageProviderHelpEntries,
@@ -67,6 +69,7 @@ export const SettingsModal: React.FC = () => {
     providerSettings,
     interfaceThemeId,
     interfaceDensity,
+    locale,
     keyboardShortcuts,
     gamepadBindings,
     settingsPanel,
@@ -74,6 +77,7 @@ export const SettingsModal: React.FC = () => {
     setDefaultModel,
     setInterfaceThemeId,
     setInterfaceDensity,
+    setLocale,
     setKeyboardShortcut,
     setGamepadBinding,
     setProviderSetting,
@@ -84,6 +88,7 @@ export const SettingsModal: React.FC = () => {
     importSettingsBackup,
     settingsBackupSupported,
   } = useSettingsStore();
+  const { t, tf } = useI18n();
   const keyStorageStatus = getApiKeyStorageStatus(apiKeys);
   const vertexPlatform: 'desktop' | 'mobile' = getSignalLoomNativeBridge()
     ? 'desktop'
@@ -128,7 +133,7 @@ export const SettingsModal: React.FC = () => {
       const warningText = summary.warnings.length ? `\n${summary.warnings.join('\n')}` : '';
       setAndroidAcceleratorStatus(`${summary.title}\n${summary.detail}${warningText}`);
     } catch (error) {
-      setAndroidAcceleratorStatus(error instanceof Error ? error.message : 'Android accelerator connection failed.');
+      setAndroidAcceleratorStatus(error instanceof Error ? error.message : t('settings.err.androidAccelFailed'));
     } finally {
       setAndroidAcceleratorChecking(false);
     }
@@ -144,12 +149,12 @@ export const SettingsModal: React.FC = () => {
       onClose={toggleSettings}
       open={isSettingsOpen}
       title={settingsPanel === 'keyboard'
-        ? 'Keyboard Shortcut Configuration'
+        ? t('settings.dialog.keyboard')
         : settingsPanel === 'gamepad'
-          ? 'Gamepad Binding Configuration'
+          ? t('settings.dialog.gamepad')
           : settingsPanel === 'license'
-            ? 'License'
-            : 'Provider Configuration'}
+            ? t('settings.dialog.license')
+            : t('settings.dialog.providers')}
       workspaceId="app-dialogs"
     >
       <div
@@ -158,8 +163,8 @@ export const SettingsModal: React.FC = () => {
         {phone ? (
           <div className="theme-surface theme-border flex items-center gap-2 overflow-x-auto border-b px-3 py-2">
             <div className="flex shrink-0 items-center gap-1 rounded-lg border border-gray-800 bg-[#0b1018] p-1">
-              {([['providers', 'Providers'], ['keyboard', 'Shortcuts'], ['gamepad', 'Gamepad'], ['license', 'License']] as const).map(
-                ([panel, label]) => (
+              {([['providers', 'settings.tab.providers'], ['keyboard', 'settings.tab.shortcuts'], ['gamepad', 'settings.tab.gamepad'], ['license', 'settings.tab.license']] as const).map(
+                ([panel, labelKey]) => (
                   <button
                     key={panel}
                     className={`whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
@@ -168,13 +173,13 @@ export const SettingsModal: React.FC = () => {
                     onClick={() => openSettings(panel)}
                     type="button"
                   >
-                    {label}
+                    {t(labelKey)}
                   </button>
                 ),
               )}
             </div>
             <button
-              aria-label="Refresh Catalogs"
+              aria-label={t('settings.refreshCatalogs')}
               className="ml-auto shrink-0 rounded-lg border border-gray-700 bg-[#111217]/60 p-2 text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
               onClick={() => void handleRefresh()}
               type="button"
@@ -185,15 +190,29 @@ export const SettingsModal: React.FC = () => {
         ) : null}
         <div className={`theme-surface theme-border ${phone ? 'hidden' : 'flex'} justify-between items-center p-5 border-b`}>
           <div>
-            <h2 className="text-xl font-semibold text-gray-100">Provider Configuration</h2>
+            <h2 className="text-xl font-semibold text-gray-100">{t('settings.header.providerConfig')}</h2>
             <p className="text-sm text-gray-400 mt-1">
               {settingsPanel === 'keyboard'
-                ? 'Customize command and tool shortcuts. Changes apply to browser/runtime shortcuts and integrated menu labels immediately.'
+                ? t('settings.desc.keyboard')
                 : settingsPanel === 'gamepad'
-                  ? 'Bind gamepad controls for each workspace. Changes apply to Android and desktop controller input immediately.'
+                  ? t('settings.desc.gamepad')
                   : settingsPanel === 'license'
-                    ? 'Free forever for noncommercial use. One key unlocks the commercial print-production exports on desktop and Android.'
-                    : `Keys are ${keyStorageStatus.encryptedAtRest ? 'stored encrypted' : 'not encrypted'} in ${keyStorageStatus.storageMedium}. ${keyStorageStatus.caveat}`}
+                    ? t('settings.desc.license')
+                    : tf('settings.desc.keysStored', {
+                        state: keyStorageStatus.encryptedAtRest ? t('settings.keys.encrypted') : t('settings.keys.notEncrypted'),
+                        medium: t(
+                          keyStorageStatus.storageMedium === 'local-storage'
+                            ? 'settings.keys.medium.localStorage'
+                            : 'settings.keys.medium.memoryOnly',
+                        ),
+                        caveat: t(
+                          keyStorageStatus.storageMedium === 'memory-only'
+                            ? 'settings.keys.caveat.memoryOnly'
+                            : keyStorageStatus.encryptedAtRest
+                              ? 'settings.keys.caveat.encrypted'
+                              : 'settings.keys.caveat.localStorage',
+                        ),
+                      })}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -206,7 +225,7 @@ export const SettingsModal: React.FC = () => {
               onClick={() => openSettings('providers')}
               type="button"
             >
-              Providers
+              {t('settings.tab.providers')}
             </button>
             <button
               className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
@@ -217,7 +236,7 @@ export const SettingsModal: React.FC = () => {
               onClick={() => openSettings('keyboard')}
               type="button"
             >
-              Shortcuts
+              {t('settings.tab.shortcuts')}
             </button>
             <button
               className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
@@ -228,7 +247,7 @@ export const SettingsModal: React.FC = () => {
               onClick={() => openSettings('gamepad')}
               type="button"
             >
-              Gamepad
+              {t('settings.tab.gamepad')}
             </button>
             <button
               className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
@@ -239,7 +258,7 @@ export const SettingsModal: React.FC = () => {
               onClick={() => openSettings('license')}
               type="button"
             >
-              License
+              {t('settings.tab.license')}
             </button>
             <button
               className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-[#111217]/60 px-3 py-2 text-sm font-medium text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
@@ -247,7 +266,7 @@ export const SettingsModal: React.FC = () => {
               type="button"
             >
               {isRefreshing ? <LoaderCircle className="animate-spin" size={14} /> : <RefreshCcw size={14} />}
-              Refresh Catalogs
+              {t('settings.refreshCatalogs')}
             </button>
             <button
               onClick={toggleSettings}
@@ -276,7 +295,16 @@ export const SettingsModal: React.FC = () => {
             />
           ) : (
             <>
-          <Section title="API Keys">
+          <Section title={`${translate('settings.section.interface', 'en')} · ${translate('settings.section.interface', 'ja')}`}>
+            <SelectInput
+              label={`${translate('settings.language', 'en')} · ${translate('settings.language', 'ja')}`}
+              onChange={(value) => setLocale(normalizeLocale(value))}
+              options={APP_LOCALES.map((code) => ({ value: code, label: APP_LOCALE_ENDONYM[code] }))}
+              value={locale}
+            />
+          </Section>
+
+          <Section title={t('settings.section.apiKeys')}>
             <div className="grid gap-4 md:grid-cols-2">
               <ApiKeyInput
                 label="Google Gemini / Veo"
@@ -338,27 +366,27 @@ export const SettingsModal: React.FC = () => {
           <ImageProviderHelpSection entries={imageProviderHelpEntries} />
           <ImageModelPricingSection entries={imageModelPricingEntries} />
 
-          <Section title="Runtime Options">
+          <Section title={t('settings.section.runtimeOptions')}>
             <div className="grid gap-4 md:grid-cols-2">
               <TextInput
-                label="OpenAI-compatible base URL"
+                label={t('settings.field.openaiBaseUrl')}
                 value={providerSettings.openaiBaseUrl}
                 onChange={(value) => setProviderSetting('openaiBaseUrl', value)}
                 placeholder="https://api.openai.com/v1"
               />
               <TextInput
-                label="Atlas base URL"
+                label={t('settings.field.atlasBaseUrl')}
                 value={providerSettings.atlasBaseUrl ?? ''}
                 onChange={(value) => setProviderSetting('atlasBaseUrl', value)}
                 placeholder="https://api.atlas-cloud.ai/v1"
               />
 
               <SelectInput
-                label="Google Gemini / Vertex credential mode"
+                label={t('settings.field.geminiCredentialMode')}
                 onChange={(value) => setProviderSetting('geminiCredentialMode', value as ProviderSettings['geminiCredentialMode'])}
                 options={[
-                  { value: 'api-key', label: 'Gemini API key' },
-                  { value: 'vertex-adc', label: 'Vertex AI via Google Cloud desktop auth' },
+                  { value: 'api-key', label: t('settings.opt.geminiApiKey') },
+                  { value: 'vertex-adc', label: t('settings.opt.vertexAdc') },
                 ]}
                 value={providerSettings.geminiCredentialMode}
               />
@@ -385,21 +413,21 @@ export const SettingsModal: React.FC = () => {
               ) : null}
 
               <SelectInput
-                label="Paper print image upscaling"
+                label={t('settings.field.paperPrintUpscale')}
                 onChange={(value) => setProviderSetting('paperPrintUpscaleMethod', value as ProviderSettings['paperPrintUpscaleMethod'])}
                 options={PAPER_PRINT_UPSCALE_METHOD_OPTIONS}
                 value={providerSettings.paperPrintUpscaleMethod}
               />
 
               <SelectInput
-                label="Paper PDF raster preset"
+                label={t('settings.field.paperPdfRasterPreset')}
                 onChange={(value) => setProviderSetting('paperPdfRasterPreset', value as ProviderSettings['paperPdfRasterPreset'])}
                 options={PAPER_PDF_RASTER_PRESET_OPTIONS}
                 value={providerSettings.paperPdfRasterPreset}
               />
 
               <NumberInput
-                label="Batch max retries"
+                label={t('settings.field.batchMaxRetries')}
                 value={providerSettings.batchMaxRetries ?? 10}
                 onChange={(value) => setProviderSetting('batchMaxRetries', value)}
                 min={0}
@@ -407,7 +435,7 @@ export const SettingsModal: React.FC = () => {
               />
 
               <NumberInput
-                label="Batch retry base delay (ms)"
+                label={t('settings.field.batchRetryBaseDelay')}
                 value={providerSettings.batchRetryBaseDelayMs ?? 30000}
                 onChange={(value) => setProviderSetting('batchRetryBaseDelayMs', value)}
                 min={1000}
@@ -415,14 +443,14 @@ export const SettingsModal: React.FC = () => {
               />
 
               <SelectInput
-                label="Local render backend"
+                label={t('settings.field.localRenderBackend')}
                 onChange={(value) => setProviderSetting('renderBackendPreference', value as ProviderSettings['renderBackendPreference'])}
                 options={RENDER_BACKEND_OPTIONS}
                 value={providerSettings.renderBackendPreference}
               />
 
               <SelectInput
-                label="Interface theme"
+                label={t('settings.field.interfaceTheme')}
                 onChange={setInterfaceThemeId}
                 options={INTERFACE_THEMES.map((theme) => ({
                   value: theme.id,
@@ -432,11 +460,11 @@ export const SettingsModal: React.FC = () => {
               />
 
               <SelectInput
-                label="Interface density"
+                label={t('settings.field.interfaceDensity')}
                 onChange={(value) => setInterfaceDensity(value === 'comfortable' ? 'comfortable' : 'compact')}
                 options={[
-                  { value: 'compact', label: 'Compact (default)' },
-                  { value: 'comfortable', label: 'Comfortable — larger small text, higher contrast' },
+                  { value: 'compact', label: t('settings.opt.densityCompact') },
+                  { value: 'comfortable', label: t('settings.opt.densityComfortable') },
                 ]}
                 value={interfaceDensity}
               />
@@ -450,14 +478,14 @@ export const SettingsModal: React.FC = () => {
               </div>
 
               <TextInput
-                label="Local native render service URL"
+                label={t('settings.field.localNativeRenderUrl')}
                 value={providerSettings.localNativeRenderUrl}
                 onChange={(value) => setProviderSetting('localNativeRenderUrl', value)}
                 placeholder="http://127.0.0.1:41736"
               />
 
               <ApiKeyInput
-                label="Local native render token"
+                label={t('settings.field.localNativeRenderToken')}
                 value={providerSettings.localNativeRenderToken ?? ''}
                 onChange={(value) => setProviderSetting('localNativeRenderToken', value)}
                 placeholder="Matches SIGNAL_LOOM_NATIVE_RENDER_TOKEN"
@@ -469,74 +497,74 @@ export const SettingsModal: React.FC = () => {
                   onChange={(event) => setProviderSetting('backendProxyEnabled', event.target.checked)}
                   type="checkbox"
                 />
-                Use backend proxy for provider runs
+                {t('settings.field.backendProxyToggle')}
               </label>
 
               <TextInput
-                label="Backend proxy URL"
+                label={t('settings.field.backendProxyUrl')}
                 value={providerSettings.backendProxyBaseUrl}
                 onChange={(value) => setProviderSetting('backendProxyBaseUrl', value)}
                 placeholder="http://127.0.0.1:8787"
               />
 
               <TextInput
-                label="Local/Open image endpoint"
+                label={t('settings.field.localOpenImageEndpoint')}
                 value={providerSettings.localOpenImageEndpointUrl ?? ''}
                 onChange={(value) => setProviderSetting('localOpenImageEndpointUrl', value)}
                 placeholder="http://127.0.0.1:8188/signal-loom-image-edit"
               />
 
               <TextInput
-                label="Local/Open image auth header"
+                label={t('settings.field.localOpenImageAuth')}
                 value={providerSettings.localOpenImageAuthHeader ?? ''}
                 onChange={(value) => setProviderSetting('localOpenImageAuthHeader', value)}
                 placeholder="Bearer ..."
               />
 
               <TextInput
-                label="Local/Open default image model"
+                label={t('settings.field.localOpenImageModel')}
                 value={providerSettings.localOpenImageDefaultModel ?? 'Qwen/Qwen-Image-Edit'}
                 onChange={(value) => setProviderSetting('localOpenImageDefaultModel', value)}
                 placeholder="Qwen/Qwen-Image-Edit"
               />
 
               <TextInput
-                label="Generic HTTP Image Endpoint"
+                label={t('settings.field.genericImageEndpoint')}
                 value={providerSettings.genericImageEndpointUrl ?? ''}
                 onChange={(value) => setProviderSetting('genericImageEndpointUrl', value)}
                 placeholder="http://127.0.0.1:5000/inpaint"
               />
 
               <TextInput
-                label="Generic HTTP Image Auth Header"
+                label={t('settings.field.genericImageAuth')}
                 value={providerSettings.genericImageAuthHeader ?? ''}
                 onChange={(value) => setProviderSetting('genericImageAuthHeader', value)}
                 placeholder="Bearer ..."
               />
 
               <TextInput
-                label="Android accelerator URL"
+                label={t('settings.field.androidAccelUrl')}
                 value={providerSettings.androidAcceleratorBaseUrl ?? ''}
                 onChange={(value) => setProviderSetting('androidAcceleratorBaseUrl', value)}
                 placeholder="http://192.168.1.42:8788"
               />
 
               <TextInput
-                label="Android accelerator pairing token"
+                label={t('settings.field.androidAccelToken')}
                 value={providerSettings.androidAcceleratorAuthToken ?? ''}
                 onChange={(value) => setProviderSetting('androidAcceleratorAuthToken', value)}
-                placeholder="Shown by the companion app"
+                placeholder={t('settings.ph.androidToken')}
               />
 
               <TextInput
-                label="Android default upscaler"
+                label={t('settings.field.androidDefaultUpscaler')}
                 value={providerSettings.androidAcceleratorDefaultUpscaler ?? 'upscaler_realistic'}
                 onChange={(value) => setProviderSetting('androidAcceleratorDefaultUpscaler', value)}
                 placeholder="upscaler_realistic"
               />
 
               <TextInput
-                label="Android default image model"
+                label={t('settings.field.androidDefaultImageModel')}
                 value={providerSettings.androidAcceleratorDefaultImageModel ?? defaultModels.image.android}
                 onChange={(value) => {
                   setProviderSetting('androidAcceleratorDefaultImageModel', value);
@@ -547,10 +575,10 @@ export const SettingsModal: React.FC = () => {
 
               <div className="md:col-span-2 rounded-xl border border-gray-800 bg-[#111217]/50 px-4 py-3 text-xs leading-5 text-gray-400">
                 <div>
-                  Pair the Sloom Studio Android Accelerator companion on the same Wi-Fi network, then paste its URL and token here. Image nodes can generate on the phone, and Paper, Image/Photos, and Flow auto-upscale paths use the Android NPU/GPU path first when configured, with $0 provider spend and final exact-DPI fit inside Sloom Studio where needed.
+                  {t('settings.help.androidAccelerator1')}
                 </div>
                 <div className="mt-2">
-                  For the current Local Dream Play Store downloads, connect to the standalone bridge companion. The one-app Sloom Studio Android build is supported too, but Android private app storage means it must download its own model and upscaler files before it can replace the bridge.
+                  {t('settings.help.androidAccelerator2')}
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                   <button
@@ -560,7 +588,7 @@ export const SettingsModal: React.FC = () => {
                     type="button"
                   >
                     {androidAcceleratorChecking ? <LoaderCircle className="animate-spin" size={13} /> : <RefreshCcw size={13} />}
-                    Test Android Accelerator
+                    {t('settings.testAndroidAccelerator')}
                   </button>
                   {androidAcceleratorStatus ? (
                     <span className="whitespace-pre-line text-gray-300">{androidAcceleratorStatus}</span>
@@ -570,7 +598,7 @@ export const SettingsModal: React.FC = () => {
 
               {apiKeys.elevenlabs.trim() ? (
                 <SelectInput
-                  label="Default ElevenLabs voice"
+                  label={t('settings.field.defaultElevenLabsVoice')}
                   onChange={(value) => setProviderSetting('elevenlabsVoiceId', value)}
                   options={voiceOptions.map((voice) => ({
                     value: voice.value,
@@ -580,7 +608,7 @@ export const SettingsModal: React.FC = () => {
                 />
               ) : (
                 <div className="rounded-xl border border-gray-800 bg-[#111217]/50 px-4 py-3 text-sm text-gray-400">
-                  Add an ElevenLabs key to populate voices.
+                  {t('settings.help.elevenlabsEmpty')}
                 </div>
               )}
             </div>
@@ -593,34 +621,31 @@ export const SettingsModal: React.FC = () => {
           </Section>
 
           {vertexPlatform === 'mobile' && (
-            <Section title="Android LAN Server">
+            <Section title={t('settings.section.androidLanServer')}>
               <div className="rounded-xl border border-gray-800 bg-[#111217]/50 px-4 py-3 text-sm text-gray-400 mb-4">
-                Serve your projects and assets to other devices on your local Wi-Fi network (port 8723).
-                Access is protected by pairing: the phone shows a one-time PIN and a desktop browser must
-                enter it to connect — no certificates, no browser warnings. Set a fixed PIN below to reuse
-                the same code, or leave it blank to auto-generate a new PIN each time the server starts.
+                {t('settings.help.lanServer')}
               </div>
               <div className="grid gap-4 md:grid-cols-2">
                 <SelectInput
-                  label="LAN Server Toggle"
+                  label={t('settings.field.lanServerToggle')}
                   value={providerSettings.androidLanServerEnabled ? 'enabled' : 'disabled'}
                   onChange={(val) => setProviderSetting('androidLanServerEnabled', val === 'enabled')}
                   options={[
-                    { value: 'enabled', label: 'Enabled' },
-                    { value: 'disabled', label: 'Disabled (Auto-start off)' }
+                    { value: 'enabled', label: t('settings.opt.enabled') },
+                    { value: 'disabled', label: t('settings.opt.disabledAutostart') }
                   ]}
                 />
                 <TextInput
-                  label="Pairing PIN (optional fixed code)"
+                  label={t('settings.field.pairingPin')}
                   value={providerSettings.androidLanServerPin ?? ''}
                   onChange={(val) => setProviderSetting('androidLanServerPin', val)}
-                  placeholder="Auto-generated each session if empty"
+                  placeholder={t('settings.ph.lanPin')}
                 />
               </div>
             </Section>
           )}
 
-          <Section title="Default Text Models">
+          <Section title={t('settings.section.defaultTextModels')}>
             <ConfiguredProviderGrid
               capability="text"
               configuredProviders={configuredTextProviders}
@@ -632,7 +657,7 @@ export const SettingsModal: React.FC = () => {
             />
           </Section>
 
-          <Section title="Default Image Models">
+          <Section title={t('settings.section.defaultImageModels')}>
             <ConfiguredProviderGrid
               capability="image"
               configuredProviders={configuredImageProviders}
@@ -644,7 +669,7 @@ export const SettingsModal: React.FC = () => {
             />
           </Section>
 
-          <Section title="Default Video Models">
+          <Section title={t('settings.section.defaultVideoModels')}>
             <ConfiguredProviderGrid
               capability="video"
               configuredProviders={configuredVideoProviders}
@@ -656,7 +681,7 @@ export const SettingsModal: React.FC = () => {
             />
           </Section>
 
-          <Section title="Default Audio Models">
+          <Section title={t('settings.section.defaultAudioModels')}>
             <ConfiguredProviderGrid
               capability="audio"
               configuredProviders={configuredAudioProviders}
@@ -678,7 +703,7 @@ export const SettingsModal: React.FC = () => {
             className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors"
             type="button"
           >
-            Save & Close
+            {t('settings.saveAndClose')}
           </button>
         </div>
       </div>
@@ -695,19 +720,20 @@ function KeyboardShortcutsSection({
   onChange: (command: NativeMenuCommand, shortcut: string) => void;
   onReset: () => void;
 }) {
+  const { t } = useI18n();
   return (
-    <Section title="Keyboard Shortcuts">
+    <Section title={t('settings.section.keyboardShortcuts')}>
       <div className="rounded-xl border border-gray-800 bg-[#111217]/50 p-4">
         <div className="mb-4 flex items-center justify-between gap-4">
           <div className="text-sm text-gray-400">
-            Use labels like <span className="text-gray-200">Ctrl+Shift+Z</span>, <span className="text-gray-200">Shift+R</span>, <span className="text-gray-200">Del</span>, or <span className="text-gray-200">F1</span>.
+            {t('settings.keyboard.hint')}
           </div>
           <button
             className="rounded-lg border border-gray-700 bg-[#0d0f15] px-3 py-2 text-sm font-medium text-gray-200 hover:border-gray-500 hover:text-white"
             onClick={onReset}
             type="button"
           >
-            Reset Defaults
+            {t('settings.resetDefaults')}
           </button>
         </div>
         <div className="grid gap-2">
@@ -724,13 +750,13 @@ function KeyboardShortcutsSection({
                   <div className="text-xs text-gray-500">{command}</div>
                 </div>
                 <div className="text-xs text-gray-500">
-                  Default: <span className="text-gray-300">{defaultShortcut || 'None'}</span>
+                  {t('settings.keyboard.defaultLabel')} <span className="text-gray-300">{defaultShortcut || t('settings.common.none')}</span>
                 </div>
                 <input
                   className="w-full rounded-lg border border-gray-700 bg-[#111217] px-2.5 py-2 text-sm text-gray-100 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/40"
                   onBlur={(event) => onChange(command, normalizeShortcutLabel(event.target.value))}
                   onChange={(event) => onChange(command, event.target.value)}
-                  placeholder={defaultShortcut || 'No shortcut'}
+                  placeholder={defaultShortcut || t('settings.keyboard.noShortcut')}
                   type="text"
                   value={current}
                 />
@@ -752,13 +778,14 @@ function GamepadBindingsSection({
   onChange: (workspace: GamepadWorkspace, controlId: GamepadControlId, patch: Partial<GamepadControlBinding>) => void;
   onReset: () => void;
 }) {
+  const { t, tf } = useI18n();
   const [activeWorkspace, setActiveWorkspace] = React.useState<GamepadWorkspace>('flow');
   const commandOptions = getGamepadCommandOptionsForWorkspace(activeWorkspace);
   const workspaceBindings = gamepadBindings[activeWorkspace];
   const activeWorkspaceLabel = GAMEPAD_WORKSPACES.find((workspace) => workspace.id === activeWorkspace)?.label ?? activeWorkspace;
 
   return (
-    <Section title="Gamepad Bindings">
+    <Section title={t('settings.section.gamepadBindings')}>
       <div className="rounded-xl border border-gray-800 bg-[#111217]/50 p-4" data-gamepad-bindings-panel="true">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex rounded-lg border border-gray-800 bg-[#0b1018] p-1">
@@ -783,7 +810,7 @@ function GamepadBindingsSection({
             onClick={onReset}
             type="button"
           >
-            Reset Defaults
+            {t('settings.resetDefaults')}
           </button>
         </div>
         <div className="grid gap-2">
@@ -799,12 +826,12 @@ function GamepadBindingsSection({
                   <div className="text-xs capitalize text-gray-500">{control.kind}</div>
                 </div>
                 <select
-                  aria-label={`${activeWorkspaceLabel} ${control.label} command`}
+                  aria-label={tf('settings.gamepad.commandAria', { workspace: activeWorkspaceLabel, control: control.label })}
                   className="w-full rounded-lg border border-gray-700 bg-[#111217] px-2.5 py-2 text-sm text-gray-100 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/40"
                   onChange={(event) => onChange(activeWorkspace, control.id, { command: event.target.value as NativeMenuCommand | '' })}
                   value={binding.command}
                 >
-                  <option value="">None</option>
+                  <option value="">{t('settings.common.none')}</option>
                   {commandOptions.map((command) => (
                     <option key={command} value={command}>
                       {formatShortcutCommandLabel(command)}
@@ -837,11 +864,12 @@ function GamepadAdvancedControls({
   kind: string;
   onChange: (patch: Partial<GamepadControlBinding>) => void;
 }) {
+  const { t } = useI18n();
   const isAnalog = kind === 'axis' || kind === 'trigger';
   return (
     <div className="grid gap-2 text-xs text-gray-400 sm:grid-cols-2">
       <NumberSetting
-        label="Threshold"
+        label={t('settings.gamepad.threshold')}
         max={1}
         min={0.05}
         onChange={(threshold) => onChange({ threshold })}
@@ -851,7 +879,7 @@ function GamepadAdvancedControls({
       {kind === 'axis' ? (
         <>
           <NumberSetting
-            label="Deadzone"
+            label={t('settings.gamepad.deadzone')}
             max={0.95}
             min={0}
             onChange={(deadzone) => onChange({ deadzone })}
@@ -859,7 +887,7 @@ function GamepadAdvancedControls({
             value={binding.deadzone}
           />
           <NumberSetting
-            label="Sensitivity"
+            label={t('settings.gamepad.sensitivity')}
             max={3}
             min={0.1}
             onChange={(sensitivity) => onChange({ sensitivity })}
@@ -872,13 +900,13 @@ function GamepadAdvancedControls({
               onChange={(event) => onChange({ inverted: event.target.checked })}
               type="checkbox"
             />
-            Invert
+            {t('settings.gamepad.invert')}
           </label>
         </>
       ) : null}
       {!isAnalog ? (
         <div className="rounded-lg border border-gray-800 bg-[#111217] px-2 py-2 text-gray-500">
-          Digital edge trigger
+          {t('settings.gamepad.digitalEdge')}
         </div>
       ) : null}
       <input name={`gamepad-${controlId}-marker`} type="hidden" value={controlId} />
@@ -929,7 +957,7 @@ type SettingsBackupStatus = { tone: 'ok' | 'error' | 'info'; message: string } |
 function backupErrorMessage(error: unknown): string {
   return error instanceof Error && error.message
     ? error.message
-    : 'Something went wrong with the settings backup.';
+    : translate('settings.backup.errGeneric', useSettingsStore.getState().locale);
 }
 
 // Settings-backup export rides the shared Android-aware download helper: the plain anchor-click
@@ -977,11 +1005,11 @@ function SettingsBackupSection({
   const handleExport = async () => {
     resetFeedback();
     if (passphrase.length < 8) {
-      setStatus({ tone: 'error', message: 'Choose a passphrase of at least 8 characters — you will need it to restore.' });
+      setStatus({ tone: 'error', message: t('settings.backup.errMinChars') });
       return;
     }
     if (passphrase !== confirmPassphrase) {
-      setStatus({ tone: 'error', message: 'The two passphrases do not match.' });
+      setStatus({ tone: 'error', message: t('settings.backup.errMismatch') });
       return;
     }
     setBusy(true);
@@ -992,7 +1020,7 @@ function SettingsBackupSection({
       downloadTextFile(`signal-loom-settings-${stamp}.slbackup`, blob);
       setStatus({
         tone: 'ok',
-        message: 'Encrypted backup saved. Keep the file and its passphrase somewhere safe — the passphrase cannot be recovered.',
+        message: t('settings.backup.saved'),
       });
       setPassphrase('');
       setConfirmPassphrase('');
@@ -1010,22 +1038,22 @@ function SettingsBackupSection({
       const text = await file.text();
       setImportText(text);
       setImportFileName(file.name);
-      setStatus({ tone: 'info', message: `Loaded ${file.name}. Enter its passphrase, then Restore.` });
+      setStatus({ tone: 'info', message: tf('settings.backup.loaded', { name: file.name }) });
     } catch {
-      setStatus({ tone: 'error', message: 'Could not read that file.' });
+      setStatus({ tone: 'error', message: t('settings.backup.errReadFile') });
     }
   };
 
   const handleImport = async () => {
     setStatus(null);
     if (!importText.trim()) {
-      setStatus({ tone: 'error', message: 'Choose a backup file or paste its contents first.' });
+      setStatus({ tone: 'error', message: t('settings.backup.errNoFile') });
       return;
     }
     setBusy(true);
     try {
       await importSettingsBackup(importText, passphrase);
-      setStatus({ tone: 'ok', message: 'Settings restored — your keys and credentials are back in place.' });
+      setStatus({ tone: 'ok', message: t('settings.backup.restored') });
       setImportText('');
       setImportFileName('');
       setPassphrase('');
@@ -1036,6 +1064,7 @@ function SettingsBackupSection({
     }
   };
 
+  const { t, tf } = useI18n();
   const statusToneClass = status?.tone === 'ok'
     ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'
     : status?.tone === 'error'
@@ -1043,25 +1072,23 @@ function SettingsBackupSection({
       : 'border-blue-500/30 bg-blue-500/10 text-blue-100';
 
   return (
-    <Section title="Settings Backup">
+    <Section title={t('settings.section.settingsBackup')}>
       <div className="space-y-4 rounded-xl border border-gray-800 bg-[#111217]/50 p-4">
         <div className="flex items-start gap-3 text-sm text-gray-400">
           <ShieldCheck className="mt-0.5 shrink-0 text-emerald-300" size={18} />
           <p className="leading-5">
-            Save an encrypted copy of your API keys, provider credentials, and editor preferences so you can
-            restore them if the app data is ever lost. The backup is locked with a passphrase you choose and is
-            useless without it — Sloom Studio never uploads it anywhere. This is optional.
+            {t('settings.backup.intro')}
           </p>
         </div>
 
         {!supported ? (
           <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-            Encrypted backups aren’t available in this environment (no Web Crypto support).
+            {t('settings.backup.unavailable')}
           </div>
         ) : (
           <>
             <div className="flex w-fit rounded-lg border border-gray-800 bg-[#0b1018] p-1">
-              {([['export', 'Export'], ['import', 'Restore']] as const).map(([value, label]) => (
+              {([['export', 'settings.backup.modeExport'], ['import', 'settings.backup.modeRestore']] as const).map(([value, labelKey]) => (
                 <button
                   className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
                     mode === value ? 'bg-blue-500/20 text-blue-100' : 'text-gray-400 hover:text-gray-100'
@@ -1070,7 +1097,7 @@ function SettingsBackupSection({
                   onClick={() => switchMode(value)}
                   type="button"
                 >
-                  {label}
+                  {t(labelKey)}
                 </button>
               ))}
             </div>
@@ -1080,16 +1107,16 @@ function SettingsBackupSection({
                 <div className="grid gap-3 md:grid-cols-2">
                   <BackupPassphraseInput
                     autoComplete="new-password"
-                    label="Backup passphrase"
+                    label={t('settings.backup.passphrase')}
                     onChange={setPassphrase}
-                    placeholder="At least 8 characters"
+                    placeholder={t('settings.backup.passphraseMin')}
                     value={passphrase}
                   />
                   <BackupPassphraseInput
                     autoComplete="new-password"
-                    label="Confirm passphrase"
+                    label={t('settings.backup.confirmPassphrase')}
                     onChange={setConfirmPassphrase}
-                    placeholder="Re-enter passphrase"
+                    placeholder={t('settings.backup.reenter')}
                     value={confirmPassphrase}
                   />
                 </div>
@@ -1100,12 +1127,12 @@ function SettingsBackupSection({
                   type="button"
                 >
                   {busy ? <LoaderCircle className="animate-spin" size={14} /> : <Download size={14} />}
-                  Export encrypted backup
+                  {t('settings.backup.export')}
                 </button>
                 {exportedBlob ? (
                   <div className="space-y-2">
                     <div className="text-xs text-gray-500">
-                      If the download didn’t start, copy this text and save it as a <span className="text-gray-300">.slbackup</span> file:
+                      {tf('settings.backup.downloadHint', { ext: '.slbackup' })}
                     </div>
                     <textarea
                       className="h-28 w-full resize-y rounded-lg border border-gray-700 bg-[#0d0f15] p-2 font-mono text-[11px] text-gray-300 outline-none"
@@ -1117,7 +1144,7 @@ function SettingsBackupSection({
                       onClick={() => void navigator.clipboard?.writeText(exportedBlob)}
                       type="button"
                     >
-                      Copy to clipboard
+                      {t('settings.backup.copyToClipboard')}
                     </button>
                   </div>
                 ) : null}
@@ -1138,21 +1165,21 @@ function SettingsBackupSection({
                     type="button"
                   >
                     <Upload size={14} />
-                    Choose backup file
+                    {t('settings.backup.chooseFile')}
                   </button>
                   {importFileName ? <span className="text-xs text-gray-400">{importFileName}</span> : null}
                 </div>
                 <textarea
                   className="h-24 w-full resize-y rounded-lg border border-gray-700 bg-[#0d0f15] p-2 font-mono text-[11px] text-gray-300 outline-none focus:border-blue-500"
                   onChange={(event) => setImportText(event.target.value)}
-                  placeholder="…or paste the backup file contents here"
+                  placeholder={t('settings.backup.pasteHere')}
                   value={importText}
                 />
                 <BackupPassphraseInput
                   autoComplete="off"
-                  label="Backup passphrase"
+                  label={t('settings.backup.passphrase')}
                   onChange={setPassphrase}
-                  placeholder="The passphrase used to create this backup"
+                  placeholder={t('settings.backup.restorePassphrase')}
                   value={passphrase}
                 />
                 <button
@@ -1162,10 +1189,10 @@ function SettingsBackupSection({
                   type="button"
                 >
                   {busy ? <LoaderCircle className="animate-spin" size={14} /> : <Upload size={14} />}
-                  Restore from backup
+                  {t('settings.backup.restoreFromBackup')}
                 </button>
                 <div className="text-xs text-gray-500">
-                  Restoring overwrites your current keys and credentials with the ones in the backup.
+                  {t('settings.backup.restoreWarning')}
                 </div>
               </form>
             )}
@@ -1209,11 +1236,11 @@ function BackupPassphraseInput({
 }
 
 function ImageProviderHelpSection({ entries }: { entries: ImageProviderHelpEntry[] }) {
+  const { t } = useI18n();
   return (
-    <Section title="Image Provider Setup & Costs">
+    <Section title={t('settings.section.imageProviderSetup')}>
       <p className="text-xs text-gray-500">
-        Tap a provider to expand its setup steps, costs, and troubleshooting — most of this is only needed
-        once, when you first sign up.
+        {t('settings.help.imageProviderIntro')}
       </p>
       <div className="grid gap-3 lg:grid-cols-2">
         {entries.map((entry) => (
@@ -1228,6 +1255,7 @@ function ImageProviderHelpCard({ entry }: { entry: ImageProviderHelpEntry }) {
   // Collapsed by default: the setup instructions are bulky and only relevant during first-time signup,
   // so the card shows just the identity + sign-up/pricing links until the user expands it.
   const [expanded, setExpanded] = React.useState(false);
+  const { t, tf } = useI18n();
 
   return (
     <article className="rounded-xl border border-gray-800 bg-[#111217]/50 text-sm text-gray-300">
@@ -1245,22 +1273,22 @@ function ImageProviderHelpCard({ entry }: { entry: ImageProviderHelpEntry }) {
           <span className="min-w-0">
             <span className="block font-semibold text-gray-100">{entry.label}</span>
             <span className="mt-1 block text-xs leading-5 text-gray-400">{entry.capabilitySummary}</span>
-            <span className="mt-1 block text-[11px] text-gray-500">Pricing verified {entry.lastVerifiedDate}</span>
+            <span className="mt-1 block text-[11px] text-gray-500">{tf('settings.help.pricingVerified', { date: entry.lastVerifiedDate })}</span>
           </span>
         </button>
         <div className="flex shrink-0 gap-2 text-xs">
           <a className="text-blue-300 hover:text-blue-100" href={entry.signupUrl} rel="noreferrer" target="_blank">
-            Sign up
+            {t('settings.help.signUp')}
           </a>
           <a className="text-blue-300 hover:text-blue-100" href={entry.pricingUrl} rel="noreferrer" target="_blank">
-            Pricing
+            {t('settings.help.pricing')}
           </a>
         </div>
       </div>
       {expanded ? (
         <div className="space-y-2 border-t border-gray-800 px-4 pb-4 pt-3 text-xs leading-5 text-gray-400">
           <div>
-            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Configure</div>
+            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">{t('settings.help.configure')}</div>
             <ol className="mt-1 list-decimal space-y-1 pl-4">
               {entry.setupSteps.map((step) => (
                 <li key={step}>{step}</li>
@@ -1268,7 +1296,7 @@ function ImageProviderHelpCard({ entry }: { entry: ImageProviderHelpEntry }) {
             </ol>
           </div>
           <div>
-            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Cost</div>
+            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">{t('settings.help.cost')}</div>
             <ul className="mt-1 list-disc space-y-1 pl-4">
               {entry.costNotes.map((note) => (
                 <li key={note}>{note}</li>
@@ -1276,13 +1304,13 @@ function ImageProviderHelpCard({ entry }: { entry: ImageProviderHelpEntry }) {
             </ul>
           </div>
           <div>
-            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Operations</div>
+            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">{t('settings.help.operations')}</div>
             <p className="mt-1 text-gray-400">
               {entry.supportedOperations.join(', ')}
             </p>
           </div>
           <div>
-            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Spend Controls</div>
+            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">{t('settings.help.spendControls')}</div>
             <ul className="mt-1 list-disc space-y-1 pl-4">
               {entry.spendControls.map((note) => (
                 <li key={note}>{note}</li>
@@ -1290,7 +1318,7 @@ function ImageProviderHelpCard({ entry }: { entry: ImageProviderHelpEntry }) {
             </ul>
           </div>
           <div>
-            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">Troubleshooting</div>
+            <div className="font-semibold uppercase tracking-[0.16em] text-gray-500">{t('settings.help.troubleshooting')}</div>
             <ul className="mt-1 list-disc space-y-1 pl-4">
               {entry.troubleshooting.map((note) => (
                 <li key={note}>{note}</li>
@@ -1299,7 +1327,7 @@ function ImageProviderHelpCard({ entry }: { entry: ImageProviderHelpEntry }) {
           </div>
           {entry.apiKeyUrl ? (
             <a className="inline-flex text-blue-300 hover:text-blue-100" href={entry.apiKeyUrl} rel="noreferrer" target="_blank">
-              Open API key page
+              {t('settings.help.openApiKeyPage')}
             </a>
           ) : null}
         </div>
@@ -1309,15 +1337,16 @@ function ImageProviderHelpCard({ entry }: { entry: ImageProviderHelpEntry }) {
 }
 
 function ImageModelPricingSection({ entries }: { entries: ImageModelPricingEntry[] }) {
+  const { t } = useI18n();
   return (
-    <Section title="Image Model Cost Table">
+    <Section title={t('settings.section.imageModelCostTable')}>
       <div className="overflow-hidden rounded-xl border border-gray-800 bg-[#111217]/50">
         <div className="grid grid-cols-[1.1fr_1.6fr_1fr_1fr_0.9fr] gap-3 border-b border-gray-800 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">
-          <span>Provider</span>
-          <span>Model</span>
-          <span>Operation</span>
-          <span>Cost</span>
-          <span>Confidence</span>
+          <span>{t('settings.pricing.provider')}</span>
+          <span>{t('settings.pricing.model')}</span>
+          <span>{t('settings.pricing.operation')}</span>
+          <span>{t('settings.pricing.cost')}</span>
+          <span>{t('settings.pricing.confidence')}</span>
         </div>
         <div className="max-h-80 overflow-y-auto">
           {entries.map((entry) => (
@@ -1341,7 +1370,7 @@ function ImageModelPricingSection({ entries }: { entries: ImageModelPricingEntry
         </div>
       </div>
       <div className="text-xs leading-5 text-gray-500">
-        Exact rows use published fixed prices. Estimated rows are pre-run estimates and provider-routed rows depend on the selected endpoint or Hugging Face provider.
+        {t('settings.pricing.footer')}
       </div>
     </Section>
   );
@@ -1388,9 +1417,10 @@ interface ThemeGridProps {
 }
 
 function ThemeGrid({ activeThemeId, onChange, themes }: ThemeGridProps) {
+  const { t } = useI18n();
   return (
     <div className="space-y-2">
-      <div className="text-sm font-medium text-gray-300">Theme previews</div>
+      <div className="text-sm font-medium text-gray-300">{t('settings.grid.themePreviews')}</div>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {themes.map((theme) => {
           const selected = theme.id === activeThemeId;
@@ -1435,12 +1465,13 @@ interface CatalogStatusProps {
 }
 
 function CatalogStatus({ isRefreshing, refreshError, lastRefreshedAt }: CatalogStatusProps) {
+  const { t, tf } = useI18n();
   return (
     <div className="rounded-xl border border-gray-800 bg-[#111217]/50 px-4 py-3 text-sm text-gray-400">
-      {isRefreshing ? 'Refreshing provider catalogs…' : 'Catalogs refresh automatically after you edit keys.'}
-      {lastRefreshedAt ? ` Last refresh: ${new Date(lastRefreshedAt).toLocaleString()}.` : ''}
+      {isRefreshing ? t('settings.catalog.refreshing') : t('settings.catalog.auto')}
+      {lastRefreshedAt ? ` ${tf('settings.catalog.lastRefresh', { time: new Date(lastRefreshedAt).toLocaleString() })}` : ''}
       <div className="mt-2 text-xs text-gray-500">
-        Native FFmpeg rendering is local-machine only. Auto prefers AMD VAAPI GPU encode when the token-protected local render service reports it, then native CPU, then browser FFmpeg. Use the forced AMD VAAPI option when CPU fallback is not acceptable.
+        {t('settings.catalog.ffmpegNote')}
       </div>
       {refreshError ? (
         <div className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-100">
@@ -1466,10 +1497,11 @@ function ConfiguredProviderGrid<TCapability extends Capability>({
   modelCatalog,
   onChange,
 }: ConfiguredProviderGridProps<TCapability>) {
+  const { t } = useI18n();
   if (configuredProviders.length === 0) {
     return (
       <div className="rounded-xl border border-gray-800 bg-[#111217]/50 px-4 py-3 text-sm text-gray-400">
-        Add a provider key above to populate this model list.
+        {t('settings.grid.emptyProviders')}
       </div>
     );
   }
@@ -1495,9 +1527,9 @@ function ConfiguredProviderGrid<TCapability extends Capability>({
             value={modelValue}
             />
             <TextInput
-              label="Model ID override"
+              label={t('settings.field.modelIdOverride')}
               onChange={(value) => onChange(capability, provider, value)}
-              placeholder="Paste a newly announced model ID"
+              placeholder={t('settings.ph.modelId')}
               value={modelValue}
             />
           </div>

@@ -3,11 +3,15 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Print-ready comic &amp; book export — KDP, PDF/X, CMYK | Sloom Studio (Signal Loom)</title>
-<meta name="description" content="Lay out and export print-ready comics and books: KDP, PDF/X-4, PDF/X-1a, IDML, and CMYK/spot. One-time purchase, no subscription, in an app you own. Free to download." />
+<title>Print-ready comic &amp; book export — KDP, CMYK, bleed &amp; trim | Sloom Studio (Signal Loom)</title>
+<meta name="description" content="Lay out and export print-ready comics and books: KDP-ready PDF, conformant PDF/X-1a/X-4 with real CMYK/ICC, named spot Separation plates, a structurally valid Adobe IDML package, plus CBZ and webtoon. One-time purchase, no subscription, in an app you own. Free to download." />
 <meta name="theme-color" content="#04070d" />
 <link rel="canonical" href="https://sloom.studio/print-ready-comics.html" />
-<meta property="og:title" content="Print-ready comic & book export — KDP, PDF/X, CMYK" />
+<link rel="alternate" hreflang="en" href="https://sloom.studio/print-ready-comics.html" />
+<link rel="alternate" hreflang="ja" href="https://sloom.studio/ja/print-ready-comics.html" />
+<link rel="alternate" hreflang="x-default" href="https://sloom.studio/print-ready-comics.html" />
+
+<meta property="og:title" content="Print-ready comic & book export — KDP, CMYK, bleed & trim" />
 <meta property="og:description" content="Lay out and export print-ready comics and books. One-time purchase, no subscription, an app you own." />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://sloom.studio/print-ready-comics.html" />
@@ -57,6 +61,7 @@
       <a href="changelog.html">Changelog</a>
       <a href="index.html#license">Download</a>
       <a href="privacy.html">Privacy</a>
+      <a href="ja/print-ready-comics.html" hreflang="ja">日本語</a>
     </div>
     <a class="nav-cta" href="index.html#license">Get it — $17.99</a>
     <button class="nav-hamburger" aria-label="Toggle navigation" onclick="document.getElementById('nav-links').classList.toggle('open')">
@@ -66,21 +71,24 @@
 </header>
 
 <main class="lp">
-  <h1>Export print-ready comics and books. <em>KDP, PDF/X, CMYK.</em></h1>
+  <h1>Export print-ready comics and books. <em>KDP-ready. CMYK. Built for print.</em></h1>
   <p class="lede">You drew the pages. Now you need clean files a printer or Amazon KDP will actually accept, without renting your software by the month. Sloom Studio lays out your comic or book and exports proper print production files, in an app you buy once and own.</p>
   <div class="cta">
-    <a class="btn btn-primary" href="downloads/SignalLoom-Setup-0.9.10.exe" download>Download free — Windows</a>
-    <a class="btn btn-ghost" href="downloads/SignalLoom-0.9.10.AppImage" download>Linux AppImage</a>
+    <a class="btn btn-primary" href="downloads/SloomStudio-Setup.exe" download>Download free — Windows</a>
+    <a class="btn btn-ghost" href="downloads/SloomStudio.AppImage" download>Linux AppImage</a>
     <a class="btn btn-ghost" href="https://buy.stripe.com/7sY28rfcmaRxaBVgQ57Re02">Buy the license — $17.99</a>
   </div>
-  <p class="fineline" style="margin-bottom:8px">On a Mac? <b>Experimental macOS builds</b> (unsigned): <a href="downloads/SignalLoom-0.9.10-mac-arm64.dmg" download>Apple&nbsp;Silicon</a> &middot; <a href="downloads/SignalLoom-0.9.10-mac-intel.dmg" download>Intel</a>. They're not signed yet, so <a href="macos-install.html">here's how to open them the proper way &rarr;</a></p>
+  <p class="fineline" style="margin-bottom:8px">On a Mac? <b>Experimental macOS builds</b> (unsigned): <a href="downloads/SloomStudio-arm64.dmg" download>Apple&nbsp;Silicon</a> &middot; <a href="downloads/SloomStudio-x64.dmg" download>Intel</a>. They're not signed yet, so <a href="macos-install.html">here's how to open them the proper way &rarr;</a></p>
   <p class="fineline">Free to download and lay out your whole book. The one-time license unlocks the professional print exports. No subscription, no account, no ads.</p>
 
   <h2>The export formats print actually needs</h2>
   <div class="exports">
-    <span>KDP-ready PDF</span><span>PDF/X-4</span><span>PDF/X-1a</span><span>CMYK / spot</span><span>IDML</span><span>CBZ</span><span>Webtoon strip</span><span>High-res PNG / JPG</span>
+    <span>KDP-ready PDF</span><span>PDF/X-1a</span><span>PDF/X-4</span><span>CMYK / spot swatches</span><span>Adobe IDML</span><span>CBZ</span><span>Webtoon strip</span><span>High-res PNG / JPG</span>
   </div>
-  <p>Amazon KDP, a print-on-demand service, and a traditional printer each want different things. Sloom Studio exports the ones that matter: KDP-ready interiors and covers, PDF/X-4 and PDF/X-1a for professional presses, CMYK and spot color, IDML if your printer works in InDesign, plus CBZ and a webtoon strip for digital.</p>
+  <p>Amazon KDP, a print-on-demand service, and a traditional printer each want different things. Sloom Studio exports the ones that matter: KDP-ready interiors and covers, conformant PDF/X-1a and PDF/X-4 with real CMYK through an embedded ICC output intent, named spot-color swatches written as real Separation plates, and text embedded as vector curves where supported. You also get a structurally valid, spec-correct Adobe IDML package for InDesign/Affinity Publisher handoff (IDML import is not yet supported), plus CBZ and a webtoon strip for digital. The browser PDF export is a fast RGB proof; the PDF/X path is the press-certified output.</p>
+
+  <img src="assets/screenshots/paper-pdfx-typecraft-showcase.png" alt="The Type &amp; Craft showcase page in the Paper workspace with a production spec sheet listing PDF/X-1a &amp; X-4, real CMYK with embedded ICC, named spot Separation plates, true drop caps, hanging indents, runaround text, and true small caps" style="width:100%;border-radius:13px;border:1px solid var(--line-2);margin:18px 0 6px" />
+  <p class="fineline">The Paper workspace's live production spec sheet: PDF/X-1a/X-4, real CMYK with embedded ICC, named spot Separation plates, true drop caps, hanging indents, runaround text, and true small caps.</p>
 
   <h2>Lay the whole book out in one place</h2>
   <div class="grid">
@@ -93,7 +101,7 @@
   <div class="price">
     <div class="big">$17.99 <small>one-time · launch price</small></div>
     <ul>
-      <li>Unlocks KDP, PDF/X-4, PDF/X-1a, IDML, and CMYK/spot print export</li>
+      <li>Unlocks pro print production — KDP-ready PDF, conformant PDF/X-1a/X-4 with real CMYK/ICC and named spot Separation plates, CMYK/spot swatches, plus a structurally valid Adobe IDML package export</li>
       <li>The legal license once you earn with what you make</li>
       <li>One key covers desktop and Android, verified offline, yours forever</li>
       <li>Launch price for the first 100 copies, then $39 — sale ends August 1</li>
@@ -104,9 +112,9 @@
   <h2>You own it. It runs on your machine.</h2>
   <p>No subscription and no account. Sloom Studio is local-first: your project files and your work stay on your device. It is even source-available if you want to read exactly what it does. Windows and Linux today, plus experimental macOS builds, with the same one-time key covering Android.</p>
   <div class="cta" style="margin-top:20px">
-    <a class="btn btn-primary" href="downloads/SignalLoom-Setup-0.9.10.exe" download>Download free — Windows</a>
-    <a class="btn btn-ghost" href="downloads/SignalLoom-0.9.10.AppImage" download>Linux AppImage</a>
-    <a class="btn btn-ghost" href="downloads/SignalLoom-0.9.10-mac-arm64.dmg" download>macOS (experimental)</a>
+    <a class="btn btn-primary" href="downloads/SloomStudio-Setup.exe" download>Download free — Windows</a>
+    <a class="btn btn-ghost" href="downloads/SloomStudio.AppImage" download>Linux AppImage</a>
+    <a class="btn btn-ghost" href="downloads/SloomStudio-arm64.dmg" download>macOS (experimental)</a>
     <a class="btn btn-ghost" href="https://buy.stripe.com/7sY28rfcmaRxaBVgQ57Re02">Buy the license — $17.99</a>
   </div>
 </main>

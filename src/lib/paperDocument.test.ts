@@ -6,6 +6,7 @@ import {
   assignPaperParentPage,
   computeEffectivePaperFrame,
   createDefaultPaperDocument,
+  effectiveRtlBinding,
   detachInheritedPaperFrame,
   exportPaperDocumentToPrintHtml,
   parsePaperDocument,
@@ -47,6 +48,7 @@ describe('paperDocument', () => {
     expect(doc.view.showRulers).toBe(true);
     expect(doc.view.showGrid).toBe(true);
     expect(doc.view.showGuides).toBe(true);
+    expect(doc.view.showFrameEdges).toBe(false);
     expect(doc.view.snapToGuides).toBe(false);
     expect(doc.view.snapToGrid).toBe(false);
     expect(doc.printProduction).toEqual(expect.objectContaining({
@@ -56,6 +58,26 @@ describe('paperDocument', () => {
     }));
     expect(doc.parentPages).toHaveLength(1);
     expect(doc.styles.paragraph.map((style) => style.id)).toEqual(expect.arrayContaining(['para-comic-dialogue', 'para-caption', 'para-sfx']));
+  });
+
+  it('creates new text frames borderless (Word-like) but keeps comic bubbles filled/stroked', () => {
+    let doc = createDefaultPaperDocument({ title: 'Borderless defaults' });
+    const pageId = doc.pages[0].id;
+
+    // A plain text frame with no explicit stroke/fill = a document paragraph: no border, no fill.
+    const text = addFrameToPaperPage(doc, pageId, { kind: 'text', xMm: 20, yMm: 20, widthMm: 60, heightMm: 20 });
+    doc = text.document;
+    const textFrame = doc.pages[0].frames.find((f) => f.id === text.frameId)!;
+    expect(textFrame.strokeWidthMm).toBe(0);
+    expect(textFrame.strokeColor).toBe('transparent');
+    expect(textFrame.fillColor).toBe('transparent');
+
+    // A speech bubble must still get its white fill + visible stroke (comic workflow unchanged).
+    const bubble = addFrameToPaperPage(doc, pageId, { kind: 'speechBubble', xMm: 20, yMm: 50, widthMm: 60, heightMm: 30 });
+    doc = bubble.document;
+    const bubbleFrame = doc.pages[0].frames.find((f) => f.id === bubble.frameId)!;
+    expect(bubbleFrame.fillColor).toBe('#ffffff');
+    expect(bubbleFrame.strokeWidthMm).toBeGreaterThan(0);
   });
 
   it('normalizes legacy speech/thought frame kinds into current bubble frame kinds', () => {
@@ -921,3 +943,34 @@ function decodeBubbleSvgSources(html: string): string[] {
   return Array.from(html.matchAll(/<img class="paper-bubble-shape"[^>]+src="([^"]+)"/g))
     .map((match) => decodeURIComponent(match[1]));
 }
+
+describe('effectiveRtlBinding (右綴じ auto-derive)', () => {
+  it('auto-binds right-to-left when the document has vertical (縦書き) text', () => {
+    const base = createDefaultPaperDocument({ title: 'Auto Manga' });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'text', xMm: 10, yMm: 10, widthMm: 40, heightMm: 60,
+      text: '縦書き本文', typography: { writingMode: 'vertical-rl' },
+    });
+    expect(document.view.rtlBinding).toBeUndefined(); // nothing pinned — pure auto
+    expect(effectiveRtlBinding(document)).toBe(true);
+  });
+
+  it('auto-binds left-to-right for a horizontal (Western) document', () => {
+    const base = createDefaultPaperDocument({ title: 'Auto Western' });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'text', xMm: 10, yMm: 10, widthMm: 40, heightMm: 20, text: 'Plain body',
+    });
+    expect(effectiveRtlBinding(document)).toBe(false);
+  });
+
+  it('lets an explicit view.rtlBinding override the auto-derivation either way', () => {
+    const base = createDefaultPaperDocument({ title: 'Pinned' });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'text', xMm: 10, yMm: 10, widthMm: 40, heightMm: 60,
+      text: '縦書き', typography: { writingMode: 'vertical-rl' },
+    });
+    expect(effectiveRtlBinding({ ...document, view: { ...document.view, rtlBinding: false } })).toBe(false); // pin LTR on a vertical doc
+    const western = createDefaultPaperDocument({ title: 'Pinned RTL' });
+    expect(effectiveRtlBinding({ ...western, view: { ...western.view, rtlBinding: true } })).toBe(true); // pin RTL on a horizontal doc
+  });
+});

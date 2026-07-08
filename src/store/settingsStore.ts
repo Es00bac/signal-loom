@@ -13,6 +13,7 @@ import {
   SettingsBackupError,
 } from '../lib/settingsBackup';
 import { DEFAULT_INTERFACE_THEME_ID, resolveInterfaceTheme } from '../lib/interfaceThemes';
+import { normalizeLocale, resolveDefaultLocale, type AppLocale } from '../lib/i18n';
 import { verifyLicenseKey, type LicenseVerification } from '../lib/licenseKey';
 import { sanitizeKeyboardShortcutMap, type KeyboardShortcutMap } from '../lib/keyboardShortcuts';
 import {
@@ -227,6 +228,11 @@ interface SettingsState {
   /** Desktop integrated-menu presentation: 'compact' (single ☰) or 'menubar' (classic File/Edit/… row). */
   appMenuStyle: AppMenuStyle;
   interfaceDensity: InterfaceDensity;
+  /** Interface language ('en' | 'ja'); drives `translate()` across the UI. */
+  locale: AppLocale;
+  /** True once the user has confirmed a language (first-run gate or Settings). Gates the first-run
+   *  bilingual language chooser so it appears exactly once on a fresh install. */
+  localeChosen: boolean;
   keyboardShortcuts: KeyboardShortcutMap;
   gamepadBindings: GamepadBindingProfile;
   customBrushPresets: ImageBrushPreset[];
@@ -252,6 +258,7 @@ interface SettingsState {
   setInterfaceThemeId: (themeId: string) => void;
   setAppMenuStyle: (style: AppMenuStyle) => void;
   setInterfaceDensity: (density: InterfaceDensity) => void;
+  setLocale: (locale: AppLocale) => void;
   setKeyboardShortcut: (command: NativeMenuCommand, shortcut: string) => void;
   resetKeyboardShortcuts: () => void;
   setGamepadBinding: (workspace: GamepadWorkspace, controlId: GamepadControlId, patch: Partial<GamepadControlBinding>) => void;
@@ -385,6 +392,8 @@ export const useSettingsStore = create<SettingsState>()(
       interfaceThemeId: DEFAULT_INTERFACE_THEME_ID,
       appMenuStyle: 'compact',
       interfaceDensity: 'compact',
+      locale: resolveDefaultLocale(),
+      localeChosen: false,
       keyboardShortcuts: {},
       gamepadBindings: createDefaultGamepadBindings(),
       customBrushPresets: [],
@@ -417,6 +426,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({ appMenuStyle: style === 'menubar' ? 'menubar' : 'compact' }),
       setInterfaceDensity: (density) =>
         set({ interfaceDensity: density === 'comfortable' ? 'comfortable' : 'compact' }),
+      setLocale: (locale) => set({ locale: normalizeLocale(locale), localeChosen: true }),
       setKeyboardShortcut: (command, shortcut) =>
         set((state) => ({
           keyboardShortcuts: sanitizeKeyboardShortcutMap({
@@ -614,6 +624,8 @@ export const useSettingsStore = create<SettingsState>()(
           interfaceThemeId: resolveInterfaceTheme(typedPersistedState?.interfaceThemeId).id,
           appMenuStyle: typedPersistedState?.appMenuStyle === 'menubar' ? 'menubar' : 'compact',
           interfaceDensity: typedPersistedState?.interfaceDensity === 'comfortable' ? 'comfortable' : 'compact',
+          locale: normalizeLocale(typedPersistedState?.locale),
+          localeChosen: Boolean(typedPersistedState?.localeChosen),
           keyboardShortcuts: sanitizeKeyboardShortcutMap(typedPersistedState?.keyboardShortcuts ?? {}),
           gamepadBindings: normalizeGamepadBindings(typedPersistedState?.gamepadBindings),
           customBrushPresets: sanitizeUserBrushPresets(typedPersistedState?.customBrushPresets),

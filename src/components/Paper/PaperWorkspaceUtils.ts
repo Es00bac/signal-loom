@@ -431,6 +431,8 @@ export function frameFillCss(frame: PaperFrame): string {
 
 export function paperTextBoxReactStyle(frame: PaperFrame): React.CSSProperties {
   const textBox = resolvePaperTextBox(frame);
+  const vertical = frame.typography.writingMode === 'vertical-rl';
+  const verticalAlignFlex = paperTextVerticalAlignToJustifyContent(textBox.verticalAlign);
 
   return {
     left: `${textBox.xPercent}%`,
@@ -441,7 +443,13 @@ export function paperTextBoxReactStyle(frame: PaperFrame): React.CSSProperties {
     transformOrigin: 'center',
     display: 'flex',
     flexDirection: 'column',
-    justifyContent: paperTextVerticalAlignToJustifyContent(textBox.verticalAlign),
+    // Horizontal text: the flex column's main axis is vertical, so the text-box vertical-align maps to
+    // justify-content and horizontal placement comes from text-align. Japanese 縦書き (writing-mode: vertical-rl)
+    // rotates the flex axes — the block/main axis is now horizontal — so columns are centered horizontally (the
+    // manga norm) and vertical-align maps to align-items (the now-vertical cross axis) instead. Without this a
+    // vertical bubble's text would jam to one side instead of centering like an English bubble.
+    justifyContent: vertical ? 'center' : verticalAlignFlex,
+    alignItems: vertical ? verticalAlignFlex : undefined,
     overflow: 'hidden',
     textAlign: frame.typography.align,
   };
@@ -485,6 +493,11 @@ export function shapeStrokeWidthPx(frame: PaperFrame, zoom: number): number {
 
 export function paperFrameContentPaddingPx(frame: PaperFrame, zoom: number): number {
   if (frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble' || frame.kind === 'shape') return 0;
+  // A frame whose paragraphs ALL carry a box border/shading hugs the frame edge: the box's border sits on the
+  // frame bounds so the selection/resize rectangle lands on the visible box corners (each paragraph's own
+  // border-padding still keeps text off the line). Covers one bordered paragraph AND a merged callout of several.
+  // Without this, the 2mm content inset floats the box inside the frame and the handles miss the corners.
+  if (frame.richText?.length && frame.richText.every((p) => p.borders || p.shading)) return 0;
   return 2 * PX_PER_MM * zoom;
 }
 

@@ -56,6 +56,46 @@ describe('paperSpreads', () => {
     ]);
   });
 
+  it('binds right-to-left (右綴じ): the lower page number reads on the RIGHT and progresses right→left', () => {
+    let doc = createDefaultPaperDocument({ title: '右綴じ Manga' });
+    doc = addPaperPage(addPaperPage(addPaperPage(doc))); // 4 pages
+
+    const spreads = buildPaperSpreads(doc.pages, { enabled: true, startOnRight: true, rtlBinding: true });
+
+    expect(spreads).toHaveLength(3);
+    // Cover reads first, on the right.
+    expect(spreads[0].slots.map((s) => [s.side, s.page?.pageNumber ?? null])).toEqual([
+      ['left', null],
+      ['right', 1],
+    ]);
+    // Inside a spread, page 2 (read first) sits on the RIGHT, page 3 on the left — the manga reading order.
+    expect(spreads[1].slots.map((s) => [s.side, s.page?.pageNumber ?? null])).toEqual([
+      ['left', 3],
+      ['right', 2],
+    ]);
+    expect(spreads[2].slots.map((s) => [s.side, s.page?.pageNumber ?? null])).toEqual([
+      ['left', null],
+      ['right', 4],
+    ]);
+  });
+
+  it('binds right-to-left without a cover offset (page one on the right of the first spread)', () => {
+    const doc = addPaperPage(createDefaultPaperDocument({ title: '右綴じ no-cover' }));
+    const spreads = buildPaperSpreads(doc.pages, { enabled: true, startOnRight: false, rtlBinding: true });
+    expect(spreads).toHaveLength(1);
+    expect(spreads[0].slots.map((s) => [s.side, s.page?.pageNumber ?? null])).toEqual([
+      ['left', 2],
+      ['right', 1],
+    ]);
+  });
+
+  it('labels single-page sides right-to-left when right-bound (recto on the right)', () => {
+    const doc = addPaperPage(createDefaultPaperDocument({ title: '右綴じ single' }));
+    const spreads = buildPaperSpreads(doc.pages, { enabled: false, rtlBinding: true });
+    expect(spreads[0].slots[0].side).toBe('right'); // page 1 (odd/recto)
+    expect(spreads[1].slots[0].side).toBe('left'); // page 2 (even/verso)
+  });
+
   it('builds connected live spread geometry with no interior pasteboard gap', () => {
     let doc = createDefaultPaperDocument({ title: 'Connected Spread', preset: 'comic-book' });
     doc = addPaperPage(addPaperPage(doc));

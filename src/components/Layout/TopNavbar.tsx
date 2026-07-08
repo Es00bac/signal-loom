@@ -37,6 +37,8 @@ import { useMobilePhoneInterfaceDescriptor } from '../../lib/mobilePhoneInterfac
 import { isAndroidNativeFullscreenAvailable, setAndroidFullscreen } from '../../lib/androidSystemUi';
 import { isAndroidLanServerAvailable } from '../../lib/androidLanServer';
 import { UsageBar } from './UsageBar';
+import { useI18n } from '../../lib/useI18n';
+import type { MessageKey } from '../../lib/i18n';
 
 const flowIcon = new URL('../../assets/icon-flow.png', import.meta.url).href;
 const editorIcon = new URL('../../assets/icon-editor.png', import.meta.url).href;
@@ -52,7 +54,7 @@ const WORKSPACE_TABS = [
     activeClass: 'border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-100 shadow-[0_0_14px_rgba(217,70,239,0.2)]',
     dotClass: 'bg-fuchsia-400',
     hoverClass: 'hover:bg-fuchsia-500/5 hover:text-fuchsia-100',
-    desc: 'Generative AI Multi-Agent Media Workflow Builder',
+    descKey: 'nav.workspace.flow.desc' as MessageKey,
   },
   {
     id: 'editor' as WorkspaceView,
@@ -62,7 +64,7 @@ const WORKSPACE_TABS = [
     activeClass: 'border-sky-500/30 bg-sky-500/10 text-sky-100 shadow-[0_0_14px_rgba(14,165,233,0.2)]',
     dotClass: 'bg-sky-400',
     hoverClass: 'hover:bg-sky-500/5 hover:text-sky-100',
-    desc: 'Multi-track Non-linear Timeline Video Editor',
+    descKey: 'nav.workspace.editor.desc' as MessageKey,
   },
   {
     id: 'image' as WorkspaceView,
@@ -72,7 +74,7 @@ const WORKSPACE_TABS = [
     activeClass: 'border-rose-500/30 bg-rose-500/10 text-rose-100 shadow-[0_0_14px_rgba(244,63,94,0.2)]',
     dotClass: 'bg-rose-400',
     hoverClass: 'hover:bg-rose-500/5 hover:text-rose-100',
-    desc: 'Layers-based Creative Image Editor',
+    descKey: 'nav.workspace.image.desc' as MessageKey,
   },
   {
     id: 'paper' as WorkspaceView,
@@ -82,7 +84,7 @@ const WORKSPACE_TABS = [
     activeClass: 'border-amber-500/30 bg-amber-500/10 text-amber-100 shadow-[0_0_14px_rgba(245,158,11,0.2)]',
     dotClass: 'bg-amber-400',
     hoverClass: 'hover:bg-amber-500/5 hover:text-amber-100',
-    desc: 'Professional Publishing & Document Layouts',
+    descKey: 'nav.workspace.paper.desc' as MessageKey,
   },
 ];
 
@@ -103,6 +105,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   sourceBins = [],
   workspaceView: workspaceViewOverride,
 }) => {
+  const { t, locale } = useI18n();
   const toggleSettings = useSettingsStore((state) => state.toggleSettings);
   const keyboardShortcuts = useSettingsStore((state) => state.keyboardShortcuts);
   const appMenuStyle = useSettingsStore((state) => state.appMenuStyle);
@@ -188,7 +191,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
     paper: paperIcon,
   }[workspaceView];
   const showGenericViewportControls = !isPaperWorkspace;
-  const appMenuGroups = React.useMemo(() => buildAppMenuGroups(workspaceView, keyboardShortcuts), [keyboardShortcuts, workspaceView]);
+  const appMenuGroups = React.useMemo(() => buildAppMenuGroups(workspaceView, keyboardShortcuts, locale), [keyboardShortcuts, locale, workspaceView]);
   const imageViewportReady =
     Boolean(activeImageDocument) &&
     imageViewportContainerSize.width > 0 &&
@@ -412,7 +415,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
     return (
       <>
         <button
-          aria-label="Show Sloom Studio interface"
+          aria-label={t('nav.showInterface')}
           className="theme-topbar absolute left-3 top-3 z-[90] flex h-11 w-11 items-center justify-center rounded-full border border-cyan-300/30 bg-[#0b1421]/95 text-cyan-100 shadow-[0_10px_28px_rgba(0,0,0,0.35)] backdrop-blur-md"
           data-application-chrome-restore="true"
           onClick={restoreMobileInterface}
@@ -432,7 +435,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
       return (
         <>
           <button
-            aria-label="Show Sloom Studio interface"
+            aria-label={t('nav.showInterface')}
             className="theme-topbar absolute left-3 top-3 z-[90] flex h-11 w-11 items-center justify-center rounded-full border border-cyan-300/30 bg-[#0b1421]/95 text-cyan-100 shadow-[0_10px_28px_rgba(0,0,0,0.35)] backdrop-blur-md"
             data-mobile-phone-topbar="hidden"
             data-mobile-phone-orientation={mobilePhoneInterface.orientation}
@@ -471,7 +474,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
               const isActive = workspaceView === tab.id;
               return (
                 <button
-                  aria-label={`${tab.label} Workspace`}
+                  aria-label={`${tab.label} ${t('nav.workspaceSuffix')}`}
                   className={`flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full border px-3 transition-colors ${
                     isActive
                       ? tab.activeClass
@@ -479,7 +482,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                   }`}
                   key={tab.id}
                   onClick={() => handleMenuCommand(tab.command, 'topbar')}
-                  title={`${tab.label} Workspace`}
+                  title={`${tab.label} ${t('nav.workspaceSuffix')}`}
                   type="button"
                 >
                   <img src={tab.icon} alt="" className="h-6 w-6 rounded-md object-contain" />
@@ -491,12 +494,12 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
 
           <IconButton
             icon={drawerExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-            label={drawerExpanded ? 'Collapse interface drawer' : 'Expand interface drawer'}
+            label={drawerExpanded ? t('nav.drawer.collapse') : t('nav.drawer.expand')}
             onClick={() => toggleMobileEdgeDrawer('top')}
           />
           <IconButton
             icon={<EyeOff size={18} />}
-            label="Hide interface"
+            label={t('nav.hideInterface')}
             onClick={hideMobileInterface}
           />
         </div>
@@ -579,7 +582,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                     <IconButton
                       disabled={isImageWorkspace && !imageViewportReady}
                       icon={<Minus size={16} />}
-                      label="Zoom out"
+                      label={t('nav.zoom.out')}
                       onClick={handleZoomOut}
                     />
                     <button
@@ -588,37 +591,37 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                       onClick={handleZoomFit}
                       type="button"
                     >
-                      Fit
+                      {t('nav.zoom.fit')}
                     </button>
                     <IconButton
                       disabled={isImageWorkspace && !imageViewportReady}
                       icon={<Plus size={16} />}
-                      label="Zoom in"
+                      label={t('nav.zoom.in')}
                       onClick={handleZoomIn}
                     />
                   </div>
                 </div>
               ) : null}
 
-              <MobileDrawerActionButton icon={<Command size={16} />} label="Commands" onClick={() => handleMenuCommand('view:command-palette', 'topbar')} />
-              <MobileDrawerActionButton icon={<FolderOpen size={16} />} label="Projects" onClick={() => setProjectLibraryOpen(true)} />
-              <MobileDrawerActionButton icon={isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />} label={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'} onClick={() => void toggleFullscreen()} />
-              <MobileDrawerActionButton icon={<Settings size={16} />} label="Settings" onClick={toggleSettings} />
+              <MobileDrawerActionButton icon={<Command size={16} />} label={t('nav.commands')} onClick={() => handleMenuCommand('view:command-palette', 'topbar')} />
+              <MobileDrawerActionButton icon={<FolderOpen size={16} />} label={t('nav.projects')} onClick={() => setProjectLibraryOpen(true)} />
+              <MobileDrawerActionButton icon={isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />} label={isFullscreen ? t('nav.fullscreen.exitShort') : t('nav.fullscreen.enterShort')} onClick={() => void toggleFullscreen()} />
+              <MobileDrawerActionButton icon={<Settings size={16} />} label={t('common.settings')} onClick={toggleSettings} />
               {lanServerAvailable ? (
                 <MobileDrawerActionButton
                   active={lanServerEnabled}
                   icon={lanServerEnabled ? <Wifi size={16} /> : <WifiOff size={16} />}
-                  label={lanServerEnabled ? 'Serving · On' : 'Serve to Desktop'}
+                  label={lanServerEnabled ? t('nav.serving') : t('nav.serveToDesktop')}
                   onClick={() => setProviderSetting('androidLanServerEnabled', !lanServerEnabled)}
                 />
               ) : null}
 
               {workspaceView === 'flow' ? (
                 <>
-                  <MobileDrawerActionButton icon={<Library size={16} />} label="Functions" onClick={() => setFunctionLibraryOpen(true)} />
+                  <MobileDrawerActionButton icon={<Library size={16} />} label={t('nav.functions')} onClick={() => setFunctionLibraryOpen(true)} />
                   <MobileDrawerActionButton
                     icon={<Download size={16} />}
-                    label={copyState === 'copied' ? 'Copied' : copyState === 'error' ? 'Failed' : 'Export'}
+                    label={copyState === 'copied' ? t('nav.export.copied') : copyState === 'error' ? t('nav.export.failed') : t('nav.export')}
                     onClick={() => void handleCopyFlow()}
                   />
                 </>
@@ -640,7 +643,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         className="pointer-events-none relative z-20 flex items-center gap-2"
         data-topbar-left-controls="true"
       >
-        <div className="pointer-events-auto flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-cyan-300/25 bg-[#0b1421] shadow-[0_0_18px_rgba(34,211,238,0.16)]" data-testid="app-icon-container" title={`${workspaceView.charAt(0).toUpperCase() + workspaceView.slice(1)} Workspace`}>
+        <div className="pointer-events-auto flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-cyan-300/25 bg-[#0b1421] shadow-[0_0_18px_rgba(34,211,238,0.16)]" data-testid="app-icon-container" title={`${workspaceView.charAt(0).toUpperCase() + workspaceView.slice(1)} ${t('nav.workspaceSuffix')}`}>
           <img
             alt={`${workspaceView} Icon`}
             className="h-full w-full object-contain p-1.5"
@@ -660,7 +663,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
           >
             <button
               aria-expanded={openMenuId === '__app__'}
-              aria-label="Application menu"
+              aria-label={t('nav.appMenu')}
               className={`flex items-center gap-1 rounded px-2 py-1.5 text-cyan-100/70 transition-colors hover:bg-cyan-400/10 hover:text-white ${
                 openMenuId === '__app__' ? 'bg-cyan-400/10 text-white' : ''
               }`}
@@ -668,7 +671,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                 setMenuAnchorRect(event.currentTarget.getBoundingClientRect());
                 setOpenMenuId((current) => (current === '__app__' ? null : '__app__'));
               }}
-              title="Menu"
+              title={t('nav.menu')}
               type="button"
             >
               <Menu size={16} />
@@ -714,7 +717,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                         }}
                         type="button"
                       >
-                        Switch to classic menu bar
+                        {t('nav.switchToClassicMenu')}
                       </button>
                     </div>
                   </div>,
@@ -736,7 +739,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                     ? tab.activeClass
                     : `border-transparent text-cyan-100/50 ${tab.hoverClass}`
                 }`}
-                title={`${tab.label} Workspace — ${tab.desc}`}
+                title={`${tab.label} ${t('nav.workspaceSuffix')} — ${t(tab.descKey)}`}
                 type="button"
               >
                 <img
@@ -819,11 +822,11 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         {workspaceView === 'flow' && sourceBins.length > 0 ? (
           <label
             className="theme-control pointer-events-auto flex h-9 shrink-0 items-center gap-2 rounded-full border px-3 text-sm text-cyan-50/80"
-            title="Target source bin"
+            title={t('nav.targetSourceBin')}
           >
             <Library size={15} />
             <select
-              aria-label="Target source bin"
+              aria-label={t('nav.targetSourceBin')}
               className="max-w-44 bg-transparent text-sm text-cyan-50 outline-none"
               onChange={(event) => onActiveFlowSourceBinChange?.(event.target.value || undefined)}
               value={flowTargetBinId}
@@ -847,7 +850,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
               <IconButton
                 disabled={isImageWorkspace && !imageViewportReady}
                 icon={<Minus size={16} />}
-                label="Zoom out"
+                label={t('nav.zoom.out')}
                 onClick={handleZoomOut}
               />
               <button
@@ -856,12 +859,12 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                 onClick={handleZoomFit}
                 type="button"
               >
-                Fit
+                {t('nav.zoom.fit')}
               </button>
               <IconButton
                 disabled={isImageWorkspace && !imageViewportReady}
                 icon={<Plus size={16} />}
-                label="Zoom in"
+                label={t('nav.zoom.in')}
                 onClick={handleZoomIn}
               />
 
@@ -871,12 +874,12 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
 
           <IconButton
             icon={isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-            label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+            label={isFullscreen ? t('nav.fullscreen.exit') : t('nav.fullscreen.enter')}
             onClick={() => void toggleFullscreen()}
           />
           <IconButton
             icon={<Command size={16} />}
-            label="Command palette"
+            label={t('nav.commandPalette')}
             onClick={() => handleMenuCommand('view:command-palette', 'topbar')}
           />
 
@@ -885,11 +888,11 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
           <button
             className="flex items-center gap-2 rounded-full px-2.5 py-2 text-sm text-cyan-100/75 transition-colors hover:bg-cyan-400/10 hover:text-white"
             onClick={() => setProjectLibraryOpen(true)}
-            title="Open the local project library"
+            title={t('nav.projects.tooltip')}
             type="button"
           >
             <FolderOpen size={16} />
-            <span className="hidden min-[2000px]:inline">Projects</span>
+            <span className="hidden min-[2000px]:inline">{t('nav.projects')}</span>
           </button>
 
           {workspaceView === 'flow' ? (
@@ -907,11 +910,11 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             <button
               className="flex items-center gap-2 rounded-full border border-emerald-300/30 bg-emerald-400/15 px-2.5 py-2 text-sm font-semibold text-emerald-100 transition-colors hover:border-emerald-100/70 hover:bg-emerald-300/25 hover:text-white"
               onClick={() => setFunctionLibraryOpen(true)}
-              title="Open the reusable function library"
+              title={t('nav.functions.tooltip')}
               type="button"
             >
               <Library size={16} />
-              <span className="hidden min-[2000px]:inline">Functions</span>
+              <span className="hidden min-[2000px]:inline">{t('nav.functions')}</span>
             </button>
           ) : null}
 
@@ -919,11 +922,11 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             <button
               className="flex items-center gap-2 rounded-full px-2.5 py-2 text-sm text-cyan-100/75 transition-colors hover:bg-cyan-400/10 hover:text-white"
               onClick={() => void handleCopyFlow()}
-              title="Copy the current flow JSON to the clipboard"
+              title={t('nav.export.tooltip')}
               type="button"
             >
               <Download size={16} />
-              <span className="hidden min-[2000px]:inline">{copyState === 'copied' ? 'Copied' : copyState === 'error' ? 'Failed' : 'Export'}</span>
+              <span className="hidden min-[2000px]:inline">{copyState === 'copied' ? t('nav.export.copied') : copyState === 'error' ? t('nav.export.failed') : t('nav.export')}</span>
             </button>
           ) : null}
 
@@ -936,7 +939,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             </span>
           ) : null}
 
-          <IconButton icon={<Settings size={16} />} label="Provider settings" onClick={toggleSettings} />
+          <IconButton icon={<Settings size={16} />} label={t('nav.providerSettings')} onClick={toggleSettings} />
           <UsageBar placement="topbar" workspaceView={workspaceView} />
         </div>
       </div>
@@ -1011,28 +1014,29 @@ function EditorTitlebarControls({
   sourceBinVisible: boolean;
   sourceMonitorVisible: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div className="pointer-events-auto hidden min-w-0 flex-1 items-center justify-end gap-1.5 overflow-hidden xl:flex">
       <div className="hidden shrink-0 rounded-md border border-cyan-300/15 bg-[#101a29]/85 px-2 py-1 text-[11px] font-medium text-cyan-100/75 min-[1800px]:block">
-        Source Library · {sourceBinCount} asset{sourceBinCount === 1 ? '' : 's'} · {sourceBinNodeCount} bin{sourceBinNodeCount === 1 ? '' : 's'}
+        {t('video.sourceLibrary')} · {sourceBinCount} {t('video.assetsUnit')} · {sourceBinNodeCount} {t('video.binsUnit')}
       </div>
       <select
         className="hidden h-8 max-w-52 rounded-md border border-cyan-300/15 bg-[#0b121d] px-2 text-[11px] font-semibold text-gray-200 outline-none transition-colors hover:border-cyan-300/35 focus:border-cyan-300/60 min-[1800px]:block"
         onChange={(event) => onCompositionChange(event.target.value)}
-        title="Active composition"
+        title={t('video.activeComposition')}
         value={activeCompositionId ?? ''}
       >
-        <option value="">No compositions</option>
+        <option value="">{t('video.noCompositions')}</option>
         {compositionOptions.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
           </option>
         ))}
       </select>
-      <TitlebarActionButton icon={<Undo2 size={12} />} label="Undo" onClick={onUndo} title="Undo editor edit" />
-      <TitlebarActionButton icon={<Redo2 size={12} />} label="Redo" onClick={onRedo} title="Redo editor edit" />
-      <TitlebarActionButton icon={<Plus size={12} />} label="Source Bin" onClick={onAddSourceBin} />
-      <TitlebarActionButton icon={<Plus size={12} />} label="Composition" onClick={onAddComposition} />
+      <TitlebarActionButton icon={<Undo2 size={12} />} label={t('common.undo')} onClick={onUndo} title={t('video.undoEdit')} />
+      <TitlebarActionButton icon={<Redo2 size={12} />} label={t('common.redo')} onClick={onRedo} title={t('video.redoEdit')} />
+      <TitlebarActionButton icon={<Plus size={12} />} label={t('video.sourceBin')} onClick={onAddSourceBin} />
+      <TitlebarActionButton icon={<Plus size={12} />} label={t('video.composition')} onClick={onAddComposition} />
       <button
         className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-white px-2.5 text-[11px] font-semibold text-black transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:bg-gray-500/30 disabled:text-white"
         disabled={!activeCompositionId || isCompositionRendering}
@@ -1040,27 +1044,27 @@ function EditorTitlebarControls({
         type="button"
       >
         <Play size={12} fill="currentColor" />
-        <span className="hidden min-[1700px]:inline">{isCompositionRendering ? 'Rendering...' : 'Render'}</span>
+        <span className="hidden min-[1700px]:inline">{isCompositionRendering ? t('video.rendering') : t('video.render')}</span>
       </button>
       <div className="mx-0.5 h-5 w-px shrink-0 bg-cyan-300/15" />
       <PanelToggleButton
         active={sourceBinVisible}
-        label="Bin"
+        label={t('video.panel.bin')}
         onClick={() => onTogglePanel('sourceBinVisible', !sourceBinVisible)}
       />
       <PanelToggleButton
         active={sourceMonitorVisible}
-        label="Source"
+        label={t('video.panel.source')}
         onClick={() => onTogglePanel('sourceMonitorVisible', !sourceMonitorVisible)}
       />
       <PanelToggleButton
         active={programMonitorVisible}
-        label="Program"
+        label={t('video.panel.program')}
         onClick={() => onTogglePanel('programMonitorVisible', !programMonitorVisible)}
       />
       <PanelToggleButton
         active={inspectorVisible}
-        label="Inspector"
+        label={t('video.panel.inspector')}
         onClick={() => onTogglePanel('inspectorVisible', !inspectorVisible)}
       />
       <button
@@ -1068,7 +1072,7 @@ function EditorTitlebarControls({
         onClick={onHelp}
         type="button"
       >
-        Help
+        {t('common.help')}
       </button>
     </div>
   );
@@ -1151,12 +1155,13 @@ function MobileEditorPanelControls({
   sourceBinVisible: boolean;
   sourceMonitorVisible: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div className="grid grid-cols-2 gap-2 rounded-lg border border-cyan-300/10 bg-[#09101d]/65 p-2" data-mobile-video-controls="true">
-      <MobileDrawerActionButton icon={<Undo2 size={16} />} label="Undo" onClick={onUndo} />
-      <MobileDrawerActionButton icon={<Redo2 size={16} />} label="Redo" onClick={onRedo} />
-      <MobileDrawerActionButton icon={<Plus size={16} />} label="Source Bin" onClick={onAddSourceBin} />
-      <MobileDrawerActionButton icon={<Plus size={16} />} label="Composition" onClick={onAddComposition} />
+      <MobileDrawerActionButton icon={<Undo2 size={16} />} label={t('common.undo')} onClick={onUndo} />
+      <MobileDrawerActionButton icon={<Redo2 size={16} />} label={t('common.redo')} onClick={onRedo} />
+      <MobileDrawerActionButton icon={<Plus size={16} />} label={t('video.sourceBin')} onClick={onAddSourceBin} />
+      <MobileDrawerActionButton icon={<Plus size={16} />} label={t('video.composition')} onClick={onAddComposition} />
       <button
         className="col-span-2 inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-white px-3 text-sm font-semibold text-black transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:bg-gray-500/30 disabled:text-white"
         disabled={renderDisabled}
@@ -1164,29 +1169,29 @@ function MobileEditorPanelControls({
         type="button"
       >
         <Play size={14} fill="currentColor" />
-        {isCompositionRendering ? 'Rendering...' : 'Render'}
+        {isCompositionRendering ? t('video.rendering') : t('video.render')}
       </button>
       <PanelToggleButton
         active={sourceBinVisible}
-        label="Bin"
+        label={t('video.panel.bin')}
         onClick={() => onTogglePanel('sourceBinVisible', !sourceBinVisible)}
       />
       <PanelToggleButton
         active={sourceMonitorVisible}
-        label="Source"
+        label={t('video.panel.source')}
         onClick={() => onTogglePanel('sourceMonitorVisible', !sourceMonitorVisible)}
       />
       <PanelToggleButton
         active={programMonitorVisible}
-        label="Program"
+        label={t('video.panel.program')}
         onClick={() => onTogglePanel('programMonitorVisible', !programMonitorVisible)}
       />
       <PanelToggleButton
         active={inspectorVisible}
-        label="Inspector"
+        label={t('video.panel.inspector')}
         onClick={() => onTogglePanel('inspectorVisible', !inspectorVisible)}
       />
-      <MobileDrawerActionButton icon={<Command size={16} />} label="Help" onClick={onHelp} />
+      <MobileDrawerActionButton icon={<Command size={16} />} label={t('common.help')} onClick={onHelp} />
     </div>
   );
 }

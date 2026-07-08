@@ -9,6 +9,9 @@
   <meta property="og:title" content="Sloom Studio Documentation" />
   <meta property="og:description" content="Getting started, per-workspace guides, Android / DeX setup, and BYO API key configuration." />
   <meta property="og:image" content="/assets/graphics/feature-graphic-1024x500.png" />
+<link rel="alternate" hreflang="en" href="https://sloom.studio/docs.html" />
+<link rel="alternate" hreflang="ja" href="https://sloom.studio/ja/docs.html" />
+<link rel="alternate" hreflang="x-default" href="https://sloom.studio/docs.html" />
   <link rel="icon" type="image/png" href="assets/graphics/icon-512.png" />
   <link rel="stylesheet" href="assets/site.css" />
   <style>
@@ -198,6 +201,7 @@
       <a href="changelog.html">Changelog</a>
       <a href="index.html#license">Download</a>
       <a href="privacy.html">Privacy</a>
+      <a href="ja/docs.html" hreflang="ja">日本語</a>
     </div>
     <a class="nav-cta" href="index.html#license">Get it — $17.99</a>
     <button class="nav-hamburger" aria-label="Toggle navigation" onclick="document.getElementById('nav-links').classList.toggle('open')">
@@ -259,35 +263,35 @@
           <li>
             <span class="step-num">1</span>
             <div class="step-body">
-              <strong>Get Sloom Studio on Android</strong>
-              <p>Install Sloom Studio from the <strong>Samsung Galaxy Store</strong> or <strong>Google Play</strong> — the trusted, official way, no sideloading. <em>(Both coming soon. On desktop, grab the Windows/Linux build from <a href="index.html#desktop" style="color: var(--cyan)">sloom.studio</a>.)</em></p>
+              <strong>Get Sloom Studio</strong>
+              <p><strong>Desktop is available now.</strong> Download the Windows installer, or the Linux AppImage or <code>.deb</code>, from <a href="index.html#desktop" style="color: var(--cyan)">sloom.studio</a> (experimental macOS builds are there too). On <strong>Android</strong>, Sloom Studio is coming to the <strong>Samsung Galaxy Store</strong> and <strong>Google Play</strong>, the trusted official way with no sideloading, and the same one-time key covers it.</p>
             </div>
           </li>
           <li>
             <span class="step-num">2</span>
             <div class="step-body">
-              <strong>Install from your store</strong>
-              <p>Open the Sloom Studio listing in the Galaxy Store or Google Play and tap <strong>Install</strong>. It installs and auto-updates like any trusted app — no "unknown sources," no <code>.apk</code> to wrangle. No account with Sloom is created or required.</p>
+              <strong>Install it</strong>
+              <p>On desktop, run the installer on Windows, or the AppImage or <code>.deb</code> on Linux. It works offline, and no account with Sloom is created or required. On Android, once the stores are live you tap <strong>Install</strong> and it auto-updates like any trusted app: no "unknown sources," and no <code>.apk</code> to wrangle.</p>
             </div>
           </li>
           <li>
             <span class="step-num">3</span>
             <div class="step-body">
               <strong>Open Sloom Studio and, if you want AI, enter your API keys</strong>
-              <p>On first launch, tap the Settings icon to open the provider configuration panel. Add at least one API key to enable AI generation features &mdash; or skip this step entirely; every workspace works without a key. See <a href="#api-keys" style="color: var(--cyan)">API keys</a> for details.</p>
+              <p>On first launch, open the Settings panel (the gear icon in the top bar) to configure providers. Add at least one API key to enable AI generation features, or skip this step entirely; every workspace works without a key. See <a href="#api-keys" style="color: var(--cyan)">API keys</a> for details.</p>
             </div>
           </li>
           <li>
             <span class="step-num">4</span>
             <div class="step-body">
               <strong>Create or open a project</strong>
-              <p>Tap <strong>New Project</strong> to create a fresh <code>.sloom</code> file, or <strong>Open</strong> to load an existing one from your device storage. Projects can live anywhere accessible to Android (internal storage, SD card, or a folder you choose).</p>
+              <p>Choose <strong>New Project</strong> to create a fresh <code>.sloom</code> file, or <strong>Open</strong> to load an existing one. Projects are plain files you can keep anywhere on your device: copy them, back them up, and move them like any other file.</p>
             </div>
           </li>
         </ul>
 
         <div class="callout tip">
-          <p><strong>Tip:</strong> On Android 13 and later, Sloom Studio does not request broad storage permissions. It uses the standard file picker to access only the files you choose.</p>
+          <p><strong>Android note:</strong> On Android 13 and later, Sloom Studio does not request broad storage permissions. It uses the standard file picker to access only the files you choose.</p>
         </div>
       </section>
 
@@ -354,12 +358,6 @@
         <p>The Flow workspace is a visual node graph editor for building AI generation pipelines. You wire together prompt nodes, model nodes, transformation nodes, and output nodes to create repeatable, cost-tracked generation chains.</p>
 
         <figure class="doc-shot">
-          <img src="assets/screenshots/06-flow-nodes.png"
-               alt="Flow node graph on Android showing connected prompt, generate, and export nodes" />
-          <figcaption>Flow node graph on Android. Edge drawers give access to the source library (left), panels (right), and assets (bottom).</figcaption>
-        </figure>
-
-        <figure class="doc-shot">
           <img src="assets/screenshots/weights-and-measures-flow-graph.jpg"
                alt="A large real production Flow graph for the Weights &amp; Measures comic, with panel image nodes wired to shared character and environment reference plates, a source library of saved bins on the left, and node bookmarks on the right" />
           <figcaption>A real production graph: every panel of the Weights &amp; Measures comic is generated from shared character and environment plates, so corrections propagate.</figcaption>
@@ -391,12 +389,6 @@
         <span class="tag pink" style="margin-bottom: 16px;">Image</span>
         <h2>Image workspace</h2>
         <p>The Image workspace is a full layered image editor with AI-assisted tools including generative fill and reference-guided generation. It supports all standard layer operations plus a brush engine designed for stylus input.</p>
-
-        <figure class="doc-shot">
-          <img src="assets/screenshots/01-portrait-painting.png"
-               alt="Image workspace showing a portrait painting on Android with floating tool palette" />
-          <figcaption>Portrait painting in the Image workspace. The floating palette gives quick access to brush, selection, transform, and eyedropper tools.</figcaption>
-        </figure>
 
         <h3>Layers</h3>
         <p>The Image workspace supports raster layers, vector layers, text layers, adjustment layers, and group layers. Each layer can have masks, effects (stroke, shadow, glow), and blend modes. The layers panel is accessible from the right-side drawer on phone, or as a persistent panel on tablet and DeX.</p>
@@ -439,12 +431,6 @@
         <h2>Paper workspace</h2>
         <p>Paper is a page-based layout workspace designed for comics, illustrated books, webcomics, and long-form printed documents. Pages are composed of placed images, text frames, and comic-specific elements such as panels, speech bubbles, caption boxes, and SFX decals.</p>
 
-        <figure class="doc-shot">
-          <img src="assets/screenshots/05-paper-layout.png"
-               alt="Paper workspace showing a comic page with panels and speech bubbles on Android" />
-          <figcaption>Comic page layout in the Paper workspace on Android. Panel grids, speech tooling, and text frames are all available from the toolbar.</figcaption>
-        </figure>
-
         <h3>Page setup</h3>
         <p>Create a new page from the Paper toolbar. Set the page size, orientation, margin, and bleed settings. Pages can be standard print sizes or custom dimensions for webcomic exports.</p>
 
@@ -457,8 +443,22 @@
         <h3>Linked text frames</h3>
         <p>For long-form text (book chapters, article layouts), create a text frame and link it to subsequent frames on the same or following pages. Overflow text flows automatically through the chain.</p>
 
+        <h3>Advanced typography</h3>
+        <p>Paper supports OpenType true small caps, runaround text wrap with a standoff gap around obstacles, first-line and hanging indents, and drop caps from 2 up to 8 lines. These settings render on the canvas and are preserved in print export; frames that use features the vector exporter cannot yet reproduce are rasterized so the output stays faithful rather than simplified.</p>
+
+        <h3 id="japanese-typesetting">Japanese typesetting &amp; manga tools</h3>
+        <p>Paper supports <span lang="ja">縦書き</span> (vertical, right-to-left column) writing mode as a genuine layout mode, not a cosmetic flip &mdash; a frame set to vertical renders identically on the canvas and in the exported PDF, because the same layout code drives both. Switch any text frame's writing mode from the Inspector.</p>
+        <p>Furigana and emphasis marks are typed inline, using the notation letterers already use (the Aozora/pixiv/narou conventions): write <code lang="ja">漢字《かんじ》</code> for furigana over a run of kanji, or add an explicit delimiter &mdash; <code lang="ja">｜熟語《じゅくご》</code> &mdash; to attach a reading to any base text, including kana-led or mixed words. Wrap a word in double angle brackets, <code lang="ja">《《強調》》</code>, for emphasis dots (<span lang="ja">圏点</span>/<span lang="ja">傍点</span>). In vertical columns, one- and two-digit numbers are automatically set <span lang="ja">縦中横</span> (tate-ch&#363;-yoko) &mdash; upright and horizontal &mdash; so page numbers and short digits read across the column the way novels and manga are typeset; longer numbers, like a four-digit year, stay rotated with the column.</p>
+        <p>Two manga-lettering bubble presets (Gothic and Mincho) switch a bubble's typography in one step, and a manga-digest page preset (127&nbsp;&times;&nbsp;190.5&nbsp;mm &mdash; standard tank&#333;bon trim) sits in page setup alongside the comic-book, A4, A5, and webtoon-panel sizes. Paper's preflight has a dedicated manga profile, separate from its generic, comic, and webtoon checks.</p>
+
         <h3>Export</h3>
-        <p>Export individual pages or full spreads as high-resolution PNG or JPEG. Export a full document as a print-ready PDF with embedded bleed marks. Webcomic mode exports each page as a standalone image at web resolution.</p>
+        <p>For digital, export individual pages or full spreads as high-resolution PNG or JPEG, or use Webcomic mode to emit each page as a standalone web-resolution image. For print, choose <strong>PDF/X-1a</strong> or <strong>PDF/X-4</strong>: the document is rendered to real CMYK through an embedded ICC output intent, named spot-color swatches are written as real <strong>Separation</strong> plates, and text is embedded as vector curves where supported. A dedicated <strong>KDP-ready</strong> preset produces the PDF/X-1a interior or cover PDF Amazon's print checker expects, with the correct 0.125" bleed. The Print Production Inspector exposes the PDF/X target, output-intent profile, total-ink limit, black-handling policy, spot-color policy, and overprint-preview intent. You can also export a <strong>structurally valid, spec-correct Adobe IDML package</strong> for InDesign/Affinity Publisher handoff (IDML <em>import</em> is not yet supported). The browser PDF export remains a fast RGB proof and records production intent, but it is not press-certified.</p>
+
+        <figure class="doc-shot">
+          <img src="assets/screenshots/paper-pdfx-typecraft-showcase.png"
+               alt="The Type &amp; Craft showcase page in the Paper workspace, with a production spec sheet visible that lists PDF/X-1a &amp; X-4, real CMYK with embedded ICC, named spot colors kept as Separation plates, true drop caps, hanging indents, runaround text, and true small caps" />
+          <figcaption>The Type &amp; Craft showcase page in Paper &mdash; the live production spec sheet lists the PDF/X-1a/X-4 target, real CMYK with an embedded ICC output intent, named spot colors as Separation plates, true drop caps, hanging indents, runaround text, and true small caps.</figcaption>
+        </figure>
 
         <figure class="doc-shot">
           <img src="assets/screenshots/paper-comic-spread.png"
@@ -467,9 +467,9 @@
         </figure>
 
         <figure class="doc-shot">
-          <img src="assets/screenshots/weights-and-measures-paper-spread.jpg"
-               alt="A finished Weights &amp; Measures comic spread in the Paper workspace: a desert town establishing page and a cold-aisle lab page with speech bubbles, with the Paper Inspector panel open on the right" />
-          <figcaption>The same issue laid out in Paper &mdash; frames, speech bubbles, and print-production settings.</figcaption>
+          <img src="assets/screenshots/paper-print-production-inspector.png"
+               alt="A full-bleed illustrated comic page in the Paper workspace with the Print Production Inspector open, showing page size, bleed, PDF/X target, output intent, ink limit, black handling, spot colors, and overprint preview" />
+          <figcaption>A full-bleed comic page with the Print Production Inspector open &mdash; page size, bleed, PDF/X target, output intent, ink limit, black handling, spot colors, and overprint preview.</figcaption>
         </figure>
       </section>
 
@@ -479,9 +479,9 @@
         <p>The Video workspace is a timeline-based editor for assembling generated clips, Paper pages, and imported footage into finished video sequences. It supports multi-track arrangement, keyframe animation, text overlays, and export.</p>
 
         <figure class="doc-shot">
-          <img src="assets/screenshots/04-video-timeline.png"
-               alt="Video workspace showing multi-track timeline with clip thumbnails on Android" />
-          <figcaption>Multi-track timeline in the Video workspace on Android. Source bins appear in the left drawer; the preview monitor is above the timeline.</figcaption>
+          <img src="assets/screenshots/tablet-03-video-timeline.png"
+               alt="Video workspace multi-track timeline: program monitor, sequence info, and V1/V2 tracks with the editing tool strip" />
+          <figcaption>The Video workspace: a program monitor above a multi-track timeline, with select/cut/slip tools, zoom, and 1080p sequence settings.</figcaption>
         </figure>
 
         <h3>Timeline and tracks</h3>
@@ -515,7 +515,7 @@
       <section id="android-install">
         <p class="eyebrow">Android</p>
         <h2>Android installation and setup</h2>
-        <p>Sloom Studio is an Android application — available now as a $17.99 purchase from <a href="index.html#license" style="color: var(--cyan)">sloom.studio</a>, with Google Play coming soon. It runs on Android phones and tablets. For the best experience with a stylus, use an S Pen-equipped device or a tablet with Wacom-protocol stylus support.</p>
+        <p>Sloom Studio's desktop apps (Windows and Linux) are available now — buy once at <a href="index.html#license" style="color: var(--cyan)">sloom.studio</a>. The Android build is coming to the <b>Samsung Galaxy Store</b> and <b>Google Play</b> (it isn't on either store yet) and isn't sold directly from the site; the same one-time key covers it. It runs on Android phones and tablets. For the best experience with a stylus, use an S Pen-equipped device or a tablet with Wacom-protocol stylus support.</p>
 
         <h3>System requirements</h3>
         <ul>
@@ -533,23 +533,11 @@
           <li><strong>Top bar</strong> &mdash; Workspace switcher, project actions, zoom, and settings</li>
         </ul>
         <p>A floating tool palette provides quick access to the current workspace&rsquo;s primary tools. Tap the <strong>&times;</strong> button in the top bar to hide all chrome and work full-screen; a restore button appears at the edge to bring the interface back.</p>
-
-        <figure class="doc-shot">
-          <img src="assets/screenshots/phone-chrome-portrait.png"
-               alt="Sloom Studio phone interface in portrait mode showing the workspace chrome" />
-          <figcaption>Phone chrome in portrait mode. The top bar has the workspace tabs and project controls; the floating palette is visible at the left.</figcaption>
-        </figure>
       </section>
 
       <section id="dex">
         <h2>Samsung DeX and external displays</h2>
         <p>When connected to an external display via HDMI or DeX Station, Sloom Studio automatically switches to a desktop-style layout with persistent side panels, a larger canvas, and full keyboard and mouse support.</p>
-
-        <figure class="doc-shot">
-          <img src="assets/screenshots/dex-image-workspace.png"
-               alt="Image workspace in Samsung DeX showing persistent panels and large canvas" />
-          <figcaption>Image workspace in Samsung DeX. Panels are persistent, the canvas fills the display, and keyboard shortcuts are fully active.</figcaption>
-        </figure>
 
         <h3>Keyboard shortcuts</h3>
         <p>Standard shortcuts work in DeX mode: <code>Ctrl+Z</code> / <code>Ctrl+Shift+Z</code> for undo/redo, <code>B</code> for brush, <code>S</code> for selection, <code>H</code> for hand tool, <code>Ctrl+S</code> to save, <code>Space</code> to pan, and modifier keys for constrained transforms.</p>

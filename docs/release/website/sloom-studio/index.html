@@ -16,6 +16,10 @@
 <meta name="twitter:description" content="Node-graph Flow, a layered Image editor, print-ready Paper layout, and a Video timeline — one project, your own API keys. Free to download; $17.99 one-time commercial license, no subscription." />
 <meta name="twitter:image" content="https://sloom.studio/assets/graphics/feature-graphic-1024x500.png" />
 <link rel="canonical" href="https://sloom.studio/" />
+<link rel="alternate" hreflang="en" href="https://sloom.studio/" />
+<link rel="alternate" hreflang="ja" href="https://sloom.studio/ja/" />
+<link rel="alternate" hreflang="x-default" href="https://sloom.studio/" />
+
 <link rel="me" href="https://mastodon.social/@SloomStudio" />
 <link rel="icon" type="image/png" href="assets/graphics/icon-512.png" />
 <link rel="preload" href="assets/fonts/space-grotesk-latin-var.woff2" as="font" type="font/woff2" crossorigin />
@@ -810,6 +814,7 @@
     <a href="docs.html">Docs</a>
     <a href="examples.html">Examples</a>
     <a href="changelog.html">Changelog</a>
+    <a href="ja/index.html" hreflang="ja">日本語</a>
   </nav>
   <a class="btn btn-primary" href="#license">Download free</a>
 </div></header>
@@ -898,9 +903,9 @@
           data-title="Image" data-chips="Layers + masks|Generative fill|Region tools"
           data-desc="A layered editor with masks, canvas transforms, and model-in-the-loop generative fill.">
           <span class="k"></span><span><span class="n">Image</span><span class="d">Layered editor with model fill</span></span></button>
-        <button class="tab" role="tab" aria-selected="false" data-shot="weights-and-measures-paper-spread" data-ext="jpg" data-accent="#ffb53d"
-          data-title="Paper" data-chips="Threaded text|CMYK + baseline grid|Speech bubbles"
-          data-desc="Page-based publishing for comics, books &amp; print — frames, grids, bubbles, CMYK.">
+        <button class="tab" role="tab" aria-selected="false" data-shot="paper-pdfx-typecraft-showcase" data-ext="png" data-accent="#ffb53d"
+          data-title="Paper" data-chips="PDF/X-1a &amp; X-4|Real CMYK + ICC|Named spot Separation plates|Threaded text &amp; vertical"
+          data-desc="Page-based publishing for comics, books &amp; print — PDF/X-1a/X-4, real CMYK/ICC, named spot Separation plates, frames, grids, bubbles, and Japanese vertical typesetting.">
           <span class="k"></span><span><span class="n">Paper</span><span class="d">Print-ready publishing layout</span></span></button>
         <button class="tab" role="tab" aria-selected="false" data-shot="tablet-03-video-timeline" data-accent="#5ce6a1"
           data-title="Video" data-chips="Multi-track timeline|Keyframes|Overlays + crop"
@@ -978,7 +983,7 @@
             <tr style="--accent2:#ffb53d">
               <th scope="row">Paper</th>
               <td><span class="spec-fmt">.slppr</span></td>
-              <td>Threaded text, comic bubbles, SFX designer, baseline grids, booklet imposition. Exports PDF/X, KDP, IDML, CBZ, webtoon</td>
+              <td>Threaded text, comic bubbles, SFX designer, baseline grids, booklet imposition, vertical writing mode with furigana &amp; emphasis marks. Exports conformant PDF/X-1a / PDF/X-4, KDP-ready PDF, a structurally valid Adobe IDML package, CBZ, and webtoon</td>
               <td><span class="spec-ai">Supportive</span> Composes and upscales generated assets for print</td>
               <td class="spec-plat">Windows · Linux · Android/DeX</td>
             </tr>
@@ -1187,13 +1192,13 @@
           <li>Learn it, make things, share them — a license is due only once you earn with it</li>
         </ul>
         <div class="cta" style="margin-top:22px">
-          <a class="btn btn-primary" href="downloads/SignalLoom-Setup-0.9.10.exe" download>Windows</a>
-          <a class="btn btn-primary" href="downloads/SignalLoom-0.9.10.AppImage" download>Linux AppImage</a>
-          <a class="btn btn-ghost" href="downloads/SignalLoom-0.9.10-amd64.deb" download>.deb</a>
+          <a class="btn btn-primary" href="downloads/SloomStudio-Setup.exe" download>Windows</a>
+          <a class="btn btn-primary" href="downloads/SloomStudio.AppImage" download>Linux AppImage</a>
+          <a class="btn btn-ghost" href="downloads/SloomStudio.deb" download>.deb</a>
         </div>
         <div class="cta" style="margin-top:10px">
-          <a class="btn btn-primary" href="downloads/SignalLoom-0.9.10-mac-arm64.dmg" download>macOS · Apple Silicon</a>
-          <a class="btn btn-primary" href="downloads/SignalLoom-0.9.10-mac-intel.dmg" download>macOS · Intel</a>
+          <a class="btn btn-primary" href="downloads/SloomStudio-arm64.dmg" download>macOS · Apple Silicon</a>
+          <a class="btn btn-primary" href="downloads/SloomStudio-x64.dmg" download>macOS · Intel</a>
         </div>
         <div class="strike" style="margin-top:12px">macOS builds are <b>experimental &amp; unsigned</b>. They run fine, but macOS blocks unsigned apps on first launch (and may say the app is &ldquo;damaged&rdquo; on Apple Silicon). <a href="macos-install.html">How to open the Mac build &rarr;</a></div>
         <div class="strike" style="margin-top:14px">free download · <a href="downloads/SHA256SUMS.txt" style="color:var(--ink-2)">sha-256 checksums</a> · or <a href="https://github.com/Es00bac/signal-loom" style="color:var(--ink-2)">build from source</a></div>
@@ -1202,7 +1207,7 @@
         <div class="price"><small>$</small>17.99</div>
         <div class="strike">commercial license · launch sale <b>ends August 1</b> — first 100 copies · then <b>$39</b></div>
         <ul>
-          <li>Unlocks KDP, PDF/X-4, PDF/X-1a, IDML, and CMYK/spot print production</li>
+          <li>Unlocks pro print production — KDP-ready PDF, conformant PDF/X-1a/X-4 with real CMYK/ICC and named spot Separation plates, CMYK/spot swatches, plus a structurally valid Adobe IDML package export</li>
           <li>Marks your exports&rsquo; metadata as licensed and removes the startup notice</li>
           <li>The legal license once you earn with what you make here</li>
           <li>One key — desktop <b>and</b> Android</li>
@@ -1230,7 +1235,7 @@
       </details>
       <details>
         <summary>What exactly does $17.99 buy?</summary>
-        <div class="a">The <b>commercial license</b> — a one-time key, sent by email, verified offline, yours forever. It unlocks the professional print-production exports (KDP, PDF/X-4, PDF/X-1a, IDML, CMYK/spot), marks your exports&rsquo; metadata as licensed, removes the startup notice, and is the legal license once you start earning with your work. One key covers desktop <b>and</b> Android. Everything else — all four workspaces, webcomics, video renders, sharing — is already free. Model usage is separate: billed by your own AI provider, only when you choose to generate.</div>
+        <div class="a">The <b>commercial license</b> — a one-time key, sent by email, verified offline, yours forever. It unlocks the professional print-production workspace: KDP-ready output, conformant PDF/X-1a and PDF/X-4 export with real CMYK through an embedded ICC output intent and named spot colors as Separation plates, plus a structurally valid Adobe IDML package export (IDML import is not yet supported). It also covers print-ready PDF with bleed and trim, CMYK and spot swatches, and everything that ships during the 0.9.x beta at no extra cost. Because it&rsquo;s buy-once-own-it, every pro export we land during the beta is yours at no extra cost. It also marks your exports&rsquo; metadata as licensed, removes the startup notice, and is the legal license once you start earning with your work. One key covers desktop <b>and</b> Android. Everything else — all four workspaces, webcomics, video renders, sharing — is already free. Model usage is separate: billed by your own AI provider, only when you choose to generate.</div>
       </details>
       <details>
         <summary>Where do my projects and keys live?</summary>

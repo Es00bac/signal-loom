@@ -9,6 +9,9 @@
   <meta property="og:title" content="Signal Loom Changelog" />
   <meta property="og:description" content="Release notes for every Signal Loom beta build — desktop and Android." />
   <meta property="og:image" content="/assets/graphics/feature-graphic-1024x500.png" />
+<link rel="alternate" hreflang="en" href="https://sloom.studio/changelog.html" />
+<link rel="alternate" hreflang="ja" href="https://sloom.studio/ja/changelog.html" />
+<link rel="alternate" hreflang="x-default" href="https://sloom.studio/changelog.html" />
   <link rel="icon" type="image/png" href="assets/graphics/icon-512.png" />
   <link rel="stylesheet" href="assets/site.css" />
   <style>
@@ -92,6 +95,7 @@
       <a href="changelog.html" aria-current="page">Changelog</a>
       <a href="index.html#license">Download</a>
       <a href="privacy.html">Privacy</a>
+      <a href="ja/changelog.html" hreflang="ja">日本語</a>
     </div>
     <a class="nav-cta" href="index.html#license">Get it — $17.99</a>
     <button class="nav-hamburger" aria-label="Toggle navigation" onclick="document.getElementById('nav-links').classList.toggle('open')">
@@ -117,13 +121,16 @@
         <span class="current-badge">Current</span>
         <span class="release-date">July 2026</span>
       </div>
-      <p class="release-summary">The cross-device release: the phone &harr; browser Image baton pass now carries every stroke both ways, live, verified end-to-end on real hardware — and the commercial license activates on Android with the same offline key as desktop.</p>
+      <p class="release-summary">The cross-device release: the phone &harr; browser Image baton pass now carries every stroke both ways, live, verified end-to-end on real hardware; the commercial license activates on Android with the same offline key as desktop; and the professional print-production pipeline ships conformant PDF/X-1a/X-4 export with real CMYK/ICC and named spot Separation plates, plus a structurally valid Adobe IDML package export.</p>
 
       <div class="cl-group">
         <h3>New</h3>
         <ul class="cl-items">
           <li><strong>Cross-device drawing, for real.</strong> Draw on the phone, take over in a served desktop browser, draw there, take it back — the document, its layers, and every stroke travel both directions live. &ldquo;Continue from your other device&rdquo; cards pick a handed-off image up with its full layer stack.</li>
           <li><strong>License activation on Android.</strong> Settings &rarr; License accepts the same key as desktop, verified fully offline (with a pure-JS fallback for older WebViews), and unlocks the commercial exports on the phone.</li>
+          <li><strong>Conformant PDF/X-1a and PDF/X-4 export.</strong> Paper now renders pages to real CMYK through an embedded ICC output intent, writes named spot-color swatches as real Separation plates, and embeds text as vector curves where supported. A dedicated KDP-ready preset produces the PDF/X-1a interior/cover PDF Amazon's print checker expects, with the correct 0.125" bleed.</li>
+          <li><strong>Real Adobe IDML package export.</strong> Paper exports a structurally valid, spec-correct <code>.idml</code> ZIP package for InDesign/Affinity Publisher handoff. IDML import is not yet supported.</li>
+          <li><strong>Print Production Inspector controls.</strong> Set the PDF/X target, output-intent profile, total-ink limit, black-handling policy, spot-color policy, and overprint-preview intent before export.</li>
         </ul>
       </div>
       <div class="cl-group fix">
@@ -147,7 +154,7 @@
       <div class="cl-group">
         <h3>New</h3>
         <ul class="cl-items">
-          <li><strong>Community edition + commercial license.</strong> Signal Loom is free for personal and noncommercial use. The one-time $17.99 commercial license (Settings &rarr; License; verified offline, one key for desktop and Android) unlocks the professional print-production exports — KDP, PDF/X-4, PDF/X-1a, IDML, and CMYK/spot — and removes the once-a-day Community notice. No watermarks on anyone's art, ever: exports carry invisible provenance metadata instead (PNG/JPEG tags, PDF Producer, video container comment).</li>
+          <li><strong>Community edition + commercial license.</strong> Signal Loom is free for personal and noncommercial use. The one-time $17.99 commercial license (Settings &rarr; License; verified offline, one key for desktop and Android) unlocks the professional print-production workspace — KDP-ready output, print-ready PDF with bleed and trim, and CMYK/spot swatches, with conformant PDF/X-1a, PDF/X-4 and Adobe IDML in active development and included free as they ship — and removes the once-a-day Community notice. No watermarks on anyone's art, ever: exports carry invisible provenance metadata instead (PNG/JPEG tags, PDF Producer, video container comment).</li>
           <li><strong>Motion comics.</strong> Speech bubbles, thought bubbles, and caption boxes are first-class timeline clips — placed on the Program stage, keyframe-animatable, with full typesetting (font, colors, tail direction/length, line height, letter spacing, alignment) in the Inspector.</li>
           <li><strong>Pro editing quartet.</strong> JKL shuttle with 2/4/8&times; speeds, Space/Home/End/arrow transport, Source Monitor in/out marks with three-point insert (<code>,</code>) and overwrite (<code>.</code>), and ripple/roll trims — including Alt-drag pointer ripple on clip edges.</li>
           <li><strong>Timeline power tools.</strong> Markers (Shift+M), audio fades and crossfades, per-track locks, and collapsible drawer-style tracks that shrink to a slim strip with clip hints.</li>

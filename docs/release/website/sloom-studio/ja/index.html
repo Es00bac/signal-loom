@@ -1,0 +1,1625 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sloom Studio（Signal Loom）— 本当に自分のものになる創作スイート</title>
+<meta name="description" content="Sloom Studio（Signal Loom）はローカルファーストの創作スイートです。ノードグラフのFlow、レイヤー式のImageエディタ、印刷対応のPaperレイアウト、Videoタイムライン——ひとつの.sloomプロジェクトの下にある4つの独立したツール。自分のAPIキーを使う、あるいはAIをまったく使わない、どちらも自由です。買い切り、サブスクリプションなし。" />
+<meta name="theme-color" content="#04070d" />
+<meta property="og:title" content="Sloom Studio（Signal Loom）" />
+<meta property="og:description" content="自分のものになる創作スイート。独立した4つのワークスペース、ひとつのプロジェクト、自分のAPIキー。無料でダウンロードでき、買い切り¥3,000の商用ライセンスでプロ向け印刷書き出しが解放されます。" />
+<meta property="og:image" content="https://sloom.studio/assets/graphics/feature-graphic-1024x500.png" />
+<meta property="og:url" content="https://sloom.studio/ja/" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Sloom Studio（Signal Loom）— 自分のものになる創作スイート" />
+<meta name="twitter:description" content="ノードグラフのFlow、レイヤー式のImageエディタ、印刷対応のPaperレイアウト、Videoタイムライン——ひとつのプロジェクト、自分のAPIキー。無料でダウンロード、買い切り¥3,000でサブスクリプションなし。" />
+<meta name="twitter:image" content="https://sloom.studio/assets/graphics/feature-graphic-1024x500.png" />
+<link rel="canonical" href="https://sloom.studio/ja/" />
+<link rel="alternate" hreflang="en" href="https://sloom.studio/" />
+<link rel="alternate" hreflang="ja" href="https://sloom.studio/ja/" />
+<link rel="alternate" hreflang="x-default" href="https://sloom.studio/" />
+
+<link rel="me" href="https://mastodon.social/@SloomStudio" />
+<link rel="icon" type="image/png" href="../assets/graphics/icon-512.png" />
+<link rel="preload" href="../assets/fonts/space-grotesk-latin-var.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="preload" href="../assets/fonts/inter-latin-var.woff2?v=2" as="font" type="font/woff2" crossorigin />
+<script>document.documentElement.classList.add('js')</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Sloom Studio (Signal Loom)",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "Windows, macOS, Linux",
+  "description": "ローカルファーストで自分のAPIキーを使う創作スイート：ノードグラフのFlow、レイヤー式の画像エディタ、コミック・印刷用のページレイアウト、ビデオタイムライン——ひとつのプロジェクトの下にある4つの独立したツール。非商用利用は無料でダウンロード可能。買い切りの商用ライセンスでプロ向け印刷書き出しが解放されます。サブスクリプションなし。",
+  "url": "https://sloom.studio/ja/",
+  "image": "https://sloom.studio/assets/graphics/feature-graphic-1024x500.png",
+  "brand": { "@type": "Brand", "name": "Sloom Studio" },
+  "offers": [
+    {
+      "@type": "Offer",
+      "name": "コミュニティ版",
+      "price": "0",
+      "priceCurrency": "JPY",
+      "availability": "https://schema.org/InStock",
+      "url": "https://sloom.studio/ja/#license"
+    },
+    {
+      "@type": "Offer",
+      "name": "商用ライセンス",
+      "price": "3000",
+      "priceCurrency": "JPY",
+      "availability": "https://schema.org/InStock",
+      "url": "https://sloom.studio/ja/#license"
+    }
+  ]
+}
+</script>
+<style>
+  /* ── self-hosted type — no third-party requests, same as the app ── */
+  @font-face{font-family:"Space Grotesk";src:url("assets/fonts/space-grotesk-latin-var.woff2") format("woff2");
+    font-weight:300 700;font-style:normal;font-display:swap}
+  @font-face{font-family:"Inter";src:url("assets/fonts/inter-latin-var.woff2?v=2") format("woff2");
+    font-weight:100 900;font-style:normal;font-display:swap}
+
+  :root{
+    color-scheme:dark;
+    --bg:#04070d; --panel:#080d17cc; --panel-2:#0b111d;
+    --ink:#edf3fa; --ink-2:#97a5ba; --ink-3:#5c6a80;
+    --line:rgba(150,182,220,.11); --line-2:rgba(150,182,220,.22);
+    --accent:#3fd6ff; --pink:#ff5cb8; --gold:#ffb53d; --green:#5ce6a1;
+    --wire:#2ea8cf;
+    --display:"Space Grotesk","Inter",system-ui,sans-serif;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --ease:cubic-bezier(.22,.61,.2,1);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:16.5px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:clip;
+    font-feature-settings:"cv11","ss01";
+  }
+  ::selection{background:rgba(63,214,255,.25);color:#fff}
+  a{color:inherit;text-decoration:none}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+  .mono{font-family:var(--mono);letter-spacing:.14em;text-transform:uppercase}
+
+  /* ── the infinite node-editor canvas the whole site lives on ── */
+  body::before{
+    content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background-image:radial-gradient(rgba(120,160,200,.13) 1px,transparent 1px);
+    background-size:30px 30px;
+  }
+  body::after{ /* vignette so the canvas breathes */
+    content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 0%,transparent 40%,rgba(2,4,8,.7) 100%);
+  }
+
+  /* ── the wire that runs the page ── */
+  #wiresvg{position:absolute;top:0;left:0;width:100%;z-index:1;pointer-events:none;overflow:visible}
+  #wirepath{fill:none;stroke:var(--wire);stroke-width:1.6;opacity:.9;
+    filter:drop-shadow(0 0 6px rgba(63,214,255,.35))}
+  #wirepath.undrawn{opacity:0}
+  .pulse{fill:#bfefff;filter:drop-shadow(0 0 8px rgba(63,214,255,.9))}
+
+  /* ── run bar (top) ── */
+  header.bar{position:fixed;top:0;left:0;right:0;z-index:50;backdrop-filter:blur(16px);
+    background:linear-gradient(180deg,rgba(4,7,13,.88),rgba(4,7,13,.55));border-bottom:1px solid var(--line)}
+  .bar-in{display:flex;align-items:center;gap:18px;height:56px;padding-inline:clamp(14px,3vw,28px)}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:640;font-size:.93rem}
+  .brand img{width:26px;height:26px;border-radius:6px}
+  .runchip{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:.6rem;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:6px 12px}
+  .runchip i{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px rgba(92,230,161,.9);
+    animation:blink 2.4s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+  .runchip b{color:var(--ink-2);font-weight:600}
+  .bar nav{margin-left:auto;display:flex;gap:2px}
+  .bar nav a{font-size:.82rem;font-weight:480;color:var(--ink-2);padding:8px 11px;border-radius:8px;transition:color .15s}
+  .bar nav a:hover{color:var(--ink)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:560;font-size:.9rem;
+    padding:11px 19px;border-radius:10px;border:1px solid transparent;cursor:pointer;
+    transition:transform .18s var(--ease),background .18s,border-color .18s;white-space:nowrap}
+  .btn-primary{background:var(--ink);color:#0a0f17;box-shadow:0 1px 0 rgba(255,255,255,.25) inset,0 14px 34px -18px rgba(180,220,255,.45)}
+  .btn-primary:hover{transform:translateY(-1px);background:#fff}
+  .btn-ghost{border-color:var(--line-2);color:var(--ink);background:rgba(8,13,23,.5)}
+  .btn-ghost:hover{border-color:rgba(150,182,220,.4)}
+  .bar .btn{padding:7px 14px;font-size:.8rem}
+
+  /* ── minimap (a node editor has one; so does the site) ── */
+  #minimap{position:fixed;right:16px;top:50%;transform:translateY(-50%);z-index:60;width:54px;
+    border:1px solid var(--line-2);border-radius:10px;background:rgba(5,9,17,.85);backdrop-filter:blur(8px);
+    padding:7px;cursor:pointer;display:none}
+  .js #minimap{display:block}
+  #minimap .mm-label{font-family:var(--mono);font-size:.42rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--ink-3);text-align:center;margin-bottom:6px}
+  #mm-track{position:relative;width:100%;height:280px}
+  #mm-track::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--line-2)}
+  .mm-node{position:absolute;left:14%;width:72%;border-radius:3px;background:rgba(150,182,220,.16);
+    border:1px solid rgba(150,182,220,.22);min-height:6px;transition:background .3s,border-color .3s}
+  .mm-node.ran{background:rgba(63,214,255,.3);border-color:rgba(63,214,255,.5)}
+  #mm-view{position:absolute;left:-4px;right:-4px;border:1px solid rgba(63,214,255,.7);border-radius:4px;
+    background:rgba(63,214,255,.07);box-shadow:0 0 10px -2px rgba(63,214,255,.4)}
+  @media(max-width:1220px){.js #minimap{display:none}}
+
+  /* ── nodes (every section IS a node) ── */
+  main{position:relative;z-index:2;padding-top:56px}
+  .graph{width:min(1120px,94vw);margin-inline:auto;position:relative}
+  .node{position:relative;margin-block:clamp(90px,14vh,170px);border:1px solid var(--line-2);border-radius:16px;
+    background:linear-gradient(180deg,rgba(9,14,24,.92),rgba(7,11,19,.88));backdrop-filter:blur(6px);
+    box-shadow:0 40px 90px -50px #000}
+  .node-head{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);
+    font-family:var(--mono);font-size:.62rem;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);
+    background:linear-gradient(180deg,rgba(150,182,220,.045),transparent);border-radius:16px 16px 0 0}
+  .node-head .nid{color:var(--accent);font-weight:600}
+  .node-head .ntype{border:1px solid var(--line);border-radius:999px;padding:2px 9px;color:var(--ink-3)}
+  .node-head .nstate{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .node-head .nstate i{width:6px;height:6px;border-radius:50%;background:var(--ink-3);transition:.4s}
+  .node-head .nstate .txt::after{content:"idle"}
+  .node.ran .node-head .nstate i{background:var(--green);box-shadow:0 0 8px rgba(92,230,161,.9)}
+  .node.ran .node-head .nstate .txt::after{content:"ran ✓";color:var(--green)}
+  .node-body{padding:clamp(26px,4.5vw,54px)}
+  /* ports — where the page's cable plugs in and out */
+  .port{position:absolute;width:12px;height:12px;border-radius:50%;background:#0a1420;border:2px solid var(--wire);
+    z-index:3;box-shadow:0 0 0 3px rgba(63,214,255,.08)}
+  .port.in{top:-7px} .port.out{bottom:-7px}
+  .node.ran .port.in,.node.done .port.out{background:var(--accent);box-shadow:0 0 12px rgba(63,214,255,.8)}
+
+  /* ── shared type inside nodes ── */
+  .kicker{font-family:var(--mono);font-size:.64rem;letter-spacing:.24em;text-transform:uppercase;color:var(--ink-3);
+    display:flex;align-items:center;gap:12px;margin:0 0 20px}
+  .kicker i{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent);flex:none}
+  h1.display{font-family:var(--display);font-weight:560;
+    font-size:clamp(2.6rem,5.5vw,4.5rem);line-height:1;letter-spacing:-.03em;margin:0 0 24px}
+  h1.display em,h2 em{font-style:normal;
+    background:linear-gradient(100deg,#66dfff,#8f7bff 90%);-webkit-background-clip:text;background-clip:text;color:transparent}
+  h2{font-family:var(--display);font-weight:540;
+    font-size:clamp(1.8rem,3.2vw,2.7rem);line-height:1.04;letter-spacing:-.025em;margin:0 0 16px}
+  .sub{color:var(--ink-2);max-width:46em;font-size:1rem;line-height:1.7;margin:0}
+  .sub b{color:var(--ink);font-weight:540}
+  .sub+.sub{margin-top:14px}
+
+  /* ── node 01 · prompt (hero) ── */
+  #prompt .node-body{display:grid;grid-template-columns:1.04fr .96fr;gap:clamp(36px,4.5vw,64px);align-items:center;position:relative;overflow:hidden;border-radius:0 0 16px 16px}
+  #loom{position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:.85}
+  #prompt .node-body>*:not(#loom){position:relative;z-index:1}
+  .lead{font-size:clamp(1rem,1.35vw,1.14rem);color:var(--ink-2);max-width:34em;margin:0 0 12px;line-height:1.72}
+  .lead b{color:var(--ink);font-weight:540}
+  .lead-2{font-size:.96rem;color:var(--ink-3);max-width:34em;margin:0 0 30px}
+  .lead-2 b{color:var(--ink-2);font-weight:520}
+  .cta{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:26px}
+  .weaveline{font-family:var(--mono);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);
+    border-top:1px solid var(--line);padding-top:16px;line-height:2}
+  .weaveline b{color:var(--ink-2)}
+  .weaveline a{color:var(--accent);cursor:pointer}
+  .facts{display:flex;flex-wrap:wrap;gap:8px 0;margin-top:6px;
+    font-family:var(--mono);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3)}
+  .facts span{display:flex;align-items:center}
+  .facts span+span::before{content:"";width:3px;height:3px;border-radius:50%;background:var(--ink-3);margin-inline:12px;opacity:.6}
+  .facts b{color:var(--ink-2);font-weight:600;margin-right:5px}
+
+  /* app-window frame */
+  .monitor{border:1px solid var(--line-2);border-radius:13px;overflow:hidden;background:#050a13;
+    box-shadow:0 50px 100px -48px #000,0 0 80px -50px rgba(63,214,255,.45);position:relative}
+  .monitor .chrome{display:flex;align-items:center;gap:10px;padding:10px 15px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#0a101c,#070c15)}
+  .monitor .chrome i{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px rgba(92,230,161,.8);flex:none}
+  .chrome .label{font-family:var(--mono);font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+  .chrome .meta{margin-left:auto;font-family:var(--mono);font-size:.56rem;letter-spacing:.12em;color:var(--ink-3);opacity:.7}
+  .monitor img{display:block;width:100%}
+  .readout{position:absolute;right:14px;bottom:14px;border:1px solid var(--line-2);border-radius:9px;
+    background:rgba(5,9,17,.92);backdrop-filter:blur(10px);padding:9px 13px;font-family:var(--mono);
+    font-size:.58rem;letter-spacing:.13em;color:var(--ink-2)}
+  .readout b{color:var(--green)}
+
+  /* ── node 02 · workstation ── */
+  .station{display:grid;grid-template-columns:230px 1fr;gap:26px;margin-top:38px}
+  .tabs{display:flex;flex-direction:column;gap:8px}
+  .tab{display:flex;gap:12px;align-items:flex-start;text-align:left;cursor:pointer;border:1px solid var(--line);
+    background:transparent;border-radius:12px;padding:13px 14px;transition:.18s var(--ease);color:var(--ink-2);font-family:var(--sans)}
+  .tab:hover{border-color:var(--line-2);color:var(--ink)}
+  .tab[aria-selected="true"]{border-color:var(--line-2);color:var(--ink);background:linear-gradient(180deg,rgba(150,182,220,.06),transparent)}
+  .tab .k{width:8px;height:8px;border-radius:50%;background:var(--accent,var(--accent));margin-top:7px;flex:none;
+    box-shadow:0 0 0 3px color-mix(in srgb,var(--accent,#3fd6ff) 14%,transparent);opacity:.45;transition:opacity .18s}
+  .tab[aria-selected="true"] .k,.tab:hover .k{opacity:1}
+  .tab .n{font-weight:560;font-size:.95rem;line-height:1.25}
+  .tab .d{display:block;font-size:.77rem;color:var(--ink-3);margin-top:3px;font-weight:420}
+  .stage .monitor img{aspect-ratio:2560/1600;object-fit:cover}
+  .stage-info{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+  .chip{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);
+    border:1px solid var(--line);border-radius:999px;padding:6px 12px;display:inline-flex;align-items:center;gap:8px}
+  .chip::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--accent,#3fd6ff)}
+  .credo{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(22px,3vw,40px);margin-top:clamp(40px,5vw,60px)}
+  .credo>div{border-top:1px solid var(--line-2);padding-top:20px}
+  .credo .kick{font-family:var(--mono);font-size:.58rem;letter-spacing:.22em;text-transform:uppercase;color:var(--ink-3);margin-bottom:12px}
+  .credo h3{font-family:var(--display);font-weight:540;font-size:1.36rem;letter-spacing:-.02em;margin:0 0 9px;line-height:1.12}
+  .credo p{margin:0;color:var(--ink-2);font-size:.92rem;line-height:1.68}
+
+  /* ── node 04 · patch bay ── */
+  .jacks{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:13px;overflow:hidden;margin-top:34px}
+  .jack{background:#0a101b;padding:18px 16px;display:flex;flex-direction:column;gap:3px;transition:background .2s}
+  .jack:hover{background:var(--panel-2)}
+  .jack span{font-size:.9rem;font-weight:540;display:flex;align-items:center;gap:9px}
+  .jack span::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 8px rgba(63,214,255,.5);flex:none}
+  .jack small{font-family:var(--mono);font-size:.56rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);padding-left:15px}
+  .jack.quiet span::before{background:var(--ink-3);box-shadow:none}
+  .jack.quiet span{color:var(--ink-2);font-weight:460}
+  .mini{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px}
+  .card{border:1px solid var(--line);border-radius:13px;background:transparent;padding:22px;transition:border-color .2s}
+  .card:hover{border-color:var(--line-2)}
+  .card h3{margin:0 0 8px;font-size:.98rem;font-weight:560;display:flex;align-items:center;gap:10px}
+  .card .tag{font-family:var(--mono);font-size:.54rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent2,var(--accent));
+    border:1px solid var(--line);border-radius:999px;padding:3px 9px;font-weight:500}
+  .card p{margin:0;color:var(--ink-2);font-size:.88rem;line-height:1.65}
+
+  /* ── node 05 · image desk ── */
+  .shots{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:36px}
+  .shots figure{margin:0;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#0a101b;
+    display:flex;flex-direction:column;transition:border-color .2s}
+  .shots figure:hover{border-color:var(--line-2)}
+  .shots figure img{display:block;width:100%;height:auto}
+  .shots figcaption{padding:18px 20px 20px;border-top:1px solid var(--line)}
+  .shots figcaption b{display:block;font-family:var(--display);font-weight:540;font-size:1.12rem;letter-spacing:-.015em;margin-bottom:6px}
+  .shots .cap{color:var(--ink-2);font-size:.88rem;line-height:1.65}
+  .shots .cap b{display:inline;font-family:var(--sans);font-size:inherit;font-weight:560;color:var(--ink)}
+  .tagrow{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+  .tagrow em{font-style:normal;font-family:var(--mono);font-size:.55rem;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 10px}
+
+  /* ── node 06 · field ── */
+  .field{display:grid;grid-template-columns:.9fr 1.1fr;gap:clamp(30px,4vw,52px);align-items:center;margin-top:36px}
+  .diagram{border:1px solid var(--line);border-radius:13px;background:#0a101b;padding:24px}
+  .flowline{display:flex;align-items:center;justify-content:space-between;gap:12px;font-family:var(--mono);
+    font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2)}
+  .fnode{border:1px solid var(--line-2);border-radius:10px;padding:14px 11px;text-align:center;background:var(--panel-2);min-width:0;flex:1}
+  .fnode b{display:block;color:var(--ink);font-size:.84rem;letter-spacing:0;text-transform:none;margin-bottom:4px;font-family:var(--sans);font-weight:560}
+  .arrow{color:var(--accent);flex:none;opacity:.8}
+  .bademo{position:relative;aspect-ratio:1344/2389;width:100%;border:1px solid var(--line-2);border-radius:16px;overflow:hidden;background:#04070d}
+  .bademo .fr{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;animation:baFade 13.5s infinite}
+  .bademo .fr2{animation-delay:4.5s} .bademo .fr3{animation-delay:9s}
+  .bademo .balabel{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);max-width:92%;text-align:center;white-space:nowrap;
+    font-family:var(--mono);font-size:.56rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);background:rgba(4,8,16,.9);
+    border:1px solid var(--line-2);border-radius:999px;padding:7px 14px;opacity:0;animation:baFade 13.5s infinite;backdrop-filter:blur(6px)}
+  .bademo .balabel b{color:var(--accent);margin-right:8px;font-weight:600}
+  .bademo .bl2{animation-delay:4.5s} .bademo .bl3{animation-delay:9s}
+  @keyframes baFade{0%{opacity:0}6%{opacity:1}30%{opacity:1}36%{opacity:0}100%{opacity:0}}
+  @media(prefers-reduced-motion:reduce){.bademo .fr,.bademo .balabel{animation:none}.bademo .fr3,.bademo .bl3{opacity:1}}
+  .fieldnote{display:flex;gap:16px;align-items:flex-start;margin-top:26px;padding:20px 22px;border:1px solid var(--line);border-radius:14px}
+  .fieldnote .ic{font-size:1.4rem;line-height:1.3;flex:none;filter:saturate(.7)}
+  .fieldnote b{display:block;font-size:.98rem;font-weight:560;margin-bottom:4px}
+  .fieldnote p{color:var(--ink-2);font-size:.88rem;line-height:1.65;margin:0}
+  .fieldnote a{color:var(--accent)}
+
+  /* ── node 07 · license ── */
+  .license{margin-top:36px;display:grid;grid-template-columns:1.08fr .92fr;gap:0;border:1px solid var(--line-2);
+    border-radius:15px;overflow:hidden;background:#0a101b}
+  .license .left{padding:32px 34px}
+  .license .price{font-family:var(--display);font-weight:600;font-size:clamp(3rem,5.5vw,4.2rem);letter-spacing:-.035em;line-height:1}
+  .license .price small{font-size:1.3rem;color:var(--ink-2);font-weight:400;vertical-align:38%}
+  .license .strike{font-family:var(--mono);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin-top:11px}
+  .license .strike s{color:var(--ink-3)}
+  .license ul{list-style:none;padding:0;margin:22px 0 0;display:grid;gap:10px}
+  .license li{display:flex;gap:12px;color:var(--ink-2);font-size:.91rem;line-height:1.55}
+  .license li::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--accent);margin-top:.62em;flex:none}
+  .license .right{border-left:1px solid var(--line);padding:32px 34px;background:linear-gradient(180deg,rgba(63,214,255,.045),transparent);
+    display:flex;flex-direction:column;justify-content:center;gap:11px}
+  .license .right .note{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--ink-3);line-height:1.9;margin-top:6px}
+  .license .right .note b{color:var(--ink-2)}
+  .fineprint{color:var(--ink-3);font-size:.79rem;margin-top:16px;max-width:46em;line-height:1.6}
+  .srcnote{margin-top:20px;color:var(--ink-3);font-size:.86rem;max-width:46em;line-height:1.65}
+  .srcnote a{color:var(--ink-2);border-bottom:1px solid var(--line-2)}
+  .srcnote a:hover{color:var(--ink)}
+
+  /* ── node 08 · faq ── */
+  .faq{margin-top:30px;max-width:760px}
+  .faq details{border-top:1px solid var(--line)}
+  .faq details:last-child{border-bottom:1px solid var(--line)}
+  .faq summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;justify-content:space-between;gap:20px;
+    padding:18px 4px;font-size:1rem;font-weight:520;color:var(--ink);transition:color .15s}
+  .faq summary::-webkit-details-marker{display:none}
+  .faq summary::after{content:"+";font-family:var(--display);font-size:1.3rem;font-weight:300;color:var(--ink-3);
+    transition:transform .25s var(--ease);flex:none;line-height:1}
+  .faq details[open] summary::after{transform:rotate(45deg);color:var(--accent)}
+  .faq .a{padding:0 4px 20px;color:var(--ink-2);font-size:.91rem;line-height:1.7;max-width:60ch}
+  .faq .a b{color:var(--ink);font-weight:540}
+  .faq .a a{color:var(--accent)}
+
+  /* ── terminal node (footer) ── */
+  #terminal .node-body{font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;line-height:2.2;color:var(--ink-2)}
+  #terminal .p{color:var(--green)}
+  #terminal .dim{color:var(--ink-3)}
+  #terminal a{color:var(--ink-2);border-bottom:1px solid var(--line-2)}
+  #terminal a:hover{color:var(--accent);border-color:var(--accent)}
+  .legal{width:min(1120px,94vw);margin:26px auto 40px;display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;
+    font-family:var(--mono);font-size:.58rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);position:relative;z-index:2}
+
+  /* ── node 03 · the flow-demo replay (a mock of the real workspace) ── */
+  .fd-wrap{margin-top:34px;border:1px solid var(--line-2);border-radius:14px;overflow:hidden;background:#050a13;
+    box-shadow:0 50px 100px -48px #000}
+  /* film sims (sims.js <sl-sim>) drop into the same window chrome as the old inline stages */
+  .fd-wrap .fd-sim{display:block;width:100%;aspect-ratio:1100/640}
+  .fd-wrap .fd-sim:not(:defined){background:#050a13}
+  .fd-stage{position:relative;width:100%;aspect-ratio:1100/640;container-type:inline-size;
+    font-size:clamp(6px,1.1cqw,12px);overflow:hidden}
+  .fd-stage *{box-sizing:border-box}
+  .fd-chrome{position:absolute;inset:0 0 auto 0;height:6.2%;display:flex;align-items:center;gap:1em;
+    padding-inline:1.4em;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0a101c,#070c15);
+    font-family:var(--mono);font-size:.95em;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);z-index:6}
+  .fd-chrome i{width:.7em;height:.7em;border-radius:50%;background:var(--green);box-shadow:0 0 8px rgba(92,230,161,.8)}
+  .fd-ws{margin-left:auto;display:flex;gap:.4em}
+  .fd-ws b{width:2em;height:2em;display:grid;place-items:center;border:1px solid var(--line);border-radius:.4em;
+    font-weight:600;color:var(--ink-3)}
+  .fd-ws b.on{color:var(--accent);border-color:rgba(63,214,255,.4);background:rgba(63,214,255,.08)}
+  .fd-canvas{position:absolute;inset:10.4% 0 0 0;
+    background-image:radial-gradient(rgba(120,160,200,.14) 1px,transparent 1px);background-size:2.4em 2.4em}
+  /* stage coordinates: 1100 × 600 design units — 1 unit = 0.0909cqw */
+  .fd-canvas>*{position:absolute}
+  .fd-node{border:1px solid color-mix(in srgb,var(--nc,#6b7280) 35%,transparent);border-radius:.85em;z-index:3;
+    background:linear-gradient(155deg,color-mix(in srgb,var(--nc,#6b7280) 14%,#1e2027),#1e2027 34%,#15171d);
+    box-shadow:0 1.4em 3em -1.6em #000;opacity:0;transform:scale(.85);transition:opacity .45s var(--ease),transform .45s var(--ease);
+    width:15.3cqw}
+  .fd-node.on{opacity:1;transform:none}
+  .fd-node,.fd-node *{font-size:inherit}
+  .fd-nh{display:flex;align-items:center;gap:.6em;padding:.7em .9em;border-radius:.85em .85em 0 0;
+    background:linear-gradient(90deg,color-mix(in srgb,var(--nc,#6b7280) 20%,transparent),rgba(37,40,48,.82));
+    border-bottom:1px solid color-mix(in srgb,var(--nc,#6b7280) 25%,transparent);
+    font-family:var(--mono);font-size:.92em;letter-spacing:.08em;text-transform:uppercase;color:#e5e7eb;white-space:nowrap;overflow:hidden}
+  .fd-nh>b{margin-left:auto;font-weight:400;color:color-mix(in srgb,var(--nc,#6b7280) 80%,#fff)}
+  .fd-nh i{width:.6em;height:.6em;border-radius:50%;background:var(--nc);box-shadow:0 0 6px var(--nc);flex:none}
+  .fd-nh u{margin-left:auto;text-decoration:none;color:color-mix(in srgb,var(--nc,#6b7280) 85%,#fff);
+    border:1px solid color-mix(in srgb,var(--nc,#6b7280) 40%,transparent);border-radius:99em;padding:.05em .55em;font-size:.9em}
+  .fd-nh em{font-style:normal;color:var(--accent);opacity:0;margin-left:-.35em}
+  .fd-node.editing .fd-nh em{opacity:1;animation:fdblink .8s steps(1) infinite}
+  @keyframes fdblink{50%{opacity:0}}
+  .fd-thumb{margin:.6em;border-radius:.45em;overflow:hidden;background:#0a0f18}
+  .fd-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .fd-ta{margin:.6em;border:1px solid var(--line);border-radius:.45em;background:#0a0f18;min-height:5.4em;
+    padding:.6em .7em;font-family:var(--mono);font-size:.95em;color:var(--ink-2);line-height:1.5}
+  .fd-ta em{font-style:normal;color:var(--accent);animation:fdblink .8s steps(1) infinite}
+  .fd-prov{display:flex;align-items:baseline;gap:.6em;padding:.55em .9em;border-bottom:1px solid var(--line);
+    font-size:.95em;color:var(--ink)}
+  .fd-prov small{font-family:var(--mono);font-size:.78em;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+  .fd-result{position:relative;margin:.6em;height:14.5cqw;border-radius:.45em;overflow:hidden;background:#0a0f18;
+    border:1px dashed var(--line-2)}
+  .fd-result img{width:100%;height:100%;object-fit:cover;object-position:top;opacity:0;transition:opacity .6s;display:block}
+  .fd-result.done{border-style:solid}
+  .fd-result.done img{opacity:1}
+  .fd-await{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--mono);font-size:.85em;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);transition:opacity .3s}
+  .fd-result.done .fd-await,.fd-result.running .fd-await{opacity:0}
+  .fd-progress{position:absolute;left:8%;right:8%;top:50%;height:.5em;border-radius:99em;background:rgba(150,182,220,.12);
+    opacity:0;transition:opacity .3s}
+  .fd-result.running .fd-progress{opacity:1}
+  .fd-progress i{display:block;height:100%;width:0%;border-radius:99em;background:linear-gradient(90deg,var(--accent),#8f7bff);
+    box-shadow:0 0 8px rgba(63,214,255,.6);transition:width 2.4s linear}
+  .fd-result.running .fd-progress i{width:100%}
+  .fd-gen{display:block;margin:.35em .6em .7em;width:calc(100% - 1.2em);padding:.55em;border-radius:.45em;
+    border:1px solid rgba(63,214,255,.35);background:rgba(63,214,255,.1);color:var(--accent);
+    font-family:var(--mono);font-size:.9em;letter-spacing:.14em;text-transform:uppercase;pointer-events:none;transition:.15s}
+  .fd-gen.pressed{transform:scale(.96);background:rgba(63,214,255,.28);color:#fff}
+  .fd-port{position:absolute;width:1.3em;height:1.3em;border-radius:50%;background:#3b82f6;border:.24em solid #1e2027;z-index:4;transition:background .25s,box-shadow .25s}
+  .fd-port.out{right:-.75em;top:50%;margin-top:-.65em}
+  .fd-port.in{left:-.75em;top:50%;margin-top:-.65em}
+  .fd-port.in.i1{top:34%}.fd-port.in.i2{top:52%}.fd-port.in.i3{top:70%}
+  .fd-port.hot{background:#22c55e;box-shadow:0 0 .8em rgba(34,197,94,.8)}
+  .fd-svg{inset:0;width:100%;height:100%;z-index:2;overflow:visible;position:absolute}
+  .fd-svg path{fill:none;stroke-width:.18cqw;stroke-linecap:round}
+  .fd-items{padding:.5em .6em .7em;display:grid;gap:.5em}
+  .fd-item{display:flex;align-items:center;gap:.6em;border:1px solid var(--line);border-radius:.45em;padding:.4em .5em;
+    font-family:var(--mono);font-size:.85em;color:var(--ink-2);background:#0a0f18;overflow:hidden;white-space:nowrap}
+  .fd-item img{width:1.9em;height:1.9em;border-radius:.3em;object-fit:cover;flex:none}
+  .fd-item.new{border-color:rgba(63,214,255,.55);box-shadow:0 0 1em -0.2em rgba(63,214,255,.7);color:var(--ink)}
+  .fd-lib{top:1em;bottom:1.6em;left:1em;width:25.5cqw;background:rgba(13,15,21,.94);border:1px solid rgba(110,125,150,.4);
+    border-radius:1em;backdrop-filter:blur(8px);z-index:5;box-shadow:0 2em 4em -2em #000;
+    transform:translateX(calc(-100% - 2.5em));transition:transform .6s var(--ease);padding:1em;display:flex;flex-direction:column;gap:.6em}
+  .fd-lib.open{transform:none}
+  .fd-lib-h{font-family:var(--mono);font-size:.95em;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3);
+    border-bottom:1px solid var(--line);padding-bottom:.7em}
+  .fd-lib-env{font-family:var(--mono);font-size:.9em;letter-spacing:.06em;color:var(--ink);padding:.3em 0}
+  .fd-lib-env u{text-decoration:none;color:#d8b4fe;border:1px solid rgba(192,132,252,.45);border-radius:99em;padding:.02em .5em;margin-left:.4em}
+  .fd-lib-item{display:flex;align-items:center;gap:.6em;border:1px solid var(--line);border-radius:.45em;padding:.45em .55em;
+    font-family:var(--mono);font-size:.85em;color:var(--ink-2);background:#0a0f18;margin-left:1em;white-space:nowrap;overflow:hidden}
+  .fd-lib-item img{width:2em;height:2em;border-radius:.3em;object-fit:cover;flex:none}
+  .fd-lib-item.new{opacity:0;transform:translateY(.5em);transition:.5s var(--ease)}
+  .fd-lib.open .fd-lib-item.new{opacity:1;transform:none;border-color:rgba(63,214,255,.55);color:var(--ink);
+    box-shadow:0 0 1em -0.2em rgba(63,214,255,.7)}
+  .fd-libtab{top:38%;left:0;z-index:4;writing-mode:vertical-rl;transform:rotate(180deg);border:1px solid var(--line-2);border-right:0;
+    border-radius:.5em 0 0 .5em;padding:.8em .35em;background:rgba(11,17,29,.95);font-family:var(--mono);
+    font-size:.85em;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3)}
+  .fd-cursor{z-index:9;left:50%;top:80%;transition:left .8s var(--ease),top .8s var(--ease);filter:drop-shadow(0 2px 6px #000)}
+  .fd-cursor i{position:absolute;left:.2em;top:.2em;width:1.6em;height:1.6em;border-radius:50%;border:2px solid rgba(63,214,255,.9);
+    opacity:0;transform:scale(.4)}
+  .fd-cursor.click i{animation:fdclick .5s var(--ease)}
+  @keyframes fdclick{0%{opacity:.9;transform:scale(.3)}100%{opacity:0;transform:scale(1.4)}}
+  .fd-caption{left:50%;bottom:3.5%;transform:translateX(-50%);z-index:8;white-space:nowrap;
+    font-family:var(--mono);font-size:1em;letter-spacing:.14em;text-transform:uppercase;color:var(--ink);
+    background:rgba(4,8,16,.92);border:1px solid var(--line-2);border-radius:99em;padding:.7em 1.3em;
+    transition:opacity .4s;backdrop-filter:blur(6px)}
+  .fd-caption.off{opacity:0}
+  .fd-loop{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(150,182,220,.1);z-index:9}
+  .fd-loop i{display:block;height:100%;width:0%;background:var(--accent);opacity:.7}
+  .fd-tag{position:absolute;right:1em;top:calc(6.2% + .8em);z-index:6;font-family:var(--mono);font-size:.8em;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);border:1px solid var(--line);border-radius:99em;padding:.4em .8em;
+    background:rgba(5,9,17,.7)}
+
+  /* ── nodes 04–07 · workspace replays (shared bits reuse the fd-* system) ── */
+  .pp .fd-canvas,.sx .fd-canvas,.vd .fd-canvas{background-image:none;background:#101318}
+  .br .fd-canvas{background-image:none;background:#0a0d13;top:14.8%}
+  .pp-key{z-index:9;font-family:var(--mono);font-size:.8em;letter-spacing:.14em;padding:.35em .7em;border-radius:.4em;
+    border:1px solid rgba(63,214,255,.5);background:rgba(63,214,255,.14);color:#bfefff;opacity:0;transition:opacity .25s;
+    box-shadow:0 0 .8em -0.2em rgba(63,214,255,.7)}
+  .pp-key.on{opacity:1}
+
+  /* inspector panel — shared by paper / sfx / brush / video mocks */
+  .pp-inspector{position:absolute;right:.3cqw;top:.3cqw;bottom:.3cqw;width:22cqw;background:rgba(12,17,25,.97);
+    border:1px solid rgba(110,125,150,.26);border-radius:.25em;padding:0 0 .8em;display:flex;flex-direction:column;gap:.55em;
+    font-size:1em;overflow:hidden}
+  .pp-inspector>*{margin-inline:1em}
+  .pp-inspector>.vd-pbar{margin:0 0 .2em}
+  .pp-bin{left:.3cqw;top:.3cqw;bottom:.3cqw;width:12.4cqw}
+  .pp-bin .fd-lib-item{margin-left:0}
+  .pp-ih{font-family:var(--mono);font-size:.95em;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3);
+    border-bottom:1px solid var(--line);padding-bottom:.6em}
+  .pp-sec{font-family:var(--mono);font-size:.75em;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-top:.4em}
+  .pp-row{display:flex;align-items:center;gap:.6em;font-size:.92em;color:var(--ink-2)}
+  .pp-row>span:first-child{flex:1;white-space:nowrap;overflow:hidden}
+  .pp-row b{font-family:var(--mono);font-size:.85em;color:var(--ink);white-space:nowrap}
+  .pp-slider{width:6.5cqw;height:.45em;border-radius:99em;background:rgba(150,182,220,.15);overflow:hidden;flex:none}
+  .pp-slider i{display:block;height:100%;background:var(--accent);border-radius:99em;transition:width .7s var(--ease)}
+  .pp-swatch{width:1.3em;height:1.3em;border-radius:.35em;border:1px solid rgba(255,255,255,.25);flex:none;transition:background .5s}
+  .pp-ok{color:#5ce6a1;font-family:var(--mono);font-size:.8em;letter-spacing:.08em;text-transform:uppercase}
+
+  /* paper page */
+  .pp-page{position:absolute;left:26cqw;top:2.2cqw;width:47cqw;height:37.4cqw;background:#fff;border-radius:.3em;
+    box-shadow:0 1.6em 3em -1.4em #000;transition:background .8s}
+  .pp-page svg{position:absolute;inset:0;width:100%;height:100%}
+  .pp-frame{fill:rgba(255,255,255,0);stroke:#181b20;stroke-width:1.6;transition:stroke .5s}
+  .pp-handles{position:absolute;inset:0;pointer-events:none}
+  .pp-handles i{position:absolute;width:.7em;height:.7em;margin:-.35em;border-radius:.15em;background:#3fd6ff;
+    border:1px solid #04070d;opacity:0;transition:opacity .3s}
+  .pp-handles i.mid{border-radius:50%;background:#0b111d;border:2px solid #3fd6ff}
+  .pp-handles.on i{opacity:1}
+
+  /* sfx stage */
+  .sx-panelart{position:absolute;left:12cqw;top:2.4cqw;width:49cqw;height:36.6cqw;border-radius:.4em;overflow:hidden;
+    background:#101318 url(../assets/demo/wnm-aisle.jpg) center/cover;box-shadow:0 1.6em 3em -1.4em #000;border:.35em solid #fff}
+  .sx-burst{position:absolute;inset:-20%;background:repeating-conic-gradient(from 0deg,rgba(255,210,61,.16) 0deg 7deg,transparent 7deg 16deg);
+    opacity:0;transition:opacity .5s;transform-origin:50% 52%}
+  .sx-panelart svg{position:absolute;inset:0;width:100%;height:100%}
+  #sx-decal text{font-family:var(--display);font-weight:700;font-size:86px;text-anchor:middle;
+    paint-order:stroke fill;letter-spacing:0;transition:letter-spacing .6s}
+  #sx-main{fill:#ffd23d;stroke:#b91c1c;stroke-width:6px;filter:drop-shadow(4px 5px 0 #1f2937)}
+  .sx-echo{fill:none;stroke:#b91c1c;opacity:0}
+  .sx-echo.e1{stroke-width:4px}.sx-echo.e2{stroke-width:3px}.sx-echo.e3{stroke-width:2px}
+  #sx-decal.copies .e1{opacity:.42;transform:translate(-10px,7px)}
+  #sx-decal.copies .e2{opacity:.26;transform:translate(-20px,14px)}
+  #sx-decal.copies .e3{opacity:.14;transform:translate(-30px,21px)}
+  .sx-echo,#sx-main{transition:transform .5s var(--ease),opacity .5s,stroke-width .5s}
+  .sx-step{border:1px solid var(--line-2);border-radius:.4em;padding:.15em .7em}
+
+  /* brush stage */
+  .br-canvas{position:absolute;left:9cqw;top:2.2cqw;width:50cqw;height:37.4cqw;background:#f4f2ee;border-radius:.3em;
+    box-shadow:0 1.6em 3em -1.4em #000}
+  .br-tip{height:4.2em;border:1px solid var(--line);border-radius:.5em;display:grid;place-items:center;background:#0a0d13}
+  .br-tip i{width:2.4em;height:2.4em;border-radius:50%;background:radial-gradient(circle at 38% 34%,#3a4655,#141a22);
+    border:1px solid rgba(150,182,220,.35);transition:transform .6s var(--ease)}
+  .br-c2{background:transparent;pointer-events:none}
+  .br-panel{bottom:auto;max-height:44%;overflow:hidden}
+  .br-layers{top:auto;bottom:1.6em;height:auto;max-height:48%;overflow:hidden}
+  .br-layers .pp-ih{display:flex;align-items:center}
+  .br-add{margin-left:auto;white-space:nowrap;font-family:var(--mono);font-size:.62em;letter-spacing:.06em;color:#bfefff;
+    border:1px solid rgba(63,214,255,.4);border-radius:.4em;padding:.25em .6em;background:rgba(63,214,255,.08);font-weight:500;
+    text-transform:none}
+  .br-tabs{display:flex;gap:.3em;align-items:center;border-bottom:1px solid rgba(150,182,220,.15);padding-bottom:.4em}
+  .br-tabs b{font-family:var(--mono);font-size:.68em;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+    padding:.2em .6em;border-radius:.3em;font-weight:500}
+  .br-tabs b.on{color:#bfefff;background:rgba(63,214,255,.12)}
+  .br-presets{display:grid;grid-template-columns:1fr 1fr;gap:.45em}
+  .br-preset{border:1px solid rgba(150,182,220,.18);border-radius:.4em;background:#080c12;padding:.3em .45em .4em}
+  .br-preset svg{display:block;width:100%;height:1.6em}
+  .br-preset span{font-size:.68em;color:var(--ink-2)}
+  .br-lrows{display:grid;gap:.4em}
+  .br-lrow{display:flex;align-items:center;gap:.55em;border:1px solid var(--line);border-radius:.45em;padding:.32em .5em;
+    font-size:.88em;color:var(--ink-2);background:#0a0f18}
+  .br-lrow.on{border-color:rgba(63,214,255,.5);color:var(--ink)}
+  .br-lrow canvas,.br-lrow .br-bgthumb{width:2.7em;height:2em;border-radius:.25em;background:#f4f2ee;border:1px solid var(--line);flex:none}
+  .br-lrow u{text-decoration:none;filter:saturate(.4);font-size:.9em}
+  .br-lrow.hidden u{opacity:.28}
+  .br-lrow span{flex:1;white-space:nowrap;overflow:hidden}
+  .br-lrow em{font-style:normal;font-family:var(--mono);font-size:.72em;color:var(--ink-3);border:1px solid var(--line);
+    border-radius:99em;padding:.1em .5em}
+  .br-stylus{position:absolute;z-index:9;transition:left .1s linear,top .1s linear;transform-origin:20% 92%;filter:drop-shadow(0 3px 6px #0009)}
+  .br-stylus svg{display:block;transform:rotate(24deg);transform-origin:50% 95%;transition:transform .7s var(--ease)}
+  .br-stylus i{position:absolute;left:50%;top:88%;width:2.2em;height:2.2em;margin:-1.1em;border-radius:50%;
+    border:2px solid rgba(63,214,255,.75);transform:scale(.4);transition:transform .12s linear;pointer-events:none}
+  #br-key{position:absolute}
+
+  /* real-app chrome: workspace icon switcher row + menu row (+ doc tabs) */
+  .fd-bar1{position:absolute;inset:0 0 auto 0;height:5.6%;display:flex;align-items:center;gap:.7em;
+    padding-inline:.9em;background:#070a10;border-bottom:1px solid rgba(150,182,220,.14);z-index:6;
+    font-size:.95em;color:var(--ink-2)}
+  .fd-appico{width:2.2em;height:2.2em;border:1px solid rgba(63,214,255,.5);border-radius:.45em;display:grid;
+    place-items:center;color:#7fe3ff;font-size:.9em;flex:none;background:rgba(63,214,255,.06)}
+  /* workspace switcher = the app's real icon tabs (ws-*.png are the shipped workspace icons) */
+  .fd-wsgroup{display:flex;gap:.35em;border:1px solid rgba(150,182,220,.18);border-radius:.6em;
+    padding:.22em .35em;background:rgba(10,16,24,.8);flex:none}
+  .fd-wsgroup i{height:1.5em;width:1.7em;border-radius:.35em;border:1px solid rgba(150,182,220,.22);
+    display:grid;place-items:center;font-style:normal;flex:none}
+  .fd-wsgroup i img{width:1.1em;height:1.1em;border-radius:.22em;display:block;object-fit:contain}
+  .fd-wsgroup i.on{border-color:rgba(63,214,255,.65);color:#bfefff;background:rgba(63,214,255,.12);position:relative}
+  .fd-wsgroup i.on::after{content:"";position:absolute;right:-.28em;top:-.28em;width:.5em;height:.5em;border-radius:50%;
+    background:var(--pink)}
+  .fd-chipbtn{border:1px solid rgba(150,182,220,.25);border-radius:.45em;padding:.3em .7em;font-size:.72em;
+    color:var(--ink-2);white-space:nowrap}
+  .fd-chipbtn.hot{color:#ffe9ad;border-color:rgba(255,181,61,.4)}
+  .fd-chipbtn.lit{background:#e8eef7;color:#0b1017;border-color:transparent;font-weight:620}
+  .fd-bar1 .grow{flex:1}
+  .fd-zoom{display:flex;gap:.3em;align-items:center;font-size:.72em}
+  .fd-zoom b{border:1px solid rgba(150,182,220,.25);border-radius:.45em;padding:.28em .6em;font-weight:500;color:var(--ink-2)}
+  .fd-cost{display:flex;align-items:center;gap:.5em;border:1px solid rgba(150,182,220,.3);border-radius:.55em;
+    padding:.32em .8em;font-family:var(--mono);font-size:.7em;color:#5ce6a1;white-space:nowrap}
+  .fd-cost::after{content:"▾";color:var(--ink-3)}
+  .fd-bar2{position:absolute;left:0;right:0;top:5.6%;height:4.6%;display:flex;align-items:center;gap:.35em;
+    padding-inline:.9em;background:#05080d;border-bottom:1px solid rgba(150,182,220,.12);z-index:6}
+  .fd-bar2 b{border:1px solid rgba(150,182,220,.16);border-radius:.4em;padding:.22em .75em;font-size:.68em;
+    font-weight:480;color:var(--ink-2);background:rgba(150,182,220,.03)}
+  .fd-bar2 .grow{flex:1}
+  .fd-bar2 u{text-decoration:none;color:var(--ink-3);font-size:.85em}
+  .fd-tabsrow{position:absolute;left:0;right:0;top:10.2%;height:4.4%;display:flex;align-items:center;gap:.4em;
+    padding-inline:.9em;background:#04070b;border-bottom:1px solid rgba(150,182,220,.1);z-index:6;font-size:.7em}
+  .fd-tabsrow b{color:var(--ink-3);font-weight:400;padding:.15em .4em}
+  .fd-tabsrow .doctab{display:flex;align-items:center;gap:.6em;border:1px solid rgba(150,182,220,.22);
+    border-bottom-color:transparent;border-radius:.45em .45em 0 0;padding:.28em .9em;color:#dfe9f5;
+    background:rgba(150,182,220,.06)}
+  .fd-tabsrow .doctab i{width:.45em;height:.45em;border-radius:50%;background:#5ce6a1;font-style:normal}
+  /* panel headers: drag-dots + uppercase title + split icon (as in the app) */
+  .pp-ih{position:relative;padding-left:1.5em}
+  .pp-ih::before{content:"⋮⋮";position:absolute;left:.1em;top:.35em;letter-spacing:-.12em;color:var(--ink-3);
+    font-size:.9em;line-height:1}
+  .pp-ih::after{content:"◫";position:absolute;right:0;top:.28em;color:var(--ink-3);font-size:1em}
+  .pp-secbar{display:flex;align-items:center;justify-content:space-between;background:rgba(150,182,220,.08);
+    border:1px solid rgba(150,182,220,.14);border-radius:.4em;padding:.32em .6em;font-family:var(--mono);
+    font-size:.72em;letter-spacing:.14em;text-transform:uppercase;color:var(--ink)}
+  .pp-secbar::after{content:"▾";color:var(--ink-3)}
+  .pp-mini{display:grid;grid-template-columns:1fr 1fr;gap:.4em}
+  .pp-mini label{display:flex;flex-direction:column;gap:.2em;font-size:.7em;color:var(--ink-3)}
+  .pp-mini span{border:1px solid rgba(150,182,220,.2);border-radius:.35em;padding:.25em .5em;color:var(--ink);
+    font-family:var(--mono);font-size:.95em;text-align:right;background:#080c12}
+  .pp-select{border:1px solid rgba(150,182,220,.25);border-radius:.4em;padding:.3em .6em;font-size:.78em;
+    color:var(--ink);background:#080c12;display:flex;justify-content:space-between;gap:.6em}
+  .pp-select::after{content:"▾";color:var(--ink-3)}
+
+  /* real floating tool palettes (mirrors the app's toolbars) */
+  .tp::before{content:"⋮⋮⋮";letter-spacing:-.1em;grid-column:1/-1;text-align:center;color:var(--ink-3);
+    font-size:.75em;line-height:1;padding-bottom:.2em;border-bottom:1px solid rgba(150,182,220,.12);margin-bottom:.15em}
+  .tp{position:absolute;left:13.4cqw;top:.8cqw;background:rgba(16,20,27,.97);border:1px solid rgba(110,125,150,.4);
+    border-radius:.7em;padding:.5em;z-index:4;display:grid;gap:.28em}
+  .tp.cols2{grid-template-columns:repeat(2,auto)}
+  .tp.cols3{grid-template-columns:repeat(3,auto)}
+  .tp b{width:2em;height:2em;display:grid;place-items:center;border-radius:.35em;font-weight:400;
+    color:#9fb0c4;font-size:1em;border:1px solid transparent;filter:saturate(.45);line-height:1}
+  .tp b.on{background:rgba(63,214,255,.2);border-color:rgba(63,214,255,.55);color:#dff6ff;filter:none}
+  .tp b.sfx{font-size:.5em;font-weight:700;color:#ffd23d;border:1px solid rgba(255,210,61,.3);letter-spacing:.02em;
+    width:4em;height:4em;filter:none}
+  .tp.pulse b.sfx{box-shadow:0 0 .9em -0.25em rgba(255,210,61,.9)}
+  .tp .chips{grid-column:1/-1;position:relative;height:2.5em;margin-top:.2em}
+  .tp .chips i{position:absolute;width:1.5em;height:1.5em;border:1px solid rgba(255,255,255,.35);border-radius:.25em}
+  .tp .chips .fgc{left:.25em;top:.1em;z-index:2}
+  .tp .chips .bgc{left:1.15em;top:1em}
+  .pp-bintab{position:absolute;left:0;top:44%;z-index:3;writing-mode:vertical-rl;transform:rotate(180deg);
+    border:1px solid var(--line-2);border-right:0;border-radius:.5em 0 0 .5em;padding:.8em .3em;
+    background:rgba(11,17,29,.95);font-family:var(--mono);font-size:.8em;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--ink-3)}
+  .pp-bleedtag{position:absolute;z-index:4;font-family:var(--mono);font-size:.6em;letter-spacing:.08em;
+    padding:.15em .5em;border-radius:.25em;color:#fff}
+  .pp-bleedtag.bleed{background:#e0359a}
+  .pp-bleedtag.cut{background:#14181f;border:1px solid rgba(150,182,220,.35);color:var(--ink-2)}
+  .pp-page::before{content:"";position:absolute;inset:-.55em;border:1px solid rgba(224,53,154,.75);border-radius:.2em;pointer-events:none}
+  .pp-guide{position:absolute;top:0;bottom:0;width:1px;background:rgba(224,53,154,.4);pointer-events:none}
+  .pp-hruler{position:absolute;height:1.3em;font-family:var(--mono);font-size:.6em;color:var(--ink-3);
+    background:rgba(16,20,27,.9);border:1px solid var(--line);border-radius:.3em;overflow:hidden;
+    background-image:repeating-linear-gradient(90deg,rgba(150,182,220,.35) 0 1px,transparent 1px 7%)}
+  .pp-hruler span{position:absolute;top:.1em}
+  .pp-ruler{position:absolute;width:1.3em;font-family:var(--mono);font-size:.6em;color:var(--ink-3);
+    background:rgba(16,20,27,.9);border:1px solid var(--line);border-radius:.3em;overflow:hidden;
+    background-image:repeating-linear-gradient(180deg,rgba(150,182,220,.35) 0 1px,transparent 1px 8%)}
+  .pp-ruler span{position:absolute;left:.35em}
+
+  /* video stage — the app's real tiled layout: panels fill the window edge-to-edge with thin
+     gaps and square-ish corners (shown in one theme of ~20; structure, not palette, is the point) */
+  .vd .fd-canvas{background:#04060a}
+  .vd-panel{position:absolute;background:rgba(12,17,25,.97);border:1px solid rgba(110,125,150,.26);
+    border-radius:.25em;overflow:hidden;display:flex;flex-direction:column}
+  .vd-pbar{display:flex;align-items:center;gap:.45em;font-family:var(--mono);font-size:.55em;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--ink-3);padding:.5em .9em;border-bottom:1px solid var(--line);
+    background:rgba(5,8,13,.6);white-space:nowrap;overflow:hidden;flex:none}
+  .vd-pbar::before{content:"⋮⋮";letter-spacing:-.12em}
+  .vd-pbar .grow{flex:1}
+  .vd-pbar s{text-decoration:none;border:1px solid rgba(150,182,220,.2);border-radius:.35em;padding:.1em .5em;
+    letter-spacing:.04em;color:var(--ink-3);flex:none}
+  /* top band ends at 31.9cqw; the timeline owns the rest — same split as the app */
+  .vd-lib{left:.3cqw;top:.3cqw;width:12.4cqw;height:25.75cqw}
+  .vd-lib .vd-libbody{padding:.55em .6em;display:flex;flex-direction:column;gap:.45em;min-height:0;overflow:hidden}
+  .vd-lib .fd-lib-item{margin-left:0}
+  .vd-libhead{display:flex;align-items:center;gap:.4em;font-size:.7em;font-weight:580;color:var(--ink)}
+  .vd-libhead u{text-decoration:none;margin-left:auto;font-family:var(--mono);font-size:.78em;color:var(--ink-3);
+    border:1px solid rgba(150,182,220,.25);border-radius:.4em;padding:.05em .45em}
+  .vd-libsub{font-size:.54em;color:var(--ink-3);line-height:1.4}
+  .vd-imp{display:flex;flex-wrap:wrap;gap:.3em;font-size:.54em;color:var(--ink-3)}
+  .vd-imp b{font-weight:450;border:1px solid rgba(150,182,220,.22);border-radius:.4em;padding:.18em .45em;white-space:nowrap}
+  .vd-tchips{display:flex;gap:.25em;margin-top:.3em}
+  .vd-tchips b{font-family:var(--mono);font-size:.52em;font-weight:500;color:var(--ink-3);
+    border:1px solid rgba(150,182,220,.25);border-radius:.35em;padding:.12em .4em}
+  .vd-smon{left:13cqw;top:.3cqw;width:31.5cqw;height:25.75cqw}
+  .vd-pmon{left:44.8cqw;top:.3cqw;width:44cqw;height:25.75cqw}
+  .vd-mh{display:flex;justify-content:space-between;align-items:center;gap:.6em;font-size:.6em;
+    color:var(--ink-3);padding:.4em .9em;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;flex:none}
+  .vd-mh .ttl{color:var(--ink);font-weight:580;font-size:1.12em}
+  .vd-mtoggle{display:inline-flex;border:1px solid rgba(150,182,220,.25);border-radius:.5em;overflow:hidden;flex:none}
+  .vd-mtoggle b{font-weight:480;padding:.2em .7em;color:var(--ink-3)}
+  .vd-mtoggle b.on{color:#bfefff;background:rgba(63,214,255,.14)}
+  .vd-pmbody{display:flex;flex:1;min-height:0}
+  .vd-pstage{flex:1;min-width:0;display:flex;flex-direction:column;padding:.45em .55em;gap:.4em}
+  .vd-banner{font-size:.55em;border:1px solid rgba(92,230,161,.4);background:rgba(92,230,161,.08);color:#bde9cd;
+    border-radius:.3em;padding:.35em .6em;white-space:nowrap;overflow:hidden;flex:none}
+  .vd-banner b{color:#5ce6a1;font-family:var(--mono);letter-spacing:.1em}
+  .vd-pctl{display:flex;align-items:center;gap:.6em;font-family:var(--mono);font-size:.6em;color:var(--ink-2);flex:none}
+  .vd-pctl i{font-style:normal;color:var(--ink)}
+  .vd-pinfo{width:12.6cqw;flex:none;border-left:1px solid var(--line);padding:.5em .6em;overflow:hidden;
+    display:flex;flex-direction:column;gap:.4em}
+  .vd-pinfo .ih{font-family:var(--mono);font-size:.52em;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3)}
+  .vd-pinfo .btn{font-size:.56em;text-align:center;border:1px solid rgba(150,182,220,.3);border-radius:.4em;
+    padding:.3em .5em;color:var(--ink-2)}
+  .vd-pinfo .btn.lit{background:#e8eef7;color:#0b1017;border-color:transparent;font-weight:600}
+  .vd-irow{display:flex;justify-content:space-between;gap:.5em;font-size:.56em;color:var(--ink-3);white-space:nowrap;overflow:hidden}
+  .vd-irow b{font-family:var(--mono);font-weight:500;color:var(--ink-2)}
+  .vd-screen{position:relative;background:#000;overflow:hidden;flex:none;aspect-ratio:16/9;min-height:0}
+  .vd-pstage .vd-screen{flex:1;aspect-ratio:auto}
+  .vd-screen img,.vd-screen video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transition:opacity .3s linear}
+  #vd-p1{opacity:0}#vd-p2{opacity:0}
+  #vd-sm{opacity:0}
+  .vd-smempty{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:1em;
+    color:var(--ink-3);font-size:.62em;transition:opacity .3s}
+  .vd-smempty b{display:block;color:var(--ink-2);font-size:1.15em;margin-bottom:.4em}
+  .vd-minfo{display:flex;align-items:center;gap:.5em;padding:.4em .7em;border-top:1px solid var(--line);
+    white-space:nowrap;overflow:hidden;transition:opacity .3s;flex:none}
+  .vd-minfo .nm{font-size:.64em;font-weight:560;color:var(--ink)}
+  .vd-minfo .mt{font-family:var(--mono);font-size:.52em;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+  .vd-minfo .grow{flex:1}
+  .vd-minfo .add{font-family:var(--mono);font-size:.56em;border:1px solid rgba(150,182,220,.3);border-radius:.4em;
+    padding:.2em .5em;color:var(--ink-2);background:#0f131b;flex:none}
+  .vd-minfo .add.hot{color:#bfefff;border-color:rgba(63,214,255,.45)}
+  .vd-insp{left:89.1cqw;top:.3cqw;width:10.6cqw;height:25.75cqw}
+  .vd-insp .ibody{padding:.45em .6em;display:flex;flex-direction:column;gap:.32em;overflow:hidden}
+  .vd-insp .iname{font-size:.6em;font-weight:580;color:var(--ink);border:1px solid rgba(150,182,220,.2);
+    border-radius:.35em;padding:.25em .45em;white-space:nowrap;overflow:hidden}
+  .vd-insp .ih{font-family:var(--mono);font-size:.5em;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-top:.3em}
+  .vd-insp .inote{font-size:.54em;color:var(--ink-3);line-height:1.4}
+  .vd-islider{height:.35em;border-radius:99em;background:rgba(150,182,220,.15);position:relative}
+  .vd-islider u{position:absolute;left:0;top:0;bottom:0;width:100%;border-radius:99em;background:#3fd6ff;display:block}
+  .vd-addkey{border:1px solid rgba(63,214,255,.4);border-radius:.4em;padding:.22em .6em;color:#bfefff;
+    background:rgba(63,214,255,.08);font-size:.6em;text-align:center}
+  .vd-tl{left:.3cqw;right:.3cqw;bottom:.3cqw;top:26.35cqw}
+  .vd-tl .vd-tlbody{padding:.3em .8em 0;overflow:hidden;flex:1;min-height:0}
+  .vd-th{font-size:.66em;color:var(--ink-2);padding-bottom:.3em;font-weight:560}
+  .vd-th span{color:var(--ink)}
+  .vd-msl{display:inline-block;width:3.2em;height:.4em;border-radius:99em;background:rgba(150,182,220,.15);
+    vertical-align:middle;margin-inline:.3em;position:relative;font-style:normal}
+  /* every sim bar carries the app's real control row — tighter chips so they fit the stage */
+  .fd-stage .fd-bar1{gap:.4em}
+  .fd-stage .fd-bar1 .fd-chipbtn{font-size:.6em;padding:.24em .5em;flex:none}
+  .fd-stage .fd-wsgroup,.fd-stage .fd-wsgroup i,.fd-stage .fd-appico,.fd-stage .fd-zoom{flex:none}
+  .vd-msl u{position:absolute;left:0;top:0;bottom:0;border-radius:99em;background:#3fd6ff;display:block}
+  /* tool strip matches the app: title-case UI font, single row */
+  .vd-tools{display:flex;flex-wrap:nowrap;gap:.4em;align-items:center;font-size:.68em;letter-spacing:.02em;
+    color:var(--ink-2);padding-bottom:.55em;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden}
+  .vd-tools b{font-weight:520;border:1px solid var(--line);border-radius:.45em;padding:.25em .55em;flex:none;white-space:nowrap}
+  .vd-tools b.on{color:#bfefff;border-color:rgba(63,214,255,.45);background:rgba(63,214,255,.1)}
+  .vd-tools em{margin-left:auto;font-style:normal;flex:none;white-space:nowrap;font-family:var(--mono);font-size:.9em;color:var(--ink-3)}
+  .vd-ruler{display:flex;font-family:var(--mono);font-size:.68em;color:var(--ink-3);
+    margin:.4em 0 .1em 6em;border:1px solid rgba(63,214,255,.18);border-radius:.3em;
+    background:rgba(23,42,58,.55);overflow:hidden}
+  .vd-ruler span{flex:1;padding:.18em 0 .18em .45em;border-left:1px solid rgba(150,182,220,.18)}
+  .vd-ruler span:first-child{border-left:0}
+  .vd-track{display:flex;align-items:stretch;gap:.5em;margin-top:.26em}
+  .vd-track u{text-decoration:none;font-family:var(--mono);font-size:.66em;letter-spacing:.08em;color:var(--ink-2);
+    width:6em;flex:none;text-transform:uppercase;border:1px solid rgba(150,182,220,.16);border-radius:.3em;
+    background:rgba(10,14,20,.8);padding:.25em .5em;display:flex;flex-direction:column;justify-content:center;gap:.12em}
+  .vd-track u i{font-style:normal;font-size:.72em;letter-spacing:.14em;color:var(--ink-3)}
+  .vd-lane{position:relative;flex:1;height:2.3em;border:1px dashed rgba(150,182,220,.18);border-radius:.3em;background:rgba(8,11,17,.6)}
+  .vd-hint{position:absolute;inset:0;display:flex;align-items:center;padding-left:1em;font-size:.56em;
+    color:var(--ink-3);opacity:.75;transition:opacity .3s;white-space:nowrap;overflow:hidden}
+  .vd-clip{position:absolute;top:.22em;bottom:.22em;border-radius:.35em;overflow:hidden;border:1px solid rgba(63,214,255,.45);
+    background:#12202b center/auto 100% repeat-x;opacity:0;transform:scale(.94);transition:opacity .4s,transform .4s var(--ease);
+    font-family:var(--mono);font-size:.7em;letter-spacing:.06em;color:#dff4ff}
+  .vd-clip.on{opacity:1;transform:none}
+  .vd-clip.sel{box-shadow:0 0 .9em -0.2em rgba(63,214,255,.9);border-color:#3fd6ff}
+  .vd-clip span{position:absolute;left:.6em;top:.35em;text-shadow:0 1px 2px #000}
+  .vd-clip .fadewedge{position:absolute;left:0;top:0;bottom:0;width:22%;background:linear-gradient(90deg,rgba(4,7,13,.85),transparent);
+    border-right:1px dashed rgba(63,214,255,.5);opacity:0;transition:opacity .4s}
+  .vd-clip.fade .fadewedge{opacity:1}
+  .vd-oline{position:absolute;inset:0;z-index:2;width:100%;height:100%}
+  .vd-oline polyline{fill:none;stroke:#7fe3ff;stroke-width:2;vector-effect:non-scaling-stroke;
+    filter:drop-shadow(0 0 3px rgba(63,214,255,.6))}
+  .vd-okf{position:absolute;width:.65em;height:.65em;background:#3fd6ff;z-index:3;
+    transform:translate(-50%,-50%) rotate(45deg);box-shadow:0 0 .5em rgba(63,214,255,.9)}
+  .vd-clip .kf{position:absolute;bottom:.25em;width:.8em;height:.8em;background:#3fd6ff;transform:rotate(45deg) scale(0);
+    transition:transform .3s var(--ease);box-shadow:0 0 .5em rgba(63,214,255,.8)}
+  .vd-clip .kf.on{transform:rotate(45deg) scale(1)}
+  .vd-aclip{position:absolute;top:.22em;bottom:.22em;border-radius:.35em;border:1px solid rgba(92,230,161,.45);
+    background:rgba(9,20,15,.9);opacity:0;transform:scale(.94);transition:opacity .4s,transform .4s var(--ease);overflow:hidden}
+  .vd-aclip.on{opacity:1;transform:none}
+  .vd-aclip svg{position:absolute;inset:0;width:100%;height:100%}
+  .vd-playhead{position:absolute;top:4.4em;bottom:.4em;left:7.4em;width:2px;background:#f43f5e;
+    box-shadow:0 0 .5em rgba(244,63,94,.7);z-index:3}
+  .vd-playhead::before{content:"";position:absolute;top:-.5em;left:50%;margin-left:-.45em;border:.45em solid transparent;
+    border-top-color:#f43f5e}
+  .vd-ghost{position:absolute;z-index:8;width:5.5em;height:3.4em;border-radius:.4em;overflow:hidden;
+    border:1px solid rgba(63,214,255,.6);box-shadow:0 0 1.2em -0.2em rgba(63,214,255,.8);opacity:0;
+    transition:left .9s var(--ease),top .9s var(--ease),opacity .25s;background:#0a0d13 center/cover}
+
+  .pp .fd-tag,.sx .fd-tag,.br .fd-tag,.vd .fd-tag{top:auto;bottom:.55em;right:1em;background:rgba(5,9,17,.9)}
+
+  @media(max-width:960px){
+    .pp-inspector{width:31cqw}
+    /* the vd stage keeps its real desktop proportions — both monitors stay visible */
+    .vd-insp{width:21.5cqw}
+  }
+
+  /* ── reveal (JS-scoped) ── */
+  .js [data-reveal]{opacity:0;transform:translateY(14px);transition:opacity .8s var(--ease),transform .8s var(--ease)}
+  .js [data-reveal].in{opacity:1;transform:none}
+  @media(prefers-reduced-motion:reduce){.js [data-reveal]{opacity:1;transform:none;transition:none}}
+
+  /* ── responsive ── */
+  @media(max-width:960px){
+    #prompt .node-body,.field,.license,.credo{grid-template-columns:1fr}
+    .station{grid-template-columns:1fr}
+    .tabs{flex-direction:row;overflow-x:auto;scrollbar-width:none;padding-bottom:4px}
+    .tab{min-width:172px}
+    .jacks{grid-template-columns:repeat(2,1fr)}
+    .mini,.shots{grid-template-columns:1fr}
+    .bar nav{display:none}
+    .runchip .lbl{display:none}
+    .license .right{border-left:0;border-top:1px solid var(--line)}
+    .bademo{max-width:420px;margin-inline:auto}
+    .node{margin-block:76px}
+  }
+  @media(max-width:700px){.runchip{display:none}}
+  @media(max-width:560px){
+    .jacks{grid-template-columns:1fr}.facts{font-size:.54rem}
+    .flowline{flex-direction:column;align-items:stretch}
+    .flowline .arrow{transform:rotate(90deg);align-self:center;padding-block:2px}
+  }
+  @media(prefers-reduced-motion:reduce){.runchip i{animation:none}}
+</style>
+</head>
+<body>
+
+<svg id="wiresvg" aria-hidden="true"><path id="wirepath" class="undrawn" d=""/></svg>
+
+<header class="bar"><div class="bar-in">
+  <a class="brand" href="/ja/"><img src="../assets/graphics/icon-512.png" alt="Sloom Studio" /><b>Sloom&nbsp;Studio</b></a>
+  <span class="runchip" title="このページはフローグラフです。スクロールすると実行されます — Signal Loomのすべてがそうであるように、あなた自身の端末の上で。"><i></i><span class="lbl">sloom.studio.sloom&nbsp;·&nbsp;</span><span id="runstat">running</span>&nbsp;·&nbsp;<b id="runcost">$0.0000</b></span>
+  <nav>
+    <a href="#workstation">ワークスペース</a>
+    <a href="#keys">プロバイダー</a>
+    <a href="#android">Android</a>
+    <a href="docs.html">ドキュメント</a>
+    <a href="examples.html">作例</a>
+    <a href="changelog.html">更新履歴</a>
+    <a href="../index.html" hreflang="en">English</a>
+  </nav>
+  <a class="btn btn-primary" href="#license">無料でダウンロード</a>
+</div></header>
+
+<div id="minimap" title="ミニマップ — クリックでグラフ内を移動" aria-hidden="true">
+  <div class="mm-label">グラフ</div>
+  <div id="mm-track"></div>
+</div>
+
+<main><div class="graph" id="graph">
+
+<!-- ═══════ NODE 01 · PROMPT (hero) ═══════ -->
+<section class="node" id="prompt">
+  <i class="port out"></i>
+  <div class="node-head"><span class="nid">01・プロンプト</span><span class="ntype">入力</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <canvas id="loom" aria-hidden="true"></canvas>
+    <div>
+      <div class="kicker"><i></i>サービスではなく、道具</div>
+      <h1 class="display">創作スイート。<br><em>自分だけのもの。</em></h1>
+      <p class="lead">ノードグラフの<b>Flow</b>、レイヤー式の<b>Image</b>エディタ、印刷対応の<b>Paper</b>レイアウト、<b>Video</b>タイムライン——ひとつのプロジェクト、自分のAPIキー、買い切り。</p>
+      <p class="lead-2">各ワークスペースはそれ単体で完結したツールです。<b>AIは選択肢であって、必須ではありません。</b></p>
+      <div class="cta">
+        <a class="btn btn-primary" href="#license">無料でダウンロード — Windows・macOS・Linux</a>
+        <a class="btn btn-ghost" href="#license">商用ライセンスを購入 — ¥3,000</a>
+        <a class="btn btn-ghost" href="docs.html">ドキュメントを読む</a>
+      </div>
+      <div class="weaveline">このノードは、たった今この文章の背景にある織り模様を生成しました——<b>シード <span id="seedhex">…</span></b>、あなたのためだけに生成されたものです。<br>それがここでの考え方です。あなたの端末上で作られたメディアは、あなたのもの。<a id="keepweave">保存する&nbsp;⬇</a></div>
+      <div class="facts">
+        <span><b>4</b> ワークスペース</span><span><b>1</b> つの.sloomプロジェクト</span><span><b>8</b> プロバイダー + ローカル</span><span>サブスクリプションなし</span>
+      </div>
+    </div>
+    <div class="monitor">
+      <div class="chrome"><i></i><span class="label">flow · main-flow.sloom</span><span class="meta">ローカル</span></div>
+      <img src="../assets/screenshots/flow-workspace.png" alt="Signal Loom の Flow ワークスペース — プロジェクトの起点として、複数のプロバイダーをまたいで再利用可能な低レベルの一貫性アセット（繰り返し登場するオブジェクトや環境）を生成しており、Vision Verify によるQAと折りたたまれたノードが見える" loading="eager" />
+      <div class="readout">実行コスト&nbsp;<b>$0.0000</b>&nbsp;·&nbsp;ローカル</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ FILM · the sit-back overview video ═══════ -->
+<section class="filmband" id="film" aria-label="Watch the Sloom Studio film">
+  <style>
+    .filmband{padding:clamp(28px,6vw,64px) clamp(16px,5vw,48px);border-top:1px solid var(--line-2);border-bottom:1px solid var(--line-2)}
+    .filmband .fw{max-width:1100px;margin-inline:auto}
+    .filmband h2{margin:0 0 6px;font-size:clamp(1.4rem,3.4vw,2.1rem)}
+    .filmband p.sub{margin:0 0 20px;color:var(--ink-2);max-width:60ch}
+    .filmframe{position:relative;aspect-ratio:16/9;width:100%;border-radius:16px;overflow:hidden;
+      border:1px solid var(--line-2);background:#04070d;box-shadow:0 1.6em 3em -1.4em #000}
+    .filmframe .poster{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;cursor:pointer;border:0;padding:0;display:block}
+    .filmframe .play{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:88px;height:88px;border-radius:50%;
+      background:rgba(4,7,13,.62);border:2px solid var(--accent);display:grid;place-items:center;pointer-events:none;transition:transform .18s}
+    .filmframe:hover .play{transform:translate(-50%,-50%) scale(1.06)}
+    .filmframe .play::after{content:"";display:block;width:0;height:0;margin-left:6px;
+      border-left:26px solid var(--accent);border-top:16px solid transparent;border-bottom:16px solid transparent}
+    .filmframe .runtime{position:absolute;right:12px;bottom:12px;font:600 12px/1 var(--mono,monospace);
+      letter-spacing:.04em;color:#cfe8ef;background:rgba(4,7,13,.7);padding:5px 9px;border-radius:6px}
+    .filmframe iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+  </style>
+  <div class="fw">
+    <h2 data-reveal>スタジオ全体を、ひと続きで見る。</h2>
+    <p class="sub" data-reveal>4つのワークスペースすべてをめぐるガイドツアー：描いて彩色し、コミックや本のページを組み、レタリングし、タイムラインをカットし、印刷対応で書き出す。14分、登録不要。</p>
+    <div class="filmframe" data-reveal>
+      <button class="poster" type="button" aria-label="Sloom Studio の映像を再生" data-yt="SGsVLWmSUYA"
+        style="background:#04070d url(../assets/film-poster.png) center/cover no-repeat"></button>
+      <span class="play" aria-hidden="true"></span>
+      <span class="runtime">14:28</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 02 · WORKSTATION ═══════ -->
+<section class="node" id="workstation">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">02・ワークスペース</span><span class="ntype">スイート</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>4つのワークスペース。<em>ひとつのプロジェクト。</em></h2>
+    <p class="sub" data-reveal>各ワークスペースは正真正銘、単体で完結したツールです——ImageとPaperは自前のファイル形式（<span class="mono" style="letter-spacing:.04em;text-transform:none">.slimg</span>、<span class="mono" style="letter-spacing:.04em;text-transform:none">.slppr</span>）まで持ち、<span class="mono" style="letter-spacing:.04em;text-transform:none">.sloom</span>プロジェクトはその4つをまとめる傘です。ファイルを切り替えずにツールを切り替えられます。Flowで生成したクリップは、共有のプロジェクトとソースライブラリを通じて、Image・Video・Paperに自動的に現れます。</p>
+    <div class="station" data-reveal>
+      <div class="tabs" role="tablist" aria-label="Workspaces">
+        <button class="tab" role="tab" aria-selected="true" data-shot="weights-and-measures-flow-graph" data-ext="jpg" data-accent="#3fd6ff"
+          data-title="Flow" data-chips="マルチプロバイダー生成|Vision-Verify によるQA|折りたたみノード + ポータル"
+          data-desc="あらゆるプロバイダーを同時に扱う、ノードベースの生成グラフ。">
+          <span class="k"></span><span><span class="n">Flow</span><span class="d">ノードベースの生成グラフ</span></span></button>
+        <button class="tab" role="tab" aria-selected="false" data-shot="image-brush-engine" data-accent="#ff5cb8"
+          data-title="Image" data-chips="レイヤー + マスク|ジェネレーティブフィル|範囲選択ツール"
+          data-desc="マスク、キャンバス変形、モデルを組み込んだジェネレーティブフィルを備えたレイヤーエディタ。">
+          <span class="k"></span><span><span class="n">Image</span><span class="d">AIフィル対応のレイヤーエディタ</span></span></button>
+        <button class="tab" role="tab" aria-selected="false" data-shot="paper-pdfx-typecraft-showcase" data-ext="png" data-accent="#ffb53d"
+          data-title="Paper" data-chips="PDF/X-1a &amp; X-4|実際のCMYK + ICC|名前付きスポット Separation版|連結テキスト &amp; 縦書き"
+          data-desc="コミック・書籍・印刷のためのページ単位のパブリッシング——PDF/X-1a/X-4、実際のCMYK/ICC、名前付きスポットSeparation版、フレーム、グリッド、吹き出し、そして日本語の縦組み。">
+          <span class="k"></span><span><span class="n">Paper</span><span class="d">印刷対応のパブリッシングレイアウト</span></span></button>
+        <button class="tab" role="tab" aria-selected="false" data-shot="tablet-03-video-timeline" data-accent="#5ce6a1"
+          data-title="Video" data-chips="マルチトラックタイムライン|キーフレーム|オーバーレイ + クロップ"
+          data-desc="マルチトラックのシーケンス、キーフレーム、テキスト・図形オーバーレイを備えたタイムラインエディタ。">
+          <span class="k"></span><span><span class="n">Video</span><span class="d">マルチトラックのタイムライン編集</span></span></button>
+      </div>
+      <div class="stage">
+        <div class="monitor">
+          <div class="chrome"><i></i><span class="label" id="stage-label">flow</span><span class="meta">ワークスペース</span></div>
+          <img id="stage-img" src="../assets/screenshots/weights-and-measures-flow-graph.jpg" alt="Flow workspace" />
+        </div>
+        <div class="stage-info" id="stage-chips"></div>
+      </div>
+    </div>
+    <div class="credo">
+      <div data-reveal>
+        <div class="kick">すべての中心</div>
+        <h3>Flowを中心に設計。</h3>
+        <p>生成的なノードグラフこそ、Signal Loomが中心に据えて設計されたものです——グラフに一度プロバイダーを配線すれば、下流のすべてのワークスペースがその結果を受け継ぎます。</p>
+      </div>
+      <div data-reveal>
+        <div class="kick">意図的な選択</div>
+        <h3>AIは任意です。</h3>
+        <p>Imageで描き、Paperで本のレイアウトを組み、Videoでカットする。素材を取り込むか、手で作るか——AIなし、キーなしでもプロジェクト全体を作り上げられます。</p>
+      </div>
+      <div data-reveal>
+        <div class="kick">決められた道はない</div>
+        <h3>ひとつだけ使う。全部使う。</h3>
+        <p>各ワークスペースは単体でも強力で、組み合わせればさらに輝きます。Signal Loomの使い方に、唯一の正解はありません。</p>
+      </div>
+    </div>
+
+    <style>
+      .specs{margin-top:40px}
+      .spec-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:14px;margin-top:16px}
+      .spec-table{width:100%;border-collapse:collapse;min-width:760px;font-size:.85rem}
+      .spec-table th,.spec-table td{text-align:left;padding:15px 16px;border-bottom:1px solid var(--line);vertical-align:top}
+      .spec-table thead th{font-family:var(--mono);font-size:.56rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:500;background:rgba(150,182,220,.04)}
+      .spec-table tbody tr:last-child td,.spec-table tbody tr:last-child th{border-bottom:none}
+      .spec-table th[scope=row]{font-weight:600;color:var(--ink);white-space:nowrap}
+      .spec-table td{color:var(--ink-2);line-height:1.6}
+      .spec-fmt{font-family:var(--mono);font-size:.78rem;color:var(--accent2,var(--accent));letter-spacing:.02em}
+      .spec-ai{font-family:var(--mono);font-size:.54rem;letter-spacing:.1em;text-transform:uppercase;color:var(--accent2,var(--accent));border:1px solid var(--line-2);border-radius:999px;padding:3px 9px;display:inline-block;margin-bottom:8px;font-weight:500}
+      .spec-plat{white-space:nowrap;font-size:.82rem}
+    </style>
+    <div class="specs" data-reveal>
+      <div class="kick">仕様の一覧</div>
+      <h3 style="margin:6px 0 0">すべての記述はコードに裏付けられています。</h3>
+      <div class="spec-scroll">
+        <table class="spec-table">
+          <thead>
+            <tr>
+              <th scope="col">ワークスペース</th>
+              <th scope="col">自前形式</th>
+              <th scope="col">主な機能</th>
+              <th scope="col">AI</th>
+              <th scope="col">動作環境</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="--accent2:#3fd6ff">
+              <th scope="row">Flow</th>
+              <td><span class="spec-fmt">.sloom</span></td>
+              <td>10のノードカテゴリ、Vision-Verify によるQAゲート、ノード単位のコスト計測、ポータルと再利用可能な関数</td>
+              <td><span class="spec-ai">AIネイティブ</span> 各プロバイダーに自分のキーを使うか、自前のエンドポイントも可能</td>
+              <td class="spec-plat">Windows・Linux・Android/DeX</td>
+            </tr>
+            <tr style="--accent2:#ff5cb8">
+              <th scope="row">Image</th>
+              <td><span class="spec-fmt">.slimg</span> <span style="color:var(--ink-3)">（+ PSD）</span></td>
+              <td>26種のツール、筆圧・傾き対応のブラシエンジン、16のブレンドモード、9つのレイヤー効果、8つの調整レイヤー</td>
+              <td><span class="spec-ai">モデル組み込み</span> ジェネレーティブフィル、インペイント、再配色、アップスケールを任意で利用可能</td>
+              <td class="spec-plat">Windows・Linux・Android/DeX <span style="color:var(--ink-3)">（Sペン）</span></td>
+            </tr>
+            <tr style="--accent2:#ffb53d">
+              <th scope="row">Paper</th>
+              <td><span class="spec-fmt">.slppr</span></td>
+              <td>連結テキスト、コミック用吹き出し、SFXデザイナー、ベースライングリッド、面付け、ルビ・傍点対応の縦書きモード。適合PDF/X-1a / PDF/X-4、KDP対応PDF、構造的に有効なAdobe IDMLパッケージ、CBZ、webtoonを書き出し</td>
+              <td><span class="spec-ai">補助的</span> 生成したアセットを印刷用に合成・アップスケール</td>
+              <td class="spec-plat">Windows・Linux・Android/DeX</td>
+            </tr>
+            <tr style="--accent2:#5ce6a1">
+              <th scope="row">Video</th>
+              <td><span class="spec-fmt">in .sloom</span></td>
+              <td>映像トラック + 4本の音声トラック、キーフレーム、クロスフェード、オーバーレイ、10種の書き出しプリセット（H.264、HEVC、ProRes、VP9、GIF）</td>
+              <td><span class="spec-ai">統合済み</span> Flowで生成した映像をそのままカット・仕上げ</td>
+              <td class="spec-plat">Windows・Linux・Android/DeX</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 03 · LIVE MOCK — a scripted replay of the real workflow ═══════ -->
+<section class="node" id="flowdemo">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">03・フローデモ</span><span class="ntype">リプレイ</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal><em>ノードの実行</em>を見る。</h2>
+    <p class="sub" data-reveal>実際のFlowのワークフローを、プレーンなHTMLだけでループ再現したもの——動画ファイルは使っていません。ラフスケッチ、スタイル参照、そして入力したプロンプトが<b>Image Generation</b>ノードに配線され、結果はすでに2つのアセットを持つ<b>Envelope</b>に配線され、届いた瞬間に共有の<b>ソースライブラリ</b>に現れます。<span style="color:var(--ink-3)">（参照用のサムネイルはVertex経由のnano-bananaで生成——アプリが実際に行う呼び出しと同じものです。）</span></p>
+    <div class="fd-wrap" data-reveal>
+      <sl-sim class="fd-sim" kind="flow" role="img" aria-label="Signal LoomのFlowワークスペースのアニメーションリプレイ：ラフスケッチ、スタイル参照、テキストプロンプトがImage Generationノードに接続され、実行するとインクと彩色が施されたポートレートが生成され、その結果がブランドキットのEnvelopeに接続されて、ソースライブラリパネルに3つのアイテムが表示される。"></sl-sim>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 04 · PAPER REPLAY — sculpting a comic page ═══════ -->
+<section class="node" id="paperdemo">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">04・ペーパーデモ</span><span class="ntype">リプレイ</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal><em>コミックのページ</em>を組む。</h2>
+    <p class="sub" data-reveal>Paperワークスペースを再現：コマ枠を引き、<b>Ctrl</b>を押して<b>頂点ハンドル</b>を表示し、辺の中点をドラッグして自由な形にし、<b>隣のコマと連動</b>させることで変形しても余白が生まれない（art側が新しい境界に自動で合わせます）、罫線の太さと色を<b>ミリメートル単位</b>で設定し、ページに色を乗せ、ドラッグ可能な尻尾つきの吹き出しを配置——Preflightが印刷対応を保ちます。</p>
+    <div class="fd-wrap" data-reveal>
+      <sl-sim class="fd-sim" kind="paper" role="img" aria-label="Signal LoomのPaperワークスペースのアニメーションリプレイ：ページ上に3つのコミックコマ枠が描かれ、そのひとつがCtrlの頂点ハンドルで変形され、インスペクタで枠線の太さと色が変更され、ページに色が乗り、ドラッグ可能な尻尾つきの吹き出しが追加される。"></sl-sim>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 05 · SFX REPLAY — comic sound-effect decals ═══════ -->
+<section class="node" id="sfxdemo">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">05・SFXデモ</span><span class="ntype">リプレイ</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal><em>爆音</em>にする。</h2>
+    <p class="sub" data-reveal>Paperの<b>コミックSFXデザイナー</b>：8種のプリセット——BANG!、KAPOW!、SCREECH、WHIRRRR、BOOM!、CRASH!、ZAP!、SLAM!——そこから先はすべて自由自在。塗り・ストローク・影をミリメートル単位で調整し、傾斜と回転、文字トラッキング、そして動きを演出する<b>残像コピー</b>まで。</p>
+    <div class="fd-wrap" data-reveal>
+      <sl-sim class="fd-sim" kind="sfx" role="img" aria-label="Paperのコミック用SFXデザイナーのアニメーションリプレイ：KAPOW!プリセットがコミック画像の上にスタンプされ、傾斜がつき、ストロークと影がミリメートル単位で太くなり、残像のエコーコピーが追加される。"></sl-sim>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 06 · BRUSH REPLAY — the brush engine ═══════ -->
+<section class="node" id="brushdemo">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">06・ブラシデモ</span><span class="ntype">リプレイ</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal><em>反応する</em>ブラシ。</h2>
+    <p class="sub" data-reveal>Imageワークスペースのブラシエンジンを、模擬スタイラスで再現：<b>筆圧</b>が太さと流量を左右し、<b>傾き</b>が鉛筆の側面のようにぼかし、<b>カラーレート</b>がストローク中に前景色と背景色を混ぜ、<b>Shift</b>で完全な直線を引ける——GPUブラシエンジン（WebGL2、差分領域更新）で動作。</p>
+    <div class="fd-wrap" data-reveal>
+      <sl-sim class="fd-sim" kind="brush" role="img" aria-label="Signal Loomのブラシエンジンのアニメーションリプレイ：模擬スタイラスが筆圧に応じて太さが変わるストロークを描き、傾きで広くぼかし、ストロークに沿って前景色から背景色へブレンドし、Shiftを押しながら直線を引く。"></sl-sim>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 07 · VIDEO REPLAY — the sequencer timeline ═══════ -->
+<section class="node" id="videodemo">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">07・ビデオデモ</span><span class="ntype">リプレイ</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal><em>つなぎ合わせる。</em></h2>
+    <p class="sub" data-reveal>Videoワークスペースを、実際の2モニターレイアウトで再現：<b>プロジェクトソースビン</b>のクリップが<b>ソースモニター</b>でプレビューされ、<b>V1トラックチップ</b>を持つレーンに送られ、2つ目のクリップが<b>シーケンサータイムライン</b>に直接ドラッグされ、クロスフェードが実際の手順で作られます——<b>不透明度のキーフレーム</b>、最初のキーを0%にドラッグしてゴムバンドのラインがV2をV1の上にランプインさせる——スコアが音声レーンに乗り、<b>スケールのキーフレーム</b>（◇）がプッシュインをアニメーションさせながら、再生ヘッドが<b>プログラムモニター</b>をスクラブ——実際のVeoで撮った2カット、同じキャラクターを2つのアングルでカットしたものが再生されます。<span style="color:var(--ink-3)">（アプリの20以上あるテーマのうちひとつで表示）</span></p>
+    <div class="fd-wrap" data-reveal>
+      <sl-sim class="fd-sim" kind="video" role="img" aria-label="デュアルモニターを持つSignal LoomのVideoワークスペースのアニメーションリプレイ：プロジェクトソースビンからソースクリップが選択され、ソースモニターでプレビューされ、トラックV1に追加される。2つ目のクリップがV2にドラッグされる。不透明度のキーフレームでクロスフェードが作られ、そのラインがゼロから引き上げられる。波形のある音声クリップが追加される。スケールのキーフレームが設定される。そして再生ヘッドがスクラブしながらプログラムモニターが結果を再生する。"></sl-sim>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 08 · A REAL RUN ═══════ -->
+<section class="node" id="showcase">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">08・フロー実行</span><span class="ntype">画像生成 × 4</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal><em>一貫性ライブラリ</em>から始める。</h2>
+    <p class="sub" data-reveal>プロジェクトの最初の一手：低レベルの<b>一貫性アセット</b>——あちこちで再利用する繰り返し登場するオブジェクト、小道具、環境——を生成するFlowグラフで、カットが変わってもシーンの見た目の一貫性を保ちます。ワークスペースのほとんどをひと通り巡る内容にもなっています。</p>
+    <div class="monitor" style="margin-top:2rem" data-reveal>
+      <div class="chrome"><i></i><span class="label">flow · consistency-assets.sloom</span><span class="meta">4プロバイダー</span></div>
+      <img src="../assets/screenshots/flow-workspace.png" alt="複数のプロバイダーをまたいで再利用可能な低レベルの一貫性アセットを生成するSignal LoomのFlowグラフ。Vision VerifyによるQAといくつかの折りたたまれたノードが見える" loading="lazy" />
+    </div>
+    <p class="sub" style="margin-top:1.5rem" data-reveal>プロンプトと<b>カラーパレット / スウォッチ</b>ノードが、4つのプロバイダー——<b>Atlas</b>（Seedream v4.5）、<b>BytePlus</b>（bytedance/seedream）、<b>Google</b>（gemini-3-pro-image）、<b>Black Forest Labs</b>（FLUX）——を同時に使って<b>Image Generation</b>を駆動し、結果は<b>アセットパッケージ</b>と共有の<b>ソースライブラリ</b>にまとめられます。<b>ポータル</b>はグラフ全体で共有のスタイルとカラートークンを運び、2つの<b>Vision Verify</b>ノードがGeminiのビジョンモデルで各結果を参照と照合し（<b>✓ TRUE</b> / <b>✗ FALSE</b>）、<b>Value Monitor</b>に渡します。そしていくつかのノードは<b>折りたたまれた</b>最小サイズのまま、すべての接続は保たれています。</p>
+  </div>
+</section>
+
+<!-- ═══════ NODE 04 · PATCH BAY ═══════ -->
+<section class="node" id="keys">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">09・プロバイダー</span><span class="ntype">パッチベイ</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>あなたのプロバイダー。あなたのコスト。<em>あなたの管理下に。</em></h2>
+    <p class="sub" data-reveal>Signal Loomにはアカウントも自前のサーバーもありません。あなたがすでに料金を払っているAIプロバイダーに、自分のキーで接続します——キーも作業内容もあなたの端末に残り、プロバイダーとは直接やり取りします。AIなしで作業したい場合は、このパネルは丸ごと無視してかまいません。スタジオの他の部分はそれに依存していません。</p>
+    <div class="jacks" data-reveal>
+      <div class="jack"><span>Google Gemini</span><small>+ Vertex AI</small></div>
+      <div class="jack"><span>OpenAI</span><small>+ 互換API</small></div>
+      <div class="jack"><span>BytePlus</span><small>Seedream・純正</small></div>
+      <div class="jack"><span>Atlas Cloud</span><small>マルチモデルゲートウェイ</small></div>
+      <div class="jack"><span>Hugging Face</span><small>推論</small></div>
+      <div class="jack"><span>Black Forest Labs</span><small>FLUX</small></div>
+      <div class="jack"><span>Stability AI</span><small>画像</small></div>
+      <div class="jack"><span>ElevenLabs</span><small>音声</small></div>
+      <div class="jack"><span>ローカル・オープンモデル</span><small>自前のエンドポイント</small></div>
+      <div class="jack quiet"><span>できることを決めるのは</span><small>メニューではなくモデル</small></div>
+    </div>
+    <div class="mini">
+      <div class="card" style="--accent2:var(--pink)" data-reveal><h3>ジェネレーティブフィル <span class="tag">画像</span></h3><p>範囲をマスクし、変更内容を記述し、参照画像付きのモデルで編集——料金は自分のプロバイダーアカウントに請求されます。</p></div>
+      <div class="card" style="--accent2:var(--gold)" data-reveal><h3>同じ機能、どのプロバイダーでも <span class="tag">機能</span></h3><p>参照画像やマスクは、そのモデルがどこで動いていても機能します——直接のキー経由でも、クラウドゲートウェイ経由でも。</p></div>
+      <div class="card" style="--accent2:var(--green)" data-reveal><h3>ローカルファースト・プライベート <span class="tag">データ</span></h3><p>プロジェクトはあなたが保持するファイルです。アナリティクスなし。あなたが送ると選んだリクエスト以外、端末の外に何も出ていきません。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 05 · IMAGE DESK ═══════ -->
+<section class="node" id="imagedesk">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">10・イメージデスク</span><span class="ntype">キャンバス</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>手で描き、<em>AIで仕上げる。</em></h2>
+    <p class="sub" data-reveal>本物の筆圧・傾き・回転に反応するブラシエンジンを備えた、フル機能のレイヤー式ラスターエディタ——さらに、範囲をマスクし、変更内容を記述すれば、モデルがその場でレンダリングします。ひとつのキャンバスで両方こなせます。</p>
+    <div class="shots">
+      <figure data-reveal>
+        <img src="../assets/screenshots/desktop-image-hero.png" alt="Signal LoomのImageワークスペース：ブラシパレットを開いた状態で、キャンバス上に手描きの人物が描かれている" loading="lazy" />
+        <figcaption>
+          <b>ブラシエンジン</b>
+          <span class="cap">筆圧・傾き・回転への応答と、前景色から背景色へのカラーダイナミクス、リアルタイムの3Dチッププレビュー——Sペンや、あらゆるWacomプロトコルのスタイラス向けに作られています。<b>Shift</b>を押し続けると直線に、<b>Alt+クリック</b>で修復・スタンプの基準点を設定できます。</span>
+          <div class="tagrow"><em>筆圧 + 傾き</em><em>Shift直線 & 修復</em><em>スタイラスネイティブ</em></div>
+        </figcaption>
+      </figure>
+      <figure data-reveal>
+        <img src="../assets/screenshots/image-generative-fill.png" alt="Signal LoomのImageエディタでのジェネレーティブフィル：マスクされた範囲がAIモデルによって再生成されている" loading="lazy" />
+        <figcaption>
+          <b>ジェネレーティブフィル</b>
+          <span class="cap">任意の範囲をマスクし、プロンプトを書いて、参照画像付きのモデルで編集——料金は直接あなたのプロバイダーキーに請求されます。スケッチのインクと彩色は、プロンプトひとつの距離です。</span>
+          <div class="tagrow"><em>マスク範囲編集</em><em>参照画像対応</em><em>自分のキーを使用</em></div>
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 06 · IN THE FIELD ═══════ -->
+<section class="node" id="android">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">11・フィールド</span><span class="ntype">デバイス</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>スタジオまるごと、<em>AndroidとDeXでも。</em></h2>
+    <p class="sub" data-reveal>同じプロジェクト、同じ4つのワークスペース——スマートフォンではタッチとSペンに対応し、Samsung DeXではフルのデスクトップレイアウトになり、ゲームコントローラーで手元を見ずに素早く操作できます。</p>
+    <div class="field">
+      <div data-reveal><div class="bademo" role="img" aria-label="スマートフォンでのジェネレーティブフィル：ラフな鉛筆スケッチが「この画像にインクと色をつけて」というプロンプトから、Imageエディタ内のAtlas Wan 2.7によってインクと彩色を施される。">
+        <img class="fr fr1" src="../assets/screenshots/02-sketch.jpg" alt="Signal LoomのImageエディタでのポートレートのラフな鉛筆スケッチ" loading="lazy" />
+        <img class="fr fr2" src="../assets/screenshots/02-atlas-ink-color.png" alt="Atlasのジェネレーティブフィルのプロンプト：この画像にインクと色をつける" loading="lazy" />
+        <img class="fr fr3" src="../assets/screenshots/02-atlas-ink-color-after.jpg" alt="完成したAI彩色済みポートレート" loading="lazy" />
+        <div class="balabel bl1"><b>1</b> ラフスケッチ</div>
+        <div class="balabel bl2"><b>2</b> プロンプト・「この画像にインクと色をつけて」</div>
+        <div class="balabel bl3"><b>3</b> AI彩色済み・Atlas Wan 2.7</div>
+      </div></div>
+      <div data-reveal>
+        <h3 style="font-family:var(--display);font-weight:540;font-size:1.36rem;letter-spacing:-.02em;margin:0 0 10px">ひとつのプロジェクト、2つの画面、リアルタイム</h3>
+        <p style="color:var(--ink-2);margin:0 0 20px;font-size:.94rem;line-height:1.7">LANホストをオンにすると、スマートフォンがネットワーク上のあらゆるブラウザにフルのデスクトップ画面を配信します。<em>同じ</em>プロジェクトが双方向で同期し——ワンタップの<b style="color:var(--ink);font-weight:560">作業中はこちら&nbsp;⇄&nbsp;スマホ</b>という切り替えが編集ロックをデバイス間で受け渡し、2つの画面が衝突することはありません。</p>
+        <div class="diagram"><div class="flowline">
+          <div class="fnode"><b>スマホ</b>プロジェクトをホスト・保持</div>
+          <span class="arrow">◀──▶</span>
+          <div class="fnode"><b>LAN</b>:8723</div>
+          <span class="arrow">◀──▶</span>
+          <div class="fnode"><b>PCブラウザ</b>同じプロジェクトをライブ表示</div>
+        </div></div>
+        <div class="fieldnote">
+          <div class="ic" aria-hidden="true">🎮</div>
+          <div>
+            <b>ゲームコントローラーを接続</b>
+            <p>Xbox、PlayStation、または汎用パッドをBluetoothでペアリングし、物理ボタンとスティックでスタジオを操作——ワークスペースごとに完全にリマップ可能です。Videoでキーフレームをスクラブし、Paperでフレームを配置し、Imageでツールを切り替える。<a href="docs.html#gamepad">割り当てを見る →</a></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ NODE 07 · OWNERSHIP ═══════ -->
+<section class="node" id="license">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">12・ライセンス</span><span class="ntype">出力</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>学ぶのは無料。<em>稼いだら、正当な対価を。</em></h2>
+    <p class="sub" data-reveal>アプリ全体が個人・非商用利用なら無料です。一度きりのライセンスひとつで、プロ向けの印刷用書き出しが解放されます——そして、あなたの制作物が収益を生み始めたら、それが正式なライセンスになります。サブスクリプションなし、アプリ内課金なし、広告なし、アカウント不要。</p>
+    <div class="license" data-reveal>
+      <div class="left">
+        <div class="strike"><b>コミュニティ版 — 無料</b> ・ 個人・非商用利用</div>
+        <ul>
+          <li>4つのワークスペース——Flow、Image、Paper、Video——それぞれが単体で完結したツール</li>
+          <li>ウェブコミック、CBZ、PNG/JPG、動画の書き出し、共有——すべて永久無料</li>
+          <li>各プロバイダーに自分のキーを使う——あるいはAIをまったく使わない</li>
+          <li>あなたの作品にウォーターマークが入ることは決してありません——コミュニティ版の書き出しには不可視のメタデータのみが付与されます</li>
+          <li>学び、作り、共有する——ライセンス料が必要になるのは、それで収益を得るようになってから</li>
+        </ul>
+        <div class="cta" style="margin-top:22px">
+          <a class="btn btn-primary" href="../downloads/SloomStudio-Setup.exe" download>Windows</a>
+          <a class="btn btn-primary" href="../downloads/SloomStudio.AppImage" download>Linux AppImage</a>
+          <a class="btn btn-ghost" href="../downloads/SloomStudio.deb" download>.deb</a>
+        </div>
+        <div class="cta" style="margin-top:10px">
+          <a class="btn btn-primary" href="../downloads/SloomStudio-arm64.dmg" download>macOS・Apple Silicon</a>
+          <a class="btn btn-primary" href="../downloads/SloomStudio-x64.dmg" download>macOS・Intel</a>
+        </div>
+        <div class="strike" style="margin-top:12px">macOS版は<b>実験的かつ未署名</b>です。動作はしますが、macOSは初回起動時に未署名アプリをブロックします（Apple Siliconでは「壊れている」と表示される場合があります）。<a href="macos-install.html">Mac版の開き方 &rarr;</a></div>
+        <div class="strike" style="margin-top:14px">無料ダウンロード ・ <a href="../downloads/SHA256SUMS.txt" style="color:var(--ink-2)">SHA-256チェックサム</a> ・ または<a href="https://github.com/Es00bac/signal-loom" style="color:var(--ink-2)">ソースからビルド</a></div>
+      </div>
+      <div class="right" id="desktop">
+        <div class="price">¥3,000</div>
+        <div class="strike">商用ライセンス ・ 発売記念セールは<b>8月1日まで</b>——先着100本 ・ その後は<b>¥6,500</b></div>
+        <ul>
+          <li>プロ向け印刷書き出しを解放——KDP対応PDF、埋め込みICCを通じた実際のCMYKによる適合PDF/X-1a/X-4と名前付きスポットのSeparation版、CMYK/スポットのスウォッチ、加えて構造的に有効なAdobe IDMLパッケージの書き出し</li>
+          <li>書き出しのメタデータにライセンス済みと記録し、起動時の通知を消します</li>
+          <li>ここで作った制作物で収益を得るようになったときの正式なライセンス</li>
+          <li>1つのキーで——デスクトップ<b>と</b>Androidの両方をカバー</li>
+        </ul>
+        <a class="btn btn-primary" href="https://buy.stripe.com/00wbJ16FQ1gX25p57n7Re03" style="margin-top:18px">ライセンスを購入 — ¥3,000</a>
+        <a class="btn btn-ghost" href="https://sloomstudio.itch.io/signal-loom">itch.ioでも購入可能</a>
+        <div class="note">キーはメールで届きます ・ オフラインで永久に使えます<br>📱 Androidは<b>Samsung Galaxy Store</b>と<b>Google Play</b>に近日登場——同じキーでカバーされます。<br>PKG・studio.sloom.signalloom</div>
+      </div>
+    </div>
+    <p class="fineprint">Signal LoomにはAI利用料やクレジットは含まれません。ご自身のプロバイダーアカウント・キーを用意していただき、モデルの利用料はそのプロバイダーの規約に従って請求されます。</p>
+    <p class="srcnote">Signal Loomは非商用ライセンスの下でソースが公開されています。自分でビルドしたい、あるいは自分のキーでコードが正確に何をしているか読みたいですか？すべて<a href="https://github.com/Es00bac/signal-loom">GitHub</a>にあります——遠慮は要りません。現在0.9.xベータ版です。新機能は<a href="changelog.html">更新履歴</a>をご覧ください。</p>
+  </div>
+</section>
+
+<!-- ═══════ NODE 08 · QUESTIONS ═══════ -->
+<section class="node" id="faq">
+  <i class="port in"></i><i class="port out"></i>
+  <div class="node-head"><span class="nid">13・質問</span><span class="ntype">モニター</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <h2 data-reveal>質問、<em>答えます。</em></h2>
+    <div class="faq" data-reveal>
+      <details>
+        <summary>Signal Loomを使うのに、APIキーやAIは必要ですか？</summary>
+        <div class="a">いいえ。<b>すべてのワークスペースはキーを一切設定しなくても使えます。</b>Imageで描き、Paperでページを組み、Videoでタイムラインをカットし、好きなメディアを取り込む。AI機能は、プロバイダーキーを追加したときだけ目を覚まし——追加しなければ一切邪魔をしません。</div>
+      </details>
+      <details>
+        <summary>¥3,000でちょうど何が手に入りますか？</summary>
+        <div class="a"><b>商用ライセンス</b>——一度きりのキーがメールで届き、オフラインで検証され、永久にあなたのものです。プロ向けの印刷制作ワークスペースを解放します：KDP対応の出力、埋め込みICCアウトプットインテントを通じた実際のCMYKで適合PDF/X-1a・PDF/X-4を書き出し、名前付きスポットカラーをSeparation版として保持し、加えて構造的に有効なAdobe IDMLパッケージも書き出せます（IDMLインポートはまだ未対応です）。断ち落とし・トンボつきの印刷対応PDF、CMYKとスポットのスウォッチも含まれ、0.9.xベータの間に追加されるプロ向け書き出しはすべて追加費用なしであなたのものになります。書き出しのメタデータにライセンス済みと記録し、起動時の通知を消し、あなたの制作物が収益を生み始めたときの正式なライセンスにもなります。1つのキーでデスクトップ<b>と</b>Androidの両方をカバー。それ以外——4つのワークスペースすべて、ウェブコミック、動画の書き出し、共有——はすでに無料です。モデルの利用料は別で、生成を選んだときだけ、自分のAIプロバイダーに請求されます。</div>
+      </details>
+      <details>
+        <summary>プロジェクトとキーはどこに保存されますか？</summary>
+        <div class="a">あなたの端末上です。プロジェクトは<span class="mono" style="letter-spacing:.03em;text-transform:none">.sloom</span>ファイルで、他のファイルと同じようにコピー、バックアップ、移動ができます。APIキーはローカルに保存され、リクエストはあなたの端末からプロバイダーへ直接送られます——Signal Loomには自前のサーバーがなく、アナリティクスも収集しません。</div>
+      </details>
+      <details>
+        <summary>対応しているAIプロバイダーは？</summary>
+        <div class="a">標準で8つのクラウドプロバイダーに対応——Google Gemini（Vertex AI含む）、OpenAIおよびOpenAI互換エンドポイント、BytePlus（純正Seedream）、Atlas Cloud、Hugging Face、Black Forest Labs、Stability AI、ElevenLabs——さらに、自前でホストする<b>ローカル・オープンモデル</b>向けのレーンもあります。参照画像やマスクはメニューではなくモデルに従うので、そのモデルがどこで動いていても同じ機能が使えます。</div>
+      </details>
+      <details>
+        <summary>Androidについては？</summary>
+        <div class="a">Android版——同じプロジェクト形式、同じ4つのワークスペース、Sペン・Samsung DeX・LANホストを標準搭載——は<b>Samsung Galaxy StoreとGoogle Play</b>に近日登場予定です。デスクトップ版は上記の通り、本日から利用できます。</div>
+      </details>
+      <details>
+        <summary>支払わずに試すことはできますか？</summary>
+        <div class="a">はい——<a href="#license">無料でダウンロード</a>するだけで、アカウントも試用期限もありません。Signal Loomは個人・非商用利用なら無料です：学び、作り、共有してください。PolyForm非商用ライセンスの下でソースも公開されているので、すべてのコードを読んで、<a href="https://github.com/Es00bac/signal-loom">GitHub</a>から自分でビルドすることもできます。作ったもので<b>収益</b>を得るようになったとき、そこで¥3,000のライセンスが必要になります——それがプロ向け印刷書き出しを解放し、一人の開発者の活動資金になります。学ぶのは無料、稼げるようになったら正当な対価を。</div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ SIGNUP · own the audience (first-party, no third party) ═══════ -->
+<section class="signupband" id="notify" aria-label="Get updates">
+  <style>
+    .signupband{padding:clamp(30px,6vw,60px) clamp(16px,5vw,48px);border-top:1px solid var(--line-2)}
+    .signupband .sw{max-width:640px;margin-inline:auto;text-align:center}
+    .signupband h2{margin:0 0 8px;font-size:clamp(1.3rem,3.2vw,1.9rem)}
+    .signupband p{color:var(--ink-2);margin:0 0 20px;line-height:1.6}
+    .signupform{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+    .signupform input[type=email]{flex:1;min-width:220px;padding:12px 14px;border-radius:10px;border:1px solid var(--line-2);background:#04070d;color:var(--ink-1);font-size:1rem}
+    .signupform button{padding:12px 22px;border-radius:10px;border:0;background:var(--accent,#35d3ee);color:#021018;font-weight:650;cursor:pointer;font-size:1rem}
+    .signupform .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+    .signupmsg{margin-top:12px;min-height:1.2em;color:var(--ink-2);font-size:.92rem}
+    .signupmsg.ok{color:#5ce6a1}
+  </style>
+  <div class="sw">
+    <h2>最新情報を受け取る</h2>
+    <p>本当に価値のあるニュースがあったときだけメールをお送りします：新機能や、<b>署名済みMac版</b>が公開されたときなど。スパムはありません。どのメールにも返信するだけで配信停止できます。</p>
+    <form class="signupform" id="signupform" novalidate>
+      <label class="hp" aria-hidden="true">この欄は空のままにしてください <input type="text" name="website" tabindex="-1" autocomplete="off"></label>
+      <input type="email" name="email" placeholder="you@example.com" required aria-label="メールアドレス" />
+      <button type="submit">通知を受け取る</button>
+    </form>
+    <div class="signupmsg" id="signupmsg" role="status" aria-live="polite"></div>
+  </div>
+  <script>
+  (function(){
+    var f=document.getElementById('signupform'), m=document.getElementById('signupmsg');
+    if(!f) return;
+    f.addEventListener('submit',function(e){
+      e.preventDefault();
+      var email=(f.email.value||'').trim();
+      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){m.textContent='有効なメールアドレスを入力してください。';m.className='signupmsg';return;}
+      m.textContent='少々お待ちください…';m.className='signupmsg';
+      fetch('/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,website:f.website.value,src:'home_ja'})})
+        .then(function(r){return r.json().catch(function(){return {ok:r.ok};});})
+        .then(function(d){if(d&&d.ok){m.textContent='ありがとうございます — 登録が完了しました。';m.className='signupmsg ok';f.reset();if(window.slEv)slEv('subscribe');}else{m.textContent='送信に失敗しました。もう一度お試しいただくか、support@sloom.studio までご連絡ください。';m.className='signupmsg';}})
+        .catch(function(){m.textContent='通信エラーが発生しました。少し時間をおいてお試しください。';m.className='signupmsg';});
+    });
+  })();
+  </script>
+</section>
+
+<!-- ═══════ NODE 09 · TERMINAL ═══════ -->
+<section class="node" id="terminal">
+  <i class="port in"></i>
+  <div class="node-head"><span class="nid">14・標準出力</span><span class="ntype">ターミナル</span><span class="nstate"><span class="txt"></span><i></i></span></div>
+  <div class="node-body">
+    <div><span class="p">➜</span> run <span id="term-count">…</span> · cost <b>$0.0000</b> <span class="dim">— あなたの端末上で実行された。それがすべて。</span></div>
+    <div><span class="p">➜</span> <span class="dim">デモのサムネイルはVertex経由のnano-bananaで生成——アプリが実際に行う呼び出しと同じもの。</span></div>
+    <div><span class="p">➜</span> プロダクト&nbsp;&nbsp;<a href="docs.html">ドキュメント</a> · <a href="examples.html">作例</a> · <a href="changelog.html">更新履歴</a> · <a href="#license">無料でダウンロード</a> · <a href="#license">ライセンス — ¥3,000</a></div>
+    <div><span class="p">➜</span> その他&nbsp;<a href="https://github.com/Es00bac/signal-loom">github</a> · <a href="https://sloomstudio.itch.io/signal-loom">itch.io</a> · <a rel="me" href="https://mastodon.social/@SloomStudio">mastodon</a> · <a href="mailto:support@sloom.studio">support@sloom.studio</a></div>
+    <div><span class="p">➜</span> <span class="dim">自分のものになる創作スイート。</span></div>
+  </div>
+</section>
+
+</div></main>
+
+<div class="legal">
+  <span>© 2026 Sloom Studio (Signal Loom)</span>
+  <span><a href="privacy.html" style="color:var(--ink-2)">プライバシー</a></span>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   This page is a flow graph. Scrolling runs it.
+   1. a seeded loom weaves a unique artwork per visitor (downloadable)
+   2. one cable wires every node; it draws itself as you scroll
+   3. nodes flip idle → ran as the signal reaches them
+   4. a node-editor minimap tracks where you are in the graph
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+'use strict';
+var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ── seeded PRNG ── */
+var seed = (crypto.getRandomValues ? crypto.getRandomValues(new Uint32Array(1))[0] : (Math.random()*0xffffffff)) >>> 0;
+function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+var seedHex = '0x'+seed.toString(16).toUpperCase().padStart(8,'0');
+var el = document.getElementById('seedhex'); if(el) el.textContent = seedHex;
+
+/* ── the weave — generative artwork, unique to this visit ── */
+var PAL = [[63,214,255],[255,92,184],[255,181,61],[92,230,161],[150,182,220]];
+function drawWeave(x, W, H, rnd, boost){
+  boost = boost || 1;
+  x.clearRect(0,0,W,H);
+  var warp = Math.max(18, Math.round(W/30));
+  for(var i=0;i<warp;i++){
+    var c = PAL[rnd()<.55?0:(rnd()*PAL.length)|0];
+    var x0 = (i+.5)/warp*W + (rnd()*10-5);
+    var amp = 6+rnd()*26, f = .002+rnd()*.004, ph = rnd()*6.28;
+    x.strokeStyle = 'rgba('+c[0]+','+c[1]+','+c[2]+','+((.03+rnd()*.09)*boost)+')';
+    x.lineWidth = .7+rnd()*1.1;
+    x.beginPath();
+    for(var y=-10;y<=H+10;y+=12) x[y<0?'moveTo':'lineTo'](x0+Math.sin(y*f+ph)*amp, y);
+    x.stroke();
+  }
+  var weft = Math.max(10, Math.round(H/44));
+  for(var j=0;j<weft;j++){
+    var c2 = PAL[rnd()<.5?4:(rnd()*PAL.length)|0];
+    var y0 = (j+.5)/weft*H + (rnd()*14-7);
+    var amp2 = 3+rnd()*12, f2 = .003+rnd()*.005, ph2 = rnd()*6.28;
+    x.strokeStyle = 'rgba('+c2[0]+','+c2[1]+','+c2[2]+','+((.025+rnd()*.06)*boost)+')';
+    x.lineWidth = .6+rnd()*.9;
+    x.beginPath();
+    for(var xx=-10;xx<=W+10;xx+=14) x[xx<0?'moveTo':'lineTo'](xx, y0+Math.sin(xx*f2+ph2)*amp2);
+    x.stroke();
+  }
+  for(var s=0;s<3;s++){ /* three bright signal threads */
+    var xs = W*(.15+rnd()*.7), amp3 = 10+rnd()*30, f3 = .0025+rnd()*.003, ph3 = rnd()*6.28;
+    x.strokeStyle = 'rgba(63,214,255,'+(.16*boost)+')';
+    x.lineWidth = 1.4; x.shadowColor = 'rgba(63,214,255,.8)'; x.shadowBlur = 7;
+    x.beginPath();
+    for(var yy=-10;yy<=H+10;yy+=10) x[yy<0?'moveTo':'lineTo'](xs+Math.sin(yy*f3+ph3)*amp3, yy);
+    x.stroke(); x.shadowBlur = 0;
+  }
+  var knots = Math.round(W*H/9000);
+  for(var k2=0;k2<knots;k2++){
+    var c3 = PAL[(rnd()*PAL.length)|0];
+    x.fillStyle = 'rgba('+c3[0]+','+c3[1]+','+c3[2]+','+((.10+rnd()*.22)*boost)+')';
+    x.beginPath(); x.arc(rnd()*W, rnd()*H, .6+rnd()*1.3, 0, 6.2832); x.fill();
+  }
+}
+var loom = document.getElementById('loom');
+function renderLoom(){
+  if(!loom) return;
+  var DPR = Math.min(2, devicePixelRatio||1), r = loom.getBoundingClientRect();
+  if(r.width<10) return;
+  loom.width = r.width*DPR; loom.height = r.height*DPR;
+  var ctx = loom.getContext('2d'); ctx.setTransform(DPR,0,0,DPR,0,0);
+  drawWeave(ctx, r.width, r.height, mulberry(seed), 1);
+}
+renderLoom();
+var keep = document.getElementById('keepweave');
+if(keep) keep.addEventListener('click', function(){
+  var W = 1200, H = 1600, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  var x = c.getContext('2d');
+  x.fillStyle = '#04070d'; x.fillRect(0,0,W,H);
+  drawWeave(x, W, H, mulberry(seed), 2.6);
+  x.fillStyle = 'rgba(237,243,250,.92)';
+  x.font = '500 44px "Space Grotesk", Inter, sans-serif';
+  x.fillText('自分だけの一枚。', 64, H-140);
+  x.fillStyle = 'rgba(150,182,220,.55)';
+  x.font = '12px ui-monospace, Menlo, monospace';
+  x.fillText('WOVEN AT SLOOM.STUDIO · SEED '+seedHex+' · '+new Date().toISOString().slice(0,10)+' · YOURS', 64, H-92);
+  var a = document.createElement('a');
+  a.download = 'signal-loom-weave-'+seedHex+'.png';
+  a.href = c.toDataURL('image/png');
+  a.click();
+});
+
+/* ── workstation tab switcher ── */
+var tabs = [].slice.call(document.querySelectorAll('.tab'));
+var img = document.getElementById('stage-img'), label = document.getElementById('stage-label'),
+    chips = document.getElementById('stage-chips'), stage = document.querySelector('.stage');
+function sel(t){
+  tabs.forEach(function(x2){x2.setAttribute('aria-selected', x2===t?'true':'false');});
+  var a = t.dataset.accent;
+  img.src = '../assets/screenshots/'+t.dataset.shot+'.'+(t.dataset.ext||'png');
+  img.alt = t.dataset.title+' workspace';
+  label.textContent = t.dataset.title.toLowerCase();
+  stage.style.setProperty('--accent', a);
+  chips.innerHTML = t.dataset.chips.split('|').map(function(c){return '<span class="chip" style="--accent:'+a+'">'+c+'</span>';}).join('');
+}
+tabs.forEach(function(t){ t.style.setProperty('--accent', t.dataset.accent); t.addEventListener('click', function(){sel(t);}); });
+if(tabs.length) sel(tabs[0]);
+
+/* ── reveal on scroll ── */
+if(!('IntersectionObserver' in window) || reduced){
+  [].forEach.call(document.querySelectorAll('[data-reveal]'), function(e2){e2.classList.add('in');});
+}else{
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e2){ if(e2.isIntersecting){ e2.target.classList.add('in'); io.unobserve(e2.target); } });
+  }, {threshold:.1, rootMargin:'0px 0px -5% 0px'});
+  [].forEach.call(document.querySelectorAll('[data-reveal]'), function(e2){io.observe(e2);});
+}
+
+/* ── the cable: one path wiring every node, drawn by scroll ── */
+var nodes = [].slice.call(document.querySelectorAll('.node'));
+var svg = document.getElementById('wiresvg'), path = document.getElementById('wirepath');
+var totalLen = 0, nodeInY = [], pulses = [];
+var NP = 4;
+for(var p2=0;p2<NP;p2++){
+  var c2 = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  c2.setAttribute('r', p2? 2.2 : 3); c2.setAttribute('class','pulse'); c2.style.opacity = 0;
+  svg.appendChild(c2); pulses.push(c2);
+}
+function side(k){ return k%2 ? .84 : .16; }
+function buildWire(){
+  var docH = document.documentElement.scrollHeight;
+  svg.setAttribute('width', innerWidth); svg.setAttribute('height', docH);
+  svg.style.height = docH+'px';
+  var d = '', prev = null;
+  nodeInY = [];
+  nodes.forEach(function(sec, k){
+    var r = sec.getBoundingClientRect(), top = r.top+scrollY, bot = r.bottom+scrollY;
+    var sx = r.left + r.width*side(k);
+    var pin = sec.querySelector('.port.in'), pout = sec.querySelector('.port.out');
+    if(pin){ pin.style.left = 'calc('+(side(k)*100)+'% - 6px)'; }
+    if(pout){ pout.style.left = 'calc('+(side(k)*100)+'% - 6px)'; }
+    nodeInY.push(top);
+    if(prev){
+      var dy = Math.max(60, Math.min(220, (top-prev.y)*.5));
+      d += ' M'+prev.x+','+prev.y+' C'+prev.x+','+(prev.y+dy)+' '+sx+','+(top-dy)+' '+sx+','+top;
+    }
+    prev = {x:sx, y:bot};
+  });
+  path.setAttribute('d', d);
+  totalLen = path.getTotalLength();
+  path.style.strokeDasharray = totalLen+' '+totalLen;
+  path.classList.remove('undrawn');
+  update(true);
+}
+var drawn = 0;
+function update(force){
+  if(!totalLen) return;
+  var docH = document.documentElement.scrollHeight - innerHeight;
+  var p3 = docH>0 ? Math.min(1, Math.max(0, (scrollY + innerHeight*.72) / (docH + innerHeight*.72))) : 1;
+  var target = totalLen * p3;
+  drawn = force ? target : drawn + (target-drawn)*.14;
+  path.style.strokeDashoffset = Math.max(0, totalLen - drawn);
+  var tip = path.getPointAtLength(Math.min(drawn, totalLen-1));
+  nodes.forEach(function(sec, k){
+    var hit = tip.y >= nodeInY[k]-4 || p3 > .985;
+    if(k===0) hit = true;
+    sec.classList.toggle('ran', hit);
+    if(sec.querySelector('.port.out') && tip.y >= (nodeInY[k+1]||Infinity)-4) sec.classList.add('done');
+  });
+  var ranN = document.querySelectorAll('.node.ran').length;
+  var tc = document.getElementById('term-count');
+  if(tc) tc.textContent = ranN+'/'+nodes.length+' nodes';
+  var rs = document.getElementById('runstat');
+  if(rs) rs.textContent = (ranN===nodes.length) ? 'run complete' : 'running';
+  mmView();
+  mmRan();
+}
+function animPulses(now){
+  if(totalLen && !reduced){
+    for(var i2=0;i2<pulses.length;i2++){
+      var t2 = ((now/2600) + i2/pulses.length) % 1;
+      var L2 = t2 * drawn;
+      if(L2 > 8 && drawn > 40){
+        var pt = path.getPointAtLength(L2);
+        pulses[i2].setAttribute('cx', pt.x); pulses[i2].setAttribute('cy', pt.y);
+        pulses[i2].style.opacity = .25 + .75*Math.sin(t2*Math.PI);
+      } else pulses[i2].style.opacity = 0;
+    }
+    if(Math.abs((totalLen*lastP())-drawn) > .5) update();
+  }
+  requestAnimationFrame(animPulses);
+}
+function lastP(){
+  var docH = document.documentElement.scrollHeight - innerHeight;
+  return docH>0 ? Math.min(1, Math.max(0, (scrollY + innerHeight*.72) / (docH + innerHeight*.72))) : 1;
+}
+
+/* ── minimap ── */
+var mmTrack = document.getElementById('mm-track'), mmNodes = [], mmV = null;
+function buildMM(){
+  if(!mmTrack) return;
+  mmTrack.innerHTML = '';
+  mmNodes = [];
+  var docH = document.documentElement.scrollHeight;
+  nodes.forEach(function(sec){
+    var r = sec.getBoundingClientRect(), top = r.top+scrollY;
+    var d2 = document.createElement('div');
+    d2.className = 'mm-node';
+    d2.style.top = (top/docH*100)+'%';
+    d2.style.height = Math.max(2.2, r.height/docH*100)+'%';
+    mmTrack.appendChild(d2); mmNodes.push(d2);
+  });
+  mmV = document.createElement('div'); mmV.id = 'mm-view';
+  mmTrack.appendChild(mmV);
+  mmView();
+}
+function mmView(){
+  if(!mmV) return;
+  var docH = document.documentElement.scrollHeight;
+  mmV.style.top = (scrollY/docH*100)+'%';
+  mmV.style.height = (innerHeight/docH*100)+'%';
+}
+function mmRan(){
+  nodes.forEach(function(sec,k){ if(mmNodes[k]) mmNodes[k].classList.toggle('ran', sec.classList.contains('ran')); });
+}
+var mm = document.getElementById('minimap');
+if(mm) mm.addEventListener('click', function(ev){
+  var r = mmTrack.getBoundingClientRect();
+  var f = Math.min(1, Math.max(0, (ev.clientY-r.top)/r.height));
+  scrollTo({top: f*document.documentElement.scrollHeight - innerHeight/2, behavior: reduced?'auto':'smooth'});
+});
+
+/* ── run-cost flicker: it never leaves zero — that's the joke and the promise ── */
+if(!reduced){
+  var rc = document.getElementById('runcost');
+  if(rc) setInterval(function(){
+    rc.textContent = '$0.000'+(Math.random()<.85?'0':(Math.random()*10|0));
+    setTimeout(function(){ rc.textContent = '$0.0000'; }, 140);
+  }, 3400);
+}
+
+/* ── wire everything up ── */
+function layout(){ renderLoom(); buildWire(); buildMM(); }
+addEventListener('scroll', function(){ update(); }, {passive:true});
+addEventListener('resize', function(){ clearTimeout(layout._t); layout._t = setTimeout(layout, 180); });
+addEventListener('load', layout);
+if('ResizeObserver' in window){ /* lazy images shift the graph; re-measure the cable when the page grows */
+  var ro = new ResizeObserver(function(){ clearTimeout(layout._t); layout._t = setTimeout(function(){ buildWire(); buildMM(); }, 220); });
+  ro.observe(document.body);
+}
+layout();
+requestAnimationFrame(animPulses);
+})();
+
+</script>
+<script>
+/* ── first-party funnel beacons: no third party, no cookies, host-only referrer.
+   Fires a 1x1 GET pixel that lands in nginx logs; download_stats.py buckets it. ── */
+(function(){
+  try{
+    var q = new URLSearchParams(location.search);
+    var src = (q.get('src') || q.get('utm_source') || '').replace(/[^a-z0-9_-]/gi,'').slice(0,32);
+    var ref = 'direct';
+    try{ if(document.referrer){ var h = new URL(document.referrer).hostname;
+      if(h && h.indexOf('sloom.studio') === -1) ref = h.slice(0,60); } }catch(e){}
+    window.slEv = function(ev, extra){
+      try{ new Image().src = '/e/px.gif?ev=' + encodeURIComponent(ev)
+        + '&r=' + encodeURIComponent(ref) + (src?('&s='+encodeURIComponent(src)):'')
+        + (extra||'') + '&t=' + Date.now(); }catch(e){}
+    };
+    slEv('view');
+    /* film play button: swap poster for the privacy-friendly youtube embed on click */
+    document.addEventListener('click', function(e){
+      var b = e.target.closest && e.target.closest('.filmframe .poster[data-yt]'); if(!b) return;
+      var id = b.getAttribute('data-yt'); var frame = b.closest('.filmframe');
+      var ifr = document.createElement('iframe');
+      ifr.src = 'https://www.youtube-nocookie.com/embed/' + id + '?autoplay=1&rel=0';
+      ifr.title = 'Sloom Studio — the film';
+      ifr.setAttribute('allow', 'autoplay; encrypted-media; fullscreen');
+      ifr.setAttribute('allowfullscreen', '');
+      frame.innerHTML = ''; frame.appendChild(ifr);
+      slEv('video');
+    });
+    /* download + buy clicks (event-delegated, survives dynamic nodes) */
+    document.addEventListener('click', function(e){
+      var a = e.target.closest && e.target.closest('a[href]'); if(!a) return;
+      var href = a.getAttribute('href') || '';
+      if(href.indexOf('/downloads/') !== -1 || href.indexOf('downloads/') === 0){
+        var f = href.split('/').pop().replace(/[^a-z0-9._-]/gi,'').slice(0,40);
+        slEv('dl', '&f=' + encodeURIComponent(f));
+      } else if(href.indexOf('buy.stripe.com') !== -1){ slEv('buy'); }
+      else if(href.indexOf('itch.io') !== -1){ slEv('itch'); }
+    }, true);
+    /* a workspace demo scrolled into view (fires once) */
+    if('IntersectionObserver' in window){
+      var seen = false;
+      var io = new IntersectionObserver(function(en){
+        for(var i=0;i<en.length;i++){ if(en[i].isIntersecting && !seen){ seen = true; slEv('demo'); io.disconnect(); break; } }
+      }, {threshold:0.4});
+      document.querySelectorAll('.node[id$="demo"]').forEach(function(n){ io.observe(n); });
+    }
+  }catch(e){}
+})();
+</script>
+<script src="../assets/sims.js" defer></script>
+</body>
+</html>

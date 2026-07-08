@@ -25,7 +25,7 @@ echo "▶ verifying site…"
 node "$HERE/verify-site.mjs"
 
 # Never ship these to the public root.
-EXCLUDES=(--exclude verify-site.mjs --exclude deploy.sh --exclude README.md --exclude nginx-sloom.studio.conf --exclude '.omc' --exclude '.git*')
+EXCLUDES=(--exclude verify-site.mjs --exclude deploy.sh --exclude repoint-downloads.sh --exclude README.md --exclude nginx-sloom.studio.conf --exclude '.omc' --exclude '.git*')
 
 if [[ "$GO" == "--go" ]]; then
   echo "▶ deploying $HERE/ → $TARGET:$REMOTE_PATH"
@@ -34,6 +34,20 @@ if [[ "$GO" == "--go" ]]; then
   code="$(curl -s -o /dev/null -w '%{http_code}' https://sloom.studio/privacy || echo 000)"
   echo "   privacy URL HTTP $code"
   [[ "$code" == "200" ]] && echo "✓ live" || echo "⚠ expected 200 — check nginx try_files / DNS / TLS"
+  # Ping IndexNow (Bing/DuckDuckGo/Yandex/Ecosia) so search engines re-crawl on every deploy.
+  # Key is the 32-hex-char file hosted at the site root; non-fatal if absent.
+  KEYFILE="$(find "$HERE" -maxdepth 1 -regextype posix-extended -regex '.*/[0-9a-f]{32}\.txt' -printf '%f\n' 2>/dev/null | head -1)"
+  if [[ -n "$KEYFILE" ]]; then
+    KEY="${KEYFILE%.txt}"
+    URLS="$(grep -oE '<loc>[^<]+' sitemap.xml 2>/dev/null | sed 's/<loc>//' | sed 's/.*/"&"/' | paste -sd, -)"
+    if [[ -n "$URLS" ]]; then
+      echo "▶ pinging IndexNow ($KEY)…"
+      inc="$(curl -s -m15 -o /dev/null -w '%{http_code}' -X POST 'https://api.indexnow.org/indexnow' \
+        -H 'Content-Type: application/json' \
+        -d "{\"host\":\"sloom.studio\",\"key\":\"$KEY\",\"keyLocation\":\"https://sloom.studio/$KEYFILE\",\"urlList\":[$URLS]}" || echo 000)"
+      echo "   IndexNow HTTP $inc (200/202 = accepted)"
+    fi
+  fi
 else
   echo "▶ DRY RUN $HERE/ → $TARGET:$REMOTE_PATH  (add --go to apply)"
   rsync -avzn --delete "${EXCLUDES[@]}" "$HERE/" "$TARGET:$REMOTE_PATH"

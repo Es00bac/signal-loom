@@ -10,6 +10,11 @@ export interface PaperTableSpec {
   headerRow: boolean;
   borderWidthMm: number;
   cellPaddingMm: number;
+  /** Optional per-cell background colour (row-major, rows×cols; empty string / missing = no fill). Carries
+   * imported header-row and alternating-row shading. */
+  cellFills?: string[][];
+  /** Optional border colour (defaults to a neutral grey in the renderer when unset). */
+  borderColor?: string;
 }
 
 const MAX_DIMENSION = 50;
@@ -29,6 +34,16 @@ export function normalizePaperTable(spec: Partial<PaperTableSpec> | undefined): 
       return typeof value === 'string' ? value : '';
     }),
   );
+  const sourceFills = Array.isArray(spec?.cellFills) ? spec!.cellFills : undefined;
+  const hasFill = sourceFills?.some((row) => Array.isArray(row) && row.some((value) => typeof value === 'string' && value));
+  const cellFills = hasFill
+    ? Array.from({ length: rows }, (_, r) =>
+        Array.from({ length: cols }, (_, c) => {
+          const value = sourceFills?.[r]?.[c];
+          return typeof value === 'string' ? value : '';
+        }),
+      )
+    : undefined;
   return {
     rows,
     cols,
@@ -36,6 +51,8 @@ export function normalizePaperTable(spec: Partial<PaperTableSpec> | undefined): 
     headerRow: spec?.headerRow ?? true,
     borderWidthMm: Number.isFinite(spec?.borderWidthMm) ? Math.max(0, spec!.borderWidthMm as number) : 0.2,
     cellPaddingMm: Number.isFinite(spec?.cellPaddingMm) ? Math.max(0, spec!.cellPaddingMm as number) : 1.5,
+    ...(cellFills ? { cellFills } : {}),
+    ...(typeof spec?.borderColor === 'string' && spec.borderColor ? { borderColor: spec.borderColor } : {}),
   };
 }
 
@@ -85,4 +102,36 @@ export function removePaperTableColumn(spec: PaperTableSpec, index: number): Pap
   if (table.cols <= 1 || index < 0 || index >= table.cols) return table;
   const cells = table.cells.map((line) => line.filter((_, c) => c !== index));
   return normalizePaperTable({ ...table, cols: table.cols - 1, cells });
+}
+
+/** A blank rows×cols fill grid for `spec`, seeded from any existing fills. */
+function fillGridFor(table: PaperTableSpec): string[][] {
+  return Array.from({ length: table.rows }, (_, r) =>
+    Array.from({ length: table.cols }, (_, c) => table.cellFills?.[r]?.[c] ?? ''),
+  );
+}
+
+/** Shade the header row (row 0) with `hex` (empty string clears just the header). */
+export function setPaperTableHeaderFill(spec: PaperTableSpec, hex: string): PaperTableSpec {
+  const table = normalizePaperTable(spec);
+  const fills = fillGridFor(table);
+  if (fills[0]) fills[0] = fills[0].map(() => hex);
+  return normalizePaperTable({ ...table, cellFills: fills });
+}
+
+/** Shade alternating body rows (every other row after the header) with `hex` for a banded look. */
+export function setPaperTableBandFill(spec: PaperTableSpec, hex: string): PaperTableSpec {
+  const table = normalizePaperTable(spec);
+  const fills = fillGridFor(table);
+  const bodyStart = table.headerRow ? 1 : 0;
+  for (let r = bodyStart; r < table.rows; r += 1) {
+    if ((r - bodyStart) % 2 === 0) fills[r] = fills[r].map(() => hex);
+  }
+  return normalizePaperTable({ ...table, cellFills: fills });
+}
+
+/** Drop all per-cell shading. */
+export function clearPaperTableFills(spec: PaperTableSpec): PaperTableSpec {
+  const table = normalizePaperTable(spec);
+  return normalizePaperTable({ ...table, cellFills: undefined });
 }

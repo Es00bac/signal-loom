@@ -82,6 +82,65 @@ rsync -avz --delete \
 The Play Store listing points to `https://sloom.studio/privacy` — this file
 satisfies that requirement. No symlink needed; nginx serves it directly.
 
+## Maintenance: single-source values (don't hand-edit every page)
+
+Values that used to be duplicated across pages now have a single source, so a
+change is one command instead of editing every file by hand.
+
+### Downloads — stable symlinks (implemented)
+
+Every HTML download link points at a **version-agnostic** name in `downloads/`
+(e.g. `downloads/SloomStudio-Setup.exe`). Those are symlinks to the current
+versioned build. nginx follows them, so the pages never contain a version number.
+
+On a new release, drop the new build files into `downloads/` and run:
+
+```sh
+./repoint-downloads.sh 0.9.11     # repoints all stable symlinks to that version
+./deploy.sh user@host --go        # ships the symlinks (rsync -a preserves them)
+```
+
+Stable name → what it points to:
+
+| link in HTML                     | symlink target (current)              |
+|----------------------------------|---------------------------------------|
+| downloads/SloomStudio-Setup.exe  | SloomStudio-Setup-<ver>.exe           |
+| downloads/SloomStudio.AppImage   | SloomStudio-<ver>-x86_64.AppImage     |
+| downloads/SloomStudio.deb        | SloomStudio-<ver>-amd64.deb           |
+| downloads/SloomStudio-arm64.dmg  | SloomStudio-<ver>-arm64.dmg           |
+| downloads/SloomStudio-x64.dmg    | SloomStudio-<ver>-x64.dmg             |
+
+`SHA256SUMS.txt` stays versioned on purpose (it's a checksum manifest). The
+`repoint-downloads.sh` helper is source-only and excluded from deploy.
+
+### Price change (launch $17.99 → $39 after 100 sales) — one command
+
+The display price is hardcoded in the HTML on purpose (static price = good for
+SEO and AI answer engines). When it changes, do it in one pass:
+
+```sh
+# from this directory:
+sed -i 's/\$17\.99/\$39/g; s/>17\.99</>39</g' *.html
+# then update the verify marker if needed and deploy
+```
+
+Check afterward with `grep -rn '17\.99' *.html` (changelog history entries may
+legitimately keep an old price — review before blanket-replacing).
+
+### Stripe buy link
+
+English pages use one checkout URL; Japanese pages use a separate JPY checkout URL. To update them:
+
+```sh
+# English
+sed -i 's#buy\.stripe\.com/OLD_EN_ID#buy.stripe.com/NEW_EN_ID#g' *.html
+# Japanese
+sed -i 's#buy\.stripe\.com/OLD_JA_ID#buy.stripe.com/NEW_JA_ID#g' ja/*.html
+```
+
+(A cleaner long-term option is an nginx redirect `location = /buy { return 302 <stripe-url>; }`
+and linking `/buy` everywhere — server-side, do when touching the nginx config.)
+
 ## No external dependencies
 
 All fonts use the system font stack. No CDN links. No JavaScript frameworks.

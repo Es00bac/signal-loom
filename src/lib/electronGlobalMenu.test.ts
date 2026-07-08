@@ -22,6 +22,7 @@ interface DbusMenuModelModule {
     keyboardShortcuts?: Record<string, string>;
     isMac?: boolean;
     revision?: number;
+    locale?: string;
   }) => { revision: number; rootId: number; nodes: Map<number, DbusMenuNode> };
   toDbusShortcut: (accelerator: string) => string[][] | null;
 }
@@ -61,6 +62,28 @@ describe('global menu — DBusMenu model builder', () => {
     const root = nodes.get(rootId)!;
     const topLabels = root.children.map((id) => nodes.get(id)!.label);
     expect(topLabels).toEqual(['Project', 'File', 'Edit', 'Image', 'Select', 'Tools', 'View', 'Window', 'Help']);
+  });
+
+  it('translates top-level + role labels when locale is ja (keeping brand names), English by default', async () => {
+    const { buildDbusMenuModel } = await loadModel();
+
+    // Paper workspace: Japanese top-level labels resolve from the shared JSON labelJa fields.
+    const jaPaper = buildDbusMenuModel({ activeWorkspace: 'paper', isMac: false, locale: 'ja' });
+    const jaTop = jaPaper.nodes.get(jaPaper.rootId)!.children.map((id) => jaPaper.nodes.get(id)!.label);
+    expect(jaTop).toEqual(['プロジェクト', 'ファイル', '編集', 'レイアウト', '挿入', 'ツール', '表示', 'ウィンドウ', 'ヘルプ']);
+
+    // A leaf command label + a synthetic role label both translate.
+    expect(findByCommand(jaPaper.nodes, 'edit:undo')?.label).toBe('元に戻す');
+    expect(findByCommand(jaPaper.nodes, 'role:quit')?.label).toBe('Sloom Studio を終了');
+
+    // The flow workspace's Flow group is a product proper noun — English even in Japanese.
+    const jaFlow = buildDbusMenuModel({ activeWorkspace: 'flow', isMac: false, locale: 'ja' });
+    const jaFlowTop = jaFlow.nodes.get(jaFlow.rootId)!.children.map((id) => jaFlow.nodes.get(id)!.label);
+    expect(jaFlowTop).toContain('Flow');
+
+    // Default locale is unchanged English.
+    const enPaper = buildDbusMenuModel({ activeWorkspace: 'paper', isMac: false });
+    expect(findByCommand(enPaper.nodes, 'edit:undo')?.label).toBe('Undo');
   });
 
   it('maps Electron roles to synthetic role:* commands and drops `close` on non-mac', async () => {

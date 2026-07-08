@@ -49,6 +49,8 @@ import {
   type SourceLibraryWorkspaceId,
 } from '../../lib/sourceLibraryWorkspaceActions';
 import { getAcceptStringForAllImportableFormats, getAcceptStringForKinds } from '../../lib/mediaFormatRegistry';
+import { useI18n } from '../../lib/useI18n';
+import { translate, type AppLocale, type MessageKey } from '../../lib/i18n';
 
 const ALL_SOURCE_IMPORT_ACCEPT = getAcceptStringForAllImportableFormats();
 const MEDIA_SOURCE_IMPORT_ACCEPT = getAcceptStringForKinds(['image', 'video', 'audio']);
@@ -71,6 +73,7 @@ type SourcePanelMode = 'source-library' | 'generated-pool';
 type GeneratedPoolKindFilter = 'all' | 'audio' | 'image' | 'video';
 
 export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false, workspaceId }: FlowSourceBinSidebarProps) {
+  const { t, tf, locale } = useI18n();
   const [sidebarMode, setSidebarMode] = useState<SourcePanelMode>('source-library');
   const [generatedPoolKindFilter, setGeneratedPoolKindFilter] = useState<GeneratedPoolKindFilter>('all');
   const editorWorkspaceView = useEditorStore((state) => state.workspaceView);
@@ -196,8 +199,8 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
 
   const handleRemoveItem = async (item: SourceBinLibraryItem) => {
     const confirmed = await useConfirmationStore.getState().requestConfirmation(
-      `Remove "${item.label}" from this project's saved source library? Timeline clips that depend on it will also be removed.`,
-      'Remove Asset'
+      tf('sourceBin.confirm.removeAssetMsg', { name: item.label }),
+      t('sourceBin.confirm.removeAssetTitle')
     );
 
     if (!confirmed) {
@@ -210,8 +213,8 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
 
   const handleRemoveGeneratedItem = async (item: SourceBinLibraryItem) => {
     const confirmed = await useConfirmationStore.getState().requestConfirmation(
-      `Remove "${item.label}" from the generated pool?`,
-      'Remove Generated Asset'
+      tf('sourceBin.confirm.removeGeneratedMsg', { name: item.label }),
+      t('sourceBin.confirm.removeGeneratedTitle')
     );
 
     if (!confirmed) {
@@ -228,8 +231,8 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
 
     if (!item.originNodeId) {
       await showAlertDialog({
-        title: 'Generated Asset Unlinked',
-        message: 'This generated asset is not currently linked to a source node.',
+        title: t('sourceBin.alert.unlinkedTitle'),
+        message: t('sourceBin.alert.unlinkedMsg'),
         tone: 'warning',
       });
       return;
@@ -238,16 +241,16 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
     const sourceNode = sourceNodeById.get(resolveSourceNodeId(item.originNodeId) ?? '');
     if (!sourceNode) {
       await showAlertDialog({
-        title: 'Source Node Missing',
-        message: 'The source node for this generated asset is not available.',
+        title: t('sourceBin.alert.nodeMissingTitle'),
+        message: t('sourceBin.alert.nodeMissingMsg'),
         tone: 'warning',
       });
       return;
     }
 
     const shouldRerun = await useConfirmationStore.getState().requestConfirmation(
-      `Regenerate only "${item.label}"? Other generated assets from this node will be reused if already available.`,
-      'Regenerate Asset'
+      tf('sourceBin.confirm.regenMsg', { name: item.label }),
+      t('sourceBin.confirm.regenTitle')
     );
 
     if (!shouldRerun) {
@@ -309,17 +312,17 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
       y: event.clientY,
       title: item.label,
       items: [
-        { id: 'open-preview', label: sourceLibraryPrimaryActionLabel(resolveSourceLibraryPrimaryAction(workspaceView, item)), action: () => openPreview(item) },
-        { id: 'locate-node', label: 'Locate Generator Node', action: () => handleLocateGeneratorNode(item), hidden: !item.originNodeId },
-        { id: 'rename', label: 'Rename', action: () => startRenameItem(item) },
-        { id: 'toggle-star', label: item.starred ? 'Unstar' : 'Star', action: () => toggleItemStarred(item.id) },
-        { id: 'toggle-collapse', label: item.collapsed ? 'Expand Details' : 'Collapse Details', action: () => setItemCollapsed(item.id, !item.collapsed) },
-        { id: 'rerun-generated', label: 'Regenerate This Output', action: () => handleRerunGeneratedItem(item), hidden: !isGeneratedItem || !options?.includeRerun },
-        { id: 'copy-reference', label: 'Copy Source Reference', action: () => copySourceReference(item), hidden: !hasCopyableReference },
-        { id: 'metadata', label: 'Show Metadata', action: () => setMetadataItem(item) },
+        { id: 'open-preview', label: sourceLibraryPrimaryActionLabel(resolveSourceLibraryPrimaryAction(workspaceView, item), locale), action: () => openPreview(item) },
+        { id: 'locate-node', label: t('sourceBin.menu.locateNode'), action: () => handleLocateGeneratorNode(item), hidden: !item.originNodeId },
+        { id: 'rename', label: t('sourceBin.menu.rename'), action: () => startRenameItem(item) },
+        { id: 'toggle-star', label: item.starred ? t('sourceBin.menu.unstar') : t('sourceBin.menu.star'), action: () => toggleItemStarred(item.id) },
+        { id: 'toggle-collapse', label: item.collapsed ? t('sourceBin.menu.expandDetails') : t('sourceBin.menu.collapseDetails'), action: () => setItemCollapsed(item.id, !item.collapsed) },
+        { id: 'rerun-generated', label: t('sourceBin.menu.regenerate'), action: () => handleRerunGeneratedItem(item), hidden: !isGeneratedItem || !options?.includeRerun },
+        { id: 'copy-reference', label: t('sourceBin.menu.copyReference'), action: () => copySourceReference(item), hidden: !hasCopyableReference },
+        { id: 'metadata', label: t('sourceBin.menu.showMetadata'), action: () => setMetadataItem(item) },
         {
           id: 'remove',
-          label: isGeneratedItem ? 'Remove From Generated Pool' : 'Remove From Source Library',
+          label: isGeneratedItem ? t('sourceBin.menu.removeFromGenerated') : t('sourceBin.menu.removeFromLibrary'),
           tone: 'danger',
           action: () => isGeneratedItem ? handleRemoveGeneratedItem(item) : handleRemoveItem(item),
         },
@@ -338,10 +341,10 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
       y: event.clientY,
       title: entry.label,
       items: [
-        { id: 'toggle-envelope', label: entry.collapsed ? 'Expand Envelope' : 'Collapse Envelope', action: () => setEnvelopeCollapsed(entry.id, !entry.collapsed) },
-        { id: 'preview-first', label: 'Preview First Item', action: () => entry.items[0] && openPreview(entry.items[0]), disabled: entry.items.length === 0 },
-        { id: 'collapse-items', label: 'Collapse Child Details', action: () => entry.items.forEach((item) => setItemCollapsed(item.id, true)), disabled: entry.items.length === 0 },
-        { id: 'expand-items', label: 'Expand Child Details', action: () => entry.items.forEach((item) => setItemCollapsed(item.id, false)), disabled: entry.items.length === 0 },
+        { id: 'toggle-envelope', label: entry.collapsed ? t('sourceBin.menu.expandEnvelope') : t('sourceBin.menu.collapseEnvelope'), action: () => setEnvelopeCollapsed(entry.id, !entry.collapsed) },
+        { id: 'preview-first', label: t('sourceBin.menu.previewFirst'), action: () => entry.items[0] && openPreview(entry.items[0]), disabled: entry.items.length === 0 },
+        { id: 'collapse-items', label: t('sourceBin.menu.collapseChildren'), action: () => entry.items.forEach((item) => setItemCollapsed(item.id, true)), disabled: entry.items.length === 0 },
+        { id: 'expand-items', label: t('sourceBin.menu.expandChildren'), action: () => entry.items.forEach((item) => setItemCollapsed(item.id, false)), disabled: entry.items.length === 0 },
       ],
     });
   };
@@ -378,26 +381,26 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
 
   const handleCreateBin = async () => {
     const name = await useTextInputDialogStore.getState().requestTextInput({
-      title: 'New Source Bin',
-      message: 'Create a named bin for organizing project assets.',
-      label: 'Bin name',
-      initialValue: 'New Bin',
-      placeholder: 'New Bin',
-      confirmLabel: 'Create',
+      title: t('sourceBin.dialog.newBinTitle'),
+      message: t('sourceBin.dialog.newBinMsg'),
+      label: t('sourceBin.dialog.binNameLabel'),
+      initialValue: t('sourceBin.dialog.newBinDefault'),
+      placeholder: t('sourceBin.dialog.newBinDefault'),
+      confirmLabel: t('sourceBin.dialog.createLabel'),
     });
     if (name !== null) {
-      createBin(name.trim() || 'New Bin');
+      createBin(name.trim() || t('sourceBin.dialog.newBinDefault'));
     }
   };
 
   const handleRenameBin = async (bin: SourceBin) => {
     const name = await useTextInputDialogStore.getState().requestTextInput({
-      title: 'Rename Source Bin',
-      message: `Rename "${bin.name}".`,
-      label: 'Bin name',
+      title: t('sourceBin.dialog.renameBinTitle'),
+      message: tf('sourceBin.dialog.renameBinMsg', { name: bin.name }),
+      label: t('sourceBin.dialog.binNameLabel'),
       initialValue: bin.name,
       placeholder: bin.name,
-      confirmLabel: 'Rename',
+      confirmLabel: t('sourceBin.dialog.renameLabel'),
     });
     if (name !== null) {
       renameBin(bin.id, name.trim() || bin.name);
@@ -407,15 +410,15 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
   const handleRemoveBin = async (bin: SourceBin) => {
     if (bins.length <= 1) {
       await showAlertDialog({
-        title: 'Source Bin Required',
-        message: 'You must keep at least one source bin.',
+        title: t('sourceBin.dialog.binRequiredTitle'),
+        message: t('sourceBin.dialog.binRequiredMsg'),
         tone: 'warning',
       });
       return;
     }
     const confirmed = await useConfirmationStore.getState().requestConfirmation(
-      `Delete "${bin.name}"? Its items will be moved to your first bin.`,
-      'Delete Bin'
+      tf('sourceBin.confirm.deleteBinMsg', { name: bin.name }),
+      t('sourceBin.confirm.deleteBinTitle')
     );
     if (confirmed) {
       removeBin(bin.id);
@@ -488,20 +491,20 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-blue-200/80">
-                  {isSourceLibraryMode ? 'Saved Assets' : 'Generated Asset Pool'}
+                  {isSourceLibraryMode ? t('sourceBin.saved.eyebrow') : t('sourceBin.generated.eyebrow')}
                 </div>
                 <div className="mt-1 text-base font-semibold text-white">
-                  {isSourceLibraryMode ? 'Source Library' : 'Generated Outputs'}
+                  {isSourceLibraryMode ? t('sourceBin.saved.title') : t('sourceBin.generated.title')}
                 </div>
               </div>
               <div className="rounded-full border border-gray-700/60 bg-[#111217]/60 px-3 py-1 text-xs text-gray-300">
-                {currentModeVisibleCount} item{currentModeVisibleCount === 1 ? '' : 's'}
+                {locale === 'ja'
+                  ? tf('sourceBin.itemCount', { count: currentModeVisibleCount })
+                  : `${currentModeVisibleCount} item${currentModeVisibleCount === 1 ? '' : 's'}`}
               </div>
             </div>
             <div className="mt-2 text-xs leading-5 text-gray-400">
-              {isSourceLibraryMode
-                ? 'Organize assets into named bins. Anything added here stays with the current project and can be dragged back onto the flow canvas as a reusable source node.'
-                : 'Browse generated outputs from flow nodes, delete bad ones, and rerun only what you removed.'}
+              {isSourceLibraryMode ? t('sourceBin.saved.desc') : t('sourceBin.generated.desc')}
             </div>
             {isSourceLibraryMode && nativeSyncStatus.state !== 'idle' && nativeSyncStatus.state !== 'synced' ? (
               <div
@@ -514,21 +517,21 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="font-semibold">
-                      {nativeSyncStatus.state === 'degraded' ? 'Native sync needs repair' : 'Syncing native windows'}
+                      {nativeSyncStatus.state === 'degraded' ? t('sourceBin.sync.repairTitle') : t('sourceBin.sync.syncingTitle')}
                     </div>
                     <div className="mt-1 text-[11px] leading-4 opacity-80">
-                      {nativeSyncStatus.message ?? 'Keeping Source Library changes aligned across workspace windows.'}
+                      {nativeSyncStatus.message ?? t('sourceBin.sync.defaultMsg')}
                     </div>
                   </div>
                   {nativeSyncStatus.state === 'degraded' ? (
                     <button
-                      aria-label="Retry Source Library native sync"
+                      aria-label={t('sourceBin.sync.retryAria')}
                       className="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-200/50 bg-amber-200/10 px-2 py-1 text-[11px] font-semibold text-amber-50 transition-colors hover:bg-amber-200/20"
                       onClick={retryNativeSourceLibrarySync}
                       type="button"
                     >
                       <RefreshCw size={12} />
-                      Repair
+                      {t('sourceBin.sync.repair')}
                     </button>
                   ) : null}
                 </div>
@@ -544,7 +547,7 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
                 onClick={() => setSidebarMode('source-library')}
                 type="button"
               >
-                Source Library
+                {t('sourceBin.tab.library')}
               </button>
               <button
                 className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors ${
@@ -555,21 +558,21 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
                 onClick={() => setSidebarMode('generated-pool')}
                 type="button"
               >
-                Generated Pool
+                {t('sourceBin.tab.generated')}
               </button>
             </div>
             <label className="mt-3 flex items-center gap-2 rounded-md border border-gray-700/60 bg-[#0b1018] px-2.5 py-2 text-xs text-gray-300 focus-within:border-blue-300/60">
               <Search size={14} className="shrink-0 text-blue-200/70" />
               <input
-                aria-label={isSourceLibraryMode ? 'Search source library' : 'Search generated pool'}
+                aria-label={isSourceLibraryMode ? t('sourceBin.search.libraryAria') : t('sourceBin.search.generatedAria')}
                 className="min-w-0 flex-1 bg-transparent text-sm text-gray-100 outline-none placeholder:text-gray-500"
                 onChange={(event) => setSourceSearchQuery(event.target.value)}
-                placeholder={isSourceLibraryMode ? 'Search sources' : 'Search generated assets'}
+                placeholder={isSourceLibraryMode ? t('sourceBin.search.libraryPlaceholder') : t('sourceBin.search.generatedPlaceholder')}
                 value={sourceSearchQuery}
               />
               {sourceSearchQuery ? (
                 <button
-                  aria-label="Clear search"
+                  aria-label={t('sourceBin.search.clearAria')}
                   className="rounded-md p-1 text-gray-500 transition-colors hover:text-white"
                   onClick={() => setSourceSearchQuery('')}
                   type="button"
@@ -580,7 +583,10 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
             </label>
             {sourceSearchQuery.trim() ? (
               <div className="mt-2 text-[11px] text-gray-500">
-                Showing {currentModeVisibleCount} of {isSourceLibraryMode ? allItems.length : generatedPoolItems.length}
+                {tf('sourceBin.search.showing', {
+                  count: currentModeVisibleCount,
+                  total: isSourceLibraryMode ? allItems.length : generatedPoolItems.length,
+                })}
               </div>
             ) : null}
             <div className="mt-3 flex flex-wrap gap-2">
@@ -592,12 +598,12 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
                     type="button"
                   >
                     <Plus size={12} />
-                    New Bin
+                    {t('sourceBin.newBin')}
                   </button>
                   {allItems.length > 0 ? (
                     <>
-                      <SourceBinActionChip icon={<ChevronRight size={12} />} label="Collapse All" onClick={() => setAllItemsCollapsed(true)} />
-                      <SourceBinActionChip icon={<ChevronDown size={12} />} label="Expand All" onClick={() => setAllItemsCollapsed(false)} />
+                      <SourceBinActionChip icon={<ChevronRight size={12} />} label={t('sourceBin.collapseAll')} onClick={() => setAllItemsCollapsed(true)} />
+                      <SourceBinActionChip icon={<ChevronDown size={12} />} label={t('sourceBin.expandAll')} onClick={() => setAllItemsCollapsed(false)} />
                     </>
                   ) : null}
                 </>
@@ -607,28 +613,28 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
                     active={generatedPoolKindFilter === 'all'}
                     count={generatedPoolCounts.all}
                     icon={<Package size={12} />}
-                    label="All"
+                    label={t('sourceBin.filter.all')}
                     onClick={() => setGeneratedPoolKindFilter('all')}
                   />
                   <GeneratedPoolFilterButton
                     active={generatedPoolKindFilter === 'image'}
                     count={generatedPoolCounts.image}
                     icon={<ImageIcon size={12} />}
-                    label="Images"
+                    label={t('sourceBin.filter.images')}
                     onClick={() => setGeneratedPoolKindFilter('image')}
                   />
                   <GeneratedPoolFilterButton
                     active={generatedPoolKindFilter === 'video'}
                     count={generatedPoolCounts.video}
                     icon={<Film size={12} />}
-                    label="Videos"
+                    label={t('sourceBin.filter.videos')}
                     onClick={() => setGeneratedPoolKindFilter('video')}
                   />
                   <GeneratedPoolFilterButton
                     active={generatedPoolKindFilter === 'audio'}
                     count={generatedPoolCounts.audio}
                     icon={<Music2 size={12} />}
-                    label="Audio"
+                    label={t('sourceBin.filter.audio')}
                     onClick={() => setGeneratedPoolKindFilter('audio')}
                   />
                 </>
@@ -680,8 +686,8 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
                   ) : (
                     <div className="rounded-xl border border-dashed border-gray-700/60 bg-[#111217]/35 p-4 text-sm text-gray-400">
                       {bins.length > 0
-                        ? 'No source assets match that search.'
-                        : "Connect outputs into any source-bin node or import media directly here to build the current project's source library."}
+                        ? t('sourceBin.empty.noSearchMatch')
+                        : t('sourceBin.empty.connectPrompt')}
                     </div>
                   )}
                 </div>
@@ -701,8 +707,8 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
               ) : (
                 <div className="rounded-xl border border-dashed border-gray-700/60 bg-[#111217]/35 p-4 text-sm text-gray-400">
                   {generatedPoolItems.length === 0
-                    ? 'No generated assets have been created yet.'
-                    : `No generated ${generatedPoolKindFilter === 'all' ? 'assets' : `${generatedPoolKindFilter}s`} match that search.`}
+                    ? t('sourceBin.empty.noGenerated')
+                    : t('sourceBin.empty.noGeneratedMatch')}
                 </div>
               )
             )}
@@ -720,7 +726,7 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
       {metadataItem ? <SourceMetadataDialog item={metadataItem} onClose={() => setMetadataItem(null)} /> : null}
       {contextMenu ? (
         <SharedContextMenu
-          ariaLabel="Source library context menu"
+          ariaLabel={t('sourceBin.menu.aria')}
           items={contextMenu.items}
           onClose={() => setContextMenu(null)}
           title={contextMenu.title}
@@ -732,10 +738,13 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
   );
 }
 
-function sourceLibraryPrimaryActionLabel(action: ReturnType<typeof resolveSourceLibraryPrimaryAction>): string {
-  if (action === 'place-paper') return 'Place / Open';
-  if (action === 'open-image-editor') return 'Open In Image Editor';
-  return 'Preview / Details';
+function sourceLibraryPrimaryActionLabel(
+  action: ReturnType<typeof resolveSourceLibraryPrimaryAction>,
+  locale: AppLocale,
+): string {
+  if (action === 'place-paper') return translate('sourceBin.action.placeOpen', locale);
+  if (action === 'open-image-editor') return translate('sourceBin.action.openInImageEditor', locale);
+  return translate('sourceBin.action.previewDetails', locale);
 }
 
 function isFlowGeneratedSourceNode(sourceNode?: AppNode): boolean {
@@ -787,22 +796,23 @@ function isSharedWorkspaceId(value: string): value is 'flow' | 'image' | 'paper'
 }
 
 function SourceMetadataDialog({ item, onClose }: { item: SourceBinLibraryItem; onClose: () => void }) {
+  const { t } = useI18n();
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-sm rounded-2xl border border-gray-700/70 bg-[#10151f] p-4 shadow-2xl">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">Source Metadata</div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">{t('sourceBin.meta.title')}</div>
             <div className="mt-1 truncate text-base font-semibold text-white">{item.label}</div>
           </div>
           <button className="rounded-lg border border-gray-700/60 px-2 py-1 text-xs text-gray-300 hover:text-white" onClick={onClose} type="button">
-            Close
+            {t('sourceBin.meta.close')}
           </button>
         </div>
         <div className="mt-4 space-y-2 text-sm text-gray-300">
-          <MetadataRow label="Kind" value={item.kind} />
-          <MetadataRow label="MIME" value={item.mimeType ?? 'Unknown'} />
-          <MetadataRow label="Path" value={item.nativeFilePath ?? item.scratchFileName ?? item.assetUrl ?? 'Project asset'} />
+          <MetadataRow label={t('sourceBin.meta.kind')} value={item.kind} />
+          <MetadataRow label={t('sourceBin.meta.mime')} value={item.mimeType ?? t('sourceBin.meta.unknown')} />
+          <MetadataRow label={t('sourceBin.meta.path')} value={item.nativeFilePath ?? item.scratchFileName ?? item.assetUrl ?? t('sourceBin.meta.projectAsset')} />
         </div>
       </div>
     </div>
@@ -857,6 +867,7 @@ function SourceBinSection({
   renamingItemDraft: string;
   renamingItemId: string | null;
 }) {
+  const { t } = useI18n();
   const isCollapsed = Boolean(bin.collapsed);
   const orderedItems = useMemo(() => sortSourceBinItemsForDisplay(bin.items), [bin.items]);
   const rows = useMemo(() => buildSourceLibraryDisplayRows(orderedItems), [orderedItems]);
@@ -927,7 +938,7 @@ function SourceBinSection({
               event.stopPropagation();
               onRenameBin();
             }}
-            title="Rename bin"
+            title={t('sourceBin.section.renameBin')}
             type="button"
           >
             <Type size={11} />
@@ -938,7 +949,7 @@ function SourceBinSection({
               event.stopPropagation();
               onRemoveBin();
             }}
-            title="Delete bin"
+            title={t('sourceBin.section.deleteBin')}
             type="button"
           >
             <X size={12} />
@@ -956,7 +967,7 @@ function SourceBinSection({
             ))
           ) : (
             <div className="rounded-lg border border-dashed border-gray-700/60 bg-[#0d0f15]/50 px-3 py-3 text-center text-[11px] text-gray-500">
-              Empty bin — import or generate media to fill it
+              {t('sourceBin.section.emptyBin')}
             </div>
           )}
           <div className="flex flex-wrap gap-1.5 pt-1">
@@ -986,6 +997,7 @@ function EnvelopeLibraryHeaderRow({
   onOpenContextMenu: (event: ReactMouseEvent<HTMLElement>, entry: Extract<SourceLibraryRow, { kind: 'envelope-header' }>) => void;
   onToggleEnvelopeCollapsed: () => void;
 }) {
+  const { t, tf, locale } = useI18n();
   return (
     <div
       className="rounded-xl border border-purple-400/25 bg-purple-500/10 px-3 py-2"
@@ -1000,7 +1012,9 @@ function EnvelopeLibraryHeaderRow({
         <span className="min-w-0">
           <span className="block truncate text-sm font-semibold text-purple-100">{entry.label}</span>
           <span className="block text-[10px] uppercase tracking-[0.16em] text-purple-200/55">
-            Envelope · {entry.itemCount} item{entry.itemCount === 1 ? '' : 's'}
+            {t('sourceBin.envelope.label')} · {locale === 'ja'
+              ? tf('sourceBin.itemCount', { count: entry.itemCount })
+              : `${entry.itemCount} item${entry.itemCount === 1 ? '' : 's'}`}
           </span>
         </span>
       </button>
@@ -1041,6 +1055,7 @@ function SourceLibraryCard({
   showRerunButton?: boolean;
   sourceNodeLabel?: string | null;
 }) {
+  const { t, tf } = useI18n();
   const isCollapsed = Boolean(item.collapsed);
   const isStarred = Boolean(item.starred);
 
@@ -1068,7 +1083,7 @@ function SourceLibraryCard({
               event.stopPropagation();
               onToggleCollapsed();
             }}
-            title={isCollapsed ? 'Expand item' : 'Collapse item'}
+            title={isCollapsed ? t('sourceBin.card.expandItem') : t('sourceBin.card.collapseItem')}
             type="button"
           >
             {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
@@ -1084,7 +1099,7 @@ function SourceLibraryCard({
               event.stopPropagation();
               onToggleStarred();
             }}
-            title={isStarred ? 'Unstar item' : 'Star item'}
+            title={isStarred ? t('sourceBin.card.unstarItem') : t('sourceBin.card.starItem')}
             type="button"
           >
             <Star fill={isStarred ? 'currentColor' : 'none'} size={13} />
@@ -1142,13 +1157,13 @@ function SourceLibraryCard({
           </div>
           {sourceNodeLabel ? (
             <div className="mt-0.5 truncate text-[9px] uppercase tracking-[0.08em] text-gray-500">
-              Generated by {sourceNodeLabel}
+              {tf('sourceBin.card.generatedBy', { label: sourceNodeLabel })}
             </div>
           ) : null}
           {!isCollapsed ? (
             <div className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-[10px] text-gray-400">
               <Plus size={10} />
-              <span className="truncate">Drag to flow</span>
+              <span className="truncate">{t('sourceBin.card.dragToFlow')}</span>
             </div>
           ) : null}
         </div>
@@ -1161,7 +1176,7 @@ function SourceLibraryCard({
                 event.stopPropagation();
                 onRerun?.();
               }}
-              title="Regenerate this output"
+              title={t('sourceBin.card.regenerateOutput')}
               type="button"
             >
               <RefreshCw size={12} />
@@ -1174,7 +1189,7 @@ function SourceLibraryCard({
               event.stopPropagation();
               onRename();
             }}
-            title="Rename source item"
+            title={t('sourceBin.card.renameItem')}
             type="button"
           >
             <Type size={12} />
@@ -1186,7 +1201,7 @@ function SourceLibraryCard({
               event.stopPropagation();
               onRemove();
             }}
-            title="Remove source item"
+            title={t('sourceBin.card.removeItem')}
             type="button"
           >
             <Trash2 size={12} />
@@ -1198,6 +1213,7 @@ function SourceLibraryCard({
 }
 
 function SourceLibraryPreview({ item }: { item: SourceBinLibraryItem }) {
+  const { t } = useI18n();
   const previewRef = useRef<HTMLDivElement>(null);
   const [shouldLoadMedia, setShouldLoadMedia] = useState(() => (
     typeof window === 'undefined' || !('IntersectionObserver' in window)
@@ -1236,7 +1252,7 @@ function SourceLibraryPreview({ item }: { item: SourceBinLibraryItem }) {
   }
 
   if (mediaFailed) {
-    return <SourceLibraryPreviewPlaceholder item={item} status="Missing" />;
+    return <SourceLibraryPreviewPlaceholder item={item} status={t('sourceBin.placeholder.missing')} />;
   }
 
   if (item.kind === 'image' && item.assetUrl) {
@@ -1268,6 +1284,7 @@ function SourceLibraryPreview({ item }: { item: SourceBinLibraryItem }) {
 }
 
 function SourceLibraryPreviewPlaceholder({ item, status }: { item: SourceBinLibraryItem; status?: string }) {
+  const { t } = useI18n();
   if (item.kind === 'audio') {
     return (
       <div className="flex h-[72px] w-28 items-center justify-center bg-[#0d0f15] text-cyan-200">
@@ -1280,7 +1297,7 @@ function SourceLibraryPreviewPlaceholder({ item, status }: { item: SourceBinLibr
     return (
       <div className="flex h-[72px] w-28 flex-col items-center justify-center gap-1 bg-[#0d0f15] text-emerald-200">
         <FileText size={18} />
-        <span className="text-[9px] uppercase tracking-[0.14em] text-emerald-100/70">Document</span>
+        <span className="text-[9px] uppercase tracking-[0.14em] text-emerald-100/70">{t('sourceBin.placeholder.document')}</span>
       </div>
     );
   }
@@ -1289,7 +1306,7 @@ function SourceLibraryPreviewPlaceholder({ item, status }: { item: SourceBinLibr
     return (
       <div className="flex h-[72px] w-28 flex-col items-center justify-center gap-1 bg-[#0d0f15] text-violet-200">
         <Captions size={18} />
-        <span className="text-[9px] uppercase tracking-[0.14em] text-violet-100/70">Captions</span>
+        <span className="text-[9px] uppercase tracking-[0.14em] text-violet-100/70">{t('sourceBin.placeholder.captions')}</span>
       </div>
     );
   }
@@ -1298,7 +1315,7 @@ function SourceLibraryPreviewPlaceholder({ item, status }: { item: SourceBinLibr
     return (
       <div className="flex h-[72px] w-28 flex-col items-center justify-center gap-1 bg-[#0d0f15] text-amber-200">
         <Package size={18} />
-        <span className="text-[9px] uppercase tracking-[0.14em] text-amber-100/70">Package</span>
+        <span className="text-[9px] uppercase tracking-[0.14em] text-amber-100/70">{t('sourceBin.placeholder.package')}</span>
       </div>
     );
   }
@@ -1311,7 +1328,20 @@ function SourceLibraryPreviewPlaceholder({ item, status }: { item: SourceBinLibr
   );
 }
 
+const MINI_IMPORT_CHIP_KEYS: Record<string, MessageKey> = {
+  All: 'sourceBin.import.all',
+  Media: 'sourceBin.import.media',
+  Image: 'sourceBin.import.image',
+  Video: 'sourceBin.import.video',
+  Audio: 'sourceBin.import.audio',
+  Document: 'sourceBin.import.document',
+  Subtitle: 'sourceBin.import.subtitle',
+  Package: 'sourceBin.import.package',
+};
+
 function MiniImportChip({ label, onClick }: { label: string; onClick: () => void }) {
+  const { t } = useI18n();
+  const displayKey = MINI_IMPORT_CHIP_KEYS[label];
   return (
     <button
       className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700/60 bg-[#0f131b] px-2 py-1 text-[10px] font-semibold text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
@@ -1319,7 +1349,7 @@ function MiniImportChip({ label, onClick }: { label: string; onClick: () => void
       type="button"
     >
       {label === 'Image' ? <ImageIcon size={10} /> : label === 'Video' ? <Film size={10} /> : label === 'Audio' ? <Music2 size={10} /> : label === 'Document' ? <FileText size={10} /> : label === 'Subtitle' ? <Captions size={10} /> : label === 'Package' ? <Package size={10} /> : <Archive size={10} />}
-      {label}
+      {displayKey ? t(displayKey) : label}
     </button>
   );
 }

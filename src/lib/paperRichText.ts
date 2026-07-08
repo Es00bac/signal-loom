@@ -1,0 +1,164 @@
+import type { PaperParagraphBorderEdge, PaperParagraphBorders, PaperRichParagraph, PaperTextRun, PaperTextVertAlign } from '../types/paper';
+
+// Inline rich text for Paper text frames. `PaperFrame.richText` (when present) is the authoritative content;
+// `PaperFrame.text` is kept as its flattened plaintext so search/threading/legacy export keep working. These
+// helpers are pure (no React / no canvas) so the same normalization + flattening feed the renderer, the
+// editor, the docx importer, and the PDF/X exporter.
+
+const VERT_ALIGNS: PaperTextVertAlign[] = ['baseline', 'super', 'sub'];
+
+/** The style fields of a run (everything except its text), compared to merge adjacent identical runs. */
+const RUN_STYLE_KEYS: Array<keyof PaperTextRun> = [
+  'fontFamily', 'fontSizePt', 'fontWeight', 'fontStyle', 'underline', 'strike', 'color', 'highlight', 'tracking', 'smallCaps', 'vertAlign', 'link',
+];
+
+function cleanString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function cleanNumber(value: unknown, min: number, max: number): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : undefined;
+}
+
+/** Coerce one untrusted run into a clean PaperTextRun (text always a string; style fields optional). */
+function normalizeRun(input: unknown): PaperTextRun {
+  const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const run: PaperTextRun = { text: typeof raw.text === 'string' ? raw.text : '' };
+  const fontFamily = cleanString(raw.fontFamily);
+  if (fontFamily) run.fontFamily = fontFamily;
+  const fontSizePt = cleanNumber(raw.fontSizePt, 1, 1600);
+  if (fontSizePt != null) run.fontSizePt = fontSizePt;
+  const fontWeight = cleanString(raw.fontWeight);
+  if (fontWeight) run.fontWeight = fontWeight;
+  if (raw.fontStyle === 'italic' || raw.fontStyle === 'normal') run.fontStyle = raw.fontStyle;
+  if (raw.underline === true) run.underline = true;
+  if (raw.strike === true) run.strike = true;
+  const color = cleanString(raw.color);
+  if (color) run.color = color;
+  const highlight = cleanString(raw.highlight);
+  if (highlight) run.highlight = highlight;
+  const tracking = cleanNumber(raw.tracking, -200, 2000);
+  if (tracking != null) run.tracking = tracking;
+  if (raw.smallCaps === true) run.smallCaps = true;
+  if (typeof raw.vertAlign === 'string' && VERT_ALIGNS.includes(raw.vertAlign as PaperTextVertAlign) && raw.vertAlign !== 'baseline') {
+    run.vertAlign = raw.vertAlign as PaperTextVertAlign;
+  }
+  const link = cleanString(raw.link);
+  if (link) run.link = link;
+  return run;
+}
+
+/** Coerce one untrusted border edge into a clean edge, or undefined if it carries no real weight. */
+function normalizeBorderEdge(input: unknown): PaperParagraphBorderEdge | undefined {
+  const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const color = cleanString(raw.color);
+  const widthPt = cleanNumber(raw.widthPt, 0, 96);
+  if (!color || widthPt == null || widthPt <= 0) return undefined;
+  return { color, widthPt };
+}
+
+/** Coerce untrusted paragraph borders, keeping only edges that actually paint. */
+function normalizeBorders(input: unknown): PaperParagraphBorders | undefined {
+  const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const borders: PaperParagraphBorders = {};
+  for (const edge of ['top', 'left', 'bottom', 'right'] as const) {
+    const clean = normalizeBorderEdge(raw[edge]);
+    if (clean) borders[edge] = clean;
+  }
+  const paddingPt = cleanNumber(raw.paddingPt, 0, 96);
+  if (paddingPt != null && paddingPt > 0) borders.paddingPt = paddingPt;
+  return borders.top || borders.left || borders.bottom || borders.right ? borders : undefined;
+}
+
+/** True when two runs carry the same styling (ignoring their text), so they can be concatenated. */
+export function paperRunsShareStyle(a: PaperTextRun, b: PaperTextRun): boolean {
+  return RUN_STYLE_KEYS.every((key) => a[key] === b[key]);
+}
+
+/** Merge consecutive runs that share styling — keeps richText compact after edits/imports. */
+function mergeAdjacentRuns(runs: PaperTextRun[]): PaperTextRun[] {
+  const merged: PaperTextRun[] = [];
+  for (const run of runs) {
+    const last = merged[merged.length - 1];
+    if (last && paperRunsShareStyle(last, run)) last.text += run.text;
+    else merged.push({ ...run });
+  }
+  return merged.length ? merged : [{ text: '' }];
+}
+
+/**
+ * Coerce untrusted input (freshly-parsed JSON, importer output) into clean rich text, or `undefined` when
+ * there is no real content — so a frame never gets stuck in rich mode with nothing in it (it falls back to
+ * the plain `text` path). Empty paragraphs are preserved (they are meaningful blank lines).
+ */
+export function normalizePaperRichText(input: unknown): PaperRichParagraph[] | undefined {
+  if (!Array.isArray(input) || input.length === 0) return undefined;
+  const paragraphs: PaperRichParagraph[] = [];
+  for (const item of input) {
+    const raw = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+    const rawRuns = Array.isArray(raw.runs) ? raw.runs : [];
+    const runs = mergeAdjacentRuns(rawRuns.map(normalizeRun));
+    const paragraph: PaperRichParagraph = { runs };
+    if (raw.align === 'left' || raw.align === 'center' || raw.align === 'right' || raw.align === 'justify') paragraph.align = raw.align;
+    const indent = cleanNumber(raw.firstLineIndentMm, -200, 200);
+    if (indent != null) paragraph.firstLineIndentMm = indent;
+    const before = cleanNumber(raw.spaceBeforeMm, 0, 200);
+    if (before != null) paragraph.spaceBeforeMm = before;
+    const after = cleanNumber(raw.spaceAfterMm, 0, 200);
+    if (after != null) paragraph.spaceAfterMm = after;
+    const dropCap = cleanNumber(raw.dropCapLines, 0, 8);
+    if (dropCap != null && dropCap >= 2) paragraph.dropCapLines = Math.round(dropCap);
+    const marker = cleanString(raw.listMarker);
+    if (marker) paragraph.listMarker = marker;
+    const shading = cleanString(raw.shading);
+    if (shading) paragraph.shading = shading;
+    const borders = normalizeBorders(raw.borders);
+    if (borders) paragraph.borders = borders;
+    const leftIndent = cleanNumber(raw.leftIndentMm, 0, 400);
+    if (leftIndent != null && leftIndent > 0) paragraph.leftIndentMm = leftIndent;
+    const rightIndent = cleanNumber(raw.rightIndentMm, 0, 400);
+    if (rightIndent != null && rightIndent > 0) paragraph.rightIndentMm = rightIndent;
+    const hanging = cleanNumber(raw.hangingIndentMm, 0, 400);
+    if (hanging != null && hanging > 0) paragraph.hangingIndentMm = hanging;
+    paragraphs.push(paragraph);
+  }
+  // No real text anywhere → treat as empty (use the plain-text path instead of an empty rich shell).
+  const hasText = paragraphs.some((paragraph) => paragraph.runs.some((run) => run.text.length > 0));
+  if (!hasText) return undefined;
+  return paragraphs;
+}
+
+/** Flatten rich text to plaintext: runs concatenated, paragraphs joined by newlines. Mirrors what the user sees. */
+export function flattenPaperRichText(paragraphs: PaperRichParagraph[] | undefined): string {
+  if (!paragraphs || !paragraphs.length) return '';
+  return paragraphs
+    .map((paragraph) => (paragraph.listMarker ? `${paragraph.listMarker}\t` : '') + paragraph.runs.map((run) => run.text).join(''))
+    .join('\n');
+}
+
+/** Build single-run rich paragraphs from plaintext (one paragraph per line) — used when a plain frame is
+ * promoted to rich, or to seed the editor. */
+export function paperRichTextFromPlainText(text: string): PaperRichParagraph[] {
+  return (text ?? '').split('\n').map((line) => ({ runs: [{ text: line }] }));
+}
+
+export function paperRichTextIsEmpty(paragraphs: PaperRichParagraph[] | undefined): boolean {
+  return !paragraphs || !paragraphs.some((paragraph) => paragraph.runs.some((run) => run.text.length > 0));
+}
+
+/**
+ * True when rich text carries NOTHING beyond plain text — a single paragraph with no paragraph-level
+ * formatting and runs with no style overrides — so the frame's single `typography` fully represents it.
+ * The PDF/X single-style vector/outline export path is only correct for such frames; anything richer (a bold
+ * word, a font swap, a shaded/indented/drop-cap paragraph) would be drawn in ONE style and lose its runs, so
+ * those frames must fall back to raster (where the HTML print render draws every run correctly).
+ */
+export function paperRichTextIsUniform(paragraphs: PaperRichParagraph[] | undefined): boolean {
+  if (!paragraphs || paragraphs.length === 0) return true;
+  if (paragraphs.length > 1) return false;
+  const p = paragraphs[0];
+  if (p.listMarker || p.shading || p.borders || p.align) return false;
+  if (p.dropCapLines || p.leftIndentMm || p.rightIndentMm || p.hangingIndentMm || p.firstLineIndentMm) return false;
+  if (p.spaceBeforeMm || p.spaceAfterMm) return false;
+  return p.runs.every((run) => RUN_STYLE_KEYS.every((key) => run[key] === undefined));
+}

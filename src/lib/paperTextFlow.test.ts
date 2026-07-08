@@ -92,6 +92,59 @@ describe('flowPaperText', () => {
   });
 });
 
+describe('flowPaperText Japanese line breaking (no inter-character spaces)', () => {
+  it('breaks CJK text per character instead of treating a paragraph as one giant word', () => {
+    // 2mm/char: a 5mm-wide column holds 2 chars per line (4mm), a 3rd would be 6mm.
+    const result = flowPaperText('あいうえお', spec, [frame('f1', col(0, 0, 5, 30))], measure);
+    expect(result.frames[0].lines.map((line) => line.text)).toEqual(['あい', 'うえ', 'お']);
+    expect(result.overset).toBe('');
+  });
+
+  it('does not start a line with closing punctuation (行頭禁則 → 追い込み)', () => {
+    // Without kinsoku the 。would begin line 2; instead it is pulled up onto line 1 (slight overflow).
+    const result = flowPaperText('あい。う', spec, [frame('f1', col(0, 0, 5, 30))], measure);
+    expect(result.frames[0].lines.map((line) => line.text)).toEqual(['あい。', 'う']);
+  });
+
+  it('does not end a line with an opening bracket (行末禁則 → push down)', () => {
+    // The 「 would otherwise end line 1; it is pushed down to open line 2 next to its quote.
+    const result = flowPaperText('あ「いう', spec, [frame('f1', col(0, 0, 5, 30))], measure);
+    expect(result.frames[0].lines.map((line) => line.text)).toEqual(['あ', '「い', 'う']);
+  });
+
+  it('still wraps Latin words on spaces (kinsoku only bites CJK punctuation)', () => {
+    const result = flowPaperText('aa bb cc', spec, [frame('f1', col(0, 0, 10, 12))], measure);
+    expect(result.frames[0].lines.map((line) => line.text)).toEqual(['aa bb', 'cc']);
+  });
+});
+
+describe('flowPaperText vertical writing (縦書き) capacity + overset', () => {
+  const vspec: PaperTextFlowTypeSpec = { ...spec, vertical: true };
+
+  it('bounds a line by the frame HEIGHT and advances lines across the WIDTH (right-to-left)', () => {
+    // leading ≈4.233mm/line. Height 5mm → 2 chars per line; width 9mm → 2 lines fit → 'お' is overset.
+    const result = flowPaperText('あいうえお', vspec, [frame('f1', col(0, 0, 9, 5))], measure);
+    expect(result.frames[0].lines.map((line) => line.text)).toEqual(['あい', 'うえ']);
+    expect(result.fits).toBe(false);
+    expect(result.overset).toBe('お');
+  });
+
+  it('fits when the frame is wide enough for every text-line', () => {
+    // Width 15mm → 3 lines fit; height 5mm → 2 chars each → all of あいうえお lands.
+    const result = flowPaperText('あいうえお', vspec, [frame('f1', col(0, 0, 15, 5))], measure);
+    expect(result.frames[0].lines.map((line) => line.text)).toEqual(['あい', 'うえ', 'お']);
+    expect(result.fits).toBe(true);
+    expect(result.overset).toBe('');
+  });
+
+  it('marches successive text-lines leftward from the right edge (vertical-rl)', () => {
+    const result = flowPaperText('あいうえ', vspec, [frame('f1', col(0, 0, 15, 5))], measure);
+    const [first, second] = result.frames[0].lines;
+    // First line sits at the right; the second is one leading to its left.
+    expect(first.xMm).toBeGreaterThan(second.xMm);
+  });
+});
+
 describe('flowPaperText runaround (text wrap)', () => {
   // Obstacle covering the left 20mm of the column for the first line band only (y ≈ 0..4.23mm).
   const leftObstacle: PaperTextFlowExclusion = {

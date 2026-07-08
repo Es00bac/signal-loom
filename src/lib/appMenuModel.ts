@@ -2,11 +2,13 @@ import { buildNativeStandaloneEntryReadiness, type NativeMenuCommand } from './n
 import type { WorkspaceView } from '../types/flow';
 import { getKeyboardShortcutLabel, type KeyboardShortcutMap } from './keyboardShortcuts';
 import type { WorkspaceIconId } from './workspaceIcons';
+import type { AppLocale } from './i18n';
 import workspaceMenuData from '../../shared/workspaceMenus.json';
 
 interface RawMenuItem {
   command?: NativeMenuCommand;
   label?: string;
+  labelJa?: string;
   accelerator?: string;
   type?: 'separator';
   role?: string;
@@ -16,7 +18,16 @@ interface RawMenuItem {
 interface RawMenuGroup {
   id: string;
   label: string;
+  labelJa?: string;
   items: RawMenuItem[] | string;
+}
+
+/** Pick a menu label for the active locale, falling back to English (and finally the command id). The
+ *  bilingual `labelJa` fields live alongside `label` in shared/workspaceMenus.json so the integrated
+ *  React menu, the native Electron menu, and the KDE global menu all translate from one source. */
+function pickMenuLabel(node: { label?: string; labelJa?: string; command?: string }, locale: AppLocale): string {
+  if (locale === 'ja' && node.labelJa) return node.labelJa;
+  return node.label ?? node.command ?? '';
 }
 const WORKSPACE_MENUS = workspaceMenuData as unknown as Record<string, RawMenuGroup[]> & {
   $shared: Record<string, RawMenuItem[]>;
@@ -36,14 +47,14 @@ function resolveWorkspaceMenuItems(items: RawMenuItem[] | string): RawMenuItem[]
  * flattened in and separators + native-only roles (quit/close/reload/…) are
  * dropped. The native Electron menu keeps the full nested structure.
  */
-function flattenIntegratedMenuItems(items: RawMenuItem[]): AppMenuItem[] {
+function flattenIntegratedMenuItems(items: RawMenuItem[], locale: AppLocale): AppMenuItem[] {
   const out: AppMenuItem[] = [];
   for (const item of items) {
     if (item.type === 'separator' || item.role || item.nativeOnly) continue;
     if (item.command) {
-      out.push({ label: item.label ?? item.command, command: item.command, shortcut: item.accelerator });
+      out.push({ label: pickMenuLabel(item, locale), command: item.command, shortcut: item.accelerator });
     } else if (Array.isArray(item.items)) {
-      out.push(...flattenIntegratedMenuItems(item.items));
+      out.push(...flattenIntegratedMenuItems(item.items, locale));
     }
   }
   return out;
@@ -178,16 +189,20 @@ export function buildWorkspaceSuiteStandaloneHandoff(workspace: WorkspaceView): 
   };
 }
 
-export function buildAppMenuGroups(activeWorkspace: WorkspaceView, shortcuts: KeyboardShortcutMap = {}): AppMenuGroup[] {
+export function buildAppMenuGroups(
+  activeWorkspace: WorkspaceView,
+  shortcuts: KeyboardShortcutMap = {},
+  locale: AppLocale = 'en',
+): AppMenuGroup[] {
   // Return only the active workspace's idiomatic menu bar (no other-workspace
   // menus, no greying). Sourced from the shared workspaceMenus.json so the
   // integrated React menu and the native Electron menu can never drift.
   const key = WORKSPACE_MENU_KEYS.includes(activeWorkspace) ? activeWorkspace : 'flow';
   const groups: AppMenuGroup[] = (WORKSPACE_MENUS[key] ?? WORKSPACE_MENUS.flow).map((group) => ({
     id: group.id,
-    label: group.label,
+    label: pickMenuLabel(group, locale),
     enabled: true,
-    items: flattenIntegratedMenuItems(resolveWorkspaceMenuItems(group.items)),
+    items: flattenIntegratedMenuItems(resolveWorkspaceMenuItems(group.items), locale),
   }));
 
   return groups.map((group) => ({

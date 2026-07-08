@@ -1,5 +1,6 @@
 import './test-setup-window';
 import { describe, expect, it } from 'vitest';
+import { resolveDefaultLocale } from '../lib/i18n';
 import {
   getApiKeyStorageCaveat,
   getApiKeyStorageMedium,
@@ -292,5 +293,31 @@ describe('settingsStore interface density', () => {
     expect(merge?.({ interfaceDensity: 'comfortable' }, current)?.interfaceDensity).toBe('comfortable');
     expect(merge?.({ interfaceDensity: 'gigantic' }, current)?.interfaceDensity).toBe('compact');
     expect(merge?.({}, current)?.interfaceDensity).toBe('compact');
+  });
+});
+
+describe('settingsStore interface language', () => {
+  const fallback = resolveDefaultLocale();
+
+  it('sanitizes the setter to a valid locale', () => {
+    useSettingsStore.getState().setLocale('ja');
+    expect(useSettingsStore.getState().locale).toBe('ja');
+
+    useSettingsStore.getState().setLocale('en');
+    expect(useSettingsStore.getState().locale).toBe('en');
+
+    useSettingsStore.getState().setLocale('bogus' as never);
+    expect(useSettingsStore.getState().locale).toBe(fallback);
+  });
+
+  it('rehydrates only known locales through the persist merge', () => {
+    const merge = (useSettingsStore as PersistableSettingsStore).persist?.getOptions?.().merge;
+    expect(merge).toBeTypeOf('function');
+    const current = useSettingsStore.getState();
+
+    expect(merge?.({ locale: 'ja' }, current)?.locale).toBe('ja');
+    expect(merge?.({ locale: 'en' }, current)?.locale).toBe('en');
+    expect(merge?.({ locale: 'klingon' }, current)?.locale).toBe(fallback);
+    expect(merge?.({}, current)?.locale).toBe(fallback);
   });
 });

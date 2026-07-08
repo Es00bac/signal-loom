@@ -45,6 +45,7 @@ function createGlobalMenuController(options = {}) {
   const {
     onCommand = () => {},
     getKeyboardShortcuts = () => ({}),
+    getLocale = () => 'en',
     isMac = false,
     env = process.env,
     platform = process.platform,
@@ -72,6 +73,7 @@ function createGlobalMenuController(options = {}) {
       keyboardShortcuts: getKeyboardShortcuts() || {},
       isMac,
       revision,
+      locale: getLocale() || 'en',
     });
 
   async function start() {

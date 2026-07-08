@@ -46,8 +46,8 @@ function nodeToPanelJson(model, id) {
 }
 
 /** Build the panel-menu tree: { schema, revision, workspace, groups:[{ label, children:[…] }] }. */
-function buildPanelMenu({ activeWorkspace = 'flow', keyboardShortcuts = {}, isMac = false, revision = 1 } = {}) {
-  const model = buildDbusMenuModel({ activeWorkspace, keyboardShortcuts, isMac, revision });
+function buildPanelMenu({ activeWorkspace = 'flow', keyboardShortcuts = {}, isMac = false, revision = 1, locale = 'en' } = {}) {
+  const model = buildDbusMenuModel({ activeWorkspace, keyboardShortcuts, isMac, revision, locale });
   const root = model.nodes.get(model.rootId);
   const groups = (root ? root.children : []).map((groupId) => {
     const group = model.nodes.get(groupId);

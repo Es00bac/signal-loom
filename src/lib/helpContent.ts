@@ -20,7 +20,7 @@ export const HELP_SECTIONS: HelpContentSection[] = [
   {
     id: 'project-documentation',
     title: 'Project Documentation',
-    summary: 'Sloom Studio is a node-based generative AI media studio with a timeline editor for assembling, animating, and rendering audio/video projects.',
+    summary: 'Sloom Studio is a node-based media studio with a timeline editor for assembling, animating, and rendering audio/video projects.',
     groups: [
       {
         title: 'Core Workspaces',

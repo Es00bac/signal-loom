@@ -93,6 +93,22 @@ describe('buildVectorTextFrameSpecs', () => {
     expect(pageTextIsVectorizable(docWithFrames([{ text: 'x', typography: { ...baseTypo, dropCapLines: 3 } }]).pages[0])).toBe(false);
   });
 
+  it('rasterizes rich-text frames with real runs or paragraph formatting, keeps uniform rich text vector-safe', () => {
+    const baseTypo = { fontFamily: 'Georgia, serif', fontSizePt: 11, leadingPt: 14, tracking: 0, hyphenate: false, align: 'left' as const, color: '#000', fontWeight: 'normal', fontStyle: 'normal' as const };
+    // A bold run mid-paragraph: single-style vector would flatten it → the page must raster (runs draw right).
+    const boldRun = docWithFrames([{ text: 'a b', richText: [{ runs: [{ text: 'a ' }, { text: 'b', fontWeight: '700' }] }], typography: baseTypo }]);
+    expect(pageTextIsVectorizable(boldRun.pages[0])).toBe(false);
+    expect(buildVectorTextFrameSpecs(boldRun.pages[0], boldRun, blackTransform)).toHaveLength(0);
+    expect(frameTextIsOutlineable(boldRun.pages[0].frames[0])).toBe(false); // outline path also single-style → raster
+    // A shaded paragraph → must raster.
+    const shaded = docWithFrames([{ text: 'x', richText: [{ runs: [{ text: 'x' }], shading: '#dddddd' }], typography: baseTypo }]);
+    expect(pageTextIsVectorizable(shaded.pages[0])).toBe(false);
+    // Uniform richText (a lone plain run) is fully represented by the frame typography → still vector-safe.
+    const uniform = docWithFrames([{ text: 'x', richText: [{ runs: [{ text: 'x' }] }], typography: baseTypo }]);
+    expect(pageTextIsVectorizable(uniform.pages[0])).toBe(true);
+    expect(buildVectorTextFrameSpecs(uniform.pages[0], uniform, blackTransform)).toHaveLength(1);
+  });
+
   it('rasterizes display/decorative fonts (no faithful Liberation substitute) but vectorizes text faces', () => {
     const typo = (fontFamily: string) => ({ fontFamily, fontSizePt: 18, leadingPt: 20, tracking: 0, hyphenate: false, align: 'center' as const, color: '#000', fontWeight: '700', fontStyle: 'normal' as const });
     // Text faces Liberation stands in for → vectorized.

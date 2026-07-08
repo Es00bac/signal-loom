@@ -147,6 +147,7 @@ interface PaperActions {
     options?: { point?: PaperPoint; sourceItem?: SourceBinLibraryItem },
   ) => void;
   toggleViewOption: (option: keyof PaperDocument['view']) => void;
+  setViewOption: <K extends keyof PaperDocument['view']>(option: K, value: PaperDocument['view'][K]) => void;
   exportSnapshot: () => PaperDocumentSnapshot;
   restoreSnapshot: (snapshot?: Partial<PaperDocumentSnapshot>) => void;
   /**
@@ -799,6 +800,18 @@ export const usePaperStore = create<PaperState & PaperActions>()(
             view: {
               ...state.document.view,
               [option]: !state.document.view[option],
+            },
+            updatedAt: Date.now(),
+          },
+        })),
+
+      setViewOption: (option, value) =>
+        set((state) => withPaperHistory(state, {
+          document: {
+            ...state.document,
+            view: {
+              ...state.document.view,
+              [option]: value,
             },
             updatedAt: Date.now(),
           },

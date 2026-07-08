@@ -148,6 +148,7 @@ export const NATIVE_MENU_COMMANDS = [
   'paper:toggle-snap-to-grid',
   'paper:toggle-spreads',
   'paper:toggle-start-on-right',
+  'paper:toggle-binding-direction',
   'paper:toggle-tools-panel',
   'paper:toggle-document-strip-panel',
   'paper:toggle-inspector-panel',
@@ -495,6 +496,8 @@ export interface SignalLoomNativeBridge {
   openWorkspaceWindow: (workspace: WorkspaceWindowView) => Promise<{ ok?: boolean; workspace?: WorkspaceWindowView; error?: string }>;
   setActiveWorkspace: (workspace: WorkspaceWindowView) => Promise<{ ok?: boolean }>;
   setKeyboardShortcuts: (shortcuts: Partial<Record<NativeMenuCommand, string>>) => Promise<{ ok?: boolean }>;
+  // Push the interface language ('en' | 'ja') so the native + KDE menus translate their labels.
+  setLocale?: (locale: string) => Promise<{ ok?: boolean }>;
   getSourceLibrarySnapshot: () => Promise<SourceLibraryNativeSnapshotResult>;
   syncSourceLibrarySnapshot: (snapshot: SourceLibraryNativeSnapshotResult['snapshot']) => Promise<{ ok?: boolean; version?: number; error?: string }>;
   applySourceLibraryChange: (change: SourceLibraryNativeChange) => Promise<{ ok?: boolean; version?: number; error?: string }>;

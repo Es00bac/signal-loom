@@ -4,6 +4,7 @@ import {
   resolvePaperPageFramesForOutput,
   renderPrintBubbleConnectors,
   renderPrintFrame,
+  effectiveRtlBinding,
   formatMm,
   escapeHtml,
 } from './paperDocument';
@@ -361,7 +362,7 @@ function exportPaperRasterSpreadsToPdfHtml(
 </div>`;
   };
   const spreadsMarkup = mode === 'reader-spreads'
-    ? buildPaperSpreads(document.pages, { enabled: true, startOnRight: document.view.startOnRight })
+    ? buildPaperSpreads(document.pages, { enabled: true, startOnRight: document.view.startOnRight, rtlBinding: effectiveRtlBinding(document) })
       .map((spread, spreadIndex) => {
         const left = spread.slots[0];
         const right = spread.slots[1];

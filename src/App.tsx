@@ -16,6 +16,8 @@ import { useConfirmationStore } from './store/confirmationStore';
 import { showAlertDialog } from './store/alertDialogStore';
 import { SettingsModal } from './components/Settings/SettingsModal';
 import { CommunityStartupNotice } from './components/Layout/CommunityStartupNotice';
+import { FirstRunLanguageGate } from './components/Layout/FirstRunLanguageGate';
+import { BrandWordmark } from './components/Layout/BrandWordmark';
 import { ConfirmationDialog } from './components/Common/ConfirmationDialog';
 import { TextInputDialog } from './components/Common/TextInputDialog';
 import { AlertDialog } from './components/Common/AlertDialog';
@@ -154,7 +156,10 @@ import {
 import {
   FLOW_NODE_CATALOG_CATEGORIES,
   getNodeCatalogEntriesForCategory,
+  nodeCategoryLabel,
+  nodeCatalogEntryLabel,
 } from './lib/nodeCatalog';
+import { translateFormat } from './lib/i18n';
 import { applyInterfaceTheme, buildInterfaceThemeStyle, resolveInterfaceTheme } from './lib/interfaceThemes';
 import { resolveKeyboardShortcutCommand } from './lib/keyboardShortcuts';
 import {
@@ -364,6 +369,7 @@ function FlowApp() {
   const interfaceThemeId = useSettingsStore((state) => state.interfaceThemeId);
   const interfaceDensity = useSettingsStore((state) => state.interfaceDensity);
   const keyboardShortcuts = useSettingsStore((state) => state.keyboardShortcuts);
+  const locale = useSettingsStore((state) => state.locale);
   const gamepadBindings = useSettingsStore((state) => state.gamepadBindings);
   const openSettings = useSettingsStore((state) => state.openSettings);
   const sourceBinItems = useSourceBinStore(useShallow((state) => state.bins.flatMap((bin) => bin.items)));
@@ -491,11 +497,12 @@ function FlowApp() {
     () => buildCommandPaletteEntries({
       activeWorkspace: activeWorkspaceView,
       shortcuts: keyboardShortcuts,
+      locale,
       flowDiagnosticsCount: flowDiagnostics.length,
       flowNodeCount: nodes.length,
       canCleanFlow: activeWorkspaceView === 'flow' && nodes.length > 0 && !flowOrganizeJob,
     }),
-    [activeWorkspaceView, flowDiagnostics.length, flowOrganizeJob, keyboardShortcuts, nodes.length],
+    [activeWorkspaceView, flowDiagnostics.length, flowOrganizeJob, keyboardShortcuts, locale, nodes.length],
   );
 
   const recordCommandActivity = useCallback((command: NativeMenuCommand, source: ActivityTrailSource = 'menu') => {
@@ -1521,7 +1528,7 @@ function FlowApp() {
         } else {
           await showAlertDialog({
             title: 'Sloom Studio',
-            message: `Generative AI media flow builder and timeline editor. ${describeLicenseEdition(useSettingsStore.getState().license)}.`,
+            message: `Multimedia editor, media flow builder, and timeline editor. ${describeLicenseEdition(useSettingsStore.getState().license)}.`,
             tone: 'info',
           });
         }
@@ -1949,6 +1956,13 @@ function FlowApp() {
     void bridge.setKeyboardShortcuts(keyboardShortcuts);
   }, [keyboardShortcuts]);
 
+  useEffect(() => {
+    const bridge = getSignalLoomNativeBridge();
+    if (!bridge?.setLocale) return;
+    // Keep the native + KDE menus' language in sync with the interface-language setting.
+    void bridge.setLocale(locale);
+  }, [locale]);
+
   const placeSourceBinItemOnFlow = useCallback((item: SourceBinLibraryItem, position: { x: number; y: number }) => {
     const type = getFlowNodeTypeForSourceBinItem(item);
     const nodeId = addNode(type, position);
@@ -2008,21 +2022,21 @@ function FlowApp() {
     const nodeCatalogItems: SharedContextMenuItem[] = FLOW_NODE_CATALOG_CATEGORIES.map((category) => {
       const children: SharedContextMenuItem[] = getNodeCatalogEntriesForCategory(category.id).map((entry) => ({
         id: `add-${entry.type}`,
-        label: `Add ${entry.label}`,
+        label: translateFormat('flow.toolbar.addNode', locale, { name: nodeCatalogEntryLabel(entry, locale) }),
         action: createNodeAction(entry.type, entry.initialData),
       }));
 
       if (category.id === 'generate') {
         children.push(...imageTemplates.map((template) => ({
           id: `add-image-template-${template.id}`,
-          label: `Add ${template.label}`,
+          label: translateFormat('flow.toolbar.addImageNode', locale, { name: template.label }),
           action: createNodeAction('imageGen', createImageNodeTemplateDataPatch(template.id)),
         } satisfies SharedContextMenuItem)));
       }
 
       return {
         id: `node-category-${category.id}`,
-        label: category.label,
+        label: nodeCategoryLabel(category, locale),
         children,
       };
     });
@@ -2341,6 +2355,7 @@ function FlowApp() {
       {startupSplash.visible ? (
         <StartupSplash title={startupSplash.title} detail={startupSplash.detail} />
       ) : null}
+      <FirstRunLanguageGate />
     </div>
   );
 }
@@ -2354,6 +2369,10 @@ function StartupSplash({ title, detail }: { title: string; detail: string }) {
         draggable={false}
         src={resolveBundledAssetUrl('/signal-loom-splash.png')}
       />
+      {/* Bilingual manga-title wordmark, anchored low over a legibility scrim so it reads over any art. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-[#020711] via-[#020711]/80 to-transparent pt-16 pb-[7vh]">
+        <BrandWordmark scale={1} />
+      </div>
       <div className="sr-only" role="status">
         {title}. {detail}
       </div>

@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('signalLoomNative', {
   openWorkspaceWindow: (workspace) => ipcRenderer.invoke('signal-loom:open-workspace-window', workspace),
   setActiveWorkspace: (workspace) => ipcRenderer.invoke('signal-loom:set-active-workspace', workspace),
   setKeyboardShortcuts: (shortcuts) => ipcRenderer.invoke('signal-loom:set-keyboard-shortcuts', shortcuts),
+  setLocale: (locale) => ipcRenderer.invoke('signal-loom:set-locale', locale),
   getSourceLibrarySnapshot: () => ipcRenderer.invoke('signal-loom:source-library-get-snapshot'),
   syncSourceLibrarySnapshot: (snapshot) => ipcRenderer.invoke('signal-loom:source-library-sync-snapshot', snapshot),
   applySourceLibraryChange: (change) => ipcRenderer.invoke('signal-loom:source-library-apply-change', change),
