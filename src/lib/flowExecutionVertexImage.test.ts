@@ -45,6 +45,7 @@ const baseSettings: RuntimeSettingsSnapshot = {
     openaiBaseUrl: '',
     elevenlabsVoiceId: '',
     renderBackendPreference: 'auto',
+    exportCompositorPreference: 'stage',
     localNativeRenderUrl: 'http://127.0.0.1:41736',
     backendProxyEnabled: false,
     backendProxyBaseUrl: '',

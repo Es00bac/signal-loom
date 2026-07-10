@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executeNodeRequest } from './flowExecution';
 import { DEFAULT_EXECUTION_CONFIG } from './providerCatalog';
 import { composeSequenceMedia } from './mediaComposition';
+import { renderStageFrameSequence } from './stageFrameExport';
 import type { ManualEditorVisualSequenceClip } from './manualEditorSequence';
 import type { AppNode, RuntimeSettingsSnapshot, VideoRenderAssemblyManifestData } from '../types/flow';
 
@@ -13,7 +14,21 @@ vi.mock('./mediaComposition', async (importOriginal) => {
   };
 });
 
+// The frame-server export (stageFrameExport.ts) is tried BEFORE the legacy path this test exercises
+// (see flowExecution.ts's `executeCompositionNode`). It's DOM-dependent (canvas/Image/<video>), and
+// this test file runs in a non-DOM environment, so it's mocked to return `null` — the engine's own
+// "not applicable here, fall back to legacy" signal — exactly like it would when no native render
+// service is reachable, letting this test exercise the (mocked) legacy metadata passthrough as before.
+vi.mock('./stageFrameExport', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./stageFrameExport')>();
+  return {
+    ...actual,
+    renderStageFrameSequence: vi.fn().mockResolvedValue(null),
+  };
+});
+
 const mockedComposeSequenceMedia = vi.mocked(composeSequenceMedia);
+const mockedRenderStageFrameSequence = vi.mocked(renderStageFrameSequence);
 
 const settings = {
   apiKeys: {},
@@ -82,6 +97,7 @@ const visualClip = {
 describe('executeNodeRequest composition metadata', () => {
   beforeEach(() => {
     mockedComposeSequenceMedia.mockReset();
+    mockedRenderStageFrameSequence.mockReset().mockResolvedValue(null);
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:sequence-output');
   });
 
@@ -153,5 +169,38 @@ describe('executeNodeRequest composition metadata', () => {
     expect(mockedComposeSequenceMedia).toHaveBeenCalledWith(expect.objectContaining({
       nativeAssemblyManifest,
     }));
+  });
+
+  it('does NOT retry a failed render, even when batchMaxRetries allows many retries for other node types', async () => {
+    // Regression test for the incident where a killed local render service auto-resurrected: the
+    // generic exponential-backoff retry (src/lib/exponentialBackoff.ts, wired in
+    // executeNodeRequest) is meant for flaky AI provider APIs, not a local, deterministic,
+    // operator-cancellable render. `batchMaxRetries` is set high here deliberately — if composition
+    // nodes were still routed through that wrapper, this failure would be retried many times before
+    // the caller ever saw it.
+    const retryableSettings = {
+      ...settings,
+      providerSettings: {
+        ...settings.providerSettings,
+        batchMaxRetries: 10,
+        batchRetryBaseDelayMs: 1,
+      },
+    } as RuntimeSettingsSnapshot;
+    const renderFailure = new Error('The local native render service is unavailable at http://127.0.0.1:41736.');
+    mockedComposeSequenceMedia.mockRejectedValue(renderFailure);
+
+    await expect(executeNodeRequest(
+      compositionNode,
+      {
+        prompt: '',
+        config: DEFAULT_EXECUTION_CONFIG,
+        visualSequenceClips: [visualClip],
+        sequenceAudioInputs: [],
+      },
+      retryableSettings,
+    )).rejects.toThrow(renderFailure.message);
+
+    expect(mockedRenderStageFrameSequence).toHaveBeenCalledTimes(1);
+    expect(mockedComposeSequenceMedia).toHaveBeenCalledTimes(1);
   });
 });

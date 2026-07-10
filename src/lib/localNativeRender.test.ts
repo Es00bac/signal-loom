@@ -8,6 +8,7 @@ import type { ProviderSettings } from '../types/flow';
 
 const baseSettings: ProviderSettings = {
   renderBackendPreference: 'auto',
+  exportCompositorPreference: 'stage',
   localNativeRenderUrl: 'http://127.0.0.1:41736',
   localNativeRenderToken: '',
   openaiBaseUrl: '',

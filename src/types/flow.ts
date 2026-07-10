@@ -130,6 +130,14 @@ export type SerializableNodeValue = unknown;
 export type VideoFrameSelection = 'first' | 'last';
 export type VideoReferenceType = 'asset' | 'style';
 export type RenderBackendPreference = 'auto' | 'browser' | 'native-cpu' | 'native-amd-vaapi';
+/**
+ * Which compositor draws export frames. `stage` (the default) steps the SAME layout/effect math
+ * the Edit Stage preview uses (`buildVisualClipLayoutDescriptor` et al.) through a canvas, one frame
+ * at a time, so what you see on the stage is what renders. `legacy` keeps the pre-existing ffmpeg
+ * `filter_complex` translation (`mediaComposition.ts`'s `buildSequenceCommand`) as a fallback — see
+ * docs/gpu-frame-server-export-brief.md for why `stage` exists at all.
+ */
+export type ExportCompositorPreference = 'stage' | 'legacy';
 export type VideoExportPresetId =
   | 'review-h264-1080p'
   | 'social-vertical-h264'
@@ -717,6 +725,7 @@ export interface ProviderSettings {
   openaiBaseUrl: string;
   elevenlabsVoiceId: string;
   renderBackendPreference: RenderBackendPreference;
+  exportCompositorPreference: ExportCompositorPreference;
   localNativeRenderUrl: string;
   localNativeRenderToken?: string;
   backendProxyEnabled: boolean;

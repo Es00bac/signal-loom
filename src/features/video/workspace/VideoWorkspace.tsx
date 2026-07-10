@@ -7511,6 +7511,7 @@ function ProgramStage({
       <MonitorStageFrame aspectRatioValue={aspectRatioValue}>
         <div
           className="absolute inset-0 overflow-hidden bg-black"
+          data-video-program-stage="true"
           onContextMenu={onOpenContextMenu}
           ref={stageRef}
         >

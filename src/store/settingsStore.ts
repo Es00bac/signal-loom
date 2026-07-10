@@ -352,6 +352,7 @@ export const useSettingsStore = create<SettingsState>()(
         atlasBaseUrl: DEFAULT_PROVIDER_SETTINGS.atlasBaseUrl,
         elevenlabsVoiceId: DEFAULT_PROVIDER_SETTINGS.elevenlabsVoiceId,
         renderBackendPreference: DEFAULT_PROVIDER_SETTINGS.renderBackendPreference,
+        exportCompositorPreference: DEFAULT_PROVIDER_SETTINGS.exportCompositorPreference,
         localNativeRenderUrl: DEFAULT_PROVIDER_SETTINGS.localNativeRenderUrl,
         localNativeRenderToken: DEFAULT_PROVIDER_SETTINGS.localNativeRenderToken,
         backendProxyEnabled: DEFAULT_PROVIDER_SETTINGS.backendProxyEnabled,

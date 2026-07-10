@@ -2,6 +2,7 @@ import React from 'react';
 import { ChevronRight, Download, LoaderCircle, RefreshCcw, ShieldCheck, Upload, X } from 'lucide-react';
 import {
   ensureVoiceOption,
+  EXPORT_COMPOSITOR_OPTIONS,
   getConfiguredProviders,
   getModelOptions,
   getProviderLabel,
@@ -419,6 +420,13 @@ export const SettingsModal: React.FC = () => {
                 onChange={(value) => setProviderSetting('renderBackendPreference', value as ProviderSettings['renderBackendPreference'])}
                 options={RENDER_BACKEND_OPTIONS}
                 value={providerSettings.renderBackendPreference}
+              />
+
+              <SelectInput
+                label="Export compositor"
+                onChange={(value) => setProviderSetting('exportCompositorPreference', value as ProviderSettings['exportCompositorPreference'])}
+                options={EXPORT_COMPOSITOR_OPTIONS}
+                value={providerSettings.exportCompositorPreference}
               />
 
               <SelectInput

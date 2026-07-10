@@ -5,6 +5,7 @@ import type {
   Capability,
   DefaultModelSettings,
   ExecutionConfig,
+  ExportCompositorPreference,
   ImageOutputFormat,
   ModelCatalog,
   ProviderSettings,
@@ -72,6 +73,7 @@ export const DEFAULT_PROVIDER_SETTINGS = {
   bytePlusBaseUrl: '',
   elevenlabsVoiceId: '',
   renderBackendPreference: 'auto' as RenderBackendPreference,
+  exportCompositorPreference: 'stage' as ExportCompositorPreference,
   localNativeRenderUrl: 'http://127.0.0.1:41736',
   localNativeRenderToken: '',
   backendProxyEnabled: false,
@@ -108,6 +110,11 @@ export const RENDER_BACKEND_OPTIONS: SelectOption[] = [
   { value: 'browser', label: 'Browser FFmpeg (maximum compatibility)' },
   { value: 'native-cpu', label: 'Native FFmpeg CPU (multithreaded)' },
   { value: 'native-amd-vaapi', label: 'Native FFmpeg AMD VAAPI GPU (forced)' },
+];
+
+export const EXPORT_COMPOSITOR_OPTIONS: SelectOption[] = [
+  { value: 'stage', label: 'Stage (exact) — same compositor as the Edit Stage preview' },
+  { value: 'legacy', label: 'Legacy (ffmpeg graph) — pre-frame-server export path' },
 ];
 
 export const VERTEX_AUTH_MODE_OPTIONS: SelectOption[] = [

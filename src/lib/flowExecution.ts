@@ -64,6 +64,7 @@ import {
   describeSequenceRenderBackend,
   describeSequenceRenderBackendCaveat,
 } from './mediaComposition';
+import { renderStageFrameSequence } from './stageFrameExport';
 import { getVideoExportPresetOption } from './videoPremiereParity';
 import type { ManualEditorVisualSequenceClip } from './manualEditorSequence';
 import type { ProviderSettings, TimelineAutomationPoint } from '../types/flow';
@@ -231,6 +232,20 @@ export async function executeNodeRequest(
   onStatus?: (statusMessage: string, retryState?: { attempt: number; max: number; nextAttemptAt: number }) => void,
   options: { signal?: AbortSignal } = {},
 ): Promise<ExecutionResult> {
+  // Composition/render nodes drive a LOCAL, deterministic, CPU/GPU-bound export (the frame-server
+  // engine or the legacy ffmpeg graph) — not a flaky external API call. The generic
+  // exponential-backoff retry below exists for rate-limited AI provider calls; applying it here
+  // meant a render that failed because the local render service was killed (or crashed) got
+  // silently, automatically RETRIED (up to `batchMaxRetries`, 30s+ apart) — and because systemd
+  // restarts a killed render service within `RestartSec=2`, well inside even the first backoff
+  // window, the "retry" routinely succeeded in re-firing the SAME expensive render the operator had
+  // just killed. Composition nodes bypass the wrapper entirely: a render failure surfaces once,
+  // immediately, to the user — it is never silently resurrected.
+  if (node.type === 'composition') {
+    throwIfAborted(options.signal);
+    return executeCompositionNode(node, context, settings, onStatus);
+  }
+
   const providerId = typeof node.data.provider === 'string' ? node.data.provider : 'default';
   const limiter = getProviderLimiter(providerId);
 
@@ -264,8 +279,7 @@ export async function executeNodeRequest(
           return executeVideoNode(node, context, settings, onStatus);
         case 'audioGen':
           return executeAudioNode(node, context, settings, onStatus);
-        case 'composition':
-          return executeCompositionNode(node, context, settings, onStatus);
+        // 'composition' is handled above, before the retry wrapper — see that comment.
         case 'visionVerifyNode':
           return executeVisionVerifyNode(node, context, settings, onStatus);
         case 'functionNode':
@@ -3284,7 +3298,7 @@ async function executeCompositionNode(
   if (visualSequenceClips.length > 0 || stageObjects.length > 0) {
     onStatus?.('Rendering editor sequence locally…');
     const exportPreset = getVideoExportPresetOption(context.exportPresetId);
-    const sequenceOutput = await composeSequenceMedia({
+    const sequenceMediaOptions = {
       visualClips: visualSequenceClips,
       audioTracks: context.sequenceAudioInputs ?? [],
       stageObjects,
@@ -3294,7 +3308,18 @@ async function executeCompositionNode(
       exportPresetId: context.exportPresetId,
       providerSettings: settings.providerSettings,
       nativeAssemblyManifest: context.nativeAssemblyManifest,
-    });
+    };
+    // Frame-server export (docs/gpu-frame-server-export-brief.md) is the DEFAULT compositor: it
+    // steps the same layout/effect math the Edit Stage preview uses, so the render matches what was
+    // approved on the stage. It returns `null` (never throws for this) when there's no reachable
+    // native render service or the preset is an image sequence — in both cases we fall back to the
+    // legacy ffmpeg-graph path below, which still has the browser ffmpeg.wasm fallback. A REAL error
+    // from the new engine (a thrown exception, as opposed to `null`) is a genuine failure and is
+    // allowed to propagate rather than being silently swallowed into a legacy re-render.
+    const exportCompositorPreference = settings.providerSettings.exportCompositorPreference;
+    const sequenceOutput = exportCompositorPreference === 'legacy'
+      ? await composeSequenceMedia(sequenceMediaOptions)
+      : (await renderStageFrameSequence(sequenceMediaOptions)) ?? (await composeSequenceMedia(sequenceMediaOptions));
     const isImageSequence = Boolean(sequenceOutput.imageSequence);
     const segmentArtifacts = sequenceOutput.segmentArtifacts?.length
       ? sequenceOutput.segmentArtifacts
