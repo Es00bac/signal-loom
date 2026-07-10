@@ -1,0 +1,80 @@
+DIAGNOSTIC stageBoundsAtStart: {"x":671,"y":294.5,"width":82,"height":46}
+{
+  "ok": true,
+  "projectPath": "/tmp/claude-1000/-home-cabewse-work-SPaC3-Nates/976d7c85-f1f9-483d-ab5f-d7ea2edc5c44/scratchpad/case-file-2033-trimmed/Case-File-2033-trimmed.sloom",
+  "renderUrl": "http://127.0.0.1:41737",
+  "renderHealth": {
+    "ok": true,
+    "ffmpegVersion": "ffmpeg version n8.1.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "availableBackends": [
+      "cpu",
+      "amd-vaapi"
+    ],
+    "recommendedBackend": "amd-vaapi",
+    "cpuThreads": 24
+  },
+  "startup": {
+    "currentProjectPath": "/tmp/claude-1000/-home-cabewse-work-SPaC3-Nates/976d7c85-f1f9-483d-ab5f-d7ea2edc5c44/scratchpad/case-file-2033-trimmed/Case-File-2033-trimmed.sloom",
+    "projectName": "Case File 2033 Motion Comic (TRIMMED TEST - first 2 pages, builder verification only)",
+    "bodyHasRecovery": false
+  },
+  "settingsCheck": {
+    "title": "Sloom Studio",
+    "hasCommunityText": false,
+    "hasLanguagePicker": false
+  },
+  "openResult": {
+    "ok": true,
+    "workspace": "editor"
+  },
+  "preflight": {
+    "url": "http://127.0.0.1:5175/?workspace=editor",
+    "hasRecoveryBoundary": false,
+    "renderButtonCount": 1,
+    "bodyText": "Bin\nSource\nProgram\nInspector\nHelp\nFit\n$0.0000\nPROJECT SOURCE BIN\nSource Library\nMixed media, generated assets, captions, and reusable timeline elements.\n50\nLibrary\nDesign Assets\nImport Media\nVideo\nAudio\nCaptions\nAll 50\nVisual 48\nImage 48\nAudio 2\n1 entry node\n50 of 50 sources\nHide Pools\nShow Pools\nCollapse All\nExpand All\nImage Assets\n48\np01.jpg\nIMAGE\nAdd Video\np02.jpg\nIMAGE\nAdd Video\np03.jpg\nIMAGE\nAdd Video\np04.jpg\nIMAGE\nAdd Video\np05.jpg\nIMAGE\nAdd Video\np06.jpg\nIMAGE\nAdd Video\np07.jpg\nIMAGE\nAdd Video\np08.jpg\nIMAGE\nAdd Video\np09.jpg\nIMAGE\nAdd Video\np10.jpg\nIMAGE\nAdd Video\np11.jpg\nIMAGE\nAdd Video\np12.jpg\nIMAGE\nAdd Video\np13.jpg\nIMAGE\nAdd Video\np14.jpg\nIMAGE\nAdd Video\np15.jpg\nIMAGE\nAdd Video\np16.jpg\nIMAGE\nAdd Video\np17.jpg\nIMAGE\nAdd Video\np18.jpg\nIMAGE\nAdd Video\np19.jpg\nIMAGE\nAdd Video\np20.jp"
+  },
+  "scrubResults": [
+    {
+      "label": "T1",
+      "seconds": 3,
+      "ok": true,
+      "displaySeconds": 13,
+      "ratio": 0.23076923076923078,
+      "clientX": 544.5384615384615
+    },
+    {
+      "label": "T2",
+      "seconds": 6.4,
+      "ok": true,
+      "displaySeconds": 13,
+      "ratio": 0.49230769230769234,
+      "clientX": 1016.6153846153846
+    },
+    {
+      "label": "T3",
+      "seconds": 10,
+      "ok": true,
+      "displaySeconds": 13,
+      "ratio": 0.7692307692307693,
+      "clientX": 1516.4615384615386
+    }
+  ],
+  "renderElapsedMs": 58108,
+  "renderStartedAtIso": "2026-07-10T20:09:52.807Z",
+  "renderFinishedAtIso": "2026-07-10T20:10:50.915Z",
+  "render": {
+    "previewVideoPresent": true,
+    "bytes": 8722380,
+    "mimeType": "video/mp4",
+    "fileSignature": "000000206674797069736f6d00000200",
+    "failed": false
+  },
+  "outputVideoPath": "/tmp/claude-1000/-home-cabewse-work-SPaC3-Nates/976d7c85-f1f9-483d-ab5f-d7ea2edc5c44/scratchpad/case-file-2033-trimmed/output/real-project-render.mp4",
+  "screenshots": {
+    "start": "/tmp/claude-1000/-home-cabewse-work-SPaC3-Nates/976d7c85-f1f9-483d-ab5f-d7ea2edc5c44/scratchpad/case-file-2033-trimmed/output/stage-real-T0-start.png",
+    "T1": "/tmp/claude-1000/-home-cabewse-work-SPaC3-Nates/976d7c85-f1f9-483d-ab5f-d7ea2edc5c44/scratchpad/case-file-2033-trimmed/output/stage-real-T1.png",
+    "T2": "/tmp/claude-1000/-home-cabewse-work-SPaC3-Nates/976d7c85-f1f9-483d-ab5f-d7ea2edc5c44/scratchpad/case-file-2033-trimmed/output/stage-real-T2.png",
+    "T3": "/tmp/claude-1000/-home-cabewse-work-SPaC3-Nates/976d7c85-f1f9-483d-ab5f-d7ea2edc5c44/scratchpad/case-file-2033-trimmed/output/stage-real-T3.png"
+  }
+}
+EXIT CODE: 0

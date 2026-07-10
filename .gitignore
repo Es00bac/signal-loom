@@ -18,6 +18,11 @@ dist-ssr
 !.env.example
 *.pem
 *.key
+
+# Persistent local Electron test profile (native-real-project-video-render-parity.mjs and
+# friends) — has a dev-test license key baked into its (encrypted-at-rest) local storage.
+# Machine-local only, never shared, never committed.
+.test-profile/
 *.p12
 *.pfx
 
