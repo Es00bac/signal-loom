@@ -1,8 +1,40 @@
 import type { EditorStageObject, EditorVisualClip, TextClipEffect } from '../types/flow';
 import { getAutomationValueAtLocalTime } from './clipAutomation';
-import { buildClipEffectDescriptorForClip, type ClipCropSettings } from './editorClipEffects';
-import { getVisualKeyframeStateAtProgress } from './editorKeyframes';
+import { buildClipEffectDescriptorForClip, type ClipCropSettings, type ClipEffectSourceClip } from './editorClipEffects';
+import { getVisualKeyframeStateAtProgress, type VisualKeyframeClip } from './editorKeyframes';
 import { measureTextObjectBounds } from './editorTextRender';
+
+/**
+ * The subset of `EditorVisualClip` the layout descriptor actually reads. Widened (rather than left
+ * nominal `EditorVisualClip`) so `buildVisualClipLayoutDescriptor` is callable from both the Edit
+ * Stage preview and the frame-server export driver's flattened `ComposeSequenceVisualClip` — see
+ * `ClipEffectSourceClip`'s doc comment in `editorClipEffects.ts` for why that matters.
+ */
+export type VisualLayoutClip = VisualKeyframeClip & ClipEffectSourceClip & Pick<
+  EditorVisualClip,
+  | 'sourceKind'
+  | 'fitMode'
+  | 'opacityAutomationPoints'
+  | 'transitionIn'
+  | 'transitionOut'
+  | 'transitionDurationMs'
+  | 'flipHorizontal'
+  | 'flipVertical'
+  | 'textContent'
+  | 'textFontFamily'
+  | 'textSizePx'
+  | 'textColor'
+  | 'textEffect'
+  | 'shapeFillColor'
+  | 'shapeBorderColor'
+  | 'shapeBorderWidth'
+  | 'shapeCornerRadius'
+> & {
+  // Required on `EditorVisualClip`; optional on `ComposeSequenceVisualClip` (the export driver's
+  // flattened clip shape, which doesn't always carry the authored id) — see `clipId: clip.id ?? ''`
+  // below for the corresponding default.
+  id?: string;
+};
 
 export interface VisualLayoutCanvas {
   width: number;
@@ -103,7 +135,7 @@ export function buildVisualClipLayoutDescriptor({
   durationSeconds,
   text,
 }: {
-  clip: EditorVisualClip;
+  clip: VisualLayoutClip;
   canvas: VisualLayoutCanvas;
   source: VisualSourceDimensions;
   progressPercent?: number;
@@ -123,7 +155,7 @@ export function buildVisualClipLayoutDescriptor({
   const height = fit.height * scaleFactor;
 
   return {
-    clipId: clip.id,
+    clipId: clip.id ?? '',
     sourceKind: clip.sourceKind,
     progressPercent,
     fitMode,
@@ -164,7 +196,7 @@ export function buildVisualClipLayoutDescriptor({
 }
 
 export function getTransitionOpacityFactor(
-  clip: EditorVisualClip,
+  clip: Pick<EditorVisualClip, 'transitionIn' | 'transitionOut' | 'transitionDurationMs'>,
   localTimeSeconds: number,
   durationSeconds: number,
 ): number {
@@ -256,7 +288,7 @@ export function fitVisualDimensions(
   };
 }
 
-export function buildCropLayoutDescriptor(clip: EditorVisualClip): CropLayoutDescriptor {
+export function buildCropLayoutDescriptor(clip: ClipEffectSourceClip): CropLayoutDescriptor {
   const crop = buildClipEffectDescriptorForClip(clip).crop;
   const visibleWidthPercent = Math.max(1, 100 - crop.cropLeftPercent - crop.cropRightPercent);
   const visibleHeightPercent = Math.max(1, 100 - crop.cropTopPercent - crop.cropBottomPercent);

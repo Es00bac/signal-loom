@@ -1,7 +1,7 @@
 import { Film, Image as ImageIcon, Music2, Square, Type } from 'lucide-react';
 import type { SourceBinItem } from '../../lib/sourceBin';
 import { buildMediaAssetSignaturePart } from '../../lib/mediaAssetSignature';
-import { resolveVisualClipSourceRangeMs } from '../../lib/editorTimelineSourceRange';
+import { resolveVisualClipSourceRangeMs, type VisualClipSourceRangeInput } from '../../lib/editorTimelineSourceRange';
 import { extractVideoFramesAtTimes } from '../../lib/videoFrameExtraction';
 import { buildAudioTimelineBlocks, buildVisualTimelineBlocks, resolveVisualClipDuration } from '../../lib/manualEditorTimeline';
 import { buildVisualClipLayoutDescriptor, resolveTextSourceDimensions } from '../../lib/editorVisualLayout';
@@ -451,7 +451,10 @@ export function getPreviewEditPointDissolveOffsetSeconds(
 }
 
 export function resolveStageSourceTimeSeconds(
-  clip: EditorVisualClip,
+  // Widened from the concrete `EditorVisualClip` (same reasoning as `ClipEffectSourceClip` in
+  // editorClipEffects.ts) so the frame-server export driver can call this with
+  // `mediaComposition.ts`'s flattened `ComposeSequenceVisualClip` too.
+  clip: Pick<EditorVisualClip, 'playbackRate' | 'reversePlayback'> & VisualClipSourceRangeInput,
   sourceDurationSeconds: number,
   localSeconds: number,
 ): number {

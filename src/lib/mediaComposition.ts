@@ -26,6 +26,8 @@ import { buildTextOverlaySvgAsset } from './editorTextRender';
 import { buildShapeLayoutDescriptor } from './editorVisualLayout';
 import { resolveVisualClipSourceRangeMs } from './editorTimelineSourceRange';
 import { createMediaDurationResolver, type MediaDurationLoader } from './mediaDurationCache';
+import { probeGifAnimation } from './gifFrames';
+import { isGifAssetReference } from './mediaFormatRegistry';
 import {
   renderViaLocalNativeFFmpeg,
   renderViaLocalNativeFFmpegWithArtifacts,
@@ -78,7 +80,7 @@ interface ComposeMediaOptions {
   providerSettings?: ProviderSettings;
 }
 
-interface ComposeSequenceVisualClip {
+export interface ComposeSequenceVisualClip {
   id?: string;
   sourceNodeId: string;
   sourceKind: EditorVisualSourceKind;
@@ -143,7 +145,7 @@ interface ComposeSequenceVisualClip {
   comicTextAlign?: 'left' | 'center' | 'right';
 }
 
-interface ComposeSequenceAudioTrack {
+export interface ComposeSequenceAudioTrack {
   url: string;
   sourceNodeId: string;
   sourceKind: 'audio' | 'video' | 'composition';
@@ -157,7 +159,7 @@ interface ComposeSequenceAudioTrack {
   enabled: boolean;
 }
 
-interface ComposeSequenceMediaOptions {
+export interface ComposeSequenceMediaOptions {
   visualClips: ComposeSequenceVisualClip[];
   audioTracks: ComposeSequenceAudioTrack[];
   stageObjects?: EditorStageObject[];
@@ -201,7 +203,7 @@ export interface SequenceCanvas {
   height: number;
 }
 
-interface PreparedSequenceVisualClip {
+export interface PreparedSequenceVisualClip {
   clip: ComposeSequenceVisualClip;
   inputIndex: number;
   inputName: string;
@@ -209,7 +211,7 @@ interface PreparedSequenceVisualClip {
   clipDurationSeconds: number;
 }
 
-interface PreparedSequenceAudioTrack {
+export interface PreparedSequenceAudioTrack {
   track: ComposeSequenceAudioTrack;
   inputName: string;
   sourceUrl: string;
@@ -776,7 +778,27 @@ async function prepareVisualClipInput(
   };
 }
 
-async function resolveSequenceVisualClipDuration(
+/**
+ * Detects whether an `image` clip's source is a real, multi-frame (animated) GIF, so the FFmpeg
+ * sequence command can loop it instead of freezing it to its first frame (see
+ * `buildVisualClipInputArgs`). Cheaply gated by `isGifAssetReference` (mimeType/URL sniffing --
+ * no I/O) before paying for the byte fetch + frame-count probe; never throws, since a detection
+ * failure should just fall back to today's static-image behavior rather than break the export.
+ */
+export async function detectAnimatedGifClip(clip: ComposeSequenceVisualClip): Promise<boolean> {
+  if (clip.sourceKind !== 'image' || !clip.assetUrl || !isGifAssetReference(clip.assetUrl, clip.mimeType)) {
+    return false;
+  }
+
+  try {
+    const bytes = await fetchFile(clip.assetUrl);
+    return (await probeGifAnimation(bytes)).isAnimated;
+  } catch {
+    return false;
+  }
+}
+
+export async function resolveSequenceVisualClipDuration(
   clip: ComposeSequenceVisualClip,
   resolveMediaDuration: MediaDurationLoader,
 ): Promise<number> {
@@ -794,7 +816,7 @@ async function resolveSequenceVisualClipDuration(
   return availableMs / 1000 / Math.max(0.25, clip.playbackRate || 1);
 }
 
-function resolveSequenceTimelineDurationSeconds(
+export function resolveSequenceTimelineDurationSeconds(
   visualClips: PreparedSequenceVisualClip[],
   audioTracks: PreparedSequenceAudioTrack[],
 ): number {
@@ -1069,7 +1091,7 @@ export async function renderComicCard(clip: {
   return canvas.toDataURL('image/png');
 }
 
-async function renderStageObjectImage(
+export async function renderStageObjectImage(
   object: EditorStageObject,
   canvasSize: SequenceCanvas,
 ): Promise<string> {
@@ -1118,7 +1140,7 @@ function paintStageBlendNeutralBackground(
   context.fillRect(0, 0, canvasSize.width, canvasSize.height);
 }
 
-function drawTextStageObject(
+export function drawTextStageObject(
   context: CanvasRenderingContext2D,
   object: Extract<EditorStageObject, { kind: 'text' }>,
 ) {
@@ -1241,7 +1263,7 @@ export function drawComicStageObject(
   }
 }
 
-function drawRectangleStageObject(
+export function drawRectangleStageObject(
   context: CanvasRenderingContext2D,
   object: Extract<EditorStageObject, { kind: 'rectangle' }>,
 ) {
@@ -1261,7 +1283,7 @@ function drawRectangleStageObject(
   }
 }
 
-function buildSequenceAudioVolumeFilter(
+export function buildSequenceAudioVolumeFilter(
   track: ComposeSequenceAudioTrack,
   durationSeconds: number,
 ): string {
@@ -1465,7 +1487,7 @@ function buildSequenceVisualFilter(
   return `[${inputIndex}:v]${filters.join(',')}[clip${inputIndex}]`;
 }
 
-function resolveEditPointCrossDissolveOffsetSeconds(
+export function resolveEditPointCrossDissolveOffsetSeconds(
   preparedClip: PreparedSequenceVisualClip,
   allPreparedClips: PreparedSequenceVisualClip[],
 ): number {
@@ -1529,7 +1551,7 @@ function getBlendNeutralFilter(ffmpegBlendMode: string): string {
     : 'lutrgb=r=0:g=0:b=0,format=rgba';
 }
 
-function resolveSequenceAudioExtension(track: ComposeSequenceAudioTrack): string {
+export function resolveSequenceAudioExtension(track: ComposeSequenceAudioTrack): string {
   const mimeType = track.mimeType ?? '';
 
   if (mimeType.includes('mp4') || track.sourceKind === 'video' || track.sourceKind === 'composition') {
@@ -1747,7 +1769,7 @@ function formatSeconds(value: number): string {
   return Math.max(0, value).toFixed(3);
 }
 
-async function getMediaDuration(url: string, kind: 'audio' | 'video'): Promise<number> {
+export async function getMediaDuration(url: string, kind: 'audio' | 'video'): Promise<number> {
   return new Promise((resolve) => {
     const media = document.createElement(kind);
     const cleanup = () => {
@@ -1772,7 +1794,7 @@ async function getMediaDuration(url: string, kind: 'audio' | 'video'): Promise<n
   });
 }
 
-async function renderTextCard({
+export async function renderTextCard({
   text,
   fontFamily,
   fontSizePx,
@@ -1813,7 +1835,7 @@ async function renderTextCard({
   return canvas.toDataURL('image/png');
 }
 
-async function renderShapeCard({
+export async function renderShapeCard({
   fillColor,
   borderColor,
   borderWidth,

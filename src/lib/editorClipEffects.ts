@@ -4,7 +4,6 @@ import type {
   EditorClipFilterKind,
   EditorClipStrokeSettings,
   EditorStageBlendMode,
-  EditorVisualClip,
 } from '../types/flow';
 
 export interface ClipCropSettings {
@@ -105,15 +104,43 @@ export function normalizeClipCrop(settings: ClipCropSettings): ClipCropSettings 
   };
 }
 
-export function getClipEffectSettings(clip: EditorVisualClip): ClipEffectSettings {
+/**
+ * The subset of `EditorVisualClip` the crop/filter/blend/chroma-key/stroke descriptor actually
+ * reads. Widened from the concrete `EditorVisualClip` (rather than left nominal) so the SAME
+ * descriptor builder is callable from both the Edit Stage preview (which has a real
+ * `EditorVisualClip`) and the frame-server export driver (which works from
+ * `mediaComposition.ts`'s flattened `ComposeSequenceVisualClip` — a structurally compatible but
+ * separate interface) — see `src/lib/stageFrameCompositor.ts`. One function, two structurally
+ * compatible callers, zero behavior change.
+ */
+export interface ClipEffectSourceClip {
+  // Required on `EditorVisualClip`, but `mediaComposition.ts`'s `ComposeSequenceVisualClip` (the
+  // export driver's flattened clip shape) declares these optional — every reader below
+  // (`normalizeClipCrop`'s `clamp`, `normalizeClipFilterStack`, `normalizeClipBlendMode`, ...)
+  // already treats a missing/non-finite value as its documented default, so widening to optional
+  // here is a pure type-level accommodation, not a behavior change.
+  cropLeftPercent?: number;
+  cropRightPercent?: number;
+  cropTopPercent?: number;
+  cropBottomPercent?: number;
+  cropPanXPercent?: number;
+  cropPanYPercent?: number;
+  cropRotationDeg?: number;
+  filterStack?: EditorClipFilter[];
+  blendMode?: EditorStageBlendMode;
+  chromaKey?: EditorClipChromaKeySettings;
+  stroke?: EditorClipStrokeSettings;
+}
+
+export function getClipEffectSettings(clip: ClipEffectSourceClip): ClipEffectSettings {
   return {
-    cropLeftPercent: clip.cropLeftPercent,
-    cropRightPercent: clip.cropRightPercent,
-    cropTopPercent: clip.cropTopPercent,
-    cropBottomPercent: clip.cropBottomPercent,
-    cropPanXPercent: clip.cropPanXPercent,
-    cropPanYPercent: clip.cropPanYPercent,
-    cropRotationDeg: clip.cropRotationDeg,
+    cropLeftPercent: clip.cropLeftPercent ?? 0,
+    cropRightPercent: clip.cropRightPercent ?? 0,
+    cropTopPercent: clip.cropTopPercent ?? 0,
+    cropBottomPercent: clip.cropBottomPercent ?? 0,
+    cropPanXPercent: clip.cropPanXPercent ?? 0,
+    cropPanYPercent: clip.cropPanYPercent ?? 0,
+    cropRotationDeg: clip.cropRotationDeg ?? 0,
     filterStack: normalizeClipFilterStack(clip.filterStack),
     blendMode: normalizeClipBlendMode(clip.blendMode),
     chromaKey: normalizeClipChromaKey(clip.chromaKey),
@@ -145,7 +172,7 @@ export function buildClipEffectDescriptor(settings: ClipEffectSettings): ClipEff
   };
 }
 
-export function buildClipEffectDescriptorForClip(clip: EditorVisualClip): ClipEffectDescriptor {
+export function buildClipEffectDescriptorForClip(clip: ClipEffectSourceClip): ClipEffectDescriptor {
   return buildClipEffectDescriptor(getClipEffectSettings(clip));
 }
 

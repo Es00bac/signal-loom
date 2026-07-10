@@ -14,7 +14,7 @@ const KEYFRAME_EPSILON_PERCENT = 0.001;
 
 type VisualKeyframeCandidate = Partial<EditorVisualKeyframe> & { timePercent?: number };
 type AudioKeyframeCandidate = Partial<EditorAudioKeyframe> & { timePercent?: number };
-type VisualKeyframeClip = Pick<
+export type VisualKeyframeClip = Pick<
   EditorVisualClip,
   | 'positionX'
   | 'positionY'
