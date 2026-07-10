@@ -3,10 +3,24 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  buildStreamFfmpegArgs,
+  createRenderStreamSessionId,
+  expectedFrameStreamBytes,
+  findExpiredStreamSessions,
+  sanitizeFileName as sanitizeStreamFileName,
+  StreamTruncatedError,
+  validateStreamMetadata,
+  writeStreamChunkToFfmpegStdin,
+} from './local-renderer-lib.mjs';
 
 const HOST = process.env.SIGNAL_LOOM_NATIVE_RENDER_HOST || '127.0.0.1';
 const PORT = Number.parseInt(process.env.SIGNAL_LOOM_NATIVE_RENDER_PORT || '41736', 10);
 const VAAPI_DEVICE = '/dev/dri/renderD128';
+
+/** Live chunked-upload sessions for the frame-server streaming endpoints, keyed by session id — see
+ *  local-renderer-lib.mjs's module doc comment for the three-request wire protocol this backs. */
+const streamSessions = new Map();
 
 const health = await probeCapabilities();
 
@@ -32,6 +46,39 @@ const server = http.createServer(async (request, response) => {
       response.writeHead(200, {
         'Content-Type': 'video/mp4',
         'X-Signal-Loom-Renderer': payload.backend,
+      });
+      response.end(result);
+      return;
+    }
+
+    // Frame-server export (docs/gpu-frame-server-export-brief.md): the client has ALREADY
+    // composited every frame (same compositor as the Edit Stage) and uploads raw RGBA bytes here in
+    // small chunks (see local-renderer-lib.mjs's module doc for why three requests, not one
+    // streamed body). This endpoint's only job across the three routes below is: spawn ffmpeg once,
+    // wire chunks to its stdin with backpressure, mux the client's audio inputs, and hand back the
+    // mp4.
+    if (request.method === 'POST' && request.url === '/render-stream/start') {
+      const payload = await readJson(request);
+      const { sessionId } = await startStreamingRenderSession(payload);
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ sessionId }));
+      return;
+    }
+
+    if (request.method === 'POST' && request.url.startsWith('/render-stream/chunk')) {
+      const sessionId = new URL(request.url, 'http://internal').searchParams.get('session');
+      const bytesReceived = await appendStreamingRenderChunk(sessionId, request);
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ ok: true, bytesReceived }));
+      return;
+    }
+
+    if (request.method === 'POST' && request.url.startsWith('/render-stream/finish')) {
+      const sessionId = new URL(request.url, 'http://internal').searchParams.get('session');
+      const result = await finishStreamingRenderSession(sessionId);
+      response.writeHead(200, {
+        'Content-Type': 'video/mp4',
+        'X-Signal-Loom-Renderer': 'stage-frame-server',
       });
       response.end(result);
       return;
@@ -129,6 +176,190 @@ async function executeRenderJob(payload) {
   }
 }
 
+/**
+ * Handles POST /render-stream/start: validates the metadata, writes the client's audio input files
+ * to a temp dir exactly like `executeRenderJob` does, spawns ffmpeg with `-i pipe:0` as the rawvideo
+ * source, and parks the live process (plus its stderr buffer and exit promise) in `streamSessions`
+ * keyed by a fresh session id for the `/chunk` and `/finish` calls that follow.
+ */
+async function startStreamingRenderSession(rawMetadata) {
+  const metadata = validateStreamMetadata(rawMetadata);
+
+  if (metadata.backend === 'amd-vaapi' && !health.availableBackends.includes('amd-vaapi')) {
+    throw new Error('AMD VAAPI rendering was requested, but this machine does not currently support it.');
+  }
+
+  await sweepExpiredStreamSessions();
+
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'signal-loom-render-stream-'));
+
+  try {
+    const audioInputFileNames = [];
+
+    for (const input of metadata.audioInputs) {
+      const fileName = sanitizeStreamFileName(input.name);
+      await writeFile(path.join(tempDir, fileName), Buffer.from(input.base64, 'base64'));
+      audioInputFileNames.push(fileName);
+    }
+
+    const outputName = sanitizeStreamFileName(metadata.outputName);
+    const args = ['-hide_banner', '-y', ...buildStreamFfmpegArgs(metadata, audioInputFileNames)];
+    const ffmpeg = spawn('ffmpeg', args, { cwd: tempDir, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stderr = '';
+    ffmpeg.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    const ffmpegExit = new Promise((resolve, reject) => {
+      ffmpeg.on('error', reject);
+      ffmpeg.on('close', (code) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+
+        reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
+      });
+    });
+    // Nothing awaits `ffmpegExit` until /finish; without this, ffmpeg crashing mid-upload (bad
+    // frame dims, encoder rejecting a param) would be an unhandled rejection the moment it happens.
+    ffmpegExit.catch(() => {});
+
+    const sessionId = createRenderStreamSessionId();
+    streamSessions.set(sessionId, {
+      ffmpeg,
+      tempDir,
+      outputName,
+      expectedBytes: expectedFrameStreamBytes(metadata),
+      bytesReceived: 0,
+      ffmpegExit,
+      getStderr: () => stderr,
+      createdAt: Date.now(),
+    });
+
+    return { sessionId };
+  } catch (error) {
+    await rm(tempDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/** Handles POST /render-stream/chunk?session=<id>: reads the (bounded, ordinary) request body as raw
+ *  bytes and writes it to the session's ffmpeg stdin, awaiting drain if backpressured — see
+ *  `writeStreamChunkToFfmpegStdin`'s doc comment for why this IS the backpressure mechanism here. */
+async function appendStreamingRenderChunk(sessionId, request) {
+  const session = requireStreamSession(sessionId);
+
+  if (session.ffmpeg.exitCode !== null || session.ffmpeg.signalCode !== null) {
+    throw new Error(`Render-stream session "${sessionId}" already ended (ffmpeg is no longer running).${describeSessionFailure(session)}`);
+  }
+
+  const chunk = await readRawBody(request);
+
+  try {
+    await writeStreamChunkToFfmpegStdin(session.ffmpeg.stdin, chunk);
+  } catch (error) {
+    await abandonStreamSession(sessionId, session);
+    throw error;
+  }
+
+  session.bytesReceived += chunk.length;
+  return session.bytesReceived;
+}
+
+/**
+ * Handles POST /render-stream/finish?session=<id>: rejects a short upload as a `StreamTruncatedError`
+ * (mirroring what a truncated single-stream upload would have surfaced), otherwise ends ffmpeg's
+ * stdin, awaits the encode, and returns the mp4 bytes — same shape `/render` already returns.
+ */
+async function finishStreamingRenderSession(sessionId) {
+  const session = requireStreamSession(sessionId);
+  streamSessions.delete(sessionId);
+
+  try {
+    if (session.bytesReceived < session.expectedBytes) {
+      throw new StreamTruncatedError(
+        `Frame upload for session "${sessionId}" ended after ${session.bytesReceived} byte(s); expected ${session.expectedBytes}. The client likely disconnected mid-render.`,
+      );
+    }
+
+    session.ffmpeg.stdin.end();
+
+    try {
+      await session.ffmpegExit;
+    } catch (error) {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}${describeSessionFailure(session)}`);
+    }
+
+    return await readFile(path.join(session.tempDir, session.outputName));
+  } finally {
+    if (session.ffmpeg.exitCode === null && session.ffmpeg.signalCode === null) {
+      session.ffmpeg.kill('SIGKILL');
+    }
+
+    await rm(session.tempDir, { recursive: true, force: true });
+  }
+}
+
+function requireStreamSession(sessionId) {
+  const session = sessionId ? streamSessions.get(sessionId) : undefined;
+
+  if (!session) {
+    throw new Error(`Unknown or expired render-stream session: "${sessionId}".`);
+  }
+
+  return session;
+}
+
+function describeSessionFailure(session) {
+  const stderr = session.getStderr?.().trim();
+  return stderr ? ` ffmpeg stderr: ${stderr}` : '';
+}
+
+/** A client that starts an upload and never calls /finish (crashed tab, killed process) would
+ *  otherwise leak a temp dir and an ffmpeg process forever — kill+clean any session idle past
+ *  `findExpiredStreamSessions`'s timeout. Opportunistic (runs on each /start), not a persistent
+ *  timer: good enough for a localhost dev/render helper with a handful of concurrent sessions. */
+async function sweepExpiredStreamSessions() {
+  const expiredIds = findExpiredStreamSessions(streamSessions);
+
+  for (const sessionId of expiredIds) {
+    const session = streamSessions.get(sessionId);
+    streamSessions.delete(sessionId);
+
+    if (session) {
+      await abandonStreamSession(sessionId, session);
+    }
+  }
+}
+
+async function abandonStreamSession(sessionId, session) {
+  streamSessions.delete(sessionId);
+
+  if (session.ffmpeg.exitCode === null && session.ffmpeg.signalCode === null) {
+    session.ffmpeg.kill('SIGKILL');
+  }
+
+  await rm(session.tempDir, { recursive: true, force: true }).catch(() => {});
+}
+
+async function readRawBody(request) {
+  const chunks = [];
+  let totalBytes = 0;
+
+  for await (const chunk of request) {
+    totalBytes += chunk.length;
+
+    if (totalBytes > 256 * 1024 * 1024) {
+      throw new Error('Render-stream chunk exceeded the 256MB safety limit.');
+    }
+
+    chunks.push(chunk);
+  }
+
+  return Buffer.concat(chunks, totalBytes);
+}
+
 function validateRenderPayload(payload) {
   if (!payload || typeof payload !== 'object') {
     throw new Error('Render payload is missing.');
@@ -186,7 +417,12 @@ function sanitizeFileName(value) {
 
 function setCorsHeaders(response) {
   response.setHeader('Access-Control-Allow-Origin', '*');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // X-Sloom-Meta-Length: the frame-server /render-stream endpoint's metadata-preamble length
+  // (see local-renderer-lib.mjs). X-Signal-Loom-Render-Token: the existing /render endpoint's
+  // optional auth header (renderViaLocalNativeFFmpeg in localNativeRender.ts) — allowlisted here
+  // too since it was missing before and would hit this same preflight failure the moment a render
+  // token is configured.
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Sloom-Meta-Length, X-Signal-Loom-Render-Token');
   response.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
 }
 
