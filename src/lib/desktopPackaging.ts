@@ -169,11 +169,11 @@ export function buildDesktopPackagingReadinessSummary(
         hostRequirement: 'linux-cross-build-supported',
         readiness: 'configured-with-caveats',
         caveats: [
-          'NSIS packaging is configured for x64 only.',
+          'NSIS and MSIX packaging are both configured for x64 only.',
           windowsCaveat,
         ],
         artifactExpectations: [
-          'Expected configured artifact types: NSIS installer executable for x64.',
+          'Expected configured artifact types: NSIS installer and MSIX package, both x64.',
           'Do not claim a signed installer artifact exists until an actual release build produces it.',
         ],
         signingCaveats: ['Windows code signing credentials are not represented in package metadata.'],
@@ -209,10 +209,10 @@ export function buildDesktopPackagingReadinessSummary(
         hostRequirement: 'native-linux-build-host',
         readiness: 'configured-with-caveats',
         caveats: [
-          'AppImage and deb targets are configured; Snap, Flatpak, and RPM targets are not represented.',
+          'AppImage, deb, and Snap targets are configured; Flatpak and RPM targets are not represented.',
           'The user-local desktop entry installer is separate from electron-builder packages.',
         ],
-        artifactExpectations: ['Expected configured artifact types: AppImage and deb packages.'],
+        artifactExpectations: ['Expected configured artifact types: AppImage, deb, and Snap packages.'],
         signingCaveats: [],
       },
     ],
