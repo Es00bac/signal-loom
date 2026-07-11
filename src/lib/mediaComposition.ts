@@ -88,6 +88,10 @@ export interface ComposeSequenceVisualClip {
   startMs: number;
   aspectRatio?: AspectRatio;
   assetUrl?: string;
+  /** Optional MIME-type hint for `assetUrl` (mirrors `ComposeSequenceAudioTrack.mimeType`).
+   * Nothing currently populates this for visual clips; GIF detection (`isGifAssetReference`)
+   * already falls back to sniffing the URL itself when it's absent. */
+  mimeType?: string;
   text?: string;
   sourceInMs?: number;
   sourceOutMs?: number;

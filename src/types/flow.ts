@@ -436,6 +436,16 @@ export interface EditorVisualKeyframe {
   scalePercent: number;
   rotationDeg: number;
   opacityPercent: number;
+  /**
+   * Optional per-keyframe overrides for an animated comic speech-bubble/thought-bubble tail
+   * (tip position as a percent of the card, plus curvature). Nothing writes these yet — no UI
+   * exposes per-keyframe tail control — so they are always undefined for real project data today;
+   * `resolveComicTailSample` (stageFrameCompositor.ts) reads them defensively and callers fall
+   * back to the clip's static `comicTailAngleDeg`/`comicTailLengthPx` when unset.
+   */
+  tailTipXPercent?: number;
+  tailTipYPercent?: number;
+  tailCurvePercent?: number;
 }
 
 export interface EditorAudioKeyframe {
