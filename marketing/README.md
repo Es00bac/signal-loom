@@ -64,3 +64,12 @@ Built from the real **Case File 2033** webcomic (made in Paper) — authentic pr
 
 Still to capture (loop): an in-app *workflow* screencast (idea → page) from the Root and Relay /
 Case File project on the dev server; then wire the showcase into `examples.html` + the index hero.
+
+## `marketing/sim-videos/` — OBSOLETE, do not use
+
+Per `sloom-business/strategy/signal-loom-facts.md`: "The old sim/UI-animation `.mp4`s are
+OBSOLETE - do not use them." These predate the current app UI. They are not linked from any live
+page (the site's own workspace sims run from `sim-assets/`, a separate directory) and are kept
+here only because they were already sitting in the working tree when the 2026-07-10/11 site
+overhaul got committed. For any future marketing asset, use fresh screenshots of the real app
+(`flow/docs/release/website/sloom-studio/assets/screenshots/`) and the live site instead.
