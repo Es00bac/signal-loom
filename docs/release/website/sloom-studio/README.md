@@ -16,7 +16,8 @@ sloom-studio/
 │   ├── site.css                    Shared stylesheet (dark theme, cyan/pink/gold palette)
 │   ├── graphics/
 │   │   ├── icon-512.png            App icon (512×512) — used as favicon
-│   │   └── feature-graphic-1024x500.png  OG image / Play Store feature graphic
+│   │   ├── feature-graphic-sloom-1024x500.png  Current OG/Twitter share card; every og:image/twitter:image points here
+│   │   └── feature-graphic-1024x500.png  Old Signal-Loom-branded card, kept in place (unreferenced) so cached links don't 404
 │   └── screenshots/
 │       ├── 01-portrait-painting.png        Phone: Image workspace portrait painting
 │       ├── 02-atlas-ink-color.png          Phone: Atlas ink + colour pass
