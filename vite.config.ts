@@ -41,7 +41,12 @@ export default defineConfig({
     exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
   },
   test: {
-    exclude: [...configDefaults.exclude, '**/.worktrees/**'],
+    // Agent-isolation worktrees actually land at .claude/worktrees/<id>/ (Claude Code's
+    // worktree tool), not the .worktrees/ this pattern originally assumed — without the
+    // .claude/ prefix, a stray leftover worktree's duplicate test files get collected and
+    // run (and fail) alongside the real suite. Match both in case anything relies on the
+    // bare convention too.
+    exclude: [...configDefaults.exclude, '**/.worktrees/**', '**/.claude/worktrees/**'],
   },
   server: {
     host: '127.0.0.1',
