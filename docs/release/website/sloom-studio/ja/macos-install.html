@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>macOS版の開き方（未署名です） — Sloom Studio</title>
+<meta name="description" content="実験的で未署名のSloom StudioのmacOS版を安全に開く方法：Gatekeeperと「アプリが壊れている」というメッセージを、正しい手順で回避します。" />
+<meta name="theme-color" content="#04070d" />
+<link rel="canonical" href="https://sloom.studio/ja/macos-install.html" />
+<link rel="alternate" hreflang="en" href="https://sloom.studio/macos-install.html" />
+<link rel="alternate" hreflang="ja" href="https://sloom.studio/ja/macos-install.html" />
+<link rel="alternate" hreflang="x-default" href="https://sloom.studio/macos-install.html" />
+
+<link rel="stylesheet" href="../assets/site.css" />
+<style>
+  .mg{max-width:820px;margin:0 auto;padding:60px 22px 44px}
+  .mg h1{font-size:clamp(1.6rem,4vw,2.3rem);line-height:1.1;margin:0 0 12px}
+  .mg .lede{color:var(--ink-2);font-size:1.06rem;line-height:1.6;margin:0 0 26px;max-width:64ch}
+  .mg h2{font-size:1.2rem;margin:34px 0 10px}
+  .mg p{color:var(--ink-2);line-height:1.65;max-width:66ch}
+  .mg ol{color:var(--ink-2);line-height:1.7;max-width:66ch;padding-left:22px}
+  .mg li{margin:6px 0}
+  .dl{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0 8px}
+  .dl a{display:inline-flex;align-items:center;justify-content:center;padding:11px 16px;border-radius:10px;background:var(--cyan);color:#021018;font-weight:650;text-decoration:none}
+  .dl a.ghost{background:transparent;border:1px solid var(--line-2);color:var(--ink-1)}
+  code,.cmd{font-family:var(--mono);font-size:.9em}
+  .cmd{display:block;background:#04070d;border:1px solid var(--line-2);border-radius:10px;padding:13px 15px;margin:12px 0;color:#cfe8ef;overflow-x:auto;white-space:nowrap}
+  .callout{border:1px solid var(--line-2);border-left:3px solid var(--cyan);border-radius:10px;padding:15px 18px;margin:20px 0;color:var(--ink-2)}
+  .reassure{color:var(--ink-3);font-size:.9rem;line-height:1.6;margin-top:26px}
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav-inner wrap" aria-label="メインナビゲーション">
+    <a class="brand" href="index.html" aria-label="Sloom Studio ホーム">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Sloom Studio
+    </a>
+    <div class="nav-links" id="nav-links">
+      <a href="index.html">ホーム</a>
+      <a href="docs.html">ドキュメント</a>
+      <a href="examples.html">作例</a>
+      <a href="changelog.html">更新履歴</a>
+      <a href="index.html#license">ダウンロード</a>
+      <a href="privacy.html">プライバシー</a>
+      <a href="../macos-install.html" hreflang="en">English</a>
+    </div>
+    <a class="nav-cta" href="index.html#license">¥3,000で購入</a>
+    <button class="nav-hamburger" aria-label="メニューの表示切り替え" onclick="document.getElementById('nav-links').classList.toggle('open')">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+</header>
+
+<main class="mg">
+  <h1>macOS版の開き方</h1>
+  <p class="lede">Mac版は本物で、ちゃんと動きますが、<b>実験的で、まだApple証明書による署名がされていません</b>。アプリの署名と公証には、個人開発者にとって年間$99の費用がかかり、それは今後対応予定です。それまでの間、初めて開いたときmacOSは怖そうな警告を表示します。ここでは正しい開き方を説明します。一度だけ、1分ほどで終わります。</p>
+
+  <div class="dl">
+    <a href="../downloads/SloomStudio-arm64.dmg" download>Apple Silicon（M1〜M4）版をダウンロード</a>
+    <a class="ghost" href="../downloads/SloomStudio-x64.dmg" download>Intel Mac版をダウンロード</a>
+  </div>
+  <p style="color:var(--ink-3);font-size:.86rem">2020年以降のMacのほとんどはApple Siliconです。わからない場合は：Appleメニュー &rarr; このMacについて。「チップ」が<b>Apple</b>で始まっていればApple Silicon、「プロセッサ」が<b>Intel</b>と表示されていればIntelです。</p>
+
+  <h2>1. インストールする</h2>
+  <ol>
+    <li>ダウンロードした<code>.dmg</code>を開きます。</li>
+    <li><b>Sloom Studio</b>を<b>アプリケーション</b>フォルダにドラッグします。</li>
+  </ol>
+
+  <h2>2. Gatekeeperを回避して開く</h2>
+  <p>初めて開いたとき、まだ署名されていないためmacOSがブロックします。表示されるメッセージによって対処が変わります。</p>
+
+  <p><b>「開発元が未確認」「開けません」と表示された場合：</b></p>
+  <ol>
+    <li><b>システム設定 &rarr; プライバシーとセキュリティ</b>を開きます。</li>
+    <li>下にスクロールします。<b>Sloom Studio</b>がブロックされたという表示があります。<b>このまま開く</b>をクリックし、確認します。</li>
+    <li>（古いmacOSでは、代わりにアプリケーション内のアプリを右クリック &rarr; <b>開く</b> &rarr; <b>開く</b>でも可能です。）</li>
+  </ol>
+
+  <div class="callout">
+    <p style="margin:0 0 8px"><b>「Sloom Studioは壊れているため開けません」と表示された場合</b>（まだ公証されていないアプリでApple Siliconによくある表示です）——アプリ自体は問題ありません。インターネット経由でダウンロードされたためmacOSがフラグを立てただけです。そのフラグを一度だけ取り除きます：</p>
+    <p style="margin:0"><b>ターミナル</b>（アプリケーション &rarr; ユーティリティ &rarr; ターミナル）を開き、これを貼り付けてReturnキーを押します：</p>
+    <span class="cmd">xattr -dr com.apple.quarantine "/Applications/Sloom Studio.app"</span>
+    <p style="margin:0">その後、普通にSloom Studioを開いてください。これはダウンロード時の検疫フラグを取り除くだけで、アプリ自体は変更しません。</p>
+  </div>
+
+  <h2>これは安全ですか？</h2>
+  <p>はい。「未署名」は「安全でない」という意味ではなく、Appleの有料証明書のプロセスをまだ通していないという意味です。Sloom Studioはローカルファーストです：あなたのプロジェクトとAPIキーはすべてあなたの端末に留まります。自分で確認したい場合は、フルのソースが<a href="https://github.com/Es00bac/signal-loom" style="color:var(--cyan)">GitHub</a>にあり、ダウンロードしたファイルを<a href="../downloads/SHA256SUMS.txt" style="color:var(--cyan)">SHA-256チェックサム</a>と照合できます。正式に署名・公証されたMac版はロードマップに含まれています。</p>
+
+  <p class="reassure">うまくいかない、何かおかしいと感じたら？ <a href="mailto:support@sloom.studio" style="color:var(--cyan)">support@sloom.studio</a>宛にメールをください。すぐに対応します。</p>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Sloom Studio
+    </a>
+    <nav class="footer-links" aria-label="フッターナビゲーション">
+      <a href="index.html">ホーム</a>
+      <a href="docs.html">ドキュメント</a>
+      <a href="examples.html">作例</a>
+      <a href="changelog.html">更新履歴</a>
+      <a href="privacy.html">プライバシー</a>
+      <a href="mailto:support@sloom.studio">support@sloom.studio</a>
+    </nav>
+    <span>&copy; 2026 Sloom Software</span>
+  </div>
+</footer>
+
+<script>
+(function(){try{
+  var ref='direct';try{if(document.referrer){var h=new URL(document.referrer).hostname;if(h&&h.indexOf('sloom.studio')===-1)ref=h.slice(0,60);}}catch(e){}
+  function ev(n,x){try{new Image().src='/e/px.gif?ev='+encodeURIComponent(n)+'&r='+encodeURIComponent(ref)+'&p=macguide_ja'+(x||'')+'&t='+Date.now();}catch(e){}}
+  ev('view');
+  document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href]');if(!a)return;var href=a.getAttribute('href')||'';if(href.indexOf('/downloads/')!==-1||href.indexOf('downloads/')===0){ev('dl','&f='+encodeURIComponent(href.split('/').pop().slice(0,40)));}},true);
+}catch(e){}})();
+</script>
+</body>
+</html>

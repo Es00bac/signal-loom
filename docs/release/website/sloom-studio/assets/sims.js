@@ -12,7 +12,7 @@
 (function(){
 'use strict';
 
-var ASSETS = 'sim-assets/';
+var ASSETS = '/sim-assets/';
 
 /* ── minimal stroke icons (lucide-style, 24 viewBox, stroke=currentColor) ── */
 function ic(paths, extra){

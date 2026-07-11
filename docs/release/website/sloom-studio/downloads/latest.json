@@ -1,6 +1,6 @@
 {
-  "version": "0.9.10",
+  "version": "0.9.11",
   "channel": "beta",
   "url": "https://sloom.studio/downloads",
-  "notes": "The cross-device release. Draw on your phone, take over in a served desktop browser, draw there, take it back — the Image baton pass now carries every stroke both ways, live, verified end-to-end on real hardware. Three deep fixes got it there: the high-resolution compositor worker no longer crashes in production builds (synced documents could render blank), synced pixels repaint immediately instead of waiting for your next brushstroke, and the phone's LAN relay no longer drops the request parameters that authorize a connected browser's edits. Licensing is verified on Android: the same offline key activates commercial exports on desktop and phone. Everything from 0.9.9 (motion comics, the pro-editing batch, the Community license model) rides along."
+  "notes": "0.9.11 focuses on production-ready print output in the Paper workspace. Spot colours now flow end-to-end: create named spot swatches, apply them to fills and text, and export real /Separation plates in PDF/X-4 and PDF/X-1a. Text can be outlined to filled vector curves, preserving strokes, tracking, and rotation instead of rasterizing. Preflight now warns when imported fonts are missing glyphs, and spot-colour preflight is honest about what will plate. Imported IDML files get an honest error if real .idml parsing is not yet supported, instead of silent garbage. The website now supports Japanese localization and adds landing pages for comic software, KDP book formatting, TTRPG layout, and small-business design tools. LAN relay and sync fixes from 0.9.10 remain in place; this release is the print-production follow-up."
 }

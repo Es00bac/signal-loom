@@ -3,12 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Documentation &mdash; Signal Loom</title>
-  <meta name="description" content="Signal Loom documentation: getting started, workspace guides for Flow, Image, Paper, and Video, Android / DeX setup, and bring-your-own-keys configuration." />
+  <title>Documentation &mdash; Sloom Studio</title>
+  <meta name="description" content="Sloom Studio documentation: getting started, workspace guides for Flow, Image, Paper, and Video, Android / DeX setup, and bring-your-own-keys configuration." />
   <meta name="theme-color" content="#020711" />
-  <meta property="og:title" content="Signal Loom Documentation" />
+  <meta property="og:title" content="Sloom Studio Documentation" />
   <meta property="og:description" content="Getting started, per-workspace guides, Android / DeX setup, and BYO API key configuration." />
   <meta property="og:image" content="/assets/graphics/feature-graphic-1024x500.png" />
+<link rel="alternate" hreflang="en" href="https://sloom.studio/docs.html" />
+<link rel="alternate" hreflang="ja" href="https://sloom.studio/ja/docs.html" />
+<link rel="alternate" hreflang="x-default" href="https://sloom.studio/docs.html" />
   <link rel="icon" type="image/png" href="assets/graphics/icon-512.png" />
   <link rel="stylesheet" href="assets/site.css" />
   <style>
@@ -182,14 +185,14 @@
 
 <header class="site-header">
   <nav class="nav-inner wrap" aria-label="Primary navigation">
-    <a class="brand" href="index.html" aria-label="Signal Loom home">
+    <a class="brand" href="index.html" aria-label="Sloom Studio home">
       <span class="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
           <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
           <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
         </svg>
       </span>
-      Signal Loom
+      Sloom Studio
     </a>
     <div class="nav-links" id="nav-links">
       <a href="index.html">Home</a>
@@ -198,6 +201,7 @@
       <a href="changelog.html">Changelog</a>
       <a href="index.html#license">Download</a>
       <a href="privacy.html">Privacy</a>
+      <a href="ja/docs.html" hreflang="ja">日本語</a>
     </div>
     <a class="nav-cta" href="index.html#license">Get it — $17.99</a>
     <button class="nav-hamburger" aria-label="Toggle navigation" onclick="document.getElementById('nav-links').classList.toggle('open')">
@@ -244,13 +248,13 @@
 
       <section id="getting-started">
         <p class="eyebrow">Getting started</p>
-        <h2>Signal Loom documentation</h2>
-        <p>Signal Loom is a local-first creative suite with four connected workspaces. Your projects are <code>.sloom</code> files that live on your device. There are no Sloom accounts, no cloud sync services, and no Sloom servers. Everything you generate or edit stays in your project unless you export it.</p>
+        <h2>Sloom Studio documentation</h2>
+        <p>Sloom Studio is a local-first creative suite with four connected workspaces. Your projects are <code>.sloom</code> files that live on your device. There are no Sloom accounts, no cloud sync services, and no Sloom servers. Everything you generate or edit stays in your project unless you export it.</p>
         <div class="callout note">
-          <p><strong>Bring your own keys.</strong> Signal Loom does not include AI usage credits or a built-in model. You connect to AI providers using your own API keys. Usage is billed directly to you by each provider.</p>
+          <p><strong>Bring your own keys.</strong> Sloom Studio does not include AI usage credits or a built-in model. You connect to AI providers using your own API keys. Usage is billed directly to you by each provider.</p>
         </div>
         <p>The four workspaces &mdash; Flow, Image, Paper, and Video &mdash; all open the same <code>.sloom</code> project and share one source library. A clip you generate in Flow is available in Image, Paper, and Video without any import step.</p>
-        <p>Signal Loom was designed around Flow &mdash; the generative node graph is its center of gravity &mdash; but AI is deliberately optional. Each workspace is a genuine standalone tool: Image saves its own <code>.slimg</code> documents, Paper its own <code>.slppr</code> documents, and the <code>.sloom</code> project is the umbrella that unites all four. Use one workspace or all of them; you can build an entire project with no AI at all by importing media or creating it by hand.</p>
+        <p>Sloom Studio was designed around Flow &mdash; the generative node graph is its center of gravity &mdash; but AI is deliberately optional. Each workspace is a genuine standalone tool: Image saves its own <code>.slimg</code> documents, Paper its own <code>.slppr</code> documents, and the <code>.sloom</code> project is the umbrella that unites all four. Use one workspace or all of them; you can build an entire project with no AI at all by importing media or creating it by hand.</p>
       </section>
 
       <section id="install">
@@ -259,47 +263,47 @@
           <li>
             <span class="step-num">1</span>
             <div class="step-body">
-              <strong>Get Signal Loom on Android</strong>
-              <p>Install Signal Loom from the <strong>Samsung Galaxy Store</strong> or <strong>Google Play</strong> — the trusted, official way, no sideloading. <em>(Both coming soon. On desktop, grab the Windows/Linux build from <a href="index.html#desktop" style="color: var(--cyan)">sloom.studio</a>.)</em></p>
+              <strong>Get Sloom Studio</strong>
+              <p><strong>Desktop is available now.</strong> Download the Windows installer, or the Linux AppImage or <code>.deb</code>, from <a href="index.html#desktop" style="color: var(--cyan)">sloom.studio</a> (experimental macOS builds are there too). On <strong>Android</strong>, Sloom Studio is coming to the <strong>Samsung Galaxy Store</strong> and <strong>Google Play</strong>, the trusted official way with no sideloading, and the same one-time key covers it.</p>
             </div>
           </li>
           <li>
             <span class="step-num">2</span>
             <div class="step-body">
-              <strong>Install from your store</strong>
-              <p>Open the Signal Loom listing in the Galaxy Store or Google Play and tap <strong>Install</strong>. It installs and auto-updates like any trusted app — no "unknown sources," no <code>.apk</code> to wrangle. No account with Sloom is created or required.</p>
+              <strong>Install it</strong>
+              <p>On desktop, run the installer on Windows, or the AppImage or <code>.deb</code> on Linux. It works offline, and no account with Sloom is created or required. On Android, once the stores are live you tap <strong>Install</strong> and it auto-updates like any trusted app: no "unknown sources," and no <code>.apk</code> to wrangle.</p>
             </div>
           </li>
           <li>
             <span class="step-num">3</span>
             <div class="step-body">
-              <strong>Open Signal Loom and, if you want AI, enter your API keys</strong>
-              <p>On first launch, tap the Settings icon to open the provider configuration panel. Add at least one API key to enable AI generation features &mdash; or skip this step entirely; every workspace works without a key. See <a href="#api-keys" style="color: var(--cyan)">API keys</a> for details.</p>
+              <strong>Open Sloom Studio and, if you want AI, enter your API keys</strong>
+              <p>On first launch, open the Settings panel (the gear icon in the top bar) to configure providers. Add at least one API key to enable AI generation features, or skip this step entirely; every workspace works without a key. See <a href="#api-keys" style="color: var(--cyan)">API keys</a> for details.</p>
             </div>
           </li>
           <li>
             <span class="step-num">4</span>
             <div class="step-body">
               <strong>Create or open a project</strong>
-              <p>Tap <strong>New Project</strong> to create a fresh <code>.sloom</code> file, or <strong>Open</strong> to load an existing one from your device storage. Projects can live anywhere accessible to Android (internal storage, SD card, or a folder you choose).</p>
+              <p>Choose <strong>New Project</strong> to create a fresh <code>.sloom</code> file, or <strong>Open</strong> to load an existing one. Projects are plain files you can keep anywhere on your device: copy them, back them up, and move them like any other file.</p>
             </div>
           </li>
         </ul>
 
         <div class="callout tip">
-          <p><strong>Tip:</strong> On Android 13 and later, Signal Loom does not request broad storage permissions. It uses the standard file picker to access only the files you choose.</p>
+          <p><strong>Android note:</strong> On Android 13 and later, Sloom Studio does not request broad storage permissions. It uses the standard file picker to access only the files you choose.</p>
         </div>
       </section>
 
       <section id="projects">
         <h2>Projects and files</h2>
-        <p>Every Signal Loom project is a single <code>.sloom</code> file. The file contains your project graph, workspace state, layer data, page layouts, timeline arrangements, and embedded or referenced source assets.</p>
+        <p>Every Sloom Studio project is a single <code>.sloom</code> file. The file contains your project graph, workspace state, layer data, page layouts, timeline arrangements, and embedded or referenced source assets.</p>
 
         <h3>Creating a project</h3>
-        <p>From any workspace, tap the Signal Loom icon in the top-left corner to open the project menu. Select <strong>New</strong> to create a project, or <strong>Open</strong> to load an existing <code>.sloom</code> file.</p>
+        <p>From any workspace, tap the Sloom Studio icon in the top-left corner to open the project menu. Select <strong>New</strong> to create a project, or <strong>Open</strong> to load an existing <code>.sloom</code> file.</p>
 
         <h3>Saving</h3>
-        <p>Signal Loom saves your project automatically as you work. You can also trigger a manual save from the project menu. The project file is always on your device &mdash; it is never uploaded to any Sloom server.</p>
+        <p>Sloom Studio saves your project automatically as you work. You can also trigger a manual save from the project menu. The project file is always on your device &mdash; it is never uploaded to any Sloom server.</p>
 
         <h3>Exporting</h3>
         <p>Each workspace has its own export options suited to its content type:</p>
@@ -354,12 +358,6 @@
         <p>The Flow workspace is a visual node graph editor for building AI generation pipelines. You wire together prompt nodes, model nodes, transformation nodes, and output nodes to create repeatable, cost-tracked generation chains.</p>
 
         <figure class="doc-shot">
-          <img src="assets/screenshots/06-flow-nodes.png"
-               alt="Flow node graph on Android showing connected prompt, generate, and export nodes" />
-          <figcaption>Flow node graph on Android. Edge drawers give access to the source library (left), panels (right), and assets (bottom).</figcaption>
-        </figure>
-
-        <figure class="doc-shot">
           <img src="assets/screenshots/weights-and-measures-flow-graph.jpg"
                alt="A large real production Flow graph for the Weights &amp; Measures comic, with panel image nodes wired to shared character and environment reference plates, a source library of saved bins on the left, and node bookmarks on the right" />
           <figcaption>A real production graph: every panel of the Weights &amp; Measures comic is generated from shared character and environment plates, so corrections propagate.</figcaption>
@@ -391,12 +389,6 @@
         <span class="tag pink" style="margin-bottom: 16px;">Image</span>
         <h2>Image workspace</h2>
         <p>The Image workspace is a full layered image editor with AI-assisted tools including generative fill and reference-guided generation. It supports all standard layer operations plus a brush engine designed for stylus input.</p>
-
-        <figure class="doc-shot">
-          <img src="assets/screenshots/01-portrait-painting.png"
-               alt="Image workspace showing a portrait painting on Android with floating tool palette" />
-          <figcaption>Portrait painting in the Image workspace. The floating palette gives quick access to brush, selection, transform, and eyedropper tools.</figcaption>
-        </figure>
 
         <h3>Layers</h3>
         <p>The Image workspace supports raster layers, vector layers, text layers, adjustment layers, and group layers. Each layer can have masks, effects (stroke, shadow, glow), and blend modes. The layers panel is accessible from the right-side drawer on phone, or as a persistent panel on tablet and DeX.</p>
@@ -439,12 +431,6 @@
         <h2>Paper workspace</h2>
         <p>Paper is a page-based layout workspace designed for comics, illustrated books, webcomics, and long-form printed documents. Pages are composed of placed images, text frames, and comic-specific elements such as panels, speech bubbles, caption boxes, and SFX decals.</p>
 
-        <figure class="doc-shot">
-          <img src="assets/screenshots/05-paper-layout.png"
-               alt="Paper workspace showing a comic page with panels and speech bubbles on Android" />
-          <figcaption>Comic page layout in the Paper workspace on Android. Panel grids, speech tooling, and text frames are all available from the toolbar.</figcaption>
-        </figure>
-
         <h3>Page setup</h3>
         <p>Create a new page from the Paper toolbar. Set the page size, orientation, margin, and bleed settings. Pages can be standard print sizes or custom dimensions for webcomic exports.</p>
 
@@ -457,8 +443,16 @@
         <h3>Linked text frames</h3>
         <p>For long-form text (book chapters, article layouts), create a text frame and link it to subsequent frames on the same or following pages. Overflow text flows automatically through the chain.</p>
 
+        <h3>Advanced typography</h3>
+        <p>Paper supports OpenType true small caps, runaround text wrap with a standoff gap around obstacles, first-line and hanging indents, and drop caps from 2 up to 8 lines. These settings render on the canvas and are preserved in print export; frames that use features the vector exporter cannot yet reproduce are rasterized so the output stays faithful rather than simplified.</p>
+
+        <h3 id="japanese-typesetting">Japanese typesetting &amp; manga tools</h3>
+        <p>Paper supports <span lang="ja">縦書き</span> (vertical, right-to-left column) writing mode as a genuine layout mode, not a cosmetic flip &mdash; a frame set to vertical renders identically on the canvas and in the exported PDF, because the same layout code drives both. Switch any text frame's writing mode from the Inspector.</p>
+        <p>Furigana and emphasis marks are typed inline, using the notation letterers already use (the Aozora/pixiv/narou conventions): write <code lang="ja">漢字《かんじ》</code> for furigana over a run of kanji, or add an explicit delimiter &mdash; <code lang="ja">｜熟語《じゅくご》</code> &mdash; to attach a reading to any base text, including kana-led or mixed words. Wrap a word in double angle brackets, <code lang="ja">《《強調》》</code>, for emphasis dots (<span lang="ja">圏点</span>/<span lang="ja">傍点</span>). In vertical columns, one- and two-digit numbers are automatically set <span lang="ja">縦中横</span> (tate-ch&#363;-yoko) &mdash; upright and horizontal &mdash; so page numbers and short digits read across the column the way novels and manga are typeset; longer numbers, like a four-digit year, stay rotated with the column.</p>
+        <p>Two manga-lettering bubble presets (Gothic and Mincho) switch a bubble's typography in one step, and a manga-digest page preset (127&nbsp;&times;&nbsp;190.5&nbsp;mm &mdash; standard tank&#333;bon trim) sits in page setup alongside the comic-book, A4, A5, and webtoon-panel sizes. Paper's preflight has a dedicated manga profile, separate from its generic, comic, and webtoon checks.</p>
+
         <h3>Export</h3>
-        <p>Export individual pages or full spreads as high-resolution PNG or JPEG. Export a full document as a print-ready PDF with embedded bleed marks. Webcomic mode exports each page as a standalone image at web resolution.</p>
+        <p>For digital, export individual pages or full spreads as high-resolution PNG or JPEG, or use Webcomic mode to emit each page as a standalone web-resolution image. For print, choose <strong>PDF/X-1a</strong> or <strong>PDF/X-4</strong>: the document is rendered to real CMYK through an embedded ICC output intent, named spot-color swatches are written as real <strong>Separation</strong> plates, and text is embedded as vector curves where supported. A dedicated <strong>KDP-ready</strong> preset produces the PDF/X-1a interior or cover PDF Amazon's print checker expects, with the correct 0.125" bleed. The Print Production Inspector exposes the PDF/X target, output-intent profile, total-ink limit, black-handling policy, spot-color policy, and overprint-preview intent. You can also export a <strong>structurally valid, spec-correct Adobe IDML package</strong> for InDesign/Affinity Publisher handoff (IDML <em>import</em> is not yet supported). The browser PDF export remains a fast RGB proof and records production intent, but it is not press-certified.</p>
 
         <figure class="doc-shot">
           <img src="assets/screenshots/paper-comic-spread.png"
@@ -479,9 +473,9 @@
         <p>The Video workspace is a timeline-based editor for assembling generated clips, Paper pages, and imported footage into finished video sequences. It supports multi-track arrangement, keyframe animation, text overlays, and export.</p>
 
         <figure class="doc-shot">
-          <img src="assets/screenshots/04-video-timeline.png"
-               alt="Video workspace showing multi-track timeline with clip thumbnails on Android" />
-          <figcaption>Multi-track timeline in the Video workspace on Android. Source bins appear in the left drawer; the preview monitor is above the timeline.</figcaption>
+          <img src="assets/screenshots/tablet-03-video-timeline.png"
+               alt="Video workspace multi-track timeline: program monitor, sequence info, and V1/V2 tracks with the editing tool strip" />
+          <figcaption>The Video workspace: a program monitor above a multi-track timeline, with select/cut/slip tools, zoom, and 1080p sequence settings.</figcaption>
         </figure>
 
         <h3>Timeline and tracks</h3>
@@ -515,7 +509,7 @@
       <section id="android-install">
         <p class="eyebrow">Android</p>
         <h2>Android installation and setup</h2>
-        <p>Signal Loom is an Android application — available now as a $17.99 purchase from <a href="index.html#license" style="color: var(--cyan)">sloom.studio</a>, with Google Play coming soon. It runs on Android phones and tablets. For the best experience with a stylus, use an S Pen-equipped device or a tablet with Wacom-protocol stylus support.</p>
+        <p>Sloom Studio's desktop apps (Windows and Linux) are available now — buy once at <a href="index.html#license" style="color: var(--cyan)">sloom.studio</a>. The Android build is coming to the <b>Samsung Galaxy Store</b> and <b>Google Play</b> (it isn't on either store yet) and isn't sold directly from the site; the same one-time key covers it. It runs on Android phones and tablets. For the best experience with a stylus, use an S Pen-equipped device or a tablet with Wacom-protocol stylus support.</p>
 
         <h3>System requirements</h3>
         <ul>
@@ -525,7 +519,7 @@
         </ul>
 
         <h3>Phone interface</h3>
-        <p>On a phone, Signal Loom uses an edge-drawer layout:</p>
+        <p>On a phone, Sloom Studio uses an edge-drawer layout:</p>
         <ul>
           <li><strong>Left edge</strong> &mdash; Source library (your assets and generated outputs)</li>
           <li><strong>Right edge</strong> &mdash; Workspace panels (layers, properties, history, channels)</li>
@@ -533,23 +527,11 @@
           <li><strong>Top bar</strong> &mdash; Workspace switcher, project actions, zoom, and settings</li>
         </ul>
         <p>A floating tool palette provides quick access to the current workspace&rsquo;s primary tools. Tap the <strong>&times;</strong> button in the top bar to hide all chrome and work full-screen; a restore button appears at the edge to bring the interface back.</p>
-
-        <figure class="doc-shot">
-          <img src="assets/screenshots/phone-chrome-portrait.png"
-               alt="Signal Loom phone interface in portrait mode showing the workspace chrome" />
-          <figcaption>Phone chrome in portrait mode. The top bar has the workspace tabs and project controls; the floating palette is visible at the left.</figcaption>
-        </figure>
       </section>
 
       <section id="dex">
         <h2>Samsung DeX and external displays</h2>
-        <p>When connected to an external display via HDMI or DeX Station, Signal Loom automatically switches to a desktop-style layout with persistent side panels, a larger canvas, and full keyboard and mouse support.</p>
-
-        <figure class="doc-shot">
-          <img src="assets/screenshots/dex-image-workspace.png"
-               alt="Image workspace in Samsung DeX showing persistent panels and large canvas" />
-          <figcaption>Image workspace in Samsung DeX. Panels are persistent, the canvas fills the display, and keyboard shortcuts are fully active.</figcaption>
-        </figure>
+        <p>When connected to an external display via HDMI or DeX Station, Sloom Studio automatically switches to a desktop-style layout with persistent side panels, a larger canvas, and full keyboard and mouse support.</p>
 
         <h3>Keyboard shortcuts</h3>
         <p>Standard shortcuts work in DeX mode: <code>Ctrl+Z</code> / <code>Ctrl+Shift+Z</code> for undo/redo, <code>B</code> for brush, <code>S</code> for selection, <code>H</code> for hand tool, <code>Ctrl+S</code> to save, <code>Space</code> to pan, and modifier keys for constrained transforms.</p>
@@ -560,7 +542,7 @@
 
       <section id="lan-host">
         <h2>Phone as LAN host</h2>
-        <p>Signal Loom can serve the full desktop interface from your Android phone to any browser on the same local network. This means you can open the complete Signal Loom UI on a laptop or desktop PC browser without installing anything on the PC &mdash; your phone handles all the computation and project storage.</p>
+        <p>Sloom Studio can serve the full desktop interface from your Android phone to any browser on the same local network. This means you can open the complete Sloom Studio UI on a laptop or desktop PC browser without installing anything on the PC &mdash; your phone handles all the computation and project storage.</p>
 
         <h3>Starting the LAN server</h3>
         <ul class="steps">
@@ -568,14 +550,14 @@
             <span class="step-num">1</span>
             <div class="step-body">
               <strong>Open the LAN host panel</strong>
-              <p>In Signal Loom settings, scroll to <strong>LAN Host</strong> and tap <strong>Start server</strong>. The app displays a local IP address and port, such as <code>http://192.168.1.42:7700</code>.</p>
+              <p>In Sloom Studio settings, scroll to <strong>LAN Host</strong> and tap <strong>Start server</strong>. The app displays a local IP address and port, such as <code>http://192.168.1.42:7700</code>.</p>
             </div>
           </li>
           <li>
             <span class="step-num">2</span>
             <div class="step-body">
               <strong>Open the address in a browser on your PC</strong>
-              <p>Type the address shown on your phone into any modern browser on the same Wi-Fi network. The full Signal Loom desktop workspace loads in the browser tab.</p>
+              <p>Type the address shown on your phone into any modern browser on the same Wi-Fi network. The full Sloom Studio desktop workspace loads in the browser tab.</p>
             </div>
           </li>
           <li>
@@ -597,7 +579,7 @@
         <p>The LAN host does more than mirror a screen &mdash; the phone and the desktop browser open the <strong>same live project</strong>. Changes flow both ways across the four workspaces: Flow graph edits, Paper page layouts, Image strokes and layer operations, and the shared source library all stay in step over your local network.</p>
 
         <h3>One editor at a time: the baton</h3>
-        <p>To keep two screens from fighting over the same change, Signal Loom uses a single edit lock &mdash; the <strong>baton</strong>. Only the device holding the baton can make changes; the other follows along as a live, read-only mirror. The phone is the project&rsquo;s home and starts with the baton.</p>
+        <p>To keep two screens from fighting over the same change, Sloom Studio uses a single edit lock &mdash; the <strong>baton</strong>. Only the device holding the baton can make changes; the other follows along as a live, read-only mirror. The phone is the project&rsquo;s home and starts with the baton.</p>
         <ul class="steps">
           <li>
             <span class="step-num">1</span>
@@ -629,7 +611,7 @@
 
       <section id="gamepad">
         <h2>Game controller support</h2>
-        <p>Signal Loom has built-in support for game controllers. Connect a standard Xbox, PlayStation, or generic gamepad over USB or Bluetooth and drive the interface with physical buttons and sticks instead of reaching across the screen. It is especially handy on <strong>Android and Samsung DeX</strong>, where a paired Bluetooth controller gives you fast, eyes-up, tactile control of the app.</p>
+        <p>Sloom Studio has built-in support for game controllers. Connect a standard Xbox, PlayStation, or generic gamepad over USB or Bluetooth and drive the interface with physical buttons and sticks instead of reaching across the screen. It is especially handy on <strong>Android and Samsung DeX</strong>, where a paired Bluetooth controller gives you fast, eyes-up, tactile control of the app.</p>
 
         <h3>Configuring bindings</h3>
         <p>Open <strong>Settings &rarr; Gamepad</strong> to view and remap every control. Bindings are organised <strong>per workspace</strong> &mdash; Flow, Image, Paper, and Video each keep their own profile, so the same button can do different things depending on where you are. Every face button, bumper, trigger, D-pad direction, stick press, and both analog sticks are mappable, and for each control you can tune the <strong>dead zone</strong>, <strong>sensitivity</strong>, <strong>analog response curve</strong> (linear, quadratic, or cubic), inversion, and trigger range. Profiles save with your settings and can be exported and imported.</p>
@@ -661,7 +643,7 @@
           <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
         </svg>
       </span>
-      Signal Loom
+      Sloom Studio
     </a>
     <nav class="footer-links" aria-label="Footer navigation">
       <a href="index.html">Home</a>

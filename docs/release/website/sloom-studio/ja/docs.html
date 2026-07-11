@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ドキュメント &mdash; Sloom Studio</title>
+  <meta name="description" content="Sloom Studioのドキュメント：はじめかた、Flow・Image・Paper・Videoの各ワークスペースガイド、Android / DeXのセットアップ、自分のAPIキーの設定方法。" />
+  <meta name="theme-color" content="#020711" />
+  <meta property="og:title" content="Sloom Studio ドキュメント" />
+  <meta property="og:description" content="はじめかた、各ワークスペースのガイド、Android / DeXのセットアップ、自分のAPIキーの設定。" />
+  <meta property="og:image" content="/assets/graphics/feature-graphic-1024x500.png" />
+<link rel="alternate" hreflang="en" href="https://sloom.studio/docs.html" />
+<link rel="alternate" hreflang="ja" href="https://sloom.studio/ja/docs.html" />
+<link rel="alternate" hreflang="x-default" href="https://sloom.studio/docs.html" />
+  <link rel="icon" type="image/png" href="../assets/graphics/icon-512.png" />
+  <link rel="stylesheet" href="../assets/site.css" />
+  <style>
+    body {
+      background:
+        radial-gradient(ellipse 60% 30% at 20% 10%, rgba(41,217,255,.10) 0%, transparent 55%),
+        linear-gradient(180deg, #07111f 0%, var(--bg) 50%);
+    }
+
+    /* ── Docs layout ── */
+    .docs-layout {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 0;
+      align-items: start;
+      padding-block: 48px;
+    }
+
+    /* Sidebar */
+    .docs-sidebar {
+      position: sticky;
+      top: 82px;
+      padding-right: 32px;
+    }
+    .sidebar-group { margin-bottom: 28px; }
+    .sidebar-group-label {
+      font-size: .7rem; font-weight: 900; letter-spacing: .18em;
+      text-transform: uppercase; color: var(--dim);
+      margin-bottom: 8px; padding-left: 10px;
+    }
+    .sidebar-link {
+      display: block;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      font-size: .88rem; color: var(--muted); font-weight: 600;
+      transition: color .15s, background .15s;
+      border-left: 2px solid transparent;
+    }
+    .sidebar-link:hover {
+      color: #fff; background: var(--cyan-soft);
+      border-left-color: var(--cyan);
+    }
+    .sidebar-link.active {
+      color: var(--cyan); background: var(--cyan-soft);
+      border-left-color: var(--cyan);
+    }
+
+    /* Content */
+    .docs-content { min-width: 0; }
+    .docs-content section {
+      padding-block: 52px;
+      border-top: 1px solid var(--line);
+    }
+    .docs-content section:first-child { border-top: none; padding-top: 0; }
+
+    .docs-content h2 {
+      font-size: clamp(1.6rem, 3vw, 2.4rem);
+      margin-bottom: 18px;
+    }
+    .docs-content h3 {
+      font-size: 1.18rem;
+      margin-top: 32px; margin-bottom: 12px;
+    }
+    .docs-content h4 {
+      font-size: .82rem; font-weight: 900; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--cyan);
+      margin-top: 24px; margin-bottom: 8px;
+    }
+    .docs-content p { margin-bottom: 16px; font-size: .97rem; line-height: 1.7; }
+    .docs-content ul, .docs-content ol {
+      margin-bottom: 16px; display: grid; gap: 6px;
+    }
+    .docs-content li { font-size: .95rem; color: var(--muted); line-height: 1.6; }
+
+    /* Callout boxes */
+    .callout {
+      border-left: 3px solid var(--cyan);
+      background: var(--cyan-soft);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      padding: 14px 18px;
+      margin-bottom: 20px;
+    }
+    .callout.note  { border-color: var(--cyan); background: var(--cyan-soft); }
+    .callout.warn  { border-color: var(--gold); background: var(--gold-soft); }
+    .callout.tip   { border-color: var(--green); background: rgba(114,246,177,.1); }
+    .callout p { margin: 0; font-size: .92rem; color: var(--text); }
+    .callout strong { color: #fff; }
+
+    /* Code / inline code */
+    code {
+      background: rgba(41,217,255,.1);
+      border: 1px solid rgba(41,217,255,.18);
+      border-radius: 5px;
+      padding: .15em .42em;
+      font-family: "SF Mono", "Fira Code", ui-monospace, monospace;
+      font-size: .87em;
+      color: var(--cyan);
+    }
+
+    /* Step list */
+    .steps { list-style: none; padding: 0; display: grid; gap: 16px; }
+    .steps li {
+      display: grid;
+      grid-template-columns: 32px 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+    .step-num {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      border: 1px solid var(--line-strong);
+      background: rgba(41,217,255,.1);
+      color: var(--cyan);
+      font-weight: 900; font-size: .82rem;
+      display: grid; place-items: center;
+      flex-shrink: 0;
+    }
+    .step-body { padding-top: 4px; }
+    .step-body strong { display: block; color: #fff; margin-bottom: 4px; font-size: .95rem; }
+    .step-body p { margin: 0; font-size: .9rem; }
+
+    /* Screenshot inline */
+    .doc-shot {
+      margin-block: 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+      background: #000;
+    }
+    .doc-shot img { width: 100%; display: block; }
+    .doc-shot figcaption {
+      padding: 10px 16px;
+      font-size: .8rem; color: var(--dim);
+      border-top: 1px solid var(--line);
+    }
+
+    /* Feature table */
+    .feat-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+    .feat-table th {
+      text-align: left; padding: 10px 14px;
+      border-bottom: 1px solid var(--line-strong);
+      font-size: .78rem; font-weight: 900; letter-spacing: .1em;
+      text-transform: uppercase; color: var(--cyan);
+    }
+    .feat-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: .9rem; color: var(--muted);
+      vertical-align: top;
+    }
+    .feat-table tr:last-child td { border-bottom: none; }
+
+    @media (max-width: 840px) {
+      .docs-layout { grid-template-columns: 1fr; }
+      .docs-sidebar {
+        position: static;
+        padding-right: 0;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 24px;
+        margin-bottom: 24px;
+        display: flex; flex-wrap: wrap; gap: 6px;
+      }
+      .sidebar-group { margin: 0; }
+      .sidebar-group-label { display: none; }
+      .sidebar-link { padding: 7px 12px; }
+    }
+  </style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav-inner wrap" aria-label="メインナビゲーション">
+    <a class="brand" href="index.html" aria-label="Sloom Studio ホーム">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Sloom Studio
+    </a>
+    <div class="nav-links" id="nav-links">
+      <a href="index.html">ホーム</a>
+      <a href="docs.html" aria-current="page">ドキュメント</a>
+      <a href="examples.html">作例</a>
+      <a href="changelog.html">更新履歴</a>
+      <a href="index.html#license">ダウンロード</a>
+      <a href="privacy.html">プライバシー</a>
+      <a href="../docs.html" hreflang="en">English</a>
+    </div>
+    <a class="nav-cta" href="index.html#license">¥3,000で購入</a>
+    <button class="nav-hamburger" aria-label="メニューの表示切り替え" onclick="document.getElementById('nav-links').classList.toggle('open')">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="docs-layout">
+
+    <!-- ── Sidebar ── -->
+    <aside class="docs-sidebar" aria-label="Documentation navigation">
+      <div class="sidebar-group">
+        <div class="sidebar-group-label">はじめに</div>
+        <a class="sidebar-link active" href="#getting-started">概要</a>
+        <a class="sidebar-link" href="#install">インストール</a>
+        <a class="sidebar-link" href="#projects">プロジェクトとファイル</a>
+        <a class="sidebar-link" href="#api-keys">APIキー</a>
+      </div>
+      <div class="sidebar-group">
+        <div class="sidebar-group-label">ワークスペース</div>
+        <a class="sidebar-link" href="#flow">Flow</a>
+        <a class="sidebar-link" href="#image">Image</a>
+        <a class="sidebar-link" href="#paper">Paper</a>
+        <a class="sidebar-link" href="#video">Video</a>
+      </div>
+      <div class="sidebar-group">
+        <div class="sidebar-group-label">ソースライブラリ</div>
+        <a class="sidebar-link" href="#library">共有ライブラリ</a>
+      </div>
+      <div class="sidebar-group">
+        <div class="sidebar-group-label">Android</div>
+        <a class="sidebar-link" href="#android-install">インストールと設定</a>
+        <a class="sidebar-link" href="#dex">Samsung DeX</a>
+        <a class="sidebar-link" href="#lan-host">スマホをLANホストに</a>
+        <a class="sidebar-link" href="#cross-device">デバイス間同期</a>
+        <a class="sidebar-link" href="#gamepad">ゲームコントローラー</a>
+      </div>
+    </aside>
+
+    <!-- ── Content ── -->
+    <div class="docs-content">
+
+      <section id="getting-started">
+        <p class="eyebrow">はじめに</p>
+        <h2>Sloom Studio ドキュメント</h2>
+        <p>Sloom Studioは、4つのワークスペースがつながったローカルファーストの創作スイートです。プロジェクトはあなたの端末上にある<code>.sloom</code>ファイルです。Sloomアカウントも、クラウド同期サービスも、Sloomのサーバーもありません。生成・編集したものはすべて、書き出さない限りプロジェクトの中にとどまります。</p>
+        <div class="callout note">
+          <p><strong>自分のキーを使います。</strong>Sloom StudioにはAI利用のクレジットや内蔵モデルは含まれません。自分のAPIキーでAIプロバイダーに接続します。利用料は各プロバイダーから直接あなたに請求されます。</p>
+        </div>
+        <p>Flow・Image・Paper・Videoの4つのワークスペースはすべて、同じ<code>.sloom</code>プロジェクトを開き、ひとつのソースライブラリを共有します。Flowで生成したクリップは、取り込み作業なしにImage・Paper・Videoで使えます。</p>
+        <p>Sloom StudioはFlowを中心に設計されました——生成的なノードグラフがその重心です——ですが、AIは意図的に任意のものです。各ワークスペースは正真正銘、単体で完結したツールです：Imageは自前の<code>.slimg</code>文書を、Paperは自前の<code>.slppr</code>文書を保存し、<code>.sloom</code>プロジェクトはその4つをまとめる傘です。ひとつだけ使うことも、全部使うこともでき、素材を取り込むか手で作るかすれば、AIをまったく使わずにプロジェクト全体を作り上げることもできます。</p>
+      </section>
+
+      <section id="install">
+        <h2>インストール</h2>
+        <ul class="steps">
+          <li>
+            <span class="step-num">1</span>
+            <div class="step-body">
+              <strong>Sloom Studioを入手する</strong>
+              <p><strong>デスクトップ版は今すぐ利用できます。</strong><a href="index.html#desktop" style="color: var(--cyan)">sloom.studio</a>からWindowsインストーラー、またはLinuxのAppImageや<code>.deb</code>をダウンロードしてください（実験的なmacOS版もそこにあります）。<strong>Android</strong>版は、正規かつ信頼できる方法で、サイドロード不要の<strong>Samsung Galaxy Store</strong>と<strong>Google Play</strong>に近日登場予定で、同じ一度きりのキーでカバーされます。</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">2</span>
+            <div class="step-body">
+              <strong>インストールする</strong>
+              <p>デスクトップでは、Windowsならインストーラーを、Linuxなら AppImage か <code>.deb</code> を実行してください。オフラインで動作し、Sloomのアカウントは作成も必要もありません。Androidでは、ストアが公開されたら<strong>インストール</strong>をタップするだけで、他の信頼できるアプリと同じように自動更新されます。「提供元不明のアプリ」の設定も、<code>.apk</code>を扱う必要もありません。</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">3</span>
+            <div class="step-body">
+              <strong>Sloom Studioを開き、AIを使うならAPIキーを入力する</strong>
+              <p>初回起動時に、設定パネル（上部バーの歯車アイコン）を開いてプロバイダーを設定します。AI生成機能を使うには少なくとも1つのAPIキーを追加してください。このステップを丸ごと省略してもかまいません。すべてのワークスペースはキーなしで動作します。詳しくは<a href="#api-keys" style="color: var(--cyan)">APIキー</a>をご覧ください。</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">4</span>
+            <div class="step-body">
+              <strong>プロジェクトを作成または開く</strong>
+              <p><strong>新規プロジェクト</strong>を選んで新しい<code>.sloom</code>ファイルを作成するか、<strong>開く</strong>を選んで既存のファイルを読み込みます。プロジェクトは端末のどこにでも置ける普通のファイルで、他のファイルと同じようにコピー、バックアップ、移動ができます。</p>
+            </div>
+          </li>
+        </ul>
+
+        <div class="callout tip">
+          <p><strong>Androidに関する注記：</strong>Android 13以降では、Sloom Studioは広範なストレージ権限を要求しません。あなたが選んだファイルにのみアクセスする、標準のファイルピッカーを使用します。</p>
+        </div>
+      </section>
+
+      <section id="projects">
+        <h2>プロジェクトとファイル</h2>
+        <p>Sloom Studioのプロジェクトは、それぞれひとつの<code>.sloom</code>ファイルです。このファイルには、プロジェクトグラフ、ワークスペースの状態、レイヤーデータ、ページレイアウト、タイムラインの構成、埋め込みまたは参照されたソースアセットが含まれます。</p>
+
+        <h3>プロジェクトを作成する</h3>
+        <p>どのワークスペースからでも、左上のSloom Studioアイコンをタップしてプロジェクトメニューを開きます。<strong>新規</strong>を選んでプロジェクトを作成するか、<strong>開く</strong>を選んで既存の<code>.sloom</code>ファイルを読み込みます。</p>
+
+        <h3>保存する</h3>
+        <p>Sloom Studioは作業中、プロジェクトを自動的に保存します。プロジェクトメニューから手動保存を行うこともできます。プロジェクトファイルは常にあなたの端末上にあり&mdash;Sloomのサーバーにアップロードされることは一切ありません。</p>
+
+        <h3>書き出す</h3>
+        <p>各ワークスペースには、そのコンテンツの種類に合わせた独自の書き出しオプションがあります：</p>
+        <ul>
+          <li><strong>Flow：</strong>生成したアセットを個別にソースライブラリまたは端末のギャラリーに書き出します。</li>
+          <li><strong>Image：</strong>書き出しパネルからPNG、JPEG、その他の形式で書き出します。</li>
+          <li><strong>Paper：</strong>ページをラスター画像として、または印刷対応PDFとして書き出します。</li>
+          <li><strong>Video：</strong>組み立てたタイムラインを動画ファイルとして書き出します。</li>
+        </ul>
+
+        <div class="callout warn">
+          <p><strong>ファイルサイズについて：</strong>生成された画像やメディアが埋め込まれるため、大きな<code>.sloom</code>プロジェクトはサイズが大きくなることがあります。高解像度の出力を扱う場合は、ソースライブラリの外部参照モードを使うとプロジェクトファイルを小さく保てます。</p>
+        </div>
+      </section>
+
+      <section id="api-keys">
+        <h2>APIキーの設定</h2>
+        <p>どのワークスペースからでも、上部バーの設定アイコンをタップして設定パネルを開きます。各プロバイダーには専用の設定セクションがあります。</p>
+
+        <table class="feat-table">
+          <thead>
+            <tr><th>プロバイダー</th><th>必要なもの</th><th>備考</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Google Gemini</td><td>Google AI StudioのGemini APIキー</td><td>テスト用の無料枠あり</td></tr>
+            <tr><td>Google Vertex AI</td><td>サービスアカウントのJSON、またはAPIキー + プロジェクトID</td><td>エンタープライズ向け。GCP上でプロジェクト単位で課金</td></tr>
+            <tr><td>OpenAI</td><td>OpenAI APIキー</td><td>互換エンドポイントでも動作</td></tr>
+            <tr><td>Hugging Face</td><td>HF Inference APIトークン</td><td>多数のオープンモデルが利用可能</td></tr>
+            <tr><td>Stability AI</td><td>Stability AI APIキー</td><td>Stable Diffusionによる画像生成</td></tr>
+            <tr><td>Black Forest Labs</td><td>BFL APIキー</td><td>FLUXモデルファミリー</td></tr>
+            <tr><td>Atlas Cloud</td><td>Atlas APIキー</td><td>Atlas生成ゲートウェイ</td></tr>
+            <tr><td>ElevenLabs</td><td>ElevenLabs APIキー</td><td>Flowでの音声・ボイス生成</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout note">
+          <p><strong>キーはあなたの端末に留まり&mdash;保存時も暗号化されます。</strong>APIキーは、デスクトップではOSのセキュアストア（Electronの<code>safeStorage</code>）で、ウェブとAndroidではWebCryptoで封印されます。Sloomに送信されることは一切なく、特定の操作のために設定したプロバイダーにのみ送られます。</p>
+        </div>
+
+        <h3>暗号化された設定バックアップ</h3>
+        <p>設定画面から、プロバイダーキー・各種設定・ゲームパッドのプロファイルを含む全設定の<strong>暗号化バックアップを書き出し</strong>、別の端末に再インポートできます。バックアップファイルは自分で選んだパスフレーズで暗号化されるため、保存やデバイス間の移動も安全です。</p>
+
+        <h3>生成操作ごとにプロバイダーを選ぶ</h3>
+        <p>Flowでは、各生成ノードに<strong>プロバイダー</strong>のドロップダウンがあります。そのノードで使いたいプロバイダーとモデルを選んでください。Imageでは、ジェネレーティブフィルと参照画像付き生成のパネルに、それぞれ独自のプロバイダー選択があります。PaperとVideoは生成を直接実行せず、FlowとImageで生成されたアセットを利用します。</p>
+      </section>
+
+      <!-- ──────── WORKSPACES ──────── -->
+
+      <section id="flow">
+        <span class="tag" style="margin-bottom: 16px;">Flow</span>
+        <h2>Flow ワークスペース</h2>
+        <p>FlowワークスペースはAI生成パイプラインを構築するための、ビジュアルなノードグラフエディタです。プロンプトノード、モデルノード、変換ノード、出力ノードを配線して、再現可能でコストが追跡された生成チェーンを作ります。</p>
+
+        <figure class="doc-shot">
+          <img src="../assets/screenshots/weights-and-measures-flow-graph.jpg"
+               alt="Weights & Measuresコミックのための、実際の大規模なプロダクションFlowグラフ。コマの画像ノードが共有のキャラクター・環境の参照プレートに配線され、左にはビンとして保存されたソースライブラリ、右にはノードのブックマークが見える" />
+          <figcaption>実際のプロダクショングラフ：Weights & Measuresコミックのすべてのコマは、共有のキャラクター・環境プレートから生成されるため、修正が全体に反映されます。</figcaption>
+        </figure>
+
+        <h3>ノードの種類</h3>
+        <ul>
+          <li><strong>プロンプトノード</strong> &mdash; 生成ノードに送られるテキスト入力</li>
+          <li><strong>テキストノード</strong> &mdash; プロンプトやラベル用の固定・パラメータ化されたテキスト</li>
+          <li><strong>画像生成ノード</strong> &mdash; 選んだプロバイダーを呼び出して画像を生成</li>
+          <li><strong>動画生成ノード</strong> &mdash; プロンプトまたは元画像から動画クリップを生成</li>
+          <li><strong>音声ノード</strong> &mdash; ElevenLabsまたは互換サービスによる音声・サウンド生成</li>
+          <li><strong>合成ノード</strong> &mdash; 生成された出力を組み合わせ・重ね合わせ</li>
+          <li><strong>書き出しノード</strong> &mdash; 結果をソースライブラリまたは端末ストレージに送る</li>
+        </ul>
+
+        <h3>グラフを実行する</h3>
+        <p>上部バーの<strong>実行</strong>をタップします。Flowは依存関係の順序でノードを実行します。各生成ノードは、実行の前後でプロバイダー、モデル、コスト見積もりを表示します。結果はノードの出力サムネイルに表示され、自動的にソースライブラリに追加されます。</p>
+
+        <h3>コストの追跡</h3>
+        <p>実行サマリーパネルには、現在の実行の推定コスト（プロバイダーのAPIが何を返すかによって、トークン数またはドル建て）と、プロジェクトセッションの累計が表示されます。プロバイダーのダッシュボードに切り替えなくても支出を把握できます。</p>
+
+        <div class="callout tip">
+          <p><strong>ヒント：</strong>ソースライブラリの<strong>生成プール</strong>ビンを使うと、あるFlow実行のすべての出力を確認し、Image・Paper・Videoに直接ドラッグできます。</p>
+        </div>
+      </section>
+
+      <section id="image">
+        <span class="tag pink" style="margin-bottom: 16px;">Image</span>
+        <h2>Image ワークスペース</h2>
+        <p>Imageワークスペースは、ジェネレーティブフィルや参照画像付き生成を含むAI支援ツールを備えた、フル機能のレイヤー式画像エディタです。標準的なレイヤー操作全般に加え、スタイラス入力向けに設計されたブラシエンジンを備えています。</p>
+
+        <h3>レイヤー</h3>
+        <p>Imageワークスペースは、ラスターレイヤー、ベクターレイヤー、テキストレイヤー、調整レイヤー、グループレイヤーに対応しています。各レイヤーにはマスク、効果（ストローク、シャドウ、グロー）、ブレンドモードを設定できます。レイヤーパネルは、スマホでは右側のドロワーから、タブレットとDeXでは常時表示のパネルとしてアクセスできます。</p>
+
+        <h3>ブラシエンジン</h3>
+        <p>ブラシエンジンはスタイラス入力を余さず読み取ります：筆圧（太さと不透明度）、傾き（広がりと方向）、回転（スタンプの角度）。カラーダイナミクスにより、前景色から背景色への変化を筆圧やペンの向きに対応させられます。3Dチッププレビューが、描く前に現在のブラシ形状を示します。</p>
+        <h4>修飾ジェスチャー</h4>
+        <ul>
+          <li><strong>Shift &mdash; 直線。</strong>ブラシ系のツールで描いている間<code>Shift</code>を押し続けると、点から点への完全な直線ストロークが引けます。点から点へタップしていくと、連結した線分をつなげられます。</li>
+          <li><strong>Alt &mdash; 修復・スタンプの基準点。</strong><code>Alt</code>+クリック（タッチでは基準点ボタンの長押し）でスポット修復・スタンプツールのサンプル位置を設定し、そこから描画してコピーまたはブレンドします。</li>
+        </ul>
+        <div class="callout tip">
+          <p><strong>ヒント：</strong>Androidでは、ハードウェアの音量キーをブラシサイズに割り当てられるため、キャンバスから手を離さずにサイズ変更できます。</p>
+        </div>
+
+        <figure class="doc-shot">
+          <img src="../assets/screenshots/image-brush-engine.png"
+               alt="デスクトップのブラシエンジンパネル。傾き、筆圧、カラーダイナミクスが表示されている" />
+          <figcaption>デスクトップのブラシエンジンパネル。筆圧、傾き、回転、カラーダイナミクスは、すべてブラシごとに設定可能です。</figcaption>
+        </figure>
+
+        <h3>ジェネレーティブフィル</h3>
+        <p>選択ツールでキャンバス上の範囲を選び、ジェネレーティブフィルパネルを開きます。その範囲に欲しい内容を記述し、プロバイダーを選びます。結果は選択した場所のレイヤーに溶け込むように合成されます。</p>
+
+        <figure class="doc-shot">
+          <img src="../assets/screenshots/image-generative-fill.png"
+               alt="デスクトップでのジェネレーティブフィルの結果：ある範囲がAI生成コンテンツに置き換えられている" />
+          <figcaption>デスクトップでのジェネレーティブフィル。範囲を選択し、内容を記述すると、モデルがアクティブレイヤー上でその場所を埋めます。</figcaption>
+        </figure>
+
+        <h3>参照画像付き生成</h3>
+        <p>ソースライブラリから元画像を参照パネルにドラッグし、生成操作を実行します。参照画像に対応するモデル（一部のFLUXバリアントやGeminiの画像編集モードなど）は、その参照をスタイル・構図・被写体の同一性のガイドとして使います。</p>
+
+        <h3>書き出し</h3>
+        <p>書き出しパネルを開き、統合した合成結果または個別のレイヤーをPNG、JPEG、WebPとして保存します。プロジェクトを離れることなく、結果をソースアセットとしてPaperやVideoに送ることもできます。</p>
+      </section>
+
+      <section id="paper">
+        <span class="tag gold" style="margin-bottom: 16px;">Paper</span>
+        <h2>Paper ワークスペース</h2>
+        <p>Paperは、コミック、イラスト入りの書籍、ウェブコミック、長文の印刷物向けに設計された、ページ単位のレイアウトワークスペースです。ページは、配置した画像、テキストフレーム、コマ・吹き出し・キャプションボックス・SFXデカールといったコミック特有の要素で構成されます。</p>
+
+        <h3>ページ設定</h3>
+        <p>Paperのツールバーから新しいページを作成します。ページサイズ、向き、余白、断ち落としの設定を行います。標準的な印刷サイズにも、ウェブコミック書き出し用のカスタム寸法にも対応します。</p>
+
+        <h3>コマ割りグリッド</h3>
+        <p>ページにコマ割りグリッドを挿入して、コミックのコマに分割します。ハンドルをドラッグして、ガター幅、行数・列数、個々のコマサイズを調整します。各コマは独立したフレームで、ソースライブラリの画像やラスターのペイントレイヤーを内包できます。</p>
+
+        <h3>吹き出し・キャプションツール</h3>
+        <p>挿入メニューから、吹き出し、心の声の吹き出し、キャプションボックス、SFXテキストデカールを追加します。各要素には固有のテキスト、尻尾の向き、スタイル設定があります。吹き出しは、脚本的なワークフローのために読み順のチェーンでリンクできます。</p>
+
+        <h3>連結テキストフレーム</h3>
+        <p>長文テキスト（書籍の章、記事レイアウト）向けに、テキストフレームを作成し、同じページまたは後続のページの次のフレームにリンクさせます。あふれたテキストはそのチェーンを通じて自動的に流れます。</p>
+
+        <h3>高度なタイポグラフィ</h3>
+        <p>PaperはOpenTypeのトゥルースモールキャップス、障害物周りにスタンドオフの余白を持つ回り込みテキストラップ、ファーストラインおよびハンギングインデント、2行から8行までのドロップキャップに対応しています。これらの設定はキャンバス上にレンダリングされ、印刷書き出しでも保持されます。ベクトル書き出しエンジンがまだ再現できない機能を使うフレームは、簡略化されるのではなく正確に保たれるようラスタライズされます。</p>
+
+        <h3 id="japanese-typesetting">日本語組版とマンガツール</h3>
+        <p>Paperは<span lang="ja">縦書き</span>（右から左への段組み）モードを、見た目だけの反転ではなく、正真正銘のレイアウトモードとしてサポートしています&mdash;縦書きに設定したフレームは、キャンバス上と書き出したPDFの両方で同一に描画されます。同じレイアウトコードが両方を駆動しているからです。任意のテキストフレームの書字方向は、インスペクタから切り替えられます。</p>
+        <p>ルビと傍点はインライン記法で入力します。レタラーがすでに使っている記法（青空文庫・pixiv・なろう系の慣習）に従います：漢字の連続に対するルビには<code lang="ja">漢字《かんじ》</code>のように書き、かな始まりや混在した語を含む任意の親文字にルビを付けるには、明示的な区切り記号&mdash;<code lang="ja">｜熟語《じゅくご》</code>&mdash;を追加します。語を二重山括弧で囲む<code lang="ja">《《強調》》</code>で、傍点（<span lang="ja">圏点</span>/<span lang="ja">傍点</span>）が付きます。縦の段組みでは、1〜2桁の数字は自動的に<span lang="ja">縦中横</span>（正立・横並び）に設定されるため、ノンブルや短い数字は小説やマンガの組版と同じように段を横切って読めます。4桁の年号のような長い数字は、段に沿って回転したままになります。</p>
+        <p>2種類のマンガレタリング用吹き出しプリセット（ゴシックと明朝）が、ワンステップで吹き出しの書体を切り替えます。また、マンガダイジェストのページプリセット（127&nbsp;&times;&nbsp;190.5&nbsp;mm&mdash;標準的な単行本のトリムサイズ）が、コミックブック、A4、A5、webtoonパネルの各サイズと並んでページ設定にあります。Paperのプリフライトには、汎用・コミック・webtoon各チェックとは別に、専用のマンガプロファイルがあります。</p>
+
+        <figure class="doc-shot">
+          <img src="../assets/screenshots/paper-japanese-vertical-comic.png"
+               alt="Paperワークスペースで組まれた日本語縦書きコミックページ。ルビと吹き出しが入り、ソースビンサイドバーが日本語UIで表示されている" />
+          <figcaption>Paperで組まれた日本語縦書きのコミックページ&mdash;ルビ、吹き出し、日本語UIのソースビンサイドバーが見える。</figcaption>
+        </figure>
+
+        <h3>書き出し</h3>
+        <p>デジタル用には、個別のページや見開きを高解像度のPNGまたはJPEGとして書き出したり、Webcomicモードで各ページをWeb解像度の単体画像として出力したりできます。印刷用には<strong>PDF/X-1a</strong>または<strong>PDF/X-4</strong>を選択します。ドキュメントは埋め込まれたICCアウトプットインテントを通じて実際のCMYKにレンダリングされ、名前付きスポットカラースウォッチは実際の<strong>Separation</strong>版として書き込まれ、テキストはサポートされる場合はベクトル曲線として埋め込まれます。専用の<strong>KDP対応</strong>プリセットは、Amazonの印刷チェッカーが求める正しい0.125インチの断ち落とし付きのPDF/X-1a本文・表紙PDFを生成します。Print Production Inspectorからは、PDF/Xターゲット、アウトプットインテントプロファイル、総インキ量制限、ブラック処理ポリシー、スポットカラーポリシー、オーバープリントプレビューインテントを設定できます。InDesign/Affinity Publisherへの受け渡し用に、<strong>構造的に有効で仕様通りのAdobe IDMLパッケージ</strong>も書き出せます（IDML<em>インポート</em>はまだ未対応です）。ブラウザPDF書き出しは迅速なRGBプルーフとして機能し、印刷意図を記録しますが、プレス認証済みではありません。</p>
+
+        <figure class="doc-shot">
+          <img src="../assets/screenshots/paper-comic-spread.png"
+               alt="デスクトップアプリのPaperワークスペースでレイアウトされた完成済みのコミック見開き" />
+          <figcaption>デスクトップのPaperワークスペースで組んだ完成済みのコミック見開き&mdash;コマ割りグリッド、連結した吹き出し、印刷対応ページ上のキャプションボックス。</figcaption>
+        </figure>
+
+        <figure class="doc-shot">
+          <img src="../assets/screenshots/weights-and-measures-paper-spread.jpg"
+               alt="Paperワークスペースでレイアウトされた完成済みのWeights & Measuresコミック見開き。砂漠の町を映す扉ページと、コールドアイルの研究室ページに吹き出しが入り、右側にPaper Inspectorパネルが開いている" />
+          <figcaption>同じ号をPaperで組んだもの&mdash;コマ割り、吹き出し、印刷用の各設定。</figcaption>
+        </figure>
+      </section>
+
+      <section id="video">
+        <span class="tag green" style="margin-bottom: 16px;">Video</span>
+        <h2>Video ワークスペース</h2>
+        <p>Videoワークスペースは、生成したクリップ、Paperのページ、取り込んだ映像を完成した動画シーケンスに組み立てる、タイムライン式のエディタです。マルチトラックの配置、キーフレームアニメーション、テキストオーバーレイ、書き出しに対応しています。</p>
+
+        <figure class="doc-shot">
+          <img src="../assets/screenshots/tablet-03-video-timeline.png"
+               alt="Videoワークスペースのマルチトラックタイムライン：プログラムモニター、シーケンス情報、編集ツールストリップつきのV1/V2トラック" />
+          <figcaption>Videoワークスペース：マルチトラックタイムラインの上にプログラムモニターがあり、選択・カット・スリップツール、ズーム、1080pのシーケンス設定を備える。</figcaption>
+        </figure>
+
+        <h3>タイムラインとトラック</h3>
+        <p>タイムラインに映像、音声、画像、テキストのトラックを追加します。クリップは再生ヘッドや互いにスナップします。端をドラッグしてクリップのサイズを変更します。ドラッグしてクリップを移動します。タイムラインはプロジェクトに必要な数だけトラックに対応します。</p>
+
+        <h3>キーフレームアニメーション</h3>
+        <p>クリップを選択し、プロパティパネルを開いて、不透明度・スケール・位置・回転のキーフレームを追加します。キーフレームはタイムライントラック上にひし形で表示されます。ドラッグしてタイミングを調整し、ダブルタップで値を編集します。</p>
+
+        <h3>テキストと図形のオーバーレイ</h3>
+        <p>テキストトラックを挿入し、タイミング付きのテキストクリップを追加します。各テキストクリップには固有のフォント、サイズ、色、位置があります。ロワーサード、タイトルカード、タイムラインに追従するグラフィック要素には図形オーバーレイを使います。</p>
+
+        <h3>ソースビンとPaperのページ</h3>
+        <p>左のドロワーには、プロジェクトの他の部分と共有されるソースビンがあります。Flowで生成したクリップや画像を映像トラックに直接ドラッグできます。Paperのページは静止フレームとして映像トラックに配置でき、コミックのシーケンスやスライドショーのアニメーション化が簡単に行えます。</p>
+
+        <h3>書き出し</h3>
+        <p>タイムラインの準備ができたら、書き出しパネルを開きます。解像度、フレームレート、形式を選び、書き出しをタップします。レンダリングはあなたの端末上で行われます。</p>
+      </section>
+
+      <section id="library">
+        <h2>共有ソースライブラリ</h2>
+        <p>ソースライブラリは、どのワークスペースからでもアクセスできる、プロジェクト全体のアセットマネージャーです。取り込んだもの、生成したものすべて&mdash;画像、クリップ、音声ファイル、Paperのページ、マスク&mdash;を保持します。</p>
+        <p>アセットは名前付きのビンに整理されます。既定のビンは<strong>生成プール</strong>（Flowからの出力）、<strong>取り込んだメディア</strong>、<strong>プロジェクトページ</strong>です。作業を整理するために追加のビンを作成できます。</p>
+        <p>どのワークスペースからでもライブラリのアセットを使うには、左端のドロワー（スマホ）またはソースライブラリパネル（タブレット/DeX）を開き、アセットをキャンバス、タイムライン、ノードグラフにドラッグします。</p>
+        <div class="callout tip">
+          <p><strong>ヒント：</strong>Flowで生成したアセットはすぐにソースライブラリに現れます。Image・Paper・Videoで使う前に、書き出して再度取り込む必要はありません。</p>
+        </div>
+      </section>
+
+      <!-- ──────── ANDROID ──────── -->
+
+      <section id="android-install">
+        <p class="eyebrow">Android</p>
+        <h2>Androidのインストールと設定</h2>
+        <p>Sloom Studioのデスクトップアプリ（WindowsとLinux）は今すぐ利用できます&mdash;<a href="index.html#license" style="color: var(--cyan)">sloom.studio</a>で一度購入するだけです。Android版は<b>Samsung Galaxy Store</b>と<b>Google Play</b>に近日登場予定で（現時点ではどちらのストアにもまだありません）、サイトから直接は販売されず、同じ一度きりのキーでカバーされます。Androidのスマートフォンとタブレットで動作します。スタイラスでの最良の体験には、Sペン搭載端末、またはWacomプロトコルのスタイラスに対応したタブレットをお使いください。</p>
+
+        <h3>システム要件</h3>
+        <ul>
+          <li>Android 13以降を推奨（Android 10が最低要件）</li>
+          <li>大規模なプロジェクトには4GB以上のRAMを推奨</li>
+          <li>OpenGL ES 3.0以降に対応したGPUを搭載した端末（現行の端末であればほぼすべて該当）</li>
+        </ul>
+
+        <h3>スマホでの画面構成</h3>
+        <p>スマートフォンでは、Sloom Studioはエッジドロワー方式のレイアウトを使います：</p>
+        <ul>
+          <li><strong>左端</strong> &mdash; ソースライブラリ（アセットと生成結果）</li>
+          <li><strong>右端</strong> &mdash; ワークスペースパネル（レイヤー、プロパティ、履歴、チャンネル）</li>
+          <li><strong>下端</strong> &mdash; クイックアセットブラウザ</li>
+          <li><strong>上部バー</strong> &mdash; ワークスペース切り替え、プロジェクト操作、ズーム、設定</li>
+        </ul>
+        <p>フローティングツールパレットが、現在のワークスペースの主要ツールへのクイックアクセスを提供します。上部バーの<strong>&times;</strong>ボタンをタップすると、すべてのUIを隠して全画面で作業でき、端に表示される復元ボタンでインターフェースを元に戻せます。</p>
+      </section>
+
+      <section id="dex">
+        <h2>Samsung DeXと外部ディスプレイ</h2>
+        <p>HDMIまたはDeX Station経由で外部ディスプレイに接続すると、Sloom Studioは自動的にデスクトップ風のレイアウトに切り替わり、常時表示のサイドパネル、より広いキャンバス、フルのキーボード・マウス対応になります。</p>
+
+        <h3>キーボードショートカット</h3>
+        <p>DeXモードでは標準のショートカットが使えます：取り消し/やり直しに<code>Ctrl+Z</code> / <code>Ctrl+Shift+Z</code>、ブラシに<code>B</code>、選択に<code>S</code>、手のひらツールに<code>H</code>、保存に<code>Ctrl+S</code>、パンに<code>Space</code>、そして制約付き変形のための修飾キー。</p>
+
+        <h3>マウスとペン</h3>
+        <p>DeXドックにUSBで接続したWacom互換ペンは、筆圧と傾きの情報を余さずブラシエンジンに送ります。マウスホイールでキャンバスをズームします。右クリックでコンテキストメニューが開きます。</p>
+      </section>
+
+      <section id="lan-host">
+        <h2>スマホをLANホストにする</h2>
+        <p>Sloom Studioは、Androidスマートフォンから同じローカルネットワーク上のあらゆるブラウザに、フルのデスクトップインターフェースを配信できます。つまり、PC側には何もインストールせずに、ノートPCやデスクトップPCのブラウザで完全なSloom StudioのUIを開けます&mdash;計算とプロジェクトの保存はすべてスマホが担います。</p>
+
+        <h3>LANサーバーを起動する</h3>
+        <ul class="steps">
+          <li>
+            <span class="step-num">1</span>
+            <div class="step-body">
+              <strong>LANホストパネルを開く</strong>
+              <p>Sloom Studioの設定で<strong>LANホスト</strong>までスクロールし、<strong>サーバーを起動</strong>をタップします。アプリが<code>http://192.168.1.42:7700</code>のようなローカルIPアドレスとポートを表示します。</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">2</span>
+            <div class="step-body">
+              <strong>PCのブラウザでそのアドレスを開く</strong>
+              <p>同じWi-Fiネットワーク上の最新のブラウザに、スマホに表示されたアドレスを入力します。ブラウザのタブに、Sloom Studioのデスクトップワークスペース全体が読み込まれます。</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">3</span>
+            <div class="step-body">
+              <strong>PC側で作業する</strong>
+              <p>PCに接続したキーボード、マウス、Wacomタブレットを使います。プロジェクトデータはスマホ上にあり、ブラウザはUIを描画するだけです。</p>
+            </div>
+          </li>
+        </ul>
+
+        <div class="callout warn">
+          <p><strong>スマホをPCと同じWi-Fiネットワークに保ってください。</strong>スマホがスリープしたりネットワークを切り替えたりすると、接続が切れます。LANセッション中は画面をスリープさせないでください。</p>
+        </div>
+      </section>
+
+      <section id="cross-device">
+        <h2>デバイス間同期と編集の受け渡し</h2>
+        <p>LANホストは画面をミラーリングするだけではありません&mdash;スマホとデスクトップのブラウザは<strong>同じライブのプロジェクト</strong>を開きます。変更は4つのワークスペースをまたいで双方向に流れます：Flowのグラフ編集、Paperのページレイアウト、Imageのストロークとレイヤー操作、共有のソースライブラリのすべてが、ローカルネットワーク上で足並みを揃えます。</p>
+
+        <h3>一度に編集できるのはひとつ：バトン</h3>
+        <p>2つの画面が同じ変更を巡って競合しないよう、Sloom Studioはひとつの編集ロック&mdash;<strong>バトン</strong>&mdash;を使います。バトンを持つデバイスだけが変更を加えられ、もう一方はリアルタイムの読み取り専用ミラーとして追従します。プロジェクトの本拠地はスマホで、バトンはそこから始まります。</p>
+        <ul class="steps">
+          <li>
+            <span class="step-num">1</span>
+            <div class="step-body">
+              <strong>上部バーから受け渡す</strong>
+              <p>上部バーの<strong>作業中はこちら&nbsp;&rlarr;&nbsp;スマホ</strong>をタップして、もう一方のデバイスにバトンを渡します。現在の画面がスナップショットされるので、受け取ったデバイスはあなたが離れたところからそのまま続けられます。</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">2</span>
+            <div class="step-body">
+              <strong>もう一方はミラー表示になる</strong>
+              <p>バトンを持たない側のデバイスは読み取り専用のオーバーレイを表示し、リアルタイムで更新され続けます。小さい画面で編集しながら、大きな画面で進行を見たりレビューしたりできます。</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">3</span>
+            <div class="step-body">
+              <strong>締め出しではなく、在席表示</strong>
+              <p>別のデバイスが同じプロジェクトを見ているとき、上部バーはそれを在席として表示します&mdash;プロジェクトを「読み取り専用」で開くことを強制されなくなります。</p>
+            </div>
+          </li>
+        </ul>
+
+        <div class="callout note">
+          <p><strong>リアルタイムの共同編集ではなく、受け渡しです。</strong>同期は切り替え時にスナップショットを伴うバトンの受け渡しであり、リアルタイムのマルチカーソルによるマージではありません。設計上、一度に編集できるのはひとつのデバイスだけで、これによりプロジェクトの状態が常に明確に保たれます。Videoワークスペースはプロジェクト構造を同期しますが、大きなメディアのレンダリングはそれを生成したデバイス上に留まります。</p>
+        </div>
+      </section>
+
+      <section id="gamepad">
+        <h2>ゲームコントローラー対応</h2>
+        <p>Sloom Studioはゲームコントローラーに標準対応しています。標準的なXbox、PlayStation、または汎用ゲームパッドをUSBまたはBluetoothで接続し、画面に手を伸ばす代わりに物理ボタンとスティックでインターフェースを操作できます。特に<strong>AndroidとSamsung DeX</strong>で便利で、ペアリングしたBluetoothコントローラーによって、素早く、手元を見ずに、触覚的にアプリを操作できます。</p>
+
+        <h3>割り当てを設定する</h3>
+        <p><strong>設定 &rarr; ゲームパッド</strong>を開いて、すべての操作を確認・再割り当てできます。割り当ては<strong>ワークスペースごと</strong>に整理されています&mdash;Flow、Image、Paper、Videoはそれぞれ独自のプロファイルを持つため、同じボタンでも今いる場所によって違う動作をします。フェイスボタン、バンパー、トリガー、十字キーの各方向、スティック押し込み、両方のアナログスティックすべてが割り当て可能で、各操作について<strong>デッドゾーン</strong>、<strong>感度</strong>、<strong>アナログ応答カーブ</strong>（線形・二次・三次）、反転、トリガーの範囲を調整できます。プロファイルは設定と一緒に保存され、書き出し・読み込みができます。</p>
+
+        <h3>初期設定の割り当て</h3>
+        <ul>
+          <li><strong>Flow</strong> &mdash; <em>A</em>でコマンドパレットを開く、<em>B</em>で選択解除、<em>X</em>でソースビンを追加、<em>Y</em>でアクティビティトレイルの切り替え。</li>
+          <li><strong>Image</strong> &mdash; フェイスボタンでブラシ・移動・消しゴム・スポイトツールを切り替え、トリガーで手のひらツールとバケツを掴み、バンパーで取り消し・やり直し。</li>
+          <li><strong>Paper</strong> &mdash; フェイスボタンで選択・手のひら・テキスト・画像ツールを切り替え、十字キーで新しいテキスト・画像・キャプション・吹き出しフレームをページに配置。</li>
+          <li><strong>Video</strong> &mdash; フェイスボタンで選択・手のひら・カット・スリップツールを切り替え、十字キーで前後のキーフレームに移動、右トリガーでキーフレームを打つ。</li>
+          <li><strong>Start / Menu</strong>で、どのワークスペースからでもゲームパッド割り当てエディタが開きます。</li>
+        </ul>
+
+        <div class="callout">
+          <p><strong>設定 &rarr; ゲームパッド</strong>ですべての操作をワークスペースごとに再割り当てでき、割り当ては設定と一緒に保存されます&mdash;自分の作業スタイルに合わせて、コントローラーを思い通りに構成できます。</p>
+        </div>
+      </section>
+
+    </div><!-- /docs-content -->
+  </div><!-- /docs-layout -->
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Sloom Studio
+    </a>
+    <nav class="footer-links" aria-label="フッターナビゲーション">
+      <a href="index.html">ホーム</a>
+      <a href="docs.html">ドキュメント</a>
+      <a href="examples.html">作例</a>
+      <a href="changelog.html">更新履歴</a>
+      <a href="privacy.html">プライバシー</a>
+      <a href="mailto:support@sloom.studio">support@sloom.studio</a>
+    </nav>
+    <span>&copy; 2026 Sloom Software</span>
+  </div>
+</footer>
+
+</body>
+</html>

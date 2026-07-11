@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case File 2033 — a Chronicle 2046 companion comic | Sloom Studio</title>
+<meta name="description" content="Case File 2033: the human side of the survival years. A complete 24-page companion comic to The Chronicle Trilogy, made start to finish in Sloom Studio.">
+<link rel="canonical" href="https://sloom.studio/case-file-2033/">
+<style>
+  :root { --bg:#101318; --ink:#E6EAEF; --muted:#97A2AF; --line:#2C3542; --cyan:#3FC0D2; --gold:#E0B04F; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.6 system-ui,"Segoe UI",sans-serif; }
+  header, footer { max-width:820px; margin:0 auto; padding:28px 16px; }
+  h1 { font-size:clamp(26px,5vw,38px); margin:0 0 6px; letter-spacing:-0.01em; }
+  .sub { color:var(--muted); margin:0 0 4px; }
+  .pages { max-width:820px; margin:0 auto; padding:0 8px; }
+  .pages img { display:block; width:100%; height:auto; margin:0 0 4px; background:#181d24; }
+  .motion { max-width:820px; margin:0 auto 22px; padding:0 16px; }
+  .motion video { display:block; width:100%; border-radius:10px; background:#000; border:1px solid var(--line); }
+  .motion .cap { margin:12px 0 0; color:var(--muted); font-size:15px; }
+  .rail { max-width:820px; margin:18px auto 60px; padding:0 16px; display:grid; gap:16px; }
+  .card { border:1px solid var(--line); border-radius:12px; padding:18px 20px; }
+  .card h2 { margin:0 0 8px; font-size:19px; }
+  .card p { margin:0 0 12px; color:var(--muted); }
+  .btn { display:inline-block; padding:11px 20px; border-radius:10px; text-decoration:none; font-weight:700; }
+  .btn-gold { background:var(--gold); color:#101318; }
+  .btn-cyan { background:var(--cyan); color:#101318; }
+  .btn-ghost { border:1px solid var(--line); color:var(--ink); }
+  form.packform { display:flex; gap:8px; flex-wrap:wrap; margin:0; }
+  form.packform input[type=email] { flex:1; min-width:200px; padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--ink); font:inherit; }
+  form.packform button { background:var(--cyan); color:#101318; border:0; border-radius:8px; padding:10px 18px; font-weight:700; cursor:pointer; }
+  .packmsg { color:var(--muted); font-size:14px; margin:8px 0 0; }
+  a { color:var(--cyan); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Case File 2033</h1>
+  <p class="sub">A Chronicle 2046 companion file · 24 pages · complete</p>
+  <p class="sub">Before the machines were people, someone had to keep the power on.</p>
+</header>
+
+<div class="motion">
+  <video controls preload="none" poster="video/poster.jpg">
+    <source src="video/teaser.webm" type="video/webm">
+    <source src="video/teaser.mp4" type="video/mp4">
+    Your browser does not support embedded video. <a href="video/teaser.mp4">Download the teaser (mp4, ~11MB)</a>.
+  </video>
+  <p class="cap">The motion comic — every panel, every caption, read for you. Made entirely in Sloom Studio. <a href="video/case-file-2033-full-720p.mp4">Watch the full 13-minute cut →</a></p>
+</div>
+
+<div class="pages" id="pages"></div>
+
+<div class="rail">
+  <div class="card">
+    <h2>Read the books</h2>
+    <p>Case File 2033 is a companion to The Chronicle Trilogy (Chronicle 2046) by Jarrod Cary: intelligence, memory, survival, and personhood after the line between human life and machine continuity stops being theoretical.</p>
+    <a class="btn btn-gold" href="https://www.amazon.com/dp/B0H2GGLV6S">The Chronicle Trilogy on Amazon</a>
+  </div>
+  <div class="card">
+    <h2>Made in Sloom Studio</h2>
+    <p>Every page: script adaptation, panels, lettering, and export, in one app you own. Comic and book layout with print-ready output (KDP-ready PDF, press-ready PDF, CBZ, webtoon). One-time purchase, no subscription.</p>
+    <a class="btn btn-cyan" href="/comic-software-you-own.html?src=cf2033reader">See the comic tools</a>
+    <a class="btn btn-ghost" href="https://buy.stripe.com/7sY28rfcmaRxaBVgQ57Re02">Buy the license — $17.99</a>
+  </div>
+  <div class="card">
+    <h2>Free Print-Ready Pack</h2>
+    <p>Comic and book page templates plus the KDP preflight checklist for trim, bleed, margins, and spine math. Sent by email; no spam, one list, leave any time.</p>
+    <form class="packform" data-src="pack-cf2033">
+      <input type="email" name="email" required placeholder="you@example.com">
+      <input type="text" name="website" value="" style="display:none" tabindex="-1" autocomplete="off">
+      <button type="submit">Get the Pack</button>
+    </form>
+    <p class="packmsg"></p>
+  </div>
+</div>
+
+<footer>
+  <p class="sub">© 2026 Sloom Software LLC · <a href="/">sloom.studio</a> · story and art from the Chronicle 2046 project.</p>
+</footer>
+
+<script>
+(function(){
+  var n = 24, box = document.getElementById('pages');
+  for (var i = 1; i <= n; i++) {
+    var img = document.createElement('img');
+    var num = (i < 10 ? '0' : '') + i;
+    img.src = 'pages/p' + num + '.jpg';
+    img.loading = i > 2 ? 'lazy' : 'eager';
+    img.alt = 'Case File 2033, page ' + i;
+    box.appendChild(img);
+  }
+  var f = document.querySelector('.packform'), m = document.querySelector('.packmsg');
+  f.addEventListener('submit', function(e){
+    e.preventDefault();
+    var em = f.email.value.trim();
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)){ m.textContent = 'Please enter a valid email.'; return; }
+    m.textContent = 'One sec…';
+    fetch('/subscribe', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email: em, website: f.website.value, src: f.getAttribute('data-src') }) })
+    .then(function(r){ return r.json().catch(function(){ return { ok: r.ok }; }); })
+    .then(function(d){ if (d && d.ok) { m.textContent = 'Done. The Pack is on its way to your inbox.'; f.reset(); }
+      else { m.textContent = 'That did not go through. Email support@sloom.studio and we will send it directly.'; } })
+    .catch(function(){ m.textContent = 'Network hiccup. Try again in a moment.'; });
+  });
+  try { new Image().src = '/e/px.gif?ev=view&s=cf2033reader&r=' + encodeURIComponent((document.referrer||'').split('/')[2]||''); } catch(e) {}
+})();
+</script>
+</body>
+</html>

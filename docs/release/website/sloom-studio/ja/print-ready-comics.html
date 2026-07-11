@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>印刷対応コミック・書籍の書き出し — KDP、CMYK、断ち落とし＆トリム | Sloom Studio</title>
+<meta name="description" content="印刷対応のコミックや書籍をレイアウトして書き出す：KDP対応PDF、適合PDF/X-1a/X-4、実際のCMYK/ICC、名前付きスポットのSeparation版、構造的に有効なAdobe IDMLパッケージ、CBZとwebtoon。買い切り、サブスクリプションなし、自分のものになるアプリ。無料でダウンロード。" />
+<meta name="theme-color" content="#04070d" />
+<link rel="canonical" href="https://sloom.studio/ja/print-ready-comics.html" />
+<link rel="alternate" hreflang="en" href="https://sloom.studio/print-ready-comics.html" />
+<link rel="alternate" hreflang="ja" href="https://sloom.studio/ja/print-ready-comics.html" />
+<link rel="alternate" hreflang="x-default" href="https://sloom.studio/print-ready-comics.html" />
+
+<meta property="og:title" content="印刷対応コミック・書籍の書き出し — KDP、CMYK、断ち落とし＆トリム" />
+<meta property="og:description" content="印刷対応のコミックや書籍をレイアウトして書き出す。買い切り、サブスクリプションなし、自分のものになるアプリ。" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://sloom.studio/ja/print-ready-comics.html" />
+<link rel="stylesheet" href="../assets/site.css" />
+<style>
+  .lp{max-width:960px;margin:0 auto;padding:64px 22px 40px}
+  .lp h1{font-size:clamp(1.8rem,4.6vw,2.7rem);line-height:1.08;margin:0 0 14px}
+  .lp h1 em{color:var(--cyan);font-style:normal}
+  .lp .lede{color:var(--ink-2);font-size:1.1rem;line-height:1.6;max-width:64ch;margin:0 0 26px}
+  .lp .cta{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 12px}
+  .lp .btn{display:inline-flex;align-items:center;justify-content:center;padding:12px 18px;border-radius:11px;font-weight:650;text-decoration:none}
+  .lp .btn-primary{background:var(--cyan);color:#021018}
+  .lp .btn-ghost{border:1px solid var(--line-2);color:var(--ink-1)}
+  .lp .fineline{color:var(--ink-3);font-size:.84rem;margin:0 0 44px}
+  .lp h2{font-size:1.35rem;margin:40px 0 14px}
+  .lp p{color:var(--ink-2);line-height:1.65;max-width:66ch}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin:18px 0}
+  @media(max-width:720px){.grid{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line-2);border-radius:13px;padding:18px 20px;background:#04070d}
+  .card b{display:block;margin-bottom:5px}
+  .card span{color:var(--ink-2);font-size:.92rem;line-height:1.55}
+  .exports{display:flex;flex-wrap:wrap;gap:9px;margin:16px 0 6px}
+  .exports span{border:1px solid var(--line-2);border-radius:999px;padding:7px 13px;font-family:var(--mono);font-size:.78rem;color:var(--ink-1)}
+  .price{border:1px solid var(--line-2);border-radius:16px;padding:26px;background:#04070d;margin:26px 0;max-width:640px}
+  .price .big{font-size:2rem;font-weight:700}
+  .price .big small{font-size:1rem;color:var(--ink-2);font-weight:500}
+  .price ul{margin:14px 0 0;padding-left:18px;color:var(--ink-2);line-height:1.7}
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav-inner wrap" aria-label="メインナビゲーション">
+    <a class="brand" href="index.html" aria-label="Sloom Studio ホーム">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Sloom Studio
+    </a>
+    <div class="nav-links" id="nav-links">
+      <a href="index.html">ホーム</a>
+      <a href="docs.html">ドキュメント</a>
+      <a href="examples.html">作例</a>
+      <a href="changelog.html">更新履歴</a>
+      <a href="index.html#license">ダウンロード</a>
+      <a href="privacy.html">プライバシー</a>
+      <a href="../print-ready-comics.html" hreflang="en">English</a>
+    </div>
+    <a class="nav-cta" href="index.html#license">¥3,000で購入</a>
+    <button class="nav-hamburger" aria-label="メニューの表示切り替え" onclick="document.getElementById('nav-links').classList.toggle('open')">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+</header>
+
+<main class="lp">
+  <h1>印刷対応のコミックや書籍を書き出す。<em>KDP対応。CMYK。印刷のために作られた。</em></h1>
+  <p class="lede">ページは描き終えました。次に必要なのは、月額でソフトを借りずに、印刷所やAmazon KDPが実際に受け付けてくれるクリーンなファイルです。Sloom Studioはあなたのコミックや書籍をレイアウトし、きちんとした印刷制作用ファイルを、一度買えば自分のものになるアプリで書き出します。</p>
+  <div class="cta">
+    <a class="btn btn-primary" href="../downloads/SloomStudio-Setup.exe" download>無料でダウンロード — Windows</a>
+    <a class="btn btn-ghost" href="../downloads/SloomStudio.AppImage" download>Linux AppImage</a>
+    <a class="btn btn-ghost" href="https://buy.stripe.com/00wbJ16FQ1gX25p57n7Re03">ライセンスを購入 — ¥3,000</a>
+  </div>
+  <p class="fineline" style="margin-bottom:8px">Macをお使いですか？ <b>実験的なmacOSビルド</b>（未署名）：<a href="../downloads/SloomStudio-arm64.dmg" download>Apple&nbsp;Silicon</a> &middot; <a href="../downloads/SloomStudio-x64.dmg" download>Intel</a>。まだ署名されていないため、<a href="macos-install.html">正しい開き方はこちら &rarr;</a></p>
+  <p class="fineline">ダウンロードして本全体をレイアウトするまで無料です。一度きりのライセンスでプロ向け印刷書き出しが解放されます。サブスクリプションなし、アカウント不要、広告なし。</p>
+
+  <h2>印刷に実際に必要な書き出し形式</h2>
+  <div class="exports">
+    <span>KDP対応PDF</span><span>PDF/X-1a</span><span>PDF/X-4</span><span>CMYK / スポットのスウォッチ</span><span>Adobe IDML</span><span>CBZ</span><span>webtoonストリップ</span><span>高解像度PNG / JPG</span>
+  </div>
+  <p>Amazon KDP、プリントオンデマンドサービス、従来の印刷所は、それぞれ求めるものが違います。Sloom Studioは必要なものを書き出します：KDP対応の本文と表紙、埋め込みICCアウトプットインテントを通じた実際のCMYKで適合PDF/X-1a・PDF/X-4、名前付きスポットカラースウォッチを実際のSeparation版として保持し、テキストはサポートされる場合はベクトル曲線として埋め込まれます。InDesign/Affinity Publisherへの受け渡し用に、構造的に有効で仕様通りの<strong>Adobe IDMLパッケージ</strong>も書き出せます（IDMLインポートはまだ未対応です）。さらにデジタル向けのCBZとwebtoonストリップも書き出せます。ブラウザPDF書き出しは迅速なRGBプルーフとして機能しますが、PDF/Xパスがプレス認証済みの出力です。</p>
+
+  <img src="../assets/screenshots/weights-and-measures-paper-spread.jpg" alt="Paperワークスペースでレイアウトされた完成済みのWeights & Measuresコミック見開き。砂漠の町を映す扉ページと、コールドアイルの研究室ページに吹き出しが入り、右側にPaper Inspectorパネルが開いている" style="width:100%;border-radius:13px;border:1px solid var(--line-2);margin:18px 0 6px" />
+  <p class="fineline">Paperで組んだ印刷対応の仕上がり&mdash;コマ割り、連結した吹き出し、インスペクタで開いた製版設定。</p>
+
+  <h2>本全体を一箇所でレイアウトする</h2>
+  <div class="grid">
+    <div class="card"><b>ページ、コマ、断ち落とし＆トリム</b><span>実際の断ち落としとトリムマークを備えた見開きを設定し、印刷ファイルを最初から正しくします。</span></div>
+    <div class="card"><b>ちゃんと動くレタリング</b><span>ページをまたいで流れる連結テキスト、ドラッグ可能な尻尾つきの吹き出し、効果音のためのSFXデザイナー。</span></div>
+    <div class="card"><b>あなたのアート、あなたのやり方で</b><span>Imageエディタでページを描き、ペン入れするか、すでに作った作品を持ち込みます。本全体を手で組み上げられます。</span></div>
+    <div class="card"><b>ひとつのプロジェクトファイル</b><span>すべてがあなたの端末上の、ひとつの.sloomプロジェクトに収まります。他のファイルと同じようにコピー、バックアップ、移動ができます。</span></div>
+  </div>
+
+  <div class="price">
+    <div class="big">¥3,000 <small>一度きり・発売記念価格</small></div>
+    <ul>
+      <li>プロ向け印刷制作を解放——KDP対応PDF、埋め込みICCを通じた実際のCMYKによる適合PDF/X-1a/X-4と名前付きスポットのSeparation版、CMYK/スポットのスウォッチ、加えて構造的に有効なAdobe IDMLパッケージの書き出し</li>
+      <li>あなたの制作物で収益を得るようになったときの正式なライセンス</li>
+      <li>1つのキーでデスクトップとAndroidの両方をカバー、オフラインで検証、永久にあなたのもの</li>
+      <li>発売記念価格は先着100本まで、その後は¥6,500——セールは8月1日まで</li>
+    </ul>
+  </div>
+  <p>それ以外——ページのレイアウト、彩色、レタリング、webcomicとCBZの書き出し——は好きなだけ無料で使えます。ライセンスが必要になるのは、あなたの作品が有償の印刷物になったときで、起動時の通知を消し、書き出しをライセンス済みとしてマークします。</p>
+
+  <h2>あなたのもの。あなたの端末で動く。</h2>
+  <p>サブスクリプションなし、アカウント不要。Sloom Studioはローカルファーストです：プロジェクトファイルと作業内容はあなたの端末に留まります。何をしているか正確に知りたければ、ソースも公開されています。今すぐWindowsとLinux、加えて実験的なmacOSビルド、同じ一度きりのキーでAndroidもカバーします。</p>
+  <div class="cta" style="margin-top:20px">
+    <a class="btn btn-primary" href="../downloads/SloomStudio-Setup.exe" download>無料でダウンロード — Windows</a>
+    <a class="btn btn-ghost" href="../downloads/SloomStudio.AppImage" download>Linux AppImage</a>
+    <a class="btn btn-ghost" href="../downloads/SloomStudio-arm64.dmg" download>macOS（実験的）</a>
+    <a class="btn btn-ghost" href="https://buy.stripe.com/00wbJ16FQ1gX25p57n7Re03">ライセンスを購入 — ¥3,000</a>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Sloom Studio
+    </a>
+    <nav class="footer-links" aria-label="フッターナビゲーション">
+      <a href="index.html">ホーム</a>
+      <a href="docs.html">ドキュメント</a>
+      <a href="examples.html">作例</a>
+      <a href="changelog.html">更新履歴</a>
+      <a href="privacy.html">プライバシー</a>
+      <a href="mailto:support@sloom.studio">support@sloom.studio</a>
+    </nav>
+    <span>&copy; 2026 Sloom Software</span>
+  </div>
+</footer>
+
+<script>
+/* first-party funnel beacon (same cookieless pixel as the home page) */
+(function(){
+  try{
+    var q=new URLSearchParams(location.search);
+    var src=(q.get('src')||q.get('utm_source')||'').replace(/[^a-z0-9_-]/gi,'').slice(0,32);
+    var ref='direct';
+    try{if(document.referrer){var h=new URL(document.referrer).hostname;if(h&&h.indexOf('sloom.studio')===-1)ref=h.slice(0,60);}}catch(e){}
+    function ev(n,x){try{new Image().src='/e/px.gif?ev='+encodeURIComponent(n)+'&r='+encodeURIComponent(ref)+(src?('&s='+encodeURIComponent(src)):'')+'&p=print_ja'+(x||'')+'&t='+Date.now();}catch(e){}}
+    ev('view');
+    document.addEventListener('click',function(e){
+      var a=e.target.closest&&e.target.closest('a[href]');if(!a)return;var href=a.getAttribute('href')||'';
+      if(href.indexOf('/downloads/')!==-1||href.indexOf('downloads/')===0){ev('dl','&f='+encodeURIComponent(href.split('/').pop().slice(0,40)));}
+      else if(href.indexOf('buy.stripe.com')!==-1){ev('buy');}
+    },true);
+  }catch(e){}
+})();
+</script>
+</body>
+</html>

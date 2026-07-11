@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>更新履歴 &mdash; Sloom Studio</title>
+  <meta name="description" content="Sloom Studioのリリースノートと開発の更新履歴——Flow・Image・Paper・Videoの各ワークスペース、デスクトップとAndroidにおける各ベータビルドの変更点。" />
+  <meta name="theme-color" content="#020711" />
+  <meta property="og:title" content="Sloom Studio の更新履歴" />
+  <meta property="og:description" content="Sloom Studioの各ベータビルドのリリースノート——デスクトップとAndroid。" />
+  <meta property="og:image" content="/assets/graphics/feature-graphic-1024x500.png" />
+<link rel="alternate" hreflang="en" href="https://sloom.studio/changelog.html" />
+<link rel="alternate" hreflang="ja" href="https://sloom.studio/ja/changelog.html" />
+<link rel="alternate" hreflang="x-default" href="https://sloom.studio/changelog.html" />
+  <link rel="icon" type="image/png" href="../assets/graphics/icon-512.png" />
+  <link rel="stylesheet" href="../assets/site.css" />
+  <style>
+    body {
+      background:
+        radial-gradient(ellipse 55% 30% at 25% 6%, rgba(41,217,255,.10) 0%, transparent 55%),
+        linear-gradient(180deg, #07111f 0%, var(--bg) 50%);
+    }
+    .cl-header { padding-block: clamp(56px, 8vw, 96px) 36px; max-width: 760px; }
+    .cl-header h1 { font-size: clamp(2rem, 5vw, 3.2rem); margin-bottom: 14px; }
+    .cl-header p  { font-size: 1.06rem; max-width: 60ch; }
+
+    /* timeline rail */
+    .cl-list { max-width: 880px; margin-bottom: clamp(64px, 9vw, 120px); }
+    .release {
+      position: relative;
+      border-top: 1px solid var(--line);
+      padding-block: clamp(34px, 5vw, 56px);
+    }
+    .release-head {
+      display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+    .release-ver {
+      font-size: clamp(1.4rem, 3vw, 2rem); font-weight: 900; letter-spacing: -.02em; color: #fff;
+    }
+    .release-date {
+      font-family: var(--mono); font-size: .7rem; letter-spacing: .12em; text-transform: uppercase;
+      color: var(--dim);
+    }
+    .release-summary { color: var(--muted); font-size: .98rem; line-height: 1.65; margin-bottom: 22px; max-width: 64ch; }
+
+    .cl-group { margin-bottom: 18px; }
+    .cl-group h3 {
+      font-size: .76rem; font-weight: 900; letter-spacing: .14em; text-transform: uppercase;
+      color: var(--cyan); margin-bottom: 10px;
+    }
+    .cl-group.fix h3   { color: var(--gold); }
+    .cl-group.android h3 { color: var(--green); }
+    .cl-items { list-style: none; padding: 0; display: grid; gap: 8px; }
+    .cl-items li {
+      position: relative; padding-left: 20px; color: var(--muted);
+      font-size: .93rem; line-height: 1.55;
+    }
+    .cl-items li::before {
+      content: ""; position: absolute; left: 2px; top: .62em;
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--cyan); box-shadow: 0 0 8px rgba(52,217,255,.5);
+    }
+    .cl-group.fix .cl-items li::before   { background: var(--gold); box-shadow: 0 0 8px rgba(255,181,61,.5); }
+    .cl-group.android .cl-items li::before { background: var(--green); box-shadow: 0 0 8px rgba(103,240,173,.5); }
+    .cl-items li strong { color: #fff; font-weight: 650; }
+
+    .current-badge {
+      font-family: var(--mono); font-size: .58rem; letter-spacing: .12em; text-transform: uppercase;
+      color: #021018; background: var(--cyan); border-radius: 5px; padding: 3px 8px; font-weight: 700;
+    }
+    .cl-note {
+      margin-top: 8px; border: 1px dashed var(--line-2); border-radius: 12px;
+      padding: 16px 18px; color: var(--dim); font-size: .86rem; line-height: 1.6; max-width: 70ch;
+    }
+  </style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav-inner wrap" aria-label="メインナビゲーション">
+    <a class="brand" href="index.html" aria-label="Sloom Studio ホーム">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Sloom Studio
+    </a>
+    <div class="nav-links" id="nav-links">
+      <a href="index.html">ホーム</a>
+      <a href="docs.html">ドキュメント</a>
+      <a href="examples.html">作例</a>
+      <a href="changelog.html" aria-current="page">更新履歴</a>
+      <a href="index.html#license">ダウンロード</a>
+      <a href="privacy.html">プライバシー</a>
+      <a href="../changelog.html" hreflang="en">English</a>
+    </div>
+    <a class="nav-cta" href="index.html#license">¥3,000で購入</a>
+    <button class="nav-hamburger" aria-label="メニューの表示切り替え" onclick="document.getElementById('nav-links').classList.toggle('open')">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="cl-header">
+    <p class="eyebrow">リリースノート</p>
+    <h1>更新履歴</h1>
+    <p>Sloom Studioの各ビルドでの変更点、新しい順（旧称 Signal Loom。0.9.11より前のビルドは旧名称で公開されています）。Sloom Studioはオープンベータ（0.9.x）です——デスクトップ（Windows / Linux）とAndroidはひとつのバージョン系列を共有しています。日付は各ビルドが作成された時期です。</p>
+  </div>
+
+  <div class="cl-list">
+
+    <!-- ───── 0.9.10 ───── -->
+    <section class="release" id="v0-9-10">
+      <div class="release-head">
+        <span class="release-ver">0.9.10</span>
+        <span class="current-badge">最新</span>
+        <span class="release-date">2026年7月</span>
+      </div>
+      <p class="release-summary">デバイス間対応のリリース：スマホ⇄ブラウザ間のImageバトンパスが、あらゆるストロークを双方向でリアルタイムに、実機での検証を経て運びます。商用ライセンスがAndroidでも、デスクトップと同じオフラインキーで有効化できるようになりました。さらに、プロ向け印刷制作パイプラインとして、実際のCMYK/ICCと名前付きスポットのSeparation版による適合PDF/X-1a/X-4書き出し、および構造的に有効なAdobe IDMLパッケージ書き出しが出荷されました。</p>
+
+      <div class="cl-group">
+        <h3>新機能</h3>
+        <ul class="cl-items">
+          <li><strong>本物のデバイス間描画。</strong>スマホで描き、配信されたデスクトップブラウザに引き継ぎ、そこで描き、また戻す——文書もレイヤーもあらゆるストロークも、リアルタイムで双方向に行き来します。「別のデバイスから続ける」カードは、引き継がれた画像をレイヤースタックごとそのまま拾い上げます。</li>
+          <li><strong>Androidでのライセンス有効化。</strong>設定 &rarr; ライセンスが、デスクトップと同じキーを受け付け、完全にオフラインで検証され（古いWebView向けの純JSフォールバックあり）、スマホでも商用書き出しを解放します。</li>
+          <li><strong>適合PDF/X-1a・PDF/X-4書き出し。</strong>Paperは、埋め込まれたICCアウトプットインテントを通じてページを実際のCMYKにレンダリングし、名前付きスポットカラースウォッチを実際のSeparation版として書き込み、テキストはサポートされる場合はベクトル曲線として埋め込みます。専用のKDP対応プリセットは、Amazonの印刷チェッカーが求める正しい0.125インチの断ち落とし付きのPDF/X-1a本文・表紙PDFを生成します。</li>
+          <li><strong>実際のAdobe IDMLパッケージ書き出し。</strong>Paperは、InDesign/Affinity Publisherへの受け渡し用に、構造的に有効で仕様通りの<code>.idml</code> ZIPパッケージを書き出します。IDMLインポートはまだ未対応です。</li>
+          <li><strong>Print Production Inspectorのコントロール。</strong>書き出し前に、PDF/Xターゲット、アウトプットインテントプロファイル、総インキ量制限、ブラック処理ポリシー、スポットカラーポリシー、オーバープリントプレビューインテントを設定できます。</li>
+        </ul>
+      </div>
+      <div class="cl-group fix">
+        <h3>修正・改善</h3>
+        <ul class="cl-items">
+          <li><strong>同期された文書が白紙で表示される不具合を修正。</strong>高解像度コンポジターのワーカーが本番ビルドでクラッシュし、キャンバスが空のキャッシュ済み合成に固定されてしまう問題がありました。適切にバンドルされたモジュールワーカーと安全なフォールバックに変更し、同期されたピクセルは次のブラシストロークを待たずに届いた瞬間に再描画されるようになりました。</li>
+          <li><strong>接続したブラウザの編集が実際にスマホへ届くように。</strong>スマホのLANリレーがリクエストのパラメータを落としていたため、配信されたブラウザが送るすべての操作を編集バトンのゲートが黙って拒否し、ライブ同期のポーリングは毎回イベントログ全体を再送していました。どちらも同じ修正で解決：リレーが完全なリクエストを転送するようになりました。</li>
+          <li>バトンの引き継ぎスナップショットが、繰り返しの引き継ぎで「別のデバイスから続ける」を自身のタイトルに重ねて表示することがなくなり、引き継ぎカードはどのストレージバックエンドからでも開けるようになりました。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───── 0.9.9 ───── -->
+    <section class="release" id="v0-9-9">
+      <div class="release-head">
+        <span class="release-ver">0.9.9</span>
+        <span class="release-date">2026年7月</span>
+      </div>
+      <p class="release-summary">コミュニティ版＋ライセンスのリリース、加えて過去最大のVideo/Paper機能アップデート：非商用利用は無料で買い切りの商用ライセンス、タイムライン上のモーションコミック用吹き出しとキャプション、JKLシャトルによるプロ向け3点編集、Premiere XML書き出し、Paperの AIフレーム修正ツール。</p>
+
+      <div class="cl-group">
+        <h3>新機能</h3>
+        <ul class="cl-items">
+          <li><strong>コミュニティ版＋商用ライセンス。</strong>Sloom Studioは個人・非商用利用なら無料です。買い切り¥3,000の商用ライセンス（設定 &rarr; ライセンス。オフラインで検証、デスクトップとAndroidで1つのキー）で、プロ向け印刷制作ワークスペース——KDP対応の出力、断ち落とし・トリムつきの印刷対応PDF、CMYK/スポットのスウォッチが解放され、適合PDF/X-1a・PDF/X-4・Adobe IDMLは現在開発中で公開され次第無料で含まれます——そして1日1回のコミュニティ通知が消えます。誰の作品にもウォーターマークは入りません：書き出しには不可視の来歴メタデータが代わりに付与されます（PNG/JPEGのタグ、PDFのProducer、動画コンテナのコメント）。</li>
+          <li><strong>モーションコミック。</strong>吹き出し、心の声の吹き出し、キャプションボックスが、正真正銘のタイムラインクリップになりました——プログラムステージに配置され、キーフレームアニメーション可能で、インスペクタで完全な組版設定（フォント、色、尻尾の向き/長さ、行間、字間、揃え）ができます。</li>
+          <li><strong>プロ編集の4点セット。</strong>2/4/8倍速のJKLシャトル、Space/Home/End/矢印での再生操作、3点編集の挿入（<code>,</code>）と上書き（<code>.</code>）に対応したソースモニターのイン/アウトマーク、リップル/ロールトリム——クリップ端でのAltドラッグによるポインタリップルを含む。</li>
+          <li><strong>タイムライン強化ツール。</strong>マーカー（Shift+M）、音声のフェードとクロスフェード、トラックごとのロック、クリップのヒントつきの細いストリップに縮められる折りたたみ式のドロワー型トラック。</li>
+          <li><strong>Premiere連携。</strong>出力タブから、アクティブなシーケンスをFCP7 XMLとして書き出し——PremiereはFile &gt; Importで取り込め、ファイルに紐づくメディアが直接リンクされます。</li>
+          <li><strong>Paper：AIフレーム修正。</strong>コマを右クリック &rarr; モデルに正しい隣接コマを示し、何が正しくて何が間違っているかを記述し、必要ならその範囲だけを矩形選択して、設定済みの編集モデルで再描画します。加えて：ページメニューからページ／全ページをソースライブラリに送る——コミックのレイアウトがワンクリックでモーションコミックの素材になります。</li>
+          <li><strong>プログラムモニターのサイドバータブ</strong>（ツール／情報／出力）、全高の不透明度キーフレーム帯、再生ヘッドでのCtrl+Alt+&uarr;/&darr;による不透明度／音量の微調整。</li>
+        </ul>
+      </div>
+      <div class="cl-group fix">
+        <h3>修正・改善</h3>
+        <ul class="cl-items">
+          <li><strong>ソースライブラリの信頼性。</strong>生成したアセットの削除が、そのノードが配線されたままでも確実に反映されるように。ウィンドウ間の同期が数MB単位のペイロードを送らなくなり、ライブラリが変更のたびにすべてのアセットを読み直さなくなり、失敗した取り込みは消えるのではなく報告されるようになりました。</li>
+          <li><strong>スプラッシュ画面のアートワーク</strong>がパッケージ済みアプリで読み込まれるように。</li>
+          <li>ワークスペース全体でのパネルレイアウトの修正：ドッキング解除したパネルのスナップ、Videoのメニューバーの反応しない帯、Flowのズームコントロールがソースライブラリの下に隠れなくなりました。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───── 0.9.8 ───── -->
+    <section class="release" id="v0-9-8">
+      <div class="release-head">
+        <span class="release-ver">0.9.8</span>
+        <span class="release-date">2026年7月</span>
+      </div>
+      <p class="release-summary">Flowの新しい構成要素と、プロバイダー・エディタの修正：画像をImageエディタとの間で往復させる<code>.slimg</code>ノード、FLUX LoRAウェイトノード、カラーパレット／カラースウォッチノード、BytePlus（Seedream）プロバイダー、サインインしていればnano-bananaの画像とGeminiのテキストが確実に表示されるVertex経由Googleの修正。</p>
+
+      <div class="cl-group">
+        <h3>新機能</h3>
+        <ul class="cl-items">
+          <li><strong>.slimgノード。</strong>接続された画像を編集可能な<code>.slimg</code>として保存し、Imageエディタで開き、統合した結果をFlowグラフに戻す——明示的な「ディスクから読み込む」により、狙ったタイミングで出力を更新できます。</li>
+          <li><strong>LoRA Specノード。</strong>FLUX LoRAモデルが受け付けるJSON形式のLoRAウェイト（パス＋スケール、最大3つ）を構築し、FLUX画像ノードに直接配線します。</li>
+          <li><strong>カラーパレット＋カラースウォッチノード。</strong>画像・動画の色を導くマスターパレットと、そこからドラッグして取り出すシーンごとにラベル付けされたスウォッチ。</li>
+          <li><strong>BytePlus（Seedream）プロバイダー。</strong>BytePlus ModelArk経由の純正画像生成。</li>
+        </ul>
+      </div>
+      <div class="cl-group fix">
+        <h3>修正・改善</h3>
+        <ul class="cl-items">
+          <li><strong>Vertex経由のGoogle。</strong>Vertexが認証されていれば（<code>GOOGLE_CLOUD_PROJECT</code>環境変数で設定されたプロジェクトを含む）nano-bananaの画像とGeminiのテキストが確実に表示されるようになり、検出／サインインでプロジェクトが自動的に選ばれるようになりました。</li>
+          <li><strong>折りたたんだノードも配線を保持。</strong>ノードを縮小してスペースを節約しても、接続されたエッジは消えずに描画されたままになります。</li>
+          <li>ノードカテゴリのラベルが、超ワイドモニターだけでなく通常幅のモニターでも表示されるようになり、ノードのタイトルは固有の部分が切れる代わりに2行に折り返すようになり、VideoワークスペースとSource Libraryの名称がアプリ全体で統一されました。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───── 0.9.7 ───── -->
+    <section class="release" id="v0-9-7">
+      <div class="release-head">
+        <span class="release-ver">0.9.7</span>
+        <span class="release-date">2026年6月</span>
+      </div>
+      <p class="release-summary">デバイス間対応のリリース。スマホとデスクトップのブラウザが<em>同じ</em>ライブのプロジェクトを開けるようになり、ワンタップのバトンで編集が衝突しなくなりました——加えて、作り直されたウィンドウ内メニューと、一連のエディタの磨き上げ。</p>
+
+      <div class="cl-group">
+        <h3>新機能</h3>
+        <ul class="cl-items">
+          <li><strong>デバイス間同期。</strong>スマホのLANホストを実行し、同時にデスクトップのブラウザでプロジェクトを開く——Flowのグラフ、Paperのページ、Imageのキャンバス、ソースライブラリのすべてが、ローカルネットワーク上で足並みを揃えます。</li>
+          <li><strong>「作業中はこちら ⇄ スマホ」バトン。</strong>一度に編集ロックを持つのは1つのデバイスだけ。上部バーから受け渡すと、もう一方のデバイスは読み取り専用のミラーになるため、2つの画面が同じ変更を巡って競合することはありません。</li>
+          <li><strong>ウィンドウ内メニュー。</strong>アプリのウィンドウ内に収まる新しいメニュー——コンパクトなメニューボタンと、常時表示のクラシックなメニューバーを切り替え可能（不安定だったLinuxのグローバルメニュー経路を置き換え）。</li>
+          <li><strong>ライブ在席表示。</strong>プロジェクトを強制的に「読み取り専用」で開かせる代わりに、別のデバイスが同じプロジェクトを見ているとき上部バーがそれを表示します。</li>
+        </ul>
+      </div>
+      <div class="cl-group fix">
+        <h3>修正・改善</h3>
+        <ul class="cl-items">
+          <li>配信されたセッションのソース画像が専用のホストアセットエンドポイント経由で読み込まれるようになり、保存された状態が、サムネイルと書き出しを壊していたストレージ容量制限の連鎖を引き起こさなくなりました。</li>
+          <li>モジュール初期化テストの不安定さに対して同期チャンネルを強化。ビルドとテストのゲートは正常です。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───── 0.9.5 ───── -->
+    <section class="release" id="v0-9-5">
+      <div class="release-head">
+        <span class="release-ver">0.9.5</span>
+        <span class="release-date">2026年6月</span>
+      </div>
+      <p class="release-summary">ブラシとツールのアップデート：Imageエディタが絵描きが期待する修飾ジェスチャーを獲得し、各ワークスペースが独自のツールアイコンを手に入れ、設定を暗号化した状態で持ち運べるようになりました。</p>
+
+      <div class="cl-group">
+        <h3>新機能</h3>
+        <ul class="cl-items">
+          <li><strong>ブラシの直線。</strong><strong>Shift</strong>を押し続けると、ブラシ系のどのツールでも点から点への直線ストロークにスナップします。</li>
+          <li><strong>修復・スタンプの基準点。</strong><strong>Alt+クリック</strong>でスポット修復・スタンプツールの基準点を設定します。</li>
+          <li><strong>ワークスペースごとの独自ツールアイコン。</strong>共有のグリフはもう使いません——Flow、Image、Paper、Videoがそれぞれ明確なツールセットを持ちます。</li>
+          <li><strong>暗号化された設定バックアップ。</strong>全設定を暗号化されたバックアップファイルとして書き出し、再度取り込めます。</li>
+          <li><strong>Atlas画像モデルのより幅広い対応。</strong>各Atlas画像モデルの機能とリクエスト形式をマッピングし、Flowノードとジェネレーティブフィルのゲーティングをそれに合わせて整合させました。</li>
+        </ul>
+      </div>
+      <div class="cl-group fix">
+        <h3>修正・改善</h3>
+        <ul class="cl-items">
+          <li>ツールのホットキーとゲームパッドの対応を精査し、すべてのツールがキーボードとコントローラーの両方から使えるようにしました。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───── 0.9.3 ───── -->
+    <section class="release" id="v0-9-3">
+      <div class="release-head">
+        <span class="release-ver">0.9.3</span>
+        <span class="release-date">2026年6月</span>
+      </div>
+      <p class="release-summary">セキュリティとAndroidの使い勝手のアップデート。</p>
+
+      <div class="cl-group">
+        <h3>新機能</h3>
+        <ul class="cl-items">
+          <li><strong>APIキーを保存時も暗号化。</strong>キーはデスクトップではOSのセキュアストア（safeStorage）で、ウェブ/Androidでは WebCryptoで封印されます——Sloomに送信されないのは変わらず、ディスク上でも暗号化されるようになりました。</li>
+          <li>小さな画面でキャンバスの領域を確保するための<strong>折りたたみ可能なツールバー</strong>。</li>
+        </ul>
+      </div>
+      <div class="cl-group android">
+        <h3>Android</h3>
+        <ul class="cl-items">
+          <li>ファイルの保存／開くと、名前を付けて保存のダウンロードフォールバックで発生していたサイレント障害を修正。</li>
+          <li>Atlas画像リクエストの形式を修正（モデルごとのソースフィールド、参照画像が正しく添付されるように）。</li>
+          <li>音量キーでブラシサイズを操作可能に。垂直スワイプがプロパティスライダーに引っかからずスクロールするように。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───── 0.9.2 ───── -->
+    <section class="release" id="v0-9-2">
+      <div class="release-head">
+        <span class="release-ver">0.9.2</span>
+        <span class="release-date">2026年6月</span>
+      </div>
+      <p class="release-summary">Imageエディタの安定性とパフォーマンス。</p>
+
+      <div class="cl-group fix">
+        <h3>修正・改善</h3>
+        <ul class="cl-items">
+          <li>矩形選択・選択範囲の描画が劇的に速くなりました（フリーハンドの投げ縄が1fps未満まで落ちることがなくなりました）。</li>
+          <li>選択範囲を移動すると、新しいレイヤーに浮かせるようになりました（非破壊、Photoshop風）。</li>
+          <li>次の描画までズームがチェッカーボードにちらつくことがなくなりました——GPUのブリットがクランプされ、キャンバスの表示が同期されるように。</li>
+          <li>上部バーの下にあった何もない帯を削除し、<strong>ファイル ▸ 新規</strong>を追加。</li>
+          <li>フィールドやダイアログに入力中はツールのホットキーが反応しなくなりました。</li>
+          <li>ポインタがウィンドウの内外に移動するまでUIが固まる、キャンバスの再描画/表示のストールを修正。</li>
+          <li>レイヤーのピクセルが正しく保持されるようになり、プロジェクトを保存してもキャンバスが消えなくなりました。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───── 0.9.1 ───── -->
+    <section class="release" id="v0-9-1">
+      <div class="release-head">
+        <span class="release-ver">0.9.1</span>
+        <span class="release-date">2026年6月</span>
+      </div>
+      <div class="cl-group fix">
+        <h3>修正・改善</h3>
+        <ul class="cl-items">
+          <li>Windows / Linuxのデスクトップ版が、アプリ内のバージョン情報と更新確認つきでsloom.studioに初めて公開されました。</li>
+          <li>上部バーが1080p以上で1行に収まるように。LinuxのElectronはデフォルトでネイティブのWayland + GPUを使い、60fpsのキャンバスに。</li>
+          <li>テキストツールを修復（ワーカーのクラッシュ＋クリック配置の自動解除の不具合）。ブラシの初期設定を正確なプレビューに合わせて調整し直しました。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───── 0.9.0 ───── -->
+    <section class="release" id="v0-9-0">
+      <div class="release-head">
+        <span class="release-ver">0.9.0</span>
+        <span class="release-date">2026年6月・初の公開ベータ</span>
+      </div>
+      <p class="release-summary">初の公開ベータ：つながった4つのワークスペース——ノードグラフの<strong>Flow</strong>、スタイラス対応のブラシエンジンとジェネレーティブフィルを備えたレイヤー式の<strong>Image</strong>エディタ、印刷対応の<strong>Paper</strong>レイアウト（連結テキスト、ベースライングリッド、CMYKスウォッチ、吹き出し、表、パス上のテキスト）、マルチトラックの<strong>Video</strong>タイムライン——すべてがひとつの<code>.sloom</code>プロジェクトとソースライブラリを共有し、デスクトップとAndroidで、スマホをLANホストにするモード、ゲームパッド対応、各プロバイダーへの自分のキーでの接続に対応。</p>
+    </section>
+
+  </div>
+
+  <p class="cl-note">Sloom Studioは活発にベータ開発が進む独立系ソフトウェアです——頻繁なビルド更新が見込まれます。デスクトップアプリはこのバージョン系列を確認して更新します。Androidではストア版が自動的に更新されます。何かおかしいところを見つけましたか？ <a href="mailto:support@sloom.studio" style="color:var(--cyan)">support@sloom.studio</a>までご連絡ください。</p>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Sloom Studio
+    </a>
+    <nav class="footer-links" aria-label="フッターナビゲーション">
+      <a href="index.html">ホーム</a>
+      <a href="docs.html">ドキュメント</a>
+      <a href="examples.html">作例</a>
+      <a href="changelog.html">更新履歴</a>
+      <a href="privacy.html">プライバシー</a>
+      <a href="mailto:support@sloom.studio">support@sloom.studio</a>
+    </nav>
+    <span>&copy; 2026 Sloom Software</span>
+  </div>
+</footer>
+
+</body>
+</html>
