@@ -33,7 +33,7 @@ jobs:
             ebargs: --linux AppImage deb
           - os: windows-latest
             platform: windows
-            ebargs: --win nsis msix
+            ebargs: --win nsis
           - os: macos-14
             platform: mac
             ebargs: --mac dmg zip --x64 --arm64 -c.mac.icon=build/icons/icon.png
