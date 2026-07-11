@@ -110,7 +110,7 @@ async function waitForSignalLoomTarget(electron, port) {
     }
     try {
       const targets = await fetch(url).then((response) => response.json());
-      const signalLoomTarget = targets.find((target) => target.title === 'Signal Loom');
+      const signalLoomTarget = targets.find((target) => target.title === 'Sloom Studio' || target.title === 'Signal Loom');
       if (signalLoomTarget?.webSocketDebuggerUrl) {
         return signalLoomTarget;
       }

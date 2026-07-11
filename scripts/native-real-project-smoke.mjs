@@ -94,8 +94,13 @@ async function inspectStartupProjectAndOpenWorkspaces(webSocketDebuggerUrl) {
   const result = await evaluateCdpExpression(webSocketDebuggerUrl, `
     (async () => {
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-      const bridge = window.signalLoomNative;
-      if (!bridge) return { error: 'native bridge missing' };
+      let bridge = window.signalLoomNative;
+      const bridgeWaitStartedAt = Date.now();
+      while (!bridge && Date.now() - bridgeWaitStartedAt < 10000) {
+        await sleep(100);
+        bridge = window.signalLoomNative;
+      }
+      if (!bridge) return { error: 'native bridge missing', locationHref: location.href, readyState: document.readyState };
       let state;
       const startedAt = Date.now();
       while (Date.now() - startedAt < 60000) {
@@ -223,7 +228,7 @@ async function waitForSignalLoomTarget(electron, port) {
     }
     try {
       const targets = await fetch(url).then((response) => response.json());
-      const signalLoomTarget = targets.find((target) => target.title === 'Signal Loom');
+      const signalLoomTarget = targets.find((target) => target.title === 'Sloom Studio' || target.title === 'Signal Loom');
       if (signalLoomTarget?.webSocketDebuggerUrl) return signalLoomTarget;
       const fallbackTarget = targets.find((target) => target.webSocketDebuggerUrl);
       if (fallbackTarget) return fallbackTarget;
