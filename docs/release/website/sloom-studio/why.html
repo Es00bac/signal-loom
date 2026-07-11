@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Why I Built Sloom Studio</title>
+  <meta name="description" content="The maker story behind Sloom Studio: subscription fatigue, building it alone, and why the app is local-first with a free Community edition." />
+  <meta name="robots" content="index,follow" />
+  <meta name="theme-color" content="#020711" />
+  <meta property="og:title" content="Why I Built Sloom Studio" />
+  <meta property="og:description" content="I got tired of renting my own creative tools, so I built the suite I wanted and I'm selling it the way I'd want to buy it: once." />
+  <meta property="og:image" content="/assets/graphics/feature-graphic-sloom-1024x500.png" />
+<link rel="alternate" hreflang="en" href="https://sloom.studio/why.html" />
+<link rel="alternate" hreflang="x-default" href="https://sloom.studio/why.html" />
+  <link rel="icon" type="image/png" href="assets/graphics/icon-512.png" />
+  <link rel="stylesheet" href="assets/site.css" />
+  <style>
+    body {
+      background:
+        radial-gradient(ellipse 50% 28% at 30% 5%, rgba(41,217,255,.09) 0%, transparent 55%),
+        linear-gradient(180deg, #07111f 0%, var(--bg) 60%);
+    }
+
+    .why-layout {
+      max-width: 780px;
+      margin-inline: auto;
+      padding-block: clamp(56px, 8vw, 100px);
+    }
+
+    .why-layout h1 {
+      font-size: clamp(2rem, 5vw, 3.4rem);
+      margin-bottom: 8px;
+    }
+
+    .byline {
+      font-size: .88rem;
+      color: var(--dim);
+      margin-bottom: 32px;
+    }
+
+    /* Short version callout */
+    .lede-box {
+      border: 1px solid rgba(114,246,177,.28);
+      border-left: 3px solid var(--green);
+      background: rgba(114,246,177,.07);
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+      padding: 18px 22px;
+      margin-bottom: 40px;
+    }
+    .lede-box p { color: var(--text); margin: 0; font-size: .97rem; line-height: 1.7; }
+    .lede-box strong { color: #fff; }
+
+    /* Section headings */
+    .why-layout h2 {
+      font-size: 1.18rem;
+      margin-top: 40px;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+      color: #fff;
+    }
+    .why-layout p  { margin-bottom: 14px; font-size: .96rem; line-height: 1.72; }
+    .why-layout ul { margin-bottom: 14px; display: grid; gap: 6px; }
+    .why-layout li { font-size: .94rem; color: var(--muted); line-height: 1.65; }
+    .why-layout strong { color: var(--text); }
+
+    code {
+      background: rgba(41,217,255,.1);
+      border: 1px solid rgba(41,217,255,.18);
+      border-radius: 5px;
+      padding: .15em .42em;
+      font-family: "SF Mono", "Fira Code", ui-monospace, monospace;
+      font-size: .87em;
+      color: var(--cyan);
+    }
+
+    .why-footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+      font-size: .86rem;
+      color: var(--dim);
+    }
+    .why-footer a { color: var(--muted); }
+    .why-footer a:hover { color: var(--cyan); }
+  </style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav-inner wrap" aria-label="Primary navigation">
+    <a class="brand" href="index.html" aria-label="Sloom Studio home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Sloom Studio
+    </a>
+    <div class="nav-links" id="nav-links">
+      <a href="index.html">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="examples.html">Examples</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="index.html#license">Download</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="why.html" aria-current="page">Why I built this</a>
+    </div>
+    <a class="nav-cta" href="index.html#license">Get it — $17.99</a>
+    <button class="nav-hamburger" aria-label="Toggle navigation" onclick="document.getElementById('nav-links').classList.toggle('open')">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="why-layout">
+
+      <h1>Why I Built Sloom Studio</h1>
+      <p class="byline">By Jarrod Cary, the person who wrote all of it. Sloom Software.</p>
+
+      <div class="lede-box">
+        <p><strong>The short version.</strong> I got tired of renting my own creative tools, so I
+        built the suite I actually wanted: four workspaces, one project file, local-first, and a
+        free tier that isn't a trial. This is the longer version of why.</p>
+      </div>
+
+      <h2>The subscription tax</h2>
+      <p>I've paid it for years, like most people who make things on a computer. A few dollars a
+      month here for a paint app, a few there for a layout tool, another line for a video editor,
+      and if I wanted to touch any of the newer AI tooling, another subscription on top of that.
+      None of those charges is enormous by itself. Added up, forever, for tools I already own a
+      computer capable of running, it started to feel less like a fair trade and more like a toll
+      booth I'd agreed to walk through every month for the rest of my life. I don't want to rent
+      the pencil. I wanted to buy it once and keep it.</p>
+
+      <h2>Building it alone</h2>
+      <p>I'm a solo developer. There's no studio behind Sloom Studio, no investors, no roadmap set
+      by a committee. It's one person deciding what a creative suite should look like if it didn't
+      have to answer to a subscription dashboard or a growth target. That has a real upside: I can
+      just build the thing I think is right, without a meeting about it. It also has a real cost:
+      I'm also the only QA department, the only support inbox, and the only person who fixes the
+      bug you just found. I say that plainly because it's true, not because it's a pitch. If you
+      buy this, you're buying something one person built, and one person stands behind.</p>
+
+      <h2>Local-first, on purpose</h2>
+      <p>The app has no user accounts and no telemetry, and that isn't a bullet point I added to
+      the marketing page, it's the actual design. Your projects are files on your disk, in the
+      app's own <code>.sloom</code> format. If Sloom Software vanished tomorrow, the files you
+      already made would still open, because the app was never built to need a server to function.
+      The only time anything leaves your machine is if you deliberately turn on the optional Flow
+      graph and add your own API key for an AI provider, and even then it's your prompt going to
+      the provider you chose, not to me. I think that's how creative software should work by
+      default, not as a premium feature.</p>
+
+      <h2>One project file, four workspaces</h2>
+      <p>The actual reason the suite is one app instead of four separate ones is a boring, practical
+      complaint I had for years: export a PNG out of one program, import it into another, lose the
+      layers, and start over the moment something needs to change. So Image, Paper, Video, and the
+      optional Flow graph all read and write the same <code>.sloom</code> project and the same
+      shared source library. Draw something in Image and it's already sitting in Paper's library
+      when you go to letter a page. Cut a clip in Video and the same source assets are right there
+      too. That's the whole case for "one suite": not that any single workspace is the best tool
+      in the world at its one job, but that none of them make you leave the project to do the next
+      step.</p>
+
+      <h2>Why there's a free Community edition</h2>
+      <p>The free tier isn't a trial and it isn't a demo. It doesn't expire, it doesn't watermark
+      your work, and it isn't missing a workspace. What it doesn't include is the professional
+      print-production pipeline, the part that comic and book creators use when they're actually
+      publishing for money. That felt like the honest line to draw: if you're drawing for
+      yourself, learning, or making something you're not selling, I'd rather you just use the app.
+      If you're running a business on it, a one-time license fee to keep that business going seems
+      fair to ask, once, not every month.</p>
+
+      <h2>The source is public. That's a narrower promise than it sounds.</h2>
+      <p>The code lives on GitHub because I think that's the more trustworthy way to ship
+      software you're eventually asking people to pay for: you can read it, build it yourself, and
+      check that it isn't doing anything shady with your files. It's licensed for noncommercial use
+      under PolyForm Noncommercial, which is a real, specific, source-available license, not a
+      permissive one. I'd rather say that plainly than let anyone assume otherwise just because the
+      repository happens to be public.</p>
+
+      <h2>Where that leaves things</h2>
+      <p>I shipped the first public builds not long ago, and it's still moving fast, still pre-1.0,
+      still one person's judgment calls all the way down. If any of the above sounds like your
+      problem too, the <a href="https://youtu.be/7-imCNPPXZM" style="color: var(--cyan)">17-minute
+      walkthrough</a> shows the whole thing end to end, and the free download is on the
+      <a href="index.html#license" style="color: var(--cyan)">home page</a>. If you just want to
+      tell me I got something wrong, or right, <a href="mailto:support@sloom.studio" style="color: var(--cyan)">support@sloom.studio</a>
+      reaches me directly.</p>
+
+      <div class="why-footer">
+        &copy; 2026 Sloom Software. Sloom Studio is a local-first, bring-your-own-key creative suite. &middot;
+        <a href="index.html">sloom.studio</a>
+      </div>
+
+    </div>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M18 12h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#29d9ff" stroke-width="7" transform="rotate(45 32 32)"/>
+          <path d="M18 24h18a14 14 0 0 1 0 28H18a14 14 0 0 1 0-28Z" stroke="#ff3fb4" stroke-width="7" transform="rotate(-45 32 32)"/>
+        </svg>
+      </span>
+      Sloom Studio
+    </a>
+    <nav class="footer-links" aria-label="Footer navigation">
+      <a href="index.html">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="examples.html">Examples</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="why.html">Why I built this</a>
+      <a href="mailto:support@sloom.studio">support@sloom.studio</a>
+    </nav>
+    <span>&copy; 2026 Sloom Software</span>
+  </div>
+</footer>
+
+</body>
+</html>
