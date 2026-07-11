@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   mapBlendModeToCanvasComposite,
   resolveActiveStageFrameClips,
+  resolveComicTailSample,
   resolveDissolveOffsetSeconds,
   type StageFrameTimelineClip,
 } from './stageFrameCompositor';
@@ -165,5 +166,54 @@ describe('mapBlendModeToCanvasComposite', () => {
     for (const mode of modes) {
       expect(mapBlendModeToCanvasComposite(mode)).toBe(mode);
     }
+  });
+});
+
+describe('resolveComicTailSample', () => {
+  it('returns no override for a legacy comic clip with only the static polar tail (angle/length)', () => {
+    const clip = buildClip({
+      sourceKind: 'comic',
+      comicKind: 'speech-bubble',
+      comicTailAngleDeg: 115,
+      comicTailLengthPx: 90,
+    });
+
+    const sample = resolveComicTailSample(clip, 50);
+
+    expect(sample).toEqual({ tipXPercent: undefined, tipYPercent: undefined, curvePercent: undefined });
+  });
+
+  it('resolves the static bezier tail at every progress when the clip has no keyframes', () => {
+    const clip = buildClip({
+      sourceKind: 'comic',
+      comicKind: 'speech-bubble',
+      comicTailTipXPercent: 72,
+      comicTailTipYPercent: 116,
+      comicTailCurvePercent: 50,
+    });
+
+    expect(resolveComicTailSample(clip, 0)).toEqual({ tipXPercent: 72, tipYPercent: 116, curvePercent: 50 });
+    expect(resolveComicTailSample(clip, 100)).toEqual({ tipXPercent: 72, tipYPercent: 116, curvePercent: 50 });
+  });
+
+  it('animates the tail per frame between two tail keyframes, independent of the bubble body', () => {
+    const clip = buildClip({
+      sourceKind: 'comic',
+      comicKind: 'speech-bubble',
+      comicTailTipXPercent: 20,
+      comicTailTipYPercent: 20,
+      comicTailCurvePercent: 30,
+      keyframes: [
+        { timePercent: 0, positionX: 0, positionY: 0, scalePercent: 100, rotationDeg: 0, opacityPercent: 100, tailTipXPercent: 20, tailTipYPercent: 20, tailCurvePercent: 30 },
+        { timePercent: 100, positionX: 0, positionY: 0, scalePercent: 100, rotationDeg: 0, opacityPercent: 100, tailTipXPercent: 80, tailTipYPercent: 40, tailCurvePercent: 70 },
+      ],
+    });
+
+    // Exactly the mechanism docs/notes/830 names as the fix for the legacy export's "tail baked to
+    // the start pose" limitation: sampling per frame (not just at t=0/t=100) proves interpolation,
+    // not just pass-through of a keyframe's own stored value.
+    expect(resolveComicTailSample(clip, 0)).toEqual({ tipXPercent: 20, tipYPercent: 20, curvePercent: 30 });
+    expect(resolveComicTailSample(clip, 50)).toEqual({ tipXPercent: 50, tipYPercent: 30, curvePercent: 50 });
+    expect(resolveComicTailSample(clip, 100)).toEqual({ tipXPercent: 80, tipYPercent: 40, curvePercent: 70 });
   });
 });
