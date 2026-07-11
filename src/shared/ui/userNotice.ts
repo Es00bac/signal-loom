@@ -6,7 +6,7 @@
  */
 export function showUserNotice(message: string, kind: 'success' | 'error' = 'success'): void {
   if (typeof document === 'undefined' || !document.body) {
-    (kind === 'error' ? console.error : console.log)(`[Signal Loom] ${message}`);
+    (kind === 'error' ? console.error : console.log)(`[Sloom Studio] ${message}`);
     return;
   }
   const notice = document.createElement('div');

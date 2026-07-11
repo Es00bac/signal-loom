@@ -2,6 +2,8 @@ import type {
   EditorAudioClip,
   EditorVisualSourceKind,
   EditorVisualClip,
+  EditorVisualTrackKind,
+  EditorTextTypography,
   NodeData,
   TimelineAutomationPoint,
   TextClipEffect,
@@ -38,6 +40,8 @@ export function getEditorVisualClips(nodeData: NodeData): EditorVisualClip[] {
     if (!sourceKind) {
       return [];
     }
+
+    const comicBezierTip = resolveComicBezierTip(clip);
 
     const normalizedClip: EditorVisualClip = {
       id: clip.id,
@@ -97,9 +101,15 @@ export function getEditorVisualClips(nodeData: NodeData): EditorVisualClip[] {
       comicKind: clip.comicKind === 'speech-bubble' || clip.comicKind === 'thought-bubble' || clip.comicKind === 'caption' ? clip.comicKind : undefined,
       comicTailAngleDeg: typeof clip.comicTailAngleDeg === 'number' ? clip.comicTailAngleDeg : undefined,
       comicTailLengthPx: typeof clip.comicTailLengthPx === 'number' ? Math.max(0, clip.comicTailLengthPx) : undefined,
+      comicTailTipXPercent: comicBezierTip?.tipXPercent,
+      comicTailTipYPercent: comicBezierTip?.tipYPercent,
+      comicTailCurvePercent: typeof clip.comicTailCurvePercent === 'number' && Number.isFinite(clip.comicTailCurvePercent)
+        ? clamp01to100(clip.comicTailCurvePercent)
+        : undefined,
       comicLineHeightPercent: typeof clip.comicLineHeightPercent === 'number' ? clip.comicLineHeightPercent : undefined,
       comicLetterSpacingPx: typeof clip.comicLetterSpacingPx === 'number' ? clip.comicLetterSpacingPx : undefined,
       comicTextAlign: clip.comicTextAlign === 'left' || clip.comicTextAlign === 'center' || clip.comicTextAlign === 'right' ? clip.comicTextAlign : undefined,
+      textTypography: normalizeEditorTextTypography(clip.textTypography),
       shapeFillColor: typeof clip.shapeFillColor === 'string' ? clip.shapeFillColor : undefined,
       shapeBorderColor: typeof clip.shapeBorderColor === 'string' ? clip.shapeBorderColor : undefined,
       shapeBorderWidth: typeof clip.shapeBorderWidth === 'number' ? Math.max(0, Math.round(clip.shapeBorderWidth)) : undefined,
@@ -174,11 +184,62 @@ export function getEditorAudioTrackVolumes(nodeData: NodeData, trackCount = 4): 
   );
 }
 
+/**
+ * Per-visual-track role (index-aligned with the visual tracks), defaulting every absent/invalid
+ * entry to `'standard'` — never crashes on a missing or short-array `editorVisualTrackKinds`.
+ * Mirrors `getEditorAudioTrackVolumes`'s dense-array-with-defaults shape (as opposed to the sparse
+ * index-set shape used by track lock/collapse, which are booleans rather than an enum per track).
+ */
+export function getEditorVisualTrackKinds(nodeData: NodeData, trackCount = 4): EditorVisualTrackKind[] {
+  const value = Array.isArray(nodeData.editorVisualTrackKinds) ? nodeData.editorVisualTrackKinds : [];
+
+  return Array.from({ length: Math.max(0, trackCount) }, (_, index) =>
+    normalizeVisualTrackKind(value[index]),
+  );
+}
+
+function normalizeVisualTrackKind(value: unknown): EditorVisualTrackKind {
+  return value === 'overlay' ? 'overlay' : 'standard';
+}
+
+/** Toggles a single track's kind between `'standard'` and `'overlay'`, leaving every other track
+ *  untouched. `trackKinds` is expected to already be the full, dense array (from
+ *  `getEditorVisualTrackKinds`); out-of-range indexes are a no-op. */
+export function toggleEditorVisualTrackKind(
+  trackKinds: readonly EditorVisualTrackKind[],
+  trackIndex: number,
+): EditorVisualTrackKind[] {
+  return trackKinds.map((kind, index) =>
+    index === trackIndex ? (kind === 'overlay' ? 'standard' : 'overlay') : kind,
+  );
+}
+
+/**
+ * Placement preference for a brand-new text/comic clip: when a dedicated `overlay` track exists,
+ * new text/comic clips should land there instead of the default track, so "text/captions are a
+ * separate thing" without migrating any existing clip. Returns `undefined` (meaning "no
+ * preference, keep today's default") for every other source kind, and whenever no overlay track
+ * exists — callers should fall back to their normal default trackIndex in that case.
+ */
+export function selectOverlayTrackIndexForNewClip(
+  sourceKind: EditorVisualSourceKind,
+  trackKinds: readonly EditorVisualTrackKind[],
+): number | undefined {
+  if (sourceKind !== 'text' && sourceKind !== 'comic') {
+    return undefined;
+  }
+
+  const overlayIndex = trackKinds.findIndex((kind) => kind === 'overlay');
+
+  return overlayIndex >= 0 ? overlayIndex : undefined;
+}
+
 export function createEditorVisualClip(
   sourceNodeId: string,
   sourceKind: EditorVisualSourceKind,
   overrides: Partial<EditorVisualClip> = {},
 ): EditorVisualClip {
+  const overridesBezierTip = resolveComicBezierTip(overrides);
   const clip: EditorVisualClip = {
     id: `visual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     sourceNodeId,
@@ -232,9 +293,13 @@ export function createEditorVisualClip(
     textColor: overrides.textColor ?? '#f3f4f6',
     textEffect: overrides.textEffect ?? 'shadow',
     textBackgroundOpacityPercent: overrides.textBackgroundOpacityPercent ?? 0,
+    textTypography: overrides.textTypography,
     comicKind: overrides.comicKind,
     comicTailAngleDeg: overrides.comicTailAngleDeg,
     comicTailLengthPx: overrides.comicTailLengthPx,
+    comicTailTipXPercent: overridesBezierTip?.tipXPercent,
+    comicTailTipYPercent: overridesBezierTip?.tipYPercent,
+    comicTailCurvePercent: overrides.comicTailCurvePercent,
     comicLineHeightPercent: overrides.comicLineHeightPercent,
     comicLetterSpacingPx: overrides.comicLetterSpacingPx,
     comicTextAlign: overrides.comicTextAlign,
@@ -395,6 +460,129 @@ function normalizeAutomationPoints(
   }
 
   return anchored;
+}
+
+const COMIC_TAIL_BODY_RADIUS_PERCENT = 30;
+const COMIC_TAIL_PX_TO_PERCENT = 0.2;
+const COMIC_TAIL_DEFAULT_ANGLE_DEG = 115;
+const COMIC_TAIL_DEFAULT_LENGTH_PX = 90;
+
+type ComicTailSource = Pick<
+  EditorVisualClip,
+  'comicTailTipXPercent' | 'comicTailTipYPercent' | 'comicTailAngleDeg' | 'comicTailLengthPx'
+>;
+
+/**
+ * Resolves a comic clip's bezier tail tip: prefers an explicit `comicTailTip*` (the new bezier
+ * model), otherwise migrates the legacy polar `comicTailAngleDeg`/`comicTailLengthPx`. Returns
+ * `undefined` when the clip carries no tail data (non-comic clips, or comics whose tail is left to
+ * painter defaults). Pure.
+ */
+function resolveComicBezierTip(clip: ComicTailSource): { tipXPercent: number; tipYPercent: number } | undefined {
+  if (
+    typeof clip.comicTailTipXPercent === 'number' && Number.isFinite(clip.comicTailTipXPercent) &&
+    typeof clip.comicTailTipYPercent === 'number' && Number.isFinite(clip.comicTailTipYPercent)
+  ) {
+    return {
+      tipXPercent: clamp01to100(clip.comicTailTipXPercent),
+      tipYPercent: clamp01to100(clip.comicTailTipYPercent),
+    };
+  }
+
+  return migrateComicPolarTailToBezierTip(clip.comicTailAngleDeg, clip.comicTailLengthPx);
+}
+
+/**
+ * Converts a legacy polar comic tail (angle in degrees — 0 = right, 90 = down; length in px, both
+ * measured around the bubble center) into a Paper-style bezier tail tip expressed as a percent of
+ * the bubble frame (0–100, origin top-left, center = 50/50). The bubble body half-extent in that
+ * percent space is ~45, so the tip is placed beyond the body edge; the px length is scaled into
+ * percent units so a default ~90px tail lands ~48 from center (matching Paper's default tip
+ * distance) and the result is clamped in-frame. Returns `undefined` when no polar data is present.
+ * Pure — exported for direct unit testing.
+ */
+export function migrateComicPolarTailToBezierTip(
+  angleDeg: number | undefined,
+  lengthPx: number | undefined,
+): { tipXPercent: number; tipYPercent: number } | undefined {
+  const hasAngle = typeof angleDeg === 'number' && Number.isFinite(angleDeg);
+  const hasLength = typeof lengthPx === 'number' && Number.isFinite(lengthPx);
+
+  if (!hasAngle && !hasLength) {
+    return undefined;
+  }
+
+  const resolvedAngleDeg = hasAngle ? (angleDeg as number) : COMIC_TAIL_DEFAULT_ANGLE_DEG;
+  const resolvedLengthPx = Math.max(0, hasLength ? (lengthPx as number) : COMIC_TAIL_DEFAULT_LENGTH_PX);
+  const angleRad = resolvedAngleDeg * (Math.PI / 180);
+  const distancePercent = clampRange(
+    COMIC_TAIL_BODY_RADIUS_PERCENT + resolvedLengthPx * COMIC_TAIL_PX_TO_PERCENT,
+    22,
+    72,
+  );
+
+  return {
+    tipXPercent: clamp01to100(50 + Math.cos(angleRad) * distancePercent),
+    tipYPercent: clamp01to100(50 + Math.sin(angleRad) * distancePercent),
+  };
+}
+
+function normalizeEditorTextTypography(value: unknown): EditorTextTypography | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const typography: EditorTextTypography = {};
+
+  if (typeof value.fontWeight === 'number' && Number.isFinite(value.fontWeight)) {
+    typography.fontWeight = value.fontWeight;
+  }
+  if (value.fontStyle === 'normal' || value.fontStyle === 'italic') {
+    typography.fontStyle = value.fontStyle;
+  }
+  if (typeof value.lineHeightPercent === 'number' && Number.isFinite(value.lineHeightPercent)) {
+    typography.lineHeightPercent = value.lineHeightPercent;
+  }
+  if (typeof value.letterSpacingPx === 'number' && Number.isFinite(value.letterSpacingPx)) {
+    typography.letterSpacingPx = value.letterSpacingPx;
+  }
+  if (
+    value.textAlign === 'left' || value.textAlign === 'center' ||
+    value.textAlign === 'right' || value.textAlign === 'justify'
+  ) {
+    typography.textAlign = value.textAlign;
+  }
+  if (typeof value.strokeColor === 'string') {
+    typography.strokeColor = value.strokeColor;
+  }
+  if (typeof value.strokeWidthPx === 'number' && Number.isFinite(value.strokeWidthPx)) {
+    typography.strokeWidthPx = value.strokeWidthPx;
+  }
+  if (typeof value.shadowColor === 'string') {
+    typography.shadowColor = value.shadowColor;
+  }
+  if (typeof value.shadowBlurPx === 'number' && Number.isFinite(value.shadowBlurPx)) {
+    typography.shadowBlurPx = value.shadowBlurPx;
+  }
+  if (typeof value.shadowOffsetXPx === 'number' && Number.isFinite(value.shadowOffsetXPx)) {
+    typography.shadowOffsetXPx = value.shadowOffsetXPx;
+  }
+  if (typeof value.shadowOffsetYPx === 'number' && Number.isFinite(value.shadowOffsetYPx)) {
+    typography.shadowOffsetYPx = value.shadowOffsetYPx;
+  }
+  if (typeof value.arcPercent === 'number' && Number.isFinite(value.arcPercent)) {
+    typography.arcPercent = value.arcPercent;
+  }
+
+  return Object.keys(typography).length > 0 ? typography : undefined;
+}
+
+function clampRange(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function clamp01to100(value: number): number {
+  return Number(clampRange(value, 0, 100).toFixed(2));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

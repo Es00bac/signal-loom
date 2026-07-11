@@ -243,7 +243,7 @@ export function SourceLinkedLayerControls({
       ) : null}
       <div className="mt-2 space-y-1 text-[10px] text-cyan-100/35">
         <p>Replace updates this layer from Source Library metadata without rewriting the original source asset.</p>
-        <p>Edit Original remains metadata-only; Signal Loom does not launch a native Smart Object editor.</p>
+        <p>Edit Original remains metadata-only; Sloom Studio does not launch a native Smart Object editor.</p>
         <p>
           {sourceExists
             ? 'Video handoff uses flattened pixels plus Source Library provenance; native Smart Object parity is unavailable.'

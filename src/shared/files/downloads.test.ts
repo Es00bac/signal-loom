@@ -12,7 +12,7 @@ describe('shared browser downloads', () => {
     expect(buildDownloadFilename('Scene 01/final!', 'image/jpeg', 'png')).toBe('Scene-01-final.jpg');
   });
 
-  it('keeps Signal Loom container extensions literal (no MIME inference)', () => {
+  it('keeps Sloom Studio container extensions literal (no MIME inference)', () => {
     expect(buildWorkspaceDownloadFilename('Untitled-1', 'slimg')).toBe('Untitled-1.slimg');
     expect(buildWorkspaceDownloadFilename('My Zine!', '.SLPPR')).toBe('My-Zine.slppr');
     expect(buildWorkspaceDownloadFilename('', 'slimg')).toBe('signal-loom.slimg');

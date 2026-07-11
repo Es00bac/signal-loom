@@ -468,7 +468,7 @@ export function resolvePaperPrintUpscalePlan(input: {
         usesLocalFinalFit: true,
         notes: [
           'Auto will use the paired Android accelerator over the local network because it has no provider spend.',
-          'Signal Loom will still do an exact local fit to the document DPI after the NPU/GPU AI pass.',
+          'Sloom Studio will still do an exact local fit to the document DPI after the NPU/GPU AI pass.',
         ],
       };
     }
@@ -483,7 +483,7 @@ export function resolvePaperPrintUpscalePlan(input: {
         usesLocalFinalFit: true,
         notes: [
           'Auto will use the Android app native image upscaler because it has no provider spend.',
-          'Signal Loom will still do an exact local fit to the document DPI after the Android result returns.',
+          'Sloom Studio will still do an exact local fit to the document DPI after the Android result returns.',
         ],
       };
     }
@@ -498,7 +498,7 @@ export function resolvePaperPrintUpscalePlan(input: {
         usesLocalFinalFit: true,
         notes: [
           'Auto will use the local CPU upscaler runtime because it is configured and has no cloud spend.',
-          'Signal Loom will still do an exact local fit to the document DPI after the AI pass.',
+          'Sloom Studio will still do an exact local fit to the document DPI after the AI pass.',
         ],
       };
     }
@@ -553,7 +553,7 @@ export function resolvePaperPrintUpscalePlan(input: {
       usesLocalFinalFit: true,
       notes: [
         'Runs the AI upscale on a paired Android device with an NPU/GPU-capable companion service.',
-        'Signal Loom will still do an exact local fit to the document DPI after the Android result returns.',
+        'Sloom Studio will still do an exact local fit to the document DPI after the Android result returns.',
       ],
     };
   }
@@ -569,7 +569,7 @@ export function resolvePaperPrintUpscalePlan(input: {
       usesLocalFinalFit: true,
       notes: [
         'Runs locally on CPU only when the optional tiled upscaler runtime is installed.',
-        'Signal Loom will still do an exact local fit to the document DPI after the AI pass.',
+        'Sloom Studio will still do an exact local fit to the document DPI after the AI pass.',
       ],
     };
   }
@@ -986,7 +986,7 @@ function stabilityPlan(
     usesLocalFinalFit: true,
     notes: [
       `${label} handles the AI enhancement pass.`,
-      'Signal Loom locally resizes the provider result to the exact document-DPI pixel target before replacing the frame asset.',
+      'Sloom Studio locally resizes the provider result to the exact document-DPI pixel target before replacing the frame asset.',
     ],
   };
 }
@@ -1008,7 +1008,7 @@ function vertexPlan(
     vertexUpscaleFactor,
     notes: [
       'Vertex Imagen performs the AI upscale using the smallest available factor that can satisfy the print target.',
-      'Signal Loom locally resizes the provider result to the exact document-DPI pixel target before replacing the frame asset.',
+      'Sloom Studio locally resizes the provider result to the exact document-DPI pixel target before replacing the frame asset.',
     ],
   };
 }

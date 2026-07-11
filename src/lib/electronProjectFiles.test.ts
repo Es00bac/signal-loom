@@ -73,13 +73,13 @@ describe('Electron project file helpers', () => {
     expect(projectFiles.FLOW_NODE_TYPES).toEqual(FLOW_NODE_TYPES);
   });
 
-  it('adds the Signal Loom extension to save-as paths without one', async () => {
+  it('adds the Sloom Studio extension to save-as paths without one', async () => {
     const { ensureSignalLoomProjectExtension } = await loadProjectFilesModule();
 
     expect(ensureSignalLoomProjectExtension('/tmp/my-edit')).toBe('/tmp/my-edit.sloom');
   });
 
-  it('uses the native Signal Loom project extension for new saves', async () => {
+  it('uses the native Sloom Studio project extension for new saves', async () => {
     const { ensureSignalLoomProjectExtension } = await loadProjectFilesModule();
 
     expect(ensureSignalLoomProjectExtension('/tmp/project.sloom')).toBe('/tmp/project.sloom');
@@ -658,7 +658,7 @@ describe('Electron project file helpers', () => {
       },
     });
     expect(() => parseProjectDocumentJson('{"flow":{"nodes":{}}}')).toThrow(
-      'not a valid Signal Loom project',
+      'not a valid Sloom Studio project',
     );
     expect(() => parseProjectDocumentJson('{')).toThrow('could not be parsed');
   });

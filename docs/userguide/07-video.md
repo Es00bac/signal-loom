@@ -31,7 +31,7 @@ Clip properties animate over time with **keyframes**:
 - **Opacity** fades clips in and out.
 - **Crop** trims the visible area and can animate.
 
-Set a keyframe at one point in time, change the value at another, and Signal Loom interpolates
+Set a keyframe at one point in time, change the value at another, and Sloom Studio interpolates
 between them.
 
 ## Generating clips *(needs a provider key)*

@@ -1124,7 +1124,7 @@ function describeOrganizationSuiteHandoffCaveats(
 ): string[] {
   const caveats: string[] = [];
   if (handoffTarget === 'psd-export' && clippingMasks.clippedLayerIds.length > 0) {
-    caveats.push('PSD export preserves clipping-mask flags as Signal Loom metadata, but native Photoshop clipping groups are not guaranteed.');
+    caveats.push('PSD export preserves clipping-mask flags as Sloom Studio metadata, but native Photoshop clipping groups are not guaranteed.');
   }
   if (handoffTarget !== 'internal' && clippingMasks.groupBaseLayerIds.length > 0) {
     caveats.push('Group-base clipping masks flatten through visible descendant alpha for preview/export handoff.');

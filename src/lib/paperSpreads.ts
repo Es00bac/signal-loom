@@ -33,6 +33,7 @@ export interface LivePaperSpreadLayout {
 
 export interface PaperSpreadExportOptions {
   startOnRight?: boolean;
+  rtlBinding?: boolean;
 }
 
 export interface PaperBookletSignature {
@@ -43,12 +44,13 @@ export interface PaperBookletSignature {
 
 export function buildPaperSpreads(
   pages: PaperPage[],
-  options: { enabled?: boolean; startOnRight?: boolean } = {},
+  options: { enabled?: boolean; startOnRight?: boolean; rtlBinding?: boolean } = {},
 ): PaperSpread[] {
+  const rtl = options.rtlBinding ?? false;
   if (!options.enabled) {
     return pages.map((page) => ({
       id: page.id,
-      slots: [{ side: pageSideLabel(page.pageNumber, options.startOnRight ?? true).side, page, label: 'Single page' }],
+      slots: [{ side: pageSideLabel(page.pageNumber, options.startOnRight ?? true, rtl).side, page, label: 'Single page' }],
     }));
   }
 
@@ -56,6 +58,7 @@ export function buildPaperSpreads(
   const spreads: PaperSpread[] = [];
   let index = 0;
 
+  // A lone cover opens on the right (title-page recto), independent of binding direction.
   if (startOnRight && pages[0]) {
     spreads.push({
       id: `spread-cover-${pages[0].id}`,
@@ -68,12 +71,16 @@ export function buildPaperSpreads(
   }
 
   for (; index < pages.length; index += 2) {
-    const leftPage = pages[index] ?? null;
-    const rightPage = pages[index + 1] ?? null;
+    const firstPage = pages[index] ?? null; // the lower page number of the pair
+    const secondPage = pages[index + 1] ?? null;
+    // Right-to-left binding (右綴じ) reads the lower page number on the RIGHT and progresses right→left; the slot
+    // ORDER stays [left, right] (so the geometry is unchanged) — only which page lands in which side flips.
+    const leftPage = rtl ? secondPage : firstPage;
+    const rightPage = rtl ? firstPage : secondPage;
     spreads.push({
       id: `spread-${leftPage?.id ?? 'blank'}-${rightPage?.id ?? 'blank'}`,
       slots: [
-        { side: 'left', page: leftPage, label: 'Left page' },
+        { side: 'left', page: leftPage, label: leftPage ? 'Left page' : 'Blank left' },
         { side: 'right', page: rightPage, label: rightPage ? 'Right page' : 'Blank right' },
       ],
     });
@@ -213,9 +220,11 @@ function extractPaperSheets(html: string): string[] {
   return matches ?? [];
 }
 
-function pageSideLabel(pageNumber: number, startOnRight: boolean): { side: PaperSpreadSide } {
-  if (startOnRight) return { side: pageNumber % 2 === 0 ? 'left' : 'right' };
-  return { side: pageNumber % 2 === 0 ? 'right' : 'left' };
+function pageSideLabel(pageNumber: number, startOnRight: boolean, rtl = false): { side: PaperSpreadSide } {
+  // A right-bound book (or a start-on-right document) puts odd pages (recto) on the right.
+  const oddOnRight = startOnRight || rtl;
+  const odd = pageNumber % 2 === 1;
+  return { side: odd === oddOnRight ? 'right' : 'left' };
 }
 
 function formatMm(value: number): string {

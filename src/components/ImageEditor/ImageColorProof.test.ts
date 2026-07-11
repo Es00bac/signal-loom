@@ -228,7 +228,7 @@ describe('ImageColorProof', () => {
       conversion: {
         flatteningRequiredForPress: true,
         limitations: [
-          'Press handoff requires external flattening and ICC-managed CMYK separation; Signal Loom exports RGB pixels plus proof metadata.',
+          'Press handoff requires external flattening and ICC-managed CMYK separation; Sloom Studio exports RGB pixels plus proof metadata.',
         ],
       },
       signature: 'proof-plan:cmyk-soft-proof:perceptual:Coated FOGRA39:formula-preview',
@@ -547,7 +547,7 @@ describe('ImageColorProof', () => {
     ]);
     expect(cmyk.suiteHandoffGuidance).toEqual([
       'Keep proof presets attached as metadata when handing work to Flow, Video, or external print apps.',
-      'Run final ICC conversion and CMYK separation outside Signal Loom before production handoff.',
+      'Run final ICC conversion and CMYK separation outside Sloom Studio before production handoff.',
       'Do not treat the soft-proof preview as native CMYK evidence in automated suites.',
     ]);
     expect(cmyk.signature).toBe('image-color-proof-operational-readiness:v1:cmyk-soft-proof:perceptual:Coated FOGRA39:blocked');
@@ -759,7 +759,7 @@ describe('ImageColorProof', () => {
           label: 'External high-bit proof',
           preserves: '16-bit precision, ICC soft-proof transform, gamut warning, and press separation checks',
           recommendedFor: 'Production print proofing, archive masters, and color-critical review.',
-          caveat: 'Signal Loom proof metadata can guide setup, but it is not production proof evidence.',
+          caveat: 'Sloom Studio proof metadata can guide setup, but it is not production proof evidence.',
         },
         {
           route: '8bit-rgb-proof-derivative',

@@ -720,7 +720,7 @@ function describeGenerativeEditProviderCapabilities(
       supportsOutpaint: true,
       supportsUpscale: false,
       credentialRequirement: 'endpoint',
-      cost: { estimatedUsd: 0, label: 'Local endpoint: no metered cloud cost from Signal Loom.', unit: 'local' },
+      cost: { estimatedUsd: 0, label: 'Local endpoint: no metered cloud cost from Sloom Studio.', unit: 'local' },
       capabilityNotes: ['Endpoint/model readiness depends on the locally configured image-edit server.'],
     };
   }
@@ -1058,7 +1058,7 @@ function describeGenerativeEditRuntimeSummary(
     warnings.push({
       code: 'external-cloud-provider',
       severity: 'warning',
-      message: `${provider.displayName} would run through Signal Loom provider dispatch with stored credentials, not Photoshop cloud execution.`,
+      message: `${provider.displayName} would run through Sloom Studio provider dispatch with stored credentials, not Photoshop cloud execution.`,
     });
   } else if (provider.routeKind === 'local' || provider.routeKind === 'android') {
     warnings.push({
@@ -1079,7 +1079,7 @@ function describeGenerativeEditRuntimeSummary(
     dispatchStatus: blockers.length === 0 ? 'ready-for-provider-dispatch' : 'blocked',
     photoshopNativeAi: {
       supported: false,
-      reason: 'Photoshop/Firefly native Generative Fill execution is not wired; this descriptor only prepares Signal Loom provider routes.',
+      reason: 'Photoshop/Firefly native Generative Fill execution is not wired; this descriptor only prepares Sloom Studio provider routes.',
     },
     signalLoomExecution: {
       usesCloudProvider: provider.routeKind === 'cloud',
@@ -1190,7 +1190,7 @@ function describeUnsupportedPhotoshopGenerativeFillStates(): GenerativeEditReadi
     {
       state: 'photoshop-generative-fill-native-layer',
       supported: false,
-      caveat: 'Signal Loom creates ordinary image layers with masks; it does not preserve Photoshop native Generative Fill layer semantics.',
+      caveat: 'Sloom Studio creates ordinary image layers with masks; it does not preserve Photoshop native Generative Fill layer semantics.',
     },
     {
       state: 'photoshop-firefly-variation-stack',

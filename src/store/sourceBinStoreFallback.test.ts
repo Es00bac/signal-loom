@@ -112,8 +112,8 @@ describe('source bin persistence fallbacks', () => {
       label: 'Generated still',
       kind: 'image',
       mimeType: 'image/png',
-      assetUrl: 'capacitor://file:///storage/emulated/0/Documents/Signal Loom/Source Library/source-image-1.png',
-      nativeFilePath: 'file:///storage/emulated/0/Documents/Signal Loom/Source Library/source-image-1.png',
+      assetUrl: 'capacitor://file:///storage/emulated/0/Documents/Sloom Studio/Source Library/source-image-1.png',
+      nativeFilePath: 'file:///storage/emulated/0/Documents/Sloom Studio/Source Library/source-image-1.png',
       originNodeId: 'image-1',
       sourceKey: 'image:image-1:data:image/png;base64,AAAA',
       isGenerated: true,
@@ -138,8 +138,8 @@ describe('source bin persistence fallbacks', () => {
         label: 'Generated still',
         kind: 'image',
         mimeType: 'image/png',
-        nativeFilePath: 'file:///storage/emulated/0/Documents/Signal Loom/Source Library/source-image-1.png',
-        assetUrl: 'capacitor://file:///storage/emulated/0/Documents/Signal Loom/Source Library/source-image-1.png',
+        nativeFilePath: 'file:///storage/emulated/0/Documents/Sloom Studio/Source Library/source-image-1.png',
+        assetUrl: 'capacitor://file:///storage/emulated/0/Documents/Sloom Studio/Source Library/source-image-1.png',
       }),
     ]);
     expect(mocks.saveDataUrlAsset).not.toHaveBeenCalled();

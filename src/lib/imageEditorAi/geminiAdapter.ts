@@ -98,7 +98,7 @@ async function runVertexGeminiInpaint(input: {
   const bridge = getSignalLoomNativeBridge();
 
   if (!bridge?.generateVertexImage) {
-    throw new Error('Vertex AI requires the Signal Loom desktop app with the native Vertex bridge.');
+    throw new Error('Vertex AI requires the Sloom Studio desktop app with the native Vertex bridge.');
   }
 
   const limiter = getProviderLimiter('gemini');

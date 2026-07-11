@@ -1421,9 +1421,9 @@ function buildActiveLayerCaveats(
   }
   if (
     activeLayer.clippingMask
-    && organizationParity.suiteHandoffCaveats.some((caveat) => caveat.includes('clipping-mask flags as Signal Loom metadata'))
+    && organizationParity.suiteHandoffCaveats.some((caveat) => caveat.includes('clipping-mask flags as Sloom Studio metadata'))
   ) {
-    caveats.push('PSD handoff keeps clipping masks as Signal Loom metadata; native Photoshop clipping groups are not guaranteed.');
+    caveats.push('PSD handoff keeps clipping masks as Sloom Studio metadata; native Photoshop clipping groups are not guaranteed.');
   }
 
   return caveats;

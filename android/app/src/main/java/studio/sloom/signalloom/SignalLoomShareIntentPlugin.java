@@ -11,7 +11,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 /**
- * Surfaces ACTION_SEND ("share to Signal Loom" from another app's share sheet) to the web layer.
+ * Surfaces ACTION_SEND ("share to Sloom Studio" from another app's share sheet) to the web layer.
  *
  * `@capacitor/app`'s `appUrlOpen` event only recognizes `Intent.ACTION_VIEW` + `intent.getData()`
  * (see AppPlugin.handleOnNewIntent in node_modules/@capacitor/app) — a share-to intent's URI lives

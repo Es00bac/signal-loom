@@ -23,9 +23,28 @@ import {
 } from 'lucide-react';
 import { addTimelineMarker, normalizeTimelineMarkers, removeTimelineMarker, type TimelineMarker } from '../../../lib/editorTimelineMarkers';
 import { applyAudioFade, resolveCrossfadePercents } from '../../../lib/editorAudioFades';
-import { drawComicStageObject, renderComicCard } from '../../../lib/mediaComposition';
+import {
+  COMIC_CARD_BODY_HEIGHT,
+  COMIC_CARD_BODY_WIDTH,
+  COMIC_CARD_HEIGHT,
+  COMIC_CARD_WIDTH,
+  drawComicStageObject,
+  renderComicCard,
+} from '../../../lib/mediaComposition';
+import {
+  COMIC_BODY_RADIUS_PERCENT,
+  COMIC_TAIL_DEFAULT_TIP_X_PERCENT,
+  COMIC_TAIL_DEFAULT_TIP_Y_PERCENT,
+} from '../../../lib/videoComicTail';
+import { computeArcTextGlyphs, createVideoTextCanvasMeasurer } from '../../../lib/videoTextFlow';
+import { decodeGifFrames, selectGifFrameIndexAtTime, type GifDecodeResult } from '../../../lib/gifFrames';
 import { isTrackLocked, normalizeLockedTracks, toggleLockedTrack } from '../../../lib/editorTrackLocks';
 import { isTrackCollapsed, normalizeCollapsedTracks, toggleCollapsedTrack } from '../../../lib/editorTrackCollapse';
+import {
+  resolveClipTrackIndexPatch,
+  resolveTimelineDropTrackIndex,
+  type TimelineLaneRect,
+} from '../../../lib/editorTimelineTrackDrag';
 import { advanceShuttleCursor, stepShuttleRate, toggleShuttlePlay } from './timelineTransport';
 import { normalizeSourceMarks, overwriteTrackRange, shiftTrackClipsForInsert } from './threePointEdit';
 import { findNearestEditPoint, rippleTrimClipToTarget, rollEditPointToTarget } from './trimEdit';
@@ -67,6 +86,9 @@ import {
   getEditorAudioTrackVolumes,
   getEditorAudioClips,
   getEditorVisualClips,
+  getEditorVisualTrackKinds,
+  selectOverlayTrackIndexForNewClip,
+  toggleEditorVisualTrackKind,
 } from '../../../lib/manualEditorState';
 import type {
   AppNode,
@@ -80,7 +102,9 @@ import type {
   EditorClipFilterKind,
   EditorStageBlendMode,
   EditorStageObject,
+  EditorTextTypography,
   EditorVisualClip,
+  EditorVisualTrackKind,
   NodeData,
   TextClipEffect,
   TimelineAutomationPoint,
@@ -194,6 +218,7 @@ import {
   getAcceptStringForKinds,
   getBrowserPreviewSupportLabel,
   inferSourceKindFromFile,
+  isGifAssetReference,
 } from '../../../lib/mediaFormatRegistry';
 import {
   applyVisualClipPatchAtProgress,
@@ -390,6 +415,31 @@ export function resolveClipFitState(clip: EditorVisualClip, progressPercent: num
   return {
     ...getVisualKeyframeStateAtProgress(clip, progressPercent),
     fitMode: clip.fitMode,
+  };
+}
+
+/**
+ * Maps a comic tail-tip percent (frame coords, 50/50 = body centre) to a CSS percent within the
+ * clip's stage frame, and its inverse for the tail-drag handle. Shared contract with the comic card
+ * in mediaComposition: the body box occupies `COMIC_CARD_BODY_*` of the `COMIC_CARD_*` card, and a
+ * tip at percent 50±COMIC_BODY_RADIUS_PERCENT lands on the body edge.
+ */
+const COMIC_TAIL_HANDLE_FACTOR_X =
+  (COMIC_CARD_BODY_WIDTH / COMIC_CARD_WIDTH) * (100 / (2 * COMIC_BODY_RADIUS_PERCENT));
+const COMIC_TAIL_HANDLE_FACTOR_Y =
+  (COMIC_CARD_BODY_HEIGHT / COMIC_CARD_HEIGHT) * (100 / (2 * COMIC_BODY_RADIUS_PERCENT));
+
+function comicTailTipToFrameCssPercent(tipXPercent: number, tipYPercent: number): { leftPercent: number; topPercent: number } {
+  return {
+    leftPercent: 50 + (tipXPercent - 50) * COMIC_TAIL_HANDLE_FACTOR_X,
+    topPercent: 50 + (tipYPercent - 50) * COMIC_TAIL_HANDLE_FACTOR_Y,
+  };
+}
+
+function comicTailFrameFractionToTipPercent(xFractionFromCenter: number, yFractionFromCenter: number): { tipXPercent: number; tipYPercent: number } {
+  return {
+    tipXPercent: 50 + (xFractionFromCenter * 100) / COMIC_TAIL_HANDLE_FACTOR_X,
+    tipYPercent: 50 + (yFractionFromCenter * 100) / COMIC_TAIL_HANDLE_FACTOR_Y,
   };
 }
 const TIMELINE_PREVIEW_DEBOUNCE_MS = 220;
@@ -671,6 +721,21 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     commitActiveCompositionPatch(
       { editorCollapsedAudioTracks: toggleCollapsedTrack(collapsedAudioTracks, trackIndex) },
       isAudioTrackCollapsed(trackIndex) ? 'Expand audio track' : 'Collapse audio track',
+    );
+  };
+  // Overlay track kind (Phase 2D): a visual track can be designated 'overlay' so text/comic
+  // clips live on their own track, visually distinct from panel-art (image/video) tracks. It's
+  // metadata + placement preference + styling only — an overlay track is still a normal track.
+  const visualTrackKinds = useMemo(
+    () => getEditorVisualTrackKinds(activeComposition?.data ?? {}, VISUAL_TRACK_COUNT),
+    [activeComposition?.data.editorVisualTrackKinds],
+  );
+  const toggleVisualTrackKind = (trackIndex: number) => {
+    if (!activeComposition) return;
+    const isOverlay = visualTrackKinds[trackIndex] === 'overlay';
+    commitActiveCompositionPatch(
+      { editorVisualTrackKinds: toggleEditorVisualTrackKind(visualTrackKinds, trackIndex) },
+      isOverlay ? 'Unmark overlay track' : 'Mark overlay track',
     );
   };
   const editorAssetById = useMemo(
@@ -1686,8 +1751,12 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     if (!activeComposition) return;
     const asset = createEditorAsset('comic', { comicKind: kind });
     const defaults = asset.comicDefaults;
+    // Comic clips created from this toolbar action have no explicit track picker — prefer a
+    // dedicated overlay track when one exists, so captions/bubbles land as "a separate thing"
+    // without disturbing today's default (track 0) when no overlay track has been designated.
+    const overlayTrackIndex = selectOverlayTrackIndexForNewClip('comic', visualTrackKinds);
     const nextClip = createEditorVisualClip(asset.id, 'comic', {
-      trackIndex: 0,
+      trackIndex: overlayTrackIndex ?? 0,
       startMs: Math.max(0, Math.round(timelineCursorSeconds * 1000)),
       durationSeconds: 4,
       comicKind: kind,
@@ -1778,7 +1847,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
 
     const sequenceName = typeof activeComposition.data.customTitle === 'string' && activeComposition.data.customTitle.trim()
       ? activeComposition.data.customTitle.trim()
-      : 'Signal Loom Sequence';
+      : 'Sloom Studio Sequence';
     const sequence = buildFcpXmlSequenceFromEditor({
       name: sequenceName,
       frameRate: compositionFrameRate,
@@ -2606,25 +2675,36 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     commitTimelineSnapPoints([], 'Clear timeline snap points');
   };
 
-  const moveVisualClip = (clipId: string, nextStartSeconds: number, shiftKey = false) => {
+  // nextTrackIndex is set only while a cross-track vertical drag is hovering a different lane
+  // (undefined keeps horizontal-only drags working exactly as before). A locked destination track
+  // rejects the move via resolveClipTrackIndexPatch, leaving the clip on its current track.
+  const moveVisualClip = (clipId: string, nextStartSeconds: number, shiftKey = false, nextTrackIndex?: number) => {
     const snappedStartSeconds = snapTimelineInteractionSeconds(nextStartSeconds, shiftKey);
 
     updateVisualClips(
       visualClips.map((clip) =>
         clip.id === clipId
-          ? { ...clip, startMs: Math.max(0, Math.round(snappedStartSeconds * 1000)) }
+          ? {
+              ...clip,
+              startMs: Math.max(0, Math.round(snappedStartSeconds * 1000)),
+              trackIndex: resolveClipTrackIndexPatch(clip.trackIndex, nextTrackIndex, isVisualTrackLocked),
+            }
           : clip,
       ),
     );
   };
 
-  const moveAudioClip = (clipId: string, nextStartSeconds: number, shiftKey = false) => {
+  const moveAudioClip = (clipId: string, nextStartSeconds: number, shiftKey = false, nextTrackIndex?: number) => {
     const snappedStartSeconds = snapTimelineInteractionSeconds(nextStartSeconds, shiftKey);
 
     updateAudioClips(
       audioClips.map((clip) =>
         clip.id === clipId
-          ? { ...clip, offsetMs: Math.max(0, Math.round(snappedStartSeconds * 1000)) }
+          ? {
+              ...clip,
+              offsetMs: Math.max(0, Math.round(snappedStartSeconds * 1000)),
+              trackIndex: resolveClipTrackIndexPatch(clip.trackIndex, nextTrackIndex, isAudioTrackLocked),
+            }
           : clip,
       ),
     );
@@ -4132,6 +4212,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
           isAudioTrackCollapsedProp={isAudioTrackCollapsed}
           onToggleVisualTrackCollapse={toggleVisualTrackCollapse}
           onToggleAudioTrackCollapse={toggleAudioTrackCollapse}
+          visualTrackKinds={visualTrackKinds}
+          onToggleVisualTrackKind={toggleVisualTrackKind}
           snapTimelineInteractionSeconds={snapTimelineInteractionSeconds}
           timelineAudioTrackHeight={timelineAudioTrackHeight}
           timelineCursorSeconds={timelineCursorSeconds}
@@ -5185,8 +5267,8 @@ interface SequencerTimelinePanelProps {
   displayTimelineSeconds: number;
   handleTimelineSourceDrop: (event: React.DragEvent<HTMLDivElement>, trackType: 'visual' | 'audio', trackIndex: number) => void;
   jumpToAdjacentSelectedKeyframe: (direction: 'previous' | 'next') => void;
-  moveAudioClip: (id: string, nextStartSeconds: number, shiftKey: boolean) => void;
-  moveVisualClip: (id: string, nextStartSeconds: number, shiftKey: boolean) => void;
+  moveAudioClip: (id: string, nextStartSeconds: number, shiftKey: boolean, nextTrackIndex?: number) => void;
+  moveVisualClip: (id: string, nextStartSeconds: number, shiftKey: boolean, nextTrackIndex?: number) => void;
   onCutSelectedVisualClipAtPlayhead: () => boolean;
   onOpenAudioClipContextMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void;
   onOpenTimelineGapContextMenu: (gap: TimelineGap, event: React.MouseEvent<HTMLElement>) => void;
@@ -5222,6 +5304,8 @@ interface SequencerTimelinePanelProps {
   isAudioTrackCollapsedProp: (trackIndex: number) => boolean;
   onToggleVisualTrackCollapse: (trackIndex: number) => void;
   onToggleAudioTrackCollapse: (trackIndex: number) => void;
+  visualTrackKinds: EditorVisualTrackKind[];
+  onToggleVisualTrackKind: (trackIndex: number) => void;
   snapTimelineInteractionSeconds: (seconds: number, shiftKey: boolean) => number;
   splitVisualClipAtSeconds: (id: string, splitSeconds: number, shiftKey: boolean) => void;
   slipVisualClip: (id: string, deltaSeconds: number) => void;
@@ -5294,6 +5378,8 @@ function SequencerTimelinePanel({
   isAudioTrackCollapsedProp,
   onToggleVisualTrackCollapse,
   onToggleAudioTrackCollapse,
+  visualTrackKinds,
+  onToggleVisualTrackKind,
   snapTimelineInteractionSeconds,
   splitVisualClipAtSeconds,
   slipVisualClip,
@@ -5459,11 +5545,15 @@ function SequencerTimelinePanel({
 
         <div className="min-h-0 overflow-auto px-2.5 py-2" ref={timelineScrollRef}>
           {activeComposition ? (
-            <div className="min-w-full space-y-1.5" style={{ width: `${timelineZoomPercent}%` }}>
+            <div className="min-w-full space-y-1.5" data-timeline-lanes-root="true" style={{ width: `${timelineZoomPercent}%` }}>
               {Array.from({ length: VISUAL_TRACK_COUNT }, (_, trackIndex) => (
                 <TimelineLane
                   key={`visual-${trackIndex}`}
                   automationLabel="Opacity"
+                  laneTrackIndex={trackIndex}
+                  laneTrackKind="visual"
+                  overlayKind={visualTrackKinds[trackIndex]}
+                  onToggleOverlayKind={() => onToggleVisualTrackKind(trackIndex)}
                   blocks={visualBlocks.filter((block) => block.clip.trackIndex === trackIndex).map((block) => ({
                     id: block.clip.id,
                     label: visualBlockLabel(block.clip, block.item?.label),
@@ -5521,6 +5611,8 @@ function SequencerTimelinePanel({
                 <TimelineLane
                   key={trackIndex}
                   automationLabel="Volume"
+                  laneTrackIndex={trackIndex}
+                  laneTrackKind="audio"
                   blocks={audioBlocks.filter((block) => block.clip.trackIndex === trackIndex).map((block) => ({
                     id: block.clip.id,
                     label: block.item?.label ?? block.clip.sourceNodeId,
@@ -6130,7 +6222,7 @@ export function ProgramMonitorPanel({
                   </div>
                 </div>
                 <div className="mt-1 text-xs text-amber-50/85">
-                  {renderStatusMessage ?? 'Signal Loom is rendering the current composition.'}
+                  {renderStatusMessage ?? 'Sloom Studio is rendering the current composition.'}
                 </div>
               </div>
             </div>
@@ -6678,7 +6770,7 @@ function buildRenderedPreviewDescriptor({
     return {
       status: 'rendering',
       title: 'Rendering preview',
-      detail: renderStatusMessage?.trim() || 'Signal Loom is rendering the current composition.',
+      detail: renderStatusMessage?.trim() || 'Sloom Studio is rendering the current composition.',
       metadata,
     };
   }
@@ -6791,7 +6883,7 @@ function VideoPremiereParityPanel() {
             </div>
             <div className="mt-1 grid gap-1 text-[10px] leading-4 text-gray-400 md:grid-cols-2">
               <div><span className="text-gray-500">Premiere:</span> {row.premiere}</div>
-              <div><span className="text-gray-500">Signal Loom:</span> {row.signalLoom}</div>
+              <div><span className="text-gray-500">Sloom Studio:</span> {row.signalLoom}</div>
             </div>
             <div className="mt-1 text-[10px] leading-4 text-cyan-100/85">{row.workflowImpact}</div>
           </div>
@@ -6829,7 +6921,7 @@ function RenderedPreviewStatusPanel({
         ? 'Rendered preview unavailable'
         : 'No rendered preview yet';
   const detail = state === 'waiting'
-    ? (renderStatusMessage?.trim() || 'Signal Loom is rendering the current composition.')
+    ? (renderStatusMessage?.trim() || 'Sloom Studio is rendering the current composition.')
     : state === 'error'
       ? (errorMessage?.trim() || 'The last render did not produce a playable preview asset.')
       : state === 'empty'
@@ -7368,6 +7460,62 @@ function ProgramStage({
     window.addEventListener('pointerup', onUp);
   };
 
+  /**
+   * Drags the comic bubble's TAIL TIP. Writes `comicTailTip{X,Y}Percent` as a KEYFRAME at the
+   * current playhead (via applyVisualClipPatchAtProgress, same path as move/scale/rotate), so the
+   * tail tip animates independently of the bubble body. The tip percent is derived from the pointer
+   * position relative to the clip frame (inverse-rotated when the clip is rotated).
+   */
+  const startTailTipDrag = (event: React.PointerEvent<HTMLButtonElement>, stageClip: ProgramStageClip) => {
+    if (event.button !== 0 || activeTool !== 'select' || !stageRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const { clip } = stageClip;
+    onSelectClip(clip.id);
+
+    const stageBounds = stageRef.current.getBoundingClientRect();
+    const stageScale = stageBounds.width / canvas.width;
+    const layout = getStageClipLayout(stageClip, canvas);
+    const centerX = stageBounds.left + (layout.left + layout.width / 2) * stageScale;
+    const centerY = stageBounds.top + (layout.top + layout.height / 2) * stageScale;
+    const frameWidthPx = Math.max(1, layout.width * stageScale);
+    const frameHeightPx = Math.max(1, layout.height * stageScale);
+    const rotationRad = (layout.rotationDeg * Math.PI) / 180;
+    const cos = Math.cos(-rotationRad);
+    const sin = Math.sin(-rotationRad);
+    const progressPercent = getStageClipProgress(stageClip) * 100;
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - centerX;
+      const deltaY = moveEvent.clientY - centerY;
+      // Undo the frame rotation so the offset is in the bubble's own (unrotated) frame.
+      const localX = deltaX * cos - deltaY * sin;
+      const localY = deltaX * sin + deltaY * cos;
+      const { tipXPercent, tipYPercent } = comicTailFrameFractionToTipPercent(
+        localX / frameWidthPx,
+        localY / frameHeightPx,
+      );
+      onUpdateClip(
+        clip.id,
+        applyVisualClipPatchAtProgress(clip, progressPercent, {
+          comicTailTipXPercent: Math.round(tipXPercent * 10) / 10,
+          comicTailTipYPercent: Math.round(tipYPercent * 10) / 10,
+        }),
+      );
+    };
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   const startStageObjectMoveDrag = (
     event: React.PointerEvent<HTMLElement>,
     object: EditorStageObject,
@@ -7598,6 +7746,27 @@ function ProgramStage({
                           title="Resize / scale clip"
                           type="button"
                         />
+                        {stageClip.clip.sourceKind === 'comic' && stageClip.clip.comicKind !== 'caption'
+                          ? (() => {
+                              const tail = getVisualKeyframeStateAtProgress(
+                                stageClip.clip,
+                                getStageClipProgress(stageClip) * 100,
+                              );
+                              const tipCss = comicTailTipToFrameCssPercent(
+                                tail.tailTipXPercent ?? COMIC_TAIL_DEFAULT_TIP_X_PERCENT,
+                                tail.tailTipYPercent ?? COMIC_TAIL_DEFAULT_TIP_Y_PERCENT,
+                              );
+                              return (
+                                <button
+                                  className="absolute z-10 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-amber-200 bg-amber-400/90 shadow"
+                                  onPointerDown={(event) => startTailTipDrag(event, stageClip)}
+                                  style={{ left: `${tipCss.leftPercent}%`, top: `${tipCss.topPercent}%` }}
+                                  title="Drag speech tail tip (keyframes at the playhead)"
+                                  type="button"
+                                />
+                              );
+                            })()
+                          : null}
                       </div>
                     ) : null}
                   </div>
@@ -7730,6 +7899,15 @@ function ProgramStageMedia({
           src={clip.item.assetUrl}
         />
       )
+      : isGifAssetReference(clip.item.assetUrl, clip.item.mimeType)
+      ? (
+        <GifStagePreview
+          className={mediaClassName}
+          label={clip.item.label}
+          localTimeSeconds={clip.localTimeSeconds}
+          src={clip.item.assetUrl}
+        />
+      )
       : <img alt={clip.item.label} className={mediaClassName} src={clip.item.assetUrl} />;
   } else if ((clip.item?.kind === 'video' || clip.item?.kind === 'composition') && clip.item.assetUrl) {
     content = effectDescriptor.chromaKey?.enabled
@@ -7773,25 +7951,40 @@ function ProgramStageMedia({
       </div>
     );
   } else if (clip.clip.sourceKind === 'comic') {
-    content = <ComicClipStagePreview clip={clip.clip} />;
+    content = <ComicClipStagePreview clip={clip.clip} progressPercent={getStageClipProgress(clip) * 100} />;
   } else if (isTextClip) {
     const text = layout.text;
     const fontSizePx = (text?.fontSizePx ?? Math.max(8, clip.clip.textSizePx || textDefaults?.fontSizePx || 64)) * (layout.scalePercent / 100) * stageScale;
+    const safeFontSizePx = Math.max(8, fontSizePx);
+    const textColor = text?.color ?? clip.clip.textColor ?? textDefaults?.color ?? '#f3f4f6';
+    const textFontFamily = text?.fontFamily ?? clip.clip.textFontFamily ?? textDefaults?.fontFamily ?? 'Inter, system-ui, sans-serif';
+    const textString = clip.clip.textContent ?? textDefaults?.text ?? clip.item?.text ?? 'Text';
+    const typography = clip.clip.textTypography;
 
     content = (
       <div className="flex h-full w-full items-center justify-center bg-transparent text-center">
-        <div
-          className="inline-block whitespace-pre font-semibold leading-tight"
-          style={{
-            color: text?.color ?? clip.clip.textColor ?? textDefaults?.color ?? '#f3f4f6',
-            fontFamily: text?.fontFamily ?? clip.clip.textFontFamily ?? textDefaults?.fontFamily ?? 'Inter, system-ui, sans-serif',
-            fontSize: `${Math.max(8, fontSizePx)}px`,
-            lineHeight: TEXT_LINE_HEIGHT,
-            ...getTextPreviewEffectStyle(text?.effect ?? clip.clip.textEffect ?? textDefaults?.textEffect ?? 'none'),
-          }}
-        >
-          {clip.clip.textContent ?? textDefaults?.text ?? clip.item?.text ?? 'Text'}
-        </div>
+        {typography?.arcPercent ? (
+          <ArcTextPreview
+            color={textColor}
+            fontFamily={textFontFamily}
+            fontSizePx={safeFontSizePx}
+            text={textString}
+            typography={typography}
+          />
+        ) : (
+          <div
+            className="inline-block whitespace-pre font-semibold leading-tight"
+            style={{
+              color: textColor,
+              fontFamily: textFontFamily,
+              fontSize: `${safeFontSizePx}px`,
+              lineHeight: TEXT_LINE_HEIGHT,
+              ...getTextTypographyStyle(typography, text?.effect ?? clip.clip.textEffect ?? textDefaults?.textEffect ?? 'none'),
+            }}
+          >
+            {textString}
+          </div>
+        )}
       </div>
     );
   } else {
@@ -7841,6 +8034,86 @@ function ProgramStageMedia({
   );
 }
 
+/**
+ * Program Monitor preview for an image clip whose source is a GIF. A browser `<img>` free-runs a
+ * GIF on wall-clock time -- it ignores the timeline playhead entirely, so it shows the wrong frame
+ * whenever the sequence is paused, scrubbed, or the clip is trimmed/time-offset, and it can't be
+ * captured frame-accurately. This decodes the GIF once (`decodeGifFrames`) and repaints a canvas
+ * with whichever frame `selectGifFrameIndexAtTime` says corresponds to `localTimeSeconds` -- the
+ * same "elapsed time since this clip started on the timeline" clock `getStageClipProgress` already
+ * uses, and the same clock the FFmpeg export loops the GIF against (see `buildVisualClipInputArgs`
+ * in mediaComposition.ts), so preview and export agree on what the GIF looks like at any given
+ * playhead position. Works for static (single-frame) GIFs too -- they simply always resolve to
+ * frame 0, matching the previous `<img>` behavior.
+ */
+function GifStagePreview({
+  className,
+  label,
+  localTimeSeconds,
+  src,
+}: {
+  className: string;
+  label: string;
+  localTimeSeconds: number;
+  src: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [decoded, setDecoded] = useState<GifDecodeResult | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDecoded(null);
+
+    fetch(src)
+      .then((response) => response.blob())
+      .then((blob) => decodeGifFrames(blob))
+      .then((result) => {
+        if (!cancelled) {
+          setDecoded(result);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDecoded(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext('2d');
+
+    if (!canvas || !context || !decoded || decoded.frames.length === 0) {
+      return;
+    }
+
+    const frameIndex = selectGifFrameIndexAtTime(decoded.frames, Math.max(0, localTimeSeconds) * 1000);
+    const frame = decoded.frames[frameIndex];
+
+    canvas.width = decoded.width;
+    canvas.height = decoded.height;
+    context.clearRect(0, 0, decoded.width, decoded.height);
+
+    if (typeof ImageData !== 'undefined' && frame.bitmap instanceof ImageData) {
+      context.putImageData(frame.bitmap, 0, 0);
+    } else {
+      context.drawImage(frame.bitmap as CanvasImageSource, 0, 0, decoded.width, decoded.height);
+    }
+  }, [decoded, localTimeSeconds]);
+
+  return (
+    <canvas
+      aria-label={label}
+      className={className}
+      ref={canvasRef}
+    />
+  );
+}
+
 function ProgramStageObjectPreview({ object }: { object: EditorStageObject }) {
   if (object.kind === 'text') {
     return (
@@ -7879,20 +8152,26 @@ function ProgramStageObjectPreview({ object }: { object: EditorStageObject }) {
 
 /**
  * Edit-stage preview for a motion-comic CLIP: renders the exact export card (renderComicCard)
- * as the stage content, so the interactive stage matches the encode pixel-for-pixel.
+ * as the stage content, so the interactive stage matches the encode pixel-for-pixel. The tail tip +
+ * funnel are resolved at the current playhead progress so a keyframed tail animates live and
+ * INDEPENDENTLY of the bubble body (the body's pos/scale/rotation is applied by the stage layout).
  */
-function ComicClipStagePreview({ clip }: { clip: EditorVisualClip }) {
+function ComicClipStagePreview({ clip, progressPercent }: { clip: EditorVisualClip; progressPercent: number }) {
   const [src, setSrc] = useState<string | null>(null);
+  const tailState = getVisualKeyframeStateAtProgress(clip, progressPercent);
+  const tipXPercent = tailState.tailTipXPercent;
+  const tipYPercent = tailState.tailTipYPercent;
+  const curvePercent = tailState.tailCurvePercent;
 
   useEffect(() => {
     let cancelled = false;
-    void renderComicCard(clip).then((url) => {
+    void renderComicCard(clip, { tipXPercent, tipYPercent, curvePercent }).then((url) => {
       if (!cancelled) setSrc(url);
     });
     return () => {
       cancelled = true;
     };
-  }, [clip]);
+  }, [clip, tipXPercent, tipYPercent, curvePercent]);
 
   return src
     ? <img alt={clip.textContent ?? 'Motion comic'} className="h-full w-full object-contain" src={src} />
@@ -7905,7 +8184,11 @@ function ComicClipStagePreview({ clip }: { clip: EditorVisualClip }) {
  */
 function ComicStageObjectPreview({ object }: { object: Extract<EditorStageObject, { kind: 'speech-bubble' | 'thought-bubble' | 'caption' }> }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const pad = Math.ceil(object.tailLengthPx + object.strokeWidthPx + 8);
+  // The bezier tail can poke ~0.6× the smaller body half-extent beyond the body, so pad for that
+  // as well as the legacy polar length so the tail is never clipped in the preview canvas.
+  const pad = Math.ceil(
+    Math.max(object.tailLengthPx, Math.min(object.width, object.height) * 0.65) + object.strokeWidthPx + 8,
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -7964,6 +8247,226 @@ function getTextPreviewEffectStyle(effect: TextClipEffect): CSSProperties {
   }
 
   return {};
+}
+
+/**
+ * Full Paper-grade typography CSS for a text/comic clip's live preview: starts from the legacy
+ * per-clip `TextClipEffect` look (so clips created before `textTypography` existed render
+ * unchanged), then layers explicit `textTypography` fields on top. Arc is handled separately by
+ * `ArcTextPreview` (CSS can't bend a text run along a curve) — this function is only used for the
+ * straight-line render path.
+ */
+function getTextTypographyStyle(
+  typography: EditorTextTypography | undefined,
+  legacyEffect: TextClipEffect,
+): CSSProperties {
+  const style: CSSProperties = { ...getTextPreviewEffectStyle(legacyEffect) };
+
+  if (typography?.fontWeight !== undefined) {
+    style.fontWeight = typography.fontWeight;
+  }
+  if (typography?.fontStyle) {
+    style.fontStyle = typography.fontStyle;
+  }
+  if (typography?.lineHeightPercent !== undefined) {
+    style.lineHeight = typography.lineHeightPercent / 100;
+  }
+  if (typography?.letterSpacingPx !== undefined) {
+    style.letterSpacing = `${typography.letterSpacingPx}px`;
+  }
+  if (typography?.textAlign) {
+    style.textAlign = typography.textAlign;
+  }
+  if ((typography?.strokeWidthPx ?? 0) > 0) {
+    style.WebkitTextStroke = `${typography?.strokeWidthPx}px ${typography?.strokeColor ?? '#000000'}`;
+  }
+  if ((typography?.shadowBlurPx ?? 0) > 0 || (typography?.shadowOffsetXPx ?? 0) !== 0 || (typography?.shadowOffsetYPx ?? 0) !== 0) {
+    style.textShadow = `${typography?.shadowOffsetXPx ?? 0}px ${typography?.shadowOffsetYPx ?? 0}px ${Math.max(0, typography?.shadowBlurPx ?? 0)}px ${typography?.shadowColor ?? 'rgba(0,0,0,0.6)'}`;
+  }
+
+  return style;
+}
+
+/**
+ * Lazily-created shared measurer for the LIVE preview's arc-text glyph placement — mirrors
+ * `mediaComposition.ts`'s `getVideoTextMeasurer()`, kept as a separate instance since this module
+ * can't import a canvas context across the preview/export boundary (nor should it: this one only
+ * ever runs in the browser/Electron renderer, same as the export path, just a different call site).
+ */
+let sharedVideoTextMeasurer: ReturnType<typeof createVideoTextCanvasMeasurer> | undefined;
+
+function getSharedVideoTextMeasurer(): ReturnType<typeof createVideoTextCanvasMeasurer> {
+  sharedVideoTextMeasurer ??= createVideoTextCanvasMeasurer();
+  return sharedVideoTextMeasurer;
+}
+
+/**
+ * Live-preview render for arc/curved text (`textTypography.arcPercent`): CSS can't bend a text run
+ * along a curve, so each character is measured and placed individually via `computeArcTextGlyphs` —
+ * the SAME pure geometry `mediaComposition.ts`'s canvas export uses, so the curve the user drags in
+ * the inspector matches the exported frame.
+ */
+function ArcTextPreview({
+  color,
+  fontFamily,
+  fontSizePx,
+  text,
+  typography,
+}: {
+  color: string;
+  fontFamily: string;
+  fontSizePx: number;
+  text: string;
+  typography: EditorTextTypography;
+}) {
+  const measurer = getSharedVideoTextMeasurer();
+  const fontWeight = typography.fontWeight ?? 600;
+  const fontStyle = typography.fontStyle ?? 'normal';
+  const letterSpacingPx = typography.letterSpacingPx ?? 0;
+  const font = { fontFamily, fontSizePx, fontWeight, fontStyle, letterSpacingPx };
+  const naturalWidthPx = Math.max(1, measurer(text, font));
+  const glyphs = computeArcTextGlyphs(text, naturalWidthPx, typography.arcPercent, (char) => measurer(char, font) + letterSpacingPx);
+  const glyphStyle = getTextTypographyStyle(typography, 'none');
+  const heightPx = fontSizePx * 2;
+
+  return (
+    <div className="relative" style={{ width: naturalWidthPx, height: heightPx }}>
+      {glyphs.map((glyph, index) => (
+        <span
+          className="absolute whitespace-pre"
+          key={index}
+          style={{
+            color,
+            fontFamily,
+            fontSize: `${fontSizePx}px`,
+            fontStyle,
+            fontWeight,
+            left: naturalWidthPx / 2 + glyph.xPx,
+            top: heightPx / 2 + glyph.yPx,
+            textShadow: glyphStyle.textShadow,
+            transform: `translate(-50%, -50%) rotate(${glyph.rotationDeg}deg)`,
+            WebkitTextStroke: glyphStyle.WebkitTextStroke,
+          }}
+        >
+          {glyph.char}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The Paper-grade typography controls shared by the text- and comic-clip inspectors: weight, style,
+ * arc/curve, and stroke/shadow — the fields `EditorTextTypography` carries beyond line-height/
+ * letter-spacing/align (which each inspector already has its own controls for, since comic bubbles
+ * had those first). All writes merge into the clip's `textTypography` via the caller's
+ * `updateTypography` (see `updateTextTypography` in the Inspector component), never overwriting
+ * fields this section doesn't own.
+ */
+function TypographyAdvancedControls({
+  typography,
+  updateTypography,
+}: {
+  typography: EditorTextTypography | undefined;
+  updateTypography: (patch: Partial<EditorTextTypography>) => void;
+}) {
+  const fontWeight = typography?.fontWeight ?? 600;
+  const fontStyle = typography?.fontStyle ?? 'normal';
+  const strokeWidthPx = typography?.strokeWidthPx ?? 0;
+  const shadowBlurPx = typography?.shadowBlurPx ?? 0;
+  const arcPercent = typography?.arcPercent ?? 0;
+
+  return (
+    <div className="space-y-3 rounded-lg border border-gray-700/60 bg-[#0f131b]/50 p-3">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Typography</div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <NumberField
+          label="Weight"
+          max={900}
+          min={100}
+          onChange={(value) => updateTypography({ fontWeight: Math.max(100, Math.min(900, Math.round(value / 100) * 100)) })}
+          step={100}
+          value={fontWeight}
+        />
+        <div className="flex items-end gap-2">
+          {(['normal', 'italic'] as const).map((style) => (
+            <button
+              className={`flex-1 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${fontStyle === style ? 'border-cyan-300/50 bg-cyan-500/10 text-cyan-100' : 'border-gray-700/60 text-gray-400 hover:text-gray-200'}`}
+              key={style}
+              onClick={() => updateTypography({ fontStyle: style })}
+              type="button"
+            >
+              {style === 'normal' ? 'Normal' : 'Italic'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <RangeControl
+        label="Curve (arc)"
+        max={100}
+        min={-100}
+        onChange={(value) => updateTypography({ arcPercent: Math.round(value) })}
+        value={arcPercent}
+        valueLabel={arcPercent === 0 ? 'straight' : `${arcPercent}`}
+      />
+      <div className="grid gap-3 md:grid-cols-2">
+        <NumberField
+          label="Stroke width"
+          max={20}
+          min={0}
+          onChange={(value) => updateTypography({ strokeWidthPx: Math.max(0, Math.round(value)) })}
+          step={1}
+          value={strokeWidthPx}
+        />
+        <label className="block space-y-2 text-xs text-gray-400">
+          <span>Stroke color</span>
+          <AdvancedColorPicker
+            className="h-10 w-full"
+            buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+            label="Text stroke color"
+            onChange={(strokeColor) => updateTypography({ strokeColor })}
+            value={typography?.strokeColor ?? '#000000'}
+          />
+        </label>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <NumberField
+          label="Shadow blur"
+          max={60}
+          min={0}
+          onChange={(value) => updateTypography({ shadowBlurPx: Math.max(0, Math.round(value)) })}
+          step={1}
+          value={shadowBlurPx}
+        />
+        <label className="block space-y-2 text-xs text-gray-400">
+          <span>Shadow color</span>
+          <AdvancedColorPicker
+            className="h-10 w-full"
+            buttonClassName="rounded-xl border border-gray-700/60 bg-[#0f131b]"
+            label="Text shadow color"
+            onChange={(shadowColor) => updateTypography({ shadowColor })}
+            value={typography?.shadowColor ?? '#000000'}
+          />
+        </label>
+        <NumberField
+          label="Shadow offset X"
+          max={40}
+          min={-40}
+          onChange={(value) => updateTypography({ shadowOffsetXPx: Math.round(value) })}
+          step={1}
+          value={typography?.shadowOffsetXPx ?? 0}
+        />
+        <NumberField
+          label="Shadow offset Y"
+          max={40}
+          min={-40}
+          onChange={(value) => updateTypography({ shadowOffsetYPx: Math.round(value) })}
+          step={1}
+          value={typography?.shadowOffsetYPx ?? 0}
+        />
+      </div>
+    </div>
+  );
 }
 
 function ChromaKeyPreviewMedia({
@@ -8715,6 +9218,19 @@ function InspectorPanel({
       stroke: normalizeClipStroke({ ...stroke, ...patch }),
     });
   };
+  /** Merges a patch into the selected clip's Paper-grade typography (weight/style/leading/tracking/
+   *  align/stroke/shadow/arc), shared by the text- and comic-clip inspectors. `onUpdateVisualClip`
+   *  does a SHALLOW merge (`{...clip, ...patch}`), so `textTypography` must be spread here rather
+   *  than passed as a bare patch, or unrelated fields already set on it would be dropped. */
+  const updateTextTypography = (patch: Partial<EditorTextTypography>) => {
+    if (!visualClip) {
+      return;
+    }
+
+    onUpdateVisualClip({
+      textTypography: { ...visualClip.textTypography, ...patch },
+    });
+  };
 
   return (
     <aside className={`${panelClassName} flex h-full min-h-0 flex-col overflow-hidden`}>
@@ -9198,51 +9714,98 @@ function InspectorPanel({
                     label="Line height %"
                     max={240}
                     min={80}
-                    onChange={(value) => onUpdateVisualClip({ comicLineHeightPercent: Math.max(80, Math.min(240, Math.round(value))) })}
+                    onChange={(value) => updateTextTypography({ lineHeightPercent: Math.max(80, Math.min(240, Math.round(value))) })}
                     step={5}
-                    value={visualClip.comicLineHeightPercent ?? 120}
+                    value={visualClip.textTypography?.lineHeightPercent ?? visualClip.comicLineHeightPercent ?? 120}
                   />
                   <NumberField
                     label="Letter spacing"
                     max={24}
                     min={-4}
-                    onChange={(value) => onUpdateVisualClip({ comicLetterSpacingPx: Math.max(-4, Math.min(24, Math.round(value))) })}
+                    onChange={(value) => updateTextTypography({ letterSpacingPx: Math.max(-4, Math.min(24, Math.round(value))) })}
                     step={1}
-                    value={visualClip.comicLetterSpacingPx ?? 0}
+                    value={visualClip.textTypography?.letterSpacingPx ?? visualClip.comicLetterSpacingPx ?? 0}
                   />
                 </div>
-                {visualClip.comicKind !== 'caption' ? (
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <NumberField
-                      label="Tail angle°"
-                      max={360}
-                      min={0}
-                      onChange={(value) => onUpdateVisualClip({ comicTailAngleDeg: Math.round(value) })}
-                      step={5}
-                      value={visualClip.comicTailAngleDeg ?? 115}
-                    />
-                    <NumberField
-                      label="Tail length"
-                      max={600}
-                      min={0}
-                      onChange={(value) => onUpdateVisualClip({ comicTailLengthPx: Math.max(0, Math.round(value)) })}
-                      step={5}
-                      value={visualClip.comicTailLengthPx ?? 90}
-                    />
-                  </div>
-                ) : null}
+                {visualClip.comicKind !== 'caption'
+                  ? (() => {
+                      const tipXPercent = Math.round(
+                        visualCurrentState?.tailTipXPercent ?? visualClip.comicTailTipXPercent ?? COMIC_TAIL_DEFAULT_TIP_X_PERCENT,
+                      );
+                      const tipYPercent = Math.round(
+                        visualCurrentState?.tailTipYPercent ?? visualClip.comicTailTipYPercent ?? COMIC_TAIL_DEFAULT_TIP_Y_PERCENT,
+                      );
+                      const curvePercent = Math.round(
+                        visualCurrentState?.tailCurvePercent ?? visualClip.comicTailCurvePercent ?? 50,
+                      );
+                      const keyframeCount = visualClip.keyframes?.length ?? 0;
+                      const curveLabel =
+                        curvePercent === 50 ? 'straight' : curvePercent > 50 ? 'bows ▶' : 'bows ◀';
+                      return (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-100/70">
+                              Tail &amp; Funnel
+                            </span>
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                keyframeCount > 0
+                                  ? 'border-amber-300/50 bg-amber-500/10 text-amber-100'
+                                  : 'border-gray-700/60 text-gray-400'
+                              }`}
+                              title="The tail tip and funnel curvature keyframe at the current playhead, independently of the bubble body."
+                            >
+                              <span aria-hidden>◆</span>
+                              {keyframeCount > 0 ? `${keyframeCount} keyframes` : 'Static tail'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] leading-snug text-gray-500">
+                            Drag the amber handle on the stage to move the tail tip — it and the funnel curvature
+                            animate separately from the bubble body.
+                          </p>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <NumberField
+                              label="Tail tip X %"
+                              max={160}
+                              min={-60}
+                              onChange={(value) => onUpdateVisualClip({ comicTailTipXPercent: Math.round(value) })}
+                              step={1}
+                              value={tipXPercent}
+                            />
+                            <NumberField
+                              label="Tail tip Y %"
+                              max={160}
+                              min={-60}
+                              onChange={(value) => onUpdateVisualClip({ comicTailTipYPercent: Math.round(value) })}
+                              step={1}
+                              value={tipYPercent}
+                            />
+                          </div>
+                          <RangeControl
+                            label="Funnel curvature"
+                            max={100}
+                            min={0}
+                            onChange={(value) => onUpdateVisualClip({ comicTailCurvePercent: Math.round(value) })}
+                            value={curvePercent}
+                            valueLabel={`${curvePercent} · ${curveLabel}`}
+                          />
+                        </div>
+                      );
+                    })()
+                  : null}
                 <div className="flex gap-2">
-                  {(['left', 'center', 'right'] as const).map((align) => (
+                  {(['left', 'center', 'right', 'justify'] as const).map((align) => (
                     <button
-                      className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${(visualClip.comicTextAlign ?? 'center') === align ? 'border-cyan-300/50 bg-cyan-500/10 text-cyan-100' : 'border-gray-700/60 text-gray-400 hover:text-gray-200'}`}
+                      className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${(visualClip.textTypography?.textAlign ?? visualClip.comicTextAlign ?? 'center') === align ? 'border-cyan-300/50 bg-cyan-500/10 text-cyan-100' : 'border-gray-700/60 text-gray-400 hover:text-gray-200'}`}
                       key={align}
-                      onClick={() => onUpdateVisualClip({ comicTextAlign: align })}
+                      onClick={() => updateTextTypography({ textAlign: align })}
                       type="button"
                     >
-                      {align === 'left' ? 'Left' : align === 'center' ? 'Center' : 'Right'}
+                      {align === 'left' ? 'Left' : align === 'center' ? 'Center' : align === 'right' ? 'Right' : 'Justify'}
                     </button>
                   ))}
                 </div>
+                <TypographyAdvancedControls typography={visualClip.textTypography} updateTypography={updateTextTypography} />
               </div>
             ) : null}
             {visualClip.sourceKind === 'text' ? (
@@ -9314,6 +9877,37 @@ function InspectorPanel({
                     <option value="outline">Outline</option>
                   </select>
                 </label>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <NumberField
+                    label="Line height %"
+                    max={240}
+                    min={80}
+                    onChange={(value) => updateTextTypography({ lineHeightPercent: Math.max(80, Math.min(240, Math.round(value))) })}
+                    step={5}
+                    value={visualClip.textTypography?.lineHeightPercent ?? 112}
+                  />
+                  <NumberField
+                    label="Letter spacing"
+                    max={24}
+                    min={-4}
+                    onChange={(value) => updateTextTypography({ letterSpacingPx: Math.max(-4, Math.min(24, Math.round(value))) })}
+                    step={1}
+                    value={visualClip.textTypography?.letterSpacingPx ?? 0}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  {(['left', 'center', 'right', 'justify'] as const).map((align) => (
+                    <button
+                      className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${(visualClip.textTypography?.textAlign ?? 'center') === align ? 'border-cyan-300/50 bg-cyan-500/10 text-cyan-100' : 'border-gray-700/60 text-gray-400 hover:text-gray-200'}`}
+                      key={align}
+                      onClick={() => updateTextTypography({ textAlign: align })}
+                      type="button"
+                    >
+                      {align === 'left' ? 'Left' : align === 'center' ? 'Center' : align === 'right' ? 'Right' : 'Justify'}
+                    </button>
+                  ))}
+                </div>
+                <TypographyAdvancedControls typography={visualClip.textTypography} updateTypography={updateTextTypography} />
               </div>
             ) : null}
             {visualClip.sourceKind === 'shape' ? (
@@ -9814,6 +10408,29 @@ function EditorAssetCard({
   );
 }
 
+// Cross-track vertical drag (Phase 2D): collects the viewport rects of every sibling lane of the
+// same kind (visual/audio) as `anchor`, tagged with each lane's own track index — the DOM-glue half
+// of the pure hit-test in editorTimelineTrackDrag.ts. Queried once per drag-start rather than on
+// every pointermove (lane positions don't change mid-drag).
+function collectTimelineLaneRects(anchor: Element, trackKind: 'visual' | 'audio'): TimelineLaneRect[] {
+  const root = anchor.closest('[data-timeline-lanes-root="true"]');
+
+  if (!root) {
+    return [];
+  }
+
+  return Array.from(root.querySelectorAll<HTMLElement>(`[data-timeline-track-kind="${trackKind}"]`)).flatMap((el) => {
+    const trackIndex = Number(el.dataset.timelineTrackIndex);
+
+    if (!Number.isInteger(trackIndex)) {
+      return [];
+    }
+
+    const rect = el.getBoundingClientRect();
+    return [{ trackIndex, top: rect.top, bottom: rect.bottom }];
+  });
+}
+
 function TimelineLane({
   trackLabel,
   locked = false,
@@ -9849,6 +10466,10 @@ function TimelineLane({
   onTrackVolumeChange,
   previewById,
   waveformById,
+  laneTrackIndex,
+  laneTrackKind,
+  overlayKind,
+  onToggleOverlayKind,
 }: {
   trackLabel: string;
   locked?: boolean;
@@ -9872,7 +10493,7 @@ function TimelineLane({
   }>;
   emptyMessage: string;
   onSelect: (id: string) => void;
-  onMoveBlock?: (id: string, nextStartSeconds: number, shiftKey: boolean) => void;
+  onMoveBlock?: (id: string, nextStartSeconds: number, shiftKey: boolean, nextTrackIndex?: number) => void;
   onCutBlock?: (id: string, splitSeconds: number, shiftKey: boolean) => void;
   onSlipBlock?: (id: string, deltaSeconds: number) => void;
   onTrimBlockEdge?: (
@@ -9903,6 +10524,14 @@ function TimelineLane({
   onTrackVolumeChange?: (volumePercent: number) => void;
   previewById?: Record<string, TimelineClipEdgePreview>;
   waveformById?: Record<string, number[]>;
+  // Cross-track vertical drag (Phase 2D): this lane's own track index/kind, tagged onto the DOM so
+  // a dragged block can hit-test sibling lanes of the same kind. Optional — a lane rendered without
+  // these (e.g. a legacy/unwired call site) simply keeps horizontal-only dragging.
+  laneTrackIndex?: number;
+  laneTrackKind?: 'visual' | 'audio';
+  // Overlay track kind (visual lanes only): renders a distinct label/tint and a toggle control.
+  overlayKind?: EditorVisualTrackKind;
+  onToggleOverlayKind?: () => void;
 }) {
   // Drawer-style minimize (owner request): a collapsed lane renders as a thin strip regardless
   // of the persisted laneHeight, so it can still be "kinda seen" without the full detail view.
@@ -9969,11 +10598,13 @@ function TimelineLane({
   return (
     <div className="group/lane relative grid grid-cols-[96px_minmax(0,1fr)] gap-2" style={laneSizeStyle}>
       <div
-        className={`overflow-hidden rounded-lg border border-gray-700/60 bg-[#0f131b] ${collapsed ? 'flex items-center px-2 py-0' : 'px-2.5 py-2'}`}
+        className={`overflow-hidden rounded-lg border ${overlayKind === 'overlay' ? 'border-fuchsia-400/40' : 'border-gray-700/60'} bg-[#0f131b] ${collapsed ? 'flex items-center px-2 py-0' : 'px-2.5 py-2'}`}
         style={laneSizeStyle}
       >
         <div className="flex items-center gap-1.5">
-          <span className="text-[13px] font-semibold text-gray-100">{trackLabel}</span>
+          <span className={`text-[13px] font-semibold ${overlayKind === 'overlay' ? 'text-fuchsia-200' : 'text-gray-100'}`}>
+            {trackLabel}{overlayKind === 'overlay' && !collapsed ? ' · Overlay' : ''}
+          </span>
           {!collapsed && onToggleLock ? (
             <button
               aria-label={locked ? `Unlock ${trackLabel}` : `Lock ${trackLabel}`}
@@ -9994,6 +10625,17 @@ function TimelineLane({
               type="button"
             >
               {collapsed ? '▸' : '▾'}
+            </button>
+          ) : null}
+          {!collapsed && onToggleOverlayKind ? (
+            <button
+              aria-label={overlayKind === 'overlay' ? `Make ${trackLabel} a standard track` : `Make ${trackLabel} an overlay track`}
+              className={`rounded px-1 text-[11px] leading-none transition-colors ${overlayKind === 'overlay' ? 'text-fuchsia-300' : 'text-gray-600 hover:text-gray-300'}`}
+              onClick={(event) => { event.stopPropagation(); onToggleOverlayKind(); }}
+              title={overlayKind === 'overlay' ? 'Overlay track (text/comic clips composite on top) — click to make standard' : 'Mark as overlay track (dedicated to text/comic clips)'}
+              type="button"
+            >
+              {overlayKind === 'overlay' ? '◆' : '◇'}
             </button>
           ) : null}
         </div>
@@ -10021,7 +10663,9 @@ function TimelineLane({
         data-timeline-lane-body="true"
         data-timeline-lane-locked={locked ? 'true' : undefined}
         data-timeline-lane-collapsed={collapsed ? 'true' : undefined}
-        className={`relative overflow-hidden rounded-lg border border-gray-700/60 bg-[#0f131b] ${locked ? 'pointer-events-none opacity-55 saturate-50' : ''} ${collapsed ? 'pointer-events-none' : ''}`}
+        data-timeline-track-index={laneTrackIndex}
+        data-timeline-track-kind={laneTrackKind}
+        className={`relative overflow-hidden rounded-lg border ${overlayKind === 'overlay' ? 'border-fuchsia-400/40' : 'border-gray-700/60'} bg-[#0f131b] ${locked ? 'pointer-events-none opacity-55 saturate-50' : ''} ${collapsed ? 'pointer-events-none' : ''} data-[timeline-drag-target=true]:ring-2 data-[timeline-drag-target=true]:ring-cyan-300/70`}
         onDragOver={(event) => {
           if (!onDropSourceItem || !event.dataTransfer.types.includes('application/x-flow-source-bin-item')) {
             return;
@@ -10194,13 +10838,46 @@ function TimelineLane({
 
                   const startClientX = event.clientX;
                   const startSeconds = block.startSeconds;
+                  // Cross-track drag: cache sibling lane rects (of the same kind) once at drag
+                  // start — lane positions don't move mid-drag, so there's no need to re-query on
+                  // every pointermove. A lane rendered without laneTrackKind (e.g. an unwired call
+                  // site) gets an empty list here, which keeps the drag horizontal-only exactly as
+                  // before (dropTrackIndex resolves to null → onMoveBlock's 4th arg stays undefined).
+                  const dragLanesRoot = laneTrackKind
+                    ? event.currentTarget.closest('[data-timeline-lanes-root="true"]')
+                    : null;
+                  const laneRects = laneTrackKind ? collectTimelineLaneRects(event.currentTarget, laneTrackKind) : [];
+                  let highlightedLaneEl: HTMLElement | null = null;
 
                   const onPointerMove = (moveEvent: PointerEvent) => {
                     const deltaSeconds = ((moveEvent.clientX - startClientX) / laneRect.width) * timelineSeconds;
-                    onMoveBlock(block.id, Math.max(0, startSeconds + deltaSeconds), moveEvent.shiftKey);
+                    const dropTrackIndex = laneRects.length > 0
+                      ? resolveTimelineDropTrackIndex(moveEvent.clientY, laneRects)
+                      : null;
+
+                    // Subtle visual cue: ring-highlight whichever lane the pointer is currently
+                    // hovering (the clip itself already jumps lanes live via onMoveBlock's commit).
+                    if (dragLanesRoot && laneTrackKind) {
+                      const nextLaneEl = dropTrackIndex !== null
+                        ? dragLanesRoot.querySelector<HTMLElement>(
+                            `[data-timeline-track-kind="${laneTrackKind}"][data-timeline-track-index="${dropTrackIndex}"]`,
+                          )
+                        : null;
+
+                      if (highlightedLaneEl && highlightedLaneEl !== nextLaneEl) {
+                        highlightedLaneEl.removeAttribute('data-timeline-drag-target');
+                      }
+                      if (nextLaneEl) {
+                        nextLaneEl.setAttribute('data-timeline-drag-target', 'true');
+                      }
+                      highlightedLaneEl = nextLaneEl;
+                    }
+
+                    onMoveBlock(block.id, Math.max(0, startSeconds + deltaSeconds), moveEvent.shiftKey, dropTrackIndex ?? undefined);
                   };
 
                   const onPointerUp = () => {
+                    highlightedLaneEl?.removeAttribute('data-timeline-drag-target');
                     window.removeEventListener('pointermove', onPointerMove);
                     window.removeEventListener('pointerup', onPointerUp);
                   };

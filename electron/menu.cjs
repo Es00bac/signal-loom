@@ -216,8 +216,15 @@ function resolveMenuItems(items) {
   return Array.isArray(items) ? items : [];
 }
 
+/** Pick a label for the active locale, falling back to English. `labelJa` lives beside `label` in the
+ *  shared JSON so the native menu translates from the same source as the integrated + global menus. */
+function pickLabel(item, locale) {
+  if (locale === 'ja' && item && typeof item.labelJa === 'string' && item.labelJa) return item.labelJa;
+  return item ? item.label : undefined;
+}
+
 /** Map shared-JSON item descriptors to Electron menu template items. */
-function buildNativeMenuItems(items, sendCommand, isMac) {
+function buildNativeMenuItems(items, sendCommand, isMac, locale) {
   const out = [];
   for (const item of items) {
     if (!item) continue;
@@ -234,23 +241,23 @@ function buildNativeMenuItems(items, sendCommand, isMac) {
       continue;
     }
     if (Array.isArray(item.items)) {
-      out.push({ label: item.label, submenu: buildNativeMenuItems(item.items, sendCommand, isMac) });
+      out.push({ label: pickLabel(item, locale), submenu: buildNativeMenuItems(item.items, sendCommand, isMac, locale) });
       continue;
     }
     if (item.command) {
       const fallback = item.accelerator ? toElectronAccelerator(item.accelerator) : undefined;
-      out.push(commandItem(item.label, item.command, sendCommand, fallback ? { accelerator: fallback } : {}));
+      out.push(commandItem(pickLabel(item, locale), item.command, sendCommand, fallback ? { accelerator: fallback } : {}));
     }
   }
   return out;
 }
 
 /** Build the top-level menu groups for one workspace from the shared JSON. */
-function buildWorkspaceMenuGroups(activeWorkspace, sendCommand, isMac) {
+function buildWorkspaceMenuGroups(activeWorkspace, sendCommand, isMac, locale) {
   const groups = WORKSPACE_MENUS[activeWorkspace] ?? WORKSPACE_MENUS.flow;
   return groups.map((group) => ({
-    label: group.label,
-    submenu: buildNativeMenuItems(resolveMenuItems(group.items), sendCommand, isMac),
+    label: pickLabel(group, locale),
+    submenu: buildNativeMenuItems(resolveMenuItems(group.items), sendCommand, isMac, locale),
   }));
 }
 
@@ -259,12 +266,13 @@ function createApplicationMenuTemplate({
   isMac = false,
   activeWorkspace = 'flow',
   keyboardShortcuts = {},
+  locale = 'en',
   sendCommand,
 }) {
   const previousKeyboardShortcuts = activeKeyboardShortcuts;
   activeKeyboardShortcuts = keyboardShortcuts && typeof keyboardShortcuts === 'object' ? keyboardShortcuts : {};
 
-  const template = buildWorkspaceMenuGroups(activeWorkspace, sendCommand, isMac);
+  const template = buildWorkspaceMenuGroups(activeWorkspace, sendCommand, isMac, locale);
 
 
   const result = isMac

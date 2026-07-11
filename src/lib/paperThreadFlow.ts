@@ -19,6 +19,7 @@ export function paperTypographyToTextFlowSpec(typography: PaperTypography): Pape
     align: typography.align,
     fontWeight: typography.fontWeight,
     fontStyle: typography.fontStyle,
+    vertical: typography.writingMode === 'vertical-rl',
   };
 }
 

@@ -318,7 +318,7 @@ function parseNativeAssetUrl(url) {
   const parsed = new URL(url);
 
   if (parsed.protocol !== 'signal-loom-asset:') {
-    throw new Error('Unsupported Signal Loom asset URL.');
+    throw new Error('Unsupported Sloom Studio asset URL.');
   }
 
   if (parsed.hostname === 'file') {
@@ -332,7 +332,7 @@ function parseNativeAssetUrl(url) {
   if (parsed.hostname === 'asset') {
     const assetId = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
     if (!assetId) {
-      throw new Error('Unsupported Signal Loom asset URL.');
+      throw new Error('Unsupported Sloom Studio asset URL.');
     }
     return {
       type: 'asset',
@@ -340,13 +340,13 @@ function parseNativeAssetUrl(url) {
     };
   }
 
-  throw new Error('Unsupported Signal Loom asset URL.');
+  throw new Error('Unsupported Sloom Studio asset URL.');
 }
 
 function decodeNativeAssetUrl(url) {
   const parsed = parseNativeAssetUrl(url);
   if (parsed.type !== 'file') {
-    throw new Error('Opaque Signal Loom asset URLs do not decode to file paths.');
+    throw new Error('Opaque Sloom Studio asset URLs do not decode to file paths.');
   }
   return parsed.filePath;
 }
@@ -621,7 +621,7 @@ function parseProjectDocumentJson(contents) {
   }
 
   if (!parsed || typeof parsed !== 'object' || (!parsed.flow && !parsed.flowWorkspaces)) {
-    throw new Error('The selected file is not a valid Signal Loom project.');
+    throw new Error('The selected file is not a valid Sloom Studio project.');
   }
 
   return sanitizeProjectDocument(parsed);
@@ -708,7 +708,7 @@ function sanitizeNodeData(value) {
 
 function sanitizeFlowSnapshot(flow) {
   if (!isObject(flow) || !Array.isArray(flow.nodes) || !Array.isArray(flow.edges)) {
-    throw new Error('The selected file is not a valid Signal Loom project.');
+    throw new Error('The selected file is not a valid Sloom Studio project.');
   }
   const seenNodeIds = new Set();
   const nodes = flow.nodes.flatMap((node, index) => {
@@ -875,7 +875,7 @@ function sanitizeFlowWorkspaceState(document) {
   const activeWorkspace = findActiveFlowWorkspace(flowWorkspaces, activeFlowWorkspaceId);
 
   if (!activeWorkspace) {
-    throw new Error('The selected file is not a valid Signal Loom project.');
+    throw new Error('The selected file is not a valid Sloom Studio project.');
   }
 
   return {
@@ -892,7 +892,7 @@ function sanitizeProjectDocument(document) {
     ...document,
     schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
     id: stringOr(document.id, `project-${Date.now()}`),
-    name: stringOr(document.name, 'Signal Loom Project'),
+    name: stringOr(document.name, 'Sloom Studio Project'),
     savedAt: finiteOr(document.savedAt, Date.now()),
     flow: flowWorkspaceState.flow,
     flowWorkspaces: flowWorkspaceState.flowWorkspaces,

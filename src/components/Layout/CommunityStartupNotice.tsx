@@ -86,12 +86,13 @@ export const CommunityStartupNotice: React.FC = () => {
   return (
     <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/60 backdrop-blur-[2px]" data-community-notice="true">
       <div className="mx-4 w-full max-w-md rounded-2xl border border-gray-700/70 bg-[#10141d] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.55)]">
-        <div className="text-lg font-semibold text-gray-100">Signal Loom Community</div>
+        <div className="text-lg font-semibold text-gray-100">Sloom Studio Community</div>
         <p className="mt-3 text-sm leading-6 text-gray-300">
           Free for personal and noncommercial use. Learn it, make things, share them. If you start
           earning with what you make here, that&apos;s when a license is due
           <span className="text-gray-100 font-semibold"> ($17.99, one-time, first 100 copies — then $39)</span>.
-          It unlocks the professional print-production exports and removes this notice.
+          It unlocks the commercial print-production exports (real CMYK PDF/X-1a and PDF/X-4, a KDP-ready
+          print PDF, and real Adobe IDML) and removes this notice.
         </p>
         <div className="mt-5 flex flex-col gap-2">
           <a

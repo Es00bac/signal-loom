@@ -6,6 +6,7 @@ import {
   type ImageModelOperation,
 } from './imageProviderCapabilities';
 import type { ImageOutputFormat, NodeData } from '../types/flow';
+import type { AppLocale } from './i18n';
 
 export interface ImageNodeTemplate {
   id: string;
@@ -217,6 +218,50 @@ const OPERATION_LABELS: Record<ImageModelOperation, string> = {
   upscale: 'Upscale',
   'local-open-edit': 'Local/open edit',
 };
+
+const IMAGE_TEMPLATE_DESC_JA: Record<string, string> = {
+  'gemini-reference-edit': 'ソース画像と参照画像を使った Google の画像生成／編集。',
+  'openai-mask-edit': 'ソース画像と任意のマスク入力を使う OpenAI GPT Image 編集ノード。',
+  'huggingface-open-model': 'Hugging Face のルーティングと月間クレジットによるオープンモデルのテキスト→画像。',
+  'bfl-flux2-reference': '最大 8 枚の参照画像・正確な色・画像内テキスト制御に対応した BFL FLUX.2 Pro。',
+  'stability-inpaint': '本物の Stability AI によるマスク対応の生成塗りつぶし。',
+  'stability-outpaint': 'Stability AI のアウトペイント制御でキャンバスの端を拡張。',
+  'stability-erase': 'オブジェクト除去や選択的削除のための Stability AI マスク対応消去。',
+  'stability-search-replace': '手動でマスクを描かずに、対象を説明して検索・置換します。',
+  'stability-background-relight': '背景を置き換え、前景をリライトして商品・合成向けに仕上げます。',
+  'local-open-qwen-edit': 'Qwen 互換のローカル／LAN／レンタル GPU 画像編集エンドポイント。',
+};
+
+const IMAGE_TEMPLATE_HIGHLIGHT_JA: Record<string, string> = {
+  'source image': 'ソース画像',
+  'up to 14 references': '参照 最大 14 枚',
+  'Vertex/API key': 'Vertex／API キー',
+  'mask input': 'マスク入力',
+  'token estimate': 'トークン見積り',
+  'open model': 'オープンモデル',
+  'provider routed': 'プロバイダー経由',
+  steps: 'ステップ',
+  '8 references': '参照 8 枚',
+  'exact color': '正確な色',
+  'text edits': 'テキスト編集',
+  'mask required': 'マスク必須',
+  'fixed credits': '固定クレジット',
+  margins: '余白',
+  creativity: '創造性',
+  'search prompt': '検索プロンプト',
+  background: '背景',
+  relight: 'リライト',
+  'mask/reference': 'マスク／参照',
+  'local endpoint': 'ローカルエンドポイント',
+};
+
+export function imageNodeTemplateDescription(template: ImageNodeTemplate, locale: AppLocale = 'en'): string {
+  return locale === 'ja' ? IMAGE_TEMPLATE_DESC_JA[template.id] ?? template.description : template.description;
+}
+
+export function imageNodeTemplateHighlight(tag: string, locale: AppLocale = 'en'): string {
+  return locale === 'ja' ? IMAGE_TEMPLATE_HIGHLIGHT_JA[tag] ?? tag : tag;
+}
 
 export function listImageNodeTemplates(): ImageNodeTemplate[] {
   return IMAGE_NODE_TEMPLATES.map(cloneImageNodeTemplate);

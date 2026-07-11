@@ -36,12 +36,14 @@ describe('PaperTopStrip titlebar placement', () => {
         showFindChange={false}
         onToggleGrid={noop}
         onToggleGuides={noop}
+        onToggleFrameEdges={noop}
         onToggleSnapToGrid={noop}
         onToggleSnapToGuides={noop}
         onToggleInspector={noop}
         onToggleRulers={noop}
         onToggleSpreads={noop}
         onToggleStartOnRight={noop}
+        onToggleRtlBinding={noop}
         onToggleToolbar={noop}
         onZoomIn={noop}
         onZoomOut={noop}
@@ -53,6 +55,7 @@ describe('PaperTopStrip titlebar placement', () => {
           detail: 'Preflight found 3 warnings. First: No bleed configured',
         }}
         showGrid={false}
+        showFrameEdges={false}
         showGuides
         showInspector
         showRulers
@@ -61,6 +64,7 @@ describe('PaperTopStrip titlebar placement', () => {
         snapToGrid={false}
         snapToGuides
         startOnRight={false}
+        rtlBinding={false}
         zoom={1.59}
       />,
     );
@@ -113,12 +117,14 @@ describe('PaperTopStrip titlebar placement', () => {
         showFindChange={false}
         onToggleGrid={noop}
         onToggleGuides={noop}
+        onToggleFrameEdges={noop}
         onToggleSnapToGrid={noop}
         onToggleSnapToGuides={noop}
         onToggleInspector={noop}
         onToggleRulers={noop}
         onToggleSpreads={noop}
         onToggleStartOnRight={noop}
+        onToggleRtlBinding={noop}
         onToggleToolbar={noop}
         onZoomIn={noop}
         onZoomOut={noop}
@@ -130,6 +136,7 @@ describe('PaperTopStrip titlebar placement', () => {
           detail: 'No Paper preflight issues detected.',
         }}
         showGrid={false}
+        showFrameEdges={false}
         showGuides
         showInspector
         showRulers
@@ -138,6 +145,7 @@ describe('PaperTopStrip titlebar placement', () => {
         snapToGrid={false}
         snapToGuides
         startOnRight={false}
+        rtlBinding={false}
         zoom={1}
       />,
     );

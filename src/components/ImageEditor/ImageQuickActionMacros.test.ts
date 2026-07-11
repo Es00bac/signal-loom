@@ -248,7 +248,7 @@ describe('ImageQuickActionMacros', () => {
         arbitraryCommandsSupported: false,
         parameterizedStepsSupported: false,
         fixedQuickActionIdsOnly: true,
-        message: 'Playback diagnostics assume fixed Signal Loom quick action ids only; arbitrary commands and parameter payloads remain descriptor-only caveats.',
+        message: 'Playback diagnostics assume fixed Sloom Studio quick action ids only; arbitrary commands and parameter payloads remain descriptor-only caveats.',
       },
       documents: [
         {
@@ -481,7 +481,7 @@ describe('ImageQuickActionMacros', () => {
       arbitraryCommandsSupported: false,
       parameterizedStepsSupported: false,
       fixedQuickActionIdsOnly: true,
-      message: 'Playback diagnostics assume fixed Signal Loom quick action ids only; arbitrary commands and parameter payloads remain descriptor-only caveats.',
+      message: 'Playback diagnostics assume fixed Sloom Studio quick action ids only; arbitrary commands and parameter payloads remain descriptor-only caveats.',
     });
     expect(diagnostics.batchOpenDocuments).toEqual({
       supported: true,

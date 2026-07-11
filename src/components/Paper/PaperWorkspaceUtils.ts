@@ -1,4 +1,4 @@
-import { exportPaperDocumentToPrintHtml } from '../../lib/paperDocument';
+import { exportPaperDocumentToPrintHtml, updatePaperDocumentSetup } from '../../lib/paperDocument';
 import {
   buildPaperRasterPdfExportRequest,
   type PaperPdfExportRequest,
@@ -13,6 +13,11 @@ import { resolveBubbleTailCurvePercent } from '../../lib/paperBubblePaths';
 import { getSignalLoomNativeBridge, type NativePaperPdfExportResult } from '../../lib/nativeApp';
 import { buildProvenanceLabel } from '../../lib/exportProvenance';
 import { downloadBlob as downloadSharedBlob, downloadTextFile } from '../../lib/downloadAsset';
+import { exportPaperDocumentToPdfxInBrowser } from '../../lib/paperPdfxBrowser';
+import { bundledProfileForOutputIntent, isSubstitutedOutputIntent } from '../../lib/paperPdfxPipeline';
+import { validatePaperPdfx } from '../../lib/paperPdfxValidate';
+import { frameTextIsVectorSafe } from '../../lib/paperPdfxVectorTextFrames';
+import { normalizePaperPrintProductionSpec } from '../../lib/paperPrintProduction';
 import { usePaperStore } from '../../store/paperStore';
 import {
   clientPointToPaperPoint,
@@ -426,6 +431,8 @@ export function frameFillCss(frame: PaperFrame): string {
 
 export function paperTextBoxReactStyle(frame: PaperFrame): React.CSSProperties {
   const textBox = resolvePaperTextBox(frame);
+  const vertical = frame.typography.writingMode === 'vertical-rl';
+  const verticalAlignFlex = paperTextVerticalAlignToJustifyContent(textBox.verticalAlign);
 
   return {
     left: `${textBox.xPercent}%`,
@@ -436,7 +443,13 @@ export function paperTextBoxReactStyle(frame: PaperFrame): React.CSSProperties {
     transformOrigin: 'center',
     display: 'flex',
     flexDirection: 'column',
-    justifyContent: paperTextVerticalAlignToJustifyContent(textBox.verticalAlign),
+    // Horizontal text: the flex column's main axis is vertical, so the text-box vertical-align maps to
+    // justify-content and horizontal placement comes from text-align. Japanese 縦書き (writing-mode: vertical-rl)
+    // rotates the flex axes — the block/main axis is now horizontal — so columns are centered horizontally (the
+    // manga norm) and vertical-align maps to align-items (the now-vertical cross axis) instead. Without this a
+    // vertical bubble's text would jam to one side instead of centering like an English bubble.
+    justifyContent: vertical ? 'center' : verticalAlignFlex,
+    alignItems: vertical ? verticalAlignFlex : undefined,
     overflow: 'hidden',
     textAlign: frame.typography.align,
   };
@@ -480,6 +493,11 @@ export function shapeStrokeWidthPx(frame: PaperFrame, zoom: number): number {
 
 export function paperFrameContentPaddingPx(frame: PaperFrame, zoom: number): number {
   if (frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble' || frame.kind === 'shape') return 0;
+  // A frame whose paragraphs ALL carry a box border/shading hugs the frame edge: the box's border sits on the
+  // frame bounds so the selection/resize rectangle lands on the visible box corners (each paragraph's own
+  // border-padding still keeps text off the line). Covers one bordered paragraph AND a merged callout of several.
+  // Without this, the 2mm content inset floats the box inside the frame and the handles miss the corners.
+  if (frame.richText?.length && frame.richText.every((p) => p.borders || p.shading)) return 0;
   return 2 * PX_PER_MM * zoom;
 }
 
@@ -846,6 +864,94 @@ export async function exportPaperPdfDocument(
 
   const sizeLabel = result.bytes ? ` (${Math.round(result.bytes / 1024)} KB)` : '';
   setStatus(result.filePath ? `Saved PDF to ${result.filePath}${sizeLabel}.` : `Saved PDF${sizeLabel}.`);
+}
+
+/**
+ * True when any text/caption frame will actually be embedded as vector on export (non-empty AND
+ * vector-safe). Drives the export note honestly — a page whose text is all display-font/multi-column
+ * /gated rasterizes, so we must not claim "embedded vector" for it.
+ */
+function documentHasVectorizableText(document: PaperDocument): boolean {
+  return document.pages.some((page) =>
+    page.frames.some((frame) =>
+      (frame.kind === 'text' || frame.kind === 'caption')
+      && (frame.text ?? '').trim().length > 0
+      && frameTextIsVectorSafe(frame, document.importedFonts)),
+  );
+}
+
+/**
+ * Real PDF/X-1a / PDF/X-4 export path (docs/notes/836): renders each page to CMYK through the embedded
+ * ICC output profile and writes a conformant PDF/X — not the RGB browser-PDF raster path. Used when the
+ * document's print target is a PDF/X standard. Text is embedded as real vector type (docs/notes/840).
+ */
+export async function exportPaperPdfxAndSave(
+  document: PaperDocument,
+  setStatus: (status: string) => void,
+): Promise<void> {
+  const production = normalizePaperPrintProductionSpec(document.printProduction);
+  const standard = production.pdfStandard === 'pdf-x-1a' ? 'pdf-x-1a' : 'pdf-x-4';
+  const standardLabel = standard === 'pdf-x-1a' ? 'PDF/X-1a' : 'PDF/X-4';
+  const profile = bundledProfileForOutputIntent(production.outputIntentProfileId);
+  const substituted = isSubstitutedOutputIntent(production.outputIntentProfileId);
+  try {
+    setStatus(`Rendering ${document.pages.length} page${document.pages.length === 1 ? '' : 's'} to CMYK and building ${standardLabel} (${profile.displayName})…`);
+    const result = await exportPaperDocumentToPdfxInBrowser(document, {
+      standard,
+      iccProfileId: profile.id,
+      title: document.title,
+      vectorText: true,
+    });
+    const report = await validatePaperPdfx(result.bytes, { standard });
+    const pdfBlob = new Blob([new Uint8Array(result.bytes)], { type: 'application/pdf' });
+    downloadSharedBlob(pdfBlob, `${safeFileName(document.title)}-${standard}.pdf`);
+    const kb = Math.round(result.bytes.length / 1024);
+    const preflight = report.pass
+      ? 'preflight OK'
+      : `preflight flagged: ${report.checks.filter((c) => !c.pass).map((c) => c.label).join(', ')}`;
+    const substituteNote = substituted ? ` (nearest bundled profile embedded)` : '';
+    const textNote = documentHasVectorizableText(document) ? ', text as embedded vector where supported (Liberation)' : '';
+    setStatus(`Exported ${standardLabel} — embedded ${profile.displayName} ICC${substituteNote}${textNote}, ${kb} KB, ${preflight}.`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : `${standardLabel} export failed.`;
+    setStatus(`${standardLabel} export failed: ${message}`);
+  }
+}
+
+/** 0.125 inch KDP interior bleed, in millimetres. */
+const KDP_BLEED_MM = 3.175;
+
+/**
+ * Export a KDP-ready print interior PDF: a flattened CMYK PDF/X-1a at ≥300 DPI with the required 0.125"
+ * bleed and an embedded ICC output intent — the form Amazon KDP's print checker accepts. Reuses the
+ * real PDF/X pipeline; the document is cloned with the KDP bleed so the raster and the boxes agree.
+ */
+export async function exportPaperKdpPdfAndSave(
+  document: PaperDocument,
+  setStatus: (status: string) => void,
+): Promise<void> {
+  const dpi = Math.max(300, Math.round(document.page.dpi || 300));
+  const profile = bundledProfileForOutputIntent(normalizePaperPrintProductionSpec(document.printProduction).outputIntentProfileId);
+  try {
+    setStatus(`Rendering ${document.pages.length} page${document.pages.length === 1 ? '' : 's'} at ${dpi} DPI for a KDP-ready PDF/X-1a…`);
+    const kdpDocument = updatePaperDocumentSetup(document, { bleedMm: KDP_BLEED_MM });
+    const result = await exportPaperDocumentToPdfxInBrowser(kdpDocument, {
+      standard: 'pdf-x-1a',
+      iccProfileId: profile.id,
+      outputDpi: dpi,
+      title: document.title,
+      vectorText: true,
+    });
+    const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-1a' });
+    const pdfBlob = new Blob([new Uint8Array(result.bytes)], { type: 'application/pdf' });
+    downloadSharedBlob(pdfBlob, `${safeFileName(document.title)}-KDP-interior.pdf`);
+    const kb = Math.round(result.bytes.length / 1024);
+    const preflight = report.pass ? 'preflight OK' : 'preflight flagged — check page/ink warnings';
+    setStatus(`Exported KDP-ready PDF/X-1a — ${dpi} DPI, 0.125" bleed, ${profile.displayName} CMYK (${kb} KB, ${preflight}).`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'KDP PDF export failed.';
+    setStatus(`KDP PDF export failed: ${message}`);
+  }
 }
 
 export interface PaperPdfDocumentExportOptions {

@@ -34,7 +34,26 @@ export interface PaperPageFlattenExportOptions {
   outputDpi?: number;
   outputWidthPx?: number;
   outputHeightPx?: number;
+  /** Drop ALL text-kind frames (they're drawn as vector on top of this raster). */
   backdropOnly?: boolean;
+  /**
+   * Drop only these specific text-kind frames (the ones drawn as vector on top). Other text frames —
+   * e.g. display-font SFX with no faithful vector substitute — stay baked into the raster. Takes
+   * precedence over `backdropOnly` when both are set.
+   */
+  excludeTextFrameIds?: string[];
+  /**
+   * Knock the FILL out of these frames (render them fill-less / paper) — their spot ink is drawn on a real
+   * /Separation plate on top instead, so it must not also appear as process in the raster. Stroke + text
+   * still render. Composes with `excludeTextFrameIds` (a frame can have both a spot fill and vector text).
+   */
+  excludeFrameFillIds?: string[];
+  /**
+   * Knock the STROKE/border out of these frames (render them stroke-less) — their spot ink is drawn on a
+   * real /Separation plate on top instead, so it must not also appear as process in the raster. Fill + text
+   * still render. Composes with the fill/text knockouts (a frame can have a process fill and a spot border).
+   */
+  excludeFrameStrokeIds?: string[];
 }
 
 export interface PaperPageEmbeddedAssetExportOptions extends PaperPageFlattenExportOptions {
@@ -218,6 +237,54 @@ export async function rasterizeFlattenedPaperPageToPng(
   };
 }
 
+export interface FlattenedPaperPageRgbaExport extends PaperPageExportDimensions {
+  pageId: string;
+  pageNumber: number;
+  label: string;
+  /** Interleaved RGBA, row-major top-to-bottom (canvas order). Length = widthPx*heightPx*4. */
+  rgba: Uint8ClampedArray;
+}
+
+/**
+ * Rasterize a flattened page SVG to raw RGBA pixels (for the real PDF/X exporter, which converts them
+ * to CMYK through an ICC profile). Same canvas path as the PNG raster, minus the PNG encode.
+ */
+export async function rasterizeFlattenedPaperPageToRgba(
+  exported: FlattenedPaperPageSvgExport,
+  browserDocument: Document = globalThis.document,
+): Promise<FlattenedPaperPageRgbaExport> {
+  if (!browserDocument) {
+    throw new Error('Paper page raster export needs a browser document.');
+  }
+  const image = new Image();
+  image.decoding = 'async';
+  image.src = exported.dataUrl;
+  await decodeImage(image);
+
+  const canvas = browserDocument.createElement('canvas');
+  canvas.width = exported.widthPx;
+  canvas.height = exported.heightPx;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Paper page raster export could not create a canvas context.');
+  }
+  context.drawImage(image, 0, 0, exported.widthPx, exported.heightPx);
+  const { data } = context.getImageData(0, 0, exported.widthPx, exported.heightPx);
+
+  return {
+    pageId: exported.pageId,
+    pageNumber: exported.pageNumber,
+    label: exported.label,
+    widthMm: exported.widthMm,
+    heightMm: exported.heightMm,
+    widthPx: exported.widthPx,
+    heightPx: exported.heightPx,
+    scale: exported.scale,
+    includeBleed: exported.includeBleed,
+    rgba: data,
+  };
+}
+
 function positiveNumber(value: number | undefined): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
 }
@@ -244,7 +311,24 @@ function buildOnePageExportDocument(
 ): PaperDocument {
   const includeBleed = options.includeBleed ?? true;
   let exportPage = page;
-  if (options.backdropOnly) {
+  const excluded = options.excludeTextFrameIds ? new Set(options.excludeTextFrameIds) : undefined;
+  const knockoutFills = options.excludeFrameFillIds ? new Set(options.excludeFrameFillIds) : undefined;
+  const knockoutStrokes = options.excludeFrameStrokeIds ? new Set(options.excludeFrameStrokeIds) : undefined;
+  if (excluded || knockoutFills || knockoutStrokes) {
+    // Frame-level: keep every frame (so a caption's border/box still renders) but BLANK the text of the
+    // text-excluded frames (drawn as vector on top), REMOVE the fill of spot-fill-knockout frames, and REMOVE
+    // the stroke of spot-stroke-knockout frames (each drawn as a /Separation plate on top). All three compose.
+    exportPage = {
+      ...page,
+      frames: page.frames.map((frame) => {
+        let next = frame;
+        if (excluded?.has(frame.id)) next = { ...next, text: '' };
+        if (knockoutFills?.has(frame.id)) next = { ...next, fillColor: 'transparent', fillGradient: undefined, fillOpacity: 0 };
+        if (knockoutStrokes?.has(frame.id)) next = { ...next, strokeColor: 'transparent', strokeWidthMm: 0, strokeOpacity: 0 };
+        return next;
+      }),
+    };
+  } else if (options.backdropOnly) {
     exportPage = {
       ...page,
       frames: page.frames.filter((frame) => {

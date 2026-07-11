@@ -18,7 +18,7 @@ import fi.iki.elonen.NanoHTTPD;
 /**
  * Tiny LAN web server that streams the bundled web app (android/app/src/main/assets/public,
  * the same Vite build the WebView loads) over plain HTTP, so a desktop browser on the same network
- * can open the full Signal Loom interface from the phone. The served app runs in plain "web" mode
+ * can open the full Sloom Studio interface from the phone. The served app runs in plain "web" mode
  * (no Capacitor bridge), which matches the Chrome build used for tests.
  *
  * <p><b>Security without HTTPS.</b> Self-signed TLS was dropped on purpose: a self-signed cert for a
@@ -94,7 +94,7 @@ public class LanAppServer extends NanoHTTPD {
         // Health is the open probe — it reveals only the app identity and that auth is required.
         if (path.endsWith("/health")) {
             Response r = newFixedLengthResponse(
-                Response.Status.OK, "application/json", "{\"name\":\"Signal Loom\",\"authRequired\":true}");
+                Response.Status.OK, "application/json", "{\"name\":\"Sloom Studio\",\"authRequired\":true}");
             applyApiCors(r, session);
             return r;
         }

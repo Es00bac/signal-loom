@@ -1,8 +1,8 @@
-# Signal Loom
+# Sloom Studio (Signal Loom)
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-es00bac-FFDD00?logo=buymeacoffee&logoColor=000)](https://buymeacoffee.com/es00bac)
 
-Signal Loom is an AI media suite with four applications sharing one project model and one source library:
+Sloom Studio is an AI media suite with four applications sharing one project model and one source library:
 
 - **Flow**: build generation and orchestration graphs.
 - **Video**: edit timeline sequencing, compositing, keyframes, and rendering.
@@ -18,17 +18,17 @@ The app runs in a normal browser through Vite, ships as an Electron desktop app 
 ## Screenshots
 
 <figure>
-  <img src="docs/assets/signal-loom-current.png" alt="Signal Loom current application snapshot" />
+  <img src="docs/assets/signal-loom-current.png" alt="Sloom Studio current application snapshot" />
   <figcaption><strong>Current version.</strong> Current application screenshot from a recent desktop run.</figcaption>
 </figure>
 
 <figure>
-  <img src="docs/assets/signal-loom-flow.png" alt="Signal Loom Flow workspace: the opening of a project, generating reusable low-level consistency assets (recurring objects and environments) across multiple providers, with Vision Verify QA, portals, and several collapsed nodes." />
+  <img src="docs/assets/signal-loom-flow.png" alt="Sloom Studio Flow workspace: the opening of a project, generating reusable low-level consistency assets (recurring objects and environments) across multiple providers, with Vision Verify QA, portals, and several collapsed nodes." />
   <figcaption><strong>Flow workspace — building a project's consistency library.</strong> This graph is the <em>opening move</em> of a project: it generates the low-level <strong>consistency assets</strong> — the recurring objects, props, and environments a project leans on — so they can be reused throughout the rest of the flow and keep scenes visually consistent from shot to shot. <strong>Prompt Input</strong> and <strong>Color Palette / Color Swatch</strong> nodes drive a row of <strong>Image Generation</strong> nodes, each on a different provider — <strong>Atlas</strong> (Seedream v4.5), <strong>BytePlus</strong> (bytedance/seedream), <strong>Google</strong> (gemini-3-pro-image), and <strong>Black Forest Labs</strong> (FLUX) — whose outputs collect into an <strong>Asset Package</strong> and land in the shared <strong>Source Library</strong> as reusable <em>Level-0 assets</em>. <strong>Portals</strong> carry shared style + colour tokens across the graph without redrawing edges; two <strong>Vision Verify</strong> nodes run a Gemini vision model to QA each result against the reference — ✓&nbsp;TRUE (consistent) / ✗&nbsp;FALSE (inconsistent) — feeding <strong>Value Monitor</strong> gating; and several nodes are <strong>collapsed to their minimal size</strong> to keep the canvas readable while every connection stays wired. It doubles as a tour of the Flow workspace.</figcaption>
 </figure>
 
 <figure>
-  <img src="docs/assets/signal-loom-editor.png" alt="Signal Loom video workspace showing the source/program monitors, timeline, and clip controls." />
+  <img src="docs/assets/signal-loom-editor.png" alt="Sloom Studio video workspace showing the source/program monitors, timeline, and clip controls." />
   <figcaption><strong>Video workspace.</strong> Assemble source-bin media on a multi-track timeline, tune source/program monitors, and keyframe clip transform and opacity from the inspector.</figcaption>
 </figure>
 
@@ -45,7 +45,7 @@ The app runs in a normal browser through Vite, ships as an Electron desktop app 
 
 ## Providers
 
-Signal Loom uses your own provider accounts and model access. Provider keys are not included in this repository.
+Sloom Studio uses your own provider accounts and model access. Provider keys are not included in this repository.
 
 Currently wired provider paths include:
 
@@ -119,10 +119,10 @@ The systemd units under `ops/` are examples for local native rendering and optio
 
 ## License
 
-Signal Loom is **source-available** under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0). See `LICENSE`.
+Sloom Studio is **source-available** under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0). See `LICENSE`.
 
 In plain terms: you're welcome to read the code, build it, and use it for any **noncommercial** purpose — personal projects, study, hobby tinkering, research, education, and nonprofit use. What the license does **not** grant is the right to sell it, redistribute it commercially, or publish it on an app store. Official, supported builds — and the only place to buy the app — come from the developer through [sloom.studio](https://sloom.studio) and the official Samsung Galaxy Store and Google Play listings.
 
-**"Signal Loom" is a trademark of Sloom Software.** The license covers copyright only; it grants no right to use the name, logo, or branding.
+**"Sloom Studio" and "Signal Loom" are trademarks of Sloom Software.** The license covers copyright only; it grants no right to use the name, logo, or branding.
 
 Earlier releases were published under the GNU Affero General Public License v3.0; those specific releases remain available under AGPL-3.0. Everything from the relicensing commit onward is under PolyForm Noncommercial.

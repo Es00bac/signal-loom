@@ -188,7 +188,7 @@ function sanitizeNodeData(value: unknown): NodeData {
 
 export function sanitizeFlowSnapshot(snapshot: unknown): FlowProjectDocument['flow'] {
   if (!isRecord(snapshot) || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.edges)) {
-    throw new Error('The selected file is not a valid Signal Loom .sloom project: flow nodes and edges must be arrays.');
+    throw new Error('The selected file is not a valid Sloom Studio .sloom project: flow nodes and edges must be arrays.');
   }
 
   const seenNodeIds = new Set<string>();
@@ -811,7 +811,7 @@ function sanitizeFlowWorkspaceState(
   );
 
   if (!activeWorkspace) {
-    throw new Error('The selected file is not a valid Signal Loom .sloom project: flow nodes and edges must be arrays.');
+    throw new Error('The selected file is not a valid Sloom Studio .sloom project: flow nodes and edges must be arrays.');
   }
 
   return {
@@ -821,9 +821,9 @@ function sanitizeFlowWorkspaceState(
   };
 }
 
-export function sanitizeProjectDocument(input: unknown, fallbackName = 'Signal Loom Project'): FlowProjectDocument {
+export function sanitizeProjectDocument(input: unknown, fallbackName = 'Sloom Studio Project'): FlowProjectDocument {
   if (!isRecord(input)) {
-    throw new Error('The selected file is not a valid Signal Loom .sloom project.');
+    throw new Error('The selected file is not a valid Sloom Studio .sloom project.');
   }
 
   const sourceBin = sanitizeSourceBinSnapshot(input.sourceBin);

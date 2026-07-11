@@ -12,6 +12,8 @@ import { useSettingsStore } from '../../store/settingsStore';
 import type { ProjectUsageLedgerBucket, ProjectUsageLedgerSummary } from '../../lib/projectUsageLedger';
 import type { ProviderBalance } from '../../lib/providerBalance';
 import type { WorkspaceView } from '../../types/flow';
+import { useI18n } from '../../lib/useI18n';
+import type { UseI18n } from '../../lib/useI18n';
 
 interface UsageBarProps {
   workspaceView?: WorkspaceView;
@@ -42,6 +44,7 @@ export function getUsageBarPositionClassName(
 }
 
 export function UsageBar({ placement, workspaceView = 'flow' }: UsageBarProps) {
+  const { t, tf } = useI18n();
   const nodes = useFlowStore((state) => state.nodes);
   const edges = useFlowStore((state) => state.edges);
   const apiKeys = useSettingsStore((state) => state.apiKeys);
@@ -71,7 +74,7 @@ export function UsageBar({ placement, workspaceView = 'flow' }: UsageBarProps) {
     [nodes, edges, settings],
   );
   const actualUsage = useMemo(() => collectActualUsageRollup(nodes), [nodes]);
-  const projectSpendSummary = formatProjectSpendSummary(projectSummary);
+  const projectSpendSummary = formatProjectSpendSummary(projectSummary, tf);
   const resolvedPlacement = placement ?? 'topbar';
   const positionClassName = getUsageBarPositionClassName(workspaceView, resolvedPlacement);
 
@@ -94,12 +97,12 @@ export function UsageBar({ placement, workspaceView = 'flow' }: UsageBarProps) {
       >
         <button
           aria-expanded={detailsOpen}
-          aria-label="Toggle usage estimator"
+          aria-label={t('usage.toggle')}
           className={`pointer-events-auto inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-cyan-300/15 bg-[#101a29]/80 px-2.5 text-[11px] font-semibold text-cyan-100/75 transition-colors hover:border-cyan-300/40 hover:text-white ${
             compact ? 'max-w-44' : 'w-full'
           }`}
           onClick={() => setDetailsOpen((open) => !open)}
-          title="Usage estimator and project spend"
+          title={t('usage.tooltip')}
           type="button"
         >
           <Wallet size={13} className="shrink-0 text-cyan-300" />
@@ -129,18 +132,18 @@ export function UsageBar({ placement, workspaceView = 'flow' }: UsageBarProps) {
       >
         <button
           aria-expanded={false}
-          aria-label="Show usage estimator"
+          aria-label={t('usage.show')}
           onClick={toggleMinimize}
           className="pointer-events-auto flex items-center gap-2 rounded-full border border-cyan-500/30 bg-[#171922]/95 px-3 py-1.5 text-[11px] font-medium text-cyan-100/90 shadow-2xl hover:border-cyan-400/60 hover:bg-[#1c1f2c]/95 transition-all duration-200"
-          title="Show full cost estimator and usage details"
+          title={t('usage.showFull')}
         >
           <span className="flex items-center gap-1">
             <Wallet size={12} className="text-cyan-400" />
-            <span>Project:</span>
+            <span>{t('usage.projectLabel')}</span>
             <span className="font-mono text-cyan-300 font-bold">{formatUsd(projectSummary.totalKnownCostUsd)}</span>
           </span>
           <span className="text-gray-600">|</span>
-          <span className="text-[10px] text-gray-400">Expand Estimator</span>
+          <span className="text-[10px] text-gray-400">{t('usage.expand')}</span>
           <ChevronDown size={12} className="text-cyan-400" />
         </button>
       </div>
@@ -157,17 +160,17 @@ export function UsageBar({ placement, workspaceView = 'flow' }: UsageBarProps) {
       <div className="pointer-events-none flex min-w-[420px] max-w-[86vw] items-center gap-2 rounded-2xl border border-gray-700/70 bg-[#171922]/90 px-3 py-2 shadow-2xl backdrop-blur-md">
         <UsagePill
           icon={<Wallet size={14} />}
-          summary={formatRollupSummary(canvasEstimate, 'Canvas estimate')}
+          summary={formatRollupSummary(canvasEstimate, t('usage.canvasEstimate'))}
           toneClassName={canvasEstimate.unknownCostCount > 0 ? 'border-amber-500/25 bg-amber-500/10 text-amber-50' : 'border-blue-500/25 bg-blue-500/10 text-blue-50'}
         />
         <UsagePill
           icon={<Activity size={14} />}
-          summary={formatRollupSummary(actualUsage, 'Actual this session')}
+          summary={formatRollupSummary(actualUsage, t('usage.actualSession'))}
           toneClassName="border-emerald-500/25 bg-emerald-500/10 text-emerald-50"
         />
         <UsagePill
           ariaExpanded={detailsOpen}
-          ariaLabel="Toggle project spend details"
+          ariaLabel={t('usage.toggleDetails')}
           button
           icon={<Wallet size={14} />}
           onClick={() => setDetailsOpen((open) => !open)}
@@ -176,10 +179,10 @@ export function UsageBar({ placement, workspaceView = 'flow' }: UsageBarProps) {
         />
         <button
           aria-expanded={true}
-          aria-label="Minimize usage estimator"
+          aria-label={t('usage.minimize')}
           onClick={toggleMinimize}
           className="pointer-events-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-gray-700/60 bg-gray-800/20 text-gray-400 hover:border-gray-500 hover:bg-gray-700/30 hover:text-gray-200 transition-all"
-          title="Minimize usage estimator"
+          title={t('usage.minimize')}
         >
           <ChevronUp size={14} />
         </button>
@@ -248,6 +251,7 @@ function ProjectSpendPopover({
   placement?: UsageBarPlacement;
   summary: ProjectUsageLedgerSummary;
 }) {
+  const { t, tf } = useI18n();
   const placementClassName = placement === 'topbar'
     ? 'absolute right-0 top-full z-[95] mt-2 w-[min(860px,86vw)]'
     : placement === 'mobile-drawer'
@@ -261,13 +265,13 @@ function ProjectSpendPopover({
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100/55">Project Spend Ledger</div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100/55">{t('usage.ledger')}</div>
           <div className="mt-1 text-sm font-semibold text-white">
-            {formatUsd(summary.totalKnownCostUsd)} known across {summary.entryCount} recorded operation{summary.entryCount === 1 ? '' : 's'}
+            {tf('usage.knownAcross', { known: formatUsd(summary.totalKnownCostUsd), count: summary.entryCount })}
           </div>
           {summary.unknownCostEntryCount > 0 ? (
             <div className="mt-1 text-[11px] text-amber-100/80">
-              {summary.unknownCostEntryCount} operation{summary.unknownCostEntryCount === 1 ? '' : 's'} had provider-defined or unknown pricing.
+              {tf('usage.unknownPricing', { count: summary.unknownCostEntryCount })}
             </div>
           ) : null}
         </div>
@@ -278,23 +282,23 @@ function ProjectSpendPopover({
           type="button"
         >
           <RefreshCw className={balancesLoading ? 'animate-spin' : ''} size={12} />
-          Balances
+          {t('usage.balances')}
         </button>
       </div>
       <div className="mt-3 grid gap-3 md:grid-cols-2">
-        <SpendBreakdown title="Provider" rows={summary.byProvider} />
-        <SpendBreakdown title="Model" rows={summary.byModel} />
-        <SpendBreakdown title="Operation" rows={summary.byOperation} />
-        <SpendBreakdown title="Workspace" rows={summary.byWorkspace} />
+        <SpendBreakdown title={t('settings.pricing.provider')} rows={summary.byProvider} />
+        <SpendBreakdown title={t('settings.pricing.model')} rows={summary.byModel} />
+        <SpendBreakdown title={t('settings.pricing.operation')} rows={summary.byOperation} />
+        <SpendBreakdown title={t('usage.workspace')} rows={summary.byWorkspace} />
       </div>
       <div className="mt-3 rounded-lg border border-gray-700/60 bg-black/20 p-2">
-        <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">Provider Balances</div>
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">{t('usage.providerBalances')}</div>
         {balances.length > 0 ? (
           <div className="grid gap-1.5 md:grid-cols-2">
             {balances.map((balance) => <BalanceRow balance={balance} key={balance.provider} />)}
           </div>
         ) : (
-          <div className="text-[11px] text-gray-400">Click Balances to check supported providers. Unsupported providers explain why no live balance is available.</div>
+          <div className="text-[11px] text-gray-400">{t('usage.balancesHint')}</div>
         )}
       </div>
     </div>
@@ -302,6 +306,7 @@ function ProjectSpendPopover({
 }
 
 function SpendBreakdown({ rows, title }: { rows: ProjectUsageLedgerBucket[]; title: string }) {
+  const { t } = useI18n();
   const visibleRows = rows.slice(0, 5);
   return (
     <div className="rounded-lg border border-gray-700/60 bg-black/20 p-2">
@@ -316,7 +321,7 @@ function SpendBreakdown({ rows, title }: { rows: ProjectUsageLedgerBucket[]; tit
           ))}
         </div>
       ) : (
-        <div className="text-[11px] text-gray-500">No recorded usage yet.</div>
+        <div className="text-[11px] text-gray-500">{t('usage.noUsage')}</div>
       )}
     </div>
   );
@@ -337,7 +342,7 @@ function BalanceRow({ balance }: { balance: ProviderBalance }) {
   );
 }
 
-function formatProjectSpendSummary(summary: ProjectUsageLedgerSummary): string {
-  const unknown = summary.unknownCostEntryCount > 0 ? `, ${summary.unknownCostEntryCount} unknown` : '';
-  return `Project total: ${formatUsd(summary.totalKnownCostUsd)}${unknown}`;
+function formatProjectSpendSummary(summary: ProjectUsageLedgerSummary, tf: UseI18n['tf']): string {
+  const unknown = summary.unknownCostEntryCount > 0 ? tf('usage.unknownSuffix', { count: summary.unknownCostEntryCount }) : '';
+  return `${tf('usage.projectTotal', { total: formatUsd(summary.totalKnownCostUsd) })}${unknown}`;
 }

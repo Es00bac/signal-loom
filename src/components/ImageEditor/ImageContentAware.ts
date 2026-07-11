@@ -1,7 +1,7 @@
 import type { SelectionMask } from './SelectionMask';
 
 export const LOCAL_CONTENT_AWARE_APPROXIMATION_WARNING =
-  'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.';
+  'Uses Sloom Studio local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.';
 
 export type LocalContentAwarePatchTargetKind = 'selection' | 'transparent-pixels';
 export type LocalContentAwarePatchOutputTarget = 'active-layer';

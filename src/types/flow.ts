@@ -204,6 +204,9 @@ export type UsageTelemetryConfidence = 'measured' | 'heuristic' | 'fixed' | 'unk
 export type WorkspaceView = 'flow' | 'editor' | 'image' | 'paper';
 export type EditorSourceKind = 'text' | 'image' | 'video' | 'audio' | 'composition' | 'document' | 'subtitle' | 'package';
 export type EditorVisualSourceKind = 'text' | 'shape' | 'image' | 'video' | 'composition' | 'comic';
+/** Timeline track role. `overlay` tracks are reserved for text/comic clips that composite on top of
+ *  the standard media tracks; `standard` tracks carry the regular image/video/composition clips. */
+export type EditorVisualTrackKind = 'standard' | 'overlay';
 export type VisualClipTransition = 'none' | 'fade' | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down';
 export type EditorVisualFitMode = 'contain' | 'cover' | 'stretch';
 export type TextClipEffect = 'none' | 'shadow' | 'glow' | 'outline';
@@ -219,15 +222,29 @@ export type EditorClipFilterKind =
   | 'invert'
   | 'hue-rotate';
 export type EditorStageObjectKind = 'text' | 'rectangle' | 'speech-bubble' | 'thought-bubble' | 'caption';
+/**
+ * Video stage/clip blend modes — widened to the full 16-mode Photoshop/canvas set to match the
+ * Image editor's `BlendMode` (src/types/imageEditor.ts). CSS mix-blend-mode names map 1:1; the
+ * FFmpeg `blend=` names map 1:1 for the separable modes, while the four non-separable HSL modes
+ * (hue/saturation/color/luminosity) have no FFmpeg blend equivalent and fall back to normal on export.
+ */
 export type EditorStageBlendMode =
   | 'normal'
-  | 'screen'
   | 'multiply'
+  | 'screen'
   | 'overlay'
-  | 'lighten'
   | 'darken'
+  | 'lighten'
   | 'color-dodge'
-  | 'color-burn';
+  | 'color-burn'
+  | 'hard-light'
+  | 'soft-light'
+  | 'difference'
+  | 'exclusion'
+  | 'hue'
+  | 'saturation'
+  | 'color'
+  | 'luminosity';
 
 export interface FunctionPortKind {
   id: string;
@@ -437,11 +454,12 @@ export interface EditorVisualKeyframe {
   rotationDeg: number;
   opacityPercent: number;
   /**
-   * Optional per-keyframe overrides for an animated comic speech-bubble/thought-bubble tail
-   * (tip position as a percent of the card, plus curvature). Nothing writes these yet — no UI
-   * exposes per-keyframe tail control — so they are always undefined for real project data today;
-   * `resolveComicTailSample` (stageFrameCompositor.ts) reads them defensively and callers fall
-   * back to the clip's static `comicTailAngleDeg`/`comicTailLengthPx` when unset.
+   * Optional comic-bubble tail channels. When present they animate the bubble's tail tip position
+   * (0–100% of the bubble frame, origin top-left, center = 50/50) and funnel curvature (0–100,
+   * 50 = straight) independently of the bubble body's position/scale/rotation/opacity. Omitted on
+   * non-comic clips and on comic clips with a static tail — resolution then falls back to the clip's
+   * static bezier tail (the comicTailTip / comicTailCurvePercent clip fields) and finally to sane
+   * painter defaults.
    */
   tailTipXPercent?: number;
   tailTipYPercent?: number;
@@ -481,6 +499,27 @@ export interface EditorTextDefaults {
   color: string;
   textEffect: TextClipEffect;
   textBackgroundOpacityPercent: number;
+}
+
+/**
+ * Rich typesetting for Video text & comic clips — a px/percent-unit subset of Paper's
+ * `PaperTypography` (src/types/paper.ts, which uses mm/pt). Carried by both text AND comic clips via
+ * `EditorVisualClip.textTypography` so they share Paper-grade type controls (weight, style, leading,
+ * tracking, alignment, stroke, drop shadow, arc) on the Video program stage.
+ */
+export interface EditorTextTypography {
+  fontWeight?: number;
+  fontStyle?: 'normal' | 'italic';
+  lineHeightPercent?: number;
+  letterSpacingPx?: number;
+  textAlign?: 'left' | 'center' | 'right' | 'justify';
+  strokeColor?: string;
+  strokeWidthPx?: number;
+  shadowColor?: string;
+  shadowBlurPx?: number;
+  shadowOffsetXPx?: number;
+  shadowOffsetYPx?: number;
+  arcPercent?: number;
 }
 
 export interface EditorShapeDefaults {
@@ -569,6 +608,9 @@ export interface EditorVisualClip {
   textColor: string;
   textEffect: TextClipEffect;
   textBackgroundOpacityPercent: number;
+  /** Paper-grade typesetting shared by text AND comic clips (weight/style/leading/tracking/align/
+   *  stroke/shadow/arc). Optional; when unset the clip falls back to the flat text* fields. */
+  textTypography?: EditorTextTypography;
   shapeFillColor?: string;
   shapeBorderColor?: string;
   shapeBorderWidth?: number;
@@ -578,6 +620,15 @@ export interface EditorVisualClip {
   comicKind?: 'speech-bubble' | 'thought-bubble' | 'caption';
   comicTailAngleDeg?: number;
   comicTailLengthPx?: number;
+  /** Bezier tail model mirroring Paper's speech bubbles (see src/types/paper.ts tailXPercent/
+   *  tailYPercent/bubbleTailCurvePercent and src/lib/paperBubblePaths.ts): the tail tip position as a
+   *  percent of the bubble frame (0–100, origin top-left, center = 50/50) and funnel curvature
+   *  (0–100, 50 = straight). Supersedes the legacy polar comicTailAngleDeg/comicTailLengthPx, which
+   *  are kept for back-compat and auto-migrated (manualEditorState) to these tip fields on read. Each
+   *  can be keyframed independently of the bubble body via the EditorVisualKeyframe tail channels. */
+  comicTailTipXPercent?: number;
+  comicTailTipYPercent?: number;
+  comicTailCurvePercent?: number;
   comicLineHeightPercent?: number;
   comicLetterSpacingPx?: number;
   comicTextAlign?: 'left' | 'center' | 'right';
@@ -953,6 +1004,9 @@ export interface NodeData {
   compositionAudio3Enabled?: boolean;
   compositionAudio4Enabled?: boolean;
   editorVisualClips?: EditorVisualClip[];
+  /** Per-visual-track role (index-aligned with the visual tracks). Lets text/comic clips live on
+   *  dedicated `overlay` tracks that composite above the `standard` media tracks. */
+  editorVisualTrackKinds?: EditorVisualTrackKind[];
   editorAudioClips?: EditorAudioClip[];
   editorAudioTrackVolumes?: number[];
   editorAssets?: EditorAsset[];

@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   addPaperTableColumn,
   addPaperTableRow,
+  clearPaperTableFills,
   createPaperTable,
   normalizePaperTable,
   removePaperTableColumn,
   removePaperTableRow,
+  setPaperTableBandFill,
   setPaperTableCell,
+  setPaperTableHeaderFill,
 } from './paperTables';
 
 describe('paper tables core', () => {
@@ -54,5 +57,29 @@ describe('paper tables core', () => {
     const oneByOne = createPaperTable(1, 1);
     expect(removePaperTableRow(oneByOne, 0)).toEqual(oneByOne);
     expect(removePaperTableColumn(oneByOne, 0)).toEqual(oneByOne);
+  });
+
+  it('shades the header row, bands alternating body rows, and clears fills', () => {
+    const base = createPaperTable(4, 2); // headerRow defaults true
+    const header = setPaperTableHeaderFill(base, '#4472c4');
+    expect(header.cellFills?.[0]).toEqual(['#4472c4', '#4472c4']);
+    expect(header.cellFills?.[1]).toEqual(['', '']);
+
+    const banded = setPaperTableBandFill(header, '#d9e1f2');
+    // Header stays; body rows 1 and 3 are the alternating bands (row index 1 = first body row).
+    expect(banded.cellFills?.[0]).toEqual(['#4472c4', '#4472c4']);
+    expect(banded.cellFills?.[1]).toEqual(['#d9e1f2', '#d9e1f2']);
+    expect(banded.cellFills?.[2]).toEqual(['', '']);
+    expect(banded.cellFills?.[3]).toEqual(['#d9e1f2', '#d9e1f2']);
+
+    expect(clearPaperTableFills(banded).cellFills).toBeUndefined();
+  });
+
+  it('bands from the first row when there is no header row', () => {
+    const noHeader = normalizePaperTable({ rows: 3, cols: 1, cells: [], headerRow: false });
+    const banded = setPaperTableBandFill(noHeader, '#eeeeee');
+    expect(banded.cellFills?.[0]).toEqual(['#eeeeee']); // row 0 is the first band
+    expect(banded.cellFills?.[1]).toEqual(['']);
+    expect(banded.cellFills?.[2]).toEqual(['#eeeeee']);
   });
 });

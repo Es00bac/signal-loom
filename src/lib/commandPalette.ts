@@ -1,6 +1,7 @@
 import { buildAppMenuGroups } from './appMenuModel';
 import type { KeyboardShortcutMap } from './keyboardShortcuts';
 import type { NativeMenuCommand } from './nativeApp';
+import type { AppLocale } from './i18n';
 import type { WorkspaceView } from '../types/flow';
 
 export type CommandPaletteAppAction =
@@ -35,6 +36,7 @@ export type CommandPaletteEntry =
 export interface CommandPaletteBuildOptions {
   activeWorkspace: WorkspaceView;
   shortcuts?: KeyboardShortcutMap;
+  locale?: AppLocale;
   flowNodeCount?: number;
   flowDiagnosticsCount?: number;
   canCleanFlow?: boolean;
@@ -45,11 +47,12 @@ const ALWAYS_VISIBLE_GROUPS = new Set(['project', 'view', 'help']);
 export function buildCommandPaletteEntries({
   activeWorkspace,
   shortcuts = {},
+  locale = 'en',
   flowNodeCount = 0,
   flowDiagnosticsCount = 0,
   canCleanFlow = false,
 }: CommandPaletteBuildOptions): CommandPaletteEntry[] {
-  const menuEntries = buildAppMenuGroups(activeWorkspace, shortcuts)
+  const menuEntries = buildAppMenuGroups(activeWorkspace, shortcuts, locale)
     .filter((group) => group.enabled || ALWAYS_VISIBLE_GROUPS.has(group.id))
     .flatMap((group) => group.items
       .filter((item) => item.command !== 'view:command-palette')

@@ -343,7 +343,7 @@ const DETERMINISTIC_IMPLEMENTATION = {
 } as const;
 
 const LOCAL_CONTENT_AWARE_FILL_WARNING =
-  'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.';
+  'Uses Sloom Studio local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.';
 
 const BASE_QUICK_ACTION_CAPABILITY_BY_ID: Record<string, QuickActionCapabilityShape> = {
   selectLayerBounds: capability(ACTIVE_LAYER_INPUT, SELECTION_OUTPUT),

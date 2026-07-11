@@ -37,7 +37,7 @@ export function OssLicensesSection() {
   return (
     <Section title="Open-Source Licenses">
       <p className="text-sm text-gray-400">
-        Signal Loom is built on open-source software. This inventory covers every production
+        Sloom Studio is built on open-source software. This inventory covers every production
         npm package shipped in the app plus the native engines and models it bundles or
         downloads (desktop local upscaler, Android on-device upscaler, FFmpeg core).
       </p>

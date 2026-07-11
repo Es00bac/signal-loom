@@ -41,22 +41,43 @@ rsync -a --delete "${unpacked}/" "${install_dir}/"
 ln -sfn "$project_root/scripts/signal-loom-electron" "$bin_target"
 chmod +x "$project_root/scripts/signal-loom-electron"
 
-if [ -f "$project_root/build/icons/icon.png" ]; then
-  install -m 644 "$project_root/build/icons/icon.png" "${icon_dir}/signal-loom.png"
+icon_src="$project_root/build/icons/icon.png"
+icon_theme_dir="${HOME}/.local/share/icons/hicolor"
+if [ -f "$icon_src" ]; then
+  # Install the CURRENT logo at every standard menu size, overwriting any stale
+  # icons from older installs (a leftover old-logo PNG in one size dir is a common
+  # cause of the menu showing the wrong icon). Downscale from the source when a
+  # resizer is available; otherwise drop the source in at each size.
+  for size in 32 48 64 128 256 512; do
+    size_dir="${icon_theme_dir}/${size}x${size}/apps"
+    mkdir -p "$size_dir"
+    if command -v magick >/dev/null 2>&1; then
+      magick "$icon_src" -resize "${size}x${size}" "${size_dir}/signal-loom.png"
+    elif command -v convert >/dev/null 2>&1; then
+      convert "$icon_src" -resize "${size}x${size}" "${size_dir}/signal-loom.png"
+    else
+      install -m 644 "$icon_src" "${size_dir}/signal-loom.png"
+    fi
+  done
+  # Rebuild the icon-theme cache so the menu/taskbar pick up the NEW icon instead
+  # of a stale cached name→file mapping (the real "wrong icon" culprit).
+  if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t "$icon_theme_dir" >/dev/null 2>&1 || true
+  fi
 fi
 
 cat > "$desktop_target" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Signal Loom
-GenericName=AI Multimedia Editor
-Comment=Generative AI media flow builder and timeline editor
-Exec=${install_dir}/signal-loom %U
+Name=Sloom Studio
+GenericName=Multimedia Editor
+Comment=Multimedia editor, media flow builder, and timeline editor
+Exec=env SIGNAL_LOOM_ELECTRON_PANEL_MENU=1 ${install_dir}/signal-loom %U
 Icon=signal-loom
 Terminal=false
-Categories=AudioVideo;AudioVideoEditing;
-Keywords=video;audio;multimedia;editor;timeline;AI;generation;
+Categories=AudioVideo;AudioVideoEditing;Graphics;
+Keywords=video;audio;multimedia;editor;timeline;comic;manga;publishing;
 StartupNotify=true
 StartupWMClass=signal-loom
 DESKTOP
@@ -69,5 +90,12 @@ if command -v xdg-desktop-menu >/dev/null 2>&1; then
   xdg-desktop-menu forceupdate >/dev/null 2>&1 || true
 fi
 
+# Refresh KDE Plasma's service cache so the menu entry + icon update without a re-login.
+if command -v kbuildsycoca6 >/dev/null 2>&1; then
+  kbuildsycoca6 >/dev/null 2>&1 || true
+elif command -v kbuildsycoca5 >/dev/null 2>&1; then
+  kbuildsycoca5 >/dev/null 2>&1 || true
+fi
+
 version="$(node -p "require('${project_root}/package.json').version" 2>/dev/null || echo '?')"
-printf 'Installed Signal Loom %s to %s (menu entry: %s)\n' "$version" "$install_dir" "$desktop_target"
+printf 'Installed Sloom Studio %s to %s (menu entry: %s)\n' "$version" "$install_dir" "$desktop_target"

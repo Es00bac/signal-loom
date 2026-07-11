@@ -79,7 +79,7 @@ describe('LayerFiltersControls', () => {
     expect(opacity).not.toBeNull();
     expect(moveDown).not.toBeNull();
     expect(label?.getAttribute('title')).toBe(
-      'Editable in Signal Loom: amount, blend mode, opacity, enabled state, and stack order. Smart-filter masks, advanced parameters, and native smart-filter roundtrip remain unsupported.',
+      'Editable in Sloom Studio: amount, blend mode, opacity, enabled state, and stack order. Smart-filter masks, advanced parameters, and native smart-filter roundtrip remain unsupported.',
     );
 
     act(() => {
@@ -347,7 +347,7 @@ describe('LayerEffectsControls', () => {
     expect(readinessSummary?.textContent).toBe('2 global-light effects / Photoshop live effects flatten on export');
     expect(saveButton).not.toBeNull();
     expect(dropShadowLabel?.getAttribute('title')).toBe(
-      'Portable inside Signal Loom with deterministic preview/export signatures. Editable Photoshop Blend If and Bevel & Emboss parity remain unsupported or flattened.',
+      'Portable inside Sloom Studio with deterministic preview/export signatures. Editable Photoshop Blend If and Bevel & Emboss parity remain unsupported or flattened.',
     );
 
     act(() => {

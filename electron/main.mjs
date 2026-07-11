@@ -19,6 +19,7 @@ import automationPathModule from './automation-paths.cjs';
 import linuxWindowingModule from './linux-windowing.cjs';
 import globalMenuControllerModule from './globalMenu/globalMenuController.cjs';
 import x11WindowIdModule from './globalMenu/x11WindowId.cjs';
+import panelMenuServiceModule from './globalMenu/panelMenuService.cjs';
 
 const { createApplicationMenuTemplate, SIGNAL_LOOM_MENU_COMMANDS } = menuModule;
 const {
@@ -92,6 +93,7 @@ const {
 } = linuxWindowingModule;
 const { createGlobalMenuController } = globalMenuControllerModule;
 const { resolveX11WindowId } = x11WindowIdModule;
+const { createPanelMenuService } = panelMenuServiceModule;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PRODUCTION_RENDERER_URL = pathToFileURL(resolve(__dirname, '../dist/index.html')).toString();
@@ -102,7 +104,7 @@ const isDev = Boolean(rendererUrl);
 const DEV_RENDERER_READY_RETRY_COUNT = 12;
 const DEV_RENDERER_READY_RETRY_DELAY_MS = 250;
 const DEV_RENDERER_READY_TIMEOUT_ERROR = 'Renderer URL is unavailable.';
-const appName = 'Signal Loom';
+const appName = 'Sloom Studio';
 const execFileAsync = promisify(execFile);
 let mainWindow = null;
 let splashWindow = null;
@@ -114,9 +116,17 @@ let currentAssetCapabilityRootPaths = [];
 let startupProject = undefined;
 let activeWorkspace = 'flow';
 let keyboardShortcuts = {};
+// Interface language for menu labels (mirrors the renderer's settingsStore.locale, pushed over IPC).
+// The native in-window menu, the KDE global menu, and the panel menu all read this so their labels
+// track the app's language setting; defaults to English until the renderer reports its locale.
+let appLocale = 'en';
 // Lazily-created KDE Plasma global-menu controller (opt-in; null when unsupported/disabled). It
 // exports each workspace window's menu over DBus, fully decoupled from the GPU/render process.
 let globalMenuController = null;
+// Lazily-created native-Wayland KDE panel-menu service (opt-in via SIGNAL_LOOM_ELECTRON_PANEL_MENU=1;
+// null when unsupported). Unlike the global-menu controller it needs no X11 window id, so it does NOT
+// force XWayland — the app keeps its native-Wayland GPU surface while the menu shows in the panel.
+let panelMenuService = null;
 let sourceLibraryVersion = 0;
 let sourceLibrarySnapshot = createEmptySourceLibrarySnapshot();
 const nativeAssetCapabilityRegistry = createNativeAssetCapabilityRegistry();
@@ -279,12 +289,18 @@ function buildStartupSplashHtml() {
     imageUrl = pathToFileURL(SIGNAL_LOOM_SPLASH_IMAGE_PATH).href;
   }
 
+  // Bilingual, anime-title-style wordmark baked onto the splash: the Latin "Sloom Studio" over a faint
+  // oversized katakana ghost (スルーム・スタジオ) plus a small tracked katakana subtitle, on a scrim so
+  // it reads over the artwork. Kept in sync with the in-app BrandWordmark (src/components/Layout).
+  const BRAND_NAME = 'Sloom Studio';
+  const BRAND_KATAKANA = 'スルーム・スタジオ';
+
   return `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data:; style-src 'unsafe-inline';" />
-    <title>Signal Loom is starting</title>
+    <title>Sloom Studio is starting</title>
     <style>
       html,
       body {
@@ -296,8 +312,10 @@ function buildStartupSplashHtml() {
       }
 
       body {
+        position: relative;
         display: grid;
         place-items: center;
+        font-family: system-ui, -apple-system, 'Noto Sans JP', 'Noto Sans CJK JP', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif;
       }
 
       img {
@@ -308,10 +326,76 @@ function buildStartupSplashHtml() {
         user-select: none;
         -webkit-user-drag: none;
       }
+
+      .brand-scrim {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        justify-content: center;
+        padding: 16% 0 8%;
+        background: linear-gradient(to top, #020711 8%, rgba(2, 7, 17, 0.82) 42%, transparent);
+        pointer-events: none;
+      }
+
+      .brand { position: relative; text-align: center; line-height: 1; }
+      .brand__logo { position: relative; display: inline-block; padding-top: 0.35em; }
+      .brand__ghost {
+        position: absolute;
+        left: 50%;
+        top: -0.18em;
+        transform: translateX(-50%);
+        font-size: 76px;
+        font-weight: 800;
+        letter-spacing: 0.18em;
+        white-space: nowrap;
+        color: rgba(103, 232, 249, 0.10);
+      }
+      .brand__name {
+        position: relative;
+        display: block;
+        font-size: 40px;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+        color: #eef6ff;
+        text-shadow: 0 2px 18px rgba(4, 10, 24, 0.65);
+      }
+      .brand__sub {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        margin-top: 10px;
+      }
+      .brand__rule { height: 1px; width: 30px; }
+      .brand__rule--l { background: linear-gradient(90deg, transparent, rgba(103, 232, 249, 0.55)); }
+      .brand__rule--r { background: linear-gradient(90deg, rgba(103, 232, 249, 0.55), transparent); }
+      .brand__kana {
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.42em;
+        padding-left: 0.42em;
+        color: rgba(125, 224, 245, 0.92);
+        white-space: nowrap;
+      }
     </style>
   </head>
   <body>
-    <img src="${imageUrl}" alt="Signal Loom is starting" />
+    <img src="${imageUrl}" alt="Sloom Studio is starting" />
+    <div class="brand-scrim">
+      <div class="brand">
+        <div class="brand__logo">
+          <span class="brand__ghost">${BRAND_KATAKANA}</span>
+          <span class="brand__name">${BRAND_NAME}</span>
+        </div>
+        <div class="brand__sub">
+          <span class="brand__rule brand__rule--l"></span>
+          <span class="brand__kana">${BRAND_KATAKANA}</span>
+          <span class="brand__rule brand__rule--r"></span>
+        </div>
+      </div>
+    </div>
   </body>
 </html>`;
 }
@@ -333,7 +417,7 @@ function createStartupSplashWindow() {
     maxWidth: 560,
     maxHeight: 560,
     useContentSize: true,
-    title: 'Signal Loom is starting',
+    title: 'Sloom Studio is starting',
     backgroundColor: '#020712',
     frame: false,
     resizable: false,
@@ -936,6 +1020,15 @@ function createWorkspaceWindow(workspace = 'flow') {
     // The focused workspace's menu drives the macOS bar + KDE global menu.
     applicationMenu = menuForWorkspace(workspace);
     Menu.setApplicationMenu(applicationMenu);
+    // Show this workspace's menu in the native-Wayland panel applet (no-op when the flag is off).
+    panelMenuService?.setActive(true);
+    panelMenuService?.setActiveWorkspace(workspace);
+  });
+
+  workspaceWindow.on('blur', () => {
+    // Hide the panel menu when focus leaves Sloom Studio (debounced in the service so opening the
+    // applet's own popup — which briefly steals focus — doesn't make the menu flicker away).
+    panelMenuService?.setActive(false);
   });
 
   workspaceWindow.on('closed', () => {
@@ -961,6 +1054,7 @@ function menuForWorkspace(workspace) {
     isMac: process.platform === 'darwin',
     activeWorkspace: workspace,
     keyboardShortcuts,
+    locale: appLocale,
     sendCommand: sendRendererCommand,
   }));
 }
@@ -1018,12 +1112,38 @@ function getGlobalMenuController() {
       sendRendererCommand(command);
     },
     getKeyboardShortcuts: () => keyboardShortcuts,
+    getLocale: () => appLocale,
     isMac: process.platform === 'darwin',
     // The controller only runs when the global menu is explicitly opted in, so always surface its
     // lifecycle (bus connect, registrar round-trip, Plasma adoption) — not just in dev builds.
     logger: (...args) => console.log('[gmenu]', ...args),
   });
   return globalMenuController;
+}
+
+// ── KDE panel menu, native-Wayland variant (opt-in, no XWayland) ─────────────────────────────────
+// Same menu content and command routing as the global-menu controller, but published over our own
+// `org.signalloom.PanelMenu` D-Bus service for the Sloom Studio Plasma applet to render. No X11 window
+// id is involved, so this never forces XWayland: the app keeps hardware acceleration on native Wayland.
+function getPanelMenuService() {
+  if (panelMenuService) return panelMenuService;
+  panelMenuService = createPanelMenuService({
+    onCommand: (command) => {
+      if (typeof command === 'string' && command.startsWith('role:')) {
+        performGlobalMenuRole(command);
+        return;
+      }
+      sendRendererCommand(command);
+    },
+    getActiveWorkspace: () => activeWorkspace,
+    getKeyboardShortcuts: () => keyboardShortcuts,
+    getLocale: () => appLocale,
+    isMac: process.platform === 'darwin',
+    // Best-effort identity hints for the applet (StartupWMClass varies between our two .desktop files).
+    appIdHints: ['signal-loom', 'Sloom Studio', 'signalloom', 'studio.sloom.signalloom'],
+    logger: (...args) => console.log('[panelmenu]', ...args),
+  });
+  return panelMenuService;
 }
 
 /** Best-effort: get the toplevel's real X11 id. getNativeWindowHandle is the real XID on a normal
@@ -1103,7 +1223,7 @@ function sanitizeKeyboardShortcutsForMenu(shortcuts) {
 
 function getProjectDialogFilters() {
   return [
-    { name: 'Signal Loom Project', extensions: [SIGNAL_LOOM_PROJECT_EXTENSION.replace(/^\./, '')] },
+    { name: 'Sloom Studio Project', extensions: [SIGNAL_LOOM_PROJECT_EXTENSION.replace(/^\./, '')] },
     { name: 'All Files', extensions: ['*'] },
   ];
 }
@@ -1118,8 +1238,8 @@ async function chooseProjectSavePath(existingPath, parentWindow) {
 
   const result = await dialog.showSaveDialog(parentWindow ?? mainWindow ?? undefined, {
     title: isSignalLoomProjectBackupPath(existingPath)
-      ? 'Save Restored Signal Loom Project'
-      : 'Save Signal Loom Project',
+      ? 'Save Restored Sloom Studio Project'
+      : 'Save Sloom Studio Project',
     defaultPath,
     filters: getProjectDialogFilters(),
   });
@@ -1722,12 +1842,12 @@ async function exportPaperPdfToFile(request, filePath) {
 async function applyPdfProvenance(pdfBuffer, provenanceLabel) {
   const label = typeof provenanceLabel === 'string' && provenanceLabel.trim()
     ? provenanceLabel.trim().slice(0, 200)
-    : 'Signal Loom Community (unlicensed)';
+    : 'Sloom Studio Community (unlicensed)';
   try {
     const { PDFDocument } = await import('pdf-lib');
     const document = await PDFDocument.load(pdfBuffer, { updateMetadata: false });
     document.setProducer(label);
-    document.setCreator('Signal Loom');
+    document.setCreator('Sloom Studio');
     return Buffer.from(await document.save());
   } catch (error) {
     console.warn('[paper-pdf] provenance stamp skipped:', error);
@@ -1774,7 +1894,7 @@ function installProtocolHandlers() {
   protocol.handle('signal-loom-asset', async (request) => {
     const filePath = await getNativeFilePathFromAssetUrl(request.url);
     if (!filePath) {
-      return new Response('Signal Loom asset capability is not registered for this project.', { status: 403 });
+      return new Response('Sloom Studio asset capability is not registered for this project.', { status: 403 });
     }
 
     return net.fetch(pathToFileURL(filePath).toString());
@@ -2229,7 +2349,7 @@ async function materializeVertexVideo(video, token, quotaProjectId) {
     : video.uri;
 
   if (!url) {
-    throw new Error('Vertex AI returned a video reference that Signal Loom could not download.');
+    throw new Error('Vertex AI returned a video reference that Sloom Studio could not download.');
   }
 
   const response = await fetch(url, {
@@ -2266,7 +2386,7 @@ function vertexGcsUriToDownloadUrl(gcsUri) {
 
 async function materializeSourceAsset(request) {
   if (!currentScratchDirectoryPath) {
-    return { error: 'No active Signal Loom scratch directory is available.' };
+    return { error: 'No active Sloom Studio scratch directory is available.' };
   }
 
   if (!isPlainObject(request)) {
@@ -2382,7 +2502,7 @@ function installIpcHandlers() {
     }
 
     const result = await dialog.showOpenDialog(getIpcWindow(event), {
-      title: 'Open Signal Loom Project',
+      title: 'Open Sloom Studio Project',
       properties: ['openFile'],
       filters: getProjectDialogFilters(),
     });
@@ -2421,10 +2541,10 @@ function installIpcHandlers() {
 
   ipcMain.handle('signal-loom:image-open', async (event) => {
     const result = await dialog.showOpenDialog(getIpcWindow(event), {
-      title: 'Open Signal Loom Image',
+      title: 'Open Sloom Studio Image',
       properties: ['openFile'],
       filters: [
-        { name: 'Signal Loom Image', extensions: ['slimg'] },
+        { name: 'Sloom Studio Image', extensions: ['slimg'] },
         { name: 'All Files', extensions: ['*'] },
       ],
     });
@@ -2440,9 +2560,9 @@ function installIpcHandlers() {
 
   ipcMain.handle('signal-loom:image-save-as', async (event, bytes) => {
     const result = await dialog.showSaveDialog(getIpcWindow(event), {
-      title: 'Save Signal Loom Image',
+      title: 'Save Sloom Studio Image',
       filters: [
-        { name: 'Signal Loom Image', extensions: ['slimg'] },
+        { name: 'Sloom Studio Image', extensions: ['slimg'] },
         { name: 'All Files', extensions: ['*'] },
       ],
     });
@@ -2495,10 +2615,10 @@ function installIpcHandlers() {
 
   ipcMain.handle('signal-loom:paper-open', async (event) => {
     const result = await dialog.showOpenDialog(getIpcWindow(event), {
-      title: 'Open Signal Loom Paper',
+      title: 'Open Sloom Studio Paper',
       properties: ['openFile'],
       filters: [
-        { name: 'Signal Loom Paper', extensions: ['slppr'] },
+        { name: 'Sloom Studio Paper', extensions: ['slppr'] },
         { name: 'All Files', extensions: ['*'] },
       ],
     });
@@ -2514,9 +2634,9 @@ function installIpcHandlers() {
 
   ipcMain.handle('signal-loom:paper-save-as', async (event, bytes) => {
     const result = await dialog.showSaveDialog(getIpcWindow(event), {
-      title: 'Save Signal Loom Paper',
+      title: 'Save Sloom Studio Paper',
       filters: [
-        { name: 'Signal Loom Paper', extensions: ['slppr'] },
+        { name: 'Sloom Studio Paper', extensions: ['slppr'] },
         { name: 'All Files', extensions: ['*'] },
       ],
     });
@@ -2733,7 +2853,7 @@ function installIpcHandlers() {
 
   ipcMain.handle('signal-loom:choose-scratch-directory', async (event) => {
     const result = await dialog.showOpenDialog(getIpcWindow(event), {
-      title: 'Choose Signal Loom Scratch Folder',
+      title: 'Choose Sloom Studio Scratch Folder',
       properties: ['openDirectory', 'createDirectory'],
     });
 
@@ -2786,6 +2906,19 @@ function installIpcHandlers() {
     installApplicationMenu();
     // Rebuild the KDE global menu too so its accelerators track the in-window menu (no-op if off).
     globalMenuController?.refreshShortcuts();
+    panelMenuService?.refresh();
+
+    return { ok: true };
+  });
+
+  ipcMain.handle('signal-loom:set-locale', async (_event, locale) => {
+    // Mirror the renderer's interface-language setting into the native + KDE menus. Rebuilding the
+    // in-window menu is immediate; the global/panel menus re-read their model on the next fetch, so a
+    // revision bump + re-emit (refresh) is all Plasma needs to pick up the new labels. No-op when off.
+    appLocale = locale === 'ja' ? 'ja' : 'en';
+    installApplicationMenu();
+    globalMenuController?.refreshShortcuts();
+    panelMenuService?.refresh();
 
     return { ok: true };
   });
@@ -2815,8 +2948,8 @@ function installIpcHandlers() {
       title: `About ${appName}`,
       message: `${appName} ${version} — ${edition}`,
       detail:
-        'A local-first studio for generative media — node-based Flow, a layered Image editor, '
-        + 'print/comic Paper layout, and a Video timeline. Bring your own API keys; Signal Loom '
+        'A local-first multimedia studio — node-based Flow, a layered Image editor, '
+        + 'print/comic Paper layout, and a Video timeline. Bring your own API keys; Sloom Studio '
         + 'never sees your keys or your work.\n\n'
         + 'Early access (beta) — expect rough edges, and thank you for trying it.\n\n'
         + 'Staying up to date: the newest builds are always at https://sloom.studio/downloads. '
@@ -3136,8 +3269,10 @@ app.whenReady().then(async () => {
   installIpcHandlers();
   void maybeAutoStartLocalUpscaler();
   installApplicationMenu();
+  // Bring up the native-Wayland panel-menu D-Bus service (no-op unless SIGNAL_LOOM_ELECTRON_PANEL_MENU=1).
+  void getPanelMenuService().start();
   if (process.env.SIGNAL_LOOM_ELECTRON_MENU_SMOKE === '1') {
-    console.log(`Signal Loom application menu: ${getInstalledApplicationMenuLabels().join(', ')}`);
+    console.log(`Sloom Studio application menu: ${getInstalledApplicationMenuLabels().join(', ')}`);
     app.quit();
     return;
   }
@@ -3150,7 +3285,7 @@ app.whenReady().then(async () => {
 
     if (!isProductionRendererReady()) {
       dialog.showErrorBox(
-        'Signal Loom startup failed',
+        'Sloom Studio startup failed',
         `${message} Build the Vite app (npm run build) and restart in production mode.`,
       );
       app.quit();
@@ -3176,6 +3311,7 @@ app.on('window-all-closed', () => {
 // Tear down the global-menu DBus export cleanly so KDE drops our registrations on exit.
 app.on('will-quit', () => {
   void globalMenuController?.stop();
+  void panelMenuService?.stop();
 });
 
 export { SIGNAL_LOOM_MENU_COMMANDS };

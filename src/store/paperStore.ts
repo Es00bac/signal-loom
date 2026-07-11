@@ -58,6 +58,7 @@ import type {
   PaperFramePatch,
   PaperFrameKind,
   PaperGuide,
+  PaperImportedFont,
   PaperPagePreset,
   PaperTool,
 } from '../types/paper';
@@ -114,6 +115,9 @@ interface PaperActions {
   unchainSelectedBubbles: () => void;
   addPaperSwatch: (swatch: PaperSwatch) => void;
   removePaperSwatch: (swatchId: string) => void;
+  /** Add (or replace, by family+weight+style) a vetted imported font on the document. */
+  addImportedFont: (font: PaperImportedFont) => void;
+  removeImportedFont: (fontId: string) => void;
   threadSelectedFrames: () => void;
   unthreadSelectedFrames: () => void;
   alignSelectedFrames: (edge: PaperAlignEdge) => void;
@@ -143,6 +147,7 @@ interface PaperActions {
     options?: { point?: PaperPoint; sourceItem?: SourceBinLibraryItem },
   ) => void;
   toggleViewOption: (option: keyof PaperDocument['view']) => void;
+  setViewOption: <K extends keyof PaperDocument['view']>(option: K, value: PaperDocument['view'][K]) => void;
   exportSnapshot: () => PaperDocumentSnapshot;
   restoreSnapshot: (snapshot?: Partial<PaperDocumentSnapshot>) => void;
   /**
@@ -545,6 +550,22 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           document: { ...state.document, swatches: (state.document.swatches ?? []).filter((swatch) => swatch.id !== swatchId) },
         })),
 
+      addImportedFont: (font) =>
+        set((state) => {
+          // Replace any existing import of the same family+weight+style so re-importing updates in place.
+          const kept = (state.document.importedFonts ?? []).filter(
+            (f) => !(f.familyName === font.familyName && f.bold === font.bold && f.italic === font.italic),
+          );
+          return withPaperHistory(state, {
+            document: { ...state.document, importedFonts: [...kept, font] },
+          });
+        }),
+
+      removeImportedFont: (fontId) =>
+        set((state) => withPaperHistory(state, {
+          document: { ...state.document, importedFonts: (state.document.importedFonts ?? []).filter((f) => f.id !== fontId) },
+        })),
+
       threadSelectedFrames: () =>
         set((state) => {
           const patch = threadSelectedPaperFramesPatch(state);
@@ -779,6 +800,18 @@ export const usePaperStore = create<PaperState & PaperActions>()(
             view: {
               ...state.document.view,
               [option]: !state.document.view[option],
+            },
+            updatedAt: Date.now(),
+          },
+        })),
+
+      setViewOption: (option, value) =>
+        set((state) => withPaperHistory(state, {
+          document: {
+            ...state.document,
+            view: {
+              ...state.document.view,
+              [option]: value,
             },
             updatedAt: Date.now(),
           },

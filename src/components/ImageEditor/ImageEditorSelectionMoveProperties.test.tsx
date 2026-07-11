@@ -187,7 +187,7 @@ describe('MovePanel', () => {
       type: 'text',
       bitmap: null,
       text: {
-        content: 'Signal Loom',
+        content: 'Sloom Studio',
         fontFamily: 'Inter',
         fontSize: 42,
         fontWeight: '400',

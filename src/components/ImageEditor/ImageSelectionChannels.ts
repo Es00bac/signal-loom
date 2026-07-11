@@ -1223,7 +1223,7 @@ export function buildImageChannelWorkflowPlan(input: BuildImageChannelWorkflowPl
       invalidChannelIds,
       signature: alphaPersistenceSignature,
       caveats: [
-        'Saved alpha channels persist as Signal Loom document metadata.',
+        'Saved alpha channels persist as Sloom Studio document metadata.',
         'Native alpha-channel export and direct alpha painting are not implemented.',
       ],
     },
@@ -1859,17 +1859,17 @@ function formatInactiveChannelList(channel: ImageColorChannel): string {
 function getAlphaExportReadinessSummary(channelCount: number): string {
   if (channelCount === 0) return 'No saved alpha channels are present for export metadata.';
   if (channelCount === 1) {
-    return '1 saved alpha channel will be preserved as Signal Loom metadata only; no native alpha plate is exported.';
+    return '1 saved alpha channel will be preserved as Sloom Studio metadata only; no native alpha plate is exported.';
   }
-  return `${channelCount} saved alpha channels will be preserved as Signal Loom metadata only; no native alpha plates are exported.`;
+  return `${channelCount} saved alpha channels will be preserved as Sloom Studio metadata only; no native alpha plates are exported.`;
 }
 
 function getSpotExportReadinessSummary(channelCount: number): string {
   if (channelCount === 0) return 'No spot channels are present for export metadata.';
   if (channelCount === 1) {
-    return '1 spot channel will be preserved as Signal Loom metadata only; press-ready spot plates require external prepress.';
+    return '1 spot channel will be preserved as Sloom Studio metadata only; press-ready spot plates require external prepress.';
   }
-  return `${channelCount} spot channels will be preserved as Signal Loom metadata only; press-ready spot plates require external prepress.`;
+  return `${channelCount} spot channels will be preserved as Sloom Studio metadata only; press-ready spot plates require external prepress.`;
 }
 
 function getAlphaPanelLoadSelectionSummary(
@@ -2118,7 +2118,7 @@ function buildChannelExportCheckSignature(
 function buildChannelExportWarnings(alphaChannelCount: number, format: ImageChannelPlanningExportFormat): string[] {
   if (alphaChannelCount === 0) return [];
   return [
-    `${formatExportTarget(format)} export preserves saved alpha selections only as Signal Loom metadata; native alpha channels and print plates are not emitted.`,
+    `${formatExportTarget(format)} export preserves saved alpha selections only as Sloom Studio metadata; native alpha channels and print plates are not emitted.`,
   ];
 }
 

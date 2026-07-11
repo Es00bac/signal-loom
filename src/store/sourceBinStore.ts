@@ -2376,7 +2376,7 @@ function notifyAndroidSourceAssetPermissionRequired(label: string): void {
   androidSourceAssetPermissionAlertOpen = true;
   void showAlertDialog({
     title: 'Storage Permission Required',
-    message: `Signal Loom needs Android file storage access to save generated asset "${label}" into the Source Library. Tap Allow when Android asks for file access, then regenerate or reimport the asset if it was saved only as a temporary preview.`,
+    message: `Sloom Studio needs Android file storage access to save generated asset "${label}" into the Source Library. Tap Allow when Android asks for file access, then regenerate or reimport the asset if it was saved only as a temporary preview.`,
     confirmLabel: 'OK',
     tone: 'warning',
   }).finally(() => {

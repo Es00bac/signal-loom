@@ -34,7 +34,7 @@ function flattenCommands(items: RawItem[]): string[] {
 
 interface ElectronMenuItem { label?: string; command?: string; role?: string; click?: () => void; submenu?: ElectronMenuItem[]; }
 interface ElectronMenuModule {
-  createApplicationMenuTemplate: (o: { appName: string; isMac?: boolean; activeWorkspace?: string; sendCommand: (c: string) => void }) => ElectronMenuItem[];
+  createApplicationMenuTemplate: (o: { appName: string; isMac?: boolean; activeWorkspace?: string; locale?: string; sendCommand: (c: string) => void }) => ElectronMenuItem[];
 }
 async function loadNativeMenu(): Promise<ElectronMenuModule> {
   // @ts-expect-error CommonJS Electron helper outside the renderer tsconfig module graph.
@@ -71,13 +71,26 @@ describe('workspaceMenus single source of truth', () => {
 
       // Native side: capture command IDs by clicking each command item in order.
       const nativeCommands: string[] = [];
-      const template = createApplicationMenuTemplate({ appName: 'Signal Loom', isMac: false, activeWorkspace: ws, sendCommand: (c) => nativeCommands.push(c) });
+      const template = createApplicationMenuTemplate({ appName: 'Sloom Studio', isMac: false, activeWorkspace: ws, sendCommand: (c) => nativeCommands.push(c) });
       const nativeLabels = template.map((g) => g.label);
       clickAllInOrder(template);
 
       expect(nativeLabels, `labels differ for ${ws}`).toEqual(rendererLabels);
       expect(nativeCommands, `commands differ for ${ws}`).toEqual(rendererCommands);
     }
+  });
+
+  it('keeps native and integrated labels identical in Japanese too (no cross-surface drift)', async () => {
+    const { createApplicationMenuTemplate } = await loadNativeMenu();
+    for (const ws of WORKSPACES) {
+      const rendererLabels = buildAppMenuGroups(ws, {}, 'ja').map((g) => g.label);
+      const template = createApplicationMenuTemplate({ appName: 'Sloom Studio', isMac: false, activeWorkspace: ws, locale: 'ja', sendCommand: () => {} });
+      expect(template.map((g) => g.label), `ja labels differ for ${ws}`).toEqual(rendererLabels);
+    }
+    // Sanity: at least one label actually changed from English (the JSON labelJa fields are wired).
+    const jaFlow = buildAppMenuGroups('flow', {}, 'ja').map((g) => g.label);
+    expect(jaFlow).toContain('ヘルプ'); // Help → ヘルプ
+    expect(jaFlow).toContain('Flow'); // brand proper noun stays English
   });
 
   it('keeps all four window launchers in every workspace (cross-app switching never lost)', () => {

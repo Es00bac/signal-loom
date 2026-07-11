@@ -4,10 +4,10 @@ import { buildScratchAssetFileName } from './fileSystemWorkspace';
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import type { EditorSourceKind } from '../types/flow';
 
-export const ANDROID_SOURCE_ASSET_DIRECTORY = 'Signal Loom/Source Library';
+export const ANDROID_SOURCE_ASSET_DIRECTORY = 'Sloom Studio/Source Library';
 
 export class AndroidSourceAssetPermissionError extends Error {
-  constructor(message = 'Signal Loom needs Android file storage access before it can save generated assets.') {
+  constructor(message = 'Sloom Studio needs Android file storage access before it can save generated assets.') {
     super(message);
     this.name = 'AndroidSourceAssetPermissionError';
   }

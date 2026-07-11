@@ -1,11 +1,11 @@
-# Signal Loom — User Guide
+# Sloom Studio (Signal Loom) — User Guide
 
-**Signal Loom** is a local-first creative suite for building with generative AI on your own
+**Sloom Studio** is a local-first creative suite for building with generative AI on your own
 terms. Four connected apps — **Flow**, **Image**, **Video**, and **Paper** — live inside one
 project and share one asset library, so you can go from an idea to a finished image, video, or
 printed page without juggling tools or re-importing files.
 
-Signal Loom runs on **desktop** (Linux, Windows, macOS), **Android** phones and tablets,
+Sloom Studio runs on **desktop** (Linux, Windows, macOS), **Android** phones and tablets,
 **Samsung DeX**, and **ChromeOS / Aluminium OS** desktop mode. It is a one-time purchase with
 **no account, no subscription, and no servers of its own** — you connect to the AI providers you
 already use with your **own API keys**, and your keys and your work stay on your device.
@@ -16,7 +16,7 @@ already use with your **own API keys**, and your keys and your work stay on your
 
 | Guide | What it covers |
 |---|---|
-| [1. Overview & concepts](01-overview.md) | What Signal Loom is, the four workspaces, and the ideas (projects, the source library, capabilities) that tie them together. |
+| [1. Overview & concepts](01-overview.md) | What Sloom Studio is, the four workspaces, and the ideas (projects, the source library, capabilities) that tie them together. |
 | [2. Getting started](02-getting-started.md) | Installing, creating your first project, and the lay of the land. |
 | [3. Projects & files](03-projects-and-files.md) | The `.sloom` project, the per-app `.slimg` / `.slppr` files, saving, backups, and scratch assets. |
 | [4. Providers & API keys](04-providers-and-keys.md) | Connecting Gemini, Vertex AI, OpenAI, Hugging Face, Stability, FLUX, Atlas Cloud, and ElevenLabs — and how cost and privacy work. |

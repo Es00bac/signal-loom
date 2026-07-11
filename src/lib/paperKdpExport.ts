@@ -542,7 +542,7 @@ async function cropImageDataUrl(
 
 function buildKdpManifest(plan: PaperKdpExportPlan) {
   return {
-    app: 'Signal Loom Paper',
+    app: 'Sloom Studio Paper',
     format: 'signal-loom-paper-kdp-image-assets',
     version: 1,
     title: plan.title,

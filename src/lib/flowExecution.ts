@@ -1030,7 +1030,7 @@ async function executeImageNode(
       // FIRST-PARTY BytePlus/ModelArk (Seedream). Generation only for now; masked edit/reference guidance
       // is pending confirmation of the ModelArk edit API (see memory byteplus-first-party-provider).
       if (sourceImageInput || referenceImageInputs.length > 0) {
-        throw new Error('BytePlus Seedream currently supports text-to-image generation in Signal Loom; image editing and reference guidance are pending the ModelArk edit API.');
+        throw new Error('BytePlus Seedream currently supports text-to-image generation in Sloom Studio; image editing and reference guidance are pending the ModelArk edit API.');
       }
       onStatus?.('Generating image with BytePlus…');
       const apiKey = requireApiKey(settings.apiKeys.byteplus ?? '', 'BytePlus');
@@ -1052,7 +1052,7 @@ async function executeImageNode(
     }
     case 'huggingface': {
       if (sourceImageInput || referenceImageInputs.length > 0) {
-        throw new Error('Hugging Face image models are text-to-image only in Signal Loom. For source or reference-image edits choose a Gemini, OpenAI, Atlas, BFL, Stability, or Local/Open edit model.');
+        throw new Error('Hugging Face image models are text-to-image only in Sloom Studio. For source or reference-image edits choose a Gemini, OpenAI, Atlas, BFL, Stability, or Local/Open edit model.');
       }
 
       onStatus?.('Generating image with Hugging Face…');
@@ -2409,7 +2409,7 @@ async function executeVertexImageNode(input: {
   const generateVertexImage = resolveVertexImageGenerator(input.settings.providerSettings);
 
   if (!generateVertexImage) {
-    throw new NonRetryableError('Vertex AI requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
+    throw new NonRetryableError('Vertex AI requires the Sloom Studio desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
   }
 
   const route = getVertexImageRoute(input.modelId);
@@ -2536,7 +2536,7 @@ async function executeVertexGeminiTextContent(input: {
   const generateVertexText = resolveVertexTextGenerator(input.settings.providerSettings);
 
   if (!generateVertexText) {
-    throw new NonRetryableError(`${input.label} requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).`);
+    throw new NonRetryableError(`${input.label} requires the Sloom Studio desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).`);
   }
 
   const result = await generateVertexText({
@@ -2658,7 +2658,7 @@ async function executeVideoNode(
     }
     case 'huggingface': {
       if (context.startImageInput || context.endImageInput) {
-        throw new Error('Hugging Face video models are text-to-video only in Signal Loom. For a start frame use Gemini Veo or an Atlas image-to-video model.');
+        throw new Error('Hugging Face video models are text-to-video only in Sloom Studio. For a start frame use Gemini Veo or an Atlas image-to-video model.');
       }
 
       const { HfInference } = await loadProviderModule(
@@ -2774,7 +2774,7 @@ async function executeVertexVeoVideoNode(input: {
   const generateVertexVideo = resolveVertexVideoGenerator(input.settings.providerSettings);
 
   if (!generateVertexVideo) {
-    throw new NonRetryableError('Vertex AI video requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
+    throw new NonRetryableError('Vertex AI video requires the Sloom Studio desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
   }
 
   validateGeminiVeoVideoRequest(input.modelId, input.prompt, input.context);
@@ -2843,7 +2843,7 @@ async function executeVertexOmniVideoNode(input: {
   const generateVertexVideo = resolveVertexVideoGenerator(input.settings.providerSettings);
 
   if (!generateVertexVideo) {
-    throw new NonRetryableError('Vertex AI Gemini Omni video requires the Signal Loom desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
+    throw new NonRetryableError('Vertex AI Gemini Omni video requires the Sloom Studio desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
   }
 
   const media = await buildOmniVideoMediaParts(input.context);

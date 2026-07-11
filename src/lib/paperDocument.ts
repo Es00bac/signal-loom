@@ -26,6 +26,8 @@ import {
 import { buildPaperBubblePath, resolveBubbleTailCurveHandle } from './paperBubblePaths';
 import { buildPaperBubbleConnectorSegments } from './paperBubbleChains';
 import { normalizePaperTable } from './paperTables';
+import { flattenPaperRichText, normalizePaperRichText } from './paperRichText';
+import { paperEmphasisMarkToCss, paperInlineTextToHtml } from './paperJapaneseText';
 import {
   appendPaperTextEffectTransform,
   buildPaperTextPaintEffectCssText,
@@ -83,6 +85,13 @@ export const DEFAULT_PAPER_BACKGROUND: PaperBackgroundSpec = {
 
 export const DEFAULT_PAPER_STYLES: PaperStyleCatalogs = {
   paragraph: [
+    // Document presets (word-processor feel) — plug into the paragraph-style dropdown + applyPaperParagraphStyle.
+    { id: 'para-title', name: 'Title', typography: { fontFamily: 'Georgia, serif', fontSizePt: 26, leadingPt: 30, align: 'left', fontWeight: '700', hyphenate: false, spaceAfterMm: 3 } },
+    { id: 'para-heading-1', name: 'Heading 1', typography: { fontFamily: 'Georgia, serif', fontSizePt: 18, leadingPt: 22, align: 'left', fontWeight: '700', hyphenate: false, spaceBeforeMm: 3, spaceAfterMm: 1.5 } },
+    { id: 'para-heading-2', name: 'Heading 2', typography: { fontFamily: 'Georgia, serif', fontSizePt: 14, leadingPt: 18, align: 'left', fontWeight: '700', hyphenate: false, spaceBeforeMm: 2.5, spaceAfterMm: 1 } },
+    { id: 'para-body', name: 'Body', typography: { fontFamily: 'Georgia, serif', fontSizePt: 10.5, leadingPt: 14, align: 'left', fontWeight: '400', hyphenate: true } },
+    { id: 'para-quote', name: 'Quote', typography: { fontFamily: 'Georgia, serif', fontSizePt: 10.5, leadingPt: 14, align: 'left', fontWeight: '400', fontStyle: 'italic', hyphenate: true, firstLineIndentMm: 6 } },
+    // Comic presets (comic-book layout) — the original defaults, unchanged.
     { id: 'para-comic-dialogue', name: 'Comic Dialogue', typography: { fontFamily: 'Inter, system-ui, sans-serif', fontSizePt: 9.5, leadingPt: 11.5, align: 'center', fontWeight: '600', hyphenate: false } },
     { id: 'para-caption', name: 'Caption', typography: { fontFamily: 'Georgia, serif', fontSizePt: 9, leadingPt: 12, align: 'left', fontWeight: '700', hyphenate: true } },
     { id: 'para-sfx', name: 'SFX Display', typography: { fontFamily: 'Impact, Haettenschweiler, sans-serif', fontSizePt: 18, leadingPt: 18, align: 'center', fontWeight: '700', hyphenate: false } },
@@ -141,9 +150,11 @@ export function createDefaultPaperDocument({
       showGrid: true,
       showBaselineGrid: false,
       showGuides: true,
+      showFrameEdges: false,
       showBleed: true,
       showSpreads: false,
       startOnRight: true,
+      // rtlBinding omitted → 'auto': right-to-left when the doc has vertical (縦書き) text, else left-to-right.
       snapToGuides: false,
       snapToGrid: false,
     },
@@ -400,6 +411,19 @@ export function clearPaperFrameLocalOverrides(doc: PaperDocument, pageId: string
   });
 }
 
+/** True when any text-bearing frame is set 縦書き (vertical-rl) — the signal that a document is Japanese/manga. */
+export function documentHasVerticalText(document: Pick<PaperDocument, 'pages'>): boolean {
+  return document.pages.some((page) =>
+    page.frames.some((frame) => frame.typography?.writingMode === 'vertical-rl'),
+  );
+}
+
+/** Resolve the effective binding direction: an explicit `view.rtlBinding` wins; otherwise it auto-derives —
+ * right-to-left (右綴じ) when the document has vertical (縦書き) text, left-to-right for a Western document. */
+export function effectiveRtlBinding(document: Pick<PaperDocument, 'pages' | 'view'>): boolean {
+  return document.view.rtlBinding ?? documentHasVerticalText(document);
+}
+
 export function computeEffectivePaperFrame(doc: Pick<PaperDocument, 'styles'>, frame: PaperFrame): PaperFrame {
   const paragraph = resolveParagraphStyle(doc.styles, frame.paragraphStyleId);
   const character = resolveCharacterStyle(doc.styles, frame.characterStyleId);
@@ -513,13 +537,43 @@ function patchPaperFrame(frame: PaperFrame, patch: PaperFramePatch): PaperFrame 
 
   if (!frameChanged && !typographyChanged) return frame;
 
-  return {
+  const next: PaperFrame = {
     ...frame,
     ...framePatch,
     typography: typographyChanged
       ? { ...frame.typography, ...typography }
       : frame.typography,
   };
+  // Changing the fill by any path OTHER than applying a swatch drops the durable spot-swatch link, so it
+  // can never point at a swatch the fill no longer matches.
+  if (framePatch.fillColor !== undefined && framePatch.fillSwatchId === undefined) {
+    next.fillSwatchId = undefined;
+  }
+  // Same for the stroke's durable spot-swatch link.
+  if (framePatch.strokeColor !== undefined && framePatch.strokeSwatchId === undefined) {
+    next.strokeSwatchId = undefined;
+  }
+  // Same for the text colour. Typography patches are usually spread (`{...typo, color}`), so — unlike the
+  // flat fill patch — the stale colorSwatchId rides along. Drop it whenever the colour actually changes,
+  // UNLESS the patch explicitly assigns a *different* swatch (i.e. the user picked a new one).
+  if (typography && typography.color !== undefined && !Object.is(typography.color, frame.typography.color)) {
+    const assignsNewSwatch =
+      typography.colorSwatchId !== undefined && !Object.is(typography.colorSwatchId, frame.typography.colorSwatchId);
+    if (!assignsNewSwatch) next.typography = { ...next.typography, colorSwatchId: undefined };
+  }
+  // Keep `text` and `richText` consistent. Editing the plain text of a rich frame replaces its content, so
+  // the old runs are dropped (text becomes authoritative again) — unless the same patch also sets richText.
+  if (framePatch.text !== undefined && framePatch.richText === undefined && frame.richText) {
+    next.richText = undefined;
+  }
+  // Patching richText makes it authoritative: normalize it and re-flatten `text` to match, unless the patch
+  // supplied its own text alongside (the editor commits both together).
+  if (framePatch.richText !== undefined) {
+    const normalized = normalizePaperRichText(framePatch.richText);
+    next.richText = normalized;
+    if (framePatch.text === undefined) next.text = normalized ? flattenPaperRichText(normalized) : (frame.text ?? '');
+  }
+  return next;
 }
 
 function hasShallowPatchChange<T extends object>(current: T, patch: Partial<T>): boolean {
@@ -696,7 +750,7 @@ export function serializePaperDocument(doc: PaperDocument): string {
 export function parsePaperDocument(json: string): PaperDocument {
   const parsed = JSON.parse(json) as PaperDocument;
   if (!parsed || !Array.isArray(parsed.pages) || !parsed.page) {
-    throw new Error('The selected file is not a Signal Loom Paper document.');
+    throw new Error('The selected file is not a Sloom Studio Paper document.');
   }
   const pageSpec = normalizePageSpec(parsed.page);
   return {
@@ -711,9 +765,12 @@ export function parsePaperDocument(json: string): PaperDocument {
       showGrid: parsed.view?.showGrid ?? true,
       showBaselineGrid: parsed.view?.showBaselineGrid ?? false,
       showGuides: parsed.view?.showGuides ?? true,
+      showFrameEdges: parsed.view?.showFrameEdges ?? false,
       showBleed: parsed.view?.showBleed ?? true,
       showSpreads: parsed.view?.showSpreads ?? false,
       startOnRight: parsed.view?.startOnRight ?? true,
+      // Preserve undefined ('auto'); only a saved true/false pins the binding explicitly.
+      rtlBinding: parsed.view?.rtlBinding,
       snapToGuides: parsed.view?.snapToGuides ?? false,
       snapToGrid: parsed.view?.snapToGrid ?? false,
     },
@@ -836,6 +893,10 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     textVerticalAlign: frame.textVerticalAlign,
   });
 
+  // Inline rich text (optional). When present it is authoritative and `text` is kept as its flattened
+  // plaintext, so every plain-text consumer (search, threading, legacy export) still works unchanged.
+  const richText = frame.richText ? normalizePaperRichText(frame.richText) : undefined;
+
   return {
     id: frame.id ?? makeId('frame'),
     kind,
@@ -846,7 +907,8 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     heightMm: frame.heightMm,
     rotationDeg: frame.rotationDeg ?? 0,
     locked: frame.locked ?? false,
-    text: frame.text ?? defaultTextForKind(kind),
+    text: richText ? flattenPaperRichText(richText) : (frame.text ?? defaultTextForKind(kind)),
+    richText,
     asset: frame.asset,
     fit: frame.fit ?? 'contain',
     imageScale: frame.imageScale ?? 1,
@@ -855,7 +917,10 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     imageRotationDeg: frame.imageRotationDeg ?? 0,
     imageFlipX: frame.imageFlipX ?? false,
     imageFlipY: frame.imageFlipY ?? false,
-    columns: frame.columns ?? (kind === 'text' ? 2 : 1),
+    // Default to a single column so body text vectorizes (real embedded, selectable type in PDF/X) by
+    // default — matching InDesign/Affinity. Multi-column is still available on demand (it rasterizes, since
+    // the linear vector-text engine doesn't flow columns).
+    columns: frame.columns ?? 1,
     columnGutterMm: frame.columnGutterMm,
     columnRule: frame.columnRule,
     columnBalance: frame.columnBalance,
@@ -865,9 +930,12 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     fillColor: frame.fillColor ?? defaultFillForKind(kind),
     fillOpacity: frame.fillOpacity ?? 1,
     fillGradient: frame.fillGradient,
-    strokeColor: frame.strokeColor ?? '#111827',
+    // A plain text frame is a document paragraph — borderless by default, like Word/InDesign body text. Comic
+    // kinds (panel/caption/bubble) keep their visible stroke. The non-printing "Frame Edges" view toggle keeps
+    // borderless frames easy to see/grab. (Only affects NEW frames; saved frames store explicit values.)
+    strokeColor: frame.strokeColor ?? (kind === 'text' ? 'transparent' : '#111827'),
     strokeOpacity: frame.strokeOpacity ?? 1,
-    strokeWidthMm: frame.strokeWidthMm ?? (kind === 'image' ? 0.2 : 0.35),
+    strokeWidthMm: frame.strokeWidthMm ?? (kind === 'image' ? 0.2 : kind === 'text' ? 0 : 0.35),
     strokeStyle: frame.strokeStyle ?? 'solid',
     cornerRadiusMm: frame.cornerRadiusMm ?? defaultCornerRadiusForKind(kind),
     opacity: frame.opacity ?? 1,
@@ -1047,7 +1115,9 @@ export function renderPrintFrame(doc: PaperDocument, frame: PaperFrame): string 
   }
 
   if (frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble') {
-    return `<div class="frame frame-${frame.kind}" style="${outerStyle}; background: transparent; border: 0; padding: 0;">${renderPrintBubbleSvg(frame)}${renderPrintTextBox(frame, escapeHtml(frame.text ?? frame.asset?.text ?? ''))}</div>`;
+    const bubbleVertical = frame.typography.writingMode === 'vertical-rl';
+    const bubbleText = paperInlineTextToHtml(frame.text ?? frame.asset?.text ?? '', bubbleVertical, escapeHtml);
+    return `<div class="frame frame-${frame.kind}" style="${outerStyle}; background: transparent; border: 0; padding: 0;">${renderPrintBubbleSvg(frame)}${renderPrintTextBox(frame, bubbleText)}</div>`;
   }
 
   if (isShapedContentFrame(frame)) {
@@ -1066,7 +1136,7 @@ export function renderPrintFrame(doc: PaperDocument, frame: PaperFrame): string 
 </figure>`;
   }
 
-  const text = escapeHtml(frame.text ?? frame.asset?.text ?? '');
+  const text = paperInlineTextToHtml(frame.text ?? frame.asset?.text ?? '', frame.typography.writingMode === 'vertical-rl', escapeHtml);
   const columns = frame.kind === 'text' ? Math.max(1, frame.columns || doc.layout.columns.count) : 1;
   const columnStyle =
     columns > 1
@@ -1103,10 +1173,13 @@ function printFrameContentStyle(frame: PaperFrame): string {
   ];
 
   if (frame.kind === 'caption') {
+    const verticalAlignFlex = paperTextVerticalAlignToJustifyContent(frame.textVerticalAlign);
+    const vertical = frame.typography.writingMode === 'vertical-rl';
     style.push(
       'display: flex',
       'flex-direction: column',
-      `justify-content: ${paperTextVerticalAlignToJustifyContent(frame.textVerticalAlign)}`,
+      `justify-content: ${vertical ? 'center' : verticalAlignFlex}`,
+      ...(vertical ? [`align-items: ${verticalAlignFlex}`] : []),
     );
   }
 
@@ -1135,7 +1208,7 @@ function renderPrintShapedContentFrame(doc: PaperDocument, style: string, frame:
     ? renderPrintImageFrameContent(frame)
     : frame.kind === 'panel'
       ? ''
-      : escapeHtml(frame.text ?? frame.asset?.text ?? '');
+      : paperInlineTextToHtml(frame.text ?? frame.asset?.text ?? '', frame.typography.writingMode === 'vertical-rl', escapeHtml);
 
   return `<div class="frame frame-${frame.kind}" style="${style}; background: transparent; border: 0; overflow: visible;">
   <div class="frame-content" style="${innerStyle}">${content}</div>
@@ -1257,6 +1330,11 @@ function printFrameContentPaddingMm(frame: PaperFrame): number {
 
 function renderPrintTextBox(frame: PaperFrame, content: string, extraStyle = ''): string {
   const textBox = resolvePaperTextBox(frame);
+  // Same axis handling as the on-canvas bubble (paperTextBoxReactStyle): horizontal maps vertical-align to
+  // justify-content; Japanese 縦書き rotates the flex axes, so center the columns horizontally and map
+  // vertical-align to align-items instead — otherwise a vertical bubble's text jams to one side.
+  const vertical = frame.typography.writingMode === 'vertical-rl';
+  const verticalAlignFlex = paperTextVerticalAlignToJustifyContent(textBox.verticalAlign);
   const style = [
     `position: absolute`,
     `left: ${formatPercent(textBox.xPercent)}`,
@@ -1269,15 +1347,21 @@ function renderPrintTextBox(frame: PaperFrame, content: string, extraStyle = '')
     `transform-origin: center`,
     `display: flex`,
     `flex-direction: column`,
-    `justify-content: ${paperTextVerticalAlignToJustifyContent(textBox.verticalAlign)}`,
+    `justify-content: ${vertical ? 'center' : verticalAlignFlex}`,
+    vertical ? `align-items: ${verticalAlignFlex}` : '',
     textStyle(frame),
     extraStyle,
   ].filter(Boolean).join('; ');
 
-  return `<div class="paper-text-box" style="${style}">${content}</div>`;
+  // Wrap the content in one inner block so <ruby> is not blockified into separate flex items (which would scatter
+  // vertical furigana across columns). Mirrors the on-canvas PaperBubbleText structure.
+  return `<div class="paper-text-box" style="${style}"><div style="white-space: pre-wrap; overflow-wrap: break-word">${content}</div></div>`;
 }
 
 function textStyle(frame: PaperFrame): string {
+  // Japanese 縦書き / kinsoku / 圏点 must survive export exactly as on canvas (they inherit to the text content).
+  const vertical = frame.typography.writingMode === 'vertical-rl';
+  const emphasis = paperEmphasisMarkToCss(frame.typography.emphasis);
   return [
     `font-family: ${frame.typography.fontFamily}`,
     `font-size: ${frame.typography.fontSizePt}pt`,
@@ -1288,6 +1372,10 @@ function textStyle(frame: PaperFrame): string {
     `color: ${frame.typography.color}`,
     `font-weight: ${frame.typography.fontWeight}`,
     `font-style: ${frame.typography.fontStyle}`,
+    vertical ? 'writing-mode: vertical-rl' : '',
+    vertical ? `text-orientation: ${frame.typography.textOrientation ?? 'mixed'}` : '',
+    (frame.typography.lineBreakStrict ?? vertical) ? 'line-break: strict' : '',
+    emphasis ? `text-emphasis: ${emphasis}` : '',
     buildPaperTextPaintEffectCssText(frame),
   ].filter(Boolean).join('; ');
 }
@@ -1393,6 +1481,9 @@ function defaultTextForKind(kind: PaperFrameKind): string | undefined {
 function defaultFillForKind(kind: PaperFrameKind): string {
   if (kind === 'caption') return '#fff4bf';
   if (kind === 'panel' || kind === 'image') return 'transparent';
+  // A document text frame has no fill (text flows over the page, like Word/InDesign body text). Speech/thought
+  // bubbles still fall through to the white fallback below.
+  if (kind === 'text') return 'transparent';
   if (kind === 'document') return '#f8fafc';
   if (kind === 'shape') return '#e0f2fe';
   return '#ffffff';

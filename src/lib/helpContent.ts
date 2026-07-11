@@ -20,7 +20,7 @@ export const HELP_SECTIONS: HelpContentSection[] = [
   {
     id: 'project-documentation',
     title: 'Project Documentation',
-    summary: 'Signal Loom is a node-based generative AI media studio with a timeline editor for assembling, animating, and rendering audio/video projects.',
+    summary: 'Sloom Studio is a node-based media studio with a timeline editor for assembling, animating, and rendering audio/video projects.',
     groups: [
       {
         title: 'Core Workspaces',
@@ -60,7 +60,7 @@ export const HELP_SECTIONS: HelpContentSection[] = [
         title: '1. Create or Open a Project',
         items: [
           'Start from File > New Project or File > Open.',
-          'In Electron, save the project as a .sloom file before large imports so Signal Loom creates and uses that project’s scratch folder.',
+          'In Electron, save the project as a .sloom file before large imports so Sloom Studio creates and uses that project’s scratch folder.',
           'Switch to the Editor workspace from the titlebar or View menu.',
         ],
       },
@@ -93,7 +93,7 @@ export const HELP_SECTIONS: HelpContentSection[] = [
   {
     id: 'feature-help',
     title: 'Feature Help',
-    summary: 'Reference for the major Signal Loom tools and editor features.',
+    summary: 'Reference for the major Sloom Studio tools and editor features.',
     groups: [
       {
         title: 'Timeline Tools',
@@ -190,9 +190,9 @@ export const HELP_SECTIONS: HelpContentSection[] = [
       {
         title: 'Android Accelerator Setup',
         items: [
-          'Install the Signal Loom Android Accelerator companion on a Snapdragon Android device, keep the phone on the same trusted Wi-Fi network as the desktop, and start the foreground server from the app.',
+          'Install the Sloom Studio Android Accelerator companion on a Snapdragon Android device, keep the phone on the same trusted Wi-Fi network as the desktop, and start the foreground server from the app.',
           'The companion exposes /v1/capabilities, /v1/generate, and /v1/upscale over the local network with bearer-token pairing. Paste the shown URL and token into Settings > Providers.',
-          'For Local Dream based builds, SD1.5/SDXL generation and Real-ESRGAN/UltraSharp-style 4x upscaling run through the phone-side runtime; Signal Loom treats those jobs as local/provider-free and records $0 provider spend.',
+          'For Local Dream based builds, SD1.5/SDXL generation and Real-ESRGAN/UltraSharp-style 4x upscaling run through the phone-side runtime; Sloom Studio treats those jobs as local/provider-free and records $0 provider spend.',
           'Image nodes can select Android Accelerator for phone-side generation, and the node Auto-upscale toggle uses the currently configured upscaler while adding any paid upscale cost to the pre-run estimate.',
           'Paper Auto print upscaling, Image/Photos Upscale 2x, and Flow node Auto-upscale use the paired Android accelerator first when configured, then fall back through the configured cloud/local methods. Paper still performs the final exact document-DPI fit before replacing the frame asset.',
           'If the Android server cannot be reached, confirm both devices are on the same LAN, the Android foreground-service notification is still active, the pairing token matches, and the phone has the required model/upscaler downloaded.',
@@ -206,7 +206,7 @@ export const HELP_SECTIONS: HelpContentSection[] = [
           'For a simple desktop login, run gcloud auth login and enable the Vertex AI API on the project. For ADC/service-account workflows, run gcloud auth application-default login or set GOOGLE_APPLICATION_CREDENTIALS to a credential JSON file.',
           'Useful Vertex variables include GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_CLOUD_PROJECT, CLOUDSDK_CORE_PROJECT, CLOUDSDK_CONFIG, GOOGLE_CLOUD_QUOTA_PROJECT, optional GCLOUD_ACCOUNT (for explicit gcloud user account selection), and optional GCLOUD_BIN. Add them one per line as KEY=value in Settings.',
           'Paper print image upscaling can be Auto, Android accelerator, Stability Fast, Stability Conservative, Vertex Imagen, Local CPU AI when a safe runtime is installed, or Local browser scaling only. Auto uses the Android accelerator when configured, then Stability Fast when a Stability key is configured, then Vertex Imagen, then local scaling.',
-          'Paper print upscaling shows source pixels, target print pixels, provider choice, and estimated cost before spending. Stability Fast is 2 credits / $0.02 per image; Stability Conservative is 40 credits / $0.40 per image. Signal Loom locally fits provider results to the exact document-DPI target before replacing the frame asset.',
+          'Paper print upscaling shows source pixels, target print pixels, provider choice, and estimated cost before spending. Stability Fast is 2 credits / $0.02 per image; Stability Conservative is 40 credits / $0.40 per image. Sloom Studio locally fits provider results to the exact document-DPI target before replacing the frame asset.',
         ],
       },
     ],

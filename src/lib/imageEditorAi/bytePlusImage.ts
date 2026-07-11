@@ -80,7 +80,7 @@ export async function runBytePlusImage(request: GenerativeFillRequest): Promise<
   }
   if (request.references && request.references.length > 0) {
     throw new Error(
-      'BytePlus Seedream has no confirmed reference-image endpoint in Signal Loom yet; remove the attached references or choose a provider that supports them (Gemini, OpenAI, Atlas, BFL, Stability, or Local/Open).',
+      'BytePlus Seedream has no confirmed reference-image endpoint in Sloom Studio yet; remove the attached references or choose a provider that supports them (Gemini, OpenAI, Atlas, BFL, Stability, or Local/Open).',
     );
   }
   const baseUrl = normalizeBytePlusBaseUrl(useSettingsStore.getState().providerSettings.bytePlusBaseUrl);

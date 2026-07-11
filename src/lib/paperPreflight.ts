@@ -1,9 +1,63 @@
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
-import type { PaperDocument, PaperFrame, PaperPage } from '../types/paper';
+import type { PaperDocument, PaperFrame, PaperImportedFont, PaperPage } from '../types/paper';
 import {
   buildPaperPrintProductionMetadata,
   isPdfXProductionTarget,
 } from './paperPrintProduction';
+import { classifyFontFamily, isDisplayFontFamily } from './paperFontResolution';
+import { normalizeFamilyName, resolveTextFace } from './paperFontLibrary';
+import { findUncoveredCharacters } from './paperFontVetting';
+import { collectSpotFills, collectSpotStrokes } from './paperPdfxSpotFills';
+import { resolveTextSpot } from './paperPdfxVectorTextFrames';
+
+const LIBERATION_SUBSTITUTE_NAME: Record<'serif' | 'sans' | 'mono', string> = {
+  serif: 'Liberation Serif',
+  sans: 'Liberation Sans',
+  mono: 'Liberation Mono',
+};
+
+/** True when a referenced family matches an embeddable imported font (so it embeds as the real face). */
+function familyHasImportedFace(family: string, importedFonts: readonly PaperImportedFont[] | undefined): boolean {
+  const norm = normalizeFamilyName(family);
+  if (!norm) return false;
+  return (importedFonts ?? []).some((f) => f.embeddable && normalizeFamilyName(f.familyName) === norm);
+}
+
+/**
+ * For every text/caption frame whose font resolves to an imported face, collect the distinct characters the
+ * imported font can't render, keyed by the family that gets embedded. Those characters fall back to a
+ * substitute font (rendered as raster pixels, not embedded as selectable vector in the user's font), so the
+ * user should know before they hand the file off. Uses the SAME resolution + coverage the exporter uses, so
+ * the disclosure matches what actually happens. Empty map = every imported font covers all of its text.
+ */
+function collectUncoveredImportedGlyphs(document: PaperDocument): Map<string, string[]> {
+  const missingByFamily = new Map<string, string[]>();
+  const seenByFamily = new Map<string, Set<string>>();
+  for (const page of document.pages) {
+    for (const frame of page.frames) {
+      if (frame.kind !== 'text' && frame.kind !== 'caption') continue;
+      const text = frame.text ?? '';
+      if (!text.trim()) continue;
+      const face = resolveTextFace(frame.typography, document.importedFonts);
+      if (!face.embeddedReal || !face.bytes) continue; // only the user's own imported faces are at issue
+      const uncovered = findUncoveredCharacters(face.bytes, text);
+      if (uncovered.length === 0) continue;
+      let seen = seenByFamily.get(face.familyName);
+      if (!seen) {
+        seen = new Set();
+        seenByFamily.set(face.familyName, seen);
+        missingByFamily.set(face.familyName, []);
+      }
+      const list = missingByFamily.get(face.familyName)!;
+      for (const ch of uncovered) {
+        if (seen.has(ch)) continue;
+        seen.add(ch);
+        list.push(ch);
+      }
+    }
+  }
+  return missingByFamily;
+}
 
 export type PaperPreflightSeverity = 'error' | 'warning' | 'info';
 export type PaperPreflightProfileId = 'generic-pdf' | 'comic-print' | 'manga-print' | 'webtoon';
@@ -116,6 +170,69 @@ export function analyzePaperPreflight(
   for (const font of fontInventory) {
     if (font.available === false) {
       issues.push(issue('warning', 'Font may be unavailable', `${font.family} is referenced but not reported as available by the browser.`, { category: 'fonts' }));
+    }
+  }
+  // Honest disclosure: PDF/X exports embed real vector text. A font the user IMPORTED is embedded as their
+  // actual face (subset); everything else falls back to a metric-compatible Liberation face (we can't
+  // legally embed arbitrary system fonts). Display/decorative faces have no faithful Liberation stand-in,
+  // so — unless the real font was imported — their text is RASTERIZED (real glyphs) instead of substituted.
+  // The three outcomes are disclosed separately so they're never conflated.
+  if (isPdfXProductionTarget(document.printProduction)) {
+    const substitutions = new Map<string, string>();
+    const rasterized = new Set<string>();
+    const embeddedReal = new Set<string>();
+    for (const font of fontInventory) {
+      if (familyHasImportedFace(font.family, document.importedFonts)) {
+        embeddedReal.add(font.family);
+        continue;
+      }
+      if (isDisplayFontFamily(font.family)) {
+        rasterized.add(font.family);
+        continue;
+      }
+      const target = LIBERATION_SUBSTITUTE_NAME[classifyFontFamily(font.family)];
+      if (font.family.trim().toLowerCase() === target.toLowerCase()) continue; // already the substitute
+      substitutions.set(font.family, target);
+    }
+    if (embeddedReal.size > 0) {
+      const list = [...embeddedReal].join('; ');
+      issues.push(issue(
+        'info',
+        'Fonts embedded as your imported font',
+        `${list}: your uploaded font is embedded as real, selectable vector text (subset) — no substitution.`,
+        { category: 'fonts' },
+      ));
+    }
+    // Some of that imported-font text may use characters the font has no glyph for (e.g. an accented letter,
+    // a symbol, a dash). Those fall back to a substitute font as raster pixels — NOT embedded as selectable
+    // vector in the user's font — so disclose exactly which characters, per family, before hand-off.
+    for (const [family, chars] of collectUncoveredImportedGlyphs(document)) {
+      const shown = chars.slice(0, 12).map((c) => `“${c}”`).join(' ');
+      const more = chars.length > 12 ? ` (+${chars.length - 12} more)` : '';
+      issues.push(issue(
+        'warning',
+        'Imported font is missing some glyphs',
+        `${family} has no glyph for ${shown}${more}. That text falls back to another font as raster pixels — it won't be selectable vector in your font. Use a font that includes these characters, or accept the fallback.`,
+        { category: 'fonts' },
+      ));
+    }
+    if (substitutions.size > 0) {
+      const list = [...substitutions.entries()].map(([from, to]) => `${from} → ${to}`).join('; ');
+      issues.push(issue(
+        'info',
+        'Fonts embedded as Liberation substitutes',
+        `PDF/X embeds selectable vector text with metric-compatible open fonts: ${list}. Set text in Liberation Serif/Sans/Mono to match the print exactly.`,
+        { category: 'fonts' },
+      ));
+    }
+    if (rasterized.size > 0) {
+      const list = [...rasterized].join('; ');
+      issues.push(issue(
+        'info',
+        'Display fonts kept as raster',
+        `${list}: display/decorative faces have no faithful open substitute, so their text is rendered as high-resolution pixels (its real look is preserved, but it isn't selectable). Other text stays selectable vector.`,
+        { category: 'fonts' },
+      ));
     }
   }
   if (profile.warnRgbForPrint) {
@@ -435,6 +552,39 @@ function groupIssuesByCategory(issues: PaperPreflightIssue[]): PaperPreflightRep
   return categories.map((category) => ({ category, issues: issues.filter((issue) => issue.category === category) })).filter((group) => group.issues.length > 0);
 }
 
+/** True when the document actually USES (not merely defines) a named spot swatch in a frame colour —
+ * either as a fill (fillSwatchId) or as a text colour (typography.colorSwatchId). */
+function documentUsesSpotColor(document: PaperDocument): boolean {
+  const spotIds = new Set((document.swatches ?? []).filter((swatch) => swatch.type === 'spot').map((swatch) => swatch.id));
+  if (spotIds.size === 0) return false;
+  for (const page of document.pages) {
+    for (const frame of page.frames) {
+      // The durable link: a fill applied from a spot swatch records its id in fillSwatchId, and text colour
+      // from a spot swatch records typography.colorSwatchId (the CSS colour is only an RGB preview and can't
+      // identify the swatch).
+      if (frame.fillSwatchId && spotIds.has(frame.fillSwatchId)) return true;
+      if (frame.strokeSwatchId && spotIds.has(frame.strokeSwatchId)) return true;
+      if (frame.typography?.colorSwatchId && spotIds.has(frame.typography.colorSwatchId)) return true;
+    }
+  }
+  return false;
+}
+
+/** Spot ink names carried by text that will actually plate: a non-empty text frame whose colour resolves
+ * to a preserved spot (outlined glyphs draw on the named /Separation plate). Empty under any policy but
+ * 'preserve-named' since resolveTextSpot gates on it. */
+function collectSpotTextNames(document: PaperDocument): string[] {
+  const names: string[] = [];
+  for (const page of document.pages) {
+    for (const frame of page.frames) {
+      if (!(frame.text ?? '').trim()) continue;
+      const spot = resolveTextSpot(frame, document);
+      if (spot) names.push(spot.name);
+    }
+  }
+  return [...new Set(names)];
+}
+
 function analyzePrintProduction(
   document: PaperDocument,
   colorInventory: PaperColorInventoryItem[],
@@ -456,11 +606,28 @@ function analyzePrintProduction(
   }
 
   if (isPdfXProductionTarget(production)) {
-    issues.push(issue('warning', 'Browser PDF export is not PDF/X-certified', `${production.pdfStandard.toUpperCase()} intent is recorded for handoff metadata, but the built-in browser PDF path does not embed ICC output profiles or validate conformance. Use a press-aware PDF/X converter for final delivery.`, { category: 'production' }));
+    issues.push(issue('info', 'PDF/X export embeds a real ICC output intent', `${production.pdfStandard.toUpperCase()} export converts each page to CMYK through the embedded ${production.outputIntentLabel} output intent, enforces the total-ink limit, and passes ISO 15930 structural validation. Do a final visual proof in Acrobat/Enfocus before press.`, { category: 'production' }));
   }
 
   if (production.outputIntentColorSpace === 'cmyk' && hasRgbColors) {
     issues.push(issue('warning', 'RGB colors need CMYK proofing', `${production.outputIntentLabel} is a CMYK press target, but editable Paper colors are CSS/RGB values. Check separations, rich black, and total ink coverage in a print-production tool before press handoff.`, { category: 'color' }));
+  }
+
+  if (documentUsesSpotColor(document)) {
+    if (production.spotColorPolicy === 'preserve-named') {
+      const fillNames = document.pages.flatMap((page) => collectSpotFills(page, document).preservedSpotNames);
+      const strokeNames = document.pages.flatMap((page) => collectSpotStrokes(page, document).preservedSpotNames);
+      const textNames = collectSpotTextNames(document);
+      const preserved = [...new Set([...fillNames, ...strokeNames, ...textNames])];
+      if (preserved.length > 0) {
+        issues.push(issue('info', 'Spot colors kept as separation plates', `${preserved.join('; ')} export as real /Separation plates (verify with a RIP/separations preview). Spot fills (solid, tinted, rotated, rounded, or polygon shapes), spot solid borders, and spot-coloured text all plate; a dashed/dotted/double border or a speech-bubble shape still converts to process CMYK.`, { category: 'color' }));
+      } else {
+        issues.push(issue('warning', 'Spot colors will convert to process', `Spot policy is "preserve named", but no spot swatch is used on a plateable fill, solid border, or text, so every spot ink converts to process. To keep a real /Separation plate, apply the spot swatch to a fill, a solid border, or text.`, { category: 'color' }));
+      }
+    } else if (production.spotColorPolicy === 'warn') {
+      issues.push(issue('warning', 'Named spot colors will convert to process', `Spot inks convert to process CMYK — not kept as separate plates. Set the spot policy to "preserve named" to export solid spot fills as real /Separation plates.`, { category: 'color' }));
+    }
+    // 'convert-process': the user explicitly chose conversion — no warning.
   }
 
   if (production.totalInkLimitPercent > 340 && production.outputIntentColorSpace === 'cmyk') {

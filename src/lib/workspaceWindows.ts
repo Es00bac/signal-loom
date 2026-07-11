@@ -25,7 +25,7 @@ export function getWorkspaceWindowLabel(workspace: WorkspaceWindowView): string 
   return WORKSPACE_LABELS[workspace];
 }
 
-export function getWorkspaceWindowTitle(workspace: WorkspaceWindowView, appName = 'Signal Loom'): string {
+export function getWorkspaceWindowTitle(workspace: WorkspaceWindowView, appName = 'Sloom Studio'): string {
   return `${appName} - ${getWorkspaceWindowLabel(workspace)}`;
 }
 

@@ -630,9 +630,9 @@ export function describeSourceLinkedLayerReadiness({
   const replaceContentsCaveats = [
     'Replacement updates the linked bitmap and metadata; it does not rewrite the original Source Library asset.',
   ];
-  const editOriginalCaveat = 'Edit Original is metadata-only: Signal Loom can identify the Source Library item, but does not launch or round-trip a native external editor.';
+  const editOriginalCaveat = 'Edit Original is metadata-only: Sloom Studio can identify the Source Library item, but does not launch or round-trip a native external editor.';
   const smartFilterCaveats = [
-    'Smart filters are retained as Signal Loom layer filters only; native Photoshop Smart Filter stacks are not round-tripped.',
+    'Smart filters are retained as Sloom Studio layer filters only; native Photoshop Smart Filter stacks are not round-tripped.',
   ];
   const rasterizeCaveats = [
     'Rasterize detaches the Source Library relationship and bakes the current linked pixels into the layer.',
@@ -998,7 +998,7 @@ function describeSourceLinkedLayerPsdMetadataWarnings({
     warnings.push(
       {
         code: 'metadata-only-smart-filters',
-        message: 'Image filter stacks stay editable in Signal Loom metadata but are flattened for native PSD Smart Filter roundtrip.',
+        message: 'Image filter stacks stay editable in Sloom Studio metadata but are flattened for native PSD Smart Filter roundtrip.',
       },
       {
         code: 'smart-filter-mask-unsupported',
@@ -1193,7 +1193,7 @@ function describeSourceLinkedLayerSuitePackage({
     paper: describeSourceLinkedLayerSuitePackageTarget('paper', replacementReady, blockerCodes),
   };
   const caveats = replacementReady
-    ? ['Suite handoff packages the durable Source Library source beside flattened Image pixels and Signal Loom metadata.']
+    ? ['Suite handoff packages the durable Source Library source beside flattened Image pixels and Sloom Studio metadata.']
     : ['Resolve source-linked layer blockers before handing source-library packages to Flow, Video, or Paper.'];
 
   return {
@@ -1855,7 +1855,7 @@ function describeSourceDocumentRoundtripCaveats(
   }
   if (workflow.nativeRoundtrip === 'metadata-only') {
     return [
-      `${workflow.formatLabel ?? 'Source'} native editable constructs may be retained only as Signal Loom metadata.`,
+      `${workflow.formatLabel ?? 'Source'} native editable constructs may be retained only as Sloom Studio metadata.`,
     ];
   }
   if (workflow.nativeRoundtrip === 'unsupported') {

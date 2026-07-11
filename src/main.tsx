@@ -15,7 +15,7 @@ installResizeObserverLoopErrorFilter()
 function renderApp() {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <ErrorBoundary className="min-h-screen" level="root" title="Signal Loom">
+      <ErrorBoundary className="min-h-screen" level="root" title="Sloom Studio">
         <App />
         <AndroidLanServerBanner />
         <RemoteHostBanner />

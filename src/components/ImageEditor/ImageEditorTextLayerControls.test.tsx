@@ -33,7 +33,7 @@ function textLayer(): ImageLayer {
     bitmapVersion: 0,
     mask: null,
     text: normalizeImageTextStyle({
-      content: 'Signal Loom',
+      content: 'Sloom Studio',
       fontSize: 32,
       baselineShift: 4,
       fontKerning: 'auto',
@@ -145,7 +145,7 @@ describe('EditableTextLayerControls', () => {
     });
 
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
-      content: 'Signal Loom',
+      content: 'Sloom Studio',
       fontFamily: 'Cormorant Garamond, Georgia, serif',
       fontWeight: '600',
       fontStyle: 'italic',
@@ -167,7 +167,7 @@ describe('EditableTextLayerControls', () => {
 
     expect(container.textContent).toContain('Retained live text');
     expect(container.textContent).toContain('Canvas raster preview');
-    expect(container.textContent).toContain('Retained text style is stored as Signal Loom metadata while native PSD editable text layers are not written.');
+    expect(container.textContent).toContain('Retained text style is stored as Sloom Studio metadata while native PSD editable text layers are not written.');
   });
 
   it('surfaces explicit edit-readiness, installed-font fallback, and text-on-path handoff caveats', () => {
@@ -176,7 +176,7 @@ describe('EditableTextLayerControls', () => {
       bitmap: { width: 180, height: 40 } as ImageLayer['bitmap'],
       bitmapVersion: 2,
       text: normalizeImageTextStyle({
-        content: 'Signal Loom',
+        content: 'Sloom Studio',
         fontFamily: 'Poster Font, Inter, sans-serif',
         fontSize: 32,
         openTypeFeatures: {
@@ -226,7 +226,7 @@ describe('EditableTextLayerControls', () => {
     expect(container.textContent).toContain('Live edit readiness');
     expect(container.textContent).toContain('OpenType unsupported states');
     expect(container.textContent).toContain('Stable signatures');
-    expect(container.textContent).toContain('Retained text style is stored as Signal Loom metadata while native PSD editable text layers are not written.');
+    expect(container.textContent).toContain('Retained text style is stored as Sloom Studio metadata while native PSD editable text layers are not written.');
     expect(container.textContent).toContain('Text-on-path handoff keeps the vector path reference and text style metadata, but exported/source-bin previews flatten the current glyph layout to pixels.');
   });
 

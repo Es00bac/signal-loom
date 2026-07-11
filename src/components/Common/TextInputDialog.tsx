@@ -4,6 +4,7 @@ import {
   useTextInputDialogStore,
   type TextInputDialogRequest,
 } from '../../store/textInputDialogStore';
+import { useI18n } from '../../lib/useI18n';
 
 export const TextInputDialog: React.FC = () => {
   const { activeRequest, respond } = useTextInputDialogStore();
@@ -21,6 +22,7 @@ interface TextInputDialogViewProps {
 export const TextInputDialogView: React.FC<TextInputDialogViewProps> = ({ request, respond }) => {
   const [value, setValue] = useState(request.initialValue ?? '');
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const { t } = useI18n();
 
   useEffect(() => {
     window.requestAnimationFrame(() => {
@@ -34,8 +36,8 @@ export const TextInputDialogView: React.FC<TextInputDialogViewProps> = ({ reques
     message,
     label,
     placeholder,
-    confirmLabel = 'Continue',
-    cancelLabel = 'Cancel',
+    confirmLabel = t('common.continue'),
+    cancelLabel = t('common.cancel'),
   } = request;
 
   const submit = () => respond(value);

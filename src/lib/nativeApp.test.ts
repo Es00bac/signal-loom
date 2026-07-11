@@ -127,9 +127,9 @@ describe('native app bridge helpers', () => {
       suiteHandoffMode: 'shared-binary-deep-link',
       packageTargets: ['macos', 'windows', 'linux'],
       packageCaveats: [
-        'Standalone Image handoff stays inside the shared Signal Loom desktop package; separate signed single-workspace executables are not produced.',
+        'Standalone Image handoff stays inside the shared Sloom Studio desktop package; separate signed single-workspace executables are not produced.',
       ],
-      caveat: 'Standalone workspace entry uses the shared Signal Loom desktop binary and focused workspace windows; separate signed executables are not packaged.',
+      caveat: 'Standalone workspace entry uses the shared Sloom Studio desktop binary and focused workspace windows; separate signed executables are not packaged.',
       signature: 'native-standalone-entry:v2|paper|view:paper|signal-loom://workspace/paper|shared-binary-window|suite-handoff=shared-binary-deep-link|targets=macos,windows,linux|separate-exe=false',
     });
   });

@@ -4,6 +4,7 @@ import type {
   EditorClipChromaKeySettings,
   EditorClipStrokeSettings,
   EditorStageBlendMode,
+  EditorTextTypography,
   EditorVisualKeyframe,
   EditorVisualClip,
   EditorVisualSourceKind,
@@ -14,6 +15,9 @@ export interface ManualEditorVisualSequenceSource {
   assetUrl?: string;
   aspectRatio?: AspectRatio;
   text?: string;
+  /** Source asset MIME type (e.g. `image/gif`) -- lets downstream FFmpeg export detect an
+   *  animated GIF without guessing from the (often extension-less) blob: asset URL. */
+  mimeType?: string;
 }
 
 export interface ManualEditorVisualSequenceClip {
@@ -24,6 +28,7 @@ export interface ManualEditorVisualSequenceClip {
   aspectRatio?: AspectRatio;
   assetUrl?: string;
   text?: string;
+  mimeType?: string;
   sourceInMs: number;
   sourceOutMs?: number;
   durationSeconds?: number;
@@ -68,6 +73,9 @@ export interface ManualEditorVisualSequenceClip {
   textColor: string;
   textEffect: 'none' | 'shadow' | 'glow' | 'outline';
   textBackgroundOpacityPercent: number;
+  /** Paper-grade typography (weight/style/leading/tracking/align incl. justify/stroke/shadow/arc),
+   *  carried by text AND comic clips — see `EditorVisualClip.textTypography`. */
+  textTypography?: EditorTextTypography;
   shapeFillColor?: string;
   shapeBorderColor?: string;
   shapeBorderWidth?: number;
@@ -75,6 +83,9 @@ export interface ManualEditorVisualSequenceClip {
   comicKind?: 'speech-bubble' | 'thought-bubble' | 'caption';
   comicTailAngleDeg?: number;
   comicTailLengthPx?: number;
+  comicTailTipXPercent?: number;
+  comicTailTipYPercent?: number;
+  comicTailCurvePercent?: number;
   comicLineHeightPercent?: number;
   comicLetterSpacingPx?: number;
   comicTextAlign?: 'left' | 'center' | 'right';
@@ -92,6 +103,7 @@ export function buildManualEditorVisualSequenceClip(
     aspectRatio: source.aspectRatio,
     assetUrl: source.assetUrl,
     text: source.text,
+    mimeType: source.mimeType,
     sourceInMs: clip.sourceInMs,
     sourceOutMs: clip.sourceOutMs,
     durationSeconds: clip.durationSeconds,
@@ -136,12 +148,16 @@ export function buildManualEditorVisualSequenceClip(
     textColor: clip.textColor,
     textEffect: clip.textEffect,
     textBackgroundOpacityPercent: clip.textBackgroundOpacityPercent,
+    textTypography: clip.textTypography ? { ...clip.textTypography } : undefined,
     shapeFillColor: clip.shapeFillColor,
     shapeBorderColor: clip.shapeBorderColor,
     shapeBorderWidth: clip.shapeBorderWidth,
     comicKind: clip.comicKind,
     comicTailAngleDeg: clip.comicTailAngleDeg,
     comicTailLengthPx: clip.comicTailLengthPx,
+    comicTailTipXPercent: clip.comicTailTipXPercent,
+    comicTailTipYPercent: clip.comicTailTipYPercent,
+    comicTailCurvePercent: clip.comicTailCurvePercent,
     comicLineHeightPercent: clip.comicLineHeightPercent,
     comicLetterSpacingPx: clip.comicLetterSpacingPx,
     comicTextAlign: clip.comicTextAlign,

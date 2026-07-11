@@ -279,7 +279,7 @@ const DEFAULT_SPOT_COLOR: ImageSpotChannelColor = { r: 0, g: 174, b: 239 };
 const SPOT_PREVIEW_WARNING = 'Spot channel preview is an RGB tint overlay; it is not a native ink separation.';
 const SPOT_EXPORT_PREPRESS_WARNING = 'Use an external prepress tool for final spot-color separations before print handoff.';
 const SPOT_DIRECT_PAINT_UNSUPPORTED_REASON = 'Direct spot-channel painting is not implemented; spot masks can be stored as metadata and previewed only.';
-const SPOT_PRINT_SEPARATION_WARNING = 'Signal Loom does not emit native spot plates or press-ready separations.';
+const SPOT_PRINT_SEPARATION_WARNING = 'Sloom Studio does not emit native spot plates or press-ready separations.';
 
 export function buildImageSpotChannelEntry(
   mask: ImageSpotChannelMaskInput,
@@ -617,8 +617,8 @@ export function buildSpotChannelExportWarnings(
   const verb = channels.length === 1 ? 'is' : 'are';
   const formatLabel = options.targetFormat ? formatExportTarget(options.targetFormat) : null;
   const exportWarning = formatLabel
-    ? `${countLabel} ${verb} preserved only as Signal Loom metadata; ${formatLabel} export cannot emit native spot plates or press-ready separations.`
-    : `${countLabel} ${verb} preserved only as Signal Loom metadata; native spot plates and press-ready separations are not exported.`;
+    ? `${countLabel} ${verb} preserved only as Sloom Studio metadata; ${formatLabel} export cannot emit native spot plates or press-ready separations.`
+    : `${countLabel} ${verb} preserved only as Sloom Studio metadata; native spot plates and press-ready separations are not exported.`;
 
   return [exportWarning, SPOT_EXPORT_PREPRESS_WARNING];
 }

@@ -1504,6 +1504,7 @@ function collectEditorVisualSequence(
       aspectRatio: sourceAspectRatio,
       assetUrl: sourceItem?.assetUrl,
       text: sourceItem?.text ?? editorAsset?.textDefaults?.text,
+      mimeType: sourceItem?.mimeType,
     })];
   });
 }

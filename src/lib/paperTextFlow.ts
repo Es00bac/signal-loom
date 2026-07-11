@@ -14,6 +14,13 @@ export interface PaperTextFlowTypeSpec {
   align: 'left' | 'center' | 'right' | 'justify';
   fontWeight?: string;
   fontStyle?: string;
+  /**
+   * Japanese vertical writing (縦書き). When set, each text line runs down the frame's HEIGHT and
+   * successive lines (columns) advance right-to-left across its WIDTH — so the flow engine's capacity
+   * and overset are computed on the swapped axis. CJK text also breaks per character with kinsoku,
+   * independent of this flag (see `tokenize`).
+   */
+  vertical?: boolean;
 }
 
 export interface PaperTextFlowColumn {
@@ -78,6 +85,31 @@ interface FlowToken {
   kind: 'word' | 'break';
   text: string;
   start: number;
+  /** Separator to emit BEFORE this token when it is not the first on a line (space for Latin words
+   * preceded by whitespace, empty for CJK characters — Japanese has no inter-character spaces). */
+  sep: string;
+  /** A single CJK character (breakable per-glyph, subject to kinsoku), as opposed to a Latin word. */
+  cjk: boolean;
+}
+
+// CJK ideographs, kana, and fullwidth/CJK symbols & punctuation, as explicit \u block ranges (CJK
+// Symbols/Punctuation, Hiragana+Katakana, CJK Ext A, CJK Unified, CJK Compat Ideographs,
+// Halfwidth/Fullwidth Forms). Japanese wraps between (almost) any two, so each is its own unit — unlike Latin, which only breaks at spaces.
+const CJK_CHAR =
+  /[　-〿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/;
+
+// 禁則処理 (kinsoku shori). Characters that may not BEGIN a line (行頭禁則: closing brackets, trailing
+// punctuation, small kana, chōonpu, iteration marks) — pulled up onto the previous line (追い込み).
+const KINSOKU_LINE_START_FORBIDDEN = new Set(
+  Array.from(
+    '、。，．・：；？！ゝゞ々ー‐）］｝〕〉》」』】〙〗｣»’”〟ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ｡｣､',
+  ),
+);
+// Characters that may not END a line (行末禁則: opening brackets/quotes) — pushed down to the next line.
+const KINSOKU_LINE_END_FORBIDDEN = new Set(Array.from('（［｛〔〈《「『【〘〖｢«‘“〝｟'));
+
+function isCjkChar(ch: string): boolean {
+  return CJK_CHAR.test(ch);
 }
 
 function tokenize(text: string): FlowToken[] {
@@ -87,12 +119,40 @@ function tokenize(text: string): FlowToken[] {
 
   lines.forEach((line, lineIndex) => {
     if (lineIndex > 0) {
-      tokens.push({ kind: 'break', text: '\n', start: offset - 1 });
+      tokens.push({ kind: 'break', text: '\n', start: offset - 1, sep: '', cjk: false });
     }
-    const wordPattern = /\S+/g;
-    let match: RegExpExecArray | null;
-    while ((match = wordPattern.exec(line)) !== null) {
-      tokens.push({ kind: 'word', text: match[0], start: offset + match.index });
+    // Walk the line: whitespace separates Latin words; each CJK glyph is its own unit; a run of
+    // non-space, non-CJK characters is one Latin "word". `sep` records whether whitespace preceded a
+    // unit so the reconstructed line text (and thus its measured width) stays faithful to the source.
+    const chars = Array.from(line);
+    let i = 0;
+    let charOffset = 0;
+    let pendingSpace = false;
+    while (i < chars.length) {
+      const ch = chars[i];
+      if (/\s/.test(ch)) {
+        pendingSpace = true;
+        charOffset += ch.length;
+        i += 1;
+        continue;
+      }
+      if (isCjkChar(ch)) {
+        tokens.push({ kind: 'word', text: ch, start: offset + charOffset, sep: pendingSpace ? ' ' : '', cjk: true });
+        pendingSpace = false;
+        charOffset += ch.length;
+        i += 1;
+        continue;
+      }
+      // Accumulate a Latin word up to the next whitespace or CJK char.
+      let word = '';
+      const wordStart = charOffset;
+      while (i < chars.length && !/\s/.test(chars[i]) && !isCjkChar(chars[i])) {
+        word += chars[i];
+        charOffset += chars[i].length;
+        i += 1;
+      }
+      tokens.push({ kind: 'word', text: word, start: offset + wordStart, sep: pendingSpace ? ' ' : '', cjk: false });
+      pendingSpace = false;
     }
     offset += line.length + 1;
   });
@@ -106,10 +166,20 @@ interface NextLineResult {
   nextIndex: number;
 }
 
+/** Reconstruct a line's text from its chosen units, honouring each unit's leading separator (the first
+ * unit never gets one). CJK units concatenate with no space; Latin words keep their source spacing. */
+function joinUnits(units: FlowToken[]): string {
+  let out = '';
+  for (let i = 0; i < units.length; i += 1) {
+    out += i === 0 ? units[i].text : units[i].sep + units[i].text;
+  }
+  return out;
+}
+
 function buildNextLine(
   tokens: FlowToken[],
   startIndex: number,
-  columnWidthMm: number,
+  lineBudgetMm: number,
   measure: PaperTextMeasurer,
   spec: PaperTextFlowTypeSpec,
 ): NextLineResult {
@@ -120,15 +190,14 @@ function buildNextLine(
     index += 1;
   }
 
-  const words: string[] = [];
+  const chosen: FlowToken[] = [];
   while (index < tokens.length && tokens[index].kind === 'word') {
-    const candidate = [...words, tokens[index].text].join(' ');
-    const candidateWidth = measure(candidate, spec);
-    if (words.length === 0 || candidateWidth <= columnWidthMm + EPSILON_MM) {
-      words.push(tokens[index].text);
+    const candidateWidth = measure(joinUnits([...chosen, tokens[index]]), spec);
+    if (chosen.length === 0 || candidateWidth <= lineBudgetMm + EPSILON_MM) {
+      chosen.push(tokens[index]);
       index += 1;
-      // A single word wider than the column is placed alone, then the line ends.
-      if (candidateWidth > columnWidthMm + EPSILON_MM) {
+      // A single unit wider than the line budget is placed alone, then the line ends.
+      if (candidateWidth > lineBudgetMm + EPSILON_MM) {
         break;
       }
     } else {
@@ -136,7 +205,29 @@ function buildNextLine(
     }
   }
 
-  const text = words.join(' ');
+  // --- 禁則処理 (kinsoku shori) — only bites on CJK punctuation; Latin lines are unaffected ---
+  // 行末禁則: a line must not END on an opening bracket/quote; push it down to the next line (unless it
+  // is the line's only unit, which would loop forever / leave an empty line).
+  while (chosen.length > 1 && KINSOKU_LINE_END_FORBIDDEN.has(chosen[chosen.length - 1].text)) {
+    chosen.pop();
+    index -= 1;
+  }
+  // 行頭禁則: the next line must not START with closing punctuation (。、」…); pull such characters up onto
+  // this line (追い込み). Capped so a pathological run can't overflow the frame unboundedly.
+  let pulled = 0;
+  while (
+    index < tokens.length &&
+    tokens[index].kind === 'word' &&
+    chosen.length > 0 &&
+    pulled < 4 &&
+    KINSOKU_LINE_START_FORBIDDEN.has(tokens[index].text)
+  ) {
+    chosen.push(tokens[index]);
+    index += 1;
+    pulled += 1;
+  }
+
+  const text = joinUnits(chosen);
   return { text, widthMm: text ? measure(text, spec) : 0, nextIndex: index };
 }
 
@@ -237,6 +328,37 @@ export function flowPaperText(
     const frameExclusions = frame.exclusions ?? exclusions;
 
     for (const column of frame.columns) {
+      // 縦書き (vertical-rl): each text line runs down the column HEIGHT and successive lines advance
+      // right-to-left across its WIDTH, so the axes swap. Runaround exclusions (horizontal bands) don't
+      // apply, so the vertical path is a clean column fill — its job here is capacity/overset, and the
+      // browser renders the glyphs via CSS `writing-mode`.
+      if (spec.vertical) {
+        const lineBudgetMm = column.heightMm; // a line's length is bounded by the frame height
+        const columnRight = column.xMm + column.widthMm; // the first text-line sits at the right edge
+        let used = 0; // width consumed by placed text-lines
+
+        while (index < tokens.length && used + leadingMm <= column.widthMm + EPSILON_MM) {
+          const line = buildNextLine(tokens, index, lineBudgetMm, measure, spec);
+          if (line.nextIndex === index) break;
+
+          const remainderHasWords = tokens.slice(line.nextIndex).some((token) => token.kind === 'word');
+          if (line.text === '' && !remainderHasWords) {
+            index = line.nextIndex;
+            break;
+          }
+
+          lines.push({
+            text: line.text,
+            xMm: columnRight - used - leadingMm, // nominal (not consumed downstream): lines march leftward
+            yMm: column.yMm,
+            widthMm: line.widthMm,
+          });
+          used += leadingMm;
+          index = line.nextIndex;
+        }
+        continue;
+      }
+
       const columnBottom = column.yMm + column.heightMm;
       let y = column.yMm;
 

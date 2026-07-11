@@ -451,7 +451,7 @@ describe('GenerativeFillLayer', () => {
       dispatchStatus: 'blocked',
       photoshopNativeAi: {
         supported: false,
-        reason: 'Photoshop/Firefly native Generative Fill execution is not wired; this descriptor only prepares Signal Loom provider routes.',
+        reason: 'Photoshop/Firefly native Generative Fill execution is not wired; this descriptor only prepares Sloom Studio provider routes.',
       },
       signalLoomExecution: {
         usesCloudProvider: true,
@@ -476,7 +476,7 @@ describe('GenerativeFillLayer', () => {
         {
           code: 'external-cloud-provider',
           severity: 'warning',
-          message: 'OpenAI Images would run through Signal Loom provider dispatch with stored credentials, not Photoshop cloud execution.',
+          message: 'OpenAI Images would run through Sloom Studio provider dispatch with stored credentials, not Photoshop cloud execution.',
         },
       ],
     });

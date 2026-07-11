@@ -272,7 +272,7 @@ export function TextPanel() {
         <div>Kerning {settings.fontKerning}</div>
         <div>Baseline {Math.round(settings.baselineShift)}px</div>
         <div>OpenType intent {openTypeTags.length ? openTypeTags.join(', ') : 'default features'}</div>
-        <div>Retained text style is stored as Signal Loom metadata while native PSD editable text layers are not written.</div>
+        <div>Retained text style is stored as Sloom Studio metadata while native PSD editable text layers are not written.</div>
       </div>
       <TypographySupportMatrixSummary matrix={supportMatrix} />
       <p className="rounded border border-cyan-300/10 bg-[#10131b] px-2 py-1.5 text-[11px] text-cyan-100/45">

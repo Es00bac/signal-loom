@@ -83,7 +83,7 @@ export async function resolveNativeRenderTarget(
     }
 
     throw new Error(
-      `The local native render service is unavailable at ${endpoint}. Switch the render backend to Browser or start the Signal Loom native render service.`,
+      `The local native render service is unavailable at ${endpoint}. Switch the render backend to Browser or start the Sloom Studio native render service.`,
     );
   }
 

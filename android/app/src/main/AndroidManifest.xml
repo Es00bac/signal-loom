@@ -24,7 +24,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Open Signal Loom documents tapped in a file manager / "Open with".
+            <!-- Open Sloom Studio documents tapped in a file manager / "Open with".
                  Custom extensions (.sloom/.slimg/.slppr) have no registered MIME type, so we match
                  by URI path. The repeated pathPatterns cover filenames with extra dots (Android's
                  PatternMatcher .* does not backtrack). Some content:// providers omit the filename
@@ -67,8 +67,8 @@
                 <data android:pathPattern=".*\\..*\\..*\\.slppr" />
             </intent-filter>
 
-            <!-- "Share to Signal Loom" from another app's share sheet (e.g. Gallery -> Share ->
-                 Signal Loom, or a file manager's Share action). ACTION_SEND carries the shared
+            <!-- "Share to Sloom Studio" from another app's share sheet (e.g. Gallery -> Share ->
+                 Sloom Studio, or a file manager's Share action). ACTION_SEND carries the shared
                  item's content:// URI in EXTRA_STREAM, not the intent's data/path, so Android can
                  only match it here by MIME type (@capacitor/app's appUrlOpen never sees this —
                  SignalLoomShareIntentPlugin reads EXTRA_STREAM directly; see that class).

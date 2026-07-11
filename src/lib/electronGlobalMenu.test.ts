@@ -22,6 +22,7 @@ interface DbusMenuModelModule {
     keyboardShortcuts?: Record<string, string>;
     isMac?: boolean;
     revision?: number;
+    locale?: string;
   }) => { revision: number; rootId: number; nodes: Map<number, DbusMenuNode> };
   toDbusShortcut: (accelerator: string) => string[][] | null;
 }
@@ -63,12 +64,34 @@ describe('global menu — DBusMenu model builder', () => {
     expect(topLabels).toEqual(['Project', 'File', 'Edit', 'Image', 'Select', 'Tools', 'View', 'Window', 'Help']);
   });
 
+  it('translates top-level + role labels when locale is ja (keeping brand names), English by default', async () => {
+    const { buildDbusMenuModel } = await loadModel();
+
+    // Paper workspace: Japanese top-level labels resolve from the shared JSON labelJa fields.
+    const jaPaper = buildDbusMenuModel({ activeWorkspace: 'paper', isMac: false, locale: 'ja' });
+    const jaTop = jaPaper.nodes.get(jaPaper.rootId)!.children.map((id) => jaPaper.nodes.get(id)!.label);
+    expect(jaTop).toEqual(['プロジェクト', 'ファイル', '編集', 'レイアウト', '挿入', 'ツール', '表示', 'ウィンドウ', 'ヘルプ']);
+
+    // A leaf command label + a synthetic role label both translate.
+    expect(findByCommand(jaPaper.nodes, 'edit:undo')?.label).toBe('元に戻す');
+    expect(findByCommand(jaPaper.nodes, 'role:quit')?.label).toBe('Sloom Studio を終了');
+
+    // The flow workspace's Flow group is a product proper noun — English even in Japanese.
+    const jaFlow = buildDbusMenuModel({ activeWorkspace: 'flow', isMac: false, locale: 'ja' });
+    const jaFlowTop = jaFlow.nodes.get(jaFlow.rootId)!.children.map((id) => jaFlow.nodes.get(id)!.label);
+    expect(jaFlowTop).toContain('Flow');
+
+    // Default locale is unchanged English.
+    const enPaper = buildDbusMenuModel({ activeWorkspace: 'paper', isMac: false });
+    expect(findByCommand(enPaper.nodes, 'edit:undo')?.label).toBe('Undo');
+  });
+
   it('maps Electron roles to synthetic role:* commands and drops `close` on non-mac', async () => {
     const { buildDbusMenuModel } = await loadModel();
     const { nodes } = buildDbusMenuModel({ activeWorkspace: 'image', isMac: false });
 
     const quit = findByCommand(nodes, 'role:quit');
-    expect(quit?.label).toBe('Quit Signal Loom');
+    expect(quit?.label).toBe('Quit Sloom Studio');
     expect(findByCommand(nodes, 'role:reload')).toBeDefined();
     expect(findByCommand(nodes, 'role:togglefullscreen')).toBeDefined();
     // `close` has no ROLE_ITEMS entry on non-mac, so it must not surface as any command.
@@ -142,10 +165,10 @@ describe('global menu — strict X11 window-id resolver', () => {
     const { resolveX11WindowId } = await loadX11();
     const xid = resolveX11WindowId({
       pid: 1234,
-      titleIncludes: 'Signal Loom — Image',
+      titleIncludes: 'Sloom Studio — Image',
       exec: makeExec({
         pidSearch: '0x100\n0x200\n',
-        names: { 0x100: 'Signal Loom — Flow', 0x200: 'Signal Loom — Image' },
+        names: { 0x100: 'Sloom Studio — Flow', 0x200: 'Sloom Studio — Image' },
       }),
     });
     expect(xid).toBe(0x200);
@@ -156,7 +179,7 @@ describe('global menu — strict X11 window-id resolver', () => {
     // pid search surfaces only some unrelated app's window; the title does not match it.
     const xid = resolveX11WindowId({
       pid: 1234,
-      titleIncludes: 'Signal Loom',
+      titleIncludes: 'Sloom Studio',
       exec: makeExec({ pidSearch: '0x1000035\n', names: { 0x1000035: 'BulmaCAS.bot' } }),
     });
     expect(xid).toBeNull();
@@ -179,12 +202,12 @@ describe('global menu — strict X11 window-id resolver', () => {
 
   it('returns null when there are no candidates at all', async () => {
     const { resolveX11WindowId } = await loadX11();
-    expect(resolveX11WindowId({ pid: 1234, titleIncludes: 'Signal Loom', exec: makeExec({}) })).toBeNull();
+    expect(resolveX11WindowId({ pid: 1234, titleIncludes: 'Sloom Studio', exec: makeExec({}) })).toBeNull();
   });
 
   it('escapes regex metacharacters before handing a title to xdotool --name', async () => {
     const { escapeForXdotoolName } = await loadX11();
-    expect(escapeForXdotoolName('Signal Loom (probe)')).toBe('Signal Loom \\(probe\\)');
+    expect(escapeForXdotoolName('Sloom Studio (probe)')).toBe('Sloom Studio \\(probe\\)');
   });
 
   it('parseWindowId rejects the 0x1 placeholder and non-ids', async () => {

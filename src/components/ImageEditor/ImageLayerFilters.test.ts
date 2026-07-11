@@ -429,19 +429,19 @@ describe('ImageLayerFilters', () => {
         id: 'blend-mode',
         editable: true,
         portability: 'flattened-handoff',
-        warning: 'Per-filter blend modes stay editable in Signal Loom but flatten into preview/export pixels for native smart-filter handoff.',
+        warning: 'Per-filter blend modes stay editable in Sloom Studio but flatten into preview/export pixels for native smart-filter handoff.',
       },
       {
         id: 'opacity',
         editable: true,
         portability: 'flattened-handoff',
-        warning: 'Per-filter opacity stays editable in Signal Loom metadata but is baked into flattened preview/export pixels.',
+        warning: 'Per-filter opacity stays editable in Sloom Studio metadata but is baked into flattened preview/export pixels.',
       },
       {
         id: 'order',
         editable: true,
         portability: 'flattened-handoff',
-        warning: 'Per-filter order stays deterministic in Signal Loom metadata but does not roundtrip as editable native smart-filter order.',
+        warning: 'Per-filter order stays deterministic in Sloom Studio metadata but does not roundtrip as editable native smart-filter order.',
       },
     ]);
     expect(descriptor.portability).toEqual({
@@ -453,10 +453,10 @@ describe('ImageLayerFilters', () => {
       warnings: [
         'Smart-filter masks are metadata-only and cannot be edited or previewed non-destructively.',
         'Unsupported filter parameters require rasterization or lossy preset omission.',
-        'Source Bin and Video handoff preserve flattened pixels plus Signal Loom metadata only; editable native smart-filter roundtrip is unavailable.',
+        'Source Bin and Video handoff preserve flattened pixels plus Sloom Studio metadata only; editable native smart-filter roundtrip is unavailable.',
       ],
       signature:
-        'layer-filter-portability:v1:{"portableWithinSignalLoom":false,"portableAcrossSignalLoomDocuments":false,"portableAsEditablePhotoshopSmartFilters":false,"sourceBinVisibleExport":"flattened-preview-plus-metadata","suiteVideoHandoff":"flattened-visible-raster-plus-metadata","warnings":["Smart-filter masks are metadata-only and cannot be edited or previewed non-destructively.","Unsupported filter parameters require rasterization or lossy preset omission.","Source Bin and Video handoff preserve flattened pixels plus Signal Loom metadata only; editable native smart-filter roundtrip is unavailable."]}',
+        'layer-filter-portability:v1:{"portableWithinSignalLoom":false,"portableAcrossSignalLoomDocuments":false,"portableAsEditablePhotoshopSmartFilters":false,"sourceBinVisibleExport":"flattened-preview-plus-metadata","suiteVideoHandoff":"flattened-visible-raster-plus-metadata","warnings":["Smart-filter masks are metadata-only and cannot be edited or previewed non-destructively.","Unsupported filter parameters require rasterization or lossy preset omission.","Source Bin and Video handoff preserve flattened pixels plus Sloom Studio metadata only; editable native smart-filter roundtrip is unavailable."]}',
     });
   });
 

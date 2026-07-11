@@ -494,7 +494,7 @@ describe('ImageVectorMasks', () => {
       },
     ]);
     expect(readiness.handoffCaveats).toEqual([
-      'Retained vector masks stay editable inside Signal Loom as path metadata.',
+      'Retained vector masks stay editable inside Sloom Studio as path metadata.',
       'Preview/export rasterizes vector masks to alpha for deterministic output.',
       'PSD handoff should be treated as metadata/raster-alpha preservation, not native editable vector-mask parity.',
       'Boolean vector-mask stacks, overlaps, and live PSD vector-mask states remain unsupported.',

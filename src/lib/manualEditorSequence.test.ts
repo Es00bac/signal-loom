@@ -75,4 +75,25 @@ describe('buildManualEditorVisualSequenceClip', () => {
       { timePercent: 100, valuePercent: 80 },
     ]);
   });
+
+  it('carries the source mimeType through so the export pipeline can detect an animated GIF', () => {
+    const sequenceClip = buildManualEditorVisualSequenceClip(
+      createVisualClip(),
+      {
+        assetUrl: 'blob:http://localhost/gif-asset',
+        mimeType: 'image/gif',
+      },
+    );
+
+    expect(sequenceClip.mimeType).toBe('image/gif');
+  });
+
+  it('leaves mimeType undefined when the source item carries none', () => {
+    const sequenceClip = buildManualEditorVisualSequenceClip(
+      createVisualClip(),
+      { assetUrl: 'data:image/png;base64,abc' },
+    );
+
+    expect(sequenceClip.mimeType).toBeUndefined();
+  });
 });

@@ -234,23 +234,6 @@ export function getBrowserPreviewSupportLabel(fileNameOrPath: string | undefined
     : 'Imported for native/FFmpeg use; browser preview may be unsupported';
 }
 
-export function getElectronDialogFilterGroups(): ElectronDialogFilterGroup[] {
-  const mediaExtensions = getExtensionsForKinds(['image', 'video', 'audio']);
-  const allExtensions = MEDIA_FORMAT_REGISTRY.flatMap((format) => format.extensions);
-  return [
-    { name: 'Media', extensions: mediaExtensions },
-    ...MEDIA_FORMAT_REGISTRY.map((format) => ({ name: format.label, extensions: format.extensions })),
-    { name: 'All Supported', extensions: [...new Set(allExtensions)] },
-    { name: 'All Files', extensions: ['*'] },
-  ];
-}
-
-function getExtensionsForKinds(kinds: readonly MediaFormatKind[]): string[] {
-  return MEDIA_FORMAT_REGISTRY
-    .filter((format) => kinds.includes(format.kind))
-    .flatMap((format) => format.extensions);
-}
-
 export function isGifMimeType(mimeType: string | undefined): boolean {
   return normalizeMimeType(mimeType) === 'image/gif';
 }
@@ -279,4 +262,21 @@ export function isGifAssetReference(assetUrl: string | undefined, mimeType: stri
 
   const pathOnly = assetUrl.split(/[?#]/)[0];
   return getFileExtension(pathOnly) === 'gif';
+}
+
+export function getElectronDialogFilterGroups(): ElectronDialogFilterGroup[] {
+  const mediaExtensions = getExtensionsForKinds(['image', 'video', 'audio']);
+  const allExtensions = MEDIA_FORMAT_REGISTRY.flatMap((format) => format.extensions);
+  return [
+    { name: 'Media', extensions: mediaExtensions },
+    ...MEDIA_FORMAT_REGISTRY.map((format) => ({ name: format.label, extensions: format.extensions })),
+    { name: 'All Supported', extensions: [...new Set(allExtensions)] },
+    { name: 'All Files', extensions: ['*'] },
+  ];
+}
+
+function getExtensionsForKinds(kinds: readonly MediaFormatKind[]): string[] {
+  return MEDIA_FORMAT_REGISTRY
+    .filter((format) => kinds.includes(format.kind))
+    .flatMap((format) => format.extensions);
 }

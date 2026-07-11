@@ -298,7 +298,7 @@ export function buildImageHistoryActionWorkflowDescriptor({
     {
       code: 'arbitrary-command-recording-unsupported',
       severity: 'info',
-      message: 'History Actions record and replay Signal Loom quick action ids only; arbitrary Photoshop menu commands are not captured.',
+      message: 'History Actions record and replay Sloom Studio quick action ids only; arbitrary Photoshop menu commands are not captured.',
     },
     {
       code: 'parameterized-action-steps-unsupported',

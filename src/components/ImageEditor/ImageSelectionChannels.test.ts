@@ -241,9 +241,9 @@ describe('ImageSelectionChannels', () => {
           separationSupported: false,
           warningCount: 1,
           warnings: [
-            'PSD export preserves saved alpha selections only as Signal Loom metadata; native alpha channels and print plates are not emitted.',
+            'PSD export preserves saved alpha selections only as Sloom Studio metadata; native alpha channels and print plates are not emitted.',
           ],
-          summary: '1 saved alpha channel will be preserved as Signal Loom metadata only; no native alpha plate is exported.',
+          summary: '1 saved alpha channel will be preserved as Sloom Studio metadata only; no native alpha plate is exported.',
         },
         signature:
           'alpha-channel-panel-actions:v1:4x4:replace:alpha-subject:blocked:alpha-channel-size-mismatch:psd:metadata-only',
@@ -252,7 +252,7 @@ describe('ImageSelectionChannels', () => {
         'Saved alpha channel "Subject" is 3x2 but the active document is 4x4.',
       ],
       warnings: [
-        'PSD export preserves saved alpha selections only as Signal Loom metadata; native alpha channels and print plates are not emitted.',
+        'PSD export preserves saved alpha selections only as Sloom Studio metadata; native alpha channels and print plates are not emitted.',
       ],
       summaryLines: [
         'Saved alpha channels expose preview metadata only; independent channel visibility toggles are not implemented.',
@@ -287,7 +287,7 @@ describe('ImageSelectionChannels', () => {
         targetFormat: 'tiff',
         channelCount: 1,
         status: 'metadata-only',
-        message: 'TIFF export preserves saved alpha selections only as Signal Loom metadata; native alpha channels and print plates are not emitted.',
+        message: 'TIFF export preserves saved alpha selections only as Sloom Studio metadata; native alpha channels and print plates are not emitted.',
         signature: 'channel-export-check:alpha:tiff:1:metadata-only:warning',
       },
       {
@@ -298,7 +298,7 @@ describe('ImageSelectionChannels', () => {
         targetFormat: 'tiff',
         channelCount: 1,
         status: 'metadata-only',
-        message: '1 spot channel is preserved only as Signal Loom metadata; TIFF export cannot emit native spot plates or press-ready separations.',
+        message: '1 spot channel is preserved only as Sloom Studio metadata; TIFF export cannot emit native spot plates or press-ready separations.',
         signature: 'channel-export-check:spot:tiff:1:metadata-only:warning',
       },
       {
@@ -1041,18 +1041,18 @@ describe('ImageSelectionChannels', () => {
           channelCount: 1,
           status: 'metadata-only',
           warnings: [
-            'PSD export preserves saved alpha selections only as Signal Loom metadata; native alpha channels and print plates are not emitted.',
+            'PSD export preserves saved alpha selections only as Sloom Studio metadata; native alpha channels and print plates are not emitted.',
           ],
-          summary: '1 saved alpha channel will be preserved as Signal Loom metadata only; no native alpha plate is exported.',
+          summary: '1 saved alpha channel will be preserved as Sloom Studio metadata only; no native alpha plate is exported.',
         },
         spot: {
           channelCount: 1,
           status: 'metadata-only',
           warnings: [
-            '1 spot channel is preserved only as Signal Loom metadata; PSD export cannot emit native spot plates or press-ready separations.',
+            '1 spot channel is preserved only as Sloom Studio metadata; PSD export cannot emit native spot plates or press-ready separations.',
             'Use an external prepress tool for final spot-color separations before print handoff.',
           ],
-          summary: '1 spot channel will be preserved as Signal Loom metadata only; press-ready spot plates require external prepress.',
+          summary: '1 spot channel will be preserved as Sloom Studio metadata only; press-ready spot plates require external prepress.',
         },
         separation: {
           supported: false,
@@ -1070,7 +1070,7 @@ describe('ImageSelectionChannels', () => {
             targetFormat: 'psd',
             channelCount: 1,
             status: 'metadata-only',
-            message: 'PSD export preserves saved alpha selections only as Signal Loom metadata; native alpha channels and print plates are not emitted.',
+            message: 'PSD export preserves saved alpha selections only as Sloom Studio metadata; native alpha channels and print plates are not emitted.',
             signature: 'channel-export-check:alpha:psd:1:metadata-only:warning',
           },
           {
@@ -1081,7 +1081,7 @@ describe('ImageSelectionChannels', () => {
             targetFormat: 'psd',
             channelCount: 1,
             status: 'metadata-only',
-            message: '1 spot channel is preserved only as Signal Loom metadata; PSD export cannot emit native spot plates or press-ready separations.',
+            message: '1 spot channel is preserved only as Sloom Studio metadata; PSD export cannot emit native spot plates or press-ready separations.',
             signature: 'channel-export-check:spot:psd:1:metadata-only:warning',
           },
           {
@@ -1110,8 +1110,8 @@ describe('ImageSelectionChannels', () => {
         signature: 'channel-export-readiness:v1:psd:alpha=1:metadata-only:spot=1:metadata-only:warnings=3',
       },
       exportWarnings: [
-        'PSD export preserves saved alpha selections only as Signal Loom metadata; native alpha channels and print plates are not emitted.',
-        '1 spot channel is preserved only as Signal Loom metadata; PSD export cannot emit native spot plates or press-ready separations.',
+        'PSD export preserves saved alpha selections only as Sloom Studio metadata; native alpha channels and print plates are not emitted.',
+        '1 spot channel is preserved only as Sloom Studio metadata; PSD export cannot emit native spot plates or press-ready separations.',
         'Use an external prepress tool for final spot-color separations before print handoff.',
       ],
     });
@@ -1249,7 +1249,7 @@ describe('ImageSelectionChannels', () => {
         invalidChannelIds: [],
         signature: 'alpha-persistence:1/12:alpha-subject:ready',
         caveats: [
-          'Saved alpha channels persist as Signal Loom document metadata.',
+          'Saved alpha channels persist as Sloom Studio document metadata.',
           'Native alpha-channel export and direct alpha painting are not implemented.',
         ],
       },
@@ -1260,10 +1260,10 @@ describe('ImageSelectionChannels', () => {
         caveats: [
           'Spot channel preview is an RGB tint overlay; it is not a native ink separation.',
           'Direct spot-channel painting is not implemented; spot masks can be stored as metadata and previewed only.',
-          'Signal Loom does not emit native spot plates or press-ready separations.',
+          'Sloom Studio does not emit native spot plates or press-ready separations.',
         ],
         exportWarnings: [
-          '1 spot channel is preserved only as Signal Loom metadata; TIFF export cannot emit native spot plates or press-ready separations.',
+          '1 spot channel is preserved only as Sloom Studio metadata; TIFF export cannot emit native spot plates or press-ready separations.',
           'Use an external prepress tool for final spot-color separations before print handoff.',
         ],
       },
@@ -1298,8 +1298,8 @@ describe('ImageSelectionChannels', () => {
         policySignature: 'preview-policy:3x2:red:alpha-subject:spot-varnish:tiff',
       },
       warnings: [
-        'TIFF export preserves saved alpha selections only as Signal Loom metadata; native alpha channels and print plates are not emitted.',
-        '1 spot channel is preserved only as Signal Loom metadata; TIFF export cannot emit native spot plates or press-ready separations.',
+        'TIFF export preserves saved alpha selections only as Sloom Studio metadata; native alpha channels and print plates are not emitted.',
+        '1 spot channel is preserved only as Sloom Studio metadata; TIFF export cannot emit native spot plates or press-ready separations.',
         'Use an external prepress tool for final spot-color separations before print handoff.',
       ],
     });
@@ -1559,7 +1559,7 @@ describe('ImageSelectionChannels', () => {
         previewSignatures: ['spot-preview:spot-varnish:3x2:20,120,220:0.75:0.5:visible'],
         readinessSignature: 'spot-readiness:psd:spot-varnish:3x2:20,120,220:0.75:0.5:visible:ready',
         exportWarnings: [
-          '1 spot channel is preserved only as Signal Loom metadata; PSD export cannot emit native spot plates or press-ready separations.',
+          '1 spot channel is preserved only as Sloom Studio metadata; PSD export cannot emit native spot plates or press-ready separations.',
           'Use an external prepress tool for final spot-color separations before print handoff.',
         ],
         blockers: [],
@@ -1572,7 +1572,7 @@ describe('ImageSelectionChannels', () => {
           {
             code: 'spot-channel-export-metadata-only',
             severity: 'warning',
-            message: '1 spot channel is preserved only as Signal Loom metadata; PSD export cannot emit native spot plates or press-ready separations.',
+            message: '1 spot channel is preserved only as Sloom Studio metadata; PSD export cannot emit native spot plates or press-ready separations.',
           },
           {
             code: 'spot-channel-export-prepress-required',
@@ -1587,7 +1587,7 @@ describe('ImageSelectionChannels', () => {
           {
             code: 'spot-channel-print-separation-unsupported',
             severity: 'warning',
-            message: 'Signal Loom does not emit native spot plates or press-ready separations.',
+            message: 'Sloom Studio does not emit native spot plates or press-ready separations.',
           },
         ],
       },
@@ -1640,7 +1640,7 @@ describe('ImageSelectionChannels', () => {
         {
           code: 'alpha-channel-export-metadata-only',
           severity: 'warning',
-          message: 'PSD export preserves saved alpha selections only as Signal Loom metadata; native alpha channels and print plates are not emitted.',
+          message: 'PSD export preserves saved alpha selections only as Sloom Studio metadata; native alpha channels and print plates are not emitted.',
         },
         {
           code: 'alpha-channel-direct-paint-unsupported',
@@ -1655,7 +1655,7 @@ describe('ImageSelectionChannels', () => {
         {
           code: 'spot-channel-export-metadata-only',
           severity: 'warning',
-          message: '1 spot channel is preserved only as Signal Loom metadata; PSD export cannot emit native spot plates or press-ready separations.',
+          message: '1 spot channel is preserved only as Sloom Studio metadata; PSD export cannot emit native spot plates or press-ready separations.',
         },
         {
           code: 'spot-channel-export-prepress-required',
@@ -1670,7 +1670,7 @@ describe('ImageSelectionChannels', () => {
         {
           code: 'spot-channel-print-separation-unsupported',
           severity: 'warning',
-          message: 'Signal Loom does not emit native spot plates or press-ready separations.',
+          message: 'Sloom Studio does not emit native spot plates or press-ready separations.',
         },
       ],
     });

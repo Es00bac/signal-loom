@@ -6,6 +6,7 @@ import {
   type CommandPaletteEntry,
 } from '../../lib/commandPalette';
 import { getContextMenuPortalTarget } from '../../lib/sharedContextMenu';
+import { useI18n } from '../../lib/useI18n';
 
 interface CommandPaletteProps {
   entries: CommandPaletteEntry[];
@@ -15,6 +16,7 @@ interface CommandPaletteProps {
 }
 
 export function CommandPalette({ entries, open, onClose, onRun }: CommandPaletteProps) {
+  const { t } = useI18n();
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -91,13 +93,13 @@ export function CommandPalette({ entries, open, onClose, onRun }: CommandPalette
           <Command className="h-4 w-4 shrink-0 text-cyan-200/80" />
           <input
             ref={inputRef}
-            aria-label="Search commands"
+            aria-label={t('palette.search')}
             className="min-w-0 flex-1 bg-transparent text-sm font-medium text-cyan-50 outline-none placeholder:text-cyan-100/35"
             onChange={(event) => {
               setQuery(event.target.value);
               setActiveIndex(0);
             }}
-            placeholder="Search commands"
+            placeholder={t('palette.search')}
             value={query}
           />
           <Search className="h-4 w-4 shrink-0 text-cyan-100/35" />
@@ -145,7 +147,7 @@ export function CommandPalette({ entries, open, onClose, onRun }: CommandPalette
           })}
           {results.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-cyan-100/45">
-              No commands found.
+              {t('palette.noResults')}
             </div>
           ) : null}
         </div>

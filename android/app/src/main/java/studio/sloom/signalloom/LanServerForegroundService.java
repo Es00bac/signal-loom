@@ -14,7 +14,7 @@ import android.os.IBinder;
 import android.os.PowerManager;
 
 /**
- * Keeps the LAN app server alive while Signal Loom is backgrounded or the screen is off.
+ * Keeps the LAN app server alive while Sloom Studio is backgrounded or the screen is off.
  *
  * <p>Without this, Android freezes the app process minutes after it leaves the foreground and the
  * NanoHTTPD socket (plus the WebView that answers the relayed data-API calls) goes silent — a
@@ -66,7 +66,7 @@ public class LanServerForegroundService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager != null) {
             NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID, "Serve to Desktop", NotificationManager.IMPORTANCE_LOW);
-            channel.setDescription("Shown while Signal Loom hosts its workspace for other devices on your network.");
+            channel.setDescription("Shown while Sloom Studio hosts its workspace for other devices on your network.");
             manager.createNotificationChannel(channel);
         }
 
@@ -81,7 +81,7 @@ public class LanServerForegroundService extends Service {
             : new Notification.Builder(this);
         return builder
             .setContentTitle("Serving to desktop")
-            .setContentText("Signal Loom is available at " + url)
+            .setContentText("Sloom Studio is available at " + url)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(tap)
             .setOngoing(true)

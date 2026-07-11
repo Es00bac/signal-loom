@@ -909,7 +909,7 @@ function buildUniversalImageUpscaleBlocker(
     'accelerator-runtime-missing': 'QNN, NNAPI, or equivalent accelerator availability has not been proven.',
     'runtime-assets-missing': 'Bundled runtime assets required for the on-device path have not been proven.',
     'upscaler-model-missing': 'Bundled upscaler model availability has not been proven.',
-    'single-app-runtime-missing': 'The single-app Signal Loom runtime path has not been proven.',
+    'single-app-runtime-missing': 'The single-app Sloom Studio runtime path has not been proven.',
     'second-app-handoff-required': 'The current Android upscale path still depends on a second-app handoff.',
     'local-cpu-runtime-missing': 'Local CPU AI upscaler runtime is not configured.',
     'cloud-provider-missing': 'No configured cloud image upscaler fallback is available.',

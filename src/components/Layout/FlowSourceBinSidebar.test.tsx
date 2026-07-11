@@ -8,8 +8,20 @@ describe('FlowSourceBinSidebar production dialog wiring', () => {
     expect(source).not.toContain('window.prompt');
     expect(source).toContain('useTextInputDialogStore');
     expect(source).toContain('requestTextInput');
-    expect(source).toContain('New Source Bin');
-    expect(source).toContain('Rename Source Bin');
+    // Dialog titles are localized via the i18n catalog (bilingual en/ja).
+    expect(source).toContain("t('sourceBin.dialog.newBinTitle')");
+    expect(source).toContain("t('sourceBin.dialog.renameBinTitle')");
+  });
+
+  it('provides both English and Japanese for the bin-naming dialog titles', () => {
+    const catalog = readFileSync(new URL('../../lib/i18n.ts', import.meta.url), 'utf8');
+
+    expect(catalog).toContain("'sourceBin.dialog.newBinTitle'");
+    expect(catalog).toContain('New Source Bin');
+    expect(catalog).toContain('新規ソースビン');
+    expect(catalog).toContain("'sourceBin.dialog.renameBinTitle'");
+    expect(catalog).toContain('Rename Source Bin');
+    expect(catalog).toContain('ソースビンの名前を変更');
   });
 
   it('uses a virtualized generated-pool list for large project source libraries', () => {

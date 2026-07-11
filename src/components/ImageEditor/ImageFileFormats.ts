@@ -535,8 +535,8 @@ export function describeSourceImageFormatPolicy(policy: SourceImageFormatPolicy)
         formatLabel: 'PSD',
         importStatus: 'supported',
         exportStatus: 'layered-with-metadata',
-        importSummary: 'Layered PSD import is supported, including retained Signal Loom metadata for linked-source and editor state where available.',
-        exportSummary: 'PSD export is available, but unsupported native PSD constructs are written as flattened pixels plus Signal Loom metadata-only records.',
+        importSummary: 'Layered PSD import is supported, including retained Sloom Studio metadata for linked-source and editor state where available.',
+        exportSummary: 'PSD export is available, but unsupported native PSD constructs are written as flattened pixels plus Sloom Studio metadata-only records.',
         warningCodes: ['psd-native-constructs-flattened'],
         warnings: [],
         limitations: [
@@ -1333,16 +1333,16 @@ function buildEditStateLossDescriptor({
     return {
       layers: 'XCF workfiles are not imported; exported XCF layers are raster-only and Image cannot reopen native XCF layer state.',
       text: 'Editable XCF text is not imported, and Image text exports to XCF as raster pixels only.',
-      effects: 'Native GIMP effects and Signal Loom layer effects are flattened into exported XCF pixels.',
+      effects: 'Native GIMP effects and Sloom Studio layer effects are flattened into exported XCF pixels.',
       sourceLinks: 'Source-linked layers stay as metadata or packaged source assets; native XCF link state is not written.',
     };
   }
   if (warningCodes.includes('psd-native-constructs-flattened')) {
     return {
       layers: 'Raster PSD layers can reopen, but unsupported groups, adjustments, and linked constructs fall back to flattened pixels or metadata-only records.',
-      text: 'Retained text is stored as Signal Loom metadata; exported PSD layers do not carry native editable PSD text records.',
+      text: 'Retained text is stored as Sloom Studio metadata; exported PSD layers do not carry native editable PSD text records.',
       effects: 'Layer effects are flattened into PSD pixels and metadata-only settings instead of native PSD layer-effect records.',
-      sourceLinks: 'Source-linked layers export as flattened pixels plus Signal Loom metadata; native PSD Smart Object and source-link records are not written.',
+      sourceLinks: 'Source-linked layers export as flattened pixels plus Sloom Studio metadata; native PSD Smart Object and source-link records are not written.',
     };
   }
   if (warningCodes.includes('svg-rasterized-import') || warningCodes.includes('svg-flattened-export')) {
@@ -1504,9 +1504,9 @@ function buildWorkflowFallbackRoutes({
     return [
       {
         route: 'psd-signal-loom-metadata',
-        label: 'PSD with Signal Loom metadata',
-        preserves: 'raster layers plus retained Signal Loom text, effects, adjustment, source-link, and filter metadata',
-        recommendedFor: 'Best working master when Signal Loom will reopen the PSD.',
+        label: 'PSD with Sloom Studio metadata',
+        preserves: 'raster layers plus retained Sloom Studio text, effects, adjustment, source-link, and filter metadata',
+        recommendedFor: 'Best working master when Sloom Studio will reopen the PSD.',
         caveat: 'Text, effects, and source links reopen as metadata-only or flattened constructs, not native PSD records.',
       },
       {
@@ -1637,7 +1637,7 @@ function buildSourceImageOpenRoutes(
         supported: true,
         openAction: 'open-as-pixels',
         label: 'Open layered PSD',
-        preserves: 'raster PSD layers plus Signal Loom metadata where present',
+        preserves: 'raster PSD layers plus Sloom Studio metadata where present',
         recommendedFor: 'PSD files within current size limits when raster layer editing is needed.',
         caveat: 'Full native PSD constructs are partial: text, effects, source links, smart filters, masks, and groups are flattened or metadata-only.',
         unsupportedStateCodes: ['full-psd-native-constructs'],
@@ -1890,7 +1890,7 @@ function buildSourceImageFileOpenRoundtripRiskSummary(
 ): string {
   switch (level) {
     case 'metadata-only':
-      return `${formatLabel} can reopen through raster layers plus retained Signal Loom metadata, but full native construct round-trip is not claimed.`;
+      return `${formatLabel} can reopen through raster layers plus retained Sloom Studio metadata, but full native construct round-trip is not claimed.`;
     case 'rasterized':
       return `${formatLabel} opens through rasterization; editable native source structure is not round-tripped.`;
     case 'unsupported':

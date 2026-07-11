@@ -12,9 +12,19 @@ vi.mock('./localNativeRender', async (importOriginal) => {
   };
 });
 
+vi.mock('./gifFrames', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./gifFrames')>();
+
+  return {
+    ...actual,
+    probeGifAnimation: vi.fn(actual.probeGifAnimation),
+  };
+});
+
 import {
   buildCompositionCommand,
   buildSequenceCommand,
+  buildVisualClipInputArgs,
   composeSequenceMedia,
   describeSequenceRenderBackend,
   describeSequenceRenderBackendCaveat,
@@ -25,17 +35,20 @@ import {
   renderViaLocalNativeFFmpegWithArtifacts,
   resolveNativeRenderTarget,
 } from './localNativeRender';
+import { probeGifAnimation } from './gifFrames';
 import { getVideoExportPresetOption } from './videoPremiereParity';
 import type { ProviderSettings, VideoRenderAssemblyManifestData } from '../types/flow';
 
 const mockedRenderViaLocalNativeFFmpeg = vi.mocked(renderViaLocalNativeFFmpeg);
 const mockedRenderViaLocalNativeFFmpegWithArtifacts = vi.mocked(renderViaLocalNativeFFmpegWithArtifacts);
 const mockedResolveNativeRenderTarget = vi.mocked(resolveNativeRenderTarget);
+const mockedProbeGifAnimation = vi.mocked(probeGifAnimation);
 
 beforeEach(() => {
   mockedRenderViaLocalNativeFFmpeg.mockReset();
   mockedRenderViaLocalNativeFFmpegWithArtifacts.mockReset();
   mockedResolveNativeRenderTarget.mockReset();
+  mockedProbeGifAnimation.mockClear();
 });
 
 describe('buildCompositionCommand', () => {
@@ -313,6 +326,161 @@ describe('composeSequenceMedia', () => {
       assemblyManifest,
     }));
     expect(mockedRenderViaLocalNativeFFmpeg).not.toHaveBeenCalled();
+  });
+
+  it('loops an image clip detected as an animated GIF instead of freezing it', async () => {
+    mockedResolveNativeRenderTarget.mockResolvedValue({
+      endpoint: 'http://127.0.0.1:41736',
+      backend: 'cpu',
+    });
+    mockedProbeGifAnimation.mockResolvedValueOnce({ isAnimated: true, frameCount: 12 });
+    mockedRenderViaLocalNativeFFmpeg.mockResolvedValue(new Blob([new Uint8Array([1])], { type: 'video/mp4' }));
+
+    await composeSequenceMedia({
+      visualClips: [
+        {
+          sourceNodeId: 'clip-gif',
+          sourceKind: 'image',
+          trackIndex: 0,
+          startMs: 0,
+          assetUrl: 'data:image/gif;base64,AAAA',
+          mimeType: 'image/gif',
+          durationSeconds: 3,
+          trimStartMs: 0,
+          trimEndMs: 0,
+          playbackRate: 1,
+          reversePlayback: false,
+          fitMode: 'contain',
+          scalePercent: 100,
+          scaleMotionEnabled: false,
+          endScalePercent: 100,
+          opacityPercent: 100,
+          rotationDeg: 0,
+          rotationMotionEnabled: false,
+          endRotationDeg: 0,
+          flipHorizontal: false,
+          flipVertical: false,
+          positionX: 0,
+          positionY: 0,
+          motionEnabled: false,
+          endPositionX: 0,
+          endPositionY: 0,
+          transitionIn: 'none',
+          transitionOut: 'none',
+          transitionDurationMs: 0,
+          textFontFamily: 'Inter, system-ui, sans-serif',
+          textSizePx: 64,
+          textColor: '#f3f4f6',
+          textEffect: 'shadow',
+          textBackgroundOpacityPercent: 0,
+        },
+      ],
+      audioTracks: [],
+      aspectRatio: '16:9',
+      videoResolution: '720p',
+      frameRate: 30,
+      providerSettings: {
+        renderBackendPreference: 'native-cpu',
+        localNativeRenderUrl: 'http://127.0.0.1:41736',
+      } as ProviderSettings,
+    });
+
+    expect(mockedProbeGifAnimation).toHaveBeenCalledTimes(1);
+    const [request] = mockedRenderViaLocalNativeFFmpeg.mock.calls[0] as [{ command: string[] }];
+    expect(request.command.join(' ')).toContain('-ignore_loop 0 -t 3.000');
+    expect(request.command.join(' ')).not.toContain('-loop 1');
+  });
+
+  it('never probes a non-GIF image clip for animation', async () => {
+    mockedResolveNativeRenderTarget.mockResolvedValue({
+      endpoint: 'http://127.0.0.1:41736',
+      backend: 'cpu',
+    });
+    mockedRenderViaLocalNativeFFmpeg.mockResolvedValue(new Blob([new Uint8Array([1])], { type: 'video/mp4' }));
+
+    await composeSequenceMedia({
+      visualClips: [
+        {
+          sourceNodeId: 'clip-png',
+          sourceKind: 'image',
+          trackIndex: 0,
+          startMs: 0,
+          assetUrl: 'data:image/png;base64,UE5H',
+          mimeType: 'image/png',
+          durationSeconds: 3,
+          trimStartMs: 0,
+          trimEndMs: 0,
+          playbackRate: 1,
+          reversePlayback: false,
+          fitMode: 'contain',
+          scalePercent: 100,
+          scaleMotionEnabled: false,
+          endScalePercent: 100,
+          opacityPercent: 100,
+          rotationDeg: 0,
+          rotationMotionEnabled: false,
+          endRotationDeg: 0,
+          flipHorizontal: false,
+          flipVertical: false,
+          positionX: 0,
+          positionY: 0,
+          motionEnabled: false,
+          endPositionX: 0,
+          endPositionY: 0,
+          transitionIn: 'none',
+          transitionOut: 'none',
+          transitionDurationMs: 0,
+          textFontFamily: 'Inter, system-ui, sans-serif',
+          textSizePx: 64,
+          textColor: '#f3f4f6',
+          textEffect: 'shadow',
+          textBackgroundOpacityPercent: 0,
+        },
+      ],
+      audioTracks: [],
+      aspectRatio: '16:9',
+      videoResolution: '720p',
+      frameRate: 30,
+      providerSettings: {
+        renderBackendPreference: 'native-cpu',
+        localNativeRenderUrl: 'http://127.0.0.1:41736',
+      } as ProviderSettings,
+    });
+
+    expect(mockedProbeGifAnimation).not.toHaveBeenCalled();
+    const [request] = mockedRenderViaLocalNativeFFmpeg.mock.calls[0] as [{ command: string[] }];
+    expect(request.command.join(' ')).toContain('-loop 1 -t 3.000');
+  });
+});
+
+describe('buildVisualClipInputArgs', () => {
+  it('loops an animated GIF image clip instead of freezing it, honoring the clip duration', () => {
+    expect(buildVisualClipInputArgs('image', 'clip-1.gif', 4, true)).toEqual([
+      '-ignore_loop', '0', '-t', '4.000', '-i', 'clip-1.gif',
+    ]);
+  });
+
+  it('keeps the exact -loop 1 behavior for non-animated image clips (including static GIFs)', () => {
+    expect(buildVisualClipInputArgs('image', 'clip-1.png', 4, false)).toEqual([
+      '-loop', '1', '-t', '4.000', '-i', 'clip-1.png',
+    ]);
+    expect(buildVisualClipInputArgs('image', 'clip-1.png', 4, undefined)).toEqual([
+      '-loop', '1', '-t', '4.000', '-i', 'clip-1.png',
+    ]);
+  });
+
+  it('keeps looping text and shape clips regardless of the (irrelevant) isAnimatedGif flag', () => {
+    expect(buildVisualClipInputArgs('text', 'clip-1.png', 2, true)).toEqual([
+      '-loop', '1', '-t', '2.000', '-i', 'clip-1.png',
+    ]);
+    expect(buildVisualClipInputArgs('shape', 'clip-1.png', 2, true)).toEqual([
+      '-loop', '1', '-t', '2.000', '-i', 'clip-1.png',
+    ]);
+  });
+
+  it('never loops video/composition clips, regardless of the (irrelevant) isAnimatedGif flag', () => {
+    expect(buildVisualClipInputArgs('video', 'clip-1.mp4', 4, true)).toEqual(['-i', 'clip-1.mp4']);
+    expect(buildVisualClipInputArgs('composition', 'clip-1.mp4', 4, true)).toEqual(['-i', 'clip-1.mp4']);
   });
 });
 
@@ -614,6 +782,126 @@ describe('buildSequenceCommand', () => {
     expect(filterGraph).toContain('fade=t=out:st=3.000:d=1.000:alpha=1');
     expect(filterGraph).toContain('fade=t=in:st=0:d=1.000:alpha=1');
     expect(filterGraph).toContain('setpts=PTS-STARTPTS+3.000/TB');
+  });
+
+  it('loops an animated GIF image clip in the ffmpeg command instead of freezing it', () => {
+    const baseClip = {
+      sourceNodeId: 'source-1',
+      sourceKind: 'image' as const,
+      trackIndex: 0,
+      startMs: 0,
+      assetUrl: 'a.gif',
+      mimeType: 'image/gif',
+      sourceInMs: 0,
+      trimStartMs: 0,
+      trimEndMs: 0,
+      playbackRate: 1,
+      reversePlayback: false,
+      fitMode: 'contain' as const,
+      scalePercent: 100,
+      scaleMotionEnabled: false,
+      endScalePercent: 100,
+      opacityPercent: 100,
+      rotationDeg: 0,
+      rotationMotionEnabled: false,
+      endRotationDeg: 0,
+      flipHorizontal: false,
+      flipVertical: false,
+      positionX: 0,
+      positionY: 0,
+      motionEnabled: false,
+      endPositionX: 0,
+      endPositionY: 0,
+      transitionIn: 'none' as const,
+      transitionOut: 'none' as const,
+      transitionDurationMs: 0,
+      textFontFamily: 'Inter, system-ui, sans-serif',
+      textSizePx: 72,
+      textColor: '#ffffff',
+      textEffect: 'none' as const,
+      textBackgroundOpacityPercent: 0,
+    };
+    const command = buildSequenceCommand({
+      preparedClips: [
+        {
+          inputIndex: 1,
+          inputName: 'a.gif',
+          sourceUrl: 'a.gif',
+          clipDurationSeconds: 4,
+          isAnimatedGif: true,
+          clip: baseClip,
+        },
+      ],
+      preparedAudioTracks: [],
+      canvas: { width: 1280, height: 720 },
+      timelineDurationSeconds: 4,
+      frameRate: 30,
+      outputName: 'sequence-output.mp4',
+      nativeBackend: null,
+    });
+
+    expect(command.join(' ')).toContain('-ignore_loop 0 -t 4.000 -i a.gif');
+    expect(command.join(' ')).not.toContain('-loop 1 -t 4.000 -i a.gif');
+  });
+
+  it('keeps freezing a non-animated (static) GIF image clip exactly as before', () => {
+    const baseClip = {
+      sourceNodeId: 'source-1',
+      sourceKind: 'image' as const,
+      trackIndex: 0,
+      startMs: 0,
+      assetUrl: 'a.gif',
+      mimeType: 'image/gif',
+      sourceInMs: 0,
+      trimStartMs: 0,
+      trimEndMs: 0,
+      playbackRate: 1,
+      reversePlayback: false,
+      fitMode: 'contain' as const,
+      scalePercent: 100,
+      scaleMotionEnabled: false,
+      endScalePercent: 100,
+      opacityPercent: 100,
+      rotationDeg: 0,
+      rotationMotionEnabled: false,
+      endRotationDeg: 0,
+      flipHorizontal: false,
+      flipVertical: false,
+      positionX: 0,
+      positionY: 0,
+      motionEnabled: false,
+      endPositionX: 0,
+      endPositionY: 0,
+      transitionIn: 'none' as const,
+      transitionOut: 'none' as const,
+      transitionDurationMs: 0,
+      textFontFamily: 'Inter, system-ui, sans-serif',
+      textSizePx: 72,
+      textColor: '#ffffff',
+      textEffect: 'none' as const,
+      textBackgroundOpacityPercent: 0,
+    };
+    const command = buildSequenceCommand({
+      preparedClips: [
+        {
+          inputIndex: 1,
+          inputName: 'a.gif',
+          sourceUrl: 'a.gif',
+          clipDurationSeconds: 4,
+          isAnimatedGif: false,
+          clip: baseClip,
+        },
+      ],
+      preparedAudioTracks: [],
+      canvas: { width: 1280, height: 720 },
+      timelineDurationSeconds: 4,
+      frameRate: 30,
+      outputName: 'sequence-output.mp4',
+      nativeBackend: null,
+    });
+
+    expect(command.join(' ')).toContain('-loop 1 -t 4.000 -i a.gif');
+    expect(command.join(' ')).not.toContain('-ignore_loop');
   });
 
   it('multiplies track volume with clip volume and clip automation for sequence audio', () => {

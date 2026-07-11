@@ -3,16 +3,23 @@ import { Activity, AlignLeft, Braces, ChevronDown, Database, Image, List, Repeat
 import {
   createImageNodeTemplateDataPatch,
   listImageNodeTemplates,
+  imageNodeTemplateDescription,
+  imageNodeTemplateHighlight,
   type ImageNodeTemplate,
 } from '../../lib/imageNodeTemplates';
 import {
   FLOW_NODE_CATALOG_CATEGORIES,
   getNodeCatalogEntriesForCategory,
+  nodeCategoryLabel,
+  nodeCategoryDescription,
+  nodeCatalogEntryLabel,
+  nodeCatalogEntryDescription,
   type FlowNodeCatalogCategory,
   type FlowNodeCatalogCategoryId,
   type FlowNodeCatalogEntry,
 } from '../../lib/nodeCatalog';
 import type { FlowNodeType, NodeData } from '../../types/flow';
+import { useI18n } from '../../lib/useI18n';
 
 interface BottomToolbarProps {
   onAddNode: (type: FlowNodeType, initialData?: Partial<NodeData>) => void;
@@ -67,7 +74,10 @@ function NodeCategoryMenu({
   imageTemplates: ImageNodeTemplate[];
   onAddNode: (type: FlowNodeType, initialData?: Partial<NodeData>) => void;
 }) {
+  const { tf, locale } = useI18n();
   const entries = getNodeCatalogEntriesForCategory(category.id);
+  const categoryLabel = nodeCategoryLabel(category, locale);
+  const categoryDescription = nodeCategoryDescription(category, locale);
   const menuClassName = compact
     ? 'absolute left-1/2 top-9 z-50 w-80 -translate-x-1/2 rounded-lg border border-gray-700 bg-[#10151f] p-2 shadow-2xl'
     : 'absolute bottom-12 left-0 z-50 w-80 rounded-lg border border-gray-700 bg-[#10151f] p-2 shadow-2xl';
@@ -82,17 +92,17 @@ function NodeCategoryMenu({
   return (
     <details className="relative" data-node-category-menu="true">
       <summary
-        aria-label={`Open ${category.label} node category`}
+        aria-label={tf('flow.toolbar.openCategory', { name: categoryLabel })}
         className={compact
           ? 'theme-icon-button flex h-8 cursor-pointer list-none items-center gap-1 rounded-md border border-transparent px-2 text-cyan-100/75 transition-colors hover:border-cyan-300/25 hover:bg-cyan-400/10 hover:text-white [&::-webkit-details-marker]:hidden'
           : 'theme-button flex cursor-pointer list-none items-center gap-2 rounded-xl border border-transparent px-3 py-2 text-sm text-gray-300 transition-all duration-200 hover:border-gray-600 hover:bg-gray-700/50 hover:text-white [&::-webkit-details-marker]:hidden'}
-        title={category.description}
+        title={categoryDescription}
       >
         {CATEGORY_ICONS[category.id]}
         {/* Category labels show on standard-width monitors (≥1600px keeps labelled buttons on one
             row); below that the bar stays icon-only so 1080p/1440p don't wrap to a second row.
             (UX review F02: the old 3200px gate hid labels on virtually every laptop and monitor.) */}
-        <span className={compact ? 'hidden min-[1600px]:inline' : undefined}>{category.label}</span>
+        <span className={compact ? 'hidden min-[1600px]:inline' : undefined}>{categoryLabel}</span>
         <ChevronDown size={13} />
       </summary>
       <div className={menuClassName}>
@@ -125,16 +135,19 @@ function NodeCategoryMenu({
 }
 
 function NodeEntryButton({ entry, onAdd }: { entry: FlowNodeCatalogEntry; onAdd: (event: React.MouseEvent<HTMLButtonElement>) => void }) {
+  const { tf, locale } = useI18n();
+  const entryLabel = nodeCatalogEntryLabel(entry, locale);
+  const addLabel = tf('flow.toolbar.addNode', { name: entryLabel });
   return (
     <button
-      aria-label={`Add ${entry.label} node`}
+      aria-label={addLabel}
       className="rounded-md px-2.5 py-2 text-left transition-colors hover:bg-blue-500/10"
       onClick={onAdd}
-      title={`Add ${entry.label} node`}
+      title={addLabel}
       type="button"
     >
-      <span className="block text-xs font-semibold text-gray-100">{entry.label}</span>
-      <span className="mt-0.5 block text-[10px] leading-4 text-gray-400">{entry.description}</span>
+      <span className="block text-xs font-semibold text-gray-100">{entryLabel}</span>
+      <span className="mt-0.5 block text-[10px] leading-4 text-gray-400">{nodeCatalogEntryDescription(entry, locale)}</span>
     </button>
   );
 }
@@ -148,32 +161,33 @@ function ImageTemplateMenuItems({
   onAddNode: (type: FlowNodeType, initialData?: Partial<NodeData>) => void;
   templates: ImageNodeTemplate[];
 }) {
+  const { t, tf, locale } = useI18n();
   return (
     <div className="mt-1 border-t border-gray-700/60 pt-1" data-image-provider-menu="true">
       <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-        Image model templates
+        {t('flow.toolbar.imageModelTemplates')}
       </div>
       {templates.map((template) => (
         <button
-          aria-label={`Add ${template.label} image node`}
+          aria-label={tf('flow.toolbar.addImageNode', { name: template.label })}
           className="w-full rounded-md px-2.5 py-2 text-left transition-colors hover:bg-blue-500/10"
           key={template.id}
           onClick={(event) => {
             onAddNode('imageGen', createImageNodeTemplateDataPatch(template.id));
             closeMenu(event.currentTarget);
           }}
-          title={`Add ${template.label} image node`}
+          title={tf('flow.toolbar.addImageNode', { name: template.label })}
           type="button"
         >
           <span className="flex items-center gap-1.5 text-xs font-semibold text-gray-100"><Image size={12} />{template.label}</span>
-          <span className="mt-0.5 block text-[10px] leading-4 text-gray-400">{template.description}</span>
+          <span className="mt-0.5 block text-[10px] leading-4 text-gray-400">{imageNodeTemplateDescription(template, locale)}</span>
           <span className="mt-1 flex flex-wrap gap-1">
             {template.highlights.map((highlight) => (
               <span
                 className="rounded border border-gray-700/70 bg-[#0d1118] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-gray-400"
                 key={highlight}
               >
-                {highlight}
+                {imageNodeTemplateHighlight(highlight, locale)}
               </span>
             ))}
           </span>

@@ -220,7 +220,7 @@ const BLEND_IF_UNSUPPORTED_WARNING =
 const ADVANCED_BLENDING_UNSUPPORTED_WARNING =
   'Advanced blending options such as channel targeting, knockout, and fill opacity are not supported yet; only layer opacity and canvas-native blend modes are previewed and exported.';
 const FILL_OPACITY_UNSUPPORTED_WARNING =
-  'Photoshop Fill Opacity is not supported yet; Signal Loom uses layer opacity for canvas preview/export and treats fill opacity as metadata-only.';
+  'Photoshop Fill Opacity is not supported yet; Sloom Studio uses layer opacity for canvas preview/export and treats fill opacity as metadata-only.';
 const KNOCKOUT_UNSUPPORTED_WARNING =
   'Photoshop shallow/deep knockout is not supported yet; group and layer stacks render without knockout isolation.';
 const CHANNEL_TARGETING_UNSUPPORTED_WARNING =

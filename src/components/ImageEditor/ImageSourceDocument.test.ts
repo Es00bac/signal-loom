@@ -916,7 +916,7 @@ describe('ImageSourceDocument', () => {
       editOriginal: {
         ready: false,
         mode: 'metadata-only',
-        caveat: 'Edit Original is metadata-only: Signal Loom can identify the Source Library item, but does not launch or round-trip a native external editor.',
+        caveat: 'Edit Original is metadata-only: Sloom Studio can identify the Source Library item, but does not launch or round-trip a native external editor.',
       },
       rasterize: {
         ready: true,
@@ -950,7 +950,7 @@ describe('ImageSourceDocument', () => {
       smartFilters: {
         filterCount: 1,
         editableInHost: true,
-        caveats: ['Smart filters are retained as Signal Loom layer filters only; native Photoshop Smart Filter stacks are not round-tripped.'],
+        caveats: ['Smart filters are retained as Sloom Studio layer filters only; native Photoshop Smart Filter stacks are not round-tripped.'],
       },
       psdSmartObject: {
         supported: false,
@@ -963,7 +963,7 @@ describe('ImageSourceDocument', () => {
         },
         {
           code: 'metadata-only-smart-filters',
-          message: 'Image filter stacks stay editable in Signal Loom metadata but are flattened for native PSD Smart Filter roundtrip.',
+          message: 'Image filter stacks stay editable in Sloom Studio metadata but are flattened for native PSD Smart Filter roundtrip.',
         },
         {
           code: 'smart-filter-mask-unsupported',
@@ -996,7 +996,7 @@ describe('ImageSourceDocument', () => {
           blockerCodes: [],
           caveats: [
             'Replacement updates the linked bitmap and metadata; it does not rewrite the original Source Library asset.',
-            'Smart filters are retained as Signal Loom layer filters only; native Photoshop Smart Filter stacks are not round-tripped.',
+            'Smart filters are retained as Sloom Studio layer filters only; native Photoshop Smart Filter stacks are not round-tripped.',
           ],
         },
         relinkRepair: {
@@ -1009,7 +1009,7 @@ describe('ImageSourceDocument', () => {
           suitable: false,
           operation: 'edit-original',
           blockerCodes: [],
-          caveats: ['Edit Original is metadata-only: Signal Loom can identify the Source Library item, but does not launch or round-trip a native external editor.'],
+          caveats: ['Edit Original is metadata-only: Sloom Studio can identify the Source Library item, but does not launch or round-trip a native external editor.'],
         },
       },
       batchSuitability: {
@@ -1018,7 +1018,7 @@ describe('ImageSourceDocument', () => {
         blockerCodes: [],
         caveats: [
           'Batch replace is suitable for deterministic linked bitmap swaps; validate dimensions when relink history exists.',
-          'Smart filters are retained as Signal Loom layer filters only; native Photoshop Smart Filter stacks are not round-tripped.',
+          'Smart filters are retained as Sloom Studio layer filters only; native Photoshop Smart Filter stacks are not round-tripped.',
         ],
       },
       suiteHandoffSafe: true,
@@ -1071,7 +1071,7 @@ describe('ImageSourceDocument', () => {
           },
         },
         caveats: [
-          'Suite handoff packages the durable Source Library source beside flattened Image pixels and Signal Loom metadata.',
+          'Suite handoff packages the durable Source Library source beside flattened Image pixels and Sloom Studio metadata.',
         ],
         signature: 'image-source-linked-layer-suite-package:v1|layer=smart|source=cover-art|state=durable-source-library-asset|ready=true|packaged=cover-art|missing=none|blockers=none|targets=flow:true,video:true,paper:true',
       },

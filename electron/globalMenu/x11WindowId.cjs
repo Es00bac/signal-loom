@@ -4,7 +4,7 @@
 // .getNativeWindowHandle() does not reliably return the toplevel XID (it comes back as 0x1 here), and
 // the KDE AppMenu registrar is keyed strictly on the real XID. So we correlate by the X11 window
 // metadata instead: enumerate managed toplevels and match on the owning pid + the window title (every
-// Signal Loom workspace window has a distinct title, which disambiguates multiple windows in one pid).
+// Sloom Studio workspace window has a distinct title, which disambiguates multiple windows in one pid).
 //
 // Pure-ish: all process spawning goes through an injectable `exec` so the matching logic is unit-tested
 // without X11. Returns a positive integer XID, or null if it can't be resolved (caller falls back to
@@ -48,7 +48,7 @@ function normalizeTitle(value) {
     .toLowerCase();
 }
 
-/** xdotool's --name takes a REGEX; our titles contain regex metachars ("Signal Loom (probe)").
+/** xdotool's --name takes a REGEX; our titles contain regex metachars ("Sloom Studio (probe)").
  *  Escape them so the search can't error out or match the wrong thing. */
 function escapeForXdotoolName(value) {
   return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

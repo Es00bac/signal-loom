@@ -7,7 +7,7 @@ Open **Settings** from the gear in the top bar. The main sections:
 - **Providers** — connect your AI provider keys and sign in to Vertex AI. See
   [Providers & API keys](04-providers-and-keys.md).
 - **Keyboard Shortcuts** — review and learn the shortcuts.
-- **Gamepad Bindings** — Signal Loom can map a game controller to brush and tool controls, useful
+- **Gamepad Bindings** — Sloom Studio can map a game controller to brush and tool controls, useful
   on couch/tablet setups.
 
 Settings are stored on your device.

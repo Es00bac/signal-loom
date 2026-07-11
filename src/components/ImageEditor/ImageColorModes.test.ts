@@ -112,7 +112,7 @@ describe('ImageColorModes', () => {
       colorMode: 'lab',
       previewKind: 'unsupported',
       channels: [],
-      warnings: ['Lab channel previews are not available because Signal Loom does not implement native Lab conversion or editing.'],
+      warnings: ['Lab channel previews are not available because Sloom Studio does not implement native Lab conversion or editing.'],
     });
 
     expect(describeColorModeChannels('indexed')).toMatchObject({
@@ -193,7 +193,7 @@ describe('ImageColorModes', () => {
       constraintCode: 'lab-external-conversion',
       externalConversionRequired: true,
       exportImplication: 'external-export-required',
-      warnings: ['Lab workflows are not implemented, so exports must convert elsewhere before entering Signal Loom.'],
+      warnings: ['Lab workflows are not implemented, so exports must convert elsewhere before entering Sloom Studio.'],
     });
 
     expect(getColorModeOperationPolicy({ colorMode: 'indexed', bitDepth: 8, operation: 'paint' })).toMatchObject({
@@ -216,7 +216,7 @@ describe('ImageColorModes', () => {
       fromBitDepth: 8,
       toBitDepth: 8,
     })).toEqual([
-      'CMYK to RGB conversion inside Signal Loom is only a formula preview; use an external ICC-aware tool for press-accurate conversion.',
+      'CMYK to RGB conversion inside Sloom Studio is only a formula preview; use an external ICC-aware tool for press-accurate conversion.',
     ]);
 
     expect(buildColorModeConversionWarnings({
@@ -253,7 +253,7 @@ describe('ImageColorModes', () => {
       fromBitDepth: 8,
       toBitDepth: 8,
     })).toEqual([
-      'Lab conversion is not implemented in Signal Loom; move the document through an external color-managed app before editing here.',
+      'Lab conversion is not implemented in Sloom Studio; move the document through an external color-managed app before editing here.',
     ]);
   });
 
@@ -285,7 +285,7 @@ describe('ImageColorModes', () => {
     expect(cmyk.suiteHandoffGuidance).toEqual([
       'Convert documents to 8-bit RGB before recording shared Image actions for other workspaces.',
       'Treat CMYK proof/profile labels as handoff metadata only; downstream apps must perform real separations.',
-      'Keep a native master outside Signal Loom when 16-bit precision must survive handoff.',
+      'Keep a native master outside Sloom Studio when 16-bit precision must survive handoff.',
     ]);
 
     expect(lab.state).toMatchObject({
@@ -297,7 +297,7 @@ describe('ImageColorModes', () => {
     expect(lab.suiteHandoffGuidance).toEqual([
       'Convert documents to 8-bit RGB before recording shared Image actions for other workspaces.',
       'Lab documents must be converted in an external color-managed app before suite handoff.',
-      'Keep a native master outside Signal Loom when 32-bit precision must survive handoff.',
+      'Keep a native master outside Sloom Studio when 32-bit precision must survive handoff.',
     ]);
   });
 
@@ -488,7 +488,7 @@ describe('ImageColorModes', () => {
         signature: 'lab:32:unsupported:Lab D50',
       },
     });
-    expect(lab.warnings).toContain('Lab conversion is not implemented in Signal Loom; move the document through an external color-managed app before editing here.');
+    expect(lab.warnings).toContain('Lab conversion is not implemented in Sloom Studio; move the document through an external color-managed app before editing here.');
     expect(lab.warnings).toContain('Converting from 32-bit to 8-bit removes HDR/floating-point precision and clamps the workflow to standard dynamic range RGB.');
 
     expect(indexed).toMatchObject({
@@ -575,11 +575,11 @@ describe('ImageColorModes', () => {
       id: 'mode-preview:cmyk:16:Coated FOGRA39',
       signature: 'cmyk:16:rgb-formula-cmyk-preview:Coated FOGRA39',
     });
-    expect(cmyk.outputWarnings).toContain('Print/output warning: CMYK output is planning metadata only; create press-ready separations outside Signal Loom.');
+    expect(cmyk.outputWarnings).toContain('Print/output warning: CMYK output is planning metadata only; create press-ready separations outside Sloom Studio.');
 
     expect(lab.modeWorkflowLimitations).toEqual([
       'Lab workflows cannot be previewed, edited, stored, or exported natively in this Image editor.',
-      'Convert Lab documents to RGB in an external ICC-aware application before using Signal Loom.',
+      'Convert Lab documents to RGB in an external ICC-aware application before using Sloom Studio.',
     ]);
     expect(lab.operationsMatrix.paint).toMatchObject({
       operation: 'paint',
@@ -743,7 +743,7 @@ describe('ImageColorModes', () => {
       ],
       exportCaveats: [
         'Visible exports are flattened 8-bit RGB/RGBA derivatives, not high-bit TIFF/PSD/EXR masters.',
-        'Keep the original TIFF high-bit master outside Signal Loom when 16-bit precision must survive print or archive handoff.',
+        'Keep the original TIFF high-bit master outside Sloom Studio when 16-bit precision must survive print or archive handoff.',
       ],
       warnings: [
         '16-bit source storage is not preserved; imported pixels are represented as 8-bit RGBA canvas data.',
@@ -756,7 +756,7 @@ describe('ImageColorModes', () => {
     expect(bit32.lossSurface).toBe('dynamic-range-clamp');
     expect(bit32.operationPolicies.map((policy) => policy.operation)).toEqual(['adjustments', 'export']);
     expect(bit32.warnings).toContain('Converting from 32-bit to 8-bit removes HDR/floating-point precision and clamps the workflow to standard dynamic range RGB.');
-    expect(bit32.exportCaveats).toContain('Keep the original EXR high-bit master outside Signal Loom when 32-bit precision must survive print or archive handoff.');
+    expect(bit32.exportCaveats).toContain('Keep the original EXR high-bit master outside Sloom Studio when 32-bit precision must survive print or archive handoff.');
     expect(bit32.signature).toBe('image-bit-depth-document-readiness:v1:doc-hdr-32:EXR:32:adjustments,export:8');
   });
 
@@ -1104,7 +1104,7 @@ describe('ImageColorModes', () => {
           route: 'psd-metadata-working-copy',
           label: 'PSD metadata working copy',
           preserves: 'Image layer metadata and visible 8-bit RGB edit state',
-          recommendedFor: 'Layered Signal Loom reopening after high-bit conversion.',
+          recommendedFor: 'Layered Sloom Studio reopening after high-bit conversion.',
           caveat: 'PSD output is not a native high-bit master and profile transforms remain metadata-only.',
         },
       ],
@@ -1144,7 +1144,7 @@ describe('ImageColorModes', () => {
     ]);
     expect(readiness.operationCaveats.export).toEqual([
       'Export produces flattened 8-bit RGB pixels with CMYK/profile labels only; native CMYK separations are unsupported.',
-      'Export cannot preserve 16-bit source precision; keep a high-bit master outside Signal Loom.',
+      'Export cannot preserve 16-bit source precision; keep a high-bit master outside Sloom Studio.',
       'Profile "Coated FOGRA39" remains metadata-only; no ICC conversion or embedded output profile is produced.',
     ]);
     expect(readiness.unsupportedStates).toEqual([

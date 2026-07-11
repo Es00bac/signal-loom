@@ -25,7 +25,7 @@ describe('desktop and Android packaging configuration', () => {
         accelerator: 'CommandOrControl+1',
         packageSurface: 'electron-native-menu',
         readiness: 'ready',
-        caveats: ['Launches the Flow workspace through the shared Signal Loom desktop binary.'],
+        caveats: ['Launches the Flow workspace through the shared Sloom Studio desktop binary.'],
       },
       {
         workspace: 'editor',
@@ -36,7 +36,7 @@ describe('desktop and Android packaging configuration', () => {
         accelerator: 'CommandOrControl+2',
         packageSurface: 'electron-native-menu',
         readiness: 'ready',
-        caveats: ['Launches the Video workspace through the shared Signal Loom desktop binary.'],
+        caveats: ['Launches the Video workspace through the shared Sloom Studio desktop binary.'],
       },
       {
         workspace: 'image',
@@ -47,7 +47,7 @@ describe('desktop and Android packaging configuration', () => {
         accelerator: 'CommandOrControl+3',
         packageSurface: 'electron-native-menu',
         readiness: 'ready',
-        caveats: ['Launches the Image workspace through the shared Signal Loom desktop binary.'],
+        caveats: ['Launches the Image workspace through the shared Sloom Studio desktop binary.'],
       },
       {
         workspace: 'paper',
@@ -58,7 +58,7 @@ describe('desktop and Android packaging configuration', () => {
         accelerator: 'CommandOrControl+4',
         packageSurface: 'electron-native-menu',
         readiness: 'ready',
-        caveats: ['Launches the Paper workspace through the shared Signal Loom desktop binary.'],
+        caveats: ['Launches the Paper workspace through the shared Sloom Studio desktop binary.'],
       },
     ]);
     expect(getDesktopWorkspaceLaunchReadiness('image')).toBe(DESKTOP_WORKSPACE_LAUNCH_READINESS[2]);
@@ -68,7 +68,7 @@ describe('desktop and Android packaging configuration', () => {
     const { buildDesktopPackagingReadinessSummary } = await loadDesktopPackagingModule();
 
     expect(buildDesktopPackagingReadinessSummary(packageJson)).toEqual({
-      productName: 'Signal Loom',
+      productName: 'Sloom Studio',
       appId: 'studio.sloom.signalloom',
       workspaceLaunchSurface: 'electron-native-menu',
       platforms: [
@@ -169,7 +169,7 @@ describe('desktop and Android packaging configuration', () => {
         },
       ],
       installerLimitations: [
-        'Flow, Video, Image, and Paper are focusable workspaces inside one Signal Loom desktop app, not separate packaged executables.',
+        'Flow, Video, Image, and Paper are focusable workspaces inside one Sloom Studio desktop app, not separate packaged executables.',
         'Provider credentials, model downloads, and Android accelerator setup remain runtime/user configuration and are not bundled in desktop installers.',
       ],
     });
@@ -189,7 +189,7 @@ describe('desktop and Android packaging configuration', () => {
     expect(packageJson.scripts['icons:mac']).toBe('bash scripts/create-mac-icon.sh');
     expect(packageJson.build).toMatchObject({
       appId: 'studio.sloom.signalloom',
-      productName: 'Signal Loom',
+      productName: 'Sloom Studio',
       win: {
         icon: 'build/icons/icon.ico',
         target: [{ target: 'nsis', arch: ['x64'] }, { target: 'msix', arch: ['x64'] }],

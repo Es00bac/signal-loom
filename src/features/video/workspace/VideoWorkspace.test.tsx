@@ -390,6 +390,36 @@ describe('ProgramMonitorPanel', () => {
     expect(html).toContain('box-shadow:inset 0 0 0');
     expect(html).toContain('rgba(34, 211, 238, 0.900)');
   });
+
+  it('renders a plain image clip with a wall-clock <img>, not a canvas', () => {
+    const clip = createEditorVisualClip('source-1', 'image', {
+      id: 'visual-plain',
+      durationSeconds: 4,
+    });
+    const html = renderProgramMonitor({
+      stageClips: [makeImageStageClip(clip)],
+    });
+
+    expect(html).toContain('<img');
+    expect(html).not.toContain('<canvas');
+  });
+
+  it('renders a GIF image clip (detected via mimeType) with a canvas instead of a wall-clock <img>', () => {
+    const clip = createEditorVisualClip('source-gif', 'image', {
+      id: 'visual-gif',
+      durationSeconds: 4,
+    });
+    const stageClip = makeImageStageClip(clip);
+    const html = renderProgramMonitor({
+      stageClips: [{
+        ...stageClip,
+        item: { ...stageClip.item!, mimeType: 'image/gif' },
+      }],
+    });
+
+    expect(html).toContain('<canvas');
+    expect(html).not.toContain('<img');
+  });
 });
 
 function renderSourceItemCard(item: SourceBinItem): string {

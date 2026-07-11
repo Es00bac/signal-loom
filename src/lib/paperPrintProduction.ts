@@ -110,7 +110,7 @@ export function buildPaperPrintProductionMetadata(document: Pick<PaperDocument, 
   ];
 
   if (profile.colorSpace === 'cmyk') {
-    limitations.push('Signal Loom stores editable frame colors as CSS/RGB values; CMYK conversion and separations must be verified by a press-aware PDF workflow.');
+    limitations.push('Sloom Studio stores editable frame colors as CSS/RGB values; CMYK conversion and separations must be verified by a press-aware PDF workflow.');
   }
 
   return {

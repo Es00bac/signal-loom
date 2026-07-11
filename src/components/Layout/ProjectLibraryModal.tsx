@@ -256,7 +256,7 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
         sourceBin,
       });
 
-      setStatusMessage(`Exported ${name} as a Signal Loom project file.`);
+      setStatusMessage(`Exported ${name} as a Sloom Studio project file.`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'Failed to export the project.');
     } finally {

@@ -124,6 +124,10 @@ export interface PaperTypography {
   align: PaperTextAlign;
   hyphenate: boolean;
   color: string;
+  /** Durable reference to the swatch the text `color` came from. When it resolves to a SPOT swatch (and the
+   * spot policy preserves named spots), the text is drawn as a real /Separation plate instead of process.
+   * Auto-cleared whenever `color` changes by any other path (see patchPaperFrame), so it can't go stale. */
+  colorSwatchId?: string;
   fontWeight: string;
   fontStyle: 'normal' | 'italic';
   /** First-line indent (mm) applied to each paragraph (CSS text-indent each-line). */
@@ -142,6 +146,99 @@ export interface PaperTypography {
   spaceAfterMm?: number;
   /** Line-breaking style (CSS text-wrap-style): balanced ragging or orphan-aware "pretty". */
   lineBreak?: PaperLineBreak;
+  /** Writing direction. `vertical-rl` is Japanese 縦書き (tategaki): glyphs run top→bottom, lines/columns
+   * right→left — the default for manga lettering and Japanese book/文芸 typesetting. Absent = horizontal. */
+  writingMode?: PaperWritingMode;
+  /** How upright vs. rotated each character sits in vertical text (CSS text-orientation). `mixed` keeps CJK
+   * upright and rotates Latin (normal 縦組); `upright` forces every glyph upright (used for short Latin runs). */
+  textOrientation?: PaperTextOrientation;
+  /** Apply strict Japanese line-breaking (禁則処理 / CSS `line-break: strict`): kinsoku characters like 、。」
+   * never start a line and 「（ never end one. On by default for vertical text. */
+  lineBreakStrict?: boolean;
+  /** 圏点 / bouten emphasis marks drawn beside every glyph (CSS text-emphasis) — the Japanese counterpart of
+   * italic/bold for stressing a word. Frame-level (whole frame), which suits short emphasis captions, manga SFX,
+   * and headings; per-run emphasis on specific words is Phase 2. Absent/`none` = no marks. */
+  emphasis?: PaperEmphasisMark;
+}
+
+/** Writing direction of a text frame. */
+export type PaperWritingMode = 'horizontal-tb' | 'vertical-rl';
+/** Character orientation within vertical text. */
+export type PaperTextOrientation = 'mixed' | 'upright';
+/** 圏点 emphasis-mark shape (maps to CSS text-emphasis-style). `sesame` is the traditional teardrop ゴマ点. */
+export type PaperEmphasisMark = 'none' | 'dot' | 'open-dot' | 'sesame' | 'circle';
+
+/** Baseline shift for a run — normal text, superscript, or subscript. */
+export type PaperTextVertAlign = 'baseline' | 'super' | 'sub';
+
+/**
+ * One inline run of text with optional per-run style overrides. Any field left unset inherits the frame's
+ * paragraph typography, so a run only carries what it actually changes (a bold word, a colour, a font swap).
+ * This is what lets a single paragraph mix styles — the thing a uniform `text` + one `typography` can't do.
+ */
+export interface PaperTextRun {
+  text: string;
+  fontFamily?: string;
+  fontSizePt?: number;
+  fontWeight?: string;
+  fontStyle?: 'normal' | 'italic';
+  underline?: boolean;
+  strike?: boolean;
+  color?: string;
+  /** Background / highlight colour behind the run (Word highlight or run shading — e.g. yellow highlight,
+   * or black for "inverse video" white-on-black). */
+  highlight?: string;
+  /** Letter-spacing in per-mille em (matches PaperTypography.tracking units). */
+  tracking?: number;
+  smallCaps?: boolean;
+  vertAlign?: PaperTextVertAlign;
+  /** External hyperlink for just this run. */
+  link?: string;
+}
+
+/**
+ * One paragraph of rich text: an ordered list of runs plus optional paragraph-level overrides. Unset
+ * paragraph fields inherit the frame's typography, so a plain paragraph is just `{ runs: [{ text }] }`.
+ */
+/** One edge of a paragraph border (`<w:pBdr>`). */
+export interface PaperParagraphBorderEdge {
+  /** `#rrggbb`, or `'currentColor'` when the source used auto / the text colour. */
+  color: string;
+  /** Border weight in points. */
+  widthPt: number;
+}
+
+/** Per-edge paragraph borders + the padding between text and the border edges (Word `w:pBdr` / `w:space`). */
+export interface PaperParagraphBorders {
+  top?: PaperParagraphBorderEdge;
+  left?: PaperParagraphBorderEdge;
+  bottom?: PaperParagraphBorderEdge;
+  right?: PaperParagraphBorderEdge;
+  /** Padding (pt) between the text and its border edges. */
+  paddingPt?: number;
+}
+
+export interface PaperRichParagraph {
+  runs: PaperTextRun[];
+  align?: PaperTextAlign;
+  firstLineIndentMm?: number;
+  spaceBeforeMm?: number;
+  spaceAfterMm?: number;
+  /** Drop-cap height in lines for this paragraph (0 / undefined = none). */
+  dropCapLines?: number;
+  /** A pre-resolved list marker ("•", "1.") rendered as a hanging bullet; undefined = not a list item. */
+  listMarker?: string;
+  /** Paragraph background fill (`#rrggbb`) from `<w:pPr><w:shd w:fill>`. */
+  shading?: string;
+  /** Per-edge paragraph borders from `<w:pBdr>`. */
+  borders?: PaperParagraphBorders;
+  /** Whole-paragraph left indent (mm) from `<w:ind w:left/start>`. */
+  leftIndentMm?: number;
+  /** Whole-paragraph right indent (mm) from `<w:ind w:right/end>` — insets the paragraph (and any shading/
+   * border box) from the right margin, so callouts/pull quotes read as inset blocks, not full-width bands. */
+  rightIndentMm?: number;
+  /** Hanging indent (mm) — the first line out-dents by this from the left indent (`<w:ind w:hanging>`). */
+  hangingIndentMm?: number;
 }
 
 export interface PaperFrameAsset {
@@ -192,6 +289,13 @@ export interface PaperFrame {
   rotationDeg: number;
   locked: boolean;
   text?: string;
+  /**
+   * Optional inline-rich content. When present it is the AUTHORITATIVE text (paragraphs of styled runs), and
+   * `text` is kept as its flattened plaintext for search, threading, and any consumer that only understands
+   * plain text. Absent → the frame is uniform single-style text exactly as before (comics, bubbles, captions
+   * and every existing frame are unaffected). Only inline text frames (text/caption/bubbles) use it.
+   */
+  richText?: PaperRichParagraph[];
   asset?: PaperFrameAsset;
   fit: PaperAssetFit;
   imageScale: number;
@@ -208,9 +312,22 @@ export interface PaperFrame {
   threadOrder?: number;
   typography: PaperTypography;
   fillColor: string;
+  /**
+   * Id of the document swatch this fill came from, when it was applied from the swatch library. Kept so a
+   * SPOT swatch fill survives to PDF/X export as a real /Separation plate (fillColor alone is just the RGB
+   * preview and loses the spot identity). Auto-cleared the moment the fill is changed by any other path.
+   */
+  fillSwatchId?: string;
   fillOpacity: number;
   fillGradient?: PaperFrameGradient;
   strokeColor: string;
+  /**
+   * Id of the document swatch this stroke came from, when it was applied from the swatch library. Mirrors
+   * {@link fillSwatchId} for the border: a SPOT stroke survives to PDF/X export as a real /Separation plate
+   * (strokeColor alone is just the RGB preview). Auto-cleared the moment the stroke colour changes by any
+   * other path.
+   */
+  strokeSwatchId?: string;
   strokeOpacity: number;
   strokeWidthMm: number;
   strokeStyle: PaperStrokeStyle;
@@ -328,9 +445,17 @@ export interface PaperDocument {
     showGrid: boolean;
     showBaselineGrid: boolean;
     showGuides: boolean;
+    /** Light, non-printing frame outlines shown only in the editor (like guides/grid) so borderless frames
+     * stay easy to see and grab. Never drawn in print/PDF/flatten export. */
+    showFrameEdges: boolean;
     showBleed: boolean;
     showSpreads: boolean;
     startOnRight: boolean;
+    /** Right-to-left binding (右綴じ) — the reading order of a Japanese/manga book: facing-page spreads put the
+     * LOWER page number on the RIGHT and progress right→left, and CBZ/PDF/print exports carry the right-to-left
+     * reading-direction metadata. **Undefined = auto**: right-to-left when the document has vertical (縦書き) text,
+     * left-to-right otherwise. `true`/`false` pins it explicitly. Resolve via `effectiveRtlBinding(document)`. */
+    rtlBinding?: boolean;
     snapToGuides: boolean;
     snapToGrid: boolean;
   };
@@ -338,9 +463,34 @@ export interface PaperDocument {
   styles: PaperStyleCatalogs;
   /** Document swatch library (custom CMYK/spot/process colors) layered on the built-in defaults. */
   swatches?: PaperSwatch[];
+  /** User-imported fonts embedded in the document (vetted unbroken + embeddable) so they travel with it. */
+  importedFonts?: PaperImportedFont[];
   pages: PaperPage[];
   createdAt: number;
   updatedAt: number;
+}
+
+/**
+ * A font the user imported into the document. Vetted (unbroken + embeddable) at import time; the raw bytes
+ * are carried inline as base64 so the font travels with the .slppr file and can be embedded on export
+ * instead of substituting a bundled Liberation face.
+ */
+export interface PaperImportedFont {
+  /** Stable id (embed cache key). */
+  id: string;
+  /** Font family name as reported by the font (e.g. "Brandon Grotesque"). */
+  familyName: string;
+  subfamilyName?: string;
+  postscriptName?: string;
+  bold: boolean;
+  italic: boolean;
+  format: 'truetype' | 'opentype-cff' | 'collection';
+  /** OS/2 fsType permits embedding this face in a print PDF. */
+  embeddable: boolean;
+  /** OS/2 fsType permits subsetting (false → embed the whole font). */
+  canSubset: boolean;
+  /** Raw font bytes as base64 (no data: prefix). */
+  dataBase64: string;
 }
 
 export interface PaperDocumentSnapshot {

@@ -969,7 +969,7 @@ export function planImageTextOnPath(
     reverse: request.reverse ?? false,
     fallback: 'retain point text metadata and rasterize current glyph layout',
     requiredMetadata: ['textLayerId', 'pathReference.kind', 'pathReference.layerId'],
-    reason: 'Signal Loom does not support editable text-on-path layers yet.',
+    reason: 'Sloom Studio does not support editable text-on-path layers yet.',
     warnings: [
       'Editable text-on-path is not available; preserve the path reference so a future text engine can restore intent.',
     ],
@@ -994,7 +994,7 @@ export function describeUnsupportedImageTextOnPath(
     reverse: request.reverse ?? false,
     fallback: 'retain point text metadata and rasterize current glyph layout',
     requiredMetadata: ['textLayerId', 'pathReference.kind', 'pathReference.layerId'],
-    reason: 'Signal Loom does not support editable text-on-path layers yet.',
+    reason: 'Sloom Studio does not support editable text-on-path layers yet.',
     warnings: [
       'Editable text-on-path is not available; preserve the path reference so a future text engine can restore intent.',
     ],
@@ -1331,7 +1331,7 @@ export function describeImageTextTypographySupportMatrix(
       implemented: true,
       layerIds: editableTextLayerIds,
       evidence: [`Editable retained layers: ${editableTextLayerIds.join(', ') || 'none in current selection'}`],
-      caveats: ['Live edits mutate Signal Loom metadata and regenerate raster previews, not native PSD text records.'],
+      caveats: ['Live edits mutate Sloom Studio metadata and regenerate raster previews, not native PSD text records.'],
     }),
     createImageTextTypographyCapability({
       id: 'character-options',
@@ -1362,7 +1362,7 @@ export function describeImageTextTypographySupportMatrix(
             .filter((layer) => layer.text)
             .map((layer) => `${layer.id}: ${buildImageTextStylePackageSignature(layer.text!)}`)
         : ['No retained text layers in current selection.'],
-      caveats: ['Signatures describe Signal Loom metadata packages, not native PSD text resources.'],
+      caveats: ['Signatures describe Sloom Studio metadata packages, not native PSD text resources.'],
     }),
     createImageTextTypographyCapability({
       id: 'text-preview-signatures',
@@ -1509,7 +1509,7 @@ export function describeImageTextTypographySupportMatrix(
       blockerCode: 'native-psd-editable-text-export-unsupported',
       layerIds: retainedTextLayerIds,
       evidence: [buildImageTextNativeExportStateSignature(buildNativePsdTextRoundtripDescriptor())],
-      caveats: ['Signal Loom retains text metadata internally but does not write native PSD editable text layer records.'],
+      caveats: ['Sloom Studio retains text metadata internally but does not write native PSD editable text layer records.'],
     }),
   ] satisfies ImageTextTypographyCapabilityDescriptor[];
   const summary = summarizeImageTextTypographySupportMatrix(capabilities);
@@ -2115,7 +2115,7 @@ function buildImageTextStylePackageMetadataCheck(
     layerIds: packagedLayers,
     evidence: [`Character and paragraph packages: ${packagedLayers.join(', ') || 'none'}`],
     caveats: packagedLayers.length > 0
-      ? ['Style packages are Signal Loom metadata and do not create native PSD editable text records.']
+      ? ['Style packages are Sloom Studio metadata and do not create native PSD editable text records.']
       : ['No retained text layers are available for character/paragraph style packaging.'],
   });
 }
@@ -2635,7 +2635,7 @@ function buildImageTextLiveEditStatusDescriptor(editable: boolean): ImageTextLiv
     editable,
     retainedMetadata: true,
     caveats: [
-      'Live edits update Signal Loom text metadata and regenerate a canvas raster preview.',
+      'Live edits update Sloom Studio text metadata and regenerate a canvas raster preview.',
     ],
   };
 }
@@ -2683,7 +2683,7 @@ function buildNativePsdTextRoundtripDescriptor(): ImageTextNativePsdTextRoundtri
   return {
     status: 'unsupported',
     warningCode: 'native-psd-editable-text-unsupported',
-    message: 'Retained text style is stored as Signal Loom metadata while native PSD editable text layers are not written.',
+    message: 'Retained text style is stored as Sloom Studio metadata while native PSD editable text layers are not written.',
   };
 }
 
@@ -2809,7 +2809,7 @@ function buildImageTextNativePsdTextReadinessOperation(
     status: 'unsupported',
     warningCode: 'native-psd-editable-text-unsupported',
     affectedLayerIds: layerReadiness.filter((layer) => layer.retainedText).map((layer) => layer.layerId),
-    message: 'Signal Loom retains text metadata for editing but does not write native PSD editable text layers.',
+    message: 'Sloom Studio retains text metadata for editing but does not write native PSD editable text layers.',
   };
 }
 
@@ -2824,7 +2824,7 @@ function buildImageTextExportSourceBinHandoffCaveats(
       code: 'export-flattens-live-type',
       scope: 'export',
       layerIds: retainedTextLayerIds,
-      message: 'Visible image exports and source-bin thumbnails flatten text to pixels; Signal Loom text metadata must travel as sidecar project data to stay editable.',
+      message: 'Visible image exports and source-bin thumbnails flatten text to pixels; Sloom Studio text metadata must travel as sidecar project data to stay editable.',
     });
   }
 
@@ -2890,7 +2890,7 @@ function buildImageTextTypographyRetainedEditabilityDescriptor(
       status: 'not-editable',
       editable: false,
       retainedMetadata: false,
-      caveats: ['Layer does not include retained Signal Loom text metadata.'],
+      caveats: ['Layer does not include retained Sloom Studio text metadata.'],
     };
   }
   if (!editable) {
@@ -2915,7 +2915,7 @@ function buildImageTextTypographyLayerBlockers(
       code: 'missing-retained-text',
       scope: 'layer',
       layerId: layer.id,
-      message: 'Layer does not retain editable Signal Loom text metadata.',
+      message: 'Layer does not retain editable Sloom Studio text metadata.',
     });
     return blockers;
   }

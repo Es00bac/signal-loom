@@ -188,7 +188,7 @@ export function buildFlowOrganizationPrompt(input: FlowAutoOrganizeInput): strin
   }));
 
   return [
-    'You are organizing a Signal Loom node workspace for a visual AI media workflow.',
+    'You are organizing a Sloom Studio node workspace for a visual AI media workflow.',
     'Return only JSON matching the requested schema.',
     'Move nodes into a clean, readable left-to-right workflow. Keep related branches near each other, reduce crossing edges, and leave at least 220px vertical spacing and 320px horizontal spacing where practical.',
     'Do not return the existing coordinates as the plan. If the graph is messy, sprawling, or overlapping, move nodes into a visibly cleaner compact layout.',

@@ -17,9 +17,9 @@ const WORKSPACE_MENUS = require('../../shared/workspaceMenus.json');
 // performs natively (quit/reload/fullscreen). `close` is intentionally dropped on non-mac to match
 // the in-window menu (which does `if (role === 'close' && !isMac) continue`).
 const ROLE_ITEMS = Object.freeze({
-  quit: { label: 'Quit Signal Loom', command: 'role:quit' },
-  reload: { label: 'Reload', command: 'role:reload' },
-  togglefullscreen: { label: 'Toggle Full Screen', command: 'role:togglefullscreen' },
+  quit: { label: 'Quit Sloom Studio', labelJa: 'Sloom Studio を終了', command: 'role:quit' },
+  reload: { label: 'Reload', labelJa: '再読み込み', command: 'role:reload' },
+  togglefullscreen: { label: 'Toggle Full Screen', labelJa: '全画面表示の切り替え', command: 'role:togglefullscreen' },
 });
 
 /** Resolve a group's `items` — an inline array or a `$shared` reference like "$project". */
@@ -28,6 +28,13 @@ function resolveMenuItems(items) {
     return WORKSPACE_MENUS.$shared[items.slice(1)] ?? [];
   }
   return Array.isArray(items) ? items : [];
+}
+
+/** Pick a label for the active locale, falling back to English. `labelJa` lives beside `label` in the
+ *  shared JSON (and on ROLE_ITEMS) so the global menu translates from the same source as the others. */
+function pickLabel(item, locale) {
+  if (locale === 'ja' && item && typeof item.labelJa === 'string' && item.labelJa) return item.labelJa;
+  return (item && item.label) || '';
 }
 
 /** "Ctrl+Shift+S" -> [["Control","Shift","S"]] (the DBusMenu `shortcut` aas form). */
@@ -61,7 +68,7 @@ function resolveAccelerator(command, fallback, keyboardShortcuts) {
   return fallback;
 }
 
-function buildDbusMenuModel({ activeWorkspace = 'flow', keyboardShortcuts = {}, isMac = false, revision = 1 } = {}) {
+function buildDbusMenuModel({ activeWorkspace = 'flow', keyboardShortcuts = {}, isMac = false, revision = 1, locale = 'en' } = {}) {
   const shortcuts = keyboardShortcuts && typeof keyboardShortcuts === 'object' ? keyboardShortcuts : {};
   const nodes = new Map();
   let nextId = 0;
@@ -111,13 +118,13 @@ function buildDbusMenuModel({ activeWorkspace = 'flow', keyboardShortcuts = {}, 
       if (item.role) {
         const mapped = ROLE_ITEMS[item.role];
         if (!mapped) continue; // dropped roles (e.g. `close` on non-mac)
-        addNode(parentId, { label: mapped.label, command: mapped.command });
+        addNode(parentId, { label: pickLabel(mapped, locale), command: mapped.command });
         continue;
       }
 
       if (Array.isArray(item.items)) {
         const submenu = addNode(parentId, {
-          label: item.label ?? '',
+          label: pickLabel(item, locale),
           childrenDisplay: 'submenu',
         });
         addItems(submenu.id, resolveMenuItems(item.items));
@@ -127,7 +134,7 @@ function buildDbusMenuModel({ activeWorkspace = 'flow', keyboardShortcuts = {}, 
       if (item.command) {
         const accel = resolveAccelerator(item.command, item.accelerator, shortcuts);
         addNode(parentId, {
-          label: item.label ?? '',
+          label: pickLabel(item, locale),
           command: item.command,
           shortcut: toDbusShortcut(accel),
         });
@@ -137,7 +144,7 @@ function buildDbusMenuModel({ activeWorkspace = 'flow', keyboardShortcuts = {}, 
 
   const groups = WORKSPACE_MENUS[activeWorkspace] ?? WORKSPACE_MENUS.flow;
   for (const group of groups) {
-    const top = addNode(root.id, { label: group.label, childrenDisplay: 'submenu' });
+    const top = addNode(root.id, { label: pickLabel(group, locale), childrenDisplay: 'submenu' });
     addItems(top.id, resolveMenuItems(group.items));
   }
 

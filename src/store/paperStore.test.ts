@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createPaperComicSfxDesign } from '../lib/paperComicSfx';
 import { addFrameToPaperPage, createDefaultPaperDocument } from '../lib/paperDocument';
 import type { SourceBinLibraryItem } from './sourceBinStore';
+import type { PaperImportedFont } from '../types/paper';
 import { usePaperStore } from './paperStore';
 
 function resetPaperStore() {
@@ -571,5 +572,28 @@ describe('paperStore document swatches', () => {
     // History is preserved: undoing the removal brings the swatch back.
     usePaperStore.getState().undo();
     expect(usePaperStore.getState().document.swatches?.map((swatch) => swatch.id)).toEqual(['sw1']);
+  });
+
+  it('adds, replaces by family+style, and removes imported fonts with history', () => {
+    const face = (id: string, patch: Partial<PaperImportedFont> = {}): PaperImportedFont => ({
+      id, familyName: 'Brandon', bold: false, italic: false, format: 'truetype',
+      embeddable: true, canSubset: true, dataBase64: 'AAAA', ...patch,
+    });
+    const ids = () => usePaperStore.getState().document.importedFonts?.map((f) => f.id);
+
+    usePaperStore.getState().addImportedFont(face('a'));
+    expect(ids()).toEqual(['a']);
+    // Re-importing the same family+style replaces in place (no duplicate).
+    usePaperStore.getState().addImportedFont(face('b'));
+    expect(ids()).toEqual(['b']);
+    // A different style (bold) coexists.
+    usePaperStore.getState().addImportedFont(face('c', { bold: true }));
+    expect(ids()).toEqual(['b', 'c']);
+
+    usePaperStore.getState().removeImportedFont('b');
+    expect(ids()).toEqual(['c']);
+    // Undo restores the removed font.
+    usePaperStore.getState().undo();
+    expect(ids()).toEqual(['b', 'c']);
   });
 });

@@ -39,15 +39,31 @@ export interface ClipEffectDescriptor {
   ffmpegBlendMode?: string;
 }
 
+/**
+ * The full 16-mode Photoshop/canvas blend set (matches Image's `BlendMode`,
+ * src/types/imageEditor.ts, and `EditorStageBlendMode`, src/types/flow.ts). CSS `mix-blend-mode`
+ * keywords are identical to these strings verbatim, so `buildCssClipBlendMode` needs no translation
+ * table — only `mapClipBlendModeToFFmpeg` (below) needs a name table, since FFmpeg's `blend=` filter
+ * uses different spellings for a few modes and has no equivalent for the four non-separable HSL
+ * modes (hue/saturation/color/luminosity).
+ */
 const CLIP_BLEND_MODES: EditorStageBlendMode[] = [
   'normal',
-  'screen',
   'multiply',
+  'screen',
   'overlay',
-  'lighten',
   'darken',
+  'lighten',
   'color-dodge',
   'color-burn',
+  'hard-light',
+  'soft-light',
+  'difference',
+  'exclusion',
+  'hue',
+  'saturation',
+  'color',
+  'luminosity',
 ];
 
 const CLIP_FILTER_KINDS: readonly EditorClipFilterKind[] = [
@@ -235,6 +251,15 @@ export function buildCssClipBlendMode(value: unknown): EditorStageBlendMode {
   return normalizeClipBlendMode(value);
 }
 
+/**
+ * Maps a clip blend mode to FFmpeg's `blend=all_mode=<name>` value. Most of the 16 modes are
+ * spelled identically; a handful differ (`color-dodge`->`dodge`, `color-burn`->`burn`,
+ * `hard-light`->`hardlight`, `soft-light`->`softlight` — verified against FFmpeg's `blend_modes.c`
+ * enum, which has no `colordodge`/`colorburn` entries). The four non-separable HSL modes
+ * (hue/saturation/color/luminosity) have no FFmpeg `blend=` equivalent at all and fall back to
+ * `undefined` (normal) on export — that's a real fidelity gap between preview (CSS, which supports
+ * them) and export, not a bug.
+ */
 export function mapClipBlendModeToFFmpeg(value: unknown): string | undefined {
   switch (normalizeClipBlendMode(value)) {
     case 'screen':
@@ -248,9 +273,21 @@ export function mapClipBlendModeToFFmpeg(value: unknown): string | undefined {
     case 'darken':
       return 'darken';
     case 'color-dodge':
-      return 'colordodge';
+      return 'dodge';
     case 'color-burn':
-      return 'colorburn';
+      return 'burn';
+    case 'hard-light':
+      return 'hardlight';
+    case 'soft-light':
+      return 'softlight';
+    case 'difference':
+      return 'difference';
+    case 'exclusion':
+      return 'exclusion';
+    case 'hue':
+    case 'saturation':
+    case 'color':
+    case 'luminosity':
     case 'normal':
       return undefined;
   }

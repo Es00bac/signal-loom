@@ -119,6 +119,7 @@ export const NATIVE_MENU_COMMANDS = [
   'paper:file-save-as',
   'paper:export-pdf',
   'paper:export-kdp-assets',
+  'paper:export-kdp-pdf',
   'paper:export-reader-spreads-pdf',
   'paper:export-booklet-proof-pdf',
   'paper:export-webcomic-images',
@@ -127,6 +128,7 @@ export const NATIVE_MENU_COMMANDS = [
   'paper:export-booklet-proof-html',
   'paper:package-print',
   'paper:export-idml',
+  'paper:soft-proof',
   'paper:export-stories-txt',
   'paper:export-stories-html',
   'paper:export-stories-rtf',
@@ -146,6 +148,7 @@ export const NATIVE_MENU_COMMANDS = [
   'paper:toggle-snap-to-grid',
   'paper:toggle-spreads',
   'paper:toggle-start-on-right',
+  'paper:toggle-binding-direction',
   'paper:toggle-tools-panel',
   'paper:toggle-document-strip-panel',
   'paper:toggle-inspector-panel',
@@ -235,9 +238,9 @@ export function buildNativeStandaloneEntryReadiness(
     suiteHandoffMode: 'shared-binary-deep-link',
     packageTargets: ['macos', 'windows', 'linux'],
     packageCaveats: [
-      'Standalone Image handoff stays inside the shared Signal Loom desktop package; separate signed single-workspace executables are not produced.',
+      'Standalone Image handoff stays inside the shared Sloom Studio desktop package; separate signed single-workspace executables are not produced.',
     ],
-    caveat: 'Standalone workspace entry uses the shared Signal Loom desktop binary and focused workspace windows; separate signed executables are not packaged.',
+    caveat: 'Standalone workspace entry uses the shared Sloom Studio desktop binary and focused workspace windows; separate signed executables are not packaged.',
     signature: [
       'native-standalone-entry:v2',
       entry.workspace,
@@ -493,6 +496,8 @@ export interface SignalLoomNativeBridge {
   openWorkspaceWindow: (workspace: WorkspaceWindowView) => Promise<{ ok?: boolean; workspace?: WorkspaceWindowView; error?: string }>;
   setActiveWorkspace: (workspace: WorkspaceWindowView) => Promise<{ ok?: boolean }>;
   setKeyboardShortcuts: (shortcuts: Partial<Record<NativeMenuCommand, string>>) => Promise<{ ok?: boolean }>;
+  // Push the interface language ('en' | 'ja') so the native + KDE menus translate their labels.
+  setLocale?: (locale: string) => Promise<{ ok?: boolean }>;
   getSourceLibrarySnapshot: () => Promise<SourceLibraryNativeSnapshotResult>;
   syncSourceLibrarySnapshot: (snapshot: SourceLibraryNativeSnapshotResult['snapshot']) => Promise<{ ok?: boolean; version?: number; error?: string }>;
   applySourceLibraryChange: (change: SourceLibraryNativeChange) => Promise<{ ok?: boolean; version?: number; error?: string }>;

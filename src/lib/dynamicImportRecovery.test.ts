@@ -21,7 +21,7 @@ describe('dynamic import recovery', () => {
 
     expect(message).toContain('Google Gemini audio');
     expect(message).toContain('app updated');
-    expect(message).toContain('refresh Signal Loom');
+    expect(message).toContain('refresh Sloom Studio');
     expect(message).not.toContain('dynamically imported module');
   });
 });

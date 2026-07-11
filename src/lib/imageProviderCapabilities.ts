@@ -183,7 +183,7 @@ const DEFAULT_CAPABILITIES: ImageModelCapabilities = {
 const PRICING_LAST_VERIFIED_DATE = '2026-05-24';
 
 const PROVIDER_FREE_TIER_NOTES: Record<FirstClassImageProviderId, string> = {
-  gemini: 'Google lists a Free tier for some Gemini API usage, but the visible paid image models in Signal Loom are marked not available on the free tier.',
+  gemini: 'Google lists a Free tier for some Gemini API usage, but the visible paid image models in Sloom Studio are marked not available on the free tier.',
   openai: 'OpenAI API usage is billed separately from ChatGPT subscriptions; no free image API tier is assumed.',
   atlas: 'Atlas Cloud native image models bill through your Atlas account; GPT Image routes remain token-priced when selected.',
   byteplus: 'BytePlus (ModelArk) Seedream image models bill through your own BytePlus account (bring your own key); a free trial may be available.',
@@ -191,7 +191,7 @@ const PROVIDER_FREE_TIER_NOTES: Record<FirstClassImageProviderId, string> = {
   bfl: 'BFL uses credits where 1 credit equals $0.01 USD; [dev] is free and Playground credits are prepaid.',
   stability: 'Stability AI uses credits where 1 credit equals $0.01 USD; trial credits may vary by account and region.',
   localOpen: 'Local/Open costs depend on the configured local, LAN, rented GPU, or hosted wrapper endpoint.',
-  android: 'Android Accelerator runs on a paired local-network Android device; Signal Loom assumes $0 provider spend after setup.',
+  android: 'Android Accelerator runs on a paired local-network Android device; Sloom Studio assumes $0 provider spend after setup.',
 };
 
 const PROVIDER_SPEND_CONTROLS: Record<FirstClassImageProviderId, string[]> = {
@@ -279,9 +279,9 @@ const PROVIDER_TROUBLESHOOTING: Record<FirstClassImageProviderId, string[]> = {
     'For inpaint, verify that both source image and mask are present.',
   ],
   localOpen: [
-    'If requests fail, test the endpoint URL outside Signal Loom with a small image first.',
-    'Confirm the wrapper accepts the Signal Loom local/open JSON contract: image, mask, references, prompt, and outputFormat.',
-    'For rented GPUs, check server logs before assuming the Signal Loom request failed.',
+    'If requests fail, test the endpoint URL outside Sloom Studio with a small image first.',
+    'Confirm the wrapper accepts the Sloom Studio local/open JSON contract: image, mask, references, prompt, and outputFormat.',
+    'For rented GPUs, check server logs before assuming the Sloom Studio request failed.',
   ],
   android: [
     'If requests fail, confirm the phone and desktop are on the same LAN or use adb port forwarding for development.',
@@ -942,7 +942,7 @@ const PROVIDER_HELP: RawImageProviderHelpEntry[] = [
     signupUrl: 'https://aistudio.google.com/app/apikey',
     apiKeyUrl: 'https://aistudio.google.com/app/apikey',
     pricingUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
-    capabilitySummary: 'Gemini image models support text-to-image, source-image editing, and reference-guided generation in Signal Loom.',
+    capabilitySummary: 'Gemini image models support text-to-image, source-image editing, and reference-guided generation in Sloom Studio.',
     setupSteps: [
       'Create a Google AI Studio API key, or configure Vertex AI desktop auth in the app.',
       'Paste the API key in Settings or switch Google image credential mode to Vertex AI.',
@@ -963,10 +963,10 @@ const PROVIDER_HELP: RawImageProviderHelpEntry[] = [
     setupSteps: [
       'Create an OpenAI platform account and add billing.',
       'Create an API key from the OpenAI dashboard.',
-      'Paste it in Signal Loom Settings and select GPT Image 2 or GPT Image 1.',
+      'Paste it in Sloom Studio Settings and select GPT Image 2 or GPT Image 1.',
     ],
     costNotes: [
-      'GPT Image 2 is token-priced, so Signal Loom shows a token estimate rather than a fixed image price.',
+      'GPT Image 2 is token-priced, so Sloom Studio shows a token estimate rather than a fixed image price.',
       'OpenAI API billing is separate from ChatGPT subscriptions.',
     ],
   },
@@ -976,10 +976,10 @@ const PROVIDER_HELP: RawImageProviderHelpEntry[] = [
     signupUrl: 'https://app.atlas-cloud.ai/',
     apiKeyUrl: 'https://app.atlas-cloud.ai/',
     pricingUrl: 'https://www.atlascloud.ai/',
-    capabilitySummary: 'Atlas Cloud exposes native text-to-image and image editing models in Signal Loom, while preserving GPT Image routes for OpenAI-compatible Atlas endpoints.',
+    capabilitySummary: 'Atlas Cloud exposes native text-to-image and image editing models in Sloom Studio, while preserving GPT Image routes for OpenAI-compatible Atlas endpoints.',
     setupSteps: [
       'Create an Atlas Cloud account and add an API key.',
-      'Enter the key in Signal Loom Settings; native image models use https://api.atlascloud.ai/api/v1 by default.',
+      'Enter the key in Sloom Studio Settings; native image models use https://api.atlascloud.ai/api/v1 by default.',
       'Select Atlas in an Image node and choose a native FLUX, Seedream, Nano Banana, Qwen, or FireRed image model.',
     ],
     costNotes: [
@@ -998,7 +998,7 @@ const PROVIDER_HELP: RawImageProviderHelpEntry[] = [
     setupSteps: [
       'Create a Hugging Face account.',
       'Create a user access token.',
-      'Paste it in Signal Loom Settings and select a Hugging Face image model.',
+      'Paste it in Sloom Studio Settings and select a Hugging Face image model.',
     ],
     costNotes: [
       'Costs depend on the routed provider and model.',
@@ -1015,7 +1015,7 @@ const PROVIDER_HELP: RawImageProviderHelpEntry[] = [
     setupSteps: [
       'Create a BFL account from the dashboard.',
       'Add credits and create an API key.',
-      'Paste the key in Signal Loom Settings and select a FLUX.2 model.',
+      'Paste the key in Sloom Studio Settings and select a FLUX.2 model.',
     ],
     costNotes: [
       'BFL uses credit pricing where 1 credit equals $0.01.',
@@ -1032,11 +1032,11 @@ const PROVIDER_HELP: RawImageProviderHelpEntry[] = [
     setupSteps: [
       'Create a Stability AI platform account.',
       'Claim trial credits or buy credits.',
-      'Create an API key and paste it in Signal Loom Settings.',
+      'Create an API key and paste it in Sloom Studio Settings.',
     ],
     costNotes: [
       'Stability uses credits; 1 credit equals $0.01.',
-      'Edit operations expose fixed credit estimates in Signal Loom.',
+      'Edit operations expose fixed credit estimates in Sloom Studio.',
       'Fast Upscale is 2 credits / $0.02 per image; Conservative Upscale is 40 credits / $0.40 per image.',
     ],
   },
@@ -1045,14 +1045,14 @@ const PROVIDER_HELP: RawImageProviderHelpEntry[] = [
     label: 'Local / Open Models',
     signupUrl: 'https://huggingface.co/Qwen/Qwen-Image-Edit',
     pricingUrl: 'https://huggingface.co/docs/api-inference/en/pricing',
-    capabilitySummary: 'Local/Open Models let Signal Loom call a Qwen/ComfyUI/local HTTP endpoint without relying on the RX 5700 XT for every cloud run.',
+    capabilitySummary: 'Local/Open Models let Sloom Studio call a Qwen/ComfyUI/local HTTP endpoint without relying on the RX 5700 XT for every cloud run.',
     setupSteps: [
-      'Run a compatible local, LAN, or rented-cloud model server that accepts the Signal Loom local/open image endpoint contract.',
+      'Run a compatible local, LAN, or rented-cloud model server that accepts the Sloom Studio local/open image endpoint contract.',
       'Paste the endpoint URL and optional Authorization header in Settings.',
       'Select Local / Open Models in an Image node or Image workspace fill action.',
     ],
     costNotes: [
-      'Signal Loom labels this as local/provider-defined because costs depend on your machine or rented GPU provider.',
+      'Sloom Studio labels this as local/provider-defined because costs depend on your machine or rented GPU provider.',
       'Use this lane for free local experiments or prepaid cloud GPU wrappers.',
     ],
   },
@@ -1061,15 +1061,15 @@ const PROVIDER_HELP: RawImageProviderHelpEntry[] = [
     label: 'Android Accelerator',
     signupUrl: 'https://github.com/xororz/local-dream',
     pricingUrl: 'https://github.com/xororz/local-dream',
-    capabilitySummary: 'Android Accelerator lets Signal Loom call models and upscalers running on a paired Snapdragon/Local Dream phone over the local network.',
+    capabilitySummary: 'Android Accelerator lets Sloom Studio call models and upscalers running on a paired Snapdragon/Local Dream phone over the local network.',
     setupSteps: [
-      'Install and start the Signal Loom Android Accelerator companion on the phone.',
-      'Paste the companion URL and pairing token in Signal Loom Settings.',
+      'Install and start the Sloom Studio Android Accelerator companion on the phone.',
+      'Paste the companion URL and pairing token in Sloom Studio Settings.',
       'In bridge mode, open Local Dream on the phone and select/download the model there.',
       'Select Android Accelerator in an Image node for phone-side generation.',
     ],
     costNotes: [
-      'Signal Loom treats Android Accelerator runs as $0 provider spend after setup.',
+      'Sloom Studio treats Android Accelerator runs as $0 provider spend after setup.',
       'Phone battery, heat, and model availability are the practical constraints.',
     ],
   },
@@ -1247,7 +1247,7 @@ function estimateGptImage2Cost(input: ImageModelCostInput, imageCount: number): 
     unitLabel: 'token priced',
     notes: [
       'GPT Image 2 is charged by text, input-image, and output-image tokens.',
-      'This estimate uses Signal Loom token heuristics until actual usage metadata is available.',
+      'This estimate uses Sloom Studio token heuristics until actual usage metadata is available.',
     ],
   };
 }

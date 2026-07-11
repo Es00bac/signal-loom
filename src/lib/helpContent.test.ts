@@ -14,7 +14,7 @@ describe('help content', () => {
   it('keeps help menu sections populated with actionable content', () => {
     expect(getHelpSection('tutorial').groups.length).toBeGreaterThan(2);
     expect(getHelpSection('feature-help').groups.length).toBeGreaterThan(3);
-    expect(getHelpSection('project-documentation').summary).toContain('Signal Loom');
+    expect(getHelpSection('project-documentation').summary).toContain('Sloom Studio');
   });
 
   it('documents setup and cost expectations for advanced image providers', () => {

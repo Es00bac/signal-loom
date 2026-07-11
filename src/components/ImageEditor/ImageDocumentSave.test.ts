@@ -428,7 +428,7 @@ describe('ImageDocumentSave', () => {
       suiteHandoffMode: 'shared-binary-deep-link',
       packageTargets: ['macos', 'windows', 'linux'],
       packageCaveats: [
-        'Standalone Image handoff stays inside the shared Signal Loom desktop package; separate signed single-workspace executables are not produced.',
+        'Standalone Image handoff stays inside the shared Sloom Studio desktop package; separate signed single-workspace executables are not produced.',
       ],
     });
     expect(readiness.nativeApp.signature).toBe(

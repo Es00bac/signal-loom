@@ -674,7 +674,7 @@ describe('ImageDocumentExport', () => {
           id: 'headline',
           type: 'text',
           text: {
-            content: 'Signal Loom',
+            content: 'Sloom Studio',
             fontFamily: 'Inter',
             fontSize: 48,
             fontWeight: '700',

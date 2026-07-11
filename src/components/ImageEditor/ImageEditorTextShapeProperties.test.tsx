@@ -216,7 +216,7 @@ describe('TextPanel', () => {
     expect(container.textContent).toContain('OpenType intent liga, ss01');
     expect(container.textContent).toContain('Typography support matrix');
     expect(container.textContent).toContain('Unsupported capabilities 1');
-    expect(container.textContent).toContain('Retained text style is stored as Signal Loom metadata while native PSD editable text layers are not written.');
+    expect(container.textContent).toContain('Retained text style is stored as Sloom Studio metadata while native PSD editable text layers are not written.');
   });
 
   it('persists custom vector shape preset settings for the shape tool', () => {

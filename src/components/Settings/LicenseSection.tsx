@@ -48,15 +48,17 @@ export const LicenseSection: React.FC = () => {
         <div className="mt-2 text-sm leading-6 text-gray-400">
           {license.licensed ? (
             <>
-              Thank you for supporting Signal Loom. This key unlocks the professional print-production
+              Thank you for supporting Sloom Studio. This key unlocks the professional print-production
               exports on desktop and Android, marks your exports as licensed, and removes the startup notice.
               {license.issued ? <span className="text-gray-500"> Issued {license.issued}.</span> : null}
             </>
           ) : (
             <>
-              Signal Loom is free for personal and noncommercial use — learn it, make things, share them.
+              Sloom Studio is free for personal and noncommercial use — learn it, make things, share them.
               When you start earning with what you make here, a one-time commercial license is due.
-              It unlocks KDP, PDF/X, IDML, and CMYK print production.
+              It unlocks the commercial print-production exports — real CMYK PDF/X-1a and PDF/X-4 with an
+              embedded ICC output intent, a KDP-ready print PDF, real Adobe IDML (opens in InDesign /
+              Affinity Publisher), and CMYK/spot swatches. Free to license holders across the 0.9.x beta.
             </>
           )}
         </div>

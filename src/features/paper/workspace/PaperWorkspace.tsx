@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
@@ -44,6 +44,7 @@ import {
   ShieldCheck,
   Slice,
   Sparkles,
+  SquareDashed,
   Triangle,
   Type,
   Undo2,
@@ -55,6 +56,7 @@ import { useImageEditorStore } from '../../../store/imageEditorStore';
 import { useEditorStore } from '../../../store/editorStore';
 import { useDockablePanelStore } from '../../../store/dockablePanelStore';
 import { usePaperStore } from '../../../store/paperStore';
+import { PaperFontImportControl, useRegisterImportedFonts } from './PaperFontImport';
 import { useSettingsStore } from '../../../store/settingsStore';
 import { useSourceBinStore } from '../../../store/sourceBinStore';
 import { useFlowStore } from '../../../store/flowStore';
@@ -71,6 +73,7 @@ import { panelKey } from '../../../lib/dockablePanel';
 import {
   exportPaperDocumentToPrintHtml,
   computeEffectivePaperFrame,
+  effectiveRtlBinding,
   DEFAULT_PAPER_BACKGROUND,
   paperDocumentBackgroundCss,
   paperPixelsFromMm,
@@ -86,6 +89,9 @@ import {
 } from '../../../lib/paperPageFlattenExport';
 import { buildPaperBookletProofHtmlExportRequest, buildPaperBookletProofPdfExportRequest, buildPaperReaderSpreadHtmlExportRequest, buildPaperReaderSpreadPdfExportRequest } from '../../../lib/paperPdfExport';
 import { buildPaperPackageExport } from '../../../lib/paperPackageExport';
+import { paperEmphasisMarkToCss, tokenizePaperInlineText } from '../../../lib/paperJapaneseText';
+import { useI18n } from '../../../lib/useI18n';
+import { translate, type MessageKey } from '../../../lib/i18n';
 import {
   buildPaperKdpExportPlan,
   buildPaperKdpImageArchiveExport,
@@ -96,15 +102,17 @@ import {
 } from '../../../lib/paperKdpExport';
 import {
   buildPaperCbzRasterExport,
-  exportPaperIdmlInterchange,
   exportPaperStoryText,
   importTextDocumentIntoPaper,
   inferPaperDocumentImportFormat,
   parsePaperDocumentImportFile,
 } from '../../../lib/paperDocumentFormats';
+import { buildPaperIdmlPackage } from '../../../lib/paperIdmlExport';
 import {
   PAPER_FRAME_CONTEXT_ACTIONS,
   PAPER_PAGE_CONTEXT_ACTIONS,
+  paperActionLabel,
+  paperActionGroupLabel,
   type PaperFrameContextActionId,
   type PaperPageContextActionId,
 } from '../../../lib/paperUsabilityActions';
@@ -120,10 +128,11 @@ import {
   type PaperPreflightStatusSummary,
   type PaperPreflightStatusTone,
 } from '../../../lib/paperPreflight';
-import { PAPER_OUTPUT_INTENT_PROFILES } from '../../../lib/paperPrintProduction';
+import { PAPER_OUTPUT_INTENT_PROFILES, isPdfXProductionTarget } from '../../../lib/paperPrintProduction';
 import { isCommercialPrintProductionTarget, requestCommercialExportUnlock } from '../../../lib/licenseGates';
 import { canFrameBeAiFixed, collectFrameFixSiblingCandidates } from '../../../lib/paperFrameFix';
 import { PaperFrameFixDialog } from './PaperFrameFixDialog';
+import { PaperSoftProofModal } from './PaperSoftProofModal';
 import {
   buildPaperPrintUpscaledFramePatch,
   buildPaperPrintUpscaleUsageTelemetry,
@@ -159,21 +168,27 @@ import { DEFAULT_PAPER_COLUMN_GUTTER_MM, resolvePaperColumnGutterMm } from '../.
 import { computePaperThreadSlices } from '../../../lib/paperThreadFlow';
 import { createPaperCanvasMeasurer } from '../../../lib/paperCanvasMeasurer';
 import { resolveFrameWrapSpacers, type PaperWrapSpacer } from '../../../lib/paperTextWrap';
+import { flattenPaperRichText } from '../../../lib/paperRichText';
+import { richTextToEditorHtml, serializeRichEditor } from '../../../lib/paperRichTextDom';
 import { findPaperMatches, type PaperFindOptions } from '../../../lib/paperFindChange';
 import { resolvePaperFolioText } from '../../../lib/paperFolios';
 import { buildPaperTextArcPath } from '../../../lib/paperTextPath';
 import {
   addPaperTableColumn,
   addPaperTableRow,
+  clearPaperTableFills,
   createPaperTable,
   removePaperTableColumn,
   removePaperTableRow,
+  setPaperTableBandFill,
   setPaperTableCell,
+  setPaperTableHeaderFill,
 } from '../../../lib/paperTables';
 import { PAPER_BUBBLE_PRESETS } from '../../../lib/paperBubblePresets';
 import type { PaperAlignEdge, PaperDistributeAxis } from '../../../lib/paperAlignDistribute';
 import { PAPER_DEFAULT_SWATCHES } from '../../../lib/paperSwatchCatalog';
 import { cmykToRgb, parseHexColor, resolveSwatchCssColor, rgbToCmyk, rgbToCss, totalInkPercent } from '../../../lib/paperSwatches';
+import { PRINT_SAFE_PALETTES, findPrintSafePalette, paletteToPaperSwatches } from '../../../lib/printSafePalettes';
 import {
   estimateGenerativeFillCostUsd,
   type GenerativeFillProvider,
@@ -306,6 +321,8 @@ import {
   downloadBlob,
   downloadText,
   exportPaperPdfDocument,
+  exportPaperPdfxAndSave,
+  exportPaperKdpPdfAndSave,
   exportPaperWebcomicImages,
   fileToDataUrl,
   frameFillCss,
@@ -344,6 +361,7 @@ import type {
 import type {
   PaperBubbleConnectorStyle,
   PaperDocument,
+  PaperEmphasisMark,
   PaperFrame,
   PaperFrameKind,
   PaperFramePatch,
@@ -352,7 +370,11 @@ import type {
   PaperNumericStyle,
   PaperPage,
   PaperPagePreset,
+  PaperParagraphBorderEdge,
+  PaperRichParagraph,
   PaperTextAlignLast,
+  PaperTextOrientation,
+  PaperTextRun,
   PaperTextWrapMode,
   PaperTool,
 } from '../../../types/paper';
@@ -385,6 +407,11 @@ const PAPER_FONT_OPTIONS = [
   { label: 'Comic Sans MS', value: '"Comic Sans MS", "Comic Sans", cursive' },
   { label: 'Impact', value: 'Impact, Haettenschweiler, sans-serif' },
   { label: 'Courier New', value: '"Courier New", Courier, monospace' },
+  // Japanese families for 縦組 / manga lettering. Gothic (角ゴシック) is the body/UI sans; Mincho (明朝) the serif
+  // for prose. The stacks prefer OS-bundled JP faces, then the Noto CJK JP webfonts, then a generic fallback.
+  { label: '明朝 Mincho (JP serif)', value: "'Hiragino Mincho ProN', 'Yu Mincho', YuMincho, 'Noto Serif CJK JP', 'Noto Serif JP', 'MS Mincho', serif" },
+  { label: 'ゴシック Gothic (JP sans)', value: "'Hiragino Kaku Gothic ProN', 'Yu Gothic', YuGothic, 'Noto Sans CJK JP', 'Noto Sans JP', Meiryo, 'MS Gothic', sans-serif" },
+  { label: '丸ゴシック Maru Gothic (rounded)', value: "'Hiragino Maru Gothic ProN', 'Rounded Mplus 1c', 'Zen Maru Gothic', 'M PLUS Rounded 1c', 'Yu Gothic', sans-serif" },
 ] as const;
 const PAPER_FONT_WEIGHTS = ['300', '400', '500', '600', '700', '800', '900'] as const;
 const DEFAULT_PAPER_WEBCOMIC_EXPORT_SETTINGS: PaperWebcomicExportSettings = {
@@ -594,6 +621,8 @@ export function PaperWorkspace() {
   const touchNavigationPointersRef = useRef<Map<number, PaperTouchNavigationPoint>>(new Map());
   const touchNavigationPinchRef = useRef<PaperTouchNavigationPinchState | null>(null);
   const document = usePaperStore((s) => s.document);
+  // Register the document's imported fonts as live browser faces so the editor renders them.
+  useRegisterImportedFonts(document.importedFonts);
   const selectedPageId = usePaperStore((s) => s.selectedPageId);
   const selectedFrameId = usePaperStore((s) => s.selectedFrameId);
   const selectedFrameIds = usePaperStore((s) => s.selectedFrameIds);
@@ -654,6 +683,7 @@ export function PaperWorkspace() {
   const addGuideToPage = usePaperStore((s) => s.addGuideToPage);
   const updateGuide = usePaperStore((s) => s.updateGuide);
   const toggleViewOption = usePaperStore((s) => s.toggleViewOption);
+  const setViewOption = usePaperStore((s) => s.setViewOption);
   const openImageDocument = useImageEditorStore((s) => s.openDocument);
   const setImageBrushSettings = useImageEditorStore((s) => s.setBrushSettings);
   const setWorkspaceView = useEditorStore((s) => s.setWorkspaceView);
@@ -704,6 +734,7 @@ export function PaperWorkspace() {
   const [webcomicExportSettings, setWebcomicExportSettings] = useState<PaperWebcomicExportSettings>(DEFAULT_PAPER_WEBCOMIC_EXPORT_SETTINGS);
   const [kdpExportOpen, setKdpExportOpen] = useState(false);
   const [kdpExportSettings, setKdpExportSettings] = useState<PaperKdpExportSettings>(() => loadPaperKdpExportSettings());
+  const [softProofOpen, setSoftProofOpen] = useState(false);
   const [polygonPoints, setPolygonPoints] = useState<Array<PaperPoint & { pageId: string }>>([]);
   const [modifierState, setModifierState] = useState({ ctrlKey: false, metaKey: false });
   // On Android, holding Volume Down acts as a Ctrl-equivalent modifier for frame reshaping (handle
@@ -861,8 +892,9 @@ export function PaperWorkspace() {
     () => buildPaperSpreads(document.pages, {
       enabled: document.view.showSpreads,
       startOnRight: document.view.startOnRight,
+      rtlBinding: effectiveRtlBinding(document),
     }),
-    [document.pages, document.view.showSpreads, document.view.startOnRight],
+    [document, document.pages, document.view.showSpreads, document.view.startOnRight, document.view.rtlBinding],
   );
   const activeVirtualPageIds = useMemo(
     () => [selectedPageId, interaction?.pageId].filter((pageId): pageId is string => Boolean(pageId)),
@@ -1245,15 +1277,26 @@ export function PaperWorkspace() {
         if (isCommercialPrintProductionTarget(document.printProduction)
           && !(await requestCommercialExportUnlock('PDF/X and CMYK print production'))) return;
         if (await confirmPreflightBeforeExport('PDF export')) {
-          void exportPaperPdfDocument(document, setStatus, undefined, {
-            rasterPreset: providerSettings.paperPdfRasterPreset,
-          });
+          if (isPdfXProductionTarget(document.printProduction)) {
+            // Real CMYK PDF/X-1a / PDF/X-4 with an embedded ICC output intent (docs/notes/836).
+            void exportPaperPdfxAndSave(document, setStatus);
+          } else {
+            void exportPaperPdfDocument(document, setStatus, undefined, {
+              rasterPreset: providerSettings.paperPdfRasterPreset,
+            });
+          }
         }
         return;
       case 'paper:export-kdp-assets':
         if (!(await requestCommercialExportUnlock('KDP export'))) return;
         setKdpExportOpen(true);
         setStatus('Configuring KDP comic asset export.');
+        return;
+      case 'paper:export-kdp-pdf':
+        if (!(await requestCommercialExportUnlock('KDP print PDF'))) return;
+        if (await confirmPreflightBeforeExport('KDP print PDF export')) {
+          void exportPaperKdpPdfAndSave(document, setStatus);
+        }
         return;
       case 'paper:export-reader-spreads-pdf':
         if (isCommercialPrintProductionTarget(document.printProduction)
@@ -1302,9 +1345,19 @@ export function PaperWorkspace() {
         return;
       }
       case 'paper:export-idml':
-        if (!(await requestCommercialExportUnlock('IDML interchange export'))) return;
-        downloadText(`${safeFileName(document.title)}.sloom-idml.json`, exportPaperIdmlInterchange(document), 'application/vnd.signal-loom.paper-idml+json');
-        setStatus('Downloaded Paper IDML-like interchange JSON.');
+        if (!(await requestCommercialExportUnlock('Adobe IDML export'))) return;
+        if (await confirmPreflightBeforeExport('IDML export')) {
+          try {
+            const idmlBytes = buildPaperIdmlPackage(document);
+            downloadBlob(`${safeFileName(document.title)}.idml`, new Blob([new Uint8Array(idmlBytes)], { type: 'application/vnd.adobe.indesign-idml-package' }));
+            setStatus('Exported real Adobe IDML (.idml) — open in InDesign or Affinity Publisher. Images export as placeholder frames (relink on open).');
+          } catch (error) {
+            setStatus(`IDML export failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+          }
+        }
+        return;
+      case 'paper:soft-proof':
+        setSoftProofOpen(true);
         return;
       case 'paper:export-stories-txt':
       case 'paper:export-stories-html':
@@ -1391,6 +1444,14 @@ export function PaperWorkspace() {
         toggleViewOption('startOnRight');
         setStatus('Toggled start-on-right spread pairing.');
         return;
+      case 'paper:toggle-binding-direction': {
+        // Flip the EFFECTIVE binding (which may be auto-derived from vertical text) and pin it explicitly.
+        const nextRtl = !effectiveRtlBinding(document);
+        setViewOption('rtlBinding', nextRtl);
+        const bindingLocale = useSettingsStore.getState().locale;
+        setStatus(translate(nextRtl ? 'paper.jp.binding.setRtl' : 'paper.jp.binding.setLtr', bindingLocale));
+        return;
+      }
       case 'paper:toggle-tools-panel':
         togglePaperToolsPalette();
         return;
@@ -1903,8 +1964,10 @@ export function PaperWorkspace() {
     updateFrame(pageId, frame.id, rotatePaperTextBoxTowardPointer(frame, point));
   }, [selectFrame, selectPage, setActiveInteraction, setTool, updateFrame]);
 
-  const commitFrameText = useCallback((pageId: string, frameId: string, text: string) => {
-    updateFrame(pageId, frameId, { text });
+  const commitFrameText = useCallback((pageId: string, frameId: string, text: string, richText?: PaperRichParagraph[]) => {
+    // A rich-text commit patches richText (createPaperFrame re-syncs the flattened `text`); a plain-text
+    // commit patches `text` (which clears any stale rich runs — see patchPaperFrame).
+    updateFrame(pageId, frameId, richText ? { richText } : { text });
     setStatus('Updated frame text.');
   }, [updateFrame]);
 
@@ -2066,9 +2129,38 @@ export function PaperWorkspace() {
         return;
       }
       const imported = await parsePaperDocumentImportFile(file);
-      const nextDocument = 'blocks' in imported ? importTextDocumentIntoPaper(imported) : imported;
+      const isTextImport = 'blocks' in imported;
+      const nextDocument = isTextImport ? importTextDocumentIntoPaper(imported) : imported;
+      // Importing REPLACES the current layout and clears undo history — confirm when there's work to lose.
+      const currentFrameCount = document.pages.reduce((sum, page) => sum + page.frames.length, 0);
+      if (currentFrameCount > 0 && !(shouldBypassConfirmations() || await useConfirmationStore.getState().requestConfirmation(
+        `Importing "${file.name}" replaces your current Paper layout (${currentFrameCount} frame${currentFrameCount === 1 ? '' : 's'}) and can't be undone. Continue?`,
+        'Replace current layout?',
+      ))) {
+        setStatus(`Canceled importing "${file.name}".`);
+        return;
+      }
       importDocumentJson(JSON.stringify(nextDocument));
-      setStatus(`Imported "${file.name}".`);
+      // Report what actually came in — tables and images are real frames now, not text.
+      const importedFrames = nextDocument.pages.flatMap((page) => page.frames);
+      const tableCount = importedFrames.filter((frame) => frame.table).length;
+      const imageCount = importedFrames.filter((frame) => frame.kind === 'image').length;
+      const textCount = importedFrames.length - tableCount - imageCount;
+      const breakdown = [
+        `${textCount} text frame${textCount === 1 ? '' : 's'}`,
+        ...(tableCount ? [`${tableCount} table${tableCount === 1 ? '' : 's'}`] : []),
+        ...(imageCount ? [`${imageCount} image${imageCount === 1 ? '' : 's'}`] : []),
+      ].join(', ');
+      setStatus(`Imported "${file.name}" — ${breakdown} across ${nextDocument.pages.length} page${nextDocument.pages.length === 1 ? '' : 's'}.`);
+      // Be honest about anything the source held that Paper's model can't reproduce exactly.
+      const limitations = isTextImport ? imported.limitations : undefined;
+      if (limitations && limitations.length) {
+        void showAlertDialog({
+          title: 'Imported with notes',
+          message: `"${file.name}" imported. A few things Paper couldn't reproduce exactly:\n\n• ${limitations.join('\n• ')}`,
+          tone: 'info',
+        });
+      }
     } catch (error) {
       void showAlertDialog({
         title: 'Paper Import Failed',
@@ -3574,6 +3666,8 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           onDuplicatePage={duplicatePageFromTopStrip}
           onExportPdf={() => runPaperTopStripCommand('paper:export-pdf')}
           onExportKdpAssets={() => runPaperTopStripCommand('paper:export-kdp-assets')}
+          onExportKdpPdf={() => runPaperTopStripCommand('paper:export-kdp-pdf')}
+          onOpenSoftProof={() => runPaperTopStripCommand('paper:soft-proof')}
           onExportReaderSpreadsPdf={() => runPaperTopStripCommand('paper:export-reader-spreads-pdf')}
           onExportBookletProofPdf={() => runPaperTopStripCommand('paper:export-booklet-proof-pdf')}
           onExportWebcomicImages={() => runPaperTopStripCommand('paper:export-webcomic-images')}
@@ -3597,12 +3691,14 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           showFindChange={isPanelVisible(PAPER_DOCKABLE_PANEL_IDS.findChange, { treatCollapsedAsShown: false })}
           onToggleGrid={() => togglePaperViewOptionFromTopStrip('showGrid', 'Grid')}
           onToggleGuides={() => togglePaperViewOptionFromTopStrip('showGuides', 'Guides')}
+          onToggleFrameEdges={() => togglePaperViewOptionFromTopStrip('showFrameEdges', 'Frame edges')}
           onToggleSnapToGrid={() => togglePaperSnapFromTopStrip('snapToGrid', 'snap to grid')}
           onToggleSnapToGuides={() => togglePaperSnapFromTopStrip('snapToGuides', 'snap to guides')}
           onToggleInspector={() => runPaperWorkspaceActionFromTopStrip('Toggle Paper Inspector panel', () => togglePanelVisibility(PAPER_DOCKABLE_PANEL_IDS.inspector))}
           onToggleRulers={() => togglePaperViewOptionFromTopStrip('showRulers', 'Rulers')}
           onToggleSpreads={() => runPaperTopStripCommand('paper:toggle-spreads')}
           onToggleStartOnRight={() => runPaperTopStripCommand('paper:toggle-start-on-right')}
+          onToggleRtlBinding={() => runPaperTopStripCommand('paper:toggle-binding-direction')}
           onToggleToolbar={() => runPaperWorkspaceActionFromTopStrip('Toggle Paper Tools palette', togglePaperToolsPalette)}
           onToggleTouchNavigation={() => runPaperWorkspaceActionFromTopStrip('Toggle Paper touch navigation', togglePaperTouchNavigation)}
           onZoomIn={() => setZoom(zoom + 0.1)}
@@ -3612,11 +3708,13 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           showInspector={isPanelVisible(PAPER_DOCKABLE_PANEL_IDS.inspector)}
           showGrid={document.view.showGrid}
           showGuides={document.view.showGuides}
+          showFrameEdges={document.view.showFrameEdges}
           showRulers={document.view.showRulers}
           showSpreads={document.view.showSpreads}
           snapToGrid={document.view.snapToGrid}
           snapToGuides={document.view.snapToGuides}
           startOnRight={document.view.startOnRight}
+          rtlBinding={effectiveRtlBinding(document)}
           showToolbar={paperToolsVisible}
           touchNavigationAvailable={paperTouchNavigationAvailable}
           touchNavigationEnabled={paperTouchNavigationActive}
@@ -4093,6 +4191,13 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           onClose={() => setKdpExportOpen(false)}
           onExport={runKdpImageExport}
           pendingPrintUpscaleCount={collectPaperPrintUpscaleFrameJobs(document, sourceItems).length}
+        />
+      ) : null}
+      {softProofOpen ? (
+        <PaperSoftProofModal
+          document={document}
+          onClose={() => setSoftProofOpen(false)}
+          pageId={selectedPage.id}
         />
       ) : null}
     </div>
@@ -5889,6 +5994,8 @@ export function PaperTopStrip({
   onDuplicatePage,
   onExportJson,
   onExportIdml,
+  onExportKdpPdf,
+  onOpenSoftProof,
   onExportStoriesTxt,
   onExportStoriesHtml,
   onExportStoriesRtf,
@@ -5912,24 +6019,28 @@ export function PaperTopStrip({
   showFindChange,
   onToggleGrid,
   onToggleGuides,
+  onToggleFrameEdges,
   onToggleSnapToGrid,
   onToggleSnapToGuides,
   onToggleInspector,
   onToggleRulers,
   onToggleSpreads,
   onToggleStartOnRight,
+  onToggleRtlBinding,
   onToggleToolbar,
   onToggleTouchNavigation,
   onZoomIn,
   onZoomOut,
   showGrid,
   showGuides,
+  showFrameEdges,
   showInspector,
   showRulers,
   showSpreads,
   snapToGrid,
   snapToGuides,
   startOnRight,
+  rtlBinding,
   showToolbar,
   touchNavigationAvailable = false,
   touchNavigationEnabled = false,
@@ -5942,6 +6053,8 @@ export function PaperTopStrip({
   onDuplicatePage: () => void;
   onExportJson: () => void;
   onExportIdml: () => void;
+  onExportKdpPdf?: () => void;
+  onOpenSoftProof?: () => void;
   onExportStoriesTxt: () => void;
   onExportStoriesHtml: () => void;
   onExportStoriesRtf: () => void;
@@ -5965,24 +6078,28 @@ export function PaperTopStrip({
   showFindChange: boolean;
   onToggleGrid: () => void;
   onToggleGuides: () => void;
+  onToggleFrameEdges: () => void;
   onToggleSnapToGrid: () => void;
   onToggleSnapToGuides: () => void;
   onToggleInspector: () => void;
   onToggleRulers: () => void;
   onToggleSpreads: () => void;
   onToggleStartOnRight: () => void;
+  onToggleRtlBinding: () => void;
   onToggleToolbar: () => void;
   onToggleTouchNavigation?: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   showGrid: boolean;
   showGuides: boolean;
+  showFrameEdges: boolean;
   showInspector: boolean;
   showRulers: boolean;
   showSpreads: boolean;
   snapToGrid: boolean;
   snapToGuides: boolean;
   startOnRight: boolean;
+  rtlBinding: boolean;
   showToolbar: boolean;
   touchNavigationAvailable?: boolean;
   touchNavigationEnabled?: boolean;
@@ -5991,6 +6108,7 @@ export function PaperTopStrip({
   preflightStatus: PaperPreflightStatusSummary;
 }) {
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const { t, tBoth } = useI18n();
   const exportButtonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [exportButtonRect, setExportButtonRect] = useState<DOMRect | null>(null);
@@ -6061,9 +6179,9 @@ export function PaperTopStrip({
         </div>
       </div>
       <div className={`flex items-center gap-1.5 ${isTitlebar ? 'min-w-max flex-1 overflow-x-auto overflow-y-hidden pr-2 [scrollbar-width:none]' : 'min-w-0 overflow-x-auto overflow-y-hidden [scrollbar-width:thin]'}`}>
-        <StripButton icon={<FilePlus2 size={13} />} label="New" onClick={onNew} />
-        <StripButton icon={<FilePlus2 size={13} />} label="Page" onClick={onAddPage} />
-        <StripButton icon={<FileJson size={13} />} label="Duplicate" onClick={onDuplicatePage} />
+        <StripButton icon={<FilePlus2 size={13} />} label={t('paper.strip.new')} onClick={onNew} />
+        <StripButton icon={<FilePlus2 size={13} />} label={t('paper.strip.page')} onClick={onAddPage} />
+        <StripButton icon={<FileJson size={13} />} label={t('paper.strip.duplicate')} onClick={onDuplicatePage} />
         <PaperPreflightStatusButton
           active={showPreflight}
           onClick={onShowPreflight}
@@ -6073,7 +6191,7 @@ export function PaperTopStrip({
         {/* Reclaim titlebar layout space with a single Export Document trigger */}
         <button
           ref={exportButtonRef}
-          aria-label="Export Document"
+          aria-label={t('paper.strip.exportDocument')}
           className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border text-[11px] font-semibold px-2.5 transition-all duration-150 ${
             isExportOpen
               ? 'border-cyan-300/45 bg-cyan-400/15 text-cyan-100'
@@ -6083,7 +6201,7 @@ export function PaperTopStrip({
           type="button"
         >
           <Download size={13} />
-          <span>Export Document</span>
+          <span>{t('paper.strip.exportDocument')}</span>
           <ChevronDown size={11} className={`transition-transform duration-200 ${isExportOpen ? 'rotate-180' : ''}`} />
         </button>
 
@@ -6101,7 +6219,7 @@ export function PaperTopStrip({
             <div className="flex items-center justify-between border-b border-cyan-300/10 pb-2.5 mb-3">
               <div className="flex items-center gap-2">
                 <Download size={14} className="text-cyan-300" />
-                <span className="text-xs font-bold uppercase tracking-wider text-cyan-200">Export Options</span>
+                <span className="text-xs font-bold uppercase tracking-wider text-cyan-200">{t('paper.export.options')}</span>
               </div>
               <button
                 onClick={() => setIsExportOpen(false)}
@@ -6115,72 +6233,80 @@ export function PaperTopStrip({
               {/* Left Column */}
               <div className="flex flex-col gap-4">
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-cyan-400/60 mb-2 px-1">Print & Publishing</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-cyan-400/60 mb-2 px-1">{t('paper.export.sec.print')}</div>
                   <div className="flex flex-col gap-1">
                     <ExportMenuItem
                       icon={<Printer size={13} />}
                       label="PDF"
-                      description="Export high-quality flattened PDF layout"
+                      description={t('paper.export.desc.pdf')}
                       onClick={() => { onExportPdf(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
                       icon={<BookOpen size={13} />}
                       label="KDP"
-                      description="Kindle Direct Publishing assets package"
+                      description={t('paper.export.desc.kdp')}
                       onClick={() => { onExportKdpAssets(); setIsExportOpen(false); }}
                     />
+                    {onOpenSoftProof ? (
+                      <ExportMenuItem
+                        icon={<Printer size={13} />}
+                        label={t('paper.export.softProof')}
+                        description={t('paper.export.desc.softProof')}
+                        onClick={() => { onOpenSoftProof(); setIsExportOpen(false); }}
+                      />
+                    ) : null}
                     <ExportMenuItem
                       icon={<BookOpen size={13} />}
-                      label="Spread PDF"
-                      description="Double-page reader layout spreads"
+                      label={t('paper.export.spreadPdf')}
+                      description={t('paper.export.desc.spread')}
                       onClick={() => { onExportReaderSpreadsPdf(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
                       icon={<BookOpen size={13} />}
-                      label="Booklet"
-                      description="Printable booklet proof imposition"
+                      label={t('paper.export.booklet')}
+                      description={t('paper.export.desc.booklet')}
                       onClick={() => { onExportBookletProofPdf(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
                       icon={<Download size={13} />}
-                      label="Package"
-                      description="Consolidate all layout assets for print"
+                      label={t('paper.export.package')}
+                      description={t('paper.export.desc.package')}
                       onClick={() => { onPackagePrint(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
                       icon={<Printer size={13} />}
-                      label="Finalize Print"
-                      description="Upscale and prepare final art production"
+                      label={t('paper.export.finalizePrint')}
+                      description={t('paper.export.desc.finalize')}
                       onClick={() => { onFinalizePrintUpscale(); setIsExportOpen(false); }}
                     />
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-cyan-400/60 mb-2 px-1">Text & Stories</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-cyan-400/60 mb-2 px-1">{t('paper.export.sec.text')}</div>
                   <div className="flex flex-col gap-1">
                     <ExportMenuItem
                       icon={<Download size={13} />}
                       label="TXT"
-                      description="Plain text extraction"
+                      description={t('paper.export.desc.txt')}
                       onClick={() => { onExportStoriesTxt(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
                       icon={<Download size={13} />}
                       label="HTML"
-                      description="Web format extract"
+                      description={t('paper.export.desc.html')}
                       onClick={() => { onExportStoriesHtml(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
                       icon={<Download size={13} />}
                       label="RTF"
-                      description="Rich text document"
+                      description={t('paper.export.desc.rtf')}
                       onClick={() => { onExportStoriesRtf(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
                       icon={<Download size={13} />}
                       label="DOCX"
-                      description="Word file format"
+                      description={t('paper.export.desc.docx')}
                       onClick={() => { onExportStoriesDocx(); setIsExportOpen(false); }}
                     />
                   </div>
@@ -6190,55 +6316,61 @@ export function PaperTopStrip({
               {/* Right Column */}
               <div className="flex flex-col gap-4">
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-cyan-400/60 mb-2 px-1">Web & Media</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-cyan-400/60 mb-2 px-1">{t('paper.export.sec.web')}</div>
                   <div className="flex flex-col gap-1">
                     <ExportMenuItem
                       icon={<ImageIcon size={13} />}
-                      label="Web PNG"
-                      description="Export all pages as webcomic image files"
+                      label={t('paper.export.webPng')}
+                      description={t('paper.export.desc.webPng')}
                       onClick={() => { onExportWebcomicImages(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
                       icon={<ImageIcon size={13} />}
-                      label="Image"
-                      description="Save current page as a single PNG"
+                      label={t('paper.export.image')}
+                      description={t('paper.export.desc.image')}
                       onClick={() => { onExportPageToImage(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
                       icon={<Download size={13} />}
                       label="CBZ"
-                      description="Comic book zip file archive package"
+                      description={t('paper.export.desc.cbz')}
                       onClick={() => { onExportCbz(); setIsExportOpen(false); }}
                     />
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-cyan-400/60 mb-2 px-1">Interoperability & Data</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-cyan-400/60 mb-2 px-1">{t('paper.export.sec.interop')}</div>
                   <div className="flex flex-col gap-1">
                     <ExportMenuItem
                       icon={<Download size={13} />}
-                      label="Source"
-                      description="Send this page to the Source Library for Image, Video, and Flow"
+                      label={t('paper.export.source')}
+                      description={t('paper.export.desc.source')}
                       onClick={() => { onExportPageToSource(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
                       icon={<FilePlus2 size={13} />}
-                      label="Envelope"
-                      description="Send all pages to the Source Library as one envelope"
+                      label={t('paper.export.envelope')}
+                      description={t('paper.export.desc.envelope')}
                       onClick={() => { onExportPagesToEnvelope(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
                       icon={<Download size={13} />}
                       label="JSON"
-                      description="Save raw document schema JSON"
+                      description={t('paper.export.desc.json')}
                       onClick={() => { onExportJson(); setIsExportOpen(false); }}
                     />
                     <ExportMenuItem
                       icon={<Download size={13} />}
-                      label="IDML"
-                      description="InDesign compatible layout format"
+                      label="Adobe IDML"
+                      description={t('paper.export.desc.idml')}
                       onClick={() => { onExportIdml(); setIsExportOpen(false); }}
+                    />
+                    <ExportMenuItem
+                      icon={<Download size={13} />}
+                      label={t('paper.export.kdpPrintPdf')}
+                      description={t('paper.export.desc.kdpPdf')}
+                      onClick={() => { onExportKdpPdf?.(); setIsExportOpen(false); }}
                     />
                   </div>
                 </div>
@@ -6248,19 +6380,21 @@ export function PaperTopStrip({
           document.body
         )}
 
-        <StripButton icon={<FileJson size={13} />} label="Place PDF/document" onClick={onImportJson} />
+        <StripButton icon={<FileJson size={13} />} label={t('paper.strip.importPlace')} title={t('paper.strip.importPlace.tooltip')} onClick={onImportJson} />
         <div className="mx-1 h-5 w-px shrink-0 bg-cyan-300/15" />
-        <ToggleStripButton active={showRulers} icon={<Ruler size={13} />} label="Rulers" onClick={onToggleRulers} />
-        <ToggleStripButton active={showGuides} icon={<Columns3 size={13} />} label="Guides" onClick={onToggleGuides} />
-        <ToggleStripButton active={showGrid} icon={<Grid3X3 size={13} />} label="Grid" onClick={onToggleGrid} />
-        <ToggleStripButton active={snapToGuides} icon={<Magnet size={13} />} label="Snap Guides" onClick={onToggleSnapToGuides} />
-        <ToggleStripButton active={snapToGrid} icon={<Magnet size={13} />} label="Snap Grid" onClick={onToggleSnapToGrid} />
-        <ToggleStripButton active={showSpreads} icon={<BookOpen size={13} />} label="Spreads" onClick={onToggleSpreads} />
-        <ToggleStripButton active={startOnRight} icon={<BookOpen size={13} />} label="Start R" onClick={onToggleStartOnRight} />
-        <ToggleStripButton active={showToolbar} icon={<PanelRightOpen size={13} />} label="Tools" onClick={onToggleToolbar} />
+        <ToggleStripButton active={showRulers} icon={<Ruler size={13} />} label={t('paper.view.rulers')} onClick={onToggleRulers} />
+        <ToggleStripButton active={showGuides} icon={<Columns3 size={13} />} label={t('paper.view.guides')} onClick={onToggleGuides} />
+        <ToggleStripButton active={showGrid} icon={<Grid3X3 size={13} />} label={t('paper.view.grid')} onClick={onToggleGrid} />
+        <ToggleStripButton active={showFrameEdges} icon={<SquareDashed size={13} />} label={t('paper.view.frameEdges')} onClick={onToggleFrameEdges} />
+        <ToggleStripButton active={snapToGuides} icon={<Magnet size={13} />} label={t('paper.view.snapGuides')} onClick={onToggleSnapToGuides} />
+        <ToggleStripButton active={snapToGrid} icon={<Magnet size={13} />} label={t('paper.view.snapGrid')} onClick={onToggleSnapToGrid} />
+        <ToggleStripButton active={showSpreads} icon={<BookOpen size={13} />} label={t('paper.view.spreads')} onClick={onToggleSpreads} />
+        <ToggleStripButton active={startOnRight} icon={<BookOpen size={13} />} label={t('paper.view.startOnRight')} onClick={onToggleStartOnRight} />
+        <ToggleStripButton active={rtlBinding} icon={<BookOpen size={13} />} label={tBoth('paper.jp.rtlBinding')} title={t('paper.jp.rtlBinding.tooltip')} onClick={onToggleRtlBinding} />
+        <ToggleStripButton active={showToolbar} icon={<PanelRightOpen size={13} />} label={t('paper.strip.tools')} onClick={onToggleToolbar} />
         {touchNavigationAvailable && onToggleTouchNavigation ? (
           <button
-            aria-label="Touch navigation"
+            aria-label={t('paper.strip.touchNav')}
             aria-pressed={touchNavigationEnabled}
             className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-2 text-[11px] font-semibold ${
               touchNavigationEnabled
@@ -6269,7 +6403,7 @@ export function PaperTopStrip({
             }`}
             data-paper-touch-navigation-topstrip="true"
             onClick={onToggleTouchNavigation}
-            title="Touch navigation"
+            title={t('paper.strip.touchNav')}
             type="button"
           >
             <Hand size={13} />
@@ -6363,7 +6497,7 @@ function PaperConnectedSpreadView({
     event?: Pick<React.PointerEvent<HTMLElement> | React.MouseEvent<HTMLElement>, 'ctrlKey' | 'metaKey'>,
   ) => void;
   onSelectPage: (pageId: string) => void;
-  onCommitFrameText: (pageId: string, frameId: string, text: string) => void;
+  onCommitFrameText: (pageId: string, frameId: string, text: string, richText?: PaperRichParagraph[]) => void;
   onDetachInheritedFrame: (pageId: string, frameId: string) => void;
   onUpdateGuide: ReturnType<typeof usePaperStore.getState>['updateGuide'];
   polygonPoints: Array<PaperPoint & { pageId: string }>;
@@ -6641,6 +6775,7 @@ function PaperConnectedSpreadView({
                     wrapSpacers={resolveFrameWrapSpacers(frame, outputFrames)}
                     isSelected={frame.id === selectedFrameId || selectedFrameIds.includes(frame.id)}
                     key={frame.id}
+                    showFrameEdges={doc.view.showFrameEdges}
                     showVertexHandles={shouldShowPaperVertexHandles(frame, {
                       isSelected: frame.id === selectedFrameId || selectedFrameIds.includes(frame.id),
                       modifierActive: vertexEditModifierActive,
@@ -6715,7 +6850,7 @@ function PaperConnectedSpreadView({
                     }}
                     onSelect={(event) => onSelectFrame(frame.id, event)}
                     onDetachInherited={() => onDetachInheritedFrame(slot.page!.id, frame.id)}
-                    onCommitText={(text) => onCommitFrameText(slot.page!.id, frame.id, text)}
+                    onCommitText={(text, richText) => onCommitFrameText(slot.page!.id, frame.id, text, richText)}
                     onResolveImageNaturalSize={(naturalWidth, naturalHeight) => onResolveFrameImageNaturalSize(slot.page!.id, frame, naturalWidth, naturalHeight)}
                     onToggleImageFlipX={() => onToggleImageFlip(slot.page!.id, frame, 'x')}
                     onToggleImageFlipY={() => onToggleImageFlip(slot.page!.id, frame, 'y')}
@@ -6896,7 +7031,7 @@ function PaperPageView({
     event?: Pick<React.PointerEvent<HTMLElement> | React.MouseEvent<HTMLElement>, 'ctrlKey' | 'metaKey'>,
   ) => void;
   onSelectPage: () => void;
-  onCommitFrameText: (pageId: string, frameId: string, text: string) => void;
+  onCommitFrameText: (pageId: string, frameId: string, text: string, richText?: PaperRichParagraph[]) => void;
   onDetachInheritedFrame: (frameId: string) => void;
   onUpdateGuide: ReturnType<typeof usePaperStore.getState>['updateGuide'];
   page: PaperPage;
@@ -7123,6 +7258,7 @@ function PaperPageView({
               frame={frame}
               isSelected={frame.id === selectedFrameId || selectedFrameIds.includes(frame.id)}
               key={frame.id}
+              showFrameEdges={doc.view.showFrameEdges}
               showVertexHandles={shouldShowPaperVertexHandles(frame, {
                 isSelected: frame.id === selectedFrameId || selectedFrameIds.includes(frame.id),
                 modifierActive: vertexEditModifierActive,
@@ -7197,7 +7333,7 @@ function PaperPageView({
               }}
               onSelect={(event) => onSelectFrame(frame.id, event)}
               onDetachInherited={() => onDetachInheritedFrame(frame.id)}
-              onCommitText={(text) => onCommitFrameText(page.id, frame.id, text)}
+              onCommitText={(text, richText) => onCommitFrameText(page.id, frame.id, text, richText)}
               onResolveImageNaturalSize={(naturalWidth, naturalHeight) => onResolveFrameImageNaturalSize(page.id, frame, naturalWidth, naturalHeight)}
               onToggleImageFlipX={() => onToggleImageFlip(page.id, frame, 'x')}
               onToggleImageFlipY={() => onToggleImageFlip(page.id, frame, 'y')}
@@ -7651,6 +7787,7 @@ function PaperFrameView({
   pageOriginPx,
   pageOriginYPx = pageOriginPx,
   showVertexHandles,
+  showFrameEdges = false,
   tool,
   zoom,
 }: {
@@ -7678,7 +7815,7 @@ function PaperFrameView({
   onOpenMenu: (event: React.MouseEvent<HTMLElement>) => void;
   onSelect: (event?: Pick<React.PointerEvent<HTMLElement> | React.MouseEvent<HTMLElement>, 'ctrlKey' | 'metaKey'>) => void;
   onDetachInherited: () => void;
-  onCommitText: (text: string) => void;
+  onCommitText: (text: string, richText?: PaperRichParagraph[]) => void;
   onResolveImageNaturalSize: (naturalWidth: number, naturalHeight: number) => void;
   onDeleteFrameVertex: (vertexIndex: number) => void;
   onToggleImageFlipX: () => void;
@@ -7687,6 +7824,7 @@ function PaperFrameView({
   pageOriginPx: number;
   pageOriginYPx?: number;
   showVertexHandles: boolean;
+  showFrameEdges?: boolean;
   tool: PaperTool;
   zoom: number;
 }) {
@@ -7713,7 +7851,12 @@ function PaperFrameView({
       : frameFillCss(frame),
     border: frame.kind === 'shape' || frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble' || hasShapeStrokeOverlay
       ? 0
-      : `${Math.max(1, frame.strokeWidthMm * PX_PER_MM * zoom)}px ${frame.strokeStyle} ${frame.strokeColor}`,
+      : frame.strokeWidthMm > 0
+        // A frame with a real stroke keeps a min-1px hairline so it stays visible at low zoom. A frame with
+        // strokeWidthMm 0 (imported document paragraphs/images, any borderless frame) paints NO border —
+        // the old Math.max(1, …) forced a 1px stroke-coloured box even when the stroke width was zero.
+        ? `${Math.max(1, frame.strokeWidthMm * PX_PER_MM * zoom)}px ${frame.strokeStyle} ${frame.strokeColor}`
+        : 0,
     borderRadius: effectiveClipPath
       ? 0
       : frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble'
@@ -7739,6 +7882,19 @@ function PaperFrameView({
       ? frame.typography.lineBreak
       : undefined,
     hyphens: frame.typography.hyphenate ? 'auto' : 'manual',
+    // Japanese 縦書き (tategaki). `vertical-rl` flows glyphs top→bottom and columns right→left — the reading
+    // direction for manga and Japanese prose. `text-orientation: mixed` (default) keeps CJK upright and lays
+    // Latin on its side; `upright` forces every glyph upright. Kinsoku (禁則処理) via `line-break: strict` is on
+    // by default in vertical text so 、。」 never open a line and 「（ never end one. These inherit to the text
+    // content div (and each rich paragraph), so both document frames and bubbles pick them up.
+    writingMode: frame.typography.writingMode === 'vertical-rl' ? 'vertical-rl' : undefined,
+    textOrientation:
+      frame.typography.writingMode === 'vertical-rl' ? (frame.typography.textOrientation ?? 'mixed') : undefined,
+    lineBreak:
+      (frame.typography.lineBreakStrict ?? frame.typography.writingMode === 'vertical-rl') ? 'strict' : undefined,
+    // 圏点 bouten emphasis marks (CSS text-emphasis). The default position (over for horizontal, right for
+    // vertical) is exactly what Japanese typesetting uses, so only the mark style needs setting.
+    textEmphasis: paperEmphasisMarkToCss(frame.typography.emphasis),
     columnCount: frame.kind === 'text' ? Math.max(1, frame.columns) : 1,
     columnGap: `${resolvePaperColumnGutterMm(frame) * PX_PER_MM * zoom}px`,
     columnFill: frame.kind === 'text' && frame.columnBalance ? 'balance' : 'auto',
@@ -7747,6 +7903,14 @@ function PaperFrameView({
         ? `${Math.max(1, 0.2 * PX_PER_MM * zoom)}px solid ${frame.strokeColor}`
         : undefined,
     borderStyle: frame.kind === 'thoughtBubble' ? 'dashed' : frame.strokeStyle,
+    // Non-printing "frame edges" affordance (View ▸ Frame Edges) — a light 1px hairline, like guides/grid, so
+    // borderless document frames stay easy to see and grab. Editor-only: it's an `outline` on the live canvas,
+    // never part of the frame's real stroke, and the print/PDF/flatten paths re-render independently. Skipped
+    // for clip-path/bubble/shape frames where a rectangle would misrepresent the shape.
+    outline: showFrameEdges && !effectiveClipPath
+      && frame.kind !== 'speechBubble' && frame.kind !== 'thoughtBubble' && frame.kind !== 'shape'
+      ? '1px solid rgba(148, 163, 184, 0.5)'
+      : undefined,
     clipPath: effectiveClipPath,
     padding: paperFrameContentPaddingPx(frame, zoom),
   };
@@ -7767,10 +7931,16 @@ function PaperFrameView({
     setTextDraft(frame.text ?? '');
     setTextEditing(true);
   };
-  const commitTextEdit = (nextText: string) => {
+  const commitTextEdit = (nextText: string, richText?: PaperRichParagraph[]) => {
     const normalizedText = normalizePaperInlineText(nextText);
     setTextEditing(false);
     setTextDraft(normalizedText);
+    if (richText) {
+      // Rich edit: patch the runs (the flattened text rides along). The rich editor only calls this when it
+      // actually changed, so no equality guard is needed here.
+      onCommitText(normalizedText, richText);
+      return;
+    }
     if (normalizedText !== (frame.text ?? '')) {
       onCommitText(normalizedText);
     }
@@ -8326,8 +8496,11 @@ function PaperBubbleText({
 }) {
   const baseStyle = paperTextBoxReactStyle(frame);
   const style = paperTextEffectReactStyle(frame, zoom, baseStyle);
+  const vertical = frame.typography.writingMode === 'vertical-rl';
 
   if (isEditing) {
+    // The editor keeps the raw text (incl. the 《》/｜ furigana notation), so lettering round-trips; ruby/TCY
+    // render only in the display view below.
     return (
       <PaperEditableText
         className="absolute z-50 whitespace-pre-wrap break-words rounded border border-cyan-400/80 bg-white/95 p-1 shadow-[0_0_0_2px_rgba(8,145,178,0.18)] outline-none"
@@ -8335,18 +8508,19 @@ function PaperBubbleText({
         onChange={onDraftChange}
         onCommit={onCommit}
         style={style}
+        vertical={vertical}
         value={draft}
       />
     );
   }
 
+  // The text box is a flex container (for vertical/horizontal centering). Inline content — especially <ruby> —
+  // must NOT be a direct flex child: flex blockifies each <ruby> into its own item, which in vertical text scatters
+  // the reading across separate columns. Wrapping the content in one inner block keeps it a single flex item so
+  // the text (and furigana) flows and wraps as normal columns.
   return (
-    <div
-      className="pointer-events-none absolute z-40 whitespace-pre-wrap break-words"
-      onDoubleClick={onBeginEdit}
-      style={style}
-    >
-      {frame.text}
+    <div className="pointer-events-none absolute z-40" onDoubleClick={onBeginEdit} style={style}>
+      <div className="whitespace-pre-wrap break-words">{renderPaperInlineText(frame.text ?? '', vertical)}</div>
     </div>
   );
 }
@@ -8356,7 +8530,7 @@ function PaperTableView({ frame, zoom }: { frame: PaperFrame; zoom: number }) {
   if (!table) return null;
   const borderPx = Math.max(0.5, table.borderWidthMm * PX_PER_MM * zoom);
   const padPx = Math.max(0, table.cellPaddingMm * PX_PER_MM * zoom);
-  const border = `${borderPx}px solid ${frame.strokeColor}`;
+  const border = `${borderPx}px solid ${table.borderColor ?? frame.strokeColor}`;
   return (
     <table
       className="absolute inset-0 h-full w-full border-collapse"
@@ -8373,6 +8547,9 @@ function PaperTableView({ frame, zoom }: { frame: PaperFrame; zoom: number }) {
           <tr key={r}>
             {row.map((cell, c) => {
               const isHeader = table.headerRow && r === 0;
+              // An imported per-cell fill (header/alternating-row shading) wins; else the default header tint.
+              const cellFill = table.cellFills?.[r]?.[c];
+              const background = cellFill || (isHeader ? 'rgba(148,163,184,0.18)' : undefined);
               return (
                 <td
                   key={c}
@@ -8381,7 +8558,7 @@ function PaperTableView({ frame, zoom }: { frame: PaperFrame; zoom: number }) {
                     padding: padPx,
                     verticalAlign: 'top',
                     fontWeight: isHeader ? 700 : undefined,
-                    background: isHeader ? 'rgba(148,163,184,0.18)' : undefined,
+                    background,
                     overflow: 'hidden',
                     wordBreak: 'break-word',
                   }}
@@ -8472,13 +8649,28 @@ function PaperInlineText({
   isEditing: boolean;
   onBeginEdit: (event: React.MouseEvent<HTMLElement>) => void;
   onCancel: () => void;
-  onCommit: (text: string) => void;
+  onCommit: (text: string, richText?: PaperRichParagraph[]) => void;
   onDraftChange: (text: string) => void;
   zoom: number;
 }) {
   const className = 'h-full w-full whitespace-pre-wrap break-words';
   const style = paperTextEffectReactStyle(frame, zoom);
+  const vertical = frame.typography.writingMode === 'vertical-rl';
   if (isEditing) {
+    // A rich frame gets the WYSIWYG rich editor (formatting toolbar + per-run styling preserved); every
+    // other text frame keeps the plain single-style editor exactly as before.
+    if (frame.richText && frame.richText.length > 0) {
+      return (
+        <PaperRichEditableText
+          baseStyle={style}
+          className={`${className} rounded border border-cyan-400/80 bg-white/95 p-1 shadow-[0_0_0_2px_rgba(8,145,178,0.18)] outline-none`}
+          frame={frame}
+          onCancel={onCancel}
+          onCommit={onCommit}
+          zoom={zoom}
+        />
+      );
+    }
     return (
       <PaperEditableText
         className={`${className} rounded border border-cyan-400/80 bg-white/95 p-1 shadow-[0_0_0_2px_rgba(8,145,178,0.18)] outline-none`}
@@ -8486,7 +8678,23 @@ function PaperInlineText({
         onChange={onDraftChange}
         onCommit={onCommit}
         style={style}
+        vertical={vertical}
         value={draft}
+      />
+    );
+  }
+
+  // Inline-rich content (imported docx, mixed styling) renders paragraphs of styled runs; the plain single
+  // -style path below is untouched for every frame that has no richText (comics, bubbles, captions, …).
+  if (frame.richText && frame.richText.length > 0) {
+    return (
+      <PaperRichTextView
+        baseStyle={style}
+        className={className}
+        frame={frame}
+        onBeginEdit={onBeginEdit}
+        wrapSpacers={wrapSpacers}
+        zoom={zoom}
       />
     );
   }
@@ -8518,7 +8726,7 @@ function PaperInlineText({
                 ...(paragraphDropCap ? { '--sl-dropcap-lines': String(dropCapLines) } : {}),
               } as React.CSSProperties}
             >
-              {paragraph || ' '}
+              {paragraph ? renderPaperInlineText(paragraph, vertical) : ' '}
             </div>
           );
         })}
@@ -8536,7 +8744,163 @@ function PaperInlineText({
       style={textStyle}
     >
       <PaperWrapFloats spacers={wrapSpacers} zoom={zoom} />
-      {text}
+      {renderPaperInlineText(text, vertical)}
+    </div>
+  );
+}
+
+// Render a frame's text with Japanese inline notation resolved: furigana kanji-《reading》 / \uff5c-delimited base
+// -> real <ruby>, and (in vertical text) 1-2 digit numbers as tate-chu-yoko. The parsing lives in the shared
+// `paperJapaneseText` tokenizer so the on-canvas render and the print/PDF export stay identical. Editors keep the
+// raw notation (they show the source), so lettering round-trips; only this display view resolves it.
+function renderPaperInlineText(text: string, vertical: boolean): React.ReactNode {
+  const tokens = tokenizePaperInlineText(text, vertical);
+  if (tokens.length === 0) return text;
+  if (tokens.length === 1 && tokens[0].type === 'text') return tokens[0].text;
+  return tokens.map((token, index) => {
+    if (token.type === 'text') return <Fragment key={index}>{token.text}</Fragment>;
+    if (token.type === 'tcy') {
+      return (
+        <span key={index} style={{ textCombineUpright: 'all', WebkitTextCombine: 'horizontal' } as React.CSSProperties}>
+          {token.digits}
+        </span>
+      );
+    }
+    if (token.type === 'emphasis') {
+      return (
+        <span key={index} style={{ textEmphasis: 'filled sesame' } as React.CSSProperties}>
+          {token.text}
+        </span>
+      );
+    }
+    return (
+      <ruby key={index}>
+        {token.base}
+        <rt>{token.reading}</rt>
+      </ruby>
+    );
+  });
+}
+
+/** CSS overrides for one inline run — only the fields the run actually changes; the rest inherit the frame. */
+function paperRunReactStyle(run: PaperTextRun, zoom: number): React.CSSProperties {
+  const style: React.CSSProperties = {};
+  if (run.fontFamily) style.fontFamily = run.fontFamily;
+  if (run.fontWeight) style.fontWeight = run.fontWeight;
+  if (run.fontStyle) style.fontStyle = run.fontStyle;
+  if (run.color) style.color = run.color;
+  if (run.highlight) { style.backgroundColor = run.highlight; style.borderRadius = '1px'; style.boxDecorationBreak = 'clone'; style.WebkitBoxDecorationBreak = 'clone'; }
+  if (run.tracking != null) style.letterSpacing = `${run.tracking / 1000}em`;
+  if (run.smallCaps) style.fontVariantCaps = 'small-caps';
+  const decorations: string[] = [];
+  if (run.underline) decorations.push('underline');
+  if (run.strike) decorations.push('line-through');
+  if (decorations.length) style.textDecoration = decorations.join(' ');
+  if (run.vertAlign === 'super' || run.vertAlign === 'sub') {
+    style.verticalAlign = run.vertAlign;
+    // Super/subscript shrinks like it does everywhere; honour an explicit run size, else 0.7em of the line.
+    style.fontSize = run.fontSizePt ? run.fontSizePt * 1.333 * zoom : '0.7em';
+  } else if (run.fontSizePt) {
+    style.fontSize = run.fontSizePt * 1.333 * zoom;
+  }
+  return style;
+}
+
+/** Render a frame's inline-rich content: paragraphs of styled runs, with per-paragraph align/indent/spacing,
+ * drop caps, and hanging list markers. Font/size/colour defaults come from the frame's content style (which
+ * this div inherits); each run span overrides only what it carries. */
+function PaperRichTextView({
+  baseStyle,
+  className,
+  frame,
+  onBeginEdit,
+  wrapSpacers,
+  zoom,
+}: {
+  baseStyle: React.CSSProperties;
+  className: string;
+  frame: PaperFrame;
+  onBeginEdit: (event: React.MouseEvent<HTMLElement>) => void;
+  wrapSpacers: PaperWrapSpacer[];
+  zoom: number;
+}) {
+  const paragraphs = frame.richText ?? [];
+  const vertical = frame.typography.writingMode === 'vertical-rl';
+  // A merged callout (every paragraph shares a border/shading) renders as ONE continuous box, the way a word
+  // processor draws a multi-paragraph shaded note: the border padding and any top/bottom stroke apply only at the
+  // outer edges, not around every paragraph, so the paragraphs flow inside one box instead of stacking as chunks.
+  const continuousBox = paragraphs.length > 1 && paragraphs.every((p) => p.borders || p.shading);
+  return (
+    <div className={className} onDoubleClick={onBeginEdit} style={baseStyle}>
+      <PaperWrapFloats spacers={wrapSpacers} zoom={zoom} />
+      {paragraphs.map((paragraph, index) => {
+        const isFirstPara = index === 0;
+        const isLastPara = index === paragraphs.length - 1;
+        const dropCapLines = paragraph.dropCapLines && paragraph.dropCapLines >= 2 ? Math.min(8, Math.round(paragraph.dropCapLines)) : 0;
+        const spaceBefore = Math.max(0, paragraph.spaceBeforeMm ?? 0) * PX_PER_MM * zoom;
+        const spaceAfter = Math.max(0, paragraph.spaceAfterMm ?? 0) * PX_PER_MM * zoom;
+        const leftIndentPx = Math.max(0, paragraph.leftIndentMm ?? 0) * PX_PER_MM * zoom;
+        const rightIndentPx = Math.max(0, paragraph.rightIndentMm ?? 0) * PX_PER_MM * zoom;
+        const hangingPx = Math.max(0, paragraph.hangingIndentMm ?? 0) * PX_PER_MM * zoom;
+        const markerPadPx = paragraph.listMarker ? 4.5 * PX_PER_MM * zoom : 0;
+        const firstLinePx = paragraph.firstLineIndentMm ? paragraph.firstLineIndentMm * PX_PER_MM * zoom : 0;
+        // Indent priority: list bullet > Word hanging indent > positive first-line indent. Word's hanging model:
+        // body lines sit at the left indent; the first line out-dents by `hanging` (textIndent negative).
+        let indentLeftPx = leftIndentPx;
+        let textIndent: string | number | undefined;
+        if (paragraph.listMarker) { indentLeftPx = leftIndentPx + markerPadPx; textIndent = -markerPadPx; }
+        else if (hangingPx > 0) { indentLeftPx = leftIndentPx; textIndent = -hangingPx; }
+        else if (firstLinePx !== 0) { textIndent = `${firstLinePx.toFixed(2)}px each-line`; }
+        // Paragraph borders + shading (from Word's `<w:pBdr>` / `<w:shd>`). `w:space` becomes inset padding.
+        const borders = paragraph.borders;
+        const borderPadPx = borders?.paddingPt ? borders.paddingPt * 1.333 * zoom : borders ? 2 * zoom : 0;
+        const edgeCss = (edge?: PaperParagraphBorderEdge) =>
+          edge ? `${(edge.widthPt * 1.333 * zoom).toFixed(2)}px solid ${edge.color}` : undefined;
+        // Inside a continuous callout, top padding/stroke belongs to the first paragraph only and bottom to the
+        // last; the interior boundaries carry neither so the paragraphs read as one box.
+        const padTopPx = continuousBox && !isFirstPara ? 0 : borderPadPx;
+        const padBottomPx = continuousBox && !isLastPara ? 0 : borderPadPx;
+        const paragraphStyle: React.CSSProperties = {
+          marginTop: spaceBefore || undefined,
+          marginBottom: spaceAfter || undefined,
+          textAlign: paragraph.align,
+          paddingLeft: indentLeftPx + borderPadPx || undefined,
+          paddingRight: rightIndentPx + borderPadPx || undefined,
+          paddingTop: padTopPx || undefined,
+          paddingBottom: padBottomPx || undefined,
+          textIndent,
+          background: paragraph.shading || undefined,
+          ...(borders
+            ? {
+                borderTop: continuousBox && !isFirstPara ? undefined : edgeCss(borders.top),
+                borderLeft: edgeCss(borders.left),
+                borderBottom: continuousBox && !isLastPara ? undefined : edgeCss(borders.bottom),
+                borderRight: edgeCss(borders.right),
+              }
+            : {}),
+          ...(dropCapLines ? ({ '--sl-dropcap-lines': String(dropCapLines) } as React.CSSProperties) : {}),
+        };
+        const hasText = paragraph.runs.some((run) => run.text.length > 0);
+        return (
+          <div className={dropCapLines ? 'paper-dropcap' : undefined} key={index} style={paragraphStyle}>
+            {paragraph.listMarker ? <span>{`${paragraph.listMarker} `}</span> : null}
+            {hasText
+              ? paragraph.runs.map((run, runIndex) => {
+                  const runStyle = paperRunReactStyle(run, zoom);
+                  return run.link ? (
+                    <a href={run.link} key={runIndex} onClick={(event) => event.preventDefault()} style={runStyle}>
+                      {renderPaperInlineText(run.text, vertical)}
+                    </a>
+                  ) : (
+                    <span key={runIndex} style={runStyle}>
+                      {renderPaperInlineText(run.text, vertical)}
+                    </span>
+                  );
+                })
+              : ' '}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -8568,6 +8932,7 @@ function PaperEditableText({
   onCommit,
   style,
   value,
+  vertical = false,
 }: {
   className: string;
   onCancel: () => void;
@@ -8575,10 +8940,15 @@ function PaperEditableText({
   onCommit: (text: string) => void;
   style?: React.CSSProperties;
   value: string;
+  vertical?: boolean;
 }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const finishedRef = useRef(false);
   const initialValueRef = useRef(value);
+  const { t, tBoth } = useI18n();
+  // Vertical (manga) frames get a tiny ルビ/圏 toolbar so a letterer can add furigana/emphasis without typing the
+  // fullwidth 《》 by hand (which otherwise needs a Japanese IME). Positioned once at mount, above the editor.
+  const [toolbarPos, setToolbarPos] = useState<{ left: number; top: number } | null>(null);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -8591,7 +8961,11 @@ function PaperEditableText({
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
-  }, []);
+    if (vertical) {
+      const rect = editor.getBoundingClientRect();
+      setToolbarPos({ left: Math.max(4, rect.left), top: Math.max(4, rect.top - 30) });
+    }
+  }, [vertical]);
 
   const readText = () => normalizePaperInlineText(editorRef.current?.innerText ?? '');
   const finishCommit = () => {
@@ -8604,35 +8978,375 @@ function PaperEditableText({
     finishedRef.current = true;
     onCancel();
   };
+  // Wrap the current selection in furigana (語《》) or emphasis (《《語》》) notation. Inserted as plain text so it
+  // round-trips through the frame text and renders as <ruby>/圏点 in the non-editing view.
+  const wrapNotation = (before: string, after: string, caretBackBy = 0) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const selected = sel.toString();
+    if (!selected && before) return; // emphasis needs a word; furigana may open an empty 《》
+    document.execCommand('insertText', false, `${before}${selected}${after}`);
+    const movable = sel as Selection & { modify?: (alter: string, direction: string, granularity: string) => void };
+    for (let i = 0; i < caretBackBy; i += 1) movable.modify?.('move', 'backward', 'character');
+    onChange(readText());
+  };
+  const miniButton = (label: React.ReactNode, title: string, onApply: () => void) => (
+    <button
+      className="min-w-[20px] rounded px-1 py-0.5 text-[11px] font-semibold leading-none text-slate-100 hover:bg-cyan-500/30"
+      onClick={(event) => { event.preventDefault(); onApply(); }}
+      onMouseDown={(event) => event.preventDefault()}
+      title={title}
+      type="button"
+    >
+      {label}
+    </button>
+  );
 
   return (
-    <div
-      className={className}
-      contentEditable
-      onBlur={finishCommit}
-      onInput={() => onChange(readText())}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') {
-          event.preventDefault();
+    <>
+      <div
+        className={className}
+        contentEditable
+        onBlur={finishCommit}
+        onInput={() => onChange(readText())}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            finishCancel();
+            event.currentTarget.blur();
+            return;
+          }
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            event.stopPropagation();
+            finishCommit();
+            event.currentTarget.blur();
+          }
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+        ref={editorRef}
+        role="textbox"
+        spellCheck
+        style={style}
+        suppressContentEditableWarning
+      />
+      {vertical && toolbarPos && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="fixed z-[999] flex items-center gap-0.5 rounded-md border border-cyan-400/40 bg-slate-900/95 px-1.5 py-1 text-slate-100 shadow-xl"
+              onMouseDown={(event) => { if (event.target === event.currentTarget) event.preventDefault(); }}
+              style={{ left: toolbarPos.left, top: toolbarPos.top }}
+            >
+              {miniButton(tBoth('paper.jp.furigana'), t('paper.jp.furigana.tooltip'), () => wrapNotation('', '《》', 1))}
+              {miniButton(<span style={{ textEmphasis: 'filled sesame', textEmphasisPosition: 'over' } as React.CSSProperties}>圏</span>, t('paper.jp.emphasis.tooltip'), () => wrapNotation('《《', '》》'))}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}
+
+const PAPER_RICH_FONT_CHOICES: Array<{ label: string; value: string }> = [
+  { label: 'Sans (Inter)', value: 'Inter, system-ui, sans-serif' },
+  { label: 'Serif (Georgia)', value: 'Georgia, "Times New Roman", serif' },
+  { label: 'Times New Roman', value: '"Times New Roman", Times, serif' },
+  { label: 'Arial', value: 'Arial, Helvetica, sans-serif' },
+  { label: 'Garamond', value: 'Garamond, "Times New Roman", serif' },
+  { label: 'Verdana', value: 'Verdana, Geneva, sans-serif' },
+  { label: 'Courier (mono)', value: '"Courier New", Courier, monospace' },
+];
+const PAPER_RICH_SIZE_CHOICES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 32, 48];
+
+/**
+ * WYSIWYG editor for an inline-rich text frame: an uncontrolled contentEditable seeded from the frame's runs,
+ * with a floating formatting toolbar (bold/italic/underline/strike, super/subscript, lists, font, size,
+ * colour). On commit it serialises the DOM back to runs. Only rich frames use it — every other text frame
+ * keeps the plain single-style editor, so nothing else in Sloom changes.
+ */
+function PaperRichEditableText({
+  baseStyle,
+  className,
+  frame,
+  onCancel,
+  onCommit,
+  zoom,
+}: {
+  baseStyle: React.CSSProperties;
+  className: string;
+  frame: PaperFrame;
+  onCancel: () => void;
+  onCommit: (text: string, richText: PaperRichParagraph[]) => void;
+  zoom: number;
+}) {
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const finishedRef = useRef(false);
+  const savedRangeRef = useRef<Range | null>(null);
+  const [toolbarPos, setToolbarPos] = useState<{ left: number; top: number } | null>(null);
+  const { t, tBoth } = useI18n();
+
+  const base = {
+    colorHex: (frame.typography.color || '#111827').toLowerCase(),
+    fontFamily: frame.typography.fontFamily,
+    fontSizePx: frame.typography.fontSizePt * 1.333 * zoom,
+    zoom,
+  };
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.innerHTML = richTextToEditorHtml(frame.richText ?? [], zoom);
+    try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* older engines */ }
+    editor.focus();
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const rect = editor.getBoundingClientRect();
+    setToolbarPos({ left: Math.max(8, Math.min(rect.left, window.innerWidth - 620)), top: Math.max(8, rect.top - 42) });
+
+    // Remember the last selection that lived inside the editor, so toolbar clicks (which move focus) still
+    // apply to the text the user had highlighted.
+    const onSelectionChange = () => {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount && editor.contains(sel.anchorNode)) savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    };
+    document.addEventListener('selectionchange', onSelectionChange);
+    return () => document.removeEventListener('selectionchange', onSelectionChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const restoreSelection = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    const sel = window.getSelection();
+    const range = savedRangeRef.current;
+    if (range && (!sel?.rangeCount || !editor.contains(sel.anchorNode))) {
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    }
+  };
+
+  const runCommand = (command: string, value?: string) => {
+    restoreSelection();
+    try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* older engines */ }
+    document.execCommand(command, false, value);
+  };
+  const applyFontSizePt = (pt: number) => {
+    restoreSelection();
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+    const range = sel.getRangeAt(0);
+    const span = document.createElement('span');
+    span.style.fontSize = `${(pt * 1.333 * zoom).toFixed(2)}px`;
+    try {
+      range.surroundContents(span);
+    } catch {
+      span.appendChild(range.extractContents());
+      range.insertNode(span);
+    }
+    sel.removeAllRanges();
+    const next = document.createRange();
+    next.selectNodeContents(span);
+    sel.addRange(next);
+    savedRangeRef.current = next.cloneRange();
+  };
+  // Wrap the selection in Japanese inline notation (furigana 語《》 or emphasis 《《語》》). The notation is
+  // inserted as plain text — it round-trips through the frame text and renders as <ruby>/圏点 in the non-editing
+  // view (same as typing it by hand), so it also survives export. `caretBackBy` drops the caret inside a trailing
+  // 《》 so the letterer can type the reading immediately after pressing ルビ.
+  const wrapSelectionWithNotation = (before: string, after: string, caretBackBy = 0) => {
+    restoreSelection();
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const selected = sel.toString();
+    if (!selected && before) return; // emphasis needs a word to mark; furigana (before='') may open an empty 《》
+    document.execCommand('insertText', false, `${before}${selected}${after}`);
+    const movable = sel as Selection & { modify?: (alter: string, direction: string, granularity: string) => void };
+    for (let i = 0; i < caretBackBy; i += 1) movable.modify?.('move', 'backward', 'character');
+  };
+
+  // Paragraph-level authoring operates on the block(s) the selection touches, setting BOTH inline style (live
+  // preview) and the `data-*` attribute the serializer round-trips — so the change survives the edit commit.
+  const blocksInSelection = (): HTMLElement[] => {
+    const editor = editorRef.current;
+    if (!editor) return [];
+    const blocks = Array.from(editor.children).filter((c) => c.nodeName === 'DIV' || c.nodeName === 'P') as HTMLElement[];
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return blocks.slice(0, 1);
+    const range = sel.getRangeAt(0);
+    const inRange = blocks.filter((b) => {
+      try { return range.intersectsNode(b); } catch { return false; }
+    });
+    if (inRange.length) return inRange;
+    let node: Node | null = sel.anchorNode;
+    while (node && node.parentElement !== editor) node = node.parentElement;
+    return node instanceof HTMLElement ? [node] : blocks.slice(0, 1);
+  };
+  const updateBlocks = (mutator: (el: HTMLElement) => void) => {
+    restoreSelection();
+    blocksInSelection().forEach(mutator);
+  };
+  const setParagraphAlign = (align: 'left' | 'center' | 'right' | 'justify') =>
+    updateBlocks((el) => { el.style.textAlign = align; el.dataset.align = align; });
+  const toggleDropCap = () =>
+    updateBlocks((el) => {
+      if (el.dataset.dc) { delete el.dataset.dc; el.classList.remove('paper-dropcap'); el.style.removeProperty('--sl-dropcap-lines'); }
+      else { el.dataset.dc = '3'; el.classList.add('paper-dropcap'); el.style.setProperty('--sl-dropcap-lines', '3'); }
+    });
+  const setParagraphShading = (hex: string) =>
+    updateBlocks((el) => { el.dataset.shade = hex; el.style.backgroundColor = hex; });
+  const clearParagraphFormat = () =>
+    updateBlocks((el) => {
+      for (const key of ['align', 'shade', 'dc', 'sb', 'sa', 'fi', 'li', 'hi', 'borders']) delete el.dataset[key];
+      el.classList.remove('paper-dropcap');
+      el.removeAttribute('style');
+    });
+
+  const commit = () => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    const editor = editorRef.current;
+    if (!editor) { onCancel(); return; }
+    const richText = serializeRichEditor(editor, base);
+    if (JSON.stringify(richText) === JSON.stringify(frame.richText ?? [])) { onCancel(); return; }
+    onCommit(flattenPaperRichText(richText), richText);
+  };
+  const cancel = () => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    onCancel();
+  };
+
+  const toolButton = (label: React.ReactNode, title: string, onApply: () => void) => (
+    <button
+      className="min-w-[22px] rounded px-1.5 py-0.5 text-[11px] font-semibold leading-none text-slate-100 hover:bg-cyan-500/30"
+      onClick={(event) => { event.preventDefault(); onApply(); }}
+      onMouseDown={(event) => event.preventDefault()}
+      title={title}
+      type="button"
+    >
+      {label}
+    </button>
+  );
+
+  const toolbar = toolbarPos && typeof document !== 'undefined'
+    ? createPortal(
+        <div
+          className="fixed z-[999] flex items-center gap-0.5 rounded-md border border-cyan-400/40 bg-slate-900/95 px-1.5 py-1 text-slate-100 shadow-xl"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) event.preventDefault(); }}
+          ref={toolbarRef}
+          style={{ left: toolbarPos.left, top: toolbarPos.top }}
+        >
+          {toolButton(<b>B</b>, 'Bold (Ctrl+B)', () => runCommand('bold'))}
+          {toolButton(<i>I</i>, 'Italic (Ctrl+I)', () => runCommand('italic'))}
+          {toolButton(<u>U</u>, 'Underline (Ctrl+U)', () => runCommand('underline'))}
+          {toolButton(<s>S</s>, 'Strikethrough', () => runCommand('strikeThrough'))}
+          {toolButton(<span>x²</span>, 'Superscript', () => runCommand('superscript'))}
+          {toolButton(<span>x₂</span>, 'Subscript', () => runCommand('subscript'))}
+          <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
+          {toolButton('•', 'Bullet list', () => runCommand('insertUnorderedList'))}
+          {toolButton('1.', 'Numbered list', () => runCommand('insertOrderedList'))}
+          <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
+          {toolButton(tBoth('paper.jp.furigana'), t('paper.jp.furigana.tooltip'), () => wrapSelectionWithNotation('', '《》', 1))}
+          {toolButton(<span style={{ textEmphasis: 'filled sesame', textEmphasisPosition: 'over' } as React.CSSProperties}>圏</span>, t('paper.jp.emphasis.tooltip'), () => wrapSelectionWithNotation('《《', '》》'))}
+          <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
+          <select
+            className="rounded bg-slate-800 px-1 py-0.5 text-[11px]"
+            onChange={(event) => { const value = event.target.value; event.currentTarget.selectedIndex = 0; if (value) runCommand('fontName', value); }}
+            title="Font"
+            value=""
+          >
+            <option value="">Font…</option>
+            {PAPER_RICH_FONT_CHOICES.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}
+          </select>
+          <select
+            className="rounded bg-slate-800 px-1 py-0.5 text-[11px]"
+            onChange={(event) => { const value = event.target.value; event.currentTarget.selectedIndex = 0; if (value) applyFontSizePt(Number(value)); }}
+            title="Font size (pt)"
+            value=""
+          >
+            <option value="">Size…</option>
+            {PAPER_RICH_SIZE_CHOICES.map((size) => <option key={size} value={size}>{size}</option>)}
+          </select>
+          <input
+            aria-label="Text colour"
+            className="h-5 w-6 cursor-pointer rounded border border-cyan-300/20 bg-transparent p-0"
+            onChange={(event) => runCommand('foreColor', event.target.value)}
+            title="Text colour"
+            type="color"
+          />
+          <label className="flex h-5 w-6 cursor-pointer items-center justify-center rounded border border-cyan-300/20 text-[11px]" title="Highlight colour">
+            <span aria-hidden className="pointer-events-none">🖊</span>
+            <input
+              aria-label="Highlight colour"
+              className="sr-only"
+              onChange={(event) => runCommand('hiliteColor', event.target.value)}
+              type="color"
+            />
+          </label>
+          <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
+          {toolButton(<span aria-hidden>⇤</span>, 'Align left', () => setParagraphAlign('left'))}
+          {toolButton(<span aria-hidden>≡</span>, 'Align centre', () => setParagraphAlign('center'))}
+          {toolButton(<span aria-hidden>⇥</span>, 'Align right', () => setParagraphAlign('right'))}
+          {toolButton(<span aria-hidden>▤</span>, 'Justify', () => setParagraphAlign('justify'))}
+          {toolButton(<span className="font-serif">D̲</span>, 'Toggle drop cap', () => toggleDropCap())}
+          <label className="flex h-5 w-6 cursor-pointer items-center justify-center rounded border border-cyan-300/20 text-[11px]" title="Paragraph shading">
+            <span aria-hidden className="pointer-events-none">▦</span>
+            <input
+              aria-label="Paragraph shading colour"
+              className="sr-only"
+              onChange={(event) => setParagraphShading(event.target.value)}
+              type="color"
+            />
+          </label>
+          <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
+          {toolButton('⌫', 'Clear run formatting', () => runCommand('removeFormat'))}
+          {toolButton(<span aria-hidden>¶⌫</span>, 'Clear paragraph formatting', () => clearParagraphFormat())}
+        </div>,
+        document.body,
+      )
+    : null;
+
+  return (
+    <>
+      {toolbar}
+      <div
+        className={className}
+        contentEditable
+        onBlur={(event) => {
+          // Interacting with the floating toolbar (select/colour) moves focus there — don't commit/close then.
+          if (toolbarRef.current && event.relatedTarget instanceof Node && toolbarRef.current.contains(event.relatedTarget)) return;
+          commit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            cancel();
+            event.currentTarget.blur();
+            return;
+          }
+          // Enter inserts a new paragraph (word-processor behaviour); commit happens on blur / Escape. Stop
+          // propagation so the workspace's global shortcuts don't fire while typing.
           event.stopPropagation();
-          finishCancel();
-          event.currentTarget.blur();
-          return;
-        }
-        if (event.key === 'Enter' && !event.shiftKey) {
-          event.preventDefault();
-          event.stopPropagation();
-          finishCommit();
-          event.currentTarget.blur();
-        }
-      }}
-      onPointerDown={(event) => event.stopPropagation()}
-      ref={editorRef}
-      role="textbox"
-      spellCheck
-      style={style}
-      suppressContentEditableWarning
-    />
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+        ref={editorRef}
+        role="textbox"
+        spellCheck
+        style={baseStyle}
+        suppressContentEditableWarning
+      />
+    </>
   );
 }
 
@@ -8841,6 +9555,7 @@ export function PaperContextMenu({
   selectedFrameCount: number;
   sourceItems: SourceBinLibraryItem[];
 }) {
+  const { t, tf, locale } = useI18n();
   const imageItems = sourceItems.filter((item) => item.kind === 'image').slice(0, 8);
   const textItems = sourceItems.filter((item) => item.kind === 'text').slice(0, 8);
   const groupedFrameActions = groupContextActions(PAPER_FRAME_CONTEXT_ACTIONS);
@@ -8895,8 +9610,8 @@ export function PaperContextMenu({
         <>
           <MenuHeading label={frame.label} />
           {isComicSfxFrame ? (
-            <MenuGroup label="Comic SFX">
-              <MenuButton label="Edit Decal in Designer" onClick={() => {
+            <MenuGroup label={t('paper.ctx.comicSfx')}>
+              <MenuButton label={t('paper.ctx.editDecal')} onClick={() => {
                 onEditComicSfxFrame(context.pageId, frame);
                 onClose();
               }} />
@@ -8904,97 +9619,97 @@ export function PaperContextMenu({
           ) : null}
           {frame.asset?.kind === 'image' && !isComicSfxFrame ? (
             <>
-              <MenuButton label="Quick Edit Image..." onClick={() => {
+              <MenuButton label={t('paper.ctx.quickEdit')} onClick={() => {
                 if (context.frameId) onQuickEditImageFrame(context.pageId, context.frameId);
                 onClose();
               }} />
-              <MenuButton label="AI Fix Frame..." onClick={() => {
+              <MenuButton label={t('paper.ctx.aiFix')} onClick={() => {
                 if (context.frameId) onAiFixImageFrame(context.pageId, context.frameId);
                 onClose();
               }} />
-              <MenuButton label="Edit in Image Workspace" onClick={() => {
+              <MenuButton label={t('paper.ctx.editInImage')} onClick={() => {
                 onOpenImageFrame(context.pageId, context.frameId, frame);
                 onClose();
               }} />
-              <MenuButton label="Upscale for Print" onClick={() => {
+              <MenuButton label={t('paper.ctx.upscale')} onClick={() => {
                 onUpscaleFrameForPrint(context.pageId, frame);
               }} />
-              <MenuButton label="Send Image to Flow Workspace" onClick={() => {
+              <MenuButton label={t('paper.ctx.sendToFlow')} onClick={() => {
                 onSendFrameSourceToFlow(frame);
                 onClose();
               }} />
-              <MenuButton label="Locate Generator in Flow Canvas" onClick={() => {
+              <MenuButton label={t('paper.ctx.locateInFlow')} onClick={() => {
                 onLocateFrameSourceInFlow?.(frame);
                 onClose();
               }} />
-              <MenuButton label="Reveal / Use in Video Tab" onClick={() => {
+              <MenuButton label={t('paper.ctx.useInVideo')} onClick={() => {
                 onSendFrameSourceToVideo(frame);
                 onClose();
               }} />
             </>
           ) : null}
           {Object.entries(groupedFrameActions).map(([group, actions]) => (
-            <MenuGroup key={group} label={group}>
+            <MenuGroup key={group} label={paperActionGroupLabel(group, locale)}>
               {actions.map((action) => (
                 <MenuButton
                   key={action.id}
-                  label={action.label}
+                  label={paperActionLabel(action, locale)}
                   onClick={() => onApplyFrameAction(context.pageId, context.frameId!, action.id)}
                 />
               ))}
             </MenuGroup>
           ))}
-          <MenuGroup label="Style Clipboard">
-            <MenuButton label="Copy Style" onClick={onCopyFrameStyle} />
-            <MenuButton disabled={!hasStyleClipboard} label="Paste Style to Selection" onClick={onPasteFrameStyle} />
+          <MenuGroup label={t('paper.ctx.styleClipboard')}>
+            <MenuButton label={t('paper.ctx.copyStyle')} onClick={onCopyFrameStyle} />
+            <MenuButton disabled={!hasStyleClipboard} label={t('paper.ctx.pasteStyle')} onClick={onPasteFrameStyle} />
           </MenuGroup>
           {selectedBubbleCount >= 2 ? (
-            <MenuGroup label="Bubble Chain">
-              <MenuButton label={`Same Speaker — Merge ${selectedBubbleCount} Bubbles`} onClick={() => onChainSelectedBubbles('bridge')} />
-              <MenuButton label="Link with Connector Line" onClick={() => onChainSelectedBubbles('line')} />
-              <MenuButton label="Link with Tail" onClick={() => onChainSelectedBubbles('tail')} />
-              <MenuButton label="Link as Thought Trail" onClick={() => onChainSelectedBubbles('thought-dots')} />
-              <MenuButton label="Unchain Selected Bubbles" onClick={onUnchainSelectedBubbles} />
+            <MenuGroup label={t('paper.ctx.bubbleChain')}>
+              <MenuButton label={tf('paper.ctx.mergeBubbles', { count: selectedBubbleCount })} onClick={() => onChainSelectedBubbles('bridge')} />
+              <MenuButton label={t('paper.ctx.linkLine')} onClick={() => onChainSelectedBubbles('line')} />
+              <MenuButton label={t('paper.ctx.linkTail')} onClick={() => onChainSelectedBubbles('tail')} />
+              <MenuButton label={t('paper.ctx.linkThought')} onClick={() => onChainSelectedBubbles('thought-dots')} />
+              <MenuButton label={t('paper.ctx.unchainSelected')} onClick={onUnchainSelectedBubbles} />
             </MenuGroup>
           ) : frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble' ? (
-            <MenuGroup label="Bubble Chain">
-              <MenuButton label="Unchain This Bubble" onClick={onUnchainSelectedBubbles} />
+            <MenuGroup label={t('paper.ctx.bubbleChain')}>
+              <MenuButton label={t('paper.ctx.unchainThis')} onClick={onUnchainSelectedBubbles} />
             </MenuGroup>
           ) : null}
           {selectedTextFrameCount >= 2 ? (
-            <MenuGroup label="Text Thread">
-              <MenuButton label={`Thread ${selectedTextFrameCount} Text Frames`} onClick={onThreadSelectedFrames} />
-              <MenuButton label="Unthread Selected Frames" onClick={onUnthreadSelectedFrames} />
+            <MenuGroup label={t('paper.ctx.textThread')}>
+              <MenuButton label={tf('paper.ctx.threadFrames', { count: selectedTextFrameCount })} onClick={onThreadSelectedFrames} />
+              <MenuButton label={t('paper.ctx.unthreadSelected')} onClick={onUnthreadSelectedFrames} />
             </MenuGroup>
           ) : frame && frame.kind === 'text' && frame.threadId ? (
-            <MenuGroup label="Text Thread">
-              <MenuButton label="Unthread This Frame" onClick={onUnthreadSelectedFrames} />
+            <MenuGroup label={t('paper.ctx.textThread')}>
+              <MenuButton label={t('paper.ctx.unthreadThis')} onClick={onUnthreadSelectedFrames} />
             </MenuGroup>
           ) : null}
           {selectedFrameCount >= 2 ? (
-            <MenuGroup label="Align & Distribute">
+            <MenuGroup label={t('paper.ctx.alignDistribute')}>
               <div className="grid grid-cols-3 gap-1 px-2 py-1">
-                {(([['Left', 'left'], ['Center', 'centerX'], ['Right', 'right'], ['Top', 'top'], ['Middle', 'centerY'], ['Bottom', 'bottom']]) as Array<[string, PaperAlignEdge]>).map(([label, edge]) => (
+                {(([['paper.ctx.align.left', 'left'], ['paper.ctx.align.center', 'centerX'], ['paper.ctx.align.right', 'right'], ['paper.ctx.align.top', 'top'], ['paper.ctx.align.middle', 'centerY'], ['paper.ctx.align.bottom', 'bottom']]) as Array<[MessageKey, PaperAlignEdge]>).map(([labelKey, edge]) => (
                   <button
                     className="rounded border border-cyan-300/15 bg-[#101a29]/70 px-1.5 py-1 text-[11px] text-cyan-100/75 hover:border-cyan-300/40 hover:text-white"
                     key={edge}
                     onClick={() => onAlignSelectedFrames(edge)}
                     type="button"
                   >
-                    {label}
+                    {t(labelKey)}
                   </button>
                 ))}
               </div>
               {selectedFrameCount >= 3 ? (
                 <div className="grid grid-cols-2 gap-1 px-2 pb-2">
-                  {(([['Distribute H', 'horizontal'], ['Distribute V', 'vertical']]) as Array<[string, PaperDistributeAxis]>).map(([label, axis]) => (
+                  {(([['paper.ctx.distributeH', 'horizontal'], ['paper.ctx.distributeV', 'vertical']]) as Array<[MessageKey, PaperDistributeAxis]>).map(([labelKey, axis]) => (
                     <button
                       className="rounded border border-cyan-300/15 bg-[#101a29]/70 px-1.5 py-1 text-[11px] text-cyan-100/75 hover:border-cyan-300/40 hover:text-white"
                       key={axis}
                       onClick={() => onDistributeSelectedFrames(axis)}
                       type="button"
                     >
-                      {label}
+                      {t(labelKey)}
                     </button>
                   ))}
                 </div>
@@ -9002,7 +9717,7 @@ export function PaperContextMenu({
             </MenuGroup>
           ) : null}
           {imageItems.length || textItems.length ? (
-            <MenuGroup label="Place Source Asset">
+            <MenuGroup label={t('paper.ctx.placeSource')}>
               {[...imageItems, ...textItems].map((item) => (
                 <MenuButton
                   key={item.id}
@@ -9015,53 +9730,53 @@ export function PaperContextMenu({
         </>
       ) : (
         <>
-          <MenuHeading label="Page" />
-          <MenuGroup label="Send to Source Library">
+          <MenuHeading label={t('paper.ctx.page')} />
+          <MenuGroup label={t('paper.ctx.sendToSourceLib')}>
             <MenuButton
-              label="Send This Page to Source Library"
+              label={t('paper.ctx.sendThisPage')}
               onClick={() => onSendPageToSourceLibrary(context.pageId)}
             />
             <MenuButton
-              label="Send All Pages to Source Library"
+              label={t('paper.ctx.sendAllPages')}
               onClick={() => onSendAllPagesToSourceLibrary()}
             />
           </MenuGroup>
-          <MenuGroup label="Comic SFX">
+          <MenuGroup label={t('paper.ctx.comicSfx')}>
             {PAPER_COMIC_SFX_PRESET_IDS.map((presetId) => {
               const preset = getPaperComicSfxPreset(presetId);
               return (
                 <MenuButton
                   key={presetId}
-                  label={`Design ${preset.label} Here`}
+                  label={tf('paper.ctx.designHere', { name: preset.label })}
                   onClick={() => onAddComicSfx(presetId, context.pageId, context.point)}
                 />
               );
             })}
           </MenuGroup>
           {Object.entries(groupedPageActions).map(([group, actions]) => (
-            <MenuGroup key={group} label={group}>
+            <MenuGroup key={group} label={paperActionGroupLabel(group, locale)}>
               {actions.map((action) => (
                 <MenuButton
                   key={action.id}
-                  label={action.label}
+                  label={paperActionLabel(action, locale)}
                   onClick={() => onApplyPageAction(context.pageId, action.id, context.point)}
                 />
               ))}
             </MenuGroup>
           ))}
           {imageItems.length || textItems.length ? (
-            <MenuGroup label="Drop Source Here">
+            <MenuGroup label={t('paper.ctx.dropSource')}>
               {imageItems.map((item) => (
                 <MenuButton
                   key={item.id}
-                  label={`Image: ${item.label}`}
+                  label={tf('paper.ctx.imageItem', { name: item.label })}
                   onClick={() => onApplyPageAction(context.pageId, 'add-image-here', context.point, item)}
                 />
               ))}
               {textItems.map((item) => (
                 <MenuButton
                   key={item.id}
-                  label={`Text: ${item.label}`}
+                  label={tf('paper.ctx.textItem', { name: item.label })}
                   onClick={() => onApplyPageAction(context.pageId, 'add-caption-here', context.point, item)}
                 />
               ))}
@@ -9246,23 +9961,27 @@ function PaperInspector({
   selectedPageNumber: number;
   status: string;
 }) {
+  const { t } = useI18n();
   const frameTypography = frame?.typography;
   const documentBackground = document.background ?? DEFAULT_PAPER_BACKGROUND;
   const currentPage = document.pages.find((page) => page.pageNumber === selectedPageNumber) ?? document.pages[0];
   const effectiveFrame = frame ? computeEffectivePaperFrame(document, frame) : null;
   const selectedFontFamily = frameTypography?.fontFamily ?? '';
-  const selectedFontIsPreset = PAPER_FONT_OPTIONS.some((option) => option.value === selectedFontFamily);
+  const [newSpotName, setNewSpotName] = useState('');
+  const importedFontFamilies = [...new Set((document.importedFonts ?? []).map((font) => font.familyName))];
+  const selectedFontIsPreset = PAPER_FONT_OPTIONS.some((option) => option.value === selectedFontFamily)
+    || importedFontFamilies.includes(selectedFontFamily);
 
   return (
     <div className="flex min-h-full flex-col bg-[#101722]">
       <div className="border-b border-cyan-300/10 pb-3">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-100/50">Paper Inspector</div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-100/50">{t('paper.insp.title')}</div>
         <div className="mt-1 truncate text-sm font-semibold text-white">{documentTitle}</div>
         <div className="mt-2 text-xs text-cyan-100/50">Page {selectedPageNumber} of {pageCount}</div>
       </div>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pt-3">
-        <InspectorSection title="Document">
-          <Field label="Page Size">
+        <InspectorSection title={t('paper.insp.document')}>
+          <Field label={t('paper.insp.pageSize')}>
             <select
               className="paper-input"
               onChange={(event) => onUpdateDocumentSetup({ preset: event.target.value as PaperPagePreset })}
@@ -9277,17 +9996,17 @@ function PaperInspector({
           </Field>
           <div className="grid grid-cols-2 gap-2">
             <NumberField
-              label="Width mm"
+              label={t('paper.insp.widthMm')}
               onChange={(widthMm) => onUpdateDocumentSetup({ preset: 'custom', widthMm })}
               value={document.page.widthMm}
             />
             <NumberField
-              label="Height mm"
+              label={t('paper.insp.heightMm')}
               onChange={(heightMm) => onUpdateDocumentSetup({ preset: 'custom', heightMm })}
               value={document.page.heightMm}
             />
             <NumberField
-              label="Bleed mm"
+              label={t('paper.insp.bleedMm')}
               onChange={(bleedMm) => onUpdateDocumentSetup({ bleedMm })}
               value={document.page.bleedMm}
             />
@@ -9302,75 +10021,67 @@ function PaperInspector({
             Export raster target: {paperPixelsFromMm(document.page.widthMm, document.page.dpi)} x {paperPixelsFromMm(document.page.heightMm, document.page.dpi)} px
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <NumberField label="Margin T" onChange={(top) => onUpdateDocumentSetup({ marginsMm: { top } })} value={document.layout.marginsMm.top} />
-            <NumberField label="Margin R" onChange={(right) => onUpdateDocumentSetup({ marginsMm: { right } })} value={document.layout.marginsMm.right} />
-            <NumberField label="Margin B" onChange={(bottom) => onUpdateDocumentSetup({ marginsMm: { bottom } })} value={document.layout.marginsMm.bottom} />
-            <NumberField label="Margin L" onChange={(left) => onUpdateDocumentSetup({ marginsMm: { left } })} value={document.layout.marginsMm.left} />
+            <NumberField label={t('paper.insp.marginT')} onChange={(top) => onUpdateDocumentSetup({ marginsMm: { top } })} value={document.layout.marginsMm.top} />
+            <NumberField label={t('paper.insp.marginR')} onChange={(right) => onUpdateDocumentSetup({ marginsMm: { right } })} value={document.layout.marginsMm.right} />
+            <NumberField label={t('paper.insp.marginB')} onChange={(bottom) => onUpdateDocumentSetup({ marginsMm: { bottom } })} value={document.layout.marginsMm.bottom} />
+            <NumberField label={t('paper.insp.marginL')} onChange={(left) => onUpdateDocumentSetup({ marginsMm: { left } })} value={document.layout.marginsMm.left} />
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <NumberField label="Columns" onChange={(count) => onUpdateDocumentSetup({ columns: { count } })} step={1} value={document.layout.columns.count} />
-            <NumberField label="Gutter" onChange={(gutterMm) => onUpdateDocumentSetup({ columns: { gutterMm } })} value={document.layout.columns.gutterMm} />
-            <NumberField label="Grid mm" onChange={(sizeMm) => onUpdateDocumentSetup({ grid: { sizeMm } })} value={document.layout.grid.sizeMm} />
-            <NumberField label="Subdiv" onChange={(subdivisions) => onUpdateDocumentSetup({ grid: { subdivisions } })} step={1} value={document.layout.grid.subdivisions} />
+            <NumberField label={t('paper.insp.columns')} onChange={(count) => onUpdateDocumentSetup({ columns: { count } })} step={1} value={document.layout.columns.count} />
+            <NumberField label={t('paper.insp.gutter')} onChange={(gutterMm) => onUpdateDocumentSetup({ columns: { gutterMm } })} value={document.layout.columns.gutterMm} />
+            <NumberField label={t('paper.insp.gridMm')} onChange={(sizeMm) => onUpdateDocumentSetup({ grid: { sizeMm } })} value={document.layout.grid.sizeMm} />
+            <NumberField label={t('paper.insp.subdiv')} onChange={(subdivisions) => onUpdateDocumentSetup({ grid: { subdivisions } })} step={1} value={document.layout.grid.subdivisions} />
           </div>
           <label className="flex items-center gap-2 text-xs text-cyan-100/55">
             <input
               checked={document.layout.grid.enabled}
               onChange={(event) => onUpdateDocumentSetup({ grid: { enabled: event.target.checked } })}
               type="checkbox"
-            />
-            Grid enabled
-          </label>
+            />{t('paper.insp.gridEnabled')}</label>
           <div className="grid grid-cols-2 gap-2">
             <label className="flex items-center gap-2 text-xs text-cyan-100/55">
               <input
                 checked={document.view.snapToGuides}
                 onChange={() => onToggleViewOption('snapToGuides')}
                 type="checkbox"
-              />
-              Snap guides
-            </label>
+              />{t('paper.insp.snapGuides')}</label>
             <label className="flex items-center gap-2 text-xs text-cyan-100/55">
               <input
                 checked={document.view.snapToGrid}
                 onChange={() => onToggleViewOption('snapToGrid')}
                 type="checkbox"
-              />
-              Snap grid
-            </label>
+              />{t('paper.insp.snapGrid')}</label>
           </div>
           <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
             <div className="mb-2 flex items-center justify-between">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Baseline Grid</div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">{t('paper.insp.baselineGrid')}</div>
               <label className="flex items-center gap-1 text-xs text-cyan-100/55">
-                <input checked={document.view.showBaselineGrid} onChange={() => onToggleViewOption('showBaselineGrid')} type="checkbox" />
-                Show
-              </label>
+                <input checked={document.view.showBaselineGrid} onChange={() => onToggleViewOption('showBaselineGrid')} type="checkbox" />{t('paper.insp.show')}</label>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <NumberField label="Start mm" onChange={(startMm) => onUpdateDocumentSetup({ baselineGrid: { startMm: Math.max(0, startMm) } })} step={0.5} value={document.layout.baselineGrid.startMm} />
-              <NumberField label="Step mm" onChange={(incrementMm) => onUpdateDocumentSetup({ baselineGrid: { incrementMm: Math.max(0.5, incrementMm) } })} step={0.1} value={document.layout.baselineGrid.incrementMm} />
+              <NumberField label={t('paper.insp.startMm')} onChange={(startMm) => onUpdateDocumentSetup({ baselineGrid: { startMm: Math.max(0, startMm) } })} step={0.5} value={document.layout.baselineGrid.startMm} />
+              <NumberField label={t('paper.insp.stepMm')} onChange={(incrementMm) => onUpdateDocumentSetup({ baselineGrid: { incrementMm: Math.max(0.5, incrementMm) } })} step={0.1} value={document.layout.baselineGrid.incrementMm} />
             </div>
           </div>
           <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
-            <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Document Background</div>
-            <Field label="Type">
+            <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">{t('paper.insp.documentBackground')}</div>
+            <Field label={t('paper.insp.type')}>
               <select
                 className="paper-input"
                 onChange={(event) => onUpdateDocumentSetup({ background: { type: event.target.value as PaperDocument['background']['type'] } })}
                 value={documentBackground.type}
               >
-                <option value="solid">Solid color</option>
-                <option value="linear-gradient">Linear gradient</option>
-                <option value="radial-gradient">Radial gradient</option>
+                <option value="solid">{t('paper.insp.solidColor')}</option>
+                <option value="linear-gradient">{t('paper.insp.linearGradient')}</option>
+                <option value="radial-gradient">{t('paper.insp.radialGradient')}</option>
               </select>
             </Field>
             {documentBackground.type === 'solid' ? (
-              <Field label="Color">
+              <Field label={t('paper.insp.color')}>
                 <AdvancedColorPicker
                   className="h-8 w-full"
                   buttonClassName="rounded border border-cyan-300/15 bg-[#0b121d]"
-                  label="Document background color"
+                  label={t('paper.insp.docBgColor')}
                   onChange={(color) => onUpdateDocumentSetup({ background: { color } })}
                   value={cssColorToPickerValue(documentBackground.color)}
                 />
@@ -9378,20 +10089,20 @@ function PaperInspector({
             ) : (
               <>
                 <div className="grid grid-cols-2 gap-2">
-                  <Field label="From">
+                  <Field label={t('paper.insp.from')}>
                     <AdvancedColorPicker
                       className="h-8 w-full"
                       buttonClassName="rounded border border-cyan-300/15 bg-[#0b121d]"
-                      label="Document gradient from color"
+                      label={t('paper.insp.docGradFrom')}
                       onChange={(color) => onUpdateDocumentSetup({ background: { fromColor: color } })}
                       value={cssColorToPickerValue(documentBackground.fromColor)}
                     />
                   </Field>
-                  <Field label="To">
+                  <Field label={t('paper.insp.to')}>
                     <AdvancedColorPicker
                       className="h-8 w-full"
                       buttonClassName="rounded border border-cyan-300/15 bg-[#0b121d]"
-                      label="Document gradient to color"
+                      label={t('paper.insp.docGradTo')}
                       onChange={(color) => onUpdateDocumentSetup({ background: { toColor: color } })}
                       value={cssColorToPickerValue(documentBackground.toColor)}
                     />
@@ -9399,20 +10110,20 @@ function PaperInspector({
                 </div>
                 {documentBackground.type === 'linear-gradient' ? (
                   <NumberField
-                    label="Angle"
+                    label={t('paper.insp.angle')}
                     onChange={(angleDeg) => onUpdateDocumentSetup({ background: { angleDeg } })}
                     step={1}
                     value={documentBackground.angleDeg}
                   />
                 ) : (
-                  <Field label="Radial Shape">
+                  <Field label={t('paper.insp.radialShape')}>
                     <select
                       className="paper-input"
                       onChange={(event) => onUpdateDocumentSetup({ background: { radialShape: event.target.value as PaperDocument['background']['radialShape'] } })}
                       value={documentBackground.radialShape}
                     >
-                      <option value="ellipse">Ellipse</option>
-                      <option value="circle">Circle</option>
+                      <option value="ellipse">{t('paper.insp.ellipse')}</option>
+                      <option value="circle">{t('paper.insp.circle')}</option>
                     </select>
                   </Field>
                 )}
@@ -9424,19 +10135,19 @@ function PaperInspector({
             />
           </div>
           <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
-            <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Print Production</div>
-            <Field label="PDF Target">
+            <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">{t('paper.insp.printProduction')}</div>
+            <Field label={t('paper.insp.pdfTarget')}>
               <select
                 className="paper-input"
                 onChange={(event) => onUpdateDocumentSetup({ printProduction: { pdfStandard: event.target.value as PaperDocument['printProduction']['pdfStandard'] } })}
                 value={document.printProduction.pdfStandard}
               >
-                <option value="browser-pdf">Browser PDF proof</option>
-                <option value="pdf-x-4">PDF/X-4 intent</option>
-                <option value="pdf-x-1a">PDF/X-1a intent</option>
+                <option value="browser-pdf">{t('paper.insp.browserPdfProof')}</option>
+                <option value="pdf-x-4">{t('paper.insp.pdfx4')}</option>
+                <option value="pdf-x-1a">{t('paper.insp.pdfx1a')}</option>
               </select>
             </Field>
-            <Field label="Output Intent">
+            <Field label={t('paper.insp.outputIntent')}>
               <select
                 className="paper-input"
                 onChange={(event) => onUpdateDocumentSetup({ printProduction: { outputIntentProfileId: event.target.value as PaperDocument['printProduction']['outputIntentProfileId'] } })}
@@ -9450,7 +10161,7 @@ function PaperInspector({
               </select>
             </Field>
             {document.printProduction.outputIntentProfileId === 'custom' ? (
-              <Field label="Custom Intent Name">
+              <Field label={t('paper.insp.customIntentName')}>
                 <input
                   className="paper-input"
                   onChange={(event) => onUpdateDocumentSetup({ printProduction: { customOutputIntentName: event.target.value } })}
@@ -9459,31 +10170,31 @@ function PaperInspector({
               </Field>
             ) : null}
             <NumberField
-              label="Ink Limit %"
+              label={t('paper.insp.inkLimit')}
               onChange={(totalInkLimitPercent) => onUpdateDocumentSetup({ printProduction: { totalInkLimitPercent } })}
               step={1}
               value={document.printProduction.totalInkLimitPercent}
             />
-            <Field label="Black Handling">
+            <Field label={t('paper.insp.blackHandling')}>
               <select
                 className="paper-input"
                 onChange={(event) => onUpdateDocumentSetup({ printProduction: { blackPolicy: event.target.value as PaperDocument['printProduction']['blackPolicy'] } })}
                 value={document.printProduction.blackPolicy}
               >
-                <option value="warn-rich-black">Warn rich black</option>
-                <option value="force-100k-text">Force 100K text intent</option>
-                <option value="allow-rich-black">Allow rich black</option>
+                <option value="warn-rich-black">{t('paper.insp.warnRichBlack')}</option>
+                <option value="force-100k-text">{t('paper.insp.force100kText')}</option>
+                <option value="allow-rich-black">{t('paper.insp.allowRichBlack')}</option>
               </select>
             </Field>
-            <Field label="Spot Colors">
+            <Field label={t('paper.insp.spotColors')}>
               <select
                 className="paper-input"
                 onChange={(event) => onUpdateDocumentSetup({ printProduction: { spotColorPolicy: event.target.value as PaperDocument['printProduction']['spotColorPolicy'] } })}
                 value={document.printProduction.spotColorPolicy}
               >
-                <option value="warn">Warn if present</option>
-                <option value="convert-process">Convert/process intent</option>
-                <option value="preserve-named">Preserve named spots</option>
+                <option value="warn">{t('paper.insp.warnIfPresent')}</option>
+                <option value="convert-process">{t('paper.insp.convertProcess')}</option>
+                <option value="preserve-named">{t('paper.insp.preserveSpots')}</option>
               </select>
             </Field>
             <label className="flex items-center gap-2 text-xs text-cyan-100/55">
@@ -9491,49 +10202,43 @@ function PaperInspector({
                 checked={document.printProduction.overprintPreview}
                 onChange={(event) => onUpdateDocumentSetup({ printProduction: { overprintPreview: event.target.checked } })}
                 type="checkbox"
-              />
-              Overprint preview intent
-            </label>
+              />{t('paper.insp.overprintPreview')}</label>
           </div>
           <button
             className="w-full rounded-md border border-rose-300/20 bg-rose-400/10 px-3 py-2 text-left text-xs font-semibold text-rose-100 hover:border-rose-300/50"
             disabled={pageCount <= 1}
             onClick={onDeletePage}
             type="button"
-          >
-            Delete Current Page
-          </button>
+          >{t('paper.insp.deleteCurrentPage')}</button>
         </InspectorSection>
 
-        <InspectorSection title="Parent Pages">
-          <Field label="Current Page Parent">
+        <InspectorSection title={t('paper.insp.parentPages')}>
+          <Field label={t('paper.insp.currentPageParent')}>
             <select
               className="paper-input"
               onChange={(event) => onAssignParentPage(event.target.value)}
               value={currentPage?.parentPageId ?? ''}
             >
-              <option value="">None</option>
+              <option value="">{t('paper.insp.none')}</option>
               {document.parentPages.map((parent) => <option key={parent.id} value={parent.id}>{parent.name}</option>)}
             </select>
           </Field>
           <div className="grid grid-cols-2 gap-2">
-            <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs font-semibold text-cyan-100/70 hover:border-cyan-300/40" onClick={onAddParentPage} type="button">New Parent</button>
+            <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs font-semibold text-cyan-100/70 hover:border-cyan-300/40" onClick={onAddParentPage} type="button">{t('paper.insp.newParent')}</button>
             <button
               className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs font-semibold text-cyan-100/70 hover:border-cyan-300/40 disabled:opacity-40"
               disabled={!frame || !currentPage?.parentPageId}
               onClick={() => currentPage?.parentPageId && onAddSelectedFrameToParent(currentPage.parentPageId)}
               type="button"
-            >
-              Add Frame to Parent
-            </button>
+            >{t('paper.insp.addFrameToParent')}</button>
           </div>
-          <div className="text-[11px] leading-4 text-cyan-100/45">Inherited parent items render locked under page frames and are included in print/PDF/flatten exports.</div>
+          <div className="text-[11px] leading-4 text-cyan-100/45">{t('paper.insp.inheritedParentInfo')}</div>
         </InspectorSection>
 
         {frame ? (
           <>
             {frame.comicSfxDesign ? (
-              <InspectorSection title="Comic SFX Decal">
+              <InspectorSection title={t('paper.insp.comicSfxDecal')}>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold text-cyan-50">{frame.comicSfxDesign.text}</div>
@@ -9543,46 +10248,44 @@ function PaperInspector({
                     className="rounded-md border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs font-semibold text-amber-100 hover:border-amber-300/50 hover:text-white"
                     onClick={onEditComicSfxFrame}
                     type="button"
-                  >
-                    Edit
-                  </button>
+                  >{t('paper.insp.edit')}</button>
                 </div>
               </InspectorSection>
             ) : null}
-            <InspectorSection title="Styles">
+            <InspectorSection title={t('paper.insp.styles')}>
               {frame.kind !== 'image' && frame.kind !== 'panel' ? (
                 <>
-                  <Field label="Paragraph Style">
+                  <Field label={t('paper.insp.paragraphStyle')}>
                     <select className="paper-input" onChange={(event) => onUpdateFrame({ paragraphStyleId: event.target.value || undefined })} value={frame.paragraphStyleId ?? ''}>
-                      <option value="">None</option>
+                      <option value="">{t('paper.insp.none')}</option>
                       {document.styles.paragraph.map((style) => <option key={style.id} value={style.id}>{style.name}</option>)}
                     </select>
                   </Field>
-                  <Field label="Character Style">
+                  <Field label={t('paper.insp.characterStyle')}>
                     <select className="paper-input" onChange={(event) => onUpdateFrame({ characterStyleId: event.target.value || undefined })} value={frame.characterStyleId ?? ''}>
-                      <option value="">None</option>
+                      <option value="">{t('paper.insp.none')}</option>
                       {document.styles.character.map((style) => <option key={style.id} value={style.id}>{style.name}</option>)}
                     </select>
                   </Field>
                 </>
               ) : null}
-              <Field label="Object Style">
+              <Field label={t('paper.insp.objectStyle')}>
                 <select className="paper-input" onChange={(event) => onUpdateFrame({ objectStyleId: event.target.value || undefined })} value={frame.objectStyleId ?? ''}>
-                  <option value="">None</option>
+                  <option value="">{t('paper.insp.none')}</option>
                   {document.styles.object.map((style) => <option key={style.id} value={style.id}>{style.name}</option>)}
                 </select>
               </Field>
               <div className="grid grid-cols-2 gap-2">
-                <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs text-cyan-100/70" onClick={onCopyStyle} type="button">Copy Style</button>
-                <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs text-cyan-100/70 disabled:opacity-40" disabled={!canPasteStyle} onClick={onPasteStyle} type="button">Paste Style</button>
-                <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs text-cyan-100/70" disabled={!frame.paragraphStyleId} onClick={() => onRedefineStyle('paragraph')} type="button">Redefine Para</button>
-                <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs text-cyan-100/70" disabled={!frame.objectStyleId} onClick={() => onRedefineStyle('object')} type="button">Redefine Obj</button>
-                <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs text-cyan-100/70" onClick={onClearStyleLinks} type="button">Clear Links</button>
-                <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs text-cyan-100/70" onClick={onClearStyleOverrides} type="button">Clear Overrides</button>
+                <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs text-cyan-100/70" onClick={onCopyStyle} type="button">{t('paper.insp.copyStyle')}</button>
+                <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs text-cyan-100/70 disabled:opacity-40" disabled={!canPasteStyle} onClick={onPasteStyle} type="button">{t('paper.insp.pasteStyle')}</button>
+                <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs text-cyan-100/70" disabled={!frame.paragraphStyleId} onClick={() => onRedefineStyle('paragraph')} type="button">{t('paper.insp.redefinePara')}</button>
+                <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs text-cyan-100/70" disabled={!frame.objectStyleId} onClick={() => onRedefineStyle('object')} type="button">{t('paper.insp.redefineObj')}</button>
+                <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs text-cyan-100/70" onClick={onClearStyleLinks} type="button">{t('paper.insp.clearLinks')}</button>
+                <button className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 py-1 text-xs text-cyan-100/70" onClick={onClearStyleOverrides} type="button">{t('paper.insp.clearOverrides')}</button>
               </div>
             </InspectorSection>
-            <InspectorSection title="Frame">
-              <Field label="Label">
+            <InspectorSection title={t('paper.insp.frame')}>
+              <Field label={t('paper.insp.label')}>
                 <input className="paper-input" onChange={(e) => onUpdateFrame({ label: e.target.value })} value={frame.label} />
               </Field>
               <div className="grid grid-cols-2 gap-2">
@@ -9591,26 +10294,26 @@ function PaperInspector({
                 <NumberField label="W" onChange={(widthMm) => onUpdateFrame({ widthMm })} value={frame.widthMm} />
                 <NumberField label="H" onChange={(heightMm) => onUpdateFrame({ heightMm })} value={frame.heightMm} />
               </div>
-                <NumberField label="Rotation" onChange={(rotationDeg) => onUpdateFrame({ rotationDeg })} value={frame.rotationDeg} />
+                <NumberField label={t('paper.insp.rotation')} onChange={(rotationDeg) => onUpdateFrame({ rotationDeg })} value={frame.rotationDeg} />
               <div className="grid grid-cols-2 gap-2">
-                <NumberField label="Stroke" onChange={(strokeWidthMm) => onUpdateFrame({ strokeWidthMm })} value={frame.strokeWidthMm} />
-                <NumberField label="Radius" onChange={(cornerRadiusMm) => onUpdateFrame({ cornerRadiusMm })} value={frame.cornerRadiusMm} />
+                <NumberField label={t('paper.insp.stroke')} onChange={(strokeWidthMm) => onUpdateFrame({ strokeWidthMm })} value={frame.strokeWidthMm} />
+                <NumberField label={t('paper.insp.radius')} onChange={(cornerRadiusMm) => onUpdateFrame({ cornerRadiusMm })} value={frame.cornerRadiusMm} />
               </div>
-              <Field label="Border Style">
+              <Field label={t('paper.insp.borderStyle')}>
                 <select
                   className="paper-input"
                   onChange={(event) => onUpdateFrame({ strokeStyle: event.target.value as PaperFrame['strokeStyle'] })}
                   value={frame.strokeStyle}
                 >
-                  <option value="solid">Solid</option>
-                  <option value="dashed">Dashed</option>
-                  <option value="dotted">Dotted</option>
-                  <option value="double">Double</option>
-                  <option value="groove">Groove</option>
-                  <option value="ridge">Ridge</option>
+                  <option value="solid">{t('paper.insp.solid')}</option>
+                  <option value="dashed">{t('paper.insp.dashed')}</option>
+                  <option value="dotted">{t('paper.insp.dotted')}</option>
+                  <option value="double">{t('paper.insp.double')}</option>
+                  <option value="groove">{t('paper.insp.groove')}</option>
+                  <option value="ridge">{t('paper.insp.ridge')}</option>
                 </select>
               </Field>
-              <Field label="Frame Shape">
+              <Field label={t('paper.insp.frameShape')}>
                 <select
                   className="paper-input"
                   onChange={(event) => onUpdateFrame({
@@ -9621,16 +10324,16 @@ function PaperInspector({
                   })}
                   value={frame.shapeKind ?? 'none'}
                 >
-                  <option value="none">Rectangle</option>
-                  <option value="ellipse">Ellipse / Circle</option>
-                  <option value="triangle">Triangle</option>
-                  <option value="pentagon">Pentagon</option>
-                  <option value="hexagon">Hexagon</option>
+                  <option value="none">{t('paper.insp.rectangle')}</option>
+                  <option value="ellipse">{t('paper.insp.ellipseCircle')}</option>
+                  <option value="triangle">{t('paper.insp.triangle')}</option>
+                  <option value="pentagon">{t('paper.insp.pentagon')}</option>
+                  <option value="hexagon">{t('paper.insp.hexagon')}</option>
                 </select>
               </Field>
               <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
-                <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Text Wrap</div>
-                <Field label="Wrap surrounding text">
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">{t('paper.insp.textWrap')}</div>
+                <Field label={t('paper.insp.wrapSurrounding')}>
                   <select
                     className="paper-input"
                     onChange={(event) => {
@@ -9643,29 +10346,29 @@ function PaperInspector({
                     }}
                     value={frame.textWrap?.mode ?? 'none'}
                   >
-                    <option value="none">None</option>
-                    <option value="boundingBox">Bounding box</option>
-                    <option value="jumpObject">Jump object (skip below)</option>
-                    <option value="contour">Contour (shape)</option>
+                    <option value="none">{t('paper.insp.none')}</option>
+                    <option value="boundingBox">{t('paper.insp.boundingBox')}</option>
+                    <option value="jumpObject">{t('paper.insp.jumpObject')}</option>
+                    <option value="contour">{t('paper.insp.contourShape')}</option>
                   </select>
                 </Field>
                 {frame.textWrap && frame.textWrap.mode !== 'none' ? (
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     <NumberField
-                      label="Standoff mm"
+                      label={t('paper.insp.standoffMm')}
                       onChange={(standoffMm) => onUpdateFrame({ textWrap: { ...frame.textWrap!, standoffMm: Math.max(0, standoffMm) } })}
                       step={0.5}
                       value={frame.textWrap.standoffMm}
                     />
                     {frame.textWrap.mode === 'contour' ? (
-                      <Field label="Contour from">
+                      <Field label={t('paper.insp.contourFrom')}>
                         <select
                           className="paper-input"
                           onChange={(event) => onUpdateFrame({ textWrap: { ...frame.textWrap!, contourSource: event.target.value as 'frameShape' | 'vertices' } })}
                           value={frame.textWrap.contourSource ?? 'frameShape'}
                         >
-                          <option value="frameShape">Frame shape</option>
-                          <option value="vertices">Vertices only</option>
+                          <option value="frameShape">{t('paper.insp.frameShapeWrap')}</option>
+                          <option value="vertices">{t('paper.insp.verticesOnly')}</option>
                         </select>
                       </Field>
                     ) : null}
@@ -9674,18 +10377,18 @@ function PaperInspector({
               </div>
               <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
                 <div className="mb-2 flex items-center justify-between">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Table</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">{t('paper.insp.table')}</div>
                   {frame.table ? (
-                    <button className="rounded border border-cyan-300/20 px-1.5 py-0.5 text-[10px] text-cyan-100/60 hover:border-cyan-300/50 hover:text-white" onClick={() => onUpdateFrame({ table: undefined })} type="button">Remove</button>
+                    <button className="rounded border border-cyan-300/20 px-1.5 py-0.5 text-[10px] text-cyan-100/60 hover:border-cyan-300/50 hover:text-white" onClick={() => onUpdateFrame({ table: undefined })} type="button">{t('paper.insp.remove')}</button>
                   ) : (
-                    <button className="rounded border border-cyan-300/20 px-1.5 py-0.5 text-[10px] text-cyan-100/60 hover:border-cyan-300/50 hover:text-white" onClick={() => onUpdateFrame({ table: createPaperTable(3, 3) })} type="button">Add table</button>
+                    <button className="rounded border border-cyan-300/20 px-1.5 py-0.5 text-[10px] text-cyan-100/60 hover:border-cyan-300/50 hover:text-white" onClick={() => onUpdateFrame({ table: createPaperTable(3, 3) })} type="button">{t('paper.insp.addTable')}</button>
                   )}
                 </div>
                 {frame.table ? (
                   <>
                     <div className="grid grid-cols-2 gap-2 text-[11px] text-cyan-100/55">
                       <div className="flex items-center justify-between gap-1">
-                        <span>Rows</span>
+                        <span>{t('paper.insp.rows')}</span>
                         <span className="flex items-center gap-1">
                           <button className="rounded border border-cyan-300/20 px-1.5" onClick={() => onUpdateFrame({ table: removePaperTableRow(frame.table!, frame.table!.rows - 1) })} type="button">−</button>
                           <span className="tabular-nums">{frame.table.rows}</span>
@@ -9693,7 +10396,7 @@ function PaperInspector({
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-1">
-                        <span>Cols</span>
+                        <span>{t('paper.insp.cols')}</span>
                         <span className="flex items-center gap-1">
                           <button className="rounded border border-cyan-300/20 px-1.5" onClick={() => onUpdateFrame({ table: removePaperTableColumn(frame.table!, frame.table!.cols - 1) })} type="button">−</button>
                           <span className="tabular-nums">{frame.table.cols}</span>
@@ -9702,12 +10405,47 @@ function PaperInspector({
                       </div>
                     </div>
                     <label className="mt-2 flex items-center gap-2 text-xs text-cyan-100/55">
-                      <input checked={frame.table.headerRow} onChange={(event) => onUpdateFrame({ table: { ...frame.table!, headerRow: event.target.checked } })} type="checkbox" />
-                      Header row
-                    </label>
+                      <input checked={frame.table.headerRow} onChange={(event) => onUpdateFrame({ table: { ...frame.table!, headerRow: event.target.checked } })} type="checkbox" />{t('paper.insp.headerRow')}</label>
                     <div className="mt-2 grid grid-cols-2 gap-2">
-                      <NumberField label="Border mm" onChange={(borderWidthMm) => onUpdateFrame({ table: { ...frame.table!, borderWidthMm: Math.max(0, borderWidthMm) } })} step={0.1} value={frame.table.borderWidthMm} />
-                      <NumberField label="Padding mm" onChange={(cellPaddingMm) => onUpdateFrame({ table: { ...frame.table!, cellPaddingMm: Math.max(0, cellPaddingMm) } })} step={0.5} value={frame.table.cellPaddingMm} />
+                      <NumberField label={t('paper.insp.borderMm')} onChange={(borderWidthMm) => onUpdateFrame({ table: { ...frame.table!, borderWidthMm: Math.max(0, borderWidthMm) } })} step={0.1} value={frame.table.borderWidthMm} />
+                      <NumberField label={t('paper.insp.paddingMm')} onChange={(cellPaddingMm) => onUpdateFrame({ table: { ...frame.table!, cellPaddingMm: Math.max(0, cellPaddingMm) } })} step={0.5} value={frame.table.cellPaddingMm} />
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-cyan-100/55">
+                      <label className="flex items-center gap-1" title={t('paper.insp.tableBorderColor')}>
+                        <span>{t('paper.insp.border')}</span>
+                        <input
+                          aria-label={t('paper.insp.tableBorderColor')}
+                          className="h-5 w-6 cursor-pointer rounded border border-cyan-300/20 bg-transparent p-0"
+                          onChange={(event) => onUpdateFrame({ table: { ...frame.table!, borderColor: event.target.value } })}
+                          type="color"
+                          value={/^#[0-9a-f]{6}$/i.test(frame.table.borderColor ?? '') ? frame.table.borderColor : '#334155'}
+                        />
+                      </label>
+                      <label className="flex items-center gap-1" title={t('paper.insp.shadeHeaderRow')}>
+                        <span>{t('paper.insp.header')}</span>
+                        <input
+                          aria-label={t('paper.insp.headerRowShading')}
+                          className="h-5 w-6 cursor-pointer rounded border border-cyan-300/20 bg-transparent p-0"
+                          onChange={(event) => onUpdateFrame({ table: setPaperTableHeaderFill(frame.table!, event.target.value) })}
+                          type="color"
+                          value="#4472c4"
+                        />
+                      </label>
+                      <label className="flex items-center gap-1" title={t('paper.insp.shadeAltRows')}>
+                        <span>{t('paper.insp.bands')}</span>
+                        <input
+                          aria-label={t('paper.insp.altRowShading')}
+                          className="h-5 w-6 cursor-pointer rounded border border-cyan-300/20 bg-transparent p-0"
+                          onChange={(event) => onUpdateFrame({ table: setPaperTableBandFill(frame.table!, event.target.value) })}
+                          type="color"
+                          value="#d9e1f2"
+                        />
+                      </label>
+                      <button
+                        className="rounded border border-cyan-300/20 px-1.5 py-0.5 text-[10px] hover:border-cyan-300/50 hover:text-white"
+                        onClick={() => onUpdateFrame({ table: clearPaperTableFills(frame.table!) })}
+                        type="button"
+                      >{t('paper.insp.clearShading')}</button>
                     </div>
                     <div className="mt-2 space-y-1">
                       {frame.table.cells.map((row, r) => (
@@ -9727,7 +10465,7 @@ function PaperInspector({
                   </>
                 ) : null}
               </div>
-              <Field label="Link URL">
+              <Field label={t('paper.insp.linkUrl')}>
                 <input
                   className="paper-input"
                   onChange={(event) => onUpdateFrame({ hyperlink: event.target.value || undefined })}
@@ -9736,18 +10474,18 @@ function PaperInspector({
                 />
               </Field>
               <div className="grid grid-cols-2 gap-2">
-                <NumberField label="Opacity" onChange={(opacity) => onUpdateFrame({ opacity: clamp(opacity, 0, 1) })} step={0.05} value={effectiveFrame?.opacity ?? frame.opacity} />
-                <NumberField label="Fill Opacity" onChange={(fillOpacity) => onUpdateFrame({ fillOpacity: clamp(fillOpacity, 0, 1) })} step={0.05} value={effectiveFrame?.fillOpacity ?? frame.fillOpacity} />
+                <NumberField label={t('paper.insp.opacity')} onChange={(opacity) => onUpdateFrame({ opacity: clamp(opacity, 0, 1) })} step={0.05} value={effectiveFrame?.opacity ?? frame.opacity} />
+                <NumberField label={t('paper.insp.fillOpacity')} onChange={(fillOpacity) => onUpdateFrame({ fillOpacity: clamp(fillOpacity, 0, 1) })} step={0.05} value={effectiveFrame?.fillOpacity ?? frame.fillOpacity} />
               </div>
-              <Field label="Fill">
-                <AdvancedColorPicker className="h-8 w-full" buttonClassName="rounded border border-cyan-300/15 bg-[#0b121d]" label="Frame fill color" onChange={(color) => onUpdateFrame({ fillColor: color })} value={cssColorToPickerValue(frame.fillColor)} />
+              <Field label={t('paper.insp.fill')}>
+                <AdvancedColorPicker className="h-8 w-full" buttonClassName="rounded border border-cyan-300/15 bg-[#0b121d]" label={t('paper.insp.frameFillColor')} onChange={(color) => onUpdateFrame({ fillColor: color })} value={cssColorToPickerValue(frame.fillColor)} />
               </Field>
-              <Field label="Stroke Color">
-                <AdvancedColorPicker className="h-8 w-full" buttonClassName="rounded border border-cyan-300/15 bg-[#0b121d]" label="Frame stroke color" onChange={(color) => onUpdateFrame({ strokeColor: color })} value={cssColorToPickerValue(frame.strokeColor)} />
+              <Field label={t('paper.insp.strokeColor')}>
+                <AdvancedColorPicker className="h-8 w-full" buttonClassName="rounded border border-cyan-300/15 bg-[#0b121d]" label={t('paper.insp.frameStrokeColor')} onChange={(color) => onUpdateFrame({ strokeColor: color })} value={cssColorToPickerValue(frame.strokeColor)} />
               </Field>
               <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
                 <div className="mb-1.5 flex items-center justify-between">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Swatches (CMYK)</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">{t('paper.insp.swatchesCmyk')}</div>
                   <div className="flex items-center gap-2">
                     {(() => {
                       const rgb = parseHexColor(cssColorToPickerValue(frame.fillColor));
@@ -9770,21 +10508,68 @@ function PaperInspector({
                           cmyk,
                         });
                       }}
-                      title="Add the current fill to the document swatch library"
+                      title={t('paper.insp.addFillToSwatches')}
                       type="button"
                     >
                       + Add
                     </button>
                   </div>
                 </div>
+                <div className="mb-1.5 flex items-center gap-1">
+                  <input
+                    className="paper-input h-6 flex-1 text-[10px]"
+                    onChange={(event) => setNewSpotName(event.target.value)}
+                    placeholder={t('paper.insp.spotNamePlaceholder')}
+                    value={newSpotName}
+                  />
+                  <button
+                    className="whitespace-nowrap rounded border border-amber-300/30 px-1.5 py-0.5 text-[10px] text-amber-100/70 hover:border-amber-300/60 hover:text-white disabled:opacity-40"
+                    disabled={!newSpotName.trim() || !parseHexColor(cssColorToPickerValue(frame.fillColor))}
+                    onClick={() => {
+                      const rgb = parseHexColor(cssColorToPickerValue(frame.fillColor));
+                      if (!rgb || !newSpotName.trim()) return;
+                      onAddSwatch({
+                        id: `swatch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+                        name: newSpotName.trim(),
+                        type: 'spot',
+                        model: 'cmyk',
+                        rgb,
+                        cmyk: rgbToCmyk(rgb),
+                        spotName: newSpotName.trim(),
+                      });
+                      setNewSpotName('');
+                    }}
+                    title={t('paper.insp.addSpotSwatch')}
+                    type="button"
+                  >
+                    + Spot
+                  </button>
+                </div>
+                <select
+                  aria-label={t('paper.insp.loadPrintSafePalette')}
+                  className="mb-1.5 w-full rounded border border-cyan-300/15 bg-[#0b121d] px-1.5 py-1 text-[10px] text-cyan-100/70 hover:border-cyan-300/40"
+                  onChange={(event) => {
+                    const palette = findPrintSafePalette(event.target.value);
+                    if (palette) paletteToPaperSwatches(palette).forEach(onAddSwatch);
+                    event.target.value = '';
+                  }}
+                  value=""
+                >
+                  <option value="">{t('paper.insp.loadPrintSafePaletteEllipsis')}</option>
+                  {PRINT_SAFE_PALETTES.map((palette) => (
+                    <option key={palette.id} value={palette.id}>
+                      {palette.name} ({palette.swatches.length})
+                    </option>
+                  ))}
+                </select>
                 <div className="flex flex-wrap gap-1">
                   {PAPER_DEFAULT_SWATCHES.map((swatch) => (
                     <button
                       className="h-5 w-5 rounded border border-cyan-300/25 hover:ring-2 hover:ring-cyan-300/50"
                       key={swatch.id}
                       onClick={(event) => onUpdateFrame(event.altKey
-                        ? { strokeColor: resolveSwatchCssColor(swatch) }
-                        : { fillColor: resolveSwatchCssColor(swatch) })}
+                        ? { strokeColor: resolveSwatchCssColor(swatch), strokeSwatchId: swatch.id }
+                        : { fillColor: resolveSwatchCssColor(swatch), fillSwatchId: swatch.id })}
                       style={{ backgroundColor: resolveSwatchCssColor(swatch) }}
                       title={`${swatch.name}${swatch.cmyk ? ` — C${swatch.cmyk.c} M${swatch.cmyk.m} Y${swatch.cmyk.y} K${swatch.cmyk.k}` : ''} (tap: fill, Alt: stroke)`}
                       type="button"
@@ -9793,7 +10578,7 @@ function PaperInspector({
                 </div>
                 {(document.swatches ?? []).length > 0 ? (
                   <div className="mt-1.5">
-                    <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-cyan-100/30">Document swatches</div>
+                    <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-cyan-100/30">{t('paper.insp.documentSwatches')}</div>
                     <div className="flex flex-wrap gap-1">
                       {(document.swatches ?? []).map((swatch) => (
                         <button
@@ -9805,11 +10590,11 @@ function PaperInspector({
                               return;
                             }
                             onUpdateFrame(event.altKey
-                              ? { strokeColor: resolveSwatchCssColor(swatch) }
-                              : { fillColor: resolveSwatchCssColor(swatch) });
+                              ? { strokeColor: resolveSwatchCssColor(swatch), strokeSwatchId: swatch.id }
+                              : { fillColor: resolveSwatchCssColor(swatch), fillSwatchId: swatch.id });
                           }}
                           style={{ backgroundColor: resolveSwatchCssColor(swatch) }}
-                          title={`${swatch.name} (tap: fill, Alt: stroke, Shift: remove)`}
+                          title={`${swatch.name} (tap: fill, Alt: stroke${swatch.type === 'spot' ? ' → spot plate' : ''}, Shift: remove)`}
                           type="button"
                         />
                       ))}
@@ -9828,7 +10613,7 @@ function PaperInspector({
                   ];
                   return (
                     <div className="mt-2">
-                      <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-cyan-100/30">Fill CMYK %</div>
+                      <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-cyan-100/30">{t('paper.insp.fillCmyk')}</div>
                       <div className="grid grid-cols-4 gap-1">
                         {channels.map(({ key, label }) => (
                           <NumberField
@@ -9856,47 +10641,41 @@ function PaperInspector({
                       : undefined,
                   })}
                   type="checkbox"
-                />
-                Gradient fill
-              </label>
+                />{t('paper.insp.gradientFill')}</label>
             </InspectorSection>
 
             {(frame.kind === 'image' || isImageCropFrame(frame)) && !frame.comicSfxDesign ? (
-              <InspectorSection title="Image Crop">
-                <Field label="Fit">
+              <InspectorSection title={t('paper.insp.imageCrop')}>
+                <Field label={t('paper.insp.fit')}>
                   <select
                     className="paper-input"
                     onChange={(e) => onUpdateFrame({ fit: e.target.value as PaperFrame['fit'] })}
                     value={frame.fit}
                   >
-                    <option value="contain">Contain</option>
-                    <option value="cover">Cover / Crop</option>
-                    <option value="stretch">Stretch</option>
+                    <option value="contain">{t('paper.insp.contain')}</option>
+                    <option value="cover">{t('paper.insp.coverCrop')}</option>
+                    <option value="stretch">{t('paper.insp.stretch')}</option>
                   </select>
                 </Field>
-                <NumberField label="Scale" onChange={(imageScale) => onUpdateFrame({ imageScale })} step={0.05} value={frame.imageScale} />
+                <NumberField label={t('paper.insp.scale')} onChange={(imageScale) => onUpdateFrame({ imageScale })} step={0.05} value={frame.imageScale} />
                 <div className="grid grid-cols-2 gap-2">
-                  <NumberField label="Offset X %" onChange={(imageOffsetXPercent) => onUpdateFrame({ imageOffsetXPercent })} value={frame.imageOffsetXPercent} />
-                  <NumberField label="Offset Y %" onChange={(imageOffsetYPercent) => onUpdateFrame({ imageOffsetYPercent })} value={frame.imageOffsetYPercent} />
+                  <NumberField label={t('paper.insp.offsetX')} onChange={(imageOffsetXPercent) => onUpdateFrame({ imageOffsetXPercent })} value={frame.imageOffsetXPercent} />
+                  <NumberField label={t('paper.insp.offsetY')} onChange={(imageOffsetYPercent) => onUpdateFrame({ imageOffsetYPercent })} value={frame.imageOffsetYPercent} />
                 </div>
-                <NumberField label="Image Rotate" onChange={(imageRotationDeg) => onUpdateFrame({ imageRotationDeg })} value={frame.imageRotationDeg} />
+                <NumberField label={t('paper.insp.imageRotate')} onChange={(imageRotationDeg) => onUpdateFrame({ imageRotationDeg })} value={frame.imageRotationDeg} />
                 <div className="grid grid-cols-2 gap-2">
                   <label className="flex items-center gap-2 rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-3 py-2 text-xs font-semibold text-cyan-100/70">
                     <input
                       checked={Boolean(frame.imageFlipX)}
                       onChange={(event) => onUpdateFrame({ imageFlipX: event.target.checked })}
                       type="checkbox"
-                    />
-                    Flip X
-                  </label>
+                    />{t('paper.insp.flipX')}</label>
                   <label className="flex items-center gap-2 rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-3 py-2 text-xs font-semibold text-cyan-100/70">
                     <input
                       checked={Boolean(frame.imageFlipY)}
                       onChange={(event) => onUpdateFrame({ imageFlipY: event.target.checked })}
                       type="checkbox"
-                    />
-                    Flip Y
-                  </label>
+                    />{t('paper.insp.flipY')}</label>
                 </div>
                 <button
                   className="w-full rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-3 py-2 text-left text-xs font-semibold text-cyan-100/70 hover:border-cyan-300/40 hover:text-white"
@@ -9910,22 +10689,20 @@ function PaperInspector({
                     imageFlipY: false,
                   })}
                   type="button"
-                >
-                  Reset Crop
-                </button>
+                >{t('paper.insp.resetCrop')}</button>
               </InspectorSection>
             ) : null}
 
             {frame.kind !== 'image' && frame.kind !== 'panel' ? (
-              <InspectorSection title="Type">
-                <Field label="Text">
+              <InspectorSection title={t('paper.insp.type')}>
+                <Field label={t('paper.insp.text')}>
                   <textarea
                     className="paper-input min-h-24 resize-y"
                     onChange={(e) => onUpdateFrame({ text: e.target.value })}
                     value={frame.text ?? ''}
                   />
                 </Field>
-                <Field label="Font Family">
+                <Field label={t('paper.insp.fontFamily')}>
                   <select
                     className="paper-input"
                     onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, fontFamily: event.target.value } })}
@@ -9933,6 +10710,15 @@ function PaperInspector({
                     value={selectedFontFamily}
                   >
                     {!selectedFontIsPreset && selectedFontFamily ? <option value={selectedFontFamily}>Custom - {selectedFontFamily}</option> : null}
+                    {importedFontFamilies.length > 0 ? (
+                      <optgroup label={t('paper.insp.importedFonts')}>
+                        {importedFontFamilies.map((family) => (
+                          <option key={`imported-${family}`} style={{ fontFamily: family }} value={family}>
+                            {family} (imported)
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null}
                     {PAPER_FONT_OPTIONS.map((font) => (
                       <option key={font.value} style={{ fontFamily: font.value }} value={font.value}>
                         {font.label}
@@ -9940,7 +10726,8 @@ function PaperInspector({
                     ))}
                   </select>
                 </Field>
-                <Field label="Custom Font Stack">
+                <PaperFontImportControl />
+                <Field label={t('paper.insp.customFontStack')}>
                   <input
                     className="paper-input"
                     onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, fontFamily: event.target.value } })}
@@ -9964,33 +10751,70 @@ function PaperInspector({
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <NumberField
-                    label="Size pt"
+                    label={t('paper.insp.sizePt')}
                     onChange={(fontSizePt) => onUpdateFrame({ typography: { ...frame.typography, fontSizePt } })}
                     value={frame.typography.fontSizePt}
                   />
                   <NumberField
-                    label="Leading"
+                    label={t('paper.insp.leading')}
                     onChange={(leadingPt) => onUpdateFrame({ typography: { ...frame.typography, leadingPt } })}
                     value={frame.typography.leadingPt}
                   />
                   <NumberField
-                    label="Tracking"
+                    label={t('paper.insp.tracking')}
                     onChange={(tracking) => onUpdateFrame({ typography: { ...frame.typography, tracking } })}
                     step={5}
                     value={frame.typography.tracking}
                   />
-                  <Field label="Font Color">
+                  <Field label={t('paper.insp.fontColor')}>
                     <AdvancedColorPicker
                       className="h-8 w-full"
                       buttonClassName="rounded border border-cyan-300/15 bg-[#0b121d]"
-                      label="Paper frame font color"
+                      label={t('paper.insp.paperFrameFontColor')}
                       onChange={(color) => onUpdateFrame({ typography: { ...frame.typography, color } })}
                       value={cssColorToPickerValue(frame.typography.color)}
                     />
                   </Field>
                 </div>
+                {(document.swatches ?? []).some((swatch) => swatch.type === 'spot') ? (
+                  <Field label={t('paper.insp.spotInk')}>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(document.swatches ?? [])
+                        .filter((swatch) => swatch.type === 'spot')
+                        .map((swatch) => {
+                          const active = frame.typography.colorSwatchId === swatch.id;
+                          return (
+                            <button
+                              key={swatch.id}
+                              type="button"
+                              className={`h-6 w-6 rounded border ${active ? 'border-cyan-300 ring-2 ring-cyan-300/60' : 'border-cyan-300/20 hover:border-cyan-300/50'}`}
+                              onClick={() =>
+                                onUpdateFrame({
+                                  typography: {
+                                    ...frame.typography,
+                                    color: resolveSwatchCssColor(swatch),
+                                    colorSwatchId: active ? undefined : swatch.id,
+                                  },
+                                })
+                              }
+                              style={{ backgroundColor: resolveSwatchCssColor(swatch) }}
+                              title={`${swatch.spotName ?? swatch.name} — text prints on its own named /Separation plate in PDF/X (needs spot policy "Preserve named spots"). Tap again to unbind.`}
+                            />
+                          );
+                        })}
+                      {frame.typography.colorSwatchId ? (
+                        <span className="ml-1 text-[10px] text-cyan-100/60">
+                          {(document.swatches ?? []).find((swatch) => swatch.id === frame.typography.colorSwatchId)?.spotName
+                            ?? (document.swatches ?? []).find((swatch) => swatch.id === frame.typography.colorSwatchId)?.name
+                            ?? 'spot'} plate
+                          {document.printProduction.spotColorPolicy !== 'preserve-named' ? ' (enable "Preserve named spots")' : ''}
+                        </span>
+                      ) : null}
+                    </div>
+                  </Field>
+                ) : null}
                 <div className="grid grid-cols-2 gap-2">
-                  <Field label="Weight">
+                  <Field label={t('paper.insp.weight')}>
                     <select
                       className="paper-input"
                       onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, fontWeight: event.target.value } })}
@@ -9999,27 +10823,27 @@ function PaperInspector({
                       {PAPER_FONT_WEIGHTS.map((weight) => <option key={weight} value={weight}>{weight}</option>)}
                     </select>
                   </Field>
-                  <Field label="Style">
+                  <Field label={t('paper.insp.style')}>
                     <select
                       className="paper-input"
                       onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, fontStyle: event.target.value as PaperFrame['typography']['fontStyle'] } })}
                       value={frame.typography.fontStyle}
                     >
-                      <option value="normal">Normal</option>
-                      <option value="italic">Italic</option>
+                      <option value="normal">{t('paper.insp.normal')}</option>
+                      <option value="italic">{t('paper.insp.italic')}</option>
                     </select>
                   </Field>
                 </div>
-                <Field label="Align">
+                <Field label={t('paper.insp.align')}>
                   <select
                     className="paper-input"
                     onChange={(e) => onUpdateFrame({ typography: { ...frame.typography, align: e.target.value as PaperFrame['typography']['align'] } })}
                     value={frame.typography.align}
                   >
-                    <option value="left">Left</option>
-                    <option value="center">Center</option>
-                    <option value="right">Right</option>
-                    <option value="justify">Justify</option>
+                    <option value="left">{t('paper.insp.left')}</option>
+                    <option value="center">{t('paper.insp.center')}</option>
+                    <option value="right">{t('paper.insp.right')}</option>
+                    <option value="justify">{t('paper.insp.justify')}</option>
                   </select>
                 </Field>
                 <label className="flex items-center gap-2 text-xs text-cyan-100/55">
@@ -10027,33 +10851,31 @@ function PaperInspector({
                     checked={frame.typography.hyphenate}
                     onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, hyphenate: event.target.checked } })}
                     type="checkbox"
-                  />
-                  Hyphenation
-                </label>
+                  />{t('paper.insp.hyphenation')}</label>
                 <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
-                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Paragraph</div>
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">{t('paper.insp.paragraph')}</div>
                   <div className="grid grid-cols-2 gap-2">
                     <NumberField
-                      label="Indent mm"
+                      label={t('paper.insp.indentMm')}
                       onChange={(firstLineIndentMm) => onUpdateFrame({ typography: { ...frame.typography, firstLineIndentMm: Math.max(0, firstLineIndentMm) } })}
                       step={0.5}
                       value={frame.typography.firstLineIndentMm ?? 0}
                     />
-                    <Field label="Last line">
+                    <Field label={t('paper.insp.lastLine')}>
                       <select
                         className="paper-input"
                         onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, alignLast: event.target.value as PaperTextAlignLast } })}
                         value={frame.typography.alignLast ?? 'auto'}
                       >
-                        <option value="auto">Auto</option>
-                        <option value="left">Left</option>
-                        <option value="center">Center</option>
-                        <option value="right">Right</option>
-                        <option value="justify">Justify</option>
+                        <option value="auto">{t('paper.insp.auto')}</option>
+                        <option value="left">{t('paper.insp.left')}</option>
+                        <option value="center">{t('paper.insp.center')}</option>
+                        <option value="right">{t('paper.insp.right')}</option>
+                        <option value="justify">{t('paper.insp.justify')}</option>
                       </select>
                     </Field>
                     <NumberField
-                      label="Drop cap lines"
+                      label={t('paper.insp.dropCapLines')}
                       onChange={(dropCapLines) => onUpdateFrame({ typography: { ...frame.typography, dropCapLines: Math.max(0, Math.round(dropCapLines)) } })}
                       step={1}
                       value={frame.typography.dropCapLines ?? 0}
@@ -10065,42 +10887,40 @@ function PaperInspector({
                         checked={Boolean(frame.typography.smallCaps)}
                         onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, smallCaps: event.target.checked } })}
                         type="checkbox"
-                      />
-                      Small caps
-                    </label>
-                    <Field label="Figures">
+                      />{t('paper.insp.smallCaps')}</label>
+                    <Field label={t('paper.insp.figures')}>
                       <select
                         className="paper-input"
                         onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, numericStyle: event.target.value as PaperNumericStyle } })}
                         value={frame.typography.numericStyle ?? 'normal'}
                       >
-                        <option value="normal">Default</option>
-                        <option value="lining">Lining</option>
-                        <option value="oldstyle">Oldstyle</option>
-                        <option value="tabular">Tabular</option>
+                        <option value="normal">{t('paper.insp.default')}</option>
+                        <option value="lining">{t('paper.insp.lining')}</option>
+                        <option value="oldstyle">{t('paper.insp.oldstyle')}</option>
+                        <option value="tabular">{t('paper.insp.tabular')}</option>
                       </select>
                     </Field>
-                    <Field label="Line break">
+                    <Field label={t('paper.insp.lineBreak')}>
                       <select
                         className="paper-input"
                         onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, lineBreak: event.target.value as PaperLineBreak } })}
                         value={frame.typography.lineBreak ?? 'auto'}
                       >
-                        <option value="auto">Auto</option>
-                        <option value="balance">Balance</option>
-                        <option value="pretty">Pretty</option>
+                        <option value="auto">{t('paper.insp.auto')}</option>
+                        <option value="balance">{t('paper.insp.balance')}</option>
+                        <option value="pretty">{t('paper.insp.pretty')}</option>
                       </select>
                     </Field>
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     <NumberField
-                      label="Space before mm"
+                      label={t('paper.insp.spaceBeforeMm')}
                       onChange={(spaceBeforeMm) => onUpdateFrame({ typography: { ...frame.typography, spaceBeforeMm: Math.max(0, spaceBeforeMm) } })}
                       step={0.5}
                       value={frame.typography.spaceBeforeMm ?? 0}
                     />
                     <NumberField
-                      label="Space after mm"
+                      label={t('paper.insp.spaceAfterMm')}
                       onChange={(spaceAfterMm) => onUpdateFrame({ typography: { ...frame.typography, spaceAfterMm: Math.max(0, spaceAfterMm) } })}
                       step={0.5}
                       value={frame.typography.spaceAfterMm ?? 0}
@@ -10108,98 +10928,156 @@ function PaperInspector({
                   </div>
                   <div className="mt-2 text-[10px] text-cyan-100/35">Folios: type {'{page}'} or {'{pages}'} for live page numbers (great on master pages).</div>
                 </div>
+                <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">{t('paper.jp.section')}</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label={t('paper.insp.direction')}>
+                      <select
+                        className="paper-input"
+                        onChange={(event) =>
+                          onUpdateFrame({
+                            typography: {
+                              ...frame.typography,
+                              writingMode: event.target.value === 'vertical-rl' ? 'vertical-rl' : undefined,
+                            },
+                          })
+                        }
+                        value={frame.typography.writingMode ?? 'horizontal-tb'}
+                      >
+                        <option value="horizontal-tb">横書き Horizontal</option>
+                        <option value="vertical-rl">縦書き Vertical (RL)</option>
+                      </select>
+                    </Field>
+                    <Field label={t('paper.insp.orientation')}>
+                      <select
+                        className="paper-input"
+                        disabled={frame.typography.writingMode !== 'vertical-rl'}
+                        onChange={(event) =>
+                          onUpdateFrame({ typography: { ...frame.typography, textOrientation: event.target.value as PaperTextOrientation } })
+                        }
+                        value={frame.typography.textOrientation ?? 'mixed'}
+                      >
+                        <option value="mixed">{t('paper.insp.mixedTcy')}</option>
+                        <option value="upright">{t('paper.insp.upright')}</option>
+                      </select>
+                    </Field>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <label className="flex items-center gap-2 text-xs text-cyan-100/55">
+                      <input
+                        checked={frame.typography.lineBreakStrict ?? frame.typography.writingMode === 'vertical-rl'}
+                        onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, lineBreakStrict: event.target.checked } })}
+                        type="checkbox"
+                      />
+                      禁則処理 Kinsoku
+                    </label>
+                    <Field label={t('paper.insp.emphasisField')}>
+                      <select
+                        className="paper-input"
+                        onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, emphasis: event.target.value as PaperEmphasisMark } })}
+                        value={frame.typography.emphasis ?? 'none'}
+                      >
+                        <option value="none">{t('paper.insp.none')}</option>
+                        <option value="dot">● Dot</option>
+                        <option value="sesame">﹅ Sesame</option>
+                        <option value="open-dot">○ Open dot</option>
+                        <option value="circle">◉ Circle</option>
+                      </select>
+                    </Field>
+                  </div>
+                  <div className="mt-2 text-[10px] leading-relaxed text-cyan-100/35">{t('paper.insp.furiganaHint')}<span className="text-cyan-100/60">漢字《かんじ》</span> or <span className="text-cyan-100/60">｜熟語《じゅくご》</span>.
+                    圏点 / emphasis on a word: <span className="text-cyan-100/60">《《大事》》</span>.
+                    Numbers auto-set as 縦中横 in vertical text. Pick a 明朝/ゴシック font above for proper kana &amp; kanji.
+                  </div>
+                </div>
                 {frame.kind === 'text' ? (
                   <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
-                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Columns</div>
+                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">{t('paper.insp.columns')}</div>
                     <div className="grid grid-cols-2 gap-2">
-                      <NumberField label="Count" onChange={(columns) => onUpdateFrame({ columns: Math.max(1, Math.round(columns)) })} step={1} value={frame.columns} />
-                      <NumberField label="Gutter mm" onChange={(columnGutterMm) => onUpdateFrame({ columnGutterMm: Math.max(0, columnGutterMm) })} step={0.5} value={frame.columnGutterMm ?? DEFAULT_PAPER_COLUMN_GUTTER_MM} />
+                      <NumberField label={t('paper.insp.count')} onChange={(columns) => onUpdateFrame({ columns: Math.max(1, Math.round(columns)) })} step={1} value={frame.columns} />
+                      <NumberField label={t('paper.insp.gutterMm')} onChange={(columnGutterMm) => onUpdateFrame({ columnGutterMm: Math.max(0, columnGutterMm) })} step={0.5} value={frame.columnGutterMm ?? DEFAULT_PAPER_COLUMN_GUTTER_MM} />
                     </div>
                     <div className="mt-2 grid grid-cols-2 gap-2">
                       <label className="flex items-center gap-2 text-xs text-cyan-100/55">
-                        <input checked={Boolean(frame.columnBalance)} onChange={(event) => onUpdateFrame({ columnBalance: event.target.checked })} type="checkbox" />
-                        Balance
-                      </label>
+                        <input checked={Boolean(frame.columnBalance)} onChange={(event) => onUpdateFrame({ columnBalance: event.target.checked })} type="checkbox" />{t('paper.insp.balance')}</label>
                       <label className="flex items-center gap-2 text-xs text-cyan-100/55">
-                        <input checked={Boolean(frame.columnRule)} onChange={(event) => onUpdateFrame({ columnRule: event.target.checked })} type="checkbox" />
-                        Rule
-                      </label>
+                        <input checked={Boolean(frame.columnRule)} onChange={(event) => onUpdateFrame({ columnRule: event.target.checked })} type="checkbox" />{t('paper.insp.rule')}</label>
                     </div>
                   </div>
                 ) : (
-                  <NumberField label="Columns" onChange={(columns) => onUpdateFrame({ columns: Math.max(1, Math.round(columns)) })} value={frame.columns} />
+                  <NumberField label={t('paper.insp.columns')} onChange={(columns) => onUpdateFrame({ columns: Math.max(1, Math.round(columns)) })} value={frame.columns} />
                 )}
                 <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
-                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Text Effects</div>
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">{t('paper.insp.textEffects')}</div>
                   <div className="grid grid-cols-2 gap-2">
-                    <Field label="Stroke">
+                    <Field label={t('paper.insp.stroke')}>
                       <AdvancedColorPicker
                         className="h-8 w-full"
                         buttonClassName="rounded border border-cyan-300/15 bg-[#0b121d]"
-                        label="Text stroke color"
+                        label={t('paper.insp.textStrokeColor')}
                         onChange={(color) => onUpdateFrame({ textStrokeColor: color })}
                         value={cssColorToPickerValue(frame.textStrokeColor ?? '#111111')}
                       />
                     </Field>
                     <NumberField
-                      label="Stroke mm"
+                      label={t('paper.insp.strokeMm')}
                       onChange={(textStrokeWidthMm) => onUpdateFrame({ textStrokeWidthMm: Math.max(0, textStrokeWidthMm) })}
                       step={0.05}
                       value={frame.textStrokeWidthMm ?? 0}
                     />
-                    <Field label="Shadow">
+                    <Field label={t('paper.insp.shadow')}>
                       <AdvancedColorPicker
                         className="h-8 w-full"
                         buttonClassName="rounded border border-cyan-300/15 bg-[#0b121d]"
-                        label="Text shadow color"
+                        label={t('paper.insp.textShadowColor')}
                         onChange={(color) => onUpdateFrame({ textShadowColor: color })}
                         value={cssColorToPickerValue(frame.textShadowColor ?? '#000000')}
                       />
                     </Field>
                     <NumberField
-                      label="Shadow blur"
+                      label={t('paper.insp.shadowBlur')}
                       onChange={(textShadowBlurMm) => onUpdateFrame({ textShadowBlurMm: Math.max(0, textShadowBlurMm) })}
                       step={0.1}
                       value={frame.textShadowBlurMm ?? 0}
                     />
                     <NumberField
-                      label="Shadow X"
+                      label={t('paper.insp.shadowX')}
                       onChange={(textShadowOffsetXMm) => onUpdateFrame({ textShadowOffsetXMm })}
                       step={0.1}
                       value={frame.textShadowOffsetXMm ?? 0}
                     />
                     <NumberField
-                      label="Shadow Y"
+                      label={t('paper.insp.shadowY')}
                       onChange={(textShadowOffsetYMm) => onUpdateFrame({ textShadowOffsetYMm })}
                       step={0.1}
                       value={frame.textShadowOffsetYMm ?? 0}
                     />
                     <NumberField
-                      label="Skew X"
+                      label={t('paper.insp.skewX')}
                       onChange={(textSkewXDeg) => onUpdateFrame({ textSkewXDeg })}
                       step={1}
                       value={frame.textSkewXDeg ?? 0}
                     />
                     <NumberField
-                      label="Skew Y"
+                      label={t('paper.insp.skewY')}
                       onChange={(textSkewYDeg) => onUpdateFrame({ textSkewYDeg })}
                       step={1}
                       value={frame.textSkewYDeg ?? 0}
                     />
                     <NumberField
-                      label="Scale X"
+                      label={t('paper.insp.scaleX')}
                       onChange={(textScaleX) => onUpdateFrame({ textScaleX: Math.max(0.1, textScaleX) })}
                       step={0.05}
                       value={frame.textScaleX ?? 1}
                     />
                     <NumberField
-                      label="Scale Y"
+                      label={t('paper.insp.scaleY')}
                       onChange={(textScaleY) => onUpdateFrame({ textScaleY: Math.max(0.1, textScaleY) })}
                       step={0.05}
                       value={frame.textScaleY ?? 1}
                     />
                     <NumberField
-                      label="Arc %"
+                      label={t('paper.insp.arc')}
                       onChange={(textArcPercent) => onUpdateFrame({ textArcPercent: Math.max(-100, Math.min(100, Math.round(textArcPercent))) })}
                       step={5}
                       value={frame.textArcPercent ?? 0}
@@ -10221,14 +11099,12 @@ function PaperInspector({
                       textArcPercent: undefined,
                     })}
                     type="button"
-                  >
-                    Clear Text Effects
-                  </button>
+                  >{t('paper.insp.clearTextEffects')}</button>
                 </div>
                 {frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble' ? (
                   <>
                     <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
-                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">Bubble Presets</div>
+                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">{t('paper.insp.bubblePresets')}</div>
                       <div className="grid grid-cols-3 gap-1.5">
                         {PAPER_BUBBLE_PRESETS.map((preset) => (
                           <button
@@ -10243,20 +11119,20 @@ function PaperInspector({
                         ))}
                       </div>
                     </div>
-                    <Field label="Bubble Shape">
+                    <Field label={t('paper.insp.bubbleShape')}>
                       <select
                         className="paper-input"
                         onChange={(event) => onUpdateFrame({ bubbleShape: event.target.value as PaperFrame['bubbleShape'] })}
                         value={frame.bubbleShape ?? 'organic'}
                       >
-                        <option value="organic">Organic</option>
-                        <option value="oval">Oval</option>
-                        <option value="squircle">Squircle</option>
-                        <option value="cloud">Thought Cloud</option>
+                        <option value="organic">{t('paper.insp.organic')}</option>
+                        <option value="oval">{t('paper.insp.oval')}</option>
+                        <option value="squircle">{t('paper.insp.squircle')}</option>
+                        <option value="cloud">{t('paper.insp.thoughtCloud')}</option>
                       </select>
                     </Field>
                     <div className="grid grid-cols-2 gap-2">
-                      <Field label="Chain ID">
+                      <Field label={t('paper.insp.chainId')}>
                         <input
                           className="paper-input"
                           onChange={(event) => onUpdateFrame({ bubbleChainId: event.target.value.trim() || undefined })}
@@ -10264,36 +11140,36 @@ function PaperInspector({
                         />
                       </Field>
                       <NumberField
-                        label="Chain Order"
+                        label={t('paper.insp.chainOrder')}
                         onChange={(bubbleChainOrder) => onUpdateFrame({ bubbleChainOrder: Math.max(1, Math.round(bubbleChainOrder)) })}
                         step={1}
                         value={frame.bubbleChainOrder ?? 1}
                       />
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                      <Field label="Connector">
+                      <Field label={t('paper.insp.connector')}>
                         <select
                           className="paper-input"
                           onChange={(event) => onUpdateFrame({ bubbleConnectorStyle: event.target.value as PaperFrame['bubbleConnectorStyle'] })}
                           value={frame.bubbleConnectorStyle ?? 'line'}
                         >
-                          <option value="line">Line</option>
-                          <option value="tail">Curved tail</option>
-                          <option value="thought-dots">Thought dots</option>
-                          <option value="bridge">Same-speaker bridge</option>
+                          <option value="line">{t('paper.insp.line')}</option>
+                          <option value="tail">{t('paper.insp.curvedTail')}</option>
+                          <option value="thought-dots">{t('paper.insp.thoughtDots')}</option>
+                          <option value="bridge">{t('paper.insp.sameSpeakerBridge')}</option>
                         </select>
                       </Field>
-                      <Field label="Anchor">
+                      <Field label={t('paper.insp.anchor')}>
                         <select
                           className="paper-input"
                           onChange={(event) => onUpdateFrame({ bubbleConnectorAnchor: event.target.value as PaperFrame['bubbleConnectorAnchor'] })}
                           value={frame.bubbleConnectorAnchor ?? 'auto'}
                         >
-                          <option value="auto">Auto</option>
-                          <option value="left">Left</option>
-                          <option value="right">Right</option>
-                          <option value="top">Top</option>
-                          <option value="bottom">Bottom</option>
+                          <option value="auto">{t('paper.insp.auto')}</option>
+                          <option value="left">{t('paper.insp.left')}</option>
+                          <option value="right">{t('paper.insp.right')}</option>
+                          <option value="top">{t('paper.insp.top')}</option>
+                          <option value="bottom">{t('paper.insp.bottom')}</option>
                         </select>
                       </Field>
                     </div>
@@ -10306,36 +11182,53 @@ function PaperInspector({
                         bubbleConnectorAnchor: undefined,
                       })}
                       type="button"
-                    >
-                      Clear Bubble Chain
-                    </button>
+                    >{t('paper.insp.clearBubbleChain')}</button>
                     <div className="grid grid-cols-2 gap-2">
-                      <NumberField label="Tail X %" onChange={(tailXPercent) => onUpdateFrame({ tailXPercent })} value={frame.tailXPercent ?? 72} />
-                      <NumberField label="Tail Y %" onChange={(tailYPercent) => onUpdateFrame({ tailYPercent })} value={frame.tailYPercent ?? 92} />
-                      <NumberField label="Pinch X %" onChange={(bubblePinchXPercent) => onUpdateFrame({ bubblePinchXPercent })} value={frame.bubblePinchXPercent ?? 58} />
-                      <NumberField label="Pinch Y %" onChange={(bubblePinchYPercent) => onUpdateFrame({ bubblePinchYPercent })} value={frame.bubblePinchYPercent ?? 75} />
-                      <NumberField label="Tail Width %" onChange={(bubbleTailWidthPercent) => onUpdateFrame({ bubbleTailWidthPercent })} value={frame.bubbleTailWidthPercent ?? 18} />
-                      <NumberField label="Tail Curve %" onChange={(bubbleTailCurvePercent) => onUpdateFrame({ bubbleTailCurvePercent })} value={frame.bubbleTailCurvePercent ?? 55} />
-                      <NumberField label="Warp" onChange={(bubbleWarp) => onUpdateFrame({ bubbleWarp })} step={0.01} value={frame.bubbleWarp ?? 0.18} />
+                      <NumberField label={t('paper.insp.tailX')} onChange={(tailXPercent) => onUpdateFrame({ tailXPercent })} value={frame.tailXPercent ?? 72} />
+                      <NumberField label={t('paper.insp.tailY')} onChange={(tailYPercent) => onUpdateFrame({ tailYPercent })} value={frame.tailYPercent ?? 92} />
+                      <NumberField label={t('paper.insp.pinchX')} onChange={(bubblePinchXPercent) => onUpdateFrame({ bubblePinchXPercent })} value={frame.bubblePinchXPercent ?? 58} />
+                      <NumberField label={t('paper.insp.pinchY')} onChange={(bubblePinchYPercent) => onUpdateFrame({ bubblePinchYPercent })} value={frame.bubblePinchYPercent ?? 75} />
+                      <NumberField label={t('paper.insp.tailWidth')} onChange={(bubbleTailWidthPercent) => onUpdateFrame({ bubbleTailWidthPercent })} value={frame.bubbleTailWidthPercent ?? 18} />
+                      <NumberField label={t('paper.insp.tailCurve')} onChange={(bubbleTailCurvePercent) => onUpdateFrame({ bubbleTailCurvePercent })} value={frame.bubbleTailCurvePercent ?? 55} />
+                      <NumberField label={t('paper.insp.warp')} onChange={(bubbleWarp) => onUpdateFrame({ bubbleWarp })} step={0.01} value={frame.bubbleWarp ?? 0.18} />
                     </div>
-                    <Field label="Text Vertical Align">
+                    <Field label={t('paper.insp.textVAlign')}>
                       <select
                         className="paper-input"
                         onChange={(event) => onUpdateFrame({ textVerticalAlign: event.target.value as PaperFrame['textVerticalAlign'] })}
                         value={resolvePaperTextBox(frame).verticalAlign}
                       >
-                        <option value="top">Top</option>
-                        <option value="middle">Middle</option>
-                        <option value="bottom">Bottom</option>
+                        <option value="top">{t('paper.insp.top')}</option>
+                        <option value="middle">{t('paper.insp.middle')}</option>
+                        <option value="bottom">{t('paper.insp.bottom')}</option>
                       </select>
                     </Field>
+                    <label className="flex items-center gap-2 rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-3 py-2 text-xs font-semibold text-cyan-100/75">
+                      <input
+                        checked={frame.typography.writingMode === 'vertical-rl'}
+                        onChange={(event) =>
+                          onUpdateFrame({
+                            typography: {
+                              ...frame.typography,
+                              // Manga bubbles are almost always centered; turning on 縦書き also centers the text
+                              // box so it reads like a proper vertical bubble in one click. Full JP controls
+                              // (furigana notation, kinsoku, 圏点, fonts) live in the Japanese 縦組 section above.
+                              writingMode: event.target.checked ? 'vertical-rl' : undefined,
+                              align: event.target.checked ? 'center' : frame.typography.align,
+                            },
+                          })
+                        }
+                        type="checkbox"
+                      />
+                      縦書き Vertical text (manga)
+                    </label>
                     <div className="grid grid-cols-2 gap-2">
-                      <NumberField label="Text X %" onChange={(textBoxXPercent) => onUpdateFrame({ textBoxXPercent: clamp(textBoxXPercent, 0, 100) })} value={resolvePaperTextBox(frame).xPercent} />
-                      <NumberField label="Text Y %" onChange={(textBoxYPercent) => onUpdateFrame({ textBoxYPercent: clamp(textBoxYPercent, 0, 100) })} value={resolvePaperTextBox(frame).yPercent} />
-                      <NumberField label="Text W %" onChange={(textBoxWidthPercent) => onUpdateFrame({ textBoxWidthPercent: clamp(textBoxWidthPercent, 5, 100) })} value={resolvePaperTextBox(frame).widthPercent} />
-                      <NumberField label="Text H %" onChange={(textBoxHeightPercent) => onUpdateFrame({ textBoxHeightPercent: clamp(textBoxHeightPercent, 5, 100) })} value={resolvePaperTextBox(frame).heightPercent} />
+                      <NumberField label={t('paper.insp.textX')} onChange={(textBoxXPercent) => onUpdateFrame({ textBoxXPercent: clamp(textBoxXPercent, 0, 100) })} value={resolvePaperTextBox(frame).xPercent} />
+                      <NumberField label={t('paper.insp.textY')} onChange={(textBoxYPercent) => onUpdateFrame({ textBoxYPercent: clamp(textBoxYPercent, 0, 100) })} value={resolvePaperTextBox(frame).yPercent} />
+                      <NumberField label={t('paper.insp.textW')} onChange={(textBoxWidthPercent) => onUpdateFrame({ textBoxWidthPercent: clamp(textBoxWidthPercent, 5, 100) })} value={resolvePaperTextBox(frame).widthPercent} />
+                      <NumberField label={t('paper.insp.textH')} onChange={(textBoxHeightPercent) => onUpdateFrame({ textBoxHeightPercent: clamp(textBoxHeightPercent, 5, 100) })} value={resolvePaperTextBox(frame).heightPercent} />
                     </div>
-                    <NumberField label="Text Rotate" onChange={(textRotationDeg) => onUpdateFrame({ textRotationDeg })} value={resolvePaperTextBox(frame).rotationDeg} />
+                    <NumberField label={t('paper.insp.textRotate')} onChange={(textRotationDeg) => onUpdateFrame({ textRotationDeg })} value={resolvePaperTextBox(frame).rotationDeg} />
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-3 py-2 text-left text-xs font-semibold text-cyan-100/70 hover:border-cyan-300/40 hover:text-white"
@@ -10348,9 +11241,7 @@ function PaperInspector({
                           typography: { ...frame.typography, align: 'center' },
                         })}
                         type="button"
-                      >
-                        Center Text
-                      </button>
+                      >{t('paper.insp.centerText')}</button>
                       <button
                         className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-3 py-2 text-left text-xs font-semibold text-cyan-100/70 hover:border-cyan-300/40 hover:text-white"
                         onClick={() => onUpdateFrame({
@@ -10361,9 +11252,7 @@ function PaperInspector({
                           textRotationDeg: 0,
                         })}
                         type="button"
-                      >
-                        Fill Bubble
-                      </button>
+                      >{t('paper.insp.fillBubble')}</button>
                     </div>
                   </>
                 ) : null}
@@ -10371,9 +11260,7 @@ function PaperInspector({
             ) : null}
           </>
         ) : (
-          <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-3 text-sm text-cyan-100/45">
-            Select a frame to edit typography, image fitting, columns, bubble text, and geometry.
-          </div>
+          <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-3 text-sm text-cyan-100/45">{t('paper.insp.selectFrameHint')}</div>
         )}
       </div>
       <div className="border-t border-cyan-300/10 pt-3 text-xs text-cyan-100/50">{status}</div>
@@ -10388,12 +11275,13 @@ function PaperPreflightPanel({
   onSelectPreflightIssue: (issue: PaperPreflightIssue) => void;
   preflight: PaperPreflightReport;
 }) {
+  const { t } = useI18n();
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-3 gap-2">
-        <PreflightCount label="Errors" value={preflight.counts.error} tone="error" />
-        <PreflightCount label="Warnings" value={preflight.counts.warning} tone="warning" />
-        <PreflightCount label="Info" value={preflight.counts.info} tone="info" />
+        <PreflightCount label={t('paper.insp.errors')} value={preflight.counts.error} tone="error" />
+        <PreflightCount label={t('paper.insp.warnings')} value={preflight.counts.warning} tone="warning" />
+        <PreflightCount label={t('paper.insp.info')} value={preflight.counts.info} tone="info" />
       </div>
       <div className="max-h-[30rem] space-y-2 overflow-y-auto pr-1">
         {preflight.issues.length ? preflight.issues.slice(0, 24).map((issue) => (
@@ -10411,9 +11299,7 @@ function PaperPreflightPanel({
             <div className="mt-0.5 text-[11px] leading-4 text-cyan-100/45">{issue.detail}</div>
           </button>
         )) : (
-          <div className="rounded-md border border-emerald-300/15 bg-emerald-400/10 p-2 text-xs text-emerald-100/75">
-            No Paper preflight issues detected by the current checks.
-          </div>
+          <div className="rounded-md border border-emerald-300/15 bg-emerald-400/10 p-2 text-xs text-emerald-100/75">{t('paper.insp.noPreflightIssues')}</div>
         )}
       </div>
     </div>
@@ -10429,6 +11315,7 @@ function PaperLinkedAssetsPanel({
   onSelectLinkedAsset: (asset: PaperLinkedAssetInfo) => void;
   sourceItems: SourceBinLibraryItem[];
 }) {
+  const { t } = useI18n();
   const linkedAssets = useMemo(() => collectPaperLinkedAssets(document, sourceItems), [document, sourceItems]);
 
   return (
@@ -10451,9 +11338,7 @@ function PaperLinkedAssetsPanel({
           <div className="mt-0.5 text-[11px] leading-4 text-cyan-100/50">{asset.detail}</div>
         </button>
       )) : (
-        <div className="rounded-md border border-cyan-300/10 bg-[#10131b] p-2 text-xs text-cyan-100/45">
-          No placed image assets in this Paper document.
-        </div>
+        <div className="rounded-md border border-cyan-300/10 bg-[#10131b] p-2 text-xs text-cyan-100/45">{t('paper.insp.noPlacedImages')}</div>
       )}
     </div>
   );
@@ -10464,13 +11349,12 @@ function PaperDtpParityPanel({
 }: {
   onRunParityAction: (target: 'linked-assets' | 'spreads' | 'preflight') => void;
 }) {
+  const { t } = useI18n();
   const parityFeatures = useMemo(() => getPaperDtpParityPriorities(), []);
 
   return (
     <div className="space-y-3">
-      <div className="text-[11px] leading-4 text-cyan-100/45">
-        Highest priority production checks for comic pages generated from Flow/Image assets.
-      </div>
+      <div className="text-[11px] leading-4 text-cyan-100/45">{t('paper.insp.preflightIntro')}</div>
       <div className="space-y-2">
         {parityFeatures.map((feature) => (
           <div className="rounded-md border border-cyan-300/10 bg-[#10131b] p-2" key={feature.id}>
@@ -10479,8 +11363,8 @@ function PaperDtpParityPanel({
               <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${parityStatusClass(feature.status)}`}>{feature.status}</span>
             </div>
             <div className="mt-1 grid grid-cols-2 gap-2 text-[10px] leading-4 text-cyan-100/45">
-              <div><span className="font-semibold text-cyan-100/60">Print standard:</span> {feature.indesign}</div>
-              <div><span className="font-semibold text-cyan-100/60">Signal Loom:</span> {feature.signalLoom}</div>
+              <div><span className="font-semibold text-cyan-100/60">{t('paper.insp.printStandard')}</span> {feature.indesign}</div>
+              <div><span className="font-semibold text-cyan-100/60">Sloom Studio:</span> {feature.signalLoom}</div>
             </div>
             <div className="mt-1 text-[11px] leading-4 text-cyan-100/50">{feature.comicImpact}</div>
             {feature.actionTarget ? (
@@ -10488,9 +11372,7 @@ function PaperDtpParityPanel({
                 className="mt-2 rounded border border-cyan-300/15 bg-cyan-400/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100/70 hover:border-cyan-300/40 hover:text-white"
                 onClick={() => onRunParityAction(feature.actionTarget!)}
                 type="button"
-              >
-                Show in Paper
-              </button>
+              >{t('paper.insp.showInPaper')}</button>
             ) : null}
           </div>
         ))}
@@ -10510,13 +11392,14 @@ function HorizontalRuler({
   width: number;
   zoom: number;
 }) {
+  const { t } = useI18n();
   const marks = useMemo(() => buildRulerMarks(width, zoom, grid), [grid, width, zoom]);
   return (
     <div
       className="relative mb-1 h-5 cursor-col-resize bg-[#0b121d] text-[9px] text-cyan-100/45"
       onPointerDown={onBeginGuideDrag}
       style={{ width }}
-      title="Drag from the ruler to add a vertical guide"
+      title={t('paper.insp.dragVGuide')}
     >
       {marks.map((mark) => (
         <span
@@ -10542,13 +11425,14 @@ function VerticalRuler({
   onBeginGuideDrag: (event: React.PointerEvent<HTMLDivElement>) => void;
   zoom: number;
 }) {
+  const { t } = useI18n();
   const marks = useMemo(() => buildRulerMarks(height, zoom, grid), [grid, height, zoom]);
   return (
     <div
       className="relative mt-6 w-5 cursor-row-resize bg-[#0b121d] text-[9px] text-cyan-100/45"
       onPointerDown={onBeginGuideDrag}
       style={{ height }}
-      title="Drag from the ruler to add a horizontal guide"
+      title={t('paper.insp.dragHGuide')}
     >
       {marks.map((mark) => (
         <span
@@ -10734,13 +11618,13 @@ function paperPreflightStatusToneClass(tone: PaperPreflightStatusTone, active: b
   return `${activeTint} bg-emerald-400/10 text-emerald-100/80 hover:border-emerald-200/45 hover:text-white`;
 }
 
-function StripButton({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+function StripButton({ icon, label, onClick, title }: { icon: React.ReactNode; label: string; onClick: () => void; title?: string }) {
   return (
     <button
       aria-label={label}
       className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-2 text-[11px] font-semibold text-cyan-100/75 hover:border-cyan-300/40 hover:text-white"
       onClick={onClick}
-      title={label}
+      title={title ?? label}
       type="button"
     >
       {icon}
@@ -10781,7 +11665,7 @@ function ExportMenuItem({
   );
 }
 
-function ToggleStripButton({ active, icon, label, onClick }: { active: boolean; icon: React.ReactNode; label: string; onClick: () => void }) {
+function ToggleStripButton({ active, icon, label, onClick, title }: { active: boolean; icon: React.ReactNode; label: string; onClick: () => void; title?: string }) {
   return (
     <button
       aria-label={label}
@@ -10792,7 +11676,7 @@ function ToggleStripButton({ active, icon, label, onClick }: { active: boolean; 
           : 'border-cyan-300/10 bg-[#101a29]/70 text-cyan-100/45 hover:border-cyan-300/35 hover:text-cyan-100'
       }`}
       onClick={onClick}
-      title={label}
+      title={title ?? label}
       type="button"
     >
       {icon}

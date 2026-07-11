@@ -16,6 +16,8 @@ import { useConfirmationStore } from './store/confirmationStore';
 import { showAlertDialog } from './store/alertDialogStore';
 import { SettingsModal } from './components/Settings/SettingsModal';
 import { CommunityStartupNotice } from './components/Layout/CommunityStartupNotice';
+import { FirstRunLanguageGate } from './components/Layout/FirstRunLanguageGate';
+import { BrandWordmark } from './components/Layout/BrandWordmark';
 import { ConfirmationDialog } from './components/Common/ConfirmationDialog';
 import { TextInputDialog } from './components/Common/TextInputDialog';
 import { AlertDialog } from './components/Common/AlertDialog';
@@ -106,6 +108,7 @@ const PaperWorkspace = lazy(() =>
 import { useEditorStore } from './store/editorStore';
 import { useSourceBinStore, type SourceBinLibraryItem } from './store/sourceBinStore';
 import { useShallow } from 'zustand/react/shallow';
+import { resolveBundledAssetUrl } from './lib/bundledAssetUrl';
 import { collectGlobalSourceBinItems } from './lib/sourceBin';
 import { buildSourceBinIngestSignature } from './lib/sourceBinIngest';
 import {
@@ -153,7 +156,10 @@ import {
 import {
   FLOW_NODE_CATALOG_CATEGORIES,
   getNodeCatalogEntriesForCategory,
+  nodeCategoryLabel,
+  nodeCatalogEntryLabel,
 } from './lib/nodeCatalog';
+import { translateFormat } from './lib/i18n';
 import { applyInterfaceTheme, buildInterfaceThemeStyle, resolveInterfaceTheme } from './lib/interfaceThemes';
 import { resolveKeyboardShortcutCommand } from './lib/keyboardShortcuts';
 import {
@@ -356,13 +362,14 @@ function FlowApp() {
   const licenseIsCommercial = useSettingsStore((state) => state.license.licensed);
   // Edition in the title bar (licensing spec Part 2 §3). Licensed builds keep the clean title.
   useEffect(() => {
-    document.title = licenseIsCommercial ? 'Signal Loom' : 'Signal Loom — Community';
+    document.title = licenseIsCommercial ? 'Sloom Studio' : 'Sloom Studio — Community';
   }, [licenseIsCommercial]);
   const defaultModels = useSettingsStore((state) => state.defaultModels);
   const providerSettings = useSettingsStore((state) => state.providerSettings);
   const interfaceThemeId = useSettingsStore((state) => state.interfaceThemeId);
   const interfaceDensity = useSettingsStore((state) => state.interfaceDensity);
   const keyboardShortcuts = useSettingsStore((state) => state.keyboardShortcuts);
+  const locale = useSettingsStore((state) => state.locale);
   const gamepadBindings = useSettingsStore((state) => state.gamepadBindings);
   const openSettings = useSettingsStore((state) => state.openSettings);
   const sourceBinItems = useSourceBinStore(useShallow((state) => state.bins.flatMap((bin) => bin.items)));
@@ -441,7 +448,7 @@ function FlowApp() {
   const [activeHelpSectionId, setActiveHelpSectionId] = useState<HelpSectionId | null>(null);
   const [startupSplash, setStartupSplash] = useState(() => ({
     visible: Boolean(getSignalLoomNativeBridge()),
-    title: 'Starting Signal Loom',
+    title: 'Starting Sloom Studio',
     detail: 'Preparing workspace…',
   }));
   const [flowOrganizeJob, setFlowOrganizeJob] = useState<{
@@ -490,11 +497,12 @@ function FlowApp() {
     () => buildCommandPaletteEntries({
       activeWorkspace: activeWorkspaceView,
       shortcuts: keyboardShortcuts,
+      locale,
       flowDiagnosticsCount: flowDiagnostics.length,
       flowNodeCount: nodes.length,
       canCleanFlow: activeWorkspaceView === 'flow' && nodes.length > 0 && !flowOrganizeJob,
     }),
-    [activeWorkspaceView, flowDiagnostics.length, flowOrganizeJob, keyboardShortcuts, nodes.length],
+    [activeWorkspaceView, flowDiagnostics.length, flowOrganizeJob, keyboardShortcuts, locale, nodes.length],
   );
 
   const recordCommandActivity = useCallback((command: NativeMenuCommand, source: ActivityTrailSource = 'menu') => {
@@ -1519,8 +1527,8 @@ function FlowApp() {
           await bridge.showAbout({ edition: describeLicenseEdition(useSettingsStore.getState().license) });
         } else {
           await showAlertDialog({
-            title: 'Signal Loom',
-            message: `Generative AI media flow builder and timeline editor. ${describeLicenseEdition(useSettingsStore.getState().license)}.`,
+            title: 'Sloom Studio',
+            message: `Multimedia editor, media flow builder, and timeline editor. ${describeLicenseEdition(useSettingsStore.getState().license)}.`,
             tone: 'info',
           });
         }
@@ -1797,7 +1805,7 @@ function FlowApp() {
       return;
     }
     if (kind === 'unknown') {
-      throw new Error('This file is not a Signal Loom project (.sloom), image (.slimg), or layout (.slppr).');
+      throw new Error('This file is not a Sloom Studio project (.sloom), image (.slimg), or layout (.slppr).');
     }
 
     const document = await parseProjectDocument(new File([bytes as BlobPart], fileName));
@@ -1826,7 +1834,7 @@ function FlowApp() {
     }
   }, [openSignalLoomFileBytes]);
 
-  // Android: open Signal Loom files tapped in a file manager / "Open with" (ACTION_VIEW intent).
+  // Android: open Sloom Studio files tapped in a file manager / "Open with" (ACTION_VIEW intent).
   useEffect(() => {
     return registerAndroidFileOpenHandler(async ({ bytes, fileName }) => {
       try {
@@ -1899,7 +1907,7 @@ function FlowApp() {
           }
         }
       }).catch((error) => {
-        const message = error instanceof Error ? error.message : 'Signal Loom could not finish startup.';
+        const message = error instanceof Error ? error.message : 'Sloom Studio could not finish startup.';
         console.error(message);
       }).finally(() => {
         if (!cancelled) {
@@ -1947,6 +1955,13 @@ function FlowApp() {
     if (!bridge?.setKeyboardShortcuts) return;
     void bridge.setKeyboardShortcuts(keyboardShortcuts);
   }, [keyboardShortcuts]);
+
+  useEffect(() => {
+    const bridge = getSignalLoomNativeBridge();
+    if (!bridge?.setLocale) return;
+    // Keep the native + KDE menus' language in sync with the interface-language setting.
+    void bridge.setLocale(locale);
+  }, [locale]);
 
   const placeSourceBinItemOnFlow = useCallback((item: SourceBinLibraryItem, position: { x: number; y: number }) => {
     const type = getFlowNodeTypeForSourceBinItem(item);
@@ -2007,21 +2022,21 @@ function FlowApp() {
     const nodeCatalogItems: SharedContextMenuItem[] = FLOW_NODE_CATALOG_CATEGORIES.map((category) => {
       const children: SharedContextMenuItem[] = getNodeCatalogEntriesForCategory(category.id).map((entry) => ({
         id: `add-${entry.type}`,
-        label: `Add ${entry.label}`,
+        label: translateFormat('flow.toolbar.addNode', locale, { name: nodeCatalogEntryLabel(entry, locale) }),
         action: createNodeAction(entry.type, entry.initialData),
       }));
 
       if (category.id === 'generate') {
         children.push(...imageTemplates.map((template) => ({
           id: `add-image-template-${template.id}`,
-          label: `Add ${template.label}`,
+          label: translateFormat('flow.toolbar.addImageNode', locale, { name: template.label }),
           action: createNodeAction('imageGen', createImageNodeTemplateDataPatch(template.id)),
         } satisfies SharedContextMenuItem)));
       }
 
       return {
         id: `node-category-${category.id}`,
-        label: category.label,
+        label: nodeCategoryLabel(category, locale),
         children,
       };
     });
@@ -2340,6 +2355,7 @@ function FlowApp() {
       {startupSplash.visible ? (
         <StartupSplash title={startupSplash.title} detail={startupSplash.detail} />
       ) : null}
+      <FirstRunLanguageGate />
     </div>
   );
 }
@@ -2348,11 +2364,15 @@ function StartupSplash({ title, detail }: { title: string; detail: string }) {
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-[#020711]">
       <img
-        alt="Signal Loom is starting"
+        alt="Sloom Studio is starting"
         className="h-full max-h-full w-full max-w-full object-contain"
         draggable={false}
-        src="/signal-loom-splash.png"
+        src={resolveBundledAssetUrl('/signal-loom-splash.png')}
       />
+      {/* Bilingual manga-title wordmark, anchored low over a legibility scrim so it reads over any art. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-[#020711] via-[#020711]/80 to-transparent pt-16 pb-[7vh]">
+        <BrandWordmark scale={1} />
+      </div>
       <div className="sr-only" role="status">
         {title}. {detail}
       </div>
@@ -2378,13 +2398,13 @@ function AppHelpModal({
       minSize={{ width: 520, height: 360 }}
       onClose={onClose}
       open
-      title="Signal Loom Help"
+      title="Sloom Studio Help"
       workspaceId="app-dialogs"
     >
       <div className="theme-card grid h-full min-h-0 overflow-hidden bg-[#101722] text-gray-100 md:grid-cols-[220px_minmax(0,1fr)]">
         <aside className="theme-card-soft border-b border-cyan-300/15 bg-[#0b121d] p-4 md:border-b-0 md:border-r">
           <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-200/70">Help</div>
-          <div className="mt-1 text-lg font-semibold text-white">Signal Loom</div>
+          <div className="mt-1 text-lg font-semibold text-white">Sloom Studio</div>
           <div className="mt-4 space-y-1">
             {HELP_SECTIONS.map((section) => (
               <button

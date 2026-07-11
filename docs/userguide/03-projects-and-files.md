@@ -1,6 +1,6 @@
 # 3. Projects & files
 
-Signal Loom keeps everything you do inside **one project**, and gives each workspace its own
+Sloom Studio keeps everything you do inside **one project**, and gives each workspace its own
 portable document format for when you want to share or reuse a single piece.
 
 ## The `.sloom` project
@@ -17,7 +17,7 @@ Open a `.sloom` and you're back exactly where you left off, everywhere at once.
 | Save a copy | **Project → Save As…** (`Ctrl+Shift+S`) |
 
 ### Backups
-When you overwrite an existing project, Signal Loom writes a timestamped `.bak-…` copy alongside
+When you overwrite an existing project, Sloom Studio writes a timestamped `.bak-…` copy alongside
 it first, so a save can always be rolled back. These backups are ordinary files you can delete or
 archive.
 
@@ -53,7 +53,7 @@ binary (not base64), so they stay small. A `.slimg` carries your full layer stac
 
 ## Keeping projects healthy
 
-- **Stability first.** Signal Loom is built to stay responsive on large projects. If a project
+- **Stability first.** Sloom Studio is built to stay responsive on large projects. If a project
   feels heavy, most of the weight is embedded assets — keeping a scratch folder (above) is the fix.
 - **Sync across devices.** A portable, exported `.sloom` (assets embedded) is the format to move
   between machines. The lean working `.sloom` + its scratch folder is best kept together on one

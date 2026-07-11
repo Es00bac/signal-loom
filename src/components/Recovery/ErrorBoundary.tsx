@@ -37,7 +37,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     this.setState({ errorInfo });
-    console.error(`[Signal Loom recovery] ${this.props.title ?? this.props.level ?? 'surface'} failed`, error, errorInfo);
+    console.error(`[Sloom Studio recovery] ${this.props.title ?? this.props.level ?? 'surface'} failed`, error, errorInfo);
   }
 
   componentDidUpdate(prevProps: ErrorBoundaryProps): void {
@@ -144,10 +144,10 @@ export function RecoveryFallback({
   onCopyDetails,
 }: RecoveryFallbackProps) {
   const isRoot = level === 'root';
-  const heading = title ?? (isRoot ? 'Signal Loom recovered from a render crash' : 'This surface crashed');
+  const heading = title ?? (isRoot ? 'Sloom Studio recovered from a render crash' : 'This surface crashed');
   const summary = isRoot
     ? 'The app shell caught a render exception before it could blank the window.'
-    : 'Only this area was paused. Other Signal Loom workspaces and panels should remain usable.';
+    : 'Only this area was paused. Other Sloom Studio workspaces and panels should remain usable.';
 
   return (
     <div

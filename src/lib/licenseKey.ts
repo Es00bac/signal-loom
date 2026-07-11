@@ -1,5 +1,5 @@
 /**
- * Signal Loom commercial-license verification — public wrapper.
+ * Sloom Studio commercial-license verification — public wrapper.
  *
  * Key format: `SLOOM-<base64url(payload JSON)>.<base64url(signature)>`, verified fully offline
  * (no license server exists; keys work forever). The verification implementation itself ships as

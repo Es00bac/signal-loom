@@ -5,6 +5,7 @@ import {
   type AlertDialogRequest,
   type AlertDialogTone,
 } from '../../store/alertDialogStore';
+import { useI18n } from '../../lib/useI18n';
 
 export const AlertDialog: React.FC = () => {
   const { activeRequest, respond } = useAlertDialogStore();
@@ -47,6 +48,7 @@ const toneClasses: Record<AlertDialogTone, {
 
 export const AlertDialogView: React.FC<AlertDialogViewProps> = ({ request, respond }) => {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const { t } = useI18n();
   const tone = request.tone ?? 'warning';
   const classes = toneClasses[tone];
 
@@ -68,7 +70,7 @@ export const AlertDialogView: React.FC<AlertDialogViewProps> = ({ request, respo
   return (
     <div className="fixed inset-0 z-[152] flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs transition-opacity duration-200">
       <section
-        aria-label={request.title ?? 'Alert'}
+        aria-label={request.title ?? t('dialog.alert.aria')}
         aria-modal="true"
         className={`theme-popover flex w-full max-w-md flex-col gap-5 rounded-xl border bg-[#13161f] p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150 ${classes.borderClassName}`}
         role="alertdialog"
@@ -79,7 +81,7 @@ export const AlertDialogView: React.FC<AlertDialogViewProps> = ({ request, respo
           </div>
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-base font-semibold text-gray-100">
-              {request.title ?? 'Notice'}
+              {request.title ?? t('dialog.alert.title')}
             </h3>
             <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-300">
               {request.message}
@@ -95,7 +97,7 @@ export const AlertDialogView: React.FC<AlertDialogViewProps> = ({ request, respo
             type="button"
           >
             <Check size={14} />
-            {request.confirmLabel ?? 'OK'}
+            {request.confirmLabel ?? t('common.ok')}
           </button>
         </div>
       </section>

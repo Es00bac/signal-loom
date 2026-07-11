@@ -13,7 +13,7 @@ describe('paperDtpParity', () => {
     ]));
   });
 
-  it('keeps side-by-side InDesign and Signal Loom status data for each feature', () => {
+  it('keeps side-by-side InDesign and Sloom Studio status data for each feature', () => {
     expect(PAPER_DTP_PARITY_FEATURES.every((feature) => (
       feature.indesign.length > 0
       && feature.signalLoom.length > 0

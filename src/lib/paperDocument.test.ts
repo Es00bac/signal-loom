@@ -6,6 +6,7 @@ import {
   assignPaperParentPage,
   computeEffectivePaperFrame,
   createDefaultPaperDocument,
+  effectiveRtlBinding,
   detachInheritedPaperFrame,
   exportPaperDocumentToPrintHtml,
   parsePaperDocument,
@@ -32,11 +33,11 @@ function makeImageItem(): SourceBinLibraryItem {
 describe('paperDocument', () => {
   it('creates a print-oriented document with pages, margins, grids, and guides enabled', () => {
     const doc = createDefaultPaperDocument({
-      title: 'Signal Loom Comic',
+      title: 'Sloom Studio Comic',
       preset: 'us-letter',
     });
 
-    expect(doc.title).toBe('Signal Loom Comic');
+    expect(doc.title).toBe('Sloom Studio Comic');
     expect(doc.pages).toHaveLength(1);
     expect(doc.pages[0].pageNumber).toBe(1);
     expect(doc.page.widthMm).toBe(215.9);
@@ -47,6 +48,7 @@ describe('paperDocument', () => {
     expect(doc.view.showRulers).toBe(true);
     expect(doc.view.showGrid).toBe(true);
     expect(doc.view.showGuides).toBe(true);
+    expect(doc.view.showFrameEdges).toBe(false);
     expect(doc.view.snapToGuides).toBe(false);
     expect(doc.view.snapToGrid).toBe(false);
     expect(doc.printProduction).toEqual(expect.objectContaining({
@@ -56,6 +58,26 @@ describe('paperDocument', () => {
     }));
     expect(doc.parentPages).toHaveLength(1);
     expect(doc.styles.paragraph.map((style) => style.id)).toEqual(expect.arrayContaining(['para-comic-dialogue', 'para-caption', 'para-sfx']));
+  });
+
+  it('creates new text frames borderless (Word-like) but keeps comic bubbles filled/stroked', () => {
+    let doc = createDefaultPaperDocument({ title: 'Borderless defaults' });
+    const pageId = doc.pages[0].id;
+
+    // A plain text frame with no explicit stroke/fill = a document paragraph: no border, no fill.
+    const text = addFrameToPaperPage(doc, pageId, { kind: 'text', xMm: 20, yMm: 20, widthMm: 60, heightMm: 20 });
+    doc = text.document;
+    const textFrame = doc.pages[0].frames.find((f) => f.id === text.frameId)!;
+    expect(textFrame.strokeWidthMm).toBe(0);
+    expect(textFrame.strokeColor).toBe('transparent');
+    expect(textFrame.fillColor).toBe('transparent');
+
+    // A speech bubble must still get its white fill + visible stroke (comic workflow unchanged).
+    const bubble = addFrameToPaperPage(doc, pageId, { kind: 'speechBubble', xMm: 20, yMm: 50, widthMm: 60, heightMm: 30 });
+    doc = bubble.document;
+    const bubbleFrame = doc.pages[0].frames.find((f) => f.id === bubble.frameId)!;
+    expect(bubbleFrame.fillColor).toBe('#ffffff');
+    expect(bubbleFrame.strokeWidthMm).toBeGreaterThan(0);
   });
 
   it('normalizes legacy speech/thought frame kinds into current bubble frame kinds', () => {
@@ -367,6 +389,72 @@ describe('paperDocument', () => {
     expect(frame?.imageScale).toBe(1);
     expect(frame?.imageOffsetXPercent).toBe(0);
     expect(frame?.widthMm).toBe(80);
+  });
+
+  it('records a swatch id on the fill and auto-clears it when the fill changes another way', () => {
+    const doc = createDefaultPaperDocument({ title: 'Spot ref', preset: 'us-letter' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame, frameId } = addFrameToPaperPage(doc, pageId, { kind: 'caption', xMm: 10, yMm: 10, widthMm: 40, heightMm: 20 });
+    const frameOf = (d: typeof doc) => d.pages.find((p) => p.id === pageId)!.frames.find((f) => f.id === frameId)!;
+
+    // Applying a swatch records the durable link (fillColor + fillSwatchId set together).
+    const applied = updatePaperFrame(withFrame, pageId, frameId, { fillColor: '#ff8800', fillSwatchId: 'sw-spot' });
+    expect(frameOf(applied).fillSwatchId).toBe('sw-spot');
+
+    // Changing the fill by any other path (no fillSwatchId in the patch) drops the link so it can't go stale.
+    const recolored = updatePaperFrame(applied, pageId, frameId, { fillColor: '#00aaff' });
+    expect(frameOf(recolored).fillColor).toBe('#00aaff');
+    expect(frameOf(recolored).fillSwatchId).toBeUndefined();
+  });
+
+  it('records a swatch id on the TEXT colour and auto-clears it when the colour changes another way', () => {
+    const doc = createDefaultPaperDocument({ title: 'Text spot ref', preset: 'us-letter' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame, frameId } = addFrameToPaperPage(doc, pageId, { kind: 'caption', xMm: 10, yMm: 10, widthMm: 40, heightMm: 20, text: 'Logo' });
+    const frameOf = (d: typeof doc) => d.pages.find((p) => p.id === pageId)!.frames.find((f) => f.id === frameId)!;
+
+    // Applying a swatch to the text colour records the durable link (color + colorSwatchId together).
+    const applied = updatePaperFrame(withFrame, pageId, frameId, { typography: { ...frameOf(withFrame).typography, color: '#e30613', colorSwatchId: 'sw-spot' } });
+    expect(frameOf(applied).typography.colorSwatchId).toBe('sw-spot');
+
+    // Recolouring the text any other way (no colorSwatchId in the patch) drops the link.
+    const recolored = updatePaperFrame(applied, pageId, frameId, { typography: { ...frameOf(applied).typography, color: '#123456' } });
+    expect(frameOf(recolored).typography.color).toBe('#123456');
+    expect(frameOf(recolored).typography.colorSwatchId).toBeUndefined();
+  });
+
+  it('records a swatch id on the STROKE colour and auto-clears it when the stroke changes another way', () => {
+    const doc = createDefaultPaperDocument({ title: 'Stroke spot ref', preset: 'us-letter' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame, frameId } = addFrameToPaperPage(doc, pageId, { kind: 'shape', xMm: 10, yMm: 10, widthMm: 40, heightMm: 20 });
+    const frameOf = (d: typeof doc) => d.pages.find((p) => p.id === pageId)!.frames.find((f) => f.id === frameId)!;
+
+    // Applying a swatch to the stroke records the durable link (strokeColor + strokeSwatchId together).
+    const applied = updatePaperFrame(withFrame, pageId, frameId, { strokeColor: '#e30613', strokeSwatchId: 'sw-spot' });
+    expect(frameOf(applied).strokeSwatchId).toBe('sw-spot');
+
+    // Changing the stroke any other way (no strokeSwatchId in the patch) drops the link so it can't go stale.
+    const recolored = updatePaperFrame(applied, pageId, frameId, { strokeColor: '#00aaff' });
+    expect(frameOf(recolored).strokeColor).toBe('#00aaff');
+    expect(frameOf(recolored).strokeSwatchId).toBeUndefined();
+  });
+
+  it('defaults a new text frame to a single column so its type vectorizes (real embedded font) by default', () => {
+    const doc = createDefaultPaperDocument({ title: 'Columns default', preset: 'us-letter' });
+    const pageId = doc.pages[0].id;
+    const { document: withText, frameId } = addFrameToPaperPage(doc, pageId, {
+      kind: 'text',
+      xMm: 18,
+      yMm: 18,
+      widthMm: 90,
+      heightMm: 120,
+      text: 'Body copy that should embed as selectable vector text.',
+    });
+    const frame = withText.pages[0].frames.find((f) => f.id === frameId);
+    // A default text frame is single-column; the vector-text engine only vectorizes columns === 1, so this
+    // is what makes real-font embedding work for body text without the user changing anything. Multi-column
+    // is still available on demand (and correctly rasterizes).
+    expect(frame?.columns).toBe(1);
   });
 
   it('exports print HTML with page size, bleed, crop marks, columns, and placed assets', () => {
@@ -855,3 +943,34 @@ function decodeBubbleSvgSources(html: string): string[] {
   return Array.from(html.matchAll(/<img class="paper-bubble-shape"[^>]+src="([^"]+)"/g))
     .map((match) => decodeURIComponent(match[1]));
 }
+
+describe('effectiveRtlBinding (右綴じ auto-derive)', () => {
+  it('auto-binds right-to-left when the document has vertical (縦書き) text', () => {
+    const base = createDefaultPaperDocument({ title: 'Auto Manga' });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'text', xMm: 10, yMm: 10, widthMm: 40, heightMm: 60,
+      text: '縦書き本文', typography: { writingMode: 'vertical-rl' },
+    });
+    expect(document.view.rtlBinding).toBeUndefined(); // nothing pinned — pure auto
+    expect(effectiveRtlBinding(document)).toBe(true);
+  });
+
+  it('auto-binds left-to-right for a horizontal (Western) document', () => {
+    const base = createDefaultPaperDocument({ title: 'Auto Western' });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'text', xMm: 10, yMm: 10, widthMm: 40, heightMm: 20, text: 'Plain body',
+    });
+    expect(effectiveRtlBinding(document)).toBe(false);
+  });
+
+  it('lets an explicit view.rtlBinding override the auto-derivation either way', () => {
+    const base = createDefaultPaperDocument({ title: 'Pinned' });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'text', xMm: 10, yMm: 10, widthMm: 40, heightMm: 60,
+      text: '縦書き', typography: { writingMode: 'vertical-rl' },
+    });
+    expect(effectiveRtlBinding({ ...document, view: { ...document.view, rtlBinding: false } })).toBe(false); // pin LTR on a vertical doc
+    const western = createDefaultPaperDocument({ title: 'Pinned RTL' });
+    expect(effectiveRtlBinding({ ...western, view: { ...western.view, rtlBinding: true } })).toBe(true); // pin RTL on a horizontal doc
+  });
+});

@@ -328,11 +328,11 @@ describe('ImageEditorChannelsPanel', () => {
 
     expect(container.textContent).toContain('Load selection is blocked until the saved alpha channel matches the active document dimensions.');
     expect(container.textContent).toContain('Load "Subject" is blocked: saved alpha is 3x2 but the active document is 4x4.');
-    expect(container.textContent).toContain('1 saved alpha channel will be preserved as Signal Loom metadata only; no native alpha plate is exported.');
+    expect(container.textContent).toContain('1 saved alpha channel will be preserved as Sloom Studio metadata only; no native alpha plate is exported.');
     expect(container.textContent).toContain('Saved alpha channels are selection masks only and do not create press-ready separations.');
-    expect(container.textContent).toContain('PSD export preserves saved alpha selections only as Signal Loom metadata; native alpha channels and print plates are not emitted.');
+    expect(container.textContent).toContain('PSD export preserves saved alpha selections only as Sloom Studio metadata; native alpha channels and print plates are not emitted.');
     expect(container.textContent).toContain('Spot channel preview is an RGB tint overlay; it is not a native ink separation.');
-    expect(container.textContent).toContain('Signal Loom does not emit native spot plates or press-ready separations.');
+    expect(container.textContent).toContain('Sloom Studio does not emit native spot plates or press-ready separations.');
     expect(container.textContent).toContain('Spot channel "Varnish" is 3x2 but the active document is 4x4.');
 
     const alphaSignatures = container.querySelector<HTMLElement>('[data-testid="alpha-channel-readiness-signatures"]');

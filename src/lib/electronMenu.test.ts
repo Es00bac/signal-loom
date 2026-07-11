@@ -46,19 +46,19 @@ describe('Electron native menu template (per-workspace)', () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
     const send = () => undefined;
 
-    expect(labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'image', sendCommand: send })))
+    expect(labelsOf(createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: 'image', sendCommand: send })))
       .toEqual(['Project', 'File', 'Edit', 'Image', 'Select', 'Tools', 'View', 'Window', 'Help']);
-    expect(labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'paper', sendCommand: send })))
+    expect(labelsOf(createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: 'paper', sendCommand: send })))
       .toEqual(['Project', 'File', 'Edit', 'Layout', 'Insert', 'Tools', 'View', 'Window', 'Help']);
-    expect(labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'editor', sendCommand: send })))
+    expect(labelsOf(createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: 'editor', sendCommand: send })))
       .toEqual(['Project', 'Edit', 'Timeline', 'Keyframes', 'View', 'Window', 'Help']);
-    expect(labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'flow', sendCommand: send })))
+    expect(labelsOf(createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: 'flow', sendCommand: send })))
       .toEqual(['Project', 'Flow', 'View', 'Window', 'Help']);
   });
 
   it('does not show other workspaces\' menus', async () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
-    const image = labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'image', sendCommand: () => undefined }));
+    const image = labelsOf(createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: 'image', sendCommand: () => undefined }));
     expect(image).not.toContain('Paper');
     expect(image).not.toContain('Timeline');
     expect(image).not.toContain('Flow');
@@ -67,7 +67,7 @@ describe('Electron native menu template (per-workspace)', () => {
   it('dispatches stable command IDs with native accelerators from the Project menu', async () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
     const commands: string[] = [];
-    const template = createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'image', sendCommand: (c) => commands.push(c) });
+    const template = createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: 'image', sendCommand: (c) => commands.push(c) });
     const project = template.find((entry) => entry.label === 'Project');
     const save = findItem(project?.submenu, 'Save');
     const saveAs = findItem(project?.submenu, 'Save As...');
@@ -82,7 +82,7 @@ describe('Electron native menu template (per-workspace)', () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
     for (const ws of ['flow', 'editor', 'image', 'paper']) {
       const commands: string[] = [];
-      const template = createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: ws, sendCommand: (c) => commands.push(c) });
+      const template = createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: ws, sendCommand: (c) => commands.push(c) });
       const windowMenu = template.find((entry) => entry.label === 'Window');
       expect(windowMenu, `Window menu missing for ${ws}`).toBeTruthy();
       for (const [label, command, accel] of [
@@ -102,7 +102,7 @@ describe('Electron native menu template (per-workspace)', () => {
   it('dispatches Image Edit/Tools commands (not native text roles) with nested tool submenus', async () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
     const commands: string[] = [];
-    const template = createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'image', sendCommand: (c) => commands.push(c) });
+    const template = createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: 'image', sendCommand: (c) => commands.push(c) });
     const edit = template.find((entry) => entry.label === 'Edit');
     const cut = findItem(edit?.submenu, 'Cut');
     expect(cut?.role).toBeUndefined();
@@ -120,7 +120,7 @@ describe('Electron native menu template (per-workspace)', () => {
   it('wires the Image File menu to the .slimg open/save-as commands', async () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
     const commands: string[] = [];
-    const template = createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'image', sendCommand: (c) => commands.push(c) });
+    const template = createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: 'image', sendCommand: (c) => commands.push(c) });
     const file = template.find((entry) => entry.label === 'File');
     expect(file).toBeTruthy();
     const open = findItem(file?.submenu, 'Open...');
@@ -133,7 +133,7 @@ describe('Electron native menu template (per-workspace)', () => {
   it('wires the Paper File menu to the .slppr open/save-as commands', async () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
     const commands: string[] = [];
-    const template = createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'paper', sendCommand: (c) => commands.push(c) });
+    const template = createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: 'paper', sendCommand: (c) => commands.push(c) });
     const file = template.find((entry) => entry.label === 'File');
     expect(file).toBeTruthy();
     const open = findItem(file?.submenu, 'Open...');
@@ -146,7 +146,7 @@ describe('Electron native menu template (per-workspace)', () => {
   it('keeps the per-document File menu out of the Flow and Video workspaces', async () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
     for (const ws of ['flow', 'editor']) {
-      const other = labelsOf(createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: ws, sendCommand: () => undefined }));
+      const other = labelsOf(createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: ws, sendCommand: () => undefined }));
       expect(other).not.toContain('File');
     }
   });
@@ -154,7 +154,7 @@ describe('Electron native menu template (per-workspace)', () => {
   it('puts Paper exports under Project > Export and dispatches them', async () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
     const commands: string[] = [];
-    const template = createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'paper', sendCommand: (c) => commands.push(c) });
+    const template = createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: 'paper', sendCommand: (c) => commands.push(c) });
     const project = template.find((entry) => entry.label === 'Project');
     const exportSubmenu = project?.submenu?.find((entry) => entry.label === 'Export');
     expect(exportSubmenu?.submenu).toBeTruthy();
@@ -168,7 +168,7 @@ describe('Electron native menu template (per-workspace)', () => {
 
   it('keeps View roles (fullscreen/reload) and the layout-defaults submenu', async () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
-    const template = createApplicationMenuTemplate({ appName: 'Signal Loom', activeWorkspace: 'flow', sendCommand: () => undefined });
+    const template = createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: 'flow', sendCommand: () => undefined });
     const view = template.find((entry) => entry.label === 'View');
     expect(view?.submenu?.some((entry) => entry.role === 'togglefullscreen')).toBe(true);
     expect(view?.submenu?.some((entry) => entry.role === 'reload')).toBe(true);
@@ -181,7 +181,7 @@ describe('Electron native menu template (per-workspace)', () => {
   it('uses customized shortcut accelerators when the renderer sends overrides', async () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
     const template = createApplicationMenuTemplate({
-      appName: 'Signal Loom',
+      appName: 'Sloom Studio',
       activeWorkspace: 'image',
       keyboardShortcuts: { 'image:tool-brush': 'Ctrl+Shift+B', 'edit:cut': 'Ctrl+Alt+X' },
       sendCommand: () => undefined,
@@ -194,8 +194,8 @@ describe('Electron native menu template (per-workspace)', () => {
 
   it('prepends the macOS application menu when isMac', async () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
-    const template = createApplicationMenuTemplate({ appName: 'Signal Loom', isMac: true, activeWorkspace: 'image', sendCommand: () => undefined });
-    expect(template[0]?.label).toBe('Signal Loom');
+    const template = createApplicationMenuTemplate({ appName: 'Sloom Studio', isMac: true, activeWorkspace: 'image', sendCommand: () => undefined });
+    expect(template[0]?.label).toBe('Sloom Studio');
     expect(template[1]?.label).toBe('Project');
   });
 });

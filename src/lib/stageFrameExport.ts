@@ -51,6 +51,7 @@ import {
   paintCroppedBitmap,
   paintPlannedClip,
   resolveActiveStageFrameClips,
+  resolveComicTailSample,
   drawComicStageObject,
   drawRectangleStageObject,
   drawTextStageObject,
@@ -575,6 +576,7 @@ async function paintActiveClip(
       color: clip.textColor,
       effect: clip.textEffect,
       opacityPercent: 100,
+      typography: clip.textTypography,
     });
     const image = await mediaPool.getImage(cardUrl);
     paintPlannedClip(ctx, plan, (context) => {
@@ -603,13 +605,13 @@ async function paintActiveClip(
   }
 
   if (clip.sourceKind === 'comic') {
-    // NOTE: per-frame tail sampling (resolveComicTailSample) is scaffolded in
-    // stageFrameCompositor.ts but not yet wired end-to-end — EditorVisualKeyframe carries the
-    // tail-override fields, but renderComicCard doesn't yet accept/apply a sampled override, and
-    // nothing in the UI writes per-keyframe tail values. Until that's finished and visually
-    // verified, this bakes the clip's static tail (comicTailAngleDeg/comicTailLengthPx) exactly
-    // like the legacy ffmpeg export does — see renderComicCard in mediaComposition.ts.
-    const cardUrl = await renderComicCard(clip);
+    // Sampled per frame (not baked to the clip's static start pose like the legacy ffmpeg export —
+    // see docs/notes/830's "KNOWN LIMITATION" and "to lift it later" note) so a keyframed tail
+    // animates in this export exactly like it does live on the stage. The frame-server engine
+    // renders every frame from scratch already, which is exactly the mechanism 830 says the
+    // limitation needs — see `resolveComicTailSample`'s doc comment in stageFrameCompositor.ts.
+    const tailSample = resolveComicTailSample(clip, activeClip.progressPercent);
+    const cardUrl = await renderComicCard(clip, tailSample);
     const image = await mediaPool.getImage(cardUrl);
     paintPlannedClip(ctx, plan, (context) => {
       context.drawImage(image, -plan.layout.width / 2, -plan.layout.height / 2, plan.layout.width, plan.layout.height);

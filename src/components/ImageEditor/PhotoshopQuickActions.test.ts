@@ -371,7 +371,7 @@ describe('PhotoshopQuickActions', () => {
       undoable: true,
       mutatesDocument: true,
       implementation: 'local-approximation',
-      warning: 'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
+      warning: 'Uses Sloom Studio local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
     });
     expect(getPhotoshopQuickActionCapabilityDescriptor('missingAction')).toBeNull();
   });
@@ -385,7 +385,7 @@ describe('PhotoshopQuickActions', () => {
     expect(warnedActionIds).toEqual(['localContentAwareFillPatch']);
     expect(localFill).toMatchObject({
       implementation: 'local-approximation',
-      warning: 'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
+      warning: 'Uses Sloom Studio local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
     });
   });
 
@@ -417,7 +417,7 @@ describe('PhotoshopQuickActions', () => {
       compatible: false,
       blockerCodes: ['output-to-new-layer-unsupported'],
       warnings: [
-        'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
+        'Uses Sloom Studio local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
       ],
       contentAwareRepair: {
         operation: 'patch',
@@ -501,7 +501,7 @@ describe('PhotoshopQuickActions', () => {
         {
           id: 'localContentAwareFillPatch',
           label: 'Local Content-Aware Fill / Patch',
-          warning: 'Uses Signal Loom local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
+          warning: 'Uses Sloom Studio local pixel patching; Photoshop Content-Aware Fill and cloud Generative Fill may produce different semantic results.',
         },
       ],
     });
