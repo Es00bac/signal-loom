@@ -7,6 +7,7 @@ import {
   ITALIC_TOGGLE_PATCH,
   MAX_RUN_FONT_SIZE_PT,
   MIN_RUN_FONT_SIZE_PT,
+  resolveRichEditorCommit,
   stepFontSize,
   toggleParagraphBullet,
   toggleRunStyle,
@@ -263,5 +264,76 @@ describe('ensureRichTextForTransform', () => {
   it('returns existing richText untouched when it already has content, ignoring the plain-text fallback', () => {
     const existing: PaperRichParagraph[] = [{ runs: [{ text: 'Already rich', fontWeight: '700' }] }];
     expect(ensureRichTextForTransform(existing, 'ignored')).toBe(existing);
+  });
+});
+
+describe('resolveRichEditorCommit — plain-frame promotion policy', () => {
+  it('is a no-op when a plain frame is entered and left untouched (edited text equals the lifted seed)', () => {
+    const edited: PaperRichParagraph[] = [{ runs: [{ text: 'Hello' }] }];
+    const decision = resolveRichEditorCommit(edited, undefined, 'Hello');
+    expect(decision.changed).toBe(false);
+  });
+
+  it('promotes on the FIRST real formatting action: a plain frame + bold applied -> richText created, bold applied, flatten invariant respected', () => {
+    const edited: PaperRichParagraph[] = [{ runs: [{ text: 'Hello', fontWeight: '700' }] }];
+    const decision = resolveRichEditorCommit(edited, undefined, 'Hello');
+    expect(decision.changed).toBe(true);
+    expect(decision.richText).toEqual(edited); // promoted: richText is now persisted
+    expect(decision.text).toBe('Hello'); // flatten invariant: the plain text itself never changed
+  });
+
+  it('does NOT promote merely editing plain text with no formatting applied (new words, still uniform)', () => {
+    const edited: PaperRichParagraph[] = [{ runs: [{ text: 'Hello world' }] }];
+    const decision = resolveRichEditorCommit(edited, undefined, 'Hello');
+    expect(decision.changed).toBe(true); // the text really did change...
+    expect(decision.richText).toBeUndefined(); // ...but it stays plain, no promotion
+    expect(decision.text).toBe('Hello world');
+  });
+
+  it('DOES promote a bullet toggle — a list marker is a real formatting action, not plain text', () => {
+    const edited: PaperRichParagraph[] = [{ runs: [{ text: 'Item' }], listMarker: '•', hangingIndentMm: 4 }];
+    const decision = resolveRichEditorCommit(edited, undefined, 'Item');
+    expect(decision.richText).toEqual(edited);
+  });
+
+  it('does NOT promote a MULTI-LINE plain edit with zero formatting — line breaks alone are not "formatting"', () => {
+    // Regression case: a naive re-use of paperRichTextIsUniform (which treats >1 paragraph as automatically
+    // non-uniform, correct for ITS OWN "collapses to one frame typography" purpose) would wrongly promote any
+    // multi-line plain caption just for having a line break. hasRealFormatting must not do that.
+    const edited: PaperRichParagraph[] = [{ runs: [{ text: 'Line one' }] }, { runs: [{ text: 'Line two' }] }];
+    const decision = resolveRichEditorCommit(edited, undefined, 'Line one\nLine two');
+    expect(decision.changed).toBe(false); // identical to the lifted seed — nothing changed at all
+    expect(decision.richText).toBeUndefined();
+  });
+
+  it('does NOT promote a multi-line plain edit that also changed WORDS but still carries no formatting', () => {
+    const edited: PaperRichParagraph[] = [{ runs: [{ text: 'Line one' }] }, { runs: [{ text: 'Line TWO edited' }] }];
+    const decision = resolveRichEditorCommit(edited, undefined, 'Line one\nLine two');
+    expect(decision.changed).toBe(true); // the words really did change...
+    expect(decision.richText).toBeUndefined(); // ...but still no formatting was applied, so it stays plain
+  });
+
+  it('DOES promote a cross-paragraph edit where only one paragraph carries real formatting', () => {
+    const edited: PaperRichParagraph[] = [
+      { runs: [{ text: 'One', fontStyle: 'italic' }] },
+      { runs: [{ text: 'Two' }] },
+    ];
+    const decision = resolveRichEditorCommit(edited, undefined, 'One\nTwo');
+    expect(decision.richText).toEqual(edited);
+    expect(decision.text).toBe('One\nTwo');
+  });
+
+  it('an already-rich frame always keeps committing as rich, even if the edit removes all formatting (no demotion)', () => {
+    const priorRich: PaperRichParagraph[] = [{ runs: [{ text: 'Hello', fontWeight: '700' }] }];
+    const edited: PaperRichParagraph[] = [{ runs: [{ text: 'Hello' }] }]; // formatting removed
+    const decision = resolveRichEditorCommit(edited, priorRich, 'Hello');
+    expect(decision.changed).toBe(true);
+    expect(decision.richText).toEqual(edited); // still committed as rich — no plain-demotion logic
+  });
+
+  it('is a no-op for an already-rich frame left completely untouched', () => {
+    const priorRich: PaperRichParagraph[] = [{ runs: [{ text: 'Hello', fontWeight: '700' }] }];
+    const decision = resolveRichEditorCommit(priorRich, priorRich, 'Hello');
+    expect(decision.changed).toBe(false);
   });
 });

@@ -229,4 +229,68 @@ export function ensureRichTextForTransform(
   return richText && richText.length ? richText : paperRichTextFromPlainText(plainText);
 }
 
+export interface RichEditorCommitDecision {
+  /** False when nothing actually changed from what the editor started with — the caller should cancel/no-op
+   *  rather than commit anything (so entering edit mode and blurring without touching anything is a true no-op). */
+  changed: boolean;
+  /** The flattened plain text to commit — meaningful only when `changed` is true. */
+  text: string;
+  /**
+   * The richText to persist, or `undefined` to commit as plain text (the frame stays/becomes plain). A frame
+   * that was already rich always keeps committing as rich (no demotion logic); a frame that started plain only
+   * gets PROMOTED to rich when the edited content carries real formatting (see hasRealFormatting) — typing new
+   * plain text, including MULTI-LINE plain text, with no formatting applied keeps it plain.
+   */
+  richText?: PaperRichParagraph[];
+}
+
+/** Mirrors src/lib/paperRichText.ts's private (unexported) RUN_STYLE_KEYS list — the run-level fields that
+ *  count as a real style override, kept in sync by hand since it isn't exported for reuse. */
+const RUN_FORMATTING_KEYS: Array<keyof PaperTextRun> = [
+  'fontFamily', 'fontSizePt', 'fontWeight', 'fontStyle', 'underline', 'strike', 'color', 'highlight', 'tracking', 'smallCaps', 'vertAlign', 'link',
+];
+
+/**
+ * True when ANY paragraph carries real formatting: a list marker, a paragraph-level layout override (align/
+ * shading/borders/indents/spacing/drop-cap), or any run-level style override. Deliberately does NOT flag
+ * multi-paragraph content by itself — unlike src/lib/paperRichText.ts's paperRichTextIsUniform, whose job is a
+ * different question ("can this collapse to one frame-level typography for PDF/X vector text", where >1
+ * paragraph alone already answers no) — this function exists so a plain MULTI-LINE caption with zero actual
+ * formatting doesn't get promoted to rich storage just for having line breaks.
+ */
+function hasRealFormatting(paragraphs: PaperRichParagraph[]): boolean {
+  return paragraphs.some((paragraph) => {
+    if (paragraph.listMarker || paragraph.align || paragraph.shading || paragraph.borders) return true;
+    if (paragraph.dropCapLines || paragraph.leftIndentMm || paragraph.rightIndentMm || paragraph.hangingIndentMm || paragraph.firstLineIndentMm) return true;
+    if (paragraph.spaceBeforeMm || paragraph.spaceAfterMm) return true;
+    return paragraph.runs.some((run) => RUN_FORMATTING_KEYS.some((key) => run[key] !== undefined));
+  });
+}
+
+/**
+ * Decide what a rich-editor session should commit, given the richText it serialized from the live DOM at
+ * commit time. Pure and DOM-free — the caller (PaperRichEditableText's commit()) is responsible for producing
+ * `editedRichText` (via serializeRichEditor) and calling onCommit/onCancel per this decision. This is the
+ * plain-frame-promotion policy from the "make the floating bar available on plain frames" feature: promotion
+ * happens on the first REAL formatting action (including a bullet toggle), never merely from entering edit
+ * mode or editing plain text — even multi-line plain text.
+ */
+export function resolveRichEditorCommit(
+  editedRichText: PaperRichParagraph[],
+  priorRichText: PaperRichParagraph[] | undefined,
+  plainText: string,
+): RichEditorCommitDecision {
+  const wasAlreadyRich = Boolean(priorRichText && priorRichText.length > 0);
+  const baseline = wasAlreadyRich ? priorRichText! : ensureRichTextForTransform(undefined, plainText);
+  const text = flattenPaperRichText(editedRichText);
+
+  if (JSON.stringify(editedRichText) === JSON.stringify(baseline)) {
+    return { changed: false, text };
+  }
+  if (!wasAlreadyRich && !hasRealFormatting(editedRichText)) {
+    return { changed: true, text };
+  }
+  return { changed: true, text, richText: editedRichText };
+}
+
 export { flattenPaperRichText };

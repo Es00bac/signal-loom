@@ -170,8 +170,8 @@ import { DEFAULT_PAPER_COLUMN_GUTTER_MM, resolvePaperColumnGutterMm } from '../.
 import { computePaperThreadSlices } from '../../../lib/paperThreadFlow';
 import { createPaperCanvasMeasurer } from '../../../lib/paperCanvasMeasurer';
 import { resolveFrameWrapSpacers, type PaperWrapSpacer } from '../../../lib/paperTextWrap';
-import { flattenPaperRichText } from '../../../lib/paperRichText';
 import { richTextToEditorHtml, serializeRichEditor } from '../../../lib/paperRichTextDom';
+import { ensureRichTextForTransform, resolveRichEditorCommit } from './richTextTransforms';
 import { findPaperMatches, type PaperFindOptions } from '../../../lib/paperFindChange';
 import { resolvePaperFolioText } from '../../../lib/paperFolios';
 import { buildPaperTextArcPath } from '../../../lib/paperTextPath';
@@ -8168,13 +8168,11 @@ function PaperFrameView({
         ) : editableTextFrame ? (
           <PaperInlineText
             displayText={displayText}
-            draft={textDraft}
             frame={frame}
             isEditing={textEditing}
             onBeginEdit={beginTextEdit}
             onCancel={cancelTextEdit}
             onCommit={commitTextEdit}
-            onDraftChange={setTextDraft}
             pageBackgroundCss={pageBackgroundCss}
             wrapSpacers={wrapSpacers}
             zoom={zoom}
@@ -8742,7 +8740,6 @@ function PaperWrapFloats({ spacers, zoom }: { spacers: PaperWrapSpacer[]; zoom: 
 }
 
 function PaperInlineText({
-  draft,
   frame,
   displayText,
   wrapSpacers = [],
@@ -8750,11 +8747,9 @@ function PaperInlineText({
   onBeginEdit,
   onCancel,
   onCommit,
-  onDraftChange,
   pageBackgroundCss,
   zoom,
 }: {
-  draft: string;
   frame: PaperFrame;
   displayText?: string;
   wrapSpacers?: PaperWrapSpacer[];
@@ -8762,7 +8757,6 @@ function PaperInlineText({
   onBeginEdit: (event: React.MouseEvent<HTMLElement>) => void;
   onCancel: () => void;
   onCommit: (text: string, richText?: PaperRichParagraph[]) => void;
-  onDraftChange: (text: string) => void;
   pageBackgroundCss: string;
   zoom: number;
 }) {
@@ -8781,29 +8775,22 @@ function PaperInlineText({
       pageBackground: pageBackgroundCss,
     });
     const editorStyle = backdrop.needsBackdrop ? { ...style, backgroundColor: backdrop.backdropColor } : style;
-    // A rich frame gets the WYSIWYG rich editor (formatting toolbar + per-run styling preserved); every
-    // other text frame keeps the plain single-style editor exactly as before.
-    if (frame.richText && frame.richText.length > 0) {
-      return (
-        <PaperRichEditableText
-          baseStyle={editorStyle}
-          className={`${className} rounded border border-cyan-400/80 p-1 shadow-[0_0_0_2px_rgba(8,145,178,0.18)] outline-none`}
-          frame={frame}
-          onCancel={onCancel}
-          onCommit={onCommit}
-          zoom={zoom}
-        />
-      );
-    }
+    // Every text/caption frame edits through the same WYSIWYG rich editor now — a plain frame (no richText
+    // yet) is seeded from its plain text (ensureRichTextForTransform) so the toolbar/Ctrl+B/I/U are available
+    // from the first keystroke. PaperRichEditableText's own commit() only PERSISTS richText (promoting the
+    // frame) when real formatting was actually applied (paperRichTextIsUniform is false) — merely entering
+    // edit mode, or editing plain text with no formatting, commits as plain text exactly as before, so a
+    // frame Jarrod never formats never migrates. See richTextTransforms.ts's commit note for the full design
+    // (this closes the gap B3's investigation found: the toolbar already existed, but only for frames that
+    // already had richText — which a hand-drawn plain frame never does).
     return (
-      <PaperEditableText
+      <PaperRichEditableText
+        baseStyle={editorStyle}
         className={`${className} rounded border border-cyan-400/80 p-1 shadow-[0_0_0_2px_rgba(8,145,178,0.18)] outline-none`}
+        frame={frame}
         onCancel={onCancel}
-        onChange={onDraftChange}
         onCommit={onCommit}
-        style={editorStyle}
-        vertical={vertical}
-        value={draft}
+        zoom={zoom}
       />
     );
   }
@@ -9204,7 +9191,7 @@ function PaperRichEditableText({
   className: string;
   frame: PaperFrame;
   onCancel: () => void;
-  onCommit: (text: string, richText: PaperRichParagraph[]) => void;
+  onCommit: (text: string, richText?: PaperRichParagraph[]) => void;
   zoom: number;
 }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
@@ -9224,7 +9211,9 @@ function PaperRichEditableText({
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    editor.innerHTML = richTextToEditorHtml(frame.richText ?? [], zoom);
+    // A plain frame (no richText yet) is lifted into a single-run seed here purely for the editor's initial
+    // DOM — commit() below only persists that promotion if the user actually applies real formatting.
+    editor.innerHTML = richTextToEditorHtml(ensureRichTextForTransform(frame.richText, frame.text ?? ''), zoom);
     try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* older engines */ }
     editor.focus();
     const range = document.createRange();
@@ -9341,8 +9330,12 @@ function PaperRichEditableText({
     const editor = editorRef.current;
     if (!editor) { onCancel(); return; }
     const richText = serializeRichEditor(editor, base);
-    if (JSON.stringify(richText) === JSON.stringify(frame.richText ?? [])) { onCancel(); return; }
-    onCommit(flattenPaperRichText(richText), richText);
+    // The plain-frame-promotion policy (promote only on a real formatting action, never on mere entry/plain
+    // edits) is pure decision logic — see resolveRichEditorCommit in richTextTransforms.ts for the rules and
+    // its own unit tests.
+    const decision = resolveRichEditorCommit(richText, frame.richText, frame.text ?? '');
+    if (!decision.changed) { onCancel(); return; }
+    onCommit(decision.text, decision.richText);
   };
   const cancel = () => {
     if (finishedRef.current) return;
