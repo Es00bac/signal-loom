@@ -134,6 +134,7 @@ import { canFrameBeAiFixed, collectFrameFixSiblingCandidates } from '../../../li
 import { PaperFrameFixDialog } from './PaperFrameFixDialog';
 import { PaperSoftProofModal } from './PaperSoftProofModal';
 import { resolveEditorBackdrop } from './editorContrast';
+import { computeFitToTextFrameHeightMm, isFrameContentOverset } from './frameOverflow';
 import {
   buildPaperPrintUpscaledFramePatch,
   buildPaperPrintUpscaleUsageTelemetry,
@@ -381,6 +382,13 @@ import type {
 } from '../../../types/paper';
 import type { SourceBinLibraryItem } from '../../../store/sourceBinStore';
 
+// Exact CSS pt->px ratio (96 CSS px per inch / 72pt per inch) — what a browser applies when it resolves a
+// native `pt` CSS unit itself (as the print/export HTML in src/lib/paperDocument.ts's renderPrintFrame does,
+// via `font-size: Npt` / `line-height: Npt`). This file used to hand-round that to a bare 1.333 literal at
+// every pt->px call site (fontSize, lineHeight, border padding, run overrides): a real but tiny (~0.025%)
+// drift from the print path's math, found while investigating why workspace text measurement can differ from
+// print (see the metric-drift note in the commit that introduced this constant). Replaces every prior 1.333.
+const PT_TO_PX = 96 / 72;
 const PAPER_PASTEBOARD_PADDING_PX = 160;
 const PAPER_PAGE_OVERLAY_Z = PAPER_CANVAS_BLEED_Z;
 const PAPER_GUIDE_OVERLAY_Z = PAPER_CANVAS_GUIDE_Z;
@@ -3408,6 +3416,37 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
     setStatus(PAPER_FRAME_CONTEXT_ACTIONS.find((action) => action.id === actionId)?.label ?? 'Updated frame.');
   };
 
+  // Grows a clipping text/caption frame to fit its measured content (the "Fit Frame to Text" context-menu
+  // action). Reads the live-DOM content box PaperFrameView tags with data-paper-frame-content-box for this
+  // exact frame — `window.document` (the browser DOM), not `document` (this component's PaperDocument model,
+  // shadowed in this scope) — converts it to mm, then routes the resulting heightMm patch through the same
+  // updateFrame store action every other frame edit uses, so undo/history conventions hold like any other edit.
+  const fitFrameToTextAction = (pageId: string, frameId: string) => {
+    const page = document.pages.find((candidate) => candidate.id === pageId);
+    const frame = page?.frames.find((candidate) => candidate.id === frameId);
+    setContextMenu(null);
+    if (!frame) return;
+    const contentBoxEl = typeof window === 'undefined'
+      ? null
+      : window.document.querySelector(`[data-paper-frame-id="${frameId}"] [data-paper-frame-content-box="true"]`);
+    if (!(contentBoxEl instanceof HTMLElement)) {
+      setStatus("Could not measure this frame's text to fit it — try again once the page has rendered.");
+      return;
+    }
+    const contentBoxHeightMm = contentBoxEl.scrollHeight / (PX_PER_MM * zoom);
+    const newHeightMm = computeFitToTextFrameHeightMm({
+      contentBoxHeightMm,
+      textBoxHeightPercent: resolvePaperTextBox(frame).heightPercent,
+      currentHeightMm: frame.heightMm,
+    });
+    if (newHeightMm <= frame.heightMm) {
+      setStatus('This frame already fits its text.');
+      return;
+    }
+    updateFrame(pageId, frameId, { heightMm: newHeightMm });
+    setStatus('Grew the frame to fit its text.');
+  };
+
   const applyPageMenuAction = (
     pageId: string,
     actionId: PaperPageContextActionId,
@@ -4087,6 +4126,9 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
             }
             setPrintUpscaleTarget({ pageId, frameId: frame.id });
             setContextMenu(null);
+          }}
+          onFitFrameToText={(pageId, frameId) => {
+            fitFrameToTextAction(pageId, frameId);
           }}
           onPlaceSourceInFrame={(pageId, frameId, item) => {
             placeSourceAssetAt({ item, pageId, targetFrameId: frameId });
@@ -7756,6 +7798,25 @@ function PaperBubbleConnectorsOverlay({
 
 const paperThreadTextMeasurer = createPaperCanvasMeasurer();
 
+/**
+ * Live "is this frame's rendered content taller than its own box" signal for the editor-only overset
+ * indicator (see frameOverflow.ts for the pure decision and PaperFrameView for how the ref/deps are wired).
+ * Deliberately measures the real DOM (`scrollHeight` vs `clientHeight`) on every change to anything that can
+ * affect the rendered text's height, rather than reusing the thread-flow text-layout estimator
+ * (computePaperThreadSlices/flowPaperText) — see this feature's commit for why that estimator's metrics can
+ * drift from what actually renders. Returns false whenever `ref` isn't attached to anything (e.g. the frame
+ * isn't a plain text/caption frame, or it's mid-edit and the editor overlay has replaced the measured node).
+ */
+function usePaperFrameContentOverset(ref: React.RefObject<HTMLElement | null>, deps: React.DependencyList): boolean {
+  const [overset, setOverset] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    setOverset(el ? isFrameContentOverset(el.scrollHeight, el.clientHeight) : false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return overset;
+}
+
 function PaperFrameView({
   canvasZIndex,
   frame,
@@ -7838,6 +7899,21 @@ function PaperFrameView({
 }) {
   const [textEditing, setTextEditing] = useState(false);
   const [textDraft, setTextDraft] = useState(frame.text ?? '');
+  // Live "does the rendered text clip its own box" signal for the overset indicator badge below — measured
+  // from the actual DOM (see usePaperFrameContentOverset), not the thread-flow text estimator, so it reflects
+  // exactly what's clipping on screen. Only meaningful for plain text/caption frames (see isPlainInlineTextFrame
+  // below); the ref is left unattached for every other kind, so contentOverset stays false for them.
+  const contentMeasureRef = useRef<HTMLDivElement | null>(null);
+  const contentOverset = usePaperFrameContentOverset(contentMeasureRef, [
+    frame.text,
+    frame.richText,
+    frame.typography,
+    frame.widthMm,
+    frame.heightMm,
+    frame.columns,
+    zoom,
+    textEditing,
+  ]);
   const contentClipPath = clipPathForFrame(frame);
   const hasImageContent = isImageCropFrame(frame);
   const imageContentClipPath = hasImageContent ? clipPathForImageContentFrame(frame) : undefined;
@@ -7872,8 +7948,8 @@ function PaperFrameView({
         : frame.cornerRadiusMm * PX_PER_MM * zoom,
     color: frame.typography.color,
     fontFamily: frame.typography.fontFamily,
-    fontSize: frame.typography.fontSizePt * 1.333 * zoom,
-    lineHeight: `${frame.typography.leadingPt * 1.333 * zoom}px`,
+    fontSize: frame.typography.fontSizePt * PT_TO_PX * zoom,
+    lineHeight: `${frame.typography.leadingPt * PT_TO_PX * zoom}px`,
     fontWeight: frame.typography.fontWeight,
     fontStyle: frame.typography.fontStyle,
     textAlign: frame.typography.align,
@@ -7930,6 +8006,11 @@ function PaperFrameView({
   const showFrameTransformHandles = isSelected && !frame.inherited && !showVertexHandles;
   // A threaded continuation frame is read-only (the story is edited on the thread's head frame).
   const editableTextFrame = isPaperInlineTextFrame(frame) && !isThreadContinuation && !frame.table;
+  // Overset-indicator/Fit-Frame-to-Text scope: plain text/caption frames only. Speech/thought bubbles render
+  // their text in a nested %-based sub-box (textBox*Percent) with its own, different overflow semantics from
+  // the outer frame box measured here, and growing a bubble's height would also need to regrow its whole
+  // shape/tail — a materially bigger feature. Left as a follow-up rather than guessed at in this pass.
+  const isPlainInlineTextFrame = editableTextFrame && frame.kind !== 'speechBubble' && frame.kind !== 'thoughtBubble';
 
   const beginTextEdit = (event: React.MouseEvent<HTMLElement>) => {
     if (!editableTextFrame || frame.locked || frame.inherited || tool !== 'select') return;
@@ -8036,6 +8117,8 @@ function PaperFrameView({
       ) : null}
       <div
         className={`absolute inset-0 ${allowsVisibleOverflow ? 'overflow-visible' : 'overflow-hidden'}`}
+        data-paper-frame-content-box={isPlainInlineTextFrame ? 'true' : undefined}
+        ref={isPlainInlineTextFrame ? contentMeasureRef : undefined}
         style={contentStyle}
       >
         {frame.table ? (
@@ -8109,6 +8192,13 @@ function PaperFrameView({
           title="Overset text — thread another frame to continue the story"
         >
           +
+        </div>
+      ) : isPlainInlineTextFrame && !textEditing && contentOverset ? (
+        <div
+          className="pointer-events-none absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-sm bg-red-500 text-[9px] font-bold leading-none text-white shadow"
+          title="Text doesn't fit this frame — right-click and choose Fit Frame to Text, or resize the frame"
+        >
+          !
         </div>
       ) : null}
       {frame.hyperlink ? (
@@ -8558,7 +8648,7 @@ function PaperTableView({ frame, zoom }: { frame: PaperFrame; zoom: number }) {
       style={{
         color: frame.typography.color,
         fontFamily: frame.typography.fontFamily,
-        fontSize: frame.typography.fontSizePt * 1.333 * zoom,
+        fontSize: frame.typography.fontSizePt * PT_TO_PX * zoom,
         lineHeight: 1.25,
         tableLayout: 'fixed',
       }}
@@ -8614,7 +8704,7 @@ function PaperTextArc({ frame, text, zoom }: { frame: PaperFrame; text: string; 
       <text
         fill={frame.typography.color}
         fontFamily={frame.typography.fontFamily}
-        fontSize={frame.typography.fontSizePt * 1.333 * zoom}
+        fontSize={frame.typography.fontSizePt * PT_TO_PX * zoom}
         fontStyle={frame.typography.fontStyle}
         fontWeight={frame.typography.fontWeight}
         letterSpacing={`${frame.typography.tracking / 1000}em`}
@@ -8833,9 +8923,9 @@ function paperRunReactStyle(run: PaperTextRun, zoom: number): React.CSSPropertie
   if (run.vertAlign === 'super' || run.vertAlign === 'sub') {
     style.verticalAlign = run.vertAlign;
     // Super/subscript shrinks like it does everywhere; honour an explicit run size, else 0.7em of the line.
-    style.fontSize = run.fontSizePt ? run.fontSizePt * 1.333 * zoom : '0.7em';
+    style.fontSize = run.fontSizePt ? run.fontSizePt * PT_TO_PX * zoom : '0.7em';
   } else if (run.fontSizePt) {
-    style.fontSize = run.fontSizePt * 1.333 * zoom;
+    style.fontSize = run.fontSizePt * PT_TO_PX * zoom;
   }
   return style;
 }
@@ -8887,9 +8977,9 @@ function PaperRichTextView({
         else if (firstLinePx !== 0) { textIndent = `${firstLinePx.toFixed(2)}px each-line`; }
         // Paragraph borders + shading (from Word's `<w:pBdr>` / `<w:shd>`). `w:space` becomes inset padding.
         const borders = paragraph.borders;
-        const borderPadPx = borders?.paddingPt ? borders.paddingPt * 1.333 * zoom : borders ? 2 * zoom : 0;
+        const borderPadPx = borders?.paddingPt ? borders.paddingPt * PT_TO_PX * zoom : borders ? 2 * zoom : 0;
         const edgeCss = (edge?: PaperParagraphBorderEdge) =>
-          edge ? `${(edge.widthPt * 1.333 * zoom).toFixed(2)}px solid ${edge.color}` : undefined;
+          edge ? `${(edge.widthPt * PT_TO_PX * zoom).toFixed(2)}px solid ${edge.color}` : undefined;
         // Inside a continuous callout, top padding/stroke belongs to the first paragraph only and bottom to the
         // last; the interior boundaries carry neither so the paragraphs read as one box.
         const padTopPx = continuousBox && !isFirstPara ? 0 : borderPadPx;
@@ -9127,7 +9217,7 @@ function PaperRichEditableText({
   const base = {
     colorHex: (frame.typography.color || '#111827').toLowerCase(),
     fontFamily: frame.typography.fontFamily,
-    fontSizePx: frame.typography.fontSizePt * 1.333 * zoom,
+    fontSizePx: frame.typography.fontSizePt * PT_TO_PX * zoom,
     zoom,
   };
 
@@ -9180,7 +9270,7 @@ function PaperRichEditableText({
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
     const range = sel.getRangeAt(0);
     const span = document.createElement('span');
-    span.style.fontSize = `${(pt * 1.333 * zoom).toFixed(2)}px`;
+    span.style.fontSize = `${(pt * PT_TO_PX * zoom).toFixed(2)}px`;
     try {
       range.surroundContents(span);
     } catch {
@@ -9541,6 +9631,7 @@ export function PaperContextMenu({
   onQuickEditImageFrame,
   onAiFixImageFrame,
   onUpscaleFrameForPrint,
+  onFitFrameToText,
   onPasteFrameStyle,
   onPlaceSourceInFrame,
   onSendFrameSourceToFlow,
@@ -9572,6 +9663,9 @@ export function PaperContextMenu({
   onQuickEditImageFrame: (pageId: string, frameId: string) => void;
   onAiFixImageFrame: (pageId: string, frameId: string) => void;
   onUpscaleFrameForPrint: (pageId: string, frame: PaperFrame | undefined) => void;
+  /** Grows a clipping text/caption frame's height to fit its measured content (see frameOverflow.ts's
+   *  computeFitToTextFrameHeightMm). Not offered for bubbles — see isPlainInlineTextFrame in PaperFrameView. */
+  onFitFrameToText: (pageId: string, frameId: string) => void;
   onPasteFrameStyle: () => void;
   onPlaceSourceInFrame: (pageId: string, frameId: string, item: SourceBinLibraryItem) => void;
   onSendFrameSourceToFlow: (frame: PaperFrame | undefined) => void;
@@ -9681,6 +9775,11 @@ export function PaperContextMenu({
                 onClose();
               }} />
             </>
+          ) : null}
+          {(frame.kind === 'text' || frame.kind === 'caption') && context.frameId ? (
+            <MenuButton label="Fit Frame to Text" onClick={() => {
+              onFitFrameToText(context.pageId, context.frameId!);
+            }} />
           ) : null}
           {Object.entries(groupedFrameActions).map(([group, actions]) => (
             <MenuGroup key={group} label={paperActionGroupLabel(group, locale)}>
