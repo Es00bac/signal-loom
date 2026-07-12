@@ -212,4 +212,82 @@ describe('paperPageFlattenExport', () => {
       heightMm: 50.8,
     });
   });
+
+  // The PNG/webcomic/KDP raster export and the PDF/X raster backdrop all rasterize this same flattened-page
+  // SVG (it embeds the print HTML in a <foreignObject>) — so proving richText survives HERE proves it for
+  // every raster consumer, not just one format. See docs/notes/850-paper-rich-text.md task #56 and
+  // paperPdfxVectorTextFrames.ts's "falls back to raster, where the HTML print render draws every run
+  // correctly" comment — a claim that only became true once renderPrintFrame actually consumed richText.
+  it('bakes rich-text run styling and paragraph formatting into the flattened page SVG', () => {
+    const doc = createDefaultPaperDocument({ title: 'Rich Raster Export', preset: 'comic-book' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame } = addFrameToPaperPage(doc, pageId, {
+      kind: 'text',
+      xMm: 15,
+      yMm: 15,
+      widthMm: 80,
+      heightMm: 40,
+      richText: [
+        { runs: [{ text: 'Plain ' }, { text: 'bold', fontWeight: '700' }] },
+      ],
+    });
+
+    const exported = buildFlattenedPaperPageSvgExport(withFrame, pageId);
+
+    expect(exported.mimeType).toBe('image/svg+xml');
+    expect(exported.svg).toContain('<span style="font-weight: 700">bold</span>');
+    expect(exported.svg).toContain('<span>Plain </span>');
+  });
+
+  it('produces raster HTML that differs from the plain-text-only rendering of the same words', () => {
+    const richDoc = createDefaultPaperDocument({ title: 'Rich vs Plain A', preset: 'comic-book' });
+    const richPageId = richDoc.pages[0].id;
+    const { document: withRichFrame } = addFrameToPaperPage(richDoc, richPageId, {
+      kind: 'text',
+      xMm: 15,
+      yMm: 15,
+      widthMm: 80,
+      heightMm: 40,
+      richText: [{ runs: [{ text: 'Plain ' }, { text: 'bold', fontWeight: '700' }] }],
+    });
+
+    const plainDoc = createDefaultPaperDocument({ title: 'Rich vs Plain B', preset: 'comic-book' });
+    const plainPageId = plainDoc.pages[0].id;
+    const { document: withPlainFrame } = addFrameToPaperPage(plainDoc, plainPageId, {
+      kind: 'text',
+      xMm: 15,
+      yMm: 15,
+      widthMm: 80,
+      heightMm: 40,
+      // Same flattened characters a rich frame's `text` mirror would carry, but authored as plain text
+      // (no richText) — this is what the bug used to render for BOTH cases (rich text silently flattened).
+      text: 'Plain bold',
+    });
+
+    const richExport = buildFlattenedPaperPageSvgExport(withRichFrame, richPageId);
+    const plainExport = buildFlattenedPaperPageSvgExport(withPlainFrame, plainPageId);
+
+    // The rich export carries real per-run styling; the plain export never does — so the two rasters differ.
+    expect(richExport.svg).not.toBe(plainExport.svg);
+    expect(richExport.svg).toContain('font-weight: 700');
+    expect(plainExport.svg).not.toContain('font-weight: 700');
+  });
+
+  it('keeps a plain-text frame\'s flattened export unchanged when richText is absent (regression)', () => {
+    const doc = createDefaultPaperDocument({ title: 'Plain Raster Regression', preset: 'comic-book' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame } = addFrameToPaperPage(doc, pageId, {
+      kind: 'text',
+      xMm: 15,
+      yMm: 15,
+      widthMm: 80,
+      heightMm: 40,
+      text: 'Plain frame, no rich runs.',
+    });
+
+    const exported = buildFlattenedPaperPageSvgExport(withFrame, pageId);
+
+    expect(exported.svg).toContain('<div class="frame-text-content" style="">Plain frame, no rich runs.</div>');
+    expect(exported.svg).not.toContain('class="paper-dropcap"');
+  });
 });

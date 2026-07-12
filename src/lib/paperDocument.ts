@@ -17,6 +17,8 @@ import type {
   PaperParentPage,
   PaperStyleCatalogs,
   PaperTextWrap,
+  PaperParagraphBorderEdge,
+  PaperTextRun,
 } from '../types/paper';
 import {
   buildPaperImageRenderStyle,
@@ -713,6 +715,14 @@ body { font-family: Inter, system-ui, sans-serif; }
   border: 0.6mm solid #111827;
   background: transparent;
 }
+.paper-dropcap::first-letter {
+  float: left;
+  font-size: calc(var(--sl-dropcap-lines, 3) * 1em);
+  line-height: 0.78;
+  padding-right: 0.08em;
+  padding-top: 0.02em;
+  font-weight: 600;
+}
 ${screenGuideCss}
 </style>
 </head>
@@ -1116,7 +1126,7 @@ export function renderPrintFrame(doc: PaperDocument, frame: PaperFrame): string 
 
   if (frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble') {
     const bubbleVertical = frame.typography.writingMode === 'vertical-rl';
-    const bubbleText = paperInlineTextToHtml(frame.text ?? frame.asset?.text ?? '', bubbleVertical, escapeHtml);
+    const bubbleText = renderPrintFrameInlineText(frame, bubbleVertical);
     return `<div class="frame frame-${frame.kind}" style="${outerStyle}; background: transparent; border: 0; padding: 0;">${renderPrintBubbleSvg(frame)}${renderPrintTextBox(frame, bubbleText)}</div>`;
   }
 
@@ -1136,7 +1146,7 @@ export function renderPrintFrame(doc: PaperDocument, frame: PaperFrame): string 
 </figure>`;
   }
 
-  const text = paperInlineTextToHtml(frame.text ?? frame.asset?.text ?? '', frame.typography.writingMode === 'vertical-rl', escapeHtml);
+  const text = renderPrintFrameInlineText(frame, frame.typography.writingMode === 'vertical-rl');
   const columns = frame.kind === 'text' ? Math.max(1, frame.columns || doc.layout.columns.count) : 1;
   const columnStyle =
     columns > 1
@@ -1146,6 +1156,129 @@ export function renderPrintFrame(doc: PaperDocument, frame: PaperFrame): string 
   return `<div class="frame frame-${frame.kind}" style="${outerStyle}">
   <div class="frame-content" style="${contentStyle}; ${columnStyle}"><div class="frame-text-content" style="${printTextEffectInlineStyle(frame)}">${text}</div></div>
 </div>`;
+}
+
+/**
+ * A frame's inline text content for print/export HTML: rich runs when `richText` carries real content
+ * (same gate the live canvas uses — `PaperInlineText`/`PaperRichTextView` in PaperWorkspace.tsx), otherwise
+ * the flattened plain text exactly as before (byte-identical — no regression for any non-rich frame).
+ */
+function renderPrintFrameInlineText(frame: PaperFrame, vertical: boolean): string {
+  if (frame.richText && frame.richText.length > 0) {
+    return renderPrintRichParagraphs(frame, vertical);
+  }
+  return paperInlineTextToHtml(frame.text ?? frame.asset?.text ?? '', vertical, escapeHtml);
+}
+
+const MM_PER_PT = 25.4 / 72;
+
+/** Inline CSS for one rich-text run in print/export HTML — field-for-field mirror of `paperRunReactStyle`
+ * (the live canvas render in PaperWorkspace.tsx), so a run looks identical on screen and on the exported
+ * page. Only fields the run overrides are emitted; everything else inherits the frame's `textStyle`. */
+function printRunInlineStyle(run: PaperTextRun): string {
+  const parts: string[] = [];
+  if (run.fontFamily) parts.push(`font-family: ${run.fontFamily}`);
+  if (run.fontWeight) parts.push(`font-weight: ${run.fontWeight}`);
+  if (run.fontStyle) parts.push(`font-style: ${run.fontStyle}`);
+  if (run.color) parts.push(`color: ${run.color}`);
+  if (run.highlight) {
+    parts.push(`background-color: ${run.highlight}`, 'border-radius: 1px', '-webkit-box-decoration-break: clone', 'box-decoration-break: clone');
+  }
+  if (run.tracking != null) parts.push(`letter-spacing: ${run.tracking / 1000}em`);
+  if (run.smallCaps) parts.push('font-variant-caps: small-caps');
+  const decorations: string[] = [];
+  if (run.underline) decorations.push('underline');
+  if (run.strike) decorations.push('line-through');
+  if (decorations.length) parts.push(`text-decoration: ${decorations.join(' ')}`);
+  if (run.vertAlign === 'super' || run.vertAlign === 'sub') {
+    parts.push(`vertical-align: ${run.vertAlign}`);
+    parts.push(`font-size: ${run.fontSizePt ? `${run.fontSizePt}pt` : '0.7em'}`);
+  } else if (run.fontSizePt) {
+    parts.push(`font-size: ${run.fontSizePt}pt`);
+  }
+  return parts.join('; ');
+}
+
+function printBorderEdgeCss(edge: PaperParagraphBorderEdge | undefined): string | undefined {
+  return edge ? `${formatMm(edge.widthPt * MM_PER_PT)} solid ${edge.color}` : undefined;
+}
+
+/**
+ * Render one frame's `richText` paragraphs as print/export HTML — field-for-field mirror of
+ * `PaperRichTextView` (the live canvas render in PaperWorkspace.tsx): per-run style spans (bold/italic/size/
+ * colour/tracking/small-caps/underline/strike/super-sub/highlight/link), per-paragraph align, space-before/
+ * after, left/right/hanging/first-line indents, hanging list markers, drop caps, shading, and borders — so
+ * exported PDF/PNG show exactly what the workspace shows. Only called when `frame.richText` has real content.
+ */
+function renderPrintRichParagraphs(frame: PaperFrame, vertical: boolean): string {
+  const paragraphs = frame.richText ?? [];
+  // A merged callout (every paragraph shares a border/shading) renders as ONE continuous box: the border/
+  // padding apply only at the outer edges, not around every paragraph — matches PaperRichTextView exactly.
+  const continuousBox = paragraphs.length > 1 && paragraphs.every((p) => p.borders || p.shading);
+
+  return paragraphs.map((paragraph, index) => {
+    const isFirstPara = index === 0;
+    const isLastPara = index === paragraphs.length - 1;
+    const dropCapLines = paragraph.dropCapLines && paragraph.dropCapLines >= 2 ? Math.min(8, Math.round(paragraph.dropCapLines)) : 0;
+    const leftIndentMm = Math.max(0, paragraph.leftIndentMm ?? 0);
+    const rightIndentMm = Math.max(0, paragraph.rightIndentMm ?? 0);
+    const hangingMm = Math.max(0, paragraph.hangingIndentMm ?? 0);
+    const markerPadMm = paragraph.listMarker ? 4.5 : 0;
+    const firstLineMm = paragraph.firstLineIndentMm ?? 0;
+
+    // Indent priority: list bullet > hanging indent > positive first-line indent (matches the editor/canvas).
+    let indentLeftMm = leftIndentMm;
+    let textIndentCss: string | undefined;
+    if (paragraph.listMarker) { indentLeftMm = leftIndentMm + markerPadMm; textIndentCss = `-${formatMm(markerPadMm)}`; }
+    else if (hangingMm > 0) { textIndentCss = `-${formatMm(hangingMm)}`; }
+    else if (firstLineMm !== 0) { textIndentCss = formatMm(firstLineMm); }
+
+    // Paragraph borders + shading. Inside a continuous callout, top padding/stroke belongs to the first
+    // paragraph only and bottom to the last, so the paragraphs read as one box (matches PaperRichTextView).
+    const borders = paragraph.borders;
+    const borderPadMm = borders?.paddingPt ? borders.paddingPt * MM_PER_PT : borders ? 2 : 0;
+    const padTopMm = continuousBox && !isFirstPara ? 0 : borderPadMm;
+    const padBottomMm = continuousBox && !isLastPara ? 0 : borderPadMm;
+    const topBorder = borders && !(continuousBox && !isFirstPara) ? printBorderEdgeCss(borders.top) : undefined;
+    const bottomBorder = borders && !(continuousBox && !isLastPara) ? printBorderEdgeCss(borders.bottom) : undefined;
+    const leftBorder = borders ? printBorderEdgeCss(borders.left) : undefined;
+    const rightBorder = borders ? printBorderEdgeCss(borders.right) : undefined;
+
+    const style = [
+      paragraph.spaceBeforeMm ? `margin-top: ${formatMm(paragraph.spaceBeforeMm)}` : '',
+      paragraph.spaceAfterMm ? `margin-bottom: ${formatMm(paragraph.spaceAfterMm)}` : '',
+      paragraph.align ? `text-align: ${paragraph.align}` : '',
+      (indentLeftMm + borderPadMm) ? `padding-left: ${formatMm(indentLeftMm + borderPadMm)}` : '',
+      (rightIndentMm + borderPadMm) ? `padding-right: ${formatMm(rightIndentMm + borderPadMm)}` : '',
+      padTopMm ? `padding-top: ${formatMm(padTopMm)}` : '',
+      padBottomMm ? `padding-bottom: ${formatMm(padBottomMm)}` : '',
+      textIndentCss ? `text-indent: ${textIndentCss}` : '',
+      paragraph.shading ? `background: ${paragraph.shading}` : '',
+      topBorder ? `border-top: ${topBorder}` : '',
+      leftBorder ? `border-left: ${leftBorder}` : '',
+      bottomBorder ? `border-bottom: ${bottomBorder}` : '',
+      rightBorder ? `border-right: ${rightBorder}` : '',
+      dropCapLines ? `--sl-dropcap-lines: ${dropCapLines}` : '',
+    ].filter(Boolean).join('; ');
+
+    const hasText = paragraph.runs.some((run) => run.text.length > 0);
+    const marker = paragraph.listMarker ? `<span>${escapeHtml(paragraph.listMarker)} </span>` : '';
+    const runsHtml = hasText
+      ? paragraph.runs.map((run) => renderPrintRichRun(run, vertical)).join('')
+      : '&nbsp;';
+    const className = dropCapLines ? ' class="paper-dropcap"' : '';
+
+    return `<div${className} style="${style}">${marker}${runsHtml}</div>`;
+  }).join('\n');
+}
+
+function renderPrintRichRun(run: PaperTextRun, vertical: boolean): string {
+  const inner = paperInlineTextToHtml(run.text, vertical, escapeHtml);
+  const style = printRunInlineStyle(run);
+  if (run.link) {
+    return `<a href="${escapeHtml(run.link)}" style="${style}">${inner}</a>`;
+  }
+  return style ? `<span style="${style}">${inner}</span>` : `<span>${inner}</span>`;
 }
 
 function printFrameOuterStyle(frame: PaperFrame): string {
@@ -1208,7 +1341,7 @@ function renderPrintShapedContentFrame(doc: PaperDocument, style: string, frame:
     ? renderPrintImageFrameContent(frame)
     : frame.kind === 'panel'
       ? ''
-      : paperInlineTextToHtml(frame.text ?? frame.asset?.text ?? '', frame.typography.writingMode === 'vertical-rl', escapeHtml);
+      : renderPrintFrameInlineText(frame, frame.typography.writingMode === 'vertical-rl');
 
   return `<div class="frame frame-${frame.kind}" style="${style}; background: transparent; border: 0; overflow: visible;">
   <div class="frame-content" style="${innerStyle}">${content}</div>

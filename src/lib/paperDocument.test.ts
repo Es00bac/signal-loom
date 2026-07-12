@@ -521,6 +521,59 @@ describe('paperDocument', () => {
     expect(html).toContain('transform: translate(-50%, -50%) rotate(15deg)');
   });
 
+  it('exports rich-text runs and paragraph formatting to print HTML (bold run, bullet list, paragraph spacing)', () => {
+    const doc = createDefaultPaperDocument({ title: 'Rich Print Export', preset: 'us-letter' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame } = addFrameToPaperPage(doc, pageId, {
+      kind: 'text',
+      xMm: 18,
+      yMm: 18,
+      widthMm: 90,
+      heightMm: 60,
+      richText: [
+        { runs: [{ text: 'Plain then ' }, { text: 'bold', fontWeight: '700' }, { text: ' word.' }], spaceAfterMm: 4 },
+        { runs: [{ text: 'Bulleted item' }], listMarker: '•' },
+      ],
+    });
+
+    const html = exportPaperDocumentToPrintHtml(withFrame);
+
+    // Per-run styling survives export: the bold run gets its own styled span; plain runs stay unstyled —
+    // NOT flattened to one plain-text string (the bug: PDF/PNG export used to drop every run's formatting).
+    expect(html).toContain('<span>Plain then </span>');
+    expect(html).toContain('<span style="font-weight: 700">bold</span>');
+    expect(html).toContain('<span> word.</span>');
+    // Paragraph-level spacing survives.
+    expect(html).toContain('margin-bottom: 4mm');
+    // The bullet paragraph gets a real hanging list marker (prefix span + negative text-indent), not the
+    // literal "•\t" flattened-text marker.
+    expect(html).toContain('<span>• </span>');
+    expect(html).toContain('text-indent: -4.5mm');
+    expect(html).not.toContain('•\tBulleted item');
+  });
+
+  it('keeps plain-text frames byte-identical in print HTML when richText is absent (export regression)', () => {
+    const doc = createDefaultPaperDocument({ title: 'Plain Print Regression', preset: 'us-letter' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame } = addFrameToPaperPage(doc, pageId, {
+      kind: 'text',
+      xMm: 18,
+      yMm: 18,
+      widthMm: 90,
+      heightMm: 40,
+      text: 'Plain frame, no rich runs.',
+    });
+
+    const html = exportPaperDocumentToPrintHtml(withFrame);
+
+    // Exactly the pre-existing plain-text markup — no rich-paragraph wrapper, no per-run spans. (The
+    // stylesheet always defines `.paper-dropcap::first-letter` — like the other always-present frame rules
+    // — but nothing in THIS document's markup references the class.)
+    expect(html).toContain('<div class="frame-text-content" style="">Plain frame, no rich runs.</div>');
+    expect(html).not.toContain('class="paper-dropcap"');
+    expect(html).not.toContain('<span>Plain frame');
+  });
+
   it('exports image content inside the same padded frame-content box used by the live canvas', () => {
     const doc = createDefaultPaperDocument({ title: 'Image Frame Export' });
     const pageId = doc.pages[0].id;

@@ -121,6 +121,39 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
     expect(report.pass, report.checks.filter((c) => !c.pass).map((c) => c.label).join('; ')).toBe(true);
   });
 
+  it('keeps a rich-text frame (per-run styling) out of the vector-text layer so it rasters with full formatting', async () => {
+    // A bold mid-paragraph run is non-uniform richText — the single-style linear layout engine can't draw
+    // it (it would flatten every run to the frame's one style and lose the bold run), so it must stay
+    // raster, where the print/flatten render now draws every run correctly (docs/notes/850, task #56).
+    const base = textDoc();
+    const richFrame = {
+      ...base.pages[0].frames[0],
+      richText: [{ runs: [{ text: 'Plain ' }, { text: 'bold', fontWeight: '700' }] }],
+    } as PaperFrame;
+    const doc: PaperDocument = { ...base, pages: base.pages.map((p, i) => (i === 0 ? { ...p, frames: [richFrame] } : p)) };
+
+    let excludedTextFrameIds: string[] | undefined = ['sentinel'];
+    const result = await exportPaperDocumentToPdfx(
+      doc,
+      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, iccProfileId: 'fogra39' },
+      {
+        loadIccBytes: async () => fogra39,
+        createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
+        loadFontBytes: async (url) => new Uint8Array(readFileSync(`public${url}`)),
+        rasterizePage: async (_pageId, _dpi, opts) => {
+          excludedTextFrameIds = opts?.excludeTextFrameIds;
+          return { rgba: new Uint8Array(96 * 124 * 4).fill(255), widthPx: 96, heightPx: 124 };
+        },
+      },
+    );
+
+    // Nothing excluded → the rich frame's text stayed baked into the full raster (not vectorized).
+    expect(excludedTextFrameIds).toBeUndefined();
+    expect(Buffer.from(result.bytes).toString('latin1')).not.toContain('/FontFile2');
+    const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-4' });
+    expect(report.pass, report.checks.filter((c) => !c.pass).map((c) => c.label).join('; ')).toBe(true);
+  });
+
   it('vectorizes body text but keeps a display-font SFX frame in the raster (same page)', async () => {
     // The real comic case: Inter dialogue + an Impact SFX on ONE page. The body must become selectable
     // vector; the SFX must stay raster (Liberation is not a faithful Impact substitute) — its real glyphs
