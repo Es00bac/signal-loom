@@ -37,6 +37,17 @@ export interface PaperPdfxPipelineOptions {
    * linear engine can faithfully reproduce are vectorized (see `frameTextIsVectorSafe`); any other text
    * frame (rotation, columns, display fonts like Impact, bubbles, …) stays baked into the raster with
    * its real glyphs. Vector and raster text can coexist on the same page (per-frame, not per-page).
+   *
+   * `richText` frames: a frame with ONLY a uniform run (`paperRichTextIsUniform` — no per-run overrides,
+   * no paragraph formatting) is fully represented by its single `typography` and still vectorizes. A frame
+   * with REAL rich formatting (a bold word, per-run colour/font, a bullet list, paragraph spacing/shading/
+   * borders/drop-cap — `paperRichTextIsUniform` false) is intentionally excluded from both the vector-text
+   * and outline-text builders in `paperPdfxVectorTextFrames.ts` (`frameTextIsVectorSafe`'s
+   * `paperRichTextIsUniform` gate) and falls back to the raster — never silently flattened to one style
+   * in vector text. That raster is `renderPrintFrame` (paperDocument.ts), which draws every run/paragraph
+   * correctly, so the frame's formatting still reaches the PDF/X, just as a raster image instead of
+   * selectable type. True per-run vector text (mixed styles as real PDF text objects) is not implemented;
+   * see docs/notes/850-paper-rich-text.md task #56.
    */
   vectorText?: boolean;
 }
@@ -127,8 +138,10 @@ export async function exportPaperDocumentToPdfx(
   const pages: PdfxRasterPage[] = [];
   for (const page of document.pages) {
     // Per-frame: each text frame the linear engine can faithfully reproduce is drawn as real vector and
-    // excluded from the raster; every other frame (rotation, columns, display fonts, bubbles, …) stays
-    // baked into the raster with its real glyphs. Vector + raster text coexist on the same page.
+    // excluded from the raster; every other frame (rotation, columns, display fonts, bubbles, non-uniform
+    // richText — a bold run, a bullet list, paragraph spacing/shading — …) stays baked into the raster with
+    // its real glyphs/runs. Vector + raster text coexist on the same page. See `PaperPdfxPipelineOptions.
+    // vectorText` above for exactly how richText frames route.
     let textFrames: PdfxVectorTextFrame[] | undefined;
     let vectorFrameIds: string[] | undefined;
     let outlineFrames: PdfxOutlineTextFrame[] | undefined;
