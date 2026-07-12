@@ -133,6 +133,7 @@ import { isCommercialPrintProductionTarget, requestCommercialExportUnlock } from
 import { canFrameBeAiFixed, collectFrameFixSiblingCandidates } from '../../../lib/paperFrameFix';
 import { PaperFrameFixDialog } from './PaperFrameFixDialog';
 import { PaperSoftProofModal } from './PaperSoftProofModal';
+import { resolveEditorBackdrop } from './editorContrast';
 import {
   buildPaperPrintUpscaledFramePatch,
   buildPaperPrintUpscaleUsageTelemetry,
@@ -6772,6 +6773,7 @@ function PaperConnectedSpreadView({
                     isThreadContinuation={threadSlices.get(frame.id) ? !threadSlices.get(frame.id)!.isHead : false}
                     isOverset={threadSlices.get(frame.id)?.isOverset ?? false}
                     frame={frame}
+                    pageBackgroundCss={paperDocumentBackgroundCss(doc.background)}
                     wrapSpacers={resolveFrameWrapSpacers(frame, outputFrames)}
                     isSelected={frame.id === selectedFrameId || selectedFrameIds.includes(frame.id)}
                     key={frame.id}
@@ -7258,6 +7260,7 @@ function PaperPageView({
               frame={frame}
               isSelected={frame.id === selectedFrameId || selectedFrameIds.includes(frame.id)}
               key={frame.id}
+              pageBackgroundCss={paperDocumentBackgroundCss(doc.background)}
               showFrameEdges={doc.view.showFrameEdges}
               showVertexHandles={shouldShowPaperVertexHandles(frame, {
                 isSelected: frame.id === selectedFrameId || selectedFrameIds.includes(frame.id),
@@ -7783,6 +7786,7 @@ function PaperFrameView({
   onDeleteFrameVertex,
   onToggleImageFlipX,
   onToggleImageFlipY,
+  pageBackgroundCss,
   pageNumber,
   pageOriginPx,
   pageOriginYPx = pageOriginPx,
@@ -7820,6 +7824,10 @@ function PaperFrameView({
   onDeleteFrameVertex: (vertexIndex: number) => void;
   onToggleImageFlipX: () => void;
   onToggleImageFlipY: () => void;
+  /** Resolved CSS for the document/page background (paperDocumentBackgroundCss(doc.background)) — threaded
+   *  down to the in-canvas text editor so it can decide whether its editing surface needs a readability
+   *  backdrop (see editorContrast.ts). Editor-chrome concern only; never applied to document rendering. */
+  pageBackgroundCss: string;
   pageNumber: number;
   pageOriginPx: number;
   pageOriginYPx?: number;
@@ -8068,6 +8076,7 @@ function PaperFrameView({
               onCancel={cancelTextEdit}
               onCommit={commitTextEdit}
               onDraftChange={setTextDraft}
+              pageBackgroundCss={pageBackgroundCss}
               zoom={zoom}
             />
           </>
@@ -8083,6 +8092,7 @@ function PaperFrameView({
             onCancel={cancelTextEdit}
             onCommit={commitTextEdit}
             onDraftChange={setTextDraft}
+            pageBackgroundCss={pageBackgroundCss}
             wrapSpacers={wrapSpacers}
             zoom={zoom}
           />
@@ -8483,6 +8493,7 @@ function PaperBubbleText({
   onCancel,
   onCommit,
   onDraftChange,
+  pageBackgroundCss,
   zoom,
 }: {
   draft: string;
@@ -8492,6 +8503,7 @@ function PaperBubbleText({
   onCancel: () => void;
   onCommit: (text: string) => void;
   onDraftChange: (text: string) => void;
+  pageBackgroundCss: string;
   zoom: number;
 }) {
   const baseStyle = paperTextBoxReactStyle(frame);
@@ -8500,14 +8512,23 @@ function PaperBubbleText({
 
   if (isEditing) {
     // The editor keeps the raw text (incl. the 《》/｜ furigana notation), so lettering round-trips; ruby/TCY
-    // render only in the display view below.
+    // render only in the display view below. The editing surface itself is transparent (it sits directly over
+    // the bubble's own fill/shape, so it always matches the frame); a computed ink/paper backdrop is added only
+    // when that real pairing is too low-contrast to read — editor chrome only, never a document colour change.
+    const backdrop = resolveEditorBackdrop({
+      textColor: frame.typography.color,
+      fillColor: frame.fillColor,
+      fillOpacity: frame.fillOpacity,
+      pageBackground: pageBackgroundCss,
+    });
+    const editorStyle = backdrop.needsBackdrop ? { ...style, backgroundColor: backdrop.backdropColor } : style;
     return (
       <PaperEditableText
-        className="absolute z-50 whitespace-pre-wrap break-words rounded border border-cyan-400/80 bg-white/95 p-1 shadow-[0_0_0_2px_rgba(8,145,178,0.18)] outline-none"
+        className="absolute z-50 whitespace-pre-wrap break-words rounded border border-cyan-400/80 p-1 shadow-[0_0_0_2px_rgba(8,145,178,0.18)] outline-none"
         onCancel={onCancel}
         onChange={onDraftChange}
         onCommit={onCommit}
-        style={style}
+        style={editorStyle}
         vertical={vertical}
         value={draft}
       />
@@ -8640,6 +8661,7 @@ function PaperInlineText({
   onCancel,
   onCommit,
   onDraftChange,
+  pageBackgroundCss,
   zoom,
 }: {
   draft: string;
@@ -8651,19 +8673,31 @@ function PaperInlineText({
   onCancel: () => void;
   onCommit: (text: string, richText?: PaperRichParagraph[]) => void;
   onDraftChange: (text: string) => void;
+  pageBackgroundCss: string;
   zoom: number;
 }) {
   const className = 'h-full w-full whitespace-pre-wrap break-words';
   const style = paperTextEffectReactStyle(frame, zoom);
   const vertical = frame.typography.writingMode === 'vertical-rl';
   if (isEditing) {
+    // The editing surface itself is transparent (it sits directly over the frame's own fill, so it always
+    // matches what the frame actually looks like). A computed ink/paper backdrop is added only when that real
+    // pairing is too low-contrast to read (e.g. light typography over a transparent/light fill) — editor chrome
+    // only, this never changes the document's real colours.
+    const backdrop = resolveEditorBackdrop({
+      textColor: frame.typography.color,
+      fillColor: frame.fillColor,
+      fillOpacity: frame.fillOpacity,
+      pageBackground: pageBackgroundCss,
+    });
+    const editorStyle = backdrop.needsBackdrop ? { ...style, backgroundColor: backdrop.backdropColor } : style;
     // A rich frame gets the WYSIWYG rich editor (formatting toolbar + per-run styling preserved); every
     // other text frame keeps the plain single-style editor exactly as before.
     if (frame.richText && frame.richText.length > 0) {
       return (
         <PaperRichEditableText
-          baseStyle={style}
-          className={`${className} rounded border border-cyan-400/80 bg-white/95 p-1 shadow-[0_0_0_2px_rgba(8,145,178,0.18)] outline-none`}
+          baseStyle={editorStyle}
+          className={`${className} rounded border border-cyan-400/80 p-1 shadow-[0_0_0_2px_rgba(8,145,178,0.18)] outline-none`}
           frame={frame}
           onCancel={onCancel}
           onCommit={onCommit}
@@ -8673,11 +8707,11 @@ function PaperInlineText({
     }
     return (
       <PaperEditableText
-        className={`${className} rounded border border-cyan-400/80 bg-white/95 p-1 shadow-[0_0_0_2px_rgba(8,145,178,0.18)] outline-none`}
+        className={`${className} rounded border border-cyan-400/80 p-1 shadow-[0_0_0_2px_rgba(8,145,178,0.18)] outline-none`}
         onCancel={onCancel}
         onChange={onDraftChange}
         onCommit={onCommit}
-        style={style}
+        style={editorStyle}
         vertical={vertical}
         value={draft}
       />
