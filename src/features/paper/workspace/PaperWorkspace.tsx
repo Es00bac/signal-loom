@@ -9459,6 +9459,20 @@ function PaperRichEditableText({
             event.currentTarget.blur();
             return;
           }
+          // Ctrl/Cmd+B/I/U — the same bold/italic/underline the floating toolbar's B/I/U buttons already run
+          // (runCommand, just below), wired to the keyboard so authoring formatting doesn't require reaching
+          // for the mouse. See richTextTransforms.ts's commit note for why this reuses the existing
+          // execCommand path here rather than the new pure library directly (a live-DOM-selection ->
+          // character-range mapping problem, checkpointed rather than rushed).
+          if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) {
+            const key = event.key.toLowerCase();
+            if (key === 'b' || key === 'i' || key === 'u') {
+              event.preventDefault();
+              event.stopPropagation();
+              runCommand(key === 'b' ? 'bold' : key === 'i' ? 'italic' : 'underline');
+              return;
+            }
+          }
           // Enter inserts a new paragraph (word-processor behaviour); commit happens on blur / Escape. Stop
           // propagation so the workspace's global shortcuts don't fire while typing.
           event.stopPropagation();
