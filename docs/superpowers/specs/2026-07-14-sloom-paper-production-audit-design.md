@@ -94,7 +94,7 @@ Golden fixtures compare editor reference renders with round-tripped PNG, PDF, PD
 
 No new document or application state may store binary content as Base64 or a `data:` URL. Legacy Base64 is migration input only.
 
-`.sloom` and `.slppr` remain ZIP containers with JSON manifests. Binary data is stored once at a content-addressed path such as `assets/<sha256>.<extension>`. Manifest references contain a stable asset ID/hash, MIME type, byte length, and source/provenance metadata where applicable. Images, fonts, ICC profiles, generated/upscaled media, placed documents, and future binary resources share this service.
+`.slppr` remains a ZIP container with a JSON manifest. `.sloom` currently remains a JSON project manifest whose Paper asset references resolve through the project asset directory/cache; a later document-integrity project may introduce a portable ZIP form after the active Flow and Image work is reconciled. In both cases, binary data is stored once on disk or at a content-addressed ZIP path such as `assets/<sha256>.<extension>`, never inside JSON. Manifest references contain a stable asset ID/hash, MIME type, byte length, and source/provenance metadata where applicable. Images, fonts, ICC profiles, generated/upscaled media, placed documents, and future binary resources share this service.
 
 Desktop and Android working copies use project workspace/cache files. Browser sessions use Blob/File objects backed by IndexedDB or OPFS where available. Temporary object URLs are created by one resolver and revoked through reference tracking; object URLs never become durable document fields.
 
