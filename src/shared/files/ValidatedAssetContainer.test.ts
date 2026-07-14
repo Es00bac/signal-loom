@@ -74,6 +74,58 @@ function setCentralUncompressedSize(bytes: Uint8Array, size: number): Uint8Array
   return output;
 }
 
+interface ZipEntryHeaderOffsets {
+  local: number;
+  central: number;
+}
+
+function findZipEntryHeaderOffsets(bytes: Uint8Array, path: string): ZipEntryHeaderOffsets {
+  const pathBytes = strToU8(path);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let local = -1;
+  let central = -1;
+
+  for (let offset = 0; offset <= bytes.byteLength - 4; offset += 1) {
+    const signature = view.getUint32(offset, true);
+    const isLocal = signature === 0x04034b50;
+    const isCentral = signature === 0x02014b50;
+    if (!isLocal && !isCentral) continue;
+
+    const nameLengthOffset = offset + (isLocal ? 26 : 28);
+    const nameOffset = offset + (isLocal ? 30 : 46);
+    if (nameLengthOffset + 2 > bytes.byteLength) continue;
+    const nameLength = view.getUint16(nameLengthOffset, true);
+    if (nameLength !== pathBytes.byteLength || nameOffset + nameLength > bytes.byteLength) continue;
+    if (!pathBytes.every((value, index) => bytes[nameOffset + index] === value)) continue;
+
+    if (isLocal) local = offset;
+    else central = offset;
+  }
+
+  expect(local).toBeGreaterThanOrEqual(0);
+  expect(central).toBeGreaterThanOrEqual(0);
+  return { local, central };
+}
+
+function forgeZipEntrySizes(
+  bytes: Uint8Array,
+  path: string,
+  sizes: { compressed?: number; uncompressed?: number },
+): Uint8Array {
+  const output = new Uint8Array(bytes);
+  const offsets = findZipEntryHeaderOffsets(output, path);
+  const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
+  if (sizes.compressed !== undefined) {
+    view.setUint32(offsets.local + 18, sizes.compressed, true);
+    view.setUint32(offsets.central + 20, sizes.compressed, true);
+  }
+  if (sizes.uncompressed !== undefined) {
+    view.setUint32(offsets.local + 22, sizes.uncompressed, true);
+    view.setUint32(offsets.central + 24, sizes.uncompressed, true);
+  }
+  return output;
+}
+
 describe('ValidatedAssetContainer', () => {
   it('round-trips and verifies content-addressed entries', async () => {
     const asset = await createBinaryAssetRecord(
@@ -210,6 +262,66 @@ describe('ValidatedAssetContainer', () => {
       forgedSizes,
       withLimits({ maxAssetBytes: 1 }),
     )).rejects.toThrow(/stored.*size metadata|asset.*limit/i);
+  });
+
+  it('bounds deflated output before consuming a forged oversized payload', async () => {
+    const actualBytes = new Uint8Array(4 * 1024 * 1024).fill(65);
+    const declaredBytes = actualBytes.slice(0, 64);
+    const asset = await createBinaryAssetRecord(declaredBytes, { mimeType: 'image/png' });
+    const path = assetPath(asset.ref);
+    const archive = zipSync({
+      'manifest.json': strToU8(JSON.stringify(manifest([asset.ref]))),
+      [path]: actualBytes,
+    });
+    const forged = forgeZipEntrySizes(archive, path, { uncompressed: declaredBytes.byteLength });
+
+    const error = await unpackValidatedAssetContainer(forged).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(Error);
+    const progress = (error as Error).message.match(/after (\d+) of (\d+) compressed bytes/i);
+    expect(progress).not.toBeNull();
+    expect(Number(progress?.[1])).toBeLessThan(Number(progress?.[2]));
+  });
+
+  it('rejects stored payload trailing data hidden by forged matching sizes', async () => {
+    const declaredBytes = new Uint8Array([1, 2, 3]);
+    const actualBytes = new Uint8Array(4096).fill(1);
+    actualBytes.set(declaredBytes);
+    const asset = await createBinaryAssetRecord(declaredBytes, { mimeType: 'image/png' });
+    const path = assetPath(asset.ref);
+    const archive = zipSync({
+      'manifest.json': [strToU8(JSON.stringify(manifest([asset.ref]))), { level: 0 }],
+      [path]: [actualBytes, { level: 0 }],
+    });
+    const forged = forgeZipEntrySizes(archive, path, {
+      compressed: declaredBytes.byteLength,
+      uncompressed: declaredBytes.byteLength,
+    });
+
+    await expect(unpackValidatedAssetContainer(forged)).rejects.toThrow(/layout|trailing|mismatch/i);
+  });
+
+  it('rejects local headers that disagree with the central directory', async () => {
+    const asset = await createBinaryAssetRecord(new Uint8Array([1, 2, 3]), { mimeType: 'image/png' });
+    const path = assetPath(asset.ref);
+    const archive = zipWithManifest(manifest([asset.ref]), { [path]: asset.bytes });
+    const offsets = findZipEntryHeaderOffsets(archive, path);
+    const mutations: Array<(bytes: Uint8Array, view: DataView) => void> = [
+      (bytes) => { bytes[offsets.local + 30] ^= 1; },
+      (_bytes, view) => { view.setUint16(offsets.local + 6, 0x0800, true); },
+      (_bytes, view) => { view.setUint16(offsets.local + 8, 0, true); },
+      (_bytes, view) => { view.setUint32(offsets.local + 14, 0, true); },
+      (_bytes, view) => { view.setUint32(offsets.local + 18, 1, true); },
+      (_bytes, view) => { view.setUint32(offsets.local + 22, 1, true); },
+    ];
+
+    for (const mutate of mutations) {
+      const mismatched = new Uint8Array(archive);
+      mutate(mismatched, new DataView(mismatched.buffer));
+      await expect(unpackValidatedAssetContainer(mismatched)).rejects.toThrow(/local|header|mismatch/i);
+    }
   });
 
   it('rejects declared byte-length and content-hash mismatches', async () => {

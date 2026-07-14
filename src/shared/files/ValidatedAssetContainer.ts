@@ -1,4 +1,5 @@
 import {
+  Inflate,
   strFromU8,
   strToU8,
   unzipSync,
@@ -267,23 +268,59 @@ export function packValidatedAssetContainer<TDocument>(
   return zipSync(files, { level: 6 });
 }
 
-interface ArchiveMetadata {
-  manifest: UnzipFileInfo;
-  entries: Map<string, UnzipFileInfo>;
+// This reader accepts only the single-disk, non-ZIP64 subset emitted by the packer.
+const LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
+const CENTRAL_DIRECTORY_HEADER_SIGNATURE = 0x02014b50;
+const END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
+const LOCAL_FILE_HEADER_BYTES = 30;
+const CENTRAL_DIRECTORY_HEADER_BYTES = 46;
+const END_OF_CENTRAL_DIRECTORY_BYTES = 22;
+const MAX_ZIP_COMMENT_BYTES = 65_535;
+const UTF8_FILENAME_FLAG = 0x0800;
+const INFLATE_INPUT_CHUNK_BYTES = 4 * 1024;
+
+interface ZipEntryMetadata {
+  name: string;
+  nameBytes: Uint8Array;
+  flags: number;
+  compression: number;
+  crc32: number;
+  compressedSize: number;
+  uncompressedSize: number;
+  localHeaderOffset: number;
+  dataStart: number;
+  dataEnd: number;
 }
 
-function inspectArchive(
+interface ArchiveMetadata {
+  manifest: ZipEntryMetadata;
+  entries: Map<string, ZipEntryMetadata>;
+}
+
+function assertSupportedEntryEncoding(
+  name: string,
+  compression: number,
+  compressedSize: number,
+  uncompressedSize: number,
+): void {
+  if (compression !== 0 && compression !== 8) {
+    throw containerError(`archive entry ${name} uses unsupported compression ${compression}.`);
+  }
+  if (compression === 0 && compressedSize !== uncompressedSize) {
+    throw containerError(`stored archive entry ${name} has inconsistent size metadata.`);
+  }
+}
+
+function inspectWithFflateMetadata(
   bytes: Uint8Array,
   limits: AssetContainerLimits,
-): { metadata: ArchiveMetadata; manifestBytes: Uint8Array } {
+): Map<string, UnzipFileInfo> {
   const entries = new Map<string, UnzipFileInfo>();
-  let manifestMetadata: UnzipFileInfo | undefined;
   let entryCount = 0;
   let totalBytes = 0;
-  let retained: Record<string, Uint8Array>;
 
   try {
-    retained = unzipSync(bytes, {
+    unzipSync(bytes, {
       filter: (entry) => {
         assertSafeArchivePath(entry.name);
         if (entries.has(entry.name)) {
@@ -297,12 +334,7 @@ function inspectArchive(
         ) {
           throw containerError(`archive entry ${entry.name} has invalid size metadata.`);
         }
-        if (entry.compression !== 0 && entry.compression !== 8) {
-          throw containerError(`archive entry ${entry.name} uses unsupported compression ${entry.compression}.`);
-        }
-        if (entry.compression === 0 && entry.size !== entry.originalSize) {
-          throw containerError(`stored archive entry ${entry.name} has inconsistent size metadata.`);
-        }
+        assertSupportedEntryEncoding(entry.name, entry.compression, entry.size, entry.originalSize);
 
         entryCount += 1;
         if (entryCount > limits.maxEntries) {
@@ -312,7 +344,6 @@ function inspectArchive(
           if (entry.originalSize > limits.maxManifestBytes) {
             throw containerError(`manifest size exceeds manifest limit (${entry.originalSize} > ${limits.maxManifestBytes}).`);
           }
-          manifestMetadata = { ...entry };
         } else if (entry.originalSize > limits.maxAssetBytes) {
           throw containerError(`asset size exceeds asset limit (${entry.originalSize} > ${limits.maxAssetBytes}).`);
         }
@@ -322,20 +353,355 @@ function inspectArchive(
           throw containerError(`total uncompressed size exceeds total limit (${totalBytes} > ${limits.maxTotalBytes}).`);
         }
         entries.set(entry.name, { ...entry });
-        return entry.name === MANIFEST_PATH;
+        return false;
       },
     });
   } catch (error) {
     rethrowZipError(error);
   }
 
-  if (!manifestMetadata || retained[MANIFEST_PATH] === undefined) {
+  return entries;
+}
+
+function assertByteRange(bytes: Uint8Array, offset: number, length: number, context: string): void {
+  if (
+    !Number.isSafeInteger(offset)
+    || !Number.isSafeInteger(length)
+    || offset < 0
+    || length < 0
+    || offset > bytes.byteLength - length
+  ) {
+    throw containerError(`${context} is outside the ZIP data.`);
+  }
+}
+
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  return left.byteLength === right.byteLength
+    && left.every((value, index) => value === right[index]);
+}
+
+interface EndOfCentralDirectory {
+  offset: number;
+  entryCount: number;
+  centralDirectoryOffset: number;
+  centralDirectorySize: number;
+}
+
+function findEndOfCentralDirectory(bytes: Uint8Array, view: DataView): EndOfCentralDirectory {
+  const minimumOffset = Math.max(
+    0,
+    bytes.byteLength - END_OF_CENTRAL_DIRECTORY_BYTES - MAX_ZIP_COMMENT_BYTES,
+  );
+  let offset = bytes.byteLength - END_OF_CENTRAL_DIRECTORY_BYTES;
+
+  for (; offset >= minimumOffset; offset -= 1) {
+    if (view.getUint32(offset, true) !== END_OF_CENTRAL_DIRECTORY_SIGNATURE) continue;
+    const commentLength = view.getUint16(offset + 20, true);
+    if (offset + END_OF_CENTRAL_DIRECTORY_BYTES + commentLength !== bytes.byteLength) continue;
+
+    const diskNumber = view.getUint16(offset + 4, true);
+    const centralDirectoryDisk = view.getUint16(offset + 6, true);
+    const diskEntryCount = view.getUint16(offset + 8, true);
+    const entryCount = view.getUint16(offset + 10, true);
+    const centralDirectorySize = view.getUint32(offset + 12, true);
+    const centralDirectoryOffset = view.getUint32(offset + 16, true);
+    if (diskNumber !== 0 || centralDirectoryDisk !== 0 || diskEntryCount !== entryCount) {
+      throw containerError('multi-disk ZIP archives are not supported.');
+    }
+    if (centralDirectoryOffset + centralDirectorySize !== offset) {
+      throw containerError('central directory layout mismatch.');
+    }
+    return { offset, entryCount, centralDirectoryOffset, centralDirectorySize };
+  }
+
+  throw containerError('missing or invalid end-of-central-directory record.');
+}
+
+function decodeEntryName(nameBytes: Uint8Array, flags: number): string {
+  try {
+    return strFromU8(nameBytes, !(flags & UTF8_FILENAME_FLAG));
+  } catch (error) {
+    throw new Error(`${ERROR_PREFIX} archive entry name is invalid.`, { cause: error });
+  }
+}
+
+function parseCentralDirectory(
+  bytes: Uint8Array,
+  view: DataView,
+  end: EndOfCentralDirectory,
+): ZipEntryMetadata[] {
+  const entries: ZipEntryMetadata[] = [];
+  let offset = end.centralDirectoryOffset;
+
+  for (let index = 0; index < end.entryCount; index += 1) {
+    assertByteRange(bytes, offset, CENTRAL_DIRECTORY_HEADER_BYTES, 'central directory header');
+    if (view.getUint32(offset, true) !== CENTRAL_DIRECTORY_HEADER_SIGNATURE) {
+      throw containerError('central directory header signature mismatch.');
+    }
+
+    const flags = view.getUint16(offset + 8, true);
+    const compression = view.getUint16(offset + 10, true);
+    const crc32 = view.getUint32(offset + 16, true);
+    const compressedSize = view.getUint32(offset + 20, true);
+    const uncompressedSize = view.getUint32(offset + 24, true);
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    const diskNumber = view.getUint16(offset + 34, true);
+    const localHeaderOffset = view.getUint32(offset + 42, true);
+    const variableLength = nameLength + extraLength + commentLength;
+    assertByteRange(bytes, offset + CENTRAL_DIRECTORY_HEADER_BYTES, variableLength, 'central directory entry');
+
+    if (
+      compressedSize === 0xffffffff
+      || uncompressedSize === 0xffffffff
+      || localHeaderOffset === 0xffffffff
+    ) {
+      throw containerError('ZIP64 archives are not supported.');
+    }
+    if (diskNumber !== 0) {
+      throw containerError('multi-disk ZIP entries are not supported.');
+    }
+    if (flags & ~UTF8_FILENAME_FLAG) {
+      throw containerError(`archive entry uses unsupported flags 0x${flags.toString(16)}.`);
+    }
+    const nameOffset = offset + CENTRAL_DIRECTORY_HEADER_BYTES;
+    const nameBytes = bytes.subarray(nameOffset, nameOffset + nameLength);
+    const name = decodeEntryName(nameBytes, flags);
+    assertSafeArchivePath(name);
+    assertSupportedEntryEncoding(name, compression, compressedSize, uncompressedSize);
+    entries.push({
+      name,
+      nameBytes,
+      flags,
+      compression,
+      crc32,
+      compressedSize,
+      uncompressedSize,
+      localHeaderOffset,
+      dataStart: 0,
+      dataEnd: 0,
+    });
+    offset += CENTRAL_DIRECTORY_HEADER_BYTES + variableLength;
+  }
+
+  if (offset !== end.offset) {
+    throw containerError('central directory size or entry count mismatch.');
+  }
+  return entries;
+}
+
+function reconcileLocalHeaders(
+  bytes: Uint8Array,
+  view: DataView,
+  entries: ZipEntryMetadata[],
+  centralDirectoryOffset: number,
+): void {
+  const localEntries = [...entries].sort((left, right) => left.localHeaderOffset - right.localHeaderOffset);
+  let expectedOffset = 0;
+
+  for (const entry of localEntries) {
+    if (entry.localHeaderOffset !== expectedOffset) {
+      throw containerError(`local entry layout mismatch or trailing data before ${entry.name}.`);
+    }
+    assertByteRange(bytes, entry.localHeaderOffset, LOCAL_FILE_HEADER_BYTES, `local header for ${entry.name}`);
+    if (view.getUint32(entry.localHeaderOffset, true) !== LOCAL_FILE_HEADER_SIGNATURE) {
+      throw containerError(`local header signature mismatch for ${entry.name}.`);
+    }
+
+    const flags = view.getUint16(entry.localHeaderOffset + 6, true);
+    const compression = view.getUint16(entry.localHeaderOffset + 8, true);
+    const crc32 = view.getUint32(entry.localHeaderOffset + 14, true);
+    const compressedSize = view.getUint32(entry.localHeaderOffset + 18, true);
+    const uncompressedSize = view.getUint32(entry.localHeaderOffset + 22, true);
+    const nameLength = view.getUint16(entry.localHeaderOffset + 26, true);
+    const extraLength = view.getUint16(entry.localHeaderOffset + 28, true);
+    const nameOffset = entry.localHeaderOffset + LOCAL_FILE_HEADER_BYTES;
+    assertByteRange(bytes, nameOffset, nameLength + extraLength, `local header fields for ${entry.name}`);
+    const localNameBytes = bytes.subarray(nameOffset, nameOffset + nameLength);
+
+    if (
+      flags !== entry.flags
+      || compression !== entry.compression
+      || crc32 !== entry.crc32
+      || compressedSize !== entry.compressedSize
+      || uncompressedSize !== entry.uncompressedSize
+      || !equalBytes(localNameBytes, entry.nameBytes)
+    ) {
+      throw containerError(`local header mismatch for ${entry.name}.`);
+    }
+
+    entry.dataStart = nameOffset + nameLength + extraLength;
+    entry.dataEnd = entry.dataStart + entry.compressedSize;
+    if (entry.dataEnd > centralDirectoryOffset) {
+      throw containerError(`compressed data for ${entry.name} overlaps the central directory.`);
+    }
+    expectedOffset = entry.dataEnd;
+  }
+
+  if (expectedOffset !== centralDirectoryOffset) {
+    throw containerError('local entry layout contains trailing or unclaimed data.');
+  }
+}
+
+function inspectArchive(bytes: Uint8Array, limits: AssetContainerLimits): ArchiveMetadata {
+  const fflateEntries = inspectWithFflateMetadata(bytes, limits);
+  if (bytes.byteLength < END_OF_CENTRAL_DIRECTORY_BYTES) {
+    throw containerError('invalid ZIP data.');
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const end = findEndOfCentralDirectory(bytes, view);
+  if (end.entryCount > limits.maxEntries) {
+    throw containerError(`entries limit exceeded (${end.entryCount} > ${limits.maxEntries}).`);
+  }
+  const parsedEntries = parseCentralDirectory(bytes, view, end);
+  reconcileLocalHeaders(bytes, view, parsedEntries, end.centralDirectoryOffset);
+
+  const entries = new Map<string, ZipEntryMetadata>();
+  for (const entry of parsedEntries) {
+    if (entries.has(entry.name)) {
+      throw containerError(`duplicate archive entry ${entry.name}.`);
+    }
+    const fflateEntry = fflateEntries.get(entry.name);
+    if (
+      !fflateEntry
+      || fflateEntry.compression !== entry.compression
+      || fflateEntry.size !== entry.compressedSize
+      || fflateEntry.originalSize !== entry.uncompressedSize
+    ) {
+      throw containerError(`fflate metadata mismatch for ${entry.name}.`);
+    }
+    entries.set(entry.name, entry);
+  }
+
+  if (entries.size !== fflateEntries.size) {
+    throw containerError('central directory entry mismatch.');
+  }
+  const manifest = entries.get(MANIFEST_PATH);
+  if (!manifest) {
     throw containerError('missing manifest.json entry.');
   }
-  return {
-    metadata: { manifest: manifestMetadata, entries },
-    manifestBytes: retained[MANIFEST_PATH],
-  };
+  return { manifest, entries };
+}
+
+const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_unused, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
+  }
+  return value >>> 0;
+});
+
+function updateCrc32(crc: number, bytes: Uint8Array): number {
+  let next = crc;
+  for (const value of bytes) {
+    next = CRC32_TABLE[(next ^ value) & 0xff] ^ (next >>> 8);
+  }
+  return next >>> 0;
+}
+
+function assertEntryCrc(entry: ZipEntryMetadata, crc: number): void {
+  const actualCrc = (crc ^ 0xffffffff) >>> 0;
+  if (actualCrc !== entry.crc32) {
+    throw containerError(`CRC mismatch for ${entry.name}.`);
+  }
+}
+
+interface InflateInternalState {
+  s: { f?: number; l?: unknown; p?: number };
+  p: Uint8Array;
+}
+
+// fflate has no public consumed-input signal; these fields distinguish its final block from trailing bytes.
+function hasFinishedDeflateStream(inflater: Inflate): boolean {
+  const internal = inflater as unknown as InflateInternalState;
+  return Boolean(internal.s.f) && !internal.s.l;
+}
+
+function hasTrailingDeflateBytes(inflater: Inflate): boolean {
+  const internal = inflater as unknown as InflateInternalState;
+  const partialByteCount = internal.s.p ? 1 : 0;
+  return internal.p.byteLength > partialByteCount;
+}
+
+function inflateBoundedEntry(
+  bytes: Uint8Array,
+  entry: ZipEntryMetadata,
+  outputLimit: number,
+): Uint8Array {
+  if (entry.uncompressedSize > outputLimit) {
+    throw containerError(`declared output for ${entry.name} exceeds its container limit.`);
+  }
+
+  const output = new Uint8Array(entry.uncompressedSize);
+  let outputBytes = 0;
+  let compressedBytesFed = 0;
+  let crc = 0xffffffff;
+  const inflater = new Inflate((chunk) => {
+    const nextOutputBytes = outputBytes + chunk.byteLength;
+    if (nextOutputBytes > entry.uncompressedSize || nextOutputBytes > outputLimit) {
+      throw containerError(
+        `actual output for ${entry.name} exceeds its declared/container limit after `
+        + `${compressedBytesFed} of ${entry.compressedSize} compressed bytes.`,
+      );
+    }
+    output.set(chunk, outputBytes);
+    outputBytes = nextOutputBytes;
+    crc = updateCrc32(crc, chunk);
+  });
+
+  while (compressedBytesFed < entry.compressedSize) {
+    const nextOffset = Math.min(
+      compressedBytesFed + INFLATE_INPUT_CHUNK_BYTES,
+      entry.compressedSize,
+    );
+    const isFinalInput = nextOffset === entry.compressedSize;
+    const chunk = bytes.subarray(entry.dataStart + compressedBytesFed, entry.dataStart + nextOffset);
+    compressedBytesFed = nextOffset;
+    try {
+      inflater.push(chunk, isFinalInput);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith(ERROR_PREFIX)) throw error;
+      throw new Error(`${ERROR_PREFIX} invalid DEFLATE data for ${entry.name}.`, { cause: error });
+    }
+
+    if (hasFinishedDeflateStream(inflater)) {
+      if (hasTrailingDeflateBytes(inflater) || compressedBytesFed < entry.compressedSize) {
+        throw containerError(`trailing compressed data for ${entry.name}.`);
+      }
+      break;
+    }
+  }
+
+  if (!hasFinishedDeflateStream(inflater)) {
+    throw containerError(`incomplete DEFLATE data for ${entry.name}.`);
+  }
+  if (outputBytes !== entry.uncompressedSize) {
+    throw containerError(`actual output size mismatch for ${entry.name}.`);
+  }
+  assertEntryCrc(entry, crc);
+  return output;
+}
+
+function extractBoundedEntry(
+  bytes: Uint8Array,
+  entry: ZipEntryMetadata,
+  outputLimit: number,
+): Uint8Array {
+  if (entry.uncompressedSize > outputLimit) {
+    throw containerError(`declared output for ${entry.name} exceeds its container limit.`);
+  }
+  if (entry.compression === 8) {
+    return inflateBoundedEntry(bytes, entry, outputLimit);
+  }
+
+  const output = bytes.slice(entry.dataStart, entry.dataEnd);
+  if (output.byteLength !== entry.uncompressedSize) {
+    throw containerError(`actual output size mismatch for ${entry.name}.`);
+  }
+  assertEntryCrc(entry, updateCrc32(0xffffffff, output));
+  return output;
 }
 
 function parseManifest(bytes: Uint8Array): ValidatedAssetContainerManifest {
@@ -354,7 +720,7 @@ function reconcileManifestEntries(
   limits: AssetContainerLimits,
 ): Map<string, BinaryAssetRef> {
   const expectedPaths = new Map<string, BinaryAssetRef>();
-  let declaredTotal = metadata.manifest.originalSize;
+  let declaredTotal = metadata.manifest.uncompressedSize;
 
   for (const ref of manifest.assets) {
     if (ref.byteLength > limits.maxAssetBytes) {
@@ -370,7 +736,7 @@ function reconcileManifestEntries(
     if (!entry) {
       throw containerError(`missing declared asset entry ${path}.`);
     }
-    if (entry.originalSize !== ref.byteLength) {
+    if (entry.uncompressedSize !== ref.byteLength) {
       throw containerError(`asset entry ${path} byte length does not match its reference.`);
     }
     expectedPaths.set(path, ref);
@@ -384,38 +750,31 @@ function reconcileManifestEntries(
   return expectedPaths;
 }
 
-function extractDeclaredAssets(
-  bytes: Uint8Array,
-  expectedPaths: ReadonlyMap<string, BinaryAssetRef>,
-): Record<string, Uint8Array> {
-  try {
-    return unzipSync(bytes, {
-      filter: (entry) => expectedPaths.has(entry.name),
-    });
-  } catch (error) {
-    rethrowZipError(error);
-  }
-}
-
 export async function unpackValidatedAssetContainer<TDocument = unknown>(
   bytes: Uint8Array,
   limitOverrides?: Partial<AssetContainerLimits>,
 ): Promise<ValidatedAssetContainer<TDocument>> {
   const limits = resolveLimits(limitOverrides);
-  const inspected = inspectArchive(bytes, limits);
-  const manifest = parseManifest(inspected.manifestBytes);
-  const expectedPaths = reconcileManifestEntries(manifest, inspected.metadata, limits);
-  const extracted = extractDeclaredAssets(bytes, expectedPaths);
+  const metadata = inspectArchive(bytes, limits);
+  const manifestBytes = extractBoundedEntry(
+    bytes,
+    metadata.manifest,
+    Math.min(limits.maxManifestBytes, limits.maxTotalBytes),
+  );
+  const manifest = parseManifest(manifestBytes);
+  const expectedPaths = reconcileManifestEntries(manifest, metadata, limits);
   const assets = new Map<BinaryAssetId, BinaryAssetRecord>();
+  let retainedBytes = manifestBytes.byteLength;
 
   for (const [path, ref] of expectedPaths) {
-    const assetBytes = extracted[path];
-    if (assetBytes === undefined) {
-      throw containerError(`missing extracted asset entry ${path}.`);
-    }
-    if (assetBytes.byteLength !== ref.byteLength) {
-      throw containerError(`asset entry ${path} byte length changed during extraction.`);
-    }
+    const entry = metadata.entries.get(path);
+    if (!entry) throw containerError(`missing declared asset entry ${path}.`);
+    const assetBytes = extractBoundedEntry(
+      bytes,
+      entry,
+      Math.min(limits.maxAssetBytes, limits.maxTotalBytes - retainedBytes),
+    );
+    retainedBytes += assetBytes.byteLength;
 
     const record: BinaryAssetRecord = {
       ref: { ...ref },
