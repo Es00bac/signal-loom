@@ -8,6 +8,77 @@ import {
   PaperAssetStorageUnavailableError,
 } from './PaperIndexedDbAssetRepository';
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function createControlledTransactionFactory() {
+  const requestStarted = createDeferred<void>();
+  const operationRequestState = {
+    result: 'sha256:test-key' as IDBValidKey,
+    error: null as DOMException | null,
+    onsuccess: null as IDBRequest<IDBValidKey>['onsuccess'],
+    onerror: null as IDBRequest<IDBValidKey>['onerror'],
+  };
+  const operationRequest = operationRequestState as unknown as IDBRequest<IDBValidKey>;
+  const objectStore = {
+    put: () => {
+      requestStarted.resolve();
+      return operationRequest;
+    },
+  } as unknown as IDBObjectStore;
+  const transactionState = {
+    error: null as DOMException | null,
+    oncomplete: null as IDBTransaction['oncomplete'],
+    onerror: null as IDBTransaction['onerror'],
+    onabort: null as IDBTransaction['onabort'],
+    objectStore: () => objectStore,
+  };
+  const transaction = transactionState as unknown as IDBTransaction;
+  const database = {
+    transaction: () => transaction,
+  } as unknown as IDBDatabase;
+  const openRequestState = {
+    result: database,
+    error: null as DOMException | null,
+    onupgradeneeded: null as IDBOpenDBRequest['onupgradeneeded'],
+    onsuccess: null as IDBOpenDBRequest['onsuccess'],
+    onerror: null as IDBOpenDBRequest['onerror'],
+  };
+  const openRequest = openRequestState as unknown as IDBOpenDBRequest;
+  const factory = {
+    open: () => {
+      queueMicrotask(() => {
+        openRequestState.onsuccess?.call(openRequest, new Event('success'));
+      });
+      return openRequest;
+    },
+  } as unknown as IDBFactory;
+
+  return {
+    factory,
+    requestStarted: requestStarted.promise,
+    succeedRequest: () => {
+      operationRequestState.onsuccess?.call(operationRequest, new Event('success'));
+    },
+    completeTransaction: () => {
+      transactionState.oncomplete?.call(transaction, new Event('complete'));
+    },
+    failTransaction: (eventName: 'abort' | 'error', error: DOMException) => {
+      transactionState.error = error;
+      if (eventName === 'abort') {
+        transactionState.onabort?.call(transaction, new Event('abort'));
+      } else {
+        transactionState.onerror?.call(transaction, new Event('error'));
+      }
+    },
+  };
+}
+
 describe('Paper IndexedDB asset repository', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -66,5 +137,38 @@ describe('Paper IndexedDB asset repository', () => {
     await expect(reopened.has(record.ref.id)).resolves.toBe(false);
     await expect(reopened.listRefs()).resolves.toEqual([]);
     await reopened.close();
+  });
+
+  it('does not resolve a write before its transaction completes', async () => {
+    const controlled = createControlledTransactionFactory();
+    const repository = new IndexedDbPaperAssetRepository(controlled.factory);
+    const record = await createBinaryAssetRecord(new Uint8Array([7]), { mimeType: 'image/png' });
+    let settled = false;
+
+    const operation = repository.put(record).finally(() => {
+      settled = true;
+    });
+    await controlled.requestStarted;
+    controlled.succeedRequest();
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    controlled.completeTransaction();
+    await expect(operation).resolves.toEqual(record.ref);
+    expect(settled).toBe(true);
+  });
+
+  it.each(['abort', 'error'] as const)('rejects a write when its transaction emits %s', async (eventName) => {
+    const controlled = createControlledTransactionFactory();
+    const repository = new IndexedDbPaperAssetRepository(controlled.factory);
+    const record = await createBinaryAssetRecord(new Uint8Array([8]), { mimeType: 'image/png' });
+    const operation = repository.put(record);
+    await controlled.requestStarted;
+    controlled.succeedRequest();
+    const transactionError = new DOMException(`controlled ${eventName}`, 'UnknownError');
+
+    controlled.failTransaction(eventName, transactionError);
+
+    await expect(operation).rejects.toBe(transactionError);
   });
 });

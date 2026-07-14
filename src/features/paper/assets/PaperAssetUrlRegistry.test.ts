@@ -3,6 +3,14 @@ import { createBinaryAssetRecord } from '../../../shared/assets/contentAddressed
 import { MemoryPaperAssetRepository } from './PaperAssetRepository';
 import { PaperAssetUrlRegistry } from './PaperAssetUrlRegistry';
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe('Paper asset URL registry', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -30,5 +38,36 @@ describe('Paper asset URL registry', () => {
 
     second.release();
     expect(revoke).toHaveBeenCalledOnce();
+  });
+
+  it('shares one repository read and object URL across concurrent acquires', async () => {
+    const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:concurrent-paper-asset');
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const repository = new MemoryPaperAssetRepository();
+    const record = await createBinaryAssetRecord(new Uint8Array([2]), { mimeType: 'image/png' });
+    await repository.put(record);
+    const readGate = createDeferred<void>();
+    const originalGet = repository.get.bind(repository);
+    const get = vi.spyOn(repository, 'get').mockImplementation(async (id) => {
+      await readGate.promise;
+      return originalGet(id);
+    });
+    const registry = new PaperAssetUrlRegistry(repository);
+
+    const firstPromise = registry.acquire(record.ref.id);
+    const secondPromise = registry.acquire(record.ref.id);
+    expect(get).toHaveBeenCalledOnce();
+    readGate.resolve();
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+
+    expect(first.url).toBe('blob:concurrent-paper-asset');
+    expect(second.url).toBe(first.url);
+    expect(get).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenCalledOnce();
+    first.release();
+    expect(revoke).not.toHaveBeenCalled();
+    second.release();
+    expect(revoke).toHaveBeenCalledOnce();
+    expect(revoke).toHaveBeenCalledWith('blob:concurrent-paper-asset');
   });
 });

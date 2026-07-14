@@ -41,4 +41,20 @@ describe('Paper asset repository', () => {
     await repository.delete(id);
     expect(await repository.has(id)).toBe(false);
   });
+
+  it('returns a ref detached from both the caller and stored record', async () => {
+    const repository = new MemoryPaperAssetRepository();
+    const record = await createBinaryAssetRecord(new Uint8Array([5, 6]), {
+      mimeType: 'image/png',
+      fileName: 'original.png',
+    });
+
+    const returnedRef = await repository.put(record);
+
+    expect(returnedRef).toEqual(record.ref);
+    expect(returnedRef).not.toBe(record.ref);
+    returnedRef.fileName = 'returned.png';
+    expect(record.ref.fileName).toBe('original.png');
+    expect((await repository.listRefs())[0]?.fileName).toBe('original.png');
+  });
 });

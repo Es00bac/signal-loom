@@ -24,7 +24,7 @@ export class MemoryPaperAssetRepository implements PaperAssetRepository {
 
   async put(record: BinaryAssetRecord): Promise<BinaryAssetRef> {
     this.records.set(record.ref.id, cloneRecord(record));
-    return record.ref;
+    return { ...record.ref };
   }
 
   async get(id: BinaryAssetId): Promise<BinaryAssetRecord | undefined> {
