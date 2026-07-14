@@ -50,8 +50,11 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
     const managedDoc: PaperDocument = {
       ...base,
       importedFonts: [{
-        id: 'managed-test', familyName: 'Managed Test Face', bold: false, italic: false,
-        format: 'truetype', embeddable: true, canSubset: true, assetRef: record.ref,
+        id: 'managed-test', familyId: 'managed test face', familyName: 'Managed Test Face',
+        postscriptName: 'ManagedTestFace-Regular', weight: 400, style: 'normal', stretchPercent: 100,
+        collectionIndex: 0, variableAxes: {}, unicodeRanges: [{ start: 0x20, end: 0x7e }],
+        format: 'truetype', fontAsset: record.ref, embeddability: 'installable', canSubset: true,
+        source: { kind: 'user-import' }, license: {},
       }],
       pages: base.pages.map((page, index) => index === 0 ? { ...page, frames: [importedFrame] } : page),
     };

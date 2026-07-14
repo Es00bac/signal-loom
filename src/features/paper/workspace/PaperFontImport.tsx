@@ -27,19 +27,19 @@ export function useRegisterImportedFonts(importedFonts: readonly PaperImportedFo
     if (typeof FontFace === 'undefined' || typeof document === 'undefined') return;
     let cancelled = false;
     for (const font of importedFonts ?? []) {
-      const key = `${font.id}:${font.assetRef.id}`;
+      const key = `${font.id}:${font.fontAsset.id}`;
       if (registered.current.has(key) || pending.current.has(key)) continue;
       pending.current.add(key);
       void (async () => {
         try {
-          const record = await paperAssetRepository.get(font.assetRef.id);
+          const record = await paperAssetRepository.get(font.fontAsset.id);
           if (!record || cancelled) return;
           // Copy into a concrete ArrayBuffer so the FontFace source type is exact (not ArrayBufferLike).
           const buffer = new ArrayBuffer(record.bytes.byteLength);
           new Uint8Array(buffer).set(record.bytes);
           const face = new FontFace(font.familyName, buffer, {
-            weight: font.bold ? '700' : '400',
-            style: font.italic ? 'italic' : 'normal',
+            weight: String(font.weight),
+            style: font.style,
           });
           const loaded = await face.load();
           if (cancelled) return;
@@ -97,7 +97,7 @@ export function PaperFontImportControl() {
           return;
         }
         addImportedFont(font);
-        const label = `${font.familyName}${font.subfamilyName ? ` ${font.subfamilyName}` : ''}`;
+        const label = `${font.familyName} ${font.weight}${font.style === 'normal' ? '' : ` ${font.style}`}`;
         setNotice(`Imported ${label}.${vet.warnings[0] ? ` ${vet.warnings[0]}` : ''}`);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to read the font file.');
@@ -138,7 +138,7 @@ export function PaperFontImportControl() {
             <li key={font.id} className="flex items-center justify-between gap-2 text-sm text-slate-200">
               <span className="truncate" style={{ fontFamily: font.familyName }}>
                 {font.familyName}
-                {font.subfamilyName ? ` ${font.subfamilyName}` : ''}
+                {` ${font.weight}${font.style === 'normal' ? '' : ` ${font.style}`}`}
                 {!font.canSubset ? <span className="ml-1 text-[10px] text-amber-300/80" title="Whole font embedded (subsetting not permitted)">·full</span> : null}
               </span>
               <button

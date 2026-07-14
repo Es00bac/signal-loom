@@ -412,6 +412,13 @@ function collectPaperSnapshotAssetIds(document: Record<string, unknown>): Binary
     if (!Array.isArray(importedFonts)) return undefined;
     for (const font of importedFonts) {
       if (!isRecord(font)) return undefined;
+      if (isBinaryAssetRef(font.fontAsset)) {
+        assetIds.add(font.fontAsset.id);
+        if (isRecord(font.license) && isBinaryAssetRef(font.license.textAsset)) {
+          assetIds.add(font.license.textAsset.id);
+        }
+        continue;
+      }
       if (isBinaryAssetRef(font.assetRef)) {
         assetIds.add(font.assetRef.id);
         continue;

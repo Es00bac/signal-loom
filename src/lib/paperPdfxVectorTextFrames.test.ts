@@ -169,10 +169,16 @@ describe('buildVectorTextFrameSpecs', () => {
 
 describe('imported fonts in the vector-text builder', () => {
   const typo = (fontFamily: string) => ({ fontFamily, fontSizePt: 14, leadingPt: 18, tracking: 0, hyphenate: false, align: 'left' as const, color: '#000', fontWeight: 'normal', fontStyle: 'normal' as const });
-  const importedFace = (patch: Partial<PaperImportedFont>): PaperImportedFont => ({
-    id: 'brandon', familyName: 'Brandon Grotesque', bold: false, italic: false, format: 'truetype',
-    embeddable: true, canSubset: true, assetRef: fontRef(), ...patch,
-  });
+  const importedFace = (patch: Partial<PaperImportedFont>): PaperImportedFont => {
+    const familyName = patch.familyName ?? 'Brandon Grotesque';
+    return {
+      id: 'brandon', familyId: patch.familyId ?? familyName.toLowerCase(), familyName,
+      postscriptName: 'BrandonGrotesque-Regular', weight: 400, style: 'normal', stretchPercent: 100,
+      collectionIndex: 0, variableAxes: {}, unicodeRanges: [{ start: 0x20, end: 0x7e }],
+      format: 'truetype', fontAsset: fontRef(), embeddability: 'installable', canSubset: true,
+      source: { kind: 'user-import' }, license: {}, ...patch,
+    };
+  };
   const withImports = (doc: PaperDocument, fonts: PaperImportedFont[]): PaperDocument => ({ ...doc, importedFonts: fonts });
 
   it('carries the imported font asset reference (no inline bytes or URL) when a frame matches it', () => {
@@ -211,7 +217,7 @@ describe('imported fonts in the vector-text builder', () => {
   it('ignores an imported font whose licence forbids embedding (falls back to Liberation)', () => {
     const doc = withImports(
       docWithFrames([{ text: 'x', typography: typo('Brandon Grotesque') }]),
-      [importedFace({ embeddable: false })],
+      [importedFace({ embeddability: 'restricted' })],
     );
     const [spec] = buildVectorTextFrameSpecs(doc.pages[0], doc, blackTransform);
     expect(spec.fontId).toBe('LiberationSans-Regular');
@@ -224,7 +230,7 @@ describe('imported fonts in the vector-text builder', () => {
     const cjk = withImports(docWithFrames([{ text: 'Hello 日本語', typography: typo('Test Face') }]), [font]);
     const [spec] = buildVectorTextFrameSpecs(cjk.pages[0], cjk, blackTransform);
     expect(spec.fontId).toBe('imported-test');
-    expect(spec.fontAssetRef).toEqual(font.assetRef);
+    expect(spec.fontAssetRef).toEqual(font.fontAsset);
   });
 });
 

@@ -18,13 +18,21 @@ function fontRef(byteLength = 4): BinaryAssetRef {
 
 const face = (patch: Partial<PaperImportedFont>): PaperImportedFont => ({
   id: 'f',
+  familyId: 'brandon grotesque',
   familyName: 'Brandon Grotesque',
-  bold: false,
-  italic: false,
+  postscriptName: 'BrandonGrotesque-Regular',
+  weight: 400,
+  style: 'normal',
+  stretchPercent: 100,
+  collectionIndex: 0,
+  variableAxes: {},
+  unicodeRanges: [{ start: 0x20, end: 0x7e }],
   format: 'truetype',
-  embeddable: true,
+  fontAsset: fontRef(),
+  embeddability: 'installable',
   canSubset: true,
-  assetRef: fontRef(),
+  source: { kind: 'user-import' },
+  license: {},
   ...patch,
 });
 
@@ -38,9 +46,9 @@ describe('normalizeFamilyName', () => {
 });
 
 describe('selectImportedFace', () => {
-  const regular = face({ id: 'r', bold: false, italic: false });
-  const bold = face({ id: 'b', bold: true, italic: false });
-  const boldItalic = face({ id: 'bi', bold: true, italic: true });
+  const regular = face({ id: 'r', weight: 400, style: 'normal' });
+  const bold = face({ id: 'b', weight: 700, style: 'normal' });
+  const boldItalic = face({ id: 'bi', weight: 700, style: 'italic' });
 
   it('returns undefined when no family matches', () => {
     expect(selectImportedFace('helvetica', false, false, [regular, bold])).toBeUndefined();
@@ -49,24 +57,23 @@ describe('selectImportedFace', () => {
     expect(selectImportedFace('brandon grotesque', true, true, [regular, bold, boldItalic])?.id).toBe('bi');
     expect(selectImportedFace('brandon grotesque', true, false, [regular, bold, boldItalic])?.id).toBe('b');
   });
-  it('falls back to the closest available face rather than Liberation', () => {
-    // Only Regular imported, but a bold run still gets the user's font.
-    expect(selectImportedFace('brandon grotesque', true, false, [regular])?.id).toBe('r');
+  it('does not silently select a nearby face for a missing requested weight', () => {
+    expect(selectImportedFace('brandon grotesque', true, false, [regular])).toBeUndefined();
   });
   it('ignores faces whose licence forbids embedding', () => {
-    const restricted = face({ id: 'x', embeddable: false });
+    const restricted = face({ id: 'x', embeddability: 'restricted' });
     expect(selectImportedFace('brandon grotesque', false, false, [restricted])).toBeUndefined();
   });
 });
 
 describe('resolveTextFace', () => {
   it('embeds the user\'s real font when a family matches', () => {
-    const imported = face({ id: 'r', assetRef: fontRef(3) });
+    const imported = face({ id: 'r', fontAsset: fontRef(3) });
     const resolved = resolveTextFace({ fontFamily: '"Brandon Grotesque", sans-serif' }, [imported]);
     expect(resolved.embeddedReal).toBe(true);
     expect(resolved.id).toBe('imported-r');
     expect(resolved.url).toBeUndefined();
-    expect(resolved.assetRef).toEqual(imported.assetRef);
+    expect(resolved.assetRef).toEqual(imported.fontAsset);
     expect(resolved.familyName).toBe('Brandon Grotesque');
   });
 
@@ -79,10 +86,24 @@ describe('resolveTextFace', () => {
   });
 
   it('does not use a matching-but-restricted imported font', () => {
-    const restricted = face({ id: 'x', embeddable: false });
+    const restricted = face({ id: 'x', embeddability: 'restricted' });
     const resolved = resolveTextFace({ fontFamily: 'Brandon Grotesque' }, [restricted]);
     expect(resolved.embeddedReal).toBe(false);
     expect(resolved.url).toContain('/fonts/liberation/');
+  });
+
+  it('does not use unknown-rights bytes without an attestation', () => {
+    const unknown = face({ id: 'unknown', embeddability: 'unknown' });
+    const resolved = resolveTextFace({ fontFamily: 'Brandon Grotesque' }, [unknown]);
+    expect(resolved.embeddedReal).toBe(false);
+    expect(resolved.url).toContain('/fonts/liberation/');
+  });
+
+  it('selects an exact numeric weight instead of coercing it to bold', () => {
+    const semibold = face({ id: 'semibold', weight: 600 });
+    const resolved = resolveTextFace({ fontFamily: 'Brandon Grotesque', fontWeight: '600' }, [semibold]);
+    expect(resolved.id).toBe('imported-semibold');
+    expect(resolved.embeddedReal).toBe(true);
   });
 });
 
@@ -95,11 +116,11 @@ describe('buildImportedFont', () => {
     const built = buildImportedFont(vetFontBytes(bytes), assetRef, 'font-1')!;
     expect(built).not.toBeNull();
     expect(built.familyName).toBe('Liberation Sans');
-    expect(built.bold).toBe(true);
-    expect(built.italic).toBe(false);
+    expect(built.weight).toBe(700);
+    expect(built.style).toBe('normal');
     expect(built.format).toBe('truetype');
-    expect(built.embeddable).toBe(true);
-    expect(built.assetRef).toEqual(assetRef);
+    expect(built.embeddability).toBe('installable');
+    expect(built.fontAsset).toEqual(assetRef);
   });
 
   it('refuses a font that failed vetting', () => {

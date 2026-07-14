@@ -6,13 +6,20 @@ import {
 } from '../../../shared/assets/contentAddressedAsset';
 import type {
   PaperDocument,
+  PaperFontAttestation,
   PaperFrame,
   PaperFrameAsset,
   PaperImportedFont,
   PaperManagedAssetLocator,
+  PaperManagedFontFace,
   PaperPage,
 } from '../../../types/paper';
 import type { PaperAssetRepository } from './PaperAssetRepository';
+import {
+  normalizePaperFontFamilyId,
+  normalizePaperFontStretch,
+  normalizePaperFontWeight,
+} from '../../../lib/paperManagedFonts';
 
 export type ManagedPaperAssetLocator = PaperManagedAssetLocator;
 export type PaperAssetLocator = PaperManagedAssetLocator;
@@ -23,9 +30,13 @@ export type ManagedPaperImportedFont = PaperImportedFont;
 export type PaperDocumentWithManagedAssets = PaperDocument;
 
 type LegacyPaperFrameAsset = PaperFrameAsset & { src?: unknown };
-type LegacyPaperImportedFont = Omit<PaperImportedFont, 'assetRef'> & {
-  assetRef?: BinaryAssetRef;
+type LegacyPaperImportedFont = Partial<PaperImportedFont> & {
+  assetRef?: unknown;
   dataBase64?: unknown;
+  bold?: unknown;
+  italic?: unknown;
+  embeddable?: unknown;
+  subfamilyName?: unknown;
 };
 
 interface LegacySlpprAssetRef {
@@ -99,6 +110,139 @@ function fontExtension(format: PaperImportedFont['format']): string {
   return 'ttc';
 }
 
+function hasManagedFontFormat(value: unknown): value is PaperManagedFontFace['format'] {
+  return value === 'truetype' || value === 'opentype-cff' || value === 'collection';
+}
+
+function hasManagedFontStyle(value: unknown): value is PaperManagedFontFace['style'] {
+  return value === 'normal' || value === 'italic' || value === 'oblique';
+}
+
+function hasFontEmbeddability(value: unknown): value is PaperManagedFontFace['embeddability'] {
+  return value === 'installable'
+    || value === 'print-preview'
+    || value === 'editable'
+    || value === 'restricted'
+    || value === 'bitmap-only'
+    || value === 'unknown';
+}
+
+function normalizeVariableAxes(value: unknown): PaperManagedFontFace['variableAxes'] {
+  if (!isRecord(value)) return {};
+  const axes: PaperManagedFontFace['variableAxes'] = {};
+  for (const [tag, candidate] of Object.entries(value)) {
+    if (!isRecord(candidate)) continue;
+    const min = candidate.min;
+    const defaultValue = candidate.default;
+    const max = candidate.max;
+    if (
+      typeof min !== 'number' || !Number.isFinite(min)
+      || typeof defaultValue !== 'number' || !Number.isFinite(defaultValue)
+      || typeof max !== 'number' || !Number.isFinite(max)
+    ) continue;
+    axes[tag] = { min, default: defaultValue, max };
+  }
+  return axes;
+}
+
+function normalizeUnicodeRanges(value: unknown): PaperManagedFontFace['unicodeRanges'] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (!isRecord(candidate)) return [];
+    const start = candidate.start;
+    const end = candidate.end;
+    if (
+      typeof start !== 'number' || !Number.isInteger(start) || start < 0 || start > 0x10ffff
+      || typeof end !== 'number' || !Number.isInteger(end) || end < start || end > 0x10ffff
+    ) return [];
+    return [{ start, end }];
+  });
+}
+
+function normalizeFontSource(value: unknown): PaperManagedFontFace['source'] {
+  if (!isRecord(value) || (value.kind !== 'open-catalog' && value.kind !== 'user-import')) {
+    return { kind: 'user-import' };
+  }
+  return {
+    kind: value.kind,
+    ...(typeof value.url === 'string' && value.url ? { url: value.url } : {}),
+    ...(typeof value.version === 'string' && value.version ? { version: value.version } : {}),
+  };
+}
+
+function normalizeFontLicense(value: unknown): PaperManagedFontFace['license'] {
+  if (!isRecord(value)) return {};
+  return {
+    ...(typeof value.id === 'string' && value.id ? { id: value.id } : {}),
+    ...(isBinaryAssetRef(value.textAsset) ? { textAsset: value.textAsset } : {}),
+    ...(typeof value.attribution === 'string' && value.attribution ? { attribution: value.attribution } : {}),
+  };
+}
+
+function normalizeFontAttestation(value: unknown): PaperFontAttestation | undefined {
+  if (!isRecord(value)) return undefined;
+  if (
+    typeof value.acceptedAt !== 'number' || !Number.isFinite(value.acceptedAt)
+    || typeof value.assetSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(value.assetSha256)
+    || typeof value.mayEmbedOutput !== 'boolean'
+    || typeof value.mayPackageEditableProject !== 'boolean'
+    || value.statementVersion !== 1
+  ) return undefined;
+  return {
+    acceptedAt: value.acceptedAt,
+    assetSha256: value.assetSha256.toLowerCase(),
+    mayEmbedOutput: value.mayEmbedOutput,
+    mayPackageEditableProject: value.mayPackageEditableProject,
+    statementVersion: 1,
+  };
+}
+
+/** Normalizes historical imported-font shapes into one explicit production-managed face. */
+function normalizeManagedFontFace(candidate: LegacyPaperImportedFont, fontAsset: BinaryAssetRef): PaperManagedFontFace {
+  const familyName = typeof candidate.familyName === 'string' && candidate.familyName.trim()
+    ? candidate.familyName.trim()
+    : 'Imported Font';
+  const weight = normalizePaperFontWeight(
+    typeof candidate.weight === 'number' ? candidate.weight : candidate.bold === true ? 700 : 400,
+  );
+  const style = hasManagedFontStyle(candidate.style)
+    ? candidate.style
+    : candidate.italic === true ? 'italic' : 'normal';
+  const collectionIndex = typeof candidate.collectionIndex === 'number'
+    && Number.isInteger(candidate.collectionIndex)
+    && candidate.collectionIndex >= 0
+    ? candidate.collectionIndex
+    : 0;
+  const attestation = normalizeFontAttestation(candidate.attestation);
+  return {
+    id: typeof candidate.id === 'string' && candidate.id ? candidate.id : `imported-font-${fontAsset.sha256.slice(0, 12)}`,
+    familyId: typeof candidate.familyId === 'string' && candidate.familyId.trim()
+      ? normalizePaperFontFamilyId(candidate.familyId)
+      : normalizePaperFontFamilyId(familyName),
+    familyName,
+    postscriptName: typeof candidate.postscriptName === 'string' && candidate.postscriptName.trim()
+      ? candidate.postscriptName.trim()
+      : familyName,
+    weight,
+    style,
+    stretchPercent: normalizePaperFontStretch(
+      typeof candidate.stretchPercent === 'number' ? candidate.stretchPercent : undefined,
+    ),
+    collectionIndex,
+    variableAxes: normalizeVariableAxes(candidate.variableAxes),
+    unicodeRanges: normalizeUnicodeRanges(candidate.unicodeRanges),
+    format: hasManagedFontFormat(candidate.format) ? candidate.format : 'truetype',
+    fontAsset,
+    embeddability: hasFontEmbeddability(candidate.embeddability)
+      ? candidate.embeddability
+      : candidate.embeddable === false ? 'restricted' : 'unknown',
+    canSubset: candidate.canSubset !== false,
+    source: normalizeFontSource(candidate.source),
+    license: normalizeFontLicense(candidate.license),
+    ...(attestation ? { attestation } : {}),
+  };
+}
+
 async function storePayload(
   repository: PaperAssetRepository,
   bytes: Uint8Array,
@@ -143,7 +287,8 @@ export function collectReachablePaperAssetIds(document: PaperDocument): BinaryAs
   }
 
   for (const font of managed.importedFonts ?? []) {
-    if (isBinaryAssetRef(font.assetRef)) ids.add(font.assetRef.id);
+    if (isBinaryAssetRef(font.fontAsset)) ids.add(font.fontAsset.id);
+    if (isBinaryAssetRef(font.license?.textAsset)) ids.add(font.license.textAsset.id);
   }
 
   return [...ids].sort();
@@ -204,18 +349,21 @@ export async function migrateLegacyPaperBinaryFields(
   if (Array.isArray(migrated.importedFonts)) {
     migrated.importedFonts = await Promise.all(migrated.importedFonts.map(async (font) => {
       const candidate = font as unknown as LegacyPaperImportedFont;
-      const { dataBase64, ...metadata } = candidate;
-      if (candidate.assetRef && isBinaryAssetRef(candidate.assetRef)) {
-        return { ...metadata, assetRef: candidate.assetRef } as ManagedPaperImportedFont;
+      if (isBinaryAssetRef(candidate.fontAsset)) {
+        return normalizeManagedFontFace(candidate, candidate.fontAsset) as ManagedPaperImportedFont;
       }
+      if (isBinaryAssetRef(candidate.assetRef)) {
+        return normalizeManagedFontFace(candidate, candidate.assetRef) as ManagedPaperImportedFont;
+      }
+      const dataBase64 = candidate.dataBase64;
       if (typeof dataBase64 !== 'string' || dataBase64.length === 0) {
         throw new Error(`Paper imported font ${candidate.id || '<unknown>'} has no managed bytes.`);
       }
       const ref = await storePayload(repository, decodeBase64(dataBase64), {
-        mimeType: fontMimeType(candidate.format),
-        fileName: `${candidate.id || 'font'}.${fontExtension(candidate.format)}`,
+        mimeType: fontMimeType(hasManagedFontFormat(candidate.format) ? candidate.format : 'truetype'),
+        fileName: `${candidate.id || 'font'}.${fontExtension(hasManagedFontFormat(candidate.format) ? candidate.format : 'truetype')}`,
       });
-      return { ...metadata, assetRef: ref } as ManagedPaperImportedFont;
+      return normalizeManagedFontFace(candidate, ref) as ManagedPaperImportedFont;
     }));
   }
 

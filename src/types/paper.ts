@@ -477,34 +477,64 @@ export interface PaperDocument {
   styles: PaperStyleCatalogs;
   /** Document swatch library (custom CMYK/spot/process colors) layered on the built-in defaults. */
   swatches?: PaperSwatch[];
-/** User-imported fonts represented by vetted binary asset references. */
+  /** Managed faces referenced by this document. Exact bytes live in the Paper asset repository. */
   importedFonts?: PaperImportedFont[];
   pages: PaperPage[];
   createdAt: number;
   updatedAt: number;
 }
 
-/**
- * A font the user imported into the document. Vetted (unbroken + embeddable) at import time; bytes are
- * resolved through the managed Paper asset repository for preview and export.
- */
-export interface PaperImportedFont {
-  /** Stable id (embed cache key). */
-  id: string;
-  /** Font family name as reported by the font (e.g. "Brandon Grotesque"). */
-  familyName: string;
-  subfamilyName?: string;
-  postscriptName?: string;
-  bold: boolean;
-  italic: boolean;
-  format: 'truetype' | 'opentype-cff' | 'collection';
-  /** OS/2 fsType permits embedding this face in a print PDF. */
-  embeddable: boolean;
-  /** OS/2 fsType permits subsetting (false → embed the whole font). */
-  canSubset: boolean;
-  /** Immutable content-addressed font bytes. */
-  assetRef: BinaryAssetRef;
+export type PaperFontEmbeddability =
+  | 'installable'
+  | 'print-preview'
+  | 'editable'
+  | 'restricted'
+  | 'bitmap-only'
+  | 'unknown';
+
+export type PaperManagedFontStyle = 'normal' | 'italic' | 'oblique';
+export type PaperManagedFontFormat = 'truetype' | 'opentype-cff' | 'collection';
+
+export interface PaperFontAttestation {
+  acceptedAt: number;
+  assetSha256: string;
+  mayEmbedOutput: boolean;
+  mayPackageEditableProject: boolean;
+  statementVersion: 1;
 }
+
+export interface PaperManagedFontAxisRange {
+  min: number;
+  default: number;
+  max: number;
+}
+
+export interface PaperManagedFontFace {
+  /** Stable face identifier used by document dependencies and font embedding. */
+  id: string;
+  /** Stable normalized family identity. A display name alone is never a production identity. */
+  familyId: string;
+  familyName: string;
+  postscriptName: string;
+  weight: number;
+  style: PaperManagedFontStyle;
+  stretchPercent: number;
+  collectionIndex: number;
+  variableAxes: Record<string, PaperManagedFontAxisRange>;
+  unicodeRanges: Array<{ start: number; end: number }>;
+  format: PaperManagedFontFormat;
+  /** Immutable content-addressed bytes for this exact face. */
+  fontAsset: BinaryAssetRef;
+  embeddability: PaperFontEmbeddability;
+  canSubset: boolean;
+  source: { kind: 'open-catalog' | 'user-import'; url?: string; version?: string };
+  license: { id?: string; textAsset?: BinaryAssetRef; attribution?: string };
+  /** Required for production embedding when the font's own embedding rights are unknown. */
+  attestation?: PaperFontAttestation;
+}
+
+/** Historical name retained for document compatibility. New code should use PaperManagedFontFace. */
+export type PaperImportedFont = PaperManagedFontFace;
 
 export interface PaperDocumentSnapshot {
   document: PaperDocument;

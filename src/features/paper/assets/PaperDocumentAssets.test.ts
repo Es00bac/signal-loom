@@ -27,7 +27,7 @@ describe('Paper document assets', () => {
       parentPages: [{
         frames: [{ asset: { locator: { kind: 'managed', ref: parentAsset.ref } } }],
       }],
-      importedFonts: [{ assetRef: first.ref }],
+      importedFonts: [{ fontAsset: first.ref, license: {} }],
     } as unknown as PaperDocument;
 
     expect(collectReachablePaperAssetIds(document)).toEqual([first.ref.id, second.ref.id, parentAsset.ref.id].sort());
@@ -68,8 +68,13 @@ describe('Paper document assets', () => {
     );
     expect(managed.importedFonts?.[0]).toMatchObject({
       id: 'font-1',
-      assetRef: expect.objectContaining({ id: expect.stringMatching(/^sha256:/) }),
+      fontAsset: expect.objectContaining({ id: expect.stringMatching(/^sha256:/) }),
+      embeddability: 'unknown',
+      familyId: 'legacy sans',
+      style: 'normal',
+      weight: 400,
     });
+    expect(managed.importedFonts?.[0]).not.toHaveProperty('assetRef');
   });
 
   it('strips an obsolete inline source when a frame already has a managed reference', async () => {
@@ -114,7 +119,7 @@ describe('Paper document assets', () => {
     const managed = migrated as PaperDocumentWithManagedAssets;
 
     expect(JSON.stringify(migrated)).not.toMatch(/dataBase64|BAUG/);
-    expect(managed.importedFonts?.[0]).toMatchObject({ id: 'font-1', assetRef: record.ref });
+    expect(managed.importedFonts?.[0]).toMatchObject({ id: 'font-1', fontAsset: record.ref });
   });
 
   it('migrates a URL-encoded legacy data URL into a managed record', async () => {

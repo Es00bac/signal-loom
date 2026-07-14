@@ -583,8 +583,10 @@ describe('paperStore document swatches', () => {
 
   it('adds, replaces by family+style, and removes imported fonts with history', () => {
     const face = (id: string, patch: Partial<PaperImportedFont> = {}): PaperImportedFont => ({
-      id, familyName: 'Brandon', bold: false, italic: false, format: 'truetype',
-      embeddable: true, canSubset: true, assetRef: fontAssetRef(), ...patch,
+      id, familyId: 'brandon', familyName: 'Brandon', postscriptName: 'Brandon-Regular',
+      weight: 400, style: 'normal', stretchPercent: 100, collectionIndex: 0, variableAxes: {},
+      unicodeRanges: [{ start: 0x20, end: 0x7e }], format: 'truetype', fontAsset: fontAssetRef(),
+      embeddability: 'installable', canSubset: true, source: { kind: 'user-import' }, license: {}, ...patch,
     });
     const ids = () => usePaperStore.getState().document.importedFonts?.map((f) => f.id);
 
@@ -593,15 +595,19 @@ describe('paperStore document swatches', () => {
     // Re-importing the same family+style replaces in place (no duplicate).
     usePaperStore.getState().addImportedFont(face('b'));
     expect(ids()).toEqual(['b']);
-    // A different style (bold) coexists.
-    usePaperStore.getState().addImportedFont(face('c', { bold: true }));
+    // A different exact face (bold) coexists.
+    usePaperStore.getState().addImportedFont(face('c', { weight: 700 }));
     expect(ids()).toEqual(['b', 'c']);
 
+    // Collection faces can share a family/style tuple but still identify different exact source faces.
+    usePaperStore.getState().addImportedFont(face('d', { collectionIndex: 1 }));
+    expect(ids()).toEqual(['b', 'c', 'd']);
+
     usePaperStore.getState().removeImportedFont('b');
-    expect(ids()).toEqual(['c']);
+    expect(ids()).toEqual(['c', 'd']);
     // Undo restores the removed font.
     usePaperStore.getState().undo();
-    expect(ids()).toEqual(['b', 'c']);
+    expect(ids()).toEqual(['b', 'c', 'd']);
   });
 });
 

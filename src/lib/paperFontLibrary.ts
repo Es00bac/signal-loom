@@ -5,10 +5,15 @@
 // substitute (disclosed in preflight). Framework-free + unit-testable; imported bytes are addressed through
 // a managed content-addressed record and never live in Paper JSON.
 
-import type { PaperImportedFont } from '../types/paper';
+import type { PaperImportedFont, PaperManagedFontFace, PaperManagedFontStyle } from '../types/paper';
 import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
-import { resolveBundledFontFace, isBoldWeight } from './paperFontResolution';
+import { resolveBundledFontFace } from './paperFontResolution';
 import type { FontVetResult } from './paperFontVetting';
+import {
+  canUseManagedFontForProduction,
+  normalizePaperFontFamilyId,
+  selectManagedFontFace,
+} from './paperManagedFonts';
 
 /** Normalize a CSS font-family (or stack) to its first family token, unquoted + lowercased, for matching. */
 export function normalizeFamilyName(cssFamily: string): string {
@@ -17,9 +22,8 @@ export function normalizeFamilyName(cssFamily: string): string {
 }
 
 /**
- * Pick the imported face that best matches a requested family + style. Only embeddable faces of the exact
- * family are eligible; among those, prefer an exact weight+style match, then weight, then any — so a user
- * who imported only Regular still gets their font (not Liberation) for a bold run.
+ * Legacy convenience wrapper for UI callers that still carry boolean weight/style controls. It uses exact
+ * 400/700 faces and deliberately returns undefined rather than synthesizing a nearby face.
  */
 export function selectImportedFace(
   family: string,
@@ -28,18 +32,13 @@ export function selectImportedFace(
   fonts: readonly PaperImportedFont[],
 ): PaperImportedFont | undefined {
   if (!family) return undefined;
-  const candidates = fonts.filter((f) => f.embeddable && normalizeFamilyName(f.familyName) === family);
-  if (candidates.length === 0) return undefined;
-  let best = candidates[0];
-  let bestScore = -1;
-  for (const f of candidates) {
-    const score = (f.bold === bold ? 2 : 0) + (f.italic === italic ? 1 : 0);
-    if (score > bestScore) {
-      best = f;
-      bestScore = score;
-    }
-  }
-  return best;
+  const selection = selectManagedFontFace(fonts, {
+    familyId: normalizePaperFontFamilyId(family),
+    weight: bold ? 700 : 400,
+    style: italic ? 'italic' : 'normal',
+  });
+  if (selection.status !== 'selected') return undefined;
+  return canUseManagedFontForProduction(selection.face).allowed ? selection.face : undefined;
 }
 
 /** A face resolved for the vector-text exporter — either the user's imported font, or a bundled Liberation. */
@@ -64,23 +63,41 @@ interface TypographyLike {
   fontStyle?: string;
 }
 
+function numericWeight(weight: string | undefined): number {
+  const normalized = (weight ?? '').trim().toLowerCase();
+  if (normalized === 'bold' || normalized === 'bolder') return 700;
+  if (normalized === 'normal' || normalized === 'lighter' || !normalized) return 400;
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) ? Math.min(1000, Math.max(1, parsed)) : 400;
+}
+
+function requestedStyle(style: string | undefined): PaperManagedFontStyle {
+  const normalized = (style ?? '').trim().toLowerCase();
+  if (normalized === 'oblique') return 'oblique';
+  return normalized === 'italic' ? 'italic' : 'normal';
+}
+
 /**
- * Resolve a frame's typography to the face to embed: the user's imported font when one matches (and is
- * embeddable), otherwise the bundled Liberation substitute — behaviour-identical to the old path when the
- * document has no imported fonts.
+ * Resolve a frame's typography to the face to embed: the user's imported font only when one exact face is
+ * authorized for production, otherwise the existing bundled Liberation draft fallback.
  */
 export function resolveTextFace(
   typography: TypographyLike,
   importedFonts: readonly PaperImportedFont[] | undefined,
 ): ResolvedTextFace {
   const family = normalizeFamilyName(typography.fontFamily ?? '');
-  const bold = isBoldWeight(typography.fontWeight);
-  const italic = (typography.fontStyle ?? '').toLowerCase() === 'italic';
-  const imported = family ? selectImportedFace(family, bold, italic, importedFonts ?? []) : undefined;
-  if (imported) {
+  const selection = family
+    ? selectManagedFontFace(importedFonts ?? [], {
+      familyId: normalizePaperFontFamilyId(family),
+      weight: numericWeight(typography.fontWeight),
+      style: requestedStyle(typography.fontStyle),
+    })
+    : undefined;
+  if (selection?.status === 'selected' && canUseManagedFontForProduction(selection.face).allowed) {
+    const imported = selection.face;
     return {
       id: `imported-${imported.id}`,
-      assetRef: imported.assetRef,
+      assetRef: imported.fontAsset,
       familyName: imported.familyName,
       embeddedReal: true,
       noSubsetting: !imported.canSubset,
@@ -91,25 +108,41 @@ export function resolveTextFace(
 }
 
 /**
- * Build a persisted imported-font record from a vetting result + managed binary reference. Returns null
- * when the font failed vetting or can't be embedded (the caller should reject it), so a bad font never
- * enters the library.
+ * Build one explicit managed face from a vetted binary record. A collection caller chooses its face index;
+ * no face is silently inferred from an adjacent weight or style.
  */
-export function buildImportedFont(vet: FontVetResult, assetRef: BinaryAssetRef, id: string): PaperImportedFont | null {
-  if (!vet.ok || !vet.embeddable) return null;
-  if (vet.format !== 'truetype' && vet.format !== 'opentype-cff' && vet.format !== 'collection') return null;
-  const bold = /bold|black|heavy|semibold|demibold/i.test(vet.subfamilyName ?? '');
-  const italic = /italic|oblique/i.test(vet.subfamilyName ?? '');
+export function buildImportedFont(
+  vet: FontVetResult,
+  fontAsset: BinaryAssetRef,
+  id: string,
+  options: {
+    collectionIndex?: number;
+    source?: PaperManagedFontFace['source'];
+    license?: PaperManagedFontFace['license'];
+    attestation?: PaperManagedFontFace['attestation'];
+  } = {},
+): PaperImportedFont | null {
+  const collectionIndex = options.collectionIndex ?? 0;
+  const vettedFace = vet.faces.find((face) => face.collectionIndex === collectionIndex);
+  if (!vettedFace || !vettedFace.ok || !vettedFace.embeddable) return null;
+  const familyName = vettedFace.familyName ?? vet.familyName ?? id;
   return {
     id,
-    familyName: vet.familyName ?? id,
-    subfamilyName: vet.subfamilyName,
-    postscriptName: vet.postscriptName,
-    bold,
-    italic,
-    format: vet.format,
-    embeddable: vet.embeddable,
-    canSubset: vet.canSubset,
-    assetRef,
+    familyId: normalizePaperFontFamilyId(familyName),
+    familyName,
+    postscriptName: vettedFace.postscriptName ?? vettedFace.familyName ?? id,
+    weight: vettedFace.weight,
+    style: vettedFace.style,
+    stretchPercent: vettedFace.stretchPercent,
+    collectionIndex,
+    variableAxes: vettedFace.variableAxes,
+    unicodeRanges: vettedFace.unicodeRanges,
+    format: vettedFace.format,
+    fontAsset,
+    embeddability: vettedFace.embeddability,
+    canSubset: vettedFace.canSubset,
+    source: options.source ?? { kind: 'user-import' },
+    license: options.license ?? {},
+    attestation: options.attestation,
   };
 }

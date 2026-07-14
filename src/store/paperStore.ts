@@ -559,9 +559,16 @@ export const usePaperStore = create<PaperState & PaperActions>()(
 
       addImportedFont: (font) =>
         set((state) => {
-          // Replace any existing import of the same family+weight+style so re-importing updates in place.
+          // Replace an exact family/weight/style/stretch face so re-importing updates in place without
+          // collapsing a neighbouring instance or an explicitly different collection face.
           const kept = (state.document.importedFonts ?? []).filter(
-            (f) => !(f.familyName === font.familyName && f.bold === font.bold && f.italic === font.italic),
+            (f) => !(
+              f.familyId === font.familyId
+              && f.weight === font.weight
+              && f.style === font.style
+              && f.stretchPercent === font.stretchPercent
+              && f.collectionIndex === font.collectionIndex
+            ),
           );
           return withPaperHistory(state, {
             document: { ...state.document, importedFonts: [...kept, font] },

@@ -157,7 +157,7 @@ describe('SlpprFormat', () => {
     expect(managed.pages[0]?.frames[0]?.asset?.locator).toEqual(
       managed.pages[0]?.frames[2]?.asset?.locator,
     );
-    expect(managed.importedFonts?.[0]?.assetRef.id).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(managed.importedFonts?.[0]?.fontAsset.id).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(collectReachablePaperAssetIds(restored)).toEqual(refs.map((ref) => ref.id).sort());
     await expect(Promise.all(refs.map((ref) => repository.get(ref.id)))).resolves.toEqual(
       expect.arrayContaining([

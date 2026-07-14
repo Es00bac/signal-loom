@@ -6,16 +6,44 @@
 // gets silently accepted. Framework-free + unit-testable; the raw bytes come from a file upload upstream.
 
 import fontkit from '@pdf-lib/fontkit';
+import {
+  classifyFontEmbeddingRights,
+  normalizePaperFontStretch,
+  normalizePaperFontWeight,
+} from './paperManagedFonts';
+import type {
+  PaperFontEmbeddability,
+  PaperManagedFontAxisRange,
+  PaperManagedFontFormat,
+  PaperManagedFontStyle,
+} from '../types/paper';
 
 /** How the OS/2 fsType bits classify a face for print embedding. */
-export type FontEmbeddability =
-  | 'installable' // fsType 0 — no restrictions
-  | 'print-preview' // Preview & Print embedding permitted (fine for a print PDF)
-  | 'editable' // Editable embedding permitted
-  | 'restricted' // Restricted-License bit set — the foundry forbids embedding
-  | 'unknown'; // no OS/2 table — permission undeclared (treated as installable, flagged)
+export type FontEmbeddability = PaperFontEmbeddability;
 
-export type FontFormat = 'truetype' | 'opentype-cff' | 'collection' | 'woff' | 'woff2' | 'unknown';
+export type FontFormat = PaperManagedFontFormat | 'woff' | 'woff2' | 'unknown';
+
+export interface FontVetFace {
+  collectionIndex: number;
+  ok: boolean;
+  format: PaperManagedFontFormat;
+  familyName?: string;
+  subfamilyName?: string;
+  postscriptName?: string;
+  numGlyphs?: number;
+  unitsPerEm?: number;
+  weight: number;
+  style: PaperManagedFontStyle;
+  stretchPercent: number;
+  variableAxes: Record<string, PaperManagedFontAxisRange>;
+  unicodeRanges: Array<{ start: number; end: number }>;
+  embeddable: boolean;
+  canSubset: boolean;
+  embeddability: FontEmbeddability;
+  missingTables: string[];
+  errors: string[];
+  warnings: string[];
+}
 
 export interface FontVetResult {
   /** True only when the font parsed, has renderable outlines + required tables, and can be embedded. */
@@ -35,8 +63,10 @@ export interface FontVetResult {
   missingTables: string[];
   /** Hard failures that make the font unusable (unparseable, no outlines, missing critical tables). */
   errors: string[];
-  /** Soft issues worth surfacing but not blocking (no OS/2, subsetting disallowed, bitmap-only, …). */
+  /** Soft issues worth surfacing but not blocking (no OS/2 or subsetting disallowed, for example). */
   warnings: string[];
+  /** Every face in a collection, or its one face for standalone font files. */
+  faces: FontVetFace[];
 }
 
 // Tables every sfnt-based face needs to lay out and render text. Absent → the font can't be trusted.
@@ -72,25 +102,160 @@ interface FontkitFont {
   numGlyphs?: number;
   unitsPerEm?: number;
   directory?: { tables?: Record<string, unknown> };
-  ['OS/2']?: { fsType?: FontkitFsType };
+  characterSet?: number[];
+  variationAxes?: Record<string, { min?: number; default?: number; max?: number }>;
+  italicAngle?: number;
+  ['OS/2']?: {
+    fsType?: FontkitFsType;
+    usWeightClass?: number;
+    usWidthClass?: number;
+  };
   fonts?: FontkitFont[]; // present on a TrueType/OpenType Collection
 }
 
-/** Map the decoded OS/2 fsType bitfield to a print-embedding verdict. */
-function classifyEmbeddability(fsType: FontkitFsType | undefined): {
-  embeddability: FontEmbeddability;
-  embeddable: boolean;
-  canSubset: boolean;
-} {
-  if (!fsType) return { embeddability: 'unknown', embeddable: true, canSubset: true };
-  // Restricted-License embedding is exclusive of the others and forbids embedding outright.
-  if (fsType.noEmbedding) return { embeddability: 'restricted', embeddable: false, canSubset: false };
-  const embeddability: FontEmbeddability = fsType.editable
-    ? 'editable'
-    : fsType.viewOnly
-      ? 'print-preview'
-      : 'installable';
-  return { embeddability, embeddable: true, canSubset: !fsType.noSubsetting };
+function formatForFace(font: FontkitFont, fallback: FontFormat): PaperManagedFontFormat {
+  const tables = font.directory?.tables ?? {};
+  const has = (tag: string) => Object.prototype.hasOwnProperty.call(tables, tag);
+  if (has('CFF ') || has('CFF2')) return 'opentype-cff';
+  if (fallback === 'collection') return 'collection';
+  return 'truetype';
+}
+
+function fontStyle(font: FontkitFont): PaperManagedFontStyle {
+  const subfamily = `${font.subfamilyName ?? ''}`.toLowerCase();
+  if (/oblique/.test(subfamily)) return 'oblique';
+  if (/italic/.test(subfamily) || (typeof font.italicAngle === 'number' && font.italicAngle !== 0)) return 'italic';
+  return 'normal';
+}
+
+function inferredWeight(font: FontkitFont): number {
+  const declared = font['OS/2']?.usWeightClass;
+  if (typeof declared === 'number' && Number.isFinite(declared)) return normalizePaperFontWeight(declared);
+  const subfamily = `${font.subfamilyName ?? ''}`.toLowerCase();
+  if (/thin/.test(subfamily)) return 100;
+  if (/extra[- ]?light|ultra[- ]?light/.test(subfamily)) return 200;
+  if (/light/.test(subfamily)) return 300;
+  if (/medium/.test(subfamily)) return 500;
+  if (/semi[- ]?bold|demi[- ]?bold/.test(subfamily)) return 600;
+  if (/extra[- ]?bold|ultra[- ]?bold/.test(subfamily)) return 800;
+  if (/black|heavy/.test(subfamily)) return 900;
+  if (/bold/.test(subfamily)) return 700;
+  return 400;
+}
+
+function stretchPercent(font: FontkitFont): number {
+  const widthClass = font['OS/2']?.usWidthClass;
+  const stretchByClass: Record<number, number> = {
+    1: 50,
+    2: 62.5,
+    3: 75,
+    4: 87.5,
+    5: 100,
+    6: 112.5,
+    7: 125,
+    8: 150,
+    9: 200,
+  };
+  return normalizePaperFontStretch(typeof widthClass === 'number' ? stretchByClass[widthClass] : undefined);
+}
+
+function normalizeVariableAxes(font: FontkitFont): Record<string, PaperManagedFontAxisRange> {
+  const axes = font.variationAxes;
+  if (!axes || typeof axes !== 'object') return {};
+  const normalized: Record<string, PaperManagedFontAxisRange> = {};
+  for (const [tag, axis] of Object.entries(axes)) {
+    if (!axis || !Number.isFinite(axis.min) || !Number.isFinite(axis.default) || !Number.isFinite(axis.max)) continue;
+    normalized[tag] = { min: axis.min!, default: axis.default!, max: axis.max! };
+  }
+  return normalized;
+}
+
+function unicodeRanges(characterSet: number[] | undefined): Array<{ start: number; end: number }> | undefined {
+  if (!Array.isArray(characterSet)) return undefined;
+  const codePoints = [...new Set(characterSet)]
+    .filter((codePoint) => Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff)
+    .sort((left, right) => left - right);
+  if (codePoints.length === 0) return [];
+  const ranges: Array<{ start: number; end: number }> = [];
+  let start = codePoints[0];
+  let end = start;
+  for (const codePoint of codePoints.slice(1)) {
+    if (codePoint === end + 1) {
+      end = codePoint;
+      continue;
+    }
+    ranges.push({ start, end });
+    start = codePoint;
+    end = codePoint;
+  }
+  ranges.push({ start, end });
+  return ranges;
+}
+
+function vetFace(font: FontkitFont, collectionIndex: number, fallbackFormat: FontFormat): FontVetFace {
+  const tables = font.directory?.tables ?? {};
+  const has = (tag: string) => Object.prototype.hasOwnProperty.call(tables, tag);
+  const missingTables = BASE_REQUIRED_TABLES.filter((table) => !has(table));
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const hasTrueType = has('glyf') && has('loca');
+  const hasCff = has('CFF ') || has('CFF2');
+  if (!hasTrueType && !hasCff) {
+    errors.push('The font has no glyph outlines (missing glyf/loca or CFF table) — it cannot be embedded.');
+  }
+  if (missingTables.length > 0) {
+    errors.push(`The font is missing required tables: ${missingTables.join(', ')}.`);
+  }
+  if (!has('OS/2')) {
+    warnings.push('No OS/2 table — embedding permissions are unknown and require an attestation for production output.');
+  }
+
+  const rights = classifyFontEmbeddingRights(font['OS/2']?.fsType);
+  if (!rights.embeddable) {
+    errors.push(rights.reason === 'bitmap-only'
+      ? 'This font permits bitmap embedding only and cannot be embedded as production vector text.'
+      : "This font's licence forbids embedding (OS/2 fsType is Restricted-License). It can't be used in a print export.");
+  } else if (!rights.canSubset) {
+    warnings.push('This font disallows subsetting; the full font will be embedded, increasing file size.');
+  }
+
+  const safe = <T>(read: () => T): T | undefined => {
+    try {
+      return read();
+    } catch {
+      return undefined;
+    }
+  };
+  const numGlyphs = safe(() => (typeof font.numGlyphs === 'number' ? font.numGlyphs : undefined));
+  if (numGlyphs !== undefined && numGlyphs <= 0) {
+    errors.push('The font reports zero glyphs — it is empty or corrupt.');
+  }
+  const coverage = safe(() => unicodeRanges(font.characterSet));
+  if (!coverage || coverage.length === 0) {
+    errors.push('The font Unicode coverage could not be read; it cannot be used for production output.');
+  }
+
+  return {
+    collectionIndex,
+    ok: errors.length === 0,
+    format: formatForFace(font, fallbackFormat),
+    familyName: safe(() => font.familyName),
+    subfamilyName: safe(() => font.subfamilyName),
+    postscriptName: safe(() => font.postscriptName),
+    numGlyphs,
+    unitsPerEm: safe(() => (typeof font.unitsPerEm === 'number' ? font.unitsPerEm : undefined)),
+    weight: inferredWeight(font),
+    style: fontStyle(font),
+    stretchPercent: stretchPercent(font),
+    variableAxes: normalizeVariableAxes(font),
+    unicodeRanges: coverage ?? [],
+    embeddable: rights.embeddable,
+    canSubset: rights.canSubset,
+    embeddability: rights.embeddability,
+    missingTables: [...missingTables],
+    errors,
+    warnings,
+  };
 }
 
 /**
@@ -108,6 +273,7 @@ export function vetFontBytes(bytes: Uint8Array): FontVetResult {
     missingTables: [],
     errors: [],
     warnings: [],
+    faces: [],
   };
 
   if (bytes.length === 0) {
@@ -133,74 +299,21 @@ export function vetFontBytes(bytes: Uint8Array): FontVetResult {
     return { ...base, errors: [`This file isn't a valid font (${reason}). It may be corrupt or the wrong file type.`] };
   }
 
-  // A collection (.ttc/.otc) parses to a wrapper; vet its first face and flag that only one was taken.
-  const warnings: string[] = [];
-  let font = parsed;
-  if (Array.isArray(parsed.fonts) && parsed.fonts.length > 0) {
-    font = parsed.fonts[0];
-    warnings.push('This is a font collection; only the first face was imported.');
-    base.format = 'collection';
+  const collectionFaces = Array.isArray(parsed.fonts) && parsed.fonts.length > 0 ? parsed.fonts : [parsed];
+  const faces = collectionFaces.map((face, index) => vetFace(face, index, signature));
+  const primary = faces[0];
+  if (!primary) {
+    return { ...base, errors: ['This font does not contain any readable faces.'] };
   }
-
-  const tables = font.directory?.tables ?? {};
-  const has = (tag: string) => Object.prototype.hasOwnProperty.call(tables, tag);
-
-  const missingTables = BASE_REQUIRED_TABLES.filter((t) => !has(t));
-  const errors: string[] = [];
-
-  // Outlines: TrueType needs glyf+loca; OpenType/CFF needs 'CFF ' (or 'CFF2'). Neither → nothing to render.
-  const hasTrueType = has('glyf') && has('loca');
-  const hasCff = has('CFF ') || has('CFF2');
-  let format: FontFormat = base.format;
-  if (base.format !== 'collection') format = hasCff && !hasTrueType ? 'opentype-cff' : hasTrueType ? 'truetype' : base.format;
-  if (!hasTrueType && !hasCff) {
-    errors.push('The font has no glyph outlines (missing glyf/loca or CFF table) — it cannot be embedded.');
-  }
-  if (missingTables.length > 0) {
-    errors.push(`The font is missing required tables: ${missingTables.join(', ')}.`);
-  }
-  if (!has('OS/2')) {
-    warnings.push('No OS/2 table — embedding permissions are undeclared; treating the font as freely embeddable.');
-  }
-
-  const { embeddability, embeddable, canSubset } = classifyEmbeddability(font['OS/2']?.fsType);
-  if (!embeddable) {
-    errors.push("This font's licence forbids embedding (OS/2 fsType is Restricted-License). It can't be used in a print export.");
-  } else if (!canSubset) {
-    warnings.push('This font disallows subsetting; the full font will be embedded, increasing file size.');
-  }
-  if (font['OS/2']?.fsType?.bitmapOnly) {
-    warnings.push('This font permits bitmap embedding only; vector embedding may be rejected by some tools.');
-  }
-
-  // Metadata getters read lazily-parsed tables (name/maxp/head); on a malformed font they can throw, so
-  // read each defensively — a missing value is already reflected by errors/missingTables above.
-  const safe = <T>(read: () => T): T | undefined => {
-    try {
-      return read();
-    } catch {
-      return undefined;
-    }
-  };
-  const numGlyphs = safe(() => (typeof font.numGlyphs === 'number' ? font.numGlyphs : undefined));
-  if (numGlyphs !== undefined && numGlyphs <= 0) {
-    errors.push('The font reports zero glyphs — it is empty or corrupt.');
-  }
+  const collectionWarning = collectionFaces.length > 1
+    ? ['This is a font collection; every face is available for explicit selection.']
+    : [];
 
   return {
-    ok: errors.length === 0,
-    format,
-    familyName: safe(() => font.familyName),
-    subfamilyName: safe(() => font.subfamilyName),
-    postscriptName: safe(() => font.postscriptName),
-    numGlyphs,
-    unitsPerEm: safe(() => (typeof font.unitsPerEm === 'number' ? font.unitsPerEm : undefined)),
-    embeddable,
-    canSubset,
-    embeddability,
-    missingTables: [...missingTables],
-    errors,
-    warnings,
+    ...primary,
+    format: signature === 'collection' ? 'collection' : primary.format,
+    warnings: [...collectionWarning, ...primary.warnings],
+    faces,
   };
 }
 
@@ -211,18 +324,29 @@ export function vetFontBytes(bytes: Uint8Array): FontVetResult {
  * missing glyphs), and preflight uses it to disclose *which* characters will rasterize instead of embedding
  * as selectable vector. De-duplicated and order-stable (first appearance wins).
  *
- * Fails OPEN: if the bytes can't be parsed here, returns [] (assume covered — the exporter decides), so a
- * quirk in this check can never wrongly demote a valid font to raster.
+ * Fails CLOSED: unreadable coverage is treated as missing so strict export cannot embed a font whose glyph
+ * mapping it cannot prove. This may route a draft preview through a non-production fallback, but it never
+ * permits a silent production substitution.
  */
 export function findUncoveredCharacters(bytes: Uint8Array, text: string): string[] {
-  let font: { hasGlyphForCodePoint?: (cp: number) => boolean };
+  const missing = new Set<string>();
+  const addCharacter = (character: string) => {
+    if (character.trim() !== '') missing.add(character);
+  };
+  let parsed: FontkitFont;
   try {
-    font = fontkit.create(bytes as Buffer) as unknown as { hasGlyphForCodePoint?: (cp: number) => boolean };
+    parsed = fontkit.create(bytes as Buffer) as unknown as FontkitFont;
   } catch {
-    return [];
+    for (const character of text) addCharacter(character);
+    return [...missing];
   }
-  if (typeof font.hasGlyphForCodePoint !== 'function') return [];
-  const missing: string[] = [];
+  const font = (Array.isArray(parsed.fonts) && parsed.fonts.length > 0 ? parsed.fonts[0] : parsed) as FontkitFont & {
+    hasGlyphForCodePoint?: (cp: number) => boolean;
+  };
+  if (typeof font.hasGlyphForCodePoint !== 'function') {
+    for (const character of text) addCharacter(character);
+    return [...missing];
+  }
   const seen = new Set<number>();
   for (const ch of text) {
     const cp = ch.codePointAt(0);
@@ -231,10 +355,10 @@ export function findUncoveredCharacters(bytes: Uint8Array, text: string): string
     if (seen.has(cp)) continue;
     seen.add(cp);
     try {
-      if (!font.hasGlyphForCodePoint(cp)) missing.push(ch);
+      if (!font.hasGlyphForCodePoint(cp)) missing.add(ch);
     } catch {
-      // A single failed lookup shouldn't fail the whole check — treat it as covered.
+      addCharacter(ch);
     }
   }
-  return missing;
+  return [...missing];
 }

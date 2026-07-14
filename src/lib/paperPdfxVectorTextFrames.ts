@@ -15,8 +15,8 @@ import type { PaperDocument, PaperFrame, PaperImportedFont, PaperPage } from '..
 import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import { applyBlackPolicy, type IccCmykTransform } from './paperColorManagement';
 import { parseHexColor, type PaperRgb } from './paperSwatches';
-import { isDisplayFontFamily, isBoldWeight } from './paperFontResolution';
-import { resolveTextFace, selectImportedFace, normalizeFamilyName } from './paperFontLibrary';
+import { isDisplayFontFamily } from './paperFontResolution';
+import { resolveTextFace } from './paperFontLibrary';
 import { paperRichTextIsUniform } from './paperRichText';
 import type { PdfxOutlineTextFrame, PdfxVectorTextFrame } from './paperPdfxExport';
 
@@ -48,12 +48,7 @@ export type PdfxVectorTextFrameSpec = Omit<PdfxVectorTextFrame, 'fontBytes'> & {
 
 /** True when the frame's family+style matches an embeddable imported font (so we embed the real glyphs). */
 function frameHasImportedFace(frame: PaperFrame, importedFonts: readonly PaperImportedFont[] | undefined): boolean {
-  const t = frame.typography;
-  const family = normalizeFamilyName(t.fontFamily ?? '');
-  if (!family) return false;
-  const bold = isBoldWeight(t.fontWeight);
-  const italic = (t.fontStyle ?? '').toLowerCase() === 'italic';
-  return !!selectImportedFace(family, bold, italic, importedFonts ?? []);
+  return resolveTextFace(frame.typography, importedFonts).embeddedReal;
 }
 
 function cssToRgb(css: string): PaperRgb | undefined {

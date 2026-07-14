@@ -255,7 +255,12 @@ describe('paperPreflight', () => {
     });
     const withFont: typeof document = {
       ...document,
-      importedFonts: [{ id: 'geo', familyName: 'Georgia', bold: false, italic: false, format: 'truetype', embeddable: true, canSubset: true, assetRef: fontRef() }],
+      importedFonts: [{
+        id: 'geo', familyId: 'georgia', familyName: 'Georgia', postscriptName: 'Georgia-Regular',
+        weight: 400, style: 'normal', stretchPercent: 100, collectionIndex: 0, variableAxes: {},
+        unicodeRanges: [{ start: 0x20, end: 0x7e }], format: 'truetype', fontAsset: fontRef(),
+        embeddability: 'installable', canSubset: true, source: { kind: 'user-import' }, license: {},
+      }],
     };
 
     const report = analyzePaperPreflight(withFont, []);

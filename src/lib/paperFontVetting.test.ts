@@ -85,6 +85,15 @@ describe('vetFontBytes', () => {
     expect(result.warnings.join(' ')).toMatch(/disallows subsetting|full font will be embedded/i);
   });
 
+  it('blocks bitmap-only embedding rights', () => {
+    const bitmapOnly = patchFsType(validFont(), 0x0200);
+    const result = vetFontBytes(bitmapOnly);
+    expect(result.ok).toBe(false);
+    expect(result.embeddable).toBe(false);
+    expect(result.embeddability).toBe('bitmap-only');
+    expect(result.errors.join(' ')).toMatch(/bitmap/i);
+  });
+
   it('treats Editable/Preview&Print fsType as embeddable', () => {
     expect(vetFontBytes(patchFsType(validFont(), 0x0008)).embeddability).toBe('editable');
     expect(vetFontBytes(patchFsType(validFont(), 0x0004)).embeddability).toBe('print-preview');
@@ -116,7 +125,7 @@ describe('findUncoveredCharacters', () => {
     expect(findUncoveredCharacters(validFont(), 'Neko 猫 chan')).toEqual(['猫']);
   });
 
-  it('fails open (returns []) when the bytes are not a parseable font', () => {
-    expect(findUncoveredCharacters(new TextEncoder().encode('not a font'), '你好')).toEqual([]);
+  it('fails closed when coverage bytes cannot be parsed', () => {
+    expect(findUncoveredCharacters(new TextEncoder().encode('not a font'), '你 好')).toEqual(['你', '好']);
   });
 });

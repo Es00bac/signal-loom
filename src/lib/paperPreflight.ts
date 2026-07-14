@@ -6,6 +6,7 @@ import {
 } from './paperPrintProduction';
 import { classifyFontFamily, isDisplayFontFamily } from './paperFontResolution';
 import { normalizeFamilyName } from './paperFontLibrary';
+import { canUseManagedFontForProduction } from './paperManagedFonts';
 import { collectSpotFills, collectSpotStrokes } from './paperPdfxSpotFills';
 import { resolveTextSpot } from './paperPdfxVectorTextFrames';
 import { hasPaperAssetReference } from './paperAssetReferences';
@@ -16,11 +17,13 @@ const LIBERATION_SUBSTITUTE_NAME: Record<'serif' | 'sans' | 'mono', string> = {
   mono: 'Liberation Mono',
 };
 
-/** True when a referenced family matches an embeddable imported font (so it embeds as the real face). */
+/** True when a referenced family has a managed face whose exact bytes may be embedded in production. */
 function familyHasImportedFace(family: string, importedFonts: readonly PaperImportedFont[] | undefined): boolean {
   const norm = normalizeFamilyName(family);
   if (!norm) return false;
-  return (importedFonts ?? []).some((f) => f.embeddable && normalizeFamilyName(f.familyName) === norm);
+  return (importedFonts ?? []).some((face) =>
+    normalizeFamilyName(face.familyName) === norm && canUseManagedFontForProduction(face).allowed,
+  );
 }
 
 export type PaperPreflightSeverity = 'error' | 'warning' | 'info';

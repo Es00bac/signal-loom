@@ -805,7 +805,7 @@ export function serializePaperDocument(doc: PaperDocument): string {
 }
 
 type LegacyPaperFrameAsset = PaperFrameAsset & { src?: unknown };
-type LegacyPaperImportedFont = Omit<PaperImportedFont, 'assetRef'> & {
+type LegacyPaperImportedFont = Partial<PaperImportedFont> & {
   assetRef?: unknown;
   dataBase64?: unknown;
 };
@@ -841,9 +841,15 @@ function sanitizeParsedPaperImportedFonts(value: unknown): PaperImportedFont[] |
   return value.flatMap((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
     const font = entry as LegacyPaperImportedFont;
+    if (isBinaryAssetRef(font.fontAsset)) {
+      const { dataBase64: _legacyBytes, assetRef: _legacyAssetRef, fontAsset, ...metadata } = font;
+      return [{ ...metadata, fontAsset } as PaperImportedFont];
+    }
+    // Keep a reference-only historical record until its restore boundary converts it to a modern managed
+    // face. Inline bytes deliberately remain rejected here.
     if (!isBinaryAssetRef(font.assetRef)) return [];
-    const { dataBase64: _legacyBytes, assetRef, ...metadata } = font;
-    return [{ ...metadata, assetRef } as PaperImportedFont];
+    const { dataBase64: _legacyBytes, ...legacyMetadata } = font;
+    return [legacyMetadata as unknown as PaperImportedFont];
   });
 }
 
