@@ -1,11 +1,12 @@
 import {
-  Inflate,
   strFromU8,
   strToU8,
   unzipSync,
   zipSync,
   type UnzipFileInfo,
 } from 'fflate';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { Inflate as PakoInflate } from 'pako';
 import {
   isBinaryAssetRef,
   verifyBinaryAssetRecord,
@@ -188,6 +189,12 @@ function sameAssetRef(left: BinaryAssetRef, right: BinaryAssetRef): boolean {
     && left.fileName === right.fileName;
 }
 
+function sha256Hex(bytes: Uint8Array): string {
+  return [...sha256(bytes)]
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 function assertEntryAndSizeLimits(
   entryCount: number,
   manifestBytes: number,
@@ -241,6 +248,9 @@ export function packValidatedAssetContainer<TDocument>(
     if (record.bytes.byteLength !== record.ref.byteLength) {
       throw containerError(`asset record ${record.ref.id} byte length does not match its reference.`);
     }
+    if (sha256Hex(record.bytes) !== record.ref.sha256) {
+      throw containerError(`asset record ${record.ref.id} hash does not match its reference.`);
+    }
     recordsById.set(record.ref.id, record);
   }
 
@@ -277,7 +287,12 @@ const CENTRAL_DIRECTORY_HEADER_BYTES = 46;
 const END_OF_CENTRAL_DIRECTORY_BYTES = 22;
 const MAX_ZIP_COMMENT_BYTES = 65_535;
 const UTF8_FILENAME_FLAG = 0x0800;
-const INFLATE_INPUT_CHUNK_BYTES = 4 * 1024;
+const MAX_PACKER_ENTRY_NAME_BYTES = 'assets/'.length + 64 + 1 + 16;
+const MAX_INFLATE_OUTPUT_CHUNK_BYTES = 64 * 1024;
+const FFLATE_PACKER_BLOCK_BYTES = 7000;
+const PACKER_ENTRY_HEADER_BYTES = LOCAL_FILE_HEADER_BYTES
+  + CENTRAL_DIRECTORY_HEADER_BYTES
+  + 2 * MAX_PACKER_ENTRY_NAME_BYTES;
 
 interface ZipEntryMetadata {
   name: string;
@@ -309,6 +324,31 @@ function assertSupportedEntryEncoding(
   if (compression === 0 && compressedSize !== uncompressedSize) {
     throw containerError(`stored archive entry ${name} has inconsistent size metadata.`);
   }
+}
+
+function maxPackerDeflateBytes(uncompressedSize: number): number {
+  // fflate 0.8.3 reserves this exact upper bound for each packed DEFLATE stream.
+  return uncompressedSize + 5 * (1 + Math.ceil(uncompressedSize / FFLATE_PACKER_BLOCK_BYTES));
+}
+
+function assertCompressedWorkBudget(entry: ZipEntryMetadata): void {
+  if (
+    entry.compression === 8
+    && entry.compressedSize > maxPackerDeflateBytes(entry.uncompressedSize)
+  ) {
+    throw containerError(`compressed input for ${entry.name} exceeds the private packer work budget.`);
+  }
+}
+
+function maxPackerArchiveBytes(limits: AssetContainerLimits): number {
+  // Summed block ceilings add at most one extra block per entry; headers use the longest packer path.
+  const deflateBlockOverhead = 5 * Math.ceil(limits.maxTotalBytes / FFLATE_PACKER_BLOCK_BYTES);
+  const entryOverhead = limits.maxEntries * (PACKER_ENTRY_HEADER_BYTES + 10);
+  const maximum = limits.maxTotalBytes
+    + deflateBlockOverhead
+    + entryOverhead
+    + END_OF_CENTRAL_DIRECTORY_BYTES;
+  return Number.isSafeInteger(maximum) ? maximum : Number.MAX_SAFE_INTEGER;
 }
 
 function inspectWithFflateMetadata(
@@ -398,6 +438,9 @@ function findEndOfCentralDirectory(bytes: Uint8Array, view: DataView): EndOfCent
     if (view.getUint32(offset, true) !== END_OF_CENTRAL_DIRECTORY_SIGNATURE) continue;
     const commentLength = view.getUint16(offset + 20, true);
     if (offset + END_OF_CENTRAL_DIRECTORY_BYTES + commentLength !== bytes.byteLength) continue;
+    if (commentLength !== 0) {
+      throw containerError('ZIP archive comments are not supported by the private packer.');
+    }
 
     const diskNumber = view.getUint16(offset + 4, true);
     const centralDirectoryDisk = view.getUint16(offset + 6, true);
@@ -462,6 +505,9 @@ function parseCentralDirectory(
     if (diskNumber !== 0) {
       throw containerError('multi-disk ZIP entries are not supported.');
     }
+    if (nameLength > MAX_PACKER_ENTRY_NAME_BYTES || extraLength !== 0 || commentLength !== 0) {
+      throw containerError('central directory entry is outside the private packer subset.');
+    }
     if (flags & ~UTF8_FILENAME_FLAG) {
       throw containerError(`archive entry uses unsupported flags 0x${flags.toString(16)}.`);
     }
@@ -521,7 +567,8 @@ function reconcileLocalHeaders(
     const localNameBytes = bytes.subarray(nameOffset, nameOffset + nameLength);
 
     if (
-      flags !== entry.flags
+      extraLength !== 0
+      || flags !== entry.flags
       || compression !== entry.compression
       || crc32 !== entry.crc32
       || compressedSize !== entry.compressedSize
@@ -545,6 +592,10 @@ function reconcileLocalHeaders(
 }
 
 function inspectArchive(bytes: Uint8Array, limits: AssetContainerLimits): ArchiveMetadata {
+  const archiveLimit = maxPackerArchiveBytes(limits);
+  if (bytes.byteLength > archiveLimit) {
+    throw containerError(`archive size exceeds the private packer input limit (${bytes.byteLength} > ${archiveLimit}).`);
+  }
   const fflateEntries = inspectWithFflateMetadata(bytes, limits);
   if (bytes.byteLength < END_OF_CENTRAL_DIRECTORY_BYTES) {
     throw containerError('invalid ZIP data.');
@@ -557,6 +608,7 @@ function inspectArchive(bytes: Uint8Array, limits: AssetContainerLimits): Archiv
   }
   const parsedEntries = parseCentralDirectory(bytes, view, end);
   reconcileLocalHeaders(bytes, view, parsedEntries, end.centralDirectoryOffset);
+  parsedEntries.forEach(assertCompressedWorkBudget);
 
   const entries = new Map<string, ZipEntryMetadata>();
   for (const entry of parsedEntries) {
@@ -608,23 +660,6 @@ function assertEntryCrc(entry: ZipEntryMetadata, crc: number): void {
   }
 }
 
-interface InflateInternalState {
-  s: { f?: number; l?: unknown; p?: number };
-  p: Uint8Array;
-}
-
-// fflate has no public consumed-input signal; these fields distinguish its final block from trailing bytes.
-function hasFinishedDeflateStream(inflater: Inflate): boolean {
-  const internal = inflater as unknown as InflateInternalState;
-  return Boolean(internal.s.f) && !internal.s.l;
-}
-
-function hasTrailingDeflateBytes(inflater: Inflate): boolean {
-  const internal = inflater as unknown as InflateInternalState;
-  const partialByteCount = internal.s.p ? 1 : 0;
-  return internal.p.byteLength > partialByteCount;
-}
-
 function inflateBoundedEntry(
   bytes: Uint8Array,
   entry: ZipEntryMetadata,
@@ -636,46 +671,46 @@ function inflateBoundedEntry(
 
   const output = new Uint8Array(entry.uncompressedSize);
   let outputBytes = 0;
-  let compressedBytesFed = 0;
   let crc = 0xffffffff;
-  const inflater = new Inflate((chunk) => {
+  const outputChunkBytes = Math.max(1, Math.min(
+    MAX_INFLATE_OUTPUT_CHUNK_BYTES,
+    entry.uncompressedSize + 1,
+    outputLimit + 1,
+  ));
+  const inflater = new PakoInflate({
+    raw: true,
+    chunkSize: outputChunkBytes,
+  });
+  inflater.onData = (chunk) => {
     const nextOutputBytes = outputBytes + chunk.byteLength;
     if (nextOutputBytes > entry.uncompressedSize || nextOutputBytes > outputLimit) {
       throw containerError(
         `actual output for ${entry.name} exceeds its declared/container limit after `
-        + `${compressedBytesFed} of ${entry.compressedSize} compressed bytes.`,
+        + `${nextOutputBytes} bytes of actual output.`,
       );
     }
     output.set(chunk, outputBytes);
     outputBytes = nextOutputBytes;
     crc = updateCrc32(crc, chunk);
-  });
+  };
 
-  while (compressedBytesFed < entry.compressedSize) {
-    const nextOffset = Math.min(
-      compressedBytesFed + INFLATE_INPUT_CHUNK_BYTES,
-      entry.compressedSize,
-    );
-    const isFinalInput = nextOffset === entry.compressedSize;
-    const chunk = bytes.subarray(entry.dataStart + compressedBytesFed, entry.dataStart + nextOffset);
-    compressedBytesFed = nextOffset;
-    try {
-      inflater.push(chunk, isFinalInput);
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith(ERROR_PREFIX)) throw error;
-      throw new Error(`${ERROR_PREFIX} invalid DEFLATE data for ${entry.name}.`, { cause: error });
-    }
-
-    if (hasFinishedDeflateStream(inflater)) {
-      if (hasTrailingDeflateBytes(inflater) || compressedBytesFed < entry.compressedSize) {
-        throw containerError(`trailing compressed data for ${entry.name}.`);
-      }
-      break;
-    }
+  const compressed = bytes.subarray(entry.dataStart, entry.dataEnd);
+  let succeeded: boolean;
+  try {
+    succeeded = inflater.push(compressed, true);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith(ERROR_PREFIX)) throw error;
+    throw new Error(`${ERROR_PREFIX} invalid DEFLATE data for ${entry.name}.`, { cause: error });
   }
 
-  if (!hasFinishedDeflateStream(inflater)) {
-    throw containerError(`incomplete DEFLATE data for ${entry.name}.`);
+  if (!succeeded || inflater.err !== 0 || !inflater.ended) {
+    throw containerError(`incomplete or invalid DEFLATE data for ${entry.name}${inflater.msg ? `: ${inflater.msg}` : '.'}`);
+  }
+  if (inflater.strm.avail_in > 0) {
+    const trailingBytes = inflater.strm.avail_in;
+    throw containerError(
+      `${trailingBytes} trailing compressed byte${trailingBytes === 1 ? '' : 's'} for ${entry.name}.`,
+    );
   }
   if (outputBytes !== entry.uncompressedSize) {
     throw containerError(`actual output size mismatch for ${entry.name}.`);

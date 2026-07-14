@@ -126,6 +126,37 @@ function forgeZipEntrySizes(
   return output;
 }
 
+function appendZipEntryCompressedData(
+  bytes: Uint8Array,
+  path: string,
+  trailing: Uint8Array,
+): Uint8Array {
+  const offsets = findZipEntryHeaderOffsets(bytes, path);
+  const sourceView = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const nameLength = sourceView.getUint16(offsets.local + 26, true);
+  const extraLength = sourceView.getUint16(offsets.local + 28, true);
+  const compressedSize = sourceView.getUint32(offsets.local + 18, true);
+  const dataEnd = offsets.local + 30 + nameLength + extraLength + compressedSize;
+  const endRecord = bytes.byteLength - 22;
+  expect(sourceView.getUint32(endRecord, true)).toBe(0x06054b50);
+  const centralDirectoryOffset = sourceView.getUint32(endRecord + 16, true);
+  expect(dataEnd).toBe(centralDirectoryOffset);
+
+  const output = new Uint8Array(bytes.byteLength + trailing.byteLength);
+  output.set(bytes.subarray(0, dataEnd));
+  output.set(trailing, dataEnd);
+  output.set(bytes.subarray(dataEnd), dataEnd + trailing.byteLength);
+
+  const outputView = new DataView(output.buffer);
+  const nextCompressedSize = compressedSize + trailing.byteLength;
+  const nextCentralOffset = offsets.central + trailing.byteLength;
+  const nextEndRecord = endRecord + trailing.byteLength;
+  outputView.setUint32(offsets.local + 18, nextCompressedSize, true);
+  outputView.setUint32(nextCentralOffset + 20, nextCompressedSize, true);
+  outputView.setUint32(nextEndRecord + 16, centralDirectoryOffset + trailing.byteLength, true);
+  return output;
+}
+
 describe('ValidatedAssetContainer', () => {
   it('round-trips and verifies content-addressed entries', async () => {
     const asset = await createBinaryAssetRecord(
@@ -265,7 +296,7 @@ describe('ValidatedAssetContainer', () => {
   });
 
   it('bounds deflated output before consuming a forged oversized payload', async () => {
-    const actualBytes = new Uint8Array(4 * 1024 * 1024).fill(65);
+    const actualBytes = new Uint8Array(32 * 1024).fill(65);
     const declaredBytes = actualBytes.slice(0, 64);
     const asset = await createBinaryAssetRecord(declaredBytes, { mimeType: 'image/png' });
     const path = assetPath(asset.ref);
@@ -280,9 +311,39 @@ describe('ValidatedAssetContainer', () => {
       (caught: unknown) => caught,
     );
     expect(error).toBeInstanceOf(Error);
-    const progress = (error as Error).message.match(/after (\d+) of (\d+) compressed bytes/i);
-    expect(progress).not.toBeNull();
-    expect(Number(progress?.[1])).toBeLessThan(Number(progress?.[2]));
+    expect((error as Error).message).toMatch(/65 actual output bytes|65 bytes of actual output/i);
+  });
+
+  it('rejects compressed input beyond the private packer work budget before inflate', async () => {
+    const asset = await createBinaryAssetRecord(new Uint8Array([1, 2, 3]), { mimeType: 'image/png' });
+    const path = assetPath(asset.ref);
+    const archive = zipWithManifest(manifest([asset.ref]), { [path]: asset.bytes });
+    const padded = appendZipEntryCompressedData(archive, path, new Uint8Array(32));
+
+    await expect(unpackValidatedAssetContainer(padded)).rejects.toThrow(/compressed.*work budget/i);
+  });
+
+  it('rejects trailing deflate input through the inflater remaining-input contract', async () => {
+    const asset = await createBinaryAssetRecord(new Uint8Array([1, 2, 3]), { mimeType: 'image/png' });
+    const path = assetPath(asset.ref);
+    const archive = zipWithManifest(manifest([asset.ref]), { [path]: asset.bytes });
+    const trailing = appendZipEntryCompressedData(archive, path, new Uint8Array([0]));
+
+    await expect(unpackValidatedAssetContainer(trailing)).rejects.toThrow(/1 trailing compressed byte/i);
+  });
+
+  it('rejects archives beyond the packer-derived total input cap', async () => {
+    const asset = await createBinaryAssetRecord(new Uint8Array([1, 2, 3]), { mimeType: 'image/png' });
+    const value = manifest([asset.ref]);
+    const path = assetPath(asset.ref);
+    const archive = zipWithManifest(value, { [path]: asset.bytes });
+    const padded = appendZipEntryCompressedData(archive, path, new Uint8Array(4096));
+    const declaredTotal = strToU8(JSON.stringify(value)).byteLength + asset.bytes.byteLength;
+
+    await expect(unpackValidatedAssetContainer(padded, withLimits({
+      maxEntries: 2,
+      maxTotalBytes: declaredTotal,
+    }))).rejects.toThrow(/archive.*limit/i);
   });
 
   it('rejects stored payload trailing data hidden by forged matching sizes', async () => {
@@ -353,5 +414,9 @@ describe('ValidatedAssetContainer', () => {
       ...asset,
       bytes: other.bytes,
     }])).toThrow(/byte length/i);
+    expect(() => packValidatedAssetContainer(manifest([asset.ref]), [{
+      ...asset,
+      bytes: new Uint8Array([1, 2, 4]),
+    }])).toThrow(/hash/i);
   });
 });
