@@ -1,127 +1,103 @@
-import { packContainer, unpackContainer } from '../../shared/files/SignalLoomContainer';
+import type { BinaryAssetRecord } from '../../shared/assets/contentAddressedAsset';
+import { unpackContainer } from '../../shared/files/SignalLoomContainer';
+import {
+  packValidatedAssetContainer,
+  unpackValidatedAssetContainer,
+} from '../../shared/files/ValidatedAssetContainer';
 import type { PaperDocument } from '../../types/paper';
+import {
+  collectReachablePaperAssetIds,
+  migrateLegacyPaperBinaryFields,
+  type LegacySlpprAssetPayload,
+} from './assets/PaperDocumentAssets';
+import type { PaperAssetRepository } from './assets/PaperAssetRepository';
 
 export const SLPPR_FORMAT = 'signal-loom-paper';
-export const SLPPR_FORMAT_VERSION = 1;
+export const SLPPR_FORMAT_VERSION = 2;
 
-// ---------------------------------------------------------------------------
-// Pure base64 helpers — no Buffer, no DOM (works in Node 18+, browsers, WebView)
-// ---------------------------------------------------------------------------
-
-export function b64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
+function assertSlpprIdentity(format: string, kind: string): void {
+  if (format !== SLPPR_FORMAT || kind !== 'paper') {
+    throw new Error(`Not a .slppr container: ${format}`);
   }
-  return bytes;
 }
 
-export function bytesToB64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
+function unsupportedVersion(version: number): Error {
+  return new Error(`Unsupported .slppr format version ${version}.`);
+}
+
+async function collectRequiredRecords(
+  document: PaperDocument,
+  repository: PaperAssetRepository,
+): Promise<BinaryAssetRecord[]> {
+  return Promise.all(collectReachablePaperAssetIds(document).map(async (id) => {
+    const record = await repository.get(id);
+    if (!record) throw new Error(`Paper document is missing required asset ${id}.`);
+    return record;
+  }));
+}
+
+function legacyPayloads(assets: ReadonlyMap<string, Uint8Array>): Map<string, LegacySlpprAssetPayload> {
+  return new Map([...assets].map(([id, bytes]) => [id, { bytes: new Uint8Array(bytes) }]));
+}
+
+async function deserializeVersionOne(
+  bytes: Uint8Array,
+  repository: PaperAssetRepository,
+  strictError: unknown,
+): Promise<PaperDocument> {
+  let legacy: ReturnType<typeof unpackContainer>;
+  try {
+    legacy = unpackContainer(bytes);
+  } catch {
+    throw strictError;
   }
-  return btoa(binary);
-}
 
-// ---------------------------------------------------------------------------
-// Asset reference type (stored in manifest JSON in place of data-URLs)
-// ---------------------------------------------------------------------------
+  assertSlpprIdentity(legacy.manifest.format, legacy.manifest.kind);
+  if (legacy.manifest.formatVersion !== 1) {
+    throw unsupportedVersion(legacy.manifest.formatVersion);
+  }
 
-interface SlpprAssetRef {
-  $slpprAsset: string;
-  mime: string;
-}
-
-function isAssetRef(v: unknown): v is SlpprAssetRef {
-  return (
-    typeof v === 'object' &&
-    v !== null &&
-    '$slpprAsset' in v &&
-    'mime' in v
+  return migrateLegacyPaperBinaryFields(
+    legacy.manifest.document as PaperDocument,
+    repository,
+    { legacySlpprAssets: legacyPayloads(legacy.assets) },
   );
 }
 
-// ---------------------------------------------------------------------------
-// Generic deep walk
-// ---------------------------------------------------------------------------
-
-/** Walk and REPLACE data-URLs → asset refs. Mutates `assets` and `counter`. */
-function walkExtract(
-  value: unknown,
-  assets: Map<string, Uint8Array>,
-  counter: { n: number },
-): unknown {
-  if (typeof value === 'string' && value.startsWith('data:') && value.includes(';base64,')) {
-    const semicolonIdx = value.indexOf(';base64,');
-    const mime = value.slice('data:'.length, semicolonIdx);
-    const b64 = value.slice(semicolonIdx + ';base64,'.length);
-    const id = `asset-${counter.n++}.bin`;
-    assets.set(id, b64ToBytes(b64));
-    const ref: SlpprAssetRef = { $slpprAsset: id, mime };
-    return ref;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => walkExtract(item, assets, counter));
-  }
-  if (typeof value === 'object' && value !== null) {
-    const result: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>)) {
-      result[key] = walkExtract((value as Record<string, unknown>)[key], assets, counter);
-    }
-    return result;
-  }
-  return value;
+export async function serializeSlppr(
+  document: PaperDocument,
+  repository: PaperAssetRepository,
+): Promise<Uint8Array> {
+  const managedDocument = await migrateLegacyPaperBinaryFields(document, repository);
+  const records = await collectRequiredRecords(managedDocument, repository);
+  return packValidatedAssetContainer({
+    format: SLPPR_FORMAT,
+    formatVersion: SLPPR_FORMAT_VERSION,
+    kind: 'paper',
+    document: managedDocument,
+    assets: records.map(({ ref }) => ref),
+  }, records);
 }
 
-/** Walk and RESTORE asset refs → data-URLs. */
-function walkRestore(value: unknown, assets: Map<string, Uint8Array>): unknown {
-  if (isAssetRef(value)) {
-    const bytes = assets.get(value.$slpprAsset);
-    if (!bytes) {
-      throw new Error(`SlpprFormat: missing asset "${value.$slpprAsset}"`);
-    }
-    return `data:${value.mime};base64,${bytesToB64(bytes)}`;
+export async function deserializeSlppr(
+  bytes: Uint8Array,
+  repository: PaperAssetRepository,
+): Promise<PaperDocument> {
+  let opened: Awaited<ReturnType<typeof unpackValidatedAssetContainer<PaperDocument>>>;
+  try {
+    opened = await unpackValidatedAssetContainer<PaperDocument>(bytes);
+  } catch (strictError) {
+    return deserializeVersionOne(bytes, repository, strictError);
   }
-  if (Array.isArray(value)) {
-    return value.map((item) => walkRestore(item, assets));
-  }
-  if (typeof value === 'object' && value !== null) {
-    const result: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>)) {
-      result[key] = walkRestore((value as Record<string, unknown>)[key], assets);
-    }
-    return result;
-  }
-  return value;
-}
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-export function serializeSlppr(doc: PaperDocument): Uint8Array {
-  const assets = new Map<string, Uint8Array>();
-  const counter = { n: 0 };
-  const documentManifest = walkExtract(doc, assets, counter);
-  return packContainer(
-    {
-      format: SLPPR_FORMAT,
-      formatVersion: SLPPR_FORMAT_VERSION,
-      kind: 'paper',
-      document: documentManifest,
-      assets: [...assets.keys()],
-    },
-    assets,
-  );
-}
-
-export function deserializeSlppr(bytes: Uint8Array): PaperDocument {
-  const { manifest, assets } = unpackContainer(bytes);
-  if (manifest.format !== SLPPR_FORMAT) {
-    throw new Error('Not a .slppr container: ' + manifest.format);
+  assertSlpprIdentity(opened.manifest.format, opened.manifest.kind);
+  if (opened.manifest.formatVersion !== SLPPR_FORMAT_VERSION) {
+    throw unsupportedVersion(opened.manifest.formatVersion);
   }
-  const restored = walkRestore(manifest.document, assets);
-  return restored as unknown as PaperDocument;
+
+  for (const record of opened.assets.values()) {
+    await repository.put(record);
+  }
+  await collectRequiredRecords(opened.manifest.document, repository);
+  return opened.manifest.document;
 }

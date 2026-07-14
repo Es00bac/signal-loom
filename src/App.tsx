@@ -198,6 +198,8 @@ import { useImageEditorStore } from './store/imageEditorStore';
 import { saveImageDocumentAsSlimg, openSlimgDocument } from './components/ImageEditor/ImageSlimgCodec';
 import { classifyOpenedFile } from './lib/signalLoomFileRouting';
 import { serializeSlppr, deserializeSlppr } from './features/paper/SlpprFormat';
+import { IndexedDbPaperAssetRepository } from './features/paper/assets/PaperIndexedDbAssetRepository';
+import { MemoryPaperAssetRepository, type PaperAssetRepository } from './features/paper/assets/PaperAssetRepository';
 import { usePaperStore } from './store/paperStore';
 import { applySlimgFileUpdateToLocalFlow, openLinkedImageDocumentFromItem } from './lib/imageLinkedEdit';
 import { useDockablePanelStore } from './store/dockablePanelStore';
@@ -231,6 +233,9 @@ import './index.css';
 
 const SIGNAL_LOOM_PROJECT_FILE_EXTENSION = '.sloom';
 const SOURCE_IMPORT_ACCEPT = getAcceptStringForAllImportableFormats();
+const paperAssetRepository: PaperAssetRepository = globalThis.indexedDB
+  ? new IndexedDbPaperAssetRepository(globalThis.indexedDB)
+  : new MemoryPaperAssetRepository();
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -1357,7 +1362,7 @@ function FlowApp() {
         try {
           const result = await bridge.openPaperDocumentFile();
           if (!result.canceled && result.bytes) {
-            const doc = deserializeSlppr(new Uint8Array(result.bytes));
+            const doc = await deserializeSlppr(new Uint8Array(result.bytes), paperAssetRepository);
             // Route through importDocumentJson so the loaded layout passes the same
             // parse/sanitize validation as the Paper JSON import path.
             usePaperStore.getState().importDocumentJson(JSON.stringify(doc));
@@ -1374,7 +1379,7 @@ function FlowApp() {
       case 'paper:file-save-as': {
         try {
           const paperDocument = usePaperStore.getState().document;
-          const bytes = serializeSlppr(paperDocument);
+          const bytes = await serializeSlppr(paperDocument, paperAssetRepository);
           if (bridge?.savePaperDocumentFileAs) {
             await bridge.savePaperDocumentFileAs(bytes);
           } else {
@@ -1799,7 +1804,7 @@ function FlowApp() {
       return;
     }
     if (kind === 'paper') {
-      const doc = deserializeSlppr(bytes);
+      const doc = await deserializeSlppr(bytes, paperAssetRepository);
       usePaperStore.getState().importDocumentJson(JSON.stringify(doc));
       setWorkspaceView('paper');
       return;
