@@ -56,8 +56,47 @@ export const PAPER_PAGE_PRESETS: Record<PaperPagePreset, PaperPageSpec> = {
   'webtoon-panel': { preset: 'webtoon-panel', widthMm: 100, heightMm: 178, bleedMm: 0, dpi: DEFAULT_DPI },
 };
 
+/**
+ * Print-safe sans stack. Paper is a print module: text must render as the SAME concrete font in the
+ * live editor and in the SVG-foreignObject export raster. The `system-ui` keyword does not guarantee
+ * that — Chromium resolves it through a platform path that differs between the DOM and a rasterized
+ * <foreignObject> (it can even fall back to a serif), which is why text that fits on screen could
+ * reflow/clip on export. These are concrete, fontconfig-resolvable families ending in the `sans-serif`
+ * generic (which resolves consistently in both contexts). Arial and Liberation Sans are metric-
+ * compatible, so a layout made on Linux (Liberation Sans) matches Windows (Arial).
+ */
+export const PAPER_SAFE_SANS = 'Arial, "Liberation Sans", "Helvetica Neue", Helvetica, "Noto Sans", "DejaVu Sans", sans-serif';
+
+/**
+ * Make a stored font stack deterministic for print. Strips the non-deterministic `system-ui` /
+ * `ui-sans-serif` keywords (which resolve differently in the DOM vs the export raster) and substitutes
+ * the concrete safe-sans chain, while leaving any real leading font (an imported font, Georgia, etc.)
+ * and the `serif`/`monospace`/`sans-serif` generics intact — those already resolve identically in both
+ * paths via fontconfig. Applied at the frame-normalize chokepoint (editor + export read the result) and
+ * again in the exporter as belt-and-suspenders.
+ */
+export function resolvePaperFontFamily(family: string | undefined): string {
+  if (!family || !family.trim()) return PAPER_SAFE_SANS;
+  if (!/\b(system-ui|ui-sans-serif)\b/i.test(family)) return family;
+  const safeCore = 'Arial, "Liberation Sans", "Helvetica Neue", Helvetica, "Noto Sans", "DejaVu Sans"';
+  const seen = new Set<string>();
+  const out: string[] = [];
+  let injected = false;
+  for (const raw of family.split(',')) {
+    const token = raw.trim();
+    if (!token) continue;
+    if (/^(system-ui|ui-sans-serif)$/i.test(token)) {
+      if (!injected) { out.push(safeCore); injected = true; }
+      continue;
+    }
+    const key = token.toLowerCase();
+    if (!seen.has(key)) { seen.add(key); out.push(token); }
+  }
+  return out.join(', ');
+}
+
 export const DEFAULT_PAPER_TYPOGRAPHY: PaperTypography = {
-  fontFamily: 'Inter, system-ui, sans-serif',
+  fontFamily: PAPER_SAFE_SANS,
   fontSizePt: 10,
   leadingPt: 13,
   tracking: 0,
@@ -94,7 +133,7 @@ export const DEFAULT_PAPER_STYLES: PaperStyleCatalogs = {
     { id: 'para-body', name: 'Body', typography: { fontFamily: 'Georgia, serif', fontSizePt: 10.5, leadingPt: 14, align: 'left', fontWeight: '400', hyphenate: true } },
     { id: 'para-quote', name: 'Quote', typography: { fontFamily: 'Georgia, serif', fontSizePt: 10.5, leadingPt: 14, align: 'left', fontWeight: '400', fontStyle: 'italic', hyphenate: true, firstLineIndentMm: 6 } },
     // Comic presets (comic-book layout) — the original defaults, unchanged.
-    { id: 'para-comic-dialogue', name: 'Comic Dialogue', typography: { fontFamily: 'Inter, system-ui, sans-serif', fontSizePt: 9.5, leadingPt: 11.5, align: 'center', fontWeight: '600', hyphenate: false } },
+    { id: 'para-comic-dialogue', name: 'Comic Dialogue', typography: { fontFamily: PAPER_SAFE_SANS, fontSizePt: 9.5, leadingPt: 11.5, align: 'center', fontWeight: '600', hyphenate: false } },
     { id: 'para-caption', name: 'Caption', typography: { fontFamily: 'Georgia, serif', fontSizePt: 9, leadingPt: 12, align: 'left', fontWeight: '700', hyphenate: true } },
     { id: 'para-sfx', name: 'SFX Display', typography: { fontFamily: 'Impact, Haettenschweiler, sans-serif', fontSizePt: 18, leadingPt: 18, align: 'center', fontWeight: '700', hyphenate: false } },
   ],
@@ -651,7 +690,7 @@ ${renderPrintProductionMetaTags(productionMeta)}
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; background: #d1d5db; color: #111827; }
 html, body { width: ${formatMm(sheetWidthMm)}; min-height: ${formatMm(sheetHeightMm)}; }
-body { font-family: Inter, system-ui, sans-serif; }
+body { font-family: ${PAPER_SAFE_SANS}; }
 .paper-sheet {
   position: relative;
   width: ${formatMm(sheetWidthMm)};
@@ -706,11 +745,10 @@ body { font-family: Inter, system-ui, sans-serif; }
 }
 .bubble-tail-thought { width: 4mm; height: 4mm; }
 .bubble-tail-thought-small { width: 2.5mm; height: 2.5mm; }
-.frame-caption {
-  background: #fff7cc;
-  border: 0.3mm solid #111827;
-  padding: 2.5mm;
-}
+/* No .frame-caption box: a caption's fill, border, corner radius and padding are painted
+   per-frame by .frame-content (printFrameContentStyle). A duplicate border plus 2.5mm padding
+   here double-outlined captions and shrank the text box so captions that fit in the editor
+   wrapped and clipped on export. */
 .frame-panel {
   border: 0.6mm solid #111827;
   background: transparent;
@@ -936,7 +974,9 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     columnBalance: frame.columnBalance,
     threadId: frame.threadId,
     threadOrder: frame.threadOrder,
-    typography: { ...DEFAULT_PAPER_TYPOGRAPHY, ...frame.typography },
+    // Normalize the font stack for print determinism: strip `system-ui` (resolves differently in the
+    // export raster than the editor) down to a concrete installed chain, so editor and export match.
+    typography: { ...DEFAULT_PAPER_TYPOGRAPHY, ...frame.typography, fontFamily: resolvePaperFontFamily(frame.typography?.fontFamily) },
     fillColor: frame.fillColor ?? defaultFillForKind(kind),
     fillOpacity: frame.fillOpacity ?? 1,
     fillGradient: frame.fillGradient,
@@ -1177,7 +1217,7 @@ const MM_PER_PT = 25.4 / 72;
  * page. Only fields the run overrides are emitted; everything else inherits the frame's `textStyle`. */
 function printRunInlineStyle(run: PaperTextRun): string {
   const parts: string[] = [];
-  if (run.fontFamily) parts.push(`font-family: ${run.fontFamily}`);
+  if (run.fontFamily) parts.push(`font-family: ${resolvePaperFontFamily(run.fontFamily)}`);
   if (run.fontWeight) parts.push(`font-weight: ${run.fontWeight}`);
   if (run.fontStyle) parts.push(`font-style: ${run.fontStyle}`);
   if (run.color) parts.push(`color: ${run.color}`);
@@ -1496,7 +1536,7 @@ function textStyle(frame: PaperFrame): string {
   const vertical = frame.typography.writingMode === 'vertical-rl';
   const emphasis = paperEmphasisMarkToCss(frame.typography.emphasis);
   return [
-    `font-family: ${frame.typography.fontFamily}`,
+    `font-family: ${resolvePaperFontFamily(frame.typography.fontFamily)}`,
     `font-size: ${frame.typography.fontSizePt}pt`,
     `line-height: ${frame.typography.leadingPt}pt`,
     `letter-spacing: ${frame.typography.tracking / 1000}em`,

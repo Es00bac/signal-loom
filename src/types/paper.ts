@@ -353,7 +353,15 @@ export interface PaperFrame {
   /** Curve the text baseline along an arc (-100..100; 0 = straight). Renders via SVG textPath. */
   textArcPercent?: number;
   bubbleShape?: PaperBubbleShape;
+  /** Symmetric organic warp (legacy single control; still the fallback for any side left unset). */
   bubbleWarp?: number;
+  /** Per-side organic warp. Each edge bulges (+) or pinches (-) on its own. When a side is unset it
+   *  falls back to bubbleWarp, so bubbles authored before this existed render identically. Driven by
+   *  the four side handles in PaperBubbleHandles / bubbleHandlePatch. */
+  bubbleWarpLeft?: number;
+  bubbleWarpRight?: number;
+  bubbleWarpTop?: number;
+  bubbleWarpBottom?: number;
   bubblePinchXPercent?: number;
   bubblePinchYPercent?: number;
   bubbleTailWidthPercent?: number;

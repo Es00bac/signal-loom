@@ -14,24 +14,113 @@ export function buildPaperBubblePath(frame: PaperFrame): string {
     : buildSpeechBubblePath(frame);
 }
 
+export interface BubbleRadii {
+  rLeft: number;
+  rRight: number;
+  rTop: number;
+  rBottom: number;
+}
+
+// Legacy multipliers (unchanged) preserve every previously-authored bubble; the wider per-side clamp
+// only applies when a side is explicitly set, so the handles produce a visible bulge/pinch.
+const BUBBLE_BASE_RADIUS_X = 45;
+const BUBBLE_BASE_RADIUS_Y = 38;
+const BUBBLE_WARP_MULT_X = 4;
+const BUBBLE_WARP_MULT_Y = 5;
+
+export function resolveBubbleRadii(frame: PaperFrame): BubbleRadii {
+  if (frame.bubbleShape === 'squircle') {
+    return { rLeft: 44, rRight: 44, rTop: 36, rBottom: 36 };
+  }
+  const symmetricWarp = clamp(frame.bubbleWarp ?? 0.18, -0.35, 0.5);
+  const sideRadius = (value: number | undefined, base: number, mult: number): number => (
+    typeof value === 'number' && Number.isFinite(value)
+      ? base + clamp(value, -0.8, 0.9) * mult
+      : base + symmetricWarp * mult
+  );
+  return {
+    rLeft: sideRadius(frame.bubbleWarpLeft, BUBBLE_BASE_RADIUS_X, BUBBLE_WARP_MULT_X),
+    rRight: sideRadius(frame.bubbleWarpRight, BUBBLE_BASE_RADIUS_X, BUBBLE_WARP_MULT_X),
+    rTop: sideRadius(frame.bubbleWarpTop, BUBBLE_BASE_RADIUS_Y, BUBBLE_WARP_MULT_Y),
+    rBottom: sideRadius(frame.bubbleWarpBottom, BUBBLE_BASE_RADIUS_Y, BUBBLE_WARP_MULT_Y),
+  };
+}
+
+function radiiAtAngle(radii: BubbleRadii, angle: number): { rx: number; ry: number } {
+  // +y is down (screen coords), so sin >= 0 is the bottom edge.
+  return {
+    rx: Math.cos(angle) >= 0 ? radii.rRight : radii.rLeft,
+    ry: Math.sin(angle) >= 0 ? radii.rBottom : radii.rTop,
+  };
+}
+
+function pointOnBubble(radii: BubbleRadii, angle: number): Point {
+  const { rx, ry } = radiiAtAngle(radii, angle);
+  return {
+    x: round(BUBBLE_CENTER.x + Math.cos(angle) * rx),
+    y: round(BUBBLE_CENTER.y + Math.sin(angle) * ry),
+  };
+}
+
+/** Cubic-bezier commands for a (possibly asymmetric) bubble body, split at every quadrant boundary so
+ *  each sub-arc keeps one (rx, ry) pair. Quarter-ellipses meet with matching vertical/horizontal tangents
+ *  at the axis points, so independent per-side radii stay smooth instead of kinking. */
+function bubbleArcCommands(radii: BubbleRadii, startAngle: number, endAngle: number): string[] {
+  const commands: string[] = [];
+  const dir = endAngle >= startAngle ? 1 : -1;
+  const quarter = Math.PI / 2;
+  const EPS = 1e-9;
+  let a0 = startAngle;
+  let guard = 0;
+  while ((dir > 0 ? a0 < endAngle - EPS : a0 > endAngle + EPS) && guard < 64) {
+    guard += 1;
+    let a1 = dir > 0
+      ? (Math.floor(a0 / quarter + EPS) + 1) * quarter
+      : (Math.ceil(a0 / quarter - EPS) - 1) * quarter;
+    if (dir > 0 ? a1 > endAngle : a1 < endAngle) a1 = endAngle;
+    if (Math.abs(a1 - a0) > EPS) {
+      const mid = (a0 + a1) / 2;
+      const { rx, ry } = radiiAtAngle(radii, mid);
+      const alpha = (4 / 3) * Math.tan((a1 - a0) / 4);
+      const control1 = {
+        x: round(BUBBLE_CENTER.x + rx * (Math.cos(a0) - alpha * Math.sin(a0))),
+        y: round(BUBBLE_CENTER.y + ry * (Math.sin(a0) + alpha * Math.cos(a0))),
+      };
+      const control2 = {
+        x: round(BUBBLE_CENTER.x + rx * (Math.cos(a1) + alpha * Math.sin(a1))),
+        y: round(BUBBLE_CENTER.y + ry * (Math.sin(a1) - alpha * Math.cos(a1))),
+      };
+      const end = pointOnBubble(radii, a1);
+      commands.push(`C ${formatPoint(control1)} ${formatPoint(control2)} ${formatPoint(end)}`);
+    }
+    a0 = a1;
+  }
+  return commands;
+}
+
 export function buildSpeechBubblePath(frame: PaperFrame): string {
   const tail = resolveBubbleTail(frame);
   const base = resolveBubbleBase(frame, frame.bubbleShape === 'oval' ? 45 : 43, frame.bubbleShape === 'oval' ? 39 : 37);
   const tailWidth = clamp(frame.bubbleTailWidthPercent ?? 18, 4, 38);
-  const radiusX = frame.bubbleShape === 'squircle' ? 44 : 45 + clamp(frame.bubbleWarp ?? 0.18, -0.35, 0.5) * 4;
-  const radiusY = frame.bubbleShape === 'squircle' ? 36 : 38 + clamp(frame.bubbleWarp ?? 0.18, -0.35, 0.5) * 5;
-  const baseAngle = Math.atan2((base.y - BUBBLE_CENTER.y) / radiusY, (base.x - BUBBLE_CENTER.x) / radiusX);
+  const radii = resolveBubbleRadii(frame);
+  const baseRadiusX = base.x >= BUBBLE_CENTER.x ? radii.rRight : radii.rLeft;
+  const baseRadiusY = base.y >= BUBBLE_CENTER.y ? radii.rBottom : radii.rTop;
+  const baseAngle = Math.atan2((base.y - BUBBLE_CENTER.y) / baseRadiusY, (base.x - BUBBLE_CENTER.x) / baseRadiusX);
   const tailGapRadians = clamp(tailWidth / 110, 0.06, 0.4);
   const startAngle = baseAngle - tailGapRadians;
   const endAngle = baseAngle + tailGapRadians;
-  const start = pointOnEllipse(radiusX, radiusY, startAngle);
-  const end = pointOnEllipse(radiusX, radiusY, endAngle);
+  const start = pointOnBubble(radii, startAngle);
+  const end = pointOnBubble(radii, endAngle);
   const curveHandle = resolveTailCurveHandle(base, tail, frame.bubbleTailCurvePercent);
   const tailInControl = lerpPoint(end, curveHandle, 0.62);
   const tailOutControl = lerpPoint(tail, curveHandle, 0.52);
   const returnInControl = lerpPoint(tail, curveHandle, 0.52);
   const returnOutControl = lerpPoint(start, curveHandle, 0.62);
-  const bodyCommands = ellipseCubicArcCommands(radiusX, radiusY, startAngle, endAngle - Math.PI * 2);
+  // A bubble with no per-side warp is symmetric; keep the exact legacy arc so pre-existing art is
+  // byte-for-byte identical. Only genuinely per-side bubbles take the quadrant-split path.
+  const bodyCommands = radii.rLeft === radii.rRight && radii.rTop === radii.rBottom
+    ? ellipseCubicArcCommands(radii.rRight, radii.rBottom, startAngle, endAngle - Math.PI * 2)
+    : bubbleArcCommands(radii, startAngle, endAngle - Math.PI * 2);
 
   return `M ${formatPoint(start)} ${bodyCommands.join(' ')} C ${formatPoint(tailInControl)} ${formatPoint(tailOutControl)} ${formatPoint(tail)} C ${formatPoint(returnInControl)} ${formatPoint(returnOutControl)} ${formatPoint(start)} Z`;
 }

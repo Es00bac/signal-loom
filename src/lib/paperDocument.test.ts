@@ -13,11 +13,34 @@ import {
   paperDocumentBackgroundCss,
   paperPixelsFromMm,
   PAPER_PAGE_PRESETS,
+  PAPER_SAFE_SANS,
   placeSourceAssetInPaperFrame,
+  resolvePaperFontFamily,
   resolvePaperPageFramesForOutput,
   updatePaperDocumentSetup,
   updatePaperFrame,
 } from './paperDocument';
+
+describe('resolvePaperFontFamily (print-safe fonts)', () => {
+  it('replaces the non-deterministic system-ui keyword with a concrete installed chain', () => {
+    const resolved = resolvePaperFontFamily('Inter, system-ui, sans-serif');
+    expect(resolved).not.toMatch(/system-ui/);
+    expect(resolved).toContain('Liberation Sans');
+    expect(resolved.endsWith('sans-serif')).toBe(true);
+    // a real leading font is preserved (forward-compatible if Inter is ever installed/bundled)
+    expect(resolved.startsWith('Inter,')).toBe(true);
+  });
+
+  it('leaves concrete font stacks and generics untouched', () => {
+    expect(resolvePaperFontFamily('Georgia, "Times New Roman", serif')).toBe('Georgia, "Times New Roman", serif');
+    expect(resolvePaperFontFamily('"Courier New", Courier, monospace')).toBe('"Courier New", Courier, monospace');
+  });
+
+  it('falls back to the safe sans stack for empty input', () => {
+    expect(resolvePaperFontFamily(undefined)).toBe(PAPER_SAFE_SANS);
+    expect(resolvePaperFontFamily('   ')).toBe(PAPER_SAFE_SANS);
+  });
+});
 
 function makeImageItem(): SourceBinLibraryItem {
   return {
@@ -633,6 +656,13 @@ describe('paperDocument', () => {
     expect(html).toContain('justify-content: center');
     expect(html).toContain('class="frame-text-content"');
     expect(html).toContain('Centered narration.');
+    // Regression: the caption box (border/fill/padding) must come only from `.frame-content`,
+    // never a second `.frame-caption` border. A duplicate border here double-outlined captions
+    // and its extra padding shrank the text box so captions that fit in the editor clipped on export.
+    expect(html).not.toMatch(/\.frame-caption\s*\{[^}]*\bborder\b/);
+    // Print-safe fonts: the non-deterministic `system-ui` keyword must never reach exported output;
+    // it resolves differently in the SVG->canvas raster than in the editor DOM.
+    expect(html).not.toMatch(/system-ui/);
   });
 
   it('uses explicit sheet dimensions for PDF bleed instead of relying only on CSS paged-media bleed', () => {

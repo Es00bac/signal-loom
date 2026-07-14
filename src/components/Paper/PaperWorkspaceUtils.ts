@@ -607,12 +607,14 @@ export function bubbleHandlePatch(frame: PaperFrame, handle: PaperBubbleHandle, 
   const xPercent = clamp(rawXPercent, 0, 100);
   const yPercent = clamp(rawYPercent, 0, 100);
   if (handle === 'pinch') return { bubblePinchXPercent: xPercent, bubblePinchYPercent: yPercent };
-  if (handle === 'left' || handle === 'right') {
-    return { bubbleWarp: clamp(((handle === 'left' ? 50 - xPercent : xPercent - 50) / 100), -0.35, 0.5) };
-  }
-  if (handle === 'top' || handle === 'bottom') {
-    return { bubbleWarp: clamp(((handle === 'top' ? 20 - yPercent : yPercent - 70) / 100), -0.35, 0.5) };
-  }
+  // Each side handle shapes ONLY its own edge now (independent bulge/pinch), instead of every handle
+  // writing the one shared bubbleWarp. The maths mirror resolveBubbleRadii in paperBubblePaths.ts:
+  // radius = base + warp * mult (base 45 / 38, mult 4 / 5), so dragging a handle to a screen % maps
+  // back to that side's warp. Clamp matches the path's -0.8..0.9 per-side range.
+  if (handle === 'left') return { bubbleWarpLeft: clamp((5 - xPercent) / 4, -0.8, 0.9) };
+  if (handle === 'right') return { bubbleWarpRight: clamp((xPercent - 95) / 4, -0.8, 0.9) };
+  if (handle === 'top') return { bubbleWarpTop: clamp((12 - yPercent) / 5, -0.8, 0.9) };
+  if (handle === 'bottom') return { bubbleWarpBottom: clamp((yPercent - 88) / 5, -0.8, 0.9) };
   return {};
 }
 

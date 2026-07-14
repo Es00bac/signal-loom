@@ -316,11 +316,8 @@ html, body {
 }
 .bubble-tail-thought { width: 4mm; height: 4mm; }
 .bubble-tail-thought-small { width: 2.5mm; height: 2.5mm; }
-.frame-caption {
-  background: #fff7cc;
-  border: 0.3mm solid #111827;
-  padding: 2.5mm;
-}
+/* No .frame-caption box: fill/border/corner-radius/padding come from per-frame .frame-content.
+   A duplicate border plus 2.5mm padding here double-outlined captions and clipped fitting text. */
 .frame-panel {
   border: 0.6mm solid #111827;
   background: transparent;
@@ -482,11 +479,8 @@ html, body {
 }
 .bubble-tail-thought { width: 4mm; height: 4mm; }
 .bubble-tail-thought-small { width: 2.5mm; height: 2.5mm; }
-.frame-caption {
-  background: #fff7cc;
-  border: 0.3mm solid #111827;
-  padding: 2.5mm;
-}
+/* No .frame-caption box: fill/border/corner-radius/padding come from per-frame .frame-content.
+   A duplicate border plus 2.5mm padding here double-outlined captions and clipped fitting text. */
 .frame-panel {
   border: 0.6mm solid #111827;
   background: transparent;

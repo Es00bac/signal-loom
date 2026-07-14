@@ -78,6 +78,7 @@ import {
   paperDocumentBackgroundCss,
   paperPixelsFromMm,
   PAPER_PAGE_PRESETS,
+  PAPER_SAFE_SANS,
   resolvePaperPageFramesForOutput,
   resolvePaperPageInheritedGuides,
 } from '../../../lib/paperDocument';
@@ -164,7 +165,7 @@ import {
   buildPaperSpreadVirtualWindow,
   type PaperSpreadVirtualMetric,
 } from '../../../lib/paperWorkspaceVirtualization';
-import { buildPaperBubblePath, resolveBubbleTailCurveHandle } from '../../../lib/paperBubblePaths';
+import { buildPaperBubblePath, resolveBubbleRadii, resolveBubbleTailCurveHandle } from '../../../lib/paperBubblePaths';
 import { buildPaperBubbleConnectorSegments } from '../../../lib/paperBubbleChains';
 import { DEFAULT_PAPER_COLUMN_GUTTER_MM, resolvePaperColumnGutterMm } from '../../../lib/paperColumns';
 import { computePaperThreadSlices } from '../../../lib/paperThreadFlow';
@@ -409,7 +410,7 @@ const PAPER_IMAGE_QUICK_EDIT_PROVIDERS: Array<{ value: GenerativeFillProvider; l
   { value: 'generic', label: 'Generic HTTP' },
 ];
 const PAPER_FONT_OPTIONS = [
-  { label: 'Inter', value: 'Inter, system-ui, sans-serif' },
+  { label: 'Sans', value: PAPER_SAFE_SANS },
   { label: 'Arial', value: 'Arial, Helvetica, sans-serif' },
   { label: 'Georgia', value: 'Georgia, serif' },
   { label: 'Times New Roman', value: '"Times New Roman", Times, serif' },
@@ -7925,7 +7926,10 @@ function PaperFrameView({
     width: frame.widthMm * PX_PER_MM * zoom,
     height: frame.heightMm * PX_PER_MM * zoom,
     transform: `rotate(${frame.rotationDeg}deg)`,
-    zIndex: canvasZIndex,
+    // A selected frame floats just below the guide/bleed overlays so its edit handles are reachable even
+    // when the frame sits underneath other frames in the stack. Unselected frames keep their normal
+    // stacking order. (PAPER_GUIDE_OVERLAY_Z - 1 is above every frame's canvasZIndex, below the overlays.)
+    zIndex: isSelected ? PAPER_GUIDE_OVERLAY_Z - 1 : canvasZIndex,
     opacity: frame.inherited ? Math.min(frame.opacity, 0.72) : frame.opacity,
     pointerEvents: tool === 'select' || tool === 'eyedropper' ? 'auto' : 'none',
   };
@@ -9163,7 +9167,7 @@ function PaperEditableText({
 }
 
 const PAPER_RICH_FONT_CHOICES: Array<{ label: string; value: string }> = [
-  { label: 'Sans (Inter)', value: 'Inter, system-ui, sans-serif' },
+  { label: 'Sans', value: PAPER_SAFE_SANS },
   { label: 'Serif (Georgia)', value: 'Georgia, "Times New Roman", serif' },
   { label: 'Times New Roman', value: '"Times New Roman", Times, serif' },
   { label: 'Arial', value: 'Arial, Helvetica, sans-serif' },
@@ -9577,28 +9581,37 @@ function PaperBubbleHandles({
   frame: PaperFrame;
   onBeginHandle: (handle: PaperBubbleHandle) => void;
 }) {
-  const handles: Array<{ handle: PaperBubbleHandle; x: number; y: number; title: string }> = [
-    { handle: 'tail', x: frame.tailXPercent ?? 72, y: frame.tailYPercent ?? 92, title: 'Tail point' },
-    { handle: 'curve', ...resolveBubbleTailCurveHandle(frame), title: 'Tail curve' },
-    { handle: 'pinch', x: frame.bubblePinchXPercent ?? 58, y: frame.bubblePinchYPercent ?? 75, title: 'Tail base / pinch' },
-    { handle: 'left', x: 6, y: 50, title: 'Left curve' },
-    { handle: 'right', x: 94, y: 50, title: 'Right curve' },
-    { handle: 'top', x: 50, y: 7, title: 'Top curve' },
-    { handle: 'bottom', x: 50, y: 86, title: 'Bottom curve' },
+  // Each side handle sits on the edge it now shapes (per-side warp), so it tracks its own bulge/pinch.
+  const radii = resolveBubbleRadii(frame);
+  // Order matters: later siblings + higher zIndex win overlapping clicks. The tail (the thing you grab
+  // most, and which used to sit under the bottom edge handle) is rendered LAST and on top; pinch/curve
+  // next; the four edge handles underneath.
+  const handles: Array<{ handle: PaperBubbleHandle; x: number; y: number; title: string; z: number }> = [
+    { handle: 'left', x: 50 - radii.rLeft, y: 50, title: 'Left edge', z: 10 },
+    { handle: 'right', x: 50 + radii.rRight, y: 50, title: 'Right edge', z: 10 },
+    { handle: 'top', x: 50, y: 50 - radii.rTop, title: 'Top edge', z: 10 },
+    { handle: 'bottom', x: 50, y: 50 + radii.rBottom, title: 'Bottom edge', z: 10 },
+    { handle: 'curve', ...resolveBubbleTailCurveHandle(frame), title: 'Tail curve', z: 20 },
+    { handle: 'pinch', x: frame.bubblePinchXPercent ?? 58, y: frame.bubblePinchYPercent ?? 75, title: 'Tail base / pinch', z: 20 },
+    { handle: 'tail', x: frame.tailXPercent ?? 72, y: frame.tailYPercent ?? 92, title: 'Tail point', z: 30 },
   ];
 
   return (
     <>
       {handles.map((entry) => (
         <button
-          className="absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-700 bg-white shadow"
+          className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border shadow ${
+            entry.handle === 'tail'
+              ? 'h-4 w-4 border-amber-600 bg-amber-300'
+              : 'h-3.5 w-3.5 border-cyan-700 bg-white'
+          }`}
           key={entry.handle}
           onPointerDown={(event) => {
             event.stopPropagation();
             event.currentTarget.setPointerCapture(event.pointerId);
             onBeginHandle(entry.handle);
           }}
-          style={{ left: `${entry.x}%`, top: `${entry.y}%` }}
+          style={{ left: `${entry.x}%`, top: `${entry.y}%`, zIndex: entry.z }}
           title={entry.title}
           type="button"
         />

@@ -116,4 +116,42 @@ describe('paper bubble paths', () => {
       y: 91.137,
     });
   });
+
+  // The user's complaint: the four side handles all "did the same thing to the entire bubble". Each side
+  // must now move its own edge, so warping one side produces a distinct outline from warping any other.
+  it('warps each bubble side independently', () => {
+    const tail = {
+      tailXPercent: 72,
+      tailYPercent: 92,
+      bubblePinchXPercent: 58,
+      bubblePinchYPercent: 75,
+    } as const;
+    const base = buildPaperBubblePath(bubbleFrame({ ...tail }));
+    const leftOnly = buildPaperBubblePath(bubbleFrame({ ...tail, bubbleWarpLeft: 0.8 }));
+    const rightOnly = buildPaperBubblePath(bubbleFrame({ ...tail, bubbleWarpRight: 0.8 }));
+    const topOnly = buildPaperBubblePath(bubbleFrame({ ...tail, bubbleWarpTop: 0.8 }));
+    const bottomOnly = buildPaperBubblePath(bubbleFrame({ ...tail, bubbleWarpBottom: 0.8 }));
+
+    // Every side actually reshapes the outline...
+    expect(leftOnly).not.toBe(base);
+    expect(rightOnly).not.toBe(base);
+    expect(topOnly).not.toBe(base);
+    expect(bottomOnly).not.toBe(base);
+    // ...and no two sides produce the same outline (they are no longer one shared control).
+    expect(new Set([leftOnly, rightOnly, topOnly, bottomOnly]).size).toBe(4);
+  });
+
+  // Byte-identity guard: a bubble with no per-side fields renders from the symmetric fallback. Setting all
+  // four sides to that same fallback magnitude (0.18 = the default bubbleWarp) must reproduce the exact
+  // same path, proving pre-existing (symmetric) bubbles are untouched by the per-side code path.
+  it('keeps symmetric bubbles byte-identical to the legacy fallback path', () => {
+    const viaFallback = buildPaperBubblePath(bubbleFrame());
+    const viaEqualSides = buildPaperBubblePath(bubbleFrame({
+      bubbleWarpLeft: 0.18,
+      bubbleWarpRight: 0.18,
+      bubbleWarpTop: 0.18,
+      bubbleWarpBottom: 0.18,
+    }));
+    expect(viaEqualSides).toBe(viaFallback);
+  });
 });

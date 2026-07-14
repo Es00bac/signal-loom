@@ -118,6 +118,37 @@ describe('PaperWorkspaceUtils bubble handles', () => {
       bubbleTailCurvePercent: 100,
     });
   });
+
+  // The four side handles now each shape ONLY their own edge (independent bulge/pinch). Each drag must
+  // write exactly one bubbleWarp{Side} field and leave the others (and the legacy bubbleWarp) untouched,
+  // so bubbles authored before per-side warp existed keep rendering from the symmetric fallback.
+  it('left handle shapes only the left edge (bubbleWarpLeft)', () => {
+    // xMm 21.2 → 3% across a 40mm frame → (5 - 3) / 4 = 0.5 bulge on the left edge alone.
+    expect(bubbleHandlePatch(bubbleFrame(), 'left', { xMm: 21.2, yMm: 30 })).toEqual({
+      bubbleWarpLeft: 0.5,
+    });
+  });
+
+  it('right handle shapes only the right edge (bubbleWarpRight)', () => {
+    // xMm 58.8 → 97% across → (97 - 95) / 4 = 0.5 bulge on the right edge alone.
+    expect(bubbleHandlePatch(bubbleFrame(), 'right', { xMm: 58.8, yMm: 30 })).toEqual({
+      bubbleWarpRight: 0.5,
+    });
+  });
+
+  it('top handle shapes only the top edge (bubbleWarpTop)', () => {
+    // yMm 31.9 → 9.5% down a 20mm frame → (12 - 9.5) / 5 = 0.5 bulge on the top edge alone.
+    expect(bubbleHandlePatch(bubbleFrame(), 'top', { xMm: 20, yMm: 31.9 })).toEqual({
+      bubbleWarpTop: 0.5,
+    });
+  });
+
+  it('bottom handle shapes only the bottom edge (bubbleWarpBottom)', () => {
+    // yMm 48.1 → 90.5% down → (90.5 - 88) / 5 = 0.5 bulge on the bottom edge alone.
+    expect(bubbleHandlePatch(bubbleFrame(), 'bottom', { xMm: 20, yMm: 48.1 })).toEqual({
+      bubbleWarpBottom: 0.5,
+    });
+  });
 });
 
 describe('PaperWorkspaceUtils eyedropper', () => {
