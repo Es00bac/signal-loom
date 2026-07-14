@@ -96,7 +96,7 @@ interface FlowToken {
 // Symbols/Punctuation, Hiragana+Katakana, CJK Ext A, CJK Unified, CJK Compat Ideographs,
 // Halfwidth/Fullwidth Forms). Japanese wraps between (almost) any two, so each is its own unit — unlike Latin, which only breaks at spaces.
 const CJK_CHAR =
-  /[　-〿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/;
+  /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/;
 
 // 禁則処理 (kinsoku shori). Characters that may not BEGIN a line (行頭禁則: closing brackets, trailing
 // punctuation, small kana, chōonpu, iteration marks) — pulled up onto the previous line (追い込み).

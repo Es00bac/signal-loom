@@ -8841,7 +8841,7 @@ function PaperInlineText({
                 ...(paragraphDropCap ? { '--sl-dropcap-lines': String(dropCapLines) } : {}),
               } as React.CSSProperties}
             >
-              {paragraph ? renderPaperInlineText(paragraph, vertical) : ' '}
+              {paragraph ? renderPaperInlineText(paragraph, vertical) : '\u00a0'}
             </div>
           );
         })}
@@ -8998,7 +8998,7 @@ function PaperRichTextView({
         const hasText = paragraph.runs.some((run) => run.text.length > 0);
         return (
           <div className={dropCapLines ? 'paper-dropcap' : undefined} key={index} style={paragraphStyle}>
-            {paragraph.listMarker ? <span>{`${paragraph.listMarker} `}</span> : null}
+            {paragraph.listMarker ? <span>{`${paragraph.listMarker}\u2003`}</span> : null}
             {hasText
               ? paragraph.runs.map((run, runIndex) => {
                   const runStyle = paperRunReactStyle(run, zoom);
@@ -9012,7 +9012,7 @@ function PaperRichTextView({
                     </span>
                   );
                 })
-              : ' '}
+              : '\u00a0'}
           </div>
         );
       })}
@@ -9038,6 +9038,32 @@ function paperTextEffectReactStyle(
     style.transformOrigin = baseStyle.transformOrigin ?? 'center';
   }
   return style;
+}
+
+function PaperContextualToolbarButton({
+  children,
+  compact = false,
+  onApply,
+  title,
+}: {
+  children: React.ReactNode;
+  compact?: boolean;
+  onApply: () => void;
+  title: string;
+}) {
+  return (
+    <button
+      className={compact
+        ? 'min-w-[20px] rounded px-1 py-0.5 text-[11px] font-semibold leading-none text-slate-100 hover:bg-cyan-500/30'
+        : 'min-w-[22px] rounded px-1.5 py-0.5 text-[11px] font-semibold leading-none text-slate-100 hover:bg-cyan-500/30'}
+      onClick={(event) => { event.preventDefault(); onApply(); }}
+      onMouseDown={(event) => event.preventDefault()}
+      title={title}
+      type="button"
+    >
+      {children}
+    </button>
+  );
 }
 
 function PaperEditableText({
@@ -9108,18 +9134,6 @@ function PaperEditableText({
     for (let i = 0; i < caretBackBy; i += 1) movable.modify?.('move', 'backward', 'character');
     onChange(readText());
   };
-  const miniButton = (label: React.ReactNode, title: string, onApply: () => void) => (
-    <button
-      className="min-w-[20px] rounded px-1 py-0.5 text-[11px] font-semibold leading-none text-slate-100 hover:bg-cyan-500/30"
-      onClick={(event) => { event.preventDefault(); onApply(); }}
-      onMouseDown={(event) => event.preventDefault()}
-      title={title}
-      type="button"
-    >
-      {label}
-    </button>
-  );
-
   return (
     <>
       <div
@@ -9156,8 +9170,20 @@ function PaperEditableText({
               onMouseDown={(event) => { if (event.target === event.currentTarget) event.preventDefault(); }}
               style={{ left: toolbarPos.left, top: toolbarPos.top }}
             >
-              {miniButton(tBoth('paper.jp.furigana'), t('paper.jp.furigana.tooltip'), () => wrapNotation('', '《》', 1))}
-              {miniButton(<span style={{ textEmphasis: 'filled sesame', textEmphasisPosition: 'over' } as React.CSSProperties}>圏</span>, t('paper.jp.emphasis.tooltip'), () => wrapNotation('《《', '》》'))}
+              <PaperContextualToolbarButton
+                compact
+                onApply={() => wrapNotation('', '《》', 1)}
+                title={t('paper.jp.furigana.tooltip')}
+              >
+                {tBoth('paper.jp.furigana')}
+              </PaperContextualToolbarButton>
+              <PaperContextualToolbarButton
+                compact
+                onApply={() => wrapNotation('《《', '》》')}
+                title={t('paper.jp.emphasis.tooltip')}
+              >
+                <span style={{ textEmphasis: 'filled sesame', textEmphasisPosition: 'over' } as React.CSSProperties}>圏</span>
+              </PaperContextualToolbarButton>
             </div>,
             document.body,
           )
@@ -9347,18 +9373,6 @@ function PaperRichEditableText({
     onCancel();
   };
 
-  const toolButton = (label: React.ReactNode, title: string, onApply: () => void) => (
-    <button
-      className="min-w-[22px] rounded px-1.5 py-0.5 text-[11px] font-semibold leading-none text-slate-100 hover:bg-cyan-500/30"
-      onClick={(event) => { event.preventDefault(); onApply(); }}
-      onMouseDown={(event) => event.preventDefault()}
-      title={title}
-      type="button"
-    >
-      {label}
-    </button>
-  );
-
   const toolbar = toolbarPos && typeof document !== 'undefined'
     ? createPortal(
         <div
@@ -9367,18 +9381,28 @@ function PaperRichEditableText({
           ref={toolbarRef}
           style={{ left: toolbarPos.left, top: toolbarPos.top }}
         >
-          {toolButton(<b>B</b>, 'Bold (Ctrl+B)', () => runCommand('bold'))}
-          {toolButton(<i>I</i>, 'Italic (Ctrl+I)', () => runCommand('italic'))}
-          {toolButton(<u>U</u>, 'Underline (Ctrl+U)', () => runCommand('underline'))}
-          {toolButton(<s>S</s>, 'Strikethrough', () => runCommand('strikeThrough'))}
-          {toolButton(<span>x²</span>, 'Superscript', () => runCommand('superscript'))}
-          {toolButton(<span>x₂</span>, 'Subscript', () => runCommand('subscript'))}
+          <PaperContextualToolbarButton onApply={() => runCommand('bold')} title="Bold (Ctrl+B)"><b>B</b></PaperContextualToolbarButton>
+          <PaperContextualToolbarButton onApply={() => runCommand('italic')} title="Italic (Ctrl+I)"><i>I</i></PaperContextualToolbarButton>
+          <PaperContextualToolbarButton onApply={() => runCommand('underline')} title="Underline (Ctrl+U)"><u>U</u></PaperContextualToolbarButton>
+          <PaperContextualToolbarButton onApply={() => runCommand('strikeThrough')} title="Strikethrough"><s>S</s></PaperContextualToolbarButton>
+          <PaperContextualToolbarButton onApply={() => runCommand('superscript')} title="Superscript"><span>x²</span></PaperContextualToolbarButton>
+          <PaperContextualToolbarButton onApply={() => runCommand('subscript')} title="Subscript"><span>x₂</span></PaperContextualToolbarButton>
           <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
-          {toolButton('•', 'Bullet list', () => runCommand('insertUnorderedList'))}
-          {toolButton('1.', 'Numbered list', () => runCommand('insertOrderedList'))}
+          <PaperContextualToolbarButton onApply={() => runCommand('insertUnorderedList')} title="Bullet list">•</PaperContextualToolbarButton>
+          <PaperContextualToolbarButton onApply={() => runCommand('insertOrderedList')} title="Numbered list">1.</PaperContextualToolbarButton>
           <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
-          {toolButton(tBoth('paper.jp.furigana'), t('paper.jp.furigana.tooltip'), () => wrapSelectionWithNotation('', '《》', 1))}
-          {toolButton(<span style={{ textEmphasis: 'filled sesame', textEmphasisPosition: 'over' } as React.CSSProperties}>圏</span>, t('paper.jp.emphasis.tooltip'), () => wrapSelectionWithNotation('《《', '》》'))}
+          <PaperContextualToolbarButton
+            onApply={() => wrapSelectionWithNotation('', '《》', 1)}
+            title={t('paper.jp.furigana.tooltip')}
+          >
+            {tBoth('paper.jp.furigana')}
+          </PaperContextualToolbarButton>
+          <PaperContextualToolbarButton
+            onApply={() => wrapSelectionWithNotation('《《', '》》')}
+            title={t('paper.jp.emphasis.tooltip')}
+          >
+            <span style={{ textEmphasis: 'filled sesame', textEmphasisPosition: 'over' } as React.CSSProperties}>圏</span>
+          </PaperContextualToolbarButton>
           <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
           <select
             className="rounded bg-slate-800 px-1 py-0.5 text-[11px]"
@@ -9415,11 +9439,11 @@ function PaperRichEditableText({
             />
           </label>
           <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
-          {toolButton(<span aria-hidden>⇤</span>, 'Align left', () => setParagraphAlign('left'))}
-          {toolButton(<span aria-hidden>≡</span>, 'Align centre', () => setParagraphAlign('center'))}
-          {toolButton(<span aria-hidden>⇥</span>, 'Align right', () => setParagraphAlign('right'))}
-          {toolButton(<span aria-hidden>▤</span>, 'Justify', () => setParagraphAlign('justify'))}
-          {toolButton(<span className="font-serif">D̲</span>, 'Toggle drop cap', () => toggleDropCap())}
+          <PaperContextualToolbarButton onApply={() => setParagraphAlign('left')} title="Align left"><span aria-hidden>⇤</span></PaperContextualToolbarButton>
+          <PaperContextualToolbarButton onApply={() => setParagraphAlign('center')} title="Align centre"><span aria-hidden>≡</span></PaperContextualToolbarButton>
+          <PaperContextualToolbarButton onApply={() => setParagraphAlign('right')} title="Align right"><span aria-hidden>⇥</span></PaperContextualToolbarButton>
+          <PaperContextualToolbarButton onApply={() => setParagraphAlign('justify')} title="Justify"><span aria-hidden>▤</span></PaperContextualToolbarButton>
+          <PaperContextualToolbarButton onApply={toggleDropCap} title="Toggle drop cap"><span className="font-serif">D̲</span></PaperContextualToolbarButton>
           <label className="flex h-5 w-6 cursor-pointer items-center justify-center rounded border border-cyan-300/20 text-[11px]" title="Paragraph shading">
             <span aria-hidden className="pointer-events-none">▦</span>
             <input
@@ -9430,8 +9454,8 @@ function PaperRichEditableText({
             />
           </label>
           <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
-          {toolButton('⌫', 'Clear run formatting', () => runCommand('removeFormat'))}
-          {toolButton(<span aria-hidden>¶⌫</span>, 'Clear paragraph formatting', () => clearParagraphFormat())}
+          <PaperContextualToolbarButton onApply={() => runCommand('removeFormat')} title="Clear run formatting">⌫</PaperContextualToolbarButton>
+          <PaperContextualToolbarButton onApply={clearParagraphFormat} title="Clear paragraph formatting"><span aria-hidden>¶⌫</span></PaperContextualToolbarButton>
         </div>,
         document.body,
       )

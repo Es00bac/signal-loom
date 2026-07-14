@@ -129,13 +129,13 @@ export function richTextToEditorHtml(paragraphs: PaperRichParagraph[], zoom: num
         ? paragraph.runs
             .map((run) => {
               const css = runInlineCss(run, zoom);
-              const text = escapeHtml(run.text).replace(/ {2,}/g, (match) => ' '.repeat(match.length));
+              const text = escapeHtml(run.text).replace(/ {2,}/g, (match) => '\u00a0'.repeat(match.length));
               return css ? `<span style="${css}">${text}</span>` : `<span>${text}</span>`;
             })
             .join('')
         : '<br>';
       const marker = paragraph.listMarker
-        ? `<span contenteditable="false" data-paper-marker="${escapeHtml(paragraph.listMarker)}">${escapeHtml(paragraph.listMarker)} </span>`
+        ? `<span contenteditable="false" data-paper-marker="${escapeHtml(paragraph.listMarker)}">${escapeHtml(paragraph.listMarker)}\u2003</span>`
         : '';
       const css = paragraphInlineCss(paragraph, zoom);
       const data = paragraphDataAttrs(paragraph);
