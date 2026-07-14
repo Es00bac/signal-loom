@@ -113,6 +113,15 @@ describe('tiledCanvasInterop', () => {
     expect(Array.from(px)).toEqual([40, 80, 120, 255]);
   });
 
+  it('uses each bitmap\'s persisted tile size during canvas interop', () => {
+    const bmp = new TiledBitmap(300, 200, 128);
+    bmp.applyRegion(130, 10, solid(20, 20, [90, 80, 70, 255]));
+
+    const canvas = tiledBitmapToCanvas(bmp);
+    const px = canvas.getContext('2d')!.getImageData(135, 15, 1, 1).data;
+    expect(Array.from(px)).toEqual([90, 80, 70, 255]);
+  });
+
   // -------------------------------------------------------------------------
   // Task 2
   // -------------------------------------------------------------------------
@@ -124,6 +133,15 @@ describe('tiledCanvasInterop', () => {
     const bmp = canvasToTiledBitmap(src);
     expect(bmp.width).toBe(260);
     expect(Array.from(bmp.materializeRegion(255, 45, 1, 1).data)).toEqual([7, 8, 9, 255]);
+  });
+
+  it('canvasToTiledBitmap preserves a selected backend tile size', async () => {
+    const { canvasToTiledBitmap } = await import('./tiledCanvasInterop');
+    const source = new OffscreenCanvas(260, 100);
+    const bitmap = canvasToTiledBitmap(source, 128);
+
+    expect(bitmap.tileSize).toBe(128);
+    expect(bitmap.tilesWide).toBe(3);
   });
 
   // -------------------------------------------------------------------------

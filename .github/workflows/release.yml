@@ -63,7 +63,6 @@ jobs:
           if-no-files-found: warn
           path: |
             release/*.exe
-            release/*.msix
             release/*.dmg
             release/*.zip
             release/*.AppImage
@@ -74,7 +73,6 @@ jobs:
         with:
           files: |
             release/*.exe
-            release/*.msix
             release/*.dmg
             release/*.zip
             release/*.AppImage

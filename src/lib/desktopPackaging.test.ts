@@ -76,16 +76,16 @@ describe('desktop and Android packaging configuration', () => {
           platform: 'windows',
           scriptName: 'dist:win',
           script: 'npm run build && electron-builder --win nsis',
-          configuredTargets: ['nsis:x64', 'msix:x64'],
+          configuredTargets: ['nsis:x64'],
           processDocumentPath: 'docs/packaging/windows-installer.md',
           hostRequirement: 'linux-cross-build-supported',
           readiness: 'configured-with-caveats',
           caveats: [
-            'NSIS and MSIX packaging are both configured for x64 only.',
+            'NSIS packaging is configured for x64 only.',
             'Windows installer packaging can be prepared on Linux, but signing credentials and final validation still need a Windows-oriented release step.',
           ],
           artifactExpectations: [
-            'Expected configured artifact types: NSIS installer and MSIX package, both x64.',
+            'Expected configured artifact type: NSIS installer for x64.',
             'Do not claim a signed installer artifact exists until an actual release build produces it.',
           ],
           signingCaveats: [
@@ -184,6 +184,7 @@ describe('desktop and Android packaging configuration', () => {
 
   it('defines standard Windows and macOS Electron installer targets', () => {
     expect(packageJson.scripts['dist:win']).toBe('npm run build && electron-builder --win nsis');
+    expect(packageJson.scripts['dist:win:msix']).toBeUndefined();
     expect(packageJson.scripts['dist:mac']).toBe('npm run build && electron-builder --mac dmg zip');
     expect(packageJson.scripts['dist:mac:zip']).toBe('npm run build && electron-builder --mac zip');
     expect(packageJson.scripts['icons:mac']).toBe('bash scripts/create-mac-icon.sh');
@@ -192,7 +193,7 @@ describe('desktop and Android packaging configuration', () => {
       productName: 'Sloom Studio',
       win: {
         icon: 'build/icons/icon.ico',
-        target: [{ target: 'nsis', arch: ['x64'] }, { target: 'msix', arch: ['x64'] }],
+        target: [{ target: 'nsis', arch: ['x64'] }],
       },
       mac: {
         hardenedRuntime: true,
@@ -231,7 +232,7 @@ describe('desktop and Android packaging configuration', () => {
       hostRequirement: 'linux-cross-build-supported',
       processDocumentPath: 'docs/packaging/windows-installer.md',
       artifactExpectations: [
-        'Expected configured artifact types: NSIS installer and MSIX package, both x64.',
+        'Expected configured artifact type: NSIS installer for x64.',
         'Do not claim a signed installer artifact exists until an actual release build produces it.',
       ],
       signingCaveats: ['Windows code signing credentials are not represented in package metadata.'],
@@ -244,7 +245,10 @@ describe('desktop and Android packaging configuration', () => {
     });
     expect(windowsDoc).toContain('electron-builder --win nsis');
     expect(windowsDoc).toContain('NSIS');
+    expect(windowsDoc).not.toContain('MSIX');
     expect(windowsDoc).toContain('Do not claim a signed installer artifact exists');
+    const releaseWorkflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8');
+    expect(releaseWorkflow).not.toContain('.msix');
   });
 
   it('documents the macOS package process, Linux host limitation, and signing/notarization caveats as descriptors only', async () => {
