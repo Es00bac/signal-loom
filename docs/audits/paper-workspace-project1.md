@@ -21,9 +21,12 @@ The commit owns these nine Paper files:
 Protected invariants:
 
 - Speech and thought bubbles keep one continuous, closed curved outline, including tails that extend outside the frame.
-- Left, right, top, and bottom bubble handles shape only their corresponding edge.
+- The curved-tail drag control remains available for speech and thought bubbles: dragging the curve handle updates `bubbleTailCurvePercent` and reshapes the stem independently of the tail point and pinch point.
+- Bubble normalization preserves the established model fields and defaults for `bubbleShape`, legacy `bubbleWarp`, `bubblePinchXPercent`, `bubblePinchYPercent`, `bubbleTailWidthPercent`, `bubbleTailCurvePercent`, `tailXPercent`, and `tailYPercent`; the optional per-side warp fields retain their legacy symmetric fallback.
+- The full editor handle set remains reachable and behaviorally distinct: tail, curve, pinch, left, right, top, and bottom. Left/right/top/bottom shape only their corresponding edge, and their handle placement tracks that edge through the resolved bubble radii.
+- A selected bubble frame remains lifted above ordinary frame stacking and below guide/bleed overlays so all edit handles are reachable even when another frame overlaps it.
+- Tail-over-edge stacking remains explicit: the tail handle renders last and above pinch/curve handles, which render above the four edge handles, so an overlapping bottom-edge handle cannot intercept tail dragging.
 - Documents without per-side warp fields retain the byte-identical symmetric fallback path.
-- Per-side warp state survives Paper document parse/serialize paths.
 - Editor and export use the same bubble geometry; captions do not gain a duplicate export border.
 - Print export removes the nondeterministic `system-ui` keyword while retaining concrete font-stack fallbacks.
 
