@@ -126,6 +126,7 @@ function collectNativeEntries() {
     scope: component.scope,
     flagged: component.flagged === true,
     notes: component.notes,
+    licenseText: component.licenseText,
   }));
 }
 

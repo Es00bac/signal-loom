@@ -2,6 +2,8 @@ import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { createLogger } from 'vite'
 import { fileURLToPath, URL } from 'node:url'
+import { copyFile, mkdir } from 'node:fs/promises'
+import { dirname } from 'node:path'
 
 const resizeObserverLoopLogSnippets = [
   'ResizeObserver loop completed with undelivered notifications.',
@@ -27,11 +29,23 @@ logger.error = (message, options) => {
   loggerError(message, options)
 }
 
+const harfBuzzWasmSource = fileURLToPath(new URL('./node_modules/harfbuzzjs/dist/harfbuzz.wasm', import.meta.url))
+const harfBuzzWasmOutput = fileURLToPath(new URL('./dist/assets/harfbuzz.wasm', import.meta.url))
+
+const copyHarfBuzzWasm = {
+  name: 'copy-harfbuzz-wasm',
+  apply: 'build' as const,
+  closeBundle: async () => {
+    await mkdir(dirname(harfBuzzWasmOutput), { recursive: true })
+    await copyFile(harfBuzzWasmSource, harfBuzzWasmOutput)
+  },
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
   base: './',
   customLogger: logger,
-  plugins: [react()],
+  plugins: [react(), copyHarfBuzzWasm],
   resolve: {
     alias: {
       util: fileURLToPath(new URL('./src/lib/nodeUtilBrowserShim.ts', import.meta.url)),

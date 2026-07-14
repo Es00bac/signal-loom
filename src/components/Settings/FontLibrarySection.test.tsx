@@ -10,7 +10,7 @@ import { MemoryPaperAssetRepository } from '../../features/paper/assets/PaperAss
 import { createOpenFontCatalogClient, type OpenFontLibraryFace } from '../../lib/paperOpenFontCatalog';
 import { FontLibrarySection } from './FontLibrarySection';
 
-globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
 
 function jsonResponse(value: unknown): Response {
   return new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } });

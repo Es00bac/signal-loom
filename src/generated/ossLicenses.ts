@@ -96,6 +96,17 @@ export const OSS_NATIVE_COMPONENTS: OssLicenseEntry[] = [
     "scope": "runtime-download",
     "flagged": false,
     "notes": "WebAssembly FFmpeg core fetched at runtime from jsDelivr for video composition; not bundled with the app."
+  },
+  {
+    "name": "HarfBuzz (embedded WASM in harfbuzzjs)",
+    "version": "as shipped by harfbuzzjs 1.4.0",
+    "license": "Old MIT",
+    "url": "https://github.com/harfbuzz/harfbuzz",
+    "kind": "native",
+    "scope": "browser-bundled",
+    "flagged": false,
+    "notes": "The harfbuzzjs 1.4.0 package ships a stripped HB_TINY HarfBuzz WebAssembly build for Paper text shaping. This entry supplies the upstream notice in addition to harfbuzzjs's npm MIT notice.",
+    "licenseText": "HarfBuzz is licensed under the so-called \"Old MIT\" license. Details follow.\n\nCopyright © 2010-2022 Google, Inc.\nCopyright © 2015-2020 Ebrahim Byagowi\nCopyright © 2019,2020 Facebook, Inc.\nCopyright © 2012,2015 Mozilla Foundation\nCopyright © 2011 Codethink Limited\nCopyright © 2008,2010 Nokia Corporation and/or its subsidiary(-ies)\nCopyright © 2009 Keith Stribley\nCopyright © 2011 Martin Hosken and SIL International\nCopyright © 2007 Chris Wilson\nCopyright © 2005,2006,2020,2021,2022,2023 Behdad Esfahbod\nCopyright © 2004,2007,2008,2009,2010,2013,2021,2022,2023 Red Hat, Inc.\nCopyright © 1998-2005 David Turner and Werner Lemberg\nCopyright © 2016 Igalia S.L.\nCopyright © 2022 Matthias Clasen\nCopyright © 2018,2021 Khaled Hosny\nCopyright © 2018,2019,2020 Adobe, Inc\nCopyright © 2013-2015 Alexei Podtelezhnikov\n\nFor full copyright notices consult the individual files in the package.\n\nPermission is hereby granted, without written agreement and without license or royalty fees, to use, copy, modify, and distribute this software and its documentation for any purpose, provided that the above copyright notice and the following two paragraphs appear in all copies of this software.\n\nIN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE TO ANY PARTY FOR DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS DOCUMENTATION, EVEN IF THE COPYRIGHT HOLDER HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n\nTHE COPYRIGHT HOLDER SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. THE SOFTWARE PROVIDED HEREUNDER IS ON AN \"AS IS\" BASIS, AND THE COPYRIGHT HOLDER HAS NO OBLIGATION TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.\n"
   }
 ];
 
@@ -1241,6 +1252,14 @@ export const OSS_NPM_PACKAGES: OssLicenseEntry[] = [
     "url": "https://github.com/ljharb/gopd",
     "kind": "npm",
     "licenseText": "MIT License\n\nCopyright (c) 2022 Jordan Harband\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+  },
+  {
+    "name": "harfbuzzjs",
+    "version": "1.4.0",
+    "license": "MIT",
+    "url": "https://github.com/harfbuzz/harfbuzzjs",
+    "kind": "npm",
+    "licenseText": "Copyright (c) 2019-2026 The harfbuzzjs project authors\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
   },
   {
     "name": "has-bigints",
