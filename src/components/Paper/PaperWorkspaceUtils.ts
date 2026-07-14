@@ -14,7 +14,6 @@ import { getSignalLoomNativeBridge, type NativePaperPdfExportResult } from '../.
 import { buildProvenanceLabel } from '../../lib/exportProvenance';
 import { downloadBlob as downloadSharedBlob, downloadTextFile } from '../../lib/downloadAsset';
 import { exportPaperDocumentToPdfxInBrowser } from '../../lib/paperPdfxBrowser';
-import { bundledProfileForOutputIntent, isSubstitutedOutputIntent } from '../../lib/paperPdfxPipeline';
 import { validatePaperPdfx } from '../../lib/paperPdfxValidate';
 import { frameTextIsVectorSafe } from '../../lib/paperPdfxVectorTextFrames';
 import { normalizePaperPrintProductionSpec } from '../../lib/paperPrintProduction';
@@ -894,13 +893,12 @@ export async function exportPaperPdfxAndSave(
   const production = normalizePaperPrintProductionSpec(document.printProduction);
   const standard = production.pdfStandard === 'pdf-x-1a' ? 'pdf-x-1a' : 'pdf-x-4';
   const standardLabel = standard === 'pdf-x-1a' ? 'PDF/X-1a' : 'PDF/X-4';
-  const profile = bundledProfileForOutputIntent(production.outputIntentProfileId);
-  const substituted = isSubstitutedOutputIntent(production.outputIntentProfileId);
+  const profile = document.managedIccProfiles?.find((candidate) => candidate.id === production.outputIntentProfileAssetId);
+  const profileLabel = profile?.description ?? 'managed CMYK profile';
   try {
-    setStatus(`Rendering ${document.pages.length} page${document.pages.length === 1 ? '' : 's'} to CMYK and building ${standardLabel} (${profile.displayName})…`);
+    setStatus(`Rendering ${document.pages.length} page${document.pages.length === 1 ? '' : 's'} to CMYK and building ${standardLabel} (${profileLabel})…`);
     const result = await exportPaperDocumentToPdfxInBrowser(document, {
       standard,
-      iccProfileId: profile.id,
       title: document.title,
       vectorText: true,
     });
@@ -911,9 +909,8 @@ export async function exportPaperPdfxAndSave(
     const preflight = report.pass
       ? 'preflight OK'
       : `preflight flagged: ${report.checks.filter((c) => !c.pass).map((c) => c.label).join(', ')}`;
-    const substituteNote = substituted ? ` (nearest bundled profile embedded)` : '';
-    const textNote = documentHasVectorizableText(document) ? ', text as embedded vector where supported (Liberation)' : '';
-    setStatus(`Exported ${standardLabel} — embedded ${profile.displayName} ICC${substituteNote}${textNote}, ${kb} KB, ${preflight}.`);
+    const textNote = documentHasVectorizableText(document) ? ', text as vector where supported' : '';
+    setStatus(`Exported ${standardLabel} — embedded ${profileLabel} ICC${textNote}, ${kb} KB, ${preflight}.`);
   } catch (error) {
     const message = error instanceof Error ? error.message : `${standardLabel} export failed.`;
     setStatus(`${standardLabel} export failed: ${message}`);
@@ -933,13 +930,14 @@ export async function exportPaperKdpPdfAndSave(
   setStatus: (status: string) => void,
 ): Promise<void> {
   const dpi = Math.max(300, Math.round(document.page.dpi || 300));
-  const profile = bundledProfileForOutputIntent(normalizePaperPrintProductionSpec(document.printProduction).outputIntentProfileId);
+  const production = normalizePaperPrintProductionSpec(document.printProduction);
+  const profile = document.managedIccProfiles?.find((candidate) => candidate.id === production.outputIntentProfileAssetId);
+  const profileLabel = profile?.description ?? 'managed CMYK profile';
   try {
     setStatus(`Rendering ${document.pages.length} page${document.pages.length === 1 ? '' : 's'} at ${dpi} DPI for a KDP-ready PDF/X-1a…`);
     const kdpDocument = updatePaperDocumentSetup(document, { bleedMm: KDP_BLEED_MM });
     const result = await exportPaperDocumentToPdfxInBrowser(kdpDocument, {
       standard: 'pdf-x-1a',
-      iccProfileId: profile.id,
       outputDpi: dpi,
       title: document.title,
       vectorText: true,
@@ -949,7 +947,7 @@ export async function exportPaperKdpPdfAndSave(
     downloadSharedBlob(pdfBlob, `${safeFileName(document.title)}-KDP-interior.pdf`);
     const kb = Math.round(result.bytes.length / 1024);
     const preflight = report.pass ? 'preflight OK' : 'preflight flagged — check page/ink warnings';
-    setStatus(`Exported KDP-ready PDF/X-1a — ${dpi} DPI, 0.125" bleed, ${profile.displayName} CMYK (${kb} KB, ${preflight}).`);
+    setStatus(`Exported KDP-ready PDF/X-1a — ${dpi} DPI, 0.125" bleed, ${profileLabel} CMYK (${kb} KB, ${preflight}).`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'KDP PDF export failed.';
     setStatus(`KDP PDF export failed: ${message}`);

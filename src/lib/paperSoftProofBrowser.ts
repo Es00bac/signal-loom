@@ -9,10 +9,10 @@ import {
   rasterizeFlattenedPaperPageToRgba,
 } from './paperPageFlattenExport';
 import { createSoftProofTransform, type SoftProofOptions } from './paperIccEngine';
-import { resolveBundledAssetUrl } from './bundledAssetUrl';
-import { bundledProfileForOutputIntent } from './paperPdfxPipeline';
+import { resolveExactPaperOutputProfile } from './paperManagedIccProfiles';
 import { softProofRgba } from './paperSoftProofImage';
 import type { PaperDocument } from '../types/paper';
+import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
 
 export interface SoftProofPreviewOptions extends SoftProofOptions {
   /** Preview render resolution. Lower than print DPI keeps the round-trip fast (default 150). */
@@ -34,13 +34,15 @@ export async function softProofPaperPageInBrowser(
   pageId: string,
   options: SoftProofPreviewOptions = {},
 ): Promise<SoftProofPreviewResult> {
-  const profileRef = bundledProfileForOutputIntent(document.printProduction.outputIntentProfileId);
-  if (!profileRef.url) throw new Error(`Soft-proof profile "${profileRef.displayName}" has no URL to fetch.`);
-  const response = await fetch(resolveBundledAssetUrl(profileRef.url));
-  if (!response.ok) {
-    throw new Error(`Could not load the soft-proof ICC profile (${response.status}).`);
+  const outputProfile = await resolveExactPaperOutputProfile({
+    profiles: document.managedIccProfiles ?? [],
+    getAsset: (id) => paperAssetRepository.get(id),
+  }, document.printProduction.outputIntentProfileAssetId);
+  if (outputProfile.status !== 'ready') {
+    const detail = outputProfile.status === 'invalid' ? `: ${outputProfile.reason}` : '';
+    throw new Error(`The selected managed CMYK output profile is unavailable${detail}`);
   }
-  const iccBytes = new Uint8Array(await response.arrayBuffer());
+  const { bytes: iccBytes } = outputProfile;
 
   const { previewDpi, ...proofOptions } = options;
   const proof = await createSoftProofTransform(iccBytes, proofOptions);

@@ -214,6 +214,21 @@ describe('paperDocument', () => {
     expect(parsed.importedFonts).toEqual([]);
   });
 
+  it('drops malformed managed ICC metadata during Paper JSON parsing', () => {
+    const document = createDefaultPaperDocument({ title: 'Malformed ICC metadata' });
+    (document as unknown as { managedIccProfiles: unknown[] }).managedIccProfiles = [{
+      id: 'not-a-content-addressed-id',
+      asset: { id: 'not-a-content-addressed-id' },
+      description: 'Unsafe inline profile',
+      bytes: 'not allowed',
+    }];
+
+    const parsed = parsePaperDocument(JSON.stringify(document));
+
+    expect(parsed.managedIccProfiles).toEqual([]);
+    expect(JSON.stringify(parsed)).not.toContain('not allowed');
+  });
+
   it('resolves assigned parent page frames into canvas and print output with detach overrides', () => {
     let doc = createDefaultPaperDocument({ title: 'Parents' });
     const pageId = doc.pages[0].id;

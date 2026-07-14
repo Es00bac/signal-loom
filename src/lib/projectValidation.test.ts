@@ -1129,4 +1129,28 @@ describe('sanitizePaperSnapshot', () => {
 
     expect(snapshot?.assetIds).toEqual([assetId]);
   });
+
+  it('includes an exact managed ICC profile asset in restored snapshot reachability', () => {
+    const assetId = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const snapshot = sanitizePaperSnapshot({
+      document: {
+        id: 'paper-icc',
+        title: 'Managed output profile',
+        pages: [],
+        managedIccProfiles: [{
+          id: assetId,
+          asset: { id: assetId, sha256: assetId.slice('sha256:'.length), mimeType: 'application/vnd.iccprofile', byteLength: 12 },
+          description: 'Exact CMYK profile',
+          deviceClass: 'prtr',
+          colorSpace: 'CMYK',
+          pcs: 'Lab ',
+          outputConditionId: 'FOGRA51',
+          source: { kind: 'user-import' },
+        }],
+      },
+      assetIds: [assetId],
+    });
+
+    expect(snapshot?.assetIds).toEqual([assetId]);
+  });
 });

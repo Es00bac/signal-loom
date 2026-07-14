@@ -65,6 +65,34 @@ export async function describeIccProfile(profileBytes: Uint8Array): Promise<IccP
   }
 }
 
+/**
+ * Opens and closes a real sRGB-to-CMYK lcms transform to prove that an ICC profile is usable for
+ * production conversion. This intentionally does not hand a transform back to callers, so validation
+ * cannot retain WASM profiles or transforms past the check.
+ */
+export async function validateCmykOutputProfileTransform(profileBytes: Uint8Array): Promise<void> {
+  const lcms = await getIccEngine();
+  const sRGB = lcms.cmsCreate_sRGBProfile();
+  if (!sRGB) throw new Error('Could not create the sRGB validation profile.');
+  const cmyk = lcms.cmsOpenProfileFromMem(profileBytes, profileBytes.length);
+  if (!cmyk) {
+    lcms.cmsCloseProfile(sRGB);
+    throw new Error('Could not open the CMYK ICC profile.');
+  }
+
+  let transform = 0;
+  try {
+    const space = lcms.cmsGetColorSpaceASCII(cmyk);
+    if (space !== 'CMYK') throw new Error(`Expected a CMYK output profile but got "${space}".`);
+    transform = lcms.cmsCreateTransform(sRGB, TYPE_RGB_8, cmyk, TYPE_CMYK_8, INTENT_CODE.relative, FLAGS_BLACKPOINTCOMPENSATION);
+    if (!transform) throw new Error('Could not create the ICC color transform.');
+  } finally {
+    if (transform) lcms.cmsDeleteTransform(transform);
+    lcms.cmsCloseProfile(cmyk);
+    lcms.cmsCloseProfile(sRGB);
+  }
+}
+
 export interface IccTransformOptions {
   intent?: IccRenderingIntent;
   /** Black-point compensation (default true, matching Adobe's default for relative colorimetric). */
@@ -83,10 +111,14 @@ export async function createRgbToCmykTransform(
   const lcms = await getIccEngine();
   const sRGB = lcms.cmsCreate_sRGBProfile();
   const cmyk = lcms.cmsOpenProfileFromMem(cmykProfileBytes, cmykProfileBytes.length);
-  if (!cmyk) throw new Error('Could not open the CMYK ICC profile.');
+  if (!cmyk) {
+    lcms.cmsCloseProfile(sRGB);
+    throw new Error('Could not open the CMYK ICC profile.');
+  }
   const space = lcms.cmsGetColorSpaceASCII(cmyk);
   if (space !== 'CMYK') {
     lcms.cmsCloseProfile(cmyk);
+    lcms.cmsCloseProfile(sRGB);
     throw new Error(`Expected a CMYK output profile but got "${space}".`);
   }
   const intent = INTENT_CODE[options.intent ?? 'relative'];
@@ -94,6 +126,7 @@ export async function createRgbToCmykTransform(
   const transform = lcms.cmsCreateTransform(sRGB, TYPE_RGB_8, cmyk, TYPE_CMYK_8, intent, flags);
   if (!transform) {
     lcms.cmsCloseProfile(cmyk);
+    lcms.cmsCloseProfile(sRGB);
     throw new Error('Could not create the ICC color transform.');
   }
   const profileName = safeProfileName(lcms, cmyk) || 'CMYK profile';

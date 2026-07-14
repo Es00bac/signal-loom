@@ -3,6 +3,7 @@ import type {
   PaperOutputIntentProfileId,
   PaperPrintProductionSpec,
 } from '../types/paper';
+import type { BinaryAssetId } from '../shared/assets/contentAddressedAsset';
 
 export interface PaperOutputIntentProfile {
   id: PaperOutputIntentProfileId;
@@ -87,10 +88,14 @@ export function normalizePaperPrintProductionSpec(
     ? merged.outputIntentProfileId
     : DEFAULT_PAPER_PRINT_PRODUCTION.outputIntentProfileId;
   const profile = PAPER_OUTPUT_INTENT_PROFILES[outputIntentProfileId];
+  const outputIntentProfileAssetId = isBinaryAssetId(merged.outputIntentProfileAssetId)
+    ? merged.outputIntentProfileAssetId
+    : undefined;
 
   return {
     pdfStandard: isPaperPdfStandard(merged.pdfStandard) ? merged.pdfStandard : DEFAULT_PAPER_PRINT_PRODUCTION.pdfStandard,
     outputIntentProfileId,
+    ...(outputIntentProfileAssetId ? { outputIntentProfileAssetId } : {}),
     customOutputIntentName: typeof merged.customOutputIntentName === 'string' ? merged.customOutputIntentName.slice(0, 120) : '',
     totalInkLimitPercent: clampPercent(merged.totalInkLimitPercent, 100, 400, profile.recommendedTotalInkLimitPercent),
     blackPolicy: isBlackPolicy(merged.blackPolicy) ? merged.blackPolicy : DEFAULT_PAPER_PRINT_PRODUCTION.blackPolicy,
@@ -134,6 +139,10 @@ function isPaperPdfStandard(value: unknown): value is PaperPrintProductionSpec['
 
 function isOutputIntentProfileId(value: unknown): value is PaperOutputIntentProfileId {
   return typeof value === 'string' && value in PAPER_OUTPUT_INTENT_PROFILES;
+}
+
+function isBinaryAssetId(value: unknown): value is BinaryAssetId {
+  return typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value);
 }
 
 function isBlackPolicy(value: unknown): value is PaperPrintProductionSpec['blackPolicy'] {

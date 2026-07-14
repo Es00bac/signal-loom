@@ -33,6 +33,7 @@ import {
   truncateSavedSelectionChannels,
 } from '../components/ImageEditor/ImageSelectionChannels';
 import { sanitizeImageSpotChannelName } from '../components/ImageEditor/ImageSpotChannels';
+import { isPaperManagedIccProfile } from './paperManagedIccProfiles';
 
 const VALID_RESULT_TYPES = new Set<ResultType>(['text', 'number', 'boolean', 'json', 'image', 'video', 'audio', 'package', 'list', 'envelope']);
 const VALID_SOURCE_KINDS = new Set<EditorSourceKind>(['text', 'image', 'video', 'audio', 'composition', 'document', 'subtitle', 'package']);
@@ -426,6 +427,17 @@ function collectPaperSnapshotAssetIds(document: Record<string, unknown>): Binary
       // Older Paper saves stored imported font bytes directly in the document. Keep that exact
       // legacy shape only until restoreProjectDocument migrates it into the managed repository.
       if (typeof font.dataBase64 !== 'string' || font.dataBase64.length === 0) return undefined;
+    }
+  }
+
+  const managedIccProfiles = document.managedIccProfiles;
+  if (managedIccProfiles !== undefined) {
+    if (!Array.isArray(managedIccProfiles)) return undefined;
+    for (const profile of managedIccProfiles) {
+      if (!isPaperManagedIccProfile(profile) || !isRecord(profile)) return undefined;
+      // Project snapshots carry references only. Byte strings belong in the asset store/container.
+      if ('bytes' in profile || 'dataBase64' in profile || 'assetBase64' in profile) return undefined;
+      assetIds.add(profile.asset.id);
     }
   }
 

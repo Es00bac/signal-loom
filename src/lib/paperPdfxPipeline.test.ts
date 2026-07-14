@@ -4,17 +4,31 @@ import { addFrameToPaperPage, createDefaultPaperDocument, updatePaperFrame } fro
 import { addPaperPage } from './paperDocument';
 import type { PaperSwatch } from './paperSwatches';
 import {
-  bundledProfileForOutputIntent,
   exportPaperDocumentToPdfx,
-  isSubstitutedOutputIntent,
-  resolvePdfxProfile,
   type PaperPdfxPipelineDeps,
   type RasterizePageOptions,
 } from './paperPdfxPipeline';
 import { validatePaperPdfx } from './paperPdfxValidate';
 import { createRgbToCmykTransform } from './paperIccEngine';
+import type { PaperOutputProfileResolution } from './paperManagedIccProfiles';
+import type { BinaryAssetId } from '../shared/assets/contentAddressedAsset';
 
 const fogra39 = new Uint8Array(readFileSync('public/icc/FOGRA39L_coated.icc'));
+const FOGRA39_ASSET_ID = `sha256:${'a'.repeat(64)}` as BinaryAssetId;
+const exactFogra39Profile: Extract<PaperOutputProfileResolution, { status: 'ready' }> = {
+  status: 'ready',
+  profile: {
+    id: FOGRA39_ASSET_ID,
+    asset: { id: FOGRA39_ASSET_ID, sha256: 'a'.repeat(64), mimeType: 'application/vnd.iccprofile', byteLength: fogra39.byteLength },
+    description: 'ISO Coated v2 300% (ECI)',
+    deviceClass: 'prtr',
+    colorSpace: 'CMYK',
+    pcs: 'Lab ',
+    outputConditionId: 'FOGRA39',
+    source: { kind: 'user-import' },
+  },
+  bytes: fogra39,
+};
 
 // Deterministic synthetic rasterizer (no canvas needed): opaque mid-gray page at a small size.
 function stubRaster(widthPx = 48, heightPx = 64) {
@@ -28,7 +42,6 @@ function stubRaster(widthPx = 48, heightPx = 64) {
 function deps(): PaperPdfxPipelineDeps {
   return {
     rasterizePage: async () => stubRaster(),
-    loadIccBytes: async () => fogra39,
     createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
   };
 }
@@ -40,7 +53,7 @@ describe('paperPdfxPipeline', () => {
 
     const result = await exportPaperDocumentToPdfx(
       document,
-      { standard: 'pdf-x-4', iccProfileId: 'fogra39', outputDpi: 150 },
+      { standard: 'pdf-x-4', outputProfile: exactFogra39Profile, outputDpi: 150 },
       deps(),
     );
 
@@ -61,7 +74,7 @@ describe('paperPdfxPipeline', () => {
     const seen: (RasterizePageOptions | undefined)[] = [];
     const spyDeps: PaperPdfxPipelineDeps = { ...deps(), rasterizePage: async (_id, _dpi, opts) => { seen.push(opts); return stubRaster(); } };
 
-    const result = await exportPaperDocumentToPdfx(document, { standard: 'pdf-x-4', iccProfileId: 'fogra39', outputDpi: 150 }, spyDeps);
+    const result = await exportPaperDocumentToPdfx(document, { standard: 'pdf-x-4', outputProfile: exactFogra39Profile, outputDpi: 150 }, spyDeps);
 
     // The spot-fill frame's fill was knocked out of the raster …
     expect(seen[0]?.excludeFrameFillIds).toEqual([added.frameId]);
@@ -91,7 +104,7 @@ describe('paperPdfxPipeline', () => {
       // Vector/outline text is opt-in and needs a font loader for bundled Liberation faces.
       loadFontBytes: async (url) => new Uint8Array(readFileSync(`public${url}`)),
     };
-    const result = await exportPaperDocumentToPdfx(document, { standard: 'pdf-x-4', iccProfileId: 'fogra39', outputDpi: 150, vectorText: true }, spyDeps);
+    const result = await exportPaperDocumentToPdfx(document, { standard: 'pdf-x-4', outputProfile: exactFogra39Profile, outputDpi: 150, vectorText: true }, spyDeps);
 
     // The stroked-text frame's text was knocked out of the raster backdrop (drawn as outlines instead).
     expect(seen[0]?.excludeTextFrameIds).toContain(added.frameId);
@@ -100,16 +113,9 @@ describe('paperPdfxPipeline', () => {
     expect(report.pass, JSON.stringify(report.checks.filter((c) => !c.pass))).toBe(true);
   });
 
-  it('maps output-intent selections to bundled ICC profiles', () => {
-    expect(bundledProfileForOutputIntent('gracol-2013-coated').id).toBe('gracol-tr006');
-    expect(bundledProfileForOutputIntent('swop-coated-v2').id).toBe('swop-tr003');
-    // Non-bundled conditions substitute the nearest bundled profile (flagged honestly).
-    expect(isSubstitutedOutputIntent('pso-coated-v3-fogra51')).toBe(true);
-    expect(bundledProfileForOutputIntent('pso-coated-v3-fogra51').id).toBe('fogra39');
-    expect(isSubstitutedOutputIntent('gracol-2013-coated')).toBe(false);
-  });
+  it('rejects PDF/X export when no exact managed profile is resolved', async () => {
+    const document = createDefaultPaperDocument({ title: 'Missing managed profile', preset: 'us-letter' });
 
-  it('falls back to the default profile for an unknown id', () => {
-    expect(resolvePdfxProfile('does-not-exist').id).toBe('fogra39');
+    await expect(exportPaperDocumentToPdfx(document, { standard: 'pdf-x-4', outputDpi: 150 }, deps())).rejects.toThrow(/exact managed CMYK output profile/i);
   });
 });

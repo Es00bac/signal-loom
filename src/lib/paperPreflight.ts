@@ -10,6 +10,7 @@ import { canUseManagedFontForProduction } from './paperManagedFonts';
 import { collectSpotFills, collectSpotStrokes } from './paperPdfxSpotFills';
 import { resolveTextSpot } from './paperPdfxVectorTextFrames';
 import { hasPaperAssetReference } from './paperAssetReferences';
+import { isPaperManagedIccProfile } from './paperManagedIccProfiles';
 
 const LIBERATION_SUBSTITUTE_NAME: Record<'serif' | 'sans' | 'mono', string> = {
   serif: 'Liberation Serif',
@@ -555,8 +556,23 @@ function analyzePrintProduction(
     issues.push(issue('error', 'Custom output intent is unnamed', 'Name the custom press ICC/output-intent profile before exporting a printer handoff package.', { category: 'production' }));
   }
 
-  if (isPdfXProductionTarget(production)) {
-    issues.push(issue('info', 'PDF/X export embeds a real ICC output intent', `${production.pdfStandard.toUpperCase()} export converts each page to CMYK through the embedded ${production.outputIntentLabel} output intent, enforces the total-ink limit, and passes ISO 15930 structural validation. Do a final visual proof in Acrobat/Enfocus before press.`, { category: 'production' }));
+  if (isPdfXProductionTarget(production) && production.outputIntentColorSpace === 'cmyk') {
+    const selectedProfileId = production.outputIntentProfileAssetId;
+    const expectedOutputCondition = production.outputIntentProfileId === 'custom'
+      ? production.customOutputIntentName.trim()
+      : production.outputCondition;
+    const selectedProfile = selectedProfileId
+      ? (document.managedIccProfiles ?? []).find((profile) => profile.id === selectedProfileId)
+      : undefined;
+    if (!selectedProfileId) {
+      issues.push(issue('error', 'Exact managed CMYK profile is required', `${production.pdfStandard.toUpperCase()} cannot use an inferred, bundled, or substitute profile. Import and select the exact CMYK printer ICC for ${production.outputIntentLabel}.`, { category: 'production' }));
+    } else if (!selectedProfile || !isPaperManagedIccProfile(selectedProfile)) {
+      issues.push(issue('error', 'Selected managed CMYK profile is unavailable', `The selected ICC asset ${selectedProfileId} is not available in this document. Re-import the exact printer profile before exporting.`, { category: 'production' }));
+    } else if (expectedOutputCondition && selectedProfile.outputConditionId !== expectedOutputCondition) {
+      issues.push(issue('error', 'Managed ICC output condition does not match', `The selected profile is recorded for ${selectedProfile.outputConditionId}, but this document targets ${expectedOutputCondition}. Select the exact matching profile instead of substituting it.`, { category: 'production' }));
+    } else {
+      issues.push(issue('info', 'PDF/X export embeds a real ICC output intent', `${production.pdfStandard.toUpperCase()} will embed the selected exact ${selectedProfile.description} ICC for ${selectedProfile.outputConditionId}. Structural and press checks still run at export; do a final visual proof in Acrobat/Enfocus before press.`, { category: 'production' }));
+    }
   }
 
   if (production.outputIntentColorSpace === 'cmyk' && hasRgbColors) {

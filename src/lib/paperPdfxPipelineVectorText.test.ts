@@ -9,9 +9,26 @@ import { createBinaryAssetRecord } from '../shared/assets/contentAddressedAsset'
 import { exportPaperDocumentToPdfx } from './paperPdfxPipeline';
 import { createRgbToCmykTransform } from './paperIccEngine';
 import { validatePaperPdfx } from './paperPdfxValidate';
+import type { BinaryAssetId } from '../shared/assets/contentAddressedAsset';
+import type { PaperOutputProfileResolution } from './paperManagedIccProfiles';
 
 const fogra39 = new Uint8Array(readFileSync('public/icc/FOGRA39L_coated.icc'));
 const FRAME_TEXT = 'Vector text through the whole pipeline';
+const FOGRA39_ASSET_ID = `sha256:${'a'.repeat(64)}` as BinaryAssetId;
+const exactFogra39Profile: Extract<PaperOutputProfileResolution, { status: 'ready' }> = {
+  status: 'ready',
+  profile: {
+    id: FOGRA39_ASSET_ID,
+    asset: { id: FOGRA39_ASSET_ID, sha256: 'a'.repeat(64), mimeType: 'application/vnd.iccprofile', byteLength: fogra39.byteLength },
+    description: 'ISO Coated v2 300% (ECI)',
+    deviceClass: 'prtr',
+    colorSpace: 'CMYK',
+    pcs: 'Lab ',
+    outputConditionId: 'FOGRA39',
+    source: { kind: 'user-import' },
+  },
+  bytes: fogra39,
+};
 
 function textDoc(): PaperDocument {
   let doc = createDefaultPaperDocument({ title: 'Pipeline vec', preset: 'us-letter' });
@@ -60,7 +77,6 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
     };
     let excludedTextFrameIds: string[] | undefined;
     const deps = {
-      loadIccBytes: async () => fogra39,
       createTransform: (bytes: Uint8Array) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
       loadManagedFontBytes: async (ref: typeof record.ref) => {
         expect(ref).toEqual(record.ref);
@@ -74,7 +90,7 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
 
     const result = await exportPaperDocumentToPdfx(
       managedDoc,
-      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, iccProfileId: 'fogra39' },
+      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, outputProfile: exactFogra39Profile },
       deps,
     );
     expect(excludedTextFrameIds).toEqual(['f0']);
@@ -84,7 +100,7 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
     excludedTextFrameIds = ['sentinel'];
     const cjkResult = await exportPaperDocumentToPdfx(
       { ...managedDoc, pages: managedDoc.pages.map((page, index) => index === 0 ? { ...page, frames: [cjkFrame] } : page) },
-      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, iccProfileId: 'fogra39' },
+      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, outputProfile: exactFogra39Profile },
       deps,
     );
     expect(excludedTextFrameIds).toBeUndefined();
@@ -97,9 +113,8 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
 
     const result = await exportPaperDocumentToPdfx(
       doc,
-      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, iccProfileId: 'fogra39' },
+      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, outputProfile: exactFogra39Profile },
       {
-        loadIccBytes: async () => fogra39,
         createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
         loadFontBytes: async (url) => new Uint8Array(readFileSync(`public${url}`)),
         rasterizePage: async (_pageId, _dpi, opts) => {
@@ -133,9 +148,8 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
     const doc = textDoc();
     const result = await exportPaperDocumentToPdfx(
       doc,
-      { standard: 'pdf-x-4', outputDpi: 96 },
+      { standard: 'pdf-x-4', outputDpi: 96, outputProfile: exactFogra39Profile },
       {
-        loadIccBytes: async () => fogra39,
         createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
         rasterizePage: async () => ({ rgba: new Uint8Array(96 * 124 * 4).fill(255), widthPx: 96, heightPx: 124 }),
       },
@@ -154,9 +168,8 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
     let excludedTextFrameIds: string[] | undefined = ['sentinel'];
     const result = await exportPaperDocumentToPdfx(
       doc,
-      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, iccProfileId: 'fogra39' },
+      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, outputProfile: exactFogra39Profile },
       {
-        loadIccBytes: async () => fogra39,
         createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
         loadFontBytes: async (url) => new Uint8Array(readFileSync(`public${url}`)),
         rasterizePage: async (_pageId, _dpi, opts) => {
@@ -188,9 +201,8 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
     let excludedTextFrameIds: string[] | undefined = ['sentinel'];
     const result = await exportPaperDocumentToPdfx(
       doc,
-      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, iccProfileId: 'fogra39' },
+      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, outputProfile: exactFogra39Profile },
       {
-        loadIccBytes: async () => fogra39,
         createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
         loadFontBytes: async (url) => new Uint8Array(readFileSync(`public${url}`)),
         rasterizePage: async (_pageId, _dpi, opts) => {
@@ -224,9 +236,8 @@ describe('exportPaperDocumentToPdfx with vectorText', () => {
     let excludedTextFrameIds: string[] | undefined;
     const result = await exportPaperDocumentToPdfx(
       doc,
-      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, iccProfileId: 'fogra39' },
+      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, outputProfile: exactFogra39Profile },
       {
-        loadIccBytes: async () => fogra39,
         createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
         loadFontBytes: async (url) => new Uint8Array(readFileSync(`public${url}`)),
         rasterizePage: async (_pageId, _dpi, opts) => {

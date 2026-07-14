@@ -14,6 +14,7 @@ describe('Paper document assets', () => {
     const first = await createBinaryAssetRecord(new Uint8Array([1]), { mimeType: 'image/png' });
     const second = await createBinaryAssetRecord(new Uint8Array([2]), { mimeType: 'font/ttf' });
     const parentAsset = await createBinaryAssetRecord(new Uint8Array([3]), { mimeType: 'image/jpeg' });
+    const profileAsset = await createBinaryAssetRecord(new Uint8Array([4]), { mimeType: 'application/vnd.iccprofile' });
     const document = {
       id: 'paper-1',
       pages: [{
@@ -28,9 +29,19 @@ describe('Paper document assets', () => {
         frames: [{ asset: { locator: { kind: 'managed', ref: parentAsset.ref } } }],
       }],
       importedFonts: [{ fontAsset: first.ref, license: {} }],
+      managedIccProfiles: [{
+        id: profileAsset.ref.id,
+        asset: profileAsset.ref,
+        description: 'Exact press profile',
+        deviceClass: 'prtr',
+        colorSpace: 'CMYK',
+        pcs: 'Lab ',
+        outputConditionId: 'FOGRA51',
+        source: { kind: 'user-import' },
+      }],
     } as unknown as PaperDocument;
 
-    expect(collectReachablePaperAssetIds(document)).toEqual([first.ref.id, second.ref.id, parentAsset.ref.id].sort());
+    expect(collectReachablePaperAssetIds(document)).toEqual([first.ref.id, second.ref.id, parentAsset.ref.id, profileAsset.ref.id].sort());
   });
 
   it('migrates duplicate legacy image payloads and imported-font Base64 to repository records', async () => {

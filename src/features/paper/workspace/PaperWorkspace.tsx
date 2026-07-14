@@ -57,6 +57,7 @@ import { useEditorStore } from '../../../store/editorStore';
 import { useDockablePanelStore } from '../../../store/dockablePanelStore';
 import { usePaperStore } from '../../../store/paperStore';
 import { PaperFontImportControl, useRegisterImportedFonts } from './PaperFontImport';
+import { PaperIccProfileManager } from './PaperIccProfileManager';
 import { PaperManagedTextLayer } from './PaperManagedTextLayer';
 import { materializePaperDocumentAssetUrls } from '../assets/PaperAssetRuntime';
 import { useSettingsStore } from '../../../store/settingsStore';
@@ -10255,6 +10256,10 @@ function PaperInspector({
   const importedFontFamilies = [...new Set((document.importedFonts ?? []).map((font) => font.familyName))];
   const selectedFontIsPreset = PAPER_FONT_OPTIONS.some((option) => option.value === selectedFontFamily)
     || importedFontFamilies.includes(selectedFontFamily);
+  const outputIntent = PAPER_OUTPUT_INTENT_PROFILES[document.printProduction.outputIntentProfileId];
+  const outputConditionId = document.printProduction.outputIntentProfileId === 'custom'
+    ? document.printProduction.customOutputIntentName.trim()
+    : outputIntent.printingCondition ?? '';
 
   return (
     <div className="flex min-h-full flex-col bg-[#101722]">
@@ -10434,7 +10439,13 @@ function PaperInspector({
             <Field label={t('paper.insp.outputIntent')}>
               <select
                 className="paper-input"
-                onChange={(event) => onUpdateDocumentSetup({ printProduction: { outputIntentProfileId: event.target.value as PaperDocument['printProduction']['outputIntentProfileId'] } })}
+                onChange={(event) => onUpdateDocumentSetup({
+                  printProduction: {
+                    outputIntentProfileId: event.target.value as PaperDocument['printProduction']['outputIntentProfileId'],
+                    // An ICC belongs to one output condition. Force an explicit re-selection after changing it.
+                    outputIntentProfileAssetId: undefined,
+                  },
+                })}
                 value={document.printProduction.outputIntentProfileId}
               >
                 {Object.values(PAPER_OUTPUT_INTENT_PROFILES).map((profile) => (
@@ -10448,10 +10459,27 @@ function PaperInspector({
               <Field label={t('paper.insp.customIntentName')}>
                 <input
                   className="paper-input"
-                  onChange={(event) => onUpdateDocumentSetup({ printProduction: { customOutputIntentName: event.target.value } })}
+                  onChange={(event) => onUpdateDocumentSetup({
+                    printProduction: {
+                      customOutputIntentName: event.target.value,
+                      outputIntentProfileAssetId: undefined,
+                    },
+                  })}
                   value={document.printProduction.customOutputIntentName}
                 />
               </Field>
+            ) : null}
+            {isPdfXProductionTarget(document.printProduction) && outputIntent.colorSpace === 'cmyk' ? (
+              <PaperIccProfileManager
+                outputConditionId={outputConditionId}
+                profiles={document.managedIccProfiles}
+                registryName={outputIntent.registryName}
+                selectedProfileAssetId={document.printProduction.outputIntentProfileAssetId}
+                onChange={({ profiles, selectedProfileAssetId }) => onUpdateDocumentSetup({
+                  managedIccProfiles: profiles,
+                  printProduction: { outputIntentProfileAssetId: selectedProfileAssetId },
+                })}
+              />
             ) : null}
             <NumberField
               label={t('paper.insp.inkLimit')}

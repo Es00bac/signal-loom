@@ -1,12 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
+import type { PaperManagedIccProfile } from '../types/paper';
 import { addFrameToPaperPage, createDefaultPaperDocument, updatePaperDocumentSetup, updatePaperFrame } from './paperDocument';
 import { PAPER_PREFLIGHT_PROFILES, analyzePaperPreflight, collectPaperLinkedAssets, summarizePaperPreflightStatus, summarizePreflightForExport } from './paperPreflight';
 
 function fontRef(byteLength = 4): BinaryAssetRef {
   const sha256 = '2'.repeat(64);
   return { id: `sha256:${sha256}`, sha256, mimeType: 'font/ttf', byteLength };
+}
+
+function exactIccProfile(outputConditionId = 'FOGRA51'): PaperManagedIccProfile {
+  const sha256 = '3'.repeat(64);
+  const asset: BinaryAssetRef = { id: `sha256:${sha256}`, sha256, mimeType: 'application/vnd.iccprofile', byteLength: 8 };
+  return {
+    id: asset.id,
+    asset,
+    description: 'Exact press profile',
+    deviceClass: 'prtr',
+    colorSpace: 'CMYK',
+    pcs: 'Lab ',
+    outputConditionId,
+    source: { kind: 'user-import' },
+  };
 }
 
 function sourceItem(id = 'image-1'): SourceBinLibraryItem {
@@ -184,7 +200,7 @@ describe('paperPreflight', () => {
     expect(report.issues).toContainEqual(expect.objectContaining({ title: 'RGB color used for print', category: 'color' }));
   });
 
-  it('accurately describes the real PDF/X export and still flags RGB colors for CMYK proofing', () => {
+  it('describes a selected exact PDF/X profile and still flags RGB colors for CMYK proofing', () => {
     const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Press Target', preset: 'comic-book' }), {
       printProduction: {
         pdfStandard: 'pdf-x-4',
@@ -206,7 +222,12 @@ describe('paperPreflight', () => {
       typography: { color: '#111111' },
     });
 
-    const report = analyzePaperPreflight(document, [], 'comic-print');
+    const managedProfile = exactIccProfile();
+    const report = analyzePaperPreflight({
+      ...document,
+      managedIccProfiles: [managedProfile],
+      printProduction: { ...document.printProduction, outputIntentProfileAssetId: managedProfile.id },
+    }, [], 'comic-print');
 
     expect(report.groups.map((group) => group.category)).toEqual(expect.arrayContaining(['production', 'color']));
     // The export is real now — no false "not certified" claim; an accurate info note instead.
@@ -379,6 +400,44 @@ describe('paperPreflight', () => {
     expect(report.issues).toContainEqual(expect.objectContaining({
       severity: 'error',
       title: 'PDF/X target needs a press output intent',
+      category: 'production',
+    }));
+  });
+
+  it('blocks PDF/X when the selected output condition has no exact managed ICC asset', () => {
+    const document = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Exact profile required' }), {
+      printProduction: {
+        pdfStandard: 'pdf-x-4',
+        outputIntentProfileId: 'pso-coated-v3-fogra51',
+      },
+    });
+
+    const report = analyzePaperPreflight(document, [], 'comic-print');
+
+    expect(report.issues).toContainEqual(expect.objectContaining({
+      severity: 'error',
+      title: 'Exact managed CMYK profile is required',
+      category: 'production',
+    }));
+  });
+
+  it('blocks a restored custom target when its selected ICC names another output condition', () => {
+    const managedProfile = exactIccProfile('Printer B Coated');
+    const document = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Mismatched custom profile' }), {
+      printProduction: {
+        pdfStandard: 'pdf-x-4',
+        outputIntentProfileId: 'custom',
+        customOutputIntentName: 'Printer A Coated',
+        outputIntentProfileAssetId: managedProfile.id,
+      },
+      managedIccProfiles: [managedProfile],
+    });
+
+    const report = analyzePaperPreflight(document, [], 'comic-print');
+
+    expect(report.issues).toContainEqual(expect.objectContaining({
+      severity: 'error',
+      title: 'Managed ICC output condition does not match',
       category: 'production',
     }));
   });

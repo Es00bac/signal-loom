@@ -17,6 +17,7 @@ import type {
   PaperParagraphStyle,
   PaperParentPage,
   PaperImportedFont,
+  PaperManagedIccProfile,
   PaperStyleCatalogs,
   PaperTextWrap,
   PaperParagraphBorderEdge,
@@ -48,6 +49,7 @@ import {
   buildPaperFrameAssetFromSourceItem,
   resolvePaperFrameAssetUrl,
 } from './paperAssetReferences';
+import { isPaperManagedIccProfile } from './paperManagedIccProfiles';
 
 const DEFAULT_DPI = 300;
 
@@ -234,6 +236,7 @@ export function updatePaperDocumentSetup(
     baselineGrid?: Partial<PaperDocument['layout']['baselineGrid']>;
     background?: Partial<PaperDocument['background']>;
     printProduction?: Partial<PaperPrintProductionSpec>;
+    managedIccProfiles?: PaperDocument['managedIccProfiles'];
   },
 ): PaperDocument {
   const preset = patch.preset ?? doc.page.preset;
@@ -293,6 +296,9 @@ export function updatePaperDocumentSetup(
     ...(doc.printProduction ?? DEFAULT_PAPER_PRINT_PRODUCTION),
     ...patch.printProduction,
   });
+  const managedIccProfiles = 'managedIccProfiles' in patch
+    ? patch.managedIccProfiles
+    : doc.managedIccProfiles;
 
   return touch({
     ...doc,
@@ -300,6 +306,7 @@ export function updatePaperDocumentSetup(
     layout,
     background,
     printProduction,
+    ...(managedIccProfiles !== undefined ? { managedIccProfiles } : {}),
     pages: doc.pages.map((paperPage) => ({
       ...paperPage,
       guides: updateDefaultGuidesForPage(paperPage.guides, page),
@@ -853,6 +860,26 @@ function sanitizeParsedPaperImportedFonts(value: unknown): PaperImportedFont[] |
   });
 }
 
+/** Keeps only typed managed ICC metadata; profile bytes always stay in the asset repository. */
+function sanitizeParsedPaperManagedIccProfiles(value: unknown): PaperManagedIccProfile[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return undefined;
+  return value.flatMap((entry) => {
+    if (!isPaperManagedIccProfile(entry)) return [];
+    return [{
+      id: entry.id,
+      asset: { ...entry.asset },
+      description: entry.description,
+      deviceClass: entry.deviceClass,
+      colorSpace: entry.colorSpace,
+      pcs: entry.pcs,
+      outputConditionId: entry.outputConditionId,
+      ...(entry.registryName ? { registryName: entry.registryName } : {}),
+      source: { ...entry.source },
+    }];
+  });
+}
+
 function sanitizeParsedPaperFrame(frame: PaperFrame): PaperFrame {
   return createPaperFrame({
     ...frame,
@@ -901,6 +928,7 @@ export function parsePaperDocument(json: string): PaperDocument {
       : [createPaperParentPage('A-Parent', pageSpec)],
     styles: normalizePaperStyles(parsed.styles),
     importedFonts: sanitizeParsedPaperImportedFonts(parsed.importedFonts),
+    managedIccProfiles: sanitizeParsedPaperManagedIccProfiles(parsed.managedIccProfiles),
     pages: parsed.pages.map((page) => ({
       ...page,
       parentPageId: page.parentPageId,

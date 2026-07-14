@@ -99,11 +99,30 @@ export interface PaperBackgroundSpec {
 export interface PaperPrintProductionSpec {
   pdfStandard: PaperPdfStandard;
   outputIntentProfileId: PaperOutputIntentProfileId;
+  /** Exact managed ICC asset selected for a strict PDF/X or print-ready export. */
+  outputIntentProfileAssetId?: BinaryAssetId;
   customOutputIntentName: string;
   totalInkLimitPercent: number;
   blackPolicy: PaperBlackPolicy;
   spotColorPolicy: PaperSpotColorPolicy;
   overprintPreview: boolean;
+}
+
+export interface PaperManagedIccProfile {
+  /** Content-addressed profile identity. This must equal `asset.id`. */
+  id: BinaryAssetId;
+  asset: BinaryAssetRef;
+  description: string;
+  deviceClass: string;
+  colorSpace: 'CMYK';
+  pcs: 'Lab ' | 'XYZ ';
+  outputConditionId: string;
+  registryName?: string;
+  source: {
+    kind: 'bundled' | 'downloaded' | 'user-import';
+    url?: string;
+    licenseId?: string;
+  };
 }
 
 export interface PaperGuide {
@@ -479,6 +498,8 @@ export interface PaperDocument {
   swatches?: PaperSwatch[];
   /** Managed faces referenced by this document. Exact bytes live in the Paper asset repository. */
   importedFonts?: PaperImportedFont[];
+  /** Exact CMYK output profiles referenced by this document. Bytes live in the Paper asset repository. */
+  managedIccProfiles?: PaperManagedIccProfile[];
   pages: PaperPage[];
   createdAt: number;
   updatedAt: number;

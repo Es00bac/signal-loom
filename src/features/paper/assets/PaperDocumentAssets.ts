@@ -20,6 +20,7 @@ import {
   normalizePaperFontStretch,
   normalizePaperFontWeight,
 } from '../../../lib/paperManagedFonts';
+import { isPaperManagedIccProfile } from '../../../lib/paperManagedIccProfiles';
 
 export type ManagedPaperAssetLocator = PaperManagedAssetLocator;
 export type PaperAssetLocator = PaperManagedAssetLocator;
@@ -289,6 +290,10 @@ export function collectReachablePaperAssetIds(document: PaperDocument): BinaryAs
   for (const font of managed.importedFonts ?? []) {
     if (isBinaryAssetRef(font.fontAsset)) ids.add(font.fontAsset.id);
     if (isBinaryAssetRef(font.license?.textAsset)) ids.add(font.license.textAsset.id);
+  }
+
+  for (const profile of managed.managedIccProfiles ?? []) {
+    if (isPaperManagedIccProfile(profile)) ids.add(profile.asset.id);
   }
 
   return [...ids].sort();

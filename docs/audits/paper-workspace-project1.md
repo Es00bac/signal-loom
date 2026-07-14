@@ -61,10 +61,10 @@ Flow and Image paths are concurrently owned and are outside Project 1. None were
 
 ### `icc-profile-substitution`
 
-- Severity/status/commercial: critical / reproduced / yes.
-- Evidence: `INTENT_TO_BUNDLED`, `bundledProfileForOutputIntent`, and `isSubstitutedOutputIntent` in `src/lib/paperPdfxPipeline.ts`.
-- Reproduce: `rg -n "INTENT_TO_BUNDLED|bundledProfileForOutputIntent|isSubstitutedOutputIntent" src/lib/paperPdfxPipeline.ts`.
-- Expected fix: Task 11 stores validated CMYK output profiles as managed assets and resolves only the exact profile selected by the document. Missing, invalid, RGB, or substituted profiles must block production output.
+- Severity/status/commercial: critical / fixed / yes.
+- Evidence: `resolveExactPaperOutputProfile` in `src/lib/paperManagedIccProfiles.ts` resolves only the selected content-addressed profile record; `PaperIccProfileManager` imports and binds `.icc`/`.icm` assets explicitly.
+- Verify: `npx vitest run src/lib/paperManagedIccProfiles.test.ts src/features/paper/workspace/PaperIccProfileManager.test.tsx src/lib/paperPdfxPipeline.test.ts src/lib/paperPreflight.test.ts`, then `rg -n "INTENT_TO_BUNDLED|bundledProfileForOutputIntent|isSubstitutedOutputIntent" src/lib src/components/Paper src/features/paper` produces no production matches.
+- Result: Missing, invalid, RGB, output-condition-mismatched, and substituted profiles block strict output. The user must import the exact profile supplied or approved by the print provider; Paper does not infer a profile contract from a label or description.
 
 ### `process-cmyk-roundtrip`
 
