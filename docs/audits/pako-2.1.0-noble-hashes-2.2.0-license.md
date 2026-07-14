@@ -63,3 +63,13 @@ Pako does not ship TypeScript declarations. The repository therefore defines onl
 - `npm audit --omit=dev` reported 14 vulnerable packages elsewhere in the existing production graph: 8 moderate, 4 high, and 2 critical. Neither audited package appears in the vulnerability report, and neither can introduce a transitive advisory because both have no dependencies. No audit fix or unrelated dependency change was made.
 
 Decision: approved for the bounded ZIP reader and synchronous pack-time content hash validation.
+
+## Fflate Packer Version Gate
+
+The container packer remains implemented by `fflate`, but its direct production dependency is now exact-pinned to `fflate@0.8.3`. This is required because the pre-inflate compressed-work budget intentionally matches that version's DEFLATE output allocation bound:
+
+```text
+uncompressed + 5 * (1 + ceil(uncompressed / 7000))
+```
+
+A semver-compatible fflate release could change the packer's block sizing or allocation formula without changing this reader. Any fflate upgrade must therefore inspect the candidate packer implementation, prove or update the bound, and pass the adversarial `ValidatedAssetContainer` tests plus the Task 2/Task 4/legacy combined gate before changing the exact pin.
