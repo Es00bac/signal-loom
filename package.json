@@ -39,7 +39,6 @@
     "sync:android": "npm run build && cap sync android",
     "build:android": "npm run android:prepare-localdream-runtime && npm run sync:android && cd android && ./gradlew assembleDebug",
     "dist:win": "npm run build && electron-builder --win nsis",
-    "dist:win:msix": "npm run build && electron-builder --win msix",
     "dist:mac": "npm run build && electron-builder --mac dmg zip",
     "dist:mac:zip": "npm run build && electron-builder --mac zip",
     "dist:linux": "npm run build && electron-builder --linux AppImage deb",
