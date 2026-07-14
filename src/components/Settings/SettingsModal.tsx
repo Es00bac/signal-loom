@@ -58,6 +58,7 @@ import { getSignalLoomNativeBridge } from '../../lib/nativeApp';
 import { VertexAuthPanel } from './VertexAuthPanel';
 import { OssLicensesSection } from './OssLicensesSection';
 import { LicenseSection } from './LicenseSection';
+import { FontLibrarySection } from './FontLibrarySection';
 import { downloadTextFile } from '../../shared/files/downloads';
 import { useVertexAuth } from './useVertexAuth';
 
@@ -88,6 +89,8 @@ export const SettingsModal: React.FC = () => {
     exportSettingsBackup,
     importSettingsBackup,
     settingsBackupSupported,
+    openFontLibrary,
+    addOpenFontLibraryFace,
   } = useSettingsStore();
   const { t, tf } = useI18n();
   const keyStorageStatus = getApiKeyStorageStatus(apiKeys);
@@ -153,6 +156,8 @@ export const SettingsModal: React.FC = () => {
         ? t('settings.dialog.keyboard')
         : settingsPanel === 'gamepad'
           ? t('settings.dialog.gamepad')
+          : settingsPanel === 'fonts'
+            ? t('settings.dialog.fonts')
           : settingsPanel === 'license'
             ? t('settings.dialog.license')
             : t('settings.dialog.providers')}
@@ -164,7 +169,7 @@ export const SettingsModal: React.FC = () => {
         {phone ? (
           <div className="theme-surface theme-border flex items-center gap-2 overflow-x-auto border-b px-3 py-2">
             <div className="flex shrink-0 items-center gap-1 rounded-lg border border-gray-800 bg-[#0b1018] p-1">
-              {([['providers', 'settings.tab.providers'], ['keyboard', 'settings.tab.shortcuts'], ['gamepad', 'settings.tab.gamepad'], ['license', 'settings.tab.license']] as const).map(
+              {([['providers', 'settings.tab.providers'], ['keyboard', 'settings.tab.shortcuts'], ['gamepad', 'settings.tab.gamepad'], ['fonts', 'settings.tab.fonts'], ['license', 'settings.tab.license']] as const).map(
                 ([panel, labelKey]) => (
                   <button
                     key={panel}
@@ -179,24 +184,30 @@ export const SettingsModal: React.FC = () => {
                 ),
               )}
             </div>
-            <button
-              aria-label={t('settings.refreshCatalogs')}
-              className="ml-auto shrink-0 rounded-lg border border-gray-700 bg-[#111217]/60 p-2 text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
-              onClick={() => void handleRefresh()}
-              type="button"
-            >
-              {isRefreshing ? <LoaderCircle className="animate-spin" size={16} /> : <RefreshCcw size={16} />}
-            </button>
+            {settingsPanel !== 'fonts' ? (
+              <button
+                aria-label={t('settings.refreshCatalogs')}
+                className="ml-auto shrink-0 rounded-lg border border-gray-700 bg-[#111217]/60 p-2 text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
+                onClick={() => void handleRefresh()}
+                type="button"
+              >
+                {isRefreshing ? <LoaderCircle className="animate-spin" size={16} /> : <RefreshCcw size={16} />}
+              </button>
+            ) : null}
           </div>
         ) : null}
         <div className={`theme-surface theme-border ${phone ? 'hidden' : 'flex'} justify-between items-center p-5 border-b`}>
           <div>
-            <h2 className="text-xl font-semibold text-gray-100">{t('settings.header.providerConfig')}</h2>
+            <h2 className="text-xl font-semibold text-gray-100">
+              {settingsPanel === 'fonts' ? t('settings.header.fontLibrary') : t('settings.header.providerConfig')}
+            </h2>
             <p className="text-sm text-gray-400 mt-1">
               {settingsPanel === 'keyboard'
                 ? t('settings.desc.keyboard')
                 : settingsPanel === 'gamepad'
                   ? t('settings.desc.gamepad')
+                  : settingsPanel === 'fonts'
+                    ? t('settings.desc.fontLibrary')
                   : settingsPanel === 'license'
                     ? t('settings.desc.license')
                     : tf('settings.desc.keysStored', {
@@ -252,6 +263,17 @@ export const SettingsModal: React.FC = () => {
             </button>
             <button
               className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                settingsPanel === 'fonts'
+                  ? 'border-blue-400/60 bg-blue-500/15 text-blue-100'
+                  : 'border-gray-700 bg-[#111217]/60 text-gray-200 hover:border-gray-500 hover:text-white'
+              }`}
+              onClick={() => openSettings('fonts')}
+              type="button"
+            >
+              {t('settings.tab.fonts')}
+            </button>
+            <button
+              className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
                 settingsPanel === 'license'
                   ? 'border-blue-400/60 bg-blue-500/15 text-blue-100'
                   : 'border-gray-700 bg-[#111217]/60 text-gray-200 hover:border-gray-500 hover:text-white'
@@ -261,14 +283,16 @@ export const SettingsModal: React.FC = () => {
             >
               {t('settings.tab.license')}
             </button>
-            <button
-              className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-[#111217]/60 px-3 py-2 text-sm font-medium text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
-              onClick={() => void handleRefresh()}
-              type="button"
-            >
-              {isRefreshing ? <LoaderCircle className="animate-spin" size={14} /> : <RefreshCcw size={14} />}
-              {t('settings.refreshCatalogs')}
-            </button>
+            {settingsPanel !== 'fonts' ? (
+              <button
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-[#111217]/60 px-3 py-2 text-sm font-medium text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
+                onClick={() => void handleRefresh()}
+                type="button"
+              >
+                {isRefreshing ? <LoaderCircle className="animate-spin" size={14} /> : <RefreshCcw size={14} />}
+                {t('settings.refreshCatalogs')}
+              </button>
+            ) : null}
             <button
               onClick={toggleSettings}
               className="text-gray-400 hover:text-white transition-colors p-1 rounded-md hover:bg-gray-700"
@@ -294,6 +318,8 @@ export const SettingsModal: React.FC = () => {
               onChange={setGamepadBinding}
               onReset={resetGamepadBindings}
             />
+          ) : settingsPanel === 'fonts' ? (
+            <FontLibrarySection library={openFontLibrary} onInstall={addOpenFontLibraryFace} />
           ) : (
             <>
           <Section title={`${translate('settings.section.interface', 'en')} · ${translate('settings.section.interface', 'ja')}`}>

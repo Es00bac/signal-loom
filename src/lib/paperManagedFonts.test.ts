@@ -65,6 +65,25 @@ describe('managed Paper font rights', () => {
     });
   });
 
+  it('accepts an unknown-rights Fontsource face only with pinned open-license evidence', () => {
+    const licenseAsset = { ...fontAsset('b'.repeat(64)), mimeType: 'text/plain', byteLength: 120 };
+    const trusted = managedFace({
+      embeddability: 'unknown',
+      source: {
+        kind: 'open-catalog',
+        url: 'https://cdn.jsdelivr.net/fontsource/fonts/example-sans@1.2.3/latin-400-normal.ttf',
+        version: '1.2.3',
+      },
+      license: { id: 'OFL-1.1', textAsset: licenseAsset },
+    });
+
+    expect(canUseManagedFontForProduction(trusted)).toEqual({ allowed: true });
+    expect(canUseManagedFontForProduction({
+      ...trusted,
+      license: { id: 'Proprietary', textAsset: licenseAsset },
+    })).toMatchObject({ allowed: false, reason: 'attestation-required' });
+  });
+
   it('accepts an attestation only when it names the exact managed bytes', () => {
     const face = managedFace({
       embeddability: 'unknown',

@@ -640,11 +640,13 @@ export const MESSAGES = {
   // — Settings modal (provider/brand NAMES + format-example placeholders stay English by design) —
   'settings.dialog.keyboard': { en: 'Keyboard Shortcut Configuration', ja: 'キーボードショートカット設定' },
   'settings.dialog.gamepad': { en: 'Gamepad Binding Configuration', ja: 'ゲームパッド割り当て設定' },
+  'settings.dialog.fonts': { en: 'Font Library', ja: 'フォントライブラリ' },
   'settings.dialog.license': { en: 'License', ja: 'ライセンス' },
   'settings.dialog.providers': { en: 'Provider Configuration', ja: 'プロバイダー設定' },
   'settings.tab.providers': { en: 'Providers', ja: 'プロバイダー' },
   'settings.tab.shortcuts': { en: 'Shortcuts', ja: 'ショートカット' },
   'settings.tab.gamepad': { en: 'Gamepad', ja: 'ゲームパッド' },
+  'settings.tab.fonts': { en: 'Fonts', ja: 'フォント' },
   'settings.tab.license': { en: 'License', ja: 'ライセンス' },
   'settings.refreshCatalogs': { en: 'Refresh Catalogs', ja: 'カタログを更新' },
   'settings.saveAndClose': { en: 'Save & Close', ja: '保存して閉じる' },
@@ -657,6 +659,10 @@ export const MESSAGES = {
   'settings.desc.gamepad': {
     en: 'Bind gamepad controls for each workspace. Changes apply to Android and desktop controller input immediately.',
     ja: 'ワークスペースごとにゲームパッドの操作を割り当てます。変更は Android とデスクトップのコントローラー入力に即時反映されます。',
+  },
+  'settings.desc.fontLibrary': {
+    en: 'Managed local font library.',
+    ja: '管理されたローカルフォントライブラリ。',
   },
   'settings.desc.license': {
     en: 'Free forever for noncommercial use. One key unlocks the commercial print-production exports on desktop and Android.',
@@ -682,6 +688,15 @@ export const MESSAGES = {
   },
   'settings.desc.keysStored': { en: 'Keys are {state} in {medium}. {caveat}', ja: 'キーは {medium} に {state}保存されています。{caveat}' },
   'settings.header.providerConfig': { en: 'Provider Configuration', ja: 'プロバイダー設定' },
+  'settings.header.fontLibrary': { en: 'Font Library', ja: 'フォントライブラリ' },
+  'settings.fonts.heading': { en: 'Open Fonts', ja: 'オープンフォント' },
+  'settings.fonts.browse': { en: 'Browse open fonts', ja: 'オープンフォントを参照' },
+  'settings.fonts.search': { en: 'Search font families', ja: 'フォントファミリーを検索' },
+  'settings.fonts.download': { en: 'Download', ja: 'ダウンロード' },
+  'settings.fonts.offline': { en: 'Available offline', ja: 'オフラインで利用可能' },
+  'settings.fonts.error.browse': { en: 'Could not browse open fonts.', ja: 'オープンフォントを参照できませんでした。' },
+  'settings.fonts.error.select': { en: 'Could not load that font family.', ja: 'このフォントファミリーを読み込めませんでした。' },
+  'settings.fonts.error.download': { en: 'Could not download that font face.', ja: 'このフォントフェイスをダウンロードできませんでした。' },
 
   // Settings — section titles
   'settings.section.interface': { en: 'Interface', ja: 'インターフェース' },

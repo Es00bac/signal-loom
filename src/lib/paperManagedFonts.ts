@@ -1,4 +1,4 @@
-import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
+import { isBinaryAssetRef, type BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import type {
   PaperDocument,
   PaperFontEmbeddability,
@@ -13,6 +13,12 @@ export interface PaperFontEmbeddingFlags {
   noSubsetting?: boolean;
   bitmapOnly?: boolean;
 }
+
+/** Licenses whose authoritative text may authorize a version-pinned Fontsource face without a user attestation. */
+export const OPEN_CATALOG_LICENSE_IDS = ['OFL-1.1', 'Apache-2.0', 'MIT'] as const;
+type OpenCatalogLicenseId = (typeof OPEN_CATALOG_LICENSE_IDS)[number];
+
+const SEMVER_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 export type PaperFontRightsReason =
   | 'restricted'
@@ -59,12 +65,37 @@ export function canUseManagedFontForProduction(face: PaperManagedFontFace):
   if (face.embeddability === 'restricted') return { allowed: false, reason: 'restricted' };
   if (face.embeddability !== 'unknown') return { allowed: true };
 
+  if (hasAuthoritativeOpenCatalogLicense(face)) return { allowed: true };
+
   if (!face.attestation) return { allowed: false, reason: 'attestation-required' };
   if (face.attestation.assetSha256 !== face.fontAsset.sha256) {
     return { allowed: false, reason: 'attestation-mismatch' };
   }
   if (!face.attestation.mayEmbedOutput) return { allowed: false, reason: 'attestation-required' };
   return { allowed: true };
+}
+
+/**
+ * The download flow fetches and hashes the license text before producing these metadata fields. This exception
+ * exists only for the approved, version-pinned catalog shape; every user-imported unknown-rights font still
+ * requires the explicit byte-bound attestation below.
+ */
+function hasAuthoritativeOpenCatalogLicense(face: PaperManagedFontFace): boolean {
+  if (face.source.kind !== 'open-catalog') return false;
+  if (!face.source.url || !face.source.version || !SEMVER_PATTERN.test(face.source.version)) return false;
+  if (!OPEN_CATALOG_LICENSE_IDS.includes(face.license.id as OpenCatalogLicenseId)) return false;
+  if (!isBinaryAssetRef(face.fontAsset) || !isBinaryAssetRef(face.license.textAsset)) return false;
+  if (face.license.textAsset.mimeType !== 'text/plain' || face.license.textAsset.byteLength === 0) return false;
+
+  try {
+    const url = new URL(face.source.url);
+    const escapedVersion = face.source.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return url.protocol === 'https:'
+      && url.hostname === 'cdn.jsdelivr.net'
+      && new RegExp(`^/fontsource/fonts/[a-z0-9][a-z0-9-]*@${escapedVersion}/[^/]+\\.ttf$`).test(url.pathname);
+  } catch {
+    return false;
+  }
 }
 
 export interface PaperManagedFontFaceRequest {

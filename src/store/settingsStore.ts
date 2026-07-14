@@ -39,6 +39,10 @@ import {
   sanitizeUserBrushPresets,
   type ImageBrushPreset,
 } from '../components/ImageEditor/ImageBrushPresets';
+import {
+  isOpenFontLibraryFace,
+  type OpenFontLibraryFace,
+} from '../lib/paperOpenFontCatalog';
 import type {
   ApiKeys,
   DefaultModelSettings,
@@ -237,6 +241,8 @@ interface SettingsState {
   gamepadBindings: GamepadBindingProfile;
   customBrushPresets: ImageBrushPreset[];
   customCropPresets: CropCustomPreset[];
+  /** Metadata-only records for locally downloaded open fonts; binary bytes remain in the Paper repository. */
+  openFontLibrary: OpenFontLibraryFace[];
   /** Encrypt the current settings (keys + credentials) into a portable, passphrase-locked backup blob. */
   exportSettingsBackup: (passphrase: string) => Promise<string>;
   /** Decrypt + restore a settings backup blob produced by exportSettingsBackup. */
@@ -270,8 +276,9 @@ interface SettingsState {
   saveCustomCropPreset: (label: string, ratio: number) => void;
   renameCustomCropPreset: (id: string, label: string) => void;
   deleteCustomCropPreset: (id: string) => void;
+  addOpenFontLibraryFace: (entry: OpenFontLibraryFace) => void;
   isSettingsOpen: boolean;
-  settingsPanel: 'providers' | 'keyboard' | 'gamepad' | 'license';
+  settingsPanel: 'providers' | 'keyboard' | 'gamepad' | 'fonts' | 'license';
   openSettings: (panel?: SettingsState['settingsPanel']) => void;
   toggleSettings: () => void;
   /** Raw commercial-license key string ('' = Community). Encrypted at rest with the settings blob. */
@@ -399,6 +406,7 @@ export const useSettingsStore = create<SettingsState>()(
       gamepadBindings: createDefaultGamepadBindings(),
       customBrushPresets: [],
       customCropPresets: [],
+      openFontLibrary: [],
       setApiKey: (provider, key) =>
         set((state) => ({
           apiKeys: { ...state.apiKeys, [provider]: key },
@@ -488,6 +496,13 @@ export const useSettingsStore = create<SettingsState>()(
       deleteCustomCropPreset: (id) =>
         set((state) => ({
           customCropPresets: state.customCropPresets.filter((preset) => preset.id !== id),
+        })),
+      addOpenFontLibraryFace: (entry) =>
+        set((state) => ({
+          openFontLibrary: [
+            ...state.openFontLibrary.filter((current) => current.face.fontAsset.sha256 !== entry.face.fontAsset.sha256),
+            entry,
+          ],
         })),
       exportSettingsBackup: async (passphrase) => {
         const state = get();
@@ -631,8 +646,12 @@ export const useSettingsStore = create<SettingsState>()(
           gamepadBindings: normalizeGamepadBindings(typedPersistedState?.gamepadBindings),
           customBrushPresets: sanitizeUserBrushPresets(typedPersistedState?.customBrushPresets),
           customCropPresets: sanitizeCropPresets(typedPersistedState?.customCropPresets),
+          openFontLibrary: Array.isArray(typedPersistedState?.openFontLibrary)
+            ? typedPersistedState.openFontLibrary.filter(isOpenFontLibraryFace)
+            : [],
           settingsPanel: typedPersistedState?.settingsPanel === 'keyboard'
             || typedPersistedState?.settingsPanel === 'gamepad'
+            || typedPersistedState?.settingsPanel === 'fonts'
             || typedPersistedState?.settingsPanel === 'license'
             ? typedPersistedState.settingsPanel
             : 'providers',

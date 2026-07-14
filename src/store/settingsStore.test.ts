@@ -1,6 +1,7 @@
 import './test-setup-window';
 import { describe, expect, it } from 'vitest';
 import { resolveDefaultLocale } from '../lib/i18n';
+import type { OpenFontLibraryFace } from '../lib/paperOpenFontCatalog';
 import {
   getApiKeyStorageCaveat,
   getApiKeyStorageMedium,
@@ -24,6 +25,40 @@ type PersistableSettingsStore = typeof useSettingsStore & {
     getOptions?: () => SettingsPersistOptions;
   };
 };
+
+function openFontLibraryFace(): OpenFontLibraryFace {
+  const fontSha256 = 'a'.repeat(64);
+  const licenseSha256 = 'b'.repeat(64);
+  return {
+    subset: 'latin',
+    retrievedAt: 1234,
+    face: {
+      id: 'open-example-sans-latin-400-normal',
+      familyId: 'example sans',
+      familyName: 'Example Sans',
+      postscriptName: 'ExampleSans-Regular',
+      weight: 400,
+      style: 'normal',
+      stretchPercent: 100,
+      collectionIndex: 0,
+      variableAxes: {},
+      unicodeRanges: [{ start: 0x20, end: 0x7e }],
+      format: 'truetype',
+      fontAsset: { id: `sha256:${fontSha256}`, sha256: fontSha256, mimeType: 'font/ttf', byteLength: 4 },
+      embeddability: 'unknown',
+      canSubset: true,
+      source: {
+        kind: 'open-catalog',
+        url: 'https://cdn.jsdelivr.net/fontsource/fonts/example-sans@1.2.3/latin-400-normal.ttf',
+        version: '1.2.3',
+      },
+      license: {
+        id: 'OFL-1.1',
+        textAsset: { id: `sha256:${licenseSha256}`, sha256: licenseSha256, mimeType: 'text/plain', byteLength: 4 },
+      },
+    },
+  };
+}
 
 describe('settingsStore image provider settings', () => {
   it('classifies API key storage with plaintext local-storage backing and no encryption', () => {
@@ -156,6 +191,17 @@ describe('settingsStore image provider settings', () => {
       atlas: '',
       byteplus: '',
     });
+  });
+
+  it('rehydrates only validated metadata-only open font records', () => {
+    const merge = (useSettingsStore as PersistableSettingsStore).persist?.getOptions?.().merge;
+    expect(merge).toBeTypeOf('function');
+    const current = useSettingsStore.getState();
+    const valid = openFontLibraryFace();
+
+    const merged = merge?.({ openFontLibrary: [valid, { face: { source: { kind: 'open-catalog' } } }], settingsPanel: 'fonts' }, current);
+    expect(merged?.openFontLibrary).toEqual([valid]);
+    expect(merged?.settingsPanel).toBe('fonts');
   });
 
   it('defaults advanced cloud and local image provider settings to safe empty values', () => {

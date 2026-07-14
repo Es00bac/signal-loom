@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SettingsModal } from './SettingsModal';
 import { DEFAULT_PROVIDER_SETTINGS } from '../../lib/providerCatalog';
 
-let mockSettingsPanel: 'providers' | 'keyboard' | 'gamepad' = 'providers';
+let mockSettingsPanel: 'providers' | 'keyboard' | 'gamepad' | 'fonts' = 'providers';
 
 vi.mock('../DockablePanel', () => ({
   DockableDialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -32,6 +32,7 @@ vi.mock('../../store/settingsStore', async () => {
       },
       defaultModels: { text: {}, image: {}, video: {}, audio: {} },
       keyboardShortcuts: {},
+      openFontLibrary: [],
       providerSettings: {
         ...DEFAULT_PROVIDER_SETTINGS,
         batchMaxRetries: 7,
@@ -41,7 +42,8 @@ vi.mock('../../store/settingsStore', async () => {
       setDefaultModel: vi.fn(),
       setKeyboardShortcut: vi.fn(),
       resetKeyboardShortcuts: vi.fn(),
-      openSettings: vi.fn((panel?: 'providers' | 'keyboard' | 'gamepad') => {
+      addOpenFontLibraryFace: vi.fn(),
+      openSettings: vi.fn((panel?: 'providers' | 'keyboard' | 'gamepad' | 'fonts') => {
         mockSettingsPanel = panel ?? 'providers';
       }),
       toggleSettings: vi.fn(),
@@ -70,5 +72,13 @@ describe('SettingsModal', () => {
     expect(html).toContain('value="42000"');
     expect(html).toContain('Local native render token');
     expect(html).toContain('Matches SIGNAL_LOOM_NATIVE_RENDER_TOKEN');
+  });
+
+  it('renders the opt-in Fonts settings tab without browsing automatically', () => {
+    mockSettingsPanel = 'fonts';
+    const html = renderToStaticMarkup(<SettingsModal />);
+
+    expect(html).toContain('Fonts');
+    expect(html).toContain('Browse open fonts');
   });
 });
