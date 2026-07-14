@@ -113,3 +113,6 @@ marketing/sim-videos/
 # Loose QA/screenshot artifacts dumped at repo root (not project files)
 /*.png
 /*.jpeg
+
+# Local isolated branches created by coding agents
+/.worktrees/
