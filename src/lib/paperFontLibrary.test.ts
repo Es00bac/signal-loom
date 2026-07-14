@@ -2,15 +2,19 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { PaperImportedFont } from '../types/paper';
+import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import { vetFontBytes } from './paperFontVetting';
 import {
-  base64ToBytes,
-  bytesToBase64,
   buildImportedFont,
   normalizeFamilyName,
   resolveTextFace,
   selectImportedFace,
 } from './paperFontLibrary';
+
+function fontRef(byteLength = 4): BinaryAssetRef {
+  const sha256 = '0'.repeat(64);
+  return { id: `sha256:${sha256}`, sha256, mimeType: 'font/ttf', byteLength };
+}
 
 const face = (patch: Partial<PaperImportedFont>): PaperImportedFont => ({
   id: 'f',
@@ -20,19 +24,8 @@ const face = (patch: Partial<PaperImportedFont>): PaperImportedFont => ({
   format: 'truetype',
   embeddable: true,
   canSubset: true,
-  dataBase64: bytesToBase64(new Uint8Array([1, 2, 3, 4])),
+  assetRef: fontRef(),
   ...patch,
-});
-
-describe('base64 codec', () => {
-  it('round-trips arbitrary bytes', () => {
-    const bytes = new Uint8Array([0, 1, 2, 127, 128, 200, 255, 42, 13, 10]);
-    expect(Array.from(base64ToBytes(bytesToBase64(bytes)))).toEqual(Array.from(bytes));
-  });
-  it('round-trips a large buffer (past the chunk boundary)', () => {
-    const bytes = new Uint8Array(0x8000 * 2 + 17).map((_, i) => i % 256);
-    expect(base64ToBytes(bytesToBase64(bytes))).toEqual(bytes);
-  });
 });
 
 describe('normalizeFamilyName', () => {
@@ -68,12 +61,12 @@ describe('selectImportedFace', () => {
 
 describe('resolveTextFace', () => {
   it('embeds the user\'s real font when a family matches', () => {
-    const imported = face({ id: 'r', dataBase64: bytesToBase64(new Uint8Array([9, 8, 7])) });
+    const imported = face({ id: 'r', assetRef: fontRef(3) });
     const resolved = resolveTextFace({ fontFamily: '"Brandon Grotesque", sans-serif' }, [imported]);
     expect(resolved.embeddedReal).toBe(true);
     expect(resolved.id).toBe('imported-r');
     expect(resolved.url).toBeUndefined();
-    expect(Array.from(resolved.bytes!)).toEqual([9, 8, 7]);
+    expect(resolved.assetRef).toEqual(imported.assetRef);
     expect(resolved.familyName).toBe('Brandon Grotesque');
   });
 
@@ -82,7 +75,7 @@ describe('resolveTextFace', () => {
     expect(resolved.embeddedReal).toBe(false);
     expect(resolved.id).toBe('LiberationSerif-Regular');
     expect(resolved.url).toBe('/fonts/liberation/LiberationSerif-Regular.ttf');
-    expect(resolved.bytes).toBeUndefined();
+    expect(resolved.assetRef).toBeUndefined();
   });
 
   it('does not use a matching-but-restricted imported font', () => {
@@ -96,20 +89,21 @@ describe('resolveTextFace', () => {
 describe('buildImportedFont', () => {
   const bytesOf = (rel: string) => new Uint8Array(readFileSync(resolve(process.cwd(), rel)));
 
-  it('builds a persisted record from a real vetted font, bytes round-tripping', () => {
+  it('builds a persisted record from a real vetted font and managed asset ref', () => {
     const bytes = bytesOf('public/fonts/liberation/LiberationSans-Bold.ttf');
-    const built = buildImportedFont(vetFontBytes(bytes), bytes, 'font-1')!;
+    const assetRef = fontRef(bytes.byteLength);
+    const built = buildImportedFont(vetFontBytes(bytes), assetRef, 'font-1')!;
     expect(built).not.toBeNull();
     expect(built.familyName).toBe('Liberation Sans');
     expect(built.bold).toBe(true);
     expect(built.italic).toBe(false);
     expect(built.format).toBe('truetype');
     expect(built.embeddable).toBe(true);
-    expect(base64ToBytes(built.dataBase64)).toEqual(bytes);
+    expect(built.assetRef).toEqual(assetRef);
   });
 
   it('refuses a font that failed vetting', () => {
     const garbage = new TextEncoder().encode('nope');
-    expect(buildImportedFont(vetFontBytes(garbage), garbage, 'font-2')).toBeNull();
+    expect(buildImportedFont(vetFontBytes(garbage), fontRef(garbage.byteLength), 'font-2')).toBeNull();
   });
 });

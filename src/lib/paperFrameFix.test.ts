@@ -8,7 +8,7 @@ import {
 } from './paperFrameFix';
 import type { PaperFrame } from '../types/paper';
 
-function imageFrame(id: string, src?: string): PaperFrame {
+function imageFrame(id: string, sourceBinItemId?: string): PaperFrame {
   return {
     id,
     kind: 'image',
@@ -22,7 +22,7 @@ function imageFrame(id: string, src?: string): PaperFrame {
     imageOffsetXPercent: 0,
     imageOffsetYPercent: 0,
     imageRotationDeg: 0,
-    ...(src ? { asset: { label: `Art ${id}`, kind: 'image' as const, src } } : {}),
+    ...(sourceBinItemId ? { asset: { sourceBinItemId, label: `Art ${id}`, kind: 'image' as const } } : {}),
   } as PaperFrame;
 }
 
@@ -37,7 +37,12 @@ describe('paper AI frame fix core', () => {
       ],
     };
 
-    const candidates = collectFrameFixSiblingCandidates(page, 'target');
+    const sourceItems = [
+      { id: 'data:image/png;base64,TARGET', assetUrl: 'data:image/png;base64,TARGET' },
+      { id: 'data:image/png;base64,GOOD1', assetUrl: 'data:image/png;base64,GOOD1' },
+      { id: 'data:image/png;base64,GOOD2', assetUrl: 'data:image/png;base64,GOOD2' },
+    ];
+    const candidates = collectFrameFixSiblingCandidates(page, 'target', sourceItems);
     expect(candidates.map((candidate) => candidate.frameId)).toEqual(['good-1', 'good-2']);
     expect(candidates[0]).toMatchObject({ label: 'Panel good-1', imageUrl: 'data:image/png;base64,GOOD1' });
   });
@@ -78,7 +83,7 @@ describe('paper AI frame fix core', () => {
   });
 
   it('gates the context-menu entry on frames with raster art', () => {
-    expect(canFrameBeAiFixed(imageFrame('a', 'data:image/png;base64,X'))).toBe(true);
+    expect(canFrameBeAiFixed(imageFrame('a', 'source-a'))).toBe(true);
     expect(canFrameBeAiFixed(imageFrame('b'))).toBe(false);
     expect(canFrameBeAiFixed(undefined)).toBe(false);
   });

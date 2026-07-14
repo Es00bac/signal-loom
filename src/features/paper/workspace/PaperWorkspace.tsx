@@ -57,6 +57,7 @@ import { useEditorStore } from '../../../store/editorStore';
 import { useDockablePanelStore } from '../../../store/dockablePanelStore';
 import { usePaperStore } from '../../../store/paperStore';
 import { PaperFontImportControl, useRegisterImportedFonts } from './PaperFontImport';
+import { materializePaperDocumentAssetUrls } from '../assets/PaperAssetRuntime';
 import { useSettingsStore } from '../../../store/settingsStore';
 import { useSourceBinStore } from '../../../store/sourceBinStore';
 import { useFlowStore } from '../../../store/flowStore';
@@ -207,9 +208,16 @@ import {
   buildPaperComicSfxDecalFrameUpdate,
   getPaperComicSfxPreset,
   PAPER_COMIC_SFX_PRESET_IDS,
+  paperComicSfxDesignToDataUrl,
   type PaperComicSfxDesign,
   type PaperComicSfxPresetId,
 } from '../../../lib/paperComicSfx';
+import {
+  buildPaperFrameAssetFromSourceItem,
+  hasPaperAssetReference,
+  resolvePaperFrameAssetUrl,
+} from '../../../lib/paperAssetReferences';
+import { usePaperAssetUrl } from '../assets/usePaperAssetUrl';
 import {
   preparePaperImageQuickEdit,
   resolvePaperImageQuickEditTarget,
@@ -792,6 +800,16 @@ export function PaperWorkspace() {
     (paperTouchNavigation.oneFingerPan || paperTouchNavigation.pinchZoom);
   const [touchNavigationPanelOpen, setTouchNavigationPanelOpen] = useState(false);
 
+  const materializePaperOutputDocument = useCallback(async (sourceDocument: PaperDocument): Promise<PaperDocument | undefined> => {
+    try {
+      return await materializePaperDocumentAssetUrls(sourceDocument, sourceItems);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'A Paper asset could not be resolved.';
+      setStatus(`Export blocked: ${message}`);
+      return undefined;
+    }
+  }, [sourceItems]);
+
   const selectedPage = document.pages.find((page) => page.id === selectedPageId) ?? document.pages[0];
   const selectedFrame = selectedPage?.frames.find((frame) => frame.id === selectedFrameId) ?? null;
   const setActiveInteraction = useCallback((nextInteraction: PaperInteraction | null) => {
@@ -1287,11 +1305,13 @@ export function PaperWorkspace() {
         if (isCommercialPrintProductionTarget(document.printProduction)
           && !(await requestCommercialExportUnlock('PDF/X and CMYK print production'))) return;
         if (await confirmPreflightBeforeExport('PDF export')) {
+          const outputDocument = await materializePaperOutputDocument(document);
+          if (!outputDocument) return;
           if (isPdfXProductionTarget(document.printProduction)) {
             // Real CMYK PDF/X-1a / PDF/X-4 with an embedded ICC output intent (docs/notes/836).
-            void exportPaperPdfxAndSave(document, setStatus);
+            void exportPaperPdfxAndSave(outputDocument, setStatus);
           } else {
-            void exportPaperPdfDocument(document, setStatus, undefined, {
+            void exportPaperPdfDocument(outputDocument, setStatus, undefined, {
               rasterPreset: providerSettings.paperPdfRasterPreset,
             });
           }
@@ -1305,21 +1325,27 @@ export function PaperWorkspace() {
       case 'paper:export-kdp-pdf':
         if (!(await requestCommercialExportUnlock('KDP print PDF'))) return;
         if (await confirmPreflightBeforeExport('KDP print PDF export')) {
-          void exportPaperKdpPdfAndSave(document, setStatus);
+          const outputDocument = await materializePaperOutputDocument(document);
+          if (!outputDocument) return;
+          void exportPaperKdpPdfAndSave(outputDocument, setStatus);
         }
         return;
       case 'paper:export-reader-spreads-pdf':
         if (isCommercialPrintProductionTarget(document.printProduction)
           && !(await requestCommercialExportUnlock('PDF/X and CMYK print production'))) return;
         if (await confirmPreflightBeforeExport('reader-spreads PDF export')) {
-          void exportPaperPdfDocument(document, setStatus, buildPaperReaderSpreadPdfExportRequest(document));
+          const outputDocument = await materializePaperOutputDocument(document);
+          if (!outputDocument) return;
+          void exportPaperPdfDocument(outputDocument, setStatus, buildPaperReaderSpreadPdfExportRequest(outputDocument));
         }
         return;
       case 'paper:export-booklet-proof-pdf':
         if (isCommercialPrintProductionTarget(document.printProduction)
           && !(await requestCommercialExportUnlock('PDF/X and CMYK print production'))) return;
         if (await confirmPreflightBeforeExport('booklet proof PDF export')) {
-          void exportPaperPdfDocument(document, setStatus, buildPaperBookletProofPdfExportRequest(document));
+          const outputDocument = await materializePaperOutputDocument(document);
+          if (!outputDocument) return;
+          void exportPaperPdfDocument(outputDocument, setStatus, buildPaperBookletProofPdfExportRequest(outputDocument));
         }
         return;
       case 'paper:export-webcomic-images':
@@ -1328,19 +1354,27 @@ export function PaperWorkspace() {
         return;
       case 'paper:export-html':
         if (!await confirmPreflightBeforeExport('print HTML export')) return;
-        downloadText(`${safeFileName(document.title)}-print.html`, exportPaperDocumentToPrintHtml(document), 'text/html');
+        {
+          const outputDocument = await materializePaperOutputDocument(document);
+          if (!outputDocument) return;
+          downloadText(`${safeFileName(outputDocument.title)}-print.html`, exportPaperDocumentToPrintHtml(outputDocument), 'text/html');
+        }
         setStatus('Downloaded print HTML.');
         return;
       case 'paper:export-reader-spreads-html': {
         if (!await confirmPreflightBeforeExport('reader-spreads HTML export')) return;
-        const request = buildPaperReaderSpreadHtmlExportRequest(document);
+        const outputDocument = await materializePaperOutputDocument(document);
+        if (!outputDocument) return;
+        const request = buildPaperReaderSpreadHtmlExportRequest(outputDocument);
         downloadText(request.fileName, request.html, 'text/html');
         setStatus('Downloaded reader-spreads HTML. Page-based PDF and print export remain unchanged.');
         return;
       }
       case 'paper:export-booklet-proof-html': {
         if (!await confirmPreflightBeforeExport('booklet proof HTML export')) return;
-        const request = buildPaperBookletProofHtmlExportRequest(document);
+        const outputDocument = await materializePaperOutputDocument(document);
+        if (!outputDocument) return;
+        const request = buildPaperBookletProofHtmlExportRequest(outputDocument);
         downloadText(request.fileName, request.html, 'text/html');
         setStatus('Downloaded imposed booklet proof HTML. Page-based PDF remains unchanged by default.');
         return;
@@ -1381,15 +1415,17 @@ export function PaperWorkspace() {
       }
       case 'paper:export-cbz': {
         if (!await confirmPreflightBeforeExport('raster CBZ export')) return;
-        setStatus(`Rasterizing ${document.pages.length} Paper page${document.pages.length === 1 ? '' : 's'} for CBZ export...`);
-        void buildPaperCbzRasterExport(document, {
+        const outputDocument = await materializePaperOutputDocument(document);
+        if (!outputDocument) return;
+        setStatus(`Rasterizing ${outputDocument.pages.length} Paper page${outputDocument.pages.length === 1 ? '' : 's'} for CBZ export...`);
+        void buildPaperCbzRasterExport(outputDocument, {
           onPageRasterized: ({ pageNumber, pageIndex, pageCount }) => {
             setStatus(`Rasterized page ${pageNumber} (${pageIndex + 1}/${pageCount}) for CBZ export...`);
           },
         })
           .then((cbz) => {
             downloadBlob(cbz.fileName, cbz.blob);
-            setStatus(`Downloaded raster CBZ with ${document.pages.length} PNG page${document.pages.length === 1 ? '' : 's'} plus metadata.`);
+            setStatus(`Downloaded raster CBZ with ${outputDocument.pages.length} PNG page${outputDocument.pages.length === 1 ? '' : 's'} plus metadata.`);
           })
           .catch((error) => {
             const message = error instanceof Error ? error.message : 'Paper CBZ export failed while rasterizing pages.';
@@ -1508,6 +1544,7 @@ export function PaperWorkspace() {
     providerSettings.paperPdfRasterPreset,
     redo,
     sourceItems,
+    materializePaperOutputDocument,
     resetWorkspacePanels,
     setTool,
     togglePaperToolsPalette,
@@ -2140,7 +2177,7 @@ export function PaperWorkspace() {
       }
       const imported = await parsePaperDocumentImportFile(file);
       const isTextImport = 'blocks' in imported;
-      const nextDocument = isTextImport ? importTextDocumentIntoPaper(imported) : imported;
+      const nextDocument = isTextImport ? await importTextDocumentIntoPaper(imported) : imported;
       // Importing REPLACES the current layout and clears undo history — confirm when there's work to lose.
       const currentFrameCount = document.pages.reduce((sum, page) => sum + page.frames.length, 0);
       if (currentFrameCount > 0 && !(shouldBypassConfirmations() || await useConfirmationStore.getState().requestConfirmation(
@@ -2150,7 +2187,7 @@ export function PaperWorkspace() {
         setStatus(`Canceled importing "${file.name}".`);
         return;
       }
-      importDocumentJson(JSON.stringify(nextDocument));
+      await importDocumentJson(JSON.stringify(nextDocument));
       // Report what actually came in — tables and images are real frames now, not text.
       const importedFrames = nextDocument.pages.flatMap((page) => page.frames);
       const tableCount = importedFrames.filter((frame) => frame.table).length;
@@ -2517,7 +2554,11 @@ export function PaperWorkspace() {
     stabilityCreativity?: number;
     stabilityPrompt?: string;
   } = {}) => {
-    if (!frame?.asset?.src || frame.asset.kind !== 'image') {
+    const sourceItem = frame?.asset?.sourceBinItemId
+      ? useSourceBinStore.getState().getAllItems().find((item) => item.id === frame.asset?.sourceBinItemId)
+      : undefined;
+    const sourceUrl = resolvePaperFrameAssetUrl(frame?.asset, sourceItem);
+    if (!frame?.asset || !sourceUrl || frame.asset.kind !== 'image') {
       setStatus('Select an image frame with a placed image before upscaling.');
       return;
     }
@@ -2638,7 +2679,7 @@ export function PaperWorkspace() {
     });
     setStatus(`Upscaling "${frame.asset.label}" for ${document.page.dpi} DPI print placement...`);
     void (async () => {
-      const sourceDataUrl = await imageSourceToDataUrl(frame.asset!.src!);
+      const sourceDataUrl = await imageSourceToDataUrl(sourceUrl);
       const vertexUpscale = canUseVertexUpscale && generateVertexImage
         ? async (request: PaperPrintVertexUpscaleRequest) => {
           const detail = describePaperPrintUpscaleBusyProvider('vertex-imagen', request.upscaleFactor);
@@ -2780,8 +2821,9 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
 
     for (const page of usePaperStore.getState().document.pages) {
       for (const frame of page.frames) {
-        if (!frame.asset?.src || frame.asset.kind !== 'image') continue;
-        const sourceBinItemId = frame.asset.sourceBinItemId;
+        const frameAsset = frame.asset;
+        if (!frameAsset || !hasPaperAssetReference(frameAsset) || frameAsset.kind !== 'image') continue;
+        const sourceBinItemId = frameAsset.sourceBinItemId;
         if (!sourceBinItemId) continue;
 
         const upscaledSourceItem = initialSourceItemsById.get(sourceBinItemId);
@@ -2794,20 +2836,14 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
         if (!originalSourceItem || !originalSourceItem.assetUrl) continue;
 
         if (!isPaperPrintUpscaledImageAspectMatch({
-          upscaledWidthPx: frame.asset.pixelWidth,
-          upscaledHeightPx: frame.asset.pixelHeight,
+          upscaledWidthPx: frameAsset.pixelWidth,
+          upscaledHeightPx: frameAsset.pixelHeight,
           sourceWidthPx: originalSourceItem.pixelWidth,
           sourceHeightPx: originalSourceItem.pixelHeight,
         })) {
           updateFrame(page.id, frame.id, {
             asset: {
-              sourceBinItemId: originalSourceItem.id,
-              label: originalSourceItem.label,
-              kind: 'image',
-              src: originalSourceItem.assetUrl,
-              mimeType: originalSourceItem.mimeType,
-              pixelWidth: originalSourceItem.pixelWidth,
-              pixelHeight: originalSourceItem.pixelHeight,
+              ...buildPaperFrameAssetFromSourceItem(originalSourceItem),
             },
           });
           repairedInvalidUpscaleCount += 1;
@@ -2935,7 +2971,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
         };
 
         const frameAsset = liveFrame?.asset;
-        if (!liveFrame || !frameAsset || !frameAsset.src || frameAsset.kind !== 'image') {
+        if (!liveFrame || !frameAsset || !hasPaperAssetReference(frameAsset) || frameAsset.kind !== 'image') {
           skippedCount += 1;
           continue;
         }
@@ -2992,7 +3028,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           setStatus(`Checking "${frameAsset.label}" for ${liveDocument.page.dpi} DPI print upscale (${progressPrefix})...`);
 
           const result = await runPrintUpscaleWithRetry(frameAsset.label, async () => {
-            const sourceUrl = frameAsset.src;
+            const sourceUrl = resolvePaperFrameAssetUrl(frameAsset, sourceItem);
             if (!sourceUrl) {
               throw new Error(`Missing source URL for "${frameAsset.label}".`);
             }
@@ -3224,7 +3260,8 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       envelopeIndex?: number;
     } = {},
   ): Promise<SourceBinLibraryItem> => {
-    const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(document, pageId, {
+    const outputDocument = await materializePaperDocumentAssetUrls(document, sourceItems);
+    const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(outputDocument, pageId, {
       resolveImageSrc: (src) => imageSourceToDataUrl(src),
     });
     let dataUrl = svgExport.dataUrl;
@@ -3239,14 +3276,14 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       mimeType = svgExport.mimeType;
     }
 
-    const item = await addSourceAssetItem(buildFlattenedPaperPageSourcePayload(document, pageId, {
+    const item = await addSourceAssetItem(buildFlattenedPaperPageSourcePayload(outputDocument, pageId, {
       ...options,
       dataUrl,
       mimeType,
     }));
     setSourceSidebarOpen(true);
     return item;
-  }, [addSourceAssetItem, document, setSourceSidebarOpen]);
+  }, [addSourceAssetItem, document, setSourceSidebarOpen, sourceItems]);
 
   const sendPaperPageToSourceLibraryById = useCallback((pageId: string) => {
     const page = document.pages.find((candidate) => candidate.id === pageId);
@@ -3294,9 +3331,11 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
 
   const runWebcomicImageExport = useCallback(async (settings: PaperWebcomicExportSettings) => {
     if (!await confirmPreflightBeforeExport('webcomic page image export')) return;
+    const outputDocument = await materializePaperOutputDocument(document);
+    if (!outputDocument) return;
     setWebcomicExportSettings(settings);
     setWebcomicExportOpen(false);
-    void exportPaperWebcomicImages(document, setStatus, {
+    void exportPaperWebcomicImages(outputDocument, setStatus, {
       format: settings.format,
       includeBleed: settings.includeBleed,
       outputWidthPx: settings.outputWidthPx,
@@ -3311,7 +3350,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
         tone: 'danger',
       });
     });
-  }, [confirmPreflightBeforeExport, document]);
+  }, [confirmPreflightBeforeExport, document, materializePaperOutputDocument]);
 
   const runKdpImageExport = useCallback(async (settings: PaperKdpExportSettings) => {
     const pendingUpscales = collectPaperPrintUpscaleFrameJobs(document, sourceItems);
@@ -3344,7 +3383,9 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
     setKdpExportSettings(normalizedSettings);
     setKdpExportOpen(false);
     setStatus(`Building KDP asset package: ${plan.interiorPageCount} interior page image${plan.interiorPageCount === 1 ? '' : 's'} plus cover wrap...`);
-    void buildPaperKdpImageArchiveExport(document, {
+    const outputDocument = await materializePaperOutputDocument(document);
+    if (!outputDocument) return;
+    void buildPaperKdpImageArchiveExport(outputDocument, {
       directoryName: normalizedSettings.directoryName,
       dpi: normalizedSettings.dpi,
       interiorType: normalizedSettings.interiorType,
@@ -3370,7 +3411,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           tone: 'danger',
         });
       });
-  }, [confirmPreflightBeforeExport, document, sourceItems]);
+  }, [confirmPreflightBeforeExport, document, materializePaperOutputDocument, sourceItems]);
 
   const exportSelectedPageToImageWorkspace = useCallback(() => {
     if (!selectedPage) return;
@@ -4056,14 +4097,16 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       {frameFixTarget ? (() => {
         const fixPage = document.pages.find((page) => page.id === frameFixTarget.pageId);
         const fixFrame = fixPage?.frames.find((frame) => frame.id === frameFixTarget.frameId);
-        if (!fixPage || !canFrameBeAiFixed(fixFrame)) {
+        const fixSourceItem = sourceItems.find((item) => item.id === fixFrame?.asset?.sourceBinItemId);
+        const fixImageUrl = resolvePaperFrameAssetUrl(fixFrame?.asset, fixSourceItem);
+        if (!fixPage || !canFrameBeAiFixed(fixFrame) || !fixImageUrl) {
           return null;
         }
         return (
           <PaperFrameFixDialog
             frameLabel={fixFrame!.label || 'Image frame'}
-            frameImageUrl={fixFrame!.asset!.src!}
-            siblings={collectFrameFixSiblingCandidates(fixPage, frameFixTarget.frameId)}
+            frameImageUrl={fixImageUrl}
+            siblings={collectFrameFixSiblingCandidates(fixPage, frameFixTarget.frameId, sourceItems)}
             onApply={(resultDataUrl) => {
               void (async () => {
                 const item = await addSourceAssetItem({
@@ -4509,7 +4552,7 @@ function PaperPrintUpscaleDialog({
     .find((page) => page.id === target.pageId)
     ?.frames.find((candidate) => candidate.id === target.frameId);
   const sourceItem = sourceItems.find((item) => item.id === frame?.asset?.sourceBinItemId);
-  const sourceUrl = sourceItem?.assetUrl ?? frame?.asset?.src;
+  const sourceUrl = usePaperAssetUrl(frame?.asset, sourceItem);
   const sourceWidthPx = frame?.asset?.pixelWidth ?? sourceItem?.pixelWidth ?? 1;
   const sourceHeightPx = frame?.asset?.pixelHeight ?? sourceItem?.pixelHeight ?? 1;
   const vertexConfig = getVertexProjectConfig(providerSettings);
@@ -4603,7 +4646,7 @@ function PaperPrintUpscaleDialog({
   };
 
   const submit = async () => {
-    if (!frame?.asset?.src || !plan) {
+    if (!frame?.asset || !sourceUrl || !plan) {
       setError('The selected image frame is no longer available.');
       return;
     }
@@ -4657,7 +4700,7 @@ function PaperPrintUpscaleDialog({
           </button>
         </div>
 
-        {frame?.asset?.src && targetPlan && plan ? (
+        {frame?.asset && sourceUrl && targetPlan && plan ? (
           <div className="mt-4 grid gap-4 md:grid-cols-[13rem_minmax(0,1fr)]">
             <div className="space-y-3">
               <div className="overflow-hidden rounded border border-cyan-300/10 bg-slate-950">
@@ -7900,6 +7943,16 @@ function PaperFrameView({
 }) {
   const [textEditing, setTextEditing] = useState(false);
   const [textDraft, setTextDraft] = useState(frame.text ?? '');
+  const sourceBins = useSourceBinStore((state) => state.bins);
+  const sourceItem = useMemo(
+    () => frame.asset?.sourceBinItemId
+      ? sourceBins.flatMap((bin) => bin.items).find((item) => item.id === frame.asset?.sourceBinItemId)
+      : undefined,
+    [frame.asset?.sourceBinItemId, sourceBins],
+  );
+  const managedAssetUrl = usePaperAssetUrl(frame.asset, sourceItem);
+  const assetUrl = managedAssetUrl
+    ?? (frame.comicSfxDesign ? paperComicSfxDesignToDataUrl(frame.comicSfxDesign) : undefined);
   // Live "does the rendered text clip its own box" signal for the overset indicator badge below — measured
   // from the actual DOM (see usePaperFrameContentOverset), not the thread-flow text estimator, so it reflects
   // exactly what's clipping on screen. Only meaningful for plain text/caption frames (see isPlainInlineTextFrame
@@ -8127,7 +8180,7 @@ function PaperFrameView({
       >
         {frame.table ? (
           <PaperTableView frame={frame} zoom={zoom} />
-        ) : hasImageContent && frame.asset?.src ? (
+        ) : hasImageContent && assetUrl && frame.asset ? (
           <img
             alt={frame.asset.label}
             className="h-full w-full"
@@ -8139,7 +8192,7 @@ function PaperFrameView({
               event.stopPropagation();
             }}
             onLoad={(event) => onResolveImageNaturalSize(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)}
-            src={frame.asset.src}
+            src={assetUrl}
             style={imageStyle}
           />
         ) : frame.kind === 'image' ? (
@@ -8147,7 +8200,7 @@ function PaperFrameView({
             Drop image asset
           </div>
         ) : frame.kind === 'document' ? (
-          <PaperDocumentFramePreview frame={frame} />
+          <PaperDocumentFramePreview assetUrl={assetUrl} frame={frame} />
         ) : frame.kind === 'panel' ? (
           <div className="h-full w-full" />
         ) : frame.kind === 'shape' ? (
@@ -8472,14 +8525,15 @@ function formatCssPercent(value: number): string {
 }
 
 function isImageCropFrame(frame: PaperFrame): boolean {
-  return (frame.kind === 'image' || frame.kind === 'panel' || frame.kind === 'shape') && Boolean(frame.asset?.src);
+  return (frame.kind === 'image' || frame.kind === 'panel' || frame.kind === 'shape')
+    && Boolean(hasPaperAssetReference(frame.asset) || frame.comicSfxDesign);
 }
 
-function PaperDocumentFramePreview({ frame }: { frame: PaperFrame }) {
+function PaperDocumentFramePreview({ assetUrl, frame }: { assetUrl?: string; frame: PaperFrame }) {
   const label = frame.asset?.label ?? frame.label;
-  if (frame.asset?.src && frame.asset.mimeType === 'application/pdf') {
+  if (assetUrl && frame.asset?.mimeType === 'application/pdf') {
     return (
-      <object className="h-full w-full" data={frame.asset.src} type="application/pdf">
+      <object className="h-full w-full" data={assetUrl} type="application/pdf">
         <div className="flex h-full flex-col items-center justify-center gap-2 border border-dashed border-slate-400/70 bg-slate-50 p-3 text-center text-xs text-slate-600">
           <FileJson size={18} />
           <span>Linked PDF</span>

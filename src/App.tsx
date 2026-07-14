@@ -198,8 +198,7 @@ import { useImageEditorStore } from './store/imageEditorStore';
 import { saveImageDocumentAsSlimg, openSlimgDocument } from './components/ImageEditor/ImageSlimgCodec';
 import { classifyOpenedFile } from './lib/signalLoomFileRouting';
 import { serializeSlppr, deserializeSlppr } from './features/paper/SlpprFormat';
-import { IndexedDbPaperAssetRepository } from './features/paper/assets/PaperIndexedDbAssetRepository';
-import { MemoryPaperAssetRepository, type PaperAssetRepository } from './features/paper/assets/PaperAssetRepository';
+import { paperAssetRepository } from './features/paper/assets/PaperAssetRuntime';
 import { usePaperStore } from './store/paperStore';
 import { applySlimgFileUpdateToLocalFlow, openLinkedImageDocumentFromItem } from './lib/imageLinkedEdit';
 import { useDockablePanelStore } from './store/dockablePanelStore';
@@ -233,9 +232,6 @@ import './index.css';
 
 const SIGNAL_LOOM_PROJECT_FILE_EXTENSION = '.sloom';
 const SOURCE_IMPORT_ACCEPT = getAcceptStringForAllImportableFormats();
-const paperAssetRepository: PaperAssetRepository = globalThis.indexedDB
-  ? new IndexedDbPaperAssetRepository(globalThis.indexedDB)
-  : new MemoryPaperAssetRepository();
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -1365,7 +1361,7 @@ function FlowApp() {
             const doc = await deserializeSlppr(new Uint8Array(result.bytes), paperAssetRepository);
             // Route through importDocumentJson so the loaded layout passes the same
             // parse/sanitize validation as the Paper JSON import path.
-            usePaperStore.getState().importDocumentJson(JSON.stringify(doc));
+            await usePaperStore.getState().importDocumentJson(JSON.stringify(doc));
           }
         } catch (error) {
           await showAlertDialog({
@@ -1805,7 +1801,7 @@ function FlowApp() {
     }
     if (kind === 'paper') {
       const doc = await deserializeSlppr(bytes, paperAssetRepository);
-      usePaperStore.getState().importDocumentJson(JSON.stringify(doc));
+      await usePaperStore.getState().importDocumentJson(JSON.stringify(doc));
       setWorkspaceView('paper');
       return;
     }

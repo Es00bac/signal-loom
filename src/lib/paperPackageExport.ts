@@ -47,14 +47,13 @@ export function buildPaperPackageExport(
   const colors = collectPaperColorInventory(document);
   const production = buildPaperPrintProductionMetadata(document);
   const assetFiles = linkedAssets.map((asset) => {
-    const source = sourceItems.find((item) => item.id === asset.sourceId);
+    const source = packageSourceMetadata(sourceItems.find((item) => item.id === asset.sourceId));
     return {
       path: `Links/${safePathPart(asset.sourceLabel)}.json`,
       type: 'linked-asset-metadata',
       bytes: jsonBytes(source ?? asset),
       source,
       asset,
-      embeddedDataUrl: source?.assetUrl,
     };
   });
   const files = [
@@ -85,7 +84,7 @@ export function buildPaperPackageExport(
     fontInventory: fonts,
     colorInventory: colors,
     production,
-    assets: assetFiles.map(({ source, asset, embeddedDataUrl }) => ({ source, asset, embeddedDataUrl })),
+    assets: assetFiles.map(({ source, asset }) => ({ source, asset })),
   };
   const json = `${JSON.stringify(bundle, null, 2)}\n`;
   const fallbackJsonFileName = `${safePathPart(document.title || 'paper-document')}.sloom-paper-package.json`;
@@ -95,7 +94,7 @@ export function buildPaperPackageExport(
     'manifest.json': strToU8(`${JSON.stringify(manifest, null, 2)}\n`),
   };
   for (const assetFile of assetFiles) {
-    zipEntries[assetFile.path] = strToU8(`${JSON.stringify({ source: assetFile.source, asset: assetFile.asset, embeddedDataUrl: assetFile.embeddedDataUrl }, null, 2)}\n`);
+    zipEntries[assetFile.path] = strToU8(`${JSON.stringify({ source: assetFile.source, asset: assetFile.asset }, null, 2)}\n`);
   }
   try {
     const zipped = zipSync(zipEntries);
@@ -120,6 +119,16 @@ export function buildPaperPackageExport(
     };
   }
 
+}
+
+/** Package metadata may name a durable Source Library URL, but never serializes runtime bytes. */
+function packageSourceMetadata(source: SourceBinLibraryItem | undefined): SourceBinLibraryItem | undefined {
+  if (!source) return undefined;
+  const { assetUrl, ...metadata } = source;
+  if (assetUrl && !/^(?:data:|blob:)/i.test(assetUrl)) {
+    return { ...metadata, assetUrl };
+  }
+  return metadata;
 }
 
 function safePathPart(value: string): string {

@@ -502,7 +502,6 @@ export function buildPaperComicSfxDecalFrame(options: PaperComicSfxBuildOptions)
   const minWidthMm = minimumSfxWidthMm(normalizedDesign.text);
   const minHeightMm = minimumSfxHeightMm(normalizedDesign.text);
   const bounds = expandSfxBounds(computeSfxBounds(layered.frames), minWidthMm, minHeightMm);
-  const svg = renderPaperComicSfxSvg(layered.frames, bounds);
   const widthMm = roundPaperNumber(bounds.widthMm);
   const heightMm = roundPaperNumber(bounds.heightMm);
   const label = `${normalizedDesign.text} Comic SFX`;
@@ -520,7 +519,6 @@ export function buildPaperComicSfxDecalFrame(options: PaperComicSfxBuildOptions)
     asset: {
       label,
       kind: 'image',
-      src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
       mimeType: 'image/svg+xml',
       pixelWidth: Math.max(1, Math.round((widthMm / 25.4) * vectorDpi)),
       pixelHeight: Math.max(1, Math.round((heightMm / 25.4) * vectorDpi)),
@@ -549,6 +547,24 @@ export function buildPaperComicSfxDecalFrame(options: PaperComicSfxBuildOptions)
     primaryFrameId: decalId,
     selectedFrameIds: [decalId],
   };
+}
+
+/** Generates an ephemeral display/export URL from the retained editable recipe, never Paper state. */
+export function paperComicSfxDesignToDataUrl(design: PaperComicSfxDesign): string {
+  const normalizedDesign = normalizePaperComicSfxDesign(design);
+  const layered = buildPaperComicSfxFrames({
+    presetId: normalizedDesign.presetId,
+    design: normalizedDesign,
+    idPrefix: 'paper-comic-sfx-runtime',
+    origin: { xMm: 0, yMm: 0 },
+    zIndexStart: 0,
+  });
+  const bounds = expandSfxBounds(
+    computeSfxBounds(layered.frames),
+    minimumSfxWidthMm(normalizedDesign.text),
+    minimumSfxHeightMm(normalizedDesign.text),
+  );
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderPaperComicSfxSvg(layered.frames, bounds))}`;
 }
 
 export function buildPaperComicSfxDecalFrameUpdate(

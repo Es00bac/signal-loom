@@ -50,6 +50,11 @@ import {
   applyPaperDocumentNativeChange,
   type PaperDocumentNativeChange,
 } from '../lib/paperDocumentNativeSync';
+import {
+  collectReachablePaperAssetIds,
+  migrateLegacyPaperBinaryFields,
+} from '../features/paper/assets/PaperDocumentAssets';
+import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
 import type {
   PaperDocument,
   PaperDocumentSnapshot,
@@ -86,7 +91,7 @@ interface PaperActions {
   pasteFrameStyleToSelection: () => number;
   deleteSelection: () => void;
   createNewDocument: (options?: { title?: string; preset?: PaperPagePreset; dpi?: number }) => void;
-  importDocumentJson: (json: string) => void;
+  importDocumentJson: (json: string) => Promise<void>;
   exportDocumentJson: () => string;
   updateDocumentSetup: (patch: Parameters<typeof updatePaperDocumentSetup>[1]) => void;
   setTool: (tool: PaperTool) => void;
@@ -323,8 +328,10 @@ export const usePaperStore = create<PaperState & PaperActions>()(
         });
       },
 
-      importDocumentJson: (json) => {
-        const document = parsePaperDocument(json);
+      importDocumentJson: async (json) => {
+        const rawDocument = JSON.parse(json) as PaperDocument;
+        const migratedDocument = await migrateLegacyPaperBinaryFields(rawDocument, paperAssetRepository);
+        const document = parsePaperDocument(JSON.stringify(migratedDocument));
         set({
           document,
           selectedPageId: document.pages[0]?.id ?? '',
@@ -821,6 +828,7 @@ export const usePaperStore = create<PaperState & PaperActions>()(
         const state = get();
         return {
           document: state.document,
+          assetIds: collectReachablePaperAssetIds(state.document),
           selectedPageId: state.selectedPageId,
           selectedFrameId: state.selectedFrameId ?? undefined,
           selectedFrameIds: state.selectedFrameIds,

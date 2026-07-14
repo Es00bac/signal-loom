@@ -39,7 +39,6 @@ function makePaperDocumentWithImageFrame() {
       sourceBinItemId: 'source-image-1',
       label: 'Panel Shot.png',
       kind: 'image',
-      src: SOURCE_URL,
       mimeType: 'image/png',
       pixelWidth: 640,
       pixelHeight: 360,

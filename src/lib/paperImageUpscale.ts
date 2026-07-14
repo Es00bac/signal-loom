@@ -1,6 +1,7 @@
 import type { PaperDocument, PaperFrame, PaperFramePatch } from '../types/paper';
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import { paperPixelsFromMm } from './paperDocument';
+import { buildPaperFrameAssetFromSourceItem, hasPaperAssetReference } from './paperAssetReferences';
 import type { VertexImagenOutputMimeType, VertexImagenUpscaleFactor } from './vertexImageRequests';
 import type { PaperPrintUpscaleMethod, UsageTelemetry } from '../types/flow';
 
@@ -705,11 +706,7 @@ export function buildPaperPrintUpscaledFramePatch(
 ): PaperFramePatch {
   return {
     asset: {
-      sourceBinItemId: item.id,
-      label: item.label,
-      kind: 'image',
-      src: item.assetUrl,
-      mimeType: item.mimeType,
+      ...buildPaperFrameAssetFromSourceItem({ ...item, kind: 'image' }),
       pixelWidth: result.targetWidthPx,
       pixelHeight: result.targetHeightPx,
     },
@@ -732,7 +729,7 @@ export function collectPaperPrintUpscaleFrameJobs(
 
   for (const page of document.pages) {
     for (const frame of page.frames) {
-      if (!frame.asset?.src || frame.asset.kind !== 'image') {
+      if (!hasPaperAssetReference(frame.asset) || frame.asset?.kind !== 'image') {
         continue;
       }
 
@@ -774,7 +771,7 @@ export function isPaperFramePrintReady(
     return true;
   }
 
-  if (!frame.asset?.src || frame.asset.kind !== 'image') {
+  if (!hasPaperAssetReference(frame.asset) || frame.asset?.kind !== 'image') {
     return false;
   }
 

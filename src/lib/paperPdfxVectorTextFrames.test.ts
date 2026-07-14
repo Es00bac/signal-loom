@@ -1,13 +1,16 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createDefaultPaperDocument } from './paperDocument';
 import { updatePaperDocumentSetup } from './paperDocument';
 import type { PaperDocument, PaperFrame, PaperImportedFont } from '../types/paper';
+import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import type { PaperSwatch } from './paperSwatches';
 import type { IccCmykTransform } from './paperColorManagement';
 import { buildOutlineTextFrameSpecs, buildVectorTextFrameSpecs, frameTextIsOutlineable, pageTextIsVectorizable } from './paperPdfxVectorTextFrames';
-import { bytesToBase64 } from './paperFontLibrary';
+
+function fontRef(byteLength = 4): BinaryAssetRef {
+  const sha256 = '1'.repeat(64);
+  return { id: `sha256:${sha256}`, sha256, mimeType: 'font/ttf', byteLength };
+}
 
 const PT_PER_MM = 72 / 25.4;
 
@@ -168,19 +171,18 @@ describe('imported fonts in the vector-text builder', () => {
   const typo = (fontFamily: string) => ({ fontFamily, fontSizePt: 14, leadingPt: 18, tracking: 0, hyphenate: false, align: 'left' as const, color: '#000', fontWeight: 'normal', fontStyle: 'normal' as const });
   const importedFace = (patch: Partial<PaperImportedFont>): PaperImportedFont => ({
     id: 'brandon', familyName: 'Brandon Grotesque', bold: false, italic: false, format: 'truetype',
-    embeddable: true, canSubset: true, dataBase64: bytesToBase64(new Uint8Array([1, 2, 3, 4])), ...patch,
+    embeddable: true, canSubset: true, assetRef: fontRef(), ...patch,
   });
   const withImports = (doc: PaperDocument, fonts: PaperImportedFont[]): PaperDocument => ({ ...doc, importedFonts: fonts });
 
-  it('embeds the imported font inline (bytes, no URL) when a frame matches it', () => {
+  it('carries the imported font asset reference (no inline bytes or URL) when a frame matches it', () => {
     const doc = withImports(
       docWithFrames([{ text: 'Hi', typography: typo('"Brandon Grotesque", sans-serif') }]),
       [importedFace({})],
     );
     const [spec] = buildVectorTextFrameSpecs(doc.pages[0], doc, blackTransform);
     expect(spec.fontId).toBe('imported-brandon');
-    expect(spec.fontBytes).toBeInstanceOf(Uint8Array);
-    expect(Array.from(spec.fontBytes!)).toEqual([1, 2, 3, 4]);
+    expect(spec.fontAssetRef).toEqual(fontRef());
     expect(spec.fontUrl).toBeUndefined();
   });
 
@@ -214,23 +216,15 @@ describe('imported fonts in the vector-text builder', () => {
     const [spec] = buildVectorTextFrameSpecs(doc.pages[0], doc, blackTransform);
     expect(spec.fontId).toBe('LiberationSans-Regular');
     expect(spec.fontUrl).toBe('/fonts/liberation/LiberationSans-Regular.ttf');
-    expect(spec.fontBytes).toBeUndefined();
+    expect(spec.fontAssetRef).toBeUndefined();
   });
 
-  it('rasters (skips vector) a frame whose text the imported font cannot render', () => {
-    // Liberation Sans covers Latin but not CJK; use it as the "imported" face for family 'Test Face'.
-    const bytes = readFileSync(resolve(process.cwd(), 'public/fonts/liberation/LiberationSans-Regular.ttf'));
-    const font = importedFace({ id: 'test', familyName: 'Test Face', dataBase64: bytesToBase64(new Uint8Array(bytes)) });
-
-    // Latin text is fully covered → vectorizes with the imported bytes.
-    const latin = withImports(docWithFrames([{ text: 'Hello world', typography: typo('Test Face') }]), [font]);
-    const latinSpecs = buildVectorTextFrameSpecs(latin.pages[0], latin, blackTransform);
-    expect(latinSpecs).toHaveLength(1);
-    expect(latinSpecs[0].fontId).toBe('imported-test');
-
-    // Text with a glyph the font lacks (CJK) → no vector spec; the frame falls back to raster.
+  it('defers managed-font glyph coverage to the async PDF/X asset loader', () => {
+    const font = importedFace({ id: 'test', familyName: 'Test Face' });
     const cjk = withImports(docWithFrames([{ text: 'Hello 日本語', typography: typo('Test Face') }]), [font]);
-    expect(buildVectorTextFrameSpecs(cjk.pages[0], cjk, blackTransform)).toHaveLength(0);
+    const [spec] = buildVectorTextFrameSpecs(cjk.pages[0], cjk, blackTransform);
+    expect(spec.fontId).toBe('imported-test');
+    expect(spec.fontAssetRef).toEqual(font.assetRef);
   });
 });
 

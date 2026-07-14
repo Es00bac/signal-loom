@@ -7,6 +7,9 @@ import { buildCurrentProjectDocument, restoreProjectDocument } from './projectDo
 import { CURRENT_PROJECT_SCHEMA_VERSION } from './projectSchema';
 import { useImageEditorStore } from '../store/imageEditorStore';
 import type { ImageDocument } from '../types/imageEditor';
+import { usePaperStore } from '../store/paperStore';
+import { addFrameToPaperPage, createDefaultPaperDocument } from './paperDocument';
+import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
 
 const originalRestoreSourceBinSnapshot = useSourceBinStore.getState().restoreProjectSnapshot;
 const originalReplaceFlowSnapshot = useFlowStore.getState().replaceFlowSnapshot;
@@ -121,6 +124,46 @@ describe('restoreProjectDocument', () => {
     });
 
     expect(calls).toEqual(['sourceBin', 'flow', 'flowAssets']);
+  });
+
+  it('migrates legacy inline Paper assets before restoring the Paper workspace', async () => {
+    const base = createDefaultPaperDocument({ title: 'Legacy restore' });
+    const legacyDocument = addFrameToPaperPage(base, base.pages[0].id, {
+      id: 'legacy-panel',
+      kind: 'image',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 40,
+      heightMm: 30,
+      asset: {
+        label: 'Legacy panel',
+        kind: 'image',
+        src: 'data:image/png;base64,AQID',
+      },
+    } as never).document;
+
+    await restoreProjectDocument({
+      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      id: 'paper-legacy-project',
+      name: 'Legacy Paper Restore',
+      savedAt: 1,
+      flow: { version: 3, nodes: [], edges: [] },
+      sourceBin: { dismissedSourceKeys: [] },
+      paper: {
+        document: legacyDocument,
+        selectedPageId: legacyDocument.pages[0].id,
+        tool: 'select',
+        zoom: 0.8,
+      },
+    });
+
+    const asset = usePaperStore.getState().document.pages[0].frames.find((frame) => frame.id === 'legacy-panel')?.asset;
+    expect(asset?.locator).toMatchObject({ kind: 'managed' });
+    expect(JSON.stringify(usePaperStore.getState().document)).not.toMatch(/data:image|base64/i);
+    const ref = asset?.locator?.kind === 'managed' ? asset.locator.ref : undefined;
+    expect(ref).toBeDefined();
+    expect(await paperAssetRepository.get(ref!.id)).toMatchObject({ bytes: new Uint8Array([1, 2, 3]) });
+    await paperAssetRepository.delete(ref!.id);
   });
 
   it('does not republish a restored project snapshot back to the native Source Library bridge', async () => {

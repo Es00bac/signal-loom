@@ -25,7 +25,6 @@ describe('paper frame flow bridge', () => {
         sourceBinItemId: item.id,
         label: item.label,
         kind: 'image',
-        src: item.assetUrl,
         mimeType: item.mimeType,
       },
     } as PaperFrame;

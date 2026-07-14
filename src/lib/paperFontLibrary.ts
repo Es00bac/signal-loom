@@ -2,30 +2,13 @@
 // typography, and resolved into a face to embed. Sits above the vetting gate (paperFontVetting) and the
 // bundled-face fallback (paperFontResolution): when a frame's font-family matches an imported, embeddable
 // face we embed the user's ACTUAL font; otherwise we fall back to the metric-compatible Liberation
-// substitute (disclosed in preflight). Framework-free + unit-testable; the raw bytes live inline (base64)
-// on the PaperDocument so the font travels with the file.
+// substitute (disclosed in preflight). Framework-free + unit-testable; imported bytes are addressed through
+// a managed content-addressed record and never live in Paper JSON.
 
 import type { PaperImportedFont } from '../types/paper';
+import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import { resolveBundledFontFace, isBoldWeight } from './paperFontResolution';
 import type { FontVetResult } from './paperFontVetting';
-
-/** Decode base64 (no data: prefix) to bytes — works in the browser and Node without Buffer. */
-export function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-/** Encode bytes to base64 (no data: prefix), chunked so a large font doesn't blow the call stack. */
-export function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
 
 /** Normalize a CSS font-family (or stack) to its first family token, unquoted + lowercased, for matching. */
 export function normalizeFamilyName(cssFamily: string): string {
@@ -63,8 +46,8 @@ export function selectImportedFace(
 export interface ResolvedTextFace {
   /** Embed cache key (unique per distinct face). */
   id: string;
-  /** Inline font bytes — present for imported fonts (embed these directly). */
-  bytes?: Uint8Array;
+  /** Managed binary record — present for imported fonts (load bytes through the asset repository). */
+  assetRef?: BinaryAssetRef;
   /** public/-relative .ttf URL — present for bundled Liberation faces (adapter fetches it). */
   url?: string;
   /** Family that was actually used. */
@@ -97,7 +80,7 @@ export function resolveTextFace(
   if (imported) {
     return {
       id: `imported-${imported.id}`,
-      bytes: base64ToBytes(imported.dataBase64),
+      assetRef: imported.assetRef,
       familyName: imported.familyName,
       embeddedReal: true,
       noSubsetting: !imported.canSubset,
@@ -108,10 +91,11 @@ export function resolveTextFace(
 }
 
 /**
- * Build a persisted imported-font record from a vetting result + the raw bytes. Returns null when the font
- * failed vetting or can't be embedded (the caller should reject it), so a bad font never enters the library.
+ * Build a persisted imported-font record from a vetting result + managed binary reference. Returns null
+ * when the font failed vetting or can't be embedded (the caller should reject it), so a bad font never
+ * enters the library.
  */
-export function buildImportedFont(vet: FontVetResult, bytes: Uint8Array, id: string): PaperImportedFont | null {
+export function buildImportedFont(vet: FontVetResult, assetRef: BinaryAssetRef, id: string): PaperImportedFont | null {
   if (!vet.ok || !vet.embeddable) return null;
   if (vet.format !== 'truetype' && vet.format !== 'opentype-cff' && vet.format !== 'collection') return null;
   const bold = /bold|black|heavy|semibold|demibold/i.test(vet.subfamilyName ?? '');
@@ -126,6 +110,6 @@ export function buildImportedFont(vet: FontVetResult, bytes: Uint8Array, id: str
     format: vet.format,
     embeddable: vet.embeddable,
     canSubset: vet.canSubset,
-    dataBase64: bytesToBase64(bytes),
+    assetRef,
   };
 }

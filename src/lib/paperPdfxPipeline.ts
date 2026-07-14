@@ -14,6 +14,8 @@ import {
 } from './paperIccProfiles';
 import { buildOutlineTextFrameSpecs, buildVectorTextFrameSpecs } from './paperPdfxVectorTextFrames';
 import { collectSpotFills, collectSpotStrokes } from './paperPdfxSpotFills';
+import { findUncoveredCharacters } from './paperFontVetting';
+import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 
 const PT_PER_MM = 72 / 25.4;
 
@@ -72,6 +74,42 @@ export interface PaperPdfxPipelineDeps {
   createTransform: (bytes: Uint8Array) => Promise<IccCmykTransform>;
   /** Load the bytes of a bundled font face by its public url (required when `vectorText` is on). */
   loadFontBytes?: (fontUrl: string) => Promise<Uint8Array>;
+  /** Load an imported font from the managed Paper asset repository. */
+  loadManagedFontBytes?: (assetRef: BinaryAssetRef) => Promise<Uint8Array>;
+}
+
+interface ResolvedFontSpec {
+  text: string;
+  frameId: string;
+  fontUrl?: string;
+  fontAssetRef?: BinaryAssetRef;
+}
+
+async function resolveVectorFontSpecs<T extends ResolvedFontSpec>(
+  specs: T[],
+  deps: Pick<PaperPdfxPipelineDeps, 'loadFontBytes' | 'loadManagedFontBytes'>,
+  loadBundledFontOnce: (url: string) => Promise<Uint8Array>,
+): Promise<Array<Omit<T, 'fontUrl' | 'fontAssetRef'> & { fontBytes: Uint8Array }>> {
+  type ResolvedSpec = Omit<T, 'fontUrl' | 'fontAssetRef'> & { fontBytes: Uint8Array };
+  const resolved: Array<ResolvedSpec | undefined> = await Promise.all(specs.map(async (spec): Promise<ResolvedSpec | undefined> => {
+    let bytes: Uint8Array | undefined;
+    if (spec.fontAssetRef) {
+      if (!deps.loadManagedFontBytes) {
+        throw new Error(`Managed Paper font ${spec.fontAssetRef.id} cannot be loaded for PDF/X export.`);
+      }
+      bytes = await deps.loadManagedFontBytes(spec.fontAssetRef);
+    } else if (spec.fontUrl) {
+      bytes = await loadBundledFontOnce(spec.fontUrl);
+    }
+    if (!bytes) {
+      throw new Error('Vector-text frame has neither a managed font asset nor a bundled font URL.');
+    }
+    // A missing glyph would draw as .notdef in the PDF. Keep that frame in the WYSIWYG raster instead.
+    if (findUncoveredCharacters(bytes, spec.text).length > 0) return undefined;
+    const { fontUrl: _fontUrl, fontAssetRef: _fontAssetRef, ...rest } = spec;
+    return { ...rest, fontBytes: bytes } as ResolvedSpec;
+  }));
+  return resolved.filter((spec): spec is ResolvedSpec => spec !== undefined);
 }
 
 /**
@@ -124,7 +162,7 @@ export async function exportPaperDocumentToPdfx(
   const trimWidthPt = document.page.widthMm * PT_PER_MM;
   const trimHeightPt = document.page.heightMm * PT_PER_MM;
 
-  const wantVectorText = options.vectorText === true && !!deps.loadFontBytes;
+  const wantVectorText = options.vectorText === true && !!(deps.loadFontBytes || deps.loadManagedFontBytes);
   const fontBytesCache = new Map<string, Uint8Array>();
   const loadFontOnce = async (url: string): Promise<Uint8Array> => {
     let bytes = fontBytesCache.get(url);
@@ -149,28 +187,17 @@ export async function exportPaperDocumentToPdfx(
     if (wantVectorText) {
       const specs = buildVectorTextFrameSpecs(page, document, transform);
       if (specs.length > 0) {
-        vectorFrameIds = specs.map((spec) => spec.frameId);
-        textFrames = await Promise.all(
-          specs.map(async ({ fontUrl, fontBytes, frameId: _frameId, ...rest }) => {
-            // Imported fonts carry inline bytes; bundled Liberation faces are fetched by URL (cached).
-            const bytes = fontBytes ?? (fontUrl ? await loadFontOnce(fontUrl) : undefined);
-            if (!bytes) throw new Error('Vector-text frame has neither font bytes nor a font URL.');
-            return { ...rest, fontBytes: bytes };
-          }),
-        );
+        const resolved = await resolveVectorFontSpecs(specs, deps, loadFontOnce);
+        vectorFrameIds = resolved.map((spec) => spec.frameId);
+        textFrames = resolved.map(({ frameId: _frameId, ...spec }) => spec);
       }
       // Text that can't be live type but can be outlined (stroked lettering) → filled vector curves,
       // also knocked out of the raster. Stays crisp vector instead of rasterizing.
       const outlineSpecs = buildOutlineTextFrameSpecs(page, document, transform);
       if (outlineSpecs.length > 0) {
-        outlineFrameIds = outlineSpecs.map((spec) => spec.frameId);
-        outlineFrames = await Promise.all(
-          outlineSpecs.map(async ({ fontUrl, fontBytes, frameId: _frameId, ...rest }) => {
-            const bytes = fontBytes ?? (fontUrl ? await loadFontOnce(fontUrl) : undefined);
-            if (!bytes) throw new Error('Outline-text frame has neither font bytes nor a font URL.');
-            return { ...rest, fontBytes: bytes };
-          }),
-        );
+        const resolved = await resolveVectorFontSpecs(outlineSpecs, deps, loadFontOnce);
+        outlineFrameIds = resolved.map((spec) => spec.frameId);
+        outlineFrames = resolved.map(({ frameId: _frameId, ...spec }) => spec);
       }
     }
 

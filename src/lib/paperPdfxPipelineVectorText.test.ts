@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createDefaultPaperDocument, updatePaperDocumentSetup } from './paperDocument';
 import type { PaperDocument, PaperFrame } from '../types/paper';
+import { createBinaryAssetRecord } from '../shared/assets/contentAddressedAsset';
 import { exportPaperDocumentToPdfx } from './paperPdfxPipeline';
 import { createRgbToCmykTransform } from './paperIccEngine';
 import { validatePaperPdfx } from './paperPdfxValidate';
@@ -38,6 +39,55 @@ function poppler(tool: string, args: string[]): string | null {
 }
 
 describe('exportPaperDocumentToPdfx with vectorText', () => {
+  it('loads imported vector text from its managed record and keeps missing-glyph text in the raster', async () => {
+    const fontBytes = new Uint8Array(readFileSync('public/fonts/liberation/LiberationSans-Regular.ttf'));
+    const record = await createBinaryAssetRecord(fontBytes, { mimeType: 'font/ttf' });
+    const base = textDoc();
+    const importedFrame = {
+      ...base.pages[0].frames[0],
+      typography: { ...base.pages[0].frames[0].typography, fontFamily: 'Managed Test Face' },
+    } as PaperFrame;
+    const managedDoc: PaperDocument = {
+      ...base,
+      importedFonts: [{
+        id: 'managed-test', familyName: 'Managed Test Face', bold: false, italic: false,
+        format: 'truetype', embeddable: true, canSubset: true, assetRef: record.ref,
+      }],
+      pages: base.pages.map((page, index) => index === 0 ? { ...page, frames: [importedFrame] } : page),
+    };
+    let excludedTextFrameIds: string[] | undefined;
+    const deps = {
+      loadIccBytes: async () => fogra39,
+      createTransform: (bytes: Uint8Array) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
+      loadManagedFontBytes: async (ref: typeof record.ref) => {
+        expect(ref).toEqual(record.ref);
+        return fontBytes;
+      },
+      rasterizePage: async (_pageId: string, _dpi: number, options?: { excludeTextFrameIds?: string[] }) => {
+        excludedTextFrameIds = options?.excludeTextFrameIds;
+        return { rgba: new Uint8Array(96 * 124 * 4).fill(255), widthPx: 96, heightPx: 124 };
+      },
+    };
+
+    const result = await exportPaperDocumentToPdfx(
+      managedDoc,
+      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, iccProfileId: 'fogra39' },
+      deps,
+    );
+    expect(excludedTextFrameIds).toEqual(['f0']);
+    expect(Buffer.from(result.bytes).toString('latin1')).toContain('/FontFile2');
+
+    const cjkFrame = { ...importedFrame, text: 'Managed 日本語' };
+    excludedTextFrameIds = ['sentinel'];
+    const cjkResult = await exportPaperDocumentToPdfx(
+      { ...managedDoc, pages: managedDoc.pages.map((page, index) => index === 0 ? { ...page, frames: [cjkFrame] } : page) },
+      { standard: 'pdf-x-4', vectorText: true, outputDpi: 96, iccProfileId: 'fogra39' },
+      deps,
+    );
+    expect(excludedTextFrameIds).toBeUndefined();
+    expect(Buffer.from(cjkResult.bytes).toString('latin1')).not.toContain('/FontFile2');
+  });
+
   it('excludes the text frame from the raster and embeds the document text as real vector', async () => {
     const doc = textDoc();
     let excludedTextFrameIds: string[] | undefined;

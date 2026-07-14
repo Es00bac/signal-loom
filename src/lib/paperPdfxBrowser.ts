@@ -17,6 +17,12 @@ import {
 } from './paperPdfxPipeline';
 import type { PdfxExportResult } from './paperPdfxExport';
 import type { PaperDocument } from '../types/paper';
+import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
+import {
+  materializePaperDocumentAssetUrls,
+  paperAssetRepository,
+} from '../features/paper/assets/PaperAssetRuntime';
+import { useSourceBinStore } from '../store/sourceBinStore';
 
 async function fetchBundledIcc(profile: IccProfileRef): Promise<Uint8Array> {
   if (!profile.url) throw new Error(`Bundled profile "${profile.displayName}" has no URL to fetch.`);
@@ -34,17 +40,30 @@ async function fetchBundledFont(fontUrl: string): Promise<Uint8Array> {
   return new Uint8Array(await response.arrayBuffer());
 }
 
+async function loadManagedPaperFont(assetRef: BinaryAssetRef): Promise<Uint8Array> {
+  const record = await paperAssetRepository.get(assetRef.id);
+  if (!record || record.ref.sha256 !== assetRef.sha256 || record.ref.byteLength !== assetRef.byteLength) {
+    throw new Error(`Managed Paper font ${assetRef.id} is unavailable or does not match its document reference.`);
+  }
+  return record.bytes;
+}
+
 /** Export a PaperDocument to a real PDF/X in the browser/Electron renderer. Returns the PDF bytes. */
-export function exportPaperDocumentToPdfxInBrowser(
+export async function exportPaperDocumentToPdfxInBrowser(
   document: PaperDocument,
   options: PaperPdfxPipelineOptions,
 ): Promise<PdfxExportResult> {
-  return exportPaperDocumentToPdfx(document, options, {
+  const exportDocument = await materializePaperDocumentAssetUrls(
+    document,
+    useSourceBinStore.getState().getAllItems(),
+  );
+  return exportPaperDocumentToPdfx(exportDocument, options, {
     loadIccBytes: fetchBundledIcc,
     createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
     loadFontBytes: fetchBundledFont,
+    loadManagedFontBytes: loadManagedPaperFont,
     rasterizePage: async (pageId, outputDpi, rasterOptions) => {
-      const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(document, pageId, {
+      const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(exportDocument, pageId, {
         includeBleed: true,
         outputDpi,
         backdropOnly: rasterOptions?.backdropOnly ?? false,

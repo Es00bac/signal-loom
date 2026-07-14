@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { addFrameToPaperPage, createDefaultPaperDocument } from './paperDocument';
 import type { PaperDocument, PaperFrame } from '../types/paper';
+import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import {
   applyPaperDocumentNativeChange,
   diffPaperDocumentNativeChanges,
@@ -28,6 +29,11 @@ function docWithFrames(count: number): { document: PaperDocument; pageId: string
 
 const frameOnPage = (document: PaperDocument, pageId: string, frameId: string): PaperFrame | undefined =>
   document.pages.find((page) => page.id === pageId)?.frames.find((frame) => frame.id === frameId);
+
+function managedRef(): BinaryAssetRef {
+  const sha256 = '4'.repeat(64);
+  return { id: `sha256:${sha256}`, sha256, mimeType: 'image/png', byteLength: 3 };
+}
 
 describe('applyPaperDocumentNativeChange', () => {
   it('adds a remote frame and is idempotent on a duplicate id', () => {
@@ -177,6 +183,25 @@ describe('diffPaperDocumentNativeChanges', () => {
     const ops = diffPaperDocumentNativeChanges(document, next);
     expect(ops).toHaveLength(1);
     expect(ops[0]).toEqual({ type: 'paper-document-snapshot', document: next });
+  });
+
+  it('carries reachable managed asset ids in a structural snapshot without carrying bytes', () => {
+    const { document, pageId } = docWithFrames(0);
+    const next = addFrameToPaperPage(document, pageId, {
+      kind: 'image',
+      xMm: 1,
+      yMm: 1,
+      widthMm: 10,
+      heightMm: 10,
+      asset: { label: 'Managed', kind: 'image', locator: { kind: 'managed', ref: managedRef() } },
+    }).document;
+    const structural = { ...next, title: 'Managed asset snapshot' };
+
+    expect(diffPaperDocumentNativeChanges(document, structural)).toEqual([{
+      type: 'paper-document-snapshot',
+      document: structural,
+      assetIds: [managedRef().id],
+    }]);
   });
 
   it('collapses a guide change to a snapshot (guides are structural, not frames)', () => {

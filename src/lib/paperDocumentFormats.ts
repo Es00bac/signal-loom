@@ -1,9 +1,11 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import type { PaperDocument, PaperFrame, PaperGuide, PaperMarginSpec, PaperPage, PaperParagraphBorders, PaperRichParagraph, PaperTextRun } from '../types/paper';
-import { bytesToBase64 } from './paperFontLibrary';
 import { normalizePaperTable } from './paperTables';
 import { addFrameToPaperPage, addPaperPage, createDefaultPaperDocument, effectiveRtlBinding, parsePaperDocument } from './paperDocument';
+import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
+import { storePaperBinaryAsset } from '../features/paper/assets/PaperDocumentAssets';
+import { buildPaperFrameAssetFromSourceItem } from './paperAssetReferences';
 import { flattenPaperRichText } from './paperRichText';
 import { tokenizePaperInlineText } from './paperJapaneseText';
 import {
@@ -30,8 +32,8 @@ export interface ImportedPaperTableData {
 }
 
 export interface ImportedPaperImageData {
-  /** The picture embedded as a self-contained data: URL (bytes lifted straight out of the .docx). */
-  dataUrl: string;
+  /** Image bytes lifted straight out of the .docx; persisted Paper state gets only the resulting asset ref. */
+  bytes: Uint8Array;
   mimeType: string;
   /** Intrinsic size from the drawing's <wp:extent> (EMU → mm), when present. */
   widthMm?: number;
@@ -191,7 +193,7 @@ export async function parsePaperDocumentImportFile(file: File): Promise<Imported
   }
 }
 
-export function importTextDocumentIntoPaper(imported: ImportedPaperTextDocument): PaperDocument {
+export async function importTextDocumentIntoPaper(imported: ImportedPaperTextDocument): Promise<PaperDocument> {
   let doc = createDefaultPaperDocument({ title: imported.title || 'Imported Document' });
   // Adopt the source's page margins (`<w:pgMar>`) so the text area matches Word, and remember the margin
   // guide positions to drop onto every page — the owner wants imported docs to show their margins by default.
@@ -288,7 +290,7 @@ export function importTextDocumentIntoPaper(imported: ImportedPaperTextDocument)
 
     // Place one block (table / image / heading / paragraph) with its top-left at topMm/contentLeftMm, spanning
     // `widthMm`. Returns the vertical space consumed (including the gap after it).
-    const placeBlock = (block: ImportedPaperTextBlock, topMm: number, widthMm: number): number => {
+    const placeBlock = async (block: ImportedPaperTextBlock, topMm: number, widthMm: number): Promise<number> => {
       const heightMm = estimateBlockHeightMm(block, widthMm);
       if (block.role === 'table' && block.table) {
         const at = place(widthMm, heightMm, topMm, contentLeftMm);
@@ -303,7 +305,11 @@ export function importTextDocumentIntoPaper(imported: ImportedPaperTextDocument)
         const frameH = Math.max(8, drawH);
         const at = place(drawW, frameH, topMm, contentLeftMm);
         // Imported pictures flow like Word/LibreOffice inline images — no frame border.
-        addFrame({ kind: 'image', label: 'Imported Image', xMm: at.xMm, yMm: at.yMm, widthMm: drawW, heightMm: frameH, rotationDeg: at.rotationDeg, fit: 'contain', strokeColor: 'transparent', strokeWidthMm: 0, asset: { label: block.text || 'Embedded image', kind: 'image', src: block.image.dataUrl, mimeType: block.image.mimeType, embeddedAt: Date.now() } });
+        const ref = await storePaperBinaryAsset(paperAssetRepository, block.image.bytes, {
+          mimeType: block.image.mimeType,
+          fileName: 'imported-image',
+        });
+        addFrame({ kind: 'image', label: 'Imported Image', xMm: at.xMm, yMm: at.yMm, widthMm: drawW, heightMm: frameH, rotationDeg: at.rotationDeg, fit: 'contain', strokeColor: 'transparent', strokeWidthMm: 0, asset: { label: block.text || 'Embedded image', kind: 'image', locator: { kind: 'managed', ref }, mimeType: block.image.mimeType, embeddedAt: Date.now() } });
         return frameH + 2.5;
       }
       const headingTypography = block.role === 'heading'
@@ -368,7 +374,7 @@ export function importTextDocumentIntoPaper(imported: ImportedPaperTextDocument)
           flushColumns();
           if (pageDirty) { newPage(); pageDirty = false; }
           registerPage();
-          placeBlock(block, contentTopMm, contentWidthMm);
+          await placeBlock(block, contentTopMm, contentWidthMm);
           noteFootnotes(block);
           pageDirty = true;
           continue;
@@ -408,7 +414,7 @@ export function importTextDocumentIntoPaper(imported: ImportedPaperTextDocument)
         const opaque = blockIsOpaque(block);
         const placeY = opaque ? Math.max(yMm, prevContentBottomMm) : yMm;
         const frameHMm = estimateBlockHeightMm(block, contentWidthMm);
-        const advance = placeBlock(block, placeY, contentWidthMm);
+        const advance = await placeBlock(block, placeY, contentWidthMm);
         // Clear the previous frame's full box bottom before dropping an opaque box below it. For a padded (non-
         // opaque) frame the 2mm bottom padding doubles as slack for any height under-estimate, so the next opaque
         // box never lands on real text.
@@ -756,11 +762,7 @@ export function placeDocumentSourceOnPaperPage(
     widthMm: Math.min(120, Math.max(70, doc.page.widthMm - point.xMm - doc.layout.marginsMm.right)),
     heightMm: Math.min(150, Math.max(80, doc.page.heightMm - point.yMm - doc.layout.marginsMm.bottom)),
     asset: {
-      sourceBinItemId: item.id,
-      label: item.label,
-      kind: item.kind,
-      src: item.assetUrl,
-      mimeType: item.mimeType,
+      ...buildPaperFrameAssetFromSourceItem(item),
       text: item.text,
       format: inferPaperDocumentImportFormat(item.label, item.mimeType),
     },
@@ -1514,7 +1516,7 @@ function docxDrawingToImage(
   const mimeType = docxMediaMime(path);
   const extent = /<wp:extent\b[^>]*cx="(\d+)"[^>]*cy="(\d+)"/.exec(drawingXml);
   return {
-    dataUrl: `data:${mimeType};base64,${bytesToBase64(bytes)}`,
+    bytes: new Uint8Array(bytes),
     mimeType,
     widthMm: extent ? Number(extent[1]) / 36000 : undefined, // EMU → mm (914400 EMU/in ÷ 25.4)
     heightMm: extent ? Number(extent[2]) / 36000 : undefined,

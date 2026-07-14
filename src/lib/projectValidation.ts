@@ -4,6 +4,7 @@ import type { ImageEditorProjectSnapshot } from '../store/imageEditorStore';
 import type { SourceBinLibraryItem, SourceBinProjectSnapshot } from '../store/sourceBinStore';
 import type { AppNode, EditorSourceKind, EnvelopeItem, NodeData, NodeResultAttempt, ResultType, WorkspaceView } from '../types/flow';
 import type { PaperDocumentSnapshot, PaperTool } from '../types/paper';
+import { isBinaryAssetRef, type BinaryAssetId } from '../shared/assets/contentAddressedAsset';
 import type { ImageDocumentSnapshot, ImageLayer, ImageLayerEditTarget, ImageQuickActionMacro, LayerType } from '../types/imageEditor';
 import type { FlowProjectDocument } from './projectLibrary';
 import {
@@ -355,13 +356,83 @@ export function sanitizePaperSnapshot(snapshot: unknown): Partial<PaperDocumentS
   if (snapshot === undefined) return undefined;
   if (!isRecord(snapshot) || !isRecord(snapshot.document) || !Array.isArray(snapshot.document.pages)) return undefined;
 
+  const assetIds = collectPaperSnapshotAssetIds(snapshot.document);
+  if (!assetIds) return undefined;
+  if (snapshot.assetIds !== undefined) {
+    if (!Array.isArray(snapshot.assetIds)) return undefined;
+    const declaredAssetIds = snapshot.assetIds.filter((assetId): assetId is BinaryAssetId => isBinaryAssetId(assetId));
+    if (declaredAssetIds.length !== snapshot.assetIds.length || !samePaperAssetIds(assetIds, declaredAssetIds)) {
+      return undefined;
+    }
+  }
+
   return {
     document: snapshot.document as unknown as PaperDocumentSnapshot['document'],
+    assetIds,
     selectedPageId: optionalString(snapshot.selectedPageId),
     selectedFrameId: optionalString(snapshot.selectedFrameId),
+    selectedFrameIds: Array.isArray(snapshot.selectedFrameIds)
+      ? snapshot.selectedFrameIds.filter((frameId): frameId is string => typeof frameId === 'string')
+      : undefined,
     tool: VALID_PAPER_TOOLS.has(snapshot.tool as PaperTool) ? snapshot.tool as PaperTool : 'select',
     zoom: finiteNumber(snapshot.zoom, 0.8),
   };
+}
+
+function collectPaperSnapshotAssetIds(document: Record<string, unknown>): BinaryAssetId[] | undefined {
+  const assetIds = new Set<BinaryAssetId>();
+  const frameContainers = [...(document.pages as unknown[])];
+  if (document.parentPages !== undefined) {
+    if (!Array.isArray(document.parentPages)) return undefined;
+    frameContainers.push(...document.parentPages);
+  }
+  for (const page of frameContainers) {
+    if (!isRecord(page) || !Array.isArray(page.frames)) return undefined;
+    for (const frame of page.frames) {
+      if (!isRecord(frame)) return undefined;
+      const asset = frame.asset;
+      if (asset === undefined) continue;
+      if (!isRecord(asset)) return undefined;
+      const locator = asset.locator;
+      if (locator === undefined) continue;
+      if (!isRecord(locator) || typeof locator.kind !== 'string') return undefined;
+      if (locator.kind === 'managed') {
+        if (!isBinaryAssetRef(locator.ref)) return undefined;
+        assetIds.add(locator.ref.id);
+      } else if (locator.kind === 'external') {
+        if (typeof locator.url !== 'string' || /^(?:data:|blob:)/i.test(locator.url)) return undefined;
+      } else {
+        return undefined;
+      }
+    }
+  }
+
+  const importedFonts = document.importedFonts;
+  if (importedFonts !== undefined) {
+    if (!Array.isArray(importedFonts)) return undefined;
+    for (const font of importedFonts) {
+      if (!isRecord(font)) return undefined;
+      if (isBinaryAssetRef(font.assetRef)) {
+        assetIds.add(font.assetRef.id);
+        continue;
+      }
+      // Older Paper saves stored imported font bytes directly in the document. Keep that exact
+      // legacy shape only until restoreProjectDocument migrates it into the managed repository.
+      if (typeof font.dataBase64 !== 'string' || font.dataBase64.length === 0) return undefined;
+    }
+  }
+
+  return [...assetIds].sort();
+}
+
+function isBinaryAssetId(value: unknown): value is BinaryAssetId {
+  return typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value);
+}
+
+function samePaperAssetIds(left: readonly BinaryAssetId[], right: readonly BinaryAssetId[]): boolean {
+  if (left.length !== right.length) return false;
+  const sortedRight = [...right].sort();
+  return left.every((assetId, index) => assetId === sortedRight[index]);
 }
 
 export function sanitizeImageEditorSnapshot(snapshot: unknown): ImageEditorProjectSnapshot | undefined {

@@ -4,6 +4,7 @@ import { isServedLanSession } from './remoteHostClient';
 import { ensureProjectSyncChannelStarted } from './projectSyncClient';
 import { registerProjectSyncChannel, type ProjectSyncChannel } from './projectSyncService';
 import {
+  createPaperDocumentSnapshotChange,
   diffPaperDocumentNativeChanges,
   type PaperDocumentNativeChange,
 } from './paperDocumentNativeSync';
@@ -73,7 +74,7 @@ const paperChannel: ProjectSyncChannel<PaperDocumentNativeChange> = {
     }
   },
   snapshot() {
-    return { type: 'paper-document-snapshot', document: currentDocument() };
+    return createPaperDocumentSnapshotChange(currentDocument());
   },
 };
 

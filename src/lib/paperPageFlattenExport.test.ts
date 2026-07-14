@@ -119,7 +119,7 @@ describe('paperPageFlattenExport', () => {
                     sourceBinItemId: 'image-1',
                     label: 'Blob-backed panel',
                     kind: 'image' as const,
-                    src: 'blob:http://127.0.0.1:5175/panel-art',
+                    locator: { kind: 'external' as const, url: 'blob:http://127.0.0.1:5175/panel-art' },
                     mimeType: 'image/png',
                   },
                 }

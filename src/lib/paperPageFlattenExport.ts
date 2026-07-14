@@ -5,6 +5,7 @@ import {
   paperPixelsFromMm,
   updatePaperDocumentSetup,
 } from './paperDocument';
+import { resolvePaperFrameAssetUrl } from './paperAssetReferences';
 
 export interface PaperPageExportDimensions {
   widthMm: number;
@@ -157,17 +158,18 @@ export async function buildFlattenedPaperPageSvgExportWithEmbeddedAssets(
 
   const page = findPaperPage(document, pageId);
   const frames = await Promise.all(page.frames.map(async (frame) => {
-    if (!frame.asset?.src) return frame;
-    const resolvedSrc = await Promise.resolve(options.resolveImageSrc?.(frame.asset.src, {
+    const sourceUrl = resolvePaperFrameAssetUrl(frame.asset);
+    if (!frame.asset || !sourceUrl) return frame;
+    const resolvedSrc = await Promise.resolve(options.resolveImageSrc?.(sourceUrl, {
       frameId: frame.id,
       pageId: page.id,
     })).catch(() => undefined);
-    if (!resolvedSrc || resolvedSrc === frame.asset.src) return frame;
+    if (!resolvedSrc || resolvedSrc === sourceUrl) return frame;
     return {
       ...frame,
       asset: {
         ...frame.asset,
-        src: resolvedSrc,
+        locator: { kind: 'external' as const, url: resolvedSrc },
       },
     };
   }));

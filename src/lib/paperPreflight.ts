@@ -5,10 +5,10 @@ import {
   isPdfXProductionTarget,
 } from './paperPrintProduction';
 import { classifyFontFamily, isDisplayFontFamily } from './paperFontResolution';
-import { normalizeFamilyName, resolveTextFace } from './paperFontLibrary';
-import { findUncoveredCharacters } from './paperFontVetting';
+import { normalizeFamilyName } from './paperFontLibrary';
 import { collectSpotFills, collectSpotStrokes } from './paperPdfxSpotFills';
 import { resolveTextSpot } from './paperPdfxVectorTextFrames';
+import { hasPaperAssetReference } from './paperAssetReferences';
 
 const LIBERATION_SUBSTITUTE_NAME: Record<'serif' | 'sans' | 'mono', string> = {
   serif: 'Liberation Serif',
@@ -21,42 +21,6 @@ function familyHasImportedFace(family: string, importedFonts: readonly PaperImpo
   const norm = normalizeFamilyName(family);
   if (!norm) return false;
   return (importedFonts ?? []).some((f) => f.embeddable && normalizeFamilyName(f.familyName) === norm);
-}
-
-/**
- * For every text/caption frame whose font resolves to an imported face, collect the distinct characters the
- * imported font can't render, keyed by the family that gets embedded. Those characters fall back to a
- * substitute font (rendered as raster pixels, not embedded as selectable vector in the user's font), so the
- * user should know before they hand the file off. Uses the SAME resolution + coverage the exporter uses, so
- * the disclosure matches what actually happens. Empty map = every imported font covers all of its text.
- */
-function collectUncoveredImportedGlyphs(document: PaperDocument): Map<string, string[]> {
-  const missingByFamily = new Map<string, string[]>();
-  const seenByFamily = new Map<string, Set<string>>();
-  for (const page of document.pages) {
-    for (const frame of page.frames) {
-      if (frame.kind !== 'text' && frame.kind !== 'caption') continue;
-      const text = frame.text ?? '';
-      if (!text.trim()) continue;
-      const face = resolveTextFace(frame.typography, document.importedFonts);
-      if (!face.embeddedReal || !face.bytes) continue; // only the user's own imported faces are at issue
-      const uncovered = findUncoveredCharacters(face.bytes, text);
-      if (uncovered.length === 0) continue;
-      let seen = seenByFamily.get(face.familyName);
-      if (!seen) {
-        seen = new Set();
-        seenByFamily.set(face.familyName, seen);
-        missingByFamily.set(face.familyName, []);
-      }
-      const list = missingByFamily.get(face.familyName)!;
-      for (const ch of uncovered) {
-        if (seen.has(ch)) continue;
-        seen.add(ch);
-        list.push(ch);
-      }
-    }
-  }
-  return missingByFamily;
 }
 
 export type PaperPreflightSeverity = 'error' | 'warning' | 'info';
@@ -200,19 +164,6 @@ export function analyzePaperPreflight(
         'info',
         'Fonts embedded as your imported font',
         `${list}: your uploaded font is embedded as real, selectable vector text (subset) — no substitution.`,
-        { category: 'fonts' },
-      ));
-    }
-    // Some of that imported-font text may use characters the font has no glyph for (e.g. an accented letter,
-    // a symbol, a dash). Those fall back to a substitute font as raster pixels — NOT embedded as selectable
-    // vector in the user's font — so disclose exactly which characters, per family, before hand-off.
-    for (const [family, chars] of collectUncoveredImportedGlyphs(document)) {
-      const shown = chars.slice(0, 12).map((c) => `“${c}”`).join(' ');
-      const more = chars.length > 12 ? ` (+${chars.length - 12} more)` : '';
-      issues.push(issue(
-        'warning',
-        'Imported font is missing some glyphs',
-        `${family} has no glyph for ${shown}${more}. That text falls back to another font as raster pixels — it won't be selectable vector in your font. Use a font that includes these characters, or accept the fallback.`,
         { category: 'fonts' },
       ));
     }
@@ -362,37 +313,33 @@ function analyzeFrame(page: PaperPage, frame: PaperFrame, sourceById: Map<string
   const base = { pageNumber: page.pageNumber, frameId: frame.id };
 
   if (frame.kind === 'document') {
-    if (!frame.asset?.sourceBinItemId && !frame.asset?.src) {
+    const asset = frame.asset;
+    if (!hasPaperAssetReference(asset) || !asset) {
       issues.push(issue('error', 'Empty document frame', `${frame.label} has no linked document.`, { ...base, category: 'links' }));
     } else {
       const linkedAsset = resolveLinkedAssetInfo(page, frame, sourceById);
-      if (frame.asset.sourceBinItemId && !sourceById.has(frame.asset.sourceBinItemId)) {
-        issues.push(issue('error', 'Missing linked document', `${frame.asset.label || frame.label} is not present in the Source bin.`, { ...base, category: 'links' }));
-      }
-      if (!frame.asset.src && !frame.asset.text) {
-        issues.push(issue('warning', 'Linked document has no preview source', `${frame.asset.label || frame.label} can be tracked but may not preview or package outside the project.`, { ...base, category: 'links' }));
+      if (asset.sourceBinItemId && !sourceById.has(asset.sourceBinItemId)) {
+        issues.push(issue('error', 'Missing linked document', `${asset.label || frame.label} is not present in the Source bin.`, { ...base, category: 'links' }));
       }
       if (linkedAsset.status === 'unknown') {
-        issues.push(issue('info', 'Document link tracked', `${frame.asset.label || frame.label} is linked for package/preflight tracking.`, { ...base, category: 'links' }));
+        issues.push(issue('info', 'Document link tracked', `${asset.label || frame.label} is linked for package/preflight tracking.`, { ...base, category: 'links' }));
       }
     }
   }
 
   if (frame.kind === 'image') {
-    if (!frame.asset?.sourceBinItemId && !frame.asset?.src) {
+    const asset = frame.asset;
+    if (!hasPaperAssetReference(asset) || !asset) {
       issues.push(issue('error', 'Empty image frame', `${frame.label} has no linked art.`, { ...base, category: 'links' }));
     } else {
       const linkedAsset = resolveLinkedAssetInfo(page, frame, sourceById);
-      if (frame.asset.sourceBinItemId && !sourceById.has(frame.asset.sourceBinItemId)) {
-        issues.push(issue('error', 'Missing linked asset', `${frame.asset.label || frame.label} is not present in the Source bin.`, { ...base, category: 'links' }));
-      }
-      if (!frame.asset.src) {
-        issues.push(issue('warning', 'Linked image has no embedded source', `${frame.asset.label || frame.label} may not export outside the current project asset store.`, { ...base, category: 'links' }));
+      if (asset.sourceBinItemId && !sourceById.has(asset.sourceBinItemId)) {
+        issues.push(issue('error', 'Missing linked asset', `${asset.label || frame.label} is not present in the Source bin.`, { ...base, category: 'links' }));
       }
       if (linkedAsset.effectivePpi === undefined) {
-        issues.push(issue('info', 'Image resolution unknown', `${frame.asset.label || frame.label} has no pixel dimensions available for DPI validation.`, { ...base, category: 'resolution' }));
+        issues.push(issue('info', 'Image resolution unknown', `${asset.label || frame.label} has no pixel dimensions available for DPI validation.`, { ...base, category: 'resolution' }));
       } else if (linkedAsset.effectivePpi < profile.minPrintPpi) {
-        issues.push(issue('warning', 'Image resolution is low', `${frame.asset.label || frame.label} is about ${linkedAsset.effectivePpi} effective PPI.`, { ...base, category: 'resolution' }));
+        issues.push(issue('warning', 'Image resolution is low', `${asset.label || frame.label} is about ${linkedAsset.effectivePpi} effective PPI.`, { ...base, category: 'resolution' }));
       }
     }
   }
@@ -459,8 +406,8 @@ function resolveLinkedAssetStatus(
   sourceItem: SourceBinLibraryItem | undefined,
   effectivePpi: number | undefined,
 ): PaperLinkedAssetStatus {
-  if (frame.asset?.sourceBinItemId && !sourceItem) return frame.asset.src ? 'stale' : 'missing';
-  if (!frame.asset?.sourceBinItemId && frame.asset?.src) return 'embedded';
+  if (frame.asset?.sourceBinItemId && !sourceItem) return frame.asset.locator ? 'stale' : 'missing';
+  if (!frame.asset?.sourceBinItemId && frame.asset?.locator) return 'embedded';
   if (effectivePpi === undefined) return 'unknown';
   return 'ok';
 }

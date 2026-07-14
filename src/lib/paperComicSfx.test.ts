@@ -8,6 +8,7 @@ import {
   listPaperComicSfxPresets,
   normalizePaperComicSfxDesign,
   PAPER_COMIC_SFX_PRESET_IDS,
+  paperComicSfxDesignToDataUrl,
 } from './paperComicSfx';
 
 describe('paperComicSfx', () => {
@@ -271,7 +272,8 @@ describe('paperComicSfx', () => {
     });
     expect(result.frame.asset?.pixelWidth).toBeGreaterThan(2000);
 
-    const svgPayload = decodeURIComponent(result.frame.asset?.src?.split(',')[1] ?? '');
+    expect(result.frame.asset?.locator).toBeUndefined();
+    const svgPayload = decodeURIComponent(paperComicSfxDesignToDataUrl(result.frame.comicSfxDesign!).split(',')[1] ?? '');
     expect(svgPayload).toContain('<svg');
     expect(svgPayload).toContain('GO');
     expect(svgPayload).toContain('<polygon');
@@ -309,7 +311,7 @@ describe('paperComicSfx', () => {
     expect(patch.yMm).toBeUndefined();
     expect(patch.widthMm).toBeUndefined();
     expect(patch.heightMm).toBeUndefined();
-    expect(patch.asset?.src).toContain('data:image/svg+xml');
-    expect(patch.asset?.src).not.toBe(original.asset?.src);
+    expect(patch.asset?.locator).toBeUndefined();
+    expect(paperComicSfxDesignToDataUrl(patch.comicSfxDesign!)).not.toBe(paperComicSfxDesignToDataUrl(original.comicSfxDesign!));
   });
 });

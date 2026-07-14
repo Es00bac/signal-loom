@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CURRENT_PROJECT_SCHEMA_VERSION, FLOW_NODE_TYPES } from './projectSchema';
-import { sanitizeProjectDocument } from './projectValidation';
+import { sanitizePaperSnapshot, sanitizeProjectDocument } from './projectValidation';
 
 function projectWith(overrides: Record<string, unknown>) {
   return sanitizeProjectDocument({
@@ -1013,5 +1013,120 @@ describe('sanitizeProjectDocument', () => {
 
   it('rejects documents without array-shaped flow snapshots', () => {
     expect(() => projectWith({ flow: { nodes: {}, edges: [] } })).toThrow('flow nodes and edges must be arrays');
+  });
+});
+
+describe('sanitizePaperSnapshot', () => {
+  it('rejects malformed Paper asset references on project restore', () => {
+    expect(sanitizePaperSnapshot({
+      document: {
+        id: 'paper-1',
+        title: 'Malformed asset reference',
+        pages: [{
+          id: 'page-1',
+          frames: [{
+            id: 'frame-1',
+            asset: {
+              label: 'Panel',
+              kind: 'image',
+              locator: {
+                kind: 'managed',
+                ref: {
+                  id: 'sha256:not-a-hash',
+                  sha256: 'not-a-hash',
+                  mimeType: 'image/png',
+                  byteLength: 3,
+                },
+              },
+            },
+          }],
+        }],
+      },
+    })).toBeUndefined();
+  });
+
+  it('rejects an inline URL persisted in a Paper asset locator', () => {
+    expect(sanitizePaperSnapshot({
+      document: {
+        id: 'paper-1',
+        title: 'Inline asset reference',
+        pages: [{
+          id: 'page-1',
+          frames: [{
+            id: 'frame-1',
+            asset: {
+              label: 'Panel',
+              kind: 'image',
+              locator: { kind: 'external', url: 'data:image/png;base64,AQID' },
+            },
+          }],
+        }],
+      },
+    })).toBeUndefined();
+  });
+
+  it('preserves legacy inline Paper fields only until the restore migration can convert them', () => {
+    const snapshot = sanitizePaperSnapshot({
+      document: {
+        id: 'paper-legacy',
+        title: 'Legacy inline asset',
+        pages: [{
+          id: 'page-1',
+          frames: [{
+            id: 'frame-1',
+            asset: {
+              label: 'Legacy panel',
+              kind: 'image',
+              src: 'data:image/png;base64,AQID',
+            },
+          }],
+        }],
+        importedFonts: [{
+          id: 'legacy-face',
+          familyName: 'Legacy Face',
+          bold: false,
+          italic: false,
+          format: 'truetype',
+          embeddable: true,
+          canSubset: true,
+          dataBase64: 'BAUG',
+        }],
+      },
+      tool: 'select',
+      zoom: 0.8,
+    });
+
+    expect(snapshot).toBeDefined();
+    expect(snapshot?.assetIds).toEqual([]);
+    expect((snapshot?.document?.pages[0]?.frames[0]?.asset as { src?: string } | undefined)?.src)
+      .toBe('data:image/png;base64,AQID');
+  });
+
+  it('includes managed parent-page assets in the restored snapshot reachability list', () => {
+    const assetId = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const snapshot = sanitizePaperSnapshot({
+      document: {
+        id: 'paper-1',
+        title: 'Parent asset reference',
+        pages: [],
+        parentPages: [{
+          id: 'parent-1',
+          frames: [{
+            id: 'frame-1',
+            asset: {
+              label: 'Parent panel',
+              kind: 'image',
+              locator: {
+                kind: 'managed',
+                ref: { id: assetId, sha256: assetId.slice('sha256:'.length), mimeType: 'image/png', byteLength: 3 },
+              },
+            },
+          }],
+        }],
+      },
+      assetIds: [assetId],
+    });
+
+    expect(snapshot?.assetIds).toEqual([assetId]);
   });
 });

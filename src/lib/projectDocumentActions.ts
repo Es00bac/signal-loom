@@ -7,6 +7,8 @@ import {
   resolveProjectMediaReferencesForRestore,
 } from './projectMediaReferences';
 import { sanitizeProjectDocument } from './projectValidation';
+import { migrateLegacyPaperBinaryFields } from '../features/paper/assets/PaperDocumentAssets';
+import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
 import { useEditorStore } from '../store/editorStore';
 import { useFlowStore } from '../store/flowStore';
 import { useFlowWorkspaceStore } from '../store/flowWorkspaceStore';
@@ -83,16 +85,25 @@ export async function restoreProjectDocument(document: unknown): Promise<void> {
       sanitizedDocument,
       sourceBinStore.getAllItems(),
     );
+    const restoredDocument = resolvedDocument.paper?.document
+      ? {
+        ...resolvedDocument,
+        paper: {
+          ...resolvedDocument.paper,
+          document: await migrateLegacyPaperBinaryFields(resolvedDocument.paper.document, paperAssetRepository),
+        },
+      }
+      : resolvedDocument;
     flowWorkspaceStore.hydrateProjectSnapshot({
-      workspaces: resolvedDocument.flowWorkspaces ?? [buildDefaultFlowWorkspace(resolvedDocument.flow)],
-      activeWorkspaceId: resolvedDocument.activeFlowWorkspaceId,
+      workspaces: restoredDocument.flowWorkspaces ?? [buildDefaultFlowWorkspace(restoredDocument.flow)],
+      activeWorkspaceId: restoredDocument.activeFlowWorkspaceId,
     });
-    flowStore.replaceFlowSnapshot(resolvedDocument.flow);
+    flowStore.replaceFlowSnapshot(restoredDocument.flow);
     await flowStore.restoreImportedAssets();
-    editorStore.restoreWorkspaceSnapshot(resolvedDocument.editor);
-    projectUsageStore.restoreSnapshot(resolvedDocument.usageLedger);
-    paperStore.restoreSnapshot(resolvedDocument.paper);
-    await imageEditorStore.restoreProjectSnapshotWithPixels(resolvedDocument.imageEditor);
+    editorStore.restoreWorkspaceSnapshot(restoredDocument.editor);
+    projectUsageStore.restoreSnapshot(restoredDocument.usageLedger);
+    paperStore.restoreSnapshot(restoredDocument.paper);
+    await imageEditorStore.restoreProjectSnapshotWithPixels(restoredDocument.imageEditor);
     // Multi-window desktop: the source-bin restore above replaced the Source Library with the
     // saved project bin (resolved against flow media refs first). The native main process holds
     // the authoritative live snapshot — which also contains assets generated in *other* windows

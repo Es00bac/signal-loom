@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FlowProjectDocument } from './projectLibrary';
+import type { PaperFrameAsset } from '../types/paper';
 import {
   normalizeProjectMediaReferencesForSave,
   resolveProjectMediaReferencesForRestore,
@@ -93,7 +94,7 @@ function buildProjectDocument(): FlowProjectDocument {
                   kind: 'image',
                   src: imageDataUrl,
                   mimeType: 'image/png',
-                },
+                } as unknown as PaperFrameAsset,
                 fit: 'cover',
                 imageScale: 1,
                 imageOffsetXPercent: 0,
@@ -146,7 +147,7 @@ describe('project media reference normalization', () => {
     const frameAsset = result.document.paper!.document!.pages[0]!.frames[0]!.asset;
     const envelopeItem = result.document.flow.nodes[0]!.data.envelopeItems?.[0];
 
-    expect(frameAsset?.src).toBe(signalAssetUrl);
+    expect(frameAsset?.locator).toEqual({ kind: 'external', url: signalAssetUrl });
     expect(envelopeItem?.value).toBe(signalAssetUrl);
     expect(envelopeItem?.sourceBinItemId).toBe('source-image-1');
     expect(JSON.stringify(result.document.flow)).not.toContain(imageDataUrl);
@@ -155,12 +156,33 @@ describe('project media reference normalization', () => {
     expect(result.stats.flowEmbeddedMediaReplaced).toBe(1);
   });
 
+  it('normalizes legacy parent-page assets through the same Source Library link', () => {
+    const project = buildProjectDocument();
+    const parentFrame = {
+      ...project.paper!.document!.pages[0]!.frames[0]!,
+      id: 'parent-frame-1',
+    };
+    project.paper!.document!.parentPages = [{
+      id: 'parent-page-1',
+      name: 'A-Parent',
+      guides: [],
+      frames: [parentFrame],
+    }];
+
+    const result = normalizeProjectMediaReferencesForSave(project);
+    const parentAsset = result.document.paper!.document!.parentPages[0]!.frames[0]!.asset;
+
+    expect(parentAsset?.locator).toEqual({ kind: 'external', url: signalAssetUrl });
+    expect(JSON.stringify(result.document.paper)).not.toContain(imageDataUrl);
+    expect(result.stats.paperEmbeddedMediaReplaced).toBe(2);
+  });
+
   it('rehydrates lightweight Paper and Flow references from restored Source Library items', () => {
     const saved = normalizeProjectMediaReferencesForSave(buildProjectDocument()).document;
     const sourceItems = saved.sourceBin?.bins?.flatMap((bin) => bin.items) ?? [];
     const restored = resolveProjectMediaReferencesForRestore(saved, sourceItems);
 
-    expect(restored.paper!.document!.pages[0]!.frames[0]!.asset?.src).toBe(signalAssetUrl);
+    expect(restored.paper!.document!.pages[0]!.frames[0]!.asset?.locator).toEqual({ kind: 'external', url: signalAssetUrl });
     expect(restored.flow.nodes[0]!.data.envelopeItems?.[0]?.value).toBe(signalAssetUrl);
     expect(restored.flow.nodes[0]!.data.envelopeItems?.[0]?.sourceBinItemId).toBe('source-image-1');
   });

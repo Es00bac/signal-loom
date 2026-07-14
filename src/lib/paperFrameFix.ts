@@ -9,8 +9,10 @@
  * This module is the pure, canvas-free core: prompt assembly, sibling-reference collection, and
  * marquee-rect math. Rasterization (mask PNGs) lives with the dialog, which owns a canvas.
  */
+import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import type { PaperFrame, PaperPage } from '../types/paper';
 import type { GenerativeFillReferenceInput } from './imageEditorAi';
+import { hasPaperAssetReference, resolvePaperFrameAssetUrl } from './paperAssetReferences';
 
 export interface FrameFixSiblingCandidate {
   frameId: string;
@@ -23,12 +25,17 @@ export interface FrameFixSiblingCandidate {
 export function collectFrameFixSiblingCandidates(
   page: Pick<PaperPage, 'frames'>,
   targetFrameId: string,
+  sourceItems: readonly Pick<SourceBinLibraryItem, 'id' | 'assetUrl'>[] = [],
 ): FrameFixSiblingCandidate[] {
+  const sourceById = new Map(sourceItems.map((item) => [item.id, item]));
   return page.frames.flatMap((frame) => {
     if (frame.id === targetFrameId) {
       return [];
     }
-    const src = frame.asset?.src;
+    const src = resolvePaperFrameAssetUrl(
+      frame.asset,
+      frame.asset?.sourceBinItemId ? sourceById.get(frame.asset.sourceBinItemId) : undefined,
+    );
     if (!src || frame.asset?.kind !== 'image') {
       return [];
     }
@@ -120,5 +127,5 @@ export function buildFrameFixReferences(
 
 /** A frame qualifies for AI fix when it carries raster image art the model can edit. */
 export function canFrameBeAiFixed(frame: Pick<PaperFrame, 'asset'> | undefined): boolean {
-  return Boolean(frame?.asset?.src && frame.asset.kind === 'image');
+  return Boolean(hasPaperAssetReference(frame?.asset) && frame?.asset?.kind === 'image');
 }

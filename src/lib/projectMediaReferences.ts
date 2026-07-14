@@ -1,8 +1,9 @@
 import type { AppNode, EnvelopeItem } from '../types/flow';
-import type { PaperFrameAsset } from '../types/paper';
+import type { PaperFrame, PaperFrameAsset } from '../types/paper';
 import type { SourceBinLibraryItem, SourceBinProjectSnapshot } from '../store/sourceBinStore';
 import type { FlowProjectDocument } from './projectLibrary';
 import { buildMediaAssetSignaturePart } from './mediaAssetSignature';
+import { buildPaperFrameAssetFromSourceItem } from './paperAssetReferences';
 
 export interface ProjectMediaReferenceStats {
   paperEmbeddedMediaReplaced: number;
@@ -166,30 +167,42 @@ function normalizePaperMediaReferences(
     return paper;
   }
 
+  const normalizedPages = normalizePaperFrameContainers(paper.document.pages, sourceIndex, stats);
+  const normalizedParentPages = normalizePaperFrameContainers(paper.document.parentPages ?? [], sourceIndex, stats);
+
+  return normalizedPages.changed || normalizedParentPages.changed
+    ? {
+      ...paper,
+      document: {
+        ...paper.document,
+        pages: normalizedPages.containers,
+        parentPages: normalizedParentPages.containers,
+      },
+    }
+    : paper;
+}
+
+function normalizePaperFrameContainers<T extends { frames: PaperFrame[] }>(
+  containers: readonly T[],
+  sourceIndex: SourceItemIndex,
+  stats: ProjectMediaReferenceStats,
+): { containers: T[]; changed: boolean } {
   let changed = false;
-  const pages = paper.document.pages.map((page) => {
-    let pageChanged = false;
-    const frames = page.frames.map((frame) => {
-      if (!frame.asset) {
-        return frame;
-      }
+  const normalized = containers.map((container) => {
+    let containerChanged = false;
+    const frames = container.frames.map((frame) => {
+      if (!frame.asset) return frame;
 
       const asset = normalizePaperFrameAsset(frame.asset, sourceIndex, stats);
-      if (asset === frame.asset) {
-        return frame;
-      }
+      if (asset === frame.asset) return frame;
 
       changed = true;
-      pageChanged = true;
+      containerChanged = true;
       return { ...frame, asset };
     });
-
-    return pageChanged ? { ...page, frames } : page;
+    return containerChanged ? { ...container, frames } : container;
   });
-
-  return changed
-    ? { ...paper, document: { ...paper.document, pages } }
-    : paper;
+  return { containers: normalized, changed };
 }
 
 function normalizePaperFrameAsset(
@@ -197,32 +210,27 @@ function normalizePaperFrameAsset(
   sourceIndex: SourceItemIndex,
   stats: ProjectMediaReferenceStats,
 ): PaperFrameAsset {
+  const legacy = asset as PaperFrameAsset & { src?: unknown };
+  const embeddedLegacySrc = typeof legacy.src === 'string' && isEmbeddedMediaValue(legacy.src);
   const sourceItem = asset.sourceBinItemId ? sourceIndex.byId.get(asset.sourceBinItemId) : undefined;
 
   if (!sourceItem?.assetUrl) {
-    if (isEmbeddedMediaValue(asset.src)) {
-      stats.paperEmbeddedMediaUnmatched += 1;
-    }
+    if (embeddedLegacySrc) stats.paperEmbeddedMediaUnmatched += 1;
     return asset;
   }
 
-  if (asset.src === sourceItem.assetUrl) {
-    return asset;
-  }
-
-  if (isEmbeddedMediaValue(asset.src)) {
-    stats.paperEmbeddedMediaReplaced += 1;
-  }
-
-  return {
-    ...asset,
+  const { src: _legacySrc, ...storedAsset } = legacy;
+  const normalized: PaperFrameAsset = {
+    ...storedAsset,
+    ...buildPaperFrameAssetFromSourceItem(sourceItem),
     label: asset.label || sourceItem.label,
     kind: asset.kind ?? sourceItem.kind,
-    src: sourceItem.assetUrl,
     mimeType: asset.mimeType ?? sourceItem.mimeType,
     pixelWidth: asset.pixelWidth ?? sourceItem.pixelWidth,
     pixelHeight: asset.pixelHeight ?? sourceItem.pixelHeight,
   };
+  if (embeddedLegacySrc) stats.paperEmbeddedMediaReplaced += 1;
+  return JSON.stringify(normalized) === JSON.stringify(asset) ? asset : normalized;
 }
 
 function findSourceItemForEnvelopeItem(

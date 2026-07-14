@@ -22,7 +22,7 @@ describe('paperDocumentFormats', () => {
     if (!('blocks' in imported)) throw new Error('Expected text document import.');
     expect(imported.blocks.map((block) => block.role)).toEqual(['heading', 'paragraph', 'heading', 'paragraph']);
 
-    const doc = importTextDocumentIntoPaper(imported);
+    const doc = await importTextDocumentIntoPaper(imported);
     expect(doc.title).toBe('script');
     expect(doc.pages.flatMap((page) => page.frames).map((frame) => frame.text)).toEqual(expect.arrayContaining(['Page One', 'Panel caption text.']));
     expect(doc.pages[0].frames[0].typography.fontWeight).toBe('700');
@@ -85,7 +85,7 @@ describe('paperDocumentFormats', () => {
 
     // The attributes flow into the created Paper frames — and, critically, into the EFFECTIVE typography
     // (no paragraph style silently overriding alignment/weight, which the old 'para-caption' default did).
-    const doc = importTextDocumentIntoPaper(imported);
+    const doc = await importTextDocumentIntoPaper(imported);
     const frames = doc.pages.flatMap((page) => page.frames);
     const centered = frames.find((frame) => frame.text === 'Bold centered line');
     expect(centered?.paragraphStyleId).toBeUndefined();
@@ -137,16 +137,16 @@ describe('paperDocumentFormats', () => {
     expect(table?.table?.cells[0]).toEqual(['Header spans two', '']); // spanned cell → blank continuation
     expect(table?.table?.cells[1]).toEqual(['A1', 'B1']);
     expect(image?.image?.mimeType).toBe('image/png');
-    expect(image?.image?.dataUrl.startsWith('data:image/png;base64,')).toBe(true);
+    expect(image?.image?.bytes).toEqual(pngBytes);
     expect(image?.image?.widthMm).toBeCloseTo(50.8, 1); // 1828800 EMU ÷ 36000
     expect(imported.limitations?.some((note) => /table/i.test(note))).toBe(true);
     expect(imported.limitations?.some((note) => /image/i.test(note))).toBe(true);
 
     // …and they become a real table frame + a real image frame in the laid-out document.
-    const built = importTextDocumentIntoPaper(imported);
+    const built = await importTextDocumentIntoPaper(imported);
     const frames = built.pages.flatMap((page) => page.frames);
     expect(frames.some((frame) => frame.table && frame.table.rows === 2)).toBe(true);
-    expect(frames.some((frame) => frame.kind === 'image' && frame.asset?.src?.startsWith('data:image/png'))).toBe(true);
+    expect(frames.some((frame) => frame.kind === 'image' && frame.asset?.locator?.kind === 'managed')).toBe(true);
 
     // Imported document elements flow like a Word/LibreOffice document — no debug box around them. Every
     // imported paragraph, table, and image frame must be borderless (transparent stroke, zero width) rather
@@ -193,7 +193,7 @@ describe('paperDocumentFormats', () => {
     expect(table?.table?.borderColor).toBe('#4472c4');
 
     // …and the fills/border land on the built Paper table frame (normalized, still rows×cols).
-    const built = importTextDocumentIntoPaper(imported);
+    const built = await importTextDocumentIntoPaper(imported);
     const frame = built.pages.flatMap((page) => page.frames).find((f) => f.table);
     expect(frame?.table?.cellFills?.[0]).toEqual(['#4472c4', '#4472c4']);
     expect(frame?.table?.borderColor).toBe('#4472c4');
@@ -261,7 +261,7 @@ describe('paperDocumentFormats', () => {
     const imported = await parsePaperDocumentImportFile(file);
     if (!('blocks' in imported)) throw new Error('Expected a text-document import.');
     expect(imported.pageMarginsMm?.top).toBeCloseTo(25.4, 1); // 1440 twips = 1 inch
-    const built = importTextDocumentIntoPaper(imported);
+    const built = await importTextDocumentIntoPaper(imported);
     expect(built.layout.marginsMm.left).toBeCloseTo(25.4, 1);
     expect(built.view.showGuides).toBe(true);
     // Four margin guides on the page: left/right verticals + top/bottom horizontals.
@@ -358,7 +358,7 @@ describe('paperDocumentFormats', () => {
     expect((imported.limitations ?? []).some((note) => /simplified|dominant style/i.test(note))).toBe(false);
 
     // …and it lands on a real frame carrying the runs, with text kept as the flattened fallback.
-    const doc = importTextDocumentIntoPaper(imported);
+    const doc = await importTextDocumentIntoPaper(imported);
     const frame = doc.pages.flatMap((page) => page.frames).find((f) => f.text === 'Plain bold and big red2');
     expect(frame?.richText?.[0].runs.length).toBe(5);
   });
@@ -532,7 +532,7 @@ describe('paperDocumentFormats', () => {
     expect(imported.blocks.find((b) => b.text.includes('Heading on page two'))?.pageBreakBefore).toBe(true);
     expect(imported.blocks.find((b) => b.footnoteRefs?.length)?.footnoteRefs).toEqual([1]);
 
-    const built = importTextDocumentIntoPaper(imported);
+    const built = await importTextDocumentIntoPaper(imported);
     const allFrames = built.pages.flatMap((page) => page.frames);
     // The page break puts the heading on its own (second) page, not page one.
     const introPage = built.pages.findIndex((p) => p.frames.some((f) => (f.text ?? '').includes('Intro on page one')));
@@ -586,7 +586,7 @@ describe('DOCX Japanese round-trip (furigana / 圏点 / 縦書き)', () => {
     );
     if (!('blocks' in imported)) throw new Error('Expected a text-document import.');
     expect(imported.sections?.some((s) => s.vertical)).toBe(true);
-    const doc = importTextDocumentIntoPaper(imported);
+    const doc = await importTextDocumentIntoPaper(imported);
     const frame = doc.pages.flatMap((p) => p.frames).find((f) => (f.text ?? '').includes('吾輩'));
     expect(computeEffectivePaperFrame(doc, frame!).typography.writingMode).toBe('vertical-rl');
   });

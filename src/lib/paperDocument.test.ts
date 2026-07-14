@@ -140,6 +140,39 @@ describe('paperDocument', () => {
     expect(exportPaperDocumentToPrintHtml(parsed)).toContain('class="frame frame-thoughtBubble"');
   });
 
+  it('drops legacy inline binary fields when synchronously parsing Paper JSON', () => {
+    const legacy = createDefaultPaperDocument({ title: 'Legacy binary fields' });
+    legacy.pages[0].frames = [{
+      id: 'legacy-image',
+      kind: 'image',
+      xMm: 10,
+      yMm: 12,
+      widthMm: 50,
+      heightMm: 30,
+      asset: {
+        label: 'Legacy panel',
+        kind: 'image',
+        src: 'data:image/png;base64,AQID',
+      },
+    }] as never;
+    (legacy as unknown as { importedFonts: unknown[] }).importedFonts = [{
+      id: 'legacy-face',
+      familyName: 'Legacy Face',
+      bold: false,
+      italic: false,
+      format: 'truetype',
+      embeddable: true,
+      canSubset: true,
+      dataBase64: 'BAUG',
+    }];
+
+    const parsed = parsePaperDocument(JSON.stringify(legacy));
+
+    expect(JSON.stringify(parsed)).not.toMatch(/data:image|dataBase64|AQID|BAUG/i);
+    expect(parsed.pages[0].frames[0].asset).toEqual({ label: 'Legacy panel', kind: 'image' });
+    expect(parsed.importedFonts).toEqual([]);
+  });
+
   it('resolves assigned parent page frames into canvas and print output with detach overrides', () => {
     let doc = createDefaultPaperDocument({ title: 'Parents' });
     const pageId = doc.pages[0].id;
@@ -407,7 +440,7 @@ describe('paperDocument', () => {
 
     expect(frame?.kind).toBe('image');
     expect(frame?.asset?.sourceBinItemId).toBe('asset-panel-1');
-    expect(frame?.asset?.src).toBe('data:image/png;base64,abc123');
+    expect(frame?.asset?.locator).toBeUndefined();
     expect(frame?.fit).toBe('cover');
     expect(frame?.imageScale).toBe(1);
     expect(frame?.imageOffsetXPercent).toBe(0);
@@ -515,13 +548,16 @@ describe('paperDocument', () => {
       imageOffsetYPercent: -5,
       imageRotationDeg: 15,
     });
+    const item = makeImageItem();
     const placed = placeSourceAssetInPaperFrame(withImageFrame, {
       pageId,
       frameId: imageFrameId,
-      item: makeImageItem(),
+      item,
     });
 
-    const html = exportPaperDocumentToPrintHtml(placed);
+    const html = exportPaperDocumentToPrintHtml(placed, {
+      resolveAssetUrl: (frame) => frame.asset?.sourceBinItemId === item.id ? item.assetUrl : undefined,
+    });
 
     expect(html).toContain('@page');
     expect(html).toContain('size: 221.9mm 285.4mm');
@@ -613,13 +649,16 @@ describe('paperDocument', () => {
       imageOffsetYPercent: 14,
       imageRotationDeg: -3,
     });
+    const item = makeImageItem();
     const placed = placeSourceAssetInPaperFrame(withImageFrame, {
       pageId,
       frameId,
-      item: makeImageItem(),
+      item,
     });
 
-    const html = exportPaperDocumentToPrintHtml(placed);
+    const html = exportPaperDocumentToPrintHtml(placed, {
+      resolveAssetUrl: (frame) => frame.asset?.sourceBinItemId === item.id ? item.assetUrl : undefined,
+    });
 
     expect(html).toContain('.frame { position: absolute; margin: 0; overflow: visible; }');
     expect(html).toContain('<figure class="frame frame-image"');

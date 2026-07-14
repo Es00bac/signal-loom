@@ -62,7 +62,7 @@ export function resolvePaperImageQuickEditTarget({
     throw new Error('The selected Paper image is not linked to an image Source Library asset.');
   }
 
-  const sourceUrl = sourceItem.assetUrl ?? frame.asset?.src;
+  const sourceUrl = sourceItem.assetUrl;
   if (!sourceUrl) {
     throw new Error('The selected Paper image has no editable bitmap URL.');
   }

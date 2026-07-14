@@ -2,6 +2,7 @@ import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import type {
   PaperDocument,
   PaperFrame,
+  PaperFrameAsset,
   PaperFrameKind,
   PaperFramePatch,
   PaperGuide,
@@ -15,11 +16,13 @@ import type {
   PaperObjectStyle,
   PaperParagraphStyle,
   PaperParentPage,
+  PaperImportedFont,
   PaperStyleCatalogs,
   PaperTextWrap,
   PaperParagraphBorderEdge,
   PaperTextRun,
 } from '../types/paper';
+import { isBinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import {
   buildPaperImageRenderStyle,
   paperTextVerticalAlignToJustifyContent,
@@ -27,6 +30,7 @@ import {
 } from './paperLayoutTools';
 import { buildPaperBubblePath, resolveBubbleTailCurveHandle } from './paperBubblePaths';
 import { buildPaperBubbleConnectorSegments } from './paperBubbleChains';
+import { paperComicSfxDesignToDataUrl } from './paperComicSfx';
 import { normalizePaperTable } from './paperTables';
 import { flattenPaperRichText, normalizePaperRichText } from './paperRichText';
 import { paperEmphasisMarkToCss, paperInlineTextToHtml } from './paperJapaneseText';
@@ -40,6 +44,10 @@ import {
   normalizePaperPrintProductionSpec,
   type PaperPrintProductionMetadata,
 } from './paperPrintProduction';
+import {
+  buildPaperFrameAssetFromSourceItem,
+  resolvePaperFrameAssetUrl,
+} from './paperAssetReferences';
 
 const DEFAULT_DPI = 300;
 
@@ -155,6 +163,7 @@ type PaperFrameDraft = Partial<Omit<PaperFrame, 'typography'>> & {
 export interface PaperPrintHtmlOptions {
   mediaBox?: 'bleed' | 'trim';
   includeScreenGuides?: boolean;
+  resolveAssetUrl?: (frame: PaperFrame) => string | undefined;
 }
 
 export function createDefaultPaperDocument({
@@ -660,7 +669,7 @@ export function exportPaperDocumentToPrintHtml(
   const sheetWidthMm = useBleedMediaBox ? page.widthMm + page.bleedMm * 2 : page.widthMm;
   const sheetHeightMm = useBleedMediaBox ? page.heightMm + page.bleedMm * 2 : page.heightMm;
   const pageOffsetMm = useBleedMediaBox ? page.bleedMm : 0;
-  const pages = doc.pages.map((paperPage) => renderPrintPage(doc, paperPage, page)).join('\n');
+  const pages = doc.pages.map((paperPage) => renderPrintPage(doc, paperPage, page, options.resolveAssetUrl)).join('\n');
   const productionMeta = buildPaperPrintProductionMetadata(doc);
   const screenGuideCss = options.includeScreenGuides ? `
 @media screen {
@@ -795,6 +804,61 @@ export function serializePaperDocument(doc: PaperDocument): string {
   return `${JSON.stringify(doc, null, 2)}\n`;
 }
 
+type LegacyPaperFrameAsset = PaperFrameAsset & { src?: unknown };
+type LegacyPaperImportedFont = Omit<PaperImportedFont, 'assetRef'> & {
+  assetRef?: unknown;
+  dataBase64?: unknown;
+};
+
+function sanitizeParsedPaperFrameAsset(value: unknown): PaperFrameAsset | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+
+  const asset = value as LegacyPaperFrameAsset;
+  const { src: _legacySource, locator, ...metadata } = asset;
+  if (!locator || typeof locator !== 'object' || Array.isArray(locator)) {
+    return metadata as PaperFrameAsset;
+  }
+
+  const candidate = locator as Record<string, unknown>;
+  if (candidate.kind === 'managed' && isBinaryAssetRef(candidate.ref)) {
+    return { ...metadata, locator: { kind: 'managed', ref: candidate.ref } } as PaperFrameAsset;
+  }
+  if (
+    candidate.kind === 'external'
+    && typeof candidate.url === 'string'
+    && !/^(?:data:|blob:)/i.test(candidate.url)
+  ) {
+    return { ...metadata, locator: { kind: 'external', url: candidate.url } } as PaperFrameAsset;
+  }
+
+  return metadata as PaperFrameAsset;
+}
+
+function sanitizeParsedPaperImportedFonts(value: unknown): PaperImportedFont[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return undefined;
+
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const font = entry as LegacyPaperImportedFont;
+    if (!isBinaryAssetRef(font.assetRef)) return [];
+    const { dataBase64: _legacyBytes, assetRef, ...metadata } = font;
+    return [{ ...metadata, assetRef } as PaperImportedFont];
+  });
+}
+
+function sanitizeParsedPaperFrame(frame: PaperFrame): PaperFrame {
+  return createPaperFrame({
+    ...frame,
+    asset: sanitizeParsedPaperFrameAsset(frame.asset),
+    kind: frame.kind,
+    xMm: frame.xMm,
+    yMm: frame.yMm,
+    widthMm: frame.widthMm,
+    heightMm: frame.heightMm,
+  });
+}
+
 export function parsePaperDocument(json: string): PaperDocument {
   const parsed = JSON.parse(json) as PaperDocument;
   if (!parsed || !Array.isArray(parsed.pages) || !parsed.page) {
@@ -823,12 +887,18 @@ export function parsePaperDocument(json: string): PaperDocument {
       snapToGrid: parsed.view?.snapToGrid ?? false,
     },
     printProduction: normalizePaperPrintProductionSpec(parsed.printProduction),
-    parentPages: Array.isArray(parsed.parentPages) ? parsed.parentPages : [createPaperParentPage('A-Parent', pageSpec)],
+    parentPages: Array.isArray(parsed.parentPages)
+      ? parsed.parentPages.map((parent) => ({
+        ...parent,
+        frames: Array.isArray(parent.frames) ? parent.frames.map(sanitizeParsedPaperFrame) : [],
+      }))
+      : [createPaperParentPage('A-Parent', pageSpec)],
     styles: normalizePaperStyles(parsed.styles),
+    importedFonts: sanitizeParsedPaperImportedFonts(parsed.importedFonts),
     pages: parsed.pages.map((page) => ({
       ...page,
       parentPageId: page.parentPageId,
-      frames: page.frames.map((frame) => createPaperFrame({ ...frame, kind: frame.kind, xMm: frame.xMm, yMm: frame.yMm, widthMm: frame.widthMm, heightMm: frame.heightMm })),
+      frames: page.frames.map(sanitizeParsedPaperFrame),
       guides: Array.isArray(page.guides) ? page.guides : defaultGuidesForPage(pageSpec),
     })),
   };
@@ -1060,9 +1130,7 @@ function placeAssetInFrame(frame: PaperFrame, item: SourceBinLibraryItem): Paper
       ...frame,
       text: item.text ?? item.label,
       asset: {
-        sourceBinItemId: item.id,
-        label: item.label,
-        kind: item.kind,
+        ...buildPaperFrameAssetFromSourceItem(item),
         text: item.text,
       },
     };
@@ -1082,11 +1150,7 @@ function placeAssetInFrame(frame: PaperFrame, item: SourceBinLibraryItem): Paper
       kind: frame.kind === 'panel' ? 'image' : frame.kind,
       label: frame.label || item.label,
       asset: {
-        sourceBinItemId: item.id,
-        label: item.label,
-        kind: item.kind,
-        src: item.assetUrl,
-        mimeType: item.mimeType,
+        ...buildPaperFrameAssetFromSourceItem(item),
         pixelWidth: firstPositiveNumber(imageMetadata.pixelWidth, imageMetadata.widthPx, imageMetadata.width),
         pixelHeight: firstPositiveNumber(imageMetadata.pixelHeight, imageMetadata.heightPx, imageMetadata.height),
       },
@@ -1100,11 +1164,7 @@ function placeAssetInFrame(frame: PaperFrame, item: SourceBinLibraryItem): Paper
       label: frame.label || item.label,
       text: item.text ?? frame.text,
       asset: {
-        sourceBinItemId: item.id,
-        label: item.label,
-        kind: item.kind,
-        src: item.assetUrl,
-        mimeType: item.mimeType,
+        ...buildPaperFrameAssetFromSourceItem(item),
         text: item.text,
         format: item.mimeType === 'application/pdf' || item.label.toLowerCase().endsWith('.pdf') ? 'pdf' : undefined,
       },
@@ -1118,11 +1178,16 @@ function firstPositiveNumber(...values: Array<number | undefined>): number | und
   return values.find((value) => typeof value === 'number' && Number.isFinite(value) && value > 0);
 }
 
-function renderPrintPage(doc: PaperDocument, page: PaperPage, pageSpec: PaperPageSpec): string {
+function renderPrintPage(
+  doc: PaperDocument,
+  page: PaperPage,
+  pageSpec: PaperPageSpec,
+  resolveAssetUrl?: (frame: PaperFrame) => string | undefined,
+): string {
   const outputFrames = resolvePaperPageFramesForOutput(doc, page).sort((a, b) => a.zIndex - b.zIndex);
   const connectors = renderPrintBubbleConnectors(outputFrames, pageSpec);
   const frames = outputFrames
-    .map((frame) => renderPrintFrame(doc, frame))
+    .map((frame) => renderPrintFrame(doc, frame, resolveAssetUrl))
     .join('\n');
 
   return `<section class="paper-sheet" data-page="${page.pageNumber}" data-trim-width="${formatMm(pageSpec.widthMm)}" data-trim-height="${formatMm(pageSpec.heightMm)}" data-bleed="${formatMm(pageSpec.bleedMm)}">
@@ -1155,10 +1220,17 @@ ${body}
 </svg>`;
 }
 
-export function renderPrintFrame(doc: PaperDocument, frame: PaperFrame): string {
+export function renderPrintFrame(
+  doc: PaperDocument,
+  frame: PaperFrame,
+  resolveAssetUrl?: (frame: PaperFrame) => string | undefined,
+): string {
   frame = computeEffectivePaperFrame(doc, frame);
   const outerStyle = printFrameOuterStyle(frame);
   const contentStyle = printFrameContentStyle(frame);
+  const assetUrl = resolveAssetUrl?.(frame)
+    ?? resolvePaperFrameAssetUrl(frame.asset)
+    ?? (frame.comicSfxDesign ? paperComicSfxDesignToDataUrl(frame.comicSfxDesign) : undefined);
 
   if (frame.kind === 'shape') {
     return renderPrintShapeFrame(outerStyle, frame);
@@ -1171,18 +1243,18 @@ export function renderPrintFrame(doc: PaperDocument, frame: PaperFrame): string 
   }
 
   if (isShapedContentFrame(frame)) {
-    return renderPrintShapedContentFrame(doc, outerStyle, frame);
+    return renderPrintShapedContentFrame(doc, outerStyle, frame, assetUrl);
   }
 
   if (frame.kind === 'document') {
     return `<figure class="frame frame-document" style="${outerStyle}">
-  <div class="frame-content" style="${contentStyle}">${renderPrintDocumentFrameContent(frame)}</div>
+  <div class="frame-content" style="${contentStyle}">${renderPrintDocumentFrameContent(frame, assetUrl)}</div>
 </figure>`;
   }
 
-  if (frame.kind === 'image' && frame.asset?.src) {
+  if (frame.kind === 'image' && assetUrl) {
     return `<figure class="frame frame-image" style="${outerStyle}">
-  <div class="frame-content" style="${contentStyle}">${renderPrintImageFrameContent(frame)}</div>
+  <div class="frame-content" style="${contentStyle}">${renderPrintImageFrameContent(frame, assetUrl)}</div>
 </figure>`;
   }
 
@@ -1359,7 +1431,12 @@ function printFrameContentStyle(frame: PaperFrame): string {
   return style.join('; ');
 }
 
-function renderPrintShapedContentFrame(doc: PaperDocument, style: string, frame: PaperFrame): string {
+function renderPrintShapedContentFrame(
+  doc: PaperDocument,
+  style: string,
+  frame: PaperFrame,
+  assetUrl?: string,
+): string {
   const clipPath = printClipPathForFrame(frame);
   const columns = frame.kind === 'text' ? Math.max(1, frame.columns || doc.layout.columns.count) : 1;
   const columnStyle =
@@ -1377,8 +1454,8 @@ function renderPrintShapedContentFrame(doc: PaperDocument, style: string, frame:
     columnStyle,
   ].filter(Boolean).join('; ');
 
-  const content = frame.kind === 'image' && frame.asset?.src
-    ? renderPrintImageFrameContent(frame)
+  const content = frame.kind === 'image' && assetUrl
+    ? renderPrintImageFrameContent(frame, assetUrl)
     : frame.kind === 'panel'
       ? ''
       : renderPrintFrameInlineText(frame, frame.typography.writingMode === 'vertical-rl');
@@ -1417,16 +1494,15 @@ function renderPrintShapeFrame(style: string, frame: PaperFrame): string {
 </figure>`;
 }
 
-function renderPrintImageFrameContent(frame: PaperFrame): string {
-  if (!frame.asset?.src) return '';
+function renderPrintImageFrameContent(frame: PaperFrame, assetUrl: string): string {
   const imageStyle = buildPaperImageRenderStyle(frame);
-  return `<img alt="${escapeHtml(frame.asset.label)}" src="${escapeHtml(frame.asset.src)}" style="position: ${imageStyle.position}; width: ${imageStyle.width}; height: ${imageStyle.height}; max-width: ${imageStyle.maxWidth}; max-height: ${imageStyle.maxHeight}; left: ${imageStyle.left}; top: ${imageStyle.top}; object-fit: ${imageStyle.objectFit}; object-position: ${imageStyle.objectPosition}; transform: ${imageStyle.transform}; transform-origin: ${imageStyle.transformOrigin};" />`;
+  return `<img alt="${escapeHtml(frame.asset?.label ?? frame.label)}" src="${escapeHtml(assetUrl)}" style="position: ${imageStyle.position}; width: ${imageStyle.width}; height: ${imageStyle.height}; max-width: ${imageStyle.maxWidth}; max-height: ${imageStyle.maxHeight}; left: ${imageStyle.left}; top: ${imageStyle.top}; object-fit: ${imageStyle.objectFit}; object-position: ${imageStyle.objectPosition}; transform: ${imageStyle.transform}; transform-origin: ${imageStyle.transformOrigin};" />`;
 }
 
-function renderPrintDocumentFrameContent(frame: PaperFrame): string {
+function renderPrintDocumentFrameContent(frame: PaperFrame, assetUrl?: string): string {
   const label = escapeHtml(frame.asset?.label ?? frame.label);
-  if (frame.asset?.src && frame.asset.mimeType === 'application/pdf') {
-    return `<object data="${escapeHtml(frame.asset.src)}" type="application/pdf" width="100%" height="100%"><div class="paper-document-placeholder">Linked PDF: ${label}</div></object>`;
+  if (assetUrl && frame.asset?.mimeType === 'application/pdf') {
+    return `<object data="${escapeHtml(assetUrl)}" type="application/pdf" width="100%" height="100%"><div class="paper-document-placeholder">Linked PDF: ${label}</div></object>`;
   }
   return `<div class="paper-document-placeholder" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;border:0.35mm dashed #64748b;background:#f8fafc;color:#334155;text-align:center;padding:3mm;">Linked document: ${label}</div>`;
 }

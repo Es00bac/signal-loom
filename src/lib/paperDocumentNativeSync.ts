@@ -1,5 +1,7 @@
 import type { PaperDocument, PaperFrame, PaperFramePatch } from '../types/paper';
 import { updatePaperFrame } from './paperDocument';
+import type { BinaryAssetId } from '../shared/assets/contentAddressedAsset';
+import { collectReachablePaperAssetIds } from '../features/paper/assets/PaperDocumentAssets';
 
 /**
  * Paper workspace channel for the unified cross-device op-sync (task #52; core in
@@ -30,7 +32,7 @@ import { updatePaperFrame } from './paperDocument';
 
 export type PaperDocumentNativeChange =
   /** Full document snapshot — seed, version-gap repair, and the fallback for any non-frame change. */
-  | { type: 'paper-document-snapshot'; document: PaperDocument }
+  | { type: 'paper-document-snapshot'; document: PaperDocument; assetIds?: BinaryAssetId[] }
   /** A frame was created on a page. Idempotent: ignored if that frame id already exists on the page. */
   | { type: 'paper-frame-added'; pageId: string; frame: PaperFrame }
   /** A frame was moved (typically the coalesced final position of a drag, not every pointer frame). */
@@ -139,7 +141,7 @@ export function diffPaperDocumentNativeChanges(
 ): PaperDocumentNativeChange[] {
   if (prev === next) return [];
   if (structuralFingerprint(prev) !== structuralFingerprint(next)) {
-    return [{ type: 'paper-document-snapshot', document: next }];
+    return [createPaperDocumentSnapshotChange(next)];
   }
 
   const ops: PaperDocumentNativeChange[] = [];
@@ -171,4 +173,14 @@ export function diffPaperDocumentNativeChanges(
   }
 
   return ops;
+}
+
+/** Asset bytes travel on the project asset channel; Paper sync carries only their reachable ids. */
+export function createPaperDocumentSnapshotChange(document: PaperDocument): PaperDocumentNativeChange {
+  const assetIds = collectReachablePaperAssetIds(document);
+  return {
+    type: 'paper-document-snapshot',
+    document,
+    ...(assetIds.length ? { assetIds } : {}),
+  };
 }

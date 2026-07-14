@@ -1,4 +1,4 @@
-import type { BinaryAssetId } from '../../../shared/assets/contentAddressedAsset';
+import type { BinaryAssetId, BinaryAssetRef } from '../../../shared/assets/contentAddressedAsset';
 import type { PaperAssetRepository } from './PaperAssetRepository';
 
 export interface PaperAssetUrlLease {
@@ -7,6 +7,7 @@ export interface PaperAssetUrlLease {
 }
 
 interface PaperAssetUrlEntry {
+  ref: BinaryAssetRef;
   url: string;
   leases: number;
 }
@@ -20,8 +21,9 @@ export class PaperAssetUrlRegistry {
     this.repository = repository;
   }
 
-  async acquire(id: BinaryAssetId): Promise<PaperAssetUrlLease> {
-    const entry = await this.getOrCreateEntry(id);
+  async acquire(ref: BinaryAssetRef): Promise<PaperAssetUrlLease> {
+    const entry = await this.getOrCreateEntry(ref);
+    const id = ref.id;
     entry.leases += 1;
     let released = false;
 
@@ -41,16 +43,20 @@ export class PaperAssetUrlRegistry {
     };
   }
 
-  private async getOrCreateEntry(id: BinaryAssetId): Promise<PaperAssetUrlEntry> {
+  private async getOrCreateEntry(ref: BinaryAssetRef): Promise<PaperAssetUrlEntry> {
+    const id = ref.id;
     const existing = this.entries.get(id);
     if (existing) {
+      assertMatchingAssetRef(existing.ref, ref);
       return existing;
     }
 
-    const pending = this.pendingEntries.get(id) ?? this.createEntry(id);
+    const pending = this.pendingEntries.get(id) ?? this.createEntry(ref);
     this.pendingEntries.set(id, pending);
     try {
-      return await pending;
+      const entry = await pending;
+      assertMatchingAssetRef(entry.ref, ref);
+      return entry;
     } finally {
       if (this.pendingEntries.get(id) === pending) {
         this.pendingEntries.delete(id);
@@ -58,17 +64,30 @@ export class PaperAssetUrlRegistry {
     }
   }
 
-  private async createEntry(id: BinaryAssetId): Promise<PaperAssetUrlEntry> {
-    const record = await this.repository.get(id);
+  private async createEntry(ref: BinaryAssetRef): Promise<PaperAssetUrlEntry> {
+    const record = await this.repository.get(ref.id);
     if (!record) {
-      throw new Error(`Paper asset not found: ${id}`);
+      throw new Error(`Paper asset not found: ${ref.id}`);
     }
+    assertMatchingAssetRef(record.ref, ref);
 
     const entry = {
+      ref: { ...record.ref },
       url: URL.createObjectURL(new Blob([new Uint8Array(record.bytes)], { type: record.ref.mimeType })),
       leases: 0,
     };
-    this.entries.set(id, entry);
+    this.entries.set(ref.id, entry);
     return entry;
+  }
+}
+
+function assertMatchingAssetRef(record: BinaryAssetRef, declared: BinaryAssetRef): void {
+  if (
+    record.id !== declared.id
+    || record.sha256 !== declared.sha256
+    || record.mimeType !== declared.mimeType
+    || record.byteLength !== declared.byteLength
+  ) {
+    throw new Error(`Paper asset ${declared.id} does not match its document reference.`);
   }
 }

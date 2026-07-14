@@ -1,4 +1,5 @@
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
+import type { BinaryAssetId, BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import type { PaperComicSfxDesign } from '../lib/paperComicSfx';
 import type { PaperSwatch } from '../lib/paperSwatches';
 import type { PaperTableSpec } from '../lib/paperTables';
@@ -245,7 +246,8 @@ export interface PaperFrameAsset {
   sourceBinItemId?: string;
   label: string;
   kind: SourceBinLibraryItem['kind'];
-  src?: string;
+  /** Binary bytes live in project/Paper asset storage, never in Paper JSON. */
+  locator?: PaperManagedAssetLocator;
   mimeType?: string;
   text?: string;
   format?: string;
@@ -254,6 +256,10 @@ export interface PaperFrameAsset {
   pixelHeight?: number;
   embeddedAt?: number;
 }
+
+export type PaperManagedAssetLocator =
+  | { kind: 'managed'; ref: BinaryAssetRef }
+  | { kind: 'external'; url: string };
 
 export interface PaperFrameGradient {
   type: 'linear';
@@ -471,7 +477,7 @@ export interface PaperDocument {
   styles: PaperStyleCatalogs;
   /** Document swatch library (custom CMYK/spot/process colors) layered on the built-in defaults. */
   swatches?: PaperSwatch[];
-  /** User-imported fonts embedded in the document (vetted unbroken + embeddable) so they travel with it. */
+/** User-imported fonts represented by vetted binary asset references. */
   importedFonts?: PaperImportedFont[];
   pages: PaperPage[];
   createdAt: number;
@@ -479,9 +485,8 @@ export interface PaperDocument {
 }
 
 /**
- * A font the user imported into the document. Vetted (unbroken + embeddable) at import time; the raw bytes
- * are carried inline as base64 so the font travels with the .slppr file and can be embedded on export
- * instead of substituting a bundled Liberation face.
+ * A font the user imported into the document. Vetted (unbroken + embeddable) at import time; bytes are
+ * resolved through the managed Paper asset repository for preview and export.
  */
 export interface PaperImportedFont {
   /** Stable id (embed cache key). */
@@ -497,12 +502,14 @@ export interface PaperImportedFont {
   embeddable: boolean;
   /** OS/2 fsType permits subsetting (false → embed the whole font). */
   canSubset: boolean;
-  /** Raw font bytes as base64 (no data: prefix). */
-  dataBase64: string;
+  /** Immutable content-addressed font bytes. */
+  assetRef: BinaryAssetRef;
 }
 
 export interface PaperDocumentSnapshot {
   document: PaperDocument;
+  /** Reachable Paper-managed binary records; source-bin links remain identifiers only. */
+  assetIds?: BinaryAssetId[];
   selectedPageId?: string;
   selectedFrameId?: string;
   selectedFrameIds?: string[];

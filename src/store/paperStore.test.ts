@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createPaperComicSfxDesign } from '../lib/paperComicSfx';
 import { addFrameToPaperPage, createDefaultPaperDocument } from '../lib/paperDocument';
+import { createBinaryAssetRecord, type BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
+import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
 import type { SourceBinLibraryItem } from './sourceBinStore';
 import type { PaperImportedFont } from '../types/paper';
 import { usePaperStore } from './paperStore';
@@ -19,6 +21,11 @@ function resetPaperStore() {
     clipboardFrames: [],
     styleClipboard: null,
   });
+}
+
+function fontAssetRef(): BinaryAssetRef {
+  const sha256 = '3'.repeat(64);
+  return { id: `sha256:${sha256}`, sha256, mimeType: 'font/ttf', byteLength: 4 };
 }
 
 function textItem(): SourceBinLibraryItem {
@@ -324,7 +331,7 @@ describe('paperStore interaction actions', () => {
       },
     });
     expect(primaryFrame?.asset?.mimeType).toBe('image/svg+xml');
-    expect(primaryFrame?.asset?.src).toContain('data:image/svg+xml');
+    expect(primaryFrame?.asset?.locator).toBeUndefined();
 
     paperEditActions().undo();
     expect(usePaperStore.getState().document.pages.find((candidate) => candidate.id === pageId)?.frames).toHaveLength(0);
@@ -364,7 +371,7 @@ describe('paperStore interaction actions', () => {
         burstEnabled: false,
       },
     });
-    expect(page?.frames.find((frame) => frame.id === primaryFrameId)?.asset?.src).toContain('data:image/svg+xml');
+    expect(page?.frames.find((frame) => frame.id === primaryFrameId)?.asset?.locator).toBeUndefined();
     expect(state.selectedFrameIds).toEqual([primaryFrameId]);
   });
 
@@ -577,7 +584,7 @@ describe('paperStore document swatches', () => {
   it('adds, replaces by family+style, and removes imported fonts with history', () => {
     const face = (id: string, patch: Partial<PaperImportedFont> = {}): PaperImportedFont => ({
       id, familyName: 'Brandon', bold: false, italic: false, format: 'truetype',
-      embeddable: true, canSubset: true, dataBase64: 'AAAA', ...patch,
+      embeddable: true, canSubset: true, assetRef: fontAssetRef(), ...patch,
     });
     const ids = () => usePaperStore.getState().document.importedFonts?.map((f) => f.id);
 
@@ -595,5 +602,60 @@ describe('paperStore document swatches', () => {
     // Undo restores the removed font.
     usePaperStore.getState().undo();
     expect(ids()).toEqual(['b', 'c']);
+  });
+});
+
+describe('paperStore managed assets', () => {
+  beforeEach(resetPaperStore);
+
+  it('exports Paper snapshots with references but no binary strings', async () => {
+    const record = await createBinaryAssetRecord(new Uint8Array([4, 5, 6]), { mimeType: 'image/png' });
+    let document = createDefaultPaperDocument({ title: 'Managed asset snapshot' });
+    const pageId = document.pages[0].id;
+    document = addFrameToPaperPage(document, pageId, {
+      kind: 'image',
+      xMm: 0,
+      yMm: 0,
+      widthMm: 40,
+      heightMm: 30,
+      asset: {
+        label: 'Managed panel',
+        kind: 'image',
+        locator: { kind: 'managed', ref: record.ref },
+      },
+    } as never).document;
+    usePaperStore.setState({ document });
+
+    const snapshot = usePaperStore.getState().exportSnapshot();
+
+    expect(JSON.stringify(snapshot)).not.toMatch(/base64|data:image|blob:/i);
+    expect((snapshot as unknown as { assetIds?: string[] }).assetIds).toEqual([record.ref.id]);
+  });
+
+  it('migrates legacy inline Paper JSON into repository records before importing it', async () => {
+    const legacy = createDefaultPaperDocument({ title: 'Legacy import' });
+    legacy.pages[0].frames = [{
+      id: 'legacy-panel',
+      kind: 'image',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 40,
+      heightMm: 30,
+      asset: {
+        label: 'Legacy panel',
+        kind: 'image',
+        src: 'data:image/png;base64,AQID',
+      },
+    }] as never;
+
+    await usePaperStore.getState().importDocumentJson(JSON.stringify(legacy));
+
+    const asset = usePaperStore.getState().document.pages[0].frames[0].asset;
+    expect(asset?.locator).toMatchObject({ kind: 'managed' });
+    expect(JSON.stringify(usePaperStore.getState().document)).not.toMatch(/data:image|base64/i);
+    const ref = asset?.locator?.kind === 'managed' ? asset.locator.ref : undefined;
+    expect(ref).toBeDefined();
+    expect(await paperAssetRepository.get(ref!.id)).toMatchObject({ bytes: new Uint8Array([1, 2, 3]) });
+    await paperAssetRepository.delete(ref!.id);
   });
 });

@@ -9,43 +9,23 @@ import type {
   PaperFrame,
   PaperFrameAsset,
   PaperImportedFont,
+  PaperManagedAssetLocator,
   PaperPage,
 } from '../../../types/paper';
 import type { PaperAssetRepository } from './PaperAssetRepository';
 
-export interface ManagedPaperAssetLocator {
-  kind: 'managed';
-  ref: BinaryAssetRef;
-}
+export type ManagedPaperAssetLocator = PaperManagedAssetLocator;
+export type PaperAssetLocator = PaperManagedAssetLocator;
+export type ManagedPaperFrameAsset = PaperFrameAsset;
+export type ManagedPaperFrame = PaperFrame;
+export type ManagedPaperPage = PaperPage;
+export type ManagedPaperImportedFont = PaperImportedFont;
+export type PaperDocumentWithManagedAssets = PaperDocument;
 
-export interface ExternalPaperAssetLocator {
-  kind: 'external';
-  url: string;
-}
-
-export type PaperAssetLocator = ManagedPaperAssetLocator | ExternalPaperAssetLocator;
-
-export type ManagedPaperFrameAsset = Omit<PaperFrameAsset, 'src'> & {
-  src?: string;
-  locator?: PaperAssetLocator;
-};
-
-export type ManagedPaperFrame = Omit<PaperFrame, 'asset'> & {
-  asset?: ManagedPaperFrameAsset;
-};
-
-export type ManagedPaperPage = Omit<PaperPage, 'frames'> & {
-  frames: ManagedPaperFrame[];
-};
-
-export type ManagedPaperImportedFont = Omit<PaperImportedFont, 'dataBase64'> & {
-  dataBase64?: never;
-  assetRef: BinaryAssetRef;
-};
-
-export type PaperDocumentWithManagedAssets = Omit<PaperDocument, 'pages' | 'importedFonts'> & {
-  pages: ManagedPaperPage[];
-  importedFonts?: ManagedPaperImportedFont[];
+type LegacyPaperFrameAsset = PaperFrameAsset & { src?: unknown };
+type LegacyPaperImportedFont = Omit<PaperImportedFont, 'assetRef'> & {
+  assetRef?: BinaryAssetRef;
+  dataBase64?: unknown;
 };
 
 interface LegacySlpprAssetRef {
@@ -92,17 +72,17 @@ function decodeBase64(value: string): Uint8Array {
 
 function parseDataUrl(value: string): { bytes: Uint8Array; mimeType: string } | undefined {
   if (!/^data:/i.test(value)) return undefined;
-  const marker = ';base64,';
-  const markerIndex = value.indexOf(marker);
-  if (markerIndex < 5) {
-    throw new Error('Unsupported non-Base64 data URL in a Paper asset.');
-  }
-  const mimeType = value.slice(5, markerIndex).trim();
+  const match = /^data:([^,]*),(.*)$/is.exec(value);
+  if (!match) throw new Error('Malformed Paper asset data URL.');
+  const metadata = match[1].trim();
+  const mimeType = metadata.split(';', 1)[0]?.trim();
   if (!mimeType) {
-    throw new Error('Paper asset Base64 data URL must declare a MIME type.');
+    throw new Error('Paper asset data URL must declare a MIME type.');
   }
+  const payload = match[2];
+  const isBase64 = metadata.split(';').some((part) => part.trim().toLowerCase() === 'base64');
   return {
-    bytes: decodeBase64(value.slice(markerIndex + marker.length)),
+    bytes: isBase64 ? decodeBase64(payload) : new TextEncoder().encode(decodeURIComponent(payload)),
     mimeType,
   };
 }
@@ -128,11 +108,32 @@ async function storePayload(
   return repository.put(record);
 }
 
+/** Converts a legacy inline payload at an import boundary into a managed binary reference. */
+export async function storePaperBinaryAsset(
+  repository: PaperAssetRepository,
+  bytes: Uint8Array,
+  metadata: { mimeType: string; fileName?: string },
+): Promise<BinaryAssetRef> {
+  return storePayload(repository, bytes, metadata);
+}
+
+export async function storePaperDataUrlAsset(
+  repository: PaperAssetRepository,
+  dataUrl: string,
+  fileName?: string,
+): Promise<BinaryAssetRef> {
+  const payload = parseDataUrl(dataUrl);
+  if (!payload) {
+    throw new Error('Paper asset import requires a data URL.');
+  }
+  return storePaperBinaryAsset(repository, payload.bytes, { mimeType: payload.mimeType, fileName });
+}
+
 export function collectReachablePaperAssetIds(document: PaperDocument): BinaryAssetId[] {
   const managed = document as unknown as PaperDocumentWithManagedAssets;
   const ids = new Set<BinaryAssetId>();
 
-  for (const page of managed.pages ?? []) {
+  for (const page of [...(managed.pages ?? []), ...(managed.parentPages ?? [])]) {
     for (const frame of page.frames ?? []) {
       const locator = frame.asset?.locator;
       if (locator?.kind === 'managed' && isBinaryAssetRef(locator.ref)) {
@@ -155,9 +156,9 @@ export async function migrateLegacyPaperBinaryFields(
 ): Promise<PaperDocument> {
   const migrated = cloneDocument(document);
 
-  for (const page of migrated.pages ?? []) {
+  for (const page of [...(migrated.pages ?? []), ...(migrated.parentPages ?? [])]) {
     for (const frame of page.frames ?? []) {
-      const asset = frame.asset;
+      const asset = frame.asset as LegacyPaperFrameAsset | undefined;
       if (!asset) continue;
       if (asset.locator?.kind === 'managed') {
         delete asset.src;
@@ -179,7 +180,18 @@ export async function migrateLegacyPaperBinaryFields(
         };
       }
 
-      if (!payload) continue;
+      if (!payload) {
+        delete asset.src;
+        if (typeof source === 'string' && source.trim()) {
+          if (/^blob:/i.test(source)) {
+            throw new Error(`Paper asset ${asset.label || '<unknown>'} uses an expired legacy object URL.`);
+          }
+          asset.locator = { kind: 'external', url: source };
+        } else if (source !== undefined) {
+          throw new Error(`Paper asset ${asset.label || '<unknown>'} has an unsupported legacy source.`);
+        }
+        continue;
+      }
       const ref = await storePayload(repository, payload.bytes, {
         mimeType: payload.mimeType ?? asset.mimeType ?? 'application/octet-stream',
       });
@@ -191,7 +203,7 @@ export async function migrateLegacyPaperBinaryFields(
 
   if (Array.isArray(migrated.importedFonts)) {
     migrated.importedFonts = await Promise.all(migrated.importedFonts.map(async (font) => {
-      const candidate = font as unknown as PaperImportedFont & { assetRef?: BinaryAssetRef };
+      const candidate = font as unknown as LegacyPaperImportedFont;
       const { dataBase64, ...metadata } = candidate;
       if (candidate.assetRef && isBinaryAssetRef(candidate.assetRef)) {
         return { ...metadata, assetRef: candidate.assetRef } as ManagedPaperImportedFont;

@@ -27,11 +27,15 @@ describe('paperPackageExport', () => {
       yMm: 10,
       widthMm: 80,
       heightMm: 100,
-      asset: { sourceBinItemId: item.id, label: item.label, kind: item.kind, src: item.assetUrl },
+      asset: { sourceBinItemId: item.id, label: item.label, kind: item.kind },
     });
 
     const exported = buildPaperPackageExport(document, [item], { profileId: 'comic-print' });
-    const parsed = JSON.parse(exported.json) as { manifest: typeof exported.manifest; preflightReport: { profile: { id: string } }; assets: unknown[] };
+    const parsed = JSON.parse(exported.json) as {
+      manifest: typeof exported.manifest;
+      preflightReport: { profile: { id: string } };
+      assets: Array<{ source?: { assetUrl?: string } }>;
+    };
 
     expect(exported.fileName).toBe('Package-Me.sloom-paper-package.zip');
     expect(exported.fallbackJsonFileName).toBe('Package-Me.sloom-paper-package.json');
@@ -58,5 +62,10 @@ describe('paperPackageExport', () => {
     expect(exported.manifest.colors.length).toBeGreaterThan(0);
     expect(parsed.preflightReport.profile.id).toBe('comic-print');
     expect(parsed.assets).toHaveLength(1);
+    expect(parsed.assets[0].source?.assetUrl).toBeUndefined();
+    expect(exported.json).not.toMatch(/data:image|base64,abc/);
+
+    const entries = unzipSync(new Uint8Array(await exported.blob.arrayBuffer()));
+    expect(new TextDecoder().decode(entries['Links/Cover-Art.json'])).not.toMatch(/data:image|base64,abc/);
   });
 });
