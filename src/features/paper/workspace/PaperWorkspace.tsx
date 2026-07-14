@@ -57,6 +57,7 @@ import { useEditorStore } from '../../../store/editorStore';
 import { useDockablePanelStore } from '../../../store/dockablePanelStore';
 import { usePaperStore } from '../../../store/paperStore';
 import { PaperFontImportControl, useRegisterImportedFonts } from './PaperFontImport';
+import { PaperManagedTextLayer } from './PaperManagedTextLayer';
 import { materializePaperDocumentAssetUrls } from '../assets/PaperAssetRuntime';
 import { useSettingsStore } from '../../../store/settingsStore';
 import { useSourceBinStore } from '../../../store/sourceBinStore';
@@ -7943,6 +7944,8 @@ function PaperFrameView({
 }) {
   const [textEditing, setTextEditing] = useState(false);
   const [textDraft, setTextDraft] = useState(frame.text ?? '');
+  const managedTextDocument = usePaperStore((state) => state.document);
+  const [managedTextReady, setManagedTextReady] = useState(false);
   const sourceBins = useSourceBinStore((state) => state.bins);
   const sourceItem = useMemo(
     () => frame.asset?.sourceBinItemId
@@ -8069,11 +8072,26 @@ function PaperFrameView({
   // shape/tail — a materially bigger feature. Left as a follow-up rather than guessed at in this pass.
   const isPlainInlineTextFrame = editableTextFrame && frame.kind !== 'speechBubble' && frame.kind !== 'thoughtBubble';
 
-  const beginTextEdit = (event: React.MouseEvent<HTMLElement>) => {
+  // Managed composition owns only frames whose visible source text is the document's actual text. Thread
+  // continuations/folios can display a derived string, and remain in the legacy preview until they have their
+  // own managed source contract. Browser-only paint effects remain on the browser preview until the production
+  // renderer owns matching vector/flattened effects; a missing face never turns into substitution here.
+  const hasBrowserOnlyTextPaint = Boolean(
+    (frame.textStrokeWidthMm ?? 0) > 0 && frame.textStrokeColor,
+  ) || Boolean(frame.textShadowColor);
+  const managedTextEligible = editableTextFrame
+    && !textEditing
+    && !isThreadContinuation
+    && !frame.textArcPercent
+    && !hasBrowserOnlyTextPaint
+    && (displayText === undefined || displayText === (frame.text ?? ''));
+
+  const beginTextEdit = (event: React.MouseEvent<Element>) => {
     if (!editableTextFrame || frame.locked || frame.inherited || tool !== 'select') return;
     event.preventDefault();
     event.stopPropagation();
     onSelect(event);
+    setManagedTextReady(false);
     setTextDraft(frame.text ?? '');
     setTextEditing(true);
   };
@@ -8208,32 +8226,58 @@ function PaperFrameView({
         ) : frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble' ? (
           <>
             <PaperBubbleShape frame={frame} zoom={zoom} />
-            <PaperBubbleText
-              draft={textDraft}
-              frame={frame}
-              isEditing={textEditing}
-              onBeginEdit={beginTextEdit}
-              onCancel={cancelTextEdit}
-              onCommit={commitTextEdit}
-              onDraftChange={setTextDraft}
-              pageBackgroundCss={pageBackgroundCss}
-              zoom={zoom}
-            />
+            {managedTextEligible ? (
+              <PaperManagedTextLayer
+                document={managedTextDocument}
+                frame={frame}
+                onDoubleClick={beginTextEdit}
+                onReadyChange={setManagedTextReady}
+                style={{ ...paperManagedTextLayerStyle(frame, zoom), zIndex: 45 }}
+                zoom={zoom}
+              />
+            ) : null}
+            <div className={managedTextReady && managedTextEligible ? 'invisible' : undefined}>
+              <PaperBubbleText
+                draft={textDraft}
+                frame={frame}
+                isEditing={textEditing}
+                onBeginEdit={beginTextEdit}
+                onCancel={cancelTextEdit}
+                onCommit={commitTextEdit}
+                onDraftChange={setTextDraft}
+                pageBackgroundCss={pageBackgroundCss}
+                zoom={zoom}
+              />
+            </div>
           </>
         ) : frame.textArcPercent && !textEditing && isPaperInlineTextFrame(frame) ? (
           <PaperTextArc frame={frame} text={displayText ?? frame.text ?? ''} zoom={zoom} />
         ) : editableTextFrame ? (
-          <PaperInlineText
-            displayText={displayText}
-            frame={frame}
-            isEditing={textEditing}
-            onBeginEdit={beginTextEdit}
-            onCancel={cancelTextEdit}
-            onCommit={commitTextEdit}
-            pageBackgroundCss={pageBackgroundCss}
-            wrapSpacers={wrapSpacers}
-            zoom={zoom}
-          />
+          <>
+            {managedTextEligible ? (
+              <PaperManagedTextLayer
+                document={managedTextDocument}
+                frame={frame}
+                onDoubleClick={beginTextEdit}
+                onReadyChange={setManagedTextReady}
+                style={{ ...paperManagedTextLayerStyle(frame, zoom), zIndex: 1 }}
+                zoom={zoom}
+              />
+            ) : null}
+            <div className={`h-full w-full${managedTextReady && managedTextEligible ? ' invisible' : ''}`}>
+              <PaperInlineText
+                displayText={displayText}
+                frame={frame}
+                isEditing={textEditing}
+                onBeginEdit={beginTextEdit}
+                onCancel={cancelTextEdit}
+                onCommit={commitTextEdit}
+                pageBackgroundCss={pageBackgroundCss}
+                wrapSpacers={wrapSpacers}
+                zoom={zoom}
+              />
+            </div>
+          </>
         ) : (
           <div className="whitespace-pre-wrap break-words">
             <PaperWrapFloats spacers={wrapSpacers} zoom={zoom} />
@@ -9092,6 +9136,15 @@ function paperTextEffectReactStyle(
     style.transformOrigin = baseStyle.transformOrigin ?? 'center';
   }
   return style;
+}
+
+/** The managed SVG owns glyph coordinates; this keeps the bubble text-box rotation/effect transform identical. */
+function paperManagedTextLayerStyle(frame: PaperFrame, zoom: number): React.CSSProperties {
+  const style = paperTextEffectReactStyle(frame, zoom);
+  if (frame.kind !== 'speechBubble' && frame.kind !== 'thoughtBubble') return style;
+  const rotationDeg = resolvePaperTextBox(frame).rotationDeg;
+  const transform = appendPaperTextEffectTransform(`rotate(${rotationDeg}deg)`, frame);
+  return transform ? { ...style, transform, transformOrigin: 'center' } : style;
 }
 
 function PaperContextualToolbarButton({

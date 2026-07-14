@@ -6,7 +6,13 @@ import {
   exportPaperDocumentToPrintHtml,
   updatePaperFrame,
 } from './paperDocument';
-import { paperEmphasisMarkToCss, paperInlineTextToHtml, tokenizePaperInlineText } from './paperJapaneseText';
+import {
+  canBreakPaperJapaneseBefore,
+  paperEmphasisMarkToCss,
+  paperInlineTextToHtml,
+  tokenizePaperInlineText,
+  tokenizePaperInlineTextWithOffsets,
+} from './paperJapaneseText';
 import { frameTextIsVectorSafe } from './paperPdfxVectorTextFrames';
 import type { PaperFrame } from '../types/paper';
 
@@ -60,6 +66,18 @@ describe('tokenizePaperInlineText', () => {
       { type: 'ruby', base: '漢字', reading: 'かんじ' },
     ]);
   });
+
+  it('retains authored source offsets while resolving ruby notation for managed composition', () => {
+    expect(tokenizePaperInlineTextWithOffsets('漢字《かんじ》', false)).toEqual([{
+      type: 'ruby',
+      base: '漢字',
+      reading: 'かんじ',
+      sourceStart: 0,
+      sourceEnd: 7,
+      baseSourceStart: 0,
+      baseSourceEnd: 2,
+    }]);
+  });
 });
 
 describe('paperInlineTextToHtml', () => {
@@ -88,6 +106,14 @@ describe('paperEmphasisMarkToCss', () => {
     expect(paperEmphasisMarkToCss('dot')).toBe('filled dot');
     expect(paperEmphasisMarkToCss('none')).toBeUndefined();
     expect(paperEmphasisMarkToCss(undefined)).toBeUndefined();
+  });
+});
+
+describe('Japanese kinsoku helpers', () => {
+  it('does not allow prohibited closing punctuation to begin a strict line', () => {
+    expect(canBreakPaperJapaneseBefore('、', true)).toBe(false);
+    expect(canBreakPaperJapaneseBefore('」', true)).toBe(false);
+    expect(canBreakPaperJapaneseBefore('記', true)).toBe(true);
   });
 });
 

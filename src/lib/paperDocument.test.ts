@@ -16,6 +16,7 @@ import {
   PAPER_SAFE_SANS,
   placeSourceAssetInPaperFrame,
   resolvePaperFontFamily,
+  resolvePaperFrameTextContentBoxMm,
   resolvePaperPageFramesForOutput,
   updatePaperDocumentSetup,
   updatePaperFrame,
@@ -39,6 +40,46 @@ describe('resolvePaperFontFamily (print-safe fonts)', () => {
   it('falls back to the safe sans stack for empty input', () => {
     expect(resolvePaperFontFamily(undefined)).toBe(PAPER_SAFE_SANS);
     expect(resolvePaperFontFamily('   ')).toBe(PAPER_SAFE_SANS);
+  });
+});
+
+describe('resolvePaperFrameTextContentBoxMm', () => {
+  it('uses the same physical inset as print HTML for ordinary text frames', () => {
+    let document = createDefaultPaperDocument({ title: 'Managed text geometry' });
+    const added = addFrameToPaperPage(document, document.pages[0].id, {
+      kind: 'text',
+      xMm: 0,
+      yMm: 0,
+      widthMm: 60,
+      heightMm: 30,
+    });
+    document = added.document;
+    expect(resolvePaperFrameTextContentBoxMm(document.pages[0].frames[0])).toEqual({
+      xMm: 2,
+      yMm: 2,
+      widthMm: 56,
+      heightMm: 26,
+    });
+  });
+
+  it('keeps all rich paragraph callout boxes flush with the frame like the editor preview', () => {
+    let document = createDefaultPaperDocument({ title: 'Managed paragraph box geometry' });
+    const added = addFrameToPaperPage(document, document.pages[0].id, {
+      kind: 'text',
+      xMm: 0,
+      yMm: 0,
+      widthMm: 60,
+      heightMm: 30,
+      richText: [{ runs: [{ text: 'Boxed text' }], shading: '#e5e7eb' }],
+    });
+    document = added.document;
+
+    expect(resolvePaperFrameTextContentBoxMm(document.pages[0].frames[0])).toEqual({
+      xMm: 0,
+      yMm: 0,
+      widthMm: 60,
+      heightMm: 30,
+    });
   });
 });
 

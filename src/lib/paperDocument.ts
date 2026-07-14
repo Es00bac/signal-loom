@@ -1580,7 +1580,39 @@ function printBubbleShapeBounds(frame: PaperFrame): { minX: number; minY: number
 
 function printFrameContentPaddingMm(frame: PaperFrame): number {
   if (frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble' || frame.kind === 'shape') return 0;
+  // Keep continuous imported callouts aligned with the editor: when every rich paragraph paints a shading or
+  // border, its box is the frame's visual edge rather than an inset rectangle inside that frame.
+  if (frame.richText?.length && frame.richText.every((paragraph) => paragraph.borders || paragraph.shading)) return 0;
   return 2;
+}
+
+/**
+ * The physical text content box shared by print HTML and managed glyph composition. Coordinates are local to
+ * the frame, in millimetres. Keeping this geometry here prevents the editor and export paths from inventing
+ * subtly different bubble/text insets.
+ */
+export function resolvePaperFrameTextContentBoxMm(frame: PaperFrame): {
+  xMm: number;
+  yMm: number;
+  widthMm: number;
+  heightMm: number;
+} {
+  if (frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble') {
+    const textBox = resolvePaperTextBox(frame);
+    return {
+      xMm: frame.widthMm * textBox.xPercent / 100,
+      yMm: frame.heightMm * textBox.yPercent / 100,
+      widthMm: frame.widthMm * textBox.widthPercent / 100,
+      heightMm: frame.heightMm * textBox.heightPercent / 100,
+    };
+  }
+  const paddingMm = printFrameContentPaddingMm(frame);
+  return {
+    xMm: paddingMm,
+    yMm: paddingMm,
+    widthMm: Math.max(0, frame.widthMm - paddingMm * 2),
+    heightMm: Math.max(0, frame.heightMm - paddingMm * 2),
+  };
 }
 
 function renderPrintTextBox(frame: PaperFrame, content: string, extraStyle = ''): string {

@@ -20,6 +20,15 @@ export type PaperInlineToken =
   | { type: 'emphasis'; text: string }
   | { type: 'tcy'; digits: string };
 
+/** A token plus offsets into the unparsed inline source (UTF-16 offsets, matching browser selection APIs). */
+export type PaperInlineTokenWithOffsets = PaperInlineToken & {
+  sourceStart: number;
+  sourceEnd: number;
+  /** The visual base range for ruby; the reading occupies the remainder of the token source. */
+  baseSourceStart?: number;
+  baseSourceEnd?: number;
+};
+
 // Alternatives, left-to-right priority:
 //   1. 《《word》》            emphasis (must precede ruby so 《《…》》 isn't read as a 《…》 ruby)
 //   2. ｜base《reading》      furigana with an explicit ｜ delimiter (base = any non-delimiter chars)
@@ -45,6 +54,38 @@ function pushPlain(tokens: PaperInlineToken[], text: string, vertical: boolean):
   if (last < text.length) tokens.push({ type: 'text', text: text.slice(last) });
 }
 
+function pushPlainWithOffsets(
+  tokens: PaperInlineTokenWithOffsets[],
+  text: string,
+  sourceStart: number,
+  vertical: boolean,
+): void {
+  if (!text) return;
+  if (!vertical || !/\d/.test(text)) {
+    tokens.push({ type: 'text', text, sourceStart, sourceEnd: sourceStart + text.length });
+    return;
+  }
+  const re = /\d+/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text))) {
+    if (match.index > last) {
+      const plain = text.slice(last, match.index);
+      tokens.push({ type: 'text', text: plain, sourceStart: sourceStart + last, sourceEnd: sourceStart + match.index });
+    }
+    const tokenStart = sourceStart + match.index;
+    if (match[0].length <= 2) {
+      tokens.push({ type: 'tcy', digits: match[0], sourceStart: tokenStart, sourceEnd: tokenStart + match[0].length });
+    } else {
+      tokens.push({ type: 'text', text: match[0], sourceStart: tokenStart, sourceEnd: tokenStart + match[0].length });
+    }
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) {
+    tokens.push({ type: 'text', text: text.slice(last), sourceStart: sourceStart + last, sourceEnd: sourceStart + text.length });
+  }
+}
+
 /** Parse the inline notation into a flat token list (furigana, emphasis, tate-chū-yoko, plain runs). */
 export function tokenizePaperInlineText(text: string, vertical: boolean): PaperInlineToken[] {
   const tokens: PaperInlineToken[] = [];
@@ -67,6 +108,69 @@ export function tokenizePaperInlineText(text: string, vertical: boolean): PaperI
   }
   if (last < text.length) pushPlain(tokens, text.slice(last), vertical);
   return tokens;
+}
+
+/**
+ * Offset-preserving counterpart to {@link tokenizePaperInlineText}. Composition uses this so ruby/emphasis
+ * annotations remain tied to authored source offsets instead of losing caret/export identity during parsing.
+ */
+export function tokenizePaperInlineTextWithOffsets(text: string, vertical: boolean): PaperInlineTokenWithOffsets[] {
+  const tokens: PaperInlineTokenWithOffsets[] = [];
+  if (!text) return tokens;
+  if (!text.includes('《')) {
+    pushPlainWithOffsets(tokens, text, 0, vertical);
+    return tokens;
+  }
+  let last = 0;
+  let match: RegExpExecArray | null;
+  PAPER_INLINE_RE.lastIndex = 0;
+  while ((match = PAPER_INLINE_RE.exec(text))) {
+    if (match.index > last) pushPlainWithOffsets(tokens, text.slice(last, match.index), last, vertical);
+    const sourceStart = match.index;
+    const sourceEnd = match.index + match[0].length;
+    if (match[1] != null) {
+      tokens.push({
+        type: 'emphasis',
+        text: match[1],
+        sourceStart,
+        sourceEnd,
+        baseSourceStart: sourceStart + 2,
+        baseSourceEnd: sourceStart + 2 + match[1].length,
+      });
+    } else {
+      const explicitBase = match[2];
+      const base = explicitBase ?? match[4] ?? '';
+      const reading = match[3] ?? match[5] ?? '';
+      const baseSourceStart = sourceStart + (explicitBase != null ? 1 : 0);
+      tokens.push({
+        type: 'ruby',
+        base,
+        reading,
+        sourceStart,
+        sourceEnd,
+        baseSourceStart,
+        baseSourceEnd: baseSourceStart + base.length,
+      });
+    }
+    last = sourceEnd;
+  }
+  if (last < text.length) pushPlainWithOffsets(tokens, text.slice(last), last, vertical);
+  return tokens;
+}
+
+// Japanese kinsoku shori. Closing punctuation may not begin a line; opening punctuation may not end one.
+// This is intentionally a concise, conservative set covering the Japanese characters Paper exposes today.
+const KINSOKU_LINE_START = /^[、。，．・：；？！ー）］｝〉》」』】〕〙〗〟’”ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮ]/u;
+const KINSOKU_LINE_END = /[「『（［｛〈《【〔〘〖‘“]/u;
+
+/** True when a strict Japanese line may begin with `nextText`. */
+export function canBreakPaperJapaneseBefore(nextText: string, strict = true): boolean {
+  return !strict || !KINSOKU_LINE_START.test(nextText);
+}
+
+/** True when a strict Japanese line may end with `previousText`. */
+export function canBreakPaperJapaneseAfter(previousText: string, strict = true): boolean {
+  return !strict || !KINSOKU_LINE_END.test(previousText);
 }
 
 // Inline 圏点 default = filled sesame (ゴマ点), the most common emphasis mark. Frame-level emphasis (typography

@@ -46,6 +46,48 @@ export interface TextLayoutResult {
   totalHeightPt: number;
 }
 
+/** Options for the shared, deterministic unit wrapper used by managed composition. */
+export interface PaperTextUnitBreakOptions<T> {
+  /** Return false when `unit` must remain with its predecessor even when it overflows the target width. */
+  canBreakBefore?: (unit: T, index: number, previous: T | undefined) => boolean;
+}
+
+/**
+ * Deterministically split already-tokenized units at their legal boundaries. The caller owns tokenization and
+ * width measurement, which keeps this primitive useful for horizontal text, vertical tategaki, and kinsoku.
+ * A forbidden leading unit is deliberately retained with the previous line rather than being silently moved.
+ */
+export function breakPaperTextUnits<T>(
+  units: readonly T[],
+  maxWidthPt: number,
+  measure: (unit: T) => number,
+  options: PaperTextUnitBreakOptions<T> = {},
+): T[][] {
+  if (units.length === 0) return [];
+  const maxWidth = Number.isFinite(maxWidthPt) && maxWidthPt > 0 ? maxWidthPt : Number.POSITIVE_INFINITY;
+  const canBreakBefore = options.canBreakBefore ?? (() => true);
+  const lines: T[][] = [];
+  let current: T[] = [];
+  let currentWidth = 0;
+
+  units.forEach((unit, index) => {
+    const measured = measure(unit);
+    const width = Math.max(0, Number.isFinite(measured) ? measured : 0);
+    const previous = current[current.length - 1];
+    if (current.length > 0 && currentWidth + width > maxWidth && canBreakBefore(unit, index, previous)) {
+      lines.push(current);
+      current = [unit];
+      currentWidth = width;
+      return;
+    }
+    current.push(unit);
+    currentWidth += width;
+  });
+
+  if (current.length > 0) lines.push(current);
+  return lines;
+}
+
 /** Split a paragraph into words, preserving nothing but single-space separators (CSS-collapsed). */
 function splitWords(paragraph: string): string[] {
   return paragraph.split(/\s+/).filter((w) => w.length > 0);

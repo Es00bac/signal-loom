@@ -37,6 +37,8 @@ export interface PaperShapedRun {
 }
 
 export interface PaperTextShaper {
+  /** Native glyph path scale. Consumers use this instead of assuming a 1000-upem font. */
+  readonly unitsPerEm?: number;
   shape(request: PaperShapeRequest): PaperShapedRun;
   /** Returns an SVG path in the face's units-per-em coordinate space. */
   glyphPath(glyphId: number): string;
@@ -95,6 +97,7 @@ function variationsFor(variations: PaperShapeRequest['variations']): Variation[]
 }
 
 class HarfBuzzPaperTextShaper implements PaperTextShaper {
+  readonly unitsPerEm: number;
   private blob: HarfBuzzBlob | undefined;
   private face: Face | undefined;
   private font: Font | undefined;
@@ -111,6 +114,7 @@ class HarfBuzzPaperTextShaper implements PaperTextShaper {
     if (!Number.isFinite(this.face.upem) || this.face.upem <= 0) {
       throw new Error('The HarfBuzz face has an invalid units-per-em value.');
     }
+    this.unitsPerEm = this.face.upem;
     this.font = new Font(this.face);
     this.font.setScale(this.face.upem, this.face.upem);
     this.buffer = new HarfBuzzBuffer();

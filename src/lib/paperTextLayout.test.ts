@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { layoutParagraphText, type PaperTextAlign } from './paperTextLayout';
+import { breakPaperTextUnits, layoutParagraphText, type PaperTextAlign } from './paperTextLayout';
 
 // Monospace metric: every character (space included) is 10pt wide → all positions are exact integers.
 const CH = 10;
@@ -74,5 +74,12 @@ describe('layoutParagraphText', () => {
   it('defaults the ascent to 0.8·fontSize when not provided', () => {
     const { lines } = run('x', 100, 'left', { fontSizePt: 20 });
     expect(lines[0].baselineYPt).toBe(16); // 20 * 0.8
+  });
+
+  it('keeps an explicitly prohibited next-line character with the preceding unit', () => {
+    const units = ['花', '、', '記'];
+    expect(breakPaperTextUnits(units, 10, () => 6, {
+      canBreakBefore: (unit) => !/^[、。」]/.test(unit),
+    })).toEqual([['花', '、'], ['記']]);
   });
 });
