@@ -1,8 +1,9 @@
 import { memo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Handle, Position } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import { FileImage, FolderOpen, ImageOff, Loader2, RefreshCw, Save } from 'lucide-react';
 import { BaseNode } from './BaseNode';
+import { TypedHandle as Handle } from './TypedHandle';
 import { collectUpstreamImageInputForHandles, useFlowStore } from '../../store/flowStore';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 import { importSlimgFromDisk, readSlimgFromDisk, saveImageAsSlimg } from '../../lib/slimgNodeActions';

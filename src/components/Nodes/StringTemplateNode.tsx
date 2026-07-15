@@ -1,7 +1,8 @@
 import { memo } from 'react';
-import { Handle, Position } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import { AlignLeft } from 'lucide-react';
 import { BaseNode } from './BaseNode';
+import { TypedHandle as Handle } from './TypedHandle';
 import { useFlowStore } from '../../store/flowStore';
 import type { AppNodeProps } from '../../types/flow';
 import { FlowVariableTextarea } from './FlowVariableTextarea';

@@ -171,12 +171,73 @@ describe('ImageNode reference handle routing', () => {
       </ReactFlowProvider>,
     );
 
-    expect(referenceHandleTag(html, 'image-reference-2')).toContain('title="Reference 2 image input (right edge)"');
+    expect(referenceHandleTag(html, 'image-reference-2')).toContain('title="Reference 2 · image"');
     expect(html).toContain('data-reference-side="right"');
+  });
+
+  it('keeps every conceptual reference port visible and blocks handles beyond the model limit', () => {
+    useFlowStore.setState({ nodes: [createNode('target-image', 'imageGen')], edges: [] });
+
+    const html = renderToStaticMarkup(
+      <ReactFlowProvider>
+        <ImageNode
+          data={{ mediaMode: 'generate', provider: 'bfl', modelId: 'flux-2-pro' }}
+          deletable
+          dragging={false}
+          draggable
+          id="target-image"
+          isConnectable
+          positionAbsoluteX={0}
+          positionAbsoluteY={0}
+          selectable
+          selected={false}
+          type="imageGen"
+          zIndex={0}
+        />
+      </ReactFlowProvider>,
+    );
+
+    expect(referenceHandleTag(html, 'image-reference-8')).toContain('data-flow-port-disabled="false"');
+    expect(referenceHandleTag(html, 'image-reference-9')).toContain('data-flow-port-disabled="true"');
+    expect(referenceHandleTag(html, 'image-reference-14')).toContain('data-flow-port-disabled="true"');
+    expect(referenceHandleTag(html, 'image-reference-9')).toContain('supports at most 8 reference images');
+  });
+
+  it('shows unsupported image-conditioning controls as disabled ports with reasons', () => {
+    useFlowStore.setState({ nodes: [createNode('target-image', 'imageGen')], edges: [] });
+
+    const html = renderToStaticMarkup(
+      <ReactFlowProvider>
+        <ImageNode
+          data={{ mediaMode: 'generate', provider: 'stability', modelId: 'stable-image-core' }}
+          deletable
+          dragging={false}
+          draggable
+          id="target-image"
+          isConnectable
+          positionAbsoluteX={0}
+          positionAbsoluteY={0}
+          selectable
+          selected={false}
+          type="imageGen"
+          zIndex={0}
+        />
+      </ReactFlowProvider>,
+    );
+
+    expect(referenceHandleTag(html, 'image-reference-1')).toContain('data-flow-port-disabled="true"');
+    expect(referenceHandleTag(html, 'image-reference-14')).toContain('data-flow-port-disabled="true"');
+    expect(handleTag(html, 'image-edit-source')).toContain('data-flow-port-disabled="true"');
+    expect(handleTag(html, 'image-mask')).toContain('data-flow-port-disabled="true"');
+    expect(html).toContain('does not support reference images');
   });
 });
 
 function referenceHandleTag(html: string, handleId: string): string {
+  return handleTag(html, handleId);
+}
+
+function handleTag(html: string, handleId: string): string {
   const tag = html.match(new RegExp(`<div[^>]*data-handleid="${handleId}"[^>]*>`))?.[0];
   expect(tag, `Expected ${handleId} handle in rendered Image node`).toBeDefined();
   return tag ?? '';

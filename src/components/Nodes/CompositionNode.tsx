@@ -1,8 +1,9 @@
 import { memo, useEffect, useMemo, useState } from 'react';
-import { Handle, Position } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import { Download, ExternalLink, Film, Music2, Plus, Volume2, VolumeX } from 'lucide-react';
 import { AttemptHistory } from './AttemptHistory';
 import { BaseNode } from './BaseNode';
+import { TypedHandle as Handle } from './TypedHandle';
 import { ExecutionTelemetryPanel } from './ExecutionTelemetryPanel';
 import { MediaLoadingOverlay } from './MediaLoadingOverlay';
 import { getCompatibleNodeActions } from '../../lib/nodeActionMenu';

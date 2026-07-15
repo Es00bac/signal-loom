@@ -1,9 +1,10 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Handle, Position } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import { Download, Image as ImageIcon, Upload, Video } from 'lucide-react';
 import { AttemptHistory } from './AttemptHistory';
 import { BaseNode } from './BaseNode';
+import { TypedHandle as Handle } from './TypedHandle';
 import { ExecutionTelemetryPanel } from './ExecutionTelemetryPanel';
 import { ImagePreviewPane } from './ImagePreviewPane';
 import { MediaLoadingOverlay } from './MediaLoadingOverlay';

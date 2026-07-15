@@ -1,8 +1,9 @@
 import { memo, useEffect } from 'react';
-import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
+import { Position, useUpdateNodeInternals } from '@xyflow/react';
 import { Palette, Plus, X } from 'lucide-react';
 import { AdvancedColorPicker } from '../Common/AdvancedColorPicker';
 import { BaseNode } from './BaseNode';
+import { TypedHandle as Handle } from './TypedHandle';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 import {
   COLOR_SWATCH_USAGE_OPTIONS,

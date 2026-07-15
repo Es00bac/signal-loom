@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Handle, Position } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import { MoreHorizontal } from 'lucide-react';
+import { TypedHandle as Handle } from './TypedHandle';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 import { useFlowStore } from '../../store/flowStore';
 import type { NodeActionTemplate } from '../../lib/nodeActionMenu';

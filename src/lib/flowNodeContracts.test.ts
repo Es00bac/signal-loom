@@ -6,6 +6,7 @@ import {
   resolveFlowNodePorts,
   type FlowNodeContractContext,
 } from './flowNodeContracts';
+import { LOOP_BREAK_TARGET_HANDLE } from './flowControlHandles';
 
 function node(type: FlowNodeType, data: NodeData = {}): AppNode {
   return { id: `${type}-1`, type, position: { x: 0, y: 0 }, data } as AppNode;
@@ -132,5 +133,22 @@ describe('dynamic Flow node contracts', () => {
   it('distinguishes Portal entrance and exit directions', () => {
     expect(resolveFlowNodePorts(context('portal', { portalRole: 'entry' })).map((port) => port.direction)).toEqual(['input']);
     expect(resolveFlowNodePorts(context('portal', { portalRole: 'exit' })).map((port) => port.direction)).toEqual(['output']);
+  });
+
+  it.each([
+    'textNode',
+    'imageGen',
+    'cropImageNode',
+    'videoGen',
+    'audioGen',
+    'composition',
+    'visionVerifyNode',
+    'functionNode',
+  ] as const)('%s exposes the Stop When control handle rendered by BaseNode', (type) => {
+    expect(resolveFlowNodePorts(context(type))).toContainEqual(expect.objectContaining({
+      id: LOOP_BREAK_TARGET_HANDLE,
+      direction: 'input',
+      types: [{ kind: 'control' }],
+    }));
   });
 });

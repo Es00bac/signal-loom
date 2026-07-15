@@ -1,7 +1,8 @@
 import { memo } from 'react';
-import { Handle, Position } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import { Scale } from 'lucide-react';
 import { BaseNode } from './BaseNode';
+import { TypedHandle as Handle } from './TypedHandle';
 import type { AppNodeProps } from '../../types/flow';
 
 function FallbackSelectorNodeComponent({ id, data }: AppNodeProps) {

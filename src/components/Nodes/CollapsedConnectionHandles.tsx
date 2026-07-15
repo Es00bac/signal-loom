@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
-import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
+import { Position, useUpdateNodeInternals } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
 import { useFlowStore } from '../../store/flowStore';
+import { TypedHandle as Handle } from './TypedHandle';
 
 // When a node collapses, its per-handle ports (rendered in the expanded body) unmount, so React Flow
 // loses the DOM anchor for the connected edges and stops DRAWING them — even though the connections
@@ -11,7 +12,7 @@ import { useFlowStore } from '../../store/flowStore';
 //
 // Mount this ONLY in a node's collapsed content: there the real handles are absent, so the stub ids
 // (which reuse the real ids so the edges re-anchor) never collide with a live handle of the same id.
-const STUB_CLASS = '!h-2.5 !w-2.5 !min-w-0 !rounded-full !border !border-[#1e2027] !bg-gray-400';
+const STUB_CLASS = '!h-2.5 !w-2.5 !min-w-0 !border !border-[#1e2027]';
 
 export function CollapsedConnectionHandles({ nodeId }: { nodeId: string }) {
   const updateNodeInternals = useUpdateNodeInternals();
@@ -51,7 +52,6 @@ export function CollapsedConnectionHandles({ nodeId }: { nodeId: string }) {
           position={Position.Left}
           className={STUB_CLASS}
           style={{ top: `${38 + index * 13}px` }}
-          title={`Connected · ${handleId}`}
         />
       ))}
       {sourceHandles.map((handleId, index) => (
@@ -62,7 +62,6 @@ export function CollapsedConnectionHandles({ nodeId }: { nodeId: string }) {
           position={Position.Right}
           className={STUB_CLASS}
           style={{ top: `${38 + index * 13}px` }}
-          title={`Connected · ${handleId}`}
         />
       ))}
     </>

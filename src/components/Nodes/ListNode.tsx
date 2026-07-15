@@ -1,7 +1,8 @@
 import { memo, useMemo } from 'react';
-import { Handle, Position } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import { AlertTriangle, Archive, Braces, Hash, Image as ImageIcon, Layers3, List, Music2, ToggleRight, Type, Video } from 'lucide-react';
 import { BaseNode } from './BaseNode';
+import { TypedHandle as Handle } from './TypedHandle';
 import { getCompatibleNodeActions } from '../../lib/nodeActionMenu';
 import {
   buildListItemTargetHandle,

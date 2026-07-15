@@ -8,6 +8,7 @@ import type {
 } from '../types/flow';
 import { FLOW_NODE_TYPES } from '../types/flow';
 import { IMAGE_REFERENCE_HANDLES } from './imageModelSupport';
+import { LOOP_BREAK_TARGET_HANDLE } from './flowControlHandles';
 import { getImageModelDefinition, getImageNodeControlModel } from './imageProviderCapabilities';
 import { isFlowResultKind } from './flowValueTypes';
 import {
@@ -122,6 +123,17 @@ const allKnownValueTypes: readonly FlowDataType[] = [
 ];
 
 const allInspectableTypes: readonly FlowDataType[] = [...allKnownValueTypes, unknownType, controlType];
+
+const LOOP_BREAK_TARGET_TYPES = new Set<FlowNodeType>([
+  'textNode',
+  'imageGen',
+  'cropImageNode',
+  'videoGen',
+  'audioGen',
+  'composition',
+  'visionVerifyNode',
+  'functionNode',
+]);
 
 const IMPLEMENTATION_PATHS = {
   textNode: 'src/components/Nodes/TextNode.tsx',
@@ -382,7 +394,15 @@ export function getFlowNodeContract(type: FlowNodeType): FlowNodeContract {
 }
 
 export function resolveFlowNodePorts(context: FlowNodeContractContext): readonly FlowPortContract[] {
-  return FLOW_NODE_CONTRACTS[context.node.type].resolvePorts(context);
+  const ports = FLOW_NODE_CONTRACTS[context.node.type].resolvePorts(context);
+  if (!LOOP_BREAK_TARGET_TYPES.has(context.node.type)
+    || ports.some((port) => port.direction === 'input' && port.id === LOOP_BREAK_TARGET_HANDLE)) {
+    return ports;
+  }
+  return [
+    ...ports,
+    input(LOOP_BREAK_TARGET_HANDLE, 'Stop control', [controlType]),
+  ];
 }
 
 function define(

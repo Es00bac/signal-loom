@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Handle, Position } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import { Bookmark, Check, Clock, Maximize2, Minimize2, MoreHorizontal, Play, RotateCcw, Square, Trash2, X } from 'lucide-react';
 import { OutputPortMenu } from './OutputPortMenu';
+import { TypedHandle as Handle } from './TypedHandle';
+import { FlowNodeHandleContext } from './flowNodeHandleContext';
 import { dispatchNodeContextMenu, getNodeContextMenuAnchor, useCoarsePointer } from './nodeContextMenuTrigger';
 import { SharedContextMenu } from '../Common/SharedContextMenu';
 import type { NodeActionTemplate } from '../../lib/nodeActionMenu';
@@ -258,6 +260,7 @@ const inputShapeClass = isGenericInput ? 'sl-handle-triangle' : (isLogicNode ? '
 const outputShapeClass = isGenericOutput ? 'sl-handle-triangle' : (isLogicNode ? '!rounded-none' : '!rounded-full');
 
 return (
+  <FlowNodeHandleContext.Provider value={nodeId ?? null}>
   <div
     ref={containerRef}
     className={`border rounded-xl w-[260px] shadow-2xl font-sans relative flex flex-col group transition-all hover:border-gray-500 ${theme.containerClassName} ${containerClassName ?? ''}`}
@@ -534,5 +537,6 @@ return (
         />
       ) : null}
     </div>
+  </FlowNodeHandleContext.Provider>
   );
 };

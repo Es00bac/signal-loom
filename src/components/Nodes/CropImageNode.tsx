@@ -7,10 +7,11 @@ import {
   useState,
   type CSSProperties,
 } from 'react';
-import { Handle, Position } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import { Crop } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { BaseNode } from './BaseNode';
+import { TypedHandle as Handle } from './TypedHandle';
 import { ImagePreviewPane } from './ImagePreviewPane';
 import { collectUpstreamImageInputForHandles } from '../../store/flowStore';
 import { buildCropPreviewOverlayRect, resolveCropImageNodeSettings, type CropImageNodeSettings } from '../../lib/cropImageNode';

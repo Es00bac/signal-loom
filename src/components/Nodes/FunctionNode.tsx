@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { Handle, Position } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import { Box, Braces, GitBranch, ListPlus, Plus, Trash2 } from 'lucide-react';
 import { BaseNode } from './BaseNode';
+import { TypedHandle as Handle } from './TypedHandle';
 import {
   collectFunctionNodeWarnings,
   createDefaultFunctionNodeConfig,

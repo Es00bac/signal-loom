@@ -1,7 +1,8 @@
 import { useMemo, memo } from 'react';
-import { Handle, Position } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import { Archive, ChevronLeft, ChevronRight, ChevronsRight, Image as ImageIcon, Music2, Type, Video, Cpu } from 'lucide-react';
 import { BaseNode } from './BaseNode';
+import { TypedHandle as Handle } from './TypedHandle';
 import { getCompatibleNodeActions } from '../../lib/nodeActionMenu';
 import {
   buildExpanderSourceItems,

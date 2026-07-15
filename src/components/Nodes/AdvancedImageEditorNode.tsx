@@ -1,7 +1,8 @@
 import { memo, useCallback } from 'react';
-import { Handle, Position } from '@xyflow/react';
+import { Position } from '@xyflow/react';
 import { Image as ImageIcon } from 'lucide-react';
 import { BaseNode } from './BaseNode';
+import { TypedHandle as Handle } from './TypedHandle';
 import type { AppNodeProps } from '../../types/flow';
 import { createEmptyImageDocument, useImageEditorStore } from '../../store/imageEditorStore';
 import { useEditorStore } from '../../store/editorStore';

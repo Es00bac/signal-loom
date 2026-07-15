@@ -1,9 +1,10 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
+import { Position, useUpdateNodeInternals } from '@xyflow/react';
 import { Download, Image as ImageIcon, Maximize2, Upload, X } from 'lucide-react';
 import { AttemptHistory } from './AttemptHistory';
 import { BaseNode } from './BaseNode';
+import { TypedHandle as Handle } from './TypedHandle';
 import { CollapsedConnectionHandles } from './CollapsedConnectionHandles';
 import { ExecutionTelemetryPanel } from './ExecutionTelemetryPanel';
 import { ImageGenerationProgressBackdrop } from './ImageGenerationProgressBackdrop';
@@ -43,6 +44,7 @@ import {
 } from '../../lib/imageNodeTemplates';
 import { getCompatibleNodeActions } from '../../lib/nodeActionMenu';
 import { assignVariableToResultAttempt } from '../../lib/flowVariables';
+import { resolveFlowNodePorts, type FlowPortContract } from '../../lib/flowNodeContracts';
 import { resolveUniversalConfiguredUpscalePlan } from '../../lib/universalImageUpscale';
 import { hasConnectedVideoSource } from '../../lib/videoSourceConnections';
 import {
@@ -120,6 +122,19 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
   );
   const selectedModelId = data.modelId ?? getDefaultImageModel(provider);
   const controlModel = getImageNodeControlModel(provider, selectedModelId);
+  const resolvedPortContracts = resolveFlowNodePorts({
+    node: {
+      id,
+      type: 'imageGen',
+      position: { x: 0, y: 0 },
+      data: { ...data, provider, modelId: selectedModelId },
+    },
+    nodes: [],
+    edges: [],
+  });
+  const portContract = (handleId: string) => resolvedPortContracts.find((port) =>
+    port.direction === 'input' && port.id === handleId
+  );
   const capabilityBadges = useMemo(
     () => getImageNodeCapabilityBadges(provider, selectedModelId),
     [provider, selectedModelId],
@@ -134,10 +149,7 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
   );
   const autoUpscaleEnabled = Boolean(data.imageAutoUpscale);
   const hasControl = (control: ImageNodeVisibleControl) => controlModel.visibleControls.includes(control);
-  const visibleReferenceHandles = IMAGE_REFERENCE_HANDLES.slice(
-    0,
-    Math.max(0, Math.min(IMAGE_REFERENCE_HANDLES.length, controlModel.capabilities.maxReferenceImages)),
-  );
+  const visibleReferenceHandles = IMAGE_REFERENCE_HANDLES;
   const servedSession = isServedLanSession();
   const sourceAssetId = typeof data.sourceAssetId === 'string' ? data.sourceAssetId : undefined;
   const nodeSourceBinItemId = typeof data.sourceBinItemId === 'string' ? data.sourceBinItemId : undefined;
@@ -1059,24 +1071,33 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
         )
       ) : null}
 
-      {mediaMode === 'generate' && !isVideoFrameMode && (canEditConnectedImage || canUseReferenceGuidance || hasControl('mask')) ? (
+      {mediaMode === 'generate' && !isVideoFrameMode ? (
         <>
-          {canEditConnectedImage ? (
-            <ImageEditSourceSlot imageUrl={editSourcePreviewUrl} isConnected={hasEditSourceConnection} />
-          ) : null}
-          {hasControl('mask') ? (
-            <ImageMaskSlot
-              canOpenPainter={canOpenMaskPainter}
-              hasPaintedMask={hasPaintedMask}
-              imageUrl={effectiveMaskPreviewUrl}
-              isConnected={hasMaskConnection}
-              onOpenPainter={() => setMaskPainterOpen(true)}
-            />
-          ) : null}
-          {canUseReferenceGuidance ? (
-            <div className="grid grid-cols-2 gap-2">
-              {references.map((reference, index) => (
+          <ImageEditSourceSlot
+            contract={portContract('image-edit-source')}
+            disabledReason={canEditConnectedImage ? undefined : 'The selected model does not support image editing.'}
+            imageUrl={editSourcePreviewUrl}
+            isConnected={hasEditSourceConnection}
+          />
+          <ImageMaskSlot
+            canOpenPainter={canOpenMaskPainter && hasControl('mask')}
+            contract={portContract('image-mask')}
+            disabledReason={hasControl('mask') ? undefined : 'The selected model does not support mask inpainting.'}
+            hasPaintedMask={hasPaintedMask}
+            imageUrl={effectiveMaskPreviewUrl}
+            isConnected={hasMaskConnection}
+            onOpenPainter={() => setMaskPainterOpen(true)}
+          />
+          <div className="grid grid-cols-2 gap-2">
+            {references.map((reference, index) => {
+              const supported = canUseReferenceGuidance
+                && index < controlModel.capabilities.maxReferenceImages;
+              return (
                 <ImageReferenceSlot
+                  contract={portContract(reference.handleId)}
+                  disabledReason={supported ? undefined : canUseReferenceGuidance
+                    ? `This model supports at most ${controlModel.capabilities.maxReferenceImages} reference images.`
+                    : 'The selected model does not support reference images.'}
                   handleId={reference.handleId}
                   imageUrl={reference.imageUrl}
                   isConnected={reference.isConnected}
@@ -1084,9 +1105,9 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
                   label={`Reference ${index + 1}`}
                   side={index % 2 === 0 ? 'left' : 'right'}
                 />
-              ))}
-            </div>
-          ) : null}
+              );
+            })}
+          </div>
         </>
       ) : null}
 
@@ -1229,14 +1250,17 @@ function ModeButton({ active, label, onClick }: ModeButtonProps) {
 }
 
 interface EditSourcePreviewProps {
+  contract?: FlowPortContract;
+  disabledReason?: string;
   isConnected: boolean;
   imageUrl?: string;
 }
 
-function ImageEditSourceSlot({ imageUrl, isConnected }: EditSourcePreviewProps) {
+function ImageEditSourceSlot({ contract, disabledReason, imageUrl, isConnected }: EditSourcePreviewProps) {
   return (
     <div className="relative rounded-lg border border-gray-700/60 bg-[#111217]/35 p-2 pl-5">
       <Handle
+        contract={contract}
         id="image-edit-source"
         type="target"
         position={Position.Left}
@@ -1245,20 +1269,24 @@ function ImageEditSourceSlot({ imageUrl, isConnected }: EditSourcePreviewProps) 
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-400">
         Source Image
       </div>
-      <ImagePreviewPane
-        alt="Connected image edit source"
-        fallbackAspectRatio="1:1"
-        imageMaxHeightClassName="max-h-24"
-        minHeightClassName="min-h-[5.5rem]"
-        placeholder={(
-          <div className="px-4 text-center text-[10px] text-gray-500">
-            {isConnected
-              ? 'An image source is wired. The preview appears after the upstream image is generated or imported.'
-              : 'Connect the image you want this node to edit.'}
-          </div>
-        )}
-        src={imageUrl}
-      />
+      {disabledReason ? (
+        <div className="text-[10px] leading-4 text-amber-200/80">{disabledReason}</div>
+      ) : (
+        <ImagePreviewPane
+          alt="Connected image edit source"
+          fallbackAspectRatio="1:1"
+          imageMaxHeightClassName="max-h-24"
+          minHeightClassName="min-h-[5.5rem]"
+          placeholder={(
+            <div className="px-4 text-center text-[10px] text-gray-500">
+              {isConnected
+                ? 'An image source is wired. The preview appears after the upstream image is generated or imported.'
+                : 'Connect the image you want this node to edit.'}
+            </div>
+          )}
+          src={imageUrl}
+        />
+      )}
     </div>
   );
 }
@@ -1271,6 +1299,8 @@ interface ImageMaskSlotProps extends EditSourcePreviewProps {
 
 function ImageMaskSlot({
   canOpenPainter,
+  contract,
+  disabledReason,
   hasPaintedMask,
   imageUrl,
   isConnected,
@@ -1279,6 +1309,7 @@ function ImageMaskSlot({
   return (
     <div className="relative rounded-lg border border-gray-700/60 bg-[#111217]/35 p-2 pl-5">
       <Handle
+        contract={contract}
         id="image-mask"
         type="target"
         position={Position.Left}
@@ -1287,7 +1318,9 @@ function ImageMaskSlot({
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-400">
         Mask Image
       </div>
-      <ImagePreviewPane
+      {disabledReason ? (
+        <div className="text-[10px] leading-4 text-amber-200/80">{disabledReason}</div>
+      ) : <ImagePreviewPane
         alt="Connected image edit mask"
         fallbackAspectRatio="1:1"
         imageMaxHeightClassName="max-h-24"
@@ -1302,8 +1335,8 @@ function ImageMaskSlot({
           </div>
         )}
         src={imageUrl}
-      />
-      <button
+      />}
+      {!disabledReason ? <button
         className={`${actionButtonClassName} mt-2 w-full justify-center disabled:cursor-not-allowed disabled:opacity-50`}
         disabled={!canOpenPainter}
         onClick={onOpenPainter}
@@ -1311,7 +1344,7 @@ function ImageMaskSlot({
       >
         <Maximize2 size={12} />
         Paint mask
-      </button>
+      </button> : null}
       {isConnected && hasPaintedMask ? (
         <div className="mt-1 text-[9px] leading-3 text-gray-500">
           Connected mask overrides the saved painted mask.
@@ -1322,6 +1355,8 @@ function ImageMaskSlot({
 }
 
 interface ImageReferenceSlotProps {
+  contract?: FlowPortContract;
+  disabledReason?: string;
   handleId: (typeof IMAGE_REFERENCE_HANDLES)[number];
   imageUrl?: string;
   isConnected: boolean;
@@ -1329,7 +1364,7 @@ interface ImageReferenceSlotProps {
   side: 'left' | 'right';
 }
 
-function ImageReferenceSlot({ handleId, imageUrl, isConnected, label, side }: ImageReferenceSlotProps) {
+function ImageReferenceSlot({ contract, disabledReason, handleId, imageUrl, isConnected, label, side }: ImageReferenceSlotProps) {
   const isLeft = side === 'left';
   return (
     <div
@@ -1341,21 +1376,23 @@ function ImageReferenceSlot({ handleId, imageUrl, isConnected, label, side }: Im
         className={`pointer-events-none absolute top-1/2 h-px w-4 -translate-y-1/2 bg-blue-400/70 ${isLeft ? 'left-0' : 'right-0'}`}
       />
       <Handle
+        contract={contract}
         id={handleId}
         type="target"
         position={isLeft ? Position.Left : Position.Right}
         className={`nodrag nopan !top-1/2 !-translate-y-1/2 !w-6 !h-6 !border-[3px] !border-[#1e2027] ${isLeft ? '!left-0 !-translate-x-1/2' : '!right-0 !translate-x-1/2'} ${isConnected ? '!bg-emerald-500' : '!bg-blue-500'}`}
-        title={`${label} image input (${side} edge)`}
       />
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-400">{label}</div>
-      <ImagePreviewPane
+      {disabledReason ? (
+        <div className="min-h-8 text-[9px] leading-3 text-amber-200/75">{disabledReason}</div>
+      ) : <ImagePreviewPane
         alt={label}
         fallbackAspectRatio="1:1"
         imageMaxHeightClassName="max-h-24"
         minHeightClassName="min-h-[5.5rem]"
         placeholder={<div className="px-2 text-center text-[9px] text-gray-500">Connect reference image</div>}
         src={imageUrl}
-      />
+      />}
     </div>
   );
 }
