@@ -55,7 +55,11 @@ export function PaperIccProfileManager({
     try {
       const profile = await importPaperManagedIccProfile(file, { outputConditionId, registryName }, repository);
       const nextProfiles = replaceProfile(managedProfiles, profile);
-      onChange({ profiles: nextProfiles, selectedProfileAssetId: profile.id });
+      onChange({
+        profiles: nextProfiles,
+        selectedProfileAssetId: profile.id,
+        outputConditionId: profile.outputConditionId,
+      });
       setNotice(`Managed ${profile.description} for ${profile.outputConditionId}.`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The ICC profile could not be imported.');
@@ -142,7 +146,11 @@ export function PaperIccProfileManager({
                     aria-label={`Use ${profile.description}`}
                     className="rounded border border-cyan-300/15 px-1.5 py-0.5 text-[10px] text-cyan-100 hover:bg-cyan-400/10 disabled:opacity-50"
                     disabled={selected}
-                    onClick={() => onChange({ profiles: [...managedProfiles], selectedProfileAssetId: profile.id })}
+                    onClick={() => onChange({
+                      profiles: [...managedProfiles],
+                      selectedProfileAssetId: profile.id,
+                      outputConditionId: profile.outputConditionId,
+                    })}
                   >
                     {selected ? 'Selected' : 'Use'}
                   </button>

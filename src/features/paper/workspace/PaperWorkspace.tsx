@@ -57,7 +57,7 @@ import { useEditorStore } from '../../../store/editorStore';
 import { useDockablePanelStore } from '../../../store/dockablePanelStore';
 import { usePaperStore } from '../../../store/paperStore';
 import { PaperFontImportControl, useRegisterImportedFonts } from './PaperFontImport';
-import { PaperIccProfileManager } from './PaperIccProfileManager';
+import { PaperIccProfileManager, type PaperIccProfileManagerChange } from './PaperIccProfileManager';
 import { PaperManagedTextLayer } from './PaperManagedTextLayer';
 import { materializePaperDocumentAssetUrls, paperAssetRepository } from '../assets/PaperAssetRuntime';
 import { useSettingsStore } from '../../../store/settingsStore';
@@ -788,6 +788,24 @@ export function PaperWorkspace() {
   const [kdpExportOpen, setKdpExportOpen] = useState(false);
   const [kdpExportSettings, setKdpExportSettings] = useState<PaperKdpExportSettings>(() => loadPaperKdpExportSettings());
   const [softProofOpen, setSoftProofOpen] = useState(false);
+  const applyManagedIccProfileChange = useCallback((change: PaperIccProfileManagerChange) => {
+    const selected = change.profiles.find((profile) => profile.id === change.selectedProfileAssetId);
+    const exactCondition = (change.outputConditionId ?? selected?.outputConditionId ?? '').trim();
+    const currentIntent = PAPER_OUTPUT_INTENT_PROFILES[document.printProduction.outputIntentProfileId];
+    const currentCondition = document.printProduction.outputIntentProfileId === 'custom'
+      ? document.printProduction.customOutputIntentName.trim()
+      : currentIntent.printingCondition ?? '';
+    updateDocumentSetup({
+      managedIccProfiles: change.profiles,
+      printProduction: {
+        outputIntentProfileAssetId: change.selectedProfileAssetId,
+        ...(exactCondition && exactCondition !== currentCondition ? {
+          outputIntentProfileId: 'custom',
+          customOutputIntentName: exactCondition,
+        } : {}),
+      },
+    });
+  }, [document.printProduction, updateDocumentSetup]);
   const [polygonPoints, setPolygonPoints] = useState<Array<PaperPoint & { pageId: string }>>([]);
   const [modifierState, setModifierState] = useState({ ctrlKey: false, metaKey: false });
   // On Android, holding Volume Down acts as a Ctrl-equivalent modifier for frame reshaping (handle
@@ -4486,6 +4504,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
         <PaperSoftProofModal
           document={document}
           onClose={() => setSoftProofOpen(false)}
+          onConfigureProfile={applyManagedIccProfileChange}
           pageId={selectedPage.id}
         />
       ) : null}
@@ -10765,10 +10784,20 @@ function PaperInspector({
                 profiles={document.managedIccProfiles}
                 registryName={outputIntent.registryName}
                 selectedProfileAssetId={document.printProduction.outputIntentProfileAssetId}
-                onChange={({ profiles, selectedProfileAssetId }) => onUpdateDocumentSetup({
-                  managedIccProfiles: profiles,
-                  printProduction: { outputIntentProfileAssetId: selectedProfileAssetId },
-                })}
+                onChange={({ profiles, selectedProfileAssetId, outputConditionId: exactCondition }) => {
+                  const selected = profiles.find((profile) => profile.id === selectedProfileAssetId);
+                  const selectedCondition = (exactCondition ?? selected?.outputConditionId ?? '').trim();
+                  onUpdateDocumentSetup({
+                    managedIccProfiles: profiles,
+                    printProduction: {
+                      outputIntentProfileAssetId: selectedProfileAssetId,
+                      ...(selectedCondition && selectedCondition !== outputConditionId ? {
+                        outputIntentProfileId: 'custom',
+                        customOutputIntentName: selectedCondition,
+                      } : {}),
+                    },
+                  });
+                }}
               />
             ) : null}
             <NumberField

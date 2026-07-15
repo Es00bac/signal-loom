@@ -7,23 +7,42 @@ import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { softProofPaperPageInBrowser, type SoftProofPreviewResult } from '../../../lib/paperSoftProofBrowser';
 import type { PaperDocument } from '../../../types/paper';
+import { PAPER_OUTPUT_INTENT_PROFILES } from '../../../lib/paperPrintProduction';
+import {
+  PaperIccProfileManager,
+  type PaperIccProfileManagerChange,
+} from './PaperIccProfileManager';
 
 interface PaperSoftProofModalProps {
   document: PaperDocument;
   pageId: string;
   onClose: () => void;
+  onConfigureProfile?: (change: PaperIccProfileManagerChange) => void;
 }
 
-export function PaperSoftProofModal({ document, pageId, onClose }: PaperSoftProofModalProps) {
+export function PaperSoftProofModal({ document, pageId, onClose, onConfigureProfile }: PaperSoftProofModalProps) {
   const [simulatePaperWhite, setSimulatePaperWhite] = useState(false);
   const [preview, setPreview] = useState<SoftProofPreviewResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const requestIdRef = useRef(0);
+  const selectedProfile = document.managedIccProfiles?.find(
+    (profile) => profile.id === document.printProduction.outputIntentProfileAssetId,
+  );
+  const outputIntent = PAPER_OUTPUT_INTENT_PROFILES[document.printProduction.outputIntentProfileId];
+  const outputConditionId = document.printProduction.outputIntentProfileId === 'custom'
+    ? document.printProduction.customOutputIntentName.trim()
+    : outputIntent.printingCondition ?? '';
 
   useEffect(() => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
+    if (!selectedProfile) {
+      setPreview(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     void softProofPaperPageInBrowser(document, pageId, { simulatePaperWhite })
@@ -37,7 +56,7 @@ export function PaperSoftProofModal({ document, pageId, onClose }: PaperSoftProo
         setError(err instanceof Error ? err.message : 'Could not build the soft-proof preview.');
         setLoading(false);
       });
-  }, [document, pageId, simulatePaperWhite]);
+  }, [document, pageId, selectedProfile, simulatePaperWhite]);
 
   return (
     <div
@@ -70,13 +89,39 @@ export function PaperSoftProofModal({ document, pageId, onClose }: PaperSoftProo
         </div>
 
         <div className="flex min-h-[280px] flex-1 items-center justify-center overflow-auto rounded-xl border border-cyan-300/10 bg-[#050a12] p-4">
-          {loading ? (
+          {!selectedProfile && onConfigureProfile ? (
+            <div className="w-full max-w-xl rounded-xl border border-cyan-300/15 bg-[#0b1320] p-5 text-left">
+              <div className="text-sm font-semibold text-white">Choose an exact CMYK output profile</div>
+              <p className="mt-2 text-xs leading-5 text-cyan-100/60">
+                Soft Proof needs a managed printer profile. Use one of the redistribution-cleared offline profiles
+                included with Sloom Studio, or import the exact profile supplied by your print provider.
+              </p>
+              <PaperIccProfileManager
+                onChange={onConfigureProfile}
+                outputConditionId={outputConditionId}
+                profiles={document.managedIccProfiles}
+                registryName={outputIntent.registryName}
+                selectedProfileAssetId={document.printProduction.outputIntentProfileAssetId}
+              />
+            </div>
+          ) : loading ? (
             <div className="text-sm text-cyan-100/60" data-soft-proof-status="loading">
               Building soft-proof preview…
             </div>
           ) : error ? (
-            <div className="max-w-md text-center text-sm text-rose-300/90" data-soft-proof-status="error">
-              {error}
+            <div className="w-full max-w-xl text-center text-sm text-rose-300/90" data-soft-proof-status="error">
+              <div>{error}</div>
+              {onConfigureProfile ? (
+                <div className="mt-4 rounded-xl border border-cyan-300/15 bg-[#0b1320] p-4 text-left text-white">
+                  <PaperIccProfileManager
+                    onChange={onConfigureProfile}
+                    outputConditionId={outputConditionId}
+                    profiles={document.managedIccProfiles}
+                    registryName={outputIntent.registryName}
+                    selectedProfileAssetId={document.printProduction.outputIntentProfileAssetId}
+                  />
+                </div>
+              ) : null}
             </div>
           ) : preview ? (
             <img
@@ -88,7 +133,7 @@ export function PaperSoftProofModal({ document, pageId, onClose }: PaperSoftProo
           ) : null}
         </div>
 
-        <label className="mt-4 flex cursor-pointer items-center gap-2.5 text-[12px] text-cyan-100/80">
+        {selectedProfile ? <label className="mt-4 flex cursor-pointer items-center gap-2.5 text-[12px] text-cyan-100/80">
           <input
             checked={simulatePaperWhite}
             className="h-3.5 w-3.5 accent-cyan-400"
@@ -97,7 +142,7 @@ export function PaperSoftProofModal({ document, pageId, onClose }: PaperSoftProo
           />
           Simulate paper color
           <span className="text-cyan-100/40">— tints white toward the stock (absolute colorimetric)</span>
-        </label>
+        </label> : null}
       </div>
     </div>
   );
