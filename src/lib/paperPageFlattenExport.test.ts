@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe('paperPageFlattenExport', () => {
-  it('decodes flattened SVGs from a revocable Blob URL instead of an oversized data URL', async () => {
+  it('decodes flattened SVGs from their data URL so foreignObject canvases stay origin-clean', async () => {
     const imageSources: string[] = [];
     class MockImage {
       decoding = '';
@@ -66,9 +66,9 @@ describe('paperPageFlattenExport', () => {
       includeBleed: false,
     }, browserDocument);
 
-    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
-    expect(imageSources).toEqual(['blob:flattened-paper-page']);
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:flattened-paper-page');
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(imageSources).toEqual(['data:image/svg+xml;charset=utf-8,oversized']);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 
   it('escapes quoted font-family values so the flattened SVG stays valid XML', () => {

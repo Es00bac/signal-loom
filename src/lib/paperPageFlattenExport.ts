@@ -416,27 +416,20 @@ async function decodeFlattenedPaperPageSvg(
 ): Promise<{ image: HTMLImageElement; dispose: () => void }> {
   const image = new Image();
   image.decoding = 'async';
-  const canUseObjectUrl = typeof URL !== 'undefined'
-    && typeof URL.createObjectURL === 'function'
-    && typeof URL.revokeObjectURL === 'function';
-  const objectUrl = canUseObjectUrl
-    ? URL.createObjectURL(new Blob([exported.svg], { type: 'image/svg+xml;charset=utf-8' }))
-    : undefined;
-  image.src = objectUrl ?? exported.dataUrl;
+  // Keep the SVG on a data: URL. Chromium treats a Blob-backed SVG containing foreignObject HTML as a
+  // cross-origin source and taints the destination canvas, even when every nested image is embedded.
+  image.src = exported.dataUrl;
 
   try {
     await decodeImage(image);
   } catch (error) {
-    if (objectUrl) URL.revokeObjectURL(objectUrl);
     const detail = error instanceof Error && error.message ? `: ${error.message}` : '';
     throw new Error(`Paper page ${exported.pageNumber} SVG could not be decoded for raster export${detail}`);
   }
 
   return {
     image,
-    dispose: () => {
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    },
+    dispose: () => undefined,
   };
 }
 
