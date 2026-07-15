@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import WebSocket from 'ws';
 
@@ -22,11 +22,18 @@ async function main() {
   await Promise.all([stat(documentPath), stat(appPath)]);
   await mkdir(dirname(outputPath), { recursive: true });
   await mkdir(dirname(screenshotPath), { recursive: true });
-  await Promise.all([rm(outputPath, { force: true }), rm(screenshotPath, { force: true })]);
 
   const app = launchInstalledApp();
   try {
-    const mainTarget = await waitForTarget(app, (target) => target.webSocketDebuggerUrl, 30000);
+    const mainTarget = await waitForTarget(app, (target) => {
+      try {
+        return target.type === 'page'
+          && new URL(target.url).searchParams.get('workspace') === 'flow'
+          && target.webSocketDebuggerUrl;
+      } catch {
+        return false;
+      }
+    }, 30000);
     const openResult = await evaluate(mainTarget.webSocketDebuggerUrl, `
       (async () => {
         const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -230,18 +237,26 @@ async function setFileInputFiles(webSocketDebuggerUrl, selector, files, timeoutM
 }
 
 async function evaluate(webSocketDebuggerUrl, expression, timeoutMs) {
-  return withCdp(webSocketDebuggerUrl, async (send) => {
-    const response = await send('Runtime.evaluate', {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    }, timeoutMs);
-    const result = response.result?.result;
-    if (response.error || response.result?.exceptionDetails || !result || !Object.prototype.hasOwnProperty.call(result, 'value')) {
-      throw new Error(`CDP evaluation failed: ${JSON.stringify(response)}`);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await withCdp(webSocketDebuggerUrl, async (send) => {
+        const response = await send('Runtime.evaluate', {
+          expression,
+          awaitPromise: true,
+          returnByValue: true,
+        }, timeoutMs);
+        const result = response.result?.result;
+        if (response.error || response.result?.exceptionDetails || !result || !Object.prototype.hasOwnProperty.call(result, 'value')) {
+          throw new Error(`CDP evaluation failed: ${JSON.stringify(response)}`);
+        }
+        return result.value;
+      });
+    } catch (error) {
+      if (attempt === 2) throw error;
+      await delay(300);
     }
-    return result.value;
-  });
+  }
+  throw new Error('CDP evaluation failed after retries.');
 }
 
 async function withCdp(webSocketDebuggerUrl, operation) {

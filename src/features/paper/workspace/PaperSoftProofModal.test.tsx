@@ -61,6 +61,8 @@ describe('PaperSoftProofModal', () => {
 
     expect(html).toContain('Building soft-proof preview');
     expect(html).toContain('Simulate paper color');
+    expect(html).toContain('Page 1 of 1');
+    expect(html).toContain('Export PDF/X to create the printer handoff file');
     expect(html).toContain('aria-label="Close soft proof"');
   });
 });

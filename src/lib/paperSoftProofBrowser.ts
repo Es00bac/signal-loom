@@ -12,7 +12,11 @@ import { createSoftProofTransform, type SoftProofOptions } from './paperIccEngin
 import { resolveExactPaperOutputProfile } from './paperManagedIccProfiles';
 import { softProofRgba } from './paperSoftProofImage';
 import type { PaperDocument } from '../types/paper';
-import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
+import {
+  materializePaperDocumentAssetUrls,
+  paperAssetRepository,
+} from '../features/paper/assets/PaperAssetRuntime';
+import { useSourceBinStore } from '../store/sourceBinStore';
 
 export interface SoftProofPreviewOptions extends SoftProofOptions {
   /** Preview render resolution. Lower than print DPI keeps the round-trip fast (default 150). */
@@ -47,7 +51,11 @@ export async function softProofPaperPageInBrowser(
   const { previewDpi, ...proofOptions } = options;
   const proof = await createSoftProofTransform(iccBytes, proofOptions);
   try {
-    const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(document, pageId, {
+    const proofDocument = await materializePaperDocumentAssetUrls(
+      document,
+      useSourceBinStore.getState().getAllItems(),
+    );
+    const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(proofDocument, pageId, {
       includeBleed: false,
       outputDpi: previewDpi ?? 150,
       resolveImageSrc: imageSourceToDataUrl,

@@ -11,6 +11,7 @@ import {
   getPaperPageExportDimensions,
   rasterizeFlattenedPaperPageToPng,
 } from './paperPageFlattenExport';
+import type { BinaryAssetId } from '../shared/assets/contentAddressedAsset';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -213,6 +214,95 @@ describe('paperPageFlattenExport', () => {
 
     expect(exported.svg).toContain('data:image/png;base64,embedded');
     expect(exported.svg).not.toContain('blob:http://127.0.0.1:5175/panel-art');
+  });
+
+  it('pre-decodes embedded artwork before wrapping it in the foreignObject page SVG', async () => {
+    let finishDecode: (() => void) | undefined;
+    const decoded = new Promise<void>((resolve) => { finishDecode = resolve; });
+    const imageSources: string[] = [];
+    class MockImage {
+      decoding = '';
+      set src(value: string) { imageSources.push(value); }
+      decode() { return decoded; }
+    }
+    vi.stubGlobal('Image', MockImage);
+    const doc = createDefaultPaperDocument({ title: 'Decoded Assets' });
+    const pageId = doc.pages[0].id;
+    const placed = addFrameToPaperPage(doc, pageId, {
+      kind: 'image', xMm: 10, yMm: 20, widthMm: 40, heightMm: 30, label: 'Hero artwork',
+    });
+    const sourceDoc = {
+      ...placed.document,
+      pages: placed.document.pages.map((page) => page.id === pageId
+        ? {
+            ...page,
+            frames: page.frames.map((frame) => frame.id === placed.frameId
+              ? {
+                  ...frame,
+                  asset: {
+                    label: 'Hero artwork',
+                    kind: 'image' as const,
+                    locator: { kind: 'external' as const, url: 'blob:hero-artwork' },
+                    mimeType: 'image/png',
+                  },
+                }
+              : frame),
+          }
+        : page),
+    };
+    let settled = false;
+    const exportPromise = buildFlattenedPaperPageSvgExportWithEmbeddedAssets(sourceDoc, pageId, {
+      resolveImageSrc: () => 'data:image/png;base64,hero',
+    }).then((value) => {
+      settled = true;
+      return value;
+    });
+
+    await Promise.resolve();
+    expect(imageSources).toEqual(['data:image/png;base64,hero']);
+    expect(settled).toBe(false);
+    finishDecode?.();
+    const exported = await exportPromise;
+    expect(exported.svg).toContain('data:image/png;base64,hero');
+  });
+
+  it('fails instead of silently replacing an unmaterialized managed image with its frame fill', async () => {
+    const doc = createDefaultPaperDocument({ title: 'Managed artwork must render' });
+    const pageId = doc.pages[0].id;
+    const placed = addFrameToPaperPage(doc, pageId, {
+      kind: 'image', xMm: 10, yMm: 20, widthMm: 40, heightMm: 30, label: 'Managed hero',
+    });
+    const sha256 = 'a'.repeat(64);
+    const sourceDoc = {
+      ...placed.document,
+      pages: placed.document.pages.map((page) => page.id === pageId
+        ? {
+            ...page,
+            frames: page.frames.map((frame) => frame.id === placed.frameId
+              ? {
+                  ...frame,
+                  asset: {
+                    label: 'Managed hero',
+                    kind: 'image' as const,
+                    locator: {
+                      kind: 'managed' as const,
+                      ref: {
+                        id: `sha256:${sha256}` as BinaryAssetId,
+                        sha256,
+                        mimeType: 'image/png',
+                        byteLength: 4,
+                      },
+                    },
+                  },
+                }
+              : frame),
+          }
+        : page),
+    };
+
+    await expect(buildFlattenedPaperPageSvgExportWithEmbeddedAssets(sourceDoc, pageId, {
+      resolveImageSrc: vi.fn(),
+    })).rejects.toThrow(/Managed hero.*materialized/i);
   });
 
   it('does not bake screen-only margin guides into flattened page snapshots', () => {

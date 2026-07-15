@@ -33,6 +33,8 @@ export function PaperSoftProofModal({ document, pageId, onClose, onConfigureProf
   const outputConditionId = document.printProduction.outputIntentProfileId === 'custom'
     ? document.printProduction.customOutputIntentName.trim()
     : outputIntent.printingCondition ?? '';
+  const pageIndex = document.pages.findIndex((page) => page.id === pageId);
+  const pageLabel = `Page ${pageIndex >= 0 ? pageIndex + 1 : 1} of ${Math.max(1, document.pages.length)}`;
 
   useEffect(() => {
     const requestId = requestIdRef.current + 1;
@@ -73,7 +75,7 @@ export function PaperSoftProofModal({ document, pageId, onClose, onConfigureProf
           <div>
             <div className="text-xs font-bold uppercase tracking-wider text-cyan-200">CMYK Soft Proof</div>
             <div className="mt-1 text-[11px] text-cyan-100/50">
-              Simulating {preview?.profileName ?? 'the document output condition'} — on-screen preview only.
+              {pageLabel} · Simulating {preview?.profileName ?? 'the document output condition'} — on-screen preview only.
             </div>
           </div>
           <button
@@ -141,6 +143,9 @@ export function PaperSoftProofModal({ document, pageId, onClose, onConfigureProf
           Simulate paper color
           <span className="text-cyan-100/40">— tints white toward the stock (absolute colorimetric)</span>
         </label> : null}
+        {selectedProfile ? <div className="mt-2 text-[11px] text-cyan-100/45">
+          This previews the current page only. Export PDF/X to create the printer handoff file.
+        </div> : null}
       </div>
     </div>
   );

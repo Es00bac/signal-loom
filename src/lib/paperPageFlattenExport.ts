@@ -168,12 +168,22 @@ export async function buildFlattenedPaperPageSvgExportWithEmbeddedAssets(
   const page = findPaperPage(document, pageId);
   const frames = await Promise.all(page.frames.map(async (frame) => {
     const sourceUrl = resolvePaperFrameAssetUrl(frame.asset);
-    if (!frame.asset || !sourceUrl) return frame;
+    if (!frame.asset) return frame;
+    if (!sourceUrl) {
+      if (frame.kind === 'image' || frame.kind === 'document') {
+        throw new Error(`Paper artwork ${frame.label} must be materialized before page ${page.pageNumber} is flattened.`);
+      }
+      return frame;
+    }
     const resolvedSrc = await Promise.resolve(options.resolveImageSrc?.(sourceUrl, {
       frameId: frame.id,
       pageId: page.id,
-    })).catch(() => undefined);
-    if (!resolvedSrc || resolvedSrc === sourceUrl) return frame;
+    }));
+    if (!resolvedSrc) {
+      throw new Error(`Paper artwork ${frame.label} could not be embedded for page ${page.pageNumber}.`);
+    }
+    await predecodeEmbeddedImage(resolvedSrc, frame.label, page.pageNumber);
+    if (resolvedSrc === sourceUrl) return frame;
     return {
       ...frame,
       asset: {
@@ -190,6 +200,19 @@ export async function buildFlattenedPaperPageSvgExportWithEmbeddedAssets(
   };
 
   return buildFlattenedPaperPageSvgExport(embeddedDocument, page.id, options);
+}
+
+async function predecodeEmbeddedImage(src: string, frameLabel: string, pageNumber: number): Promise<void> {
+  if (typeof globalThis.Image !== 'function') return;
+  const image = new globalThis.Image();
+  image.decoding = 'async';
+  image.src = src;
+  try {
+    await decodeImage(image);
+  } catch (error) {
+    const detail = error instanceof Error && error.message ? `: ${error.message}` : '';
+    throw new Error(`Paper artwork ${frameLabel} on page ${pageNumber} could not be decoded${detail}`);
+  }
 }
 
 export function buildFlattenedPaperPageSourcePayload(
