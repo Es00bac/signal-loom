@@ -54,6 +54,8 @@ The Electron broker now uses `google-auth-library` before falling back to Cloud 
 
 The Settings panel exposes file choose, paste, ADC detect, project picker/manual ID, region, quota project, and test connection. Android standalone refreshes authorized-user ADC or signs service-account assertions in-app and uses the existing direct Vertex REST implementation for text/image/video. No terminal is required for JSON import on any shipped platform. The optional desktop browser sign-in button still uses an installed Cloud SDK as a compatibility path.
 
+Fresh installs no longer inherit the developer's historical Google Cloud project ID; project selection starts blank and existing users keep their persisted project.
+
 The settings blob is encrypted at rest through OS `safeStorage` on desktop or non-extractable WebCrypto AES-GCM on Android/WebView. Vertex credential JSON is not part of `.sloom` project files. See the [user guide](../vertex-authentication.md) for exact setup and troubleshooting.
 
 ## Verification

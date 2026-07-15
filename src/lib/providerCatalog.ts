@@ -80,7 +80,7 @@ export const DEFAULT_PROVIDER_SETTINGS = {
   backendProxyBaseUrl: '',
   geminiCredentialMode: 'vertex-adc',
   vertexAuthMode: 'gcloud-adc',
-  vertexProjectId: 'project-76c3c7fb-e370-4080-8c8',
+  vertexProjectId: '',
   vertexLocation: 'us-central1',
   vertexQuotaProjectId: '',
   vertexEnvironmentVariables: '',

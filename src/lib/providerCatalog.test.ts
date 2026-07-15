@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_MODELS,
+  DEFAULT_PROVIDER_SETTINGS,
   FALLBACK_MODEL_OPTIONS,
   getConfiguredProviders,
   getImageAspectRatioOptions,
@@ -153,6 +154,17 @@ describe('FALLBACK_MODEL_OPTIONS', () => {
 });
 
 describe('getConfiguredProviders', () => {
+  it('does not ship a developer project ID or treat a fresh install as Vertex-configured', () => {
+    expect(DEFAULT_PROVIDER_SETTINGS.vertexProjectId).toBe('');
+    expect(
+      getConfiguredProviders(
+        'image',
+        { gemini: '', openai: '', huggingface: '', elevenlabs: '' },
+        DEFAULT_PROVIDER_SETTINGS,
+      ),
+    ).toEqual([]);
+  });
+
   it('exposes providers without browser keys when backend proxy mode is enabled', () => {
     expect(
       getConfiguredProviders(

@@ -35,6 +35,7 @@ The Flow workspace was exercised in a headed browser against the development ser
 - Reference handles sit on alternating exterior left/right edges, so incoming wires no longer disappear behind the two-row interior control grid.
 - Browser console result: 0 errors and 0 warnings.
 - Vertex Settings showed terminal-free JSON choose/paste, ADC detection, project/region/quota controls, and test connection.
+- The default settings regression gate confirms a fresh install has no hard-coded Google Cloud project and is not treated as Vertex-configured until the user selects one.
 
 ## Live credential/provider checks
 
