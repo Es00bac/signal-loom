@@ -13,7 +13,7 @@ The Flow node/type, provider/model, typed-wire, Image reference-handle, and Vert
 | Command or check | Result | Evidence |
 | --- | --- | --- |
 | `npm run verify:flow-production` | Pass | 63 node contracts, 182 model contracts, 178 normal options; no orphans, stale generated audit, missing implementation, project-file Vertex secret field, or credential-shaped shipping literal |
-| `npm test -- --run` | Pass | 613 test files, 4,686 tests |
+| `npm test -- --run` | Pass | 613 test files, 4,687 tests |
 | `npx tsc -b --pretty false` | Pass | Project-reference TypeScript build clean |
 | `npm run build` | Pass | Vite transformed 3,239 modules and emitted production assets |
 | `npm run lint` | Pass with warnings | 0 errors, 84 repository warnings; no new error gate failure |
@@ -22,7 +22,7 @@ The Flow node/type, provider/model, typed-wire, Image reference-handle, and Vert
 | Generator tests | Pass | Node and provider matrices reproduce exactly from executable registries |
 | Saved-flow migration fixtures | Pass | Valid typed edge, invalid retained edge, shut-down saved model, and legacy Vertex ADC settings all round-trip as designed |
 
-The first repository test run executed concurrently with build/lint and timed out one Paper PDF golden case at its five-second budget. The same Paper golden passed 4/4 alone, and the subsequent full repository suite run by itself passed all 4,686 tests. This was resource contention, not a Flow or Paper regression.
+The first repository test run executed concurrently with build/lint and timed out one Paper PDF golden case at its five-second budget. The same Paper golden passed 4/4 alone, and the subsequent full repository suite run by itself passed all 4,687 tests. This was resource contention, not a Flow or Paper regression.
 
 ## Live UI verification
 

@@ -61,7 +61,7 @@ The settings blob is encrypted at rest through OS `safeStorage` on desktop or no
 ## Verification
 
 - Flow production gate: 63 node contracts, 182 model contracts, 178 normal options.
-- Full Vitest: 613 files / 4,686 tests passed.
+- Full Vitest: 613 files / 4,687 tests passed.
 - Project-reference TypeScript: clean.
 - Production build: 3,239 modules transformed, exit 0.
 - ESLint: 0 errors / 84 existing warnings.
