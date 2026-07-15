@@ -25,13 +25,13 @@ import {
 } from '../../lib/providerCatalog';
 import { captureFrameFromVideoElement } from '../../lib/videoFrameExtraction';
 import {
-  filterGeminiVideoModelsForConditioning,
   isGeminiOmniModelId,
-  normalizeGeminiVideoModelId,
-  supportsGeminiFrameConditioning,
-  supportsGeminiReferenceImages,
-  supportsGeminiVideoExtension,
 } from '../../lib/videoModelSupport';
+import {
+  getVideoModelContract,
+  getVideoCredentialRouteWarning,
+  getVideoModelSupport,
+} from '../../lib/modelContracts/videoModelContracts';
 import {
   findMiswiredVideoImageSources,
   hasConnectedVideoFrameSource,
@@ -79,6 +79,10 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
   const isCollapsed = Boolean(data.collapsed);
   const availableProviders = getConfiguredProviders('video', apiKeys, providerSettings);
   const provider = ((data.provider as VideoProvider | undefined) ?? availableProviders[0] ?? 'gemini') as VideoProvider;
+  const selectedModelId = data.modelId ?? defaultModels[provider];
+  const modelContract = getVideoModelContract(provider, selectedModelId);
+  const modelSupport = getVideoModelSupport(provider, selectedModelId);
+  const modelParameterIds = new Set(modelContract.parameters.map((parameter) => parameter.id));
   // The store-owned `blob:` URL cached in `data.result` is revoked on rehydration, leaving a dead
   // thumbnail/preview; resolve the source-bin item's live URL instead (see useLiveNodeResultAssetUrl).
   const selectedResultAttempt = Array.isArray(data.resultHistory)
@@ -130,11 +134,22 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
   } = connections;
   const hasReferenceConnections = hasReference1Connection || hasReference2Connection || hasReference3Connection;
   const hasFrameInputs = hasStartFrameConnection || hasEndFrameConnection;
-  const requiresEightSecondDuration = hasReferenceConnections || hasExtensionConnection;
-  const requiresAdvancedGeminiModel = hasEndFrameConnection || hasReferenceConnections || hasExtensionConnection;
+  const requiresEightSecondDuration = !isGeminiOmniModelId(selectedModelId) && (
+    (hasEndFrameConnection && modelSupport.interpolation)
+    || (hasReferenceConnections && modelSupport.referenceImages)
+    || (hasExtensionConnection && modelSupport.videoExtension)
+  );
   const durationValue = data.durationSeconds ?? 6;
+  const durationSteps = isGeminiOmniModelId(selectedModelId)
+    ? [3, 4, 5, 6, 7, 8, 9, 10]
+    : [4, 6, 8];
   const configuredAspectRatio = (data.aspectRatio as AspectRatio | undefined) ?? '16:9';
-  const resolutionOptions = getVideoResolutionOptions(durationValue, hasExtensionConnection);
+  const baseResolutionOptions = getVideoResolutionOptions(durationValue, hasExtensionConnection && modelSupport.videoExtension);
+  const resolutionOptions = modelSupport.fixedResolution
+    ? baseResolutionOptions.filter((option) => option.value === modelSupport.fixedResolution)
+    : modelSupport.maxResolution === '1080p'
+      ? baseResolutionOptions.filter((option) => option.value !== '4k')
+      : baseResolutionOptions;
 
   useEffect(() => {
     if (mediaMode !== 'generate' || availableProviders.length === 0 || availableProviders.includes(provider)) {
@@ -163,27 +178,13 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
     data.onChange?.('durationSeconds', 8);
   }, [data, durationValue, requiresEightSecondDuration]);
 
-  const rawSelectedModelId = data.modelId ?? defaultModels[provider];
-  const selectedModelId =
-    provider === 'gemini' ? normalizeGeminiVideoModelId(rawSelectedModelId) : rawSelectedModelId;
   const allModelOptions = getModelOptions(
     'video',
     provider,
     modelCatalog,
     selectedModelId,
   );
-  const modelOptions =
-    provider === 'gemini' && requiresAdvancedGeminiModel
-      ? filterGeminiVideoModelsForConditioning(allModelOptions)
-      : allModelOptions;
-
-  useEffect(() => {
-    if (provider !== 'gemini' || selectedModelId === rawSelectedModelId) {
-      return;
-    }
-
-    data.onChange?.('modelId', selectedModelId);
-  }, [data, provider, rawSelectedModelId, selectedModelId]);
+  const modelOptions = allModelOptions;
 
   useEffect(() => {
     if (provider === 'gemini' && typeof data.videoBatchCount === 'number' && data.videoBatchCount !== 1) {
@@ -191,32 +192,25 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
     }
   }, [data, provider]);
 
-  useEffect(() => {
-    if (provider !== 'gemini' || !requiresAdvancedGeminiModel) {
-      return;
-    }
-
-    const hasSupportedAdvancedModel =
-      (!hasEndFrameConnection || supportsGeminiFrameConditioning(selectedModelId)) &&
-      (!hasReferenceConnections || supportsGeminiReferenceImages(selectedModelId)) &&
-      (!hasExtensionConnection || supportsGeminiVideoExtension(selectedModelId));
-
-    if (hasSupportedAdvancedModel) {
-      return;
-    }
-
-    data.onChange?.('modelId', modelOptions[0]?.value ?? defaultModels.gemini);
-  }, [
-    data,
-    defaultModels.gemini,
-    hasEndFrameConnection,
-    hasExtensionConnection,
-    hasReferenceConnections,
-    modelOptions,
-    provider,
-    requiresAdvancedGeminiModel,
-    selectedModelId,
-  ]);
+  const lifecycleWarning = modelContract.lifecycle === 'shutdown'
+    ? `${modelContract.displayName} is shut down and retained only so saved flows remain understandable.${modelContract.migrationModelId ? ` Choose ${modelContract.migrationModelId} to run.` : ''}`
+    : modelContract.lifecycle === 'deprecated'
+      ? `${modelContract.displayName} is deprecated.${modelContract.migrationModelId ? ` Migrate to ${modelContract.migrationModelId}.` : ''}`
+      : modelContract.lifecycle === 'preview'
+        ? `${modelContract.displayName} is a preview model; availability and behavior can change.`
+        : modelContract.lifecycle === 'unverified'
+          ? 'This live model has no curated capability contract. Only safe text-to-video controls are enabled.'
+          : undefined;
+  const credentialRouteWarning = getVideoCredentialRouteWarning(
+    modelContract,
+    providerSettings.geminiCredentialMode,
+  );
+  const startFrameDisabledReason = modelSupport.imageToVideo ? undefined : `${modelContract.displayName} does not support image-to-video through this route.`;
+  const endFrameDisabledReason = modelSupport.interpolation ? undefined : `${modelContract.displayName} does not support first/last-frame interpolation.`;
+  const referenceDisabledReason = modelSupport.referenceImages ? undefined : `${modelContract.displayName} does not support reference-image guidance.`;
+  const extensionDisabledReason = modelSupport.videoExtension || modelSupport.videoEdit
+    ? undefined
+    : `${modelContract.displayName} does not support video extension or video editing through this route.`;
 
   const handleProviderChange = (nextProvider: VideoProvider) => {
     data.onChange?.('provider', nextProvider);
@@ -419,6 +413,13 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
                   </option>
                 ))}
               </select>
+
+              {lifecycleWarning || credentialRouteWarning ? (
+                <div className="space-y-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
+                  {lifecycleWarning ? <div>{lifecycleWarning}</div> : null}
+                  {credentialRouteWarning ? <div>{credentialRouteWarning}</div> : null}
+                </div>
+              ) : null}
             </>
           ) : (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
@@ -443,13 +444,16 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
               <VideoDurationSlider
                 disabled={requiresEightSecondDuration}
                 onChange={(value) => data.onChange?.('durationSeconds', value)}
+                steps={durationSteps}
                 value={durationValue}
               />
             </div>
 
             <select
               className={selectClassName}
+              disabled={Boolean(modelSupport.fixedResolution)}
               onChange={(event) => data.onChange?.('videoResolution', event.target.value)}
+              title={modelSupport.fixedResolution ? `${modelContract.displayName} outputs ${modelSupport.fixedResolution}.` : undefined}
               value={data.videoResolution ?? '720p'}
             >
               {resolutionOptions.map((option) => (
@@ -462,6 +466,7 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
 
           <input
             className={selectClassName}
+            disabled={!modelParameterIds.has('seed')}
             inputMode="numeric"
             onChange={(event) =>
               data.onChange?.(
@@ -470,20 +475,33 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
               )
             }
             placeholder="Seed (optional, improves repeatability slightly)"
+            title={modelParameterIds.has('seed') ? undefined : `${modelContract.displayName} does not expose a seed control.`}
             type="number"
             value={data.videoSeed ?? ''}
           />
 
-          {provider === 'gemini' || provider === 'atlas' ? (
-            // Atlas video execution sends negative_prompt too — the field was Gemini-gated in the UI
-            // even though the Atlas request honored it.
-            <input
-              className={selectClassName}
-              onChange={(event) => data.onChange?.('videoNegativePrompt', event.target.value)}
-              placeholder="Negative prompt (optional: blur, artifacts, low detail)"
-              type="text"
-              value={typeof data.videoNegativePrompt === 'string' ? data.videoNegativePrompt : ''}
-            />
+          <input
+            className={selectClassName}
+            disabled={!modelSupport.negativePrompt}
+            onChange={(event) => data.onChange?.('videoNegativePrompt', event.target.value)}
+            placeholder={modelSupport.negativePrompt
+              ? 'Negative prompt (optional: blur, artifacts, low detail)'
+              : 'Negative prompt unsupported — put exclusions in the main prompt'}
+            title={modelSupport.negativePrompt ? undefined : `${modelContract.displayName} does not expose a negative-prompt API field.`}
+            type="text"
+            value={typeof data.videoNegativePrompt === 'string' ? data.videoNegativePrompt : ''}
+          />
+
+          {provider === 'atlas' ? (
+            <label className={withFlowNodeInteractionClasses('flex items-center gap-2 rounded-lg border border-gray-700/60 bg-[#111217]/50 px-2.5 py-2 text-[11px] text-gray-300')}>
+              <input
+                checked={data.videoGenerateAudio !== false}
+                className="accent-blue-500"
+                onChange={(event) => data.onChange?.('videoGenerateAudio', event.target.checked)}
+                type="checkbox"
+              />
+              Generate audio when this Atlas model supports it
+            </label>
           ) : null}
 
           {provider === 'gemini' ? (
@@ -505,6 +523,7 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
 
           <div className="grid grid-cols-2 gap-2">
             <FrameSlot
+              disabledReason={startFrameDisabledReason}
               fallbackAspectRatio={configuredAspectRatio}
               handleId="video-start-frame"
               imageUrl={startFrame}
@@ -512,6 +531,7 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
               label="Start Frame"
             />
             <FrameSlot
+              disabledReason={endFrameDisabledReason}
               fallbackAspectRatio={configuredAspectRatio}
               handleId="video-end-frame"
               imageUrl={endFrame}
@@ -522,6 +542,7 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
 
           <div className="grid grid-cols-3 gap-2">
             <ReferenceImageSlot
+              disabledReason={referenceDisabledReason}
               fallbackAspectRatio={configuredAspectRatio}
               handleId="video-reference-1"
               imageUrl={reference1}
@@ -531,6 +552,7 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
               onReferenceTypeChange={(value) => data.onChange?.('videoReference1Type', value)}
             />
             <ReferenceImageSlot
+              disabledReason={referenceDisabledReason}
               fallbackAspectRatio={configuredAspectRatio}
               handleId="video-reference-2"
               imageUrl={reference2}
@@ -540,6 +562,7 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
               onReferenceTypeChange={(value) => data.onChange?.('videoReference2Type', value)}
             />
             <ReferenceImageSlot
+              disabledReason={referenceDisabledReason}
               fallbackAspectRatio={configuredAspectRatio}
               handleId="video-reference-3"
               imageUrl={reference3}
@@ -551,6 +574,7 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
           </div>
 
           <VideoExtensionSlot
+            disabledReason={extensionDisabledReason}
             handleId="video-source-video"
             isConnected={hasExtensionConnection}
             sourceUrl={extensionSource}
@@ -561,12 +585,12 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
             <span className="text-gray-200"> Start Frame</span> for image-to-video. Add
             <span className="text-gray-200"> End Frame</span> for interpolation. Use up to three
             <span className="text-gray-200"> Reference</span> images to guide assets or style, or connect an upstream video to
-            <span className="text-gray-200"> Extend Video</span> to continue an existing clip.
+            <span className="text-gray-200"> Extend / Edit Video</span> to transform an existing clip. The selected model keeps every slot visible and explains or blocks unsupported combinations.
           </div>
 
           {provider === 'gemini' && isGeminiOmniModelId(selectedModelId) ? (
             <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-2 text-[11px] text-emerald-100">
-              Gemini Omni Flash is experimental in API mode. It is routed through Vertex when Vertex credentials are selected, and it fails closed if Vertex does not expose the model for this project.
+              Gemini Omni Flash uses the Interactions API for API-key mode. It supports text, start/reference images, and video editing, but not Veo-style extension or first/last-frame interpolation. Output is 720p and 3–10 seconds.
             </div>
           ) : null}
 
@@ -671,6 +695,7 @@ function ModeButton({ active, label, onClick }: ModeButtonProps) {
 }
 
 interface FrameSlotProps {
+  disabledReason?: string;
   handleId: string;
   isConnected: boolean;
   label: string;
@@ -678,7 +703,7 @@ interface FrameSlotProps {
   fallbackAspectRatio: AspectRatio;
 }
 
-function FrameSlot({ handleId, isConnected, label, imageUrl, fallbackAspectRatio }: FrameSlotProps) {
+function FrameSlot({ disabledReason, handleId, isConnected, label, imageUrl, fallbackAspectRatio }: FrameSlotProps) {
   return (
     <div className="relative rounded-lg border border-gray-700/60 bg-[#111217]/35 p-2 pl-5">
       <Handle
@@ -686,16 +711,19 @@ function FrameSlot({ handleId, isConnected, label, imageUrl, fallbackAspectRatio
         type="target"
         position={Position.Left}
         className={`nodrag nopan !left-0 !top-1/2 !-translate-x-1/2 !-translate-y-1/2 !w-6 !h-6 !border-[3px] !border-[#1e2027] ${isConnected ? '!bg-emerald-500' : '!bg-blue-500'}`}
+        isConnectable={!disabledReason}
       />
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-400">{label}</div>
-      <ImagePreviewPane
+      {disabledReason ? (
+        <div className="min-h-[5.5rem] text-[10px] leading-4 text-amber-200/80">{disabledReason}</div>
+      ) : <ImagePreviewPane
         alt={label}
         fallbackAspectRatio={fallbackAspectRatio}
         imageMaxHeightClassName="max-h-24"
         minHeightClassName="min-h-[5.5rem]"
         placeholder={<div className="text-center text-[10px] text-gray-500">Connect an image node</div>}
         src={imageUrl}
-      />
+      />}
     </div>
   );
 }
@@ -706,6 +734,7 @@ interface ReferenceImageSlotProps extends FrameSlotProps {
 }
 
 function ReferenceImageSlot({
+  disabledReason,
   handleId,
   isConnected,
   label,
@@ -721,18 +750,22 @@ function ReferenceImageSlot({
         type="target"
         position={Position.Left}
         className={`nodrag nopan !left-0 !top-1/2 !-translate-x-1/2 !-translate-y-1/2 !w-6 !h-6 !border-[3px] !border-[#1e2027] ${isConnected ? '!bg-emerald-500' : '!bg-blue-500'}`}
+        isConnectable={!disabledReason}
       />
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-400">{label}</div>
-      <ImagePreviewPane
+      {disabledReason ? (
+        <div className="min-h-[5.5rem] text-[9px] leading-3 text-amber-200/75">{disabledReason}</div>
+      ) : <ImagePreviewPane
         alt={label}
         fallbackAspectRatio={fallbackAspectRatio}
         imageMaxHeightClassName="max-h-24"
         minHeightClassName="min-h-[5.5rem]"
         placeholder={<div className="text-center text-[10px] text-gray-500">Connect reference image</div>}
         src={imageUrl}
-      />
+      />}
       <select
         className={withFlowNodeInteractionClasses('mt-2 w-full rounded-md border border-gray-700/60 bg-[#0d0f15] p-1.5 text-[10px] font-medium text-gray-200 outline-none')}
+        disabled={Boolean(disabledReason)}
         onChange={(event) => onReferenceTypeChange(event.target.value as VideoReferenceType)}
         value={referenceType}
       >
@@ -747,12 +780,13 @@ function ReferenceImageSlot({
 }
 
 interface VideoExtensionSlotProps {
+  disabledReason?: string;
   handleId: string;
   isConnected: boolean;
   sourceUrl?: string;
 }
 
-function VideoExtensionSlot({ handleId, isConnected, sourceUrl }: VideoExtensionSlotProps) {
+function VideoExtensionSlot({ disabledReason, handleId, isConnected, sourceUrl }: VideoExtensionSlotProps) {
   return (
     <div className="relative rounded-lg border border-gray-700/60 bg-[#111217]/35 p-2 pl-5">
       <Handle
@@ -760,10 +794,11 @@ function VideoExtensionSlot({ handleId, isConnected, sourceUrl }: VideoExtension
         type="target"
         position={Position.Left}
         className={`nodrag nopan !left-0 !top-1/2 !-translate-x-1/2 !-translate-y-1/2 !w-6 !h-6 !border-[3px] !border-[#1e2027] ${isConnected ? '!bg-emerald-500' : '!bg-blue-500'}`}
+        isConnectable={!disabledReason}
       />
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-400">Extend Video</div>
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-400">{disabledReason ? 'Video Input' : 'Extend / Edit Video'}</div>
       <div className="rounded-md border border-gray-700/60 bg-[#090a0f] px-2 py-3 text-[10px] text-gray-400">
-        {sourceUrl ? 'Upstream video connected for Veo extension.' : 'Connect a generated or imported video'}
+        {disabledReason ?? (sourceUrl ? 'Upstream video connected.' : 'Connect a generated or imported video')}
       </div>
     </div>
   );

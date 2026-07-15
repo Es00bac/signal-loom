@@ -7,6 +7,7 @@ interface VideoDurationSliderProps {
   onChange: (value: number) => void;
   disabled?: boolean;
   className?: string;
+  steps?: readonly number[];
 }
 
 export function VideoDurationSlider({
@@ -14,26 +15,27 @@ export function VideoDurationSlider({
   onChange,
   disabled = false,
   className,
+  steps = VIDEO_DURATION_STEPS,
 }: VideoDurationSliderProps) {
-  const currentIndex = VIDEO_DURATION_STEPS.indexOf(value as (typeof VIDEO_DURATION_STEPS)[number]);
-  const resolvedIndex = currentIndex >= 0 ? currentIndex : 1;
+  const currentIndex = steps.indexOf(value);
+  const resolvedIndex = currentIndex >= 0 ? currentIndex : Math.max(0, steps.indexOf(6));
 
   return (
     <div className={className}>
       <input
         className={withFlowNodeInteractionClasses('h-2 w-full cursor-pointer accent-blue-500 disabled:cursor-not-allowed disabled:opacity-60')}
         disabled={disabled}
-        max={String(VIDEO_DURATION_STEPS.length - 1)}
+        max={String(steps.length - 1)}
         min="0"
-        onChange={(event) => onChange(VIDEO_DURATION_STEPS[Number(event.target.value)] ?? 6)}
+        onChange={(event) => onChange(steps[Number(event.target.value)] ?? steps[0] ?? 6)}
         step="1"
         type="range"
         value={String(resolvedIndex)}
       />
 
-      <div className="mt-1 grid grid-cols-3 gap-1">
-        {VIDEO_DURATION_STEPS.map((step) => {
-          const active = step === VIDEO_DURATION_STEPS[resolvedIndex];
+      <div className="mt-1 flex flex-wrap gap-1">
+        {steps.map((step) => {
+          const active = step === steps[resolvedIndex];
 
           return (
             <button

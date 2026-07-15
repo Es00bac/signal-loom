@@ -5,18 +5,14 @@ import type {
   FunctionValueKind,
   ImageProvider,
   NodeData,
+  VideoProvider,
 } from '../types/flow';
 import { FLOW_NODE_TYPES } from '../types/flow';
 import { IMAGE_REFERENCE_HANDLES } from './imageModelSupport';
 import { LOOP_BREAK_TARGET_HANDLE } from './flowControlHandles';
 import { getImageModelDefinition, getImageNodeControlModel } from './imageProviderCapabilities';
 import { isFlowResultKind } from './flowValueTypes';
-import {
-  supportsGeminiFrameConditioning,
-  supportsGeminiImageToVideo,
-  supportsGeminiReferenceImages,
-  supportsGeminiVideoExtension,
-} from './videoModelSupport';
+import { getVideoModelSupport } from './modelContracts/videoModelContracts';
 import {
   runtimeTypeFromResultType,
   type FlowDataType,
@@ -516,23 +512,19 @@ function resolveImagePorts(context: FlowNodeContractContext): readonly FlowPortC
 function resolveVideoPorts(context: FlowNodeContractContext): readonly FlowPortContract[] {
   const data = context.node.data;
   const modelId = typeof data.modelId === 'string' ? data.modelId : undefined;
-  const provider = typeof data.provider === 'string' ? data.provider : 'gemini';
+  const provider = (typeof data.provider === 'string' ? data.provider : 'gemini') as VideoProvider;
   const importMode = data.mediaMode === 'import';
-  const isGemini = provider === 'gemini';
-  const imageToVideo = isGemini && supportsGeminiImageToVideo(modelId);
-  const interpolation = isGemini && supportsGeminiFrameConditioning(modelId);
-  const references = isGemini && supportsGeminiReferenceImages(modelId);
-  const extension = isGemini && supportsGeminiVideoExtension(modelId);
+  const support = getVideoModelSupport(provider, modelId ?? '');
   const unsupported = (capability: boolean, description: string) => importMode
     ? 'Imported Video nodes do not consume generation inputs.'
     : capability ? undefined : `${modelId || 'The selected model'} does not support ${description} through this API route.`;
 
   return [
     input('video-prompt', 'Prompt / config', [textType, jsonType], { disabledReason: importMode ? 'Imported Video nodes do not consume prompts.' : undefined }),
-    input('video-start-frame', 'Start frame', [imageType], { disabledReason: unsupported(imageToVideo, 'image-to-video') }),
-    input('video-end-frame', 'End frame', [imageType], { disabledReason: unsupported(interpolation, 'first/last-frame interpolation') }),
-    ...['video-reference-1', 'video-reference-2', 'video-reference-3'].map((id, index) => input(id, `Reference ${index + 1}`, [imageType], { disabledReason: unsupported(references, 'reference-image guidance') })),
-    input('video-source-video', 'Video to extend', [videoType], { disabledReason: unsupported(extension, 'video extension') }),
+    input('video-start-frame', 'Start frame', [imageType], { disabledReason: unsupported(support.imageToVideo, 'image-to-video') }),
+    input('video-end-frame', 'End frame', [imageType], { disabledReason: unsupported(support.interpolation, 'first/last-frame interpolation') }),
+    ...['video-reference-1', 'video-reference-2', 'video-reference-3'].map((id, index) => input(id, `Reference ${index + 1}`, [imageType], { disabledReason: unsupported(support.referenceImages && index < support.maxReferenceImages, 'reference-image guidance') })),
+    input('video-source-video', support.videoEdit ? 'Video to edit' : 'Video to extend', [videoType], { disabledReason: unsupported(support.videoExtension || support.videoEdit, support.videoEdit ? 'video editing' : 'video extension') }),
     output(null, 'Video', [videoType]),
   ];
 }

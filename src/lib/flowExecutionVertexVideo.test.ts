@@ -3,6 +3,20 @@ import { executeNodeRequest } from './flowExecution';
 import { DEFAULT_EXECUTION_CONFIG } from './providerCatalog';
 import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
 
+const omniCapture = vi.hoisted(() => ({
+  create: vi.fn(async () => ({
+    id: 'interaction-1',
+    status: 'completed',
+    outputs: [{ type: 'video', mime_type: 'video/mp4', data: 'T01OSQ==' }],
+  })),
+}));
+
+vi.mock('@google/genai', () => ({
+  GoogleGenAI: class {
+    interactions = { create: omniCapture.create };
+  },
+}));
+
 const baseSettings: RuntimeSettingsSnapshot = {
   apiKeys: {
     gemini: 'DO_NOT_USE_GEMINI_API_KEY',
@@ -120,7 +134,7 @@ describe('executeNodeRequest Vertex video routing', () => {
     });
   });
 
-  it('normalizes persisted preview/global Veo settings to the Vertex-accessible stable us-central1 route', async () => {
+  it('preserves a Gemini preview ID in Vertex mode and fails with an actionable route warning', async () => {
     const generateVertexVideo = vi.fn().mockResolvedValue({
       result: 'data:video/mp4;base64,VERTEX',
       resultType: 'video',
@@ -129,26 +143,24 @@ describe('executeNodeRequest Vertex video routing', () => {
     });
     vi.stubGlobal('window', { signalLoomNative: { generateVertexVideo } });
 
-    await executeNodeRequest(
-      createVideoNode('veo-3.1-generate-preview'),
-      {
-        prompt: 'A cinematic establishing shot.',
-        config: { ...DEFAULT_EXECUTION_CONFIG, aspectRatio: '16:9', durationSeconds: 6, videoResolution: '720p' },
-      },
-      {
-        ...baseSettings,
-        providerSettings: {
-          ...baseSettings.providerSettings,
-          vertexLocation: 'global',
+    await expect(
+      executeNodeRequest(
+        createVideoNode('veo-3.1-generate-preview'),
+        {
+          prompt: 'A cinematic establishing shot.',
+          config: { ...DEFAULT_EXECUTION_CONFIG, aspectRatio: '16:9', durationSeconds: 6, videoResolution: '720p' },
         },
-      },
-    );
+        {
+          ...baseSettings,
+          providerSettings: {
+            ...baseSettings.providerSettings,
+            vertexLocation: 'global',
+          },
+        },
+      ),
+    ).rejects.toThrow('Gemini Developer API model ID');
 
-    expect(generateVertexVideo).toHaveBeenCalledWith(expect.objectContaining({
-      location: 'us-central1',
-      modelId: 'veo-3.1-generate-001',
-      route: 'veo-predict-long-running',
-    }));
+    expect(generateVertexVideo).not.toHaveBeenCalled();
   });
 
   it('fails closed in Vertex mode when the Vertex video bridge is unavailable', async () => {
@@ -202,5 +214,58 @@ describe('executeNodeRequest Vertex video routing', () => {
     expect(generateVertexVideo.mock.calls[0][0].body.contents[0].parts).toContainEqual({
       text: 'Make the character turn and wave.',
     });
+  });
+
+  it('blocks Omni end-frame interpolation before either credential route sends a request', async () => {
+    const generateVertexVideo = vi.fn();
+    vi.stubGlobal('window', { signalLoomNative: { generateVertexVideo } });
+
+    await expect(
+      executeNodeRequest(
+        createVideoNode('gemini-omni-flash-preview'),
+        {
+          prompt: 'Interpolate these frames.',
+          startImageInput: 'data:image/png;base64,U1RBUlQ=',
+          endImageInput: 'data:image/png;base64,RU5E',
+          config: { ...DEFAULT_EXECUTION_CONFIG, aspectRatio: '16:9', durationSeconds: 5, videoResolution: '720p' },
+        },
+        baseSettings,
+      ),
+    ).rejects.toThrow('does not support first/last-frame interpolation');
+
+    expect(generateVertexVideo).not.toHaveBeenCalled();
+  });
+
+  it('routes Gemini Omni API-key generation through the Interactions API contract', async () => {
+    omniCapture.create.mockClear();
+
+    const result = await executeNodeRequest(
+      createVideoNode('gemini-omni-flash-preview'),
+      {
+        prompt: 'One unbroken shot of a character waving.',
+        startImageInput: 'data:image/png;base64,U1RBUlQ=',
+        config: { ...DEFAULT_EXECUTION_CONFIG, aspectRatio: '9:16', durationSeconds: 5, videoResolution: '720p' },
+      },
+      {
+        ...baseSettings,
+        providerSettings: {
+          ...baseSettings.providerSettings,
+          geminiCredentialMode: 'api-key',
+        },
+      },
+    );
+
+    expect(result.resultType).toBe('video');
+    expect(omniCapture.create).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'gemini-omni-flash-preview',
+      response_format: { type: 'video', aspect_ratio: '9:16' },
+      generation_config: {
+        video_config: { task: 'image_to_video', duration: 5 },
+      },
+    }));
+    expect(omniCapture.create.mock.calls[0][0].input).toEqual(expect.arrayContaining([
+      { type: 'text', text: 'One unbroken shot of a character waving.' },
+      expect.objectContaining({ type: 'image', data: 'U1RBUlQ=', mime_type: 'image/png' }),
+    ]));
   });
 });

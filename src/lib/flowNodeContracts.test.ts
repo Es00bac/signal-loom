@@ -99,6 +99,24 @@ describe('dynamic Flow node contracts', () => {
     expect(unsupported.find((port) => port.id === 'image-reference-1')?.disabledReason).toContain('does not support reference images');
   });
 
+  it('drives Video conditioning ports from the exact provider/model contract', () => {
+    const omni = resolveFlowNodePorts(context('videoGen', {
+      provider: 'gemini',
+      modelId: 'gemini-omni-flash-preview',
+    }));
+    const atlasImageToVideo = resolveFlowNodePorts(context('videoGen', {
+      provider: 'atlas',
+      modelId: 'google/veo3.1/image-to-video',
+    }));
+
+    expect(omni.find((port) => port.id === 'video-start-frame')?.disabledReason).toBeUndefined();
+    expect(omni.find((port) => port.id === 'video-end-frame')?.disabledReason).toContain('does not support');
+    expect(omni.find((port) => port.id === 'video-reference-3')?.disabledReason).toBeUndefined();
+    expect(omni.find((port) => port.id === 'video-source-video')?.label).toBe('Video to edit');
+    expect(atlasImageToVideo.find((port) => port.id === 'video-start-frame')?.disabledReason).toBeUndefined();
+    expect(atlasImageToVideo.find((port) => port.id === 'video-reference-1')?.disabledReason).toContain('does not support');
+  });
+
   it('declares composite package and envelope extraction on Image source and reference inputs', () => {
     const ports = resolveFlowNodePorts(context('imageGen', { provider: 'bfl', modelId: 'flux-2-pro' }));
     const compositeImageTypes = [

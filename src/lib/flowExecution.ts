@@ -115,6 +115,7 @@ import {
   isGeminiOmniModelId,
   normalizeGeminiVideoModelId,
 } from './videoModelSupport';
+import { getVideoModelContract } from './modelContracts/videoModelContracts';
 import {
   buildBackendProxyExecuteRequest,
   shouldUseBackendProxy,
@@ -2649,6 +2650,7 @@ async function executeVideoNode(
   const provider = (node.data.provider as VideoProvider | undefined) ?? 'gemini';
   const rawModelId = getModelId(settings, 'video', provider, node.data.modelId);
   const modelId = provider === 'gemini' ? normalizeGeminiVideoModelId(rawModelId) : rawModelId;
+  const modelContract = getVideoModelContract(provider, modelId);
   const prompt = context.prompt.trim();
 
   if (!prompt && !context.startImageInput && !context.extensionVideoInput) {
@@ -2657,7 +2659,13 @@ async function executeVideoNode(
 
   switch (provider) {
     case 'gemini': {
+      if (modelContract.availability === 'unavailable') {
+        throw new NonRetryableError(`${modelContract.displayName} is unavailable.${modelContract.migrationModelId ? ` Select ${modelContract.migrationModelId} instead.` : ''}`);
+      }
       if (settings.providerSettings.geminiCredentialMode === 'vertex-adc') {
+        if (modelContract.apiFamily === 'google-gemini') {
+          throw new NonRetryableError(`${modelContract.displayName} uses a Gemini Developer API model ID. Select the matching -001 Vertex model or switch Google credentials to API-key mode.`);
+        }
         return isGeminiOmniModelId(modelId)
           ? executeVertexOmniVideoNode({
               modelId,
@@ -2679,6 +2687,10 @@ async function executeVideoNode(
       }
 
       const apiKey = requireApiKey(settings.apiKeys.gemini, 'Google Gemini');
+
+      if (modelContract.apiFamily === 'google-vertex') {
+        throw new NonRetryableError(`${modelContract.displayName} uses a Vertex model ID. Select the matching -preview Gemini API model or switch Google credentials to Vertex ADC.`);
+      }
 
       if (isGeminiOmniModelId(modelId)) {
         return executeGeminiOmniVideoNode(apiKey, modelId, prompt, context, onStatus);
@@ -2886,6 +2898,7 @@ async function executeVertexOmniVideoNode(input: {
   settings: RuntimeSettingsSnapshot;
   onStatus?: (statusMessage: string) => void;
 }): Promise<ExecutionResult> {
+  validateOmniVideoRequest(input.context);
   const vertexConfig = getVertexProjectConfig(input.settings.providerSettings);
 
   if (!vertexConfig.projectId) {
@@ -2948,48 +2961,66 @@ async function executeGeminiOmniVideoNode(
   context: ExecutionContext,
   onStatus?: (statusMessage: string) => void,
 ): Promise<ExecutionResult> {
+  validateOmniVideoRequest(context);
   onStatus?.('Generating video with Gemini Omni…');
   const { GoogleGenAI } = await loadProviderModule(
     () => import('@google/genai'),
     'Google Gemini Omni video',
   );
-  const client = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: 'v1alpha' } });
-  const parts: PartUnion[] = [{ text: prompt }];
+  const client = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: 'v1beta' } });
   const media = await buildOmniVideoMediaParts(context);
-
-  for (const item of media) {
-    if (item.instruction) {
-      parts.push({ text: item.instruction });
-    }
-    parts.push({
-      inlineData: item.inlineData,
-    } as unknown as PartUnion);
-  }
 
   if (!prompt.trim() && media.length === 0) {
     throw new Error('Gemini Omni video needs a prompt, image reference, or video reference.');
   }
 
-  const response = await client.models.generateContent({
-    model: modelId,
-    contents: parts,
-    config: {
-      responseModalities: ['VIDEO'],
-    },
-  });
-  const videoPart = extractGeminiInlineData(response);
-
-  if (!videoPart?.mimeType.startsWith('video/')) {
-    const text = extractGeminiTextResponse(response);
-    throw new Error(
-      text
-        ? `Gemini Omni did not return inline video data. Provider response: ${text}`
-        : 'Gemini Omni did not return inline video data. The public video API contract may still be rolling out.',
-    );
+  const interactionInput: Array<Record<string, string>> = [];
+  if (prompt.trim()) {
+    interactionInput.push({ type: 'text', text: prompt.trim() });
+  }
+  for (const item of media) {
+    if (item.instruction) interactionInput.push({ type: 'text', text: item.instruction });
+    interactionInput.push({
+      type: item.inlineData.mimeType.startsWith('video/') ? 'video' : 'image',
+      data: item.inlineData.data,
+      mime_type: item.inlineData.mimeType,
+    });
   }
 
+  const task = context.extensionVideoInput
+    ? 'edit'
+    : (context.referenceImageInputs?.length ?? 0) > 0
+      ? 'reference_to_video'
+      : context.startImageInput
+        ? 'image_to_video'
+        : 'text_to_video';
+
+  const interaction = await client.interactions.create({
+    model: modelId,
+    input: interactionInput as never,
+    response_format: {
+      type: 'video',
+      aspect_ratio: context.config.aspectRatio,
+    },
+    generation_config: {
+      video_config: {
+        task,
+        duration: context.config.durationSeconds,
+      },
+    } as never,
+  });
+  const videoPart = extractOmniInteractionVideo(interaction);
+
+  if (!videoPart) {
+    throw new Error('Gemini Omni completed without a video output in the Interactions API response.');
+  }
+
+  const result = videoPart.data
+    ? await toResultUrl(inlineDataToBlob(videoPart.data, videoPart.mimeType))
+    : await materializeRemoteMediaResult(videoPart.uri as string, 'Gemini Omni video download failed', videoPart.mimeType);
+
   return {
-    result: await toResultUrl(inlineDataToBlob(videoPart.data, videoPart.mimeType)),
+    result: typeof result === 'string' ? result : result.result,
     resultType: 'video',
     statusMessage: `Generated video with ${modelId}`,
     usage: createGeminiVideoUsage(
@@ -3001,6 +3032,45 @@ async function executeGeminiOmniVideoNode(
     mimeType: videoPart.mimeType,
     extension: videoPart.mimeType.includes('webm') ? 'webm' : 'mp4',
   };
+}
+
+function validateOmniVideoRequest(context: ExecutionContext): void {
+  if (context.endImageInput) {
+    throw new NonRetryableError('Gemini Omni Flash does not support first/last-frame interpolation. Use Veo 3.1 for an End Frame input.');
+  }
+
+  const referenceImageCount = context.referenceImageInputs?.length ?? 0;
+  if (referenceImageCount > 3) {
+    throw new NonRetryableError('The Flow Gemini Omni interface supports up to three reference images. Remove extra reference-image edges before running.');
+  }
+}
+
+function extractOmniInteractionVideo(interaction: unknown): {
+  data?: string;
+  uri?: string;
+  mimeType: string;
+} | undefined {
+  if (!interaction || typeof interaction !== 'object') return undefined;
+  const record = interaction as Record<string, unknown>;
+  const convenience = (record.output_video ?? record.outputVideo) as Record<string, unknown> | undefined;
+  const outputs = Array.isArray(record.outputs) ? record.outputs : [];
+  const steps = Array.isArray(record.steps) ? record.steps : [];
+  const stepContents = steps.flatMap((step) => {
+    const content = step && typeof step === 'object' ? (step as Record<string, unknown>).content : undefined;
+    return Array.isArray(content) ? content : [];
+  });
+  const candidate = [convenience, ...outputs, ...stepContents].find((item) =>
+    item && typeof item === 'object' && (item as Record<string, unknown>).type === 'video'
+  ) ?? convenience;
+  if (!candidate || typeof candidate !== 'object') return undefined;
+  const video = candidate as Record<string, unknown>;
+  const data = typeof video.data === 'string' ? video.data : undefined;
+  const uri = typeof video.uri === 'string' ? video.uri : undefined;
+  if (!data && !uri) return undefined;
+  const mimeType = typeof video.mime_type === 'string'
+    ? video.mime_type
+    : typeof video.mimeType === 'string' ? video.mimeType : 'video/mp4';
+  return { data, uri, mimeType };
 }
 
 function validateGeminiVeoVideoRequest(
@@ -3071,13 +3141,6 @@ async function buildOmniVideoMediaParts(context: ExecutionContext): Promise<Arra
     media.push({
       instruction: 'Use this as the starting visual reference.',
       inlineData: await dataUrlToInlineImage(context.startImageInput),
-    });
-  }
-
-  if (context.endImageInput) {
-    media.push({
-      instruction: 'Use this as the ending visual reference.',
-      inlineData: await dataUrlToInlineImage(context.endImageInput),
     });
   }
 

@@ -13,9 +13,10 @@ import {
 } from './videoModelSupport';
 
 describe('normalizeGeminiVideoModelId', () => {
-  it('maps legacy or alias Veo ids onto the current canonical ids', () => {
-    expect(normalizeGeminiVideoModelId('veo-3.1')).toBe('veo-3.1-generate-001');
-    expect(normalizeGeminiVideoModelId('veo-3.1-fast')).toBe('veo-3.1-fast-generate-001');
+  it('maps legacy aliases without rewriting current Gemini preview IDs to Vertex IDs', () => {
+    expect(normalizeGeminiVideoModelId('veo-3.1')).toBe('veo-3.1-generate-preview');
+    expect(normalizeGeminiVideoModelId('veo-3.1-fast')).toBe('veo-3.1-fast-generate-preview');
+    expect(normalizeGeminiVideoModelId('veo-3.1-generate-preview')).toBe('veo-3.1-generate-preview');
     expect(normalizeGeminiVideoModelId('veo-3-generate-preview')).toBe('veo-3.0-generate-001');
     expect(normalizeGeminiVideoModelId('gemini-omni-flash')).toBe('gemini-omni-flash-preview');
   });
@@ -41,8 +42,8 @@ describe('supportsGeminiFrameConditioning', () => {
     expect(supportsGeminiFrameConditioning('gemini-omni-flash')).toBe(false);
   });
 
-  it('rejects unknown Gemini video models for frame-conditioned renders', () => {
-    expect(supportsGeminiFrameConditioning('veo-3.1-lite-preview')).toBe(false);
+  it('accepts documented Lite interpolation but rejects missing model ids', () => {
+    expect(supportsGeminiFrameConditioning('veo-3.1-lite-preview')).toBe(true);
     expect(supportsGeminiFrameConditioning('')).toBe(false);
   });
 });
@@ -64,7 +65,8 @@ describe('supportsGeminiVideoExtension', () => {
     expect(supportsGeminiVideoExtension('veo-3.1-fast-generate-preview')).toBe(true);
     expect(supportsGeminiVideoExtension('veo-3.1-generate-001')).toBe(true);
     expect(supportsGeminiVideoExtension('veo-3.1-fast-generate-001')).toBe(true);
-    expect(supportsGeminiVideoExtension('gemini-omni-flash-preview')).toBe(true);
+    expect(supportsGeminiVideoExtension('gemini-omni-flash-preview')).toBe(false);
+    expect(supportsGeminiVideoExtension('veo-3.1-lite-generate-preview')).toBe(false);
     expect(supportsGeminiVideoExtension('veo-3-generate-preview')).toBe(false);
   });
 });
@@ -80,6 +82,7 @@ describe('filterGeminiVideoModelsForConditioning', () => {
     ];
 
     expect(filterGeminiVideoModelsForConditioning(options)).toEqual([
+      { value: 'veo-3.1-lite-preview', label: 'Veo 3.1 Lite' },
       { value: 'gemini-omni-flash-preview', label: 'Gemini Omni Flash Preview' },
       { value: 'veo-3.1-fast-generate-001', label: 'Veo 3.1 Fast' },
       { value: 'veo-3.1-generate-001', label: 'Veo 3.1' },

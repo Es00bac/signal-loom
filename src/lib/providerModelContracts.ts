@@ -27,6 +27,7 @@ export type ApiFamily =
   | 'openai-chat-completions'
   | 'openai-images'
   | 'google-gemini'
+  | 'google-interactions'
   | 'google-vertex'
   | 'huggingface-inference'
   | 'elevenlabs'
@@ -58,6 +59,7 @@ export type ModelOperation =
   | 'video-extension'
   | 'frame-interpolation'
   | 'reference-to-video'
+  | 'video-edit'
   | 'text-to-speech'
   | 'speech-to-speech'
   | 'text-to-sound-effect';
@@ -517,6 +519,7 @@ function getInactiveReason(
 function safePromptApiName(apiFamily: ApiFamily): string {
   if (apiFamily === 'openai-responses') return 'input';
   if (apiFamily === 'google-gemini' || apiFamily === 'google-vertex') return 'contents';
+  if (apiFamily === 'google-interactions') return 'input';
   if (apiFamily === 'huggingface-inference') return 'inputs';
   return 'prompt';
 }

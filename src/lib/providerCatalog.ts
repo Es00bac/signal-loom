@@ -56,7 +56,7 @@ export const DEFAULT_MODELS: DefaultModelSettings = {
     byteplus: 'seedream-5-0-260128',
   },
   video: {
-    gemini: 'veo-3.1-generate-001',
+    gemini: 'gemini-omni-flash-preview',
     huggingface: 'Wan-AI/Wan2.2-T2V-A14B',
     atlas: 'google/veo3.1/text-to-video',
   },
@@ -313,9 +313,12 @@ export const FALLBACK_MODEL_OPTIONS: ModelCatalog = {
   video: {
     gemini: [
       { value: 'gemini-omni-flash-preview', label: 'Gemini Omni Flash Preview' },
-      { value: 'veo-3.1-generate-001', label: 'Veo 3.1' },
-      { value: 'veo-3.1-fast-generate-001', label: 'Veo 3.1 Fast' },
-      { value: 'veo-3.0-generate-001', label: 'Veo 3' },
+      { value: 'veo-3.1-generate-preview', label: 'Veo 3.1 Preview (Gemini API)' },
+      { value: 'veo-3.1-fast-generate-preview', label: 'Veo 3.1 Fast Preview (Gemini API)' },
+      { value: 'veo-3.1-lite-generate-preview', label: 'Veo 3.1 Lite Preview (Gemini API)' },
+      { value: 'veo-3.1-generate-001', label: 'Veo 3.1 (Vertex GA)' },
+      { value: 'veo-3.1-fast-generate-001', label: 'Veo 3.1 Fast (Vertex GA)' },
+      { value: 'veo-3.1-lite-generate-001', label: 'Veo 3.1 Lite (Vertex)' },
     ],
     huggingface: [
       { value: 'Lightricks/LTX-2.3', label: 'LTX 2.3' },
