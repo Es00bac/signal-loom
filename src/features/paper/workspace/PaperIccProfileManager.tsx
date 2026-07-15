@@ -3,13 +3,16 @@ import type { BinaryAssetId } from '../../../shared/assets/contentAddressedAsset
 import type { PaperManagedIccProfile } from '../../../types/paper';
 import {
   importPaperManagedIccProfile,
+  installBundledPaperManagedIccProfile,
 } from '../../../lib/paperManagedIccProfiles';
+import { BUNDLED_CMYK_PROFILES, DEFAULT_CMYK_PROFILE_ID } from '../../../lib/paperIccProfiles';
 import type { PaperAssetRepository } from '../assets/PaperAssetRepository';
 import { paperAssetRepository } from '../assets/PaperAssetRuntime';
 
 export interface PaperIccProfileManagerChange {
   profiles: PaperManagedIccProfile[];
   selectedProfileAssetId?: BinaryAssetId;
+  outputConditionId?: string;
 }
 
 export interface PaperIccProfileManagerProps {
@@ -41,6 +44,8 @@ export function PaperIccProfileManager({
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [bundledProfileId, setBundledProfileId] = useState(DEFAULT_CMYK_PROFILE_ID);
+  const [installingBundled, setInstallingBundled] = useState(false);
   const managedProfiles = useMemo(() => profiles ?? [], [profiles]);
 
   const handleFile = useCallback(async (file: File | undefined) => {
@@ -56,6 +61,26 @@ export function PaperIccProfileManager({
       setError(reason instanceof Error ? reason.message : 'The ICC profile could not be imported.');
     }
   }, [managedProfiles, onChange, outputConditionId, registryName, repository]);
+
+  const handleBundledProfile = useCallback(async () => {
+    setError(null);
+    setNotice(null);
+    setInstallingBundled(true);
+    try {
+      const installed = await installBundledPaperManagedIccProfile(bundledProfileId, repository);
+      const nextProfiles = replaceProfile(managedProfiles, installed.profile);
+      onChange({
+        profiles: nextProfiles,
+        selectedProfileAssetId: installed.profile.id,
+        outputConditionId: installed.outputConditionId,
+      });
+      setNotice(`Managed ${installed.profile.description} for ${installed.outputConditionId}.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The bundled ICC profile could not be installed.');
+    } finally {
+      setInstallingBundled(false);
+    }
+  }, [bundledProfileId, managedProfiles, onChange, repository]);
 
   return (
     <div className="mt-2 space-y-2 border-t border-cyan-300/10 pt-2">
@@ -79,6 +104,27 @@ export function PaperIccProfileManager({
           event.target.value = '';
         }}
       />
+      <div className="grid grid-cols-[1fr_auto] gap-2">
+        <select
+          aria-label="Bundled CMYK profile"
+          className="paper-input min-w-0"
+          onChange={(event) => setBundledProfileId(event.target.value)}
+          value={bundledProfileId}
+        >
+          {BUNDLED_CMYK_PROFILES.map((profile) => (
+            <option key={profile.id} value={profile.id}>{profile.displayName}</option>
+          ))}
+        </select>
+        <button
+          aria-label="Use bundled CMYK profile"
+          className="rounded border border-cyan-300/20 bg-cyan-400/10 px-2 py-1 text-xs text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50"
+          disabled={installingBundled}
+          onClick={() => { void handleBundledProfile(); }}
+          type="button"
+        >
+          {installingBundled ? 'Installing…' : 'Use bundled'}
+        </button>
+      </div>
       {error ? <p className="text-xs text-rose-300">{error}</p> : null}
       {notice ? <p className="text-xs text-emerald-300">{notice}</p> : null}
       {managedProfiles.length ? (

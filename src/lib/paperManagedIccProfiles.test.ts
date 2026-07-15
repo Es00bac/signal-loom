@@ -4,6 +4,7 @@ import { createBinaryAssetRecord } from '../shared/assets/contentAddressedAsset'
 import { MemoryPaperAssetRepository } from '../features/paper/assets/PaperAssetRepository';
 import type { PaperManagedIccProfile } from '../types/paper';
 import {
+  installBundledPaperManagedIccProfile,
   parseAndValidateCmykOutputProfile,
   resolveExactPaperOutputProfile,
   type PaperManagedIccProfileRegistry,
@@ -42,6 +43,34 @@ async function profileFixture(): Promise<{
 }
 
 describe('managed Paper CMYK output profiles', () => {
+  it('installs the exact selected bundled profile as a content-addressed managed asset', async () => {
+    const repository = new MemoryPaperAssetRepository();
+
+    const installed = await installBundledPaperManagedIccProfile(
+      'fogra39',
+      repository,
+      async (url) => {
+        expect(url).toContain('icc/FOGRA39L_coated.icc');
+        return fogra39;
+      },
+    );
+
+    expect(installed.outputConditionId).toBe('FOGRA39');
+    expect(installed.profile).toMatchObject({
+      id: `sha256:${installed.profile.asset.sha256}`,
+      outputConditionId: 'FOGRA39',
+      colorSpace: 'CMYK',
+      source: {
+        kind: 'bundled',
+        url: '/icc/FOGRA39L_coated.icc',
+      },
+    });
+    expect(await repository.get(installed.profile.asset.id)).toMatchObject({
+      ref: installed.profile.asset,
+      bytes: fogra39,
+    });
+  });
+
   it('never substitutes a different output condition', async () => {
     const { registry } = await profileFixture();
 

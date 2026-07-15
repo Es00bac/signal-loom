@@ -89,4 +89,32 @@ describe('PaperIccProfileManager', () => {
     await act(async () => select.click());
     expect(updates).toHaveBeenCalledWith(expect.objectContaining({ selectedProfileAssetId: record.ref.id }));
   });
+
+  it('offers the redistribution-cleared bundled profile catalog as an explicit setup action', async () => {
+    const repository = new MemoryPaperAssetRepository();
+    const updates = vi.fn();
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+
+    await act(async () => {
+      root.render(
+        <PaperIccProfileManager
+          outputConditionId=""
+          profiles={[]}
+          repository={repository}
+          selectedProfileAssetId={undefined}
+          onChange={updates}
+        />,
+      );
+    });
+
+    const bundled = host.querySelector('[aria-label="Bundled CMYK profile"]') as HTMLSelectElement;
+    expect(bundled).not.toBeNull();
+    expect([...bundled.options].map((option) => option.textContent)).toContain(
+      'ISO Coated v2 / FOGRA39 (coated)',
+    );
+    expect(host.querySelector('button[aria-label="Use bundled CMYK profile"]')).not.toBeNull();
+  });
 });

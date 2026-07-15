@@ -8,6 +8,8 @@ import {
 } from '../shared/assets/contentAddressedAsset';
 import type { PaperManagedIccProfile } from '../types/paper';
 import { describeIccProfile, validateCmykOutputProfileTransform } from './paperIccEngine';
+import { resolveBundledAssetUrl } from './bundledAssetUrl';
+import { findBundledProfile } from './paperIccProfiles';
 
 const ICC_HEADER_BYTES = 128;
 export const MAX_PAPER_ICC_PROFILE_BYTES = 512 * 1024 * 1024;
@@ -45,6 +47,13 @@ export interface PaperIccImportFile {
 /** Minimal asset-write contract so ICC import remains independent of the renderer repository class. */
 export interface PaperManagedIccAssetStore {
   put(record: BinaryAssetRecord): Promise<BinaryAssetRef>;
+}
+
+export type PaperBundledIccBytesLoader = (url: string) => Promise<Uint8Array>;
+
+export interface InstalledBundledPaperManagedIccProfile {
+  profile: PaperManagedIccProfile;
+  outputConditionId: string;
 }
 
 function iccTag(bytes: Uint8Array, offset: number): string {
@@ -162,6 +171,47 @@ export async function importPaperManagedIccProfile(
     registryName: options.registryName,
     source: { kind: 'user-import' },
   });
+}
+
+async function fetchBundledIccBytes(url: string): Promise<Uint8Array> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Bundled ICC profile could not be loaded (HTTP ${response.status}).`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+/** Explicitly installs one shipped profile as the document's exact content-addressed managed asset. */
+export async function installBundledPaperManagedIccProfile(
+  profileId: string,
+  store: PaperManagedIccAssetStore,
+  load: PaperBundledIccBytesLoader = fetchBundledIccBytes,
+): Promise<InstalledBundledPaperManagedIccProfile> {
+  const bundled = findBundledProfile(profileId);
+  if (!bundled?.url || !bundled.outputConditionId) {
+    throw new Error('The selected bundled CMYK profile is unavailable.');
+  }
+  const resolvedUrl = resolveBundledAssetUrl(bundled.url);
+  const bytes = await load(resolvedUrl);
+  const parsed = await parseAndValidateCmykOutputProfile(bytes);
+  const fileName = bundled.url.split('/').filter(Boolean).at(-1) ?? `${bundled.id}.icc`;
+  const record = await createBinaryAssetRecord(bytes, {
+    mimeType: 'application/vnd.iccprofile',
+    fileName,
+  });
+  const asset = await store.put(record);
+  return {
+    outputConditionId: bundled.outputConditionId,
+    profile: createPaperManagedIccProfile(asset, parsed, {
+      outputConditionId: bundled.outputConditionId,
+      registryName: bundled.registryName,
+      source: {
+        kind: 'bundled',
+        url: bundled.url,
+        licenseId: bundled.licenseId ?? 'LicenseRef-NoKnownCopyrightRestrictions',
+      },
+    }),
+  };
 }
 
 /**
