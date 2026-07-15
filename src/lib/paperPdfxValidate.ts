@@ -1,7 +1,7 @@
 // PDF/X structural validator (docs/notes/835). veraPDF validates PDF/A + PDF/UA but NOT PDF/X, and
 // Acrobat/Enfocus preflight are proprietary — so this is Sloom Studio's own check against the ISO 15930
-// (PDF/X-1a / PDF/X-4) structural essentials. It is the oracle the exporter tests assert on, and the
-// same report drives the in-app print-preflight badge ("this file really is PDF/X").
+// (PDF/X-1a / PDF/X-4) structural essentials. It is an internal structural verifier, not a substitute
+// for a press RIP, Acrobat, Enfocus, or an ISO conformance certification.
 //
 // It verifies STRUCTURE (the things a bad "fake PDF/X" gets wrong): a GTS_PDFX OutputIntent with an
 // embedded CMYK DestOutputProfile, PDF/X version in both XMP and the Info dict, TrimBox + MediaBox on
@@ -64,6 +64,50 @@ function nameValue(value: unknown): string | undefined {
   return value instanceof PDFName ? value.asString().replace(/^\//, '') : undefined;
 }
 
+function stringValue(value: unknown): string | undefined {
+  return value instanceof PDFString ? value.asString() : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return value instanceof PDFNumber ? value.asNumber() : undefined;
+}
+
+function standardFromPdfxVersion(value: string | undefined): PdfxStandard | undefined {
+  if (!value) return undefined;
+  if (/^PDF\/X-4(?:\b|:)/i.test(value)) return 'pdf-x-4';
+  if (/^PDF\/X-1a(?:\b|:)/i.test(value)) return 'pdf-x-1a';
+  return undefined;
+}
+
+function asDict(ctx: PDFContext, value: unknown): PDFDict | undefined {
+  if (value == null) return undefined;
+  const resolved = ctx.lookup(value as never);
+  return resolved instanceof PDFDict ? resolved : undefined;
+}
+
+/** Return the first inspectable live-transparency construct found in a PDF object dictionary. */
+function liveTransparencyDetail(ctx: PDFContext, dict: PDFDict): string | undefined {
+  const softMask = dict.get(PDFName.of('SMask'));
+  if (softMask && nameValue(softMask) !== 'None') return 'soft mask';
+  const smaskInData = numberValue(dict.get(PDFName.of('SMaskInData')));
+  if (smaskInData && smaskInData !== 0) return 'image soft-mask data';
+  // /Type is optional for ExtGState dictionaries, so alpha keys themselves are also evidence.
+  if (
+    nameValue(dict.get(PDFName.of('Type'))) === 'ExtGState'
+    || dict.has(PDFName.of('ca'))
+    || dict.has(PDFName.of('CA'))
+  ) {
+    const fillAlpha = numberValue(dict.get(PDFName.of('ca')));
+    const strokeAlpha = numberValue(dict.get(PDFName.of('CA')));
+    if ((fillAlpha !== undefined && fillAlpha < 1) || (strokeAlpha !== undefined && strokeAlpha < 1)) {
+      return 'ExtGState alpha';
+    }
+  }
+  const group = asDict(ctx, dict.get(PDFName.of('Group')));
+  if (group && nameValue(group.get(PDFName.of('S'))) === 'Transparency') return 'transparency group';
+  return undefined;
+}
+
 /**
  * Validate PDF/X structure. `expected.standard` (if given) additionally checks the header version and
  * metadata match that standard.
@@ -112,12 +156,13 @@ export async function validatePaperPdfx(
   else if (/PDF\/X-1a/.test(xmpText)) detectedStandard = 'pdf-x-1a';
 
   // --- Info dict GTS_PDFXVersion + Trapped ---
+  let infoVersion: string | undefined;
   let infoVersionOk = false;
   let trappedOk = false;
   const info = ctx.lookupMaybe(ctx.trailerInfo.Info, PDFDict);
   if (info) {
-    const v = info.get(PDFName.of('GTS_PDFXVersion'));
-    infoVersionOk = v instanceof PDFString && v.asString().length > 0;
+    infoVersion = stringValue(info.get(PDFName.of('GTS_PDFXVersion')));
+    infoVersionOk = Boolean(infoVersion);
     const trapped = nameValue(info.get(PDFName.of('Trapped')));
     trappedOk = trapped === 'True' || trapped === 'False';
   }
@@ -145,6 +190,34 @@ export async function validatePaperPdfx(
   // --- Not encrypted ---
   const notEncrypted = !ctx.trailerInfo.Encrypt && !/\/Encrypt\b/.test(tail);
   add('not-encrypted', 'Document is not encrypted', notEncrypted);
+
+  const targetStandard = expected.standard ?? detectedStandard;
+  if (expected.standard) {
+    const infoStandard = standardFromPdfxVersion(infoVersion);
+    const metadataMatches = detectedStandard === expected.standard && infoStandard === expected.standard;
+    const actual = [detectedStandard, infoStandard].filter(Boolean).join(' / ') || 'missing metadata standard';
+    add(
+      'metadata-standard',
+      `XMP and Info metadata match ${expected.standard}`,
+      metadataMatches,
+      metadataMatches ? undefined : actual,
+    );
+  }
+
+  // --- PDF/X-1a must not retain live transparency ---
+  if (targetStandard === 'pdf-x-1a') {
+    let transparencyDetail = '';
+    for (const [, object] of ctx.enumerateIndirectObjects()) {
+      const dict = object instanceof PDFRawStream ? object.dict : object instanceof PDFDict ? object : undefined;
+      if (!dict) continue;
+      const detail = liveTransparencyDetail(ctx, dict);
+      if (detail) {
+        transparencyDetail = detail;
+        break;
+      }
+    }
+    add('x1a-no-live-transparency', 'PDF/X-1a has no live transparency', !transparencyDetail, transparencyDetail || undefined);
+  }
 
   // --- No RGB anywhere (image color spaces + content color operators) ---
   let rgbDetail = '';
@@ -186,7 +259,6 @@ export async function validatePaperPdfx(
   add('no-rgb', 'No RGB color (DeviceCMYK / spot only)', noRgb, rgbDetail || undefined);
 
   // --- Header version matches the standard (when a standard is expected/detected) ---
-  const targetStandard = expected.standard ?? detectedStandard;
   if (targetStandard) {
     const wantVersion = targetStandard === 'pdf-x-4' ? '1.6' : '1.4';
     const versionOk = version === wantVersion || (targetStandard === 'pdf-x-1a' && (version === '1.3' || version === '1.4'));
@@ -200,6 +272,6 @@ export async function validatePaperPdfx(
 /** One-line human summary of a report (for logs / CLI). */
 export function summarizePdfxReport(report: PdfxValidationReport): string {
   const failed = report.checks.filter((c) => !c.pass).map((c) => c.label);
-  if (report.pass) return `PDF/X OK (${report.standard ?? 'unknown'}, PDF ${report.headerVersion})`;
-  return `PDF/X FAILED: ${failed.join('; ')}`;
+  if (report.pass) return `Structural checks passed (${report.standard ?? 'unknown'}, PDF ${report.headerVersion})`;
+  return `Structural checks failed: ${failed.join('; ')}`;
 }

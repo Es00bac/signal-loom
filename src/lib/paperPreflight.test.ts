@@ -244,7 +244,7 @@ describe('paperPreflight', () => {
     }));
   });
 
-  it('discloses Liberation font substitution for PDF/X but not for browser PDF', () => {
+  it('blocks PDF/X browser/system font fallback rather than describing substitutions', () => {
     const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Font subst', preset: 'comic-book' }), {
       printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51' },
     });
@@ -254,19 +254,19 @@ describe('paperPreflight', () => {
     });
 
     const pdfxReport = analyzePaperPreflight(document, []);
-    const subst = pdfxReport.issues.find((i) => i.title === 'Fonts embedded as Liberation substitutes');
-    expect(subst).toBeDefined();
-    expect(subst?.severity).toBe('info');
-    expect(subst?.category).toBe('fonts');
-    expect(subst?.detail).toContain('Georgia → Liberation Serif');
+    const missing = pdfxReport.issues.find((i) => i.title === 'PDF/X requires exact managed font faces');
+    expect(missing).toBeDefined();
+    expect(missing?.severity).toBe('error');
+    expect(missing?.category).toBe('fonts');
+    expect(missing?.detail).toContain('Georgia');
 
-    // The plain browser-PDF target embeds nothing special, so no substitution disclosure.
+    // Browser PDF remains a separate proof path and does not advertise a managed production embedding.
     const browserDoc = updatePaperDocumentSetup(document, { printProduction: { pdfStandard: 'browser-pdf' } });
     const browserReport = analyzePaperPreflight(browserDoc, []);
-    expect(browserReport.issues.some((i) => i.title === 'Fonts embedded as Liberation substitutes')).toBe(false);
+    expect(browserReport.issues.some((i) => i.title === 'PDF/X requires exact managed font faces')).toBe(false);
   });
 
-  it('discloses an imported font as embedded-real, not a Liberation substitute', () => {
+  it('describes an authorized managed font as the only PDF/X text source', () => {
     const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Imported', preset: 'comic-book' }), {
       printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51' },
     });
@@ -285,15 +285,14 @@ describe('paperPreflight', () => {
     };
 
     const report = analyzePaperPreflight(withFont, []);
-    const real = report.issues.find((i) => i.title === 'Fonts embedded as your imported font');
+    const real = report.issues.find((i) => i.title === 'PDF/X will embed exact managed font faces');
     expect(real).toBeDefined();
     expect(real?.severity).toBe('info');
     expect(real?.detail).toContain('Georgia');
-    // …and it must NOT also be reported as a Liberation substitute.
-    expect(report.issues.some((i) => i.title === 'Fonts embedded as Liberation substitutes')).toBe(false);
+    expect(report.issues.some((i) => i.title === 'PDF/X requires exact managed font faces')).toBe(false);
   });
 
-  it('discloses display fonts as rasterized (not substituted) for PDF/X', () => {
+  it('does not rasterize display fonts as a production fallback', () => {
     const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'SFX subst', preset: 'comic-book' }), {
       printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51' },
     });
@@ -307,84 +306,30 @@ describe('paperPreflight', () => {
     });
 
     const report = analyzePaperPreflight(document, []);
-    // Impact is disclosed as rasterized, and NOT listed among the Liberation substitutions.
-    const raster = report.issues.find((i) => i.title === 'Display fonts kept as raster');
-    expect(raster?.severity).toBe('info');
-    expect(raster?.detail).toContain('Impact');
-    const subst = report.issues.find((i) => i.title === 'Fonts embedded as Liberation substitutes');
-    expect(subst?.detail).toContain('Georgia → Liberation Serif');
-    expect(subst?.detail ?? '').not.toContain('Impact');
+    const missing = report.issues.find((i) => i.title === 'PDF/X requires exact managed font faces');
+    expect(missing?.severity).toBe('error');
+    expect(missing?.detail).toContain('Georgia');
+    expect(missing?.detail).toContain('Impact');
+    expect(report.issues.some((i) => /Liberation|raster/i.test(i.title))).toBe(false);
   });
 
-  it('discloses spot colors per policy — real /Separation plates when preservable, else honest conversion', () => {
+  it('describes named spots as a requested native-plate check rather than a completed plate claim', () => {
     const spotSwatch = {
       id: 'spot-1', name: 'PANTONE 485 C', type: 'spot' as const, model: 'cmyk' as const,
       rgb: { r: 218, g: 41, b: 28 }, cmyk: { c: 0, m: 95, y: 100, k: 0 }, spotName: 'PANTONE 485 C',
     };
-    const build = (policy: 'preserve-named' | 'convert-process' | 'warn', opts: { useSpot: boolean; plain?: boolean }) => {
-      let doc = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Spot', preset: 'comic-book' }), {
-        printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51', spotColorPolicy: policy },
-      });
-      doc = { ...doc, swatches: [spotSwatch] };
-      const added = addFrameToPaperPage(doc, doc.pages[0].id, {
-        kind: 'caption', xMm: 10, yMm: 10, widthMm: 50, heightMm: 20, text: 'Ink',
-        strokeWidthMm: opts.plain ? 0 : 0.5, strokeColor: opts.plain ? 'transparent' : '#000000', strokeOpacity: 1, cornerRadiusMm: 0,
-      });
-      let document = added.document;
-      // The durable spot link is fillSwatchId (a fill applied from a spot swatch), not the RGB fillColor.
-      if (opts.useSpot) document = updatePaperFrame(document, doc.pages[0].id, added.frameId, { fillColor: '#da291c', fillSwatchId: 'spot-1' });
-      return analyzePaperPreflight(document, []).issues.map((i) => i.title);
-    };
+    let document = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Spot', preset: 'comic-book' }), {
+      printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51', spotColorPolicy: 'preserve-named' },
+    });
+    document = { ...document, swatches: [spotSwatch] };
+    const added = addFrameToPaperPage(document, document.pages[0].id, {
+      kind: 'caption', xMm: 10, yMm: 10, widthMm: 50, heightMm: 20, text: 'Ink',
+    });
+    document = updatePaperFrame(added.document, document.pages[0].id, added.frameId, { fillColor: '#da291c', fillSwatchId: 'spot-1' });
 
-    // preserve-named + a plain solid spot rectangle → kept as a real /Separation plate.
-    expect(build('preserve-named', { useSpot: true, plain: true })).toContain('Spot colors kept as separation plates');
-    // preserve-named + spot on a stroked frame (not a faithful rectangle) → converts, disclosed.
-    expect(build('preserve-named', { useSpot: true, plain: false })).toContain('Spot colors will convert to process');
-    // 'warn' policy → warns that spot converts (with the "preserve named" hint).
-    expect(build('warn', { useSpot: true, plain: true })).toContain('Named spot colors will convert to process');
-    // 'convert-process' → the user opted into conversion, so no spot noise at all.
-    const cp = build('convert-process', { useSpot: true, plain: true });
-    expect(cp).not.toContain('Named spot colors will convert to process');
-    expect(cp).not.toContain('Spot colors kept as separation plates');
-    // Spot swatch defined but unused → no spot issue.
-    const unused = build('preserve-named', { useSpot: false, plain: true });
-    expect(unused).not.toContain('Spot colors kept as separation plates');
-    expect(unused).not.toContain('Spot colors will convert to process');
-
-    // preserve-named + text coloured from a spot swatch (no plateable fill) → the outlined glyphs plate.
-    {
-      let doc = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'SpotText', preset: 'comic-book' }), {
-        printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51', spotColorPolicy: 'preserve-named' },
-      });
-      doc = { ...doc, swatches: [spotSwatch] };
-      const added = addFrameToPaperPage(doc, doc.pages[0].id, {
-        kind: 'caption', xMm: 10, yMm: 10, widthMm: 50, heightMm: 20, text: 'SPOT LOGO',
-      });
-      const addedTypo = added.document.pages[0].frames.find((f) => f.id === added.frameId)!.typography;
-      const withSpotText = updatePaperFrame(added.document, doc.pages[0].id, added.frameId, {
-        typography: { ...addedTypo, color: '#da291c', colorSwatchId: 'spot-1' },
-      });
-      const spotTextIssue = analyzePaperPreflight(withSpotText, []).issues.find((i) => i.title === 'Spot colors kept as separation plates');
-      expect(spotTextIssue).toBeDefined();
-      expect(spotTextIssue?.detail).toContain('PANTONE 485 C');
-      expect(spotTextIssue?.detail).toContain('spot-coloured text');
-    }
-
-    // preserve-named + a solid border coloured from a spot swatch → the border plates on the named plate.
-    {
-      let doc = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'SpotBorder', preset: 'comic-book' }), {
-        printProduction: { pdfStandard: 'pdf-x-4', outputIntentProfileId: 'pso-coated-v3-fogra51', spotColorPolicy: 'preserve-named' },
-      });
-      doc = { ...doc, swatches: [spotSwatch] };
-      const added = addFrameToPaperPage(doc, doc.pages[0].id, {
-        kind: 'shape', xMm: 10, yMm: 10, widthMm: 50, heightMm: 30, strokeWidthMm: 2, strokeColor: '#da291c', strokeOpacity: 1, strokeStyle: 'solid',
-      });
-      const withSpotBorder = updatePaperFrame(added.document, doc.pages[0].id, added.frameId, { strokeColor: '#da291c', strokeSwatchId: 'spot-1' });
-      const spotBorderIssue = analyzePaperPreflight(withSpotBorder, []).issues.find((i) => i.title === 'Spot colors kept as separation plates');
-      expect(spotBorderIssue).toBeDefined();
-      expect(spotBorderIssue?.detail).toContain('PANTONE 485 C');
-      expect(spotBorderIssue?.detail).toContain('spot solid borders');
-    }
+    const titles = analyzePaperPreflight(document, []).issues.map((issue) => issue.title);
+    expect(titles).toContain('Spot colors requested for native plates');
+    expect(titles).not.toContain('Spot colors kept as separation plates');
   });
 
   it('flags invalid PDF/X output intent combinations before export', () => {

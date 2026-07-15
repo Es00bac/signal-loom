@@ -118,6 +118,8 @@ export interface PaperRenderPlanPage {
 
 export interface PaperRenderPlan {
   documentId: string;
+  /** Immutable document revision compiled into this plan. Strict exports reject mismatched evidence. */
+  revision: number;
   pages: PaperRenderPlanPage[];
 }
 
@@ -657,5 +659,9 @@ export async function compilePaperRenderPlan(
       nodes,
     });
   }
-  return { documentId: document.id, pages };
+  return {
+    documentId: document.id,
+    revision: Number.isFinite(document.updatedAt) ? document.updatedAt : 0,
+    pages,
+  };
 }

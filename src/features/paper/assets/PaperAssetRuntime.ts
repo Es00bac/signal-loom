@@ -1,6 +1,7 @@
 import { IndexedDbPaperAssetRepository } from './PaperIndexedDbAssetRepository';
 import { PaperAssetUrlRegistry } from './PaperAssetUrlRegistry';
 import { MemoryPaperAssetRepository, type PaperAssetRepository } from './PaperAssetRepository';
+import { verifyBinaryAssetRecord } from '../../../shared/assets/contentAddressedAsset';
 import type { SourceBinLibraryItem } from '../../../store/sourceBinStore';
 import type { PaperDocument, PaperFrame } from '../../../types/paper';
 import { resolvePaperFrameAssetUrl } from '../../../lib/paperAssetReferences';
@@ -55,6 +56,9 @@ async function materializePaperFrameContainer<T extends { frames: PaperFrame[] }
         throw new Error(`Paper asset ${asset.locator.ref.id} is unavailable for export.`);
       }
       assertMatchingManagedAssetRef(record.ref, asset.locator.ref);
+      if (!(await verifyBinaryAssetRecord(record))) {
+        throw new Error(`Paper asset ${asset.locator.ref.id} fails its content hash verification.`);
+      }
       url = await paperBytesToDataUrl(record.bytes, record.ref.mimeType);
     }
     if (!url && (frame.kind === 'image' || frame.kind === 'document')) {

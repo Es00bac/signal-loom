@@ -171,7 +171,7 @@ export async function exportPaperDocumentToPdfx(
       });
     }
 
-    return buildPaperPdfx(pages, {
+    const result = await buildPaperPdfx(pages, {
       standard: options.standard,
       profile: {
         iccBytes: outputProfile.bytes,
@@ -184,6 +184,7 @@ export async function exportPaperDocumentToPdfx(
       createdAt: options.createdAt,
       totalInkLimitPercent: document.printProduction.totalInkLimitPercent,
     });
+    return { ...result, renderPlan: plan };
   } finally {
     fontRuntime.dispose();
   }

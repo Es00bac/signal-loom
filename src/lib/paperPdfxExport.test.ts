@@ -89,6 +89,11 @@ describe('buildPaperPdfx', () => {
     expect(report.pass).toBe(true);
     expect(report.standard).toBe(standard);
 
+    const otherStandard = standard === 'pdf-x-1a' ? 'pdf-x-4' : 'pdf-x-1a';
+    expect((await validatePaperPdfx(result.bytes, { standard: otherStandard })).checks).toContainEqual(
+      expect.objectContaining({ id: 'metadata-standard', pass: false }),
+    );
+
     // Dump artifacts for external verification (gs/pdfinfo/veraPDF) when requested.
     const outDir = process.env.SLOOM_PDFX_OUT;
     if (outDir) writeFileSync(`${outDir}/sloom-${standard}.pdf`, result.bytes);

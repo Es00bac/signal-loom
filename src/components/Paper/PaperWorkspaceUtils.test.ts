@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { addFrameToPaperPage, createDefaultPaperDocument } from '../../lib/paperDocument';
-import type { PaperFrame } from '../../types/paper';
+import { addFrameToPaperPage, createDefaultPaperDocument, updatePaperDocumentSetup } from '../../lib/paperDocument';
+import type { BinaryAssetRef } from '../../shared/assets/contentAddressedAsset';
+import type { PaperFrame, PaperManagedIccProfile } from '../../types/paper';
 import {
   bubbleHandlePatch,
   buildPaperEyedropperFrameColorPatch,
@@ -8,6 +9,7 @@ import {
   deletePaperFrameVertexPatch,
   resolvePaperEyedropperPixelColor,
   exportPaperPdfDocument,
+  exportPaperPdfxAndSave,
   insertPaperFrameVertexPatch,
   movePaperFrameVertexPatch,
   resolvePaperEyedropperFrameColor,
@@ -344,6 +346,58 @@ describe('PaperWorkspaceUtils export', () => {
     expect(toDataURL).toHaveBeenCalledWith('image/jpeg', 0.82);
     expect(statuses[0]).toContain('Proof JPEG');
     vi.unstubAllGlobals();
+  });
+
+  it('does not invoke the PDF/X download bridge after a failed structural validation', async () => {
+    const sha256 = 'a'.repeat(64);
+    const profileAsset: BinaryAssetRef = {
+      id: `sha256:${sha256}`,
+      sha256,
+      mimeType: 'application/vnd.iccprofile',
+      byteLength: 8,
+    };
+    const profile: PaperManagedIccProfile = {
+      id: profileAsset.id,
+      asset: profileAsset,
+      description: 'Exact FOGRA51 profile',
+      deviceClass: 'prtr',
+      colorSpace: 'CMYK',
+      pcs: 'Lab ',
+      outputConditionId: 'FOGRA51',
+      source: { kind: 'user-import' },
+    };
+    const document = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Blocked PDFX' }), {
+      printProduction: {
+        pdfStandard: 'pdf-x-4',
+        outputIntentProfileId: 'pso-coated-v3-fogra51',
+        outputIntentProfileAssetId: profile.id,
+      },
+      managedIccProfiles: [profile],
+    });
+    const downloadPdf = vi.fn();
+    const statuses: string[] = [];
+
+    await exportPaperPdfxAndSave(document, (status) => statuses.push(status), {
+      exportPdfx: async () => ({
+        bytes: new Uint8Array([1]),
+        standard: 'pdf-x-4',
+        pageCount: 1,
+        profileName: 'Exact FOGRA51 profile',
+        approximateColor: false,
+        nativeEvidence: {
+          processObjectIds: [], spotPlates: [], embeddedFontIds: [], outlinedObjectIds: [], flattenedObjectIds: [], overprintObjectIds: [],
+        },
+      }),
+      validatePdfx: async () => ({
+        standard: 'pdf-x-4', headerVersion: '1.6', pass: false,
+        checks: [{ id: 'no-rgb', label: 'No RGB color', pass: false }],
+      }),
+      downloadPdf,
+      assetExists: async () => true,
+    });
+
+    expect(downloadPdf).not.toHaveBeenCalled();
+    expect(statuses.at(-1)).toContain('blocked');
   });
 });
 

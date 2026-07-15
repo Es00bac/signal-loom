@@ -1307,12 +1307,12 @@ export function PaperWorkspace() {
         if (isCommercialPrintProductionTarget(document.printProduction)
           && !(await requestCommercialExportUnlock('PDF/X and CMYK print production'))) return;
         if (await confirmPreflightBeforeExport('PDF export')) {
-          const outputDocument = await materializePaperOutputDocument(document);
-          if (!outputDocument) return;
           if (isPdfXProductionTarget(document.printProduction)) {
-            // Real CMYK PDF/X-1a / PDF/X-4 with an embedded ICC output intent (docs/notes/836).
-            void exportPaperPdfxAndSave(outputDocument, setStatus);
+            // Strict PDF/X consumes the original content-addressed document and freezes it before validation.
+            void exportPaperPdfxAndSave(document, setStatus);
           } else {
+            const outputDocument = await materializePaperOutputDocument(document);
+            if (!outputDocument) return;
             void exportPaperPdfDocument(outputDocument, setStatus, undefined, {
               rasterPreset: providerSettings.paperPdfRasterPreset,
             });
@@ -1327,9 +1327,7 @@ export function PaperWorkspace() {
       case 'paper:export-kdp-pdf':
         if (!(await requestCommercialExportUnlock('KDP print PDF'))) return;
         if (await confirmPreflightBeforeExport('KDP print PDF export')) {
-          const outputDocument = await materializePaperOutputDocument(document);
-          if (!outputDocument) return;
-          void exportPaperKdpPdfAndSave(outputDocument, setStatus);
+          void exportPaperKdpPdfAndSave(document, setStatus);
         }
         return;
       case 'paper:export-reader-spreads-pdf':

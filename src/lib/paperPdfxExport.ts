@@ -32,7 +32,7 @@ import {
   appendPaperNativeContent,
   type PaperPdfxNativeEvidence,
 } from './paperPdfxNativeContent';
-import type { PaperRenderPlanPage } from './paperRenderPlan';
+import type { PaperRenderPlan, PaperRenderPlanPage } from './paperRenderPlan';
 import type { PaperManagedFontFace } from '../types/paper';
 
 export type PdfxStandard = 'pdf-x-1a' | 'pdf-x-4';
@@ -233,6 +233,8 @@ export interface PdfxExportResult {
   approximateColor: boolean;
   /** Inspectable proof of native vector/text/spot content retained in a hybrid export. */
   nativeEvidence: PaperPdfxNativeEvidence;
+  /** In-memory semantic plan used to produce this file. It is never persisted in document state. */
+  renderPlan?: PaperRenderPlan;
 }
 
 interface StandardMeta {

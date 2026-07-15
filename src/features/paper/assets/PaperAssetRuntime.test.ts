@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createBinaryAssetRecord } from '../../../shared/assets/contentAddressedAsset';
 import { addFrameToPaperPage, addFrameToPaperParentPage, createDefaultPaperDocument } from '../../../lib/paperDocument';
 import { materializePaperDocumentAssetUrls, paperAssetRepository } from './PaperAssetRuntime';
@@ -103,5 +103,32 @@ describe('materializePaperDocumentAssetUrls', () => {
 
     await expect(materializePaperDocumentAssetUrls(document)).rejects.toThrow(/does not match its document reference/i);
     await paperAssetRepository.delete(record.ref.id);
+  });
+
+  it('fails closed when managed bytes no longer match their content-addressed hash', async () => {
+    const record = await createBinaryAssetRecord(new Uint8Array([11, 12, 13]), { mimeType: 'image/png' });
+    const base = createDefaultPaperDocument({ title: 'Corrupt managed asset' });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 40,
+      heightMm: 30,
+      asset: {
+        label: 'Managed art',
+        kind: 'image',
+        locator: { kind: 'managed', ref: record.ref },
+      },
+    });
+    const get = vi.spyOn(paperAssetRepository, 'get').mockResolvedValue({
+      ref: record.ref,
+      bytes: new Uint8Array([11, 12, 14]),
+    });
+
+    try {
+      await expect(materializePaperDocumentAssetUrls(document)).rejects.toThrow(/content hash/i);
+    } finally {
+      get.mockRestore();
+    }
   });
 });

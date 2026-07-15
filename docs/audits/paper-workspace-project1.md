@@ -54,11 +54,12 @@ Flow and Image paths are concurrently owned and are outside Project 1. None were
 
 ### `font-system-authority`
 
-- Severity/status/commercial: critical / reproduced / yes.
+- Severity/status/commercial: critical / fixed / yes.
 - Evidence: free-form `PaperTypography.fontFamily` in `src/types/paper.ts` and `browserCanCheckFont`/`document.fonts.check` in `src/lib/paperPreflight.ts`.
 - Reproduce: `rg -n "fontFamily: string|browserCanCheckFont|document\\?\\.fonts" src/types/paper.ts src/lib/paperPreflight.ts`.
 - Expected fix: Tasks 7-10 require vetted, licensed managed faces; exact weight/style selection; deterministic HarfBuzz shaping and composition; and production output from the same positioned glyph runs used for preview.
-- Current foundation: Task 13 embeds only the resolved content-addressed managed face in the native PDF/X writer and emits the positioned HarfBuzz glyph IDs directly. Browser/system font selection is not consulted by the production PDF/X path. Task 14 still replaces the remaining legacy preflight authority and makes the save transaction fail closed.
+- Result: Task 14 removes system/browser and Liberation fallback from the PDF/X preflight decision. Every uniform and rich text run must resolve to an authorized exact managed face; missing face, rights, managed asset, or glyph evidence blocks saving. The generated native evidence must contain every expected face before bytes download.
+- Verify: `npx vitest run src/lib/paperProductionPreflight.test.ts src/lib/paperProductionReport.test.ts src/lib/paperPreflight.test.ts src/lib/paperPdfxPipelineVectorText.test.ts`.
 
 ### `icc-profile-substitution`
 
@@ -76,11 +77,12 @@ Flow and Image paths are concurrently owned and are outside Project 1. None were
 
 ### `spot-rich-text-overclaim`
 
-- Severity/status/commercial: high / reproduced / yes.
+- Severity/status/commercial: high / fixed / yes.
 - Evidence: `collectSpotTextNames` advertises text spots in `src/lib/paperPreflight.ts`, while non-uniform `richText` is rejected by `frameTextIsOutlineable` in `src/lib/paperPdfxVectorTextFrames.ts` and remains in the process raster.
 - Reproduce: `rg -n "collectSpotTextNames|paperRichTextIsUniform|frameTextIsOutlineable|richText" src/lib/paperPreflight.ts src/lib/paperPdfxVectorTextFrames.ts src/lib/paperPdfxPipeline.ts`.
 - Expected fix: Tasks 12-14 make preflight consume the same render plan as export, emit supported rich text on its named separation, and report a blocker instead of claiming a plate for content that cannot be emitted.
-- Current foundation: Task 13 emits supported managed rich-text runs as native `/Separation` content and rejects a repeated spot name with a conflicting alternate CMYK recipe. The legacy preflight claim remains open until Task 14 consumes the production report.
+- Result: editable preflight now says that named spots are requested, not already plated. The frozen render plan blocks a requested spot that would flatten, and the generated evidence must list every requested named plate before the download callback can run.
+- Verify: `npx vitest run src/lib/paperProductionPreflight.test.ts src/lib/paperProductionReport.test.ts src/lib/paperPdfxNativeContent.test.ts src/lib/paperPdfxSpotFills.test.ts`.
 
 ### `overprint-not-emitted`
 
@@ -91,10 +93,11 @@ Flow and Image paths are concurrently owned and are outside Project 1. None were
 
 ### `pdfx-download-after-failure`
 
-- Severity/status/commercial: critical / reproduced / yes.
+- Severity/status/commercial: critical / fixed / yes.
 - Evidence: `exportPaperPdfxAndSave` in `src/components/Paper/PaperWorkspaceUtils.ts` invokes `downloadSharedBlob` before branching on `report.pass`.
 - Reproduce: `rg -n -C 5 "downloadSharedBlob\\(pdfBlob|report\\.pass" src/components/Paper/PaperWorkspaceUtils.ts`.
-- Expected fix: Task 14 freezes revision/assets, preflights, generates and validates in memory, and invokes download only for a `saved` result. Failed validation must return stable blocker codes and no bytes may be saved as PDF/X.
+- Result: `exportValidatedPaperPdfx` freezes a clone and reachable asset IDs, runs production preflight, generates in memory, validates PDF structure plus native font/spot evidence, and invokes the download adapter only for `saved`. The workspace PDF/X and KDP routes use that transaction without changing the commercial license gate.
+- Verify: `npx vitest run src/lib/paperProductionPreflight.test.ts src/lib/paperProductionReport.test.ts src/lib/paperPdfxValidate.test.ts src/components/Paper/PaperWorkspaceUtils.test.ts src/lib/licenseGates.test.ts`.
 
 ### `stability-provider-contract`
 
