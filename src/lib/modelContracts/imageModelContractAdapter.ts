@@ -351,4 +351,3 @@ function toContract(definition: ImageModelDefinition): ProviderModelContract {
 export const IMAGE_MODEL_CONTRACTS = defineProviderModelContracts(
   listImageModelDefinitions().map(toContract),
 );
-

@@ -1,7 +1,7 @@
 # Flow Workspace Audit — Release Verification
 
-Date: 2026-07-14  
-Branch: `audit/flow-node-provider-vertex`  
+Date: 2026-07-14
+Branch: `audit/flow-node-provider-vertex`
 Host verification: Linux desktop, Electron/browser development runtime, Android Gradle toolchain
 
 ## Outcome
