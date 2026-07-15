@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   addFrameToPaperPage,
   createDefaultPaperDocument,
@@ -9,9 +9,68 @@ import {
   buildFlattenedPaperPageSvgExport,
   buildFlattenedPaperPageSvgExportWithEmbeddedAssets,
   getPaperPageExportDimensions,
+  rasterizeFlattenedPaperPageToPng,
 } from './paperPageFlattenExport';
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe('paperPageFlattenExport', () => {
+  it('decodes flattened SVGs from a revocable Blob URL instead of an oversized data URL', async () => {
+    const imageSources: string[] = [];
+    class MockImage {
+      decoding = '';
+      private source = '';
+
+      get src() {
+        return this.source;
+      }
+
+      set src(value: string) {
+        this.source = value;
+        imageSources.push(value);
+      }
+
+      decode() {
+        return Promise.resolve();
+      }
+    }
+    const createObjectURL = vi.fn(() => 'blob:flattened-paper-page');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('Image', MockImage);
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
+    const context = { drawImage: vi.fn() };
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => context),
+      toDataURL: vi.fn(() => 'data:image/png;base64,page'),
+    };
+    const browserDocument = {
+      createElement: vi.fn(() => canvas),
+    } as unknown as Document;
+
+    await rasterizeFlattenedPaperPageToPng({
+      pageId: 'page-1',
+      pageNumber: 1,
+      label: 'Large image page',
+      mimeType: 'image/svg+xml',
+      svg: `<svg xmlns="http://www.w3.org/2000/svg"><foreignObject>${'x'.repeat(1024)}</foreignObject></svg>`,
+      dataUrl: 'data:image/svg+xml;charset=utf-8,oversized',
+      widthMm: 210,
+      heightMm: 297,
+      widthPx: 1600,
+      heightPx: 2263,
+      scale: 2,
+      includeBleed: false,
+    }, browserDocument);
+
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    expect(imageSources).toEqual(['blob:flattened-paper-page']);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:flattened-paper-page');
+  });
+
   it('builds a selected-page SVG export at document DPI with bleed included', () => {
     let doc = updatePaperDocumentSetup(createDefaultPaperDocument({
       title: 'Issue 01',

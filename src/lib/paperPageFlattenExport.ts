@@ -219,33 +219,33 @@ export async function rasterizeFlattenedPaperPageToPng(
     throw new Error('Paper page raster export needs a browser document.');
   }
 
-  const image = new Image();
-  image.decoding = 'async';
-  image.src = exported.dataUrl;
-  await decodeImage(image);
+  const decoded = await decodeFlattenedPaperPageSvg(exported);
+  try {
+    const canvas = browserDocument.createElement('canvas');
+    canvas.width = exported.widthPx;
+    canvas.height = exported.heightPx;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('Paper page raster export could not create a canvas context.');
+    }
+    context.drawImage(decoded.image, 0, 0, exported.widthPx, exported.heightPx);
 
-  const canvas = browserDocument.createElement('canvas');
-  canvas.width = exported.widthPx;
-  canvas.height = exported.heightPx;
-  const context = canvas.getContext('2d');
-  if (!context) {
-    throw new Error('Paper page raster export could not create a canvas context.');
+    return {
+      pageId: exported.pageId,
+      pageNumber: exported.pageNumber,
+      label: exported.label,
+      widthMm: exported.widthMm,
+      heightMm: exported.heightMm,
+      widthPx: exported.widthPx,
+      heightPx: exported.heightPx,
+      scale: exported.scale,
+      includeBleed: exported.includeBleed,
+      mimeType: 'image/png',
+      dataUrl: canvas.toDataURL('image/png'),
+    };
+  } finally {
+    decoded.dispose();
   }
-  context.drawImage(image, 0, 0, exported.widthPx, exported.heightPx);
-
-  return {
-    pageId: exported.pageId,
-    pageNumber: exported.pageNumber,
-    label: exported.label,
-    widthMm: exported.widthMm,
-    heightMm: exported.heightMm,
-    widthPx: exported.widthPx,
-    heightPx: exported.heightPx,
-    scale: exported.scale,
-    includeBleed: exported.includeBleed,
-    mimeType: 'image/png',
-    dataUrl: canvas.toDataURL('image/png'),
-  };
 }
 
 export interface FlattenedPaperPageRgbaExport extends PaperPageExportDimensions {
@@ -267,33 +267,33 @@ export async function rasterizeFlattenedPaperPageToRgba(
   if (!browserDocument) {
     throw new Error('Paper page raster export needs a browser document.');
   }
-  const image = new Image();
-  image.decoding = 'async';
-  image.src = exported.dataUrl;
-  await decodeImage(image);
+  const decoded = await decodeFlattenedPaperPageSvg(exported);
+  try {
+    const canvas = browserDocument.createElement('canvas');
+    canvas.width = exported.widthPx;
+    canvas.height = exported.heightPx;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('Paper page raster export could not create a canvas context.');
+    }
+    context.drawImage(decoded.image, 0, 0, exported.widthPx, exported.heightPx);
+    const { data } = context.getImageData(0, 0, exported.widthPx, exported.heightPx);
 
-  const canvas = browserDocument.createElement('canvas');
-  canvas.width = exported.widthPx;
-  canvas.height = exported.heightPx;
-  const context = canvas.getContext('2d');
-  if (!context) {
-    throw new Error('Paper page raster export could not create a canvas context.');
+    return {
+      pageId: exported.pageId,
+      pageNumber: exported.pageNumber,
+      label: exported.label,
+      widthMm: exported.widthMm,
+      heightMm: exported.heightMm,
+      widthPx: exported.widthPx,
+      heightPx: exported.heightPx,
+      scale: exported.scale,
+      includeBleed: exported.includeBleed,
+      rgba: data,
+    };
+  } finally {
+    decoded.dispose();
   }
-  context.drawImage(image, 0, 0, exported.widthPx, exported.heightPx);
-  const { data } = context.getImageData(0, 0, exported.widthPx, exported.heightPx);
-
-  return {
-    pageId: exported.pageId,
-    pageNumber: exported.pageNumber,
-    label: exported.label,
-    widthMm: exported.widthMm,
-    heightMm: exported.heightMm,
-    widthPx: exported.widthPx,
-    heightPx: exported.heightPx,
-    scale: exported.scale,
-    includeBleed: exported.includeBleed,
-    rgba: data,
-  };
 }
 
 function positiveNumber(value: number | undefined): number | undefined {
@@ -409,6 +409,35 @@ function decodeImage(image: HTMLImageElement): Promise<void> {
     image.onload = () => resolve();
     image.onerror = () => reject(new Error('Paper page SVG could not be loaded for raster export.'));
   });
+}
+
+async function decodeFlattenedPaperPageSvg(
+  exported: FlattenedPaperPageSvgExport,
+): Promise<{ image: HTMLImageElement; dispose: () => void }> {
+  const image = new Image();
+  image.decoding = 'async';
+  const canUseObjectUrl = typeof URL !== 'undefined'
+    && typeof URL.createObjectURL === 'function'
+    && typeof URL.revokeObjectURL === 'function';
+  const objectUrl = canUseObjectUrl
+    ? URL.createObjectURL(new Blob([exported.svg], { type: 'image/svg+xml;charset=utf-8' }))
+    : undefined;
+  image.src = objectUrl ?? exported.dataUrl;
+
+  try {
+    await decodeImage(image);
+  } catch (error) {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    const detail = error instanceof Error && error.message ? `: ${error.message}` : '';
+    throw new Error(`Paper page ${exported.pageNumber} SVG could not be decoded for raster export${detail}`);
+  }
+
+  return {
+    image,
+    dispose: () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    },
+  };
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {
