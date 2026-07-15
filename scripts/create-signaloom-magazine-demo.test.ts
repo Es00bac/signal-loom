@@ -1,0 +1,95 @@
+import { strFromU8, unzipSync } from 'fflate';
+import { describe, expect, it } from 'vitest';
+import {
+  buildEnglishMagazine,
+  buildJapaneseMagazine,
+  createAssetRecord,
+  packMagazineContainer,
+} from './create-signaloom-magazine-demo.mjs';
+
+const MIDPOINT_MM = 148.5;
+
+async function fixtureRecords() {
+  return {
+    hero: await createAssetRecord(new Uint8Array([1, 2, 3]), 'hero.png'),
+    ad: await createAssetRecord(new Uint8Array([4, 5, 6]), 'ad-composite.png'),
+  };
+}
+
+function plainText(document: unknown): string {
+  return JSON.stringify(document);
+}
+
+function assertSharedMagazineStructure(document: any, heroId: string, adId: string) {
+  expect(document.page).toMatchObject({ preset: 'a4', widthMm: 210, heightMm: 297, bleedMm: 3, dpi: 300 });
+  expect(document.pages).toHaveLength(2);
+  expect(document.view).toMatchObject({ showSpreads: true, startOnRight: false, showBleed: true, showGuides: true });
+  expect(document.printProduction.pdfStandard).toBe('browser-pdf');
+  expect(document.styles.paragraph.length).toBeGreaterThanOrEqual(8);
+  expect(document.styles.character.length).toBeGreaterThanOrEqual(4);
+  expect(document.styles.object.length).toBeGreaterThanOrEqual(5);
+  expect(document.swatches.length).toBeGreaterThanOrEqual(6);
+
+  const allFrames = document.pages.flatMap((page: any) => page.frames);
+  const managedIds = allFrames
+    .map((frame: any) => frame.asset?.locator?.kind === 'managed' ? frame.asset.locator.ref.id : undefined)
+    .filter(Boolean);
+  expect(managedIds).toContain(heroId);
+  expect(managedIds).toContain(adId);
+
+  const pageTwoFrames = document.pages[1].frames;
+  const articleFrames = pageTwoFrames.filter((frame: any) => /^(Article|Timeline)/.test(frame.label));
+  const adFrames = pageTwoFrames.filter((frame: any) => frame.label.startsWith('Ad '));
+  expect(articleFrames.length).toBeGreaterThan(4);
+  expect(adFrames.length).toBeGreaterThan(4);
+  expect(articleFrames.every((frame: any) => frame.yMm + frame.heightMm <= MIDPOINT_MM)).toBe(true);
+  expect(adFrames.every((frame: any) => frame.yMm >= MIDPOINT_MM)).toBe(true);
+
+  const threaded = allFrames.filter((frame: any) => frame.threadId === 'signaloom-feature');
+  expect(threaded.length).toBeGreaterThanOrEqual(4);
+  expect(new Set(threaded.map((frame: any) => frame.threadOrder)).size).toBe(threaded.length);
+  expect(allFrames.some((frame: any) => frame.richText?.some((paragraph: any) => paragraph.runs.length > 1))).toBe(true);
+  expect(allFrames.some((frame: any) => frame.fillGradient)).toBe(true);
+  expect(allFrames.some((frame: any) => frame.columns > 1 && frame.columnRule)).toBe(true);
+  expect(allFrames.every((frame: any) => frame.kind !== 'shape' || frame.shapeKind)).toBe(true);
+}
+
+describe('Signaloom bilingual magazine demo builder', () => {
+  it('builds a professional two-page English edition with an isolated half-page demo ad', async () => {
+    const { hero, ad } = await fixtureRecords();
+    const document = buildEnglishMagazine(hero, ad, { now: 1_784_132_800_000 });
+
+    assertSharedMagazineStructure(document, hero.ref.id, ad.ref.id);
+    expect(document.view.rtlBinding).toBe(false);
+    expect(plainText(document)).toContain('WOVEN FROM SIGNALS');
+    expect(plainText(document)).toContain('CONCEPT DEMO — NOT A REAL PRODUCT — NOT FOR SALE');
+    expect(plainText(document)).toContain('信号を、かたちへ。');
+  });
+
+  it('builds a fully localized Japanese edition with vertical type and right binding', async () => {
+    const { hero, ad } = await fixtureRecords();
+    const document = buildJapaneseMagazine(hero, ad, { now: 1_784_132_800_000 });
+
+    assertSharedMagazineStructure(document, hero.ref.id, ad.ref.id);
+    expect(document.view.rtlBinding).toBe(true);
+    expect(plainText(document)).toContain('シグナルを織る');
+    expect(plainText(document)).toContain('コンセプトデモ／実在しない商品です／非売品');
+    expect(document.pages.flatMap((page: any) => page.frames).some((frame: any) =>
+      frame.typography.writingMode === 'vertical-rl'
+      && frame.typography.lineBreakStrict === true
+      && frame.typography.textOrientation === 'mixed')).toBe(true);
+  });
+
+  it('packs deterministic version-2 .slppr containers with validated managed assets', async () => {
+    const { hero, ad } = await fixtureRecords();
+    const document = buildEnglishMagazine(hero, ad, { now: 1_784_132_800_000 });
+    const bytes = packMagazineContainer(document, [hero, ad]);
+    const archive = unzipSync(bytes);
+    const manifest = JSON.parse(strFromU8(archive['manifest.json']));
+
+    expect(manifest).toMatchObject({ format: 'signal-loom-paper', formatVersion: 2, kind: 'paper' });
+    expect(manifest.assets).toEqual([hero.ref, ad.ref]);
+    expect(Object.keys(archive).filter((path) => path.startsWith('assets/'))).toHaveLength(2);
+    expect(JSON.stringify(manifest.document)).not.toContain('data:image');
+  });
+});

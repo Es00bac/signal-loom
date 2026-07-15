@@ -11,6 +11,10 @@ Check `docs/notes/` for a chronological log of changes, technical decisions, and
 
 The main Flow workspace has an executable contract for all 63 node types, exact typed connection enforcement/presentation, an independent contract-versus-runtime evidence registry for every input handle and dynamic variant, model-aware text/image/video/audio controls, generated 182-model API documentation, terminal-free Vertex ADC import/detection, saved-flow migration fixtures, and `npm run verify:flow-production`. Start with `docs/notes/903-flow-contract-runtime-parity-audit.md`, then use the generated matrices in `docs/audits/flow-node-audit-2026-07-15.md` and `docs/audits/provider-model-audit-2026-07-14.md`.
 
+## Latest Paper demo
+
+The bilingual Signaloom magazine demo is complete. The English and Japanese two-page `.slppr` spreads and their dedicated Flow asset project are isolated under `/home/cabewse/Documents/Loom Workspace`; the reusable deterministic builder is `scripts/create-signaloom-magazine-demo.mjs`. Start with `docs/notes/904-signaloom-bilingual-magazine-demo.md` for the asset graph, Paper capabilities, native-open verification, and honest print-resolution caveat.
+
 ## How to Continue
 1. Read the `docs/TASK_LIST.md` to see what is checked off.
 2. Read the latest file in `docs/notes/` to understand the most recent context.
