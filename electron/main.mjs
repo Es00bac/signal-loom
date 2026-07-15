@@ -2733,6 +2733,30 @@ function installIpcHandlers() {
     };
   });
 
+  ipcMain.handle('signal-loom:paper-choose-pdf-export-path', async (event, request) => {
+    try {
+      const filePath = await choosePaperPdfSavePath(request, getIpcWindow(event));
+      return filePath ? { canceled: false, filePath } : { canceled: true };
+    } catch (error) {
+      return {
+        canceled: false,
+        error: error instanceof Error ? error.message : 'Failed to choose the Paper PDF destination.',
+      };
+    }
+  });
+
+  ipcMain.handle('signal-loom:paper-choose-image-export-directory', async (event, request) => {
+    try {
+      const directoryPath = await choosePaperImageExportDirectory(request, getIpcWindow(event));
+      return directoryPath ? { canceled: false, directoryPath } : { canceled: true };
+    } catch (error) {
+      return {
+        canceled: false,
+        error: error instanceof Error ? error.message : 'Failed to choose the Paper page-image destination.',
+      };
+    }
+  });
+
   ipcMain.handle('signal-loom:paper-export-pdf', async (event, request) => {
     if (!request || typeof request.html !== 'string' || !request.html.trim()) {
       return {
@@ -2741,7 +2765,10 @@ function installIpcHandlers() {
       };
     }
 
-    const filePath = await choosePaperPdfSavePath(request, getIpcWindow(event));
+    const requestedFilePath = typeof request.filePath === 'string' && isAbsolute(request.filePath)
+      ? ensurePdfExtension(request.filePath)
+      : undefined;
+    const filePath = requestedFilePath ?? await choosePaperPdfSavePath(request, getIpcWindow(event));
 
     if (!filePath) {
       return { canceled: true };
@@ -2765,7 +2792,10 @@ function installIpcHandlers() {
       };
     }
 
-    const directoryPath = await choosePaperImageExportDirectory(request, getIpcWindow(event));
+    const requestedDirectoryPath = typeof request.directoryPath === 'string' && isAbsolute(request.directoryPath)
+      ? request.directoryPath
+      : undefined;
+    const directoryPath = requestedDirectoryPath ?? await choosePaperImageExportDirectory(request, getIpcWindow(event));
 
     if (!directoryPath) {
       return { canceled: true };

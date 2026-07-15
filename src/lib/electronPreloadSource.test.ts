@@ -13,4 +13,11 @@ describe('Electron preload source guards', () => {
     expect(source).not.toContain('SIGNAL_LOOM_AUTOMATION_PAPER_PDF_PATH');
     expect(source).not.toContain('SIGNAL_LOOM_AUTOMATION_PAPER_IMAGE_DIRECTORY');
   });
+
+  it('exposes chooser-first Paper PDF and page-image export bridges', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/preload.cjs'), 'utf8');
+
+    expect(source).toContain("choosePaperPdfExportPath: (request) => ipcRenderer.invoke('signal-loom:paper-choose-pdf-export-path', request)");
+    expect(source).toContain("choosePaperImageExportDirectory: (request) => ipcRenderer.invoke('signal-loom:paper-choose-image-export-directory', request)");
+  });
 });

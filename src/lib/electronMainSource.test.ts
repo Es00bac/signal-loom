@@ -151,6 +151,15 @@ describe('Electron main process source guards', () => {
     expect(source).toContain("command: 'paper:export-pdf'");
   });
 
+  it('chooses Paper PDF and page-image destinations before renderer rasterization', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+
+    expect(source).toContain("ipcMain.handle('signal-loom:paper-choose-pdf-export-path'");
+    expect(source).toContain("ipcMain.handle('signal-loom:paper-choose-image-export-directory'");
+    expect(source).toMatch(/signal-loom:paper-export-pdf[\s\S]*request\.filePath[\s\S]*isAbsolute\(request\.filePath\)[\s\S]*choosePaperPdfSavePath/);
+    expect(source).toMatch(/signal-loom:paper-export-images[\s\S]*request\.directoryPath[\s\S]*isAbsolute\(request\.directoryPath\)[\s\S]*choosePaperImageExportDirectory/);
+  });
+
   it('retries native smoke CDP evaluation across renderer reloads', () => {
     const realProjectSmoke = readFileSync(join(process.cwd(), 'scripts/native-real-project-smoke.mjs'), 'utf8');
     const realProjectSoak = readFileSync(join(process.cwd(), 'scripts/native-real-project-soak.mjs'), 'utf8');

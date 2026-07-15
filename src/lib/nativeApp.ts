@@ -304,6 +304,17 @@ export interface NativePaperPdfExportResult {
   error?: string;
 }
 
+export interface NativePaperPdfDestinationResult {
+  canceled: boolean;
+  filePath?: string;
+  error?: string;
+}
+
+export type NativePaperPdfExportRequest = PaperPdfExportRequest & {
+  /** Absolute path approved by the chooser-only IPC before renderer rasterization. */
+  filePath?: string;
+};
+
 export interface NativePaperImageExportPage {
   pageId: string;
   pageNumber: number;
@@ -321,6 +332,14 @@ export interface NativePaperImageExportRequest {
   mimeType: 'image/png' | 'image/jpeg';
   quality?: number;
   pages: NativePaperImageExportPage[];
+  /** Absolute directory approved by the chooser-only IPC before renderer rasterization. */
+  directoryPath?: string;
+}
+
+export interface NativePaperImageDestinationResult {
+  canceled: boolean;
+  directoryPath?: string;
+  error?: string;
 }
 
 export interface NativePaperImageExportResult {
@@ -485,7 +504,13 @@ export interface SignalLoomNativeBridge {
   normalizeImportedMediaBatch: (
     items: ImportedMediaBatchNormalizationRequestItem[],
   ) => Promise<NormalizedImportedMediaBatchItem[]>;
-  exportPaperPdf: (request: PaperPdfExportRequest) => Promise<NativePaperPdfExportResult>;
+  choosePaperPdfExportPath?: (
+    request: Pick<PaperPdfExportRequest, 'title' | 'fileName'>,
+  ) => Promise<NativePaperPdfDestinationResult>;
+  exportPaperPdf: (request: NativePaperPdfExportRequest) => Promise<NativePaperPdfExportResult>;
+  choosePaperImageExportDirectory?: (
+    request: Pick<NativePaperImageExportRequest, 'title' | 'directoryName' | 'format'>,
+  ) => Promise<NativePaperImageDestinationResult>;
   exportPaperImages: (request: NativePaperImageExportRequest) => Promise<NativePaperImageExportResult>;
   captureCurrentWindowPng: () => Promise<NativeWindowCaptureResult>;
   readClipboardImage: () => Promise<string | null | { error: string }>;
