@@ -6,6 +6,7 @@ import {
   getNodeCatalogEntry,
 } from './nodeCatalog';
 import { FLOW_NODE_TYPES } from './projectSchema';
+import { FLOW_NODE_CONTRACTS } from './flowNodeContracts';
 
 describe('node catalog', () => {
   it('groups core flow nodes by what they do', () => {
@@ -52,5 +53,11 @@ describe('node catalog', () => {
     expect(findNodeCatalogEntries('template').map((entry) => entry.type)).toContain('stringTemplateNode');
     expect(findNodeCatalogEntries('palette').map((entry) => entry.type)).toContain('colorSwatchNode');
     expect(findNodeCatalogEntries('crop').map((entry) => entry.type)).toContain('cropImageNode');
+  });
+
+  it('uses the audited node contract purpose as the English catalog description', () => {
+    for (const entry of FLOW_NODE_CATALOG_ENTRIES) {
+      expect(entry.description).toBe(FLOW_NODE_CONTRACTS[entry.type].purpose);
+    }
   });
 });

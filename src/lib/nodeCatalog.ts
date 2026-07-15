@@ -1,5 +1,6 @@
 import type { FlowNodeType, NodeData } from '../types/flow';
 import type { AppLocale } from './i18n';
+import { FLOW_NODE_CONTRACTS } from './flowNodeContracts';
 
 export type FlowNodeCatalogCategoryId =
   | 'generate'
@@ -243,10 +244,10 @@ export function findNodeCatalogEntries(query: string): FlowNodeCatalogEntry[] {
 function entry(
   type: FlowNodeType,
   label: string,
-  description: string,
+  _legacyDescription: string,
   categoryId: FlowNodeCatalogCategoryId,
   tags: string[],
   initialData?: Partial<NodeData>,
 ): FlowNodeCatalogEntry {
-  return { type, label, description, categoryId, tags, initialData };
+  return { type, label, description: FLOW_NODE_CONTRACTS[type].purpose, categoryId, tags, initialData };
 }
