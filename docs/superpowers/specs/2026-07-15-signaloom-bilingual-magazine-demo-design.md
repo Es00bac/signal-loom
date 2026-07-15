@@ -82,12 +82,18 @@ The Japanese edition additionally demonstrates:
 
 ## Flow-Generated Assets
 
-Create two source assets in Signal Loom’s Flow workspace using the Atlas Cloud provider and its already-configured in-app credential:
+Create the source assets in Signal Loom’s Flow workspace using the Atlas Cloud provider and its already-configured in-app credential:
 
 1. **Signal weave hero** — abstract editorial technology image, dark field, luminous cobalt/cyan filaments forming a subtle node graph and woven loom structure, generous negative space, no legible text, no logo, no watermark.
-2. **Sloan Studio T-shirt concept** — premium editorial studio photograph of a simple black or bone T-shirt with an abstract woven-signal graphic, neutral architectural setting, magazine lighting, no legible branding or sales copy, no watermark.
+2. **Sloom Studio logo source** — use the repository's official four-loop Sloom Studio icon as a Flow image reference; do not redraw or substitute the mark.
+3. **T-shirt reference** — use the logo reference to generate a clean black or bone studio T-shirt with the official mark printed tastefully on the chest. The shirt must be shown clearly enough that a later reference-to-image step can preserve its cut, color, and graphic placement.
+4. **Model reference** — a separate full-body editorial casting reference with neutral wardrobe and a clear, consistent face, hair, body proportions, and skin tone.
+5. **Environment reference** — a separate minimalist modern studio/architectural environment in the cobalt, graphite, and cool-white palette, empty of people and legible signage.
+6. **Final ad composite** — a multi-reference Atlas result that places the same model wearing the reference T-shirt in the reference environment in a natural standing or walking pose suitable for a half-page fashion advertisement. Preserve the logo placement and shirt design; include no generated sales copy, watermark, or unrelated branding.
 
-Use the same generated assets in both language editions so that the typography and localized composition—not the underlying illustration—are the variables. Preserve the generated assets in the Flow/source-library path long enough to place them in Paper, and embed their bytes in each `.slppr` so the deliverables remain self-contained.
+Use the same final hero and ad composite in both language editions so that the typography and localized composition—not the underlying illustration—are the variables. Preserve every intermediate reference in Flow/source library as traceable demo evidence. Embed the final hero and ad composite bytes in each `.slppr` so the deliverables remain self-contained.
+
+Each Image reference slot must accept its visual reference plus connected Text or JSON description guidance at the same time. The runtime must continue resolving the image when a textual edge is encountered first, and all textual/JSON reference descriptions must contribute to the image node's effective prompt. A regression in the exact typed-port contract currently prevents those direct textual connections, so this focused Flow fix is a prerequisite to the reference chain.
 
 The API key must remain inside Signal Loom's existing credential storage. Do not print it, copy it into repository files, or embed it in either `.slppr` deliverable.
 
