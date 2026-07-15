@@ -57,17 +57,17 @@
 
 **Files:**
 - Modify: `scripts/create-signaloom-magazine-demo.mjs`
-- Modify: `src/lib/signaloomMagazineDemo.test.ts`
+- Modify: `scripts/create-signaloom-magazine-demo.test.ts`
 
 **Interfaces:**
 - Consumes: deterministic `frame(...)` builder and existing `COLORS` palette
 - Produces: English/Japanese page-one documents with warm-paper running-head text over cobalt and a blue-black translucent pull-quote panel below quote copy
 
-- [ ] **Step 1: Add failing assertions** that both page-one manifests contain a translucent blue-black pull-quote backing below the quote and that running-head text crossing the parent band uses a contrasting color.
-- [ ] **Step 2: Run `npm test -- src/lib/signaloomMagazineDemo.test.ts`** and verify those assertions fail because the backing frame/contrast is absent.
-- [ ] **Step 3: Add the English and Japanese backing panels** with `fillColor: COLORS.blueBlack`, `fillOpacity: 0.62`, `opacity: 0.92`, and z-index below the coral rule/quote.
-- [ ] **Step 4: Change band-crossing running-head copy to `COLORS.paper`** on both pages/languages.
-- [ ] **Step 5: Re-run the fixture test and confirm it passes.**
+- [x] **Step 1: Add failing assertions** that both page-one manifests contain a translucent blue-black pull-quote backing below the quote and that running-head text crossing the parent band uses a contrasting color.
+- [x] **Step 2: Run `npm test -- scripts/create-signaloom-magazine-demo.test.ts`** and verify those assertions fail because the backing frame/contrast is absent.
+- [x] **Step 3: Add the English and Japanese backing panels** with `fillColor: COLORS.blueBlack`, `fillOpacity: 0.62`, `opacity: 0.92`, and z-index below the coral rule/quote.
+- [x] **Step 4: Change band-crossing running-head copy to `COLORS.paper`** on both pages/languages.
+- [x] **Step 5: Re-run the fixture test and confirm it passes.**
 
 ### Task 4: Regenerate and inspect installed-app outputs
 
@@ -80,11 +80,11 @@
 - Consumes: `scripts/create-signaloom-magazine-demo.mjs`, `scripts/native-paper-kdp-soft-proof-smoke.mjs`
 - Produces: installed-app visual evidence using the normal configured user-data profile
 
-- [ ] **Step 1: Run the deterministic magazine builder** and confirm both packages contain the new frames and the existing managed profile/assets.
-- [ ] **Step 2: Run `npm run install:linux`.**
-- [ ] **Step 3: Run the installed-app smoke once per language on separate CDP ports.**
-- [ ] **Step 4: Inspect both proof PNGs and rasterized PDF pages** for the parent band, contrasting running head, translucent callout, matching quote wrapping, photographs, Japanese typography/furigana, and advertisement.
-- [ ] **Step 5: Check both PDFs with `qpdf --check` and `pdfinfo`.**
+- [x] **Step 1: Run the deterministic magazine builder** and confirm both packages contain the new frames and the existing managed profile/assets.
+- [x] **Step 2: Run `npm run install:linux`.**
+- [x] **Step 3: Run the installed-app smoke once per language on separate CDP ports.**
+- [x] **Step 4: Inspect both proof PNGs and rasterized PDF pages** for the parent band, contrasting running head, translucent callout, matching quote wrapping, photographs, Japanese typography/furigana, and advertisement.
+- [x] **Step 5: Check both PDFs with `qpdf --check` and `pdfinfo`.**
 
 ### Task 5: Production verification and documentation
 
@@ -92,8 +92,8 @@
 - Modify: `docs/TASK_LIST.md`
 - Create: `docs/notes/907-paper-canvas-export-fidelity.md`
 
-- [ ] **Step 1: Run `npm test`.** Expected: all repository tests pass.
-- [ ] **Step 2: Run `npm run verify:paper-production` and `npm run build`.** Expected: both exit 0.
-- [ ] **Step 3: Run ESLint on touched source/test files and `git diff --check`.** Expected: zero errors and no whitespace failures.
-- [ ] **Step 4: Write note 907** with root causes, implementation, visual evidence, outputs, and caveats.
-- [ ] **Step 5: Mark the task complete in `docs/TASK_LIST.md` and commit the implementation.**
+- [x] **Step 1: Run `npm test`.** Expected: all repository tests pass.
+- [x] **Step 2: Run `npm run verify:paper-production` and `npm run build`.** Expected: both exit 0.
+- [x] **Step 3: Run ESLint on touched source/test files and `git diff --check`.** Expected: zero errors and no whitespace failures.
+- [x] **Step 4: Write note 907** with root causes, implementation, visual evidence, outputs, and caveats.
+- [x] **Step 5: Mark the task complete in `docs/TASK_LIST.md` and commit the implementation.**

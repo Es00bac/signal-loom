@@ -260,11 +260,11 @@ function englishPageOne(hero) {
       frame('en-p1-top-rule', 'shape', 0, 0, 210, 1.8, { label: 'Feature Cobalt Rule', fillColor: COLORS.cobalt, zIndex: 10, objectStyleId: 'o-hairline' }),
       frame('en-p1-masthead', 'text', 14, 9, 100, 7, {
         label: 'Magazine Identity', text: 'SLOOM / MATERIAL SYSTEMS', paragraphStyleId: 'p-running',
-        typography: { fontFamily: MONO, fontSizePt: 7.2, leadingPt: 8, tracking: 130, fontWeight: '700', smallCaps: true, color: COLORS.cobalt }, zIndex: 12,
+        typography: { fontFamily: MONO, fontSizePt: 7.2, leadingPt: 8, tracking: 130, fontWeight: '700', smallCaps: true, color: COLORS.paper }, zIndex: 12,
       }),
       frame('en-p1-issue', 'text', 145, 9, 51, 7, {
         label: 'Issue Metadata', text: 'DEMO ISSUE 01  /  2026', paragraphStyleId: 'p-running',
-        typography: { fontFamily: MONO, fontSizePt: 6.8, leadingPt: 8, tracking: 70, align: 'right', color: COLORS.muted, hyphenate: false }, zIndex: 12,
+        typography: { fontFamily: MONO, fontSizePt: 6.8, leadingPt: 8, tracking: 70, align: 'right', color: COLORS.paper, hyphenate: false }, zIndex: 12,
       }),
       frame('en-p1-headline', 'text', 14, 25, 174, 43, {
         label: 'Feature Headline', paragraphStyleId: 'p-display',
@@ -317,6 +317,10 @@ function englishPageOne(hero) {
         ],
         typography: { fontFamily: SAFE_SANS, fontSizePt: 8.4, leadingPt: 11.2, align: 'left', alignLast: 'left', hyphenate: true, lineBreak: 'pretty' }, zIndex: 7,
       }),
+      frame('en-p1-pull-backdrop', 'shape', 111, 143, 89, 56, {
+        label: 'Pull Quote Translucent Backdrop', fillColor: COLORS.blueBlack, fillOpacity: 0.62,
+        opacity: 0.92, cornerRadiusMm: 1.2, zIndex: 5,
+      }),
       frame('en-p1-pull-rule', 'shape', 106, 150, 2.2, 45, { label: 'Pull Quote Coral Rule', fillColor: COLORS.coral, cornerRadiusMm: 1, zIndex: 6, objectStyleId: 'o-accent-chip' }),
       frame('en-p1-pull', 'text', 116, 149, 80, 45, {
         label: 'Pull Quote', text: '“The graph was never the destination. It was the loom.”', paragraphStyleId: 'p-pull',
@@ -349,7 +353,7 @@ function englishPageTwo(ad) {
       frame('en-p2-top-rule', 'shape', 0, 0, 210, 1.8, { label: 'Article Cobalt Rule', fillColor: COLORS.cobalt, zIndex: 10 }),
       frame('en-p2-running', 'text', 14, 9, 182, 7, {
         label: 'Article Running Head', text: 'WOVEN FROM SIGNALS   /   THE MAKING OF A CONNECTED CREATIVE STUDIO', paragraphStyleId: 'p-running',
-        typography: { fontFamily: MONO, fontSizePt: 6.7, leadingPt: 8, tracking: 75, fontWeight: '700', color: COLORS.cobalt, hyphenate: false }, zIndex: 12,
+        typography: { fontFamily: MONO, fontSizePt: 6.7, leadingPt: 8, tracking: 75, fontWeight: '700', color: COLORS.paper, hyphenate: false }, zIndex: 12,
       }),
       frame('en-p2-milestone-label', 'text', 14, 23, 42, 7, {
         label: 'Milestone Label', text: 'THREE TURNS', paragraphStyleId: 'p-running',
@@ -443,11 +447,11 @@ function japanesePageOne(hero) {
       frame('jp-p1-top-rule', 'shape', 0, 0, 210, 1.8, { label: '特集コバルト罫', fillColor: COLORS.cobalt, zIndex: 10 }),
       frame('jp-p1-masthead', 'text', 14, 9, 112, 7, {
         label: '雑誌名', text: 'SLOOM / MATERIAL SYSTEMS', paragraphStyleId: 'p-running',
-        typography: { fontFamily: MONO, fontSizePt: 7.2, leadingPt: 8, tracking: 130, fontWeight: '700', color: COLORS.cobalt, hyphenate: false }, zIndex: 12,
+        typography: { fontFamily: MONO, fontSizePt: 7.2, leadingPt: 8, tracking: 130, fontWeight: '700', color: COLORS.paper, hyphenate: false }, zIndex: 12,
       }),
       frame('jp-p1-issue', 'text', 142, 9, 54, 7, {
         label: '号数', text: 'デモ特別号 01  /  2026', paragraphStyleId: 'p-running',
-        typography: { fontFamily: JP_SANS, fontSizePt: 6.8, leadingPt: 8, tracking: 45, align: 'right', color: COLORS.muted, fontWeight: '600', hyphenate: false, lineBreakStrict: true }, zIndex: 12,
+        typography: { fontFamily: JP_SANS, fontSizePt: 6.8, leadingPt: 8, tracking: 45, align: 'right', color: COLORS.paper, fontWeight: '600', hyphenate: false, lineBreakStrict: true }, zIndex: 12,
       }),
       frame('jp-p1-headline', 'text', 14, 25, 150, 42, {
         label: '特集見出し', text: 'シグナルを織る', paragraphStyleId: 'p-display',
@@ -490,6 +494,10 @@ function japanesePageOne(hero) {
         ],
         typography: { fontFamily: JP_SANS, fontSizePt: 8.4, leadingPt: 13, fontWeight: '400', color: COLORS.ink, writingMode: 'vertical-rl', textOrientation: 'mixed', lineBreakStrict: true, hyphenate: false }, zIndex: 7,
       }),
+      frame('jp-p1-pull-backdrop', 'shape', 22, 143, 78, 72, {
+        label: '引用・半透明背景', fillColor: COLORS.blueBlack, fillOpacity: 0.62,
+        opacity: 0.92, cornerRadiusMm: 1.2, zIndex: 5,
+      }),
       frame('jp-p1-pull-rule', 'shape', 101, 151, 2.2, 52, { label: '引用コーラル罫', fillColor: COLORS.coral, cornerRadiusMm: 1, zIndex: 6 }),
       frame('jp-p1-pull', 'text', 28, 149, 64, 60, {
         label: '縦組み引用', text: 'グラフは目的地ではない。\nそれは創造を織るための機だった。', paragraphStyleId: 'p-pull',
@@ -515,7 +523,7 @@ function japanesePageTwo(ad) {
       frame('jp-p2-top-rule', 'shape', 0, 0, 210, 1.8, { label: '記事コバルト罫', fillColor: COLORS.cobalt, zIndex: 10 }),
       frame('jp-p2-running', 'text', 14, 9, 182, 7, {
         label: '記事柱', text: 'シグナルを織る　／　つながるクリエイティブスタジオの開発', paragraphStyleId: 'p-running',
-        typography: { fontFamily: JP_SANS, fontSizePt: 6.8, leadingPt: 8, tracking: 70, fontWeight: '700', color: COLORS.cobalt, hyphenate: false, lineBreakStrict: true }, zIndex: 12,
+        typography: { fontFamily: JP_SANS, fontSizePt: 6.8, leadingPt: 8, tracking: 70, fontWeight: '700', color: COLORS.paper, hyphenate: false, lineBreakStrict: true }, zIndex: 12,
       }),
       frame('jp-p2-milestone-label', 'text', 14, 23, 34, 7, { label: '転機ラベル', text: '三つの転機', typography: { fontFamily: JP_SANS, fontSizePt: 7, leadingPt: 8, tracking: 85, fontWeight: '700', color: COLORS.coral, hyphenate: false, lineBreakStrict: true }, zIndex: 12 }),
       frame('jp-p2-milestone-01-rule', 'shape', 14, 34, 56, 0.45, { label: '転機 01 罫', fillColor: COLORS.cobalt, zIndex: 2 }),

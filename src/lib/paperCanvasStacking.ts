@@ -21,3 +21,9 @@ export function buildPaperCanvasFrameLayers(frames: PaperFrame[]): PaperCanvasFr
       canvasZIndex: PAPER_CANVAS_FRAME_Z_START + stackIndex,
     }));
 }
+
+/** Keep the editing canvas visually faithful to output; parent-page ownership is shown by controls/badges. */
+export function resolvePaperCanvasFrameOpacity(frame: Pick<PaperFrame, 'opacity'>): number {
+  const opacity = Number.isFinite(frame.opacity) ? frame.opacity : 1;
+  return Math.max(0, Math.min(1, opacity));
+}

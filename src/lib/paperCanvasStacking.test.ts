@@ -4,6 +4,7 @@ import {
   PAPER_CANVAS_FRAME_Z_START,
   PAPER_CANVAS_GUIDE_Z,
   buildPaperCanvasFrameLayers,
+  resolvePaperCanvasFrameOpacity,
 } from './paperCanvasStacking';
 
 function frame(id: string, zIndex: number): PaperFrame {
@@ -68,5 +69,13 @@ describe('paperCanvasStacking', () => {
     ]);
     expect(layers.every((layer) => layer.canvasZIndex > 0)).toBe(true);
     expect(layers.every((layer) => layer.canvasZIndex < PAPER_CANVAS_GUIDE_Z)).toBe(true);
+  });
+
+  it('shows inherited artwork at its authored opacity so the canvas matches export', () => {
+    expect(resolvePaperCanvasFrameOpacity(frame('parent-rule', 0))).toBe(1);
+    const translucentParent: PaperFrame = { ...frame('parent-overlay', 0), inherited: true, opacity: 0.42 };
+    const solidParent: PaperFrame = { ...frame('parent-solid', 0), inherited: true, opacity: 1 };
+    expect(resolvePaperCanvasFrameOpacity(translucentParent)).toBe(0.42);
+    expect(resolvePaperCanvasFrameOpacity(solidParent)).toBe(1);
   });
 });

@@ -252,6 +252,85 @@ describe('paperDocument', () => {
     expect(detached.document.pages[0].frames[0]).toEqual(expect.objectContaining({ inherited: false, locked: false, text: 'Folio' }));
   });
 
+  it('keeps inherited and negative translucent frames above the page background in print output', () => {
+    let doc = createDefaultPaperDocument({ title: 'Visible parent artwork' });
+    const pageId = doc.pages[0].id;
+    const parentId = doc.parentPages[0].id;
+    doc = addFrameToPaperParentPage(doc, parentId, {
+      id: 'parent-blue-rule',
+      kind: 'panel',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 80,
+      heightMm: 1,
+      fillColor: '#1239b8',
+      strokeWidthMm: 0,
+      zIndex: 0,
+    }).document;
+    doc = assignPaperParentPage(doc, pageId, parentId);
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'translucent-black-panel',
+      kind: 'panel',
+      xMm: 20,
+      yMm: 30,
+      widthMm: 60,
+      heightMm: 25,
+      fillColor: '#000000',
+      fillOpacity: 0.45,
+      opacity: 0.8,
+      strokeWidthMm: 0,
+      zIndex: -5,
+    }).document;
+
+    const html = exportPaperDocumentToPrintHtml(doc);
+
+    expect(html).toContain('background: #1239b8');
+    expect(html).toContain('background: rgba(0, 0, 0, 0.45)');
+    expect(html).toContain('opacity: 0.8');
+    expect(html).toContain('z-index: 100');
+    expect(html).toContain('z-index: 101');
+    expect(html).not.toContain('z-index: -100000');
+    expect(html).not.toContain('z-index: -5');
+  });
+
+  it('mirrors canvas wrapping, numeric, indent, and column typography in print output', () => {
+    let doc = createDefaultPaperDocument({ title: 'Typography parity' });
+    const pageId = doc.pages[0].id;
+    doc = addFrameToPaperPage(doc, pageId, {
+      id: 'balanced-columns',
+      kind: 'text',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 90,
+      heightMm: 50,
+      text: 'Balanced copy that should wrap exactly like the canvas.',
+      columns: 2,
+      columnGutterMm: 7,
+      columnBalance: true,
+      columnRule: true,
+      strokeColor: '#1239b8',
+      typography: {
+        lineBreak: 'balance',
+        firstLineIndentMm: 3,
+        alignLast: 'center',
+        smallCaps: true,
+        numericStyle: 'tabular',
+      },
+    }).document;
+
+    const html = exportPaperDocumentToPrintHtml(doc);
+
+    expect(html).toContain('text-wrap-style: balance');
+    expect(html).toContain('text-indent: 3mm each-line');
+    expect(html).toContain('text-align-last: center');
+    expect(html).toContain('font-variant-caps: small-caps');
+    expect(html).toContain('font-variant-numeric: tabular-nums');
+    expect(html).toContain('column-count: 2');
+    expect(html).toContain('column-gap: 7mm');
+    expect(html).toContain('column-fill: balance');
+    expect(html).toContain('column-rule: 0.2mm solid #1239b8');
+  });
+
   it('resolves live page frames in z-index order so caption stacking updates the canvas order', () => {
     let doc = createDefaultPaperDocument({ title: 'Caption Stack' });
     const pageId = doc.pages[0].id;

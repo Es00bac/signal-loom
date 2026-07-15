@@ -50,6 +50,8 @@ import {
   resolvePaperFrameAssetUrl,
 } from './paperAssetReferences';
 import { isPaperManagedIccProfile } from './paperManagedIccProfiles';
+import { buildPaperCanvasFrameLayers } from './paperCanvasStacking';
+import { resolvePaperColumnGutterMm } from './paperColumns';
 
 const DEFAULT_DPI = 300;
 
@@ -1244,7 +1246,11 @@ function renderPrintPage(
 ): string {
   const outputFrames = resolvePaperPageFramesForOutput(doc, page).sort((a, b) => a.zIndex - b.zIndex);
   const connectors = renderPrintBubbleConnectors(outputFrames, pageSpec);
-  const frames = outputFrames
+  // The live canvas maps the document's relative z-order into a positive local stacking context. Print HTML
+  // must do the same: inherited parent-page frames deliberately carry very low document z-indexes, and a raw
+  // negative CSS z-index puts them behind the opaque page background instead of beneath local page artwork.
+  const frames = buildPaperCanvasFrameLayers(outputFrames)
+    .map(({ frame, canvasZIndex }) => ({ ...frame, zIndex: canvasZIndex }))
     .map((frame) => renderPrintFrame(doc, frame, resolveAssetUrl))
     .join('\n');
 
@@ -1301,7 +1307,7 @@ export function renderPrintFrame(
   }
 
   if (isShapedContentFrame(frame)) {
-    return renderPrintShapedContentFrame(doc, outerStyle, frame, assetUrl);
+    return renderPrintShapedContentFrame(outerStyle, frame, assetUrl);
   }
 
   if (frame.kind === 'document') {
@@ -1317,11 +1323,7 @@ export function renderPrintFrame(
   }
 
   const text = renderPrintFrameInlineText(frame, frame.typography.writingMode === 'vertical-rl');
-  const columns = frame.kind === 'text' ? Math.max(1, frame.columns || doc.layout.columns.count) : 1;
-  const columnStyle =
-    columns > 1
-      ? `column-count: ${columns}; column-gap: ${formatMm(doc.layout.columns.gutterMm)};`
-      : '';
+  const columnStyle = printFrameColumnStyle(frame);
 
   return `<div class="frame frame-${frame.kind}" style="${escapeHtml(outerStyle)}">
   <div class="frame-content" style="${escapeHtml(`${contentStyle}; ${columnStyle}`)}"><div class="frame-text-content" style="${escapeHtml(printTextEffectInlineStyle(frame))}">${text}</div></div>
@@ -1490,17 +1492,12 @@ function printFrameContentStyle(frame: PaperFrame): string {
 }
 
 function renderPrintShapedContentFrame(
-  doc: PaperDocument,
   style: string,
   frame: PaperFrame,
   assetUrl?: string,
 ): string {
   const clipPath = printClipPathForFrame(frame);
-  const columns = frame.kind === 'text' ? Math.max(1, frame.columns || doc.layout.columns.count) : 1;
-  const columnStyle =
-    columns > 1
-      ? `column-count: ${columns}; column-gap: ${formatMm(doc.layout.columns.gutterMm)}`
-      : '';
+  const columnStyle = printFrameColumnStyle(frame);
   const innerStyle = [
     'position: absolute',
     'inset: 0',
@@ -1712,11 +1709,40 @@ function textStyle(frame: PaperFrame): string {
     `color: ${frame.typography.color}`,
     `font-weight: ${frame.typography.fontWeight}`,
     `font-style: ${frame.typography.fontStyle}`,
+    frame.typography.firstLineIndentMm ? `text-indent: ${formatMm(frame.typography.firstLineIndentMm)} each-line` : '',
+    frame.typography.alignLast && frame.typography.alignLast !== 'auto' ? `text-align-last: ${frame.typography.alignLast}` : '',
+    frame.typography.smallCaps ? 'font-variant-caps: small-caps' : '',
+    paperNumericStyleToCss(frame.typography.numericStyle) ? `font-variant-numeric: ${paperNumericStyleToCss(frame.typography.numericStyle)}` : '',
+    frame.typography.lineBreak && frame.typography.lineBreak !== 'auto' ? `text-wrap-style: ${frame.typography.lineBreak}` : '',
     vertical ? 'writing-mode: vertical-rl' : '',
     vertical ? `text-orientation: ${frame.typography.textOrientation ?? 'mixed'}` : '',
     (frame.typography.lineBreakStrict ?? vertical) ? 'line-break: strict' : '',
     emphasis ? `text-emphasis: ${emphasis}` : '',
     buildPaperTextPaintEffectCssText(frame),
+  ].filter(Boolean).join('; ');
+}
+
+function paperNumericStyleToCss(style: PaperTypography['numericStyle']): string | undefined {
+  switch (style) {
+    case 'oldstyle':
+      return 'oldstyle-nums';
+    case 'lining':
+      return 'lining-nums';
+    case 'tabular':
+      return 'tabular-nums';
+    default:
+      return undefined;
+  }
+}
+
+function printFrameColumnStyle(frame: PaperFrame): string {
+  const columns = frame.kind === 'text' ? Math.max(1, Math.round(frame.columns || 1)) : 1;
+  if (columns <= 1) return '';
+  return [
+    `column-count: ${columns}`,
+    `column-gap: ${formatMm(resolvePaperColumnGutterMm(frame))}`,
+    `column-fill: ${frame.columnBalance ? 'balance' : 'auto'}`,
+    frame.columnRule ? `column-rule: 0.2mm solid ${frame.strokeColor}` : '',
   ].filter(Boolean).join('; ');
 }
 

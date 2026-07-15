@@ -242,6 +242,7 @@ import {
   PAPER_CANVAS_CUT_Z,
   PAPER_CANVAS_GUIDE_Z,
   buildPaperCanvasFrameLayers,
+  resolvePaperCanvasFrameOpacity,
 } from '../../../lib/paperCanvasStacking';
 import {
   buildPaperFrameDragGeometry,
@@ -8289,7 +8290,7 @@ function PaperFrameView({
     // when the frame sits underneath other frames in the stack. Unselected frames keep their normal
     // stacking order. (PAPER_GUIDE_OVERLAY_Z - 1 is above every frame's canvasZIndex, below the overlays.)
     zIndex: isSelected ? PAPER_GUIDE_OVERLAY_Z - 1 : canvasZIndex,
-    opacity: frame.inherited ? Math.min(frame.opacity, 0.72) : frame.opacity,
+    opacity: resolvePaperCanvasFrameOpacity(frame),
     pointerEvents: tool === 'select' || tool === 'eyedropper' ? 'auto' : 'none',
   };
   const contentStyle: React.CSSProperties = {

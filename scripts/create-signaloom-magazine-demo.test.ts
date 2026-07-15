@@ -102,6 +102,18 @@ describe('Signaloom bilingual magazine demo builder', () => {
     expect(document.styles.paragraph.find((style: any) => style.id === 'p-body')?.typography.align).toBe('left');
     const continuation = document.pages[1].frames.find((frame: any) => frame.id === 'en-p2-article-columns');
     expect(continuation).toMatchObject({ columnRule: false, typography: { align: 'left' } });
+    const pullQuote = document.pages[0].frames.find((frame: any) => frame.id === 'en-p1-pull');
+    const pullBackdrop = document.pages[0].frames.find((frame: any) => frame.id === 'en-p1-pull-backdrop');
+    expect(pullBackdrop).toMatchObject({
+      kind: 'panel',
+      fillColor: '#071426',
+      fillOpacity: 0.62,
+      opacity: 0.92,
+    });
+    expect(pullBackdrop.zIndex).toBeLessThan(pullQuote.zIndex);
+    for (const id of ['en-p1-masthead', 'en-p1-issue', 'en-p2-running']) {
+      expect(document.pages.flatMap((page: any) => page.frames).find((frame: any) => frame.id === id)?.typography.color).toBe('#f3f0e8');
+    }
     expect(plainText(document)).toContain('WOVEN FROM SIGNALS');
     expect(plainText(document)).toContain('CONCEPT DEMO — NOT A REAL PRODUCT — NOT FOR SALE');
     expect(plainText(document)).toContain('信号を、かたちへ。');
@@ -121,6 +133,18 @@ describe('Signaloom bilingual magazine demo builder', () => {
     expect(verticalFrames[1]?.text).toContain('ポートは「受け取れるものを漏らさず受け取り');
     expect(verticalFrames[2]?.text).toContain('｜見開き《みひらき》');
     expect(document.pages[1].frames.find((frame: any) => frame.id === 'jp-p2-article-pull')?.widthMm).toBeGreaterThanOrEqual(30);
+    const pullQuote = document.pages[0].frames.find((frame: any) => frame.id === 'jp-p1-pull');
+    const pullBackdrop = document.pages[0].frames.find((frame: any) => frame.id === 'jp-p1-pull-backdrop');
+    expect(pullBackdrop).toMatchObject({
+      kind: 'panel',
+      fillColor: '#071426',
+      fillOpacity: 0.62,
+      opacity: 0.92,
+    });
+    expect(pullBackdrop.zIndex).toBeLessThan(pullQuote.zIndex);
+    for (const id of ['jp-p1-masthead', 'jp-p1-issue', 'jp-p2-running']) {
+      expect(document.pages.flatMap((page: any) => page.frames).find((frame: any) => frame.id === id)?.typography.color).toBe('#f3f0e8');
+    }
     expect(plainText(document)).toContain('素材《そざい》と工程《こうてい》');
     expect(plainText(document)).toContain('シグナルを織る');
     expect(plainText(document)).toContain('コンセプトデモ／実在しない商品です／非売品');
