@@ -18,6 +18,7 @@ import {
 } from '../../lib/modelContracts/audioModelContracts';
 import {
   AUDIO_OUTPUT_FORMAT_OPTIONS,
+  CAPABILITY_PROVIDERS,
   ensureVoiceOption,
   getConfiguredProviders,
   getModelOptions,
@@ -100,7 +101,8 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
   const mediaMode = (data.mediaMode ?? 'generate') as MediaNodeMode;
   const isCollapsed = Boolean(data.collapsed);
   const availableProviders = getConfiguredProviders('audio', apiKeys, providerSettings);
-  const provider = ((data.provider as AudioProvider | undefined) ?? availableProviders[0] ?? 'elevenlabs') as AudioProvider;
+  const provider = ((data.provider as AudioProvider | undefined) ?? 'elevenlabs') as AudioProvider;
+  const providerConfigured = availableProviders.includes(provider);
   const audioMode = ((data.audioGenerationMode as AudioGenerationMode | undefined) ?? 'speech') as AudioGenerationMode;
   // The store-owned `blob:` URL cached in `data.result` is revoked on rehydration, leaving a dead
   // preview; resolve the source-bin item's live URL instead (see useLiveNodeResultAssetUrl).
@@ -124,16 +126,6 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
         : (data.audioOutputFormat ?? 'mp3_44100_128').startsWith('pcm')
           ? 'audio/wav'
           : 'audio/mpeg';
-
-  useEffect(() => {
-    if (mediaMode !== 'generate' || availableProviders.length === 0 || availableProviders.includes(provider)) {
-      return;
-    }
-
-    const nextProvider = availableProviders[0];
-    data.onChange?.('provider', nextProvider);
-    data.onChange?.('modelId', defaultModels[nextProvider]);
-  }, [availableProviders, data, defaultModels, mediaMode, provider]);
 
   useEffect(() => {
     if (provider !== 'elevenlabs' || audioMode === 'soundEffect' || audioMode === 'music' || data.voiceId) {
@@ -166,6 +158,11 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
   const modelContract = getAudioModelContract(provider, selectedModelId);
   const modelSupport = getAudioModelSupport(provider, selectedModelId, audioMode);
   const compatibilityWarning = describeAudioModelCompatibility(provider, selectedModelId, audioMode);
+  const runDisabledReason = !providerConfigured
+    ? `Configure ${getProviderLabel(provider)} in Settings before running this node.`
+    : modelContract.availability === 'unavailable'
+      ? `${modelContract.displayName} is unavailable and cannot run.`
+      : compatibilityWarning;
   const selectedVoiceId = data.voiceId ?? defaultVoiceId ?? elevenLabsVoices[0]?.value ?? '';
   const voiceOptions = ensureVoiceOption(elevenLabsVoices, selectedVoiceId);
 
@@ -179,14 +176,8 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
       return;
     }
 
-    if (availableProviders.length > 0) {
-      const nextProvider = availableProviders.includes(provider) ? provider : availableProviders[0];
-      data.onChange?.('provider', nextProvider);
-      data.onChange?.(
-        'modelId',
-        defaultModels[nextProvider],
-      );
-    }
+    data.onChange?.('provider', provider);
+    data.onChange?.('modelId', data.modelId ?? defaultModels[provider]);
   };
 
   const handleProviderChange = (nextProvider: AudioProvider) => {
@@ -288,7 +279,7 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
       title={mediaMode === 'import' ? 'Audio Asset' : 'Audio Generation'}
       outputActions={getCompatibleNodeActions('audioGen')}
       onRun={mediaMode === 'generate' ? data.onRun : undefined}
-      runDisabledReason={mediaMode === 'generate' ? compatibilityWarning : undefined}
+      runDisabledReason={mediaMode === 'generate' ? runDisabledReason : undefined}
       isRunning={data.isRunning}
       error={data.error}
       statusMessage={data.statusMessage}
@@ -319,19 +310,24 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
 
       {mediaMode === 'generate' ? (
         <>
-          {availableProviders.length > 0 ? (
-            <>
+          <>
               <select
                 className={selectClassName}
                 onChange={(event) => handleProviderChange(event.target.value as AudioProvider)}
                 value={provider}
               >
-                {availableProviders.map((option) => (
+                {CAPABILITY_PROVIDERS.audio.map((option) => (
                   <option key={option} value={option}>
                     {getProviderLabel(option)}
                   </option>
                 ))}
               </select>
+
+              {!providerConfigured ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-5 text-amber-100">
+                  Configure {getProviderLabel(provider)} in Settings to run this model. The provider and model remain selectable so you can design the flow first.
+                </div>
+              ) : null}
 
               {provider === 'elevenlabs' ? (
                 <div className="grid grid-cols-4 gap-2">
@@ -373,12 +369,7 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
                       : `${modelContract.displayName} is ${modelContract.lifecycle}.`}
                 </div>
               ) : null}
-            </>
-          ) : (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
-              Add an audio-capable provider key in Settings to unlock generation models.
-            </div>
-          )}
+          </>
 
           <fieldset
             className={!modelSupport.operationSupported ? 'space-y-2 opacity-55' : 'contents'}

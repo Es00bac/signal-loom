@@ -3,24 +3,24 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useFlowStore } from '../../store/flowStore';
 import { useSettingsStore } from '../../store/settingsStore';
-import type { AppNode } from '../../types/flow';
+import type { AppNode, TextProvider } from '../../types/flow';
 import { TextNode } from './TextNode';
 
-function generatedNode(modelId: string): AppNode {
+function generatedNode(modelId: string, provider: TextProvider = 'gemini'): AppNode {
   return {
     id: 'text-model-1',
     type: 'textNode',
     position: { x: 0, y: 0 },
-    data: { mode: 'generate', provider: 'gemini', modelId },
+    data: { mode: 'generate', provider, modelId },
   };
 }
 
-function renderGeneratedTextNode(modelId: string): string {
-  useFlowStore.setState({ nodes: [generatedNode(modelId)], edges: [] });
+function renderGeneratedTextNode(modelId: string, provider: TextProvider = 'gemini'): string {
+  useFlowStore.setState({ nodes: [generatedNode(modelId, provider)], edges: [] });
   return renderToStaticMarkup(
     <ReactFlowProvider>
       <TextNode
-        data={{ mode: 'generate', provider: 'gemini', modelId, onChange: () => undefined }}
+        data={{ mode: 'generate', provider, modelId, onChange: () => undefined }}
         deletable
         dragging={false}
         draggable
@@ -86,5 +86,14 @@ describe('TextNode model-specific controls', () => {
     expect(html).toContain('Gemini 2.5 Flash does not expose Thinking level.');
     expect(html).toContain('Gemini 2.5 Flash does not expose Media resolution.');
     expect(html).toMatch(/<select[^>]*disabled=""[^>]*title="Gemini 2.5 Flash does not expose Thinking level\./);
+  });
+
+  it('keeps unconfigured providers and models selectable while blocking Run', () => {
+    const settings = useSettingsStore.getState();
+    useSettingsStore.setState({ apiKeys: { ...settings.apiKeys, openai: '' } });
+    const html = renderGeneratedTextNode('gpt-5.6-terra', 'openai');
+
+    expect(html).toContain('<option value="openai" selected="">OpenAI / Compatible</option>');
+    expect(html).toContain('Configure OpenAI / Compatible in Settings to run this model');
   });
 });

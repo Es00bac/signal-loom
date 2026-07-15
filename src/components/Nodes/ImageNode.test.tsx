@@ -2,6 +2,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useFlowStore } from '../../store/flowStore';
+import { useSettingsStore } from '../../store/settingsStore';
 import { ImageNode } from './ImageNode';
 import type { AppNode } from '../../types/flow';
 
@@ -239,6 +240,8 @@ describe('ImageNode selected-model warnings', () => {
   });
 
   it('keeps a preview image model selectable and warns that its contract can change', () => {
+    const settings = useSettingsStore.getState();
+    useSettingsStore.setState({ apiKeys: { ...settings.apiKeys, bfl: '' } });
     const html = renderToStaticMarkup(
       <ReactFlowProvider>
         <ImageNode
@@ -251,6 +254,8 @@ describe('ImageNode selected-model warnings', () => {
     );
 
     expect(html).toContain('FLUX.2 Klein 9B Preview is a preview model');
+    expect(html).toContain('<option value="bfl" selected="">Black Forest Labs</option>');
+    expect(html).toContain('Configure Black Forest Labs in Settings to run this model');
   });
 
   it('keeps a saved shut-down model understandable but visibly blocks execution', () => {

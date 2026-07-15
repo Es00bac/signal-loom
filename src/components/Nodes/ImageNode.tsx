@@ -49,6 +49,7 @@ import { resolveFlowNodePorts, type FlowPortContract } from '../../lib/flowNodeC
 import { resolveUniversalConfiguredUpscalePlan } from '../../lib/universalImageUpscale';
 import { hasConnectedVideoSource } from '../../lib/videoSourceConnections';
 import {
+  CAPABILITY_PROVIDERS,
   getConfiguredProviders,
   getImageAspectRatioOptions,
   getModelOptions,
@@ -155,7 +156,8 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
     () => getConfiguredProviders('image', apiKeys, providerSettings),
     [apiKeys, providerSettings],
   );
-  const provider = ((data.provider as ImageProvider | undefined) ?? availableProviders[0] ?? 'gemini') as ImageProvider;
+  const provider = ((data.provider as ImageProvider | undefined) ?? 'gemini') as ImageProvider;
+  const providerConfigured = availableProviders.includes(provider);
   const getDefaultImageModel = (imageProvider: ImageProvider) => (
     imageProvider === 'android'
       ? providerSettings.androidAcceleratorDefaultImageModel ?? defaultModels[imageProvider]
@@ -208,7 +210,9 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
           : undefined;
   const runDisabledReason = modelDefinition.availability === 'unavailable'
     ? `${modelDefinition.label} is unavailable and cannot run.${modelDefinition.migrationModelId ? ` Choose ${modelDefinition.migrationModelId} instead.` : ''}`
-    : undefined;
+    : !providerConfigured
+      ? `Configure ${getProviderLabel(provider)} in Settings before running this node.`
+      : undefined;
   const visibleReferenceHandles = IMAGE_REFERENCE_HANDLES;
   const servedSession = isServedLanSession();
   const sourceAssetId = typeof data.sourceAssetId === 'string' ? data.sourceAssetId : undefined;
@@ -418,16 +422,6 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
   };
 
   useEffect(() => {
-    if (mediaMode !== 'generate' || availableProviders.length === 0 || availableProviders.includes(provider)) {
-      return;
-    }
-
-    const nextProvider = availableProviders[0];
-    onDataChange?.('provider', nextProvider);
-    onDataChange?.('modelId', defaultModels[nextProvider]);
-  }, [availableProviders, defaultModels, mediaMode, onDataChange, provider]);
-
-  useEffect(() => {
     if (mediaMode !== 'generate' || isVideoFrameMode || currentAspectRatio === configuredAspectRatio) {
       return;
     }
@@ -445,11 +439,8 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
       return;
     }
 
-    if (availableProviders.length > 0) {
-      const nextProvider = availableProviders.includes(provider) ? provider : availableProviders[0];
-      data.onChange?.('provider', nextProvider);
-      data.onChange?.('modelId', data.modelId ?? getDefaultImageModel(nextProvider));
-    }
+    data.onChange?.('provider', provider);
+    data.onChange?.('modelId', data.modelId ?? getDefaultImageModel(provider));
   };
 
   const handleProviderChange = (nextProvider: ImageProvider) => {
@@ -683,14 +674,14 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
                 An upstream video is connected. This node will extract the selected frame locally without calling an image model.
               </div>
             </>
-          ) : availableProviders.length > 0 ? (
+          ) : (
             <>
               <select
                 className={selectClassName}
                 onChange={(event) => handleProviderChange(event.target.value as ImageProvider)}
                 value={provider}
               >
-                {availableProviders.map((option) => (
+                {CAPABILITY_PROVIDERS.image.map((option) => (
                   <option key={option} value={option}>
                     {getProviderLabel(option)}
                   </option>
@@ -720,14 +711,13 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
                 />
                 Default for new image nodes
               </label>
+
+              {!providerConfigured ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-5 text-amber-100">
+                  Configure {getProviderLabel(provider)} in Settings to run this model. The provider and model remain selectable so you can design the flow first.
+                </div>
+              ) : null}
             </>
-          ) : (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
-              Add a {getProviderLabel(provider)} key or endpoint in Settings to run this model.
-              <div className="mt-1 text-amber-100/80">
-                Selected model: {selectedModelId}
-              </div>
-            </div>
           )}
 
           {!isVideoFrameMode && lifecycleWarning ? (

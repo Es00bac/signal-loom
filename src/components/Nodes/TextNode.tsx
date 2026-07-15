@@ -1,10 +1,11 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useState } from 'react';
 import { FileText, Image as ImageIcon, Music2, Type, Video, X } from 'lucide-react';
 import { AttemptHistory } from './AttemptHistory';
 import { BaseNode } from './BaseNode';
 import { ExecutionTelemetryPanel } from './ExecutionTelemetryPanel';
 import { getCompatibleNodeActions } from '../../lib/nodeActionMenu';
 import {
+  CAPABILITY_PROVIDERS,
   getConfiguredProviders,
   getModelOptions,
   getProviderLabel,
@@ -66,7 +67,8 @@ function TextNodeComponent({ id, data }: AppNodeProps) {
   const sourceBinItems = useSourceBinStore(useShallow((state) => state.bins.flatMap((bin) => bin.items)));
   const mode = (data.mode ?? 'prompt') as TextNodeMode;
   const availableProviders = getConfiguredProviders('text', apiKeys, providerSettings);
-  const provider = ((data.provider as TextProvider | undefined) ?? availableProviders[0] ?? 'gemini') as TextProvider;
+  const provider = ((data.provider as TextProvider | undefined) ?? 'gemini') as TextProvider;
+  const providerConfigured = availableProviders.includes(provider);
   const selectedModelId = data.modelId ?? defaultModels[provider];
   const modelContract = getTextModelContract(provider, selectedModelId);
   const modelControls = getModelUiControls(modelContract, 'text-generation', [
@@ -90,7 +92,9 @@ function TextNodeComponent({ id, data }: AppNodeProps) {
         : modelContract.lifecycle === 'shutdown'
           ? `${modelContract.displayName} is shut down and retained only for saved-flow diagnostics.${modelContract.migrationModelId ? ` Choose ${modelContract.migrationModelId} to run.` : ''}`
           : undefined;
-  const runDisabledReason = modelContract.availability === 'unavailable'
+  const runDisabledReason = !providerConfigured
+    ? `Configure ${getProviderLabel(provider)} in Settings before running this node.`
+    : modelContract.availability === 'unavailable'
     ? `${modelContract.displayName} is unavailable and cannot run.`
     : undefined;
   const thinkingOptions = thinkingControl.parameter?.options ?? GEMINI_THINKING_LEVEL_OPTIONS;
@@ -134,23 +138,12 @@ function TextNodeComponent({ id, data }: AppNodeProps) {
     }, 0),
   );
 
-  useEffect(() => {
-    if (mode !== 'generate' || availableProviders.length === 0 || availableProviders.includes(provider)) {
-      return;
-    }
-
-    const nextProvider = availableProviders[0];
-    data.onChange?.('provider', nextProvider);
-    data.onChange?.('modelId', defaultModels[nextProvider]);
-  }, [availableProviders, data, defaultModels, mode, provider]);
-
   const handleModeChange = (nextMode: TextNodeMode) => {
     data.onChange?.('mode', nextMode);
 
-    if (nextMode === 'generate' && availableProviders.length > 0) {
-      const nextProvider = availableProviders.includes(provider) ? provider : availableProviders[0];
-      data.onChange?.('provider', nextProvider);
-      data.onChange?.('modelId', data.modelId ?? defaultModels[nextProvider]);
+    if (nextMode === 'generate') {
+      data.onChange?.('provider', provider);
+      data.onChange?.('modelId', data.modelId ?? defaultModels[provider]);
     }
   };
 
@@ -266,19 +259,24 @@ function TextNodeComponent({ id, data }: AppNodeProps) {
         />
       ) : (
         <>
-          {availableProviders.length > 0 ? (
-            <>
+          <>
               <select
                 className={selectClassName}
                 onChange={(event) => handleProviderChange(event.target.value as TextProvider)}
                 value={provider}
               >
-                {availableProviders.map((option) => (
+                {CAPABILITY_PROVIDERS.text.map((option) => (
                   <option key={option} value={option}>
                     {getProviderLabel(option)}
                   </option>
                 ))}
               </select>
+
+              {!providerConfigured ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-5 text-amber-100">
+                  Configure {getProviderLabel(provider)} in Settings to run this model. The provider and model remain selectable so you can design the flow first.
+                </div>
+              ) : null}
 
               <select
                 className={selectClassName}
@@ -376,12 +374,7 @@ function TextNodeComponent({ id, data }: AppNodeProps) {
                   ) : null}
                 </div>
               ) : null}
-            </>
-          ) : (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
-              Add a text-capable provider key in Settings to unlock model selection.
-            </div>
-          )}
+          </>
 
           <FlowVariableTextarea
             placeholder="Instruction for the model..."

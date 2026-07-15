@@ -18,6 +18,7 @@ import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 import { getCompatibleNodeActions } from '../../lib/nodeActionMenu';
 import { assignVariableToResultAttempt } from '../../lib/flowVariables';
 import {
+  CAPABILITY_PROVIDERS,
   getConfiguredProviders,
   getModelOptions,
   getProviderLabel,
@@ -78,7 +79,8 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
   const mediaMode = (data.mediaMode ?? 'generate') as MediaNodeMode;
   const isCollapsed = Boolean(data.collapsed);
   const availableProviders = getConfiguredProviders('video', apiKeys, providerSettings);
-  const provider = ((data.provider as VideoProvider | undefined) ?? availableProviders[0] ?? 'gemini') as VideoProvider;
+  const provider = ((data.provider as VideoProvider | undefined) ?? 'gemini') as VideoProvider;
+  const providerConfigured = availableProviders.includes(provider);
   const selectedModelId = data.modelId ?? defaultModels[provider];
   const modelContract = getVideoModelContract(provider, selectedModelId);
   const modelSupport = getVideoModelSupport(provider, selectedModelId);
@@ -152,16 +154,6 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
       : baseResolutionOptions;
 
   useEffect(() => {
-    if (mediaMode !== 'generate' || availableProviders.length === 0 || availableProviders.includes(provider)) {
-      return;
-    }
-
-    const nextProvider = availableProviders[0];
-    data.onChange?.('provider', nextProvider);
-    data.onChange?.('modelId', defaultModels[nextProvider]);
-  }, [availableProviders, data, defaultModels, mediaMode, provider]);
-
-  useEffect(() => {
     const selectedResolution = data.videoResolution ?? '720p';
     if (resolutionOptions.some((option) => option.value === selectedResolution)) {
       return;
@@ -205,6 +197,12 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
     modelContract,
     providerSettings.geminiCredentialMode,
   );
+  const runDisabledReason = modelContract.availability === 'unavailable'
+    ? lifecycleWarning
+    : credentialRouteWarning
+      ?? (!providerConfigured
+        ? `Configure ${getProviderLabel(provider)} in Settings before running this node.`
+        : undefined);
   const startFrameDisabledReason = modelSupport.imageToVideo ? undefined : `${modelContract.displayName} does not support image-to-video through this route.`;
   const endFrameDisabledReason = modelSupport.interpolation ? undefined : `${modelContract.displayName} does not support first/last-frame interpolation.`;
   const referenceDisabledReason = modelSupport.referenceImages ? undefined : `${modelContract.displayName} does not support reference-image guidance.`;
@@ -227,11 +225,8 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
       return;
     }
 
-    if (availableProviders.length > 0) {
-      const nextProvider = availableProviders.includes(provider) ? provider : availableProviders[0];
-      data.onChange?.('provider', nextProvider);
-      data.onChange?.('modelId', data.modelId ?? defaultModels[nextProvider]);
-    }
+    data.onChange?.('provider', provider);
+    data.onChange?.('modelId', data.modelId ?? defaultModels[provider]);
   };
 
   const handleImport = async (file: File | undefined) => {
@@ -352,6 +347,7 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
         ) : undefined
       }
       onRun={mediaMode === 'generate' ? data.onRun : undefined}
+      runDisabledReason={mediaMode === 'generate' ? runDisabledReason : undefined}
       isRunning={data.isRunning}
       error={data.error}
       statusMessage={data.statusMessage}
@@ -388,19 +384,24 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
 
       {mediaMode === 'generate' ? (
         <>
-          {availableProviders.length > 0 ? (
-            <>
+          <>
               <select
                 className={selectClassName}
                 onChange={(event) => handleProviderChange(event.target.value as VideoProvider)}
                 value={provider}
               >
-                {availableProviders.map((option) => (
+                {CAPABILITY_PROVIDERS.video.map((option) => (
                   <option key={option} value={option}>
                     {getProviderLabel(option)}
                   </option>
                 ))}
               </select>
+
+              {!providerConfigured ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-5 text-amber-100">
+                  Configure {getProviderLabel(provider)} in Settings to run this model. The provider and model remain selectable so you can design the flow first.
+                </div>
+              ) : null}
 
               <select
                 className={selectClassName}
@@ -420,12 +421,7 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
                   {credentialRouteWarning ? <div>{credentialRouteWarning}</div> : null}
                 </div>
               ) : null}
-            </>
-          ) : (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
-              Add a video-capable provider key in Settings to unlock video generation.
-            </div>
-          )}
+          </>
 
           <div className="grid grid-cols-3 gap-2">
             <select

@@ -3,25 +3,25 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useFlowStore } from '../../store/flowStore';
 import { useSettingsStore } from '../../store/settingsStore';
-import type { AppNode } from '../../types/flow';
+import type { AppNode, VideoProvider } from '../../types/flow';
 import { getVideoCredentialRouteWarning, getVideoModelContract } from '../../lib/modelContracts/videoModelContracts';
 import { VideoNode } from './VideoNode';
 
-function node(modelId: string): AppNode {
+function node(modelId: string, provider: VideoProvider = 'gemini'): AppNode {
   return {
     id: 'video-1',
     type: 'videoGen',
     position: { x: 0, y: 0 },
-    data: { mediaMode: 'generate', provider: 'gemini', modelId },
+    data: { mediaMode: 'generate', provider, modelId },
   };
 }
 
-function renderVideoNode(modelId: string): string {
-  useFlowStore.setState({ nodes: [node(modelId)], edges: [] });
+function renderVideoNode(modelId: string, provider: VideoProvider = 'gemini'): string {
+  useFlowStore.setState({ nodes: [node(modelId, provider)], edges: [] });
   return renderToStaticMarkup(
     <ReactFlowProvider>
       <VideoNode
-        data={{ mediaMode: 'generate', provider: 'gemini', modelId, onChange: () => undefined }}
+        data={{ mediaMode: 'generate', provider, modelId, onChange: () => undefined }}
         deletable
         dragging={false}
         draggable
@@ -73,5 +73,14 @@ describe('VideoNode model-specific UX', () => {
       getVideoModelContract('gemini', 'veo-3.1-generate-001'),
       'api-key',
     )).toContain('This -001 model ID is a Vertex route');
+  });
+
+  it('keeps an unconfigured provider selectable while blocking execution', () => {
+    const settings = useSettingsStore.getState();
+    useSettingsStore.setState({ apiKeys: { ...settings.apiKeys, huggingface: '' } });
+    const html = renderVideoNode('Wan-AI/Wan2.2-T2V-A14B', 'huggingface');
+
+    expect(html).toContain('<option value="huggingface" selected="">Hugging Face</option>');
+    expect(html).toContain('Configure Hugging Face in Settings to run this model');
   });
 });
