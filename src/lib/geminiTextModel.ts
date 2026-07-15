@@ -6,6 +6,7 @@ import type {
   ResultType,
   TextOutputFormat,
 } from '../types/flow';
+import { getTextModelContract } from './modelContracts/textModelContracts';
 
 export interface GeminiTextMediaInput {
   url: string;
@@ -85,9 +86,22 @@ export function buildGeminiTextConfig(data: Pick<NodeData,
   | 'geminiGoogleSearchEnabled'
   | 'geminiCodeExecutionEnabled'
   | 'textOutputFormat'
->): GeminiTextConfig {
+>, modelId?: string): GeminiTextConfig {
   const config: GeminiTextConfig = {};
-  const thinkingLevel = normalizeGeminiThinkingLevel(data.geminiThinkingLevel);
+  const contract = modelId ? getTextModelContract('gemini', modelId) : undefined;
+  const supportedParameters = contract
+    ? new Set(contract.parameters.map((parameter) => parameter.id))
+    : undefined;
+  const supports = (parameterId: string) => supportedParameters?.has(parameterId) ?? true;
+  const supportsEnumValue = (parameterId: string, value: string | undefined) => {
+    if (!contract || value === undefined) return true;
+    const parameter = contract.parameters.find((candidate) => candidate.id === parameterId);
+    return parameter?.options?.some((option) => option.value === value) ?? false;
+  };
+  const thinkingLevel = supports('thinkingLevel')
+    && supportsEnumValue('thinkingLevel', data.geminiThinkingLevel)
+    ? normalizeGeminiThinkingLevel(data.geminiThinkingLevel)
+    : undefined;
 
   if (thinkingLevel) {
     config.thinkingConfig = {
@@ -95,17 +109,21 @@ export function buildGeminiTextConfig(data: Pick<NodeData,
     };
   }
 
-  if (data.textOutputFormat === 'json') {
+  if (
+    supports('outputFormat')
+    && supportsEnumValue('outputFormat', data.textOutputFormat)
+    && data.textOutputFormat === 'json'
+  ) {
     config.responseMimeType = 'application/json';
   }
 
   const tools: GeminiTextConfig['tools'] = [];
 
-  if (data.geminiGoogleSearchEnabled) {
+  if (supports('googleSearch') && data.geminiGoogleSearchEnabled) {
     tools.push({ googleSearch: {} });
   }
 
-  if (data.geminiCodeExecutionEnabled) {
+  if (supports('codeExecution') && data.geminiCodeExecutionEnabled) {
     tools.push({ codeExecution: {} });
   }
 

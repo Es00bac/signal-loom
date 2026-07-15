@@ -116,6 +116,7 @@ import {
   normalizeGeminiVideoModelId,
 } from './videoModelSupport';
 import { getVideoModelContract } from './modelContracts/videoModelContracts';
+import { getTextModelContract } from './modelContracts/textModelContracts';
 import {
   audioModeToOperation,
   getAudioModelContract,
@@ -710,15 +711,27 @@ async function executeTextNode(
 
   const provider = (node.data.provider as TextProvider | undefined) ?? 'gemini';
   const modelId = getModelId(settings, 'text', provider, node.data.modelId);
+  const modelContract = getTextModelContract(provider, modelId);
   const combinedPrompt = composePrompt(context.prompt, promptText);
   const textMediaInputs = normalizeTextMediaInputs(context);
   const textImageInputs = textMediaInputs.filter(isImageMediaInput).map((input) => input.url);
   const unsupportedTextMediaInputs = textMediaInputs.filter((input) => !isGeminiTextMediaInputSupported(input));
+  const unsupportedModelInputs = textMediaInputs.filter((input) => {
+    const modality = textMediaInputModality(input);
+    return !modality || !modelContract.inputModalities.includes(modality);
+  });
   const effectivePrompt = combinedPrompt || (textMediaInputs.length > 0 ? 'Analyze the connected media in detail.' : '');
   const systemPrompt = (node.data.systemPrompt ?? '').trim();
 
   if (!effectivePrompt) {
     throw new Error('Connect a prompt source or enter an instruction in this text node.');
+  }
+
+  if (unsupportedModelInputs.length > 0) {
+    const labels = unsupportedModelInputs
+      .map((input) => input.label ?? input.mimeType ?? input.kind ?? 'media')
+      .join(', ');
+    throw new Error(`${modelContract.displayName} cannot accept these connected inputs on its configured Flow route: ${labels}.`);
   }
 
   switch (provider) {
@@ -730,7 +743,9 @@ async function executeTextNode(
         throw new Error(`Gemini text analysis does not support this media input yet: ${labels}.`);
       }
 
-      const mediaResolution = node.data.geminiMediaResolution;
+      const mediaResolution = modelContract.parameters.some((parameter) => parameter.id === 'mediaResolution')
+        ? node.data.geminiMediaResolution
+        : undefined;
       const mediaParts = await Promise.all(
         textMediaInputs.map(async (input) => {
           const inlineData = await dataUrlToInlineData(
@@ -746,7 +761,7 @@ async function executeTextNode(
         }),
       );
       const geminiConfig = {
-        ...buildGeminiTextConfig(node.data),
+        ...buildGeminiTextConfig(node.data, modelId),
         systemInstruction: systemPrompt || undefined,
       } as GenerateContentConfig;
       const geminiContents = [
@@ -761,7 +776,7 @@ async function executeTextNode(
           settings,
           body: buildVertexGeminiGenerateContentBody({
             parts: geminiContents as unknown[],
-            config: buildGeminiTextConfig(node.data),
+            config: buildGeminiTextConfig(node.data, modelId),
             systemPrompt,
           }),
           label: 'Vertex Gemini text',
@@ -3598,6 +3613,25 @@ function normalizeTextMediaInputs(context: ExecutionContext): GeminiTextMediaInp
 
 function isImageMediaInput(input: GeminiTextMediaInput): boolean {
   return input.kind === 'image' || input.mimeType?.toLowerCase().startsWith('image/') === true;
+}
+
+function textMediaInputModality(
+  input: GeminiTextMediaInput,
+): 'image' | 'video' | 'audio' | 'pdf' | undefined {
+  const mimeType = input.mimeType?.toLowerCase() ?? '';
+  if (input.kind === 'image' || mimeType.startsWith('image/')) return 'image';
+  if (input.kind === 'video' || input.kind === 'composition' || mimeType.startsWith('video/')) return 'video';
+  if (input.kind === 'audio' || mimeType.startsWith('audio/')) return 'audio';
+  if (
+    input.kind === 'document'
+    || input.kind === 'subtitle'
+    || input.kind === 'text'
+    || mimeType === 'application/pdf'
+    || mimeType.startsWith('text/')
+  ) {
+    return 'pdf';
+  }
+  return undefined;
 }
 
 function buildChatMessages(systemPrompt: string, userPrompt: string) {

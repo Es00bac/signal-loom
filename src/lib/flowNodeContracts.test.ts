@@ -117,6 +117,38 @@ describe('dynamic Flow node contracts', () => {
     expect(atlasImageToVideo.find((port) => port.id === 'video-reference-1')?.disabledReason).toContain('does not support');
   });
 
+  it('drives Text media input types from the exact provider/model contract', () => {
+    const gemini = resolveFlowNodePorts(context('textNode', {
+      mode: 'generate',
+      provider: 'gemini',
+      modelId: 'gemini-3.5-flash',
+    }));
+    const openai = resolveFlowNodePorts(context('textNode', {
+      mode: 'generate',
+      provider: 'openai',
+      modelId: 'gpt-5.6-terra',
+    }));
+    const huggingface = resolveFlowNodePorts(context('textNode', {
+      mode: 'generate',
+      provider: 'huggingface',
+      modelId: 'Qwen/Qwen3-4B-Thinking-2507',
+    }));
+
+    expect(gemini.find((port) => port.direction === 'input')?.types).toEqual([
+      { kind: 'text' },
+      { kind: 'image' },
+      { kind: 'video' },
+      { kind: 'audio' },
+    ]);
+    expect(openai.find((port) => port.direction === 'input')?.types).toEqual([
+      { kind: 'text' },
+      { kind: 'image' },
+    ]);
+    expect(huggingface.find((port) => port.direction === 'input')?.types).toEqual([
+      { kind: 'text' },
+    ]);
+  });
+
   it('declares composite package and envelope extraction on Image source and reference inputs', () => {
     const ports = resolveFlowNodePorts(context('imageGen', { provider: 'bfl', modelId: 'flux-2-pro' }));
     const compositeImageTypes = [

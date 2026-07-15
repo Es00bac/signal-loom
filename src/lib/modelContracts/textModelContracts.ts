@@ -1,9 +1,12 @@
 import {
+  createUnverifiedModelContract,
   defineProviderModelContracts,
+  getProviderModelContract,
   type ModelLifecycle,
   type ModelParameterContract,
   type ProviderModelContract,
 } from '../providerModelContracts';
+import type { TextProvider } from '../../types/flow';
 
 const VERIFIED_AT = '2026-07-14';
 const GEMINI_MODELS_URL = 'https://ai.google.dev/gemini-api/docs/models';
@@ -322,3 +325,41 @@ export const TEXT_MODEL_CONTRACTS = defineProviderModelContracts([
   huggingFaceTextContract('zai-org/GLM-4.5', 'GLM 4.5'),
   huggingFaceTextContract('deepseek-ai/DeepSeek-R1', 'DeepSeek R1'),
 ]);
+
+export function getTextModelContract(
+  providerId: TextProvider,
+  modelId: string,
+): ProviderModelContract {
+  return getProviderModelContract(TEXT_MODEL_CONTRACTS, providerId, modelId)
+    ?? createUnverifiedModelContract({
+      providerId,
+      providerName: providerId === 'gemini'
+        ? 'Google Gemini / Vertex AI'
+        : providerId === 'openai'
+          ? 'OpenAI / Compatible'
+          : 'Hugging Face Inference Providers',
+      modelId,
+      displayName: modelId,
+      apiFamily: providerId === 'gemini'
+        ? 'google-gemini'
+        : providerId === 'openai'
+          ? 'openai-chat-completions'
+          : 'huggingface-inference',
+      endpoint: providerId === 'gemini'
+        ? 'Configured Gemini generateContent route'
+        : providerId === 'openai'
+          ? '/v1/chat/completions'
+          : 'Inference Providers chat-completion task',
+      auth: providerId === 'gemini'
+        ? { type: 'api-key-or-vertex-adc', credentialKey: 'gemini' }
+        : { type: providerId === 'openai' ? 'api-key' : 'bearer', credentialKey: providerId },
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+      operation: 'text-generation',
+      requestBuilder: providerId === 'gemini'
+        ? 'google-gemini'
+        : providerId === 'openai'
+          ? 'openai-chat-completions'
+          : 'huggingface-inference',
+    });
+}

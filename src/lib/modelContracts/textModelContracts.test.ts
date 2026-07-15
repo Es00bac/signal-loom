@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_MODELS, FALLBACK_MODEL_OPTIONS } from '../providerCatalog';
 import { getProviderModelContract } from '../providerModelContracts';
-import { TEXT_MODEL_CONTRACTS } from './textModelContracts';
+import { getTextModelContract, TEXT_MODEL_CONTRACTS } from './textModelContracts';
 
 describe('TEXT_MODEL_CONTRACTS', () => {
   it('covers every normal fallback option with an exact verified or unverified contract', () => {
@@ -80,5 +80,15 @@ describe('TEXT_MODEL_CONTRACTS', () => {
         apiFamily: 'huggingface-inference',
       });
     }
+  });
+
+  it('fails closed to a safe unverified text-only contract for an unknown live model', () => {
+    expect(getTextModelContract('huggingface', 'vendor/new-chat-model')).toMatchObject({
+      modelId: 'vendor/new-chat-model',
+      lifecycle: 'unverified',
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+      operations: ['text-generation'],
+    });
   });
 });

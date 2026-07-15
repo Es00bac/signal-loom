@@ -5,6 +5,7 @@ import type {
   FunctionValueKind,
   ImageProvider,
   NodeData,
+  TextProvider,
   VideoProvider,
 } from '../types/flow';
 import { FLOW_NODE_TYPES } from '../types/flow';
@@ -12,7 +13,9 @@ import { IMAGE_REFERENCE_HANDLES } from './imageModelSupport';
 import { LOOP_BREAK_TARGET_HANDLE } from './flowControlHandles';
 import { getImageModelDefinition, getImageNodeControlModel } from './imageProviderCapabilities';
 import { isFlowResultKind } from './flowValueTypes';
+import { getTextModelContract } from './modelContracts/textModelContracts';
 import { getVideoModelSupport } from './modelContracts/videoModelContracts';
+import { DEFAULT_MODELS } from './providerCatalog';
 import {
   runtimeTypeFromResultType,
   type FlowDataType,
@@ -198,12 +201,24 @@ const IMPLEMENTATION_PATHS = {
 } satisfies Record<FlowNodeType, string>;
 
 const resolvers = {
-  textNode: (context) => [
-    ...(context.node.data.mode === 'generate'
-      ? [input(null, 'Prompt / media context', [textType, imageType, videoType, audioType], { maxConnections: null })]
-      : []),
-    output(null, 'Text', [textType]),
-  ],
+  textNode: (context) => {
+    const provider = (context.node.data.provider as TextProvider | undefined) ?? 'gemini';
+    const modelId = context.node.data.modelId ?? DEFAULT_MODELS.text[provider];
+    const modalities = getTextModelContract(provider, modelId).inputModalities;
+    const inputTypes = [
+      ...(modalities.includes('text') ? [textType] : []),
+      ...(modalities.includes('image') ? [imageType] : []),
+      ...(modalities.includes('video') ? [videoType] : []),
+      ...(modalities.includes('audio') ? [audioType] : []),
+    ];
+
+    return [
+      ...(context.node.data.mode === 'generate'
+        ? [input(null, 'Prompt / media context', inputTypes, { maxConnections: null })]
+        : []),
+      output(null, 'Text', [textType]),
+    ];
+  },
   imageGen: resolveImagePorts,
   cropImageNode: () => [input('image', 'Image', [imageType], { required: true }), output(null, 'Cropped image', [imageType])],
   videoGen: resolveVideoPorts,

@@ -29,6 +29,18 @@ describe('buildGeminiTextConfig', () => {
   it('omits optional Gemini config when controls stay on defaults', () => {
     expect(buildGeminiTextConfig({})).toEqual({});
   });
+
+  it('omits Gemini 3-only controls for Gemini 2.5 even when stale values remain saved', () => {
+    expect(buildGeminiTextConfig({
+      geminiThinkingLevel: 'high',
+      geminiGoogleSearchEnabled: true,
+      geminiCodeExecutionEnabled: true,
+      textOutputFormat: 'json',
+    }, 'gemini-2.5-flash')).toEqual({
+      responseMimeType: 'application/json',
+      tools: [{ googleSearch: {} }, { codeExecution: {} }],
+    });
+  });
 });
 
 describe('Gemini text media inputs', () => {
