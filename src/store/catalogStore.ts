@@ -288,7 +288,7 @@ async function fetchElevenLabsModels(apiKey: string): Promise<SelectOption[]> {
         const supportsMusic = model.can_do_music ?? model.canDoMusic;
         const modelId = (model.model_id ?? model.modelId ?? '').trim();
 
-        if (VESTIGIAL_MODEL_IDS.has(modelId)) return false;
+        if (VESTIGIAL_MODEL_ID_SET.has(modelId)) return false;
         if (modelId === 'music_v2') return true;
 
         if (typeof supportsTts === 'boolean') {
