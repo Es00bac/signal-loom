@@ -10416,6 +10416,13 @@ function PaperInspector({
   const { t } = useI18n();
   const frameTypography = frame?.typography;
   const documentBackground = document.background ?? DEFAULT_PAPER_BACKGROUND;
+  const documentSwatches = document.swatches ?? [];
+  const selectedFillSwatch = frame?.fillSwatchId
+    ? documentSwatches.find((swatch) => swatch.id === frame.fillSwatchId)
+    : undefined;
+  const selectedStrokeSwatch = frame?.strokeSwatchId
+    ? documentSwatches.find((swatch) => swatch.id === frame.strokeSwatchId)
+    : undefined;
   const currentPage = document.pages.find((page) => page.pageNumber === selectedPageNumber) ?? document.pages[0];
   const effectiveFrame = frame ? computeEffectivePaperFrame(document, frame) : null;
   const selectedFontFamily = frameTypography?.fontFamily ?? '';
@@ -10962,6 +10969,40 @@ function PaperInspector({
               <Field label={t('paper.insp.strokeColor')}>
                 <AdvancedColorPicker className="h-8 w-full" buttonClassName="rounded border border-cyan-300/15 bg-[#0b121d]" label={t('paper.insp.frameStrokeColor')} onChange={(color) => onUpdateFrame({ strokeColor: color })} value={cssColorToPickerValue(frame.strokeColor)} />
               </Field>
+              {selectedFillSwatch || selectedStrokeSwatch ? (
+                <div className="grid grid-cols-2 gap-2">
+                  {selectedFillSwatch ? (
+                    <NumberField
+                      label={t('paper.insp.fillInkTint')}
+                      onChange={(value) => {
+                        const tintPercent = clamp(value, 0, 100);
+                        onUpdateFrame({
+                          fillColor: resolveSwatchCssColor(selectedFillSwatch, tintPercent),
+                          fillSwatchId: selectedFillSwatch.id,
+                          fillTintPercent: tintPercent,
+                        });
+                      }}
+                      step={1}
+                      value={frame.fillTintPercent ?? 100}
+                    />
+                  ) : null}
+                  {selectedStrokeSwatch ? (
+                    <NumberField
+                      label={t('paper.insp.strokeInkTint')}
+                      onChange={(value) => {
+                        const tintPercent = clamp(value, 0, 100);
+                        onUpdateFrame({
+                          strokeColor: resolveSwatchCssColor(selectedStrokeSwatch, tintPercent),
+                          strokeSwatchId: selectedStrokeSwatch.id,
+                          strokeTintPercent: tintPercent,
+                        });
+                      }}
+                      step={1}
+                      value={frame.strokeTintPercent ?? 100}
+                    />
+                  ) : null}
+                </div>
+              ) : null}
               <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
                 <div className="mb-1.5 flex items-center justify-between">
                   <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/40">{t('paper.insp.swatchesCmyk')}</div>
@@ -11055,11 +11096,11 @@ function PaperInspector({
                     />
                   ))}
                 </div>
-                {(document.swatches ?? []).length > 0 ? (
+                {documentSwatches.length > 0 ? (
                   <div className="mt-1.5">
                     <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-cyan-100/30">{t('paper.insp.documentSwatches')}</div>
                     <div className="flex flex-wrap gap-1">
-                      {(document.swatches ?? []).map((swatch) => (
+                      {documentSwatches.map((swatch) => (
                         <button
                           className="h-5 w-5 rounded border border-cyan-300/25 hover:ring-2 hover:ring-cyan-300/50"
                           key={swatch.id}

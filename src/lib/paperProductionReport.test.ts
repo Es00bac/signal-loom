@@ -11,6 +11,7 @@ const preflight: PaperProductionPreflightReport = {
   assetIds: [],
   expectedFontIds: ['managed-serif'],
   requestedSpotNames: ['PANTONE 185 C'],
+  imagePpi: [],
   issues: [],
   pass: true,
 };

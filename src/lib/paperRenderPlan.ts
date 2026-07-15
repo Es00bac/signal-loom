@@ -318,8 +318,12 @@ function paintFor(
   return paint;
 }
 
-function sourceForFrame(color: string, swatchId: string | undefined): PaperPrintPaintInput {
-  return { color, ...(swatchId ? { swatchId } : {}) };
+function sourceForFrame(color: string, swatchId: string | undefined, tintPercent?: number): PaperPrintPaintInput {
+  return {
+    color,
+    ...(swatchId ? { swatchId } : {}),
+    ...(tintPercent === undefined ? {} : { tint: clampUnit(tintPercent / 100) }),
+  };
 }
 
 function translateBounds(bounds: PaperRenderBounds, x: number, y: number): PaperRenderBounds {
@@ -440,10 +444,10 @@ async function compileNativeFrame(frame: PaperFrame, context: CompileContext, al
   const fillRequired = hasVisibleColor(frame.fillColor, frame.fillOpacity) && frame.kind !== 'shape' || (frame.kind === 'shape' && frame.shapeKind !== 'line' && hasVisibleColor(frame.fillColor, frame.fillOpacity));
   const strokeRequired = hasVisibleColor(frame.strokeColor, frame.strokeOpacity) && nonNegative(frame.strokeWidthMm) > 0;
   const fill = fillRequired
-    ? paintFor(context, sourceForFrame(frame.fillColor, frame.fillSwatchId), true, reasons, 'unsupported-fill-paint')
+    ? paintFor(context, sourceForFrame(frame.fillColor, frame.fillSwatchId, frame.fillTintPercent), true, reasons, 'unsupported-fill-paint')
     : undefined;
   const stroke = strokeRequired
-    ? paintFor(context, sourceForFrame(frame.strokeColor, frame.strokeSwatchId), true, reasons, 'unsupported-stroke-paint')
+    ? paintFor(context, sourceForFrame(frame.strokeColor, frame.strokeSwatchId, frame.strokeTintPercent), true, reasons, 'unsupported-stroke-paint')
     : undefined;
   const nodes: PaperRenderNode[] = [];
   if (fill || stroke) {
@@ -519,11 +523,11 @@ function appendBubbleConnectors(page: PaperPage, document: PaperDocument, contex
     const frame = frames.find((candidate) => candidate.id === segment.fromFrameId);
     if (!frame) continue;
     const reasons: string[] = [];
-    const stroke = paintFor(context, sourceForFrame(frame.strokeColor, frame.strokeSwatchId), true, reasons, 'unsupported-connector-paint');
+    const stroke = paintFor(context, sourceForFrame(frame.strokeColor, frame.strokeSwatchId, frame.strokeTintPercent), true, reasons, 'unsupported-connector-paint');
     if (!stroke || reasons.length) continue;
     const point = (value: { xMm: number; yMm: number }) => ({ x: context.bleedPt + mmToPt(value.xMm), y: context.bleedPt + mmToPt(value.yMm) });
     if (segment.style === 'bridge') {
-      const fill = paintFor(context, sourceForFrame(frame.fillColor, frame.fillSwatchId), true, reasons, 'unsupported-bridge-paint');
+      const fill = paintFor(context, sourceForFrame(frame.fillColor, frame.fillSwatchId, frame.fillTintPercent), true, reasons, 'unsupported-bridge-paint');
       const polygon = segment.bridgePolygon.map(point);
       if (!fill || reasons.length || polygon.length < 3) continue;
       nodes.push({

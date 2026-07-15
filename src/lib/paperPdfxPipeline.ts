@@ -4,7 +4,14 @@
 import type { PaperDocument, PaperManagedFontFace } from '../types/paper';
 import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import { createHarfBuzzPaperTextShaper, type PaperTextShaper } from './paperTextShaper';
-import { compilePaperRenderPlan, type PaperFlattenGroup, type PaperRenderImageNode, type PaperRenderNode } from './paperRenderPlan';
+import {
+  compilePaperRenderPlan,
+  type PaperAffineTransform,
+  type PaperFlattenGroup,
+  type PaperRenderBounds,
+  type PaperRenderImageNode,
+  type PaperRenderNode,
+} from './paperRenderPlan';
 import {
   buildPaperPdfx,
   type PdfxExportResult,
@@ -29,6 +36,8 @@ export interface PaperPdfxPipelineOptions {
   outputDpi?: number;
   title?: string;
   createdAt?: Date;
+  /** Fixed 16-byte hex trailer id for reproducible production verification artifacts. */
+  documentId?: string;
 }
 
 export interface RasterizePageOptions {
@@ -112,6 +121,68 @@ function omitImageFramePaths(nodes: readonly PaperRenderNode[], images: readonly
   return nodes.filter((node) => node.kind !== 'path' || !node.sourceFrameId || !sourceFrameIds.has(node.sourceFrameId));
 }
 
+function applyTransform(transform: PaperAffineTransform, x: number, y: number): { x: number; y: number } {
+  const [a, b, c, d, e, f] = transform;
+  return { x: a * x + c * y + e, y: b * x + d * y + f };
+}
+
+function boundsForTransform(transform: PaperAffineTransform, extent: number): PaperRenderBounds {
+  const points = [
+    applyTransform(transform, 0, 0),
+    applyTransform(transform, extent, 0),
+    applyTransform(transform, extent, extent),
+    applyTransform(transform, 0, extent),
+  ];
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+}
+
+function imageClipBounds(image: PaperRenderImageNode): PaperRenderBounds {
+  return image.clipTransform
+    ? boundsForTransform(image.clipTransform, 100)
+    : image.boundsPt;
+}
+
+function cropRasterToBounds(
+  raster: PdfxFlattenedGroupRaster,
+  bounds: PaperRenderBounds,
+  mediaWidthPt: number,
+  mediaHeightPt: number,
+): PdfxFlattenedGroupRaster {
+  if (!(mediaWidthPt > 0) || !(mediaHeightPt > 0) || !(raster.widthPx > 0) || !(raster.heightPx > 0)) {
+    throw new Error(`Cannot crop managed image ${raster.objectId} without positive media and raster dimensions.`);
+  }
+  const left = Math.max(0, Math.min(raster.widthPx, Math.round(bounds.x / mediaWidthPt * raster.widthPx)));
+  const top = Math.max(0, Math.min(raster.heightPx, Math.round(bounds.y / mediaHeightPt * raster.heightPx)));
+  const right = Math.max(0, Math.min(raster.widthPx, Math.round((bounds.x + bounds.width) / mediaWidthPt * raster.widthPx)));
+  const bottom = Math.max(0, Math.min(raster.heightPx, Math.round((bounds.y + bounds.height) / mediaHeightPt * raster.heightPx)));
+  if (right <= left || bottom <= top) {
+    throw new Error(`Managed image ${raster.objectId} is outside the PDF media bounds.`);
+  }
+  const widthPx = right - left;
+  const heightPx = bottom - top;
+  const rgba = new Uint8Array(widthPx * heightPx * 4);
+  for (let y = 0; y < heightPx; y += 1) {
+    const source = ((top + y) * raster.widthPx + left) * 4;
+    rgba.set(raster.rgba.subarray(source, source + widthPx * 4), y * widthPx * 4);
+  }
+  return {
+    objectId: raster.objectId,
+    rgba,
+    widthPx,
+    heightPx,
+    placement: {
+      xPt: left / raster.widthPx * mediaWidthPt,
+      yTopPt: top / raster.heightPx * mediaHeightPt,
+      widthPt: widthPx / raster.widthPx * mediaWidthPt,
+      heightPt: heightPx / raster.heightPx * mediaHeightPt,
+    },
+  };
+}
+
 async function rasterizeSelection(
   pageId: string,
   objectId: string,
@@ -146,6 +217,8 @@ export async function exportPaperDocumentToPdfx(
     for (const planPage of plan.pages) {
       const groups = flattenGroupsForPage(planPage.nodes, planPage.background);
       const images = imageNodesForPage(planPage.nodes);
+      const mediaWidthPt = planPage.trimWidthPt + planPage.bleedPt * 2;
+      const mediaHeightPt = planPage.trimHeightPt + planPage.bleedPt * 2;
       const flattenedGroups = await Promise.all(groups.map((group) =>
         rasterizeSelection(
           planPage.pageId,
@@ -156,9 +229,12 @@ export async function exportPaperDocumentToPdfx(
           deps,
         ),
       ));
-      const rasterizedImages = await Promise.all(images.map((image) =>
-        rasterizeSelection(planPage.pageId, image.objectId, [image.sourceFrameId], false, dpi, deps),
-      ));
+      const rasterizedImages = await Promise.all(images.map(async (image) => cropRasterToBounds(
+        await rasterizeSelection(planPage.pageId, image.objectId, [image.sourceFrameId], false, dpi, deps),
+        imageClipBounds(image),
+        mediaWidthPt,
+        mediaHeightPt,
+      )));
       pages.push({
         pageNumber: planPage.pageNumber,
         trimWidthPt: planPage.trimWidthPt,
@@ -182,6 +258,7 @@ export async function exportPaperDocumentToPdfx(
       transform,
       title: options.title ?? document.title,
       createdAt: options.createdAt,
+      docId: options.documentId,
       totalInkLimitPercent: document.printProduction.totalInkLimitPercent,
     });
     return { ...result, renderPlan: plan };

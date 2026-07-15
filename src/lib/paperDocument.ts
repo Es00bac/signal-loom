@@ -589,6 +589,8 @@ export function updatePaperFrame(
 
 function patchPaperFrame(frame: PaperFrame, patch: PaperFramePatch): PaperFrame {
   const { typography, ...framePatch } = patch;
+  const patchesFillSwatch = Object.prototype.hasOwnProperty.call(framePatch, 'fillSwatchId');
+  const patchesStrokeSwatch = Object.prototype.hasOwnProperty.call(framePatch, 'strokeSwatchId');
   const frameChanged = hasShallowPatchChange(frame, framePatch);
   const typographyChanged = typography ? hasShallowPatchChange(frame.typography, typography) : false;
 
@@ -605,10 +607,26 @@ function patchPaperFrame(frame: PaperFrame, patch: PaperFramePatch): PaperFrame 
   // can never point at a swatch the fill no longer matches.
   if (framePatch.fillColor !== undefined && framePatch.fillSwatchId === undefined) {
     next.fillSwatchId = undefined;
+    next.fillTintPercent = undefined;
+  } else if (framePatch.fillSwatchId !== undefined && framePatch.fillTintPercent === undefined) {
+    next.fillTintPercent = undefined;
+  }
+  if (framePatch.fillTintPercent !== undefined) {
+    next.fillTintPercent = next.fillSwatchId ? normalizePaperTintPercent(framePatch.fillTintPercent) : undefined;
+  } else if (patchesFillSwatch && !next.fillSwatchId) {
+    next.fillTintPercent = undefined;
   }
   // Same for the stroke's durable spot-swatch link.
   if (framePatch.strokeColor !== undefined && framePatch.strokeSwatchId === undefined) {
     next.strokeSwatchId = undefined;
+    next.strokeTintPercent = undefined;
+  } else if (framePatch.strokeSwatchId !== undefined && framePatch.strokeTintPercent === undefined) {
+    next.strokeTintPercent = undefined;
+  }
+  if (framePatch.strokeTintPercent !== undefined) {
+    next.strokeTintPercent = next.strokeSwatchId ? normalizePaperTintPercent(framePatch.strokeTintPercent) : undefined;
+  } else if (patchesStrokeSwatch && !next.strokeSwatchId) {
+    next.strokeTintPercent = undefined;
   }
   // Same for the text colour. Typography patches are usually spread (`{...typo, color}`), so — unlike the
   // flat fill patch — the stale colorSwatchId rides along. Drop it whenever the colour actually changes,
@@ -1016,9 +1034,11 @@ function resolveStyle<T extends { id: string; basedOnId?: string }>(styles: T[],
 function pickObjectStyleFrame(frame: PaperFrame): PaperObjectStyle['frame'] {
   return {
     fillColor: frame.fillColor,
+    fillTintPercent: frame.fillTintPercent,
     fillOpacity: frame.fillOpacity,
     fillGradient: frame.fillGradient,
     strokeColor: frame.strokeColor,
+    strokeTintPercent: frame.strokeTintPercent,
     strokeOpacity: frame.strokeOpacity,
     strokeWidthMm: frame.strokeWidthMm,
     strokeStyle: frame.strokeStyle,
@@ -1083,6 +1103,7 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     typography: { ...DEFAULT_PAPER_TYPOGRAPHY, ...frame.typography, fontFamily: resolvePaperFontFamily(frame.typography?.fontFamily) },
     fillColor: frame.fillColor ?? defaultFillForKind(kind),
     fillSwatchId: frame.fillSwatchId,
+    fillTintPercent: normalizePaperTintPercent(frame.fillTintPercent),
     fillOpacity: frame.fillOpacity ?? 1,
     fillGradient: frame.fillGradient,
     // A plain text frame is a document paragraph — borderless by default, like Word/InDesign body text. Comic
@@ -1090,6 +1111,7 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     // borderless frames easy to see/grab. (Only affects NEW frames; saved frames store explicit values.)
     strokeColor: frame.strokeColor ?? (kind === 'text' ? 'transparent' : '#111827'),
     strokeSwatchId: frame.strokeSwatchId,
+    strokeTintPercent: normalizePaperTintPercent(frame.strokeTintPercent),
     strokeOpacity: frame.strokeOpacity ?? 1,
     strokeWidthMm: frame.strokeWidthMm ?? (kind === 'image' ? 0.2 : kind === 'text' ? 0 : 0.35),
     strokeStyle: frame.strokeStyle ?? 'solid',
@@ -2001,6 +2023,11 @@ function svgToDataUrl(svg: string): string {
 function clampUnit(value: number | undefined): number {
   if (!Number.isFinite(value)) return 1;
   return Math.max(0, Math.min(1, Number(value)));
+}
+
+function normalizePaperTintPercent(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  return Math.max(0, Math.min(100, Math.round(value * 1000) / 1000));
 }
 
 function finiteOr(value: number | undefined, fallback: number): number {

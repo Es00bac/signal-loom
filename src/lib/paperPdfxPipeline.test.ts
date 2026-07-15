@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { addFrameToPaperPage, createDefaultPaperDocument, updatePaperFrame } from './paperDocument';
+import { PDFArray, PDFDocument, PDFRawStream } from 'pdf-lib';
+import { addFrameToPaperPage, createDefaultPaperDocument, updatePaperDocumentSetup, updatePaperFrame } from './paperDocument';
 import { addPaperPage } from './paperDocument';
 import type { PaperSwatch } from './paperSwatches';
 import {
@@ -44,6 +46,32 @@ function deps(): PaperPdfxPipelineDeps {
     rasterizePage: async () => stubRaster(),
     createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
   };
+}
+
+async function decodedPageContent(bytes: Uint8Array): Promise<string> {
+  const pdf = await PDFDocument.load(bytes);
+  const contents = pdf.getPages()[0]?.node.Contents();
+  if (!(contents instanceof PDFArray)) return '';
+  return contents.asArray().map((reference) => {
+    const stream = pdf.context.lookup(reference) as unknown as PDFRawStream;
+    return Buffer.from(inflateSync(Buffer.from(stream.contents))).toString('latin1');
+  }).join('\n');
+}
+
+function fullPageImageSelectionRaster(): { rgba: Uint8Array; widthPx: number; heightPx: number } {
+  const widthPx = 1000;
+  const heightPx = 1000;
+  const rgba = new Uint8Array(widthPx * heightPx * 4);
+  for (let y = 200; y < 500; y += 1) {
+    for (let x = 100; x < 600; x += 1) {
+      const offset = (y * widthPx + x) * 4;
+      rgba[offset] = 32;
+      rgba[offset + 1] = 96;
+      rgba[offset + 2] = 192;
+      rgba[offset + 3] = 255;
+    }
+  }
+  return { rgba, widthPx, heightPx };
 }
 
 describe('paperPdfxPipeline', () => {
@@ -110,6 +138,39 @@ describe('paperPdfxPipeline', () => {
     // The exported file is still a conformant PDF/X-4.
     const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-4' });
     expect(report.pass, JSON.stringify(report.checks.filter((c) => !c.pass))).toBe(true);
+  });
+
+  it('crops a page-sized managed-image selection and emits it at the frame bounds', async () => {
+    let document = createDefaultPaperDocument({ title: 'Placed image pipeline', preset: 'custom' });
+    document = updatePaperDocumentSetup(document, { widthMm: 100, heightMm: 100, bleedMm: 0 });
+    const pageId = document.pages[0].id;
+    const asset = {
+      id: `sha256:${'b'.repeat(64)}` as BinaryAssetId,
+      sha256: 'b'.repeat(64),
+      mimeType: 'image/png',
+      byteLength: 12,
+    };
+    const added = addFrameToPaperPage(document, pageId, {
+      kind: 'image', xMm: 10, yMm: 20, widthMm: 50, heightMm: 30,
+      fillColor: 'transparent', strokeColor: 'transparent', strokeWidthMm: 0,
+      asset: {
+        label: 'Managed image', kind: 'image', pixelWidth: 500, pixelHeight: 300,
+        locator: { kind: 'managed', ref: asset },
+      },
+    });
+
+    const result = await exportPaperDocumentToPdfx(
+      added.document,
+      { standard: 'pdf-x-4', outputProfile: exactFogra39Profile, outputDpi: 300 },
+      {
+        ...deps(),
+        rasterizePage: async () => fullPageImageSelectionRaster(),
+      },
+    );
+
+    const content = await decodedPageContent(result.bytes);
+    // 50x30 mm at (10,20) mm on a 100x100 mm page: the image must not receive the full-media matrix.
+    expect(content).toMatch(/141\.732[0-9]* 0 0 85\.039[0-9]* 28\.346[0-9]* 141\.732[0-9]* cm\s*\/Fg-[0-9]+ Do/);
   });
 
   it('rejects PDF/X export when no exact managed profile is resolved', async () => {

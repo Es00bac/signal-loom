@@ -42,6 +42,16 @@ export interface FrozenPaperProductionInput {
   assetIds: BinaryAssetId[];
 }
 
+export interface PaperProductionImagePpi {
+  pageId: string;
+  objectId: string;
+  label: string;
+  /** Zero means the placed image has no usable pixel dimensions. */
+  effectivePpi: number;
+  requiredPpi: number;
+  printReady: boolean;
+}
+
 export interface PaperProductionPreflightReport {
   documentId: string;
   revision: number;
@@ -51,6 +61,8 @@ export interface PaperProductionPreflightReport {
   expectedFontIds: string[];
   /** Named spots requested by preserved-spot document paint. */
   requestedSpotNames: string[];
+  /** Measured placed-image resolution used to make strict print readiness auditable. */
+  imagePpi: PaperProductionImagePpi[];
   issues: PaperProductionIssue[];
   pass: boolean;
 }
@@ -196,7 +208,11 @@ function effectivePpi(frame: PaperFrame): number | undefined {
 }
 
 function hasLiveFrameTransparency(frame: PaperFrame): boolean {
-  return frame.opacity < 1 || frame.fillOpacity < 1 || frame.strokeOpacity < 1;
+  const hasPaintedFill = frame.fillColor.trim().toLowerCase() !== 'transparent';
+  const hasPaintedStroke = frame.strokeWidthMm > 0 && frame.strokeColor.trim().toLowerCase() !== 'transparent';
+  return frame.opacity < 1
+    || (hasPaintedFill && frame.fillOpacity < 1)
+    || (hasPaintedStroke && frame.strokeOpacity < 1);
 }
 
 function inspectPaint(
@@ -287,7 +303,10 @@ function inspectRenderNodes(
     if (node.kind === 'path') {
       inspectPaint(node.fill, node.objectId, pageId, totalInkLimitPercent, issues);
       inspectPaint(node.stroke, node.objectId, pageId, totalInkLimitPercent, issues);
-      if (standard === 'pdf-x-1a' && (node.opacity < 1 || node.fillOpacity < 1 || node.strokeOpacity < 1)) {
+      const hasLiveTransparency = node.opacity < 1
+        || (node.fill !== undefined && node.fillOpacity < 1)
+        || (node.stroke !== undefined && node.strokeWidthPt > 0 && node.strokeOpacity < 1);
+      if (standard === 'pdf-x-1a' && hasLiveTransparency) {
         addIssue(issues, {
           code: 'PDFX1A_TRANSPARENCY_UNSUPPORTED',
           severity: 'blocker',
@@ -370,6 +389,7 @@ async function preflightFrozenPaperProduction(
   const issues: PaperProductionIssue[] = [];
   const expectedFontIds = new Set<string>();
   const requestedSpotNames = collectRequestedSpotNames(document);
+  const imagePpi: PaperProductionImagePpi[] = [];
   const outputIntent = PAPER_OUTPUT_INTENT_PROFILES[production.outputIntentProfileId];
   const selectedProfileId = production.outputIntentProfileAssetId;
   const selectedProfile = selectedProfileId
@@ -474,6 +494,14 @@ async function preflightFrozenPaperProduction(
           });
         }
         const ppi = effectivePpi(frame);
+        imagePpi.push({
+          pageId: container.id,
+          objectId: frame.id,
+          label: frame.label,
+          effectivePpi: ppi ?? 0,
+          requiredPpi,
+          printReady: ppi !== undefined && ppi >= requiredPpi,
+        });
         if (ppi === undefined || ppi < requiredPpi) {
           addIssue(issues, {
             code: 'INSUFFICIENT_PPI',
@@ -527,6 +555,7 @@ async function preflightFrozenPaperProduction(
     assetIds: [...frozen.assetIds],
     expectedFontIds: [...expectedFontIds].sort(),
     requestedSpotNames,
+    imagePpi: imagePpi.sort((left, right) => `${left.pageId}:${left.objectId}`.localeCompare(`${right.pageId}:${right.objectId}`)),
     issues: orderedIssues,
     pass: !orderedIssues.some((issue) => issue.severity === 'blocker'),
   };

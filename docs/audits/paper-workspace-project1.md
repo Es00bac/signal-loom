@@ -113,6 +113,22 @@ Flow and Image paths are concurrently owned and are outside Project 1. None were
 - Verify: `rg -n "PaperPrintStabilityUpscale|stabilityResult" src/lib/paperImageUpscale.ts src/features/paper/workspace/PaperWorkspace.tsx`; `npx vitest run src/lib/paperStabilityUpscale.test.ts src/lib/paperImageUpscale.test.ts src/lib/paperPreflight.test.ts`.
 - Remaining external evidence: Task 17 records live Fast/Conservative output dimensions and achieved PPI without exposing credentials.
 
+## Task 16 Local Print Verification (2026-07-14)
+
+`src/lib/paperProductionGolden.test.ts` generates byte-stable PDF/X-1a and PDF/X-4 golden files from the same managed, hash-verified FOGRA39 profile, managed serif/sans faces, and managed image asset. The fixture contains mixed rich text, vertical Japanese when an installed CJK face is available, exact process CMYK, full and 50% `PANTONE 185 C` spot tints, emitted overprint, a 300 PPI Stability-upscaled placement, bleed, an ICC-converted sRGB raster, an X-4 live-transparent panel, and the explicit opaque equivalent required for X-1a.
+
+No CJK font is committed or distributed by this fixture. It uses `PAPER_GOLDEN_CJK_FONT` when supplied, otherwise this Linux host's installed `/usr/share/fonts/droid/DroidSansJapanese.ttf`; hosts without an installed CJK face retain managed vertical type but should supply the variable to exercise Japanese glyph coverage.
+
+Run the local structural gate with a caller-controlled artifact directory:
+
+```bash
+npm run verify:paper-production -- --output-dir /tmp/sloom-paper-production-verify
+```
+
+The command runs the golden fixture, writes `paper-production-golden-pdf-x-1a.pdf`, `paper-production-golden-pdf-x-4.pdf`, and `paper-production-verification.json`, then invokes each available local tool. On this host all installed checks passed for both standards: `qpdf --check`, `pdfinfo`, `pdffonts` (three embedded managed faces), `pdfimages -list` (one ICC-converted 600x399 image placed at 300x300 PPI), and Ghostscript `tiffsep` (Cyan, Magenta, Yellow, Black, and `PANTONE 185 C` separation files). The runner fails when no emitted image meets 300 PPI and records missing tools as `external-pending` rather than passing them.
+
+This is structural and separation evidence only. Adobe Acrobat Pro Preflight is not installed on this Linux host, so Acrobat review, a print-provider RIP check, and a physical proof remain explicitly `external-pending`; neither the runner nor this audit claims certification.
+
 ## Status Rules
 
 - `reproduced`: source evidence and a repeatable observation exist, but the defect remains.

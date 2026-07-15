@@ -84,6 +84,38 @@ function planFor(document: { id: string; updatedAt: number }, nodes: PaperRender
 }
 
 describe('Paper production preflight', () => {
+  it('does not mistake unused transparent text or image box paint for PDF/X-1a live transparency', async () => {
+    let document = productionDocument('pdf-x-1a');
+    const text = addFrameToPaperPage(document, document.pages[0].id, {
+      kind: 'text', xMm: 10, yMm: 10, widthMm: 60, heightMm: 20, text: 'Managed text',
+      fillColor: 'transparent', fillOpacity: 0, strokeColor: 'transparent', strokeOpacity: 0, strokeWidthMm: 0,
+    });
+    document = text.document;
+    const image = addFrameToPaperPage(document, document.pages[0].id, {
+      kind: 'image', xMm: 10, yMm: 40, widthMm: 60, heightMm: 20,
+      fillColor: 'transparent', fillOpacity: 0, strokeColor: 'transparent', strokeOpacity: 0, strokeWidthMm: 0,
+    });
+
+    const report = await preflightPaperProduction(image.document, { standard: 'pdf-x-1a' });
+
+    expect(report.issues.filter((issue) => issue.code === 'PDFX1A_TRANSPARENCY_UNSUPPORTED')).toEqual([]);
+  });
+
+  it('does not mistake an absent native stroke for PDF/X-1a live transparency', async () => {
+    const document = productionDocument('pdf-x-1a');
+    const report = await preflightPaperProduction(document, {
+      standard: 'pdf-x-1a',
+      renderPlan: planFor(document, [{
+        kind: 'path', objectId: 'opaque-fill-only', path: 'M 0 0 L 10 0 L 10 10 Z',
+        fill: { kind: 'process-cmyk', c: 0.1, m: 0.2, y: 0.3, k: 0.4, tint: 1 },
+        opacity: 1, fillOpacity: 1, strokeOpacity: 0, strokeWidthPt: 0, strokeStyle: 'solid', overprint: false,
+        boundsPt: { x: 0, y: 0, width: 10, height: 10 },
+      }]),
+    });
+
+    expect(report.issues.filter((issue) => issue.code === 'PDFX1A_TRANSPARENCY_UNSUPPORTED')).toEqual([]);
+  });
+
   it('does not download bytes when PDF/X validation fails', async () => {
     const document = productionDocument();
     const download = vi.fn();

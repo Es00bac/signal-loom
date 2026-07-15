@@ -71,12 +71,23 @@ export interface PdfxRasterPage {
   outlineFrames?: readonly PdfxOutlineTextFrame[];
 }
 
-/** Isolated RGBA output for one deliberate render-plan flatten group. It contains no native siblings. */
+export interface PdfxRasterPlacement {
+  /** Left edge in points from the media-left edge. */
+  xPt: number;
+  /** Top edge in points from the media-top edge. */
+  yTopPt: number;
+  widthPt: number;
+  heightPt: number;
+}
+
+/** Isolated RGBA output for one render-plan selection. It contains no native siblings. */
 export interface PdfxFlattenedGroupRaster {
   objectId: string;
   rgba: Uint8Array | Uint8ClampedArray;
   widthPx: number;
   heightPx: number;
+  /** Omitted for a full-media raster. Managed image selections carry their physical crop bounds. */
+  placement?: PdfxRasterPlacement;
 }
 
 /** A plan-driven hybrid PDF/X page. Native paths/text stay native; only listed flatten groups use rasters. */
@@ -533,9 +544,22 @@ function drawIsolatedFlattenGroup(
 ): void {
   const imageRef = registerIsolatedRgbaImage(pdf, group, transform, standard, totalInkLimitPercent);
   const resource = page.node.newXObject('Fg', imageRef);
+  const placement = group.placement ?? {
+    xPt: 0,
+    yTopPt: 0,
+    widthPt: mediaWidthPt,
+    heightPt: mediaHeightPt,
+  };
   page.pushOperators(
     pushGraphicsState(),
-    concatTransformationMatrix(mediaWidthPt, 0, 0, mediaHeightPt, 0, 0),
+    concatTransformationMatrix(
+      placement.widthPt,
+      0,
+      0,
+      placement.heightPt,
+      placement.xPt,
+      mediaHeightPt - placement.yTopPt - placement.heightPt,
+    ),
     drawObject(resource),
     popGraphicsState(),
   );

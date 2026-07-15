@@ -519,6 +519,31 @@ describe('paperDocument', () => {
     expect(frameOf(recolored).fillSwatchId).toBeUndefined();
   });
 
+  it('keeps a swatch-backed fill tint bounded while preserving its durable swatch identity', () => {
+    const doc = createDefaultPaperDocument({ title: 'Tinted spot ref', preset: 'us-letter' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame, frameId } = addFrameToPaperPage(doc, pageId, {
+      kind: 'caption', xMm: 10, yMm: 10, widthMm: 40, heightMm: 20,
+    });
+    const frameOf = (d: typeof doc) => d.pages.find((page) => page.id === pageId)!.frames.find((frame) => frame.id === frameId)!;
+
+    const tinted = updatePaperFrame(withFrame, pageId, frameId, {
+      fillColor: 'rgb(241, 131, 137)',
+      fillSwatchId: 'sw-spot',
+      fillTintPercent: 50,
+    });
+    expect(frameOf(tinted).fillSwatchId).toBe('sw-spot');
+    expect(frameOf(tinted).fillTintPercent).toBe(50);
+
+    const bounded = updatePaperFrame(tinted, pageId, frameId, {
+      fillColor: 'rgb(227, 6, 19)',
+      fillSwatchId: 'sw-spot',
+      fillTintPercent: 140,
+    });
+    expect(frameOf(bounded).fillSwatchId).toBe('sw-spot');
+    expect(frameOf(bounded).fillTintPercent).toBe(100);
+  });
+
   it('records a swatch id on the TEXT colour and auto-clears it when the colour changes another way', () => {
     const doc = createDefaultPaperDocument({ title: 'Text spot ref', preset: 'us-letter' });
     const pageId = doc.pages[0].id;

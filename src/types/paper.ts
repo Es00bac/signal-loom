@@ -355,6 +355,8 @@ export interface PaperFrame {
    * preview and loses the spot identity). Auto-cleared the moment the fill is changed by any other path.
    */
   fillSwatchId?: string;
+  /** Ink tint for a swatch-backed fill, in percent (0 = paper, 100 = full ink). Omitted means 100. */
+  fillTintPercent?: number;
   fillOpacity: number;
   fillGradient?: PaperFrameGradient;
   strokeColor: string;
@@ -365,6 +367,8 @@ export interface PaperFrame {
    * other path.
    */
   strokeSwatchId?: string;
+  /** Ink tint for a swatch-backed stroke, in percent (0 = paper, 100 = full ink). Omitted means 100. */
+  strokeTintPercent?: number;
   strokeOpacity: number;
   strokeWidthMm: number;
   strokeStyle: PaperStrokeStyle;
@@ -463,7 +467,7 @@ export interface PaperObjectStyle {
   name: string;
   basedOnId?: string;
   frame: Partial<Pick<PaperFrame,
-    'fillColor' | 'fillOpacity' | 'fillGradient' | 'strokeColor' | 'strokeOpacity' | 'strokeWidthMm' | 'strokeStyle' | 'cornerRadiusMm' | 'opacity' | 'textBoxXPercent' | 'textBoxYPercent' | 'textBoxWidthPercent' | 'textBoxHeightPercent' | 'textVerticalAlign'
+    'fillColor' | 'fillTintPercent' | 'fillOpacity' | 'fillGradient' | 'strokeColor' | 'strokeTintPercent' | 'strokeOpacity' | 'strokeWidthMm' | 'strokeStyle' | 'cornerRadiusMm' | 'opacity' | 'textBoxXPercent' | 'textBoxYPercent' | 'textBoxWidthPercent' | 'textBoxHeightPercent' | 'textVerticalAlign'
   >>;
 }
 

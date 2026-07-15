@@ -113,6 +113,32 @@ describe('compilePaperRenderPlan', () => {
     });
   });
 
+  it('preserves a named spot tint as a native half-strength separation paint', async () => {
+    const base = fixtureDocument();
+    const pageId = base.pages[0].id;
+    const added = addFrameToPaperPage({ ...base, swatches: [spotSwatch] }, pageId, {
+      kind: 'panel',
+      label: 'Half tint spot panel',
+      xMm: 12,
+      yMm: 18,
+      widthMm: 60,
+      heightMm: 30,
+      fillColor: '#f18389',
+      fillSwatchId: spotSwatch.id,
+      fillTintPercent: 50,
+      strokeColor: 'transparent',
+      strokeWidthMm: 0,
+    });
+
+    const plan = await compilePaperRenderPlan(added.document);
+    const node = plan.pages[0].nodes.find((candidate) => candidate.objectId === added.frameId);
+
+    expect(node).toMatchObject({
+      kind: 'path',
+      fill: { kind: 'spot', name: 'PANTONE 185 C', tint: 0.5 },
+    });
+  });
+
   it('records non-native effects as deliberate flatten groups', async () => {
     const base = fixtureDocument();
     const pageId = base.pages[0].id;

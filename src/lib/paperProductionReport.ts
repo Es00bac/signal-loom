@@ -3,7 +3,11 @@
 
 import type { PdfxExportResult, PdfxStandard } from './paperPdfxExport';
 import type { PdfxValidationReport } from './paperPdfxValidate';
-import type { PaperProductionIssue, PaperProductionPreflightReport } from './paperProductionPreflight';
+import type {
+  PaperProductionImagePpi,
+  PaperProductionIssue,
+  PaperProductionPreflightReport,
+} from './paperProductionPreflight';
 
 export interface PaperProductionExportReport {
   standard: PdfxStandard;
@@ -16,6 +20,8 @@ export interface PaperProductionExportReport {
   spotPlates: readonly string[];
   embeddedFonts: readonly string[];
   flattenedObjects: readonly string[];
+  overprintObjects: readonly string[];
+  imagePpi: readonly PaperProductionImagePpi[];
   blockers: PaperProductionIssue[];
   warnings: PaperProductionIssue[];
   information: PaperProductionIssue[];
@@ -99,6 +105,8 @@ export function createPaperProductionExportReport(input: {
     spotPlates: unique(result.nativeEvidence.spotPlates.map((plate) => plate.name)),
     embeddedFonts: unique(result.nativeEvidence.embeddedFontIds),
     flattenedObjects: unique(result.nativeEvidence.flattenedObjectIds.map((entry) => entry.objectId)),
+    overprintObjects: unique(result.nativeEvidence.overprintObjectIds),
+    imagePpi: (preflight.imagePpi ?? []).map((entry) => ({ ...entry })),
     blockers,
     warnings,
     information,
