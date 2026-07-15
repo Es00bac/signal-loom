@@ -283,4 +283,49 @@ describe('Paper production preflight', () => {
     const report = await preflightPaperProduction(document, { standard: 'pdf-x-1a' });
     expect(report.issues).toContainEqual(expect.objectContaining({ code: 'PDFX1A_TRANSPARENCY_UNSUPPORTED', severity: 'blocker' }));
   });
+
+  it('allows an explicit full-page KDP flatten while retaining low source PPI as a warning', async () => {
+    let document = productionDocument('pdf-x-1a');
+    document = updatePaperDocumentSetup(document, {
+      printProduction: { spotColorPolicy: 'convert-process' },
+    });
+    const text = addFrameToPaperPage(document, document.pages[0].id, {
+      kind: 'text',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 80,
+      heightMm: 30,
+      text: 'Rasterized KDP text',
+      opacity: 0.5,
+      typography: { fontFamily: 'Unmanaged Display', fontSizePt: 20 },
+    });
+    const image = assetRef('image/png');
+    const placed = addFrameToPaperPage(text.document, text.document.pages[0].id, {
+      kind: 'image',
+      xMm: 10,
+      yMm: 50,
+      widthMm: 100,
+      heightMm: 100,
+      asset: {
+        label: 'Low resolution art',
+        kind: 'image',
+        locator: { kind: 'managed', ref: image },
+        pixelWidth: 100,
+        pixelHeight: 100,
+      },
+    });
+
+    const report = await preflightPaperProduction(placed.document, {
+      standard: 'pdf-x-1a',
+      allowFullPageFlatten: true,
+    });
+
+    expect(report.issues.filter((issue) => issue.code === 'MISSING_MANAGED_FONT')).toEqual([]);
+    expect(report.issues.filter((issue) => issue.code === 'PDFX1A_TRANSPARENCY_UNSUPPORTED')).toEqual([]);
+    expect(report.issues).toContainEqual(expect.objectContaining({
+      code: 'INSUFFICIENT_PPI',
+      severity: 'warning',
+    }));
+    expect(report.pass).toBe(true);
+  });
 });

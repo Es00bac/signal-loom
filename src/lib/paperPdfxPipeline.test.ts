@@ -91,6 +91,51 @@ describe('paperPdfxPipeline', () => {
     expect(report.pass, JSON.stringify(report.checks.filter((c) => !c.pass))).toBe(true);
   });
 
+  it('deliberately flattens a KDP page without requiring managed text faces or retaining live opacity', async () => {
+    let document = createDefaultPaperDocument({ title: 'KDP flattened page', preset: 'us-letter' });
+    const added = addFrameToPaperPage(document, document.pages[0].id, {
+      kind: 'text',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 80,
+      heightMm: 30,
+      text: 'Browser text becomes process CMYK pixels',
+      opacity: 0.65,
+      typography: { fontFamily: 'Unmanaged Display', fontSizePt: 24 },
+    });
+    document = added.document;
+    const seen: Array<{ pageId: string; dpi: number; options?: RasterizePageOptions }> = [];
+    const result = await exportPaperDocumentToPdfx(
+      document,
+      {
+        standard: 'pdf-x-1a',
+        outputProfile: exactFogra39Profile,
+        outputDpi: 300,
+        flattenAllPages: true,
+      },
+      {
+        ...deps(),
+        rasterizePage: async (pageId, dpi, options) => {
+          seen.push({ pageId, dpi, options });
+          return stubRaster();
+        },
+      },
+    );
+
+    expect(seen).toEqual([{
+      pageId: document.pages[0].id,
+      dpi: 300,
+      options: { includePageBackground: true },
+    }]);
+    expect(result.nativeEvidence.flattenedObjectIds).toEqual([{
+      objectId: `kdp-page-flatten:${document.pages[0].id}`,
+      reasons: ['kdp-full-page-flatten'],
+    }]);
+    expect(result.nativeEvidence.embeddedFontIds).toEqual([]);
+    const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-1a' });
+    expect(report.pass, JSON.stringify(report.checks.filter((check) => !check.pass))).toBe(true);
+  });
+
   it('emits a real /Separation spot plate end-to-end without a page-wide raster', async () => {
     let document = createDefaultPaperDocument({ title: 'Spot pipeline', preset: 'us-letter' });
     const spot: PaperSwatch = { id: 'sw-spot', name: 'Brand', type: 'spot', model: 'cmyk', spotName: 'PANTONE 185 C', rgb: { r: 227, g: 6, b: 19 }, cmyk: { c: 0, m: 90, y: 85, k: 0 } };

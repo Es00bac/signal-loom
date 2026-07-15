@@ -75,6 +75,8 @@ export interface PaperProductionPreflightOptions {
   renderPlan?: PaperRenderPlan;
   /** Defaults to the higher of the document setting and 300 PPI. */
   requiredPpi?: number;
+  /** KDP page-raster preset resolves fonts/transparency before compiling PDF/X-1a. */
+  allowFullPageFlatten?: boolean;
 }
 
 export interface ExportValidatedPaperPdfxDependencies extends PaperProductionPreflightOptions {
@@ -452,33 +454,35 @@ async function preflightFrozenPaperProduction(
   const requiredPpi = Math.max(300, Math.round(options.requiredPpi ?? document.page.dpi ?? 300));
   for (const container of documentContainers(document)) {
     for (const frame of container.frames) {
-      for (const style of textStyles(frame)) {
-        const family = normalizeFamilyName(style.typography.fontFamily);
-        const familyId = normalizePaperFontFamilyId(family);
-        const weight = numericWeight(style.typography.fontWeight);
-        const fontStyle = requestedStyle(style.typography.fontStyle);
-        const selected = selectManagedFontFace(document.importedFonts ?? [], { familyId, weight, style: fontStyle });
-        if (selected.status !== 'selected') {
-          addIssue(issues, {
-            code: 'MISSING_MANAGED_FONT',
-            severity: 'blocker',
-            message: `${frame.label} uses ${family || 'an unnamed family'} ${weight}/${fontStyle}, but no exact managed face is available.`,
-            pageId: container.id,
-            objectId: frame.id,
-            fixAction: 'manage-font',
-          });
-        } else if (!canUseManagedFontForProduction(selected.face).allowed) {
-          addIssue(issues, {
-            code: 'MISSING_MANAGED_FONT',
-            severity: 'blocker',
-            message: `${frame.label} uses ${selected.face.familyName}, whose managed font rights do not permit this production output.`,
-            pageId: container.id,
-            objectId: frame.id,
-            assetId: selected.face.fontAsset.id,
-            fixAction: 'manage-font',
-          });
-        } else {
-          expectedFontIds.add(selected.face.id);
+      if (!options.allowFullPageFlatten) {
+        for (const style of textStyles(frame)) {
+          const family = normalizeFamilyName(style.typography.fontFamily);
+          const familyId = normalizePaperFontFamilyId(family);
+          const weight = numericWeight(style.typography.fontWeight);
+          const fontStyle = requestedStyle(style.typography.fontStyle);
+          const selected = selectManagedFontFace(document.importedFonts ?? [], { familyId, weight, style: fontStyle });
+          if (selected.status !== 'selected') {
+            addIssue(issues, {
+              code: 'MISSING_MANAGED_FONT',
+              severity: 'blocker',
+              message: `${frame.label} uses ${family || 'an unnamed family'} ${weight}/${fontStyle}, but no exact managed face is available.`,
+              pageId: container.id,
+              objectId: frame.id,
+              fixAction: 'manage-font',
+            });
+          } else if (!canUseManagedFontForProduction(selected.face).allowed) {
+            addIssue(issues, {
+              code: 'MISSING_MANAGED_FONT',
+              severity: 'blocker',
+              message: `${frame.label} uses ${selected.face.familyName}, whose managed font rights do not permit this production output.`,
+              pageId: container.id,
+              objectId: frame.id,
+              assetId: selected.face.fontAsset.id,
+              fixAction: 'manage-font',
+            });
+          } else {
+            expectedFontIds.add(selected.face.id);
+          }
         }
       }
 
@@ -505,8 +509,10 @@ async function preflightFrozenPaperProduction(
         if (ppi === undefined || ppi < requiredPpi) {
           addIssue(issues, {
             code: 'INSUFFICIENT_PPI',
-            severity: 'blocker',
-            message: `${frame.label} is ${ppi === undefined ? 'missing usable pixel dimensions' : `${ppi} effective PPI`}; strict PDF/X requires at least ${requiredPpi} PPI at placement.`,
+            severity: options.allowFullPageFlatten ? 'warning' : 'blocker',
+            message: options.allowFullPageFlatten
+              ? `${frame.label} is ${ppi === undefined ? 'missing usable pixel dimensions' : `${ppi} effective PPI`}; the flattened KDP page is ${requiredPpi} DPI, but this source remains below the recommended placement resolution.`
+              : `${frame.label} is ${ppi === undefined ? 'missing usable pixel dimensions' : `${ppi} effective PPI`}; strict PDF/X requires at least ${requiredPpi} PPI at placement.`,
             pageId: container.id,
             objectId: frame.id,
             fixAction: 'upscale-image',
@@ -514,7 +520,7 @@ async function preflightFrozenPaperProduction(
         }
       }
 
-      if (options.standard === 'pdf-x-1a' && hasLiveFrameTransparency(frame)) {
+      if (options.standard === 'pdf-x-1a' && !options.allowFullPageFlatten && hasLiveFrameTransparency(frame)) {
         addIssue(issues, {
           code: 'PDFX1A_TRANSPARENCY_UNSUPPORTED',
           severity: 'blocker',

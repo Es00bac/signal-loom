@@ -132,7 +132,7 @@ function strictPdfDocument(title: string): {
 
 function passingPdfxDependencies() {
   return {
-    exportPdfx: async () => ({
+    exportPdfx: vi.fn(async () => ({
       bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]),
       standard: 'pdf-x-1a' as const,
       pageCount: 1,
@@ -146,13 +146,13 @@ function passingPdfxDependencies() {
         flattenedObjectIds: [],
         overprintObjectIds: [],
       },
-    }),
-    validatePdfx: async () => ({
+    })),
+    validatePdfx: vi.fn(async () => ({
       standard: 'pdf-x-1a' as const,
       headerVersion: '1.4',
       pass: true,
       checks: [{ id: 'header', label: 'PDF header', pass: true }],
-    }),
+    })),
     assetExists: async () => true,
   };
 }
@@ -592,7 +592,8 @@ describe('PaperWorkspaceUtils export', () => {
     vi.stubGlobal('window', { signalLoomNative: { savePaperPdfBytes } });
     const statuses: string[] = [];
 
-    await exportPaperKdpPdfAndSave(document, (status) => statuses.push(status), passingPdfxDependencies());
+    const dependencies = passingPdfxDependencies();
+    await exportPaperKdpPdfAndSave(document, (status) => statuses.push(status), dependencies);
 
     expect(savePaperPdfBytes).toHaveBeenCalledWith(expect.objectContaining({
       title: 'Native KDP',
@@ -600,6 +601,10 @@ describe('PaperWorkspaceUtils export', () => {
       bytes: expect.any(Uint8Array),
     }));
     expect(statuses.at(-1)).toContain('/tmp/Native-KDP-interior.pdf');
+    expect(dependencies.exportPdfx).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ standard: 'pdf-x-1a', outputDpi: 300, flattenAllPages: true }),
+    );
     vi.unstubAllGlobals();
   });
 

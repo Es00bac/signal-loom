@@ -1067,13 +1067,18 @@ export async function exportPaperKdpPdfAndSave(
   let delivery: NativePaperPdfExportResult | undefined;
   try {
     setStatus(`Checking managed assets and production constraints for a ${dpi} DPI KDP PDF/X-1a…`);
-    const kdpDocument = updatePaperDocumentSetup(document, { bleedMm: KDP_BLEED_MM });
+    const kdpDocument = updatePaperDocumentSetup(document, {
+      bleedMm: KDP_BLEED_MM,
+      printProduction: { spotColorPolicy: 'convert-process' },
+    });
     const transaction = await exportValidatedPaperPdfx(kdpDocument, {
       standard: 'pdf-x-1a',
       requiredPpi: dpi,
+      allowFullPageFlatten: true,
       generate: (frozenDocument) => (dependencies.exportPdfx ?? exportPaperDocumentToPdfxInBrowser)(frozenDocument, {
         standard: 'pdf-x-1a',
         outputDpi: dpi,
+        flattenAllPages: true,
         title: frozenDocument.title,
       }),
       validate: dependencies.validatePdfx ?? validatePaperPdfx,

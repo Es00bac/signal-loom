@@ -38,6 +38,8 @@ export interface PaperPdfxPipelineOptions {
   createdAt?: Date;
   /** Fixed 16-byte hex trailer id for reproducible production verification artifacts. */
   documentId?: string;
+  /** KDP preset: resolve all editable content and transparency into one CMYK page raster. */
+  flattenAllPages?: boolean;
 }
 
 export interface RasterizePageOptions {
@@ -209,6 +211,45 @@ export async function exportPaperDocumentToPdfx(
   if (!outputProfile) throw new Error('PDF/X export requires an exact managed CMYK output profile.');
   const transform = await deps.createTransform(outputProfile.bytes);
   const dpi = options.outputDpi && options.outputDpi > 0 ? options.outputDpi : 300;
+  const pdfxOptions = {
+    standard: options.standard,
+    profile: {
+      iccBytes: outputProfile.bytes,
+      outputConditionIdentifier: outputProfile.profile.outputConditionId,
+      outputCondition: outputProfile.profile.description,
+      registryName: outputProfile.profile.registryName,
+    },
+    transform,
+    title: options.title ?? document.title,
+    createdAt: options.createdAt,
+    docId: options.documentId,
+    totalInkLimitPercent: document.printProduction.totalInkLimitPercent,
+  };
+
+  if (options.flattenAllPages) {
+    const ptPerMm = 72 / 25.4;
+    const pages = await Promise.all(document.pages.map(async (page) => {
+      const raster = await deps.rasterizePage(page.id, dpi, { includePageBackground: true });
+      return {
+        pageNumber: page.pageNumber,
+        ...raster,
+        trimWidthPt: document.page.widthMm * ptPerMm,
+        trimHeightPt: document.page.heightMm * ptPerMm,
+        bleedPt: document.page.bleedMm * ptPerMm,
+      };
+    }));
+    const result = await buildPaperPdfx(pages, pdfxOptions);
+    return {
+      ...result,
+      nativeEvidence: {
+        ...result.nativeEvidence,
+        flattenedObjectIds: document.pages.map((page) => ({
+          objectId: `kdp-page-flatten:${page.id}`,
+          reasons: ['kdp-full-page-flatten'],
+        })),
+      },
+    };
+  }
   const fontRuntime = createManagedFontRuntime(deps);
 
   try {
@@ -247,20 +288,7 @@ export async function exportPaperDocumentToPdfx(
       });
     }
 
-    const result = await buildPaperPdfx(pages, {
-      standard: options.standard,
-      profile: {
-        iccBytes: outputProfile.bytes,
-        outputConditionIdentifier: outputProfile.profile.outputConditionId,
-        outputCondition: outputProfile.profile.description,
-        registryName: outputProfile.profile.registryName,
-      },
-      transform,
-      title: options.title ?? document.title,
-      createdAt: options.createdAt,
-      docId: options.documentId,
-      totalInkLimitPercent: document.printProduction.totalInkLimitPercent,
-    });
+    const result = await buildPaperPdfx(pages, pdfxOptions);
     return { ...result, renderPlan: plan };
   } finally {
     fontRuntime.dispose();
