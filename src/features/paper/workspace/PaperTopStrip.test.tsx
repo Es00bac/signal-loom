@@ -1,10 +1,22 @@
 import { renderToStaticMarkup } from 'react-dom/server';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { PaperTopStrip } from './PaperWorkspace';
 
 const noop = vi.fn();
 
 describe('PaperTopStrip titlebar placement', () => {
+  it('keeps export progress and the exact result path visible outside the Inspector', () => {
+    const source = readFileSync(join(process.cwd(), 'src/features/paper/workspace/PaperWorkspace.tsx'), 'utf8');
+
+    expect(source).toContain('function PaperExportStatusNotice');
+    expect(source).toContain('data-paper-export-status="true"');
+    expect(source).toContain('aria-live="polite"');
+    expect(source).toContain('notice.path');
+    expect(source).toContain('nativeBridge.openPath(notice.path)');
+  });
+
   it('renders the Paper document/export controls for the app titlebar slot', () => {
     const html = renderToStaticMarkup(
       <PaperTopStrip

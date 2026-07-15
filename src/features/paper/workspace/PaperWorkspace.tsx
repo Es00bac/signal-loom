@@ -366,6 +366,7 @@ import {
   verticesForEditableFrame,
   verticesForShapeKind,
   type PaperBubbleHandle,
+  type PaperExportOutcome,
 } from '../../../components/Paper/PaperWorkspaceUtils';
 import { PAPER_TOOL_DEFINITIONS } from './paperToolRegistry';
 import type {
@@ -590,6 +591,10 @@ type PaperPrintUpscaleBusyState = {
   total?: number;
 };
 
+type PaperExportNoticeState = Omit<PaperExportOutcome, 'state'> & {
+  state: PaperExportOutcome['state'] | 'busy';
+};
+
 type PaperWebcomicExportSettings = {
   format: 'png' | 'jpeg';
   outputWidthPx: number;
@@ -764,6 +769,7 @@ export function PaperWorkspace() {
     [preflightReport],
   );
   const [status, setStatus] = useState<string>('Paper workspace ready.');
+  const [exportNotice, setExportNotice] = useState<PaperExportNoticeState | null>(null);
   const [printUpscaleBusy, setPrintUpscaleBusy] = useState<PaperPrintUpscaleBusyState | null>(null);
   const [interaction, setInteraction] = useState<PaperInteraction | null>(null);
   const interactionRef = useRef<PaperInteraction | null>(null);
@@ -828,6 +834,15 @@ export function PaperWorkspace() {
     paperTouchNavigation.enabled &&
     (paperTouchNavigation.oneFingerPan || paperTouchNavigation.pinchZoom);
   const [touchNavigationPanelOpen, setTouchNavigationPanelOpen] = useState(false);
+
+  const showPaperExportProgress = useCallback((message: string, targetKind: PaperExportOutcome['targetKind']) => {
+    setStatus(message);
+    setExportNotice({ message, state: 'busy', targetKind });
+  }, []);
+  const finishPaperExportNotice = useCallback((outcome: PaperExportOutcome) => {
+    setStatus(outcome.message);
+    setExportNotice(outcome);
+  }, []);
 
   const materializePaperOutputDocument = useCallback(async (sourceDocument: PaperDocument): Promise<PaperDocument | undefined> => {
     try {
@@ -1340,9 +1355,12 @@ export function PaperWorkspace() {
           } else {
             const outputDocument = await materializePaperOutputDocument(document);
             if (!outputDocument) return;
-            void exportPaperPdfDocument(outputDocument, setStatus, undefined, {
-              rasterPreset: providerSettings.paperPdfRasterPreset,
-            });
+            void exportPaperPdfDocument(
+              outputDocument,
+              (message) => showPaperExportProgress(message, 'file'),
+              undefined,
+              { rasterPreset: providerSettings.paperPdfRasterPreset },
+            ).then(finishPaperExportNotice);
           }
         }
         return;
@@ -1363,7 +1381,11 @@ export function PaperWorkspace() {
         if (await confirmPreflightBeforeExport('reader-spreads PDF export')) {
           const outputDocument = await materializePaperOutputDocument(document);
           if (!outputDocument) return;
-          void exportPaperPdfDocument(outputDocument, setStatus, buildPaperReaderSpreadPdfExportRequest(outputDocument));
+          void exportPaperPdfDocument(
+            outputDocument,
+            (message) => showPaperExportProgress(message, 'file'),
+            buildPaperReaderSpreadPdfExportRequest(outputDocument),
+          ).then(finishPaperExportNotice);
         }
         return;
       case 'paper:export-booklet-proof-pdf':
@@ -1372,7 +1394,11 @@ export function PaperWorkspace() {
         if (await confirmPreflightBeforeExport('booklet proof PDF export')) {
           const outputDocument = await materializePaperOutputDocument(document);
           if (!outputDocument) return;
-          void exportPaperPdfDocument(outputDocument, setStatus, buildPaperBookletProofPdfExportRequest(outputDocument));
+          void exportPaperPdfDocument(
+            outputDocument,
+            (message) => showPaperExportProgress(message, 'file'),
+            buildPaperBookletProofPdfExportRequest(outputDocument),
+          ).then(finishPaperExportNotice);
         }
         return;
       case 'paper:export-webcomic-images':
@@ -1565,6 +1591,7 @@ export function PaperWorkspace() {
     deselectFrames,
     document,
     exportDocumentJson,
+    finishPaperExportNotice,
     invertFrameSelectionOnSelectedPage,
     selectAllFramesOnSelectedPage,
     pasteSelection,
@@ -1574,6 +1601,7 @@ export function PaperWorkspace() {
     materializePaperOutputDocument,
     resetWorkspacePanels,
     setTool,
+    showPaperExportProgress,
     togglePaperToolsPalette,
     togglePanelVisibility,
     toggleViewOption,
@@ -3495,22 +3523,30 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
     if (!outputDocument) return;
     setWebcomicExportSettings(settings);
     setWebcomicExportOpen(false);
-    void exportPaperWebcomicImages(outputDocument, setStatus, {
+    const outcome = await exportPaperWebcomicImages(outputDocument, (message) => {
+      showPaperExportProgress(message, 'directory');
+    }, {
       format: settings.format,
       includeBleed: settings.includeBleed,
       outputWidthPx: settings.outputWidthPx,
       outputDpi: settings.outputDpi,
       quality: settings.quality,
-    }).catch((error) => {
-      const message = error instanceof Error ? error.message : 'Paper page image export failed.';
-      setStatus(`Page image export failed: ${message}`);
+    });
+    finishPaperExportNotice(outcome);
+    if (outcome.state === 'error') {
       void showAlertDialog({
         title: 'Page Image Export Failed',
-        message,
+        message: outcome.message,
         tone: 'danger',
       });
-    });
-  }, [confirmPreflightBeforeExport, document, materializePaperOutputDocument]);
+    }
+  }, [
+    confirmPreflightBeforeExport,
+    document,
+    finishPaperExportNotice,
+    materializePaperOutputDocument,
+    showPaperExportProgress,
+  ]);
 
   const runKdpImageExport = useCallback(async (settings: PaperKdpExportSettings) => {
     const pendingUpscales = collectPaperPrintUpscaleFrameJobs(document, sourceItems);
@@ -4251,6 +4287,12 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           </main>
         </PaperWorkspaceViewportHost>
       </div>
+      {exportNotice ? (
+        <PaperExportStatusNotice
+          notice={exportNotice}
+          onDismiss={() => setExportNotice(null)}
+        />
+      ) : null}
       {printUpscaleBusy ? (
         <PaperPrintUpscaleBusyIndicator job={printUpscaleBusy} />
       ) : null}
@@ -4606,6 +4648,80 @@ function normalizePaperKdpExportSettings(
     directoryName: typeof settings.directoryName === 'string' ? settings.directoryName : '',
     allowPreflightErrors: Boolean(settings.allowPreflightErrors),
   };
+}
+
+function PaperExportStatusNotice({
+  notice,
+  onDismiss,
+}: {
+  notice: PaperExportNoticeState;
+  onDismiss: () => void;
+}) {
+  const nativeBridge = getSignalLoomNativeBridge();
+  const openTarget = () => {
+    if (!notice.path || !nativeBridge?.openPath) return;
+    void nativeBridge.openPath(notice.path);
+  };
+  const tone = notice.state === 'error'
+    ? 'border-rose-300/45 bg-rose-950/95 text-rose-50'
+    : notice.state === 'canceled'
+      ? 'border-slate-500/60 bg-slate-950/95 text-slate-100'
+      : notice.state === 'success'
+        ? 'border-emerald-300/40 bg-emerald-950/95 text-emerald-50'
+        : 'border-cyan-300/40 bg-[#071522]/95 text-cyan-50';
+
+  return (
+    <div
+      aria-live="polite"
+      className={`absolute right-6 top-20 z-[95] w-[min(32rem,calc(100vw-3rem))] rounded-lg border px-4 py-3 shadow-2xl backdrop-blur ${tone}`}
+      data-paper-export-status="true"
+      role="status"
+    >
+      <div className="flex items-start gap-3">
+        {notice.state === 'busy' ? <Loader2 className="mt-0.5 shrink-0 animate-spin" size={19} /> : null}
+        {notice.state === 'success' ? <ShieldCheck className="mt-0.5 shrink-0" size={19} /> : null}
+        {notice.state === 'error' ? <AlertTriangle className="mt-0.5 shrink-0" size={19} /> : null}
+        {notice.state === 'canceled' ? <X className="mt-0.5 shrink-0" size={19} /> : null}
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-semibold uppercase tracking-[0.14em]">
+            {notice.state === 'busy'
+              ? 'Exporting'
+              : notice.state === 'success'
+                ? 'Export complete'
+                : notice.state === 'error'
+                  ? 'Export failed'
+                  : 'Export canceled'}
+          </div>
+          <div className="mt-1 break-words text-sm leading-5 text-current/85">{notice.message}</div>
+          {notice.path ? (
+            <div className="mt-2 break-all rounded bg-black/20 px-2.5 py-2 font-mono text-[11px] leading-4 text-current/75">
+              {notice.path}
+            </div>
+          ) : null}
+          {notice.path && nativeBridge?.openPath ? (
+            <button
+              className="mt-3 inline-flex items-center gap-2 rounded border border-current/25 bg-white/10 px-3 py-1.5 text-xs font-semibold transition hover:bg-white/20"
+              onClick={openTarget}
+              type="button"
+            >
+              <Download size={14} />
+              {notice.targetKind === 'directory' ? 'Open folder' : 'Open PDF'}
+            </button>
+          ) : null}
+        </div>
+        {notice.state !== 'busy' ? (
+          <button
+            aria-label="Dismiss export status"
+            className="rounded p-1 text-current/60 transition hover:bg-white/10 hover:text-current"
+            onClick={onDismiss}
+            type="button"
+          >
+            <X size={16} />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function PaperPrintUpscaleBusyIndicator({ job }: { job: PaperPrintUpscaleBusyState }) {
