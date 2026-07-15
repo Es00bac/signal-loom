@@ -1283,21 +1283,26 @@ export function getImageModelDefinition(
   if (modelId && modelId.trim()) {
     if (providerId === 'atlas') {
       const inferred = inferImageModelCapabilities(providerId, modelId);
-      return {
-        providerId,
-        modelId,
-        label: inferred.label,
-        recommendedUse: 'Live Atlas model with operation-shaped controls inferred from its route ID; verify availability for the connected account.',
-        capabilities: inferred.capabilities,
-        supportedOperations: inferred.supportedOperations,
-        visibleControls: inferred.visibleControls,
-        cost: { confidence: 'unknown', unitLabel: 'provider-billed' },
-        docsUrl: '',
-        lifecycle: 'unverified',
-        availability: 'live',
-        capabilityConfidence: 'unverified',
-        evidence: [],
-      };
+      const hasExplicitNonGenerationOperation = inferred.supportedOperations.some(
+        (operation) => operation !== 'text-to-image',
+      );
+      if (hasExplicitNonGenerationOperation) {
+        return {
+          providerId,
+          modelId,
+          label: inferred.label,
+          recommendedUse: 'Live Atlas model with operation-shaped controls inferred from its route ID; verify availability for the connected account.',
+          capabilities: inferred.capabilities,
+          supportedOperations: inferred.supportedOperations,
+          visibleControls: inferred.visibleControls,
+          cost: { confidence: 'unknown', unitLabel: 'provider-billed' },
+          docsUrl: '',
+          lifecycle: 'unverified',
+          availability: 'live',
+          capabilityConfidence: 'unverified',
+          evidence: [],
+        };
+      }
     }
     return {
       providerId,

@@ -163,6 +163,9 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
   );
   const selectedModelId = data.modelId ?? getDefaultImageModel(provider);
   const modelDefinition = getImageModelDefinition(provider, selectedModelId);
+  const usesInferredAtlasOperation = provider === 'atlas'
+    && modelDefinition.capabilityConfidence === 'unverified'
+    && modelDefinition.supportedOperations.some((operation) => operation !== 'text-to-image');
   const controlModel = getImageNodeControlModel(provider, selectedModelId);
   const resolvedPortContracts = resolveFlowNodePorts({
     node: {
@@ -199,7 +202,7 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
       : modelDefinition.lifecycle === 'shutdown'
         ? `${modelDefinition.label} is shut down and retained only so saved flows remain understandable.${modelDefinition.migrationModelId ? ` Choose ${modelDefinition.migrationModelId} to run.` : ''}`
         : modelDefinition.lifecycle === 'unverified'
-          ? provider === 'atlas'
+          ? usesInferredAtlasOperation
             ? `${modelDefinition.label} has no curated capability contract; operation-shaped controls are inferred from its Atlas route ID and all other controls stay blocked.`
             : `${modelDefinition.label} has no curated capability contract; only safe baseline controls are enabled.`
           : undefined;
