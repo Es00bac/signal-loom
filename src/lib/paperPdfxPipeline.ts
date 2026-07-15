@@ -224,6 +224,7 @@ export async function exportPaperDocumentToPdfx(
     createdAt: options.createdAt,
     docId: options.documentId,
     totalInkLimitPercent: document.printProduction.totalInkLimitPercent,
+    correctOneStepInkQuantization: options.flattenAllPages,
   };
 
   if (options.flattenAllPages) {

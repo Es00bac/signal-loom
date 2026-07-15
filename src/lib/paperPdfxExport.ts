@@ -26,7 +26,11 @@ import {
 import fontkit from '@pdf-lib/fontkit';
 import type { IccCmykTransform } from './paperColorManagement';
 import { layoutParagraphText, type PaperTextAlign } from './paperTextLayout';
-import { assertCmykBufferWithinInkLimit, assertCmykPaintWithinInkLimit } from './paperInkLimit';
+import {
+  assertCmykBufferWithinInkLimit,
+  assertCmykPaintWithinInkLimit,
+  correctCmykQuantizationOvershoot,
+} from './paperInkLimit';
 import { createOutlineFont, measureTextWidthPt, outlineTextRun, type FontkitOutlineFont, type GlyphPathOp } from './paperGlyphOutlines';
 import {
   appendPaperNativeContent,
@@ -232,6 +236,8 @@ export interface PdfxExportOptions {
   docId?: string;
   /** Total-ink (TAC) ceiling as a percent, e.g. 280. Over-limit output is blocked, never rewritten. */
   totalInkLimitPercent?: number;
+  /** Correct only a one-byte ICC quantization overshoot before enforcing the TAC ceiling. */
+  correctOneStepInkQuantization?: boolean;
 }
 
 export interface PdfxExportResult {
@@ -693,7 +699,11 @@ export async function buildPaperPdfx(
     if (cmyk.length < pixelCount * 4) {
       throw new Error('ICC transform returned fewer CMYK samples than expected.');
     }
-    // TAC is a blocker: retain authored CMYK bytes exactly rather than applying silent UCR.
+    // ICC output may land one byte above its stated TAC after 8-bit quantization. KDP's deliberate
+    // full-page conversion corrects only that rounding step; real excess remains a blocker.
+    if (options.correctOneStepInkQuantization) {
+      correctCmykQuantizationOvershoot(cmyk, inkLimitPercent);
+    }
     assertCmykBufferWithinInkLimit(cmyk, inkLimitPercent);
 
     const imageStream = ctx.flateStream(cmyk.subarray(0, pixelCount * 4), {

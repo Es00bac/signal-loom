@@ -112,6 +112,35 @@ describe('buildPaperPdfx', () => {
       .rejects.toThrow(/400.*280/i);
   });
 
+  it('can correct a single converted-byte TAC overshoot without masking real excess', async () => {
+    const oneStepTransform = {
+      ...MAX_INK_TRANSFORM,
+      transformRgbBuffer: (_rgb: Uint8Array, pixelCount: number) => {
+        const output = new Uint8Array(pixelCount * 4);
+        for (let index = 0; index < pixelCount; index += 1) {
+          output.set([255, 255, 255, 1], index * 4);
+        }
+        return output;
+      },
+    };
+    const base = {
+      standard: 'pdf-x-1a' as const,
+      profile,
+      transform: oneStepTransform,
+      totalInkLimitPercent: 300,
+      docId: '0123456789abcdef0123456789abcdef',
+    };
+
+    await expect(buildPaperPdfx([makePage(1, 8, 8)], base)).rejects.toThrow(/300\.392.*300/i);
+    const corrected = await buildPaperPdfx([makePage(1, 8, 8)], {
+      ...base,
+      correctOneStepInkQuantization: true,
+    });
+    const cmyk = await readDeviceCmykImage(corrected.bytes);
+    expect(cmyk).toBeDefined();
+    expect(cmyk![0] + cmyk![1] + cmyk![2] + cmyk![3]).toBe(765);
+  });
+
   it('marks output approximate when using the non-ICC transform (still structurally valid)', async () => {
     const result = await buildPaperPdfx([makePage(1)], {
       standard: 'pdf-x-4',

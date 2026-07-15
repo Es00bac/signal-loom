@@ -36,6 +36,31 @@ export function findCmykInkLimitViolation(
   return undefined;
 }
 
+/**
+ * Correct the one-byte TAC overshoot that can appear when an ICC transform quantizes a profile's
+ * exact percentage ceiling into four 8-bit channels. Larger excess remains untouched so the normal
+ * production assertion still blocks a profile/limit mismatch rather than applying silent UCR.
+ */
+export function correctCmykQuantizationOvershoot(
+  buffer: Uint8Array | Uint8ClampedArray,
+  maxTotalInkPercent: number | undefined,
+): number {
+  if (maxTotalInkPercent === undefined || !Number.isFinite(maxTotalInkPercent) || maxTotalInkPercent >= 400) return 0;
+  const byteCeiling = Math.floor(Math.max(0, maxTotalInkPercent) / 100 * 255 + 0.000001);
+  let correctedPixels = 0;
+  for (let offset = 0; offset + 3 < buffer.length; offset += 4) {
+    const total = buffer[offset] + buffer[offset + 1] + buffer[offset + 2] + buffer[offset + 3];
+    if (total !== byteCeiling + 1) continue;
+    for (let channel = 0; channel < 4; channel += 1) {
+      if (buffer[offset + channel] <= 0) continue;
+      buffer[offset + channel] -= 1;
+      correctedPixels += 1;
+      break;
+    }
+  }
+  return correctedPixels;
+}
+
 /** Throw an actionable production error while retaining the exact authored DeviceCMYK samples. */
 export function assertCmykBufferWithinInkLimit(
   buffer: Uint8Array | Uint8ClampedArray,
