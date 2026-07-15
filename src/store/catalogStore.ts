@@ -4,6 +4,7 @@ import {
   cloneModelCatalog,
   FALLBACK_MODEL_OPTIONS,
   FALLBACK_VOICE_OPTIONS,
+  VESTIGIAL_MODEL_IDS,
 } from '../lib/providerCatalog';
 import { normalizeGeminiVideoModelId } from '../lib/videoModelSupport';
 import { getProviderModelContract, type ProviderModelContract } from '../lib/providerModelContracts';
@@ -338,14 +339,7 @@ const MODEL_CONTRACTS_BY_CAPABILITY: Record<keyof ModelCatalog, readonly Provide
   audio: AUDIO_MODEL_CONTRACTS,
 };
 
-const VESTIGIAL_MODEL_IDS = new Set([
-  'eleven_ttv_v3',
-  'eleven_multilingual_ttv_v2',
-  'eleven_turbo_v2_5',
-  'eleven_turbo_v2',
-  'eleven_monolingual_v1',
-  'eleven_multilingual_v1',
-]);
+const VESTIGIAL_MODEL_ID_SET = new Set<string>(VESTIGIAL_MODEL_IDS);
 
 function mergeDiscoveredOptions(
   curated: SelectOption[],
@@ -354,7 +348,7 @@ function mergeDiscoveredOptions(
   providerId: string,
 ): SelectOption[] {
   const allowed = (discovered ?? []).filter((option) => {
-    if (VESTIGIAL_MODEL_IDS.has(option.value)) return false;
+    if (VESTIGIAL_MODEL_ID_SET.has(option.value)) return false;
     const contract = getProviderModelContract(
       MODEL_CONTRACTS_BY_CAPABILITY[capability],
       providerId,

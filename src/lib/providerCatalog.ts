@@ -226,6 +226,16 @@ export const AUDIO_OUTPUT_FORMAT_OPTIONS: SelectOption[] = [
   { value: 'pcm_44100', label: 'PCM 44.1kHz' },
 ];
 
+/** Provider IDs discovery may still return but normal Flow selection must omit. */
+export const VESTIGIAL_MODEL_IDS = [
+  'eleven_ttv_v3',
+  'eleven_multilingual_ttv_v2',
+  'eleven_turbo_v2_5',
+  'eleven_turbo_v2',
+  'eleven_monolingual_v1',
+  'eleven_multilingual_v1',
+] as const;
+
 export const FALLBACK_MODEL_OPTIONS: ModelCatalog = {
   text: {
     gemini: [
