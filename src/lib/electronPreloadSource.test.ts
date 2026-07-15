@@ -19,5 +19,6 @@ describe('Electron preload source guards', () => {
 
     expect(source).toContain("choosePaperPdfExportPath: (request) => ipcRenderer.invoke('signal-loom:paper-choose-pdf-export-path', request)");
     expect(source).toContain("choosePaperImageExportDirectory: (request) => ipcRenderer.invoke('signal-loom:paper-choose-image-export-directory', request)");
+    expect(source).toContain("savePaperPdfBytes: (request) => ipcRenderer.invoke('signal-loom:paper-save-pdf-bytes', request)");
   });
 });

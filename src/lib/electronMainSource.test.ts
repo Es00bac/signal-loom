@@ -158,6 +158,7 @@ describe('Electron main process source guards', () => {
     expect(source).toContain("ipcMain.handle('signal-loom:paper-choose-image-export-directory'");
     expect(source).toMatch(/signal-loom:paper-export-pdf[\s\S]*request\.filePath[\s\S]*isAbsolute\(request\.filePath\)[\s\S]*choosePaperPdfSavePath/);
     expect(source).toMatch(/signal-loom:paper-export-images[\s\S]*request\.directoryPath[\s\S]*isAbsolute\(request\.directoryPath\)[\s\S]*choosePaperImageExportDirectory/);
+    expect(source).toMatch(/signal-loom:paper-save-pdf-bytes[\s\S]*PDF header[\s\S]*choosePaperPdfSavePath[\s\S]*writeFile/);
   });
 
   it('retries native smoke CDP evaluation across renderer reloads', () => {

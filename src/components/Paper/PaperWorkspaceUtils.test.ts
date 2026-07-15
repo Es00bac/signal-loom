@@ -10,6 +10,7 @@ import {
   resolvePaperEyedropperPixelColor,
   exportPaperPdfDocument,
   exportPaperPdfxAndSave,
+  exportPaperKdpPdfAndSave,
   exportPaperWebcomicImages,
   insertPaperFrameVertexPatch,
   movePaperFrameVertexPatch,
@@ -93,6 +94,66 @@ function bubbleFrame(overrides: Partial<PaperFrame> = {}): PaperFrame {
     textVerticalAlign: 'middle',
     zIndex: 0,
     ...overrides,
+  };
+}
+
+function strictPdfDocument(title: string): {
+  document: ReturnType<typeof createDefaultPaperDocument>;
+  profile: PaperManagedIccProfile;
+} {
+  const sha256 = 'b'.repeat(64);
+  const profileAsset: BinaryAssetRef = {
+    id: `sha256:${sha256}`,
+    sha256,
+    mimeType: 'application/vnd.iccprofile',
+    byteLength: 122152,
+  };
+  const profile: PaperManagedIccProfile = {
+    id: profileAsset.id,
+    asset: profileAsset,
+    description: 'FOGRA39L Coated',
+    deviceClass: 'prtr',
+    colorSpace: 'CMYK',
+    pcs: 'Lab ',
+    outputConditionId: 'FOGRA39',
+    source: { kind: 'bundled', url: '/icc/FOGRA39L_coated.icc' },
+  };
+  const document = updatePaperDocumentSetup(createDefaultPaperDocument({ title }), {
+    printProduction: {
+      pdfStandard: 'browser-pdf',
+      outputIntentProfileId: 'custom',
+      customOutputIntentName: 'FOGRA39',
+      outputIntentProfileAssetId: profile.id,
+    },
+    managedIccProfiles: [profile],
+  });
+  return { document, profile };
+}
+
+function passingPdfxDependencies() {
+  return {
+    exportPdfx: async () => ({
+      bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]),
+      standard: 'pdf-x-1a' as const,
+      pageCount: 1,
+      profileName: 'FOGRA39L Coated',
+      approximateColor: false,
+      nativeEvidence: {
+        processObjectIds: [],
+        spotPlates: [],
+        embeddedFontIds: [],
+        outlinedObjectIds: [],
+        flattenedObjectIds: [],
+        overprintObjectIds: [],
+      },
+    }),
+    validatePdfx: async () => ({
+      standard: 'pdf-x-1a' as const,
+      headerVersion: '1.4',
+      pass: true,
+      checks: [{ id: 'header', label: 'PDF header', pass: true }],
+    }),
+    assetExists: async () => true,
   };
 }
 
@@ -519,6 +580,40 @@ describe('PaperWorkspaceUtils export', () => {
 
     expect(downloadPdf).not.toHaveBeenCalled();
     expect(statuses.at(-1)).toContain('blocked');
+  });
+
+  it('saves validated KDP PDF/X bytes through the native destination bridge and reports the exact path', async () => {
+    const { document } = strictPdfDocument('Native KDP');
+    const savePaperPdfBytes = vi.fn().mockResolvedValue({
+      canceled: false,
+      filePath: '/tmp/Native-KDP-interior.pdf',
+      bytes: 8,
+    });
+    vi.stubGlobal('window', { signalLoomNative: { savePaperPdfBytes } });
+    const statuses: string[] = [];
+
+    await exportPaperKdpPdfAndSave(document, (status) => statuses.push(status), passingPdfxDependencies());
+
+    expect(savePaperPdfBytes).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Native KDP',
+      fileName: 'Native-KDP-KDP-interior.pdf',
+      bytes: expect.any(Uint8Array),
+    }));
+    expect(statuses.at(-1)).toContain('/tmp/Native-KDP-interior.pdf');
+    vi.unstubAllGlobals();
+  });
+
+  it('reports a canceled native KDP destination without claiming that a PDF was saved', async () => {
+    const { document } = strictPdfDocument('Canceled KDP');
+    const savePaperPdfBytes = vi.fn().mockResolvedValue({ canceled: true });
+    vi.stubGlobal('window', { signalLoomNative: { savePaperPdfBytes } });
+    const statuses: string[] = [];
+
+    await exportPaperKdpPdfAndSave(document, (status) => statuses.push(status), passingPdfxDependencies());
+
+    expect(statuses.at(-1)).toBe('KDP PDF/X-1a export canceled.');
+    expect(statuses.join(' ')).not.toContain('Saved KDP');
+    vi.unstubAllGlobals();
   });
 });
 

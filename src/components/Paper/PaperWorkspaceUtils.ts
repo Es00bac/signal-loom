@@ -949,8 +949,44 @@ async function paperManagedAssetExists(reference: BinaryAssetRef): Promise<boole
   return verifyBinaryAssetRecord(record);
 }
 
-function defaultPdfxDownload(bytes: Uint8Array, fileName: string): void {
+class PaperPdfxSaveCanceledError extends Error {
+  constructor() {
+    super('The native PDF destination was canceled.');
+    this.name = 'PaperPdfxSaveCanceledError';
+  }
+}
+
+async function defaultPdfxDownload(
+  bytes: Uint8Array,
+  fileName: string,
+  title: string,
+): Promise<NativePaperPdfExportResult> {
+  const nativeBridge = getSignalLoomNativeBridge();
+  if (nativeBridge?.savePaperPdfBytes) {
+    return nativeBridge.savePaperPdfBytes({
+      title,
+      fileName,
+      bytes: new Uint8Array(bytes),
+    });
+  }
   downloadSharedBlob(new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }), fileName);
+  return { canceled: false, bytes: bytes.byteLength };
+}
+
+async function deliverValidatedPaperPdf(
+  bytes: Uint8Array,
+  fileName: string,
+  title: string,
+  downloadPdf?: PaperPdfxSaveDependencies['downloadPdf'],
+): Promise<NativePaperPdfExportResult | undefined> {
+  if (downloadPdf) {
+    await downloadPdf(bytes, fileName);
+    return undefined;
+  }
+  const result = await defaultPdfxDownload(bytes, fileName, title);
+  if (result.canceled) throw new PaperPdfxSaveCanceledError();
+  if (result.error) throw new Error(result.error);
+  return result;
 }
 
 /**
@@ -968,6 +1004,7 @@ export async function exportPaperPdfxAndSave(
   const standardLabel = standard === 'pdf-x-1a' ? 'PDF/X-1a' : 'PDF/X-4';
   const profile = document.managedIccProfiles?.find((candidate) => candidate.id === production.outputIntentProfileAssetId);
   const profileLabel = profile?.description ?? 'managed CMYK profile';
+  let delivery: NativePaperPdfExportResult | undefined;
   try {
     setStatus(`Checking managed assets and production constraints for ${standardLabel} (${profileLabel})…`);
     const transaction = await exportValidatedPaperPdfx(document, {
@@ -977,7 +1014,14 @@ export async function exportPaperPdfxAndSave(
         title: frozenDocument.title,
       }),
       validate: dependencies.validatePdfx ?? validatePaperPdfx,
-      download: (bytes) => (dependencies.downloadPdf ?? defaultPdfxDownload)(bytes, `${safeFileName(document.title)}-${standard}.pdf`),
+      download: async (bytes) => {
+        delivery = await deliverValidatedPaperPdf(
+          bytes,
+          `${safeFileName(document.title)}-${standard}.pdf`,
+          document.title,
+          dependencies.downloadPdf,
+        );
+      },
       assetExists: dependencies.assetExists ?? paperManagedAssetExists,
     });
     if (transaction.status === 'blocked') {
@@ -992,8 +1036,13 @@ export async function exportPaperPdfxAndSave(
       return;
     }
     const kb = Math.round(transaction.bytes.length / 1024);
-    setStatus(`${formatProductionValidationStatus(transaction.report)} Saved ${standardLabel} with ${profileLabel} ICC (${kb} KB).`);
+    const pathLabel = delivery?.filePath ? ` to ${delivery.filePath}` : '';
+    setStatus(`${formatProductionValidationStatus(transaction.report)} Saved ${standardLabel}${pathLabel} with ${profileLabel} ICC (${kb} KB).`);
   } catch (error) {
+    if (error instanceof PaperPdfxSaveCanceledError) {
+      setStatus(`${standardLabel} export canceled.`);
+      return;
+    }
     const message = error instanceof Error ? error.message : `${standardLabel} export failed.`;
     setStatus(`${standardLabel} export failed: ${message}`);
   }
@@ -1015,6 +1064,7 @@ export async function exportPaperKdpPdfAndSave(
   const production = normalizePaperPrintProductionSpec(document.printProduction);
   const profile = document.managedIccProfiles?.find((candidate) => candidate.id === production.outputIntentProfileAssetId);
   const profileLabel = profile?.description ?? 'managed CMYK profile';
+  let delivery: NativePaperPdfExportResult | undefined;
   try {
     setStatus(`Checking managed assets and production constraints for a ${dpi} DPI KDP PDF/X-1a…`);
     const kdpDocument = updatePaperDocumentSetup(document, { bleedMm: KDP_BLEED_MM });
@@ -1027,7 +1077,14 @@ export async function exportPaperKdpPdfAndSave(
         title: frozenDocument.title,
       }),
       validate: dependencies.validatePdfx ?? validatePaperPdfx,
-      download: (bytes) => (dependencies.downloadPdf ?? defaultPdfxDownload)(bytes, `${safeFileName(document.title)}-KDP-interior.pdf`),
+      download: async (bytes) => {
+        delivery = await deliverValidatedPaperPdf(
+          bytes,
+          `${safeFileName(document.title)}-KDP-interior.pdf`,
+          document.title,
+          dependencies.downloadPdf,
+        );
+      },
       assetExists: dependencies.assetExists ?? paperManagedAssetExists,
     });
     if (transaction.status === 'blocked') {
@@ -1042,8 +1099,13 @@ export async function exportPaperKdpPdfAndSave(
       return;
     }
     const kb = Math.round(transaction.bytes.length / 1024);
-    setStatus(`${formatProductionValidationStatus(transaction.report)} Saved KDP-targeted PDF/X-1a at ${dpi} DPI with 0.125" bleed and ${profileLabel} ICC (${kb} KB).`);
+    const pathLabel = delivery?.filePath ? ` to ${delivery.filePath}` : '';
+    setStatus(`${formatProductionValidationStatus(transaction.report)} Saved KDP-targeted PDF/X-1a${pathLabel} at ${dpi} DPI with 0.125" bleed and ${profileLabel} ICC (${kb} KB).`);
   } catch (error) {
+    if (error instanceof PaperPdfxSaveCanceledError) {
+      setStatus('KDP PDF/X-1a export canceled.');
+      return;
+    }
     const message = error instanceof Error ? error.message : 'KDP PDF export failed.';
     setStatus(`KDP PDF export failed: ${message}`);
   }

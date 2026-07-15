@@ -315,6 +315,14 @@ export type NativePaperPdfExportRequest = PaperPdfExportRequest & {
   filePath?: string;
 };
 
+export interface NativePaperPdfBytesSaveRequest {
+  title: string;
+  fileName: string;
+  bytes: Uint8Array;
+  /** Absolute path supplied only by the opt-in native automation harness. */
+  filePath?: string;
+}
+
 export interface NativePaperImageExportPage {
   pageId: string;
   pageNumber: number;
@@ -508,6 +516,7 @@ export interface SignalLoomNativeBridge {
     request: Pick<PaperPdfExportRequest, 'title' | 'fileName'>,
   ) => Promise<NativePaperPdfDestinationResult>;
   exportPaperPdf: (request: NativePaperPdfExportRequest) => Promise<NativePaperPdfExportResult>;
+  savePaperPdfBytes?: (request: NativePaperPdfBytesSaveRequest) => Promise<NativePaperPdfExportResult>;
   choosePaperImageExportDirectory?: (
     request: Pick<NativePaperImageExportRequest, 'title' | 'directoryName' | 'format'>,
   ) => Promise<NativePaperImageDestinationResult>;

@@ -2784,6 +2784,40 @@ function installIpcHandlers() {
     }
   });
 
+  ipcMain.handle('signal-loom:paper-save-pdf-bytes', async (event, request) => {
+    try {
+      const bytes = request?.bytes instanceof Uint8Array
+        ? Buffer.from(request.bytes)
+        : ArrayBuffer.isView(request?.bytes)
+          ? Buffer.from(request.bytes.buffer, request.bytes.byteOffset, request.bytes.byteLength)
+          : Array.isArray(request?.bytes)
+            ? Buffer.from(request.bytes)
+            : undefined;
+      if (!bytes?.subarray(0, 5).equals(Buffer.from('%PDF-'))) {
+        return { canceled: false, error: 'Validated Paper PDF bytes are missing a valid PDF header.' };
+      }
+
+      const requestedFilePath = typeof request?.filePath === 'string' && isAbsolute(request.filePath)
+        ? ensurePdfExtension(request.filePath)
+        : undefined;
+      const filePath = requestedFilePath ?? await choosePaperPdfSavePath(request, getIpcWindow(event));
+      if (!filePath) return { canceled: true };
+
+      await mkdir(dirname(filePath), { recursive: true });
+      await writeFile(filePath, bytes);
+      return {
+        canceled: false,
+        filePath,
+        bytes: bytes.byteLength,
+      };
+    } catch (error) {
+      return {
+        canceled: false,
+        error: error instanceof Error ? error.message : 'Failed to save the validated Paper PDF.',
+      };
+    }
+  });
+
   ipcMain.handle('signal-loom:paper-export-images', async (event, request) => {
     if (!request || !Array.isArray(request.pages) || request.pages.length === 0) {
       return {
