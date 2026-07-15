@@ -51,10 +51,10 @@ A disk-backed PNG was dropped through the Paper image-frame workflow and registe
 
 | Mode | UI plan | Result |
 | --- | --- | --- |
-| Stability Fast | $0.02 estimate, provider-reported pixels | Submission disabled: `Stability AI API key is not configured.` No endpoint was invoked, so there is no HTTP status, output MIME, output dimensions, output hash, achieved PPI, or replacement asset. |
-| Stability Conservative | $0.40 estimate, non-empty preservation prompt, creativity `0.35`, provider-reported pixels | Submission disabled: `Stability AI API key is not configured.` No endpoint was invoked, so there is no HTTP status, output MIME, output dimensions, output hash, achieved PPI, or replacement asset. |
+| Stability Fast | $0.02 estimate, provider-reported pixels | HTTP 200/SUCCESS; PNG 2552 x 2552, 5,362,548 bytes, SHA-256 `1981875b0ca0d55997f03e9cfbde3a3170a564d1f4f0ab89640628841f876211`; frame replacement succeeded at 300 effective PPI. |
+| Stability Conservative | $0.40 estimate, non-empty preservation prompt, creativity `0.35`, provider-reported pixels | HTTP 200/SUCCESS; PNG 3112 x 3112, 9,375,800 bytes, SHA-256 `3f0edeb0557609245ef93ed46d3fdb50e5c720fbd68fe3e38b650d73b3eb13d4`; frame replacement succeeded at 366 effective PPI. |
 
-This is an `external-pending` live-provider result, not a failed implementation claim. The UI correctly prevents a paid call without the user-supplied BYOK key. Local provider-contract behavior is verified; the `stability-effective-ppi` ledger entry remains external-pending until a configured account permits a real binary result to be measured and retained.
+The initial unconfigured-key check correctly prevented a paid call. After the user configured their BYOK key, both authorized live modes returned binary results and the UI applied and measured them without exposing credential material. The `stability-effective-ppi` ledger entry is now verified. Full credential-free details are in `docs/audits/paper-stability-live-2026-07-14.md`.
 
 ## Defect Ledger
 
@@ -119,14 +119,14 @@ This is an `external-pending` live-provider result, not a failed implementation 
 - Severity/status/commercial: high / verified / no.
 - Evidence: `src/lib/paperStabilityUpscale.ts` validates Fast/Conservative inputs, preserves aspect during binary preparation, validates provider MIME/dimensions, and stores only a hash-addressed result. `src/lib/paperStabilitySource.ts` verifies a managed source record or creates an in-memory binary record from a runtime URL before the request.
 - Verify: `npx vitest run src/lib/paperStabilityUpscale.test.ts src/lib/paperStabilitySource.test.ts src/lib/paperImageUpscale.test.ts src/lib/paperPreflight.test.ts`.
-- Result: Task 17 exercised both Fast and Conservative through the Paper UI. With no configured user BYOK key, the UI disabled submission before any paid request; no credential, request, or provider output was read or logged. See `docs/audits/paper-stability-live-2026-07-14.md`.
+- Result: Task 17 first verified that both modes disable submission without a key, then live-verified Fast and Conservative after the user configured BYOK. Both returned HTTP 200/SUCCESS PNG binaries and replaced the frame without reading or logging the key. See `docs/audits/paper-stability-live-2026-07-14.md`.
 
 ### `stability-effective-ppi`
 
-- Severity/status/commercial: critical / external-pending / yes.
+- Severity/status/commercial: critical / verified / yes.
 - Evidence: `buildPaperManagedPrintUpscaledFramePatch` preserves the existing placement/crop/rotation fields while replacing the source with a managed result whose actual provider dimensions and `printUpscale` evidence are stored. The generic Data URL helper no longer accepts a Stability callback. `paperPreflight` displays measured PPI, and strict production preflight still blocks assets below the higher of 300 PPI and document DPI.
 - Verify: `rg -n "PaperPrintStabilityUpscale|stabilityResult" src/lib/paperImageUpscale.ts src/features/paper/workspace/PaperWorkspace.tsx`; `npx vitest run src/lib/paperStabilityUpscale.test.ts src/lib/paperImageUpscale.test.ts src/lib/paperPreflight.test.ts`.
-- Remaining external evidence: The local mechanics are verified, but this machine has no configured Stability BYOK key. A real provider result must still record output MIME, dimensions, hash, and achieved PPI without exposing credentials. See `docs/audits/paper-stability-live-2026-07-14.md`.
+- Result: Conservative returned a 3112 x 3112 PNG and achieved 366 PPI; Fast returned a 2552 x 2552 PNG and achieved 300 PPI. Both managed replacements cleared the original low-resolution warning. Response hashes and byte sizes are recorded in `docs/audits/paper-stability-live-2026-07-14.md`.
 
 ## Task 16 Local Print Verification (2026-07-14)
 
@@ -159,4 +159,4 @@ The final focused suite passed 24 files and 221 tests, including the Project 1 a
 
 The complete repository suite passed 589 files and 4,394 tests. `npm run lint` and `npm run build` also passed. The protected speech-bubble baseline remained green in the focused suite. The final scan found no production profile-substitution path or unsupported PDF/X certification statement; `data:`/Base64 occurrences are legacy migration inputs, transient export/runtime helpers, or test fixtures rather than persisted managed assets.
 
-Project 1 is locally complete. External gates remain: Adobe Acrobat/Enfocus Preflight, a real RIP/press proof, KDP upload, InDesign IDML round-trip, and a real Stability result from a user-configured BYOK account. Those are evidence gaps, not a reason to bypass the paid PDF/X gate or weaken strict export validation.
+Project 1 is locally complete and both Stability modes are live-verified. External print gates remain: Adobe Acrobat/Enfocus Preflight, a real RIP/press proof, KDP upload, and InDesign IDML round-trip. Those are evidence gaps, not a reason to bypass the paid PDF/X gate or weaken strict export validation.

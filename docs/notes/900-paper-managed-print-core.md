@@ -24,7 +24,7 @@ PDF/X-1a and PDF/X-4 exports freeze document/assets, preflight the exact render 
 
 The Stability adapter accepts and returns binary data, validates Fast and Conservative provider constraints, stores only content-addressed result assets, and calculates achieved PPI from provider-reported output dimensions and physical placement. It does not describe local fitting as generated detail; strict output blocks inadequate achieved PPI.
 
-The Task 17 UI smoke opened both paid modes. This machine had no user-configured Stability key, so Fast and Conservative both disabled submission before a paid call. No credential, request, header, or provider output was read or logged. Local provider-contract behavior is verified; live provider-result MIME, dimensions, hash, and achieved-PPI evidence remains external-pending in `docs/audits/paper-stability-live-2026-07-14.md`.
+The Task 17 UI smoke first confirmed that both paid modes disable submission without a configured key. After the user configured BYOK, Conservative returned an HTTP 200 PNG at 3112 x 3112 and 366 effective PPI, and Fast returned an HTTP 200 PNG at 2552 x 2552 and 300 effective PPI. Both managed replacements succeeded. No key, request header, multipart body, or local-storage credential was read or logged; response hashes and byte sizes are recorded in `docs/audits/paper-stability-live-2026-07-14.md`.
 
 ## Verification
 
@@ -41,6 +41,6 @@ The production verifier observed three embedded managed faces, one 600x399 CMYK 
 
 ## External Gates And Handoff
 
-Still external-pending: Acrobat/Enfocus Preflight, a print-provider RIP/physical proof, KDP upload, InDesign IDML round-trip, and a configured Stability provider result. These do not weaken the existing paid gate or strict local validation.
+Still external-pending: Acrobat/Enfocus Preflight, a print-provider RIP/physical proof, KDP upload, and InDesign IDML round-trip. These do not weaken the existing paid gate or strict local validation.
 
 Project 2 should carry the Layout/Interoperability handoff, Project 3 the Document Integrity/container coordination across workspaces, and Project 4 Runtime Quality. Preserve the content-addressed Paper asset boundary and strict managed-font/ICC requirements when those projects integrate with Flow or Image.

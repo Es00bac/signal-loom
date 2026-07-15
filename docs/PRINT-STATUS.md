@@ -17,7 +17,7 @@ The community edition can use the opt-in Font Library to download vetted open-fo
 - Output intents resolve only to the selected hash-verified managed CMYK ICC asset. Authored CMYK/gray, named spot paints, and supported overprint stay native PDF content; RGB artwork uses the selected exact profile transform.
 - PDF/X-1a and PDF/X-4 are generated from the frozen render plan, preflighted and structurally checked in memory, then saved only on a passing transaction.
 - The production golden fixture is byte-stable for both standards. On this Linux host, `qpdf`, Poppler, `pdffonts`, `pdfimages`, and Ghostscript `tiffsep` passed. The fixture showed three embedded managed faces, one 600x399 CMYK image at 300x300 PPI, process Cyan/Magenta/Yellow/Black separations, and named `PANTONE 185 C` separation output.
-- Stability Fast and Conservative validate binary input/output contracts, record provider-returned dimensions, and calculate achieved placed PPI. The Paper UI does not submit a paid request without the user's configured BYOK key.
+- Stability Fast and Conservative validate binary input/output contracts, record provider-returned dimensions, and calculate achieved placed PPI. Live UI calls returned HTTP 200 PNG results: Fast produced 2552 x 2552 at 300 PPI and Conservative produced 3112 x 3112 at 366 PPI. The UI also verified that no paid request can be submitted without the user's configured BYOK key.
 
 ## Evidence Commands
 
@@ -39,6 +39,5 @@ This is local structural and separation evidence, not an Adobe or press certific
 - Adobe Acrobat Pro or Enfocus Preflight review.
 - A print-provider RIP and physical press proof.
 - KDP upload validation and InDesign IDML round-trip.
-- A real Stability Fast and Conservative result with a user-configured BYOK account. This machine had no configured key, so both paid UI modes correctly disabled submission before a request.
 
 Do not market these exports as Acrobat-certified, ISO-certified, or press-certified until the relevant external evidence exists. See `docs/audits/paper-workspace-project1.md` and `docs/audits/paper-stability-live-2026-07-14.md` for the full ledger.
