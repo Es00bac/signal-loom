@@ -233,6 +233,68 @@ describe('ImageNode reference handle routing', () => {
   });
 });
 
+describe('ImageNode selected-model warnings', () => {
+  beforeEach(() => {
+    useFlowStore.setState({ nodes: [createNode('target-image', 'imageGen')], edges: [] });
+  });
+
+  it('keeps a preview image model selectable and warns that its contract can change', () => {
+    const html = renderToStaticMarkup(
+      <ReactFlowProvider>
+        <ImageNode
+          data={{ mediaMode: 'generate', provider: 'bfl', modelId: 'flux-2-klein-9b-preview' }}
+          deletable dragging={false} draggable id="target-image" isConnectable
+          positionAbsoluteX={0} positionAbsoluteY={0} selectable selected={false}
+          type="imageGen" zIndex={0}
+        />
+      </ReactFlowProvider>,
+    );
+
+    expect(html).toContain('FLUX.2 Klein 9B Preview is a preview model');
+  });
+
+  it('keeps a saved shut-down model understandable but visibly blocks execution', () => {
+    const html = renderToStaticMarkup(
+      <ReactFlowProvider>
+        <ImageNode
+          data={{
+            mediaMode: 'generate',
+            provider: 'gemini',
+            modelId: 'gemini-3.1-flash-image-preview',
+            onRun: () => undefined,
+          }}
+          deletable dragging={false} draggable id="target-image" isConnectable
+          positionAbsoluteX={0} positionAbsoluteY={0} selectable selected={false}
+          type="imageGen" zIndex={0}
+        />
+      </ReactFlowProvider>,
+    );
+
+    expect(html).toContain('Gemini 3.1 Flash Image Preview is shut down');
+    expect(html).toContain('Choose gemini-3.1-flash-image to run');
+    expect(html).toContain('title="Gemini 3.1 Flash Image Preview is unavailable and cannot run. Choose gemini-3.1-flash-image instead."');
+    expect(html).toContain('disabled=""');
+  });
+
+  it('lists model controls that are deliberately blocked instead of silently hiding the mismatch', () => {
+    const html = renderToStaticMarkup(
+      <ReactFlowProvider>
+        <ImageNode
+          data={{ mediaMode: 'generate', provider: 'stability', modelId: 'stable-image-core' }}
+          deletable dragging={false} draggable id="target-image" isConnectable
+          positionAbsoluteX={0} positionAbsoluteY={0} selectable selected={false}
+          type="imageGen" zIndex={0}
+        />
+      </ReactFlowProvider>,
+    );
+
+    expect(html).toContain('Unavailable model controls');
+    expect(html).toContain('Negative prompt');
+    expect(html).toContain('Inference steps');
+    expect(html).toContain('Unsupported values are blocked and never sent');
+  });
+});
+
 function referenceHandleTag(html: string, handleId: string): string {
   return handleTag(html, handleId);
 }

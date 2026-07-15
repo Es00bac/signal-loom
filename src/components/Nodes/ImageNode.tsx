@@ -35,6 +35,7 @@ import {
 } from '../../lib/imageModelSupport';
 import { configureDetectorKeys, listConfiguredDetectors } from '../../lib/imageMask/objectMaskDetectors';
 import {
+  getImageModelDefinition,
   getImageNodeControlModel,
   type ImageNodeVisibleControl,
 } from '../../lib/imageProviderCapabilities';
@@ -89,6 +90,46 @@ const textInputClassName = withFlowNodeInteractionClasses(
   'w-full rounded-lg border border-gray-700/60 bg-[#111217]/50 px-2.5 py-2 text-xs font-medium text-gray-200 outline-none focus:ring-2 focus:ring-blue-500',
 );
 
+const AUDITED_IMAGE_CONTROLS = [
+  'aspectRatio',
+  'dimensions',
+  'imageSize',
+  'quality',
+  'steps',
+  'seed',
+  'guidanceScale',
+  'editStrength',
+  'loraWeights',
+  'safetyChecker',
+  'outputFormat',
+  'searchPrompt',
+  'exactColorPrompt',
+  'textEditPrompt',
+  'negativePrompt',
+  'outpaintMargins',
+  'creativity',
+] as const satisfies readonly ImageNodeVisibleControl[];
+
+const IMAGE_CONTROL_LABELS: Record<(typeof AUDITED_IMAGE_CONTROLS)[number], string> = {
+  aspectRatio: 'Aspect ratio',
+  dimensions: 'Custom dimensions',
+  imageSize: 'Resolution tier',
+  quality: 'Quality',
+  steps: 'Inference steps',
+  seed: 'Seed',
+  guidanceScale: 'Guidance scale',
+  editStrength: 'Edit strength',
+  loraWeights: 'LoRA weights',
+  safetyChecker: 'Safety checker',
+  outputFormat: 'Output format',
+  searchPrompt: 'Search prompt',
+  exactColorPrompt: 'Exact-color instruction',
+  textEditPrompt: 'Text-edit instruction',
+  negativePrompt: 'Negative prompt',
+  outpaintMargins: 'Outpaint margins',
+  creativity: 'Creativity',
+};
+
 function ImageNodeComponent({ id, data }: AppNodeProps) {
   const apiKeys = useSettingsStore((state) => state.apiKeys);
   const providerSettings = useSettingsStore((state) => state.providerSettings);
@@ -121,6 +162,7 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
       : defaultModels[imageProvider]
   );
   const selectedModelId = data.modelId ?? getDefaultImageModel(provider);
+  const modelDefinition = getImageModelDefinition(provider, selectedModelId);
   const controlModel = getImageNodeControlModel(provider, selectedModelId);
   const resolvedPortContracts = resolveFlowNodePorts({
     node: {
@@ -149,6 +191,19 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
   );
   const autoUpscaleEnabled = Boolean(data.imageAutoUpscale);
   const hasControl = (control: ImageNodeVisibleControl) => controlModel.visibleControls.includes(control);
+  const unavailableControls = AUDITED_IMAGE_CONTROLS.filter((control) => !hasControl(control));
+  const lifecycleWarning = modelDefinition.lifecycle === 'preview'
+    ? `${modelDefinition.label} is a preview model; availability and its API contract can change.`
+    : modelDefinition.lifecycle === 'deprecated'
+      ? `${modelDefinition.label} is deprecated.${modelDefinition.migrationModelId ? ` Migrate to ${modelDefinition.migrationModelId}.` : ''}`
+      : modelDefinition.lifecycle === 'shutdown'
+        ? `${modelDefinition.label} is shut down and retained only so saved flows remain understandable.${modelDefinition.migrationModelId ? ` Choose ${modelDefinition.migrationModelId} to run.` : ''}`
+        : modelDefinition.lifecycle === 'unverified'
+          ? `${modelDefinition.label} has no curated capability contract; only safe baseline controls are enabled.`
+          : undefined;
+  const runDisabledReason = modelDefinition.availability === 'unavailable'
+    ? `${modelDefinition.label} is unavailable and cannot run.${modelDefinition.migrationModelId ? ` Choose ${modelDefinition.migrationModelId} instead.` : ''}`
+    : undefined;
   const visibleReferenceHandles = IMAGE_REFERENCE_HANDLES;
   const servedSession = isServedLanSession();
   const sourceAssetId = typeof data.sourceAssetId === 'string' ? data.sourceAssetId : undefined;
@@ -577,6 +632,7 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
       }
       outputActions={getCompatibleNodeActions('imageGen')}
       onRun={mediaMode === 'generate' ? data.onRun : undefined}
+      runDisabledReason={mediaMode === 'generate' ? runDisabledReason : undefined}
       isRunning={data.isRunning}
       error={data.error}
       statusMessage={data.statusMessage}
@@ -668,6 +724,35 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
               </div>
             </div>
           )}
+
+          {!isVideoFrameMode && lifecycleWarning ? (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-5 text-amber-100">
+              {lifecycleWarning}
+            </div>
+          ) : null}
+
+          {!isVideoFrameMode && unavailableControls.length > 0 ? (
+            <details className={withFlowNodeInteractionClasses('rounded-lg border border-gray-700/60 bg-[#111217]/25 px-2.5 py-2 text-[10px] text-gray-400')}>
+              <summary className="cursor-pointer font-semibold text-gray-300">
+                Unavailable model controls ({unavailableControls.length})
+              </summary>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {unavailableControls.map((control) => (
+                  <span
+                    aria-disabled="true"
+                    className="cursor-not-allowed rounded border border-gray-800 bg-[#0b0d13] px-1.5 py-1 text-[9px] text-gray-600 line-through"
+                    key={control}
+                    title={`${modelDefinition.label} does not expose ${IMAGE_CONTROL_LABELS[control]} on this API route.`}
+                  >
+                    {IMAGE_CONTROL_LABELS[control]}
+                  </span>
+                ))}
+              </div>
+              <div className="mt-2 leading-4 text-amber-200/70">
+                Unsupported values are blocked and never sent to this model API.
+              </div>
+            </details>
+          ) : null}
 
           {!isVideoFrameMode ? (
             <>
