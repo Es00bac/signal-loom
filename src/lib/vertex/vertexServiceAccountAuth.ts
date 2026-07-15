@@ -11,7 +11,63 @@ export interface ParseServiceAccountResult {
   error?: string;
 }
 
+export type VertexCredentialType = 'service_account' | 'authorized_user' | 'external_account' | 'impersonated_service_account';
+
+export interface ParseVertexCredentialResult {
+  ok: boolean;
+  type?: VertexCredentialType;
+  projectId?: string;
+  quotaProjectId?: string;
+  account?: string;
+  data?: Record<string, unknown>;
+  error?: string;
+}
+
 const DEFAULT_TOKEN_URI = 'https://oauth2.googleapis.com/token';
+
+export function parseVertexCredentialJson(raw: string): ParseVertexCredentialResult {
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return { ok: false, error: 'Could not parse ADC credential JSON. Choose or paste the full JSON file.' };
+  }
+
+  const type = typeof data.type === 'string' ? data.type : '';
+  if (!['service_account', 'authorized_user', 'external_account', 'impersonated_service_account'].includes(type)) {
+    return { ok: false, error: `Unsupported ADC credential type: ${type || 'missing type'}.` };
+  }
+
+  if (type === 'service_account') {
+    const parsed = parseServiceAccountJson(raw);
+    if (!parsed.ok || !parsed.credential) return { ok: false, error: parsed.error };
+  }
+  if (type === 'authorized_user') {
+    for (const field of ['client_id', 'client_secret', 'refresh_token']) {
+      if (typeof data[field] !== 'string' || !String(data[field]).trim()) {
+        return { ok: false, error: `Authorized-user ADC credentials are missing ${field}.` };
+      }
+    }
+  }
+
+  const projectId = typeof data.project_id === 'string' && data.project_id.trim()
+    ? data.project_id.trim()
+    : undefined;
+  const quotaProjectId = typeof data.quota_project_id === 'string' && data.quota_project_id.trim()
+    ? data.quota_project_id.trim()
+    : undefined;
+  const account = typeof data.account === 'string' && data.account.trim()
+    ? data.account.trim()
+    : typeof data.client_email === 'string' && data.client_email.trim() ? data.client_email.trim() : undefined;
+  return {
+    ok: true,
+    type: type as VertexCredentialType,
+    projectId,
+    quotaProjectId,
+    account,
+    data,
+  };
+}
 
 export function parseServiceAccountJson(raw: string): ParseServiceAccountResult {
   let data: Record<string, unknown>;
@@ -167,6 +223,57 @@ export async function getServiceAccountAccessToken(
   }
 
   const minted = await mintAccessToken(parsed.credential, deps);
+  tokenCache.set(cacheKey, minted);
+  return minted;
+}
+
+export async function getVertexCredentialAccessToken(
+  raw: string,
+  deps: MintAccessTokenDeps = {},
+): Promise<MintedAccessToken> {
+  const parsed = parseVertexCredentialJson(raw);
+  if (!parsed.ok || !parsed.type || !parsed.data) {
+    throw new Error(parsed.error ?? 'Invalid ADC credential JSON.');
+  }
+  if (parsed.type === 'service_account') {
+    return getServiceAccountAccessToken(raw, deps);
+  }
+  if (parsed.type !== 'authorized_user') {
+    throw new Error(`${parsed.type} credentials require the Sloom Studio desktop ADC broker.`);
+  }
+
+  const clientId = String(parsed.data.client_id);
+  const clientSecret = String(parsed.data.client_secret);
+  const refreshToken = String(parsed.data.refresh_token);
+  const tokenUri = typeof parsed.data.token_uri === 'string' && parsed.data.token_uri.trim()
+    ? parsed.data.token_uri.trim()
+    : DEFAULT_TOKEN_URI;
+  const now = deps.now ?? Date.now;
+  const cacheKey = `authorized_user:${clientId}:${refreshToken}`;
+  const cached = tokenCache.get(cacheKey);
+  if (cached && cached.expiresAt - REFRESH_SKEW_MS > now()) return cached;
+
+  const doFetch = deps.fetch ?? globalThis.fetch;
+  const response = await doFetch(tokenUri, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+    }).toString(),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`Vertex authorized-user token refresh failed (${response.status}). ${detail}`.trim());
+  }
+  const payload = await response.json() as { access_token?: string; expires_in?: number };
+  if (!payload.access_token) throw new Error('Vertex authorized-user token refresh returned no access_token.');
+  const minted = {
+    accessToken: payload.access_token,
+    expiresAt: now() + (typeof payload.expires_in === 'number' ? payload.expires_in : TOKEN_LIFETIME_SECONDS) * 1000,
+  };
   tokenCache.set(cacheKey, minted);
   return minted;
 }

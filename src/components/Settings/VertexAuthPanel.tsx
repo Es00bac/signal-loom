@@ -24,6 +24,7 @@ export interface VertexAuthPanelProps {
 
 const STATUS_LABEL: Record<VertexAuthStatus['source'], string> = {
   gcloud: 'Signed in with gcloud',
+  'adc-json': 'Imported ADC credentials loaded',
   'service-account': 'Service account loaded',
   'env-var': 'Using environment credentials',
   none: 'Not configured',
@@ -59,7 +60,7 @@ export function VertexAuthPanel(props: VertexAuthPanelProps) {
               className="flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
             >
               {busy.login ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
-              Sign in with gcloud
+              Google browser sign-in
             </button>
             <button
               type="button"
@@ -69,6 +70,33 @@ export function VertexAuthPanel(props: VertexAuthPanelProps) {
             >
               {busy.detect ? 'Detecting…' : 'Detect ADC'}
             </button>
+
+            <div className="grid gap-2 rounded-lg border border-gray-800 bg-[#111217]/40 p-3 md:col-span-2">
+              <p className="text-xs text-gray-300">
+                Built-in ADC import works without a terminal. Choose an Application Default Credentials, authorized-user, workload-identity, or service-account JSON file; the encrypted settings store keeps it at rest.
+              </p>
+              <input
+                type="file"
+                accept="application/json,.json"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) props.onServiceAccountFile(file);
+                }}
+                className="text-xs text-gray-300"
+              />
+              <details>
+                <summary className="cursor-pointer text-xs text-gray-400">Paste credential JSON instead</summary>
+                <div className="mt-2">
+                  <TextAreaInput
+                    label="ADC credential JSON"
+                    value={providerSettings.vertexServiceAccountJson}
+                    onChange={(value) => (props.onServiceAccountText ?? ((v) => setProviderSetting('vertexServiceAccountJson', v)))(value)}
+                    placeholder='{ "type": "authorized_user", "client_id": "…", "refresh_token": "…" }'
+                  />
+                </div>
+              </details>
+              {props.serviceAccountError ? <p className="text-xs text-red-400">{props.serviceAccountError}</p> : null}
+            </div>
 
             <SelectInput
               label="Vertex authentication mode"
@@ -109,7 +137,7 @@ export function VertexAuthPanel(props: VertexAuthPanelProps) {
         ) : (
           <div className="grid gap-4">
             <p className="text-xs text-gray-400">
-              Paste a Vertex service-account key (JSON) to authenticate directly from this device.
+              Import ADC authorized-user or service-account JSON to authenticate directly from this device without a terminal.
             </p>
             <input
               type="file"
@@ -123,10 +151,10 @@ export function VertexAuthPanel(props: VertexAuthPanelProps) {
               className="text-xs text-gray-300"
             />
             <TextAreaInput
-              label="Service-account JSON"
+              label="ADC credential JSON"
               value={providerSettings.vertexServiceAccountJson}
               onChange={(value) => (props.onServiceAccountText ?? ((v) => setProviderSetting('vertexServiceAccountJson', v)))(value)}
-              placeholder='{ "type": "service_account", "project_id": "…", "private_key": "…", "client_email": "…" }'
+              placeholder='{ "type": "authorized_user" or "service_account", "project_id": "…" }'
             />
             {props.serviceAccountError ? (
               <p className="text-xs text-red-400">{props.serviceAccountError}</p>

@@ -11,7 +11,7 @@ vi.mock('./vertex/vertexServiceAccountAuth', async (importOriginal) => {
   const original = await importOriginal<typeof import('./vertex/vertexServiceAccountAuth')>();
   return {
     ...original,
-    getServiceAccountAccessToken: vi.fn(async () => ({
+    getVertexCredentialAccessToken: vi.fn(async () => ({
       accessToken: 'test-token',
       expiresAt: Date.now() + 3_600_000,
     })),
@@ -141,7 +141,7 @@ describe('generateVertexImageDirect', () => {
       { vertexServiceAccountJson: '' } as ProviderSettings,
       { fetch: vi.fn() as unknown as typeof fetch },
     );
-    expect(result.error).toContain('service-account key');
+    expect(result.error).toContain('ADC credential JSON');
   });
 });
 

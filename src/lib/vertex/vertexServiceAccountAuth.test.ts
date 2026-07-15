@@ -4,6 +4,8 @@ import {
   mintAccessToken,
   getServiceAccountAccessToken,
   clearVertexTokenCache,
+  getVertexCredentialAccessToken,
+  parseVertexCredentialJson,
 } from './vertexServiceAccountAuth';
 
 const VALID = JSON.stringify({
@@ -136,5 +138,30 @@ describe('getServiceAccountAccessToken cache', () => {
     clock += 3600 * 1000;
     await getServiceAccountAccessToken(raw, deps);
     expect((deps.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
+  });
+});
+
+describe('authorized-user ADC credentials', () => {
+  beforeEach(() => clearVertexTokenCache());
+
+  it('parses and refreshes an authorized_user ADC file without a service-account key', async () => {
+    const raw = JSON.stringify({
+      type: 'authorized_user',
+      client_id: 'client.apps.googleusercontent.com',
+      client_secret: 'secret',
+      refresh_token: 'refresh',
+      quota_project_id: 'billing-project',
+    });
+    expect(parseVertexCredentialJson(raw)).toMatchObject({
+      ok: true,
+      type: 'authorized_user',
+      quotaProjectId: 'billing-project',
+    });
+    const deps = fakeDeps();
+    const result = await getVertexCredentialAccessToken(raw, deps);
+    expect(result.accessToken).toBe('ya29.token');
+    const [url, init] = (deps.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe('https://oauth2.googleapis.com/token');
+    expect(String((init as RequestInit).body)).toContain('grant_type=refresh_token');
   });
 });

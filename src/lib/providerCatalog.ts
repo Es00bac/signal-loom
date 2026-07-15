@@ -118,8 +118,8 @@ export const EXPORT_COMPOSITOR_OPTIONS: SelectOption[] = [
 ];
 
 export const VERTEX_AUTH_MODE_OPTIONS: SelectOption[] = [
-  { value: 'gcloud-user', label: 'gcloud user login (simple desktop setup)' },
-  { value: 'gcloud-adc', label: 'Application Default Credentials / service account' },
+  { value: 'gcloud-adc', label: 'Application Default Credentials (recommended)' },
+  { value: 'gcloud-user', label: 'Google Cloud SDK user login (fallback)' },
 ];
 
 export const PAPER_PRINT_UPSCALE_METHOD_OPTIONS: SelectOption[] = [

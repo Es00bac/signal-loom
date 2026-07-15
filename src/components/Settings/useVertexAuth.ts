@@ -3,7 +3,7 @@ import type { ProviderSettings } from '../../types/flow';
 import { getSignalLoomNativeBridge } from '../../lib/nativeApp';
 import { buildNativeVertexAuthConfig } from '../../lib/vertexProviderSettings';
 import { computeVertexAuthStatus } from '../../lib/vertex/vertexAuthStatus';
-import { parseServiceAccountJson, getServiceAccountAccessToken } from '../../lib/vertex/vertexServiceAccountAuth';
+import { getVertexCredentialAccessToken, parseVertexCredentialJson } from '../../lib/vertex/vertexServiceAccountAuth';
 
 interface UseVertexAuthArgs {
   providerSettings: ProviderSettings;
@@ -59,12 +59,15 @@ export function useVertexAuth({ providerSettings, setProviderSetting, platform }
         ? { ok: true, message: 'Signed in. Detecting credentials…' }
         : { ok: false, message: result.error ?? 'Sign-in failed.' });
       if (result.ok) {
+        if (result.projectId && !providerSettings.vertexProjectId.trim()) {
+          setProviderSetting('vertexProjectId', result.projectId);
+        }
         await refreshProjects();
       }
     } finally {
       setBusy((prev) => ({ ...prev, login: false }));
     }
-  }, [authConfig, refreshProjects]);
+  }, [authConfig, providerSettings.vertexProjectId, refreshProjects, setProviderSetting]);
 
   const detect = useCallback(async () => {
     const bridge = getSignalLoomNativeBridge();
@@ -78,12 +81,18 @@ export function useVertexAuth({ providerSettings, setProviderSetting, platform }
       // A successful detect should also pull + auto-select a project, so detecting alone leaves the app
       // actually ready instead of stuck at "no-project".
       if (result.ok && result.hasToken) {
+        if (result.projectId && !providerSettings.vertexProjectId.trim()) {
+          setProviderSetting('vertexProjectId', result.projectId);
+        }
+        if (result.quotaProjectId && !providerSettings.vertexQuotaProjectId.trim()) {
+          setProviderSetting('vertexQuotaProjectId', result.quotaProjectId);
+        }
         await refreshProjects();
       }
     } finally {
       setBusy((prev) => ({ ...prev, detect: false }));
     }
-  }, [authConfig, refreshProjects]);
+  }, [authConfig, providerSettings.vertexProjectId, providerSettings.vertexQuotaProjectId, refreshProjects, setProviderSetting]);
 
   const testConnection = useCallback(async () => {
     setBusy((prev) => ({ ...prev, test: true }));
@@ -93,10 +102,10 @@ export function useVertexAuth({ providerSettings, setProviderSetting, platform }
         await detect();
         return;
       }
-      const minted = await getServiceAccountAccessToken(providerSettings.vertexServiceAccountJson);
+      const minted = await getVertexCredentialAccessToken(providerSettings.vertexServiceAccountJson);
       const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(minted.accessToken)}`);
       setTestResult(response.ok
-        ? { ok: true, message: 'Service-account credentials verified.' }
+        ? { ok: true, message: 'ADC credentials verified.' }
         : { ok: false, message: `Token rejected (${response.status}).` });
     } catch (error) {
       setTestResult({ ok: false, message: error instanceof Error ? error.message : String(error) });
@@ -107,16 +116,19 @@ export function useVertexAuth({ providerSettings, setProviderSetting, platform }
 
   const importServiceAccountText = useCallback((raw: string) => {
     setProviderSetting('vertexServiceAccountJson', raw);
-    const parsed = parseServiceAccountJson(raw);
+    const parsed = parseVertexCredentialJson(raw);
     if (!parsed.ok) {
       setServiceAccountError(parsed.error);
       return;
     }
     setServiceAccountError(undefined);
-    if (parsed.credential && !providerSettings.vertexProjectId.trim()) {
-      setProviderSetting('vertexProjectId', parsed.credential.projectId);
+    if (parsed.projectId && !providerSettings.vertexProjectId.trim()) {
+      setProviderSetting('vertexProjectId', parsed.projectId);
     }
-  }, [setProviderSetting, providerSettings.vertexProjectId]);
+    if (parsed.quotaProjectId && !providerSettings.vertexQuotaProjectId.trim()) {
+      setProviderSetting('vertexQuotaProjectId', parsed.quotaProjectId);
+    }
+  }, [setProviderSetting, providerSettings.vertexProjectId, providerSettings.vertexQuotaProjectId]);
 
   const onServiceAccountFile = useCallback(async (file: File) => {
     const text = await file.text();

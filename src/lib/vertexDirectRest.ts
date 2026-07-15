@@ -19,7 +19,7 @@ import type {
   NativeVertexVideoResult,
 } from './nativeApp';
 import type { ProviderSettings } from '../types/flow';
-import { getServiceAccountAccessToken, type MintAccessTokenDeps } from './vertex/vertexServiceAccountAuth';
+import { getVertexCredentialAccessToken, type MintAccessTokenDeps } from './vertex/vertexServiceAccountAuth';
 import { blobToDataUrl, readBinaryImageResponseBlob } from './imageEditorAi/blobUtils';
 import { NonRetryableError } from './exponentialBackoff';
 
@@ -28,7 +28,7 @@ export interface VertexDirectRestDeps extends MintAccessTokenDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
-/** Direct REST is available whenever a service-account key is configured. */
+/** Direct REST is available whenever a service-account or authorized-user ADC JSON is configured. */
 export function isVertexDirectRestAvailable(providerSettings: ProviderSettings): boolean {
   return Boolean(providerSettings.vertexServiceAccountJson?.trim());
 }
@@ -127,10 +127,10 @@ async function getDirectAccessToken(
   const raw = providerSettings.vertexServiceAccountJson?.trim();
   if (!raw) {
     throw new NonRetryableError(
-      'Vertex AI on this device needs a service-account key. Import one in Settings > Providers > Vertex AI, then use "Test connection".',
+      'Vertex AI on this device needs an ADC credential JSON file. Import one in Settings > Providers > Vertex AI, then use "Test connection".',
     );
   }
-  const minted = await getServiceAccountAccessToken(raw, deps);
+  const minted = await getVertexCredentialAccessToken(raw, deps);
   return minted.accessToken;
 }
 

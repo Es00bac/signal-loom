@@ -2,7 +2,7 @@ import type { ProviderSettings } from '../../types/flow';
 import { getVertexProjectConfig } from '../vertexProviderSettings';
 
 export type VertexAuthPlatform = 'desktop' | 'mobile';
-export type VertexAuthSource = 'gcloud' | 'service-account' | 'env-var' | 'none';
+export type VertexAuthSource = 'gcloud' | 'adc-json' | 'service-account' | 'env-var' | 'none';
 export type VertexAuthBlocker = 'not-vertex-mode' | 'no-project' | 'no-credential';
 
 export interface VertexAuthStatus {
@@ -17,7 +17,12 @@ function hasEnvCredential(settings: ProviderSettings): boolean {
 
 function resolveSource(settings: ProviderSettings, platform: VertexAuthPlatform): VertexAuthSource {
   if ((settings.vertexServiceAccountJson ?? '').trim()) {
-    return 'service-account';
+    try {
+      const parsed = JSON.parse(settings.vertexServiceAccountJson) as { type?: unknown };
+      return parsed.type === 'service_account' ? 'service-account' : 'adc-json';
+    } catch {
+      return 'adc-json';
+    }
   }
   if (hasEnvCredential(settings)) {
     return 'env-var';

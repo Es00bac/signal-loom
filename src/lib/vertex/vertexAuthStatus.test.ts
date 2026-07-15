@@ -43,6 +43,15 @@ describe('computeVertexAuthStatus', () => {
     expect(status.configured).toBe(true);
   });
 
+  it('reports imported ADC JSON distinctly from service accounts', () => {
+    const status = computeVertexAuthStatus(
+      settings({ geminiCredentialMode: 'vertex-adc', vertexProjectId: 'proj-1', vertexServiceAccountJson: '{"type":"authorized_user"}' }),
+      'desktop',
+    );
+    expect(status.source).toBe('adc-json');
+    expect(status.configured).toBe(true);
+  });
+
   it('flags no-credential on mobile without service-account JSON', () => {
     const status = computeVertexAuthStatus(
       settings({ geminiCredentialMode: 'vertex-adc', vertexProjectId: 'proj-1', vertexServiceAccountJson: '' }),

@@ -3,6 +3,18 @@ import { getVertexProjectConfig } from './vertexProviderSettings';
 import { DEFAULT_PROVIDER_SETTINGS } from './providerCatalog';
 
 describe('vertexProviderSettings', () => {
+  it('passes imported credential JSON only to the native in-app ADC broker', () => {
+    const credentialJson = '{"type":"authorized_user","refresh_token":"secret"}';
+    expect(getVertexProjectConfig({
+      ...DEFAULT_PROVIDER_SETTINGS,
+      vertexProjectId: 'project-1',
+      vertexServiceAccountJson: credentialJson,
+    }).auth).toMatchObject({
+      mode: 'gcloud-adc',
+      credentialJson,
+    });
+  });
+
   it('falls back to persisted Vertex environment variables for project, location, and quota project', () => {
     expect(getVertexProjectConfig({
       ...DEFAULT_PROVIDER_SETTINGS,

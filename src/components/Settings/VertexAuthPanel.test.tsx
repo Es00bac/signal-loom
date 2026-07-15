@@ -26,20 +26,21 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 }
 
 describe('VertexAuthPanel', () => {
-  it('renders the gcloud sign-in action and project picker on desktop', () => {
+  it('renders browser sign-in, built-in ADC import, and the project picker on desktop', () => {
     const html = renderToStaticMarkup(<VertexAuthPanel {...baseProps()} />);
-    expect(html).toContain('Sign in with gcloud');
+    expect(html).toContain('Google browser sign-in');
+    expect(html).toContain('Built-in ADC import works without a terminal');
     expect(html).toContain('Project One');
     expect(html).toContain('Test connection');
   });
 
-  it('renders the service-account import on mobile and hides gcloud sign-in', () => {
+  it('renders ADC import on mobile and hides browser sign-in', () => {
     const html = renderToStaticMarkup(<VertexAuthPanel {...baseProps({
       platform: 'mobile',
       status: { source: 'none', configured: false, blockers: ['no-credential'] },
     })} />);
-    expect(html).toContain('service-account');
-    expect(html).not.toContain('Sign in with gcloud');
+    expect(html).toContain('ADC authorized-user or service-account JSON');
+    expect(html).not.toContain('Google browser sign-in');
   });
 
   it('shows the status badge text derived from status', () => {

@@ -824,6 +824,8 @@ export interface VertexNativeAuthConfig {
   mode: VertexAuthMode;
   quotaProjectId?: string;
   environmentVariables?: string;
+  /** Encrypted-at-rest imported ADC JSON, passed only to the native in-app auth broker at request time. */
+  credentialJson?: string;
 }
 
 export interface DefaultModelSettings {

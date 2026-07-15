@@ -8,6 +8,7 @@ export function buildNativeVertexAuthConfig(providerSettings: ProviderSettings):
   const environment = parseVertexEnvironmentVariables(providerSettings.vertexEnvironmentVariables);
   const quotaProjectId = providerSettings.vertexQuotaProjectId.trim();
   const environmentVariables = providerSettings.vertexEnvironmentVariables.trim();
+  const credentialJson = providerSettings.vertexServiceAccountJson.trim();
 
   return {
     mode: normalizeVertexAuthMode(providerSettings.vertexAuthMode),
@@ -15,6 +16,7 @@ export function buildNativeVertexAuthConfig(providerSettings: ProviderSettings):
       ? { quotaProjectId: quotaProjectId || environment.GOOGLE_CLOUD_QUOTA_PROJECT }
       : {}),
     ...(environmentVariables ? { environmentVariables } : {}),
+    ...(credentialJson ? { credentialJson } : {}),
   };
 }
 

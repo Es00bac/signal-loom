@@ -1,6 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { basename } from 'node:path';
 
+interface TestGoogleAuthInstance {
+  getClient: () => Promise<{ getAccessToken: () => Promise<{ token?: string } | string> }>;
+}
+
 interface VertexAuthModule {
   buildVertexAccessTokenCommand: (auth?: { mode?: string; environmentVariables?: string }) => { command: string; args: string[] };
   buildVertexAuthEnvironment: (auth: { environmentVariables?: string }, baseEnv: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
@@ -8,6 +12,8 @@ interface VertexAuthModule {
   buildVertexLoginCommand: (auth?: { mode?: string; environmentVariables?: string }) => { command: string; args: string[] };
   buildVertexListProjectsCommand: (auth?: { environmentVariables?: string }) => { command: string; args: string[] };
   parseGcloudProjectsList: (stdout?: string) => Array<{ projectId: string; name: string }>;
+  resolveVertexAdcPathCandidates: (auth?: { environmentVariables?: string }, deps?: { platform?: string; env?: NodeJS.ProcessEnv; homeDirectory?: string }) => string[];
+  getVertexAccessTokenFromAdc: (auth?: { credentialJson?: string; environmentVariables?: string }, deps?: { GoogleAuth?: new (options: Record<string, unknown>) => TestGoogleAuthInstance; platform?: string; env?: NodeJS.ProcessEnv; homeDirectory?: string; existsSync?: (path: string) => boolean }) => Promise<{ token: string; source: string; projectId?: string; quotaProjectId?: string; account?: string } | undefined>;
 }
 
 async function loadVertexAuthModule(): Promise<VertexAuthModule> {
@@ -133,5 +139,67 @@ describe('Electron Vertex native auth helpers', () => {
       { projectId: 'p2', name: 'Two' },
     ]);
     expect(mod.parseGcloudProjectsList('not json')).toEqual([]);
+  });
+
+  it('discovers ADC files on Windows, macOS, and Linux without a terminal', async () => {
+    const { resolveVertexAdcPathCandidates } = await loadVertexAuthModule();
+
+    expect(resolveVertexAdcPathCandidates({}, {
+      platform: 'win32',
+      env: { APPDATA: 'C:\\Users\\Ada\\AppData\\Roaming' },
+      homeDirectory: 'C:\\Users\\Ada',
+    })).toContain('C:\\Users\\Ada\\AppData\\Roaming/gcloud/application_default_credentials.json');
+    expect(resolveVertexAdcPathCandidates({}, {
+      platform: 'darwin',
+      env: {},
+      homeDirectory: '/Users/ada',
+    })).toContain('/Users/ada/.config/gcloud/application_default_credentials.json');
+    expect(resolveVertexAdcPathCandidates({
+      environmentVariables: 'GOOGLE_APPLICATION_CREDENTIALS=/secure/imported-adc.json',
+    }, {
+      platform: 'linux',
+      env: {},
+      homeDirectory: '/home/ada',
+    })[0]).toBe('/secure/imported-adc.json');
+  });
+
+  it('mints from imported authorized-user ADC through Google Auth without invoking gcloud', async () => {
+    const { getVertexAccessTokenFromAdc } = await loadVertexAuthModule();
+    const constructed: Record<string, unknown>[] = [];
+    class FakeGoogleAuth {
+      constructor(options: Record<string, unknown>) {
+        constructed.push(options);
+      }
+      async getClient() {
+        return { getAccessToken: async () => ({ token: 'ya29.in-app-token' }) };
+      }
+      async getProjectId() {
+        return 'adc-project';
+      }
+    }
+
+    const credentialJson = JSON.stringify({
+      type: 'authorized_user',
+      client_id: 'client.apps.googleusercontent.com',
+      client_secret: 'secret',
+      refresh_token: 'refresh',
+      quota_project_id: 'billing-project',
+      account: 'ada@example.com',
+    });
+    const result = await getVertexAccessTokenFromAdc(
+      { credentialJson },
+      { GoogleAuth: FakeGoogleAuth as never, existsSync: () => false },
+    );
+
+    expect(result).toEqual({
+      token: 'ya29.in-app-token',
+      source: 'imported-json',
+      projectId: 'adc-project',
+      quotaProjectId: 'billing-project',
+      account: 'ada@example.com',
+    });
+    expect(constructed[0]).toMatchObject({
+      credentials: expect.objectContaining({ type: 'authorized_user', refresh_token: 'refresh' }),
+    });
   });
 });

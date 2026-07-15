@@ -391,6 +391,8 @@ export interface NativeVertexAuthRequest {
 
 export interface NativeVertexLoginResult {
   ok: boolean;
+  account?: string;
+  projectId?: string;
   error?: string;
 }
 
@@ -398,6 +400,9 @@ export interface NativeVertexDetectResult {
   ok: boolean;
   hasToken: boolean;
   account?: string;
+  projectId?: string;
+  quotaProjectId?: string;
+  source?: 'imported-json' | 'adc-file' | 'application-default' | 'gcloud';
   error?: string;
 }
 

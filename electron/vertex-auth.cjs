@@ -1,9 +1,10 @@
-const { accessSync, constants, existsSync, statSync } = require('node:fs');
+const { accessSync, constants, existsSync, readFileSync, statSync } = require('node:fs');
 const { homedir } = require('node:os');
 const { join } = require('node:path');
 
 const VALID_VERTEX_AUTH_MODES = new Set(['gcloud-user', 'gcloud-adc']);
 const WINDOWS_PLATFORM = process.platform === 'win32';
+const VERTEX_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 
 function stripOptionalQuotes(value) {
   if (typeof value !== 'string') {
@@ -279,6 +280,110 @@ function buildVertexAuthEnvironment(auth = {}, baseEnv = process.env) {
   };
 }
 
+function resolveVertexAdcPathCandidates(auth = {}, deps = {}) {
+  const platform = deps.platform || process.platform;
+  const baseEnv = deps.env || process.env;
+  const homeDirectory = deps.homeDirectory || homedir();
+  const environment = {
+    ...baseEnv,
+    ...parseVertexEnvironmentVariables(auth.environmentVariables),
+  };
+  const candidates = [];
+  const explicit = stripOptionalQuotes(environment.GOOGLE_APPLICATION_CREDENTIALS);
+  if (explicit) candidates.push(expandHomePath(explicit));
+
+  const cloudSdkConfig = stripOptionalQuotes(environment.CLOUDSDK_CONFIG);
+  if (cloudSdkConfig) {
+    candidates.push(join(expandHomePath(cloudSdkConfig), 'application_default_credentials.json'));
+  }
+
+  if (platform === 'win32') {
+    const appData = stripOptionalQuotes(environment.APPDATA) || join(homeDirectory, 'AppData', 'Roaming');
+    candidates.push(join(appData, 'gcloud', 'application_default_credentials.json'));
+  } else {
+    const xdgConfig = stripOptionalQuotes(environment.XDG_CONFIG_HOME) || join(homeDirectory, '.config');
+    candidates.push(join(xdgConfig, 'gcloud', 'application_default_credentials.json'));
+  }
+
+  return [...new Set(candidates.filter(Boolean))];
+}
+
+function parseCredentialMetadata(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('The imported Vertex credential file is not valid JSON.');
+  }
+  if (!parsed || typeof parsed !== 'object' || typeof parsed.type !== 'string') {
+    throw new Error('The imported Vertex credential JSON is missing its credential type.');
+  }
+  return {
+    credential: parsed,
+    projectId: readVertexAuthValue([parsed.project_id, parsed.quota_project_id]),
+    quotaProjectId: readVertexAuthValue([parsed.quota_project_id]),
+    account: readVertexAuthValue([parsed.account, parsed.client_email]),
+  };
+}
+
+function normalizeGoogleAccessToken(value) {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (value && typeof value.token === 'string' && value.token.trim()) return value.token.trim();
+  if (value && typeof value.access_token === 'string' && value.access_token.trim()) return value.access_token.trim();
+  return '';
+}
+
+async function getVertexAccessTokenFromAdc(auth = {}, deps = {}) {
+  const GoogleAuth = deps.GoogleAuth || require('google-auth-library').GoogleAuth;
+  const pathExists = deps.existsSync || existsSync;
+  const readCredentialFile = deps.readFileSync || readFileSync;
+  const rawImported = typeof auth.credentialJson === 'string' ? auth.credentialJson.trim() : '';
+  let metadata = {};
+  let source = 'application-default';
+  let options = { scopes: [VERTEX_SCOPE] };
+
+  if (rawImported) {
+    metadata = parseCredentialMetadata(rawImported);
+    options = { ...options, credentials: metadata.credential };
+    source = 'imported-json';
+  } else {
+    const keyFile = resolveVertexAdcPathCandidates(auth, deps).find((candidate) => pathExists(candidate));
+    if (keyFile) {
+      const raw = String(readCredentialFile(keyFile, 'utf8'));
+      metadata = parseCredentialMetadata(raw);
+      options = { ...options, keyFile };
+      source = 'adc-file';
+    } else if (normalizeVertexAuthMode(auth.mode) !== 'gcloud-adc') {
+      return undefined;
+    }
+  }
+
+  const googleAuth = new GoogleAuth(options);
+  const client = await googleAuth.getClient();
+  const token = normalizeGoogleAccessToken(await client.getAccessToken());
+  if (!token) {
+    throw new Error('Google Application Default Credentials returned an empty access token.');
+  }
+
+  let detectedProjectId = metadata.projectId;
+  if (typeof googleAuth.getProjectId === 'function') {
+    try {
+      detectedProjectId = (await googleAuth.getProjectId()) || detectedProjectId;
+    } catch {
+      // Some authorized-user ADC files intentionally have no discoverable project; the UI can list one.
+    }
+  }
+
+  return {
+    token,
+    source,
+    ...(detectedProjectId ? { projectId: detectedProjectId } : {}),
+    ...(metadata.quotaProjectId ? { quotaProjectId: metadata.quotaProjectId } : {}),
+    ...(metadata.account ? { account: metadata.account } : {}),
+  };
+}
+
 module.exports = {
   buildVertexAccessTokenCommand,
   resolveGcloudCommand,
@@ -288,4 +393,6 @@ module.exports = {
   buildVertexLoginCommand,
   buildVertexListProjectsCommand,
   parseGcloudProjectsList,
+  resolveVertexAdcPathCandidates,
+  getVertexAccessTokenFromAdc,
 };

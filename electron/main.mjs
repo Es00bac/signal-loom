@@ -69,10 +69,9 @@ const {
 const {
   buildVertexAccessTokenCommand,
   buildVertexLoginCommand,
-  buildVertexListProjectsCommand,
-  parseGcloudProjectsList,
   buildVertexAuthEnvironment,
   parseVertexEnvironmentVariables,
+  getVertexAccessTokenFromAdc,
 } = vertexAuthModule;
 const {
   buildWorkspaceWindowOpenResult,
@@ -2008,10 +2007,19 @@ function resolveVertexQuotaProjectId(request, endpointProjectId) {
     : endpointProjectId;
 }
 
-async function getGcloudAccessToken(auth) {
+async function getVertexAccessToken(auth) {
+  let adcError;
+  try {
+    const adc = await getVertexAccessTokenFromAdc(auth);
+    if (adc?.token) return adc;
+  } catch (error) {
+    adcError = error instanceof Error ? error.message : String(error);
+  }
+
+  let commandLabel = 'gcloud auth print-access-token';
   try {
     const { command, args } = buildVertexAccessTokenCommand(auth);
-    const commandLabel = args.length ? `${command} ${args.join(' ')}` : command;
+    commandLabel = args.length ? `${command} ${args.join(' ')}` : command;
     const { stdout } = await execFileAsync(command, args, {
       env: buildVertexAuthEnvironment(auth, process.env),
       timeout: 30000,
@@ -2023,11 +2031,48 @@ async function getGcloudAccessToken(auth) {
       throw new Error('gcloud returned an empty access token.');
     }
 
-    return token;
+    return { token, source: 'gcloud' };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not get a Google access token from gcloud. Tried \'${commandLabel}\'. Check Settings > Providers > Vertex AI, then run the listed gcloud login or ADC command. ${message}`);
+    throw new Error([
+      'Sloom Studio could not obtain a Vertex access token.',
+      adcError ? `Built-in ADC broker: ${adcError}` : 'No imported or system ADC file was usable.',
+      `Google Cloud SDK fallback (${commandLabel}): ${message}`,
+      'Use Settings > Providers > Vertex AI to import an ADC/service-account JSON file or start browser sign-in; no terminal command is required.',
+    ].join(' '));
   }
+}
+
+async function getGcloudAccessToken(auth) {
+  return (await getVertexAccessToken(auth)).token;
+}
+
+async function listVertexProjectsWithToken(token) {
+  const projects = [];
+  let pageToken = '';
+  do {
+    const url = new URL('https://cloudresourcemanager.googleapis.com/v1/projects');
+    url.searchParams.set('filter', 'lifecycleState:ACTIVE');
+    url.searchParams.set('pageSize', '100');
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const response = await net.fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(buildVertexErrorMessage(response.status, payload, 'project listing'));
+    }
+    for (const project of Array.isArray(payload.projects) ? payload.projects : []) {
+      if (typeof project?.projectId === 'string' && project.projectId.trim()) {
+        projects.push({
+          projectId: project.projectId.trim(),
+          name: typeof project.name === 'string' ? project.name : '',
+        });
+      }
+    }
+    pageToken = typeof payload.nextPageToken === 'string' ? payload.nextPageToken : '';
+  } while (pageToken);
+  return projects.sort((left, right) => left.projectId.localeCompare(right.projectId));
 }
 
 function extractVertexGeneratedImage(response) {
@@ -2812,6 +2857,10 @@ function installIpcHandlers() {
 
   ipcMain.handle('signal-loom:vertex-login', async (_event, request = {}) => {
     try {
+      if (request?.auth?.credentialJson) {
+        const detected = await getVertexAccessToken(request.auth);
+        return { ok: true, account: detected.account, projectId: detected.projectId };
+      }
       const { command, args } = buildVertexLoginCommand(request?.auth);
       await execFileAsync(command, args, {
         env: buildVertexAuthEnvironment(request?.auth, process.env),
@@ -2826,8 +2875,15 @@ function installIpcHandlers() {
 
   ipcMain.handle('signal-loom:vertex-detect-adc', async (_event, request = {}) => {
     try {
-      const token = await getGcloudAccessToken(request?.auth);
-      return { ok: true, hasToken: Boolean(token) };
+      const detected = await getVertexAccessToken(request?.auth);
+      return {
+        ok: true,
+        hasToken: Boolean(detected.token),
+        account: detected.account,
+        projectId: detected.projectId,
+        quotaProjectId: detected.quotaProjectId,
+        source: detected.source,
+      };
     } catch (error) {
       return { ok: false, hasToken: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -2835,13 +2891,8 @@ function installIpcHandlers() {
 
   ipcMain.handle('signal-loom:vertex-list-projects', async (_event, request = {}) => {
     try {
-      const { command, args } = buildVertexListProjectsCommand(request?.auth);
-      const { stdout } = await execFileAsync(command, args, {
-        env: buildVertexAuthEnvironment(request?.auth, process.env),
-        timeout: 60000,
-        maxBuffer: 4 * 1024 * 1024,
-      });
-      return { ok: true, projects: parseGcloudProjectsList(stdout) };
+      const detected = await getVertexAccessToken(request?.auth);
+      return { ok: true, projects: await listVertexProjectsWithToken(detected.token) };
     } catch (error) {
       return { ok: false, projects: [], error: error instanceof Error ? error.message : String(error) };
     }
