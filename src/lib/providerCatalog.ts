@@ -220,6 +220,7 @@ export const IMAGE_OUTPUT_FORMAT_OPTIONS: SelectOption[] = [
 ];
 
 export const AUDIO_OUTPUT_FORMAT_OPTIONS: SelectOption[] = [
+  { value: 'mp3_48000_192', label: 'MP3 48kHz 192kbps' },
   { value: 'mp3_44100_128', label: 'MP3 44.1kHz 128kbps' },
   { value: 'mp3_44100_64', label: 'MP3 44.1kHz 64kbps' },
   { value: 'pcm_44100', label: 'PCM 44.1kHz' },
@@ -351,11 +352,10 @@ export const FALLBACK_MODEL_OPTIONS: ModelCatalog = {
       { value: 'eleven_multilingual_v2', label: 'Eleven Multilingual v2' },
       { value: 'eleven_flash_v2_5', label: 'Eleven Flash v2.5' },
       { value: 'eleven_flash_v2', label: 'Eleven Flash v2' },
-      { value: 'eleven_ttv_v3', label: 'Eleven TTV v3' },
-      { value: 'eleven_turbo_v2_5', label: 'Eleven Turbo v2.5' },
       { value: 'eleven_multilingual_sts_v2', label: 'Eleven Multilingual STS v2' },
       { value: 'eleven_english_sts_v2', label: 'Eleven English STS v2' },
       { value: 'eleven_text_to_sound_v2', label: 'Eleven Text to Sound v2' },
+      { value: 'music_v2', label: 'Eleven Music v2' },
     ],
     huggingface: [
       { value: 'hexgrad/Kokoro-82M', label: 'Kokoro 82M' },

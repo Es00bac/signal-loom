@@ -62,7 +62,8 @@ export type ModelOperation =
   | 'video-edit'
   | 'text-to-speech'
   | 'speech-to-speech'
-  | 'text-to-sound-effect';
+  | 'text-to-sound-effect'
+  | 'text-to-music';
 
 export type ModelRequestBuilderFamily = ApiFamily | 'elevenlabs-sound-generation';
 

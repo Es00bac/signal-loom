@@ -33,6 +33,7 @@ interface BaseNodeProps {
   hasOutput?: boolean;
   customHandles?: React.ReactNode;
   onRun?: () => void;
+  runDisabledReason?: string;
   isRunning?: boolean;
   retryState?: { attempt: number; max: number; nextAttemptAt: number };
   error?: string;
@@ -55,6 +56,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
   hasOutput = true,
   customHandles,
   onRun,
+  runDisabledReason,
   isRunning = false,
   retryState,
   error,
@@ -476,12 +478,13 @@ return (
             <div className="flex items-center gap-1.5">
               <button
                 onClick={onRun}
-                disabled={isRunning}
+                disabled={isRunning || Boolean(runDisabledReason)}
                 className={withFlowNodeInteractionClasses(`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all
-                  ${isRunning
+                  ${isRunning || runDisabledReason
                     ? 'bg-blue-600/50 text-white cursor-not-allowed'
                     : 'bg-white text-black hover:bg-gray-200 shadow-sm'
                   }`)}
+                title={runDisabledReason}
                 type="button"
               >
                 {isRunning ? (

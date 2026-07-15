@@ -12,6 +12,11 @@ import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 import { assignVariableToResultAttempt } from '../../lib/flowVariables';
 import { getCompatibleNodeActions } from '../../lib/nodeActionMenu';
 import {
+  describeAudioModelCompatibility,
+  getAudioModelContract,
+  getAudioModelSupport,
+} from '../../lib/modelContracts/audioModelContracts';
+import {
   AUDIO_OUTPUT_FORMAT_OPTIONS,
   ensureVoiceOption,
   getConfiguredProviders,
@@ -20,7 +25,7 @@ import {
 } from '../../lib/providerCatalog';
 import { useCatalogStore } from '../../store/catalogStore';
 import { useSettingsStore } from '../../store/settingsStore';
-import type { AppNodeProps, AudioGenerationMode, AudioProvider, MediaNodeMode, SelectOption } from '../../types/flow';
+import type { AppNodeProps, AudioGenerationMode, AudioProvider, MediaNodeMode } from '../../types/flow';
 
 const selectClassName = withFlowNodeInteractionClasses(
   'w-full bg-[#111217]/50 text-gray-200 border border-gray-700/60 rounded-lg p-2 text-xs font-medium focus:ring-2 focus:ring-blue-500 outline-none shadow-inner',
@@ -69,10 +74,8 @@ const AUDIO_MODE_OPTIONS: Array<{ value: AudioGenerationMode; label: string }> =
   { value: 'speech', label: 'Speech' },
   { value: 'soundEffect', label: 'SFX' },
   { value: 'voiceChange', label: 'Voice' },
+  { value: 'music', label: 'Music' },
 ];
-
-const DEFAULT_SOUND_EFFECT_MODEL = 'eleven_text_to_sound_v2';
-const DEFAULT_VOICE_CHANGER_MODEL = 'eleven_multilingual_sts_v2';
 
 const VOICE_SETTING_INPUTS: Array<{
   field: 'audioStability' | 'audioSimilarityBoost' | 'audioStyleExaggeration' | 'audioSpeed';
@@ -133,7 +136,7 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
   }, [availableProviders, data, defaultModels, mediaMode, provider]);
 
   useEffect(() => {
-    if (provider !== 'elevenlabs' || audioMode === 'soundEffect' || data.voiceId) {
+    if (provider !== 'elevenlabs' || audioMode === 'soundEffect' || audioMode === 'music' || data.voiceId) {
       return;
     }
 
@@ -158,19 +161,13 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
     modelCatalog,
     data.modelId ?? defaultModels[provider],
   );
-  const modelOptions = filterAudioModelOptions(provider, audioMode, allModelOptions);
+  const modelOptions = allModelOptions;
   const selectedModelId = data.modelId ?? defaultModels[provider];
+  const modelContract = getAudioModelContract(provider, selectedModelId);
+  const modelSupport = getAudioModelSupport(provider, selectedModelId, audioMode);
+  const compatibilityWarning = describeAudioModelCompatibility(provider, selectedModelId, audioMode);
   const selectedVoiceId = data.voiceId ?? defaultVoiceId ?? elevenLabsVoices[0]?.value ?? '';
   const voiceOptions = ensureVoiceOption(elevenLabsVoices, selectedVoiceId);
-
-  useEffect(() => {
-    if (modelOptions.some((option) => option.value === selectedModelId)) {
-      return;
-    }
-
-    const nextModelId = resolveDefaultAudioModel(provider, audioMode, defaultModels[provider], modelOptions);
-    data.onChange?.('modelId', nextModelId);
-  }, [audioMode, data, defaultModels, modelOptions, provider, selectedModelId]);
 
   const handleModeChange = (nextMode: MediaNodeMode) => {
     data.onChange?.('mediaMode', nextMode);
@@ -187,7 +184,7 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
       data.onChange?.('provider', nextProvider);
       data.onChange?.(
         'modelId',
-        resolveDefaultAudioModel(nextProvider, audioMode, defaultModels[nextProvider], modelOptions),
+        defaultModels[nextProvider],
       );
     }
   };
@@ -199,24 +196,11 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
       data.onChange?.('audioGenerationMode', 'speech');
     }
 
-    const nextAudioMode = nextProvider === 'elevenlabs' ? audioMode : 'speech';
-    const nextOptions = filterAudioModelOptions(
-      nextProvider,
-      nextAudioMode,
-      getModelOptions('audio', nextProvider, modelCatalog, defaultModels[nextProvider]),
-    );
-    data.onChange?.(
-      'modelId',
-      resolveDefaultAudioModel(nextProvider, nextAudioMode, defaultModels[nextProvider], nextOptions),
-    );
+    data.onChange?.('modelId', defaultModels[nextProvider]);
   };
 
   const handleAudioGenerationModeChange = (nextMode: AudioGenerationMode) => {
     data.onChange?.('audioGenerationMode', nextMode);
-    data.onChange?.(
-      'modelId',
-      resolveDefaultAudioModel(provider, nextMode, defaultModels[provider], filterAudioModelOptions(provider, nextMode, allModelOptions)),
-    );
     data.onChange?.('error', undefined);
   };
 
@@ -304,6 +288,7 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
       title={mediaMode === 'import' ? 'Audio Asset' : 'Audio Generation'}
       outputActions={getCompatibleNodeActions('audioGen')}
       onRun={mediaMode === 'generate' ? data.onRun : undefined}
+      runDisabledReason={mediaMode === 'generate' ? compatibilityWarning : undefined}
       isRunning={data.isRunning}
       error={data.error}
       statusMessage={data.statusMessage}
@@ -349,7 +334,7 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
               </select>
 
               {provider === 'elevenlabs' ? (
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-4 gap-2">
                   {AUDIO_MODE_OPTIONS.map((option) => (
                     <ModeButton
                       key={option.value}
@@ -372,6 +357,22 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
                   </option>
                 ))}
               </select>
+
+              {compatibilityWarning ? (
+                <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
+                  {compatibilityWarning} Choose a compatible model or mode before running; the selection is preserved so saved and live catalog entries are never silently replaced.
+                </div>
+              ) : null}
+
+              {modelContract.lifecycle !== 'stable' ? (
+                <div className="rounded-lg border border-gray-600/60 bg-[#111217]/35 px-2.5 py-2 text-[11px] text-gray-300">
+                  {modelContract.lifecycle === 'preview'
+                    ? `${modelContract.displayName} is a preview model and its availability or schema may change.`
+                    : modelContract.lifecycle === 'unverified'
+                      ? `${modelContract.displayName} came from a live/saved catalog entry without a curated capability contract; only its safe base operation is enabled.`
+                      : `${modelContract.displayName} is ${modelContract.lifecycle}.`}
+                </div>
+              ) : null}
             </>
           ) : (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
@@ -379,6 +380,10 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
             </div>
           )}
 
+          <fieldset
+            className={!modelSupport.operationSupported ? 'space-y-2 opacity-55' : 'contents'}
+            disabled={!modelSupport.operationSupported}
+          >
           {provider === 'gemini' ? (
             <>
               <select
@@ -409,7 +414,7 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
             </>
           ) : null}
 
-          {provider === 'elevenlabs' && audioMode !== 'soundEffect' ? (
+          {provider === 'elevenlabs' && audioMode !== 'soundEffect' && audioMode !== 'music' ? (
             <select
               className={selectClassName}
               onChange={(event) => data.onChange?.('voiceId', event.target.value)}
@@ -587,8 +592,65 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
                   </div>
                 </>
               ) : null}
+
+              {audioMode === 'music' ? (
+                <>
+                  <select
+                    className={selectClassName}
+                    onChange={(event) => data.onChange?.('audioOutputFormat', event.target.value)}
+                    value={data.audioOutputFormat ?? 'mp3_48000_192'}
+                  >
+                    {AUDIO_OUTPUT_FORMAT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  <input
+                    className={selectClassName}
+                    inputMode="numeric"
+                    max="600"
+                    min="3"
+                    onChange={(event) =>
+                      data.onChange?.(
+                        'audioDurationSeconds',
+                        event.target.value.trim() ? Number(event.target.value) : undefined,
+                      )
+                    }
+                    placeholder="Track duration 3–600 seconds"
+                    type="number"
+                    value={data.audioDurationSeconds ?? ''}
+                  />
+
+                  <label className={withFlowNodeInteractionClasses('flex items-center gap-2 rounded-lg border border-gray-700/60 bg-[#111217]/25 px-2.5 py-2 text-[11px] text-gray-300')}>
+                    <input
+                      checked={Boolean(data.audioForceInstrumental)}
+                      className={withFlowNodeInteractionClasses()}
+                      onChange={(event) => data.onChange?.('audioForceInstrumental', event.target.checked)}
+                      type="checkbox"
+                    />
+                    Force instrumental
+                  </label>
+
+                  <input
+                    aria-label="Music seed"
+                    className={selectClassName}
+                    disabled
+                    placeholder="Seed requires composition-plan mode"
+                    title="The ElevenLabs prompt route cannot combine seed with prompt; composition plans are not exposed yet."
+                    type="number"
+                    value=""
+                  />
+
+                  <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-2.5 py-2 text-[11px] text-blue-100">
+                    Music v2 turns the upstream prompt into a complete track. Describe genre, instruments, energy, structure, and lyrics; API access requires a paid ElevenLabs plan.
+                  </div>
+                </>
+              ) : null}
             </>
           ) : null}
+          </fieldset>
         </>
       ) : (
         <label className={`${actionButtonClassName} justify-center cursor-pointer`}>
@@ -613,51 +675,6 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
 }
 
 export const AudioNode = memo(AudioNodeComponent);
-
-export function filterAudioModelOptions(
-  provider: AudioProvider,
-  audioMode: AudioGenerationMode,
-  options: SelectOption[],
-): SelectOption[] {
-  if (provider !== 'elevenlabs') {
-    return options;
-  }
-
-  return options.filter((option) => {
-    const modelId = option.value.toLowerCase();
-
-    if (audioMode === 'soundEffect') {
-      return modelId.includes('sound');
-    }
-
-    if (audioMode === 'voiceChange') {
-      return modelId.includes('_sts_');
-    }
-
-    // `_ttv_` models are Text-to-Voice DESIGN models (voice creation), not TTS — the
-    // /v1/text-to-speech endpoint rejects them, so never offer them in Speech mode.
-    return !modelId.includes('_sts_') && !modelId.includes('sound') && !modelId.includes('_ttv_');
-  });
-}
-
-function resolveDefaultAudioModel(
-  provider: AudioProvider,
-  audioMode: AudioGenerationMode,
-  fallbackModel: string,
-  options: SelectOption[],
-): string {
-  if (provider === 'elevenlabs') {
-    if (audioMode === 'soundEffect') {
-      return options[0]?.value ?? DEFAULT_SOUND_EFFECT_MODEL;
-    }
-
-    if (audioMode === 'voiceChange') {
-      return options[0]?.value ?? DEFAULT_VOICE_CHANGER_MODEL;
-    }
-  }
-
-  return options[0]?.value ?? fallbackModel;
-}
 
 interface ModeButtonProps {
   active: boolean;

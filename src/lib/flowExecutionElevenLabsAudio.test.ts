@@ -148,4 +148,46 @@ describe('executeNodeRequest ElevenLabs speech', () => {
     expect(body.voice_settings).toEqual({ stability: 0.8 });
     expect(body.seed).toBeUndefined();
   });
+
+  it('composes Music v2 with prompt-route controls and documented units', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(audioResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    await executeNodeRequest(
+      createAudioNode({
+        modelId: 'music_v2',
+        audioGenerationMode: 'music',
+        audioDurationSeconds: 12.5,
+        audioForceInstrumental: true,
+        audioSeed: 123,
+      }),
+      {
+        prompt: 'Cinematic chamber strings with a restrained pulse.',
+        config: { ...DEFAULT_EXECUTION_CONFIG, audioOutputFormat: 'mp3_48000_192' },
+      },
+      settings,
+    );
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.elevenlabs.io/v1/music?output_format=mp3_48000_192');
+    expect(JSON.parse(String(init.body))).toEqual({
+      prompt: 'Cinematic chamber strings with a restrained pulse.',
+      model_id: 'music_v2',
+      music_length_ms: 12_500,
+      force_instrumental: true,
+    });
+  });
+
+  it('fails closed before fetch when a selected model cannot run the selected mode', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(executeNodeRequest(
+      createAudioNode({ modelId: 'eleven_v3', audioGenerationMode: 'soundEffect' }),
+      { prompt: 'A heavy metal door impact.', config: DEFAULT_EXECUTION_CONFIG },
+      settings,
+    )).rejects.toThrow('does not support text to sound effect');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

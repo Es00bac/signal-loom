@@ -12,6 +12,7 @@ const genAiCapture = vi.hoisted(() => ({
 vi.mock('@google/genai', () => ({
   GoogleGenAI: class {
     models: { generateContent: (request: Record<string, unknown>) => Promise<unknown> };
+    interactions: { create: (request: Record<string, unknown>) => Promise<unknown> };
     constructor(opts: { apiKey?: string }) {
       genAiCapture.apiKey = opts.apiKey;
       this.models = {
@@ -20,6 +21,12 @@ vi.mock('@google/genai', () => ({
           return {
             candidates: [{ content: { parts: [{ inlineData: { data: 'AAAA', mimeType: 'audio/pcm' } }] } }],
           };
+        },
+      };
+      this.interactions = {
+        create: async (request: Record<string, unknown>) => {
+          genAiCapture.requests.push(request);
+          return { output_audio: { type: 'audio', data: 'AAAA', mime_type: 'audio/pcm' } };
         },
       };
     }
@@ -171,7 +178,12 @@ describe('executeNodeRequest Vertex text routing', () => {
 
     expect(result.resultType).toBe('audio');
     expect(genAiCapture.apiKey).toBe('DO_NOT_USE_GEMINI_API_KEY');
-    expect(genAiCapture.requests[0]).toMatchObject({ model: 'gemini-3.1-flash-tts-preview' });
+    expect(genAiCapture.requests[0]).toMatchObject({
+      model: 'gemini-3.1-flash-tts-preview',
+      input: expect.stringContaining('Narrate this line.'),
+      response_format: { type: 'audio' },
+      generation_config: { speech_config: [{ voice: 'Kore' }] },
+    });
   });
 
   it('fails Gemini TTS with a key-focused error when no API key is configured', async () => {

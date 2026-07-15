@@ -75,7 +75,7 @@ export type ImageProvider = 'gemini' | 'openai' | 'huggingface' | 'bfl' | 'stabi
 export type VideoProvider = 'gemini' | 'huggingface' | 'atlas';
 export type AudioProvider = 'gemini' | 'elevenlabs' | 'huggingface';
 export type ColorSwatchUsageMode = 'primary' | 'theme' | 'brand' | 'grade';
-export type AudioGenerationMode = 'speech' | 'soundEffect' | 'voiceChange';
+export type AudioGenerationMode = 'speech' | 'soundEffect' | 'voiceChange' | 'music';
 export type AspectRatio =
   | '1:1'
   | '2:3'
@@ -89,7 +89,7 @@ export type AspectRatio =
   | '21:9';
 export type VideoResolution = '720p' | '1080p' | '4k';
 export type ImageOutputFormat = 'png' | 'jpeg' | 'webp';
-export type AudioOutputFormat = 'mp3_44100_128' | 'mp3_44100_64' | 'pcm_44100';
+export type AudioOutputFormat = 'mp3_48000_192' | 'mp3_44100_128' | 'mp3_44100_64' | 'pcm_44100';
 export type ResultType = 'text' | 'number' | 'boolean' | 'json' | 'image' | 'video' | 'audio' | 'package' | 'list' | 'envelope';
 export const FUNCTION_NODE_SCHEMA_VERSION = 1 as const;
 export type DynamicValue = string | number | boolean | null | Record<string, unknown> | unknown[];
@@ -978,6 +978,7 @@ export interface NodeData {
   audioDurationSeconds?: number;
   audioPromptInfluence?: number;
   audioRemoveBackgroundNoise?: boolean;
+  audioForceInstrumental?: boolean;
   videoSeed?: number;
   videoReference1Type?: VideoReferenceType;
   videoReference2Type?: VideoReferenceType;

@@ -117,6 +117,10 @@ import {
 } from './videoModelSupport';
 import { getVideoModelContract } from './modelContracts/videoModelContracts';
 import {
+  audioModeToOperation,
+  getAudioModelContract,
+} from './modelContracts/audioModelContracts';
+import {
   buildBackendProxyExecuteRequest,
   shouldUseBackendProxy,
 } from './backendProxy';
@@ -3183,6 +3187,15 @@ async function executeAudioNode(
   const audioMode = (node.data.audioGenerationMode as string | undefined) ?? 'speech';
   const prompt = context.prompt.trim();
 
+  const modelContract = getAudioModelContract(provider, modelId);
+  const operation = audioModeToOperation(audioMode as import('../types/flow').AudioGenerationMode);
+  if (modelContract.availability === 'unavailable') {
+    throw new NonRetryableError(`${modelContract.displayName} is unavailable.${modelContract.migrationModelId ? ` Choose ${modelContract.migrationModelId}.` : ''}`);
+  }
+  if (!modelContract.operations.includes(operation)) {
+    throw new NonRetryableError(`${modelContract.displayName} does not support ${operation.replaceAll('-', ' ')}. Choose a compatible model or audio mode.`);
+  }
+
   if (audioMode !== 'voiceChange' && !prompt) {
     throw new Error('Audio nodes need an upstream text prompt.');
   }
@@ -3214,21 +3227,34 @@ async function executeAudioNode(
         prompt,
         normalizeOptionalString(node.data.audioStyleDescription as string | undefined),
       );
-      const response = await client.models.generateContent({
-        model: modelId,
-        contents: [{ parts: [{ text: ttsPrompt }] }],
-        config: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName,
+      let audioBase64: string | undefined;
+      if (modelContract.apiFamily === 'google-interactions') {
+        const interaction = await client.interactions.create({
+          model: modelId,
+          input: ttsPrompt,
+          response_format: { type: 'audio' },
+          generation_config: {
+            speech_config: [{ voice: voiceName }],
+          },
+        } as never);
+        audioBase64 = extractGeminiInteractionAudio(interaction);
+      } else {
+        const response = await client.models.generateContent({
+          model: modelId,
+          contents: [{ parts: [{ text: ttsPrompt }] }],
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName,
+                },
               },
             },
           },
-        },
-      });
-      const audioBase64 = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        });
+        audioBase64 = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      }
 
       if (!audioBase64) {
         throw new Error('Gemini TTS did not return audio data.');
@@ -3271,7 +3297,7 @@ async function executeAudioNode(
             body: JSON.stringify({
               text: prompt,
               model_id: modelId,
-              ...(speechSeed !== undefined ? { seed: Math.max(0, Math.floor(speechSeed)) } : {}),
+              ...(speechSeed !== undefined ? { seed: Math.min(4_294_967_295, Math.max(0, Math.floor(speechSeed))) } : {}),
               ...(voiceSettings ? { voice_settings: voiceSettings } : {}),
             }),
           },
@@ -3303,8 +3329,8 @@ async function executeAudioNode(
               text: prompt,
               model_id: modelId,
               loop: Boolean(node.data.audioLoop),
-              duration_seconds: coerceOptionalNumber(node.data.audioDurationSeconds),
-              prompt_influence: coerceOptionalNumber(node.data.audioPromptInfluence),
+              duration_seconds: clampOptionalNumber(coerceOptionalNumber(node.data.audioDurationSeconds), 0.5, 30),
+              prompt_influence: clampOptionalNumber(coerceOptionalNumber(node.data.audioPromptInfluence), 0, 1),
             }),
           },
         );
@@ -3321,6 +3347,47 @@ async function executeAudioNode(
             characters: prompt.length,
             confidence: 'unknown',
             notes: ['ElevenLabs sound-effect pricing is not currently mapped in the app.'],
+          }),
+        };
+      }
+
+      if (audioMode === 'music') {
+        if (prompt.length > 4_100) {
+          throw new NonRetryableError('Eleven Music v2 prompts are limited to 4,100 characters. Shorten the upstream prompt before running.');
+        }
+
+        onStatus?.('Composing music with ElevenLabs Music v2…');
+        const durationSeconds = clampOptionalNumber(coerceOptionalNumber(node.data.audioDurationSeconds), 3, 600);
+        const outputFormat = context.config.audioOutputFormat;
+        const response = await fetch(
+          `https://api.elevenlabs.io/v1/music?output_format=${outputFormat}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'xi-api-key': apiKey,
+            },
+            body: JSON.stringify({
+              prompt,
+              model_id: modelId,
+              ...(durationSeconds !== undefined ? { music_length_ms: Math.round(durationSeconds * 1_000) } : {}),
+              force_instrumental: Boolean(node.data.audioForceInstrumental),
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(await extractErrorBody(response, 'ElevenLabs music generation failed'));
+        }
+
+        return {
+          result: await toResultUrl(await response.blob()),
+          resultType: 'audio',
+          statusMessage: `Generated music with ${modelId}`,
+          usage: buildAudioUsage('elevenlabs', modelId, {
+            characters: prompt.length,
+            confidence: 'unknown',
+            notes: ['ElevenLabs music pricing is not currently mapped in the app.'],
           }),
         };
       }
@@ -3347,7 +3414,7 @@ async function executeAudioNode(
       const seedValue = coerceOptionalNumber(node.data.audioSeed);
 
       if (seedValue !== undefined) {
-        formData.append('seed', String(Math.max(0, Math.floor(seedValue))));
+        formData.append('seed', String(Math.min(4_294_967_295, Math.max(0, Math.floor(seedValue)))));
       }
 
       const response = await fetch(
@@ -4133,6 +4200,25 @@ async function pcmBase64ToWavBlob(base64: string, sampleRate = 24_000): Promise<
   view.setUint32(40, bytes.length, true);
 
   return new Blob([header, bytes], { type: 'audio/wav' });
+}
+
+function extractGeminiInteractionAudio(interaction: unknown): string | undefined {
+  if (!interaction || typeof interaction !== 'object') return undefined;
+  const record = interaction as Record<string, unknown>;
+  const output = (record.output_audio ?? record.outputAudio) as Record<string, unknown> | undefined;
+  if (output && typeof output.data === 'string') return output.data;
+
+  const outputs = Array.isArray(record.outputs) ? record.outputs : [];
+  for (const candidate of outputs) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const item = candidate as Record<string, unknown>;
+    if (item.type === 'audio' && typeof item.data === 'string') return item.data;
+  }
+  return undefined;
+}
+
+function clampOptionalNumber(value: number | undefined, min: number, max: number): number | undefined {
+  return value === undefined ? undefined : Math.min(max, Math.max(min, value));
 }
 
 function writeAscii(view: DataView, offset: number, value: string): void {
