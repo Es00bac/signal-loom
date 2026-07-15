@@ -32,7 +32,7 @@ export function buildDesktopLauncherInstallPlan({
       `Exec=${binTarget}`,
       'Icon=signal-loom',
       'Terminal=false',
-      'Categories=AudioVideo;AudioVideoEditing;Graphics;',
+      'Categories=AudioVideo;AudioVideoEditing;',
       'Keywords=video;audio;multimedia;editor;timeline;comic;manga;publishing;',
       'StartupNotify=true',
       'StartupWMClass=Sloom Studio',

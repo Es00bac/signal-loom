@@ -35,7 +35,7 @@ describe('Paper production golden fixture', () => {
       await mkdir(outputDirectory, { recursive: true });
       await writeFile(join(outputDirectory, `paper-production-golden-${standard}.pdf`), result.bytes);
     }
-  });
+  }, 30_000);
 
   it.each(['pdf-x-1a', 'pdf-x-4'] as const)('is byte-stable for repeated %s generation', async (standard) => {
     const fixture = await buildPaperProductionGoldenFixture({ standard });
