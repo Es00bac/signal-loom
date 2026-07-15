@@ -1082,6 +1082,7 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
                   isConnected={reference.isConnected}
                   key={reference.handleId}
                   label={`Reference ${index + 1}`}
+                  side={index % 2 === 0 ? 'left' : 'right'}
                 />
               ))}
             </div>
@@ -1325,16 +1326,26 @@ interface ImageReferenceSlotProps {
   imageUrl?: string;
   isConnected: boolean;
   label: string;
+  side: 'left' | 'right';
 }
 
-function ImageReferenceSlot({ handleId, imageUrl, isConnected, label }: ImageReferenceSlotProps) {
+function ImageReferenceSlot({ handleId, imageUrl, isConnected, label, side }: ImageReferenceSlotProps) {
+  const isLeft = side === 'left';
   return (
-    <div className="relative rounded-lg border border-gray-700/60 bg-[#111217]/35 p-2 pl-5">
+    <div
+      className={`relative rounded-lg border border-gray-700/60 bg-[#111217]/35 p-2 ${isLeft ? 'pl-5' : 'pr-5'}`}
+      data-reference-side={side}
+    >
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute top-1/2 h-px w-4 -translate-y-1/2 bg-blue-400/70 ${isLeft ? 'left-0' : 'right-0'}`}
+      />
       <Handle
         id={handleId}
         type="target"
-        position={Position.Left}
-        className={`nodrag nopan !left-0 !top-1/2 !-translate-x-1/2 !-translate-y-1/2 !w-6 !h-6 !border-[3px] !border-[#1e2027] ${isConnected ? '!bg-emerald-500' : '!bg-blue-500'}`}
+        position={isLeft ? Position.Left : Position.Right}
+        className={`nodrag nopan !top-1/2 !-translate-y-1/2 !w-6 !h-6 !border-[3px] !border-[#1e2027] ${isLeft ? '!left-0 !-translate-x-1/2' : '!right-0 !translate-x-1/2'} ${isConnected ? '!bg-emerald-500' : '!bg-blue-500'}`}
+        title={`${label} image input (${side} edge)`}
       />
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-400">{label}</div>
       <ImagePreviewPane

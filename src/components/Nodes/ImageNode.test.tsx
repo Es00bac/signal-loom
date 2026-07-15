@@ -107,3 +107,77 @@ describe('ImageNode mask painter controls', () => {
     expect(html).toContain('Open outpaint workspace');
   });
 });
+
+describe('ImageNode reference handle routing', () => {
+  beforeEach(() => {
+    useFlowStore.setState({ nodes: [], edges: [] });
+  });
+
+  it('places left-column references on the exterior left and right-column references on the exterior right', () => {
+    useFlowStore.setState({
+      nodes: [createNode('target-image', 'imageGen')],
+      edges: [],
+    });
+
+    const html = renderToStaticMarkup(
+      <ReactFlowProvider>
+        <ImageNode
+          data={{
+            mediaMode: 'generate',
+            provider: 'bfl',
+            modelId: 'flux-2-pro',
+            onChange: () => undefined,
+          }}
+          deletable
+          dragging={false}
+          draggable
+          id="target-image"
+          isConnectable
+          positionAbsoluteX={0}
+          positionAbsoluteY={0}
+          selectable
+          selected={false}
+          type="imageGen"
+          zIndex={0}
+        />
+      </ReactFlowProvider>,
+    );
+
+    expect(referenceHandleTag(html, 'image-reference-1')).toContain('react-flow__handle-left');
+    expect(referenceHandleTag(html, 'image-reference-2')).toContain('react-flow__handle-right');
+    expect(referenceHandleTag(html, 'image-reference-7')).toContain('react-flow__handle-left');
+    expect(referenceHandleTag(html, 'image-reference-8')).toContain('react-flow__handle-right');
+  });
+
+  it('labels exterior reference targets so right-side inputs are not mistaken for the image output', () => {
+    useFlowStore.setState({ nodes: [createNode('target-image', 'imageGen')], edges: [] });
+
+    const html = renderToStaticMarkup(
+      <ReactFlowProvider>
+        <ImageNode
+          data={{ mediaMode: 'generate', provider: 'bfl', modelId: 'flux-2-pro' }}
+          deletable
+          dragging={false}
+          draggable
+          id="target-image"
+          isConnectable
+          positionAbsoluteX={0}
+          positionAbsoluteY={0}
+          selectable
+          selected={false}
+          type="imageGen"
+          zIndex={0}
+        />
+      </ReactFlowProvider>,
+    );
+
+    expect(referenceHandleTag(html, 'image-reference-2')).toContain('title="Reference 2 image input (right edge)"');
+    expect(html).toContain('data-reference-side="right"');
+  });
+});
+
+function referenceHandleTag(html: string, handleId: string): string {
+  const tag = html.match(new RegExp(`<div[^>]*data-handleid="${handleId}"[^>]*>`))?.[0];
+  expect(tag, `Expected ${handleId} handle in rendered Image node`).toBeDefined();
+  return tag ?? '';
+}
