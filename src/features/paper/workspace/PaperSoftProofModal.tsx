@@ -37,25 +37,23 @@ export function PaperSoftProofModal({ document, pageId, onClose, onConfigureProf
   useEffect(() => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    if (!selectedProfile) {
-      setPreview(null);
+    if (!selectedProfile) return;
+    void (async () => {
+      await Promise.resolve();
+      if (requestIdRef.current !== requestId) return;
+      setLoading(true);
       setError(null);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    void softProofPaperPageInBrowser(document, pageId, { simulatePaperWhite })
-      .then((result) => {
+      try {
+        const result = await softProofPaperPageInBrowser(document, pageId, { simulatePaperWhite });
         if (requestIdRef.current !== requestId) return;
         setPreview(result);
         setLoading(false);
-      })
-      .catch((err: unknown) => {
+      } catch (err: unknown) {
         if (requestIdRef.current !== requestId) return;
         setError(err instanceof Error ? err.message : 'Could not build the soft-proof preview.');
         setLoading(false);
-      });
+      }
+    })();
   }, [document, pageId, selectedProfile, simulatePaperWhite]);
 
   return (
