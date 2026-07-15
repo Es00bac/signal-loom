@@ -3,9 +3,8 @@
 //
 // Usage: ATLAS_API_KEY=... OPENAI_API_KEY=... GEMINI_API_KEY=... npm run sync:catalog
 //
-// Capabilities are NOT stored here — the app derives them at use-time via
-// inferImageModelCapabilities (src/lib/imageModelInference.ts). This snapshot keeps the
-// committed default catalog current and surfaces drift for CI / manual seed updates.
+// Capabilities are NOT inferred from model names. Curated request contracts in
+// src/lib/modelContracts remain the authority; this snapshot only detects provider-list drift.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -23,10 +22,20 @@ export function diffModelIds(current, discovered) {
   };
 }
 
+export function hasCatalogDrift(perProviderDrift) {
+  return Object.values(perProviderDrift).some((drift) => drift.added.length > 0 || drift.removed.length > 0);
+}
+
 export function extractModelIds(provider, payload) {
   if (provider === 'gemini') {
     return (payload?.models ?? [])
       .map((model) => String(model?.name ?? '').replace(/^models\//, ''))
+      .filter(Boolean);
+  }
+  if (provider === 'elevenlabs') {
+    const models = Array.isArray(payload) ? payload : payload?.models ?? [];
+    return models
+      .map((model) => String(model?.model_id ?? model?.modelId ?? ''))
       .filter(Boolean);
   }
   return (payload?.data ?? [])
@@ -51,6 +60,7 @@ const PROVIDER_ENDPOINTS = {
   }),
   openai: (key) => ({ url: 'https://api.openai.com/v1/models', headers: { Authorization: `Bearer ${key}` } }),
   atlas: (key) => ({ url: 'https://api.atlascloud.ai/api/v1/models', headers: { Authorization: `Bearer ${key}` } }),
+  elevenlabs: (key) => ({ url: 'https://api.elevenlabs.io/v1/models', headers: { 'xi-api-key': key } }),
 };
 
 async function fetchProviderModelIds(provider, key) {
@@ -75,9 +85,12 @@ async function main() {
     gemini: process.env.GEMINI_API_KEY,
     openai: process.env.OPENAI_API_KEY,
     atlas: process.env.ATLAS_API_KEY,
+    elevenlabs: process.env.ELEVENLABS_API_KEY,
   };
+  const checkOnly = process.argv.includes('--check');
   const previous = await readPreviousSnapshot();
   const perProvider = {};
+  const perProviderDrift = {};
 
   for (const [provider, key] of Object.entries(keys)) {
     if (!key) {
@@ -88,6 +101,7 @@ async function main() {
       const ids = await fetchProviderModelIds(provider, key);
       perProvider[provider] = ids;
       const drift = diffModelIds(previous.providers?.[provider] ?? [], ids);
+      perProviderDrift[provider] = drift;
       console.log(`- ${provider}: ${ids.length} models (+${drift.added.length} / -${drift.removed.length})`);
       if (drift.added.length) console.log(`    added: ${drift.added.join(', ')}`);
       if (drift.removed.length) console.log(`    removed: ${drift.removed.join(', ')}`);
@@ -97,7 +111,18 @@ async function main() {
   }
 
   if (Object.keys(perProvider).length === 0) {
-    console.log('No providers fetched (set GEMINI_API_KEY / OPENAI_API_KEY / ATLAS_API_KEY). Nothing written.');
+    console.log('No providers fetched (set GEMINI_API_KEY / OPENAI_API_KEY / ATLAS_API_KEY / ELEVENLABS_API_KEY). Nothing written.');
+    if (checkOnly) process.exitCode = 2;
+    return;
+  }
+
+  if (checkOnly) {
+    if (hasCatalogDrift(perProviderDrift)) {
+      console.error('Provider model catalog drift detected. Run npm run sync:catalog, audit new/removed IDs, and update contracts before committing the snapshot.');
+      process.exitCode = 1;
+    } else {
+      console.log('No provider model catalog drift detected.');
+    }
     return;
   }
 

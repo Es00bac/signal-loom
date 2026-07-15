@@ -6,6 +6,11 @@ import {
   FALLBACK_VOICE_OPTIONS,
 } from '../lib/providerCatalog';
 import { normalizeGeminiVideoModelId } from '../lib/videoModelSupport';
+import { getProviderModelContract, type ProviderModelContract } from '../lib/providerModelContracts';
+import { TEXT_MODEL_CONTRACTS } from '../lib/modelContracts/textModelContracts';
+import { IMAGE_MODEL_CONTRACTS } from '../lib/modelContracts/imageModelContractAdapter';
+import { VIDEO_MODEL_CONTRACTS } from '../lib/modelContracts/videoModelContracts';
+import { AUDIO_MODEL_CONTRACTS } from '../lib/modelContracts/audioModelContracts';
 import type {
   ModelCatalog,
   RuntimeSettingsSnapshot,
@@ -44,6 +49,8 @@ interface ElevenLabsModelRecord {
   canDoVoiceConversion?: boolean;
   can_do_text_to_sound_effects?: boolean;
   canDoTextToSoundEffects?: boolean;
+  can_do_music?: boolean;
+  canDoMusic?: boolean;
 }
 
 interface ElevenLabsVoiceRecord {
@@ -131,10 +138,7 @@ export function addGeminiModelRecordToCatalog(catalog: ModelCatalog, model: Gemi
   };
 
   if (lowerName.includes('omni') && lowerName.startsWith('gemini-')) {
-    catalog.text.gemini.push(option);
-    catalog.image.gemini.push(option);
     catalog.video.gemini.push(option);
-    catalog.audio.gemini.push(option);
     return;
   }
 
@@ -186,6 +190,7 @@ async function fetchOpenAIModels(
   catalog.text.openai = dedupeOptions(catalog.text.openai);
   catalog.image.openai = dedupeOptions(catalog.image.openai);
   catalog.image.atlas = dedupeOptions(catalog.image.atlas);
+  catalog.video.atlas = dedupeOptions(catalog.video.atlas);
 
   return catalog;
 }
@@ -208,6 +213,10 @@ export function addOpenAICompatibleModelRecordToCatalog(
   const lowerId = modelId.toLowerCase();
 
   if (provider === 'atlas') {
+    if (isAtlasDiscoverableVideoModelId(lowerId)) {
+      catalog.video.atlas.push(option);
+      return;
+    }
     if (isAtlasDiscoverableImageModelId(lowerId)) {
       catalog.image.atlas.push(option);
     }
@@ -230,6 +239,10 @@ export function addOpenAICompatibleModelRecordToCatalog(
   }
 
   catalog.text.openai.push(option);
+}
+
+function isAtlasDiscoverableVideoModelId(lowerId: string): boolean {
+  return lowerId.includes('video') || lowerId.includes('veo') || lowerId.includes('seedance');
 }
 
 function isAtlasDiscoverableImageModelId(lowerId: string): boolean {
@@ -271,12 +284,16 @@ async function fetchElevenLabsModels(apiKey: string): Promise<SelectOption[]> {
         const supportsTts = model.can_do_text_to_speech ?? model.canDoTextToSpeech;
         const supportsVoiceConversion = model.can_do_voice_conversion ?? model.canDoVoiceConversion;
         const supportsSoundEffects = model.can_do_text_to_sound_effects ?? model.canDoTextToSoundEffects;
+        const supportsMusic = model.can_do_music ?? model.canDoMusic;
+        const modelId = (model.model_id ?? model.modelId ?? '').trim();
+
+        if (VESTIGIAL_MODEL_IDS.has(modelId)) return false;
+        if (modelId === 'music_v2') return true;
 
         if (typeof supportsTts === 'boolean') {
-          return supportsTts || Boolean(supportsVoiceConversion) || Boolean(supportsSoundEffects);
+          return supportsTts || Boolean(supportsVoiceConversion) || Boolean(supportsSoundEffects) || Boolean(supportsMusic);
         }
 
-        const modelId = model.model_id ?? model.modelId ?? '';
         return modelId.startsWith('eleven_');
       })
       .map((model) => ({
@@ -314,56 +331,60 @@ async function fetchElevenLabsVoices(apiKey: string): Promise<VoiceOption[]> {
   );
 }
 
-function mergeCatalog(target: ModelCatalog, partial: Partial<ModelCatalog>): ModelCatalog {
+const MODEL_CONTRACTS_BY_CAPABILITY: Record<keyof ModelCatalog, readonly ProviderModelContract[]> = {
+  text: TEXT_MODEL_CONTRACTS,
+  image: IMAGE_MODEL_CONTRACTS,
+  video: VIDEO_MODEL_CONTRACTS,
+  audio: AUDIO_MODEL_CONTRACTS,
+};
+
+const VESTIGIAL_MODEL_IDS = new Set([
+  'eleven_ttv_v3',
+  'eleven_multilingual_ttv_v2',
+  'eleven_turbo_v2_5',
+  'eleven_turbo_v2',
+  'eleven_monolingual_v1',
+  'eleven_multilingual_v1',
+]);
+
+function mergeDiscoveredOptions(
+  curated: SelectOption[],
+  discovered: SelectOption[] | undefined,
+  capability: keyof ModelCatalog,
+  providerId: string,
+): SelectOption[] {
+  const allowed = (discovered ?? []).filter((option) => {
+    if (VESTIGIAL_MODEL_IDS.has(option.value)) return false;
+    const contract = getProviderModelContract(
+      MODEL_CONTRACTS_BY_CAPABILITY[capability],
+      providerId,
+      option.value,
+    );
+    return !contract || (
+      contract.lifecycle !== 'deprecated'
+      && contract.lifecycle !== 'shutdown'
+      && contract.availability !== 'unavailable'
+    );
+  });
+  return dedupeOptions([...curated, ...allowed]);
+}
+
+export function mergeCatalog(target: ModelCatalog, partial: Partial<ModelCatalog>): ModelCatalog {
   const merged = cloneModelCatalog(target);
 
-  if (partial.text?.gemini?.length) {
-    merged.text.gemini = partial.text.gemini;
-  }
-
-  if (partial.text?.openai?.length) {
-    merged.text.openai = partial.text.openai;
-  }
-
-  if (partial.text?.huggingface?.length) {
-    merged.text.huggingface = partial.text.huggingface;
-  }
-
-  if (partial.image?.gemini?.length) {
-    merged.image.gemini = partial.image.gemini;
-  }
-
-  if (partial.image?.openai?.length) {
-    merged.image.openai = partial.image.openai;
-  }
-
-  if (partial.image?.atlas?.length) {
-    merged.image.atlas = partial.image.atlas;
-  }
-
-  if (partial.image?.huggingface?.length) {
-    merged.image.huggingface = partial.image.huggingface;
-  }
-
-  if (partial.video?.gemini?.length) {
-    merged.video.gemini = partial.video.gemini;
-  }
-
-  if (partial.video?.huggingface?.length) {
-    merged.video.huggingface = partial.video.huggingface;
-  }
-
-  if (partial.audio?.gemini?.length) {
-    merged.audio.gemini = partial.audio.gemini;
-  }
-
-  if (partial.audio?.elevenlabs?.length) {
-    merged.audio.elevenlabs = partial.audio.elevenlabs;
-  }
-
-  if (partial.audio?.huggingface?.length) {
-    merged.audio.huggingface = partial.audio.huggingface;
-  }
+  merged.text.gemini = mergeDiscoveredOptions(target.text.gemini, partial.text?.gemini, 'text', 'gemini');
+  merged.text.openai = mergeDiscoveredOptions(target.text.openai, partial.text?.openai, 'text', 'openai');
+  merged.text.huggingface = mergeDiscoveredOptions(target.text.huggingface, partial.text?.huggingface, 'text', 'huggingface');
+  merged.image.gemini = mergeDiscoveredOptions(target.image.gemini, partial.image?.gemini, 'image', 'gemini');
+  merged.image.openai = mergeDiscoveredOptions(target.image.openai, partial.image?.openai, 'image', 'openai');
+  merged.image.atlas = mergeDiscoveredOptions(target.image.atlas, partial.image?.atlas, 'image', 'atlas');
+  merged.image.huggingface = mergeDiscoveredOptions(target.image.huggingface, partial.image?.huggingface, 'image', 'huggingface');
+  merged.video.gemini = mergeDiscoveredOptions(target.video.gemini, partial.video?.gemini, 'video', 'gemini');
+  merged.video.huggingface = mergeDiscoveredOptions(target.video.huggingface, partial.video?.huggingface, 'video', 'huggingface');
+  merged.video.atlas = mergeDiscoveredOptions(target.video.atlas, partial.video?.atlas, 'video', 'atlas');
+  merged.audio.gemini = mergeDiscoveredOptions(target.audio.gemini, partial.audio?.gemini, 'audio', 'gemini');
+  merged.audio.elevenlabs = mergeDiscoveredOptions(target.audio.elevenlabs, partial.audio?.elevenlabs, 'audio', 'elevenlabs');
+  merged.audio.huggingface = mergeDiscoveredOptions(target.audio.huggingface, partial.audio?.huggingface, 'audio', 'huggingface');
 
   return merged;
 }
@@ -418,7 +439,12 @@ export const useCatalogStore = create<CatalogState>()((set) => ({
 
     if (settings.apiKeys.elevenlabs.trim()) {
       try {
-        nextCatalog.audio.elevenlabs = await fetchElevenLabsModels(settings.apiKeys.elevenlabs.trim());
+        nextCatalog.audio.elevenlabs = mergeDiscoveredOptions(
+          nextCatalog.audio.elevenlabs,
+          await fetchElevenLabsModels(settings.apiKeys.elevenlabs.trim()),
+          'audio',
+          'elevenlabs',
+        );
       } catch (error) {
         errors.push(error instanceof Error ? error.message : 'ElevenLabs model catalog refresh failed.');
       }

@@ -3,6 +3,7 @@ import {
   buildProviderCatalogSnapshot,
   diffModelIds,
   extractModelIds,
+  hasCatalogDrift,
 } from './sync-provider-catalog.mjs';
 
 describe('diffModelIds', () => {
@@ -22,6 +23,19 @@ describe('extractModelIds', () => {
   it('reads OpenAI-compatible data[].id (openai/atlas)', () => {
     const ids = extractModelIds('atlas', { data: [{ id: 'google/nano-banana-2/edit' }, { id: 'flux' }] });
     expect(ids).toEqual(['google/nano-banana-2/edit', 'flux']);
+  });
+  it('reads ElevenLabs model IDs from array and object response shapes', () => {
+    expect(extractModelIds('elevenlabs', [{ model_id: 'eleven_v3' }, { modelId: 'music_v2' }])).toEqual([
+      'eleven_v3',
+      'music_v2',
+    ]);
+  });
+});
+
+describe('hasCatalogDrift', () => {
+  it('fails a check for any provider addition or removal', () => {
+    expect(hasCatalogDrift({ gemini: { added: [], removed: [] } })).toBe(false);
+    expect(hasCatalogDrift({ gemini: { added: ['new'], removed: [] } })).toBe(true);
   });
 });
 
