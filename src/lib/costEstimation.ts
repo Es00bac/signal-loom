@@ -874,6 +874,7 @@ function collectTextInputsFromSource(
     'valueMonitorNode',
     'numberNode',
     'functionNode',
+    'doodleNode',
   ];
 
   if (listAndUtilityNodeTypes.includes(node.type)) {
@@ -971,6 +972,16 @@ function collectImageInputFromSource(
     return pkg.image;
   }
 
+  if (node.type === 'doodleNode') {
+    return typeof node.data.doodleSketch === 'string' && node.data.doodleSketch
+      ? node.data.doodleSketch
+      : undefined;
+  }
+
+  if (node.type === 'slimgNode') {
+    return typeof node.data.result === 'string' && node.data.result ? node.data.result : undefined;
+  }
+
   if (node.type === 'envelope') {
     const items = collectEnvelopeItemsForEnvelopeNode(node.id, Array.from(nodesById.values()), edges);
     const imgItem = items.find((item) => (item.kind === 'image' || item.kind === 'package') && item.value);
@@ -1009,10 +1020,10 @@ export function collectUpstreamImageInput(
   for (const edge of matchingEdges) {
     const rawSourceNode = nodesById.get(edge.source);
     const sourceNode = rawSourceNode
-      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
+      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges, edge.sourceHandle)
       : undefined;
 
-    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'packageNode', 'envelope', 'expander', 'functionNode'];
+    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'slimgNode', 'packageNode', 'doodleNode', 'envelope', 'expander', 'functionNode'];
     if (!sourceNode || !allowedTypes.includes(sourceNode.type)) {
       continue;
     }
@@ -1041,10 +1052,10 @@ export function collectUpstreamImageInputForHandles(
   for (const edge of matchingEdges) {
     const rawSourceNode = nodesById.get(edge.source);
     const sourceNode = rawSourceNode
-      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
+      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges, edge.sourceHandle)
       : undefined;
 
-    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'packageNode', 'envelope', 'expander', 'functionNode'];
+    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'slimgNode', 'packageNode', 'doodleNode', 'envelope', 'expander', 'functionNode'];
     if (!sourceNode || !allowedTypes.includes(sourceNode.type)) {
       continue;
     }

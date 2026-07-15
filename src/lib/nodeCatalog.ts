@@ -99,8 +99,8 @@ export const FLOW_NODE_CATALOG_ENTRIES: FlowNodeCatalogEntry[] = [
 
   entry('storyStateNode', 'Story State', 'Store or reuse a named story variable.', 'story-tools', ['story', 'state']),
   entry('seedSequencerNode', 'Seed Sequencer', 'Generate repeatable seed sequences.', 'story-tools', ['seed', 'sequence']),
-  entry('textSentimentAnalysisNode', 'Sentiment Analyzer', 'Analyze text sentiment for routing or scene logic.', 'story-tools', ['text', 'analysis']),
-  entry('imageFeatureExtractorNode', 'Image Feature Extractor', 'Extract image features for consistency checks.', 'story-tools', ['image', 'analysis']),
+  entry('textSentimentAnalysisNode', 'Sentiment Analyzer', 'Score text polarity with a deterministic local keyword heuristic.', 'story-tools', ['text', 'analysis', 'polarity']),
+  entry('imageFeatureExtractorNode', 'Image Feature Extractor', 'Extract dimensions, orientation, aspect ratio, and average color locally.', 'story-tools', ['image', 'analysis', 'dimensions', 'color']),
   entry('dialogueScriptSplitterNode', 'Dialogue Splitter', 'Split dialogue/script text into usable story chunks.', 'story-tools', ['dialogue', 'script']),
 
   entry('functionNode', 'Function', 'Use or configure a reusable collapsed graph function.', 'reuse-layout', ['function', 'reuse']),

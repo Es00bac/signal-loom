@@ -229,6 +229,120 @@ describe('flow signal evaluation', () => {
     }));
   });
 
+  it('evaluates the story utility nodes according to their declared contracts', () => {
+    const nodes = [
+      createNode({ id: 'index', type: 'numberNode', data: { value: 3 } }),
+      createNode({ id: 'seed', type: 'seedSequencerNode', data: { seed: 100, increment: 5 } }),
+      createNode({ id: 'a', type: 'textNode', data: { prompt: 'watercolor portrait' } }),
+      createNode({ id: 'b', type: 'textNode', data: { prompt: 'dramatic rim light' } }),
+      createNode({ id: 'mix', type: 'promptMixerNode', data: { weight: 25 } }),
+      createNode({ id: 'state-value', type: 'valueNode', data: { valueKind: 'boolean', value: true } }),
+      createNode({ id: 'state', type: 'storyStateNode', data: { key: 'injured', value: 'false' } }),
+      createNode({ id: 'dialogue', type: 'textNode', data: { prompt: 'MARA: Hello\nJON: Wait\n  MARA: Goodbye' } }),
+      createNode({ id: 'split', type: 'dialogueScriptSplitterNode', data: { prefix: 'MARA:' } }),
+      createNode({ id: 'sentiment-text', type: 'textNode', data: { prompt: 'I love this wonderful, joyful day.' } }),
+      createNode({ id: 'sentiment', type: 'textSentimentAnalysisNode' }),
+    ];
+    const edges: Edge[] = [
+      { id: 'index-seed', source: 'index', target: 'seed' },
+      { id: 'a-mix', source: 'a', target: 'mix', targetHandle: 'A' },
+      { id: 'b-mix', source: 'b', target: 'mix', targetHandle: 'B' },
+      { id: 'value-state', source: 'state-value', target: 'state' },
+      { id: 'dialogue-split', source: 'dialogue', target: 'split' },
+      { id: 'text-sentiment', source: 'sentiment-text', target: 'sentiment' },
+    ];
+
+    expect(evaluateNodeSignal('seed', nodes, edges)).toMatchObject({ kind: 'number', value: 115 });
+    expect(evaluateNodeSignal('mix', nodes, edges)).toMatchObject({
+      kind: 'text',
+      value: '[watercolor portrait — 25% emphasis]\n[dramatic rim light — 75% emphasis]',
+    });
+    expect(evaluateNodeSignal('state', nodes, edges)).toMatchObject({ kind: 'json', value: { injured: true } });
+    expect(evaluateNodeSignal('split', nodes, edges)).toMatchObject({
+      kind: 'list',
+      value: ['Hello', 'Goodbye'],
+    });
+    expect(evaluateNodeSignal('sentiment', nodes, edges)).toMatchObject({
+      kind: 'json',
+      value: expect.objectContaining({ label: 'positive', score: expect.any(Number) }),
+    });
+  });
+
+  it('implements filters, gates, fallback, and branch-specific source handles', () => {
+    const nodes = [
+      createNode({ id: 'prompt', type: 'textNode', data: { prompt: 'A clean portrait' } }),
+      createNode({ id: 'avoid', type: 'textNode', data: { prompt: 'blur, watermark' } }),
+      createNode({ id: 'negative', type: 'negativePromptNode' }),
+      createNode({ id: 'yes', type: 'valueNode', data: { valueKind: 'boolean', value: true } }),
+      createNode({ id: 'no', type: 'valueNode', data: { valueKind: 'boolean', value: false } }),
+      createNode({ id: 'gate', type: 'loopGateNode' }),
+      createNode({ id: 'empty', type: 'textNode', data: { prompt: '' } }),
+      createNode({ id: 'backup', type: 'textNode', data: { prompt: 'fallback value' } }),
+      createNode({ id: 'fallback', type: 'fallbackSelectorNode' }),
+      createNode({ id: 'fork', type: 'forkSwitchNode', data: { selectedOutput: 'A' } }),
+      createNode({ id: 'monitor-a', type: 'valueMonitorNode' }),
+      createNode({ id: 'monitor-b', type: 'valueMonitorNode' }),
+      createNode({ id: 'case-key', type: 'textNode', data: { prompt: 'B' } }),
+      createNode({ id: 'cases', type: 'switchCaseNode', data: { case1Val: 'A', case2Val: 'B', case3Val: 'C' } }),
+      createNode({ id: 'case-two', type: 'valueMonitorNode' }),
+      createNode({ id: 'case-one', type: 'valueMonitorNode' }),
+    ];
+    const edges: Edge[] = [
+      { id: 'prompt-negative', source: 'prompt', target: 'negative', targetHandle: 'text' },
+      { id: 'avoid-negative', source: 'avoid', target: 'negative', targetHandle: 'exclude' },
+      { id: 'prompt-gate', source: 'prompt', target: 'gate', targetHandle: 'input' },
+      { id: 'no-gate', source: 'no', target: 'gate', targetHandle: 'condition' },
+      { id: 'empty-primary', source: 'empty', target: 'fallback', targetHandle: 'primary' },
+      { id: 'backup-fallback', source: 'backup', target: 'fallback', targetHandle: 'fallback' },
+      { id: 'prompt-fork', source: 'prompt', target: 'fork', targetHandle: 'input' },
+      { id: 'yes-fork', source: 'yes', target: 'fork', targetHandle: 'condition' },
+      { id: 'fork-a', source: 'fork', sourceHandle: 'A', target: 'monitor-a' },
+      { id: 'fork-b', source: 'fork', sourceHandle: 'B', target: 'monitor-b' },
+      { id: 'key-cases', source: 'case-key', target: 'cases', targetHandle: 'key' },
+      { id: 'case-2', source: 'cases', sourceHandle: 'case2', target: 'case-two' },
+      { id: 'case-1', source: 'cases', sourceHandle: 'case1', target: 'case-one' },
+    ];
+
+    expect(evaluateNodeSignal('negative', nodes, edges).value).toBe('A clean portrait\nAvoid: blur, watermark');
+    expect(evaluateNodeSignal('gate', nodes, edges)).toMatchObject({ kind: 'text', value: '' });
+    expect(evaluateNodeSignal('fallback', nodes, edges).value).toBe('fallback value');
+    expect(evaluateNodeSignal('monitor-a', nodes, edges).value).toBe('A clean portrait');
+    expect(evaluateNodeSignal('monitor-b', nodes, edges).value).toBe('');
+    expect(evaluateNodeSignal('case-two', nodes, edges).value).toBe('B');
+    expect(evaluateNodeSignal('case-one', nodes, edges).value).toBe('');
+  });
+
+  it('emits honest typed values for config, palette, LoRA, doodle, editor, and feature nodes', () => {
+    const nodes = [
+      createNode({ id: 'config', type: 'settings', data: { aspectRatio: '16:9', steps: 30, durationSeconds: 6 } }),
+      createNode({ id: 'palette', type: 'colorSwatchNode', data: { colorSwatchColors: ['#112233', '#aabbcc'] } }),
+      createNode({ id: 'template', type: 'stringTemplateNode', data: { template: 'Color {A}' } }),
+      createNode({ id: 'lora', type: 'loraSpecNode', data: { loraEntries: [{ path: 'org/style', scale: 0.8 }] } }),
+      createNode({ id: 'doodle', type: 'doodleNode', data: { doodleDescription: 'rough fox', doodleSketch: 'data:image/png;base64,AAAA' } }),
+      createNode({ id: 'editor', type: 'advancedImageEditor', data: { result: 'data:image/png;base64,EDIT' } }),
+      createNode({ id: 'features', type: 'imageFeatureExtractorNode', data: { imageFeatures: { width: 640, height: 480, dominantColor: '#123456' } } }),
+    ];
+    const edges: Edge[] = [
+      { id: 'color-template', source: 'palette', sourceHandle: 'palette-color-1', target: 'template', targetHandle: 'A' },
+    ];
+
+    expect(evaluateNodeSignal('config', nodes, edges)).toMatchObject({
+      kind: 'json',
+      value: expect.objectContaining({ aspectRatio: '16:9', steps: 30, durationSeconds: 6 }),
+    });
+    expect(evaluateNodeSignal('template', nodes, edges).value).toBe('Color #AABBCC');
+    expect(evaluateNodeSignal('lora', nodes, edges)).toMatchObject({
+      kind: 'json',
+      value: [{ path: 'org/style', scale: 0.8 }],
+    });
+    expect(evaluateNodeSignal('doodle', nodes, edges)).toMatchObject({ kind: 'package', value: 'rough fox' });
+    expect(evaluateNodeSignal('editor', nodes, edges)).toMatchObject({ kind: 'image', value: 'data:image/png;base64,EDIT' });
+    expect(evaluateNodeSignal('features', nodes, edges)).toMatchObject({
+      kind: 'json',
+      value: { width: 640, height: 480, dominantColor: '#123456' },
+    });
+  });
+
   it('evaluates JSON Builder nodes correctly rendering input signals', () => {
     const nodes = [
       createNode({ id: 'valA', type: 'textNode', data: { prompt: 'John' } }),

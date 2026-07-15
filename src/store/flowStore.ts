@@ -1085,7 +1085,7 @@ function collectTextMediaInputs(
   for (const edge of matchingEdges) {
     const rawSourceNode = nodesById.get(edge.source);
     const sourceNode = rawSourceNode
-      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
+      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges, edge.sourceHandle)
       : undefined;
 
     if (!sourceNode || !['imageGen', 'cropImageNode', 'audioGen', 'videoGen', 'composition', 'expander'].includes(sourceNode.type)) {
@@ -1292,10 +1292,10 @@ export function collectUpstreamImageInput(
   for (const edge of matchingEdges) {
     const rawSourceNode = nodesById.get(edge.source);
     const sourceNode = rawSourceNode
-      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
+      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges, edge.sourceHandle)
       : undefined;
 
-    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'slimgNode', 'packageNode', 'envelope', 'expander', 'functionNode'];
+    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'slimgNode', 'packageNode', 'doodleNode', 'envelope', 'expander', 'functionNode'];
     if (!sourceNode || !allowedTypes.includes(sourceNode.type)) {
       continue;
     }
@@ -1340,10 +1340,10 @@ export function collectUpstreamImageInputForHandles(
   for (const edge of matchingEdges) {
     const rawSourceNode = nodesById.get(edge.source);
     const sourceNode = rawSourceNode
-      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
+      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges, edge.sourceHandle)
       : undefined;
 
-    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'slimgNode', 'packageNode', 'envelope', 'expander', 'functionNode'];
+    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'slimgNode', 'packageNode', 'doodleNode', 'envelope', 'expander', 'functionNode'];
     if (!sourceNode || !allowedTypes.includes(sourceNode.type)) {
       continue;
     }

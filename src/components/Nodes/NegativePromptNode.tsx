@@ -43,7 +43,7 @@ function NegativePromptNodeComponent({ id, data }: AppNodeProps) {
     >
       <div className="flex flex-col gap-2 rounded-lg border border-purple-500/20 bg-purple-500/5 p-3 text-xs">
         <div className="leading-5 text-gray-300">
-          Strips locally specified negative words out of the description prompt.
+          Appends the EXCLUDE text as an explicit “Avoid:” instruction after the main prompt.
         </div>
         <NodeHelpText helpKey="negativePromptNode" summary="How to connect TEXT and EXCLUDE">
           Connect your main prompt to the <span className="text-purple-400 font-semibold">TEXT</span> port and words to exclude to the <span className="text-rose-400 font-semibold">EXCLUDE</span> port.

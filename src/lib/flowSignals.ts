@@ -8,8 +8,11 @@ import {
 import { resolveEffectiveSourceNode } from './virtualNodes';
 import { LOOP_BREAK_TARGET_HANDLE } from './flowControlHandles';
 import { isFlowPrimitiveKind } from './flowValueTypes';
-import { formatColorSwatchPrompt } from './colorSwatchNode';
+import { formatColorSwatchListPrompt, formatColorSwatchPrompt } from './colorSwatchNode';
 import { resolveFlowVariablesInText } from './flowVariables';
+import { buildLoraWeightsJson } from './loraSpecNode';
+import { buildDoodleAssetPackage } from './doodleNode';
+import { analyzeTextSentiment, splitDialogueForPrefix } from './storyUtilityNodes';
 
 export type FlowSignalKind = ResultType | 'boolean' | 'any';
 export type FlowDiagnosticSeverity = 'info' | 'warning' | 'critical';
@@ -45,6 +48,7 @@ export function evaluateNodeSignal(
   edges: Edge[],
   visited: Set<string> = new Set<string>(),
   nodesById: Map<string, AppNode> = new Map(nodes.map((candidate) => [candidate.id, candidate])),
+  sourceHandle?: string | null,
 ): FlowSignal {
   if (visited.has(nodeId)) {
     return emptySignal('text', nodeId, [
@@ -82,11 +86,13 @@ export function evaluateNodeSignal(
 
   if (node.type === 'valueMonitorNode') {
     const incomingEdge = edges.find((edge) => edge.target === node.id);
-    return incomingEdge ? evaluateNodeSignal(incomingEdge.source, nodes, edges, nextVisited, nodesById) : emptySignal('text', node.id);
+    return incomingEdge
+      ? evaluateNodeSignal(incomingEdge.source, nodes, edges, nextVisited, nodesById, incomingEdge.sourceHandle)
+      : emptySignal('text', node.id);
   }
 
-  if (['portal', 'switchNode', 'forkSwitchNode', 'virtual'].includes(node.type)) {
-    const effectiveNode = resolveEffectiveSourceNode(node, nodesById, edges);
+  if (['portal', 'virtual'].includes(node.type)) {
+    const effectiveNode = resolveEffectiveSourceNode(node, nodesById, edges, sourceHandle);
     if (effectiveNode && effectiveNode.id !== node.id) {
       return evaluateNodeSignal(effectiveNode.id, nodes, edges, nextVisited, nodesById);
     }
@@ -123,6 +129,11 @@ export function evaluateNodeSignal(
       return scalarSignal('package', pkg.text || pkg.image || '', node.id, { label: node.data.customTitle as string | undefined });
     }
     case 'colorSwatchNode':
+      if (sourceHandle?.startsWith('palette-color-')) {
+        const index = Number(sourceHandle.slice('palette-color-'.length));
+        const color = normalizeHexColor(node.data.colorSwatchColors?.[index]);
+        return scalarSignal('text', color, node.id);
+      }
       return scalarSignal('text', formatColorSwatchPrompt(node.data), node.id, {
         label: node.data.customTitle as string | undefined,
       });
@@ -132,10 +143,23 @@ export function evaluateNodeSignal(
       const own = String(node.data.doodleDescription ?? '').trim();
       const incomingEdge = edges.find((edge) => edge.target === node.id);
       const upstream = incomingEdge
-        ? signalToText(evaluateNodeSignal(incomingEdge.source, nodes, edges, nextVisited, nodesById)).trim()
+        ? signalToText(evaluateNodeSignal(incomingEdge.source, nodes, edges, nextVisited, nodesById, incomingEdge.sourceHandle)).trim()
         : '';
-      return scalarSignal('text', upstream || own, node.id);
+      const pkg = buildDoodleAssetPackage({
+        sketch: node.data.doodleSketch,
+        ownDescription: own,
+        upstreamText: upstream,
+      });
+      return scalarSignal('package', pkg.description, node.id, { mimeType: pkg.image ? 'image/png' : undefined });
     }
+    case 'settings':
+      return evaluateSettingsNode(node);
+    case 'advancedImageEditor':
+      return scalarSignal('image', sourceHandle === 'maskOutput' ? String(node.data.maskOutput ?? '') : String(node.data.result ?? ''), node.id);
+    case 'switchNode':
+      return evaluateSwitchNode(node, nodes, edges, nextVisited, nodesById);
+    case 'forkSwitchNode':
+      return evaluateForkSwitchNode(node, nodes, edges, nextVisited, nodesById, sourceHandle);
     case 'stringTemplateNode':
       return evaluateStringTemplateNode(node, nodes, edges, nextVisited, nodesById);
     case 'promptsJoinerNode':
@@ -154,6 +178,32 @@ export function evaluateNodeSignal(
       return scalarSignal('number', resolveListLikeLength(node, nodes, edges, nextVisited, nodesById), node.id);
     case 'arrayFlatNode':
       return evaluateArrayFlatNode(node, nodes, edges, nextVisited, nodesById);
+    case 'loopGateNode':
+      return evaluateLoopGateNode(node, nodes, edges, nextVisited, nodesById);
+    case 'switchCaseNode':
+      return evaluateSwitchCaseNode(node, nodes, edges, nextVisited, nodesById, sourceHandle);
+    case 'negativePromptNode':
+      return evaluateNegativePromptNode(node, nodes, edges, nextVisited, nodesById);
+    case 'seedSequencerNode':
+      return evaluateSeedSequencerNode(node, nodes, edges, nextVisited, nodesById);
+    case 'promptMixerNode':
+      return evaluatePromptMixerNode(node, nodes, edges, nextVisited, nodesById);
+    case 'storyStateNode':
+      return evaluateStoryStateNode(node, nodes, edges, nextVisited, nodesById);
+    case 'textSentimentAnalysisNode':
+      return evaluateTextSentimentNode(node, nodes, edges, nextVisited, nodesById);
+    case 'imageFeatureExtractorNode':
+      return evaluateImageFeatureExtractorNode(node, nodes, edges, nextVisited, nodesById);
+    case 'fallbackSelectorNode':
+      return evaluateFallbackSelectorNode(node, nodes, edges, nextVisited, nodesById);
+    case 'dialogueScriptSplitterNode':
+      return evaluateDialogueScriptSplitterNode(node, nodes, edges, nextVisited, nodesById);
+    case 'colorSwatchListNode':
+      return scalarSignal('text', formatColorSwatchListPrompt(node, nodes, edges), node.id);
+    case 'loraSpecNode':
+      return evaluateLoraSpecNode(node);
+    case 'slimgNode':
+      return scalarSignal('image', String(node.data.result ?? ''), node.id, { mimeType: node.data.resultMimeType });
     case 'visionVerifyNode': {
       const raw = String(node.data.result ?? 'false');
       return scalarSignal('boolean', parseBoolean(raw), node.id, { label: raw });
@@ -179,7 +229,7 @@ export function evaluateNodeSignal(
     case 'functionOutputNode': {
       const incomingEdge = edges.find((edge) => edge.target === node.id);
       if (incomingEdge) {
-        return evaluateNodeSignal(incomingEdge.source, nodes, edges, nextVisited, nodesById);
+        return evaluateNodeSignal(incomingEdge.source, nodes, edges, nextVisited, nodesById, incomingEdge.sourceHandle);
       }
       const val = node.data.result !== undefined ? node.data.result : (node.data.value !== undefined ? node.data.value : '');
       return scalarSignal(inferKindFromValue(val), val, node.id);
@@ -225,7 +275,7 @@ export function collectPromptSignalForNode(nodeId: string, nodes: AppNode[], edg
   const nodesById = new Map(nodes.map((candidate) => [candidate.id, candidate]));
   const incomingEdges = edges.filter((edge) => edge.target === nodeId && edge.targetHandle !== LOOP_BREAK_TARGET_HANDLE);
   const promptSignals = incomingEdges.flatMap((edge) => {
-    const signal = evaluateNodeSignal(edge.source, nodes, edges, new Set<string>(), nodesById);
+    const signal = evaluateNodeSignal(edge.source, nodes, edges, new Set<string>(), nodesById, edge.sourceHandle);
     return isTextualSignal(signal) ? [signal] : [];
   });
 
@@ -478,6 +528,233 @@ function evaluateConditionalNode(
   );
 }
 
+function evaluateSettingsNode(node: AppNode): FlowSignal {
+  return scalarSignal('json', {
+    aspectRatio: node.data.aspectRatio ?? '1:1',
+    steps: coerceNumber(node.data.steps, 30),
+    durationSeconds: coerceNumber(node.data.durationSeconds, 6),
+    videoResolution: node.data.videoResolution ?? '720p',
+    audioOutputFormat: node.data.audioOutputFormat ?? 'mp3_44100_128',
+  }, node.id);
+}
+
+function evaluateSwitchNode(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  visited: Set<string>,
+  nodesById: Map<string, AppNode>,
+): FlowSignal {
+  const input = incomingSignalForHandle(node.id, 'input', nodes, edges, visited, nodesById);
+  const conditionEdge = edges.find((edge) => edge.target === node.id && edge.targetHandle === 'condition');
+  const enabled = conditionEdge
+    ? parseBoolean(signalToText(evaluateNodeSignal(conditionEdge.source, nodes, edges, visited, nodesById, conditionEdge.sourceHandle)))
+    : node.data.state !== 'off';
+  return enabled ? cloneSignalForNode(input, node.id) : emptyLikeSignal(input, node.id);
+}
+
+function evaluateForkSwitchNode(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  visited: Set<string>,
+  nodesById: Map<string, AppNode>,
+  sourceHandle?: string | null,
+): FlowSignal {
+  const input = incomingSignalForHandle(node.id, 'input', nodes, edges, visited, nodesById);
+  const conditionEdge = edges.find((edge) => edge.target === node.id && edge.targetHandle === 'condition');
+  const activeOutput = conditionEdge
+    ? parseBoolean(signalToText(evaluateNodeSignal(conditionEdge.source, nodes, edges, visited, nodesById, conditionEdge.sourceHandle))) ? 'A' : 'B'
+    : node.data.selectedOutput === 'B' ? 'B' : 'A';
+  return !sourceHandle || sourceHandle === activeOutput
+    ? cloneSignalForNode(input, node.id)
+    : emptyLikeSignal(input, node.id);
+}
+
+function evaluateSwitchCaseNode(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  visited: Set<string>,
+  nodesById: Map<string, AppNode>,
+  sourceHandle?: string | null,
+): FlowSignal {
+  const key = incomingSignalForHandle(node.id, 'key', nodes, edges, visited, nodesById);
+  const keyText = signalToText(key).trim();
+  const matches: Record<string, string> = {
+    case1: String(node.data.case1Val ?? 'A').trim(),
+    case2: String(node.data.case2Val ?? 'B').trim(),
+    case3: String(node.data.case3Val ?? 'C').trim(),
+  };
+  const activeHandle = Object.entries(matches).find(([, value]) => value === keyText)?.[0];
+  return !sourceHandle || sourceHandle === activeHandle
+    ? cloneSignalForNode(key, node.id)
+    : emptyLikeSignal(key, node.id);
+}
+
+function evaluateLoopGateNode(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  visited: Set<string>,
+  nodesById: Map<string, AppNode>,
+): FlowSignal {
+  const input = incomingSignalForHandle(node.id, 'input', nodes, edges, visited, nodesById);
+  const condition = incomingSignalForHandle(node.id, 'condition', nodes, edges, visited, nodesById);
+  return parseBoolean(signalToText(condition))
+    ? cloneSignalForNode(input, node.id)
+    : emptyLikeSignal(input, node.id);
+}
+
+function evaluateNegativePromptNode(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  visited: Set<string>,
+  nodesById: Map<string, AppNode>,
+): FlowSignal {
+  const inputs = withDefaultSignals(collectIncomingSignalsByHandle(node.id, nodes, edges, visited, nodesById, 'text'), {
+    text: scalarSignal('text', '', node.id),
+    exclude: scalarSignal('text', '', node.id),
+  });
+  return vectorizeRecord(node.id, inputs, (values) => {
+    const prompt = signalToText(values.text).trim();
+    const exclusions = signalToText(values.exclude).trim();
+    return scalarSignal('text', [prompt, exclusions ? `Avoid: ${exclusions}` : ''].filter(Boolean).join('\n'), node.id);
+  });
+}
+
+function evaluateSeedSequencerNode(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  visited: Set<string>,
+  nodesById: Map<string, AppNode>,
+): FlowSignal {
+  const input = firstIncomingSignal(node.id, nodes, edges, visited, nodesById);
+  const base = Math.trunc(coerceNumber(node.data.seed, 12345));
+  const increment = Math.trunc(coerceNumber(node.data.increment, 1));
+  return vectorizeRecord(node.id, { index: input }, (values) =>
+    scalarSignal('number', base + Math.trunc(coerceNumber(values.index.value, 0)) * increment, node.id));
+}
+
+function evaluatePromptMixerNode(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  visited: Set<string>,
+  nodesById: Map<string, AppNode>,
+): FlowSignal {
+  const inputs = withDefaultSignals(collectIncomingSignalsByHandle(node.id, nodes, edges, visited, nodesById, 'A'), {
+    A: scalarSignal('text', '', node.id),
+    B: scalarSignal('text', '', node.id),
+  });
+  const weightA = Math.max(0, Math.min(100, Math.round(coerceNumber(node.data.weight, 50))));
+  return vectorizeRecord(node.id, inputs, (values) => {
+    const a = signalToText(values.A).trim();
+    const b = signalToText(values.B).trim();
+    if (!a) return scalarSignal('text', b, node.id);
+    if (!b) return scalarSignal('text', a, node.id);
+    if (weightA === 100) return scalarSignal('text', a, node.id);
+    if (weightA === 0) return scalarSignal('text', b, node.id);
+    return scalarSignal('text', `[${a} — ${weightA}% emphasis]\n[${b} — ${100 - weightA}% emphasis]`, node.id);
+  });
+}
+
+function evaluateStoryStateNode(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  visited: Set<string>,
+  nodesById: Map<string, AppNode>,
+): FlowSignal {
+  const key = String(node.data.key ?? 'state').trim() || 'state';
+  const edge = edges.find((candidate) => candidate.target === node.id);
+  const override = edge
+    ? evaluateNodeSignal(edge.source, nodes, edges, visited, nodesById, edge.sourceHandle)
+    : scalarSignal(inferKindFromValue(parseConfiguredValue(node.data.value)), parseConfiguredValue(node.data.value), node.id);
+  return vectorizeRecord(node.id, { value: override }, (values) =>
+    scalarSignal('json', { [key]: values.value.value }, node.id));
+}
+
+function evaluateTextSentimentNode(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  visited: Set<string>,
+  nodesById: Map<string, AppNode>,
+): FlowSignal {
+  const input = firstIncomingSignal(node.id, nodes, edges, visited, nodesById);
+  return vectorizeRecord(node.id, { text: input }, (values) => {
+    return scalarSignal('json', analyzeTextSentiment(signalToText(values.text)), node.id);
+  });
+}
+
+function evaluateImageFeatureExtractorNode(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  visited: Set<string>,
+  nodesById: Map<string, AppNode>,
+): FlowSignal {
+  const source = firstIncomingSignal(node.id, nodes, edges, visited, nodesById);
+  const stored = node.data.imageFeatures;
+  const value = stored && typeof stored === 'object' && !Array.isArray(stored)
+    ? stored
+    : {
+        source: typeof source.value === 'string' ? source.value : '',
+        mimeType: source.mimeType ?? inferDataUrlMimeType(source.value),
+      };
+  return scalarSignal('json', value, node.id, { diagnostics: source.diagnostics });
+}
+
+function evaluateFallbackSelectorNode(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  visited: Set<string>,
+  nodesById: Map<string, AppNode>,
+): FlowSignal {
+  const primary = incomingSignalForHandle(node.id, 'primary', nodes, edges, visited, nodesById);
+  const fallback = incomingSignalForHandle(node.id, 'fallback', nodes, edges, visited, nodesById);
+  const primaryFailed = collectSignalDiagnostics(primary).some((diagnostic) => diagnostic.blocksRun);
+  return !primaryFailed && !isEmptySignalValue(primary)
+    ? cloneSignalForNode(primary, node.id)
+    : cloneSignalForNode(fallback, node.id);
+}
+
+function evaluateDialogueScriptSplitterNode(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  visited: Set<string>,
+  nodesById: Map<string, AppNode>,
+): FlowSignal {
+  const input = firstIncomingSignal(node.id, nodes, edges, visited, nodesById);
+  const prefix = String(node.data.prefix ?? 'MARA:').trim();
+  const lines = splitDialogueForPrefix(signalToText(input), prefix)
+    .map((dialogue) => scalarSignal('text', dialogue, node.id));
+  return listSignal(lines, node.id, 'list', input.diagnostics);
+}
+
+function evaluateLoraSpecNode(node: AppNode): FlowSignal {
+  const json = buildLoraWeightsJson(node.data.loraEntries);
+  try {
+    return scalarSignal('json', json ? JSON.parse(json) : [], node.id);
+  } catch {
+    return scalarSignal('json', [], node.id, {
+      diagnostics: [{
+        id: `invalid-lora-spec-${node.id}`,
+        severity: 'critical',
+        nodeId: node.id,
+        message: 'LoRA Spec could not serialize its path and scale entries.',
+        suggestedFix: 'Remove the invalid entry and add the LoRA path and scale again.',
+        blocksRun: true,
+      }],
+    });
+  }
+}
+
 function evaluateArrayFlatNode(
   node: AppNode,
   nodes: AppNode[],
@@ -541,7 +818,7 @@ function evaluateLoopBreakNode(
     return scalarSignal('boolean', parseBoolean(node.data.value), node.id);
   }
 
-  const condition = evaluateNodeSignal(conditionEdge.source, nodes, edges, visited, nodesById);
+  const condition = evaluateNodeSignal(conditionEdge.source, nodes, edges, visited, nodesById, conditionEdge.sourceHandle);
   return vectorizeRecord(node.id, { condition }, (values) =>
     scalarSignal('boolean', parseBoolean(signalToText(values.condition)), node.id, {
       label: typeof node.data.loopBreakReason === 'string' ? node.data.loopBreakReason : undefined,
@@ -564,7 +841,7 @@ function evaluateListLikeNode(
   }
 
   const items = incomingEdges.flatMap((edge) => {
-    const signal = evaluateNodeSignal(edge.source, nodes, edges, visited, nodesById);
+    const signal = evaluateNodeSignal(edge.source, nodes, edges, visited, nodesById, edge.sourceHandle);
     return isListSignal(signal) ? signal.items : [signal];
   });
 
@@ -584,7 +861,7 @@ function evaluateLoopNode(
   }
 
   const count = Number.isInteger(node.data.count) ? Math.max(1, Number(node.data.count)) : 5;
-  const sourceSignal = evaluateNodeSignal(incomingEdge.source, nodes, edges, visited, nodesById);
+  const sourceSignal = evaluateNodeSignal(incomingEdge.source, nodes, edges, visited, nodesById, incomingEdge.sourceHandle);
   const sourceItems = isListSignal(sourceSignal) ? sourceSignal.items : [sourceSignal];
 
   if (sourceItems.length === 0) {
@@ -610,7 +887,7 @@ function collectIncomingSignalsByHandle(
   const record: SignalRecord = {};
   for (const edge of edges.filter((candidate) => candidate.target === nodeId)) {
     const handle = edge.targetHandle || fallbackHandle;
-    record[handle] = evaluateNodeSignal(edge.source, nodes, edges, visited, nodesById);
+    record[handle] = evaluateNodeSignal(edge.source, nodes, edges, visited, nodesById, edge.sourceHandle);
   }
   return record;
 }
@@ -623,7 +900,9 @@ function firstIncomingSignal(
   nodesById: Map<string, AppNode>,
 ): FlowSignal {
   const edge = edges.find((candidate) => candidate.target === nodeId);
-  return edge ? evaluateNodeSignal(edge.source, nodes, edges, visited, nodesById) : scalarSignal('text', '', nodeId);
+  return edge
+    ? evaluateNodeSignal(edge.source, nodes, edges, visited, nodesById, edge.sourceHandle)
+    : scalarSignal('text', '', nodeId);
 }
 
 function vectorizeRecord(
@@ -727,6 +1006,74 @@ function listSignal(
     sourceNodeId: nodeId,
     diagnostics,
   };
+}
+
+function incomingSignalForHandle(
+  nodeId: string,
+  targetHandle: string,
+  nodes: AppNode[],
+  edges: Edge[],
+  visited: Set<string>,
+  nodesById: Map<string, AppNode>,
+): FlowSignal {
+  const edge = edges.find((candidate) => candidate.target === nodeId && candidate.targetHandle === targetHandle);
+  return edge
+    ? evaluateNodeSignal(edge.source, nodes, edges, visited, nodesById, edge.sourceHandle)
+    : scalarSignal('text', '', nodeId);
+}
+
+function cloneSignalForNode(signal: FlowSignal, nodeId: string): FlowSignal {
+  return {
+    ...signal,
+    sourceNodeId: nodeId,
+    items: signal.items?.map((item) => ({ ...item })),
+    diagnostics: [...signal.diagnostics],
+  };
+}
+
+function emptyLikeSignal(signal: FlowSignal, nodeId: string): FlowSignal {
+  if (signal.kind === 'list' || signal.kind === 'envelope') {
+    return listSignal([], nodeId, signal.kind, signal.diagnostics);
+  }
+  return scalarSignal(signal.kind, '', nodeId, { diagnostics: signal.diagnostics, mimeType: signal.mimeType });
+}
+
+function isEmptySignalValue(signal: FlowSignal): boolean {
+  if (isListSignal(signal)) return signal.items.length === 0;
+  if (signal.value === null || signal.value === undefined) return true;
+  if (typeof signal.value === 'string') return signal.value.trim().length === 0;
+  return false;
+}
+
+function parseConfiguredValue(value: unknown): unknown {
+  if (typeof value !== 'string') return value ?? '';
+  const trimmed = value.trim();
+  if (trimmed === 'true') return true;
+  if (trimmed === 'false') return false;
+  if (trimmed && Number.isFinite(Number(trimmed))) return Number(trimmed);
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
+function inferDataUrlMimeType(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  return value.match(/^data:([^;,]+)/)?.[1];
+}
+
+function normalizeHexColor(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed.toUpperCase();
+  if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
+    return `#${trimmed.slice(1).split('').map((part) => part.repeat(2)).join('')}`.toUpperCase();
+  }
+  return trimmed;
 }
 
 function scalarSignal(

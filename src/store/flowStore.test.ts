@@ -84,6 +84,28 @@ describe('flow store package and envelope input gathering', () => {
     expect(costImg).toBe('data:image/png;base64,STYLEIMAGE');
   });
 
+  it('extracts both parts of a Doodle package when connected to an Image reference port', () => {
+    const nodes = [
+      createNode('doodle', 'doodleNode', {
+        doodleDescription: 'blue-pencil fox pose',
+        doodleSketch: 'data:image/png;base64,DOODLE',
+      }),
+      createNode('target-gen', 'imageGen'),
+    ];
+    const edges: Edge[] = [
+      { id: 'doodle-reference', source: 'doodle', target: 'target-gen', targetHandle: 'image-reference-1' },
+    ];
+    const nodesById = buildNodeMap(nodes);
+    const incoming = buildIncomingMap(edges);
+
+    expect(storeCollectTextInputs('target-gen', nodesById, incoming, edges)).toContain('blue-pencil fox pose');
+    expect(storeCollectUpstreamImageInputForHandles('target-gen', ['image-reference-1'], nodesById, edges))
+      .toBe('data:image/png;base64,DOODLE');
+    expect(costCollectTextInputs('target-gen', nodesById, incoming, edges)).toContain('blue-pencil fox pose');
+    expect(costCollectUpstreamImageInputForHandles('target-gen', ['image-reference-1'], nodesById, edges))
+      .toBe('data:image/png;base64,DOODLE');
+  });
+
   it('correctly resolves text and image payloads from an upstream envelope with individual text and image items', () => {
     const nodes = [
       createNode('envelope-1', 'envelope', {

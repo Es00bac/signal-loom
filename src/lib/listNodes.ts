@@ -9,8 +9,9 @@ import {
   isFlowResultKind,
   serializeManualEnvelopeValue,
 } from './flowValueTypes';
-import { formatColorSwatchListPrompt, formatColorSwatchPrompt } from './colorSwatchNode';
+import { formatColorSwatchListPrompt, formatColorSwatchPrompt, normalizeHexColor } from './colorSwatchNode';
 import { buildLoraWeightsJson } from './loraSpecNode';
+import { analyzeTextSentiment, splitDialogueForPrefix } from './storyUtilityNodes';
 
 export const LIST_ITEM_HANDLE_PREFIX = 'list-item-';
 
@@ -73,7 +74,7 @@ export function buildListNodeItems(
       return [];
     }
 
-    const item = buildListItemFromConnectionSource(sourceNode, nodes, edges, index, buildListItemTargetHandle(index));
+    const item = buildListItemFromConnectionSource(sourceNode, nodes, edges, index, buildListItemTargetHandle(index), edge.sourceHandle);
     return item ? [item] : [];
   });
   const listKind = items[0]?.kind;
@@ -123,7 +124,7 @@ export function buildLoopNodeItems(
   const sourceNode = resolveConnectionSourceNode(incomingEdge.source, nodesById, edges, incomingEdge.sourceHandle);
   if (!sourceNode) return [];
 
-  const item = buildListItemFromConnectionSource(sourceNode, nodes, edges, 0, buildListItemTargetHandle(0));
+  const item = buildListItemFromConnectionSource(sourceNode, nodes, edges, 0, buildListItemTargetHandle(0), incomingEdge.sourceHandle);
   if (!item) return [];
 
   return Array.from({ length: count }, (_, index) => ({
@@ -169,7 +170,7 @@ export function buildExpanderSourceItems(
         return buildLoopNodeItems(sourceNode.id, nodes, edges);
       }
 
-      const item = buildListItemFromNode(sourceNode, edgeIndex, buildListItemTargetHandle(edgeIndex), nodes, edges);
+      const item = buildListItemFromNode(sourceNode, edgeIndex, buildListItemTargetHandle(edgeIndex), nodes, edges, edge.sourceHandle);
       return item ? [item] : [];
     });
 
@@ -251,6 +252,15 @@ export function evaluateNodeTextForMonitor(
   if (node.type === 'packageNode') {
     const pkg = resolvePackageNodeData(node.id, nodes, edges, visited);
     return pkg.text || '';
+  }
+
+  if (node.type === 'doodleNode') {
+    const incomingEdge = edges.find((edge) => edge.target === node.id);
+    if (incomingEdge) {
+      const upstream = evaluateNodeTextForMonitor(incomingEdge.source, nodes, edges, new Set(visited));
+      if (upstream.trim()) return upstream.trim();
+    }
+    return typeof node.data.doodleDescription === 'string' ? node.data.doodleDescription.trim() : '';
   }
 
   if (node.type === 'colorSwatchNode') {
@@ -448,6 +458,16 @@ export function evaluateNodeTextForMonitor(
     return (node.data.result as string | undefined) || 'false';
   }
 
+  if (node.type === 'seedSequencerNode') {
+    const incomingEdge = edges.find((edge) => edge.target === nodeId);
+    const index = incomingEdge
+      ? Number(evaluateNodeTextForMonitor(incomingEdge.source, nodes, edges, new Set(visited)))
+      : 0;
+    const seed = Number(node.data.seed ?? 12345);
+    const increment = Number(node.data.increment ?? 1);
+    return String(Math.trunc(seed) + (Number.isFinite(index) ? Math.trunc(index) : 0) * Math.trunc(increment));
+  }
+
   if (node.type === 'storyStateNode') {
     const key = (node.data.key as string) ?? '';
     if (!key) return '';
@@ -600,6 +620,7 @@ function buildListItemFromConnectionSource(
   edges: Edge[],
   index: number,
   targetHandle: ListTargetHandle,
+  sourceHandle?: string | null,
 ): FlowListItem | undefined {
   if (node.type === 'expander') {
     const selected = resolveExpandedListItemForNode(node, nodes, edges);
@@ -614,7 +635,7 @@ function buildListItemFromConnectionSource(
       : undefined;
   }
 
-  return buildListItemFromNode(node, index, targetHandle, nodes, edges);
+  return buildListItemFromNode(node, index, targetHandle, nodes, edges, sourceHandle);
 }
 
 export function buildListItemFromNode(
@@ -623,6 +644,7 @@ export function buildListItemFromNode(
   targetHandle: ListTargetHandle,
   nodes?: AppNode[],
   edges?: Edge[],
+  sourceHandle?: string | null,
 ): FlowListItem | undefined {
   if (node.type === 'textNode') {
     const mode = node.data.mode ?? 'prompt';
@@ -735,8 +757,26 @@ export function buildListItemFromNode(
     };
   }
 
+  if (node.type === 'doodleNode') {
+    const text = nodes && edges ? evaluateNodeTextForMonitor(node.id, nodes, edges) : String(node.data.doodleDescription ?? '').trim();
+    const image = typeof node.data.doodleSketch === 'string' ? node.data.doodleSketch : '';
+    return {
+      id: `${node.id}-${index}`,
+      index,
+      targetHandle,
+      nodeId: node.id,
+      kind: 'package',
+      label: node.data.customTitle ?? 'Doodle package',
+      value: image,
+      text,
+      mimeType: image.startsWith('data:image/jpeg') ? 'image/jpeg' : 'image/png',
+    };
+  }
+
   if (node.type === 'colorSwatchNode') {
-    const value = formatColorSwatchPrompt(node.data);
+    const colorIndex = sourceHandle?.match(/^palette-color-(\d+)$/)?.[1];
+    const selectedColor = colorIndex === undefined ? undefined : node.data.colorSwatchColors?.[Number(colorIndex)];
+    const value = typeof selectedColor === 'string' ? normalizeHexColor(selectedColor) : formatColorSwatchPrompt(node.data);
     if (!value) {
       return undefined;
     }
@@ -782,10 +822,10 @@ export function buildListItemFromNode(
       index,
       targetHandle,
       nodeId: node.id,
-      kind: 'text',
+      kind: 'json',
       label: node.data.customTitle ?? 'LoRA spec',
       value,
-      mimeType: 'text/plain',
+      mimeType: 'application/json',
     };
   }
 
@@ -827,6 +867,20 @@ export function buildListItemFromNode(
       nodeId: node.id,
       kind: 'number',
       label: node.data.customTitle ?? (node.type === 'mathNode' ? 'Math Result' : 'List Length'),
+      value: val,
+      mimeType: 'text/plain',
+    };
+  }
+
+  if (node.type === 'seedSequencerNode') {
+    const val = nodes && edges ? evaluateNodeTextForMonitor(node.id, nodes, edges) : String(node.data.seed ?? 12345);
+    return {
+      id: `${node.id}-${index}`,
+      index,
+      targetHandle,
+      nodeId: node.id,
+      kind: 'number',
+      label: node.data.customTitle ?? 'Seed',
       value: val,
       mimeType: 'text/plain',
     };
@@ -874,11 +928,45 @@ export function buildListItemFromNode(
     };
   }
 
+  if (node.type === 'storyStateNode') {
+    const key = String(node.data.key ?? 'state').trim() || 'state';
+    const value = parseMonitorValue(nodes && edges ? evaluateNodeTextForMonitor(node.id, nodes, edges) : node.data.value);
+    return jsonListItem(node, index, targetHandle, { [key]: value }, 'Story state');
+  }
+
+  if (node.type === 'textSentimentAnalysisNode') {
+    const text = nodes && edges
+      ? evaluateFirstIncomingText(node.id, nodes, edges)
+      : '';
+    return jsonListItem(node, index, targetHandle, analyzeTextSentiment(text), 'Sentiment');
+  }
+
+  if (node.type === 'imageFeatureExtractorNode') {
+    const value = node.data.imageFeatures && typeof node.data.imageFeatures === 'object'
+      ? node.data.imageFeatures
+      : {};
+    return jsonListItem(node, index, targetHandle, value, 'Image features');
+  }
+
+  if (node.type === 'dialogueScriptSplitterNode') {
+    const script = nodes && edges ? evaluateFirstIncomingText(node.id, nodes, edges) : '';
+    const lines = splitDialogueForPrefix(script, String(node.data.prefix ?? 'MARA:'));
+    return {
+      id: `${node.id}-${index}`,
+      index,
+      targetHandle,
+      nodeId: node.id,
+      kind: 'list',
+      label: node.data.customTitle ?? 'Dialogue lines',
+      value: JSON.stringify(lines),
+      mimeType: 'application/json',
+    };
+  }
+
   if ([
     'conditionalNode', 'valueMonitorNode',
     'stringTemplateNode', 'regexReplaceNode', 'promptsJoinerNode', 'negativePromptNode',
-    'seedSequencerNode', 'promptMixerNode', 'storyStateNode', 'textSentimentAnalysisNode',
-    'imageFeatureExtractorNode', 'fallbackSelectorNode', 'dialogueScriptSplitterNode',
+    'promptMixerNode', 'fallbackSelectorNode',
   ].includes(node.type)) {
     const val = nodes && edges ? evaluateNodeTextForMonitor(node.id, nodes, edges) : '';
     return {
@@ -1160,4 +1248,41 @@ function isResultType(value: unknown): value is ResultType {
 
 function capitalizeKind(kind: ResultType): string {
   return kind.charAt(0).toUpperCase() + kind.slice(1);
+}
+
+function evaluateFirstIncomingText(nodeId: string, nodes: AppNode[], edges: Edge[]): string {
+  const edge = edges.find((candidate) => candidate.target === nodeId);
+  return edge ? evaluateNodeTextForMonitor(edge.source, nodes, edges) : '';
+}
+
+function parseMonitorValue(value: unknown): unknown {
+  if (typeof value !== 'string') return value ?? '';
+  const trimmed = value.trim();
+  if (trimmed === 'true') return true;
+  if (trimmed === 'false') return false;
+  if (trimmed && Number.isFinite(Number(trimmed))) return Number(trimmed);
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function jsonListItem(
+  node: AppNode,
+  index: number,
+  targetHandle: ListTargetHandle,
+  value: unknown,
+  fallbackLabel: string,
+): FlowListItem {
+  return {
+    id: `${node.id}-${index}`,
+    index,
+    targetHandle,
+    nodeId: node.id,
+    kind: 'json',
+    label: node.data.customTitle ?? fallbackLabel,
+    value: JSON.stringify(value),
+    mimeType: 'application/json',
+  };
 }

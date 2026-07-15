@@ -900,6 +900,15 @@ export interface NodeData {
   colorSwatchDraftColor?: string;
   doodleSketch?: string;
   doodleDescription?: string;
+  imageFeatures?: {
+    width: number;
+    height: number;
+    aspectRatio?: number;
+    orientation?: 'square' | 'landscape' | 'portrait';
+    averageColor?: string;
+    mimeType?: string;
+    samplingWarning?: string;
+  };
   colorSwatchSelectedIndex?: number;
   colorSwatchUsageMode?: ColorSwatchUsageMode;
   /** Color Swatch node: per-entry labels keyed by `${sourcePaletteNodeId}:${sourceHandleId}`. */

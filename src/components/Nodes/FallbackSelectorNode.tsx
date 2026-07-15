@@ -42,7 +42,7 @@ function FallbackSelectorNodeComponent({ id, data }: AppNodeProps) {
     >
       <div className="flex flex-col gap-2 rounded-lg border border-purple-500/20 bg-purple-500/5 p-3 text-xs">
         <div className="leading-5 text-gray-300">
-          Provides error-tolerant script compilation.
+          Selects the first usable value without converting its data type.
         </div>
         <div className="mt-1 leading-5 text-gray-400">
           Switches automatically to the <span className="text-purple-400 font-semibold">FALLBACK</span> input value if the <span className="text-purple-400 font-semibold">PRIMARY</span> input is blank or fails.

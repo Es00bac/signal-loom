@@ -99,6 +99,71 @@ describe('list node model', () => {
     });
   });
 
+  it('preserves the declared value kinds and selected source handles of utility outputs', () => {
+    const nodes = [
+      createNode({ id: 'index', type: 'numberNode', data: { value: 3 } }),
+      createNode({ id: 'seed', type: 'seedSequencerNode', data: { seed: 100, increment: 5 } }),
+      createNode({ id: 'number-list', type: 'list' }),
+      createNode({ id: 'palette', type: 'colorSwatchNode', data: { colorSwatchColors: ['#112233', '#aabbcc'] } }),
+      createNode({ id: 'color-list', type: 'list' }),
+      createNode({ id: 'lora', type: 'loraSpecNode', data: { loraEntries: [{ path: 'org/style', scale: 0.8 }] } }),
+      createNode({ id: 'json-list', type: 'list' }),
+      createNode({ id: 'doodle', type: 'doodleNode', data: { doodleDescription: 'rough fox', doodleSketch: 'data:image/png;base64,AAAA' } }),
+      createNode({ id: 'package-list', type: 'list' }),
+    ];
+    const edges: Edge[] = [
+      { id: 'index-seed', source: 'index', target: 'seed' },
+      { id: 'seed-list', source: 'seed', target: 'number-list', targetHandle: buildListItemTargetHandle(0) },
+      { id: 'palette-list', source: 'palette', sourceHandle: 'palette-color-1', target: 'color-list', targetHandle: buildListItemTargetHandle(0) },
+      { id: 'lora-list', source: 'lora', target: 'json-list', targetHandle: buildListItemTargetHandle(0) },
+      { id: 'doodle-list', source: 'doodle', target: 'package-list', targetHandle: buildListItemTargetHandle(0) },
+    ];
+
+    expect(buildListNodeItems('number-list', nodes, edges)[0]).toMatchObject({ kind: 'number', value: '115' });
+    expect(buildListNodeItems('color-list', nodes, edges)[0]).toMatchObject({ kind: 'text', value: '#AABBCC' });
+    expect(buildListNodeItems('json-list', nodes, edges)[0]).toMatchObject({
+      kind: 'json',
+      value: '[{"path":"org/style","scale":0.8}]',
+      mimeType: 'application/json',
+    });
+    expect(buildListNodeItems('package-list', nodes, edges)[0]).toMatchObject({
+      kind: 'package',
+      value: 'data:image/png;base64,AAAA',
+      text: 'rough fox',
+    });
+  });
+
+  it('keeps JSON and list utility outputs typed when they are collected', () => {
+    const nodes = [
+      createNode({ id: 'bool', type: 'valueNode', data: { valueKind: 'boolean', value: true } }),
+      createNode({ id: 'state', type: 'storyStateNode', data: { key: 'injured' } }),
+      createNode({ id: 'state-list', type: 'list' }),
+      createNode({ id: 'text', type: 'textNode', data: { prompt: 'I love this wonderful day' } }),
+      createNode({ id: 'sentiment', type: 'textSentimentAnalysisNode' }),
+      createNode({ id: 'sentiment-list', type: 'list' }),
+      createNode({ id: 'features', type: 'imageFeatureExtractorNode', data: { imageFeatures: { width: 640, height: 480 } } }),
+      createNode({ id: 'feature-list', type: 'list' }),
+      createNode({ id: 'script', type: 'textNode', data: { prompt: 'MARA: Hi\nJON: No\nMARA: Bye' } }),
+      createNode({ id: 'dialogue', type: 'dialogueScriptSplitterNode', data: { prefix: 'MARA:' } }),
+      createNode({ id: 'dialogue-list', type: 'list' }),
+    ];
+    const edges: Edge[] = [
+      { id: 'bool-state', source: 'bool', target: 'state' },
+      { id: 'state-list-edge', source: 'state', target: 'state-list', targetHandle: buildListItemTargetHandle(0) },
+      { id: 'text-sentiment', source: 'text', target: 'sentiment' },
+      { id: 'sentiment-list-edge', source: 'sentiment', target: 'sentiment-list', targetHandle: buildListItemTargetHandle(0) },
+      { id: 'feature-list-edge', source: 'features', target: 'feature-list', targetHandle: buildListItemTargetHandle(0) },
+      { id: 'script-dialogue', source: 'script', target: 'dialogue' },
+      { id: 'dialogue-list-edge', source: 'dialogue', target: 'dialogue-list', targetHandle: buildListItemTargetHandle(0) },
+    ];
+
+    expect(buildListNodeItems('state-list', nodes, edges)[0]).toMatchObject({ kind: 'json', value: '{"injured":true}' });
+    expect(buildListNodeItems('sentiment-list', nodes, edges)[0]).toMatchObject({ kind: 'json' });
+    expect(JSON.parse(buildListNodeItems('sentiment-list', nodes, edges)[0].value)).toMatchObject({ label: 'positive' });
+    expect(buildListNodeItems('feature-list', nodes, edges)[0]).toMatchObject({ kind: 'json', value: '{"width":640,"height":480}' });
+    expect(buildListNodeItems('dialogue-list', nodes, edges)[0]).toMatchObject({ kind: 'list', value: '["Hi","Bye"]' });
+  });
+
   it('expands a connected list to the selected single item for downstream operations', () => {
     const nodes = [
       createNode({
