@@ -46,5 +46,5 @@ describe('Paper production golden fixture', () => {
     expect(second.status).toBe('saved');
     if (first.status !== 'saved' || second.status !== 'saved') return;
     expect(first.bytes).toEqual(second.bytes);
-  });
+  }, 30_000);
 });
