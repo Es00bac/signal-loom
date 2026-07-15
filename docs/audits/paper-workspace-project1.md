@@ -43,6 +43,19 @@ The worktree and diff were empty. The five-commit history was `583732f`, `df9155
 
 Flow and Image paths are concurrently owned and are outside Project 1. None were modified while establishing this ledger.
 
+## Task 17: Authorized Live Stability Smoke
+
+The local build and focused Stability suite passed before the UI smoke. The Paper UI was exercised at `http://127.0.0.1:5175` on 2026-07-14 from 20:52:23 through 21:01:02 America/Denver (2026-07-15T02:52:23Z through 03:01:02Z). Provider settings were opened only to confirm the Stability configuration state; no credential value, local-storage record, request header, or authorization data was read, copied, or logged.
+
+A disk-backed PNG was dropped through the Paper image-frame workflow and registered in the Source Library. The fixture was `public/signal-loom-splash.png`, SHA-256 `c1230f5f6b86faffa65c56796b21df4ca2c8946bbff403eb03882420453eeb9d`, source dimensions `1254 x 1254 px`, and the 300 PPI placement target was `2550 x 2550 px` (2.03x). Its Source Library reference was the UI-created `Page 1 imports` envelope; no inline Base64 asset was created.
+
+| Mode | UI plan | Result |
+| --- | --- | --- |
+| Stability Fast | $0.02 estimate, provider-reported pixels | Submission disabled: `Stability AI API key is not configured.` No endpoint was invoked, so there is no HTTP status, output MIME, output dimensions, output hash, achieved PPI, or replacement asset. |
+| Stability Conservative | $0.40 estimate, non-empty preservation prompt, creativity `0.35`, provider-reported pixels | Submission disabled: `Stability AI API key is not configured.` No endpoint was invoked, so there is no HTTP status, output MIME, output dimensions, output hash, achieved PPI, or replacement asset. |
+
+This is an `external-pending` live-provider result, not a failed implementation claim. The UI correctly prevents a paid call without the user-supplied BYOK key. Local provider-contract behavior is verified; the `stability-effective-ppi` ledger entry remains external-pending until a configured account permits a real binary result to be measured and retained.
+
 ## Defect Ledger
 
 ### `asset-inline-base64`

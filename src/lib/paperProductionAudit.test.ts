@@ -13,4 +13,16 @@ describe('Paper Project 1 audit ledger', () => {
       expect(paperAuditEntry(id)).toMatchObject({ severity: expect.any(String), evidence: expect.any(Array) });
     }
   });
+
+  it('keeps live Stability output evidence external-pending when the configured provider cannot run', () => {
+    expect(paperAuditEntry('stability-provider-contract')).toMatchObject({
+      status: 'verified',
+    });
+    expect(paperAuditEntry('stability-effective-ppi')).toMatchObject({
+      status: 'external-pending',
+      evidence: expect.arrayContaining([
+        'docs/audits/paper-stability-live-2026-07-14.md',
+      ]),
+    });
+  });
 });
