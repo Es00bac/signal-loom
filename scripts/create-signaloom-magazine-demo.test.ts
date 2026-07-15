@@ -13,6 +13,10 @@ async function fixtureRecords() {
   return {
     hero: await createAssetRecord(new Uint8Array([1, 2, 3]), 'hero.png'),
     ad: await createAssetRecord(new Uint8Array([4, 5, 6]), 'ad-composite.png'),
+    icc: await createAssetRecord(
+      new Uint8Array(readFileSync('public/icc/FOGRA39L_coated.icc')),
+      'FOGRA39L_coated.icc',
+    ),
   };
 }
 
@@ -33,6 +37,17 @@ function assertSharedMagazineStructure(document: any, heroId: string, adId: stri
     startOnRight: false,
   });
   expect(document.printProduction.pdfStandard).toBe('browser-pdf');
+  expect(document.printProduction).toMatchObject({
+    outputIntentProfileId: 'custom',
+    customOutputIntentName: 'FOGRA39',
+  });
+  expect(document.managedIccProfiles).toHaveLength(1);
+  expect(document.managedIccProfiles[0]).toMatchObject({
+    id: document.printProduction.outputIntentProfileAssetId,
+    outputConditionId: 'FOGRA39',
+    colorSpace: 'CMYK',
+    source: { kind: 'bundled', url: '/icc/FOGRA39L_coated.icc' },
+  });
   expect(document.styles.paragraph.length).toBeGreaterThanOrEqual(8);
   expect(document.styles.character.length).toBeGreaterThanOrEqual(4);
   expect(document.styles.object.length).toBeGreaterThanOrEqual(5);
@@ -79,8 +94,8 @@ function assertSharedMagazineStructure(document: any, heroId: string, adId: stri
 
 describe('Signaloom bilingual magazine demo builder', () => {
   it('builds a professional two-page English edition with an isolated half-page demo ad', async () => {
-    const { hero, ad } = await fixtureRecords();
-    const document = buildEnglishMagazine(hero, ad, { now: 1_784_132_800_000 });
+    const { hero, ad, icc } = await fixtureRecords();
+    const document = buildEnglishMagazine(hero, ad, { now: 1_784_132_800_000, iccProfile: icc });
 
     assertSharedMagazineStructure(document, hero.ref.id, ad.ref.id);
     expect(document.view.rtlBinding).toBe(false);
@@ -93,8 +108,8 @@ describe('Signaloom bilingual magazine demo builder', () => {
   });
 
   it('builds a fully localized Japanese edition with vertical type and right binding', async () => {
-    const { hero, ad } = await fixtureRecords();
-    const document = buildJapaneseMagazine(hero, ad, { now: 1_784_132_800_000 });
+    const { hero, ad, icc } = await fixtureRecords();
+    const document = buildJapaneseMagazine(hero, ad, { now: 1_784_132_800_000, iccProfile: icc });
 
     assertSharedMagazineStructure(document, hero.ref.id, ad.ref.id);
     expect(document.view.rtlBinding).toBe(true);
@@ -116,15 +131,20 @@ describe('Signaloom bilingual magazine demo builder', () => {
   });
 
   it('packs deterministic version-2 .slppr containers with validated managed assets', async () => {
-    const { hero, ad } = await fixtureRecords();
-    const document = buildEnglishMagazine(hero, ad, { now: 1_784_132_800_000 });
-    const bytes = packMagazineContainer(document, [hero, ad]);
+    const { hero, ad, icc } = await fixtureRecords();
+    const document = buildEnglishMagazine(hero, ad, { now: 1_784_132_800_000, iccProfile: icc });
+    const bytes = packMagazineContainer(document, [hero, ad, icc]);
     const archive = unzipSync(bytes);
     const manifest = JSON.parse(strFromU8(archive['manifest.json']));
 
     expect(manifest).toMatchObject({ format: 'signal-loom-paper', formatVersion: 2, kind: 'paper' });
-    expect(manifest.assets).toEqual([hero.ref, ad.ref]);
-    expect(Object.keys(archive).filter((path) => path.startsWith('assets/'))).toHaveLength(2);
+    expect(manifest.assets).toEqual([hero.ref, ad.ref, icc.ref]);
+    const iccPath = Object.keys(archive).find((path) => path.endsWith('.icc'));
+    expect(iccPath).toBe(`assets/${icc.ref.sha256}.icc`);
+    expect(createHash('sha256').update(archive[iccPath!]).digest('hex')).toBe(icc.ref.sha256);
+    expect(Object.keys(archive).filter((path) => path.startsWith('assets/'))).toHaveLength(3);
     expect(JSON.stringify(manifest.document)).not.toContain('data:image');
   });
 });
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';

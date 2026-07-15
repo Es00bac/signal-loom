@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, extname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { basename, dirname, extname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { strToU8, zipSync } from 'fflate';
 
 const FORMAT = 'signal-loom-paper';
@@ -14,6 +14,8 @@ const SAFE_SANS = 'Arial, "Liberation Sans", "Helvetica Neue", Helvetica, "Noto 
 const JP_SANS = '"Noto Sans CJK JP", "Noto Sans JP", "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif';
 const DISPLAY = '"Arial Narrow", "Liberation Sans Narrow", Arial, sans-serif';
 const MONO = '"IBM Plex Mono", "Liberation Mono", "Noto Sans Mono", monospace';
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const FOGRA39_PROFILE_PATH = resolve(SCRIPT_DIR, '../public/icc/FOGRA39L_coated.icc');
 
 const COLORS = {
   paper: '#f3f0e8',
@@ -180,7 +182,8 @@ function styles(japanese) {
   };
 }
 
-function baseDocument(title, japanese, now) {
+function baseDocument(title, japanese, now, iccProfile) {
+  if (!iccProfile?.ref) throw new Error('The magazine demo requires its exact managed CMYK profile record.');
   const parentId = japanese ? 'parent-jp-feature' : 'parent-en-feature';
   return {
     id: japanese ? 'paper-signaloom-japanese-magazine' : 'paper-signaloom-english-magazine',
@@ -195,13 +198,28 @@ function baseDocument(title, japanese, now) {
     background: { type: 'solid', color: COLORS.paper, fromColor: COLORS.paper, toColor: COLORS.paper, angleDeg: 90, radialShape: 'ellipse' },
     printProduction: {
       pdfStandard: 'browser-pdf',
-      outputIntentProfileId: 'srgb',
-      customOutputIntentName: '',
+      outputIntentProfileId: 'custom',
+      outputIntentProfileAssetId: iccProfile.ref.id,
+      customOutputIntentName: 'FOGRA39',
       totalInkLimitPercent: 300,
       blackPolicy: 'warn-rich-black',
       spotColorPolicy: 'preserve-named',
       overprintPreview: true,
     },
+    managedIccProfiles: [{
+      id: iccProfile.ref.id,
+      asset: { ...iccProfile.ref },
+      description: 'FOGRA39L Coated',
+      deviceClass: 'prtr',
+      colorSpace: 'CMYK',
+      pcs: 'Lab ',
+      outputConditionId: 'FOGRA39',
+      source: {
+        kind: 'bundled',
+        url: '/icc/FOGRA39L_coated.icc',
+        licenseId: 'LicenseRef-NoKnownCopyrightRestrictions',
+      },
+    }],
     view: {
       showRulers: false,
       showGrid: false,
@@ -557,14 +575,14 @@ function japanesePageTwo(ad) {
   };
 }
 
-export function buildEnglishMagazine(heroRecord, adRecord, { now = Date.now() } = {}) {
-  const document = baseDocument('Signaloom — Woven From Signals', false, now);
+export function buildEnglishMagazine(heroRecord, adRecord, { now = Date.now(), iccProfile } = {}) {
+  const document = baseDocument('Signaloom — Woven From Signals', false, now, iccProfile);
   document.pages = [englishPageOne(heroRecord), englishPageTwo(adRecord)];
   return document;
 }
 
-export function buildJapaneseMagazine(heroRecord, adRecord, { now = Date.now() } = {}) {
-  const document = baseDocument('Signaloom — シグナルを織る', true, now);
+export function buildJapaneseMagazine(heroRecord, adRecord, { now = Date.now(), iccProfile } = {}) {
+  const document = baseDocument('Signaloom — シグナルを織る', true, now, iccProfile);
   document.pages = [japanesePageOne(heroRecord), japanesePageTwo(adRecord)];
   return document;
 }
@@ -572,11 +590,17 @@ export function buildJapaneseMagazine(heroRecord, adRecord, { now = Date.now() }
 export function createAssetRecord(bytes, fileName) {
   const copy = new Uint8Array(bytes);
   const sha256 = createHash('sha256').update(copy).digest('hex');
+  const extension = extname(fileName).toLowerCase();
+  const mimeType = extension === '.jpg' || extension === '.jpeg'
+    ? 'image/jpeg'
+    : extension === '.icc' || extension === '.icm'
+      ? 'application/vnd.iccprofile'
+      : 'image/png';
   return {
     ref: {
       id: `sha256:${sha256}`,
       sha256,
-      mimeType: extname(fileName).toLowerCase() === '.jpg' || extname(fileName).toLowerCase() === '.jpeg' ? 'image/jpeg' : 'image/png',
+      mimeType,
       byteLength: copy.byteLength,
       fileName,
     },
@@ -627,15 +651,16 @@ function generateFiles({ assets, output }) {
   const adPath = join(assetDir, 'ad-composite.png');
   const hero = createAssetRecord(readFileSync(heroPath), basename(heroPath));
   const ad = createAssetRecord(readFileSync(adPath), basename(adPath));
+  const iccProfile = createAssetRecord(readFileSync(FOGRA39_PROFILE_PATH), basename(FOGRA39_PROFILE_PATH));
   const now = 1_784_132_800_000;
   const editions = [
-    ['Signaloom-Story-English-Magazine.slppr', buildEnglishMagazine(hero, ad, { now })],
-    ['Signaloom-Story-Japanese-Magazine.slppr', buildJapaneseMagazine(hero, ad, { now })],
+    ['Signaloom-Story-English-Magazine.slppr', buildEnglishMagazine(hero, ad, { now, iccProfile })],
+    ['Signaloom-Story-Japanese-Magazine.slppr', buildJapaneseMagazine(hero, ad, { now, iccProfile })],
   ];
   mkdirSync(outputDir, { recursive: true });
   return editions.map(([fileName, document]) => {
     const path = join(outputDir, fileName);
-    writeFileSync(path, packMagazineContainer(document, [hero, ad]));
+    writeFileSync(path, packMagazineContainer(document, [hero, ad, iccProfile]));
     return path;
   });
 }
