@@ -11,7 +11,13 @@ Created two standalone, native Paper version-2 `.slppr` magazine spreads about d
 
 Both are A4 two-page facing spreads with 3 mm bleed, a six-column editorial grid, baseline grid, guides, parent-page furniture, threaded text, paragraph/character/object styles, managed embedded images, gradients, swatches, rich text, multicolumn copy, column rules, and a lower-half page-two Sloan Studio T-shirt concept advertisement. The advertisement is explicitly marked as a demo/non-product in each language.
 
-The Japanese edition is a full localization rather than an English layout with translated labels. It uses right-to-left binding, vertical `vertical-rl` text, mixed glyph orientation, strict Japanese line breaking, and sesame emphasis. With the document configured as a facing spread, page 1 appears on the right and page 2 on the left.
+The Japanese edition is a full localization rather than an English layout with translated labels. It uses right-to-left binding, vertical `vertical-rl` text, mixed glyph orientation, strict Japanese line breaking, sesame emphasis, and native Paper ruby notation for selective furigana. With the document configured as a facing spread, page 1 appears on the right and page 2 on the left.
+
+## Editorial redesign
+
+The final presentation pass replaced the original card-heavy prototype with a restrained contemporary editorial system. Production overlays remain authored in the document but open hidden, the headline and deck follow a quieter top rail, the opening article panel is compact, body copy is ragged-right instead of mechanically justified, and the three development turns use open color rules instead of filled cards. Pull quotes, evidence strips, and image captions now align to the same underlying grid while preserving deliberate whitespace.
+
+The Japanese page-two article uses three independently composed vertical lanes. This avoids treating authored text on continuation frames as separate story roots and eliminates the false overset indicator seen in the earlier threaded version. Furigana is encoded with Paper's real inline ruby notation and rendered as `<ruby>/<rt>` annotations for `素材《そざい》`, `工程《こうてい》`, `時間軸《じかんじく》`, `余白《よはく》`, `階層《かいそう》`, `認証情報《にんしょうじょうほう》`, and `｜見開き《みひらき》`.
 
 ## Dedicated Flow asset project
 
@@ -38,6 +44,8 @@ Both finished files were opened through the installed Sloom Studio Paper file ro
 - two Paper page views per document;
 - English left-to-right order and Japanese right-to-left order;
 - zero overset text indicators in either edition;
+- seven native ruby/furigana annotations in the Japanese edition;
+- zero unintended shape/polygon frames;
 - no container, managed-asset, font, or output-intent errors;
 - the article remains above the 148.5 mm page-two midpoint and every ad frame begins at or below it;
 - both embedded Flow images render in Paper;

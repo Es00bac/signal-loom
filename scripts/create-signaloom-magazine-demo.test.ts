@@ -23,7 +23,15 @@ function plainText(document: unknown): string {
 function assertSharedMagazineStructure(document: any, heroId: string, adId: string) {
   expect(document.page).toMatchObject({ preset: 'a4', widthMm: 210, heightMm: 297, bleedMm: 3, dpi: 300 });
   expect(document.pages).toHaveLength(2);
-  expect(document.view).toMatchObject({ showSpreads: true, startOnRight: false, showBleed: true, showGuides: true });
+  expect(document.view).toMatchObject({
+    showRulers: false,
+    showGrid: false,
+    showGuides: false,
+    showFrameEdges: false,
+    showBleed: false,
+    showSpreads: true,
+    startOnRight: false,
+  });
   expect(document.printProduction.pdfStandard).toBe('browser-pdf');
   expect(document.styles.paragraph.length).toBeGreaterThanOrEqual(8);
   expect(document.styles.character.length).toBeGreaterThanOrEqual(4);
@@ -46,12 +54,27 @@ function assertSharedMagazineStructure(document: any, heroId: string, adId: stri
   expect(adFrames.every((frame: any) => frame.yMm >= MIDPOINT_MM)).toBe(true);
 
   const threaded = allFrames.filter((frame: any) => frame.threadId === 'signaloom-feature');
-  expect(threaded.length).toBeGreaterThanOrEqual(4);
+  expect(threaded.length).toBeGreaterThanOrEqual(document.view.rtlBinding ? 1 : 4);
   expect(new Set(threaded.map((frame: any) => frame.threadOrder)).size).toBe(threaded.length);
   expect(allFrames.some((frame: any) => frame.richText?.some((paragraph: any) => paragraph.runs.length > 1))).toBe(true);
   expect(allFrames.some((frame: any) => frame.fillGradient)).toBe(true);
   expect(allFrames.some((frame: any) => frame.columns > 1 && frame.columnRule)).toBe(true);
   expect(allFrames.every((frame: any) => frame.kind !== 'shape' || frame.shapeKind)).toBe(true);
+
+  const deprecatedEditorialCards = allFrames.filter((frame: any) => (
+    /p1-meta-card$/.test(frame.id)
+    || /p2-timeline-\d\d$/.test(frame.id)
+    || /p1-opening-card$/.test(frame.id)
+  ));
+  expect(deprecatedEditorialCards).toEqual([]);
+
+  const openingPanels = allFrames.filter((frame: any) => /p1-opening-panel$/.test(frame.id));
+  expect(openingPanels).toHaveLength(1);
+  expect(openingPanels[0].heightMm).toBeLessThanOrEqual(66);
+
+  const milestoneRules = document.pages[1].frames.filter((frame: any) => /p2-milestone-\d\d-rule$/.test(frame.id));
+  expect(milestoneRules).toHaveLength(3);
+  expect(milestoneRules.every((frame: any) => frame.kind === 'panel' && frame.heightMm <= 0.6)).toBe(true);
 }
 
 describe('Signaloom bilingual magazine demo builder', () => {
@@ -61,6 +84,9 @@ describe('Signaloom bilingual magazine demo builder', () => {
 
     assertSharedMagazineStructure(document, hero.ref.id, ad.ref.id);
     expect(document.view.rtlBinding).toBe(false);
+    expect(document.styles.paragraph.find((style: any) => style.id === 'p-body')?.typography.align).toBe('left');
+    const continuation = document.pages[1].frames.find((frame: any) => frame.id === 'en-p2-article-columns');
+    expect(continuation).toMatchObject({ columnRule: false, typography: { align: 'left' } });
     expect(plainText(document)).toContain('WOVEN FROM SIGNALS');
     expect(plainText(document)).toContain('CONCEPT DEMO — NOT A REAL PRODUCT — NOT FOR SALE');
     expect(plainText(document)).toContain('信号を、かたちへ。');
@@ -72,6 +98,15 @@ describe('Signaloom bilingual magazine demo builder', () => {
 
     assertSharedMagazineStructure(document, hero.ref.id, ad.ref.id);
     expect(document.view.rtlBinding).toBe(true);
+    const verticalFrames = ['jp-p2-article-v1', 'jp-p2-article-v2', 'jp-p2-article-v3']
+      .map((id) => document.pages[1].frames.find((frame: any) => frame.id === id));
+    expect(verticalFrames.every((frame: any) => frame?.text && !frame.threadId && frame.threadOrder == null)).toBe(true);
+    expect(verticalFrames[0]?.text).toContain('時間軸《じかんじく》');
+    expect(verticalFrames[1]?.text).toContain('認証情報《にんしょうじょうほう》');
+    expect(verticalFrames[1]?.text).toContain('ポートは「受け取れるものを漏らさず受け取り');
+    expect(verticalFrames[2]?.text).toContain('｜見開き《みひらき》');
+    expect(document.pages[1].frames.find((frame: any) => frame.id === 'jp-p2-article-pull')?.widthMm).toBeGreaterThanOrEqual(30);
+    expect(plainText(document)).toContain('素材《そざい》と工程《こうてい》');
     expect(plainText(document)).toContain('シグナルを織る');
     expect(plainText(document)).toContain('コンセプトデモ／実在しない商品です／非売品');
     expect(document.pages.flatMap((page: any) => page.frames).some((frame: any) =>
