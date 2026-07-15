@@ -20,6 +20,7 @@ import {
 } from '../../lib/nodeCatalog';
 import type { FlowNodeType, NodeData } from '../../types/flow';
 import { useI18n } from '../../lib/useI18n';
+import { NodeContractHelp } from './NodeContractHelp';
 
 interface BottomToolbarProps {
   onAddNode: (type: FlowNodeType, initialData?: Partial<NodeData>) => void;
@@ -139,16 +140,19 @@ function NodeEntryButton({ entry, onAdd }: { entry: FlowNodeCatalogEntry; onAdd:
   const entryLabel = nodeCatalogEntryLabel(entry, locale);
   const addLabel = tf('flow.toolbar.addNode', { name: entryLabel });
   return (
-    <button
-      aria-label={addLabel}
-      className="rounded-md px-2.5 py-2 text-left transition-colors hover:bg-blue-500/10"
-      onClick={onAdd}
-      title={addLabel}
-      type="button"
-    >
-      <span className="block text-xs font-semibold text-gray-100">{entryLabel}</span>
-      <span className="mt-0.5 block text-[10px] leading-4 text-gray-400">{nodeCatalogEntryDescription(entry, locale)}</span>
-    </button>
+    <div className="rounded-md px-0.5 py-0.5">
+      <button
+        aria-label={addLabel}
+        className="w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-blue-500/10"
+        onClick={onAdd}
+        title={addLabel}
+        type="button"
+      >
+        <span className="block text-xs font-semibold text-gray-100">{entryLabel}</span>
+        <span className="mt-0.5 block text-[10px] leading-4 text-gray-400">{nodeCatalogEntryDescription(entry, locale)}</span>
+      </button>
+      <NodeContractHelp initialData={entry.initialData} nodeType={entry.type} />
+    </div>
   );
 }
 

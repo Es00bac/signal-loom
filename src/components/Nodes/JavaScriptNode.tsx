@@ -5,6 +5,9 @@ import { BaseNode } from './BaseNode';
 import { TypedHandle as Handle } from './TypedHandle';
 import { useFlowStore } from '../../store/flowStore';
 import type { AppNodeProps } from '../../types/flow';
+import { DeclaredOutputTypeSelect } from './DeclaredOutputTypeSelect';
+
+const SCRIPT_OUTPUT_TYPES = ['text', 'number', 'boolean', 'json', 'image', 'video', 'audio', 'list'] as const;
 
 function JavaScriptNodeComponent({ id, data }: AppNodeProps) {
   const patchNodeData = useFlowStore((state) => state.patchNodeData);
@@ -69,6 +72,11 @@ function JavaScriptNodeComponent({ id, data }: AppNodeProps) {
             className="rounded-md border border-gray-700 bg-gray-950 px-2 py-1.5 font-mono text-[11px] text-gray-100 focus:border-yellow-400 focus:outline-none resize-y"
           />
         </div>
+        <DeclaredOutputTypeSelect
+          allowedTypes={SCRIPT_OUTPUT_TYPES}
+          onChange={(value) => patchNodeData(id, { declaredOutputType: value })}
+          value={data.declaredOutputType}
+        />
         <div className="mt-1 leading-5 text-gray-400">
           Evaluates JavaScript code with variables <code className="text-yellow-400 font-mono">A</code>, <code className="text-yellow-400 font-mono">B</code>, and <code className="text-yellow-400 font-mono">C</code>, outputting the returned value.
         </div>

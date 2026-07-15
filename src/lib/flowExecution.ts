@@ -421,13 +421,24 @@ async function executeApiFetchNode(
     const text = await response.text();
     let result: unknown = text;
     let resultType: ResultType = 'text';
+    const declaredOutputType = node.data.declaredOutputType;
 
-    if (response.headers.get('content-type')?.includes('application/json')) {
+    if (declaredOutputType === 'json') {
+      try {
+        result = JSON.parse(text);
+        resultType = 'json';
+      } catch (error) {
+        throw new NonRetryableError(
+          'API Requester declared JSON output, but the response body is not valid JSON. Change Output type to Text or fix the endpoint response.',
+          { cause: error },
+        );
+      }
+    } else if (declaredOutputType !== 'text' && response.headers.get('content-type')?.includes('application/json')) {
       try {
         result = JSON.parse(text);
         resultType = 'json';
       } catch {
-        // Keep as string
+        // Auto-detection is best-effort when no output type has been declared.
       }
     }
 
@@ -441,6 +452,9 @@ async function executeApiFetchNode(
       statusMessage: `Completed with status ${response.status}`,
     };
   } catch (err) {
+    if (err instanceof NonRetryableError) {
+      throw err;
+    }
     throw new Error(`Network request failed: ${(err as Error).message}`);
   }
 }

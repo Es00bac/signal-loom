@@ -885,6 +885,7 @@ export interface NodeData {
   customTitle?: string;
   result?: string;
   resultType?: ResultType;
+  declaredOutputType?: ResultType;
   resultHistory?: NodeResultAttempt[];
   selectedResultId?: string;
   usage?: UsageTelemetry;

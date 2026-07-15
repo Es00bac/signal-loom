@@ -196,6 +196,39 @@ describe('flow signal evaluation', () => {
     ]);
   });
 
+  it('accepts flexible-node values that match their declared output type', () => {
+    const nodes = [
+      createNode({
+        id: 'script',
+        type: 'javascriptNode',
+        data: { code: 'return 42;', declaredOutputType: 'number' },
+      }),
+    ];
+
+    const signal = evaluateNodeSignal('script', nodes, []);
+
+    expect(signal.kind).toBe('number');
+    expect(signal.value).toBe(42);
+    expect(signal.diagnostics).toEqual([]);
+  });
+
+  it.each([
+    ['javascriptNode', { code: 'return "hello";', declaredOutputType: 'number' }],
+    ['pythonNode', { code: 'return "hello"', declaredOutputType: 'number' }],
+    ['apiFetchNode', { result: '{"ok":true}', resultType: 'json', declaredOutputType: 'text' }],
+  ] as const)('blocks %s when its actual value violates the declared output type', (type, data) => {
+    const node = createNode({ id: 'flexible', type, data });
+    const signal = evaluateNodeSignal(node.id, [node], []);
+
+    expect(signal.diagnostics).toContainEqual(expect.objectContaining({
+      id: 'declared-output-mismatch-flexible',
+      severity: 'critical',
+      nodeId: 'flexible',
+      blocksRun: true,
+      message: expect.stringContaining('declared a'),
+    }));
+  });
+
   it('evaluates JSON Builder nodes correctly rendering input signals', () => {
     const nodes = [
       createNode({ id: 'valA', type: 'textNode', data: { prompt: 'John' } }),

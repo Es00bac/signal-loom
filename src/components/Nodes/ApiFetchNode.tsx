@@ -3,6 +3,7 @@ import { Globe } from 'lucide-react';
 import { BaseNode } from './BaseNode';
 import { useFlowStore } from '../../store/flowStore';
 import type { AppNodeProps } from '../../types/flow';
+import { DeclaredOutputTypeSelect } from './DeclaredOutputTypeSelect';
 
 function ApiFetchNodeComponent({ id, data }: AppNodeProps) {
   const patchNodeData = useFlowStore((state) => state.patchNodeData);
@@ -104,6 +105,12 @@ function ApiFetchNodeComponent({ id, data }: AppNodeProps) {
             />
           </div>
         )}
+
+        <DeclaredOutputTypeSelect
+          allowedTypes={['text', 'json']}
+          onChange={(value) => patchNodeData(id, { declaredOutputType: value })}
+          value={data.declaredOutputType}
+        />
 
         <div className="mt-1 leading-5 text-gray-400">
           Sends an HTTP request. Any upstream text input connected to the target handle on the left will override the URL field dynamically.

@@ -32,4 +32,15 @@ describe('BottomToolbar topbar presentation', () => {
     expect(html).toContain('Add Stability Inpaint image node');
     expect(html).toContain('Add Local/Open Qwen Edit image node');
   });
+
+  it('documents each catalog node without nesting help controls inside its add button', () => {
+    const html = renderToStaticMarkup(<BottomToolbar onAddNode={() => undefined} variant="topbar" />);
+
+    expect(html).toContain('Connections &amp; example');
+    expect(html).toContain('Crop one connected image locally and emit the cropped pixels.');
+    expect(html).toMatch(/<button[^>]*aria-label="Add Crop Image node"[^>]*>[\s\S]*?<\/button>[\s\S]*?<details/);
+    const cropButton = html.match(/(<button aria-label="Add Crop Image node"[\s\S]*?<\/button>)/)?.[1];
+    expect(cropButton).toBeDefined();
+    expect(cropButton).not.toContain('<details');
+  });
 });

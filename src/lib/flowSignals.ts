@@ -828,6 +828,28 @@ function isResultType(value: unknown): value is ResultType {
   return ['text', 'number', 'boolean', 'json', 'image', 'video', 'audio', 'package', 'list', 'envelope'].includes(value as string);
 }
 
+function signalWithDeclaredOutput(
+  node: AppNode,
+  value: unknown,
+  actualKind: ResultType = inferKindFromValue(value),
+): FlowSignal {
+  const declaredKind = node.data.declaredOutputType;
+  if (!isResultType(declaredKind) || declaredKind === actualKind) {
+    return scalarSignal(actualKind, value, node.id);
+  }
+
+  return scalarSignal(actualKind, value, node.id, {
+    diagnostics: [{
+      id: `declared-output-mismatch-${node.id}`,
+      severity: 'critical',
+      nodeId: node.id,
+      message: `${node.data.customTitle ?? node.type} declared a ${declaredKind} output but returned ${actualKind}.`,
+      suggestedFix: `Change the node logic to return ${declaredKind}, or update Output type to ${actualKind}. Flow does not coerce flexible-node results implicitly.`,
+      blocksRun: true,
+    }],
+  });
+}
+
 function evaluateJavaScriptNode(
   node: AppNode,
   nodes: AppNode[],
@@ -853,8 +875,7 @@ function evaluateJavaScriptNode(
     try {
       const fn = new Function('A', 'B', 'C', code);
       const outputVal = fn(A, B, C);
-      const kind = inferKindFromValue(outputVal);
-      return scalarSignal(kind, outputVal !== undefined ? outputVal : '', node.id);
+      return signalWithDeclaredOutput(node, outputVal !== undefined ? outputVal : '');
     } catch (err) {
       return emptySignal('text', node.id, [
         {
@@ -898,7 +919,7 @@ function evaluateJsonQueryNode(
     }
 
     if (!queryStr) {
-      return scalarSignal(inferKindFromValue(jsonVal), jsonVal, node.id);
+      return signalWithDeclaredOutput(node, jsonVal);
     }
 
     try {
@@ -914,8 +935,7 @@ function evaluateJsonQueryNode(
 
       const evaluator = new Function('json', `try { return ${expr}; } catch (e) { return undefined; }`);
       const outputVal = evaluator(jsonVal);
-      const kind = inferKindFromValue(outputVal);
-      return scalarSignal(kind, outputVal !== undefined ? outputVal : '', node.id);
+      return signalWithDeclaredOutput(node, outputVal !== undefined ? outputVal : '');
     } catch (err) {
       return emptySignal('text', node.id, [
         {
@@ -1035,8 +1055,7 @@ function evaluatePythonNode(
       const transpiledJs = transpilePythonToJs(code);
       const fn = new Function('A', 'B', 'C', transpiledJs);
       const outputVal = fn(A, B, C);
-      const kind = inferKindFromValue(outputVal);
-      return scalarSignal(kind, outputVal !== undefined ? outputVal : '', node.id);
+      return signalWithDeclaredOutput(node, outputVal !== undefined ? outputVal : '');
     } catch (err) {
       return emptySignal('text', node.id, [
         {
@@ -1198,8 +1217,8 @@ function evaluateApiFetchNode(
   _nodesById?: Map<string, AppNode>,
 ): FlowSignal {
   const val = node.data.result !== undefined ? node.data.result : '';
-  const resultType = (node.data.resultType as ResultType | undefined) ?? 'text';
-  return scalarSignal(resultType, val, node.id);
+  const resultType = isResultType(node.data.resultType) ? node.data.resultType : inferKindFromValue(val);
+  return signalWithDeclaredOutput(node, val, resultType);
 }
 
 function evaluateSqlQueryNode(

@@ -5,6 +5,9 @@ import { BaseNode } from './BaseNode';
 import { TypedHandle as Handle } from './TypedHandle';
 import { useFlowStore } from '../../store/flowStore';
 import type { AppNodeProps } from '../../types/flow';
+import { DeclaredOutputTypeSelect } from './DeclaredOutputTypeSelect';
+
+const QUERY_OUTPUT_TYPES = ['text', 'number', 'boolean', 'json', 'image', 'video', 'audio', 'list'] as const;
 
 function JsonQueryNodeComponent({ id, data }: AppNodeProps) {
   const patchNodeData = useFlowStore((state) => state.patchNodeData);
@@ -61,6 +64,11 @@ function JsonQueryNodeComponent({ id, data }: AppNodeProps) {
             className="rounded-md border border-gray-700 bg-gray-950 px-2 py-1.5 font-mono text-[11px] text-gray-100 focus:border-cyan-400 focus:outline-none"
           />
         </div>
+        <DeclaredOutputTypeSelect
+          allowedTypes={QUERY_OUTPUT_TYPES}
+          onChange={(value) => patchNodeData(id, { declaredOutputType: value })}
+          value={data.declaredOutputType}
+        />
         <div className="mt-1 leading-5 text-gray-400">
           Extracts values from the input <code className="text-cyan-400 font-mono">json</code> object using a JavaScript evaluation path. Supports fields, arrays, and standard array methods.
         </div>
