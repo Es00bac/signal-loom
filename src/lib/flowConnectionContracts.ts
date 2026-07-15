@@ -101,6 +101,7 @@ export function annotateFlowEdge(edge: Edge, context: FlowGraphContractContext):
 
   return {
     ...edge,
+    type: 'typed',
     data: {
       ...(edge.data ?? {}),
       flowContract,

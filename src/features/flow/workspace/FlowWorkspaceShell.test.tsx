@@ -6,13 +6,20 @@ import type { Edge } from '@xyflow/react';
 import { FlowWorkspaceShell } from './FlowWorkspaceShell';
 import type { AppNode } from '../../../types/flow';
 
+const reactFlowCapture = vi.hoisted(() => ({
+  props: undefined as Record<string, unknown> | undefined,
+}));
+
 vi.mock('@xyflow/react', async () => {
   return {
     Background: () => <div data-testid="flow-background" />,
+    BaseEdge: () => <path />,
     Controls: () => <div data-testid="flow-controls" />,
-    ReactFlow: ({ children }: { children?: any }) => (
-      <div data-testid="react-flow-shell">{children}</div>
-    ),
+    ReactFlow: (props: { children?: any } & Record<string, unknown>) => {
+      reactFlowCapture.props = props;
+      return <div data-testid="react-flow-shell">{props.children}</div>;
+    },
+    getBezierPath: () => ['M 0 0 L 1 1', 0.5, 0.5],
     useReactFlow: () => ({
       getViewport: () => ({ x: 0, y: 0, zoom: 1 }),
       setViewport: () => {},
@@ -60,6 +67,12 @@ describe('FlowWorkspaceShell', () => {
 
     expect(markup).toContain('data-testid="flow-workspace-shell"');
     expect(markup).toContain('data-testid="react-flow-shell"');
+    expect(reactFlowCapture.props).toMatchObject({
+      defaultEdgeOptions: { type: 'typed' },
+    });
+    expect((reactFlowCapture.props?.edgeTypes as Record<string, unknown>)?.typed).toBeTypeOf('function');
+    expect(reactFlowCapture.props?.connectionLineComponent).toBeTypeOf('function');
+    expect(reactFlowCapture.props?.isValidConnection).toBeTypeOf('function');
   });
 
   it('is mounted by App instead of leaving the Flow canvas inline there', () => {

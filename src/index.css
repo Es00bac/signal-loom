@@ -261,6 +261,20 @@
     color: var(--sl-text);
   }
 
+  .react-flow__edge .typed-flow-edge-path {
+    transition: filter 120ms ease, opacity 120ms ease, stroke-width 120ms ease;
+  }
+
+  .react-flow__edge.selectable:hover .typed-flow-edge-path,
+  .react-flow__edge.selected .typed-flow-edge-path {
+    filter: drop-shadow(0 0 3px rgb(255 255 255 / 36%));
+    opacity: 1;
+  }
+
+  .react-flow__edge:not(.selected) .typed-flow-edge-path {
+    opacity: 0.9;
+  }
+
   .paper-input {
     @apply w-full rounded-md border px-2 py-1.5 text-xs outline-none transition-colors;
     background: color-mix(in srgb, var(--sl-bg) 66%, var(--sl-panel)) !important;

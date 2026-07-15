@@ -2,6 +2,7 @@ import {
   Background,
   Controls,
   type Edge,
+  type EdgeTypes,
   type OnConnect,
   type OnConnectEnd,
   type OnConnectStart,
@@ -13,7 +14,7 @@ import {
   useStoreApi,
 } from '@xyflow/react';
 import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { computePinchViewport, pinchSampleFromPoints, type PinchSample } from './flowPinchZoom';
 import { AlertTriangle, Braces, Bug, Loader2, Sparkles, X } from 'lucide-react';
 import { LibrarySearchDialog } from '../../../components/Common/LibrarySearchDialog';
@@ -21,6 +22,12 @@ import { ErrorBoundary } from '../../../components/Recovery/ErrorBoundary';
 import type { StandardLibraryFunction } from '../../../lib/standardLibrary';
 import type { FlowDiagnostic } from '../../../lib/flowSignals';
 import type { AppNode } from '../../../types/flow';
+import { validateFlowConnection } from '../../../lib/flowConnectionContracts';
+import { TypedFlowEdge } from '../../../components/Flow/TypedFlowEdge';
+import { createTypedConnectionLine } from '../../../components/Flow/TypedConnectionLine';
+
+const FLOW_EDGE_TYPES: EdgeTypes = { typed: TypedFlowEdge };
+const DEFAULT_FLOW_EDGE_OPTIONS = { type: 'typed', selectable: true } as const;
 
 export interface FlowWorkspaceShellProps {
   blockingFlowDiagnosticCount: number;
@@ -88,6 +95,14 @@ export function FlowWorkspaceShell({
   const pinchWrapperRef = useRef<HTMLDivElement>(null);
   const pinchSampleRef = useRef<PinchSample | null>(null);
   const [isPinching, setIsPinching] = useState(false);
+  const isValidConnection = useCallback(
+    (candidate: Edge | import('@xyflow/react').Connection) => validateFlowConnection(candidate, { nodes, edges }).valid,
+    [edges, nodes],
+  );
+  const connectionLineComponent = useMemo(
+    () => createTypedConnectionLine(nodes, edges),
+    [edges, nodes],
+  );
 
   // Two-finger pinch-zoom that works ANYWHERE on the canvas, including over nodes.
   // React Flow's built-in pinch is pre-empted by node dragging when a finger lands on a
@@ -216,6 +231,9 @@ export function FlowWorkspaceShell({
       <ErrorBoundary className="absolute inset-0" level="canvas" resetKeys={[flowRecoveryKey]} title="Flow Canvas">
         <ReactFlow<AppNode, Edge>
           className="bg-[var(--sl-bg)]"
+          connectionLineComponent={connectionLineComponent}
+          defaultEdgeOptions={DEFAULT_FLOW_EDGE_OPTIONS}
+          edgeTypes={FLOW_EDGE_TYPES}
           edges={edges}
           elementsSelectable={!flowOrganizeJob}
           fitView
@@ -223,6 +241,7 @@ export function FlowWorkspaceShell({
           nodes={nodes}
           nodesConnectable={!flowOrganizeJob}
           nodesDraggable={!flowOrganizeJob && !isPinching}
+          isValidConnection={isValidConnection}
           onConnect={onConnect}
           onConnectEnd={onConnectEnd}
           onConnectStart={onConnectStart}
