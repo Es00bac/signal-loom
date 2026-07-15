@@ -1,6 +1,7 @@
 import { exportPaperDocumentToPrintHtml, updatePaperDocumentSetup } from '../../lib/paperDocument';
 import {
   buildPaperRasterPdfExportRequest,
+  safePaperPdfFileName,
   type PaperPdfExportRequest,
 } from '../../lib/paperPdfExport';
 import {
@@ -830,44 +831,104 @@ export function openPrintPreview(document: ReturnType<typeof usePaperStore.getSt
   window.setTimeout(() => printWindow.print(), 250);
 }
 
+export interface PaperExportOutcome {
+  state: 'success' | 'canceled' | 'error';
+  message: string;
+  path?: string;
+  targetKind: 'file' | 'directory';
+}
+
+function finishPaperExport(
+  setStatus: (status: string) => void,
+  outcome: PaperExportOutcome,
+): PaperExportOutcome {
+  setStatus(outcome.message);
+  return outcome;
+}
+
 export async function exportPaperPdfDocument(
   document: PaperDocument,
   setStatus: (status: string) => void,
   request?: PaperPdfExportRequest,
   options: PaperPdfDocumentExportOptions = {},
-): Promise<void> {
+): Promise<PaperExportOutcome> {
   const nativeBridge = getSignalLoomNativeBridge();
 
   if (!nativeBridge?.exportPaperPdf) {
     openPrintPreview(document);
-    setStatus('Opened browser print dialog. In the desktop app this exports directly to PDF.');
-    return;
+    return finishPaperExport(setStatus, {
+      state: 'success',
+      message: 'Opened browser print dialog. In the desktop app this exports directly to PDF.',
+      targetKind: 'file',
+    });
   }
 
   let result: NativePaperPdfExportResult;
   try {
+    let filePath: string | undefined;
+    if (nativeBridge.choosePaperPdfExportPath) {
+      setStatus('Choose where to save the PDF...');
+      const destination = await nativeBridge.choosePaperPdfExportPath({
+        title: request?.title ?? document.title,
+        fileName: request?.fileName ?? safePaperPdfFileName(document.title),
+      });
+      if (destination.canceled) {
+        return finishPaperExport(setStatus, {
+          state: 'canceled',
+          message: 'PDF export canceled.',
+          targetKind: 'file',
+        });
+      }
+      if (destination.error || !destination.filePath) {
+        return finishPaperExport(setStatus, {
+          state: 'error',
+          message: `PDF export failed: ${destination.error ?? 'No PDF destination was selected.'}`,
+          targetKind: 'file',
+        });
+      }
+      filePath = destination.filePath;
+      setStatus(`Preparing PDF export for ${filePath}...`);
+    }
     const pdfRequest = request ?? await buildDefaultRasterPaperPdfRequest(document, setStatus, options);
     if (request) {
       setStatus('Preparing print-quality PDF...');
     }
-    result = await nativeBridge.exportPaperPdf({ ...pdfRequest, provenanceLabel: buildProvenanceLabel() });
+    result = await nativeBridge.exportPaperPdf({
+      ...pdfRequest,
+      ...(filePath ? { filePath } : {}),
+      provenanceLabel: buildProvenanceLabel(),
+    });
   } catch (error) {
-    setStatus(error instanceof Error ? `PDF export failed: ${error.message}` : 'PDF export failed.');
-    return;
+    return finishPaperExport(setStatus, {
+      state: 'error',
+      message: error instanceof Error ? `PDF export failed: ${error.message}` : 'PDF export failed.',
+      targetKind: 'file',
+    });
   }
 
   if (result.canceled) {
-    setStatus('PDF export canceled.');
-    return;
+    return finishPaperExport(setStatus, {
+      state: 'canceled',
+      message: 'PDF export canceled.',
+      targetKind: 'file',
+    });
   }
 
   if (result.error) {
-    setStatus(`PDF export failed: ${result.error}`);
-    return;
+    return finishPaperExport(setStatus, {
+      state: 'error',
+      message: `PDF export failed: ${result.error}`,
+      targetKind: 'file',
+    });
   }
 
   const sizeLabel = result.bytes ? ` (${Math.round(result.bytes / 1024)} KB)` : '';
-  setStatus(result.filePath ? `Saved PDF to ${result.filePath}${sizeLabel}.` : `Saved PDF${sizeLabel}.`);
+  return finishPaperExport(setStatus, {
+    state: 'success',
+    message: result.filePath ? `Saved PDF to ${result.filePath}${sizeLabel}.` : `Saved PDF${sizeLabel}.`,
+    path: result.filePath,
+    targetKind: 'file',
+  });
 }
 
 export interface PaperPdfxSaveDependencies {
@@ -1069,12 +1130,37 @@ export async function exportPaperWebcomicImages(
   document: PaperDocument,
   setStatus: (status: string) => void,
   options: PaperWebcomicImageExportOptions = {},
-): Promise<void> {
+): Promise<PaperExportOutcome> {
   const plan = buildPaperWebcomicImageExportPlan(document, options);
   const nativeBridge = getSignalLoomNativeBridge();
 
   try {
     if (nativeBridge?.exportPaperImages) {
+      let directoryPath: string | undefined;
+      if (nativeBridge.choosePaperImageExportDirectory) {
+        setStatus(`Choose where to save the ${plan.format.toUpperCase()} page images...`);
+        const destination = await nativeBridge.choosePaperImageExportDirectory({
+          title: plan.title,
+          directoryName: plan.directoryName,
+          format: plan.format,
+        });
+        if (destination.canceled) {
+          return finishPaperExport(setStatus, {
+            state: 'canceled',
+            message: 'Page image export canceled.',
+            targetKind: 'directory',
+          });
+        }
+        if (destination.error || !destination.directoryPath) {
+          return finishPaperExport(setStatus, {
+            state: 'error',
+            message: `Page image export failed: ${destination.error ?? 'No image export directory was selected.'}`,
+            targetKind: 'directory',
+          });
+        }
+        directoryPath = destination.directoryPath;
+        setStatus(`Preparing ${plan.format.toUpperCase()} page images for ${directoryPath}...`);
+      }
       setStatus(`Rasterizing ${plan.pages.length} Paper page${plan.pages.length === 1 ? '' : 's'} for ${plan.format.toUpperCase()} export...`);
       const pages = await buildPaperWebcomicImageDataPages(document, {
         ...options,
@@ -1089,6 +1175,7 @@ export async function exportPaperWebcomicImages(
         format: plan.format,
         mimeType: plan.mimeType,
         quality: plan.quality,
+        ...(directoryPath ? { directoryPath } : {}),
         pages: pages.map((page) => ({
           pageId: page.pageId,
           pageNumber: page.pageNumber,
@@ -1101,28 +1188,46 @@ export async function exportPaperWebcomicImages(
       });
 
       if (result.canceled) {
-        setStatus('Page image export canceled.');
-        return;
+        return finishPaperExport(setStatus, {
+          state: 'canceled',
+          message: 'Page image export canceled.',
+          targetKind: 'directory',
+        });
       }
       if (result.error) {
-        setStatus(`Page image export failed: ${result.error}`);
-        return;
+        return finishPaperExport(setStatus, {
+          state: 'error',
+          message: `Page image export failed: ${result.error}`,
+          targetKind: 'directory',
+        });
       }
 
       const fileCount = result.files?.length ?? pages.length;
       const sizeLabel = result.bytes ? ` (${Math.round(result.bytes / 1024)} KB)` : '';
-      setStatus(result.directoryPath
-        ? `Saved ${fileCount} page image${fileCount === 1 ? '' : 's'} to ${result.directoryPath}${sizeLabel}.`
-        : `Saved ${fileCount} page image${fileCount === 1 ? '' : 's'}${sizeLabel}.`);
-      return;
+      return finishPaperExport(setStatus, {
+        state: 'success',
+        message: result.directoryPath
+          ? `Saved ${fileCount} page image${fileCount === 1 ? '' : 's'} to ${result.directoryPath}${sizeLabel}.`
+          : `Saved ${fileCount} page image${fileCount === 1 ? '' : 's'}${sizeLabel}.`,
+        path: result.directoryPath,
+        targetKind: 'directory',
+      });
     }
 
     setStatus(`Building browser ZIP fallback for ${plan.pages.length} Paper page image${plan.pages.length === 1 ? '' : 's'}...`);
     const archive = await buildPaperWebcomicImageArchiveExport(document, options);
     downloadSharedBlob(archive.blob, archive.fileName);
-    setStatus(`Downloaded ${archive.fileName} with ${archive.entries.length} page image${archive.entries.length === 1 ? '' : 's'} inside ${plan.directoryName}.`);
+    return finishPaperExport(setStatus, {
+      state: 'success',
+      message: `Downloaded ${archive.fileName} with ${archive.entries.length} page image${archive.entries.length === 1 ? '' : 's'} inside ${plan.directoryName}.`,
+      targetKind: 'file',
+    });
   } catch (error) {
-    setStatus(error instanceof Error ? `Page image export failed: ${error.message}` : 'Page image export failed.');
+    return finishPaperExport(setStatus, {
+      state: 'error',
+      message: error instanceof Error ? `Page image export failed: ${error.message}` : 'Page image export failed.',
+      targetKind: 'directory',
+    });
   }
 }
 

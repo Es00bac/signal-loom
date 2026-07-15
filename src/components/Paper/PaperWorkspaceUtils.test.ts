@@ -10,6 +10,7 @@ import {
   resolvePaperEyedropperPixelColor,
   exportPaperPdfDocument,
   exportPaperPdfxAndSave,
+  exportPaperWebcomicImages,
   insertPaperFrameVertexPatch,
   movePaperFrameVertexPatch,
   resolvePaperEyedropperFrameColor,
@@ -247,6 +248,126 @@ describe('PaperWorkspaceUtils export', () => {
       outputDpi: Math.min(doc.page.dpi, 150),
       quality: 0.82,
     });
+  });
+
+  it('asks for the native PDF destination before creating any raster canvas', async () => {
+    const order: string[] = [];
+    const choosePaperPdfExportPath = vi.fn().mockImplementation(async () => {
+      order.push('choose');
+      return { canceled: false, filePath: '/tmp/Chooser-First.pdf' };
+    });
+    const exportPaperPdf = vi.fn().mockImplementation(async () => {
+      order.push('write');
+      return { canceled: false, filePath: '/tmp/Chooser-First.pdf', bytes: 1024 };
+    });
+    vi.stubGlobal('window', { signalLoomNative: { choosePaperPdfExportPath, exportPaperPdf } });
+    vi.stubGlobal('Image', class {
+      decoding = 'sync';
+      src = '';
+      decode = vi.fn().mockResolvedValue(undefined);
+    });
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => {
+        order.push('raster');
+        return {
+          width: 0,
+          height: 0,
+          getContext: vi.fn(() => ({ drawImage: vi.fn() })),
+          toDataURL: vi.fn(() => 'data:image/png;base64,chooser-first'),
+        };
+      }),
+    });
+
+    await exportPaperPdfDocument(createDefaultPaperDocument({ title: 'Chooser First' }), vi.fn());
+
+    expect(order[0]).toBe('choose');
+    expect(order.indexOf('choose')).toBeLessThan(order.indexOf('raster'));
+    expect(order.at(-1)).toBe('write');
+    expect(exportPaperPdf.mock.calls[0][0].filePath).toBe('/tmp/Chooser-First.pdf');
+    vi.unstubAllGlobals();
+  });
+
+  it('stops PDF export before rasterization when the destination chooser is canceled', async () => {
+    const exportPaperPdf = vi.fn();
+    const createElement = vi.fn();
+    vi.stubGlobal('window', {
+      signalLoomNative: {
+        choosePaperPdfExportPath: vi.fn().mockResolvedValue({ canceled: true }),
+        exportPaperPdf,
+      },
+    });
+    vi.stubGlobal('document', { createElement });
+    const statuses: string[] = [];
+
+    await exportPaperPdfDocument(createDefaultPaperDocument({ title: 'Canceled PDF' }), (status) => statuses.push(status));
+
+    expect(createElement).not.toHaveBeenCalled();
+    expect(exportPaperPdf).not.toHaveBeenCalled();
+    expect(statuses.at(-1)).toBe('PDF export canceled.');
+    vi.unstubAllGlobals();
+  });
+
+  it('asks for the native page-image directory before creating any raster canvas', async () => {
+    const order: string[] = [];
+    const choosePaperImageExportDirectory = vi.fn().mockImplementation(async () => {
+      order.push('choose');
+      return { canceled: false, directoryPath: '/tmp/Chooser-First-images' };
+    });
+    const exportPaperImages = vi.fn().mockImplementation(async () => {
+      order.push('write');
+      return { canceled: false, directoryPath: '/tmp/Chooser-First-images', files: [], bytes: 512 };
+    });
+    vi.stubGlobal('window', { signalLoomNative: { choosePaperImageExportDirectory, exportPaperImages } });
+    vi.stubGlobal('Image', class {
+      decoding = 'sync';
+      src = '';
+      decode = vi.fn().mockResolvedValue(undefined);
+    });
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => {
+        order.push('raster');
+        return {
+          width: 0,
+          height: 0,
+          getContext: vi.fn(() => ({ drawImage: vi.fn() })),
+          toDataURL: vi.fn(() => 'data:image/png;base64,chooser-first'),
+        };
+      }),
+    });
+
+    await exportPaperWebcomicImages(createDefaultPaperDocument({ title: 'Chooser First' }), vi.fn(), {
+      format: 'png',
+      outputWidthPx: 1200,
+    });
+
+    expect(order[0]).toBe('choose');
+    expect(order.indexOf('choose')).toBeLessThan(order.indexOf('raster'));
+    expect(order.at(-1)).toBe('write');
+    expect(exportPaperImages.mock.calls[0][0].directoryPath).toBe('/tmp/Chooser-First-images');
+    vi.unstubAllGlobals();
+  });
+
+  it('stops page-image export before rasterization when the directory chooser is canceled', async () => {
+    const exportPaperImages = vi.fn();
+    const createElement = vi.fn();
+    vi.stubGlobal('window', {
+      signalLoomNative: {
+        choosePaperImageExportDirectory: vi.fn().mockResolvedValue({ canceled: true }),
+        exportPaperImages,
+      },
+    });
+    vi.stubGlobal('document', { createElement });
+    const statuses: string[] = [];
+
+    await exportPaperWebcomicImages(createDefaultPaperDocument({ title: 'Canceled Images' }), (status) => statuses.push(status), {
+      format: 'png',
+      outputWidthPx: 1200,
+    });
+
+    expect(createElement).not.toHaveBeenCalled();
+    expect(exportPaperImages).not.toHaveBeenCalled();
+    expect(statuses.at(-1)).toBe('Page image export canceled.');
+    vi.unstubAllGlobals();
   });
 
   it('sends flattened page snapshots to default native PDF export so PDF text matches the editor', async () => {
