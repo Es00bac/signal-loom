@@ -71,6 +71,24 @@ describe('paperPageFlattenExport', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:flattened-paper-page');
   });
 
+  it('escapes quoted font-family values so the flattened SVG stays valid XML', () => {
+    const doc = createDefaultPaperDocument({ title: 'Quoted font family' });
+    const pageId = doc.pages[0].id;
+    const { document: withFrame } = addFrameToPaperPage(doc, pageId, {
+      kind: 'caption',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 80,
+      heightMm: 30,
+      text: 'XML-safe typography',
+      typography: { fontFamily: 'Arial, "Liberation Sans", sans-serif' },
+    });
+
+    const exported = buildFlattenedPaperPageSvgExport(withFrame, pageId);
+
+    expect(exported.svg).toContain('font-family: Arial, &quot;Liberation Sans&quot;, sans-serif');
+  });
+
   it('builds a selected-page SVG export at document DPI with bleed included', () => {
     let doc = updatePaperDocumentSetup(createDefaultPaperDocument({
       title: 'Issue 01',

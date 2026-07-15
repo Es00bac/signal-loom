@@ -1297,7 +1297,7 @@ export function renderPrintFrame(
   if (frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble') {
     const bubbleVertical = frame.typography.writingMode === 'vertical-rl';
     const bubbleText = renderPrintFrameInlineText(frame, bubbleVertical);
-    return `<div class="frame frame-${frame.kind}" style="${outerStyle}; background: transparent; border: 0; padding: 0;">${renderPrintBubbleSvg(frame)}${renderPrintTextBox(frame, bubbleText)}</div>`;
+    return `<div class="frame frame-${frame.kind}" style="${escapeHtml(`${outerStyle}; background: transparent; border: 0; padding: 0;`)}">${renderPrintBubbleSvg(frame)}${renderPrintTextBox(frame, bubbleText)}</div>`;
   }
 
   if (isShapedContentFrame(frame)) {
@@ -1305,14 +1305,14 @@ export function renderPrintFrame(
   }
 
   if (frame.kind === 'document') {
-    return `<figure class="frame frame-document" style="${outerStyle}">
-  <div class="frame-content" style="${contentStyle}">${renderPrintDocumentFrameContent(frame, assetUrl)}</div>
+    return `<figure class="frame frame-document" style="${escapeHtml(outerStyle)}">
+  <div class="frame-content" style="${escapeHtml(contentStyle)}">${renderPrintDocumentFrameContent(frame, assetUrl)}</div>
 </figure>`;
   }
 
   if (frame.kind === 'image' && assetUrl) {
-    return `<figure class="frame frame-image" style="${outerStyle}">
-  <div class="frame-content" style="${contentStyle}">${renderPrintImageFrameContent(frame, assetUrl)}</div>
+    return `<figure class="frame frame-image" style="${escapeHtml(outerStyle)}">
+  <div class="frame-content" style="${escapeHtml(contentStyle)}">${renderPrintImageFrameContent(frame, assetUrl)}</div>
 </figure>`;
   }
 
@@ -1323,8 +1323,8 @@ export function renderPrintFrame(
       ? `column-count: ${columns}; column-gap: ${formatMm(doc.layout.columns.gutterMm)};`
       : '';
 
-  return `<div class="frame frame-${frame.kind}" style="${outerStyle}">
-  <div class="frame-content" style="${contentStyle}; ${columnStyle}"><div class="frame-text-content" style="${printTextEffectInlineStyle(frame)}">${text}</div></div>
+  return `<div class="frame frame-${frame.kind}" style="${escapeHtml(outerStyle)}">
+  <div class="frame-content" style="${escapeHtml(`${contentStyle}; ${columnStyle}`)}"><div class="frame-text-content" style="${escapeHtml(printTextEffectInlineStyle(frame))}">${text}</div></div>
 </div>`;
 }
 
@@ -1435,10 +1435,10 @@ function renderPrintRichParagraphs(frame: PaperFrame, vertical: boolean): string
     const marker = paragraph.listMarker ? `<span>${escapeHtml(paragraph.listMarker)} </span>` : '';
     const runsHtml = hasText
       ? paragraph.runs.map((run) => renderPrintRichRun(run, vertical)).join('')
-      : '&nbsp;';
+      : '&#160;';
     const className = dropCapLines ? ' class="paper-dropcap"' : '';
 
-    return `<div${className} style="${style}">${marker}${runsHtml}</div>`;
+    return `<div${className} style="${escapeHtml(style)}">${marker}${runsHtml}</div>`;
   }).join('\n');
 }
 
@@ -1446,9 +1446,9 @@ function renderPrintRichRun(run: PaperTextRun, vertical: boolean): string {
   const inner = paperInlineTextToHtml(run.text, vertical, escapeHtml);
   const style = printRunInlineStyle(run);
   if (run.link) {
-    return `<a href="${escapeHtml(run.link)}" style="${style}">${inner}</a>`;
+    return `<a href="${escapeHtml(run.link)}" style="${escapeHtml(style)}">${inner}</a>`;
   }
-  return style ? `<span style="${style}">${inner}</span>` : `<span>${inner}</span>`;
+  return style ? `<span style="${escapeHtml(style)}">${inner}</span>` : `<span>${inner}</span>`;
 }
 
 function printFrameOuterStyle(frame: PaperFrame): string {
@@ -1518,8 +1518,8 @@ function renderPrintShapedContentFrame(
       ? ''
       : renderPrintFrameInlineText(frame, frame.typography.writingMode === 'vertical-rl');
 
-  return `<div class="frame frame-${frame.kind}" style="${style}; background: transparent; border: 0; overflow: visible;">
-  <div class="frame-content" style="${innerStyle}">${content}</div>
+  return `<div class="frame frame-${frame.kind}" style="${escapeHtml(`${style}; background: transparent; border: 0; overflow: visible;`)}">
+  <div class="frame-content" style="${escapeHtml(innerStyle)}">${content}</div>
   ${renderPrintFrameShapeStrokeSvg(frame)}
 </div>`;
 }
@@ -1544,7 +1544,7 @@ function renderPrintShapeFrame(style: string, frame: PaperFrame): string {
     svgShape = `<polygon points="${points}" ${common} stroke-linejoin="round" />`;
   }
 
-  return `<figure class="frame frame-shape" style="${style}; background: transparent; border: 0;">
+  return `<figure class="frame frame-shape" style="${escapeHtml(`${style}; background: transparent; border: 0;`)}">
   <svg viewBox="0 0 100 100" preserveAspectRatio="none" width="100%" height="100%">
     ${renderSvgGradientDef(frame)}
     ${svgShape}
@@ -1554,7 +1554,8 @@ function renderPrintShapeFrame(style: string, frame: PaperFrame): string {
 
 function renderPrintImageFrameContent(frame: PaperFrame, assetUrl: string): string {
   const imageStyle = buildPaperImageRenderStyle(frame);
-  return `<img alt="${escapeHtml(frame.asset?.label ?? frame.label)}" src="${escapeHtml(assetUrl)}" style="position: ${imageStyle.position}; width: ${imageStyle.width}; height: ${imageStyle.height}; max-width: ${imageStyle.maxWidth}; max-height: ${imageStyle.maxHeight}; left: ${imageStyle.left}; top: ${imageStyle.top}; object-fit: ${imageStyle.objectFit}; object-position: ${imageStyle.objectPosition}; transform: ${imageStyle.transform}; transform-origin: ${imageStyle.transformOrigin};" />`;
+  const style = `position: ${imageStyle.position}; width: ${imageStyle.width}; height: ${imageStyle.height}; max-width: ${imageStyle.maxWidth}; max-height: ${imageStyle.maxHeight}; left: ${imageStyle.left}; top: ${imageStyle.top}; object-fit: ${imageStyle.objectFit}; object-position: ${imageStyle.objectPosition}; transform: ${imageStyle.transform}; transform-origin: ${imageStyle.transformOrigin};`;
+  return `<img alt="${escapeHtml(frame.asset?.label ?? frame.label)}" src="${escapeHtml(assetUrl)}" style="${escapeHtml(style)}" />`;
 }
 
 function renderPrintDocumentFrameContent(frame: PaperFrame, assetUrl?: string): string {
@@ -1606,7 +1607,7 @@ function renderPrintBubbleSvg(frame: PaperFrame): string {
     'pointer-events: none',
   ].join('; ');
 
-  return `<img class="paper-bubble-shape" alt="" src="${escapeHtml(svgToDataUrl(svg))}" style="${style}" />`;
+  return `<img class="paper-bubble-shape" alt="" src="${escapeHtml(svgToDataUrl(svg))}" style="${escapeHtml(style)}" />`;
 }
 
 function printBubbleShapeBounds(frame: PaperFrame): { minX: number; minY: number; width: number; height: number } {
@@ -1694,7 +1695,7 @@ function renderPrintTextBox(frame: PaperFrame, content: string, extraStyle = '')
 
   // Wrap the content in one inner block so <ruby> is not blockified into separate flex items (which would scatter
   // vertical furigana across columns). Mirrors the on-canvas PaperBubbleText structure.
-  return `<div class="paper-text-box" style="${style}"><div style="white-space: pre-wrap; overflow-wrap: break-word">${content}</div></div>`;
+  return `<div class="paper-text-box" style="${escapeHtml(style)}"><div style="white-space: pre-wrap; overflow-wrap: break-word">${content}</div></div>`;
 }
 
 function textStyle(frame: PaperFrame): string {
