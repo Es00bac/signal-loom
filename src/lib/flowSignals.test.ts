@@ -121,6 +121,24 @@ describe('flow signal evaluation', () => {
     ]);
   });
 
+  it('combines Text and JSON descriptions attached beside an image on one reference slot', () => {
+    const nodes = [
+      createNode({ id: 'reference-image', type: 'imageGen', data: { result: 'data:image/png;base64,SHIRT' } }),
+      createNode({ id: 'reference-text', type: 'textNode', data: { prompt: 'Preserve the exact shirt cut and chest logo placement.' } }),
+      createNode({ id: 'reference-json', type: 'valueNode', data: { valueKind: 'json', value: '{"role":"wardrobe reference","priority":"high"}' } }),
+      createNode({ id: 'target-image', type: 'imageGen' }),
+    ];
+    const edges: Edge[] = [
+      { id: 'image-edge', source: 'reference-image', target: 'target-image', targetHandle: 'image-reference-1' },
+      { id: 'text-edge', source: 'reference-text', target: 'target-image', targetHandle: 'image-reference-1' },
+      { id: 'json-edge', source: 'reference-json', target: 'target-image', targetHandle: 'image-reference-1' },
+    ];
+
+    expect(signalToTextList(collectPromptSignalForNode('target-image', nodes, edges))).toEqual([
+      'Preserve the exact shirt cut and chest logo placement.\n\n{"role":"wardrobe reference","priority":"high"}',
+    ]);
+  });
+
   it('resolves named generated attempts inside text-node prompts', () => {
     const nodes = [
       createNode({

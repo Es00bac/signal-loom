@@ -84,21 +84,23 @@ function findConnectedImageInputSource(
   targetNodeId: string,
   targetHandles: Array<ImageTargetHandle | undefined>,
 ): AppNode | undefined {
-  const sourceEdge = edges.find(
+  const sourceEdges = edges.filter(
     (edge) => edge.target === targetNodeId && targetHandles.includes(edge.targetHandle as ImageTargetHandle | undefined),
   );
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
 
-  if (!sourceEdge) {
-    return undefined;
+  for (const sourceEdge of sourceEdges) {
+    const rawSourceNode = nodesById.get(sourceEdge.source);
+    const sourceNode = rawSourceNode
+      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
+      : undefined;
+
+    if (isImageInputSource(sourceNode)) {
+      return sourceNode;
+    }
   }
 
-  const nodesById = new Map(nodes.map((node) => [node.id, node]));
-  const rawSourceNode = nodesById.get(sourceEdge.source);
-  const sourceNode = rawSourceNode
-    ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
-    : undefined;
-
-  return isImageInputSource(sourceNode) ? sourceNode : undefined;
+  return undefined;
 }
 
 function isImageInputSource(node: AppNode | undefined): node is AppNode {

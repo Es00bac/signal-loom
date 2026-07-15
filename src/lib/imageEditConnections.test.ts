@@ -91,4 +91,38 @@ describe('imageEditConnections', () => {
       'data:image/png;base64,BBB',
     );
   });
+
+  it('keeps resolving the image when descriptive text is the first edge on a reference handle', () => {
+    const nodes = [
+      createNode({ id: 'reference-description', type: 'textNode', data: { prompt: 'Preserve this shirt design.' } }),
+      createNode({
+        id: 'image-source',
+        type: 'imageGen',
+        data: {
+          mediaMode: 'import',
+          sourceAssetUrl: 'data:image/png;base64,REFERENCE',
+        },
+      }),
+      createNode({ id: 'image-edit', type: 'imageGen' }),
+    ];
+    const edges: Edge[] = [
+      {
+        id: 'edge-description',
+        source: 'reference-description',
+        target: 'image-edit',
+        targetHandle: 'image-reference-1',
+      },
+      {
+        id: 'edge-image',
+        source: 'image-source',
+        target: 'image-edit',
+        targetHandle: 'image-reference-1',
+      },
+    ];
+
+    expect(hasConnectedImageReferenceSource(nodes, edges, 'image-edit', ['image-reference-1'])).toBe(true);
+    expect(resolveConnectedImageReferenceAsset(nodes, edges, 'image-edit', ['image-reference-1'])).toBe(
+      'data:image/png;base64,REFERENCE',
+    );
+  });
 });

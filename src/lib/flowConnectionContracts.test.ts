@@ -88,6 +88,26 @@ describe('validateFlowConnection', () => {
     expect(validateFlowConnection(connection({ targetHandle: 'image-edit-source' }), { nodes, edges: [] }))
       .toMatchObject({ valid: true, carriedType: { kind: 'package' } });
   });
+
+  it.each([
+    ['textNode', {}, 'text'],
+    ['valueNode', { valueKind: 'json', value: '{"role":"shirt design"}' }, 'json'],
+  ] as const)('accepts %s guidance after an image already occupies the same reference slot', (sourceType, sourceData, kind) => {
+    const nodes = [
+      node('source', sourceType, sourceData),
+      node('reference-image', 'imageGen', { mediaMode: 'import' }),
+      node('target', 'imageGen', { provider: 'bfl', modelId: 'flux-2-pro' }),
+    ];
+    const edges: Edge[] = [{
+      id: 'existing-image-reference',
+      source: 'reference-image',
+      target: 'target',
+      targetHandle: 'image-reference-1',
+    }];
+
+    expect(validateFlowConnection(connection({ targetHandle: 'image-reference-1' }), { nodes, edges }))
+      .toMatchObject({ valid: true, carriedType: { kind } });
+  });
 });
 
 describe('resolveFlowOutputType', () => {

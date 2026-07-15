@@ -99,6 +99,12 @@ const imageCompositeInputTypes: readonly FlowDataType[] = [
   envelopeMixedType,
 ];
 
+const imageReferenceInputTypes: readonly FlowDataType[] = [
+  ...imageCompositeInputTypes,
+  textType,
+  jsonType,
+];
+
 const imagePromptInputTypes: readonly FlowDataType[] = [
   textType,
   videoType,
@@ -512,7 +518,8 @@ function resolveImagePorts(context: FlowNodeContractContext): readonly FlowPortC
         ? 'Imported Image nodes do not use masks.'
         : model.capabilities.maskInpaint ? undefined : `${modelLabel} does not support mask inpainting.`,
     }),
-    ...IMAGE_REFERENCE_HANDLES.map((id, index) => input(id, `Reference ${index + 1}`, imageCompositeInputTypes, {
+    ...IMAGE_REFERENCE_HANDLES.map((id, index) => input(id, `Reference ${index + 1}`, imageReferenceInputTypes, {
+      maxConnections: null,
       side: index % 2 === 0 ? 'left' : 'right',
       disabledReason: importMode
         ? 'Imported Image nodes do not use reference guidance.'

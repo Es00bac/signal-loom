@@ -158,9 +158,17 @@ describe('dynamic Flow node contracts', () => {
       { kind: 'envelope', item: { kind: 'package' } },
       { kind: 'envelope', item: { kind: 'mixed' } },
     ];
+    const descriptiveReferenceTypes = [
+      ...compositeImageTypes,
+      { kind: 'text' },
+      { kind: 'json' },
+    ];
 
     expect(ports.find((port) => port.id === 'image-edit-source')?.types).toEqual(compositeImageTypes);
-    expect(ports.find((port) => port.id === 'image-reference-1')?.types).toEqual(compositeImageTypes);
+    expect(ports.find((port) => port.id === 'image-reference-1')).toMatchObject({
+      types: descriptiveReferenceTypes,
+      maxConnections: null,
+    });
     expect(ports.find((port) => port.id === 'image-mask')?.types).toEqual([{ kind: 'image' }]);
   });
 
