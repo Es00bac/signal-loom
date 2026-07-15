@@ -193,7 +193,7 @@ describe('universalImageUpscale', () => {
       },
       fallbackOrder: [
         { rank: 1, routeId: 'on-device-preferred', provider: 'android-native', selected: false },
-        { rank: 2, routeId: 'cloud-fallback', provider: 'vertex-imagen', selected: false },
+        { rank: 2, routeId: 'cloud-fallback', provider: 'stability-fast', selected: false },
         { rank: 3, routeId: 'bitmap-fallback', provider: 'browser', selected: false },
       ],
       stableSignature: 'image-universal-upscale-policy:v1|source=comic-sound-effect:exclude-upscale|print=300:1200x900:skip-upscale|fallback=on-device-preferred>cloud-fallback>bitmap-fallback',

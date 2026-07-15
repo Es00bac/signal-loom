@@ -538,7 +538,7 @@ describe('ImageUniversalUpscale', () => {
       },
       fallbackOrder: [
         { rank: 1, routeId: 'on-device-preferred', provider: 'android-native' },
-        { rank: 2, routeId: 'cloud-fallback', provider: 'vertex-imagen' },
+        { rank: 2, routeId: 'cloud-fallback', provider: 'stability-fast' },
         { rank: 3, routeId: 'bitmap-fallback', provider: 'browser' },
       ],
     });
