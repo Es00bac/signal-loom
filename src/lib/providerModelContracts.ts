@@ -100,7 +100,7 @@ export interface ModelOfficialEvidence {
 }
 
 export interface ModelAuthContract {
-  type: 'api-key' | 'oauth' | 'vertex-adc' | 'bearer' | 'none';
+  type: 'api-key' | 'oauth' | 'vertex-adc' | 'api-key-or-vertex-adc' | 'bearer' | 'none';
   credentialKey?: string;
   notes?: string;
 }

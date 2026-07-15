@@ -41,8 +41,8 @@ export const CAPABILITY_PROVIDERS = {
 export const DEFAULT_MODELS: DefaultModelSettings = {
   text: {
     gemini: 'gemini-3.5-flash',
-    openai: 'gpt-4.1-mini',
-    huggingface: 'Qwen/Qwen3-4B-Instruct-2507',
+    openai: 'gpt-5.6-terra',
+    huggingface: 'Qwen/Qwen3-4B-Thinking-2507',
   },
   image: {
     gemini: 'gemini-3.1-flash-image',
@@ -229,24 +229,23 @@ export const FALLBACK_MODEL_OPTIONS: ModelCatalog = {
   text: {
     gemini: [
       { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
-      { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
       { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
+      { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
       { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
-      { value: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash-Lite Preview' },
       { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
       { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
       { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite' },
     ],
     openai: [
-      { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-      { value: 'gpt-4.1', label: 'GPT-4.1' },
-      { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+      { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+      { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+      { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
     ],
     huggingface: [
-      { value: 'Qwen/Qwen3-4B-Instruct-2507', label: 'Qwen 3 4B Instruct 2507' },
-      { value: 'Qwen/Qwen3-8B', label: 'Qwen 3 8B' },
-      { value: 'meta-llama/Llama-3.1-8B-Instruct', label: 'Llama 3.1 8B Instruct' },
-      { value: 'meta-llama/Llama-3.3-70B-Instruct', label: 'Llama 3.3 70B Instruct' },
+      { value: 'Qwen/Qwen3-4B-Thinking-2507', label: 'Qwen 3 4B Thinking 2507' },
+      { value: 'openai/gpt-oss-120b', label: 'GPT OSS 120B' },
+      { value: 'Qwen/Qwen3-Coder-480B-A35B-Instruct', label: 'Qwen 3 Coder 480B A35B' },
+      { value: 'zai-org/GLM-4.5', label: 'GLM 4.5' },
       { value: 'deepseek-ai/DeepSeek-R1', label: 'DeepSeek R1' },
     ],
   },
