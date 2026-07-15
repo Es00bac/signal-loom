@@ -68,12 +68,12 @@ export function validateGeminiVideoRequest(input: GeminiVideoValidationInput): v
     throw new NonRetryableError('Gemini Veo reference-image guidance currently requires an 8-second duration.');
   }
 
-  if ((input.hasStartImage || input.hasEndImage) && !supportsGeminiImageToVideo(input.modelId)) {
-    throw new NonRetryableError('The selected Gemini video model does not currently support image-to-video generation.');
-  }
-
   if (input.hasEndImage && !supportsGeminiFrameConditioning(input.modelId)) {
     throw new NonRetryableError('Start/end-frame video generation currently requires Veo 3.1 or Veo 3.1 Fast.');
+  }
+
+  if (input.hasStartImage && !supportsGeminiImageToVideo(input.modelId)) {
+    throw new NonRetryableError('The selected Gemini video model does not currently support image-to-video generation.');
   }
 
   if (input.referenceImageCount > 0 && !supportsGeminiReferenceImages(input.modelId)) {

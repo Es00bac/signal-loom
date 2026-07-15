@@ -320,7 +320,7 @@ describe('flow signal evaluation', () => {
       createNode({ id: 'lora', type: 'loraSpecNode', data: { loraEntries: [{ path: 'org/style', scale: 0.8 }] } }),
       createNode({ id: 'doodle', type: 'doodleNode', data: { doodleDescription: 'rough fox', doodleSketch: 'data:image/png;base64,AAAA' } }),
       createNode({ id: 'editor', type: 'advancedImageEditor', data: { result: 'data:image/png;base64,EDIT' } }),
-      createNode({ id: 'features', type: 'imageFeatureExtractorNode', data: { imageFeatures: { width: 640, height: 480, dominantColor: '#123456' } } }),
+      createNode({ id: 'features', type: 'imageFeatureExtractorNode', data: { imageFeatures: { width: 640, height: 480, averageColor: '#123456' } } }),
     ];
     const edges: Edge[] = [
       { id: 'color-template', source: 'palette', sourceHandle: 'palette-color-1', target: 'template', targetHandle: 'A' },
@@ -339,7 +339,7 @@ describe('flow signal evaluation', () => {
     expect(evaluateNodeSignal('editor', nodes, edges)).toMatchObject({ kind: 'image', value: 'data:image/png;base64,EDIT' });
     expect(evaluateNodeSignal('features', nodes, edges)).toMatchObject({
       kind: 'json',
-      value: { width: 640, height: 480, dominantColor: '#123456' },
+      value: { width: 640, height: 480, averageColor: '#123456' },
     });
   });
 

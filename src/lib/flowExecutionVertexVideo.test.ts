@@ -4,7 +4,7 @@ import { DEFAULT_EXECUTION_CONFIG } from './providerCatalog';
 import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
 
 const omniCapture = vi.hoisted(() => ({
-  create: vi.fn(async () => ({
+  create: vi.fn(async (_request: Record<string, unknown>) => ({
     id: 'interaction-1',
     status: 'completed',
     outputs: [{ type: 'video', mime_type: 'video/mp4', data: 'T01OSQ==' }],

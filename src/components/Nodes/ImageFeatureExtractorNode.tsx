@@ -3,7 +3,7 @@ import { Eye } from 'lucide-react';
 import { BaseNode } from './BaseNode';
 import { collectUpstreamImageInputForHandles, useFlowStore } from '../../store/flowStore';
 import { summarizeImagePixels } from '../../lib/imageFeatureExtractor';
-import type { AppNodeProps } from '../../types/flow';
+import type { AppNodeProps, NodeData } from '../../types/flow';
 
 function ImageFeatureExtractorNodeComponent({ id, data }: AppNodeProps) {
   const patchNodeData = useFlowStore((state) => state.patchNodeData);
@@ -21,7 +21,7 @@ function ImageFeatureExtractorNodeComponent({ id, data }: AppNodeProps) {
     const mimeType = image.currentSrc.match(/^data:([^;,]+)/)?.[1];
     const orientation = width === height ? 'square' : width > height ? 'landscape' : 'portrait';
     const base = { width, height, aspectRatio: height ? Number((width / height).toFixed(4)) : 0, orientation, mimeType } as const;
-    let next = { ...base };
+    let next: NonNullable<NodeData['imageFeatures']> = { ...base };
     try {
       const sampleWidth = Math.max(1, Math.min(64, width));
       const sampleHeight = Math.max(1, Math.min(64, height));

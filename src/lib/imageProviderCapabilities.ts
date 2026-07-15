@@ -1,4 +1,5 @@
 import { ATLAS_GENERATED_IMAGE_MODELS } from './atlasImageCatalog.generated';
+import { inferImageModelCapabilities } from './imageModelInference';
 import type {
   ModelAvailability,
   ModelLifecycle,
@@ -1280,6 +1281,24 @@ export function getImageModelDefinition(
   }
 
   if (modelId && modelId.trim()) {
+    if (providerId === 'atlas') {
+      const inferred = inferImageModelCapabilities(providerId, modelId);
+      return {
+        providerId,
+        modelId,
+        label: inferred.label,
+        recommendedUse: 'Live Atlas model with operation-shaped controls inferred from its route ID; verify availability for the connected account.',
+        capabilities: inferred.capabilities,
+        supportedOperations: inferred.supportedOperations,
+        visibleControls: inferred.visibleControls,
+        cost: { confidence: 'unknown', unitLabel: 'provider-billed' },
+        docsUrl: '',
+        lifecycle: 'unverified',
+        availability: 'live',
+        capabilityConfidence: 'unverified',
+        evidence: [],
+      };
+    }
     return {
       providerId,
       modelId,

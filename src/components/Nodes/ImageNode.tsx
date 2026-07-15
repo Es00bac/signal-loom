@@ -199,7 +199,9 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
       : modelDefinition.lifecycle === 'shutdown'
         ? `${modelDefinition.label} is shut down and retained only so saved flows remain understandable.${modelDefinition.migrationModelId ? ` Choose ${modelDefinition.migrationModelId} to run.` : ''}`
         : modelDefinition.lifecycle === 'unverified'
-          ? `${modelDefinition.label} has no curated capability contract; only safe baseline controls are enabled.`
+          ? provider === 'atlas'
+            ? `${modelDefinition.label} has no curated capability contract; operation-shaped controls are inferred from its Atlas route ID and all other controls stay blocked.`
+            : `${modelDefinition.label} has no curated capability contract; only safe baseline controls are enabled.`
           : undefined;
   const runDisabledReason = modelDefinition.availability === 'unavailable'
     ? `${modelDefinition.label} is unavailable and cannot run.${modelDefinition.migrationModelId ? ` Choose ${modelDefinition.migrationModelId} instead.` : ''}`
