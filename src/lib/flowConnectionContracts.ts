@@ -84,6 +84,29 @@ export function validateFlowConnection(
     }
   }
 
+  for (const group of targetPort.connectionGroups ?? []) {
+    if (!isFlowTypeAccepted(carriedType, group.types).compatible) continue;
+    const candidateId = 'id' in candidate ? candidate.id : undefined;
+    const existingCount = context.edges.filter((edge) => {
+      if (
+        edge.id === candidateId
+        || edge.target !== targetNode.id
+        || normalizeHandle(edge.targetHandle) !== targetHandle
+      ) {
+        return false;
+      }
+      const existingType = resolveFlowOutputType(edge.source, edge.sourceHandle, context);
+      return isFlowTypeAccepted(existingType, group.types).compatible;
+    }).length;
+
+    if (existingCount >= group.maxConnections) {
+      return invalid(
+        `${targetPort.label} already has its maximum of ${group.maxConnections} ${group.id} connection${group.maxConnections === 1 ? '' : 's'}.`,
+        common,
+      );
+    }
+  }
+
   const compatibility = isFlowTypeAccepted(carriedType, acceptedTypes);
   if (!compatibility.compatible) {
     return invalid(compatibility.reason ?? 'These ports carry incompatible value types.', {
@@ -191,6 +214,11 @@ function resolveFlowOutputTypeUncached(
 
   if ((node.type === 'list' || node.type === 'envelope') && normalizedHandle === null) {
     const incomingTypes = resolveIncomingTypes(node.id, undefined, context, nextVisited);
+    if (incomingTypes.length === 0) {
+      const declared = resolveFlowNodePorts({ node, nodes: context.nodes, edges: context.edges })
+        .find((port) => port.direction === 'output' && port.id === null)?.types;
+      if (declared?.length === 1) return declared[0];
+    }
     const item = consistentType(incomingTypes);
     return { kind: node.type, item: item.kind === 'unknown' ? { kind: 'mixed' } : item };
   }

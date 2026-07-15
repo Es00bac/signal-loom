@@ -8,7 +8,7 @@ describe('NodeContractHelp', () => {
 
     expect(html).toContain('Crop one connected image locally');
     expect(html).toContain('Input');
-    expect(html).toContain('Image · image · required');
+    expect(html).toContain('Image · image/package/envelope&lt;image&gt;/envelope&lt;package&gt;/envelope&lt;mixed&gt; · required');
     expect(html).toContain('Output');
     expect(html).toContain('Cropped image · image');
     expect(html).toContain('Execution is blocked when required inputs are missing');
@@ -23,7 +23,7 @@ describe('NodeContractHelp', () => {
       />,
     );
 
-    expect(html).toContain('Reference 1 · image/package/envelope&lt;image&gt;/envelope&lt;package&gt;/envelope&lt;mixed&gt; · unavailable');
+    expect(html).toContain('Reference 1 · image/package/envelope&lt;image&gt;/envelope&lt;package&gt;/envelope&lt;mixed&gt;/text/json · unavailable');
     expect(html).toContain('does not support reference images');
   });
 });

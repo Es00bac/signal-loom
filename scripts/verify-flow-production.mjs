@@ -18,6 +18,7 @@ const REQUIRED_IMPLEMENTATION_FILES = [
   'src/lib/flowPortTypes.ts',
   'src/lib/flowNodeContracts.ts',
   'src/lib/flowConnectionContracts.ts',
+  'src/lib/flowRuntimePortCapabilities.ts',
   'src/components/Flow/TypedFlowEdge.tsx',
   'src/components/Flow/TypedConnectionLine.tsx',
   'src/components/Nodes/TypedHandle.tsx',
@@ -44,9 +45,16 @@ export async function verifyFlowProduction({ root = DEFAULT_ROOT } = {}) {
   if (missingNodeFields.length) {
     errors.push(`Incomplete node audit rows: ${missingNodeFields.map((row) => row.type).join(', ')}.`);
   }
+  const missingRuntimeEvidence = nodeRows.filter((row) => row.missingRuntimeEvidence.length > 0);
+  if (missingRuntimeEvidence.length) {
+    errors.push(`Input ports without runtime evidence: ${missingRuntimeEvidence.map((row) => `${row.type}(${row.missingRuntimeEvidence.join(', ')})`).join(', ')}.`);
+  }
 
   for (const row of nodeRows) {
     await requireFile(resolve(root, row.implementation), errors, `Node implementation for ${row.type}`);
+    for (const evidencePath of row.runtimeEvidenceFiles) {
+      await requireFile(resolve(root, evidencePath), errors, `Runtime evidence for ${row.type}`);
+    }
   }
   for (const path of REQUIRED_IMPLEMENTATION_FILES) {
     await requireFile(resolve(root, path), errors, 'Required Flow audit implementation');
@@ -64,7 +72,7 @@ export async function verifyFlowProduction({ root = DEFAULT_ROOT } = {}) {
   if (returnedVestigial.length) errors.push(`Vestigial model IDs returned to normal selection: ${returnedVestigial.join(', ')}.`);
 
   await compareGeneratedArtifact(
-    resolve(root, 'docs/audits/flow-node-audit-2026-07-14.md'),
+    resolve(root, 'docs/audits/flow-node-audit-2026-07-15.md'),
     renderFlowNodeAudit(nodeRows),
     errors,
   );

@@ -7,7 +7,9 @@ import {
   collectImageMaskInput as storeCollectImageMaskInput,
   collectUpstreamImageInput as storeCollectUpstreamImageInput,
   collectUpstreamImageInputForHandles as storeCollectUpstreamImageInputForHandles,
+  collectTextMediaInputs as storeCollectTextMediaInputs,
   canRunNode as storeCanRunNode,
+  getExecutionDependencies as storeGetExecutionDependencies,
 } from './flowStore';
 import {
   collectTextInputs as costCollectTextInputs,
@@ -204,6 +206,46 @@ describe('flow store package and envelope input gathering', () => {
     expect(costCanRunNode(imgGenNode)).toBe(true);
   });
 
+  it('resolves every declared direct image output for image and multimodal-text consumers', () => {
+    const nodes = [
+      createNode('slimg', 'slimgNode', { result: 'data:image/png;base64,SLIMG', resultMimeType: 'image/png' }),
+      createNode('editor', 'advancedImageEditor', { result: 'data:image/png;base64,EDITOR' }),
+      createNode('function', 'functionNode', { resultType: 'image', result: 'data:image/png;base64,FUNCTION', resultMimeType: 'image/png' }),
+      createNode('image-target', 'imageGen'),
+      createNode('text-target', 'textNode', { mode: 'generate', provider: 'gemini', modelId: 'gemini-3.5-flash' }),
+    ];
+    const edges: Edge[] = [
+      { id: 'editor-image', source: 'editor', sourceHandle: 'editedImage', target: 'image-target', targetHandle: 'image-edit-source' },
+      { id: 'slimg-text', source: 'slimg', target: 'text-target' },
+      { id: 'function-text', source: 'function', target: 'text-target' },
+    ];
+    const nodesById = buildNodeMap(nodes);
+
+    expect(storeCollectUpstreamImageInputForHandles('image-target', ['image-edit-source'], nodesById, edges))
+      .toBe('data:image/png;base64,EDITOR');
+    expect(storeCollectTextMediaInputs(nodes[4], nodesById, edges).map((input) => input.url)).toEqual([
+      'data:image/png;base64,SLIMG',
+      'data:image/png;base64,FUNCTION',
+    ]);
+  });
+
+  it('discovers every runnable upstream dependency without node-type allowlist gaps', () => {
+    const nodes = [
+      createNode('description', 'textNode', { mode: 'generate' }),
+      createNode('reference', 'imageGen', { mediaMode: 'generate' }),
+      createNode('package', 'packageNode'),
+      createNode('target', 'videoGen', { mediaMode: 'generate' }),
+    ];
+    const edges: Edge[] = [
+      { id: 'description-package', source: 'description', target: 'package', targetHandle: 'text' },
+      { id: 'reference-package', source: 'reference', target: 'package', targetHandle: 'image' },
+      { id: 'package-target', source: 'package', target: 'target', targetHandle: 'video-reference-1' },
+    ];
+
+    expect(storeGetExecutionDependencies(nodes[3], edges, buildNodeMap(nodes)).sort())
+      .toEqual(['description', 'reference']);
+  });
+
   it('treats color swatches as textual prompt context instead of image inputs', () => {
     const nodes = [
       createNode('swatch-1', 'colorSwatchNode' as AppNode['type'], {
@@ -398,7 +440,7 @@ describe('flow store typed connections', () => {
       data: {
         flowContract: {
           valid: false,
-          reason: 'text cannot connect to image',
+          reason: 'text cannot connect to image or package or envelope<image> or envelope<package> or envelope<mixed>',
         },
       },
     });

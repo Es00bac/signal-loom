@@ -22,7 +22,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "verify:paper-production": "node scripts/verify-paper-production.mjs",
-    "verify:flow-production": "node scripts/verify-flow-production.mjs",
+    "verify:flow-production": "vitest run src/lib/flowRuntimePortCapabilities.test.ts src/lib/flowNodeContracts.test.ts src/lib/flowConnectionContracts.test.ts src/lib/flowSignals.test.ts src/lib/imageEditConnections.test.ts src/lib/videoFrameConnections.test.ts src/lib/sourceBin.test.ts src/store/flowStore.test.ts src/components/Nodes/AdvancedImageEditorNode.test.tsx && node scripts/verify-flow-production.mjs",
     "test:smoke": "vitest run src/lib/appSmoke.test.ts",
     "smoke:native": "node scripts/native-smoke.mjs",
     "smoke:native:video-render": "node scripts/native-video-render-smoke.mjs",

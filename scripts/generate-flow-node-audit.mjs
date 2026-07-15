@@ -5,7 +5,7 @@ import { createServer } from 'vite';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = resolve(SCRIPT_DIR, '..');
-const DEFAULT_OUTPUT = resolve(DEFAULT_ROOT, 'docs/audits/flow-node-audit-2026-07-14.md');
+const DEFAULT_OUTPUT = resolve(DEFAULT_ROOT, 'docs/audits/flow-node-audit-2026-07-15.md');
 
 export async function loadFlowNodeAuditRows(root = DEFAULT_ROOT) {
   const server = await createServer({
@@ -18,10 +18,11 @@ export async function loadFlowNodeAuditRows(root = DEFAULT_ROOT) {
   });
 
   try {
-    const [{ FLOW_NODE_TYPES }, contractModule, catalogModule] = await Promise.all([
+    const [{ FLOW_NODE_TYPES }, contractModule, catalogModule, runtimeModule] = await Promise.all([
       server.ssrLoadModule('/src/types/flow.ts'),
       server.ssrLoadModule('/src/lib/flowNodeContracts.ts'),
       server.ssrLoadModule('/src/lib/nodeCatalog.ts'),
+      server.ssrLoadModule('/src/lib/flowRuntimePortCapabilities.ts'),
     ]);
     const entries = new Map(catalogModule.FLOW_NODE_CATALOG_ENTRIES.map((entry) => [entry.type, entry]));
 
@@ -38,6 +39,13 @@ export async function loadFlowNodeAuditRows(root = DEFAULT_ROOT) {
       const inputs = ports.filter((port) => port.direction === 'input');
       const outputs = ports.filter((port) => port.direction === 'output');
       const example = contract.examples[0];
+      const runtimeEvidenceEntries = inputs.map((port) => ({
+        port,
+        evidence: runtimeModule.getFlowRuntimePortEvidence(type, port.id),
+      }));
+      const runtimeEvidenceFiles = [...new Set(runtimeEvidenceEntries.flatMap(({ evidence }) => evidence
+        ? [stripAnchor(evidence.consumer), evidence.verification]
+        : []))];
 
       return {
         type,
@@ -52,7 +60,15 @@ export async function loadFlowNodeAuditRows(root = DEFAULT_ROOT) {
         failureModes: contract.failureModes.join(' '),
         implementation: contract.implementation.path,
         apiCapability: contract.implementation.apiCapability ?? 'local / structural',
-        verification: 'src/lib/flowNodeContracts.test.ts + runtime connection/preflight tests',
+        runtimeEvidence: runtimeEvidenceEntries.length === 0
+          ? 'No input ports.'
+          : runtimeEvidenceEntries.map(({ port, evidence }) => evidence
+            ? `${port.id ?? 'default'} → ${evidence.family}: ${evidence.consumer} (${evidence.verification})`
+            : `${port.id ?? 'default'} → MISSING RUNTIME EVIDENCE`
+          ).join('<br>'),
+        runtimeEvidenceFiles,
+        missingRuntimeEvidence: runtimeEvidenceEntries.filter(({ evidence }) => !evidence).map(({ port }) => port.id ?? 'default'),
+        verification: 'src/lib/flowNodeContracts.test.ts + src/lib/flowRuntimePortCapabilities.test.ts + focused consumer behavior tests',
       };
     });
   } finally {
@@ -74,23 +90,24 @@ export function renderFlowNodeAudit(rows) {
     row.failureModes,
     `\`${row.implementation}\``,
     row.apiCapability,
+    row.runtimeEvidence,
     row.verification,
   ].map(cell).join(' | '));
 
-  return `# Flow Node Audit — 2026-07-14
+  return `# Flow Node Contract/Runtime Parity Audit — 2026-07-15
 
-> Generated from \`FLOW_NODE_TYPES\`, \`FLOW_NODE_CONTRACTS\`, and \`FLOW_NODE_CATALOG_ENTRIES\` by \`scripts/generate-flow-node-audit.mjs\`. Do not hand-edit this matrix.
+> Generated from \`FLOW_NODE_TYPES\`, \`FLOW_NODE_CONTRACTS\`, \`FLOW_NODE_CATALOG_ENTRIES\`, and the independent \`FLOW_RUNTIME_PORT_CAPABILITIES\` evidence registry by \`scripts/generate-flow-node-audit.mjs\`. Do not hand-edit this matrix.
 
 ## Result
 
-All ${rows.length} registered node types have a unique executable contract, a user-facing purpose, typed ports, at least one representative connection chain, a named implementation path, and regression coverage. The table shows the default configuration; model- and setting-dependent ports are recomputed from the same contract registry whenever node data changes.
+All ${rows.length} registered node types have a unique executable contract, a user-facing purpose, typed ports, at least one representative connection chain, a named implementation path, and independent runtime-consumer evidence for every resolved input handle. The table shows the default configuration; the parity suite separately exercises every port-changing dynamic variant.
 
 Compatibility is exact. \`text\`, \`number\`, \`boolean\`, \`json\`, \`image\`, \`video\`, \`audio\`, \`package\`, \`control\`, \`list<T>\`, and \`envelope<T>\` do not coerce into one another. \`unknown\` is restricted to explicitly undeclared flexible outputs and becomes connectable only after the node declares its result type or the graph resolves a concrete upstream type.
 
 ## Exhaustive matrix
 
-| Node type | UI label | Category | Role | Purpose | Inputs | Outputs | Dynamic behavior | Representative chain | Failure behavior | Implementation | API capability | Verification |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Node type | UI label | Category | Role | Purpose | Inputs | Outputs | Dynamic behavior | Representative chain | Failure behavior | Implementation | API capability | Runtime evidence | Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 ${generatedRows.map((row) => `| ${row} |`).join('\n')}
 
 ## Audit interpretation
@@ -101,6 +118,10 @@ ${generatedRows.map((row) => `| ${row} |`).join('\n')}
 - Legacy edges are preserved and annotated invalid rather than silently deleted; diagnostics name the carried and accepted types and suggest a converter when one exists.
 - Group is intentionally visual-only. Source Bin and Run Me are intentional sinks. Function markers and Portal endpoints are intentional graph boundaries.
 `;
+}
+
+function stripAnchor(value) {
+  return String(value).split('#')[0];
 }
 
 export async function generateFlowNodeAudit({ root = DEFAULT_ROOT, output = DEFAULT_OUTPUT } = {}) {

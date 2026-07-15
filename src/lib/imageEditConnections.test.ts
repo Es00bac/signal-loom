@@ -125,4 +125,19 @@ describe('imageEditConnections', () => {
       'data:image/png;base64,REFERENCE',
     );
   });
+
+  it('resolves the image half of a connected package source', () => {
+    const nodes = [
+      createNode({ id: 'image-source', type: 'imageGen', data: { result: 'data:image/png;base64,PACKAGE' } }),
+      createNode({ id: 'package-source', type: 'packageNode' }),
+      createNode({ id: 'image-edit', type: 'imageGen' }),
+    ];
+    const edges: Edge[] = [
+      { id: 'image-package', source: 'image-source', target: 'package-source', targetHandle: 'image' },
+      { id: 'package-edit', source: 'package-source', target: 'image-edit', targetHandle: 'image-edit-source' },
+    ];
+
+    expect(hasConnectedImageEditSource(nodes, edges, 'image-edit')).toBe(true);
+    expect(resolveConnectedImageEditAsset(nodes, edges, 'image-edit')).toBe('data:image/png;base64,PACKAGE');
+  });
 });

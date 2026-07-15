@@ -124,8 +124,6 @@ import {
   replaceExclusiveVideoFrameEdges,
 } from '../lib/videoEdgeMigration';
 import {
-  isVideoExtensionHandle,
-  isVideoImageConditioningHandle,
   normalizeGeminiVideoModelId,
 } from '../lib/videoModelSupport';
 import { resolveEffectiveSourceNode } from '../lib/virtualNodes';
@@ -803,7 +801,7 @@ function getEffectiveSources(
   return sources;
 }
 
-function getExecutionDependencies(
+export function getExecutionDependencies(
   node: AppNode,
   edges: Edge[],
   nodesById: Map<string, AppNode>,
@@ -830,173 +828,12 @@ function getExecutionDependencies(
         continue;
       }
 
-      if (sourceNode.type === 'settings') {
+      // Preflight has already rejected invalid typed edges. Any runnable effective source of a
+      // valid incoming value is therefore a real execution dependency, regardless of which
+      // routing/container node exposed it. Keeping this type-driven avoids parallel node allowlists
+      // that silently fall behind new output types.
+      if (canRunNode(sourceNode)) {
         dependencies.add(sourceNode.id);
-        continue;
-      }
-
-      if (node.type === 'list') {
-        const nodeList = Array.from(nodesById.values());
-        const sourceKind = resolveNodeListItemKind(sourceNode, nodeList, edges);
-
-        if (sourceKind && isListItemTargetHandle(edge.targetHandle)) {
-          dependencies.add(sourceNode.id);
-        }
-
-        continue;
-      }
-
-      if (node.type === 'envelope') {
-        dependencies.add(sourceNode.id);
-        continue;
-      }
-
-      if (node.type === 'expander') {
-        const nodeList = Array.from(nodesById.values());
-        if (
-          sourceNode.type === 'list' ||
-          sourceNode.type === 'envelope' ||
-          resolveNodeListItemKind(sourceNode, nodeList, edges)
-        ) {
-          dependencies.add(sourceNode.id);
-        }
-
-        continue;
-      }
-
-      if (sourceNode.type === 'expander') {
-        dependencies.add(sourceNode.id);
-        continue;
-      }
-
-      if (sourceNode.type === 'list' || sourceNode.type === 'envelope') {
-        dependencies.add(sourceNode.id);
-        continue;
-      }
-
-      if (sourceNode.type === 'packageNode') {
-        dependencies.add(sourceNode.id);
-        continue;
-      }
-
-      if (sourceNode.type === 'colorSwatchNode') {
-        dependencies.add(sourceNode.id);
-        continue;
-      }
-
-      if (node.type === 'functionNode') {
-        if (sourceNode.type !== 'groupNode') {
-          dependencies.add(sourceNode.id);
-        }
-        continue;
-      }
-
-      if (node.type === 'textNode') {
-        if (
-          sourceNode.type === 'textNode' ||
-          sourceNode.type === 'imageGen' ||
-          sourceNode.type === 'cropImageNode' ||
-          sourceNode.type === 'audioGen' ||
-          sourceNode.type === 'videoGen' ||
-          sourceNode.type === 'composition' ||
-          sourceNode.type === 'functionNode'
-        ) {
-          dependencies.add(sourceNode.id);
-        }
-
-        continue;
-      }
-
-      if (node.type === 'imageGen') {
-        if (
-          sourceNode.type === 'textNode' ||
-          sourceNode.type === 'imageGen' ||
-          sourceNode.type === 'cropImageNode' ||
-          sourceNode.type === 'videoGen' ||
-          sourceNode.type === 'composition' ||
-          sourceNode.type === 'functionNode'
-        ) {
-          dependencies.add(sourceNode.id);
-        }
-
-        continue;
-      }
-
-      if (node.type === 'cropImageNode') {
-        if (
-          sourceNode.type === 'imageGen' ||
-          sourceNode.type === 'cropImageNode' ||
-          sourceNode.type === 'functionNode'
-        ) {
-          dependencies.add(sourceNode.id);
-        }
-
-        continue;
-      }
-
-      if (node.type === 'audioGen') {
-        const audioMode = (node.data.audioGenerationMode as string | undefined) ?? 'speech';
-
-        if (audioMode === 'voiceChange') {
-          if (sourceNode.type === 'audioGen') {
-            dependencies.add(sourceNode.id);
-          }
-
-          continue;
-        }
-
-        if (sourceNode.type === 'textNode' || sourceNode.type === 'functionNode') {
-          dependencies.add(sourceNode.id);
-        }
-
-        continue;
-      }
-
-      if (node.type === 'videoGen') {
-        if (sourceNode.type === 'textNode' || sourceNode.type === 'functionNode') {
-          dependencies.add(sourceNode.id);
-          continue;
-        }
-
-        if (
-          (sourceNode.type === 'imageGen' || sourceNode.type === 'cropImageNode') &&
-          isVideoImageConditioningHandle(edge.targetHandle as VideoTargetHandle | undefined)
-        ) {
-          dependencies.add(sourceNode.id);
-          continue;
-        }
-
-        if (
-          (sourceNode.type === 'videoGen' || sourceNode.type === 'composition') &&
-          isVideoExtensionHandle(edge.targetHandle as VideoTargetHandle | undefined)
-        ) {
-          dependencies.add(sourceNode.id);
-        }
-
-        continue;
-      }
-
-      if (node.type === 'composition') {
-        if (
-          (isCompositionVideoConnection(edge) && ['videoGen', 'composition', 'functionNode'].includes(sourceNode.type)) ||
-          (COMPOSITION_AUDIO_HANDLES.includes(edge.targetHandle as typeof COMPOSITION_AUDIO_HANDLES[number]) &&
-            (sourceNode.type === 'audioGen' || sourceNode.type === 'functionNode'))
-        ) {
-          dependencies.add(sourceNode.id);
-        }
-      }
-
-      if (node.type === 'visionVerifyNode') {
-        if (
-          sourceNode.type === 'textNode' ||
-          sourceNode.type === 'imageGen' ||
-          sourceNode.type === 'cropImageNode' ||
-          sourceNode.type === 'visionVerifyNode' ||
-          sourceNode.type === 'functionNode'
-        ) {
-          dependencies.add(sourceNode.id);
-        }
-        continue;
       }
     }
   }
@@ -1032,7 +869,7 @@ export function collectTextInputs(
   return prompts.join('\n\n').trim();
 }
 
-function collectTextMediaInputs(
+export function collectTextMediaInputs(
   node: AppNode,
   nodesById: Map<string, AppNode>,
   edges: Edge[],
@@ -1088,7 +925,17 @@ function collectTextMediaInputs(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges, edge.sourceHandle)
       : undefined;
 
-    if (!sourceNode || !['imageGen', 'cropImageNode', 'audioGen', 'videoGen', 'composition', 'expander'].includes(sourceNode.type)) {
+    if (!sourceNode || ![
+      'imageGen',
+      'cropImageNode',
+      'slimgNode',
+      'advancedImageEditor',
+      'audioGen',
+      'videoGen',
+      'composition',
+      'functionNode',
+      'expander',
+    ].includes(sourceNode.type)) {
       continue;
     }
 
@@ -1295,7 +1142,7 @@ export function collectUpstreamImageInput(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges, edge.sourceHandle)
       : undefined;
 
-    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'slimgNode', 'packageNode', 'doodleNode', 'envelope', 'expander', 'functionNode'];
+    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'slimgNode', 'advancedImageEditor', 'packageNode', 'doodleNode', 'envelope', 'expander', 'functionNode'];
     if (!sourceNode || !allowedTypes.includes(sourceNode.type)) {
       continue;
     }
@@ -1343,7 +1190,7 @@ export function collectUpstreamImageInputForHandles(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges, edge.sourceHandle)
       : undefined;
 
-    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'slimgNode', 'packageNode', 'doodleNode', 'envelope', 'expander', 'functionNode'];
+    const allowedTypes: FlowNodeType[] = ['imageGen', 'cropImageNode', 'slimgNode', 'advancedImageEditor', 'packageNode', 'doodleNode', 'envelope', 'expander', 'functionNode'];
     if (!sourceNode || !allowedTypes.includes(sourceNode.type)) {
       continue;
     }
@@ -1758,6 +1605,10 @@ function collectImageInputFromSource(
       : undefined;
   }
 
+  if (node.type === 'advancedImageEditor') {
+    return typeof node.data.result === 'string' && node.data.result ? node.data.result : undefined;
+  }
+
   if (node.type === 'expander') {
     const item = resolveExpandedItemFromNode(node, nodesById, edges);
     return item?.kind === 'image' ? item.value : undefined;
@@ -1819,6 +1670,8 @@ function collectTextMediaInputFromSource(
   if (
     node.type === 'imageGen' ||
     node.type === 'cropImageNode' ||
+    node.type === 'slimgNode' ||
+    node.type === 'advancedImageEditor' ||
     node.type === 'audioGen' ||
     node.type === 'videoGen' ||
     node.type === 'composition' ||
@@ -1895,6 +1748,10 @@ function resolveNodeOutputMimeType(node: AppNode): string | undefined {
     }
   }
 
+  if (node.type === 'slimgNode' || node.type === 'advancedImageEditor') {
+    return node.data.resultMimeType ?? 'image/png';
+  }
+
   return undefined;
 }
 
@@ -1902,6 +1759,8 @@ function resolveTextMediaKindForNode(node: AppNode): GeminiTextMediaInput['kind'
   switch (node.type) {
     case 'imageGen':
     case 'cropImageNode':
+    case 'slimgNode':
+    case 'advancedImageEditor':
       return 'image';
     case 'audioGen':
       return 'audio';

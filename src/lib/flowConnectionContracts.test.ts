@@ -108,6 +108,150 @@ describe('validateFlowConnection', () => {
     expect(validateFlowConnection(connection({ targetHandle: 'image-reference-1' }), { nodes, edges }))
       .toMatchObject({ valid: true, carriedType: { kind } });
   });
+
+  it('rejects a second image-bearing value on one Image or Video reference slot', () => {
+    for (const [targetType, targetData, targetHandle] of [
+      ['imageGen', { provider: 'bfl', modelId: 'flux-2-pro' }, 'image-reference-1'],
+      ['videoGen', { provider: 'gemini', modelId: 'gemini-omni-flash-preview' }, 'video-reference-1'],
+    ] as const) {
+      const nodes = [
+        node('source', 'imageGen', { mediaMode: 'import' }),
+        node('existing', 'imageGen', { mediaMode: 'import' }),
+        node('target', targetType, targetData),
+      ];
+      const edges: Edge[] = [{ id: 'existing-reference', source: 'existing', target: 'target', targetHandle }];
+      const result = validateFlowConnection(connection({ targetHandle }), { nodes, edges });
+
+      expect(result.valid).toBe(false);
+      expect(result.reason).toContain('maximum of 1 reference-image');
+    }
+  });
+
+  it.each([
+    ['textNode', {}, 'text'],
+    ['valueNode', { valueKind: 'json', value: '{"shot":"full body"}' }, 'json'],
+  ] as const)('accepts %s guidance after an image already occupies a Video reference slot', (sourceType, sourceData, kind) => {
+    const nodes = [
+      node('source', sourceType, sourceData),
+      node('reference-image', 'imageGen', { mediaMode: 'import' }),
+      node('target', 'videoGen', { provider: 'gemini', modelId: 'gemini-omni-flash-preview' }),
+    ];
+    const edges: Edge[] = [{
+      id: 'existing-video-reference',
+      source: 'reference-image',
+      target: 'target',
+      targetHandle: 'video-reference-1',
+    }];
+
+    expect(validateFlowConnection(connection({ targetHandle: 'video-reference-1' }), { nodes, edges }))
+      .toMatchObject({ valid: true, carriedType: { kind } });
+  });
+
+  it('connects concrete typed lists and envelopes to generic container consumers', () => {
+    const nodes = [
+      node('text', 'textNode'),
+      node('list', 'list', { envelopeItemKind: 'text' }),
+      node('envelope', 'envelope', { envelopeItemKind: 'text' }),
+      node('expander', 'expander'),
+      node('length', 'listLengthNode'),
+    ];
+    const edges: Edge[] = [
+      { id: 'text-list', source: 'text', target: 'list', targetHandle: 'list-item-0' },
+      { id: 'text-envelope', source: 'text', target: 'envelope' },
+    ];
+
+    expect(validateFlowConnection(connection({ source: 'list', target: 'expander' }), { nodes, edges }))
+      .toMatchObject({ valid: true, carriedType: { kind: 'list', item: { kind: 'text' } } });
+    expect(validateFlowConnection(connection({ source: 'envelope', target: 'length' }), { nodes, edges }))
+      .toMatchObject({ valid: true, carriedType: { kind: 'envelope', item: { kind: 'text' } } });
+  });
+
+  it('preserves a configured container output type before it has connected items', () => {
+    const nodes = [
+      node('envelope', 'envelope', { envelopeItemKind: 'image' }),
+      node('target', 'sourceBin'),
+    ];
+
+    expect(resolveFlowOutputType('envelope', null, { nodes, edges: [] })).toEqual({
+      kind: 'envelope',
+      item: { kind: 'image' },
+    });
+    expect(validateFlowConnection(connection({ source: 'envelope' }), { nodes, edges: [] }))
+      .toMatchObject({ valid: true });
+  });
+
+  it('accepts supported Source Bin values and rejects unsupported numeric containers', () => {
+    const nodes = [
+      node('text', 'textNode'),
+      node('text-list', 'list', { envelopeItemKind: 'text' }),
+      node('number-envelope', 'envelope', { envelopeItemKind: 'number' }),
+      node('target', 'sourceBin'),
+    ];
+
+    expect(validateFlowConnection(connection({ source: 'text' }), { nodes, edges: [] })).toMatchObject({ valid: true });
+    expect(validateFlowConnection(connection({ source: 'text-list' }), { nodes, edges: [] })).toMatchObject({ valid: true });
+    expect(validateFlowConnection(connection({ source: 'number-envelope' }), { nodes, edges: [] })).toMatchObject({ valid: false });
+  });
+
+  it.each([
+    ['textNode', { mode: 'generate', provider: 'gemini', modelId: 'gemini-3.5-flash' }, null],
+    ['imageGen', { provider: 'bfl', modelId: 'flux-2-pro' }, null],
+    ['videoGen', { provider: 'gemini', modelId: 'gemini-omni-flash-preview' }, 'video-prompt'],
+    ['audioGen', { audioGenerationMode: 'speech' }, null],
+  ] as const)('connects reusable Settings JSON to %s generation', (targetType, targetData, targetHandle) => {
+    const nodes = [node('source', 'settings'), node('prompt', 'textNode'), node('target', targetType, targetData)];
+    const edges: Edge[] = targetType === 'videoGen' || targetType === 'audioGen'
+      ? [{ id: 'existing-prompt', source: 'prompt', target: 'target', targetHandle }]
+      : [];
+
+    expect(validateFlowConnection(connection({ targetHandle }), { nodes, edges }))
+      .toMatchObject({ valid: true, carriedType: { kind: 'json' } });
+  });
+
+  it('accepts concrete lists on list-valued reusable Function inputs and concrete values on any inputs', () => {
+    const nodes = [
+      node('list-source', 'list', { envelopeItemKind: 'text' }),
+      node('json-source', 'valueNode', { valueKind: 'json', value: '{"demo":true}' }),
+      node('target', 'functionNode', {
+        functionNode: {
+          schemaVersion: 1,
+          title: 'Flexible function',
+          description: '',
+          contract: {
+            id: 'function-contract',
+            title: 'Flexible function',
+            inputPorts: [
+              { id: 'list-input', key: 'items', label: 'Items', resultType: 'list', required: true, order: 0 },
+              { id: 'any-input', key: 'context', label: 'Context', resultType: 'any', required: false, order: 1 },
+            ],
+            outputPorts: [],
+            version: 1,
+          },
+          graph: { version: 1, nodes: [], edges: [] },
+          inputBindings: [],
+          outputBindings: [],
+        },
+      }),
+    ];
+
+    expect(validateFlowConnection(connection({ source: 'list-source', targetHandle: 'list-input' }), { nodes, edges: [] }))
+      .toMatchObject({ valid: true });
+    expect(validateFlowConnection(connection({ source: 'json-source', targetHandle: 'any-input' }), { nodes, edges: [] }))
+      .toMatchObject({ valid: true });
+  });
+
+  it('routes an image-sequence Composition package to Source Bin but not to a video track', () => {
+    const nodes = [
+      node('source', 'composition', { editorExportPresetPlan: { presetId: 'png-image-sequence' } }),
+      node('bin', 'sourceBin'),
+      node('composition', 'composition'),
+    ];
+
+    expect(validateFlowConnection(connection({ target: 'bin' }), { nodes, edges: [] }))
+      .toMatchObject({ valid: true, carriedType: { kind: 'package' } });
+    expect(validateFlowConnection(connection({ target: 'composition', targetHandle: 'composition-video' }), { nodes, edges: [] }))
+      .toMatchObject({ valid: false, carriedType: { kind: 'package' } });
+  });
 });
 
 describe('resolveFlowOutputType', () => {
@@ -170,7 +314,7 @@ describe('annotateFlowEdge', () => {
         flowContract: {
           valid: false,
           carriedType: { kind: 'text' },
-          reason: 'text cannot connect to image',
+          reason: 'text cannot connect to image or package or envelope<image> or envelope<package> or envelope<mixed>',
         },
       },
     });

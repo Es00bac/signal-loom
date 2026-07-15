@@ -42,6 +42,11 @@ export interface FlowPortContract {
   maxConnections: number | null;
   ordered: boolean;
   side: 'left' | 'right' | 'top' | 'bottom';
+  connectionGroups?: readonly {
+    id: string;
+    types: readonly FlowDataType[];
+    maxConnections: number;
+  }[];
   disabledReason?: string;
 }
 
@@ -91,6 +96,40 @@ const envelopeTextType = containerType('envelope', textType);
 const envelopeImageType = containerType('envelope', imageType);
 const envelopePackageType = containerType('envelope', packageType);
 
+const knownAtomicValueTypes: readonly FlowDataType[] = [
+  textType,
+  numberType,
+  booleanType,
+  jsonType,
+  imageType,
+  videoType,
+  audioType,
+  packageType,
+];
+
+const allListTypes: readonly FlowDataType[] = [
+  listMixedType,
+  ...knownAtomicValueTypes.map((item) => containerType('list', item)),
+  containerType('list', listMixedType),
+  containerType('list', envelopeMixedType),
+];
+
+const allEnvelopeTypes: readonly FlowDataType[] = [
+  envelopeMixedType,
+  ...knownAtomicValueTypes.map((item) => containerType('envelope', item)),
+  containerType('envelope', listMixedType),
+  containerType('envelope', envelopeMixedType),
+];
+
+const sourceBinItemTypes: readonly FlowDataType[] = [textType, imageType, videoType, audioType, packageType];
+const sourceBinInputTypes: readonly FlowDataType[] = [
+  ...sourceBinItemTypes,
+  listMixedType,
+  envelopeMixedType,
+  ...sourceBinItemTypes.map((item) => containerType('list', item)),
+  ...sourceBinItemTypes.map((item) => containerType('envelope', item)),
+];
+
 const imageCompositeInputTypes: readonly FlowDataType[] = [
   imageType,
   packageType,
@@ -107,6 +146,7 @@ const imageReferenceInputTypes: readonly FlowDataType[] = [
 
 const imagePromptInputTypes: readonly FlowDataType[] = [
   textType,
+  jsonType,
   videoType,
   packageType,
   envelopeTextType,
@@ -115,16 +155,9 @@ const imagePromptInputTypes: readonly FlowDataType[] = [
 ];
 
 const allKnownValueTypes: readonly FlowDataType[] = [
-  textType,
-  numberType,
-  booleanType,
-  jsonType,
-  imageType,
-  videoType,
-  audioType,
-  packageType,
-  listMixedType,
-  envelopeMixedType,
+  ...knownAtomicValueTypes,
+  ...allListTypes,
+  ...allEnvelopeTypes,
 ];
 
 const allInspectableTypes: readonly FlowDataType[] = [...allKnownValueTypes, unknownType, controlType];
@@ -216,6 +249,7 @@ const resolvers = {
       ...(modalities.includes('image') ? [imageType] : []),
       ...(modalities.includes('video') ? [videoType] : []),
       ...(modalities.includes('audio') ? [audioType] : []),
+      jsonType,
     ];
 
     return [
@@ -226,19 +260,24 @@ const resolvers = {
     ];
   },
   imageGen: resolveImagePorts,
-  cropImageNode: () => [input('image', 'Image', [imageType], { required: true }), output(null, 'Cropped image', [imageType])],
+  cropImageNode: () => [input('image', 'Image', imageCompositeInputTypes, { required: true }), output(null, 'Cropped image', [imageType])],
   videoGen: resolveVideoPorts,
   audioGen: (context) => [
-    input(null, context.node.data.audioGenerationMode === 'voiceChange' ? 'Voice source' : 'Prompt', context.node.data.audioGenerationMode === 'voiceChange' ? [audioType] : [textType]),
+    input(
+      null,
+      context.node.data.audioGenerationMode === 'voiceChange' ? 'Voice source / config' : 'Prompt / config',
+      context.node.data.audioGenerationMode === 'voiceChange' ? [audioType, jsonType] : [textType, jsonType],
+      { maxConnections: null },
+    ),
     output(null, 'Audio', [audioType]),
   ],
   settings: () => [output(null, 'Generation defaults', [jsonType])],
   composition: (context) => resolveCompositionPorts(context.node.data),
-  sourceBin: () => [input(null, 'Asset to ingest', [imageType, videoType, audioType, packageType], { maxConnections: null })],
+  sourceBin: () => [input(null, 'Asset to ingest', sourceBinInputTypes, { maxConnections: null })],
   valueNode: (context) => [output(null, 'Value', [primitiveType(context.node.data.valueKind)])],
   list: (context) => resolveListPorts(context),
   expander: () => [
-    input(null, 'List or envelope', [listMixedType, envelopeMixedType], { required: true }),
+    input(null, 'List or envelope', [...allListTypes, ...allEnvelopeTypes], { required: true }),
     input('index', 'Item index', [numberType]),
     output(null, 'Selected item', [unknownType]),
   ],
@@ -279,8 +318,8 @@ const resolvers = {
   ],
   loopNode: () => [input(null, 'Repeated value', allKnownValueTypes, { required: true }), output(null, 'Repeated list', [containerType('list', unknownType)])],
   visionVerifyNode: () => [
-    input('image', 'Generated image', [imageType], { required: true }),
-    input('refImage', 'Reference image', [imageType]),
+    input('image', 'Generated image', imageCompositeInputTypes, { required: true }),
+    input('refImage', 'Reference image', imageCompositeInputTypes),
     input('prompt', 'Verification prompt', [textType]),
     output(null, 'Verified', [booleanType]),
   ],
@@ -298,7 +337,7 @@ const resolvers = {
   comparisonNode: () => [input('A', 'Left value', [textType, numberType], { required: true }), input('B', 'Right value', [textType, numberType], { required: true }), output(null, 'Comparison result', [booleanType])],
   loopGateNode: () => [input('input', 'Loop value', allKnownValueTypes, { required: true }), input('condition', 'Continue condition', [booleanType], { required: true }), output(null, 'Gated value', [unknownType])],
   loopBreakNode: () => [input('condition', 'Stop condition', [booleanType], { required: true }), output(null, 'Stop control', [controlType])],
-  listLengthNode: () => [input(null, 'List or envelope', [listMixedType, envelopeMixedType], { required: true }), output(null, 'Length', [numberType])],
+  listLengthNode: () => [input(null, 'List or envelope', [...allListTypes, ...allEnvelopeTypes], { required: true }), output(null, 'Length', [numberType])],
   mathNode: () => [input('A', 'Number A', [numberType], { required: true }), input('B', 'Number B', [numberType], { required: true }), output(null, 'Number result', [numberType])],
   valueMonitorNode: () => [input(null, 'Observed value', allInspectableTypes, { required: true }), output(null, 'Observed value', [unknownType])],
   stringTemplateNode: () => [...letterInputs(['A', 'B', 'C'], [textType]), output(null, 'Rendered text', [textType])],
@@ -309,9 +348,9 @@ const resolvers = {
   seedSequencerNode: () => [input(null, 'Sequence index', [numberType]), output(null, 'Seed', [numberType])],
   promptMixerNode: () => [...letterInputs(['A', 'B'], [textType]), output(null, 'Mixed prompt', [textType])],
   storyStateNode: () => [input(null, 'State value override', [textType, numberType, booleanType, jsonType]), output(null, 'Story state', [jsonType])],
-  arrayFlatNode: () => [...letterInputs(['L1', 'L2', 'L3'], [listMixedType]), output(null, 'Flat list', [listMixedType])],
+  arrayFlatNode: () => [...letterInputs(['L1', 'L2', 'L3'], allListTypes), output(null, 'Flat list', [listMixedType])],
   textSentimentAnalysisNode: () => [input(null, 'Dialogue text', [textType], { required: true }), output(null, 'Sentiment', [jsonType])],
-  imageFeatureExtractorNode: () => [input(null, 'Image', [imageType], { required: true }), output(null, 'Image features', [jsonType])],
+  imageFeatureExtractorNode: () => [input(null, 'Image', imageCompositeInputTypes, { required: true }), output(null, 'Image features', [jsonType])],
   fallbackSelectorNode: () => [input('primary', 'Primary value', allKnownValueTypes), input('fallback', 'Fallback value', allKnownValueTypes, { required: true }), output(null, 'Selected value', [unknownType])],
   dialogueScriptSplitterNode: () => [input(null, 'Script', [textType], { required: true }), output(null, 'Dialogue lines', [containerType('list', textType)])],
   numberNode: () => [output(null, 'Number', [numberType])],
@@ -321,12 +360,12 @@ const resolvers = {
   ],
   colorSwatchListNode: () => [input(null, 'Palette color', [textType], { maxConnections: null, ordered: true }), output(null, 'Swatch prompt', [textType])],
   loraSpecNode: () => [output(null, 'LoRA weights', [jsonType])],
-  slimgNode: () => [input('image', 'Image', [imageType], { required: true }), output(null, 'Flattened image', [imageType])],
+  slimgNode: () => [input('image', 'Image', imageCompositeInputTypes, { required: true }), output(null, 'Flattened image', [imageType])],
   doodleNode: () => [input(null, 'Description override', [textType]), output(null, 'Doodle package', [packageType])],
   groupNode: () => [],
   functionNode: resolveFunctionPorts,
   functionInputNode: (context) => [output(null, 'Function input value', [functionValueType(context.node.data.functionPortType)])],
-  functionOutputNode: (context) => [input(null, 'Function output value', [functionValueType(context.node.data.functionPortType)], { required: true })],
+  functionOutputNode: (context) => [input(null, 'Function output value', functionInputTypes(context.node.data.functionPortType), { required: true })],
   javascriptNode: (context) => [...letterInputs(['A', 'B', 'C'], allInspectableTypes), output(null, 'Script result', [declaredOutputType(context.node.data)])],
   jsonQueryNode: (context) => [input('json', 'JSON value', [jsonType], { required: true }), input('query', 'Query', [textType]), output(null, 'Query result', [declaredOutputType(context.node.data)])],
   regexParseNode: () => [input('text', 'Text', [textType], { required: true }), input('regex', 'Regular expression', [textType]), output(null, 'Matches', [containerType('list', jsonType)])],
@@ -513,13 +552,14 @@ function resolveImagePorts(context: FlowNodeContractContext): readonly FlowPortC
         ? 'Imported Image nodes do not edit an upstream image.'
         : editingSupported ? undefined : `${modelLabel} does not support image editing.`,
     }),
-    input('image-mask', 'Mask image', [imageType], {
+    input('image-mask', 'Mask image', imageCompositeInputTypes, {
       disabledReason: importMode
         ? 'Imported Image nodes do not use masks.'
         : model.capabilities.maskInpaint ? undefined : `${modelLabel} does not support mask inpainting.`,
     }),
     ...IMAGE_REFERENCE_HANDLES.map((id, index) => input(id, `Reference ${index + 1}`, imageReferenceInputTypes, {
       maxConnections: null,
+      connectionGroups: [{ id: 'reference-image', types: imageCompositeInputTypes, maxConnections: 1 }],
       side: index % 2 === 0 ? 'left' : 'right',
       disabledReason: importMode
         ? 'Imported Image nodes do not use reference guidance.'
@@ -542,10 +582,14 @@ function resolveVideoPorts(context: FlowNodeContractContext): readonly FlowPortC
     : capability ? undefined : `${modelId || 'The selected model'} does not support ${description} through this API route.`;
 
   return [
-    input('video-prompt', 'Prompt / config', [textType, jsonType], { disabledReason: importMode ? 'Imported Video nodes do not consume prompts.' : undefined }),
-    input('video-start-frame', 'Start frame', [imageType], { disabledReason: unsupported(support.imageToVideo, 'image-to-video') }),
-    input('video-end-frame', 'End frame', [imageType], { disabledReason: unsupported(support.interpolation, 'first/last-frame interpolation') }),
-    ...['video-reference-1', 'video-reference-2', 'video-reference-3'].map((id, index) => input(id, `Reference ${index + 1}`, [imageType], { disabledReason: unsupported(support.referenceImages && index < support.maxReferenceImages, 'reference-image guidance') })),
+    input('video-prompt', 'Prompt / config', [textType, jsonType], { maxConnections: null, disabledReason: importMode ? 'Imported Video nodes do not consume prompts.' : undefined }),
+    input('video-start-frame', 'Start frame', imageCompositeInputTypes, { disabledReason: unsupported(support.imageToVideo, 'image-to-video') }),
+    input('video-end-frame', 'End frame', imageCompositeInputTypes, { disabledReason: unsupported(support.interpolation, 'first/last-frame interpolation') }),
+    ...['video-reference-1', 'video-reference-2', 'video-reference-3'].map((id, index) => input(id, `Reference ${index + 1}`, imageReferenceInputTypes, {
+      maxConnections: null,
+      connectionGroups: [{ id: 'reference-image', types: imageCompositeInputTypes, maxConnections: 1 }],
+      disabledReason: unsupported(support.referenceImages && index < support.maxReferenceImages, 'reference-image guidance'),
+    })),
     input('video-source-video', support.videoEdit ? 'Video to edit' : 'Video to extend', [videoType], { disabledReason: unsupported(support.videoExtension || support.videoEdit, support.videoEdit ? 'video editing' : 'video extension') }),
     output(null, 'Video', [videoType]),
   ];
@@ -553,10 +597,14 @@ function resolveVideoPorts(context: FlowNodeContractContext): readonly FlowPortC
 
 function resolveCompositionPorts(data: NodeData): readonly FlowPortContract[] {
   const count = Math.max(1, Math.min(4, Math.floor(finiteNumber(data.compositionAudioTrackCount, 1))));
+  const presetId = data.editorExportPresetPlan?.presetId;
+  const packageOutput = data.resultType === 'package'
+    || presetId === 'png-image-sequence'
+    || presetId === 'jpeg-image-sequence';
   return [
     input('composition-video', 'Video track', [videoType], { required: true }),
     ...Array.from({ length: count }, (_, index) => input(`composition-audio-${index + 1}`, `Audio track ${index + 1}`, [audioType], { ordered: true })),
-    output(null, 'Rendered video', [videoType]),
+    output(null, packageOutput ? 'Rendered image-sequence package' : 'Rendered video', [packageOutput ? packageType : videoType]),
   ];
 }
 
@@ -577,7 +625,7 @@ function resolveFunctionPorts(context: FlowNodeContractContext): readonly FlowPo
   const contract = context.node.data.functionNode?.contract;
   if (!contract) return [input(null, 'Function input', allInspectableTypes), output(null, 'Function output', [unknownType])];
   return [
-    ...[...contract.inputPorts].sort((a, b) => a.order - b.order).map((port) => input(port.id, port.label, [functionValueType(port.resultType)], { required: port.required, maxConnections: port.allowMultiple ? null : 1 })),
+    ...[...contract.inputPorts].sort((a, b) => a.order - b.order).map((port) => input(port.id, port.label, functionInputTypes(port.resultType), { required: port.required, maxConnections: port.allowMultiple ? null : 1 })),
     ...[...contract.outputPorts].sort((a, b) => a.order - b.order).map((port) => output(port.id, port.label, [functionValueType(port.resultType)])),
   ];
 }
@@ -598,6 +646,13 @@ function declaredOutputType(data: NodeData): FlowDataType {
 function functionValueType(value: unknown): FlowDataType {
   if (value === 'any' || !isFlowResultKind(value)) return unknownType;
   return runtimeTypeFromResultType(value as Exclude<FunctionValueKind, 'any'>);
+}
+
+function functionInputTypes(value: unknown): readonly FlowDataType[] {
+  if (value === 'any') return allInspectableTypes;
+  if (value === 'list') return allListTypes;
+  if (value === 'envelope') return allEnvelopeTypes;
+  return [functionValueType(value)];
 }
 
 function itemTypeFromData(value: unknown): FlowDataType | { kind: 'mixed' } {

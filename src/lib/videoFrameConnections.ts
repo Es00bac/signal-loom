@@ -1,5 +1,6 @@
 import type { Edge } from '@xyflow/react';
 import type { AppNode, VideoTargetHandle } from '../types/flow';
+import { resolveFlowImageSource } from './flowImageSources';
 import { isVideoImageConditioningHandle } from './videoModelSupport';
 import { resolveEffectiveSourceNode } from './virtualNodes';
 
@@ -23,15 +24,13 @@ export function resolveConnectedVideoFrameAsset(
   targetNodeId: string,
   targetHandles: Array<VideoTargetHandle | undefined>,
 ): string | undefined {
-  const sourceNode = findConnectedVideoFrameSource(nodes, edges, targetNodeId, targetHandles);
+  const source = findConnectedVideoFrameSource(nodes, edges, targetNodeId, targetHandles);
 
-  if (!sourceNode) {
+  if (!source) {
     return undefined;
   }
 
-  return (sourceNode.data.mediaMode ?? 'generate') === 'import'
-    ? sourceNode.data.sourceAssetUrl
-    : sourceNode.data.result;
+  return source.assetUrl;
 }
 
 export function findMiswiredVideoImageSources(
@@ -94,22 +93,24 @@ function findConnectedVideoFrameSource(
   edges: Edge[],
   targetNodeId: string,
   targetHandles: Array<VideoTargetHandle | undefined>,
-): AppNode | undefined {
-  const sourceEdge = edges.find(
+): { node: AppNode; assetUrl?: string } | undefined {
+  const sourceEdges = edges.filter(
     (edge) => edge.target === targetNodeId && targetHandles.includes(edge.targetHandle as VideoTargetHandle | undefined),
   );
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
 
-  if (!sourceEdge) {
-    return undefined;
+  for (const sourceEdge of sourceEdges) {
+    const rawSourceNode = nodesById.get(sourceEdge.source);
+    const sourceNode = rawSourceNode
+      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges, sourceEdge.sourceHandle)
+      : undefined;
+    const resolved = resolveFlowImageSource(sourceNode, nodes, edges, sourceEdge.sourceHandle);
+    if (sourceNode && resolved.recognized) {
+      return { node: sourceNode, assetUrl: resolved.assetUrl };
+    }
   }
 
-  const nodesById = new Map(nodes.map((node) => [node.id, node]));
-  const rawSourceNode = nodesById.get(sourceEdge.source);
-  const sourceNode = rawSourceNode
-    ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
-    : undefined;
-
-  return isVideoFrameImageSource(sourceNode) ? sourceNode : undefined;
+  return undefined;
 }
 
 function findConnectedVideoSource(
@@ -138,5 +139,13 @@ function findConnectedVideoSource(
 }
 
 function isVideoFrameImageSource(node: AppNode | undefined): node is AppNode {
-  return node?.type === 'imageGen' || node?.type === 'cropImageNode';
+  return node?.type === 'imageGen'
+    || node?.type === 'cropImageNode'
+    || node?.type === 'slimgNode'
+    || node?.type === 'advancedImageEditor'
+    || node?.type === 'packageNode'
+    || node?.type === 'doodleNode'
+    || node?.type === 'envelope'
+    || node?.type === 'expander'
+    || (node?.type === 'functionNode' && node.data.resultType === 'image');
 }

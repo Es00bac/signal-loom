@@ -139,6 +139,26 @@ describe('flow signal evaluation', () => {
     ]);
   });
 
+  it('keeps execution-only Settings and LoRA JSON out of creative prompts while preserving JSON context values', () => {
+    const nodes = [
+      createNode({ id: 'settings', type: 'settings', data: { aspectRatio: '4:5', steps: 30 } }),
+      createNode({ id: 'lora', type: 'loraSpecNode', data: { loraEntries: [{ path: 'demo/style', scale: 0.8 }] } }),
+      createNode({ id: 'context', type: 'valueNode', data: { valueKind: 'json', value: '{"campaign":"demo"}' } }),
+      createNode({ id: 'prompt', type: 'textNode', data: { prompt: 'Editorial portrait' } }),
+      createNode({ id: 'image', type: 'imageGen' }),
+    ];
+    const edges: Edge[] = [
+      { id: 'settings-image', source: 'settings', target: 'image' },
+      { id: 'lora-image', source: 'lora', target: 'image' },
+      { id: 'context-image', source: 'context', target: 'image' },
+      { id: 'prompt-image', source: 'prompt', target: 'image' },
+    ];
+
+    expect(signalToTextList(collectPromptSignalForNode('image', nodes, edges))).toEqual([
+      '{"campaign":"demo"}\n\nEditorial portrait',
+    ]);
+  });
+
   it('resolves named generated attempts inside text-node prompts', () => {
     const nodes = [
       createNode({

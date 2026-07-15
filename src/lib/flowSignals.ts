@@ -273,7 +273,12 @@ export function evaluateNodeSignal(
 
 export function collectPromptSignalForNode(nodeId: string, nodes: AppNode[], edges: Edge[]): FlowSignal {
   const nodesById = new Map(nodes.map((candidate) => [candidate.id, candidate]));
-  const incomingEdges = edges.filter((edge) => edge.target === nodeId && edge.targetHandle !== LOOP_BREAK_TARGET_HANDLE);
+  const incomingEdges = edges.filter((edge) =>
+    edge.target === nodeId
+    && edge.targetHandle !== LOOP_BREAK_TARGET_HANDLE
+    && nodesById.get(edge.source)?.type !== 'settings'
+    && nodesById.get(edge.source)?.type !== 'loraSpecNode'
+  );
   const promptSignals = incomingEdges.flatMap((edge) => {
     const signal = evaluateNodeSignal(edge.source, nodes, edges, new Set<string>(), nodesById, edge.sourceHandle);
     return isTextualSignal(signal) ? [signal] : [];

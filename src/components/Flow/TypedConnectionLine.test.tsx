@@ -39,7 +39,7 @@ describe('resolveTypedConnectionLineState', () => {
       toHandleType: 'target',
     }, { nodes, edges: [] })).toMatchObject({
       color: '#f87171',
-      invalidReason: 'text cannot connect to image',
+      invalidReason: 'text cannot connect to image or package or envelope<image> or envelope<package> or envelope<mixed>',
       valid: false,
     });
   });

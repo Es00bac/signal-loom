@@ -21,7 +21,9 @@ describe('Flow node audit generator', () => {
   it('renders a stable generated matrix without placeholder text', async () => {
     const markdown = renderFlowNodeAudit(await loadFlowNodeAuditRows());
 
-    expect(markdown).toContain('# Flow Node Audit — 2026-07-14');
+    expect(markdown).toContain('# Flow Node Contract/Runtime Parity Audit — 2026-07-15');
+    expect(markdown).not.toContain('MISSING RUNTIME EVIDENCE');
+    expect(markdown).toContain('Runtime evidence');
     expect(markdown).toContain('63 registered node types');
     expect(markdown).not.toMatch(/\b(?:TODO|TBD|placeholder)\b/i);
     expect(markdown.match(/^\| `[^`]+` \|/gm)).toHaveLength(63);

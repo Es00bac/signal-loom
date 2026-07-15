@@ -111,6 +111,29 @@ describe('buildSourceBinItem', () => {
       mimeType: 'video/webm',
     });
   });
+
+  it('materializes every direct source-compatible output family', () => {
+    const image = createNode({ id: 'image', type: 'imageGen', data: { result: 'data:image/png;base64,IMAGE' } });
+    const text = createNode({ id: 'text', type: 'textNode', data: { prompt: 'shirt campaign' } });
+    const packageNode = createNode({ id: 'package', type: 'packageNode', data: { customTitle: 'Campaign package' } });
+    const doodle = createNode({ id: 'doodle', type: 'doodleNode', data: { doodleDescription: 'logo placement', doodleSketch: 'data:image/png;base64,DOODLE' } });
+    const slimg = createNode({ id: 'slimg', type: 'slimgNode', data: { result: 'data:image/png;base64,SLIMG' } });
+    const palette = createNode({ id: 'palette', type: 'colorSwatchNode', data: { colorSwatchColors: ['#112233'] } });
+    const nodes = [image, text, packageNode, doodle, slimg, palette];
+    const edges: Edge[] = [
+      { id: 'image-package', source: 'image', target: 'package', targetHandle: 'image' },
+      { id: 'text-package', source: 'text', target: 'package', targetHandle: 'text' },
+    ];
+
+    expect(buildSourceBinItem(packageNode, nodes, edges)).toMatchObject({
+      kind: 'package', assetUrl: 'data:image/png;base64,IMAGE', text: 'shirt campaign',
+    });
+    expect(buildSourceBinItem(doodle, nodes, edges)).toMatchObject({
+      kind: 'package', assetUrl: 'data:image/png;base64,DOODLE', text: 'logo placement',
+    });
+    expect(buildSourceBinItem(slimg, nodes, edges)).toMatchObject({ kind: 'image', assetUrl: 'data:image/png;base64,SLIMG' });
+    expect(buildSourceBinItem(palette, nodes, edges)).toMatchObject({ kind: 'text', text: expect.stringContaining('#112233') });
+  });
 });
 
 describe('collectSourceBinItems', () => {
@@ -376,6 +399,28 @@ describe('collectGlobalSourceBinItems', () => {
         envelopeId: 'envelope-1',
         envelopeIndex: 0,
       }),
+    ]);
+  });
+
+  it('filters unsupported values from mixed containers instead of unsafe-casting them into library items', () => {
+    const nodes = [
+      createNode({
+        id: 'envelope-1',
+        type: 'envelope',
+        data: {
+          envelopeItems: [
+            { id: 'text', index: 0, kind: 'text', label: 'Caption', value: 'Demo campaign' },
+            { id: 'number', index: 1, kind: 'number', label: 'Seed', value: '42' },
+            { id: 'json', index: 2, kind: 'json', label: 'Metadata', value: '{"demo":true}' },
+          ],
+        },
+      }),
+      createNode({ id: 'bin-1', type: 'sourceBin' }),
+    ];
+    const edges: Edge[] = [{ id: 'edge', source: 'envelope-1', target: 'bin-1' }];
+
+    expect(collectGlobalSourceBinItems(nodes, edges)).toEqual([
+      expect.objectContaining({ kind: 'text', text: 'Demo campaign' }),
     ]);
   });
 });

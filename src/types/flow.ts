@@ -167,6 +167,9 @@ export type TextOutputFormat = 'plain' | 'json';
 export type ImageTargetHandle =
   | 'image'
   | 'refImage'
+  | 'sourceImage'
+  | 'mask'
+  | 'reference'
   | 'image-edit-source'
   | 'image-mask'
   | 'image-reference-1'

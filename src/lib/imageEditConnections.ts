@@ -1,5 +1,6 @@
 import type { Edge } from '@xyflow/react';
 import type { AppNode, ImageTargetHandle } from '../types/flow';
+import { resolveFlowImageSource } from './flowImageSources';
 import { resolveEffectiveSourceNode } from './virtualNodes';
 
 export function hasConnectedImageEditSource(
@@ -67,15 +68,13 @@ export function resolveConnectedImageInputAsset(
   targetNodeId: string,
   targetHandles: Array<ImageTargetHandle | undefined>,
 ): string | undefined {
-  const sourceNode = findConnectedImageInputSource(nodes, edges, targetNodeId, targetHandles);
+  const source = findConnectedImageInputSource(nodes, edges, targetNodeId, targetHandles);
 
-  if (!sourceNode) {
+  if (!source) {
     return undefined;
   }
 
-  return (sourceNode.data.mediaMode ?? 'generate') === 'import'
-    ? sourceNode.data.sourceAssetUrl
-    : sourceNode.data.result;
+  return source.assetUrl;
 }
 
 function findConnectedImageInputSource(
@@ -83,7 +82,7 @@ function findConnectedImageInputSource(
   edges: Edge[],
   targetNodeId: string,
   targetHandles: Array<ImageTargetHandle | undefined>,
-): AppNode | undefined {
+): { node: AppNode; assetUrl?: string } | undefined {
   const sourceEdges = edges.filter(
     (edge) => edge.target === targetNodeId && targetHandles.includes(edge.targetHandle as ImageTargetHandle | undefined),
   );
@@ -95,14 +94,11 @@ function findConnectedImageInputSource(
       ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
       : undefined;
 
-    if (isImageInputSource(sourceNode)) {
-      return sourceNode;
+    const resolved = resolveFlowImageSource(sourceNode, nodes, edges, sourceEdge.sourceHandle);
+    if (sourceNode && resolved.recognized) {
+      return { node: sourceNode, assetUrl: resolved.assetUrl };
     }
   }
 
   return undefined;
-}
-
-function isImageInputSource(node: AppNode | undefined): node is AppNode {
-  return node?.type === 'imageGen' || node?.type === 'cropImageNode' || node?.type === 'slimgNode';
 }

@@ -599,6 +599,17 @@ export function resolvePackageNodeData(
         if (val) {
           imageUrl = val;
         }
+      } else if (sourceNode.type === 'slimgNode' || sourceNode.type === 'advancedImageEditor') {
+        const val = sourceNode.type === 'advancedImageEditor'
+          ? (edge.sourceHandle === 'maskOutput' ? sourceNode.data.maskOutput : sourceNode.data.result)
+          : resolveMediaNodeAsset(sourceNode);
+        if (typeof val === 'string' && val) {
+          imageUrl = val;
+        }
+      } else if (sourceNode.type === 'functionNode' && sourceNode.data.resultType === 'image') {
+        if (typeof sourceNode.data.result === 'string' && sourceNode.data.result) {
+          imageUrl = sourceNode.data.result;
+        }
       } else if (sourceNode.type === 'expander') {
         const item = resolveExpandedListItemForNode(sourceNode, nodes, edges, visited);
         if (item?.kind === 'image' && item.value) {

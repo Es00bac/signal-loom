@@ -139,13 +139,16 @@ describe('dynamic Flow node contracts', () => {
       { kind: 'image' },
       { kind: 'video' },
       { kind: 'audio' },
+      { kind: 'json' },
     ]);
     expect(openai.find((port) => port.direction === 'input')?.types).toEqual([
       { kind: 'text' },
       { kind: 'image' },
+      { kind: 'json' },
     ]);
     expect(huggingface.find((port) => port.direction === 'input')?.types).toEqual([
       { kind: 'text' },
+      { kind: 'json' },
     ]);
   });
 
@@ -169,7 +172,83 @@ describe('dynamic Flow node contracts', () => {
       types: descriptiveReferenceTypes,
       maxConnections: null,
     });
-    expect(ports.find((port) => port.id === 'image-mask')?.types).toEqual([{ kind: 'image' }]);
+    expect(ports.find((port) => port.id === 'image-mask')?.types).toEqual(compositeImageTypes);
+  });
+
+  it('declares every runtime-supported composite image source on local and verification image inputs', () => {
+    const compositeImageTypes = [
+      { kind: 'image' },
+      { kind: 'package' },
+      { kind: 'envelope', item: { kind: 'image' } },
+      { kind: 'envelope', item: { kind: 'package' } },
+      { kind: 'envelope', item: { kind: 'mixed' } },
+    ];
+
+    expect(resolveFlowNodePorts(context('cropImageNode')).find((port) => port.id === 'image')?.types)
+      .toEqual(compositeImageTypes);
+    expect(resolveFlowNodePorts(context('slimgNode')).find((port) => port.id === 'image')?.types)
+      .toEqual(compositeImageTypes);
+    expect(resolveFlowNodePorts(context('imageFeatureExtractorNode')).find((port) => port.id === null)?.types)
+      .toEqual(compositeImageTypes);
+    expect(resolveFlowNodePorts(context('visionVerifyNode')).filter((port) => port.direction === 'input').slice(0, 2))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'image', types: compositeImageTypes }),
+        expect.objectContaining({ id: 'refImage', types: compositeImageTypes }),
+      ]));
+  });
+
+  it('allows descriptive Text and JSON beside composite images on Video reference handles', () => {
+    const ports = resolveFlowNodePorts(context('videoGen', {
+      provider: 'gemini',
+      modelId: 'gemini-omni-flash-preview',
+    }));
+    const compositeImageTypes = [
+      { kind: 'image' },
+      { kind: 'package' },
+      { kind: 'envelope', item: { kind: 'image' } },
+      { kind: 'envelope', item: { kind: 'package' } },
+      { kind: 'envelope', item: { kind: 'mixed' } },
+    ];
+
+    expect(ports.find((port) => port.id === 'video-start-frame')?.types).toEqual(compositeImageTypes);
+    expect(ports.find((port) => port.id === 'video-end-frame')?.types).toEqual(compositeImageTypes);
+    expect(ports.find((port) => port.id === 'video-reference-1')).toMatchObject({
+      types: [...compositeImageTypes, { kind: 'text' }, { kind: 'json' }],
+      maxConnections: null,
+    });
+  });
+
+  it('enumerates concrete container types on ports that consume any list or envelope', () => {
+    const expanderInput = resolveFlowNodePorts(context('expander')).find((port) => port.id === null);
+    const monitorInput = resolveFlowNodePorts(context('valueMonitorNode')).find((port) => port.id === null);
+
+    for (const expected of [
+      { kind: 'list', item: { kind: 'text' } },
+      { kind: 'list', item: { kind: 'image' } },
+      { kind: 'envelope', item: { kind: 'json' } },
+      { kind: 'envelope', item: { kind: 'audio' } },
+    ]) {
+      expect(expanderInput?.types).toContainEqual(expected);
+      expect(monitorInput?.types).toContainEqual(expected);
+    }
+  });
+
+  it('declares direct and container Source Bin inputs that can become library items', () => {
+    const sourceBinInput = resolveFlowNodePorts(context('sourceBin')).find((port) => port.direction === 'input');
+
+    expect(sourceBinInput?.types).toEqual(expect.arrayContaining([
+      { kind: 'text' },
+      { kind: 'image' },
+      { kind: 'video' },
+      { kind: 'audio' },
+      { kind: 'package' },
+      { kind: 'list', item: { kind: 'text' } },
+      { kind: 'list', item: { kind: 'image' } },
+      { kind: 'envelope', item: { kind: 'package' } },
+      { kind: 'envelope', item: { kind: 'mixed' } },
+    ]));
+    expect(sourceBinInput?.types).not.toContainEqual({ kind: 'number' });
+    expect(sourceBinInput?.types).not.toContainEqual({ kind: 'envelope', item: { kind: 'number' } });
   });
 
   it('declares package and envelope prompt extraction without accepting unrelated scalar coercions', () => {
@@ -178,6 +257,7 @@ describe('dynamic Flow node contracts', () => {
 
     expect(prompt?.types).toEqual([
       { kind: 'text' },
+      { kind: 'json' },
       { kind: 'video' },
       { kind: 'package' },
       { kind: 'envelope', item: { kind: 'text' } },
@@ -191,6 +271,18 @@ describe('dynamic Flow node contracts', () => {
   it('distinguishes Portal entrance and exit directions', () => {
     expect(resolveFlowNodePorts(context('portal', { portalRole: 'entry' })).map((port) => port.direction)).toEqual(['input']);
     expect(resolveFlowNodePorts(context('portal', { portalRole: 'exit' })).map((port) => port.direction)).toEqual(['output']);
+  });
+
+  it('declares image-sequence Composition output as a package instead of video', () => {
+    const packageOutput = resolveFlowNodePorts(context('composition', {
+      editorExportPresetPlan: { presetId: 'png-image-sequence' },
+    })).find((port) => port.direction === 'output');
+    const videoOutput = resolveFlowNodePorts(context('composition', {
+      editorExportPresetPlan: { presetId: 'review-h264-1080p' },
+    })).find((port) => port.direction === 'output');
+
+    expect(packageOutput).toMatchObject({ label: 'Rendered image-sequence package', types: [{ kind: 'package' }] });
+    expect(videoOutput).toMatchObject({ label: 'Rendered video', types: [{ kind: 'video' }] });
   });
 
   it.each([

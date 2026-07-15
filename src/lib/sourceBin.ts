@@ -4,8 +4,16 @@ import {
   collectEnvelopeItemsFromSourceNode,
   getDefaultMimeType,
   normalizeEnvelopeItems,
+  resolvePackageNodeData,
 } from './listNodes';
+import { evaluateNodeSignal, signalToText } from './flowSignals';
 import { resolveEffectiveSourceNode } from './virtualNodes';
+
+type SourceBinItemKind = 'text' | 'image' | 'video' | 'audio' | 'package';
+
+function isSourceBinItemKind(value: string): value is SourceBinItemKind {
+  return value === 'text' || value === 'image' || value === 'video' || value === 'audio' || value === 'package';
+}
 
 export interface SourceBinItem {
   id: string;
@@ -62,7 +70,7 @@ export function collectGlobalSourceBinItems(
       continue;
     }
 
-    const items = buildSourceBinItems(sourceNode, nodes, edges);
+    const items = buildSourceBinItems(sourceNode, nodes, edges, edge.sourceHandle);
 
     for (const item of items) {
       if (!deduped.has(item.id)) {
@@ -74,7 +82,7 @@ export function collectGlobalSourceBinItems(
   return [...deduped.values()];
 }
 
-export function buildSourceBinItems(node: AppNode, nodes?: AppNode[], edges?: Edge[]): SourceBinItem[] {
+export function buildSourceBinItems(node: AppNode, nodes?: AppNode[], edges?: Edge[], sourceHandle?: string | null): SourceBinItem[] {
   const sourceNodesById = nodes ? new Map(nodes.map((item) => [item.id, item])) : undefined;
   const isEnvelopeBacked = node.type === 'envelope' || node.type === 'list' || node.type === 'expander';
   // A generation/media node carries its OWN multi-result batch (loop) output in `data.envelopeItems`.
@@ -91,7 +99,7 @@ export function buildSourceBinItems(node: AppNode, nodes?: AppNode[], edges?: Ed
 
   if (envelopeItems.length > 0) {
     const envelopeLabel = node.data.customTitle ?? getEnvelopeSourceLabel(node);
-    return envelopeItems.map((item) => {
+    return envelopeItems.filter((item) => isSourceBinItemKind(item.kind)).map((item) => {
       const baseSourceNodeId = item.sourceNodeId
         ? (item.sourceNodeId.includes(':') ? item.sourceNodeId.split(':')[0] : item.sourceNodeId)
         : node.id;
@@ -115,11 +123,11 @@ export function buildSourceBinItems(node: AppNode, nodes?: AppNode[], edges?: Ed
     });
   }
 
-  const item = buildSourceBinItem(node);
+  const item = buildSourceBinItem(node, nodes, edges, sourceHandle);
   return item ? [item] : [];
 }
 
-export function buildSourceBinItem(node: AppNode): SourceBinItem | undefined {
+export function buildSourceBinItem(node: AppNode, nodes?: AppNode[], edges?: Edge[], sourceHandle?: string | null): SourceBinItem | undefined {
   const isGenerated = isSourceNodeGenerationOutput(node);
 
   switch (node.type) {
@@ -199,7 +207,7 @@ export function buildSourceBinItem(node: AppNode): SourceBinItem | undefined {
       if (!result) {
         return undefined;
       }
-      if (node.data.resultType === 'text' || node.data.resultType === 'number') {
+      if (node.data.resultType === 'text') {
         return {
           id: `source-${node.id}`,
           nodeId: node.id,
@@ -239,8 +247,59 @@ export function buildSourceBinItem(node: AppNode): SourceBinItem | undefined {
           }
         : undefined;
     }
-    default:
-      return undefined;
+    case 'packageNode': {
+      const pkg = resolvePackageNodeData(node.id, nodes ?? [node], edges ?? []);
+      return pkg.image || pkg.text
+        ? {
+            id: `source-${node.id}`,
+            nodeId: node.id,
+            kind: 'package',
+            label: node.data.customTitle ?? 'Asset package',
+            assetUrl: pkg.image,
+            text: pkg.text,
+            mimeType: 'image/png',
+          }
+        : undefined;
+    }
+    case 'doodleNode': {
+      const text = signalToText(evaluateNodeSignal(node.id, nodes ?? [node], edges ?? [], new Set(), undefined, sourceHandle)).trim();
+      const assetUrl = typeof node.data.doodleSketch === 'string' ? node.data.doodleSketch : undefined;
+      return assetUrl || text
+        ? {
+            id: `source-${node.id}`,
+            nodeId: node.id,
+            kind: 'package',
+            label: node.data.customTitle ?? 'Doodle package',
+            assetUrl,
+            text,
+            mimeType: assetUrl?.startsWith('data:image/jpeg') ? 'image/jpeg' : 'image/png',
+          }
+        : undefined;
+    }
+    default: {
+      const signal = evaluateNodeSignal(node.id, nodes ?? [node], edges ?? [], new Set(), undefined, sourceHandle);
+      if (!isSourceBinItemKind(signal.kind)) return undefined;
+      const value = signalToText(signal).trim();
+      if (!value) return undefined;
+      if (signal.kind === 'text') {
+        return {
+          id: `source-${node.id}${sourceHandle ? `-${sourceHandle}` : ''}`,
+          nodeId: node.id,
+          kind: 'text',
+          label: node.data.customTitle ?? value.slice(0, 48),
+          text: value,
+          mimeType: 'text/plain',
+        };
+      }
+      return {
+        id: `source-${node.id}${sourceHandle ? `-${sourceHandle}` : ''}`,
+        nodeId: node.id,
+        kind: signal.kind,
+        label: node.data.customTitle ?? `${signal.kind[0].toUpperCase()}${signal.kind.slice(1)}`,
+        assetUrl: value,
+        mimeType: signal.mimeType ?? getDefaultMimeType(signal.kind),
+      };
+    }
   }
 }
 
@@ -405,6 +464,10 @@ export function resolveMediaNodeAsset(node: AppNode): string | undefined {
   }
 
   if (node.type === 'functionNode') {
+    return typeof node.data.result === 'string' ? node.data.result : undefined;
+  }
+
+  if (node.type === 'slimgNode' || node.type === 'advancedImageEditor') {
     return typeof node.data.result === 'string' ? node.data.result : undefined;
   }
 
