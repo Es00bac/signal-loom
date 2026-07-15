@@ -1082,12 +1082,14 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     // export raster than the editor) down to a concrete installed chain, so editor and export match.
     typography: { ...DEFAULT_PAPER_TYPOGRAPHY, ...frame.typography, fontFamily: resolvePaperFontFamily(frame.typography?.fontFamily) },
     fillColor: frame.fillColor ?? defaultFillForKind(kind),
+    fillSwatchId: frame.fillSwatchId,
     fillOpacity: frame.fillOpacity ?? 1,
     fillGradient: frame.fillGradient,
     // A plain text frame is a document paragraph — borderless by default, like Word/InDesign body text. Comic
     // kinds (panel/caption/bubble) keep their visible stroke. The non-printing "Frame Edges" view toggle keeps
     // borderless frames easy to see/grab. (Only affects NEW frames; saved frames store explicit values.)
     strokeColor: frame.strokeColor ?? (kind === 'text' ? 'transparent' : '#111827'),
+    strokeSwatchId: frame.strokeSwatchId,
     strokeOpacity: frame.strokeOpacity ?? 1,
     strokeWidthMm: frame.strokeWidthMm ?? (kind === 'image' ? 0.2 : kind === 'text' ? 0 : 0.35),
     strokeStyle: frame.strokeStyle ?? 'solid',

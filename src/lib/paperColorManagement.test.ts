@@ -134,4 +134,22 @@ describe('collectPrintColorPreflight', () => {
     expect(preflight.richBlackTextFrameCount).toBeGreaterThan(0);
     expect(preflight.warnings.some((w) => w.includes('approximate'))).toBe(true);
   });
+
+  it('reports authored TAC overflow as a strict-export blocker instead of rewriting the ink', () => {
+    const overInk: PaperSwatch = {
+      id: 'over-ink', name: 'Heavy black', type: 'process', model: 'cmyk',
+      rgb: { r: 0, g: 0, b: 0 }, cmyk: { c: 100, m: 100, y: 100, k: 100 },
+    };
+    const base = createDefaultPaperDocument({ title: 'TAC' });
+    const added = addFrameToPaperPage({ ...base, swatches: [overInk] }, base.pages[0].id, {
+      kind: 'panel', xMm: 10, yMm: 10, widthMm: 30, heightMm: 30,
+      fillColor: '#000000', fillSwatchId: overInk.id,
+    });
+
+    const preflight = collectPrintColorPreflight(added.document, { inkLimitPercent: 280 });
+
+    expect(preflight.overInkFrameCount).toBeGreaterThan(0);
+    expect(preflight.warnings.join(' ')).toMatch(/block strict production export/i);
+    expect(preflight.warnings.join(' ')).not.toMatch(/reduced on export/i);
+  });
 });

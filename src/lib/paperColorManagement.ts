@@ -216,8 +216,8 @@ function frameIsText(frame: PaperFrame): boolean {
 
 /**
  * Preflight the document's colors for print: reports RGB-derived (approximate) colors, ink-limit
- * overages, and rich-black text. Honest input to the "is this really print-ready?" question — this is
- * what the KDP/PDF-X export surfaces instead of silently claiming conformance.
+ * overages, and rich-black text. Strict production output blocks TAC overages rather than silently
+ * rewriting authored CMYK; the report tells the user exactly what needs correction.
  */
 export function collectPrintColorPreflight(
   document: PaperDocument,
@@ -231,9 +231,9 @@ export function collectPrintColorPreflight(
   let overInkFrameCount = 0;
   let richBlackTextFrameCount = 0;
 
-  const consider = (raw: string | undefined, frame: PaperFrame) => {
+  const consider = (raw: string | undefined, swatchId: string | undefined, frame: PaperFrame) => {
     if (!raw || raw === 'transparent') return;
-    const swatch = swatchById.get(raw);
+    const swatch = swatchId ? swatchById.get(swatchId) : undefined;
     const color = swatch
       ? resolvePrintColorFromSwatch(swatch, 100, transform)
       : resolvePrintColorFromHex(raw, transform);
@@ -244,9 +244,9 @@ export function collectPrintColorPreflight(
 
   for (const page of document.pages) {
     for (const frame of page.frames) {
-      consider(frame.fillColor, frame);
-      consider(frame.strokeColor, frame);
-      if (frameIsText(frame)) consider(frame.typography.color, frame);
+      consider(frame.fillColor, frame.fillSwatchId, frame);
+      consider(frame.strokeColor, frame.strokeSwatchId, frame);
+      if (frameIsText(frame)) consider(frame.typography.color, frame.typography.colorSwatchId, frame);
     }
   }
 
@@ -254,7 +254,7 @@ export function collectPrintColorPreflight(
     warnings.push(`${approximateColorFrameCount} color(s) were converted from RGB with an approximate (non-ICC) profile — not guaranteed press-accurate.`);
   }
   if (overInkFrameCount > 0) {
-    warnings.push(`${overInkFrameCount} color(s) exceed the ${inkLimit}% total-ink limit and will be reduced on export.`);
+    warnings.push(`${overInkFrameCount} color(s) exceed the ${inkLimit}% total-ink limit and block strict production export until corrected.`);
   }
   if (richBlackTextFrameCount > 0) {
     warnings.push(`${richBlackTextFrameCount} text element(s) use a rich black — consider 100% K text to avoid registration fringing.`);

@@ -71,7 +71,8 @@ Flow and Image paths are concurrently owned and are outside Project 1. None were
 - Severity/status/commercial: critical / reproduced / yes.
 - Evidence: the RGBA `rasterizePage` dependency and page-wide raster backdrop in `src/lib/paperPdfxPipeline.ts`, with browser rasterization in `src/lib/paperPdfxBrowser.ts`.
 - Reproduce: `rg -n "rasterizePage|PaperPdfxPageRaster|createTransform|rgba" src/lib/paperPdfxPipeline.ts src/lib/paperPdfxBrowser.ts`.
-- Expected fix: Tasks 12-13 compile typed print paints/render nodes and emit authored process colors as native PDF `k`/`K` operands. Only explicit flatten groups may pass through the exact ICC raster transform, and total-area-coverage overflow must block rather than silently rewrite authored CMYK.
+- Current foundation: Task 12 now compiles typed print paints/render nodes and preserves authored process channels without an RGB round trip, but the legacy PDF/X pipeline has not consumed that plan yet.
+- Expected fix: Task 13 emits authored process colors as native PDF `k`/`K` operands. Only explicit flatten groups may pass through the exact ICC raster transform, and total-area-coverage overflow must block rather than silently rewrite authored CMYK.
 
 ### `spot-rich-text-overclaim`
 

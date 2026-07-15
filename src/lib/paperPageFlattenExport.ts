@@ -3,6 +3,7 @@ import type { PaperDocument, PaperPage } from '../types/paper';
 import {
   exportPaperDocumentToPrintHtml,
   paperPixelsFromMm,
+  resolvePaperPageFramesForOutput,
   updatePaperDocumentSetup,
 } from './paperDocument';
 import { resolvePaperFrameAssetUrl } from './paperAssetReferences';
@@ -55,6 +56,13 @@ export interface PaperPageFlattenExportOptions {
    * still render. Composes with the fill/text knockouts (a frame can have a process fill and a spot border).
    */
   excludeFrameStrokeIds?: string[];
+  /**
+   * Render only these output-frame ids. This is the bridge from the typed render plan's `flatten-group`
+   * nodes to the legacy HTML/SVG rasterizer, so native siblings never get painted into the backdrop.
+   */
+  renderFrameIds?: readonly string[];
+  /** Omit the page background for a group raster so it can composite beneath native print objects. */
+  includePageBackground?: boolean;
 }
 
 export interface PaperPageEmbeddedAssetExportOptions extends PaperPageFlattenExportOptions {
@@ -127,9 +135,10 @@ export function buildFlattenedPaperPageSvgExport(
   const label = `${document.title || 'Paper Layout'} - Page ${page.pageNumber}`;
   const sheetCssWidthPx = dimensions.widthPx / dimensions.scale;
   const sheetCssHeightPx = dimensions.heightPx / dimensions.scale;
+  const wrapperBackground = options.includePageBackground === false ? 'transparent' : '#d1d5db';
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${dimensions.widthPx}" height="${dimensions.heightPx}" viewBox="0 0 ${dimensions.widthPx} ${dimensions.heightPx}">
   <foreignObject width="${dimensions.widthPx}" height="${dimensions.heightPx}">
-    <div xmlns="http://www.w3.org/1999/xhtml" style="width:${formatPx(sheetCssWidthPx)};height:${formatPx(sheetCssHeightPx)};overflow:hidden;transform:scale(${dimensions.scale});transform-origin:top left;background:#d1d5db;">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="width:${formatPx(sheetCssWidthPx)};height:${formatPx(sheetCssHeightPx)};overflow:hidden;transform:scale(${dimensions.scale});transform-origin:top left;background:${wrapperBackground};">
       <style>${escapeCdata(style)}</style>
       ${body}
     </div>
@@ -312,7 +321,19 @@ function buildOnePageExportDocument(
   options: PaperPageFlattenExportOptions,
 ): PaperDocument {
   const includeBleed = options.includeBleed ?? true;
-  let exportPage = page;
+  const selectedFrameIds = options.renderFrameIds ? new Set(options.renderFrameIds) : undefined;
+  // `resolvePaperPageFramesForOutput` includes inherited frames and effective styles. Once selected, copy
+  // those resolved frames onto a standalone page and clear parent linkage so the print HTML cannot re-add
+  // every master item underneath a flatten group.
+  const sourceDocument = selectedFrameIds ? { ...document, parentPages: [] } : document;
+  let exportPage: PaperPage = selectedFrameIds
+    ? {
+        ...page,
+        parentPageId: undefined,
+        frames: resolvePaperPageFramesForOutput(document, page)
+          .filter((frame) => selectedFrameIds.has(frame.id)),
+      }
+    : page;
   const excluded = options.excludeTextFrameIds ? new Set(options.excludeTextFrameIds) : undefined;
   const knockoutFills = options.excludeFrameFillIds ? new Set(options.excludeFrameFillIds) : undefined;
   const knockoutStrokes = options.excludeFrameStrokeIds ? new Set(options.excludeFrameStrokeIds) : undefined;
@@ -338,8 +359,19 @@ function buildOnePageExportDocument(
       }),
     };
   }
-  const exportDocument = {
-    ...document,
+  const exportDocument: PaperDocument = {
+    ...sourceDocument,
+    ...(options.includePageBackground === false
+      ? {
+          background: {
+            ...document.background,
+            type: 'solid' as const,
+            color: 'transparent',
+            fromColor: 'transparent',
+            toColor: 'transparent',
+          },
+        }
+      : {}),
     pages: [exportPage],
   };
 

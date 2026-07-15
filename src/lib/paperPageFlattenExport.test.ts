@@ -177,6 +177,29 @@ describe('paperPageFlattenExport', () => {
     expect(full.svg).toContain('RASTER-SFX');
   });
 
+  it('renders only a requested flatten group without repainting native siblings or the page background', () => {
+    let document = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Flatten group only' }), {
+      background: { type: 'solid', color: '#1a2b3c' },
+    });
+    const pageId = document.pages[0].id;
+    document = addFrameToPaperPage(document, pageId, {
+      kind: 'caption', xMm: 10, yMm: 10, widthMm: 60, heightMm: 20, text: 'NATIVE-ONLY',
+    }).document;
+    const flattened = addFrameToPaperPage(document, pageId, {
+      kind: 'caption', xMm: 10, yMm: 40, widthMm: 60, heightMm: 20, text: 'FLATTEN-ONLY',
+    });
+
+    const exported = buildFlattenedPaperPageSvgExport(flattened.document, pageId, {
+      renderFrameIds: [flattened.frameId],
+      includePageBackground: false,
+    });
+
+    expect(exported.svg).toContain('FLATTEN-ONLY');
+    expect(exported.svg).not.toContain('NATIVE-ONLY');
+    expect(exported.svg).not.toContain('#1a2b3c');
+    expect(exported.svg).toContain('background:transparent');
+  });
+
   it('knocks the fill out of excludeFrameFillIds frames (spot fill drawn as a plate on top)', () => {
     const base = createDefaultPaperDocument({ title: 'SpotKnock', preset: 'comic-book', dpi: 150 });
     const pageId = base.pages[0].id;
