@@ -59,7 +59,7 @@ import { usePaperStore } from '../../../store/paperStore';
 import { PaperFontImportControl, useRegisterImportedFonts } from './PaperFontImport';
 import { PaperIccProfileManager } from './PaperIccProfileManager';
 import { PaperManagedTextLayer } from './PaperManagedTextLayer';
-import { materializePaperDocumentAssetUrls } from '../assets/PaperAssetRuntime';
+import { materializePaperDocumentAssetUrls, paperAssetRepository } from '../assets/PaperAssetRuntime';
 import { useSettingsStore } from '../../../store/settingsStore';
 import { useSourceBinStore } from '../../../store/sourceBinStore';
 import { useFlowStore } from '../../../store/flowStore';
@@ -140,6 +140,7 @@ import { PaperSoftProofModal } from './PaperSoftProofModal';
 import { resolveEditorBackdrop } from './editorContrast';
 import { computeFitToTextFrameHeightMm, isFrameContentOverset } from './frameOverflow';
 import {
+  buildPaperManagedPrintUpscaledFramePatch,
   buildPaperPrintUpscaledFramePatch,
   buildPaperPrintUpscaleUsageTelemetry,
   collectPaperPrintUpscaleFrameJobs,
@@ -156,9 +157,16 @@ import {
   type PaperPrintAndroidAcceleratorUpscaleRequest,
   type PaperPrintAndroidNativeUpscaleRequest,
   type PaperPrintLocalAiUpscaleRequest,
-  type PaperPrintStabilityUpscaleRequest,
+  type PaperPrintUpscaleTarget,
   type PaperPrintVertexUpscaleRequest,
 } from '../../../lib/paperImageUpscale';
+import {
+  createPaperStabilityUpscaleCoordinator,
+  runPaperStabilityUpscale,
+  type PaperImagePlacementRequirement,
+  type RunPaperStabilityUpscaleInput,
+} from '../../../lib/paperStabilityUpscale';
+import { resolvePaperStabilitySource } from '../../../lib/paperStabilitySource';
 import {
   isLocalCpuUpscalerConfigured,
   runLocalCpuUpscaler,
@@ -274,12 +282,6 @@ import {
   dataUrlToVertexInlineImage,
   VERTEX_IMAGEN_UPSCALE_MODEL_ID,
 } from '../../../lib/vertexImageRequests';
-import {
-  blobToDataUrl,
-  blobToFile,
-  dataUrlToBlob,
-} from '../../../lib/imageEditorAi/blobUtils';
-import { buildStabilityUpscaleRequest } from '../../../lib/imageEditorAi/requestBuilders';
 import { PAPER_PRINT_UPSCALE_METHOD_OPTIONS } from '../../../lib/providerCatalog';
 import { getVertexProjectConfig } from '../../../lib/vertexProviderSettings';
 import {
@@ -450,6 +452,31 @@ const DEFAULT_PAPER_KDP_EXPORT_SETTINGS: PaperKdpExportSettings = {
   directoryName: '',
   allowPreflightErrors: false,
 };
+
+function isPaperStabilityUpscaleProvider(
+  provider: PaperPrintUpscaleBusyProvider,
+): provider is 'stability-fast' | 'stability-conservative' {
+  return provider === 'stability-fast' || provider === 'stability-conservative';
+}
+
+function buildPaperStabilityPlacementRequirement(
+  document: Pick<PaperDocument, 'page'>,
+  frame: Pick<PaperFrame, 'widthMm' | 'heightMm'>,
+  target: PaperPrintUpscaleTarget,
+): PaperImagePlacementRequirement {
+  const placedWidthIn = Math.max(0.01, frame.widthMm / 25.4);
+  const placedHeightIn = Math.max(0.01, frame.heightMm / 25.4);
+  const requiredPpi = Math.max(300, Math.round(document.page.dpi));
+  return {
+    placedWidthIn,
+    placedHeightIn,
+    requiredPpi,
+    requiredPixels: {
+      width: Math.max(target.targetWidthPx, Math.ceil(placedWidthIn * requiredPpi)),
+      height: Math.max(target.targetHeightPx, Math.ceil(placedHeightIn * requiredPpi)),
+    },
+  };
+}
 
 function resolvePaperEyedropperBackgroundColor(background: PaperDocument['background']): string {
   if (background.type === 'solid') return background.color;
@@ -2448,42 +2475,18 @@ export function PaperWorkspace() {
     setStatus(`Locating generator node "${baseNodeId}" on Flow canvas…`);
   }, [sourceItems, setWorkspaceView]);
 
-  const runStabilityPaperPrintUpscale = useCallback(async (request: PaperPrintStabilityUpscaleRequest) => {
+  const runStabilityPaperPrintUpscale = useCallback(async (
+    request: Omit<RunPaperStabilityUpscaleInput, 'apiKey' | 'repository'>,
+  ) => {
     const apiKey = useSettingsStore.getState().apiKeys.stability?.trim();
     if (!apiKey) {
       throw new Error('Stability AI API key is not configured. Add it in Settings > Providers before using Stability print upscaling.');
     }
-
-    const built = buildStabilityUpscaleRequest({
-      mode: request.mode,
-      outputFormat: 'png',
-      prompt: request.mode === 'conservative' ? request.prompt : undefined,
-      creativity: request.mode === 'conservative' ? request.creativity : undefined,
+    return runPaperStabilityUpscale({
+      ...request,
+      apiKey,
+      repository: paperAssetRepository,
     });
-    const formData = new FormData();
-    formData.append('image', await blobToFile(dataUrlToBlob(request.sourceDataUrl), 'paper-print-upscale-source.png'));
-    Object.entries(built.fields).forEach(([key, value]) => {
-      formData.append(key, String(value));
-    });
-
-    const response = await fetch(built.endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: 'image/*',
-      },
-      body: formData,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Stability AI print upscale failed (${response.status}): ${await response.text()}`);
-    }
-
-    const blob = await response.blob();
-    return {
-      dataUrl: await blobToDataUrl(blob),
-      mimeType: blob.type === 'image/jpeg' ? 'image/jpeg' as const : 'image/png' as const,
-    };
   }, []);
 
   const runAndroidPaperPrintUpscale = useCallback(async (request: PaperPrintAndroidAcceleratorUpscaleRequest) => {
@@ -2557,8 +2560,7 @@ export function PaperWorkspace() {
     const sourceItem = frame?.asset?.sourceBinItemId
       ? useSourceBinStore.getState().getAllItems().find((item) => item.id === frame.asset?.sourceBinItemId)
       : undefined;
-    const sourceUrl = resolvePaperFrameAssetUrl(frame?.asset, sourceItem);
-    if (!frame?.asset || !sourceUrl || frame.asset.kind !== 'image') {
+    if (!frame?.asset || frame.asset.kind !== 'image') {
       setStatus('Select an image frame with a placed image before upscaling.');
       return;
     }
@@ -2577,7 +2579,116 @@ export function PaperWorkspace() {
       method,
       vertexAvailable,
     );
-    const stabilityBaseUpscale = apiKeys.stability?.trim() ? runStabilityPaperPrintUpscale : undefined;
+    const sourceWidthPx = frame.asset.pixelWidth ?? sourceItem?.pixelWidth;
+    const sourceHeightPx = frame.asset.pixelHeight ?? sourceItem?.pixelHeight;
+    const hasSourceDimensions = typeof sourceWidthPx === 'number' && sourceWidthPx > 0
+      && typeof sourceHeightPx === 'number' && sourceHeightPx > 0;
+    const strictPrintDocument = document.page.dpi >= 300
+      ? document
+      : { ...document, page: { ...document.page, dpi: 300 } };
+    const stabilityPlan = hasSourceDimensions
+      ? resolvePaperPrintUpscalePlan({
+          method,
+          target: resolvePaperPrintUpscaleTarget(strictPrintDocument, frame, {
+            widthPx: sourceWidthPx!,
+            heightPx: sourceHeightPx!,
+          }),
+          stabilityAvailable: Boolean(apiKeys.stability?.trim()),
+          vertexAvailable,
+          androidAcceleratorAvailable: isAndroidAcceleratorConfigured(providerSettings),
+          androidNativeAvailable: isAndroidNativeImageUpscalerAvailable(),
+          localAiAvailable: isLocalCpuUpscalerConfigured(providerSettings),
+        })
+      : undefined;
+    if (stabilityPlan && isPaperStabilityUpscaleProvider(stabilityPlan.provider)) {
+      if (!stabilityPlan.canRun) {
+        setStatus(stabilityPlan.unavailableReason ?? 'The selected Stability print upscaler is not configured.');
+        return;
+      }
+      const target = resolvePaperPrintUpscaleTarget(strictPrintDocument, frame, {
+        widthPx: sourceWidthPx!,
+        heightPx: sourceHeightPx!,
+      });
+      if (!target.needsUpscale) {
+        updateFrame(pageId, frame.id, {
+          asset: {
+            ...frame.asset,
+            pixelWidth: sourceWidthPx,
+            pixelHeight: sourceHeightPx,
+          },
+        });
+        setStatus(`"${frame.asset.label}" already meets the strict ${strictPrintDocument.page.dpi} PPI print requirement.`);
+        return;
+      }
+      const mode = stabilityPlan.provider === 'stability-fast' ? 'fast' : 'conservative';
+      setPrintUpscaleBusy({
+        title: busyTitle,
+        detail: formatPaperPrintUpscaleProgress({
+          current: 1,
+          total: 1,
+          label: frame.asset.label,
+          provider: stabilityPlan.provider,
+          targetWidthPx: target.targetWidthPx,
+          targetHeightPx: target.targetHeightPx,
+          dpi: document.page.dpi,
+        }),
+        provider: stabilityPlan.provider,
+        current: 1,
+        total: 1,
+      });
+      setStatus(`Submitting "${frame.asset.label}" to ${describePaperPrintUpscaleBusyProvider(stabilityPlan.provider)} for measured print resolution...`);
+      void (async () => {
+        const source = await resolvePaperStabilitySource({
+          asset: frame.asset!,
+          sourceItem,
+          repository: paperAssetRepository,
+        });
+        const result = await runStabilityPaperPrintUpscale({
+          source: source.source,
+          sourceDimensions: source.sourceDimensions,
+          placement: buildPaperStabilityPlacementRequirement(strictPrintDocument, frame!, target),
+          options: {
+            mode,
+            ...(mode === 'conservative' ? {
+              prompt: options.stabilityPrompt?.trim() || DEFAULT_PAPER_PRINT_UPSCALE_PROMPT,
+              creativity: options.stabilityCreativity ?? 0.35,
+            } : {}),
+          },
+        });
+        updateFrame(pageId, frame!.id, buildPaperManagedPrintUpscaledFramePatch(frame!, result));
+        useProjectUsageStore.getState().recordUsage({
+          nodeId: `paper:${pageId}:${frame!.id}`,
+          workspace: 'paper',
+          operation: 'print-upscale',
+          usage: buildPaperPrintUpscaleUsageTelemetry({
+            provider: stabilityPlan.provider,
+            estimatedCostUsd: result.estimatedCostUsd,
+            notes: [
+              `Stability ${mode} returned ${result.providerWidthPx} x ${result.providerHeightPx}px for "${frame!.asset!.label}".`,
+              `${result.effectivePpi} effective PPI measured at placement; ${result.printReady ? 'meets' : 'does not meet'} the ${result.requiredPpi} PPI requirement.`,
+            ],
+          }),
+        });
+        const readiness = result.printReady
+          ? `meets ${result.requiredPpi} PPI`
+          : `is ${result.effectivePpi} effective PPI, below the ${result.requiredPpi} PPI print requirement`;
+        setStatus(`Stability ${mode} returned ${result.providerWidthPx} x ${result.providerHeightPx}px for "${frame!.asset!.label}"; it ${readiness}.`);
+      })().catch((error) => {
+        setStatus(error instanceof Error ? error.message : 'Could not upscale the selected Paper image with Stability.');
+      }).finally(() => {
+        clearPaperPrintUpscaleBusyAfterMinimum(setPrintUpscaleBusy, busyStartedAt);
+      });
+      return;
+    }
+    if (!stabilityPlan && (method === 'stability-fast' || method === 'stability-conservative')) {
+      setStatus('Stability print upscale requires known image pixel dimensions. Reimport the image so Paper can measure it before spending provider credit.');
+      return;
+    }
+    const sourceUrl = resolvePaperFrameAssetUrl(frame.asset, sourceItem);
+    if (!sourceUrl) {
+      setStatus('The selected image does not have readable source bytes for this print upscaler.');
+      return;
+    }
     const androidBaseUpscale = isAndroidAcceleratorConfigured(providerSettings)
       ? runAndroidPaperPrintUpscale
       : undefined;
@@ -2586,28 +2697,6 @@ export function PaperWorkspace() {
       : undefined;
     const localAiBaseUpscale = isLocalCpuUpscalerConfigured(providerSettings)
       ? runLocalAiPaperPrintUpscale
-      : undefined;
-    const stabilityUpscale = stabilityBaseUpscale
-      ? async (request: PaperPrintStabilityUpscaleRequest) => {
-        const provider = request.mode === 'fast' ? 'stability-fast' : 'stability-conservative';
-        setPrintUpscaleBusy({
-          title: busyTitle,
-          detail: formatPaperPrintUpscaleProgress({
-            current: 1,
-            total: 1,
-            label: frame.asset!.label,
-            provider,
-            targetWidthPx: request.targetWidthPx,
-            targetHeightPx: request.targetHeightPx,
-            dpi: document.page.dpi,
-          }),
-          provider,
-          current: 1,
-          total: 1,
-        });
-        setStatus(`Submitting "${frame.asset!.label}" to ${describePaperPrintUpscaleBusyProvider(provider)} for ${request.targetWidthPx} x ${request.targetHeightPx}px @ ${document.page.dpi} DPI...`);
-        return stabilityBaseUpscale(request);
-      }
       : undefined;
     const androidAcceleratorUpscale = androidBaseUpscale
       ? async (request: PaperPrintAndroidAcceleratorUpscaleRequest) => {
@@ -2730,9 +2819,6 @@ export function PaperWorkspace() {
             provider,
           });
         },
-        stabilityCreativity: options.stabilityCreativity,
-        stabilityPrompt: options.stabilityPrompt,
-        stabilityUpscale,
         localAiUpscale,
         androidAcceleratorUpscale,
         androidNativeUpscale,
@@ -2781,15 +2867,11 @@ export function PaperWorkspace() {
       setSourceSidebarOpen(true);
       const providerLabel = result.provider === 'vertex-imagen'
         ? `with Vertex Imagen ${result.upscaleFactor}`
-        : result.provider === 'stability-fast'
-          ? 'with Stability Fast plus exact local DPI fit'
-          : result.provider === 'stability-conservative'
-            ? 'with Stability Conservative plus exact local DPI fit'
-            : result.provider === 'android-accelerator'
-              ? 'with Android accelerator plus exact local DPI fit'
-              : result.provider === 'local-ai-cpu'
-                ? 'with local CPU AI plus exact local DPI fit'
-                : 'with local browser scaling';
+        : result.provider === 'android-accelerator'
+          ? 'with Android accelerator plus exact local DPI fit'
+          : result.provider === 'local-ai-cpu'
+            ? 'with local CPU AI plus exact local DPI fit'
+            : 'with local browser scaling';
       const costLabel = result.estimatedCostUsd === undefined || result.estimatedCostUsd <= 0
         ? ''
         : ` Estimated provider cost: $${result.estimatedCostUsd.toFixed(2)}.`;
@@ -2902,6 +2984,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       const failedFrames: string[] = [];
       let skippedCount = 0;
       let alreadyReadyCount = 0;
+      const stabilityCoordinator = createPaperStabilityUpscaleCoordinator();
       const shouldUseAndroidInAuto = method === 'auto' && isAndroidAcceleratorConfigured(providerSettings);
       const shouldCheckAndroidForFinalize = total > 0
         && (method === 'android-accelerator' || shouldUseAndroidInAuto)
@@ -2992,6 +3075,110 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
 
         try {
           const progressPrefix = `${index + 1}/${total}`;
+          const sourceWidthPx = frameAsset.pixelWidth ?? sourceItem?.pixelWidth;
+          const sourceHeightPx = frameAsset.pixelHeight ?? sourceItem?.pixelHeight;
+          const hasSourceDimensions = typeof sourceWidthPx === 'number' && sourceWidthPx > 0
+            && typeof sourceHeightPx === 'number' && sourceHeightPx > 0;
+          const strictPrintDocument = liveDocument.page.dpi >= 300
+            ? liveDocument
+            : { ...liveDocument, page: { ...liveDocument.page, dpi: 300 } };
+          const stabilityPlan = hasSourceDimensions
+            ? resolvePaperPrintUpscalePlan({
+                method,
+                target: resolvePaperPrintUpscaleTarget(strictPrintDocument, liveFrame, {
+                  widthPx: sourceWidthPx!,
+                  heightPx: sourceHeightPx!,
+                }),
+                stabilityAvailable: Boolean(apiKeys.stability?.trim()),
+                vertexAvailable: providerSettings.geminiCredentialMode === 'vertex-adc'
+                  && Boolean(getVertexProjectConfig(providerSettings).projectId)
+                  && Boolean(getSignalLoomNativeBridge()?.generateVertexImage),
+                androidAcceleratorAvailable: isAndroidAcceleratorConfigured(providerSettings),
+                androidNativeAvailable: isAndroidNativeImageUpscalerAvailable(),
+                localAiAvailable: localAiConfigured,
+              })
+            : undefined;
+          if (stabilityPlan && isPaperStabilityUpscaleProvider(stabilityPlan.provider)) {
+            if (!stabilityPlan.canRun) {
+              throw new Error(stabilityPlan.unavailableReason ?? 'The selected Stability print upscaler is not configured.');
+            }
+            const target = resolvePaperPrintUpscaleTarget(strictPrintDocument, liveFrame, {
+              widthPx: sourceWidthPx!,
+              heightPx: sourceHeightPx!,
+            });
+            if (!target.needsUpscale) {
+              alreadyReadyCount += 1;
+              updateFrame(job.pageId, liveFrame.id, {
+                asset: {
+                  ...frameAsset,
+                  pixelWidth: sourceWidthPx,
+                  pixelHeight: sourceHeightPx,
+                },
+              });
+              continue;
+            }
+            const mode = stabilityPlan.provider === 'stability-fast' ? 'fast' : 'conservative';
+            setPrintUpscaleBusy({
+              title: 'Finalizing print assets',
+              detail: formatPaperPrintUpscaleProgress({
+                current: index + 1,
+                total,
+                label: frameAsset.label,
+                provider: stabilityPlan.provider,
+                targetWidthPx: target.targetWidthPx,
+                targetHeightPx: target.targetHeightPx,
+                dpi: strictPrintDocument.page.dpi,
+              }),
+              provider: stabilityPlan.provider,
+              current: index + 1,
+              total,
+            });
+            setStatus(`Submitting "${frameAsset.label}" to ${describePaperPrintUpscaleBusyProvider(stabilityPlan.provider)} for measured print resolution (${progressPrefix})...`);
+            const result = await runPrintUpscaleWithRetry(frameAsset.label, async () => {
+              const source = await resolvePaperStabilitySource({
+                asset: frameAsset,
+                sourceItem,
+                repository: paperAssetRepository,
+              });
+              return stabilityCoordinator.run({
+                apiKey: useSettingsStore.getState().apiKeys.stability?.trim() ?? '',
+                source: source.source,
+                sourceDimensions: source.sourceDimensions,
+                placement: buildPaperStabilityPlacementRequirement(strictPrintDocument, liveFrame, target),
+                options: {
+                  mode,
+                  ...(mode === 'conservative' ? {
+                    prompt: DEFAULT_PAPER_PRINT_UPSCALE_PROMPT,
+                    creativity: 0.35,
+                  } : {}),
+                },
+                repository: paperAssetRepository,
+              });
+            });
+            updateFrame(job.pageId, liveFrame.id, buildPaperManagedPrintUpscaledFramePatch(liveFrame, result));
+            useProjectUsageStore.getState().recordUsage({
+              nodeId: `paper:${job.pageId}:${liveFrame.id}`,
+              workspace: 'paper',
+              operation: 'print-upscale',
+              usage: buildPaperPrintUpscaleUsageTelemetry({
+                provider: stabilityPlan.provider,
+                estimatedCostUsd: result.estimatedCostUsd,
+                notes: [
+                  `Stability ${mode} returned ${result.providerWidthPx} x ${result.providerHeightPx}px for "${frameAsset.label}".`,
+                  `${result.effectivePpi} effective PPI measured at placement; ${result.printReady ? 'meets' : 'does not meet'} the ${result.requiredPpi} PPI requirement.`,
+                ],
+              }),
+            });
+            upscaledCount += 1;
+            const readiness = result.printReady
+              ? `meets ${result.requiredPpi} PPI`
+              : `is ${result.effectivePpi} effective PPI, below the ${result.requiredPpi} PPI print requirement`;
+            setStatus(`Stability ${mode} returned ${result.providerWidthPx} x ${result.providerHeightPx}px for "${frameAsset.label}"; it ${readiness} (${progressPrefix}).`);
+            continue;
+          }
+          if (!stabilityPlan && (method === 'stability-fast' || method === 'stability-conservative')) {
+            throw new Error(`"${frameAsset.label}" needs known pixel dimensions before Stability can plan a paid print upscale.`);
+          }
           const bridge = getSignalLoomNativeBridge();
           const generateVertexImage = bridge?.generateVertexImage;
           const vertexConfig = getVertexProjectConfig(providerSettings);
@@ -3002,7 +3189,6 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
             method,
             vertexAvailable,
           );
-          const stabilityUpscale = apiKeys.stability?.trim() ? runStabilityPaperPrintUpscale : undefined;
           const androidAcceleratorUpscale = isAndroidAcceleratorConfigured(providerSettings)
             ? runAndroidPaperPrintUpscale
             : undefined;
@@ -3080,29 +3266,6 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
                 };
               }
               : undefined;
-            const stabilityBaseUpscale = stabilityUpscale;
-            const progressStabilityUpscale = stabilityBaseUpscale
-              ? async (request: PaperPrintStabilityUpscaleRequest) => {
-                const provider = request.mode === 'fast' ? 'stability-fast' : 'stability-conservative';
-                setPrintUpscaleBusy({
-                  title: 'Finalizing print assets',
-                  detail: formatPaperPrintUpscaleProgress({
-                    current: index + 1,
-                    total,
-                    label: frameAsset.label,
-                    provider,
-                    targetWidthPx: request.targetWidthPx,
-                    targetHeightPx: request.targetHeightPx,
-                    dpi: liveDocument.page.dpi,
-                  }),
-                  provider,
-                  current: index + 1,
-                  total,
-                });
-                setStatus(`Submitting "${frameAsset.label}" to ${describePaperPrintUpscaleBusyProvider(provider)} for ${request.targetWidthPx} x ${request.targetHeightPx}px @ ${liveDocument.page.dpi} DPI (${progressPrefix})...`);
-                return stabilityBaseUpscale(request);
-              }
-              : undefined;
             const androidBaseUpscale = androidAcceleratorUpscale;
             const progressAndroidUpscale = androidBaseUpscale
               ? async (request: PaperPrintAndroidAcceleratorUpscaleRequest) => {
@@ -3168,8 +3331,6 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
                   total,
                 });
               },
-              stabilityPrompt: DEFAULT_PAPER_PRINT_UPSCALE_PROMPT,
-              stabilityUpscale: progressStabilityUpscale,
               localAiUpscale,
               androidAcceleratorUpscale: progressAndroidUpscale,
               androidNativeUpscale: progressAndroidNativeUpscale,
@@ -3247,7 +3408,6 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
     runAndroidPaperPrintUpscale,
     runAndroidNativePaperPrintUpscale,
     runLocalAiPaperPrintUpscale,
-    runStabilityPaperPrintUpscale,
     setSourceSidebarOpen,
     updateFrame,
   ]);
@@ -4515,7 +4675,7 @@ function PaperPrintUpscaleDialog({
 }) {
   const [method, setMethod] = useState<PaperPrintUpscaleMethod>(providerSettings.paperPrintUpscaleMethod);
   const [prompt, setPrompt] = useState(DEFAULT_PAPER_PRINT_UPSCALE_PROMPT);
-  const [creativity, setCreativity] = useState(0.2);
+  const [creativity, setCreativity] = useState(0.35);
   const [upscalerSetup, setUpscalerSetup] = useState<string | null>(null);
 
   const nativeBridge = getSignalLoomNativeBridge();
@@ -4609,8 +4769,11 @@ function PaperPrintUpscaleDialog({
     providerSettings.androidAcceleratorBaseUrl,
     shouldCheckAndroid,
   ]);
+  const strictPrintDocument = document.page.dpi >= 300
+    ? document
+    : { ...document, page: { ...document.page, dpi: 300 } };
   const targetPlan = frame
-    ? resolvePaperPrintUpscaleTarget(document, frame, {
+    ? resolvePaperPrintUpscaleTarget(strictPrintDocument, frame, {
         widthPx: sourceWidthPx,
         heightPx: sourceHeightPx,
       })
@@ -4646,7 +4809,7 @@ function PaperPrintUpscaleDialog({
   };
 
   const submit = async () => {
-    if (!frame?.asset || !sourceUrl || !plan) {
+    if (!frame?.asset || !plan) {
       setError('The selected image frame is no longer available.');
       return;
     }
@@ -4687,7 +4850,7 @@ function PaperPrintUpscaleDialog({
               Print Image Upscale
             </div>
             <div className="mt-1 truncate text-xs text-cyan-100/45">
-              {frame?.asset?.label ?? 'Selected image'} · {document.page.dpi} DPI document target
+              {frame?.asset?.label ?? 'Selected image'} · {strictPrintDocument.page.dpi} PPI print target
             </div>
           </div>
           <button
@@ -4700,7 +4863,7 @@ function PaperPrintUpscaleDialog({
           </button>
         </div>
 
-        {frame?.asset && sourceUrl && targetPlan && plan ? (
+        {frame?.asset && targetPlan && plan ? (
           <div className="mt-4 grid gap-4 md:grid-cols-[13rem_minmax(0,1fr)]">
             <div className="space-y-3">
               <div className="overflow-hidden rounded border border-cyan-300/10 bg-slate-950">
@@ -4742,8 +4905,14 @@ function PaperPrintUpscaleDialog({
                   <div className="mt-1 text-xs text-cyan-50">{costLabel}</div>
                 </div>
                 <div className="rounded border border-cyan-300/10 bg-[#10131b] px-3 py-2">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-cyan-100/35">Final Fit</div>
-                  <div className="mt-1 text-xs text-cyan-50">{plan.usesLocalFinalFit ? 'Exact local DPI fit' : 'Provider/local output'}</div>
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-cyan-100/35">Output</div>
+                  <div className="mt-1 text-xs text-cyan-50">
+                    {isPaperStabilityUpscaleProvider(plan.provider)
+                      ? 'Provider-reported pixels'
+                      : plan.usesLocalFinalFit
+                        ? 'Exact local DPI fit'
+                        : 'Provider/local output'}
+                  </div>
                 </div>
               </div>
 
@@ -4759,8 +4928,8 @@ function PaperPrintUpscaleDialog({
                   <Field label={`Creativity ${creativity.toFixed(2)}`}>
                     <input
                       className="w-full accent-cyan-300"
-                      max={0.35}
-                      min={0}
+                      max={0.5}
+                      min={0.2}
                       onChange={(event) => setCreativity(Number(event.target.value))}
                       step={0.01}
                       type="range"

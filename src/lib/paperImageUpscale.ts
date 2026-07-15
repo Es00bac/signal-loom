@@ -1,5 +1,6 @@
-import type { PaperDocument, PaperFrame, PaperFramePatch } from '../types/paper';
+import type { PaperDocument, PaperFrame, PaperFramePatch, PaperStabilityPrintUpscaleEvidence } from '../types/paper';
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
+import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import { paperPixelsFromMm } from './paperDocument';
 import { buildPaperFrameAssetFromSourceItem, hasPaperAssetReference } from './paperAssetReferences';
 import type { VertexImagenOutputMimeType, VertexImagenUpscaleFactor } from './vertexImageRequests';
@@ -41,19 +42,6 @@ export interface PaperPrintVertexUpscaleRequest extends PaperPrintUpscaleTarget 
 }
 
 export interface PaperPrintVertexUpscaleResult {
-  dataUrl: string;
-  mimeType?: VertexImagenOutputMimeType;
-}
-
-export interface PaperPrintStabilityUpscaleRequest extends PaperPrintUpscaleTarget {
-  sourceDataUrl: string;
-  mode: 'fast' | 'conservative';
-  outputFormat: VertexImagenOutputMimeType;
-  prompt?: string;
-  creativity?: number;
-}
-
-export interface PaperPrintStabilityUpscaleResult {
   dataUrl: string;
   mimeType?: VertexImagenOutputMimeType;
 }
@@ -248,12 +236,9 @@ export async function upscalePaperImageForPrint(input: {
   method?: PaperPrintUpscaleMethod;
   maxEdgePx?: number;
   vertexUpscale?: (request: PaperPrintVertexUpscaleRequest) => Promise<PaperPrintVertexUpscaleResult>;
-  stabilityUpscale?: (request: PaperPrintStabilityUpscaleRequest) => Promise<PaperPrintStabilityUpscaleResult>;
   androidAcceleratorUpscale?: (request: PaperPrintAndroidAcceleratorUpscaleRequest) => Promise<PaperPrintAndroidAcceleratorUpscaleResult>;
   androidNativeUpscale?: (request: PaperPrintAndroidNativeUpscaleRequest) => Promise<PaperPrintAndroidNativeUpscaleResult>;
   localAiUpscale?: (request: PaperPrintLocalAiUpscaleRequest) => Promise<PaperPrintLocalAiUpscaleResult>;
-  stabilityPrompt?: string;
-  stabilityCreativity?: number;
   onProviderResolved?: (provider: PaperPrintUpscaleBusyProvider, upscaleFactor?: VertexImagenUpscaleFactor) => void;
 }): Promise<PaperPrintUpscaleResult> {
   const image = await loadImageElement(input.src);
@@ -276,7 +261,9 @@ export async function upscalePaperImageForPrint(input: {
   const plan = resolvePaperPrintUpscalePlan({
     method: input.method,
     target,
-    stabilityAvailable: Boolean(input.stabilityUpscale),
+    // Stability uses the managed binary pipeline in paperStabilityUpscale.ts. It must never return
+    // through this Data URL-based helper, which locally fits provider output and would misreport PPI.
+    stabilityAvailable: false,
     vertexAvailable: Boolean(input.vertexUpscale),
     androidAcceleratorAvailable: Boolean(input.androidAcceleratorUpscale),
     androidNativeAvailable: Boolean(input.androidNativeUpscale),
@@ -285,33 +272,6 @@ export async function upscalePaperImageForPrint(input: {
 
   if (!plan.canRun) {
     throw new Error(plan.unavailableReason ?? 'The selected Paper print upscaler is not available.');
-  }
-
-  if (input.stabilityUpscale && (plan.provider === 'stability-fast' || plan.provider === 'stability-conservative')) {
-    const source = resolveProviderUpscaleSource(input.src, image);
-    const mode = plan.provider === 'stability-fast' ? 'fast' : 'conservative';
-    input.onProviderResolved?.(plan.provider);
-    const stabilityResult = await input.stabilityUpscale({
-      ...target,
-      sourceDataUrl: source.dataUrl,
-      mode,
-      outputFormat: 'image/png',
-      prompt: input.stabilityPrompt,
-      creativity: input.stabilityCreativity,
-    });
-    const fittedDataUrl = await fitProviderResultToTargetDataUrl(
-      stabilityResult.dataUrl,
-      target.targetWidthPx,
-      target.targetHeightPx,
-    );
-
-    return {
-      ...target,
-      dataUrl: fittedDataUrl,
-      mimeType: 'image/png',
-      provider: plan.provider,
-      estimatedCostUsd: plan.estimatedCostUsd,
-    };
   }
 
   if (input.vertexUpscale && plan.provider === 'vertex-imagen') {
@@ -720,6 +680,52 @@ export function buildPaperPrintUpscaledFramePatch(
   };
 }
 
+/** Applies a binary Stability result without creating a source-bin data URL or changing visible placement. */
+export function buildPaperManagedPrintUpscaledFramePatch(
+  frame: Pick<PaperFrame,
+    'asset'
+    | 'fit'
+    | 'imageScale'
+    | 'imageOffsetXPercent'
+    | 'imageOffsetYPercent'
+    | 'imageRotationDeg'
+    | 'imageFlipX'
+    | 'imageFlipY'
+  >,
+  result: {
+    asset: BinaryAssetRef;
+    providerWidthPx: number;
+    providerHeightPx: number;
+  } & Omit<PaperStabilityPrintUpscaleEvidence, 'provider' | 'providerWidthPx' | 'providerHeightPx'>,
+): PaperFramePatch {
+  return {
+    asset: {
+      label: frame.asset?.label ?? 'Stability upscaled image',
+      kind: 'image',
+      locator: { kind: 'managed', ref: result.asset },
+      mimeType: result.asset.mimeType,
+      pixelWidth: Math.round(result.providerWidthPx),
+      pixelHeight: Math.round(result.providerHeightPx),
+      printUpscale: {
+        provider: 'stability',
+        mode: result.mode,
+        providerWidthPx: Math.round(result.providerWidthPx),
+        providerHeightPx: Math.round(result.providerHeightPx),
+        effectivePpi: Math.floor(result.effectivePpi),
+        requiredPpi: Math.ceil(result.requiredPpi),
+        printReady: result.printReady,
+      },
+    },
+    fit: frame.fit,
+    imageScale: frame.imageScale,
+    imageOffsetXPercent: frame.imageOffsetXPercent,
+    imageOffsetYPercent: frame.imageOffsetYPercent,
+    imageRotationDeg: frame.imageRotationDeg,
+    imageFlipX: frame.imageFlipX,
+    imageFlipY: frame.imageFlipY,
+  };
+}
+
 export function collectPaperPrintUpscaleFrameJobs(
   document: Pick<PaperDocument, 'page' | 'pages'>,
   sourceItems: Pick<SourceBinLibraryItem, 'id' | 'originNodeId' | 'sourceKey' | 'pixelWidth' | 'pixelHeight'>[] = [],
@@ -781,7 +787,10 @@ export function isPaperFramePrintReady(
     return false;
   }
 
-  return !resolvePaperPrintUpscaleTarget(document, frame, {
+  const strictPrintDocument = document.page.dpi >= 300
+    ? document
+    : { ...document, page: { ...document.page, dpi: 300 } };
+  return !resolvePaperPrintUpscaleTarget(strictPrintDocument, frame, {
     widthPx,
     heightPx,
   }).needsUpscale;
@@ -980,10 +989,10 @@ function stabilityPlan(
     unavailableReason: isAvailable ? undefined : 'Stability AI API key is not configured.',
     estimatedCostUsd,
     costLabel: estimatedCostUsd === undefined ? credits : `$${estimatedCostUsd.toFixed(2)} (${credits})`,
-    usesLocalFinalFit: true,
+    usesLocalFinalFit: false,
     notes: [
-      `${label} handles the AI enhancement pass.`,
-      'Sloom Studio locally resizes the provider result to the exact document-DPI pixel target before replacing the frame asset.',
+      `${label} stores the provider-returned binary dimensions without local interpolation or crop fitting.`,
+      'Paper reports achieved placed PPI and blocks strict output when the provider result remains below the print requirement.',
     ],
   };
 }

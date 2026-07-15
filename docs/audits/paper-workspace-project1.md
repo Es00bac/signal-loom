@@ -101,17 +101,17 @@ Flow and Image paths are concurrently owned and are outside Project 1. None were
 
 ### `stability-provider-contract`
 
-- Severity/status/commercial: high / reproduced / no.
-- Evidence: Paper calls shared `buildStabilityUpscaleRequest` in `src/features/paper/workspace/PaperWorkspace.tsx` without a Paper-owned input-dimension/aspect planner; `paperImageUpscale` forwards requested target dimensions and creativity.
-- Reproduce: `rg -n "buildStabilityUpscaleRequest|sourceDataUrl|stabilityCreativity|targetWidthPx|targetHeightPx" src/features/paper/workspace/PaperWorkspace.tsx src/lib/paperImageUpscale.ts`.
-- Expected fix: Task 15 adds a Paper-owned Stability planner/adapter that normalizes Fast and Conservative requests to documented side, pixel-count, aspect, prompt, and creativity limits before any network call, and leaves state unchanged on provider or cancellation failures.
+- Severity/status/commercial: high / fixed / no.
+- Evidence: `src/lib/paperStabilityUpscale.ts` validates Fast/Conservative inputs, preserves aspect during binary preparation, validates provider MIME/dimensions, and stores only a hash-addressed result. `src/lib/paperStabilitySource.ts` verifies a managed source record or creates an in-memory binary record from a runtime URL before the request.
+- Verify: `npx vitest run src/lib/paperStabilityUpscale.test.ts src/lib/paperStabilitySource.test.ts src/lib/paperImageUpscale.test.ts src/lib/paperPreflight.test.ts`.
+- Remaining external evidence: Task 17 runs one credential-free Fast and Conservative smoke through the Paper UI when the user-configured BYOK provider permits it.
 
 ### `stability-effective-ppi`
 
-- Severity/status/commercial: critical / reproduced / yes.
-- Evidence: the Stability path in `src/lib/paperImageUpscale.ts` sends provider output through `fitProviderResultToTargetDataUrl`, which crops and locally interpolates to requested target dimensions before returning target metadata.
-- Reproduce: `rg -n "fitProviderResultToTargetDataUrl|steppedUpscaleToPngDataUrl|targetWidthPx|targetHeightPx" src/lib/paperImageUpscale.ts`.
-- Expected fix: Task 15 stores returned provider bytes without local detail claims, records actual provider dimensions, computes effective placed PPI from achieved pixels, preserves placement/crop/rotation metadata, and marks output print-ready only when achieved PPI meets the requirement.
+- Severity/status/commercial: critical / fixed / yes.
+- Evidence: `buildPaperManagedPrintUpscaledFramePatch` preserves the existing placement/crop/rotation fields while replacing the source with a managed result whose actual provider dimensions and `printUpscale` evidence are stored. The generic Data URL helper no longer accepts a Stability callback. `paperPreflight` displays measured PPI, and strict production preflight still blocks assets below the higher of 300 PPI and document DPI.
+- Verify: `rg -n "PaperPrintStabilityUpscale|stabilityResult" src/lib/paperImageUpscale.ts src/features/paper/workspace/PaperWorkspace.tsx`; `npx vitest run src/lib/paperStabilityUpscale.test.ts src/lib/paperImageUpscale.test.ts src/lib/paperPreflight.test.ts`.
+- Remaining external evidence: Task 17 records live Fast/Conservative output dimensions and achieved PPI without exposing credentials.
 
 ## Status Rules
 

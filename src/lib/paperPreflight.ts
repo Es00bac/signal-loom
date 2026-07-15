@@ -291,7 +291,25 @@ function analyzeFrame(page: PaperPage, frame: PaperFrame, sourceById: Map<string
       if (asset.sourceBinItemId && !sourceById.has(asset.sourceBinItemId)) {
         issues.push(issue('error', 'Missing linked asset', `${asset.label || frame.label} is not present in the Source bin.`, { ...base, category: 'links' }));
       }
-      if (linkedAsset.effectivePpi === undefined) {
+      const stabilityUpscale = asset.printUpscale?.provider === 'stability' ? asset.printUpscale : undefined;
+      if (stabilityUpscale && linkedAsset.effectivePpi !== undefined) {
+        const requiredPpi = Math.max(profile.minPrintPpi, stabilityUpscale.requiredPpi);
+        if (linkedAsset.effectivePpi < requiredPpi) {
+          issues.push(issue(
+            'warning',
+            'Stability image remains below print PPI',
+            `${asset.label || frame.label} is ${linkedAsset.effectivePpi} effective PPI from Stability ${stabilityUpscale.mode}; ${requiredPpi} PPI is required for this document.`,
+            { ...base, category: 'resolution' },
+          ));
+        } else {
+          issues.push(issue(
+            'info',
+            'Stability image meets current print PPI',
+            `${asset.label || frame.label} is ${linkedAsset.effectivePpi} effective PPI from Stability ${stabilityUpscale.mode}.`,
+            { ...base, category: 'resolution' },
+          ));
+        }
+      } else if (linkedAsset.effectivePpi === undefined) {
         issues.push(issue('info', 'Image resolution unknown', `${asset.label || frame.label} has no pixel dimensions available for DPI validation.`, { ...base, category: 'resolution' }));
       } else if (linkedAsset.effectivePpi < profile.minPrintPpi) {
         issues.push(issue('warning', 'Image resolution is low', `${asset.label || frame.label} is about ${linkedAsset.effectivePpi} effective PPI.`, { ...base, category: 'resolution' }));

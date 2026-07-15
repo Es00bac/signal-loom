@@ -19,8 +19,8 @@ export const PAPER_PROJECT_1_AUDIT: readonly PaperProductionAuditEntry[] = [
   { id: 'spot-rich-text-overclaim', severity: 'high', status: 'reproduced', commercial: true, summary: 'Preflight can claim a rich text spot plate that export rasterizes.', evidence: ['collectSpotTextNames'], tests: [] },
   { id: 'overprint-not-emitted', severity: 'high', status: 'reproduced', commercial: true, summary: 'Overprint is preview metadata without PDF graphics state.', evidence: ['PaperPrintProductionSpec.overprintPreview'], tests: [] },
   { id: 'pdfx-download-after-failure', severity: 'critical', status: 'reproduced', commercial: true, summary: 'PDF/X bytes save after internal validation failure.', evidence: ['exportPaperPdfxAndSave'], tests: [] },
-  { id: 'stability-provider-contract', severity: 'high', status: 'reproduced', commercial: false, summary: 'Paper can submit invalid Stability dimensions or creativity.', evidence: ['paperImageUpscale', 'buildStabilityUpscaleRequest'], tests: [] },
-  { id: 'stability-effective-ppi', severity: 'critical', status: 'reproduced', commercial: true, summary: 'Local fitting can be described as generated print detail.', evidence: ['fitProviderResultToTargetDataUrl'], tests: [] },
+  { id: 'stability-provider-contract', severity: 'high', status: 'fixed', commercial: false, summary: 'Paper validates Stability input limits and stores only verified binary provider output.', evidence: ['paperStabilityUpscale', 'paperStabilitySource'], tests: ['paperStabilityUpscale.test.ts', 'paperStabilitySource.test.ts'] },
+  { id: 'stability-effective-ppi', severity: 'critical', status: 'fixed', commercial: true, summary: 'Paper records provider dimensions and achieved placed PPI without locally fitting Stability output.', evidence: ['buildPaperManagedPrintUpscaledFramePatch', 'PaperStabilityPrintUpscaleEvidence', 'paperPreflight'], tests: ['paperStabilityUpscale.test.ts', 'paperImageUpscale.test.ts', 'paperPreflight.test.ts'] },
 ] as const;
 
 export function paperAuditEntry(id: string): PaperProductionAuditEntry | undefined {

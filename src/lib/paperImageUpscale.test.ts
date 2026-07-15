@@ -4,6 +4,7 @@ import { createDefaultPaperDocument } from './paperDocument';
 import { createPaperComicSfxDesign } from './paperComicSfx';
 import {
   buildPaperPrintUpscaledFramePatch,
+  buildPaperManagedPrintUpscaledFramePatch,
   buildPaperPrintUpscaleUsageTelemetry,
   collectPaperPrintUpscaleFrameJobs,
   describePaperPrintUpscaleBusyProvider,
@@ -252,7 +253,7 @@ describe('paperImageUpscale', () => {
       provider: 'stability-fast',
       canRun: true,
       estimatedCostUsd: 0.02,
-      usesLocalFinalFit: true,
+      usesLocalFinalFit: false,
     });
   });
 
@@ -462,6 +463,68 @@ describe('paperImageUpscale', () => {
     });
   });
 
+  it('uses the managed Stability result dimensions without changing image placement metadata', () => {
+    const sha256 = 'a'.repeat(64);
+    const patch = buildPaperManagedPrintUpscaledFramePatch(frame({
+      asset: {
+        sourceBinItemId: 'original-source',
+        label: 'Original',
+        kind: 'image',
+        pixelWidth: 600,
+        pixelHeight: 400,
+      },
+      imageScale: 1.35,
+      imageOffsetXPercent: -12,
+      imageOffsetYPercent: 8,
+      imageRotationDeg: 14,
+      imageFlipX: true,
+      imageFlipY: true,
+    }), {
+      asset: {
+        id: `sha256:${sha256}`,
+        sha256,
+        mimeType: 'image/png',
+        byteLength: 4,
+      },
+      providerWidthPx: 2449,
+      providerHeightPx: 1633,
+      mode: 'conservative',
+      effectivePpi: 148,
+      requiredPpi: 300,
+      printReady: false,
+    });
+
+    expect(patch).toMatchObject({
+      asset: {
+        label: 'Original',
+        kind: 'image',
+        locator: {
+          kind: 'managed',
+          ref: expect.objectContaining({ id: `sha256:${sha256}` }),
+        },
+        pixelWidth: 2449,
+        pixelHeight: 1633,
+        printUpscale: {
+          provider: 'stability',
+          mode: 'conservative',
+          providerWidthPx: 2449,
+          providerHeightPx: 1633,
+          effectivePpi: 148,
+          requiredPpi: 300,
+          printReady: false,
+        },
+      },
+      fit: 'cover',
+      imageScale: 1.35,
+      imageOffsetXPercent: -12,
+      imageOffsetYPercent: 8,
+      imageRotationDeg: 14,
+      imageFlipX: true,
+      imageFlipY: true,
+    });
+    expect(patch.asset?.sourceBinItemId).toBeUndefined();
+  });
+
   it('collects print upscale jobs while skipping frames that already use manual print-upscaled assets', () => {
     const document = doc();
     const pageId = document.pages[0].id;
@@ -584,6 +647,24 @@ describe('paperImageUpscale', () => {
         pixelHeight: 934,
       },
     ])).toEqual([]);
+  });
+
+  it('keeps sub-300 PPI art in the print-finalization queue when the document preview DPI is lower', () => {
+    const document = doc(144);
+    const frameAtPreviewResolution = frame({
+      widthMm: 100,
+      heightMm: 50,
+      fit: 'cover',
+      asset: {
+        sourceBinItemId: 'preview-resolution',
+        label: 'Preview resolution',
+        kind: 'image',
+        pixelWidth: 1000,
+        pixelHeight: 500,
+      },
+    });
+
+    expect(isPaperFramePrintReady(document, frameAtPreviewResolution)).toBe(false);
   });
 
   it('formats Paper batch progress with provider, target pixels, and document DPI', () => {

@@ -273,7 +273,19 @@ export interface PaperFrameAsset {
   pageCount?: number;
   pixelWidth?: number;
   pixelHeight?: number;
+  /** Provider-reported output evidence for a managed Stability upscale. */
+  printUpscale?: PaperStabilityPrintUpscaleEvidence;
   embeddedAt?: number;
+}
+
+export interface PaperStabilityPrintUpscaleEvidence {
+  provider: 'stability';
+  mode: 'fast' | 'conservative';
+  providerWidthPx: number;
+  providerHeightPx: number;
+  effectivePpi: number;
+  requiredPpi: number;
+  printReady: boolean;
 }
 
 export type PaperManagedAssetLocator =

@@ -135,6 +135,45 @@ describe('paperPreflight', () => {
     }));
   });
 
+  it('reports actual Stability output PPI without treating a requested target as print-ready', () => {
+    const base = createDefaultPaperDocument({ title: 'Stability resolution' });
+    const sha256 = '4'.repeat(64);
+    const asset: BinaryAssetRef = { id: `sha256:${sha256}`, sha256, mimeType: 'image/png', byteLength: 64 };
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 420,
+      heightMm: 280,
+      asset: {
+        label: 'Stability panel',
+        kind: 'image',
+        locator: { kind: 'managed', ref: asset },
+        mimeType: asset.mimeType,
+        pixelWidth: 2449,
+        pixelHeight: 1633,
+        printUpscale: {
+          provider: 'stability',
+          mode: 'conservative',
+          providerWidthPx: 2449,
+          providerHeightPx: 1633,
+          effectivePpi: 148,
+          requiredPpi: 300,
+          printReady: false,
+        },
+      },
+    });
+
+    const report = analyzePaperPreflight(document, [], 'comic-print');
+
+    expect(report.issues).toContainEqual(expect.objectContaining({
+      severity: 'warning',
+      title: 'Stability image remains below print PPI',
+      detail: expect.stringContaining('148 effective PPI'),
+    }));
+    expect(report.issues.some((entry) => entry.title === 'Stability image is print-ready')).toBe(false);
+  });
+
   it('summarizes export-gate warnings and errors but ignores info-only reports', () => {
     const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Export Gate' }), { bleedMm: 0 });
     const warningReport = analyzePaperPreflight(base, []);
