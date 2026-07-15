@@ -98,6 +98,37 @@ describe('dynamic Flow node contracts', () => {
     expect(unsupported.find((port) => port.id === 'image-reference-1')?.disabledReason).toContain('does not support reference images');
   });
 
+  it('declares composite package and envelope extraction on Image source and reference inputs', () => {
+    const ports = resolveFlowNodePorts(context('imageGen', { provider: 'bfl', modelId: 'flux-2-pro' }));
+    const compositeImageTypes = [
+      { kind: 'image' },
+      { kind: 'package' },
+      { kind: 'envelope', item: { kind: 'image' } },
+      { kind: 'envelope', item: { kind: 'package' } },
+      { kind: 'envelope', item: { kind: 'mixed' } },
+    ];
+
+    expect(ports.find((port) => port.id === 'image-edit-source')?.types).toEqual(compositeImageTypes);
+    expect(ports.find((port) => port.id === 'image-reference-1')?.types).toEqual(compositeImageTypes);
+    expect(ports.find((port) => port.id === 'image-mask')?.types).toEqual([{ kind: 'image' }]);
+  });
+
+  it('declares package and envelope prompt extraction without accepting unrelated scalar coercions', () => {
+    const prompt = resolveFlowNodePorts(context('imageGen', { provider: 'bfl', modelId: 'flux-2-pro' }))
+      .find((port) => port.id === null && port.direction === 'input');
+
+    expect(prompt?.types).toEqual([
+      { kind: 'text' },
+      { kind: 'video' },
+      { kind: 'package' },
+      { kind: 'envelope', item: { kind: 'text' } },
+      { kind: 'envelope', item: { kind: 'package' } },
+      { kind: 'envelope', item: { kind: 'mixed' } },
+    ]);
+    expect(prompt?.types).not.toContainEqual({ kind: 'number' });
+    expect(prompt?.types).not.toContainEqual({ kind: 'boolean' });
+  });
+
   it('distinguishes Portal entrance and exit directions', () => {
     expect(resolveFlowNodePorts(context('portal', { portalRole: 'entry' })).map((port) => port.direction)).toEqual(['input']);
     expect(resolveFlowNodePorts(context('portal', { portalRole: 'exit' })).map((port) => port.direction)).toEqual(['output']);

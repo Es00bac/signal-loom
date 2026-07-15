@@ -91,6 +91,10 @@ import {
   getSignalIterationCount,
   signalToTextAt,
 } from '../lib/flowSignals';
+import {
+  annotateFlowEdges,
+  validateFlowConnection,
+} from '../lib/flowConnectionContracts';
 import { LOOP_BREAK_TARGET_HANDLE } from '../lib/flowControlHandles';
 import { shouldBreakLoopAtIteration } from '../lib/loopControl';
 import { getBlockingFlowDiagnostics } from '../lib/flowDiagnostics';
@@ -666,10 +670,11 @@ function hasNodeDataPatchChange(data: NodeData, patch: Partial<NodeData>): boole
 
 function normalizeFlowEdges(nodes: AppNode[], edges: Edge[]): Edge[] {
   const visibleEdges = edges.filter((edge) => !isPortalSyntheticEdge(edge));
-  return normalizePortalEdges(nodes, normalizeCompositionEdges(
+  const normalizedEdges = normalizePortalEdges(nodes, normalizeCompositionEdges(
     nodes,
     normalizeVideoImageEdges(nodes, normalizeImageEdges(nodes, visibleEdges)),
   ));
+  return annotateFlowEdges(normalizedEdges, nodes);
 }
 
 export function sanitizePersistedFlowState(value: unknown): { nodes: AppNode[]; edges: Edge[]; bookmarkSidebarOpen: boolean } {
@@ -2365,6 +2370,20 @@ export const useFlowStore = create<FlowState>()(
           get().nodes,
           listValidation.edges,
         );
+        const contractValidation = validateFlowConnection(listValidation.connection, {
+          nodes: get().nodes,
+          edges: prunedEdges,
+        });
+
+        if (!contractValidation.valid) {
+          if (normalizedConnection.target && contractValidation.reason) {
+            get().patchNodeData(normalizedConnection.target, {
+              error: contractValidation.reason,
+              statusMessage: undefined,
+            });
+          }
+          return;
+        }
 
         if (normalizedConnection.target) {
           get().patchNodeData(normalizedConnection.target, {
@@ -3507,4 +3526,3 @@ if (import.meta.env?.MODE !== 'test') {
     .then((module) => module.initializeFlowSyncChannel())
     .catch(() => undefined);
 }
-

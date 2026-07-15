@@ -87,6 +87,26 @@ const controlType = type('control');
 const unknownType = type('unknown');
 const listMixedType = containerType('list', { kind: 'mixed' });
 const envelopeMixedType = containerType('envelope', { kind: 'mixed' });
+const envelopeTextType = containerType('envelope', textType);
+const envelopeImageType = containerType('envelope', imageType);
+const envelopePackageType = containerType('envelope', packageType);
+
+const imageCompositeInputTypes: readonly FlowDataType[] = [
+  imageType,
+  packageType,
+  envelopeImageType,
+  envelopePackageType,
+  envelopeMixedType,
+];
+
+const imagePromptInputTypes: readonly FlowDataType[] = [
+  textType,
+  videoType,
+  packageType,
+  envelopeTextType,
+  envelopePackageType,
+  envelopeMixedType,
+];
 
 const allKnownValueTypes: readonly FlowDataType[] = [
   textType,
@@ -447,11 +467,11 @@ function resolveImagePorts(context: FlowNodeContractContext): readonly FlowPortC
   const maxReferences = referenceSupported ? model.capabilities.maxReferenceImages : 0;
 
   return [
-    input(null, 'Prompt or video source', [textType, videoType], {
+    input(null, 'Prompt or video source', imagePromptInputTypes, {
       maxConnections: null,
       disabledReason: importMode ? 'Imported Image nodes are asset sources and do not consume prompt inputs.' : undefined,
     }),
-    input('image-edit-source', 'Source image', [imageType], {
+    input('image-edit-source', 'Source image', imageCompositeInputTypes, {
       disabledReason: importMode
         ? 'Imported Image nodes do not edit an upstream image.'
         : editingSupported ? undefined : `${modelLabel} does not support image editing.`,
@@ -461,7 +481,7 @@ function resolveImagePorts(context: FlowNodeContractContext): readonly FlowPortC
         ? 'Imported Image nodes do not use masks.'
         : model.capabilities.maskInpaint ? undefined : `${modelLabel} does not support mask inpainting.`,
     }),
-    ...IMAGE_REFERENCE_HANDLES.map((id, index) => input(id, `Reference ${index + 1}`, [imageType], {
+    ...IMAGE_REFERENCE_HANDLES.map((id, index) => input(id, `Reference ${index + 1}`, imageCompositeInputTypes, {
       side: index % 2 === 0 ? 'left' : 'right',
       disabledReason: importMode
         ? 'Imported Image nodes do not use reference guidance.'

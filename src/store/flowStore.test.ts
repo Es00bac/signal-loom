@@ -321,6 +321,68 @@ describe('flow store package and envelope input gathering', () => {
   });
 });
 
+describe('flow store typed connections', () => {
+  beforeEach(() => {
+    useFlowStore.setState({ nodes: [], edges: [], bookmarkSidebarOpen: true });
+  });
+
+  it('rejects a newly drawn incompatible edge and explains the target error', () => {
+    useFlowStore.setState({
+      nodes: [createNode('number', 'numberNode'), createNode('target', 'regexReplaceNode')],
+    });
+
+    useFlowStore.getState().onConnect({
+      source: 'number',
+      sourceHandle: null,
+      target: 'target',
+      targetHandle: null,
+    });
+
+    expect(useFlowStore.getState().edges).toEqual([]);
+    expect(useFlowStore.getState().nodes.find((node) => node.id === 'target')?.data.error)
+      .toContain('number cannot connect to text');
+  });
+
+  it('accepts and annotates a compatible edge', () => {
+    useFlowStore.setState({
+      nodes: [createNode('text', 'textNode'), createNode('target', 'regexReplaceNode')],
+    });
+
+    useFlowStore.getState().onConnect({
+      source: 'text',
+      sourceHandle: null,
+      target: 'target',
+      targetHandle: null,
+    });
+
+    expect(useFlowStore.getState().edges).toHaveLength(1);
+    expect(useFlowStore.getState().edges[0].data).toMatchObject({
+      flowContract: { valid: true, carriedType: { kind: 'text' } },
+    });
+    expect(useFlowStore.getState().nodes.find((node) => node.id === 'target')?.data.error).toBeUndefined();
+  });
+
+  it('preserves but marks an incompatible edge loaded from a legacy saved flow', () => {
+    useFlowStore.setState({
+      nodes: [createNode('text', 'textNode'), createNode('target', 'cropImageNode')],
+      edges: [{ id: 'legacy', source: 'text', target: 'target', targetHandle: 'image' }],
+    });
+
+    useFlowStore.getState().hydratePersistedState();
+
+    expect(useFlowStore.getState().edges).toHaveLength(1);
+    expect(useFlowStore.getState().edges[0]).toMatchObject({
+      id: 'legacy',
+      data: {
+        flowContract: {
+          valid: false,
+          reason: 'text cannot connect to image',
+        },
+      },
+    });
+  });
+});
+
 describe('flow store async confirmations', () => {
   beforeEach(() => {
     useFlowStore.setState({
