@@ -6,6 +6,8 @@ import type {
 } from './imageProviderCapabilities';
 
 export interface InferredImageModel {
+  /** Slug-based inference is a UI fallback, never provider capability evidence. */
+  confidence: 'unverified';
   label: string;
   capabilities: ImageModelCapabilities;
   supportedOperations: ImageModelOperation[];
@@ -162,6 +164,7 @@ export function inferImageModelCapabilities(
   if (capabilities.maskInpaint && !operations.has('mask-inpaint')) operations.add('mask-inpaint');
 
   return {
+    confidence: 'unverified',
     label: prettyLabel(modelId),
     capabilities,
     supportedOperations: [...operations],

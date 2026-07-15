@@ -68,6 +68,34 @@ describe('FALLBACK_MODEL_OPTIONS', () => {
     );
   });
 
+  it('uses current stable Gemini image IDs and removes shut-down preview aliases from new nodes', () => {
+    const ids = FALLBACK_MODEL_OPTIONS.image.gemini.map((option) => option.value);
+
+    expect(ids).toEqual(expect.arrayContaining([
+      'gemini-3.1-flash-image',
+      'gemini-3.1-flash-lite-image',
+      'gemini-3-pro-image',
+      'gemini-2.5-flash-image',
+    ]));
+    expect(ids).not.toContain('gemini-3.1-flash-image-preview');
+    expect(ids).not.toContain('gemini-3-pro-image-preview');
+  });
+
+  it('uses current OpenAI, BytePlus, and BFL image endpoint IDs', () => {
+    expect(FALLBACK_MODEL_OPTIONS.image.openai.map((option) => option.value)).toEqual([
+      'gpt-image-2',
+    ]);
+    expect(DEFAULT_MODELS.image.byteplus).toBe('seedream-5-0-260128');
+    expect(FALLBACK_MODEL_OPTIONS.image.byteplus.map((option) => option.value)).toEqual([
+      'seedream-5-0-260128',
+      'seedream-4-5-251128',
+      'seedream-4-0-250828',
+    ]);
+    expect(FALLBACK_MODEL_OPTIONS.image.bfl.map((option) => option.value)).toContain(
+      'flux-2-klein-9b-preview',
+    );
+  });
+
   it('adds cloud and local advanced image editing providers to the image picker catalog', () => {
     expect(FALLBACK_MODEL_OPTIONS.image.bfl.map((option) => option.value)).toEqual(
       expect.arrayContaining([

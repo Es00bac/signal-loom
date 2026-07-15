@@ -1073,19 +1073,25 @@ async function executeImageNode(
       });
     }
     case 'byteplus': {
-      // FIRST-PARTY BytePlus/ModelArk (Seedream). Generation only for now; masked edit/reference guidance
-      // is pending confirmation of the ModelArk edit API (see memory byteplus-first-party-provider).
+      // FIRST-PARTY BytePlus/ModelArk (Seedream). This Flow route intentionally exposes only the
+      // documented Image Generation API; edit/reference controls stay blocked until their request
+      // contract is represented explicitly rather than inferred from a model name.
       if (sourceImageInput || referenceImageInputs.length > 0) {
         throw new Error('BytePlus Seedream currently supports text-to-image generation in Sloom Studio; image editing and reference guidance are pending the ModelArk edit API.');
       }
       onStatus?.('Generating image with BytePlus…');
       const apiKey = requireApiKey(settings.apiKeys.byteplus ?? '', 'BytePlus');
       const baseUrl = normalizeBytePlusBaseUrl(settings.providerSettings.bytePlusBaseUrl);
+      const bytePlusWidth = coerceOptionalNumber(node.data.imageWidth);
+      const bytePlusHeight = coerceOptionalNumber(node.data.imageHeight);
       const urlOrData = await bytePlusGenerateImage({
         apiKey,
         baseUrl,
         modelId,
         prompt: operationPrompt,
+        size: bytePlusWidth !== undefined && bytePlusHeight !== undefined
+          ? `${Math.round(bytePlusWidth)}x${Math.round(bytePlusHeight)}`
+          : undefined,
         seed: coerceOptionalNumber(node.data.imageSeed),
       });
       const bytePlusResult = urlOrData.startsWith('data:')

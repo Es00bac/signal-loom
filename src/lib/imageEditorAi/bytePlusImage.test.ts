@@ -1,6 +1,6 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { useSettingsStore } from '../../store/settingsStore';
-import { runBytePlusImage } from './bytePlusImage';
+import { bytePlusGenerateImage, runBytePlusImage } from './bytePlusImage';
 import type { GenerativeFillRequest } from '../imageEditorAi';
 
 function baseRequest(overrides: Partial<GenerativeFillRequest> = {}): GenerativeFillRequest {
@@ -34,5 +34,36 @@ describe('runBytePlusImage', () => {
       apiKeys: { ...useSettingsStore.getState().apiKeys, byteplus: '' },
     });
     await expect(runBytePlusImage(baseRequest())).rejects.toThrow(/API key not configured/i);
+  });
+});
+
+describe('bytePlusGenerateImage', () => {
+  it('uses the documented ModelArk model ID and size field', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: [{ url: 'https://example.test/image.png' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await expect(bytePlusGenerateImage({
+      apiKey: 'test-key',
+      baseUrl: 'https://ark.ap-southeast.bytepluses.com/api/v3',
+      modelId: 'seedream-5-0-260128',
+      prompt: 'A clear editorial portrait',
+      size: '2K',
+      seed: 42,
+    })).resolves.toBe('https://example.test/image.png');
+
+    const request = fetchMock.mock.calls[0]?.[1];
+    const body = JSON.parse(String(request?.body)) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      model: 'seedream-5-0-260128',
+      prompt: 'A clear editorial portrait',
+      size: '2K',
+      seed: 42,
+    });
+    expect(body).not.toHaveProperty('image_size');
+    fetchMock.mockRestore();
   });
 });

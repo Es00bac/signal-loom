@@ -6,6 +6,7 @@ import {
   getImageModelCapabilities,
   getImageModelDefinition,
   getImageNodeControlModel,
+  hasRegisteredImageModelDefinition,
   listImageModelDefinitions,
   listImageModelPricingEntries,
   listImageProviderHelpEntries,
@@ -18,6 +19,7 @@ describe('imageProviderCapabilities', () => {
       'gemini',
       'openai',
       'atlas',
+      'byteplus',
       'bfl',
       'stability',
       'huggingface',
@@ -262,6 +264,7 @@ describe('imageProviderCapabilities', () => {
       Array<{ value: string; label: string }>,
     ]>) {
       for (const option of options) {
+        expect(hasRegisteredImageModelDefinition(providerId, option.value), `${providerId}:${option.value}`).toBe(true);
         expect(getImageModelDefinition(providerId, option.value), `${providerId}:${option.value}`).toMatchObject({
           providerId,
           modelId: option.value,

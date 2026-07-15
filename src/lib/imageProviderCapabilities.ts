@@ -1,5 +1,9 @@
-import { inferImageModelCapabilities } from './imageModelInference';
 import { ATLAS_GENERATED_IMAGE_MODELS } from './atlasImageCatalog.generated';
+import type {
+  ModelAvailability,
+  ModelLifecycle,
+  ModelOfficialEvidence,
+} from './providerModelContracts';
 
 export type FirstClassImageProviderId =
   | 'gemini'
@@ -96,6 +100,12 @@ export interface ImageModelDefinition {
     confidence: ImageModelCostConfidence;
   };
   docsUrl: string;
+  lifecycle?: ModelLifecycle;
+  availability?: ModelAvailability;
+  capabilityConfidence?: 'verified' | 'unverified';
+  evidence?: readonly ModelOfficialEvidence[];
+  migrationModelId?: string;
+  shutdownAt?: string;
 }
 
 export interface ImageProviderHelpEntry {
@@ -357,11 +367,31 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
       promptEdit: true,
       referenceImages: true,
       maxReferenceImages: 14,
-      maxOutputMegapixels: 2,
+      maxOutputMegapixels: 17,
     }),
     supportedOperations: ['text-to-image', 'image-edit'],
     visibleControls: ['prompt', 'aspectRatio', 'imageSize', 'sourceImage', 'referenceImages', 'outputFormat'],
     cost: { imageEditUsd: 0.067, textToImageUsd: 0.067, unitLabel: '$0.067/image', confidence: 'heuristic' },
+    docsUrl: 'https://ai.google.dev/gemini-api/docs/image-generation',
+  },
+  {
+    providerId: 'gemini',
+    modelId: 'gemini-3.1-flash-lite-image',
+    label: 'Gemini 3.1 Flash Lite Image',
+    recommendedUse: 'Lowest-latency Google image generation and editing at fixed 1K output.',
+    capabilities: caps({
+      textToImage: true,
+      imageToImage: true,
+      promptEdit: true,
+      referenceImages: true,
+      maxReferenceImages: 14,
+      typography: true,
+      textInImageEditing: true,
+      maxOutputMegapixels: 1.1,
+    }),
+    supportedOperations: ['text-to-image', 'image-edit'],
+    visibleControls: ['prompt', 'aspectRatio', 'sourceImage', 'referenceImages', 'outputFormat'],
+    cost: { unitLabel: 'token priced', confidence: 'provider-defined' },
     docsUrl: 'https://ai.google.dev/gemini-api/docs/image-generation',
   },
   {
@@ -381,6 +411,11 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
     visibleControls: ['prompt', 'aspectRatio', 'imageSize', 'sourceImage', 'referenceImages', 'outputFormat'],
     cost: { imageEditUsd: 0.067, textToImageUsd: 0.067, unitLabel: '$0.067/image', confidence: 'heuristic' },
     docsUrl: 'https://ai.google.dev/gemini-api/docs/image-generation',
+    lifecycle: 'shutdown',
+    availability: 'unavailable',
+    capabilityConfidence: 'verified',
+    migrationModelId: 'gemini-3.1-flash-image',
+    shutdownAt: '2026-06-25',
   },
   {
     providerId: 'gemini',
@@ -393,7 +428,7 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
       promptEdit: true,
       referenceImages: true,
       maxReferenceImages: 14,
-      maxOutputMegapixels: 2,
+      maxOutputMegapixels: 17,
     }),
     supportedOperations: ['text-to-image', 'image-edit'],
     visibleControls: ['prompt', 'aspectRatio', 'imageSize', 'sourceImage', 'referenceImages', 'outputFormat'],
@@ -417,6 +452,11 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
     visibleControls: ['prompt', 'aspectRatio', 'imageSize', 'sourceImage', 'referenceImages', 'outputFormat'],
     cost: { imageEditUsd: 0.101, textToImageUsd: 0.067, unitLabel: '$0.067-$0.101/image', confidence: 'heuristic' },
     docsUrl: 'https://ai.google.dev/gemini-api/docs/image-generation',
+    lifecycle: 'shutdown',
+    availability: 'unavailable',
+    capabilityConfidence: 'verified',
+    migrationModelId: 'gemini-3-pro-image',
+    shutdownAt: '2026-06-25',
   },
   {
     providerId: 'gemini',
@@ -448,6 +488,9 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
     visibleControls: TEXT_TO_IMAGE_CONTROLS,
     cost: { textToImageUsd: 0.02, unitLabel: '$0.02/image', confidence: 'published-fixed' },
     docsUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs/image/generate-images',
+    lifecycle: 'deprecated',
+    migrationModelId: 'gemini-3.1-flash-image',
+    shutdownAt: '2026-08-17',
   },
   {
     providerId: 'gemini',
@@ -462,6 +505,9 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
     visibleControls: TEXT_TO_IMAGE_CONTROLS,
     cost: { textToImageUsd: 0.04, unitLabel: '$0.04/image', confidence: 'published-fixed' },
     docsUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs/image/generate-images',
+    lifecycle: 'deprecated',
+    migrationModelId: 'gemini-3.1-flash-image',
+    shutdownAt: '2026-08-17',
   },
   {
     providerId: 'gemini',
@@ -476,6 +522,9 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
     visibleControls: TEXT_TO_IMAGE_CONTROLS,
     cost: { textToImageUsd: 0.06, unitLabel: '$0.06/image', confidence: 'published-fixed' },
     docsUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs/image/generate-images',
+    lifecycle: 'deprecated',
+    migrationModelId: 'gemini-3.1-flash-image',
+    shutdownAt: '2026-08-17',
   },
   {
     providerId: 'openai',
@@ -492,7 +541,7 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
       // images.edit accepts up to 16 input images for GPT image models — source + 15 references.
       referenceImages: true,
       maxReferenceImages: 15,
-      maxOutputMegapixels: 4,
+      maxOutputMegapixels: 8.3,
     }),
     supportedOperations: ['text-to-image', 'image-edit', 'mask-inpaint'],
     visibleControls: OPENAI_CONTROLS,
@@ -517,8 +566,57 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
     visibleControls: OPENAI_CONTROLS,
     cost: { imageEditUsd: 0.04, textToImageUsd: 0.04, unitLabel: '~$0.04/image', confidence: 'heuristic' },
     docsUrl: 'https://platform.openai.com/docs/guides/image-generation',
+    lifecycle: 'deprecated',
+    migrationModelId: 'gpt-image-2',
   },
   ...ATLAS_GENERATED_IMAGE_MODELS,
+  {
+    providerId: 'byteplus',
+    modelId: 'seedream-5-0-260128',
+    label: 'Seedream 5.0 Lite (260128)',
+    recommendedUse: 'Current BytePlus visual reasoning and high-fidelity text-to-image generation.',
+    capabilities: caps({
+      textToImage: true,
+      typography: true,
+      textInImageEditing: true,
+      customDimensions: true,
+      maxOutputMegapixels: 8.3,
+    }),
+    supportedOperations: ['text-to-image'],
+    visibleControls: ['prompt', 'aspectRatio', 'dimensions', 'seed', 'outputFormat'],
+    cost: { unitLabel: 'BytePlus account billed', confidence: 'provider-defined' },
+    docsUrl: 'https://docs.byteplus.com/en/docs/ModelArk/1824121',
+  },
+  {
+    providerId: 'byteplus',
+    modelId: 'seedream-4-5-251128',
+    label: 'Seedream 4.5 (251128)',
+    recommendedUse: 'Established BytePlus image generation with strong subject and text consistency.',
+    capabilities: caps({
+      textToImage: true,
+      typography: true,
+      customDimensions: true,
+    }),
+    supportedOperations: ['text-to-image'],
+    visibleControls: ['prompt', 'aspectRatio', 'dimensions', 'seed', 'outputFormat'],
+    cost: { unitLabel: 'BytePlus account billed', confidence: 'provider-defined' },
+    docsUrl: 'https://docs.byteplus.com/en/docs/ModelArk/1824121',
+  },
+  {
+    providerId: 'byteplus',
+    modelId: 'seedream-4-0-250828',
+    label: 'Seedream 4.0 (250828)',
+    recommendedUse: 'Established BytePlus image generation where the 4.0 revision is required.',
+    capabilities: caps({
+      textToImage: true,
+      typography: true,
+      customDimensions: true,
+    }),
+    supportedOperations: ['text-to-image'],
+    visibleControls: ['prompt', 'aspectRatio', 'dimensions', 'seed', 'outputFormat'],
+    cost: { unitLabel: 'BytePlus account billed', confidence: 'provider-defined' },
+    docsUrl: 'https://docs.byteplus.com/en/docs/ModelArk/1824121',
+  },
   {
     providerId: 'huggingface',
     modelId: 'black-forest-labs/FLUX.1-dev',
@@ -645,6 +743,28 @@ const MODEL_DEFINITIONS: ImageModelDefinition[] = [
     visibleControls: BFL_CONTROLS,
     cost: { textToImageUsd: 0.015, imageEditUsd: 0.015, unitLabel: 'from $0.015/image', confidence: 'published-minimum' },
     docsUrl: 'https://docs.bfl.ai/flux_2',
+  },
+  {
+    providerId: 'bfl',
+    modelId: 'flux-2-klein-9b-preview',
+    label: 'FLUX.2 Klein 9B Preview',
+    recommendedUse: 'Latest FLUX.2 Klein 9B improvements when a changing preview endpoint is acceptable.',
+    capabilities: caps({
+      textToImage: true,
+      imageToImage: true,
+      promptEdit: true,
+      referenceImages: true,
+      maxReferenceImages: 4,
+      exactColorControl: true,
+      typography: true,
+      textInImageEditing: true,
+      maxOutputMegapixels: 4,
+    }),
+    supportedOperations: ['text-to-image', 'image-edit'],
+    visibleControls: BFL_CONTROLS,
+    cost: { textToImageUsd: 0.015, imageEditUsd: 0.015, unitLabel: 'from $0.015/image', confidence: 'published-minimum' },
+    docsUrl: 'https://docs.bfl.ai/flux_2/flux2_overview',
+    lifecycle: 'preview',
   },
   {
     providerId: 'bfl',
@@ -989,6 +1109,23 @@ const PROVIDER_HELP: RawImageProviderHelpEntry[] = [
     ],
   },
   {
+    providerId: 'byteplus',
+    label: 'BytePlus ModelArk',
+    signupUrl: 'https://console.byteplus.com/auth/signup/',
+    apiKeyUrl: 'https://console.byteplus.com/ark/region:ark+ap-southeast-1/apiKey',
+    pricingUrl: 'https://docs.byteplus.com/en/docs/ModelArk/1544106',
+    capabilitySummary: 'BytePlus ModelArk exposes current Seedream image-generation models through the documented Image Generation API.',
+    setupSteps: [
+      'Create a BytePlus account and enable ModelArk in a supported region.',
+      'Create a ModelArk API key in the BytePlus console and paste it in Sloom Studio Settings.',
+      'Select an exact Seedream endpoint ID in an Image node; Sloom Studio does not rewrite display names into API IDs.',
+    ],
+    costNotes: [
+      'Seedream usage is billed by your BytePlus ModelArk account and region.',
+      'Sloom Studio labels the estimate as provider-billed until the account-specific price can be confirmed.',
+    ],
+  },
+  {
     providerId: 'huggingface',
     label: 'Hugging Face',
     signupUrl: 'https://huggingface.co/join',
@@ -1079,6 +1216,7 @@ const PROVIDER_IDS: FirstClassImageProviderId[] = [
   'gemini',
   'openai',
   'atlas',
+  'byteplus',
   'huggingface',
   'bfl',
   'stability',
@@ -1100,6 +1238,18 @@ export function listImageModelDefinitions(providerId?: FirstClassImageProviderId
     : MODEL_DEFINITIONS;
 
   return definitions.map(cloneModelDefinition);
+}
+
+export function hasRegisteredImageModelDefinition(
+  providerId: FirstClassImageProviderId,
+  modelId: string | undefined,
+): boolean {
+  const normalizedModelId = normalizeModelId(modelId);
+  return MODEL_DEFINITIONS.some(
+    (definition) =>
+      definition.providerId === providerId &&
+      definition.modelId.toLowerCase() === normalizedModelId,
+  );
 }
 
 export function listImageModelPricingEntries(
@@ -1130,17 +1280,20 @@ export function getImageModelDefinition(
   }
 
   if (modelId && modelId.trim()) {
-    const inferred = inferImageModelCapabilities(providerId, modelId);
     return {
       providerId,
       modelId,
-      label: inferred.label,
-      recommendedUse: `Auto-detected ${providerId} model from its slug; capabilities inferred.`,
-      capabilities: inferred.capabilities,
-      supportedOperations: inferred.supportedOperations,
-      visibleControls: inferred.visibleControls,
-      cost: { confidence: 'provider-defined', unitLabel: 'provider-billed' },
+      label: modelId,
+      recommendedUse: 'Live or saved model with unverified capabilities; capabilities are not inferred from its name.',
+      capabilities: caps({ textToImage: true }),
+      supportedOperations: ['text-to-image'],
+      visibleControls: ['prompt', 'outputFormat'],
+      cost: { confidence: 'unknown', unitLabel: 'provider-billed' },
       docsUrl: '',
+      lifecycle: 'unverified',
+      availability: 'live',
+      capabilityConfidence: 'unverified',
+      evidence: [],
     };
   }
 
@@ -1159,6 +1312,10 @@ export function getImageModelDefinition(
     visibleControls: TEXT_TO_IMAGE_CONTROLS,
     cost: { confidence: 'unknown', unitLabel: 'unknown' },
     docsUrl: '',
+    lifecycle: 'unverified',
+    availability: 'live',
+    capabilityConfidence: 'unverified',
+    evidence: [],
   };
 }
 
@@ -1346,8 +1503,25 @@ function formatImageCostEstimate(cost: ImageModelCostEstimate): string {
 }
 
 function cloneModelDefinition(definition: ImageModelDefinition): ImageModelDefinition {
+  const lifecycle = definition.lifecycle ?? defaultLifecycleForImageDefinition(definition);
+  const availability = definition.availability ?? defaultAvailabilityForImageDefinition(definition, lifecycle);
+  const capabilityConfidence = definition.capabilityConfidence
+    ?? defaultCapabilityConfidenceForImageDefinition(definition);
+  const evidence = definition.evidence
+    ?? (definition.docsUrl.startsWith('https://')
+      ? [{
+          title: `${definition.label} official model or endpoint documentation`,
+          url: definition.docsUrl,
+          verifiedAt: '2026-07-14',
+        }]
+      : []);
+
   return {
     ...definition,
+    lifecycle,
+    availability,
+    capabilityConfidence,
+    evidence: evidence.map((entry) => ({ ...entry })),
     capabilities: { ...definition.capabilities },
     supportedOperations: [...definition.supportedOperations],
     visibleControls: [...definition.visibleControls],
@@ -1358,6 +1532,31 @@ function cloneModelDefinition(definition: ImageModelDefinition): ImageModelDefin
         : undefined,
     },
   };
+}
+
+function defaultLifecycleForImageDefinition(definition: ImageModelDefinition): ModelLifecycle {
+  if (definition.modelId.includes('preview')) return 'preview';
+  if (definition.providerId === 'localOpen' || definition.providerId === 'android') return 'unverified';
+  return 'stable';
+}
+
+function defaultAvailabilityForImageDefinition(
+  definition: ImageModelDefinition,
+  lifecycle: ModelLifecycle,
+): ModelAvailability {
+  if (lifecycle === 'shutdown') return 'unavailable';
+  if (lifecycle === 'preview') return 'rollout-dependent';
+  if (definition.providerId === 'gemini' || definition.providerId === 'openai') return 'documented';
+  if (definition.providerId === 'localOpen' || definition.providerId === 'android') return 'live';
+  return 'account-dependent';
+}
+
+function defaultCapabilityConfidenceForImageDefinition(
+  definition: ImageModelDefinition,
+): 'verified' | 'unverified' {
+  return definition.providerId === 'localOpen' || definition.providerId === 'android'
+    ? 'unverified'
+    : 'verified';
 }
 
 function normalizeModelId(modelId: string | undefined): string {

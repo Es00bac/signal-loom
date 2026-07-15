@@ -1,10 +1,7 @@
 // BytePlus / ModelArk (ByteDance) image generation — FIRST-PARTY Seedream provider.
 //
-// Built to the PUBLIC ModelArk image-generation API shape (POST {base}/images/generations, Bearer auth,
-// JSON { model, prompt, response_format } -> { data: [{ url } | { b64_json }] }). The exact optional field
-// names (image_size vs size, guidance_scale, watermark) and the precise Seedream model IDs come from
-// public docs/guides and MUST be confirmed against ModelArk docs + the BytePlus contact (Jack Su) before
-// launch. UNVERIFIED end-to-end until a live trial key is available — see memory `byteplus-first-party-provider`.
+// Built to the public ModelArk image-generation API shape (POST {base}/images/generations, Bearer auth,
+// JSON { model, prompt, size, response_format } -> { data: [{ url } | { b64_json }] }).
 import { useSettingsStore } from '../../store/settingsStore';
 import type { GenerativeFillRequest, GenerativeFillResult } from '../imageEditorAi';
 
@@ -21,7 +18,7 @@ export interface BytePlusImageRequest {
   baseUrl: string;
   modelId: string;
   prompt: string;
-  /** e.g. "2K" | "4K" for Seedream — confirm the exact field name (image_size vs size) with BytePlus. */
+  /** e.g. "2K" or a documented exact WxH value. */
   size?: string;
   seed?: number;
   signal?: AbortSignal;
@@ -39,7 +36,7 @@ export async function bytePlusGenerateImage(request: BytePlusImageRequest): Prom
     prompt: request.prompt,
     response_format: 'url',
   };
-  if (request.size) body.image_size = request.size;
+  if (request.size) body.size = request.size;
   if (typeof request.seed === 'number') body.seed = request.seed;
 
   const response = await fetch(`${request.baseUrl}/images/generations`, {
@@ -84,7 +81,7 @@ export async function runBytePlusImage(request: GenerativeFillRequest): Promise<
     );
   }
   const baseUrl = normalizeBytePlusBaseUrl(useSettingsStore.getState().providerSettings.bytePlusBaseUrl);
-  const modelUsed = request.model ?? 'seedream-4.5';
+  const modelUsed = request.model ?? 'seedream-5-0-260128';
   const urlOrData = await bytePlusGenerateImage({
     apiKey,
     baseUrl,

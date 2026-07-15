@@ -126,6 +126,39 @@ describe('executeNodeRequest advanced image providers', () => {
     vi.restoreAllMocks();
   });
 
+  it('sends BytePlus exact model IDs and custom dimensions with the documented size field', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      data: [{ b64_json: 'QllURVBMVVM=' }],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await executeNodeRequest(
+      createImageNode('byteplus', 'seedream-5-0-260128', {
+        imageWidth: 2048,
+        imageHeight: 1152,
+        imageSeed: 42,
+      }),
+      {
+        prompt: 'cinematic alpine observatory',
+        config: { ...DEFAULT_EXECUTION_CONFIG, aspectRatio: '16:9', imageOutputFormat: 'png' },
+      },
+      {
+        ...baseSettings,
+        apiKeys: { ...baseSettings.apiKeys, byteplus: 'byteplus-key' },
+      },
+    );
+
+    expect(result.result).toBe('data:image/png;base64,QllURVBMVVM=');
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body).toMatchObject({
+      model: 'seedream-5-0-260128',
+      prompt: 'cinematic alpine observatory',
+      size: '2048x1152',
+      seed: 42,
+    });
+    expect(body).not.toHaveProperty('image_size');
+  });
+
   it('submits and polls BFL FLUX.2 image edits with source and reference images', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({

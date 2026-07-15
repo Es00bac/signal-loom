@@ -264,7 +264,7 @@ export function estimateGenerativeFillCostUsd(
     case 'byteplus':
       return estimateImageModelCostUsd({
         providerId: 'byteplus',
-        modelId: modelId ?? 'seedream-4.5',
+        modelId: modelId ?? 'seedream-5-0-260128',
         operation: 'text-to-image',
         outputMegapixels: megapixels,
         textInputTokens,

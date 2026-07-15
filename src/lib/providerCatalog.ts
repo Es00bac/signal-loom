@@ -50,10 +50,10 @@ export const DEFAULT_MODELS: DefaultModelSettings = {
     atlas: 'black-forest-labs/flux-schnell',
     huggingface: 'black-forest-labs/FLUX.1-dev',
     bfl: 'flux-2-pro',
-    stability: 'stable-image-edit-inpaint',
+    stability: 'stable-image-core',
     localOpen: 'Qwen/Qwen-Image-Edit',
     android: 'local-dream-active',
-    byteplus: 'seedream-4.5',
+    byteplus: 'seedream-5-0-260128',
   },
   video: {
     gemini: 'veo-3.1-generate-001',
@@ -252,9 +252,8 @@ export const FALLBACK_MODEL_OPTIONS: ModelCatalog = {
   image: {
     gemini: [
       { value: 'gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image' },
-      { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image Preview' },
+      { value: 'gemini-3.1-flash-lite-image', label: 'Gemini 3.1 Flash Lite Image' },
       { value: 'gemini-3-pro-image', label: 'Gemini 3 Pro Image' },
-      { value: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image Preview' },
       { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image' },
       { value: 'imagen-4.0-fast-generate-001', label: 'Vertex Imagen 4 Fast' },
       { value: 'imagen-4.0-generate-001', label: 'Vertex Imagen 4 Generate' },
@@ -262,21 +261,20 @@ export const FALLBACK_MODEL_OPTIONS: ModelCatalog = {
     ],
     openai: [
       { value: 'gpt-image-2', label: 'GPT Image 2' },
-      { value: 'gpt-image-1', label: 'GPT Image 1' },
     ],
     // Every documented Atlas 2D image model (generated from the live catalog) so every model — and thus
     // every feature it exposes (references, edit, mask, custom size, …) — is selectable from the node.
     atlas: ATLAS_IMAGE_MODEL_OPTIONS,
-    // BytePlus / ModelArk (ByteDance) Seedream — FIRST-PARTY. Model IDs from public ModelArk docs;
-    // confirm exact IDs/tiers with BytePlus (Jack Su) when the trial key lands. See docs/notes + memory.
+    // BytePlus / ModelArk (ByteDance) date-stamped IDs accepted by /api/v3/images/generations.
     byteplus: [
-      { value: 'seedream-4.5', label: 'Seedream 4.5' },
-      { value: 'seedream-4.0', label: 'Seedream 4.0' },
-      { value: 'seedream-3.0', label: 'Seedream 3.0' },
+      { value: 'seedream-5-0-260128', label: 'Seedream 5.0 Lite (260128)' },
+      { value: 'seedream-4-5-251128', label: 'Seedream 4.5 (251128)' },
+      { value: 'seedream-4-0-250828', label: 'Seedream 4.0 (250828)' },
     ],
     bfl: [
       { value: 'flux-2-klein-4b', label: 'FLUX.2 Klein 4B' },
       { value: 'flux-2-klein-9b', label: 'FLUX.2 Klein 9B' },
+      { value: 'flux-2-klein-9b-preview', label: 'FLUX.2 Klein 9B Preview' },
       { value: 'flux-2-pro', label: 'FLUX.2 Pro' },
       { value: 'flux-2-pro-preview', label: 'FLUX.2 Pro Preview' },
       { value: 'flux-2-flex', label: 'FLUX.2 Flex' },
@@ -285,6 +283,8 @@ export const FALLBACK_MODEL_OPTIONS: ModelCatalog = {
     stability: [
       { value: 'stable-image-core', label: 'Stable Image Core' },
       { value: 'stable-image-ultra', label: 'Stable Image Ultra' },
+      { value: 'stable-image-upscale-fast', label: 'Stable Image Upscale: Fast' },
+      { value: 'stable-image-upscale-conservative', label: 'Stable Image Upscale: Conservative' },
       { value: 'stable-image-edit-inpaint', label: 'Stable Image Edit: Inpaint' },
       { value: 'stable-image-edit-erase', label: 'Stable Image Edit: Erase' },
       { value: 'stable-image-edit-outpaint', label: 'Stable Image Edit: Outpaint' },
