@@ -36,13 +36,19 @@ export interface PersistedFlowEdgeContract {
 type Connectable = Connection | Edge;
 
 const unknownType: FlowDataType = { kind: 'unknown' };
+const graphIndexCache = new WeakMap<object, {
+  incomingByNode: Map<string, Edge[]>;
+  nodeById: Map<string, AppNode>;
+}>();
+const outputTypeCache = new WeakMap<object, Map<string, FlowDataType>>();
 
 export function validateFlowConnection(
   candidate: Connectable,
   context: FlowGraphContractContext,
 ): FlowConnectionValidation {
-  const sourceNode = context.nodes.find((node) => node.id === candidate.source);
-  const targetNode = context.nodes.find((node) => node.id === candidate.target);
+  const { nodeById } = getGraphIndexes(context);
+  const sourceNode = nodeById.get(candidate.source);
+  const targetNode = nodeById.get(candidate.target);
 
   if (!sourceNode) return invalid(`The source node ${candidate.source || '(missing)'} does not exist.`);
   if (!targetNode) return invalid(`The target node ${candidate.target || '(missing)'} does not exist.`);
@@ -126,8 +132,29 @@ export function resolveFlowOutputType(
   const normalizedHandle = normalizeHandle(handle);
   const visitKey = `${nodeId}:${normalizedHandle ?? '__default__'}`;
   if (visited.has(visitKey)) return unknownType;
+  const cache = getOutputTypeCache(context);
+  const cached = cache.get(visitKey);
+  if (cached) return cached;
 
-  const node = context.nodes.find((candidate) => candidate.id === nodeId);
+  const resolved = resolveFlowOutputTypeUncached(
+    nodeId,
+    normalizedHandle,
+    context,
+    visited,
+    visitKey,
+  );
+  cache.set(visitKey, resolved);
+  return resolved;
+}
+
+function resolveFlowOutputTypeUncached(
+  nodeId: string,
+  normalizedHandle: string | null,
+  context: FlowGraphContractContext,
+  visited: ReadonlySet<string>,
+  visitKey: string,
+): FlowDataType {
+  const node = getGraphIndexes(context).nodeById.get(nodeId);
   if (!node) return unknownType;
 
   const nextVisited = new Set(visited);
@@ -242,10 +269,9 @@ function resolveIncomingTypes(
   context: FlowGraphContractContext,
   visited: ReadonlySet<string>,
 ): FlowDataType[] {
-  return context.edges
+  return (getGraphIndexes(context).incomingByNode.get(nodeId) ?? [])
     .filter((edge) =>
-      edge.target === nodeId
-      && (targetHandles === undefined || targetHandles.includes(normalizeHandle(edge.targetHandle)))
+      targetHandles === undefined || targetHandles.includes(normalizeHandle(edge.targetHandle))
     )
     .map((edge) => resolveFlowOutputType(edge.source, edge.sourceHandle, context, visited));
 }
@@ -301,4 +327,35 @@ function invalid(
   details: Omit<FlowConnectionValidation, 'valid' | 'reason'> = {},
 ): FlowConnectionValidation {
   return { valid: false, reason, ...details };
+}
+
+function getGraphIndexes(context: FlowGraphContractContext): {
+  incomingByNode: Map<string, Edge[]>;
+  nodeById: Map<string, AppNode>;
+} {
+  const cacheKey = context as object;
+  const cached = graphIndexCache.get(cacheKey);
+  if (cached) return cached;
+
+  const incomingByNode = new Map<string, Edge[]>();
+  for (const edge of context.edges) {
+    const incoming = incomingByNode.get(edge.target) ?? [];
+    incoming.push(edge);
+    incomingByNode.set(edge.target, incoming);
+  }
+  const indexes = {
+    incomingByNode,
+    nodeById: new Map(context.nodes.map((node) => [node.id, node])),
+  };
+  graphIndexCache.set(cacheKey, indexes);
+  return indexes;
+}
+
+function getOutputTypeCache(context: FlowGraphContractContext): Map<string, FlowDataType> {
+  const cacheKey = context as object;
+  const cached = outputTypeCache.get(cacheKey);
+  if (cached) return cached;
+  const created = new Map<string, FlowDataType>();
+  outputTypeCache.set(cacheKey, created);
+  return created;
 }

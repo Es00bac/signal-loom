@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Edge } from '@xyflow/react';
 import type { AppNode } from '../types/flow';
 import { buildListItemTargetHandle } from './listNodes';
-import { collectFlowDiagnostics } from './flowDiagnostics';
+import { collectFlowDiagnostics, getBlockingFlowDiagnostics } from './flowDiagnostics';
 
 function createNode(node: Partial<AppNode> & Pick<AppNode, 'id' | 'type'>): AppNode {
   return {
@@ -13,6 +13,107 @@ function createNode(node: Partial<AppNode> & Pick<AppNode, 'id' | 'type'>): AppN
 }
 
 describe('flow diagnostics', () => {
+  it('reports incompatible legacy edges with source/target types and converter guidance', () => {
+    const nodes = [
+      createNode({ id: 'number', type: 'numberNode' }),
+      createNode({ id: 'replace', type: 'regexReplaceNode' }),
+    ];
+    const diagnostics = collectFlowDiagnostics(nodes, [
+      { id: 'bad-type', source: 'number', target: 'replace' },
+    ]);
+
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      id: 'contract-edge-bad-type',
+      edgeId: 'bad-type',
+      nodeId: 'replace',
+      severity: 'critical',
+      message: expect.stringContaining('number cannot connect to text'),
+      suggestedFix: expect.stringContaining('javascriptNode'),
+      blocksRun: true,
+    }));
+  });
+
+  it('reports missing required inputs from the resolved node contract', () => {
+    const diagnostics = collectFlowDiagnostics([
+      createNode({ id: 'crop', type: 'cropImageNode' }),
+    ], []);
+
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      id: 'contract-required-crop-image',
+      nodeId: 'crop',
+      severity: 'critical',
+      message: 'Image requires 1 connection.',
+      blocksRun: true,
+    }));
+  });
+
+  it('reports saved edges attached to model-disabled ports', () => {
+    const nodes = [
+      createNode({ id: 'source', type: 'imageGen', data: { mediaMode: 'import' } }),
+      createNode({
+        id: 'target',
+        type: 'imageGen',
+        data: { provider: 'stability', modelId: 'stable-image-core' },
+      }),
+    ];
+    const diagnostics = collectFlowDiagnostics(nodes, [
+      { id: 'disabled-ref', source: 'source', target: 'target', targetHandle: 'image-reference-1' },
+    ]);
+
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      id: 'contract-edge-disabled-ref',
+      edgeId: 'disabled-ref',
+      message: expect.stringContaining('does not support reference images'),
+      blocksRun: true,
+    }));
+  });
+
+  it('reports cardinality violations without deleting either saved edge', () => {
+    const nodes = [
+      createNode({ id: 'a', type: 'textNode' }),
+      createNode({ id: 'b', type: 'textNode' }),
+      createNode({ id: 'replace', type: 'regexReplaceNode' }),
+    ];
+    const edges: Edge[] = [
+      { id: 'edge-a', source: 'a', target: 'replace' },
+      { id: 'edge-b', source: 'b', target: 'replace' },
+    ];
+    const diagnostics = collectFlowDiagnostics(nodes, edges);
+
+    expect(diagnostics.filter((diagnostic) => diagnostic.id.startsWith('contract-edge-'))).toHaveLength(2);
+    expect(edges).toHaveLength(2);
+  });
+
+  it('accepts a valid dynamic pass-through chain', () => {
+    const nodes = [
+      createNode({ id: 'source', type: 'textNode' }),
+      createNode({ id: 'virtual', type: 'virtual' }),
+      createNode({ id: 'replace', type: 'regexReplaceNode' }),
+    ];
+    const edges: Edge[] = [
+      { id: 'source-virtual', source: 'source', target: 'virtual' },
+      { id: 'virtual-replace', source: 'virtual', target: 'replace' },
+    ];
+
+    expect(collectFlowDiagnostics(nodes, edges).filter((diagnostic) =>
+      diagnostic.id.startsWith('contract-'))).toEqual([]);
+  });
+
+  it('scopes run blocking to the selected node and its upstream dependency graph', () => {
+    const nodes = [
+      createNode({ id: 'prompt', type: 'textNode' }),
+      createNode({ id: 'request', type: 'apiFetchNode' }),
+      createNode({ id: 'unrelated-crop', type: 'cropImageNode' }),
+    ];
+    const edges: Edge[] = [{ id: 'prompt-request', source: 'prompt', target: 'request' }];
+
+    expect(getBlockingFlowDiagnostics(nodes, edges, 'request')).toEqual([]);
+    expect(getBlockingFlowDiagnostics(nodes, edges)).toContainEqual(expect.objectContaining({
+      nodeId: 'unrelated-crop',
+      id: 'contract-required-unrelated-crop-image',
+    }));
+  });
+
   it('reports list-aware pure-node mismatches as critical workspace diagnostics', () => {
     const nodes = [
       createNode({ id: 'a1', type: 'textNode', data: { prompt: 'a1' } }),

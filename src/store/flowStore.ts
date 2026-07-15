@@ -2953,7 +2953,7 @@ export const useFlowStore = create<FlowState>()(
           return;
         }
 
-        const blockingDiagnostics = getBlockingFlowDiagnostics(preflightState.nodes, preflightState.edges);
+        const blockingDiagnostics = getBlockingFlowDiagnostics(preflightState.nodes, preflightState.edges, nodeId);
         if (blockingDiagnostics.length > 0) {
           get().patchNodeData(nodeId, {
             error: formatBlockingDiagnosticsMessage(blockingDiagnostics),
@@ -3241,7 +3241,10 @@ export const useFlowStore = create<FlowState>()(
                     statusMessage: `${loopStatusLabel} ${index + 1}/${combinedIterationCount}: ${statusMessage}`,
                     error: undefined,
                   });
-                }, { signal: abortSignal });
+                }, {
+                  signal: abortSignal,
+                  graph: { nodes: latestState.nodes, edges: latestState.edges },
+                });
 
                 throwIfRunAborted();
                 recordProjectUsageFromExecution({
@@ -3356,7 +3359,10 @@ export const useFlowStore = create<FlowState>()(
                 statusMessage,
                 error: undefined,
               });
-            }, { signal: abortSignal });
+            }, {
+              signal: abortSignal,
+              graph: { nodes: latestState.nodes, edges: latestState.edges },
+            });
 
             throwIfRunAborted();
 

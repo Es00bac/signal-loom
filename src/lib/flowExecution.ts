@@ -134,6 +134,10 @@ import {
   cropImageDataUrl,
   resolveCropImageNodeSettings,
 } from './cropImageNode';
+import {
+  getBlockingFlowDiagnostics,
+} from './flowDiagnostics';
+import type { FlowGraphContractContext } from './flowConnectionContracts';
 
 export interface ExecutionContext {
   prompt: string;
@@ -185,6 +189,11 @@ export interface ExecutionContext {
   exportPresetId?: VideoExportPresetId;
 }
 
+export interface ExecuteNodeRequestOptions {
+  signal?: AbortSignal;
+  graph?: FlowGraphContractContext;
+}
+
 interface ExecutionResult {
   result: string;
   resultType: ResultType;
@@ -230,8 +239,12 @@ export async function executeNodeRequest(
   context: ExecutionContext,
   settings: RuntimeSettingsSnapshot,
   onStatus?: (statusMessage: string, retryState?: { attempt: number; max: number; nextAttemptAt: number }) => void,
-  options: { signal?: AbortSignal } = {},
+  options: ExecuteNodeRequestOptions = {},
 ): Promise<ExecutionResult> {
+  if (options.graph) {
+    assertFlowExecutionPreflight(options.graph, node.id);
+  }
+
   // Composition/render nodes drive a LOCAL, deterministic, CPU/GPU-bound export (the frame-server
   // engine or the legacy ffmpeg graph) — not a flaky external API call. The generic
   // exponential-backoff retry below exists for rate-limited AI provider calls; applying it here
@@ -291,6 +304,25 @@ export async function executeNodeRequest(
       }
     }),
   });
+}
+
+export function assertFlowExecutionPreflight(
+  graph: FlowGraphContractContext,
+  rootNodeId?: string,
+): void {
+  const diagnostics = getBlockingFlowDiagnostics([...graph.nodes], [...graph.edges], rootNodeId);
+  if (diagnostics.length === 0) return;
+
+  const summary = diagnostics.slice(0, 5).map((diagnostic) => {
+    const location = diagnostic.edgeId
+      ? `Edge ${diagnostic.edgeId}`
+      : diagnostic.nodeId ? `Node ${diagnostic.nodeId}` : 'Flow';
+    return `${location}: ${diagnostic.message}`;
+  }).join('\n');
+  const remaining = diagnostics.length > 5
+    ? `\n${diagnostics.length - 5} more blocking issue${diagnostics.length - 5 === 1 ? '' : 's'} are listed in Diagnostics.`
+    : '';
+  throw new Error(`Flow cannot run until these connection issues are fixed:\n${summary}${remaining}`);
 }
 
 export async function hashExecutionParameters(nodeData: unknown, context: ExecutionContext): Promise<string> {
