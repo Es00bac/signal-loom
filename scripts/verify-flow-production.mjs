@@ -83,6 +83,24 @@ export async function verifyFlowProduction({ root = DEFAULT_ROOT } = {}) {
     errors.push('Long-lived Vertex credential JSON must not be part of saved project files.');
   }
 
+  const vertexGuidePath = resolve(root, 'docs/vertex-authentication.md');
+  await requireFile(vertexGuidePath, errors, 'Vertex authentication guide');
+  try {
+    const vertexGuide = await readFile(vertexGuidePath, 'utf8');
+    for (const requiredText of [
+      'Windows desktop',
+      'macOS desktop',
+      'Linux desktop',
+      'Android',
+      'https://cloud.google.com/docs/authentication/application-default-credentials',
+      'https://cloud.google.com/vertex-ai/docs/start/cloud-environment',
+    ]) {
+      if (!vertexGuide.includes(requiredText)) errors.push(`Vertex authentication guide is missing ${requiredText}.`);
+    }
+  } catch {
+    // Missing-file error was already recorded above.
+  }
+
   const leak = await scanCredentialLeaks(root);
   if (leak) errors.push(leak);
 
