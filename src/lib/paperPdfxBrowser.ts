@@ -9,7 +9,6 @@ import {
   rasterizeFlattenedPaperPageToRgba,
 } from './paperPageFlattenExport';
 import { createRgbToCmykTransform } from './paperIccEngine';
-import { resolveBundledAssetUrl } from './bundledAssetUrl';
 import {
   exportPaperDocumentToPdfx,
   type PaperPdfxPipelineOptions,
@@ -23,12 +22,6 @@ import {
   paperAssetRepository,
 } from '../features/paper/assets/PaperAssetRuntime';
 import { useSourceBinStore } from '../store/sourceBinStore';
-
-async function fetchBundledFont(fontUrl: string): Promise<Uint8Array> {
-  const response = await fetch(resolveBundledAssetUrl(fontUrl));
-  if (!response.ok) throw new Error(`Could not load the embedded font "${fontUrl}" (${response.status}).`);
-  return new Uint8Array(await response.arrayBuffer());
-}
 
 async function loadManagedPaperFont(assetRef: BinaryAssetRef): Promise<Uint8Array> {
   const record = await paperAssetRepository.get(assetRef.id);
@@ -57,7 +50,6 @@ export async function exportPaperDocumentToPdfxInBrowser(
   );
   return exportPaperDocumentToPdfx(exportDocument, { ...options, outputProfile }, {
     createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
-    loadFontBytes: fetchBundledFont,
     loadManagedFontBytes: loadManagedPaperFont,
     rasterizePage: async (pageId, outputDpi, rasterOptions) => {
       const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(exportDocument, pageId, {
@@ -67,6 +59,8 @@ export async function exportPaperDocumentToPdfxInBrowser(
         excludeTextFrameIds: rasterOptions?.excludeTextFrameIds,
         excludeFrameFillIds: rasterOptions?.excludeFrameFillIds,
         excludeFrameStrokeIds: rasterOptions?.excludeFrameStrokeIds,
+        renderFrameIds: rasterOptions?.renderFrameIds,
+        includePageBackground: rasterOptions?.includePageBackground,
         resolveImageSrc: imageSourceToDataUrl,
       });
       const raster = await rasterizeFlattenedPaperPageToRgba(svgExport);

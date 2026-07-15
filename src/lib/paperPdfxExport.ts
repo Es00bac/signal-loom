@@ -1,17 +1,11 @@
-// Real PDF/X-1a and PDF/X-4 export (docs/notes/835). This is the exporter that makes Sloom Studio's
-// "print PDF" claim TRUE instead of a labeled RGB PNG: every page is composited, converted to CMYK
-// through a real ICC output profile (lcms2), and embedded as DeviceCMYK image data in a pdf-lib
-// document carrying an embedded ICC OutputIntent (/S /GTS_PDFX), PDF/X XMP + Info metadata, and
-// TrimBox/BleedBox. A print shop opening this in Acrobat/Enfocus/callas sees a genuine PDF/X file with
-// the color space and output intent it needs — not a surprise RGB raster.
+// PDF/X-1a and PDF/X-4 writer for Paper's typed render plan. Native paths preserve authored CMYK/gray,
+// named spots, overprint, and exact managed fonts. Only intentional flatten groups and image content are
+// rasterized through the selected ICC profile, then embedded as isolated DeviceCMYK image XObjects.
+// The document carries its ICC OutputIntent (/S /GTS_PDFX), PDF/X XMP + Info metadata, and TrimBox/
+// BleedBox. PDF/X-1a blocks live transparency; PDF/X-4 retains supported opacity states.
 //
-// Fidelity note: this path FLATTENS each page to a single high-resolution CMYK image. That is precisely
-// what PDF/X-1a requires (no live transparency) and is fully valid PDF/X-4 as well; it is the correct,
-// print-shop-accepted form for art/comic pages. Live vector text is a separate fidelity layer (a hybrid
-// text-over-art PDF/X-4) tracked as a follow-up — this module is the conformant color+structure core.
-//
-// Pure + platform-agnostic: the caller injects the page rasters (RGBA) and an ICC transform, so this is
-// unit-testable in Node and reused unchanged by the browser/Electron export paths.
+// The legacy full-page-raster interfaces remain for proof/backward-compatible exports. Production Paper
+// PDF/X uses the native render-plan branch below, while this module stays platform-agnostic and testable.
 
 import {
   PDFDocument,
@@ -32,8 +26,14 @@ import {
 import fontkit from '@pdf-lib/fontkit';
 import type { IccCmykTransform } from './paperColorManagement';
 import { layoutParagraphText, type PaperTextAlign } from './paperTextLayout';
-import { applyInkLimitToCmykBuffer, limitTotalAreaCoverage } from './paperInkLimit';
+import { assertCmykBufferWithinInkLimit, assertCmykPaintWithinInkLimit } from './paperInkLimit';
 import { createOutlineFont, measureTextWidthPt, outlineTextRun, type FontkitOutlineFont, type GlyphPathOp } from './paperGlyphOutlines';
+import {
+  appendPaperNativeContent,
+  type PaperPdfxNativeEvidence,
+} from './paperPdfxNativeContent';
+import type { PaperRenderPlanPage } from './paperRenderPlan';
+import type { PaperManagedFontFace } from '../types/paper';
 
 export type PdfxStandard = 'pdf-x-1a' | 'pdf-x-4';
 
@@ -70,6 +70,30 @@ export interface PdfxRasterPage {
    */
   outlineFrames?: readonly PdfxOutlineTextFrame[];
 }
+
+/** Isolated RGBA output for one deliberate render-plan flatten group. It contains no native siblings. */
+export interface PdfxFlattenedGroupRaster {
+  objectId: string;
+  rgba: Uint8Array | Uint8ClampedArray;
+  widthPx: number;
+  heightPx: number;
+}
+
+/** A plan-driven hybrid PDF/X page. Native paths/text stay native; only listed flatten groups use rasters. */
+export interface PdfxNativePage {
+  pageNumber?: number;
+  trimWidthPt: number;
+  trimHeightPt: number;
+  bleedPt?: number;
+  renderPlanPage: PaperRenderPlanPage;
+  flattenedGroups?: readonly PdfxFlattenedGroupRaster[];
+  /** Managed image nodes are emitted as isolated CMYK image XObjects, not page-wide backdrops. */
+  rasterizedImages?: readonly PdfxFlattenedGroupRaster[];
+  /** Resolves exact managed-font bytes while the plan's positioned runs are emitted. */
+  loadManagedFontBytes: (face: PaperManagedFontFace) => Promise<Uint8Array>;
+}
+
+export type PdfxExportPage = PdfxRasterPage | PdfxNativePage;
 
 /** One solid spot-colour fill emitted as a `/Separation` colorspace rectangle (a real named plate). */
 export interface PdfxSpotFill {
@@ -195,11 +219,7 @@ export interface PdfxExportOptions {
   createdAt?: Date;
   /** 16-byte hex document id for the trailer /ID (defaults to random). Fixed value keeps tests deterministic. */
   docId?: string;
-  /**
-   * Total-ink (TAC) ceiling as a percent, e.g. 280. When set (and < 400), every exported CMYK sample —
-   * both the flattened raster and the vector text fills — is reduced (UCR: keep K, scale CMY) so no
-   * colour exceeds it. This makes the preflight's "colours will be reduced on export" promise real.
-   */
+  /** Total-ink (TAC) ceiling as a percent, e.g. 280. Over-limit output is blocked, never rewritten. */
   totalInkLimitPercent?: number;
 }
 
@@ -211,6 +231,8 @@ export interface PdfxExportResult {
   profileName: string;
   /** True when the color conversion was not ICC-backed (structurally valid, but not press-accurate). */
   approximateColor: boolean;
+  /** Inspectable proof of native vector/text/spot content retained in a hybrid export. */
+  nativeEvidence: PaperPdfxNativeEvidence;
 }
 
 interface StandardMeta {
@@ -243,6 +265,57 @@ function flattenRgbaToRgb(rgba: Uint8Array | Uint8ClampedArray, pixelCount: numb
     rgb[d + 2] = Math.round(rgba[s + 2] * a + 255 * inv);
   }
   return rgb;
+}
+
+/** Drop alpha without compositing for a PDF/X-4 image that carries a matching soft mask. */
+function rgbaToRgb(rgba: Uint8Array | Uint8ClampedArray, pixelCount: number): Uint8Array {
+  const rgb = new Uint8Array(pixelCount * 3);
+  for (let i = 0; i < pixelCount; i += 1) {
+    const source = i * 4;
+    const target = i * 3;
+    rgb[target] = rgba[source];
+    rgb[target + 1] = rgba[source + 1];
+    rgb[target + 2] = rgba[source + 2];
+  }
+  return rgb;
+}
+
+function hasTransparency(rgba: Uint8Array | Uint8ClampedArray, pixelCount: number): boolean {
+  for (let i = 0; i < pixelCount; i += 1) {
+    if (rgba[i * 4 + 3] !== 255) return true;
+  }
+  return false;
+}
+
+function emptyNativeEvidence(): PaperPdfxNativeEvidence {
+  return {
+    processObjectIds: [],
+    spotPlates: [],
+    embeddedFontIds: [],
+    outlinedObjectIds: [],
+    flattenedObjectIds: [],
+    overprintObjectIds: [],
+  };
+}
+
+function mergeNativeEvidence(target: PaperPdfxNativeEvidence, source: PaperPdfxNativeEvidence): void {
+  for (const id of source.processObjectIds) if (!target.processObjectIds.includes(id)) target.processObjectIds.push(id);
+  for (const id of source.embeddedFontIds) if (!target.embeddedFontIds.includes(id)) target.embeddedFontIds.push(id);
+  for (const id of source.outlinedObjectIds) if (!target.outlinedObjectIds.includes(id)) target.outlinedObjectIds.push(id);
+  for (const id of source.overprintObjectIds) if (!target.overprintObjectIds.includes(id)) target.overprintObjectIds.push(id);
+  target.flattenedObjectIds.push(...source.flattenedObjectIds);
+  for (const plate of source.spotPlates) {
+    const known = target.spotPlates.find((candidate) => candidate.name === plate.name);
+    if (known) {
+      for (const id of plate.objectIds) if (!known.objectIds.includes(id)) known.objectIds.push(id);
+    } else {
+      target.spotPlates.push({ name: plate.name, objectIds: [...plate.objectIds] });
+    }
+  }
+}
+
+function isNativePage(page: PdfxExportPage): page is PdfxNativePage {
+  return 'renderPlanPage' in page;
 }
 
 function pad2(n: number): string {
@@ -400,12 +473,78 @@ function encodePdfName(name: string): string {
   return out;
 }
 
+function registerIsolatedRgbaImage(
+  pdf: PDFDocument,
+  group: PdfxFlattenedGroupRaster,
+  transform: IccCmykTransform,
+  standard: PdfxStandard,
+  totalInkLimitPercent: number | undefined,
+): PDFRef {
+  const pixelCount = group.widthPx * group.heightPx;
+  if (group.rgba.length < pixelCount * 4) {
+    throw new Error(`Flatten group ${group.objectId} is smaller than ${group.widthPx}×${group.heightPx} RGBA.`);
+  }
+  const transparent = hasTransparency(group.rgba, pixelCount);
+  if (standard === 'pdf-x-1a' && transparent) {
+    throw new Error(`PDF/X-1a cannot preserve transparency in flatten group ${group.objectId}; use PDF/X-4 or flatten against an approved opaque backdrop.`);
+  }
+  const bulk = transform.transformRgbBuffer;
+  if (!bulk) throw new Error('The provided ICC transform does not support bulk image conversion (transformRgbBuffer).');
+  const rgb = transparent ? rgbaToRgb(group.rgba, pixelCount) : flattenRgbaToRgb(group.rgba, pixelCount);
+  const cmyk = bulk(rgb, pixelCount);
+  if (cmyk.length < pixelCount * 4) throw new Error('ICC transform returned fewer CMYK samples than expected.');
+  assertCmykBufferWithinInkLimit(cmyk, totalInkLimitPercent);
+  const context = pdf.context;
+  let alphaRef: PDFRef | undefined;
+  if (transparent) {
+    const alpha = new Uint8Array(pixelCount);
+    for (let i = 0; i < pixelCount; i += 1) alpha[i] = group.rgba[i * 4 + 3];
+    alphaRef = context.register(context.flateStream(alpha, {
+      Type: 'XObject',
+      Subtype: 'Image',
+      Width: group.widthPx,
+      Height: group.heightPx,
+      ColorSpace: 'DeviceGray',
+      BitsPerComponent: 8,
+    }));
+  }
+  return context.register(context.flateStream(cmyk.subarray(0, pixelCount * 4), {
+    Type: 'XObject',
+    Subtype: 'Image',
+    Width: group.widthPx,
+    Height: group.heightPx,
+    ColorSpace: 'DeviceCMYK',
+    BitsPerComponent: 8,
+    ...(alphaRef ? { SMask: alphaRef } : {}),
+  }));
+}
+
+function drawIsolatedFlattenGroup(
+  pdf: PDFDocument,
+  page: import('pdf-lib').PDFPage,
+  group: PdfxFlattenedGroupRaster,
+  mediaWidthPt: number,
+  mediaHeightPt: number,
+  transform: IccCmykTransform,
+  standard: PdfxStandard,
+  totalInkLimitPercent: number | undefined,
+): void {
+  const imageRef = registerIsolatedRgbaImage(pdf, group, transform, standard, totalInkLimitPercent);
+  const resource = page.node.newXObject('Fg', imageRef);
+  page.pushOperators(
+    pushGraphicsState(),
+    concatTransformationMatrix(mediaWidthPt, 0, 0, mediaHeightPt, 0, 0),
+    drawObject(resource),
+    popGraphicsState(),
+  );
+}
+
 /**
- * Build a conformant PDF/X (X-1a or X-4) from pre-rendered CMYK-bound page rasters.
- * Throws if the transform cannot do bulk image conversion.
+ * Build a conformant PDF/X (X-1a or X-4) from legacy full-page rasters or typed native render-plan pages.
+ * Native plan pages retain vector paths, named spots, managed fonts, and supported PDF/X-4 transparency.
  */
 export async function buildPaperPdfx(
-  pages: readonly PdfxRasterPage[],
+  pages: readonly PdfxExportPage[],
   options: PdfxExportOptions,
 ): Promise<PdfxExportResult> {
   if (pages.length === 0) throw new Error('Cannot export a PDF/X with no pages.');
@@ -427,7 +566,7 @@ export async function buildPaperPdfx(
   const iccRef = ctx.register(iccStream);
 
   // Fonts for the optional vector-text layer are embedded once per face and reused across pages.
-  const hasVectorText = pages.some((page) => (page.textFrames?.length ?? 0) > 0);
+  const hasVectorText = pages.some((page) => !isNativePage(page) && (page.textFrames?.length ?? 0) > 0);
   if (hasVectorText) doc.registerFontkit(fontkit);
   const fontCache = new Map<string, { font: PDFFont; ascentRatio: number }>();
   const embedFace = async (fontId: string, fontBytes: Uint8Array, subset = true): Promise<{ font: PDFFont; ascentRatio: number }> => {
@@ -474,8 +613,51 @@ export async function buildPaperPdfx(
     return font;
   };
 
-  // --- Pages: each is one flattened DeviceCMYK image spanning the full media (trim + bleed) ---
+  const nativeFontCache = new Map<string, PDFFont>();
+  const nativeSpotDefinitions = new Map<string, { alternate: { c: number; m: number; y: number; k: number }; colorSpaceRef?: PDFRef }>();
+  const nativeEvidence = emptyNativeEvidence();
+
+  // --- Pages: legacy full-page rasters or plan-driven native hybrid pages ---
   for (const page of pages) {
+    const bleedPt = page.bleedPt ?? 0;
+    const mediaWpt = page.trimWidthPt + bleedPt * 2;
+    const mediaHpt = page.trimHeightPt + bleedPt * 2;
+    const pdfPage = doc.addPage([mediaWpt, mediaHpt]);
+    // TrimBox = the finished page inside the bleed; BleedBox = the full media.
+    pdfPage.node.set(PDFName.of('TrimBox'), ctx.obj([bleedPt, bleedPt, bleedPt + page.trimWidthPt, bleedPt + page.trimHeightPt]));
+    pdfPage.node.set(PDFName.of('BleedBox'), ctx.obj([0, 0, mediaWpt, mediaHpt]));
+
+    if (isNativePage(page)) {
+      const flattenedById = new Map((page.flattenedGroups ?? []).map((group) => [group.objectId, group]));
+      const imagesById = new Map((page.rasterizedImages ?? []).map((image) => [image.objectId, image]));
+      const nodes = page.renderPlanPage.background
+        ? [page.renderPlanPage.background, ...page.renderPlanPage.nodes]
+        : page.renderPlanPage.nodes;
+      const evidence = await appendPaperNativeContent(doc, pdfPage, nodes, {
+        pdf: doc,
+        standard: options.standard,
+        mediaHeightPt: mediaHpt,
+        transform: options.transform,
+        totalInkLimitPercent: inkLimitPercent,
+        loadManagedFontBytes: page.loadManagedFontBytes,
+        fontCache: nativeFontCache,
+        spotDefinitions: nativeSpotDefinitions,
+        appendFlattenedGroup: async (group) => {
+          const raster = flattenedById.get(group.objectId);
+          if (!raster) throw new Error(`Flatten group ${group.objectId} has no isolated raster in this PDF/X export.`);
+          drawIsolatedFlattenGroup(doc, pdfPage, raster, mediaWpt, mediaHpt, options.transform, options.standard, inkLimitPercent);
+        },
+        appendImage: async (image, evidence) => {
+          const raster = imagesById.get(image.objectId);
+          if (!raster) throw new Error(`Managed image ${image.objectId} has no isolated CMYK raster in this PDF/X export.`);
+          drawIsolatedFlattenGroup(doc, pdfPage, raster, mediaWpt, mediaHpt, options.transform, options.standard, inkLimitPercent);
+          if (!evidence.processObjectIds.includes(image.objectId)) evidence.processObjectIds.push(image.objectId);
+        },
+      });
+      mergeNativeEvidence(nativeEvidence, evidence);
+      continue;
+    }
+
     const pixelCount = page.widthPx * page.heightPx;
     if (page.rgba.length < pixelCount * 4) {
       throw new Error(`Page raster is smaller than ${page.widthPx}×${page.heightPx} RGBA.`);
@@ -485,12 +667,8 @@ export async function buildPaperPdfx(
     if (cmyk.length < pixelCount * 4) {
       throw new Error('ICC transform returned fewer CMYK samples than expected.');
     }
-    // Enforce the press total-ink ceiling on the flattened raster (makes the preflight promise real).
-    if (inkLimitPercent !== undefined) applyInkLimitToCmykBuffer(cmyk, inkLimitPercent);
-
-    const bleedPt = page.bleedPt ?? 0;
-    const mediaWpt = page.trimWidthPt + bleedPt * 2;
-    const mediaHpt = page.trimHeightPt + bleedPt * 2;
+    // TAC is a blocker: retain authored CMYK bytes exactly rather than applying silent UCR.
+    assertCmykBufferWithinInkLimit(cmyk, inkLimitPercent);
 
     const imageStream = ctx.flateStream(cmyk.subarray(0, pixelCount * 4), {
       Type: 'XObject',
@@ -502,7 +680,6 @@ export async function buildPaperPdfx(
     });
     const imageRef = ctx.register(imageStream);
 
-    const pdfPage = doc.addPage([mediaWpt, mediaHpt]);
     pdfPage.node.setXObject(PDFName.of('Im0'), imageRef);
     pdfPage.pushOperators(
       pushGraphicsState(),
@@ -510,9 +687,6 @@ export async function buildPaperPdfx(
       drawObject('Im0'),
       popGraphicsState(),
     );
-    // TrimBox = the finished page inside the bleed; BleedBox = the full media.
-    pdfPage.node.set(PDFName.of('TrimBox'), ctx.obj([bleedPt, bleedPt, bleedPt + page.trimWidthPt, bleedPt + page.trimHeightPt]));
-    pdfPage.node.set(PDFName.of('BleedBox'), ctx.obj([0, 0, mediaWpt, mediaHpt]));
 
     // Register a spot /Separation colorspace on THIS page's resources (cached per colorant), returning its
     // /SpN resource name. Shared by spot FILLS and spot-coloured TEXT so both draw on the same named plate.
@@ -574,11 +748,8 @@ export async function buildPaperPdfx(
     for (const frame of page.textFrames ?? []) {
       if (!frame.text.trim()) continue;
       const { font, ascentRatio } = await embedFace(frame.fontId, frame.fontBytes, frame.subset !== false);
-      // Enforce the same total-ink ceiling on the vector text fill (frame.cmyk is 0..1 per channel).
-      const ink = inkLimitPercent !== undefined
-        ? limitTotalAreaCoverage(frame.cmyk.c, frame.cmyk.m, frame.cmyk.y, frame.cmyk.k, inkLimitPercent / 100)
-        : frame.cmyk;
-      const fill = cmykColor(ink.c, ink.m, ink.y, ink.k);
+      assertCmykPaintWithinInkLimit(frame.cmyk, inkLimitPercent, `legacy-text:${frame.fontId}`);
+      const fill = cmykColor(frame.cmyk.c, frame.cmyk.m, frame.cmyk.y, frame.cmyk.k);
       // First-baseline model matching a CSS line box: half the extra leading, then the font's ascent.
       const ascentPt = frame.ascentPt ?? (frame.leadingPt - frame.fontSizePt) / 2 + ascentRatio * frame.fontSizePt;
       const layout = layoutParagraphText({
@@ -642,9 +813,8 @@ export async function buildPaperPdfx(
         }
       }
       if (glyphOps.length === 0) continue;
-      const ink = inkLimitPercent !== undefined
-        ? limitTotalAreaCoverage(frame.cmyk.c, frame.cmyk.m, frame.cmyk.y, frame.cmyk.k, inkLimitPercent / 100)
-        : frame.cmyk;
+      assertCmykPaintWithinInkLimit(frame.cmyk, inkLimitPercent, `legacy-outline:${frame.fontId}`);
+      const ink = frame.cmyk;
       const hasStroke = !!frame.strokeCmyk && (frame.strokeWidthPt ?? 0) > 0;
       const draw: PDFOperator[] = [pushGraphicsState()];
       // Rotate the whole block about the frame centre to match the editor's CSS transform (see helper).
@@ -658,9 +828,8 @@ export async function buildPaperPdfx(
         draw.push(contentOp('k', [PDFNumber.of(ink.c), PDFNumber.of(ink.m), PDFNumber.of(ink.y), PDFNumber.of(ink.k)]));
       }
       if (hasStroke) {
-        const sInk = inkLimitPercent !== undefined
-          ? limitTotalAreaCoverage(frame.strokeCmyk!.c, frame.strokeCmyk!.m, frame.strokeCmyk!.y, frame.strokeCmyk!.k, inkLimitPercent / 100)
-          : frame.strokeCmyk!;
+        assertCmykPaintWithinInkLimit(frame.strokeCmyk!, inkLimitPercent, `legacy-outline-stroke:${frame.fontId}`);
+        const sInk = frame.strokeCmyk!;
         draw.push(contentOp('K', [PDFNumber.of(sInk.c), PDFNumber.of(sInk.m), PDFNumber.of(sInk.y), PDFNumber.of(sInk.k)]));
         draw.push(contentOp('w', [PDFNumber.of(frame.strokeWidthPt!)]));
         draw.push(contentOp('j', [PDFNumber.of(1)])); // round joins read cleaner on letterforms
@@ -727,6 +896,7 @@ export async function buildPaperPdfx(
     pageCount: pages.length,
     profileName: options.transform.profileName,
     approximateColor: options.transform.kind !== 'icc',
+    nativeEvidence,
   };
 }
 

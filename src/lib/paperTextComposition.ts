@@ -40,6 +40,8 @@ export interface PaperPrintPaintSource {
 }
 
 export interface PaperPositionedGlyphRun {
+  /** Exact source text for this shaped run. The PDF writer uses it to embed selectable managed type. */
+  text: string;
   face: PaperManagedFontFace;
   fontSizePt: number;
   /** The font's native glyph-path scale, never assumed to be 1000. */
@@ -563,6 +565,7 @@ function positionHorizontalLine(
       }
     }
     runs.push({
+      text: group.units.map((unit) => unit.text).join(''),
       face: group.style.face,
       fontSizePt: group.style.fontSizePt,
       unitsPerEm: group.style.shaper.unitsPerEm ?? DEFAULT_UNITS_PER_EM,
@@ -624,6 +627,7 @@ function positionVerticalLine(
       caretY += advance;
     }
     runs.push({
+      text: group.units.map((unit) => unit.text).join(''),
       face: group.style.face,
       fontSizePt: group.style.fontSizePt,
       unitsPerEm: group.style.shaper.unitsPerEm ?? DEFAULT_UNITS_PER_EM,
@@ -686,6 +690,7 @@ function appendAnnotations(
       }
     }
     line.runs.push({
+      text: annotation.reading,
       face: annotation.style.face,
       fontSizePt,
       unitsPerEm: annotation.style.shaper.unitsPerEm ?? DEFAULT_UNITS_PER_EM,

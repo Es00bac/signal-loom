@@ -1,62 +1,63 @@
-// Total-Area-Coverage (TAC / total-ink) limiting for CMYK export. A press has a maximum total ink it can
-// lay down (e.g. ~300% coated, ~240% newsprint); a file that exceeds it smears, offsets, or is rejected.
-// The document carries a `totalInkLimitPercent`, and the preflight promises over-limit colours "will be
-// reduced on export" — this module makes that promise real by clamping the actual exported CMYK.
-//
-// Reduction strategy = UCR (under-colour removal): KEEP the black (K) channel and pull C, M, Y down
-// proportionally until the total meets the ceiling. Preserving K holds the neutral density / shadow
-// detail and keeps text/edges crisp, while scaling CMY together preserves hue. Because the limit is
-// always ≥ 100% and K ≤ 100%, there is always room to keep K and reduce CMY. Reducing ink is the safe
-// direction for a file that is over the press ceiling.
+// Total-area coverage (TAC) measurement for production CMYK. Export must preserve an authored process
+// recipe exactly; it reports a press-limit violation instead of secretly applying under-colour removal.
 
-/**
- * Reduce a CMYK colour so C+M+Y+K ≤ `maxTotal`, unit-agnostic: the channels and `maxTotal` must share
- * units (all 0..1, or all 0..255, or all 0..100). Returns the input unchanged when already within limit.
- */
-export function limitTotalAreaCoverage(
-  c: number,
-  m: number,
-  y: number,
-  k: number,
-  maxTotal: number,
-): { c: number; m: number; y: number; k: number } {
-  const total = c + m + y + k;
-  if (!(total > maxTotal)) return { c, m, y, k }; // already within limit (or NaN/negative guard)
-
-  // Keep K; give CMY whatever headroom remains under the ceiling.
-  const allowedCmy = maxTotal - k;
-  if (allowedCmy <= 0) {
-    // K alone meets/exceeds the ceiling (only possible for a sub-100% limit): drop CMY, clamp K.
-    return { c: 0, m: 0, y: 0, k: Math.min(k, maxTotal) };
-  }
-  const cmy = c + m + y;
-  if (cmy <= 0) return { c, m, y, k };
-  const scale = allowedCmy / cmy;
-  return { c: c * scale, m: m * scale, y: y * scale, k };
+export interface CmykInkChannels {
+  c: number;
+  m: number;
+  y: number;
+  k: number;
 }
 
-/**
- * Clamp an interleaved 8-bit DeviceCMYK buffer (4 bytes/pixel, 0–255) in place to a total-ink ceiling
- * given as a percent (100–400; e.g. 280 = 280%). A limit ≥ 400 is a no-op (400% is the 4-channel max).
- * Returns the same buffer for convenience.
- */
-export function applyInkLimitToCmykBuffer<T extends Uint8Array | Uint8ClampedArray>(
-  buffer: T,
-  maxTotalPercent: number,
-): T {
-  if (!(maxTotalPercent < 400)) return buffer; // no ceiling below the 400% theoretical max → nothing to do
-  const maxTotal = (maxTotalPercent / 100) * 255; // percent → 0..1020 sample-sum units
-  for (let i = 0; i + 3 < buffer.length; i += 4) {
-    const c = buffer[i];
-    const m = buffer[i + 1];
-    const y = buffer[i + 2];
-    const k = buffer[i + 3];
-    if (c + m + y + k <= maxTotal) continue;
-    const limited = limitTotalAreaCoverage(c, m, y, k, maxTotal);
-    buffer[i] = Math.round(limited.c);
-    buffer[i + 1] = Math.round(limited.m);
-    buffer[i + 2] = Math.round(limited.y);
-    buffer[i + 3] = Math.round(limited.k);
+export interface CmykInkLimitViolation {
+  /** Zero-based pixel index in the interleaved sample buffer. */
+  pixelIndex: number;
+  /** Sum of the four DeviceCMYK channels, expressed as a percentage. */
+  totalInkPercent: number;
+}
+
+/** Measure one authored CMYK recipe in 0..1 channel units. */
+export function measureCmykTotalAreaCoverage(channels: CmykInkChannels): number {
+  return channels.c + channels.m + channels.y + channels.k;
+}
+
+/** Find the first DeviceCMYK sample that exceeds a press TAC ceiling without modifying the buffer. */
+export function findCmykInkLimitViolation(
+  buffer: Uint8Array | Uint8ClampedArray,
+  maxTotalInkPercent: number | undefined,
+): CmykInkLimitViolation | undefined {
+  if (maxTotalInkPercent === undefined || !Number.isFinite(maxTotalInkPercent) || maxTotalInkPercent >= 400) return undefined;
+  const ceiling = Math.max(0, maxTotalInkPercent);
+  for (let offset = 0; offset + 3 < buffer.length; offset += 4) {
+    const totalInkPercent = (buffer[offset] + buffer[offset + 1] + buffer[offset + 2] + buffer[offset + 3]) / 255 * 100;
+    if (totalInkPercent > ceiling + 0.000001) {
+      return { pixelIndex: offset / 4, totalInkPercent: Number(totalInkPercent.toFixed(6)) };
+    }
   }
-  return buffer;
+  return undefined;
+}
+
+/** Throw an actionable production error while retaining the exact authored DeviceCMYK samples. */
+export function assertCmykBufferWithinInkLimit(
+  buffer: Uint8Array | Uint8ClampedArray,
+  maxTotalInkPercent: number | undefined,
+): void {
+  const violation = findCmykInkLimitViolation(buffer, maxTotalInkPercent);
+  if (!violation) return;
+  throw new Error(
+    `CMYK total ink ${violation.totalInkPercent.toFixed(3)}% at pixel ${violation.pixelIndex} exceeds the ${maxTotalInkPercent}% production limit.`,
+  );
+}
+
+/** Assert a native CMYK paint is within its configured total-area-coverage ceiling. */
+export function assertCmykPaintWithinInkLimit(
+  channels: CmykInkChannels,
+  maxTotalInkPercent: number | undefined,
+  objectId: string,
+): void {
+  if (maxTotalInkPercent === undefined || !Number.isFinite(maxTotalInkPercent) || maxTotalInkPercent >= 400) return;
+  const totalInkPercent = measureCmykTotalAreaCoverage(channels) * 100;
+  if (totalInkPercent <= maxTotalInkPercent + 0.000001) return;
+  throw new Error(
+    `CMYK total ink ${totalInkPercent.toFixed(3)}% on ${objectId} exceeds the ${maxTotalInkPercent}% production limit.`,
+  );
 }

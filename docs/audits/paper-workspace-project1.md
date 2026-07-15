@@ -58,6 +58,7 @@ Flow and Image paths are concurrently owned and are outside Project 1. None were
 - Evidence: free-form `PaperTypography.fontFamily` in `src/types/paper.ts` and `browserCanCheckFont`/`document.fonts.check` in `src/lib/paperPreflight.ts`.
 - Reproduce: `rg -n "fontFamily: string|browserCanCheckFont|document\\?\\.fonts" src/types/paper.ts src/lib/paperPreflight.ts`.
 - Expected fix: Tasks 7-10 require vetted, licensed managed faces; exact weight/style selection; deterministic HarfBuzz shaping and composition; and production output from the same positioned glyph runs used for preview.
+- Current foundation: Task 13 embeds only the resolved content-addressed managed face in the native PDF/X writer and emits the positioned HarfBuzz glyph IDs directly. Browser/system font selection is not consulted by the production PDF/X path. Task 14 still replaces the remaining legacy preflight authority and makes the save transaction fail closed.
 
 ### `icc-profile-substitution`
 
@@ -68,11 +69,10 @@ Flow and Image paths are concurrently owned and are outside Project 1. None were
 
 ### `process-cmyk-roundtrip`
 
-- Severity/status/commercial: critical / reproduced / yes.
-- Evidence: the RGBA `rasterizePage` dependency and page-wide raster backdrop in `src/lib/paperPdfxPipeline.ts`, with browser rasterization in `src/lib/paperPdfxBrowser.ts`.
-- Reproduce: `rg -n "rasterizePage|PaperPdfxPageRaster|createTransform|rgba" src/lib/paperPdfxPipeline.ts src/lib/paperPdfxBrowser.ts`.
-- Current foundation: Task 12 now compiles typed print paints/render nodes and preserves authored process channels without an RGB round trip, but the legacy PDF/X pipeline has not consumed that plan yet.
-- Expected fix: Task 13 emits authored process colors as native PDF `k`/`K` operands. Only explicit flatten groups may pass through the exact ICC raster transform, and total-area-coverage overflow must block rather than silently rewrite authored CMYK.
+- Severity/status/commercial: critical / fixed / yes.
+- Evidence: `appendPaperNativeContent` in `src/lib/paperPdfxNativeContent.ts` emits authored process paint as `k`/`K`, and `exportPaperDocumentToPdfx` in `src/lib/paperPdfxPipeline.ts` consumes the typed render plan rather than a page-wide raster. `paperInkLimit.ts` now measures and blocks TAC overflow without changing authored CMYK.
+- Verify: `npx vitest run src/lib/paperPdfxNativeContent.test.ts src/lib/paperPdfxExport.test.ts src/lib/paperPdfxPipeline.test.ts src/lib/paperPdfxPipelineVectorText.test.ts src/lib/paperInkLimit.test.ts`, then inspect the native fixture stream for `0.12 0.34 0.56 0.78 k`.
+- Result: only declared flatten groups and image nodes pass through the exact ICC raster transform. A local Ghostscript `tiffsep` check on the managed spot-text fixture emitted no Cyan/Magenta/Yellow/Black ink for the text and a populated named plate; it is evidence of separations, not Acrobat/ISO certification.
 
 ### `spot-rich-text-overclaim`
 
@@ -80,13 +80,14 @@ Flow and Image paths are concurrently owned and are outside Project 1. None were
 - Evidence: `collectSpotTextNames` advertises text spots in `src/lib/paperPreflight.ts`, while non-uniform `richText` is rejected by `frameTextIsOutlineable` in `src/lib/paperPdfxVectorTextFrames.ts` and remains in the process raster.
 - Reproduce: `rg -n "collectSpotTextNames|paperRichTextIsUniform|frameTextIsOutlineable|richText" src/lib/paperPreflight.ts src/lib/paperPdfxVectorTextFrames.ts src/lib/paperPdfxPipeline.ts`.
 - Expected fix: Tasks 12-14 make preflight consume the same render plan as export, emit supported rich text on its named separation, and report a blocker instead of claiming a plate for content that cannot be emitted.
+- Current foundation: Task 13 emits supported managed rich-text runs as native `/Separation` content and rejects a repeated spot name with a conflicting alternate CMYK recipe. The legacy preflight claim remains open until Task 14 consumes the production report.
 
 ### `overprint-not-emitted`
 
-- Severity/status/commercial: high / reproduced / yes.
-- Evidence: `PaperPrintProductionSpec.overprintPreview` in `src/types/paper.ts` is normalized and serialized as preview metadata, but the PDF/X writer has no corresponding overprint graphics state.
-- Reproduce: run `rg -n "overprintPreview" src/types/paper.ts src/lib/paperPrintProduction.ts src/lib/paperDocument.ts`, then confirm `rg -n "ExtGState|OPM|/OP|/op" src/lib/paperPdfx*.ts` finds no production operator path.
-- Expected fix: Tasks 12-13 carry overprint intent on typed render nodes and emit `/ExtGState` entries with `OP`, `op`, and `OPM`, backed by low-level PDF operator tests.
+- Severity/status/commercial: high / fixed / yes.
+- Evidence: typed render nodes carry `overprint`, and `graphicsState` in `src/lib/paperPdfxNativeContent.ts` emits `/ExtGState` entries with `OP`, `op`, and `OPM` before native paint/text content.
+- Verify: `npx vitest run src/lib/paperPdfxNativeContent.test.ts` inspects `/GSOP1 gs`, `/OP true`, and `/op true` in the emitted PDF stream.
+- Result: overprint is no longer only preview metadata. Press-specific separations and trapping remain an external print-provider/Acrobat Preflight validation concern.
 
 ### `pdfx-download-after-failure`
 

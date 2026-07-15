@@ -1,4 +1,4 @@
-// Pure builder: find the frames on a page whose fill is a real SPOT swatch and turn each into a
+// Legacy preflight adapter: find the frames on a page whose fill is a real SPOT swatch and turn each into a
 // PdfxSpotFill spec for the exporter's /Separation plate, plus the ids of the frames whose fill must be
 // knocked out of the flattened raster (so the spot ink lives ONLY on its named plate, not doubled as
 // process). Conservative by construction: an un-stroked rectangle (optionally rotated about its centre
@@ -23,6 +23,35 @@ export interface SpotFillPlan {
 }
 
 const num = (v: number | undefined): number => (typeof v === 'number' ? v : 0);
+
+export interface PaperSpotAlternateConflict {
+  name: string;
+  firstSwatchId: string;
+  conflictingSwatchId: string;
+}
+
+/**
+ * A PDF/X Separation name identifies exactly one alternate color recipe. Detect conflicts before output so
+ * the native writer never chooses one arbitrary plate definition for two differently-authored swatches.
+ */
+export function findPaperSpotAlternateConflicts(swatches: readonly PaperSwatch[]): PaperSpotAlternateConflict[] {
+  const definitions = new Map<string, { swatchId: string; c: number; m: number; y: number; k: number }>();
+  const conflicts: PaperSpotAlternateConflict[] = [];
+  for (const swatch of swatches) {
+    if (swatch.type !== 'spot' || !swatch.cmyk) continue;
+    const name = swatch.spotName?.trim() || swatch.name;
+    const alternate = { swatchId: swatch.id, c: swatch.cmyk.c, m: swatch.cmyk.m, y: swatch.cmyk.y, k: swatch.cmyk.k };
+    const existing = definitions.get(name);
+    if (!existing) {
+      definitions.set(name, alternate);
+      continue;
+    }
+    if (existing.c !== alternate.c || existing.m !== alternate.m || existing.y !== alternate.y || existing.k !== alternate.k) {
+      conflicts.push({ name, firstSwatchId: existing.swatchId, conflictingSwatchId: swatch.id });
+    }
+  }
+  return conflicts;
+}
 
 /** True when a frame is a rectangle we can faithfully replace with a single /Separation rect (optionally
  * rotated about its centre). A partial fill opacity is allowed — it becomes the spot TINT (a screen of the

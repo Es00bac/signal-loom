@@ -5,7 +5,7 @@ import type { PaperDocument, PaperFrame, PaperImportedFont } from '../types/pape
 import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import type { PaperSwatch } from './paperSwatches';
 import type { IccCmykTransform } from './paperColorManagement';
-import { buildOutlineTextFrameSpecs, buildVectorTextFrameSpecs, frameTextIsOutlineable, pageTextIsVectorizable } from './paperPdfxVectorTextFrames';
+import { buildOutlineTextFrameSpecs, buildVectorTextFrameSpecs, frameTextHasManagedFaces, frameTextIsOutlineable, pageTextIsVectorizable } from './paperPdfxVectorTextFrames';
 
 function fontRef(byteLength = 4): BinaryAssetRef {
   const sha256 = '1'.repeat(64);
@@ -180,6 +180,21 @@ describe('imported fonts in the vector-text builder', () => {
     };
   };
   const withImports = (doc: PaperDocument, fonts: PaperImportedFont[]): PaperDocument => ({ ...doc, importedFonts: fonts });
+
+  it('requires exact managed faces for production-facing vector-text claims', () => {
+    const bare = docWithFrames([{ text: 'Body', typography: typo('Georgia, serif') }]);
+    expect(frameTextHasManagedFaces(bare.pages[0].frames[0], bare.importedFonts)).toBe(false);
+
+    const managed = withImports(docWithFrames([{ text: 'Body', typography: typo('Brandon Grotesque') }]), [importedFace({})]);
+    expect(frameTextHasManagedFaces(managed.pages[0].frames[0], managed.importedFonts)).toBe(true);
+
+    const mixed = withImports(docWithFrames([{
+      text: 'Body',
+      richText: [{ runs: [{ text: 'Body ' }, { text: 'fallback', fontFamily: 'Unknown Browser Font' }] }],
+      typography: typo('Brandon Grotesque'),
+    }]), [importedFace({})]);
+    expect(frameTextHasManagedFaces(mixed.pages[0].frames[0], mixed.importedFonts)).toBe(false);
+  });
 
   it('carries the imported font asset reference (no inline bytes or URL) when a frame matches it', () => {
     const doc = withImports(

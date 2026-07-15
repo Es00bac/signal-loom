@@ -63,12 +63,12 @@ describe('paperPdfxPipeline', () => {
     expect(report.pass, JSON.stringify(report.checks.filter((c) => !c.pass))).toBe(true);
   });
 
-  it('emits a real /Separation spot plate end-to-end and knocks the fill out of the raster', async () => {
+  it('emits a real /Separation spot plate end-to-end without a page-wide raster', async () => {
     let document = createDefaultPaperDocument({ title: 'Spot pipeline', preset: 'us-letter' });
     const spot: PaperSwatch = { id: 'sw-spot', name: 'Brand', type: 'spot', model: 'cmyk', spotName: 'PANTONE 185 C', rgb: { r: 227, g: 6, b: 19 }, cmyk: { c: 0, m: 90, y: 85, k: 0 } };
     document = { ...document, swatches: [spot], printProduction: { ...document.printProduction, spotColorPolicy: 'preserve-named' } };
     const pageId = document.pages[0].id;
-    const added = addFrameToPaperPage(document, pageId, { kind: 'caption', xMm: 20, yMm: 20, widthMm: 60, heightMm: 40, strokeWidthMm: 0, strokeColor: 'transparent', cornerRadiusMm: 0 });
+    const added = addFrameToPaperPage(document, pageId, { kind: 'panel', xMm: 20, yMm: 20, widthMm: 60, heightMm: 40, strokeWidthMm: 0, strokeColor: 'transparent', cornerRadiusMm: 0 });
     document = updatePaperFrame(added.document, pageId, added.frameId, { fillColor: '#e30613', fillSwatchId: 'sw-spot' });
 
     const seen: (RasterizePageOptions | undefined)[] = [];
@@ -76,9 +76,9 @@ describe('paperPdfxPipeline', () => {
 
     const result = await exportPaperDocumentToPdfx(document, { standard: 'pdf-x-4', outputProfile: exactFogra39Profile, outputDpi: 150 }, spyDeps);
 
-    // The spot-fill frame's fill was knocked out of the raster …
-    expect(seen[0]?.excludeFrameFillIds).toEqual([added.frameId]);
-    // … and the exported PDF carries a real /Separation plate for the colorant.
+    // Native spot paint does not need the legacy page raster at all.
+    expect(seen).toEqual([]);
+    // The exported PDF carries a real /Separation plate for the colorant.
     const raw = Buffer.from(result.bytes).toString('latin1');
     expect(raw).toContain('/Separation');
     expect(raw).toContain('PANTONE#20185#20C');
@@ -86,7 +86,7 @@ describe('paperPdfxPipeline', () => {
     expect(report.pass, JSON.stringify(report.checks.filter((c) => !c.pass))).toBe(true);
   });
 
-  it('outlines stroked text to vector curves, knocks it out of the raster, and stays valid PDF/X-4', async () => {
+  it('rasterizes only a stroked-text flatten group and stays valid PDF/X-4', async () => {
     let document = createDefaultPaperDocument({ title: 'Outline pipeline', preset: 'us-letter' });
     const pageId = document.pages[0].id;
     // A stroked caption is otherwise vector-safe → outlined (filled + stroked curves), not rasterized.
@@ -101,13 +101,12 @@ describe('paperPdfxPipeline', () => {
     const spyDeps: PaperPdfxPipelineDeps = {
       ...deps(),
       rasterizePage: async (_id, _dpi, opts) => { seen.push(opts); return stubRaster(); },
-      // Vector/outline text is opt-in and needs a font loader for bundled Liberation faces.
-      loadFontBytes: async (url) => new Uint8Array(readFileSync(`public${url}`)),
     };
-    const result = await exportPaperDocumentToPdfx(document, { standard: 'pdf-x-4', outputProfile: exactFogra39Profile, outputDpi: 150, vectorText: true }, spyDeps);
+    const result = await exportPaperDocumentToPdfx(document, { standard: 'pdf-x-4', outputProfile: exactFogra39Profile, outputDpi: 150 }, spyDeps);
 
-    // The stroked-text frame's text was knocked out of the raster backdrop (drawn as outlines instead).
-    expect(seen[0]?.excludeTextFrameIds).toContain(added.frameId);
+    // The native plan identifies only the decorated frame as a raster boundary.
+    expect(seen[0]?.renderFrameIds).toEqual([added.frameId]);
+    expect(seen[0]?.includePageBackground).toBe(false);
     // The exported file is still a conformant PDF/X-4.
     const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-4' });
     expect(report.pass, JSON.stringify(report.checks.filter((c) => !c.pass))).toBe(true);

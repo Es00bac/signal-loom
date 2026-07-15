@@ -1,8 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { PDFDocument, PDFName, PDFRawStream } from 'pdf-lib';
-import { buildPaperPdfx, type PdfxRasterPage, type PdfxStandard } from './paperPdfxExport';
+import { PDFArray, PDFDocument, PDFName, PDFRawStream } from 'pdf-lib';
+import { buildPaperPdfx, type PdfxNativePage, type PdfxRasterPage, type PdfxStandard } from './paperPdfxExport';
 import { validatePaperPdfx } from './paperPdfxValidate';
 import { createRgbToCmykTransform } from './paperIccEngine';
 import { APPROXIMATE_CMYK_TRANSFORM, type IccCmykTransform } from './paperColorManagement';
@@ -19,6 +19,16 @@ async function readDeviceCmykImage(bytes: Uint8Array): Promise<Uint8Array | unde
     }
   }
   return undefined;
+}
+
+async function decodedPdfPageContent(bytes: Uint8Array): Promise<string> {
+  const loaded = await PDFDocument.load(bytes);
+  const contents = loaded.getPages()[0]?.node.Contents();
+  if (!contents || !(contents instanceof PDFArray)) return '';
+  return contents.asArray().map((ref) => {
+    const stream = loaded.context.lookup(ref) as unknown as PDFRawStream;
+    return Buffer.from(inflateSync(Buffer.from(stream.contents))).toString('latin1');
+  }).join('\n');
 }
 
 /** A transform that paints every pixel at 400% TAC — so ink-limit clamping is observable. */
@@ -84,26 +94,17 @@ describe('buildPaperPdfx', () => {
     if (outDir) writeFileSync(`${outDir}/sloom-${standard}.pdf`, result.bytes);
   });
 
-  it('enforces the total-ink limit on the exported CMYK raster (makes the preflight promise real)', async () => {
+  it('blocks an over-limit CMYK raster instead of silently applying UCR', async () => {
     const base = { standard: 'pdf-x-4' as const, profile, transform: MAX_INK_TRANSFORM, docId: '0123456789abcdef0123456789abcdef' };
-    // Without a limit the 400% paint survives to the file …
+    // Without a limit the 400% paint survives to the file.
     const unlimited = await buildPaperPdfx([makePage(1, 8, 8)], base);
     const rawUnlimited = await readDeviceCmykImage(unlimited.bytes);
     expect(rawUnlimited).toBeDefined();
-    expect(rawUnlimited![0] + rawUnlimited![1] + rawUnlimited![2] + rawUnlimited![3]).toBe(1020); // 400%
+    expect(rawUnlimited![0] + rawUnlimited![1] + rawUnlimited![2] + rawUnlimited![3]).toBe(1020);
 
-    // … but with a 280% ceiling, EVERY exported pixel is reduced to meet it, K preserved.
-    const limited = await buildPaperPdfx([makePage(1, 8, 8)], { ...base, totalInkLimitPercent: 280 });
-    const raw = await readDeviceCmykImage(limited.bytes);
-    expect(raw).toBeDefined();
-    const maxSum = Math.round((280 / 100) * 255) + 1; // 715, w/ rounding tolerance
-    let pixels = 0;
-    for (let i = 0; i + 3 < raw!.length; i += 4) {
-      expect(raw![i] + raw![i + 1] + raw![i + 2] + raw![i + 3]).toBeLessThanOrEqual(maxSum);
-      expect(raw![i + 3]).toBe(255); // K channel preserved (UCR)
-      pixels += 1;
-    }
-    expect(pixels).toBe(64);
+    // A press ceiling is a blocker; export never mutates the authored CMYK recipe.
+    await expect(buildPaperPdfx([makePage(1, 8, 8)], { ...base, totalInkLimitPercent: 280 }))
+      .rejects.toThrow(/400.*280/i);
   });
 
   it('marks output approximate when using the non-ICC transform (still structurally valid)', async () => {
@@ -139,5 +140,48 @@ describe('buildPaperPdfx', () => {
     // Adding the spot colorspace + fill must not break PDF/X conformance.
     const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-4' });
     expect(report.pass, report.checks.filter((c) => !c.pass).map((c) => c.label).join('; ')).toBe(true);
+  });
+
+  it('writes a typed native render-plan page without creating a page-wide CMYK raster', async () => {
+    const transform = await fograTransform();
+    const nativePage: PdfxNativePage = {
+      trimWidthPt: 144,
+      trimHeightPt: 144,
+      bleedPt: 0,
+      loadManagedFontBytes: async () => {
+        throw new Error('This fixture has no text.');
+      },
+      renderPlanPage: {
+        pageId: 'native-page',
+        pageNumber: 1,
+        trimWidthPt: 144,
+        trimHeightPt: 144,
+        bleedPt: 0,
+        nodes: [{
+          kind: 'path',
+          objectId: 'native-cmyk',
+          path: 'M 0 0 L 30 0 L 30 30 L 0 30 Z',
+          fill: { kind: 'process-cmyk', c: 0.12, m: 0.34, y: 0.56, k: 0.78, tint: 1 },
+          opacity: 1,
+          fillOpacity: 1,
+          strokeOpacity: 0,
+          strokeWidthPt: 0,
+          strokeStyle: 'solid',
+          overprint: true,
+          boundsPt: { x: 0, y: 0, width: 30, height: 30 },
+        }],
+      },
+    };
+    const result = await buildPaperPdfx([nativePage], {
+      standard: 'pdf-x-4', profile, transform, docId: '0123456789abcdef0123456789abcdef',
+    });
+    const streams = await decodedPdfPageContent(result.bytes);
+
+    expect(streams).toMatch(/0\.12 0\.34 0\.56 0\.78 k/);
+    expect(streams).toMatch(/\/GSOP1 gs/);
+    expect(result.nativeEvidence.processObjectIds).toEqual(['native-cmyk']);
+    expect(result.nativeEvidence.overprintObjectIds).toEqual(['native-cmyk']);
+    expect(await readDeviceCmykImage(result.bytes)).toBeUndefined();
+    expect((await validatePaperPdfx(result.bytes, { standard: 'pdf-x-4' })).pass).toBe(true);
   });
 });

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { addFrameToPaperPage, createDefaultPaperDocument, updatePaperDocumentSetup, updatePaperFrame } from './paperDocument';
 import type { PaperDocument, PaperFrame } from '../types/paper';
 import type { PaperSwatch } from './paperSwatches';
-import { collectSpotFills, collectSpotStrokes } from './paperPdfxSpotFills';
+import { collectSpotFills, collectSpotStrokes, findPaperSpotAlternateConflicts } from './paperPdfxSpotFills';
 
 const PT_PER_MM = 72 / 25.4;
 const spotSwatch: PaperSwatch = {
@@ -24,6 +24,13 @@ function docWithSpotFrame(patch: Partial<PaperFrame> = {}, swatchId = 'sw-spot')
 }
 
 describe('collectSpotFills', () => {
+  it('rejects duplicate spot names with different alternate CMYK recipes before native PDF/X output', () => {
+    const conflict: PaperSwatch = { ...spotSwatch, id: 'sw-spot-conflict', cmyk: { c: 0, m: 80, y: 85, k: 0 } };
+    expect(findPaperSpotAlternateConflicts([spotSwatch, conflict])).toEqual([{
+      name: 'PANTONE 185 C', firstSwatchId: 'sw-spot', conflictingSwatchId: 'sw-spot-conflict',
+    }]);
+  });
+
   it('turns a plain solid spot-swatch fill into a /Separation spec + knockout', () => {
     const { doc, frameId } = docWithSpotFrame();
     const plan = collectSpotFills(doc.pages[0], doc);

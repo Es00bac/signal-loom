@@ -57,6 +57,7 @@ function composition(): PaperComposedTextFrame {
       originYPt: 10,
       widthPt: 6,
       runs: [{
+        text: 'A',
         face: managedFace,
         fontSizePt: 12,
         unitsPerEm: 1000,

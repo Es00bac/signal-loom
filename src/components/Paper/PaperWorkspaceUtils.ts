@@ -15,7 +15,7 @@ import { buildProvenanceLabel } from '../../lib/exportProvenance';
 import { downloadBlob as downloadSharedBlob, downloadTextFile } from '../../lib/downloadAsset';
 import { exportPaperDocumentToPdfxInBrowser } from '../../lib/paperPdfxBrowser';
 import { validatePaperPdfx } from '../../lib/paperPdfxValidate';
-import { frameTextIsVectorSafe } from '../../lib/paperPdfxVectorTextFrames';
+import { frameTextHasManagedFaces, frameTextIsVectorSafe } from '../../lib/paperPdfxVectorTextFrames';
 import { normalizePaperPrintProductionSpec } from '../../lib/paperPrintProduction';
 import { usePaperStore } from '../../store/paperStore';
 import {
@@ -877,6 +877,7 @@ function documentHasVectorizableText(document: PaperDocument): boolean {
     page.frames.some((frame) =>
       (frame.kind === 'text' || frame.kind === 'caption')
       && (frame.text ?? '').trim().length > 0
+      && frameTextHasManagedFaces(frame, document.importedFonts)
       && frameTextIsVectorSafe(frame, document.importedFonts)),
   );
 }
@@ -900,7 +901,6 @@ export async function exportPaperPdfxAndSave(
     const result = await exportPaperDocumentToPdfxInBrowser(document, {
       standard,
       title: document.title,
-      vectorText: true,
     });
     const report = await validatePaperPdfx(result.bytes, { standard });
     const pdfBlob = new Blob([new Uint8Array(result.bytes)], { type: 'application/pdf' });
@@ -940,7 +940,6 @@ export async function exportPaperKdpPdfAndSave(
       standard: 'pdf-x-1a',
       outputDpi: dpi,
       title: document.title,
-      vectorText: true,
     });
     const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-1a' });
     const pdfBlob = new Blob([new Uint8Array(result.bytes)], { type: 'application/pdf' });

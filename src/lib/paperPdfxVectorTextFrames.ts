@@ -1,4 +1,5 @@
-// Pure builder: turn a Paper page's text frames into vector-text specs for the PDF/X exporter. Computes
+// Legacy compatibility builder for preflight/proof views. The production PDF/X pipeline now consumes the
+// managed `PaperRenderPlan` directly; this module must never be used to authorize browser-font fallback.
 // geometry (the text sub-box, in pt, with the page bleed offset, from the media top-left) and converts
 // each frame's text colour to CMYK through the SAME output-profile transform the raster uses. Font bytes
 // are NOT loaded here (kept pure) — the spec carries a bundled `fontUrl` or managed `fontAssetRef` for the
@@ -49,6 +50,18 @@ export type PdfxVectorTextFrameSpec = Omit<PdfxVectorTextFrame, 'fontBytes'> & {
 /** True when the frame's family+style matches an embeddable imported font (so we embed the real glyphs). */
 function frameHasImportedFace(frame: PaperFrame, importedFonts: readonly PaperImportedFont[] | undefined): boolean {
   return resolveTextFace(frame.typography, importedFonts).embeddedReal;
+}
+
+/** True only when every authored rich-text run resolves to an exact authorized managed face. */
+export function frameTextHasManagedFaces(frame: PaperFrame, importedFonts?: readonly PaperImportedFont[]): boolean {
+  if (!isVectorTextKind(frame.kind)) return true;
+  const runs = frame.richText?.flatMap((paragraph) => paragraph.runs) ?? [];
+  if (runs.length === 0) return frameHasImportedFace(frame, importedFonts);
+  return runs.every((run) => resolveTextFace({
+    fontFamily: run.fontFamily ?? frame.typography.fontFamily,
+    fontWeight: run.fontWeight ?? frame.typography.fontWeight,
+    fontStyle: run.fontStyle ?? frame.typography.fontStyle,
+  }, importedFonts).embeddedReal);
 }
 
 function cssToRgb(css: string): PaperRgb | undefined {
