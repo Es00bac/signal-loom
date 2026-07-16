@@ -554,7 +554,7 @@ describe('buildSequenceCommand', () => {
       timelineDurationSeconds: clipDurationSeconds,
       frameRate: 30,
       nativeBackend: null,
-    } as const;
+    };
 
     const browserCommand = buildSequenceCommand({
       ...common,
