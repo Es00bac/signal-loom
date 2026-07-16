@@ -1,7 +1,7 @@
 // BytePlus / ModelArk (ByteDance) image generation — FIRST-PARTY Seedream provider.
 //
 // Built to the public ModelArk image-generation API shape (POST {base}/images/generations, Bearer auth,
-// JSON { model, prompt, size, response_format } -> { data: [{ url } | { b64_json }] }).
+// JSON { model, prompt, size, response_format, watermark: false } -> { data: [{ url } | { b64_json }] }).
 import { useSettingsStore } from '../../store/settingsStore';
 import type { GenerativeFillRequest, GenerativeFillResult } from '../imageEditorAi';
 
@@ -35,6 +35,8 @@ export async function bytePlusGenerateImage(request: BytePlusImageRequest): Prom
     model: request.modelId,
     prompt: request.prompt,
     response_format: 'url',
+    // ModelArk can add an "AI generated" image watermark by default; Sloom exports clean generated assets.
+    watermark: false,
   };
   if (request.size) body.size = request.size;
   if (typeof request.seed === 'number') body.seed = request.seed;

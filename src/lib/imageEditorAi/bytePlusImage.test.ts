@@ -38,7 +38,7 @@ describe('runBytePlusImage', () => {
 });
 
 describe('bytePlusGenerateImage', () => {
-  it('uses the documented ModelArk model ID and size field', async () => {
+  it('uses the exact documented ModelArk request shape with no watermark', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ data: [{ url: 'https://example.test/image.png' }] }), {
         status: 200,
@@ -57,13 +57,14 @@ describe('bytePlusGenerateImage', () => {
 
     const request = fetchMock.mock.calls[0]?.[1];
     const body = JSON.parse(String(request?.body)) as Record<string, unknown>;
-    expect(body).toMatchObject({
+    expect(body).toEqual({
       model: 'seedream-5-0-260128',
       prompt: 'A clear editorial portrait',
+      response_format: 'url',
       size: '2K',
       seed: 42,
+      watermark: false,
     });
-    expect(body).not.toHaveProperty('image_size');
     fetchMock.mockRestore();
   });
 });
