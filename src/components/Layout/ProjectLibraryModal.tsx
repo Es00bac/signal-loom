@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, FolderOpen, Save, Trash2, Upload, X } from 'lucide-react';
 import { useFlowStore } from '../../store/flowStore';
-import { useFlowWorkspaceStore } from '../../store/flowWorkspaceStore';
 import { useConfirmationStore } from '../../store/confirmationStore';
-import { type EditorWorkspaceSnapshot, useEditorStore } from '../../store/editorStore';
 import { useSourceBinStore } from '../../store/sourceBinStore';
 import {
   deleteProjectDocument,
@@ -16,8 +14,11 @@ import {
   type FlowProjectSummary,
 } from '../../lib/projectLibrary';
 import { exportProjectAssets } from '../../lib/projectAssets';
-import { resetProjectDocument, restoreProjectDocument } from '../../lib/projectDocumentActions';
-import { CURRENT_PROJECT_SCHEMA_VERSION } from '../../lib/projectSchema';
+import {
+  buildCurrentProjectDocument as buildFullProjectDocument,
+  resetProjectDocument,
+  restoreProjectDocument,
+} from '../../lib/projectDocumentActions';
 import {
   DEFAULT_SCRATCH_DIRECTORY_NAME,
   PROJECT_DOCUMENT_FILE_NAME,
@@ -40,11 +41,7 @@ interface ProjectLibraryModalProps {
 }
 
 export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProps) {
-  const exportProjectFlowSnapshot = useFlowStore((state) => state.exportProjectFlowSnapshot);
-  const exportFlowWorkspaceProject = useFlowWorkspaceStore((state) => state.exportProjectSnapshot);
-  const activeFlowWorkspaceId = useFlowWorkspaceStore((state) => state.activeWorkspaceId);
   const nodes = useFlowStore((state) => state.nodes);
-  const exportWorkspaceSnapshot = useEditorStore((state) => state.exportWorkspaceSnapshot);
   const exportProjectSourceBin = useSourceBinStore((state) => state.exportProjectSnapshot);
   const setSourceBinScratchDirectoryHandle = useSourceBinStore((state) => state.setScratchDirectoryHandle);
   const migrateSourceBinAssetsToScratch = useSourceBinStore((state) => state.migrateAssetsToScratch);
@@ -105,28 +102,24 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
   }, [isOpen, selectedProjectId]);
 
   async function buildCurrentProjectDocument(projectId?: string): Promise<FlowProjectDocument> {
-    const resolvedName = projectName.trim() || selectedProject?.name || `${DEFAULT_PROJECT_NAME} ${new Date().toLocaleString()}`;
-    const savedAt = Date.now();
-    const flow = exportProjectFlowSnapshot();
-    const flowWorkspaces = exportFlowWorkspaceProject(flow);
+    // Always serialize through the canonical full-project builder: a local partial document
+    // would overwrite the stored record and silently discard Paper, Image, usage-ledger, and
+    // any future project slice. The modal only contributes name/id resolution and its
+    // linked-folder metadata on top.
+    const document = await buildFullProjectDocument({
+      id: projectId ?? selectedProjectId,
+      name: projectName.trim() || selectedProject?.name,
+    });
 
-    return {
-      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
-      id: projectId ?? selectedProjectId ?? globalThis.crypto?.randomUUID?.() ?? `project-${Date.now()}`,
-      name: resolvedName,
-      savedAt,
-      flow,
-      flowWorkspaces,
-      activeFlowWorkspaceId: activeFlowWorkspaceId ?? flowWorkspaces[0]?.id,
-      editor: exportWorkspaceSnapshot(),
-      sourceBin: await exportProjectSourceBin(),
-      fileSystem: activeFileSystemSummary
-        ? {
-            projectDirectoryName: activeFileSystemSummary.projectDirectoryName,
-            scratchDirectoryName: activeFileSystemSummary.scratchDirectoryName,
-          }
-        : undefined,
-    };
+    return activeFileSystemSummary
+      ? {
+        ...document,
+        fileSystem: {
+          projectDirectoryName: activeFileSystemSummary.projectDirectoryName,
+          scratchDirectoryName: activeFileSystemSummary.scratchDirectoryName,
+        },
+      }
+      : document;
   }
 
   async function persistCurrentProject(projectId?: string): Promise<FlowProjectDocument> {
@@ -222,41 +215,29 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
     setStatusMessage(undefined);
 
     try {
-      let flow = exportProjectFlowSnapshot();
-      let flowWorkspaces = exportFlowWorkspaceProject(flow);
-      let exportedActiveFlowWorkspaceId = activeFlowWorkspaceId ?? flowWorkspaces[0]?.id;
-      let editor: Partial<EditorWorkspaceSnapshot> = exportWorkspaceSnapshot();
-      let name = projectName.trim() || selectedProject?.name || DEFAULT_PROJECT_NAME;
-      let sourceBin = await exportProjectSourceBin({ includeAssetData: true });
+      // Exporting a hand-picked field subset here silently dropped Paper and every other
+      // non-flow slice from the produced .sloom. Export the stored record verbatim, or the
+      // current workspace through the canonical full-project builder.
+      let project: FlowProjectDocument;
 
       if (projectId) {
-        const project = await loadProjectDocument(projectId);
+        const stored = await loadProjectDocument(projectId);
 
-        if (!project) {
+        if (!stored) {
           throw new Error('The selected project could not be found.');
         }
 
-        flow = project.flow;
-        flowWorkspaces = project.flowWorkspaces ?? flowWorkspaces;
-        exportedActiveFlowWorkspaceId = project.activeFlowWorkspaceId ?? exportedActiveFlowWorkspaceId;
-        editor = project.editor ?? editor;
-        name = project.name;
-        sourceBin = project.sourceBin ?? sourceBin;
+        project = stored;
+      } else {
+        project = await buildFullProjectDocument({
+          name: projectName.trim() || selectedProject?.name,
+          includeAssetData: true,
+        });
       }
 
-      downloadJsonFile(`${slugify(name)}.sloom`, {
-        schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
-        id: projectId,
-        name,
-        savedAt: Date.now(),
-        flow,
-        flowWorkspaces,
-        activeFlowWorkspaceId: exportedActiveFlowWorkspaceId,
-        editor,
-        sourceBin,
-      });
+      downloadJsonFile(`${slugify(project.name)}.sloom`, project);
 
-      setStatusMessage(`Exported ${name} as a Sloom Studio project file.`);
+      setStatusMessage(`Exported ${project.name} as a Sloom Studio project file.`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'Failed to export the project.');
     } finally {
