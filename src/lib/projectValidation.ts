@@ -3,7 +3,14 @@ import type { EditorWorkspaceSnapshot } from '../store/editorStore';
 import type { ImageEditorProjectSnapshot } from '../store/imageEditorStore';
 import type { SourceBinLibraryItem, SourceBinProjectSnapshot } from '../store/sourceBinStore';
 import type { AppNode, EditorSourceKind, EnvelopeItem, NodeData, NodeResultAttempt, ResultType, WorkspaceView } from '../types/flow';
-import type { PaperDocumentSnapshot, PaperTool, PaperWorkspaceDocumentSnapshot } from '../types/paper';
+import type {
+  PaperDocumentSnapshot,
+  PaperQuarantinedDocumentRecovery,
+  PaperSnapshotRecovery,
+  PaperTool,
+  PaperWorkspaceDocumentSnapshot,
+} from '../types/paper';
+import { mergePaperSnapshotRecovery, sanitizePaperSnapshotRecovery } from './paperSnapshotRecovery';
 import { isBinaryAssetRef, type BinaryAssetId } from '../shared/assets/contentAddressedAsset';
 import type { ImageDocumentSnapshot, ImageLayer, ImageLayerEditTarget, ImageQuickActionMacro, LayerType } from '../types/imageEditor';
 import type { FlowProjectDocument } from './projectLibrary';
@@ -354,47 +361,90 @@ export function sanitizeSourceBinSnapshot(snapshot: unknown): SourceBinProjectSn
 }
 
 export function sanitizePaperSnapshot(snapshot: unknown): Partial<PaperDocumentSnapshot> | undefined {
-  if (snapshot === undefined) return undefined;
-  if (!isRecord(snapshot) || !isRecord(snapshot.document) || !Array.isArray(snapshot.document.pages)) return undefined;
+  if (snapshot === undefined || !isRecord(snapshot)) return undefined;
 
-  const legacyDocument = sanitizePaperWorkspaceDocumentSnapshot({
-    id: typeof snapshot.activeDocumentId === 'string'
-      ? snapshot.activeDocumentId
-      : stringValue(snapshot.document.id, 'paper-document'),
-    document: snapshot.document,
-    assetIds: snapshot.documents === undefined ? snapshot.assetIds : undefined,
-    selectedPageId: snapshot.selectedPageId,
-    selectedFrameId: snapshot.selectedFrameId,
-    selectedFrameIds: snapshot.selectedFrameIds,
-    tool: snapshot.tool,
-    zoom: snapshot.zoom,
-  });
-  if (!legacyDocument) return undefined;
+  const repairs: string[] = [];
+  const quarantined: PaperQuarantinedDocumentRecovery[] = [];
+  const priorRecovery = sanitizePaperSnapshotRecovery(snapshot.recovery);
 
+  // Tabs are validated independently: one malformed or duplicated entry must never blank the
+  // remaining valid documents. Failures are quarantined with their original payload instead.
   let documents: PaperWorkspaceDocumentSnapshot[] | undefined;
+  let hadDocumentEntries = false;
   if (snapshot.documents !== undefined) {
-    if (!Array.isArray(snapshot.documents) || snapshot.documents.length === 0) return undefined;
-    const sanitizedDocuments = snapshot.documents.map((candidate, index) =>
-      sanitizePaperWorkspaceDocumentSnapshot(candidate, index));
-    if (sanitizedDocuments.some((candidate) => candidate === undefined)) return undefined;
-    documents = sanitizedDocuments as PaperWorkspaceDocumentSnapshot[];
-    if (new Set(documents.map((candidate) => candidate.id)).size !== documents.length) return undefined;
-  }
-
-  const activeDocumentId = typeof snapshot.activeDocumentId === 'string'
-    && documents?.some((candidate) => candidate.id === snapshot.activeDocumentId)
-    ? snapshot.activeDocumentId
-    : documents?.[0]?.id;
-  const activeDocument = documents?.find((candidate) => candidate.id === activeDocumentId) ?? legacyDocument;
-  const assetIds = [...new Set((documents ?? [legacyDocument]).flatMap((candidate) => candidate.assetIds ?? []))].sort();
-  if (snapshot.assetIds !== undefined) {
-    if (!Array.isArray(snapshot.assetIds)) return undefined;
-    const declaredAssetIds = snapshot.assetIds.filter((assetId): assetId is BinaryAssetId => isBinaryAssetId(assetId));
-    if (declaredAssetIds.length !== snapshot.assetIds.length || !samePaperAssetIds(assetIds, declaredAssetIds)) {
-      return undefined;
+    if (!Array.isArray(snapshot.documents)) {
+      repairs.push('The saved Paper tab list was malformed; fell back to the active document.');
+    } else if (snapshot.documents.length > 0) {
+      hadDocumentEntries = true;
+      const validDocuments: PaperWorkspaceDocumentSnapshot[] = [];
+      snapshot.documents.forEach((candidate, index) => {
+        const result = sanitizePaperWorkspaceDocumentSnapshot(candidate, index);
+        if (result.ok) {
+          repairs.push(...result.repairs);
+          validDocuments.push(result.snapshot);
+        } else {
+          quarantined.push(buildPaperQuarantineEntry(candidate, index, result.reason));
+        }
+      });
+      const seenTabIds = new Set<string>();
+      const dedupedDocuments = validDocuments.map((workspaceDocument) => {
+        let id = workspaceDocument.id;
+        if (seenTabIds.has(id)) {
+          let suffix = 2;
+          while (seenTabIds.has(`${workspaceDocument.id}-${suffix}`)) suffix += 1;
+          id = `${workspaceDocument.id}-${suffix}`;
+          repairs.push(`Duplicate Paper tab id "${workspaceDocument.id}" was renamed to "${id}".`);
+        }
+        seenTabIds.add(id);
+        return id === workspaceDocument.id ? workspaceDocument : { ...workspaceDocument, id };
+      });
+      if (dedupedDocuments.length > 0) documents = dedupedDocuments;
     }
   }
 
+  let activeDocument: PaperWorkspaceDocumentSnapshot | undefined;
+  if (documents) {
+    const requestedActiveId = typeof snapshot.activeDocumentId === 'string' ? snapshot.activeDocumentId : undefined;
+    activeDocument = documents.find((candidate) => candidate.id === requestedActiveId) ?? documents[0];
+  } else {
+    const legacyResult = sanitizePaperWorkspaceDocumentSnapshot({
+      id: typeof snapshot.activeDocumentId === 'string'
+        ? snapshot.activeDocumentId
+        : isRecord(snapshot.document) ? stringValue(snapshot.document.id, 'paper-document') : 'paper-document',
+      document: snapshot.document,
+      selectedPageId: snapshot.selectedPageId,
+      selectedFrameId: snapshot.selectedFrameId,
+      selectedFrameIds: snapshot.selectedFrameIds,
+      tool: snapshot.tool,
+      zoom: snapshot.zoom,
+    });
+    if (legacyResult.ok) {
+      repairs.push(...legacyResult.repairs);
+      activeDocument = legacyResult.snapshot;
+    }
+  }
+
+  if (!activeDocument) {
+    // Nothing restorable. When tabs were declared, surface the quarantined payloads explicitly so
+    // the workspace opens with a recoverable diagnostic; a snapshot that never had a valid shape
+    // keeps the historical undefined result.
+    const recovery = mergePaperSnapshotRecovery(priorRecovery, buildPaperSnapshotRecovery(quarantined, repairs));
+    return hadDocumentEntries && recovery ? { recovery } : undefined;
+  }
+
+  const assetIds = [...new Set((documents ?? [activeDocument]).flatMap((candidate) => candidate.assetIds ?? []))].sort();
+  if (snapshot.assetIds !== undefined) {
+    if (!Array.isArray(snapshot.assetIds)) {
+      repairs.push('The saved Paper asset inventory was malformed; recomputed from document content.');
+    } else {
+      const declaredAssetIds = snapshot.assetIds.filter((assetId): assetId is BinaryAssetId => isBinaryAssetId(assetId));
+      if (declaredAssetIds.length !== snapshot.assetIds.length || !samePaperAssetIds(assetIds, declaredAssetIds)) {
+        repairs.push('The saved Paper asset inventory was stale; recomputed from document content.');
+      }
+    }
+  }
+
+  const recovery = mergePaperSnapshotRecovery(priorRecovery, buildPaperSnapshotRecovery(quarantined, repairs));
   return {
     document: activeDocument.document,
     assetIds,
@@ -404,36 +454,89 @@ export function sanitizePaperSnapshot(snapshot: unknown): Partial<PaperDocumentS
     tool: activeDocument.tool,
     zoom: activeDocument.zoom,
     documents,
-    activeDocumentId,
+    activeDocumentId: documents ? activeDocument.id : undefined,
+    ...(recovery ? { recovery } : {}),
   };
 }
+
+type PaperWorkspaceDocumentSanitizeResult =
+  | { ok: true; snapshot: PaperWorkspaceDocumentSnapshot; repairs: string[] }
+  | { ok: false; reason: 'malformed-document' | 'invalid-asset-reference' };
 
 function sanitizePaperWorkspaceDocumentSnapshot(
   value: unknown,
   index = 0,
-): PaperWorkspaceDocumentSnapshot | undefined {
-  if (!isRecord(value) || !isRecord(value.document) || !Array.isArray(value.document.pages)) return undefined;
+): PaperWorkspaceDocumentSanitizeResult {
+  if (!isRecord(value) || !isRecord(value.document) || !Array.isArray(value.document.pages)) {
+    return { ok: false, reason: 'malformed-document' };
+  }
   const assetIds = collectPaperSnapshotAssetIds(value.document);
-  if (!assetIds) return undefined;
+  if (!assetIds) return { ok: false, reason: 'invalid-asset-reference' };
+  const id = stringValue(value.id, `paper-document-${index + 1}`);
+  // The declared inventory is advisory — reachability is always recomputed from content — so a
+  // stale list (e.g. captured before save-time locator remapping) is repaired, not discarded.
+  const repairs: string[] = [];
   if (value.assetIds !== undefined) {
-    if (!Array.isArray(value.assetIds)) return undefined;
-    const declaredAssetIds = value.assetIds.filter((assetId): assetId is BinaryAssetId => isBinaryAssetId(assetId));
-    if (declaredAssetIds.length !== value.assetIds.length || !samePaperAssetIds(assetIds, declaredAssetIds)) {
-      return undefined;
+    if (!Array.isArray(value.assetIds)) {
+      repairs.push(`Paper tab "${id}": the saved asset inventory was malformed; recomputed from document content.`);
+    } else {
+      const declaredAssetIds = value.assetIds.filter((assetId): assetId is BinaryAssetId => isBinaryAssetId(assetId));
+      if (declaredAssetIds.length !== value.assetIds.length || !samePaperAssetIds(assetIds, declaredAssetIds)) {
+        repairs.push(`Paper tab "${id}": the saved asset inventory was stale; recomputed from document content.`);
+      }
     }
   }
   return {
-    id: stringValue(value.id, `paper-document-${index + 1}`),
-    document: value.document as unknown as PaperWorkspaceDocumentSnapshot['document'],
-    assetIds,
-    selectedPageId: optionalString(value.selectedPageId),
-    selectedFrameId: optionalString(value.selectedFrameId),
-    selectedFrameIds: Array.isArray(value.selectedFrameIds)
-      ? value.selectedFrameIds.filter((frameId): frameId is string => typeof frameId === 'string')
-      : undefined,
-    tool: VALID_PAPER_TOOLS.has(value.tool as PaperTool) ? value.tool as PaperTool : 'select',
-    zoom: finiteNumber(value.zoom, 0.8),
+    ok: true,
+    repairs,
+    snapshot: {
+      id,
+      document: value.document as unknown as PaperWorkspaceDocumentSnapshot['document'],
+      assetIds,
+      selectedPageId: optionalString(value.selectedPageId),
+      selectedFrameId: optionalString(value.selectedFrameId),
+      selectedFrameIds: Array.isArray(value.selectedFrameIds)
+        ? value.selectedFrameIds.filter((frameId): frameId is string => typeof frameId === 'string')
+        : undefined,
+      tool: VALID_PAPER_TOOLS.has(value.tool as PaperTool) ? value.tool as PaperTool : 'select',
+      zoom: finiteNumber(value.zoom, 0.8),
+    },
   };
+}
+
+function buildPaperQuarantineEntry(
+  candidate: unknown,
+  index: number,
+  reason: 'malformed-document' | 'invalid-asset-reference',
+): PaperQuarantinedDocumentRecovery {
+  const record = isRecord(candidate) ? candidate : undefined;
+  const documentRecord = record && isRecord(record.document) ? record.document : undefined;
+  let payloadJson: string | undefined;
+  try {
+    payloadJson = JSON.stringify(candidate);
+  } catch {
+    payloadJson = undefined;
+  }
+  const id = record ? optionalString(record.id) : undefined;
+  const title = documentRecord ? optionalString(documentRecord.title) : undefined;
+  return {
+    index,
+    ...(id ? { id } : {}),
+    ...(title ? { title } : {}),
+    reason,
+    detail: reason === 'invalid-asset-reference'
+      ? 'The tab document contained invalid or inline asset references.'
+      : 'The tab entry was not a valid Paper document snapshot.',
+    ...(payloadJson ? { payloadJson } : {}),
+  };
+}
+
+function buildPaperSnapshotRecovery(
+  quarantinedDocuments: PaperQuarantinedDocumentRecovery[],
+  repairs: string[],
+): PaperSnapshotRecovery | undefined {
+  if (quarantinedDocuments.length === 0 && repairs.length === 0) return undefined;
+  return { quarantinedDocuments, repairs };
 }
 
 function collectPaperSnapshotAssetIds(document: Record<string, unknown>): BinaryAssetId[] | undefined {

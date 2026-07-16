@@ -599,9 +599,31 @@ export interface PaperWorkspaceDocumentSnapshot {
   zoom: number;
 }
 
+/** A Paper tab that failed restore validation, retained verbatim so the owner can recover it. */
+export interface PaperQuarantinedDocumentRecovery {
+  /** Position of the tab in the saved `documents` list. */
+  index: number;
+  id?: string;
+  title?: string;
+  /** Machine-readable cause, e.g. 'malformed-document' or 'invalid-asset-reference'. */
+  reason: string;
+  detail?: string;
+  /** The original tab entry as saved, serialized for later recovery. */
+  payloadJson?: string;
+}
+
+/** Restore-time diagnostics: what was quarantined or repaired instead of silently discarded. */
+export interface PaperSnapshotRecovery {
+  quarantinedDocuments: PaperQuarantinedDocumentRecovery[];
+  /** Human-readable notes for inconsistencies that were repaired in place. */
+  repairs: string[];
+}
+
 export interface PaperDocumentSnapshot extends Omit<PaperWorkspaceDocumentSnapshot, 'id'> {
   /** All Paper documents open in this project. Omitted by historical single-document projects. */
   documents?: PaperWorkspaceDocumentSnapshot[];
   /** Active tab id within `documents`. */
   activeDocumentId?: string;
+  /** Present when restore validation quarantined or repaired part of this snapshot. */
+  recovery?: PaperSnapshotRecovery;
 }

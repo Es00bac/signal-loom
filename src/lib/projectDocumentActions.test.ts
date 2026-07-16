@@ -166,6 +166,143 @@ describe('restoreProjectDocument', () => {
     await paperAssetRepository.delete(ref!.id);
   });
 
+  it('reopens a saved project without blanking Paper after normalization remaps a migrated managed image', async () => {
+    const base = createDefaultPaperDocument({ title: 'Migrated Link' });
+    const legacyDocument = addFrameToPaperPage(base, base.pages[0].id, {
+      id: 'linked-panel',
+      kind: 'image',
+      xMm: 5,
+      yMm: 5,
+      widthMm: 40,
+      heightMm: 30,
+      asset: {
+        sourceBinItemId: 'source-image-1',
+        label: 'Linked panel',
+        kind: 'image',
+        src: 'data:image/png;base64,AQID',
+      },
+    } as never).document;
+    let managedRefId: string | undefined;
+
+    try {
+      // A pre-normalization save: the linked Source Library item has no durable URL yet,
+      // so the inline bytes migrate into the managed repository on restore.
+      await restoreProjectDocument({
+        schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+        id: 'fbl-001-project',
+        name: 'Managed Link Round Trip',
+        savedAt: 1,
+        flow: { version: 3, nodes: [], edges: [] },
+        sourceBin: {
+          bins: [{
+            id: 'default',
+            name: 'Source Library',
+            collapsed: false,
+            createdAt: 1,
+            items: [{
+              id: 'source-image-1',
+              label: 'Linked panel',
+              kind: 'image',
+              mimeType: 'image/png',
+              nativeFilePath: '/tmp/sloom-tests/panel-one.png',
+              createdAt: 1,
+            }],
+          }],
+          dismissedSourceKeys: [],
+        },
+        paper: {
+          document: legacyDocument,
+          selectedPageId: legacyDocument.pages[0].id,
+          tool: 'select',
+          zoom: 0.8,
+        },
+      });
+
+      const migratedAsset = usePaperStore.getState().document.pages[0].frames
+        .find((frame) => frame.id === 'linked-panel')?.asset;
+      expect(migratedAsset?.locator?.kind).toBe('managed');
+      expect(migratedAsset?.sourceBinItemId).toBe('source-image-1');
+      managedRefId = migratedAsset?.locator?.kind === 'managed' ? migratedAsset.locator.ref.id : undefined;
+
+      // The linked item later gains a durable external URL (ingest / native reconcile).
+      useSourceBinStore.setState((state) => ({
+        bins: state.bins.map((bin) => ({
+          ...bin,
+          items: bin.items.map((item) => item.id === 'source-image-1'
+            ? { ...item, assetUrl: 'signal-loom-asset://file/panel-one' }
+            : item),
+        })),
+      }));
+
+      const saved = await buildCurrentProjectDocument({ id: 'fbl-001-project', name: 'Managed Link Round Trip' });
+      await restoreProjectDocument(JSON.parse(JSON.stringify(saved)));
+
+      const reopenedDocument = usePaperStore.getState().document;
+      expect(reopenedDocument.title).toBe('Migrated Link');
+      const reopenedAsset = reopenedDocument.pages[0]?.frames.find((frame) => frame.id === 'linked-panel')?.asset;
+      expect(reopenedAsset?.sourceBinItemId).toBe('source-image-1');
+      expect(reopenedAsset?.locator).toEqual({ kind: 'external', url: 'signal-loom-asset://file/panel-one' });
+
+      // A second save/reopen after the remap must stay intact as well.
+      const savedAgain = await buildCurrentProjectDocument({ id: 'fbl-001-project', name: 'Managed Link Round Trip' });
+      await restoreProjectDocument(JSON.parse(JSON.stringify(savedAgain)));
+      expect(usePaperStore.getState().document.title).toBe('Migrated Link');
+      expect(usePaperStore.getState().document.pages[0]?.frames.some((frame) => frame.id === 'linked-panel')).toBe(true);
+    } finally {
+      if (managedRefId) await paperAssetRepository.delete(managedRefId as never).catch(() => undefined);
+      usePaperStore.getState().restoreSnapshot(undefined);
+      await useSourceBinStore.getState().restoreProjectSnapshot(undefined).catch(() => undefined);
+    }
+  });
+
+  it('preserves valid Paper tabs plus recovery info across reopen and a second save when one tab is corrupt', async () => {
+    const documentA = { ...createDefaultPaperDocument({ title: 'Tab A' }), id: 'paper-a' };
+    const documentB = { ...createDefaultPaperDocument({ title: 'Tab B' }), id: 'paper-b' };
+
+    try {
+      await restoreProjectDocument({
+        schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+        id: 'fbl-002-project',
+        name: 'Quarantine Round Trip',
+        savedAt: 1,
+        flow: { version: 3, nodes: [], edges: [] },
+        sourceBin: { dismissedSourceKeys: [] },
+        paper: {
+          document: documentA,
+          documents: [
+            { id: 'tab-a', document: documentA, tool: 'select', zoom: 0.8 },
+            { id: 'tab-broken', document: { id: 'paper-broken', title: 'Broken tab', pages: 'not-an-array' }, tool: 'select', zoom: 0.8 },
+            { id: 'tab-b', document: documentB, tool: 'select', zoom: 0.8 },
+          ],
+          activeDocumentId: 'tab-a',
+        },
+      });
+
+      const paperState = usePaperStore.getState();
+      expect(paperState.documents.map((candidate) => candidate.id)).toEqual(['tab-a', 'tab-b']);
+      expect(paperState.document.title).toBe('Tab A');
+      expect(paperState.recovery?.quarantinedDocuments).toHaveLength(1);
+      expect(paperState.recovery?.quarantinedDocuments[0]).toMatchObject({
+        id: 'tab-broken',
+        reason: 'malformed-document',
+      });
+      expect(paperState.recovery?.quarantinedDocuments[0]?.payloadJson).toContain('Broken tab');
+
+      // A resave after recovery must keep the valid tabs and carry the quarantined
+      // payload so the corrupt tab remains recoverable instead of silently destroyed.
+      const savedAfterRecovery = await buildCurrentProjectDocument({ id: 'fbl-002-project', name: 'Quarantine Round Trip' });
+      expect(savedAfterRecovery.paper?.documents?.map((candidate) => candidate.id)).toEqual(['tab-a', 'tab-b']);
+      expect(savedAfterRecovery.paper?.recovery?.quarantinedDocuments).toHaveLength(1);
+
+      await restoreProjectDocument(JSON.parse(JSON.stringify(savedAfterRecovery)));
+      expect(usePaperStore.getState().documents.map((candidate) => candidate.id)).toEqual(['tab-a', 'tab-b']);
+      expect(usePaperStore.getState().document.title).toBe('Tab A');
+      expect(usePaperStore.getState().recovery?.quarantinedDocuments).toHaveLength(1);
+    } finally {
+      usePaperStore.getState().restoreSnapshot(undefined);
+    }
+  });
+
   it('does not republish a restored project snapshot back to the native Source Library bridge', async () => {
     const calls: unknown[][] = [];
     useSourceBinStore.setState({

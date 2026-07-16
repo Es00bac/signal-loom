@@ -65,9 +65,11 @@ import type {
   PaperGuide,
   PaperImportedFont,
   PaperPagePreset,
+  PaperSnapshotRecovery,
   PaperTool,
   PaperWorkspaceDocumentSnapshot,
 } from '../types/paper';
+import { sanitizePaperSnapshotRecovery } from '../lib/paperSnapshotRecovery';
 
 interface PaperState {
   documents: PaperWorkspaceDocumentSnapshot[];
@@ -82,6 +84,8 @@ interface PaperState {
   redoStack: PaperHistorySnapshot[];
   clipboardFrames: PaperFrame[];
   styleClipboard: PaperStyleClipboardPayload | null;
+  /** Diagnostics from the last snapshot restore that quarantined or repaired saved tabs. */
+  recovery: PaperSnapshotRecovery | null;
 }
 
 interface PaperActions {
@@ -199,6 +203,7 @@ export const usePaperStore = create<PaperState & PaperActions>()(
       redoStack: [],
       clipboardFrames: [],
       styleClipboard: null,
+      recovery: null,
 
       undo: () => {
         const state = get();
@@ -921,12 +926,22 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           zoom: state.zoom,
           documents,
           activeDocumentId: state.activeDocumentId,
+          // Carrying the recovery record through saves keeps quarantined tab payloads
+          // recoverable instead of silently destroying them on the next write.
+          ...(state.recovery ? { recovery: state.recovery } : {}),
         };
       },
 
       restoreSnapshot: (snapshot) => {
+        const nextState = sanitizePaperSnapshot(snapshot);
+        if (nextState.recovery) {
+          console.warn(
+            `[paper] Restored with recovery diagnostics: ${nextState.recovery.quarantinedDocuments.length} quarantined tab(s), ${nextState.recovery.repairs.length} repair note(s).`,
+            nextState.recovery,
+          );
+        }
         set({
-          ...sanitizePaperSnapshot(snapshot),
+          ...nextState,
           undoStack: [],
           redoStack: [],
           clipboardFrames: get().clipboardFrames,
@@ -1004,6 +1019,7 @@ function sanitizePaperSnapshot(snapshot: unknown): PaperState {
     redoStack: [],
     clipboardFrames: [],
     styleClipboard: null,
+    recovery: sanitizePaperSnapshotRecovery(input.recovery) ?? null,
   };
 }
 

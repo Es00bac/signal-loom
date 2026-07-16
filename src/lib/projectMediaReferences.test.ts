@@ -334,4 +334,37 @@ describe('project media reference normalization', () => {
     expect(inactiveEnvelopeItem?.value).toBe(signalAssetUrl);
     expect(inactiveEnvelopeItem?.sourceBinItemId).toBe('source-image-1');
   });
+
+  it('recomputes captured Paper asset inventories atomically with save-time locator remapping', () => {
+    const managedSha = 'c'.repeat(64);
+    const managedAssetId = `sha256:${managedSha}` as const;
+    const project = buildProjectDocument();
+    const paperDocument = project.paper!.document!;
+    paperDocument.pages[0]!.frames[0]!.asset = {
+      sourceBinItemId: 'source-image-1',
+      label: 'Image 1',
+      kind: 'image',
+      mimeType: 'image/png',
+      locator: {
+        kind: 'managed',
+        ref: { id: managedAssetId, sha256: managedSha, mimeType: 'image/png', byteLength: 3 },
+      },
+    } as PaperFrameAsset;
+    project.paper = {
+      ...project.paper!,
+      assetIds: [managedAssetId],
+      documents: [{ id: 'tab-1', document: paperDocument, assetIds: [managedAssetId], tool: 'select', zoom: 1 }],
+      activeDocumentId: 'tab-1',
+    };
+
+    const result = normalizeProjectMediaReferencesForSave(project);
+    const savedPaper = result.document.paper!;
+
+    // The managed locator is remapped to the durable Source Library URL...
+    expect(savedPaper.document!.pages[0]!.frames[0]!.asset?.locator).toEqual({ kind: 'external', url: signalAssetUrl });
+    // ...so the captured inventories must be rewritten with the same remap, or the
+    // reopened project fails validation and Paper silently restores a blank workspace.
+    expect(savedPaper.documents?.[0]?.assetIds).toEqual([]);
+    expect(savedPaper.assetIds).toEqual([]);
+  });
 });

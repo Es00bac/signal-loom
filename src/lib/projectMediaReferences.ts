@@ -4,6 +4,7 @@ import type { SourceBinLibraryItem, SourceBinProjectSnapshot } from '../store/so
 import type { FlowProjectDocument } from './projectLibrary';
 import { buildMediaAssetSignaturePart } from './mediaAssetSignature';
 import { buildPaperFrameAssetFromSourceItem } from './paperAssetReferences';
+import { collectReachablePaperAssetIds } from '../features/paper/assets/PaperDocumentAssets';
 
 export interface ProjectMediaReferenceStats {
   paperEmbeddedMediaReplaced: number;
@@ -171,21 +172,33 @@ function normalizePaperMediaReferences(
     let changed = false;
     const documents = paper.documents.map((workspaceDocument) => {
       const normalizedDocument = normalizePaperDocumentMediaReferences(workspaceDocument.document, sourceIndex, stats);
-      if (normalizedDocument !== workspaceDocument.document) changed = true;
-      return normalizedDocument === workspaceDocument.document
-        ? workspaceDocument
-        : { ...workspaceDocument, document: normalizedDocument };
+      if (normalizedDocument === workspaceDocument.document) return workspaceDocument;
+      changed = true;
+      // Remapping locators changes which managed records the document reaches, so the captured
+      // inventory must be rewritten in the same step or restore validation sees a stale list.
+      return {
+        ...workspaceDocument,
+        document: normalizedDocument,
+        assetIds: collectReachablePaperAssetIds(normalizedDocument),
+      };
     });
     const activeDocument = documents.find((workspaceDocument) => workspaceDocument.id === paper.activeDocumentId)
       ?? documents[0];
     if (activeDocument && activeDocument.document !== paper.document) changed = true;
     return changed
-      ? { ...paper, documents, document: activeDocument?.document ?? paper.document }
+      ? {
+        ...paper,
+        documents,
+        document: activeDocument?.document ?? paper.document,
+        assetIds: [...new Set(documents.flatMap((workspaceDocument) => workspaceDocument.assetIds ?? []))].sort(),
+      }
       : paper;
   }
 
   const document = normalizePaperDocumentMediaReferences(paper.document, sourceIndex, stats);
-  return document === paper.document ? paper : { ...paper, document };
+  return document === paper.document
+    ? paper
+    : { ...paper, document, assetIds: collectReachablePaperAssetIds(document) };
 }
 
 function normalizePaperDocumentMediaReferences(

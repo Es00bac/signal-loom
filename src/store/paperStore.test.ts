@@ -30,6 +30,7 @@ function resetPaperStore() {
     redoStack: [],
     clipboardFrames: [],
     styleClipboard: null,
+    recovery: null,
   });
 }
 
@@ -753,5 +754,28 @@ describe('paperStore document tabs', () => {
     expect(usePaperStore.getState().zoom).toBe(1.4);
     usePaperStore.getState().setActiveDocument(englishId);
     expect(usePaperStore.getState().document.title).toBe('English edition');
+  });
+
+  it('round-trips snapshot recovery diagnostics through restore and export', () => {
+    const document = createDefaultPaperDocument({ title: 'Recovered workspace' });
+    const recovery = {
+      quarantinedDocuments: [{
+        index: 1,
+        id: 'tab-broken',
+        reason: 'malformed-document',
+        payloadJson: '{"id":"tab-broken"}',
+      }],
+      repairs: ['tab-a: declared asset inventory was stale; recomputed from document content.'],
+    };
+
+    usePaperStore.getState().restoreSnapshot({ document, tool: 'select', zoom: 0.8, recovery } as never);
+
+    expect(usePaperStore.getState().document.title).toBe('Recovered workspace');
+    expect(usePaperStore.getState().recovery).toMatchObject(recovery);
+    expect(usePaperStore.getState().exportSnapshot().recovery).toMatchObject(recovery);
+
+    usePaperStore.getState().restoreSnapshot(undefined);
+    expect(usePaperStore.getState().recovery).toBeNull();
+    expect(usePaperStore.getState().exportSnapshot().recovery).toBeUndefined();
   });
 });

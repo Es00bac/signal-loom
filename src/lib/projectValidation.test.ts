@@ -1198,4 +1198,162 @@ describe('sanitizePaperSnapshot', () => {
 
     expect(snapshot?.assetIds).toEqual([assetId]);
   });
+
+  it('preserves valid Paper tabs and quarantines a malformed tab with explicit recovery info', () => {
+    const makeDocument = (id: string, title: string) => ({ id, title, pages: [{ id: `${id}-page`, frames: [] }] });
+    const snapshot = sanitizePaperSnapshot({
+      document: makeDocument('paper-a', 'First'),
+      documents: [
+        { id: 'tab-a', document: makeDocument('paper-a', 'First'), tool: 'select', zoom: 0.8 },
+        { id: 'tab-broken', document: { id: 'paper-broken', title: 'Broken tab', pages: 'not-an-array' }, tool: 'select', zoom: 0.8 },
+        { id: 'tab-b', document: makeDocument('paper-b', 'Second'), tool: 'text', zoom: 1.1 },
+      ],
+      activeDocumentId: 'tab-broken',
+    });
+
+    expect(snapshot).toBeDefined();
+    expect(snapshot?.documents?.map((candidate) => candidate.id)).toEqual(['tab-a', 'tab-b']);
+    expect(snapshot?.activeDocumentId).toBe('tab-a');
+    expect(snapshot?.document?.title).toBe('First');
+    expect(snapshot?.recovery?.quarantinedDocuments).toHaveLength(1);
+    expect(snapshot?.recovery?.quarantinedDocuments[0]).toMatchObject({
+      index: 1,
+      id: 'tab-broken',
+      reason: 'malformed-document',
+    });
+    expect(snapshot?.recovery?.quarantinedDocuments[0]?.payloadJson).toContain('Broken tab');
+  });
+
+  it('quarantines a tab with invalid managed asset references instead of blanking every tab', () => {
+    const validDocument = { id: 'paper-a', title: 'Valid', pages: [{ id: 'page-a', frames: [] }] };
+    const invalidDocument = {
+      id: 'paper-bad-asset',
+      title: 'Bad asset',
+      pages: [{
+        id: 'page-bad',
+        frames: [{
+          id: 'frame-bad',
+          asset: {
+            label: 'Panel',
+            kind: 'image',
+            locator: {
+              kind: 'managed',
+              ref: { id: 'sha256:not-a-hash', sha256: 'not-a-hash', mimeType: 'image/png', byteLength: 3 },
+            },
+          },
+        }],
+      }],
+    };
+    const snapshot = sanitizePaperSnapshot({
+      document: validDocument,
+      documents: [
+        { id: 'tab-a', document: validDocument, tool: 'select', zoom: 0.8 },
+        { id: 'tab-bad', document: invalidDocument, tool: 'select', zoom: 0.8 },
+      ],
+      activeDocumentId: 'tab-a',
+    });
+
+    expect(snapshot?.documents?.map((candidate) => candidate.id)).toEqual(['tab-a']);
+    expect(snapshot?.recovery?.quarantinedDocuments).toHaveLength(1);
+    expect(snapshot?.recovery?.quarantinedDocuments[0]).toMatchObject({
+      index: 1,
+      id: 'tab-bad',
+      reason: 'invalid-asset-reference',
+    });
+    expect(snapshot?.recovery?.quarantinedDocuments[0]?.payloadJson).toContain('sha256:not-a-hash');
+  });
+
+  it('renames duplicate Paper tab ids and keeps both tabs instead of discarding the workspace', () => {
+    const makeDocument = (id: string, title: string) => ({ id, title, pages: [{ id: `${id}-page`, frames: [] }] });
+    const snapshot = sanitizePaperSnapshot({
+      document: makeDocument('paper-a', 'First'),
+      documents: [
+        { id: 'tab-a', document: makeDocument('paper-a', 'First'), tool: 'select', zoom: 0.8 },
+        { id: 'tab-a', document: makeDocument('paper-dup', 'Duplicate'), tool: 'select', zoom: 0.8 },
+        { id: 'tab-b', document: makeDocument('paper-b', 'Second'), tool: 'select', zoom: 0.8 },
+      ],
+      activeDocumentId: 'tab-a',
+    });
+
+    expect(snapshot?.documents?.map((candidate) => candidate.id)).toEqual(['tab-a', 'tab-a-2', 'tab-b']);
+    expect(snapshot?.documents?.map((candidate) => candidate.document.title)).toEqual(['First', 'Duplicate', 'Second']);
+    expect(snapshot?.activeDocumentId).toBe('tab-a');
+    expect(snapshot?.recovery?.repairs.some((repair) => repair.includes('tab-a'))).toBe(true);
+  });
+
+  it('repairs a stale declared Paper asset inventory instead of discarding the snapshot', () => {
+    const staleAssetId = `sha256:${'d'.repeat(64)}`;
+    const document = {
+      id: 'paper-a',
+      title: 'Linked',
+      pages: [{
+        id: 'page-a',
+        frames: [{
+          id: 'frame-a',
+          asset: {
+            sourceBinItemId: 'source-1',
+            label: 'Panel',
+            kind: 'image',
+            locator: { kind: 'external', url: 'signal-loom-asset://file/panel-one' },
+          },
+        }],
+      }],
+    };
+    const snapshot = sanitizePaperSnapshot({
+      document,
+      documents: [{ id: 'tab-a', document, assetIds: [staleAssetId], tool: 'select', zoom: 0.8 }],
+      activeDocumentId: 'tab-a',
+      assetIds: [staleAssetId],
+    });
+
+    expect(snapshot).toBeDefined();
+    expect(snapshot?.documents?.map((candidate) => candidate.id)).toEqual(['tab-a']);
+    expect(snapshot?.documents?.[0]?.assetIds).toEqual([]);
+    expect(snapshot?.assetIds).toEqual([]);
+    expect(snapshot?.recovery?.repairs.length).toBeGreaterThan(0);
+    expect(snapshot?.recovery?.quarantinedDocuments).toHaveLength(0);
+  });
+
+  it('recovers valid tabs when only the denormalized active document copy is corrupt', () => {
+    const makeDocument = (id: string, title: string) => ({ id, title, pages: [{ id: `${id}-page`, frames: [] }] });
+    const snapshot = sanitizePaperSnapshot({
+      document: { id: 'paper-corrupt', pages: 'not-an-array' },
+      documents: [
+        { id: 'tab-a', document: makeDocument('paper-a', 'First'), tool: 'select', zoom: 0.8 },
+        { id: 'tab-b', document: makeDocument('paper-b', 'Second'), tool: 'select', zoom: 0.8 },
+      ],
+      activeDocumentId: 'tab-a',
+    });
+
+    expect(snapshot?.documents?.map((candidate) => candidate.id)).toEqual(['tab-a', 'tab-b']);
+    expect(snapshot?.document?.title).toBe('First');
+  });
+
+  it('returns explicit recovery info when every tab is corrupt and carries prior recovery through revalidation', () => {
+    const allCorrupt = sanitizePaperSnapshot({
+      document: { id: 'paper-corrupt', pages: 'not-an-array' },
+      documents: [
+        { id: 'tab-x', document: { id: 'paper-x', pages: 'nope' }, tool: 'select', zoom: 0.8 },
+        { id: 'tab-y', document: { id: 'paper-y', pages: 42 }, tool: 'select', zoom: 0.8 },
+      ],
+      activeDocumentId: 'tab-x',
+    });
+    expect(allCorrupt?.document).toBeUndefined();
+    expect(allCorrupt?.recovery?.quarantinedDocuments).toHaveLength(2);
+
+    const priorRecovery = {
+      quarantinedDocuments: [{ index: 1, id: 'tab-broken', reason: 'malformed-document', payloadJson: '{"id":"tab-broken"}' }],
+      repairs: [],
+    };
+    const carried = sanitizePaperSnapshot({
+      document: { id: 'paper-a', title: 'Kept', pages: [{ id: 'page-a', frames: [] }] },
+      documents: [{ id: 'tab-a', document: { id: 'paper-a', title: 'Kept', pages: [{ id: 'page-a', frames: [] }] }, tool: 'select', zoom: 0.8 }],
+      activeDocumentId: 'tab-a',
+      recovery: priorRecovery,
+    });
+    expect(carried?.documents?.map((candidate) => candidate.id)).toEqual(['tab-a']);
+    expect(carried?.recovery?.quarantinedDocuments).toHaveLength(1);
+    expect(carried?.recovery?.quarantinedDocuments[0]?.id).toBe('tab-broken');
+    expect(carried?.recovery?.quarantinedDocuments[0]?.payloadJson).toBe('{"id":"tab-broken"}');
+  });
 });
