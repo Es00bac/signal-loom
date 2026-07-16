@@ -1,5 +1,82 @@
 # AUD-021 / AUD-022 Image snapshot pixel-integrity repair — 2026-07-16
 
+## Terra BLOCK follow-up
+
+Terra blocked the earlier `cb492f3` evidence because production commit
+`bf6b080` still trusted `pixelState: 'complete'`, did not retain exact named-
+snapshot selection bytes, silently converted corrupt live project pixels to
+null, did not own/dispose named-snapshot clones across the full document
+lifecycle, and allowed `selectionRegistry` entries to outlive their documents.
+The findings were valid. Follow-up production/tests commit
+`2f05169b6981eb6d09cec36775090283beb2debb` repairs AUD-021/AUD-022 and the
+directly overlapping AUD-023 registry lifecycle without amending or rebasing
+the earlier commits.
+
+### Repair
+
+- Named snapshots now own an immutable `Uint8ClampedArray` selection mask when
+  selection pixels are actually present. Restore installs a fresh registry
+  mask with exact bytes, or clears the document entry when the snapshot proves
+  no selection. Project JSON uses a dedicated base64 alpha payload; `.slimg`
+  uses a raw alpha asset. Live document selections also round-trip honestly,
+  and missing/empty/mismatched bytes fail closed to `hasSelection: false`.
+- Every complete named snapshot carries a versioned integrity manifest with
+  expected layer ids, bitmap/mask presence and dimensions, plus selection
+  presence, dimensions, and byte length. Project and `.slimg` decoders verify
+  references, payloads, decoded dimensions, and selection truth. Missing proof
+  is legacy/unavailable; stripped or corrupt assets never enable Restore.
+- Live project layer decode now throws. Image documents are decoded off-store,
+  all partial decoded resources are released on failure, and state/history/
+  selection replacement occurs only after the full Image graph succeeds. The
+  cross-workspace restore orders Image replacement last, so its rollback keeps
+  the exact prior live document objects, pixels, history, and selection masks.
+- Named-snapshot bitmap/mask clones have explicit ownership. Delete, 12-item
+  cap eviction, close/discard, reset/replacement, history materialization, and
+  rollback release only owned clones, once. Protected live identities, fresh
+  editable Restore clones, retained sibling snapshot identities, and history-
+  owned canvases are not released. Named-snapshot selection buffers are also
+  included in unique history byte accounting.
+- Registry entries now follow document lifecycle: close/discard clears only
+  the removed document; whole-project reset/replacement clears all replaced
+  Image entries; reused ids are cleared before open; persisted masks are
+  restored only after exact validation. A no-selection reopened `.slimg`
+  cannot inherit stale bytes, and another still-open document is not cleared.
+- Readiness, automation targets, History descriptors, and Restore UI use the
+  structural proof result rather than the `pixelState` label. Selection-
+  claiming snapshots without exact restorable bytes are blocked.
+
+### Follow-up verification
+
+- Prior focused/neighboring set plus the new snapshot-resource and selection-
+  registry lifecycle suites, all with `--configLoader runner`: **19 files
+  passed; 199 tests passed**.
+- Added asymmetric A-selection → snapshot → B-selection/clear → Restore byte-
+  equality coverage, project JSON/fresh-store and native `.slimg` round trips,
+  stripped/corrupt/missing/dimension-mismatched payload coverage, project-
+  boundary rollback coverage, and distinct/shared/double-dispose/cap/close/
+  replacement/rollback ownership coverage.
+- `npx tsc -p tsconfig.app.json --noEmit --incremental false` — passed.
+- `npx tsc -p tsconfig.node.json --noEmit --incremental false` — passed.
+- Changed-file ESLint — **0 errors** and the same two pre-existing
+  `react-refresh/only-export-components` warnings at
+  `ImageEditorSourceSnapshotControls.tsx:67,122`.
+- `git diff --check`, staged `git diff --cached --check`, and `npm run build`
+  — passed. Vite emitted only the repository's existing runtime URL, browser-
+  module externalization, deprecation, and large-chunk warnings.
+- A second producer/bypass audit found one production snapshot creator
+  (`createImageDocumentSnapshot`) and two trusted complete decoders (project
+  and `.slimg`); all three now construct/verify the integrity contract. Every
+  Restore/readiness consumer routes through `inspectImageDocumentSnapshotIntegrity`.
+
+### Remaining risk
+
+The earlier performance and platform caveats still apply: complete snapshots
+copy full Canvas-backed layer pixels synchronously, large projects/workfiles can
+grow substantially, and zero-sizing is an ownership-safe release signal rather
+than a guarantee about GPU-driver reclamation timing. This follow-up adds raw
+selection bytes and small manifests but does not change those scaling limits;
+no Windows/macOS/Android GPU trace was captured in this worktree.
+
 ## Outcome
 
 AUD-021 and AUD-022 are repaired at the Image history, named-snapshot, and
