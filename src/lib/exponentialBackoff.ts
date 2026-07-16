@@ -31,8 +31,8 @@ export class NonRetryableError extends Error {
 
 /**
  * An HTTP failure that retains the response status independently of provider
- * error-body wording. Backoff can therefore classify permanent 4xx responses
- * even when the JSON body contains only a message.
+ * error-body wording. Backoff can therefore apply its permanent-client-error
+ * policy even when the JSON body contains only a message.
  */
 export class HttpStatusError extends Error {
   readonly status: number;
@@ -44,6 +44,18 @@ export class HttpStatusError extends Error {
     Object.setPrototypeOf(this, HttpStatusError.prototype);
   }
 }
+
+const PERMANENT_CLIENT_ERROR_STATUSES = new Set([
+  400,
+  401,
+  403,
+  404,
+  405,
+  410,
+  413,
+  415,
+  422,
+]);
 
 export async function withExponentialBackoff<T>({
   operation,
@@ -119,7 +131,7 @@ function isNonRetryableError(error: unknown): boolean {
   }
 
   const httpStatus = extractHttpStatus(error);
-  if (httpStatus !== undefined && httpStatus >= 400 && httpStatus < 500) {
+  if (httpStatus !== undefined && isPermanentClientErrorStatus(httpStatus)) {
     return true;
   }
 
@@ -128,9 +140,9 @@ function isNonRetryableError(error: unknown): boolean {
   const message = error.message.toLowerCase();
 
   // Provider/library errors we don't author can't be retyped, so classify them
-  // by objective signals only. Vertex publisher-model access failures and HTTP
-  // 4xx (bad request / auth / forbidden / not found) are permanent — a retry
-  // cannot fix them.
+  // by objective signals only. Vertex publisher-model access failures and the
+  // explicit client-error statuses above are permanent. Other 4xx responses can
+  // be transient during an existing async job (notably 408, 425, and 429).
   if (message.includes('publisher model') && (
     message.includes('not found') ||
     message.includes('does not have access')
@@ -140,15 +152,14 @@ function isNonRetryableError(error: unknown): boolean {
 
   // Some native/SDK bridges expose only a rendered message. Keep this narrow
   // compatibility fallback while direct fetch paths use HttpStatusError.
-  return /\((?:http\s+)?4\d\d\)/.test(message)
-    || /http\s+4\d\d\b/.test(message);
+  return messageContainsPermanentHttpStatus(message);
 }
 
 function extractHttpStatus(error: unknown): number | undefined {
   if (typeof error !== 'object' || error === null) return undefined;
 
   const record = error as Record<string, unknown>;
-  for (const value of [record.status, record.statusCode, record.code]) {
+  for (const value of [record.status, record.statusCode]) {
     if (typeof value === 'number' && Number.isInteger(value)) return value;
     if (typeof value === 'string' && /^\d{3}$/.test(value)) return Number(value);
   }
@@ -160,4 +171,18 @@ function extractHttpStatus(error: unknown): number | undefined {
   }
 
   return undefined;
+}
+
+function isPermanentClientErrorStatus(status: number): boolean {
+  return PERMANENT_CLIENT_ERROR_STATUSES.has(status);
+}
+
+function messageContainsPermanentHttpStatus(message: string): boolean {
+  const parenthesizedStatus = message.match(/\((?:http\s+)?(\d{3})\)/)?.[1];
+  if (parenthesizedStatus && isPermanentClientErrorStatus(Number(parenthesizedStatus))) {
+    return true;
+  }
+
+  const labeledStatus = message.match(/http\s+(\d{3})\b/)?.[1];
+  return labeledStatus !== undefined && isPermanentClientErrorStatus(Number(labeledStatus));
 }

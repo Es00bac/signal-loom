@@ -116,20 +116,95 @@ describe('withExponentialBackoff', () => {
     expect(onRetry).not.toHaveBeenCalled();
   });
 
-  it('does not retry a structured HTTP 4xx error whose JSON message omits the status', async () => {
-    const error = new HttpStatusError(422, 'invalid request body');
-    const operation = vi.fn().mockRejectedValue(error);
+  it.each([400, 401, 403, 404, 405, 410, 413, 415, 422])(
+    'does not retry permanent structured HTTP %i errors',
+    async (status) => {
+      const error = new HttpStatusError(status, 'invalid request body');
+      const operation = vi.fn().mockRejectedValue(error);
+      const onRetry = vi.fn();
+
+      await expect(withExponentialBackoff({
+        operation,
+        maxRetries: 10,
+        baseDelayMs: 1000,
+        onRetry,
+      })).rejects.toBe(error);
+
+      expect(operation).toHaveBeenCalledTimes(1);
+      expect(onRetry).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['HTTP 429', new HttpStatusError(429, 'rate limited')],
+    ['HTTP 408', Object.assign(new Error('request timeout'), { statusCode: '408' })],
+    ['HTTP 425', Object.assign(new Error('request arrived too early'), { status: 425 })],
+  ])('retries transient structured %s errors', async (_label, error) => {
+    const operation = vi.fn()
+      .mockRejectedValueOnce(error)
+      .mockResolvedValueOnce('recovered');
     const onRetry = vi.fn();
 
-    await expect(withExponentialBackoff({
+    const promise = withExponentialBackoff({
       operation,
-      maxRetries: 10,
+      maxRetries: 2,
       baseDelayMs: 1000,
       onRetry,
-    })).rejects.toBe(error);
+    });
+    promise.catch(() => undefined);
 
-    expect(operation).toHaveBeenCalledTimes(1);
-    expect(onRetry).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(promise).resolves.toBe('recovered');
+    expect(operation).toHaveBeenCalledTimes(2);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['HTTP 429', new Error('provider polling failed (HTTP 429)')],
+    ['HTTP 408', new Error('provider polling failed HTTP 408')],
+    ['HTTP 425', new Error('provider polling failed (425)')],
+  ])('retries transient message-only %s errors', async (_label, error) => {
+    const operation = vi.fn()
+      .mockRejectedValueOnce(error)
+      .mockResolvedValueOnce('recovered');
+    const onRetry = vi.fn();
+
+    const promise = withExponentialBackoff({
+      operation,
+      maxRetries: 2,
+      baseDelayMs: 1000,
+      onRetry,
+    });
+    promise.catch(() => undefined);
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(promise).resolves.toBe('recovered');
+    expect(operation).toHaveBeenCalledTimes(2);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not treat an arbitrary numeric SDK code as an HTTP status', async () => {
+    const error = Object.assign(new Error('temporary provider SDK failure'), { code: 404 });
+    const operation = vi.fn()
+      .mockRejectedValueOnce(error)
+      .mockResolvedValueOnce('recovered');
+    const onRetry = vi.fn();
+
+    const promise = withExponentialBackoff({
+      operation,
+      maxRetries: 2,
+      baseDelayMs: 1000,
+      onRetry,
+    });
+    promise.catch(() => undefined);
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(promise).resolves.toBe('recovered');
+    expect(operation).toHaveBeenCalledTimes(2);
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it('DOES retry a plain Error whose message merely contains "require"', async () => {

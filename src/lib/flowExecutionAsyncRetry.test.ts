@@ -93,7 +93,7 @@ describe('paid asynchronous provider retry boundaries', () => {
     vi.restoreAllMocks();
   });
 
-  it('resumes an Atlas prediction after a transient poll fault without creating another paid job', async () => {
+  it('re-polls an Atlas prediction after HTTP 429 without creating another paid job', async () => {
     let pollCalls = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -103,7 +103,7 @@ describe('paid asynchronous provider retry boundaries', () => {
       if (url.includes('/model/prediction/atlas-existing-prediction')) {
         pollCalls += 1;
         return pollCalls === 1
-          ? jsonResponse({ message: 'temporary poll outage' }, 503)
+          ? jsonResponse({ message: 'temporary poll rate limit' }, 429)
           : jsonResponse({
               data: {
                 status: 'succeeded',
@@ -120,6 +120,7 @@ describe('paid asynchronous provider retry boundaries', () => {
       imageContext(),
       settings,
     );
+    resultPromise.catch(() => undefined);
     await vi.runAllTimersAsync();
 
     await expect(resultPromise).resolves.toMatchObject({
