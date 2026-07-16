@@ -164,7 +164,7 @@ function getClipSourceOutMs(clip: EditorVisualClip, sourceDurationSeconds: numbe
 }
 
 function isStillVisualClip(clip: EditorVisualClip): boolean {
-  return clip.sourceKind === 'image' || clip.sourceKind === 'text' || clip.sourceKind === 'shape';
+  return clip.sourceKind === 'image' || clip.sourceKind === 'text' || clip.sourceKind === 'shape' || clip.sourceKind === 'comic';
 }
 
 function createDerivedClipId(id: string): string {

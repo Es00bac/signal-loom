@@ -6,6 +6,7 @@ import {
   trimVisualClipEdge,
   snapTimelineSeconds,
 } from './editorTimelineTrim';
+import { resolveVisualClipDuration } from './manualEditorTimeline';
 
 function videoClip(overrides: Partial<EditorVisualClip> = {}): EditorVisualClip {
   return {
@@ -68,6 +69,23 @@ describe('splitVisualClipNonDestructively', () => {
     expect(right.sourceOutMs).toBe(30_000);
     expect(right.startMs).toBe(10_000);
   });
+
+  it('splits a comic as a still clip and keeps both resolved halves on the timeline', () => {
+    const comic = videoClip({
+      sourceKind: 'comic',
+      startMs: 2_000,
+      sourceOutMs: undefined,
+      durationSeconds: 4,
+    });
+    const [left, right] = splitVisualClipNonDestructively(comic, 4, 4);
+
+    expect(left.durationSeconds).toBe(2);
+    expect(right.durationSeconds).toBe(2);
+    expect(left.startMs).toBe(2_000);
+    expect(right.startMs).toBe(4_000);
+    expect(resolveVisualClipDuration(left, new Map(), {})).toBe(2);
+    expect(resolveVisualClipDuration(right, new Map(), {})).toBe(2);
+  });
 });
 
 describe('getSelectedVisualClipCutTarget', () => {
@@ -120,6 +138,21 @@ describe('trimVisualClipEdge', () => {
     expect(next.startMs).toBe(6_000);
     expect(next.sourceInMs).toBe(6_000);
     expect(next.sourceOutMs).toBe(20_000);
+  });
+
+  it('trims a comic as a still clip and preserves its resolved duration', () => {
+    const next = trimVisualClipEdge(
+      videoClip({ sourceKind: 'comic', startMs: 2_000, sourceOutMs: undefined, durationSeconds: 4 }),
+      {
+        edge: 'end',
+        deltaSeconds: 2,
+        sourceDurationSeconds: 4,
+        shiftKey: false,
+      },
+    );
+
+    expect(next.durationSeconds).toBe(6);
+    expect(resolveVisualClipDuration(next, new Map(), {})).toBe(6);
   });
 
   it('snaps edge drags to one-second intervals while Shift is held', () => {

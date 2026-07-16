@@ -76,6 +76,27 @@ describe('resolveVisualClipDuration', () => {
     ).toBe(6);
   });
 
+  it.each(['speech', 'thought', 'caption'])('keeps %s comics on the authored still-duration contract', (comicKind) => {
+    const comic = createVisualClip({
+      id: `comic-${comicKind}`,
+      sourceNodeId: `comic-${comicKind}`,
+      sourceKind: 'comic',
+      startMs: 2_000,
+      durationSeconds: 4,
+      comicKind: comicKind as EditorVisualClip['comicKind'],
+    });
+
+    const blocks = buildVisualTimelineBlocks([comic], new Map(), {});
+
+    expect(resolveVisualClipDuration(comic, new Map(), {})).toBe(4);
+    expect(blocks[0]).toMatchObject({
+      startSeconds: 2,
+      durationSeconds: 4,
+      endSeconds: 6,
+    });
+    expect(getTimelineDurationSeconds(blocks, [])).toBe(6);
+  });
+
   it('falls back to media duration for video clips', () => {
     const item = createItem({
       id: 'source-video-1',

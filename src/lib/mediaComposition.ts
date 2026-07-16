@@ -1069,7 +1069,7 @@ export function buildVisualClipInputArgs(
     return ['-ignore_loop', '0', '-t', formatSeconds(clipDurationSeconds), '-i', inputName];
   }
 
-  if (sourceKind === 'image' || sourceKind === 'text' || sourceKind === 'shape') {
+  if (sourceKind === 'image' || sourceKind === 'text' || sourceKind === 'shape' || sourceKind === 'comic') {
     return ['-loop', '1', '-t', formatSeconds(clipDurationSeconds), '-i', inputName];
   }
 

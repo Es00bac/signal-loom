@@ -2773,7 +2773,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
 
     // RIPPLE: timeline length of a clip = still duration, or source window / playback rate.
     const lengthMs = (candidate: EditorVisualClip): number => {
-      if (candidate.sourceOutMs === undefined && (candidate.sourceKind === 'image' || candidate.sourceKind === 'text' || candidate.sourceKind === 'shape')) {
+      if (candidate.sourceOutMs === undefined && (candidate.sourceKind === 'image' || candidate.sourceKind === 'text' || candidate.sourceKind === 'shape' || candidate.sourceKind === 'comic')) {
         return Math.round((candidate.durationSeconds ?? 4) * 1000);
       }
       const rate = Math.max(0.25, candidate.playbackRate || 1);
@@ -9109,7 +9109,7 @@ function resolveEditorNarrationProvider(
   return 'elevenlabs';
 }
 
-function InspectorPanel({
+export function InspectorPanel({
   visualClip,
   visualBackingImageItem,
   visualEditorAsset,
@@ -9310,7 +9310,7 @@ function InspectorPanel({
               step={0.1}
               value={visualClip.startMs / 1000}
             />
-            {(visualClip.sourceKind === 'image' || visualClip.sourceKind === 'text' || visualClip.sourceKind === 'shape') ? (
+            {(visualClip.sourceKind === 'image' || visualClip.sourceKind === 'text' || visualClip.sourceKind === 'shape' || visualClip.sourceKind === 'comic') ? (
               <NumberField
                 label="Clip duration"
                 max={120}

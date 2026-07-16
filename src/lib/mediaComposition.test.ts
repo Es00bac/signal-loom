@@ -30,6 +30,7 @@ import {
   describeSequenceRenderBackendCaveat,
   drawTextStageObject,
   packageSequenceFramesAsZip,
+  resolveSequenceVisualClipDuration,
 } from './mediaComposition';
 import {
   renderViaLocalNativeFFmpeg,
@@ -38,12 +39,51 @@ import {
 } from './localNativeRender';
 import { probeGifAnimation } from './gifFrames';
 import { getVideoExportPresetOption } from './videoPremiereParity';
+import { resolveVideoExportPreset } from './videoPremiereParity';
+import type { ComposeSequenceVisualClip } from './mediaComposition';
 import type { ProviderSettings, VideoRenderAssemblyManifestData } from '../types/flow';
 
 const mockedRenderViaLocalNativeFFmpeg = vi.mocked(renderViaLocalNativeFFmpeg);
 const mockedRenderViaLocalNativeFFmpegWithArtifacts = vi.mocked(renderViaLocalNativeFFmpegWithArtifacts);
 const mockedResolveNativeRenderTarget = vi.mocked(resolveNativeRenderTarget);
 const mockedProbeGifAnimation = vi.mocked(probeGifAnimation);
+
+function comicClip(): ComposeSequenceVisualClip {
+  return {
+    sourceNodeId: 'comic-source',
+    sourceKind: 'comic',
+    trackIndex: 0,
+    startMs: 0,
+    durationSeconds: 4,
+    trimStartMs: 0,
+    trimEndMs: 0,
+    playbackRate: 1,
+    reversePlayback: false,
+    fitMode: 'contain',
+    scalePercent: 100,
+    scaleMotionEnabled: false,
+    endScalePercent: 100,
+    opacityPercent: 100,
+    rotationDeg: 0,
+    rotationMotionEnabled: false,
+    endRotationDeg: 0,
+    flipHorizontal: false,
+    flipVertical: false,
+    positionX: 0,
+    positionY: 0,
+    motionEnabled: false,
+    endPositionX: 0,
+    endPositionY: 0,
+    transitionIn: 'none',
+    transitionOut: 'none',
+    transitionDurationMs: 0,
+    textFontFamily: 'Inter, system-ui, sans-serif',
+    textSizePx: 64,
+    textColor: '#ffffff',
+    textEffect: 'none',
+    textBackgroundOpacityPercent: 0,
+  };
+}
 
 beforeEach(() => {
   mockedRenderViaLocalNativeFFmpeg.mockReset();
@@ -481,6 +521,15 @@ describe('buildVisualClipInputArgs', () => {
     ]);
   });
 
+  it('loops rendered comic cards for their resolved still duration', async () => {
+    const comicDuration = await resolveSequenceVisualClipDuration(comicClip(), async () => 0);
+
+    expect(comicDuration).toBe(4);
+    expect(buildVisualClipInputArgs('comic', 'sequence-comic-1.png', comicDuration)).toEqual([
+      '-loop', '1', '-t', '4.000', '-i', 'sequence-comic-1.png',
+    ]);
+  });
+
   it('never loops video/composition clips, regardless of the (irrelevant) isAnimatedGif flag', () => {
     expect(buildVisualClipInputArgs('video', 'clip-1.mp4', 4, true)).toEqual(['-i', 'clip-1.mp4']);
     expect(buildVisualClipInputArgs('composition', 'clip-1.mp4', 4, true)).toEqual(['-i', 'clip-1.mp4']);
@@ -488,6 +537,44 @@ describe('buildVisualClipInputArgs', () => {
 });
 
 describe('buildSequenceCommand', () => {
+  it('keeps a static comic visible for its resolved interval in browser video and image-sequence exports', async () => {
+    const clip = comicClip();
+    const clipDurationSeconds = await resolveSequenceVisualClipDuration(clip, async () => 0);
+    const preparedClips = [{
+      clip,
+      inputIndex: 1,
+      inputName: 'sequence-comic-1.png',
+      sourceUrl: 'data:image/png;base64,comic',
+      clipDurationSeconds,
+    }];
+    const common = {
+      preparedClips,
+      preparedAudioTracks: [],
+      canvas: { width: 1280, height: 720 },
+      timelineDurationSeconds: clipDurationSeconds,
+      frameRate: 30,
+      nativeBackend: null,
+    } as const;
+
+    const browserCommand = buildSequenceCommand({
+      ...common,
+      outputName: 'sequence-output.mp4',
+    });
+    const imageSequenceCommand = buildSequenceCommand({
+      ...common,
+      exportPreset: resolveVideoExportPreset('png-image-sequence'),
+      outputName: 'sequence-frame-%05d.png',
+    });
+
+    for (const command of [browserCommand, imageSequenceCommand]) {
+      const filterGraph = command[command.indexOf('-filter_complex') + 1];
+      expect(command.join(' ')).toContain('-loop 1 -t 4.000 -i sequence-comic-1.png');
+      expect(filterGraph).toContain('[1:v]setpts=PTS-STARTPTS,trim=duration=4.000,fps=30,format=rgba');
+      expect(filterGraph).toContain('eof_action=pass');
+    }
+    expect(imageSequenceCommand).toEqual(expect.arrayContaining(['-frames:v', '120']));
+  });
+
   it('describes render backends in user-facing GPU/CPU terms', () => {
     expect(describeSequenceRenderBackend('amd-vaapi')).toBe('AMD VAAPI GPU encode (h264_vaapi)');
     expect(describeSequenceRenderBackend('cpu')).toBe('native CPU FFmpeg');

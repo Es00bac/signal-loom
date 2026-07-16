@@ -64,7 +64,7 @@ export function resolveVisualClipDuration(
   itemMap: Map<string, SourceBinItem>,
   durationMap: Record<string, number>,
 ): number {
-  if (clip.sourceKind === 'image' || clip.sourceKind === 'text' || clip.sourceKind === 'shape') {
+  if (clip.sourceKind === 'image' || clip.sourceKind === 'text' || clip.sourceKind === 'shape' || clip.sourceKind === 'comic') {
     return clip.durationSeconds ?? 4;
   }
 

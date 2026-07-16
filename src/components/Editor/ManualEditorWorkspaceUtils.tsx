@@ -268,7 +268,7 @@ export function getPreviewableClipDurationSeconds(
   clip: EditorVisualClip,
   sourceDurationSeconds: number,
 ): number {
-  if (clip.sourceKind === 'image' || clip.sourceKind === 'text' || clip.sourceKind === 'shape') {
+  if (clip.sourceKind === 'image' || clip.sourceKind === 'text' || clip.sourceKind === 'shape' || clip.sourceKind === 'comic') {
     return clip.durationSeconds ?? 4;
   }
 
