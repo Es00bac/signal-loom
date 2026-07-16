@@ -260,5 +260,118 @@ git diff --check             # exit 0
 ### Updated remaining risks
 
 - Browser-only validation for `formatFontFamily` still applies: jsdom does not reject invalid Canvas font strings, so the suite cannot assert Chromium acceptance in Node. A real-browser regression gate remains a follow-up.
-- `all-small-caps` rendering depends on the browser's support for the Canvas `fontVariantCaps` longhand; unsupported browsers fall back to normal-case glyphs while retained text content stays intact.
+- `all-small-caps` rendering depends on the browser's support for the Canvas `fontVariantCaps` longhand; unsupported browsers fall back to normal-case glyphs while retained content stays intact.
+- FBL-011 and FBL-010 remain outside this lane.
+
+
+## Terra real-Chromium review follow-up — FBL-012
+
+Terra's real-Chromium review blocked integration of the previous follow-up because the CSS tokenizer still deviated from Chromium/CSS-Syntax in three ways: hex-escape terminators, CSS comments, and serialization of invalid/escaped code points. This follow-up is **FBL-012 only**; FBL-011 (managed-face persistence across fresh processes) and FBL-010 (stretch/axis identity) remain queued as high tickets and are explicitly not claimed fixed here.
+
+### Blockers addressed
+
+1. **Hex-escape whitespace terminator semantics**
+   - CSS Syntax consumes **one** following whitespace terminator after **any** 1–6 digit hex escape, not only after six digits.
+   - Updated `consumeCssEscape` accordingly and adjusted all unit expectations.
+   - Verified Chromium oracles:
+     - `Foo\2c Bar, serif` → family `Foo,Bar` (no invented space)
+     - `Foo\41 Bar, serif` → family `FooABar`
+     - `Foo\1F600 Bar, serif` → family `Foo😀Bar`
+
+2. **CSS comments are whitespace tokens, not family-name text**
+   - Added `skipCssComment` and integrated it into the tokenizer.
+   - `Foo/**/Bar, serif` now resolves to a single family `Foo Bar` rather than `Foo/**/Bar`.
+   - Multiple consecutive comments/whitespace are collapsed to a single separator space inside unquoted names.
+
+3. **Standards-correct serialization of invalid code points and malformed input**
+   - Replaced the conservative ASCII identifier rule with a CSS `<ident-token>` validator (`isIdentStartCodePoint` / `isIdentCodePoint`).
+   - C0 controls, DEL, quotes, backslashes, commas, and raw newlines are escaped as CSS hex escapes with explicit terminators when a name must be quoted.
+   - NUL escapes decode to U+FFFD, matching Chromium.
+   - Unclosed quotes are still serialized as a quoted string (fail-closed: the captured content is escaped and wrapped in double quotes).
+   - Generic keywords remain unquoted, CSS-wide keywords and quoted generic-like families keep their quotes, and meaningful quoted boundary whitespace is preserved.
+
+4. **Real-Chromium oracle**
+   - Added `scripts/formatFontFamily_chromium_oracle.py`, an optional Python/Playwright script that:
+     - serializes each oracle input through the TypeScript module;
+     - assigns the result to a real Chromium `font-family` inline style;
+     - reads the value back and asserts it round-trips unchanged.
+   - Added `src/lib/formatFontFamily.chromium.test.ts`, which invokes the oracle when Playwright/tsx is available and skips cleanly otherwise, so CI does not depend on a downloaded browser.
+   - The oracle script and test were both run in this environment and passed.
+
+### Files changed in this follow-up
+
+- `src/lib/formatFontFamily.ts`
+- `src/lib/formatFontFamily.test.ts`
+- `src/lib/formatFontFamily.chromium.test.ts` (new)
+- `scripts/formatFontFamily_chromium_oracle.py` (new)
+- `docs/notes/overlap-kimi-typography-2026-07-16.md`
+
+### Chromium oracle results
+
+```text
+$ python3.11 scripts/formatFontFamily_chromium_oracle.py
+All serializer outputs round-trip unchanged in Chromium.
+```
+
+Representative cases:
+
+| Input | Serializer output | Chromium round-trip |
+|---|---|---|
+| `Foo\2c Bar, serif` | `"Foo,Bar", serif` | `"Foo,Bar", serif` |
+| `Foo\41 Bar, serif` | `FooABar, serif` | `FooABar, serif` |
+| `Foo\1F600 Bar, serif` | `Foo😀Bar, serif` | `Foo😀Bar, serif` |
+| `Foo/**/Bar, serif` | `"Foo Bar", serif` | `"Foo Bar", serif` |
+| `Foo/* comment */Bar, serif` | `"Foo Bar", serif` | `"Foo Bar", serif` |
+| `inherit, serif` | `"inherit", serif` | `"inherit", serif` |
+| `Foo\0 Bar, serif` | `Foo�Bar, serif` | `Foo�Bar, serif` |
+| `Foo\7f Bar, serif` | `"Foo\7f Bar", serif` | `"Foo\7f Bar", serif` |
+| `Foo\a Bar, serif` | `"Foo\a Bar", serif` | `"Foo\a Bar", serif` |
+| `M PLUS 1, Inter, sans-serif` | `"M PLUS 1", Inter, sans-serif` | `"M PLUS 1", Inter, sans-serif` |
+| `Source Sans 3, system-ui, sans-serif` | `"Source Sans 3", system-ui, sans-serif` | `"Source Sans 3", system-ui, sans-serif` |
+
+### Updated test evidence
+
+```text
+npx vitest run \
+  src/lib/formatFontFamily.test.ts \
+  src/lib/formatFontFamily.chromium.test.ts \
+  src/lib/manualEditorState.test.ts \
+  src/components/ImageEditor/ImageTextLayer.test.ts \
+  src/lib/videoTextFlow.test.ts \
+  src/lib/mediaComposition.test.ts \
+  src/lib/editorStageObjects.test.ts \
+  src/lib/editorAssets.test.ts \
+  src/components/ImageEditor/ImageEditorTextLayerControls.test.tsx \
+  src/components/ImageEditor/ImageEditorTextShapeProperties.test.tsx \
+  src/components/ImageEditor/ImageEditorCanvas.textEdit.test.tsx \
+  src/lib/editorTextRender.test.ts \
+  src/lib/editorTextRender.svgDom.test.ts \
+  src/components/Common/BundledFontBrowser.test.tsx \
+  src/features/video/workspace/VideoWorkspace.test.tsx \
+  --configLoader=runner
+
+Test Files  15 passed (15)
+Tests      203 passed (203)
+```
+
+```text
+npx tsc -b --force   # exit 0
+npm run build        # TypeScript + Vite production build green
+```
+
+```text
+npx eslint src/lib/formatFontFamily.ts src/lib/formatFontFamily.test.ts src/lib/formatFontFamily.chromium.test.ts
+# 0 errors, 0 warnings
+git diff --check    # exit 0
+```
+
+### Queued high tickets (explicitly not fixed in this commit)
+
+- **FBL-011** — Fresh-process managed-face persistence / bundled font registration across app restart and project transfer.
+- **FBL-010** — Stretch/axis identity for condensed/expanded width faces.
+
+### Updated remaining risks
+
+- Browser-only validation is now partially covered by the optional Chromium oracle, but the oracle is not wired into CI because it requires a Playwright browser. jsdom-only runs still cannot reject invalid Canvas font strings.
+- `all-small-caps` rendering still depends on the browser's support for the Canvas `fontVariantCaps` longhand; retained content remains intact.
 - FBL-011 and FBL-010 remain outside this lane.
