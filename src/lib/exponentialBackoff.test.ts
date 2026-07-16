@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { NonRetryableError, withExponentialBackoff } from './exponentialBackoff';
+import { HttpStatusError, NonRetryableError, withExponentialBackoff } from './exponentialBackoff';
 
 describe('withExponentialBackoff', () => {
   beforeEach(() => {
@@ -77,6 +77,29 @@ describe('withExponentialBackoff', () => {
     expect(onRetry).toHaveBeenCalledTimes(2);
   });
 
+  it('stops before an exponential delay would exceed the total elapsed retry budget', async () => {
+    const error = new Error('upstream unavailable');
+    const operation = vi.fn().mockRejectedValue(error);
+    const onRetry = vi.fn();
+
+    const promise = withExponentialBackoff({
+      operation,
+      maxRetries: 10,
+      baseDelayMs: 30_000,
+      maxElapsedMs: 5 * 60_000,
+      onRetry,
+    });
+    promise.catch(() => undefined);
+
+    await vi.runAllTimersAsync();
+
+    await expect(promise).rejects.toThrow('upstream unavailable');
+    // 30s + 60s + 120s = 210s. The next 240s delay would cross the
+    // five-minute budget, so the old 8h31m schedule is never created.
+    expect(operation).toHaveBeenCalledTimes(4);
+    expect(onRetry).toHaveBeenCalledTimes(3);
+  });
+
   it('does not retry a NonRetryableError (type is the authoritative signal)', async () => {
     const error = new NonRetryableError('Vertex AI video requires a service-account key on this device.');
     const operation = vi.fn().mockRejectedValue(error);
@@ -88,6 +111,22 @@ describe('withExponentialBackoff', () => {
       baseDelayMs: 1000,
       onRetry,
     })).rejects.toBeInstanceOf(NonRetryableError);
+
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a structured HTTP 4xx error whose JSON message omits the status', async () => {
+    const error = new HttpStatusError(422, 'invalid request body');
+    const operation = vi.fn().mockRejectedValue(error);
+    const onRetry = vi.fn();
+
+    await expect(withExponentialBackoff({
+      operation,
+      maxRetries: 10,
+      baseDelayMs: 1000,
+      onRetry,
+    })).rejects.toBe(error);
 
     expect(operation).toHaveBeenCalledTimes(1);
     expect(onRetry).not.toHaveBeenCalled();

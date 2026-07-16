@@ -2,6 +2,8 @@ export interface ExponentialBackoffOptions<T> {
   operation: () => Promise<T>;
   maxRetries: number;
   baseDelayMs: number;
+  /** Stop before scheduling a retry that would cross this elapsed-time budget. */
+  maxElapsedMs?: number;
   onRetry?: (attempt: number, maxRetries: number, delayMs: number, error: unknown) => void;
   abortSignal?: AbortSignal;
 }
@@ -27,14 +29,35 @@ export class NonRetryableError extends Error {
   }
 }
 
+/**
+ * An HTTP failure that retains the response status independently of provider
+ * error-body wording. Backoff can therefore classify permanent 4xx responses
+ * even when the JSON body contains only a message.
+ */
+export class HttpStatusError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string, options?: ErrorOptions) {
+    super(`${message} (HTTP ${status})`, options);
+    this.name = 'HttpStatusError';
+    this.status = status;
+    Object.setPrototypeOf(this, HttpStatusError.prototype);
+  }
+}
+
 export async function withExponentialBackoff<T>({
   operation,
   maxRetries,
   baseDelayMs,
+  maxElapsedMs,
   onRetry,
   abortSignal,
 }: ExponentialBackoffOptions<T>): Promise<T> {
   let attempt = 0;
+  const startedAt = Date.now();
+  const elapsedBudgetMs = maxElapsedMs === undefined
+    ? undefined
+    : Math.max(0, maxElapsedMs);
 
   while (true) {
     try {
@@ -61,6 +84,17 @@ export async function withExponentialBackoff<T>({
       // Calculate delay: baseDelay * 2^(attempt - 1)
       const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
 
+      // `maxRetries` alone allowed the default 30-second backoff to schedule
+      // more than eight hours of waits. Refuse a delay that would cross the
+      // request's elapsed retry budget. An in-flight operation is not forcibly
+      // interrupted here; callers can additionally supply an AbortSignal.
+      if (
+        elapsedBudgetMs !== undefined &&
+        Date.now() - startedAt + delayMs > elapsedBudgetMs
+      ) {
+        throw error;
+      }
+
       if (onRetry) {
         onRetry(attempt, maxRetries, delayMs, error);
       }
@@ -84,9 +118,12 @@ function isNonRetryableError(error: unknown): boolean {
     return true;
   }
 
-  if (!(error instanceof Error)) {
-    return false;
+  const httpStatus = extractHttpStatus(error);
+  if (httpStatus !== undefined && httpStatus >= 400 && httpStatus < 500) {
+    return true;
   }
+
+  if (!(error instanceof Error)) return false;
 
   const message = error.message.toLowerCase();
 
@@ -101,6 +138,26 @@ function isNonRetryableError(error: unknown): boolean {
     return true;
   }
 
-  return /\((400|401|403|404)\)/.test(message)
-    || /http\s+(400|401|403|404)\b/.test(message);
+  // Some native/SDK bridges expose only a rendered message. Keep this narrow
+  // compatibility fallback while direct fetch paths use HttpStatusError.
+  return /\((?:http\s+)?4\d\d\)/.test(message)
+    || /http\s+4\d\d\b/.test(message);
+}
+
+function extractHttpStatus(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+
+  const record = error as Record<string, unknown>;
+  for (const value of [record.status, record.statusCode, record.code]) {
+    if (typeof value === 'number' && Number.isInteger(value)) return value;
+    if (typeof value === 'string' && /^\d{3}$/.test(value)) return Number(value);
+  }
+
+  const response = record.response;
+  if (typeof response === 'object' && response !== null) {
+    const status = (response as Record<string, unknown>).status;
+    if (typeof status === 'number' && Number.isInteger(status)) return status;
+  }
+
+  return undefined;
 }

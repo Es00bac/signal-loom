@@ -4,6 +4,8 @@
  * Stability documents a polling rate limit of one request every 10 seconds — respect it.
  */
 
+import { HttpStatusError, NonRetryableError } from '../exponentialBackoff';
+
 interface StabilityAsyncCreatePayload {
   id?: string;
   errors?: string[];
@@ -57,13 +59,17 @@ export async function fetchStabilityAsyncResultBlob(input: {
     }
 
     if (!response.ok) {
-      throw new Error(`Stability async result polling failed (${response.status}): ${await response.text()}`);
+      const detail = (await response.text()).trim();
+      throw new HttpStatusError(
+        response.status,
+        detail ? `Stability async result polling failed: ${detail}` : 'Stability async result polling failed',
+      );
     }
 
     return response.blob();
   }
 
-  throw new Error('Stability async edit timed out waiting for the finished image.');
+  throw new NonRetryableError('Stability async edit timed out waiting for the finished image.');
 }
 
 function sleep(ms: number): Promise<void> {

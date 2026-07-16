@@ -237,8 +237,10 @@ interface GeminiVideoOperation {
   };
 }
 
-import { NonRetryableError, withExponentialBackoff } from './exponentialBackoff';
+import { HttpStatusError, NonRetryableError, withExponentialBackoff } from './exponentialBackoff';
 import { getProviderLimiter } from './providerRateLimiter';
+
+const FLOW_PROVIDER_RETRY_BUDGET_MS = 5 * 60_000;
 
 export async function executeNodeRequest(
   node: AppNode,
@@ -268,9 +270,48 @@ export async function executeNodeRequest(
   const providerId = typeof node.data.provider === 'string' ? node.data.provider : 'default';
   const limiter = getProviderLimiter(providerId);
 
+  const operation = () => limiter.acquire(async () => {
+    throwIfAborted(options.signal);
+
+    if (shouldProxyNodeExecution(node, settings)) {
+      return executeNodeViaBackendProxy(node, context, settings, onStatus, options.signal);
+    }
+
+    switch (node.type) {
+      case 'textNode':
+        return executeTextNode(node, context, settings, onStatus);
+      case 'imageGen':
+        return executeImageNode(node, context, settings, onStatus, options.signal);
+      case 'cropImageNode':
+        return executeCropImageNode(node, context, onStatus, options.signal);
+      case 'videoGen':
+        return executeVideoNode(node, context, settings, onStatus, options.signal);
+      case 'audioGen':
+        return executeAudioNode(node, context, settings, onStatus);
+      // 'composition' is handled above, before the retry wrapper — see that comment.
+      case 'visionVerifyNode':
+        return executeVisionVerifyNode(node, context, settings, onStatus);
+      case 'functionNode':
+        return executeFunctionNode(node, context);
+      case 'apiFetchNode':
+        return executeApiFetchNode(node, context, onStatus);
+      default:
+        throw new NonRetryableError(`Unsupported node type: ${node.type}`);
+    }
+  });
+
+  // These direct-provider routes submit paid, non-idempotent asynchronous jobs.
+  // Retrying the whole operation after a poll/download fault can create another
+  // charge. They submit once; their poll/materialize phases retry the existing
+  // prediction ID, polling URL, or operation name inside the provider function.
+  if (isDirectPaidAsyncRequest(node, settings)) {
+    return operation();
+  }
+
   return withExponentialBackoff({
     maxRetries: settings.providerSettings.batchMaxRetries ?? 10,
     baseDelayMs: settings.providerSettings.batchRetryBaseDelayMs ?? 30000,
+    maxElapsedMs: FLOW_PROVIDER_RETRY_BUDGET_MS,
     abortSignal: options.signal,
     onRetry: (attempt, max, delay, error) => {
       const delaySec = Math.round(delay / 1000);
@@ -280,35 +321,53 @@ export async function executeNodeRequest(
         { attempt, max, nextAttemptAt: Date.now() + delay }
       );
     },
-    operation: () => limiter.acquire(async () => {
-      throwIfAborted(options.signal);
+    operation,
+  });
+}
 
-      if (shouldProxyNodeExecution(node, settings)) {
-        return executeNodeViaBackendProxy(node, context, settings, onStatus, options.signal);
-      }
+function isDirectPaidAsyncRequest(node: AppNode, settings: RuntimeSettingsSnapshot): boolean {
+  if (shouldProxyNodeExecution(node, settings)) return false;
 
-      switch (node.type) {
-        case 'textNode':
-          return executeTextNode(node, context, settings, onStatus);
-        case 'imageGen':
-          return executeImageNode(node, context, settings, onStatus);
-        case 'cropImageNode':
-          return executeCropImageNode(node, context, onStatus, options.signal);
-        case 'videoGen':
-          return executeVideoNode(node, context, settings, onStatus);
-        case 'audioGen':
-          return executeAudioNode(node, context, settings, onStatus);
-        // 'composition' is handled above, before the retry wrapper — see that comment.
-        case 'visionVerifyNode':
-          return executeVisionVerifyNode(node, context, settings, onStatus);
-        case 'functionNode':
-          return executeFunctionNode(node, context);
-        case 'apiFetchNode':
-          return executeApiFetchNode(node, context, onStatus);
-        default:
-          throw new Error(`Unsupported node type: ${node.type}`);
-      }
-    }),
+  if (node.type === 'imageGen') {
+    const provider = (node.data.provider as ImageProvider | undefined) ?? 'gemini';
+    const modelId = getModelId(settings, 'image', provider, node.data.modelId);
+    return provider === 'bfl'
+      || (provider === 'atlas' && isAtlasNativeImageModelId(modelId))
+      || (provider === 'stability'
+        && resolveStabilityOperation(modelId, node.data.imageOperation, true) === 'replace-background-relight');
+  }
+
+  if (node.type === 'videoGen') {
+    const provider = (node.data.provider as VideoProvider | undefined) ?? 'gemini';
+    if (provider === 'atlas') return true;
+    if (provider !== 'gemini' || settings.providerSettings.geminiCredentialMode === 'vertex-adc') return false;
+
+    const modelId = normalizeGeminiVideoModelId(getModelId(settings, 'video', provider, node.data.modelId));
+    return !isGeminiOmniModelId(modelId);
+  }
+
+  return false;
+}
+
+function retryExistingAsyncJobPhase<T>(input: {
+  phaseLabel: string;
+  operation: () => Promise<T>;
+  settings: RuntimeSettingsSnapshot;
+  onStatus?: (statusMessage: string) => void;
+  abortSignal?: AbortSignal;
+}): Promise<T> {
+  return withExponentialBackoff({
+    operation: input.operation,
+    maxRetries: input.settings.providerSettings.batchMaxRetries ?? 10,
+    baseDelayMs: input.settings.providerSettings.batchRetryBaseDelayMs ?? 30000,
+    maxElapsedMs: FLOW_PROVIDER_RETRY_BUDGET_MS,
+    abortSignal: input.abortSignal,
+    onRetry: (attempt, max, delay, error) => {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      input.onStatus?.(
+        `${input.phaseLabel} (${message}). Retrying the existing job ${attempt} of ${max} in ${Math.round(delay / 1000)}s…`,
+      );
+    },
   });
 }
 
@@ -377,7 +436,7 @@ async function executeApiFetchNode(
   const rawBody = String(node.data.body ?? '').trim();
 
   if (!url) {
-    throw new Error('API Requester node needs a valid URL to run.');
+    throw new NonRetryableError('API Requester node needs a valid URL to run.');
   }
 
   // Parse custom headers
@@ -449,7 +508,7 @@ async function executeApiFetchNode(
     }
 
     if (!response.ok) {
-      throw new Error(`API responded with status ${response.status}: ${text}`);
+      throw new HttpStatusError(response.status, text || 'API request failed');
     }
 
     return {
@@ -458,7 +517,7 @@ async function executeApiFetchNode(
       statusMessage: `Completed with status ${response.status}`,
     };
   } catch (err) {
-    if (err instanceof NonRetryableError) {
+    if (err instanceof NonRetryableError || err instanceof HttpStatusError) {
       throw err;
     }
     throw new Error(`Network request failed: ${(err as Error).message}`);
@@ -504,7 +563,7 @@ async function executeNodeViaBackendProxy(
   });
 
   if (!response.ok) {
-    throw new Error(`Backend proxy returned HTTP ${response.status}.`);
+    throw new HttpStatusError(response.status, 'Backend proxy request failed');
   }
 
   const payload = await response.json() as Partial<ExecutionResult> & { error?: string };
@@ -663,7 +722,7 @@ async function executeCropImageNode(
 ): Promise<ExecutionResult> {
   const sourceImageInput = context.editImageInput;
   if (!sourceImageInput) {
-    throw new Error('Crop Image nodes need one connected image input.');
+    throw new NonRetryableError('Crop Image nodes need one connected image input.');
   }
 
   onStatus?.('Cropping image locally…');
@@ -699,7 +758,7 @@ async function executeTextNode(
 
   if (mode === 'prompt') {
     if (!promptText) {
-      throw new Error('Prompt nodes need text before they can feed the flow.');
+      throw new NonRetryableError('Prompt nodes need text before they can feed the flow.');
     }
 
     return {
@@ -724,14 +783,14 @@ async function executeTextNode(
   const systemPrompt = (node.data.systemPrompt ?? '').trim();
 
   if (!effectivePrompt) {
-    throw new Error('Connect a prompt source or enter an instruction in this text node.');
+    throw new NonRetryableError('Connect a prompt source or enter an instruction in this text node.');
   }
 
   if (unsupportedModelInputs.length > 0) {
     const labels = unsupportedModelInputs
       .map((input) => input.label ?? input.mimeType ?? input.kind ?? 'media')
       .join(', ');
-    throw new Error(`${modelContract.displayName} cannot accept these connected inputs on its configured Flow route: ${labels}.`);
+    throw new NonRetryableError(`${modelContract.displayName} cannot accept these connected inputs on its configured Flow route: ${labels}.`);
   }
 
   switch (provider) {
@@ -740,7 +799,7 @@ async function executeTextNode(
         const labels = unsupportedTextMediaInputs
           .map((input) => input.label ?? input.mimeType ?? input.kind ?? 'media')
           .join(', ');
-        throw new Error(`Gemini text analysis does not support this media input yet: ${labels}.`);
+        throw new NonRetryableError(`Gemini text analysis does not support this media input yet: ${labels}.`);
       }
 
       const mediaResolution = modelContract.parameters.some((parameter) => parameter.id === 'mediaResolution')
@@ -828,7 +887,7 @@ async function executeTextNode(
       const unsupportedOpenAIInputs = textMediaInputs.filter((input) => !isImageMediaInput(input));
 
       if (unsupportedOpenAIInputs.length > 0) {
-        throw new Error('Audio, video, and document-to-text analysis are wired for Gemini text models in this app.');
+        throw new NonRetryableError('Audio, video, and document-to-text analysis are wired for Gemini text models in this app.');
       }
 
       onStatus?.(textImageInputs.length > 0 ? 'Analyzing image with OpenAI…' : 'Generating text with OpenAI…');
@@ -868,7 +927,7 @@ async function executeTextNode(
     }
     case 'huggingface': {
       if (textMediaInputs.length > 0) {
-        throw new Error('Media-to-text analysis is currently wired for Gemini and OpenAI text models in this app.');
+        throw new NonRetryableError('Media-to-text analysis is currently wired for Gemini and OpenAI text models in this app.');
       }
 
       onStatus?.('Generating text with Hugging Face…');
@@ -903,6 +962,7 @@ async function executeImageNode(
   context: ExecutionContext,
   settings: RuntimeSettingsSnapshot,
   onStatus?: (statusMessage: string) => void,
+  abortSignal?: AbortSignal,
 ): Promise<ExecutionResult> {
   const provider = (node.data.provider as ImageProvider | undefined) ?? 'gemini';
   const modelId = getModelId(settings, 'image', provider, node.data.modelId);
@@ -927,23 +987,23 @@ async function executeImageNode(
   }
 
   if (!prompt) {
-    throw new Error('Image nodes need an upstream text prompt. Connect text and optionally an image to edit.');
+    throw new NonRetryableError('Image nodes need an upstream text prompt. Connect text and optionally an image to edit.');
   }
 
   if (sourceImageInput && !supportsImageEditing(provider, modelId)) {
-    throw new Error('The selected image model does not currently support upstream image editing in this app.');
+    throw new NonRetryableError('The selected image model does not currently support upstream image editing in this app.');
   }
 
   if (maskImageInput && !supportsTrueMaskInpaint(provider, modelId)) {
-    throw new Error('The selected image model does not accept an explicit mask input. Choose a mask-aware image edit model.');
+    throw new NonRetryableError('The selected image model does not accept an explicit mask input. Choose a mask-aware image edit model.');
   }
 
   if (referenceImageInputs.length > modelDefinition.capabilities.maxReferenceImages) {
-    throw new Error(`${modelDefinition.label} supports at most ${modelDefinition.capabilities.maxReferenceImages} reference image${modelDefinition.capabilities.maxReferenceImages === 1 ? '' : 's'}.`);
+    throw new NonRetryableError(`${modelDefinition.label} supports at most ${modelDefinition.capabilities.maxReferenceImages} reference image${modelDefinition.capabilities.maxReferenceImages === 1 ? '' : 's'}.`);
   }
 
   if (referenceImageInputs.length > 0 && !supportsImageReferenceGuidance(provider, modelId)) {
-    throw new Error('The selected image model does not accept reference-image guidance.');
+    throw new NonRetryableError('The selected image model does not accept reference-image guidance.');
   }
 
   const operationPrompt = buildImageOperationPrompt(prompt, node.data);
@@ -1074,6 +1134,7 @@ async function executeImageNode(
             maskImageInput,
             referenceImageInputs,
             onStatus,
+            abortSignal,
           }),
           onStatus,
         });
@@ -1097,7 +1158,7 @@ async function executeImageNode(
       // documented Image Generation API; edit/reference controls stay blocked until their request
       // contract is represented explicitly rather than inferred from a model name.
       if (sourceImageInput || referenceImageInputs.length > 0) {
-        throw new Error('BytePlus Seedream currently supports text-to-image generation in Sloom Studio; image editing and reference guidance are pending the ModelArk edit API.');
+        throw new NonRetryableError('BytePlus Seedream currently supports text-to-image generation in Sloom Studio; image editing and reference guidance are pending the ModelArk edit API.');
       }
       onStatus?.('Generating image with BytePlus…');
       const apiKey = requireApiKey(settings.apiKeys.byteplus ?? '', 'BytePlus');
@@ -1124,7 +1185,7 @@ async function executeImageNode(
     }
     case 'huggingface': {
       if (sourceImageInput || referenceImageInputs.length > 0) {
-        throw new Error('Hugging Face image models are text-to-image only in Sloom Studio. For source or reference-image edits choose a Gemini, OpenAI, Atlas, BFL, Stability, or Local/Open edit model.');
+        throw new NonRetryableError('Hugging Face image models are text-to-image only in Sloom Studio. For source or reference-image edits choose a Gemini, OpenAI, Atlas, BFL, Stability, or Local/Open edit model.');
       }
 
       onStatus?.('Generating image with Hugging Face…');
@@ -1179,7 +1240,9 @@ async function executeImageNode(
         sourceImageInput,
         referenceImageInputs,
         apiKey: requireApiKey(settings.apiKeys.bfl ?? '', 'Black Forest Labs'),
+        settings,
         onStatus,
+        abortSignal,
         }),
         onStatus,
       });
@@ -1196,7 +1259,9 @@ async function executeImageNode(
         sourceImageInput,
         maskImageInput,
         apiKey: requireApiKey(settings.apiKeys.stability ?? '', 'Stability AI'),
+        settings,
         onStatus,
+        abortSignal,
         }),
         onStatus,
       });
@@ -1309,12 +1374,13 @@ async function executeAtlasNativeImageNode(input: {
   maskImageInput?: string;
   referenceImageInputs: string[];
   onStatus?: (statusMessage: string) => void;
+  abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
   const definition = getImageModelDefinition('atlas', input.modelId);
   const isEditOperation = Boolean(input.sourceImageInput || input.maskImageInput || input.referenceImageInputs.length > 0);
 
   if (!isEditOperation && !definition.capabilities.textToImage) {
-    throw new Error(`${definition.label} needs a connected source image. Choose an Atlas text-to-image model for prompt-only generation.`);
+    throw new NonRetryableError(`${definition.label} needs a connected source image. Choose an Atlas text-to-image model for prompt-only generation.`);
   }
 
   const apiKey = requireApiKey(input.settings.apiKeys.atlas ?? '', 'Atlas');
@@ -1420,7 +1486,7 @@ async function executeAtlasNativeImageNode(input: {
   });
 
   if (!response.ok) {
-    throw new Error(await extractErrorBody(response, 'Atlas image generation failed'));
+    throw await createHttpStatusError(response, 'Atlas image generation failed');
   }
 
   const created = (await response.json()) as AtlasCreateResponse;
@@ -1434,7 +1500,15 @@ async function executeAtlasNativeImageNode(input: {
   const predictionId = extractAtlasPredictionId(created);
   const outputUrls = immediateOutputs.length > 0
     ? immediateOutputs
-    : (predictionId ? await pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'image') : []);
+    : (predictionId
+        ? await retryExistingAsyncJobPhase({
+            phaseLabel: `Atlas image prediction ${predictionId} polling failed`,
+            operation: () => pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'image'),
+            settings: input.settings,
+            onStatus: input.onStatus,
+            abortSignal: input.abortSignal,
+          })
+        : []);
 
   if (outputUrls.length === 0) {
     throw new Error('Atlas did not return a prediction ID or image output.');
@@ -1448,8 +1522,14 @@ async function executeAtlasNativeImageNode(input: {
     imageCount: outputUrls.length,
   });
 
-  const materialized = await Promise.all(outputUrls.map((url) =>
-    materializeAtlasImageResult(normalizeAtlasResultUrl(url, input.context.config.imageOutputFormat))));
+  const materialized = await retryExistingAsyncJobPhase({
+    phaseLabel: 'Atlas image result materialization failed',
+    operation: () => Promise.all(outputUrls.map((url) =>
+      materializeAtlasImageResult(normalizeAtlasResultUrl(url, input.context.config.imageOutputFormat)))),
+    settings: input.settings,
+    onStatus: input.onStatus,
+    abortSignal: input.abortSignal,
+  });
 
   const countLabel = materialized.length > 1 ? ` (${materialized.length} images)` : '';
   return {
@@ -1507,7 +1587,7 @@ async function uploadAtlasMedia(
   });
 
   if (!response.ok) {
-    throw new Error(await extractErrorBody(response, 'Atlas media upload failed'));
+    throw await createHttpStatusError(response, 'Atlas media upload failed');
   }
 
   const payload = (await response.json()) as AtlasUploadResponse;
@@ -1537,7 +1617,7 @@ async function pollAtlasPredictionResult(
     });
 
     if (!response.ok) {
-      throw new Error(await extractErrorBody(response, `Atlas ${mediaLabel} polling failed`));
+      throw await createHttpStatusError(response, `Atlas ${mediaLabel} polling failed`);
     }
 
     const payload = (await response.json()) as AtlasPollResponse;
@@ -1545,7 +1625,7 @@ async function pollAtlasPredictionResult(
     const status = extractAtlasPredictionStatus(payload);
 
     if (status && isAtlasFailureStatus(status)) {
-      throw new Error(extractProviderError(payload.error ?? payload.data?.error ?? status, `Atlas ${mediaLabel} generation failed.`));
+      throw new NonRetryableError(extractProviderError(payload.error ?? payload.data?.error ?? status, `Atlas ${mediaLabel} generation failed.`));
     }
 
     if (outputUrls.length > 0 && (!status || isAtlasSuccessStatus(status))) {
@@ -1553,14 +1633,14 @@ async function pollAtlasPredictionResult(
     }
 
     if (status && isAtlasSuccessStatus(status)) {
-      throw new Error(`Atlas completed the ${mediaLabel} job without an output URL.`);
+      throw new NonRetryableError(`Atlas completed the ${mediaLabel} job without an output URL.`);
     }
 
     onStatus?.(`Atlas ${mediaLabel} is still in progress... ${attempt + 1} check${attempt === 0 ? '' : 's'} so far`);
     await sleep(2000);
   }
 
-  throw new Error(`Atlas ${mediaLabel} generation timed out.`);
+  throw new NonRetryableError(`Atlas ${mediaLabel} generation timed out.`);
 }
 
 function extractAtlasPredictionId(payload: AtlasCreateResponse): string | undefined {
@@ -1767,7 +1847,9 @@ async function executeBflImageNode(input: {
   sourceImageInput?: string;
   referenceImageInputs: string[];
   apiKey: string;
+  settings: RuntimeSettingsSnapshot;
   onStatus?: (statusMessage: string) => void;
+  abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
   input.onStatus?.(input.sourceImageInput ? 'Editing image with BFL FLUX.2…' : 'Generating image with BFL FLUX.2…');
   const sourceImage = input.sourceImageInput
@@ -1798,7 +1880,7 @@ async function executeBflImageNode(input: {
   });
 
   if (!response.ok) {
-    throw new Error(await extractErrorBody(response, 'BFL image generation failed'));
+    throw await createHttpStatusError(response, 'BFL image generation failed');
   }
 
   const created = (await response.json()) as BflCreateResponse;
@@ -1810,8 +1892,20 @@ async function executeBflImageNode(input: {
   }
 
   input.onStatus?.('Waiting for BFL image result…');
-  const resultUrl = await pollBflImageResult(created.polling_url, input.apiKey, input.onStatus);
-  const result = (await materializeRemoteMediaResult(resultUrl, 'BFL result download failed')).result;
+  const resultUrl = await retryExistingAsyncJobPhase({
+    phaseLabel: `BFL job ${created.id ?? created.polling_url} polling failed`,
+    operation: () => pollBflImageResult(created.polling_url!, input.apiKey, input.onStatus),
+    settings: input.settings,
+    onStatus: input.onStatus,
+    abortSignal: input.abortSignal,
+  });
+  const result = (await retryExistingAsyncJobPhase({
+    phaseLabel: 'BFL image result materialization failed',
+    operation: () => materializeRemoteMediaResult(resultUrl, 'BFL result download failed'),
+    settings: input.settings,
+    onStatus: input.onStatus,
+    abortSignal: input.abortSignal,
+  })).result;
   const estimatedCost = created.cost !== null && created.cost !== undefined
     ? created.cost * 0.01
     : built.estimatedCostUsd;
@@ -1845,7 +1939,7 @@ async function applyConfiguredAutoUpscaleIfRequested(input: {
   });
 
   if (!plan.canRun) {
-    throw new Error(plan.unavailableReason ?? 'The configured image upscaler is not available.');
+    throw new NonRetryableError(plan.unavailableReason ?? 'The configured image upscaler is not available.');
   }
 
   input.onStatus?.(`Auto-upscaling with ${plan.label}...`);
@@ -2041,7 +2135,7 @@ async function pollBflImageResult(
     });
 
     if (!response.ok) {
-      throw new Error(await extractErrorBody(response, 'BFL image polling failed'));
+      throw await createHttpStatusError(response, 'BFL image polling failed');
     }
 
     const payload = (await response.json()) as BflPollResponse;
@@ -2049,14 +2143,14 @@ async function pollBflImageResult(
       return payload.result.sample;
     }
     if (payload.status === 'Error' || payload.status === 'Failed' || payload.error) {
-      throw new Error(extractProviderError(payload.error ?? payload.status, 'BFL image generation failed.'));
+      throw new NonRetryableError(extractProviderError(payload.error ?? payload.status, 'BFL image generation failed.'));
     }
 
     onStatus?.(`BFL image is still in progress… ${attempt + 1} check${attempt === 0 ? '' : 's'} so far`);
     await sleep(2000);
   }
 
-  throw new Error('BFL image generation timed out after 240 seconds.');
+  throw new NonRetryableError('BFL image generation timed out after 240 seconds.');
 }
 
 async function executeStabilityImageNode(input: {
@@ -2067,7 +2161,9 @@ async function executeStabilityImageNode(input: {
   sourceImageInput?: string;
   maskImageInput?: string;
   apiKey: string;
+  settings: RuntimeSettingsSnapshot;
   onStatus?: (statusMessage: string) => void;
+  abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
   const operation = resolveStabilityOperation(input.modelId, input.nodeData.imageOperation, Boolean(input.sourceImageInput));
   const headers = {
@@ -2091,7 +2187,7 @@ async function executeStabilityImageNode(input: {
     });
 
     if (!response.ok) {
-      throw new Error(await extractErrorBody(response, 'Stability AI image generation failed'));
+      throw await createHttpStatusError(response, 'Stability AI image generation failed');
     }
 
     return {
@@ -2107,7 +2203,7 @@ async function executeStabilityImageNode(input: {
 
   if (operation === 'upscale') {
     if (!input.sourceImageInput) {
-      throw new Error('This Stability AI upscale model needs a connected source image.');
+      throw new NonRetryableError('This Stability AI upscale model needs a connected source image.');
     }
 
     input.onStatus?.('Upscaling image with Stability AI...');
@@ -2127,7 +2223,7 @@ async function executeStabilityImageNode(input: {
     });
 
     if (!response.ok) {
-      throw new Error(await extractErrorBody(response, 'Stability AI image upscale failed'));
+      throw await createHttpStatusError(response, 'Stability AI image upscale failed');
     }
 
     return {
@@ -2142,16 +2238,16 @@ async function executeStabilityImageNode(input: {
   }
 
   if (!input.sourceImageInput) {
-    throw new Error('This Stability AI edit model needs a connected source image.');
+    throw new NonRetryableError('This Stability AI edit model needs a connected source image.');
   }
 
   if ((operation === 'mask-inpaint' || operation === 'erase') && !input.maskImageInput) {
-    throw new Error('This Stability AI edit model needs a connected mask image.');
+    throw new NonRetryableError('This Stability AI edit model needs a connected mask image.');
   }
 
   const searchPrompt = normalizeOptionalString(input.nodeData.imageSearchPrompt as string | undefined);
   if ((operation === 'search-replace' || operation === 'search-recolor') && !searchPrompt) {
-    throw new Error('This Stability AI edit model needs a search prompt describing what to find.');
+    throw new NonRetryableError('This Stability AI edit model needs a search prompt describing what to find.');
   }
 
   input.onStatus?.('Editing image with Stability AI…');
@@ -2185,7 +2281,7 @@ async function executeStabilityImageNode(input: {
   });
 
   if (!response.ok) {
-    throw new Error(await extractErrorBody(response, 'Stability AI image edit failed'));
+    throw await createHttpStatusError(response, 'Stability AI image edit failed');
   }
 
   // Replace Background & Relight is async: the POST returns `{id}` and the finished image is
@@ -2196,10 +2292,17 @@ async function executeStabilityImageNode(input: {
         if (!generationId) {
           throw new Error('Stability AI did not return an async generation ID for this edit.');
         }
-        return fetchStabilityAsyncResultBlob({
-          apiKey: input.apiKey,
-          generationId,
+        return retryExistingAsyncJobPhase({
+          phaseLabel: `Stability generation ${generationId} polling/materialization failed`,
+          operation: () => fetchStabilityAsyncResultBlob({
+            apiKey: input.apiKey,
+            generationId,
+            signal: input.abortSignal,
+            onStatus: input.onStatus,
+          }),
+          settings: input.settings,
           onStatus: input.onStatus,
+          abortSignal: input.abortSignal,
         });
       })()
     : await response.blob();
@@ -2227,10 +2330,10 @@ async function executeLocalOpenImageNode(input: {
 }): Promise<ExecutionResult> {
   const endpoint = normalizeOptionalString(input.settings.providerSettings.localOpenImageEndpointUrl);
   if (!endpoint) {
-    throw new Error('Local/Open image endpoint is missing. Add it in Settings before running this model.');
+    throw new NonRetryableError('Local/Open image endpoint is missing. Add it in Settings before running this model.');
   }
   if (!input.sourceImageInput) {
-    throw new Error('Local/Open image edit models need a connected source image.');
+    throw new NonRetryableError('Local/Open image edit models need a connected source image.');
   }
 
   input.onStatus?.('Editing image with Local/Open endpoint…');
@@ -2263,7 +2366,7 @@ async function executeLocalOpenImageNode(input: {
   });
 
   if (!response.ok) {
-    throw new Error(await extractErrorBody(response, 'Local/Open image edit failed'));
+    throw await createHttpStatusError(response, 'Local/Open image edit failed');
   }
 
   const contentType = response.headers.get('content-type') ?? '';
@@ -2299,7 +2402,7 @@ async function executeAndroidAcceleratorImageNode(input: {
 }): Promise<ExecutionResult> {
   const baseUrl = normalizeAndroidAcceleratorBaseUrl(input.settings.providerSettings.androidAcceleratorBaseUrl);
   if (!baseUrl) {
-    throw new Error('Android accelerator URL is missing. Pair the phone and paste its LAN URL in Settings.');
+    throw new NonRetryableError('Android accelerator URL is missing. Pair the phone and paste its LAN URL in Settings.');
   }
 
   const dimensions = mapAspectRatioToImageDimensions(input.context.config.aspectRatio);
@@ -2404,7 +2507,7 @@ async function fetchImageResultBlob(url: string, fallback: string): Promise<Blob
   const response = await fetch(url);
 
   if (!response.ok) {
-    throw new Error(await extractErrorBody(response, fallback));
+    throw await createHttpStatusError(response, fallback);
   }
 
   return response.blob();
@@ -2475,7 +2578,7 @@ async function executeVertexImageNode(input: {
   const vertexConfig = getVertexProjectConfig(input.settings.providerSettings);
 
   if (!vertexConfig.projectId) {
-    throw new Error('Vertex AI project ID is missing. Add it in Settings before running Vertex image models.');
+    throw new NonRetryableError('Vertex AI project ID is missing. Add it in Settings before running Vertex image models.');
   }
 
   const generateVertexImage = resolveVertexImageGenerator(input.settings.providerSettings);
@@ -2665,6 +2768,7 @@ async function executeVideoNode(
   context: ExecutionContext,
   settings: RuntimeSettingsSnapshot,
   onStatus?: (statusMessage: string) => void,
+  abortSignal?: AbortSignal,
 ): Promise<ExecutionResult> {
   const provider = (node.data.provider as VideoProvider | undefined) ?? 'gemini';
   const rawModelId = getModelId(settings, 'video', provider, node.data.modelId);
@@ -2673,7 +2777,7 @@ async function executeVideoNode(
   const prompt = context.prompt.trim();
 
   if (!prompt && !context.startImageInput && !context.extensionVideoInput) {
-    throw new Error('Video nodes need an upstream text prompt.');
+    throw new NonRetryableError('Video nodes need an upstream text prompt.');
   }
 
   switch (provider) {
@@ -2725,7 +2829,13 @@ async function executeVideoNode(
         normalizeOptionalString(node.data.videoNegativePrompt as string | undefined),
         coerceOptionalNumber(node.data.videoBatchCount),
       );
-      const videoBlob = await pollGeminiVideoResult(apiKey, operation, onStatus);
+      const videoBlob = await retryExistingAsyncJobPhase({
+        phaseLabel: `Gemini operation ${operation.name ?? 'result'} polling/materialization failed`,
+        operation: () => pollGeminiVideoResult(apiKey, operation, onStatus),
+        settings,
+        onStatus,
+        abortSignal,
+      });
 
       return {
         result: await toResultUrl(videoBlob),
@@ -2741,7 +2851,7 @@ async function executeVideoNode(
     }
     case 'huggingface': {
       if (context.startImageInput || context.endImageInput) {
-        throw new Error('Hugging Face video models are text-to-video only in Sloom Studio. For a start frame use Gemini Veo or an Atlas image-to-video model.');
+        throw new NonRetryableError('Hugging Face video models are text-to-video only in Sloom Studio. For a start frame use Gemini Veo or an Atlas image-to-video model.');
       }
 
       const { HfInference } = await loadProviderModule(
@@ -2763,7 +2873,7 @@ async function executeVideoNode(
       };
     }
     case 'atlas': {
-      return executeAtlasVideoNode({ modelId, prompt, context, node, settings, onStatus });
+      return executeAtlasVideoNode({ modelId, prompt, context, node, settings, onStatus, abortSignal });
     }
   }
 }
@@ -2775,6 +2885,7 @@ async function executeAtlasVideoNode(input: {
   node: AppNode;
   settings: RuntimeSettingsSnapshot;
   onStatus?: (statusMessage: string) => void;
+  abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
   const apiKey = requireApiKey(input.settings.apiKeys.atlas ?? '', 'Atlas');
   const baseUrl = normalizeAtlasBaseUrl(input.settings.providerSettings.atlasBaseUrl);
@@ -2807,7 +2918,7 @@ async function executeAtlasVideoNode(input: {
   });
 
   if (!response.ok) {
-    throw new Error(await extractErrorBody(response, 'Atlas video generation failed'));
+    throw await createHttpStatusError(response, 'Atlas video generation failed');
   }
 
   const created = (await response.json()) as AtlasCreateResponse;
@@ -2818,14 +2929,26 @@ async function executeAtlasVideoNode(input: {
   const immediateOutput = extractAtlasOutputUrl(created);
   const predictionId = extractAtlasPredictionId(created);
   const resultUrl = immediateOutput ?? (predictionId
-    ? (await pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'video'))[0]
+    ? (await retryExistingAsyncJobPhase({
+        phaseLabel: `Atlas video prediction ${predictionId} polling failed`,
+        operation: () => pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'video'),
+        settings: input.settings,
+        onStatus: input.onStatus,
+        abortSignal: input.abortSignal,
+      }))[0]
     : undefined);
 
   if (!resultUrl) {
     throw new Error('Atlas did not return a prediction ID or video output.');
   }
 
-  const materialized = await materializeAtlasVideoResult(resultUrl);
+  const materialized = await retryExistingAsyncJobPhase({
+    phaseLabel: 'Atlas video result materialization failed',
+    operation: () => materializeAtlasVideoResult(resultUrl),
+    settings: input.settings,
+    onStatus: input.onStatus,
+    abortSignal: input.abortSignal,
+  });
   return {
     result: materialized.result,
     resultType: 'video',
@@ -2851,7 +2974,7 @@ async function executeVertexVeoVideoNode(input: {
   const vertexConfig = getVertexProjectConfig(input.settings.providerSettings);
 
   if (!vertexConfig.projectId) {
-    throw new Error('Vertex AI project ID is missing. Add it in Settings before running Vertex video models.');
+    throw new NonRetryableError('Vertex AI project ID is missing. Add it in Settings before running Vertex video models.');
   }
 
   const generateVertexVideo = resolveVertexVideoGenerator(input.settings.providerSettings);
@@ -2921,7 +3044,7 @@ async function executeVertexOmniVideoNode(input: {
   const vertexConfig = getVertexProjectConfig(input.settings.providerSettings);
 
   if (!vertexConfig.projectId) {
-    throw new Error('Vertex AI project ID is missing. Add it in Settings before running Vertex Gemini Omni video.');
+    throw new NonRetryableError('Vertex AI project ID is missing. Add it in Settings before running Vertex Gemini Omni video.');
   }
 
   const generateVertexVideo = resolveVertexVideoGenerator(input.settings.providerSettings);
@@ -2933,7 +3056,7 @@ async function executeVertexOmniVideoNode(input: {
   const media = await buildOmniVideoMediaParts(input.context);
 
   if (!input.prompt.trim() && media.length === 0) {
-    throw new Error('Gemini Omni video needs a prompt, image reference, or video reference.');
+    throw new NonRetryableError('Gemini Omni video needs a prompt, image reference, or video reference.');
   }
 
   input.onStatus?.('Submitting video render to Vertex Gemini Omni…');
@@ -2990,7 +3113,7 @@ async function executeGeminiOmniVideoNode(
   const media = await buildOmniVideoMediaParts(context);
 
   if (!prompt.trim() && media.length === 0) {
-    throw new Error('Gemini Omni video needs a prompt, image reference, or video reference.');
+    throw new NonRetryableError('Gemini Omni video needs a prompt, image reference, or video reference.');
   }
 
   const interactionInput: Array<Record<string, string>> = [];
@@ -3212,13 +3335,13 @@ async function executeAudioNode(
   }
 
   if (audioMode !== 'voiceChange' && !prompt) {
-    throw new Error('Audio nodes need an upstream text prompt.');
+    throw new NonRetryableError('Audio nodes need an upstream text prompt.');
   }
 
   switch (provider) {
     case 'gemini': {
       if (audioMode !== 'speech') {
-        throw new Error('Gemini audio nodes currently support text-to-speech only.');
+        throw new NonRetryableError('Gemini audio nodes currently support text-to-speech only.');
       }
 
       // Gemini TTS runs on the Gemini API key even in Vertex mode (Vertex does not serve the TTS
@@ -3293,7 +3416,7 @@ async function executeAudioNode(
 
       if (audioMode === 'speech') {
         if (!voiceId) {
-          throw new Error('Choose an ElevenLabs voice in the node or settings.');
+          throw new NonRetryableError('Choose an ElevenLabs voice in the node or settings.');
         }
 
         onStatus?.('Synthesizing audio with ElevenLabs…');
@@ -3319,7 +3442,7 @@ async function executeAudioNode(
         );
 
         if (!response.ok) {
-          throw new Error(await extractErrorBody(response, 'ElevenLabs TTS failed'));
+          throw await createHttpStatusError(response, 'ElevenLabs TTS failed');
         }
 
         return {
@@ -3351,7 +3474,7 @@ async function executeAudioNode(
         );
 
         if (!response.ok) {
-          throw new Error(await extractErrorBody(response, 'ElevenLabs sound effect generation failed'));
+          throw await createHttpStatusError(response, 'ElevenLabs sound effect generation failed');
         }
 
         return {
@@ -3392,7 +3515,7 @@ async function executeAudioNode(
         );
 
         if (!response.ok) {
-          throw new Error(await extractErrorBody(response, 'ElevenLabs music generation failed'));
+          throw await createHttpStatusError(response, 'ElevenLabs music generation failed');
         }
 
         return {
@@ -3408,11 +3531,11 @@ async function executeAudioNode(
       }
 
       if (!voiceId) {
-        throw new Error('Choose an ElevenLabs voice in the node or settings.');
+        throw new NonRetryableError('Choose an ElevenLabs voice in the node or settings.');
       }
 
       if (!context.audioSourceInput) {
-        throw new Error('Voice changer mode needs an upstream audio node or imported audio asset.');
+        throw new NonRetryableError('Voice changer mode needs an upstream audio node or imported audio asset.');
       }
 
       onStatus?.('Changing voice with ElevenLabs…');
@@ -3444,7 +3567,7 @@ async function executeAudioNode(
       );
 
       if (!response.ok) {
-        throw new Error(await extractErrorBody(response, 'ElevenLabs voice changer failed'));
+        throw await createHttpStatusError(response, 'ElevenLabs voice changer failed');
       }
 
       return {
@@ -3459,7 +3582,7 @@ async function executeAudioNode(
     }
     case 'huggingface': {
       if (audioMode !== 'speech') {
-        throw new Error('Hugging Face audio nodes currently support text-to-speech only.');
+        throw new NonRetryableError('Hugging Face audio nodes currently support text-to-speech only.');
       }
 
       onStatus?.('Generating audio with Hugging Face…');
@@ -3848,11 +3971,14 @@ async function startGeminiVideoGeneration(
     );
 
     if (!response.ok) {
-      throw new Error(await extractErrorBody(response, 'Gemini video generation failed'));
+      throw await createHttpStatusError(response, 'Gemini video generation failed');
     }
 
     return (await response.json()) as GeminiVideoOperation;
   } catch (error) {
+    if (error instanceof HttpStatusError || error instanceof NonRetryableError) {
+      throw error;
+    }
     throw new Error(extractSdkErrorMessage(error, 'Gemini video generation failed'));
   }
 }
@@ -3866,18 +3992,18 @@ async function pollGeminiVideoResult(
 
   for (let attempt = 0; attempt < 45; attempt += 1) {
     if (currentOperation.error) {
-      throw new Error(extractSdkOperationError(currentOperation.error));
+      throw new NonRetryableError(extractSdkOperationError(currentOperation.error));
     }
 
     if (currentOperation.done) {
       const video = currentOperation.response?.generateVideoResponse?.generatedSamples?.[0]?.video;
 
       if (!video) {
-        throw new Error('Gemini finished the job but did not provide a generated video.');
+        throw new NonRetryableError('Gemini finished the job but did not provide a generated video.');
       }
 
       if (!video.uri) {
-        throw new Error('Gemini finished the job but did not provide a downloadable video URI.');
+        throw new NonRetryableError('Gemini finished the job but did not provide a downloadable video URI.');
       }
 
       onStatus?.('Downloading completed video…');
@@ -3888,7 +4014,7 @@ async function pollGeminiVideoResult(
       });
 
       if (!videoResponse.ok) {
-        throw new Error(await extractErrorBody(videoResponse, 'Failed to download Gemini video'));
+        throw await createHttpStatusError(videoResponse, 'Failed to download Gemini video');
       }
 
       return videoResponse.blob();
@@ -3898,7 +4024,7 @@ async function pollGeminiVideoResult(
     await sleep(10_000);
 
     if (!currentOperation.name) {
-      throw new Error('Gemini video generation started without an operation name.');
+      throw new NonRetryableError('Gemini video generation started without an operation name.');
     }
 
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/${currentOperation.name}`, {
@@ -3908,13 +4034,13 @@ async function pollGeminiVideoResult(
     });
 
     if (!response.ok) {
-      throw new Error(await extractErrorBody(response, 'Gemini video status polling failed'));
+      throw await createHttpStatusError(response, 'Gemini video status polling failed');
     }
 
     currentOperation = (await response.json()) as GeminiVideoOperation;
   }
 
-  throw new Error('Gemini video generation timed out after waiting 7.5 minutes.');
+  throw new NonRetryableError('Gemini video generation timed out after waiting 7.5 minutes.');
 }
 
 function extractOpenAIImageUsage(
@@ -4186,14 +4312,22 @@ function inlineDataToBlob(data: string, mimeType: string): Blob {
 
 async function extractErrorBody(response: Response, fallback: string): Promise<string> {
   const contentType = response.headers.get('content-type') ?? '';
+  const text = await response.text();
 
   if (contentType.includes('application/json')) {
-    const payload = (await response.json()) as { error?: { message?: string }; message?: string };
-    return payload.error?.message ?? payload.message ?? `${fallback} (${response.status})`;
+    try {
+      const payload = JSON.parse(text) as { error?: { message?: string }; message?: string };
+      return (payload.error?.message ?? payload.message ?? text) || fallback;
+    } catch {
+      return text || fallback;
+    }
   }
 
-  const text = await response.text();
-  return text || `${fallback} (${response.status})`;
+  return text || fallback;
+}
+
+async function createHttpStatusError(response: Response, fallback: string): Promise<HttpStatusError> {
+  return new HttpStatusError(response.status, await extractErrorBody(response, fallback));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
