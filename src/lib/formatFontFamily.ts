@@ -9,7 +9,9 @@
  *
  * The parser is standards-conscious about family *identity*: it preserves the
  * distinction between quoted and unquoted names, preserves whitespace inside
- * quoted strings, and handles CSS escapes (hex, literal, and line continuations).
+ * quoted strings, treats CSS comments as whitespace, and handles CSS escapes
+ * (hex, literal, and line continuations) with the same terminator semantics as
+ * Chromium.
  */
 
 const GENERIC_FONT_FAMILIES = new Set([
@@ -61,15 +63,51 @@ function isCssWideKeyword(name: string): boolean {
   return CSS_WIDE_KEYWORDS.has(name.toLowerCase());
 }
 
-function isUnquotedIdentifier(name: string): boolean {
-  // CSS identifiers allow many codepoints, but the conservative rule used here
-  // covers every shipped bundled family and avoids quoting safe single-word
-  // Latin/CJK names.
-  return /^[a-zA-Z_][-\w]*$/u.test(name);
+function isIdentStartCodePoint(codePoint: number): boolean {
+  return (
+    (codePoint >= 0x41 && codePoint <= 0x5a) || // A-Z
+    (codePoint >= 0x61 && codePoint <= 0x7a) || // a-z
+    codePoint === 0x5f || // _
+    codePoint >= 0x80 // non-ASCII
+  );
 }
 
-function escapeDoubleQuotedName(name: string): string {
-  return name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+function isIdentCodePoint(codePoint: number): boolean {
+  return (
+    isIdentStartCodePoint(codePoint) ||
+    (codePoint >= 0x30 && codePoint <= 0x39) || // 0-9
+    codePoint === 0x2d // -
+  );
+}
+
+function isUnquotedIdentifier(name: string): boolean {
+  if (name.length === 0) {
+    return false;
+  }
+
+  const first = name.codePointAt(0) ?? 0;
+  // Identifiers may not start with a digit, nor with a hyphen followed by a digit.
+  if (first >= 0x30 && first <= 0x39) {
+    return false;
+  }
+  if (first === 0x2d && name.length > 1) {
+    const second = name.charCodeAt(1);
+    if (second >= 0x30 && second <= 0x39) {
+      return false;
+    }
+  }
+
+  for (let index = 0; index < name.length; index += 1) {
+    const codePoint = name.codePointAt(index) ?? 0;
+    if (!isIdentCodePoint(codePoint)) {
+      return false;
+    }
+    if (codePoint > 0xffff) {
+      index += 1; // surrogate pair already consumed by codePointAt
+    }
+  }
+
+  return true;
 }
 
 function codePointToChar(codePoint: number): string {
@@ -77,6 +115,61 @@ function codePointToChar(codePoint: number): string {
     return '\uFFFD';
   }
   return String.fromCodePoint(codePoint);
+}
+
+function codePointToHexEscape(codePoint: number): string {
+  const hex = codePoint.toString(16).toLowerCase();
+  return `\\${hex} `;
+}
+
+function escapeDoubleQuotedName(name: string): string {
+  let result = '';
+  for (let index = 0; index < name.length; index += 1) {
+    const codePoint = name.codePointAt(index) ?? 0;
+    if (codePoint > 0xffff) {
+      index += 1;
+    }
+
+    if (codePoint === 0x5c) {
+      // backslash
+      result += '\\\\';
+    } else if (codePoint === 0x22) {
+      // double quote
+      result += '\\"';
+    } else if (
+      codePoint <= 0x1f ||
+      codePoint === 0x7f ||
+      codePoint === 0x80 || // U+0080 is a valid identifier start but still escaped for clarity
+      false
+    ) {
+      // C0 controls and DEL are escaped as hex sequences with an explicit terminator.
+      result += codePointToHexEscape(codePoint);
+    } else {
+      result += String.fromCodePoint(codePoint);
+    }
+  }
+  return result;
+}
+
+/**
+ * Skip a CSS comment that starts at `index` (the `/` has already been seen).
+ * Returns the index of the first character after the closing comment delimiter,
+ * or `length` if the comment is unclosed.
+ */
+function skipCssComment(stack: string, index: number): number {
+  const length = stack.length;
+  // index currently points at '*'; confirm it is the start of a comment.
+  if (stack[index] !== '*') {
+    return index;
+  }
+  let cursor = index + 1;
+  while (cursor < length - 1) {
+    if (stack[cursor] === '*' && stack[cursor + 1] === '/') {
+      return cursor + 2;
+    }
+    cursor += 1;
+  }
+  return length;
 }
 
 /**
@@ -91,9 +184,9 @@ function consumeCssEscape(stack: string, index: number): { char: string; nextInd
 
   const first = stack[index];
 
-  // Hexadecimal escape: up to six hex digits. A trailing whitespace is consumed
-  // only when exactly six hex digits were read and the next character is a
-  // whitespace terminator.
+  // Hexadecimal escape: 1–6 hex digits. A single following whitespace is
+  // consumed as a terminator whenever it is present, matching Chromium and the
+  // CSS Syntax specification.
   if (/^[0-9a-fA-F]$/.test(first)) {
     let hex = first;
     let next = index + 1;
@@ -101,7 +194,7 @@ function consumeCssEscape(stack: string, index: number): { char: string; nextInd
       hex += stack[next];
       next += 1;
     }
-    if (hex.length === 6 && next < length && (stack[next] === ' ' || stack[next] === '\t')) {
+    if (next < length && (stack[next] === ' ' || stack[next] === '\t')) {
       next += 1;
     }
     return { char: codePointToChar(parseInt(hex, 16)), nextIndex: next };
@@ -126,18 +219,29 @@ function consumeCssEscape(stack: string, index: number): { char: string; nextInd
 /**
  * Parse a comma-separated CSS font-family stack into individual family records.
  * Handles double-quoted and single-quoted strings, escaped characters,
- * commas inside quoted names, and empty entries.
+ * commas inside quotes, CSS comments, and empty entries.
  */
 function parseFontFamilyStack(stack: string): ParsedFamily[] {
   const families: ParsedFamily[] = [];
   let index = 0;
   const length = stack.length;
 
-  while (index < length) {
-    // Skip whitespace and stray commas between families.
-    while (index < length && /\s/.test(stack[index])) {
-      index += 1;
+  function skipWhitespaceAndComments(): void {
+    while (index < length) {
+      if (/\s/.test(stack[index])) {
+        index += 1;
+        continue;
+      }
+      if (stack[index] === '/' && index + 1 < length && stack[index + 1] === '*') {
+        index = skipCssComment(stack, index + 1);
+        continue;
+      }
+      break;
     }
+  }
+
+  while (index < length) {
+    skipWhitespaceAndComments();
     if (index >= length) {
       break;
     }
@@ -178,6 +282,23 @@ function parseFontFamilyStack(stack: string): ParsedFamily[] {
         }
         if (char === ',') {
           break;
+        }
+        if (char === '/' && index + 1 < length && stack[index + 1] === '*') {
+          // A CSS comment inside an unquoted name acts as whitespace: it
+          // separates identifiers that still belong to the same family name.
+          if (raw.length > 0 && !raw.endsWith(' ')) {
+            raw += ' ';
+          }
+          index = skipCssComment(stack, index + 1);
+          continue;
+        }
+        if (/\s/.test(char)) {
+          // Collapse runs of whitespace (and comments) to a single separator.
+          if (raw.length > 0 && !raw.endsWith(' ')) {
+            raw += ' ';
+          }
+          index += 1;
+          continue;
         }
         raw += char;
         index += 1;

@@ -134,15 +134,20 @@ describe('formatFontFamily standards-conscious identity preservation', () => {
     expect(formatFontFamily('  Inter  ,  sans-serif  ')).toBe('Inter, sans-serif');
   });
 
-  it('parses CSS hexadecimal escapes including optional trailing whitespace', () => {
-    // \2c is a comma, \20 is a space. Short hex escapes terminate at the
-    // first non-hex character and do not consume it.
-    expect(formatFontFamily('Foo\\2c Bar, serif')).toBe('"Foo, Bar", serif');
+  it('parses CSS hexadecimal escapes with Chromium terminator semantics', () => {
+    // A single following whitespace is always consumed after a hex escape,
+    // regardless of how many hex digits were read.
+    expect(formatFontFamily('Foo\\2c Bar, serif')).toBe('"Foo,Bar", serif');
     expect(formatFontFamily('Foo\\000020Bar, serif')).toBe('"Foo Bar", serif');
-    // A six-digit escape consumes one trailing whitespace terminator; compare
-    // with the short escape below, where the terminator is not consumed.
     expect(formatFontFamily('Foo\\000041 Bar, serif')).toBe('FooABar, serif');
-    expect(formatFontFamily('Foo\\41 Bar, serif')).toBe('"FooA Bar", serif');
+    expect(formatFontFamily('Foo\\41 Bar, serif')).toBe('FooABar, serif');
+    expect(formatFontFamily('Foo\\1F600 Bar, serif')).toBe('Foo😀Bar, serif');
+  });
+
+  it('treats CSS comments as whitespace tokens, not family-name text', () => {
+    expect(formatFontFamily('Foo/**/Bar, serif')).toBe('"Foo Bar", serif');
+    expect(formatFontFamily('Foo/* comment */Bar, serif')).toBe('"Foo Bar", serif');
+    expect(formatFontFamily('Foo /* c1 */ /* c2 */ Bar, serif')).toBe('"Foo Bar", serif');
   });
 
   it('preserves escaped literal characters in unquoted identifiers', () => {
@@ -155,9 +160,12 @@ describe('formatFontFamily standards-conscious identity preservation', () => {
     expect(formatFontFamily('Foo\\\r\nBar, serif')).toBe('FooBar, serif');
   });
 
-  it('preserves escaped control characters and unicode escapes', () => {
-    expect(formatFontFamily('Foo\\41 Bar, serif')).toBe('"FooA Bar", serif');
-    expect(formatFontFamily('Foo\\1F600 Bar, serif')).toBe('"Foo😀 Bar", serif');
+  it('escapes control characters while preserving identity', () => {
+    // NUL is parsed as U+FFFD; the remaining characters form a valid identifier.
+    expect(formatFontFamily('Foo\\0 Bar, serif')).toBe('Foo\uFFFD' + 'Bar, serif');
+    // DEL and newline stay quoted and are escaped as hex sequences.
+    expect(formatFontFamily('Foo\\7f Bar, serif')).toBe('"Foo\\7f Bar", serif');
+    expect(formatFontFamily('Foo\\a Bar, serif')).toBe('"Foo\\a Bar", serif');
   });
 
   it('preserves the quote style of input families while normalizing unsafe content', () => {
