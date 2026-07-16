@@ -102,8 +102,8 @@ The `runner` config loader and non-incremental TypeScript commands were used bec
 ## Commits
 
 - Baseline: `cef276d8fc8a03d6708f0307cf24f2b5f26bfccd`.
-- Implementation/documentation commit: **blocked by environment Git metadata permissions**. The explicit owned-path staging command failed before changing the index with: `fatal: Unable to create '/home/cabewse/work_SPaC3/flow/.git/worktrees/flow-overlap-sol/index.lock': Read-only file system`.
-- No SHA is claimed or fabricated. The validated changes remain in the requested worktree for a writable Git environment to stage and commit.
+- Implementation, deterministic regressions, and initial note: `0657bc27ed99895b0b611ba1ef51f6a842b40125` (`fix(flow): make async provider retries job-safe`).
+- Documentation-only follow-up: this commit corrects the initial note after a transient first staging attempt reported a read-only index lock; its exact SHA is recorded in the final sprint handoff because a commit cannot contain its own hash.
 
 ## Residual risks
 
