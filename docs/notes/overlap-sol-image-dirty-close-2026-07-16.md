@@ -85,3 +85,46 @@ The first attempted test command did not execute because this isolated worktree 
 - Standalone `.slimg` save locations are not retained on `ImageDocument`, so a later Close > Save
   uses Save As again. Flow-linked `.slimg` documents do retain and overwrite their authorized path.
 
+## K2.7 stale-dialog follow-up
+
+Commit `1671118` closes the independent-review blocker at the real `ImageEditorTabs` / image-store
+boundary. A pending Save / Discard / Cancel decision now re-fetches the live document and checks its
+current dirty state. When an external save has already made that document clean, either non-cancel
+choice routes through the ordinary guarded `closeDocument` action and linked-close
+completion instead of `discardDocument`. Genuine dirty decisions, cancellation, save failures,
+linked-save behavior, and the existing busy guard stay on their prior paths.
+
+The regression opens a dirty Flow-linked document, requests tab close, verifies the dialog, calls
+the real store `markDocumentClean`, then clicks the stale Discard button. It proves the destructive
+store primitive is not called, the ordinary close bookkeeping removes the tab and histories, the
+dialog resolves, and the linked Flow workspace return completes.
+
+### Follow-up red / green evidence
+
+An initial test draft tried to observe linked navigation through the persisted editor store and
+failed during setup because this Vitest environment has no writable `localStorage`; it did not
+reach the stale-discard assertion and is not counted as the red boundary. The final regression
+observes the same real linked-close completion through the native workspace bridge.
+
+- Red before the production change:
+  `npx vitest run --configLoader runner src/components/ImageEditor/ImageEditorDirtyClose.test.tsx`
+  — **1 file failed; 1 test failed, 10 passed (11 total)**. The boundary assertion reported that
+  `discardDocument("dirty-doc")` was called once after `markDocumentClean`.
+- Green after the production change: the same command — **1 file passed; 11 tests passed**.
+- Complete affected set:
+  `npx vitest run --configLoader runner src/components/ImageEditor/ImageEditorDirtyClose.test.tsx src/store/imageEditorStore.test.ts src/components/ImageEditor/ImageSlimgFormat.test.ts src/components/ImageEditor/ImageSlimgCodec.test.ts src/components/ImageEditor/ImageDocumentSave.test.ts src/lib/imageLinkedEdit.test.ts src/lib/projectDocumentActions.test.ts src/components/Layout/ProjectLibraryModal.test.tsx src/lib/electronMainSource.test.ts src/components/ImageEditor/ImageDocumentExport.test.ts src/components/ImageEditor/ImagePsdInterop.test.ts src/lib/electronMenu.test.ts src/lib/projectValidation.test.ts src/components/ImageEditor/ImageXcfInterop.test.ts src/lib/appRecovery.test.ts`
+  — **15 files passed; 213 tests passed**.
+- `npx tsc -p tsconfig.app.json --noEmit --incremental false` — passed.
+- `npx tsc -p tsconfig.node.json --noEmit --incremental false` — passed.
+- `npx eslint src/components/ImageEditor/ImageEditorTabs.tsx src/components/ImageEditor/ImageEditorDirtyClose.test.tsx`
+  — passed with **0 errors and 0 warnings**.
+- `git diff --check` — passed.
+- `npm run build` — passed. Vite emitted only the existing module-externalization, runtime URL,
+  large-chunk, and plugin-timing warnings.
+
+### Follow-up residual risk
+
+This correction deliberately revalidates when a non-cancel decision is exercised rather than
+auto-closing as soon as some other save marks the document clean. The now-stale dialog can remain
+visible until the user chooses Save, Discard, or Cancel, but Save and Discard are both harmless
+clean-close requests at that point; Cancel still preserves the open clean session as users expect.
