@@ -148,3 +148,62 @@ exit 0
   no primitive identity for a side table.
 - This still does not measure browser/Electron WASM heap bytes over a long interactive session or
   prove press/RIP behavior; it proves deterministic handle ownership and failure ordering locally.
+
+## Final TypeScript-gate correction — 2026-07-16
+
+This correction retracts both earlier `tsconfig.app.json` `exit 0` claims in this note. They were
+false for the evidence commit `cdea103`: Sol's fresh mandatory gate correctly blocked on a
+mis-scoped `@ts-expect-error` in the compile-time ownership fixture. The directive was attached to
+the enclosing declaration rather than the failing `createTransform` property, so it was unused
+while the optional-dispose transform remained incompatible with the required owned-transform
+return type. This was an evidence/test assertion failure, not a change to the repaired runtime
+lifecycle paths.
+
+### Exact red and green TypeScript evidence
+
+Sol's red result at `cdea103`:
+
+```text
+npx tsc -p tsconfig.app.json --noEmit --incremental false --pretty false
+src/lib/paperIccLifecycle.test.ts(338,5): error TS2578: Unused '@ts-expect-error' directive.
+src/lib/paperIccLifecycle.test.ts(340,36): error TS2322: Type 'Promise<IccCmykTransform>' is not assignable to type 'Promise<OwnedPaperPdfxTransform>'.
+exit 2
+```
+
+The test-only correction commit `24d447bf1d644a6ba2225a2e5513b3464ad40bf6` derives the exact
+pipeline return type, constructs an otherwise-identical fixture with `dispose?: () => void`, and
+uses a zero-effect `satisfies` type assertion to require that it is *not* assignable. It has no
+suppression and no broad cast in the compile-time proof. The separate runtime test retains its
+intentional cast only to inject an invalid dependency and verify the runtime ownership guard.
+
+Green rerun:
+
+```text
+npx tsc -p tsconfig.app.json --noEmit --incremental false --pretty false
+exit 0
+
+npx tsc -p tsconfig.node.json --noEmit --incremental false --pretty false
+exit 0
+```
+
+### Final verification after the correction
+
+```text
+npx vitest run src/lib/paperIccLifecycle.test.ts src/lib/paperPdfxLifecycle.test.ts src/lib/paperIccEngine.test.ts src/lib/paperSoftProof.test.ts src/lib/paperSoftProofBrowser.test.ts src/lib/paperSoftProofImage.test.ts src/lib/paperPdfxPipeline.test.ts src/lib/paperPdfxPipelineVectorText.test.ts src/lib/paperPdfxExport.test.ts src/lib/paperPdfxVectorText.test.ts src/lib/paperPdfxNativeContent.test.ts src/lib/paperPdfxValidate.test.ts src/lib/paperManagedIccProfiles.test.ts src/lib/bundledFontPdfxIntegration.test.ts src/features/paper/workspace/PaperSoftProofModal.test.tsx src/features/paper/workspace/PaperIccProfileManager.test.tsx --configLoader=runner
+Test Files  16 passed (16)
+Tests       88 passed (88)
+
+npx eslint src/lib/paperIccLifecycle.test.ts
+exit 0
+
+git diff --check
+exit 0
+
+npx vite build --configLoader=runner
+3251 modules transformed; exit 0
+```
+
+The production build retains its existing `new URL("./", import.meta.url)`, browser-externalized
+`module` (Harfbuzz/lcms), and large-chunk warnings. The residual risks above remain unchanged:
+this local evidence proves deterministic lifecycle ownership/failure ordering, not long-running
+browser/Electron WASM heap behavior or press/RIP output.
