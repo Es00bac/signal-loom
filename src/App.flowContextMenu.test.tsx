@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from 'react';
+import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FLOW_NODE_CATALOG_CATEGORIES, nodeCategoryLabel } from './lib/nodeCatalog';
@@ -35,14 +35,11 @@ const reactFlowApi = vi.hoisted(() => ({
   setCenter: () => {},
 }));
 
-vi.mock('@xyflow/react', async () => {
-  const React = await import('react');
-  return {
-    ReactFlowProvider: ({ children }: { children?: React.ReactNode }) => children,
+vi.mock('@xyflow/react', () => ({
+    ReactFlowProvider: ({ children }: { children?: ReactNode }) => children,
     useReactFlow: () => reactFlowApi,
     useViewport: () => ({ zoom: 1 }),
-  };
-});
+}));
 
 vi.mock('./features/flow/workspace/FlowWorkspaceShell', () => ({
   FlowWorkspaceShell: ({ onPaneContextMenu }: { onPaneContextMenu: (event: MouseEvent) => void }) => {
@@ -70,7 +67,7 @@ vi.mock('./components/Common/AlertDialog', () => ({ AlertDialog: () => null }));
 vi.mock('./components/Common/CommandPalette', () => ({ CommandPalette: () => null }));
 vi.mock('./components/Common/ActivityTrailPanel', () => ({ ActivityTrailPanel: () => null }));
 vi.mock('./components/Common/GamepadInputManager', () => ({ GamepadInputManager: () => null }));
-vi.mock('./components/Recovery/ErrorBoundary', () => ({ ErrorBoundary: ({ children }: { children?: React.ReactNode }) => children }));
+vi.mock('./components/Recovery/ErrorBoundary', () => ({ ErrorBoundary: ({ children }: { children?: ReactNode }) => children }));
 vi.mock('./lib/nativeApp', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./lib/nativeApp')>();
   return {

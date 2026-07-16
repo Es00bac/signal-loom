@@ -1,7 +1,11 @@
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
+
 export type DesktopWorkspaceId = 'flow' | 'editor' | 'image' | 'paper';
 export type DesktopWorkspaceLaunchCommand = 'view:flow' | 'view:editor' | 'view:image' | 'view:paper';
 export type DesktopPackageSurface = 'electron-native-menu';
-export type DesktopPackagingReadiness = 'ready' | 'configured-with-caveats';
+export type DesktopPackagingReadiness = 'ready' | 'configured-with-caveats' | 'blocked';
 export type DesktopPackagingPlatform = 'windows' | 'macos' | 'linux';
 export type DesktopPackagingHostRequirement =
   | 'linux-cross-build-supported'
@@ -44,8 +48,15 @@ export interface DesktopPackagingDependencyReadiness {
 export interface DesktopPackagingChecklistItem {
   id: 'desktop-app-files' | 'native-render-resource' | 'bundled-font-library-resource' | 'windows-installer-dependencies';
   label: string;
-  readiness: Extract<DesktopPackagingReadiness, 'ready'>;
+  readiness: Extract<DesktopPackagingReadiness, 'ready' | 'blocked'>;
   evidence: string[];
+  blockers?: string[];
+}
+
+export interface StagedFontLibraryReadiness {
+  readiness: Extract<DesktopPackagingReadiness, 'ready' | 'blocked'>;
+  evidence: string[];
+  blockers: string[];
 }
 
 export interface DesktopPackagingReadinessSummary {
@@ -245,6 +256,7 @@ function buildDesktopPackagingDependencyChecklist(
 ): DesktopPackagingChecklistItem[] {
   const packagedFiles = packageJson.build?.files ?? [];
   const extraResources = packageJson.build?.extraResources ?? [];
+  const stagedFontLibrary = verifyStagedFontLibrary(join(process.cwd(), 'build', 'font-library'));
 
   return [
     {
@@ -264,10 +276,14 @@ function buildDesktopPackagingDependencyChecklist(
     {
       id: 'bundled-font-library-resource',
       label: 'Desktop build includes the audited managed font library as a read-only extra resource.',
-      readiness: 'ready',
-      evidence: extraResources
+      readiness: stagedFontLibrary.readiness,
+      evidence: [
+        ...extraResources
         .filter((resource) => resource.from === 'build/font-library' && resource.to === 'font-library')
         .map((resource) => `${resource.from} -> ${resource.to}`),
+        ...stagedFontLibrary.evidence,
+      ],
+      ...(stagedFontLibrary.blockers.length ? { blockers: stagedFontLibrary.blockers } : {}),
     },
     {
       id: 'windows-installer-dependencies',
@@ -279,6 +295,95 @@ function buildDesktopPackagingDependencyChecklist(
       ],
     },
   ];
+}
+
+/** Verify the staged electron-builder font payload, not merely its package.json declaration. */
+export function verifyStagedFontLibrary(root: string): StagedFontLibraryReadiness {
+  const manifestPath = join(root, 'inventory', 'font-inventory.json');
+  const sumsPath = join(root, 'inventory', 'SHA256SUMS');
+  const blockers: string[] = [];
+
+  if (!existsSync(manifestPath)) blockers.push('Staged font manifest is missing.');
+  if (!existsSync(sumsPath)) blockers.push('Staged font checksum manifest is missing.');
+  if (blockers.length) return { readiness: 'blocked', evidence: [], blockers };
+
+  try {
+    const inventory = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      catalogFamilyCount?: unknown;
+      faceCount?: unknown;
+      fontFileCount?: unknown;
+      criticalErrorCount?: unknown;
+      families?: unknown;
+    };
+    const families = Array.isArray(inventory.families) ? inventory.families : [];
+    const faces = families.flatMap((family) => (
+      isRecord(family) && Array.isArray(family.faces) ? family.faces : []
+    ));
+    const declaredFaceCount = typeof inventory.faceCount === 'number' ? inventory.faceCount : 0;
+    const declaredFontFileCount = typeof inventory.fontFileCount === 'number' ? inventory.fontFileCount : 0;
+
+    if (inventory.catalogFamilyCount !== 116 || families.length !== 116) {
+      blockers.push('Staged font manifest does not contain the approved 116 families.');
+    }
+    if (declaredFaceCount !== 430 || declaredFontFileCount !== 430 || faces.length !== 430) {
+      blockers.push('Staged font manifest does not contain the approved 430 faces.');
+    }
+    if (inventory.criticalErrorCount !== 0) {
+      blockers.push('Staged font manifest reports critical font validation errors.');
+    }
+
+    const checksums = new Map<string, string>();
+    for (const line of readFileSync(sumsPath, 'utf8').trim().split(/\r?\n/).filter(Boolean)) {
+      const match = /^([0-9a-f]{64})  (.+)$/i.exec(line);
+      if (!match || !isSafeRelativePath(match[2])) {
+        blockers.push('Staged font checksum manifest contains an invalid entry.');
+        continue;
+      }
+      checksums.set(match[2], match[1].toLowerCase());
+    }
+
+    for (const face of faces) {
+      if (!isRecord(face) || typeof face.file !== 'string' || typeof face.sha256 !== 'string' || !isSafeRelativePath(face.file)) {
+        blockers.push('Staged font manifest contains an invalid face entry.');
+        continue;
+      }
+      if (checksums.get(face.file) !== face.sha256.toLowerCase()) {
+        blockers.push(`Staged font checksum manifest does not match ${face.file}.`);
+      }
+    }
+
+    for (const [relativePath, expectedHash] of checksums) {
+      const path = join(root, relativePath);
+      if (!existsSync(path) || !statSync(path).isFile() || statSync(path).size === 0) {
+        blockers.push(`Staged font bytes are missing for ${relativePath}.`);
+        continue;
+      }
+      const actualHash = createHash('sha256').update(readFileSync(path)).digest('hex');
+      if (actualHash !== expectedHash) {
+        blockers.push(`Staged font bytes fail checksum verification for ${relativePath}.`);
+      }
+    }
+  } catch {
+    blockers.push('Staged font manifest could not be parsed or verified.');
+  }
+
+  return blockers.length
+    ? { readiness: 'blocked', evidence: [], blockers: [...new Set(blockers)] }
+    : {
+      readiness: 'ready',
+      evidence: ['Staged 116-family/430-face font manifest and all checksummed font bytes verified.'],
+      blockers: [],
+    };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isSafeRelativePath(value: string): boolean {
+  return Boolean(value)
+    && !isAbsolute(value)
+    && !value.replace(/\\/g, '/').split('/').some((part) => !part || part === '.' || part === '..');
 }
 
 function normalizeElectronBuilderTargets(targets: ElectronBuilderTarget): string[] {

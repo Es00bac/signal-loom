@@ -1,5 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 
 const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'));
@@ -164,8 +166,12 @@ describe('desktop and Android packaging configuration', () => {
         {
           id: 'bundled-font-library-resource',
           label: 'Desktop build includes the audited managed font library as a read-only extra resource.',
-          readiness: 'ready',
+          readiness: 'blocked',
           evidence: ['build/font-library -> font-library'],
+          blockers: [
+            'Staged font manifest is missing.',
+            'Staged font checksum manifest is missing.',
+          ],
         },
         {
           id: 'windows-installer-dependencies',
@@ -179,6 +185,46 @@ describe('desktop and Android packaging configuration', () => {
         'Provider credentials, model downloads, and Android accelerator setup remain runtime/user configuration and are not bundled in desktop installers.',
       ],
     });
+  });
+
+  it('blocks desktop packaging readiness when the configured staged font library is absent', async () => {
+    const { buildDesktopPackagingReadinessSummary } = await loadDesktopPackagingModule();
+
+    const fontLibrary = buildDesktopPackagingReadinessSummary(packageJson)
+      .dependencyChecklist
+      .find((item) => item.id === 'bundled-font-library-resource');
+
+    expect(fontLibrary?.readiness).toBe('blocked');
+  });
+
+  it('blocks a staged font library when its checksum manifest does not match the staged bytes', async () => {
+    const { verifyStagedFontLibrary } = await loadDesktopPackagingModule();
+    const root = mkdtempSync(join(tmpdir(), 'sloom-staged-fonts-'));
+    const relativeFontPath = 'collection/base/example.ttf';
+    const expectedHash = createHash('sha256').update('expected font bytes').digest('hex');
+
+    try {
+      mkdirSync(join(root, 'inventory'), { recursive: true });
+      mkdirSync(join(root, 'collection', 'base'), { recursive: true });
+      writeFileSync(join(root, 'inventory', 'font-inventory.json'), JSON.stringify({
+        catalogFamilyCount: 116,
+        faceCount: 430,
+        fontFileCount: 430,
+        criticalErrorCount: 0,
+        families: [{ faces: [{ file: relativeFontPath, sha256: expectedHash }] }],
+      }));
+      writeFileSync(join(root, 'inventory', 'SHA256SUMS'), `${expectedHash}  ${relativeFontPath}\n`);
+      writeFileSync(join(root, relativeFontPath), 'different staged bytes');
+
+      expect(verifyStagedFontLibrary(root)).toMatchObject({
+        readiness: 'blocked',
+        blockers: expect.arrayContaining([
+          `Staged font bytes fail checksum verification for ${relativeFontPath}.`,
+        ]),
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('keeps repeatable Android sync and debug build scripts available', () => {
