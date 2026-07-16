@@ -177,6 +177,29 @@ describe('Image Editor dirty document close contract', () => {
     expect(useImageEditorStore.getState().redoStacks['dirty-doc']).toBeUndefined();
   });
 
+  it('revalidates an externally saved document before a stale Discard decision', async () => {
+    const openWorkspaceWindow = vi.fn(async () => undefined);
+    window.signalLoomNative = { openWorkspaceWindow } as never;
+    openDirtyDocument({ linkedEdit: { kind: 'slimg-node', filePath: '/tmp/flow-edit.slimg' } });
+    renderTabs();
+
+    await clickClose();
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+
+    const discardDocument = vi.spyOn(useImageEditorStore.getState(), 'discardDocument');
+    act(() => useImageEditorStore.getState().markDocumentClean('dirty-doc'));
+    expect(useImageEditorStore.getState().documents[0]?.dirty).toBe(false);
+
+    await choose('Discard');
+
+    expect(discardDocument).not.toHaveBeenCalled();
+    expect(useImageEditorStore.getState().documents).toHaveLength(0);
+    expect(useImageEditorStore.getState().undoStacks['dirty-doc']).toBeUndefined();
+    expect(useImageEditorStore.getState().redoStacks['dirty-doc']).toBeUndefined();
+    expect(openWorkspaceWindow).toHaveBeenCalledWith('flow');
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
   it('preserves the active dirty document, selection, and histories on Cancel and Escape', async () => {
     openDirtyDocument();
     renderTabs();

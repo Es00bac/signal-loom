@@ -88,6 +88,12 @@ export function ImageEditorTabs({ disabled = false, onOpenImageFile, onNewCanvas
       setPendingCloseDocId(null);
       return;
     }
+    if (!document.dirty) {
+      setPendingCloseDocId(null);
+      closeDocument(document.id);
+      void completeLinkedImageDocumentClose(document.linkedEdit);
+      return;
+    }
     setCloseBusy(true);
     void finishImageDocumentClose(document, decision)
       .then((outcome) => {
