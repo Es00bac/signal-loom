@@ -294,6 +294,39 @@ describe('resolveFlowOutputType', () => {
 
     expect(resolveFlowOutputType('exit', null, { nodes, edges })).toEqual({ kind: 'number' });
   });
+
+  it('infers Switch Case output types from the connected key input', () => {
+    const nodes = [
+      node('text', 'textNode'),
+      node('switch', 'switchCaseNode'),
+    ];
+    const edges: Edge[] = [
+      { id: 'text-switch-key', source: 'text', target: 'switch', targetHandle: 'key' },
+    ];
+
+    expect(resolveFlowOutputType('switch', 'case1', { nodes, edges })).toEqual({ kind: 'text' });
+    expect(resolveFlowOutputType('switch', 'case2', { nodes, edges })).toEqual({ kind: 'text' });
+    expect(resolveFlowOutputType('switch', 'case3', { nodes, edges })).toEqual({ kind: 'text' });
+  });
+
+  it.each([
+    ['textNode', {}, 'text', null],
+    ['valueNode', { valueKind: 'json', value: '{"demo":true}' }, 'json', 'json'],
+    ['imageGen', { mediaMode: 'import' }, 'image', 'image'],
+  ] as const)('allows Switch Case %s pass-through to typed consumers', (sourceType, sourceData, kind, targetHandle) => {
+    const targetType = kind === 'image' ? 'cropImageNode' : kind === 'json' ? 'jsonQueryNode' : 'regexReplaceNode';
+    const nodes = [
+      node('source', sourceType, sourceData),
+      node('switch', 'switchCaseNode'),
+      node('target', targetType),
+    ];
+    const edges: Edge[] = [
+      { id: 'source-switch-key', source: 'source', target: 'switch', targetHandle: 'key' },
+    ];
+
+    expect(validateFlowConnection(connection({ source: 'switch', sourceHandle: 'case1', target: 'target', targetHandle }), { nodes, edges }))
+      .toMatchObject({ valid: true, carriedType: { kind } });
+  });
 });
 
 describe('annotateFlowEdge', () => {

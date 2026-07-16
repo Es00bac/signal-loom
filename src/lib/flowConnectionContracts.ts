@@ -192,6 +192,10 @@ function resolveFlowOutputTypeUncached(
     return resolveConsistentIncomingType(node.id, ['input'], context, nextVisited);
   }
 
+  if (node.type === 'switchCaseNode' && /^case\d+$/.test(normalizedHandle ?? '')) {
+    return resolveConsistentIncomingType(node.id, ['key'], context, nextVisited);
+  }
+
   if (node.type === 'conditionalNode' && normalizedHandle === null) {
     return resolveConsistentIncomingType(node.id, ['valueIfTrue', 'valueIfFalse'], context, nextVisited);
   }
