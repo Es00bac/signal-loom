@@ -57,6 +57,12 @@ export interface IccProfileInfo {
   colorSpace: string;
 }
 
+export const ICC_DISPOSED_RESOURCE_ERROR = 'This ICC transform has been disposed.';
+
+function assertIccTransformOpen(disposed: boolean): void {
+  if (disposed) throw new Error(ICC_DISPOSED_RESOURCE_ERROR);
+}
+
 interface LcmsOwnedHandles {
   sRgb?: number;
   cmyk?: number;
@@ -123,7 +129,7 @@ export interface IccTransformOptions {
 export async function createRgbToCmykTransform(
   cmykProfileBytes: Uint8Array,
   options: IccTransformOptions = {},
-): Promise<IccCmykTransform> {
+): Promise<IccCmykTransform & { dispose(): void }> {
   const lcms = await getIccEngine();
   const handles: LcmsOwnedHandles = {};
   try {
@@ -148,13 +154,16 @@ export async function createRgbToCmykTransform(
     kind: 'icc',
     profileName,
     rgbToCmyk: (rgb: PaperRgb): PaperCmyk => {
+      assertIccTransformOpen(disposed);
       const out = lcms.cmsDoTransform(transform!, new Uint8Array([clampByte(rgb.r), clampByte(rgb.g), clampByte(rgb.b)]), 1);
       return { c: to100(out[0]), m: to100(out[1]), y: to100(out[2]), k: to100(out[3]) };
     },
     // Whole-image path for the raster PDF/X exporter: one lcms2 call converts the entire page. lcms
     // returns raw 0–255 CMYK samples, which are exactly the DeviceCMYK image data a PDF wants.
-    transformRgbBuffer: (rgb: Uint8Array, pixelCount: number): Uint8Array =>
-      lcms.cmsDoTransform(transform!, rgb, pixelCount),
+    transformRgbBuffer: (rgb: Uint8Array, pixelCount: number): Uint8Array => {
+      assertIccTransformOpen(disposed);
+      return lcms.cmsDoTransform(transform!, rgb, pixelCount);
+    },
     dispose: () => {
       if (disposed) return;
       disposed = true;
@@ -220,10 +229,14 @@ export async function createSoftProofTransform(
   return {
     profileName,
     proofRgb: (rgb: PaperRgb): PaperRgb => {
+      assertIccTransformOpen(disposed);
       const out = lcms.cmsDoTransform(transform!, new Uint8Array([clampByte(rgb.r), clampByte(rgb.g), clampByte(rgb.b)]), 1);
       return { r: out[0], g: out[1], b: out[2] };
     },
-    proofRgbBuffer: (rgb: Uint8Array, pixelCount: number): Uint8Array => lcms.cmsDoTransform(transform!, rgb, pixelCount),
+    proofRgbBuffer: (rgb: Uint8Array, pixelCount: number): Uint8Array => {
+      assertIccTransformOpen(disposed);
+      return lcms.cmsDoTransform(transform!, rgb, pixelCount);
+    },
     dispose: () => {
       if (disposed) return;
       disposed = true;

@@ -3,7 +3,11 @@
 
 import type { PaperDocument, PaperManagedFontFace } from '../types/paper';
 import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
-import { createHarfBuzzPaperTextShaper, type PaperTextShaper } from './paperTextShaper';
+import {
+  createHarfBuzzPaperTextShaper,
+  type CreateHarfBuzzPaperTextShaperOptions,
+  type PaperTextShaper,
+} from './paperTextShaper';
 import {
   compilePaperRenderPlan,
   type PaperAffineTransform,
@@ -19,7 +23,7 @@ import {
   type PdfxNativePage,
   type PdfxStandard,
 } from './paperPdfxExport';
-import { usingOwnedPaperResource, type IccCmykTransform } from './paperColorManagement';
+import { disposeOwnedPaperResources, usingOwnedPaperResource, type IccCmykTransform } from './paperColorManagement';
 import type { PaperOutputProfileResolution } from './paperManagedIccProfiles';
 
 export interface PaperPdfxPageRaster {
@@ -58,9 +62,16 @@ export interface PaperPdfxPipelineDeps {
   /** Rasterize one isolated output selection INCLUDING bleed to RGBA at the requested DPI. */
   rasterizePage: (pageId: string, outputDpi: number, options?: RasterizePageOptions) => Promise<PaperPdfxPageRaster>;
   /** Build a fresh sRGB→CMYK transform from the exact managed ICC bytes; ownership transfers to this pipeline. */
-  createTransform: (bytes: Uint8Array) => Promise<IccCmykTransform>;
+  createTransform: (bytes: Uint8Array) => Promise<OwnedPaperPdfxTransform>;
   /** Resolve content-addressed bytes for one managed font face. Browser/system font resolution is not used. */
   loadManagedFontBytes?: (assetRef: BinaryAssetRef) => Promise<Uint8Array>;
+  /** Injectable only for a managed-font runtime; the pipeline owns and destroys every returned shaper. */
+  createTextShaper?: (bytes: Uint8Array, options: CreateHarfBuzzPaperTextShaperOptions) => Promise<PaperTextShaper>;
+}
+
+/** Fresh transform whose native/WASM lifetime is transferred to the PDF/X pipeline. */
+export interface OwnedPaperPdfxTransform extends IccCmykTransform {
+  dispose(): void;
 }
 
 interface ManagedFontRuntime {
@@ -95,14 +106,20 @@ function createManagedFontRuntime(deps: PaperPdfxPipelineDeps): ManagedFontRunti
       const key = faceKey(face);
       let shaper = shapers.get(key);
       if (!shaper) {
-        shaper = await createHarfBuzzPaperTextShaper(await loadBytes(face), { collectionIndex: face.collectionIndex });
+        shaper = await (deps.createTextShaper ?? createHarfBuzzPaperTextShaper)(
+          await loadBytes(face),
+          { collectionIndex: face.collectionIndex },
+        );
         shapers.set(key, shaper);
       }
       return shaper;
     },
     dispose: () => {
-      for (const shaper of shapers.values()) shaper.destroy();
-      shapers.clear();
+      try {
+        disposeOwnedPaperResources([...shapers.values()].map((shaper) => ({ dispose: () => shaper.destroy() })));
+      } finally {
+        shapers.clear();
+      }
     },
   };
 }
@@ -210,7 +227,10 @@ export async function exportPaperDocumentToPdfx(
   const outputProfile = options.outputProfile;
   if (!outputProfile) throw new Error('PDF/X export requires an exact managed CMYK output profile.');
   const transform = await deps.createTransform(outputProfile.bytes);
-  return usingOwnedPaperResource({ dispose: () => transform.dispose?.() }, async () => {
+  if (!transform || typeof transform.dispose !== 'function') {
+    throw new Error('PDF/X pipeline createTransform must return a fresh owned transform with dispose().');
+  }
+  return usingOwnedPaperResource({ dispose: () => transform.dispose() }, async () => {
   const dpi = options.outputDpi && options.outputDpi > 0 ? options.outputDpi : 300;
   const pdfxOptions = {
     standard: options.standard,
@@ -253,8 +273,7 @@ export async function exportPaperDocumentToPdfx(
     };
   }
   const fontRuntime = createManagedFontRuntime(deps);
-
-  try {
+  return usingOwnedPaperResource(fontRuntime, async () => {
     const plan = await compilePaperRenderPlan(document, { managedFontResolver: fontRuntime.resolver });
     const pages: PdfxNativePage[] = [];
     for (const planPage of plan.pages) {
@@ -292,8 +311,6 @@ export async function exportPaperDocumentToPdfx(
 
     const result = await buildPaperPdfx(pages, pdfxOptions);
     return { ...result, renderPlan: plan };
-  } finally {
-    fontRuntime.dispose();
-  }
+  });
   });
 }

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { createSoftProofTransform } from './paperIccEngine';
+import { createSoftProofTransform, ICC_DISPOSED_RESOURCE_ERROR } from './paperIccEngine';
 
 // Real redistribution-cleared FOGRA39 (ISO Coated v2) CMYK profile bundled in public/icc/.
 const fogra39 = new Uint8Array(readFileSync('public/icc/FOGRA39L_coated.icc'));
@@ -77,5 +77,13 @@ describe('createSoftProofTransform (real lcms2 soft proof)', () => {
 
   it('rejects a non-CMYK profile', async () => {
     await expect(createSoftProofTransform(new Uint8Array([1, 2, 3, 4]))).rejects.toThrow();
+  });
+
+  it('rejects every soft-proof operation after disposal before re-entering lcms', async () => {
+    const proof = await createSoftProofTransform(fogra39);
+    proof.dispose();
+
+    expect(() => proof.proofRgb({ r: 1, g: 2, b: 3 })).toThrow(ICC_DISPOSED_RESOURCE_ERROR);
+    expect(() => proof.proofRgbBuffer(new Uint8Array([1, 2, 3]), 1)).toThrow(ICC_DISPOSED_RESOURCE_ERROR);
   });
 });

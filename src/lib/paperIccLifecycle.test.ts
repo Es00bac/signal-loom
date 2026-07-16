@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultPaperDocument } from './paperDocument';
-import { exportPaperDocumentToPdfx } from './paperPdfxPipeline';
+import { exportPaperDocumentToPdfx, type OwnedPaperPdfxTransform, type PaperPdfxPipelineDeps } from './paperPdfxPipeline';
+import {
+  disposeOwnedPaperResources,
+  getPaperResourceCleanupError,
+  PaperResourcePrimaryAndCleanupError,
+  usingOwnedPaperResource,
+  type IccCmykTransform,
+} from './paperColorManagement';
 import type { PaperOutputProfileResolution } from './paperManagedIccProfiles';
 import type { BinaryAssetId } from '../shared/assets/contentAddressedAsset';
 
@@ -11,12 +18,14 @@ interface LifecycleStats {
   closedProfiles: number;
   createdTransforms: number;
   deletedTransforms: number;
+  deleteTransformAttempts: number;
+  closeProfileAttempts: number;
   outstandingProfiles(): number;
   outstandingTransforms(): number;
 }
 
-function createTrackedLcms(input: { failure?: FailurePoint; throwDuringCleanup?: boolean } = {}): { module: Record<string, unknown>; stats: LifecycleStats } {
-  const { failure, throwDuringCleanup = false } = input;
+function createTrackedLcms(input: { failure?: FailurePoint; throwDuringCleanup?: boolean; failDeleteTransform?: boolean } = {}): { module: Record<string, unknown>; stats: LifecycleStats } {
+  const { failure, throwDuringCleanup = false, failDeleteTransform = false } = input;
   let nextProfile = 1;
   let nextTransform = 100;
   const profiles = new Set<number>();
@@ -26,6 +35,8 @@ function createTrackedLcms(input: { failure?: FailurePoint; throwDuringCleanup?:
     closedProfiles: 0,
     createdTransforms: 0,
     deletedTransforms: 0,
+    deleteTransformAttempts: 0,
+    closeProfileAttempts: 0,
     outstandingProfiles: () => profiles.size,
     outstandingTransforms: () => transforms.size,
   };
@@ -52,12 +63,16 @@ function createTrackedLcms(input: { failure?: FailurePoint; throwDuringCleanup?:
       cmsGetProfileInfoASCII: () => 'Tracked CMYK',
       cmsDoTransform: (_handle: number, bytes: Uint8Array) => new Uint8Array(bytes),
       cmsDeleteTransform: (handle: number) => {
+        stats.deleteTransformAttempts += 1;
+        // A failed delete does not relinquish the handle. The fake deliberately throws before
+        // mutating its ownership set so lifecycle tests can detect false-success accounting.
+        if (throwDuringCleanup || failDeleteTransform) throw new Error('delete transform failed');
         if (transforms.delete(handle)) stats.deletedTransforms += 1;
-        if (throwDuringCleanup) throw new Error('delete transform failed');
       },
       cmsCloseProfile: (handle: number) => {
-        if (profiles.delete(handle)) stats.closedProfiles += 1;
+        stats.closeProfileAttempts += 1;
         if (throwDuringCleanup) throw new Error('close profile failed');
+        if (profiles.delete(handle)) stats.closedProfiles += 1;
       },
     },
   };
@@ -151,12 +166,28 @@ describe('AUD-038 ICC ownership lifecycle (red baseline)', () => {
     expect(tracked.stats.outstandingProfiles()).toBe(0);
   });
 
-  it('continues every cleanup after a delete failure and surfaces a cleanup-only error', async () => {
-    const tracked = createTrackedLcms({ throwDuringCleanup: true });
+  it('keeps a failed deletion outstanding while later owned handles are attempted and released', async () => {
+    const tracked = createTrackedLcms({ failDeleteTransform: true });
     const { createRgbToCmykTransform } = await loadEngine(tracked.module);
     const transform = await createRgbToCmykTransform(new Uint8Array([1]));
 
-    expect(() => transform.dispose?.()).toThrow(/Failed to release 3 Paper native\/WASM resources/);
+    expect(() => transform.dispose()).toThrow(/Failed to release 1 Paper native\/WASM resource/);
+    expect(tracked.stats.deleteTransformAttempts).toBe(1);
+    expect(tracked.stats.closeProfileAttempts).toBe(2);
+    expect(tracked.stats.outstandingTransforms()).toBe(1);
+    expect(tracked.stats.outstandingProfiles()).toBe(0);
+  });
+
+  it('makes disposal idempotent while attempting every owned handle exactly once', async () => {
+    const tracked = createTrackedLcms();
+    const { createRgbToCmykTransform } = await loadEngine(tracked.module);
+    const transform = await createRgbToCmykTransform(new Uint8Array([1]));
+
+    transform.dispose();
+    transform.dispose();
+
+    expect(tracked.stats.deleteTransformAttempts).toBe(1);
+    expect(tracked.stats.closeProfileAttempts).toBe(2);
     expect(tracked.stats.outstandingTransforms()).toBe(0);
     expect(tracked.stats.outstandingProfiles()).toBe(0);
   });
@@ -174,10 +205,66 @@ describe('AUD-038 ICC ownership lifecycle (red baseline)', () => {
 
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toBe('Could not create the ICC color transform.');
-    const { getPaperResourceCleanupError } = await import('./paperColorManagement');
-    expect(getPaperResourceCleanupError(thrown)?.failures).toHaveLength(2);
+    const { getPaperResourceCleanupError: getCleanupForEngine } = await import('./paperColorManagement');
+    expect(getCleanupForEngine(thrown)?.failures).toHaveLength(2);
     expect(tracked.stats.outstandingTransforms()).toBe(0);
-    expect(tracked.stats.outstandingProfiles()).toBe(0);
+    // Cleanup was attempted but the fake correctly leaves handles outstanding when their native
+    // deletion throws before releasing ownership.
+    expect(tracked.stats.outstandingProfiles()).toBe(2);
+  });
+});
+
+describe('AUD-038 cleanup evidence is side-channelled and merged', () => {
+  it.each([
+    Object.freeze(new Error('frozen primary')),
+    Object.preventExtensions(new Error('non-extensible primary')),
+  ])('preserves a non-mutable primary Error identity with cleanup evidence', async (primary) => {
+    let thrown: unknown;
+    try {
+      await usingOwnedPaperResource({ dispose: () => { throw new Error('cleanup failure'); } }, () => { throw primary; });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBe(primary);
+    expect((thrown as Error).message).toBe(primary.message);
+    expect(getPaperResourceCleanupError(thrown)?.failures.map((failure) => (failure as Error).message)).toEqual(['cleanup failure']);
+  });
+
+  it('makes a primitive primary unmistakable while retaining it as the explicit cause', async () => {
+    let thrown: unknown;
+    try {
+      await usingOwnedPaperResource({ dispose: () => { throw new Error('cleanup failure'); } }, () => { throw 'primitive primary'; });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(PaperResourcePrimaryAndCleanupError);
+    expect((thrown as PaperResourcePrimaryAndCleanupError).primaryError).toBe('primitive primary');
+    expect((thrown as Error & { cause?: unknown }).cause).toBe('primitive primary');
+    expect(getPaperResourceCleanupError(thrown)?.failures.map((failure) => (failure as Error).message)).toEqual(['cleanup failure']);
+  });
+
+  it('merges nested cleanup failures in deterministic resource order without masking the primary', async () => {
+    const primary = new Error('primary failure');
+    let thrown: unknown;
+    try {
+      await usingOwnedPaperResource({ dispose: () => { throw new Error('outer cleanup'); } }, async () => {
+        await usingOwnedPaperResource({
+          dispose: () => disposeOwnedPaperResources([
+            { dispose: () => { throw new Error('inner cleanup one'); } },
+            { dispose: () => { throw new Error('inner cleanup two'); } },
+          ]),
+        }, () => { throw primary; });
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBe(primary);
+    expect(getPaperResourceCleanupError(thrown)?.failures.map((failure) => (failure as Error).message)).toEqual([
+      'inner cleanup one', 'inner cleanup two', 'outer cleanup',
+    ]);
   });
 });
 
@@ -242,4 +329,25 @@ describe('AUD-038 PDF/X transform ownership (red baseline)', () => {
 
     expect(outstanding).toBe(0);
   });
+
+  it('rejects a runtime dependency that violates the required owned-transform disposal contract', async () => {
+    const document = createDefaultPaperDocument({ title: 'Missing owned transform disposal' });
+    const borrowedTransform: IccCmykTransform = {
+      kind: 'icc', profileName: 'Borrowed', rgbToCmyk: () => ({ c: 0, m: 0, y: 0, k: 0 }),
+    };
+    // @ts-expect-error PDF/X owns this dependency and therefore requires dispose().
+    const invalidDeps: PaperPdfxPipelineDeps = {
+      createTransform: async () => borrowedTransform,
+      rasterizePage: async () => ({ rgba: new Uint8Array([255, 255, 255, 255]), widthPx: 1, heightPx: 1 }),
+    };
+    void invalidDeps;
+
+    await expect(exportPaperDocumentToPdfx(document, {
+      standard: 'pdf-x-1a', outputProfile, flattenAllPages: true,
+    }, {
+      createTransform: async () => borrowedTransform as OwnedPaperPdfxTransform,
+      rasterizePage: async () => ({ rgba: new Uint8Array([255, 255, 255, 255]), widthPx: 1, heightPx: 1 }),
+    })).rejects.toThrow(/fresh owned transform with dispose/i);
+  });
+
 });

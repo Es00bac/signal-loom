@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { createRgbToCmykTransform, describeIccProfile } from './paperIccEngine';
+import { createRgbToCmykTransform, describeIccProfile, ICC_DISPOSED_RESOURCE_ERROR } from './paperIccEngine';
 
 // Uses the redistribution-cleared FOGRA39 (ISO Coated v2) profile bundled in public/icc/.
 const fogra39 = new Uint8Array(readFileSync('public/icc/FOGRA39L_coated.icc'));
@@ -42,5 +42,13 @@ describe('paperIccEngine (real lcms2)', () => {
   it('rejects a non-CMYK profile', async () => {
     // A truncated / bogus buffer is not a valid profile.
     await expect(describeIccProfile(new Uint8Array([1, 2, 3, 4]))).rejects.toThrow();
+  });
+
+  it('rejects every RGB-to-CMYK operation after disposal before re-entering lcms', async () => {
+    const transform = await createRgbToCmykTransform(fogra39, { intent: 'relative' });
+    transform.dispose();
+
+    expect(() => transform.rgbToCmyk({ r: 1, g: 2, b: 3 })).toThrow(ICC_DISPOSED_RESOURCE_ERROR);
+    expect(() => transform.transformRgbBuffer?.(new Uint8Array([1, 2, 3]), 1)).toThrow(ICC_DISPOSED_RESOURCE_ERROR);
   });
 });

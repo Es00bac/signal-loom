@@ -64,28 +64,76 @@ export class PaperResourceCleanupError extends Error {
   }
 }
 
-const PAPER_CLEANUP_ERROR = 'paperResourceCleanupError';
+/**
+ * Used only when JavaScript cannot rethrow the original value with associated cleanup evidence.
+ * Object/function primaries retain their identity in the weak side table below, including frozen
+ * and non-extensible Errors. Primitive primaries have no identity that can be weakly keyed, so this
+ * wrapper makes both the original value and cleanup failure explicit.
+ */
+export class PaperResourcePrimaryAndCleanupError extends Error {
+  readonly primaryError: unknown;
+  readonly cleanupError: PaperResourceCleanupError;
+
+  constructor(primaryError: unknown, cleanupError: PaperResourceCleanupError) {
+    super('Paper work failed and one or more owned native/WASM resources also failed to release.', { cause: primaryError });
+    this.name = 'PaperResourcePrimaryAndCleanupError';
+    this.primaryError = primaryError;
+    this.cleanupError = cleanupError;
+  }
+}
+
+// Keep the side table stable across dev-server/HMR module reloads. This stores no strong references
+// and, crucially, never writes to a caller's thrown value.
+const PAPER_CLEANUP_REGISTRY_KEY = Symbol.for('signal-loom.paperResourceCleanupErrors');
+const cleanupRegistryHost = globalThis as typeof globalThis & {
+  [PAPER_CLEANUP_REGISTRY_KEY]?: WeakMap<object, PaperResourceCleanupError>;
+};
+const cleanupErrorsByPrimary = cleanupRegistryHost[PAPER_CLEANUP_REGISTRY_KEY]
+  ?? (cleanupRegistryHost[PAPER_CLEANUP_REGISTRY_KEY] = new WeakMap<object, PaperResourceCleanupError>());
+
+function isWeakKey(value: unknown): value is object {
+  return (typeof value === 'object' && value !== null) || typeof value === 'function';
+}
+
+function flattenCleanupFailures(failures: readonly unknown[]): unknown[] {
+  return failures.flatMap((failure) => failure instanceof PaperResourceCleanupError
+    ? flattenCleanupFailures(failure.failures)
+    : [failure]);
+}
+
+function mergePaperResourceCleanupErrors(
+  existing: PaperResourceCleanupError | undefined,
+  incoming: PaperResourceCleanupError,
+): PaperResourceCleanupError {
+  return new PaperResourceCleanupError(flattenCleanupFailures([
+    ...(existing?.failures ?? []),
+    ...incoming.failures,
+  ]));
+}
 
 /** Read the cleanup failure retained alongside a primary Paper work error, if there was one. */
 export function getPaperResourceCleanupError(error: unknown): PaperResourceCleanupError | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const candidate = error as { [PAPER_CLEANUP_ERROR]?: unknown };
-  return candidate[PAPER_CLEANUP_ERROR] instanceof PaperResourceCleanupError
-    ? candidate[PAPER_CLEANUP_ERROR]
-    : undefined;
+  if (error instanceof PaperResourcePrimaryAndCleanupError) return error.cleanupError;
+  return isWeakKey(error) ? cleanupErrorsByPrimary.get(error) : undefined;
 }
 
 function attachPaperCleanupError(primaryError: unknown, cleanupError: PaperResourceCleanupError): void {
-  if (typeof primaryError === 'object' && primaryError !== null) {
-    Object.defineProperty(primaryError, PAPER_CLEANUP_ERROR, {
-      configurable: true,
-      enumerable: false,
-      value: cleanupError,
-    });
+  if (primaryError instanceof PaperResourcePrimaryAndCleanupError) {
+    throw new PaperResourcePrimaryAndCleanupError(
+      primaryError.primaryError,
+      mergePaperResourceCleanupErrors(primaryError.cleanupError, cleanupError),
+    );
+  }
+  if (isWeakKey(primaryError)) {
+    cleanupErrorsByPrimary.set(
+      primaryError,
+      mergePaperResourceCleanupErrors(cleanupErrorsByPrimary.get(primaryError), cleanupError),
+    );
     return;
   }
-  // JavaScript permits `throw undefined`; preserve that unusual primary value and still surface cleanup.
-  console.error(cleanupError);
+  // JavaScript permits primitive throws. There is no object identity on which to retain evidence, so
+  // make the primary/cause explicit instead of silently logging cleanup trouble or masking it.
+  throw new PaperResourcePrimaryAndCleanupError(primaryError, cleanupError);
 }
 
 /**
@@ -122,15 +170,16 @@ export async function usingOwnedPaperResource<T>(
 ): Promise<T> {
   let primaryError: unknown;
   let hasPrimaryError = false;
+  let value: T | undefined;
   try {
-    return await work();
+    value = await work();
   } catch (error) {
     hasPrimaryError = true;
     primaryError = error;
-    throw error;
-  } finally {
-    disposeOwnedPaperResources([resource], primaryError, hasPrimaryError);
   }
+  disposeOwnedPaperResources([resource], primaryError, hasPrimaryError);
+  if (hasPrimaryError) throw primaryError;
+  return value as T;
 }
 
 export const APPROXIMATE_CMYK_TRANSFORM: IccCmykTransform = {
