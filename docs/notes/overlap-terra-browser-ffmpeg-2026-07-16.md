@@ -6,7 +6,7 @@ Production/test commit: `04a3e01 fix(media): harden browser FFmpeg lifecycle`
 
 ## What changed
 
-`src/lib/mediaComposition.ts` now gives each browser-only FFmpeg invocation a UUID-backed virtual-FS namespace. `composeMedia` and `composeSequenceMedia` rebuild their browser command using those names after the native/Electron fallback is exhausted; native request names and public result filenames are unchanged. Both command builders pass `-y` explicitly.
+`src/lib/mediaComposition.ts` now gives each browser-only FFmpeg invocation a UUID-backed virtual-FS namespace. `composeMedia` and `composeSequenceMedia` rebuild their browser command using those names after the native/Electron fallback is exhausted; native request names are unchanged. Both command builders pass `-y` explicitly.
 
 A small shared `BrowserFfmpegOperation` owns only files successfully written by the invocation, plus output files confirmed after execution. It cleans all tracked paths on normal completion and on downstream failure. Interrupted executions list the virtual FS only to capture actually-present partial output. Cleanup attempts continue after individual delete failures; a primary write/exec/read error wins, while cleanup failure remains visible when the media work otherwise succeeded.
 
@@ -32,6 +32,17 @@ The first runner-mode attempt exposed an uninstalled local dependency (`vitest/c
 - `npx eslint src/lib/mediaComposition.ts src/lib/mediaComposition.test.ts src/lib/mediaComposition.browser.test.ts` — passed.
 - `git diff --check` — passed.
 - `npm run build` — passed. Existing Vite warnings remain for runtime `new URL`, browser-externalized `module` imports from HarfBuzz/LCMS WASM, and the Node deprecation warning.
+
+## Follow-up: public image-sequence names
+
+Independent review found that the original UUID isolation also altered browser image-sequence output patterns. The raw MEMFS name could therefore leak into ZIP entries and `manifest.frames`; the original note must not be read as evidence of public image-sequence-name compatibility.
+
+Follow-up code/test commit `faf4f92 fix(media): preserve public image sequence names` retains UUID names exclusively for FFmpeg matching, reads, deletion, and cleanup. It maps each raw frame name to the preset's stable public pattern before ZIP packaging and manifest creation. PNG and JPEG regression cases use a deterministic UUID and prove public entries such as `sequence-frame-00002.png`/`.jpg`, stable manifest/output metadata, numeric ordering, and raw-path reads/deletes.
+
+- Red follow-up: `npx vitest run --configLoader runner src/lib/mediaComposition.browser.test.ts --reporter=verbose` — 9 tests: 2 failed (PNG and JPEG public-name cases), 7 passed before the correction.
+- Green follow-up focused: `npx vitest run --configLoader runner src/lib/mediaComposition.browser.test.ts src/lib/mediaComposition.test.ts --reporter=verbose` — 2 files, 39 passed.
+- Green follow-up affected set: `npx vitest run --configLoader runner src/lib/mediaComposition.browser.test.ts src/lib/mediaComposition.test.ts src/lib/flowExecutionComposition.test.ts src/lib/stageFrameCompositor.test.ts src/lib/videoPremiereParity.test.ts --reporter=dot` — 5 files, 64 passed.
+- `npx tsc -p tsconfig.app.json --incremental false`, `npx tsc -p tsconfig.node.json --incremental false`, changed-file ESLint, `git diff --check`, and `npm run build` — passed.
 
 ## Residual risk
 
