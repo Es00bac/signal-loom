@@ -6,6 +6,7 @@ import {
   applyTypographyToActiveRichEditor,
   applyTypographyToDomSelection,
   registerPaperRichEditorSession,
+  resolvePaperRichEditorTypographyUpdate,
 } from './paperRichEditorSession';
 
 const TYPOGRAPHY: PaperTypography = {
@@ -33,6 +34,72 @@ function textNodeContaining(root: HTMLElement, value: string): Text {
 afterEach(() => { document.body.replaceChildren(); });
 
 describe('active rich editor Inspector formatting', () => {
+  it('retains a range edit while persisting vertical writing on and off', () => {
+    const editor = editorWith('Selected rich words');
+    const text = textNodeContaining(editor, 'Selected rich words');
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, 8);
+    const dispose = registerPaperRichEditorSession('vertical-range', {
+      applyTypography: (previous, next) => {
+        const applied = applyTypographyToDomSelection(editor, range, previous, next, 1);
+        if (!applied) return null;
+        const richText = serializeRichEditor(editor, {
+          colorHex: '#111111', fontFamily: 'Inter', fontSizePx: 12 * 1.333, leadingPx: 15 * 1.333, zoom: 1,
+        });
+        return { richText, text: 'Selected rich words' };
+      },
+    });
+    const vertical = { ...TYPOGRAPHY, writingMode: 'vertical-rl' as const, align: 'center' as const };
+
+    const enabled = resolvePaperRichEditorTypographyUpdate('vertical-range', TYPOGRAPHY, vertical, [{ runs: [{ text: 'stale' }] }]);
+    expect(enabled.typography.writingMode).toBe('vertical-rl');
+    expect(enabled.richText?.[0]).toMatchObject({ align: 'center' });
+    expect(enabled.richText?.[0].runs.map((run) => run.text).join('')).toBe('Selected rich words');
+
+    const disabled = resolvePaperRichEditorTypographyUpdate('vertical-range', vertical, TYPOGRAPHY, enabled.richText);
+    expect(disabled.typography.writingMode).toBeUndefined();
+    expect(disabled.richText?.[0].runs.map((run) => run.text).join('')).toBe('Selected rich words');
+    dispose();
+  });
+
+  it('persists vertical writing at a collapsed caret without discarding current rich content', () => {
+    const editor = editorWith('Caret preserves rich text');
+    const text = textNodeContaining(editor, 'Caret preserves rich text');
+    const caret = document.createRange();
+    caret.setStart(text, 3);
+    caret.collapse(true);
+    const dispose = registerPaperRichEditorSession('vertical-caret', {
+      applyTypography: (previous, next) => {
+        const applied = applyTypographyToDomSelection(editor, caret, previous, next, 1);
+        if (!applied) return null;
+        const richText = serializeRichEditor(editor, {
+          colorHex: '#111111', fontFamily: 'Inter', fontSizePx: 12 * 1.333, leadingPx: 15 * 1.333, zoom: 1,
+        });
+        return { richText, text: 'Caret preserves rich text' };
+      },
+    });
+    const next = { ...TYPOGRAPHY, writingMode: 'vertical-rl' as const, align: 'center' as const };
+
+    const result = resolvePaperRichEditorTypographyUpdate('vertical-caret', TYPOGRAPHY, next, [{ runs: [{ text: 'stale' }] }]);
+    expect(result.typography.writingMode).toBe('vertical-rl');
+    expect(result.richText?.[0]).toMatchObject({ align: 'center' });
+    expect(result.richText?.[0].runs.map((run) => run.text).join('')).toBe('Caret preserves rich text');
+    dispose();
+  });
+
+  it('persists vertical writing on and off with no active editor while preserving saved rich content', () => {
+    const richText = [{ runs: [{ text: 'Saved rich content', fontWeight: '700' }] }];
+    const vertical = { ...TYPOGRAPHY, writingMode: 'vertical-rl' as const };
+
+    const enabled = resolvePaperRichEditorTypographyUpdate('inactive-frame', TYPOGRAPHY, vertical, richText);
+    expect(enabled.typography.writingMode).toBe('vertical-rl');
+    expect(enabled.richText).toEqual(richText);
+    const disabled = resolvePaperRichEditorTypographyUpdate('inactive-frame', vertical, TYPOGRAPHY, enabled.richText);
+    expect(disabled.typography.writingMode).toBeUndefined();
+    expect(disabled.richText).toEqual(richText);
+  });
+
   it('authors color, tracking, kerning, and exact size on only the highlighted words', () => {
     const editor = editorWith('Hello selected words');
     const text = textNodeContaining(editor, 'Hello selected words');

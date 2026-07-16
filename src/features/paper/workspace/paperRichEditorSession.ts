@@ -1,5 +1,10 @@
 import type { PaperRichParagraph, PaperTypography } from '../../../types/paper';
-import { changedRichTypographyPatch, type RichTypographyKey, type RichTypographyPatch } from './richTextTransforms';
+import {
+  changedRichTypographyPatch,
+  synchronizeRichTextWithTypographyChange,
+  type RichTypographyKey,
+  type RichTypographyPatch,
+} from './richTextTransforms';
 
 const PT_TO_PX = 1.333;
 const MM_TO_PX = 3.7795;
@@ -28,6 +33,25 @@ export function applyTypographyToActiveRichEditor(
   next: PaperTypography,
 ): PaperRichEditorApplyResult | null {
   return sessions.get(frameId)?.applyTypography(previous, next) ?? null;
+}
+
+/**
+ * Preserve the frame-level typography alongside any retained rich-editor transaction. Some properties, such
+ * as writingMode, belong to the frame rather than a run or paragraph; dropping this half of the transaction
+ * makes an active selection appear to accept vertical writing while silently retaining the old direction.
+ */
+export function resolvePaperRichEditorTypographyUpdate(
+  frameId: string,
+  previous: PaperTypography,
+  next: PaperTypography,
+  currentRichText: PaperRichParagraph[] | undefined,
+): { typography: PaperTypography; text?: string; richText: PaperRichParagraph[] | undefined } {
+  const live = applyTypographyToActiveRichEditor(frameId, previous, next);
+  if (live) return { typography: next, text: live.text, richText: live.richText };
+  return {
+    typography: next,
+    richText: synchronizeRichTextWithTypographyChange(currentRichText, previous, next),
+  };
 }
 
 const CHARACTER_KEYS = new Set<RichTypographyKey>([

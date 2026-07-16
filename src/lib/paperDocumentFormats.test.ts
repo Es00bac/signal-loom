@@ -48,6 +48,8 @@ describe('paperDocumentFormats', () => {
       widthMm: 73,
       heightMm: 28,
       text: 'Keep this frame as layout data.',
+      richText: [{ runs: [{ text: 'Keep this frame as layout data.', fontWeight: '700' }] }],
+      typography: { writingMode: 'vertical-rl' },
     });
     const file = new File(
       [serializePaperDocument(document)],
@@ -68,6 +70,8 @@ describe('paperDocumentFormats', () => {
           text: 'Keep this frame as layout data.',
           xMm: 11,
           yMm: 17,
+          richText: [{ runs: [{ text: 'Keep this frame as layout data.', fontWeight: '700' }] }],
+          typography: { writingMode: 'vertical-rl' },
         }],
       }],
     });

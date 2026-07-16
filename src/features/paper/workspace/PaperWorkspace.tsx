@@ -195,10 +195,10 @@ import {
   type RichTypographyPatch,
 } from './richTextTransforms';
 import {
-  applyTypographyToActiveRichEditor,
   applyTypographyPatchToDomSelection,
   applyTypographyToDomSelection,
   registerPaperRichEditorSession,
+  resolvePaperRichEditorTypographyUpdate,
 } from './paperRichEditorSession';
 import { findPaperMatches, type PaperFindOptions } from '../../../lib/paperFindChange';
 import { resolvePaperFolioText } from '../../../lib/paperFolios';
@@ -10860,15 +10860,7 @@ function PaperInspector({
     || importedFontFamilies.includes(selectedFontFamily);
   const applyFrameTypography = (typography: PaperFrame['typography']) => {
     if (!frame) return;
-    const liveResult = applyTypographyToActiveRichEditor(frame.id, frame.typography, typography);
-    if (liveResult) {
-      onUpdateFrame({ text: liveResult.text, richText: liveResult.richText });
-      return;
-    }
-    onUpdateFrame({
-      typography,
-      richText: synchronizeRichTextWithTypographyChange(frame.richText, frame.typography, typography),
-    });
+    onUpdateFrame(resolvePaperRichEditorTypographyUpdate(frame.id, frame.typography, typography, frame.richText));
   };
   const outputIntent = PAPER_OUTPUT_INTENT_PROFILES[document.printProduction.outputIntentProfileId];
   const outputConditionId = document.printProduction.outputIntentProfileId === 'custom'
