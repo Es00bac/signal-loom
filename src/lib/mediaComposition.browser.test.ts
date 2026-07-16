@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { strFromU8, unzipSync } from 'fflate';
 
 vi.mock('@ffmpeg/ffmpeg', () => ({
   FFmpeg: vi.fn(),
@@ -11,6 +12,7 @@ vi.mock('@ffmpeg/util', () => ({
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
 import type { ComposeSequenceVisualClip } from './mediaComposition';
+import { getVideoExportPresetOption } from './videoPremiereParity';
 
 interface BrowserFfmpegFake {
   load: ReturnType<typeof vi.fn>;
@@ -89,6 +91,10 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   vi.mocked(fetchFile).mockResolvedValue(new Uint8Array([1]));
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe('browser FFmpeg reliability', () => {
@@ -202,5 +208,42 @@ describe('browser FFmpeg reliability', () => {
     expect(commands.every((command) => command.includes('-y'))).toBe(true);
     expect(new Set(commands.map((command) => command.at(-1))).size).toBe(2);
     expect(new Set(ffmpeg.writeFile.mock.calls.map(([path]) => path)).size).toBe(2);
+  });
+
+  it.each([
+    ['png-image-sequence', 'png'],
+    ['jpeg-image-sequence', 'jpg'],
+  ])('keeps %s ZIP and manifest frame names public while retaining raw MEMFS names', async (presetId, extension) => {
+    const operationId = 'deterministic-operation-id';
+    const rawFrames = [
+      `sequence-frame-00010-${operationId}.${extension}`,
+      `sequence-frame-00002-${operationId}.${extension}`,
+    ];
+    vi.stubGlobal('crypto', { randomUUID: () => operationId });
+    const ffmpeg = createFfmpegFake({
+      listDir: vi.fn().mockResolvedValue(rawFrames.map((name) => ({ name, isDir: false }))),
+    });
+    configureFfmpegInstances(ffmpeg);
+    const { composeSequenceMedia } = await import('./mediaComposition');
+
+    const result = await composeSequenceMedia({
+      visualClips: [imageClip],
+      audioTracks: [],
+      exportPresetId: presetId,
+    });
+    const entries = unzipSync(new Uint8Array(await result.blob.arrayBuffer()));
+    const manifest = JSON.parse(strFromU8(entries['manifest.json']));
+    const publicFrames = [
+      `sequence-frame-00002.${extension}`,
+      `sequence-frame-00010.${extension}`,
+    ];
+
+    expect(Object.keys(entries)).toEqual(expect.arrayContaining(['manifest.json', ...publicFrames]));
+    expect(Object.keys(entries).join(' ')).not.toContain(operationId);
+    expect(manifest.frames).toEqual(publicFrames);
+    expect(result.manifest?.frames).toEqual(publicFrames);
+    expect(result.fileName).toBe(`${getVideoExportPresetOption(presetId).id}.zip`);
+    expect(ffmpeg.readFile.mock.calls.map(([path]) => path)).toEqual(rawFrames.slice().reverse());
+    expect(ffmpeg.deleteFile.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining(rawFrames));
   });
 });

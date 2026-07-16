@@ -641,6 +641,7 @@ export async function composeSequenceMedia({
         exportPreset,
         browserOutputName,
         (path) => operation.trackCreatedPath(path),
+        outputName,
       );
       return packageSequenceFramesAsZip({
         frames: frameEntries,
@@ -750,6 +751,7 @@ async function readSequenceFrameEntries(
   exportPreset: VideoExportPresetOption,
   outputPattern: string,
   onFramePath?: (path: string) => void,
+  publicOutputPattern = outputPattern,
 ): Promise<Array<{ name: string; data: Uint8Array }>> {
   const matcher = buildSequenceOutputMatcher(outputPattern);
   const entries = await ffmpeg.listDir('/');
@@ -767,8 +769,33 @@ async function readSequenceFrameEntries(
   return Promise.all(frameNames.map(async (name) => {
     const output = await ffmpeg.readFile(name);
     const data = output instanceof Uint8Array ? output : new TextEncoder().encode(String(output));
-    return { name, data };
+    return {
+      name: mapSequenceFrameNameToPublicName(name, outputPattern, publicOutputPattern),
+      data,
+    };
   }));
+}
+
+function mapSequenceFrameNameToPublicName(
+  rawName: string,
+  rawOutputPattern: string,
+  publicOutputPattern: string,
+): string {
+  const framePlaceholder = /%0?\d*d/;
+  const placeholderMatch = rawOutputPattern.match(framePlaceholder);
+  if (!placeholderMatch || placeholderMatch.index === undefined) {
+    return rawName;
+  }
+
+  const prefix = rawOutputPattern.slice(0, placeholderMatch.index);
+  const suffix = rawOutputPattern.slice(placeholderMatch.index + placeholderMatch[0].length);
+  const frameNumber = rawName.slice(prefix.length, rawName.length - suffix.length);
+
+  if (!rawName.startsWith(prefix) || !rawName.endsWith(suffix) || !/^\d+$/.test(frameNumber)) {
+    throw new Error(`Could not map browser FFmpeg frame ${rawName} to its public sequence name.`);
+  }
+
+  return publicOutputPattern.replace(framePlaceholder, frameNumber);
 }
 
 function buildSequenceOutputMatcher(outputPattern: string): RegExp {
