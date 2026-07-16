@@ -166,9 +166,7 @@ type PaperFrameDraft = Partial<Omit<PaperFrame, 'typography'>> & {
 } & Pick<PaperFrame, 'kind' | 'xMm' | 'yMm' | 'widthMm' | 'heightMm'>;
 
 /** Every PaperFrame key must be named by the normalizer, including optional persisted controls. */
-type ExhaustivePaperFrame = {
-  [Key in keyof PaperFrame]-?: PaperFrame[Key] | undefined;
-};
+type ExhaustivePaperFrameKeys = Record<keyof PaperFrame, unknown>;
 
 export interface PaperPrintHtmlOptions {
   mediaBox?: 'bleed' | 'trim';
@@ -1173,7 +1171,7 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     parentPageId: frame.parentPageId,
     parentFrameId: frame.parentFrameId,
     inherited: frame.inherited ?? false,
-  } satisfies ExhaustivePaperFrame;
+  } satisfies ExhaustivePaperFrameKeys;
 }
 
 function normalizePaperFrameKind(kind: unknown): PaperFrameKind {
