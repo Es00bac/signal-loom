@@ -6,7 +6,11 @@
 // intent + black-point compensation, exactly like InDesign/Photoshop's conversion.
 
 import { instantiate, TYPE_CMYK_8, TYPE_RGB_8, cmsInfoDescription, type LcmsModule } from 'lcms-wasm';
-import type { IccCmykTransform } from './paperColorManagement';
+import {
+  disposeOwnedPaperResources,
+  usingOwnedPaperResource,
+  type IccCmykTransform,
+} from './paperColorManagement';
 import type { PaperCmyk, PaperRgb } from './paperSwatches';
 import { resolveBundledAssetUrl } from './bundledAssetUrl';
 
@@ -22,7 +26,7 @@ export function setIccWasmLocator(locate: (file: string) => string): void {
 }
 
 let enginePromise: Promise<LcmsModule> | null = null;
-/** Lazily instantiate the shared lcms2 module (cached). */
+/** Lazily instantiate the shared lcms2 module (cached and borrowed by every operation; never per-call disposed). */
 export function getIccEngine(): Promise<LcmsModule> {
   if (!enginePromise) {
     const browserRuntime = typeof window !== 'undefined' && typeof (globalThis as { process?: unknown }).process === 'undefined';
@@ -53,16 +57,32 @@ export interface IccProfileInfo {
   colorSpace: string;
 }
 
+interface LcmsOwnedHandles {
+  sRgb?: number;
+  cmyk?: number;
+  transform?: number;
+}
+
+/**
+ * lcms allocates profiles/transforms independently. Release in dependency order and continue after a
+ * failed delete/close so a broken cleanup cannot strand the remaining handles.
+ */
+function disposeLcmsHandles(lcms: LcmsModule, handles: LcmsOwnedHandles, primaryError?: unknown, hasPrimaryError = false): void {
+  disposeOwnedPaperResources([
+    handles.transform ? { dispose: () => lcms.cmsDeleteTransform(handles.transform!) } : undefined,
+    handles.cmyk ? { dispose: () => lcms.cmsCloseProfile(handles.cmyk!) } : undefined,
+    handles.sRgb ? { dispose: () => lcms.cmsCloseProfile(handles.sRgb!) } : undefined,
+  ], primaryError, hasPrimaryError);
+}
+
 /** Read a profile's name + data color space (for the picker + validating a user-supplied .icc). */
 export async function describeIccProfile(profileBytes: Uint8Array): Promise<IccProfileInfo> {
   const lcms = await getIccEngine();
   const profile = lcms.cmsOpenProfileFromMem(profileBytes, profileBytes.length);
   if (!profile) throw new Error('That file is not a readable ICC profile.');
-  try {
+  return usingOwnedPaperResource({ dispose: () => lcms.cmsCloseProfile(profile) }, () => {
     return { name: safeProfileName(lcms, profile) || 'ICC profile', colorSpace: lcms.cmsGetColorSpaceASCII(profile) };
-  } finally {
-    lcms.cmsCloseProfile(profile);
-  }
+  });
 }
 
 /**
@@ -72,25 +92,21 @@ export async function describeIccProfile(profileBytes: Uint8Array): Promise<IccP
  */
 export async function validateCmykOutputProfileTransform(profileBytes: Uint8Array): Promise<void> {
   const lcms = await getIccEngine();
-  const sRGB = lcms.cmsCreate_sRGBProfile();
-  if (!sRGB) throw new Error('Could not create the sRGB validation profile.');
-  const cmyk = lcms.cmsOpenProfileFromMem(profileBytes, profileBytes.length);
-  if (!cmyk) {
-    lcms.cmsCloseProfile(sRGB);
-    throw new Error('Could not open the CMYK ICC profile.');
-  }
-
-  let transform = 0;
+  const handles: LcmsOwnedHandles = {};
   try {
-    const space = lcms.cmsGetColorSpaceASCII(cmyk);
+    handles.sRgb = lcms.cmsCreate_sRGBProfile();
+    if (!handles.sRgb) throw new Error('Could not create the sRGB validation profile.');
+    handles.cmyk = lcms.cmsOpenProfileFromMem(profileBytes, profileBytes.length);
+    if (!handles.cmyk) throw new Error('Could not open the CMYK ICC profile.');
+    const space = lcms.cmsGetColorSpaceASCII(handles.cmyk);
     if (space !== 'CMYK') throw new Error(`Expected a CMYK output profile but got "${space}".`);
-    transform = lcms.cmsCreateTransform(sRGB, TYPE_RGB_8, cmyk, TYPE_CMYK_8, INTENT_CODE.relative, FLAGS_BLACKPOINTCOMPENSATION);
-    if (!transform) throw new Error('Could not create the ICC color transform.');
-  } finally {
-    if (transform) lcms.cmsDeleteTransform(transform);
-    lcms.cmsCloseProfile(cmyk);
-    lcms.cmsCloseProfile(sRGB);
+    handles.transform = lcms.cmsCreateTransform(handles.sRgb, TYPE_RGB_8, handles.cmyk, TYPE_CMYK_8, INTENT_CODE.relative, FLAGS_BLACKPOINTCOMPENSATION);
+    if (!handles.transform) throw new Error('Could not create the ICC color transform.');
+  } catch (error) {
+    disposeLcmsHandles(lcms, handles, error, true);
+    throw error;
   }
+  disposeLcmsHandles(lcms, handles);
 }
 
 export interface IccTransformOptions {
@@ -109,39 +125,41 @@ export async function createRgbToCmykTransform(
   options: IccTransformOptions = {},
 ): Promise<IccCmykTransform> {
   const lcms = await getIccEngine();
-  const sRGB = lcms.cmsCreate_sRGBProfile();
-  const cmyk = lcms.cmsOpenProfileFromMem(cmykProfileBytes, cmykProfileBytes.length);
-  if (!cmyk) {
-    lcms.cmsCloseProfile(sRGB);
-    throw new Error('Could not open the CMYK ICC profile.');
+  const handles: LcmsOwnedHandles = {};
+  try {
+    handles.sRgb = lcms.cmsCreate_sRGBProfile();
+    if (!handles.sRgb) throw new Error('Could not create the sRGB profile.');
+    handles.cmyk = lcms.cmsOpenProfileFromMem(cmykProfileBytes, cmykProfileBytes.length);
+    if (!handles.cmyk) throw new Error('Could not open the CMYK ICC profile.');
+    const space = lcms.cmsGetColorSpaceASCII(handles.cmyk);
+    if (space !== 'CMYK') throw new Error(`Expected a CMYK output profile but got "${space}".`);
+    const intent = INTENT_CODE[options.intent ?? 'relative'];
+    const flags = options.blackPointCompensation === false ? 0 : FLAGS_BLACKPOINTCOMPENSATION;
+    handles.transform = lcms.cmsCreateTransform(handles.sRgb, TYPE_RGB_8, handles.cmyk, TYPE_CMYK_8, intent, flags);
+    if (!handles.transform) throw new Error('Could not create the ICC color transform.');
+  } catch (error) {
+    disposeLcmsHandles(lcms, handles, error, true);
+    throw error;
   }
-  const space = lcms.cmsGetColorSpaceASCII(cmyk);
-  if (space !== 'CMYK') {
-    lcms.cmsCloseProfile(cmyk);
-    lcms.cmsCloseProfile(sRGB);
-    throw new Error(`Expected a CMYK output profile but got "${space}".`);
-  }
-  const intent = INTENT_CODE[options.intent ?? 'relative'];
-  const flags = options.blackPointCompensation === false ? 0 : FLAGS_BLACKPOINTCOMPENSATION;
-  const transform = lcms.cmsCreateTransform(sRGB, TYPE_RGB_8, cmyk, TYPE_CMYK_8, intent, flags);
-  if (!transform) {
-    lcms.cmsCloseProfile(cmyk);
-    lcms.cmsCloseProfile(sRGB);
-    throw new Error('Could not create the ICC color transform.');
-  }
-  const profileName = safeProfileName(lcms, cmyk) || 'CMYK profile';
-  // sRGB + cmyk profiles are intentionally kept open for the transform's lifetime.
+  const { sRgb, cmyk, transform } = handles;
+  const profileName = safeProfileName(lcms, cmyk!) || 'CMYK profile';
+  let disposed = false;
   return {
     kind: 'icc',
     profileName,
     rgbToCmyk: (rgb: PaperRgb): PaperCmyk => {
-      const out = lcms.cmsDoTransform(transform, new Uint8Array([clampByte(rgb.r), clampByte(rgb.g), clampByte(rgb.b)]), 1);
+      const out = lcms.cmsDoTransform(transform!, new Uint8Array([clampByte(rgb.r), clampByte(rgb.g), clampByte(rgb.b)]), 1);
       return { c: to100(out[0]), m: to100(out[1]), y: to100(out[2]), k: to100(out[3]) };
     },
     // Whole-image path for the raster PDF/X exporter: one lcms2 call converts the entire page. lcms
     // returns raw 0–255 CMYK samples, which are exactly the DeviceCMYK image data a PDF wants.
     transformRgbBuffer: (rgb: Uint8Array, pixelCount: number): Uint8Array =>
-      lcms.cmsDoTransform(transform, rgb, pixelCount),
+      lcms.cmsDoTransform(transform!, rgb, pixelCount),
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      disposeLcmsHandles(lcms, { sRgb, cmyk, transform });
+    },
   };
 }
 
@@ -176,39 +194,40 @@ export async function createSoftProofTransform(
   options: SoftProofOptions = {},
 ): Promise<SoftProofTransform> {
   const lcms = await getIccEngine();
-  const sRGB = lcms.cmsCreate_sRGBProfile();
-  const cmyk = lcms.cmsOpenProfileFromMem(cmykProfileBytes, cmykProfileBytes.length);
-  if (!cmyk) throw new Error('Could not open the CMYK ICC profile.');
-  const space = lcms.cmsGetColorSpaceASCII(cmyk);
-  if (space !== 'CMYK') {
-    lcms.cmsCloseProfile(cmyk);
-    throw new Error(`Expected a CMYK output profile but got "${space}".`);
-  }
-  const intent = INTENT_CODE[options.intent ?? 'relative'];
+  const handles: LcmsOwnedHandles = {};
+  try {
+    handles.sRgb = lcms.cmsCreate_sRGBProfile();
+    if (!handles.sRgb) throw new Error('Could not create the sRGB soft-proof profile.');
+    handles.cmyk = lcms.cmsOpenProfileFromMem(cmykProfileBytes, cmykProfileBytes.length);
+    if (!handles.cmyk) throw new Error('Could not open the CMYK ICC profile.');
+    const space = lcms.cmsGetColorSpaceASCII(handles.cmyk);
+    if (space !== 'CMYK') throw new Error(`Expected a CMYK output profile but got "${space}".`);
+    const intent = INTENT_CODE[options.intent ?? 'relative'];
   // Paper-white simulation uses absolute colorimetric on the proof→display leg (and drops BPC, which
   // absolute intent ignores anyway); otherwise relative with black-point compensation.
-  const simulatePaper = options.simulatePaperWhite === true;
-  const proofingIntent = simulatePaper ? INTENT_CODE.absolute : INTENT_CODE.relative;
-  const flags = FLAGS_SOFTPROOFING | (simulatePaper ? 0 : FLAGS_BLACKPOINTCOMPENSATION);
-  const transform = lcms.cmsCreateProofingTransform(sRGB, TYPE_RGB_8, sRGB, TYPE_RGB_8, cmyk, intent, proofingIntent, flags);
-  if (!transform) {
-    lcms.cmsCloseProfile(cmyk);
-    throw new Error('Could not create the ICC soft-proof transform.');
+    const simulatePaper = options.simulatePaperWhite === true;
+    const proofingIntent = simulatePaper ? INTENT_CODE.absolute : INTENT_CODE.relative;
+    const flags = FLAGS_SOFTPROOFING | (simulatePaper ? 0 : FLAGS_BLACKPOINTCOMPENSATION);
+    handles.transform = lcms.cmsCreateProofingTransform(handles.sRgb, TYPE_RGB_8, handles.sRgb, TYPE_RGB_8, handles.cmyk, intent, proofingIntent, flags);
+    if (!handles.transform) throw new Error('Could not create the ICC soft-proof transform.');
+  } catch (error) {
+    disposeLcmsHandles(lcms, handles, error, true);
+    throw error;
   }
-  const profileName = safeProfileName(lcms, cmyk) || 'CMYK profile';
+  const { sRgb, cmyk, transform } = handles;
+  const profileName = safeProfileName(lcms, cmyk!) || 'CMYK profile';
   let disposed = false;
   return {
     profileName,
     proofRgb: (rgb: PaperRgb): PaperRgb => {
-      const out = lcms.cmsDoTransform(transform, new Uint8Array([clampByte(rgb.r), clampByte(rgb.g), clampByte(rgb.b)]), 1);
+      const out = lcms.cmsDoTransform(transform!, new Uint8Array([clampByte(rgb.r), clampByte(rgb.g), clampByte(rgb.b)]), 1);
       return { r: out[0], g: out[1], b: out[2] };
     },
-    proofRgbBuffer: (rgb: Uint8Array, pixelCount: number): Uint8Array => lcms.cmsDoTransform(transform, rgb, pixelCount),
+    proofRgbBuffer: (rgb: Uint8Array, pixelCount: number): Uint8Array => lcms.cmsDoTransform(transform!, rgb, pixelCount),
     dispose: () => {
       if (disposed) return;
       disposed = true;
-      lcms.cmsDeleteTransform(transform);
-      lcms.cmsCloseProfile(cmyk);
+      disposeLcmsHandles(lcms, { sRgb, cmyk, transform });
     },
   };
 }

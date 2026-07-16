@@ -14,25 +14,29 @@ describe('paperIccEngine (real lcms2)', () => {
 
   it('produces a real press-accurate sRGB→CMYK transform (not the naive formula)', async () => {
     const tf = await createRgbToCmykTransform(fogra39, { intent: 'relative' });
-    expect(tf.kind).toBe('icc');
+    try {
+      expect(tf.kind).toBe('icc');
 
-    const white = tf.rgbToCmyk({ r: 255, g: 255, b: 255 });
-    expect(white).toEqual({ c: 0, m: 0, y: 0, k: 0 });
+      const white = tf.rgbToCmyk({ r: 255, g: 255, b: 255 });
+      expect(white).toEqual({ c: 0, m: 0, y: 0, k: 0 });
 
-    // Real ICC black is a rich black (has C/M/Y under the K) — the naive formula would give 0/0/0/100.
-    const black = tf.rgbToCmyk({ r: 0, g: 0, b: 0 });
-    expect(black.k).toBeGreaterThanOrEqual(85);
-    expect(black.c + black.m + black.y).toBeGreaterThan(60);
+      // Real ICC black is a rich black (has C/M/Y under the K) — the naive formula would give 0/0/0/100.
+      const black = tf.rgbToCmyk({ r: 0, g: 0, b: 0 });
+      expect(black.k).toBeGreaterThanOrEqual(85);
+      expect(black.c + black.m + black.y).toBeGreaterThan(60);
 
-    const red = tf.rgbToCmyk({ r: 255, g: 0, b: 0 });
-    expect(red.m).toBeGreaterThan(80);
-    expect(red.y).toBeGreaterThan(80);
-    expect(red.c).toBeLessThan(20);
+      const red = tf.rgbToCmyk({ r: 255, g: 0, b: 0 });
+      expect(red.m).toBeGreaterThan(80);
+      expect(red.y).toBeGreaterThan(80);
+      expect(red.c).toBeLessThan(20);
 
-    // A neutral mid-gray gets real GCR (K plus a little CMY), not the naive 0/0/0/50.
-    const gray = tf.rgbToCmyk({ r: 128, g: 128, b: 128 });
-    expect(gray.k).toBeGreaterThan(0);
-    expect(gray.c + gray.m + gray.y).toBeGreaterThan(0);
+      // A neutral mid-gray gets real GCR (K plus a little CMY), not the naive 0/0/0/50.
+      const gray = tf.rgbToCmyk({ r: 128, g: 128, b: 128 });
+      expect(gray.k).toBeGreaterThan(0);
+      expect(gray.c + gray.m + gray.y).toBeGreaterThan(0);
+    } finally {
+      tf.dispose?.();
+    }
   });
 
   it('rejects a non-CMYK profile', async () => {

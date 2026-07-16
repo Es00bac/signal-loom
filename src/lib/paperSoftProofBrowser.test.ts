@@ -27,6 +27,7 @@ vi.mock('../store/sourceBinStore', () => ({
 }));
 
 import { softProofPaperPageInBrowser } from './paperSoftProofBrowser';
+import { getPaperResourceCleanupError } from './paperColorManagement';
 
 describe('softProofPaperPageInBrowser', () => {
   beforeEach(() => {
@@ -66,5 +67,58 @@ describe('softProofPaperPageInBrowser', () => {
       expect.objectContaining({ includeBleed: false, outputDpi: 150 }),
     );
     expect(result.dataUrl).toBe('data:image/png;base64,proof');
+  });
+
+  it('releases each owned proof exactly once across repeated successful previews', async () => {
+    const document = createDefaultPaperDocument({ title: 'Repeated proof ownership' });
+    const proofs: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
+    mocks.createProof.mockImplementation(async () => {
+      const proof = { profileName: 'FOGRA39L Coated', dispose: vi.fn() };
+      proofs.push(proof);
+      return proof;
+    });
+
+    for (let index = 0; index < 4; index += 1) {
+      await softProofPaperPageInBrowser(document, document.pages[0].id);
+      expect(proofs[index]?.dispose).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it.each(['materialize', 'build', 'rasterize', 'proof'] as const)(
+    'releases the owned proof when %s fails after transform creation',
+    async (step) => {
+      const document = createDefaultPaperDocument({ title: `Failed ${step} proof` });
+      const failure = new Error(`${step} failed`);
+      if (step === 'materialize') mocks.materialize.mockRejectedValueOnce(failure);
+      if (step === 'build') mocks.buildPage.mockRejectedValueOnce(failure);
+      if (step === 'rasterize') mocks.rasterize.mockRejectedValueOnce(failure);
+      if (step === 'proof') mocks.softProof.mockImplementationOnce(() => { throw failure; });
+
+      await expect(softProofPaperPageInBrowser(document, document.pages[0].id)).rejects.toThrow(failure);
+      expect(mocks.createProof.mock.results[0]?.value).toBeDefined();
+      const proof = await mocks.createProof.mock.results[0]?.value;
+      expect(proof.dispose).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('preserves a proof rendering error and retains a proof-dispose failure', async () => {
+    const document = createDefaultPaperDocument({ title: 'Proof cleanup error' });
+    const workFailure = new Error('raster failed');
+    const cleanupFailure = new Error('dispose failed');
+    mocks.rasterize.mockRejectedValueOnce(workFailure);
+    mocks.createProof.mockResolvedValueOnce({
+      profileName: 'FOGRA39L Coated',
+      dispose: vi.fn(() => { throw cleanupFailure; }),
+    });
+
+    let thrown: unknown;
+    try {
+      await softProofPaperPageInBrowser(document, document.pages[0].id);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBe(workFailure);
+    expect(getPaperResourceCleanupError(thrown)?.failures).toEqual([cleanupFailure]);
   });
 });

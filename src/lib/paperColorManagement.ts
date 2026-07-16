@@ -38,6 +38,99 @@ export interface IccCmykTransform {
    * in one call; the ICC backend routes this straight through lcms2 (`cmsDoTransform` over the buffer).
    */
   transformRgbBuffer?(rgb: Uint8Array, pixelCount: number): Uint8Array;
+  /**
+   * Release native/WASM state when this is a freshly-created transform. Call only when ownership was
+   * explicitly transferred to the caller; shared/borrowed transforms deliberately omit this method.
+   */
+  dispose?(): void;
+}
+
+/** A small common shape for Paper resources backed by a native/WASM handle. */
+export interface PaperOwnedDisposable {
+  dispose(): void;
+}
+
+/**
+ * Thrown when work succeeded but one or more owned resources could not be released. When work itself
+ * failed, this error is attached to that primary error instead so cleanup never masks the real failure.
+ */
+export class PaperResourceCleanupError extends Error {
+  readonly failures: readonly unknown[];
+
+  constructor(failures: readonly unknown[]) {
+    super(`Failed to release ${failures.length} Paper native/WASM resource${failures.length === 1 ? '' : 's'}.`);
+    this.name = 'PaperResourceCleanupError';
+    this.failures = failures;
+  }
+}
+
+const PAPER_CLEANUP_ERROR = 'paperResourceCleanupError';
+
+/** Read the cleanup failure retained alongside a primary Paper work error, if there was one. */
+export function getPaperResourceCleanupError(error: unknown): PaperResourceCleanupError | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const candidate = error as { [PAPER_CLEANUP_ERROR]?: unknown };
+  return candidate[PAPER_CLEANUP_ERROR] instanceof PaperResourceCleanupError
+    ? candidate[PAPER_CLEANUP_ERROR]
+    : undefined;
+}
+
+function attachPaperCleanupError(primaryError: unknown, cleanupError: PaperResourceCleanupError): void {
+  if (typeof primaryError === 'object' && primaryError !== null) {
+    Object.defineProperty(primaryError, PAPER_CLEANUP_ERROR, {
+      configurable: true,
+      enumerable: false,
+      value: cleanupError,
+    });
+    return;
+  }
+  // JavaScript permits `throw undefined`; preserve that unusual primary value and still surface cleanup.
+  console.error(cleanupError);
+}
+
+/**
+ * Dispose every owned resource even when one dispose call fails. With a primary work error, preserve it
+ * and retain the cleanup failure on that error; otherwise surface the cleanup-only error to the caller.
+ */
+export function disposeOwnedPaperResources(
+  resources: readonly (PaperOwnedDisposable | undefined)[],
+  primaryError?: unknown,
+  hasPrimaryError = false,
+): void {
+  const failures: unknown[] = [];
+  for (const resource of resources) {
+    if (!resource) continue;
+    try {
+      resource.dispose();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length === 0) return;
+  const cleanupError = new PaperResourceCleanupError(failures);
+  if (hasPrimaryError) {
+    attachPaperCleanupError(primaryError, cleanupError);
+    return;
+  }
+  throw cleanupError;
+}
+
+/** Execute work with one caller-owned resource and deterministic primary-error-preserving cleanup. */
+export async function usingOwnedPaperResource<T>(
+  resource: PaperOwnedDisposable,
+  work: () => T | Promise<T>,
+): Promise<T> {
+  let primaryError: unknown;
+  let hasPrimaryError = false;
+  try {
+    return await work();
+  } catch (error) {
+    hasPrimaryError = true;
+    primaryError = error;
+    throw error;
+  } finally {
+    disposeOwnedPaperResources([resource], primaryError, hasPrimaryError);
+  }
 }
 
 export const APPROXIMATE_CMYK_TRANSFORM: IccCmykTransform = {

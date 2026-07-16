@@ -19,7 +19,7 @@ import {
   type PdfxNativePage,
   type PdfxStandard,
 } from './paperPdfxExport';
-import type { IccCmykTransform } from './paperColorManagement';
+import { usingOwnedPaperResource, type IccCmykTransform } from './paperColorManagement';
 import type { PaperOutputProfileResolution } from './paperManagedIccProfiles';
 
 export interface PaperPdfxPageRaster {
@@ -57,7 +57,7 @@ export interface RasterizePageOptions {
 export interface PaperPdfxPipelineDeps {
   /** Rasterize one isolated output selection INCLUDING bleed to RGBA at the requested DPI. */
   rasterizePage: (pageId: string, outputDpi: number, options?: RasterizePageOptions) => Promise<PaperPdfxPageRaster>;
-  /** Build an sRGB→CMYK transform from the exact managed ICC bytes. */
+  /** Build a fresh sRGB→CMYK transform from the exact managed ICC bytes; ownership transfers to this pipeline. */
   createTransform: (bytes: Uint8Array) => Promise<IccCmykTransform>;
   /** Resolve content-addressed bytes for one managed font face. Browser/system font resolution is not used. */
   loadManagedFontBytes?: (assetRef: BinaryAssetRef) => Promise<Uint8Array>;
@@ -210,6 +210,7 @@ export async function exportPaperDocumentToPdfx(
   const outputProfile = options.outputProfile;
   if (!outputProfile) throw new Error('PDF/X export requires an exact managed CMYK output profile.');
   const transform = await deps.createTransform(outputProfile.bytes);
+  return usingOwnedPaperResource({ dispose: () => transform.dispose?.() }, async () => {
   const dpi = options.outputDpi && options.outputDpi > 0 ? options.outputDpi : 300;
   const pdfxOptions = {
     standard: options.standard,
@@ -294,4 +295,5 @@ export async function exportPaperDocumentToPdfx(
   } finally {
     fontRuntime.dispose();
   }
+  });
 }

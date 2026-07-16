@@ -57,7 +57,8 @@ function poppler(tool: string, args: string[]): string | null {
 describe('buildPaperPdfx vector text (hybrid PDF/X)', () => {
   it.each<PdfxStandard>(['pdf-x-1a', 'pdf-x-4'])('embeds selectable vector text and stays conformant (%s)', async (standard) => {
     const transform = await createRgbToCmykTransform(fogra39, { intent: 'relative' });
-    const result = await buildPaperPdfx([whitePageWithText()], {
+    try {
+      const result = await buildPaperPdfx([whitePageWithText()], {
       standard,
       profile,
       transform,
@@ -66,37 +67,41 @@ describe('buildPaperPdfx vector text (hybrid PDF/X)', () => {
       createdAt: new Date('2026-07-06T00:00:00Z'),
     });
 
-    // Still a structurally conformant PDF/X after adding the font + text.
-    const report = await validatePaperPdfx(result.bytes, { standard });
-    const failed = report.checks.filter((c) => !c.pass).map((c) => c.label);
-    expect(failed, `failed: ${failed.join('; ')}`).toEqual([]);
-    expect(report.pass).toBe(true);
+      // Still a structurally conformant PDF/X after adding the font + text.
+      const report = await validatePaperPdfx(result.bytes, { standard });
+      const failed = report.checks.filter((c) => !c.pass).map((c) => c.label);
+      expect(failed, `failed: ${failed.join('; ')}`).toEqual([]);
+      expect(report.pass).toBe(true);
 
-    // The font really travels in the file (embedded TrueType program + face name).
-    const asText = Buffer.from(result.bytes).toString('latin1');
-    expect(asText).toContain('/FontFile2');
-    expect(asText).toMatch(/LiberationSerif/);
+      // The font really travels in the file (embedded TrueType program + face name).
+      const asText = Buffer.from(result.bytes).toString('latin1');
+      expect(asText).toContain('/FontFile2');
+      expect(asText).toMatch(/LiberationSerif/);
 
-    // If poppler is available, prove the text is real (extractable) and the font is embedded+subset.
-    const dir = mkdtempSync(join(tmpdir(), 'sloom-pdfx-'));
-    const pdfPath = join(dir, `vec-${standard}.pdf`);
-    writeFileSync(pdfPath, result.bytes);
+      // If poppler is available, prove the text is real (extractable) and the font is embedded+subset.
+      const dir = mkdtempSync(join(tmpdir(), 'sloom-pdfx-'));
+      const pdfPath = join(dir, `vec-${standard}.pdf`);
+      writeFileSync(pdfPath, result.bytes);
 
-    const extracted = poppler('pdftotext', [pdfPath, '-']);
-    if (extracted !== null) {
-      expect(extracted.replace(/\s+/g, ' ')).toContain(FRAME_TEXT);
-    }
-    const fonts = poppler('pdffonts', [pdfPath]);
-    if (fonts !== null) {
-      // Row columns: name | type | encoding | emb | sub | uni | object | id.
-      // PDF/X requires the font EMBEDDED (emb=yes); we also map to Unicode (uni=yes → selectable).
-      expect(fonts).toMatch(/LiberationSerif\S*\s+CID TrueType\s+Identity-H\s+yes\s+\S+\s+yes/);
+      const extracted = poppler('pdftotext', [pdfPath, '-']);
+      if (extracted !== null) {
+        expect(extracted.replace(/\s+/g, ' ')).toContain(FRAME_TEXT);
+      }
+      const fonts = poppler('pdffonts', [pdfPath]);
+      if (fonts !== null) {
+        // Row columns: name | type | encoding | emb | sub | uni | object | id.
+        // PDF/X requires the font EMBEDDED (emb=yes); we also map to Unicode (uni=yes → selectable).
+        expect(fonts).toMatch(/LiberationSerif\S*\s+CID TrueType\s+Identity-H\s+yes\s+\S+\s+yes/);
+      }
+    } finally {
+      transform.dispose?.();
     }
   });
 
   it('leaves a page with no textFrames as a pure flattened raster', async () => {
     const transform = await createRgbToCmykTransform(fogra39, { intent: 'relative' });
-    const page: PdfxRasterPage = {
+    try {
+      const page: PdfxRasterPage = {
       rgba: new Uint8Array(48 * 48 * 4).fill(255),
       widthPx: 48,
       heightPx: 48,
@@ -104,8 +109,11 @@ describe('buildPaperPdfx vector text (hybrid PDF/X)', () => {
       trimHeightPt: 144,
       bleedPt: 0,
     };
-    const result = await buildPaperPdfx([page], { standard: 'pdf-x-4', profile, transform, docId: '0123456789abcdef0123456789abcdef' });
-    expect(Buffer.from(result.bytes).toString('latin1')).not.toContain('/FontFile2');
-    expect((await validatePaperPdfx(result.bytes)).pass).toBe(true);
+      const result = await buildPaperPdfx([page], { standard: 'pdf-x-4', profile, transform, docId: '0123456789abcdef0123456789abcdef' });
+      expect(Buffer.from(result.bytes).toString('latin1')).not.toContain('/FontFile2');
+      expect((await validatePaperPdfx(result.bytes)).pass).toBe(true);
+    } finally {
+      transform.dispose?.();
+    }
   });
 });

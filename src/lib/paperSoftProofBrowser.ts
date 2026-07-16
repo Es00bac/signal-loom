@@ -9,6 +9,7 @@ import {
   rasterizeFlattenedPaperPageToRgba,
 } from './paperPageFlattenExport';
 import { createSoftProofTransform, type SoftProofOptions } from './paperIccEngine';
+import { usingOwnedPaperResource } from './paperColorManagement';
 import { resolveExactPaperOutputProfile } from './paperManagedIccProfiles';
 import { softProofRgba } from './paperSoftProofImage';
 import type { PaperDocument } from '../types/paper';
@@ -50,7 +51,7 @@ export async function softProofPaperPageInBrowser(
 
   const { previewDpi, ...proofOptions } = options;
   const proof = await createSoftProofTransform(iccBytes, proofOptions);
-  try {
+  return usingOwnedPaperResource(proof, async () => {
     const proofDocument = await materializePaperDocumentAssetUrls(
       document,
       useSourceBinStore.getState().getAllItems(),
@@ -78,7 +79,5 @@ export async function softProofPaperPageInBrowser(
       heightPx: raster.heightPx,
       profileName: proof.profileName,
     };
-  } finally {
-    proof.dispose();
-  }
+  });
 }

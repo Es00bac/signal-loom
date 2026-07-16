@@ -61,6 +61,15 @@ async function fograTransform() {
   return createRgbToCmykTransform(fogra39, { intent: 'relative' });
 }
 
+async function withFograTransform<T>(work: (transform: IccCmykTransform) => Promise<T>): Promise<T> {
+  const transform = await fograTransform();
+  try {
+    return await work(transform);
+  } finally {
+    transform.dispose?.();
+  }
+}
+
 const profile = {
   iccBytes: fogra39,
   outputConditionIdentifier: 'FOGRA39',
@@ -69,7 +78,7 @@ const profile = {
 
 describe('buildPaperPdfx', () => {
   it.each<PdfxStandard>(['pdf-x-1a', 'pdf-x-4'])('produces a structurally conformant %s', async (standard) => {
-    const transform = await fograTransform();
+    return withFograTransform(async (transform) => {
     const result = await buildPaperPdfx([makePage(1), makePage(2)], {
       standard,
       profile,
@@ -97,6 +106,7 @@ describe('buildPaperPdfx', () => {
     // Dump artifacts for external verification (gs/pdfinfo/veraPDF) when requested.
     const outDir = process.env.SLOOM_PDFX_OUT;
     if (outDir) writeFileSync(`${outDir}/sloom-${standard}.pdf`, result.bytes);
+    });
   });
 
   it('blocks an over-limit CMYK raster instead of silently applying UCR', async () => {
@@ -154,12 +164,13 @@ describe('buildPaperPdfx', () => {
   });
 
   it('rejects an empty document', async () => {
-    const transform = await fograTransform();
-    await expect(buildPaperPdfx([], { standard: 'pdf-x-4', profile, transform })).rejects.toThrow();
+    return withFograTransform(async (transform) => {
+      await expect(buildPaperPdfx([], { standard: 'pdf-x-4', profile, transform })).rejects.toThrow();
+    });
   });
 
   it('emits a spot fill as a real /Separation plate and stays valid PDF/X', async () => {
-    const transform = await fograTransform();
+    return withFograTransform(async (transform) => {
     const page = { ...makePage(1, 32, 32), spotFills: [
       { name: 'PANTONE 185 C', cmyk: { c: 0, m: 0.9, y: 0.85, k: 0 }, tint: 1, xPt: 20, yTopPt: 20, widthPt: 100, heightPt: 100 },
     ] };
@@ -174,10 +185,11 @@ describe('buildPaperPdfx', () => {
     // Adding the spot colorspace + fill must not break PDF/X conformance.
     const report = await validatePaperPdfx(result.bytes, { standard: 'pdf-x-4' });
     expect(report.pass, report.checks.filter((c) => !c.pass).map((c) => c.label).join('; ')).toBe(true);
+    });
   });
 
   it('writes a typed native render-plan page without creating a page-wide CMYK raster', async () => {
-    const transform = await fograTransform();
+    return withFograTransform(async (transform) => {
     const nativePage: PdfxNativePage = {
       trimWidthPt: 144,
       trimHeightPt: 144,
@@ -217,5 +229,6 @@ describe('buildPaperPdfx', () => {
     expect(result.nativeEvidence.overprintObjectIds).toEqual(['native-cmyk']);
     expect(await readDeviceCmykImage(result.bytes)).toBeUndefined();
     expect((await validatePaperPdfx(result.bytes, { standard: 'pdf-x-4' })).pass).toBe(true);
+    });
   });
 });
