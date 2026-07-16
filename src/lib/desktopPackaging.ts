@@ -69,6 +69,10 @@ export interface DesktopPackagingReadinessSummary {
   installerLimitations: string[];
 }
 
+export interface DesktopPackagingReadinessOptions {
+  stagedFontLibraryRoot?: string;
+}
+
 interface ElectronBuilderTargetObject {
   target?: string;
   arch?: string[];
@@ -161,6 +165,7 @@ export function getDesktopWorkspaceLaunchReadiness(workspace: DesktopWorkspaceId
 
 export function buildDesktopPackagingReadinessSummary(
   packageJson: DesktopPackagingPackageMetadata,
+  options: DesktopPackagingReadinessOptions = {},
 ): DesktopPackagingReadinessSummary {
   const windowsCaveat =
     'Windows installer packaging can be prepared on Linux, but signing credentials and final validation still need a Windows-oriented release step.';
@@ -243,7 +248,7 @@ export function buildDesktopPackagingReadinessSummary(
         bundledBy: 'build-time host dependency only',
       },
     ],
-    dependencyChecklist: buildDesktopPackagingDependencyChecklist(packageJson),
+    dependencyChecklist: buildDesktopPackagingDependencyChecklist(packageJson, options.stagedFontLibraryRoot),
     installerLimitations: [
       'Flow, Video, Image, and Paper are focusable workspaces inside one Sloom Studio desktop app, not separate packaged executables.',
       'Provider credentials, model downloads, and Android accelerator setup remain runtime/user configuration and are not bundled in desktop installers.',
@@ -253,10 +258,11 @@ export function buildDesktopPackagingReadinessSummary(
 
 function buildDesktopPackagingDependencyChecklist(
   packageJson: DesktopPackagingPackageMetadata,
+  stagedFontLibraryRoot = join(process.cwd(), 'build', 'font-library'),
 ): DesktopPackagingChecklistItem[] {
   const packagedFiles = packageJson.build?.files ?? [];
   const extraResources = packageJson.build?.extraResources ?? [];
-  const stagedFontLibrary = verifyStagedFontLibrary(join(process.cwd(), 'build', 'font-library'));
+  const stagedFontLibrary = verifyStagedFontLibrary(stagedFontLibraryRoot);
 
   return [
     {

@@ -68,8 +68,12 @@ describe('desktop and Android packaging configuration', () => {
 
   it('summarizes platform targets, dependencies, and installer limitations from package metadata', async () => {
     const { buildDesktopPackagingReadinessSummary } = await loadDesktopPackagingModule();
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'sloom-missing-fonts-'));
 
-    expect(buildDesktopPackagingReadinessSummary(packageJson)).toEqual({
+    try {
+      expect(buildDesktopPackagingReadinessSummary(packageJson, {
+        stagedFontLibraryRoot: join(fixtureRoot, 'absent'),
+      })).toEqual({
       productName: 'Sloom Studio',
       appId: 'studio.sloom.signalloom',
       workspaceLaunchSurface: 'electron-native-menu',
@@ -184,17 +188,27 @@ describe('desktop and Android packaging configuration', () => {
         'Flow, Video, Image, and Paper are focusable workspaces inside one Sloom Studio desktop app, not separate packaged executables.',
         'Provider credentials, model downloads, and Android accelerator setup remain runtime/user configuration and are not bundled in desktop installers.',
       ],
-    });
+      });
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it('blocks desktop packaging readiness when the configured staged font library is absent', async () => {
     const { buildDesktopPackagingReadinessSummary } = await loadDesktopPackagingModule();
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'sloom-missing-fonts-'));
 
-    const fontLibrary = buildDesktopPackagingReadinessSummary(packageJson)
-      .dependencyChecklist
-      .find((item) => item.id === 'bundled-font-library-resource');
+    try {
+      const fontLibrary = buildDesktopPackagingReadinessSummary(packageJson, {
+        stagedFontLibraryRoot: join(fixtureRoot, 'absent'),
+      })
+        .dependencyChecklist
+        .find((item) => item.id === 'bundled-font-library-resource');
 
-    expect(fontLibrary?.readiness).toBe('blocked');
+      expect(fontLibrary?.readiness).toBe('blocked');
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it('blocks a staged font library when its checksum manifest does not match the staged bytes', async () => {
