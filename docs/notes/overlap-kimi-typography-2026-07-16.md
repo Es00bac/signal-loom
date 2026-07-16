@@ -174,3 +174,91 @@ git diff --check             # exit 0
 - The previous `all-small-caps` content-mutation risk is resolved; the remaining caveat is browser support for the Canvas `fontVariantCaps` longhand. Unsupported browsers will render `all-small-caps` as normal case rather than small caps, but retained content stays intact.
 - Browser-only validation for the serializer still applies (jsdom does not enforce invalid Canvas font strings).
 - FBL-011 (bundled font registration across restart) and FBL-010 (condensed-width faces) remain outside this lane.
+
+
+## Sol second independent review follow-up
+
+Sol's second review identified four remaining blockers on the typography lane. Each was fixed and covered by tests.
+
+### Blockers addressed
+
+1. **`formatFontFamily` identity preservation (FBL-012)**
+   - Rewrote the parser/serializer pair in `src/lib/formatFontFamily.ts` to be standards-conscious about family identity.
+   - Preserves whether a family was originally quoted, so `"serif"` stays `"serif"` and does not collapse into the unquoted generic keyword `serif`.
+   - Preserves meaningful quoted boundary whitespace (`"  M PLUS 1  "`).
+   - Trims only separator whitespace around unquoted names.
+   - Handles CSS hex escapes (`\2c`, `\20`, `\000020`), six-digit terminator whitespace consumption, literal escapes (`\,`, `\ `), and escaped newlines as line continuations.
+   - Quotes CSS-wide reserved words (`inherit`, `initial`, `unset`, `revert`, `revert-layer`) when they appear as actual family names.
+   - Added a dedicated `formatFontFamily standards-conscious identity preservation` describe block with red→green tests.
+
+2. **Image raster measure/draw typography parity (FBL-013)**
+   - In `rasterizeImageTextStyle`, `applyCanvasTypographySettings(mctx, style)` is now applied to the measurement context **before** `measureImageTextBlock` is called.
+   - This ensures `fontVariantCaps: all-small-caps` influences wrapping/layout metrics, not just the final draw.
+   - The existing `FakeTextContext` measurer now returns wider widths for `all-small-caps`, and a new regression test asserts that the resulting block/clip dimensions are larger than the `normal` case.
+
+3. **SVG/XML attribute encoding (FBL-012)**
+   - `buildTextOverlaySvgAsset` previously inserted the quoted `font-family` stack into the HTML `style` attribute using only HTML content escaping, so embedded double quotes broke the attribute.
+   - Added `escapeXmlAttribute` and applied it to the entire inline `style` attribute value.
+   - Added `src/lib/editorTextRender.svgDom.test.ts`, which parses the produced SVG with `DOMParser`, asserts no `parsererror`, and checks the decoded style contains the quoted family stack.
+
+4. **Asset-to-timeline test strength (AUD-026)**
+   - `buildVisualClipFromEditorAsset` is now a pure helper exported from `src/lib/editorAssets.ts`.
+   - Added tests proving:
+     - text asset `fontWeight`/`fontStyle` are copied into `clip.textTypography`;
+     - the clip survives persisted-data normalization through `getEditorVisualClips` with typography intact;
+     - the export card consumed by `renderTextCard` receives the family/weight/style and builds a Canvas font string containing `italic`, `700`, and `"M PLUS 1"`.
+
+### Files changed in this follow-up
+
+- `src/lib/formatFontFamily.ts`
+- `src/lib/formatFontFamily.test.ts`
+- `src/components/ImageEditor/ImageTextLayer.ts`
+- `src/components/ImageEditor/ImageTextLayer.test.ts`
+- `src/lib/editorTextRender.ts`
+- `src/lib/editorTextRender.test.ts`
+- `src/lib/editorTextRender.svgDom.test.ts` (new)
+- `src/lib/editorAssets.ts`
+- `src/lib/editorAssets.test.ts`
+- `src/features/video/workspace/VideoWorkspace.tsx`
+- `src/features/video/workspace/VideoWorkspace.test.tsx`
+- `docs/notes/overlap-kimi-typography-2026-07-16.md`
+
+### Updated test evidence
+
+```text
+npx vitest run \
+  src/lib/formatFontFamily.test.ts \
+  src/lib/manualEditorState.test.ts \
+  src/components/ImageEditor/ImageTextLayer.test.ts \
+  src/lib/videoTextFlow.test.ts \
+  src/lib/mediaComposition.test.ts \
+  src/lib/editorStageObjects.test.ts \
+  src/lib/editorAssets.test.ts \
+  src/components/ImageEditor/ImageEditorTextLayerControls.test.tsx \
+  src/components/ImageEditor/ImageEditorTextShapeProperties.test.tsx \
+  src/components/ImageEditor/ImageEditorCanvas.textEdit.test.tsx \
+  src/lib/editorTextRender.test.ts \
+  src/lib/editorTextRender.svgDom.test.ts \
+  src/components/Common/BundledFontBrowser.test.tsx \
+  src/features/video/workspace/VideoWorkspace.test.tsx \
+  --configLoader=runner
+
+Test Files  14 passed (14)
+Tests      201 passed (201)
+```
+
+```text
+npx tsc -b --force   # exit 0
+npm run build        # TypeScript + Vite production build green
+```
+
+```text
+npx eslint <modified files>  # 0 errors (11 pre-existing warnings in VideoWorkspace.tsx)
+git diff --check             # exit 0
+```
+
+### Updated remaining risks
+
+- Browser-only validation for `formatFontFamily` still applies: jsdom does not reject invalid Canvas font strings, so the suite cannot assert Chromium acceptance in Node. A real-browser regression gate remains a follow-up.
+- `all-small-caps` rendering depends on the browser's support for the Canvas `fontVariantCaps` longhand; unsupported browsers fall back to normal-case glyphs while retained text content stays intact.
+- FBL-011 and FBL-010 remain outside this lane.
