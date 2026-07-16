@@ -289,6 +289,52 @@ describe('executeNodeRequest advanced image providers', () => {
     });
   });
 
+  it('still retries transient direct-path provider failures after the !canRun classifier change (K3)', async () => {
+    // Regression guard: classifying the auto-upscale !canRun error as NonRetryableError
+    // must not broadly disable retries for genuine transient provider/network failures.
+    vi.spyOn(URL, 'createObjectURL')
+      .mockReturnValueOnce('blob:stability-core')
+      .mockReturnValueOnce('blob:stability-upscaled');
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('transient Stability network blip'))
+      .mockImplementation(async (url: RequestInfo | URL) => {
+        const stringUrl = String(url);
+        if (stringUrl === 'blob:stability-core' || stringUrl.includes('/stable-image/generate/core')) {
+          return imageResponse('CORE');
+        }
+        if (stringUrl === 'blob:stability-upscaled' || stringUrl.includes('/stable-image/upscale/fast')) {
+          return imageResponse('UPSCALED');
+        }
+        throw new Error(`unexpected fetch: ${stringUrl}`);
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await executeNodeRequest(
+      createImageNode('stability', 'stable-image-core', {
+        imageAutoUpscale: true,
+      }),
+      {
+        prompt: 'storybook castle at sunrise',
+        config: { ...DEFAULT_EXECUTION_CONFIG, aspectRatio: '3:2', imageOutputFormat: 'png' },
+      },
+      {
+        ...baseSettings,
+        providerSettings: {
+          ...baseSettings.providerSettings,
+          paperPrintUpscaleMethod: 'stability-fast',
+          batchMaxRetries: 2,
+          batchRetryBaseDelayMs: 1,
+        },
+      },
+    );
+
+    const generateCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('/stable-image/generate/core'),
+    );
+    expect(generateCalls).toHaveLength(2);
+    expect(result.statusMessage).toContain('auto-upscaled');
+  });
+
   it('auto-upscales generated Flow images with local CPU upscaler when configured', async () => {
     const createObjectURL = vi.spyOn(URL, 'createObjectURL')
       .mockReturnValueOnce('blob:stability-core')

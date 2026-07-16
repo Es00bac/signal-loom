@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { executeNodeRequest } from './flowExecution';
 import { DEFAULT_EXECUTION_CONFIG } from './providerCatalog';
+import { NonRetryableError } from './exponentialBackoff';
 import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
 
 /**
@@ -204,6 +205,37 @@ describe('backend proxy node execution with client-side auto-upscale', () => {
       // stability-fast explicitly selected but no Stability key is configured.
       proxySettings({ paperPrintUpscaleMethod: 'stability-fast' }),
     )).rejects.toThrow(/Stability AI key is not configured/);
+  });
+
+  it('does not retry the proxy generation when the requested upscaler is misconfigured (K3)', async () => {
+    // Regression: with default batchMaxRetries=10, the outer exponential retry wrapper
+    // re-ran the paid proxy generation before every identical local !canRun failure,
+    // allowing 11 billed generations and hours of backoff. This test forces retries >= 2
+    // and asserts the proxy fetch happens exactly once before an actionable configuration
+    // error rejects.
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === PROXY_EXECUTE_URL) {
+        return jsonResponse(PROXY_IMAGE_RESULT);
+      }
+      throw new Error(`unexpected fetch: ${String(url)}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(executeNodeRequest(
+      proxiedImageNode({ imageAutoUpscale: true }),
+      { prompt: 'castle at sunrise', config: DEFAULT_EXECUTION_CONFIG },
+      proxySettings(
+        {
+          paperPrintUpscaleMethod: 'stability-fast',
+          batchMaxRetries: 2,
+          batchRetryBaseDelayMs: 1,
+        },
+        { stability: '' },
+      ),
+    )).rejects.toBeInstanceOf(NonRetryableError);
+
+    const proxyCalls = fetchMock.mock.calls.filter(([url]) => String(url) === PROXY_EXECUTE_URL);
+    expect(proxyCalls).toHaveLength(1);
   });
 
   it('leaves proxied non-upscale runs untouched', async () => {
