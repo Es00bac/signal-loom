@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { richTextToEditorHtml, serializeRichEditor, type RichEditorBase } from './paperRichTextDom';
-import type { PaperRichParagraph } from '../types/paper';
+import { createRichEditorBase, richTextToEditorHtml, serializeRichEditor, type RichEditorBase } from './paperRichTextDom';
+import type { PaperRichParagraph, PaperTypography } from '../types/paper';
 
 const BASE: RichEditorBase = { colorHex: '#111111', fontFamily: 'Inter', fontSizePx: 16, zoom: 1 };
+
+const SESSION_TYPOGRAPHY: PaperTypography = {
+  fontFamily: 'Inter', fontSizePt: 12, leadingPt: 15, tracking: 0, fontKerning: 'auto', align: 'left',
+  hyphenate: true, color: '#111111', fontWeight: '400', fontStyle: 'normal', numericStyle: 'normal',
+};
 
 /** Seed a contentEditable from paragraphs, then read it back — the exact edit lifecycle. */
 function roundTrip(paragraphs: PaperRichParagraph[]): PaperRichParagraph[] {
@@ -13,6 +18,55 @@ function roundTrip(paragraphs: PaperRichParagraph[]): PaperRichParagraph[] {
 }
 
 describe('rich editor paragraph round-trip (edit must not drop paragraph formatting)', () => {
+  it.each([
+    ['100% → 200%', 1, 2],
+    ['200% → 50%', 2, 0.5],
+  ])('keeps mixed explicit run size and leading in authored units when zoom changes from %s', (_label, openingZoom, currentZoom) => {
+    const source: PaperRichParagraph[] = [{
+      leadingPt: 19,
+      runs: [
+        { text: 'Display', fontSizePt: 24, leadingPt: 30 },
+        { text: ' body', fontSizePt: 9, leadingPt: 11 },
+      ],
+    }];
+    const editor = document.createElement('div');
+
+    // This is the production lifecycle boundary: seed once when rich editing opens, then serialize on commit.
+    editor.innerHTML = richTextToEditorHtml(source, openingZoom);
+    // The current canvas zoom is intentionally different, but the editor's session conversion base remains
+    // anchored to the scale at which this uncontrolled DOM was opened.
+    void currentZoom;
+    const committed = serializeRichEditor(editor, createRichEditorBase(SESSION_TYPOGRAPHY, openingZoom));
+
+    expect(committed[0].leadingPt).toBe(19);
+    expect(committed[0].runs[0]).toMatchObject({ text: 'Display' });
+    expect(committed[0].runs[0].fontSizePt).toBeCloseTo(24, 2);
+    expect(committed[0].runs[0].leadingPt).toBeCloseTo(30, 2);
+    expect(committed[0].runs[1]).toMatchObject({ text: ' body' });
+    expect(committed[0].runs[1].fontSizePt).toBeCloseTo(9, 2);
+    expect(committed[0].runs[1].leadingPt).toBeCloseTo(11, 2);
+  });
+
+  it('keeps mixed explicit run size and leading when opening and commit zoom match', () => {
+    const source: PaperRichParagraph[] = [{
+      leadingPt: 19,
+      runs: [
+        { text: 'Display', fontSizePt: 24, leadingPt: 30 },
+        { text: ' body', fontSizePt: 9, leadingPt: 11 },
+      ],
+    }];
+    const editor = document.createElement('div');
+    editor.innerHTML = richTextToEditorHtml(source, 1);
+
+    const committed = serializeRichEditor(editor, createRichEditorBase(SESSION_TYPOGRAPHY, 1));
+
+    expect(committed[0].leadingPt).toBe(19);
+    expect(committed[0].runs[0].fontSizePt).toBeCloseTo(24, 2);
+    expect(committed[0].runs[0].leadingPt).toBeCloseTo(30, 2);
+    expect(committed[0].runs[1].fontSizePt).toBeCloseTo(9, 2);
+    expect(committed[0].runs[1].leadingPt).toBeCloseTo(11, 2);
+  });
+
   it('preserves advanced character and paragraph typesetting properties', () => {
     const out = roundTrip([{
       alignLast: 'center',

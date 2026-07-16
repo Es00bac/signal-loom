@@ -184,7 +184,7 @@ import { DEFAULT_PAPER_COLUMN_GUTTER_MM, resolvePaperColumnGutterMm } from '../.
 import { computePaperThreadSlices } from '../../../lib/paperThreadFlow';
 import { createPaperCanvasMeasurer } from '../../../lib/paperCanvasMeasurer';
 import { resolveFrameWrapSpacers, type PaperWrapSpacer } from '../../../lib/paperTextWrap';
-import { richTextToEditorHtml, serializeRichEditor } from '../../../lib/paperRichTextDom';
+import { createRichEditorBase, richTextToEditorHtml, serializeRichEditor } from '../../../lib/paperRichTextDom';
 import {
   ensureRichTextForTransform,
   flattenPaperRichText,
@@ -9817,6 +9817,7 @@ function PaperRichEditableText({
   const editorRef = useRef<HTMLDivElement | null>(null);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const finishedRef = useRef(false);
+  const openingZoomRef = useRef(zoom);
   const savedRangeRef = useRef<Range | null>(null);
   const preserveEditorInteractionRef = useRef(false);
   const [toolbarPos, setToolbarPos] = useState<{ left: number; top: number } | null>(null);
@@ -9824,28 +9825,18 @@ function PaperRichEditableText({
   const [advancedTypeOpen, setAdvancedTypeOpen] = useState(false);
   const { t, tBoth } = useI18n();
 
-  const base = useMemo(() => ({
-    colorHex: (frame.typography.color || '#111827').toLowerCase(),
-    fontFamily: frame.typography.fontFamily,
-    fontSizePx: frame.typography.fontSizePt * PT_TO_PX * zoom,
-    leadingPx: frame.typography.leadingPt * PT_TO_PX * zoom,
-    fontWeight: frame.typography.fontWeight,
-    fontStyle: frame.typography.fontStyle,
-    fontKerning: frame.typography.fontKerning,
-    tracking: frame.typography.tracking,
-    smallCaps: frame.typography.smallCaps,
-    numericStyle: frame.typography.numericStyle,
-    textOrientation: frame.typography.textOrientation,
-    emphasis: frame.typography.emphasis,
-    zoom,
-  }), [frame.typography, zoom]);
+  const openingZoom = openingZoomRef.current;
+  const base = useMemo(
+    () => createRichEditorBase(frame.typography, openingZoom),
+    [frame.typography, openingZoom],
+  );
 
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
     // A plain frame (no richText yet) is lifted into a single-run seed here purely for the editor's initial
     // DOM — commit() below only persists that promotion if the user actually applies real formatting.
-    editor.innerHTML = richTextToEditorHtml(ensureRichTextForTransform(frame.richText, frame.text ?? ''), zoom);
+    editor.innerHTML = richTextToEditorHtml(ensureRichTextForTransform(frame.richText, frame.text ?? ''), openingZoom);
     try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* older engines */ }
     editor.focus();
     const range = document.createRange();
@@ -9901,14 +9892,14 @@ function PaperRichEditableText({
   const applySelectionTypographyPatch = (patch: Parameters<typeof applyTypographyPatchToDomSelection>[2]): boolean => {
     const editor = editorRef.current;
     if (!editor) return false;
-    const applied = applyTypographyPatchToDomSelection(editor, savedRangeRef.current, patch, zoom);
+    const applied = applyTypographyPatchToDomSelection(editor, savedRangeRef.current, patch, openingZoom);
     if (applied) {
       savedRangeRef.current = applied.range.cloneRange();
       return true;
     }
     const current = serializeRichEditor(editor, base);
     const richText = applyTypographyPatchToRichText(current, patch) ?? current;
-    editor.innerHTML = richTextToEditorHtml(richText, zoom);
+    editor.innerHTML = richTextToEditorHtml(richText, openingZoom);
     const caret = document.createRange();
     caret.selectNodeContents(editor);
     caret.collapse(false);
@@ -10002,7 +9993,7 @@ function PaperRichEditableText({
     applyTypography: (previous, next) => {
       const editor = editorRef.current;
       if (!editor || finishedRef.current) return null;
-      const applied = applyTypographyToDomSelection(editor, savedRangeRef.current, previous, next, zoom);
+      const applied = applyTypographyToDomSelection(editor, savedRangeRef.current, previous, next, openingZoom);
       if (applied) {
         savedRangeRef.current = applied.range.cloneRange();
         const richText = serializeRichEditor(editor, base);
@@ -10016,14 +10007,14 @@ function PaperRichEditableText({
       if (!Object.keys(patch).length) return null;
       const current = serializeRichEditor(editor, base);
       const richText = applyTypographyPatchToRichText(current, patch) ?? current;
-      editor.innerHTML = richTextToEditorHtml(richText, zoom);
+      editor.innerHTML = richTextToEditorHtml(richText, openingZoom);
       const caret = document.createRange();
       caret.selectNodeContents(editor);
       caret.collapse(false);
       savedRangeRef.current = caret;
       return { richText, text: flattenPaperRichText(richText) };
     },
-  }), [base, frame.id, zoom]);
+  }), [base, frame.id, openingZoom]);
 
   useEffect(() => {
     const preserveSelector = '[data-paper-rich-inspector="true"], [data-advanced-color-picker-panel="true"], [data-text-input-dialog="true"]';

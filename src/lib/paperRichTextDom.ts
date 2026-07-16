@@ -1,4 +1,4 @@
-import type { PaperParagraphBorderEdge, PaperParagraphBorders, PaperRichParagraph, PaperTextRun } from '../types/paper';
+import type { PaperParagraphBorderEdge, PaperParagraphBorders, PaperRichParagraph, PaperTextRun, PaperTypography } from '../types/paper';
 import { normalizePaperRichText } from './paperRichText';
 
 const MM_TO_PX = 3.7795;
@@ -199,6 +199,28 @@ export interface RichEditorBase {
   textOrientation?: 'mixed' | 'upright';
   emphasis?: 'none' | 'dot' | 'open-dot' | 'sesame' | 'circle';
   zoom: number;
+}
+
+/**
+ * Build the conversion base for one rich-editor session. The DOM is seeded in pixel units when the session
+ * opens, so it must also be serialized against that same opening scale even when the canvas zoom changes.
+ */
+export function createRichEditorBase(typography: PaperTypography, openingZoom: number): RichEditorBase {
+  return {
+    colorHex: (typography.color || '#111827').toLowerCase(),
+    fontFamily: typography.fontFamily,
+    fontSizePx: typography.fontSizePt * PT_TO_PX * openingZoom,
+    leadingPx: typography.leadingPt * PT_TO_PX * openingZoom,
+    fontWeight: typography.fontWeight,
+    fontStyle: typography.fontStyle,
+    fontKerning: typography.fontKerning,
+    tracking: typography.tracking,
+    smallCaps: typography.smallCaps,
+    numericStyle: typography.numericStyle,
+    textOrientation: typography.textOrientation,
+    emphasis: typography.emphasis,
+    zoom: openingZoom,
+  };
 }
 
 function normalizedFontFamily(value: string): string {
