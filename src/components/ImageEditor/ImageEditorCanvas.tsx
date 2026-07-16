@@ -34,6 +34,7 @@ import {
   imageTextLayerContainsPoint,
 } from './ImageTextPresets';
 import { formatFontFamily } from '../../lib/formatFontFamily';
+import { bundledFontFaceRuntimeFamilyName } from '../../lib/bundledFontLibrary';
 import { updateTextLayerFromStyle } from './ImageTextLayer';
 import {
   calculateLayerPerspectiveValue,
@@ -2050,7 +2051,7 @@ export function ImageTextEditOverlay({
         spellCheck={false}
         style={{
           color: text.color,
-          fontFamily: formatFontFamily(text.fontFamily),
+          fontFamily: formatFontFamily(text.managedFace ? bundledFontFaceRuntimeFamilyName(text.managedFace) : text.fontFamily),
           fontSize: Math.max(11, text.fontSize * zoom),
           fontStyle: text.fontStyle,
           fontWeight: text.fontWeight,

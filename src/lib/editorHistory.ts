@@ -157,6 +157,10 @@ function stableSnapshotString(snapshot: EditorHistorySnapshot): string {
 function cloneVisualClip(clip: EditorVisualClip): EditorVisualClip {
   return {
     ...clip,
+    textTypography: clip.textTypography ? {
+      ...clip.textTypography,
+      managedFace: clip.textTypography.managedFace ? { ...clip.textTypography.managedFace } : undefined,
+    } : undefined,
     opacityAutomationPoints: clip.opacityAutomationPoints?.map((point) => ({ ...point })),
     keyframes: clip.keyframes?.map((keyframe) => ({ ...keyframe })),
   };
@@ -173,7 +177,10 @@ function cloneAudioClip(clip: EditorAudioClip): EditorAudioClip {
 function cloneEditorAsset(asset: EditorAsset): EditorAsset {
   return {
     ...asset,
-    textDefaults: asset.textDefaults ? { ...asset.textDefaults } : undefined,
+    textDefaults: asset.textDefaults ? {
+      ...asset.textDefaults,
+      managedFace: asset.textDefaults.managedFace ? { ...asset.textDefaults.managedFace } : undefined,
+    } : undefined,
     shapeDefaults: asset.shapeDefaults ? { ...asset.shapeDefaults } : undefined,
   };
 }
@@ -181,7 +188,10 @@ function cloneEditorAsset(asset: EditorAsset): EditorAsset {
 function cloneStageObject(
   object: NonNullable<NodeData['editorStageObjects']>[number],
 ): NonNullable<NodeData['editorStageObjects']>[number] {
-  return { ...object };
+  return {
+    ...object,
+    ...(object.kind === 'text' && object.managedFace ? { managedFace: { ...object.managedFace } } : {}),
+  };
 }
 
 function normalizeAspectRatio(value: unknown): AspectRatio | undefined {

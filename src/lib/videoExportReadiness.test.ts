@@ -111,4 +111,19 @@ describe('videoExportReadiness', () => {
       issueCount: 0,
     });
   });
+
+  it('surfaces the actionable bundled-face failure and blocks exact export readiness', () => {
+    const readiness = analyzeVideoExportReadiness({
+      hasComposition: true,
+      visualClips: [createEditorVisualClip('text-overlay', 'text', { id: 'text-ok', textContent: 'Title' })],
+      audioClips: [],
+      stageObjectCount: 0,
+      availableSourceIds: [],
+      managedFontError: 'Liberation Sans face abc is unavailable or unauthorized. Reinstall the audited bundled font library.',
+    });
+
+    expect(readiness.summary).toMatchObject({ tone: 'error', label: 'Missing font', issueCount: 1 });
+    expect(readiness.summary.detail).toMatch(/Liberation Sans.*unavailable or unauthorized.*Reinstall/i);
+    expect(readiness.issues[0]).toMatchObject({ severity: 'error', title: 'Missing bundled font face' });
+  });
 });

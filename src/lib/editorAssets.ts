@@ -12,6 +12,7 @@ import type {
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import { createEditorVisualClip } from './manualEditorState';
 import { normalizeFontWeight } from './formatFontFamily';
+import { bundledFontFaceReferenceMatchesTypography, normalizeBundledFontFaceReference } from './bundledFontLibrary';
 
 export interface CreateEditorAssetOptions {
   id?: string;
@@ -164,6 +165,7 @@ export function migrateStageObjectsToEditorAssets(
         fontFamily: object.fontFamily,
         fontWeight: object.fontWeight ?? 400,
         fontStyle: object.fontStyle ?? 'normal',
+        managedFace: object.managedFace,
         fontSizePx: object.fontSizePx,
         color: object.color,
         textEffect: 'shadow',
@@ -195,6 +197,7 @@ export function migrateStageObjectsToEditorAssets(
           textTypography: {
             fontWeight: textDefaults.fontWeight,
             fontStyle: textDefaults.fontStyle,
+            managedFace: textDefaults.managedFace,
           },
         }),
         id: `visual-${object.id}`,
@@ -323,7 +326,11 @@ export function buildVisualClipFromEditorAsset(
     textBackgroundOpacityPercent: asset.textDefaults?.textBackgroundOpacityPercent,
     textTypography:
       asset.kind === 'text' && asset.textDefaults
-        ? { fontWeight: asset.textDefaults.fontWeight, fontStyle: asset.textDefaults.fontStyle }
+        ? {
+            fontWeight: asset.textDefaults.fontWeight,
+            fontStyle: asset.textDefaults.fontStyle,
+            managedFace: asset.textDefaults.managedFace,
+          }
         : undefined,
     shapeFillColor: asset.shapeDefaults?.fillColor,
     shapeBorderColor: asset.shapeDefaults?.borderColor,
@@ -343,6 +350,14 @@ function normalizeEditorAsset(value: unknown): EditorAsset[] {
 
   if (value.kind === 'text') {
     const defaults = isRecord(value.textDefaults) ? value.textDefaults : {};
+    const managedFace = normalizeBundledFontFaceReference(defaults.managedFace);
+    const fontFamily = typeof defaults.fontFamily === 'string'
+      ? defaults.fontFamily
+      : 'Inter, system-ui, sans-serif';
+    const fontWeight = normalizeFontWeight(defaults.fontWeight);
+    const fontStyle = defaults.fontStyle === 'italic' || (defaults.fontStyle === 'oblique' && managedFace?.style === 'oblique')
+      ? defaults.fontStyle
+      : 'normal';
 
     return [{
       id: value.id,
@@ -352,11 +367,14 @@ function normalizeEditorAsset(value: unknown): EditorAsset[] {
       updatedAt,
       textDefaults: {
         text: typeof defaults.text === 'string' ? defaults.text : 'Text',
-        fontFamily: typeof defaults.fontFamily === 'string'
-          ? defaults.fontFamily
-          : 'Inter, system-ui, sans-serif',
-        fontWeight: normalizeFontWeight(defaults.fontWeight),
-        fontStyle: defaults.fontStyle === 'italic' ? 'italic' : 'normal',
+        fontFamily,
+        fontWeight,
+        fontStyle,
+        managedFace: managedFace && bundledFontFaceReferenceMatchesTypography(managedFace, {
+          family: fontFamily,
+          weight: fontWeight,
+          style: fontStyle,
+        }) ? managedFace : undefined,
         fontSizePx: Math.max(8, normalizeNumber(defaults.fontSizePx, 72)),
         color: normalizeColor(defaults.color, '#f8fafc'),
         textEffect: normalizeTextEffect(defaults.textEffect),

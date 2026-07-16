@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 
 import { act } from 'react';
+import { webcrypto } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createRoot } from 'react-dom/client';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BundledFontCatalog } from '../../lib/bundledFontLibrary';
 import { BundledFontBrowser } from './BundledFontBrowser';
 
-vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+const testFontBytes = readFileSync(resolve(process.cwd(), 'public/fonts/liberation/LiberationSans-Regular.ttf'));
+const testFontSha256 = 'baccc64becc3eb7d104b7c84d99f5314a0a1f896e2b3ea6c2f22fc08d2003bee';
 
 const catalog: BundledFontCatalog = {
   schemaVersion: 1,
@@ -17,16 +21,30 @@ const catalog: BundledFontCatalog = {
       id: 'base:editorial', family: 'Editorial Serif', slug: 'editorial', collection: 'base', role: 'serif',
       sourceUrl: 'https://example.test', sourceVersion: '1', licenseId: 'OFL-1.1', licenseFile: 'licenses/editorial.txt',
       licenseSha256: 'a'.repeat(64), licenseByteLength: 1, warnings: [],
-      faces: [{ id: 'editorial:regular', file: 'collection/base/editorial/Regular.ttf', collectionIndex: 0, sha256: 'b'.repeat(64), byteLength: 1, family: 'Editorial Serif', subfamily: 'Regular', fullName: 'Editorial Serif Regular', postscriptName: 'EditorialSerif-Regular', version: '1', weight: 400, style: 'normal', glyphCount: 100, variable: false, axes: {}, canSubset: true, hasVerticalSubstitution: false }],
+      faces: [{ id: 'editorial:regular', file: 'collection/base/editorial/Regular.ttf', collectionIndex: 0, sha256: testFontSha256, byteLength: testFontBytes.byteLength, family: 'Editorial Serif', subfamily: 'Regular', fullName: 'Editorial Serif Regular', postscriptName: 'EditorialSerif-Regular', version: '1', weight: 400, style: 'normal', stretchPercent: 100, glyphCount: 100, variable: false, axes: {}, canSubset: true, hasVerticalSubstitution: false }],
     },
     {
       id: 'base:tokyo', family: 'Tokyo Gothic', slug: 'tokyo', collection: 'base', role: 'japanese',
       sourceUrl: 'https://example.test', sourceVersion: '1', licenseId: 'OFL-1.1', licenseFile: 'licenses/tokyo.txt',
       licenseSha256: 'c'.repeat(64), licenseByteLength: 1, warnings: [],
-      faces: [{ id: 'tokyo:regular', file: 'collection/base/tokyo/Regular.ttf', collectionIndex: 0, sha256: 'd'.repeat(64), byteLength: 1, family: 'Tokyo Gothic', subfamily: 'Regular', fullName: 'Tokyo Gothic Regular', postscriptName: 'TokyoGothic-Regular', version: '1', weight: 400, style: 'normal', glyphCount: 1000, variable: false, axes: {}, canSubset: true, hasVerticalSubstitution: true }],
+      faces: [{ id: 'tokyo:regular', file: 'collection/base/tokyo/Regular.ttf', collectionIndex: 0, sha256: testFontSha256, byteLength: testFontBytes.byteLength, family: 'Tokyo Gothic', subfamily: 'Regular', fullName: 'Tokyo Gothic Regular', postscriptName: 'TokyoGothic-Regular', version: '1', weight: 400, style: 'normal', stretchPercent: 100, glyphCount: 1000, variable: false, axes: {}, canSubset: true, hasVerticalSubstitution: true }],
     },
   ],
 };
+
+beforeEach(() => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  vi.stubGlobal('crypto', webcrypto);
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(testFontBytes)));
+  vi.stubGlobal('FontFace', class {
+    async load() { return this; }
+  });
+  Object.defineProperty(document, 'fonts', { configurable: true, value: { add: vi.fn() } });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('BundledFontBrowser', () => {
   it('searches, previews, and selects an exact bundled face', async () => {
@@ -47,7 +65,9 @@ describe('BundledFontBrowser', () => {
     expect(tokyo.style.fontFamily).toBe('"Tokyo Gothic"');
     await act(async () => tokyo.click());
 
-    expect(onSelect).toHaveBeenCalledWith(catalog.families[1], catalog.families[1].faces[0]);
+    await act(async () => {
+      await vi.waitFor(() => expect(onSelect).toHaveBeenCalledWith(catalog.families[1], catalog.families[1].faces[0]));
+    });
     await act(async () => root.unmount());
   });
 

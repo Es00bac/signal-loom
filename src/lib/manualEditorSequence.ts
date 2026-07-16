@@ -148,7 +148,10 @@ export function buildManualEditorVisualSequenceClip(
     textColor: clip.textColor,
     textEffect: clip.textEffect,
     textBackgroundOpacityPercent: clip.textBackgroundOpacityPercent,
-    textTypography: clip.textTypography ? { ...clip.textTypography } : undefined,
+    textTypography: clip.textTypography ? {
+      ...clip.textTypography,
+      managedFace: clip.textTypography.managedFace ? { ...clip.textTypography.managedFace } : undefined,
+    } : undefined,
     shapeFillColor: clip.shapeFillColor,
     shapeBorderColor: clip.shapeBorderColor,
     shapeBorderWidth: clip.shapeBorderWidth,

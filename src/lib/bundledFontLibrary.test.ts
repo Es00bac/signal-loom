@@ -91,7 +91,7 @@ describe('bundled font library', () => {
     expect(bundledFontResourceUrl(family.faces[0].file)).toBe(
       'signal-loom-font://library/collection/base/liberationsans/LiberationSans-Regular.ttf',
     );
-    expect(bundledFontFaceCssDescriptor(family.faces[0])).toEqual({ weight: '400', style: 'normal' });
+    expect(bundledFontFaceCssDescriptor(family.faces[0])).toEqual({ weight: '400', style: 'normal', stretch: '100%' });
   });
 
   it('rejects an inventory with critical audit errors or unsafe resource paths', () => {

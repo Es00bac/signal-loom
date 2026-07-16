@@ -27,6 +27,7 @@ export function analyzeVideoExportReadiness({
   availableSourceIds,
   dirtySpanSummary,
   hasComposition,
+  managedFontError,
   stageObjectCount,
   visualClips,
 }: {
@@ -34,11 +35,20 @@ export function analyzeVideoExportReadiness({
   availableSourceIds: Iterable<string>;
   dirtySpanSummary?: string;
   hasComposition: boolean;
+  managedFontError?: string;
   stageObjectCount: number;
   visualClips: EditorVisualClip[];
 }): VideoExportReadinessReport {
   const availableSources = new Set(availableSourceIds);
   const issues: VideoExportReadinessIssue[] = [];
+
+  if (managedFontError) {
+    issues.push({
+      severity: 'error',
+      title: 'Missing bundled font face',
+      detail: `${managedFontError} Exact Video typography cannot be previewed or exported until this face is restored.`,
+    });
+  }
 
   if (!hasComposition) {
     issues.push({
@@ -106,10 +116,13 @@ function clipNeedsSourceMedia(clip: EditorVisualClip): boolean {
 function summarizeVideoExportReadiness(issues: VideoExportReadinessIssue[]): VideoExportReadinessSummary {
   const errorCount = issues.filter((issue) => issue.severity === 'error').length;
   if (errorCount > 0) {
+    const fontError = issues.find((issue) => issue.severity === 'error' && issue.title === 'Missing bundled font face');
     return {
       tone: 'error',
-      label: 'Missing media',
-      detail: `${errorCount} missing timeline source${errorCount === 1 ? '' : 's'} must be restored before export is reliable.`,
+      label: fontError ? 'Missing font' : 'Missing media',
+      detail: fontError
+        ? fontError.detail
+        : `${errorCount} missing timeline source${errorCount === 1 ? '' : 's'} must be restored before export is reliable.`,
       issueCount: errorCount,
     };
   }

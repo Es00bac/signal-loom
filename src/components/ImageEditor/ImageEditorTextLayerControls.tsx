@@ -3,6 +3,7 @@ import { AdjustmentSlider } from './ImageEditorAdjustmentControls';
 import type { ImageLayer, TextLayerOpenTypeFeatures, TextLayerStyle } from '../../types/imageEditor';
 import { AdvancedColorPicker } from '../Common/AdvancedColorPicker';
 import { BundledFontBrowser } from '../Common/BundledFontBrowser';
+import { createBundledFontFaceReference } from '../../lib/bundledFontLibrary';
 import {
   buildImageTextExportSourceBinHandoffDescriptor,
   buildImageTextLayerDescriptor,
@@ -22,7 +23,7 @@ import {
   type ImageTextPresetId,
 } from './ImageTextPresets';
 
-type TextFontStackPatch = Partial<Pick<TextLayerStyle, 'fontFamily' | 'fontWeight' | 'fontStyle'>>;
+type TextFontStackPatch = Partial<Pick<TextLayerStyle, 'fontFamily' | 'fontWeight' | 'fontStyle' | 'managedFace'>>;
 
 export function TextFontStackControls({
   customAriaLabel,
@@ -37,7 +38,7 @@ export function TextFontStackControls({
   disabled?: boolean;
   onChange: (patch: TextFontStackPatch) => void;
   selectAriaLabel: string;
-  style?: 'normal' | 'italic';
+  style?: 'normal' | 'italic' | 'oblique';
   value: string;
   weight?: number | string;
 }) {
@@ -52,7 +53,8 @@ export function TextFontStackControls({
         onSelect={(family, face) => onChange({
           fontFamily: family.family,
           fontWeight: String(face.weight),
-          fontStyle: face.style === 'italic' ? 'italic' : 'normal',
+          fontStyle: face.style,
+          managedFace: createBundledFontFaceReference(family, face),
         })}
         style={style}
         value={value}
@@ -66,7 +68,7 @@ export function TextFontStackControls({
           disabled={disabled}
           onChange={(event) => {
             if (event.target.value !== '__custom__') {
-              onChange({ fontFamily: event.target.value });
+              onChange({ fontFamily: event.target.value, managedFace: undefined });
             }
           }}
           value={selectedValue}
@@ -85,7 +87,7 @@ export function TextFontStackControls({
           aria-label={customAriaLabel}
           className="w-full rounded border border-cyan-300/10 bg-[#252630] px-2 py-1.5 text-xs text-cyan-100/85 outline-none focus:border-cyan-300/50 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={disabled}
-          onChange={(event) => onChange({ fontFamily: event.target.value })}
+          onChange={(event) => onChange({ fontFamily: event.target.value, managedFace: undefined })}
           value={value}
         />
       </label>

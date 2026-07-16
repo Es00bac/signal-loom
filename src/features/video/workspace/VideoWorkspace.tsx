@@ -166,6 +166,13 @@ import { useSettingsStore } from '../../../store/settingsStore';
 import { AdvancedColorPicker } from '../../../components/Common/AdvancedColorPicker';
 import { BundledFontBrowser } from '../../../components/Common/BundledFontBrowser';
 import {
+  bundledFontFaceRuntimeFamilyName,
+  createBundledFontFaceReference,
+  ensureBundledFontFaceReferencesRegistered,
+} from '../../../lib/bundledFontLibrary';
+import { collectVideoBundledFontFaceReferences } from '../../../lib/managedBundledFonts';
+import type { ManagedBundledFontFaceReference } from '../../../types/managedFont';
+import {
   getEditorStageObjects,
   getStageObjectBlendModes,
 } from '../../../lib/editorStageObjects';
@@ -460,7 +467,8 @@ interface TextEditDraft {
   text: string;
   fontFamily: string;
   fontWeight: number;
-  fontStyle: 'normal' | 'italic';
+  fontStyle: 'normal' | 'italic' | 'oblique';
+  managedFace?: ManagedBundledFontFaceReference;
   fontSizePx: number;
   color: string;
   textEffect: TextClipEffect;
@@ -793,6 +801,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     selectedProperties: VisualClipCopiedProperty[];
   } | null>(null);
   const [textEditDialog, setTextEditDialog] = useState<TextEditDialogState | null>(null);
+  const [managedFontError, setManagedFontError] = useState<string>();
   const [selectedStageObjectId, setSelectedStageObjectId] = useState<string | undefined>(undefined);
   const [selectedTimelineGap, setSelectedTimelineGap] = useState<TimelineGap | null>(null);
   const [sourceBinPreview, setSourceBinPreview] = useState<{
@@ -801,6 +810,25 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     label: string;
   } | null>(null);
   const [editorHistory, setEditorHistory] = useState(createEditorHistoryState);
+  const managedFontReferences = useMemo(
+    () => collectVideoBundledFontFaceReferences({
+      assets: compositionEditorAssets,
+      visualClips,
+      stageObjects,
+    }),
+    [compositionEditorAssets, stageObjects, visualClips],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void ensureBundledFontFaceReferencesRegistered(managedFontReferences).then(
+      () => { if (!cancelled) setManagedFontError(undefined); },
+      (error) => {
+        if (!cancelled) setManagedFontError(error instanceof Error ? error.message : 'A bundled font face is unavailable.');
+      },
+    );
+    return () => { cancelled = true; };
+  }, [managedFontReferences]);
 
   const applyEditorHistorySnapshot = useCallback((
     compositionId: string,
@@ -1569,10 +1597,11 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
       availableSourceIds: sourceItemByNodeId.keys(),
       dirtySpanSummary: incrementalRenderSummary,
       hasComposition: Boolean(activeComposition),
+      managedFontError,
       stageObjectCount: stageObjects.length,
       visualClips,
     }).summary,
-    [activeComposition, audioClips, incrementalRenderSummary, sourceItemByNodeId, stageObjects.length, visualClips],
+    [activeComposition, audioClips, incrementalRenderSummary, managedFontError, sourceItemByNodeId, stageObjects.length, visualClips],
   );
   const renderBackendStatus = useMemo(
     () => summarizeVideoRenderBackend(renderBackendPreference),
@@ -2066,6 +2095,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                   fontFamily: draft.fontFamily,
                   fontWeight: draft.fontWeight,
                   fontStyle: draft.fontStyle,
+                  managedFace: draft.managedFace,
                   fontSizePx: draft.fontSizePx,
                   color: draft.color,
                   textEffect: draft.textEffect,
@@ -2088,6 +2118,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
           ...existingTypography,
           fontWeight: draft.fontWeight,
           fontStyle: draft.fontStyle,
+          managedFace: draft.managedFace,
         },
       });
     }
@@ -7969,8 +8000,11 @@ function ProgramStageMedia({
             className="inline-block whitespace-pre font-semibold leading-tight"
             style={{
               color: textColor,
-              fontFamily: formatFontFamily(textFontFamily),
+              fontFamily: formatFontFamily(typography?.managedFace
+                ? bundledFontFaceRuntimeFamilyName(typography.managedFace)
+                : textFontFamily),
               fontSize: `${safeFontSizePx}px`,
+              fontStretch: typography?.managedFace ? `${typography.managedFace.stretchPercent}%` : undefined,
               lineHeight: TEXT_LINE_HEIGHT,
               ...getTextTypographyStyle(typography, text?.effect ?? clip.clip.textEffect ?? textDefaults?.textEffect ?? 'none'),
             }}
@@ -7991,7 +8025,9 @@ function ProgramStageMedia({
             className="mt-3 text-balance font-semibold text-white"
             style={{
               color: clip.clip.textColor || textDefaults?.color,
-              fontFamily: formatFontFamily(clip.clip.textFontFamily || textDefaults?.fontFamily || 'Inter, system-ui, sans-serif'),
+              fontFamily: formatFontFamily(clip.clip.textTypography?.managedFace
+                ? bundledFontFaceRuntimeFamilyName(clip.clip.textTypography.managedFace)
+                : clip.clip.textFontFamily || textDefaults?.fontFamily || 'Inter, system-ui, sans-serif'),
               fontSize: `${Math.max(16, (clip.clip.textSizePx || textDefaults?.fontSizePx || 64) / 3)}px`,
             }}
           >
@@ -8115,8 +8151,11 @@ function ProgramStageObjectPreview({ object }: { object: EditorStageObject }) {
           className="w-full whitespace-pre-wrap text-center font-semibold leading-tight"
           style={{
             color: object.color,
-            fontFamily: formatFontFamily(object.fontFamily),
+            fontFamily: formatFontFamily(object.managedFace
+              ? bundledFontFaceRuntimeFamilyName(object.managedFace)
+              : object.fontFamily),
             fontSize: `${object.fontSizePx}px`,
+            fontStretch: object.managedFace ? `${object.managedFace.stretchPercent}%` : undefined,
             fontStyle: object.fontStyle,
             fontWeight: object.fontWeight,
           }}
@@ -8321,7 +8360,15 @@ function ArcTextPreview({
   const fontWeight = typography.fontWeight ?? 600;
   const fontStyle = typography.fontStyle ?? 'normal';
   const letterSpacingPx = typography.letterSpacingPx ?? 0;
-  const font = { fontFamily, fontSizePx, fontWeight, fontStyle, fontKerning: typography.fontKerning ?? 'auto', letterSpacingPx };
+  const font = {
+    fontFamily,
+    fontSizePx,
+    fontWeight,
+    fontStyle,
+    fontStretchPercent: typography.managedFace?.stretchPercent ?? 100,
+    fontKerning: typography.fontKerning ?? 'auto',
+    letterSpacingPx,
+  };
   const naturalWidthPx = Math.max(1, measurer(text, font));
   const glyphs = computeArcTextGlyphs(text, naturalWidthPx, typography.arcPercent, (char) => measurer(char, font) + letterSpacingPx);
   const glyphStyle = getTextTypographyStyle(typography, 'none');
@@ -8335,9 +8382,12 @@ function ArcTextPreview({
           key={index}
           style={{
             color,
-            fontFamily: formatFontFamily(fontFamily),
+            fontFamily: formatFontFamily(typography.managedFace
+              ? bundledFontFaceRuntimeFamilyName(typography.managedFace)
+              : fontFamily),
             fontSize: `${fontSizePx}px`,
             fontStyle,
+            fontStretch: typography.managedFace ? `${typography.managedFace.stretchPercent}%` : undefined,
             fontKerning: typography.fontKerning ?? 'auto',
             fontWeight,
             left: naturalWidthPx / 2 + glyph.xPx,
@@ -8384,7 +8434,10 @@ function TypographyAdvancedControls({
           label="Weight"
           max={900}
           min={100}
-          onChange={(value) => updateTypography({ fontWeight: Math.max(100, Math.min(900, Math.round(value / 100) * 100)) })}
+          onChange={(value) => updateTypography({
+            fontWeight: Math.max(100, Math.min(900, Math.round(value / 100) * 100)),
+            managedFace: undefined,
+          })}
           step={100}
           value={fontWeight}
         />
@@ -8393,7 +8446,7 @@ function TypographyAdvancedControls({
             <button
               className={`flex-1 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${fontStyle === style ? 'border-cyan-300/50 bg-cyan-500/10 text-cyan-100' : 'border-gray-700/60 text-gray-400 hover:text-gray-200'}`}
               key={style}
-              onClick={() => updateTypography({ fontStyle: style })}
+              onClick={() => updateTypography({ fontStyle: style, managedFace: undefined })}
               type="button"
             >
               {style === 'normal' ? 'Normal' : 'Italic'}
@@ -8715,7 +8768,8 @@ function StageObjectInspector({
             onSelect={(family, face) => onUpdate({
               fontFamily: family.family,
               fontWeight: face.weight,
-              fontStyle: face.style === 'italic' ? 'italic' : 'normal',
+              fontStyle: face.style,
+              managedFace: createBundledFontFaceReference(family, face),
             } as Partial<EditorStageObject>)}
             style={object.fontStyle ?? 'normal'}
             value={object.fontFamily}
@@ -8725,7 +8779,7 @@ function StageObjectInspector({
             <span>Font family</span>
             <input
               className="w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-3 py-2 text-sm text-gray-100 outline-none"
-              onChange={(event) => onUpdate({ fontFamily: event.target.value } as Partial<EditorStageObject>)}
+              onChange={(event) => onUpdate({ fontFamily: event.target.value, managedFace: undefined } as Partial<EditorStageObject>)}
               type="text"
               value={object.fontFamily}
             />
@@ -9041,7 +9095,8 @@ function buildTextDraftFromAsset(asset: EditorAsset): TextEditDraft {
     text: asset.textDefaults?.text ?? 'Text',
     fontFamily: asset.textDefaults?.fontFamily ?? 'Inter, system-ui, sans-serif',
     fontWeight: asset.textDefaults?.fontWeight ?? 400,
-    fontStyle: asset.textDefaults?.fontStyle === 'italic' ? 'italic' : 'normal',
+    fontStyle: asset.textDefaults?.fontStyle ?? 'normal',
+    managedFace: asset.textDefaults?.managedFace,
     fontSizePx: asset.textDefaults?.fontSizePx ?? 72,
     color: asset.textDefaults?.color ?? '#f8fafc',
     textEffect: asset.textDefaults?.textEffect ?? 'shadow',
@@ -9057,7 +9112,8 @@ function buildTextDraftFromClip(
     text: clip.textContent ?? sourceItem?.text ?? asset?.textDefaults?.text ?? 'Text',
     fontFamily: clip.textFontFamily || asset?.textDefaults?.fontFamily || 'Inter, system-ui, sans-serif',
     fontWeight: clip.textTypography?.fontWeight ?? asset?.textDefaults?.fontWeight ?? 400,
-    fontStyle: (clip.textTypography?.fontStyle ?? asset?.textDefaults?.fontStyle) === 'italic' ? 'italic' : 'normal',
+    fontStyle: clip.textTypography?.fontStyle ?? asset?.textDefaults?.fontStyle ?? 'normal',
+    managedFace: clip.textTypography?.managedFace ?? asset?.textDefaults?.managedFace,
     fontSizePx: clip.textSizePx || asset?.textDefaults?.fontSizePx || 72,
     color: clip.textColor || asset?.textDefaults?.color || '#f8fafc',
     textEffect: clip.textEffect || asset?.textDefaults?.textEffect || 'shadow',
@@ -9069,7 +9125,8 @@ function normalizeTextEditDraft(draft: TextEditDraft): TextEditDraft {
     text: draft.text,
     fontFamily: draft.fontFamily.trim() || 'Inter, system-ui, sans-serif',
     fontWeight: typeof draft.fontWeight === 'number' && Number.isFinite(draft.fontWeight) ? draft.fontWeight : 400,
-    fontStyle: draft.fontStyle === 'italic' ? 'italic' : 'normal',
+    fontStyle: draft.fontStyle === 'italic' || draft.fontStyle === 'oblique' ? draft.fontStyle : 'normal',
+    managedFace: draft.managedFace,
     fontSizePx: Math.max(8, Math.min(320, Math.round(draft.fontSizePx))),
     color: /^#[0-9a-f]{6}$/i.test(draft.color) ? draft.color : '#f8fafc',
     textEffect: draft.textEffect,
@@ -9867,7 +9924,10 @@ export function InspectorPanel({
                   <span>Font family</span>
                   <input
                     className="w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-3 py-2 text-sm text-gray-100 outline-none"
-                    onChange={(event) => onUpdateVisualClip({ textFontFamily: event.target.value })}
+                    onChange={(event) => onUpdateVisualClip({
+                      textFontFamily: event.target.value,
+                      textTypography: { ...visualClip.textTypography, managedFace: undefined },
+                    })}
                     type="text"
                     value={visualClip.textFontFamily}
                   />
@@ -9878,7 +9938,8 @@ export function InspectorPanel({
                     textTypography: {
                       ...visualClip.textTypography,
                       fontWeight: face.weight,
-                      fontStyle: face.style === 'italic' ? 'italic' : 'normal',
+                      fontStyle: face.style,
+                      managedFace: createBundledFontFaceReference(family, face),
                     },
                   })}
                   style={visualClip.textTypography?.fontStyle ?? 'normal'}
@@ -10404,8 +10465,13 @@ function EditorAssetCard({
               className="max-w-full truncate px-1 text-center font-semibold"
               style={{
                 color: asset.textDefaults?.color ?? '#f8fafc',
-                fontFamily: formatFontFamily(asset.textDefaults?.fontFamily ?? 'Inter, system-ui, sans-serif'),
+                fontFamily: formatFontFamily(asset.textDefaults?.managedFace
+                  ? bundledFontFaceRuntimeFamilyName(asset.textDefaults.managedFace)
+                  : asset.textDefaults?.fontFamily ?? 'Inter, system-ui, sans-serif'),
                 fontSize: `${Math.max(10, Math.min(18, (asset.textDefaults?.fontSizePx ?? 72) / 5))}px`,
+                fontStyle: asset.textDefaults?.fontStyle,
+                fontStretch: asset.textDefaults?.managedFace ? `${asset.textDefaults.managedFace.stretchPercent}%` : undefined,
+                fontWeight: asset.textDefaults?.fontWeight,
                 ...getTextPreviewEffectStyle(asset.textDefaults?.textEffect ?? 'shadow'),
               }}
             >
@@ -11228,7 +11294,8 @@ function TextEditDialog({
             onSelect={(family, face) => onChange({
               fontFamily: family.family,
               fontWeight: face.weight,
-              fontStyle: face.style === 'italic' ? 'italic' : 'normal',
+              fontStyle: face.style,
+              managedFace: createBundledFontFaceReference(family, face),
             })}
             style={draft.fontStyle}
             value={draft.fontFamily}
@@ -11238,7 +11305,7 @@ function TextEditDialog({
             <span>Font family</span>
             <input
               className="w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-3 py-2 text-sm text-gray-100 outline-none"
-              onChange={(event) => onChange({ fontFamily: event.target.value })}
+              onChange={(event) => onChange({ fontFamily: event.target.value, managedFace: undefined })}
               type="text"
               value={draft.fontFamily}
             />
@@ -11281,9 +11348,12 @@ function TextEditDialog({
               className="whitespace-pre-wrap break-words text-center font-semibold leading-tight"
               style={{
                 color: draft.color,
-                fontFamily: formatFontFamily(draft.fontFamily),
+                fontFamily: formatFontFamily(draft.managedFace
+                  ? bundledFontFaceRuntimeFamilyName(draft.managedFace)
+                  : draft.fontFamily),
                 fontSize: `${Math.max(8, Math.min(96, draft.fontSizePx))}px`,
                 fontStyle: draft.fontStyle,
+                fontStretch: draft.managedFace ? `${draft.managedFace.stretchPercent}%` : undefined,
                 fontWeight: draft.fontWeight,
                 ...getTextPreviewEffectStyle(draft.textEffect),
               }}

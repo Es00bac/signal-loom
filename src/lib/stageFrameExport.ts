@@ -79,6 +79,8 @@ import {
 import { resolveNativeRenderTarget } from './localNativeRender';
 import { fetchAsStreamAudioInput, renderStageFrameStream, type StageFrameStreamMetadata } from './nativeRenderStream';
 import type { EditorStageObject } from '../types/flow';
+import { ensureBundledFontFaceReferencesRegistered } from './bundledFontLibrary';
+import { collectVideoBundledFontFaceReferences } from './managedBundledFonts';
 
 /** `t = n / fps` for `n` in `[0, frameCount)` — the deterministic stepper. Pure function of its
  *  inputs: no `requestAnimationFrame`, no `Date.now()`, no wall-clock dependence anywhere. Calling
@@ -123,6 +125,10 @@ export async function renderStageFrameSequence({
   exportPresetId,
   providerSettings,
 }: ComposeSequenceMediaOptions): Promise<ComposeSequenceMediaResult | null> {
+  await ensureBundledFontFaceReferencesRegistered(collectVideoBundledFontFaceReferences({
+    visualClips,
+    stageObjects,
+  }));
   if (visualClips.length === 0 && stageObjects.length === 0) {
     throw new Error('Manual editor compositions need at least one visual clip or stage object.');
   }

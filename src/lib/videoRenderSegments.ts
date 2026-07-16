@@ -32,6 +32,7 @@ export interface VideoRenderSignatureClipInput {
   textColor?: string;
   textEffect?: string;
   textBackgroundOpacityPercent?: number;
+  textTypography?: unknown;
   shapeFillColor?: string;
   shapeBorderColor?: string;
   shapeBorderWidth?: number;
@@ -94,6 +95,7 @@ export function buildVideoRenderClipSignature(input: VideoRenderSignatureClipInp
     textColor: input.textColor,
     textEffect: input.textEffect,
     textBackgroundOpacityPercent: optionalFiniteNumber(input.textBackgroundOpacityPercent),
+    textTypography: input.textTypography,
     shapeFillColor: input.shapeFillColor,
     shapeBorderColor: input.shapeBorderColor,
     shapeBorderWidth: optionalFiniteNumber(input.shapeBorderWidth),

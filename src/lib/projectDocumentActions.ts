@@ -16,6 +16,14 @@ import { useImageEditorStore } from '../store/imageEditorStore';
 import { usePaperStore } from '../store/paperStore';
 import { useProjectUsageStore } from '../store/projectUsageStore';
 import { useSourceBinStore } from '../store/sourceBinStore';
+import { getEditorAssets } from './editorAssets';
+import { getEditorVisualClips } from './manualEditorState';
+import { getEditorStageObjects } from './editorStageObjects';
+import { ensureBundledFontFaceReferencesRegistered } from './bundledFontLibrary';
+import {
+  collectImageBundledFontFaceReferences,
+  collectVideoBundledFontFaceReferences,
+} from './managedBundledFonts';
 
 export interface ProjectDocumentReplacementOptions {
   /** Set only after the user explicitly chose Discard or the current project was saved successfully. */
@@ -72,6 +80,19 @@ export async function restoreProjectDocument(
     ? (document as { name: string }).name
     : DEFAULT_PROJECT_NAME;
   const sanitizedDocument = sanitizeProjectDocument(document, fallbackName);
+  const imageFontReferences = collectImageBundledFontFaceReferences(sanitizedDocument.imageEditor?.documents ?? []);
+  const flowSnapshots = [
+    sanitizedDocument.flow,
+    ...(sanitizedDocument.flowWorkspaces ?? []).map((workspace) => workspace.flow),
+  ];
+  const videoFontReferences = flowSnapshots.flatMap((flow) => flow.nodes.flatMap((node) => (
+    collectVideoBundledFontFaceReferences({
+      assets: getEditorAssets(node.data),
+      visualClips: getEditorVisualClips(node.data),
+      stageObjects: getEditorStageObjects(node.data),
+    })
+  )));
+  await ensureBundledFontFaceReferencesRegistered([...imageFontReferences, ...videoFontReferences]);
   const flowStore = useFlowStore.getState();
   const editorStore = useEditorStore.getState();
   const sourceBinStore = useSourceBinStore.getState();

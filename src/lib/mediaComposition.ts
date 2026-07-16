@@ -18,6 +18,8 @@ import type {
 } from '../types/flow';
 import { buildAutomationExpression } from './clipAutomation';
 import { formatFontFamily } from './formatFontFamily';
+import { bundledFontFaceRuntimeFamilyName, ensureBundledFontFaceReferencesRegistered } from './bundledFontLibrary';
+import type { ManagedBundledFontFaceReference } from '../types/managedFont';
 import {
   audioKeyframesToVolumeAutomation,
   normalizeVisualKeyframes,
@@ -1324,6 +1326,9 @@ export async function renderComicCard(
   },
   tailSample?: ComicCardTailSample,
 ): Promise<string> {
+  await ensureBundledFontFaceReferencesRegistered(
+    clip.textTypography?.managedFace ? [clip.textTypography.managedFace] : [],
+  );
   const canvas = document.createElement('canvas');
   canvas.width = COMIC_CARD_WIDTH;
   canvas.height = COMIC_CARD_HEIGHT;
@@ -1365,6 +1370,7 @@ export async function renderComicCard(
     textAlign: typography?.textAlign ?? clip.comicTextAlign ?? 'center',
     textFontWeight: typography?.fontWeight,
     textFontStyle: typography?.fontStyle,
+    textManagedFace: typography?.managedFace,
     textFontKerning: typography?.fontKerning,
     textStrokeColor: typography?.strokeColor,
     textStrokeWidthPx: typography?.strokeWidthPx,
@@ -1382,6 +1388,9 @@ export async function renderStageObjectImage(
   object: EditorStageObject,
   canvasSize: SequenceCanvas,
 ): Promise<string> {
+  await ensureBundledFontFaceReferencesRegistered(
+    object.kind === 'text' && object.managedFace ? [object.managedFace] : [],
+  );
   const canvas = document.createElement('canvas');
   canvas.width = canvasSize.width;
   canvas.height = canvasSize.height;
@@ -1445,7 +1454,8 @@ interface TypesetPaintStyle {
   fontFamily: string;
   fontSizePx: number;
   fontWeight: number;
-  fontStyle: 'normal' | 'italic';
+  fontStyle: 'normal' | 'italic' | 'oblique';
+  managedFace?: ManagedBundledFontFaceReference;
   fontKerning?: 'auto' | 'normal' | 'none';
   letterSpacingPx: number;
   color: string;
@@ -1475,9 +1485,13 @@ function paintTypesetTextBlock(
   origin: { xPx: number; yPx: number },
 ): void {
   context.save();
-  const stylePrefix = style.fontStyle === 'italic' ? 'italic ' : '';
-  context.font = `${stylePrefix}${style.fontWeight} ${style.fontSizePx}px ${formatFontFamily(style.fontFamily)}`;
+  const stylePrefix = style.fontStyle === 'normal' ? '' : `${style.fontStyle} `;
+  const family = style.managedFace ? bundledFontFaceRuntimeFamilyName(style.managedFace) : style.fontFamily;
+  context.font = `${stylePrefix}${style.fontWeight} ${style.fontSizePx}px ${formatFontFamily(family)}`;
   context.fontKerning = style.fontKerning ?? 'auto';
+  if (style.managedFace && 'fontStretch' in context) {
+    (context as unknown as { fontStretch: string }).fontStretch = `${style.managedFace.stretchPercent}%`;
+  }
   if ('letterSpacing' in context) {
     (context as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${style.letterSpacingPx}px`;
   }
@@ -1543,6 +1557,7 @@ function paintArcTextRun(
     fontSizePx: style.fontSizePx,
     fontWeight: style.fontWeight,
     fontStyle: style.fontStyle,
+    fontStretchPercent: style.managedFace?.stretchPercent ?? 100,
     fontKerning: style.fontKerning ?? 'auto',
     letterSpacingPx: style.letterSpacingPx,
   };
@@ -1585,6 +1600,7 @@ export function drawTextStageObject(
       typography: {
         fontWeight,
         fontStyle,
+        managedFace: typography?.managedFace ?? object.managedFace,
         fontKerning: typography?.fontKerning,
         lineHeightPercent: typography?.lineHeightPercent ?? 115,
         letterSpacingPx: typography?.letterSpacingPx ?? 0,
@@ -1602,6 +1618,7 @@ export function drawTextStageObject(
       fontSizePx: object.fontSizePx,
       fontWeight,
       fontStyle,
+      managedFace: typography?.managedFace ?? object.managedFace,
       fontKerning: typography?.fontKerning,
       letterSpacingPx: typography?.letterSpacingPx ?? 0,
       color: object.color,
@@ -1638,7 +1655,8 @@ type ComicPaintObject = Omit<
   tailCurvePercent?: number;
   textAlign: 'left' | 'center' | 'right' | 'justify';
   textFontWeight?: number;
-  textFontStyle?: 'normal' | 'italic';
+  textFontStyle?: 'normal' | 'italic' | 'oblique';
+  textManagedFace?: ManagedBundledFontFaceReference;
   textFontKerning?: 'auto' | 'normal' | 'none';
   textStrokeColor?: string;
   textStrokeWidthPx?: number;
@@ -1730,6 +1748,7 @@ export function drawComicStageObject(
       typography: {
         fontWeight,
         fontStyle,
+        managedFace: object.textManagedFace,
         fontKerning: object.textFontKerning,
         lineHeightPercent: object.lineHeightPercent,
         letterSpacingPx: object.letterSpacingPx,
@@ -1747,6 +1766,7 @@ export function drawComicStageObject(
       fontSizePx: object.fontSizePx,
       fontWeight,
       fontStyle,
+      managedFace: object.textManagedFace,
       fontKerning: object.textFontKerning,
       letterSpacingPx: object.letterSpacingPx,
       color: object.textColor,
@@ -2403,6 +2423,7 @@ export async function renderTextCard({
   opacityPercent: number;
   typography?: EditorTextTypography;
 }): Promise<string> {
+  await ensureBundledFontFaceReferencesRegistered(typography?.managedFace ? [typography.managedFace] : []);
   const resolved: EditorTextTypography = { ...legacyTextEffectTypography(effect), ...(typography ?? {}) };
   const fontWeight = resolved.fontWeight ?? TEXT_CARD_DEFAULT_FONT_WEIGHT;
   const fontStyle = resolved.fontStyle ?? 'normal';
@@ -2418,6 +2439,7 @@ export async function renderTextCard({
       typography: {
         fontWeight,
         fontStyle,
+        managedFace: resolved.managedFace,
         fontKerning: resolved.fontKerning,
         lineHeightPercent: resolved.lineHeightPercent ?? TEXT_CARD_DEFAULT_LINE_HEIGHT_PERCENT,
         letterSpacingPx,
@@ -2457,6 +2479,7 @@ export async function renderTextCard({
       fontSizePx: safeFontSizePx,
       fontWeight,
       fontStyle,
+      managedFace: resolved.managedFace,
       fontKerning: resolved.fontKerning,
       letterSpacingPx,
       color: color || '#f3f4f6',

@@ -500,6 +500,16 @@ describe('video render cache helpers', () => {
     })).not.toBe(base);
     expect(buildVideoCompositionRenderCacheSignature({
       ...baseInput,
+      stageObjects: [{
+        ...baseInput.stageObjects[0],
+        managedFace: {
+          kind: 'bundled', faceId: 'liberation:regular', family: 'Liberation Sans',
+          weight: 400, style: 'normal', stretchPercent: 100,
+        },
+      }],
+    })).not.toBe(base);
+    expect(buildVideoCompositionRenderCacheSignature({
+      ...baseInput,
       exportPresetPlan: { presetId: 'png-image-sequence' },
     })).not.toBe(base);
   });

@@ -17,6 +17,7 @@ import {
   visualKeyframesToOpacityAutomation,
 } from './editorKeyframes';
 import { normalizeFontWeight } from './formatFontFamily';
+import { bundledFontFaceReferenceMatchesTypography, normalizeBundledFontFaceReference } from './bundledFontLibrary';
 import {
   normalizeClipBlendMode,
   normalizeClipChromaKey,
@@ -110,7 +111,7 @@ export function getEditorVisualClips(nodeData: NodeData): EditorVisualClip[] {
       comicLineHeightPercent: typeof clip.comicLineHeightPercent === 'number' ? clip.comicLineHeightPercent : undefined,
       comicLetterSpacingPx: typeof clip.comicLetterSpacingPx === 'number' ? clip.comicLetterSpacingPx : undefined,
       comicTextAlign: clip.comicTextAlign === 'left' || clip.comicTextAlign === 'center' || clip.comicTextAlign === 'right' ? clip.comicTextAlign : undefined,
-      textTypography: normalizeEditorTextTypography(clip.textTypography),
+      textTypography: normalizeEditorTextTypography(clip.textTypography, typeof clip.textFontFamily === 'string' ? clip.textFontFamily : 'Inter, system-ui, sans-serif'),
       shapeFillColor: typeof clip.shapeFillColor === 'string' ? clip.shapeFillColor : undefined,
       shapeBorderColor: typeof clip.shapeBorderColor === 'string' ? clip.shapeBorderColor : undefined,
       shapeBorderWidth: typeof clip.shapeBorderWidth === 'number' ? Math.max(0, Math.round(clip.shapeBorderWidth)) : undefined,
@@ -528,7 +529,7 @@ export function migrateComicPolarTailToBezierTip(
   };
 }
 
-function normalizeEditorTextTypography(value: unknown): EditorTextTypography | undefined {
+function normalizeEditorTextTypography(value: unknown, fontFamily: string): EditorTextTypography | undefined {
   if (!isRecord(value)) {
     return undefined;
   }
@@ -538,9 +539,22 @@ function normalizeEditorTextTypography(value: unknown): EditorTextTypography | u
   if (typeof value.fontWeight === 'number' && Number.isFinite(value.fontWeight)) {
     typography.fontWeight = normalizeFontWeight(value.fontWeight);
   }
-  if (value.fontStyle === 'normal' || value.fontStyle === 'italic') {
+  const managedFace = normalizeBundledFontFaceReference(value.managedFace);
+  const fontStyle = value.fontStyle === 'italic' || (value.fontStyle === 'oblique' && managedFace?.style === 'oblique')
+    ? value.fontStyle
+    : 'normal';
+  if (
+    value.fontStyle === 'normal'
+    || value.fontStyle === 'italic'
+    || (value.fontStyle === 'oblique' && managedFace?.style === 'oblique')
+  ) {
     typography.fontStyle = value.fontStyle;
   }
+  if (managedFace && bundledFontFaceReferenceMatchesTypography(managedFace, {
+    family: fontFamily,
+    weight: normalizeFontWeight(value.fontWeight),
+    style: fontStyle,
+  })) typography.managedFace = managedFace;
   if (value.fontKerning === 'auto' || value.fontKerning === 'normal' || value.fontKerning === 'none') {
     typography.fontKerning = value.fontKerning;
   }

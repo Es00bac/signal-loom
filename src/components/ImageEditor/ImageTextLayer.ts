@@ -11,6 +11,11 @@ import type {
 import { createBitmap } from './LayerBitmap';
 import { getVectorPathDocumentPoints } from './ImageVectorShape';
 import { formatFontFamily } from '../../lib/formatFontFamily';
+import {
+  bundledFontFaceRuntimeFamilyName,
+  bundledFontFaceReferenceMatchesTypography,
+  normalizeBundledFontFaceReference,
+} from '../../lib/bundledFontLibrary';
 
 export type ImageTextAlign = 'left' | 'center' | 'right' | 'justify';
 
@@ -667,6 +672,7 @@ export const DEFAULT_IMAGE_TEXT_STYLE: ImageTextLayerStyle = {
 export function normalizeImageTextStyle(
   patch: Partial<ImageTextLayerStyle> = {},
 ): ImageTextLayerStyle {
+  const managedFace = normalizeBundledFontFaceReference(patch.managedFace);
   const fontSize = clampNumber(patch.fontSize, 4, 512, DEFAULT_IMAGE_TEXT_STYLE.fontSize);
   const lineHeight = clampNumber(patch.lineHeight, 0.75, 3, DEFAULT_IMAGE_TEXT_STYLE.lineHeight);
   const letterSpacing = clampNumber(patch.letterSpacing, -20, 100, DEFAULT_IMAGE_TEXT_STYLE.letterSpacing);
@@ -683,7 +689,9 @@ export function normalizeImageTextStyle(
     fontFamily: patch.fontFamily?.trim() || DEFAULT_IMAGE_TEXT_STYLE.fontFamily,
     fontSize,
     fontWeight: patch.fontWeight?.trim() || DEFAULT_IMAGE_TEXT_STYLE.fontWeight,
-    fontStyle: patch.fontStyle === 'italic' ? 'italic' : 'normal',
+    fontStyle: patch.fontStyle === 'italic' || (patch.fontStyle === 'oblique' && managedFace?.style === 'oblique')
+      ? patch.fontStyle
+      : 'normal',
     fontKerning: normalizeFontKerning(patch.fontKerning),
     fontVariantCaps: normalizeFontVariantCaps(patch.fontVariantCaps),
     letterSpacing,
@@ -703,6 +711,13 @@ export function normalizeImageTextStyle(
   if (openTypeFeatures) {
     style.openTypeFeatures = openTypeFeatures;
   }
+  if (managedFace && bundledFontFaceReferenceMatchesTypography(managedFace, {
+    family: style.fontFamily,
+    weight: style.fontWeight,
+    style: style.fontStyle,
+  })) {
+    style.managedFace = managedFace;
+  }
   if (Object.prototype.hasOwnProperty.call(patch, 'pathReference')) {
     style.pathReference = patch.pathReference ?? null;
   }
@@ -712,13 +727,14 @@ export function normalizeImageTextStyle(
   return style;
 }
 
-export function imageTextCanvasFont(style: Pick<ImageTextLayerStyle, 'fontFamily' | 'fontSize' | 'fontWeight' | 'fontStyle' | 'fontVariantCaps'>): string {
+export function imageTextCanvasFont(style: Pick<ImageTextLayerStyle, 'fontFamily' | 'fontSize' | 'fontWeight' | 'fontStyle' | 'fontVariantCaps' | 'managedFace'>): string {
   // Canvas font shorthand accepts `small-caps` but not `all-small-caps`. The latter is applied
   // through the CanvasRenderingContext2D `fontVariantCaps` property after the font shorthand is set
   // so the retained text content stays unchanged.
   const shorthandVariant = style.fontVariantCaps === 'small-caps' ? 'small-caps' : undefined;
   const caps = shorthandVariant ? `${shorthandVariant} ` : '';
-  return `${style.fontStyle} ${caps}${style.fontWeight} ${style.fontSize}px ${formatFontFamily(style.fontFamily)}`;
+  const family = style.managedFace ? bundledFontFaceRuntimeFamilyName(style.managedFace) : style.fontFamily;
+  return `${style.fontStyle} ${caps}${style.fontWeight} ${style.fontSize}px ${formatFontFamily(family)}`;
 }
 
 
@@ -2627,13 +2643,15 @@ function isVerticalImageTextStyle(style: Pick<ImageTextLayerStyle, 'orientation'
 
 function applyCanvasTypographySettings(
   ctx: OffscreenCanvasRenderingContext2D,
-  style: Pick<ImageTextLayerStyle, 'fontKerning' | 'fontVariantCaps'>,
+  style: Pick<ImageTextLayerStyle, 'fontKerning' | 'fontVariantCaps' | 'managedFace'>,
 ): void {
-  const typographyContext = ctx as OffscreenCanvasRenderingContext2D & {
+  const typographyContext = ctx as unknown as {
     fontKerning?: ImageTextLayerStyle['fontKerning'];
+    fontStretch?: string;
     fontVariantCaps?: ImageTextLayerStyle['fontVariantCaps'];
   };
   typographyContext.fontKerning = style.fontKerning;
+  if (style.managedFace) typographyContext.fontStretch = `${style.managedFace.stretchPercent}%`;
   // Canvas font shorthand cannot express `all-small-caps`, so it is applied through this context
   // property after the font shorthand is set. The retained text content is left unchanged.
   typographyContext.fontVariantCaps = style.fontVariantCaps;

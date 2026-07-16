@@ -55,9 +55,21 @@ describe('buildVideoRenderClipSignature', () => {
     const base = buildVideoRenderClipSignature(baseClip);
     const changedText = buildVideoRenderClipSignature({ ...baseClip, textContent: 'Revised title' });
     const changedStyle = buildVideoRenderClipSignature({ ...baseClip, textColor: '#ff00cc' });
+    const changedManagedFace = buildVideoRenderClipSignature({
+      ...baseClip,
+      textTypography: {
+        fontWeight: 400,
+        fontStyle: 'normal',
+        managedFace: {
+          kind: 'bundled', faceId: 'liberation:regular', family: 'Liberation Sans',
+          weight: 400, style: 'normal', stretchPercent: 100,
+        },
+      },
+    });
 
     expect(changedText).not.toBe(base);
     expect(changedStyle).not.toBe(base);
+    expect(changedManagedFace).not.toBe(base);
   });
 });
 

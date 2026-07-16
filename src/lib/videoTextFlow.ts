@@ -27,13 +27,16 @@
 
 import { flowPaperText, type PaperTextFlowTypeSpec, type PaperTextMeasurer } from './paperTextFlow';
 import { formatFontFamily } from './formatFontFamily';
+import { bundledFontFaceRuntimeFamilyName } from './bundledFontLibrary';
+import type { ManagedBundledFontFaceReference } from '../types/managedFont';
 
 /** Resolved font description a measurer needs — mirrors the subset of canvas `font` + tracking. */
 export interface VideoTextFont {
   fontFamily: string;
   fontSizePx: number;
   fontWeight: number;
-  fontStyle: 'normal' | 'italic';
+  fontStyle: 'normal' | 'italic' | 'oblique';
+  fontStretchPercent?: number;
   fontKerning: 'auto' | 'normal' | 'none';
   letterSpacingPx: number;
 }
@@ -47,7 +50,8 @@ export type VideoTextAlign = 'left' | 'center' | 'right' | 'justify';
  *  applied by the renderer after layout — see `computeArcTextGlyphs` for arc). */
 export interface VideoTextTypesetting {
   fontWeight?: number;
-  fontStyle?: 'normal' | 'italic';
+  fontStyle?: 'normal' | 'italic' | 'oblique';
+  managedFace?: ManagedBundledFontFaceReference;
   fontKerning?: 'auto' | 'normal' | 'none';
   lineHeightPercent?: number;
   letterSpacingPx?: number;
@@ -93,8 +97,9 @@ export interface VideoTextLayoutResult {
   contentWidthPx: number;
   contentHeightPx: number;
   fontWeight: number;
-  fontStyle: 'normal' | 'italic';
+  fontStyle: 'normal' | 'italic' | 'oblique';
   fontKerning: 'auto' | 'normal' | 'none';
+  fontStretchPercent: number;
   letterSpacingPx: number;
   textAlign: VideoTextAlign;
 }
@@ -129,7 +134,8 @@ const MAX_ARC_SWEEP_RADIANS = Math.PI * 0.6;
 
 function resolveTypesetting(typography: VideoTextTypesetting | undefined): {
   fontWeight: number;
-  fontStyle: 'normal' | 'italic';
+  fontStyle: 'normal' | 'italic' | 'oblique';
+  fontStretchPercent: number;
   fontKerning: 'auto' | 'normal' | 'none';
   lineHeightPercent: number;
   letterSpacingPx: number;
@@ -138,6 +144,7 @@ function resolveTypesetting(typography: VideoTextTypesetting | undefined): {
   return {
     fontWeight: typography?.fontWeight ?? DEFAULT_FONT_WEIGHT,
     fontStyle: typography?.fontStyle ?? DEFAULT_FONT_STYLE,
+    fontStretchPercent: typography?.managedFace?.stretchPercent ?? 100,
     fontKerning: typography?.fontKerning ?? DEFAULT_FONT_KERNING,
     lineHeightPercent: typography?.lineHeightPercent ?? DEFAULT_LINE_HEIGHT_PERCENT,
     letterSpacingPx: typography?.letterSpacingPx ?? DEFAULT_LETTER_SPACING_PX,
@@ -154,14 +161,17 @@ export function layoutVideoText(
   options: VideoTextLayoutOptions,
   measure: VideoTextMeasurer,
 ): VideoTextLayoutResult {
-  const { fontWeight, fontStyle, fontKerning, lineHeightPercent, letterSpacingPx, textAlign } = resolveTypesetting(options.typography);
+  const { fontWeight, fontStyle, fontKerning, fontStretchPercent, lineHeightPercent, letterSpacingPx, textAlign } = resolveTypesetting(options.typography);
   const fontSizePx = Math.max(1, options.fontSizePx);
   const lineHeightPx = fontSizePx * (lineHeightPercent / 100);
   const font: VideoTextFont = {
-    fontFamily: options.fontFamily,
+    fontFamily: options.typography?.managedFace
+      ? bundledFontFaceRuntimeFamilyName(options.typography.managedFace)
+      : options.fontFamily,
     fontSizePx,
     fontWeight,
     fontStyle,
+    fontStretchPercent,
     fontKerning,
     letterSpacingPx,
   };
@@ -249,6 +259,7 @@ export function layoutVideoText(
     contentHeightPx: lines.length > 0 ? lines.length * lineHeightPx : 0,
     fontWeight,
     fontStyle,
+    fontStretchPercent,
     fontKerning,
     letterSpacingPx,
     textAlign,
@@ -337,9 +348,12 @@ export function createVideoTextCanvasMeasurer(): VideoTextMeasurer {
       return text.length * font.fontSizePx * 0.5 + trackingPx;
     }
 
-    const stylePrefix = font.fontStyle === 'italic' ? 'italic ' : '';
+    const stylePrefix = font.fontStyle === 'normal' ? '' : `${font.fontStyle} `;
     ctx.font = `${stylePrefix}${font.fontWeight} ${font.fontSizePx}px ${formatFontFamily(font.fontFamily)}`;
     ctx.fontKerning = font.fontKerning;
+    if ('fontStretch' in ctx) {
+      (ctx as unknown as { fontStretch: string }).fontStretch = `${font.fontStretchPercent ?? 100}%`;
+    }
 
     // Cast onto a type that genuinely declares the (newer, not-yet-in-lib.dom) `letterSpacing`
     // property as optional, rather than narrowing the strictly-typed `ctx` via `'x' in ctx` — the

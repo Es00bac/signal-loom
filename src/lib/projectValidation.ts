@@ -41,6 +41,10 @@ import {
 } from '../components/ImageEditor/ImageSelectionChannels';
 import { sanitizeImageSpotChannelName } from '../components/ImageEditor/ImageSpotChannels';
 import { isPaperManagedIccProfile } from './paperManagedIccProfiles';
+import { bundledFontFaceReferenceMatchesTypography, normalizeBundledFontFaceReference } from './bundledFontLibrary';
+import { getEditorAssets } from './editorAssets';
+import { getEditorVisualClips } from './manualEditorState';
+import { getEditorStageObjects } from './editorStageObjects';
 
 const VALID_RESULT_TYPES = new Set<ResultType>(['text', 'number', 'boolean', 'json', 'image', 'video', 'audio', 'package', 'list', 'envelope']);
 const VALID_SOURCE_KINDS = new Set<EditorSourceKind>(['text', 'image', 'video', 'audio', 'composition', 'document', 'subtitle', 'package']);
@@ -191,6 +195,10 @@ function sanitizeNodeData(value: unknown): NodeData {
   if (envelopeItems !== undefined) {
     data.envelopeItems = envelopeItems;
   }
+
+  if (data.editorAssets !== undefined) data.editorAssets = getEditorAssets(data);
+  if (data.editorVisualClips !== undefined) data.editorVisualClips = getEditorVisualClips(data);
+  if (data.editorStageObjects !== undefined) data.editorStageObjects = getEditorStageObjects(data);
 
   return data;
 }
@@ -844,8 +852,27 @@ function sanitizeImageLayer(layer: UnknownRecord, layerIndex: number): ImageLaye
     ...(maskDensity !== undefined ? { maskDensity } : {}),
     ...(maskFeather !== undefined ? { maskFeather } : {}),
     bitmapVersion: finiteNumber(layer.bitmapVersion, 0),
+    text: sanitizeImageTextLayerStyle(layer.text),
     groupExpanded: type === 'group' ? groupExpanded : undefined,
     linkGroupId: type === 'group' ? undefined : linkGroupId,
+  };
+}
+
+function sanitizeImageTextLayerStyle(value: unknown): ImageLayer['text'] {
+  if (!isRecord(value)) return undefined;
+  const managedFace = normalizeBundledFontFaceReference(value.managedFace);
+  const fontStyle = value.fontStyle === 'italic' || (value.fontStyle === 'oblique' && managedFace?.style === 'oblique')
+    ? value.fontStyle
+    : 'normal';
+  const matchingManagedFace = managedFace && bundledFontFaceReferenceMatchesTypography(managedFace, {
+    family: typeof value.fontFamily === 'string' ? value.fontFamily : '',
+    weight: value.fontWeight as string | number | undefined,
+    style: fontStyle,
+  }) ? managedFace : undefined;
+  return {
+    ...(value as unknown as NonNullable<ImageLayer['text']>),
+    fontStyle,
+    managedFace: matchingManagedFace,
   };
 }
 

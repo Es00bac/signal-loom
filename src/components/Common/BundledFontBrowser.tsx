@@ -74,7 +74,7 @@ export function BundledFontBrowser({
     setBusyFace(face.id);
     setError(null);
     try {
-      await ensureBundledFontFaceRegistered(family, face).catch(() => undefined);
+      await ensureBundledFontFaceRegistered(family, face);
       await onSelect(family, face);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The font face could not be selected.');

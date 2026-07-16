@@ -144,4 +144,26 @@ describe('editor history', () => {
       editorAudioClips: [],
     });
   });
+
+  it('preserves an exact bundled face through Video history copies', () => {
+    const managedFace = {
+      kind: 'bundled' as const,
+      faceId: 'liberationsans:LiberationSans-Regular:baccc64becc3',
+      family: 'Liberation Sans',
+      weight: 400,
+      style: 'normal' as const,
+      stretchPercent: 100,
+    };
+    const source = createVisualClip({
+      id: 'managed-title',
+      sourceKind: 'text',
+      textFontFamily: managedFace.family,
+      textTypography: { fontWeight: 400, fontStyle: 'normal', managedFace },
+    });
+    const snapshot = createEditorHistorySnapshot({ editorVisualClips: [source] });
+
+    source.textTypography!.managedFace!.family = 'mutated source';
+    expect(snapshot.editorVisualClips[0].textTypography?.managedFace?.family).toBe('Liberation Sans');
+    expect(snapshot.toPatch().editorVisualClips?.[0].textTypography?.managedFace?.family).toBe('Liberation Sans');
+  });
 });

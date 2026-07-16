@@ -5,6 +5,7 @@ import type {
   NodeData,
 } from '../types/flow';
 import { normalizeFontWeight } from './formatFontFamily';
+import { bundledFontFaceReferenceMatchesTypography, normalizeBundledFontFaceReference } from './bundledFontLibrary';
 
 export interface StageCanvasSize {
   width: number;
@@ -46,14 +47,24 @@ export function getEditorStageObjects(nodeData: Partial<NodeData>): EditorStageO
     };
 
     if (object.kind === 'text') {
-      const fontStyle = object.fontStyle === 'italic' ? 'italic' : 'normal';
+      const managedFace = normalizeBundledFontFaceReference(object.managedFace);
+      const fontStyle = object.fontStyle === 'italic' || (object.fontStyle === 'oblique' && managedFace?.style === 'oblique')
+        ? object.fontStyle
+        : 'normal';
+      const fontFamily = typeof object.fontFamily === 'string' ? object.fontFamily : 'Inter, system-ui, sans-serif';
+      const fontWeight = normalizeFontWeight(object.fontWeight);
       return [{
         ...base,
         kind: 'text',
         text: typeof object.text === 'string' ? object.text : 'Text',
-        fontFamily: typeof object.fontFamily === 'string' ? object.fontFamily : 'Inter, system-ui, sans-serif',
-        fontWeight: normalizeFontWeight(object.fontWeight),
+        fontFamily,
+        fontWeight,
         fontStyle,
+        managedFace: managedFace && bundledFontFaceReferenceMatchesTypography(managedFace, {
+          family: fontFamily,
+          weight: fontWeight,
+          style: fontStyle,
+        }) ? managedFace : undefined,
         fontSizePx: Math.max(8, normalizeNumber(object.fontSizePx, 64)),
         color: normalizeColor(object.color, '#f8fafc'),
       } satisfies EditorStageObject];
