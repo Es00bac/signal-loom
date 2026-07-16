@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import type { ImageDocument, ImageLayer } from '../../types/imageEditor';
 import type { SourceBinLibraryItem } from '../../store/sourceBinStore';
+import { inspectImageDocumentSnapshotIntegrity } from './ImageSnapshots';
 
 export type ImageSuiteHandoffTarget = 'flow' | 'video' | 'paper';
 export type ImageSourceLibraryAssetUrlKind = 'none' | 'blob' | 'data' | 'native' | 'remote' | 'file';
@@ -466,12 +467,14 @@ export function SnapshotsControls({
         />
       </div>
       <div className="space-y-1">
-        {snapshots.map((snapshot) => (
-          <div className="rounded border border-cyan-300/10 bg-[#10131b] px-1.5 py-1 text-[10px] text-cyan-100/55" key={snapshot.id}>
+        {snapshots.map((snapshot) => {
+          const restorable = inspectImageDocumentSnapshotIntegrity(snapshot).complete;
+          return (
+            <div className="rounded border border-cyan-300/10 bg-[#10131b] px-1.5 py-1 text-[10px] text-cyan-100/55" key={snapshot.id}>
             <div className="flex items-center gap-1">
               <span className="min-w-0 flex-1 truncate">{snapshot.name}</span>
-              {snapshot.pixelState !== 'complete' ? (
-                <span className="text-amber-100/60" title="This legacy snapshot has no stored pixels">Pixels unavailable</span>
+              {!restorable ? (
+                <span className="text-amber-100/60" title="This snapshot has no structurally proven pixel and selection payload">Pixels unavailable</span>
               ) : null}
               {onRename ? (
                 <button
@@ -489,9 +492,9 @@ export function SnapshotsControls({
               <button
                 aria-label={`Restore snapshot ${snapshot.name}`}
                 className="text-cyan-100/45 hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
-                disabled={snapshot.pixelState !== 'complete'}
+                disabled={!restorable}
                 onClick={() => onRestore(snapshot.id)}
-                title={snapshot.pixelState === 'complete' ? undefined : 'This legacy snapshot has no stored pixels and cannot be restored safely.'}
+                title={restorable ? undefined : 'This snapshot lacks structurally proven pixels or selection data and cannot be restored safely.'}
                 type="button"
               >
                 Restore
@@ -533,8 +536,9 @@ export function SnapshotsControls({
                 </button>
               </div>
             ) : null}
-          </div>
-        ))}
+            </div>
+          );
+        })}
         {snapshots.length === 0 ? <p className="text-[11px] text-cyan-100/30">Snapshots store immutable layer pixels, masks, and metadata.</p> : null}
       </div>
     </div>

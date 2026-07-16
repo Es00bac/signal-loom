@@ -1,5 +1,9 @@
-import type { ImageDocumentSnapshot, ImageLayer, LayerBitmap } from '../../types/imageEditor';
+import type { ImageDocumentSnapshot, ImageLayer, LayerBitmap, SelectionMaskSnapshot } from '../../types/imageEditor';
 import { bitmapFromUrl, bitmapToPngDataUrl } from './LayerBitmap';
+import {
+  inspectImageDocumentSnapshotIntegrity,
+  markImageDocumentSnapshotOwned,
+} from './ImageSnapshots';
 
 /**
  * Pixel codec used to move an image layer's live OffscreenCanvas buffers (`bitmap`/`mask`)
@@ -33,8 +37,7 @@ export async function encodeImageLayerProjectPixels(
 
 /**
  * Rebuild a layer's live `bitmap`/`mask` from its serialized `bitmapData`/`maskData`, then clear
- * the payload fields. A failed decode leaves that buffer null rather than throwing, so one bad
- * layer can't abort the whole project restore.
+ * the payload fields. Decode failure throws so the caller can keep the existing editable project.
  */
 export async function decodeImageLayerProjectPixels(
   layer: ImageLayer,
@@ -43,12 +46,61 @@ export async function decodeImageLayerProjectPixels(
   let bitmap = layer.bitmap;
   let mask = layer.mask;
   if (layer.bitmapData) {
-    try { bitmap = await codec.decode(layer.bitmapData); } catch { bitmap = null; }
+    bitmap = await codec.decode(layer.bitmapData);
   }
   if (layer.maskData) {
-    try { mask = await codec.decode(layer.maskData); } catch { mask = null; }
+    mask = await codec.decode(layer.maskData);
   }
   return { ...layer, bitmap, mask, bitmapData: undefined, maskData: undefined };
+}
+
+function bytesToBase64(bytes: Uint8ClampedArray): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string): Uint8ClampedArray {
+  const binary = atob(value);
+  const bytes = new Uint8ClampedArray(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+export function encodeImageSelectionMaskProjectData(selection: SelectionMaskSnapshot): string {
+  return bytesToBase64(selection.data);
+}
+
+export function decodeImageSelectionMaskProjectData(
+  dataBase64: string,
+  width: number,
+  height: number,
+): SelectionMaskSnapshot {
+  const data = base64ToBytes(dataBase64);
+  if (width <= 0 || height <= 0 || data.byteLength !== width * height) {
+    throw new Error('Image selection mask payload dimensions do not match its byte length.');
+  }
+  return { width, height, data };
+}
+
+function unavailableSnapshot(snapshot: ImageDocumentSnapshot): ImageDocumentSnapshot {
+  return {
+    ...snapshot,
+    layers: snapshot.layers.map((layer) => ({
+      ...layer,
+      bitmap: null,
+      mask: null,
+      bitmapData: undefined,
+      maskData: undefined,
+    })),
+    hasSelection: false,
+    selectionMask: undefined,
+    selectionMaskData: undefined,
+    pixelState: 'unavailable',
+  };
 }
 
 /** Persist a bounded named snapshot through the same lossless PNG layer transport as the live document. */
@@ -56,35 +108,83 @@ export async function encodeImageDocumentSnapshotProjectPixels(
   snapshot: ImageDocumentSnapshot,
   codec: ImageLayerPixelCodec = defaultImageLayerPixelCodec,
 ): Promise<ImageDocumentSnapshot> {
-  if (snapshot.pixelState !== 'complete') {
-    return { ...snapshot, pixelState: 'unavailable' };
+  if (!inspectImageDocumentSnapshotIntegrity(snapshot).complete) {
+    return unavailableSnapshot(snapshot);
   }
   return {
     ...snapshot,
     layers: await Promise.all(snapshot.layers.map((layer) => encodeImageLayerProjectPixels(layer, codec))),
+    selectionMask: undefined,
+    selectionMaskData: snapshot.selectionMask
+      ? encodeImageSelectionMaskProjectData(snapshot.selectionMask)
+      : undefined,
     pixelState: 'complete',
   };
 }
 
-/** Decode snapshot pixels and fail the snapshot closed if any advertised payload is corrupt. */
+/** Decode snapshot pixels and fail it closed unless every manifest-advertised byte is present and exact. */
 export async function decodeImageDocumentSnapshotProjectPixels(
   snapshot: ImageDocumentSnapshot,
   codec: ImageLayerPixelCodec = defaultImageLayerPixelCodec,
 ): Promise<ImageDocumentSnapshot> {
-  if (snapshot.pixelState !== 'complete') {
-    return { ...snapshot, pixelState: 'unavailable' };
+  if (snapshot.pixelState !== 'complete' || !snapshot.integrity) {
+    return unavailableSnapshot(snapshot);
   }
-  let decodeFailed = false;
-  const layers = await Promise.all(snapshot.layers.map(async (layer) => {
-    const expectedBitmap = Boolean(layer.bitmapData);
-    const expectedMask = Boolean(layer.maskData);
-    const decoded = await decodeImageLayerProjectPixels(layer, codec);
-    if ((expectedBitmap && !decoded.bitmap) || (expectedMask && !decoded.mask)) decodeFailed = true;
-    return decoded;
-  }));
-  return {
-    ...snapshot,
-    layers,
-    pixelState: decodeFailed ? 'unavailable' : 'complete',
-  };
+  const decodedLayers: ImageLayer[] = [];
+  try {
+    const proofById = new Map(snapshot.integrity.layers.map((proof) => [proof.layerId, proof] as const));
+    if (proofById.size !== snapshot.layers.length || snapshot.integrity.layers.length !== snapshot.layers.length) {
+      throw new Error('Snapshot layer manifest does not match its layer graph.');
+    }
+    for (const layer of snapshot.layers) {
+      const proof = proofById.get(layer.id);
+      if (!proof) throw new Error(`Snapshot layer ${layer.id} has no integrity proof.`);
+      if (proof.bitmap.present !== Boolean(layer.bitmapData)) {
+        throw new Error(`Snapshot layer ${layer.id} bitmap payload presence mismatch.`);
+      }
+      if (proof.mask.present !== Boolean(layer.maskData)) {
+        throw new Error(`Snapshot layer ${layer.id} mask payload presence mismatch.`);
+      }
+      const decoded = await decodeImageLayerProjectPixels(layer, codec);
+      if (
+        (proof.bitmap.present && (!decoded.bitmap || decoded.bitmap.width !== proof.bitmap.width || decoded.bitmap.height !== proof.bitmap.height))
+        || (!proof.bitmap.present && decoded.bitmap)
+        || (proof.mask.present && (!decoded.mask || decoded.mask.width !== proof.mask.width || decoded.mask.height !== proof.mask.height))
+        || (!proof.mask.present && decoded.mask)
+      ) {
+        throw new Error(`Snapshot layer ${layer.id} decoded dimensions do not match its integrity proof.`);
+      }
+      decodedLayers.push(decoded);
+    }
+
+    const selectionProof = snapshot.integrity.selection;
+    if (selectionProof.present !== snapshot.hasSelection || selectionProof.present !== Boolean(snapshot.selectionMaskData)) {
+      throw new Error('Snapshot selection payload presence does not match its integrity proof.');
+    }
+    const selectionMask = selectionProof.present
+      ? decodeImageSelectionMaskProjectData(snapshot.selectionMaskData!, selectionProof.width, selectionProof.height)
+      : undefined;
+    const decoded = {
+      ...snapshot,
+      layers: decodedLayers,
+      selectionMask,
+      selectionMaskData: undefined,
+      pixelState: 'complete' as const,
+    };
+    if (!inspectImageDocumentSnapshotIntegrity(decoded).complete) {
+      throw new Error('Decoded snapshot does not match its integrity proof.');
+    }
+    return markImageDocumentSnapshotOwned(decoded);
+  } catch {
+    const unique = new Set<LayerBitmap>();
+    for (const layer of decodedLayers) {
+      if (layer.bitmap) unique.add(layer.bitmap);
+      if (layer.mask) unique.add(layer.mask);
+    }
+    for (const bitmap of unique) {
+      bitmap.width = 0;
+      bitmap.height = 0;
+    }
+    return unavailableSnapshot(snapshot);
+  }
 }

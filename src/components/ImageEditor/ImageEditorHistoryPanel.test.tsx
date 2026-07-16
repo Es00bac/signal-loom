@@ -6,6 +6,7 @@ import { createEmptyImageDocument, useImageEditorStore } from '../../store/image
 import type { EditorOperation, ImageLayer } from '../../types/imageEditor';
 import { buildImageHistoryActionWorkflowDescriptor } from './ImageEditorHistory';
 import { ImageEditorHistoryPanel } from './ImageEditorHistoryPanel';
+import { buildImageDocumentSnapshotIntegrity } from './ImageSnapshots';
 import { runPhotoshopQuickAction } from './PhotoshopQuickActionRunner';
 
 function makeLayer(patch: Partial<ImageLayer> = {}): ImageLayer {
@@ -53,6 +54,7 @@ describe('ImageEditorHistoryPanel', () => {
   });
 
   it('builds deterministic workflow metadata for history, snapshots, recordings, saved actions, and fixed-command limits', () => {
+    const snapshotLayers = [makeLayer({ id: 'layer-1', name: 'Paint Layer', x: 10 })];
     const doc = {
       ...createEmptyImageDocument({
         id: 'doc-history-metadata',
@@ -70,11 +72,12 @@ describe('ImageEditorHistoryPanel', () => {
           updatedAt: 150,
           width: 320,
           height: 240,
-          layers: [makeLayer({ id: 'layer-1', name: 'Paint Layer', x: 10 })],
+          layers: snapshotLayers,
           activeLayerId: 'layer-1',
           hasSelection: false,
           selectionVersion: 2,
           pixelState: 'complete' as const,
+          integrity: buildImageDocumentSnapshotIntegrity(snapshotLayers),
         },
       ],
     };
@@ -244,7 +247,7 @@ describe('ImageEditorHistoryPanel', () => {
         canRename: true,
         isNewest: true,
         kind: 'named-snapshot',
-        identity: 'snapshot-before:Before cleanup:320x240:1-layers:selection-2:pixels-complete',
+        identity: 'snapshot-before:Before cleanup:320x240:1-layers:selection-2-complete:pixels-proven',
       },
     ]);
     expect(descriptor.actionSetSummary).toEqual({
@@ -355,7 +358,7 @@ describe('ImageEditorHistoryPanel', () => {
       },
     ]);
     expect(descriptor.previewSignature).toBe(
-      'image-history-action-workflow:v1:{"document":{"id":"doc-history-metadata","width":320,"height":240,"layerCount":1,"snapshotCount":1},"history":{"undoCount":2,"redoCount":1,"currentStateLabel":"New Snapshot","entries":[{"id":"history-undo-1","status":"current","targetUndoCount":2,"label":"New Snapshot","operationKind":"documentState"},{"id":"history-undo-0","status":"past","targetUndoCount":1,"label":"Move to 10","operationKind":"transform"},{"id":"history-origin-past","status":"past","targetUndoCount":0,"label":"Open Document","operationKind":"origin"},{"id":"history-redo-0","status":"future","targetUndoCount":3,"label":"Paint Layer Mask","operationKind":"paint"}]},"snapshots":[{"id":"snapshot-before","name":"Before cleanup","createdAt":100,"updatedAt":150,"width":320,"height":240,"layerCount":1,"canRename":true,"isNewest":true,"identity":"snapshot-before:Before cleanup:320x240:1-layers:selection-2:pixels-complete"}],"recording":{"active":true,"stepCount":2,"unsupportedActionIds":["unknownQuickCommand"]},"savedActions":[{"id":"macro-a","name":"Cleanup A","stepCount":1,"unsupportedActionIds":[],"playbackSignature":"image-history-action-macro:v2:{\\"id\\":\\"macro-a\\",\\"stepIds\\":[\\"nudgeLayerRightLarge\\"],\\"unsupportedActionIds\\":[],\\"allStepsSupported\\":true}"},{"id":"macro-b","name":"Batch B","stepCount":1,"unsupportedActionIds":["unknownQuickCommand"],"playbackSignature":"image-history-action-macro:v2:{\\"id\\":\\"macro-b\\",\\"stepIds\\":[\\"unknownQuickCommand\\"],\\"unsupportedActionIds\\":[\\"unknownQuickCommand\\"],\\"allStepsSupported\\":false}"}],"automationBoundary":{"separateFromMainFlow":true,"requiredWorkspace":"image-automation","reason":"History Actions stay in Image Automation planning/playback surfaces and are not executable from the main Flow graph."},"limitations":["arbitrary-command-recording-unsupported","parameterized-action-steps-unsupported"]}',
+      'image-history-action-workflow:v1:{"document":{"id":"doc-history-metadata","width":320,"height":240,"layerCount":1,"snapshotCount":1},"history":{"undoCount":2,"redoCount":1,"currentStateLabel":"New Snapshot","entries":[{"id":"history-undo-1","status":"current","targetUndoCount":2,"label":"New Snapshot","operationKind":"documentState"},{"id":"history-undo-0","status":"past","targetUndoCount":1,"label":"Move to 10","operationKind":"transform"},{"id":"history-origin-past","status":"past","targetUndoCount":0,"label":"Open Document","operationKind":"origin"},{"id":"history-redo-0","status":"future","targetUndoCount":3,"label":"Paint Layer Mask","operationKind":"paint"}]},"snapshots":[{"id":"snapshot-before","name":"Before cleanup","createdAt":100,"updatedAt":150,"width":320,"height":240,"layerCount":1,"canRename":true,"isNewest":true,"identity":"snapshot-before:Before cleanup:320x240:1-layers:selection-2-complete:pixels-proven"}],"recording":{"active":true,"stepCount":2,"unsupportedActionIds":["unknownQuickCommand"]},"savedActions":[{"id":"macro-a","name":"Cleanup A","stepCount":1,"unsupportedActionIds":[],"playbackSignature":"image-history-action-macro:v2:{\\"id\\":\\"macro-a\\",\\"stepIds\\":[\\"nudgeLayerRightLarge\\"],\\"unsupportedActionIds\\":[],\\"allStepsSupported\\":true}"},{"id":"macro-b","name":"Batch B","stepCount":1,"unsupportedActionIds":["unknownQuickCommand"],"playbackSignature":"image-history-action-macro:v2:{\\"id\\":\\"macro-b\\",\\"stepIds\\":[\\"unknownQuickCommand\\"],\\"unsupportedActionIds\\":[\\"unknownQuickCommand\\"],\\"allStepsSupported\\":false}"}],"automationBoundary":{"separateFromMainFlow":true,"requiredWorkspace":"image-automation","reason":"History Actions stay in Image Automation planning/playback surfaces and are not executable from the main Flow graph."},"limitations":["arbitrary-command-recording-unsupported","parameterized-action-steps-unsupported"]}',
     );
   });
 

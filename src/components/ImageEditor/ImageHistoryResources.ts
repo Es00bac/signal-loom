@@ -7,6 +7,7 @@ import type {
   SelectionMaskSnapshot,
 } from '../../types/imageEditor';
 import { cloneBitmap } from './LayerBitmap';
+import { markImageDocumentSnapshotOwned } from './ImageSnapshots';
 
 const retainedHistoryOperations = new WeakSet<EditorOperation>();
 
@@ -146,7 +147,9 @@ export function materializeHistoryLayers(layers: readonly ImageLayer[]): ImageLa
 
 /** Clone an immutable history document before exposing it to live tools. */
 export function materializeHistoryDocument(document: ImageDocument): ImageDocument {
-  return cloneDocument(document, new Map());
+  const materialized = cloneDocument(document, new Map());
+  materialized.snapshots?.forEach(markImageDocumentSnapshotOwned);
+  return materialized;
 }
 
 /** Clone one immutable history bitmap before exposing it to live tools. */
@@ -203,6 +206,16 @@ export function editorOperationRetainedBytes(operation: EditorOperation): number
   if (operation.kind === 'selection') {
     bytes += operation.before?.data.byteLength ?? 0;
     bytes += operation.after?.data.byteLength ?? 0;
+  }
+  if (operation.kind === 'documentState') {
+    const selectionBuffers = new Set<ArrayBufferLike>();
+    for (const document of [operation.before, operation.after]) {
+      if (document.selectionMask) selectionBuffers.add(document.selectionMask.data.buffer);
+      for (const snapshot of document.snapshots ?? []) {
+        if (snapshot.selectionMask) selectionBuffers.add(snapshot.selectionMask.data.buffer);
+      }
+    }
+    for (const buffer of selectionBuffers) bytes += buffer.byteLength;
   }
   return bytes;
 }

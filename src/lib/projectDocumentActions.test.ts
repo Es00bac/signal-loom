@@ -10,6 +10,9 @@ import type { ImageDocument } from '../types/imageEditor';
 import { usePaperStore } from '../store/paperStore';
 import { addFrameToPaperPage, createDefaultPaperDocument } from './paperDocument';
 import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
+import { defaultImageLayerPixelCodec } from '../components/ImageEditor/ImageLayerProjectPixels';
+import { createMask } from '../components/ImageEditor/SelectionMask';
+import { getSelection, setSelection } from '../components/ImageEditor/selectionRegistry';
 
 const originalRestoreSourceBinSnapshot = useSourceBinStore.getState().restoreProjectSnapshot;
 const originalReplaceFlowSnapshot = useFlowStore.getState().replaceFlowSnapshot;
@@ -479,6 +482,72 @@ describe('restoreProjectDocument', () => {
     } finally {
       useSourceBinStore.setState({ reconcileWithNativeSourceLibrarySnapshot: originalReconcile });
       useImageEditorStore.getState().restoreProjectSnapshot(undefined);
+    }
+  });
+
+  it('rejects corrupt live Image layer payloads before replacement and preserves pixels, history, and selection', async () => {
+    const liveBitmap = { width: 9, height: 7, __live: 'editable' } as unknown as NonNullable<ImageDocument['layers'][number]['bitmap']>;
+    const liveDocument = {
+      id: 'project-corruption-live',
+      title: 'Keep this edit',
+      width: 9,
+      height: 7,
+      activeLayerId: 'live-layer',
+      layers: [{
+        id: 'live-layer', name: 'Live', type: 'image', visible: true, locked: false,
+        opacity: 1, blendMode: 'normal', x: 0, y: 0, bitmap: liveBitmap, bitmapVersion: 1, mask: null,
+      }],
+      hasSelection: true,
+      selectionVersion: 2,
+      viewport: { zoom: 1, panX: 0, panY: 0 },
+      dirty: false,
+      snapshots: [],
+    } as ImageDocument;
+    const selection = createMask(9, 7);
+    selection.data.set([0, 255, 17, 99], 12);
+    setSelection(liveDocument.id, selection);
+    const historyEntry = { kind: 'selection', docId: liveDocument.id, before: null, after: null } as const;
+    useImageEditorStore.setState({
+      documents: [liveDocument],
+      activeDocId: liveDocument.id,
+      undoStacks: { [liveDocument.id]: [historyEntry] },
+      redoStacks: {},
+    });
+    const originalDecode = defaultImageLayerPixelCodec.decode;
+    defaultImageLayerPixelCodec.decode = async () => {
+      throw new Error('corrupt incoming bitmap');
+    };
+
+    try {
+      await expect(restoreProjectDocument({
+        schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+        id: 'corrupt-image-project',
+        name: 'Corrupt Image',
+        savedAt: 1,
+        flow: { version: 3, nodes: [], edges: [] },
+        sourceBin: { dismissedSourceKeys: [] },
+        imageEditor: {
+          activeDocId: 'incoming-image',
+          documents: [{
+            id: 'incoming-image', title: 'Incoming', width: 2, height: 2,
+            layers: [{
+              id: 'incoming-layer', name: 'Incoming', type: 'image', visible: true, locked: false,
+              opacity: 1, blendMode: 'normal', x: 0, y: 0, bitmap: null, mask: null,
+              bitmapData: 'data:image/png;base64,corrupt', bitmapVersion: 0,
+            }],
+            activeLayerId: 'incoming-layer', hasSelection: false, selectionVersion: 0,
+            viewport: { zoom: 1, panX: 0, panY: 0 }, dirty: false,
+          }],
+        },
+      })).rejects.toThrow('corrupt incoming bitmap');
+
+      const restoredState = useImageEditorStore.getState();
+      expect(restoredState.documents).toEqual([liveDocument]);
+      expect(restoredState.documents[0].layers[0].bitmap).toBe(liveBitmap);
+      expect(restoredState.undoStacks[liveDocument.id]).toEqual([historyEntry]);
+      expect(Array.from(getSelection(liveDocument.id)?.data ?? [])).toEqual(Array.from(selection.data));
+    } finally {
+      defaultImageLayerPixelCodec.decode = originalDecode;
     }
   });
 

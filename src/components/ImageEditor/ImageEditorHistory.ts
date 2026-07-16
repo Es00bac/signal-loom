@@ -4,6 +4,7 @@ import type {
   ImageQuickActionMacro,
   ImageQuickActionMacroStep,
 } from '../../types/imageEditor';
+import { inspectImageDocumentSnapshotIntegrity } from './ImageSnapshots';
 import { PHOTOSHOP_QUICK_ACTIONS } from './PhotoshopQuickActions';
 
 export type ImageHistoryStateStatus = 'current' | 'past' | 'future';
@@ -321,24 +322,27 @@ export function buildImageHistoryActionWorkflowDescriptor({
     const newestSnapshot = doc.snapshots?.find((candidate) => candidate.id === newestId);
     return !newestSnapshot || snapshot.createdAt > newestSnapshot.createdAt ? snapshot.id : newestId;
   }, null);
-  const snapshotItems = (doc.snapshots ?? []).map((snapshot) => ({
-    id: snapshot.id,
-    name: snapshot.name,
-    createdAt: snapshot.createdAt,
-    ...(snapshot.updatedAt !== undefined ? { updatedAt: snapshot.updatedAt } : {}),
-    width: snapshot.width,
-    height: snapshot.height,
-    layerCount: snapshot.layers.length,
-    activeLayerId: snapshot.activeLayerId,
-    hasSelection: snapshot.hasSelection,
-    selectionVersion: snapshot.selectionVersion,
-    canRestore: snapshot.pixelState === 'complete',
-    canDelete: true,
-    canRename: true,
-    isNewest: snapshot.id === newestSnapshotId,
-    kind: 'named-snapshot' as const,
-    identity: `${snapshot.id}:${snapshot.name}:${snapshot.width}x${snapshot.height}:${snapshot.layers.length}-layers:selection-${snapshot.selectionVersion}:pixels-${snapshot.pixelState ?? 'unavailable'}`,
-  }));
+  const snapshotItems = (doc.snapshots ?? []).map((snapshot) => {
+    const integrity = inspectImageDocumentSnapshotIntegrity(snapshot);
+    return {
+      id: snapshot.id,
+      name: snapshot.name,
+      createdAt: snapshot.createdAt,
+      ...(snapshot.updatedAt !== undefined ? { updatedAt: snapshot.updatedAt } : {}),
+      width: snapshot.width,
+      height: snapshot.height,
+      layerCount: snapshot.layers.length,
+      activeLayerId: snapshot.activeLayerId,
+      hasSelection: snapshot.hasSelection,
+      selectionVersion: snapshot.selectionVersion,
+      canRestore: integrity.complete,
+      canDelete: true,
+      canRename: true,
+      isNewest: snapshot.id === newestSnapshotId,
+      kind: 'named-snapshot' as const,
+      identity: `${snapshot.id}:${snapshot.name}:${snapshot.width}x${snapshot.height}:${snapshot.layers.length}-layers:selection-${snapshot.selectionVersion}-${integrity.selectionComplete ? 'complete' : 'unavailable'}:pixels-${integrity.complete ? 'proven' : 'unavailable'}`,
+    };
+  });
   const unsupportedCommandIds = uniqueActionIds([
     ...getUnsupportedActionIds(recordingSteps),
     ...savedMacros.flatMap((macro) => macro.unsupportedActionIds),

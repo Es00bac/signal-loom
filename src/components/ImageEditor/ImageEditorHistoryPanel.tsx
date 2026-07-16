@@ -5,8 +5,11 @@ import { useDockExpandToContent } from '../DockablePanel/dockExpandContext';
 import type { ImageDocument } from '../../types/imageEditor';
 import {
   addImageDocumentSnapshot,
+  applyImageDocumentSelectionState,
+  captureImageDocumentSelectionState,
   createImageDocumentSnapshot,
   deleteImageDocumentSnapshot,
+  disposeImageDocumentSnapshotsRemoved,
   renameImageDocumentSnapshot,
   restoreImageDocumentSnapshot,
 } from './ImageSnapshots';
@@ -57,15 +60,18 @@ export function ImageEditorHistoryPanel() {
 
   const currentUndoCount = undoStack.length;
 
-  const commitDocumentState = (nextDoc: ImageDocument) => {
+  const commitDocumentState = (nextDoc: ImageDocument, beforeDoc = captureImageDocumentSelectionState(doc)) => {
+    const retainedAfter = captureImageDocumentSelectionState(nextDoc);
     pushOperation({
       kind: 'documentState',
       docId: doc.id,
-      before: doc,
-      after: nextDoc,
+      before: beforeDoc,
+      after: retainedAfter,
     });
+    disposeImageDocumentSnapshotsRemoved(doc, nextDoc);
+    const liveNext = applyImageDocumentSelectionState(retainedAfter);
     useImageEditorStore.setState((state) => ({
-      documents: state.documents.map((candidate) => (candidate.id === doc.id ? nextDoc : candidate)),
+      documents: state.documents.map((candidate) => (candidate.id === doc.id ? liveNext : candidate)),
     }));
   };
 
@@ -165,13 +171,20 @@ export function ImageEditorHistoryPanel() {
 
         <SnapshotsControls
           doc={doc}
-          onDelete={(snapshotId) => commitDocumentState(deleteImageDocumentSnapshot(doc, snapshotId))}
-          onNew={(name) => commitDocumentState(addImageDocumentSnapshot(doc, createImageDocumentSnapshot(doc, name)))}
+          onDelete={(snapshotId) => commitDocumentState(deleteImageDocumentSnapshot(doc, snapshotId, { deferDisposal: true }))}
+          onNew={(name) => commitDocumentState(addImageDocumentSnapshot(
+            doc,
+            createImageDocumentSnapshot(doc, name),
+            { deferDisposal: true },
+          ))}
           onRename={(snapshotId, name) => {
             const nextDoc = renameImageDocumentSnapshot(doc, snapshotId, name);
             if (nextDoc !== doc) commitDocumentState(nextDoc);
           }}
-          onRestore={(snapshotId) => commitDocumentState(restoreImageDocumentSnapshot(doc, snapshotId))}
+          onRestore={(snapshotId) => {
+            const beforeDoc = captureImageDocumentSelectionState(doc);
+            commitDocumentState(restoreImageDocumentSnapshot(doc, snapshotId), beforeDoc);
+          }}
         />
 
         <div className="mt-3 border-t border-cyan-300/10 pt-3">

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deserializeSlimg, serializeSlimg, type SlimgCodec } from './ImageSlimgFormat';
 import type { ImageDocument, LayerBitmap } from '../../types/imageEditor';
+import { buildImageDocumentSnapshotIntegrity } from './ImageSnapshots';
 
 // A fake LayerBitmap: only width/height matter to the serializer. We tag it for round-trip checks.
 function fakeBitmap(width: number, height: number, tag: string): LayerBitmap {
@@ -55,21 +56,23 @@ describe('ImageSlimgFormat', () => {
 
   it('round-trips complete named snapshot bitmap and mask assets', async () => {
     const live = doc();
+    const snapshotLayers = [{
+      ...live.layers[0],
+      bitmap: fakeBitmap(64, 48, 'SNAPSHOT-PIX'),
+      mask: fakeBitmap(64, 48, 'SNAPSHOT-MASK'),
+    }];
     live.snapshots = [{
       id: 'snapshot-red',
       name: 'Red state',
       createdAt: 1,
       width: 64,
       height: 48,
-      layers: [{
-        ...live.layers[0],
-        bitmap: fakeBitmap(64, 48, 'SNAPSHOT-PIX'),
-        mask: fakeBitmap(64, 48, 'SNAPSHOT-MASK'),
-      }],
+      layers: snapshotLayers,
       activeLayerId: 'a',
       hasSelection: false,
       selectionVersion: 0,
       pixelState: 'complete',
+      integrity: buildImageDocumentSnapshotIntegrity(snapshotLayers),
     }];
 
     const out = await deserializeSlimg(await serializeSlimg(live, codec), codec);
@@ -77,6 +80,77 @@ describe('ImageSlimgFormat', () => {
     expect(out.snapshots?.[0]?.pixelState).toBe('complete');
     expect((out.snapshots?.[0]?.layers[0]?.bitmap as unknown as { __tag: string }).__tag).toBe('SNAPSHOT-PIX');
     expect((out.snapshots?.[0]?.layers[0]?.mask as unknown as { __tag: string }).__tag).toBe('SNAPSHOT-MASK');
+  });
+
+  it('round-trips exact named-snapshot selection bytes as a native asset', async () => {
+    const live = doc();
+    const selectionMask = {
+      width: 64,
+      height: 48,
+      data: new Uint8ClampedArray(64 * 48),
+    };
+    selectionMask.data.set([0, 7, 255, 31, 128], 19);
+    const snapshotLayers = [{ ...live.layers[0], bitmap: fakeBitmap(64, 48, 'SELECTED-PIX') }];
+    live.snapshots = [{
+      id: 'snapshot-selection',
+      name: 'Asymmetric selection',
+      createdAt: 2,
+      width: 64,
+      height: 48,
+      layers: snapshotLayers,
+      activeLayerId: 'a',
+      hasSelection: true,
+      selectionVersion: 4,
+      selectionMask,
+      pixelState: 'complete',
+      integrity: buildImageDocumentSnapshotIntegrity(snapshotLayers, selectionMask),
+    }];
+
+    const out = await deserializeSlimg(await serializeSlimg(live, codec), codec);
+
+    expect(out.snapshots?.[0]?.pixelState).toBe('complete');
+    expect(out.snapshots?.[0]?.selectionMask?.data).toEqual(selectionMask.data);
+    expect(out.snapshots?.[0]?.selectionMask?.data).not.toBe(selectionMask.data);
+  });
+
+  it('fails claimed-complete native snapshots closed when an expected ref, dimensions, or selection asset is missing', async () => {
+    const live = doc();
+    const selectionMask = { width: 64, height: 48, data: new Uint8ClampedArray(64 * 48) };
+    selectionMask.data[44] = 255;
+    const snapshotLayers = [{ ...live.layers[0], bitmap: fakeBitmap(64, 48, 'PROVEN') }];
+    live.snapshots = [{
+      id: 'snapshot-corrupt', name: 'Corrupt me', createdAt: 3, width: 64, height: 48,
+      layers: snapshotLayers, activeLayerId: 'a', hasSelection: true, selectionVersion: 1,
+      selectionMask, pixelState: 'complete',
+      integrity: buildImageDocumentSnapshotIntegrity(snapshotLayers, selectionMask),
+    }];
+    const { unpackContainer, packContainer } = await import('../../shared/files/SignalLoomContainer');
+    const packed = await serializeSlimg(live, codec);
+    const { manifest, assets } = unpackContainer(packed);
+
+    const mutateAndOpen = async (mutate: (snapshot: Record<string, unknown>) => void) => {
+      const cloned = JSON.parse(JSON.stringify(manifest)) as typeof manifest;
+      const document = cloned.document as { snapshots: Array<Record<string, unknown>> };
+      mutate(document.snapshots[0]);
+      return deserializeSlimg(packContainer(cloned, assets), codec);
+    };
+
+    const stripped = await mutateAndOpen((snapshot) => {
+      (snapshot.layers as Array<Record<string, unknown>>)[0].bitmap = null;
+    });
+    expect(stripped.snapshots?.[0]?.pixelState).toBe('unavailable');
+    expect(stripped.snapshots?.[0]?.layers[0].bitmap).toBeNull();
+
+    const wrongDimensions = await mutateAndOpen((snapshot) => {
+      ((snapshot.layers as Array<Record<string, unknown>>)[0].bitmap as { width: number }).width = 63;
+    });
+    expect(wrongDimensions.snapshots?.[0]?.pixelState).toBe('unavailable');
+
+    const missingSelection = await mutateAndOpen((snapshot) => {
+      snapshot.selectionMask = null;
+    });
+    expect(missingSelection.snapshots?.[0]?.pixelState).toBe('unavailable');
+    expect(missingSelection.snapshots?.[0]?.hasSelection).toBe(false);
   });
 
   it('deduplicates shared bitmap identities in the native asset table', async () => {

@@ -12,7 +12,15 @@ import type {
 } from '../types/paper';
 import { mergePaperSnapshotRecovery, sanitizePaperSnapshotRecovery } from './paperSnapshotRecovery';
 import { isBinaryAssetRef, type BinaryAssetId } from '../shared/assets/contentAddressedAsset';
-import type { ImageDocumentSnapshot, ImageLayer, ImageLayerEditTarget, ImageQuickActionMacro, LayerType } from '../types/imageEditor';
+import type {
+  ImageDocumentSnapshot,
+  ImageDocumentSnapshotAssetIntegrity,
+  ImageDocumentSnapshotIntegrity,
+  ImageLayer,
+  ImageLayerEditTarget,
+  ImageQuickActionMacro,
+  LayerType,
+} from '../types/imageEditor';
 import type { FlowProjectDocument } from './projectLibrary';
 import {
   buildDefaultFlowWorkspace,
@@ -645,6 +653,8 @@ export function sanitizeImageEditorSnapshot(snapshot: unknown): ImageEditorProje
           activeLayerEditTarget,
           hasSelection: Boolean(doc.hasSelection),
           selectionVersion: finiteNumber(doc.selectionVersion, 0),
+          selectionMask: undefined,
+          selectionMaskData: typeof doc.selectionMaskData === 'string' ? doc.selectionMaskData : undefined,
           savedSelectionChannels: sanitizeSavedSelectionChannels(doc.savedSelectionChannels),
           spotChannels: sanitizeImageSpotChannels(doc.spotChannels),
           viewport: isRecord(doc.viewport)
@@ -699,6 +709,7 @@ function sanitizeImageDocumentSnapshot(
   const width = positiveFiniteNumber(snapshot.width, fallbackSize.width);
   const height = positiveFiniteNumber(snapshot.height, fallbackSize.height);
   const layers = Array.isArray(snapshot.layers) ? snapshot.layers.filter(isRecord) : [];
+  const integrity = sanitizeImageDocumentSnapshotIntegrity(snapshot.integrity);
 
   return {
     ...snapshot,
@@ -714,7 +725,50 @@ function sanitizeImageDocumentSnapshot(
     activeLayerId: optionalString(snapshot.activeLayerId) ?? null,
     hasSelection: Boolean(snapshot.hasSelection),
     selectionVersion: finiteNumber(snapshot.selectionVersion, 0),
-    pixelState: snapshot.pixelState === 'complete' ? 'complete' : 'unavailable',
+    selectionMask: undefined,
+    selectionMaskData: typeof snapshot.selectionMaskData === 'string' ? snapshot.selectionMaskData : undefined,
+    pixelState: snapshot.pixelState === 'complete' && integrity ? 'complete' : 'unavailable',
+    ...(integrity ? { integrity } : {}),
+  };
+}
+
+function sanitizeImageDocumentSnapshotAssetIntegrity(
+  value: unknown,
+): ImageDocumentSnapshotAssetIntegrity | undefined {
+  if (!isRecord(value) || typeof value.present !== 'boolean') return undefined;
+  const width = finiteNumber(value.width, -1);
+  const height = finiteNumber(value.height, -1);
+  if (value.present) {
+    if (width <= 0 || height <= 0) return undefined;
+  } else if (width !== 0 || height !== 0) {
+    return undefined;
+  }
+  return { present: value.present, width, height };
+}
+
+function sanitizeImageDocumentSnapshotIntegrity(value: unknown): ImageDocumentSnapshotIntegrity | undefined {
+  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.layers) || !isRecord(value.selection)) {
+    return undefined;
+  }
+  const layers = value.layers.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.layerId !== 'string') return [];
+    const bitmap = sanitizeImageDocumentSnapshotAssetIntegrity(entry.bitmap);
+    const mask = sanitizeImageDocumentSnapshotAssetIntegrity(entry.mask);
+    return bitmap && mask ? [{ layerId: entry.layerId, bitmap, mask }] : [];
+  });
+  if (layers.length !== value.layers.length) return undefined;
+  const selectionAsset = sanitizeImageDocumentSnapshotAssetIntegrity(value.selection);
+  const byteLength = finiteNumber(value.selection.byteLength, -1);
+  if (!selectionAsset || byteLength < 0) return undefined;
+  if (selectionAsset.present) {
+    if (byteLength !== selectionAsset.width * selectionAsset.height) return undefined;
+  } else if (byteLength !== 0) {
+    return undefined;
+  }
+  return {
+    version: 1,
+    layers,
+    selection: { ...selectionAsset, byteLength },
   };
 }
 

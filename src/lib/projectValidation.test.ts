@@ -950,6 +950,15 @@ describe('sanitizeProjectDocument', () => {
             activeLayerId: 'vector-layer',
             hasSelection: false,
             selectionVersion: 2,
+            integrity: {
+              version: 1,
+              layers: [{
+                layerId: 'vector-layer',
+                bitmap: { present: true, width: 800, height: 600 },
+                mask: { present: true, width: 800, height: 600 },
+              }],
+              selection: { present: false, width: 0, height: 0, byteLength: 0 },
+            },
           }],
         }],
       },

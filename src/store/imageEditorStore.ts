@@ -28,6 +28,7 @@ import {
   type QuickMaskSettings,
   type RetouchToolSettings,
   type SelectAndMaskSettings,
+  type SelectionMaskSnapshot,
   type SelectionToolSettings,
   type ShapeToolSettings,
   type TextLayerStyle,
@@ -44,10 +45,23 @@ import { toggleLayerInSelection } from '../components/ImageEditor/ImageGroupTran
 import { cloneBitmap } from '../components/ImageEditor/LayerBitmap';
 import {
   decodeImageDocumentSnapshotProjectPixels,
+  decodeImageSelectionMaskProjectData,
   decodeImageLayerProjectPixels,
   encodeImageDocumentSnapshotProjectPixels,
+  encodeImageSelectionMaskProjectData,
   encodeImageLayerProjectPixels,
 } from '../components/ImageEditor/ImageLayerProjectPixels';
+import {
+  disposeImageDocumentNamedSnapshots,
+  disposeImageDocumentSnapshotResources,
+} from '../components/ImageEditor/ImageSnapshots';
+import {
+  clearAllSelections,
+  clearSelection,
+  getSelection,
+  setSelection,
+} from '../components/ImageEditor/selectionRegistry';
+import { fromSnapshot, isMaskEmpty, toSnapshot } from '../components/ImageEditor/SelectionMask';
 import { buildPerspectiveCroppedImageDocumentState } from '../components/ImageEditor/tools/perspectiveCropDocument';
 import type { CropPoint as PerspectiveCropCorner } from '../components/ImageEditor/tools/perspectiveCrop';
 import {
@@ -243,6 +257,7 @@ interface ImageEditorActions {
     documents: ImageDocument[];
     activeDocId: string | null;
     quickActionMacros: ImageQuickActionMacro[];
+    selectionMasks?: Record<string, SelectionMaskSnapshot>;
   }) => void;
   setIsDraggingSlider: (dragging: boolean) => void;
   setPaintingStroke: (painting: boolean) => void;
@@ -266,6 +281,7 @@ interface ImageEditorActions {
 }
 
 function removeImageDocumentState(state: ImageEditorState, id: string): Partial<ImageEditorState> {
+  const removedDocument = state.documents.find((document) => document.id === id);
   const documents = state.documents.filter((document) => document.id !== id);
   const activeDocId = state.activeDocId === id
     ? documents[documents.length - 1]?.id ?? null
@@ -278,6 +294,8 @@ function removeImageDocumentState(state: ImageEditorState, id: string): Partial<
   delete undoStacks[id];
   delete redoStacks[id];
   delete generativeFillDismissedByDocId[id];
+  if (removedDocument) disposeImageDocumentNamedSnapshots(removedDocument);
+  clearSelection(id);
   return { documents, activeDocId, undoStacks, redoStacks, generativeFillDismissedByDocId };
 }
 
@@ -328,8 +346,23 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
           if (state.activeDocId === doc.id) return state;
           return { activeDocId: doc.id };
         }
+        clearSelection(doc.id);
+        const persistedSelection = doc.hasSelection && doc.selectionMask
+          && doc.selectionMask.width === doc.width
+          && doc.selectionMask.height === doc.height
+          && doc.selectionMask.data.byteLength === doc.width * doc.height
+          && !isMaskEmpty(doc.selectionMask)
+          ? toSnapshot(doc.selectionMask)
+          : undefined;
+        if (persistedSelection) setSelection(doc.id, fromSnapshot(persistedSelection));
+        const openedDocument = {
+          ...doc,
+          hasSelection: Boolean(persistedSelection),
+          selectionMask: undefined,
+          selectionMaskData: undefined,
+        };
         return {
-          documents: [...state.documents, doc],
+          documents: [...state.documents, openedDocument],
           activeDocId: doc.id,
         };
       }),
@@ -699,7 +732,8 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
         return changed ? { documents } : state;
       }),
 
-    setHasSelection: (id, hasSelection) =>
+    setHasSelection: (id, hasSelection) => {
+      if (!hasSelection) clearSelection(id);
       set((state) => {
         const nextDismissedByDocId = { ...state.generativeFillDismissedByDocId };
         if (!hasSelection) {
@@ -717,7 +751,8 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
           ),
           generativeFillDismissedByDocId: nextDismissedByDocId,
         };
-      }),
+      });
+    },
 
     setGenerativeFillDismissed: (id, dismissed) =>
       set((state) => {
@@ -1073,6 +1108,9 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
       return {
         documents: state.documents.map((document) => ({
           ...document,
+          hasSelection: false,
+          selectionMask: undefined,
+          selectionMaskData: undefined,
           layers: document.layers.map(stripImageLayerRuntimePixels),
           snapshots: document.snapshots?.map(stripImageSnapshotRuntimePixels) ?? [],
         })),
@@ -1082,12 +1120,23 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     },
 
     restoreProjectSnapshot: (snapshot) => {
-      disposeAllImageHistory(get());
+      const previous = get();
       const safeSnapshot = sanitizeImageEditorSnapshot(snapshot);
-      const documents = safeSnapshot?.documents ?? [];
+      const documents = (safeSnapshot?.documents ?? []).map((document) => ({
+        ...document,
+        hasSelection: false,
+        selectionMask: undefined,
+        selectionMaskData: undefined,
+        snapshots: document.snapshots?.map(stripImageSnapshotRuntimePixels) ?? [],
+      }));
       const activeDocId = safeSnapshot?.activeDocId && documents.some((document) => document.id === safeSnapshot.activeDocId)
         ? safeSnapshot.activeDocId
         : documents[0]?.id ?? null;
+      disposeAllImageHistory(previous);
+      for (const document of previous.documents) {
+        disposeImageDocumentNamedSnapshots(document);
+      }
+      clearAllSelections();
       set({
         documents,
         activeDocId,
@@ -1104,17 +1153,30 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     // survives a save, instead of being stripped to null and lost. See ImageLayerProjectPixels.
     exportProjectSnapshotWithPixels: async () => {
       const state = get();
-      const documents = await Promise.all(state.documents.map(async (document) => ({
-        ...document,
-        // A persisted project is an editable layered baseline, not a flattened derivative.
-        dirty: false,
-        layers: await Promise.all(document.layers.map((layer) => encodeImageLayerProjectPixels(layer))),
-        // Named snapshots are capped at 12 and use the same lossless per-layer PNG transport as
-        // the live document. Undo/redo history remains intentionally non-persistent.
-        snapshots: await Promise.all(
-          (document.snapshots ?? []).map((snapshot) => encodeImageDocumentSnapshotProjectPixels(snapshot)),
-        ),
-      })));
+      const documents = await Promise.all(state.documents.map(async (document) => {
+        const selection = document.hasSelection ? getSelection(document.id) : undefined;
+        const persistSelection = Boolean(
+          selection
+          && selection.width === document.width
+          && selection.height === document.height
+          && selection.data.byteLength === document.width * document.height
+          && !isMaskEmpty(selection),
+        );
+        return {
+          ...document,
+          // A persisted project is an editable layered baseline, not a flattened derivative.
+          dirty: false,
+          hasSelection: persistSelection,
+          selectionMask: undefined,
+          selectionMaskData: persistSelection ? encodeImageSelectionMaskProjectData(selection!) : undefined,
+          layers: await Promise.all(document.layers.map((layer) => encodeImageLayerProjectPixels(layer))),
+          // Named snapshots are capped at 12 and use the same lossless per-layer PNG transport as
+          // the live document. Undo/redo history remains intentionally non-persistent.
+          snapshots: await Promise.all(
+            (document.snapshots ?? []).map((snapshot) => encodeImageDocumentSnapshotProjectPixels(snapshot)),
+          ),
+        };
+      }));
       return {
         documents,
         activeDocId: state.activeDocId,
@@ -1125,19 +1187,69 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     restoreProjectSnapshotWithPixels: async (snapshot) => {
       const safeSnapshot = sanitizeImageEditorSnapshot(snapshot);
       const rawDocuments = safeSnapshot?.documents ?? [];
-      const documents = await Promise.all(rawDocuments.map(async (document) => ({
-        ...document,
-        layers: await Promise.all(document.layers.map((layer) => decodeImageLayerProjectPixels(layer))),
-        snapshots: await Promise.all(
-          (document.snapshots ?? []).map((snapshot) => decodeImageDocumentSnapshotProjectPixels(snapshot)),
-        ),
-      })));
+      const documents: ImageDocument[] = [];
+      const decodedLiveBitmaps = new Set<LayerBitmap>();
+      const decodedNamedSnapshots = new Set<ImageDocumentSnapshot>();
+      try {
+        for (const document of rawDocuments) {
+          const layers: ImageLayer[] = [];
+          for (const layer of document.layers) {
+            const decoded = await decodeImageLayerProjectPixels(layer);
+            if (decoded.bitmap) decodedLiveBitmaps.add(decoded.bitmap);
+            if (decoded.mask) decodedLiveBitmaps.add(decoded.mask);
+            layers.push(decoded);
+          }
+          const snapshots: ImageDocumentSnapshot[] = [];
+          for (const namedSnapshot of document.snapshots ?? []) {
+            const decodedSnapshot = await decodeImageDocumentSnapshotProjectPixels(namedSnapshot);
+            snapshots.push(decodedSnapshot);
+            decodedNamedSnapshots.add(decodedSnapshot);
+          }
+          let selectionMask;
+          if (document.hasSelection && document.selectionMaskData) {
+            selectionMask = decodeImageSelectionMaskProjectData(
+              document.selectionMaskData,
+              document.width,
+              document.height,
+            );
+            if (isMaskEmpty(selectionMask)) selectionMask = undefined;
+          }
+          documents.push({
+            ...document,
+            layers,
+            snapshots,
+            hasSelection: Boolean(selectionMask),
+            selectionMask,
+            selectionMaskData: undefined,
+          });
+        }
+      } catch (error) {
+        for (const document of documents) disposeImageDocumentNamedSnapshots(document);
+        for (const namedSnapshot of decodedNamedSnapshots) {
+          disposeImageDocumentSnapshotResources(namedSnapshot);
+        }
+        for (const bitmap of decodedLiveBitmaps) {
+          bitmap.width = 0;
+          bitmap.height = 0;
+        }
+        throw error;
+      }
       const activeDocId = safeSnapshot?.activeDocId && documents.some((document) => document.id === safeSnapshot.activeDocId)
         ? safeSnapshot.activeDocId
         : documents[0]?.id ?? null;
-      disposeAllImageHistory(get());
+      const previous = get();
+      disposeAllImageHistory(previous);
+      for (const document of previous.documents) {
+        disposeImageDocumentNamedSnapshots(document);
+      }
+      clearAllSelections();
+      for (const document of documents) {
+        if (document.hasSelection && document.selectionMask) {
+          setSelection(document.id, fromSnapshot(document.selectionMask));
+        }
+      }
       set({
-        documents,
+        documents: documents.map((document) => ({ ...document, selectionMask: undefined })),
         activeDocId,
         undoStacks: {},
         redoStacks: {},
@@ -1148,7 +1260,23 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     },
 
     restoreLiveProjectRollback: (rollback) => {
-      disposeAllImageHistory(get());
+      const current = get();
+      if (
+        current.documents.length === rollback.documents.length
+        && current.documents.every((document, index) => document === rollback.documents[index])
+      ) {
+        return;
+      }
+      disposeAllImageHistory(current);
+      for (const document of current.documents) {
+        disposeImageDocumentNamedSnapshots(document);
+        clearSelection(document.id);
+      }
+      for (const document of rollback.documents) {
+        clearSelection(document.id);
+        const selection = rollback.selectionMasks?.[document.id];
+        if (selection) setSelection(document.id, fromSnapshot(selection));
+      }
       set({
         documents: rollback.documents,
         activeDocId: rollback.activeDocId
@@ -1403,6 +1531,9 @@ function stripImageSnapshotRuntimePixels(snapshot: ImageDocumentSnapshot): Image
   return {
     ...snapshot,
     layers: snapshot.layers.map(stripImageLayerRuntimePixels),
+    hasSelection: false,
+    selectionMask: undefined,
+    selectionMaskData: undefined,
     pixelState: 'unavailable',
   };
 }

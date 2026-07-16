@@ -2,8 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createEmptyImageDocument, useImageEditorStore } from '../../store/imageEditorStore';
 import type { ImageDocument, ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import { defaultImageLayerPixelCodec } from './ImageLayerProjectPixels';
+import { clearAllSelections, clearSelection, getSelection, setSelection } from './selectionRegistry';
+import { createMask } from './SelectionMask';
 import {
   addImageDocumentSnapshot,
+  buildImageDocumentSnapshotIntegrity,
   buildImageSnapshotReadinessDescriptor,
   createImageDocumentSnapshot,
   deleteImageDocumentSnapshot,
@@ -74,6 +77,7 @@ describe('ImageSnapshots', () => {
       undoStacks: {},
       redoStacks: {},
     });
+    clearAllSelections();
   });
 
   it('stores compact document layer state snapshots without flattening bitmaps', () => {
@@ -104,6 +108,9 @@ describe('ImageSnapshots', () => {
   });
 
   it('builds deterministic snapshot readiness for named states and rename previews', () => {
+    const selectionMask = { width: 10, height: 10, data: new Uint8ClampedArray(100) };
+    selectionMask.data[7] = 255;
+    const baseLayers = [makeLayer('base')];
     const doc = makeDoc({
       dirty: true,
       snapshots: [
@@ -114,11 +121,13 @@ describe('ImageSnapshots', () => {
           updatedAt: 20,
           width: 10,
           height: 10,
-          layers: [makeLayer('base')],
+          layers: baseLayers,
           activeLayerId: 'base',
           hasSelection: true,
           selectionVersion: 2,
+          selectionMask,
           pixelState: 'complete',
+          integrity: buildImageDocumentSnapshotIntegrity(baseLayers, selectionMask),
         },
         {
           id: 'snapshot-bad',
@@ -131,6 +140,7 @@ describe('ImageSnapshots', () => {
           hasSelection: false,
           selectionVersion: 3,
           pixelState: 'complete',
+          integrity: buildImageDocumentSnapshotIntegrity([]),
         },
       ],
     });
@@ -209,7 +219,7 @@ describe('ImageSnapshots', () => {
       bindingReadiness: 'ready-for-review',
       supportsNamedSnapshotVariables: true,
       supportsArbitraryJsExpressions: false,
-      snapshotVariableTargets: ['snapshot-base', 'snapshot-bad'],
+      snapshotVariableTargets: ['snapshot-base'],
     });
   });
 
@@ -333,6 +343,63 @@ describe('ImageSnapshots', () => {
     }
   });
 
+  it('restores exact asymmetric selection bytes after replacement, clear, and a fresh project-store round trip', async () => {
+    const initial = makeDoc({ id: 'selection-snapshot', width: 3, height: 2, hasSelection: true });
+    const selectionA = createMask(3, 2);
+    selectionA.data.set([0, 255, 17, 3, 128, 64]);
+    setSelection(initial.id, selectionA);
+    const snapshot = createImageDocumentSnapshot(initial, 'Selection A');
+    const withSnapshot = addImageDocumentSnapshot(initial, snapshot);
+
+    selectionA.data.fill(9);
+    const selectionB = createMask(3, 2);
+    selectionB.data.set([255, 0, 0, 222, 0, 1]);
+    setSelection(initial.id, selectionB);
+    const restoredFromB = restoreImageDocumentSnapshot(withSnapshot, snapshot.id);
+    expect(restoredFromB.hasSelection).toBe(true);
+    expect(Array.from(getSelection(initial.id)?.data ?? [])).toEqual([0, 255, 17, 3, 128, 64]);
+    expect(getSelection(initial.id)?.data).not.toBe(snapshot.selectionMask?.data);
+
+    clearSelection(initial.id);
+    const restoredFromClear = restoreImageDocumentSnapshot(
+      { ...restoredFromB, hasSelection: false },
+      snapshot.id,
+    );
+    expect(restoredFromClear.hasSelection).toBe(true);
+    expect(Array.from(getSelection(initial.id)?.data ?? [])).toEqual([0, 255, 17, 3, 128, 64]);
+
+    useImageEditorStore.getState().openDocument({ ...withSnapshot, hasSelection: false });
+    const serialized = JSON.parse(JSON.stringify(
+      await useImageEditorStore.getState().exportProjectSnapshotWithPixels(),
+    ));
+    useImageEditorStore.getState().restoreProjectSnapshot(undefined);
+    clearAllSelections();
+    await useImageEditorStore.getState().restoreProjectSnapshotWithPixels(serialized);
+    const reopened = useImageEditorStore.getState().getActiveDocument();
+    expect(reopened?.snapshots?.[0]?.selectionMask?.data).toEqual(
+      new Uint8ClampedArray([0, 255, 17, 3, 128, 64]),
+    );
+    const restoredFresh = restoreImageDocumentSnapshot(reopened!, snapshot.id);
+    expect(restoredFresh.hasSelection).toBe(true);
+    expect(Array.from(getSelection(initial.id)?.data ?? [])).toEqual([0, 255, 17, 3, 128, 64]);
+  });
+
+  it('clears a live registry mask when the restored snapshot proves there was no selection', () => {
+    const initial = makeDoc({ id: 'selection-clear', width: 2, height: 2 });
+    const snapshot = createImageDocumentSnapshot(initial, 'No selection');
+    const liveSelection = createMask(2, 2);
+    liveSelection.data[0] = 255;
+    setSelection(initial.id, liveSelection);
+
+    const restored = restoreImageDocumentSnapshot(
+      { ...addImageDocumentSnapshot(initial, snapshot), hasSelection: true },
+      snapshot.id,
+    );
+
+    expect(restored.hasSelection).toBe(false);
+    expect(getSelection(initial.id)).toBeUndefined();
+  });
+
   it('fails legacy lightweight snapshot restore closed instead of borrowing live pixels', () => {
     const liveBitmap = { width: 20, height: 20 } as LayerBitmap;
     const liveMask = { width: 20, height: 20 } as LayerBitmap;
@@ -371,6 +438,26 @@ describe('ImageSnapshots', () => {
       restorable: false,
       blockers: [{ code: 'snapshot-pixels-unavailable' }],
     });
+  });
+
+  it('blocks Restore when complete claims lack a proven bitmap or exact selection payload', () => {
+    const expectedBitmap = new PixelOffscreenCanvas(2, 2) as unknown as LayerBitmap;
+    const layers = [{ ...makeLayer('base'), bitmap: expectedBitmap }];
+    const selectionMask = { width: 2, height: 2, data: new Uint8ClampedArray([0, 255, 0, 1]) };
+    const integrity = buildImageDocumentSnapshotIntegrity(layers, selectionMask);
+    const stripped = {
+      id: 'stripped-complete', name: 'Stripped', createdAt: 1, width: 2, height: 2,
+      layers: [{ ...layers[0], bitmap: null }], activeLayerId: 'base', hasSelection: true,
+      selectionVersion: 1, pixelState: 'complete' as const, integrity,
+    };
+    const doc = makeDoc({ snapshots: [stripped] });
+    const readiness = buildImageSnapshotReadinessDescriptor({ doc });
+
+    expect(readiness.namedSnapshots.snapshots[0].restorable).toBe(false);
+    expect(readiness.namedSnapshots.snapshots[0].blockers.map((blocker) => blocker.code)).toEqual([
+      'snapshot-selection-unavailable',
+    ]);
+    expect(restoreImageDocumentSnapshot(doc, stripped.id)).toBe(doc);
   });
 
   it('keeps current dimensions when restoring a malformed snapshot with invalid dimensions', () => {

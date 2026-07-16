@@ -3,6 +3,10 @@ import { useImageEditorStore } from '../../store/imageEditorStore';
 import { fromSnapshot } from './SelectionMask';
 import { clearSelection, setSelection } from './selectionRegistry';
 import {
+  applyImageDocumentSelectionState,
+  disposeImageDocumentSnapshotsRemoved,
+} from './ImageSnapshots';
+import {
   materializeHistoryBitmap,
   materializeHistoryDocument,
   materializeHistoryLayers,
@@ -78,7 +82,11 @@ export function applyOperation(op: EditorOperation, direction: Direction): void 
       break;
     }
     case 'documentState': {
-      const target = materializeHistoryDocument(direction === 'undo' ? op.before : op.after);
+      const target = applyImageDocumentSelectionState(
+        materializeHistoryDocument(direction === 'undo' ? op.before : op.after),
+      );
+      const currentDocument = useImageEditorStore.getState().documents.find((doc) => doc.id === docId);
+      if (currentDocument) disposeImageDocumentSnapshotsRemoved(currentDocument, target);
       useImageEditorStore.setState((currentState) => ({
         documents: currentState.documents.map((doc) => (doc.id === docId ? target : doc)),
       }));

@@ -781,6 +781,10 @@ export interface ImageDocument {
   activeColorChannel?: ImageColorChannel;
   hasSelection: boolean;
   selectionVersion: number;
+  /** Runtime/persistence handoff for an exact live selection; consumed into selectionRegistry on open/restore. */
+  selectionMask?: SelectionMaskSnapshot;
+  /** Project JSON transport for selectionMask.data. Never used as live selection state. */
+  selectionMaskData?: string;
   viewport: DocumentViewport;
   guides?: ImageGuide[];
   dirty: boolean;
@@ -811,8 +815,32 @@ export interface ImageDocumentSnapshot {
   activeLayerId: string | null;
   hasSelection: boolean;
   selectionVersion: number;
+  /** Immutable alpha bytes owned by this named snapshot when hasSelection is true. */
+  selectionMask?: SelectionMaskSnapshot;
+  /** Project JSON transport for selectionMask.data. */
+  selectionMaskData?: string;
   /** Complete snapshots own immutable bitmap/mask pixels; unavailable is a legacy/metadata-only record. */
   pixelState?: 'complete' | 'unavailable';
+  /** Structural proof for every expected layer bitmap/mask and selection payload. */
+  integrity?: ImageDocumentSnapshotIntegrity;
+}
+
+export interface ImageDocumentSnapshotAssetIntegrity {
+  present: boolean;
+  width: number;
+  height: number;
+}
+
+export interface ImageDocumentSnapshotLayerIntegrity {
+  layerId: string;
+  bitmap: ImageDocumentSnapshotAssetIntegrity;
+  mask: ImageDocumentSnapshotAssetIntegrity;
+}
+
+export interface ImageDocumentSnapshotIntegrity {
+  version: 1;
+  layers: ImageDocumentSnapshotLayerIntegrity[];
+  selection: ImageDocumentSnapshotAssetIntegrity & { byteLength: number };
 }
 
 export interface SelectionMaskSnapshot {

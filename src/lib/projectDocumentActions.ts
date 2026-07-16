@@ -25,6 +25,8 @@ import {
   collectVideoBundledFontFaceReferences,
   upgradeLegacyBundledFontIssuesInProject,
 } from './managedBundledFonts';
+import { getSelection } from '../components/ImageEditor/selectionRegistry';
+import { toSnapshot } from '../components/ImageEditor/SelectionMask';
 
 export interface ProjectDocumentReplacementOptions {
   /** Set only after the user explicitly chose Discard or the current project was saved successfully. */
@@ -119,6 +121,10 @@ export async function restoreProjectDocument(
     documents: imageEditorStore.documents,
     activeDocId: imageEditorStore.activeDocId,
     quickActionMacros: imageEditorStore.quickActionMacros,
+    selectionMasks: Object.fromEntries(imageEditorStore.documents.flatMap((imageDocument) => {
+      const selection = getSelection(imageDocument.id);
+      return selection ? [[imageDocument.id, toSnapshot(selection)]] : [];
+    })),
   };
 
   try {
@@ -139,13 +145,15 @@ export async function restoreProjectDocument(
     editorStore.restoreWorkspaceSnapshot(restoredDocument.editor);
     projectUsageStore.restoreSnapshot(restoredDocument.usageLedger);
     paperStore.restoreSnapshot(restoredDocument.paper);
-    await imageEditorStore.restoreProjectSnapshotWithPixels(restoredDocument.imageEditor);
     // Multi-window desktop: the source-bin restore above replaced the Source Library with the
     // saved project bin (resolved against flow media refs first). The native main process holds
     // the authoritative live snapshot — which also contains assets generated in *other* windows
     // since the last save — so reconcile to recover them instead of leaving them clobbered.
     // No-op without the native bridge (web / mobile single-window).
     await sourceBinStore.reconcileWithNativeSourceLibrarySnapshot();
+    // Image replacement is deliberately last: pixel decode is transactional and may throw on
+    // corruption, while successful replacement disposes the prior graph's owned snapshots.
+    await imageEditorStore.restoreProjectSnapshotWithPixels(restoredDocument.imageEditor);
   } catch (error) {
     flowStore.replaceFlowSnapshot(previous.flow);
     flowWorkspaceStore.hydrateProjectSnapshot({
