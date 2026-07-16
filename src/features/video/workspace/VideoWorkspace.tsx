@@ -185,6 +185,7 @@ import {
   getEditorAssets,
   getProjectEditorAssets,
   migrateStageObjectsToEditorAssets,
+  buildVisualClipFromEditorAsset,
 } from '../../../lib/editorAssets';
 import {
   buildPaperStoryboardPageDescriptors,
@@ -9060,41 +9061,6 @@ function buildTextDraftFromClip(
     fontSizePx: clip.textSizePx || asset?.textDefaults?.fontSizePx || 72,
     color: clip.textColor || asset?.textDefaults?.color || '#f8fafc',
     textEffect: clip.textEffect || asset?.textDefaults?.textEffect || 'shadow',
-  });
-}
-
-export function buildVisualClipFromEditorAsset(
-  asset: EditorAsset,
-  options: { trackIndex: number; startMs: number; durationSeconds?: number },
-): EditorVisualClip {
-  const sourceKind =
-    asset.kind === 'shape'
-      ? 'shape'
-      : asset.kind === 'image'
-        ? 'image'
-        : asset.kind === 'comic'
-          ? 'comic'
-          : 'text';
-  const sourceNodeId = asset.kind === 'image' ? asset.imageSourceId ?? asset.id : asset.id;
-
-  return createEditorVisualClip(sourceNodeId, sourceKind, {
-    trackIndex: options.trackIndex,
-    startMs: options.startMs,
-    durationSeconds: options.durationSeconds ?? 4,
-    textContent: asset.textDefaults?.text,
-    textFontFamily: asset.textDefaults?.fontFamily,
-    textSizePx: asset.textDefaults?.fontSizePx,
-    textColor: asset.textDefaults?.color,
-    textEffect: asset.textDefaults?.textEffect,
-    textBackgroundOpacityPercent: asset.textDefaults?.textBackgroundOpacityPercent,
-    textTypography:
-      asset.kind === 'text' && asset.textDefaults
-        ? { fontWeight: asset.textDefaults.fontWeight, fontStyle: asset.textDefaults.fontStyle }
-        : undefined,
-    shapeFillColor: asset.shapeDefaults?.fillColor,
-    shapeBorderColor: asset.shapeDefaults?.borderColor,
-    shapeBorderWidth: asset.shapeDefaults?.borderWidth,
-    shapeCornerRadius: asset.shapeDefaults?.cornerRadius,
   });
 }
 

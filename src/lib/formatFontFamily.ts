@@ -6,6 +6,10 @@
  * Generic keyword families (`sans-serif`, `system-ui`, …) must stay unquoted so
  * the browser can resolve them. This helper quotes/escapes every non-generic
  * name and is safe for both single names and comma-separated fallback stacks.
+ *
+ * The parser is standards-conscious about family *identity*: it preserves the
+ * distinction between quoted and unquoted names, preserves whitespace inside
+ * quoted strings, and handles CSS escapes (hex, literal, and line continuations).
  */
 
 const GENERIC_FONT_FAMILIES = new Set([
@@ -40,6 +44,15 @@ const MIN_FONT_WEIGHT = 1;
 const MAX_FONT_WEIGHT = 1000;
 const DEFAULT_FONT_WEIGHT = 400;
 
+type QuoteChar = '"' | "'";
+
+interface ParsedFamily {
+  /** Unescaped family identity. */
+  raw: string;
+  /** The original quote character, or `null` if the name was unquoted. */
+  quoted: QuoteChar | null;
+}
+
 function isGenericFontFamily(name: string): boolean {
   return GENERIC_FONT_FAMILIES.has(name.toLowerCase());
 }
@@ -55,17 +68,68 @@ function isUnquotedIdentifier(name: string): boolean {
   return /^[a-zA-Z_][-\w]*$/u.test(name);
 }
 
-function escapeFamilyName(name: string): string {
+function escapeDoubleQuotedName(name: string): string {
   return name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+function codePointToChar(codePoint: number): string {
+  if (codePoint === 0 || codePoint > 0x10ffff) {
+    return '\uFFFD';
+  }
+  return String.fromCodePoint(codePoint);
+}
+
 /**
- * Parse a comma-separated CSS font-family stack into individual family names.
- * Handles double-quoted and single-quoted strings, escaped characters, and
- * commas inside quoted names. Empty entries are omitted.
+ * Consume a CSS escape sequence that starts at `index` (the backslash has
+ * already been read). Returns the decoded character and the next index.
  */
-function parseFontFamilyStack(stack: string): string[] {
-  const families: string[] = [];
+function consumeCssEscape(stack: string, index: number): { char: string; nextIndex: number } {
+  const length = stack.length;
+  if (index >= length) {
+    return { char: '\\', nextIndex: index };
+  }
+
+  const first = stack[index];
+
+  // Hexadecimal escape: up to six hex digits. A trailing whitespace is consumed
+  // only when exactly six hex digits were read and the next character is a
+  // whitespace terminator.
+  if (/^[0-9a-fA-F]$/.test(first)) {
+    let hex = first;
+    let next = index + 1;
+    while (next < length && /^[0-9a-fA-F]$/.test(stack[next]) && hex.length < 6) {
+      hex += stack[next];
+      next += 1;
+    }
+    if (hex.length === 6 && next < length && (stack[next] === ' ' || stack[next] === '\t')) {
+      next += 1;
+    }
+    return { char: codePointToChar(parseInt(hex, 16)), nextIndex: next };
+  }
+
+  // Line continuation: backslash followed by a newline is removed entirely.
+  if (first === '\n') {
+    return { char: '', nextIndex: index + 1 };
+  }
+  if (first === '\r') {
+    const afterCr = index + 1;
+    if (afterCr < length && stack[afterCr] === '\n') {
+      return { char: '', nextIndex: afterCr + 1 };
+    }
+    return { char: '', nextIndex: afterCr };
+  }
+
+  // Literal escape: include the next character unchanged.
+  return { char: first, nextIndex: index + 1 };
+}
+
+/**
+ * Parse a comma-separated CSS font-family stack into individual family records.
+ * Handles double-quoted and single-quoted strings, escaped characters,
+ * commas inside quoted names, and empty entries.
+ */
+function parseFontFamilyStack(stack: string): ParsedFamily[] {
+  const families: ParsedFamily[] = [];
   let index = 0;
   const length = stack.length;
 
@@ -82,44 +146,47 @@ function parseFontFamilyStack(stack: string): string[] {
       continue;
     }
 
-    let family = '';
+    let raw = '';
+    let quoted: QuoteChar | null = null;
 
     if (stack[index] === '"' || stack[index] === "'") {
-      const quote = stack[index];
+      quoted = stack[index] as QuoteChar;
       index += 1;
       while (index < length) {
         const char = stack[index];
-        if (char === '\\' && index + 1 < length) {
-          family += stack[index + 1];
-          index += 2;
+        if (char === '\\') {
+          const escaped = consumeCssEscape(stack, index + 1);
+          raw += escaped.char;
+          index = escaped.nextIndex;
           continue;
         }
-        if (char === quote) {
+        if (char === quoted) {
           index += 1;
           break;
         }
-        family += char;
+        raw += char;
         index += 1;
       }
     } else {
       while (index < length) {
         const char = stack[index];
-        if (char === '\\' && index + 1 < length) {
-          family += stack[index + 1];
-          index += 2;
+        if (char === '\\') {
+          const escaped = consumeCssEscape(stack, index + 1);
+          raw += escaped.char;
+          index = escaped.nextIndex;
           continue;
         }
         if (char === ',') {
           break;
         }
-        family += char;
+        raw += char;
         index += 1;
       }
-      family = family.trim();
+      raw = raw.trim();
     }
 
-    if (family.length > 0) {
-      families.push(family);
+    if (raw.length > 0) {
+      families.push({ raw, quoted });
     }
 
     if (index < length && stack[index] === ',') {
@@ -130,25 +197,33 @@ function parseFontFamilyStack(stack: string): string[] {
   return families;
 }
 
-function serializeFamilyName(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) {
-    return '""';
+function serializeFamilyName(family: ParsedFamily): string {
+  if (family.quoted) {
+    // Preserve the quoted status but normalize to double quotes for output. This
+    // keeps quoted generic-looking names (e.g. "serif") distinct from the
+    // unquoted generic keyword while producing a single canonical serialization.
+    const escaped = escapeDoubleQuotedName(family.raw);
+    return `"${escaped}"`;
   }
 
-  const lower = trimmed.toLowerCase();
-  if (isGenericFontFamily(lower)) {
-    return lower;
+  // Unquoted names: keep generic keywords generic, quote wide keywords and any
+  // name that is not a valid CSS identifier.
+  if (isGenericFontFamily(family.raw)) {
+    return family.raw;
   }
-  if (isCssWideKeyword(lower) || !isUnquotedIdentifier(trimmed)) {
-    return `"${escapeFamilyName(trimmed)}"`;
+  if (isCssWideKeyword(family.raw) || !isUnquotedIdentifier(family.raw)) {
+    return `"${escapeDoubleQuotedName(family.raw)}"`;
   }
-  return trimmed;
+  return family.raw;
 }
 
 export function formatSingleFontFamily(name: string): string {
   const parsed = parseFontFamilyStack(name);
-  return serializeFamilyName(parsed[0] ?? '');
+  const first = parsed[0];
+  if (!first) {
+    return '""';
+  }
+  return serializeFamilyName(first);
 }
 
 export function formatFontFamily(stack: string): string {

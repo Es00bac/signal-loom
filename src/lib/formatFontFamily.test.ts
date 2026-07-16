@@ -116,3 +116,65 @@ describe('normalizeFontWeight', () => {
     expect(normalizeFontWeight(Number.POSITIVE_INFINITY)).toBe(400);
   });
 });
+
+
+describe('formatFontFamily standards-conscious identity preservation', () => {
+  it('preserves quoted generic-looking names instead of promoting them to generics', () => {
+    expect(formatFontFamily('"serif", serif')).toBe('"serif", serif');
+    expect(formatFontFamily("'sans-serif', sans-serif")).toBe('"sans-serif", sans-serif');
+    expect(formatFontFamily('"system-ui"')).toBe('"system-ui"');
+  });
+
+  it('preserves meaningful quoted boundary whitespace', () => {
+    expect(formatFontFamily('"  M PLUS 1  "')).toBe('"  M PLUS 1  "');
+    expect(formatFontFamily('" Leading"')).toBe('" Leading"');
+  });
+
+  it('trims only separator whitespace around unquoted names', () => {
+    expect(formatFontFamily('  Inter  ,  sans-serif  ')).toBe('Inter, sans-serif');
+  });
+
+  it('parses CSS hexadecimal escapes including optional trailing whitespace', () => {
+    // \2c is a comma, \20 is a space. Short hex escapes terminate at the
+    // first non-hex character and do not consume it.
+    expect(formatFontFamily('Foo\\2c Bar, serif')).toBe('"Foo, Bar", serif');
+    expect(formatFontFamily('Foo\\000020Bar, serif')).toBe('"Foo Bar", serif');
+    // A six-digit escape consumes one trailing whitespace terminator; compare
+    // with the short escape below, where the terminator is not consumed.
+    expect(formatFontFamily('Foo\\000041 Bar, serif')).toBe('FooABar, serif');
+    expect(formatFontFamily('Foo\\41 Bar, serif')).toBe('"FooA Bar", serif');
+  });
+
+  it('preserves escaped literal characters in unquoted identifiers', () => {
+    expect(formatFontFamily('Foo\\ Bar, serif')).toBe('"Foo Bar", serif');
+    expect(formatFontFamily('Foo\\,Bar, serif')).toBe('"Foo,Bar", serif');
+  });
+
+  it('treats escaped newlines as line continuations', () => {
+    expect(formatFontFamily('Foo\\\nBar, serif')).toBe('FooBar, serif');
+    expect(formatFontFamily('Foo\\\r\nBar, serif')).toBe('FooBar, serif');
+  });
+
+  it('preserves escaped control characters and unicode escapes', () => {
+    expect(formatFontFamily('Foo\\41 Bar, serif')).toBe('"FooA Bar", serif');
+    expect(formatFontFamily('Foo\\1F600 Bar, serif')).toBe('"Foo😀 Bar", serif');
+  });
+
+  it('preserves the quote style of input families while normalizing unsafe content', () => {
+    expect(formatFontFamily("'M PLUS 1', serif")).toBe('"M PLUS 1", serif');
+    expect(formatFontFamily('"inherit", initial')).toBe('"inherit", "initial"');
+  });
+
+  it('does not corrupt already-valid persisted stacks', () => {
+    const stacks = [
+      'Inter, system-ui, sans-serif',
+      '"M PLUS 1", Inter, sans-serif',
+      "'Source Sans 3', system-ui, sans-serif",
+      '"Name, With Comma", serif',
+      '"Weird \\"Quoted\\" Font", monospace',
+    ];
+    for (const stack of stacks) {
+      expect(formatFontFamily(stack)).toBeTruthy();
+    }
+  });
+});

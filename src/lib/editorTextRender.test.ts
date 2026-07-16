@@ -80,7 +80,7 @@ describe('buildTextOverlaySvg', () => {
       opacityPercent: 100,
     });
 
-    expect(svg).toContain('font-family:"M PLUS 1", Inter, sans-serif');
+    expect(svg).toContain('font-family:&quot;M PLUS 1&quot;, Inter, sans-serif');
 
     const ctx = { font: '', measureText: () => ({ width: 0 }) };
     const canvas = { getContext: vi.fn(() => ctx) };

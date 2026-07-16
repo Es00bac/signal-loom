@@ -53,7 +53,10 @@ class FakeTextContext {
   transforms: Array<{ kind: 'save' | 'restore' | 'translate' | 'rotate'; x?: number; y?: number; angle?: number }> = [];
 
   measureText(line: string) {
-    return { width: line.length * 10 };
+    // Simulate the metric difference that Chromium shows for all-small-caps so the raster path is
+    // forced to measure with typography already applied.
+    const factor = this.fontVariantCaps === 'all-small-caps' ? 1.5 : 1;
+    return { width: line.length * 10 * factor };
   }
 
   fillText(text: string, x: number, y: number) {
@@ -255,6 +258,44 @@ describe('ImageTextLayer', () => {
 
     expect(context.fontVariantCaps).toBe('all-small-caps');
     expect(context.fills[0].text).toBe('Sloom スタジオ');
+  });
+
+  it('applies typography before measuring so all-small-caps changes layout metrics', () => {
+    const normal = rasterizeImageTextStyle({
+      content: 'HEADLINE',
+      fontFamily: 'Inter',
+      fontSize: 20,
+      fontWeight: '700',
+      fontVariantCaps: 'normal',
+    });
+    const allSmallCaps = rasterizeImageTextStyle({
+      content: 'HEADLINE',
+      fontFamily: 'Inter',
+      fontSize: 20,
+      fontWeight: '700',
+      fontVariantCaps: 'all-small-caps',
+    });
+
+    expect(allSmallCaps.width).toBeGreaterThan(normal.width);
+  });
+
+  it('wraps and aligns all-small-caps Unicode text using caps-aware metrics', () => {
+    const block = measureImageTextBlock(
+      normalizeImageTextStyle({
+        content: 'Sloom スタジオ alpha beta',
+        fontFamily: 'Inter',
+        fontSize: 20,
+        fontWeight: '400',
+        fontVariantCaps: 'all-small-caps',
+        wrap: true,
+        boxWidth: 120,
+        align: 'center',
+      }),
+      (line) => line.length * 10 * 1.5,
+    );
+
+    expect(block.lines.length).toBeGreaterThan(1);
+    expect(block.lines[0].x).toBeGreaterThan(0);
   });
 
   it('updates retained text metadata and rerasterizes the layer bitmap', () => {

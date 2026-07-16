@@ -1684,6 +1684,7 @@ export function rasterizeImageTextStyle(styleInput: Partial<ImageTextLayerStyle>
   const mctx = measure.getContext('2d');
   if (!mctx) throw new Error('Failed to acquire text measurement context.');
   mctx.font = imageTextCanvasFont(style);
+  applyCanvasTypographySettings(mctx, style);
   const layout = measureImageTextBlock(style, (line) => mctx.measureText(line || ' ').width);
 
   const bitmap = createBitmap(Math.max(1, Math.ceil(layout.width)), Math.max(1, Math.ceil(layout.height)));

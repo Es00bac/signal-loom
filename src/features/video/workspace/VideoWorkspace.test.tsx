@@ -4,12 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProgramStageClip } from '../../../components/Editor/ManualEditorWorkspaceUtils';
 import { getVideoCanvasDimensions } from '../../../lib/videoCanvas';
 import { createEditorVisualClip } from '../../../lib/manualEditorState';
-import { createEditorAsset } from '../../../lib/editorAssets';
+import { buildVisualClipFromEditorAsset, createEditorAsset } from '../../../lib/editorAssets';
 import { buildVideoParityDiagnostics, buildVideoSequenceSummary } from '../../../lib/videoPremiereParity';
 import type { VideoExportReadinessSummary } from '../../../lib/videoExportReadiness';
 import type { VideoRenderBackendSummary } from '../../../lib/videoRenderBackendStatus';
 import type { AspectRatio, VideoResolution } from '../../../types/flow';
-import { ProgramMonitorPanel, SourceItemCard, TrackAddControl, buildTrackMenuOptions, buildVisualClipFromEditorAsset, resolveClipFitState } from './VideoWorkspace';
+import { ProgramMonitorPanel, SourceItemCard, TrackAddControl, buildTrackMenuOptions, resolveClipFitState } from './VideoWorkspace';
 import type { SourceBinItem } from '../../../lib/sourceBin';
 
 function renderProgramMonitor({

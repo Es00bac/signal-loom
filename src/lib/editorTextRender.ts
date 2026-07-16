@@ -67,7 +67,7 @@ export function buildTextOverlaySvgAsset({
     <svg xmlns="http://www.w3.org/2000/svg" width="${bounds.width}" height="${bounds.height}" viewBox="0 0 ${bounds.width} ${bounds.height}">
       <foreignObject x="0" y="0" width="${bounds.width}" height="${bounds.height}">
         <div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;width:100%;height:100%;align-items:center;justify-content:center;text-align:center;background:transparent;pointer-events:none;">
-          <div style="display:inline-block;white-space:pre;font-family:${escapeHtml(formatFontFamily(fontFamily || 'Inter, system-ui, sans-serif'))};font-size:${safeFontSize}px;line-height:1.12;font-weight:700;color:${escapeHtml(color || '#f3f4f6')};opacity:${textAlpha.toFixed(3)};${effectCss}">
+          <div style="${escapeXmlAttribute(`display:inline-block;white-space:pre;font-family:${formatFontFamily(fontFamily || 'Inter, system-ui, sans-serif')};font-size:${safeFontSize}px;line-height:1.12;font-weight:700;color:${color || '#f3f4f6'};opacity:${textAlpha.toFixed(3)};${effectCss}`)}">
             ${escapeHtml(text || 'Text')}
           </div>
         </div>
@@ -211,4 +211,12 @@ function escapeHtml(value: string): string {
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;');
+}
+
+function escapeXmlAttribute(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
 }

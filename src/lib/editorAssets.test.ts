@@ -1,11 +1,17 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment jsdom
+
+import { describe, expect, it, vi } from 'vitest';
 import type { EditorAsset, EditorStageObject } from '../types/flow';
 import {
+  buildVisualClipFromEditorAsset,
   createEditorAsset,
   getEditorAssets,
   getProjectEditorAssets,
   migrateStageObjectsToEditorAssets,
 } from './editorAssets';
+import { getEditorVisualClips } from './manualEditorState';
+import { renderTextCard } from './mediaComposition';
+import type { NodeData } from '../types/flow';
 
 describe('createEditorAsset', () => {
   it('creates reusable text and shape editor assets with stable defaults', () => {
@@ -305,6 +311,7 @@ describe('migrateStageObjectsToEditorAssets', () => {
   });
 });
 
+describe('text asset typography normalization (AUD-026)', () => {
   it('clamps out-of-range text weights during normalization', () => {
     const assets = getEditorAssets({
       editorAssets: [
@@ -348,3 +355,112 @@ describe('migrateStageObjectsToEditorAssets', () => {
     expect(assets[0].textDefaults?.fontWeight).toBe(1000);
     expect(assets[1].textDefaults?.fontWeight).toBe(1);
   });
+});
+
+class ExportTestContext {
+  font = '';
+  fillStyle = '';
+  strokeStyle = '';
+  lineWidth = 1;
+  shadowColor = '';
+  shadowBlur = 0;
+  shadowOffsetX = 0;
+  shadowOffsetY = 0;
+  textAlign = 'left';
+  textBaseline = 'alphabetic';
+  fontKerning: string | undefined;
+  letterSpacing: string | undefined;
+
+  measureText() {
+    return { width: 50 };
+  }
+
+  fillText() {}
+  strokeText() {}
+  save() {}
+  restore() {}
+  translate() {}
+  rotate() {}
+}
+
+class ExportTestCanvas {
+  context = new ExportTestContext();
+  width = 0;
+  height = 0;
+
+  getContext() {
+    return this.context;
+  }
+
+  toDataURL() {
+    return 'data:image/png;base64,stub';
+  }
+}
+
+describe('buildVisualClipFromEditorAsset persistence and export boundaries', () => {
+  it('copies text asset weight/style into clip typography', () => {
+    const asset = createEditorAsset('text', { label: 'Title' });
+    asset.textDefaults = {
+      ...asset.textDefaults!,
+      fontFamily: 'M PLUS 1, sans-serif',
+      fontWeight: 700,
+      fontStyle: 'italic',
+    };
+
+    const clip = buildVisualClipFromEditorAsset(asset, { trackIndex: 1, startMs: 250 });
+
+    expect(clip.textFontFamily).toBe('M PLUS 1, sans-serif');
+    expect(clip.textTypography).toEqual({ fontWeight: 700, fontStyle: 'italic' });
+  });
+
+  it('survives persisted-data normalization through getEditorVisualClips', () => {
+    const asset = createEditorAsset('text', { label: 'Title' });
+    asset.textDefaults = {
+      ...asset.textDefaults!,
+      fontFamily: 'Source Sans 3, sans-serif',
+      fontWeight: 600,
+      fontStyle: 'italic',
+    };
+
+    const clip = buildVisualClipFromEditorAsset(asset, { trackIndex: 0, startMs: 0 });
+    const normalized = getEditorVisualClips({
+      editorVisualClips: [clip],
+    } as Partial<NodeData> as NodeData);
+
+    expect(normalized[0].textFontFamily).toBe('Source Sans 3, sans-serif');
+    expect(normalized[0].textTypography).toEqual({ fontWeight: 600, fontStyle: 'italic' });
+  });
+
+  it('is consumed by the text-clip export card with family/weight/style intact', async () => {
+    const asset = createEditorAsset('text', { label: 'Title' });
+    asset.textDefaults = {
+      ...asset.textDefaults!,
+      fontFamily: 'M PLUS 1, sans-serif',
+      fontWeight: 700,
+      fontStyle: 'italic',
+    };
+
+    const clip = buildVisualClipFromEditorAsset(asset, { trackIndex: 0, startMs: 0 });
+    const normalized = getEditorVisualClips({
+      editorVisualClips: [clip],
+    } as Partial<NodeData> as NodeData)[0];
+
+    const canvas = new ExportTestCanvas();
+    vi.spyOn(document, 'createElement').mockReturnValue(canvas as unknown as HTMLCanvasElement);
+
+    await renderTextCard({
+      text: normalized.textContent ?? 'Text',
+      fontFamily: normalized.textFontFamily,
+      fontSizePx: normalized.textSizePx,
+      color: normalized.textColor,
+      effect: normalized.textEffect,
+      opacityPercent: 100,
+      typography: normalized.textTypography,
+    });
+
+    expect(canvas.context.font).toContain('italic');
+    expect(canvas.context.font).toContain('700');
+    expect(canvas.context.font).toContain('"M PLUS 1"');
+    vi.restoreAllMocks();
+  });
+});
