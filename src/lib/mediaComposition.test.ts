@@ -97,6 +97,7 @@ describe('buildCompositionCommand', () => {
 
     expect(command.join(' ')).not.toContain('amix=');
     expect(command).toEqual([
+      '-y',
       '-i',
       'video.mp4',
       '-map',
@@ -117,6 +118,7 @@ describe('buildCompositionCommand', () => {
     });
 
     expect(command).toEqual([
+      '-y',
       '-i',
       'video.mp4',
       '-map',

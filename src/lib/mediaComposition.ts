@@ -253,6 +253,7 @@ interface PreparedSequenceStageObject {
 }
 
 let ffmpegPromise: Promise<FFmpeg> | undefined;
+let browserFfmpegOperationSequence = 0;
 const DEFAULT_SEQUENCE_FRAME_RATE = 30;
 const MIN_SEQUENCE_VISUAL_SCALE_FACTOR = 0.1;
 
@@ -270,6 +271,7 @@ export function buildCompositionCommand({
     if (useVideoAudio) {
       if (videoAudioVolumePercent === 100) {
         return [
+          '-y',
           '-i',
           videoInputName,
           '-map',
@@ -285,6 +287,7 @@ export function buildCompositionCommand({
       }
 
       return [
+        '-y',
         '-i',
         videoInputName,
         '-filter_complex',
@@ -302,6 +305,7 @@ export function buildCompositionCommand({
     }
 
     return [
+      '-y',
       '-i',
       videoInputName,
       '-map',
@@ -313,7 +317,7 @@ export function buildCompositionCommand({
     ];
   }
 
-  const args = ['-i', videoInputName];
+  const args = ['-y', '-i', videoInputName];
 
   for (const track of enabledTracks) {
     args.push('-i', track.inputName);
@@ -410,27 +414,42 @@ export async function composeMedia({
   }
 
   const ffmpeg = await getFFmpeg();
+  const browserOperationId = createBrowserFfmpegOperationId();
+  const browserVideoInputName = createBrowserFfmpegPath(videoInputName, browserOperationId);
+  const browserOutputName = createBrowserFfmpegPath(outputName, browserOperationId);
+  const browserTracks = compositionTracks.map((track) => ({
+    ...track,
+    inputName: createBrowserFfmpegPath(track.inputName, browserOperationId),
+  }));
+  const browserCommand = buildCompositionCommand({
+    videoInputName: browserVideoInputName,
+    audioTracks: browserTracks,
+    outputName: browserOutputName,
+    useVideoAudio,
+    videoAudioVolumePercent,
+  });
 
-  await ffmpeg.writeFile(videoInputName, await fetchFile(videoUrl));
+  return withBrowserFfmpegOperation(ffmpeg, async (operation) => {
+    await operation.writeFile(browserVideoInputName, await fetchFile(videoUrl));
 
-  for (const [index, track] of enabledTracks.entries()) {
-    await ffmpeg.writeFile(`composition-audio-${index + 1}.mp3`, await fetchFile(track.url));
-  }
+    for (const [index, track] of enabledTracks.entries()) {
+      await operation.writeFile(browserTracks[index].inputName, await fetchFile(track.url));
+    }
 
-  await ffmpeg.exec(baseCommand);
-  const output = await ffmpeg.readFile(outputName);
-  const bytes = output instanceof Uint8Array ? output : new TextEncoder().encode(String(output));
+    try {
+      await ffmpeg.exec(browserCommand);
+    } catch (error) {
+      await operation.trackExistingPaths((path) => path === browserOutputName);
+      throw error;
+    }
+    operation.trackCreatedPath(browserOutputName);
+    const output = await ffmpeg.readFile(browserOutputName);
+    const bytes = output instanceof Uint8Array ? output : new TextEncoder().encode(String(output));
+    const blobBytes = new Uint8Array(bytes.byteLength);
+    blobBytes.set(bytes);
 
-  await ffmpeg.deleteFile(videoInputName);
-  for (const track of compositionTracks) {
-    await ffmpeg.deleteFile(track.inputName);
-  }
-  await ffmpeg.deleteFile(outputName);
-
-  const blobBytes = new Uint8Array(bytes.byteLength);
-  blobBytes.set(bytes);
-
-  return new Blob([blobBytes], { type: 'video/mp4' });
+    return new Blob([blobBytes], { type: 'video/mp4' });
+  });
 }
 
 export async function composeSequenceMedia({
@@ -567,61 +586,84 @@ export async function composeSequenceMedia({
   }
 
   const ffmpeg = await getFFmpeg();
+  const browserOperationId = createBrowserFfmpegOperationId();
+  const browserPreparedClips = preparedClips.map((preparedClip) => ({
+    ...preparedClip,
+    inputName: createBrowserFfmpegPath(preparedClip.inputName, browserOperationId),
+  }));
+  const browserPreparedAudioTracks = preparedAudioTracks.map((preparedAudioTrack) => ({
+    ...preparedAudioTrack,
+    inputName: createBrowserFfmpegPath(preparedAudioTrack.inputName, browserOperationId),
+  }));
+  const browserPreparedStageObjects = preparedStageObjects.map((preparedStageObject) => ({
+    ...preparedStageObject,
+    inputName: createBrowserFfmpegPath(preparedStageObject.inputName, browserOperationId),
+  }));
+  const browserOutputName = createBrowserFfmpegPath(outputName, browserOperationId);
+  const browserCommand = buildSequenceCommand({
+    preparedClips: browserPreparedClips,
+    preparedAudioTracks: browserPreparedAudioTracks,
+    preparedStageObjects: browserPreparedStageObjects,
+    canvas,
+    timelineDurationSeconds,
+    frameRate,
+    exportPreset,
+    outputName: browserOutputName,
+    nativeBackend: null,
+  });
 
-  for (const preparedClip of preparedClips) {
-    await ffmpeg.writeFile(preparedClip.inputName, await fetchFile(preparedClip.sourceUrl));
-  }
+  return withBrowserFfmpegOperation(ffmpeg, async (operation) => {
+    for (const preparedClip of browserPreparedClips) {
+      await operation.writeFile(preparedClip.inputName, await fetchFile(preparedClip.sourceUrl));
+    }
 
-  for (const preparedAudioTrack of preparedAudioTracks) {
-    await ffmpeg.writeFile(preparedAudioTrack.inputName, await fetchFile(preparedAudioTrack.sourceUrl));
-  }
+    for (const preparedAudioTrack of browserPreparedAudioTracks) {
+      await operation.writeFile(preparedAudioTrack.inputName, await fetchFile(preparedAudioTrack.sourceUrl));
+    }
 
-  for (const preparedStageObject of preparedStageObjects) {
-    await ffmpeg.writeFile(preparedStageObject.inputName, await fetchFile(preparedStageObject.sourceUrl));
-  }
+    for (const preparedStageObject of browserPreparedStageObjects) {
+      await operation.writeFile(preparedStageObject.inputName, await fetchFile(preparedStageObject.sourceUrl));
+    }
 
-  await ffmpeg.exec(command);
+    try {
+      await ffmpeg.exec(browserCommand);
+    } catch (error) {
+      const matchesOutputPath: (path: string) => boolean = exportPreset.imageSequence
+        ? (path) => buildSequenceOutputMatcher(browserOutputName).test(path)
+        : (path: string) => path === browserOutputName;
+      await operation.trackExistingPaths(matchesOutputPath);
+      throw error;
+    }
 
-  let result: ComposeSequenceMediaResult;
+    if (exportPreset.imageSequence) {
+      const frameEntries = await readSequenceFrameEntries(
+        ffmpeg,
+        exportPreset,
+        browserOutputName,
+        (path) => operation.trackCreatedPath(path),
+      );
+      return packageSequenceFramesAsZip({
+        frames: frameEntries,
+        exportPreset,
+        canvas,
+        frameRate,
+        durationSeconds: timelineDurationSeconds,
+      });
+    }
 
-  if (exportPreset.imageSequence) {
-    const frameEntries = await readSequenceFrameEntries(ffmpeg, exportPreset, outputName);
-    result = packageSequenceFramesAsZip({
-      frames: frameEntries,
-      exportPreset,
-      canvas,
-      frameRate,
-      durationSeconds: timelineDurationSeconds,
-    });
-  } else {
-    const output = await ffmpeg.readFile(outputName);
+    operation.trackCreatedPath(browserOutputName);
+    const output = await ffmpeg.readFile(browserOutputName);
     const bytes = output instanceof Uint8Array ? output : new TextEncoder().encode(String(output));
     const blobBytes = new Uint8Array(bytes.byteLength);
     blobBytes.set(bytes);
-    result = {
+    return {
       blob: new Blob([blobBytes], { type: exportPreset.mimeType }),
       mimeType: exportPreset.mimeType,
       extension: exportPreset.extension,
       fileName: `sequence-output.${exportPreset.extension}`,
       renderBackend: 'browser',
     };
-  }
-
-  for (const inputName of [
-    ...preparedClips.map((clip) => clip.inputName),
-    ...preparedAudioTracks.map((track) => track.inputName),
-    ...preparedStageObjects.map((object) => object.inputName),
-  ]) {
-    await ffmpeg.deleteFile(inputName);
-  }
-
-  if (exportPreset.imageSequence) {
-    await Promise.allSettled(result.manifest?.frames.map((frame) => ffmpeg.deleteFile(frame)) ?? []);
-  } else {
-    await ffmpeg.deleteFile(outputName);
-  }
-
-  return result;
+  });
 }
 
 export function packageSequenceFramesAsZip({
@@ -707,6 +749,7 @@ async function readSequenceFrameEntries(
   ffmpeg: FFmpeg,
   exportPreset: VideoExportPresetOption,
   outputPattern: string,
+  onFramePath?: (path: string) => void,
 ): Promise<Array<{ name: string; data: Uint8Array }>> {
   const matcher = buildSequenceOutputMatcher(outputPattern);
   const entries = await ffmpeg.listDir('/');
@@ -718,6 +761,8 @@ async function readSequenceFrameEntries(
   if (frameNames.length === 0) {
     throw new Error(`${exportPreset.label} did not produce any frames matching ${outputPattern}.`);
   }
+
+  frameNames.forEach((name) => onFramePath?.(name));
 
   return Promise.all(frameNames.map(async (name) => {
     const output = await ffmpeg.readFile(name);
@@ -734,7 +779,7 @@ function buildSequenceOutputMatcher(outputPattern: string): RegExp {
 
 async function getFFmpeg(): Promise<FFmpeg> {
   if (!ffmpegPromise) {
-    ffmpegPromise = (async () => {
+    const loadingPromise = (async () => {
       const ffmpeg = new FFmpeg();
       await ffmpeg.load({
         coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js',
@@ -742,9 +787,120 @@ async function getFFmpeg(): Promise<FFmpeg> {
       });
       return ffmpeg;
     })();
+    ffmpegPromise = loadingPromise;
+    void loadingPromise.catch(() => {
+      if (ffmpegPromise === loadingPromise) {
+        ffmpegPromise = undefined;
+      }
+    });
   }
 
-  return ffmpegPromise;
+  return ffmpegPromise!;
+}
+
+/**
+ * Owns the files a single browser FFmpeg invocation has actually created. Keeping this small
+ * lifecycle wrapper shared between composition routes prevents one failure path from silently
+ * retaining MEMFS files while another cleans them up.
+ */
+class BrowserFfmpegOperation {
+  private readonly createdPaths = new Set<string>();
+  private readonly ffmpeg: FFmpeg;
+
+  constructor(ffmpeg: FFmpeg) {
+    this.ffmpeg = ffmpeg;
+  }
+
+  async writeFile(path: string, data: Uint8Array): Promise<void> {
+    await this.ffmpeg.writeFile(path, data);
+    this.trackCreatedPath(path);
+  }
+
+  trackCreatedPath(path: string): void {
+    this.createdPaths.add(path);
+  }
+
+  /**
+   * An interrupted FFmpeg execution can still leave partial output behind. List the virtual FS
+   * only on that failure path, so we clean files proven present without guessing or deleting a
+   * path owned by another invocation.
+   */
+  async trackExistingPaths(matches: (path: string) => boolean): Promise<void> {
+    try {
+      const entries = await this.ffmpeg.listDir('/');
+      for (const entry of entries) {
+        if (!entry.isDir && matches(entry.name)) {
+          this.trackCreatedPath(entry.name);
+        }
+      }
+    } catch {
+      // The caller already has an execution failure. Do not replace it with a best-effort probe.
+    }
+  }
+
+  async cleanup(): Promise<void> {
+    let cleanupError: unknown;
+
+    for (const path of this.createdPaths) {
+      try {
+        await this.ffmpeg.deleteFile(path);
+      } catch (error) {
+        cleanupError ??= error;
+      }
+    }
+
+    if (cleanupError !== undefined) {
+      throw cleanupError;
+    }
+  }
+}
+
+async function withBrowserFfmpegOperation<T>(
+  ffmpeg: FFmpeg,
+  work: (operation: BrowserFfmpegOperation) => Promise<T>,
+): Promise<T> {
+  const operation = new BrowserFfmpegOperation(ffmpeg);
+  let hasPrimaryError = false;
+  let primaryError: unknown;
+  let result: T | undefined;
+
+  try {
+    result = await work(operation);
+  } catch (error) {
+    hasPrimaryError = true;
+    primaryError = error;
+  }
+
+  try {
+    await operation.cleanup();
+  } catch (cleanupError) {
+    if (!hasPrimaryError) {
+      throw cleanupError;
+    }
+  }
+
+  if (hasPrimaryError) {
+    throw primaryError;
+  }
+
+  return result as T;
+}
+
+function createBrowserFfmpegOperationId(): string {
+  const randomId = globalThis.crypto?.randomUUID?.();
+  if (randomId) {
+    return randomId;
+  }
+
+  browserFfmpegOperationSequence += 1;
+  return `${Date.now().toString(36)}-${browserFfmpegOperationSequence.toString(36)}`;
+}
+
+function createBrowserFfmpegPath(path: string, operationId: string): string {
+  const extensionIndex = path.lastIndexOf('.');
+  const stem = extensionIndex > 0 ? path.slice(0, extensionIndex) : path;
+  const extension = extensionIndex > 0 ? path.slice(extensionIndex) : '';
+  return `${stem}-${operationId}${extension}`;
 }
 
 async function prepareVisualClipInput(
@@ -913,7 +1069,7 @@ export function buildSequenceCommand({
   outputName: string;
   nativeBackend: NativeRenderExecutionBackend | null;
 }): string[] {
-  const command: string[] = [];
+  const command: string[] = ['-y'];
   const isImageSequence = Boolean(exportPreset.imageSequence);
   const commandAudioTracks = isImageSequence ? [] : preparedAudioTracks;
 
