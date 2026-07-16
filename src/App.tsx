@@ -2066,7 +2066,7 @@ function FlowApp() {
         { id: 'auto-organize-flow', label: 'Auto Organize Flow', action: startFlowAutoOrganize, disabled: nodes.length === 0 || Boolean(flowOrganizeJob) },
       ],
     });
-  }, [addNode, collapseSelectionToFunction, createGroupFromSelection, flowOrganizeJob, nodes.length, recordActivityTrailEvent, screenToFlowPosition, selectedFlowNodeCount, startFlowAutoOrganize]);
+  }, [addNode, collapseSelectionToFunction, createGroupFromSelection, flowOrganizeJob, locale, nodes.length, recordActivityTrailEvent, screenToFlowPosition, selectedFlowNodeCount, startFlowAutoOrganize]);
 
   const handleNodeContextMenu = useCallback((event: ReactMouseEvent, node: AppNode) => {
     event.preventDefault();
