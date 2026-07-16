@@ -1418,7 +1418,7 @@ function renderPrintRichParagraphs(frame: PaperFrame, vertical: boolean): string
     let textIndentCss: string | undefined;
     if (paragraph.listMarker) { indentLeftMm = leftIndentMm + markerPadMm; textIndentCss = `-${formatMm(markerPadMm)}`; }
     else if (hangingMm > 0) { textIndentCss = `-${formatMm(hangingMm)}`; }
-    else if (firstLineMm !== 0) { textIndentCss = formatMm(firstLineMm); }
+    else if (firstLineMm !== 0) { textIndentCss = `${formatMm(firstLineMm)} each-line`; }
 
     // Paragraph borders + shading. Inside a continuous callout, top padding/stroke belongs to the first
     // paragraph only and bottom to the last, so the paragraphs read as one box (matches PaperRichTextView).

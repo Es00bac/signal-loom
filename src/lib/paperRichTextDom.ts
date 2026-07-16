@@ -73,7 +73,7 @@ function paragraphInlineCss(paragraph: PaperRichParagraph, zoom: number): string
     parts.push(`padding-left:${(leftPx + borderPad).toFixed(2)}px`, `text-indent:-${hangPx.toFixed(2)}px`);
   } else {
     if (leftPx || borderPad) parts.push(`padding-left:${(leftPx + borderPad).toFixed(2)}px`);
-    if (paragraph.firstLineIndentMm) parts.push(`text-indent:${(paragraph.firstLineIndentMm * MM_TO_PX * zoom).toFixed(2)}px`);
+    if (paragraph.firstLineIndentMm) parts.push(`text-indent:${(paragraph.firstLineIndentMm * MM_TO_PX * zoom).toFixed(2)}px each-line`);
   }
   if (borderPad || rightPx) parts.push(`padding-right:${(borderPad + rightPx).toFixed(2)}px`);
   if (borderPad) parts.push(`padding-top:${borderPad.toFixed(2)}px`, `padding-bottom:${borderPad.toFixed(2)}px`);

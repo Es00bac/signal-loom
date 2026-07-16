@@ -968,6 +968,23 @@ describe('paperDocument', () => {
     expect(html).not.toContain('•\tBulleted item');
   });
 
+  it('preserves each-line rich paragraph indentation in print HTML', () => {
+    const doc = createDefaultPaperDocument({ title: 'Each-line rich indent', preset: 'us-letter' });
+    const { document: withFrame } = addFrameToPaperPage(doc, doc.pages[0].id, {
+      kind: 'text',
+      xMm: 18,
+      yMm: 18,
+      widthMm: 90,
+      heightMm: 60,
+      richText: [{
+        runs: [{ text: 'Every rendered line must carry the paragraph indent.' }],
+        firstLineIndentMm: 4.25,
+      }],
+    });
+
+    expect(exportPaperDocumentToPrintHtml(withFrame)).toContain('text-indent: 4.25mm each-line');
+  });
+
   it('keeps plain-text frames byte-identical in print HTML when richText is absent (export regression)', () => {
     const doc = createDefaultPaperDocument({ title: 'Plain Print Regression', preset: 'us-letter' });
     const pageId = doc.pages[0].id;

@@ -57,4 +57,12 @@ describe('paperRichTextDom pure helpers', () => {
     expect(html).toContain('data-dc="3"');
     expect(html).toContain('data-borders=');
   });
+
+  it('uses each-line text indent in the rich editor paragraph CSS', () => {
+    const html = richTextToEditorHtml([
+      { runs: [{ text: 'Every line is indented while editing.' }], firstLineIndentMm: 4 },
+    ], 1);
+
+    expect(html).toContain('text-indent:15.12px each-line');
+  });
 });
