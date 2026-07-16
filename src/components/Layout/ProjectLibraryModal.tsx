@@ -140,7 +140,7 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
       return;
     }
 
-    await resetProjectDocument();
+    await resetProjectDocument({ allowDirtyImageReplacement: true });
     setProjectName(UNTITLED_PROJECT_NAME);
     setSelectedProjectId(undefined);
     setFileSystemSummary(undefined);
@@ -386,7 +386,7 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
         scratchDirectoryHandle,
       });
 
-      await restoreProjectDocument(saved);
+      await restoreProjectDocument(saved, { allowDirtyImageReplacement: true });
       setProjectName(saved.name);
       setSelectedProjectId(saved.id);
       setFileSystemSummary(summary);

@@ -2,11 +2,16 @@ import { useRef, useState } from 'react';
 import { X, Plus, FolderOpen, ClipboardPaste, CornerDownLeft, Loader2 } from 'lucide-react';
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import {
-  closeLinkedImageDocument,
+  completeLinkedImageDocumentClose,
   describeLinkedEditTarget,
   saveLinkedImageEdit,
 } from '../../lib/imageLinkedEdit';
 import { showUserNotice } from '../../shared/ui/userNotice';
+import {
+  finishImageDocumentClose,
+  type ImageDocumentCloseDecision,
+} from './ImageDocumentClose';
+import { ImageDocumentCloseDialog } from './ImageDocumentCloseDialog';
 
 const OPEN_IMAGE_ACCEPT = [
   'image/png',
@@ -43,9 +48,12 @@ export function ImageEditorTabs({ disabled = false, onOpenImageFile, onNewCanvas
   const setActiveDocument = useImageEditorStore((s) => s.setActiveDocument);
   const closeDocument = useImageEditorStore((s) => s.closeDocument);
   const [linkedBusyDocId, setLinkedBusyDocId] = useState<string | null>(null);
+  const [pendingCloseDocId, setPendingCloseDocId] = useState<string | null>(null);
+  const [closeBusy, setCloseBusy] = useState(false);
 
   const activeDoc = documents.find((doc) => doc.id === activeDocId);
   const activeLinkedTarget = describeLinkedEditTarget(activeDoc?.linkedEdit);
+  const pendingCloseDocument = documents.find((doc) => doc.id === pendingCloseDocId);
 
   const runLinkedAction = (docId: string, action: () => Promise<unknown>, failure: string) => {
     if (linkedBusyDocId) return;
@@ -55,6 +63,43 @@ export function ImageEditorTabs({ disabled = false, onOpenImageFile, onNewCanvas
         showUserNotice(error instanceof Error ? error.message : failure, 'error');
       })
       .finally(() => setLinkedBusyDocId(null));
+  };
+
+  const requestDocumentClose = (docId: string) => {
+    if (closeBusy || pendingCloseDocId) return;
+    const document = useImageEditorStore.getState().documents.find((candidate) => candidate.id === docId);
+    if (!document) return;
+    if (!document.dirty) {
+      closeDocument(document.id);
+      void completeLinkedImageDocumentClose(document.linkedEdit);
+      return;
+    }
+    setPendingCloseDocId(document.id);
+  };
+
+  const decideDocumentClose = (decision: ImageDocumentCloseDecision) => {
+    if (closeBusy) return;
+    if (decision === 'cancel') {
+      setPendingCloseDocId(null);
+      return;
+    }
+    const document = useImageEditorStore.getState().documents.find((candidate) => candidate.id === pendingCloseDocId);
+    if (!document) {
+      setPendingCloseDocId(null);
+      return;
+    }
+    setCloseBusy(true);
+    void finishImageDocumentClose(document, decision)
+      .then((outcome) => {
+        if (outcome === 'saved') setPendingCloseDocId(null);
+      })
+      .catch((error: unknown) => {
+        showUserNotice(
+          error instanceof Error ? error.message : 'The editable image document could not be saved.',
+          'error',
+        );
+      })
+      .finally(() => setCloseBusy(false));
   };
 
   return (
@@ -119,22 +164,14 @@ export function ImageEditorTabs({ disabled = false, onOpenImageFile, onNewCanvas
             {doc.title}
           </span>
           <button
+            aria-label={`Close ${doc.title}`}
             className="text-cyan-100/30 hover:text-white"
+            disabled={closeBusy || linkedBusyDocId !== null}
             onClick={(e) => {
               e.stopPropagation();
-              // Linked edits (Paper frame / Flow .slimg) auto-return on close —
-              // that's the whole contract of the round-trip.
-              if (doc.linkedEdit) {
-                runLinkedAction(
-                  doc.id,
-                  () => closeLinkedImageDocument(doc),
-                  'Could not return the edit to its workspace.',
-                );
-                return;
-              }
-              closeDocument(doc.id);
+              requestDocumentClose(doc.id);
             }}
-            title={doc.linkedEdit ? `Close — saves back to ${describeLinkedEditTarget(doc.linkedEdit)}` : 'Close'}
+            title="Close"
             type="button"
           >
             {linkedBusyDocId === doc.id ? <Loader2 className="animate-spin" size={12} /> : <X size={12} />}
@@ -158,6 +195,13 @@ export function ImageEditorTabs({ disabled = false, onOpenImageFile, onNewCanvas
             : <CornerDownLeft size={12} />}
           Save &amp; Return to {activeLinkedTarget}
         </button>
+      ) : null}
+      {pendingCloseDocument ? (
+        <ImageDocumentCloseDialog
+          busy={closeBusy}
+          documentTitle={pendingCloseDocument.title}
+          onDecision={decideDocumentClose}
+        />
       ) : null}
     </div>
   );

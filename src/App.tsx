@@ -26,6 +26,7 @@ import { EditBatonReadOnlyOverlay } from './components/Layout/EditBatonReadOnlyO
 import { CommandPalette } from './components/Common/CommandPalette';
 import { ActivityTrailPanel } from './components/Common/ActivityTrailPanel';
 import { GamepadInputManager } from './components/Common/GamepadInputManager';
+import { installDirtyImageDocumentUnloadGuard } from './components/ImageEditor/ImageDocumentClose';
 
 import { TextNode as InputNode } from './components/Nodes/TextNode';
 import { ImageNode } from './components/Nodes/ImageNode';
@@ -1224,7 +1225,7 @@ function FlowApp() {
         }
 
         resetSourceLibraryNativeSyncTracking();
-        await resetProjectDocument();
+        await resetProjectDocument({ allowDirtyImageReplacement: true });
         await bridge?.clearProjectPath();
         setNativeProjectPath(undefined);
         setNativeScratchDirectoryPath(undefined);
@@ -1270,7 +1271,7 @@ function FlowApp() {
             setNativeScratchDirectoryPath(result.scratchDirectoryPath);
           }
           if (result.document) {
-            await restoreProjectDocument(result.document);
+            await restoreProjectDocument(result.document, { allowDirtyImageReplacement: true });
           }
           setNativeProjectPath(result.filePath);
         }
@@ -1290,7 +1291,7 @@ function FlowApp() {
             setNativeScratchDirectoryPath(result.scratchDirectoryPath);
           }
           if (result.document) {
-            await restoreProjectDocument(result.document);
+            await restoreProjectDocument(result.document, { allowDirtyImageReplacement: true });
           }
           setNativeProjectPath(result.filePath);
         }
@@ -1329,7 +1330,8 @@ function FlowApp() {
 
           const bytes = await saveImageDocumentAsSlimg(activeDoc);
           if (bridge?.saveImageDocumentFileAs) {
-            await bridge.saveImageDocumentFileAs(bytes);
+            const result = await bridge.saveImageDocumentFileAs(bytes);
+            if (result.canceled) return;
           } else {
             // Browser / Android: no Electron bridge — stream the .slimg to the device's
             // Downloads folder (Documents on Android via the Filesystem plugin).
@@ -1338,6 +1340,7 @@ function FlowApp() {
               buildWorkspaceDownloadFilename(activeDoc.title, 'slimg'),
             );
           }
+          useImageEditorStore.getState().markDocumentClean(activeDoc.id);
         } catch (error) {
           await showAlertDialog({
             title: 'Save Image Failed',
@@ -2478,6 +2481,8 @@ function AppBootSplashDismissor() {
 }
 
 export default function App() {
+  useEffect(() => installDirtyImageDocumentUnloadGuard(window), []);
+
   return (
     <ReactFlowProvider>
       <AppBootSplashDismissor />

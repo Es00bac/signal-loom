@@ -43,6 +43,16 @@ describe('ImageSlimgFormat', () => {
     expect(out.layers[1].mask).toBeNull();
   });
 
+  it('writes a clean editable baseline without mutating the live dirty document', async () => {
+    const live = { ...doc(), dirty: true };
+
+    const bytes = await serializeSlimg(live, codec);
+    const out = await deserializeSlimg(bytes, codec);
+
+    expect(out.dirty).toBe(false);
+    expect(live.dirty).toBe(true);
+  });
+
   it('rejects a non-.slimg container', async () => {
     // Build a valid container of a different format via the container core directly.
     const { packContainer } = await import('../../shared/files/SignalLoomContainer');

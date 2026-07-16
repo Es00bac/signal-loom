@@ -153,7 +153,10 @@ export interface ImageEditorProjectSnapshot {
 
 interface ImageEditorActions {
   openDocument: (doc: ImageDocument) => void;
+  /** Close only when no editable layered changes are pending. */
   closeDocument: (id: string) => void;
+  /** Deliberately destroy a document after an explicit Discard decision. */
+  discardDocument: (id: string) => void;
   setActiveDocument: (id: string) => void;
   setDocumentTitle: (id: string, title: string) => void;
   setLayers: (docId: string, layers: ImageLayer[], activeLayerId?: string | null) => void;
@@ -255,6 +258,20 @@ interface ImageEditorActions {
   ) => boolean;
 }
 
+function removeImageDocumentState(state: ImageEditorState, id: string): Partial<ImageEditorState> {
+  const documents = state.documents.filter((document) => document.id !== id);
+  const activeDocId = state.activeDocId === id
+    ? documents[documents.length - 1]?.id ?? null
+    : state.activeDocId;
+  const undoStacks = { ...state.undoStacks };
+  const redoStacks = { ...state.redoStacks };
+  const generativeFillDismissedByDocId = { ...state.generativeFillDismissedByDocId };
+  delete undoStacks[id];
+  delete redoStacks[id];
+  delete generativeFillDismissedByDocId[id];
+  return { documents, activeDocId, undoStacks, redoStacks, generativeFillDismissedByDocId };
+}
+
 export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>()(
   (set, get) => ({
     documents: [],
@@ -329,20 +346,15 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
 
     closeDocument: (id) =>
       set((state) => {
-        if (!state.documents.some((d) => d.id === id)) return state;
-        const docs = state.documents.filter((d) => d.id !== id);
-        let activeDocId = state.activeDocId;
-        if (activeDocId === id) {
-          activeDocId = docs.length > 0 ? docs[docs.length - 1].id : null;
-        }
-        const undoStacks = { ...state.undoStacks };
-        const redoStacks = { ...state.redoStacks };
-        const generativeFillDismissedByDocId = { ...state.generativeFillDismissedByDocId };
-        delete undoStacks[id];
-        delete redoStacks[id];
-        delete generativeFillDismissedByDocId[id];
-        return { documents: docs, activeDocId, undoStacks, redoStacks, generativeFillDismissedByDocId };
+        const document = state.documents.find((candidate) => candidate.id === id);
+        if (!document || document.dirty) return state;
+        return removeImageDocumentState(state, id);
       }),
+
+    discardDocument: (id) =>
+      set((state) => state.documents.some((document) => document.id === id)
+        ? removeImageDocumentState(state, id)
+        : state),
 
     setActiveDocument: (id) =>
       set((state) => {
@@ -1073,6 +1085,8 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
       const state = get();
       const documents = await Promise.all(state.documents.map(async (document) => ({
         ...document,
+        // A persisted project is an editable layered baseline, not a flattened derivative.
+        dirty: false,
         layers: await Promise.all(document.layers.map((layer) => encodeImageLayerProjectPixels(layer))),
         // Undo-history snapshots stay pixel-stripped (not persisted) to bound file size; only the
         // live document layers carry their pixels into the saved project.

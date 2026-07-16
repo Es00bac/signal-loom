@@ -46,7 +46,7 @@ export function safeRemoveLocalStorageKeys(
 }
 
 export async function resetProjectToBlank(): Promise<void> {
-  await resetProjectDocument();
+  await resetProjectDocument({ allowDirtyImageReplacement: true });
   resetVolatileWorkspaceState();
 }
 

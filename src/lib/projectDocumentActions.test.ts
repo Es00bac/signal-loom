@@ -3,7 +3,7 @@ import { useFlowStore } from '../store/flowStore';
 import { useProjectUsageStore } from '../store/projectUsageStore';
 import { useSourceBinStore } from '../store/sourceBinStore';
 import { useFlowWorkspaceStore } from '../store/flowWorkspaceStore';
-import { buildCurrentProjectDocument, restoreProjectDocument } from './projectDocumentActions';
+import { buildCurrentProjectDocument, resetProjectDocument, restoreProjectDocument } from './projectDocumentActions';
 import { CURRENT_PROJECT_SCHEMA_VERSION } from './projectSchema';
 import { useImageEditorStore } from '../store/imageEditorStore';
 import type { ImageDocument } from '../types/imageEditor';
@@ -24,9 +24,87 @@ afterEach(() => {
   useFlowStore.getState().replaceFlowSnapshot({ nodes: [], edges: [] });
   useFlowWorkspaceStore.getState().reset();
   useProjectUsageStore.getState().restoreSnapshot(undefined);
+  useImageEditorStore.getState().restoreProjectSnapshot(undefined);
 });
 
 describe('restoreProjectDocument', () => {
+  it('fails closed before project replacement when a dirty Image document is open', async () => {
+    const liveDocument: ImageDocument = {
+      id: 'dirty-live-image',
+      title: 'Unsaved layers',
+      width: 10,
+      height: 10,
+      layers: [],
+      activeLayerId: null,
+      hasSelection: true,
+      selectionVersion: 3,
+      viewport: { zoom: 1, panX: 0, panY: 0 },
+      dirty: true,
+    };
+    useImageEditorStore.setState({
+      documents: [liveDocument],
+      activeDocId: liveDocument.id,
+      undoStacks: {
+        [liveDocument.id]: [{ kind: 'selection', docId: liveDocument.id, before: null, after: null }],
+      },
+    });
+
+    await expect(restoreProjectDocument({
+      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      id: 'incoming-project',
+      name: 'Incoming',
+      savedAt: 1,
+      flow: { version: 3, nodes: [], edges: [] },
+    })).rejects.toThrow('dirty Image document');
+
+    expect(useImageEditorStore.getState().documents).toEqual([liveDocument]);
+    expect(useImageEditorStore.getState().activeDocId).toBe(liveDocument.id);
+    expect(useImageEditorStore.getState().undoStacks[liveDocument.id]).toHaveLength(1);
+  });
+
+  it('requires explicit discard authorization before resetting a dirty Image project', async () => {
+    const liveDocument = {
+      id: 'dirty-reset-image',
+      title: 'Unsaved reset layers',
+      width: 10,
+      height: 10,
+      layers: [],
+      activeLayerId: null,
+      hasSelection: false,
+      selectionVersion: 0,
+      viewport: { zoom: 1, panX: 0, panY: 0 },
+      dirty: true,
+    } satisfies ImageDocument;
+    useImageEditorStore.setState({ documents: [liveDocument], activeDocId: liveDocument.id });
+
+    await expect(resetProjectDocument()).rejects.toThrow('dirty Image document');
+    expect(useImageEditorStore.getState().documents).toEqual([liveDocument]);
+
+    await resetProjectDocument({ allowDirtyImageReplacement: true });
+    expect(useImageEditorStore.getState().documents).toEqual([]);
+  });
+
+  it('serializes Image documents as a clean saved baseline without clearing live dirty state', async () => {
+    const liveDocument = {
+      id: 'dirty-project-save-image',
+      title: 'Saved in project',
+      width: 10,
+      height: 10,
+      layers: [],
+      activeLayerId: null,
+      hasSelection: false,
+      selectionVersion: 0,
+      viewport: { zoom: 1, panX: 0, panY: 0 },
+      dirty: true,
+    } satisfies ImageDocument;
+    useImageEditorStore.setState({ documents: [liveDocument], activeDocId: liveDocument.id });
+
+    const saved = await buildCurrentProjectDocument({ id: 'saved-project', name: 'Saved Project' });
+
+    expect(saved.imageEditor?.documents[0]?.dirty).toBe(false);
+    expect(useImageEditorStore.getState().documents[0]?.dirty).toBe(true);
+  });
+
   it('saves the current flow as the default main Flow workspace snapshot', async () => {
     useFlowStore.getState().replaceFlowSnapshot({
       nodes: [{ id: 'main-node', type: 'textNode', position: { x: 5, y: 6 }, data: { prompt: 'hello' } }],

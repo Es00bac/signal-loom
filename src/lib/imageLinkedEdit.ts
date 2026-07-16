@@ -204,24 +204,20 @@ export async function returnLinkedImageEdit(doc: ImageDocument): Promise<LinkedE
   return 'flow';
 }
 
-/** "Save & Return": hand the edit back, keep the tab open, mark it clean. */
+/** "Save & Return": hand the edit back and keep the tab open. Only .slimg preserves layers. */
 export async function saveLinkedImageEdit(doc: ImageDocument): Promise<LinkedEditTargetWorkspace> {
   const target = await returnLinkedImageEdit(doc);
-  useImageEditorStore.getState().markDocumentClean(doc.id);
+  if (doc.linkedEdit?.kind === 'slimg-node') {
+    useImageEditorStore.getState().markDocumentClean(doc.id);
+  }
   return target;
 }
 
-/**
- * Close a linked document's tab: flatten → return to origin → close → switch back.
- * A pristine document skips the return (nothing changed) but still closes and
- * switches back, since closing IS the "I'm done" gesture for a linked edit.
- */
-export async function closeLinkedImageDocument(doc: ImageDocument): Promise<void> {
-  if (doc.dirty) {
-    await returnLinkedImageEdit(doc);
-  }
-  useImageEditorStore.getState().closeDocument(doc.id);
-  const target = getLinkedEditTargetWorkspace(doc.linkedEdit);
+/** Navigate back after a linked tab has been safely closed or explicitly discarded. */
+export async function completeLinkedImageDocumentClose(
+  linkedEdit: ImageDocumentLinkedEdit | undefined,
+): Promise<void> {
+  const target = getLinkedEditTargetWorkspace(linkedEdit);
   if (target) {
     await switchToWorkspace(target);
   }

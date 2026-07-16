@@ -107,9 +107,9 @@ describe('imageEditorStore — documents', () => {
     expect(useImageEditorStore.getState().documents).toHaveLength(1);
   });
 
-  it('closes a document and clears its history', () => {
+  it('refuses to close a dirty document implicitly and preserves its history', () => {
     const doc = createEmptyImageDocument({ id: 'doc-1', title: 'a.png', width: 1, height: 1 });
-    useImageEditorStore.getState().openDocument(doc);
+    useImageEditorStore.getState().openDocument({ ...doc, dirty: true });
     useImageEditorStore.getState().pushOperation({
       kind: 'selection',
       docId: 'doc-1',
@@ -118,9 +118,26 @@ describe('imageEditorStore — documents', () => {
     });
     useImageEditorStore.getState().closeDocument('doc-1');
     const state = useImageEditorStore.getState();
+    expect(state.documents).toHaveLength(1);
+    expect(state.activeDocId).toBe('doc-1');
+    expect(state.undoStacks['doc-1']).toHaveLength(1);
+  });
+
+  it('deliberately discards a dirty document and clears both history stacks', () => {
+    const doc = createEmptyImageDocument({ id: 'doc-1', title: 'a.png', width: 1, height: 1 });
+    useImageEditorStore.getState().openDocument({ ...doc, dirty: true });
+    useImageEditorStore.setState({
+      undoStacks: { 'doc-1': [{ kind: 'selection', docId: 'doc-1', before: null, after: null }] },
+      redoStacks: { 'doc-1': [{ kind: 'selection', docId: 'doc-1', before: null, after: null }] },
+    });
+
+    useImageEditorStore.getState().discardDocument('doc-1');
+
+    const state = useImageEditorStore.getState();
     expect(state.documents).toHaveLength(0);
     expect(state.activeDocId).toBeNull();
     expect(state.undoStacks['doc-1']).toBeUndefined();
+    expect(state.redoStacks['doc-1']).toBeUndefined();
   });
 
   it('closing the active doc switches to the last remaining', () => {

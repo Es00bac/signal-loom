@@ -17,6 +17,21 @@ import { usePaperStore } from '../store/paperStore';
 import { useProjectUsageStore } from '../store/projectUsageStore';
 import { useSourceBinStore } from '../store/sourceBinStore';
 
+export interface ProjectDocumentReplacementOptions {
+  /** Set only after the user explicitly chose Discard or the current project was saved successfully. */
+  allowDirtyImageReplacement?: boolean;
+}
+
+function assertDirtyImageReplacementAllowed(options: ProjectDocumentReplacementOptions): void {
+  if (options.allowDirtyImageReplacement) return;
+  const dirtyDocument = useImageEditorStore.getState().documents.find((document) => document.dirty);
+  if (!dirtyDocument) return;
+  throw new Error(
+    `Project replacement was blocked because dirty Image document "${dirtyDocument.title}" is still open. `
+    + 'Save or discard it explicitly before replacing the project.',
+  );
+}
+
 export async function buildCurrentProjectDocument(options: {
   id?: string;
   name?: string;
@@ -48,7 +63,11 @@ export async function buildCurrentProjectDocument(options: {
   return normalizeProjectMediaReferencesForSave(document).document;
 }
 
-export async function restoreProjectDocument(document: unknown): Promise<void> {
+export async function restoreProjectDocument(
+  document: unknown,
+  options: ProjectDocumentReplacementOptions = {},
+): Promise<void> {
+  assertDirtyImageReplacementAllowed(options);
   const fallbackName = typeof (document as { name?: unknown } | undefined)?.name === 'string'
     ? (document as { name: string }).name
     : DEFAULT_PROJECT_NAME;
@@ -143,7 +162,10 @@ async function migrateProjectPaperDocuments(
   };
 }
 
-export async function resetProjectDocument(): Promise<void> {
+export async function resetProjectDocument(
+  options: ProjectDocumentReplacementOptions = {},
+): Promise<void> {
+  assertDirtyImageReplacementAllowed(options);
   useFlowStore.getState().replaceFlowSnapshot({
     nodes: [],
     edges: [],

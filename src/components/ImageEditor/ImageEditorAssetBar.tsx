@@ -124,7 +124,6 @@ export function ImageEditorAssetBar({ getNewFlowNodePosition }: ImageEditorAsset
       setStatusMessage(`Saved "${item.label}" to the Source Bin.`);
     }
 
-    markDocumentClean(doc.id);
     return item;
   };
 

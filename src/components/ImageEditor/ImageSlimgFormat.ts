@@ -52,7 +52,9 @@ export async function serializeSlimg(doc: ImageDocument, codec: SlimgCodec): Pro
     }),
   );
 
-  const documentManifest = { ...doc, layers: mappedLayers };
+  // The container itself is the editable layered save baseline. Do not persist the live
+  // pre-save warning into a file that has just been saved successfully.
+  const documentManifest = { ...doc, dirty: false, layers: mappedLayers };
 
   return packContainer(
     {
