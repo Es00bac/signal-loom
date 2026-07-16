@@ -18,6 +18,32 @@ function createNode(node: Partial<AppNode> & Pick<AppNode, 'id' | 'type'>): AppN
 }
 
 describe('flow signal evaluation', () => {
+  it('renders local string-template slots across casing without corrupting double braces or literal braces', () => {
+    const nodes = [
+      createNode({ id: 'slot-a', type: 'textNode', data: { prompt: 'alpha' } }),
+      createNode({ id: 'slot-b', type: 'textNode', data: { prompt: 'bravo' } }),
+      createNode({ id: 'slot-c', type: 'textNode', data: { prompt: 'charlie' } }),
+      createNode({
+        id: 'template',
+        type: 'stringTemplateNode',
+        data: { template: '{{A}} / {b} / {{c}} / {literal} / {{not-a-token}}' },
+      }),
+    ];
+    const edges: Edge[] = [
+      { id: 'a', source: 'slot-a', target: 'template', targetHandle: 'A' },
+      { id: 'b', source: 'slot-b', target: 'template', targetHandle: 'B' },
+      { id: 'c', source: 'slot-c', target: 'template', targetHandle: 'C' },
+    ];
+
+    const signal = evaluateNodeSignal('template', nodes, edges);
+
+    expect(signal).toMatchObject({
+      kind: 'text',
+      value: 'alpha / bravo / charlie / {literal} / {{not-a-token}}',
+      diagnostics: [],
+    });
+  });
+
   it('auto-batches a string template when one placeholder is fed by a text list', () => {
     const nodes = [
       createNode({ id: 'happy', type: 'textNode', data: { prompt: 'happy' } }),

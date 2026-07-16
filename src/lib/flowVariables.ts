@@ -57,7 +57,7 @@ export interface FlowVariableAutocompleteState {
 }
 
 const FLOW_VARIABLE_REFERENCE_PATTERN = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*(?:\[(?:\d+|\*)\])?(?:\.[A-Za-z][A-Za-z0-9_]*)?)\s*\}\}/g;
-const LOCAL_TEMPLATE_TOKENS = new Set(['A', 'B', 'C']);
+const LOCAL_TEMPLATE_TOKENS = new Set(['a', 'b', 'c']);
 
 export function normalizeFlowVariableName(value: unknown): string {
   const normalized = String(value ?? '')

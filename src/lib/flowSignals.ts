@@ -1135,9 +1135,10 @@ function orderPortRecord(inputs: SignalRecord, preferredOrder: string[]): Signal
 
 function replaceTemplateToken(template: string, key: string, value: string): string {
   const escaped = escapeRegExp(key);
-  return template
-    .replace(new RegExp(`\\{\\s*${escaped}\\s*\\}`, 'g'), value)
-    .replace(new RegExp(`\\{\\{\\s*${escaped}\\s*\\}\\}`, 'g'), value);
+  return template.replace(
+    new RegExp(`\\{\\{\\s*${escaped}\\s*\\}\\}|\\{\\s*${escaped}\\s*\\}`, 'gi'),
+    value,
+  );
 }
 
 function escapeRegExp(value: string): string {
