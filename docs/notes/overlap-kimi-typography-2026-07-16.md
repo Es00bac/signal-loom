@@ -94,3 +94,83 @@ npx eslint <modified files>  # 0 errors (11 pre-existing warnings in VideoWorksp
 - `all-small-caps` is rendered by lowercasing content + `small-caps`. This matches the OpenType `smcp`+`c2sc` intent encoded in `inferImageTextOpenTypeFeatures` but is an approximation for mixed-case/CJK content; full OpenType `c2sc` would require a renderer that supports per-glyph features on Canvas.
 - Video stage text objects previously accepted an optional `typography` field on `drawTextStageObject` for stroke/shadow/arc. That path is preserved as a fallback, but no UI currently sets it; future typography controls for stage text should use `object.fontWeight`/`fontStyle` plus `typography`.
 - Bundled font registration across app restart / project transfer (FBL-011) and condensed-width face handling (FBL-010) are outside this lane.
+
+
+## K2.7 cross-provider review follow-up
+
+Sol's independent review blocked integration of `16de26e`. The following blockers were fixed in a focused follow-up.
+
+### Blockers addressed
+
+1. **FBL-012 — `formatFontFamily` bypasses on normal paths**
+   - `ImageEditorCanvas` live text overlay now quotes the font family with `formatFontFamily` and applies `fontVariantCaps`.
+   - `editorTextRender` (Video text source-dimension measurement and SVG overlay) now quotes the family before assigning to Canvas/SVG.
+   - `VideoWorkspace` straight-line text preview and fallback placeholder now quote the family.
+   - `BundledFontBrowser` preview buttons now quote the family.
+   - Added focused behavior tests for the overlay, SVG/canvas measurer, monitor preview, and bundled browser preview.
+
+2. **FBL-012 — `formatFontFamily` CSS stack compatibility**
+   - Replaced naive comma splitting with a small CSS tokenizer that handles double-quoted and single-quoted names, escaped quotes/backslashes, commas inside quotes, escaped commas in unquoted identifiers, and empty entries.
+   - CSS-wide reserved words (`inherit`, `initial`, `unset`, `revert`, `revert-layer`) are now quoted.
+   - Recognized generic families remain unquoted.
+   - Added compatibility tests before the parser rewrite (red) and after (green).
+
+3. **AUD-026 — text asset-to-timeline placement loses weight/style**
+   - Extracted `buildVisualClipFromEditorAsset` from `placeEditorAssetOnTrack`.
+   - Text assets now copy `fontWeight`/`fontStyle` into `clip.textTypography` on placement.
+   - Added regression tests proving family/weight/style survive placement, normalization, and save/load boundaries.
+
+4. **All-small-caps Unicode mutation**
+   - Removed `getRenderedImageTextContent` lowercasing; retained text content is no longer mutated.
+   - `imageTextCanvasFont` no longer emits `small-caps` for `all-small-caps`; `applyCanvasTypographySettings` now sets the Canvas `fontVariantCaps` property to `all-small-caps` directly.
+   - The live on-canvas editor also applies `font-variant-caps: all-small-caps`.
+   - Added tests for mixed-case and expanded Unicode content.
+
+5. **Restored font-weight range safety**
+   - Added shared `normalizeFontWeight` helper clamping to CSS numeric range `1`–`1000`.
+   - Applied in `manualEditorState`, `editorAssets`, and `editorStageObjects` restoration paths.
+   - Preserves legacy projects that lack the fields (falls back to `400`).
+
+### Updated test evidence
+
+```text
+npx vitest run \
+  src/lib/formatFontFamily.test.ts \
+  src/lib/manualEditorState.test.ts \
+  src/components/ImageEditor/ImageTextLayer.test.ts \
+  src/lib/videoTextFlow.test.ts \
+  src/lib/mediaComposition.test.ts \
+  src/lib/editorStageObjects.test.ts \
+  src/lib/editorAssets.test.ts \
+  src/components/ImageEditor/ImageEditorTextLayerControls.test.tsx \
+  src/components/ImageEditor/ImageEditorTextShapeProperties.test.tsx \
+  src/components/ImageEditor/ImageEditorCanvas.textEdit.test.tsx \
+  src/lib/editorTextRender.test.ts \
+  src/components/Common/BundledFontBrowser.test.tsx \
+  src/features/video/workspace/VideoWorkspace.test.tsx \
+  --configLoader=runner
+
+Test Files  13 passed (13)
+Tests      186 passed (186)
+```
+
+```text
+npx tsc -b --force   # exit 0
+npm run build        # TypeScript + Vite production build green
+```
+
+```text
+npx eslint <modified files>  # 0 errors (pre-existing warnings only)
+git diff --check             # exit 0
+```
+
+### Follow-up commit
+
+- SHA: `cad515c`
+- Message: `fix(overlap-kimi-typography): K2.7 review blockers — FBL-012 bypasses, AUD-026 asset placement, all-small-caps, font-weight clamping`
+
+### Updated remaining risks
+
+- The previous `all-small-caps` content-mutation risk is resolved; the remaining caveat is browser support for the Canvas `fontVariantCaps` longhand. Unsupported browsers will render `all-small-caps` as normal case rather than small caps, but retained content stays intact.
+- Browser-only validation for the serializer still applies (jsdom does not enforce invalid Canvas font strings).
+- FBL-011 (bundled font registration across restart) and FBL-010 (condensed-width faces) remain outside this lane.
