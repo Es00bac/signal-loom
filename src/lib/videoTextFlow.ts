@@ -33,6 +33,7 @@ export interface VideoTextFont {
   fontSizePx: number;
   fontWeight: number;
   fontStyle: 'normal' | 'italic';
+  fontKerning: 'auto' | 'normal' | 'none';
   letterSpacingPx: number;
 }
 
@@ -46,6 +47,7 @@ export type VideoTextAlign = 'left' | 'center' | 'right' | 'justify';
 export interface VideoTextTypesetting {
   fontWeight?: number;
   fontStyle?: 'normal' | 'italic';
+  fontKerning?: 'auto' | 'normal' | 'none';
   lineHeightPercent?: number;
   letterSpacingPx?: number;
   textAlign?: VideoTextAlign;
@@ -91,6 +93,7 @@ export interface VideoTextLayoutResult {
   contentHeightPx: number;
   fontWeight: number;
   fontStyle: 'normal' | 'italic';
+  fontKerning: 'auto' | 'normal' | 'none';
   letterSpacingPx: number;
   textAlign: VideoTextAlign;
 }
@@ -114,6 +117,7 @@ const UNBOUNDED_EXTENT_PX = 1_000_000;
 
 const DEFAULT_FONT_WEIGHT = 400;
 const DEFAULT_FONT_STYLE: 'normal' | 'italic' = 'normal';
+const DEFAULT_FONT_KERNING: 'auto' | 'normal' | 'none' = 'auto';
 const DEFAULT_LINE_HEIGHT_PERCENT = 120;
 const DEFAULT_LETTER_SPACING_PX = 0;
 const DEFAULT_TEXT_ALIGN: VideoTextAlign = 'center';
@@ -125,6 +129,7 @@ const MAX_ARC_SWEEP_RADIANS = Math.PI * 0.6;
 function resolveTypesetting(typography: VideoTextTypesetting | undefined): {
   fontWeight: number;
   fontStyle: 'normal' | 'italic';
+  fontKerning: 'auto' | 'normal' | 'none';
   lineHeightPercent: number;
   letterSpacingPx: number;
   textAlign: VideoTextAlign;
@@ -132,6 +137,7 @@ function resolveTypesetting(typography: VideoTextTypesetting | undefined): {
   return {
     fontWeight: typography?.fontWeight ?? DEFAULT_FONT_WEIGHT,
     fontStyle: typography?.fontStyle ?? DEFAULT_FONT_STYLE,
+    fontKerning: typography?.fontKerning ?? DEFAULT_FONT_KERNING,
     lineHeightPercent: typography?.lineHeightPercent ?? DEFAULT_LINE_HEIGHT_PERCENT,
     letterSpacingPx: typography?.letterSpacingPx ?? DEFAULT_LETTER_SPACING_PX,
     textAlign: typography?.textAlign ?? DEFAULT_TEXT_ALIGN,
@@ -147,7 +153,7 @@ export function layoutVideoText(
   options: VideoTextLayoutOptions,
   measure: VideoTextMeasurer,
 ): VideoTextLayoutResult {
-  const { fontWeight, fontStyle, lineHeightPercent, letterSpacingPx, textAlign } = resolveTypesetting(options.typography);
+  const { fontWeight, fontStyle, fontKerning, lineHeightPercent, letterSpacingPx, textAlign } = resolveTypesetting(options.typography);
   const fontSizePx = Math.max(1, options.fontSizePx);
   const lineHeightPx = fontSizePx * (lineHeightPercent / 100);
   const font: VideoTextFont = {
@@ -155,6 +161,7 @@ export function layoutVideoText(
     fontSizePx,
     fontWeight,
     fontStyle,
+    fontKerning,
     letterSpacingPx,
   };
 
@@ -241,6 +248,7 @@ export function layoutVideoText(
     contentHeightPx: lines.length > 0 ? lines.length * lineHeightPx : 0,
     fontWeight,
     fontStyle,
+    fontKerning,
     letterSpacingPx,
     textAlign,
   };
@@ -330,6 +338,7 @@ export function createVideoTextCanvasMeasurer(): VideoTextMeasurer {
 
     const stylePrefix = font.fontStyle === 'italic' ? 'italic ' : '';
     ctx.font = `${stylePrefix}${font.fontWeight} ${font.fontSizePx}px ${font.fontFamily}`;
+    ctx.fontKerning = font.fontKerning;
 
     // Cast onto a type that genuinely declares the (newer, not-yet-in-lib.dom) `letterSpacing`
     // property as optional, rather than narrowing the strictly-typed `ctx` via `'x' in ctx` — the

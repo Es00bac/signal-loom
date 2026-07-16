@@ -103,14 +103,15 @@ describe('layoutVideoText', () => {
         text: 'ab',
         fontFamily: 'Inter',
         fontSizePx: 20,
-        typography: { letterSpacingPx: 5, fontWeight: 700, fontStyle: 'italic' },
+        typography: { letterSpacingPx: 5, fontWeight: 700, fontStyle: 'italic', fontKerning: 'none' },
       },
       recordingMeasure,
     );
 
-    expect(seen[0]).toMatchObject({ fontWeight: 700, fontStyle: 'italic', letterSpacingPx: 5 });
+    expect(seen[0]).toMatchObject({ fontWeight: 700, fontStyle: 'italic', fontKerning: 'none', letterSpacingPx: 5 });
     expect(result.lines[0].widthPx).toBe(2 * 10 + 1 * 5); // 'ab' + one gap of letter-spacing
     expect(result.letterSpacingPx).toBe(5);
+    expect(result.fontKerning).toBe('none');
   });
 
   it('scales line height from lineHeightPercent', () => {

@@ -20,6 +20,7 @@ import linuxWindowingModule from './linux-windowing.cjs';
 import globalMenuControllerModule from './globalMenu/globalMenuController.cjs';
 import x11WindowIdModule from './globalMenu/x11WindowId.cjs';
 import panelMenuServiceModule from './globalMenu/panelMenuService.cjs';
+import bundledFontLibraryModule from './bundled-font-library.cjs';
 
 const { createApplicationMenuTemplate, SIGNAL_LOOM_MENU_COMMANDS } = menuModule;
 const {
@@ -93,8 +94,10 @@ const {
 const { createGlobalMenuController } = globalMenuControllerModule;
 const { resolveX11WindowId } = x11WindowIdModule;
 const { createPanelMenuService } = panelMenuServiceModule;
+const { resolveBundledFontLibraryRoot, resolveBundledFontResourcePath } = bundledFontLibraryModule;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const APP_ROOT = resolve(__dirname, '..');
 const PRODUCTION_RENDERER_URL = pathToFileURL(resolve(__dirname, '../dist/index.html')).toString();
 const SIGNAL_LOOM_SPLASH_IMAGE_PATH = resolve(__dirname, 'assets', 'signal-loom-splash.png');
 const flowImportWorkerUrl = new URL('./flow-import-worker.mjs', import.meta.url);
@@ -209,6 +212,16 @@ if (process.platform === 'linux' && !linuxGpuPolicy.disabled) {
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'signal-loom-asset',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: true,
+    },
+  },
+  {
+    scheme: 'signal-loom-font',
     privileges: {
       standard: true,
       secure: true,
@@ -1890,12 +1903,29 @@ async function exportPaperImagesToDirectory(request, directoryPath) {
 }
 
 function installProtocolHandlers() {
+  const bundledFontLibraryRoot = resolveBundledFontLibraryRoot({
+    appIsPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appRoot: APP_ROOT,
+    env: process.env,
+  });
+
   protocol.handle('signal-loom-asset', async (request) => {
     const filePath = await getNativeFilePathFromAssetUrl(request.url);
     if (!filePath) {
       return new Response('Sloom Studio asset capability is not registered for this project.', { status: 403 });
     }
 
+    return net.fetch(pathToFileURL(filePath).toString());
+  });
+
+  protocol.handle('signal-loom-font', async (request) => {
+    const filePath = bundledFontLibraryRoot
+      ? resolveBundledFontResourcePath(bundledFontLibraryRoot, request.url)
+      : undefined;
+    if (!filePath) {
+      return new Response('The requested bundled font resource is unavailable.', { status: 404 });
+    }
     return net.fetch(pathToFileURL(filePath).toString());
   });
 }

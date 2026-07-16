@@ -13,6 +13,43 @@ function roundTrip(paragraphs: PaperRichParagraph[]): PaperRichParagraph[] {
 }
 
 describe('rich editor paragraph round-trip (edit must not drop paragraph formatting)', () => {
+  it('preserves advanced character and paragraph typesetting properties', () => {
+    const out = roundTrip([{
+      alignLast: 'center',
+      leadingPt: 18,
+      hyphenate: false,
+      lineBreak: 'pretty',
+      lineBreakStrict: true,
+      runs: [{
+        text: 'Advanced type',
+        fontFamily: 'Georgia',
+        fontSizePt: 18,
+        leadingPt: 20,
+        fontWeight: '500',
+        fontStyle: 'italic',
+        fontKerning: 'none',
+        color: '#123456',
+        tracking: 75,
+        smallCaps: true,
+        numericStyle: 'tabular',
+        textOrientation: 'upright',
+        emphasis: 'sesame',
+      }],
+    }]);
+    expect(out[0]).toMatchObject({ alignLast: 'center', leadingPt: 18, hyphenate: false, lineBreak: 'pretty', lineBreakStrict: true });
+    expect(out[0].runs[0]).toMatchObject({
+      text: 'Advanced type', fontFamily: 'Georgia', leadingPt: 20, fontWeight: '500',
+      fontStyle: 'italic', fontKerning: 'none', color: '#123456', tracking: 75, smallCaps: true,
+      numericStyle: 'tabular', textOrientation: 'upright', emphasis: 'sesame',
+    });
+    expect(out[0].runs[0].fontSizePt).toBeCloseTo(18, 2);
+  });
+
+  it('preserves run hyperlinks instead of flattening anchors during an edit', () => {
+    const out = roundTrip([{ runs: [{ text: 'Signaloom', link: 'https://example.com/signaloom', underline: true }] }]);
+    expect(out[0].runs[0]).toMatchObject({ text: 'Signaloom', link: 'https://example.com/signaloom', underline: true });
+  });
+
   it('preserves align, spacing, indents, drop cap, shading, and borders across an edit', () => {
     const out = roundTrip([
       {

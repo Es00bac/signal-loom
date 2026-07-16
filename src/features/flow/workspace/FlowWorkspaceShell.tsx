@@ -253,9 +253,11 @@ export function FlowWorkspaceShell({
           onPaneClick={onPaneClick}
           onPaneContextMenu={onPaneContextMenu}
           panOnDrag={!flowOrganizeJob && !isPinching}
+          panOnScroll={!flowOrganizeJob}
           proOptions={{ hideAttribution: true }}
+          zoomActivationKeyCode="Control"
           zoomOnPinch={!flowOrganizeJob}
-          zoomOnScroll={!flowOrganizeJob}
+          zoomOnScroll={false}
         >
           <Background color="#2d2d34" gap={24} size={2} />
           {/* Bottom-CENTER, horizontal: the old bottom-left spot sat underneath the docked Source

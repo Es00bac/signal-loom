@@ -163,6 +163,7 @@ import { cropImageDataUrl } from '../../../lib/localImageEditing';
 import { executeNodeRequest } from '../../../lib/flowExecution';
 import { useSettingsStore } from '../../../store/settingsStore';
 import { AdvancedColorPicker } from '../../../components/Common/AdvancedColorPicker';
+import { BundledFontBrowser } from '../../../components/Common/BundledFontBrowser';
 import {
   getEditorStageObjects,
   getStageObjectBlendModes,
@@ -8268,6 +8269,9 @@ function getTextTypographyStyle(
   if (typography?.fontStyle) {
     style.fontStyle = typography.fontStyle;
   }
+  if (typography?.fontKerning) {
+    style.fontKerning = typography.fontKerning;
+  }
   if (typography?.lineHeightPercent !== undefined) {
     style.lineHeight = typography.lineHeightPercent / 100;
   }
@@ -8323,7 +8327,7 @@ function ArcTextPreview({
   const fontWeight = typography.fontWeight ?? 600;
   const fontStyle = typography.fontStyle ?? 'normal';
   const letterSpacingPx = typography.letterSpacingPx ?? 0;
-  const font = { fontFamily, fontSizePx, fontWeight, fontStyle, letterSpacingPx };
+  const font = { fontFamily, fontSizePx, fontWeight, fontStyle, fontKerning: typography.fontKerning ?? 'auto', letterSpacingPx };
   const naturalWidthPx = Math.max(1, measurer(text, font));
   const glyphs = computeArcTextGlyphs(text, naturalWidthPx, typography.arcPercent, (char) => measurer(char, font) + letterSpacingPx);
   const glyphStyle = getTextTypographyStyle(typography, 'none');
@@ -8340,6 +8344,7 @@ function ArcTextPreview({
             fontFamily,
             fontSize: `${fontSizePx}px`,
             fontStyle,
+            fontKerning: typography.fontKerning ?? 'auto',
             fontWeight,
             left: naturalWidthPx / 2 + glyph.xPx,
             top: heightPx / 2 + glyph.yPx,
@@ -8372,6 +8377,7 @@ function TypographyAdvancedControls({
 }) {
   const fontWeight = typography?.fontWeight ?? 600;
   const fontStyle = typography?.fontStyle ?? 'normal';
+  const fontKerning = typography?.fontKerning ?? 'auto';
   const strokeWidthPx = typography?.strokeWidthPx ?? 0;
   const shadowBlurPx = typography?.shadowBlurPx ?? 0;
   const arcPercent = typography?.arcPercent ?? 0;
@@ -8400,6 +8406,18 @@ function TypographyAdvancedControls({
             </button>
           ))}
         </div>
+        <label className="block space-y-2 text-xs text-gray-400">
+          <span>Kerning</span>
+          <select
+            className="w-full rounded-lg border border-gray-700/60 bg-[#0f131b] px-3 py-2 text-xs text-gray-200 outline-none"
+            onChange={(event) => updateTypography({ fontKerning: event.target.value as NonNullable<EditorTextTypography['fontKerning']> })}
+            value={fontKerning}
+          >
+            <option value="auto">Auto</option>
+            <option value="normal">Metrics</option>
+            <option value="none">None</option>
+          </select>
+        </label>
       </div>
       <RangeControl
         label="Curve (arc)"
@@ -8699,6 +8717,11 @@ function StageObjectInspector({
               value={object.text}
             />
           </label>
+          <BundledFontBrowser
+            onSelect={(family) => onUpdate({ fontFamily: family.family } as Partial<EditorStageObject>)}
+            value={object.fontFamily}
+            weight={400}
+          />
           <label className="block space-y-2 text-xs text-gray-400">
             <span>Font family</span>
             <input
@@ -9844,6 +9867,12 @@ function InspectorPanel({
                     value={visualClip.textFontFamily}
                   />
                 </label>
+                <BundledFontBrowser
+                  onSelect={(family) => onUpdateVisualClip({ textFontFamily: family.family })}
+                  style={visualClip.textTypography?.fontStyle ?? 'normal'}
+                  value={visualClip.textFontFamily}
+                  weight={visualClip.textTypography?.fontWeight ?? 400}
+                />
                 <div className="grid gap-3 md:grid-cols-2">
                   <NumberField
                     label="Font size"
@@ -11183,6 +11212,11 @@ function TextEditDialog({
               value={draft.text}
             />
           </label>
+          <BundledFontBrowser
+            onSelect={(family) => onChange({ fontFamily: family.family })}
+            value={draft.fontFamily}
+            weight={400}
+          />
           <label className="block space-y-2 text-xs text-gray-400">
             <span>Font family</span>
             <input

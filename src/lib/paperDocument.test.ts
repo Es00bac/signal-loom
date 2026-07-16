@@ -6,6 +6,7 @@ import {
   assignPaperParentPage,
   computeEffectivePaperFrame,
   createDefaultPaperDocument,
+  DEFAULT_PAPER_TYPOGRAPHY,
   effectiveRtlBinding,
   detachInheritedPaperFrame,
   exportPaperDocumentToPrintHtml,
@@ -40,6 +41,24 @@ describe('resolvePaperFontFamily (print-safe fonts)', () => {
   it('falls back to the safe sans stack for empty input', () => {
     expect(resolvePaperFontFamily(undefined)).toBe(PAPER_SAFE_SANS);
     expect(resolvePaperFontFamily('   ')).toBe(PAPER_SAFE_SANS);
+  });
+});
+
+describe('Paper kerning export', () => {
+  it('preserves the selected kerning mode in print HTML', () => {
+    const document = createDefaultPaperDocument({ title: 'Kerning export' });
+    const pageId = document.pages[0].id;
+    const added = addFrameToPaperPage(document, pageId, {
+      kind: 'text',
+      xMm: 12,
+      yMm: 12,
+      widthMm: 80,
+      heightMm: 30,
+      text: 'AVATAR',
+      typography: { ...DEFAULT_PAPER_TYPOGRAPHY, fontKerning: 'none' },
+    });
+
+    expect(exportPaperDocumentToPrintHtml(added.document)).toContain('font-kerning: none');
   });
 });
 

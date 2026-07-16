@@ -86,13 +86,7 @@ export async function restoreProjectDocument(document: unknown): Promise<void> {
       sourceBinStore.getAllItems(),
     );
     const restoredDocument = resolvedDocument.paper?.document
-      ? {
-        ...resolvedDocument,
-        paper: {
-          ...resolvedDocument.paper,
-          document: await migrateLegacyPaperBinaryFields(resolvedDocument.paper.document, paperAssetRepository),
-        },
-      }
+      ? await migrateProjectPaperDocuments(resolvedDocument)
       : resolvedDocument;
     flowWorkspaceStore.hydrateProjectSnapshot({
       workspaces: restoredDocument.flowWorkspaces ?? [buildDefaultFlowWorkspace(restoredDocument.flow)],
@@ -124,6 +118,29 @@ export async function restoreProjectDocument(document: unknown): Promise<void> {
     const message = error instanceof Error ? error.message : 'Unknown restore error';
     throw new Error(`The selected project could not be restored safely. Previous workspace was left unchanged. ${message}`);
   }
+}
+
+async function migrateProjectPaperDocuments(
+  document: FlowProjectDocument,
+): Promise<FlowProjectDocument> {
+  if (!document.paper?.document) return document;
+  const documents = document.paper.documents
+    ? await Promise.all(document.paper.documents.map(async (workspaceDocument) => ({
+      ...workspaceDocument,
+      document: await migrateLegacyPaperBinaryFields(workspaceDocument.document, paperAssetRepository),
+    })))
+    : undefined;
+  const activeDocument = documents?.find((workspaceDocument) => workspaceDocument.id === document.paper?.activeDocumentId)
+    ?? documents?.[0];
+  return {
+    ...document,
+    paper: {
+      ...document.paper,
+      documents,
+      document: activeDocument?.document
+        ?? await migrateLegacyPaperBinaryFields(document.paper.document, paperAssetRepository),
+    },
+  };
 }
 
 export async function resetProjectDocument(): Promise<void> {

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { AdjustmentSlider } from './ImageEditorAdjustmentControls';
 import type { ImageLayer, TextLayerOpenTypeFeatures, TextLayerStyle } from '../../types/imageEditor';
 import { AdvancedColorPicker } from '../Common/AdvancedColorPicker';
+import { BundledFontBrowser } from '../Common/BundledFontBrowser';
 import {
   buildImageTextExportSourceBinHandoffDescriptor,
   buildImageTextLayerDescriptor,
@@ -26,19 +27,30 @@ export function TextFontStackControls({
   disabled,
   onChange,
   selectAriaLabel,
+  style = 'normal',
   value,
+  weight = 400,
 }: {
   customAriaLabel: string;
   disabled?: boolean;
   onChange: (fontFamily: string) => void;
   selectAriaLabel: string;
+  style?: 'normal' | 'italic';
   value: string;
+  weight?: number | string;
 }) {
   const catalog = describeImageTextFontCatalog(value);
   const selectedValue = catalog.selectedStack?.stack ?? '__custom__';
 
   return (
     <div className="mt-2 grid gap-1">
+      <BundledFontBrowser
+        disabled={disabled}
+        onSelect={(family) => onChange(family.family)}
+        style={style}
+        value={value}
+        weight={typeof weight === 'number' ? weight : Number.parseInt(weight, 10) || 400}
+      />
       <label className="block">
         <span className="mb-1 block text-cyan-100/40">Font Stack</span>
         <select
@@ -309,7 +321,9 @@ export function EditableTextLayerControls({
         disabled={disabled}
         onChange={(fontFamily) => onChange({ fontFamily })}
         selectAriaLabel="Text font stack"
+        style={text.fontStyle}
         value={text.fontFamily}
+        weight={text.fontWeight}
       />
       <div className="mt-2 grid grid-cols-2 gap-2">
         <label className="block">

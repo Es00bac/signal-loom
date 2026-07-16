@@ -69,10 +69,55 @@ describe('FlowWorkspaceShell', () => {
     expect(markup).toContain('data-testid="react-flow-shell"');
     expect(reactFlowCapture.props).toMatchObject({
       defaultEdgeOptions: { type: 'typed' },
+      panOnScroll: true,
+      zoomActivationKeyCode: 'Control',
+      zoomOnScroll: false,
     });
     expect((reactFlowCapture.props?.edgeTypes as Record<string, unknown>)?.typed).toBeTypeOf('function');
     expect(reactFlowCapture.props?.connectionLineComponent).toBeTypeOf('function');
     expect(reactFlowCapture.props?.isValidConnection).toBeTypeOf('function');
+  });
+
+  it('reserves ordinary wheel input for panning and Control+wheel for zooming', () => {
+    renderToStaticMarkup(
+      <FlowWorkspaceShell
+        blockingFlowDiagnosticCount={0}
+        diagnosticsOpen={false}
+        flowDiagnostics={[]}
+        flowOrganizeJob={null}
+        flowRecoveryKey="flow::wheel-navigation"
+        librarySearchMenu={null}
+        nodeTypes={{} as Record<string, ComponentType<any>>}
+        nodes={[] as AppNode[]}
+        edges={[] as Edge[]}
+        onCloseDiagnostics={() => {}}
+        onCloseLibrarySearch={() => {}}
+        onCollapseSelection={() => {}}
+        onConnect={() => {}}
+        onConnectEnd={() => {}}
+        onConnectStart={() => {}}
+        onCreateGroupFromSelection={() => {}}
+        onDragOver={() => {}}
+        onDrop={() => {}}
+        onEdgesChange={() => {}}
+        onNodeContextMenu={() => {}}
+        onNodesChange={() => {}}
+        onPaneClick={() => {}}
+        onPaneContextMenu={() => {}}
+        onSelectLibrarySearchTemplate={() => {}}
+        onStartFlowAutoOrganize={() => {}}
+        onToggleDiagnostics={() => {}}
+        onCancelFlowAutoOrganize={() => {}}
+        selectedFlowNodeCount={0}
+      />,
+    );
+
+    expect(reactFlowCapture.props?.panOnScroll).toBe(true);
+    expect(reactFlowCapture.props?.zoomOnScroll).toBe(false);
+    expect(reactFlowCapture.props?.zoomActivationKeyCode).toBe('Control');
+    // React Flow's free pan-on-scroll mode maps deltaY to vertical movement and,
+    // on desktop, Shift+deltaY to horizontal movement.
+    expect(reactFlowCapture.props?.panOnScrollMode).toBeUndefined();
   });
 
   it('is mounted by App instead of leaving the Flow canvas inline there', () => {

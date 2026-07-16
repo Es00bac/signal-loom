@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { addFrameToPaperPage, createDefaultPaperDocument } from './paperDocument';
 import { composePaperTextFrame, type PaperManagedFontResolver } from './paperTextComposition';
-import type { PaperManagedFontFace, PaperTextRun } from '../types/paper';
+import type { PaperManagedFontFace, PaperTextRun, PaperTypography } from '../types/paper';
 import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import type { PaperTextShaper } from './paperTextShaper';
 
@@ -61,7 +61,11 @@ function fixtureShaper(): PaperTextShaper {
   };
 }
 
-function composeFixture(runs: PaperTextRun[]) {
+function composeFixture(
+  runs: PaperTextRun[],
+  typographyPatch: Partial<PaperTypography> = {},
+  onShapeFeatures?: (features: Record<string, boolean | number>) => void,
+) {
   let document = createDefaultPaperDocument({ title: 'Composition fixture' });
   const pageId = document.pages[0].id;
   const added = addFrameToPaperPage(document, pageId, {
@@ -88,9 +92,19 @@ function composeFixture(runs: PaperTextRun[]) {
       fontSizePt: 12,
       leadingPt: 14,
       fontWeight: '400',
+      ...typographyPatch,
     },
   };
-  const resolver: PaperManagedFontResolver = async () => fixtureShaper();
+  const resolver: PaperManagedFontResolver = async () => {
+    const shaper = fixtureShaper();
+    return onShapeFeatures ? {
+      ...shaper,
+      shape: (request) => {
+        onShapeFeatures(request.features);
+        return shaper.shape(request);
+      },
+    } : shaper;
+  };
   return composePaperTextFrame(frame, document, resolver);
 }
 
@@ -126,6 +140,14 @@ describe('composePaperTextFrame', () => {
     expect(raised.fontSizePt).toBeCloseTo(8.4);
     expect(raised.glyphs[0].yPt).toBeLessThan(composed.lines[0].originYPt);
     expect(raised.decorations).toEqual({ underline: true, strike: true, highlight: '#fde047' });
+  });
+
+  it('disables the OpenType kern feature when Paper kerning is set to none', async () => {
+    const shapedFeatures: Array<Record<string, boolean | number>> = [];
+    await composeFixture([{ text: 'AVATAR' }], { fontKerning: 'none' }, (features) => shapedFeatures.push(features));
+
+    expect(shapedFeatures.length).toBeGreaterThan(0);
+    expect(shapedFeatures.every((features) => features.kern === false)).toBe(true);
   });
 
   it('composes vertical Japanese with right-to-left columns and kinsoku', async () => {

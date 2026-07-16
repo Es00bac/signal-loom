@@ -20,10 +20,21 @@ export function runInlineCss(run: PaperTextRun, zoom: number): string {
   if (run.fontFamily) parts.push(`font-family:${run.fontFamily}`);
   if (run.fontWeight) parts.push(`font-weight:${run.fontWeight}`);
   if (run.fontStyle) parts.push(`font-style:${run.fontStyle}`);
+  if (run.fontKerning) parts.push(`font-kerning:${run.fontKerning}`);
   if (run.color) parts.push(`color:${run.color}`);
   if (run.highlight) parts.push(`background-color:${run.highlight}`);
   if (run.tracking != null) parts.push(`letter-spacing:${run.tracking / 1000}em`);
   if (run.smallCaps) parts.push('font-variant-caps:small-caps');
+  if (run.numericStyle === 'oldstyle') parts.push('font-variant-numeric:oldstyle-nums');
+  if (run.numericStyle === 'lining') parts.push('font-variant-numeric:lining-nums');
+  if (run.numericStyle === 'tabular') parts.push('font-variant-numeric:tabular-nums');
+  if (run.textOrientation) parts.push(`text-orientation:${run.textOrientation}`);
+  if (run.emphasis === 'dot') parts.push('text-emphasis:filled dot');
+  if (run.emphasis === 'open-dot') parts.push('text-emphasis:open dot');
+  if (run.emphasis === 'sesame') parts.push('text-emphasis:filled sesame');
+  if (run.emphasis === 'circle') parts.push('text-emphasis:filled circle');
+  if (run.emphasis === 'none') parts.push('text-emphasis:none');
+  if (run.leadingPt != null) parts.push(`line-height:${(run.leadingPt * PT_TO_PX * zoom).toFixed(2)}px`);
   const decorations: string[] = [];
   if (run.underline) decorations.push('underline');
   if (run.strike) decorations.push('line-through');
@@ -44,6 +55,11 @@ function borderEdgeCss(edge: PaperParagraphBorderEdge | undefined, zoom: number)
 function paragraphInlineCss(paragraph: PaperRichParagraph, zoom: number): string {
   const parts: string[] = [];
   if (paragraph.align) parts.push(`text-align:${paragraph.align}`);
+  if (paragraph.alignLast) parts.push(`text-align-last:${paragraph.alignLast}`);
+  if (paragraph.leadingPt != null) parts.push(`line-height:${(paragraph.leadingPt * PT_TO_PX * zoom).toFixed(2)}px`);
+  if (paragraph.hyphenate != null) parts.push(`hyphens:${paragraph.hyphenate ? 'auto' : 'manual'}`);
+  if (paragraph.lineBreak && paragraph.lineBreak !== 'auto') parts.push(`text-wrap-style:${paragraph.lineBreak}`);
+  if (paragraph.lineBreakStrict != null) parts.push(`line-break:${paragraph.lineBreakStrict ? 'strict' : 'auto'}`);
   if (paragraph.spaceBeforeMm) parts.push(`margin-top:${(paragraph.spaceBeforeMm * MM_TO_PX * zoom).toFixed(2)}px`);
   if (paragraph.spaceAfterMm) parts.push(`margin-bottom:${(paragraph.spaceAfterMm * MM_TO_PX * zoom).toFixed(2)}px`);
   const leftPx = Math.max(0, paragraph.leftIndentMm ?? 0) * MM_TO_PX * zoom;
@@ -78,6 +94,11 @@ function paragraphDataAttrs(paragraph: PaperRichParagraph): string {
     if (value !== undefined && value !== '') attrs.push(`data-${key}="${escapeHtml(String(value))}"`);
   };
   push('align', paragraph.align);
+  push('al', paragraph.alignLast);
+  push('lead', paragraph.leadingPt);
+  if (paragraph.hyphenate != null) push('hyph', paragraph.hyphenate ? '1' : '0');
+  push('lb', paragraph.lineBreak);
+  if (paragraph.lineBreakStrict != null) push('lbs', paragraph.lineBreakStrict ? '1' : '0');
   push('sb', paragraph.spaceBeforeMm);
   push('sa', paragraph.spaceAfterMm);
   push('fi', paragraph.firstLineIndentMm);
@@ -100,6 +121,11 @@ function paragraphAttrsFromElement(el: HTMLElement): Partial<PaperRichParagraph>
     return Number.isFinite(n) ? n : undefined;
   };
   if (d.align === 'left' || d.align === 'center' || d.align === 'right' || d.align === 'justify') p.align = d.align;
+  if (d.al === 'auto' || d.al === 'left' || d.al === 'center' || d.al === 'right' || d.al === 'justify') p.alignLast = d.al;
+  const lead = num(d.lead); if (lead != null) p.leadingPt = lead;
+  if (d.hyph === '1' || d.hyph === '0') p.hyphenate = d.hyph === '1';
+  if (d.lb === 'auto' || d.lb === 'balance' || d.lb === 'pretty') p.lineBreak = d.lb;
+  if (d.lbs === '1' || d.lbs === '0') p.lineBreakStrict = d.lbs === '1';
   const sb = num(d.sb); if (sb != null) p.spaceBeforeMm = sb;
   const sa = num(d.sa); if (sa != null) p.spaceAfterMm = sa;
   const fi = num(d.fi); if (fi != null) p.firstLineIndentMm = fi;
@@ -130,7 +156,8 @@ export function richTextToEditorHtml(paragraphs: PaperRichParagraph[], zoom: num
             .map((run) => {
               const css = runInlineCss(run, zoom);
               const text = escapeHtml(run.text).replace(/ {2,}/g, (match) => '\u00a0'.repeat(match.length));
-              return css ? `<span style="${css}">${text}</span>` : `<span>${text}</span>`;
+              const span = css ? `<span style="${css}">${text}</span>` : `<span>${text}</span>`;
+              return run.link ? `<a href="${escapeHtml(run.link)}">${span}</a>` : span;
             })
             .join('')
         : '<br>';
@@ -162,29 +189,82 @@ export interface RichEditorBase {
   colorHex: string;
   fontFamily: string;
   fontSizePx: number;
+  leadingPx?: number;
+  fontWeight?: string;
+  fontStyle?: 'normal' | 'italic';
+  fontKerning?: 'auto' | 'normal' | 'none';
+  tracking?: number;
+  smallCaps?: boolean;
+  numericStyle?: 'normal' | 'oldstyle' | 'lining' | 'tabular';
+  textOrientation?: 'mixed' | 'upright';
+  emphasis?: 'none' | 'dot' | 'open-dot' | 'sesame' | 'circle';
   zoom: number;
+}
+
+function normalizedFontFamily(value: string): string {
+  return value.split(',').map((part) => part.trim().replace(/^['"]|['"]$/g, '')).join(', ');
+}
+
+function numericStyleFromCss(value: string): RichEditorBase['numericStyle'] {
+  if (value.includes('oldstyle-nums')) return 'oldstyle';
+  if (value.includes('lining-nums')) return 'lining';
+  if (value.includes('tabular-nums')) return 'tabular';
+  return 'normal';
+}
+
+function emphasisFromCss(value: string): RichEditorBase['emphasis'] {
+  if (!value || value === 'none') return 'none';
+  if (value.includes('sesame')) return 'sesame';
+  if (value.includes('circle')) return 'circle';
+  if (value.includes('open') && value.includes('dot')) return 'open-dot';
+  if (value.includes('dot')) return 'dot';
+  return 'none';
 }
 
 /** Turn one text node's effective computed style into a run carrying only what differs from the base. */
 function runFromComputedStyle(text: string, style: CSSStyleDeclaration, base: RichEditorBase): PaperTextRun {
   const run: PaperTextRun = { text };
-  if (parseInt(style.fontWeight, 10) >= 600) run.fontWeight = '700';
-  if (style.fontStyle === 'italic' || style.fontStyle === 'oblique') run.fontStyle = 'italic';
+  const weight = /^\d+$/.test(style.fontWeight) ? style.fontWeight : style.fontWeight === 'bold' ? '700' : '400';
+  if (weight !== (base.fontWeight ?? '400')) run.fontWeight = weight;
+  const fontStyle = style.fontStyle === 'italic' || style.fontStyle === 'oblique' ? 'italic' : 'normal';
+  if (fontStyle !== (base.fontStyle ?? 'normal')) run.fontStyle = fontStyle;
+  const fontKerning = style.fontKerning === 'none' || style.fontKerning === 'normal' ? style.fontKerning : 'auto';
+  if (fontKerning !== (base.fontKerning ?? 'auto')) run.fontKerning = fontKerning;
   const decoration = style.textDecorationLine || style.textDecoration || '';
   if (decoration.includes('underline')) run.underline = true;
   if (decoration.includes('line-through')) run.strike = true;
   if (style.verticalAlign === 'super') run.vertAlign = 'super';
   else if (style.verticalAlign === 'sub') run.vertAlign = 'sub';
-  if (style.fontVariantCaps === 'small-caps') run.smallCaps = true;
+  const smallCaps = style.fontVariantCaps === 'small-caps';
+  if (smallCaps !== Boolean(base.smallCaps)) run.smallCaps = smallCaps;
   const hex = cssColorToHex(style.color);
   if (hex && hex !== base.colorHex.toLowerCase()) run.color = hex;
   const highlight = cssColorToHex(style.backgroundColor);
   if (highlight) run.highlight = highlight;
-  if (style.fontFamily && style.fontFamily !== base.fontFamily) run.fontFamily = style.fontFamily;
+  if (style.fontFamily && normalizedFontFamily(style.fontFamily) !== normalizedFontFamily(base.fontFamily)) {
+    run.fontFamily = normalizedFontFamily(style.fontFamily);
+  }
   const px = parseFloat(style.fontSize);
   if (Number.isFinite(px) && Math.abs(px - base.fontSizePx) > 0.5 && run.vertAlign == null) {
     run.fontSizePt = px / (PT_TO_PX * (base.zoom || 1));
   }
+  const lineHeightPx = parseFloat(style.lineHeight);
+  if (Number.isFinite(lineHeightPx) && (base.leadingPx == null || Math.abs(lineHeightPx - base.leadingPx) > 0.5)) {
+    run.leadingPt = lineHeightPx / (PT_TO_PX * (base.zoom || 1));
+  }
+  const letterSpacing = style.letterSpacing.trim();
+  let tracking = 0;
+  if (letterSpacing && letterSpacing !== 'normal') {
+    const amount = parseFloat(letterSpacing);
+    if (Number.isFinite(amount)) tracking = letterSpacing.endsWith('em') ? amount * 1000 : (amount / Math.max(1, px)) * 1000;
+  }
+  if (Math.abs(tracking - (base.tracking ?? 0)) > 0.5) run.tracking = Math.round(tracking);
+  const numericStyle = numericStyleFromCss(style.fontVariantNumeric);
+  if (numericStyle !== (base.numericStyle ?? 'normal')) run.numericStyle = numericStyle;
+  const textOrientation = style.textOrientation === 'upright' ? 'upright' : 'mixed';
+  if (textOrientation !== (base.textOrientation ?? 'mixed')) run.textOrientation = textOrientation;
+  const emphasis = emphasisFromCss(style.getPropertyValue('text-emphasis') || style.getPropertyValue('-webkit-text-emphasis'));
+  if (emphasis !== (base.emphasis ?? 'none')) run.emphasis = emphasis;
   return run;
 }
 
@@ -206,7 +286,10 @@ export function serializeRichEditor(root: HTMLElement, base: RichEditorBase): Pa
     if (!current) startParagraph();
     const parent = node.parentElement;
     const style = parent ? getComputedStyle(parent) : null;
-    current!.push(style ? runFromComputedStyle(text, style, base) : { text });
+    const run: PaperTextRun = style ? runFromComputedStyle(text, style, base) : { text };
+    const link = parent?.closest('a[href]')?.getAttribute('href');
+    if (link) run.link = link;
+    current!.push(run);
   };
   const walkInline = (node: Node): void => {
     node.childNodes.forEach((child) => {

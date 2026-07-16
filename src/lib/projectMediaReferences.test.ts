@@ -142,6 +142,41 @@ function buildProjectDocument(): FlowProjectDocument {
 }
 
 describe('project media reference normalization', () => {
+  it('normalizes media in every open Paper document tab', () => {
+    const project = buildProjectDocument();
+    const english = project.paper!.document!;
+    const japanese = {
+      ...english,
+      id: 'paper-ja',
+      title: '日本語版',
+      pages: english.pages.map((page) => ({
+        ...page,
+        id: `${page.id}-ja`,
+        frames: page.frames.map((frame) => ({
+          ...frame,
+          id: `${frame.id}-ja`,
+          asset: frame.asset ? { ...frame.asset } : undefined,
+        })),
+      })),
+    };
+    project.paper = {
+      ...project.paper,
+      document: japanese,
+      documents: [
+        { id: 'tab-en', document: english, tool: 'select', zoom: 1 },
+        { id: 'tab-ja', document: japanese, tool: 'select', zoom: 1 },
+      ],
+      activeDocumentId: 'tab-ja',
+    };
+
+    const result = normalizeProjectMediaReferencesForSave(project);
+
+    expect(result.document.paper?.documents?.every((workspaceDocument) =>
+      workspaceDocument.document.pages[0]?.frames[0]?.asset?.locator?.kind === 'external')).toBe(true);
+    expect(result.document.paper?.document?.title).toBe('日本語版');
+    expect(result.stats.paperEmbeddedMediaReplaced).toBe(2);
+  });
+
   it('replaces Paper and Flow embedded media with Source Library references for save', () => {
     const result = normalizeProjectMediaReferencesForSave(buildProjectDocument());
     const frameAsset = result.document.paper!.document!.pages[0]!.frames[0]!.asset;

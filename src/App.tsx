@@ -1359,9 +1359,9 @@ function FlowApp() {
           const result = await bridge.openPaperDocumentFile();
           if (!result.canceled && result.bytes) {
             const doc = await deserializeSlppr(new Uint8Array(result.bytes), paperAssetRepository);
-            // Route through importDocumentJson so the loaded layout passes the same
-            // parse/sanitize validation as the Paper JSON import path.
-            await usePaperStore.getState().importDocumentJson(JSON.stringify(doc));
+            // A standalone .slppr opens as another Paper tab. The project's existing
+            // layouts stay open and are saved together in the next .sloom snapshot.
+            await usePaperStore.getState().openDocumentJson(JSON.stringify(doc));
           }
         } catch (error) {
           await showAlertDialog({
@@ -1801,7 +1801,7 @@ function FlowApp() {
     }
     if (kind === 'paper') {
       const doc = await deserializeSlppr(bytes, paperAssetRepository);
-      await usePaperStore.getState().importDocumentJson(JSON.stringify(doc));
+      await usePaperStore.getState().openDocumentJson(JSON.stringify(doc));
       setWorkspaceView('paper');
       return;
     }

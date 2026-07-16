@@ -10,6 +10,16 @@ import { usePaperStore } from './paperStore';
 function resetPaperStore() {
   const document = createDefaultPaperDocument({ title: 'Paper Store Test' });
   usePaperStore.setState({
+    documents: [{
+      id: document.id,
+      document,
+      assetIds: [],
+      selectedPageId: document.pages[0].id,
+      selectedFrameIds: [],
+      tool: 'select',
+      zoom: 0.8,
+    }],
+    activeDocumentId: document.id,
     document,
     selectedPageId: document.pages[0].id,
     selectedFrameId: null,
@@ -55,6 +65,17 @@ function seedStackedFrames() {
     document = added.document;
   }
   usePaperStore.setState({
+    documents: [{
+      id: document.id,
+      document,
+      assetIds: [],
+      selectedPageId: pageId,
+      selectedFrameId: 'frame-a',
+      selectedFrameIds: ['frame-a'],
+      tool: 'select',
+      zoom: 0.8,
+    }],
+    activeDocumentId: document.id,
     document,
     selectedPageId: pageId,
     selectedFrameId: 'frame-a',
@@ -663,5 +684,74 @@ describe('paperStore managed assets', () => {
     expect(ref).toBeDefined();
     expect(await paperAssetRepository.get(ref!.id)).toMatchObject({ bytes: new Uint8Array([1, 2, 3]) });
     await paperAssetRepository.delete(ref!.id);
+  });
+});
+
+describe('paperStore document tabs', () => {
+  beforeEach(resetPaperStore);
+
+  it('keeps the current document open when a new Paper tab is created', () => {
+    const firstId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().setZoom(1.25);
+
+    usePaperStore.getState().createNewDocument({ title: '日本語版' });
+
+    expect(usePaperStore.getState().documents).toHaveLength(2);
+    expect(usePaperStore.getState().document.title).toBe('日本語版');
+    expect(usePaperStore.getState().activeDocumentId).not.toBe(firstId);
+
+    usePaperStore.getState().setActiveDocument(firstId);
+    expect(usePaperStore.getState().document.title).toBe('Paper Store Test');
+    expect(usePaperStore.getState().zoom).toBe(1.25);
+  });
+
+  it('opens .slppr content additively and assigns a unique tab id', async () => {
+    const first = usePaperStore.getState().document;
+    const imported = createDefaultPaperDocument({ title: 'Imported feature' });
+    imported.id = first.id;
+
+    const openedId = await usePaperStore.getState().openDocumentJson(JSON.stringify(imported));
+
+    expect(usePaperStore.getState().documents).toHaveLength(2);
+    expect(openedId).not.toBe(first.id);
+    expect(usePaperStore.getState().activeDocumentId).toBe(openedId);
+    expect(usePaperStore.getState().document.title).toBe('Imported feature');
+  });
+
+  it('closes tabs predictably and always leaves one Paper document open', () => {
+    const firstId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().createNewDocument({ title: 'Second' });
+    const secondId = usePaperStore.getState().activeDocumentId;
+
+    usePaperStore.getState().closeDocument(secondId);
+    expect(usePaperStore.getState().activeDocumentId).toBe(firstId);
+    expect(usePaperStore.getState().documents).toHaveLength(1);
+
+    usePaperStore.getState().closeDocument(firstId);
+    expect(usePaperStore.getState().documents).toHaveLength(1);
+    expect(usePaperStore.getState().document.title).toBe('Untitled Paper Layout');
+  });
+
+  it('round-trips every open Paper tab through a project snapshot', () => {
+    usePaperStore.setState((state) => ({
+      document: { ...state.document, title: 'English edition' },
+    }));
+    const englishId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().createNewDocument({ title: '日本語版' });
+    const japaneseId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().setZoom(1.4);
+    const snapshot = usePaperStore.getState().exportSnapshot();
+
+    resetPaperStore();
+    usePaperStore.getState().restoreSnapshot(snapshot);
+
+    expect(usePaperStore.getState().documents.map((candidate) => candidate.document.title)).toEqual([
+      'English edition',
+      '日本語版',
+    ]);
+    expect(usePaperStore.getState().activeDocumentId).toBe(japaneseId);
+    expect(usePaperStore.getState().zoom).toBe(1.4);
+    usePaperStore.getState().setActiveDocument(englishId);
+    expect(usePaperStore.getState().document.title).toBe('English edition');
   });
 });

@@ -37,15 +37,16 @@
     "gate:release": "node scripts/release-gate.mjs release",
     "android:prepare-localdream-runtime": "node scripts/prepare-android-localdream-runtime.mjs",
     "generate:oss-licenses": "node scripts/generate-oss-licenses.mjs",
+    "prepare:font-library": "node scripts/prepare-bundled-font-library.mjs",
     "sync:catalog": "node scripts/sync-provider-catalog.mjs",
     "sync:catalog:check": "node scripts/sync-provider-catalog.mjs --check",
     "sync:android": "npm run build && cap sync android",
     "build:android": "npm run android:prepare-localdream-runtime && npm run sync:android && cd android && ./gradlew assembleDebug",
-    "dist:win": "npm run build && electron-builder --win nsis",
-    "dist:mac": "npm run build && electron-builder --mac dmg zip",
-    "dist:mac:zip": "npm run build && electron-builder --mac zip",
-    "dist:linux": "npm run build && electron-builder --linux AppImage deb",
-    "dist:linux:snap": "npm run build && electron-builder --linux snap",
+    "dist:win": "npm run build && npm run prepare:font-library && electron-builder --win nsis",
+    "dist:mac": "npm run build && npm run prepare:font-library && electron-builder --mac dmg zip",
+    "dist:mac:zip": "npm run build && npm run prepare:font-library && electron-builder --mac zip",
+    "dist:linux": "npm run build && npm run prepare:font-library && electron-builder --linux AppImage deb",
+    "dist:linux:snap": "npm run build && npm run prepare:font-library && electron-builder --linux snap",
     "install:linux": "bash scripts/install-desktop-launcher.sh",
     "icons:mac": "bash scripts/create-mac-icon.sh",
     "preview": "vite preview"
@@ -136,6 +137,19 @@
         "to": "ops/local-upscaler",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "build/font-library",
+        "to": "font-library",
+        "filter": [
+          "README.md",
+          "DISTRIBUTION.md",
+          "catalog/**/*",
+          "inventory/README.md",
+          "inventory/SHA256SUMS",
+          "inventory/font-inventory.json",
+          "collection/**/*"
         ]
       }
     ],

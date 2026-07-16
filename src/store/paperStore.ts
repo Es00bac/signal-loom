@@ -66,9 +66,12 @@ import type {
   PaperImportedFont,
   PaperPagePreset,
   PaperTool,
+  PaperWorkspaceDocumentSnapshot,
 } from '../types/paper';
 
 interface PaperState {
+  documents: PaperWorkspaceDocumentSnapshot[];
+  activeDocumentId: string;
   document: PaperDocument;
   selectedPageId: string;
   selectedFrameId: string | null;
@@ -91,7 +94,10 @@ interface PaperActions {
   pasteFrameStyleToSelection: () => number;
   deleteSelection: () => void;
   createNewDocument: (options?: { title?: string; preset?: PaperPagePreset; dpi?: number }) => void;
+  openDocumentJson: (json: string) => Promise<string>;
   importDocumentJson: (json: string) => Promise<void>;
+  setActiveDocument: (documentId: string) => void;
+  closeDocument: (documentId: string) => void;
   exportDocumentJson: () => string;
   updateDocumentSetup: (patch: Parameters<typeof updatePaperDocumentSetup>[1]) => void;
   setTool: (tool: PaperTool) => void;
@@ -165,6 +171,7 @@ interface PaperActions {
 }
 
 const initialDocument = createDefaultPaperDocument({ title: 'Untitled Paper Layout' });
+const initialDocumentId = initialDocument.id || 'paper-document-initial';
 const PAPER_TOOLS: readonly PaperTool[] = ['select', 'hand', 'text', 'image', 'speech', 'thought', 'caption', 'panel', 'shape', 'line', 'ellipse', 'triangle', 'pentagon', 'hexagon', 'eyedropper', 'gutterKnife'];
 const MAX_PAPER_HISTORY = 50;
 
@@ -180,6 +187,8 @@ interface PaperHistorySnapshot {
 export const usePaperStore = create<PaperState & PaperActions>()(
   persist(
     (set, get) => ({
+      documents: [createPaperWorkspaceDocumentSnapshot(initialDocumentId, initialDocument)],
+      activeDocumentId: initialDocumentId,
       document: initialDocument,
       selectedPageId: initialDocument.pages[0].id,
       selectedFrameId: null,
@@ -311,14 +320,19 @@ export const usePaperStore = create<PaperState & PaperActions>()(
       },
 
       createNewDocument: (options) => {
+        const state = get();
         const document = createDefaultPaperDocument({
           title: options?.title || 'Untitled Paper Layout',
           preset: options?.preset ?? 'us-letter',
           dpi: options?.dpi,
         });
+        const documentId = makeUniquePaperDocumentTabId(document.id, state.documents);
+        const workspaceDocument = createPaperWorkspaceDocumentSnapshot(documentId, document);
         set({
+          documents: [...syncActivePaperDocument(state), workspaceDocument],
+          activeDocumentId: documentId,
           document,
-          selectedPageId: document.pages[0].id,
+          selectedPageId: workspaceDocument.selectedPageId ?? '',
           selectedFrameId: null,
           selectedFrameIds: [],
           tool: 'select',
@@ -328,15 +342,77 @@ export const usePaperStore = create<PaperState & PaperActions>()(
         });
       },
 
+      openDocumentJson: async (json) => {
+        const rawDocument = JSON.parse(json) as PaperDocument;
+        const migratedDocument = await migrateLegacyPaperBinaryFields(rawDocument, paperAssetRepository);
+        const document = parsePaperDocument(JSON.stringify(migratedDocument));
+        const state = get();
+        const documentId = makeUniquePaperDocumentTabId(document.id, state.documents);
+        const workspaceDocument = createPaperWorkspaceDocumentSnapshot(documentId, document);
+        set({
+          documents: [...syncActivePaperDocument(state), workspaceDocument],
+          activeDocumentId: documentId,
+          ...paperStatePatchFromWorkspaceSnapshot(workspaceDocument),
+          undoStack: [],
+          redoStack: [],
+        });
+        return documentId;
+      },
+
       importDocumentJson: async (json) => {
         const rawDocument = JSON.parse(json) as PaperDocument;
         const migratedDocument = await migrateLegacyPaperBinaryFields(rawDocument, paperAssetRepository);
         const document = parsePaperDocument(JSON.stringify(migratedDocument));
+        const state = get();
+        const workspaceDocument = createPaperWorkspaceDocumentSnapshot(state.activeDocumentId, document);
         set({
-          document,
-          selectedPageId: document.pages[0]?.id ?? '',
-          selectedFrameId: null,
-          selectedFrameIds: [],
+          documents: state.documents.map((candidate) =>
+            candidate.id === state.activeDocumentId ? workspaceDocument : candidate),
+          ...paperStatePatchFromWorkspaceSnapshot(workspaceDocument),
+          undoStack: [],
+          redoStack: [],
+        });
+      },
+
+      setActiveDocument: (documentId) => {
+        const state = get();
+        if (documentId === state.activeDocumentId) return;
+        const documents = syncActivePaperDocument(state);
+        const workspaceDocument = documents.find((candidate) => candidate.id === documentId);
+        if (!workspaceDocument) return;
+        set({
+          documents,
+          activeDocumentId: documentId,
+          ...paperStatePatchFromWorkspaceSnapshot(workspaceDocument),
+          undoStack: [],
+          redoStack: [],
+        });
+      },
+
+      closeDocument: (documentId) => {
+        const state = get();
+        const documents = syncActivePaperDocument(state);
+        const closedIndex = documents.findIndex((candidate) => candidate.id === documentId);
+        if (closedIndex < 0) return;
+        const remainingDocuments = documents.filter((candidate) => candidate.id !== documentId);
+
+        if (documentId !== state.activeDocumentId) {
+          set({ documents: remainingDocuments });
+          return;
+        }
+
+        let nextDocument = remainingDocuments[Math.min(closedIndex, remainingDocuments.length - 1)];
+        if (!nextDocument) {
+          const document = createDefaultPaperDocument({ title: 'Untitled Paper Layout' });
+          const nextId = makeUniquePaperDocumentTabId(document.id, documents);
+          nextDocument = createPaperWorkspaceDocumentSnapshot(nextId, document);
+          remainingDocuments.push(nextDocument);
+        }
+
+        set({
+          documents: remainingDocuments,
+          activeDocumentId: nextDocument.id,
+          ...paperStatePatchFromWorkspaceSnapshot(nextDocument),
           undoStack: [],
           redoStack: [],
         });
@@ -833,14 +909,18 @@ export const usePaperStore = create<PaperState & PaperActions>()(
 
       exportSnapshot: () => {
         const state = get();
+        const documents = syncActivePaperDocument(state);
+        const assetIds = [...new Set(documents.flatMap((workspaceDocument) => workspaceDocument.assetIds ?? []))];
         return {
           document: state.document,
-          assetIds: collectReachablePaperAssetIds(state.document),
+          assetIds,
           selectedPageId: state.selectedPageId,
           selectedFrameId: state.selectedFrameId ?? undefined,
           selectedFrameIds: state.selectedFrameIds,
           tool: state.tool,
           zoom: state.zoom,
+          documents,
+          activeDocumentId: state.activeDocumentId,
         };
       },
 
@@ -869,6 +949,8 @@ export const usePaperStore = create<PaperState & PaperActions>()(
       name: 'signal-loom-paper-workspace',
       partialize: (state) => ({
         document: state.document,
+        documents: syncActivePaperDocument(state),
+        activeDocumentId: state.activeDocumentId,
         selectedPageId: state.selectedPageId,
         selectedFrameId: state.selectedFrameId,
         selectedFrameIds: state.selectedFrameIds,
@@ -885,32 +967,157 @@ export const usePaperStore = create<PaperState & PaperActions>()(
 
 function sanitizePaperSnapshot(snapshot: unknown): PaperState {
   const input = isRecord(snapshot) ? snapshot : {};
-  const document = sanitizePaperDocument(input.document);
-  const selectedPageId = typeof input.selectedPageId === 'string' && document.pages.some((page) => page.id === input.selectedPageId)
-    ? input.selectedPageId
-    : document.pages[0]?.id ?? '';
-  const selectedPage = document.pages.find((page) => page.id === selectedPageId);
-  const selectedFrameId = typeof input.selectedFrameId === 'string' && selectedPage?.frames.some((frame) => frame.id === input.selectedFrameId)
-    ? input.selectedFrameId
-    : null;
-  const validFrameIds = new Set(selectedPage?.frames.map((frame) => frame.id) ?? []);
-  const selectedFrameIds = Array.isArray(input.selectedFrameIds)
-    ? input.selectedFrameIds.filter((frameId): frameId is string => typeof frameId === 'string' && validFrameIds.has(frameId))
-    : selectedFrameId
-      ? [selectedFrameId]
-      : [];
+  const fallbackDocument = sanitizePaperDocument(input.document);
+  const legacyWorkspaceDocument = sanitizePaperWorkspaceDocumentSnapshot({
+    id: fallbackDocument.id || initialDocumentId,
+    document: fallbackDocument,
+    selectedPageId: input.selectedPageId,
+    selectedFrameId: input.selectedFrameId,
+    selectedFrameIds: input.selectedFrameIds,
+    tool: input.tool,
+    zoom: input.zoom,
+  }) ?? createPaperWorkspaceDocumentSnapshot(initialDocumentId, fallbackDocument);
+  const documents = Array.isArray(input.documents)
+    ? input.documents
+      .map((candidate) => sanitizePaperWorkspaceDocumentSnapshot(candidate))
+      .filter((candidate): candidate is PaperWorkspaceDocumentSnapshot => candidate !== null)
+    : [];
+  const uniqueDocuments = deduplicatePaperWorkspaceDocuments(documents.length ? documents : [legacyWorkspaceDocument]);
+  const requestedActiveDocumentId = typeof input.activeDocumentId === 'string' ? input.activeDocumentId : '';
+  const activeWorkspaceDocument = uniqueDocuments.find((candidate) => candidate.id === requestedActiveDocumentId)
+    ?? uniqueDocuments[0]
+    ?? legacyWorkspaceDocument;
+  const document = activeWorkspaceDocument.document;
+  const selectedPageId = activeWorkspaceDocument.selectedPageId ?? document.pages[0]?.id ?? '';
+  const selectedFrameId = activeWorkspaceDocument.selectedFrameId ?? null;
+  const selectedFrameIds = activeWorkspaceDocument.selectedFrameIds ?? (selectedFrameId ? [selectedFrameId] : []);
   return {
+    documents: uniqueDocuments.length ? uniqueDocuments : [activeWorkspaceDocument],
+    activeDocumentId: activeWorkspaceDocument.id,
     document,
     selectedPageId,
-    selectedFrameId: selectedFrameId ?? selectedFrameIds[0] ?? null,
+    selectedFrameId,
     selectedFrameIds,
-    tool: isPaperTool(input.tool) ? input.tool : 'select',
-    zoom: clampZoom(input.zoom),
+    tool: activeWorkspaceDocument.tool,
+    zoom: activeWorkspaceDocument.zoom,
     undoStack: [],
     redoStack: [],
     clipboardFrames: [],
     styleClipboard: null,
   };
+}
+
+function sanitizePaperWorkspaceDocumentSnapshot(value: unknown): PaperWorkspaceDocumentSnapshot | null {
+  if (!isRecord(value)) return null;
+  const document = sanitizePaperDocument(value.document);
+  const id = typeof value.id === 'string' && value.id.trim()
+    ? value.id
+    : document.id || makePaperRuntimeId('paper-document');
+  const selectedPageId = typeof value.selectedPageId === 'string' && document.pages.some((page) => page.id === value.selectedPageId)
+    ? value.selectedPageId
+    : document.pages[0]?.id ?? '';
+  const selectedPage = document.pages.find((page) => page.id === selectedPageId);
+  const selectedFrameId = typeof value.selectedFrameId === 'string' && selectedPage?.frames.some((frame) => frame.id === value.selectedFrameId)
+    ? value.selectedFrameId
+    : null;
+  const validFrameIds = new Set(selectedPage?.frames.map((frame) => frame.id) ?? []);
+  const selectedFrameIds = Array.isArray(value.selectedFrameIds)
+    ? value.selectedFrameIds.filter((frameId): frameId is string => typeof frameId === 'string' && validFrameIds.has(frameId))
+    : selectedFrameId
+      ? [selectedFrameId]
+      : [];
+  return {
+    id,
+    document,
+    assetIds: collectReachablePaperAssetIds(document),
+    selectedPageId,
+    selectedFrameId: selectedFrameId ?? selectedFrameIds[0] ?? undefined,
+    selectedFrameIds,
+    tool: isPaperTool(value.tool) ? value.tool : 'select',
+    zoom: clampZoom(value.zoom),
+  };
+}
+
+function createPaperWorkspaceDocumentSnapshot(
+  id: string,
+  document: PaperDocument,
+  options: Partial<Omit<PaperWorkspaceDocumentSnapshot, 'id' | 'document' | 'assetIds'>> = {},
+): PaperWorkspaceDocumentSnapshot {
+  return sanitizePaperWorkspaceDocumentSnapshot({
+    id,
+    document,
+    selectedPageId: options.selectedPageId,
+    selectedFrameId: options.selectedFrameId,
+    selectedFrameIds: options.selectedFrameIds,
+    tool: options.tool ?? 'select',
+    zoom: options.zoom ?? 0.8,
+  }) ?? {
+    id,
+    document,
+    assetIds: collectReachablePaperAssetIds(document),
+    selectedPageId: document.pages[0]?.id ?? '',
+    selectedFrameIds: [],
+    tool: 'select',
+    zoom: 0.8,
+  };
+}
+
+function snapshotActivePaperDocument(state: PaperState): PaperWorkspaceDocumentSnapshot {
+  return createPaperWorkspaceDocumentSnapshot(state.activeDocumentId, state.document, {
+    selectedPageId: state.selectedPageId,
+    selectedFrameId: state.selectedFrameId ?? undefined,
+    selectedFrameIds: state.selectedFrameIds,
+    tool: state.tool,
+    zoom: state.zoom,
+  });
+}
+
+function syncActivePaperDocument(state: PaperState): PaperWorkspaceDocumentSnapshot[] {
+  const activeDocument = snapshotActivePaperDocument(state);
+  const activeIndex = state.documents.findIndex((candidate) => candidate.id === state.activeDocumentId);
+  if (activeIndex < 0) return [...state.documents, activeDocument];
+  return state.documents.map((candidate, index) => index === activeIndex ? activeDocument : candidate);
+}
+
+function paperStatePatchFromWorkspaceSnapshot(
+  workspaceDocument: PaperWorkspaceDocumentSnapshot,
+): Pick<PaperState, 'document' | 'selectedPageId' | 'selectedFrameId' | 'selectedFrameIds' | 'tool' | 'zoom'> {
+  return {
+    document: workspaceDocument.document,
+    selectedPageId: workspaceDocument.selectedPageId ?? workspaceDocument.document.pages[0]?.id ?? '',
+    selectedFrameId: workspaceDocument.selectedFrameId ?? null,
+    selectedFrameIds: workspaceDocument.selectedFrameIds ?? [],
+    tool: workspaceDocument.tool,
+    zoom: workspaceDocument.zoom,
+  };
+}
+
+function deduplicatePaperWorkspaceDocuments(
+  documents: PaperWorkspaceDocumentSnapshot[],
+): PaperWorkspaceDocumentSnapshot[] {
+  const seen = new Set<string>();
+  return documents.map((document) => {
+    let id = document.id;
+    if (seen.has(id)) {
+      let suffix = 2;
+      while (seen.has(`${document.id}-${suffix}`)) suffix += 1;
+      id = `${document.id}-${suffix}`;
+    }
+    seen.add(id);
+    return id === document.id ? document : { ...document, id };
+  });
+}
+
+function makeUniquePaperDocumentTabId(
+  preferredId: string | undefined,
+  documents: Pick<PaperWorkspaceDocumentSnapshot, 'id'>[],
+): string {
+  const baseId = preferredId?.trim() || makePaperRuntimeId('paper-document');
+  const existingIds = new Set(documents.map((document) => document.id));
+  if (!existingIds.has(baseId)) return baseId;
+  let suffix = 2;
+  while (existingIds.has(`${baseId}-${suffix}`)) suffix += 1;
+  return `${baseId}-${suffix}`;
 }
 
 function createPaperHistorySnapshot(state: PaperState): PaperHistorySnapshot {

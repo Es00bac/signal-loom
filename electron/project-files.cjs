@@ -524,15 +524,19 @@ function recoverMissingPaperFrameSourceBinItems(document, sourceBin, scratchDire
 }
 
 function collectPaperFrameAssetReferences(document) {
-  const paperDocument = document?.paper?.document;
-  if (!paperDocument) {
+  const paperDocuments = Array.isArray(document?.paper?.documents) && document.paper.documents.length > 0
+    ? document.paper.documents.map((workspaceDocument) => workspaceDocument?.document).filter(Boolean)
+    : document?.paper?.document
+      ? [document.paper.document]
+      : [];
+  if (paperDocuments.length === 0) {
     return [];
   }
 
-  const containers = [
+  const containers = paperDocuments.flatMap((paperDocument) => [
     ...(Array.isArray(paperDocument.parentPages) ? paperDocument.parentPages : []),
     ...(Array.isArray(paperDocument.pages) ? paperDocument.pages : []),
-  ];
+  ]);
 
   return containers.flatMap((container) => {
     if (!Array.isArray(container?.frames)) {

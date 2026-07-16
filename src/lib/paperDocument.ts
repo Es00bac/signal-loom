@@ -112,6 +112,7 @@ export const DEFAULT_PAPER_TYPOGRAPHY: PaperTypography = {
   fontSizePt: 10,
   leadingPt: 13,
   tracking: 0,
+  fontKerning: 'auto',
   align: 'left',
   hyphenate: true,
   color: '#111827',
@@ -1352,12 +1353,17 @@ function printRunInlineStyle(run: PaperTextRun): string {
   if (run.fontFamily) parts.push(`font-family: ${resolvePaperFontFamily(run.fontFamily)}`);
   if (run.fontWeight) parts.push(`font-weight: ${run.fontWeight}`);
   if (run.fontStyle) parts.push(`font-style: ${run.fontStyle}`);
+  if (run.fontKerning) parts.push(`font-kerning: ${run.fontKerning}`);
   if (run.color) parts.push(`color: ${run.color}`);
   if (run.highlight) {
     parts.push(`background-color: ${run.highlight}`, 'border-radius: 1px', '-webkit-box-decoration-break: clone', 'box-decoration-break: clone');
   }
   if (run.tracking != null) parts.push(`letter-spacing: ${run.tracking / 1000}em`);
-  if (run.smallCaps) parts.push('font-variant-caps: small-caps');
+  if (run.smallCaps != null) parts.push(`font-variant-caps: ${run.smallCaps ? 'small-caps' : 'normal'}`);
+  if (run.numericStyle) parts.push(`font-variant-numeric: ${paperNumericStyleToCss(run.numericStyle) ?? 'normal'}`);
+  if (run.textOrientation) parts.push(`text-orientation: ${run.textOrientation}`);
+  if (run.emphasis) parts.push(`text-emphasis: ${paperEmphasisMarkToCss(run.emphasis) ?? 'none'}`);
+  if (run.leadingPt != null) parts.push(`line-height: ${run.leadingPt}pt`);
   const decorations: string[] = [];
   if (run.underline) decorations.push('underline');
   if (run.strike) decorations.push('line-through');
@@ -1420,6 +1426,11 @@ function renderPrintRichParagraphs(frame: PaperFrame, vertical: boolean): string
       paragraph.spaceBeforeMm ? `margin-top: ${formatMm(paragraph.spaceBeforeMm)}` : '',
       paragraph.spaceAfterMm ? `margin-bottom: ${formatMm(paragraph.spaceAfterMm)}` : '',
       paragraph.align ? `text-align: ${paragraph.align}` : '',
+      paragraph.alignLast && paragraph.alignLast !== 'auto' ? `text-align-last: ${paragraph.alignLast}` : '',
+      paragraph.leadingPt != null ? `line-height: ${paragraph.leadingPt}pt` : '',
+      paragraph.hyphenate != null ? `hyphens: ${paragraph.hyphenate ? 'auto' : 'manual'}` : '',
+      paragraph.lineBreak && paragraph.lineBreak !== 'auto' ? `text-wrap-style: ${paragraph.lineBreak}` : '',
+      paragraph.lineBreakStrict != null ? `line-break: ${paragraph.lineBreakStrict ? 'strict' : 'auto'}` : '',
       (indentLeftMm + borderPadMm) ? `padding-left: ${formatMm(indentLeftMm + borderPadMm)}` : '',
       (rightIndentMm + borderPadMm) ? `padding-right: ${formatMm(rightIndentMm + borderPadMm)}` : '',
       padTopMm ? `padding-top: ${formatMm(padTopMm)}` : '',
@@ -1704,6 +1715,7 @@ function textStyle(frame: PaperFrame): string {
     `font-size: ${frame.typography.fontSizePt}pt`,
     `line-height: ${frame.typography.leadingPt}pt`,
     `letter-spacing: ${frame.typography.tracking / 1000}em`,
+    `font-kerning: ${frame.typography.fontKerning ?? 'auto'}`,
     `text-align: ${frame.typography.align}`,
     `hyphens: ${frame.typography.hyphenate ? 'auto' : 'manual'}`,
     `color: ${frame.typography.color}`,

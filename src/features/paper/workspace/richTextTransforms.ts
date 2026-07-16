@@ -11,7 +11,7 @@
  * commit that introduced this file for why that specific mapping is not wired up to a live editor in this pass.
  */
 import { flattenPaperRichText, paperRichTextFromPlainText, paperRunsShareStyle } from '../../../lib/paperRichText';
-import type { PaperRichParagraph, PaperTextRun } from '../../../types/paper';
+import type { PaperRichParagraph, PaperTextRun, PaperTypography } from '../../../types/paper';
 
 export interface PaperTextRange {
   /** Inclusive start offset into the paragraphs' flattened text. */
@@ -229,6 +229,80 @@ export function ensureRichTextForTransform(
   return richText && richText.length ? richText : paperRichTextFromPlainText(plainText);
 }
 
+const RUN_TYPOGRAPHY_KEYS = [
+  'fontFamily', 'fontSizePt', 'fontWeight', 'fontStyle', 'fontKerning', 'color', 'tracking',
+  'smallCaps', 'numericStyle', 'textOrientation', 'emphasis',
+] as const satisfies ReadonlyArray<keyof PaperTypography & keyof PaperTextRun>;
+
+const PARAGRAPH_TYPOGRAPHY_KEYS = [
+  'align', 'alignLast', 'leadingPt', 'hyphenate', 'lineBreak', 'lineBreakStrict', 'firstLineIndentMm',
+  'spaceBeforeMm', 'spaceAfterMm', 'dropCapLines',
+] as const satisfies ReadonlyArray<keyof PaperTypography & keyof PaperRichParagraph>;
+
+/** Typography fields that can be represented by retained run/paragraph overrides. Writing direction remains
+ * frame-level because it changes the containing flow, not a character range. */
+export const RICH_TYPOGRAPHY_KEYS = [
+  'fontFamily', 'fontSizePt', 'leadingPt', 'fontWeight', 'fontStyle', 'fontKerning', 'color', 'tracking',
+  'smallCaps', 'numericStyle', 'textOrientation', 'emphasis', 'align', 'alignLast', 'hyphenate', 'lineBreak',
+  'lineBreakStrict', 'firstLineIndentMm', 'spaceBeforeMm', 'spaceAfterMm', 'dropCapLines',
+] as const;
+export type RichTypographyKey = (typeof RICH_TYPOGRAPHY_KEYS)[number];
+export type RichTypographyPatch = Pick<PaperTypography, RichTypographyKey>;
+
+/** Return only rich-capable fields that actually changed. This distinction is important: copying the entire
+ * frame typography into every run when only leading changed would silently destroy mixed fonts and colours. */
+export function changedRichTypographyPatch(
+  previous: PaperTypography,
+  next: PaperTypography,
+): Partial<RichTypographyPatch> {
+  const patch: Partial<RichTypographyPatch> = {};
+  for (const key of RICH_TYPOGRAPHY_KEYS) {
+    if (previous[key] !== next[key]) Object.assign(patch, { [key]: next[key] });
+  }
+  return patch;
+}
+
+/** Apply a deliberate typography patch to all retained rich runs and paragraphs. Only properties present in
+ * `patch` are authored, including explicit `false`, `0`, and `undefined`; every other mixed style survives. */
+export function applyTypographyPatchToRichText(
+  richText: PaperRichParagraph[] | undefined,
+  patch: Partial<RichTypographyPatch>,
+): PaperRichParagraph[] | undefined {
+  if (!richText?.length || Object.keys(patch).length === 0) return richText;
+  const has = (key: RichTypographyKey): boolean => Object.prototype.hasOwnProperty.call(patch, key);
+  return richText.map((paragraph) => {
+    const nextParagraph: PaperRichParagraph = { ...paragraph };
+    for (const key of PARAGRAPH_TYPOGRAPHY_KEYS) {
+      if (has(key)) Object.assign(nextParagraph, { [key]: patch[key] });
+    }
+    nextParagraph.runs = paragraph.runs.map((run) => {
+      const nextRun: PaperTextRun = { ...run };
+      for (const key of RUN_TYPOGRAPHY_KEYS) {
+        if (has(key)) Object.assign(nextRun, { [key]: patch[key] });
+      }
+      return nextRun;
+    });
+    return nextParagraph;
+  });
+}
+
+/** Synchronize a frame typography edit through retained rich overrides without disturbing unrelated styles. */
+export function synchronizeRichTextWithTypographyChange(
+  richText: PaperRichParagraph[] | undefined,
+  previous: PaperTypography,
+  next: PaperTypography,
+): PaperRichParagraph[] | undefined {
+  return applyTypographyPatchToRichText(richText, changedRichTypographyPatch(previous, next));
+}
+
+/** Backwards-compatible focused helper used by older callers/tests. */
+export function applyFontFamilyToRichText(
+  richText: PaperRichParagraph[] | undefined,
+  fontFamily: string,
+): PaperRichParagraph[] | undefined {
+  return applyTypographyPatchToRichText(richText, { fontFamily });
+}
+
 export interface RichEditorCommitDecision {
   /** False when nothing actually changed from what the editor started with — the caller should cancel/no-op
    *  rather than commit anything (so entering edit mode and blurring without touching anything is a true no-op). */
@@ -247,7 +321,8 @@ export interface RichEditorCommitDecision {
 /** Mirrors src/lib/paperRichText.ts's private (unexported) RUN_STYLE_KEYS list — the run-level fields that
  *  count as a real style override, kept in sync by hand since it isn't exported for reuse. */
 const RUN_FORMATTING_KEYS: Array<keyof PaperTextRun> = [
-  'fontFamily', 'fontSizePt', 'fontWeight', 'fontStyle', 'underline', 'strike', 'color', 'highlight', 'tracking', 'smallCaps', 'vertAlign', 'link',
+  'fontFamily', 'fontSizePt', 'leadingPt', 'fontWeight', 'fontStyle', 'fontKerning', 'underline', 'strike',
+  'color', 'highlight', 'tracking', 'smallCaps', 'numericStyle', 'textOrientation', 'emphasis', 'vertAlign', 'link',
 ];
 
 /**
@@ -260,7 +335,8 @@ const RUN_FORMATTING_KEYS: Array<keyof PaperTextRun> = [
  */
 function hasRealFormatting(paragraphs: PaperRichParagraph[]): boolean {
   return paragraphs.some((paragraph) => {
-    if (paragraph.listMarker || paragraph.align || paragraph.shading || paragraph.borders) return true;
+    if (paragraph.listMarker || paragraph.align || paragraph.alignLast || paragraph.shading || paragraph.borders) return true;
+    if (paragraph.leadingPt != null || paragraph.hyphenate != null || paragraph.lineBreak || paragraph.lineBreakStrict != null) return true;
     if (paragraph.dropCapLines || paragraph.leftIndentMm || paragraph.rightIndentMm || paragraph.hangingIndentMm || paragraph.firstLineIndentMm) return true;
     if (paragraph.spaceBeforeMm || paragraph.spaceAfterMm) return true;
     return paragraph.runs.some((run) => RUN_FORMATTING_KEYS.some((key) => run[key] !== undefined));

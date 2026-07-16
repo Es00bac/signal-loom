@@ -1,5 +1,5 @@
 import type { AppNode, EnvelopeItem } from '../types/flow';
-import type { PaperFrame, PaperFrameAsset } from '../types/paper';
+import type { PaperDocument, PaperFrame, PaperFrameAsset } from '../types/paper';
 import type { SourceBinLibraryItem, SourceBinProjectSnapshot } from '../store/sourceBinStore';
 import type { FlowProjectDocument } from './projectLibrary';
 import { buildMediaAssetSignaturePart } from './mediaAssetSignature';
@@ -167,19 +167,42 @@ function normalizePaperMediaReferences(
     return paper;
   }
 
-  const normalizedPages = normalizePaperFrameContainers(paper.document.pages, sourceIndex, stats);
-  const normalizedParentPages = normalizePaperFrameContainers(paper.document.parentPages ?? [], sourceIndex, stats);
+  if (paper.documents?.length) {
+    let changed = false;
+    const documents = paper.documents.map((workspaceDocument) => {
+      const normalizedDocument = normalizePaperDocumentMediaReferences(workspaceDocument.document, sourceIndex, stats);
+      if (normalizedDocument !== workspaceDocument.document) changed = true;
+      return normalizedDocument === workspaceDocument.document
+        ? workspaceDocument
+        : { ...workspaceDocument, document: normalizedDocument };
+    });
+    const activeDocument = documents.find((workspaceDocument) => workspaceDocument.id === paper.activeDocumentId)
+      ?? documents[0];
+    if (activeDocument && activeDocument.document !== paper.document) changed = true;
+    return changed
+      ? { ...paper, documents, document: activeDocument?.document ?? paper.document }
+      : paper;
+  }
+
+  const document = normalizePaperDocumentMediaReferences(paper.document, sourceIndex, stats);
+  return document === paper.document ? paper : { ...paper, document };
+}
+
+function normalizePaperDocumentMediaReferences(
+  document: PaperDocument,
+  sourceIndex: SourceItemIndex,
+  stats: ProjectMediaReferenceStats,
+): PaperDocument {
+  const normalizedPages = normalizePaperFrameContainers(document.pages, sourceIndex, stats);
+  const normalizedParentPages = normalizePaperFrameContainers(document.parentPages ?? [], sourceIndex, stats);
 
   return normalizedPages.changed || normalizedParentPages.changed
     ? {
-      ...paper,
-      document: {
-        ...paper.document,
-        pages: normalizedPages.containers,
-        parentPages: normalizedParentPages.containers,
-      },
+      ...document,
+      pages: normalizedPages.containers,
+      parentPages: normalizedParentPages.containers,
     }
-    : paper;
+    : document;
 }
 
 function normalizePaperFrameContainers<T extends { frames: PaperFrame[] }>(

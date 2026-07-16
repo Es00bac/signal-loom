@@ -141,6 +141,8 @@ export interface PaperTypography {
   fontSizePt: number;
   leadingPt: number;
   tracking: number;
+  /** OpenType pair kerning. `none` disables the `kern` feature in live composition and print output. */
+  fontKerning?: 'auto' | 'normal' | 'none';
   align: PaperTextAlign;
   hyphenate: boolean;
   color: string;
@@ -200,8 +202,11 @@ export interface PaperTextRun {
   text: string;
   fontFamily?: string;
   fontSizePt?: number;
+  /** Per-selection leading. Browsers resolve this into the line box touched by the run. */
+  leadingPt?: number;
   fontWeight?: string;
   fontStyle?: 'normal' | 'italic';
+  fontKerning?: 'auto' | 'normal' | 'none';
   underline?: boolean;
   strike?: boolean;
   color?: string;
@@ -211,6 +216,9 @@ export interface PaperTextRun {
   /** Letter-spacing in per-mille em (matches PaperTypography.tracking units). */
   tracking?: number;
   smallCaps?: boolean;
+  numericStyle?: PaperNumericStyle;
+  textOrientation?: PaperTextOrientation;
+  emphasis?: PaperEmphasisMark;
   vertAlign?: PaperTextVertAlign;
   /** External hyperlink for just this run. */
   link?: string;
@@ -241,6 +249,11 @@ export interface PaperParagraphBorders {
 export interface PaperRichParagraph {
   runs: PaperTextRun[];
   align?: PaperTextAlign;
+  alignLast?: PaperTextAlignLast;
+  leadingPt?: number;
+  hyphenate?: boolean;
+  lineBreak?: PaperLineBreak;
+  lineBreakStrict?: boolean;
   firstLineIndentMm?: number;
   spaceBeforeMm?: number;
   spaceAfterMm?: number;
@@ -564,7 +577,7 @@ export interface PaperManagedFontFace {
   fontAsset: BinaryAssetRef;
   embeddability: PaperFontEmbeddability;
   canSubset: boolean;
-  source: { kind: 'open-catalog' | 'user-import'; url?: string; version?: string };
+  source: { kind: 'bundled' | 'open-catalog' | 'user-import'; url?: string; version?: string };
   license: { id?: string; textAsset?: BinaryAssetRef; attribution?: string };
   /** Required for production embedding when the font's own embedding rights are unknown. */
   attestation?: PaperFontAttestation;
@@ -573,7 +586,9 @@ export interface PaperManagedFontFace {
 /** Historical name retained for document compatibility. New code should use PaperManagedFontFace. */
 export type PaperImportedFont = PaperManagedFontFace;
 
-export interface PaperDocumentSnapshot {
+/** One open Paper document tab and its local editor/view state. */
+export interface PaperWorkspaceDocumentSnapshot {
+  id: string;
   document: PaperDocument;
   /** Reachable Paper-managed binary records; source-bin links remain identifiers only. */
   assetIds?: BinaryAssetId[];
@@ -582,4 +597,11 @@ export interface PaperDocumentSnapshot {
   selectedFrameIds?: string[];
   tool: PaperTool;
   zoom: number;
+}
+
+export interface PaperDocumentSnapshot extends Omit<PaperWorkspaceDocumentSnapshot, 'id'> {
+  /** All Paper documents open in this project. Omitted by historical single-document projects. */
+  documents?: PaperWorkspaceDocumentSnapshot[];
+  /** Active tab id within `documents`. */
+  activeDocumentId?: string;
 }

@@ -59,6 +59,8 @@ import { usePaperStore } from '../../../store/paperStore';
 import { PaperFontImportControl, useRegisterImportedFonts } from './PaperFontImport';
 import { PaperIccProfileManager, type PaperIccProfileManagerChange } from './PaperIccProfileManager';
 import { PaperManagedTextLayer } from './PaperManagedTextLayer';
+import { PaperBundledFontFaceBrowser, PaperBundledFontPicker } from './PaperBundledFontPicker';
+import { PaperDocumentTabs } from './PaperDocumentTabs';
 import { materializePaperDocumentAssetUrls, paperAssetRepository } from '../assets/PaperAssetRuntime';
 import { useSettingsStore } from '../../../store/settingsStore';
 import { useSourceBinStore } from '../../../store/sourceBinStore';
@@ -183,7 +185,21 @@ import { computePaperThreadSlices } from '../../../lib/paperThreadFlow';
 import { createPaperCanvasMeasurer } from '../../../lib/paperCanvasMeasurer';
 import { resolveFrameWrapSpacers, type PaperWrapSpacer } from '../../../lib/paperTextWrap';
 import { richTextToEditorHtml, serializeRichEditor } from '../../../lib/paperRichTextDom';
-import { ensureRichTextForTransform, resolveRichEditorCommit } from './richTextTransforms';
+import {
+  ensureRichTextForTransform,
+  flattenPaperRichText,
+  applyTypographyPatchToRichText,
+  changedRichTypographyPatch,
+  resolveRichEditorCommit,
+  synchronizeRichTextWithTypographyChange,
+  type RichTypographyPatch,
+} from './richTextTransforms';
+import {
+  applyTypographyToActiveRichEditor,
+  applyTypographyPatchToDomSelection,
+  applyTypographyToDomSelection,
+  registerPaperRichEditorSession,
+} from './paperRichEditorSession';
 import { findPaperMatches, type PaperFindOptions } from '../../../lib/paperFindChange';
 import { resolvePaperFolioText } from '../../../lib/paperFolios';
 import { buildPaperTextArcPath } from '../../../lib/paperTextPath';
@@ -392,6 +408,7 @@ import type {
   PaperTextAlignLast,
   PaperTextOrientation,
   PaperTextRun,
+  PaperTypography,
   PaperTextWrapMode,
   PaperTool,
 } from '../../../types/paper';
@@ -411,6 +428,7 @@ const PAPER_CUT_OVERLAY_Z = PAPER_CANVAS_CUT_Z;
 const PAPER_TOOLS_PALETTE_STORAGE_KEY = 'signal-loom-paper-tools-palette-position';
 const PAPER_TOOLS_PALETTE_DEFAULT_POSITION: PaperToolsPalettePosition = { x: 368, y: 112 };
 const PAPER_TOOLS_PALETTE_VIEWPORT_MARGIN = 8;
+const PAPER_DOCUMENT_TABS_HEIGHT_PX = 36;
 const PAPER_TOOLBAR_POINTER_CLICK_SUPPRESSION_MS = 700;
 const DEFAULT_PAPER_PRINT_UPSCALE_PROMPT = 'Preserve the original comic page artwork, composition, characters, line art, colors, readable lettering, panel layout, lighting, and perspective while improving print-resolution detail and clean edges. Do not add, remove, crop, or rearrange content.';
 const PAPER_NATIVE_MENU_COMMAND_PREFIXES = ['paper:', 'edit:'] as const;
@@ -841,8 +859,8 @@ export function PaperWorkspace() {
       ? activeEdgeDrawer
       : null;
   const paperFloatingToolsTopInsetPx = mobilePhoneInterface.enabled
-    ? mobilePhoneInterface.topbarHeightPx + PAPER_TOOLS_PALETTE_VIEWPORT_MARGIN
-    : PAPER_TOOLS_PALETTE_VIEWPORT_MARGIN;
+    ? mobilePhoneInterface.topbarHeightPx + PAPER_DOCUMENT_TABS_HEIGHT_PX + PAPER_TOOLS_PALETTE_VIEWPORT_MARGIN
+    : PAPER_TOOLS_PALETTE_DEFAULT_POSITION.y + PAPER_DOCUMENT_TABS_HEIGHT_PX;
   // Same small margin on both sides so the tools palette can be dragged all the way to the
   // left edge, past the source-bin drawer handle (it already moves past the right panels
   // handle). The left handle no longer blocks palette movement.
@@ -4057,6 +4075,14 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
         panelOpen={touchNavigationPanelOpen}
         settings={paperTouchNavigation}
       />
+      {showWorkspaceChrome ? (
+        <div
+          className="shrink-0 transition-[margin] duration-200"
+          style={{ marginLeft: effectiveSharedSourceBinCanvasOffsetPx }}
+        >
+          <PaperDocumentTabs />
+        </div>
+      ) : null}
       <div className="flex min-h-0 flex-1">
         <PaperWorkspaceViewportHost
           activeEdgeDrawer={activePaperEdgeDrawer}
@@ -8316,6 +8342,7 @@ function PaperFrameView({
     lineHeight: `${frame.typography.leadingPt * PT_TO_PX * zoom}px`,
     fontWeight: frame.typography.fontWeight,
     fontStyle: frame.typography.fontStyle,
+    fontKerning: frame.typography.fontKerning ?? 'auto',
     textAlign: frame.typography.align,
     letterSpacing: `${frame.typography.tracking / 1000}em`,
     textIndent: frame.typography.firstLineIndentMm
@@ -9305,10 +9332,15 @@ function paperRunReactStyle(run: PaperTextRun, zoom: number): React.CSSPropertie
   if (run.fontFamily) style.fontFamily = run.fontFamily;
   if (run.fontWeight) style.fontWeight = run.fontWeight;
   if (run.fontStyle) style.fontStyle = run.fontStyle;
+  if (run.fontKerning) style.fontKerning = run.fontKerning;
   if (run.color) style.color = run.color;
   if (run.highlight) { style.backgroundColor = run.highlight; style.borderRadius = '1px'; style.boxDecorationBreak = 'clone'; style.WebkitBoxDecorationBreak = 'clone'; }
   if (run.tracking != null) style.letterSpacing = `${run.tracking / 1000}em`;
-  if (run.smallCaps) style.fontVariantCaps = 'small-caps';
+  if (run.smallCaps != null) style.fontVariantCaps = run.smallCaps ? 'small-caps' : 'normal';
+  if (run.numericStyle) style.fontVariantNumeric = paperNumericStyleToCss(run.numericStyle) ?? 'normal';
+  if (run.textOrientation) style.textOrientation = run.textOrientation;
+  if (run.emphasis) style.textEmphasis = paperEmphasisMarkToCss(run.emphasis) ?? 'none';
+  if (run.leadingPt != null) style.lineHeight = `${run.leadingPt * PT_TO_PX * zoom}px`;
   const decorations: string[] = [];
   if (run.underline) decorations.push('underline');
   if (run.strike) decorations.push('line-through');
@@ -9381,6 +9413,11 @@ function PaperRichTextView({
           marginTop: spaceBefore || undefined,
           marginBottom: spaceAfter || undefined,
           textAlign: paragraph.align,
+          textAlignLast: paragraph.alignLast && paragraph.alignLast !== 'auto' ? paragraph.alignLast : undefined,
+          lineHeight: paragraph.leadingPt != null ? `${paragraph.leadingPt * PT_TO_PX * zoom}px` : undefined,
+          hyphens: paragraph.hyphenate == null ? undefined : paragraph.hyphenate ? 'auto' : 'manual',
+          textWrapStyle: paragraph.lineBreak && paragraph.lineBreak !== 'auto' ? paragraph.lineBreak : undefined,
+          lineBreak: paragraph.lineBreakStrict == null ? undefined : paragraph.lineBreakStrict ? 'strict' : 'auto',
           paddingLeft: indentLeftPx + borderPadPx || undefined,
           paddingRight: rightIndentPx + borderPadPx || undefined,
           paddingTop: padTopPx || undefined,
@@ -9603,15 +9640,157 @@ function PaperEditableText({
   );
 }
 
-const PAPER_RICH_FONT_CHOICES: Array<{ label: string; value: string }> = [
-  { label: 'Sans', value: PAPER_SAFE_SANS },
-  { label: 'Serif (Georgia)', value: 'Georgia, "Times New Roman", serif' },
-  { label: 'Times New Roman', value: '"Times New Roman", Times, serif' },
-  { label: 'Arial', value: 'Arial, Helvetica, sans-serif' },
-  { label: 'Garamond', value: 'Garamond, "Times New Roman", serif' },
-  { label: 'Verdana', value: 'Verdana, Geneva, sans-serif' },
-  { label: 'Courier (mono)', value: '"Courier New", Courier, monospace' },
-];
+function RichTypeNumber({
+  label,
+  max,
+  min = 0,
+  onChange,
+  step = 1,
+  value,
+}: {
+  label: string;
+  max?: number;
+  min?: number;
+  onChange: (value: number) => void;
+  step?: number;
+  value: number;
+}) {
+  return (
+    <label className="grid grid-cols-[1fr_4.5rem] items-center gap-2 text-[10px] text-cyan-100/60">
+      <span>{label}</span>
+      <input
+        className="h-6 rounded border border-cyan-300/15 bg-[#0b121d] px-1.5 text-right text-[11px] tabular-nums text-cyan-50 outline-none focus:border-cyan-300/60"
+        max={max}
+        min={min}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (Number.isFinite(next)) onChange(next);
+        }}
+        step={step}
+        type="number"
+        value={value}
+      />
+    </label>
+  );
+}
+
+function RichTypeSelect({
+  children,
+  label,
+  onChange,
+  value,
+}: {
+  children: React.ReactNode;
+  label: string;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <label className="grid grid-cols-[1fr_6.5rem] items-center gap-2 text-[10px] text-cyan-100/60">
+      <span>{label}</span>
+      <select
+        className="h-6 rounded border border-cyan-300/15 bg-[#0b121d] px-1 text-[10px] text-cyan-50 outline-none focus:border-cyan-300/60"
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        {children}
+      </select>
+    </label>
+  );
+}
+
+function PaperRichAdvancedTypePanel({
+  onApply,
+  typography,
+}: {
+  onApply: (patch: Partial<RichTypographyPatch>) => void;
+  typography: PaperTypography;
+}) {
+  return (
+    <div className="max-h-[min(34rem,75vh)] w-[34rem] overflow-y-auto rounded-lg border border-cyan-300/25 bg-[#101722] p-3 text-slate-100 shadow-2xl">
+      <div className="mb-3 flex items-start justify-between gap-3 border-b border-cyan-300/10 pb-2">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">Advanced type</div>
+          <div className="mt-0.5 text-[10px] text-cyan-100/45">Character settings target highlighted text; paragraph settings target every touched paragraph.</div>
+        </div>
+        <span className="rounded bg-cyan-300/10 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-cyan-200/70">Live selection</span>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <section className="space-y-1.5">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/40">Character</div>
+          <RichTypeNumber label="Size / pt" max={1600} min={1} onChange={(fontSizePt) => onApply({ fontSizePt })} step={0.5} value={typography.fontSizePt} />
+          <RichTypeNumber label="Tracking / ‰ em" max={2000} min={-200} onChange={(tracking) => onApply({ tracking })} step={5} value={typography.tracking} />
+          <RichTypeSelect label="Kerning" onChange={(fontKerning) => onApply({ fontKerning: fontKerning as PaperTypography['fontKerning'] })} value={typography.fontKerning ?? 'auto'}>
+            <option value="auto">Auto</option><option value="normal">Metrics</option><option value="none">None</option>
+          </RichTypeSelect>
+          <RichTypeSelect label="Weight" onChange={(fontWeight) => onApply({ fontWeight })} value={typography.fontWeight}>
+            {PAPER_FONT_WEIGHTS.map((weight) => <option key={weight} value={weight}>{weight}</option>)}
+          </RichTypeSelect>
+          <RichTypeSelect label="Style" onChange={(fontStyle) => onApply({ fontStyle: fontStyle as PaperTypography['fontStyle'] })} value={typography.fontStyle}>
+            <option value="normal">Normal</option><option value="italic">Italic</option>
+          </RichTypeSelect>
+          <RichTypeSelect label="Figures" onChange={(numericStyle) => onApply({ numericStyle: numericStyle as PaperNumericStyle })} value={typography.numericStyle ?? 'normal'}>
+            <option value="normal">Default</option><option value="lining">Lining</option><option value="oldstyle">Oldstyle</option><option value="tabular">Tabular</option>
+          </RichTypeSelect>
+          <label className="flex items-center justify-between gap-2 text-[10px] text-cyan-100/60">
+            Small caps
+            <input checked={Boolean(typography.smallCaps)} onChange={(event) => onApply({ smallCaps: event.target.checked })} type="checkbox" />
+          </label>
+          <label className="flex items-center justify-between gap-2 text-[10px] text-cyan-100/60">
+            Text colour
+            <AdvancedColorPicker
+              buttonClassName="rounded border border-cyan-300/20"
+              className="h-6 w-16"
+              label="Selected text colour"
+              onChange={(color) => onApply({ color })}
+              value={cssColorToPickerValue(typography.color)}
+            />
+          </label>
+        </section>
+
+        <section className="space-y-1.5 border-l border-cyan-300/10 pl-3">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/40">Paragraph</div>
+          <RichTypeNumber label="Leading / pt" max={3200} min={1} onChange={(leadingPt) => onApply({ leadingPt })} step={0.5} value={typography.leadingPt} />
+          <RichTypeSelect label="Alignment" onChange={(align) => onApply({ align: align as PaperTypography['align'] })} value={typography.align}>
+            <option value="left">Left</option><option value="center">Centre</option><option value="right">Right</option><option value="justify">Justify</option>
+          </RichTypeSelect>
+          <RichTypeSelect label="Last line" onChange={(alignLast) => onApply({ alignLast: alignLast as PaperTextAlignLast })} value={typography.alignLast ?? 'auto'}>
+            <option value="auto">Auto</option><option value="left">Left</option><option value="center">Centre</option><option value="right">Right</option><option value="justify">Justify</option>
+          </RichTypeSelect>
+          <RichTypeNumber label="First indent / mm" max={200} min={-200} onChange={(firstLineIndentMm) => onApply({ firstLineIndentMm })} step={0.5} value={typography.firstLineIndentMm ?? 0} />
+          <RichTypeNumber label="Space before / mm" max={200} onChange={(spaceBeforeMm) => onApply({ spaceBeforeMm })} step={0.5} value={typography.spaceBeforeMm ?? 0} />
+          <RichTypeNumber label="Space after / mm" max={200} onChange={(spaceAfterMm) => onApply({ spaceAfterMm })} step={0.5} value={typography.spaceAfterMm ?? 0} />
+          <RichTypeNumber label="Drop cap / lines" max={8} onChange={(dropCapLines) => onApply({ dropCapLines: Math.round(dropCapLines) })} value={typography.dropCapLines ?? 0} />
+          <RichTypeSelect label="Line breaking" onChange={(lineBreak) => onApply({ lineBreak: lineBreak as PaperLineBreak })} value={typography.lineBreak ?? 'auto'}>
+            <option value="auto">Auto</option><option value="balance">Balance</option><option value="pretty">Pretty</option>
+          </RichTypeSelect>
+          <label className="flex items-center justify-between gap-2 text-[10px] text-cyan-100/60">
+            Hyphenation
+            <input checked={typography.hyphenate} onChange={(event) => onApply({ hyphenate: event.target.checked })} type="checkbox" />
+          </label>
+        </section>
+
+        <section className="space-y-1.5 border-l border-cyan-300/10 pl-3">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/40">Japanese / 日本語</div>
+          <RichTypeSelect label="Orientation" onChange={(textOrientation) => onApply({ textOrientation: textOrientation as PaperTextOrientation })} value={typography.textOrientation ?? 'mixed'}>
+            <option value="mixed">Mixed / 縦中横</option><option value="upright">Upright</option>
+          </RichTypeSelect>
+          <RichTypeSelect label="圏点 Emphasis" onChange={(emphasis) => onApply({ emphasis: emphasis as PaperEmphasisMark })} value={typography.emphasis ?? 'none'}>
+            <option value="none">None</option><option value="dot">● Dot</option><option value="sesame">﹅ Sesame</option><option value="open-dot">○ Open dot</option><option value="circle">◉ Circle</option>
+          </RichTypeSelect>
+          <label className="flex items-center justify-between gap-2 text-[10px] text-cyan-100/60">
+            禁則処理 Kinsoku
+            <input checked={Boolean(typography.lineBreakStrict)} onChange={(event) => onApply({ lineBreakStrict: event.target.checked })} type="checkbox" />
+          </label>
+          <div className="rounded border border-cyan-300/10 bg-[#0b121d] p-2 text-[10px] leading-relaxed text-cyan-100/45">
+            Use the always-visible <span className="text-cyan-100/80">ルビ</span> and <span className="text-cyan-100/80">圏</span> actions for furigana and inline emphasis notation. Writing direction changes the whole frame and remains in the Inspector.
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 const PAPER_RICH_SIZE_CHOICES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 32, 48];
 
 /**
@@ -9639,15 +9818,27 @@ function PaperRichEditableText({
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const finishedRef = useRef(false);
   const savedRangeRef = useRef<Range | null>(null);
+  const preserveEditorInteractionRef = useRef(false);
   const [toolbarPos, setToolbarPos] = useState<{ left: number; top: number } | null>(null);
+  const [fontMenuOpen, setFontMenuOpen] = useState(false);
+  const [advancedTypeOpen, setAdvancedTypeOpen] = useState(false);
   const { t, tBoth } = useI18n();
 
-  const base = {
+  const base = useMemo(() => ({
     colorHex: (frame.typography.color || '#111827').toLowerCase(),
     fontFamily: frame.typography.fontFamily,
     fontSizePx: frame.typography.fontSizePt * PT_TO_PX * zoom,
+    leadingPx: frame.typography.leadingPt * PT_TO_PX * zoom,
+    fontWeight: frame.typography.fontWeight,
+    fontStyle: frame.typography.fontStyle,
+    fontKerning: frame.typography.fontKerning,
+    tracking: frame.typography.tracking,
+    smallCaps: frame.typography.smallCaps,
+    numericStyle: frame.typography.numericStyle,
+    textOrientation: frame.typography.textOrientation,
+    emphasis: frame.typography.emphasis,
     zoom,
-  };
+  }), [frame.typography, zoom]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -9694,24 +9885,47 @@ function PaperRichEditableText({
     try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* older engines */ }
     document.execCommand(command, false, value);
   };
-  const applyFontSizePt = (pt: number) => {
-    restoreSelection();
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
-    const range = sel.getRangeAt(0);
-    const span = document.createElement('span');
-    span.style.fontSize = `${(pt * PT_TO_PX * zoom).toFixed(2)}px`;
-    try {
-      range.surroundContents(span);
-    } catch {
-      span.appendChild(range.extractContents());
-      range.insertNode(span);
+  const createSelectionLink = () => {
+    void (async () => {
+      const url = await useTextInputDialogStore.getState().requestTextInput({
+        title: 'Link selected text',
+        message: 'Enter the destination for the highlighted words.',
+        label: 'URL',
+        initialValue: 'https://',
+        placeholder: 'https://example.com',
+        confirmLabel: 'Apply link',
+      });
+      if (url?.trim()) runCommand('createLink', url.trim());
+    })();
+  };
+  const applySelectionTypographyPatch = (patch: Parameters<typeof applyTypographyPatchToDomSelection>[2]): boolean => {
+    const editor = editorRef.current;
+    if (!editor) return false;
+    const applied = applyTypographyPatchToDomSelection(editor, savedRangeRef.current, patch, zoom);
+    if (applied) {
+      savedRangeRef.current = applied.range.cloneRange();
+      return true;
     }
-    sel.removeAllRanges();
-    const next = document.createRange();
-    next.selectNodeContents(span);
-    sel.addRange(next);
-    savedRangeRef.current = next.cloneRange();
+    const current = serializeRichEditor(editor, base);
+    const richText = applyTypographyPatchToRichText(current, patch) ?? current;
+    editor.innerHTML = richTextToEditorHtml(richText, zoom);
+    const caret = document.createRange();
+    caret.selectNodeContents(editor);
+    caret.collapse(false);
+    savedRangeRef.current = caret;
+    return true;
+  };
+  const applyFontSizePt = (pt: number) => {
+    applySelectionTypographyPatch({ fontSizePt: pt });
+  };
+  const applyBundledFontFace = (familyName: string, weight: number, style: 'normal' | 'italic') => {
+    if (!savedRangeRef.current || savedRangeRef.current.collapsed) {
+      runCommand('fontName', familyName);
+      setFontMenuOpen(false);
+      return;
+    }
+    applySelectionTypographyPatch({ fontFamily: familyName, fontWeight: String(weight), fontStyle: style });
+    setFontMenuOpen(false);
   };
   // Wrap the selection in Japanese inline notation (furigana 語《》 or emphasis 《《語》》). The notation is
   // inserted as plain text — it round-trips through the frame text and renders as <ruby>/圏点 in the non-editing
@@ -9760,7 +9974,7 @@ function PaperRichEditableText({
     updateBlocks((el) => { el.dataset.shade = hex; el.style.backgroundColor = hex; });
   const clearParagraphFormat = () =>
     updateBlocks((el) => {
-      for (const key of ['align', 'shade', 'dc', 'sb', 'sa', 'fi', 'li', 'hi', 'borders']) delete el.dataset[key];
+      for (const key of ['align', 'al', 'lead', 'hyph', 'lb', 'lbs', 'shade', 'dc', 'sb', 'sa', 'fi', 'li', 'ri', 'hi', 'borders']) delete el.dataset[key];
       el.classList.remove('paper-dropcap');
       el.removeAttribute('style');
     });
@@ -9784,6 +9998,51 @@ function PaperRichEditableText({
     onCancel();
   };
 
+  useEffect(() => registerPaperRichEditorSession(frame.id, {
+    applyTypography: (previous, next) => {
+      const editor = editorRef.current;
+      if (!editor || finishedRef.current) return null;
+      const applied = applyTypographyToDomSelection(editor, savedRangeRef.current, previous, next, zoom);
+      if (applied) {
+        savedRangeRef.current = applied.range.cloneRange();
+        const richText = serializeRichEditor(editor, base);
+        return { richText, text: flattenPaperRichText(richText) };
+      }
+
+      // A caret-only character edit means "format the frame" (the same fallback as the Inspector when the
+      // editor is closed). Rewrite the uncontrolled DOM from the synchronized model immediately so a later
+      // blur cannot serialize stale spans back over the Inspector change.
+      const patch = changedRichTypographyPatch(previous, next);
+      if (!Object.keys(patch).length) return null;
+      const current = serializeRichEditor(editor, base);
+      const richText = applyTypographyPatchToRichText(current, patch) ?? current;
+      editor.innerHTML = richTextToEditorHtml(richText, zoom);
+      const caret = document.createRange();
+      caret.selectNodeContents(editor);
+      caret.collapse(false);
+      savedRangeRef.current = caret;
+      return { richText, text: flattenPaperRichText(richText) };
+    },
+  }), [base, frame.id, zoom]);
+
+  useEffect(() => {
+    const preserveSelector = '[data-paper-rich-inspector="true"], [data-advanced-color-picker-panel="true"], [data-text-input-dialog="true"]';
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      const element = target instanceof Element ? target : target.parentElement;
+      const isPreserved = Boolean(
+        editorRef.current?.contains(target)
+        || toolbarRef.current?.contains(target)
+        || element?.closest(preserveSelector),
+      );
+      preserveEditorInteractionRef.current = isPreserved;
+      if (!isPreserved) commit();
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  });
+
   const toolbar = toolbarPos && typeof document !== 'undefined'
     ? createPortal(
         <div
@@ -9801,6 +10060,8 @@ function PaperRichEditableText({
           <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
           <PaperContextualToolbarButton onApply={() => runCommand('insertUnorderedList')} title="Bullet list">•</PaperContextualToolbarButton>
           <PaperContextualToolbarButton onApply={() => runCommand('insertOrderedList')} title="Numbered list">1.</PaperContextualToolbarButton>
+          <PaperContextualToolbarButton onApply={createSelectionLink} title="Link selected text">↗</PaperContextualToolbarButton>
+          <PaperContextualToolbarButton onApply={() => runCommand('unlink')} title="Remove link">↗̸</PaperContextualToolbarButton>
           <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
           <PaperContextualToolbarButton
             onApply={() => wrapSelectionWithNotation('', '《》', 1)}
@@ -9815,15 +10076,32 @@ function PaperRichEditableText({
             <span style={{ textEmphasis: 'filled sesame', textEmphasisPosition: 'over' } as React.CSSProperties}>圏</span>
           </PaperContextualToolbarButton>
           <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
-          <select
-            className="rounded bg-slate-800 px-1 py-0.5 text-[11px]"
-            onChange={(event) => { const value = event.target.value; event.currentTarget.selectedIndex = 0; if (value) runCommand('fontName', value); }}
-            title="Font"
-            value=""
-          >
-            <option value="">Font…</option>
-            {PAPER_RICH_FONT_CHOICES.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}
-          </select>
+          <div className="relative">
+            <button
+              className="rounded bg-slate-800 px-2 py-0.5 text-[11px] hover:bg-slate-700"
+              onClick={() => setFontMenuOpen((open) => !open)}
+              onMouseDown={(event) => event.preventDefault()}
+              title="Audited font library"
+              type="button"
+            >
+              Font…
+            </button>
+            {fontMenuOpen ? (
+              <div className="absolute left-0 top-7 z-[1000] w-[28rem] rounded-lg bg-slate-950 p-1 shadow-2xl">
+                <PaperBundledFontFaceBrowser
+                  fontFamily={frame.typography.fontFamily}
+                  fontStyle={frame.typography.fontStyle}
+                  fontWeight={Number.parseInt(frame.typography.fontWeight, 10) || 400}
+                  initiallyOpen
+                  onSelect={(family, face) => applyBundledFontFace(
+                    family.family,
+                    face.weight,
+                    face.style === 'normal' ? 'normal' : 'italic',
+                  )}
+                />
+              </div>
+            ) : null}
+          </div>
           <select
             className="rounded bg-slate-800 px-1 py-0.5 text-[11px]"
             onChange={(event) => { const value = event.target.value; event.currentTarget.selectedIndex = 0; if (value) applyFontSizePt(Number(value)); }}
@@ -9833,37 +10111,58 @@ function PaperRichEditableText({
             <option value="">Size…</option>
             {PAPER_RICH_SIZE_CHOICES.map((size) => <option key={size} value={size}>{size}</option>)}
           </select>
-          <input
-            aria-label="Text colour"
-            className="h-5 w-6 cursor-pointer rounded border border-cyan-300/20 bg-transparent p-0"
-            onChange={(event) => runCommand('foreColor', event.target.value)}
+          <AdvancedColorPicker
+            buttonClassName="rounded border border-cyan-300/20"
+            className="h-5 w-6"
+            label="Selected text colour"
+            onChange={(color) => {
+              if (!applySelectionTypographyPatch({ color })) runCommand('foreColor', color);
+            }}
             title="Text colour"
-            type="color"
+            value={cssColorToPickerValue(frame.typography.color)}
           />
-          <label className="flex h-5 w-6 cursor-pointer items-center justify-center rounded border border-cyan-300/20 text-[11px]" title="Highlight colour">
-            <span aria-hidden className="pointer-events-none">🖊</span>
-            <input
-              aria-label="Highlight colour"
-              className="sr-only"
-              onChange={(event) => runCommand('hiliteColor', event.target.value)}
-              type="color"
-            />
-          </label>
+          <AdvancedColorPicker
+            buttonClassName="rounded border border-cyan-300/20"
+            className="h-5 w-6"
+            label="Selected text highlight"
+            onChange={(color) => runCommand('hiliteColor', color)}
+            title="Highlight colour"
+            value="#fff59d"
+          />
+          <div className="relative">
+            <button
+              aria-expanded={advancedTypeOpen}
+              className={`rounded px-2 py-0.5 text-[11px] font-semibold ${advancedTypeOpen ? 'bg-cyan-500/30 text-cyan-100' : 'bg-slate-800 hover:bg-slate-700'}`}
+              onClick={() => setAdvancedTypeOpen((open) => !open)}
+              onMouseDown={(event) => event.preventDefault()}
+              title="Advanced character, paragraph, and Japanese typesetting"
+              type="button"
+            >
+              Type…
+            </button>
+            {advancedTypeOpen ? (
+              <div className="absolute right-0 top-7 z-[1000]">
+                <PaperRichAdvancedTypePanel
+                  onApply={(patch) => { applySelectionTypographyPatch(patch); }}
+                  typography={frame.typography}
+                />
+              </div>
+            ) : null}
+          </div>
           <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
           <PaperContextualToolbarButton onApply={() => setParagraphAlign('left')} title="Align left"><span aria-hidden>⇤</span></PaperContextualToolbarButton>
           <PaperContextualToolbarButton onApply={() => setParagraphAlign('center')} title="Align centre"><span aria-hidden>≡</span></PaperContextualToolbarButton>
           <PaperContextualToolbarButton onApply={() => setParagraphAlign('right')} title="Align right"><span aria-hidden>⇥</span></PaperContextualToolbarButton>
           <PaperContextualToolbarButton onApply={() => setParagraphAlign('justify')} title="Justify"><span aria-hidden>▤</span></PaperContextualToolbarButton>
           <PaperContextualToolbarButton onApply={toggleDropCap} title="Toggle drop cap"><span className="font-serif">D̲</span></PaperContextualToolbarButton>
-          <label className="flex h-5 w-6 cursor-pointer items-center justify-center rounded border border-cyan-300/20 text-[11px]" title="Paragraph shading">
-            <span aria-hidden className="pointer-events-none">▦</span>
-            <input
-              aria-label="Paragraph shading colour"
-              className="sr-only"
-              onChange={(event) => setParagraphShading(event.target.value)}
-              type="color"
-            />
-          </label>
+          <AdvancedColorPicker
+            buttonClassName="rounded border border-cyan-300/20"
+            className="h-5 w-6"
+            label="Paragraph shading colour"
+            onChange={setParagraphShading}
+            title="Paragraph shading"
+            value="#e2e8f0"
+          />
           <span className="mx-0.5 h-4 w-px bg-cyan-300/20" />
           <PaperContextualToolbarButton onApply={() => runCommand('removeFormat')} title="Clear run formatting">⌫</PaperContextualToolbarButton>
           <PaperContextualToolbarButton onApply={clearParagraphFormat} title="Clear paragraph formatting"><span aria-hidden>¶⌫</span></PaperContextualToolbarButton>
@@ -9879,7 +10178,9 @@ function PaperRichEditableText({
         className={className}
         contentEditable
         onBlur={(event) => {
-          // Interacting with the floating toolbar (select/colour) moves focus there — don't commit/close then.
+          // Inspector, toolbar, and portalled colour controls deliberately preserve the editor session/range.
+          // A document-level pointer listener commits on the next click outside those authoring surfaces.
+          if (preserveEditorInteractionRef.current) return;
           if (toolbarRef.current && event.relatedTarget instanceof Node && toolbarRef.current.contains(event.relatedTarget)) return;
           commit();
         }}
@@ -10566,13 +10867,25 @@ function PaperInspector({
   const importedFontFamilies = [...new Set((document.importedFonts ?? []).map((font) => font.familyName))];
   const selectedFontIsPreset = PAPER_FONT_OPTIONS.some((option) => option.value === selectedFontFamily)
     || importedFontFamilies.includes(selectedFontFamily);
+  const applyFrameTypography = (typography: PaperFrame['typography']) => {
+    if (!frame) return;
+    const liveResult = applyTypographyToActiveRichEditor(frame.id, frame.typography, typography);
+    if (liveResult) {
+      onUpdateFrame({ text: liveResult.text, richText: liveResult.richText });
+      return;
+    }
+    onUpdateFrame({
+      typography,
+      richText: synchronizeRichTextWithTypographyChange(frame.richText, frame.typography, typography),
+    });
+  };
   const outputIntent = PAPER_OUTPUT_INTENT_PROFILES[document.printProduction.outputIntentProfileId];
   const outputConditionId = document.printProduction.outputIntentProfileId === 'custom'
     ? document.printProduction.customOutputIntentName.trim()
     : outputIntent.printingCondition ?? '';
 
   return (
-    <div className="flex min-h-full flex-col bg-[#101722]">
+    <div className="flex min-h-full flex-col bg-[#101722]" data-paper-rich-inspector="true">
       <div className="border-b border-cyan-300/10 pb-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-100/50">{t('paper.insp.title')}</div>
         <div className="mt-1 truncate text-sm font-semibold text-white">{documentTitle}</div>
@@ -11369,9 +11682,13 @@ function PaperInspector({
                   />
                 </Field>
                 <Field label={t('paper.insp.fontFamily')}>
+                  <PaperBundledFontPicker
+                    onChange={applyFrameTypography}
+                    typography={frame.typography}
+                  />
                   <select
                     className="paper-input"
-                    onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, fontFamily: event.target.value } })}
+                    onChange={(event) => applyFrameTypography({ ...frame.typography, fontFamily: event.target.value })}
                     style={{ fontFamily: selectedFontFamily }}
                     value={selectedFontFamily}
                   >
@@ -11396,7 +11713,7 @@ function PaperInspector({
                 <Field label={t('paper.insp.customFontStack')}>
                   <input
                     className="paper-input"
-                    onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, fontFamily: event.target.value } })}
+                    onChange={(event) => applyFrameTypography({ ...frame.typography, fontFamily: event.target.value })}
                     value={selectedFontFamily}
                   />
                 </Field>
@@ -11407,6 +11724,7 @@ function PaperInspector({
                     fontFamily: frame.typography.fontFamily,
                     fontSize: `${frame.typography.fontSizePt}pt`,
                     fontStyle: frame.typography.fontStyle,
+                    fontKerning: frame.typography.fontKerning ?? 'auto',
                     fontWeight: frame.typography.fontWeight,
                     letterSpacing: `${frame.typography.tracking / 1000}em`,
                     lineHeight: `${frame.typography.leadingPt}pt`,
@@ -11418,26 +11736,37 @@ function PaperInspector({
                 <div className="grid grid-cols-2 gap-2">
                   <NumberField
                     label={t('paper.insp.sizePt')}
-                    onChange={(fontSizePt) => onUpdateFrame({ typography: { ...frame.typography, fontSizePt } })}
+                    onChange={(fontSizePt) => applyFrameTypography({ ...frame.typography, fontSizePt })}
                     value={frame.typography.fontSizePt}
                   />
                   <NumberField
                     label={t('paper.insp.leading')}
-                    onChange={(leadingPt) => onUpdateFrame({ typography: { ...frame.typography, leadingPt } })}
+                    onChange={(leadingPt) => applyFrameTypography({ ...frame.typography, leadingPt })}
                     value={frame.typography.leadingPt}
                   />
                   <NumberField
                     label={t('paper.insp.tracking')}
-                    onChange={(tracking) => onUpdateFrame({ typography: { ...frame.typography, tracking } })}
+                    onChange={(tracking) => applyFrameTypography({ ...frame.typography, tracking })}
                     step={5}
                     value={frame.typography.tracking}
                   />
+                  <Field label={t('paper.insp.kerning')}>
+                    <select
+                      className="paper-input"
+                      onChange={(event) => applyFrameTypography({ ...frame.typography, fontKerning: event.target.value as NonNullable<PaperFrame['typography']['fontKerning']> })}
+                      value={frame.typography.fontKerning ?? 'auto'}
+                    >
+                      <option value="auto">Auto</option>
+                      <option value="normal">Metrics</option>
+                      <option value="none">None</option>
+                    </select>
+                  </Field>
                   <Field label={t('paper.insp.fontColor')}>
                     <AdvancedColorPicker
                       className="h-8 w-full"
                       buttonClassName="rounded border border-cyan-300/15 bg-[#0b121d]"
                       label={t('paper.insp.paperFrameFontColor')}
-                      onChange={(color) => onUpdateFrame({ typography: { ...frame.typography, color } })}
+                      onChange={(color) => applyFrameTypography({ ...frame.typography, color, colorSwatchId: undefined })}
                       value={cssColorToPickerValue(frame.typography.color)}
                     />
                   </Field>
@@ -11454,15 +11783,11 @@ function PaperInspector({
                               key={swatch.id}
                               type="button"
                               className={`h-6 w-6 rounded border ${active ? 'border-cyan-300 ring-2 ring-cyan-300/60' : 'border-cyan-300/20 hover:border-cyan-300/50'}`}
-                              onClick={() =>
-                                onUpdateFrame({
-                                  typography: {
-                                    ...frame.typography,
-                                    color: resolveSwatchCssColor(swatch),
-                                    colorSwatchId: active ? undefined : swatch.id,
-                                  },
-                                })
-                              }
+                              onClick={() => applyFrameTypography({
+                                ...frame.typography,
+                                color: resolveSwatchCssColor(swatch),
+                                colorSwatchId: active ? undefined : swatch.id,
+                              })}
                               style={{ backgroundColor: resolveSwatchCssColor(swatch) }}
                               title={`${swatch.spotName ?? swatch.name} — text prints on its own named /Separation plate in PDF/X (needs spot policy "Preserve named spots"). Tap again to unbind.`}
                             />
@@ -11483,7 +11808,7 @@ function PaperInspector({
                   <Field label={t('paper.insp.weight')}>
                     <select
                       className="paper-input"
-                      onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, fontWeight: event.target.value } })}
+                      onChange={(event) => applyFrameTypography({ ...frame.typography, fontWeight: event.target.value })}
                       value={frame.typography.fontWeight}
                     >
                       {PAPER_FONT_WEIGHTS.map((weight) => <option key={weight} value={weight}>{weight}</option>)}
@@ -11492,7 +11817,7 @@ function PaperInspector({
                   <Field label={t('paper.insp.style')}>
                     <select
                       className="paper-input"
-                      onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, fontStyle: event.target.value as PaperFrame['typography']['fontStyle'] } })}
+                      onChange={(event) => applyFrameTypography({ ...frame.typography, fontStyle: event.target.value as PaperFrame['typography']['fontStyle'] })}
                       value={frame.typography.fontStyle}
                     >
                       <option value="normal">{t('paper.insp.normal')}</option>
@@ -11503,7 +11828,7 @@ function PaperInspector({
                 <Field label={t('paper.insp.align')}>
                   <select
                     className="paper-input"
-                    onChange={(e) => onUpdateFrame({ typography: { ...frame.typography, align: e.target.value as PaperFrame['typography']['align'] } })}
+                    onChange={(e) => applyFrameTypography({ ...frame.typography, align: e.target.value as PaperFrame['typography']['align'] })}
                     value={frame.typography.align}
                   >
                     <option value="left">{t('paper.insp.left')}</option>
@@ -11515,7 +11840,7 @@ function PaperInspector({
                 <label className="flex items-center gap-2 text-xs text-cyan-100/55">
                   <input
                     checked={frame.typography.hyphenate}
-                    onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, hyphenate: event.target.checked } })}
+                    onChange={(event) => applyFrameTypography({ ...frame.typography, hyphenate: event.target.checked })}
                     type="checkbox"
                   />{t('paper.insp.hyphenation')}</label>
                 <div className="rounded-lg border border-cyan-300/10 bg-[#0b121d] p-2">
@@ -11523,14 +11848,14 @@ function PaperInspector({
                   <div className="grid grid-cols-2 gap-2">
                     <NumberField
                       label={t('paper.insp.indentMm')}
-                      onChange={(firstLineIndentMm) => onUpdateFrame({ typography: { ...frame.typography, firstLineIndentMm: Math.max(0, firstLineIndentMm) } })}
+                      onChange={(firstLineIndentMm) => applyFrameTypography({ ...frame.typography, firstLineIndentMm: Math.max(0, firstLineIndentMm) })}
                       step={0.5}
                       value={frame.typography.firstLineIndentMm ?? 0}
                     />
                     <Field label={t('paper.insp.lastLine')}>
                       <select
                         className="paper-input"
-                        onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, alignLast: event.target.value as PaperTextAlignLast } })}
+                        onChange={(event) => applyFrameTypography({ ...frame.typography, alignLast: event.target.value as PaperTextAlignLast })}
                         value={frame.typography.alignLast ?? 'auto'}
                       >
                         <option value="auto">{t('paper.insp.auto')}</option>
@@ -11542,7 +11867,7 @@ function PaperInspector({
                     </Field>
                     <NumberField
                       label={t('paper.insp.dropCapLines')}
-                      onChange={(dropCapLines) => onUpdateFrame({ typography: { ...frame.typography, dropCapLines: Math.max(0, Math.round(dropCapLines)) } })}
+                      onChange={(dropCapLines) => applyFrameTypography({ ...frame.typography, dropCapLines: Math.max(0, Math.round(dropCapLines)) })}
                       step={1}
                       value={frame.typography.dropCapLines ?? 0}
                     />
@@ -11551,13 +11876,13 @@ function PaperInspector({
                     <label className="flex items-center gap-2 text-xs text-cyan-100/55">
                       <input
                         checked={Boolean(frame.typography.smallCaps)}
-                        onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, smallCaps: event.target.checked } })}
+                        onChange={(event) => applyFrameTypography({ ...frame.typography, smallCaps: event.target.checked })}
                         type="checkbox"
                       />{t('paper.insp.smallCaps')}</label>
                     <Field label={t('paper.insp.figures')}>
                       <select
                         className="paper-input"
-                        onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, numericStyle: event.target.value as PaperNumericStyle } })}
+                        onChange={(event) => applyFrameTypography({ ...frame.typography, numericStyle: event.target.value as PaperNumericStyle })}
                         value={frame.typography.numericStyle ?? 'normal'}
                       >
                         <option value="normal">{t('paper.insp.default')}</option>
@@ -11569,7 +11894,7 @@ function PaperInspector({
                     <Field label={t('paper.insp.lineBreak')}>
                       <select
                         className="paper-input"
-                        onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, lineBreak: event.target.value as PaperLineBreak } })}
+                        onChange={(event) => applyFrameTypography({ ...frame.typography, lineBreak: event.target.value as PaperLineBreak })}
                         value={frame.typography.lineBreak ?? 'auto'}
                       >
                         <option value="auto">{t('paper.insp.auto')}</option>
@@ -11581,13 +11906,13 @@ function PaperInspector({
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     <NumberField
                       label={t('paper.insp.spaceBeforeMm')}
-                      onChange={(spaceBeforeMm) => onUpdateFrame({ typography: { ...frame.typography, spaceBeforeMm: Math.max(0, spaceBeforeMm) } })}
+                      onChange={(spaceBeforeMm) => applyFrameTypography({ ...frame.typography, spaceBeforeMm: Math.max(0, spaceBeforeMm) })}
                       step={0.5}
                       value={frame.typography.spaceBeforeMm ?? 0}
                     />
                     <NumberField
                       label={t('paper.insp.spaceAfterMm')}
-                      onChange={(spaceAfterMm) => onUpdateFrame({ typography: { ...frame.typography, spaceAfterMm: Math.max(0, spaceAfterMm) } })}
+                      onChange={(spaceAfterMm) => applyFrameTypography({ ...frame.typography, spaceAfterMm: Math.max(0, spaceAfterMm) })}
                       step={0.5}
                       value={frame.typography.spaceAfterMm ?? 0}
                     />
@@ -11601,11 +11926,9 @@ function PaperInspector({
                       <select
                         className="paper-input"
                         onChange={(event) =>
-                          onUpdateFrame({
-                            typography: {
-                              ...frame.typography,
-                              writingMode: event.target.value === 'vertical-rl' ? 'vertical-rl' : undefined,
-                            },
+                          applyFrameTypography({
+                            ...frame.typography,
+                            writingMode: event.target.value === 'vertical-rl' ? 'vertical-rl' : undefined,
                           })
                         }
                         value={frame.typography.writingMode ?? 'horizontal-tb'}
@@ -11619,7 +11942,7 @@ function PaperInspector({
                         className="paper-input"
                         disabled={frame.typography.writingMode !== 'vertical-rl'}
                         onChange={(event) =>
-                          onUpdateFrame({ typography: { ...frame.typography, textOrientation: event.target.value as PaperTextOrientation } })
+                          applyFrameTypography({ ...frame.typography, textOrientation: event.target.value as PaperTextOrientation })
                         }
                         value={frame.typography.textOrientation ?? 'mixed'}
                       >
@@ -11632,7 +11955,7 @@ function PaperInspector({
                     <label className="flex items-center gap-2 text-xs text-cyan-100/55">
                       <input
                         checked={frame.typography.lineBreakStrict ?? frame.typography.writingMode === 'vertical-rl'}
-                        onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, lineBreakStrict: event.target.checked } })}
+                        onChange={(event) => applyFrameTypography({ ...frame.typography, lineBreakStrict: event.target.checked })}
                         type="checkbox"
                       />
                       禁則処理 Kinsoku
@@ -11640,7 +11963,7 @@ function PaperInspector({
                     <Field label={t('paper.insp.emphasisField')}>
                       <select
                         className="paper-input"
-                        onChange={(event) => onUpdateFrame({ typography: { ...frame.typography, emphasis: event.target.value as PaperEmphasisMark } })}
+                        onChange={(event) => applyFrameTypography({ ...frame.typography, emphasis: event.target.value as PaperEmphasisMark })}
                         value={frame.typography.emphasis ?? 'none'}
                       >
                         <option value="none">{t('paper.insp.none')}</option>
@@ -11873,15 +12196,13 @@ function PaperInspector({
                       <input
                         checked={frame.typography.writingMode === 'vertical-rl'}
                         onChange={(event) =>
-                          onUpdateFrame({
-                            typography: {
-                              ...frame.typography,
-                              // Manga bubbles are almost always centered; turning on 縦書き also centers the text
-                              // box so it reads like a proper vertical bubble in one click. Full JP controls
-                              // (furigana notation, kinsoku, 圏点, fonts) live in the Japanese 縦組 section above.
-                              writingMode: event.target.checked ? 'vertical-rl' : undefined,
-                              align: event.target.checked ? 'center' : frame.typography.align,
-                            },
+                          applyFrameTypography({
+                            ...frame.typography,
+                            // Manga bubbles are almost always centered; turning on 縦書き also centers the text
+                            // box so it reads like a proper vertical bubble in one click. Full JP controls
+                            // (furigana notation, kinsoku, 圏点, fonts) live in the Japanese 縦組 section above.
+                            writingMode: event.target.checked ? 'vertical-rl' : undefined,
+                            align: event.target.checked ? 'center' : frame.typography.align,
                           })
                         }
                         type="checkbox"
@@ -11898,14 +12219,16 @@ function PaperInspector({
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         className="rounded-md border border-cyan-300/15 bg-[#101a29]/70 px-3 py-2 text-left text-xs font-semibold text-cyan-100/70 hover:border-cyan-300/40 hover:text-white"
-                        onClick={() => onUpdateFrame({
-                          textBoxXPercent: 12,
-                          textBoxYPercent: 18,
-                          textBoxWidthPercent: 76,
-                          textBoxHeightPercent: 48,
-                          textVerticalAlign: 'middle',
-                          typography: { ...frame.typography, align: 'center' },
-                        })}
+                        onClick={() => {
+                          onUpdateFrame({
+                            textBoxXPercent: 12,
+                            textBoxYPercent: 18,
+                            textBoxWidthPercent: 76,
+                            textBoxHeightPercent: 48,
+                            textVerticalAlign: 'middle',
+                          });
+                          applyFrameTypography({ ...frame.typography, align: 'center' });
+                        }}
                         type="button"
                       >{t('paper.insp.centerText')}</button>
                       <button

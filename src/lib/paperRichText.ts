@@ -9,7 +9,8 @@ const VERT_ALIGNS: PaperTextVertAlign[] = ['baseline', 'super', 'sub'];
 
 /** The style fields of a run (everything except its text), compared to merge adjacent identical runs. */
 const RUN_STYLE_KEYS: Array<keyof PaperTextRun> = [
-  'fontFamily', 'fontSizePt', 'fontWeight', 'fontStyle', 'underline', 'strike', 'color', 'highlight', 'tracking', 'smallCaps', 'vertAlign', 'link',
+  'fontFamily', 'fontSizePt', 'leadingPt', 'fontWeight', 'fontStyle', 'fontKerning', 'underline', 'strike',
+  'color', 'highlight', 'tracking', 'smallCaps', 'numericStyle', 'textOrientation', 'emphasis', 'vertAlign', 'link',
 ];
 
 function cleanString(value: unknown): string | undefined {
@@ -28,9 +29,12 @@ function normalizeRun(input: unknown): PaperTextRun {
   if (fontFamily) run.fontFamily = fontFamily;
   const fontSizePt = cleanNumber(raw.fontSizePt, 1, 1600);
   if (fontSizePt != null) run.fontSizePt = fontSizePt;
+  const leadingPt = cleanNumber(raw.leadingPt, 1, 3200);
+  if (leadingPt != null) run.leadingPt = leadingPt;
   const fontWeight = cleanString(raw.fontWeight);
   if (fontWeight) run.fontWeight = fontWeight;
   if (raw.fontStyle === 'italic' || raw.fontStyle === 'normal') run.fontStyle = raw.fontStyle;
+  if (raw.fontKerning === 'auto' || raw.fontKerning === 'normal' || raw.fontKerning === 'none') run.fontKerning = raw.fontKerning;
   if (raw.underline === true) run.underline = true;
   if (raw.strike === true) run.strike = true;
   const color = cleanString(raw.color);
@@ -39,7 +43,14 @@ function normalizeRun(input: unknown): PaperTextRun {
   if (highlight) run.highlight = highlight;
   const tracking = cleanNumber(raw.tracking, -200, 2000);
   if (tracking != null) run.tracking = tracking;
-  if (raw.smallCaps === true) run.smallCaps = true;
+  if (typeof raw.smallCaps === 'boolean') run.smallCaps = raw.smallCaps;
+  if (raw.numericStyle === 'normal' || raw.numericStyle === 'oldstyle' || raw.numericStyle === 'lining' || raw.numericStyle === 'tabular') {
+    run.numericStyle = raw.numericStyle;
+  }
+  if (raw.textOrientation === 'mixed' || raw.textOrientation === 'upright') run.textOrientation = raw.textOrientation;
+  if (raw.emphasis === 'none' || raw.emphasis === 'dot' || raw.emphasis === 'open-dot' || raw.emphasis === 'sesame' || raw.emphasis === 'circle') {
+    run.emphasis = raw.emphasis;
+  }
   if (typeof raw.vertAlign === 'string' && VERT_ALIGNS.includes(raw.vertAlign as PaperTextVertAlign) && raw.vertAlign !== 'baseline') {
     run.vertAlign = raw.vertAlign as PaperTextVertAlign;
   }
@@ -100,6 +111,14 @@ export function normalizePaperRichText(input: unknown): PaperRichParagraph[] | u
     const runs = mergeAdjacentRuns(rawRuns.map(normalizeRun));
     const paragraph: PaperRichParagraph = { runs };
     if (raw.align === 'left' || raw.align === 'center' || raw.align === 'right' || raw.align === 'justify') paragraph.align = raw.align;
+    if (raw.alignLast === 'auto' || raw.alignLast === 'left' || raw.alignLast === 'center' || raw.alignLast === 'right' || raw.alignLast === 'justify') {
+      paragraph.alignLast = raw.alignLast;
+    }
+    const leading = cleanNumber(raw.leadingPt, 1, 3200);
+    if (leading != null) paragraph.leadingPt = leading;
+    if (typeof raw.hyphenate === 'boolean') paragraph.hyphenate = raw.hyphenate;
+    if (raw.lineBreak === 'auto' || raw.lineBreak === 'balance' || raw.lineBreak === 'pretty') paragraph.lineBreak = raw.lineBreak;
+    if (typeof raw.lineBreakStrict === 'boolean') paragraph.lineBreakStrict = raw.lineBreakStrict;
     const indent = cleanNumber(raw.firstLineIndentMm, -200, 200);
     if (indent != null) paragraph.firstLineIndentMm = indent;
     const before = cleanNumber(raw.spaceBeforeMm, 0, 200);
@@ -157,7 +176,8 @@ export function paperRichTextIsUniform(paragraphs: PaperRichParagraph[] | undefi
   if (!paragraphs || paragraphs.length === 0) return true;
   if (paragraphs.length > 1) return false;
   const p = paragraphs[0];
-  if (p.listMarker || p.shading || p.borders || p.align) return false;
+  if (p.listMarker || p.shading || p.borders || p.align || p.alignLast || p.leadingPt != null) return false;
+  if (p.hyphenate != null || p.lineBreak || p.lineBreakStrict != null) return false;
   if (p.dropCapLines || p.leftIndentMm || p.rightIndentMm || p.hangingIndentMm || p.firstLineIndentMm) return false;
   if (p.spaceBeforeMm || p.spaceAfterMm) return false;
   return p.runs.every((run) => RUN_STYLE_KEYS.every((key) => run[key] === undefined));

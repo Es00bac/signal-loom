@@ -75,7 +75,7 @@ describe('desktop and Android packaging configuration', () => {
         {
           platform: 'windows',
           scriptName: 'dist:win',
-          script: 'npm run build && electron-builder --win nsis',
+          script: 'npm run build && npm run prepare:font-library && electron-builder --win nsis',
           configuredTargets: ['nsis:x64'],
           processDocumentPath: 'docs/packaging/windows-installer.md',
           hostRequirement: 'linux-cross-build-supported',
@@ -95,7 +95,7 @@ describe('desktop and Android packaging configuration', () => {
         {
           platform: 'macos',
           scriptName: 'dist:mac',
-          script: 'npm run build && electron-builder --mac dmg zip',
+          script: 'npm run build && npm run prepare:font-library && electron-builder --mac dmg zip',
           configuredTargets: ['dmg', 'zip'],
           processDocumentPath: 'docs/packaging/macos-build.md',
           hostRequirement: 'macos-required-for-final-package',
@@ -117,7 +117,7 @@ describe('desktop and Android packaging configuration', () => {
         {
           platform: 'linux',
           scriptName: 'dist:linux',
-          script: 'npm run build && electron-builder --linux AppImage deb',
+          script: 'npm run build && npm run prepare:font-library && electron-builder --linux AppImage deb',
           configuredTargets: ['AppImage', 'deb', 'snap'],
           processDocumentPath: 'docs/packaging/linux-build.md',
           hostRequirement: 'native-linux-build-host',
@@ -162,6 +162,12 @@ describe('desktop and Android packaging configuration', () => {
           evidence: ['ops/native-render -> ops/native-render'],
         },
         {
+          id: 'bundled-font-library-resource',
+          label: 'Desktop build includes the audited managed font library as a read-only extra resource.',
+          readiness: 'ready',
+          evidence: ['build/font-library -> font-library'],
+        },
+        {
           id: 'windows-installer-dependencies',
           label: 'Windows installer readiness depends on installed Electron and Electron Builder packages before packaging.',
           readiness: 'ready',
@@ -183,10 +189,11 @@ describe('desktop and Android packaging configuration', () => {
   });
 
   it('defines standard Windows and macOS Electron installer targets', () => {
-    expect(packageJson.scripts['dist:win']).toBe('npm run build && electron-builder --win nsis');
+    expect(packageJson.scripts['prepare:font-library']).toBe('node scripts/prepare-bundled-font-library.mjs');
+    expect(packageJson.scripts['dist:win']).toBe('npm run build && npm run prepare:font-library && electron-builder --win nsis');
     expect(packageJson.scripts['dist:win:msix']).toBeUndefined();
-    expect(packageJson.scripts['dist:mac']).toBe('npm run build && electron-builder --mac dmg zip');
-    expect(packageJson.scripts['dist:mac:zip']).toBe('npm run build && electron-builder --mac zip');
+    expect(packageJson.scripts['dist:mac']).toBe('npm run build && npm run prepare:font-library && electron-builder --mac dmg zip');
+    expect(packageJson.scripts['dist:mac:zip']).toBe('npm run build && npm run prepare:font-library && electron-builder --mac zip');
     expect(packageJson.scripts['icons:mac']).toBe('bash scripts/create-mac-icon.sh');
     expect(packageJson.build).toMatchObject({
       appId: 'studio.sloom.signalloom',
@@ -211,6 +218,10 @@ describe('desktop and Android packaging configuration', () => {
       'electron/**/*',
       'package.json',
     ]));
+    expect(packageJson.build.extraResources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ from: 'build/font-library', to: 'font-library' }),
+    ]));
+    expect(existsSync(join(process.cwd(), 'scripts/prepare-bundled-font-library.mjs'))).toBe(true);
     expect(existsSync(join(process.cwd(), 'scripts/create-mac-icon.sh'))).toBe(true);
     expect(existsSync(join(process.cwd(), 'build/mac/entitlements.mac.plist'))).toBe(true);
     const macBuildDoc = readFileSync(join(process.cwd(), 'docs/packaging/macos-build.md'), 'utf8');

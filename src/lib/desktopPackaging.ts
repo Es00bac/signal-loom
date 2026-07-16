@@ -42,7 +42,7 @@ export interface DesktopPackagingDependencyReadiness {
 }
 
 export interface DesktopPackagingChecklistItem {
-  id: 'desktop-app-files' | 'native-render-resource' | 'windows-installer-dependencies';
+  id: 'desktop-app-files' | 'native-render-resource' | 'bundled-font-library-resource' | 'windows-installer-dependencies';
   label: string;
   readiness: Extract<DesktopPackagingReadiness, 'ready'>;
   evidence: string[];
@@ -259,6 +259,14 @@ function buildDesktopPackagingDependencyChecklist(
       readiness: 'ready',
       evidence: extraResources
         .filter((resource) => resource.from === 'ops/native-render' && resource.to === 'ops/native-render')
+        .map((resource) => `${resource.from} -> ${resource.to}`),
+    },
+    {
+      id: 'bundled-font-library-resource',
+      label: 'Desktop build includes the audited managed font library as a read-only extra resource.',
+      readiness: 'ready',
+      evidence: extraResources
+        .filter((resource) => resource.from === 'build/font-library' && resource.to === 'font-library')
         .map((resource) => `${resource.from} -> ${resource.to}`),
     },
     {

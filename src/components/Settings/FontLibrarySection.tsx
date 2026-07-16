@@ -11,6 +11,7 @@ import {
   type OpenFontStyle,
 } from '../../lib/paperOpenFontCatalog';
 import { useI18n } from '../../lib/useI18n';
+import { BundledFontBrowser } from '../Common/BundledFontBrowser';
 
 export interface FontLibrarySectionProps {
   library: readonly OpenFontLibraryFace[];
@@ -32,6 +33,7 @@ export function FontLibrarySection({
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState<'browse' | 'select' | 'download' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [bundledPreview, setBundledPreview] = useState('');
 
   const visibleFamilies = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase('en-US');
@@ -107,6 +109,20 @@ export function FontLibrarySection({
           {t('settings.fonts.browse')}
         </button>
       </div>
+
+      <div className="space-y-2 rounded-xl border border-emerald-300/15 bg-emerald-400/[0.03] p-3">
+        <div>
+          <div className="text-xs font-semibold text-gray-100">Sloom publishing font library</div>
+          <p className="mt-1 text-[11px] leading-4 text-gray-500">116 audited families and 430 exact faces are bundled for offline design, Japanese/CJK typesetting, and commercial print.</p>
+        </div>
+        <BundledFontBrowser
+          onSelect={(family) => setBundledPreview(family.family)}
+          value={bundledPreview}
+          weight={400}
+        />
+      </div>
+
+      <div className="border-t border-gray-800 pt-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500">Additional online fonts</div>
 
       {error ? <p className="rounded border border-rose-400/25 bg-rose-400/10 px-3 py-2 text-sm text-rose-100">{error}</p> : null}
 

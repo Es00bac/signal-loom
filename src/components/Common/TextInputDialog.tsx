@@ -43,7 +43,7 @@ export const TextInputDialogView: React.FC<TextInputDialogViewProps> = ({ reques
   const submit = () => respond(value);
 
   return (
-    <div className="fixed inset-0 z-[151] flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs transition-opacity duration-200">
+    <div className="fixed inset-0 z-[151] flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs transition-opacity duration-200" data-text-input-dialog="true">
       <form
         aria-label={title}
         className="theme-popover flex w-full max-w-md flex-col gap-5 rounded-xl border border-cyan-500/20 bg-[#13161f] p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150"

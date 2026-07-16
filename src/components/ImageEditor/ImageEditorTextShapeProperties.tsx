@@ -129,7 +129,9 @@ export function TextPanel() {
         customAriaLabel="Text tool custom font family"
         onChange={(fontFamily) => set({ fontFamily })}
         selectAriaLabel="Text tool font stack"
+        style={settings.fontStyle}
         value={settings.fontFamily}
+        weight={settings.fontWeight}
       />
       <div className="grid grid-cols-2 gap-2">
         <Slider

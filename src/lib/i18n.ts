@@ -368,6 +368,7 @@ export const MESSAGES = {
   'paper.insp.sizePt': { en: 'Size pt', ja: 'サイズ pt' },
   'paper.insp.leading': { en: 'Leading', ja: '行送り' },
   'paper.insp.tracking': { en: 'Tracking', ja: '字送り' },
+  'paper.insp.kerning': { en: 'Kerning', ja: 'カーニング' },
   'paper.insp.fontColor': { en: 'Font Color', ja: 'フォントの色' },
   'paper.insp.paperFrameFontColor': { en: 'Paper frame font color', ja: 'ペーパーフレームのフォント色' },
   'paper.insp.spotInk': { en: 'Spot Ink', ja: 'スポットインキ' },

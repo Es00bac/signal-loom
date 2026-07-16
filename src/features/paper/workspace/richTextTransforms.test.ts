@@ -1,20 +1,101 @@
 import { describe, expect, it } from 'vitest';
 import { flattenPaperRichText } from '../../../lib/paperRichText';
-import type { PaperRichParagraph } from '../../../types/paper';
+import type { PaperRichParagraph, PaperTypography } from '../../../types/paper';
 import {
   BOLD_TOGGLE_PATCH,
+  applyFontFamilyToRichText,
+  applyTypographyPatchToRichText,
+  changedRichTypographyPatch,
   ensureRichTextForTransform,
   ITALIC_TOGGLE_PATCH,
   MAX_RUN_FONT_SIZE_PT,
   MIN_RUN_FONT_SIZE_PT,
   resolveRichEditorCommit,
   stepFontSize,
+  synchronizeRichTextWithTypographyChange,
   toggleParagraphBullet,
   toggleRunStyle,
   UNDERLINE_TOGGLE_PATCH,
 } from './richTextTransforms';
 
 const single = (text: string): PaperRichParagraph[] => [{ runs: [{ text }] }];
+
+describe('applyFontFamilyToRichText', () => {
+  it('replaces every explicit run family while preserving other run and paragraph formatting', () => {
+    const original: PaperRichParagraph[] = [{
+      align: 'center',
+      runs: [
+        { text: 'Woven ', fontFamily: 'Arial', fontWeight: '700' },
+        { text: 'signals', fontFamily: 'Georgia', fontStyle: 'italic', color: '#123456' },
+      ],
+    }];
+
+    expect(applyFontFamilyToRichText(original, 'BIZ UDPGothic')).toEqual([{
+      align: 'center',
+      runs: [
+        { text: 'Woven ', fontFamily: 'BIZ UDPGothic', fontWeight: '700' },
+        { text: 'signals', fontFamily: 'BIZ UDPGothic', fontStyle: 'italic', color: '#123456' },
+      ],
+    }]);
+    expect(original[0].runs[0].fontFamily).toBe('Arial');
+  });
+
+  it('leaves a plain-text frame without rich runs alone', () => {
+    expect(applyFontFamilyToRichText(undefined, 'BIZ UDPGothic')).toBeUndefined();
+  });
+});
+
+describe('rich Inspector typography synchronization', () => {
+  const baseTypography: PaperTypography = {
+    fontFamily: 'Inter', fontSizePt: 12, leadingPt: 15, tracking: 0, fontKerning: 'auto', align: 'left',
+    hyphenate: true, color: '#111111', fontWeight: '400', fontStyle: 'normal',
+  };
+
+  it('propagates only the changed property and preserves unrelated mixed run/paragraph styling', () => {
+    const original: PaperRichParagraph[] = [{
+      align: 'right',
+      leadingPt: 17,
+      runs: [
+        { text: 'Blue', color: '#0000ff', fontFamily: 'Inter', fontWeight: '700' },
+        { text: ' red', color: '#ff0000', fontFamily: 'Georgia', fontStyle: 'italic' },
+      ],
+    }];
+    const next = { ...baseTypography, color: '#22c55e' };
+    const result = synchronizeRichTextWithTypographyChange(original, baseTypography, next);
+
+    expect(result?.[0]).toMatchObject({ align: 'right', leadingPt: 17 });
+    expect(result?.[0].runs).toEqual([
+      { text: 'Blue', color: '#22c55e', fontFamily: 'Inter', fontWeight: '700' },
+      { text: ' red', color: '#22c55e', fontFamily: 'Georgia', fontStyle: 'italic' },
+    ]);
+  });
+
+  it('supports exact false, zero, and undefined values instead of treating them as absent patches', () => {
+    const original: PaperRichParagraph[] = [{
+      dropCapLines: 3,
+      lineBreakStrict: true,
+      runs: [{ text: 'Typeset', smallCaps: true, tracking: 80, emphasis: 'sesame' }],
+    }];
+    expect(applyTypographyPatchToRichText(original, {
+      dropCapLines: 0,
+      lineBreakStrict: false,
+      smallCaps: false,
+      tracking: 0,
+      emphasis: undefined,
+    })).toEqual([{
+      dropCapLines: 0,
+      lineBreakStrict: false,
+      runs: [{ text: 'Typeset', smallCaps: false, tracking: 0, emphasis: undefined }],
+    }]);
+  });
+
+  it('does not touch retained rich text for a frame-only or unchanged typography edit', () => {
+    const original: PaperRichParagraph[] = [{ runs: [{ text: 'Vertical', color: '#123456' }] }];
+    const next = { ...baseTypography, writingMode: 'vertical-rl' as const };
+    expect(changedRichTypographyPatch(baseTypography, next)).toEqual({});
+    expect(synchronizeRichTextWithTypographyChange(original, baseTypography, next)).toBe(original);
+  });
+});
 
 describe('toggleRunStyle — splitting at start/mid/end', () => {
   it('splits at the START of a run (overlap first, remainder after, no "before" piece)', () => {

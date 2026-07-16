@@ -25,7 +25,7 @@ for arg in "$@"; do
 done
 
 if [ "$build" -eq 1 ]; then
-  (cd "$project_root" && npm run build && npx electron-builder --linux dir)
+  (cd "$project_root" && npm run build && npm run prepare:font-library && npx electron-builder --linux dir)
 fi
 
 if [ ! -x "${unpacked}/signal-loom" ]; then

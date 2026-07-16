@@ -62,6 +62,7 @@ docs/superpowers
 # Packaging and build output
 /release/
 /test-results/
+/build/font-library/
 
 # Generated dev-dashboard snapshots
 ops/dev-dashboard/artifacts/

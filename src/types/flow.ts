@@ -513,6 +513,7 @@ export interface EditorTextDefaults {
 export interface EditorTextTypography {
   fontWeight?: number;
   fontStyle?: 'normal' | 'italic';
+  fontKerning?: 'auto' | 'normal' | 'none';
   lineHeightPercent?: number;
   letterSpacingPx?: number;
   textAlign?: 'left' | 'center' | 'right' | 'justify';

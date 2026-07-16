@@ -1017,6 +1017,51 @@ describe('sanitizeProjectDocument', () => {
 });
 
 describe('sanitizePaperSnapshot', () => {
+  it('preserves multiple Paper tabs and validates their union of managed assets', () => {
+    const firstAssetId = `sha256:${'1'.repeat(64)}`;
+    const secondAssetId = `sha256:${'2'.repeat(64)}`;
+    const makeDocument = (id: string, title: string, assetId: string) => ({
+      id,
+      title,
+      pages: [{
+        id: `${id}-page`,
+        frames: [{
+          id: `${id}-frame`,
+          asset: {
+            label: title,
+            kind: 'image',
+            locator: {
+              kind: 'managed',
+              ref: {
+                id: assetId,
+                sha256: assetId.slice('sha256:'.length),
+                mimeType: 'image/png',
+                byteLength: 3,
+              },
+            },
+          },
+        }],
+      }],
+    });
+    const english = makeDocument('paper-en', 'English', firstAssetId);
+    const japanese = makeDocument('paper-ja', '日本語', secondAssetId);
+
+    const snapshot = sanitizePaperSnapshot({
+      document: japanese,
+      documents: [
+        { id: 'tab-en', document: english, assetIds: [firstAssetId], tool: 'select', zoom: 0.8 },
+        { id: 'tab-ja', document: japanese, assetIds: [secondAssetId], tool: 'text', zoom: 1.2 },
+      ],
+      activeDocumentId: 'tab-ja',
+      assetIds: [firstAssetId, secondAssetId],
+    });
+
+    expect(snapshot?.documents?.map((candidate) => candidate.document.title)).toEqual(['English', '日本語']);
+    expect(snapshot?.activeDocumentId).toBe('tab-ja');
+    expect(snapshot?.document?.title).toBe('日本語');
+    expect(snapshot?.assetIds).toEqual([firstAssetId, secondAssetId]);
+  });
+
   it('rejects malformed Paper asset references on project restore', () => {
     expect(sanitizePaperSnapshot({
       document: {

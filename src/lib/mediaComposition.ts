@@ -1181,6 +1181,7 @@ export async function renderComicCard(
     textAlign: typography?.textAlign ?? clip.comicTextAlign ?? 'center',
     textFontWeight: typography?.fontWeight,
     textFontStyle: typography?.fontStyle,
+    textFontKerning: typography?.fontKerning,
     textStrokeColor: typography?.strokeColor,
     textStrokeWidthPx: typography?.strokeWidthPx,
     textShadowColor: typography?.shadowColor,
@@ -1261,6 +1262,7 @@ interface TypesetPaintStyle {
   fontSizePx: number;
   fontWeight: number;
   fontStyle: 'normal' | 'italic';
+  fontKerning?: 'auto' | 'normal' | 'none';
   letterSpacingPx: number;
   color: string;
   strokeColor?: string;
@@ -1291,6 +1293,7 @@ function paintTypesetTextBlock(
   context.save();
   const stylePrefix = style.fontStyle === 'italic' ? 'italic ' : '';
   context.font = `${stylePrefix}${style.fontWeight} ${style.fontSizePx}px ${style.fontFamily}`;
+  context.fontKerning = style.fontKerning ?? 'auto';
   if ('letterSpacing' in context) {
     (context as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${style.letterSpacingPx}px`;
   }
@@ -1356,6 +1359,7 @@ function paintArcTextRun(
     fontSizePx: style.fontSizePx,
     fontWeight: style.fontWeight,
     fontStyle: style.fontStyle,
+    fontKerning: style.fontKerning ?? 'auto',
     letterSpacingPx: style.letterSpacingPx,
   };
   const glyphs = computeArcTextGlyphs(
@@ -1397,6 +1401,7 @@ export function drawTextStageObject(
       typography: {
         fontWeight,
         fontStyle,
+        fontKerning: typography?.fontKerning,
         lineHeightPercent: typography?.lineHeightPercent ?? 115,
         letterSpacingPx: typography?.letterSpacingPx ?? 0,
         textAlign: typography?.textAlign ?? 'center',
@@ -1413,6 +1418,7 @@ export function drawTextStageObject(
       fontSizePx: object.fontSizePx,
       fontWeight,
       fontStyle,
+      fontKerning: typography?.fontKerning,
       letterSpacingPx: typography?.letterSpacingPx ?? 0,
       color: object.color,
       strokeColor: typography?.strokeColor,
@@ -1449,6 +1455,7 @@ type ComicPaintObject = Omit<
   textAlign: 'left' | 'center' | 'right' | 'justify';
   textFontWeight?: number;
   textFontStyle?: 'normal' | 'italic';
+  textFontKerning?: 'auto' | 'normal' | 'none';
   textStrokeColor?: string;
   textStrokeWidthPx?: number;
   textShadowColor?: string;
@@ -1539,6 +1546,7 @@ export function drawComicStageObject(
       typography: {
         fontWeight,
         fontStyle,
+        fontKerning: object.textFontKerning,
         lineHeightPercent: object.lineHeightPercent,
         letterSpacingPx: object.letterSpacingPx,
         textAlign: object.textAlign,
@@ -1555,6 +1563,7 @@ export function drawComicStageObject(
       fontSizePx: object.fontSizePx,
       fontWeight,
       fontStyle,
+      fontKerning: object.textFontKerning,
       letterSpacingPx: object.letterSpacingPx,
       color: object.textColor,
       strokeColor: object.textStrokeColor,
@@ -2225,6 +2234,7 @@ export async function renderTextCard({
       typography: {
         fontWeight,
         fontStyle,
+        fontKerning: resolved.fontKerning,
         lineHeightPercent: resolved.lineHeightPercent ?? TEXT_CARD_DEFAULT_LINE_HEIGHT_PERCENT,
         letterSpacingPx,
         textAlign: resolved.textAlign ?? 'center',
@@ -2263,6 +2273,7 @@ export async function renderTextCard({
       fontSizePx: safeFontSizePx,
       fontWeight,
       fontStyle,
+      fontKerning: resolved.fontKerning,
       letterSpacingPx,
       color: color || '#f3f4f6',
       strokeColor: resolved.strokeColor,

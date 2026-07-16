@@ -3,7 +3,7 @@ import type { EditorWorkspaceSnapshot } from '../store/editorStore';
 import type { ImageEditorProjectSnapshot } from '../store/imageEditorStore';
 import type { SourceBinLibraryItem, SourceBinProjectSnapshot } from '../store/sourceBinStore';
 import type { AppNode, EditorSourceKind, EnvelopeItem, NodeData, NodeResultAttempt, ResultType, WorkspaceView } from '../types/flow';
-import type { PaperDocumentSnapshot, PaperTool } from '../types/paper';
+import type { PaperDocumentSnapshot, PaperTool, PaperWorkspaceDocumentSnapshot } from '../types/paper';
 import { isBinaryAssetRef, type BinaryAssetId } from '../shared/assets/contentAddressedAsset';
 import type { ImageDocumentSnapshot, ImageLayer, ImageLayerEditTarget, ImageQuickActionMacro, LayerType } from '../types/imageEditor';
 import type { FlowProjectDocument } from './projectLibrary';
@@ -357,8 +357,36 @@ export function sanitizePaperSnapshot(snapshot: unknown): Partial<PaperDocumentS
   if (snapshot === undefined) return undefined;
   if (!isRecord(snapshot) || !isRecord(snapshot.document) || !Array.isArray(snapshot.document.pages)) return undefined;
 
-  const assetIds = collectPaperSnapshotAssetIds(snapshot.document);
-  if (!assetIds) return undefined;
+  const legacyDocument = sanitizePaperWorkspaceDocumentSnapshot({
+    id: typeof snapshot.activeDocumentId === 'string'
+      ? snapshot.activeDocumentId
+      : stringValue(snapshot.document.id, 'paper-document'),
+    document: snapshot.document,
+    assetIds: snapshot.documents === undefined ? snapshot.assetIds : undefined,
+    selectedPageId: snapshot.selectedPageId,
+    selectedFrameId: snapshot.selectedFrameId,
+    selectedFrameIds: snapshot.selectedFrameIds,
+    tool: snapshot.tool,
+    zoom: snapshot.zoom,
+  });
+  if (!legacyDocument) return undefined;
+
+  let documents: PaperWorkspaceDocumentSnapshot[] | undefined;
+  if (snapshot.documents !== undefined) {
+    if (!Array.isArray(snapshot.documents) || snapshot.documents.length === 0) return undefined;
+    const sanitizedDocuments = snapshot.documents.map((candidate, index) =>
+      sanitizePaperWorkspaceDocumentSnapshot(candidate, index));
+    if (sanitizedDocuments.some((candidate) => candidate === undefined)) return undefined;
+    documents = sanitizedDocuments as PaperWorkspaceDocumentSnapshot[];
+    if (new Set(documents.map((candidate) => candidate.id)).size !== documents.length) return undefined;
+  }
+
+  const activeDocumentId = typeof snapshot.activeDocumentId === 'string'
+    && documents?.some((candidate) => candidate.id === snapshot.activeDocumentId)
+    ? snapshot.activeDocumentId
+    : documents?.[0]?.id;
+  const activeDocument = documents?.find((candidate) => candidate.id === activeDocumentId) ?? legacyDocument;
+  const assetIds = [...new Set((documents ?? [legacyDocument]).flatMap((candidate) => candidate.assetIds ?? []))].sort();
   if (snapshot.assetIds !== undefined) {
     if (!Array.isArray(snapshot.assetIds)) return undefined;
     const declaredAssetIds = snapshot.assetIds.filter((assetId): assetId is BinaryAssetId => isBinaryAssetId(assetId));
@@ -368,15 +396,43 @@ export function sanitizePaperSnapshot(snapshot: unknown): Partial<PaperDocumentS
   }
 
   return {
-    document: snapshot.document as unknown as PaperDocumentSnapshot['document'],
+    document: activeDocument.document,
     assetIds,
-    selectedPageId: optionalString(snapshot.selectedPageId),
-    selectedFrameId: optionalString(snapshot.selectedFrameId),
-    selectedFrameIds: Array.isArray(snapshot.selectedFrameIds)
-      ? snapshot.selectedFrameIds.filter((frameId): frameId is string => typeof frameId === 'string')
+    selectedPageId: activeDocument.selectedPageId,
+    selectedFrameId: activeDocument.selectedFrameId,
+    selectedFrameIds: activeDocument.selectedFrameIds,
+    tool: activeDocument.tool,
+    zoom: activeDocument.zoom,
+    documents,
+    activeDocumentId,
+  };
+}
+
+function sanitizePaperWorkspaceDocumentSnapshot(
+  value: unknown,
+  index = 0,
+): PaperWorkspaceDocumentSnapshot | undefined {
+  if (!isRecord(value) || !isRecord(value.document) || !Array.isArray(value.document.pages)) return undefined;
+  const assetIds = collectPaperSnapshotAssetIds(value.document);
+  if (!assetIds) return undefined;
+  if (value.assetIds !== undefined) {
+    if (!Array.isArray(value.assetIds)) return undefined;
+    const declaredAssetIds = value.assetIds.filter((assetId): assetId is BinaryAssetId => isBinaryAssetId(assetId));
+    if (declaredAssetIds.length !== value.assetIds.length || !samePaperAssetIds(assetIds, declaredAssetIds)) {
+      return undefined;
+    }
+  }
+  return {
+    id: stringValue(value.id, `paper-document-${index + 1}`),
+    document: value.document as unknown as PaperWorkspaceDocumentSnapshot['document'],
+    assetIds,
+    selectedPageId: optionalString(value.selectedPageId),
+    selectedFrameId: optionalString(value.selectedFrameId),
+    selectedFrameIds: Array.isArray(value.selectedFrameIds)
+      ? value.selectedFrameIds.filter((frameId): frameId is string => typeof frameId === 'string')
       : undefined,
-    tool: VALID_PAPER_TOOLS.has(snapshot.tool as PaperTool) ? snapshot.tool as PaperTool : 'select',
-    zoom: finiteNumber(snapshot.zoom, 0.8),
+    tool: VALID_PAPER_TOOLS.has(value.tool as PaperTool) ? value.tool as PaperTool : 'select',
+    zoom: finiteNumber(value.zoom, 0.8),
   };
 }
 

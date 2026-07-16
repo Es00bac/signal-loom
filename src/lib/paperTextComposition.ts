@@ -276,7 +276,7 @@ function hasStrongScript(text: string): boolean {
 }
 
 function paperFeatures(typography: PaperTypography, run: PaperTextRun, vertical: boolean): Record<string, boolean | number> {
-  const features: Record<string, boolean | number> = { kern: true, liga: true };
+  const features: Record<string, boolean | number> = { kern: typography.fontKerning !== 'none', liga: true };
   if (typography.smallCaps || run.smallCaps) features.smcp = true;
   if (typography.numericStyle === 'oldstyle') features.onum = true;
   if (typography.numericStyle === 'lining') features.lnum = true;

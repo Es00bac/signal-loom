@@ -92,6 +92,15 @@ describe('Electron main process source guards', () => {
     expect(protocolHandler).not.toContain('registerNativeAssetCapability(filePath)');
   });
 
+  it('serves bundled fonts through a read-only contained protocol root', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+
+    expect(source).toContain("scheme: 'signal-loom-font'");
+    expect(source).toContain('resolveBundledFontLibraryRoot');
+    expect(source).toMatch(/protocol\.handle\('signal-loom-font'[\s\S]*resolveBundledFontResourcePath\(bundledFontLibraryRoot, request\.url\)/);
+    expect(source).toMatch(/protocol\.handle\('signal-loom-font'[\s\S]*status: 404/);
+  });
+
   it('registers opaque native asset ids from source-library capabilities', () => {
     const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
 
