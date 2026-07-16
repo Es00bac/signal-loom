@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultPaperDocument } from './paperDocument';
-import { exportPaperDocumentToPdfx, type OwnedPaperPdfxTransform, type PaperPdfxPipelineDeps } from './paperPdfxPipeline';
+import { exportPaperDocumentToPdfx, type PaperPdfxPipelineDeps } from './paperPdfxPipeline';
 import {
   disposeOwnedPaperResources,
   getPaperResourceCleanupError,
@@ -10,6 +10,14 @@ import {
 } from './paperColorManagement';
 import type { PaperOutputProfileResolution } from './paperManagedIccProfiles';
 import type { BinaryAssetId } from '../shared/assets/contentAddressedAsset';
+
+type Assert<T extends true> = T;
+type PipelineOwnedTransform = Awaited<ReturnType<PaperPdfxPipelineDeps['createTransform']>>;
+type PipelineBorrowedTransform = Omit<PipelineOwnedTransform, 'dispose'> & { dispose?: () => void };
+/** PDF/X takes ownership, so an otherwise-identical optional disposer cannot satisfy its dependency. */
+void (true satisfies Assert<
+  PipelineBorrowedTransform extends PipelineOwnedTransform ? false : true
+>);
 
 type FailurePoint = 'create-srgb' | 'open-cmyk' | 'wrong-space' | 'create-transform' | 'create-proofing-transform';
 
@@ -335,17 +343,11 @@ describe('AUD-038 PDF/X transform ownership (red baseline)', () => {
     const borrowedTransform: IccCmykTransform = {
       kind: 'icc', profileName: 'Borrowed', rgbToCmyk: () => ({ c: 0, m: 0, y: 0, k: 0 }),
     };
-    // @ts-expect-error PDF/X owns this dependency and therefore requires dispose().
-    const invalidDeps: PaperPdfxPipelineDeps = {
-      createTransform: async () => borrowedTransform,
-      rasterizePage: async () => ({ rgba: new Uint8Array([255, 255, 255, 255]), widthPx: 1, heightPx: 1 }),
-    };
-    void invalidDeps;
 
     await expect(exportPaperDocumentToPdfx(document, {
       standard: 'pdf-x-1a', outputProfile, flattenAllPages: true,
     }, {
-      createTransform: async () => borrowedTransform as OwnedPaperPdfxTransform,
+      createTransform: async () => borrowedTransform as PipelineOwnedTransform,
       rasterizePage: async () => ({ rgba: new Uint8Array([255, 255, 255, 255]), widthPx: 1, heightPx: 1 }),
     })).rejects.toThrow(/fresh owned transform with dispose/i);
   });
