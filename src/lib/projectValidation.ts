@@ -97,10 +97,18 @@ function sanitizeResultHistory(value: unknown): NodeResultAttempt[] | undefined 
 
   return value.flatMap((attempt, index) => {
     if (!isRecord(attempt)) return [];
-    const result = optionalString(attempt.result);
     const resultType = optionalString(attempt.resultType);
+    const result = resultType === 'boolean'
+      ? (typeof attempt.result === 'boolean'
+        ? attempt.result
+        : attempt.result === 'true'
+          ? true
+          : attempt.result === 'false'
+            ? false
+            : undefined)
+      : optionalString(attempt.result);
 
-    if (!result || !resultType || !VALID_RESULT_TYPES.has(resultType as ResultType)) {
+    if (result === undefined || result === '' || !resultType || !VALID_RESULT_TYPES.has(resultType as ResultType)) {
       return [];
     }
 
@@ -219,6 +227,21 @@ function sanitizeNodeData(value: unknown): NodeData {
   return data;
 }
 
+function normalizeVisionVerifyNodeData(data: NodeData): NodeData {
+  if (data.result === true || data.result === false) {
+    return { ...data, resultType: 'boolean' };
+  }
+
+  // AUD-033 stored the old string wire form with a text tag. Convert saved
+  // verify decisions while loading so an old selected attempt cannot re-open
+  // as a text result.
+  if (data.result === 'true' || data.result === 'false') {
+    return { ...data, result: data.result === 'true', resultType: 'boolean' };
+  }
+
+  return data;
+}
+
 export function sanitizeFlowSnapshot(snapshot: unknown): FlowProjectDocument['flow'] {
   if (!isRecord(snapshot) || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.edges)) {
     throw new Error('The selected file is not a valid Sloom Studio .sloom project: flow nodes and edges must be arrays.');
@@ -246,7 +269,9 @@ export function sanitizeFlowSnapshot(snapshot: unknown): FlowProjectDocument['fl
         x: finiteNumber(rawPosition?.x, 0),
         y: finiteNumber(rawPosition?.y, 0),
       },
-      data: sanitizeNodeData(node.data),
+      data: rawType === 'visionVerifyNode'
+        ? normalizeVisionVerifyNodeData(sanitizeNodeData(node.data))
+        : sanitizeNodeData(node.data),
     } as AppNode];
   });
 

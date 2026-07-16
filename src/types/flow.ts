@@ -734,7 +734,8 @@ export interface VideoExportPresetPlanData {
 
 export interface NodeResultAttempt {
   id: string;
-  result: string;
+  /** The typed value emitted by a node. Media and text results are strings; Boolean ports retain booleans. */
+  result: string | boolean;
   resultType: ResultType;
   statusMessage: string;
   createdAt: string;
@@ -900,7 +901,8 @@ export interface NodeData {
   statusMessage?: string;
   collapsed?: boolean;
   customTitle?: string;
-  result?: string;
+  /** The typed value emitted by a node. Media and text results are strings; Boolean ports retain booleans. */
+  result?: string | boolean;
   resultType?: ResultType;
   declaredOutputType?: ResultType;
   resultHistory?: NodeResultAttempt[];

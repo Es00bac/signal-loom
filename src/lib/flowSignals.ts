@@ -206,8 +206,8 @@ export function evaluateNodeSignal(
     case 'slimgNode':
       return scalarSignal('image', String(node.data.result ?? ''), node.id, { mimeType: node.data.resultMimeType });
     case 'visionVerifyNode': {
-      const raw = String(node.data.result ?? 'false');
-      return scalarSignal('boolean', parseBoolean(raw), node.id, { label: raw });
+      const value = parseBoolean(node.data.result ?? false);
+      return scalarSignal('boolean', value, node.id, { label: String(value) });
     }
     case 'imageGen':
     case 'cropImageNode':

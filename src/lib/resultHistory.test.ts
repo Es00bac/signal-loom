@@ -51,4 +51,26 @@ describe('resolveSelectedResultAttempt', () => {
     expect(resolveSelectedResultAttempt(next.attempts, next.attempts[1].id)?.result).toBe('second-result');
     expect(resolveSelectedResultAttempt(next.attempts, 'missing')).toBeUndefined();
   });
+
+  it('preserves Boolean false and true when selecting an earlier verification run', () => {
+    const failed = appendResultAttempt([], {
+      result: false,
+      resultType: 'boolean',
+      statusMessage: 'Verified: FALSE',
+    });
+    const passed = appendResultAttempt(failed.attempts, {
+      result: true,
+      resultType: 'boolean',
+      statusMessage: 'Verified: TRUE',
+    });
+
+    expect(resolveSelectedResultAttempt(passed.attempts, failed.selectedAttemptId)).toMatchObject({
+      result: false,
+      resultType: 'boolean',
+    });
+    expect(resolveSelectedResultAttempt(passed.attempts, passed.selectedAttemptId)).toMatchObject({
+      result: true,
+      resultType: 'boolean',
+    });
+  });
 });

@@ -18,6 +18,20 @@ function createNode(node: Partial<AppNode> & Pick<AppNode, 'id' | 'type'>): AppN
 }
 
 describe('flow signal evaluation', () => {
+  it.each([
+    [true, false],
+    [false, true],
+  ])('routes Vision Verify %s as a typed Boolean to downstream logic', (verification, expectedNot) => {
+    const nodes = [
+      createNode({ id: 'verify', type: 'visionVerifyNode', data: { result: verification, resultType: 'boolean' } }),
+      createNode({ id: 'not', type: 'logicNode', data: { operation: 'NOT' } }),
+    ];
+    const edges: Edge[] = [{ id: 'verify-not', source: 'verify', target: 'not', targetHandle: 'A' }];
+
+    expect(evaluateNodeSignal('verify', nodes, edges)).toMatchObject({ kind: 'boolean', value: verification });
+    expect(evaluateNodeSignal('not', nodes, edges)).toMatchObject({ kind: 'boolean', value: expectedNot });
+  });
+
   it('renders local string-template slots across casing without corrupting double braces or literal braces', () => {
     const nodes = [
       createNode({ id: 'slot-a', type: 'textNode', data: { prompt: 'alpha' } }),

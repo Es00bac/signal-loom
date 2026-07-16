@@ -11,7 +11,7 @@ function VisionVerifyNodeComponent({ id, data }: AppNodeProps) {
   const patchNodeData = useFlowStore((state) => state.patchNodeData);
   const nodes = useFlowStore((state) => state.nodes);
   const edges = useFlowStore((state) => state.edges);
-  const result = data.result as string | undefined;
+  const result = data.result;
   const explanation = data.usage?.notes?.[0] as string | undefined;
 
   const handleRun = () => {
@@ -102,7 +102,7 @@ function VisionVerifyNodeComponent({ id, data }: AppNodeProps) {
         {result !== undefined && (
           <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-gray-700 bg-gray-900/60 p-2">
             <div className="flex items-center gap-1.5 font-bold">
-              {result === 'true' ? (
+              {result === true || result === 'true' ? (
                 <>
                   <CheckCircle2 size={14} className="text-emerald-400" />
                   <span className="text-emerald-400 uppercase">Passed (Consistent)</span>
@@ -123,7 +123,7 @@ function VisionVerifyNodeComponent({ id, data }: AppNodeProps) {
         )}
 
         <div className="mt-1 leading-5 text-gray-500 text-[10px]">
-          Compares the input image against the prompt description and outputs a boolean <span className="text-emerald-400 font-bold">"true"</span> or <span className="text-rose-400 font-bold">"false"</span> for downstream logic.
+          Compares the input image against the prompt description and outputs the Boolean <span className="text-emerald-400 font-bold">true</span> or <span className="text-rose-400 font-bold">false</span> for downstream logic.
         </div>
       </div>
     </BaseNode>

@@ -464,7 +464,7 @@ export function evaluateNodeTextForMonitor(
   }
 
   if (node.type === 'visionVerifyNode') {
-    return (node.data.result as string | undefined) || 'false';
+    return node.data.result === true ? 'true' : 'false';
   }
 
   if (node.type === 'seedSequencerNode') {

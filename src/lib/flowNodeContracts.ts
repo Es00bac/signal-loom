@@ -400,7 +400,7 @@ export const FLOW_NODE_CONTRACTS = {
   runMeNode: define('runMeNode', 'sink', 'Provide an explicit button that executes its complete upstream dependency graph.', resolvers.runMeNode, ['envelope'], []),
   packageNode: define('packageNode', 'container', 'Bundle an image asset and descriptive text as one package value.', resolvers.packageNode, ['imageGen', 'textNode'], ['sourceBin']),
   loopNode: define('loopNode', 'control', 'Repeat one connected value a fixed number of times as a list.', resolvers.loopNode, ['textNode'], ['imageGen']),
-  visionVerifyNode: define('visionVerifyNode', 'transform', 'Verify a generated image against a prompt and optional reference image.', resolvers.visionVerifyNode, ['imageGen', 'textNode'], ['conditionalNode'], 'text'),
+  visionVerifyNode: define('visionVerifyNode', 'transform', 'Verify a generated image against a prompt and optional reference image.', resolvers.visionVerifyNode, ['imageGen', 'textNode'], ['conditionalNode'], 'boolean'),
   logicNode: define('logicNode', 'transform', 'Apply AND, OR, XOR, or NOT to explicit boolean inputs.', resolvers.logicNode, ['comparisonNode'], ['conditionalNode']),
   conditionalNode: define('conditionalNode', 'control', 'Select one of two compatible values from a boolean condition.', resolvers.conditionalNode, ['logicNode'], ['valueMonitorNode']),
   comparisonNode: define('comparisonNode', 'transform', 'Compare two text or number values and emit a boolean.', resolvers.comparisonNode, ['valueNode'], ['logicNode']),

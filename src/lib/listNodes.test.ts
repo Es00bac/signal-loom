@@ -445,6 +445,19 @@ describe('list node model', () => {
   });
 });
 describe('evaluateNodeTextForMonitor', () => {
+  it.each([
+    [true, 'true'],
+    [false, 'false'],
+  ])('serializes Vision Verify Boolean %s for generic text/monitor consumers', (result, expected) => {
+    const nodes = [createNode({
+      id: 'verify',
+      type: 'visionVerifyNode',
+      data: { result, resultType: 'boolean' },
+    })];
+
+    expect(evaluateNodeTextForMonitor('verify', nodes, [])).toBe(expected);
+  });
+
   it('correctly parses math node edge cases (empty strings, div by zero, modulo by zero)', () => {
     const nodes = [
       createNode({

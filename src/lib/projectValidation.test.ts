@@ -125,6 +125,50 @@ describe('sanitizeProjectDocument', () => {
     expect(project.flow.nodes[0].data.resultHistory).toEqual([]);
   });
 
+  it('restores a selected Vision Verify Boolean result from history without string coercion', () => {
+    const project = projectWith({
+      flow: {
+        version: 3,
+        nodes: [{
+          id: 'verify',
+          type: 'visionVerifyNode',
+          position: { x: 1, y: 2 },
+          data: {
+            selectedResultId: 'failed',
+            resultHistory: [
+              { id: 'failed', result: false, resultType: 'boolean', statusMessage: 'Verified: FALSE', createdAt: '2026-07-16T00:00:00.000Z' },
+              { id: 'passed', result: true, resultType: 'boolean', statusMessage: 'Verified: TRUE', createdAt: '2026-07-16T00:01:00.000Z' },
+            ],
+          },
+        }],
+        edges: [],
+      },
+    });
+
+    expect(project.flow.nodes[0].data).toMatchObject({ result: false, resultType: 'boolean', selectedResultId: 'failed' });
+    expect(project.flow.nodes[0].data.resultHistory).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'failed', result: false, resultType: 'boolean' }),
+      expect.objectContaining({ id: 'passed', result: true, resultType: 'boolean' }),
+    ]));
+  });
+
+  it('migrates the old Vision Verify string result into the Boolean port representation', () => {
+    const project = projectWith({
+      flow: {
+        version: 3,
+        nodes: [{
+          id: 'verify',
+          type: 'visionVerifyNode',
+          position: { x: 1, y: 2 },
+          data: { result: 'false', resultType: 'text' },
+        }],
+        edges: [],
+      },
+    });
+
+    expect(project.flow.nodes[0].data).toMatchObject({ result: false, resultType: 'boolean' });
+  });
+
   it('repairs null node position and null node data', () => {
     const project = projectWith({
       flow: {

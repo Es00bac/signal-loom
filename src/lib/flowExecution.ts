@@ -201,7 +201,7 @@ export interface ExecuteNodeRequestOptions {
 }
 
 interface ExecutionResult {
-  result: string;
+  result: string | boolean;
   resultType: ResultType;
   statusMessage: string;
   blob?: Blob;
@@ -577,8 +577,25 @@ async function executeNodeViaBackendProxy(
     throw new Error(payload.error);
   }
 
-  if (typeof payload.result !== 'string' || typeof payload.resultType !== 'string') {
+  const acceptsBooleanResult = node.type === 'visionVerifyNode' && typeof payload.result === 'boolean';
+  if ((typeof payload.result !== 'string' && !acceptsBooleanResult) || typeof payload.resultType !== 'string') {
     throw new Error('Backend proxy returned an invalid execution payload.');
+  }
+
+  if (node.type === 'visionVerifyNode') {
+    const verification = parseVisionVerificationResponse(payload.result);
+    const existingNotes = payload.usage?.notes ?? [];
+    return {
+      result: verification.value,
+      resultType: 'boolean',
+      statusMessage: payload.statusMessage ?? `Verified: ${verification.value ? 'TRUE' : 'FALSE'}`,
+      usage: {
+        ...payload.usage,
+        notes: verification.explanation && !existingNotes.includes(verification.explanation)
+          ? [verification.explanation, ...existingNotes]
+          : existingNotes,
+      },
+    };
   }
 
   return {
@@ -667,20 +684,18 @@ async function executeVisionVerifyNode(
       }),
       label: 'Vertex Gemini vision verification',
     })).trim() || 'false\nNo response received.';
-    const lines = responseText.split('\n');
-    const booleanResult = lines[0].toLowerCase().includes('true') ? 'true' : 'false';
-    const explanation = lines.slice(1).join('\n').trim() || lines[0];
+    const verification = parseVisionVerificationResponse(responseText);
 
     return {
-      result: booleanResult,
-      resultType: 'text',
-      statusMessage: `Verified: ${booleanResult.toUpperCase()}`,
+      result: verification.value,
+      resultType: 'boolean',
+      statusMessage: `Verified: ${verification.value ? 'TRUE' : 'FALSE'}`,
       usage: {
         source: 'actual',
         confidence: 'measured',
         provider: 'gemini',
         modelId,
-        notes: [explanation, 'Generated through Vertex AI desktop auth.'],
+        notes: [verification.explanation, 'Generated through Vertex AI desktop auth.'],
       },
     };
   }
@@ -699,14 +714,12 @@ async function executeVisionVerifyNode(
   });
 
   const responseText = response.text?.trim() ?? 'false\nNo response received.';
-  const lines = responseText.split('\n');
-  const booleanResult = lines[0].toLowerCase().includes('true') ? 'true' : 'false';
-  const explanation = lines.slice(1).join('\n').trim() || lines[0];
+  const verification = parseVisionVerificationResponse(responseText);
 
   return {
-    result: booleanResult,
-    resultType: 'text',
-    statusMessage: `Verified: ${booleanResult.toUpperCase()}`,
+    result: verification.value,
+    resultType: 'boolean',
+    statusMessage: `Verified: ${verification.value ? 'TRUE' : 'FALSE'}`,
     usage: {
       source: 'actual',
       confidence: 'measured',
@@ -714,8 +727,26 @@ async function executeVisionVerifyNode(
       modelId,
       inputTokens: response.usageMetadata?.promptTokenCount ?? 100,
       totalTokens: response.usageMetadata?.totalTokenCount ?? 100,
-      notes: [explanation],
+      notes: [verification.explanation],
     },
+  };
+}
+
+/**
+ * Gemini is instructed to emit the decision on line one and a human-readable
+ * explanation after it. Keep that provider parsing contract, but turn the
+ * decision into the actual Boolean carried by the Flow port.
+ */
+function parseVisionVerificationResponse(response: string | boolean): { value: boolean; explanation: string } {
+  if (typeof response === 'boolean') {
+    return { value: response, explanation: '' };
+  }
+
+  const lines = response.split('\n');
+  const decision = lines[0]?.toLowerCase().includes('true') ?? false;
+  return {
+    value: decision,
+    explanation: lines.slice(1).join('\n').trim() || lines[0] || 'No response received.',
   };
 }
 
