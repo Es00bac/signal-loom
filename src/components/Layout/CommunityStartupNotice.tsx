@@ -33,6 +33,7 @@ function writeLastShownDay(): void {
 export const CommunityStartupNotice: React.FC = () => {
   const license = useSettingsStore((state) => state.license);
   const licenseKey = useSettingsStore((state) => state.licenseKey);
+  const settingsHydrated = useSettingsStore((state) => state.settingsHydrated);
   const revalidateLicense = useSettingsStore((state) => state.revalidateLicense);
   const openSettings = useSettingsStore((state) => state.openSettings);
 
@@ -41,7 +42,9 @@ export const CommunityStartupNotice: React.FC = () => {
   const decidedRef = React.useRef(false);
 
   React.useEffect(() => {
-    if (decidedRef.current) {
+    // AUD-015: encrypted settings hydrate asynchronously; deciding before they land would
+    // validate the default empty key and lock a licensed user to Community for the session.
+    if (!settingsHydrated || decidedRef.current) {
       return;
     }
     decidedRef.current = true;
@@ -60,7 +63,7 @@ export const CommunityStartupNotice: React.FC = () => {
       writeLastShownDay();
       setVisible(true);
     })();
-  }, [revalidateLicense]);
+  }, [settingsHydrated, revalidateLicense]);
 
   React.useEffect(() => {
     if (!visible || secondsLeft <= 0) {

@@ -291,6 +291,13 @@ interface SettingsState {
   removeLicenseKey: () => void;
   /** Re-verify the persisted key (app boot; license is fail-closed after rehydration). */
   revalidateLicense: () => Promise<void>;
+  /**
+   * True once the persisted encrypted settings snapshot has finished hydrating — or definitively
+   * failed to (missing storage, undecryptable foreign-profile envelope) — so in-memory state is
+   * authoritative. Startup decisions that read persisted identity (the commercial license above
+   * all) must wait for this instead of judging the pre-hydration defaults.
+   */
+  settingsHydrated: boolean;
 }
 
 const INITIAL_API_KEYS: ApiKeys = {
@@ -354,6 +361,32 @@ function createEncryptedSettingsStorage(): StateStorage {
       }
     },
   };
+}
+
+/**
+ * Hydration latch (AUD-015): the encrypted settings storage above decrypts asynchronously, so the
+ * store exists — with default state — before the persisted snapshot lands. This promise settles
+ * exactly once, when persist finishes its hydration attempt (restored, empty, or failed), letting
+ * license validation and other persisted-identity readers sequence themselves after it.
+ */
+let settingsHydrationSettled = false;
+let resolveSettingsHydration: () => void = () => {};
+const settingsHydrationPromise = new Promise<void>((resolve) => {
+  resolveSettingsHydration = resolve;
+});
+
+/** Resolves once the persisted settings snapshot has hydrated (or definitively failed to). */
+export function waitForSettingsHydration(): Promise<void> {
+  return settingsHydrationPromise;
+}
+
+function markSettingsHydrated(): void {
+  if (settingsHydrationSettled) {
+    return;
+  }
+  settingsHydrationSettled = true;
+  useSettingsStore.setState({ settingsHydrated: true });
+  resolveSettingsHydration();
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -544,6 +577,7 @@ export const useSettingsStore = create<SettingsState>()(
         set((state) => ({ isSettingsOpen: !state.isSettingsOpen })),
       licenseKey: '',
       license: { licensed: false },
+      settingsHydrated: false,
       setLicenseKey: async (key) => {
         const verification = await verifyLicenseKey(key);
         if (verification.licensed) {
@@ -553,6 +587,9 @@ export const useSettingsStore = create<SettingsState>()(
       },
       removeLicenseKey: () => set({ licenseKey: '', license: { licensed: false } }),
       revalidateLicense: async () => {
+        // AUD-015: encrypted hydration is asynchronous, so a boot-time call can observe the
+        // default empty key. Judge the license only against the hydrated snapshot.
+        await waitForSettingsHydration();
         const storedKey = get().licenseKey;
         if (!storedKey) {
           return;
@@ -564,6 +601,11 @@ export const useSettingsStore = create<SettingsState>()(
     {
       name: SETTINGS_STORAGE_KEY,
       storage: createJSONStorage(() => createEncryptedSettingsStorage()),
+      // Fires after every hydration attempt — restored, empty, or errored — including manual
+      // rehydrate() calls; the latch itself only settles once.
+      onRehydrateStorage: () => () => {
+        markSettingsHydrated();
+      },
       merge: (persistedState, currentState) => {
         const typedPersistedState = persistedState as Partial<SettingsState> | undefined;
         const persistedApiKeys = sanitizePersistedApiKeys(typedPersistedState?.apiKeys);
@@ -660,11 +702,24 @@ export const useSettingsStore = create<SettingsState>()(
           // Fail-closed: never trust a persisted verification result. App boot calls
           // revalidateLicense(), which re-verifies the stored key offline in milliseconds.
           license: { licensed: false },
+          // merge only runs while hydration data is being applied; never let a stale persisted
+          // copy of this session flag claim otherwise.
+          settingsHydrated: true,
         };
       },
     },
   ),
 );
+
+// AUD-015: when the persisted license identity changes underneath the session — the initial
+// encrypted hydration landing after boot validation, a later rehydrate from another writer, an
+// imported settings backup — re-verify it. merge() and import always fail-close `license`, so
+// this can only upgrade the state through the offline verifier, never around it.
+useSettingsStore.subscribe((state, previousState) => {
+  if (state.licenseKey !== previousState.licenseKey) {
+    void state.revalidateLicense();
+  }
+});
 
 /**
  * Sanitize + merge a decrypted settings-backup payload onto the current state. Mirrors the persist
