@@ -191,7 +191,6 @@ import {
   applyTypographyPatchToRichText,
   changedRichTypographyPatch,
   resolveRichEditorCommit,
-  synchronizeRichTextWithTypographyChange,
   type RichTypographyPatch,
 } from './richTextTransforms';
 import {
