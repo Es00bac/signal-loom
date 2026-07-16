@@ -71,7 +71,12 @@ import {
   resultValueAsMediaUrl,
   serializeResultValueForContainer,
 } from '../lib/flowResultValues';
-import { executeNodeRequest, hashExecutionParameters, type ExecutionContext } from '../lib/flowExecution';
+import {
+  executeNodeRequest,
+  hashExecutionParameters,
+  type ExecutionContext,
+  type FunctionNodeExecutionRuntime,
+} from '../lib/flowExecution';
 import {
   buildCollapsedFunctionNode,
   createDefaultFunctionNodeConfig,
@@ -110,6 +115,7 @@ import {
 import {
   collectNodePromptSignals,
   getBlockingSignalDiagnostics,
+  type FlowSignal,
   getSignalIterationCount,
   resolveReferenceGroupsAtIndex,
   signalToTextAt,
@@ -1084,6 +1090,120 @@ function getEffectiveSources(
 
   return sources;
 }
+
+/**
+ * The single source of truth for what a node "sees" when it executes: every prompt,
+ * media, editor, and config collector the flow executor feeds into executeNodeRequest.
+ * runNode uses it for canvas nodes, and it is injected (as part of
+ * flowFunctionNodeExecutionRuntime) into collapsed reusable functions so their internal
+ * subgraphs execute through exactly the same context-building path.
+ */
+export function buildNodeExecutionContext(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  promptSignal: FlowSignal = collectPromptSignalForNode(node.id, nodes, edges),
+): ExecutionContext {
+  const currentId = node.id;
+  const nodesById = buildNodeMap(nodes);
+  const incoming = buildIncomingMap(edges);
+
+  return {
+    prompt: signalToTextAt(promptSignal, 0),
+    textMediaInputs: collectTextMediaInputs(node, nodesById, edges),
+    functionInputs: node.type === 'functionNode'
+      ? collectFunctionNodeInputs(node, nodesById, edges)
+      : undefined,
+    editImageInput: collectUpstreamImageInput(currentId, nodesById, edges),
+    refImageInput: collectUpstreamImageInputForHandles(
+      currentId,
+      ['refImage'],
+      nodesById,
+      edges,
+    ),
+    editMaskImageInput: collectImageMaskInput(currentId, nodesById, edges),
+    editReferenceImageInputs: collectImageReferenceInputs(
+      currentId,
+      nodesById,
+      edges,
+    ),
+    loraWeightsJson: collectUpstreamLoraJson(currentId, nodesById, edges),
+    audioSourceInput: collectUpstreamAudioInput(currentId, nodesById, edges),
+    sourceVideoInput: collectUpstreamVideoInput(currentId, nodesById, edges),
+    startImageInput: collectImageInputForHandle(
+      currentId,
+      ['video-start-frame'],
+      nodesById,
+      edges,
+    ),
+    endImageInput: collectImageInputForHandle(
+      currentId,
+      ['video-end-frame'],
+      nodesById,
+      edges,
+    ),
+    referenceImageInputs: collectReferenceImageInputs(node, nodesById, edges),
+    extensionVideoInput: collectVideoExtensionInput(currentId, nodesById, edges),
+    videoInput: collectResultInputForHandle(
+      currentId,
+      COMPOSITION_VIDEO_HANDLE,
+      nodesById,
+      edges,
+      ['videoGen', 'composition', 'functionNode'],
+    )?.result,
+    audioInputs: COMPOSITION_AUDIO_HANDLES.map((handle) => {
+      const track = collectResultInputForHandle(
+        currentId,
+        handle,
+        nodesById,
+        edges,
+        ['audioGen', 'functionNode'],
+      );
+
+      if (!track) {
+        return undefined;
+      }
+
+      const settingsForTrack = getCompositionTrackSettings(node.data, handle);
+
+      return {
+        url: track.result,
+        sourceNodeId: track.node.id,
+        delayMs: settingsForTrack.offsetMs,
+        volumePercent: settingsForTrack.volumePercent,
+        enabled: settingsForTrack.enabled,
+      };
+    }).filter(
+      (
+        value,
+      ): value is {
+        url: string;
+        sourceNodeId: string;
+        delayMs: number;
+        volumePercent: number;
+        enabled: boolean;
+      } => Boolean(value),
+    ),
+    useVideoAudio: Boolean(node.data.compositionUseVideoAudio),
+    videoAudioVolumePercent: coerceNumber(node.data.compositionVideoAudioVolume, 100),
+    visualSequenceClips: collectEditorVisualSequence(node, nodesById),
+    stageObjects: collectEditorStageObjects(node),
+    sequenceAudioInputs: collectEditorAudioSequence(node, nodesById),
+    nativeAssemblyManifest: node.data.editorRenderCacheAssemblyManifest,
+    exportPresetId: node.data.editorExportPresetPlan?.presetId,
+    config: collectExecutionConfig(currentId, node, nodesById, incoming),
+  };
+}
+
+/**
+ * The executor primitives collapsed reusable functions need to run their internal
+ * subgraphs with full canvas-execution semantics. Injected into executeNodeRequest
+ * because flowExecution cannot import this store module.
+ */
+export const flowFunctionNodeExecutionRuntime: FunctionNodeExecutionRuntime = {
+  buildContext: buildNodeExecutionContext,
+  getDependencies: (node, edges, nodesById) => getExecutionDependencies(node, edges, nodesById),
+};
 
 export function getExecutionDependencies(
   node: AppNode,
@@ -4520,6 +4640,7 @@ export const useFlowStore = create<FlowState>()(
                 }, {
                   signal: abortSignal,
                   graph: { nodes: latestState.nodes, edges: latestState.edges },
+                  functionRuntime: flowFunctionNodeExecutionRuntime,
                 });
 
                 recordIncurredUsage(latestNode, execution.usage);
@@ -4671,6 +4792,7 @@ export const useFlowStore = create<FlowState>()(
             }, {
               signal: abortSignal,
               graph: { nodes: latestState.nodes, edges: latestState.edges },
+              functionRuntime: flowFunctionNodeExecutionRuntime,
             });
 
             recordIncurredUsage(latestNode, execution.usage);

@@ -24,6 +24,7 @@ import {
   isPersistedApiRequesterCredential,
 } from './apiRequesterCredentials';
 import {
+  canRunNode,
   createElevenLabsTtsUsage,
   createGeminiImageUsage,
   createGeminiVideoUsage,
@@ -32,6 +33,7 @@ import {
   createLocalFrameExtractionUsage,
   createMeasuredTextUsage,
 } from './costEstimation';
+import type { Edge } from '@xyflow/react';
 import {
   supportsImageEditing,
   supportsImageReferenceGuidance,
@@ -145,7 +147,17 @@ import {
 import {
   createDefaultFunctionNodeConfig,
   executeFunctionNodeConfig,
+  prepareFunctionSubgraph,
+  resolveFunctionOutputFromGraph,
+  serializeFunctionExecutionOutcome,
+  type FunctionExecutionOutcome,
+  type PreparedFunctionSubgraph,
 } from './functionNodes';
+import {
+  collectPromptSignalForNode,
+  getBlockingSignalDiagnostics,
+  type FlowSignal,
+} from './flowSignals';
 import {
   cropImageDataUrl,
   resolveCropImageNodeSettings,
@@ -222,9 +234,33 @@ export interface ExecutionContext {
   exportPresetId?: VideoExportPresetId;
 }
 
+/**
+ * Store-provided primitives the collapsed-function executor needs to run an internal
+ * subgraph exactly the way the top-level flow executor runs the canvas: the real
+ * per-node ExecutionContext builder and the real dependency planner. They are injected
+ * (rather than imported) because they live in the flow store, which itself imports this
+ * module.
+ */
+export interface FunctionNodeExecutionRuntime {
+  buildContext: (node: AppNode, nodes: AppNode[], edges: Edge[], promptSignal?: FlowSignal) => ExecutionContext;
+  getDependencies: (node: AppNode, edges: Edge[], nodesById: Map<string, AppNode>) => string[];
+}
+
 export interface ExecuteNodeRequestOptions {
   signal?: AbortSignal;
   graph?: FlowGraphContractContext;
+  /**
+   * Required for collapsed reusable functions whose internal graph contains
+   * provider-backed nodes; execution fails closed without it rather than serving a
+   * stored result frozen at collapse time.
+   */
+  functionRuntime?: FunctionNodeExecutionRuntime;
+  /**
+   * Internal recursion ownership: the chain of collapsed-function node ids currently
+   * executing above this request. A function node whose id already appears in the chain
+   * is a recursion cycle and is rejected explicitly.
+   */
+  functionOwnerChain?: string[];
 }
 
 interface ExecutionResult {
@@ -300,8 +336,16 @@ export async function executeNodeRequest(
   if (node.type === 'apiFetchNode') {
     return executeApiFetchNode(node, context, onStatus, options.signal);
   }
+  // Collapsed reusable functions are pure orchestration: their provider spend happens inside
+  // the internal subgraph, where each provider node acquires its own limiter slot and retry
+  // budget through this same function. Running the orchestrator itself inside the retry
+  // wrapper would re-run the WHOLE internal subgraph (duplicate provider spend) whenever one
+  // internal call exhausted its retries — and holding a limiter slot here would deadlock
+  // outright the moment an internal node shares the outer node's provider, because
+  // ProviderRateLimiter.acquire is a strict serial queue.
   if (node.type === 'functionNode') {
-    return executeFunctionNode(node, context, options.signal);
+    throwIfAborted(options.signal);
+    return executeFunctionNode(node, context, settings, onStatus, options);
   }
 
   const providerId = typeof node.data.provider === 'string' ? node.data.provider : 'default';
@@ -439,37 +483,275 @@ export async function hashExecutionParameters(nodeData: unknown, context: Execut
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+const MAX_FUNCTION_SUBGRAPH_DEPTH = 8;
+
 async function executeFunctionNode(
   node: AppNode,
   context: ExecutionContext,
-  signal?: AbortSignal,
+  settings: RuntimeSettingsSnapshot,
+  onStatus?: (statusMessage: string) => void,
+  options: ExecuteNodeRequestOptions = {},
 ): Promise<ExecutionResult> {
-  throwIfAborted(signal);
+  throwIfAborted(options.signal);
   const config = node.data.functionNode ?? createDefaultFunctionNodeConfig('Reusable function');
+  const ownerChain = options.functionOwnerChain ?? [];
+
+  if (ownerChain.includes(node.id)) {
+    throw new NonRetryableError(
+      `Reusable function "${config.title}" recursively contains itself (${[...ownerChain, node.id].join(' → ')}). Break the cycle before running.`,
+    );
+  }
+  if (ownerChain.length >= MAX_FUNCTION_SUBGRAPH_DEPTH) {
+    throw new NonRetryableError(
+      `Reusable functions are nested more than ${MAX_FUNCTION_SUBGRAPH_DEPTH} levels deep (${ownerChain.join(' → ')}). Flatten the function graph before running.`,
+    );
+  }
+
   const explicitFunctionInputs = context.functionInputs ?? {};
-  const execution = executeFunctionNodeConfig(config, {
+  const flowInputs = {
     ...explicitFunctionInputs,
     prompt: context.prompt,
     'input-flow': context.prompt,
     image: context.editImageInput ?? '',
     video: context.videoInput ?? context.sourceVideoInput ?? '',
     audio: context.audioSourceInput ?? '',
-  });
-  throwIfAborted(signal);
-  const result = deserializeResultValueFromContainer(execution.result, execution.resultType);
-  if (result === undefined) {
-    throw new NonRetryableError(`Function returned an invalid ${execution.resultType} value.`);
+  };
+
+  const outputBinding = config.outputBindings[0];
+  const prepared = prepareFunctionSubgraph(config, flowInputs);
+
+  // No binding or an empty internal graph: the synchronous resolution path is the whole
+  // truth (defaults, expressions, missing strategies) and there is no provider work.
+  if (!outputBinding || !prepared) {
+    return withoutProviderSpend(executeFunctionNodeConfig(config, flowInputs));
   }
 
+  const nodesById = new Map(prepared.nodes.map((entry) => [entry.id, entry]));
+  const plan = planInternalProviderExecution(prepared, outputBinding.sourceNodeId, options.functionRuntime, nodesById);
+
+  if (plan.length === 0) {
+    const rawValue = resolveFunctionOutputFromGraph(config, outputBinding, prepared, flowInputs);
+    return withoutProviderSpend(serializeFunctionExecutionOutcome(config, outputBinding, rawValue));
+  }
+
+  if (!options.functionRuntime) {
+    throw new NonRetryableError(
+      `Reusable function "${config.title}" contains ${plan.length} provider-backed internal node${plan.length === 1 ? '' : 's'}, but this execution path did not supply the flow runtime needed to run them. Refusing to return a result frozen at collapse time.`,
+    );
+  }
+
+  // Isolation: strip stale outputs from every runnable internal node so nothing — signal
+  // evaluation, context collectors, or the output binding — can serve a provider result
+  // frozen at collapse time. Import-mode media nodes and carriers are sources, not
+  // runnable nodes, and keep their data.
+  for (const internalNode of prepared.nodes) {
+    if (canRunNode(internalNode)) {
+      internalNode.data = {
+        ...internalNode.data,
+        result: undefined,
+        resultType: undefined,
+        resultMimeType: undefined,
+        envelopeItems: undefined,
+        usage: undefined,
+        statusMessage: undefined,
+        error: undefined,
+      };
+    }
+  }
+
+  const usages: UsageTelemetry[] = [];
+  for (const [index, internalId] of plan.entries()) {
+    throwIfAborted(options.signal);
+
+    const internalNode = nodesById.get(internalId);
+    if (!internalNode) {
+      continue;
+    }
+
+    const promptSignal = collectPromptSignalForNode(internalId, prepared.nodes, prepared.edges);
+    const blockingDiagnostics = getBlockingSignalDiagnostics(promptSignal);
+    if (blockingDiagnostics.length > 0) {
+      throw new NonRetryableError(
+        `Reusable function "${config.title}" internal node ${internalId}: ${blockingDiagnostics[0].message}`,
+      );
+    }
+
+    const internalContext = options.functionRuntime.buildContext(internalNode, prepared.nodes, prepared.edges, promptSignal);
+    const stepLabel = `${index + 1}/${plan.length}`;
+    const execution = await executeNodeRequest(
+      internalNode,
+      internalContext,
+      settings,
+      (statusMessage) => {
+        onStatus?.(`${config.title} · internal ${internalNode.type} ${stepLabel}: ${statusMessage}`);
+      },
+      {
+        signal: options.signal,
+        functionRuntime: options.functionRuntime,
+        functionOwnerChain: [...ownerChain, node.id],
+      },
+    );
+
+    internalNode.data = {
+      ...internalNode.data,
+      result: execution.result,
+      resultType: execution.resultType,
+      resultMimeType: execution.mimeType,
+      envelopeItems: undefined,
+      statusMessage: execution.statusMessage,
+      error: undefined,
+    };
+
+    if (execution.usage) {
+      usages.push(execution.usage);
+    }
+  }
+
+  throwIfAborted(options.signal);
+
+  const rawValue = resolveFunctionOutputFromGraph(config, outputBinding, prepared, flowInputs);
+  const outcome = serializeFunctionExecutionOutcome(config, outputBinding, rawValue);
+  const outputSourceNode = outputBinding.sourceNodeId ? nodesById.get(outputBinding.sourceNodeId) : undefined;
+
   return {
-    ...execution,
-    result,
+    ...outcome,
+    statusMessage: `Executed ${config.title}: ${plan.length} provider node${plan.length === 1 ? '' : 's'} across ${config.graph.nodes.length} internal node${config.graph.nodes.length === 1 ? '' : 's'}`,
+    mimeType: outputSourceNode && outcome.result === outputSourceNode.data.result
+      ? outputSourceNode.data.resultMimeType
+      : undefined,
+    usage: aggregateFunctionSubgraphUsage(usages, plan.length),
+  };
+}
+
+function withoutProviderSpend(outcome: FunctionExecutionOutcome): ExecutionResult {
+  return {
+    ...outcome,
     usage: {
       source: 'actual',
       confidence: 'fixed',
       costUsd: 0,
       notes: ['Function nodes route existing graph outputs and local transforms without provider spend.'],
     },
+  };
+}
+
+/**
+ * Runnable internal nodes the bound output depends on, in dependency order. Planning uses
+ * the injected store dependency walker when available (portal/list routing aware); without
+ * it, a plain edge-ancestor walk still classifies whether provider work exists so the
+ * caller can fail closed instead of serving stale data.
+ */
+function planInternalProviderExecution(
+  prepared: PreparedFunctionSubgraph,
+  outputSourceNodeId: string | undefined,
+  runtime: FunctionNodeExecutionRuntime | undefined,
+  nodesById: Map<string, AppNode>,
+): string[] {
+  if (!outputSourceNodeId || !nodesById.has(outputSourceNodeId)) {
+    return [];
+  }
+
+  const order: string[] = [];
+  const visited = new Set<string>();
+
+  const visit = (currentId: string, stack: Set<string>) => {
+    if (visited.has(currentId)) {
+      return;
+    }
+    if (stack.has(currentId)) {
+      throw new NonRetryableError(
+        'Reusable function execution cannot continue because the internal graph contains a dependency cycle.',
+      );
+    }
+
+    const current = nodesById.get(currentId);
+    if (!current) {
+      return;
+    }
+
+    const nextStack = new Set(stack);
+    nextStack.add(currentId);
+
+    const dependencyIds = runtime
+      ? runtime.getDependencies(current, prepared.edges, nodesById)
+      : fallbackEdgeDependencies(current, prepared.edges, nodesById);
+    for (const dependencyId of dependencyIds) {
+      visit(dependencyId, nextStack);
+    }
+
+    visited.add(currentId);
+    if (canRunNode(current)) {
+      order.push(currentId);
+    }
+  };
+
+  visit(outputSourceNodeId, new Set());
+  return order;
+}
+
+function fallbackEdgeDependencies(node: AppNode, edges: Edge[], nodesById: Map<string, AppNode>): string[] {
+  const dependencies = new Set<string>();
+  for (const edge of edges) {
+    if (edge.target === node.id && edge.source !== node.id && nodesById.has(edge.source)) {
+      dependencies.add(edge.source);
+    }
+  }
+  return [...dependencies];
+}
+
+function aggregateFunctionSubgraphUsage(usages: UsageTelemetry[], providerNodeCount: number): UsageTelemetry {
+  const executionNote = `Executed ${providerNodeCount} internal provider node${providerNodeCount === 1 ? '' : 's'} with fresh inputs.`;
+
+  if (usages.length === 0) {
+    return {
+      source: 'actual',
+      confidence: 'unknown',
+      notes: [executionNote, 'Internal provider nodes did not report usage telemetry.'],
+    };
+  }
+
+  if (usages.length === 1) {
+    return {
+      ...usages[0],
+      source: 'actual',
+      notes: [executionNote, ...(usages[0].notes ?? [])],
+    };
+  }
+
+  const confidenceRank: Record<UsageTelemetry['confidence'], number> = {
+    measured: 0,
+    heuristic: 1,
+    fixed: 2,
+    unknown: 3,
+  };
+  const sumOf = (select: (usage: UsageTelemetry) => number | undefined): number | undefined => {
+    const present = usages.filter((usage) => typeof select(usage) === 'number');
+    if (present.length === 0) {
+      return undefined;
+    }
+    return usages.reduce((total, usage) => total + (select(usage) ?? 0), 0);
+  };
+
+  return {
+    source: 'actual',
+    confidence: usages.reduce(
+      (worst, usage) => (confidenceRank[usage.confidence] > confidenceRank[worst] ? usage.confidence : worst),
+      'measured' as UsageTelemetry['confidence'],
+    ),
+    costUsd: sumOf((usage) => usage.costUsd),
+    inputTokens: sumOf((usage) => usage.inputTokens),
+    outputTokens: sumOf((usage) => usage.outputTokens),
+    totalTokens: sumOf((usage) => usage.totalTokens),
+    characters: sumOf((usage) => usage.characters),
+    durationSeconds: sumOf((usage) => usage.durationSeconds),
+    imageCount: sumOf((usage) => usage.imageCount),
+    notes: [
+      executionNote,
+      ...usages.flatMap((usage) => {
+        const label = [usage.provider, usage.modelId].filter(Boolean).join(' ');
+        return label ? [`Internal spend: ${label}.`] : [];
+      }),
+    ],
   };
 }
 

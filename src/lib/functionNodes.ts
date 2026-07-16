@@ -837,11 +837,18 @@ function groupBoundaryEdges(
   return groups;
 }
 
-export function executeFunctionNodeConfig(config: FunctionNodeConfig, flowInputs: Record<string, DynamicValue> = {}): {
+export interface FunctionExecutionOutcome {
   result: string;
   resultType: ResultType;
   statusMessage: string;
-} {
+}
+
+export interface PreparedFunctionSubgraph {
+  nodes: AppNode[];
+  edges: Edge[];
+}
+
+export function executeFunctionNodeConfig(config: FunctionNodeConfig, flowInputs: Record<string, DynamicValue> = {}): FunctionExecutionOutcome {
   const outputBinding = config.outputBindings[0];
   if (!outputBinding) {
     return {
@@ -851,7 +858,16 @@ export function executeFunctionNodeConfig(config: FunctionNodeConfig, flowInputs
     };
   }
 
-  const rawValue = resolveFunctionOutputValue(config, outputBinding, flowInputs);
+  const prepared = prepareFunctionSubgraph(config, flowInputs);
+  const rawValue = resolveFunctionOutputFromGraph(config, outputBinding, prepared, flowInputs);
+  return serializeFunctionExecutionOutcome(config, outputBinding, rawValue);
+}
+
+export function serializeFunctionExecutionOutcome(
+  config: FunctionNodeConfig,
+  outputBinding: FunctionOutputBinding,
+  rawValue: DynamicValue,
+): FunctionExecutionOutcome {
   const transformedValue = applyFunctionTransforms(rawValue, outputBinding.transforms);
   const resultType = normalizeFunctionResultType(outputBinding.resultType, transformedValue);
 
@@ -860,6 +876,128 @@ export function executeFunctionNodeConfig(config: FunctionNodeConfig, flowInputs
     resultType,
     statusMessage: `Resolved ${config.title} from ${config.graph.nodes.length} internal node${config.graph.nodes.length === 1 ? '' : 's'}`,
   };
+}
+
+/**
+ * Clone the function's internal graph and bind the caller's current inputs into it. Marker
+ * nodes receive their value directly; non-marker boundary targets additionally get a
+ * synthesized carrier node wired through the original target handle, so the value arrives
+ * the same way the pre-collapse graph delivered it — through an edge that both signal
+ * evaluation and execution-context collectors can see.
+ */
+export function prepareFunctionSubgraph(
+  config: FunctionNodeConfig,
+  flowInputs: Record<string, DynamicValue> = {},
+): PreparedFunctionSubgraph | null {
+  if (!config.graph || !Array.isArray(config.graph.nodes) || config.graph.nodes.length === 0) {
+    return null;
+  }
+
+  const nodes = config.graph.nodes.map((node) => ({
+    ...node,
+    data: { ...node.data },
+  })) as AppNode[];
+  const edges = [...config.graph.edges];
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  const portsById = new Map(config.contract.inputPorts.map((port) => [port.id, port]));
+
+  nodes.forEach((node) => {
+    if (node.type === 'functionInputNode') {
+      const portLabel = typeof node.data.functionPortLabel === 'string' ? node.data.functionPortLabel : (typeof node.data.customTitle === 'string' ? node.data.customTitle : 'Input Port');
+      const portKey = typeof node.data.functionPortKey === 'string' ? node.data.functionPortKey : slugifyIdentifier(portLabel);
+      const portId = `input-marker-${node.id}`;
+
+      const val = flowInputs[portId] ?? flowInputs[portKey] ?? node.data.value ?? '';
+      const valStr = typeof val === 'string' ? val : JSON.stringify(val);
+      node.data.result = valStr;
+      node.data.value = val;
+      node.data.prompt = valStr;
+    }
+  });
+
+  (config.graph.inputBoundaryLinks ?? []).forEach((link, index) => {
+    const targetNode = nodesById.get(link.internalNodeId);
+    if (!targetNode) {
+      return;
+    }
+
+    const val = flowInputs[link.portId] ?? '';
+    if (link.internalHandle) {
+      targetNode.data[link.internalHandle] = val;
+    } else {
+      targetNode.data.result = typeof val === 'string' ? val : JSON.stringify(val);
+      targetNode.data.value = val;
+    }
+
+    // Marker nodes carry their own value; everything else gets a boundary carrier edge.
+    if (targetNode.type === 'functionInputNode') {
+      return;
+    }
+
+    const carrier = createBoundaryCarrierNode(link, portsById.get(link.portId), val, index);
+    nodes.push(carrier.node);
+    edges.push(carrier.edge);
+    nodesById.set(carrier.node.id, carrier.node);
+  });
+
+  return { nodes, edges };
+}
+
+function createBoundaryCarrierNode(
+  link: FunctionBoundaryLink,
+  port: FunctionPortKind | undefined,
+  value: DynamicValue,
+  index: number,
+): { node: AppNode; edge: Edge } {
+  const valueText = typeof value === 'string' ? value : JSON.stringify(value ?? '');
+  const kind = resolveBoundaryCarrierKind(port?.resultType, valueText);
+  const carrierId = `function-boundary-input-${link.id}`;
+  const position: XYPosition = { x: -480, y: index * 96 };
+
+  const node: AppNode = kind === 'image' || kind === 'video' || kind === 'audio'
+    ? {
+      id: carrierId,
+      // Import-mode media nodes are the canonical "media source" the execution-context
+      // collectors already understand; functionInputNode is only recognized as text.
+      type: kind === 'image' ? 'imageGen' : kind === 'video' ? 'videoGen' : 'audioGen',
+      position,
+      data: {
+        mediaMode: 'import',
+        result: valueText,
+        resultType: kind,
+        sourceAssetUrl: valueText,
+      },
+    }
+    : {
+      id: carrierId,
+      type: 'functionInputNode',
+      position,
+      data: {
+        value,
+        result: valueText,
+        prompt: valueText,
+      },
+    };
+
+  const edge: Edge = {
+    id: `edge-${carrierId}`,
+    source: carrierId,
+    target: link.internalNodeId,
+    sourceHandle: null,
+    targetHandle: link.internalHandle ?? null,
+  };
+
+  return { node, edge };
+}
+
+function resolveBoundaryCarrierKind(portResultType: FunctionValueKind | undefined, valueText: string): 'image' | 'video' | 'audio' | 'text' {
+  if (portResultType === 'image' || portResultType === 'video' || portResultType === 'audio') {
+    return portResultType;
+  }
+  if (valueText.startsWith('data:image/')) return 'image';
+  if (valueText.startsWith('data:video/')) return 'video';
+  if (valueText.startsWith('data:audio/')) return 'audio';
+  return 'text';
 }
 
 export function collectFunctionNodeWarnings(config: FunctionNodeConfig): string[] {
@@ -894,52 +1032,18 @@ export function getNodeResultForFunctionRouting(node: AppNode): DynamicValue {
   return '';
 }
 
-function resolveFunctionOutputValue(
+export function resolveFunctionOutputFromGraph(
   config: FunctionNodeConfig,
   outputBinding: FunctionOutputBinding,
+  prepared: PreparedFunctionSubgraph | null,
   flowInputs: Record<string, DynamicValue>,
 ): DynamicValue {
-  // If there are internal nodes, execute dynamic sub-DAG signals
-  if (config.graph && Array.isArray(config.graph.nodes) && config.graph.nodes.length > 0) {
+  // If there are internal nodes, resolve the bound output through sub-DAG signals
+  if (prepared) {
     try {
-      const clonedNodes = config.graph.nodes.map((node) => ({
-        ...node,
-        data: { ...node.data },
-      })) as AppNode[];
-      const clonedEdges = [...config.graph.edges];
-
-      // Inject inputs into functionInputNode markers inside the sub-graph
-      clonedNodes.forEach((node) => {
-        if (node.type === 'functionInputNode') {
-          const portLabel = typeof node.data.functionPortLabel === 'string' ? node.data.functionPortLabel : (typeof node.data.customTitle === 'string' ? node.data.customTitle : 'Input Port');
-          const portKey = typeof node.data.functionPortKey === 'string' ? node.data.functionPortKey : slugifyIdentifier(portLabel);
-          const portId = `input-marker-${node.id}`;
-
-          const val = flowInputs[portId] ?? flowInputs[portKey] ?? node.data.value ?? '';
-          const valStr = typeof val === 'string' ? val : JSON.stringify(val);
-          node.data.result = valStr;
-          node.data.value = val;
-          node.data.prompt = valStr;
-        }
-      });
-
-      // Inject inputs into non-marker boundary target nodes
-      (config.graph.inputBoundaryLinks ?? []).forEach((link) => {
-        const val = flowInputs[link.portId] ?? '';
-        const targetNode = clonedNodes.find((n) => n.id === link.internalNodeId);
-        if (targetNode) {
-          if (link.internalHandle) {
-            targetNode.data[link.internalHandle] = val;
-          } else {
-            targetNode.data.result = typeof val === 'string' ? val : JSON.stringify(val);
-            targetNode.data.value = val;
-          }
-        }
-      });
-
       const targetNodeId = outputBinding.sourceNodeId;
       if (targetNodeId) {
-        const signal = evaluateNodeSignal(targetNodeId, clonedNodes, clonedEdges);
+        const signal = evaluateNodeSignal(targetNodeId, prepared.nodes, prepared.edges);
         return signal.value as DynamicValue;
       }
     } catch (err) {
@@ -947,7 +1051,7 @@ function resolveFunctionOutputValue(
     }
   }
 
-  const sourceNode = config.graph.nodes.find((node) => node.id === outputBinding.sourceNodeId);
+  const sourceNode = (prepared?.nodes ?? config.graph.nodes).find((node) => node.id === outputBinding.sourceNodeId);
   const context = buildFunctionTemplateContext(config, flowInputs);
 
   if (outputBinding.expression?.trim()) {
