@@ -53,6 +53,46 @@ describe('ImageSlimgFormat', () => {
     expect(live.dirty).toBe(true);
   });
 
+  it('round-trips complete named snapshot bitmap and mask assets', async () => {
+    const live = doc();
+    live.snapshots = [{
+      id: 'snapshot-red',
+      name: 'Red state',
+      createdAt: 1,
+      width: 64,
+      height: 48,
+      layers: [{
+        ...live.layers[0],
+        bitmap: fakeBitmap(64, 48, 'SNAPSHOT-PIX'),
+        mask: fakeBitmap(64, 48, 'SNAPSHOT-MASK'),
+      }],
+      activeLayerId: 'a',
+      hasSelection: false,
+      selectionVersion: 0,
+      pixelState: 'complete',
+    }];
+
+    const out = await deserializeSlimg(await serializeSlimg(live, codec), codec);
+
+    expect(out.snapshots?.[0]?.pixelState).toBe('complete');
+    expect((out.snapshots?.[0]?.layers[0]?.bitmap as unknown as { __tag: string }).__tag).toBe('SNAPSHOT-PIX');
+    expect((out.snapshots?.[0]?.layers[0]?.mask as unknown as { __tag: string }).__tag).toBe('SNAPSHOT-MASK');
+  });
+
+  it('deduplicates shared bitmap identities in the native asset table', async () => {
+    const live = doc();
+    const shared = fakeBitmap(64, 48, 'SHARED');
+    live.layers[0].bitmap = shared;
+    live.layers[0].mask = shared;
+
+    const { unpackContainer } = await import('../../shared/files/SignalLoomContainer');
+    const packed = await serializeSlimg(live, codec);
+    const { manifest, assets } = unpackContainer(packed);
+
+    expect(manifest.assets).toHaveLength(1);
+    expect(assets.size).toBe(1);
+  });
+
   it('rejects a non-.slimg container', async () => {
     // Build a valid container of a different format via the container core directly.
     const { packContainer } = await import('../../shared/files/SignalLoomContainer');

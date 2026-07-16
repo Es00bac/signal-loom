@@ -470,6 +470,9 @@ export function SnapshotsControls({
           <div className="rounded border border-cyan-300/10 bg-[#10131b] px-1.5 py-1 text-[10px] text-cyan-100/55" key={snapshot.id}>
             <div className="flex items-center gap-1">
               <span className="min-w-0 flex-1 truncate">{snapshot.name}</span>
+              {snapshot.pixelState !== 'complete' ? (
+                <span className="text-amber-100/60" title="This legacy snapshot has no stored pixels">Pixels unavailable</span>
+              ) : null}
               {onRename ? (
                 <button
                   aria-label={`Rename snapshot ${snapshot.name}`}
@@ -483,7 +486,16 @@ export function SnapshotsControls({
                   Rename
                 </button>
               ) : null}
-              <button aria-label={`Restore snapshot ${snapshot.name}`} className="text-cyan-100/45 hover:text-white" onClick={() => onRestore(snapshot.id)} type="button">Restore</button>
+              <button
+                aria-label={`Restore snapshot ${snapshot.name}`}
+                className="text-cyan-100/45 hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
+                disabled={snapshot.pixelState !== 'complete'}
+                onClick={() => onRestore(snapshot.id)}
+                title={snapshot.pixelState === 'complete' ? undefined : 'This legacy snapshot has no stored pixels and cannot be restored safely.'}
+                type="button"
+              >
+                Restore
+              </button>
               <button aria-label={`Delete snapshot ${snapshot.name}`} className="text-red-100/45 hover:text-red-100" onClick={() => onDelete(snapshot.id)} type="button">Delete</button>
             </div>
             {renamingSnapshotId === snapshot.id && onRename ? (
@@ -523,7 +535,7 @@ export function SnapshotsControls({
             ) : null}
           </div>
         ))}
-        {snapshots.length === 0 ? <p className="text-[11px] text-cyan-100/30">Snapshots store layer state references without extra flattened bitmap copies.</p> : null}
+        {snapshots.length === 0 ? <p className="text-[11px] text-cyan-100/30">Snapshots store immutable layer pixels, masks, and metadata.</p> : null}
       </div>
     </div>
   );

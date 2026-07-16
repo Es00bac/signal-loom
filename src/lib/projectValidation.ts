@@ -714,6 +714,7 @@ function sanitizeImageDocumentSnapshot(
     activeLayerId: optionalString(snapshot.activeLayerId) ?? null,
     hasSelection: Boolean(snapshot.hasSelection),
     selectionVersion: finiteNumber(snapshot.selectionVersion, 0),
+    pixelState: snapshot.pixelState === 'complete' ? 'complete' : 'unavailable',
   };
 }
 

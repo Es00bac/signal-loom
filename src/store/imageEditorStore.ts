@@ -42,7 +42,12 @@ import {
 import { normalizeBrushSettings } from '../components/ImageEditor/ImageBrushEngine';
 import { toggleLayerInSelection } from '../components/ImageEditor/ImageGroupTransform';
 import { cloneBitmap } from '../components/ImageEditor/LayerBitmap';
-import { decodeImageLayerProjectPixels, encodeImageLayerProjectPixels } from '../components/ImageEditor/ImageLayerProjectPixels';
+import {
+  decodeImageDocumentSnapshotProjectPixels,
+  decodeImageLayerProjectPixels,
+  encodeImageDocumentSnapshotProjectPixels,
+  encodeImageLayerProjectPixels,
+} from '../components/ImageEditor/ImageLayerProjectPixels';
 import { buildPerspectiveCroppedImageDocumentState } from '../components/ImageEditor/tools/perspectiveCropDocument';
 import type { CropPoint as PerspectiveCropCorner } from '../components/ImageEditor/tools/perspectiveCrop';
 import {
@@ -63,6 +68,11 @@ import {
   sanitizeImageEditorToolbarFlyoutOrder,
   type ImageEditorToolbarFlyoutGroupId,
 } from '../components/ImageEditor/imageEditorTools';
+import {
+  disposeEditorOperations,
+  editorOperationRetainedBytes,
+  retainEditorOperation,
+} from '../components/ImageEditor/ImageHistoryResources';
 
 const MAX_HISTORY = 50;
 // Undo snapshots store layer bitmaps; at 4K a single paint op holds ~134MB (full-layer
@@ -71,26 +81,23 @@ const MAX_HISTORY = 50;
 // large docs stop growing while small docs still keep deep history.
 const MAX_HISTORY_BYTES = 768 * 1024 * 1024;
 
-function operationSnapshotBytes(op: EditorOperation): number {
-  let bytes = 0;
-  const before = (op as { before?: { width?: number; height?: number } }).before;
-  const after = (op as { after?: { width?: number; height?: number } }).after;
-  if (before?.width && before?.height) bytes += before.width * before.height * 4;
-  if (after?.width && after?.height) bytes += after.width * after.height * 4;
-  return bytes;
-}
-
 function trimHistory(stack: EditorOperation[]): EditorOperation[] {
   const trimmed = stack.length > MAX_HISTORY ? stack.slice(stack.length - MAX_HISTORY) : stack;
   let total = 0;
-  for (const op of trimmed) total += operationSnapshotBytes(op);
-  if (total <= MAX_HISTORY_BYTES) return trimmed;
+  for (const op of trimmed) total += editorOperationRetainedBytes(op);
+  if (total <= MAX_HISTORY_BYTES) {
+    if (trimmed !== stack) disposeEditorOperations(stack.slice(0, stack.length - trimmed.length));
+    return trimmed;
+  }
   let start = 0;
   while (start < trimmed.length - 1 && total > MAX_HISTORY_BYTES) {
-    total -= operationSnapshotBytes(trimmed[start]);
+    total -= editorOperationRetainedBytes(trimmed[start]);
     start += 1;
   }
-  return start > 0 ? trimmed.slice(start) : trimmed;
+  const retained = start > 0 ? trimmed.slice(start) : trimmed;
+  const retainedSet = new Set(retained);
+  disposeEditorOperations(stack.filter((operation) => !retainedSet.has(operation)));
+  return retained;
 }
 
 const DEFAULT_IMAGE_BACKGROUND_COLOR = '#000000';
@@ -266,10 +273,17 @@ function removeImageDocumentState(state: ImageEditorState, id: string): Partial<
   const undoStacks = { ...state.undoStacks };
   const redoStacks = { ...state.redoStacks };
   const generativeFillDismissedByDocId = { ...state.generativeFillDismissedByDocId };
+  disposeEditorOperations(undoStacks[id] ?? []);
+  disposeEditorOperations(redoStacks[id] ?? []);
   delete undoStacks[id];
   delete redoStacks[id];
   delete generativeFillDismissedByDocId[id];
   return { documents, activeDocId, undoStacks, redoStacks, generativeFillDismissedByDocId };
+}
+
+function disposeAllImageHistory(state: Pick<ImageEditorState, 'undoStacks' | 'redoStacks'>): void {
+  for (const stack of Object.values(state.undoStacks)) disposeEditorOperations(stack);
+  for (const stack of Object.values(state.redoStacks)) disposeEditorOperations(stack);
 }
 
 export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>()(
@@ -930,7 +944,9 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     pushOperation: (op) =>
       set((state) => {
         const docId = op.docId;
-        const stack = trimHistory([...(state.undoStacks[docId] ?? []), op]);
+        const retainedOperation = retainEditorOperation(op);
+        const stack = trimHistory([...(state.undoStacks[docId] ?? []), retainedOperation]);
+        disposeEditorOperations(state.redoStacks[docId] ?? []);
         return {
           undoStacks: { ...state.undoStacks, [docId]: stack },
           redoStacks: { ...state.redoStacks, [docId]: [] },
@@ -968,10 +984,14 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     },
 
     clearHistory: (docId) =>
-      set((state) => ({
-        undoStacks: { ...state.undoStacks, [docId]: [] },
-        redoStacks: { ...state.redoStacks, [docId]: [] },
-      })),
+      set((state) => {
+        disposeEditorOperations(state.undoStacks[docId] ?? []);
+        disposeEditorOperations(state.redoStacks[docId] ?? []);
+        return {
+          undoStacks: { ...state.undoStacks, [docId]: [] },
+          redoStacks: { ...state.redoStacks, [docId]: [] },
+        };
+      }),
 
     startQuickActionRecording: () =>
       set((state) => (
@@ -1062,6 +1082,7 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     },
 
     restoreProjectSnapshot: (snapshot) => {
+      disposeAllImageHistory(get());
       const safeSnapshot = sanitizeImageEditorSnapshot(snapshot);
       const documents = safeSnapshot?.documents ?? [];
       const activeDocId = safeSnapshot?.activeDocId && documents.some((document) => document.id === safeSnapshot.activeDocId)
@@ -1088,9 +1109,11 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
         // A persisted project is an editable layered baseline, not a flattened derivative.
         dirty: false,
         layers: await Promise.all(document.layers.map((layer) => encodeImageLayerProjectPixels(layer))),
-        // Undo-history snapshots stay pixel-stripped (not persisted) to bound file size; only the
-        // live document layers carry their pixels into the saved project.
-        snapshots: document.snapshots?.map(stripImageSnapshotRuntimePixels) ?? [],
+        // Named snapshots are capped at 12 and use the same lossless per-layer PNG transport as
+        // the live document. Undo/redo history remains intentionally non-persistent.
+        snapshots: await Promise.all(
+          (document.snapshots ?? []).map((snapshot) => encodeImageDocumentSnapshotProjectPixels(snapshot)),
+        ),
       })));
       return {
         documents,
@@ -1105,10 +1128,14 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
       const documents = await Promise.all(rawDocuments.map(async (document) => ({
         ...document,
         layers: await Promise.all(document.layers.map((layer) => decodeImageLayerProjectPixels(layer))),
+        snapshots: await Promise.all(
+          (document.snapshots ?? []).map((snapshot) => decodeImageDocumentSnapshotProjectPixels(snapshot)),
+        ),
       })));
       const activeDocId = safeSnapshot?.activeDocId && documents.some((document) => document.id === safeSnapshot.activeDocId)
         ? safeSnapshot.activeDocId
         : documents[0]?.id ?? null;
+      disposeAllImageHistory(get());
       set({
         documents,
         activeDocId,
@@ -1121,6 +1148,7 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     },
 
     restoreLiveProjectRollback: (rollback) => {
+      disposeAllImageHistory(get());
       set({
         documents: rollback.documents,
         activeDocId: rollback.activeDocId
@@ -1321,7 +1349,7 @@ function applyDocumentResizeState(
   afterDoc: ImageDocument,
 ): Partial<ImageEditorState> {
   const docId = beforeDoc.id;
-  const op: EditorOperation = {
+  const op = retainEditorOperation({
     kind: 'docResize',
     docId,
     before: {
@@ -1334,8 +1362,9 @@ function applyDocumentResizeState(
       height: afterDoc.height,
       layers: afterDoc.layers,
     },
-  };
-  const stack = [...(state.undoStacks[docId] ?? []), op].slice(-MAX_HISTORY);
+  });
+  const stack = trimHistory([...(state.undoStacks[docId] ?? []), op]);
+  disposeEditorOperations(state.redoStacks[docId] ?? []);
 
   return {
     documents: state.documents.map((document) => (document.id === docId ? afterDoc : document)),
@@ -1374,6 +1403,7 @@ function stripImageSnapshotRuntimePixels(snapshot: ImageDocumentSnapshot): Image
   return {
     ...snapshot,
     layers: snapshot.layers.map(stripImageLayerRuntimePixels),
+    pixelState: 'unavailable',
   };
 }
 

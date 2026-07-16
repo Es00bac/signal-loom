@@ -332,12 +332,12 @@ export function buildImageHistoryActionWorkflowDescriptor({
     activeLayerId: snapshot.activeLayerId,
     hasSelection: snapshot.hasSelection,
     selectionVersion: snapshot.selectionVersion,
-    canRestore: true,
+    canRestore: snapshot.pixelState === 'complete',
     canDelete: true,
     canRename: true,
     isNewest: snapshot.id === newestSnapshotId,
     kind: 'named-snapshot' as const,
-    identity: `${snapshot.id}:${snapshot.name}:${snapshot.width}x${snapshot.height}:${snapshot.layers.length}-layers:selection-${snapshot.selectionVersion}`,
+    identity: `${snapshot.id}:${snapshot.name}:${snapshot.width}x${snapshot.height}:${snapshot.layers.length}-layers:selection-${snapshot.selectionVersion}:pixels-${snapshot.pixelState ?? 'unavailable'}`,
   }));
   const unsupportedCommandIds = uniqueActionIds([
     ...getUnsupportedActionIds(recordingSteps),

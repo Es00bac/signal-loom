@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { createEmptyImageDocument, useImageEditorStore } from '../../store/imageEditorStore';
 import type { ImageDocument, ImageLayer, LayerBitmap } from '../../types/imageEditor';
+import { defaultImageLayerPixelCodec } from './ImageLayerProjectPixels';
 import {
   addImageDocumentSnapshot,
   buildImageSnapshotReadinessDescriptor,
@@ -8,6 +10,26 @@ import {
   renameImageDocumentSnapshot,
   restoreImageDocumentSnapshot,
 } from './ImageSnapshots';
+
+class PixelOffscreenCanvas {
+  width: number;
+  height: number;
+  pixel: [number, number, number, number];
+
+  constructor(width: number, height: number) {
+    this.width = width;
+    this.height = height;
+    this.pixel = [0, 0, 0, 0];
+  }
+
+  getContext() {
+    return {
+      drawImage: (source: PixelOffscreenCanvas) => {
+        this.pixel = [...source.pixel];
+      },
+    };
+  }
+}
 
 function makeLayer(id: string): ImageLayer {
   return {
@@ -44,6 +66,16 @@ function makeDoc(overrides?: Partial<ImageDocument>): ImageDocument {
 }
 
 describe('ImageSnapshots', () => {
+  beforeEach(() => {
+    globalThis.OffscreenCanvas = PixelOffscreenCanvas as unknown as typeof OffscreenCanvas;
+    useImageEditorStore.setState({
+      documents: [],
+      activeDocId: null,
+      undoStacks: {},
+      redoStacks: {},
+    });
+  });
+
   it('stores compact document layer state snapshots without flattening bitmaps', () => {
     const doc = makeDoc();
     const snapshot = createImageDocumentSnapshot(doc, 'Before type');
@@ -86,6 +118,7 @@ describe('ImageSnapshots', () => {
           activeLayerId: 'base',
           hasSelection: true,
           selectionVersion: 2,
+          pixelState: 'complete',
         },
         {
           id: 'snapshot-bad',
@@ -97,6 +130,7 @@ describe('ImageSnapshots', () => {
           activeLayerId: null,
           hasSelection: false,
           selectionVersion: 3,
+          pixelState: 'complete',
         },
       ],
     });
@@ -218,7 +252,88 @@ describe('ImageSnapshots', () => {
     expect(deleted.snapshots).toEqual([]);
   });
 
-  it('restores lightweight snapshots without blanking same-id live bitmap and mask buffers', () => {
+  it('freezes named snapshot pixels and restores them after a project JSON round trip', async () => {
+    const originalEncode = defaultImageLayerPixelCodec.encode;
+    const originalDecode = defaultImageLayerPixelCodec.decode;
+    defaultImageLayerPixelCodec.encode = async (bitmap) => JSON.stringify({
+      width: bitmap.width,
+      height: bitmap.height,
+      pixel: (bitmap as unknown as PixelOffscreenCanvas).pixel,
+    });
+    defaultImageLayerPixelCodec.decode = async (payload) => {
+      const parsed = JSON.parse(payload) as {
+        width: number;
+        height: number;
+        pixel: [number, number, number, number];
+      };
+      const bitmap = new PixelOffscreenCanvas(parsed.width, parsed.height);
+      bitmap.pixel = [...parsed.pixel];
+      return bitmap as unknown as LayerBitmap;
+    };
+
+    try {
+      const liveBitmap = new PixelOffscreenCanvas(1, 1);
+      liveBitmap.pixel = [180, 20, 30, 255];
+      const liveMask = new PixelOffscreenCanvas(1, 1);
+      liveMask.pixel = [40, 50, 200, 255];
+      const initial = {
+        ...createEmptyImageDocument({
+          id: 'doc-snapshot-project-roundtrip',
+          title: 'Snapshot project round trip',
+          width: 1,
+          height: 1,
+        }),
+        layers: [makeLayer('base')],
+        activeLayerId: 'base',
+      };
+      initial.layers[0].bitmap = liveBitmap as unknown as LayerBitmap;
+      initial.layers[0].mask = liveMask as unknown as LayerBitmap;
+      initial.layers[0].metadata = {
+        sourceLink: {
+          id: 'source-red',
+          status: 'linked',
+          label: 'Red source',
+          width: 1,
+          height: 1,
+          relinkHistory: [],
+        },
+      };
+      const snapshot = createImageDocumentSnapshot(initial, 'Red state');
+      const withSnapshot = addImageDocumentSnapshot(initial, snapshot);
+      liveBitmap.pixel = [10, 190, 20, 255];
+      liveMask.pixel = [200, 210, 20, 255];
+      initial.layers[0].metadata.sourceLink!.label = 'Mutated source';
+      useImageEditorStore.getState().openDocument(withSnapshot);
+
+      const serialized = JSON.parse(JSON.stringify(
+        await useImageEditorStore.getState().exportProjectSnapshotWithPixels(),
+      ));
+      useImageEditorStore.getState().restoreProjectSnapshot(undefined);
+      await useImageEditorStore.getState().restoreProjectSnapshotWithPixels(serialized);
+
+      const reopened = useImageEditorStore.getState().getActiveDocument();
+      expect(reopened).toBeDefined();
+      const restored = restoreImageDocumentSnapshot(reopened!, snapshot.id);
+      expect((restored.layers[0].bitmap as unknown as PixelOffscreenCanvas).pixel).toEqual([
+        180,
+        20,
+        30,
+        255,
+      ]);
+      expect((restored.layers[0].mask as unknown as PixelOffscreenCanvas).pixel).toEqual([
+        40,
+        50,
+        200,
+        255,
+      ]);
+      expect(restored.layers[0].metadata?.sourceLink?.label).toBe('Red source');
+    } finally {
+      defaultImageLayerPixelCodec.encode = originalEncode;
+      defaultImageLayerPixelCodec.decode = originalDecode;
+    }
+  });
+
+  it('fails legacy lightweight snapshot restore closed instead of borrowing live pixels', () => {
     const liveBitmap = { width: 20, height: 20 } as LayerBitmap;
     const liveMask = { width: 20, height: 20 } as LayerBitmap;
     const snapshot = {
@@ -250,11 +365,11 @@ describe('ImageSnapshots', () => {
 
     const restored = restoreImageDocumentSnapshot(doc, 'snapshot-lightweight');
 
-    expect(restored.layers[0]).toMatchObject({
-      name: 'Saved layer name',
-      bitmap: liveBitmap,
-      bitmapVersion: 8,
-      mask: liveMask,
+    expect(restored).toBe(doc);
+    expect(restored.layers[0]).toMatchObject({ bitmap: liveBitmap, bitmapVersion: 8, mask: liveMask });
+    expect(buildImageSnapshotReadinessDescriptor({ doc }).namedSnapshots.snapshots[0]).toMatchObject({
+      restorable: false,
+      blockers: [{ code: 'snapshot-pixels-unavailable' }],
     });
   });
 

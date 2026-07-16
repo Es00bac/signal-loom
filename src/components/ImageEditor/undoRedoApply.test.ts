@@ -1,18 +1,24 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createEmptyImageDocument, useImageEditorStore } from '../../store/imageEditorStore';
 import type { ImageLayer, LayerBitmap } from '../../types/imageEditor';
-import { applyOperation, jumpToHistoryUndoCount } from './undoRedoApply';
+import { addImageLayerUndoable } from './imageLayerInsert';
+import { cloneBitmap } from './LayerBitmap';
+import { applyOperation, jumpToHistoryUndoCount, undo } from './undoRedoApply';
 
 class FakeOffscreenCanvas {
   width: number;
   height: number;
+  pixel: [number, number, number, number];
   constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
+    this.pixel = [0, 0, 0, 0];
   }
   getContext() {
     return {
-      drawImage() {},
+      drawImage: (source: FakeOffscreenCanvas) => {
+        this.pixel = [...source.pixel];
+      },
     };
   }
 }
@@ -210,11 +216,50 @@ describe('undoRedoApply', () => {
     } as const;
 
     applyOperation(operation, 'redo');
-    expect(useImageEditorStore.getState().documents[0]?.layers[0]?.mask).toBe(afterMask);
+    expect(useImageEditorStore.getState().documents[0]?.layers[0]?.mask).not.toBe(afterMask);
+    expect(useImageEditorStore.getState().documents[0]?.layers[0]?.mask).toStrictEqual(afterMask);
     expect(useImageEditorStore.getState().documents[0]?.layers[0]?.bitmap).not.toBe(afterMask);
 
     applyOperation(operation, 'undo');
-    expect(useImageEditorStore.getState().documents[0]?.layers[0]?.mask).toBe(beforeMask);
+    expect(useImageEditorStore.getState().documents[0]?.layers[0]?.mask).not.toBe(beforeMask);
+    expect(useImageEditorStore.getState().documents[0]?.layers[0]?.mask).toStrictEqual(beforeMask);
+  });
+
+  it('does not resurrect paint recorded after a layer insertion when undo crosses both operations', () => {
+    const originalBitmap = new OffscreenCanvas(1, 1) as LayerBitmap & { pixel: [number, number, number, number] };
+    originalBitmap.pixel = [12, 34, 56, 255];
+    useImageEditorStore.getState().openDocument({
+      ...createEmptyImageDocument({
+        id: 'doc-layer-paint-chronology',
+        title: 'Layer paint chronology',
+        width: 1,
+        height: 1,
+      }),
+      layers: [layer({ id: 'base', bitmap: originalBitmap })],
+      activeLayerId: 'base',
+    });
+
+    addImageLayerUndoable(layer({ id: 'inserted', bitmap: new OffscreenCanvas(1, 1) as LayerBitmap }));
+
+    const beforePaint = cloneBitmap(originalBitmap);
+    originalBitmap.pixel = [220, 10, 20, 255];
+    const afterPaint = cloneBitmap(originalBitmap);
+    useImageEditorStore.getState().pushOperation({
+      kind: 'paint',
+      docId: 'doc-layer-paint-chronology',
+      layerId: 'base',
+      before: beforePaint,
+      after: afterPaint,
+    });
+
+    expect(undo('doc-layer-paint-chronology')).toBe(true);
+    expect(undo('doc-layer-paint-chronology')).toBe(true);
+
+    const restored = useImageEditorStore.getState().getActiveDocument()?.layers[0]?.bitmap as
+      | (LayerBitmap & { pixel: [number, number, number, number] })
+      | null
+      | undefined;
+    expect(restored?.pixel).toEqual([12, 34, 56, 255]);
   });
 
   it('restores the recorded active layer when replaying document resize operations', () => {

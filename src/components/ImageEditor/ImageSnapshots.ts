@@ -1,4 +1,5 @@
 import type { ImageDocument, ImageDocumentSnapshot, ImageLayer } from '../../types/imageEditor';
+import { cloneBitmap } from './LayerBitmap';
 
 export const IMAGE_DOCUMENT_MAX_SNAPSHOTS = 12;
 
@@ -8,7 +9,8 @@ export type ImageSnapshotReadinessIssueCode =
   | 'missing-snapshot'
   | 'blank-snapshot-name'
   | 'unchanged-snapshot-name'
-  | 'snapshot-limit-reached';
+  | 'snapshot-limit-reached'
+  | 'snapshot-pixels-unavailable';
 
 export interface ImageSnapshotReadinessIssue {
   code: ImageSnapshotReadinessIssueCode;
@@ -99,10 +101,11 @@ export function createImageDocumentSnapshot(
     createdAt,
     width: doc.width,
     height: doc.height,
-    layers: doc.layers,
+    layers: cloneSnapshotLayers(doc.layers),
     activeLayerId: doc.activeLayerId,
     hasSelection: doc.hasSelection,
     selectionVersion: doc.selectionVersion,
+    pixelState: 'complete',
   };
 }
 
@@ -122,12 +125,12 @@ export function restoreImageDocumentSnapshot(
   snapshotId: string,
 ): ImageDocument {
   const snapshot = doc.snapshots?.find((candidate) => candidate.id === snapshotId);
-  if (!snapshot) return doc;
+  if (!snapshot || snapshot.pixelState !== 'complete') return doc;
   return {
     ...doc,
     width: getRestorableSnapshotDimension(snapshot.width, doc.width),
     height: getRestorableSnapshotDimension(snapshot.height, doc.height),
-    layers: restoreSnapshotLayers(snapshot.layers, doc.layers),
+    layers: restoreSnapshotLayers(snapshot.layers),
     activeLayerId: snapshot.activeLayerId,
     hasSelection: snapshot.hasSelection,
     selectionVersion: snapshot.selectionVersion + 1,
@@ -139,22 +142,29 @@ function getRestorableSnapshotDimension(value: number, fallback: number): number
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-function restoreSnapshotLayers(snapshotLayers: ImageLayer[], currentLayers: ImageLayer[]): ImageLayer[] {
-  return snapshotLayers.map((layer) => {
-    const current = currentLayers.find((candidate) => candidate.id === layer.id);
-    const bitmap = layer.bitmap ?? current?.bitmap ?? null;
-    const mask = layer.mask ?? current?.mask ?? null;
-    const preservingRuntimeBuffer =
-      (layer.bitmap === null && bitmap !== null) ||
-      (layer.mask === null && mask !== null);
+function restoreSnapshotLayers(snapshotLayers: ImageLayer[]): ImageLayer[] {
+  return cloneSnapshotLayers(snapshotLayers);
+}
 
+function cloneSnapshotLayers(layers: readonly ImageLayer[]): ImageLayer[] {
+  const bitmapClones = new Map<NonNullable<ImageLayer['bitmap']>, NonNullable<ImageLayer['bitmap']>>();
+  const cloneLayerBitmap = (bitmap: ImageLayer['bitmap']): ImageLayer['bitmap'] => {
+    if (!bitmap) return null;
+    const existing = bitmapClones.get(bitmap);
+    if (existing) return existing;
+    const cloned = cloneBitmap(bitmap);
+    bitmapClones.set(bitmap, cloned);
+    return cloned;
+  };
+  return layers.map((layer) => {
+    const { bitmap, mask, ...serializable } = layer;
+    const clonedSerializable = typeof structuredClone === 'function'
+      ? structuredClone(serializable)
+      : JSON.parse(JSON.stringify(serializable)) as typeof serializable;
     return {
-      ...layer,
-      bitmap,
-      mask,
-      bitmapVersion: preservingRuntimeBuffer && current
-        ? Math.max(layer.bitmapVersion, current.bitmapVersion)
-        : layer.bitmapVersion,
+      ...clonedSerializable,
+      bitmap: cloneLayerBitmap(bitmap),
+      mask: cloneLayerBitmap(mask),
     };
   });
 }
@@ -180,6 +190,15 @@ function buildNamedSnapshotReadiness(snapshot: ImageDocumentSnapshot): ImageName
       severity: 'error',
       snapshotId: snapshot.id,
       message: `Snapshot ${snapshot.id} has invalid stored dimensions.`,
+    });
+  }
+
+  if (snapshot.pixelState !== 'complete') {
+    blockers.push({
+      code: 'snapshot-pixels-unavailable',
+      severity: 'error',
+      snapshotId: snapshot.id,
+      message: `Snapshot ${snapshot.id} predates pixel-complete snapshots and cannot be restored safely.`,
     });
   }
 

@@ -926,6 +926,7 @@ describe('sanitizeProjectDocument', () => {
             name: 'Before lettering',
             createdAt: 10,
             updatedAt: 15,
+            pixelState: 'complete',
             width: -20,
             height: 0,
             layers: [{
@@ -940,6 +941,8 @@ describe('sanitizeProjectDocument', () => {
               y: 34,
               bitmap: { unsafe: true },
               mask: { unsafe: true },
+              bitmapData: 'data:image/png;base64,SNAPSHOT_BITMAP',
+              maskData: 'data:image/png;base64,SNAPSHOT_MASK',
               bitmapVersion: 9,
               metadata: { originalSvgSource: '<svg><text>Bang</text></svg>' },
               vectorRecipe: '<svg><text>Bang</text></svg>',
@@ -1001,14 +1004,50 @@ describe('sanitizeProjectDocument', () => {
       width: 800,
       height: 600,
       activeLayerId: 'vector-layer',
+      pixelState: 'complete',
       layers: [{
         id: 'vector-layer',
         type: 'vector',
         bitmap: null,
         mask: null,
+        bitmapData: 'data:image/png;base64,SNAPSHOT_BITMAP',
+        maskData: 'data:image/png;base64,SNAPSHOT_MASK',
         vectorRecipe: '<svg><text>Bang</text></svg>',
       }],
     });
+  });
+
+  it('migrates legacy metadata-only Image snapshots to an explicit unavailable pixel state', () => {
+    const project = projectWith({
+      imageEditor: {
+        activeDocId: 'legacy-image',
+        documents: [{
+          id: 'legacy-image',
+          title: 'Legacy image',
+          width: 1,
+          height: 1,
+          layers: [],
+          activeLayerId: null,
+          hasSelection: false,
+          selectionVersion: 0,
+          viewport: { zoom: 1, panX: 0, panY: 0 },
+          dirty: false,
+          snapshots: [{
+            id: 'legacy-snapshot',
+            name: 'Legacy metadata',
+            createdAt: 1,
+            width: 1,
+            height: 1,
+            layers: [],
+            activeLayerId: null,
+            hasSelection: false,
+            selectionVersion: 0,
+          }],
+        }],
+      },
+    });
+
+    expect(project.imageEditor?.documents[0].snapshots?.[0]?.pixelState).toBe('unavailable');
   });
 
   it('rejects documents without array-shaped flow snapshots', () => {

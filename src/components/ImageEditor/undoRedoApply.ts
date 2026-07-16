@@ -2,6 +2,11 @@ import type { EditorOperation } from '../../types/imageEditor';
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import { fromSnapshot } from './SelectionMask';
 import { clearSelection, setSelection } from './selectionRegistry';
+import {
+  materializeHistoryBitmap,
+  materializeHistoryDocument,
+  materializeHistoryLayers,
+} from './ImageHistoryResources';
 
 type Direction = 'undo' | 'redo';
 
@@ -15,7 +20,7 @@ export function applyOperation(op: EditorOperation, direction: Direction): void 
 
   switch (op.kind) {
     case 'paint': {
-      const targetBitmap = direction === 'undo' ? op.before : op.after;
+      const targetBitmap = materializeHistoryBitmap(direction === 'undo' ? op.before : op.after);
       if (op.paintTarget === 'mask') {
         state.updateLayer(docId, op.layerId, { mask: targetBitmap });
       } else {
@@ -52,7 +57,7 @@ export function applyOperation(op: EditorOperation, direction: Direction): void 
       break;
     }
     case 'layerOp': {
-      const target = direction === 'undo' ? op.before : op.after;
+      const target = materializeHistoryLayers(direction === 'undo' ? op.before : op.after);
       // Replace doc.layers wholesale by removing all and re-adding.
       const current = useImageEditorStore.getState().documents.find((d) => d.id === docId);
       if (!current) return;
@@ -68,12 +73,12 @@ export function applyOperation(op: EditorOperation, direction: Direction): void 
       const target = direction === 'undo' ? op.before : op.after;
       const current = useImageEditorStore.getState().documents.find((d) => d.id === docId);
       if (!current) return;
-      state.setLayers(docId, target.layers, target.activeLayerId);
+      state.setLayers(docId, materializeHistoryLayers(target.layers), target.activeLayerId);
       state.setDocumentDimensions(docId, target.width, target.height);
       break;
     }
     case 'documentState': {
-      const target = direction === 'undo' ? op.before : op.after;
+      const target = materializeHistoryDocument(direction === 'undo' ? op.before : op.after);
       useImageEditorStore.setState((currentState) => ({
         documents: currentState.documents.map((doc) => (doc.id === docId ? target : doc)),
       }));

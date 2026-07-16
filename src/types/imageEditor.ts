@@ -811,6 +811,8 @@ export interface ImageDocumentSnapshot {
   activeLayerId: string | null;
   hasSelection: boolean;
   selectionVersion: number;
+  /** Complete snapshots own immutable bitmap/mask pixels; unavailable is a legacy/metadata-only record. */
+  pixelState?: 'complete' | 'unavailable';
 }
 
 export interface SelectionMaskSnapshot {

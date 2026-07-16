@@ -1,4 +1,4 @@
-import type { ImageLayer, LayerBitmap } from '../../types/imageEditor';
+import type { ImageDocumentSnapshot, ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import { bitmapFromUrl, bitmapToPngDataUrl } from './LayerBitmap';
 
 /**
@@ -49,4 +49,42 @@ export async function decodeImageLayerProjectPixels(
     try { mask = await codec.decode(layer.maskData); } catch { mask = null; }
   }
   return { ...layer, bitmap, mask, bitmapData: undefined, maskData: undefined };
+}
+
+/** Persist a bounded named snapshot through the same lossless PNG layer transport as the live document. */
+export async function encodeImageDocumentSnapshotProjectPixels(
+  snapshot: ImageDocumentSnapshot,
+  codec: ImageLayerPixelCodec = defaultImageLayerPixelCodec,
+): Promise<ImageDocumentSnapshot> {
+  if (snapshot.pixelState !== 'complete') {
+    return { ...snapshot, pixelState: 'unavailable' };
+  }
+  return {
+    ...snapshot,
+    layers: await Promise.all(snapshot.layers.map((layer) => encodeImageLayerProjectPixels(layer, codec))),
+    pixelState: 'complete',
+  };
+}
+
+/** Decode snapshot pixels and fail the snapshot closed if any advertised payload is corrupt. */
+export async function decodeImageDocumentSnapshotProjectPixels(
+  snapshot: ImageDocumentSnapshot,
+  codec: ImageLayerPixelCodec = defaultImageLayerPixelCodec,
+): Promise<ImageDocumentSnapshot> {
+  if (snapshot.pixelState !== 'complete') {
+    return { ...snapshot, pixelState: 'unavailable' };
+  }
+  let decodeFailed = false;
+  const layers = await Promise.all(snapshot.layers.map(async (layer) => {
+    const expectedBitmap = Boolean(layer.bitmapData);
+    const expectedMask = Boolean(layer.maskData);
+    const decoded = await decodeImageLayerProjectPixels(layer, codec);
+    if ((expectedBitmap && !decoded.bitmap) || (expectedMask && !decoded.mask)) decodeFailed = true;
+    return decoded;
+  }));
+  return {
+    ...snapshot,
+    layers,
+    pixelState: decodeFailed ? 'unavailable' : 'complete',
+  };
 }

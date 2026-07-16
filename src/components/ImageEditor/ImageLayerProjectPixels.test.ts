@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  decodeImageDocumentSnapshotProjectPixels,
   decodeImageLayerProjectPixels,
+  encodeImageDocumentSnapshotProjectPixels,
   encodeImageLayerProjectPixels,
   type ImageLayerPixelCodec,
 } from './ImageLayerProjectPixels';
@@ -62,5 +64,40 @@ describe('image layer project pixels', () => {
     const decoded = await decodeImageLayerProjectPixels(baseLayer({ bitmapData: 'garbage' }), throwingCodec);
     expect(decoded.bitmap).toBeNull();
     expect(decoded.bitmapData).toBeUndefined();
+  });
+
+  it('round-trips complete named snapshot pixels and marks corrupt snapshot payloads unavailable', async () => {
+    const snapshot = {
+      id: 'snapshot-red',
+      name: 'Red',
+      createdAt: 1,
+      width: 1,
+      height: 1,
+      layers: [baseLayer({ bitmap: fakeBitmap('red'), mask: fakeBitmap('mask') })],
+      activeLayerId: 'layer-1',
+      hasSelection: false,
+      selectionVersion: 0,
+      pixelState: 'complete' as const,
+    };
+    const encoded = await encodeImageDocumentSnapshotProjectPixels(snapshot, stubCodec);
+    const decoded = await decodeImageDocumentSnapshotProjectPixels(
+      JSON.parse(JSON.stringify(encoded)),
+      stubCodec,
+    );
+    expect(decoded.pixelState).toBe('complete');
+    expect(bitmapId(decoded.layers[0].bitmap)).toBe('red');
+    expect(bitmapId(decoded.layers[0].mask)).toBe('mask');
+
+    const corrupt = await decodeImageDocumentSnapshotProjectPixels(
+      { ...encoded, layers: [{ ...encoded.layers[0], bitmapData: 'corrupt' }] },
+      {
+        encode: stubCodec.encode,
+        decode: async (payload) => {
+          if (payload === 'corrupt') throw new Error('bad payload');
+          return stubCodec.decode(payload);
+        },
+      },
+    );
+    expect(corrupt.pixelState).toBe('unavailable');
   });
 });
