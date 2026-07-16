@@ -7,24 +7,23 @@ import { buildBackendProxyExecuteRequest, shouldUseBackendProxy } from './backen
  * AUD-012 expected outbound policy, duplicated here on purpose: the implementation must agree
  * with this classification key-for-key, so quietly moving a credential onto the wire requires
  * editing this test as well. Together the two lists must cover every ProviderSettings key.
+ *
+ * Forwarding is consumption-based: a field is forwarded only when the flow-execution provider
+ * paths actually read it. Fields consumed exclusively by client-side code — the Image-editor
+ * generic adapter, the client-side auto-upscaler (local CPU / Android accelerator), the
+ * client-native Vertex auth broker, and the client-side retry wrapper that also wraps proxy
+ * calls — stay on this device.
  */
 const EXPECTED_FORWARDED_PROVIDER_SETTING_KEYS = [
   'openaiBaseUrl',
   'elevenlabsVoiceId',
   'geminiCredentialMode',
-  'vertexAuthMode',
   'vertexProjectId',
   'vertexLocation',
-  'vertexQuotaProjectId',
   'localOpenImageEndpointUrl',
   'localOpenImageDefaultModel',
-  'genericImageEndpointUrl',
-  'localAiCpuEndpointUrl',
-  'localAiCpuModel',
   'atlasBaseUrl',
   'bytePlusBaseUrl',
-  'batchMaxRetries',
-  'batchRetryBaseDelayMs',
 ] as const;
 
 const EXPECTED_WITHHELD_PROVIDER_SETTING_KEYS = [
@@ -34,17 +33,24 @@ const EXPECTED_WITHHELD_PROVIDER_SETTING_KEYS = [
   'localNativeRenderToken',
   'backendProxyEnabled',
   'backendProxyBaseUrl',
+  'vertexAuthMode',
+  'vertexQuotaProjectId',
   'vertexEnvironmentVariables',
   'vertexServiceAccountJson',
   'paperPrintUpscaleMethod',
   'paperPdfRasterPreset',
   'localOpenImageAuthHeader',
+  'genericImageEndpointUrl',
   'genericImageAuthHeader',
+  'localAiCpuEndpointUrl',
   'localAiCpuAuthHeader',
+  'localAiCpuModel',
   'androidAcceleratorBaseUrl',
   'androidAcceleratorAuthToken',
   'androidAcceleratorDefaultUpscaler',
   'androidAcceleratorDefaultImageModel',
+  'batchMaxRetries',
+  'batchRetryBaseDelayMs',
   'androidLanServerEnabled',
   'androidLanServerPin',
 ] as const;
@@ -66,19 +72,12 @@ const NON_SECRET_EXECUTION_VALUES = {
   openaiBaseUrl: 'https://openai-compatible.example/v1',
   elevenlabsVoiceId: 'voice-abc',
   geminiCredentialMode: 'vertex-adc',
-  vertexAuthMode: 'gcloud-adc',
   vertexProjectId: 'render-project',
   vertexLocation: 'us-central1',
-  vertexQuotaProjectId: 'billing-project',
   localOpenImageEndpointUrl: 'https://lan-image.example/edit',
   localOpenImageDefaultModel: 'Qwen/Qwen-Image-Edit',
-  genericImageEndpointUrl: 'https://generic-image.example/generate',
-  localAiCpuEndpointUrl: 'https://lan-cpu.example/upscale',
-  localAiCpuModel: 'realesrgan-4x',
   atlasBaseUrl: 'https://api.atlas-cloud.ai',
   bytePlusBaseUrl: 'https://ark.ap-southeast.bytepluses.com/api/v3',
-  batchMaxRetries: 4,
-  batchRetryBaseDelayMs: 12000,
 } satisfies Partial<ProviderSettings>;
 
 function buildHostileProviderSettings(): ProviderSettings {
@@ -86,6 +85,10 @@ function buildHostileProviderSettings(): ProviderSettings {
     ...DEFAULT_PROVIDER_SETTINGS,
     ...NON_SECRET_EXECUTION_VALUES,
     ...CREDENTIAL_SENTINELS,
+    // Client-only fields that must never travel even though their values are strings/numbers:
+    genericImageEndpointUrl: 'https://SECRET-generic-editor-endpoint.example/generate',
+    localAiCpuEndpointUrl: 'https://SECRET-local-cpu-endpoint.example/upscale',
+    localAiCpuModel: 'SECRET-local-cpu-model',
     // Hostile / future shapes an allowlist must drop even though they are not typed today:
     apiKeys: { openai: 'SECRET-nested-api-key' },
     futureAuthBlock: { serviceAccount: { private_key: 'SECRET-future-private-key' } },
@@ -95,7 +98,7 @@ function buildHostileProviderSettings(): ProviderSettings {
 function buildRequestFromHostileSettings() {
   return buildBackendProxyExecuteRequest({
     baseUrl: 'https://proxy.local/',
-    node: { id: 'node-1', type: 'imageGen', data: { prompt: 'hello' } },
+    node: { id: 'node-1', type: 'imageGen', data: { prompt: 'hello', imageAutoUpscale: true } },
     context: { prompt: 'hello' },
     settings: {
       defaultModels: { text: { gemini: 'gemini-3' }, image: { openai: 'gpt-image-1' } },
@@ -177,6 +180,24 @@ describe('backend proxy execution settings DTO (AUD-012)', () => {
     expect(request.body.settings.providerSettings).not.toHaveProperty('futureAuthBlock');
   });
 
+  it('withholds fields consumed only by client-side code (editor adapter, upscaler, retry wrapper, native auth)', () => {
+    const request = buildRequestFromHostileSettings();
+    const forwarded = request.body.settings.providerSettings as Record<string, unknown>;
+
+    for (const key of [
+      'genericImageEndpointUrl',
+      'localAiCpuEndpointUrl',
+      'localAiCpuModel',
+      'batchMaxRetries',
+      'batchRetryBaseDelayMs',
+      'vertexAuthMode',
+      'vertexQuotaProjectId',
+      'paperPrintUpscaleMethod',
+    ]) {
+      expect(forwarded, `client-only field forwarded: ${key}`).not.toHaveProperty(key);
+    }
+  });
+
   it('forwards only allowlisted keys, and all required non-secret execution settings survive', () => {
     const request = buildRequestFromHostileSettings();
     const forwarded = request.body.settings.providerSettings as Record<string, unknown>;
@@ -189,6 +210,10 @@ describe('backend proxy execution settings DTO (AUD-012)', () => {
     for (const [key, value] of Object.entries(NON_SECRET_EXECUTION_VALUES)) {
       expect(forwarded[key], `missing required execution setting: ${key}`).toBe(value);
     }
+
+    // The node payload itself is not restructured: execution options like the auto-upscale
+    // request stay visible to the run (the client applies upscaling after the proxy returns).
+    expect((request.body.node as { data: Record<string, unknown> }).data.imageAutoUpscale).toBe(true);
   });
 
   it('drops non-primitive values even for allowlisted keys', () => {
@@ -209,6 +234,52 @@ describe('backend proxy execution settings DTO (AUD-012)', () => {
     expect(JSON.stringify(request.body)).not.toContain('SECRET-');
     expect((request.body.settings.providerSettings as Record<string, unknown>).atlasBaseUrl)
       .toBe('https://api.atlas-cloud.ai');
+  });
+
+  it('forwards endpoint URLs by safe components only: no userinfo, query, or fragment', () => {
+    const request = buildBackendProxyExecuteRequest({
+      baseUrl: 'https://proxy.local',
+      node: {},
+      context: {},
+      settings: {
+        defaultModels: {},
+        providerSettings: {
+          // Userinfo makes the whole field untrustworthy: dropped, not stripped-and-forwarded.
+          openaiBaseUrl: 'https://SECRET-url-user:SECRET-url-pass@openai.example/v1',
+          // Query and fragment components never travel, whatever their keys are called.
+          atlasBaseUrl: 'https://atlas.example/api?api_key=SECRET-query-key&region=eu#SECRET-fragment',
+          // Non-HTTP(S) schemes and unparseable values are dropped entirely.
+          bytePlusBaseUrl: 'ftp://byteplus.example/api/v3',
+          localOpenImageEndpointUrl: 'not a url at all',
+        } as Partial<ProviderSettings>,
+      },
+    });
+
+    const forwarded = request.body.settings.providerSettings as Record<string, unknown>;
+    expect(forwarded).not.toHaveProperty('openaiBaseUrl');
+    expect(forwarded.atlasBaseUrl).toBe('https://atlas.example/api');
+    expect(forwarded).not.toHaveProperty('bytePlusBaseUrl');
+    expect(forwarded).not.toHaveProperty('localOpenImageEndpointUrl');
+    expect(JSON.stringify(request.body)).not.toContain('SECRET-');
+  });
+
+  it('keeps ports and paths of clean endpoint URLs byte-stable', () => {
+    const request = buildBackendProxyExecuteRequest({
+      baseUrl: 'https://proxy.local',
+      node: {},
+      context: {},
+      settings: {
+        defaultModels: {},
+        providerSettings: {
+          openaiBaseUrl: 'http://127.0.0.1:8188/v1',
+          atlasBaseUrl: 'https://api.atlas-cloud.ai',
+        } as Partial<ProviderSettings>,
+      },
+    });
+
+    const forwarded = request.body.settings.providerSettings as Record<string, unknown>;
+    expect(forwarded.openaiBaseUrl).toBe('http://127.0.0.1:8188/v1');
+    expect(forwarded.atlasBaseUrl).toBe('https://api.atlas-cloud.ai');
   });
 
   it('rebuilds defaultModels from the four capabilities with string-valued entries only', () => {
@@ -233,6 +304,33 @@ describe('backend proxy execution settings DTO (AUD-012)', () => {
     expect(models.video).toEqual({ atlas: 'google/veo3.1/text-to-video' });
     expect(models.audio).toEqual({});
     expect(models).not.toHaveProperty('rogueCapability');
+    expect(JSON.stringify(request.body)).not.toContain('SECRET-');
+  });
+
+  it('forwards defaultModels only under the known provider keys of each capability', () => {
+    const request = buildBackendProxyExecuteRequest({
+      baseUrl: 'https://proxy.local',
+      node: {},
+      context: {},
+      settings: {
+        defaultModels: {
+          // A string value under an unknown alias must not travel; a legitimate model name
+          // under a real provider passes through as-is (its content is not interpretable here).
+          text: { gemini: 'gemini-3', rogueAlias: 'SECRET-string-under-rogue-alias' },
+          // Provider keys are per-capability: elevenlabs is an audio provider, not an image one.
+          image: { byteplus: 'seedream-4.5', elevenlabs: 'SECRET-cross-capability-smuggle' },
+          audio: { elevenlabs: 'eleven_multilingual_v2' },
+          video: { atlas: 'google/veo3.1/text-to-video', openai: 'SECRET-not-a-video-provider' },
+        },
+        providerSettings: {},
+      },
+    });
+
+    const models = request.body.settings.defaultModels as Record<string, Record<string, unknown>>;
+    expect(models.text).toEqual({ gemini: 'gemini-3' });
+    expect(models.image).toEqual({ byteplus: 'seedream-4.5' });
+    expect(models.audio).toEqual({ elevenlabs: 'eleven_multilingual_v2' });
+    expect(models.video).toEqual({ atlas: 'google/veo3.1/text-to-video' });
     expect(JSON.stringify(request.body)).not.toContain('SECRET-');
   });
 });

@@ -1,4 +1,11 @@
-import type { DefaultModelSettings, ProviderSettings } from '../types/flow';
+import type {
+  AudioProvider,
+  DefaultModelSettings,
+  ImageProvider,
+  ProviderSettings,
+  TextProvider,
+  VideoProvider,
+} from '../types/flow';
 
 export interface BackendProxySettingsLike {
   backendProxyEnabled?: boolean;
@@ -16,26 +23,34 @@ export interface BackendProxyExecuteRequestInput {
 }
 
 /**
- * Version stamp of the outbound execution-settings DTO. Bump when the forwarded shape changes so
- * a proxy server can dispatch on it; the surrounding `{ node, context, settings }` envelope stays
- * wire-compatible with pre-versioned servers, which simply ignore the extra field.
+ * Version stamp of the outbound execution-settings DTO. The consuming proxy service is external —
+ * this repository ships no server implementation or shared schema — so this constant together
+ * with the policy map below IS the client-side half of the contract. Bump it whenever the
+ * forwarded shape changes so an external implementation can validate or dispatch on the shape it
+ * receives; how any existing external server treats an unknown field or version cannot be
+ * verified from this repository.
  */
 export const BACKEND_PROXY_EXECUTION_SETTINGS_VERSION = 1;
 
 /**
  * Outbound policy for every ProviderSettings field (AUD-012). The proxy body is BUILT from the
- * 'forward' entries — never by copying the settings object and deleting secrets — so a field the
- * policy does not know about can never reach the wire. `satisfies` keeps the map exhaustive: adding
- * a ProviderSettings field refuses to compile until it is explicitly classified here.
+ * forwarding entries — never by copying the settings object and deleting secrets — so a field the
+ * policy does not know about can never reach the wire. `satisfies` keeps the map exhaustive:
+ * adding a ProviderSettings field refuses to compile until it is explicitly classified here.
  *
- * 'forward' is reserved for non-secret execution parameters a proxy server needs to run a node
- * (endpoints, model ids, project/region identifiers, retry policy). Anything credential-like
- * (tokens, auth headers, service-account JSON, ADC environment variables, PINs) and anything the
- * remote proxy has no use for (local render/export preferences, Paper output presets, the proxy's
- * own address, on-device Android accelerator config) is 'withhold'.
+ * Forwarding is consumption-based: a field travels only when the flow-execution provider paths
+ * genuinely read it to run a node ('forward' for plain values, 'forward-endpoint' for URLs that
+ * are additionally reduced to safe components — see sanitizeForwardedEndpointUrl). Everything
+ * credential-like (tokens, auth headers, service-account JSON, ADC environment variables, PINs)
+ * is withheld, as is everything consumed only by client-side code: the Image-editor generic
+ * adapter (genericImage*), the client-side auto-upscaler (localAiCpu*, androidAccelerator*,
+ * paperPrintUpscaleMethod — upscaling is post-processing applied on this device, including to
+ * proxied results), the client-native Vertex auth broker (vertexAuthMode, vertexQuotaProjectId),
+ * the client-side retry wrapper that also wraps proxy calls (batch*), local render/export
+ * preferences, Paper output presets, and the proxy's own address.
  */
 const PROVIDER_SETTING_EXECUTION_POLICY = {
-  openaiBaseUrl: 'forward',
+  openaiBaseUrl: 'forward-endpoint',
   elevenlabsVoiceId: 'forward',
   renderBackendPreference: 'withhold',
   exportCompositorPreference: 'withhold',
@@ -44,40 +59,40 @@ const PROVIDER_SETTING_EXECUTION_POLICY = {
   backendProxyEnabled: 'withhold',
   backendProxyBaseUrl: 'withhold',
   geminiCredentialMode: 'forward',
-  vertexAuthMode: 'forward',
+  vertexAuthMode: 'withhold',
   vertexProjectId: 'forward',
   vertexLocation: 'forward',
-  vertexQuotaProjectId: 'forward',
+  vertexQuotaProjectId: 'withhold',
   vertexEnvironmentVariables: 'withhold',
   vertexServiceAccountJson: 'withhold',
   paperPrintUpscaleMethod: 'withhold',
   paperPdfRasterPreset: 'withhold',
-  localOpenImageEndpointUrl: 'forward',
+  localOpenImageEndpointUrl: 'forward-endpoint',
   localOpenImageAuthHeader: 'withhold',
   localOpenImageDefaultModel: 'forward',
-  genericImageEndpointUrl: 'forward',
+  genericImageEndpointUrl: 'withhold',
   genericImageAuthHeader: 'withhold',
-  localAiCpuEndpointUrl: 'forward',
+  localAiCpuEndpointUrl: 'withhold',
   localAiCpuAuthHeader: 'withhold',
-  localAiCpuModel: 'forward',
-  atlasBaseUrl: 'forward',
-  bytePlusBaseUrl: 'forward',
+  localAiCpuModel: 'withhold',
+  atlasBaseUrl: 'forward-endpoint',
+  bytePlusBaseUrl: 'forward-endpoint',
   androidAcceleratorBaseUrl: 'withhold',
   androidAcceleratorAuthToken: 'withhold',
   androidAcceleratorDefaultUpscaler: 'withhold',
   androidAcceleratorDefaultImageModel: 'withhold',
-  batchMaxRetries: 'forward',
-  batchRetryBaseDelayMs: 'forward',
+  batchMaxRetries: 'withhold',
+  batchRetryBaseDelayMs: 'withhold',
   androidLanServerEnabled: 'withhold',
   androidLanServerPin: 'withhold',
-} as const satisfies Record<keyof ProviderSettings, 'forward' | 'withhold'>;
+} as const satisfies Record<keyof ProviderSettings, 'forward' | 'forward-endpoint' | 'withhold'>;
 
 type ProviderSettingExecutionPolicy = typeof PROVIDER_SETTING_EXECUTION_POLICY;
 
 export type BackendProxyForwardedProviderSettingKey = {
-  [TKey in keyof ProviderSettingExecutionPolicy]: ProviderSettingExecutionPolicy[TKey] extends 'forward'
-    ? TKey
-    : never;
+  [TKey in keyof ProviderSettingExecutionPolicy]: ProviderSettingExecutionPolicy[TKey] extends 'withhold'
+    ? never
+    : TKey;
 }[keyof ProviderSettingExecutionPolicy];
 
 /** The allowlisted, credential-free ProviderSettings subset a proxy request may carry. */
@@ -89,10 +104,57 @@ export const BACKEND_PROXY_FORWARDED_PROVIDER_SETTING_KEYS = (
   Object.keys(PROVIDER_SETTING_EXECUTION_POLICY) as Array<keyof ProviderSettings>
 ).filter(
   (key): key is BackendProxyForwardedProviderSettingKey =>
-    PROVIDER_SETTING_EXECUTION_POLICY[key] === 'forward',
+    PROVIDER_SETTING_EXECUTION_POLICY[key] !== 'withhold',
 );
 
 const DEFAULT_MODEL_CAPABILITIES = ['text', 'image', 'video', 'audio'] as const;
+
+/**
+ * Per-capability provider keys a defaultModels entry may travel under. Exhaustive both ways via
+ * `satisfies Record<Provider, true>`: a provider added to a capability union refuses to compile
+ * until listed, and an alias that is not a real provider of that capability never reaches the
+ * wire — model VALUES under valid providers pass through as-is, since an arbitrary legitimate
+ * model name is not interpretable at this boundary.
+ */
+const TEXT_PROVIDER_KEYS = {
+  gemini: true,
+  openai: true,
+  huggingface: true,
+} as const satisfies Record<TextProvider, true>;
+
+const IMAGE_PROVIDER_KEYS = {
+  gemini: true,
+  openai: true,
+  huggingface: true,
+  bfl: true,
+  stability: true,
+  localOpen: true,
+  android: true,
+  atlas: true,
+  byteplus: true,
+} as const satisfies Record<ImageProvider, true>;
+
+const VIDEO_PROVIDER_KEYS = {
+  gemini: true,
+  huggingface: true,
+  atlas: true,
+} as const satisfies Record<VideoProvider, true>;
+
+const AUDIO_PROVIDER_KEYS = {
+  gemini: true,
+  elevenlabs: true,
+  huggingface: true,
+} as const satisfies Record<AudioProvider, true>;
+
+const CAPABILITY_PROVIDER_KEYS: Record<
+  (typeof DEFAULT_MODEL_CAPABILITIES)[number],
+  Record<string, true>
+> = {
+  text: TEXT_PROVIDER_KEYS,
+  image: IMAGE_PROVIDER_KEYS,
+  video: VIDEO_PROVIDER_KEYS,
+  audio: AUDIO_PROVIDER_KEYS,
+};
 
 export type BackendProxyDefaultModels = Record<
   (typeof DEFAULT_MODEL_CAPABILITIES)[number],
@@ -123,12 +185,52 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Reduce a forwarded endpoint URL to safe components: http(s) scheme, host, port, and path only.
+ * Query and fragment never travel; a URL carrying userinfo — whose semantics we cannot preserve
+ * without forwarding a credential — drops the whole field, as do unparseable or non-HTTP values.
+ * This is component reconstruction, not pattern redaction.
+ */
+function sanitizeForwardedEndpointUrl(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return undefined;
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return undefined;
+  }
+  if (parsed.username !== '' || parsed.password !== '') {
+    return undefined;
+  }
+
+  return parsed.pathname === '/' ? parsed.origin : `${parsed.origin}${parsed.pathname}`;
+}
+
 function buildForwardedProviderSettings(source: unknown): BackendProxyForwardedProviderSettings {
   const record = isRecord(source) ? source : {};
   const forwarded: Record<string, string | number | boolean> = {};
 
   for (const key of BACKEND_PROXY_FORWARDED_PROVIDER_SETTING_KEYS) {
     const value = record[key];
+
+    if (PROVIDER_SETTING_EXECUTION_POLICY[key] === 'forward-endpoint') {
+      if (typeof value === 'string') {
+        const safeEndpoint = sanitizeForwardedEndpointUrl(value);
+        if (safeEndpoint !== undefined) {
+          forwarded[key] = safeEndpoint;
+        }
+      }
+      continue;
+    }
+
     // Primitives only: an object smuggled into an allowlisted slot never travels.
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
       forwarded[key] = value;
@@ -144,10 +246,11 @@ function buildForwardedDefaultModels(source: unknown): BackendProxyDefaultModels
 
   for (const capability of DEFAULT_MODEL_CAPABILITIES) {
     const entries = record[capability];
+    const knownProviders = CAPABILITY_PROVIDER_KEYS[capability];
     const forwarded: Record<string, string> = {};
     if (isRecord(entries)) {
       for (const [provider, modelId] of Object.entries(entries)) {
-        if (typeof modelId === 'string') {
+        if (typeof modelId === 'string' && Object.prototype.hasOwnProperty.call(knownProviders, provider)) {
           forwarded[provider] = modelId;
         }
       }

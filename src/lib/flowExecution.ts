@@ -274,7 +274,12 @@ export async function executeNodeRequest(
     throwIfAborted(options.signal);
 
     if (shouldProxyNodeExecution(node, settings)) {
-      return executeNodeViaBackendProxy(node, context, settings, onStatus, options.signal);
+      const proxied = await executeNodeViaBackendProxy(node, context, settings, onStatus, options.signal);
+      // Auto-upscale is client-side post-processing: the plan and every credential it can use
+      // (Android accelerator token, local endpoints, Stability key, Vertex auth) stay on this
+      // device, so a proxied image result takes exactly the same upscale path as a direct
+      // provider result instead of silently skipping the node's requested upscale.
+      return applyConfiguredAutoUpscaleIfRequested({ node, context, settings, result: proxied, onStatus });
     }
 
     switch (node.type) {
