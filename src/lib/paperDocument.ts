@@ -165,6 +165,11 @@ type PaperFrameDraft = Partial<Omit<PaperFrame, 'typography'>> & {
   typography?: Partial<PaperTypography>;
 } & Pick<PaperFrame, 'kind' | 'xMm' | 'yMm' | 'widthMm' | 'heightMm'>;
 
+/** Every PaperFrame key must be named by the normalizer, including optional persisted controls. */
+type ExhaustivePaperFrame = {
+  [Key in keyof PaperFrame]-?: PaperFrame[Key] | undefined;
+};
+
 export interface PaperPrintHtmlOptions {
   mediaBox?: 'bleed' | 'trim';
   includeScreenGuides?: boolean;
@@ -1072,6 +1077,8 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
   // plaintext, so every plain-text consumer (search, threading, legacy export) still works unchanged.
   const richText = frame.richText ? normalizePaperRichText(frame.richText) : undefined;
 
+  // Keep this construction exhaustive: `PaperFrameDraft` accepts every persisted PaperFrame field, and
+  // normalizing a loaded frame must never silently discard an authored optional control.
   return {
     id: frame.id ?? makeId('frame'),
     kind,
@@ -1139,6 +1146,10 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     textArcPercent: frame.textArcPercent,
     bubbleShape: frame.bubbleShape ?? (kind === 'speechBubble' ? 'organic' : kind === 'thoughtBubble' ? 'cloud' : undefined),
     bubbleWarp: frame.bubbleWarp ?? (kind === 'speechBubble' || kind === 'thoughtBubble' ? 0.18 : undefined),
+    bubbleWarpLeft: frame.bubbleWarpLeft,
+    bubbleWarpRight: frame.bubbleWarpRight,
+    bubbleWarpTop: frame.bubbleWarpTop,
+    bubbleWarpBottom: frame.bubbleWarpBottom,
     bubblePinchXPercent: frame.bubblePinchXPercent ?? (kind === 'speechBubble' || kind === 'thoughtBubble' ? 58 : undefined),
     bubblePinchYPercent: frame.bubblePinchYPercent ?? (kind === 'speechBubble' || kind === 'thoughtBubble' ? 75 : undefined),
     bubbleTailWidthPercent: frame.bubbleTailWidthPercent ?? (kind === 'speechBubble' ? 18 : kind === 'thoughtBubble' ? 12 : undefined),
@@ -1162,7 +1173,7 @@ function createPaperFrame(frame: PaperFrameDraft): PaperFrame {
     parentPageId: frame.parentPageId,
     parentFrameId: frame.parentFrameId,
     inherited: frame.inherited ?? false,
-  };
+  } satisfies ExhaustivePaperFrame;
 }
 
 function normalizePaperFrameKind(kind: unknown): PaperFrameKind {
