@@ -3,6 +3,7 @@ import {
   DEFAULT_MODELS,
   DEFAULT_PROVIDER_SETTINGS,
   FALLBACK_MODEL_OPTIONS,
+  getAudioOutputFormat,
   getConfiguredProviders,
   getImageAspectRatioOptions,
   getSupportedImageAspectRatio,
@@ -13,6 +14,10 @@ import {
 } from './providerCatalog';
 
 describe('FALLBACK_MODEL_OPTIONS', () => {
+  it('preserves the valid ElevenLabs 48kHz 192kbps music output format', () => {
+    expect(getAudioOutputFormat('mp3_48000_192')).toBe('mp3_48000_192');
+  });
+
   it('makes the local render auto option explicit about AMD VAAPI GPU acceleration', () => {
     expect(RENDER_BACKEND_OPTIONS.find((option) => option.value === 'auto')?.label).toContain('AMD VAAPI GPU');
     expect(RENDER_BACKEND_OPTIONS.find((option) => option.value === 'native-amd-vaapi')?.label).toContain('AMD VAAPI GPU');

@@ -219,7 +219,7 @@ export const IMAGE_OUTPUT_FORMAT_OPTIONS: SelectOption[] = [
   { value: 'webp', label: 'WEBP' },
 ];
 
-export const AUDIO_OUTPUT_FORMAT_OPTIONS: SelectOption[] = [
+export const AUDIO_OUTPUT_FORMAT_OPTIONS: Array<SelectOption & { value: AudioOutputFormat }> = [
   { value: 'mp3_48000_192', label: 'MP3 48kHz 192kbps' },
   { value: 'mp3_44100_128', label: 'MP3 44.1kHz 128kbps' },
   { value: 'mp3_44100_64', label: 'MP3 44.1kHz 64kbps' },
@@ -711,11 +711,7 @@ export function getImageOutputFormat(value: string | undefined): ImageOutputForm
 }
 
 export function getAudioOutputFormat(value: string | undefined): AudioOutputFormat {
-  if (value === 'mp3_44100_64' || value === 'pcm_44100') {
-    return value;
-  }
-
-  return 'mp3_44100_128';
+  return AUDIO_OUTPUT_FORMAT_OPTIONS.find((option) => option.value === value)?.value ?? 'mp3_44100_128';
 }
 
 export function getVideoDurationOptions(hasInterpolationFrames: boolean): SelectOption[] {
