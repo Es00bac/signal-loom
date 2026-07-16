@@ -44,6 +44,22 @@ describe('flow signal evaluation', () => {
     });
   });
 
+  it('evaluates list inputs in numbered slot order when persisted edges are shuffled', () => {
+    const nodes = [
+      createNode({ id: 'first', type: 'textNode', data: { prompt: 'first slot' } }),
+      createNode({ id: 'second', type: 'textNode', data: { prompt: 'second slot' } }),
+      createNode({ id: 'list', type: 'list' }),
+    ];
+    const edges: Edge[] = [
+      { id: 'second-edge', source: 'second', target: 'list', targetHandle: buildListItemTargetHandle(1) },
+      { id: 'first-edge', source: 'first', target: 'list', targetHandle: buildListItemTargetHandle(0) },
+    ];
+
+    const signal = evaluateNodeSignal('list', nodes, edges);
+
+    expect(signal.items?.map((item) => item.value)).toEqual(['first slot', 'second slot']);
+  });
+
   it('auto-batches a string template when one placeholder is fed by a text list', () => {
     const nodes = [
       createNode({ id: 'happy', type: 'textNode', data: { prompt: 'happy' } }),

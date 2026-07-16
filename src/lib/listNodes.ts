@@ -46,18 +46,27 @@ export function getListItemIndexFromHandle(handle: string | null | undefined): n
   return Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
+/**
+ * The numbered List handles are the authoritative input sequence. Keep this
+ * shared so previews, execution, signals, and cache inputs cannot depend on
+ * the incidental order in which a saved edge array was serialized.
+ */
+export function getOrderedListInputEdges(listNodeId: string, edges: Edge[]): Edge[] {
+  return edges
+    .filter((edge) => edge.target === listNodeId && isListItemTargetHandle(edge.targetHandle))
+    .sort((left, right) => (
+      (getListItemIndexFromHandle(left.targetHandle) ?? 0) -
+      (getListItemIndexFromHandle(right.targetHandle) ?? 0)
+    ));
+}
+
 export function buildListNodeItems(
   listNodeId: string,
   nodes: AppNode[],
   edges: Edge[],
 ): FlowListItem[] {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
-  const slotEdges = edges
-    .filter((edge) => edge.target === listNodeId && isListItemTargetHandle(edge.targetHandle))
-    .sort((left, right) => (
-      (getListItemIndexFromHandle(left.targetHandle) ?? 0) -
-      (getListItemIndexFromHandle(right.targetHandle) ?? 0)
-    ));
+  const slotEdges = getOrderedListInputEdges(listNodeId, edges);
   const latestEdgeBySlot = new Map<number, Edge>();
 
   for (const edge of slotEdges) {

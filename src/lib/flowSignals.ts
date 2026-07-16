@@ -1,6 +1,7 @@
 import type { Edge } from '@xyflow/react';
 import type { AppNode, EnvelopeItem, ResultType } from '../types/flow';
 import {
+  getOrderedListInputEdges,
   resolveExpandedListItemForNode,
   resolvePackageNodeData,
   type FlowListItem,
@@ -839,7 +840,9 @@ function evaluateListLikeNode(
   nodesById: Map<string, AppNode>,
   kind: Extract<FlowSignalKind, 'list' | 'envelope'>,
 ): FlowSignal {
-  const incomingEdges = edges.filter((edge) => edge.target === node.id && edge.targetHandle !== LOOP_BREAK_TARGET_HANDLE);
+  const incomingEdges = node.type === 'list'
+    ? getOrderedListInputEdges(node.id, edges)
+    : edges.filter((edge) => edge.target === node.id && edge.targetHandle !== LOOP_BREAK_TARGET_HANDLE);
 
   if (incomingEdges.length === 0 && Array.isArray(node.data.envelopeItems)) {
     return listSignal(node.data.envelopeItems.map((item) => signalFromEnvelopeItem(item)), node.id, kind);
