@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
-import { addFrameToPaperPage, computeEffectivePaperFrame, createDefaultPaperDocument } from './paperDocument';
+import {
+  addFrameToPaperPage,
+  computeEffectivePaperFrame,
+  createDefaultPaperDocument,
+  serializePaperDocument,
+} from './paperDocument';
 import { analyzePaperPreflight, collectPaperLinkedAssets } from './paperPreflight';
 import {
   buildPaperCbzManifestExport,
@@ -32,6 +37,40 @@ describe('paperDocumentFormats', () => {
     expect(inferPaperDocumentImportFormat('layout.idml')).toBe('idml-package');
     expect(inferPaperDocumentImportFormat('x', 'application/vnd.adobe.indesign-idml-package')).toBe('idml-package');
     expect(inferPaperDocumentImportFormat('layout.sloom-idml.json')).toBe('sloom-idml-json');
+  });
+
+  it('round-trips its own Paper JSON export through the import-file boundary', async () => {
+    const source = createDefaultPaperDocument({ title: 'Round-trip layout' });
+    const { document } = addFrameToPaperPage(source, source.pages[0].id, {
+      kind: 'text',
+      xMm: 11,
+      yMm: 17,
+      widthMm: 73,
+      heightMm: 28,
+      text: 'Keep this frame as layout data.',
+    });
+    const file = new File(
+      [serializePaperDocument(document)],
+      'round-trip.sloom-paper.json',
+      { type: 'application/json' },
+    );
+
+    expect(inferPaperDocumentImportFormat(file.name, file.type)).toBe('sloom-paper-json');
+    const imported = await parsePaperDocumentImportFile(file);
+
+    expect('blocks' in imported).toBe(false);
+    expect(imported).toMatchObject({
+      id: document.id,
+      title: 'Round-trip layout',
+      pages: [{
+        id: document.pages[0].id,
+        frames: [{
+          text: 'Keep this frame as layout data.',
+          xMm: 11,
+          yMm: 17,
+        }],
+      }],
+    });
   });
 
   it('gives an honest error for a real .idml import instead of silently mis-parsing the ZIP as text', async () => {

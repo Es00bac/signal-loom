@@ -16,7 +16,7 @@ import {
   type FlattenedPaperPageSvgExport,
 } from './paperPageFlattenExport';
 
-export type PaperDocumentImportFormat = 'txt' | 'markdown' | 'rtf' | 'html' | 'docx' | 'pdf' | 'sloom-idml-json' | 'idml-package';
+export type PaperDocumentImportFormat = 'txt' | 'markdown' | 'rtf' | 'html' | 'docx' | 'pdf' | 'sloom-paper-json' | 'sloom-idml-json' | 'idml-package';
 export type PaperStoryExportFormat = 'txt' | 'html' | 'rtf' | 'docx';
 
 export interface ImportedPaperTableData {
@@ -170,6 +170,7 @@ export interface PaperCbzRasterExportOptions {
 
 export async function parsePaperDocumentImportFile(file: File): Promise<ImportedPaperTextDocument | PaperDocument> {
   const format = inferPaperDocumentImportFormat(file.name, file.type);
+  if (format === 'sloom-paper-json') return parsePaperDocument(await file.text());
   if (format === 'sloom-idml-json') return importPaperIdmlInterchange(await file.text());
   if (format === 'idml-package') {
     // A genuine Adobe .idml ZIP. We EXPORT real .idml, but parsing one back is not built yet — say so
@@ -926,6 +927,7 @@ function dataUrlToU8(dataUrl: string, expectedMimeType: string): Uint8Array {
 export function inferPaperDocumentImportFormat(fileNameOrPath: string | undefined, mimeType?: string): PaperDocumentImportFormat {
   const lower = (fileNameOrPath ?? '').toLowerCase();
   const normalizedMime = mimeType?.split(';', 1)[0]?.toLowerCase();
+  if (lower.endsWith('.sloom-paper.json')) return 'sloom-paper-json';
   if (lower.endsWith('.sloom-idml.json')) return 'sloom-idml-json';
   // A REAL Adobe .idml package (ZIP), distinct from our .sloom-idml.json interchange — so it can be given
   // an honest "not supported yet" message instead of being silently mis-parsed as plain text.
