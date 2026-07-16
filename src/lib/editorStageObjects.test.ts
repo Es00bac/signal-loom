@@ -49,6 +49,8 @@ describe('getEditorStageObjects', () => {
         x: 120,
         blendMode: 'screen',
         text: 'Title',
+        fontWeight: 400,
+        fontStyle: 'normal',
       },
       {
         id: 'shape-1',
@@ -57,6 +59,33 @@ describe('getEditorStageObjects', () => {
         cornerRadius: 24,
       },
     ]);
+  });
+
+  it('normalizes explicit text weight and style and drops invalid values (AUD-026)', () => {
+    const objects = getEditorStageObjects({
+      editorStageObjects: [
+        {
+          id: 'text-bold',
+          kind: 'text',
+          text: 'Bold',
+          fontWeight: 700,
+          fontStyle: 'italic',
+        },
+        {
+          id: 'text-invalid',
+          kind: 'text',
+          text: 'Invalid',
+          fontWeight: 'heavy',
+          fontStyle: 'oblique',
+        },
+      ],
+    } as Partial<NodeData> as NodeData);
+
+    const bold = objects.find((o) => o.id === 'text-bold');
+    const invalid = objects.find((o) => o.id === 'text-invalid');
+
+    expect(bold).toMatchObject({ fontWeight: 700, fontStyle: 'italic' });
+    expect(invalid).toMatchObject({ fontWeight: 400, fontStyle: 'normal' });
   });
 });
 
@@ -72,6 +101,8 @@ describe('createEditorStageObject', () => {
       width: 512,
       height: 120,
       text: 'Text',
+      fontWeight: 400,
+      fontStyle: 'normal',
     });
     expect(rectangleObject).toMatchObject({
       kind: 'rectangle',

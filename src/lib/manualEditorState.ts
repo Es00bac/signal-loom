@@ -540,6 +540,9 @@ function normalizeEditorTextTypography(value: unknown): EditorTextTypography | u
   if (value.fontStyle === 'normal' || value.fontStyle === 'italic') {
     typography.fontStyle = value.fontStyle;
   }
+  if (value.fontKerning === 'auto' || value.fontKerning === 'normal' || value.fontKerning === 'none') {
+    typography.fontKerning = value.fontKerning;
+  }
   if (typeof value.lineHeightPercent === 'number' && Number.isFinite(value.lineHeightPercent)) {
     typography.lineHeightPercent = value.lineHeightPercent;
   }

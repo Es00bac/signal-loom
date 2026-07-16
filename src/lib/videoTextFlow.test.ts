@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   computeArcTextGlyphs,
+  createVideoTextCanvasMeasurer,
   layoutVideoText,
   type VideoTextFont,
   type VideoTextMeasurer,
@@ -112,6 +113,30 @@ describe('layoutVideoText', () => {
     expect(result.lines[0].widthPx).toBe(2 * 10 + 1 * 5); // 'ab' + one gap of letter-spacing
     expect(result.letterSpacingPx).toBe(5);
     expect(result.fontKerning).toBe('none');
+  });
+
+  it('quotes multi-word families in the shared canvas measurer (FBL-012)', () => {
+    const ctx = {
+      font: '',
+      fontKerning: '',
+      letterSpacing: '',
+      measureText: () => ({ width: 0 }),
+    };
+    const canvas = { getContext: () => ctx };
+    vi.stubGlobal('document', { createElement: () => canvas });
+
+    const measurer = createVideoTextCanvasMeasurer();
+    measurer('x', {
+      fontFamily: 'M PLUS 1, Inter, sans-serif',
+      fontSizePx: 20,
+      fontWeight: 400,
+      fontStyle: 'normal',
+      fontKerning: 'auto',
+      letterSpacingPx: 0,
+    });
+
+    expect(ctx.font).toBe('400 20px "M PLUS 1", Inter, sans-serif');
+    vi.unstubAllGlobals();
   });
 
   it('scales line height from lineHeightPercent', () => {

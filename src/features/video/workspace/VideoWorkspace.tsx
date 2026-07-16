@@ -37,6 +37,7 @@ import {
   COMIC_TAIL_DEFAULT_TIP_Y_PERCENT,
 } from '../../../lib/videoComicTail';
 import { computeArcTextGlyphs, createVideoTextCanvasMeasurer } from '../../../lib/videoTextFlow';
+import { formatFontFamily } from '../../../lib/formatFontFamily';
 import { decodeGifFrames, selectGifFrameIndexAtTime, type GifDecodeResult } from '../../../lib/gifFrames';
 import { isTrackLocked, normalizeLockedTracks, toggleLockedTrack } from '../../../lib/editorTrackLocks';
 import { isTrackCollapsed, normalizeCollapsedTracks, toggleCollapsedTrack } from '../../../lib/editorTrackCollapse';
@@ -457,6 +458,8 @@ type EditorContextMenuItem = Omit<SharedContextMenuItem, 'id'> & { id?: string }
 interface TextEditDraft {
   text: string;
   fontFamily: string;
+  fontWeight: number;
+  fontStyle: 'normal' | 'italic';
   fontSizePx: number;
   color: string;
   textEffect: TextClipEffect;
@@ -2080,6 +2083,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                 textDefaults: {
                   text: draft.text,
                   fontFamily: draft.fontFamily,
+                  fontWeight: draft.fontWeight,
+                  fontStyle: draft.fontStyle,
                   fontSizePx: draft.fontSizePx,
                   color: draft.color,
                   textEffect: draft.textEffect,
@@ -2090,6 +2095,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
         ),
       }, 'Edit text asset');
     } else {
+      const existingTypography = visualClips.find((c) => c.id === textEditDialog.targetId)?.textTypography;
       updateVisualClipById(textEditDialog.targetId, {
         textContent: draft.text,
         textFontFamily: draft.fontFamily,
@@ -2097,6 +2103,11 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
         textColor: draft.color,
         textEffect: draft.textEffect,
         textBackgroundOpacityPercent: 0,
+        textTypography: {
+          ...existingTypography,
+          fontWeight: draft.fontWeight,
+          fontStyle: draft.fontStyle,
+        },
       });
     }
 
@@ -8123,8 +8134,10 @@ function ProgramStageObjectPreview({ object }: { object: EditorStageObject }) {
           className="w-full whitespace-pre-wrap text-center font-semibold leading-tight"
           style={{
             color: object.color,
-            fontFamily: object.fontFamily,
+            fontFamily: formatFontFamily(object.fontFamily),
             fontSize: `${object.fontSizePx}px`,
+            fontStyle: object.fontStyle,
+            fontWeight: object.fontWeight,
           }}
         >
           {object.text}
@@ -8341,7 +8354,7 @@ function ArcTextPreview({
           key={index}
           style={{
             color,
-            fontFamily,
+            fontFamily: formatFontFamily(fontFamily),
             fontSize: `${fontSizePx}px`,
             fontStyle,
             fontKerning: typography.fontKerning ?? 'auto',
@@ -8718,9 +8731,14 @@ function StageObjectInspector({
             />
           </label>
           <BundledFontBrowser
-            onSelect={(family) => onUpdate({ fontFamily: family.family } as Partial<EditorStageObject>)}
+            onSelect={(family, face) => onUpdate({
+              fontFamily: family.family,
+              fontWeight: face.weight,
+              fontStyle: face.style === 'italic' ? 'italic' : 'normal',
+            } as Partial<EditorStageObject>)}
+            style={object.fontStyle ?? 'normal'}
             value={object.fontFamily}
-            weight={400}
+            weight={object.fontWeight ?? 400}
           />
           <label className="block space-y-2 text-xs text-gray-400">
             <span>Font family</span>
@@ -9041,6 +9059,8 @@ function buildTextDraftFromAsset(asset: EditorAsset): TextEditDraft {
   return normalizeTextEditDraft({
     text: asset.textDefaults?.text ?? 'Text',
     fontFamily: asset.textDefaults?.fontFamily ?? 'Inter, system-ui, sans-serif',
+    fontWeight: asset.textDefaults?.fontWeight ?? 400,
+    fontStyle: asset.textDefaults?.fontStyle === 'italic' ? 'italic' : 'normal',
     fontSizePx: asset.textDefaults?.fontSizePx ?? 72,
     color: asset.textDefaults?.color ?? '#f8fafc',
     textEffect: asset.textDefaults?.textEffect ?? 'shadow',
@@ -9055,6 +9075,8 @@ function buildTextDraftFromClip(
   return normalizeTextEditDraft({
     text: clip.textContent ?? sourceItem?.text ?? asset?.textDefaults?.text ?? 'Text',
     fontFamily: clip.textFontFamily || asset?.textDefaults?.fontFamily || 'Inter, system-ui, sans-serif',
+    fontWeight: clip.textTypography?.fontWeight ?? asset?.textDefaults?.fontWeight ?? 400,
+    fontStyle: (clip.textTypography?.fontStyle ?? asset?.textDefaults?.fontStyle) === 'italic' ? 'italic' : 'normal',
     fontSizePx: clip.textSizePx || asset?.textDefaults?.fontSizePx || 72,
     color: clip.textColor || asset?.textDefaults?.color || '#f8fafc',
     textEffect: clip.textEffect || asset?.textDefaults?.textEffect || 'shadow',
@@ -9065,6 +9087,8 @@ function normalizeTextEditDraft(draft: TextEditDraft): TextEditDraft {
   return {
     text: draft.text,
     fontFamily: draft.fontFamily.trim() || 'Inter, system-ui, sans-serif',
+    fontWeight: typeof draft.fontWeight === 'number' && Number.isFinite(draft.fontWeight) ? draft.fontWeight : 400,
+    fontStyle: draft.fontStyle === 'italic' ? 'italic' : 'normal',
     fontSizePx: Math.max(8, Math.min(320, Math.round(draft.fontSizePx))),
     color: /^#[0-9a-f]{6}$/i.test(draft.color) ? draft.color : '#f8fafc',
     textEffect: draft.textEffect,
@@ -9868,7 +9892,14 @@ function InspectorPanel({
                   />
                 </label>
                 <BundledFontBrowser
-                  onSelect={(family) => onUpdateVisualClip({ textFontFamily: family.family })}
+                  onSelect={(family, face) => onUpdateVisualClip({
+                    textFontFamily: family.family,
+                    textTypography: {
+                      ...visualClip.textTypography,
+                      fontWeight: face.weight,
+                      fontStyle: face.style === 'italic' ? 'italic' : 'normal',
+                    },
+                  })}
                   style={visualClip.textTypography?.fontStyle ?? 'normal'}
                   value={visualClip.textFontFamily}
                   weight={visualClip.textTypography?.fontWeight ?? 400}
@@ -11213,9 +11244,14 @@ function TextEditDialog({
             />
           </label>
           <BundledFontBrowser
-            onSelect={(family) => onChange({ fontFamily: family.family })}
+            onSelect={(family, face) => onChange({
+              fontFamily: family.family,
+              fontWeight: face.weight,
+              fontStyle: face.style === 'italic' ? 'italic' : 'normal',
+            })}
+            style={draft.fontStyle}
             value={draft.fontFamily}
-            weight={400}
+            weight={draft.fontWeight}
           />
           <label className="block space-y-2 text-xs text-gray-400">
             <span>Font family</span>
@@ -11264,8 +11300,10 @@ function TextEditDialog({
               className="whitespace-pre-wrap break-words text-center font-semibold leading-tight"
               style={{
                 color: draft.color,
-                fontFamily: draft.fontFamily,
+                fontFamily: formatFontFamily(draft.fontFamily),
                 fontSize: `${Math.max(8, Math.min(96, draft.fontSizePx))}px`,
+                fontStyle: draft.fontStyle,
+                fontWeight: draft.fontWeight,
                 ...getTextPreviewEffectStyle(draft.textEffect),
               }}
             >

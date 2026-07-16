@@ -22,6 +22,7 @@ import {
   planImageTextSpellcheckReadability,
   planImageTextOnPath,
   describeImageTextFontPersistence,
+  imageTextCanvasFont,
   measureImageTextBlock,
   normalizeImageTextStyle,
   normalizeImageTextOpenTypeFeatures,
@@ -206,6 +207,39 @@ describe('ImageTextLayer', () => {
     expect(context.font).toContain('small-caps');
     expect(context.fontKerning).toBe('none');
     expect(context.fills[0]).toMatchObject({ text: 'Caps', y: 14 });
+  });
+
+  it('serializes Canvas font declarations with quoted multi-word families (FBL-012)', () => {
+    const font = imageTextCanvasFont({
+      fontFamily: 'M PLUS 1, Inter, sans-serif',
+      fontSize: 24,
+      fontWeight: '400',
+      fontStyle: 'normal',
+      fontVariantCaps: 'normal',
+    });
+    expect(font).toBe('normal 400 24px "M PLUS 1", Inter, sans-serif');
+  });
+
+  it('renders all-small-caps through lowercased content and valid small-caps shorthand (FBL-013)', () => {
+    const font = imageTextCanvasFont({
+      fontFamily: 'Inter',
+      fontSize: 20,
+      fontWeight: '700',
+      fontStyle: 'normal',
+      fontVariantCaps: 'all-small-caps',
+    });
+    expect(font).toContain('small-caps');
+    expect(font).not.toContain('all-small-caps');
+
+    const bitmap = rasterizeImageTextStyle({
+      content: 'HEADLINE',
+      fontFamily: 'Inter',
+      fontSize: 20,
+      fontWeight: '700',
+      fontVariantCaps: 'all-small-caps',
+    });
+    const fills = (bitmap as unknown as FakeOffscreenCanvas).context.fills;
+    expect(fills[0].text).toBe('headline');
   });
 
   it('updates retained text metadata and rerasterizes the layer bitmap', () => {

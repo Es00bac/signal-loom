@@ -22,6 +22,8 @@ import {
   type ImageTextPresetId,
 } from './ImageTextPresets';
 
+type TextFontStackPatch = Partial<Pick<TextLayerStyle, 'fontFamily' | 'fontWeight' | 'fontStyle'>>;
+
 export function TextFontStackControls({
   customAriaLabel,
   disabled,
@@ -33,7 +35,7 @@ export function TextFontStackControls({
 }: {
   customAriaLabel: string;
   disabled?: boolean;
-  onChange: (fontFamily: string) => void;
+  onChange: (patch: TextFontStackPatch) => void;
   selectAriaLabel: string;
   style?: 'normal' | 'italic';
   value: string;
@@ -41,15 +43,20 @@ export function TextFontStackControls({
 }) {
   const catalog = describeImageTextFontCatalog(value);
   const selectedValue = catalog.selectedStack?.stack ?? '__custom__';
+  const resolvedWeight = typeof weight === 'number' ? weight : Number.parseInt(weight, 10) || 400;
 
   return (
     <div className="mt-2 grid gap-1">
       <BundledFontBrowser
         disabled={disabled}
-        onSelect={(family) => onChange(family.family)}
+        onSelect={(family, face) => onChange({
+          fontFamily: family.family,
+          fontWeight: String(face.weight),
+          fontStyle: face.style === 'italic' ? 'italic' : 'normal',
+        })}
         style={style}
         value={value}
-        weight={typeof weight === 'number' ? weight : Number.parseInt(weight, 10) || 400}
+        weight={resolvedWeight}
       />
       <label className="block">
         <span className="mb-1 block text-cyan-100/40">Font Stack</span>
@@ -59,7 +66,7 @@ export function TextFontStackControls({
           disabled={disabled}
           onChange={(event) => {
             if (event.target.value !== '__custom__') {
-              onChange(event.target.value);
+              onChange({ fontFamily: event.target.value });
             }
           }}
           value={selectedValue}
@@ -78,7 +85,7 @@ export function TextFontStackControls({
           aria-label={customAriaLabel}
           className="w-full rounded border border-cyan-300/10 bg-[#252630] px-2 py-1.5 text-xs text-cyan-100/85 outline-none focus:border-cyan-300/50 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={disabled}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(event) => onChange({ fontFamily: event.target.value })}
           value={value}
         />
       </label>
@@ -319,7 +326,7 @@ export function EditableTextLayerControls({
       <TextFontStackControls
         customAriaLabel="Text custom font family"
         disabled={disabled}
-        onChange={(fontFamily) => onChange({ fontFamily })}
+        onChange={onChange}
         selectAriaLabel="Text font stack"
         style={text.fontStyle}
         value={text.fontFamily}

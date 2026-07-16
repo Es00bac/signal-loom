@@ -26,6 +26,7 @@
 // `computeArcTextGlyphs`, called by the renderer once per already-wrapped line.
 
 import { flowPaperText, type PaperTextFlowTypeSpec, type PaperTextMeasurer } from './paperTextFlow';
+import { formatFontFamily } from './formatFontFamily';
 
 /** Resolved font description a measurer needs — mirrors the subset of canvas `font` + tracking. */
 export interface VideoTextFont {
@@ -337,7 +338,7 @@ export function createVideoTextCanvasMeasurer(): VideoTextMeasurer {
     }
 
     const stylePrefix = font.fontStyle === 'italic' ? 'italic ' : '';
-    ctx.font = `${stylePrefix}${font.fontWeight} ${font.fontSizePx}px ${font.fontFamily}`;
+    ctx.font = `${stylePrefix}${font.fontWeight} ${font.fontSizePx}px ${formatFontFamily(font.fontFamily)}`;
     ctx.fontKerning = font.fontKerning;
 
     // Cast onto a type that genuinely declares the (newer, not-yet-in-lib.dom) `letterSpacing`

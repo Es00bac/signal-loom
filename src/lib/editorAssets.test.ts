@@ -15,8 +15,81 @@ describe('createEditorAsset', () => {
     expect(text.kind).toBe('text');
     expect(text.label).toBe('Lower third');
     expect(text.textDefaults?.text).toBe('Text');
+    expect(text.textDefaults?.fontWeight).toBe(400);
+    expect(text.textDefaults?.fontStyle).toBe('normal');
     expect(shape.kind).toBe('shape');
     expect(shape.shapeDefaults?.shape).toBe('rectangle');
+  });
+});
+
+describe('text asset typography (AUD-026)', () => {
+  it('normalizes text defaults weight/style and drops invalid values', () => {
+    const assets = getEditorAssets({
+      editorAssets: [
+        {
+          id: 'text-1',
+          kind: 'text',
+          label: 'Title',
+          createdAt: 1,
+          updatedAt: 1,
+          textDefaults: {
+            text: 'Title',
+            fontFamily: 'Inter',
+            fontWeight: 700,
+            fontStyle: 'italic',
+            fontSizePx: 64,
+            color: '#fff',
+            textEffect: 'shadow',
+            textBackgroundOpacityPercent: 0,
+          },
+        } as unknown as EditorAsset,
+        {
+          id: 'text-2',
+          kind: 'text',
+          label: 'Bad',
+          createdAt: 1,
+          updatedAt: 1,
+          textDefaults: {
+            text: 'Bad',
+            fontFamily: 'Inter',
+            fontWeight: 'heavy',
+            fontStyle: 'oblique',
+            fontSizePx: 64,
+            color: '#fff',
+            textEffect: 'shadow',
+            textBackgroundOpacityPercent: 0,
+          },
+        } as unknown as EditorAsset,
+      ],
+    });
+
+    expect(assets[0].textDefaults).toMatchObject({ fontWeight: 700, fontStyle: 'italic' });
+    expect(assets[1].textDefaults).toMatchObject({ fontWeight: 400, fontStyle: 'normal' });
+  });
+
+  it('migrates stage text objects into text assets and clips carrying weight/style', () => {
+    const object: EditorStageObject = {
+      id: 'stage-text-1',
+      kind: 'text',
+      text: 'Hello',
+      fontFamily: 'M PLUS 1',
+      fontWeight: 700,
+      fontStyle: 'italic',
+      fontSizePx: 72,
+      color: '#f8fafc',
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 80,
+      rotationDeg: 0,
+      opacityPercent: 100,
+      blendMode: 'normal',
+    };
+
+    const { assets, clips } = migrateStageObjectsToEditorAssets([object], { durationSeconds: 4, trackIndex: 0 });
+
+    expect(assets[0].textDefaults).toMatchObject({ fontWeight: 700, fontStyle: 'italic' });
+    expect(clips[0].textTypography).toMatchObject({ fontWeight: 700, fontStyle: 'italic' });
   });
 });
 

@@ -45,11 +45,14 @@ export function getEditorStageObjects(nodeData: Partial<NodeData>): EditorStageO
     };
 
     if (object.kind === 'text') {
+      const fontStyle = object.fontStyle === 'italic' ? 'italic' : 'normal';
       return [{
         ...base,
         kind: 'text',
         text: typeof object.text === 'string' ? object.text : 'Text',
         fontFamily: typeof object.fontFamily === 'string' ? object.fontFamily : 'Inter, system-ui, sans-serif',
+        fontWeight: typeof object.fontWeight === 'number' && Number.isFinite(object.fontWeight) ? object.fontWeight : 400,
+        fontStyle,
         fontSizePx: Math.max(8, normalizeNumber(object.fontSizePx, 64)),
         color: normalizeColor(object.color, '#f8fafc'),
       } satisfies EditorStageObject];
@@ -109,6 +112,8 @@ export function createEditorStageObject(
       blendMode: 'normal',
       text: 'Text',
       fontFamily: 'Inter, system-ui, sans-serif',
+      fontWeight: 400,
+      fontStyle: 'normal',
       fontSizePx: 72,
       color: '#f8fafc',
     };

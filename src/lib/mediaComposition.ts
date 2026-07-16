@@ -17,6 +17,7 @@ import type {
   VideoResolution,
 } from '../types/flow';
 import { buildAutomationExpression } from './clipAutomation';
+import { formatFontFamily } from './formatFontFamily';
 import {
   audioKeyframesToVolumeAutomation,
   normalizeVisualKeyframes,
@@ -1475,7 +1476,7 @@ function paintTypesetTextBlock(
 ): void {
   context.save();
   const stylePrefix = style.fontStyle === 'italic' ? 'italic ' : '';
-  context.font = `${stylePrefix}${style.fontWeight} ${style.fontSizePx}px ${style.fontFamily}`;
+  context.font = `${stylePrefix}${style.fontWeight} ${style.fontSizePx}px ${formatFontFamily(style.fontFamily)}`;
   context.fontKerning = style.fontKerning ?? 'auto';
   if ('letterSpacing' in context) {
     (context as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${style.letterSpacingPx}px`;
@@ -1574,8 +1575,8 @@ export function drawTextStageObject(
   object: Extract<EditorStageObject, { kind: 'text' }> & { typography?: EditorTextTypography },
 ) {
   const typography = object.typography;
-  const fontWeight = typography?.fontWeight ?? 400;
-  const fontStyle = typography?.fontStyle ?? 'normal';
+  const fontWeight = typography?.fontWeight ?? object.fontWeight ?? 400;
+  const fontStyle = typography?.fontStyle ?? object.fontStyle ?? 'normal';
   const layout = layoutVideoText(
     {
       text: object.text,

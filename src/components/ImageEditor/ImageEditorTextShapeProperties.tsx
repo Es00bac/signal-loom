@@ -127,7 +127,7 @@ export function TextPanel() {
       </label>
       <TextFontStackControls
         customAriaLabel="Text tool custom font family"
-        onChange={(fontFamily) => set({ fontFamily })}
+        onChange={(patch) => set(patch)}
         selectAriaLabel="Text tool font stack"
         style={settings.fontStyle}
         value={settings.fontFamily}

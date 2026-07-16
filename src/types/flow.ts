@@ -498,6 +498,8 @@ export interface EditorClipStrokeSettings {
 export interface EditorTextDefaults {
   text: string;
   fontFamily: string;
+  fontWeight?: number;
+  fontStyle?: 'normal' | 'italic';
   fontSizePx: number;
   color: string;
   textEffect: TextClipEffect;
@@ -665,6 +667,8 @@ export interface EditorTextStageObject extends EditorStageObjectBase {
   kind: 'text';
   text: string;
   fontFamily: string;
+  fontWeight?: number;
+  fontStyle?: 'normal' | 'italic';
   fontSizePx: number;
   color: string;
 }

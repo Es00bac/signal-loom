@@ -245,6 +245,7 @@ describe('getEditorVisualClips comic tail migration', () => {
           textTypography: {
             fontWeight: 700,
             fontStyle: 'italic',
+            fontKerning: 'none',
             lineHeightPercent: 120,
             letterSpacingPx: 2,
             textAlign: 'justify',
@@ -257,6 +258,7 @@ describe('getEditorVisualClips comic tail migration', () => {
             arcPercent: 25,
             bogusField: 'ignored',
             fontStyleInvalid: 'oblique',
+            fontKerningInvalid: 'loose',
           },
         },
       ],
@@ -265,6 +267,7 @@ describe('getEditorVisualClips comic tail migration', () => {
     expect(clips[0].textTypography).toEqual({
       fontWeight: 700,
       fontStyle: 'italic',
+      fontKerning: 'none',
       lineHeightPercent: 120,
       letterSpacingPx: 2,
       textAlign: 'justify',

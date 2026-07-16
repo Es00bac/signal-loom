@@ -6,6 +6,7 @@ import {
   type PaperComicSfxFrameDraft,
 } from '../../lib/paperComicSfx';
 import { createBitmap } from './LayerBitmap';
+import { formatFontFamily } from '../../lib/formatFontFamily';
 
 export type ImageComicLayerKind = 'speechBubble' | 'thoughtBubble' | 'caption' | 'panelBorder' | 'mangaSpeedLine';
 
@@ -377,7 +378,7 @@ function drawSfxText(
   ctx.translate(width / 2, height / 2);
   ctx.transform(1, skewY, skewX, 1, 0, 0);
   ctx.scale(frame.textScaleX ?? 1, frame.textScaleY ?? 1);
-  ctx.font = `${frame.typography?.fontStyle ?? 'normal'} ${frame.typography?.fontWeight ?? '900'} ${Math.round(fontSize)}px ${frame.typography?.fontFamily ?? 'Impact, sans-serif'}`;
+  ctx.font = `${frame.typography?.fontStyle ?? 'normal'} ${frame.typography?.fontWeight ?? '900'} ${Math.round(fontSize)}px ${formatFontFamily(frame.typography?.fontFamily ?? 'Impact, sans-serif')}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';

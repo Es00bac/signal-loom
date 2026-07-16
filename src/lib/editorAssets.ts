@@ -161,6 +161,8 @@ export function migrateStageObjectsToEditorAssets(
       const textDefaults: EditorTextDefaults = {
         text: object.text,
         fontFamily: object.fontFamily,
+        fontWeight: object.fontWeight ?? 400,
+        fontStyle: object.fontStyle ?? 'normal',
         fontSizePx: object.fontSizePx,
         color: object.color,
         textEffect: 'shadow',
@@ -189,6 +191,10 @@ export function migrateStageObjectsToEditorAssets(
           textColor: textDefaults.color,
           textEffect: textDefaults.textEffect,
           textBackgroundOpacityPercent: textDefaults.textBackgroundOpacityPercent,
+          textTypography: {
+            fontWeight: textDefaults.fontWeight,
+            fontStyle: textDefaults.fontStyle,
+          },
         }),
         id: `visual-${object.id}`,
       });
@@ -313,6 +319,10 @@ function normalizeEditorAsset(value: unknown): EditorAsset[] {
         fontFamily: typeof defaults.fontFamily === 'string'
           ? defaults.fontFamily
           : 'Inter, system-ui, sans-serif',
+        fontWeight: typeof defaults.fontWeight === 'number' && Number.isFinite(defaults.fontWeight)
+          ? defaults.fontWeight
+          : 400,
+        fontStyle: defaults.fontStyle === 'italic' ? 'italic' : 'normal',
         fontSizePx: Math.max(8, normalizeNumber(defaults.fontSizePx, 72)),
         color: normalizeColor(defaults.color, '#f8fafc'),
         textEffect: normalizeTextEffect(defaults.textEffect),
@@ -358,6 +368,8 @@ function createTextDefaults(): EditorTextDefaults {
   return {
     text: 'Text',
     fontFamily: 'Inter, system-ui, sans-serif',
+    fontWeight: 400,
+    fontStyle: 'normal',
     fontSizePx: 72,
     color: '#f8fafc',
     textEffect: 'shadow',

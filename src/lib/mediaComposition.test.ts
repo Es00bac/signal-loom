@@ -28,6 +28,7 @@ import {
   composeSequenceMedia,
   describeSequenceRenderBackend,
   describeSequenceRenderBackendCaveat,
+  drawTextStageObject,
   packageSequenceFramesAsZip,
 } from './mediaComposition';
 import {
@@ -1460,5 +1461,78 @@ describe('buildSequenceCommand', () => {
     expect(filterGraph).toContain("rotate='if(lte(t,2.0000)");
     expect(filterGraph).toContain("a='alpha(X,Y)*(if(lte(T,2.0000)");
     expect(filterGraph).toContain("overlay=x='if(lte(t,3.0000)");
+  });
+});
+
+describe('drawTextStageObject', () => {
+  it('uses quoted multi-word families and object weight/style (FBL-012 / AUD-026)', () => {
+    const state = {
+      font: '',
+      fillStyle: '',
+      textAlign: '',
+      textBaseline: '',
+      saved: false,
+      restored: false,
+    };
+    const ctx = {
+      save: () => { state.saved = true; },
+      restore: () => { state.restored = true; },
+      font: '',
+      fillStyle: '',
+      textAlign: '',
+      textBaseline: '',
+      fontKerning: '',
+      letterSpacing: '',
+      fillText: () => undefined,
+      measureText: (text: string) => ({ width: text.length * 10 }),
+    };
+    Object.defineProperty(ctx, 'font', {
+      get: () => state.font,
+      set: (value: string) => { state.font = value; },
+      configurable: true,
+    });
+    Object.defineProperty(ctx, 'fillStyle', {
+      get: () => state.fillStyle,
+      set: (value: string) => { state.fillStyle = value; },
+      configurable: true,
+    });
+    Object.defineProperty(ctx, 'textAlign', {
+      get: () => state.textAlign,
+      set: (value: string) => { state.textAlign = value; },
+      configurable: true,
+    });
+    Object.defineProperty(ctx, 'textBaseline', {
+      get: () => state.textBaseline,
+      set: (value: string) => { state.textBaseline = value; },
+      configurable: true,
+    });
+    vi.stubGlobal('document', {
+      createElement: () => ({
+        getContext: () => ctx,
+      }),
+    });
+
+    drawTextStageObject(ctx as unknown as CanvasRenderingContext2D, {
+      kind: 'text',
+      id: 'text-1',
+      text: 'Hi',
+      fontFamily: 'M PLUS 1, sans-serif',
+      fontWeight: 700,
+      fontStyle: 'italic',
+      fontSizePx: 32,
+      color: '#f8fafc',
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 80,
+      rotationDeg: 0,
+      opacityPercent: 100,
+      blendMode: 'normal',
+    });
+
+    expect(state.font).toContain('"M PLUS 1"');
+    expect(state.font).toContain('italic');
+    expect(state.font).toContain('700');
+    vi.unstubAllGlobals();
   });
 });
