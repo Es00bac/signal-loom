@@ -155,6 +155,7 @@ describe('settingsStore image provider settings', () => {
     expect(mergedState.apiKeys.openai).toBe('');
     expect(mergedState.apiKeys.bfl).toBe('legacy-bfl');
     expect(mergedState.apiKeys.atlas).toBe('');
+    expect(mergedState.apiKeys.byteplus).toBe('');
     expect(mergedState.apiKeys.gemini).toBe(mockCurrentState.apiKeys.gemini);
 
     const mergedFromNull = persistOptions.merge(
@@ -167,6 +168,7 @@ describe('settingsStore image provider settings', () => {
   it('normalizes persisted API key objects to expected key shape', () => {
     expect(sanitizePersistedApiKeys({
       openai: 'openai-key',
+      byteplus: 'byteplus-key',
       gemini: 42,
       unknown: 'ignored',
       bfl: '',
@@ -178,7 +180,7 @@ describe('settingsStore image provider settings', () => {
       bfl: '',
       stability: '',
       atlas: '',
-      byteplus: '',
+      byteplus: 'byteplus-key',
     });
 
     expect(sanitizePersistedApiKeys('bad-api-state')).toEqual({

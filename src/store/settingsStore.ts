@@ -56,7 +56,7 @@ export interface DefaultImageNodeModel {
   modelId: string;
 }
 
-const API_KEY_PROVIDERS = ['openai', 'gemini', 'huggingface', 'elevenlabs', 'bfl', 'stability', 'atlas'] as const;
+const API_KEY_PROVIDERS = ['openai', 'gemini', 'huggingface', 'elevenlabs', 'bfl', 'stability', 'atlas', 'byteplus'] as const;
 type ApiKeyProvider = (typeof API_KEY_PROVIDERS)[number];
 type ApiKeyValueMap = Record<ApiKeyProvider, string>;
 type ApiKeyStorageDescriptorMap = {
@@ -77,6 +77,7 @@ const API_KEY_REDACTED_LABEL: ApiKeyValueMap = {
   bfl: API_KEY_REDACTION,
   stability: API_KEY_REDACTION,
   atlas: API_KEY_REDACTION,
+  byteplus: API_KEY_REDACTION,
 };
 
 export type ApiKeyStorageMedium = 'local-storage' | 'memory-only';
