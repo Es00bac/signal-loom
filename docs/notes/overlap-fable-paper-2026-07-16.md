@@ -61,3 +61,21 @@ Required coverage checklist: migrated Source-Library-linked managed image ✔ (e
 ## FBL-003
 
 **Not attempted.** FBL-001/FBL-002 are tested, committed, and the branch is clean, but FBL-003 (dirty-document close confirmation + recovery handoff) spans `PaperDocumentTabs`, per-document dirty tracking in paperStore, project-replacement and app-shutdown paths, and confirm-dialog UX/i18n decisions. That full tested scope did not fit the remaining sprint budget, and a partial implementation would have violated the clean-branch condition.
+
+---
+
+## Follow-up (same day): Project Library modal saved a partial document (K3 finding, FBL-001 class)
+
+- **Fix commit:** `6fb1e1be0e836b424b7c3ba7e065d47c1d3656ed`
+
+**Root cause.** `src/components/Layout/ProjectLibraryModal.tsx` kept a private `buildCurrentProjectDocument` that serialized only `flow`/`flowWorkspaces`/`editor`/`sourceBin`/`fileSystem`. `saveProjectDocument` performs a whole-record IndexedDB put, so every modal save path — Save Current Project, Overwrite Selected, Save Project To Folder, Save To Linked Folder, and Set Scratch Folder (all funnel through `persistCurrentProject`) — overwrote the stored project without `paper`, `imageEditor`, or `usageLedger`; the next reopen restored a blank Paper default. `handleExportProjectJson` was a second divergent partial serializer in the same file, so exported `.sloom` files dropped the same slices.
+
+**Reproduced failures (red first).** New `src/components/Layout/ProjectLibraryModal.test.tsx` drives the real modal UI (jsdom, `DockableDialog` stubbed to a div per the SettingsModal test convention) against `fake-indexeddb` and the real `saveProjectDocument`/`loadProjectDocument`/`restoreProjectDocument`. Before the fix all three tests failed with `record.paper` / folder document `paper` / export payload `paper` = `undefined`. Two harness notes: zustand's persist middleware resolves `localStorage` once at store-module import, so the Map-backed stand-in is installed via `vi.hoisted` before any import (Node's experimental `localStorage` getter is undefined without `--localstorage-file`); and the static "Saved Local Projects" header forced condition-based waits instead of matching "Saved" in status text.
+
+**Design.** The modal's builder now delegates to the canonical `buildCurrentProjectDocument` from `projectDocumentActions` (gaining save-time media normalization for free) and layers only its name/id resolution (`projectName.trim() || selectedProject?.name`, `projectId ?? selectedProjectId` — identical fallback chains to before) and linked-folder `fileSystem` metadata on top. Export downloads the stored record verbatim for a selected project, or the canonical full document with embedded asset data for the current workspace; the hand-picked field subset is deleted, not patched. Create-new-project (`handleCreateBlankProject`) is untouched. Net −19 lines of production code; no new serializer, no circular imports (the modal already imported `projectDocumentActions`).
+
+**Semantic delta worth knowing.** Exporting a *stored* project now writes the record as saved (original `savedAt`, no live-workspace backfill of missing fields) instead of a remixed subset stamped `Date.now()` — more honest, and the import path sanitizes on load as before.
+
+**Tests and gates.** New modal suite 3/3 (red → green at the data-loss assertions). Wide sweep `npx vitest run src/components/Layout src/lib/project src/store/paperStore src/lib/paper src/features/paper src/components/Paper`: **129 files, 978/978 passed**. `npx tsc -b --force` (non-incremental, all project references): exit 0. `npx eslint` on both changed files: clean. `git diff --check`: clean. `npm run build` (sandbox disabled): exit 0, fresh `dist/index.html`.
+
+**Remaining risks.** `handleImportProjectFile` persists the parsed file verbatim (pre-sanitize) — restore validates, but the stored record is the raw import; harmless today, worth a sanitize-before-save later. Modal saves and Electron-native saves still produce records independently (AUD-001 multi-window authority remains open).
