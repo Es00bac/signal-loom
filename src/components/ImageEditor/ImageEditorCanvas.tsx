@@ -33,6 +33,7 @@ import {
   shouldRefocusTextEditorOnBlur,
   imageTextLayerContainsPoint,
 } from './ImageTextPresets';
+import { formatFontFamily } from '../../lib/formatFontFamily';
 import { updateTextLayerFromStyle } from './ImageTextLayer';
 import {
   calculateLayerPerspectiveValue,
@@ -1947,7 +1948,7 @@ type SelectionTransformDragState =
 
 export type { ImageDocument };
 
-function ImageTextEditOverlay({
+export function ImageTextEditOverlay({
   bounds,
   draft,
   layer,
@@ -2049,7 +2050,7 @@ function ImageTextEditOverlay({
         spellCheck={false}
         style={{
           color: text.color,
-          fontFamily: text.fontFamily,
+          fontFamily: formatFontFamily(text.fontFamily),
           fontSize: Math.max(11, text.fontSize * zoom),
           fontStyle: text.fontStyle,
           fontWeight: text.fontWeight,
@@ -2057,6 +2058,7 @@ function ImageTextEditOverlay({
           lineHeight: text.lineHeight,
           minHeight: Math.max(36, bounds.height),
           textAlign: text.align === 'justify' ? 'justify' : text.align,
+          fontVariantCaps: text.fontVariantCaps === 'all-small-caps' ? 'all-small-caps' : text.fontVariantCaps,
         }}
         value={draft}
       />

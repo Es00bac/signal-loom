@@ -4,6 +4,7 @@ import type {
   EditorStageObjectKind,
   NodeData,
 } from '../types/flow';
+import { normalizeFontWeight } from './formatFontFamily';
 
 export interface StageCanvasSize {
   width: number;
@@ -51,7 +52,7 @@ export function getEditorStageObjects(nodeData: Partial<NodeData>): EditorStageO
         kind: 'text',
         text: typeof object.text === 'string' ? object.text : 'Text',
         fontFamily: typeof object.fontFamily === 'string' ? object.fontFamily : 'Inter, system-ui, sans-serif',
-        fontWeight: typeof object.fontWeight === 'number' && Number.isFinite(object.fontWeight) ? object.fontWeight : 400,
+        fontWeight: normalizeFontWeight(object.fontWeight),
         fontStyle,
         fontSizePx: Math.max(8, normalizeNumber(object.fontSizePx, 64)),
         color: normalizeColor(object.color, '#f8fafc'),

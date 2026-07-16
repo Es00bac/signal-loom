@@ -24,8 +24,28 @@ const GENERIC_FONT_FAMILIES = new Set([
   'fangsong',
 ]);
 
+/**
+ * CSS-wide keywords that are invalid as unquoted `<family-name>` values. They
+ * must be quoted when used as actual font family names.
+ */
+const CSS_WIDE_KEYWORDS = new Set([
+  'inherit',
+  'initial',
+  'unset',
+  'revert',
+  'revert-layer',
+]);
+
+const MIN_FONT_WEIGHT = 1;
+const MAX_FONT_WEIGHT = 1000;
+const DEFAULT_FONT_WEIGHT = 400;
+
 function isGenericFontFamily(name: string): boolean {
   return GENERIC_FONT_FAMILIES.has(name.toLowerCase());
+}
+
+function isCssWideKeyword(name: string): boolean {
+  return CSS_WIDE_KEYWORDS.has(name.toLowerCase());
 }
 
 function isUnquotedIdentifier(name: string): boolean {
@@ -35,20 +55,115 @@ function isUnquotedIdentifier(name: string): boolean {
   return /^[a-zA-Z_][-\w]*$/u.test(name);
 }
 
-export function formatSingleFontFamily(name: string): string {
+function escapeFamilyName(name: string): string {
+  return name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
+ * Parse a comma-separated CSS font-family stack into individual family names.
+ * Handles double-quoted and single-quoted strings, escaped characters, and
+ * commas inside quoted names. Empty entries are omitted.
+ */
+function parseFontFamilyStack(stack: string): string[] {
+  const families: string[] = [];
+  let index = 0;
+  const length = stack.length;
+
+  while (index < length) {
+    // Skip whitespace and stray commas between families.
+    while (index < length && /\s/.test(stack[index])) {
+      index += 1;
+    }
+    if (index >= length) {
+      break;
+    }
+    if (stack[index] === ',') {
+      index += 1;
+      continue;
+    }
+
+    let family = '';
+
+    if (stack[index] === '"' || stack[index] === "'") {
+      const quote = stack[index];
+      index += 1;
+      while (index < length) {
+        const char = stack[index];
+        if (char === '\\' && index + 1 < length) {
+          family += stack[index + 1];
+          index += 2;
+          continue;
+        }
+        if (char === quote) {
+          index += 1;
+          break;
+        }
+        family += char;
+        index += 1;
+      }
+    } else {
+      while (index < length) {
+        const char = stack[index];
+        if (char === '\\' && index + 1 < length) {
+          family += stack[index + 1];
+          index += 2;
+          continue;
+        }
+        if (char === ',') {
+          break;
+        }
+        family += char;
+        index += 1;
+      }
+      family = family.trim();
+    }
+
+    if (family.length > 0) {
+      families.push(family);
+    }
+
+    if (index < length && stack[index] === ',') {
+      index += 1;
+    }
+  }
+
+  return families;
+}
+
+function serializeFamilyName(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) {
     return '""';
   }
-  if (isGenericFontFamily(trimmed) || isUnquotedIdentifier(trimmed)) {
-    return trimmed;
+
+  const lower = trimmed.toLowerCase();
+  if (isGenericFontFamily(lower)) {
+    return lower;
   }
-  return `"${trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  if (isCssWideKeyword(lower) || !isUnquotedIdentifier(trimmed)) {
+    return `"${escapeFamilyName(trimmed)}"`;
+  }
+  return trimmed;
+}
+
+export function formatSingleFontFamily(name: string): string {
+  const parsed = parseFontFamilyStack(name);
+  return serializeFamilyName(parsed[0] ?? '');
 }
 
 export function formatFontFamily(stack: string): string {
-  return stack
-    .split(',')
-    .map((part) => formatSingleFontFamily(part))
+  return parseFontFamilyStack(stack)
+    .map((family) => serializeFamilyName(family))
     .join(', ');
+}
+
+/**
+ * Clamp a persisted or user-supplied font weight to the valid CSS numeric
+ * range (`1`–`1000`). Non-numeric or out-of-range values fall back to `400`.
+ */
+export function normalizeFontWeight(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_FONT_WEIGHT;
+  }
+  return Math.max(MIN_FONT_WEIGHT, Math.min(MAX_FONT_WEIGHT, Math.round(value)));
 }

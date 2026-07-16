@@ -713,22 +713,15 @@ export function normalizeImageTextStyle(
 }
 
 export function imageTextCanvasFont(style: Pick<ImageTextLayerStyle, 'fontFamily' | 'fontSize' | 'fontWeight' | 'fontStyle' | 'fontVariantCaps'>): string {
-  // Canvas font shorthand accepts `small-caps` but not `all-small-caps`; the latter is rendered by
-  // lowercasing the content and using `small-caps` (see `getRenderedImageTextContent`).
-  const shorthandVariant = style.fontVariantCaps === 'all-small-caps' ? 'small-caps' : style.fontVariantCaps;
-  const caps = shorthandVariant && shorthandVariant !== 'normal' ? `${shorthandVariant} ` : '';
+  // Canvas font shorthand accepts `small-caps` but not `all-small-caps`. The latter is applied
+  // through the CanvasRenderingContext2D `fontVariantCaps` property after the font shorthand is set
+  // so the retained text content stays unchanged.
+  const shorthandVariant = style.fontVariantCaps === 'small-caps' ? 'small-caps' : undefined;
+  const caps = shorthandVariant ? `${shorthandVariant} ` : '';
   return `${style.fontStyle} ${caps}${style.fontWeight} ${style.fontSize}px ${formatFontFamily(style.fontFamily)}`;
 }
 
-function getRenderedImageTextContent(
-  content: string,
-  caps: ImageTextLayerStyle['fontVariantCaps'],
-): string {
-  // `all-small-caps` is not a valid Canvas font-shorthand token. The closest supported
-  // approximation is `small-caps` plus lowercased content, which renders every letter as a small
-  // capital. This matches the OpenType `smcp`+`c2sc` intent encoded by `inferImageTextOpenTypeFeatures`.
-  return caps === 'all-small-caps' ? content.toLowerCase() : content;
-}
+
 
 function normalizeImageTextPathLayout(layout: TextLayerPathLayout | null | undefined): TextLayerPathLayout | null {
   if (!layout || !Array.isArray(layout.points) || layout.points.length < 2) return null;
@@ -1631,7 +1624,7 @@ export function measureImageTextBlock(
   style: ImageTextLayerStyle,
   measureLine: (line: string) => number,
 ): MeasuredImageTextBlock {
-  const rawLines = splitTextLines(getRenderedImageTextContent(style.content, style.fontVariantCaps));
+  const rawLines = splitTextLines(style.content);
   const lines = style.wrap && style.boxWidth ? wrapTextLines(rawLines, style.boxWidth, measureLine) : rawLines;
   const lineWidths = lines.map((line) => Math.max(1, Math.ceil(measureSpacedLine(line, style.letterSpacing, measureLine))));
   const contentWidth = Math.max(1, ...lineWidths);
@@ -1728,7 +1721,7 @@ function rasterizeImageTextOnPathStyle(style: ImageTextLayerStyle): LayerBitmap 
   ctx.fillStyle = style.color;
   ctx.textBaseline = 'middle';
 
-  const text = splitTextLines(getRenderedImageTextContent(style.content, style.fontVariantCaps)).join(' ').trim();
+  const text = splitTextLines(style.content).join(' ').trim();
   const points = pathLayout.reverse ? [...pathLayout.points].reverse() : pathLayout.points;
   let cursor = pathLayout.startOffset;
 
@@ -1750,7 +1743,7 @@ function rasterizeVerticalImageTextStyle(style: ImageTextLayerStyle): LayerBitma
   if (!mctx) throw new Error('Failed to acquire vertical text measurement context.');
   mctx.font = imageTextCanvasFont(style);
   applyCanvasTypographySettings(mctx, style);
-  const glyphs = splitTextLines(getRenderedImageTextContent(style.content, style.fontVariantCaps)).join('').split('');
+  const glyphs = splitTextLines(style.content).join('').split('');
   const lineHeightPx = Math.max(1, Math.ceil(style.fontSize * style.lineHeight));
   const measuredWidth = Math.max(1, ...glyphs.map((glyph) => Math.ceil(mctx.measureText(glyph || ' ').width)));
   const width = Math.max(Math.ceil(style.boxWidth ?? 0), measuredWidth + Math.ceil(style.fontSize * 0.5));
@@ -2640,9 +2633,9 @@ function applyCanvasTypographySettings(
     fontVariantCaps?: ImageTextLayerStyle['fontVariantCaps'];
   };
   typographyContext.fontKerning = style.fontKerning;
-  // Canvas font shorthand cannot express `all-small-caps`; the shorthand uses `small-caps` and the
-  // content is lowercased by `getRenderedImageTextContent`. Keep the context property consistent.
-  typographyContext.fontVariantCaps = style.fontVariantCaps === 'all-small-caps' ? 'small-caps' : style.fontVariantCaps;
+  // Canvas font shorthand cannot express `all-small-caps`, so it is applied through this context
+  // property after the font shorthand is set. The retained text content is left unchanged.
+  typographyContext.fontVariantCaps = style.fontVariantCaps;
 }
 
 function buildImageTextLiveEditStatusDescriptor(editable: boolean): ImageTextLiveEditStatusDescriptor {

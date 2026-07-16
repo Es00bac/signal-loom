@@ -138,3 +138,31 @@ describe('motion-comic stage objects', () => {
     expect(normalized[0].kind).toBe('caption');
   });
 });
+
+  it('clamps out-of-range text weights during normalization', () => {
+    const objects = getEditorStageObjects({
+      editorStageObjects: [
+        {
+          id: 'text-heavy',
+          kind: 'text',
+          text: 'Heavy',
+          fontWeight: 1200,
+        },
+        {
+          id: 'text-light',
+          kind: 'text',
+          text: 'Light',
+          fontWeight: -50,
+        },
+        {
+          id: 'text-missing',
+          kind: 'text',
+          text: 'Missing',
+        },
+      ],
+    } as Partial<NodeData> as NodeData);
+
+    expect((objects.find((o) => o.id === 'text-heavy') as Extract<typeof objects[number], { kind: 'text' }>)?.fontWeight).toBe(1000);
+    expect((objects.find((o) => o.id === 'text-light') as Extract<typeof objects[number], { kind: 'text' }>)?.fontWeight).toBe(1);
+    expect((objects.find((o) => o.id === 'text-missing') as Extract<typeof objects[number], { kind: 'text' }>)?.fontWeight).toBe(400);
+  });

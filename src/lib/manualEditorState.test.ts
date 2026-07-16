@@ -410,3 +410,49 @@ describe('selectOverlayTrackIndexForNewClip', () => {
     expect(selectOverlayTrackIndexForNewClip('text', ['overlay', 'standard'])).toBe(0);
   });
 });
+
+describe('normalizeEditorTextTypography', () => {
+  it('preserves text typography weight/style and clamps out-of-range weights', () => {
+    const underweight = getEditorVisualClips({
+      editorVisualClips: [
+        {
+          id: 'visual-1',
+          sourceNodeId: 'source-1',
+          sourceKind: 'text',
+          textFontFamily: 'Inter',
+          textTypography: { fontWeight: -100, fontStyle: 'italic', fontKerning: 'normal' },
+        },
+      ],
+    } as Partial<NodeData> as NodeData);
+    const overweight = getEditorVisualClips({
+      editorVisualClips: [
+        {
+          id: 'visual-2',
+          sourceNodeId: 'source-2',
+          sourceKind: 'text',
+          textFontFamily: 'Inter',
+          textTypography: { fontWeight: 1500, fontStyle: 'normal' },
+        },
+      ],
+    } as Partial<NodeData> as NodeData);
+
+    expect(underweight[0].textTypography).toEqual({ fontWeight: 1, fontStyle: 'italic', fontKerning: 'normal' });
+    expect(overweight[0].textTypography).toEqual({ fontWeight: 1000, fontStyle: 'normal' });
+  });
+
+  it('preserves kerning choices through normalization (FBL-014)', () => {
+    const clips = getEditorVisualClips({
+      editorVisualClips: [
+        {
+          id: 'visual-1',
+          sourceNodeId: 'source-1',
+          sourceKind: 'text',
+          textFontFamily: 'Inter',
+          textTypography: { fontKerning: 'none' },
+        },
+      ],
+    } as Partial<NodeData> as NodeData);
+
+    expect(clips[0].textTypography?.fontKerning).toBe('none');
+  });
+});

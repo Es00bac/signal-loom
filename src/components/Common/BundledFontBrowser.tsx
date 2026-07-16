@@ -10,6 +10,7 @@ import {
   type BundledFontRole,
 } from '../../lib/bundledFontLibrary';
 import type { PaperManagedFontStyle } from '../../types/paper';
+import { formatFontFamily } from '../../lib/formatFontFamily';
 
 const ROLE_OPTIONS: Array<{ value: '' | BundledFontRole; label: string }> = [
   { value: '', label: 'All roles' },
@@ -145,7 +146,7 @@ export function BundledFontBrowser({
                     className="flex w-full items-center justify-between gap-3 px-2.5 py-2 text-left transition-colors hover:bg-cyan-400/5"
                     disabled={busyFace !== null}
                     onClick={() => void choose(family, face)}
-                    style={{ fontFamily: family.family }}
+                    style={{ fontFamily: formatFontFamily(family.family) }}
                     type="button"
                   >
                     <span className="min-w-0">

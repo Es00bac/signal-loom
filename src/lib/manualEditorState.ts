@@ -16,6 +16,7 @@ import {
   normalizeVisualKeyframes,
   visualKeyframesToOpacityAutomation,
 } from './editorKeyframes';
+import { normalizeFontWeight } from './formatFontFamily';
 import {
   normalizeClipBlendMode,
   normalizeClipChromaKey,
@@ -535,7 +536,7 @@ function normalizeEditorTextTypography(value: unknown): EditorTextTypography | u
   const typography: EditorTextTypography = {};
 
   if (typeof value.fontWeight === 'number' && Number.isFinite(value.fontWeight)) {
-    typography.fontWeight = value.fontWeight;
+    typography.fontWeight = normalizeFontWeight(value.fontWeight);
   }
   if (value.fontStyle === 'normal' || value.fontStyle === 'italic') {
     typography.fontStyle = value.fontStyle;

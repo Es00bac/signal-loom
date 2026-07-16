@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatFontFamily, formatSingleFontFamily } from './formatFontFamily';
+import { formatFontFamily, formatSingleFontFamily, normalizeFontWeight } from './formatFontFamily';
 
 describe('formatSingleFontFamily', () => {
   it('leaves generic keyword families unquoted', () => {
@@ -30,12 +30,20 @@ describe('formatSingleFontFamily', () => {
 
   it('escapes embedded quotes and backslashes', () => {
     expect(formatSingleFontFamily('Weird "Quoted" Font')).toBe('"Weird \\"Quoted\\" Font"');
-    expect(formatSingleFontFamily('Back\\slash')).toBe('"Back\\\\slash"');
+    expect(formatSingleFontFamily('Back\\\\slash')).toBe('"Back\\\\slash"');
   });
 
   it('trims surrounding whitespace', () => {
     expect(formatSingleFontFamily('  Inter  ')).toBe('Inter');
     expect(formatSingleFontFamily('  Source Sans 3  ')).toBe('"Source Sans 3"');
+  });
+
+  it('quotes CSS-wide reserved keywords when used as family names', () => {
+    expect(formatSingleFontFamily('inherit')).toBe('"inherit"');
+    expect(formatSingleFontFamily('initial')).toBe('"initial"');
+    expect(formatSingleFontFamily('unset')).toBe('"unset"');
+    expect(formatSingleFontFamily('revert')).toBe('"revert"');
+    expect(formatSingleFontFamily('revert-layer')).toBe('"revert-layer"');
   });
 });
 
@@ -56,5 +64,55 @@ describe('formatFontFamily', () => {
     for (const { input, output } of cases) {
       expect(formatFontFamily(input)).toBe(output);
     }
+  });
+
+  it('preserves already-quoted double and single names without re-quoting', () => {
+    expect(formatFontFamily('"M PLUS 1", Inter, sans-serif')).toBe('"M PLUS 1", Inter, sans-serif');
+    expect(formatFontFamily("'Source Sans 3', serif")).toBe('"Source Sans 3", serif');
+  });
+
+  it('preserves commas inside quoted family names', () => {
+    expect(formatFontFamily('"Name, With Comma", serif')).toBe('"Name, With Comma", serif');
+    expect(formatFontFamily("'A, B, C', sans-serif")).toBe('"A, B, C", sans-serif');
+  });
+
+  it('preserves escapes inside quoted names and normalizes quote style', () => {
+    expect(formatFontFamily('"Weird \\"Quoted\\" Font", serif')).toBe('"Weird \\"Quoted\\" Font", serif');
+    expect(formatFontFamily("'Back\\\\slash', serif")).toBe('"Back\\\\slash", serif');
+  });
+
+  it('handles escaped commas and backslashes in unquoted identifiers', () => {
+    expect(formatFontFamily('Foo\\, Bar, serif')).toBe('"Foo, Bar", serif');
+  });
+
+  it('skips empty entries safely', () => {
+    expect(formatFontFamily('Inter,,sans-serif')).toBe('Inter, sans-serif');
+    expect(formatFontFamily(',Inter,,')).toBe('Inter');
+    expect(formatFontFamily('  ,  ,  ')).toBe('');
+  });
+
+  it('quotes CSS-wide reserved words and preserves generic keywords', () => {
+    expect(formatFontFamily('inherit, initial, unset, revert, revert-layer, serif')).toBe(
+      '"inherit", "initial", "unset", "revert", "revert-layer", serif',
+    );
+  });
+});
+
+describe('normalizeFontWeight', () => {
+  it('clamps numeric weights to the valid CSS range and rounds them', () => {
+    expect(normalizeFontWeight(50)).toBe(50);
+    expect(normalizeFontWeight(400)).toBe(400);
+    expect(normalizeFontWeight(1000)).toBe(1000);
+    expect(normalizeFontWeight(1200)).toBe(1000);
+    expect(normalizeFontWeight(0)).toBe(1);
+    expect(normalizeFontWeight(350.7)).toBe(351);
+  });
+
+  it('falls back to 400 for missing or non-numeric weights', () => {
+    expect(normalizeFontWeight(undefined)).toBe(400);
+    expect(normalizeFontWeight(null)).toBe(400);
+    expect(normalizeFontWeight('bold')).toBe(400);
+    expect(normalizeFontWeight(Number.NaN)).toBe(400);
+    expect(normalizeFontWeight(Number.POSITIVE_INFINITY)).toBe(400);
   });
 });

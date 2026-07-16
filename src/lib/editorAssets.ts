@@ -11,6 +11,7 @@ import type {
 } from '../types/flow';
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import { createEditorVisualClip } from './manualEditorState';
+import { normalizeFontWeight } from './formatFontFamily';
 
 export interface CreateEditorAssetOptions {
   id?: string;
@@ -319,9 +320,7 @@ function normalizeEditorAsset(value: unknown): EditorAsset[] {
         fontFamily: typeof defaults.fontFamily === 'string'
           ? defaults.fontFamily
           : 'Inter, system-ui, sans-serif',
-        fontWeight: typeof defaults.fontWeight === 'number' && Number.isFinite(defaults.fontWeight)
-          ? defaults.fontWeight
-          : 400,
+        fontWeight: normalizeFontWeight(defaults.fontWeight),
         fontStyle: defaults.fontStyle === 'italic' ? 'italic' : 'normal',
         fontSizePx: Math.max(8, normalizeNumber(defaults.fontSizePx, 72)),
         color: normalizeColor(defaults.color, '#f8fafc'),

@@ -44,7 +44,7 @@ describe('BundledFontBrowser', () => {
 
     expect(host.textContent).not.toContain('Editorial Serif');
     const tokyo = host.querySelector<HTMLButtonElement>('button[aria-label^="Tokyo Gothic"]')!;
-    expect(tokyo.style.fontFamily).toBe('Tokyo Gothic');
+    expect(tokyo.style.fontFamily).toBe('"Tokyo Gothic"');
     await act(async () => tokyo.click());
 
     expect(onSelect).toHaveBeenCalledWith(catalog.families[1], catalog.families[1].faces[0]);

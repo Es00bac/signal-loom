@@ -1928,29 +1928,9 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
       return;
     }
 
-    const sourceKind =
-      asset.kind === 'shape'
-        ? 'shape'
-        : asset.kind === 'image'
-          ? 'image'
-          : asset.kind === 'comic'
-            ? 'comic'
-            : 'text';
-    const sourceNodeId = asset.kind === 'image' ? asset.imageSourceId ?? asset.id : asset.id;
-    const nextClip = createEditorVisualClip(sourceNodeId, sourceKind, {
+    const nextClip = buildVisualClipFromEditorAsset(asset, {
       trackIndex,
       startMs: getVisualTrackEndMs(visualBlocks, trackIndex),
-      durationSeconds: 4,
-      textContent: asset.textDefaults?.text,
-      textFontFamily: asset.textDefaults?.fontFamily,
-      textSizePx: asset.textDefaults?.fontSizePx,
-      textColor: asset.textDefaults?.color,
-      textEffect: asset.textDefaults?.textEffect,
-      textBackgroundOpacityPercent: asset.textDefaults?.textBackgroundOpacityPercent,
-      shapeFillColor: asset.shapeDefaults?.fillColor,
-      shapeBorderColor: asset.shapeDefaults?.borderColor,
-      shapeBorderWidth: asset.shapeDefaults?.borderWidth,
-      shapeCornerRadius: asset.shapeDefaults?.cornerRadius,
     });
 
     commitActiveCompositionPatch({
@@ -7988,7 +7968,7 @@ function ProgramStageMedia({
             className="inline-block whitespace-pre font-semibold leading-tight"
             style={{
               color: textColor,
-              fontFamily: textFontFamily,
+              fontFamily: formatFontFamily(textFontFamily),
               fontSize: `${safeFontSizePx}px`,
               lineHeight: TEXT_LINE_HEIGHT,
               ...getTextTypographyStyle(typography, text?.effect ?? clip.clip.textEffect ?? textDefaults?.textEffect ?? 'none'),
@@ -8010,7 +7990,7 @@ function ProgramStageMedia({
             className="mt-3 text-balance font-semibold text-white"
             style={{
               color: clip.clip.textColor || textDefaults?.color,
-              fontFamily: clip.clip.textFontFamily || textDefaults?.fontFamily,
+              fontFamily: formatFontFamily(clip.clip.textFontFamily || textDefaults?.fontFamily || 'Inter, system-ui, sans-serif'),
               fontSize: `${Math.max(16, (clip.clip.textSizePx || textDefaults?.fontSizePx || 64) / 3)}px`,
             }}
           >
@@ -9080,6 +9060,41 @@ function buildTextDraftFromClip(
     fontSizePx: clip.textSizePx || asset?.textDefaults?.fontSizePx || 72,
     color: clip.textColor || asset?.textDefaults?.color || '#f8fafc',
     textEffect: clip.textEffect || asset?.textDefaults?.textEffect || 'shadow',
+  });
+}
+
+export function buildVisualClipFromEditorAsset(
+  asset: EditorAsset,
+  options: { trackIndex: number; startMs: number; durationSeconds?: number },
+): EditorVisualClip {
+  const sourceKind =
+    asset.kind === 'shape'
+      ? 'shape'
+      : asset.kind === 'image'
+        ? 'image'
+        : asset.kind === 'comic'
+          ? 'comic'
+          : 'text';
+  const sourceNodeId = asset.kind === 'image' ? asset.imageSourceId ?? asset.id : asset.id;
+
+  return createEditorVisualClip(sourceNodeId, sourceKind, {
+    trackIndex: options.trackIndex,
+    startMs: options.startMs,
+    durationSeconds: options.durationSeconds ?? 4,
+    textContent: asset.textDefaults?.text,
+    textFontFamily: asset.textDefaults?.fontFamily,
+    textSizePx: asset.textDefaults?.fontSizePx,
+    textColor: asset.textDefaults?.color,
+    textEffect: asset.textDefaults?.textEffect,
+    textBackgroundOpacityPercent: asset.textDefaults?.textBackgroundOpacityPercent,
+    textTypography:
+      asset.kind === 'text' && asset.textDefaults
+        ? { fontWeight: asset.textDefaults.fontWeight, fontStyle: asset.textDefaults.fontStyle }
+        : undefined,
+    shapeFillColor: asset.shapeDefaults?.fillColor,
+    shapeBorderColor: asset.shapeDefaults?.borderColor,
+    shapeBorderWidth: asset.shapeDefaults?.borderWidth,
+    shapeCornerRadius: asset.shapeDefaults?.cornerRadius,
   });
 }
 
@@ -10423,7 +10438,7 @@ function EditorAssetCard({
               className="max-w-full truncate px-1 text-center font-semibold"
               style={{
                 color: asset.textDefaults?.color ?? '#f8fafc',
-                fontFamily: asset.textDefaults?.fontFamily ?? 'Inter, system-ui, sans-serif',
+                fontFamily: formatFontFamily(asset.textDefaults?.fontFamily ?? 'Inter, system-ui, sans-serif'),
                 fontSize: `${Math.max(10, Math.min(18, (asset.textDefaults?.fontSizePx ?? 72) / 5))}px`,
                 ...getTextPreviewEffectStyle(asset.textDefaults?.textEffect ?? 'shadow'),
               }}

@@ -304,3 +304,47 @@ describe('migrateStageObjectsToEditorAssets', () => {
     expect(migrated.clips).toEqual([]);
   });
 });
+
+  it('clamps out-of-range text weights during normalization', () => {
+    const assets = getEditorAssets({
+      editorAssets: [
+        {
+          id: 'text-heavy',
+          kind: 'text',
+          label: 'Heavy',
+          createdAt: 1,
+          updatedAt: 1,
+          textDefaults: {
+            text: 'Heavy',
+            fontFamily: 'Inter',
+            fontWeight: 1200,
+            fontStyle: 'normal',
+            fontSizePx: 64,
+            color: '#fff',
+            textEffect: 'shadow',
+            textBackgroundOpacityPercent: 0,
+          },
+        } as unknown as EditorAsset,
+        {
+          id: 'text-light',
+          kind: 'text',
+          label: 'Light',
+          createdAt: 1,
+          updatedAt: 1,
+          textDefaults: {
+            text: 'Light',
+            fontFamily: 'Inter',
+            fontWeight: -100,
+            fontStyle: 'normal',
+            fontSizePx: 64,
+            color: '#fff',
+            textEffect: 'shadow',
+            textBackgroundOpacityPercent: 0,
+          },
+        } as unknown as EditorAsset,
+      ],
+    });
+
+    expect(assets[0].textDefaults?.fontWeight).toBe(1000);
+    expect(assets[1].textDefaults?.fontWeight).toBe(1);
+  });

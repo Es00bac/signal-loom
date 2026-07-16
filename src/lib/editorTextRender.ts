@@ -1,4 +1,5 @@
 import type { TextClipEffect } from '../types/flow';
+import { formatFontFamily } from './formatFontFamily';
 
 export interface TextOverlaySvgOptions {
   text: string;
@@ -66,7 +67,7 @@ export function buildTextOverlaySvgAsset({
     <svg xmlns="http://www.w3.org/2000/svg" width="${bounds.width}" height="${bounds.height}" viewBox="0 0 ${bounds.width} ${bounds.height}">
       <foreignObject x="0" y="0" width="${bounds.width}" height="${bounds.height}">
         <div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;width:100%;height:100%;align-items:center;justify-content:center;text-align:center;background:transparent;pointer-events:none;">
-          <div style="display:inline-block;white-space:pre;font-family:${escapeHtml(fontFamily || 'Inter, system-ui, sans-serif')};font-size:${safeFontSize}px;line-height:1.12;font-weight:700;color:${escapeHtml(color || '#f3f4f6')};opacity:${textAlpha.toFixed(3)};${effectCss}">
+          <div style="display:inline-block;white-space:pre;font-family:${escapeHtml(formatFontFamily(fontFamily || 'Inter, system-ui, sans-serif'))};font-size:${safeFontSize}px;line-height:1.12;font-weight:700;color:${escapeHtml(color || '#f3f4f6')};opacity:${textAlpha.toFixed(3)};${effectCss}">
             ${escapeHtml(text || 'Text')}
           </div>
         </div>
@@ -174,7 +175,7 @@ function measureTextLineWidthWithCanvas(
     return undefined;
   }
 
-  context.font = `700 ${Math.max(8, fontSizePx)}px ${fontFamily || DEFAULT_TEXT_FONT_FAMILY}`;
+  context.font = `700 ${Math.max(8, fontSizePx)}px ${formatFontFamily(fontFamily || DEFAULT_TEXT_FONT_FAMILY)}`;
   const metrics = context.measureText(line || ' ');
   const measuredBounds = Math.abs(metrics.actualBoundingBoxLeft ?? 0) + Math.abs(metrics.actualBoundingBoxRight ?? 0);
 

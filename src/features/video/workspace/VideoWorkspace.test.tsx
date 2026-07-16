@@ -4,11 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProgramStageClip } from '../../../components/Editor/ManualEditorWorkspaceUtils';
 import { getVideoCanvasDimensions } from '../../../lib/videoCanvas';
 import { createEditorVisualClip } from '../../../lib/manualEditorState';
+import { createEditorAsset } from '../../../lib/editorAssets';
 import { buildVideoParityDiagnostics, buildVideoSequenceSummary } from '../../../lib/videoPremiereParity';
 import type { VideoExportReadinessSummary } from '../../../lib/videoExportReadiness';
 import type { VideoRenderBackendSummary } from '../../../lib/videoRenderBackendStatus';
 import type { AspectRatio, VideoResolution } from '../../../types/flow';
-import { ProgramMonitorPanel, SourceItemCard, TrackAddControl, buildTrackMenuOptions, resolveClipFitState } from './VideoWorkspace';
+import { ProgramMonitorPanel, SourceItemCard, TrackAddControl, buildTrackMenuOptions, buildVisualClipFromEditorAsset, resolveClipFitState } from './VideoWorkspace';
 import type { SourceBinItem } from '../../../lib/sourceBin';
 
 function renderProgramMonitor({
@@ -544,5 +545,67 @@ describe('TrackAddControl (F05)', () => {
 
     expect(html).toContain('Add Audio');
     expect(html).not.toContain('aria-label="Choose Audio track"');
+  });
+});
+function makeTextStageClip(clip: ProgramStageClip['clip'], asset?: ProgramStageClip['asset']): ProgramStageClip {
+  return {
+    clip,
+    durationSeconds: clip.durationSeconds ?? 4,
+    localTimeSeconds: 0,
+    sourceWidth: 1280,
+    sourceHeight: 720,
+    asset,
+  };
+}
+
+describe('ProgramMonitorPanel text preview', () => {
+  it('quotes multi-word bundled families in the straight text preview (FBL-012)', () => {
+    const clip = createEditorVisualClip('asset-1', 'text', {
+      textFontFamily: 'M PLUS 1, sans-serif',
+      textSizePx: 96,
+      textTypography: { fontWeight: 700, fontStyle: 'italic' },
+    });
+    const html = renderProgramMonitor({
+      stageClips: [makeTextStageClip(clip)],
+    });
+
+    expect(html).toContain('font-family:&quot;M PLUS 1&quot;, sans-serif');
+    expect(html).toContain('font-weight:700');
+    expect(html).toContain('font-style:italic');
+  });
+});
+
+describe('buildVisualClipFromEditorAsset', () => {
+  it('carries family/weight/style from a text asset into the clip typography (AUD-026)', () => {
+    const asset = createEditorAsset('text', { label: 'Title' });
+    asset.textDefaults = {
+      ...asset.textDefaults!,
+      fontFamily: 'M PLUS 1, sans-serif',
+      fontWeight: 700,
+      fontStyle: 'italic',
+    };
+
+    const clip = buildVisualClipFromEditorAsset(asset, { trackIndex: 1, startMs: 250 });
+
+    expect(clip.sourceKind).toBe('text');
+    expect(clip.textFontFamily).toBe('M PLUS 1, sans-serif');
+    expect(clip.textTypography).toEqual({ fontWeight: 700, fontStyle: 'italic' });
+    expect(clip.trackIndex).toBe(1);
+    expect(clip.startMs).toBe(250);
+  });
+
+  it('survives normalization and save/load boundaries intact', () => {
+    const asset = createEditorAsset('text', { label: 'Title' });
+    asset.textDefaults = {
+      ...asset.textDefaults!,
+      fontFamily: 'Source Sans 3, sans-serif',
+      fontWeight: 600,
+      fontStyle: 'italic',
+    };
+
+    const clip = buildVisualClipFromEditorAsset(asset, { trackIndex: 0, startMs: 0 });
+    const normalized = createEditorVisualClip(clip.sourceNodeId, clip.sourceKind, clip);
+
+    expect(normalized.textTypography).toEqual({ fontWeight: 600, fontStyle: 'italic' });
   });
 });

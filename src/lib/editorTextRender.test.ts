@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildTextOverlaySvg,
   buildTextOverlaySvgAsset,
@@ -68,5 +68,32 @@ describe('buildTextOverlaySvg', () => {
 
     expect(asset.svg).toContain(`width="${asset.bounds.width}"`);
     expect(asset.svg).toContain(`height="${asset.bounds.height}"`);
+  });
+
+  it('quotes multi-word families in the SVG font-family and canvas measurer (FBL-012)', () => {
+    const svg = buildTextOverlaySvg({
+      text: 'Title',
+      fontFamily: 'M PLUS 1, Inter, sans-serif',
+      fontSizePx: 72,
+      color: '#ffffff',
+      effect: 'none',
+      opacityPercent: 100,
+    });
+
+    expect(svg).toContain('font-family:"M PLUS 1", Inter, sans-serif');
+
+    const ctx = { font: '', measureText: () => ({ width: 0 }) };
+    const canvas = { getContext: vi.fn(() => ctx) };
+    vi.stubGlobal('document', { createElement: () => canvas });
+
+    measureTextObjectBounds({
+      text: 'Title',
+      fontFamily: 'M PLUS 1, Inter, sans-serif',
+      fontSizePx: 72,
+    });
+
+    expect(canvas.getContext).toHaveBeenCalledWith('2d');
+    expect(ctx.font).toContain('"M PLUS 1"');
+    vi.unstubAllGlobals();
   });
 });

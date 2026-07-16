@@ -220,7 +220,7 @@ describe('ImageTextLayer', () => {
     expect(font).toBe('normal 400 24px "M PLUS 1", Inter, sans-serif');
   });
 
-  it('renders all-small-caps through lowercased content and valid small-caps shorthand (FBL-013)', () => {
+  it('renders all-small-caps through the canvas fontVariantCaps property without mutating content (FBL-013)', () => {
     const font = imageTextCanvasFont({
       fontFamily: 'Inter',
       fontSize: 20,
@@ -228,7 +228,7 @@ describe('ImageTextLayer', () => {
       fontStyle: 'normal',
       fontVariantCaps: 'all-small-caps',
     });
-    expect(font).toContain('small-caps');
+    expect(font).not.toContain('small-caps');
     expect(font).not.toContain('all-small-caps');
 
     const bitmap = rasterizeImageTextStyle({
@@ -238,8 +238,23 @@ describe('ImageTextLayer', () => {
       fontWeight: '700',
       fontVariantCaps: 'all-small-caps',
     });
-    const fills = (bitmap as unknown as FakeOffscreenCanvas).context.fills;
-    expect(fills[0].text).toBe('headline');
+    const context = (bitmap as unknown as FakeOffscreenCanvas).context;
+    expect(context.fontVariantCaps).toBe('all-small-caps');
+    expect(context.fills[0].text).toBe('HEADLINE');
+  });
+
+  it('preserves mixed-case and expanded Unicode content for all-small-caps', () => {
+    const bitmap = rasterizeImageTextStyle({
+      content: 'Sloom スタジオ',
+      fontFamily: 'Inter',
+      fontSize: 20,
+      fontWeight: '400',
+      fontVariantCaps: 'all-small-caps',
+    });
+    const context = (bitmap as unknown as FakeOffscreenCanvas).context;
+
+    expect(context.fontVariantCaps).toBe('all-small-caps');
+    expect(context.fills[0].text).toBe('Sloom スタジオ');
   });
 
   it('updates retained text metadata and rerasterizes the layer bitmap', () => {
