@@ -7288,6 +7288,7 @@ function PaperConnectedSpreadView({
                   <PaperFrameView
                     canvasZIndex={canvasZIndex}
                     displayText={resolvePaperFolioText(threadSlices.get(frame.id)?.sourceText ?? frame.text ?? '', slot.page!.pageNumber, doc.pages.length)}
+                    displayRichText={threadSlices.get(frame.id)?.richText}
                     isThreadContinuation={threadSlices.get(frame.id) ? !threadSlices.get(frame.id)!.isHead : false}
                     isOverset={threadSlices.get(frame.id)?.isOverset ?? false}
                     frame={frame}
@@ -8297,6 +8298,7 @@ function PaperFrameView({
   canvasZIndex,
   frame,
   displayText,
+  displayRichText,
   wrapSpacers = [],
   isThreadContinuation = false,
   isOverset = false,
@@ -8335,6 +8337,7 @@ function PaperFrameView({
   canvasZIndex: number;
   frame: PaperFrame;
   displayText?: string;
+  displayRichText?: PaperRichParagraph[];
   wrapSpacers?: PaperWrapSpacer[];
   isThreadContinuation?: boolean;
   isOverset?: boolean;
@@ -8502,6 +8505,13 @@ function PaperFrameView({
   // the outer frame box measured here, and growing a bubble's height would also need to regrow its whole
   // shape/tail — a materially bigger feature. Left as a follow-up rather than guessed at in this pass.
   const isPlainInlineTextFrame = editableTextFrame && frame.kind !== 'speechBubble' && frame.kind !== 'thoughtBubble';
+  // A read-only thread continuation carrying a computed RICH slice must render through the same rich renderer as
+  // the head (so bold/italic/link/paragraph/list survive), NOT the plaintext fallback — while staying
+  // non-editable (it is not an editableTextFrame, so double-click/edit never activates on it).
+  const richThreadContinuation = isThreadContinuation
+    && !frame.table
+    && isPaperInlineTextFrame(frame)
+    && Boolean(displayRichText && displayRichText.length > 0);
 
   // Managed composition owns only frames whose visible source text is the document's actual text. Thread
   // continuations/folios can display a derived string, and remain in the legacy preview until they have their
@@ -8681,7 +8691,7 @@ function PaperFrameView({
           </>
         ) : frame.textArcPercent && !textEditing && isPaperInlineTextFrame(frame) ? (
           <PaperTextArc frame={frame} text={displayText ?? frame.text ?? ''} zoom={zoom} />
-        ) : editableTextFrame ? (
+        ) : editableTextFrame || richThreadContinuation ? (
           <>
             {managedTextEligible ? (
               <PaperManagedTextLayer
@@ -8695,6 +8705,7 @@ function PaperFrameView({
             <div className={`h-full w-full${managedTextEligible && !textEditing ? ' invisible' : ''}`}>
               <PaperInlineText
                 displayText={displayText}
+                displayRichText={displayRichText}
                 frame={frame}
                 isEditing={textEditing}
                 managedFonts={managedTextDocument.importedFonts}
@@ -9274,6 +9285,7 @@ function PaperInlineText({
   frame,
   managedFonts,
   displayText,
+  displayRichText,
   wrapSpacers = [],
   isEditing,
   onBeginEdit,
@@ -9285,6 +9297,7 @@ function PaperInlineText({
   frame: PaperFrame;
   managedFonts: readonly PaperManagedFontFace[] | undefined;
   displayText?: string;
+  displayRichText?: PaperRichParagraph[];
   wrapSpacers?: PaperWrapSpacer[];
   isEditing: boolean;
   onBeginEdit: (event: React.MouseEvent<HTMLElement>) => void;
@@ -9331,12 +9344,17 @@ function PaperInlineText({
 
   // Inline-rich content (imported docx, mixed styling) renders paragraphs of styled runs; the plain single
   // -style path below is untouched for every frame that has no richText (comics, bubbles, captions, …).
-  if (frame.richText && frame.richText.length > 0) {
+  // In a rich thread the effective paragraphs are the frame's computed slice (`displayRichText`): the head shows
+  // only its own slice — never the whole stored story — and a read-only continuation (which has no richText of
+  // its own) shows the slice it was handed. Unthreaded rich frames keep rendering their full `frame.richText`.
+  const effectiveRichText = displayRichText ?? frame.richText;
+  if (effectiveRichText && effectiveRichText.length > 0) {
     return (
       <PaperRichTextView
         baseStyle={style}
         className={className}
         frame={frame}
+        paragraphs={effectiveRichText}
         onBeginEdit={onBeginEdit}
         wrapSpacers={wrapSpacers}
         zoom={zoom}
@@ -9468,6 +9486,7 @@ function PaperRichTextView({
   baseStyle,
   className,
   frame,
+  paragraphs,
   onBeginEdit,
   wrapSpacers,
   zoom,
@@ -9475,11 +9494,12 @@ function PaperRichTextView({
   baseStyle: React.CSSProperties;
   className: string;
   frame: PaperFrame;
+  /** The paragraphs to render — the frame's own richText, or a threaded frame's computed rich slice. */
+  paragraphs: PaperRichParagraph[];
   onBeginEdit: (event: React.MouseEvent<HTMLElement>) => void;
   wrapSpacers: PaperWrapSpacer[];
   zoom: number;
 }) {
-  const paragraphs = frame.richText ?? [];
   const vertical = frame.typography.writingMode === 'vertical-rl';
   // A merged callout (every paragraph shares a border/shading) renders as ONE continuous box, the way a word
   // processor draws a multi-paragraph shaded note: the border padding and any top/bottom stroke apply only at the

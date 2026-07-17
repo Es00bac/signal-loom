@@ -67,6 +67,14 @@ export interface PaperTextFlowFrameResult {
   lines: PaperTextFlowLine[];
   /** The contiguous slice of the original text that flowed into this frame (for threaded rendering). */
   sourceText: string;
+  /**
+   * Authoritative start/end offsets of this frame's slice within the original `text`, such that
+   * `text.slice(sourceStart, sourceEnd) === sourceText`. Half-open [start, end). An empty frame reports
+   * `sourceStart === sourceEnd`. These are token-precise (never a substring search of the visible text), so a
+   * repeated word does not make a frame's slice ambiguous — the basis for slicing rich text by the same window.
+   */
+  sourceStart: number;
+  sourceEnd: number;
 }
 
 export interface PaperTextFlowResult {
@@ -408,12 +416,27 @@ export function flowPaperText(
       }
     }
 
-    const lastTokenIndex = index - 1;
-    const sourceText = frameStartIndex < index
-      ? text.slice(tokens[frameStartIndex].start, tokens[lastTokenIndex].start + tokens[lastTokenIndex].text.length)
-      : '';
+    // The slice window spans this frame's first to last WORD token: a leading paragraph break (consumed when the
+    // previous frame ended exactly on a break) and any trailing break are the inter-frame separator, owned by
+    // neither frame — so `sourceText` is the content that actually renders here, with no leading/trailing blank.
+    let firstWordIndex = -1;
+    let lastWordIndex = -1;
+    for (let t = frameStartIndex; t < index; t += 1) {
+      if (tokens[t].kind === 'word') {
+        if (firstWordIndex < 0) firstWordIndex = t;
+        lastWordIndex = t;
+      }
+    }
+    const hasContent = firstWordIndex >= 0;
+    const sourceStart = hasContent
+      ? tokens[firstWordIndex].start
+      : (frameStartIndex < tokens.length ? tokens[frameStartIndex].start : text.length);
+    const sourceEnd = hasContent
+      ? tokens[lastWordIndex].start + tokens[lastWordIndex].text.length
+      : sourceStart;
+    const sourceText = hasContent ? text.slice(sourceStart, sourceEnd) : '';
 
-    return { frameId: frame.id, lines, sourceText };
+    return { frameId: frame.id, lines, sourceText, sourceStart, sourceEnd };
   });
 
   const overset = index < tokens.length ? text.slice(tokens[index].start) : '';

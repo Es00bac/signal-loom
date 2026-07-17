@@ -1,11 +1,21 @@
-import type { PaperFrame, PaperTypography } from '../types/paper';
+import type { PaperFrame, PaperRichParagraph, PaperTypography } from '../types/paper';
 import { resolvePaperTextColumns } from './paperColumns';
+import { flattenPaperRichText, slicePaperRichTextRange } from './paperRichText';
 import { flowPaperText, type PaperTextFlowTypeSpec, type PaperTextMeasurer } from './paperTextFlow';
 import { getPaperTextThreadFrames, isPaperTextThreadFrame } from './paperTextThreads';
 import { resolveExclusionsForTextFrame } from './paperTextWrap';
 
 export interface PaperThreadSlice {
   sourceText: string;
+  /** Authoritative half-open [sourceStart, sourceEnd) window of this slice within the head story string. */
+  sourceStart: number;
+  sourceEnd: number;
+  /**
+   * The contiguous RICH slice of the head's richText that flows into this frame — present only when the thread's
+   * head carries richText. Preserves paragraph/run styling, links, list markers and blank lines; derived by
+   * slicing the head's authoritative richText at [sourceStart, sourceEnd). Undefined for plain-text threads.
+   */
+  richText?: PaperRichParagraph[];
   isOverset: boolean;
   isHead: boolean;
 }
@@ -44,9 +54,16 @@ export function computePaperThreadSlices(
       continue;
     }
 
+    const head = members[0];
+    const headRichText = head.richText && head.richText.length > 0 ? head.richText : undefined;
+    // When the head is rich, flow over the flatten of its authoritative richText so the offsets index the exact
+    // string the rich slicer flattens — keeping displayText and the rich slice perfectly consistent. Otherwise
+    // flow the head's plain text (unchanged plain-thread behavior).
+    const story = headRichText ? flattenPaperRichText(headRichText) : (head.text ?? '');
+
     const flow = flowPaperText(
-      members[0].text ?? '',
-      paperTypographyToTextFlowSpec(members[0].typography),
+      story,
+      paperTypographyToTextFlowSpec(head.typography),
       members.map((frame) => ({
         id: frame.id,
         columns: resolvePaperTextColumns(frame, paddingMm),
@@ -56,11 +73,17 @@ export function computePaperThreadSlices(
     );
 
     flow.frames.forEach((frameResult, index) => {
-      result.set(frameResult.frameId, {
+      const slice: PaperThreadSlice = {
         sourceText: frameResult.sourceText,
+        sourceStart: frameResult.sourceStart,
+        sourceEnd: frameResult.sourceEnd,
         isOverset: index === flow.frames.length - 1 && !flow.fits,
         isHead: index === 0,
-      });
+      };
+      if (headRichText) {
+        slice.richText = slicePaperRichTextRange(headRichText, frameResult.sourceStart, frameResult.sourceEnd);
+      }
+      result.set(frameResult.frameId, slice);
     });
   }
 

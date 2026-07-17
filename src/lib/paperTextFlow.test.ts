@@ -59,6 +59,36 @@ describe('flowPaperText', () => {
     expect(result.frames[1].sourceText).toBe('cc dd');
   });
 
+  it('exposes authoritative source start/end offsets that reproduce each frame slice', () => {
+    const text = 'aa bb cc dd';
+    const result = flowPaperText(
+      text,
+      spec,
+      [frame('f1', col(0, 0, 10, 5)), frame('f2', col(0, 0, 10, 5))],
+      measure,
+    );
+    const [f0, f1] = result.frames;
+    // Offsets index into the ORIGINAL story and reproduce the frame's slice exactly.
+    expect(text.slice(f0.sourceStart, f0.sourceEnd)).toBe(f0.sourceText);
+    expect(text.slice(f1.sourceStart, f1.sourceEnd)).toBe(f1.sourceText);
+    expect(f0.sourceStart).toBe(0);
+    // Slices are ordered and non-overlapping (the boundary whitespace is the inter-frame separator).
+    expect(f1.sourceStart).toBeGreaterThanOrEqual(f0.sourceEnd);
+    expect(f1.sourceEnd).toBe(text.length);
+  });
+
+  it('gives an empty [start,end) range for a frame that receives no text', () => {
+    const result = flowPaperText(
+      'aa bb',
+      spec,
+      [frame('f1', col(0, 0, 10, 5)), frame('f2', col(0, 0, 10, 5))],
+      measure,
+    );
+    const empty = result.frames[1];
+    expect(empty.sourceText).toBe('');
+    expect(empty.sourceStart).toBe(empty.sourceEnd);
+  });
+
   it('fills column one before column two within a frame', () => {
     const result = flowPaperText(
       'aa bb cc dd',

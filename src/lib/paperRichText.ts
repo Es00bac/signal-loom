@@ -178,6 +178,68 @@ export function paperRichTextIsEmpty(paragraphs: PaperRichParagraph[] | undefine
 }
 
 /**
+ * Slice rich text to the character range [startOffset, endOffset) measured in the SAME coordinate space as
+ * `flattenPaperRichText(paragraphs)`: runs concatenated, list paragraphs prefixed with `${listMarker}\t`, and
+ * paragraphs joined by a single '\n'. Returns a NEW, independent set of paragraphs (the source is never mutated
+ * or fragmented) covering exactly that window, preserving paragraph- and run-level styling, links, run/paragraph
+ * ids, and blank lines. The list marker is kept only when the slice owns the item's start (so a bullet that began
+ * in an earlier frame is not re-emitted mid-item). The invariant, for any range the thread-flow engine produces
+ * (word/paragraph-aligned), is:
+ *   flattenPaperRichText(slicePaperRichTextRange(p, s, e)) === flattenPaperRichText(p).slice(s, e)
+ * Used to render each threaded frame's contiguous rich slice from the authoritative head richText — see
+ * paperThreadFlow.computePaperThreadSlices. An empty range yields `[]`; a range past the end reaches the end.
+ */
+export function slicePaperRichTextRange(
+  paragraphs: PaperRichParagraph[],
+  startOffset: number,
+  endOffset: number,
+): PaperRichParagraph[] {
+  const start = Math.max(0, Math.min(startOffset, endOffset));
+  const end = Math.max(start, endOffset);
+  if (end <= start) return [];
+
+  const result: PaperRichParagraph[] = [];
+  let cursor = 0;
+  paragraphs.forEach((paragraph, index) => {
+    if (index > 0) cursor += 1; // the '\n' that flattenPaperRichText inserts between paragraphs
+    const markerPrefixLen = paragraph.listMarker ? paragraph.listMarker.length + 1 : 0; // marker + '\t'
+    const paraStart = cursor;
+    const contentStart = paraStart + markerPrefixLen;
+    let runsLen = 0;
+    for (const run of paragraph.runs) runsLen += run.text.length;
+    const paraEnd = contentStart + runsLen;
+    cursor = paraEnd;
+
+    // A paragraph contributes when its own flattened span [paraStart, paraEnd) overlaps the range; a blank line
+    // (zero-length span) contributes when its position sits inside the range.
+    const overlaps = paraStart < end && paraEnd > start;
+    const blankLineInRange = paraStart === paraEnd && paraStart >= start && paraStart < end;
+    if (!overlaps && !blankLineInRange) return;
+
+    const sliced: PaperRichParagraph = { ...paragraph, runs: [] };
+    // Only keep the bullet when this slice owns the paragraph's beginning.
+    if (paragraph.listMarker && start > paraStart) delete sliced.listMarker;
+
+    const from = Math.max(start, contentStart);
+    const to = Math.min(end, paraEnd);
+    let runCursor = contentStart;
+    for (const run of paragraph.runs) {
+      const runStart = runCursor;
+      const runEnd = runStart + run.text.length;
+      runCursor = runEnd;
+      const localFrom = Math.max(from, runStart);
+      const localTo = Math.min(to, runEnd);
+      if (localTo > localFrom) {
+        sliced.runs.push({ ...run, text: run.text.slice(localFrom - runStart, localTo - runStart) });
+      }
+    }
+    if (sliced.runs.length === 0) sliced.runs = [{ text: '' }]; // preserve a blank line
+    result.push(sliced);
+  });
+  return result;
+}
+
+/**
  * True when rich text carries NOTHING beyond plain text — a single paragraph with no paragraph-level
  * formatting and runs with no style overrides — so the frame's single `typography` fully represents it.
  * The PDF/X single-style vector/outline export path is only correct for such frames; anything richer (a bold
