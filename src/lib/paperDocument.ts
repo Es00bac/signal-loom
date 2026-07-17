@@ -49,7 +49,7 @@ import {
   buildPaperFrameAssetFromSourceItem,
   resolvePaperFrameAssetUrl,
 } from './paperAssetReferences';
-import { classifyPaperPlacedPdf } from './paperPlacedPdf';
+import { classifyPaperPlacedPdf, isPaperPdfMimeType } from './paperPlacedPdf';
 import { isPaperManagedIccProfile } from './paperManagedIccProfiles';
 import { buildPaperCanvasFrameLayers } from './paperCanvasStacking';
 import { resolvePaperColumnGutterMm } from './paperColumns';
@@ -1240,7 +1240,9 @@ function placeAssetInFrame(frame: PaperFrame, item: SourceBinLibraryItem): Paper
       asset: {
         ...buildPaperFrameAssetFromSourceItem(item),
         text: item.text,
-        format: item.mimeType === 'application/pdf' || item.label.toLowerCase().endsWith('.pdf') ? 'pdf' : undefined,
+        // A filename is a legacy fallback only. Never persist `format: pdf` for a proven image
+        // replacement whose old Source Library label happened to retain a .pdf suffix.
+        format: isPaperPdfMimeType(item.mimeType?.split(';', 1)[0]?.trim().toLowerCase()) ? 'pdf' : undefined,
       },
     };
   }
@@ -1324,6 +1326,14 @@ export function renderPrintFrame(
   if (placedPdf.isPdf) {
     return `<figure class="frame frame-document" style="${escapeHtml(outerStyle)}">
   <div class="frame-content" style="${escapeHtml(contentStyle)}">${renderPrintPdfFrameContent(frame, assetUrl, placedPdf.canEmbedForLivePrint)}</div>
+</figure>`;
+  }
+
+  // Replacement flows deliberately preserve frame geometry and may retain a historic document
+  // label. A proven PNG/JPEG/SVG must nevertheless paint through the normal image renderer.
+  if (placedPdf.isImage && assetUrl) {
+    return `<figure class="frame frame-image" style="${escapeHtml(outerStyle)}">
+  <div class="frame-content" style="${escapeHtml(contentStyle)}">${renderPrintImageFrameContent(frame, assetUrl)}</div>
 </figure>`;
   }
 
@@ -1588,7 +1598,7 @@ function renderPrintImageFrameContent(frame: PaperFrame, assetUrl: string): stri
   return `<img alt="${escapeHtml(frame.asset?.label ?? frame.label)}" src="${escapeHtml(assetUrl)}" style="${escapeHtml(style)}" />`;
 }
 
-function renderPrintDocumentFrameContent(frame: PaperFrame, assetUrl?: string): string {
+function renderPrintDocumentFrameContent(frame: PaperFrame, _assetUrl?: string): string {
   const label = escapeHtml(frame.asset?.label ?? frame.label);
   return `<div class="paper-document-placeholder" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;border:0.35mm dashed #64748b;background:#f8fafc;color:#334155;text-align:center;padding:3mm;">Linked document: ${label}</div>`;
 }

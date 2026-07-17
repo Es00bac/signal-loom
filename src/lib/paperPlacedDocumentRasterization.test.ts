@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BinaryAssetId } from '../shared/assets/contentAddressedAsset';
-import { addFrameToPaperPage, createDefaultPaperDocument, exportPaperDocumentToPrintHtml } from './paperDocument';
+import { addFrameToPaperPage, addFrameToPaperParentPage, assignPaperParentPage, createDefaultPaperDocument, exportPaperDocumentToPrintHtml } from './paperDocument';
 import { buildPaperCbzRasterExport } from './paperDocumentFormats';
 import { buildPaperKdpImageArchiveExport } from './paperKdpExport';
 import {
@@ -173,5 +173,36 @@ describe('placed-document rasterization capability boundary', () => {
       .rejects.toThrow(PaperPlacedDocumentRasterizationError);
     expect(resolver).not.toHaveBeenCalled();
     expect(() => buildFlattenedPaperPageSvgExport(first, 'missing-page')).toThrow(/Unknown Paper page id/);
+  });
+
+  it('preflights inherited/grouped, off-page, duplicated, and render-excluded PDF frames before any selected output', () => {
+    let document = createDefaultPaperDocument({ title: 'Complete frame graph' });
+    const pageId = document.pages[0].id;
+    const parentId = document.parentPages[0].id;
+    document = addFrameToPaperParentPage(document, parentId, {
+      id: 'grouped-parent-pdf', kind: 'image', label: 'parent.pdf', xMm: 10, yMm: 10, widthMm: 20, heightMm: 20,
+      asset: { label: 'parent.pdf', kind: 'image', mimeType: 'application/pdf', locator: { kind: 'external', url: 'data:application/pdf;base64,JVBERi0=' } },
+    }).document;
+    document = assignPaperParentPage(document, pageId, parentId);
+    document = addFrameToPaperPage(document, pageId, {
+      id: 'off-page-pdf', kind: 'image', label: 'off-page.pdf', xMm: -1000, yMm: -1000, widthMm: 20, heightMm: 20,
+      asset: { label: 'off-page.pdf', kind: 'image', mimeType: 'application/pdf', locator: { kind: 'external', url: 'blob:https://app.test/off-page' } },
+    }).document;
+    document = addFrameToPaperPage(document, pageId, {
+      id: 'duplicate-pdf', kind: 'image', label: 'duplicate.pdf', xMm: 50, yMm: 50, widthMm: 20, heightMm: 20,
+      asset: { label: 'duplicate.pdf', kind: 'image', mimeType: 'application/pdf', locator: { kind: 'external', url: 'blob:https://app.test/off-page' } },
+    }).document;
+
+    const issues = collectPaperPlacedDocumentRasterizationIssues(document);
+    expect(issues).toHaveLength(3);
+    expect(issues.map((issue) => issue.frameId)).toEqual(expect.arrayContaining([
+      `inherited-${parentId}-grouped-parent-pdf-${pageId}`,
+      'off-page-pdf',
+      'duplicate-pdf',
+    ]));
+    // A caller may hide/exclude frames in a flatten group, but cannot narrow the whole-document
+    // capability transaction and leak a partial output around a placed PDF.
+    expect(() => buildFlattenedPaperPageSvgExport(document, pageId, { renderFrameIds: ['not-a-pdf'] }))
+      .toThrow(PaperPlacedDocumentRasterizationError);
   });
 });

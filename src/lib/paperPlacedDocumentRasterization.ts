@@ -14,7 +14,7 @@ export interface PaperPlacedDocumentRasterizationIssue {
   frameId: string;
   frameLabel: string;
   mimeType?: string;
-  /** A conservatively detected PDF is useful context; unknown document bytes are blocked too. */
+  /** A conservatively detected PDF is useful context; the current capability boundary blocks PDFs. */
   isPdf: boolean;
   message: string;
 }
@@ -32,8 +32,8 @@ export class PaperPlacedDocumentRasterizationError extends Error {
 }
 
 /**
- * Returns every PDF placement that would otherwise be passed through an image-only flatten adapter.
- * Classification is metadata-only and bounded, so this inspection never materializes document bytes.
+ * Returns every placement that must not be passed through the image-only flatten adapter. Classification
+ * is metadata-only and bounded, so this inspection never materializes document bytes.
  */
 export function collectPaperPlacedDocumentRasterizationIssues(
   document: PaperDocument,
@@ -46,7 +46,7 @@ export function collectPaperPlacedDocumentRasterizationIssues(
     if (!requested.has(page.id)) continue;
     for (const frame of resolvePaperPageFramesForOutput(document, page)) {
       const classification = classifyPaperPlacedPdf(frame);
-      if (!classification.isPdf) continue;
+      if (!classification.blocksRasterization) continue;
       issues.push(createIssue(page.id, page.pageNumber, frame, classification));
     }
   }
