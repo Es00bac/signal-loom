@@ -13,6 +13,7 @@ import {
   normalizePaperFontFamilyId,
   selectManagedFontFace,
 } from './paperManagedFonts';
+import { computeEffectivePaperFrame } from './paperDocument';
 import { normalizeFamilyName } from './paperFontLibrary';
 import { paperFontObliqueAngleFromCss, paperFontStretchFromCss, paperFontStyleFromCss, paperFontWeightFromCss, paperFrameTextStyles } from './paperExactManagedFonts';
 import { isPaperManagedIccProfile } from './paperManagedIccProfiles';
@@ -426,7 +427,9 @@ async function preflightFrozenPaperProduction(
   for (const container of documentContainers(document)) {
     for (const frame of container.frames) {
       if (!options.allowFullPageFlatten) {
-        for (const style of textStyles(frame)) {
+        // Strict output paints the STYLE-effective face, so the gate must resolve
+        // paragraph/character style typography exactly like render and exact-CSS collection do.
+        for (const style of textStyles(computeEffectivePaperFrame(document, frame))) {
           const family = normalizeFamilyName(style.typography.fontFamily);
           const familyId = normalizePaperFontFamilyId(family);
           const weight = paperFontWeightFromCss(style.typography.fontWeight);

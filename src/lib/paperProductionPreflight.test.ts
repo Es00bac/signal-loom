@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
-import type { PaperManagedIccProfile } from '../types/paper';
+import type { PaperManagedFontFace, PaperManagedIccProfile } from '../types/paper';
 import { addFrameToPaperPage, createDefaultPaperDocument, updatePaperDocumentSetup, updatePaperFrame } from './paperDocument';
 import type { PdfxExportResult } from './paperPdfxExport';
 import type { PdfxValidationReport } from './paperPdfxValidate';
@@ -177,6 +177,57 @@ describe('Paper production preflight', () => {
 
     const report = await preflightPaperProduction(document, { standard: 'pdf-x-4' });
     expect(report.issues.filter((issue) => issue.code === 'MISSING_MANAGED_FONT')).toHaveLength(2);
+  });
+
+  it('inspects the effective style-applied managed face, not raw frame typography', async () => {
+    const fontSha = 'b'.repeat(64);
+    const styledFace: PaperManagedFontFace = {
+      id: 'style-preflight-face',
+      familyId: 'Style Gate Exact',
+      familyName: 'Style Gate Exact',
+      postscriptName: 'StyleGateExact-Regular',
+      weight: 400,
+      style: 'normal',
+      stretchPercent: 100,
+      collectionIndex: 0,
+      variableAxes: {},
+      unicodeRanges: [],
+      format: 'truetype',
+      fontAsset: { id: `sha256:${fontSha}`, sha256: fontSha, mimeType: 'font/ttf', byteLength: 8 },
+      embeddability: 'installable',
+      canSubset: true,
+      source: { kind: 'user-import' },
+      license: {},
+    };
+    const base = productionDocument();
+    const styled = {
+      ...base,
+      importedFonts: [styledFace],
+      styles: {
+        ...base.styles,
+        paragraph: [
+          ...base.styles.paragraph,
+          { id: 'para-preflight-style', name: 'Preflight Style', typography: { fontFamily: styledFace.familyName, fontWeight: '400' } },
+        ],
+      },
+    };
+    const { document } = addFrameToPaperPage(styled, styled.pages[0].id, {
+      kind: 'caption',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 60,
+      heightMm: 20,
+      text: 'Style-face body',
+      typography: { fontFamily: 'Unmanaged Raw Family' },
+      paragraphStyleId: 'para-preflight-style',
+    });
+
+    const report = await preflightPaperProduction(document, { standard: 'pdf-x-4' });
+
+    // The paragraph style supplies the face the output paints, so strict preflight must approve
+    // and expect exactly that face — never the raw frame family the render never uses.
+    expect(report.issues.filter((issue) => issue.code === 'MISSING_MANAGED_FONT')).toEqual([]);
+    expect(report.expectedFontIds).toEqual([styledFace.id]);
   });
 
   it('blocks a requested spot that the render plan would flatten instead of plate', async () => {

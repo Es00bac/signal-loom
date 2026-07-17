@@ -139,6 +139,68 @@ export function createPaperPlacedDocumentRasterizationGuard(
   return guard;
 }
 
+/**
+ * Identity-only pinned snapshot for non-raster deliverables (print packages). Placed PDFs are
+ * legitimate package content, so unlike the raster guard this never asserts rasterizability.
+ * `sourceItems` is the frozen full-record snapshot the delivery must consume; calling the guard
+ * proves symmetric presence and the exact {id, mimeType, assetUrl, createdAt} revision tuple for
+ * every linked id. Unrelated Source Library changes never fail it.
+ */
+export interface PaperLinkedSourceIdentityGuard<TItem extends PaperPlacedSourceItem = PaperPlacedSourceItem> {
+  (): void;
+  readonly sourceItems: readonly Readonly<TItem>[];
+}
+
+/** Typed, actionable failure for a delivery whose pinned linked sources are no longer current. */
+export class PaperLinkedSourceRevisionError extends Error {
+  readonly code = 'paper-linked-source-revision-changed' as const;
+  readonly changedSourceItemIds: readonly string[];
+
+  constructor(changedSourceItemIds: readonly string[]) {
+    const count = changedSourceItemIds.length;
+    super(
+      `${count} linked Source Library item${count === 1 ? '' : 's'} (${changedSourceItemIds.join(', ')}) `
+      + 'changed while this output was being prepared. Retry the export so it delivers one current source revision.',
+    );
+    this.name = 'PaperLinkedSourceRevisionError';
+    this.changedSourceItemIds = changedSourceItemIds;
+  }
+}
+
+export function createPaperLinkedSourceIdentityGuard<TItem extends PaperPlacedSourceItem>(
+  document: PaperDocument,
+  readSourceItems: () => readonly TItem[],
+): PaperLinkedSourceIdentityGuard<TItem> {
+  const linkedSourceIds = collectPaperLinkedSourceItemIds(document);
+  const initialItems = Object.freeze(readSourceItems()
+    .filter((item) => linkedSourceIds.has(item.id))
+    .map((item) => Object.freeze({ ...item })));
+  const initialItemsById = new Map<string, Readonly<TItem>>(initialItems.map((item) => [item.id, item]));
+
+  const guard = (() => {
+    const currentItemsById = new Map(readSourceItems()
+      .filter((item) => linkedSourceIds.has(item.id))
+      .map((item) => [item.id, item]));
+    const changedSourceItemIds: string[] = [];
+    for (const sourceItemId of linkedSourceIds) {
+      const initialItem = initialItemsById.get(sourceItemId);
+      const currentItem = currentItemsById.get(sourceItemId);
+      if (Boolean(initialItem) !== Boolean(currentItem)
+        || (initialItem && currentItem && !paperPlacedSourceItemRevisionMatches(initialItem, currentItem))) {
+        changedSourceItemIds.push(sourceItemId);
+      }
+    }
+    if (changedSourceItemIds.length > 0) {
+      throw new PaperLinkedSourceRevisionError(changedSourceItemIds.sort());
+    }
+  }) as PaperLinkedSourceIdentityGuard<TItem>;
+  Object.defineProperty(guard, 'sourceItems', {
+    value: initialItems,
+    enumerable: true,
+  });
+  return guard;
+}
+
 export function isPaperPlacedDocumentRasterizationError(value: unknown): value is PaperPlacedDocumentRasterizationError {
   return value instanceof PaperPlacedDocumentRasterizationError
     || (Boolean(value) && typeof value === 'object'

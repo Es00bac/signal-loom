@@ -102,6 +102,7 @@ import {
 } from '../../../lib/paperPageFlattenExport';
 import { buildPaperBookletProofHtmlExportRequest, buildPaperBookletProofPdfExportRequest, buildPaperReaderSpreadHtmlExportRequest, buildPaperReaderSpreadPdfExportRequest } from '../../../lib/paperPdfExport';
 import { buildPaperPackageExport } from '../../../lib/paperPackageExport';
+import { createPaperLinkedSourceIdentityGuard } from '../../../lib/paperPlacedDocumentRasterization';
 import { paperEmphasisMarkToCss, tokenizePaperInlineText } from '../../../lib/paperJapaneseText';
 import { useI18n } from '../../../lib/useI18n';
 import { translate, type MessageKey } from '../../../lib/i18n';
@@ -1513,7 +1514,14 @@ export function PaperWorkspace() {
           && !(await requestCommercialExportUnlock('CMYK/spot print-production packaging'))) return;
         if (!await confirmPreflightBeforeExport('package for print')) return;
         try {
-          const pack = await buildPaperPackageExport(document, sourceItems);
+          // Pin every linked source revision for the whole build, then prove the pinned set is
+          // still current immediately before the durable download.
+          const packageGuard = createPaperLinkedSourceIdentityGuard(
+            document,
+            () => useSourceBinStore.getState().getAllItems(),
+          );
+          const pack = await buildPaperPackageExport(document, [...packageGuard.sourceItems]);
+          packageGuard();
           downloadBlob(pack.fileName, pack.blob);
           setStatus(`Downloaded Paper print package with ${pack.manifest.packagedAssets.length} embedded asset files, ${pack.manifest.linkedAssets.length} linked asset records${pack.entries.length ? `, and ${pack.entries.length} ZIP entries` : ''}.`);
         } catch (error) {
@@ -3507,8 +3515,14 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       }
 
       const latestDocument = usePaperStore.getState().document;
-      const latestSourceItems = useSourceBinStore.getState().getAllItems();
-      const pack = await buildPaperPackageExport(latestDocument, latestSourceItems);
+      // The package must contain one pinned revision of every linked source: build from the
+      // frozen snapshot and re-assert it right before the durable download.
+      const finalizePackageGuard = createPaperLinkedSourceIdentityGuard(
+        latestDocument,
+        () => useSourceBinStore.getState().getAllItems(),
+      );
+      const pack = await buildPaperPackageExport(latestDocument, [...finalizePackageGuard.sourceItems]);
+      finalizePackageGuard();
       downloadBlob(pack.fileName, pack.blob);
       setSourceSidebarOpen(true);
       const failureText = failedCount > 0

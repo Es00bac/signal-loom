@@ -6,7 +6,7 @@ import {
   normalizeProjectMediaReferencesForSave,
   resolveProjectMediaReferencesForRestore,
 } from './projectMediaReferences';
-import { sanitizeProjectDocument } from './projectValidation';
+import { assertProjectDocumentReplacementCandidate, sanitizeProjectDocument } from './projectValidation';
 import { migrateLegacyPaperBinaryFields } from '../features/paper/assets/PaperDocumentAssets';
 import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
 import {
@@ -1614,43 +1614,40 @@ export async function replaceProjectDocument(
   document: unknown,
   options: GuardedProjectReplacementOptions,
 ): Promise<boolean> {
-  const normalized = runStableWorkspaceNormalizationPhase(() => ({
-    document: normalizeIncomingProjectDocument(document),
-    options: normalizeGuardedProjectReplacementOptions(options, false),
-  }));
+  // Bounded candidate/options checks only. Full incoming validation is deliberately deferred
+  // until the exact current replacement is authorized: Cancel never pays deep validation, and
+  // unbounded malformed input is never deeply processed merely to show the decision dialog.
+  const normalizedOptions = runStableWorkspaceNormalizationPhase(() => {
+    assertProjectDocumentReplacementCandidate(document);
+    return normalizeGuardedProjectReplacementOptions(options, false);
+  });
+  // The request identity exists before the decision is shown, so any later request — even one
+  // whose payload fails validation afterwards — retires every older pending dialog.
   const requestId = beginProjectReplacementRequest();
   const initialImageAuthorization = consumeImageReplacementAuthorization(
-    normalized.options.imageAuthorizationToken,
+    normalizedOptions.imageAuthorizationToken,
   );
-  return authorizeAndReplaceProjectDocument(
-    requestId,
-    normalized.document,
-    normalized.options,
-    initialImageAuthorization,
-  );
-}
-
-async function authorizeAndReplaceProjectDocument(
-  requestId: number,
-  document: FlowProjectDocument,
-  options: UntrustedGuardedProjectReplacementOptions,
-  initialImageAuthorization: InternalWorkspaceReplacementAuthorization | undefined,
-): Promise<boolean> {
   const authorization = await requestProjectReplacementAuthorizations(
     requestId,
-    options,
+    normalizedOptions,
     initialImageAuthorization,
   );
-  if (!authorization || !isGuardedReplacementRequestCurrent(requestId, options.isReplacementRequestCurrent)) return false;
-  const transactionBookkeeping = options.transactionBookkeeping;
+  if (!authorization || !isGuardedReplacementRequestCurrent(requestId, normalizedOptions.isReplacementRequestCurrent)) return false;
+  // Full validation runs only for the authorized request. The stable phase fails closed when the
+  // incoming payload mutates any workspace while it is inspected, and the prepared transaction
+  // re-proves the request identity plus both authorizations before any store changes.
+  const sanitizedDocument = runStableWorkspaceNormalizationPhase(
+    () => normalizeIncomingProjectDocument(document),
+  );
+  assertGuardedReplacementRequestCurrent(requestId, normalizedOptions.isReplacementRequestCurrent);
   return restoreNormalizedProjectDocument(
     requestId,
-    document,
+    sanitizedDocument,
     authorization.paper,
     authorization.image,
-    transactionBookkeeping,
+    normalizedOptions.transactionBookkeeping,
     'restore',
-    options.isReplacementRequestCurrent,
+    normalizedOptions.isReplacementRequestCurrent,
   ).then(() => true);
 }
 

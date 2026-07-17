@@ -7,6 +7,7 @@ import {
 import {
   buildFlattenedPaperPageSourcePayload,
   buildFlattenedPaperPageSvgExport,
+  buildRasterizedPaperPageSourcePayload,
   buildFlattenedPaperPageSvgExportWithEmbeddedAssets,
   getPaperPageExportDimensions,
   publishRasterizedPaperPageSourcePayload,
@@ -151,6 +152,56 @@ describe('paperPageFlattenExport', () => {
       name: 'PaperPageOutputError',
       code: 'PAPER_PAGE_OUTPUT_FAILED',
       message: expect.stringMatching(/no Source Library or Video asset was published.*hostile SVG decode/i),
+    });
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('preserves the typed placed-document error contract through the rasterized payload builder', async () => {
+    const doc = createDefaultPaperDocument({ title: 'Placed PDF payload' });
+    const pageId = doc.pages[0].id;
+    const { document: withPdf } = addFrameToPaperPage(doc, pageId, {
+      kind: 'document', xMm: 10, yMm: 10, widthMm: 60, heightMm: 40,
+      asset: {
+        label: 'spec.pdf',
+        kind: 'document',
+        mimeType: 'application/pdf',
+        locator: { kind: 'external', url: 'data:application/pdf;base64,AAAA' },
+      },
+    });
+
+    await expect(buildRasterizedPaperPageSourcePayload(withPdf, pageId, {
+      browserDocument: { createElement: vi.fn() } as unknown as Document,
+    })).rejects.toMatchObject({
+      name: 'PaperPlacedDocumentRasterizationError',
+      code: 'paper-placed-document-rasterization-unsupported',
+      issues: [expect.objectContaining({
+        code: 'paper-placed-document-rasterization-unsupported',
+        pageNumber: 1,
+        frameLabel: 'spec.pdf',
+        isPdf: true,
+      })],
+    });
+  });
+
+  it('publishes nothing and keeps the placed-document code/issues on the publish path', async () => {
+    const doc = createDefaultPaperDocument({ title: 'Placed PDF publish' });
+    const pageId = doc.pages[0].id;
+    const { document: withPdf } = addFrameToPaperPage(doc, pageId, {
+      kind: 'document', xMm: 10, yMm: 10, widthMm: 60, heightMm: 40,
+      asset: {
+        label: 'insert.pdf',
+        kind: 'document',
+        mimeType: 'application/pdf',
+        locator: { kind: 'external', url: 'data:application/pdf;base64,AAAA' },
+      },
+    });
+    const publish = vi.fn(async () => ({ id: 'must-not-exist' }));
+
+    await expect(publishRasterizedPaperPageSourcePayload(withPdf, pageId, {
+      browserDocument: { createElement: vi.fn() } as unknown as Document,
+    }, publish)).rejects.toMatchObject({
+      code: 'paper-placed-document-rasterization-unsupported',
+      message: expect.stringMatching(/cannot rasterize|replace it with a raster image/i),
     });
     expect(publish).not.toHaveBeenCalled();
   });

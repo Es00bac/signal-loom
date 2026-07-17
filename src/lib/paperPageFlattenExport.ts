@@ -3,6 +3,7 @@ import type { PaperDocument, PaperPage } from '../types/paper';
 import {
   exportPaperDocumentToPrintHtml,
   paperPixelsFromMm,
+  resolvePaperDocumentEffectiveTypography,
   resolvePaperPageFramesForOutput,
   updatePaperDocumentSetup,
 } from './paperDocument';
@@ -13,7 +14,10 @@ import {
   readPaperManagedFontManifest,
   verifyExactPaperManagedFontReadiness,
 } from './paperExactManagedFonts';
-import { assertPaperDocumentSupportsRasterization } from './paperPlacedDocumentRasterization';
+import {
+  assertPaperDocumentSupportsRasterization,
+  isPaperPlacedDocumentRasterizationError,
+} from './paperPlacedDocumentRasterization';
 
 export interface PaperPageExportDimensions {
   widthMm: number;
@@ -158,8 +162,11 @@ export function buildFlattenedPaperPageSvgExport(
   // callers may otherwise hand this SVG straight to the raster canvas adapter.
   assertPaperDocumentSupportsRasterization(document, [pageId]);
   const page = findPaperPage(document, pageId);
+  // Collect from the effective-style projection: a paragraph/character style can supply the face
+  // this raster will paint, and a bypassing caller must be blocked on exactly that face set.
+  const effectiveDocument = resolvePaperDocumentEffectiveTypography(document);
   const managedFaces = collectExactPaperManagedFaces(
-    [...document.pages, ...document.parentPages].flatMap((candidate) => candidate.frames),
+    [...effectiveDocument.pages, ...effectiveDocument.parentPages].flatMap((candidate) => candidate.frames),
     document.importedFonts,
   );
   if (managedFaces.length > 0 && !readPaperManagedFontManifest(options.fontFaceCss)) {
@@ -303,6 +310,9 @@ export async function buildRasterizedPaperPageSourcePayload(
     });
   } catch (error) {
     if (error instanceof PaperExactManagedFontError) throw error;
+    // Placed-document failures carry their own typed code and structured per-frame issues;
+    // wrapping them generically would strip the contract consumers act on.
+    if (isPaperPlacedDocumentRasterizationError(error)) throw error;
     const page = document.pages.find((candidate) => candidate.id === pageId);
     const label = page ? `page ${page.pageNumber}` : 'the requested page';
     const detail = error instanceof Error && error.message ? ` ${error.message}` : '';

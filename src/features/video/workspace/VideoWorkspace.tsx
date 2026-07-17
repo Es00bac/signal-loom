@@ -204,6 +204,7 @@ import {
   getPaperStoryboardExistingItemIds,
   publishPaperStoryboardPageSourcePayloads,
 } from '../../../lib/paperVideoAssets';
+import { createPaperPlacedDocumentRasterizationGuard } from '../../../lib/paperPlacedDocumentRasterization';
 import {
   buildPaperDocumentExactManagedFontOutput,
   materializePaperDocumentAssetUrls,
@@ -3059,11 +3060,22 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     setPaperStoryboardImportStatus(`Preparing ${paperDocument.pages.length} Paper page${paperDocument.pages.length === 1 ? '' : 's'}...`);
 
     try {
-      const materializedDocument = await materializePaperDocumentAssetUrls(paperDocument, libraryItems);
+      // One immutable linked-source snapshot owns this storyboard publication: materialization
+      // consumes exactly the pinned revisions, and the same guard re-proves them immediately
+      // before the first Source write so a mid-preparation replacement publishes nothing.
+      const storyboardSourceGuard = createPaperPlacedDocumentRasterizationGuard(
+        paperDocument,
+        () => useSourceBinStore.getState().getAllItems(),
+      );
+      const materializedDocument = await materializePaperDocumentAssetUrls(
+        paperDocument,
+        storyboardSourceGuard.sourceItems,
+      );
       const exact = await buildPaperDocumentExactManagedFontOutput(materializedDocument);
+      storyboardSourceGuard();
       const importedItems = await publishPaperStoryboardPageSourcePayloads(exact.document, {
         fontFaceCss: exact.fontFaceCss,
-      }, addAssetItem);
+      }, addAssetItem, storyboardSourceGuard);
       const importedItemIds = importedItems.map((item) => item.id);
 
       setSourceBinSearchQuery('');

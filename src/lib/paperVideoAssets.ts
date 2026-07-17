@@ -96,13 +96,19 @@ export async function buildPaperStoryboardPageSourcePayloads(
   return payloads;
 }
 
-/** Prepare every raster first, then publish; a failure on any page leaves the caller with zero new assets. */
+/**
+ * Prepare every raster first, then publish; a failure on any page leaves the caller with zero new
+ * assets. `assertBeforePublish` runs after the complete batch exists and before the first Source
+ * write, so a caller's pinned linked-source transaction can refuse a stale publication outright.
+ */
 export async function publishPaperStoryboardPageSourcePayloads<T>(
   document: PaperDocument,
   options: PaperStoryboardAssetOptions,
   publish: (payload: FlattenedPaperPageSourcePayload) => Promise<T>,
+  assertBeforePublish?: () => void,
 ): Promise<T[]> {
   const payloads = await buildPaperStoryboardPageSourcePayloads(document, options);
+  assertBeforePublish?.();
   const published: T[] = [];
   for (const payload of payloads) published.push(await publish(payload));
   return published;

@@ -4,6 +4,7 @@ import { MemoryPaperAssetRepository, type PaperAssetRepository } from './PaperAs
 import { verifyBinaryAssetRecord } from '../../../shared/assets/contentAddressedAsset';
 import type { SourceBinLibraryItem } from '../../../store/sourceBinStore';
 import type { PaperDocument, PaperFrame } from '../../../types/paper';
+import { resolvePaperDocumentEffectiveTypography } from '../../../lib/paperDocument';
 import { resolvePaperFrameAssetUrl } from '../../../lib/paperAssetReferences';
 import type { BinaryAssetRef } from '../../../shared/assets/contentAddressedAsset';
 import {
@@ -24,9 +25,13 @@ export const paperAssetUrlRegistry = new PaperAssetUrlRegistry(paperAssetReposit
 /** Exact isolated-document payload for browser print, SVG flattening, soft proof and Electron PDF. */
 export async function buildPaperDocumentExactManagedFontOutput(document: PaperDocument): Promise<{ document: PaperDocument; fontFaceCss?: string }> {
   assertNoConflictingPaperManagedFontDescriptors(document.importedFonts);
-  const frames = [...document.pages, ...document.parentPages].flatMap((page) => page.frames);
+  // Paragraph/character styles supply the effective face at render time, so face collection and
+  // aliasing must run on the export-only effective projection — otherwise a style-linked frame
+  // paints a raw style family the alias CSS never declares.
+  const effectiveDocument = resolvePaperDocumentEffectiveTypography(document);
+  const frames = [...effectiveDocument.pages, ...effectiveDocument.parentPages].flatMap((page) => page.frames);
   const faces = collectExactPaperManagedFaces(frames, document.importedFonts);
-  if (faces.length === 0) return { document };
+  if (faces.length === 0) return { document: effectiveDocument };
   const fontFaceCss = await buildExactPaperManagedFontCss(faces, async (ref) => {
     const record = await paperAssetRepository.get(ref.id);
     if (!record || record.ref.id !== ref.id || record.ref.sha256 !== ref.sha256 || record.ref.byteLength !== ref.byteLength || record.ref.mimeType !== ref.mimeType || !(await verifyBinaryAssetRecord(record))) {
@@ -34,7 +39,7 @@ export async function buildPaperDocumentExactManagedFontOutput(document: PaperDo
     }
     return record.bytes;
   });
-  return { document: aliasPaperDocumentManagedFontFamilies(document), fontFaceCss };
+  return { document: aliasPaperDocumentManagedFontFamilies(effectiveDocument), fontFaceCss };
 }
 
 /**

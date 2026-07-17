@@ -1384,9 +1384,24 @@ function sanitizeFlowWorkspaceState(
   };
 }
 
+const INVALID_PROJECT_FILE_ERROR = 'The selected file is not a valid Sloom Studio .sloom project.';
+
+/**
+ * Bounded pre-authorization shape check for an incoming replacement candidate. Deliberately
+ * shallow and allocation-free: full validation is deferred until the current workspace's
+ * replacement is authorized, so malformed/unbounded input is never deeply processed merely to
+ * show the decision dialog. Must stay strictly weaker than sanitizeProjectDocument — anything
+ * rejected here is rejected there for the same reason.
+ */
+export function assertProjectDocumentReplacementCandidate(input: unknown): void {
+  if (input !== undefined && input !== null && !isRecord(input)) {
+    throw new Error(INVALID_PROJECT_FILE_ERROR);
+  }
+}
+
 export function sanitizeProjectDocument(input: unknown, fallbackName = 'Sloom Studio Project'): FlowProjectDocument {
   if (!isRecord(input)) {
-    throw new Error('The selected file is not a valid Sloom Studio .sloom project.');
+    throw new Error(INVALID_PROJECT_FILE_ERROR);
   }
 
   const sourceBin = sanitizeSourceBinSnapshot(input.sourceBin);

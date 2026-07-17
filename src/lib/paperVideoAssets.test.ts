@@ -13,9 +13,18 @@ import {
   buildExactPaperManagedFontCss,
   PaperExactManagedFontError,
 } from './paperExactManagedFonts';
+import {
+  createPaperPlacedDocumentRasterizationGuard,
+  type PaperPlacedSourceItem,
+} from './paperPlacedDocumentRasterization';
+import {
+  buildPaperDocumentExactManagedFontOutput,
+  materializePaperDocumentAssetUrls,
+} from '../features/paper/assets/PaperAssetRuntime';
 
 afterEach(() => {
   Reflect.deleteProperty(document, 'fonts');
+  vi.unstubAllGlobals();
 });
 
 function exactStoryboardFace(): PaperManagedFontFace {
@@ -25,6 +34,37 @@ function exactStoryboardFace(): PaperManagedFontFace {
     weight: 400, style: 'normal', stretchPercent: 100, collectionIndex: 0, variableAxes: {}, unicodeRanges: [],
     format: 'truetype', fontAsset: { id: `sha256:${sha256}`, sha256, mimeType: 'font/ttf', byteLength: 3 },
     embeddability: 'installable', canSubset: true, source: { kind: 'user-import' }, license: {},
+  };
+}
+
+function linkedTwoPageStoryboardDocument() {
+  vi.stubGlobal('Image', class {
+    decoding = '';
+    src = '';
+    decode() { return Promise.resolve(); }
+  });
+  const context = { drawImage: vi.fn() };
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext: vi.fn(() => context),
+    toDataURL: vi.fn(() => 'data:image/png;base64,cGFnZQ=='),
+  };
+  const realCreateElement = document.createElement.bind(document);
+  const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => (
+    tagName === 'canvas' ? canvas as unknown as HTMLElement : realCreateElement(tagName)
+  ));
+
+  let storyboardDocument = createDefaultPaperDocument({ title: 'Linked Boards' });
+  storyboardDocument = addFrameToPaperPage(storyboardDocument, storyboardDocument.pages[0].id, {
+    kind: 'image', xMm: 10, yMm: 10, widthMm: 60, heightMm: 40,
+    asset: { sourceBinItemId: 'board-art', label: 'Board art', kind: 'image', mimeType: 'image/png' },
+  }).document;
+  storyboardDocument = addPaperPage(storyboardDocument);
+
+  return {
+    document: storyboardDocument,
+    restoreCreateElement: () => createElementSpy.mockRestore(),
   };
 }
 
@@ -76,6 +116,81 @@ describe('paperVideoAssets', () => {
     expect(buildPaperStoryboardSourceKey(document, document.pages[0].id, { includeBleed: true })).toBe(
       `paper-page:${document.id}:${document.pages[0].id}:371x671:bleed`,
     );
+  });
+
+  it('writes zero Source items when a same-ID same-MIME linked replacement lands before publish', async () => {
+    const { document: storyboardDocument, restoreCreateElement } = linkedTwoPageStoryboardDocument();
+    const linkedV1: PaperPlacedSourceItem = {
+      id: 'board-art', mimeType: 'image/png', assetUrl: 'data:image/png;base64,djE=', createdAt: 1,
+    };
+    const unrelated: PaperPlacedSourceItem = {
+      id: 'unrelated-item', mimeType: 'image/png', assetUrl: 'data:image/png;base64,dW4=', createdAt: 1,
+    };
+    let items: readonly PaperPlacedSourceItem[] = [linkedV1, unrelated];
+    try {
+      const guard = createPaperPlacedDocumentRasterizationGuard(storyboardDocument, () => items);
+      const materialized = await materializePaperDocumentAssetUrls(storyboardDocument, guard.sourceItems);
+      const exact = await buildPaperDocumentExactManagedFontOutput(materialized);
+      items = [
+        { id: 'board-art', mimeType: 'image/png', assetUrl: 'data:image/png;base64,djI=', createdAt: 2 },
+        unrelated,
+      ];
+      const publish = vi.fn(async () => ({ id: 'must-not-exist' }));
+
+      await expect(publishPaperStoryboardPageSourcePayloads(
+        exact.document,
+        { resolveImageSrc: async () => 'data:image/png;base64,YXJ0' },
+        publish,
+        guard,
+      )).rejects.toMatchObject({
+        code: 'paper-placed-document-rasterization-unsupported',
+        issues: [expect.objectContaining({
+          message: expect.stringMatching(/changed while this output was being prepared/i),
+        })],
+      });
+      expect(publish).not.toHaveBeenCalled();
+    } finally {
+      restoreCreateElement();
+    }
+  });
+
+  it('still publishes every page in order when only an unrelated Source item changes during preparation', async () => {
+    const { document: storyboardDocument, restoreCreateElement } = linkedTwoPageStoryboardDocument();
+    const linkedV1: PaperPlacedSourceItem = {
+      id: 'board-art', mimeType: 'image/png', assetUrl: 'data:image/png;base64,djE=', createdAt: 1,
+    };
+    let items: readonly PaperPlacedSourceItem[] = [
+      linkedV1,
+      { id: 'unrelated-item', mimeType: 'image/png', assetUrl: 'data:image/png;base64,dW4=', createdAt: 1 },
+    ];
+    try {
+      const guard = createPaperPlacedDocumentRasterizationGuard(storyboardDocument, () => items);
+      const materialized = await materializePaperDocumentAssetUrls(storyboardDocument, guard.sourceItems);
+      const exact = await buildPaperDocumentExactManagedFontOutput(materialized);
+      items = [
+        linkedV1,
+        { id: 'unrelated-item', mimeType: 'image/jpeg', assetUrl: 'data:image/jpeg;base64,djI=', createdAt: 9 },
+      ];
+      const published: Array<{ label: string; envelopeIndex?: number }> = [];
+      const publish = vi.fn(async (payload: { label: string; envelopeIndex?: number }) => {
+        published.push({ label: payload.label, envelopeIndex: payload.envelopeIndex });
+        return { id: `asset-${published.length}` };
+      });
+
+      await publishPaperStoryboardPageSourcePayloads(
+        exact.document,
+        { resolveImageSrc: async () => 'data:image/png;base64,YXJ0' },
+        publish,
+        guard,
+      );
+
+      expect(published).toEqual([
+        { label: 'Linked Boards - Storyboard Page 1', envelopeIndex: 0 },
+        { label: 'Linked Boards - Storyboard Page 2', envelopeIndex: 1 },
+      ]);
+    } finally {
+      restoreCreateElement();
+    }
   });
 
   it('prepares every Video storyboard raster before publishing and leaves zero assets when exact readiness rejects', async () => {

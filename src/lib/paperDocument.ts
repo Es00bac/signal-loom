@@ -490,6 +490,39 @@ export function effectiveRtlBinding(document: Pick<PaperDocument, 'pages' | 'vie
   return document.view.rtlBinding ?? documentHasVerticalText(document);
 }
 
+/**
+ * Export-only effective-style projection. Paragraph/character styles supply effective typography
+ * OVER frame typography at render time, so exact managed-font collection, aliasing, CSS, and
+ * preflight must observe the same faces the output will actually paint. This bakes that
+ * typography (and paragraph columns) into each frame and CLEARS the paragraph/character links so
+ * a later computeEffectivePaperFrame pass cannot re-apply raw style families over managed-font
+ * aliases. Object styles carry no typography and keep resolving at render. The authored document
+ * is never mutated; untouched frames keep their identity.
+ */
+export function resolvePaperDocumentEffectiveTypography(document: PaperDocument): PaperDocument {
+  const bakeFrame = (frame: PaperFrame): PaperFrame => {
+    if (!frame.paragraphStyleId && !frame.characterStyleId) return frame;
+    const effective = computeEffectivePaperFrame(document, { ...frame, objectStyleId: undefined });
+    return {
+      ...effective,
+      objectStyleId: frame.objectStyleId,
+      paragraphStyleId: undefined,
+      characterStyleId: undefined,
+    };
+  };
+  const bakeContainer = <T extends { frames: PaperFrame[] }>(container: T): T => {
+    const frames = container.frames.map(bakeFrame);
+    return frames.some((frame, index) => frame !== container.frames[index])
+      ? { ...container, frames }
+      : container;
+  };
+  const pages = document.pages.map(bakeContainer);
+  const parentPages = document.parentPages.map(bakeContainer);
+  const unchanged = pages.every((page, index) => page === document.pages[index])
+    && parentPages.every((page, index) => page === document.parentPages[index]);
+  return unchanged ? document : { ...document, pages, parentPages };
+}
+
 export function computeEffectivePaperFrame(doc: Pick<PaperDocument, 'styles'>, frame: PaperFrame): PaperFrame {
   const paragraph = resolveParagraphStyle(doc.styles, frame.paragraphStyleId);
   const character = resolveCharacterStyle(doc.styles, frame.characterStyleId);
