@@ -217,6 +217,36 @@ function addEocdComment(bytes: Uint8Array): Uint8Array {
   return output;
 }
 
+/** Preserve all local records and EOCD fields while reversing only central records. */
+function reorderCentralDirectoryMembers(bytes: Uint8Array): Uint8Array {
+  const end = findEndRecord(bytes);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const centralOffset = view.getUint32(end + 16, true);
+  const entryCount = view.getUint16(end + 10, true);
+  const members: Uint8Array[] = [];
+  let offset = centralOffset;
+
+  for (let index = 0; index < entryCount; index += 1) {
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    const nextOffset = offset + 46 + nameLength + extraLength + commentLength;
+    members.push(bytes.slice(offset, nextOffset));
+    offset = nextOffset;
+  }
+  expect(offset).toBe(end);
+
+  const output = bytes.slice();
+  offset = centralOffset;
+  for (const member of members.reverse()) {
+    output.set(member, offset);
+    offset += member.byteLength;
+  }
+  return output;
+}
+
+const CANONICAL_FFLATE_LEVELS = [0, 6] as const;
+
 describe('ValidatedAssetContainer', () => {
   it('round-trips and verifies content-addressed entries', async () => {
     const asset = await createBinaryAssetRecord(
@@ -443,7 +473,7 @@ describe('ValidatedAssetContainer', () => {
     await expect(unpackValidatedAssetContainer(mutated)).rejects.toThrow(/CRC|local|layout|central|canonical|trailing|end-of-central/i);
   });
 
-  it.each([0, 6])('checks the CRC of every stored and deflated member (level %s)', async (level) => {
+  it.each(CANONICAL_FFLATE_LEVELS)('checks the CRC of every stored and deflated member (level %s)', async (level) => {
     const asset = await createBinaryAssetRecord(new Uint8Array([1, 2, 3]), { mimeType: 'image/png' });
     const archive = zipSync({
       'manifest.json': [strToU8(JSON.stringify(manifest([asset.ref]))), { level }],
@@ -457,7 +487,7 @@ describe('ValidatedAssetContainer', () => {
 
   it('accepts exact fflate stored and level-six compressor output', async () => {
     const asset = await createBinaryAssetRecord(new Uint8Array([1, 2, 3]), { mimeType: 'image/png' });
-    for (const level of [0, 6]) {
+    for (const level of CANONICAL_FFLATE_LEVELS) {
       const archive = zipSync({
         'manifest.json': [strToU8(JSON.stringify(manifest([asset.ref]))), { level }],
         [assetPath(asset.ref)]: [asset.bytes, { level }],
@@ -485,6 +515,14 @@ describe('ValidatedAssetContainer', () => {
     const overflowOffset = archive.slice();
     new DataView(overflowOffset.buffer).setUint32(assetOffsets.central + 42, 0xffff_fffe, true);
     await expect(unpackValidatedAssetContainer(overflowOffset)).rejects.toThrow(/outside|local|layout/i);
+  });
+
+  it('rejects central-directory records reordered relative to valid local records', async () => {
+    const asset = await createBinaryAssetRecord(new Uint8Array([1, 2, 3]), { mimeType: 'image/png' });
+    const archive = zipWithManifest(manifest([asset.ref]), { [assetPath(asset.ref)]: asset.bytes });
+
+    await expect(unpackValidatedAssetContainer(reorderCentralDirectoryMembers(archive)))
+      .rejects.toThrow(/canonical|order/i);
   });
 
   it('rejects archives beyond the packer-derived total input cap', async () => {

@@ -162,6 +162,34 @@ function duplicateFirstCentralDirectoryMember(bytes: Uint8Array): Uint8Array {
   return result;
 }
 
+/** Preserve every local record and EOCD field while reversing only central records. */
+function reorderCentralDirectoryMembers(bytes: Uint8Array): Uint8Array {
+  const end = findEndOfCentralDirectory(bytes);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const centralOffset = view.getUint32(end + 16, true);
+  const entryCount = view.getUint16(end + 10, true);
+  const members: Uint8Array[] = [];
+  let offset = centralOffset;
+
+  for (let index = 0; index < entryCount; index += 1) {
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    const nextOffset = offset + 46 + nameLength + extraLength + commentLength;
+    members.push(bytes.slice(offset, nextOffset));
+    offset = nextOffset;
+  }
+  expect(offset).toBe(end);
+
+  const result = bytes.slice();
+  offset = centralOffset;
+  for (const member of members.reverse()) {
+    result.set(member, offset);
+    offset += member.byteLength;
+  }
+  return result;
+}
+
 function mutateZipFlags(bytes: Uint8Array): Uint8Array {
   const result = bytes.slice();
   const end = findEndOfCentralDirectory(result);
@@ -483,6 +511,7 @@ describe('paperPackageExport managed asset payloads (AUD-004)', () => {
     }],
     ['extra member', (entries: Record<string, Uint8Array>) => zipSync({ ...entries, 'unexpected.txt': strToU8('not requested') })],
     ['duplicate member', (entries: Record<string, Uint8Array>) => duplicateFirstCentralDirectoryMember(zipSync(entries))],
+    ['central-directory records reordered relative to valid local records', (entries: Record<string, Uint8Array>) => reorderCentralDirectoryMembers(zipSync(entries))],
     ['encrypted member', (entries: Record<string, Uint8Array>) => mutateZipFlags(zipSync(entries))],
     ['zip-bomb-like declared member size', (entries: Record<string, Uint8Array>) => declareZipBombSize(zipSync(entries))],
     ['matching forged local and central CRC', (entries: Record<string, Uint8Array>) => mutateFirstZipCrc(zipSync(entries))],

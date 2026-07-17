@@ -568,6 +568,7 @@ function inspectZipCentralDirectory(bytes: Uint8Array, maximumMembers: number): 
 
   const members: ZipCentralDirectoryMember[] = [];
   const exactPaths = new Set<string>();
+  let previousLocalHeaderOffset = -1;
   let offset = centralOffset;
   for (let index = 0; index < entryCount; index += 1) {
     if (readU32(view, offset, 'ZIP central header') !== ZIP_CENTRAL_DIRECTORY_HEADER) {
@@ -590,6 +591,9 @@ function inspectZipCentralDirectory(bytes: Uint8Array, maximumMembers: number): 
       throw new Error('the ZIP has encrypted, streamed, or unsupported members.');
     }
     if (extraBytes !== 0 || memberCommentBytes !== 0 || localHeaderOffset === 0xffff_ffff) throw new Error('the ZIP has unsupported member metadata.');
+    if (localHeaderOffset <= previousLocalHeaderOffset) {
+      throw new Error('the ZIP central directory is not in the canonical local-record order.');
+    }
     if (compressionMethod === 0 && compressedBytes !== uncompressedBytes) throw new Error('the ZIP stored member has inconsistent size metadata.');
     if (compressionMethod === 8 && compressedBytes > maximumCanonicalDeflateBytes(uncompressedBytes)) throw new Error('the ZIP compressed member exceeds the bounded private packer input.');
     const pathBytes = bytes.slice(offset + 46, offset + 46 + nameBytes);
@@ -599,11 +603,12 @@ function inspectZipCentralDirectory(bytes: Uint8Array, maximumMembers: number): 
     exactPaths.add(path);
     const local = assertMatchingLocalZipHeader(bytes, path, pathBytes, flags, compressionMethod, crc32, compressedBytes, uncompressedBytes, localHeaderOffset);
     members.push({ path, pathBytes, flags, crc32, compressedBytes, uncompressedBytes, compressionMethod, localHeaderOffset, ...local });
+    previousLocalHeaderOffset = localHeaderOffset;
     offset = nextOffset;
   }
   if (offset !== endOffset) throw new Error('the ZIP central directory contains trailing data.');
   let expectedLocalOffset = 0;
-  for (const member of [...members].sort((left, right) => left.localHeaderOffset - right.localHeaderOffset)) {
+  for (const member of members) {
     if (member.localHeaderOffset !== expectedLocalOffset) {
       throw new Error('the ZIP local records contain a preamble, gap, overlap, or out-of-order offset.');
     }

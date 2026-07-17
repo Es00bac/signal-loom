@@ -423,6 +423,7 @@ function parseCentralDirectory(
   end: EndOfCentralDirectory,
 ): ZipEntryMetadata[] {
   const entries: ZipEntryMetadata[] = [];
+  let previousLocalHeaderOffset = -1;
   let offset = end.centralDirectoryOffset;
 
   for (let index = 0; index < end.entryCount; index += 1) {
@@ -462,6 +463,9 @@ function parseCentralDirectory(
     if (nameLength > MAX_PACKER_ENTRY_NAME_BYTES || extraLength !== 0 || commentLength !== 0) {
       throw containerError('central directory entry is outside the private packer subset.');
     }
+    if (localHeaderOffset <= previousLocalHeaderOffset) {
+      throw containerError('central directory is not in canonical local-record order.');
+    }
     if (flags & ~UTF8_FILENAME_FLAG) {
       throw containerError(`archive entry uses unsupported flags 0x${flags.toString(16)}.`);
     }
@@ -482,6 +486,7 @@ function parseCentralDirectory(
       dataStart: 0,
       dataEnd: 0,
     });
+    previousLocalHeaderOffset = localHeaderOffset;
     offset += CENTRAL_DIRECTORY_HEADER_BYTES + variableLength;
   }
 
@@ -497,10 +502,9 @@ function reconcileLocalHeaders(
   entries: ZipEntryMetadata[],
   centralDirectoryOffset: number,
 ): void {
-  const localEntries = [...entries].sort((left, right) => left.localHeaderOffset - right.localHeaderOffset);
   let expectedOffset = 0;
 
-  for (const entry of localEntries) {
+  for (const entry of entries) {
     if (entry.localHeaderOffset !== expectedOffset) {
       throw containerError(`local entry layout mismatch or trailing data before ${entry.name}.`);
     }
