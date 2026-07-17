@@ -148,7 +148,7 @@ new: stale-count-with-explicit-edge exposure, track-4 overflow rejection),
 - Composition video-handle migration (`legacyVideoEdges` collapsing to the single video handle) is
   untouched — same code path, same test coverage, explicit regression test added.
 
-## Residual risk
+## Residual risk (as of `f7a2cf2`, before the correction below)
 
 - The dropped-overflow-edge diagnostic (`normalizeCompositionEdgesWithDiagnostics`) is only
   consumed by tests today; it is not yet wired into a user-visible warning (e.g. node `error`) when
@@ -162,3 +162,112 @@ new: stale-count-with-explicit-edge exposure, track-4 overflow rejection),
   still resolve correctly live (contract/UI/execution are edge-derived), but the persisted count
   wouldn't settle until the next full restore/paste. Left out to keep the diff scoped to the
   explicitly required restore/duplicate/import/new-connection paths.
+
+## Correction (independent review, 3 Medium gaps closed on top of `f7a2cf2`)
+
+An independent review of `f7a2cf2` found the "residual risk" above understated two real gaps and
+identified a third, more serious one in the *live connection* path that the original test suite
+didn't exercise: `onConnect` validated a brand-new connection against only the edges that already
+existed, so `resolveCompositionPorts` (which derives the effective audio-track count from
+`context.edges`) couldn't see the very edge being added. An authored-count-1 Composition node could
+therefore **reject its own first connection** to `composition-audio-2` or `composition-audio-3`,
+live in the UI — not just on restore.
+
+1. **Candidate-inclusive connection validation (`onConnect`, flowStore.ts).** The new connection is
+   now validated as a synthetic edge (`{ ...connection, id: 'candidate-<id>' }`) appended to the
+   edge set passed to `validateFlowConnection`, the same pattern `annotateFlowEdge` already uses
+   for an edge validated against a context containing itself. The synthetic id lets
+   `maxConnections`/`connectionGroups` counting exclude it as "not yet existing" while
+   `resolveCompositionPorts` sees it as already connected, so the effective track count expands
+   *before* the port lookup that would otherwise reject the target handle. This applies uniformly
+   whether the handle was explicit (`composition-audio-3`) or normalized from a legacy `null`
+   handle by `normalizeCompositionConnectionTargetHandle` earlier in the same `onConnect` call. On
+   acceptance, `onConnect` now also calls `normalizeCompositionAudioTrackCounts` so the persisted
+   count settles immediately instead of only being correct dynamically.
+2. **Template insert and incremental remote sync now normalize Composition state, and UI handle
+   visibility is edge-derived, not media-derived.** `insertTemplate` and the non-snapshot branch of
+   `applyRemoteFlowGraphChange` (an edge added/removed by a remote peer) now both run
+   `normalizeCompositionAudioTrackCounts` after `normalizeFlowEdges`, matching the store's other
+   mutation paths. Separately, `CompositionNode.tsx` computed which audio handles counted as
+   "connected" (for track visibility) from **resolved media** (`findConnectedMedia`, which requires
+   the source node to already have a result/asset URL) instead of from the edge model directly —
+   so a validly connected higher track whose source hadn't produced media yet was invisible in the
+   UI even though contracts, validation, and execution all already saw it. `connectedAudioHandleIds`
+   now comes from `getConnectedCompositionAudioHandles(id, edges)` (the same canonical helper the
+   contract layer uses), and `connectionSignature` includes the raw connected-handle list so the
+   component re-renders when such an edge is added even with no media yet.
+3. **Dropped overflow/malformed edges now surface a visible, durable node error instead of vanishing
+   silently.** `normalizeFlowEdges` gained an optional `onCompositionDiagnostics` callback invoked
+   with whatever `normalizeCompositionEdgesWithDiagnostics` produced; `hydratePersistedState` and
+   `replaceFlowSnapshotState` (the restore and project-import/snapshot-replace paths) now capture
+   those diagnostics and run them through the new `surfaceCompositionEdgeDiagnostics` (in
+   `compositionEdgeMigration.ts`), which patches the affected Composition node's `data.error` with a
+   message naming the exact dropped handle and edge (e.g. `Removed unsupported audio connection on
+   handle "composition-audio-9" (beyond the supported 4-track limit).`). The edge is still dropped —
+   this doesn't restore overflow handles into range — but the rejection is now visible on the node,
+   the same way a live connection-time rejection already was. `insertTemplate`/`onConnect` were left
+   on the diagnostics-discarding `normalizeFlowEdges` default (no callback) since those paths can
+   never carry a persisted overflow handle that didn't already fail validation on the way in;
+   `pasteClipboard` is unchanged for the same reason (it copies from an already-normalized live
+   graph, not untrusted persisted/imported JSON) and remains out of scope, consistent with the
+   restore/import framing above.
+
+### Correction test evidence
+
+New regression tests (all fail against `fd7cc93` for the reason stated, pass after the fix):
+
+- `flowStore.test.ts` — `"accepts a newly drawn connection onto an explicit higher track even
+  though the saved count is stale (FBL-019 gap 1)"`, `"accepts a legacy (implicit-handle)
+  connection normalized onto a track beyond the stale saved count (FBL-019 gap 1)"` (both drive the
+  real `onConnect` production path), `"settles a stale template-authored count against a template
+  edge whose audio source has no media yet (FBL-019 gap 2)"` (drives `insertTemplate`),
+  `"surfaces a visible, durable node error instead of silently dropping a persisted overflow handle
+  on restore"` (drives `hydratePersistedState`), `"surfaces a visible node error for a dropped
+  overflow handle when restoring a project snapshot"` (drives `replaceFlowSnapshot`).
+- `flowStore.remoteSync.test.ts` — `"settles a stale Composition audio-track count when a remote
+  edge-added change lands on a higher track (FBL-019 gap 2)"` (drives
+  `applyRemoteFlowGraphChange({ type: 'flow-edge-added' })` with an unresolved-media source).
+- `CompositionNode.test.tsx` (new file) — `"renders a higher explicit audio track handle even when
+  its source has not produced media yet"` renders the real component (`renderToStaticMarkup` +
+  `ReactFlowProvider`, the same pattern used by `AudioNode.test.tsx`/`VideoNode.test.tsx`) and
+  asserts `data-handleid="composition-audio-3"` is present in the output; a sibling test guards
+  that an unconnected higher track still does not render.
+- `compositionEdgeMigration.test.ts` — 3 new tests for `surfaceCompositionEdgeDiagnostics`: sets a
+  message naming the handle on the correct target node, combines multiple diagnostics for the same
+  target into one message, and is a reference-identity no-op when there are no diagnostics.
+
+```
+npx vitest run \
+  src/store/flowStore.test.ts \
+  src/store/flowStore.remoteSync.test.ts \
+  src/components/Nodes/CompositionNode.test.tsx \
+  src/lib/compositionEdgeMigration.test.ts \
+  src/lib/flowNodeContracts.test.ts \
+  src/lib/compositionTracks.test.ts \
+  src/lib/flowExecutionComposition.test.ts
+# 7 files passed, 236 tests passed
+
+npm run verify:flow-production
+# 9 files passed, 356 tests passed; "Flow production audit passed: 63 nodes, 182 model contracts, 178 normal model options."
+
+npx vitest run
+# 683 test files; 2 pre-existing unrelated failures (ImageSourceDocument LAN-session asset-API
+# tests, bundledFontPdfxIntegration missing a build/ fixture) — same failures present at fd7cc93,
+# unaffected by this change; 6112/6114 tests passed.
+
+npm run build
+# tsc -b + vite build, clean; dist/ mtime advanced (sandbox disabled).
+
+npm run lint
+# 0 errors, 84 pre-existing warnings, none in a file this correction touched.
+
+git diff --check
+# clean.
+```
+
+### Correction final commits
+
+- `a30a116` — production fixes (flowStore.ts, snapshotActions.ts, compositionEdgeMigration.ts,
+  CompositionNode.tsx) and their tests (flowStore.test.ts, flowStore.remoteSync.test.ts,
+  compositionEdgeMigration.test.ts, CompositionNode.test.tsx, new file), in one commit.
+- This note update is a separate commit on top of `a30a116`.
