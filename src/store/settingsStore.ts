@@ -416,6 +416,76 @@ function markSettingsHydrated(): void {
 let pendingSettingsWrite: Promise<void> = Promise.resolve();
 
 /**
+ * Mutation-vs-hydration guard (AUD-015 residual): hydration reads + decrypts the persisted blob
+ * asynchronously, so a (re)hydrate that started BEFORE a local mutation can still be holding the
+ * old blob when the mutation lands. Zustand's own hydrationVersion only drops superseded
+ * *rehydrates*; nothing stops a stale read from being merged over a newer local write. So every
+ * local write records the top-level state keys it touches here, and the persist `merge` below
+ * drains the set: keys a local mutation owns keep their current (newer) value, while everything
+ * else in the snapshot still applies (first-boot hydration, cross-window rehydrate, and
+ * latest-rehydrate-wins for untouched fields are unchanged). The set is drained by merge — the
+ * single point where a read snapshot becomes authoritative — never by timers or key-specific
+ * cleanup, so any mutation not yet reflected in a read blob stays protected across overlapping
+ * reads until one actually lands.
+ */
+const localMutationKeysSinceLastMerge = new Set<keyof SettingsState>();
+
+function recordLocalMutationKeys(partial: unknown): void {
+  if (!isRecord(partial)) {
+    return;
+  }
+  for (const key of Object.keys(partial)) {
+    localMutationKeysSinceLastMerge.add(key as keyof SettingsState);
+  }
+}
+
+/**
+ * Wrap a zustand set function so every local mutation records the top-level keys it writes.
+ * Function partials are evaluated through a pass-through so their result keys are recorded too.
+ */
+type SettingsSetState = {
+  (
+    partial:
+      | SettingsState
+      | Partial<SettingsState>
+      | ((state: SettingsState) => SettingsState | Partial<SettingsState>),
+    replace?: false,
+  ): void;
+  (state: SettingsState | ((state: SettingsState) => SettingsState), replace: true): void;
+};
+
+function trackLocalMutationWrites(set: SettingsSetState): SettingsSetState {
+  return ((partial: unknown, replace?: boolean) => {
+    if (typeof partial === 'function') {
+      return set(((state: SettingsState) => {
+        const result = (partial as (state: SettingsState) => SettingsState | Partial<SettingsState>)(state);
+        recordLocalMutationKeys(result);
+        return result;
+      }) as never, replace as never);
+    }
+    recordLocalMutationKeys(partial);
+    return set(partial as never, replace as never);
+  }) as SettingsSetState;
+}
+
+/** True when the last applied hydration merge kept locally-mutated keys over the stale snapshot. */
+let lastHydrationKeptLocalMutations = false;
+
+/**
+ * Armed by the onRehydrateStorage hook at the start of every real hydration read and consumed by
+ * the persist merge below. Only an armed merge applies the mutation-vs-hydration keep-override
+ * and drains the pending keys: an out-of-band merge invocation (unit tests, tooling) keeps the
+ * plain sanitizing behavior and leaves the pending keys protected for the next real hydration.
+ */
+let hydrationReadInFlight = false;
+
+function drainLocalMutationKeys(): Array<keyof SettingsState> {
+  const keys = [...localMutationKeysSinceLastMerge];
+  localMutationKeysSinceLastMerge.clear();
+  return keys;
+}
+
+/**
  * License-identity generation (AUD-015): verification is asynchronous, so every mutation of the
  * persisted license identity — key removal, activation, backup import, any applied rehydrate —
  * bumps this counter to invalidate whatever verification is still in flight. A verification may
@@ -495,7 +565,11 @@ export function installLicenseCrossWindowSync(): () => void {
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
-    (set, get) => ({
+    (persistSet, get) => {
+      // Every action-level mutation records the top-level keys it touches so the persist `merge`
+      // below can protect them from stale in-flight hydration reads (mutation-vs-hydration guard).
+      const set = trackLocalMutationWrites(persistSet);
+      return ({
       apiKeys: INITIAL_API_KEYS,
       defaultModels: DEFAULT_MODELS,
       defaultImageNodeModel: null,
@@ -752,7 +826,8 @@ export const useSettingsStore = create<SettingsState>()(
           }
         }
       },
-    }),
+      });
+    },
     {
       name: SETTINGS_STORAGE_KEY,
       storage: createJSONStorage(() => createEncryptedSettingsStorage()),
@@ -761,14 +836,32 @@ export const useSettingsStore = create<SettingsState>()(
       // re-verifies the (fail-closed) license exactly once through the canonical path: a
       // key-change subscription cannot do this job, because a same-key rehydrate also resets
       // `license` without ever changing the key string.
-      onRehydrateStorage: () => () => {
-        markSettingsHydrated();
-        void useSettingsStore.getState().revalidateLicense();
+      onRehydrateStorage: () => {
+        // A real hydration read starts now; its merge may apply a blob captured before local
+        // mutations landed, so the mutation-vs-hydration guard arms for that merge.
+        hydrationReadInFlight = true;
+        return (hydratedState: SettingsState | undefined) => {
+          markSettingsHydrated();
+          if (hydratedState && lastHydrationKeptLocalMutations) {
+            lastHydrationKeptLocalMutations = false;
+            // The merge kept locally-mutated keys at their newer values, so memory is now
+            // ahead of what the mutating writes persisted (they captured pre-hydration state).
+            // Enqueue one write of the resolved state — on the same serialized write chain — so
+            // storage converges on the newer local mutation instead of the stale snapshot.
+            useSettingsStore.setState({});
+          }
+          void useSettingsStore.getState().revalidateLicense();
+        };
       },
       merge: (persistedState, currentState) => {
         // Every applied rehydrate replaces the license identity and fail-closes `license` below,
         // so whatever verification was in flight before it is stale by definition.
         invalidatePendingLicenseVerification();
+        // Mutation-vs-hydration guard: this read may have started before local mutations landed,
+        // making its blob stale for exactly the keys those mutations wrote. Everything else in
+        // the snapshot is still the newest durable fact and applies normally.
+        const locallyMutatedKeys = hydrationReadInFlight ? drainLocalMutationKeys() : [];
+        hydrationReadInFlight = false;
         const typedPersistedState = persistedState as Partial<SettingsState> | undefined;
         const persistedApiKeys = sanitizePersistedApiKeys(typedPersistedState?.apiKeys);
 
@@ -806,7 +899,7 @@ export const useSettingsStore = create<SettingsState>()(
           }
         }
 
-        return {
+        const mergedState: SettingsState = {
           ...currentState,
           ...typedPersistedState,
           apiKeys: {
@@ -868,10 +961,44 @@ export const useSettingsStore = create<SettingsState>()(
           // copy of this session flag claim otherwise.
           settingsHydrated: true,
         };
+
+        // Locally-mutated keys win over the stale read. The two machinery-owned fields are
+        // excluded: `license` is a derived verdict that merge always fail-closes and the
+        // post-rehydrate hook re-verifies, and `settingsHydrated` is the hydration latch itself.
+        let keptLocalMutations = false;
+        if (locallyMutatedKeys.length > 0) {
+          const mergedRecord = mergedState as unknown as Record<string, unknown>;
+          const currentRecord = currentState as unknown as Record<string, unknown>;
+          for (const key of locallyMutatedKeys) {
+            if (key === 'license' || key === 'settingsHydrated' || !(key in mergedRecord)) {
+              continue;
+            }
+            mergedRecord[key] = currentRecord[key];
+            keptLocalMutations = true;
+          }
+        }
+        lastHydrationKeptLocalMutations = keptLocalMutations;
+
+        return mergedState;
       },
     },
   ),
 );
+
+// Direct api.setState writes bypass the creator's tracked set; record their top-level keys too so
+// the mutation-vs-hydration guard covers every local mutation path, not only store actions.
+const untrackedSetState = useSettingsStore.setState;
+useSettingsStore.setState = ((partial: unknown, replace?: boolean) => {
+  if (typeof partial === 'function') {
+    return untrackedSetState(((state: SettingsState) => {
+      const result = (partial as (state: SettingsState) => Partial<SettingsState>)(state);
+      recordLocalMutationKeys(result);
+      return result;
+    }) as never, replace as never);
+  }
+  recordLocalMutationKeys(partial);
+  return untrackedSetState(partial as never, replace as never);
+}) as typeof untrackedSetState;
 
 /**
  * Sanitize + merge a decrypted settings-backup payload onto the current state. Mirrors the persist
