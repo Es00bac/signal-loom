@@ -155,6 +155,26 @@ describe('delayed native startup project replacement', () => {
     expect(usePaperLossPreventionStore.getState().activeRequest).toBeNull();
   });
 
+  it('settles blank startup without prompting and leaves its canonical Paper baseline clean', async () => {
+    const startup = startDelayedBlankProject();
+    startup.resolveNativeState();
+
+    await expect(startup.result).resolves.toBe('blank-project');
+    expect(usePaperLossPreventionStore.getState().activeRequest).toBeNull();
+    expect(usePaperStore.getState().isDocumentDirty()).toBe(false);
+  });
+
+  it('still blocks blank startup for genuinely dirty hydrated Paper work', async () => {
+    makePaperDirty('Hydrated dirty Paper');
+    const startup = startDelayedBlankProject();
+    startup.resolveNativeState();
+    await waitForPaperDecision();
+
+    usePaperLossPreventionStore.getState().cancel();
+    await expect(startup.result).resolves.toBe('preserved-live-work');
+    expect(usePaperStore.getState().isDocumentDirty()).toBe(true);
+  });
+
   it('never invokes an Image dirty accessor that could update Flow during remembered startup', async () => {
     const startup = startDelayedRememberedProject();
     const liveImage = imageDocument('accessor-image');

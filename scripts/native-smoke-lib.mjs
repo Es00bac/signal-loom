@@ -1,6 +1,9 @@
 import { basename, join } from 'node:path';
 
-export const SMOKE_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+// 2×2 RGBA PNG: matches the smoke Image document's declared canvas and exercises Chromium's
+// production decoder. The older 1×1 grayscale+alpha fixture was accepted structurally but
+// rejected by Electron 41's createImageBitmap path once project restore became pixel-complete.
+export const SMOKE_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFUlEQVR4nGNUuvzuPwMDAwMTAxQAACuMAuZqiZsjAAAAAElFTkSuQmCC';
 export const SMOKE_PNG_DATA_URL = `data:image/png;base64,${SMOKE_PNG_BASE64}`;
 export const NATIVE_SMOKE_WORKSPACES = ['flow', 'editor', 'image', 'paper'];
 export const NATIVE_VIDEO_RENDER_SMOKE_RENDER_PORT = 41836;

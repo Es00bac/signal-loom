@@ -5,6 +5,7 @@ import {
   type DirtyImageReplacementAuthorization,
 } from './projectDocumentActions';
 import type { PaperLossSaveResult } from '../store/paperLossPreventionStore';
+import { usePaperStore } from '../store/paperStore';
 
 export interface NativeStartupProjectReplacementOptions {
   rememberedDocument?: FlowProjectDocument;
@@ -65,6 +66,10 @@ export async function applyNativeStartupProjectReplacement(
       transactionBookkeeping: 'reset-source-library-native-sync',
       isReplacementRequestCurrent,
     });
+    // The successful reset is main's canonical blank project, not a user-created unsaved Paper
+    // publication. Keep only this startup baseline clean so a queued OS open can immediately run
+    // its own replacement decision. File > New and createNewDocument retain their dirty semantics.
+    if (replaced) usePaperStore.getState().markAllDocumentsProjectSaved();
     return replaced ? 'blank-project' : stale ? 'stale-startup' : 'preserved-live-work';
   } catch (error) {
     if (stale) return 'stale-startup';

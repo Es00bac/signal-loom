@@ -230,11 +230,26 @@ interface PaperHistorySnapshot {
   zoom: number;
 }
 
+export function mergePersistedPaperWorkspace(
+  persisted: unknown,
+  current: PaperState & PaperActions,
+): PaperState & PaperActions {
+  if (persisted === undefined) return current;
+  return {
+    ...current,
+    ...sanitizePaperSnapshot(persisted, 'preserve'),
+  };
+}
+
 export const usePaperStore = create<PaperState & PaperActions>()(
   persist(
     (set, get) => ({
       documents: [createPaperWorkspaceDocumentSnapshot(initialDocumentId, initialDocument, {
-        persistence: { kind: 'new' },
+        // This tab is the renderer's representation of main's canonical blank project, not a
+        // user-authored unsaved publication. Treating it as `new` makes fresh-profile startup
+        // loss prevention wait for a decision before native external-open draining can register.
+        // Tabs created by the user still enter through createNewDocument with `kind: 'new'`.
+        persistence: createSavedPaperPersistence(initialDocument, 'project'),
       })],
       documentInstanceIds: { [initialDocumentId]: makePaperRuntimeId('paper-tab-instance') },
       activeDocumentId: initialDocumentId,
@@ -1226,10 +1241,10 @@ export const usePaperStore = create<PaperState & PaperActions>()(
         zoom: state.zoom,
         discardedDocumentRecoveries: state.discardedDocumentRecoveries,
       }),
-      merge: (persisted, current) => ({
-        ...current,
-        ...sanitizePaperSnapshot(persisted, 'preserve'),
-      }),
+      // createJSONStorage reports an absent profile record as `undefined`. The helper keeps the
+      // exact boot-created canonical blank baseline in that one case; real persisted records
+      // still pass through the fail-closed sanitizer.
+      merge: mergePersistedPaperWorkspace,
     },
   ),
 );

@@ -55,6 +55,10 @@ describe('native smoke helpers', () => {
       mimeType: 'image/png',
       assetUrl: SMOKE_PNG_DATA_URL,
     });
+    const smokePng = Buffer.from(SMOKE_PNG_DATA_URL.split(',')[1], 'base64');
+    expect(smokePng.readUInt32BE(16)).toBe(2);
+    expect(smokePng.readUInt32BE(20)).toBe(2);
+    expect(smokePng[25]).toBe(6); // RGBA color type accepted by the live Electron decoder.
   });
 
   it('tracks every workspace expected in the native release-gate window smoke', () => {

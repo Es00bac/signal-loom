@@ -6,7 +6,7 @@ import { createBinaryAssetRecord, type BinaryAssetRef } from '../shared/assets/c
 import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
 import type { SourceBinLibraryItem } from './sourceBinStore';
 import type { PaperImportedFont } from '../types/paper';
-import { usePaperStore } from './paperStore';
+import { mergePersistedPaperWorkspace, usePaperStore } from './paperStore';
 
 function dirtyPaperTitles(): string[] {
   const state = usePaperStore.getState();
@@ -148,6 +148,20 @@ function paperDirtyActions() {
     }>;
   };
 }
+
+describe('paperStore boot baseline', () => {
+  it('keeps an absent persisted profile on the clean boot baseline while user-created tabs stay dirty', () => {
+    const initialState = usePaperStore.getState();
+    expect(mergePersistedPaperWorkspace(undefined, initialState)).toBe(initialState);
+
+    const bootDocumentId = usePaperStore.getState().activeDocumentId;
+    expect(usePaperStore.getState().isDocumentDirty(bootDocumentId)).toBe(false);
+
+    usePaperStore.getState().createNewDocument({ title: 'User-created unsaved layout' });
+    expect(usePaperStore.getState().isDocumentDirty()).toBe(true);
+    expect(usePaperStore.getState().isDocumentDirty(bootDocumentId)).toBe(false);
+  });
+});
 
 describe('paperStore interaction actions', () => {
   beforeEach(resetPaperStore);
