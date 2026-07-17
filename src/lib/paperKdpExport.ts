@@ -9,6 +9,7 @@ import {
   type PaperPageFlattenExportOptions,
 } from './paperPageFlattenExport';
 import { paperPixelsFromMm, updatePaperDocumentSetup } from './paperDocument';
+import { assertPaperDocumentSupportsRasterization } from './paperPlacedDocumentRasterization';
 
 export const KDP_BLEED_IN = 0.125;
 export const KDP_BLEED_MM = 25.4 * KDP_BLEED_IN;
@@ -208,6 +209,7 @@ export async function buildPaperKdpImageArchiveExport(
     onPageRasterized?: (progress: { pageNumber: number; pageIndex: number; pageCount: number; role: PaperKdpPageRole }) => void;
   } = {},
 ): Promise<PaperKdpImageArchiveExport> {
+  assertPaperDocumentSupportsRasterization(document);
   const plan = buildPaperKdpExportPlan(document, options);
   const entries: Record<string, Uint8Array> = {};
   const entryNames: string[] = [];

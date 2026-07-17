@@ -13,6 +13,7 @@ import {
   readPaperManagedFontManifest,
   verifyExactPaperManagedFontReadiness,
 } from './paperExactManagedFonts';
+import { assertPaperDocumentSupportsRasterization } from './paperPlacedDocumentRasterization';
 
 export interface PaperPageExportDimensions {
   widthMm: number;
@@ -153,6 +154,9 @@ export function buildFlattenedPaperPageSvgExport(
   pageId: string,
   options: PaperPageFlattenExportOptions = {},
 ): FlattenedPaperPageSvgExport {
+  // Keep the synchronous SVG entrypoint behind the same boundary as its embedded-asset sibling;
+  // callers may otherwise hand this SVG straight to the raster canvas adapter.
+  assertPaperDocumentSupportsRasterization(document, [pageId]);
   const page = findPaperPage(document, pageId);
   const managedFaces = collectExactPaperManagedFaces(
     [...document.pages, ...document.parentPages].flatMap((candidate) => candidate.frames),
@@ -200,6 +204,9 @@ export async function buildFlattenedPaperPageSvgExportWithEmbeddedAssets(
   pageId: string,
   options: PaperPageEmbeddedAssetExportOptions = {},
 ): Promise<FlattenedPaperPageSvgExport> {
+  // This must precede resolver/fetch/decode work. A placed PDF is valid live-print content but is
+  // not an HTMLImageElement source in this build.
+  assertPaperDocumentSupportsRasterization(document, [pageId]);
   if (!options.resolveImageSrc) {
     return buildFlattenedPaperPageSvgExport(document, pageId, options);
   }
@@ -221,7 +228,9 @@ export async function buildFlattenedPaperPageSvgExportWithEmbeddedAssets(
     if (!resolvedSrc) {
       throw new Error(`Paper artwork ${frame.label} could not be embedded for page ${page.pageNumber}.`);
     }
-    await predecodeEmbeddedImage(resolvedSrc, frame.label, page.pageNumber);
+    // Document frames are already rejected above. Only image frames need Image.decode(); a linked
+    // non-PDF document renders as its print placeholder and must not be probed as artwork.
+    if (frame.kind === 'image') await predecodeEmbeddedImage(resolvedSrc, frame.label, page.pageNumber);
     if (resolvedSrc === sourceUrl) return frame;
     return {
       ...frame,

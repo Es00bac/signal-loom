@@ -7,6 +7,7 @@ import {
 import { resolveTextFace } from './paperFontLibrary';
 import { hasPaperAssetReference } from './paperAssetReferences';
 import { isPaperManagedIccProfile } from './paperManagedIccProfiles';
+import { collectPaperPlacedDocumentRasterizationIssues } from './paperPlacedDocumentRasterization';
 
 export type PaperPreflightSeverity = 'error' | 'warning' | 'info';
 export type PaperPreflightProfileId = 'generic-pdf' | 'comic-print' | 'manga-print' | 'webtoon';
@@ -145,6 +146,22 @@ export function analyzePaperPreflight(
     for (const color of colorInventory.filter((entry) => entry.rgbLike)) {
       issues.push(issue('info', 'RGB color used for print', `${color.value} is used as ${color.usage}; confirm printer color conversion.`, { category: 'color' }));
     }
+  }
+
+  // Live print can preserve a PDF through <object>, but every browser raster route shares an
+  // image-only adapter. Surface that boundary here, with the exact page/frame remediation, rather
+  // than allowing a late HTMLImageElement decode failure during export.
+  for (const capabilityIssue of collectPaperPlacedDocumentRasterizationIssues(document)) {
+    issues.push(issue(
+      'error',
+      capabilityIssue.isPdf ? 'Placed PDF cannot be flattened in this build' : 'Placed document cannot be flattened in this build',
+      capabilityIssue.message,
+      {
+        pageNumber: capabilityIssue.pageNumber,
+        frameId: capabilityIssue.frameId,
+        category: 'links',
+      },
+    ));
   }
 
   for (const page of document.pages) {

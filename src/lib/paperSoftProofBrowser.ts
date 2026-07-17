@@ -19,6 +19,7 @@ import {
   paperAssetRepository,
 } from '../features/paper/assets/PaperAssetRuntime';
 import { useSourceBinStore } from '../store/sourceBinStore';
+import { assertPaperDocumentSupportsRasterization } from './paperPlacedDocumentRasterization';
 
 export interface SoftProofPreviewOptions extends SoftProofOptions {
   /** Preview render resolution. Lower than print DPI keeps the round-trip fast (default 150). */
@@ -40,6 +41,7 @@ export async function softProofPaperPageInBrowser(
   pageId: string,
   options: SoftProofPreviewOptions = {},
 ): Promise<SoftProofPreviewResult> {
+  assertPaperDocumentSupportsRasterization(document, [pageId]);
   const outputProfile = await resolveExactPaperOutputProfile({
     profiles: document.managedIccProfiles ?? [],
     getAsset: (id) => paperAssetRepository.get(id),

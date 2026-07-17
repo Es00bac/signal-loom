@@ -23,6 +23,7 @@ import {
   paperAssetRepository,
 } from '../features/paper/assets/PaperAssetRuntime';
 import { useSourceBinStore } from '../store/sourceBinStore';
+import { assertPaperDocumentSupportsRasterization } from './paperPlacedDocumentRasterization';
 
 async function loadManagedPaperFont(assetRef: BinaryAssetRef): Promise<Uint8Array> {
   const record = await paperAssetRepository.get(assetRef.id);
@@ -37,6 +38,9 @@ export async function exportPaperDocumentToPdfxInBrowser(
   document: PaperDocument,
   options: Omit<PaperPdfxPipelineOptions, 'outputProfile'>,
 ): Promise<PdfxExportResult> {
+  // PDF/X may flatten only selected groups, but a placed PDF has no trustworthy browser raster
+  // adapter. Stop before profile/materialization work so no mixed-page handoff is created.
+  assertPaperDocumentSupportsRasterization(document);
   const outputProfile = await resolveExactPaperOutputProfile({
     profiles: document.managedIccProfiles ?? [],
     getAsset: (id) => paperAssetRepository.get(id),

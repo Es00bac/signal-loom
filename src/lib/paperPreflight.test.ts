@@ -36,6 +36,22 @@ function sourceItem(id = 'image-1'): SourceBinLibraryItem {
 }
 
 describe('paperPreflight', () => {
+  it('turns placed PDFs into a typed, actionable raster preflight error without claiming live print is unavailable', () => {
+    const base = createDefaultPaperDocument({ title: 'PDF capability preflight' });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'document', xMm: 10, yMm: 10, widthMm: 70, heightMm: 40, label: 'Reference.pdf',
+      asset: {
+        label: 'Reference.pdf', kind: 'document', mimeType: 'application/pdf',
+        locator: { kind: 'external', url: 'data:application/pdf;base64,JVBERi0=' },
+      },
+    });
+
+    expect(analyzePaperPreflight(document).issues).toContainEqual(expect.objectContaining({
+      severity: 'error', category: 'links', pageNumber: 1,
+      title: 'Placed PDF cannot be flattened in this build',
+      detail: expect.stringContaining('Print HTML/live print'),
+    }));
+  });
   it('flags missing image links, empty text, bleed, margin, and comic page-count risks', () => {
     const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Preflight', preset: 'comic-book' }), {
       bleedMm: 0,

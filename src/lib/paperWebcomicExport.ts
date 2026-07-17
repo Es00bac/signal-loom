@@ -8,6 +8,7 @@ import {
   type FlattenedPaperPageSvgExport,
   type PaperPageFlattenExportOptions,
 } from './paperPageFlattenExport';
+import { assertPaperDocumentSupportsRasterization } from './paperPlacedDocumentRasterization';
 
 export type PaperWebcomicImageFormat = 'png' | 'jpeg';
 
@@ -140,6 +141,8 @@ export async function buildPaperWebcomicImageDataPages(
     onPageRasterized?: (progress: { pageNumber: number; pageIndex: number; pageCount: number }) => void;
   } = {},
 ): Promise<PaperWebcomicImageDataPage[]> {
+  // Check the whole transaction before page 1 so a later placed PDF never leaves partial output.
+  assertPaperDocumentSupportsRasterization(document);
   const plan = options.plan ?? buildPaperWebcomicImageExportPlan(document, options);
   const rasterize = options.rasterize ?? defaultRasterizePaperWebcomicPage;
   const resolveImageSrc = options.resolveImageSrc ?? ((src: string) => imageSourceToDataUrl(src));

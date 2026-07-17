@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDefaultPaperDocument } from './paperDocument';
+import { addFrameToPaperPage, createDefaultPaperDocument } from './paperDocument';
+import { PaperPlacedDocumentRasterizationError } from './paperPlacedDocumentRasterization';
 
 const mocks = vi.hoisted(() => ({
   buildPage: vi.fn(),
@@ -78,6 +79,21 @@ describe('softProofPaperPageInBrowser', () => {
     mocks.exact.mockResolvedValueOnce({ document, fontFaceCss: '/* exact managed payload */ @font-face{}' });
     await softProofPaperPageInBrowser(document, document.pages[0].id);
     expect(mocks.buildPage.mock.calls[0]?.[2]).toMatchObject({ fontFaceCss: '/* exact managed payload */ @font-face{}' });
+  });
+
+  it('returns the shared placed-document capability error before profile, fetch, decode, or raster work', async () => {
+    const base = createDefaultPaperDocument({ title: 'Soft proof PDF boundary' });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'document', xMm: 10, yMm: 10, widthMm: 60, heightMm: 40, label: 'Proof reference.pdf',
+      asset: { label: 'Proof reference.pdf', kind: 'document', mimeType: 'application/pdf', locator: { kind: 'external', url: 'data:application/pdf;base64,JVBERi0=' } },
+    });
+
+    await expect(softProofPaperPageInBrowser(document, document.pages[0].id)).rejects.toThrow(PaperPlacedDocumentRasterizationError);
+    expect(mocks.resolveProfile).not.toHaveBeenCalled();
+    expect(mocks.createProof).not.toHaveBeenCalled();
+    expect(mocks.materialize).not.toHaveBeenCalled();
+    expect(mocks.buildPage).not.toHaveBeenCalled();
+    expect(mocks.rasterize).not.toHaveBeenCalled();
   });
 
   it('releases each owned proof exactly once across repeated successful previews', async () => {

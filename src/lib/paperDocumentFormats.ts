@@ -15,6 +15,7 @@ import {
   type FlattenedPaperPageRasterExport,
   type FlattenedPaperPageSvgExport,
 } from './paperPageFlattenExport';
+import { assertPaperDocumentSupportsRasterization } from './paperPlacedDocumentRasterization';
 
 export type PaperDocumentImportFormat = 'txt' | 'markdown' | 'rtf' | 'html' | 'docx' | 'pdf' | 'sloom-paper-json' | 'sloom-idml-json' | 'idml-package';
 export type PaperStoryExportFormat = 'txt' | 'html' | 'rtf' | 'docx';
@@ -834,6 +835,7 @@ export async function buildPaperCbzRasterExport(
   document: PaperDocument,
   options: PaperCbzRasterExportOptions = {},
 ): Promise<PaperZipExport> {
+  assertPaperDocumentSupportsRasterization(document);
   const pageCount = document.pages.length;
   const padLength = Math.max(3, String(pageCount).length);
   const entries: Record<string, Uint8Array> = {};
