@@ -320,6 +320,7 @@ describe('desktop and Android packaging configuration', () => {
     expect(windowsDoc).toContain('Do not claim a signed installer artifact exists');
     const releaseWorkflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8');
     expect(releaseWorkflow).not.toContain('.msix');
+    expect(releaseWorkflow).toMatch(/Stage and verify bundled font library[\s\S]*npm run prepare:font-library[\s\S]*Package installers[\s\S]*electron-builder/);
   });
 
   it('documents the macOS package process, Linux host limitation, and signing/notarization caveats as descriptors only', async () => {

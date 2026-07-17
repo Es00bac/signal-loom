@@ -263,6 +263,67 @@ describe('executeNodeRequest collapsed reusable functions', () => {
     expect(execution.usage?.notes?.join(' ')).not.toContain('without provider spend');
   });
 
+  it('resolves constant bindings and transforms before preparing the internal graph', async () => {
+    const config = createDefaultFunctionNodeConfig('Constant input');
+    config.contract.inputPorts = [{ id: 'input-marker-marker', key: 'subject', label: 'Subject', resultType: 'text', required: true, order: 0 }];
+    config.inputBindings = [{
+      id: 'constant-subject',
+      targetInputPortId: 'input-marker-marker',
+      source: { mode: 'constant', valueType: 'string', value: 'fox' },
+      transforms: [{ id: 'prefix', kind: 'prefix', text: 'painted ' }],
+      resultType: 'text',
+      missing: { strategy: 'error' },
+    }];
+    config.graph = { version: 1, nodes: [node('marker', 'functionInputNode', { functionPortKey: 'subject' })], edges: [] };
+    config.outputBindings[0] = { ...config.outputBindings[0], sourceNodeId: 'marker', resultType: 'text' };
+
+    const execution = await executeNodeRequest(functionNodeFor(config), {
+      prompt: 'ignored', config: DEFAULT_EXECUTION_CONFIG,
+    }, baseSettings, undefined, { functionRuntime: flowFunctionNodeExecutionRuntime });
+
+    expect(execution.result).toBe('painted fox');
+  });
+
+  it('retains each declared named output instead of aliasing the first result', async () => {
+    const config = createDefaultFunctionNodeConfig('Two outputs');
+    config.contract.outputPorts = [
+      { id: 'first-output', key: 'first', label: 'First', resultType: 'text', required: true, order: 0 },
+      { id: 'second-output', key: 'second', label: 'Second', resultType: 'text', required: true, order: 1 },
+    ];
+    config.graph = { version: 1, nodes: [
+      node('first', 'textNode', { mode: 'prompt', prompt: 'FIRST' }),
+      node('second', 'textNode', { mode: 'prompt', prompt: 'SECOND' }),
+    ], edges: [] };
+    config.outputBindings = [
+      { ...config.outputBindings[0], targetOutputPortId: 'first-output', sourceNodeId: 'first', resultType: 'text' },
+      { ...config.outputBindings[0], id: 'second-binding', targetOutputPortId: 'second-output', sourceNodeId: 'second', resultType: 'text' },
+    ];
+
+    const execution = await executeNodeRequest(functionNodeFor(config), {
+      prompt: '', config: DEFAULT_EXECUTION_CONFIG,
+    }, baseSettings, undefined, { functionRuntime: flowFunctionNodeExecutionRuntime });
+
+    expect(execution.result).toBe('FIRST');
+    expect(execution.functionOutputs?.['second-output']?.result).toBe('SECOND');
+  });
+
+  it('passes the outer abort signal to an in-flight internal Stability request', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const fixture = collapsePromptToImageFunction();
+    const pending = executeNodeRequest(fixture.functionNode, buildOuterContextWithChangedInput(fixture, 'prompt-src', 'cancel me'), baseSettings, undefined, {
+      functionRuntime: flowFunctionNodeExecutionRuntime,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1), { timeout: 3_000 });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+  });
+
   it('feeds fresh internal provider outputs downstream and aggregates usage across the chain', async () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:function-chain-image');
     const fetchMock = vi.fn().mockResolvedValue(imageResponse('CHAIN'));
