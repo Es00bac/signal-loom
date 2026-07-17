@@ -897,7 +897,9 @@ export function prepareFunctionSubgraph(
     ...node,
     data: { ...node.data },
   })) as AppNode[];
-  const edges = [...config.graph.edges];
+  // Persisted configs from older saves can lose their wiring array; treat malformed
+  // wiring as an unwired graph so execution degrades instead of crashing.
+  const edges = Array.isArray(config.graph.edges) ? [...config.graph.edges] : [];
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const portsById = new Map(config.contract.inputPorts.map((port) => [port.id, port]));
 

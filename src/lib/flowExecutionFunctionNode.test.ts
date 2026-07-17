@@ -384,6 +384,33 @@ describe('executeNodeRequest collapsed reusable functions', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('degrades gracefully when a persisted function graph has malformed internal edges', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const config = createDefaultFunctionNodeConfig('Malformed wiring');
+    config.graph = {
+      version: 1,
+      nodes: [node('inner-prompt', 'textNode', { mode: 'prompt', prompt: 'still readable', resultType: 'text' })],
+      // Persisted configs from older saves can lose their wiring array; execution must
+      // treat that as an unwired graph, not crash.
+      edges: undefined as unknown as Edge[],
+    };
+    config.outputBindings[0].sourceNodeId = 'inner-prompt';
+
+    const execution = await executeNodeRequest(
+      functionNodeFor(config, 'fn-malformed-edges'),
+      { prompt: '', config: DEFAULT_EXECUTION_CONFIG },
+      baseSettings,
+      undefined,
+      { functionRuntime: flowFunctionNodeExecutionRuntime },
+    );
+
+    expect(execution.result).toBe('still readable');
+    expect(execution.usage?.notes?.join(' ')).toContain('without provider spend');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('rejects a malformed internal graph whose provider nodes form a dependency cycle', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
