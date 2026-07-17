@@ -8,8 +8,13 @@ interface ElectronLauncherModule {
   getElectronLaunchArgs: (
     env?: Record<string, string | undefined>,
     platform?: NodeJS.Platform,
+    openTargets?: readonly string[],
   ) => string[];
   getElectronRendererUrl: (mode: string | undefined) => string | undefined;
+  getLauncherForwardedOpenTargets: (
+    argv: readonly string[],
+    options?: { cwd?: string },
+  ) => string[];
 }
 
 async function loadLauncherModule(): Promise<ElectronLauncherModule> {
@@ -143,6 +148,41 @@ describe('Electron launcher environment', () => {
     // The global menu no longer rides the GTK module, so the stale appmenu entry is dropped in every
     // mode — the real export is the DBus path. Other ambient modules are preserved.
     expect(env.GTK_MODULES).toBe('canberra-gtk-module');
+  });
+
+  it('extracts forwarded open targets from launcher argv, resolving relative paths against the launch cwd', async () => {
+    const { getLauncherForwardedOpenTargets } = await loadLauncherModule();
+
+    expect(getLauncherForwardedOpenTargets(
+      ['--dev', 'projects/My Comic.sloom', '/abs/layout.slppr', 'signal-loom://workspace/paper', '--verbose', ''],
+      { cwd: '/home/user' },
+    )).toEqual([
+      '/home/user/projects/My Comic.sloom',
+      '/abs/layout.slppr',
+      'signal-loom://workspace/paper',
+    ]);
+  });
+
+  it('keeps file URLs untouched while forwarding launcher open targets', async () => {
+    const { getLauncherForwardedOpenTargets } = await loadLauncherModule();
+
+    expect(getLauncherForwardedOpenTargets(
+      ['file:///home/user/%E9%80%B1%E5%88%8A.sloom'],
+      { cwd: '/somewhere/else' },
+    )).toEqual(['file:///home/user/%E9%80%B1%E5%88%8A.sloom']);
+  });
+
+  it('appends forwarded open targets after the app path in the electron launch args', async () => {
+    const { getElectronLaunchArgs } = await loadLauncherModule();
+
+    const linuxArgs = getElectronLaunchArgs({}, 'linux', ['/home/user/My Comic.sloom', '/home/user/layout.slppr']);
+    expect(linuxArgs.slice(-3)).toEqual(['.', '/home/user/My Comic.sloom', '/home/user/layout.slppr']);
+
+    expect(getElectronLaunchArgs({}, 'darwin', ['/Users/artist/comic.sloom'])).toEqual([
+      '.',
+      '/Users/artist/comic.sloom',
+    ]);
+    expect(getElectronLaunchArgs({}, 'darwin')).toEqual(['.']);
   });
 
   it('keeps non-Linux environments unchanged except dev renderer mode', async () => {

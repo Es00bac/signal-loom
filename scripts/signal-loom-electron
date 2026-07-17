@@ -26,5 +26,9 @@ self="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || realpath -- "${BASH_SO
 script_dir="$(cd -- "$(dirname -- "$self")" && pwd)"
 project_root="$(cd -- "$script_dir/.." && pwd)"
 
+# The launcher needs the invoking directory to resolve relative file arguments
+# (e.g. `signal-loom-electron comic.sloom`), because we cd into the project root next.
+export SIGNAL_LOOM_LAUNCH_CWD="${SIGNAL_LOOM_LAUNCH_CWD:-$PWD}"
+
 cd "$project_root"
 exec "$node_bin" electron/launcher.cjs "$@"

@@ -149,7 +149,7 @@ function applyLinuxGpuCommandLine(app, options = {}, platform = process.platform
   }
 }
 
-function getElectronLaunchArgs(env = process.env, platform = process.platform) {
+function getElectronLaunchArgs(env = process.env, platform = process.platform, openTargets = []) {
   const args = [];
 
   if (platform === 'linux') {
@@ -166,6 +166,14 @@ function getElectronLaunchArgs(env = process.env, platform = process.platform) {
   }
 
   args.push('.');
+  // File/URL arguments (a double-clicked .sloom/.slppr, a signal-loom:// deep link) ride after
+  // the app path so the Electron main process sees them in process.argv exactly like a packaged
+  // binary would — the main process owns validation, the launcher only forwards.
+  for (const target of openTargets) {
+    if (typeof target === 'string' && target) {
+      args.push(target);
+    }
+  }
   return args;
 }
 

@@ -160,6 +160,7 @@ import {
   type NativeMenuCommand,
   type NativeProjectAdoptResult,
 } from './lib/nativeApp';
+import { registerNativeExternalOpenConsumer } from './lib/nativeExternalOpen';
 import {
   createProjectAuthorityClient,
   type ProjectAuthorityClient,
@@ -480,6 +481,9 @@ function FlowApp() {
   }));
   const imageReplacementAuthorizationRef = useRef<DirtyImageReplacementAuthorization>(async () => false);
   const pendingAuthorityAdoptionAuthorizationRef = useRef<ProjectReplacementAuthorization | undefined>(undefined);
+  // Flips once the native startup restore settles; external-open draining waits for it so an
+  // externally opened document always applies after — never racing — the startup project.
+  const [nativeStartupSettled, setNativeStartupSettled] = useState(false);
   const [flowContextMenu, setFlowContextMenu] = useState<{
     x: number;
     y: number;
@@ -2445,6 +2449,7 @@ function FlowApp() {
       }).finally(() => {
         if (!cancelled) {
           setStartupSplash((current) => ({ ...current, visible: false }));
+          setNativeStartupSettled(true);
         }
       });
     return () => {
@@ -2479,6 +2484,44 @@ function FlowApp() {
       removeProjectListener();
     };
   }, [getProjectAuthorityClient]);
+
+  // Externally opened documents (a double-clicked .sloom/.slppr, a second app launch with a
+  // file argument, macOS open-file). Registration waits for the startup restore to settle so
+  // an external open always lands after the remembered project, then each drained entry is
+  // routed through the same canonical transactions as the File menu's Open commands.
+  useEffect(() => {
+    if (!nativeStartupSettled) {
+      return;
+    }
+
+    return registerNativeExternalOpenConsumer(getSignalLoomNativeBridge(), {
+      applyProject: async (result) => {
+        if (!result.document) {
+          return;
+        }
+        if (result.scratchDirectoryPath) {
+          setNativeScratchDirectoryPath(result.scratchDirectoryPath);
+        }
+        resetSourceLibraryNativeSyncTracking();
+        await restoreProjectDocument(result.document);
+        setNativeProjectPath(result.filePath);
+      },
+      applyPaper: async (bytes) => {
+        const doc = await deserializeSlppr(bytes, paperAssetRepository);
+        // A standalone .slppr opens as another Paper tab, exactly like paper:file-open; the
+        // project's existing layouts stay open and save together in the next .sloom snapshot.
+        await usePaperStore.getState().openDocumentJson(JSON.stringify(doc));
+        setWorkspaceView('paper');
+      },
+      onError: async ({ kind, message }) => {
+        await showAlertDialog({
+          title: kind === 'paper' ? 'Open Paper Failed' : 'Open Project Failed',
+          message,
+          tone: 'danger',
+        });
+      },
+    });
+  }, [nativeStartupSettled, resetSourceLibraryNativeSyncTracking, setNativeScratchDirectoryPath, setWorkspaceView]);
 
   useEffect(() => {
     const bridge = getSignalLoomNativeBridge();

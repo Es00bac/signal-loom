@@ -449,6 +449,29 @@ export interface NativePaperOpenResult {
   path?: string;
 }
 
+/** One externally opened document drained from the main-process queue (exactly once). */
+export interface NativeExternalOpenProjectEntry {
+  kind: 'project';
+  filePath?: string;
+  /** Present on success: the canonical main-process open transaction's result. */
+  result?: NativeProjectFileResult;
+  error?: string;
+}
+
+export interface NativeExternalOpenPaperEntry {
+  kind: 'paper';
+  filePath?: string;
+  /** Present on success: raw .slppr bytes for the renderer's canonical import. */
+  bytes?: Uint8Array;
+  error?: string;
+}
+
+export type NativeExternalOpenEntry = NativeExternalOpenProjectEntry | NativeExternalOpenPaperEntry;
+
+export interface NativeExternalOpenTakeResult {
+  entries: NativeExternalOpenEntry[];
+}
+
 export interface NativePaperSaveResult {
   canceled: boolean;
   path?: string;
@@ -723,6 +746,11 @@ export interface SignalLoomNativeBridge {
   secretAvailable?: () => Promise<boolean>;
   secretEncrypt?: (plaintext: string) => Promise<string | null>;
   secretDecrypt?: (ciphertextBase64: string) => Promise<string | null>;
+  // External opens (double-clicked .sloom/.slppr files, signal-loom:// deep links). Optional:
+  // only builds whose preload exposes the external-open queue provide them; the renderer
+  // consumer no-ops when absent. Each take atomically drains the queue — exactly-once delivery.
+  takeExternalOpenRequests?: () => Promise<NativeExternalOpenTakeResult>;
+  onExternalOpenPending?: (callback: () => void) => () => void;
   onMenuCommand: (callback: (command: NativeMenuCommand) => void) => () => void;
   onProjectPathChanged: (callback: (filePath: string | undefined) => void) => () => void;
   /** Versioned project identity changes; drives adoption/stale-marking in every window. */

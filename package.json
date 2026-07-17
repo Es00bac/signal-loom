@@ -189,6 +189,30 @@
         "deb",
         "snap"
       ]
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": "sloom",
+        "name": "Sloom Studio Project",
+        "description": "Sloom Studio project",
+        "mimeType": "application/x-sloom",
+        "role": "Editor"
+      },
+      {
+        "ext": "slppr",
+        "name": "Sloom Studio Paper Layout",
+        "description": "Sloom Studio Paper layout",
+        "mimeType": "application/x-slppr",
+        "role": "Editor"
+      }
+    ],
+    "protocols": [
+      {
+        "name": "Sloom Studio",
+        "schemes": [
+          "signal-loom"
+        ]
+      }
+    ]
   }
 }

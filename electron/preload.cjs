@@ -67,6 +67,11 @@ contextBridge.exposeInMainWorld('signalLoomNative', {
   secretAvailable: () => ipcRenderer.invoke('signal-loom:secret-available'),
   secretEncrypt: (plaintext) => ipcRenderer.invoke('signal-loom:secret-encrypt', plaintext),
   secretDecrypt: (ciphertextBase64) => ipcRenderer.invoke('signal-loom:secret-decrypt', ciphertextBase64),
+  // External opens (double-clicked .sloom/.slppr files, signal-loom:// deep links): the
+  // renderer atomically drains validated requests from the main-process queue and is woken
+  // by the pending channel when new ones arrive while the app is already running.
+  takeExternalOpenRequests: () => ipcRenderer.invoke('signal-loom:external-open-take'),
+  onExternalOpenPending: (callback) => onChannel('signal-loom:external-open-pending', callback),
   onMenuCommand: (callback) => onChannel('signal-loom:menu-command', callback),
   onProjectPathChanged: (callback) => onChannel('signal-loom:project-path-changed', callback),
   onProjectAuthorityChanged: (callback) => onChannel('signal-loom:project-authority-changed', callback),

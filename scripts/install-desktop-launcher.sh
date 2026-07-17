@@ -76,6 +76,7 @@ Comment=Multimedia editor, media flow builder, and timeline editor
 Exec=env SIGNAL_LOOM_ELECTRON_PANEL_MENU=1 ${install_dir}/signal-loom %U
 Icon=signal-loom
 Terminal=false
+MimeType=application/x-sloom;application/x-slppr;x-scheme-handler/signal-loom;
 Categories=AudioVideo;AudioVideoEditing;
 Keywords=video;audio;multimedia;editor;timeline;comic;manga;publishing;
 StartupNotify=true

@@ -294,3 +294,94 @@ describe('project authority arbitration wiring (AUD-001)', () => {
     expect(saveAsHandler).toContain('{ ...result, sourceLibraryVersion }');
   });
 });
+
+describe('Electron single-instance and external-open source guards', () => {
+  const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+
+  it('acquires the single-instance lock after userData resolution and before shared side effects', () => {
+    const userDataIndex = source.indexOf("app.setPath('userData'");
+    const lockIndex = source.indexOf('app.requestSingleInstanceLock(');
+    const sentinelIndex = source.indexOf('gpuFallbackSentinelPath');
+    const privilegedSchemesIndex = source.indexOf('protocol.registerSchemesAsPrivileged');
+    const whenReadyIndex = source.indexOf('app.whenReady()');
+
+    expect(lockIndex).toBeGreaterThan(-1);
+    expect(userDataIndex).toBeGreaterThan(-1);
+    expect(lockIndex).toBeGreaterThan(userDataIndex);
+    expect(lockIndex).toBeLessThan(sentinelIndex);
+    expect(lockIndex).toBeLessThan(privilegedSchemesIndex);
+    expect(lockIndex).toBeLessThan(whenReadyIndex);
+  });
+
+  it('quits the losing instance without starting any shared services or windows', () => {
+    // app.quit() alone is not reliable before 'ready' (a live loser instance was observed
+    // lingering for 30s on Linux); the loser must force-exit after requesting quit.
+    expect(source).toMatch(/if \(!hasSingleInstanceLock\) \{\s*app\.quit\(\);\s*app\.exit\(0\);\s*\} else \{/);
+    // Everything with shared side effects (GPU sentinel, protocol schemes, whenReady boot,
+    // lifecycle handlers) must live inside the winner branch.
+    expect(source).toMatch(/} else \{[\s\S]*gpuFallbackSentinelPath[\s\S]*registerSchemesAsPrivileged[\s\S]*app\.whenReady\(\)[\s\S]*app\.on\('window-all-closed'[\s\S]*app\.on\('will-quit'/);
+  });
+
+  it('acquires the lock bare and consumes the natively relayed second-instance argv', () => {
+    // Electron 41's POSIX process singleton cannot carry requestSingleInstanceLock
+    // additionalData: the running app logs "additional_data_size exceeds payload length",
+    // never acknowledges, and the CONNECTING instance kills it and takes over (observed
+    // live on Linux). The lock must be acquired with no payload; the winner reads the
+    // relayed argv/workingDirectory, with additionalData parsed only defensively.
+    expect(source).toMatch(/const hasSingleInstanceLock = app\.requestSingleInstanceLock\(\);/);
+    expect(source).not.toMatch(/requestSingleInstanceLock\(\s*[^)\s]/);
+    expect(source).toMatch(/app\.on\('second-instance', \(_event, argv, workingDirectory, additionalData\) => \{[\s\S]*parseSecondInstanceOpenPayload\(additionalData\)/);
+  });
+
+  it('focuses the existing window and drains queued targets on second-instance', () => {
+    expect(source).toMatch(/app\.on\('second-instance'[\s\S]*focusExternalOpenTargetWindow\(\)[\s\S]*dispatchPendingExternalOpenRequests\(\)/);
+  });
+
+  it('routes macOS open-file and open-url events into the validated external-open queue before ready', () => {
+    const openFileIndex = source.indexOf("app.on('open-file'");
+    const openUrlIndex = source.indexOf("app.on('open-url'");
+    const whenReadyIndex = source.indexOf('app.whenReady()');
+
+    expect(openFileIndex).toBeGreaterThan(-1);
+    expect(openUrlIndex).toBeGreaterThan(-1);
+    expect(openFileIndex).toBeLessThan(whenReadyIndex);
+    expect(openUrlIndex).toBeLessThan(whenReadyIndex);
+    expect(source).toMatch(/app\.on\('open-file', \(event, filePath\) => \{\s*event\.preventDefault\(\);/);
+    expect(source).toMatch(/app\.on\('open-url', \(event, url\) => \{\s*event\.preventDefault\(\);/);
+  });
+
+  it('validates initial argv into the queue with the packaged/dev app path context', () => {
+    expect(source).toMatch(/enqueueExternalOpenArgv\(process\.argv, process\.cwd\(\)\)/);
+    expect(source).toMatch(/createExternalOpenQueue\(\{[\s\S]*isFile:/);
+  });
+
+  it('fulfills external document opens through the canonical open transactions only', () => {
+    const takeHandler = source.slice(source.indexOf("ipcMain.handle('signal-loom:external-open-take'"));
+
+    expect(takeHandler.length).toBeGreaterThan(100);
+    expect(takeHandler.slice(0, 1600)).toContain('takeDocumentRequests()');
+    expect(takeHandler.slice(0, 1600)).toContain('openProjectDocumentFromPath(request.filePath)');
+    expect(takeHandler.slice(0, 1600)).toMatch(/readFile\(request\.filePath\)/);
+  });
+
+  it('announces queued document opens to the target window over the pending channel', () => {
+    expect(source).toContain("'signal-loom:external-open-pending'");
+    expect(source).toMatch(/function dispatchPendingExternalOpenRequests\(\)[\s\S]*createWorkspaceWindow\(request\.workspace\)/);
+  });
+
+  it('skips the remembered startup project when an external project open is queued', () => {
+    expect(source).toMatch(/loadRememberedStartupProject\(\{ skipRemembered: externalOpenQueue\.hasPending\('project'\) \}\)/);
+    expect(source).toMatch(/async function loadRememberedStartupProject\(\{ skipRemembered = false \} = \{\}\)[\s\S]*const filePath = skipRemembered \? undefined : await readRememberedProjectPath\(\);/);
+  });
+
+  it('registers the signal-loom deep-link scheme only for packaged winners', () => {
+    expect(source).toMatch(/if \(app\.isPackaged\) \{\s*app\.setAsDefaultProtocolClient\(EXTERNAL_OPEN_DEEP_LINK_SCHEME\);/);
+  });
+
+  it('exposes the external-open bridge from the preload script', () => {
+    const preload = readFileSync(join(process.cwd(), 'electron/preload.cjs'), 'utf8');
+
+    expect(preload).toContain("takeExternalOpenRequests: () => ipcRenderer.invoke('signal-loom:external-open-take')");
+    expect(preload).toContain("onExternalOpenPending: (callback) => onChannel('signal-loom:external-open-pending', callback)");
+  });
+});

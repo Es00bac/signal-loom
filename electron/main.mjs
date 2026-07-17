@@ -17,6 +17,7 @@ import startupProjectModule from './startup-project.cjs';
 import vertexAuthModule from './vertex-auth.cjs';
 import windowOptionsModule from './window-options.cjs';
 import automationPathModule from './automation-paths.cjs';
+import externalOpenModule from './external-open.cjs';
 import linuxWindowingModule from './linux-windowing.cjs';
 import globalMenuControllerModule from './globalMenu/globalMenuController.cjs';
 import x11WindowIdModule from './globalMenu/x11WindowId.cjs';
@@ -88,6 +89,11 @@ const {
   getAutomationProjectOpenPath,
   getAutomationProjectSavePath,
 } = automationPathModule;
+const {
+  EXTERNAL_OPEN_DEEP_LINK_SCHEME,
+  createExternalOpenQueue,
+  parseSecondInstanceOpenPayload,
+} = externalOpenModule;
 const {
   applyElectronMainLinuxWindowingCompatibility,
   applyLinuxGpuCommandLine,
@@ -164,78 +170,16 @@ if (isolatedUserDataDir) {
   app.setPath('userData', resolve(isolatedUserDataDir));
 }
 
-// Linux GPU acceleration policy. Default ON via the stable ANGLE GL/EGL backend so
-// the Image workspace's canvas compositing runs on the GPU instead of SwiftShader.
-// If the GPU process ever crashes (some AMD/Mesa + ANGLE combos segfault on init),
-// we drop a sentinel and relaunch in software mode so the user always gets a working
-// window; the sentinel self-expires after a cooldown so a transient hiccup recovers.
-const gpuFallbackSentinelPath = join(app.getPath('userData'), 'gpu-fallback.flag');
-let gpuFallbackSentinelTimestamp = null;
-try {
-  if (existsSync(gpuFallbackSentinelPath)) {
-    gpuFallbackSentinelTimestamp = statSync(gpuFallbackSentinelPath).mtimeMs;
-  }
-} catch {
-  gpuFallbackSentinelTimestamp = null;
-}
-const linuxGpuPolicy = resolveLinuxGpuPolicy(
-  process.env,
-  { sentinelTimestamp: gpuFallbackSentinelTimestamp },
-  process.platform,
-);
-if (linuxGpuPolicy.clearSentinel) {
-  try {
-    rmSync(gpuFallbackSentinelPath, { force: true });
-  } catch {
-    /* best effort */
-  }
-}
-applyLinuxGpuCommandLine(app, { disabled: linuxGpuPolicy.disabled }, process.platform);
-if (process.platform === 'linux' && !linuxGpuPolicy.disabled) {
-  let gpuFallbackTriggered = false;
-  app.on('child-process-gone', (_event, details) => {
-    if (gpuFallbackTriggered || details?.type !== 'GPU' || details.reason === 'clean-exit') {
-      return;
-    }
-    gpuFallbackTriggered = true;
-    // Boundary 1 (GPU process → main process): a GPU crash here relaunches the whole app into
-    // software mode, which also tears down any registered global menu. Logged so we can tell a
-    // "menu vanished" report apart from a silent GPU-crash relaunch.
-    console.log(
-      `[gmenu] GPU process gone (reason=${details.reason ?? 'unknown'}) → writing fallback sentinel + relaunching in software`,
-    );
-    try {
-      writeFileSync(gpuFallbackSentinelPath, String(Date.now()));
-    } catch {
-      /* best effort */
-    }
-    app.relaunch();
-    app.exit(0);
-  });
-}
-
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'signal-loom-asset',
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      stream: true,
-      bypassCSP: true,
-    },
-  },
-  {
-    scheme: 'signal-loom-font',
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      stream: true,
-      bypassCSP: true,
-    },
-  },
-]);
+// The single-instance lock keys on the resolved userData directory, so it is acquired
+// immediately after the userData override and before ANY shared side effect (the GPU
+// fallback sentinel, privileged protocol schemes, fixed-port services, windows). A losing
+// instance quits untouched; its file arguments reach the winner through the natively
+// relayed second-instance argv. The lock MUST be acquired with no additionalData payload:
+// Electron 41's POSIX process singleton cannot parse it ("additional_data_size exceeds
+// payload length"), the running app never acknowledges, and the connecting instance then
+// KILLS the running app and takes over — observed live on Linux. Everything below the
+// declarations runs only inside the winner branch at the bottom of this module.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 function getRendererEntryUrl() {
   return activeRendererEntryUrl;
@@ -595,6 +539,75 @@ function commitStartupProjectAuthority() {
     scratchDirectoryPath: currentScratchDirectoryPath,
     document: startupProject?.document,
   });
+}
+
+// Every external open (initial argv, second-instance relaunch, macOS open-file/open-url)
+// funnels through this validated exactly-once queue; the renderer drains document targets
+// over IPC and routes them through its canonical open transactions.
+const externalOpenQueue = createExternalOpenQueue({
+  isFile: (filePath) => {
+    try {
+      return statSync(filePath).isFile();
+    } catch {
+      return false;
+    }
+  },
+  workspaceViews: WORKSPACE_VIEWS,
+});
+
+function enqueueExternalOpenArgv(argv, workingDirectory) {
+  const outcome = externalOpenQueue.enqueueArgv(argv, {
+    cwd: workingDirectory,
+    platform: process.platform,
+    appPath: APP_ROOT,
+    execPath: process.execPath,
+  });
+  for (const rejection of outcome.rejected) {
+    console.warn(`Ignoring unsupported external open target (${rejection.reason}): ${rejection.value}`);
+  }
+  return outcome;
+}
+
+function enqueueExternalOpenValue(rawValue) {
+  const outcome = externalOpenQueue.enqueueValue(rawValue, {
+    cwd: process.cwd(),
+    platform: process.platform,
+  });
+  if (outcome.status === 'rejected') {
+    console.warn(`Ignoring unsupported external open target (${outcome.reason}): ${String(rawValue)}`);
+  }
+  return outcome;
+}
+
+function focusExternalOpenTargetWindow() {
+  const target = (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined)
+    ?? BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+  if (!target) {
+    return undefined;
+  }
+  if (target.isMinimized()) {
+    target.restore();
+  }
+  target.show();
+  target.focus();
+  return target;
+}
+
+function dispatchPendingExternalOpenRequests() {
+  // Pre-readiness requests stay queued: the boot sequence drains workspace targets after the
+  // first window exists, and the renderer pulls document targets once it finishes mounting.
+  if (!app.isReady()) {
+    return;
+  }
+
+  for (const request of externalOpenQueue.takeWorkspaceRequests()) {
+    createWorkspaceWindow(request.workspace);
+  }
+
+  if (externalOpenQueue.hasPending('project') || externalOpenQueue.hasPending('paper')) {
+    const target = focusExternalOpenTargetWindow();
+    target?.webContents.send('signal-loom:external-open-pending');
+  }
 }
 
 function createEmptySourceLibrarySnapshot() {
@@ -1002,8 +1015,11 @@ function setCurrentProjectAssetRoots(filePath, document, scratchDirectoryPath) {
   currentAssetCapabilityRootPaths = [...new Set(currentAssetCapabilityRootPaths)];
 }
 
-async function loadRememberedStartupProject() {
-  const filePath = await readRememberedProjectPath();
+// skipRemembered: an external project open is queued for this launch, so the requested file —
+// not the remembered one — must own the startup restore. The remembered path itself is kept;
+// the external open re-remembers through the canonical open transaction once it succeeds.
+async function loadRememberedStartupProject({ skipRemembered = false } = {}) {
+  const filePath = skipRemembered ? undefined : await readRememberedProjectPath();
   if (!filePath) {
     setCurrentProjectAssetRoots(undefined, undefined, undefined);
     startupProject = undefined;
@@ -2966,6 +2982,50 @@ function installIpcHandlers() {
     });
   });
 
+  // External-open fulfillment. The renderer drains the validated queue and routes each entry
+  // through its canonical open transaction; fulfillment happens here (not at enqueue) so
+  // projects go through the exact same main-process transaction as the Open dialog and the
+  // renderer can never hand arbitrary paths across this bridge — only queued, validated
+  // targets are ever read. Each take is atomic: a drained entry is delivered exactly once.
+  ipcMain.handle('signal-loom:external-open-take', async () => {
+    const requests = externalOpenQueue.takeDocumentRequests();
+    const entries = [];
+
+    for (const request of requests) {
+      if (request.kind === 'project') {
+        try {
+          entries.push({
+            kind: 'project',
+            filePath: request.filePath,
+            result: await openProjectDocumentFromPath(request.filePath),
+          });
+        } catch (error) {
+          entries.push({
+            kind: 'project',
+            filePath: request.filePath,
+            error: error instanceof Error ? error.message : 'The project file could not be opened.',
+          });
+        }
+      } else {
+        try {
+          entries.push({
+            kind: 'paper',
+            filePath: request.filePath,
+            bytes: await readFile(request.filePath),
+          });
+        } catch (error) {
+          entries.push({
+            kind: 'paper',
+            filePath: request.filePath,
+            error: error instanceof Error ? error.message : 'The layout file could not be opened.',
+          });
+        }
+      }
+    }
+
+    return { entries };
+  });
+
   ipcMain.handle('signal-loom:project-open', async (event, request) => {
     const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
     const isSenderLive = () => isLiveAuthoritySender(event.sender, rendererEpoch);
@@ -4002,55 +4062,177 @@ async function maybeAutoStartLocalUpscaler() {
   }
 }
 
-app.whenReady().then(async () => {
-  installProtocolHandlers();
-  installIpcHandlers();
-  void maybeAutoStartLocalUpscaler();
-  installApplicationMenu();
-  // Bring up the native-Wayland panel-menu D-Bus service (no-op unless SIGNAL_LOOM_ELECTRON_PANEL_MENU=1).
-  void getPanelMenuService().start();
-  if (process.env.SIGNAL_LOOM_ELECTRON_MENU_SMOKE === '1') {
-    console.log(`Sloom Studio application menu: ${getInstalledApplicationMenuLabels().join(', ')}`);
-    app.quit();
-    return;
-  }
-  createStartupSplashWindow();
+// app.quit() alone is not reliable before 'ready' (a live loser instance was observed
+// lingering on Linux until killed), so the loser force-exits right after requesting quit.
+// Nothing has started yet, and Chromium's process singleton has already relayed the
+// loser's argv/workingDirectory to the winner's second-instance event.
+if (!hasSingleInstanceLock) {
+  app.quit();
+  app.exit(0);
+} else {
+  // Linux GPU acceleration policy. Default ON via the stable ANGLE GL/EGL backend so
+  // the Image workspace's canvas compositing runs on the GPU instead of SwiftShader.
+  // If the GPU process ever crashes (some AMD/Mesa + ANGLE combos segfault on init),
+  // we drop a sentinel and relaunch in software mode so the user always gets a working
+  // window; the sentinel self-expires after a cooldown so a transient hiccup recovers.
+  // The sentinel lives in the shared userData directory, so only the lock winner may
+  // read or clear it.
+  const gpuFallbackSentinelPath = join(app.getPath('userData'), 'gpu-fallback.flag');
+  let gpuFallbackSentinelTimestamp = null;
   try {
-    await resolveRendererEntryUrl();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Electron renderer startup resolution failed.';
-    console.error(message);
-
-    if (!isProductionRendererReady()) {
-      dialog.showErrorBox(
-        'Sloom Studio startup failed',
-        `${message} Build the Vite app (npm run build) and restart in production mode.`,
+    if (existsSync(gpuFallbackSentinelPath)) {
+      gpuFallbackSentinelTimestamp = statSync(gpuFallbackSentinelPath).mtimeMs;
+    }
+  } catch {
+    gpuFallbackSentinelTimestamp = null;
+  }
+  const linuxGpuPolicy = resolveLinuxGpuPolicy(
+    process.env,
+    { sentinelTimestamp: gpuFallbackSentinelTimestamp },
+    process.platform,
+  );
+  if (linuxGpuPolicy.clearSentinel) {
+    try {
+      rmSync(gpuFallbackSentinelPath, { force: true });
+    } catch {
+      /* best effort */
+    }
+  }
+  applyLinuxGpuCommandLine(app, { disabled: linuxGpuPolicy.disabled }, process.platform);
+  if (process.platform === 'linux' && !linuxGpuPolicy.disabled) {
+    let gpuFallbackTriggered = false;
+    app.on('child-process-gone', (_event, details) => {
+      if (gpuFallbackTriggered || details?.type !== 'GPU' || details.reason === 'clean-exit') {
+        return;
+      }
+      gpuFallbackTriggered = true;
+      // Boundary 1 (GPU process → main process): a GPU crash here relaunches the whole app into
+      // software mode, which also tears down any registered global menu. Logged so we can tell a
+      // "menu vanished" report apart from a silent GPU-crash relaunch.
+      console.log(
+        `[gmenu] GPU process gone (reason=${details.reason ?? 'unknown'}) → writing fallback sentinel + relaunching in software`,
       );
+      try {
+        writeFileSync(gpuFallbackSentinelPath, String(Date.now()));
+      } catch {
+        /* best effort */
+      }
+      app.relaunch();
+      app.exit(0);
+    });
+  }
+
+  protocol.registerSchemesAsPrivileged([
+    {
+      scheme: 'signal-loom-asset',
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        stream: true,
+        bypassCSP: true,
+      },
+    },
+    {
+      scheme: 'signal-loom-font',
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        stream: true,
+        bypassCSP: true,
+      },
+    },
+  ]);
+
+  // Own the already-defined signal-loom:// deep-link scheme (see NATIVE_WORKSPACE_STANDALONE_
+  // ENTRY_POINTS in src/lib/nativeApp.ts). Packaged builds only: registering from a dev run
+  // would point the OS handler at the bare electron binary.
+  if (app.isPackaged) {
+    app.setAsDefaultProtocolClient(EXTERNAL_OPEN_DEEP_LINK_SCHEME);
+  }
+
+  // Initial launch argv (Linux/Windows file managers, terminals, the dev launcher). macOS
+  // delivers documents through open-file/open-url below instead.
+  enqueueExternalOpenArgv(process.argv, process.cwd());
+
+  app.on('second-instance', (_event, argv, workingDirectory, additionalData) => {
+    // The natively relayed argv/workingDirectory carry the loser's open targets (extra
+    // Chromium switches in it are filtered by the queue's argv extraction). additionalData
+    // is parsed defensively only — this build never sends it (see the lock comment above).
+    const payload = parseSecondInstanceOpenPayload(additionalData);
+    enqueueExternalOpenArgv(payload?.argv ?? argv, payload?.workingDirectory || workingDirectory);
+    focusExternalOpenTargetWindow();
+    dispatchPendingExternalOpenRequests();
+  });
+
+  // macOS document/deep-link events. Both can fire before app ready, so they are registered
+  // here (not inside whenReady) and rely on the queue to hold pre-readiness requests.
+  app.on('open-file', (event, filePath) => {
+    event.preventDefault();
+    enqueueExternalOpenValue(filePath);
+    dispatchPendingExternalOpenRequests();
+  });
+
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    enqueueExternalOpenValue(url);
+    dispatchPendingExternalOpenRequests();
+  });
+
+  app.whenReady().then(async () => {
+    installProtocolHandlers();
+    installIpcHandlers();
+    void maybeAutoStartLocalUpscaler();
+    installApplicationMenu();
+    // Bring up the native-Wayland panel-menu D-Bus service (no-op unless SIGNAL_LOOM_ELECTRON_PANEL_MENU=1).
+    void getPanelMenuService().start();
+    if (process.env.SIGNAL_LOOM_ELECTRON_MENU_SMOKE === '1') {
+      console.log(`Sloom Studio application menu: ${getInstalledApplicationMenuLabels().join(', ')}`);
       app.quit();
       return;
     }
-  }
-  await loadRememberedStartupProject();
-  commitStartupProjectAuthority();
-  createWorkspaceWindow('flow');
+    createStartupSplashWindow();
+    try {
+      await resolveRendererEntryUrl();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Electron renderer startup resolution failed.';
+      console.error(message);
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWorkspaceWindow('flow');
+      if (!isProductionRendererReady()) {
+        dialog.showErrorBox(
+          'Sloom Studio startup failed',
+          `${message} Build the Vite app (npm run build) and restart in production mode.`,
+        );
+        app.quit();
+        return;
+      }
+    }
+    await loadRememberedStartupProject({ skipRemembered: externalOpenQueue.hasPending('project') });
+    commitStartupProjectAuthority();
+    createWorkspaceWindow('flow');
+    // Queued deep links open their workspace windows now; queued documents focus the main
+    // window and wait for the renderer to drain them once it mounts.
+    dispatchPendingExternalOpenRequests();
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWorkspaceWindow('flow');
+      }
+    });
+  });
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit();
     }
   });
-});
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
-
-// Tear down the global-menu DBus export cleanly so KDE drops our registrations on exit.
-app.on('will-quit', () => {
-  void globalMenuController?.stop();
-  void panelMenuService?.stop();
-});
+  // Tear down the global-menu DBus export cleanly so KDE drops our registrations on exit.
+  app.on('will-quit', () => {
+    void globalMenuController?.stop();
+    void panelMenuService?.stop();
+  });
+}
 
 export { SIGNAL_LOOM_MENU_COMMANDS };
