@@ -874,3 +874,84 @@ git diff --check
 - The evidence-note update is a separate commit on top.
 - This remains author evidence only. A fresh independent read-only review of the final clean head is
   required; no self-approval is claimed.
+
+## Sixth correction (independent final Medium, pre-canonical cap ordering on top of `4e8b400`)
+
+The fresh independent gate of the fifth correction found that the shared sanitizer itself
+canonicalized correctly, but `surfaceCompositionEdgeDiagnostics` still merged records in the wrong
+order. It keyed incoming diagnostics by their raw handles and sliced the raw map to eight before
+calling the canonical sanitizer. Several hostile handles that differed only after the persisted
+64-character truncation boundary could therefore occupy all eight raw slots, evict unrelated
+existing warnings, and then collapse to one canonical warning. The raw-key `Map.set` also replaced
+an existing warning's first-seen message when the same `{ reason, handle }` was diagnosed again.
+
+### Fix
+
+`surfaceCompositionEdgeDiagnostics` now constructs warning records for the incoming diagnostics and
+passes the complete first-seen stream — sanitized existing records followed by incoming records —
+directly to `sanitizeCompositionAudioMigrationWarnings`. The sanitizer therefore establishes the
+bounded canonical `{ reason, truncatedHandle }` identity before duplicates count toward the
+eight-unique-record cap. Existing message/order wins for a repeated identity, canonical collisions
+consume one slot, and the first eight unique records survive deterministically.
+
+### Permanent red/green evidence
+
+Three new production-function regressions cover the exact review blocker:
+
+- seven existing unique warnings plus eight incoming handles that collide only after truncation
+  retain all seven existing records plus one canonical incoming record;
+- a repeated diagnostic preserves the existing first-seen message and order while a genuinely new
+  record appends; and
+- mixed canonical collisions and unique diagnostics fill exactly eight unique slots without
+  exceeding the cap.
+
+Before the production change, the focused tests all failed:
+
+```text
+npx vitest run --configLoader runner src/lib/compositionEdgeMigration.test.ts \
+  -t "canonicalizes truncation-colliding|preserves an existing warning message|fills but never exceeds"
+# 1 file failed; 3 tests failed, 26 skipped
+# exact cap reproduction: expected 8 warnings, received 1
+```
+
+After the correction:
+
+```text
+npx vitest run --configLoader runner src/lib/compositionEdgeMigration.test.ts \
+  -t "canonicalizes truncation-colliding|preserves an existing warning message|fills but never exceeds"
+# 1 file passed; 3 tests passed, 26 skipped
+
+npx vitest run --configLoader runner \
+  src/lib/compositionEdgeMigration.test.ts src/lib/compositionTracks.test.ts \
+  src/lib/flowDiagnostics.test.ts
+# 3 files passed; 67 tests passed
+
+npx vitest run --configLoader runner \
+  src/components/Nodes/CompositionNode.test.tsx \
+  src/lib/compositionTracks.test.ts src/lib/compositionEdgeMigration.test.ts \
+  src/lib/compositionMediaState.test.ts src/lib/flowExecutionComposition.test.ts \
+  src/lib/mediaComposition.test.ts src/lib/flowDiagnostics.test.ts \
+  src/lib/flowNodeContracts.test.ts src/store/flowStore.test.ts \
+  src/store/flowStore.remoteSync.test.ts
+# 10 files passed; 333 tests passed
+
+npm run verify:flow-production
+# 9 files passed; 372 tests passed
+# Flow production audit passed: 63 nodes, 182 model contracts, 178 normal model options.
+
+npx tsc -b tsconfig.app.json --force --pretty false
+# clean
+
+npx eslint src/lib/compositionEdgeMigration.ts src/lib/compositionEdgeMigration.test.ts
+# clean
+
+git diff --check
+# clean
+```
+
+### Sixth-correction commits and review state
+
+- `045875b` — pre-canonical cap correction plus permanent tests.
+- This evidence-note update is a separate commit on top.
+- This remains author evidence only. A different agent/provider must perform the final read-only
+  review; no self-approval is claimed.
