@@ -35,6 +35,9 @@ export function paperTypographyToTextFlowSpec(typography: PaperTypography): Pape
     align: typography.align,
     fontWeight: typography.fontWeight,
     fontStyle: typography.fontStyle,
+    fontStretch: typography.fontStretch,
+    fontVariationSettings: typography.fontVariationSettings,
+    fontKerning: typography.fontKerning,
     firstLineIndentMm: typography.firstLineIndentMm,
     spaceBeforeMm: typography.spaceBeforeMm,
     spaceAfterMm: typography.spaceAfterMm,
@@ -73,6 +76,9 @@ function paperRichTextFlowMetrics(paragraphs: readonly PaperRichParagraph[]): Pa
       if (run.tracking != null) typeSpec.tracking = run.tracking;
       if (run.fontWeight) typeSpec.fontWeight = run.fontWeight;
       if (run.fontStyle) typeSpec.fontStyle = run.fontStyle;
+      if (run.fontStretch) typeSpec.fontStretch = run.fontStretch;
+      if (run.fontVariationSettings) typeSpec.fontVariationSettings = { ...run.fontVariationSettings };
+      if (run.fontKerning) typeSpec.fontKerning = run.fontKerning;
       styleSpans.push({ start: runStart, end: cursor, typeSpec });
     }
     paragraphMetrics.push({

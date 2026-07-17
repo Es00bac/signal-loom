@@ -208,36 +208,47 @@ export function slicePaperRichTextRange(
   startOffset: number,
   endOffset: number,
 ): PaperRichParagraphFragment[] {
-  const start = Math.max(0, Math.min(startOffset, endOffset));
-  const end = Math.max(start, endOffset);
+  const flat = flattenPaperRichText(paragraphs);
+  const start = Math.max(0, Math.min(flat.length, Math.min(startOffset, endOffset)));
+  const end = Math.max(start, Math.min(flat.length, endOffset));
   if (end <= start) return [];
 
-  const result: PaperRichParagraphFragment[] = [];
+  const layouts: Array<{
+    paragraph: PaperRichParagraph;
+    start: number;
+    end: number;
+    markerPrefixLength: number;
+    source: string;
+  }> = [];
   let cursor = 0;
   paragraphs.forEach((paragraph, index) => {
     if (index > 0) cursor += 1; // the '\n' that flattenPaperRichText inserts between paragraphs
-    const markerPrefixLen = paragraph.listMarker ? paragraph.listMarker.length + 1 : 0; // marker + '\t'
-    const paraStart = cursor;
-    const contentStart = paraStart + markerPrefixLen;
-    let runsLen = 0;
-    for (const run of paragraph.runs) runsLen += run.text.length;
-    const paraEnd = contentStart + runsLen;
-    cursor = paraEnd;
-
-    // A paragraph contributes when its own flattened span [paraStart, paraEnd) overlaps the range; a blank line
-    // (zero-length span) contributes when its position sits inside the range.
-    const overlaps = paraStart < end && paraEnd > start;
-    const blankLineInRange = paraStart === paraEnd && paraStart >= start && paraStart < end;
-    if (!overlaps && !blankLineInRange) return;
-
-    const paragraphSource = (paragraph.listMarker ? `${paragraph.listMarker}\t` : '')
+    const markerPrefixLength = paragraph.listMarker ? paragraph.listMarker.length + 1 : 0;
+    const source = (paragraph.listMarker ? `${paragraph.listMarker}\t` : '')
       + paragraph.runs.map((run) => run.text).join('');
-    // Flow ranges deliberately omit ordinary boundary whitespace. Whitespace alone before the first owned word
-    // or after the last owned word does not transfer paragraph ownership away from that fragment.
-    const ownsParagraphStart = start <= paraStart
-      || paragraphSource.slice(0, Math.max(0, start - paraStart)).trim() === '';
-    const ownsParagraphEnd = end >= paraEnd
-      || paragraphSource.slice(Math.max(0, end - paraStart)).trim() === '';
+    layouts.push({ paragraph, start: cursor, end: cursor + source.length, markerPrefixLength, source });
+    cursor += source.length;
+  });
+
+  // Split the exact requested source substring. Every newline creates a second fragment, including when the
+  // range begins/ends on that delimiter; this is what makes separator-only and terminal blank-paragraph slices
+  // representable while retaining each adjacent paragraph's independent formatting/ownership.
+  const sourceSegments = flat.slice(start, end).split('\n');
+  let paragraphIndex = layouts.findIndex((layout) => start >= layout.start && start <= layout.end);
+  if (paragraphIndex < 0) paragraphIndex = Math.max(0, layouts.length - 1);
+  let segmentStart = start;
+
+  return sourceSegments.map((segment, segmentIndex) => {
+    const layout = layouts[Math.min(paragraphIndex + segmentIndex, layouts.length - 1)];
+    const paragraph = layout.paragraph;
+    const localStart = Math.max(0, Math.min(layout.source.length, segmentStart - layout.start));
+    const localEnd = Math.max(localStart, Math.min(layout.source.length, localStart + segment.length));
+    segmentStart += segment.length + 1;
+
+    // Flow ranges may omit ordinary boundary whitespace. Whitespace alone before the first owned glyph or
+    // after the last owned glyph does not transfer paragraph-start/end geometry to another frame.
+    const ownsParagraphStart = localStart === 0 || layout.source.slice(0, localStart).trim() === '';
+    const ownsParagraphEnd = localEnd >= layout.source.length || layout.source.slice(localEnd).trim() === '';
     const sliced: PaperRichParagraphFragment = {
       ...paragraph,
       runs: [],
@@ -266,9 +277,20 @@ export function slicePaperRichTextRange(
       }
     }
 
-    const from = Math.max(start, contentStart);
-    const to = Math.min(end, paraEnd);
-    let runCursor = contentStart;
+    const markerFullyOwned = layout.markerPrefixLength > 0
+      && localStart === 0
+      && localEnd >= layout.markerPrefixLength;
+    if (paragraph.listMarker && !markerFullyOwned) delete sliced.listMarker;
+
+    const overlapsPartialMarker = localStart < layout.markerPrefixLength && !markerFullyOwned;
+    if (overlapsPartialMarker) {
+      sliced.runs.push({ ...(paragraph.runs[0] ?? { text: '' }), text: segment });
+    }
+
+    const contentStart = layout.markerPrefixLength;
+    const from = Math.max(localStart, contentStart) - contentStart;
+    const to = Math.max(from, localEnd - contentStart);
+    let runCursor = 0;
     for (const run of paragraph.runs) {
       const runStart = runCursor;
       const runEnd = runStart + run.text.length;
@@ -279,10 +301,9 @@ export function slicePaperRichTextRange(
         sliced.runs.push({ ...run, text: run.text.slice(localFrom - runStart, localTo - runStart) });
       }
     }
-    if (sliced.runs.length === 0) sliced.runs = [{ text: '' }]; // preserve a blank line
-    result.push(sliced);
+    if (sliced.runs.length === 0) sliced.runs = [{ ...(paragraph.runs[0] ?? { text: '' }), text: '' }];
+    return sliced;
   });
-  return result;
 }
 
 /**

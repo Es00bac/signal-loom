@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PaperFrame, PaperRichParagraph } from '../types/paper';
-import { computePaperThreadSlices } from './paperThreadFlow';
+import { computePaperThreadSlices, paperTypographyToTextFlowSpec } from './paperThreadFlow';
 import { flattenPaperRichText } from './paperRichText';
 import type { PaperTextMeasurer } from './paperTextFlow';
 
@@ -16,6 +16,19 @@ const textFrame = (patch: Partial<PaperFrame>): PaperFrame => ({
 } as PaperFrame);
 
 describe('computePaperThreadSlices', () => {
+  it('copies width-affecting frame typography into the optional flow contract exactly', () => {
+    expect(paperTypographyToTextFlowSpec({
+      ...typography,
+      fontStretch: '82.5%',
+      fontVariationSettings: { wdth: 82.5, wght: 540 },
+      fontKerning: 'none',
+    })).toMatchObject({
+      fontStretch: '82.5%',
+      fontVariationSettings: { wdth: 82.5, wght: 540 },
+      fontKerning: 'none',
+    });
+  });
+
   it('flows the head story across thread members', () => {
     const frames = [
       textFrame({ id: 'head', threadId: 't1', threadOrder: 1, text: 'aa bb cc dd' }),
@@ -278,5 +291,75 @@ describe('computePaperThreadSlices — rich (formatted) stories', () => {
       expect(fixture.frames.map((frame) => slices.get(frame.id)?.sourceText)).toEqual(fixture.expected);
       expect(slices.get(fixture.frames.at(-1)!.id)?.sourceEnd).toBe(story.length);
     }
+  });
+
+  it.each(['\n\nA', 'A\n\n', 'A\n\nB', '\n\n'])('keeps plain/rich range parity for edge and blank-only paragraphs: %j', (story) => {
+    const richText = story.split('\n').map((text) => ({ runs: [{ text }] }));
+    const frames = [
+      textFrame({ id: 'head', threadId: 'edges', threadOrder: 1, widthMm: 100, heightMm: 40, richText, text: story }),
+      textFrame({ id: 'tail', threadId: 'edges', threadOrder: 2, widthMm: 100, heightMm: 5 }),
+    ];
+    const slice = computePaperThreadSlices(frames, measure).get('head')!;
+    expect(slice.sourceText).toBe(story);
+    expect(flattenPaperRichText(slice.richText)).toBe(story);
+    expect(story.slice(slice.sourceStart, slice.sourceEnd)).toBe(story);
+  });
+
+  it('propagates stretch, variation coordinates, and kerning into rich flow and changes boundaries observably', () => {
+    const richText: PaperRichParagraph[] = [{
+      runs: [
+        { text: 'aa', fontStretch: '150%' },
+        { text: ' bb', fontVariationSettings: { wdth: 75, wght: 620 } },
+        { text: ' cc', fontKerning: 'none' },
+      ],
+    }];
+    const seen: Array<{ text: string; stretch?: string; variations?: Record<string, number>; kerning?: string }> = [];
+    const metricAwareMeasure: PaperTextMeasurer = (text, typeSpec) => {
+      seen.push({
+        text,
+        stretch: typeSpec.fontStretch,
+        variations: typeSpec.fontVariationSettings,
+        kerning: typeSpec.fontKerning,
+      });
+      const factor = typeSpec.fontStretch === '150%'
+        ? 2
+        : typeSpec.fontVariationSettings?.wdth === 75
+          ? 3
+          : typeSpec.fontKerning === 'none'
+            ? 4
+            : 1;
+      return text.length * factor;
+    };
+    const frames = [
+      textFrame({ id: 'head', threadId: 'width-metrics', threadOrder: 1, widthMm: 5, heightMm: 5, richText, text: flattenPaperRichText(richText) }),
+      textFrame({ id: 'mid', threadId: 'width-metrics', threadOrder: 2, widthMm: 7, heightMm: 5 }),
+      textFrame({ id: 'tail', threadId: 'width-metrics', threadOrder: 3, widthMm: 9, heightMm: 5 }),
+    ];
+    const slices = computePaperThreadSlices(frames, metricAwareMeasure);
+    expect(frames.map((entry) => slices.get(entry.id)?.sourceText)).toEqual(['aa', 'bb', 'cc']);
+    expect(seen).toContainEqual(expect.objectContaining({ stretch: '150%' }));
+    expect(seen).toContainEqual(expect.objectContaining({ variations: { wdth: 75, wght: 620 } }));
+    expect(seen).toContainEqual(expect.objectContaining({ kerning: 'none' }));
+  });
+
+  it.each([
+    { writingMode: 'horizontal-tb' as const, richText: [{ runs: [{ text: 'A' }], spaceAfterMm: 8 }], widthMm: 100, heightMm: 5 },
+    { writingMode: 'vertical-rl' as const, richText: [{ runs: [{ text: 'A' }], spaceBeforeMm: 8 }], widthMm: 5, heightMm: 100 },
+  ])('reports rich $writingMode geometry as overset before accepting source ownership', ({ writingMode, richText, widthMm, heightMm }) => {
+    const story = flattenPaperRichText(richText);
+    const frames = [
+      textFrame({
+        id: 'head', threadId: 'geometry', threadOrder: 1, widthMm, heightMm,
+        richText, text: story, typography: { ...typography, writingMode },
+      }),
+      textFrame({
+        id: 'tail', threadId: 'geometry', threadOrder: 2, widthMm, heightMm,
+        typography: { ...typography, writingMode },
+      }),
+    ];
+    const slices = computePaperThreadSlices(frames, measure);
+    expect(slices.get('head')?.sourceText).toBe('');
+    expect(slices.get('tail')?.sourceText).toBe('');
+    expect(slices.get('tail')?.isOverset).toBe(true);
   });
 });

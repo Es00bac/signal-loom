@@ -166,6 +166,16 @@ describe('slicePaperRichTextRange', () => {
     ]);
   });
 
+  it.each([
+    { text: '\n\nA', start: 0, end: 3 },
+    { text: 'A\n\n', start: 0, end: 3 },
+    { text: 'A\n\nB', start: 1, end: 2 },
+    { text: '\n\n', start: 0, end: 2 },
+  ])('preserves exact separator-only and edge paragraph ranges for $text[$start,$end)', ({ text, start, end }) => {
+    const rich = paperRichTextFromPlainText(text);
+    expect(flattenPaperRichText(slicePaperRichTextRange(rich, start, end))).toBe(text.slice(start, end));
+  });
+
   it('disambiguates repeated text purely by offset, not by searching visible text', () => {
     // flatten = 'ababab'; the middle 'ab' is bold, the outer two are plain — identical text, distinct offsets.
     const repeated: PaperRichParagraph[] = [{ runs: [{ text: 'ab' }, { text: 'ab', fontWeight: '700' }, { text: 'ab' }] }];

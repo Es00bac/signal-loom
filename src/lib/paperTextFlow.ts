@@ -14,6 +14,9 @@ export interface PaperTextFlowTypeSpec {
   align: 'left' | 'center' | 'right' | 'justify';
   fontWeight?: string;
   fontStyle?: string;
+  fontStretch?: string;
+  fontVariationSettings?: Record<string, number>;
+  fontKerning?: 'auto' | 'normal' | 'none';
   firstLineIndentMm?: number;
   spaceBeforeMm?: number;
   spaceAfterMm?: number;
@@ -130,6 +133,14 @@ function ptToMm(pt: number): number {
   return (pt * 25.4) / 72;
 }
 
+function finiteNonNegative(value: number | undefined, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : fallback;
+}
+
+function finiteSigned(value: number | undefined, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
 interface FlowToken {
   kind: 'word' | 'break';
   text: string;
@@ -243,6 +254,13 @@ function tokenize(text: string, protectedSpans: readonly PaperTextFlowProtectedS
     tokens.splice(0, tokens.length, ...kept);
   }
 
+  // A separator-only story still owns one blank line and its exact source bytes. Without a synthetic break,
+  // there is no progress token from which a frame can derive a range (ordinary leading/trailing whitespace
+  // around real words is already covered by the consumed-interval range calculation below).
+  if (tokens.length === 0 && text.length > 0) {
+    tokens.push({ kind: 'break', text: '', start: 0, end: text.length, paragraphIndex: 0, sep: '', cjk: false });
+  }
+
   return tokens;
 }
 
@@ -276,21 +294,34 @@ function buildNextLine(
 ): NextLineResult {
   let index = startIndex;
   const paragraphIndex = tokens[index]?.paragraphIndex ?? (sourceMetrics?.paragraphs?.length ?? 1) - 1;
+  const safeLineBudgetMm = finiteNonNegative(lineBudgetMm);
 
   // A paragraph break terminates the previous line; the next line starts after it.
   if (index < tokens.length && tokens[index].kind === 'break') {
     index += 1;
   }
 
+  if (safeLineBudgetMm <= EPSILON_MM && index < tokens.length && tokens[index].kind === 'word') {
+    return {
+      text: '',
+      widthMm: 0,
+      nextIndex: startIndex,
+      leadingMm: lineLeadingMm([], paragraphIndex, spec, sourceMetrics),
+      paragraphIndex,
+      isParagraphEnd: false,
+    };
+  }
+
   const chosen: FlowToken[] = [];
   while (index < tokens.length && tokens[index].kind === 'word') {
     const candidate = [...chosen, tokens[index]];
     const candidateWidth = measureFlowUnits(candidate, sourceText, measure, spec, sourceMetrics);
-    if (chosen.length === 0 || candidateWidth <= lineBudgetMm + EPSILON_MM) {
+    if (!Number.isFinite(candidateWidth)) break;
+    if (chosen.length === 0 || candidateWidth <= safeLineBudgetMm + EPSILON_MM) {
       chosen.push(tokens[index]);
       index += 1;
       // A single unit wider than the line budget is placed alone, then the line ends.
-      if (candidateWidth > lineBudgetMm + EPSILON_MM) {
+      if (candidateWidth > safeLineBudgetMm + EPSILON_MM) {
         break;
       }
     } else {
@@ -363,11 +394,21 @@ function measureFlowUnits(
   baseSpec: PaperTextFlowTypeSpec,
   sourceMetrics: PaperTextFlowSourceMetrics | undefined,
 ): number {
-  if (!sourceMetrics) return measure(joinUnits(units), baseSpec);
+  if (!sourceMetrics) {
+    const measured = measure(joinUnits(units), baseSpec);
+    return Number.isFinite(measured) && measured >= 0 ? measured : Number.POSITIVE_INFINITY;
+  }
   let widthMm = 0;
   units.forEach((unit, index) => {
     const unitSpec = resolvedSourceSpec(unit.start, unit.paragraphIndex, baseSpec, sourceMetrics);
-    if (index > 0 && unit.sep) widthMm += measure(unit.sep, unitSpec);
+    if (index > 0 && unit.sep) {
+      const separatorWidth = measure(unit.sep, unitSpec);
+      if (!Number.isFinite(separatorWidth) || separatorWidth < 0) {
+        widthMm = Number.POSITIVE_INFINITY;
+        return;
+      }
+      widthMm += separatorWidth;
+    }
     const boundaries = new Set([unit.start, unit.end]);
     for (const span of sourceMetrics.styleSpans ?? []) {
       if (span.start > unit.start && span.start < unit.end) boundaries.add(span.start);
@@ -381,10 +422,15 @@ function measureFlowUnits(
       const measuredSegment = sourceMetrics.protectedSpans?.some((span) => start >= span.start && end <= span.end)
         ? sourceSegment.replace(/\t/g, '\u2003')
         : sourceSegment;
-      widthMm += measure(
+      const segmentWidth = measure(
         measuredSegment,
         resolvedSourceSpec(start, unit.paragraphIndex, baseSpec, sourceMetrics),
       );
+      if (!Number.isFinite(segmentWidth) || segmentWidth < 0) {
+        widthMm = Number.POSITIVE_INFINITY;
+        return;
+      }
+      widthMm += segmentWidth;
     }
   });
   return widthMm;
@@ -396,7 +442,11 @@ function lineLeadingMm(
   baseSpec: PaperTextFlowTypeSpec,
   sourceMetrics: PaperTextFlowSourceMetrics | undefined,
 ): number {
-  if (!sourceMetrics) return ptToMm(baseSpec.leadingPt > 0 ? baseSpec.leadingPt : baseSpec.fontSizePt * 1.2);
+  if (!sourceMetrics) {
+    const fontSizePt = finiteNonNegative(baseSpec.fontSizePt, 1);
+    const leadingPt = finiteNonNegative(baseSpec.leadingPt, fontSizePt * 1.2);
+    return ptToMm(leadingPt > 0 ? leadingPt : fontSizePt * 1.2);
+  }
   const offsets = units.length > 0
     ? units.flatMap((unit) => [
         unit.start,
@@ -407,7 +457,9 @@ function lineLeadingMm(
     : [paragraphMetricsAt(paragraphIndex, sourceMetrics)?.start ?? 0];
   return Math.max(...offsets.map((offset) => {
     const resolved = resolvedSourceSpec(offset, paragraphIndex, baseSpec, sourceMetrics);
-    return ptToMm(Math.max(resolved.leadingPt > 0 ? resolved.leadingPt : 0, resolved.fontSizePt * 1.2));
+    const fontSizePt = finiteNonNegative(resolved.fontSizePt, 1);
+    const leadingPt = finiteNonNegative(resolved.leadingPt);
+    return ptToMm(Math.max(leadingPt, fontSizePt * 1.2));
   }));
 }
 
@@ -502,6 +554,7 @@ export function flowPaperText(
   const tokens = tokenize(text, sourceMetrics?.protectedSpans);
   let index = 0;
   const paragraphLineCounts = new Map<number, number>();
+  let previousFrameHasWords = false;
 
   const frameResults: PaperTextFlowFrameResult[] = frames.map((frame) => {
     const frameStartIndex = index;
@@ -515,49 +568,61 @@ export function flowPaperText(
       // apply, so the vertical path is a clean column fill — its job here is capacity/overset, and the
       // browser renders the glyphs via CSS `writing-mode`.
       if (frameSpec.vertical) {
-        const lineBudgetMm = column.heightMm; // a line's length is bounded by the frame height
-        const columnRight = column.xMm + column.widthMm; // the first text-line sits at the right edge
+        const columnWidthMm = finiteNonNegative(column.widthMm);
+        const columnHeightMm = finiteNonNegative(column.heightMm);
+        const columnRight = finiteSigned(column.xMm) + columnWidthMm; // the first text-line sits at the right edge
         let used = 0; // width consumed by placed text-lines
 
         while (index < tokens.length) {
-          const line = buildNextLine(tokens, index, lineBudgetMm, measure, frameSpec, text, sourceMetrics);
+          const paragraphIndex = tokens[index].paragraphIndex;
+          const paragraph = paragraphMetricsAt(paragraphIndex, sourceMetrics);
+          const paragraphLineIndex = paragraphLineCounts.get(paragraphIndex) ?? 0;
+          const startAdvanceMm = paragraphStartAdvanceMm(paragraph, paragraphLineIndex, frameSpec);
+          const candidateUsed = used + startAdvanceMm;
+          const lineBox = paragraphLineBox(
+            { xMm: finiteSigned(column.yMm), widthMm: columnHeightMm },
+            paragraph,
+            paragraphLineIndex,
+            text,
+            measure,
+            frameSpec,
+            sourceMetrics,
+          );
+          const line = buildNextLine(tokens, index, lineBox.widthMm, measure, frameSpec, text, sourceMetrics);
           if (line.nextIndex === index) break;
-          if (used + line.leadingMm > column.widthMm + EPSILON_MM) break;
-
-          const remainderHasWords = tokens.slice(line.nextIndex).some((token) => token.kind === 'word');
-          if (line.text === '' && !remainderHasWords) {
-            index = line.nextIndex;
-            break;
-          }
+          const endAdvanceMm = line.isParagraphEnd ? paragraphEndAdvanceMm(paragraph, frameSpec) : 0;
+          if (candidateUsed + line.leadingMm + endAdvanceMm > columnWidthMm + EPSILON_MM) break;
 
           lines.push({
             text: line.text,
-            xMm: columnRight - used - line.leadingMm, // nominal (not consumed downstream): lines march leftward
-            yMm: column.yMm,
+            xMm: columnRight - candidateUsed - line.leadingMm, // nominal (not consumed downstream): lines march leftward
+            yMm: lineBox.xMm,
             widthMm: line.widthMm,
           });
-          used += line.leadingMm;
+          used = candidateUsed + line.leadingMm + endAdvanceMm;
           index = line.nextIndex;
-          paragraphLineCounts.set(line.paragraphIndex, (paragraphLineCounts.get(line.paragraphIndex) ?? 0) + 1);
+          paragraphLineCounts.set(line.paragraphIndex, paragraphLineIndex + 1);
         }
         continue;
       }
 
-      const columnBottom = column.yMm + column.heightMm;
-      let y = column.yMm;
+      const columnHeightMm = finiteNonNegative(column.heightMm);
+      const columnBottom = finiteSigned(column.yMm) + columnHeightMm;
+      let y = finiteSigned(column.yMm);
 
       while (index < tokens.length) {
         const paragraphIndex = tokens[index].paragraphIndex;
         const paragraph = paragraphMetricsAt(paragraphIndex, sourceMetrics);
         const paragraphLineIndex = paragraphLineCounts.get(paragraphIndex) ?? 0;
-        const paragraphStartInset = paragraphLineIndex === 0
-          ? Math.max(0, paragraph?.spaceBeforeMm ?? frameSpec.spaceBeforeMm ?? 0) + Math.max(0, paragraph?.borderPaddingMm ?? 0)
-          : 0;
+        const paragraphStartInset = paragraphStartAdvanceMm(paragraph, paragraphLineIndex, frameSpec);
         const candidateY = y + paragraphStartInset;
         const nominalLeadingMm = lineLeadingMm([], paragraphIndex, frameSpec, sourceMetrics);
         // Narrow the line's usable box to the widest part of the column left clear by any exclusion
         // band; a fully blocked band is skipped so the text resumes below the obstacle.
-        let lineBox: { xMm: number; widthMm: number } = { xMm: column.xMm, widthMm: column.widthMm };
+        let lineBox: { xMm: number; widthMm: number } = {
+          xMm: finiteSigned(column.xMm),
+          widthMm: finiteNonNegative(column.widthMm),
+        };
         if (frameExclusions.length > 0) {
           const blocks: [number, number][] = [];
           for (const exclusion of frameExclusions) {
@@ -565,7 +630,7 @@ export function flowPaperText(
             if (blocked) blocks.push(blocked);
           }
           if (blocks.length > 0) {
-            const free = subtractIntervals([column.xMm, column.xMm + column.widthMm], blocks);
+            const free = subtractIntervals([lineBox.xMm, lineBox.xMm + lineBox.widthMm], blocks);
             const widest = free.reduce<[number, number] | null>(
               (best, cur) => (best === null || cur[1] - cur[0] > best[1] - best[0] ? cur : best),
               null,
@@ -583,13 +648,8 @@ export function flowPaperText(
         if (line.nextIndex === index) {
           break;
         }
-        if (candidateY + line.leadingMm > columnBottom + EPSILON_MM) break;
-
-        const remainderHasWords = tokens.slice(line.nextIndex).some((token) => token.kind === 'word');
-        if (line.text === '' && !remainderHasWords) {
-          index = line.nextIndex;
-          break;
-        }
+        const paragraphEndInset = line.isParagraphEnd ? paragraphEndAdvanceMm(paragraph, frameSpec) : 0;
+        if (candidateY + line.leadingMm + paragraphEndInset > columnBottom + EPSILON_MM) break;
 
         lines.push({
           text: line.text,
@@ -597,43 +657,70 @@ export function flowPaperText(
           yMm: candidateY,
           widthMm: line.widthMm,
         });
-        y = candidateY + line.leadingMm;
+        y = candidateY + line.leadingMm + paragraphEndInset;
         index = line.nextIndex;
         paragraphLineCounts.set(paragraphIndex, paragraphLineIndex + 1);
-        if (line.isParagraphEnd) {
-          y += Math.max(0, paragraph?.borderPaddingMm ?? 0) + Math.max(0, paragraph?.spaceAfterMm ?? frameSpec.spaceAfterMm ?? 0);
-        }
       }
     }
 
-    // Skip exactly one ordinary inter-frame delimiter. Any additional leading breaks consumed by this frame are
-    // real blank paragraphs and remain in its source range, so `A\n\nB` flows as `A` | `\nB`, not `A` | `B`.
-    let firstWordIndex = -1;
-    let lastWordIndex = -1;
-    for (let t = frameStartIndex; t < index; t += 1) {
-      if (tokens[t].kind === 'word') {
-        if (firstWordIndex < 0) firstWordIndex = t;
-        lastWordIndex = t;
-      }
-    }
-    const hasContent = firstWordIndex >= 0;
-    let leadingBreakCount = 0;
-    while (frameStartIndex + leadingBreakCount < index && tokens[frameStartIndex + leadingBreakCount]?.kind === 'break') {
-      leadingBreakCount += 1;
-    }
-    const sourceStart = hasContent
-      ? (leadingBreakCount > 1 ? tokens[frameStartIndex + 1].start : tokens[firstWordIndex].start)
-      : (frameStartIndex < tokens.length ? tokens[frameStartIndex].start : text.length);
-    const sourceEnd = hasContent
-      ? tokens[lastWordIndex].end
-      : sourceStart;
-    const sourceText = hasContent ? text.slice(sourceStart, sourceEnd) : '';
+    // Ownership follows every consumed token plus the separators leading into it. A single ordinary delimiter
+    // is omitted only at a direct nonempty→nonempty frame boundary; consecutive/edge/blank-only delimiters stay
+    // owned by exactly one range. This keeps source and rich slices byte-for-byte identical without duplicates.
+    const consumed = index > frameStartIndex;
+    const hasWords = tokens.slice(frameStartIndex, index).some((token) => token.kind === 'word');
+    const rawSourceStart = frameStartIndex === 0 ? 0 : tokens[frameStartIndex - 1].end;
+    const rawSourceEnd = consumed
+      ? (index >= tokens.length ? text.length : tokens[index - 1].end)
+      : rawSourceStart;
+    const skippedDelimiterLength = consumed && previousFrameHasWords && hasWords
+      ? ordinaryDelimiterLengthAt(text, rawSourceStart)
+      : 0;
+    const sourceStart = skippedDelimiterLength > 0
+      ? rawSourceStart + skippedDelimiterLength
+      : rawSourceStart;
+    const sourceEnd = Math.max(sourceStart, rawSourceEnd);
+    const sourceText = text.slice(sourceStart, sourceEnd);
+    previousFrameHasWords = hasWords;
 
     return { frameId: frame.id, lines, sourceText, sourceStart, sourceEnd };
   });
 
-  const overset = index < tokens.length ? text.slice(tokens[index].start) : '';
-  return { frames: frameResults, overset, fits: overset.trim() === '' };
+  let overset = '';
+  if (index < tokens.length) {
+    const rawOversetStart = index === 0 ? 0 : tokens[index - 1].end;
+    const oversetHasWords = tokens.slice(index).some((token) => token.kind === 'word');
+    const skippedDelimiterLength = previousFrameHasWords && oversetHasWords
+      ? ordinaryDelimiterLengthAt(text, rawOversetStart)
+      : 0;
+    const oversetStart = skippedDelimiterLength > 0
+      ? rawOversetStart + skippedDelimiterLength
+      : rawOversetStart;
+    overset = text.slice(oversetStart);
+  }
+  return { frames: frameResults, overset, fits: index >= tokens.length };
+}
+
+function ordinaryDelimiterLengthAt(text: string, offset: number): number {
+  if (offset < 0 || offset >= text.length || !/\s/u.test(text[offset])) return 0;
+  return text[offset] === '\r' && text[offset + 1] === '\n' ? 2 : 1;
+}
+
+function paragraphStartAdvanceMm(
+  paragraph: PaperTextFlowParagraphMetrics | undefined,
+  lineIndex: number,
+  frameSpec: PaperTextFlowTypeSpec,
+): number {
+  if (lineIndex !== 0) return 0;
+  return finiteNonNegative(paragraph?.spaceBeforeMm ?? frameSpec.spaceBeforeMm)
+    + finiteNonNegative(paragraph?.borderPaddingMm);
+}
+
+function paragraphEndAdvanceMm(
+  paragraph: PaperTextFlowParagraphMetrics | undefined,
+  frameSpec: PaperTextFlowTypeSpec,
+): number {
+  return finiteNonNegative(paragraph?.borderPaddingMm)
+    + finiteNonNegative(paragraph?.spaceAfterMm ?? frameSpec.spaceAfterMm);
 }
 
 function paragraphLineBox(
@@ -645,30 +732,38 @@ function paragraphLineBox(
   frameSpec: PaperTextFlowTypeSpec,
   sourceMetrics: PaperTextFlowSourceMetrics | undefined,
 ): { xMm: number; widthMm: number } {
-  if (!paragraph) return box;
-  const border = Math.max(0, paragraph.borderPaddingMm ?? 0);
-  const marker = Math.max(0, paragraph.listMarkerIndentMm ?? 0);
-  const left = Math.max(0, paragraph.leftIndentMm ?? 0) + border + marker;
-  const right = Math.max(0, paragraph.rightIndentMm ?? 0) + border;
+  const safeBox = { xMm: finiteSigned(box.xMm), widthMm: finiteNonNegative(box.widthMm) };
+  if (!paragraph) return safeBox;
+  const border = finiteNonNegative(paragraph.borderPaddingMm);
+  const marker = finiteNonNegative(paragraph.listMarkerIndentMm);
+  const left = finiteNonNegative(paragraph.leftIndentMm) + border + marker;
+  const right = finiteNonNegative(paragraph.rightIndentMm) + border;
   let lineOffset = 0;
   if (lineIndex === 0) {
     if (marker > 0) lineOffset = -marker;
-    else if ((paragraph.hangingIndentMm ?? 0) > 0) lineOffset = -Math.max(0, paragraph.hangingIndentMm ?? 0);
-    else lineOffset = paragraph.firstLineIndentMm ?? frameSpec.firstLineIndentMm ?? 0;
+    else if (finiteNonNegative(paragraph.hangingIndentMm) > 0) lineOffset = -finiteNonNegative(paragraph.hangingIndentMm);
+    else lineOffset = finiteSigned(paragraph.firstLineIndentMm ?? frameSpec.firstLineIndentMm);
   }
-  const dropCapLines = Math.max(0, paragraph.dropCapLines ?? frameSpec.dropCapLines ?? 0);
+  const dropCapLines = finiteNonNegative(paragraph.dropCapLines ?? frameSpec.dropCapLines);
   if (lineIndex < dropCapLines) {
     const contentStart = paragraph.contentStart ?? paragraph.start;
     const firstCharacter = Array.from(sourceText.slice(contentStart, paragraph.end).trimStart())[0];
     if (firstCharacter) {
       const paragraphIndex = Math.max(0, sourceMetrics?.paragraphs?.indexOf(paragraph) ?? 0);
       const base = resolvedSourceSpec(contentStart, paragraphIndex, frameSpec, sourceMetrics);
-      const scaled = { ...base, fontSizePt: base.fontSizePt * Math.max(2, dropCapLines) };
-      const reserve = measure(firstCharacter, scaled) + ptToMm(scaled.fontSizePt * 0.08);
-      lineOffset += lineIndex === 0 ? Math.max(0, reserve - measure(firstCharacter, base)) : reserve;
+      const baseFontSizePt = finiteNonNegative(base.fontSizePt, 1);
+      const scaled = { ...base, fontSizePt: baseFontSizePt * Math.max(2, dropCapLines) };
+      const scaledWidth = measure(firstCharacter, scaled);
+      const baseWidth = measure(firstCharacter, base);
+      const reserve = Number.isFinite(scaledWidth) && scaledWidth >= 0
+        ? scaledWidth + ptToMm(scaled.fontSizePt * 0.08)
+        : safeBox.widthMm;
+      lineOffset += lineIndex === 0
+        ? Math.max(0, reserve - (Number.isFinite(baseWidth) && baseWidth >= 0 ? baseWidth : 0))
+        : reserve;
     }
   }
-  const xMm = box.xMm + left + lineOffset;
-  const widthMm = Math.max(0, box.widthMm - left - right - lineOffset);
+  const xMm = safeBox.xMm + left + lineOffset;
+  const widthMm = finiteNonNegative(safeBox.widthMm - left - right - lineOffset);
   return { xMm, widthMm };
 }

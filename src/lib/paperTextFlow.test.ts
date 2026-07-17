@@ -127,6 +127,144 @@ describe('flowPaperText', () => {
     ]);
   });
 
+  it.each([
+    '\n\nA',
+    'A\n\n',
+    'A\n\nB',
+    '\n\n',
+    '   ',
+  ])('owns every initial, terminal, middle, or blank-only paragraph in a fitting frame: %j', (text) => {
+    const result = flowPaperText(text, spec, [frame('only', col(0, 0, 100, 40))], measure);
+    expect(result.frames[0].sourceText).toBe(text);
+    expect(text.slice(result.frames[0].sourceStart, result.frames[0].sourceEnd)).toBe(text);
+    expect(result.fits).toBe(true);
+    expect(result.overset).toBe('');
+  });
+
+  it('skips one delimiter only between adjacent nonempty frame contributions', () => {
+    const text = 'A\n\nB';
+    const result = flowPaperText(
+      text,
+      spec,
+      [frame('head', col(0, 0, 100, 5)), frame('blank', col(0, 0, 100, 5)), frame('tail', col(0, 0, 100, 5))],
+      measure,
+    );
+    expect(result.frames.map((entry) => entry.sourceText)).toEqual(['A', '\n', '\nB']);
+    expect(result.frames.map((entry) => text.slice(entry.sourceStart, entry.sourceEnd))).toEqual(['A', '\n', '\nB']);
+  });
+
+  it.each([
+    { name: 'space before', paragraph: { start: 0, end: 1, spaceBeforeMm: 8 } },
+    { name: 'space after', paragraph: { start: 0, end: 1, spaceAfterMm: 8 } },
+    { name: 'border padding', paragraph: { start: 0, end: 1, borderPaddingMm: 4 } },
+  ])('rejects a horizontal paragraph whose $name exceeds the complete block capacity', ({ paragraph }) => {
+    const result = flowPaperText('A', spec, [frame('f', col(0, 0, 100, 5))], measure, [], {
+      paragraphs: [paragraph],
+    });
+    expect(result.frames[0].lines).toEqual([]);
+    expect(result.fits).toBe(false);
+    expect(result.overset).toBe('A');
+  });
+
+  it('reserves paragraph end geometry before accepting the final horizontal line', () => {
+    const leadingMm = (spec.leadingPt * 25.4) / 72;
+    const exact = flowPaperText('A', spec, [frame('exact', col(0, 0, 100, leadingMm + 2))], measure, [], {
+      paragraphs: [{ start: 0, end: 1, spaceAfterMm: 2 }],
+    });
+    const over = flowPaperText('A', spec, [frame('over', col(0, 0, 100, leadingMm + 2 - 0.001))], measure, [], {
+      paragraphs: [{ start: 0, end: 1, spaceAfterMm: 2 }],
+    });
+    expect(exact.fits).toBe(true);
+    expect(over.fits).toBe(false);
+    expect(over.frames[0].lines).toEqual([]);
+  });
+
+  it('accepts exact vertical start/end geometry and rejects a one-unit-over capacity', () => {
+    const leadingMm = (spec.leadingPt * 25.4) / 72;
+    const geometryMm = 2 + 3 + (2 * 1);
+    const metrics = { paragraphs: [{ start: 0, end: 1, spaceBeforeMm: 2, spaceAfterMm: 3, borderPaddingMm: 1 }] };
+    const exact = flowPaperText(
+      'A',
+      { ...spec, vertical: true },
+      [frame('exact', col(0, 0, leadingMm + geometryMm, 100))],
+      measure,
+      [],
+      metrics,
+    );
+    const over = flowPaperText(
+      'A',
+      { ...spec, vertical: true },
+      [frame('over', col(0, 0, leadingMm + geometryMm - 1, 100))],
+      measure,
+      [],
+      metrics,
+    );
+    expect(exact.fits).toBe(true);
+    expect(over.fits).toBe(false);
+    expect(over.frames[0].lines).toEqual([]);
+  });
+
+  it.each([
+    { name: 'space before', paragraph: { start: 0, end: 1, spaceBeforeMm: 8 } },
+    { name: 'space after', paragraph: { start: 0, end: 1, spaceAfterMm: 8 } },
+    { name: 'border padding', paragraph: { start: 0, end: 1, borderPaddingMm: 4 } },
+  ])('rejects a vertical paragraph whose $name exceeds the complete block capacity', ({ paragraph }) => {
+    const result = flowPaperText('A', { ...spec, vertical: true }, [frame('f', col(0, 0, 5, 100))], measure, [], {
+      paragraphs: [paragraph],
+    });
+    expect(result.frames[0].lines).toEqual([]);
+    expect(result.fits).toBe(false);
+  });
+
+  it.each([
+    { name: 'first-line indent', paragraph: { start: 0, end: 3, firstLineIndentMm: 2 } },
+    { name: 'left/right indents', paragraph: { start: 0, end: 3, leftIndentMm: 1, rightIndentMm: 1 } },
+    { name: 'hanging indent', paragraph: { start: 0, end: 3, leftIndentMm: 2, hangingIndentMm: 1 } },
+    { name: 'drop-cap reserve', paragraph: { start: 0, end: 3, contentStart: 0, dropCapLines: 2 } },
+  ])('applies $name to inline capacity in horizontal and vertical writing', ({ paragraph }) => {
+    const metrics = { paragraphs: [paragraph] };
+    const horizontal = flowPaperText('A B', spec, [frame('h', col(0, 0, 6, 20))], measure, [], metrics);
+    const vertical = flowPaperText('A B', { ...spec, vertical: true }, [frame('v', col(0, 0, 20, 6))], measure, [], metrics);
+    expect(horizontal.frames[0].lines[0]?.text).toBe('A');
+    expect(vertical.frames[0].lines[0]?.text).toBe('A');
+    for (const line of [...horizontal.frames[0].lines, ...vertical.frames[0].lines]) {
+      expect(Number.isFinite(line.widthMm)).toBe(true);
+      expect(line.widthMm).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('sanitizes non-finite/negative geometry without emitting a negative or NaN line metric', () => {
+    const metrics = {
+      paragraphs: [{
+        start: 0,
+        end: 3,
+        leftIndentMm: Number.NaN,
+        rightIndentMm: Number.POSITIVE_INFINITY,
+        firstLineIndentMm: Number.NEGATIVE_INFINITY,
+        borderPaddingMm: -4,
+        spaceBeforeMm: Number.NaN,
+        spaceAfterMm: -2,
+      }],
+    };
+    for (const vertical of [false, true]) {
+      const result = flowPaperText('A B', { ...spec, vertical }, [frame('f', col(0, 0, 20, 20))], measure, [], metrics);
+      expect(result.fits).toBe(true);
+      for (const line of result.frames[0].lines) {
+        expect(Number.isFinite(line.widthMm)).toBe(true);
+        expect(line.widthMm).toBeGreaterThanOrEqual(0);
+        expect(Number.isFinite(line.xMm)).toBe(true);
+        expect(Number.isFinite(line.yMm)).toBe(true);
+      }
+    }
+  });
+
+  it('makes no progress rather than publishing NaN width when a measurer is invalid', () => {
+    const result = flowPaperText('A', spec, [frame('f', col(0, 0, 20, 20))], () => Number.NaN);
+    expect(result.frames[0].lines).toEqual([]);
+    expect(result.fits).toBe(false);
+    expect(result.overset).toBe('A');
+  });
+
   it('right-aligns and centers lines using the measured width', () => {
     const right = flowPaperText('aa', { ...spec, align: 'right' }, [frame('f1', col(0, 0, 10, 12))], measure);
     expect(right.frames[0].lines[0].xMm).toBeCloseTo(10 - 4); // width 'aa' = 4mm, right edge 10
