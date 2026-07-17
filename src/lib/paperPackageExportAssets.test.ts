@@ -120,6 +120,20 @@ async function buildManagedDocument(overrides: {
   };
 }
 
+function expectManifestAndArchiveToAgree(
+  exported: Awaited<ReturnType<typeof buildPaperPackageExport>>,
+  entries: Record<string, Uint8Array>,
+): void {
+  const manifestPaths = exported.manifest.files.map((file) => file.path).sort();
+  expect(new Set(manifestPaths).size, 'every manifest member needs a unique archive path').toBe(manifestPaths.length);
+  expect(Object.keys(entries).sort()).toEqual(manifestPaths);
+  expect(exported.entries.slice().sort()).toEqual(manifestPaths);
+  for (const file of exported.manifest.files) {
+    expect(entries[file.path], `archive must contain ${file.path}`).toBeDefined();
+    expect(entries[file.path].byteLength, `${file.path} size must match the manifest`).toBe(file.bytes);
+  }
+}
+
 afterEach(async () => {
   await wipePaperAssetRepository();
 });
@@ -232,5 +246,114 @@ describe('paperPackageExport managed asset payloads (AUD-004)', () => {
     await expect(
       Promise.resolve().then(() => buildPaperPackageExport(document, [])),
     ).rejects.toThrow(new RegExp(refs.image.sha256.slice(0, 12)));
+  });
+
+  it('reserves a unique path when a crafted binary member name collides with link metadata', async () => {
+    const binary = await seedRecord(Uint8Array.from([123, 34, 125]), 'application/json', 'placed.json');
+    const base = createDefaultPaperDocument({ title: 'Binary/metadata collision' });
+    const first = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image',
+      xMm: 5,
+      yMm: 5,
+      widthMm: 20,
+      heightMm: 20,
+      asset: { label: 'Collision', kind: 'image', locator: { kind: 'managed', ref: binary } },
+    } as never).document;
+    const craftedLabel = `Collision-${binary.sha256.slice(0, 12)}`;
+    const { document } = addFrameToPaperPage(first, first.pages[0].id, {
+      kind: 'image',
+      xMm: 30,
+      yMm: 5,
+      widthMm: 20,
+      heightMm: 20,
+      asset: { sourceBinItemId: 'external-metadata', label: craftedLabel, kind: 'image' },
+    } as never);
+    const external: SourceBinLibraryItem = {
+      id: 'external-metadata',
+      label: craftedLabel,
+      kind: 'image',
+      mimeType: 'application/json',
+      assetUrl: 'https://example.test/external.json',
+      createdAt: 1,
+    } as SourceBinLibraryItem;
+
+    const exported = await buildPaperPackageExport(document, [external]);
+    const entries = unzipSync(new Uint8Array(await exported.blob.arrayBuffer()));
+
+    expect(exported.manifest.packagedAssets).toHaveLength(1);
+    expectManifestAndArchiveToAgree(exported, entries);
+  });
+
+  it('allocates distinct deterministic metadata paths for duplicate link labels', async () => {
+    const base = createDefaultPaperDocument({ title: 'Duplicate link labels' });
+    const first = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image',
+      xMm: 5,
+      yMm: 5,
+      widthMm: 20,
+      heightMm: 20,
+      asset: { sourceBinItemId: 'external-one', label: 'Repeated Link', kind: 'image' },
+    } as never).document;
+    const { document } = addFrameToPaperPage(first, first.pages[0].id, {
+      kind: 'image',
+      xMm: 30,
+      yMm: 5,
+      widthMm: 20,
+      heightMm: 20,
+      asset: { sourceBinItemId: 'external-two', label: 'Repeated Link', kind: 'image' },
+    } as never);
+    const sourceItems = ['external-one', 'external-two'].map((id) => ({
+      id,
+      label: 'Repeated Link',
+      kind: 'image',
+      mimeType: 'image/png',
+      assetUrl: `https://example.test/${id}.png`,
+      createdAt: 1,
+    } as SourceBinLibraryItem));
+
+    const firstExport = await buildPaperPackageExport(document, sourceItems);
+    const secondExport = await buildPaperPackageExport(document, sourceItems);
+    const entries = unzipSync(new Uint8Array(await firstExport.blob.arrayBuffer()));
+
+    expectManifestAndArchiveToAgree(firstExport, entries);
+    expect(firstExport.entries).toEqual(secondExport.entries);
+  });
+
+  it('bounds hostile labels so the ZIP remains self-contained and its paths stay safe', async () => {
+    const binary = await seedRecord(Uint8Array.from([1, 2, 3, 4]), 'image/png', 'art.png');
+    const hostileLabel = `  ../\\\u0000\u0001日本語/😀 ${'very-long-'.repeat(8_000)}  `;
+    const base = createDefaultPaperDocument({ title: hostileLabel });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image',
+      xMm: 5,
+      yMm: 5,
+      widthMm: 20,
+      heightMm: 20,
+      asset: { label: hostileLabel, kind: 'image', locator: { kind: 'managed', ref: binary } },
+    } as never);
+
+    const exported = await buildPaperPackageExport(document, []);
+    const entries = unzipSync(new Uint8Array(await exported.blob.arrayBuffer()));
+
+    expect(exported.mimeType).toBe('application/zip');
+    expect(exported.fileName).toMatch(/\.zip$/);
+    expectManifestAndArchiveToAgree(exported, entries);
+    for (const path of Object.keys(entries)) {
+      expect(new TextEncoder().encode(path).byteLength).toBeLessThanOrEqual(240);
+      expect([...path].some((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return character === '\\' || codePoint <= 0x1f || codePoint === 0x7f;
+      })).toBe(false);
+      expect(path.split('/')).not.toContain('..');
+    }
+  });
+
+  it('fails honestly when ZIP construction itself fails instead of returning a JSON package that claims embedded files', async () => {
+    const { document } = await buildManagedDocument();
+    const forcedZipFailure = {
+      zip: () => { throw new Error('forced ZIP failure'); },
+    } as unknown as Parameters<typeof buildPaperPackageExport>[2];
+
+    await expect(buildPaperPackageExport(document, [], forcedZipFailure)).rejects.toThrow(/no file was downloaded/i);
   });
 });

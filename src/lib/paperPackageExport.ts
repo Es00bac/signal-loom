@@ -70,7 +70,24 @@ export interface PaperPackageExport {
   entries: string[];
 }
 
+export interface PaperPackageExportOptions {
+  profileId?: PaperPreflightProfileId;
+  repository?: PaperAssetRepository;
+  /** Injectable only for platform/integration tests of ZIP failure handling. */
+  zip?: (entries: Record<string, Uint8Array>) => Uint8Array;
+}
+
+/** A package is never downgraded to a JSON inventory after a ZIP failure. */
+export class PaperPackageExportError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(`Paper print package: ${message}`, options);
+    this.name = 'PaperPackageExportError';
+  }
+}
+
 const FIXED_ENTRY_PATHS = ['document.sloom-paper.json', 'preflight-report.json', 'manifest.json'] as const;
+const MAX_PACKAGE_MEMBER_PATH_BYTES = 240;
+const MAX_PACKAGE_LABEL_BYTES = 96;
 
 const PACKAGE_MIME_EXTENSIONS: Readonly<Record<string, string>> = {
   'application/icc': 'icc',
@@ -113,6 +130,58 @@ function extensionForAsset(ref: { mimeType: string; fileName?: string }): string
 interface PackagedBinary {
   file: PaperPackagedAssetFile;
   bytes: Uint8Array;
+}
+
+interface PackageMemberPathRequest {
+  directory: string;
+  extension: string;
+  stem: string;
+  /** Stable identity used only to make collision suffixes deterministic. */
+  identity: string;
+}
+
+/**
+ * Allocates every ZIP member namespace (metadata and bytes alike) before the archive exists.
+ * The archive format's filename limit is much larger, but this conservative bound remains safe
+ * for common filesystem extractors and makes hostile labels incapable of forcing ZIP fallback.
+ */
+function allocatePackageMemberPaths(
+  requests: readonly PackageMemberPathRequest[],
+  reservedPaths: readonly string[] = FIXED_ENTRY_PATHS,
+): string[] {
+  const allocated = new Set(reservedPaths);
+  const results = new Array<string>(requests.length);
+  const ordered = requests.map((request, index) => ({ request, index })).sort((left, right) => (
+    left.request.identity.localeCompare(right.request.identity)
+    || left.request.directory.localeCompare(right.request.directory)
+    || left.request.stem.localeCompare(right.request.stem)
+    || left.request.extension.localeCompare(right.request.extension)
+    || left.index - right.index
+  ));
+
+  for (const { request, index } of ordered) {
+    let ordinal = 1;
+    let path = buildBoundedPackagePath(request, ordinal);
+    while (allocated.has(path)) {
+      ordinal += 1;
+      path = buildBoundedPackagePath(request, ordinal);
+    }
+    allocated.add(path);
+    results[index] = path;
+  }
+
+  return results;
+}
+
+function buildBoundedPackagePath(request: PackageMemberPathRequest, ordinal: number): string {
+  const extension = request.extension.replace(/[^a-z0-9]/gi, '').slice(0, 16) || 'bin';
+  const suffix = ordinal === 1 ? '' : `-${ordinal}`;
+  const fixedBytes = byteLength(`${request.directory}/.${extension}${suffix}`);
+  const maximumStemBytes = MAX_PACKAGE_MEMBER_PATH_BYTES - fixedBytes;
+  if (maximumStemBytes < 1) {
+    throw new PaperPackageExportError('internal path allocation exceeded the safe archive-path limit.');
+  }
+  return `${request.directory}/${truncateAscii(safePathPart(request.stem, MAX_PACKAGE_LABEL_BYTES), maximumStemBytes)}${suffix}.${extension}`;
 }
 
 function decodeSourceDataUrl(url: string): { bytes: Uint8Array; mimeType?: string } | undefined {
@@ -197,44 +266,12 @@ async function collectLinkedSourceBinaries(
 export async function buildPaperPackageExport(
   document: PaperDocument,
   sourceItems: SourceBinLibraryItem[] = [],
-  options: { profileId?: PaperPreflightProfileId; repository?: PaperAssetRepository } = {},
+  options: PaperPackageExportOptions = {},
 ): Promise<PaperPackageExport> {
   const repository = options.repository ?? paperAssetRepository;
   const { records } = await collectVerifiedPaperAssetRecords([document], repository, { strict: true });
   const managedIds = new Set(records.map((entry) => entry.record.ref.id));
   const linked = await collectLinkedSourceBinaries(document, sourceItems, managedIds);
-
-  const usedPaths = new Set<string>(FIXED_ENTRY_PATHS);
-  const packagedBinaries: PackagedBinary[] = [];
-  const addBinary = (record: BinaryAssetRecord, role: PaperPackagedAssetRole, label: string) => {
-    const directory = packageDirectoryForRole(role);
-    const extension = extensionForAsset(record.ref);
-    let path = `${directory}/${safePathPart(label)}-${record.ref.sha256.slice(0, 12)}.${extension}`;
-    if (usedPaths.has(path)) {
-      path = `${directory}/${safePathPart(label)}-${record.ref.sha256}.${extension}`;
-    }
-    usedPaths.add(path);
-    packagedBinaries.push({
-      file: {
-        path,
-        role,
-        label,
-        sha256: record.ref.sha256,
-        byteLength: record.ref.byteLength,
-        mimeType: record.ref.mimeType,
-        ...(record.ref.fileName ? { fileName: record.ref.fileName } : {}),
-      },
-      bytes: record.bytes,
-    });
-  };
-  for (const { record, source } of records) {
-    addBinary(record, source.role, source.label);
-  }
-  for (const { record, label } of linked.binaries) {
-    addBinary(record, 'linked-source', label);
-  }
-  packagedBinaries.sort((left, right) => left.file.path.localeCompare(right.file.path));
-  const packagedAssets = packagedBinaries.map((entry) => entry.file);
 
   const documentJson = serializePaperDocument(document);
   const preflightReport = analyzePaperPreflight(document, sourceItems, options.profileId);
@@ -242,19 +279,55 @@ export async function buildPaperPackageExport(
   const fonts = collectPaperFontInventory(document);
   const colors = collectPaperColorInventory(document);
   const production = buildPaperPrintProductionMetadata(document);
-  const assetFiles = linkedAssets.map((asset) => {
+  const metadataMembers = linkedAssets.map((asset) => {
     const source = packageSourceMetadata(sourceItems.find((item) => item.id === asset.sourceId));
     return {
-      path: `Links/${safePathPart(asset.sourceLabel)}.json`,
       type: 'linked-asset-metadata',
-      bytes: jsonBytes(source ?? asset),
       source,
       asset,
+      json: packageJson({ source, asset }),
     };
   });
+  const binaryMembers = [
+    ...records.map(({ record, source }) => ({ record, role: source.role, label: source.label })),
+    ...linked.binaries.map(({ record, label }) => ({ record, role: 'linked-source' as const, label })),
+  ];
+  const memberRequests: PackageMemberPathRequest[] = [
+    ...metadataMembers.map((member) => ({
+      directory: 'Links',
+      extension: 'json',
+      stem: member.asset.sourceLabel,
+      identity: `metadata:${member.asset.id}`,
+    })),
+    ...binaryMembers.map((member) => ({
+      directory: packageDirectoryForRole(member.role),
+      extension: extensionForAsset(member.record.ref),
+      stem: `${safePathPart(member.label)}-${member.record.ref.sha256.slice(0, 12)}`,
+      identity: `binary:${member.role}:${member.record.ref.id}`,
+    })),
+  ];
+  const allocatedPaths = allocatePackageMemberPaths(memberRequests);
+  const assetFiles = metadataMembers.map((member, index) => ({
+    ...member,
+    path: allocatedPaths[index],
+    bytes: byteLength(member.json),
+  })).sort((left, right) => left.path.localeCompare(right.path));
+  const packagedBinaries: PackagedBinary[] = binaryMembers.map((member, index) => ({
+    file: {
+      path: allocatedPaths[metadataMembers.length + index],
+      role: member.role,
+      label: member.label,
+      sha256: member.record.ref.sha256,
+      byteLength: member.record.ref.byteLength,
+      mimeType: member.record.ref.mimeType,
+      ...(member.record.ref.fileName ? { fileName: member.record.ref.fileName } : {}),
+    },
+    bytes: member.record.bytes,
+  })).sort((left, right) => left.file.path.localeCompare(right.file.path));
+  const packagedAssets = packagedBinaries.map((entry) => entry.file);
   const files = [
     { path: 'document.sloom-paper.json', type: 'document', bytes: byteLength(documentJson) },
-    { path: 'preflight-report.json', type: 'preflight', bytes: jsonBytes(preflightReport) },
+    { path: 'preflight-report.json', type: 'preflight', bytes: byteLength(packageJson(preflightReport)) },
     { path: 'manifest.json', type: 'manifest', bytes: 0 },
     ...assetFiles.map(({ path, type, bytes }) => ({ path, type, bytes })),
     ...packagedAssets.map((asset) => ({ path: asset.path, type: asset.role, bytes: asset.byteLength })),
@@ -274,7 +347,7 @@ export async function buildPaperPackageExport(
     colors,
     production,
   };
-  manifest.files = manifest.files.map((file) => file.path === 'manifest.json' ? { ...file, bytes: jsonBytes(manifest) } : file);
+  const manifestJson = finalizeManifestJson(manifest);
   const bundle = {
     manifest,
     document: JSON.parse(documentJson) as PaperDocument,
@@ -289,38 +362,34 @@ export async function buildPaperPackageExport(
   const fallbackJsonFileName = `${safePathPart(document.title || 'paper-document')}.sloom-paper-package.json`;
   const zipEntries: Record<string, Uint8Array> = {
     'document.sloom-paper.json': strToU8(documentJson),
-    'preflight-report.json': strToU8(`${JSON.stringify(preflightReport, null, 2)}\n`),
-    'manifest.json': strToU8(`${JSON.stringify(manifest, null, 2)}\n`),
+    'preflight-report.json': strToU8(packageJson(preflightReport)),
+    'manifest.json': strToU8(manifestJson),
   };
-  for (const assetFile of [...assetFiles].sort((left, right) => left.path.localeCompare(right.path))) {
-    zipEntries[assetFile.path] = strToU8(`${JSON.stringify({ source: assetFile.source, asset: assetFile.asset }, null, 2)}\n`);
+  for (const assetFile of assetFiles) {
+    zipEntries[assetFile.path] = strToU8(assetFile.json);
   }
   for (const binary of packagedBinaries) {
     zipEntries[binary.file.path] = binary.bytes;
   }
+  assertManifestMatchesArchive(manifest, zipEntries);
+  let zipped: Uint8Array;
   try {
-    const zipped = zipSync(zipEntries);
-    return {
-      fileName: `${safePathPart(document.title || 'paper-document')}.sloom-paper-package.zip`,
-      mimeType: 'application/zip',
-      manifest,
-      blob: new Blob([zipped], { type: 'application/zip' }),
-      json,
-      fallbackJsonFileName,
-      entries: Object.keys(zipEntries),
-    };
-  } catch {
-    return {
-      fileName: fallbackJsonFileName,
-      mimeType: 'application/json',
-      manifest,
-      blob: new Blob([json], { type: 'application/json' }),
-      json,
-      fallbackJsonFileName,
-      entries: [],
-    };
+    zipped = (options.zip ?? zipSync)(zipEntries);
+  } catch (error) {
+    throw new PaperPackageExportError(
+      'could not create the self-contained ZIP; no file was downloaded. Remove or re-import the affected assets and try again.',
+      { cause: error },
+    );
   }
-
+  return {
+    fileName: `${safePathPart(document.title || 'paper-document')}.sloom-paper-package.zip`,
+    mimeType: 'application/zip',
+    manifest,
+    blob: new Blob([zipped], { type: 'application/zip' }),
+    json,
+    fallbackJsonFileName,
+    entries: Object.keys(zipEntries),
+  };
 }
 
 /** Package metadata may name a durable Source Library URL, but never serializes runtime bytes. */
@@ -333,12 +402,57 @@ function packageSourceMetadata(source: SourceBinLibraryItem | undefined): Source
   return metadata;
 }
 
-function safePathPart(value: string): string {
-  return value.trim().replace(/[/\\?%*:|"<>]+/g, '-').replace(/\s+/g, '-').replace(/[^a-z0-9._-]+/gi, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '') || 'paper-document';
+function safePathPart(value: string, maximumBytes = MAX_PACKAGE_LABEL_BYTES): string {
+  const normalized = value.normalize('NFKC').trim();
+  const sanitized = replaceAsciiControls(normalized)
+    .replace(/[/\\?%*:|"<>]+/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9._-]+/gi, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  const bounded = truncateAscii(sanitized, maximumBytes).replace(/[-.]+$/g, '');
+  return bounded && bounded !== '.' && bounded !== '..' ? bounded : 'paper-document';
 }
 
-function jsonBytes(value: unknown): number {
-  return byteLength(JSON.stringify(value));
+function replaceAsciiControls(value: string): string {
+  return [...value].map((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f ? '-' : character;
+  }).join('');
+}
+
+function truncateAscii(value: string, maximumBytes: number): string {
+  return value.slice(0, Math.max(0, maximumBytes));
+}
+
+function packageJson(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function finalizeManifestJson(manifest: PaperPackageManifest): string {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const json = packageJson(manifest);
+    const bytes = byteLength(json);
+    const manifestFile = manifest.files.find((file) => file.path === 'manifest.json');
+    if (!manifestFile) throw new PaperPackageExportError('internal manifest construction omitted manifest.json.');
+    if (manifestFile.bytes === bytes) return json;
+    manifestFile.bytes = bytes;
+  }
+  throw new PaperPackageExportError('internal manifest size did not stabilize.');
+}
+
+function assertManifestMatchesArchive(manifest: PaperPackageManifest, entries: Record<string, Uint8Array>): void {
+  const manifestPaths = manifest.files.map((file) => file.path).sort();
+  const archivePaths = Object.keys(entries).sort();
+  if (new Set(manifestPaths).size !== manifestPaths.length || manifestPaths.join('\n') !== archivePaths.join('\n')) {
+    throw new PaperPackageExportError('internal manifest and archive member lists disagree; no file was downloaded.');
+  }
+  for (const file of manifest.files) {
+    const bytes = entries[file.path];
+    if (!bytes || bytes.byteLength !== file.bytes) {
+      throw new PaperPackageExportError(`internal archive member "${file.path}" does not match its manifest size; no file was downloaded.`);
+    }
+  }
 }
 
 function byteLength(value: string): number {
