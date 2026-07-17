@@ -2643,6 +2643,10 @@ export const useFlowStore = create<FlowState>()(
           result: selectedAttempt.result,
           resultType: selectedAttempt.resultType,
           usage: selectedAttempt.usage,
+          resultMimeType: selectedAttempt.mimeType,
+          resultExtension: selectedAttempt.extension,
+          resultFileName: selectedAttempt.fileName,
+          resultOutputMetadata: selectedAttempt.outputMetadata,
           statusMessage: selectedAttempt.statusMessage,
           error: undefined,
         });

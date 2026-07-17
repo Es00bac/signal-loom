@@ -679,6 +679,53 @@ function optionalString(value) {
   return typeof value === 'string' ? value : undefined;
 }
 
+function optionalNonBlankString(value) {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function sanitizeUsage(value) {
+  if (!isObject(value) || !VALID_USAGE_SOURCES.has(value.source) || !VALID_USAGE_CONFIDENCE.has(value.confidence)) {
+    return undefined;
+  }
+  const notes = Array.isArray(value.notes)
+    ? value.notes.filter((note) => typeof note === 'string' && note.trim())
+    : undefined;
+  return {
+    source: value.source,
+    confidence: value.confidence,
+    provider: optionalNonBlankString(value.provider),
+    modelId: optionalNonBlankString(value.modelId),
+    costUsd: finiteOr(value.costUsd, undefined),
+    inputTokens: finiteOr(value.inputTokens, undefined),
+    outputTokens: finiteOr(value.outputTokens, undefined),
+    totalTokens: finiteOr(value.totalTokens, undefined),
+    characters: finiteOr(value.characters, undefined),
+    durationSeconds: finiteOr(value.durationSeconds, undefined),
+    imageCount: finiteOr(value.imageCount, undefined),
+    notes: notes && notes.length > 0 ? notes : undefined,
+  };
+}
+
+function sanitizeMetadataValue(value, depth = 0) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (depth >= 12) return undefined;
+  if (Array.isArray(value)) {
+    const items = value.map((item) => sanitizeMetadataValue(item, depth + 1));
+    return items.every((item) => item !== undefined) ? items : undefined;
+  }
+  if (!isObject(value)) return undefined;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return undefined;
+  const entries = Object.entries(value).map(([key, item]) => [key, sanitizeMetadataValue(item, depth + 1)]);
+  return entries.every(([, item]) => item !== undefined) ? Object.fromEntries(entries) : undefined;
+}
+
+function sanitizeOutputMetadata(value) {
+  const sanitized = sanitizeMetadataValue(value);
+  return sanitized && !Array.isArray(sanitized) && typeof sanitized === 'object' ? sanitized : undefined;
+}
+
 function sanitizeResultHistory(value) {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) return [];
@@ -696,7 +743,13 @@ function sanitizeResultHistory(value) {
       resultType: attempt.resultType,
       statusMessage: stringOr(attempt.statusMessage, 'Restored result'),
       createdAt: stringOr(attempt.createdAt, new Date(0).toISOString()),
-      usage: isObject(attempt.usage) ? attempt.usage : undefined,
+      usage: sanitizeUsage(attempt.usage),
+      mimeType: optionalNonBlankString(attempt.mimeType),
+      extension: optionalNonBlankString(attempt.extension),
+      fileName: optionalNonBlankString(attempt.fileName),
+      outputMetadata: sanitizeOutputMetadata(attempt.outputMetadata),
+      variableName: optionalNonBlankString(attempt.variableName),
+      sourceBinItemId: optionalNonBlankString(attempt.sourceBinItemId),
     }];
   });
 }
@@ -719,6 +772,10 @@ function restoreSelectedResultFromHistory(data, history) {
   data.result = active.result;
   data.resultType = active.resultType;
   data.usage = active.usage;
+  data.resultMimeType = active.mimeType;
+  data.resultExtension = active.extension;
+  data.resultFileName = active.fileName;
+  data.resultOutputMetadata = active.outputMetadata;
 }
 
 function sanitizeNodeData(value, nodeType) {

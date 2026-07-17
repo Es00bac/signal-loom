@@ -5,6 +5,10 @@ interface AttemptPayload {
   resultType: ResultType;
   statusMessage: string;
   usage?: UsageTelemetry;
+  mimeType?: string;
+  extension?: string;
+  fileName?: string;
+  outputMetadata?: Record<string, unknown>;
   sourceBinItemId?: string;
 }
 
@@ -19,6 +23,10 @@ export function appendResultAttempt(
     statusMessage: payload.statusMessage,
     createdAt: new Date().toISOString(),
     usage: payload.usage,
+    mimeType: payload.mimeType,
+    extension: payload.extension,
+    fileName: payload.fileName,
+    outputMetadata: payload.outputMetadata,
     sourceBinItemId: payload.sourceBinItemId,
   };
 

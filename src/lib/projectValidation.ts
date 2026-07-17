@@ -2,7 +2,7 @@ import type { Edge } from '@xyflow/react';
 import type { EditorWorkspaceSnapshot } from '../store/editorStore';
 import type { ImageEditorProjectSnapshot } from '../store/imageEditorStore';
 import type { SourceBinLibraryItem, SourceBinProjectSnapshot } from '../store/sourceBinStore';
-import type { AppNode, EditorSourceKind, EnvelopeItem, NodeData, NodeResultAttempt, ResultType, WorkspaceView } from '../types/flow';
+import type { AppNode, EditorSourceKind, EnvelopeItem, NodeData, NodeResultAttempt, ResultType, UsageTelemetry, WorkspaceView } from '../types/flow';
 import type {
   PaperDocumentSnapshot,
   PaperQuarantinedDocumentRecovery,
@@ -92,6 +92,58 @@ function optionalNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+function optionalNonBlankString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function sanitizeUsage(value: unknown): UsageTelemetry | undefined {
+  if (!isRecord(value) || (value.source !== 'actual' && value.source !== 'estimate')) return undefined;
+  if (!['measured', 'heuristic', 'fixed', 'unknown'].includes(String(value.confidence))) return undefined;
+  const notes = Array.isArray(value.notes)
+    ? value.notes.filter((note): note is string => typeof note === 'string' && Boolean(note.trim()))
+    : undefined;
+  return {
+    source: value.source,
+    confidence: value.confidence as UsageTelemetry['confidence'],
+    provider: optionalNonBlankString(value.provider),
+    modelId: optionalNonBlankString(value.modelId),
+    costUsd: optionalNumber(value.costUsd),
+    inputTokens: optionalNumber(value.inputTokens),
+    outputTokens: optionalNumber(value.outputTokens),
+    totalTokens: optionalNumber(value.totalTokens),
+    characters: optionalNumber(value.characters),
+    durationSeconds: optionalNumber(value.durationSeconds),
+    imageCount: optionalNumber(value.imageCount),
+    notes: notes && notes.length > 0 ? notes : undefined,
+  };
+}
+
+type SafeMetadataValue = string | number | boolean | null | SafeMetadataValue[] | { [key: string]: SafeMetadataValue };
+
+function sanitizeMetadataValue(value: unknown, depth = 0): SafeMetadataValue | undefined {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (depth >= 12) return undefined;
+  if (Array.isArray(value)) {
+    const items = value.map((item) => sanitizeMetadataValue(item, depth + 1));
+    return items.every((item) => item !== undefined) ? items as SafeMetadataValue[] : undefined;
+  }
+  if (!isRecord(value) || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) {
+    return undefined;
+  }
+  const entries = Object.entries(value).map(([key, item]) => [key, sanitizeMetadataValue(item, depth + 1)] as const);
+  return entries.every(([, item]) => item !== undefined)
+    ? Object.fromEntries(entries) as { [key: string]: SafeMetadataValue }
+    : undefined;
+}
+
+function sanitizeOutputMetadata(value: unknown): Record<string, unknown> | undefined {
+  const sanitized = sanitizeMetadataValue(value);
+  return sanitized && !Array.isArray(sanitized) && typeof sanitized === 'object'
+    ? sanitized as Record<string, unknown>
+    : undefined;
+}
+
 function sanitizeResultHistory(value: unknown): NodeResultAttempt[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) return [];
@@ -113,7 +165,13 @@ function sanitizeResultHistory(value: unknown): NodeResultAttempt[] | undefined 
       resultType: resultType as ResultType,
       statusMessage: stringValue(attempt.statusMessage, 'Restored result'),
       createdAt: stringValue(attempt.createdAt, new Date(0).toISOString()),
-      usage: isRecord(attempt.usage) ? attempt.usage as unknown as NodeResultAttempt['usage'] : undefined,
+      usage: sanitizeUsage(attempt.usage),
+      mimeType: optionalNonBlankString(attempt.mimeType),
+      extension: optionalNonBlankString(attempt.extension),
+      fileName: optionalNonBlankString(attempt.fileName),
+      outputMetadata: sanitizeOutputMetadata(attempt.outputMetadata),
+      variableName: optionalNonBlankString(attempt.variableName),
+      sourceBinItemId: optionalNonBlankString(attempt.sourceBinItemId),
     }];
   });
 }
@@ -189,6 +247,10 @@ function restoreSelectedResultFromHistory(data: NodeData, history: NodeResultAtt
   data.result = selected.result;
   data.resultType = selected.resultType;
   data.usage = selected.usage;
+  data.resultMimeType = selected.mimeType;
+  data.resultExtension = selected.extension;
+  data.resultFileName = selected.fileName;
+  data.resultOutputMetadata = selected.outputMetadata;
 }
 
 function sanitizeNodeData(value: unknown): NodeData {

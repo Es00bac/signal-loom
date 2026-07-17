@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CURRENT_PROJECT_SCHEMA_VERSION, FLOW_NODE_TYPES } from './projectSchema';
 import { sanitizeProjectDocument } from './projectValidation';
+import { collectFlowVariableBindings, resolveFlowVariablesInText } from './flowVariables';
+import { resolveLiveNodeResultAssetUrl } from '../components/Nodes/useLiveNodeResultAssetUrl';
 
 interface ElectronProjectFilesModule {
   CURRENT_PROJECT_SCHEMA_VERSION: number;
@@ -859,6 +861,72 @@ describe('Electron project file helpers', () => {
     const electron = parseProjectDocumentJson(JSON.stringify(raw)) as typeof renderer;
 
     expect(electron.flow.nodes).toEqual(renderer.flow.nodes);
+  });
+
+  it('round-trips selected Boolean and media attempts with validated metadata, variables, and Source Bin linkage', async () => {
+    const { parseProjectDocumentJson } = await loadProjectFilesModule();
+    const raw = {
+      id: 'attempts', name: 'Attempt metadata', savedAt: 1,
+      flow: { version: 3, nodes: [
+        {
+          id: 'verify', type: 'visionVerifyNode', position: { x: 0, y: 0 }, data: {
+            selectedResultId: 'false',
+            resultHistory: [{
+              id: 'false', result: false, resultType: 'boolean', statusMessage: 'Verified: FALSE',
+              createdAt: '2026-07-16T00:00:00.000Z', variableName: 'verified', sourceBinItemId: 'boolean-source',
+              usage: { source: 'actual', confidence: 'measured', provider: 'gemini', totalTokens: 12, ignored: { unsafe: true } },
+            }],
+          },
+        },
+        {
+          id: 'image', type: 'imageGen', position: { x: 1, y: 0 }, data: {
+            selectedResultId: 'image-run',
+            resultHistory: [{
+              id: 'image-run', result: 'data:image/png;base64,ART', resultType: 'image', statusMessage: 'Generated',
+              createdAt: '2026-07-16T00:01:00.000Z', variableName: 'hero_art', sourceBinItemId: 'source-image-1',
+              mimeType: 'image/png', extension: 'png', fileName: 'hero.png',
+              outputMetadata: { width: 1024, crop: { x: 0, y: 0 }, flags: [true, null] },
+              usage: { source: 'actual', confidence: 'measured', provider: 'gemini', imageCount: 1 },
+            }, {
+              id: 'bad-metadata', result: 'data:image/png;base64,BAD', resultType: 'image', statusMessage: 'Bad metadata',
+              createdAt: '2026-07-16T00:02:00.000Z', outputMetadata: 'not-an-object', variableName: 42,
+            }],
+          },
+        },
+      ], edges: [] },
+    };
+    const renderer = sanitizeProjectDocument(raw);
+    const electron = parseProjectDocumentJson(JSON.stringify(raw)) as typeof renderer;
+
+    expect(electron.flow.nodes).toEqual(renderer.flow.nodes);
+    const verify = renderer.flow.nodes.find((node) => node.id === 'verify')!;
+    const image = renderer.flow.nodes.find((node) => node.id === 'image')!;
+    expect(verify.data).toMatchObject({ result: false, resultType: 'boolean', selectedResultId: 'false' });
+    expect(image.data).toMatchObject({
+      result: 'data:image/png;base64,ART', resultType: 'image', selectedResultId: 'image-run',
+      resultMimeType: 'image/png', resultExtension: 'png', resultFileName: 'hero.png',
+      resultOutputMetadata: { width: 1024, crop: { x: 0, y: 0 }, flags: [true, null] },
+    });
+    expect(image.data.resultHistory?.[0]).toMatchObject({ variableName: 'hero_art', sourceBinItemId: 'source-image-1' });
+    expect(image.data.resultHistory?.[1]).toMatchObject({ outputMetadata: undefined, variableName: undefined });
+    expect(image.data.resultHistory?.[0]?.usage).toEqual({
+      source: 'actual', confidence: 'measured', provider: 'gemini', modelId: undefined,
+      costUsd: undefined, inputTokens: undefined, outputTokens: undefined, totalTokens: undefined,
+      characters: undefined, durationSeconds: undefined, imageCount: 1, notes: undefined,
+    });
+
+    expect(resolveFlowVariablesInText('{{verified}} / {{hero_art}}', renderer.flow.nodes, []).text)
+      .toBe('false / data:image/png;base64,ART');
+    expect(collectFlowVariableBindings(renderer.flow.nodes, []).map((binding) => binding.name))
+      .toEqual(expect.arrayContaining(['verified', 'hero_art']));
+    expect(resolveLiveNodeResultAssetUrl([
+      { id: 'source-image-1', label: 'Hero art', kind: 'image', mimeType: 'image/png', createdAt: 1, assetUrl: 'data:image/png;base64,RESTORED' },
+    ], {
+      nodeId: image.id,
+      enabled: true,
+      resultSourceBinItemId: image.data.resultHistory?.[0]?.sourceBinItemId,
+      servedSession: false,
+    })).toBe('data:image/png;base64,RESTORED');
   });
 
   it('preserves Paper page-import envelopes and linked page frames while parsing native project documents', async () => {

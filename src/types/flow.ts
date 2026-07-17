@@ -747,6 +747,11 @@ export interface NodeResultAttempt {
   statusMessage: string;
   createdAt: string;
   usage?: UsageTelemetry;
+  /** Output descriptors travel with each run so selecting an older media result restores its export details. */
+  mimeType?: string;
+  extension?: string;
+  fileName?: string;
+  outputMetadata?: Record<string, unknown>;
   variableName?: string;
   /**
    * The source-bin item id backing this attempt's asset, when the result was stored in the source bin.

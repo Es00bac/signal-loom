@@ -132,6 +132,55 @@ describe('backend proxy node execution with client-side auto-upscale', () => {
     expect(typeof result.result).toBe('boolean');
   });
 
+  it.each([
+    ['true\nIt matches.', true],
+    [' FaLsE \nIt does not match.', false],
+  ])('accepts a strict string decision through the proxy: %s', async (decision, expected) => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ result: decision, resultType: 'boolean' })));
+
+    await expect(executeNodeRequest(
+      proxiedVisionVerifyNode(),
+      { prompt: 'check', editImageInput: 'data:image/png;base64,AA==', config: DEFAULT_EXECUTION_CONFIG },
+      proxySettings(),
+    )).resolves.toMatchObject({ result: expected, resultType: 'boolean' });
+  });
+
+  it.each([
+    ['', 'empty'],
+    ['maybe', 'unknown token'],
+    ['untrue', 'embedded token'],
+    ['true false', 'contradictory true-first line'],
+    ['false true', 'contradictory false-first line'],
+    [undefined, 'missing result'],
+    [null, 'null result'],
+    [42, 'numeric result'],
+    [{ decision: true }, 'object result'],
+  ])('rejects malformed proxied Vision Verify responses without resubmitting: %s', async (result) => {
+    const fetchMock = vi.fn(async () => jsonResponse({ result, resultType: 'boolean' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(executeNodeRequest(
+      proxiedVisionVerifyNode(),
+      { prompt: 'check', editImageInput: 'data:image/png;base64,AA==', config: DEFAULT_EXECUTION_CONFIG },
+      proxySettings({ batchMaxRetries: 2 }),
+    )).rejects.toBeInstanceOf(NonRetryableError);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects proxied Vision Verify result/type mismatches and explicit provider rejections', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ result: true, resultType: 'text' }))
+      .mockResolvedValueOnce(jsonResponse({ result: true, resultType: 'boolean', error: 'provider rejected the request' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const context = { prompt: 'check', editImageInput: 'data:image/png;base64,AA==', config: DEFAULT_EXECUTION_CONFIG };
+    const retryingSettings = proxySettings({ batchMaxRetries: 2 });
+
+    await expect(executeNodeRequest(proxiedVisionVerifyNode(), context, retryingSettings)).rejects.toBeInstanceOf(NonRetryableError);
+    await expect(executeNodeRequest(proxiedVisionVerifyNode(), context, retryingSettings)).rejects.toBeInstanceOf(NonRetryableError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('applies the Android accelerator upscale on the client after the proxy returns, without forwarding the token', async () => {
     const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
       void _init;

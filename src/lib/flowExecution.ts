@@ -579,18 +579,15 @@ async function executeNodeViaBackendProxy(
   }
 
   const payload = await response.json() as Partial<ExecutionResult> & { error?: string };
-
-  if (payload.error) {
-    throw new Error(payload.error);
-  }
-
   const payloadResult = payload.result;
-  const acceptsBooleanResult = node.type === 'visionVerifyNode' && typeof payloadResult === 'boolean';
-  if ((typeof payloadResult !== 'string' && !acceptsBooleanResult) || typeof payload.resultType !== 'string') {
-    throw new Error('Backend proxy returned an invalid execution payload.');
-  }
 
   if (node.type === 'visionVerifyNode') {
+    if (payload.error) {
+      throw new NonRetryableError(`Vision Verify provider rejected the request: ${payload.error}`);
+    }
+    if (payload.resultType !== 'boolean') {
+      throw new NonRetryableError('Backend proxy returned a Vision Verify result with a non-Boolean result type.');
+    }
     const verification = parseVisionVerificationResponse(payloadResult);
     const existingNotes = payload.usage?.notes ?? [];
     return {
@@ -606,6 +603,14 @@ async function executeNodeViaBackendProxy(
           : existingNotes,
       },
     };
+  }
+
+  if (payload.error) {
+    throw new Error(payload.error);
+  }
+
+  if (typeof payloadResult !== 'string' || typeof payload.resultType !== 'string') {
+    throw new Error('Backend proxy returned an invalid execution payload.');
   }
 
   return {
@@ -693,7 +698,7 @@ async function executeVisionVerifyNode(
         config: {},
       }),
       label: 'Vertex Gemini vision verification',
-    })).trim() || 'false\nNo response received.';
+    }));
     const verification = parseVisionVerificationResponse(responseText);
 
     return {
@@ -723,8 +728,7 @@ async function executeVisionVerifyNode(
     contents: geminiParts,
   });
 
-  const responseText = response.text?.trim() ?? 'false\nNo response received.';
-  const verification = parseVisionVerificationResponse(responseText);
+  const verification = parseVisionVerificationResponse(response.text);
 
   return {
     result: verification.value,
@@ -747,16 +751,35 @@ async function executeVisionVerifyNode(
  * explanation after it. Keep that provider parsing contract, but turn the
  * decision into the actual Boolean carried by the Flow port.
  */
-function parseVisionVerificationResponse(response: string | boolean): { value: boolean; explanation: string } {
+export function parseVisionVerificationResponse(response: unknown): { value: boolean; explanation: string } {
   if (typeof response === 'boolean') {
     return { value: response, explanation: '' };
   }
 
-  const lines = response.split('\n');
-  const decision = lines[0]?.toLowerCase().includes('true') ?? false;
+  if (typeof response !== 'string') {
+    throw new NonRetryableError('Vision Verify returned no Boolean decision.');
+  }
+
+  const trimmed = response.trim();
+  if (!trimmed) {
+    throw new NonRetryableError('Vision Verify returned an empty Boolean decision.');
+  }
+
+  const lines = trimmed.split(/\r?\n/);
+  const decisionLine = lines[0]?.trim() ?? '';
+  if (!/^(true|false)$/i.test(decisionLine)) {
+    throw new NonRetryableError('Vision Verify returned an invalid Boolean decision. Expected exactly true or false on the first decision line.');
+  }
+
+  // A later standalone decision is not an explanation. Reject it rather than
+  // silently accepting a contradictory provider response after a paid call.
+  if (lines.slice(1).some((line) => /^(true|false)$/i.test(line.trim()))) {
+    throw new NonRetryableError('Vision Verify returned contradictory Boolean decisions.');
+  }
+
   return {
-    value: decision,
-    explanation: lines.slice(1).join('\n').trim() || lines[0] || 'No response received.',
+    value: decisionLine.toLowerCase() === 'true',
+    explanation: lines.slice(1).join('\n').trim(),
   };
 }
 
@@ -2773,11 +2796,11 @@ async function executeVertexGeminiTextContent(input: {
   });
 
   if (result.error) {
-    throw new Error(result.error);
+    throw new NonRetryableError(result.error);
   }
 
-  if (!result.text?.trim()) {
-    throw new Error('Vertex AI returned no text content.');
+  if (typeof result.text !== 'string' || !result.text.trim()) {
+    throw new NonRetryableError('Vertex AI returned no text content.');
   }
 
   return result.text.trim();
