@@ -65,6 +65,7 @@ type ApiKeyStorageDescriptorMap = {
 
 const API_KEY_REDACTION = '[redacted]';
 const SETTINGS_STORAGE_KEY = 'flow-settings-storage';
+const SETTINGS_WRITE_VERSION_SUFFIX = ':write-version';
 const LOCAL_STORAGE_CAVEAT = 'API keys are stored in browser localStorage without at-rest encryption in this app.';
 const MEMORY_ONLY_CAVEAT = 'API keys are currently not persisted to browser storage in this session.';
 const ENCRYPTED_CAVEAT = 'API keys are encrypted at rest (the OS keychain on desktop, WebCrypto on web and mobile) and only decrypted in memory while the app is open.';
@@ -332,13 +333,16 @@ function createEncryptedSettingsStorage(): StateStorage {
   };
   return {
     getItem: async (name) => {
+      const hydrationRead = takeNextHydrationRead();
       const store = backing();
       if (!store) return null;
       const raw = store.getItem(name);
       if (raw == null) return null;
       if (isEncryptedSecretEnvelope(raw)) {
         // null => can't decrypt (e.g. profile copied to another machine) -> hydrate from defaults.
-        return await decryptSecret(raw);
+        const plaintext = await decryptSecret(raw);
+        recordHydrationSnapshotVersion(hydrationRead, plaintext);
+        return plaintext;
       }
       // Legacy plaintext from before encryption shipped: use it, then re-write it encrypted.
       void encryptSecret(raw).then((envelope) => {
@@ -348,6 +352,7 @@ function createEncryptedSettingsStorage(): StateStorage {
           /* ignore */
         }
       });
+      recordHydrationSnapshotVersion(hydrationRead, raw);
       return raw;
     },
     setItem: (name, value) => {
@@ -359,17 +364,28 @@ function createEncryptedSettingsStorage(): StateStorage {
       if (broadcastAfterWrite) {
         licenseSyncBroadcastArmed = false;
       }
+      const storeAtEnqueue = backing();
+      const writeVersion = reserveSettingsWriteVersion(storeAtEnqueue, name);
+      const localMutationWrite = takePendingLocalMutationWrite(writeVersion);
+      const versionedValue = stampSettingsWriteVersion(value, writeVersion);
       const write = pendingSettingsWrite.then(async () => {
         const store = backing();
-        if (store) {
+        let didPersist = false;
+        if (store && isLatestSettingsWriteVersion(store, name, writeVersion)) {
           try {
-            const envelope = await encryptSecret(value);
-            store.setItem(name, envelope);
+            const envelope = await encryptSecret(versionedValue);
+            // A different renderer can reserve a newer write while this renderer encrypts.
+            // Never let this older completion replace that durable intent.
+            if (isLatestSettingsWriteVersion(store, name, writeVersion)) {
+              store.setItem(name, envelope);
+              didPersist = true;
+            }
           } catch {
             /* encryption / quota / availability */
           }
         }
-        if (broadcastAfterWrite) {
+        settleLocalMutationWrite(localMutationWrite, didPersist);
+        if (broadcastAfterWrite && didPersist) {
           postLicenseSyncBroadcast();
         }
       });
@@ -414,28 +430,122 @@ function markSettingsHydrated(): void {
 
 /** Serializes encrypted settings writes so the persisted blob always converges on the latest state. */
 let pendingSettingsWrite: Promise<void> = Promise.resolve();
+let fallbackSettingsWriteVersion = 0;
+
+function settingsWriteVersionKey(name: string): string {
+  return `${name}${SETTINGS_WRITE_VERSION_SUFFIX}`;
+}
+
+function readSettingsWriteVersion(store: Storage | null, name: string): number {
+  if (!store) return fallbackSettingsWriteVersion;
+  try {
+    const value = Number.parseInt(store.getItem(settingsWriteVersionKey(name)) ?? '0', 10);
+    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  } catch {
+    return fallbackSettingsWriteVersion;
+  }
+}
+
+/** Reserve a durable, cross-window write order before asynchronous encryption begins. */
+function reserveSettingsWriteVersion(store: Storage | null, name: string): number {
+  const next = Math.max(readSettingsWriteVersion(store, name), fallbackSettingsWriteVersion) + 1;
+  fallbackSettingsWriteVersion = next;
+  try {
+    store?.setItem(settingsWriteVersionKey(name), String(next));
+  } catch {
+    /* The per-renderer fallback still preserves ordering when storage is unavailable. */
+  }
+  return next;
+}
+
+function isLatestSettingsWriteVersion(store: Storage, name: string, version: number): boolean {
+  return readSettingsWriteVersion(store, name) === version;
+}
+
+function stampSettingsWriteVersion(value: string, writeVersion: number): string {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return JSON.stringify({ ...parsed, __flowSettingsWriteVersion: writeVersion });
+  } catch {
+    // createJSONStorage always gives us JSON. Keep the original value if a custom caller breaks
+    // that contract; it will still be ordered by the sidecar write version.
+    return value;
+  }
+}
+
+function readStampedSettingsWriteVersion(value: string | null): number {
+  if (!value) return 0;
+  try {
+    const version = (JSON.parse(value) as { __flowSettingsWriteVersion?: unknown }).__flowSettingsWriteVersion;
+    return typeof version === 'number' && Number.isSafeInteger(version) && version > 0 ? version : 0;
+  } catch {
+    return 0;
+  }
+}
 
 /**
  * Mutation-vs-hydration guard (AUD-015 residual): hydration reads + decrypts the persisted blob
  * asynchronously, so a (re)hydrate that started BEFORE a local mutation can still be holding the
  * old blob when the mutation lands. Zustand's own hydrationVersion only drops superseded
- * *rehydrates*; nothing stops a stale read from being merged over a newer local write. So every
- * local write records the top-level state keys it touches here, and the persist `merge` below
- * drains the set: keys a local mutation owns keep their current (newer) value, while everything
- * else in the snapshot still applies (first-boot hydration, cross-window rehydrate, and
- * latest-rehydrate-wins for untouched fields are unchanged). The set is drained by merge — the
- * single point where a read snapshot becomes authoritative — never by timers or key-specific
- * cleanup, so any mutation not yet reflected in a read blob stays protected across overlapping
- * reads until one actually lands.
+ * *rehydrates*; nothing stops a stale read from being merged over a newer local write. Each
+ * top-level key therefore carries the revision of its latest local mutation, and every real
+ * hydration captures the revision present when its read begins. Merge keeps only keys written
+ * *after that specific read began*. This is deliberately not a global pending-marker drain: a
+ * completed newer cross-window snapshot can replace a mutation that predates its read, while an
+ * older in-flight read still cannot clobber a later local write.
  */
-const localMutationKeysSinceLastMerge = new Set<keyof SettingsState>();
+let localMutationRevision = 0;
+interface LocalMutationMarker {
+  revision: number;
+  /** True until the write that contains this mutation reaches durable storage. */
+  pendingWrite: boolean;
+  /** Durable ordering claim for that write; absent for direct non-persisting setState calls. */
+  writeVersion?: number;
+}
+const localMutationRevisionByKey = new Map<keyof SettingsState, LocalMutationMarker>();
+const pendingLocalMutationWrite = new Map<keyof SettingsState, number>();
 
-function recordLocalMutationKeys(partial: unknown): void {
+function recordLocalMutationKeys(partial: unknown, persists = false): void {
   if (!isRecord(partial)) {
     return;
   }
-  for (const key of Object.keys(partial)) {
-    localMutationKeysSinceLastMerge.add(key as keyof SettingsState);
+  const keys = Object.keys(partial);
+  if (keys.length === 0) {
+    return;
+  }
+  const revision = ++localMutationRevision;
+  for (const key of keys) {
+    const typedKey = key as keyof SettingsState;
+    localMutationRevisionByKey.set(typedKey, { revision, pendingWrite: persists });
+    if (persists) {
+      pendingLocalMutationWrite.set(typedKey, revision);
+    }
+  }
+}
+
+/** Bind the synchronous persist setItem call to the local keys that just changed. */
+function takePendingLocalMutationWrite(writeVersion: number): Map<keyof SettingsState, number> {
+  const write = new Map(pendingLocalMutationWrite);
+  pendingLocalMutationWrite.clear();
+  for (const [key, revision] of write) {
+    const marker = localMutationRevisionByKey.get(key);
+    if (marker?.revision === revision) {
+      marker.writeVersion = writeVersion;
+    }
+  }
+  return write;
+}
+
+/** A failed write stays pending so a later read cannot erase an identity that never became durable. */
+function settleLocalMutationWrite(write: Map<keyof SettingsState, number>, didPersist: boolean): void {
+  if (!didPersist) {
+    return;
+  }
+  for (const [key, revision] of write) {
+    const marker = localMutationRevisionByKey.get(key);
+    if (marker?.revision === revision) {
+      marker.pendingWrite = false;
+    }
   }
 }
 
@@ -459,11 +569,11 @@ function trackLocalMutationWrites(set: SettingsSetState): SettingsSetState {
     if (typeof partial === 'function') {
       return set(((state: SettingsState) => {
         const result = (partial as (state: SettingsState) => SettingsState | Partial<SettingsState>)(state);
-        recordLocalMutationKeys(result);
+        recordLocalMutationKeys(result, true);
         return result;
       }) as never, replace as never);
     }
-    recordLocalMutationKeys(partial);
+    recordLocalMutationKeys(partial, true);
     return set(partial as never, replace as never);
   }) as SettingsSetState;
 }
@@ -472,17 +582,40 @@ function trackLocalMutationWrites(set: SettingsSetState): SettingsSetState {
 let lastHydrationKeptLocalMutations = false;
 
 /**
- * Armed by the onRehydrateStorage hook at the start of every real hydration read and consumed by
- * the persist merge below. Only an armed merge applies the mutation-vs-hydration keep-override
- * and drains the pending keys: an out-of-band merge invocation (unit tests, tooling) keeps the
- * plain sanitizing behavior and leaves the pending keys protected for the next real hydration.
+ * Armed by onRehydrateStorage at the start of every real hydration read. Only an armed merge
+ * applies the mutation-vs-hydration keep-override; out-of-band merge invocations (unit tests,
+ * tooling) retain plain sanitizing behavior. A read-start revision, rather than a global drain,
+ * means an old local marker cannot override a durable snapshot that began later.
  */
-let hydrationReadInFlight = false;
+interface HydrationRead {
+  startRevision: number;
+  snapshotWriteVersion: number;
+}
 
-function drainLocalMutationKeys(): Array<keyof SettingsState> {
-  const keys = [...localMutationKeysSinceLastMerge];
-  localMutationKeysSinceLastMerge.clear();
-  return keys;
+let activeHydrationRead: HydrationRead | null = null;
+const queuedHydrationReads: HydrationRead[] = [];
+
+function takeNextHydrationRead(): HydrationRead | undefined {
+  return queuedHydrationReads.shift();
+}
+
+function recordHydrationSnapshotVersion(read: HydrationRead | undefined, value: string | null): void {
+  if (read) {
+    read.snapshotWriteVersion = readStampedSettingsWriteVersion(value);
+  }
+}
+
+function localMutationsAfterReadStart(read: HydrationRead | null): Array<keyof SettingsState> {
+  if (read === null) {
+    return [];
+  }
+  return [...localMutationRevisionByKey]
+    .filter(([, marker]) =>
+      marker.revision > read.startRevision
+      || (marker.pendingWrite
+        && (marker.writeVersion === undefined || marker.writeVersion > read.snapshotWriteVersion)),
+    )
+    .map(([key]) => key);
 }
 
 /**
@@ -499,6 +632,16 @@ let pendingLicenseVerification: { generation: number; key: string; promise: Prom
 
 function invalidatePendingLicenseVerification(): void {
   licenseVerificationGeneration += 1;
+}
+
+/** Claim a monotonic identity generation before an identity action can await anything. */
+function claimLicenseIdentityGeneration(): number {
+  invalidatePendingLicenseVerification();
+  return licenseVerificationGeneration;
+}
+
+function isCurrentLicenseIdentityGeneration(generation: number): boolean {
+  return generation === licenseVerificationGeneration;
 }
 
 /**
@@ -732,6 +875,10 @@ export const useSettingsStore = create<SettingsState>()(
         return encryptSettingsBackup(JSON.stringify(data), passphrase);
       },
       importSettingsBackup: async (envelopeText, passphrase) => {
+        // Import is an identity action even though decrypting its payload is asynchronous. Claim
+        // ownership before the first await so a later removal/import can make this older import
+        // harmless when its decrypt eventually succeeds.
+        const generation = claimLicenseIdentityGeneration();
         const plaintext = await decryptSettingsBackup(envelopeText, passphrase);
         let parsed: unknown;
         try {
@@ -747,7 +894,9 @@ export const useSettingsStore = create<SettingsState>()(
         // apply fail-closed, then settle entitlement through the one canonical verification.
         // Callers get a deterministic postcondition — when this resolves, `license` reflects the
         // verifier's verdict on the imported key. Other windows learn through the broadcast.
-        invalidatePendingLicenseVerification();
+        if (!isCurrentLicenseIdentityGeneration(generation)) {
+          return;
+        }
         armLicenseSyncBroadcast();
         set((current) => mergeSettingsBackupData(current, data));
         await get().revalidateLicense();
@@ -762,11 +911,13 @@ export const useSettingsStore = create<SettingsState>()(
       license: { licensed: false },
       settingsHydrated: false,
       setLicenseKey: async (key) => {
+        // Claim before verification starts. A later removal/import/rehydrate must be able to
+        // invalidate this activation while its verifier is still pending.
+        const generation = claimLicenseIdentityGeneration();
         const verification = await verifyLicenseKey(key);
-        if (verification.licensed) {
-          // Activation is a new identity event: invalidate any verification still in flight so
-          // it cannot clobber this fresh, verifier-backed grant, and tell the other windows.
-          invalidatePendingLicenseVerification();
+        if (verification.licensed && isCurrentLicenseIdentityGeneration(generation)) {
+          // This verifier-backed activation still owns the identity. Rejected activations and
+          // superseded activations never write either key or verdict into newer state.
           armLicenseSyncBroadcast();
           set({ licenseKey: key.trim(), license: verification });
         }
@@ -775,7 +926,7 @@ export const useSettingsStore = create<SettingsState>()(
       removeLicenseKey: () => {
         // Removal fail-closes immediately and invalidates whatever verification is still in
         // flight — a stale positive verdict for the removed key must never resurrect the grant.
-        invalidatePendingLicenseVerification();
+        claimLicenseIdentityGeneration();
         armLicenseSyncBroadcast();
         set({ licenseKey: '', license: { licensed: false } });
       },
@@ -838,9 +989,18 @@ export const useSettingsStore = create<SettingsState>()(
       // `license` without ever changing the key string.
       onRehydrateStorage: () => {
         // A real hydration read starts now; its merge may apply a blob captured before local
-        // mutations landed, so the mutation-vs-hydration guard arms for that merge.
-        hydrationReadInFlight = true;
+        // mutations landed, so the mutation-vs-hydration guard records this read's start
+        // revision. Zustand applies only its latest rehydrate, and therefore only this latest
+        // captured revision can pair with merge.
+        const read: HydrationRead = { startRevision: localMutationRevision, snapshotWriteVersion: 0 };
+        activeHydrationRead = read;
+        queuedHydrationReads.push(read);
         return (hydratedState: SettingsState | undefined) => {
+          // Read failures skip merge. Do not leave a stale arm for an out-of-band merge after
+          // that failure; a later real hydration will capture a new start revision.
+          if (activeHydrationRead === read) {
+            activeHydrationRead = null;
+          }
           markSettingsHydrated();
           if (hydratedState && lastHydrationKeptLocalMutations) {
             lastHydrationKeptLocalMutations = false;
@@ -856,12 +1016,12 @@ export const useSettingsStore = create<SettingsState>()(
       merge: (persistedState, currentState) => {
         // Every applied rehydrate replaces the license identity and fail-closes `license` below,
         // so whatever verification was in flight before it is stale by definition.
-        invalidatePendingLicenseVerification();
+        claimLicenseIdentityGeneration();
         // Mutation-vs-hydration guard: this read may have started before local mutations landed,
         // making its blob stale for exactly the keys those mutations wrote. Everything else in
         // the snapshot is still the newest durable fact and applies normally.
-        const locallyMutatedKeys = hydrationReadInFlight ? drainLocalMutationKeys() : [];
-        hydrationReadInFlight = false;
+        const locallyMutatedKeys = localMutationsAfterReadStart(activeHydrationRead);
+        activeHydrationRead = null;
         const typedPersistedState = persistedState as Partial<SettingsState> | undefined;
         const persistedApiKeys = sanitizePersistedApiKeys(typedPersistedState?.apiKeys);
 

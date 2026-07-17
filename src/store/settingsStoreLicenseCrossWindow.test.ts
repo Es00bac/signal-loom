@@ -22,11 +22,24 @@ vi.mock('../lib/licenseKey', () => ({
   describeLicenseEdition: () => 'Community edition',
 }));
 
+const cipherControl = vi.hoisted(() => ({
+  holdNextEncryptions: 0,
+  pendingEncryptions: [] as Array<{ plain: string; resolve: (envelope: string) => void }>,
+}));
+
 vi.mock('../lib/secretCipher', () => ({
   isEncryptedSecretEnvelope: (value: unknown): boolean =>
     typeof value === 'string' && value.startsWith('enc:'),
   decryptSecret: async (envelope: string) => envelope.slice('enc:'.length),
-  encryptSecret: async (plain: string) => `enc:${plain}`,
+  encryptSecret: (plain: string) => {
+    if (cipherControl.holdNextEncryptions > 0) {
+      cipherControl.holdNextEncryptions -= 1;
+      return new Promise<string>((resolve) => {
+        cipherControl.pendingEncryptions.push({ plain, resolve });
+      });
+    }
+    return Promise.resolve(`enc:${plain}`);
+  },
   isSecretEncryptionActive: () => true,
 }));
 
@@ -48,6 +61,13 @@ function seedPersistedSettings(state: Record<string, unknown>): void {
   window.localStorage.setItem(SETTINGS_STORAGE_KEY, `enc:${JSON.stringify({ state, version: 0 })}`);
 }
 
+function readPersistedState(): Record<string, unknown> {
+  const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+  expect(raw).toBeTruthy();
+  expect(raw!.startsWith('enc:')).toBe(true);
+  return (JSON.parse(raw!.slice('enc:'.length)) as { state: Record<string, unknown> }).state;
+}
+
 type SettingsStoreModule = typeof import('./settingsStore');
 
 /** Import a fresh settings-store universe, as a second renderer window would evaluate it. */
@@ -60,6 +80,8 @@ const teardowns: Array<() => void> = [];
 
 beforeEach(() => {
   window.localStorage.clear();
+  cipherControl.holdNextEncryptions = 0;
+  cipherControl.pendingEncryptions.length = 0;
 });
 
 afterEach(() => {
@@ -114,6 +136,143 @@ describe('license identity cross-window sync (AUD-015)', () => {
     await vi.waitFor(() => {
       expect(windowB.useSettingsStore.getState().licenseKey).toBe(VALID_KEY);
       expect(windowB.useSettingsStore.getState().license.licensed).toBe(true);
+    });
+  });
+
+  it('a completed removal broadcast wins over an older local activation marker in every window', async () => {
+    seedPersistedSettings({ licenseKey: VALID_KEY });
+
+    const windowA = await importRendererWindow();
+    teardowns.push(windowA.installLicenseCrossWindowSync());
+    await windowA.waitForSettingsHydration();
+    await vi.waitFor(() => {
+      expect(windowA.useSettingsStore.getState().license.licensed).toBe(true);
+    });
+
+    // This is deliberately the same valid key: it creates a persisted local identity write in A
+    // without changing its visible entitlement. The old global marker model leaves this marker
+    // pending indefinitely, even after its write has completed.
+    await windowA.useSettingsStore.getState().setLicenseKey(VALID_KEY);
+    await vi.waitFor(() => {
+      expect(readPersistedState().licenseKey).toBe(VALID_KEY);
+    });
+
+    const windowB = await importRendererWindow();
+    teardowns.push(windowB.installLicenseCrossWindowSync());
+    await windowB.waitForSettingsHydration();
+    await vi.waitFor(() => {
+      expect(windowB.useSettingsStore.getState().license.licensed).toBe(true);
+    });
+
+    // B's write completes before its real BroadcastChannel message tells A to rehydrate.
+    // A must accept that newer durable removal; it must not drain its stale activation marker
+    // and write the old key back over B's completed state.
+    windowB.useSettingsStore.getState().removeLicenseKey();
+    await vi.waitFor(() => {
+      expect(windowA.useSettingsStore.getState().licenseKey).toBe('');
+      expect(windowB.useSettingsStore.getState().licenseKey).toBe('');
+      expect(readPersistedState().licenseKey).toBe('');
+    });
+  });
+
+  it('a newer snapshot removes an old locally persisted API key while changing another provider setting', async () => {
+    const windowA = await importRendererWindow();
+    await windowA.waitForSettingsHydration();
+
+    windowA.useSettingsStore.getState().setApiKey('openai', 'sk-old-local-key');
+    await vi.waitFor(() => {
+      expect(readPersistedState().apiKeys).toMatchObject({ openai: 'sk-old-local-key' });
+    });
+
+    const windowB = await importRendererWindow();
+    await windowB.waitForSettingsHydration();
+    expect(windowB.useSettingsStore.getState().apiKeys.openai).toBe('sk-old-local-key');
+
+    // B persists a newer complete snapshot that removes the key and changes a different setting.
+    windowB.useSettingsStore.getState().setApiKey('openai', '');
+    windowB.useSettingsStore.getState().setProviderSetting('atlasBaseUrl', 'https://newer.example.test');
+    await vi.waitFor(() => {
+      const persisted = readPersistedState();
+      expect(persisted.apiKeys).toMatchObject({ openai: '' });
+      expect(persisted.providerSettings).toMatchObject({ atlasBaseUrl: 'https://newer.example.test' });
+    });
+
+    // Settings do not have a general BroadcastChannel contract, so this represents the normal
+    // explicit refresh path. A's already-persisted old marker must not overwrite B's snapshot.
+    await windowA.useSettingsStore.persist.rehydrate();
+    await vi.waitFor(() => {
+      expect(windowA.useSettingsStore.getState().apiKeys.openai).toBe('');
+      expect(windowA.useSettingsStore.getState().providerSettings.atlasBaseUrl).toBe('https://newer.example.test');
+      expect(readPersistedState().apiKeys).toMatchObject({ openai: '' });
+    });
+  });
+
+  it('three windows converge when a completed removal is followed by a newer activation', async () => {
+    seedPersistedSettings({ licenseKey: VALID_KEY });
+
+    const windowA = await importRendererWindow();
+    const windowB = await importRendererWindow();
+    const windowC = await importRendererWindow();
+    teardowns.push(
+      windowA.installLicenseCrossWindowSync(),
+      windowB.installLicenseCrossWindowSync(),
+      windowC.installLicenseCrossWindowSync(),
+    );
+    await Promise.all([
+      windowA.waitForSettingsHydration(),
+      windowB.waitForSettingsHydration(),
+      windowC.waitForSettingsHydration(),
+    ]);
+    await vi.waitFor(() => {
+      expect(windowA.useSettingsStore.getState().license.licensed).toBe(true);
+      expect(windowB.useSettingsStore.getState().license.licensed).toBe(true);
+      expect(windowC.useSettingsStore.getState().license.licensed).toBe(true);
+    });
+
+    windowA.useSettingsStore.getState().removeLicenseKey();
+    await vi.waitFor(() => {
+      expect(readPersistedState().licenseKey).toBe('');
+      expect(windowB.useSettingsStore.getState().licenseKey).toBe('');
+      expect(windowC.useSettingsStore.getState().licenseKey).toBe('');
+    });
+
+    await windowC.useSettingsStore.getState().setLicenseKey(VALID_KEY);
+    await vi.waitFor(() => {
+      expect(windowA.useSettingsStore.getState().licenseKey).toBe(VALID_KEY);
+      expect(windowB.useSettingsStore.getState().licenseKey).toBe(VALID_KEY);
+      expect(windowC.useSettingsStore.getState().licenseKey).toBe(VALID_KEY);
+      expect(readPersistedState().licenseKey).toBe(VALID_KEY);
+    });
+  });
+
+  it('a newer broadcast wins when it arrives before an older renderer finishes encrypting', async () => {
+    seedPersistedSettings({ licenseKey: VALID_KEY });
+    const windowA = await importRendererWindow();
+    const windowB = await importRendererWindow();
+    teardowns.push(windowA.installLicenseCrossWindowSync(), windowB.installLicenseCrossWindowSync());
+    await Promise.all([windowA.waitForSettingsHydration(), windowB.waitForSettingsHydration()]);
+
+    // A claims the older removal write but cannot finish encrypting it. B then writes a newer
+    // activation and broadcasts its completed durable snapshot. The old encrypted completion
+    // must be skipped rather than landing after B and recreating a last-writer race.
+    cipherControl.holdNextEncryptions = 1;
+    windowA.useSettingsStore.getState().removeLicenseKey();
+    await vi.waitFor(() => {
+      expect(cipherControl.pendingEncryptions.length).toBe(1);
+    });
+
+    await windowB.useSettingsStore.getState().setLicenseKey(VALID_KEY);
+    await vi.waitFor(() => {
+      expect(windowA.useSettingsStore.getState().licenseKey).toBe(VALID_KEY);
+      expect(readPersistedState().licenseKey).toBe(VALID_KEY);
+    });
+
+    const delayed = cipherControl.pendingEncryptions.splice(0, 1)[0];
+    delayed.resolve(`enc:${delayed.plain}`);
+    await vi.waitFor(() => {
+      expect(windowA.useSettingsStore.getState().licenseKey).toBe(VALID_KEY);
+      expect(windowB.useSettingsStore.getState().licenseKey).toBe(VALID_KEY);
+      expect(readPersistedState().licenseKey).toBe(VALID_KEY);
     });
   });
 });

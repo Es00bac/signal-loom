@@ -356,4 +356,54 @@ describe('license verification race hardening (AUD-015)', () => {
     expect(useSettingsStore.getState().license.licensed).toBe(true);
     expect(gates.isCommercialExportUnlocked()).toBe(true);
   });
+
+  it('a removal that follows a pending activation owns the license identity', async () => {
+    const { settings, gates } = await importFreshModules();
+    const { useSettingsStore } = settings;
+    await settings.waitForSettingsHydration();
+
+    // setLicenseKey must claim its generation before it starts this verification. Otherwise the
+    // later removal cannot invalidate the activation until after this promise resolves.
+    const activation = useSettingsStore.getState().setLicenseKey(VALID_KEY);
+    const activationVerification = await takeVerification(VALID_KEY);
+
+    useSettingsStore.getState().removeLicenseKey();
+    expect(useSettingsStore.getState().licenseKey).toBe('');
+    expect(gates.isCommercialExportUnlocked()).toBe(false);
+
+    activationVerification.resolve(licensedVerdict());
+    const result = await activation;
+    expect(result.licensed).toBe(true);
+    expect(useSettingsStore.getState().licenseKey).toBe('');
+    expect(useSettingsStore.getState().license.licensed).toBe(false);
+    expect(gates.isCommercialExportUnlocked()).toBe(false);
+  });
+
+  it('a backup import that follows a pending activation owns the license identity', async () => {
+    const { settings, gates } = await importFreshModules();
+    const { useSettingsStore } = settings;
+    await settings.waitForSettingsHydration();
+
+    const activation = useSettingsStore.getState().setLicenseKey(VALID_KEY);
+    const activationVerification = await takeVerification(VALID_KEY);
+
+    const importedKey = 'SLOOM-imported-test-key';
+    const imported = useSettingsStore
+      .getState()
+      .importSettingsBackup(JSON.stringify({ licenseKey: importedKey }), 'passphrase');
+    const importVerification = await takeVerification(importedKey);
+
+    // Resolve the older activation after the newer import has claimed ownership. It may report a
+    // valid result to its caller, but it must not install that result or key into the store.
+    activationVerification.resolve(licensedVerdict());
+    await activation;
+    expect(useSettingsStore.getState().licenseKey).toBe(importedKey);
+    expect(gates.isCommercialExportUnlocked()).toBe(false);
+
+    importVerification.resolve(licensedVerdict());
+    await imported;
+    expect(useSettingsStore.getState().licenseKey).toBe(importedKey);
+    expect(useSettingsStore.getState().license.licensed).toBe(true);
+    expect(gates.isCommercialExportUnlocked()).toBe(true);
+  });
 });

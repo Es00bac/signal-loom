@@ -47,15 +47,19 @@ vi.mock('../lib/licenseKey', () => ({
 }));
 
 const cipherControl = vi.hoisted(() => ({
-  pending: [] as Array<{ envelope: string; resolve: (plain: string | null) => void }>,
+  pending: [] as Array<{
+    envelope: string;
+    resolve: (plain: string | null) => void;
+    reject: (error: unknown) => void;
+  }>,
 }));
 
 vi.mock('../lib/secretCipher', () => ({
   isEncryptedSecretEnvelope: (value: unknown): boolean =>
     typeof value === 'string' && value.startsWith('enc:'),
   decryptSecret: (envelope: string) =>
-    new Promise<string | null>((resolve) => {
-      cipherControl.pending.push({ envelope, resolve });
+    new Promise<string | null>((resolve, reject) => {
+      cipherControl.pending.push({ envelope, resolve, reject });
     }),
   encryptSecret: async (plain: string) => `enc:${plain}`,
   isSecretEncryptionActive: () => true,
@@ -84,7 +88,11 @@ function seedPersistedSettings(state: Record<string, unknown>): void {
 }
 
 /** Wait for at least one in-flight decrypt and take ownership of the oldest one. */
-async function takePendingDecrypt(): Promise<{ envelope: string; resolve: (plain: string | null) => void }> {
+async function takePendingDecrypt(): Promise<{
+  envelope: string;
+  resolve: (plain: string | null) => void;
+  reject: (error: unknown) => void;
+}> {
   await vi.waitFor(() => {
     expect(cipherControl.pending.length).toBeGreaterThan(0);
   });
@@ -280,17 +288,19 @@ describe('late hydration versus local mutation (AUD-015 residual)', () => {
       expect(useSettingsStore.getState().license.licensed).toBe(true);
     });
 
-    // First rehydrate starts against the unchanged blob; before its decrypt lands, the user
-    // removes the key locally, and then a second rehydrate starts against a rewritten blob.
+    // First rehydrate starts against the unchanged blob. A newer rehydrate starts against a
+    // rewritten blob before either decrypt lands; the user then removes the key while both reads
+    // are in flight. This preserves the actual late-read guarantee without treating a completed
+    // snapshot that began *after* a local write as stale (the cross-window suite owns that case).
     const firstRehydrate = persistApi.rehydrate();
     const firstDecrypt = await takePendingDecrypt();
-
-    useSettingsStore.getState().removeLicenseKey();
-    expect(useSettingsStore.getState().licenseKey).toBe('');
 
     seedPersistedSettings({ licenseKey: VALID_KEY, settingsPanel: 'license' });
     const secondRehydrate = persistApi.rehydrate();
     const secondDecrypt = await takePendingDecrypt();
+
+    useSettingsStore.getState().removeLicenseKey();
+    expect(useSettingsStore.getState().licenseKey).toBe('');
 
     // Resolve in order: the superseded rehydrate must be dropped wholesale, the newer one must
     // win for untouched fields while the local removal still stands for the license identity.
@@ -313,5 +323,30 @@ describe('late hydration versus local mutation (AUD-015 residual)', () => {
     await vi.waitFor(() => {
       expect(readPersistedState().licenseKey).toBe('');
     });
+  });
+
+  it('a failed read clears its ownership epoch so a recovered newer snapshot can remove a persisted API key', async () => {
+    seedPersistedSettings({ apiKeys: { openai: 'sk-unreadable-old-key' } });
+    const { settings } = await importFreshModules();
+    const { useSettingsStore } = settings;
+
+    // A storage/decryption failure must not leave the failed read armed indefinitely.
+    (await takePendingDecrypt()).reject(new Error('storage temporarily unavailable'));
+    await settings.waitForSettingsHydration();
+    expect(useSettingsStore.getState().apiKeys.openai).toBe('');
+
+    useSettingsStore.getState().setApiKey('openai', 'sk-local-after-failure');
+    await vi.waitFor(() => {
+      expect(readPersistedState().apiKeys).toMatchObject({ openai: 'sk-local-after-failure' });
+    });
+
+    // A later completed snapshot is authoritative: the old failed-read marker must not restore
+    // this locally persisted key over the newer removal.
+    seedPersistedSettings({ apiKeys: { openai: '' } });
+    const recovery = useSettingsStore.persist.rehydrate();
+    resolveDecrypt(await takePendingDecrypt());
+    await recovery;
+
+    expect(useSettingsStore.getState().apiKeys.openai).toBe('');
   });
 });
