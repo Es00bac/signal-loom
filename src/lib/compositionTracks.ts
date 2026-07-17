@@ -116,6 +116,7 @@ export function sanitizeCompositionAudioMigrationWarnings(
   }
 
   const sanitized: CompositionAudioMigrationWarning[] = [];
+  const seenCanonicalWarnings = new Set<string>();
 
   for (const entry of value) {
     if (!entry || typeof entry !== 'object') continue;
@@ -129,11 +130,19 @@ export function sanitizeCompositionAudioMigrationWarnings(
       continue;
     }
 
-    sanitized.push({
+    const canonicalWarning: CompositionAudioMigrationWarning = {
       handle: truncateForDisplay(record.handle, COMPOSITION_AUDIO_MIGRATION_HANDLE_MAX_LENGTH),
       reason: record.reason,
       message: truncateForDisplay(record.message, COMPOSITION_AUDIO_MIGRATION_MESSAGE_MAX_LENGTH),
-    });
+    };
+    const canonicalKey = JSON.stringify([canonicalWarning.reason, canonicalWarning.handle]);
+
+    if (seenCanonicalWarnings.has(canonicalKey)) {
+      continue;
+    }
+
+    seenCanonicalWarnings.add(canonicalKey);
+    sanitized.push(canonicalWarning);
 
     if (sanitized.length >= COMPOSITION_AUDIO_MIGRATION_WARNING_LIMIT) {
       break;

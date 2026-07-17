@@ -113,6 +113,30 @@ describe('sanitizeProjectDocument', () => {
     expect(project.flow.nodes.map((node) => node.type)).toEqual(FLOW_NODE_TYPES);
   });
 
+  it('deduplicates Composition audio migration warnings while sanitizing a project snapshot', () => {
+    const project = projectWith({
+      flow: {
+        version: 3,
+        nodes: [{
+          id: 'composition-1',
+          type: 'composition',
+          position: { x: 0, y: 0 },
+          data: {
+            compositionAudioMigrationWarnings: [
+              { handle: 'composition-audio-9', reason: 'overflow', message: 'First project warning.' },
+              { handle: 'composition-audio-9', reason: 'overflow', message: 'Duplicate project warning.' },
+            ],
+          },
+        }],
+        edges: [],
+      },
+    });
+
+    expect(project.flow.nodes[0].data.compositionAudioMigrationWarnings).toEqual([
+      { handle: 'composition-audio-9', reason: 'overflow', message: 'First project warning.' },
+    ]);
+  });
+
   it('normalizes object-shaped resultHistory so usage rollups cannot crash', () => {
     const project = projectWith({
       flow: {

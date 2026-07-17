@@ -3,6 +3,7 @@ import type { Edge } from '@xyflow/react';
 import type { AppNode } from '../types/flow';
 import { buildListItemTargetHandle } from './listNodes';
 import { collectFlowDiagnostics, getBlockingFlowDiagnostics } from './flowDiagnostics';
+import { sanitizeCompositionAudioMigrationWarnings } from './compositionTracks';
 
 function createNode(node: Partial<AppNode> & Pick<AppNode, 'id' | 'type'>): AppNode {
   return {
@@ -92,6 +93,27 @@ describe('flow diagnostics', () => {
       blocksRun: false,
       message: expect.stringContaining('composition-audio-9'),
     }));
+  });
+
+  it('emits one diagnostic after duplicate persisted Composition warnings are sanitized', () => {
+    const warnings = sanitizeCompositionAudioMigrationWarnings([
+      { handle: 'composition-audio-9', reason: 'overflow', message: 'First diagnostic warning.' },
+      { handle: 'composition-audio-9', reason: 'overflow', message: 'Duplicate diagnostic warning.' },
+    ]);
+    const nodes = [
+      createNode({
+        id: 'composition-1',
+        type: 'composition',
+        data: { compositionAudioMigrationWarnings: warnings },
+      }),
+    ];
+
+    const diagnostics = collectFlowDiagnostics(nodes, []).filter((diagnostic) =>
+      diagnostic.id.startsWith('composition-audio-migration-composition-1-')
+    );
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toBe('First diagnostic warning.');
   });
 
   it('reports cardinality violations without deleting either saved edge', () => {

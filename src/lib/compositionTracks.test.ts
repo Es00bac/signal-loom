@@ -210,6 +210,52 @@ describe('sanitizeCompositionAudioMigrationWarnings (FBL-019 correction)', () =>
     expect(sanitized[0].handle.length).toBeLessThan(100);
     expect(sanitized[0].message.length).toBeLessThan(300);
   });
+
+  it('deduplicates ordinary records by reason and handle while preserving the first message', () => {
+    expect(sanitizeCompositionAudioMigrationWarnings([
+      { handle: 'composition-audio-9', reason: 'overflow', message: 'First-seen warning.' },
+      { handle: 'composition-audio-9', reason: 'overflow', message: 'Later duplicate warning.' },
+      { handle: 'composition-audio-9', reason: 'malformed', message: 'Different reason.' },
+    ])).toEqual([
+      { handle: 'composition-audio-9', reason: 'overflow', message: 'First-seen warning.' },
+      { handle: 'composition-audio-9', reason: 'malformed', message: 'Different reason.' },
+    ]);
+  });
+
+  it('deduplicates records whose handles become equal only after canonical truncation', () => {
+    const sharedPrefix = 'h'.repeat(64);
+
+    expect(sanitizeCompositionAudioMigrationWarnings([
+      { handle: `${sharedPrefix}a`, reason: 'malformed', message: 'First canonical record.' },
+      { handle: `${sharedPrefix}b`, reason: 'malformed', message: 'Second canonical duplicate.' },
+    ])).toEqual([
+      { handle: `${sharedPrefix}…`, reason: 'malformed', message: 'First canonical record.' },
+    ]);
+  });
+
+  it('does not let duplicates consume the bounded unique-entry budget', () => {
+    const sanitized = sanitizeCompositionAudioMigrationWarnings([
+      { handle: 'duplicate', reason: 'overflow', message: 'First duplicate.' },
+      { handle: 'duplicate', reason: 'overflow', message: 'Second duplicate.' },
+      ...Array.from({ length: 7 }, (_, index) => ({
+        handle: `unique-${index + 1}`,
+        reason: 'malformed',
+        message: `Unique ${index + 1}.`,
+      })),
+    ]);
+
+    expect(sanitized).toHaveLength(8);
+    expect(sanitized?.map((warning) => warning.handle)).toEqual([
+      'duplicate',
+      'unique-1',
+      'unique-2',
+      'unique-3',
+      'unique-4',
+      'unique-5',
+      'unique-6',
+      'unique-7',
+    ]);
+  });
 });
 
 describe('formatCompositionAudioMigrationWarningMessage (FBL-019 correction)', () => {

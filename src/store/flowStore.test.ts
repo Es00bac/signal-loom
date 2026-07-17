@@ -11,6 +11,7 @@ import {
   canRunNode as storeCanRunNode,
   getExecutionDependencies as storeGetExecutionDependencies,
   buildExecutionContextForNode,
+  sanitizePersistedFlowState,
 } from './flowStore';
 import { resolveFlowNodePorts } from '../lib/flowNodeContracts';
 import { validateFlowConnection } from '../lib/flowConnectionContracts';
@@ -51,6 +52,23 @@ function buildIncomingMap(edges: Edge[]): Map<string, string[]> {
 }
 
 describe('flow store package and envelope input gathering', () => {
+  it('deduplicates Composition audio migration warnings while sanitizing local persisted state', () => {
+    const sanitized = sanitizePersistedFlowState({
+      nodes: [createNode('composition-1', 'composition', {
+        compositionAudioMigrationWarnings: [
+          { handle: 'composition-audio-9', reason: 'overflow', message: 'First local warning.' },
+          { handle: 'composition-audio-9', reason: 'overflow', message: 'Duplicate local warning.' },
+        ],
+      })],
+      edges: [],
+      bookmarkSidebarOpen: true,
+    });
+
+    expect(sanitized.nodes[0].data.compositionAudioMigrationWarnings).toEqual([
+      { handle: 'composition-audio-9', reason: 'overflow', message: 'First local warning.' },
+    ]);
+  });
+
   it('classifies API Requester as runnable and recursively reaches it from Run Me exactly once', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"ok":true}', {
       status: 200,
