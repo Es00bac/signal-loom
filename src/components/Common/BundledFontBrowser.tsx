@@ -10,6 +10,7 @@ import {
   type BundledFontFamily,
   type BundledFontRole,
 } from '../../lib/bundledFontLibrary';
+import { getSignalLoomNativeBridge, type SignalLoomNativeBridge } from '../../lib/nativeApp';
 import type { PaperManagedFontStyle } from '../../types/paper';
 import { formatFontFamily } from '../../lib/formatFontFamily';
 
@@ -23,6 +24,17 @@ const ROLE_OPTIONS: Array<{ value: '' | BundledFontRole; label: string }> = [
   { value: 'japanese', label: 'Japanese' },
   { value: 'cjk', label: 'Chinese / Korean' },
 ];
+
+interface BridgeScopedCatalogState {
+  bridge: SignalLoomNativeBridge | undefined;
+  catalog?: BundledFontCatalog;
+  error: string | null;
+}
+
+interface BridgeScopedErrorState {
+  bridge: SignalLoomNativeBridge | undefined;
+  error: string | null;
+}
 
 export interface BundledFontBrowserProps {
   catalog?: BundledFontCatalog;
@@ -45,26 +57,40 @@ export function BundledFontBrowser({
 }: BundledFontBrowserProps) {
   // Starts (and stays) false until the main-process round trip positively confirms a usable
   // font-library root — fail closed while pending, not just once it resolves negative.
+  const bridge = getSignalLoomNativeBridge();
   const available = useBundledFontLibraryCapability();
   const [open, setOpen] = useState(initiallyOpen);
-  const [loadedCatalog, setLoadedCatalog] = useState<BundledFontCatalog>();
+  const [catalogState, setCatalogState] = useState<BridgeScopedCatalogState>({ bridge, error: null });
   const [query, setQuery] = useState('');
   const [role, setRole] = useState<'' | BundledFontRole>('');
   const [busyFace, setBusyFace] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [selectionErrorState, setSelectionErrorState] = useState<BridgeScopedErrorState>({ bridge, error: null });
 
+  // A catalog/error has authority only while the exact bridge that loaded it remains current.
+  // This makes bridge replacement fail closed even in the render before effects can clean up.
+  const loadedCatalog = catalogState.bridge === bridge ? catalogState.catalog : undefined;
+  const catalogError = catalogState.bridge === bridge ? catalogState.error : null;
+  const selectionError = selectionErrorState.bridge === bridge ? selectionErrorState.error : null;
+  const error = catalogError ?? selectionError;
   const catalog = suppliedCatalog ?? loadedCatalog;
 
   useEffect(() => {
     if (!available || !open || catalog) return;
     let cancelled = false;
     void loadBundledFontCatalog().then((loaded) => {
-      if (!cancelled) setLoadedCatalog(loaded);
+      if (!cancelled && getSignalLoomNativeBridge() === bridge) {
+        setCatalogState({ bridge, catalog: loaded, error: null });
+      }
     }).catch((reason) => {
-      if (!cancelled) setError(reason instanceof Error ? reason.message : 'Bundled font library is unavailable.');
+      if (!cancelled && getSignalLoomNativeBridge() === bridge) {
+        setCatalogState({
+          bridge,
+          error: reason instanceof Error ? reason.message : 'Bundled font library is unavailable.',
+        });
+      }
     });
     return () => { cancelled = true; };
-  }, [available, catalog, open]);
+  }, [available, bridge, catalog, open]);
 
   const visibleFamilies = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
@@ -76,12 +102,17 @@ export function BundledFontBrowser({
 
   const choose = async (family: BundledFontFamily, face: BundledFontFace) => {
     setBusyFace(face.id);
-    setError(null);
+    setSelectionErrorState({ bridge, error: null });
     try {
       await ensureBundledFontFaceRegistered(family, face);
       await onSelect(family, face);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'The font face could not be selected.');
+      if (getSignalLoomNativeBridge() === bridge) {
+        setSelectionErrorState({
+          bridge,
+          error: reason instanceof Error ? reason.message : 'The font face could not be selected.',
+        });
+      }
     } finally {
       setBusyFace(null);
     }

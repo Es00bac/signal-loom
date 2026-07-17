@@ -807,7 +807,7 @@ async function fetchBundledFontCatalog(
   fetchImpl: typeof fetch,
 ): Promise<BundledFontCatalog> {
   const available = await queryBundledFontLibraryCapabilityForBridge(bridge);
-  if (!available) {
+  if (!available || getSignalLoomNativeBridge() !== bridge) {
     throw new Error('The bundled font library requires the Sloom Studio desktop app with a resolved font-library root; this renderer has no usable signal-loom-font transport.');
   }
   const response = await fetchImpl(bundledFontResourceUrl('inventory/font-inventory.json'), {
@@ -816,7 +816,14 @@ async function fetchBundledFontCatalog(
     headers: { Accept: 'application/json' },
   });
   if (!response.ok) throw new Error(`Bundled font library is unavailable (${response.status}).`);
-  return parseBundledFontInventory(await response.json());
+  const catalog = parseBundledFontInventory(await response.json());
+  // A bridge can be replaced while the protocol response or JSON parsing is in flight. The
+  // catalog is authorized only by the same bridge that was current after its positive status
+  // response, so never return it for a newer renderer authority.
+  if (getSignalLoomNativeBridge() !== bridge) {
+    throw new Error('The bundled font library bridge changed while its catalog was loading.');
+  }
+  return catalog;
 }
 
 export function loadBundledFontCatalog(fetchImpl: typeof fetch = fetch): Promise<BundledFontCatalog> {

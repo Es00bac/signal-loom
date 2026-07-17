@@ -32,10 +32,31 @@ multiple consumers, remount/replacement behavior, bridge-scoped catalog loading,
 Image caller. The managed-font persistence fixtures now model the explicit positive transport
 required by desktop restoration/export flows.
 
+## Follow-up: bridge-authority race correction
+
+The independent Sol final gate found that catalog authorization still had two asynchronous
+identity gaps. A delayed positive status from bridge A could initiate a catalog fetch after the
+renderer bridge had changed to unavailable bridge B; separately, a response authorized by A could
+finish parsing and be returned after B became current. The browser also retained its settled A
+catalog/error state across a bridge replacement, allowing a positive B to display A's data without
+its own catalog authorization.
+
+`fetchBundledFontCatalog` now confirms that its captured bridge is still
+`getSignalLoomNativeBridge()` immediately after the status await and again after JSON parsing,
+before returning the catalog. `BundledFontBrowser` scopes catalog and error state to the bridge
+identity seen by that render and checks identity again before asynchronous UI publication. Thus a
+replacement fails closed immediately; B must complete B's status and B's catalog request, and a
+late A completion cannot replace B's UI.
+
+Permanent regressions prove: delayed A-positive → B-negative causes zero fetches; an A-authorized
+fetch rejected after B replaces the bridge before parsing/publication; a settled A catalog is
+discarded until positive B loads its own catalog; and a late A completion cannot overwrite settled
+B state.
+
 ## Verification
 
-- Focused capability/UI/Electron-source matrix: 6 files, 86 tests passed.
-- Adjacent managed-font/UI matrix: 11 files, 84 tests passed.
+- Focused bridge-race capability/browser suites: 2 files, 28 tests passed.
+- Adjacent managed-font/UI matrix: 16 files, 171 tests passed.
 - Forced TypeScript: `npx tsc -b --force --pretty false` passed.
 - Touched-file ESLint passed with no output.
 - `git diff --check` passed.

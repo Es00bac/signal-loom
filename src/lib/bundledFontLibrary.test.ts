@@ -350,4 +350,53 @@ describe('bundled font library platform capability gate (FBL-025)', () => {
     expect(replacementStatus).toHaveBeenCalledTimes(1);
     expect(replacementFetch).not.toHaveBeenCalled();
   });
+
+  it('does not fetch or publish A\'s catalog when A turns positive after the current bridge becomes negative B', async () => {
+    let resolveFirstStatus: ((status: { available: boolean }) => void) | undefined;
+    const firstStatus = vi.fn(() => new Promise<{ available: boolean }>((resolve) => { resolveFirstStatus = resolve; }));
+    const firstBridge = { getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: firstStatus };
+    vi.stubGlobal('window', { signalLoomNative: firstBridge });
+    const firstFetch = vi.fn(async () => new Response(JSON.stringify(sampleInventory()), { status: 200 })) as unknown as typeof fetch;
+
+    const pendingCatalog = loadBundledFontCatalog(firstFetch);
+    await vi.waitFor(() => expect(firstStatus).toHaveBeenCalledTimes(1));
+
+    const replacementStatus = vi.fn(async () => ({ available: false }));
+    vi.stubGlobal('window', {
+      signalLoomNative: { getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: replacementStatus },
+    });
+    resolveFirstStatus?.({ available: true });
+
+    await expect(pendingCatalog).rejects.toThrow(/desktop app/i);
+    expect(firstFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects an A-authorized catalog when its bridge changes before JSON publication', async () => {
+    const firstBridge = {
+      getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: vi.fn(async () => ({ available: true })),
+    };
+    vi.stubGlobal('window', { signalLoomNative: firstBridge });
+    let resolveJson: ((inventory: ReturnType<typeof sampleInventory>) => void) | undefined;
+    const firstFetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: () => new Promise<ReturnType<typeof sampleInventory>>((resolve) => { resolveJson = resolve; }),
+    })) as unknown as typeof fetch;
+
+    const pendingCatalog = loadBundledFontCatalog(firstFetch);
+    await vi.waitFor(() => expect(firstFetch).toHaveBeenCalledTimes(1));
+
+    const replacementBridge = {
+      getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: vi.fn(async () => ({ available: true })),
+    };
+    vi.stubGlobal('window', { signalLoomNative: replacementBridge });
+    resolveJson?.(sampleInventory());
+
+    await expect(pendingCatalog).rejects.toThrow(/bridge changed/i);
+
+    const replacementFetch = vi.fn(async () => new Response(JSON.stringify(sampleInventory()), { status: 200 })) as unknown as typeof fetch;
+    await expect(loadBundledFontCatalog(replacementFetch)).resolves.toMatchObject({ familyCount: 1 });
+    expect(replacementBridge.bundledFontLibraryStatus).toHaveBeenCalledTimes(1);
+    expect(replacementFetch).toHaveBeenCalledTimes(1);
+  });
 });

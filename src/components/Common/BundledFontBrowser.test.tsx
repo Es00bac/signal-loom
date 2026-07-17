@@ -32,6 +32,40 @@ const catalog: BundledFontCatalog = {
   ],
 };
 
+function inventoryResponse(family: string) {
+  return {
+    schemaVersion: 1,
+    catalogFamilyCount: 1,
+    faceCount: 1,
+    criticalErrorCount: 0,
+    families: [{
+      collection: 'base',
+      family,
+      slug: family.toLocaleLowerCase().replace(/[^a-z0-9]/g, ''),
+      source: { url: 'https://example.test', commit: '1' },
+      licenses: [{ file: 'licenses/library.txt', spdx: 'OFL-1.1', sha256: 'a'.repeat(64), byteLength: 1 }],
+      faces: [{
+        file: 'collection/base/library/Regular.ttf',
+        collectionIndex: 0,
+        sha256: testFontSha256,
+        byteLength: testFontBytes.byteLength,
+        family,
+        subfamily: 'Regular',
+        fullName: `${family} Regular`,
+        postscriptName: `${family.replace(/\s/g, '')}-Regular`,
+        version: '1',
+        weight: 400,
+        stretchPercent: 100,
+        glyphCount: 100,
+        variable: false,
+        axes: [],
+        hasVerticalSubstitution: false,
+      }],
+      warnings: [],
+    }],
+  };
+}
+
 function stubCompleteNativeBridge(): void {
   window.signalLoomNative = {
     getNativeState: vi.fn(),
@@ -318,6 +352,91 @@ describe('BundledFontBrowser platform capability gate (FBL-025)', () => {
       await vi.waitFor(() => expect(onSelect).toHaveBeenCalled());
     });
 
+    await act(async () => root.unmount());
+  });
+
+  it('discards a settled A catalog and requires B\'s own positive status and catalog load', async () => {
+    const firstBridge = {
+      getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: vi.fn(async () => ({ available: true })),
+    };
+    window.signalLoomNative = firstBridge as never;
+    const firstFetch = vi.fn(async () => new Response(JSON.stringify(inventoryResponse('A Catalog')), { status: 200 }));
+    vi.stubGlobal('fetch', firstFetch);
+    const host = document.createElement('div');
+    const root = createRoot(host);
+
+    await act(async () => root.render(<BundledFontBrowser initiallyOpen onSelect={vi.fn()} style="normal" value="" weight={400} />));
+    await waitForBrowserToggle(host);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.textContent).toContain('A Catalog'));
+    });
+    expect(firstFetch).toHaveBeenCalledTimes(1);
+
+    let resolveReplacementStatus: ((status: { available: boolean }) => void) | undefined;
+    const replacementBridge = {
+      getNativeState: vi.fn(),
+      onMenuCommand: vi.fn(),
+      bundledFontLibraryStatus: vi.fn(() => new Promise<{ available: boolean }>((resolve) => { resolveReplacementStatus = resolve; })),
+    };
+    const replacementFetch = vi.fn(async () => new Response(JSON.stringify(inventoryResponse('B Catalog')), { status: 200 }));
+    window.signalLoomNative = replacementBridge as never;
+    vi.stubGlobal('fetch', replacementFetch);
+    await act(async () => root.render(<BundledFontBrowser initiallyOpen onSelect={vi.fn()} style="normal" value="" weight={400} />));
+
+    // The rendered B bridge cannot show A's settled catalog while B authorization is pending.
+    expect(host.querySelector('button')).toBeNull();
+    await act(async () => resolveReplacementStatus?.({ available: true }));
+    await waitForBrowserToggle(host);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.textContent).toContain('B Catalog'));
+    });
+    expect(host.textContent).not.toContain('A Catalog');
+    expect(replacementBridge.bundledFontLibraryStatus).toHaveBeenCalledTimes(1);
+    expect(replacementFetch).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+  });
+
+  it('does not let a stale A catalog completion overwrite B browser state', async () => {
+    const firstBridge = {
+      getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: vi.fn(async () => ({ available: true })),
+    };
+    window.signalLoomNative = firstBridge as never;
+    let resolveFirstCatalog: ((value: ReturnType<typeof inventoryResponse>) => void) | undefined;
+    const fetchSpy = vi.fn(async () => {
+      if (fetchSpy.mock.calls.length === 1) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => new Promise<ReturnType<typeof inventoryResponse>>((resolve) => { resolveFirstCatalog = resolve; }),
+        };
+      }
+      return new Response(JSON.stringify(inventoryResponse('B Catalog')), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const host = document.createElement('div');
+    const root = createRoot(host);
+
+    await act(async () => root.render(<BundledFontBrowser initiallyOpen onSelect={vi.fn()} style="normal" value="" weight={400} />));
+    await waitForBrowserToggle(host);
+    await act(async () => {
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    });
+
+    const replacementBridge = {
+      getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: vi.fn(async () => ({ available: true })),
+    };
+    window.signalLoomNative = replacementBridge as never;
+    await act(async () => root.render(<BundledFontBrowser initiallyOpen onSelect={vi.fn()} style="normal" value="" weight={400} />));
+    await waitForBrowserToggle(host);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.textContent).toContain('B Catalog'));
+    });
+
+    await act(async () => resolveFirstCatalog?.(inventoryResponse('A Catalog')));
+    expect(host.textContent).toContain('B Catalog');
+    expect(host.textContent).not.toContain('A Catalog');
+    expect(replacementBridge.bundledFontLibraryStatus).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
     await act(async () => root.unmount());
   });
 });
