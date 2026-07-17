@@ -177,6 +177,20 @@ export function paperRichTextIsEmpty(paragraphs: PaperRichParagraph[] | undefine
   return !paragraphs || !paragraphs.some((paragraph) => paragraph.runs.some((run) => run.text.length > 0));
 }
 
+/** A derived, render-only paragraph fragment. Ownership prevents paragraph-start/end decoration from being
+ * replayed when one source paragraph continues through another text frame. These fields are never serialized. */
+export interface PaperRichParagraphFragment extends PaperRichParagraph {
+  ownsParagraphStart: boolean;
+  ownsParagraphEnd: boolean;
+}
+
+export function isPaperRichParagraphFragment(
+  paragraph: PaperRichParagraph,
+): paragraph is PaperRichParagraphFragment {
+  return typeof (paragraph as Partial<PaperRichParagraphFragment>).ownsParagraphStart === 'boolean'
+    && typeof (paragraph as Partial<PaperRichParagraphFragment>).ownsParagraphEnd === 'boolean';
+}
+
 /**
  * Slice rich text to the character range [startOffset, endOffset) measured in the SAME coordinate space as
  * `flattenPaperRichText(paragraphs)`: runs concatenated, list paragraphs prefixed with `${listMarker}\t`, and
@@ -193,12 +207,12 @@ export function slicePaperRichTextRange(
   paragraphs: PaperRichParagraph[],
   startOffset: number,
   endOffset: number,
-): PaperRichParagraph[] {
+): PaperRichParagraphFragment[] {
   const start = Math.max(0, Math.min(startOffset, endOffset));
   const end = Math.max(start, endOffset);
   if (end <= start) return [];
 
-  const result: PaperRichParagraph[] = [];
+  const result: PaperRichParagraphFragment[] = [];
   let cursor = 0;
   paragraphs.forEach((paragraph, index) => {
     if (index > 0) cursor += 1; // the '\n' that flattenPaperRichText inserts between paragraphs
@@ -216,9 +230,41 @@ export function slicePaperRichTextRange(
     const blankLineInRange = paraStart === paraEnd && paraStart >= start && paraStart < end;
     if (!overlaps && !blankLineInRange) return;
 
-    const sliced: PaperRichParagraph = { ...paragraph, runs: [] };
-    // Only keep the bullet when this slice owns the paragraph's beginning.
-    if (paragraph.listMarker && start > paraStart) delete sliced.listMarker;
+    const paragraphSource = (paragraph.listMarker ? `${paragraph.listMarker}\t` : '')
+      + paragraph.runs.map((run) => run.text).join('');
+    // Flow ranges deliberately omit ordinary boundary whitespace. Whitespace alone before the first owned word
+    // or after the last owned word does not transfer paragraph ownership away from that fragment.
+    const ownsParagraphStart = start <= paraStart
+      || paragraphSource.slice(0, Math.max(0, start - paraStart)).trim() === '';
+    const ownsParagraphEnd = end >= paraEnd
+      || paragraphSource.slice(Math.max(0, end - paraStart)).trim() === '';
+    const sliced: PaperRichParagraphFragment = {
+      ...paragraph,
+      runs: [],
+      ownsParagraphStart,
+      ownsParagraphEnd,
+    };
+    // Start-only semantics belong to the fragment that owns the true paragraph start. Retain continuing
+    // geometry (alignment, leading, left/right indent, shading, side borders) in every fragment.
+    if (!ownsParagraphStart) {
+      delete sliced.listMarker;
+      delete sliced.dropCapLines;
+      delete sliced.firstLineIndentMm;
+      delete sliced.hangingIndentMm;
+      delete sliced.spaceBeforeMm;
+      if (sliced.borders?.top) {
+        const { top: _top, ...continuingBorders } = sliced.borders;
+        sliced.borders = continuingBorders;
+      }
+    }
+    // End-only semantics must not paint early at an inter-frame fragment boundary.
+    if (!ownsParagraphEnd) {
+      delete sliced.spaceAfterMm;
+      if (sliced.borders?.bottom) {
+        const { bottom: _bottom, ...continuingBorders } = sliced.borders;
+        sliced.borders = continuingBorders;
+      }
+    }
 
     const from = Math.max(start, contentStart);
     const to = Math.min(end, paraEnd);

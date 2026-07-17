@@ -14,6 +14,10 @@ export interface PaperTextFlowTypeSpec {
   align: 'left' | 'center' | 'right' | 'justify';
   fontWeight?: string;
   fontStyle?: string;
+  firstLineIndentMm?: number;
+  spaceBeforeMm?: number;
+  spaceAfterMm?: number;
+  dropCapLines?: number;
   /**
    * Japanese vertical writing (縦書き). When set, each text line runs down the frame's HEIGHT and
    * successive lines (columns) advance right-to-left across its WIDTH — so the flow engine's capacity
@@ -35,6 +39,43 @@ export interface PaperTextFlowFrame {
   columns: PaperTextFlowColumn[];
   /** Obstacles to flow around inside THIS frame (frame-local mm). Overrides the call-wide default. */
   exclusions?: PaperTextFlowExclusion[];
+  /** Destination-frame typography. When omitted, the call-wide `spec` remains authoritative. */
+  typeSpec?: PaperTextFlowTypeSpec;
+}
+
+/** A source span that must be assigned atomically. Used by rich list prefixes (`marker + "\t"`). */
+export interface PaperTextFlowProtectedSpan {
+  start: number;
+  end: number;
+}
+
+/** Run-level typography in the flattened rich source. Unset fields inherit the destination frame. */
+export interface PaperTextFlowStyleSpan extends PaperTextFlowProtectedSpan {
+  typeSpec: Partial<PaperTextFlowTypeSpec>;
+}
+
+/** Paragraph geometry in the flattened rich source. Paragraphs are in source order, including blanks. */
+export interface PaperTextFlowParagraphMetrics extends PaperTextFlowProtectedSpan {
+  /** First run character after any protected list prefix. */
+  contentStart?: number;
+  align?: PaperTextFlowTypeSpec['align'];
+  leadingPt?: number;
+  firstLineIndentMm?: number;
+  leftIndentMm?: number;
+  rightIndentMm?: number;
+  hangingIndentMm?: number;
+  listMarkerIndentMm?: number;
+  spaceBeforeMm?: number;
+  spaceAfterMm?: number;
+  borderPaddingMm?: number;
+  dropCapLines?: number;
+}
+
+/** Optional source-aware metrics used when flowing authoritative rich text. */
+export interface PaperTextFlowSourceMetrics {
+  protectedSpans?: PaperTextFlowProtectedSpan[];
+  styleSpans?: PaperTextFlowStyleSpan[];
+  paragraphs?: PaperTextFlowParagraphMetrics[];
 }
 
 export interface PaperTextFlowPoint {
@@ -93,6 +134,9 @@ interface FlowToken {
   kind: 'word' | 'break';
   text: string;
   start: number;
+  end: number;
+  /** Paragraph index in the source. A break belongs to the paragraph that follows it. */
+  paragraphIndex: number;
   /** Separator to emit BEFORE this token when it is not the first on a line (space for Latin words
    * preceded by whitespace, empty for CJK characters — Japanese has no inter-character spaces). */
   sep: string;
@@ -120,14 +164,14 @@ function isCjkChar(ch: string): boolean {
   return CJK_CHAR.test(ch);
 }
 
-function tokenize(text: string): FlowToken[] {
+function tokenize(text: string, protectedSpans: readonly PaperTextFlowProtectedSpan[] = []): FlowToken[] {
   const tokens: FlowToken[] = [];
   const lines = text.split('\n');
   let offset = 0;
 
   lines.forEach((line, lineIndex) => {
     if (lineIndex > 0) {
-      tokens.push({ kind: 'break', text: '\n', start: offset - 1, sep: '', cjk: false });
+      tokens.push({ kind: 'break', text: '\n', start: offset - 1, end: offset, paragraphIndex: lineIndex, sep: '', cjk: false });
     }
     // Walk the line: whitespace separates Latin words; each CJK glyph is its own unit; a run of
     // non-space, non-CJK characters is one Latin "word". `sep` records whether whitespace preceded a
@@ -145,7 +189,8 @@ function tokenize(text: string): FlowToken[] {
         continue;
       }
       if (isCjkChar(ch)) {
-        tokens.push({ kind: 'word', text: ch, start: offset + charOffset, sep: pendingSpace ? ' ' : '', cjk: true });
+        const start = offset + charOffset;
+        tokens.push({ kind: 'word', text: ch, start, end: start + ch.length, paragraphIndex: lineIndex, sep: pendingSpace ? ' ' : '', cjk: true });
         pendingSpace = false;
         charOffset += ch.length;
         i += 1;
@@ -159,11 +204,44 @@ function tokenize(text: string): FlowToken[] {
         charOffset += chars[i].length;
         i += 1;
       }
-      tokens.push({ kind: 'word', text: word, start: offset + wordStart, sep: pendingSpace ? ' ' : '', cjk: false });
+      const start = offset + wordStart;
+      tokens.push({ kind: 'word', text: word, start, end: start + word.length, paragraphIndex: lineIndex, sep: pendingSpace ? ' ' : '', cjk: false });
       pendingSpace = false;
     }
     offset += line.length + 1;
   });
+
+  // Replace every token that overlaps a protected source span with one indivisible word token. This is
+  // deliberately source-coordinate based: a rich list prefix such as "10.\t" stays atomic even though the
+  // ordinary tokenizer would otherwise see the marker and its tab as separate wrapping opportunities.
+  for (const rawSpan of [...protectedSpans].sort((left, right) => left.start - right.start)) {
+    const start = Math.max(0, Math.min(text.length, Math.floor(rawSpan.start)));
+    const end = Math.max(start, Math.min(text.length, Math.floor(rawSpan.end)));
+    if (end <= start) continue;
+    const firstOverlap = tokens.findIndex((token) => token.end > start && token.start < end);
+    const insertionIndex = firstOverlap >= 0
+      ? firstOverlap
+      : tokens.findIndex((token) => token.start >= end);
+    const paragraphIndex = text.slice(0, start).split('\n').length - 1;
+    const prior = firstOverlap >= 0 ? tokens[firstOverlap] : undefined;
+    const protectedToken: FlowToken = {
+      kind: 'word',
+      text: text.slice(start, end),
+      start,
+      end,
+      paragraphIndex,
+      sep: prior?.sep ?? '',
+      cjk: false,
+    };
+    const kept = tokens.filter((token) => token.end <= start || token.start >= end);
+    const targetIndex = insertionIndex < 0 ? kept.length : kept.findIndex((token) => token.start >= end);
+    const protectedIndex = targetIndex < 0 ? kept.length : targetIndex;
+    kept.splice(protectedIndex, 0, protectedToken);
+    if (/\s$/u.test(protectedToken.text) && kept[protectedIndex + 1]?.kind === 'word') {
+      kept[protectedIndex + 1].sep = '';
+    }
+    tokens.splice(0, tokens.length, ...kept);
+  }
 
   return tokens;
 }
@@ -172,6 +250,9 @@ interface NextLineResult {
   text: string;
   widthMm: number;
   nextIndex: number;
+  leadingMm: number;
+  paragraphIndex: number;
+  isParagraphEnd: boolean;
 }
 
 /** Reconstruct a line's text from its chosen units, honouring each unit's leading separator (the first
@@ -190,8 +271,11 @@ function buildNextLine(
   lineBudgetMm: number,
   measure: PaperTextMeasurer,
   spec: PaperTextFlowTypeSpec,
+  sourceText: string,
+  sourceMetrics: PaperTextFlowSourceMetrics | undefined,
 ): NextLineResult {
   let index = startIndex;
+  const paragraphIndex = tokens[index]?.paragraphIndex ?? (sourceMetrics?.paragraphs?.length ?? 1) - 1;
 
   // A paragraph break terminates the previous line; the next line starts after it.
   if (index < tokens.length && tokens[index].kind === 'break') {
@@ -200,7 +284,8 @@ function buildNextLine(
 
   const chosen: FlowToken[] = [];
   while (index < tokens.length && tokens[index].kind === 'word') {
-    const candidateWidth = measure(joinUnits([...chosen, tokens[index]]), spec);
+    const candidate = [...chosen, tokens[index]];
+    const candidateWidth = measureFlowUnits(candidate, sourceText, measure, spec, sourceMetrics);
     if (chosen.length === 0 || candidateWidth <= lineBudgetMm + EPSILON_MM) {
       chosen.push(tokens[index]);
       index += 1;
@@ -236,7 +321,94 @@ function buildNextLine(
   }
 
   const text = joinUnits(chosen);
-  return { text, widthMm: text ? measure(text, spec) : 0, nextIndex: index };
+  const widthMm = text ? measureFlowUnits(chosen, sourceText, measure, spec, sourceMetrics) : 0;
+  const leadingMm = lineLeadingMm(chosen, paragraphIndex, spec, sourceMetrics);
+  return {
+    text,
+    widthMm,
+    nextIndex: index,
+    leadingMm,
+    paragraphIndex,
+    isParagraphEnd: index >= tokens.length || tokens[index].kind === 'break',
+  };
+}
+
+function paragraphMetricsAt(
+  paragraphIndex: number,
+  sourceMetrics: PaperTextFlowSourceMetrics | undefined,
+): PaperTextFlowParagraphMetrics | undefined {
+  return sourceMetrics?.paragraphs?.[paragraphIndex];
+}
+
+function resolvedSourceSpec(
+  sourceOffset: number,
+  paragraphIndex: number,
+  base: PaperTextFlowTypeSpec,
+  sourceMetrics: PaperTextFlowSourceMetrics | undefined,
+): PaperTextFlowTypeSpec {
+  const paragraph = paragraphMetricsAt(paragraphIndex, sourceMetrics);
+  const run = sourceMetrics?.styleSpans?.find((span) => sourceOffset >= span.start && sourceOffset < span.end);
+  return {
+    ...base,
+    ...(paragraph?.align ? { align: paragraph.align } : {}),
+    ...(paragraph?.leadingPt != null ? { leadingPt: paragraph.leadingPt } : {}),
+    ...(run?.typeSpec ?? {}),
+  };
+}
+
+function measureFlowUnits(
+  units: FlowToken[],
+  sourceText: string,
+  measure: PaperTextMeasurer,
+  baseSpec: PaperTextFlowTypeSpec,
+  sourceMetrics: PaperTextFlowSourceMetrics | undefined,
+): number {
+  if (!sourceMetrics) return measure(joinUnits(units), baseSpec);
+  let widthMm = 0;
+  units.forEach((unit, index) => {
+    const unitSpec = resolvedSourceSpec(unit.start, unit.paragraphIndex, baseSpec, sourceMetrics);
+    if (index > 0 && unit.sep) widthMm += measure(unit.sep, unitSpec);
+    const boundaries = new Set([unit.start, unit.end]);
+    for (const span of sourceMetrics.styleSpans ?? []) {
+      if (span.start > unit.start && span.start < unit.end) boundaries.add(span.start);
+      if (span.end > unit.start && span.end < unit.end) boundaries.add(span.end);
+    }
+    const ordered = [...boundaries].sort((left, right) => left - right);
+    for (let segment = 0; segment < ordered.length - 1; segment += 1) {
+      const start = ordered[segment];
+      const end = ordered[segment + 1];
+      const sourceSegment = sourceText.slice(start, end);
+      const measuredSegment = sourceMetrics.protectedSpans?.some((span) => start >= span.start && end <= span.end)
+        ? sourceSegment.replace(/\t/g, '\u2003')
+        : sourceSegment;
+      widthMm += measure(
+        measuredSegment,
+        resolvedSourceSpec(start, unit.paragraphIndex, baseSpec, sourceMetrics),
+      );
+    }
+  });
+  return widthMm;
+}
+
+function lineLeadingMm(
+  units: FlowToken[],
+  paragraphIndex: number,
+  baseSpec: PaperTextFlowTypeSpec,
+  sourceMetrics: PaperTextFlowSourceMetrics | undefined,
+): number {
+  if (!sourceMetrics) return ptToMm(baseSpec.leadingPt > 0 ? baseSpec.leadingPt : baseSpec.fontSizePt * 1.2);
+  const offsets = units.length > 0
+    ? units.flatMap((unit) => [
+        unit.start,
+        ...(sourceMetrics.styleSpans ?? [])
+          .filter((span) => span.start > unit.start && span.start < unit.end)
+          .map((span) => span.start),
+      ])
+    : [paragraphMetricsAt(paragraphIndex, sourceMetrics)?.start ?? 0];
+  return Math.max(...offsets.map((offset) => {
+    const resolved = resolvedSourceSpec(offset, paragraphIndex, baseSpec, sourceMetrics);
+    return ptToMm(Math.max(resolved.leadingPt > 0 ? resolved.leadingPt : 0, resolved.fontSizePt * 1.2));
+  }));
 }
 
 function alignLineX(box: { xMm: number; widthMm: number }, widthMm: number, align: PaperTextFlowTypeSpec['align']): number {
@@ -325,29 +497,32 @@ export function flowPaperText(
   frames: PaperTextFlowFrame[],
   measure: PaperTextMeasurer,
   exclusions: PaperTextFlowExclusion[] = [],
+  sourceMetrics?: PaperTextFlowSourceMetrics,
 ): PaperTextFlowResult {
-  const tokens = tokenize(text);
-  const leadingMm = ptToMm(spec.leadingPt > 0 ? spec.leadingPt : spec.fontSizePt * 1.2);
+  const tokens = tokenize(text, sourceMetrics?.protectedSpans);
   let index = 0;
+  const paragraphLineCounts = new Map<number, number>();
 
   const frameResults: PaperTextFlowFrameResult[] = frames.map((frame) => {
     const frameStartIndex = index;
     const lines: PaperTextFlowLine[] = [];
     const frameExclusions = frame.exclusions ?? exclusions;
+    const frameSpec = frame.typeSpec ?? spec;
 
     for (const column of frame.columns) {
       // 縦書き (vertical-rl): each text line runs down the column HEIGHT and successive lines advance
       // right-to-left across its WIDTH, so the axes swap. Runaround exclusions (horizontal bands) don't
       // apply, so the vertical path is a clean column fill — its job here is capacity/overset, and the
       // browser renders the glyphs via CSS `writing-mode`.
-      if (spec.vertical) {
+      if (frameSpec.vertical) {
         const lineBudgetMm = column.heightMm; // a line's length is bounded by the frame height
         const columnRight = column.xMm + column.widthMm; // the first text-line sits at the right edge
         let used = 0; // width consumed by placed text-lines
 
-        while (index < tokens.length && used + leadingMm <= column.widthMm + EPSILON_MM) {
-          const line = buildNextLine(tokens, index, lineBudgetMm, measure, spec);
+        while (index < tokens.length) {
+          const line = buildNextLine(tokens, index, lineBudgetMm, measure, frameSpec, text, sourceMetrics);
           if (line.nextIndex === index) break;
+          if (used + line.leadingMm > column.widthMm + EPSILON_MM) break;
 
           const remainderHasWords = tokens.slice(line.nextIndex).some((token) => token.kind === 'word');
           if (line.text === '' && !remainderHasWords) {
@@ -357,12 +532,13 @@ export function flowPaperText(
 
           lines.push({
             text: line.text,
-            xMm: columnRight - used - leadingMm, // nominal (not consumed downstream): lines march leftward
+            xMm: columnRight - used - line.leadingMm, // nominal (not consumed downstream): lines march leftward
             yMm: column.yMm,
             widthMm: line.widthMm,
           });
-          used += leadingMm;
+          used += line.leadingMm;
           index = line.nextIndex;
+          paragraphLineCounts.set(line.paragraphIndex, (paragraphLineCounts.get(line.paragraphIndex) ?? 0) + 1);
         }
         continue;
       }
@@ -370,14 +546,22 @@ export function flowPaperText(
       const columnBottom = column.yMm + column.heightMm;
       let y = column.yMm;
 
-      while (index < tokens.length && y + leadingMm <= columnBottom + EPSILON_MM) {
+      while (index < tokens.length) {
+        const paragraphIndex = tokens[index].paragraphIndex;
+        const paragraph = paragraphMetricsAt(paragraphIndex, sourceMetrics);
+        const paragraphLineIndex = paragraphLineCounts.get(paragraphIndex) ?? 0;
+        const paragraphStartInset = paragraphLineIndex === 0
+          ? Math.max(0, paragraph?.spaceBeforeMm ?? frameSpec.spaceBeforeMm ?? 0) + Math.max(0, paragraph?.borderPaddingMm ?? 0)
+          : 0;
+        const candidateY = y + paragraphStartInset;
+        const nominalLeadingMm = lineLeadingMm([], paragraphIndex, frameSpec, sourceMetrics);
         // Narrow the line's usable box to the widest part of the column left clear by any exclusion
         // band; a fully blocked band is skipped so the text resumes below the obstacle.
         let lineBox: { xMm: number; widthMm: number } = { xMm: column.xMm, widthMm: column.widthMm };
         if (frameExclusions.length > 0) {
           const blocks: [number, number][] = [];
           for (const exclusion of frameExclusions) {
-            const blocked = bandBlockedInterval(exclusion, y, y + leadingMm);
+            const blocked = bandBlockedInterval(exclusion, candidateY, candidateY + nominalLeadingMm);
             if (blocked) blocks.push(blocked);
           }
           if (blocks.length > 0) {
@@ -387,17 +571,19 @@ export function flowPaperText(
               null,
             );
             if (!widest || widest[1] - widest[0] < MIN_RUNAROUND_LINE_MM) {
-              y += leadingMm;
+              y += nominalLeadingMm;
               continue;
             }
             lineBox = { xMm: widest[0], widthMm: widest[1] - widest[0] };
           }
         }
 
-        const line = buildNextLine(tokens, index, lineBox.widthMm, measure, spec);
+        lineBox = paragraphLineBox(lineBox, paragraph, paragraphLineIndex, text, measure, frameSpec, sourceMetrics);
+        const line = buildNextLine(tokens, index, lineBox.widthMm, measure, frameSpec, text, sourceMetrics);
         if (line.nextIndex === index) {
           break;
         }
+        if (candidateY + line.leadingMm > columnBottom + EPSILON_MM) break;
 
         const remainderHasWords = tokens.slice(line.nextIndex).some((token) => token.kind === 'word');
         if (line.text === '' && !remainderHasWords) {
@@ -407,18 +593,21 @@ export function flowPaperText(
 
         lines.push({
           text: line.text,
-          xMm: alignLineX(lineBox, line.widthMm, spec.align),
-          yMm: y,
+          xMm: alignLineX(lineBox, line.widthMm, resolvedSourceSpec(tokens[index].start, paragraphIndex, frameSpec, sourceMetrics).align),
+          yMm: candidateY,
           widthMm: line.widthMm,
         });
-        y += leadingMm;
+        y = candidateY + line.leadingMm;
         index = line.nextIndex;
+        paragraphLineCounts.set(paragraphIndex, paragraphLineIndex + 1);
+        if (line.isParagraphEnd) {
+          y += Math.max(0, paragraph?.borderPaddingMm ?? 0) + Math.max(0, paragraph?.spaceAfterMm ?? frameSpec.spaceAfterMm ?? 0);
+        }
       }
     }
 
-    // The slice window spans this frame's first to last WORD token: a leading paragraph break (consumed when the
-    // previous frame ended exactly on a break) and any trailing break are the inter-frame separator, owned by
-    // neither frame — so `sourceText` is the content that actually renders here, with no leading/trailing blank.
+    // Skip exactly one ordinary inter-frame delimiter. Any additional leading breaks consumed by this frame are
+    // real blank paragraphs and remain in its source range, so `A\n\nB` flows as `A` | `\nB`, not `A` | `B`.
     let firstWordIndex = -1;
     let lastWordIndex = -1;
     for (let t = frameStartIndex; t < index; t += 1) {
@@ -428,11 +617,15 @@ export function flowPaperText(
       }
     }
     const hasContent = firstWordIndex >= 0;
+    let leadingBreakCount = 0;
+    while (frameStartIndex + leadingBreakCount < index && tokens[frameStartIndex + leadingBreakCount]?.kind === 'break') {
+      leadingBreakCount += 1;
+    }
     const sourceStart = hasContent
-      ? tokens[firstWordIndex].start
+      ? (leadingBreakCount > 1 ? tokens[frameStartIndex + 1].start : tokens[firstWordIndex].start)
       : (frameStartIndex < tokens.length ? tokens[frameStartIndex].start : text.length);
     const sourceEnd = hasContent
-      ? tokens[lastWordIndex].start + tokens[lastWordIndex].text.length
+      ? tokens[lastWordIndex].end
       : sourceStart;
     const sourceText = hasContent ? text.slice(sourceStart, sourceEnd) : '';
 
@@ -441,4 +634,41 @@ export function flowPaperText(
 
   const overset = index < tokens.length ? text.slice(tokens[index].start) : '';
   return { frames: frameResults, overset, fits: overset.trim() === '' };
+}
+
+function paragraphLineBox(
+  box: { xMm: number; widthMm: number },
+  paragraph: PaperTextFlowParagraphMetrics | undefined,
+  lineIndex: number,
+  sourceText: string,
+  measure: PaperTextMeasurer,
+  frameSpec: PaperTextFlowTypeSpec,
+  sourceMetrics: PaperTextFlowSourceMetrics | undefined,
+): { xMm: number; widthMm: number } {
+  if (!paragraph) return box;
+  const border = Math.max(0, paragraph.borderPaddingMm ?? 0);
+  const marker = Math.max(0, paragraph.listMarkerIndentMm ?? 0);
+  const left = Math.max(0, paragraph.leftIndentMm ?? 0) + border + marker;
+  const right = Math.max(0, paragraph.rightIndentMm ?? 0) + border;
+  let lineOffset = 0;
+  if (lineIndex === 0) {
+    if (marker > 0) lineOffset = -marker;
+    else if ((paragraph.hangingIndentMm ?? 0) > 0) lineOffset = -Math.max(0, paragraph.hangingIndentMm ?? 0);
+    else lineOffset = paragraph.firstLineIndentMm ?? frameSpec.firstLineIndentMm ?? 0;
+  }
+  const dropCapLines = Math.max(0, paragraph.dropCapLines ?? frameSpec.dropCapLines ?? 0);
+  if (lineIndex < dropCapLines) {
+    const contentStart = paragraph.contentStart ?? paragraph.start;
+    const firstCharacter = Array.from(sourceText.slice(contentStart, paragraph.end).trimStart())[0];
+    if (firstCharacter) {
+      const paragraphIndex = Math.max(0, sourceMetrics?.paragraphs?.indexOf(paragraph) ?? 0);
+      const base = resolvedSourceSpec(contentStart, paragraphIndex, frameSpec, sourceMetrics);
+      const scaled = { ...base, fontSizePt: base.fontSizePt * Math.max(2, dropCapLines) };
+      const reserve = measure(firstCharacter, scaled) + ptToMm(scaled.fontSizePt * 0.08);
+      lineOffset += lineIndex === 0 ? Math.max(0, reserve - measure(firstCharacter, base)) : reserve;
+    }
+  }
+  const xMm = box.xMm + left + lineOffset;
+  const widthMm = Math.max(0, box.widthMm - left - right - lineOffset);
+  return { xMm, widthMm };
 }

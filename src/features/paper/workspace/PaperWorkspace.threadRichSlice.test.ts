@@ -9,7 +9,7 @@ describe('PaperWorkspace threaded rich-slice render wiring', () => {
   const source = readFileSync(new URL('./PaperWorkspace.tsx', import.meta.url), 'utf8');
 
   it('feeds each frame the thread-computed rich slice from computePaperThreadSlices', () => {
-    expect(source).toContain('displayRichText={threadSlices.get(frame.id)?.richText}');
+    expect(source).toMatch(/displayRichText=\{resolvePaperRichTextFolios\([\s\S]*?threadSlices\.get\(frame\.id\)\?\.richText/);
   });
 
   it('renders the EFFECTIVE (sliced) rich text, not always the stored head richText', () => {
@@ -27,5 +27,17 @@ describe('PaperWorkspace threaded rich-slice render wiring', () => {
     expect(source).toContain('isPaperInlineTextFrame(frame) && !isThreadContinuation && !frame.table');
     // ...and a rich continuation reaches the rich renderer without ever becoming editable.
     expect(source).toContain('richThreadContinuation');
+  });
+
+  it('suppresses rich paragraph start/end paint unless the computed fragment owns that boundary', () => {
+    expect(source).toContain('paragraph.ownsParagraphStart');
+    expect(source).toContain('paragraph.ownsParagraphEnd');
+    expect(source).toMatch(/const dropCapLines = ownsParagraphStart/);
+    expect(source).toMatch(/const spaceAfter = ownsParagraphEnd/);
+  });
+
+  it('resolves folios on derived rich slices while leaving stored head richText outside the transform', () => {
+    expect(source).toContain("import { resolvePaperFolioText, resolvePaperRichTextFolios } from '../../../lib/paperFolios'");
+    expect(source).not.toMatch(/resolvePaperRichTextFolios\(\s*frame\.richText/);
   });
 });

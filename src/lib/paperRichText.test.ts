@@ -99,6 +99,11 @@ describe('slicePaperRichTextRange', () => {
     { runs: [{ text: 'fox jumps' }], align: 'center' },
     { runs: [{ text: 'lazy', fontStyle: 'italic' }, { text: ' dog', link: 'https://x' }], listMarker: '•' },
   ];
+  const fragment = (paragraph: PaperRichParagraph, ownsParagraphStart: boolean, ownsParagraphEnd: boolean) => ({
+    ...paragraph,
+    ownsParagraphStart,
+    ownsParagraphEnd,
+  });
 
   it('keeps the flatten/slice invariant: flatten(slice(p,s,e)) === flatten(p).slice(s,e)', () => {
     const flat = flattenPaperRichText(RICH);
@@ -108,36 +113,36 @@ describe('slicePaperRichTextRange', () => {
   });
 
   it('slices mid-run and preserves that run\'s styling', () => {
-    expect(slicePaperRichTextRange(RICH, 5, 7)).toEqual([{ runs: [{ text: 'ui', fontWeight: '700' }] }]);
+    expect(slicePaperRichTextRange(RICH, 5, 7)).toEqual([fragment({ runs: [{ text: 'ui', fontWeight: '700' }] }, false, false)]);
   });
 
   it('slices on an exact run boundary', () => {
-    expect(slicePaperRichTextRange(RICH, 0, 4)).toEqual([{ runs: [{ text: 'The ' }] }]);
-    expect(slicePaperRichTextRange(RICH, 4, 9)).toEqual([{ runs: [{ text: 'quick', fontWeight: '700' }] }]);
+    expect(slicePaperRichTextRange(RICH, 0, 4)).toEqual([fragment({ runs: [{ text: 'The ' }] }, true, false)]);
+    expect(slicePaperRichTextRange(RICH, 4, 9)).toEqual([fragment({ runs: [{ text: 'quick', fontWeight: '700' }] }, false, false)]);
   });
 
   it('preserves run boundaries when a slice spans several runs in one paragraph', () => {
     expect(slicePaperRichTextRange(RICH, 0, 9)).toEqual([
-      { runs: [{ text: 'The ' }, { text: 'quick', fontWeight: '700' }] },
+      fragment({ runs: [{ text: 'The ' }, { text: 'quick', fontWeight: '700' }] }, true, false),
     ]);
   });
 
   it('splits on a paragraph newline boundary, keeping per-paragraph formatting', () => {
     expect(slicePaperRichTextRange(RICH, 0, 25)).toEqual([
-      { runs: [{ text: 'The ' }, { text: 'quick', fontWeight: '700' }, { text: ' brown' }] },
-      { runs: [{ text: 'fox jumps' }], align: 'center' },
+      fragment({ runs: [{ text: 'The ' }, { text: 'quick', fontWeight: '700' }, { text: ' brown' }] }, true, true),
+      fragment({ runs: [{ text: 'fox jumps' }], align: 'center' }, true, true),
     ]);
   });
 
   it('keeps the list marker (and link/italic) when the slice owns the item\'s start', () => {
     expect(slicePaperRichTextRange(RICH, 26, 36)).toEqual([
-      { runs: [{ text: 'lazy', fontStyle: 'italic' }, { text: ' dog', link: 'https://x' }], listMarker: '•' },
+      fragment({ runs: [{ text: 'lazy', fontStyle: 'italic' }, { text: ' dog', link: 'https://x' }], listMarker: '•' }, true, true),
     ]);
   });
 
   it('drops the list marker when the slice starts mid-item (continuation of the same bullet)', () => {
     expect(slicePaperRichTextRange(RICH, 30, 36)).toEqual([
-      { runs: [{ text: 'zy', fontStyle: 'italic' }, { text: ' dog', link: 'https://x' }] },
+      fragment({ runs: [{ text: 'zy', fontStyle: 'italic' }, { text: ' dog', link: 'https://x' }] }, false, true),
     ]);
   });
 
@@ -147,7 +152,7 @@ describe('slicePaperRichTextRange', () => {
 
   it('treats an overset (end beyond length) range as reaching the end, truthfully', () => {
     expect(slicePaperRichTextRange(RICH, 26, 999)).toEqual([
-      { runs: [{ text: 'lazy', fontStyle: 'italic' }, { text: ' dog', link: 'https://x' }], listMarker: '•' },
+      fragment({ runs: [{ text: 'lazy', fontStyle: 'italic' }, { text: ' dog', link: 'https://x' }], listMarker: '•' }, true, true),
     ]);
   });
 
@@ -155,25 +160,89 @@ describe('slicePaperRichTextRange', () => {
     const withBlank: PaperRichParagraph[] = [{ runs: [{ text: 'A' }] }, { runs: [{ text: '' }] }, { runs: [{ text: 'B' }] }];
     expect(flattenPaperRichText(withBlank)).toBe('A\n\nB');
     expect(slicePaperRichTextRange(withBlank, 0, 4)).toEqual([
-      { runs: [{ text: 'A' }] },
-      { runs: [{ text: '' }] },
-      { runs: [{ text: 'B' }] },
+      fragment({ runs: [{ text: 'A' }] }, true, true),
+      fragment({ runs: [{ text: '' }] }, true, true),
+      fragment({ runs: [{ text: 'B' }] }, true, true),
     ]);
   });
 
   it('disambiguates repeated text purely by offset, not by searching visible text', () => {
     // flatten = 'ababab'; the middle 'ab' is bold, the outer two are plain — identical text, distinct offsets.
     const repeated: PaperRichParagraph[] = [{ runs: [{ text: 'ab' }, { text: 'ab', fontWeight: '700' }, { text: 'ab' }] }];
-    expect(slicePaperRichTextRange(repeated, 0, 2)).toEqual([{ runs: [{ text: 'ab' }] }]);
-    expect(slicePaperRichTextRange(repeated, 2, 4)).toEqual([{ runs: [{ text: 'ab', fontWeight: '700' }] }]);
-    expect(slicePaperRichTextRange(repeated, 4, 6)).toEqual([{ runs: [{ text: 'ab' }] }]);
+    expect(slicePaperRichTextRange(repeated, 0, 2)).toEqual([fragment({ runs: [{ text: 'ab' }] }, true, false)]);
+    expect(slicePaperRichTextRange(repeated, 2, 4)).toEqual([fragment({ runs: [{ text: 'ab', fontWeight: '700' }] }, false, false)]);
+    expect(slicePaperRichTextRange(repeated, 4, 6)).toEqual([fragment({ runs: [{ text: 'ab' }] }, false, true)]);
   });
 
   it('preserves deterministic paragraph/run ids on kept content', () => {
     const withIds: PaperRichParagraph[] = [{ id: 'p1', runs: [{ id: 'r1', text: 'aa ' }, { id: 'r2', text: 'bb', fontWeight: '700' }] }];
     expect(slicePaperRichTextRange(withIds, 0, 5)).toEqual([
-      { id: 'p1', runs: [{ id: 'r1', text: 'aa ' }, { id: 'r2', text: 'bb', fontWeight: '700' }] },
+      fragment({ id: 'p1', runs: [{ id: 'r1', text: 'aa ' }, { id: 'r2', text: 'bb', fontWeight: '700' }] }, true, true),
     ]);
+  });
+
+  it('carries paragraph ownership and suppresses only non-owned start/end decoration', () => {
+    const decorated: PaperRichParagraph[] = [{
+      runs: [{ text: 'aa bb cc' }],
+      align: 'center',
+      leadingPt: 15,
+      firstLineIndentMm: 3,
+      hangingIndentMm: 2,
+      leftIndentMm: 4,
+      rightIndentMm: 5,
+      spaceBeforeMm: 6,
+      spaceAfterMm: 7,
+      dropCapLines: 3,
+      listMarker: '•',
+      shading: '#eee',
+      borders: {
+        top: { color: '#111', widthPt: 1 },
+        left: { color: '#222', widthPt: 1 },
+        bottom: { color: '#333', widthPt: 1 },
+        right: { color: '#444', widthPt: 1 },
+      },
+    }];
+    const flat = flattenPaperRichText(decorated);
+    const contentStart = flat.indexOf('aa');
+    const middle = slicePaperRichTextRange(decorated, contentStart + 3, contentStart + 5)[0];
+
+    expect(middle).toMatchObject({
+      ownsParagraphStart: false,
+      ownsParagraphEnd: false,
+      align: 'center',
+      leadingPt: 15,
+      leftIndentMm: 4,
+      rightIndentMm: 5,
+      shading: '#eee',
+      borders: {
+        left: { color: '#222', widthPt: 1 },
+        right: { color: '#444', widthPt: 1 },
+      },
+    });
+    expect(middle).not.toHaveProperty('listMarker');
+    expect(middle).not.toHaveProperty('dropCapLines');
+    expect(middle).not.toHaveProperty('firstLineIndentMm');
+    expect(middle).not.toHaveProperty('hangingIndentMm');
+    expect(middle).not.toHaveProperty('spaceBeforeMm');
+    expect(middle).not.toHaveProperty('spaceAfterMm');
+    expect(middle.borders).not.toHaveProperty('top');
+    expect(middle.borders).not.toHaveProperty('bottom');
+  });
+
+  it('keeps boundary ownership when flow omits only leading or trailing paragraph whitespace', () => {
+    const spaced: PaperRichParagraph[] = [{
+      runs: [{ text: '  hello  ' }],
+      dropCapLines: 2,
+      spaceBeforeMm: 3,
+      spaceAfterMm: 4,
+    }];
+    expect(slicePaperRichTextRange(spaced, 2, 7)[0]).toMatchObject({
+      ownsParagraphStart: true,
+      ownsParagraphEnd: true,
+      dropCapLines: 2,
+      spaceBeforeMm: 3,
+      spaceAfterMm: 4,
+    });
   });
 
   it('never mutates the source paragraphs', () => {

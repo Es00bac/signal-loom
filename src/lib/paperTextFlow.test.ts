@@ -108,6 +108,25 @@ describe('flowPaperText', () => {
     expect(result.overset).toBe('');
   });
 
+  it.each([
+    { text: 'A\n\nB', tailHeightMm: 9, expectedTail: '\nB' },
+    { text: 'A\n\n\nB', tailHeightMm: 13, expectedTail: '\n\nB' },
+  ])('retains blank paragraphs after the ordinary inter-frame delimiter in $text', ({ text, tailHeightMm, expectedTail }) => {
+    const result = flowPaperText(
+      text,
+      spec,
+      [frame('head', col(0, 0, 100, 5)), frame('tail', col(0, 0, 100, tailHeightMm))],
+      measure,
+    );
+    expect(result.frames[0].sourceText).toBe('A');
+    expect(result.frames[1].sourceText).toBe(expectedTail);
+    expect(text.slice(result.frames[1].sourceStart, result.frames[1].sourceEnd)).toBe(expectedTail);
+    expect(result.frames[1].lines.map((line) => line.text)).toEqual([
+      ...Array(expectedTail.lastIndexOf('B')).fill(''),
+      'B',
+    ]);
+  });
+
   it('right-aligns and centers lines using the measured width', () => {
     const right = flowPaperText('aa', { ...spec, align: 'right' }, [frame('f1', col(0, 0, 10, 12))], measure);
     expect(right.frames[0].lines[0].xMm).toBeCloseTo(10 - 4); // width 'aa' = 4mm, right edge 10

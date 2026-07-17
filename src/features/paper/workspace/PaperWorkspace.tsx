@@ -211,7 +211,8 @@ import {
   type PaperRichEditorSession,
 } from './paperRichEditorSession';
 import { findPaperMatches, type PaperFindOptions } from '../../../lib/paperFindChange';
-import { resolvePaperFolioText } from '../../../lib/paperFolios';
+import { resolvePaperFolioText, resolvePaperRichTextFolios } from '../../../lib/paperFolios';
+import { isPaperRichParagraphFragment } from '../../../lib/paperRichText';
 import { buildPaperTextArcPath } from '../../../lib/paperTextPath';
 import {
   addPaperTableColumn,
@@ -7288,7 +7289,11 @@ function PaperConnectedSpreadView({
                   <PaperFrameView
                     canvasZIndex={canvasZIndex}
                     displayText={resolvePaperFolioText(threadSlices.get(frame.id)?.sourceText ?? frame.text ?? '', slot.page!.pageNumber, doc.pages.length)}
-                    displayRichText={threadSlices.get(frame.id)?.richText}
+                    displayRichText={resolvePaperRichTextFolios(
+                      threadSlices.get(frame.id)?.richText,
+                      slot.page!.pageNumber,
+                      doc.pages.length,
+                    )}
                     isThreadContinuation={threadSlices.get(frame.id) ? !threadSlices.get(frame.id)!.isHead : false}
                     isOverset={threadSlices.get(frame.id)?.isOverset ?? false}
                     frame={frame}
@@ -9511,18 +9516,24 @@ function PaperRichTextView({
       {paragraphs.map((paragraph, index) => {
         const isFirstPara = index === 0;
         const isLastPara = index === paragraphs.length - 1;
-        const dropCapLines = paragraph.dropCapLines && paragraph.dropCapLines >= 2 ? Math.min(8, Math.round(paragraph.dropCapLines)) : 0;
-        const spaceBefore = Math.max(0, paragraph.spaceBeforeMm ?? 0) * PX_PER_MM * zoom;
-        const spaceAfter = Math.max(0, paragraph.spaceAfterMm ?? 0) * PX_PER_MM * zoom;
+        const ownsParagraphStart = !isPaperRichParagraphFragment(paragraph) || paragraph.ownsParagraphStart;
+        const ownsParagraphEnd = !isPaperRichParagraphFragment(paragraph) || paragraph.ownsParagraphEnd;
+        const inheritedDropCapLines = paragraph.dropCapLines ?? frame.typography.dropCapLines;
+        const dropCapLines = ownsParagraphStart && inheritedDropCapLines && inheritedDropCapLines >= 2 ? Math.min(8, Math.round(inheritedDropCapLines)) : 0;
+        const spaceBefore = ownsParagraphStart ? Math.max(0, paragraph.spaceBeforeMm ?? frame.typography.spaceBeforeMm ?? 0) * PX_PER_MM * zoom : 0;
+        const spaceAfter = ownsParagraphEnd ? Math.max(0, paragraph.spaceAfterMm ?? frame.typography.spaceAfterMm ?? 0) * PX_PER_MM * zoom : 0;
         const leftIndentPx = Math.max(0, paragraph.leftIndentMm ?? 0) * PX_PER_MM * zoom;
         const rightIndentPx = Math.max(0, paragraph.rightIndentMm ?? 0) * PX_PER_MM * zoom;
-        const hangingPx = Math.max(0, paragraph.hangingIndentMm ?? 0) * PX_PER_MM * zoom;
+        const hangingPx = ownsParagraphStart ? Math.max(0, paragraph.hangingIndentMm ?? 0) * PX_PER_MM * zoom : 0;
         const markerPadPx = paragraph.listMarker ? 4.5 * PX_PER_MM * zoom : 0;
-        const firstLinePx = paragraph.firstLineIndentMm ? paragraph.firstLineIndentMm * PX_PER_MM * zoom : 0;
+        const firstLineMm = ownsParagraphStart
+          ? paragraph.firstLineIndentMm ?? frame.typography.firstLineIndentMm ?? 0
+          : 0;
+        const firstLinePx = firstLineMm * PX_PER_MM * zoom;
         // Indent priority: list bullet > Word hanging indent > positive first-line indent. Word's hanging model:
         // body lines sit at the left indent; the first line out-dents by `hanging` (textIndent negative).
         let indentLeftPx = leftIndentPx;
-        let textIndent: string | number | undefined;
+        let textIndent: string | number | undefined = ownsParagraphStart ? undefined : 0;
         if (paragraph.listMarker) { indentLeftPx = leftIndentPx + markerPadPx; textIndent = -markerPadPx; }
         else if (hangingPx > 0) { indentLeftPx = leftIndentPx; textIndent = -hangingPx; }
         else if (firstLinePx !== 0) { textIndent = `${firstLinePx.toFixed(2)}px each-line`; }
@@ -9533,13 +9544,13 @@ function PaperRichTextView({
           edge ? `${(edge.widthPt * PT_TO_PX * zoom).toFixed(2)}px solid ${edge.color}` : undefined;
         // Inside a continuous callout, top padding/stroke belongs to the first paragraph only and bottom to the
         // last; the interior boundaries carry neither so the paragraphs read as one box.
-        const padTopPx = continuousBox && !isFirstPara ? 0 : borderPadPx;
-        const padBottomPx = continuousBox && !isLastPara ? 0 : borderPadPx;
+        const padTopPx = !ownsParagraphStart || (continuousBox && !isFirstPara) ? 0 : borderPadPx;
+        const padBottomPx = !ownsParagraphEnd || (continuousBox && !isLastPara) ? 0 : borderPadPx;
         const paragraphStyle: React.CSSProperties = {
           marginTop: spaceBefore || undefined,
           marginBottom: spaceAfter || undefined,
           textAlign: paragraph.align,
-          textAlignLast: paragraph.alignLast && paragraph.alignLast !== 'auto' ? paragraph.alignLast : undefined,
+          textAlignLast: ownsParagraphEnd && paragraph.alignLast && paragraph.alignLast !== 'auto' ? paragraph.alignLast : 'auto',
           lineHeight: paragraph.leadingPt != null ? `${paragraph.leadingPt * PT_TO_PX * zoom}px` : undefined,
           hyphens: paragraph.hyphenate == null ? undefined : paragraph.hyphenate ? 'auto' : 'manual',
           textWrapStyle: paragraph.lineBreak && paragraph.lineBreak !== 'auto' ? paragraph.lineBreak : undefined,
@@ -9552,9 +9563,9 @@ function PaperRichTextView({
           background: paragraph.shading || undefined,
           ...(borders
             ? {
-                borderTop: continuousBox && !isFirstPara ? undefined : edgeCss(borders.top),
+                borderTop: !ownsParagraphStart || (continuousBox && !isFirstPara) ? undefined : edgeCss(borders.top),
                 borderLeft: edgeCss(borders.left),
-                borderBottom: continuousBox && !isLastPara ? undefined : edgeCss(borders.bottom),
+                borderBottom: !ownsParagraphEnd || (continuousBox && !isLastPara) ? undefined : edgeCss(borders.bottom),
                 borderRight: edgeCss(borders.right),
               }
             : {}),

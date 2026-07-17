@@ -1,7 +1,13 @@
 import type { PaperFrame, PaperRichParagraph, PaperTypography } from '../types/paper';
 import { resolvePaperTextColumns } from './paperColumns';
-import { flattenPaperRichText, slicePaperRichTextRange } from './paperRichText';
-import { flowPaperText, type PaperTextFlowTypeSpec, type PaperTextMeasurer } from './paperTextFlow';
+import { flattenPaperRichText, slicePaperRichTextRange, type PaperRichParagraphFragment } from './paperRichText';
+import {
+  flowPaperText,
+  type PaperTextFlowSourceMetrics,
+  type PaperTextFlowStyleSpan,
+  type PaperTextFlowTypeSpec,
+  type PaperTextMeasurer,
+} from './paperTextFlow';
 import { getPaperTextThreadFrames, isPaperTextThreadFrame } from './paperTextThreads';
 import { resolveExclusionsForTextFrame } from './paperTextWrap';
 
@@ -15,7 +21,7 @@ export interface PaperThreadSlice {
    * head carries richText. Preserves paragraph/run styling, links, list markers and blank lines; derived by
    * slicing the head's authoritative richText at [sourceStart, sourceEnd). Undefined for plain-text threads.
    */
-  richText?: PaperRichParagraph[];
+  richText?: PaperRichParagraphFragment[];
   isOverset: boolean;
   isHead: boolean;
 }
@@ -29,8 +35,65 @@ export function paperTypographyToTextFlowSpec(typography: PaperTypography): Pape
     align: typography.align,
     fontWeight: typography.fontWeight,
     fontStyle: typography.fontStyle,
+    firstLineIndentMm: typography.firstLineIndentMm,
+    spaceBeforeMm: typography.spaceBeforeMm,
+    spaceAfterMm: typography.spaceAfterMm,
+    dropCapLines: typography.dropCapLines,
     vertical: typography.writingMode === 'vertical-rl',
   };
+}
+
+const PT_TO_MM = 25.4 / 72;
+
+/** Source-coordinate metrics for rich flow. Run overrides remain partial so unset values inherit the typography
+ * of the destination frame, not the head. List prefixes are protected as one marker+tab source atom. */
+function paperRichTextFlowMetrics(paragraphs: readonly PaperRichParagraph[]): PaperTextFlowSourceMetrics {
+  const protectedSpans: NonNullable<PaperTextFlowSourceMetrics['protectedSpans']> = [];
+  const styleSpans: PaperTextFlowStyleSpan[] = [];
+  const paragraphMetrics: NonNullable<PaperTextFlowSourceMetrics['paragraphs']> = [];
+  let cursor = 0;
+
+  paragraphs.forEach((paragraph, paragraphIndex) => {
+    if (paragraphIndex > 0) cursor += 1;
+    const start = cursor;
+    if (paragraph.listMarker) {
+      const end = cursor + paragraph.listMarker.length + 1;
+      protectedSpans.push({ start: cursor, end });
+      cursor = end;
+    }
+    const contentStart = cursor;
+    for (const run of paragraph.runs) {
+      const runStart = cursor;
+      cursor += run.text.length;
+      if (cursor <= runStart) continue;
+      const typeSpec: PaperTextFlowStyleSpan['typeSpec'] = {};
+      if (run.fontFamily) typeSpec.fontFamily = run.fontFamily;
+      if (run.fontSizePt != null) typeSpec.fontSizePt = run.fontSizePt;
+      if (run.leadingPt != null) typeSpec.leadingPt = run.leadingPt;
+      if (run.tracking != null) typeSpec.tracking = run.tracking;
+      if (run.fontWeight) typeSpec.fontWeight = run.fontWeight;
+      if (run.fontStyle) typeSpec.fontStyle = run.fontStyle;
+      styleSpans.push({ start: runStart, end: cursor, typeSpec });
+    }
+    paragraphMetrics.push({
+      start,
+      end: cursor,
+      contentStart,
+      align: paragraph.align,
+      leadingPt: paragraph.leadingPt,
+      firstLineIndentMm: paragraph.firstLineIndentMm,
+      leftIndentMm: paragraph.leftIndentMm,
+      rightIndentMm: paragraph.rightIndentMm,
+      hangingIndentMm: paragraph.hangingIndentMm,
+      listMarkerIndentMm: paragraph.listMarker ? 4.5 : undefined,
+      spaceBeforeMm: paragraph.spaceBeforeMm,
+      spaceAfterMm: paragraph.spaceAfterMm,
+      borderPaddingMm: paragraph.borders ? (paragraph.borders.paddingPt ?? 1.5) * PT_TO_MM : undefined,
+      dropCapLines: paragraph.dropCapLines,
+    });
+  });
+
+  return { protectedSpans, styleSpans, paragraphs: paragraphMetrics };
 }
 
 /**
@@ -60,6 +123,7 @@ export function computePaperThreadSlices(
     // string the rich slicer flattens — keeping displayText and the rich slice perfectly consistent. Otherwise
     // flow the head's plain text (unchanged plain-thread behavior).
     const story = headRichText ? flattenPaperRichText(headRichText) : (head.text ?? '');
+    const richMetrics = headRichText ? paperRichTextFlowMetrics(headRichText) : undefined;
 
     const flow = flowPaperText(
       story,
@@ -68,8 +132,11 @@ export function computePaperThreadSlices(
         id: frame.id,
         columns: resolvePaperTextColumns(frame, paddingMm),
         exclusions: resolveExclusionsForTextFrame(frame, frames),
+        typeSpec: paperTypographyToTextFlowSpec(frame.typography),
       })),
       measure,
+      [],
+      richMetrics,
     );
 
     flow.frames.forEach((frameResult, index) => {
