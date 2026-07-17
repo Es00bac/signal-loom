@@ -4,7 +4,7 @@
 
 **Requested clean starting HEAD:** `640117f64eae5d54c3d3b59f88fa53ae3817e85d`
 
-**Corrected candidate:** `b5405e994b4f331cc8fd517a75d0fca36c7f606e`
+**Corrected candidate:** `32e77aa9f629c19ed90ae3f212bb3f0374cac9c8`
 
 **Production + permanent tests:** `bce471d`
 
@@ -81,3 +81,24 @@ All of these fail against the uncorrected candidate behavior.
 ## Review status
 
 Implementation and evidence are complete. A different model must perform the fresh independent gate. No self-approval is claimed.
+
+## Second independent-gate correction — 2026-07-17
+
+Terra returned **CHANGES REQUIRED** against exact clean prior correction state `32e77aa9f629c19ed90ae3f212bb3f0374cac9c8`. This section records the bounded follow-up; it does not claim approval.
+
+**Production + permanent regressions:** `cae987e7a4899eb2e2359094ea1d69fc96b7175c`
+
+- Source ownership now derives from every consumed token and leading separator. One ordinary delimiter is omitted only at an adjacent nonempty-to-nonempty frame boundary; initial, terminal, consecutive, separator-only, and blank-only paragraph ranges remain exact in plain/rich parity.
+- Horizontal and vertical placement reserve paragraph start and end spacing, border padding, side/first/hanging indents, and drop-cap width before accepting a line. Exact-fit/one-unit-over and invalid-number regressions prevent false fit, false non-overset, negative width, and NaN progress.
+- Frame/run flow specs now carry `fontStretch`, `fontVariationSettings`, and `fontKerning`. The shipping measurer applies supported canvas properties and uses a temporary exact CSS measurement probe when a requested property is unavailable on canvas; durable rich text remains untouched.
+
+Verification at `cae987e7a4899eb2e2359094ea1d69fc96b7175c`:
+
+- Existing five-file focused FBL-023 set plus the new canvas-measurer regressions: **6 files, 107 passed**.
+- Documented bounded Paper neighbor matrix: **17 files, 260 passed**.
+- Optional `videoTextFlow` caller plus shipping canvas measurer: **2 files, 19 passed**.
+- `npx tsc -b --force --pretty false`: exit 0, no diagnostics.
+- ESLint over all eight touched production/test files: exit 0, no warnings or errors.
+- `git diff --check` and `git diff --cached --check`: clean.
+
+All red reproductions were promoted directly into permanent tests; no disposable probe remains. A fresh different-model final gate is mandatory.
