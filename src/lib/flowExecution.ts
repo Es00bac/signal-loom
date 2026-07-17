@@ -646,6 +646,9 @@ async function executeFunctionNode(
       extension: source && outcome.result === source.data.result ? source.data.resultExtension : undefined,
       fileName: source && outcome.result === source.data.result ? source.data.resultFileName : undefined,
       outputMetadata: source && outcome.result === source.data.result ? source.data.resultOutputMetadata : undefined,
+      additionalResults: sourceExecution && outcome.result === sourceExecution.result
+        ? sourceExecution.additionalResults
+        : undefined,
     };
   }
   const outcome = resolvedOutputs[outputBinding.targetOutputPortId];
