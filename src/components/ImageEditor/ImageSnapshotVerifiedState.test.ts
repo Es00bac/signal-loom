@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ImageDocument, ImageDocumentSnapshot, ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import {
+  IMAGE_SNAPSHOT_MAX_METADATA_BYTES,
   assertImageDocumentSnapshotDecodeBounds,
   buildImageDocumentSnapshotIntegrity,
   buildImageSnapshotReadinessDescriptor,
@@ -91,6 +92,26 @@ function documentWith(snapshotValue: ImageDocumentSnapshot): ImageDocument {
 }
 
 describe('Image snapshot verified-state lifecycle', () => {
+  it('rejects oversized enumerable metadata added after the verified cache is populated', () => {
+    const value = markImageDocumentSnapshotVerifiedOwned(snapshot());
+    (value as ImageDocumentSnapshot & { untrustedMetadata?: string }).untrustedMetadata = 'x'.repeat(
+      IMAGE_SNAPSHOT_MAX_METADATA_BYTES,
+    );
+
+    expect(inspectImageDocumentSnapshotIntegrity(value)).toEqual({
+      complete: false,
+      selectionComplete: false,
+      reasons: ['snapshot-bounds-invalid'],
+    });
+    expect(verifyImageDocumentSnapshotIntegrity(value)).toEqual({
+      complete: false,
+      selectionComplete: false,
+      reasons: ['snapshot-bounds-invalid'],
+    });
+    expect(buildImageSnapshotReadinessDescriptor({ doc: documentWith(value) })
+      .namedSnapshots.snapshots[0].restorable).toBe(false);
+  });
+
   it('rejects duplicate/empty layer ids and duplicate/missing/extra proofs before reading pixels, while accepting reordered proofs', () => {
     const assertIdentityFailureWithoutRead = (mutate: (value: ImageDocumentSnapshot) => void) => {
       const value = snapshot();
@@ -129,7 +150,7 @@ describe('Image snapshot verified-state lifecycle', () => {
     expect(CountingBitmap.imageDataReads).toBe(4);
   });
 
-  it('serves rerender/readiness queries from the exact verified binding without rehashing', () => {
+  it('serves cached rerender/readiness queries in O(structure) without pixel readback or rehashing', () => {
     const value = snapshot();
     let metadataReads = 0;
     Object.defineProperty(value.layers[0], 'metadataProbe', {
@@ -152,12 +173,201 @@ describe('Image snapshot verified-state lifecycle', () => {
     const elapsedMs = performance.now() - startedAt;
 
     expect(CountingBitmap.imageDataReads).toBe(0);
-    expect(metadataReads).toBe(0);
+    expect(metadataReads).toBe(200);
     expect(elapsedMs).toBeGreaterThanOrEqual(0);
 
     expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(true);
     expect(CountingBitmap.imageDataReads).toBe(4);
-    expect(metadataReads).toBeGreaterThan(0);
+    expect(metadataReads).toBe(201);
+  });
+
+  it('fails closed for oversized string, array, and object replacements before and after readiness', () => {
+    const value = markImageDocumentSnapshotVerifiedOwned(snapshot());
+    const mutable = value as ImageDocumentSnapshot & { untrustedMetadata?: unknown };
+    const assertRejectedWithoutPixelRead = () => {
+      CountingBitmap.imageDataReads = 0;
+      expect(inspectImageDocumentSnapshotIntegrity(value)).toEqual({
+        complete: false,
+        selectionComplete: false,
+        reasons: ['snapshot-bounds-invalid'],
+      });
+      expect(buildImageSnapshotReadinessDescriptor({ doc: documentWith(value) })
+        .namedSnapshots.snapshots[0].restorable).toBe(false);
+      expect(verifyImageDocumentSnapshotIntegrity(value)).toEqual({
+        complete: false,
+        selectionComplete: false,
+        reasons: ['snapshot-bounds-invalid'],
+      });
+      expect(CountingBitmap.imageDataReads).toBe(0);
+    };
+    const assertAccepted = () => {
+      expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+      expect(buildImageSnapshotReadinessDescriptor({ doc: documentWith(value) })
+        .namedSnapshots.snapshots[0].restorable).toBe(true);
+      expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+    };
+
+    mutable.untrustedMetadata = 'x'.repeat(IMAGE_SNAPSHOT_MAX_METADATA_BYTES);
+    assertRejectedWithoutPixelRead();
+    delete mutable.untrustedMetadata;
+    assertAccepted();
+
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+    mutable.untrustedMetadata = new Array(IMAGE_SNAPSHOT_MAX_METADATA_BYTES);
+    assertRejectedWithoutPixelRead();
+    delete mutable.untrustedMetadata;
+    assertAccepted();
+
+    mutable.untrustedMetadata = {
+      nested: { payload: 'x'.repeat(IMAGE_SNAPSHOT_MAX_METADATA_BYTES) },
+    };
+    assertRejectedWithoutPixelRead();
+    delete mutable.untrustedMetadata;
+    assertAccepted();
+  });
+
+  it('accepts nested metadata just below and at the aggregate limit and rejects the next byte', () => {
+    const maxMetadataBytes = 4_096;
+    const value = snapshot() as ImageDocumentSnapshot & { nestedMetadata?: unknown };
+    const setPadding = (length: number) => {
+      value.nestedMetadata = { groups: [{ details: { padding: 'x'.repeat(length) } }] };
+    };
+    const accepts = (length: number) => {
+      setPadding(length);
+      try {
+        assertImageDocumentSnapshotDecodeBounds([value], {
+          transport: 'runtime',
+          maxSnapshotMetadataBytes: maxMetadataBytes,
+          maxAggregateMetadataBytes: maxMetadataBytes,
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    let lower = 0;
+    let upper = maxMetadataBytes;
+    while (lower < upper) {
+      const midpoint = Math.ceil((lower + upper) / 2);
+      if (accepts(midpoint)) lower = midpoint;
+      else upper = midpoint - 1;
+    }
+    const exactPaddingLength = lower;
+
+    expect(accepts(exactPaddingLength - 1)).toBe(true);
+    expect(accepts(exactPaddingLength)).toBe(true);
+    expect(accepts(exactPaddingLength + 1)).toBe(false);
+
+    setPadding(exactPaddingLength);
+    expect(() => assertImageDocumentSnapshotDecodeBounds([value, value], {
+      transport: 'runtime',
+      maxSnapshotMetadataBytes: maxMetadataBytes,
+      maxAggregateMetadataBytes: maxMetadataBytes * 2,
+    })).not.toThrow();
+    expect(() => assertImageDocumentSnapshotDecodeBounds([value, value], {
+      transport: 'runtime',
+      maxSnapshotMetadataBytes: maxMetadataBytes,
+      maxAggregateMetadataBytes: maxMetadataBytes * 2 - 1,
+    })).toThrow(/aggregate metadata exceeds/i);
+  });
+
+  it('rechecks post-cache layer, proof, and selection metadata against structural bounds', () => {
+    const oversized = 'x'.repeat(IMAGE_SNAPSHOT_MAX_METADATA_BYTES);
+    const selectTargets: Array<(value: ImageDocumentSnapshot) => object> = [
+      (value) => value.layers[0],
+      (value) => value.integrity!.layers[0],
+      (value) => value.integrity!.selection,
+    ];
+
+    for (const selectTarget of selectTargets) {
+      const value = snapshot();
+      const target = selectTarget(value);
+      markImageDocumentSnapshotVerifiedOwned(value);
+      (target as unknown as { optionalMetadata?: unknown }).optionalMetadata = { nested: oversized };
+
+      CountingBitmap.imageDataReads = 0;
+      expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(false);
+      expect(buildImageSnapshotReadinessDescriptor({ doc: documentWith(value) })
+        .namedSnapshots.snapshots[0].restorable).toBe(false);
+      expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(false);
+      expect(CountingBitmap.imageDataReads).toBe(0);
+
+      delete (target as unknown as { optionalMetadata?: unknown }).optionalMetadata;
+      expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+    }
+  });
+
+  it('invalidates an object replacement with identical pixels until explicit verification recaches it', () => {
+    const value = markImageDocumentSnapshotVerifiedOwned(snapshot());
+    value.layers[0] = { ...value.layers[0] };
+
+    CountingBitmap.imageDataReads = 0;
+    expect(inspectImageDocumentSnapshotIntegrity(value)).toEqual({
+      complete: false,
+      selectionComplete: false,
+      reasons: ['verified-snapshot-binding-changed'],
+    });
+    expect(CountingBitmap.imageDataReads).toBe(0);
+
+    expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+    expect(CountingBitmap.imageDataReads).toBe(4);
+    CountingBitmap.imageDataReads = 0;
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+    expect(CountingBitmap.imageDataReads).toBe(0);
+  });
+
+  it('uses only own enumerable string-keyed metadata and fails closed on hostile getters and proxies', () => {
+    const value = markImageDocumentSnapshotVerifiedOwned(snapshot());
+    const mutable = value as unknown as Record<PropertyKey, unknown>;
+    const oversized = 'x'.repeat(IMAGE_SNAPSHOT_MAX_METADATA_BYTES);
+    const symbolKey = Symbol('untrusted');
+    const originalPrototype = Object.getPrototypeOf(value);
+
+    Object.defineProperty(value, 'hiddenMetadata', { configurable: true, value: oversized });
+    mutable[symbolKey] = oversized;
+    Object.setPrototypeOf(value, { inheritedMetadata: oversized });
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+    expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+
+    delete mutable.hiddenMetadata;
+    delete mutable[symbolKey];
+    Object.setPrototypeOf(value, originalPrototype);
+
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    mutable.runtimeMetadata = cycle;
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+    expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+
+    let getterMode: 'small' | 'oversized' | 'throw' = 'small';
+    Object.defineProperty(value, 'runtimeMetadata', {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        if (getterMode === 'throw') throw new Error('hostile getter');
+        return getterMode === 'oversized' ? oversized : { note: 'small' };
+      },
+    });
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+    getterMode = 'oversized';
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(false);
+    expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(false);
+    getterMode = 'throw';
+    expect(() => inspectImageDocumentSnapshotIntegrity(value)).not.toThrow();
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(false);
+    expect(() => verifyImageDocumentSnapshotIntegrity(value)).not.toThrow();
+    expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(false);
+
+    delete mutable.runtimeMetadata;
+    mutable.runtimeMetadata = new Proxy({}, {
+      ownKeys: () => {
+        throw new Error('hostile proxy');
+      },
+    });
+    expect(() => inspectImageDocumentSnapshotIntegrity(value)).not.toThrow();
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(false);
+    expect(() => verifyImageDocumentSnapshotIntegrity(value)).not.toThrow();
+    expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(false);
   });
 
   it('rejects hostile creation dimensions and aggregate pixels before source readback', () => {

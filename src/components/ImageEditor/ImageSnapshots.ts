@@ -777,12 +777,18 @@ export interface ImageDocumentSnapshotIntegrityResult {
 function inspectSnapshotStructure(
   snapshot: ImageDocumentSnapshot,
 ): ImageDocumentSnapshotIntegrityResult {
-  const reasons: string[] = [];
   try {
-    assertImageDocumentSnapshotDecodeBounds([snapshot], { transport: 'runtime' });
+    return inspectSnapshotStructureUnchecked(snapshot);
   } catch {
     return { complete: false, selectionComplete: false, reasons: ['snapshot-bounds-invalid'] };
   }
+}
+
+function inspectSnapshotStructureUnchecked(
+  snapshot: ImageDocumentSnapshot,
+): ImageDocumentSnapshotIntegrityResult {
+  const reasons: string[] = [];
+  assertImageDocumentSnapshotDecodeBounds([snapshot], { transport: 'runtime' });
   const integrity = snapshot.integrity;
   if (snapshot.pixelState !== 'complete') reasons.push('pixel-state-unavailable');
   if (!integrity || integrity.version !== 2) {
@@ -899,6 +905,8 @@ export function inspectImageDocumentSnapshotIntegrity(
 ): ImageDocumentSnapshotIntegrityResult {
   const cached = verifiedNamedSnapshots.get(snapshot);
   if (cached) {
+    const structure = inspectSnapshotStructure(snapshot);
+    if (!structure.complete) return structure;
     return verifiedBindingMatches(snapshot, cached)
       ? cached.result
       : {
@@ -1025,6 +1033,17 @@ function captureVerifiedBinding(
 }
 
 function verifiedBindingMatches(snapshot: ImageDocumentSnapshot, binding: VerifiedSnapshotBinding): boolean {
+  try {
+    return verifiedBindingMatchesUnchecked(snapshot, binding);
+  } catch {
+    return false;
+  }
+}
+
+function verifiedBindingMatchesUnchecked(
+  snapshot: ImageDocumentSnapshot,
+  binding: VerifiedSnapshotBinding,
+): boolean {
   if (
     snapshot.layers !== binding.layers
     || snapshot.integrity !== binding.integrity

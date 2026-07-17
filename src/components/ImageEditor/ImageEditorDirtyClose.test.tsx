@@ -36,6 +36,11 @@ function dirtyDocument(overrides: Partial<ImageDocument> = {}): ImageDocument {
     dirty: true,
     hasSelection: true,
     selectionVersion: 4,
+    selectionMask: {
+      width: 32,
+      height: 24,
+      data: new Uint8ClampedArray(32 * 24).fill(255),
+    },
     ...overrides,
   };
 }
