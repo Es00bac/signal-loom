@@ -6,7 +6,12 @@ import { createBinaryAssetRecord, type BinaryAssetRef } from '../shared/assets/c
 import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
 import type { SourceBinLibraryItem } from './sourceBinStore';
 import type { PaperImportedFont } from '../types/paper';
-import { mergePersistedPaperWorkspace, usePaperStore } from './paperStore';
+import {
+  capturePaperWorkspaceAuthorization,
+  mergePersistedPaperWorkspace,
+  projectPersistedPaperWorkspace,
+  usePaperStore,
+} from './paperStore';
 
 function dirtyPaperTitles(): string[] {
   const state = usePaperStore.getState();
@@ -36,6 +41,7 @@ function resetPaperStore() {
     zoom: 0.8,
     undoStack: [],
     redoStack: [],
+    documentHistories: {},
     clipboardFrames: [],
     styleClipboard: null,
     recovery: null,
@@ -94,6 +100,7 @@ function seedStackedFrames() {
     zoom: 0.8,
     undoStack: [],
     redoStack: [],
+    documentHistories: {},
     clipboardFrames: [],
     styleClipboard: null,
   });
@@ -1027,5 +1034,203 @@ describe('paperStore document tabs', () => {
     expect(paperDirtyActions().isDocumentDirty(documentId)).toBe(true);
     expect(usePaperStore.getState().zoom).toBe(1.55);
     expect(usePaperStore.getState().selectedPageId).toBe(pageId);
+  });
+});
+
+describe('paperStore per-document undo/redo ownership', () => {
+  beforeEach(resetPaperStore);
+
+  const frameIdsOnFirstPage = () =>
+    usePaperStore.getState().document.pages[0].frames.map((frame) => frame.id);
+  const storedHistoryIds = () => Object.keys(usePaperStore.getState().documentHistories);
+
+  it('keeps undo/redo history owned by each document across tab switches', () => {
+    const aId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addFrame('text', { id: 'a-frame', text: 'A copy' });
+    expect(usePaperStore.getState().undoStack).toHaveLength(1);
+
+    usePaperStore.getState().createNewDocument({ title: 'Document B' });
+    const bId = usePaperStore.getState().activeDocumentId;
+    expect(usePaperStore.getState().undoStack).toHaveLength(0);
+    usePaperStore.getState().addFrame('text', { id: 'b-frame-1', text: 'B copy' });
+    usePaperStore.getState().addFrame('text', { id: 'b-frame-2', text: 'B copy 2' });
+    expect(usePaperStore.getState().undoStack).toHaveLength(2);
+
+    usePaperStore.getState().setActiveDocument(aId);
+    expect(usePaperStore.getState().undoStack).toHaveLength(1);
+    paperEditActions().undo();
+    expect(frameIdsOnFirstPage()).not.toContain('a-frame');
+    expect(frameIdsOnFirstPage()).not.toContain('b-frame-1');
+    paperEditActions().redo();
+    expect(frameIdsOnFirstPage()).toContain('a-frame');
+
+    usePaperStore.getState().setActiveDocument(bId);
+    expect(usePaperStore.getState().undoStack).toHaveLength(2);
+    paperEditActions().undo();
+    expect(frameIdsOnFirstPage()).toContain('b-frame-1');
+    expect(frameIdsOnFirstPage()).not.toContain('b-frame-2');
+    expect(frameIdsOnFirstPage()).not.toContain('a-frame');
+  });
+
+  it('preserves a populated redo stack across an A→B→A round trip', () => {
+    const aId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addFrame('text', { id: 'a-frame', text: 'A copy' });
+    paperEditActions().undo();
+    expect(usePaperStore.getState().redoStack).toHaveLength(1);
+
+    usePaperStore.getState().createNewDocument({ title: 'Document B' });
+    usePaperStore.getState().setActiveDocument(aId);
+
+    expect(usePaperStore.getState().redoStack).toHaveLength(1);
+    paperEditActions().redo();
+    expect(frameIdsOnFirstPage()).toContain('a-frame');
+  });
+
+  it('closing a tab removes only its history and a reused document id starts clean', async () => {
+    const aId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addFrame('text', { id: 'a-frame', text: 'A copy' });
+
+    const imported = createDefaultPaperDocument({ title: 'Reused tab' });
+    imported.id = 'reused-tab';
+    const openedId = await usePaperStore.getState().openDocumentJson(JSON.stringify(imported));
+    expect(openedId).toBe('reused-tab');
+    usePaperStore.getState().addFrame('text', { id: 'reused-frame', text: 'Reused copy' });
+
+    usePaperStore.getState().setActiveDocument(aId);
+    expect(usePaperStore.getState().closeDocument('reused-tab', { discard: true })).toBe(true);
+    expect(usePaperStore.getState().undoStack).toHaveLength(1);
+    expect(storedHistoryIds()).not.toContain('reused-tab');
+
+    const reopened = createDefaultPaperDocument({ title: 'Reused tab again' });
+    reopened.id = 'reused-tab';
+    const reopenedId = await usePaperStore.getState().openDocumentJson(JSON.stringify(reopened));
+    expect(reopenedId).toBe('reused-tab');
+    expect(usePaperStore.getState().undoStack).toHaveLength(0);
+    expect(storedHistoryIds()).not.toContain('reused-tab');
+
+    usePaperStore.getState().setActiveDocument(aId);
+    expect(usePaperStore.getState().undoStack).toHaveLength(1);
+  });
+
+  it('replacing one tab clears only that tab’s history', () => {
+    const aId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addFrame('text', { id: 'a-frame', text: 'A copy' });
+
+    usePaperStore.getState().createNewDocument({ title: 'Document B' });
+    const bId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addFrame('text', { id: 'b-frame', text: 'B copy' });
+    usePaperStore.getState().setActiveDocument(aId);
+
+    const authorization = capturePaperWorkspaceAuthorization();
+    const replacement = createDefaultPaperDocument({ title: 'Replaced B' });
+    expect(usePaperStore.getState().replaceDocument(bId, replacement, { authorization })).toBe(true);
+    expect(storedHistoryIds()).not.toContain(bId);
+    expect(usePaperStore.getState().undoStack).toHaveLength(1);
+
+    usePaperStore.getState().setActiveDocument(bId);
+    expect(usePaperStore.getState().undoStack).toHaveLength(0);
+    usePaperStore.getState().setActiveDocument(aId);
+    expect(usePaperStore.getState().undoStack).toHaveLength(1);
+  });
+
+  it('caps each document’s history independently at the 50-entry bound', () => {
+    const aId = usePaperStore.getState().activeDocumentId;
+    for (let index = 0; index < 55; index += 1) {
+      usePaperStore.getState().updateDocumentSetup({ dpi: 300 + index });
+    }
+    expect(usePaperStore.getState().undoStack).toHaveLength(50);
+
+    usePaperStore.getState().createNewDocument({ title: 'Document B' });
+    const bId = usePaperStore.getState().activeDocumentId;
+    for (let index = 0; index < 55; index += 1) {
+      usePaperStore.getState().updateDocumentSetup({ dpi: 300 + index });
+    }
+    expect(usePaperStore.getState().undoStack).toHaveLength(50);
+
+    usePaperStore.getState().setActiveDocument(aId);
+    expect(usePaperStore.getState().undoStack).toHaveLength(50);
+    usePaperStore.getState().setActiveDocument(bId);
+    expect(usePaperStore.getState().undoStack).toHaveLength(50);
+  });
+
+  it('keeps runtime history out of project snapshots and the persisted projection', () => {
+    const aId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addFrame('text', { id: 'a-frame', text: 'A copy' });
+    usePaperStore.getState().createNewDocument({ title: 'Document B' });
+    usePaperStore.getState().addFrame('text', { id: 'b-frame', text: 'B copy' });
+    usePaperStore.getState().setActiveDocument(aId);
+    expect(usePaperStore.getState().undoStack).toHaveLength(1);
+
+    const snapshotJson = JSON.stringify(usePaperStore.getState().exportSnapshot());
+    expect(snapshotJson).not.toContain('"undoStack"');
+    expect(snapshotJson).not.toContain('"redoStack"');
+    expect(snapshotJson).not.toContain('"documentHistories"');
+
+    const persisted = projectPersistedPaperWorkspace(usePaperStore.getState());
+    expect(Object.keys(persisted)).not.toContain('undoStack');
+    expect(Object.keys(persisted)).not.toContain('redoStack');
+    expect(Object.keys(persisted)).not.toContain('documentHistories');
+
+    // Even a hostile persisted record carrying history payloads cannot resurrect them at boot.
+    const merged = mergePersistedPaperWorkspace(
+      {
+        ...persisted,
+        undoStack: usePaperStore.getState().undoStack,
+        documentHistories: usePaperStore.getState().documentHistories,
+      },
+      usePaperStore.getState(),
+    );
+    expect(merged.undoStack).toEqual([]);
+    expect(merged.redoStack).toEqual([]);
+    expect(merged.documentHistories).toEqual({});
+  });
+
+  it('captures and restores an inactive tab’s own history through deliberate recovery', () => {
+    const aId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addFrame('text', { id: 'a-frame', text: 'A copy' });
+
+    usePaperStore.getState().createNewDocument({ title: 'Inactive target' });
+    const targetId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addFrame('text', { id: 'target-frame', text: 'Target copy' });
+
+    usePaperStore.getState().setActiveDocument(aId);
+    usePaperStore.getState().addFrame('text', { id: 'a-second-frame', text: 'A second copy' });
+
+    const recoveryIds = paperDirtyActions().captureDocumentRecovery([targetId], 'baton-handoff');
+    expect(recoveryIds).toHaveLength(1);
+    const recovery = usePaperStore.getState().discardedDocumentRecoveries
+      .find((candidate) => candidate.id === recoveryIds[0]);
+    expect(recovery?.undoStack).toHaveLength(1);
+    expect(recovery?.undoStack?.[0].document.title).toBe('Inactive target');
+
+    const restoredId = paperDirtyActions().restoreDiscardedDocument(recoveryIds[0]);
+    expect(restoredId).toBeDefined();
+    expect(usePaperStore.getState().undoStack).toHaveLength(1);
+    paperEditActions().undo();
+    expect(frameIdsOnFirstPage()).not.toContain('target-frame');
+
+    usePaperStore.getState().setActiveDocument(aId);
+    expect(usePaperStore.getState().undoStack).toHaveLength(2);
+  });
+
+  it('whole-workspace restore resets runtime history without leaking the prior workspace', () => {
+    const aId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addFrame('text', { id: 'a-frame', text: 'A copy' });
+    usePaperStore.getState().createNewDocument({ title: 'Document B' });
+    const bId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addFrame('text', { id: 'b-frame', text: 'B copy' });
+    usePaperStore.getState().setActiveDocument(aId);
+    expect(usePaperStore.getState().undoStack).toHaveLength(1);
+    expect(storedHistoryIds()).toContain(bId);
+
+    usePaperStore.getState().restoreSnapshot(usePaperStore.getState().exportSnapshot());
+
+    expect(usePaperStore.getState().undoStack).toEqual([]);
+    expect(usePaperStore.getState().redoStack).toEqual([]);
+    expect(usePaperStore.getState().documentHistories).toEqual({});
+
+    usePaperStore.getState().setActiveDocument(bId);
+    expect(usePaperStore.getState().undoStack).toEqual([]);
+    expect(usePaperStore.getState().redoStack).toEqual([]);
   });
 });

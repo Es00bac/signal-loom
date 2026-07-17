@@ -88,6 +88,12 @@ interface PaperState {
   zoom: number;
   undoStack: PaperHistorySnapshot[];
   redoStack: PaperHistorySnapshot[];
+  /**
+   * Runtime-only undo/redo stacks stashed for open but inactive tabs, keyed by tab id. The active
+   * tab's history stays on `undoStack`/`redoStack`; stacks move between the two surfaces as tab
+   * focus changes. Never serialized into snapshots, persistence, or sync payloads.
+   */
+  documentHistories: Record<string, PaperDocumentHistory>;
   clipboardFrames: PaperFrame[];
   styleClipboard: PaperStyleClipboardPayload | null;
   /** Diagnostics from the last snapshot restore that quarantined or repaired saved tabs. */
@@ -230,6 +236,11 @@ interface PaperHistorySnapshot {
   zoom: number;
 }
 
+interface PaperDocumentHistory {
+  undoStack: PaperHistorySnapshot[];
+  redoStack: PaperHistorySnapshot[];
+}
+
 export function mergePersistedPaperWorkspace(
   persisted: unknown,
   current: PaperState & PaperActions,
@@ -238,6 +249,21 @@ export function mergePersistedPaperWorkspace(
   return {
     ...current,
     ...sanitizePaperSnapshot(persisted, 'preserve'),
+  };
+}
+
+/** The exact persisted projection: local workspace truth only, never runtime undo/redo history. */
+export function projectPersistedPaperWorkspace(state: PaperState) {
+  return {
+    document: state.document,
+    documents: syncActivePaperDocument(state),
+    activeDocumentId: state.activeDocumentId,
+    selectedPageId: state.selectedPageId,
+    selectedFrameId: state.selectedFrameId,
+    selectedFrameIds: state.selectedFrameIds,
+    tool: state.tool,
+    zoom: state.zoom,
+    discardedDocumentRecoveries: state.discardedDocumentRecoveries,
   };
 }
 
@@ -261,6 +287,7 @@ export const usePaperStore = create<PaperState & PaperActions>()(
       zoom: 0.8,
       undoStack: [],
       redoStack: [],
+      documentHistories: {},
       clipboardFrames: [],
       styleClipboard: null,
       recovery: null,
@@ -409,8 +436,7 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           selectedFrameIds: [],
           tool: 'select',
           zoom: 0.8,
-          undoStack: [],
-          redoStack: [],
+          ...freshPaperDocumentHistoryPatch(stashActivePaperDocumentHistory(state), documentId),
         });
       },
 
@@ -441,8 +467,7 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           },
           activeDocumentId: documentId,
           ...paperStatePatchFromWorkspaceSnapshot(workspaceDocument),
-          undoStack: [],
-          redoStack: [],
+          ...freshPaperDocumentHistoryPatch(stashActivePaperDocumentHistory(state), documentId),
         });
         return documentId;
       },
@@ -461,8 +486,7 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           documents: state.documents.map((candidate) =>
             candidate.id === state.activeDocumentId ? workspaceDocument : candidate),
           ...paperStatePatchFromWorkspaceSnapshot(workspaceDocument),
-          undoStack: [],
-          redoStack: [],
+          ...freshPaperDocumentHistoryPatch(state.documentHistories, state.activeDocumentId),
         });
       },
 
@@ -493,14 +517,17 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           candidate.id === documentId ? workspaceDocument : candidate);
 
         if (documentId !== state.activeDocumentId) {
-          set({ documents: nextDocuments, discardedDocumentRecoveries });
+          set({
+            documents: nextDocuments,
+            documentHistories: removePaperDocumentHistory(state.documentHistories, documentId),
+            discardedDocumentRecoveries,
+          });
           return true;
         }
         set({
           documents: nextDocuments,
           ...paperStatePatchFromWorkspaceSnapshot(workspaceDocument),
-          undoStack: [],
-          redoStack: [],
+          ...freshPaperDocumentHistoryPatch(state.documentHistories, documentId),
           discardedDocumentRecoveries,
         });
         return true;
@@ -516,8 +543,7 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           documents,
           activeDocumentId: documentId,
           ...paperStatePatchFromWorkspaceSnapshot(workspaceDocument),
-          undoStack: [],
-          redoStack: [],
+          ...restorePaperDocumentHistoryPatch(stashActivePaperDocumentHistory(state), documentId),
         });
       },
 
@@ -541,7 +567,12 @@ export const usePaperStore = create<PaperState & PaperActions>()(
         delete documentInstanceIds[documentId];
 
         if (documentId !== state.activeDocumentId) {
-          set({ documents: remainingDocuments, documentInstanceIds, discardedDocumentRecoveries });
+          set({
+            documents: remainingDocuments,
+            documentInstanceIds,
+            documentHistories: removePaperDocumentHistory(state.documentHistories, documentId),
+            discardedDocumentRecoveries,
+          });
           return true;
         }
 
@@ -561,8 +592,10 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           documentInstanceIds,
           activeDocumentId: nextDocument.id,
           ...paperStatePatchFromWorkspaceSnapshot(nextDocument),
-          undoStack: [],
-          redoStack: [],
+          ...restorePaperDocumentHistoryPatch(
+            removePaperDocumentHistory(state.documentHistories, documentId),
+            nextDocument.id,
+          ),
           discardedDocumentRecoveries,
         });
         return true;
@@ -668,6 +701,7 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           },
           activeDocumentId: restoredId,
           ...paperStatePatchFromWorkspaceSnapshot(restoredSnapshot),
+          documentHistories: removePaperDocumentHistory(stashActivePaperDocumentHistory(state), restoredId),
           undoStack: recovery.undoStack ?? [],
           redoStack: recovery.redoStack ?? [],
           discardedDocumentRecoveries: state.discardedDocumentRecoveries
@@ -1230,17 +1264,7 @@ export const usePaperStore = create<PaperState & PaperActions>()(
     }),
     {
       name: 'signal-loom-paper-workspace',
-      partialize: (state) => ({
-        document: state.document,
-        documents: syncActivePaperDocument(state),
-        activeDocumentId: state.activeDocumentId,
-        selectedPageId: state.selectedPageId,
-        selectedFrameId: state.selectedFrameId,
-        selectedFrameIds: state.selectedFrameIds,
-        tool: state.tool,
-        zoom: state.zoom,
-        discardedDocumentRecoveries: state.discardedDocumentRecoveries,
-      }),
+      partialize: projectPersistedPaperWorkspace,
       // createJSONStorage reports an absent profile record as `undefined`. The helper keeps the
       // exact boot-created canonical blank baseline in that one case; real persisted records
       // still pass through the fail-closed sanitizer.
@@ -1297,6 +1321,7 @@ function sanitizePaperSnapshot(
     zoom: activeWorkspaceDocument.zoom,
     undoStack: [],
     redoStack: [],
+    documentHistories: {},
     clipboardFrames: [],
     styleClipboard: null,
     recovery: sanitizePaperSnapshotRecovery(input.recovery) ?? null,
@@ -1452,6 +1477,59 @@ function withPaperHistory<TPatch extends Partial<PaperState>>(state: PaperState,
     undoStack: pushPaperHistory(state),
     redoStack: [],
   };
+}
+
+function removePaperDocumentHistory(
+  documentHistories: Record<string, PaperDocumentHistory>,
+  documentId: string,
+): Record<string, PaperDocumentHistory> {
+  if (!(documentId in documentHistories)) return documentHistories;
+  const { [documentId]: _removed, ...retained } = documentHistories;
+  return retained;
+}
+
+/** Stash the active tab's live stacks under its id before focus moves away; empty stacks stay unstored. */
+function stashActivePaperDocumentHistory(state: PaperState): Record<string, PaperDocumentHistory> {
+  if (!state.undoStack.length && !state.redoStack.length) {
+    return removePaperDocumentHistory(state.documentHistories, state.activeDocumentId);
+  }
+  return {
+    ...state.documentHistories,
+    [state.activeDocumentId]: { undoStack: state.undoStack, redoStack: state.redoStack },
+  };
+}
+
+/** Promote a tab's stashed stacks onto the live undo/redo surface as it becomes active. */
+function restorePaperDocumentHistoryPatch(
+  documentHistories: Record<string, PaperDocumentHistory>,
+  documentId: string,
+): Pick<PaperState, 'documentHistories' | 'undoStack' | 'redoStack'> {
+  const stored = documentHistories[documentId];
+  return {
+    documentHistories: removePaperDocumentHistory(documentHistories, documentId),
+    undoStack: stored?.undoStack ?? [],
+    redoStack: stored?.redoStack ?? [],
+  };
+}
+
+/** A created, opened, or replaced document starts with no history and never inherits a stale stash. */
+function freshPaperDocumentHistoryPatch(
+  documentHistories: Record<string, PaperDocumentHistory>,
+  documentId: string,
+): Pick<PaperState, 'documentHistories' | 'undoStack' | 'redoStack'> {
+  return {
+    documentHistories: removePaperDocumentHistory(documentHistories, documentId),
+    undoStack: [],
+    redoStack: [],
+  };
+}
+
+/** A tab's own history wherever it currently lives: the live stacks when active, its stash otherwise. */
+function paperHistoryForDocument(state: PaperState, documentId: string): PaperDocumentHistory {
+  if (documentId === state.activeDocumentId) {
+    return { undoStack: state.undoStack, redoStack: state.redoStack };
+  }
+  return state.documentHistories[documentId] ?? { undoStack: [], redoStack: [] };
 }
 
 /**
@@ -1864,6 +1942,7 @@ function createPaperDiscardRecovery(
   batchId = makePaperRuntimeId('paper-recovery-batch'),
 ): PaperDiscardedDocumentRecovery {
   const wasActive = snapshot.id === state.activeDocumentId;
+  const history = paperHistoryForDocument(state, snapshot.id);
   return {
     id: makePaperRuntimeId('paper-recovery'),
     batchId,
@@ -1872,8 +1951,8 @@ function createPaperDiscardRecovery(
     originalIndex,
     wasActive,
     snapshot,
-    ...(wasActive && state.undoStack.length ? { undoStack: state.undoStack } : {}),
-    ...(wasActive && state.redoStack.length ? { redoStack: state.redoStack } : {}),
+    ...(history.undoStack.length ? { undoStack: history.undoStack } : {}),
+    ...(history.redoStack.length ? { redoStack: history.redoStack } : {}),
   };
 }
 
