@@ -1379,6 +1379,7 @@ function FlowApp() {
           }
           await authorityClient.adoptSnapshot({ authority: commitResult.authority });
           setNativeScratchDirectoryPath(undefined);
+          rendererTransaction.finalize();
         } catch (error) {
           rendererTransaction?.rollback();
           await bridge.cancelProjectSwitch({ transactionId: preparedNative.transactionId }).catch(() => undefined);
@@ -1447,6 +1448,7 @@ function FlowApp() {
                 filePath: commitResult.filePath,
               });
               setNativeScratchDirectoryPath(commitResult.scratchDirectoryPath);
+              rendererTransaction.finalize();
             } catch (error) {
               rendererTransaction?.rollback();
               await bridge.cancelProjectSwitch({ transactionId: result.transactionId }).catch(() => undefined);

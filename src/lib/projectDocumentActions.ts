@@ -24,7 +24,11 @@ import { useFlowWorkspaceStore } from '../store/flowWorkspaceStore';
 import { useImageEditorStore } from '../store/imageEditorStore';
 import { getDirtyPaperWorkspaceDocumentTitles, usePaperStore } from '../store/paperStore';
 import { useProjectUsageStore } from '../store/projectUsageStore';
-import { useSourceBinStore, type PreparedSourceBinProjectSnapshot } from '../store/sourceBinStore';
+import {
+  leaseSourceBinProjectSnapshotObjectUrls,
+  useSourceBinStore,
+  type PreparedSourceBinProjectSnapshot,
+} from '../store/sourceBinStore';
 import { getEditorAssets } from './editorAssets';
 import { getEditorVisualClips } from './manualEditorState';
 import { getEditorStageObjects } from './editorStageObjects';
@@ -131,6 +135,7 @@ export interface PreparedProjectDocumentTransaction {
   readonly document: FlowProjectDocument;
   assertCanCommit: () => void;
   commit: () => void;
+  finalize: () => void;
   rollback: () => void;
 }
 
@@ -233,26 +238,34 @@ export async function prepareProjectDocumentTransaction(
 
   const sourceStore = useSourceBinStore.getState();
   const preparedSource = await sourceStore.prepareProjectSnapshot(preparedDocument.sourceBin);
-  const sourceItems = preparedSource.bins.flatMap((bin) => bin.items);
-  preparedDocument = resolveProjectMediaReferencesForRestore(preparedDocument, sourceItems);
-  const preparedWorkspaces = await Promise.all(
-    (preparedDocument.flowWorkspaces ?? [buildDefaultFlowWorkspace(preparedDocument.flow)])
-      .map(async (workspace) => ({
-        ...workspace,
-        flow: await prepareFlowSnapshotImportedAssets(workspace.flow, sourceItems),
-      })),
-  );
-  const activeWorkspace = preparedWorkspaces.find((workspace) => workspace.id === preparedDocument.activeFlowWorkspaceId)
-    ?? preparedWorkspaces[0];
-  const preparedFlow = activeWorkspace?.flow
-    ?? await prepareFlowSnapshotImportedAssets(preparedDocument.flow, sourceItems);
-  preparedDocument = {
-    ...preparedDocument,
-    flow: preparedFlow,
-    flowWorkspaces: preparedWorkspaces,
-    activeFlowWorkspaceId: activeWorkspace?.id,
-  };
-  const preparedImage = await useImageEditorStore.getState().prepareProjectSnapshotWithPixels(preparedDocument.imageEditor);
+  const releasePreparedSourceUrls = leaseSourceBinProjectSnapshotObjectUrls(preparedSource);
+  const preparedStores = await (async () => {
+    const sourceItems = preparedSource.bins.flatMap((bin) => bin.items);
+    preparedDocument = resolveProjectMediaReferencesForRestore(preparedDocument, sourceItems);
+    const preparedWorkspaces = await Promise.all(
+      (preparedDocument.flowWorkspaces ?? [buildDefaultFlowWorkspace(preparedDocument.flow)])
+        .map(async (workspace) => ({
+          ...workspace,
+          flow: await prepareFlowSnapshotImportedAssets(workspace.flow, sourceItems),
+        })),
+    );
+    const activeWorkspace = preparedWorkspaces.find((workspace) => workspace.id === preparedDocument.activeFlowWorkspaceId)
+      ?? preparedWorkspaces[0];
+    const preparedFlow = activeWorkspace?.flow
+      ?? await prepareFlowSnapshotImportedAssets(preparedDocument.flow, sourceItems);
+    preparedDocument = {
+      ...preparedDocument,
+      flow: preparedFlow,
+      flowWorkspaces: preparedWorkspaces,
+      activeFlowWorkspaceId: activeWorkspace?.id,
+    };
+    const preparedImage = await useImageEditorStore.getState().prepareProjectSnapshotWithPixels(preparedDocument.imageEditor);
+    return { preparedFlow, preparedImage, preparedWorkspaces };
+  })().catch((error) => {
+    releasePreparedSourceUrls();
+    throw error;
+  });
+  const { preparedFlow, preparedImage, preparedWorkspaces } = preparedStores;
 
   const previous = {
     flow: useFlowStore.getState().exportProjectFlowSnapshot(),
@@ -271,12 +284,24 @@ export async function prepareProjectDocumentTransaction(
       quickActionMacros: useImageEditorStore.getState().quickActionMacros,
     },
   };
+  const releasePreviousSourceUrls = leaseSourceBinProjectSnapshotObjectUrls(previous.source);
   const appliedStores: Array<{
     keys: readonly ProjectStoreIdentityKey[];
     postIdentity: ProjectStoreIdentity;
     restore: () => void;
   }> = [];
   let committed = false;
+  let settled = false;
+
+  const releaseSourceUrlLeases = () => {
+    if (settled) return;
+    settled = true;
+    try {
+      releasePreparedSourceUrls();
+    } finally {
+      releasePreviousSourceUrls();
+    }
+  };
 
   const rollbackAppliedStores = () => {
     for (const applied of [...appliedStores].reverse()) {
@@ -312,6 +337,9 @@ export async function prepareProjectDocumentTransaction(
 
   const commit = () => {
     if (committed) return;
+    if (settled) {
+      throw new Error('This project replacement transaction has already been settled.');
+    }
     if (!sameProjectStoreIdentity(baseIdentity, captureProjectStoreIdentity())) {
       throw new Error('The current project changed while the replacement was being prepared. Retry the project switch.');
     }
@@ -360,6 +388,7 @@ export async function prepareProjectDocumentTransaction(
       committed = true;
     } catch (error) {
       rollbackAppliedStores();
+      releaseSourceUrlLeases();
       throw error;
     }
   };
@@ -372,8 +401,14 @@ export async function prepareProjectDocumentTransaction(
       }
     },
     commit,
+    finalize: () => {
+      if (!committed) return;
+      releaseSourceUrlLeases();
+    },
     rollback: () => {
+      if (settled) return;
       if (committed) rollbackAppliedStores();
+      releaseSourceUrlLeases();
     },
   };
 }
@@ -384,6 +419,7 @@ export async function restoreProjectDocument(
 ): Promise<void> {
   const transaction = await prepareProjectDocumentTransaction(document, options);
   transaction.commit();
+  transaction.finalize();
 }
 
 /**
@@ -433,4 +469,5 @@ export async function resetProjectDocument(
 ): Promise<void> {
   const transaction = await prepareProjectDocumentTransaction(undefined, options);
   transaction.commit();
+  transaction.finalize();
 }

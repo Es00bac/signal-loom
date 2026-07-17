@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useFlowStore } from '../store/flowStore';
 import { useEditorStore } from '../store/editorStore';
 import { useProjectUsageStore } from '../store/projectUsageStore';
@@ -27,6 +27,48 @@ const originalReplaceFlowSnapshot = useFlowStore.getState().replaceFlowSnapshot;
 const originalRestoreImportedAssets = useFlowStore.getState().restoreImportedAssets;
 const originalPrepareImageSnapshot = useImageEditorStore.getState().prepareProjectSnapshotWithPixels;
 
+function sourceSnapshot(items: Array<{
+  id: string;
+  assetUrl: string;
+  nativeFilePath?: string;
+}>) {
+  return {
+    bins: [{
+      id: 'default',
+      name: 'Source Library',
+      collapsed: false,
+      createdAt: 1,
+      items: items.map((item) => ({
+        ...item,
+        label: item.id,
+        kind: 'image' as const,
+        mimeType: 'image/png',
+        createdAt: 1,
+      })),
+    }],
+    dismissedSourceKeys: [],
+  };
+}
+
+function projectWithSource(id: string, sourceBin: ReturnType<typeof sourceSnapshot>) {
+  return {
+    schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+    id,
+    name: id,
+    savedAt: 1,
+    flow: { version: 3 as const, nodes: [], edges: [] },
+    sourceBin,
+  };
+}
+
+function installLiveSource(items: Parameters<typeof sourceSnapshot>[0]): void {
+  useSourceBinStore.getState().commitPreparedProjectSnapshot(sourceSnapshot(items), { publishNative: false });
+}
+
+function countRevocations(revokeObjectUrl: ReturnType<typeof vi.fn>, url: string): number {
+  return revokeObjectUrl.mock.calls.filter(([revokedUrl]) => revokedUrl === url).length;
+}
+
 afterEach(() => {
   useSourceBinStore.setState({
     restoreProjectSnapshot: originalRestoreSourceBinSnapshot,
@@ -43,6 +85,7 @@ afterEach(() => {
   useImageEditorStore.getState().restoreProjectSnapshot(undefined);
   useImageEditorStore.setState({ prepareProjectSnapshotWithPixels: originalPrepareImageSnapshot });
   usePaperStore.getState().restoreSnapshot(undefined);
+  vi.restoreAllMocks();
 });
 
 describe('restoreProjectDocument', () => {
@@ -626,6 +669,196 @@ describe('restoreProjectDocument', () => {
     } finally {
       defaultImageLayerPixelCodec.decode = originalDecode;
     }
+  it('disposes prepared B URLs when a later preparation fails without touching live A URLs', async () => {
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    installLiveSource([{ id: 'prepare-a', assetUrl: 'blob:prepare-a' }]);
+    useImageEditorStore.setState({
+      prepareProjectSnapshotWithPixels: async () => {
+        throw new Error('late image preparation failed');
+      },
+    });
+
+    await expect(prepareProjectDocumentTransaction(projectWithSource('prepare-b', sourceSnapshot([
+      { id: 'prepare-b-1', assetUrl: 'blob:prepare-b-1' },
+      { id: 'prepare-b-2', assetUrl: 'blob:prepare-b-2' },
+    ])))).rejects.toThrow('late image preparation failed');
+
+    expect(useSourceBinStore.getState().getAllItems()[0]?.assetUrl).toBe('blob:prepare-a');
+    expect(countRevocations(revokeObjectUrl, 'blob:prepare-a')).toBe(0);
+    expect(countRevocations(revokeObjectUrl, 'blob:prepare-b-1')).toBe(1);
+    expect(countRevocations(revokeObjectUrl, 'blob:prepare-b-2')).toBe(1);
+
+    installLiveSource([]);
+    expect(countRevocations(revokeObjectUrl, 'blob:prepare-a')).toBe(1);
+  });
+
+  it('keeps shared and multiple Source URLs alive until the last successful-project owner releases them', async () => {
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    installLiveSource([
+      { id: 'success-a-only', assetUrl: 'blob:success-a-only' },
+      { id: 'success-a-shared-1', assetUrl: 'blob:success-shared' },
+      { id: 'success-a-shared-2', assetUrl: 'blob:success-shared' },
+      { id: 'success-a-data', assetUrl: 'data:image/png;base64,AA==' },
+      { id: 'success-a-native', assetUrl: 'file:///project/a.png', nativeFilePath: '/project/a.png' },
+    ]);
+    const transaction = await prepareProjectDocumentTransaction(projectWithSource('success-b', sourceSnapshot([
+      { id: 'success-b-shared', assetUrl: 'blob:success-shared' },
+      { id: 'success-b-only', assetUrl: 'blob:success-b-only' },
+      { id: 'success-b-data', assetUrl: 'data:image/png;base64,BB==' },
+      { id: 'success-b-native', assetUrl: 'file:///project/b.png', nativeFilePath: '/project/b.png' },
+    ])));
+
+    transaction.commit();
+    expect(countRevocations(revokeObjectUrl, 'blob:success-a-only')).toBe(0);
+    transaction.finalize();
+
+    expect(countRevocations(revokeObjectUrl, 'blob:success-a-only')).toBe(1);
+    expect(countRevocations(revokeObjectUrl, 'blob:success-shared')).toBe(0);
+    expect(revokeObjectUrl).not.toHaveBeenCalledWith('data:image/png;base64,AA==');
+    expect(revokeObjectUrl).not.toHaveBeenCalledWith('data:image/png;base64,BB==');
+    expect(revokeObjectUrl).not.toHaveBeenCalledWith('file:///project/a.png');
+    expect(revokeObjectUrl).not.toHaveBeenCalledWith('file:///project/b.png');
+
+    installLiveSource([]);
+    expect(countRevocations(revokeObjectUrl, 'blob:success-shared')).toBe(1);
+    expect(countRevocations(revokeObjectUrl, 'blob:success-b-only')).toBe(1);
+  });
+
+  it.each(['workspaces', 'flow', 'editor', 'usage', 'paper', 'image'] as const)(
+    'preserves usable A URLs and disposes B when the later %s stage fails',
+    async (failingStore) => {
+      const aUrl = `blob:stage-url-a-${failingStore}`;
+      const bUrl = `blob:stage-url-b-${failingStore}`;
+      const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+      installLiveSource([{ id: `stage-url-a-${failingStore}`, assetUrl: aUrl }]);
+      const transaction = await prepareProjectDocumentTransaction(projectWithSource(
+        `stage-url-project-b-${failingStore}`,
+        sourceSnapshot([{ id: `stage-url-b-${failingStore}`, assetUrl: bUrl }]),
+      ));
+      const injectedFailure = () => {
+        throw new Error(`${failingStore} URL stage failed`);
+      };
+      let restoreInjectedMethod: () => void;
+      switch (failingStore) {
+        case 'workspaces': {
+          const state = useFlowWorkspaceStore.getState();
+          const original = state.hydrateProjectSnapshot;
+          state.hydrateProjectSnapshot = injectedFailure;
+          restoreInjectedMethod = () => { state.hydrateProjectSnapshot = original; };
+          break;
+        }
+        case 'flow': {
+          const state = useFlowStore.getState();
+          const original = state.replaceFlowSnapshot;
+          state.replaceFlowSnapshot = injectedFailure;
+          restoreInjectedMethod = () => { state.replaceFlowSnapshot = original; };
+          break;
+        }
+        case 'editor': {
+          const state = useEditorStore.getState();
+          const original = state.restoreWorkspaceSnapshot;
+          state.restoreWorkspaceSnapshot = injectedFailure;
+          restoreInjectedMethod = () => { state.restoreWorkspaceSnapshot = original; };
+          break;
+        }
+        case 'usage': {
+          const state = useProjectUsageStore.getState();
+          const original = state.restoreSnapshot;
+          state.restoreSnapshot = injectedFailure;
+          restoreInjectedMethod = () => { state.restoreSnapshot = original; };
+          break;
+        }
+        case 'paper': {
+          const state = usePaperStore.getState();
+          const original = state.restoreSnapshot;
+          state.restoreSnapshot = injectedFailure;
+          restoreInjectedMethod = () => { state.restoreSnapshot = original; };
+          break;
+        }
+        case 'image': {
+          const state = useImageEditorStore.getState();
+          const original = state.commitPreparedProjectSnapshotWithPixels;
+          state.commitPreparedProjectSnapshotWithPixels = injectedFailure;
+          restoreInjectedMethod = () => { state.commitPreparedProjectSnapshotWithPixels = original; };
+          break;
+        }
+      }
+
+      expect(() => transaction.commit()).toThrow(`${failingStore} URL stage failed`);
+      restoreInjectedMethod();
+
+      expect(useSourceBinStore.getState().getAllItems()[0]?.assetUrl).toBe(aUrl);
+      expect(countRevocations(revokeObjectUrl, aUrl)).toBe(0);
+      expect(countRevocations(revokeObjectUrl, bUrl)).toBe(1);
+      expect(() => transaction.commit()).toThrow('already been settled');
+
+      installLiveSource([]);
+      expect(countRevocations(revokeObjectUrl, aUrl)).toBe(1);
+    },
+  );
+
+  it('retains A across repeated native-stage failures, then releases superseded URLs once on success', async () => {
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const aUrl = 'blob:native-stage-a';
+    installLiveSource([{ id: 'native-stage-a', assetUrl: aUrl }]);
+
+    for (const attempt of [1, 2]) {
+      const bUrl = `blob:native-stage-b-${attempt}`;
+      const transaction = await prepareProjectDocumentTransaction(projectWithSource(
+        `native-stage-project-b-${attempt}`,
+        sourceSnapshot([
+          { id: attempt === 1 ? 'native-stage-a' : `native-stage-b-${attempt}`, assetUrl: bUrl },
+          { id: `native-stage-shared-${attempt}`, assetUrl: aUrl },
+        ]),
+      ));
+      transaction.commit();
+      expect(countRevocations(revokeObjectUrl, aUrl)).toBe(0);
+
+      // Models commitProjectSwitch rejecting after all renderer stores committed.
+      transaction.rollback();
+      transaction.rollback();
+
+      expect(useSourceBinStore.getState().getAllItems()[0]?.assetUrl).toBe(aUrl);
+      expect(countRevocations(revokeObjectUrl, aUrl)).toBe(0);
+      expect(countRevocations(revokeObjectUrl, bUrl)).toBe(1);
+    }
+
+    const successfulBUrl = 'blob:native-stage-b-success';
+    const successful = await prepareProjectDocumentTransaction(projectWithSource(
+      'native-stage-project-b-success',
+      sourceSnapshot([{ id: 'native-stage-b-success', assetUrl: successfulBUrl }]),
+    ));
+    successful.commit();
+    expect(countRevocations(revokeObjectUrl, aUrl)).toBe(0);
+    successful.finalize();
+    successful.finalize();
+
+    expect(countRevocations(revokeObjectUrl, aUrl)).toBe(1);
+    expect(countRevocations(revokeObjectUrl, successfulBUrl)).toBe(0);
+
+    installLiveSource([]);
+    expect(countRevocations(revokeObjectUrl, successfulBUrl)).toBe(1);
+  });
+
+  it('keeps rollback observable and idempotent when URL cleanup itself throws', async () => {
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation((url) => {
+      if (url === 'blob:cleanup-b') throw new Error('cleanup failed');
+    });
+    installLiveSource([{ id: 'cleanup-a', assetUrl: 'blob:cleanup-a' }]);
+    const transaction = await prepareProjectDocumentTransaction(projectWithSource(
+      'cleanup-b',
+      sourceSnapshot([{ id: 'cleanup-b', assetUrl: 'blob:cleanup-b' }]),
+    ));
+    transaction.commit();
+
+    expect(() => transaction.rollback()).not.toThrow();
+    expect(() => transaction.rollback()).not.toThrow();
+    expect(useSourceBinStore.getState().getAllItems()[0]?.assetUrl).toBe('blob:cleanup-a');
+    expect(countRevocations(revokeObjectUrl, 'blob:cleanup-a')).toBe(0);
+    expect(countRevocations(revokeObjectUrl, 'blob:cleanup-b')).toBe(1);
+
+    installLiveSource([]);
+    expect(countRevocations(revokeObjectUrl, 'blob:cleanup-a')).toBe(1);
   });
 
   it('restores the declared active Flow workspace instead of a stale top-level flow snapshot', async () => {
@@ -891,13 +1124,15 @@ describe('restoreProjectDocument', () => {
   );
 
   it('continues every prepared store commit when a Source observer throws', async () => {
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    installLiveSource([{ id: 'observer-source-a', assetUrl: 'blob:observer-source-a' }]);
     const transaction = await prepareProjectDocumentTransaction({
       schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
       id: 'observer-b',
       name: 'Observer B',
       savedAt: 2,
       flow: { version: 3, nodes: [{ id: 'observer-flow-b', type: 'textNode', position: { x: 1, y: 1 }, data: {} }], edges: [] },
-      sourceBin: { dismissedSourceKeys: ['observer-b'] },
+      sourceBin: sourceSnapshot([{ id: 'observer-source-b', assetUrl: 'blob:observer-source-b' }]),
       paper: { document: createDefaultPaperDocument({ title: 'Observer Paper B' }) },
     }, { allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
     const unsubscribe = useSourceBinStore.subscribe(() => {
@@ -905,8 +1140,15 @@ describe('restoreProjectDocument', () => {
     });
     expect(() => transaction.commit()).not.toThrow();
     unsubscribe();
+    transaction.finalize();
     expect(useFlowStore.getState().nodes[0]?.id).toBe('observer-flow-b');
     expect(usePaperStore.getState().document.title).toBe('Observer Paper B');
+    expect(useSourceBinStore.getState().getAllItems()[0]?.assetUrl).toBe('blob:observer-source-b');
+    expect(countRevocations(revokeObjectUrl, 'blob:observer-source-a')).toBe(1);
+    expect(countRevocations(revokeObjectUrl, 'blob:observer-source-b')).toBe(0);
+
+    installLiveSource([]);
+    expect(countRevocations(revokeObjectUrl, 'blob:observer-source-b')).toBe(1);
   });
 
   it('saves and restores the project-level usage ledger', async () => {

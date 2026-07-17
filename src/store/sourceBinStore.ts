@@ -286,32 +286,32 @@ function syncRevocableObjectUrls(previousBins: SourceBin[], nextBins: SourceBin[
   const previousItems = collectRevocableObjectUrlItems(previousBins);
   const nextItems = collectRevocableObjectUrlItems(nextBins);
 
-  for (const [itemId, url] of nextItems.entries()) {
-    const previousUrl = previousItems.get(itemId);
-    if (previousUrl && previousUrl !== url && !revocableSourceAssetHandles.has(itemId)) {
-      revokeObjectUrl(previousUrl);
+  // Snapshots restored from persistence or tests can predate the runtime handle registry. Adopt
+  // every live URL before replacing anything so transaction leases and shared URLs participate in
+  // the same URL-level lifetime accounting.
+  for (const [itemId, url] of previousItems.entries()) {
+    if (!revocableSourceAssetHandles.has(itemId)) {
+      revocableSourceAssetHandles.replace(itemId, url);
     }
+  }
+
+  for (const [itemId, url] of nextItems.entries()) {
     revocableSourceAssetHandles.replace(itemId, url);
   }
 
-  for (const [itemId, url] of previousItems.entries()) {
+  for (const [itemId] of previousItems.entries()) {
     if (!nextItems.has(itemId)) {
-      if (revocableSourceAssetHandles.has(itemId)) {
-        revocableSourceAssetHandles.release(itemId);
-      } else {
-        revokeObjectUrl(url);
-      }
+      revocableSourceAssetHandles.release(itemId);
     }
   }
 }
 
 function revokeSourceBinItemObjectUrl(item: SourceBinLibraryItem | undefined): void {
   if (isRevocableObjectUrl(item?.assetUrl)) {
-    if (revocableSourceAssetHandles.has(item.id)) {
-      revocableSourceAssetHandles.release(item.id);
-      return;
+    if (!revocableSourceAssetHandles.has(item.id)) {
+      revocableSourceAssetHandles.replace(item.id, item.assetUrl);
     }
-    revokeObjectUrl(item.assetUrl);
+    revocableSourceAssetHandles.release(item.id);
   }
 }
 
@@ -326,6 +326,43 @@ function revokeObjectUrl(url: string): void {
   } catch {
     // Object URL revocation is best-effort cleanup.
   }
+}
+
+let sourceUrlLeaseSequence = 0;
+
+/**
+ * Retain every temporary URL in a prepared/live Source snapshot until a project transaction is
+ * either finalized or rolled back. Lease ids are deliberately independent from item ids so an
+ * A item and a B item with the same id can own different URLs during the handoff.
+ */
+export function leaseSourceBinProjectSnapshotObjectUrls(
+  snapshot: PreparedSourceBinProjectSnapshot,
+): () => void {
+  const leaseId = ++sourceUrlLeaseSequence;
+  const handles = snapshot.bins
+    .flatMap((bin) => bin.items)
+    .flatMap((item, index) => (
+      isRevocableObjectUrl(item.assetUrl)
+        ? [{ id: `project-source-url-lease:${leaseId}:${index}`, url: item.assetUrl }]
+        : []
+    ));
+  let released = false;
+
+  for (const handle of handles) {
+    revocableSourceAssetHandles.acquire(handle.id, handle.url);
+  }
+
+  return () => {
+    if (released) return;
+    released = true;
+    for (const handle of handles) {
+      try {
+        revocableSourceAssetHandles.release(handle.id);
+      } catch {
+        // URL cleanup is best-effort and must never mask the project transaction result.
+      }
+    }
+  };
 }
 
 function getNextEnvelopeIndex(items: readonly SourceBinLibraryItem[], envelopeId: string): number {
@@ -563,36 +600,55 @@ async function prepareSourceBinProjectSnapshot(
     : Array.isArray(safeSnapshot.items)
       ? [{ ...createDefaultBin(), items: safeSnapshot.items }]
       : [createDefaultBin()];
-  const bins = await Promise.all(snapshotBins.map(async (bin) => ({
-    id: bin.id ?? globalThis.crypto?.randomUUID?.() ?? `bin-${Date.now()}`,
-    name: bin.name || 'Source Library',
-    collapsed: Boolean(bin.collapsed),
-    createdAt: bin.createdAt ?? Date.now(),
-    items: (await Promise.all(bin.items.map(async (item): Promise<SourceBinLibraryItem | undefined> => {
-      if (item.kind === 'text') return { ...item, assetUrl: undefined };
-      if (item.scratchFileName && scratchDirectoryHandle) {
-        const file = await loadScratchAssetBlob(scratchDirectoryHandle, item.scratchFileName).catch(() => undefined);
-        if (file) return { ...item, mimeType: file.type || item.mimeType, assetUrl: URL.createObjectURL(file) };
-      }
-      const lookupId = item.assetId ?? parseSignalLoomAssetId(item.assetUrl);
-      if (lookupId) {
-        const storedAsset = await loadImportedAsset(lookupId).catch(() => undefined);
-        if (storedAsset) {
-          return {
-            ...item,
-            assetId: item.assetId ?? lookupId,
-            mimeType: storedAsset.mimeType,
-            assetUrl: storedAsset.dataUrl,
-          };
+  const createdObjectUrls: string[] = [];
+  try {
+    const bins: SourceBin[] = [];
+    for (const bin of snapshotBins) {
+      const items: SourceBinLibraryItem[] = [];
+      for (const item of bin.items) {
+        if (item.kind === 'text') {
+          items.push({ ...item, assetUrl: undefined });
+          continue;
+        }
+        if (item.scratchFileName && scratchDirectoryHandle) {
+          const file = await loadScratchAssetBlob(scratchDirectoryHandle, item.scratchFileName).catch(() => undefined);
+          if (file) {
+            const assetUrl = URL.createObjectURL(file);
+            createdObjectUrls.push(assetUrl);
+            items.push({ ...item, mimeType: file.type || item.mimeType, assetUrl });
+            continue;
+          }
+        }
+        const lookupId = item.assetId ?? parseSignalLoomAssetId(item.assetUrl);
+        if (lookupId) {
+          const storedAsset = await loadImportedAsset(lookupId).catch(() => undefined);
+          if (storedAsset) {
+            items.push({
+              ...item,
+              assetId: item.assetId ?? lookupId,
+              mimeType: storedAsset.mimeType,
+              assetUrl: storedAsset.dataUrl,
+            });
+            continue;
+          }
+        }
+        if (item.nativeFilePath || item.scratchFileName || item.assetUrl) {
+          items.push({ ...item, mimeType: item.mimeType ?? getDefaultMimeType(item.kind) });
         }
       }
-      if (item.nativeFilePath || item.scratchFileName || item.assetUrl) {
-        return { ...item, mimeType: item.mimeType ?? getDefaultMimeType(item.kind) };
-      }
-      return undefined;
-    }))).filter((item): item is SourceBinLibraryItem => Boolean(item)),
-  })));
-  return { bins, dismissedSourceKeys: safeSnapshot.dismissedSourceKeys ?? [] };
+      bins.push({
+        id: bin.id ?? globalThis.crypto?.randomUUID?.() ?? `bin-${Date.now()}`,
+        name: bin.name || 'Source Library',
+        collapsed: Boolean(bin.collapsed),
+        createdAt: bin.createdAt ?? Date.now(),
+        items,
+      });
+    }
+    return { bins, dismissedSourceKeys: safeSnapshot.dismissedSourceKeys ?? [] };
+  } catch (error) {
+    for (const url of new Set(createdObjectUrls)) revokeObjectUrl(url);
+    throw error;
+  }
 }
 
 export const useSourceBinStore = create<SourceBinState>()(
@@ -997,9 +1053,18 @@ export const useSourceBinStore = create<SourceBinState>()(
       prepareProjectSnapshot: (snapshot) => prepareSourceBinProjectSnapshot(snapshot, get().scratchDirectoryHandle),
       commitPreparedProjectSnapshot: (snapshot, options = {}) => {
         const previousBins = get().bins;
-        set({ bins: snapshot.bins, dismissedSourceKeys: snapshot.dismissedSourceKeys });
+        let observerError: unknown;
+        try {
+          set({ bins: snapshot.bins, dismissedSourceKeys: snapshot.dismissedSourceKeys });
+        } catch (error) {
+          // Zustand observers run inside set(). The state is already replaced when one throws, so
+          // finish URL ownership and publication before letting the transaction classify the error
+          // as an observer failure rather than leaving the new snapshot with unregistered URLs.
+          observerError = error;
+        }
         syncRevocableObjectUrls(previousBins, snapshot.bins);
         if (options.publishNative ?? true) syncNativeSourceLibrarySnapshot(snapshot);
+        if (observerError) throw observerError;
       },
       restoreProjectSnapshot: async (snapshot, options = {}) => {
         const publishNative = options.publishNative ?? true;

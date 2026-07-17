@@ -1312,5 +1312,7 @@ describe('project authority renderer wiring source guards (AUD-001)', () => {
     expect(source).not.toContain('restoreProjectDocument(savedDocument');
     expect(source).toContain('markPaperWorkspaceDocumentsCleanIfUnchanged(paperSignaturesAtSave)');
     expect(source).toMatch(/imageDocumentsAtSave\.get\(imageDocument\.id\) === imageDocument/);
+    expect(source.match(/rendererTransaction\.finalize\(\)/g)).toHaveLength(2);
+    expect(source).toMatch(/commitProjectSwitch[\s\S]{0,900}adoptSnapshot[\s\S]{0,400}rendererTransaction\.finalize\(\)/);
   });
 });
