@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { sanitizeProjectDocument } from './projectValidation';
-import { restoreProjectDocument } from './projectDocumentActions';
+import {
+  captureProjectReplacementAuthorization,
+  restoreProjectDocument,
+} from './projectDocumentActions';
 import { useFlowStore } from '../store/flowStore';
 
 const projectFixture = {
@@ -39,7 +42,11 @@ describe('Frontend Parsing Test', () => {
 
   it('should restore a project fixture successfully without throwing', async () => {
     const raw = cloneProjectFixture();
-    await restoreProjectDocument(raw);
+    const authorization = captureProjectReplacementAuthorization();
+    await restoreProjectDocument(raw, {
+      imageAuthorization: authorization.image,
+      paperAuthorization: authorization.paper,
+    });
     console.log('Restored Nodes count:', useFlowStore.getState().nodes.length);
     console.log('Restored Edges count:', useFlowStore.getState().edges.length);
     expect(useFlowStore.getState().nodes.length).toBeGreaterThan(0);

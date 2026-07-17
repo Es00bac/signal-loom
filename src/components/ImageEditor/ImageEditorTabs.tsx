@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { X, Plus, FolderOpen, ClipboardPaste, CornerDownLeft, Loader2 } from 'lucide-react';
+import { X, Plus, FolderOpen, ClipboardPaste, CornerDownLeft, Loader2, RotateCcw } from 'lucide-react';
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import {
   completeLinkedImageDocumentClose,
@@ -47,6 +47,8 @@ export function ImageEditorTabs({ disabled = false, onOpenImageFile, onNewCanvas
   const activeDocId = useImageEditorStore((s) => s.activeDocId);
   const setActiveDocument = useImageEditorStore((s) => s.setActiveDocument);
   const closeDocument = useImageEditorStore((s) => s.closeDocument);
+  const discardedDocumentRecoveries = useImageEditorStore((s) => s.discardedDocumentRecoveries);
+  const restoreDiscardedDocument = useImageEditorStore((s) => s.restoreDiscardedDocument);
   const [linkedBusyDocId, setLinkedBusyDocId] = useState<string | null>(null);
   const [pendingCloseDocId, setPendingCloseDocId] = useState<string | null>(null);
   const [closeBusy, setCloseBusy] = useState(false);
@@ -54,6 +56,7 @@ export function ImageEditorTabs({ disabled = false, onOpenImageFile, onNewCanvas
   const activeDoc = documents.find((doc) => doc.id === activeDocId);
   const activeLinkedTarget = describeLinkedEditTarget(activeDoc?.linkedEdit);
   const pendingCloseDocument = documents.find((doc) => doc.id === pendingCloseDocId);
+  const latestRecovery = discardedDocumentRecoveries.at(-1);
 
   const runLinkedAction = (docId: string, action: () => Promise<unknown>, failure: string) => {
     if (linkedBusyDocId) return;
@@ -133,6 +136,17 @@ export function ImageEditorTabs({ disabled = false, onOpenImageFile, onNewCanvas
           <Plus size={14} />
         </button>
       )}
+      {latestRecovery ? (
+        <button
+          aria-label={`Restore discarded Image document ${latestRecovery.snapshot.title}`}
+          className="flex h-full items-center border-r border-cyan-300/10 px-3 text-amber-200/60 transition-colors hover:bg-amber-300/5 hover:text-amber-100"
+          onClick={() => void restoreDiscardedDocument(latestRecovery.id)}
+          title={`Restore discarded “${latestRecovery.snapshot.title}”`}
+          type="button"
+        >
+          <RotateCcw aria-hidden="true" size={13} />
+        </button>
+      ) : null}
       <button
         aria-label="Open image file"
         className="flex h-full items-center px-3 text-cyan-100/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-45 border-r border-cyan-300/10"

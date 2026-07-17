@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('signalLoomNative', {
   localUpscalerStop: () => ipcRenderer.invoke('signal-loom:local-upscaler-stop'),
   openPaperDocumentFile: () => ipcRenderer.invoke('signal-loom:paper-open'),
   savePaperDocumentFileAs: (bytes) => ipcRenderer.invoke('signal-loom:paper-save-as', bytes),
+  writePaperDocumentFile: (path, bytes) => ipcRenderer.invoke('signal-loom:paper-write-path', path, bytes),
   importMediaFiles: (options) => ipcRenderer.invoke('signal-loom:import-media-files', options),
   normalizeImportedMediaBatch: (items) => ipcRenderer.invoke('signal-loom:normalize-imported-media-batch', items),
   choosePaperPdfExportPath: (request) => ipcRenderer.invoke('signal-loom:paper-choose-pdf-export-path', request),

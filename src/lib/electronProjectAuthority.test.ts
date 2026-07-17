@@ -1310,7 +1310,8 @@ describe('project authority renderer wiring source guards (AUD-001)', () => {
     // The old behavior — treating a bare path broadcast as a full project switch — is gone.
     expect(source).not.toMatch(/onProjectPathChanged\(\(filePath\) => \{\s*setNativeProjectPath\(filePath\);\s*\}\)/);
     expect(source).not.toContain('restoreProjectDocument(savedDocument');
-    expect(source).toContain('markPaperWorkspaceDocumentsCleanIfUnchanged(paperSignaturesAtSave)');
+    expect(source.match(/acknowledgePaperProjectSnapshot\(result\.document\?\.paper \?\? document\.paper\)/g))
+      .toHaveLength(3);
     expect(source).toMatch(/imageDocumentsAtSave\.get\(imageDocument\.id\) === imageDocument/);
     expect(source.match(/rendererTransaction\.finalize\(\)/g)).toHaveLength(2);
     expect(source).toMatch(/commitProjectSwitch[\s\S]{0,900}adoptSnapshot[\s\S]{0,400}rendererTransaction\.finalize\(\)/);

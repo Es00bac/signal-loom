@@ -32,8 +32,8 @@ function renderApp() {
 void initializeRemoteHostSession()
   .finally(() => {
     initializeEditLockSync()
-    // Snapshot open Image documents into the shared library the moment this device loses the
-    // baton, so the gaining device can continue the same work (layered .slimg handoff).
+    // Snapshot dirty Image and Paper documents into the shared library the moment this device
+    // loses the baton, so the gaining device can continue editable .slimg/.slppr work.
     initializeBatonHandoffSnapshots()
   })
   .finally(renderApp)

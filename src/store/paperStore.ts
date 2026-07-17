@@ -57,6 +57,9 @@ import {
 import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
 import type {
   PaperDocument,
+  PaperDiscardedDocumentRecovery,
+  PaperDocumentPersistenceState,
+  PaperDocumentRecoveryReason,
   PaperDocumentSnapshot,
   PaperBubbleConnectorStyle,
   PaperFrame,
@@ -73,6 +76,8 @@ import { sanitizePaperSnapshotRecovery } from '../lib/paperSnapshotRecovery';
 
 interface PaperState {
   documents: PaperWorkspaceDocumentSnapshot[];
+  /** Runtime-only identity for each open tab; regenerated when a tab is closed and reopened. */
+  documentInstanceIds: Record<string, string>;
   activeDocumentId: string;
   document: PaperDocument;
   selectedPageId: string;
@@ -86,6 +91,8 @@ interface PaperState {
   styleClipboard: PaperStyleClipboardPayload | null;
   /** Diagnostics from the last snapshot restore that quarantined or repaired saved tabs. */
   recovery: PaperSnapshotRecovery | null;
+  /** Bounded local recovery copies created before explicit destructive Paper actions. */
+  discardedDocumentRecoveries: PaperDiscardedDocumentRecovery[];
 }
 
 interface PaperActions {
@@ -98,10 +105,40 @@ interface PaperActions {
   pasteFrameStyleToSelection: () => number;
   deleteSelection: () => void;
   createNewDocument: (options?: { title?: string; preset?: PaperPagePreset; dpi?: number }) => void;
-  openDocumentJson: (json: string) => Promise<string>;
+  openDocumentJson: (
+    json: string,
+    options?: { source?: 'standalone' | 'project'; path?: string },
+  ) => Promise<string>;
   importDocumentJson: (json: string) => Promise<void>;
+  replaceDocument: (
+    documentId: string,
+    document: PaperDocument,
+    options: {
+      authorization: PaperWorkspaceAuthorization;
+      recoveryReason?: PaperDocumentRecoveryReason;
+    },
+  ) => boolean;
   setActiveDocument: (documentId: string) => void;
-  closeDocument: (documentId: string) => void;
+  closeDocument: (
+    documentId: string,
+    options?: {
+      discard?: boolean;
+      recoveryReason?: PaperDocumentRecoveryReason;
+      authorization?: PaperWorkspaceAuthorization;
+    },
+  ) => boolean;
+  isDocumentDirty: (documentId?: string) => boolean;
+  markDocumentSaved: (
+    documentId: string,
+    baseline: { kind: 'project' | 'standalone'; path?: string; savedFingerprint?: string },
+  ) => void;
+  markAllDocumentsProjectSaved: (savedSnapshot?: Partial<PaperDocumentSnapshot>) => void;
+  captureDocumentRecovery: (
+    documentIds: string[],
+    reason: PaperDocumentRecoveryReason,
+  ) => string[];
+  restoreDiscardedDocument: (recoveryId: string) => string | undefined;
+  dismissDiscardedDocumentRecovery: (recoveryId: string) => void;
   exportDocumentJson: () => string;
   updateDocumentSetup: (patch: Parameters<typeof updatePaperDocumentSetup>[1]) => void;
   setTool: (tool: PaperTool) => void;
@@ -163,8 +200,11 @@ interface PaperActions {
   ) => void;
   toggleViewOption: (option: keyof PaperDocument['view']) => void;
   setViewOption: <K extends keyof PaperDocument['view']>(option: K, value: PaperDocument['view'][K]) => void;
-  exportSnapshot: () => PaperDocumentSnapshot;
-  restoreSnapshot: (snapshot?: Partial<PaperDocumentSnapshot>) => void;
+  exportSnapshot: (options?: { includeLocalPersistence?: boolean }) => PaperDocumentSnapshot;
+  restoreSnapshot: (
+    snapshot?: Partial<PaperDocumentSnapshot>,
+    options?: { baseline?: 'new' | 'project' | 'preserve' },
+  ) => void;
   /**
    * Apply a remote Paper op from the unified cross-device sync (#52) to the live document, **without
    * pushing undo history or re-broadcasting** (the echo guard lives in `paperSyncChannel`). Reconciles
@@ -178,11 +218,7 @@ const initialDocument = createDefaultPaperDocument({ title: 'Untitled Paper Layo
 const initialDocumentId = initialDocument.id || 'paper-document-initial';
 const PAPER_TOOLS: readonly PaperTool[] = ['select', 'hand', 'text', 'image', 'speech', 'thought', 'caption', 'panel', 'shape', 'line', 'ellipse', 'triangle', 'pentagon', 'hexagon', 'eyedropper', 'gutterKnife'];
 const MAX_PAPER_HISTORY = 50;
-// A project save/restore establishes a baseline for every Paper tab. Undo history belongs to
-// only the active tab, so it cannot truthfully answer whether an inactive tab is dirty.
-let savedPaperDocumentSignatures = new Map<string, string>([
-  [initialDocumentId, paperWorkspaceDocumentSignature(createPaperWorkspaceDocumentSnapshot(initialDocumentId, initialDocument))],
-]);
+const MAX_PAPER_RECOVERY_BATCHES = 8;
 
 interface PaperHistorySnapshot {
   document: PaperDocument;
@@ -196,7 +232,10 @@ interface PaperHistorySnapshot {
 export const usePaperStore = create<PaperState & PaperActions>()(
   persist(
     (set, get) => ({
-      documents: [createPaperWorkspaceDocumentSnapshot(initialDocumentId, initialDocument)],
+      documents: [createPaperWorkspaceDocumentSnapshot(initialDocumentId, initialDocument, {
+        persistence: { kind: 'new' },
+      })],
+      documentInstanceIds: { [initialDocumentId]: makePaperRuntimeId('paper-tab-instance') },
       activeDocumentId: initialDocumentId,
       document: initialDocument,
       selectedPageId: initialDocument.pages[0].id,
@@ -209,6 +248,7 @@ export const usePaperStore = create<PaperState & PaperActions>()(
       clipboardFrames: [],
       styleClipboard: null,
       recovery: null,
+      discardedDocumentRecoveries: [],
 
       undo: () => {
         const state = get();
@@ -337,9 +377,15 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           dpi: options?.dpi,
         });
         const documentId = makeUniquePaperDocumentTabId(document.id, state.documents);
-        const workspaceDocument = createPaperWorkspaceDocumentSnapshot(documentId, document);
+        const workspaceDocument = createPaperWorkspaceDocumentSnapshot(documentId, document, {
+          persistence: { kind: 'new' },
+        });
         set({
           documents: [...syncActivePaperDocument(state), workspaceDocument],
+          documentInstanceIds: {
+            ...state.documentInstanceIds,
+            [documentId]: makePaperRuntimeId('paper-tab-instance'),
+          },
           activeDocumentId: documentId,
           document,
           selectedPageId: workspaceDocument.selectedPageId ?? '',
@@ -352,15 +398,31 @@ export const usePaperStore = create<PaperState & PaperActions>()(
         });
       },
 
-      openDocumentJson: async (json) => {
+      openDocumentJson: async (json, options) => {
         const rawDocument = JSON.parse(json) as PaperDocument;
         const migratedDocument = await migrateLegacyPaperBinaryFields(rawDocument, paperAssetRepository);
         const document = parsePaperDocument(JSON.stringify(migratedDocument));
         const state = get();
         const documentId = makeUniquePaperDocumentTabId(document.id, state.documents);
-        const workspaceDocument = createPaperWorkspaceDocumentSnapshot(documentId, document);
+        const source = options?.source ?? 'standalone';
+        const workspaceDocument = createPaperWorkspaceDocumentSnapshot(documentId, document, {
+          persistence: source === 'standalone'
+            ? {
+                kind: 'standalone',
+                savedFingerprint: fingerprintPaperAuthoredContent(document),
+                ...(options?.path ? { path: options.path } : {}),
+              }
+            : {
+                kind: 'project',
+                savedFingerprint: fingerprintPaperAuthoredContent(document),
+              },
+        });
         set({
           documents: [...syncActivePaperDocument(state), workspaceDocument],
+          documentInstanceIds: {
+            ...state.documentInstanceIds,
+            [documentId]: makePaperRuntimeId('paper-tab-instance'),
+          },
           activeDocumentId: documentId,
           ...paperStatePatchFromWorkspaceSnapshot(workspaceDocument),
           undoStack: [],
@@ -374,7 +436,11 @@ export const usePaperStore = create<PaperState & PaperActions>()(
         const migratedDocument = await migrateLegacyPaperBinaryFields(rawDocument, paperAssetRepository);
         const document = parsePaperDocument(JSON.stringify(migratedDocument));
         const state = get();
-        const workspaceDocument = createPaperWorkspaceDocumentSnapshot(state.activeDocumentId, document);
+        const currentWorkspaceDocument = syncActivePaperDocument(state)
+          .find((candidate) => candidate.id === state.activeDocumentId);
+        const workspaceDocument = createPaperWorkspaceDocumentSnapshot(state.activeDocumentId, document, {
+          persistence: currentWorkspaceDocument?.persistence ?? { kind: 'new' },
+        });
         set({
           documents: state.documents.map((candidate) =>
             candidate.id === state.activeDocumentId ? workspaceDocument : candidate),
@@ -382,6 +448,46 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           undoStack: [],
           redoStack: [],
         });
+      },
+
+      replaceDocument: (documentId, document, options) => {
+        const state = get();
+        // Authorization and mutation are deliberately synchronous. No callback or await may be
+        // inserted between this exact workspace check and the set() below.
+        if (!isPaperWorkspaceAuthorizationCurrentForState(options.authorization, state)) return false;
+        const documents = syncActivePaperDocument(state);
+        const replacedIndex = documents.findIndex((candidate) => candidate.id === documentId);
+        if (replacedIndex < 0) return false;
+        const replacedDocument = documents[replacedIndex];
+        const workspaceDocument = createPaperWorkspaceDocumentSnapshot(documentId, document, {
+          persistence: replacedDocument.persistence ?? { kind: 'new' },
+        });
+        const discardedDocumentRecoveries = options.recoveryReason
+          ? appendPaperDocumentRecoveries(
+              state.discardedDocumentRecoveries,
+              [createPaperDiscardRecovery(
+                state,
+                replacedDocument,
+                replacedIndex,
+                options.recoveryReason,
+              )],
+            )
+          : state.discardedDocumentRecoveries;
+        const nextDocuments = documents.map((candidate) =>
+          candidate.id === documentId ? workspaceDocument : candidate);
+
+        if (documentId !== state.activeDocumentId) {
+          set({ documents: nextDocuments, discardedDocumentRecoveries });
+          return true;
+        }
+        set({
+          documents: nextDocuments,
+          ...paperStatePatchFromWorkspaceSnapshot(workspaceDocument),
+          undoStack: [],
+          redoStack: [],
+          discardedDocumentRecoveries,
+        });
+        return true;
       },
 
       setActiveDocument: (documentId) => {
@@ -399,34 +505,166 @@ export const usePaperStore = create<PaperState & PaperActions>()(
         });
       },
 
-      closeDocument: (documentId) => {
+      closeDocument: (documentId, options) => {
         const state = get();
+        if (options?.authorization
+          && !isPaperWorkspaceAuthorizationCurrentForState(options.authorization, state)) return false;
         const documents = syncActivePaperDocument(state);
         const closedIndex = documents.findIndex((candidate) => candidate.id === documentId);
-        if (closedIndex < 0) return;
+        if (closedIndex < 0) return false;
+        const isDirty = isPaperWorkspaceDocumentDirty(documents[closedIndex]);
+        if (isDirty && !options?.discard) return false;
+        const discardedDocumentRecoveries = isDirty
+          ? appendPaperDocumentRecoveries(
+              state.discardedDocumentRecoveries,
+              [createPaperDiscardRecovery(state, documents[closedIndex], closedIndex, options?.recoveryReason ?? 'discard')],
+            )
+          : state.discardedDocumentRecoveries;
         const remainingDocuments = documents.filter((candidate) => candidate.id !== documentId);
+        const documentInstanceIds = { ...state.documentInstanceIds };
+        delete documentInstanceIds[documentId];
 
         if (documentId !== state.activeDocumentId) {
-          set({ documents: remainingDocuments });
-          return;
+          set({ documents: remainingDocuments, documentInstanceIds, discardedDocumentRecoveries });
+          return true;
         }
 
         let nextDocument = remainingDocuments[Math.min(closedIndex, remainingDocuments.length - 1)];
         if (!nextDocument) {
           const document = createDefaultPaperDocument({ title: 'Untitled Paper Layout' });
           const nextId = makeUniquePaperDocumentTabId(document.id, documents);
-          nextDocument = createPaperWorkspaceDocumentSnapshot(nextId, document);
+          nextDocument = createPaperWorkspaceDocumentSnapshot(nextId, document, {
+            persistence: { kind: 'new' },
+          });
           remainingDocuments.push(nextDocument);
+          documentInstanceIds[nextId] = makePaperRuntimeId('paper-tab-instance');
         }
 
         set({
           documents: remainingDocuments,
+          documentInstanceIds,
           activeDocumentId: nextDocument.id,
           ...paperStatePatchFromWorkspaceSnapshot(nextDocument),
           undoStack: [],
           redoStack: [],
+          discardedDocumentRecoveries,
+        });
+        return true;
+      },
+
+      isDocumentDirty: (documentId) => {
+        const state = get();
+        const resolvedId = documentId ?? state.activeDocumentId;
+        const workspaceDocument = syncActivePaperDocument(state)
+          .find((candidate) => candidate.id === resolvedId);
+        return workspaceDocument ? isPaperWorkspaceDocumentDirty(workspaceDocument) : false;
+      },
+
+      markDocumentSaved: (documentId, baseline) => {
+        const state = get();
+        const documents = syncActivePaperDocument(state);
+        const workspaceDocument = documents.find((candidate) => candidate.id === documentId);
+        if (!workspaceDocument) return;
+        const persistence: PaperDocumentPersistenceState = {
+          kind: baseline.kind,
+          savedFingerprint: baseline.savedFingerprint
+            ?? fingerprintPaperAuthoredContent(workspaceDocument.document),
+          ...(baseline.path ? { path: baseline.path } : {}),
+        };
+        set({
+          documents: documents.map((candidate) => candidate.id === documentId
+            ? { ...candidate, persistence }
+            : candidate),
         });
       },
+
+      markAllDocumentsProjectSaved: (savedSnapshot) => {
+        const state = get();
+        const savedDocuments = savedSnapshot?.documents?.length
+          ? savedSnapshot.documents
+          : savedSnapshot?.document
+            ? [{
+                id: savedSnapshot.activeDocumentId ?? state.activeDocumentId,
+                document: savedSnapshot.document,
+              }]
+            : undefined;
+        const savedFingerprints = savedDocuments
+          ? new Map(savedDocuments.map((workspaceDocument) => [
+              workspaceDocument.id,
+              fingerprintPaperAuthoredContent(workspaceDocument.document),
+            ]))
+          : undefined;
+        const documents = syncActivePaperDocument(state).map((workspaceDocument) => {
+          const savedFingerprint = savedFingerprints?.get(workspaceDocument.id)
+            ?? (savedFingerprints ? undefined : fingerprintPaperAuthoredContent(workspaceDocument.document));
+          return savedFingerprint
+            ? {
+                ...workspaceDocument,
+                persistence: {
+                  kind: 'project' as const,
+                  savedFingerprint,
+                },
+              }
+            : workspaceDocument;
+        });
+        set({ documents });
+      },
+
+      captureDocumentRecovery: (documentIds, reason) => {
+        const state = get();
+        const documents = syncActivePaperDocument(state);
+        const requestedIds = new Set(documentIds);
+        const batchId = makePaperRuntimeId('paper-recovery-batch');
+        const recoveries = documents.flatMap((workspaceDocument, index) =>
+          requestedIds.has(workspaceDocument.id)
+            ? [createPaperDiscardRecovery(state, workspaceDocument, index, reason, batchId)]
+            : [],
+        );
+        if (!recoveries.length) return [];
+        set({
+          documents,
+          discardedDocumentRecoveries: appendPaperDocumentRecoveries(
+            state.discardedDocumentRecoveries,
+            recoveries,
+          ),
+        });
+        return recoveries.map((recovery) => recovery.id);
+      },
+
+      restoreDiscardedDocument: (recoveryId) => {
+        const state = get();
+        const recovery = state.discardedDocumentRecoveries.find((candidate) => candidate.id === recoveryId);
+        if (!recovery) return undefined;
+        const documents = syncActivePaperDocument(state);
+        const restoredId = makeUniquePaperDocumentTabId(recovery.snapshot.id, documents);
+        const restoredSnapshot = {
+          ...recovery.snapshot,
+          id: restoredId,
+        };
+        const insertIndex = Math.max(0, Math.min(recovery.originalIndex, documents.length));
+        const nextDocuments = [...documents];
+        nextDocuments.splice(insertIndex, 0, restoredSnapshot);
+        set({
+          documents: nextDocuments,
+          documentInstanceIds: {
+            ...state.documentInstanceIds,
+            [restoredId]: makePaperRuntimeId('paper-tab-instance'),
+          },
+          activeDocumentId: restoredId,
+          ...paperStatePatchFromWorkspaceSnapshot(restoredSnapshot),
+          undoStack: recovery.undoStack ?? [],
+          redoStack: recovery.redoStack ?? [],
+          discardedDocumentRecoveries: state.discardedDocumentRecoveries
+            .filter((candidate) => candidate.id !== recoveryId),
+        });
+        return restoredId;
+      },
+
+      dismissDiscardedDocumentRecovery: (recoveryId) =>
+        set((state) => ({
+          discardedDocumentRecoveries: state.discardedDocumentRecoveries
+            .filter((candidate) => candidate.id !== recoveryId),
+        })),
 
       exportDocumentJson: () => serializePaperDocument(get().document),
 
@@ -917,10 +1155,13 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           },
         })),
 
-      exportSnapshot: () => {
+      exportSnapshot: (options) => {
         const state = get();
         const documents = syncActivePaperDocument(state);
         const assetIds = [...new Set(documents.flatMap((workspaceDocument) => workspaceDocument.assetIds ?? []))];
+        const exportedDocuments = options?.includeLocalPersistence
+          ? documents
+          : documents.map(({ persistence: _persistence, ...workspaceDocument }) => workspaceDocument);
         return {
           document: state.document,
           assetIds,
@@ -929,7 +1170,7 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           selectedFrameIds: state.selectedFrameIds,
           tool: state.tool,
           zoom: state.zoom,
-          documents,
+          documents: exportedDocuments,
           activeDocumentId: state.activeDocumentId,
           // Carrying the recovery record through saves keeps quarantined tab payloads
           // recoverable instead of silently destroying them on the next write.
@@ -937,8 +1178,11 @@ export const usePaperStore = create<PaperState & PaperActions>()(
         };
       },
 
-      restoreSnapshot: (snapshot) => {
-        const nextState = sanitizePaperSnapshot(snapshot);
+      restoreSnapshot: (snapshot, options) => {
+        const nextState = sanitizePaperSnapshot(
+          snapshot,
+          options?.baseline ?? (snapshot === undefined ? 'new' : 'project'),
+        );
         if (nextState.recovery) {
           console.warn(
             `[paper] Restored with recovery diagnostics: ${nextState.recovery.quarantinedDocuments.length} quarantined tab(s), ${nextState.recovery.repairs.length} repair note(s).`,
@@ -951,10 +1195,9 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           redoStack: [],
           clipboardFrames: get().clipboardFrames,
           styleClipboard: get().styleClipboard,
+          // Deliberate-discard copies are local recovery state and survive project replacement.
+          discardedDocumentRecoveries: get().discardedDocumentRecoveries,
         });
-        savedPaperDocumentSignatures = new Map(
-          nextState.documents.map((document) => [document.id, paperWorkspaceDocumentSignature(document)]),
-        );
       },
 
       applyRemotePaperDocumentChange: (change) => {
@@ -979,16 +1222,20 @@ export const usePaperStore = create<PaperState & PaperActions>()(
         selectedFrameIds: state.selectedFrameIds,
         tool: state.tool,
         zoom: state.zoom,
+        discardedDocumentRecoveries: state.discardedDocumentRecoveries,
       }),
       merge: (persisted, current) => ({
         ...current,
-        ...sanitizePaperSnapshot(persisted),
+        ...sanitizePaperSnapshot(persisted, 'preserve'),
       }),
     },
   ),
 );
 
-function sanitizePaperSnapshot(snapshot: unknown): PaperState {
+function sanitizePaperSnapshot(
+  snapshot: unknown,
+  baseline: 'new' | 'project' | 'preserve' = 'project',
+): PaperState {
   const input = isRecord(snapshot) ? snapshot : {};
   const fallbackDocument = sanitizePaperDocument(input.document);
   const legacyWorkspaceDocument = sanitizePaperWorkspaceDocumentSnapshot({
@@ -999,10 +1246,14 @@ function sanitizePaperSnapshot(snapshot: unknown): PaperState {
     selectedFrameIds: input.selectedFrameIds,
     tool: input.tool,
     zoom: input.zoom,
-  }) ?? createPaperWorkspaceDocumentSnapshot(initialDocumentId, fallbackDocument);
+  }, baseline) ?? createPaperWorkspaceDocumentSnapshot(initialDocumentId, fallbackDocument, {
+    persistence: baseline === 'project'
+      ? createSavedPaperPersistence(fallbackDocument, 'project')
+      : { kind: 'new' },
+  });
   const documents = Array.isArray(input.documents)
     ? input.documents
-      .map((candidate) => sanitizePaperWorkspaceDocumentSnapshot(candidate))
+      .map((candidate) => sanitizePaperWorkspaceDocumentSnapshot(candidate, baseline))
       .filter((candidate): candidate is PaperWorkspaceDocumentSnapshot => candidate !== null)
     : [];
   const uniqueDocuments = deduplicatePaperWorkspaceDocuments(documents.length ? documents : [legacyWorkspaceDocument]);
@@ -1016,6 +1267,10 @@ function sanitizePaperSnapshot(snapshot: unknown): PaperState {
   const selectedFrameIds = activeWorkspaceDocument.selectedFrameIds ?? (selectedFrameId ? [selectedFrameId] : []);
   return {
     documents: uniqueDocuments.length ? uniqueDocuments : [activeWorkspaceDocument],
+    documentInstanceIds: Object.fromEntries(
+      (uniqueDocuments.length ? uniqueDocuments : [activeWorkspaceDocument])
+        .map((workspaceDocument) => [workspaceDocument.id, makePaperRuntimeId('paper-tab-instance')]),
+    ),
     activeDocumentId: activeWorkspaceDocument.id,
     document,
     selectedPageId,
@@ -1028,10 +1283,14 @@ function sanitizePaperSnapshot(snapshot: unknown): PaperState {
     clipboardFrames: [],
     styleClipboard: null,
     recovery: sanitizePaperSnapshotRecovery(input.recovery) ?? null,
+    discardedDocumentRecoveries: sanitizePaperDiscardRecoveries(input.discardedDocumentRecoveries),
   };
 }
 
-function sanitizePaperWorkspaceDocumentSnapshot(value: unknown): PaperWorkspaceDocumentSnapshot | null {
+function sanitizePaperWorkspaceDocumentSnapshot(
+  value: unknown,
+  baseline: 'new' | 'project' | 'preserve' = 'preserve',
+): PaperWorkspaceDocumentSnapshot | null {
   if (!isRecord(value)) return null;
   const document = sanitizePaperDocument(value.document);
   const id = typeof value.id === 'string' && value.id.trim()
@@ -1050,6 +1309,11 @@ function sanitizePaperWorkspaceDocumentSnapshot(value: unknown): PaperWorkspaceD
     : selectedFrameId
       ? [selectedFrameId]
       : [];
+  const persistence = baseline === 'project'
+    ? createSavedPaperPersistence(document, 'project')
+    : baseline === 'new'
+      ? { kind: 'new' as const }
+      : sanitizePaperPersistence(value.persistence) ?? { kind: 'new' as const };
   return {
     id,
     document,
@@ -1059,6 +1323,7 @@ function sanitizePaperWorkspaceDocumentSnapshot(value: unknown): PaperWorkspaceD
     selectedFrameIds,
     tool: isPaperTool(value.tool) ? value.tool : 'select',
     zoom: clampZoom(value.zoom),
+    persistence,
   };
 }
 
@@ -1075,7 +1340,8 @@ function createPaperWorkspaceDocumentSnapshot(
     selectedFrameIds: options.selectedFrameIds,
     tool: options.tool ?? 'select',
     zoom: options.zoom ?? 0.8,
-  }) ?? {
+    persistence: options.persistence ?? { kind: 'new' },
+  }, 'preserve') ?? {
     id,
     document,
     assetIds: collectReachablePaperAssetIds(document),
@@ -1083,16 +1349,20 @@ function createPaperWorkspaceDocumentSnapshot(
     selectedFrameIds: [],
     tool: 'select',
     zoom: 0.8,
+    persistence: options.persistence ?? { kind: 'new' },
   };
 }
 
 function snapshotActivePaperDocument(state: PaperState): PaperWorkspaceDocumentSnapshot {
+  const currentPersistence = state.documents
+    .find((candidate) => candidate.id === state.activeDocumentId)?.persistence;
   return createPaperWorkspaceDocumentSnapshot(state.activeDocumentId, state.document, {
     selectedPageId: state.selectedPageId,
     selectedFrameId: state.selectedFrameId ?? undefined,
     selectedFrameIds: state.selectedFrameIds,
     tool: state.tool,
     zoom: state.zoom,
+    persistence: currentPersistence ?? { kind: 'new' },
   });
 }
 
@@ -1101,43 +1371,6 @@ function syncActivePaperDocument(state: PaperState): PaperWorkspaceDocumentSnaps
   const activeIndex = state.documents.findIndex((candidate) => candidate.id === state.activeDocumentId);
   if (activeIndex < 0) return [...state.documents, activeDocument];
   return state.documents.map((candidate, index) => index === activeIndex ? activeDocument : candidate);
-}
-
-function paperWorkspaceDocumentSignature(document: PaperWorkspaceDocumentSnapshot): string {
-  // Selection/tool/zoom are UI state, not authored project content. A stable JSON representation
-  // of the document is sufficient because Paper reducers replace rather than mutate it.
-  return JSON.stringify(document.document);
-}
-
-export function getDirtyPaperWorkspaceDocumentTitles(): string[] {
-  const state = usePaperStore.getState();
-  return syncActivePaperDocument(state)
-    .filter((document) => savedPaperDocumentSignatures.get(document.id) !== paperWorkspaceDocumentSignature(document))
-    .map((document) => document.document.title);
-}
-
-/** Capture exactly the Paper content sent to a project save. */
-export function capturePaperWorkspaceDocumentSignatures(): ReadonlyMap<string, string> {
-  return new Map(
-    syncActivePaperDocument(usePaperStore.getState())
-      .map((document) => [document.id, paperWorkspaceDocumentSignature(document)]),
-  );
-}
-
-/**
- * Establish a save baseline only for tabs whose authored content still equals the bytes that
- * were submitted. A Paper edit made while the native save is in flight remains dirty.
- */
-export function markPaperWorkspaceDocumentsCleanIfUnchanged(
-  savedSignatures: ReadonlyMap<string, string>,
-): void {
-  for (const document of syncActivePaperDocument(usePaperStore.getState())) {
-    const savedSignature = savedSignatures.get(document.id);
-    const currentSignature = paperWorkspaceDocumentSignature(document);
-    if (savedSignature === currentSignature) {
-      savedPaperDocumentSignatures.set(document.id, currentSignature);
-    }
-  }
 }
 
 function paperStatePatchFromWorkspaceSnapshot(
@@ -1458,6 +1691,257 @@ function makePaperRuntimeId(prefix: string): string {
 
 function roundPaperMm(value: number): number {
   return Math.round(value * 1000) / 1000;
+}
+
+/**
+ * Dirty truth is based only on editable publication content. Editor navigation and presentation
+ * toggles are deliberately excluded, while binding direction remains because it changes authored
+ * page order in print/reader output.
+ */
+export function fingerprintPaperAuthoredContent(document: PaperDocument): string {
+  const { createdAt: _createdAt, updatedAt: _updatedAt, view, ...authored } = document;
+  return stablePaperStringify({
+    ...authored,
+    binding: {
+      startOnRight: view.startOnRight,
+      ...(view.rtlBinding === undefined ? {} : { rtlBinding: view.rtlBinding }),
+    },
+  });
+}
+
+interface PaperWorkspaceAuthorizationDocument {
+  id: string;
+  instanceId: string;
+  authoredFingerprint: string;
+  dirty: boolean;
+  dirtyBaseline: PaperDocumentPersistenceState | null;
+}
+
+/**
+ * Exact runtime authorization for a Paper workspace decision. The projection intentionally binds
+ * ordered topology, active selection, per-tab runtime identity, authored content, and save/dirty
+ * baselines. Runtime tab identity makes close-then-reopen distinguishable even when the restored
+ * tab reuses the same persisted id and content.
+ */
+export interface PaperWorkspaceAuthorization {
+  activeDocumentId: string;
+  documents: PaperWorkspaceAuthorizationDocument[];
+  signature: string;
+}
+
+function projectPaperWorkspaceAuthorization(state: PaperState): Omit<PaperWorkspaceAuthorization, 'signature'> {
+  const documents = syncActivePaperDocument(state).map((workspaceDocument) => ({
+    id: workspaceDocument.id,
+    instanceId: state.documentInstanceIds[workspaceDocument.id] ?? 'missing-runtime-instance',
+    authoredFingerprint: fingerprintPaperAuthoredContent(workspaceDocument.document),
+    dirty: isPaperWorkspaceDocumentDirty(workspaceDocument),
+    dirtyBaseline: workspaceDocument.persistence
+      ? { ...workspaceDocument.persistence }
+      : null,
+  }));
+  return { activeDocumentId: state.activeDocumentId, documents };
+}
+
+function paperWorkspaceAuthorizationForState(state: PaperState): PaperWorkspaceAuthorization {
+  const projection = projectPaperWorkspaceAuthorization(state);
+  return {
+    ...projection,
+    signature: stablePaperStringify(projection),
+  };
+}
+
+export function capturePaperWorkspaceAuthorization(): PaperWorkspaceAuthorization {
+  return paperWorkspaceAuthorizationForState(usePaperStore.getState());
+}
+
+function isPaperWorkspaceAuthorizationCurrentForState(
+  authorization: PaperWorkspaceAuthorization,
+  state: PaperState,
+): boolean {
+  return authorization.signature === paperWorkspaceAuthorizationForState(state).signature;
+}
+
+export function isPaperWorkspaceAuthorizationCurrent(
+  authorization: PaperWorkspaceAuthorization,
+): boolean {
+  return isPaperWorkspaceAuthorizationCurrentForState(authorization, usePaperStore.getState());
+}
+
+/**
+ * Save is the only authorized transition permitted while a per-tab decision is open: the exact
+ * target may change only its persistence baseline from dirty to clean. Any authored, active-tab,
+ * topology, runtime-identity, or unrelated-tab baseline drift rejects the transition.
+ */
+export function isPaperWorkspaceAuthorizationCurrentAfterTargetSave(
+  authorization: PaperWorkspaceAuthorization,
+  documentId: string,
+): boolean {
+  const current = paperWorkspaceAuthorizationForState(usePaperStore.getState());
+  if (current.activeDocumentId !== authorization.activeDocumentId
+    || current.documents.length !== authorization.documents.length) return false;
+
+  return authorization.documents.every((before, index) => {
+    const after = current.documents[index];
+    if (!after
+      || after.id !== before.id
+      || after.instanceId !== before.instanceId
+      || after.authoredFingerprint !== before.authoredFingerprint) return false;
+    if (before.id === documentId) return !after.dirty;
+    return after.dirty === before.dirty
+      && stablePaperStringify(after.dirtyBaseline) === stablePaperStringify(before.dirtyBaseline);
+  });
+}
+
+function stablePaperStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, candidate) => {
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      return Object.keys(candidate as Record<string, unknown>)
+        .sort()
+        .reduce<Record<string, unknown>>((sorted, key) => {
+          sorted[key] = (candidate as Record<string, unknown>)[key];
+          return sorted;
+        }, {});
+    }
+    return candidate;
+  });
+}
+
+function createSavedPaperPersistence(
+  document: PaperDocument,
+  kind: 'project' | 'standalone',
+  path?: string,
+): PaperDocumentPersistenceState {
+  return {
+    kind,
+    savedFingerprint: fingerprintPaperAuthoredContent(document),
+    ...(path ? { path } : {}),
+  };
+}
+
+function sanitizePaperPersistence(value: unknown): PaperDocumentPersistenceState | undefined {
+  if (!isRecord(value)) return undefined;
+  const kind = value.kind;
+  if (kind !== 'new' && kind !== 'project' && kind !== 'standalone') return undefined;
+  const savedFingerprint = typeof value.savedFingerprint === 'string' && value.savedFingerprint
+    ? value.savedFingerprint
+    : undefined;
+  const path = typeof value.path === 'string' && value.path.trim() ? value.path : undefined;
+  return {
+    kind,
+    ...(savedFingerprint ? { savedFingerprint } : {}),
+    ...(path ? { path } : {}),
+  };
+}
+
+function isPaperWorkspaceDocumentDirty(workspaceDocument: PaperWorkspaceDocumentSnapshot): boolean {
+  const savedFingerprint = workspaceDocument.persistence?.savedFingerprint;
+  return !savedFingerprint
+    || fingerprintPaperAuthoredContent(workspaceDocument.document) !== savedFingerprint;
+}
+
+function createPaperDiscardRecovery(
+  state: PaperState,
+  snapshot: PaperWorkspaceDocumentSnapshot,
+  originalIndex: number,
+  reason: PaperDocumentRecoveryReason,
+  batchId = makePaperRuntimeId('paper-recovery-batch'),
+): PaperDiscardedDocumentRecovery {
+  const wasActive = snapshot.id === state.activeDocumentId;
+  return {
+    id: makePaperRuntimeId('paper-recovery'),
+    batchId,
+    reason,
+    capturedAt: Date.now(),
+    originalIndex,
+    wasActive,
+    snapshot,
+    ...(wasActive && state.undoStack.length ? { undoStack: state.undoStack } : {}),
+    ...(wasActive && state.redoStack.length ? { redoStack: state.redoStack } : {}),
+  };
+}
+
+function appendPaperDocumentRecoveries(
+  existing: PaperDiscardedDocumentRecovery[],
+  incoming: PaperDiscardedDocumentRecovery[],
+): PaperDiscardedDocumentRecovery[] {
+  let next = [...existing];
+  for (const recovery of incoming) {
+    const fingerprint = fingerprintPaperAuthoredContent(recovery.snapshot.document);
+    next = next.filter((candidate) => !(
+      candidate.reason === recovery.reason
+      && candidate.snapshot.id === recovery.snapshot.id
+      && fingerprintPaperAuthoredContent(candidate.snapshot.document) === fingerprint
+    ));
+    next.push(recovery);
+  }
+  const retainedBatchIds = [...new Set(next.map((recovery) => recovery.batchId ?? recovery.id))]
+    .slice(-MAX_PAPER_RECOVERY_BATCHES);
+  const retained = new Set(retainedBatchIds);
+  return next.filter((recovery) => retained.has(recovery.batchId ?? recovery.id));
+}
+
+function sanitizePaperHistory(value: unknown): PaperHistorySnapshot[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const history = value.flatMap((candidate) => {
+    if (!isRecord(candidate)) return [];
+    const document = sanitizePaperDocument(candidate.document);
+    const selectedPageId = typeof candidate.selectedPageId === 'string'
+      ? candidate.selectedPageId
+      : document.pages[0]?.id ?? '';
+    return [{
+      document,
+      selectedPageId,
+      selectedFrameId: typeof candidate.selectedFrameId === 'string' ? candidate.selectedFrameId : null,
+      selectedFrameIds: Array.isArray(candidate.selectedFrameIds)
+        ? candidate.selectedFrameIds.filter((id): id is string => typeof id === 'string')
+        : [],
+      tool: isPaperTool(candidate.tool) ? candidate.tool : 'select' as const,
+      zoom: clampZoom(candidate.zoom),
+    }];
+  });
+  return history.slice(-MAX_PAPER_HISTORY);
+}
+
+function sanitizePaperDiscardRecoveries(value: unknown): PaperDiscardedDocumentRecovery[] {
+  if (!Array.isArray(value)) return [];
+  const recoveries = value.flatMap((candidate) => {
+    if (!isRecord(candidate)) return [];
+    const snapshot = sanitizePaperWorkspaceDocumentSnapshot(candidate.snapshot, 'preserve');
+    const reason = candidate.reason;
+    if (
+      !snapshot
+      || (reason !== 'discard'
+        && reason !== 'document-replacement'
+        && reason !== 'project-replacement'
+        && reason !== 'crash-recovery'
+        && reason !== 'shutdown'
+        && reason !== 'baton-handoff')
+    ) return [];
+    const recoveryReason = reason as PaperDocumentRecoveryReason;
+    return [{
+      id: typeof candidate.id === 'string' && candidate.id ? candidate.id : makePaperRuntimeId('paper-recovery'),
+      ...(typeof candidate.batchId === 'string' && candidate.batchId ? { batchId: candidate.batchId } : {}),
+      reason: recoveryReason,
+      capturedAt: typeof candidate.capturedAt === 'number' && Number.isFinite(candidate.capturedAt)
+        ? candidate.capturedAt
+        : Date.now(),
+      originalIndex: typeof candidate.originalIndex === 'number' && Number.isInteger(candidate.originalIndex)
+        ? Math.max(0, candidate.originalIndex)
+        : 0,
+      wasActive: candidate.wasActive === true,
+      snapshot,
+      ...(sanitizePaperHistory(candidate.undoStack)?.length
+        ? { undoStack: sanitizePaperHistory(candidate.undoStack) }
+        : {}),
+      ...(sanitizePaperHistory(candidate.redoStack)?.length
+        ? { redoStack: sanitizePaperHistory(candidate.redoStack) }
+        : {}),
+    }];
+  });
+  const retainedBatchIds = [...new Set(recoveries.map((recovery) => recovery.batchId ?? recovery.id))]
+    .slice(-MAX_PAPER_RECOVERY_BATCHES);
+  const retained = new Set(retainedBatchIds);
+  return recoveries.filter((recovery) => retained.has(recovery.batchId ?? recovery.id));
 }
 
 function sanitizePaperDocument(value: unknown): PaperDocument {

@@ -120,10 +120,26 @@ import {
 import { exportProjectAssets } from './lib/projectAssets';
 import {
   buildCurrentProjectDocument,
+  buildDirtyImageReplacementConfirmationMessage,
   prepareProjectDocumentTransaction,
+  replaceProjectDocument,
+  replaceWithBlankProject,
+  requestBlankProjectReplacementAuthorization,
+  requestProjectReplacementAuthorization,
   resetProjectDocument,
   restoreProjectDocument,
+  type DirtyImageReplacementAuthorization,
+  type ProjectReplacementAuthorization,
 } from './lib/projectDocumentActions';
+import {
+  applyNativeStartupProjectReplacement,
+  type NativeStartupProjectReplacementResult,
+} from './lib/nativeStartupProjectReplacement';
+import { acknowledgePaperProjectSnapshot } from './lib/paperLossPrevention';
+import type { PaperLossSaveResult } from './store/paperLossPreventionStore';
+import { savePaperDocumentEditable } from './lib/paperDocumentSave';
+import { installPaperBeforeUnloadProtection } from './lib/paperBeforeUnload';
+import { PaperLossPreventionDialog } from './components/Common/PaperLossPreventionDialog';
 import { buildNativeSaveProjectDocument } from './lib/nativeProjectDocument';
 import {
   downloadJsonFile,
@@ -133,11 +149,13 @@ import { downloadBlob, buildWorkspaceDownloadFilename } from './shared/files/dow
 import { registerAndroidFileOpenHandler } from './lib/androidFileOpen';
 import {
   beginProjectAuthorityTransition,
+  captureProjectAuthorityStateScope,
   captureProjectAuthorityMutationScope,
   dispatchNativeRendererCommand,
   getSignalLoomNativeBridge,
   getCurrentProjectAuthorityClaim,
   isCurrentProjectAuthorityMutationScope,
+  isCurrentProjectAuthorityStateScope,
   setCurrentProjectAuthorityClaim,
   type NativeMenuCommand,
   type NativeProjectAdoptResult,
@@ -190,6 +208,8 @@ import {
 import {
   applySourceLibraryNativeChange,
   buildSourceLibraryNativeSyncStatus,
+  getSourceLibraryRendererNativeVersion,
+  setSourceLibraryRendererNativeVersion,
   shouldAcceptSourceLibraryNativeVersion,
   shouldRepairSourceLibraryNativeVersionGap,
   type SourceLibraryNativeChange,
@@ -210,14 +230,9 @@ import { getAcceptStringForAllImportableFormats } from './lib/mediaFormatRegistr
 import { useImageEditorStore } from './store/imageEditorStore';
 import { saveImageDocumentAsSlimg, openSlimgDocument } from './components/ImageEditor/ImageSlimgCodec';
 import { classifyOpenedFile } from './lib/signalLoomFileRouting';
-import { serializeSlppr, deserializeSlppr } from './features/paper/SlpprFormat';
+import { deserializeSlppr } from './features/paper/SlpprFormat';
 import { paperAssetRepository } from './features/paper/assets/PaperAssetRuntime';
-import {
-  capturePaperWorkspaceDocumentSignatures,
-  getDirtyPaperWorkspaceDocumentTitles,
-  markPaperWorkspaceDocumentsCleanIfUnchanged,
-  usePaperStore,
-} from './store/paperStore';
+import { usePaperStore } from './store/paperStore';
 import { applySlimgFileUpdateToLocalFlow, openLinkedImageDocumentFromItem } from './lib/imageLinkedEdit';
 import { useDockablePanelStore } from './store/dockablePanelStore';
 import { useFlowWorkspaceStore } from './store/flowWorkspaceStore';
@@ -457,6 +472,14 @@ function FlowApp() {
   const nativeWebContentsIdRef = useRef<number | undefined>(undefined);
   const projectAuthorityClientRef = useRef<ProjectAuthorityClient | undefined>(undefined);
   const projectSwitchInProgressRef = useRef(false);
+  // Latest guarded-save/confirm callbacks for authority adoption and delayed startup, which run
+  // outside the render cycle that produced them.
+  const lossPreventionSaveRef = useRef<() => Promise<PaperLossSaveResult>>(async () => ({
+    status: 'failed' as const,
+    error: 'The workspace is still starting; the project cannot be saved yet.',
+  }));
+  const imageReplacementAuthorizationRef = useRef<DirtyImageReplacementAuthorization>(async () => false);
+  const pendingAuthorityAdoptionAuthorizationRef = useRef<ProjectReplacementAuthorization | undefined>(undefined);
   const [flowContextMenu, setFlowContextMenu] = useState<{
     x: number;
     y: number;
@@ -487,8 +510,9 @@ function FlowApp() {
     [],
   );
   const workspaceWindowSenderId = useMemo(() => getWorkspaceWindowSenderId(), []);
-  const sourceLibraryNativeVersionRef = useRef(0);
   const activeWorkspaceView = windowWorkspaceView ?? workspaceView;
+
+  useEffect(() => installPaperBeforeUnloadProtection(), []);
 
   useEffect(() => {
     if (flowImportTargetBinId && activeFlowSourceBinId !== flowImportTargetBinId) {
@@ -569,8 +593,11 @@ function FlowApp() {
     return () => channel.close();
   }, []);
 
+  // Renderer-local native event progress is module-owned (not a React ref) so the closed
+  // replacement transaction's bookkeeping primitive can reset and roll it back without a
+  // caller callback. Project-switch paths reset it via transactionBookkeeping, not here.
   const resetSourceLibraryNativeSyncTracking = useCallback(() => {
-    sourceLibraryNativeVersionRef.current = 0;
+    setSourceLibraryRendererNativeVersion(0);
     useSourceBinStore.getState().setNativeSyncStatus({ state: 'idle' });
   }, []);
 
@@ -580,9 +607,9 @@ function FlowApp() {
       sourceLibraryNativeSyncStatus.state === 'synced'
       && sourceLibraryNativeSyncStatus.repairDirection === 'pull-native-snapshot'
       && typeof ackVersion === 'number'
-      && shouldAcceptSourceLibraryNativeVersion(sourceLibraryNativeVersionRef.current, ackVersion)
+      && shouldAcceptSourceLibraryNativeVersion(getSourceLibraryRendererNativeVersion(), ackVersion)
     ) {
-      sourceLibraryNativeVersionRef.current = ackVersion;
+      setSourceLibraryRendererNativeVersion(ackVersion);
     }
   }, [sourceLibraryNativeSyncStatus]);
 
@@ -879,11 +906,11 @@ function FlowApp() {
     options: { repairVersionGaps?: boolean } = {},
   ) => {
     if (nativeVersion !== undefined) {
-      if (!shouldAcceptSourceLibraryNativeVersion(sourceLibraryNativeVersionRef.current, nativeVersion)) {
+      if (!shouldAcceptSourceLibraryNativeVersion(getSourceLibraryRendererNativeVersion(), nativeVersion)) {
         return;
       }
 
-      if (options.repairVersionGaps !== false && shouldRepairSourceLibraryNativeVersionGap(sourceLibraryNativeVersionRef.current, nativeVersion)) {
+      if (options.repairVersionGaps !== false && shouldRepairSourceLibraryNativeVersionGap(getSourceLibraryRendererNativeVersion(), nativeVersion)) {
         const bridge = getSignalLoomNativeBridge();
         const repairScope = captureProjectAuthorityMutationScope();
         if (!bridge?.getSourceLibrarySnapshot || !repairScope) {
@@ -908,12 +935,12 @@ function FlowApp() {
             || result.authority.authorityId !== repairScope.claim.authorityId
             || result.authority.version !== repairScope.claim.version
             || result.version < nativeVersion
-            || !shouldAcceptSourceLibraryNativeVersion(sourceLibraryNativeVersionRef.current, result.version)
+            || !shouldAcceptSourceLibraryNativeVersion(getSourceLibraryRendererNativeVersion(), result.version)
           ) {
             throw new Error('Native Source Library snapshot repair returned a stale or empty snapshot.');
           }
 
-          sourceLibraryNativeVersionRef.current = result.version;
+          setSourceLibraryRendererNativeVersion(result.version);
           let repaired = false;
           useSourceBinStore.setState((state) => {
             const nextState = applySourceLibraryNativeChange({
@@ -944,7 +971,7 @@ function FlowApp() {
         return;
       }
 
-      sourceLibraryNativeVersionRef.current = nativeVersion;
+      setSourceLibraryRendererNativeVersion(nativeVersion);
     }
 
     let changed = false;
@@ -1267,6 +1294,9 @@ function FlowApp() {
   // Desktop project authority (AUD-001): this window may only save the project identity and
   // version it has adopted. The client hydrates canonical snapshots when another window
   // opens/switches projects, and marks this window stale/read-only when it falls behind.
+  // Adoption hydrations run through the same closed replacement transaction as Open/New: a
+  // broadcast-driven adoption never discards dirty Image/Paper work (the window goes stale
+  // instead), and an explicit reload first clears the loss-prevention policy below.
   const getProjectAuthorityClient = useCallback((): ProjectAuthorityClient => {
     if (!projectAuthorityClientRef.current) {
       const bridge = getSignalLoomNativeBridge();
@@ -1280,12 +1310,26 @@ function FlowApp() {
           if (result.scratchDirectoryPath) {
             setNativeScratchDirectoryPath(result.scratchDirectoryPath);
           }
-          resetSourceLibraryNativeSyncTracking();
-          await restoreProjectDocument(result.document);
+          const authorization = pendingAuthorityAdoptionAuthorizationRef.current;
+          pendingAuthorityAdoptionAuthorizationRef.current = undefined;
+          await restoreProjectDocument(result.document, {
+            ...(authorization ? {
+              imageAuthorization: authorization.image,
+              paperAuthorization: authorization.paper,
+            } : {}),
+            transactionBookkeeping: 'reset-source-library-native-sync',
+          });
         },
         resetSnapshot: async () => {
-          resetSourceLibraryNativeSyncTracking();
-          await resetProjectDocument();
+          const authorization = pendingAuthorityAdoptionAuthorizationRef.current;
+          pendingAuthorityAdoptionAuthorizationRef.current = undefined;
+          await resetProjectDocument({
+            ...(authorization ? {
+              imageAuthorization: authorization.image,
+              paperAuthorization: authorization.paper,
+            } : {}),
+            transactionBookkeeping: 'reset-source-library-native-sync',
+          });
           setNativeScratchDirectoryPath(undefined);
         },
         onStateChanged: (state) => {
@@ -1296,16 +1340,32 @@ function FlowApp() {
       });
     }
     return projectAuthorityClientRef.current;
-  }, [resetSourceLibraryNativeSyncTracking, setNativeScratchDirectoryPath]);
+  }, [setNativeScratchDirectoryPath]);
 
   const requestProjectAuthorityReload = useCallback(async () => {
-    const outcome = await getProjectAuthorityClient().reloadFromDisk();
-    if (!outcome.ok) {
-      await showAlertDialog({
-        title: 'Project Reload Failed',
-        message: outcome.error ?? 'The latest saved project could not be reloaded into this window.',
-        tone: 'danger',
-      });
+    // An explicit reload replaces this window's workspace, so it clears the same Paper/Image
+    // loss-prevention policy as Open/New before any store changes; the minted capability is
+    // revalidated inside the closed replacement transaction.
+    const authorization = await requestProjectReplacementAuthorization({
+      key: 'authority:reload-from-disk',
+      title: 'Save Paper changes before reloading the saved project?',
+      message: 'Reloading from disk replaces every open Paper tab in this window. Save the current project, discard with recovery, or cancel.',
+      save: () => lossPreventionSaveRef.current(),
+      authorizeDirtyImageReplacement: (projection) => imageReplacementAuthorizationRef.current(projection),
+    });
+    if (!authorization) return;
+    pendingAuthorityAdoptionAuthorizationRef.current = authorization;
+    try {
+      const outcome = await getProjectAuthorityClient().reloadFromDisk();
+      if (!outcome.ok) {
+        await showAlertDialog({
+          title: 'Project Reload Failed',
+          message: outcome.error ?? 'The latest saved project could not be reloaded into this window.',
+          tone: 'danger',
+        });
+      }
+    } finally {
+      pendingAuthorityAdoptionAuthorizationRef.current = undefined;
     }
   }, [getProjectAuthorityClient]);
 
@@ -1328,6 +1388,82 @@ function FlowApp() {
     return true;
   }, [confirmStaleProjectReload, getProjectAuthorityClient]);
 
+  // The Save option inside the Paper loss-prevention dialog must be a durable, authority-checked
+  // project save: it uses the same claim-gated native write as File → Save, and acknowledges a
+  // Paper tab as clean only when its exact submitted bytes reached disk.
+  const saveCurrentProjectForPaperLossPrevention = useCallback(async (): Promise<PaperLossSaveResult> => {
+    const bridge = getSignalLoomNativeBridge();
+    if (!bridge) {
+      return {
+        status: 'unacknowledged' as const,
+        error: 'A browser download cannot be acknowledged as a durable editable project save.',
+      };
+    }
+    const authorityClient = getProjectAuthorityClient();
+    if (authorityClient.getSaveBlock()) {
+      return {
+        status: 'failed' as const,
+        error: describeProjectAuthorityBlock(authorityClient.getState()),
+      };
+    }
+
+    try {
+      const imageDocumentsAtSave = new Map(
+        useImageEditorStore.getState().documents.map((imageDocument) => [imageDocument.id, imageDocument]),
+      );
+      const document = await buildNativeSaveProjectDocument(getNativeProjectName());
+      const result = await bridge.saveProjectFile({ document, claim: authorityClient.getClaim() });
+      authorityClient.applySaveResult(result);
+      if (result.rejected) {
+        return { status: 'failed' as const, error: result.rejected.message };
+      }
+      if (result.canceled) return { status: 'canceled' as const };
+      if (result.scratchDirectoryPath) setNativeScratchDirectoryPath(result.scratchDirectoryPath);
+      if (result.document?.sourceBin && result.sourceLibraryVersion) {
+        resetSourceLibraryNativeSyncTracking();
+        applySourceLibraryChangeToRenderer(
+          { type: 'source-library-snapshot', snapshot: result.document.sourceBin },
+          result.sourceLibraryVersion,
+          { repairVersionGaps: false },
+        );
+      }
+      for (const imageDocument of useImageEditorStore.getState().documents) {
+        if (imageDocumentsAtSave.get(imageDocument.id) === imageDocument) {
+          useImageEditorStore.getState().markDocumentClean(imageDocument.id);
+        }
+      }
+      if (!acknowledgePaperProjectSnapshot(result.document?.paper ?? document.paper)) {
+        return {
+          status: 'failed' as const,
+          error: 'Paper changed while the project was being saved. The newer changes remain open; save again before replacing the project.',
+        };
+      }
+      return { status: 'success' as const };
+    } catch (error) {
+      return {
+        status: 'failed' as const,
+        error: error instanceof Error ? error.message : 'The current project could not be saved.',
+      };
+    }
+  }, [
+    applySourceLibraryChangeToRenderer,
+    getNativeProjectName,
+    getProjectAuthorityClient,
+    resetSourceLibraryNativeSyncTracking,
+    setNativeScratchDirectoryPath,
+  ]);
+
+  const authorizeDirtyImageReplacement = useCallback<DirtyImageReplacementAuthorization>(async (projection) => (
+    useConfirmationStore.getState().requestConfirmation(
+      buildDirtyImageReplacementConfirmationMessage(projection),
+      'Discard Image Changes?',
+    )
+  ), []);
+  useEffect(() => {
+    lossPreventionSaveRef.current = saveCurrentProjectForPaperLossPrevention;
+    imageReplacementAuthorizationRef.current = authorizeDirtyImageReplacement;
+  }, [authorizeDirtyImageReplacement, saveCurrentProjectForPaperLossPrevention]);
+
   const handleAppMenuCommand = useCallback(async (command: NativeMenuCommand, source: ActivityTrailSource = 'menu') => {
     recordCommandActivity(command, source);
     const bridge = getSignalLoomNativeBridge();
@@ -1335,20 +1471,34 @@ function FlowApp() {
     switch (command) {
       case 'file:new': {
         if (projectSwitchInProgressRef.current) return;
-        const confirmed = await useConfirmationStore.getState().requestConfirmation(
-          'Start a new blank project? Unsaved changes in the current workspace will be discarded.',
-          'Start New Project'
-        );
-        if (!confirmed) {
-          return;
-        }
 
         if (!bridge) {
-          await resetProjectDocument({ allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
+          const replaced = await replaceWithBlankProject({
+            key: 'app:new-project',
+            save: saveCurrentProjectForPaperLossPrevention,
+            confirmOtherChanges: () => useConfirmationStore.getState().requestConfirmation(
+              'Start a new blank project? Unsaved changes in the current workspace will be discarded.',
+              'Start New Project',
+            ),
+            transactionBookkeeping: 'reset-source-library-native-sync',
+          });
+          if (!replaced) return;
           setNativeProjectPath(undefined);
           setNativeScratchDirectoryPath(undefined);
           return;
         }
+        // The dirty-close policy (Paper loss prevention + Image discard confirmation + the
+        // general New Project confirmation) runs before the native transaction is opened; the
+        // minted capability is revalidated inside the closed renderer transaction.
+        const replacementAuthorization = await requestBlankProjectReplacementAuthorization({
+          key: 'app:new-project',
+          save: saveCurrentProjectForPaperLossPrevention,
+          confirmOtherChanges: () => useConfirmationStore.getState().requestConfirmation(
+            'Start a new blank project? Unsaved changes in the current workspace will be discarded.',
+            'Start New Project',
+          ),
+        });
+        if (!replacementAuthorization || projectSwitchInProgressRef.current) return;
         const authorityClient = getProjectAuthorityClient();
         const preparedNative = await bridge.clearProjectPath({ claim: authorityClient.getClaim() });
         if (preparedNative.rejected || !preparedNative.transactionId) {
@@ -1365,12 +1515,12 @@ function FlowApp() {
         let endAuthorityTransition: (() => void) | undefined;
         try {
           rendererTransaction = await prepareProjectDocumentTransaction(undefined, {
-            allowDirtyImageReplacement: true,
-            allowDirtyPaperReplacement: true,
+            imageAuthorization: replacementAuthorization.image,
+            paperAuthorization: replacementAuthorization.paper,
+            transactionBookkeeping: 'reset-source-library-native-sync',
           });
           rendererTransaction.assertCanCommit();
           endAuthorityTransition = beginProjectAuthorityTransition();
-          resetSourceLibraryNativeSyncTracking();
           rendererTransaction.commit();
           const commitResult = await bridge.commitProjectSwitch({ transactionId: preparedNative.transactionId });
           if (commitResult.rejected || !commitResult.authority) {
@@ -1407,36 +1557,29 @@ function FlowApp() {
 
           if (result.rejected) throw new Error(result.rejected.message);
           if (!result.canceled && result.document && result.transactionId) {
-            const dirtyImageTitles = useImageEditorStore.getState().documents
-              .filter((document) => document.dirty)
-              .map((document) => document.title);
-            const dirtyPaperTitles = getDirtyPaperWorkspaceDocumentTitles();
-            const hasDirtyDocuments = dirtyImageTitles.length > 0 || dirtyPaperTitles.length > 0;
-            if (hasDirtyDocuments) {
-              const dirtySummary = [
-                ...dirtyImageTitles.map((title) => `Image: ${title}`),
-                ...dirtyPaperTitles.map((title) => `Paper: ${title}`),
-              ].join('\n');
-              const discard = await useConfirmationStore.getState().requestConfirmation(
-                `Open the selected project and discard these unsaved documents?\n\n${dirtySummary}`,
-                'Unsaved Documents',
-              );
-              if (!discard) {
-                await bridge.cancelProjectSwitch({ transactionId: result.transactionId });
-                return;
-              }
+            // Dirty Paper tabs get the loss-prevention policy (save / discard-with-recovery /
+            // cancel) and dirty Image documents their own discard confirmation; the minted
+            // capability is revalidated inside the closed renderer transaction below.
+            const replacementAuthorization = await requestProjectReplacementAuthorization({
+              key: 'app:open-project',
+              save: saveCurrentProjectForPaperLossPrevention,
+              authorizeDirtyImageReplacement,
+            });
+            if (!replacementAuthorization || projectSwitchInProgressRef.current) {
+              await bridge.cancelProjectSwitch({ transactionId: result.transactionId });
+              return;
             }
             projectSwitchInProgressRef.current = true;
             let rendererTransaction: Awaited<ReturnType<typeof prepareProjectDocumentTransaction>> | undefined;
             let endAuthorityTransition: (() => void) | undefined;
             try {
               rendererTransaction = await prepareProjectDocumentTransaction(result.document, {
-                allowDirtyImageReplacement: hasDirtyDocuments,
-                allowDirtyPaperReplacement: hasDirtyDocuments,
+                imageAuthorization: replacementAuthorization.image,
+                paperAuthorization: replacementAuthorization.paper,
+                transactionBookkeeping: 'reset-source-library-native-sync',
               });
               rendererTransaction.assertCanCommit();
               endAuthorityTransition = beginProjectAuthorityTransition();
-              resetSourceLibraryNativeSyncTracking();
               rendererTransaction.commit();
               const commitResult = await bridge.commitProjectSwitch({ transactionId: result.transactionId });
               if (commitResult.rejected || !commitResult.authority) {
@@ -1480,7 +1623,6 @@ function FlowApp() {
         const imageDocumentsAtSave = new Map(
           useImageEditorStore.getState().documents.map((imageDocument) => [imageDocument.id, imageDocument]),
         );
-        const paperSignaturesAtSave = capturePaperWorkspaceDocumentSignatures();
         const document = await buildNativeSaveProjectDocument(getNativeProjectName());
         const result = await bridge.saveProjectFile({ document, claim: authorityClient.getClaim() });
         authorityClient.applySaveResult(result);
@@ -1506,7 +1648,9 @@ function FlowApp() {
               useImageEditorStore.getState().markDocumentClean(imageDocument.id);
             }
           }
-          markPaperWorkspaceDocumentsCleanIfUnchanged(paperSignaturesAtSave);
+          // Baselines come from the exact acknowledged snapshot, so a Paper edit made while the
+          // native save was in flight stays dirty instead of being silently marked clean.
+          acknowledgePaperProjectSnapshot(result.document?.paper ?? document.paper);
         }
         return;
       }
@@ -1523,7 +1667,6 @@ function FlowApp() {
         const imageDocumentsAtSave = new Map(
           useImageEditorStore.getState().documents.map((imageDocument) => [imageDocument.id, imageDocument]),
         );
-        const paperSignaturesAtSave = capturePaperWorkspaceDocumentSignatures();
         const document = await buildNativeSaveProjectDocument(getNativeProjectName());
         const result = await bridge.saveProjectFileAs({ document, claim: authorityClient.getClaim() });
         authorityClient.applySaveResult(result);
@@ -1549,7 +1692,9 @@ function FlowApp() {
               useImageEditorStore.getState().markDocumentClean(imageDocument.id);
             }
           }
-          markPaperWorkspaceDocumentsCleanIfUnchanged(paperSignaturesAtSave);
+          // Baselines come from the exact acknowledged snapshot, so a Paper edit made while the
+          // native save was in flight stays dirty instead of being silently marked clean.
+          acknowledgePaperProjectSnapshot(result.document?.paper ?? document.paper);
         }
         return;
       }
@@ -1620,7 +1765,10 @@ function FlowApp() {
             const doc = await deserializeSlppr(new Uint8Array(result.bytes), paperAssetRepository);
             // A standalone .slppr opens as another Paper tab. The project's existing
             // layouts stay open and are saved together in the next .sloom snapshot.
-            await usePaperStore.getState().openDocumentJson(JSON.stringify(doc));
+            await usePaperStore.getState().openDocumentJson(JSON.stringify(doc), {
+              source: 'standalone',
+              path: result.path,
+            });
           }
         } catch (error) {
           await showAlertDialog({
@@ -1632,24 +1780,29 @@ function FlowApp() {
         return;
       }
       case 'paper:file-save-as': {
-        try {
-          const paperDocument = usePaperStore.getState().document;
-          const bytes = await serializeSlppr(paperDocument, paperAssetRepository);
-          if (bridge?.savePaperDocumentFileAs) {
-            await bridge.savePaperDocumentFileAs(bytes);
-          } else {
-            // Browser / Android: no Electron bridge — stream the .slppr to the device's
-            // Downloads folder (Documents on Android via the Filesystem plugin).
-            downloadBlob(
-              new Blob([bytes as BlobPart], { type: 'application/octet-stream' }),
-              buildWorkspaceDownloadFilename(paperDocument.title, 'slppr'),
-            );
-          }
-        } catch (error) {
+        const result = await savePaperDocumentEditable(
+          usePaperStore.getState().activeDocumentId,
+          { forceSaveAs: true, allowUnacknowledgedDownload: true },
+        );
+        if (result.status === 'failed' || result.status === 'unacknowledged') {
           await showAlertDialog({
-            title: 'Save Paper Failed',
-            message: error instanceof Error ? error.message : 'The active layout could not be saved as a .slppr file.',
-            tone: 'danger',
+            title: result.status === 'failed' ? 'Save Paper Failed' : 'Paper Downloaded, Still Unsaved',
+            message: result.error,
+            tone: result.status === 'failed' ? 'danger' : 'warning',
+          });
+        }
+        return;
+      }
+      case 'paper:file-save': {
+        const result = await savePaperDocumentEditable(
+          usePaperStore.getState().activeDocumentId,
+          { allowUnacknowledgedDownload: true },
+        );
+        if (result.status === 'failed' || result.status === 'unacknowledged') {
+          await showAlertDialog({
+            title: result.status === 'failed' ? 'Save Paper Failed' : 'Paper Downloaded, Still Unsaved',
+            message: result.error,
+            tone: result.status === 'failed' ? 'danger' : 'warning',
           });
         }
         return;
@@ -2025,6 +2178,8 @@ function FlowApp() {
     projectSaveBlockedByAuthority,
     resetSourceLibraryNativeSyncTracking,
     recordCommandActivity,
+    authorizeDirtyImageReplacement,
+    saveCurrentProjectForPaperLossPrevention,
     selectAllFlowNodes,
     setNativeScratchDirectoryPath,
     setPanelVisibility,
@@ -2101,7 +2256,7 @@ function FlowApp() {
     }
     if (kind === 'paper') {
       const doc = await deserializeSlppr(bytes, paperAssetRepository);
-      await usePaperStore.getState().openDocumentJson(JSON.stringify(doc));
+      await usePaperStore.getState().openDocumentJson(JSON.stringify(doc), { source: 'standalone' });
       setWorkspaceView('paper');
       return;
     }
@@ -2110,10 +2265,19 @@ function FlowApp() {
     }
 
     const document = await parseProjectDocument(new File([bytes as BlobPart], fileName));
-    resetSourceLibraryNativeSyncTracking();
-    await restoreProjectDocument(document);
+    const replaced = await replaceProjectDocument(document, {
+      key: 'browser:open-project',
+      save: saveCurrentProjectForPaperLossPrevention,
+      authorizeDirtyImageReplacement,
+      transactionBookkeeping: 'reset-source-library-native-sync',
+    });
+    if (!replaced) return;
     setNativeProjectPath(undefined);
-  }, [resetSourceLibraryNativeSyncTracking, setWorkspaceView]);
+  }, [
+    authorizeDirtyImageReplacement,
+    saveCurrentProjectForPaperLossPrevention,
+    setWorkspaceView,
+  ]);
 
   const handleBrowserProjectFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];
@@ -2170,6 +2334,10 @@ function FlowApp() {
     }
 
     let cancelled = false;
+    const startupAuthorityScope = captureProjectAuthorityStateScope();
+    const isStartupRequestCurrent = () => (
+      !cancelled && isCurrentProjectAuthorityStateScope(startupAuthorityScope)
+    );
     const nativeStatePromise = bridge.getNativeState();
     const nativeStateTimeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('Timeout retrieving native state from helper.')), 4000)
@@ -2177,7 +2345,8 @@ function FlowApp() {
 
     void Promise.race([nativeStatePromise, nativeStateTimeoutPromise])
       .then(async (state) => {
-        if (!cancelled) {
+        nativeWebContentsIdRef.current = state.webContentsId;
+        if (isStartupRequestCurrent()) {
           setStartupSplash({
             visible: true,
             title: state.startupProject?.document ? 'Opening Project' : 'Starting New Project',
@@ -2185,51 +2354,88 @@ function FlowApp() {
               ? `Loading ${state.startupProject.filePath.split(/[\\/]/).pop()}…`
               : 'Preparing a clean workspace…',
           });
-          nativeWebContentsIdRef.current = state.webContentsId;
           const authorityClient = getProjectAuthorityClient();
-          setNativeProjectPath(state.currentProjectPath);
-          setNativeScratchDirectoryPath(state.currentScratchDirectoryPath);
           if (state.startupProject?.document) {
-            if (state.startupProject.scratchDirectoryPath) {
-              setNativeScratchDirectoryPath(state.startupProject.scratchDirectoryPath);
-            }
             const startupDocument = state.startupProject.document;
             const startupFilePath = state.startupProject.filePath;
+            const startupScratchDirectoryPath = state.startupProject.scratchDirectoryPath;
+            // Delayed native startup state arrives after persisted renderer stores hydrated.
+            // The remembered project goes through the same closed replacement policy as an
+            // explicit Open, so live dirty Paper/Image work is never replaced by storage markers.
+            let startupDeclined = false;
+            let startupSuperseded = false;
+            let rememberedProjectAdopted = false;
             try {
               await authorityClient.adoptSnapshot(
                 { authority: state.projectAuthority, filePath: startupFilePath },
                 async () => {
-                  await restoreProjectDocument(startupDocument);
+                  const startupReplacement = await applyNativeStartupProjectReplacement({
+                    rememberedDocument: startupDocument,
+                    startBlank: false,
+                    save: () => lossPreventionSaveRef.current(),
+                    authorizeDirtyImageReplacement: (projection) => imageReplacementAuthorizationRef.current(projection),
+                    isStartupRequestCurrent,
+                  });
+                  if (startupReplacement === 'stale-startup') {
+                    startupSuperseded = true;
+                    throw new Error('A newer project replaced the delayed startup request.');
+                  }
+                  if (startupReplacement !== 'remembered-project') {
+                    startupDeclined = true;
+                    throw new Error('Startup kept the live workspace; the remembered project was not loaded into this window.');
+                  }
                 },
               );
+              rememberedProjectAdopted = true;
             } catch (bootRestoreError) {
+              if (startupSuperseded) return;
               // The window keeps running but is explicitly stale/read-only until a reload
               // from disk succeeds; it must not save state it never adopted.
               authorityClient.noteAdoptionFailure(
                 bootRestoreError instanceof Error ? bootRestoreError.message : undefined,
               );
-              throw bootRestoreError;
+              if (!startupDeclined) throw bootRestoreError;
             }
-            if (!cancelled && !state.projectAuthority) {
-              setNativeProjectPath(startupFilePath);
+            if (rememberedProjectAdopted) {
+              if (startupScratchDirectoryPath) {
+                setNativeScratchDirectoryPath(startupScratchDirectoryPath);
+              }
+              if (!cancelled && !state.projectAuthority) {
+                setNativeProjectPath(startupFilePath);
+              }
             }
           } else {
-            if (!state.currentProjectPath && (!windowWorkspaceView || windowWorkspaceView === 'flow')) {
-              await resetProjectDocument();
-              if (!cancelled) {
+            const shouldStartBlank = !state.currentProjectPath
+              && (!windowWorkspaceView || windowWorkspaceView === 'flow');
+            let startupReplacement: NativeStartupProjectReplacementResult = 'blank-project';
+            if (shouldStartBlank) {
+              startupReplacement = await applyNativeStartupProjectReplacement({
+                startBlank: true,
+                save: () => lossPreventionSaveRef.current(),
+                authorizeDirtyImageReplacement: (projection) => imageReplacementAuthorizationRef.current(projection),
+                isStartupRequestCurrent,
+              });
+              if (startupReplacement === 'blank-project' && !cancelled) {
                 setNativeProjectPath(undefined);
                 setNativeScratchDirectoryPath(undefined);
                 setWorkspaceView(windowWorkspaceView ?? 'flow');
               }
             }
-            // Nothing to hydrate: this window's stores already match the current canonical
-            // state (a fresh blank project), so confirm adoption to gain save rights.
-            await authorityClient.adoptSnapshot({
-              authority: state.projectAuthority,
-              filePath: state.currentProjectPath,
-            });
+            if (startupReplacement === 'stale-startup') {
+              return;
+            } else if (startupReplacement === 'preserved-live-work') {
+              // Live dirty startup work stayed open; this window does not match the canonical
+              // blank project and must not claim save rights over it.
+              authorityClient.noteAdoptionFailure('Startup kept live unsaved Paper/Image work in this window.');
+            } else {
+              // Stores match the current canonical state, so confirm adoption to gain save rights.
+              await authorityClient.adoptSnapshot({
+                authority: state.projectAuthority,
+                filePath: state.currentProjectPath,
+              });
+            }
           }
-          if (!windowWorkspaceView && state.workspace) {
+          if (isStartupRequestCurrent() && !windowWorkspaceView && state.workspace) {
             setWorkspaceView(state.workspace);
           }
         }
@@ -2678,6 +2884,7 @@ function FlowApp() {
         open={activityTrailOpen}
       />
       <ConfirmationDialog />
+      <PaperLossPreventionDialog />
       <TextInputDialog />
       <AlertDialog />
       {activeHelpSectionId ? (

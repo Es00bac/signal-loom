@@ -11,14 +11,18 @@ import {
   loadProjectDocument,
   parseProjectDocument,
   saveProjectDocument,
+  isRemoteLanClient,
   type FlowProjectSummary,
 } from '../../lib/projectLibrary';
 import { exportProjectAssets } from '../../lib/projectAssets';
 import {
   buildCurrentProjectDocument as buildFullProjectDocument,
-  resetProjectDocument,
-  restoreProjectDocument,
+  buildDirtyImageReplacementConfirmationMessage,
+  replaceProjectDocument,
+  replaceWithBlankProject,
+  type DirtyImageReplacementAuthorization,
 } from '../../lib/projectDocumentActions';
+import { acknowledgePaperProjectSnapshot } from '../../lib/paperLossPrevention';
 import {
   DEFAULT_SCRATCH_DIRECTORY_NAME,
   PROJECT_DOCUMENT_FILE_NAME,
@@ -123,7 +127,10 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
   }
 
   async function persistCurrentProject(projectId?: string): Promise<FlowProjectDocument> {
-    const saved = await saveProjectDocument(await buildCurrentProjectDocument(projectId));
+    const document = await buildCurrentProjectDocument(projectId);
+    const saved = await saveProjectDocument(document);
+
+    if (!isRemoteLanClient()) acknowledgePaperProjectSnapshot(saved.paper ?? document.paper);
 
     setProjectName(saved.name);
     setSelectedProjectId(saved.id);
@@ -131,16 +138,54 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
     return saved;
   }
 
-  async function handleCreateBlankProject() {
-    const confirmed = await useConfirmationStore.getState().requestConfirmation(
-      'Start a new blank project? Any unsaved changes in the current workspace will be discarded.',
-      'Start New Project'
-    );
-    if (!confirmed) {
-      return;
+  async function saveCurrentProjectBeforeReplacement() {
+    try {
+      // The selected library row may be the project the owner is about to open. Save the current
+      // workspace as a new durable record so the guard can never overwrite that target by accident.
+      if (isRemoteLanClient()) {
+        return {
+          status: 'unacknowledged' as const,
+          error: 'This served collaboration session is read-only and cannot acknowledge a durable project save.',
+        };
+      }
+      const document = await buildFullProjectDocument({
+        name: projectName.trim() || `${DEFAULT_PROJECT_NAME} recovery`,
+      });
+      const saved = await saveProjectDocument(document);
+      if (!acknowledgePaperProjectSnapshot(saved.paper ?? document.paper)) {
+        return {
+          status: 'failed' as const,
+          error: 'Paper changed while the project was being saved. The newer changes remain open; save again before replacing the project.',
+        };
+      }
+      setProjectName(saved.name);
+      await refreshProjects();
+      return { status: 'success' as const };
+    } catch (error) {
+      return {
+        status: 'failed' as const,
+        error: error instanceof Error ? error.message : 'The current project could not be saved.',
+      };
     }
+  }
 
-    await resetProjectDocument({ allowDirtyImageReplacement: true });
+  const authorizeDirtyImageReplacement: DirtyImageReplacementAuthorization = async (projection) => (
+    useConfirmationStore.getState().requestConfirmation(
+      buildDirtyImageReplacementConfirmationMessage(projection),
+      'Discard Image Changes?',
+    )
+  );
+
+  async function handleCreateBlankProject() {
+    const replaced = await replaceWithBlankProject({
+      key: 'library:new-project',
+      save: saveCurrentProjectBeforeReplacement,
+      confirmOtherChanges: () => useConfirmationStore.getState().requestConfirmation(
+        'Start a new blank project? Any unsaved changes in the current workspace will be discarded.',
+        'Start New Project',
+      ),
+    });
+    if (!replaced) return;
     setProjectName(UNTITLED_PROJECT_NAME);
     setSelectedProjectId(undefined);
     setFileSystemSummary(undefined);
@@ -174,7 +219,12 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
         throw new Error('The selected project could not be found.');
       }
 
-      await restoreProjectDocument(project);
+      const replaced = await replaceProjectDocument(project, {
+        key: `library:open:${project.id}`,
+        save: saveCurrentProjectBeforeReplacement,
+        authorizeDirtyImageReplacement,
+      });
+      if (!replaced) return;
       setProjectName(project.name);
       setSelectedProjectId(project.id);
       setFileSystemSummary(await loadFileSystemWorkspaceSummary(project.id));
@@ -254,7 +304,12 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
 
     try {
       const project = await parseProjectDocument(file);
-      await restoreProjectDocument(project);
+      const replaced = await replaceProjectDocument(project, {
+        key: `library:import:${project.id}`,
+        save: saveCurrentProjectBeforeReplacement,
+        authorizeDirtyImageReplacement,
+      });
+      if (!replaced) return;
       setProjectName(project.name);
       setSelectedProjectId(project.id);
       await saveProjectDocument(project);
@@ -389,7 +444,12 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
         scratchDirectoryHandle,
       });
 
-      await restoreProjectDocument(saved, { allowDirtyImageReplacement: true });
+      const replaced = await replaceProjectDocument(saved, {
+        key: `library:open-folder:${saved.id}`,
+        save: saveCurrentProjectBeforeReplacement,
+        authorizeDirtyImageReplacement,
+      });
+      if (!replaced) return;
       setProjectName(saved.name);
       setSelectedProjectId(saved.id);
       setFileSystemSummary(summary);

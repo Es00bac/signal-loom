@@ -73,6 +73,19 @@ export interface SourceLibraryRendererState {
   dismissedSourceKeys: string[];
 }
 
+// Renderer-local native event progress is deliberately module-owned rather than held in a React
+// ref. Project replacement can therefore reset and roll it back through a closed transaction
+// primitive without accepting a caller callback with ambient store authority.
+let sourceLibraryRendererNativeVersion = 0;
+
+export function getSourceLibraryRendererNativeVersion(): number {
+  return sourceLibraryRendererNativeVersion;
+}
+
+export function setSourceLibraryRendererNativeVersion(version: number): void {
+  sourceLibraryRendererNativeVersion = version;
+}
+
 export function sourceLibraryNativeAckNeedsRepair(result: SourceLibraryNativeAckResult | undefined): boolean {
   return !result?.ok;
 }

@@ -4,10 +4,12 @@ import {
   beginProjectAuthorityTransition,
   buildNativeStandaloneEntryReadiness,
   captureProjectAuthorityMutationScope,
+  captureProjectAuthorityStateScope,
   dispatchNativeRendererCommand,
   getSignalLoomNativeBridge,
   isNativeMenuCommand,
   isCurrentProjectAuthorityMutationScope,
+  isCurrentProjectAuthorityStateScope,
   NATIVE_RENDERER_COMMAND_EVENT,
   onNativeRendererCommand,
   setCurrentProjectAuthorityClaim,
@@ -51,6 +53,16 @@ describe('native app bridge helpers', () => {
     expect(projectBJob?.claim).toEqual({ authorityId: 'project-b', version: 1 });
     expect(isCurrentProjectAuthorityMutationScope(projectAJob)).toBe(false);
     expect(isCurrentProjectAuthorityMutationScope(projectBJob)).toBe(true);
+  });
+
+  it('invalidates a delayed startup scope when a newer project is adopted from the no-claim state', () => {
+    setCurrentProjectAuthorityClaim(undefined);
+    const delayedStartup = captureProjectAuthorityStateScope();
+    expect(isCurrentProjectAuthorityStateScope(delayedStartup)).toBe(true);
+
+    setCurrentProjectAuthorityClaim({ authorityId: 'newer-open', version: 1 });
+
+    expect(isCurrentProjectAuthorityStateScope(delayedStartup)).toBe(false);
   });
 
   it('dispatches renderer commands through a typed custom event', () => {

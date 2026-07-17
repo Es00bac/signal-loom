@@ -12,8 +12,22 @@ import {
   setTransformPreviewMode,
 } from './ImageTransformPreview';
 
+class FakeOffscreenCanvas {
+  width: number;
+  height: number;
+
+  constructor(width: number, height: number) {
+    this.width = width;
+    this.height = height;
+  }
+
+  getContext() {
+    return { drawImage: vi.fn() };
+  }
+}
+
 function bitmap(width: number, height: number): LayerBitmap {
-  return { width, height } as LayerBitmap;
+  return new FakeOffscreenCanvas(width, height) as unknown as LayerBitmap;
 }
 
 function layer(patch: Partial<ImageLayer> = {}): ImageLayer {
@@ -51,6 +65,7 @@ function openDoc(layerPatch: Partial<ImageLayer> = {}): ImageDocument {
 
 describe('ImageTransformPreview', () => {
   beforeEach(() => {
+    vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas);
     clearTransformPreviewSession();
     useImageEditorStore.setState({
       documents: [],

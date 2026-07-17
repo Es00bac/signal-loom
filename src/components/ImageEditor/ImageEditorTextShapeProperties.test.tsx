@@ -27,16 +27,21 @@ function setInputValue(input: HTMLInputElement | HTMLSelectElement, value: strin
 }
 
 class FakeOffscreenCanvas {
-  readonly width: number;
-  readonly height: number;
+  width: number;
+  height: number;
 
   constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
   }
 
-  getContext(): { measureText: (text: string) => { width: number }; fillText: () => void } {
+  getContext(): {
+    drawImage: () => void;
+    measureText: (text: string) => { width: number };
+    fillText: () => void;
+  } {
     return {
+      drawImage: () => undefined,
       fillText: () => undefined,
       measureText: (text) => ({ width: text.length }),
     };
@@ -84,6 +89,7 @@ describe('TextPanel', () => {
 
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas);
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);

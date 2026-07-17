@@ -223,6 +223,10 @@ import {
   type GenerativeFillProvider,
 } from '../../../lib/imageEditorAi';
 import { shouldBypassConfirmations } from '../../../lib/automationBypass';
+import {
+  replaceAuthorizedPaperDocument,
+  requestPaperDocumentReplacement,
+} from '../../../lib/paperLossPrevention';
 import { useConfirmationStore } from '../../../store/confirmationStore';
 import { useTextInputDialogStore } from '../../../store/textInputDialogStore';
 import {
@@ -691,6 +695,7 @@ export function PaperWorkspace() {
   const touchNavigationPointersRef = useRef<Map<number, PaperTouchNavigationPoint>>(new Map());
   const touchNavigationPinchRef = useRef<PaperTouchNavigationPinchState | null>(null);
   const document = usePaperStore((s) => s.document);
+  const activeDocumentId = usePaperStore((s) => s.activeDocumentId);
   // Register the document's imported fonts as live browser faces so the editor renders them.
   useRegisterImportedFonts(document.importedFonts);
   const selectedPageId = usePaperStore((s) => s.selectedPageId);
@@ -699,7 +704,6 @@ export function PaperWorkspace() {
   const tool = usePaperStore((s) => s.tool);
   const zoom = usePaperStore((s) => s.zoom);
   const createNewDocument = usePaperStore((s) => s.createNewDocument);
-  const importDocumentJson = usePaperStore((s) => s.importDocumentJson);
   const exportDocumentJson = usePaperStore((s) => s.exportDocumentJson);
   const updateDocumentSetup = usePaperStore((s) => s.updateDocumentSetup);
   const setTool = usePaperStore((s) => s.setTool);
@@ -2273,16 +2277,15 @@ export function PaperWorkspace() {
       const imported = await parsePaperDocumentImportFile(file);
       const isTextImport = 'blocks' in imported;
       const nextDocument = isTextImport ? await importTextDocumentIntoPaper(imported) : imported;
-      // Importing REPLACES the current layout and clears undo history — confirm when there's work to lose.
-      const currentFrameCount = document.pages.reduce((sum, page) => sum + page.frames.length, 0);
-      if (currentFrameCount > 0 && !(shouldBypassConfirmations() || await useConfirmationStore.getState().requestConfirmation(
-        `Importing "${file.name}" replaces your current Paper layout (${currentFrameCount} frame${currentFrameCount === 1 ? '' : 's'}) and can't be undone. Continue?`,
-        'Replace current layout?',
-      ))) {
+      const replacementAuthorization = await requestPaperDocumentReplacement(activeDocumentId, file.name);
+      if (!replacementAuthorization) {
         setStatus(`Canceled importing "${file.name}".`);
         return;
       }
-      await importDocumentJson(JSON.stringify(nextDocument));
+      if (!replaceAuthorizedPaperDocument(replacementAuthorization, nextDocument)) {
+        setStatus(`Canceled importing "${file.name}" because the Paper workspace changed.`);
+        return;
+      }
       // Report what actually came in — tables and images are real frames now, not text.
       const importedFrames = nextDocument.pages.flatMap((page) => page.frames);
       const tableCount = importedFrames.filter((frame) => frame.table).length;
@@ -9820,7 +9823,7 @@ function PaperRichEditableText({
   const editorRef = useRef<HTMLDivElement | null>(null);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const finishedRef = useRef(false);
-  const openingZoomRef = useRef(zoom);
+  const [openingZoom] = useState(zoom);
   const savedRangeRef = useRef<Range | null>(null);
   const preserveEditorInteractionRef = useRef(false);
   const [toolbarPos, setToolbarPos] = useState<{ left: number; top: number } | null>(null);
@@ -9828,7 +9831,6 @@ function PaperRichEditableText({
   const [advancedTypeOpen, setAdvancedTypeOpen] = useState(false);
   const { t, tBoth } = useI18n();
 
-  const openingZoom = openingZoomRef.current;
   const base = useMemo(
     () => createRichEditorBase(frame.typography, openingZoom),
     [frame.typography, openingZoom],

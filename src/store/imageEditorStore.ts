@@ -128,9 +128,27 @@ function trimHistory(stack: EditorOperation[]): EditorOperation[] {
 
 const DEFAULT_IMAGE_BACKGROUND_COLOR = '#000000';
 
+export type ImageDocumentRecoveryReason = 'crash-recovery';
+
+export interface ImageDiscardedDocumentRecovery {
+  id: string;
+  batchId: string;
+  reason: ImageDocumentRecoveryReason;
+  capturedAt: number;
+  originalIndex: number;
+  wasActive: boolean;
+  /** Pixel-complete encoded document; runtime canvases are decoded only when restored. */
+  snapshot: ImageDocument;
+  /** History operations retained against disposal until restored, dismissed, or evicted. */
+  undoStack?: EditorOperation[];
+  redoStack?: EditorOperation[];
+}
+
 interface ImageEditorState {
   documents: ImageDocument[];
   activeDocId: string | null;
+  /** Bounded local recovery copies retained across deliberate project replacement/reset. */
+  discardedDocumentRecoveries: ImageDiscardedDocumentRecovery[];
   /** The document id the cross-device sync's last snapshot seeded; granular remote ops target it. */
   syncedImageDocumentId: string | null;
   /**
@@ -279,6 +297,14 @@ interface ImageEditorActions {
     snapshot: PreparedImageEditorProjectSnapshot,
   ) => ImageEditorProjectSnapshotTransaction;
   restoreProjectSnapshotWithPixels: (snapshot?: ImageEditorProjectSnapshot) => Promise<void>;
+  prepareDocumentRecovery: (
+    documentIds: readonly string[],
+    reason: ImageDocumentRecoveryReason,
+  ) => Promise<ImageDiscardedDocumentRecovery[]>;
+  disposePreparedDocumentRecovery: (recoveries: readonly ImageDiscardedDocumentRecovery[]) => void;
+  commitPreparedDocumentRecovery: (recoveries: readonly ImageDiscardedDocumentRecovery[]) => number;
+  restoreDiscardedDocument: (recoveryId: string) => Promise<string | undefined>;
+  dismissDiscardedDocumentRecovery: (recoveryId: string) => void;
   /**
    * Lossless rollback for a failed project restore: puts back the exact live
    * document objects (bitmaps included) that were captured before the restore
@@ -482,6 +508,7 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
   (set, get) => ({
     documents: [],
     activeDocId: null,
+    discardedDocumentRecoveries: [],
     tool: 'move',
     backgroundColor: DEFAULT_IMAGE_BACKGROUND_COLOR,
     // Volume-key brush sizing is opt-in via DEFAULT_BRUSH_SETTINGS, but on a native (Android/DeX) build
@@ -1552,6 +1579,140 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
       }
     },
 
+    prepareDocumentRecovery: async (documentIds, reason) => {
+      const state = get();
+      const requestedIds = new Set(documentIds);
+      const batchId = makeImageRecoveryId('image-recovery-batch');
+      const recoveryResults = await Promise.allSettled(state.documents.flatMap((document, originalIndex) => (
+        requestedIds.has(document.id)
+          ? [Promise.all([
+              Promise.all(document.layers.map((layer) => encodeImageLayerProjectPixels(layer))),
+              Promise.all((document.snapshots ?? []).map(
+                (snapshot) => encodeImageDocumentSnapshotProjectPixels(snapshot),
+              )),
+            ]).then(([layers, snapshots]): ImageDiscardedDocumentRecovery => ({
+              id: makeImageRecoveryId('image-recovery'),
+              batchId,
+              reason,
+              capturedAt: Date.now(),
+              originalIndex,
+              wasActive: document.id === state.activeDocId,
+              // Selection lives in the runtime registry, so the encoded copy never claims one.
+              snapshot: {
+                ...document,
+                dirty: true,
+                hasSelection: false,
+                selectionMask: undefined,
+                selectionMaskData: undefined,
+                layers,
+                snapshots,
+              },
+              ...(state.undoStacks[document.id]?.length
+                ? { undoStack: state.undoStacks[document.id].map((operation) => retainEditorOperation(operation)) }
+                : {}),
+              ...(state.redoStacks[document.id]?.length
+                ? { redoStack: state.redoStacks[document.id].map((operation) => retainEditorOperation(operation)) }
+                : {}),
+            }))]
+          : []
+      )));
+      const recoveries = recoveryResults.flatMap((result) => (
+        result.status === 'fulfilled' ? [result.value] : []
+      ));
+      const rejected = recoveryResults.find(
+        (result): result is PromiseRejectedResult => result.status === 'rejected',
+      );
+      if (rejected) {
+        disposeImageDocumentRecoveries(recoveries);
+        throw rejected.reason;
+      }
+      if (get() !== state) {
+        disposeImageDocumentRecoveries(recoveries);
+        throw new Error('The Image workspace changed while crash recovery was being captured.');
+      }
+      return recoveries;
+    },
+
+    disposePreparedDocumentRecovery: (recoveries) => {
+      disposeImageDocumentRecoveries(recoveries);
+    },
+
+    commitPreparedDocumentRecovery: (recoveries) => {
+      if (!recoveries.length) return 0;
+      set((state) => ({
+        discardedDocumentRecoveries: appendImageDocumentRecoveries(
+          state.discardedDocumentRecoveries,
+          recoveries,
+        ),
+      }));
+      return recoveries.length;
+    },
+
+    restoreDiscardedDocument: async (recoveryId) => {
+      const recovery = get().discardedDocumentRecoveries
+        .find((candidate) => candidate.id === recoveryId);
+      if (!recovery) return undefined;
+      const decodedLayers: ImageLayer[] = [];
+      const decodedSnapshots: ImageDocumentSnapshot[] = [];
+      try {
+        for (const layer of recovery.snapshot.layers) {
+          decodedLayers.push(await decodeImageLayerProjectPixels(layer));
+        }
+        for (const namedSnapshot of recovery.snapshot.snapshots ?? []) {
+          decodedSnapshots.push(await decodeImageDocumentSnapshotProjectPixels(namedSnapshot));
+        }
+      } catch (error) {
+        disposeDecodedImageLayers(decodedLayers);
+        for (const namedSnapshot of decodedSnapshots) {
+          disposeImageDocumentSnapshotResources(namedSnapshot);
+        }
+        throw error;
+      }
+      const current = get();
+      if (!current.discardedDocumentRecoveries.includes(recovery)) {
+        disposeDecodedImageLayers(decodedLayers);
+        for (const namedSnapshot of decodedSnapshots) {
+          disposeImageDocumentSnapshotResources(namedSnapshot);
+        }
+        return undefined;
+      }
+      const restoredId = makeUniqueImageDocumentId(recovery.snapshot.id, current.documents);
+      const restoredDocument: ImageDocument = {
+        ...recovery.snapshot,
+        id: restoredId,
+        dirty: true,
+        layers: decodedLayers,
+        snapshots: decodedSnapshots,
+      };
+      const insertIndex = Math.max(0, Math.min(recovery.originalIndex, current.documents.length));
+      const documents = [...current.documents];
+      documents.splice(insertIndex, 0, restoredDocument);
+      set({
+        documents,
+        activeDocId: restoredId,
+        // Retained history ownership transfers into the live stacks with the tab.
+        undoStacks: recovery.undoStack?.length
+          ? { ...current.undoStacks, [restoredId]: recovery.undoStack }
+          : current.undoStacks,
+        redoStacks: recovery.redoStack?.length
+          ? { ...current.redoStacks, [restoredId]: recovery.redoStack }
+          : current.redoStacks,
+        discardedDocumentRecoveries: current.discardedDocumentRecoveries
+          .filter((candidate) => candidate.id !== recoveryId),
+      });
+      return restoredId;
+    },
+
+    dismissDiscardedDocumentRecovery: (recoveryId) => set((state) => {
+      const dismissed = state.discardedDocumentRecoveries
+        .find((candidate) => candidate.id === recoveryId);
+      if (dismissed) disposeImageDocumentRecoveries([dismissed]);
+      return {
+        discardedDocumentRecoveries: state.discardedDocumentRecoveries
+          .filter((candidate) => candidate.id !== recoveryId),
+      };
+    }),
+
     restoreLiveProjectRollback: (rollback) => {
       const current = get();
       if (
@@ -1836,6 +1997,54 @@ function cloneImageQuickActionMacro(macro: ImageQuickActionMacro): ImageQuickAct
     ...macro,
     steps: macro.steps.map((step) => ({ ...step })),
   };
+}
+
+const MAX_IMAGE_RECOVERY_BATCHES = 8;
+
+function makeImageRecoveryId(prefix: string): string {
+  return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`;
+}
+
+function disposeImageDocumentRecoveries(
+  recoveries: readonly ImageDiscardedDocumentRecovery[],
+): void {
+  for (const recovery of recoveries) {
+    disposeEditorOperations(recovery.undoStack ?? []);
+    disposeEditorOperations(recovery.redoStack ?? []);
+  }
+}
+
+function disposeDecodedImageLayers(layers: readonly ImageLayer[]): void {
+  const bitmaps = new Set<LayerBitmap>();
+  for (const layer of layers) {
+    if (layer.bitmap) bitmaps.add(layer.bitmap);
+    if (layer.mask) bitmaps.add(layer.mask);
+  }
+  for (const bitmap of bitmaps) {
+    if (bitmap.width === 0 && bitmap.height === 0) continue;
+    releaseImmutableBitmap(bitmap);
+    bitmap.width = 0;
+    bitmap.height = 0;
+  }
+}
+
+function appendImageDocumentRecoveries(
+  existing: readonly ImageDiscardedDocumentRecovery[],
+  incoming: readonly ImageDiscardedDocumentRecovery[],
+): ImageDiscardedDocumentRecovery[] {
+  const next = [...existing, ...incoming];
+  const retainedBatchIds = [...new Set(next.map((recovery) => recovery.batchId))]
+    .slice(-MAX_IMAGE_RECOVERY_BATCHES);
+  const retained = new Set(retainedBatchIds);
+  disposeImageDocumentRecoveries(next.filter((recovery) => !retained.has(recovery.batchId)));
+  return next.filter((recovery) => retained.has(recovery.batchId));
+}
+
+function makeUniqueImageDocumentId(id: string, documents: readonly ImageDocument[]): string {
+  if (!documents.some((document) => document.id === id)) return id;
+  let suffix = 2;
+  while (documents.some((document) => document.id === `${id}-recovered-${suffix}`)) suffix += 1;
+  return `${id}-recovered-${suffix}`;
 }
 
 function cloneSerializableValue<T>(value: T): T {

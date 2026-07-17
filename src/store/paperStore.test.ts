@@ -1,16 +1,19 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createPaperComicSfxDesign } from '../lib/paperComicSfx';
 import { addFrameToPaperPage, createDefaultPaperDocument } from '../lib/paperDocument';
+import { buildPaperPdfExportRequest } from '../lib/paperPdfExport';
 import { createBinaryAssetRecord, type BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
 import type { SourceBinLibraryItem } from './sourceBinStore';
 import type { PaperImportedFont } from '../types/paper';
-import {
-  capturePaperWorkspaceDocumentSignatures,
-  getDirtyPaperWorkspaceDocumentTitles,
-  markPaperWorkspaceDocumentsCleanIfUnchanged,
-  usePaperStore,
-} from './paperStore';
+import { usePaperStore } from './paperStore';
+
+function dirtyPaperTitles(): string[] {
+  const state = usePaperStore.getState();
+  return (state.exportSnapshot().documents ?? [])
+    .filter((workspaceDocument) => state.isDocumentDirty(workspaceDocument.id))
+    .map((workspaceDocument) => workspaceDocument.document.title);
+}
 
 function resetPaperStore() {
   const document = createDefaultPaperDocument({ title: 'Paper Store Test' });
@@ -36,6 +39,7 @@ function resetPaperStore() {
     clipboardFrames: [],
     styleClipboard: null,
     recovery: null,
+    discardedDocumentRecoveries: [],
   });
 }
 
@@ -121,6 +125,30 @@ function paperEditActions() {
   };
 }
 
+function paperDirtyActions() {
+  return usePaperStore.getState() as ReturnType<typeof usePaperStore.getState> & {
+    isDocumentDirty: (documentId?: string) => boolean;
+    markDocumentSaved: (
+      documentId: string,
+      baseline: { kind: 'project' | 'standalone'; path?: string },
+    ) => void;
+    captureDocumentRecovery: (
+      documentIds: string[],
+      reason: 'discard' | 'project-replacement' | 'shutdown' | 'baton-handoff',
+    ) => string[];
+    restoreDiscardedDocument: (recoveryId: string) => string | undefined;
+    closeDocument: (
+      documentId: string,
+      options?: { discard?: boolean; recoveryReason?: 'discard' | 'project-replacement' | 'shutdown' | 'baton-handoff' },
+    ) => boolean;
+    discardedDocumentRecoveries: Array<{
+      id: string;
+      reason: string;
+      snapshot: { id: string; document: { title: string } };
+    }>;
+  };
+}
+
 describe('paperStore interaction actions', () => {
   beforeEach(resetPaperStore);
 
@@ -129,16 +157,16 @@ describe('paperStore interaction actions', () => {
     usePaperStore.setState((state) => ({
       document: { ...state.document, title: 'Submitted title' },
     }));
-    const submitted = capturePaperWorkspaceDocumentSignatures();
-    markPaperWorkspaceDocumentsCleanIfUnchanged(submitted);
-    expect(getDirtyPaperWorkspaceDocumentTitles()).toEqual([]);
+    const submitted = usePaperStore.getState().exportSnapshot();
+    usePaperStore.getState().markAllDocumentsProjectSaved(submitted);
+    expect(dirtyPaperTitles()).toEqual([]);
 
-    const beforeConcurrentEdit = capturePaperWorkspaceDocumentSignatures();
+    const beforeConcurrentEdit = usePaperStore.getState().exportSnapshot();
     usePaperStore.setState((state) => ({
       document: { ...state.document, title: 'Edited while save was pending' },
     }));
-    markPaperWorkspaceDocumentsCleanIfUnchanged(beforeConcurrentEdit);
-    expect(getDirtyPaperWorkspaceDocumentTitles()).toEqual(['Edited while save was pending']);
+    usePaperStore.getState().markAllDocumentsProjectSaved(beforeConcurrentEdit);
+    expect(dirtyPaperTitles()).toEqual(['Edited while save was pending']);
   });
 
   it('adds and updates ruler-created guides on the selected page', () => {
@@ -746,11 +774,11 @@ describe('paperStore document tabs', () => {
     usePaperStore.getState().createNewDocument({ title: 'Second' });
     const secondId = usePaperStore.getState().activeDocumentId;
 
-    usePaperStore.getState().closeDocument(secondId);
+    usePaperStore.getState().closeDocument(secondId, { discard: true });
     expect(usePaperStore.getState().activeDocumentId).toBe(firstId);
     expect(usePaperStore.getState().documents).toHaveLength(1);
 
-    usePaperStore.getState().closeDocument(firstId);
+    usePaperStore.getState().closeDocument(firstId, { discard: true });
     expect(usePaperStore.getState().documents).toHaveLength(1);
     expect(usePaperStore.getState().document.title).toBe('Untitled Paper Layout');
   });
@@ -799,5 +827,191 @@ describe('paperStore document tabs', () => {
     usePaperStore.getState().restoreSnapshot(undefined);
     expect(usePaperStore.getState().recovery).toBeNull();
     expect(usePaperStore.getState().exportSnapshot().recovery).toBeUndefined();
+  });
+
+  it('derives dirty truth from authored content while ignoring navigation and view-only state', () => {
+    const initial = usePaperStore.getState().exportSnapshot();
+    usePaperStore.getState().restoreSnapshot(initial);
+    const documentId = usePaperStore.getState().activeDocumentId;
+
+    expect(paperDirtyActions().isDocumentDirty(documentId)).toBe(false);
+    usePaperStore.getState().setZoom(1.3);
+    usePaperStore.getState().setTool('hand');
+    usePaperStore.getState().selectPage(usePaperStore.getState().document.pages[0].id);
+    usePaperStore.getState().toggleViewOption('showGrid');
+    expect(paperDirtyActions().isDocumentDirty(documentId)).toBe(false);
+
+    usePaperStore.getState().addFrame('text', { text: 'Authored copy' });
+    expect(paperDirtyActions().isDocumentDirty(documentId)).toBe(true);
+    usePaperStore.getState().undo();
+    expect(paperDirtyActions().isDocumentDirty(documentId)).toBe(false);
+  });
+
+  it('detects document, frame, style, thread, guide, asset-reference, and binding mutations', () => {
+    const assertMutationDirties = (mutate: () => void) => {
+      const document = createDefaultPaperDocument({ title: 'Mutation baseline' });
+      usePaperStore.getState().restoreSnapshot({ document, tool: 'select', zoom: 0.8 });
+      mutate();
+      expect(paperDirtyActions().isDocumentDirty()).toBe(true);
+    };
+
+    assertMutationDirties(() => usePaperStore.getState().updateDocumentSetup({ dpi: 450 }));
+    assertMutationDirties(() => usePaperStore.getState().addFrame('text', { text: 'Frame mutation' }));
+    assertMutationDirties(() => usePaperStore.getState().addPaperSwatch({
+      id: 'brand-cyan',
+      name: 'Brand cyan',
+      color: '#22d3ee',
+      model: 'rgb',
+    } as never));
+    assertMutationDirties(() => {
+      const pageId = usePaperStore.getState().selectedPageId;
+      usePaperStore.getState().addGuideToPage(pageId, { orientation: 'vertical', positionMm: 24 });
+    });
+    assertMutationDirties(() => usePaperStore.getState().placeSourceAssetAt({
+      item: textItem(),
+      point: { xMm: 10, yMm: 10 },
+    }));
+    assertMutationDirties(() => usePaperStore.getState().toggleViewOption('startOnRight'));
+
+    const threaded = createDefaultPaperDocument({ title: 'Thread baseline' });
+    usePaperStore.getState().restoreSnapshot({ document: threaded, tool: 'select', zoom: 0.8 });
+    const firstFrame = usePaperStore.getState().addFrame('text', { text: 'First' })!;
+    const secondFrame = usePaperStore.getState().addFrame('text', { text: 'Second' })!;
+    paperDirtyActions().markDocumentSaved(usePaperStore.getState().activeDocumentId, { kind: 'project' });
+    usePaperStore.getState().selectFrame(firstFrame);
+    usePaperStore.getState().selectFrameWithMode(secondFrame, 'add');
+    usePaperStore.getState().threadSelectedFrames();
+    expect(paperDirtyActions().isDocumentDirty()).toBe(true);
+  });
+
+  it('distinguishes new unsaved, imported standalone, and project-backed baselines', async () => {
+    usePaperStore.getState().createNewDocument({ title: 'Never saved' });
+    expect(paperDirtyActions().isDocumentDirty()).toBe(true);
+
+    const imported = createDefaultPaperDocument({ title: 'Imported standalone' });
+    const importedId = await usePaperStore.getState().openDocumentJson(
+      JSON.stringify(imported),
+      { source: 'standalone', path: '/layouts/imported.slppr' } as never,
+    );
+    expect(paperDirtyActions().isDocumentDirty(importedId)).toBe(false);
+
+    usePaperStore.getState().restoreSnapshot({
+      document: createDefaultPaperDocument({ title: 'Saved project tab' }),
+      tool: 'select',
+      zoom: 0.8,
+    });
+    expect(paperDirtyActions().isDocumentDirty()).toBe(false);
+  });
+
+  it('does not clear dirty truth when a project snapshot or flattened export is merely built', () => {
+    const documentId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addPage();
+    expect(paperDirtyActions().isDocumentDirty(documentId)).toBe(true);
+
+    const projectSnapshot = usePaperStore.getState().exportSnapshot();
+    usePaperStore.getState().exportDocumentJson();
+    expect(buildPaperPdfExportRequest(usePaperStore.getState().document).html).toContain('<!doctype html>');
+    expect(projectSnapshot.documents?.every((document) => document.persistence === undefined)).toBe(true);
+    expect(paperDirtyActions().isDocumentDirty(documentId)).toBe(true);
+
+    paperDirtyActions().markDocumentSaved(documentId, { kind: 'project' });
+    expect(paperDirtyActions().isDocumentDirty(documentId)).toBe(false);
+  });
+
+  it('keeps edits made after a project snapshot dirty when that exact snapshot is acknowledged', () => {
+    const documentId = usePaperStore.getState().activeDocumentId;
+    paperDirtyActions().addPage();
+    const persistedSnapshot = paperDirtyActions().exportSnapshot();
+    paperDirtyActions().addPage();
+
+    paperDirtyActions().markAllDocumentsProjectSaved(persistedSnapshot);
+
+    expect(paperDirtyActions().isDocumentDirty(documentId)).toBe(true);
+  });
+
+  it('marks only the acknowledged standalone tab clean', () => {
+    const firstId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addPage();
+    usePaperStore.getState().createNewDocument({ title: 'Second dirty tab' });
+    const secondId = usePaperStore.getState().activeDocumentId;
+
+    paperDirtyActions().markDocumentSaved(secondId, {
+      kind: 'standalone',
+      path: '/layouts/second.slppr',
+    });
+
+    expect(paperDirtyActions().isDocumentDirty(firstId)).toBe(true);
+    expect(paperDirtyActions().isDocumentDirty(secondId)).toBe(false);
+  });
+
+  it('refuses an unacknowledged dirty close, closes clean tabs directly, and preserves tab order', () => {
+    const firstId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().restoreSnapshot(usePaperStore.getState().exportSnapshot());
+    usePaperStore.getState().createNewDocument({ title: 'Dirty middle' });
+    const middleId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().createNewDocument({ title: 'Clean end after save' });
+    const endId = usePaperStore.getState().activeDocumentId;
+    paperDirtyActions().markDocumentSaved(endId, { kind: 'standalone', path: '/layouts/end.slppr' });
+
+    expect(paperDirtyActions().closeDocument(middleId)).toBe(false);
+    expect(usePaperStore.getState().documents.map((entry) => entry.id)).toEqual([firstId, middleId, endId]);
+    expect(paperDirtyActions().closeDocument(endId)).toBe(true);
+    expect(usePaperStore.getState().documents.map((entry) => entry.id)).toEqual([firstId, middleId]);
+  });
+
+  it('captures a deliberate discard and restores the exact document into its original order', () => {
+    const firstId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().createNewDocument({ title: 'Recover me' });
+    const discardedId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addFrame('text', { id: 'recovery-copy', text: 'Exact recovery text' });
+    usePaperStore.getState().createNewDocument({ title: 'Last tab' });
+
+    expect(paperDirtyActions().closeDocument(discardedId, {
+      discard: true,
+      recoveryReason: 'discard',
+    })).toBe(true);
+    const recovery = paperDirtyActions().discardedDocumentRecoveries.at(-1);
+    expect(recovery?.snapshot.document.title).toBe('Recover me');
+    expect(usePaperStore.getState().documents.map((entry) => entry.id)).not.toContain(discardedId);
+
+    const restoredId = paperDirtyActions().restoreDiscardedDocument(recovery!.id);
+    expect(restoredId).toBe(discardedId);
+    expect(usePaperStore.getState().documents.map((entry) => entry.id)).toEqual([
+      firstId,
+      discardedId,
+      expect.any(String),
+    ]);
+    expect(usePaperStore.getState().document.pages[0].frames.some((frame) => frame.id === 'recovery-copy')).toBe(true);
+    expect(paperDirtyActions().isDocumentDirty(discardedId)).toBe(true);
+  });
+
+  it('caps deliberate recovery history instead of growing without bound', () => {
+    for (let index = 0; index < 12; index += 1) {
+      usePaperStore.getState().createNewDocument({ title: `Discard ${index}` });
+      const id = usePaperStore.getState().activeDocumentId;
+      expect(paperDirtyActions().closeDocument(id, { discard: true })).toBe(true);
+    }
+
+    expect(paperDirtyActions().discardedDocumentRecoveries.length).toBeLessThanOrEqual(8);
+    expect(paperDirtyActions().discardedDocumentRecoveries.at(-1)?.snapshot.document.title).toBe('Discard 11');
+  });
+
+  it('treats accepted remote authored changes as dirty without changing local view state', () => {
+    const documentId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().restoreSnapshot(usePaperStore.getState().exportSnapshot());
+    usePaperStore.getState().setZoom(1.55);
+    const pageId = usePaperStore.getState().document.pages[0].id;
+
+    expect(usePaperStore.getState().applyRemotePaperDocumentChange({
+      type: 'paper-document-snapshot',
+      document: {
+        ...usePaperStore.getState().document,
+        title: 'Remote authored title',
+      },
+    } as never)).toBe(true);
+
+    expect(paperDirtyActions().isDocumentDirty(documentId)).toBe(true);
+    expect(usePaperStore.getState().zoom).toBe(1.55);
+    expect(usePaperStore.getState().selectedPageId).toBe(pageId);
   });
 });

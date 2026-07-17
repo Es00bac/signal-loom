@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { PAPER_PROJECT_1_AUDIT, paperAuditEntry } from './paperProductionAudit';
 
@@ -44,5 +45,10 @@ describe('Paper Project 1 audit ledger', () => {
         tests: expect.arrayContaining([expect.any(String)]),
       });
     }
+  });
+
+  it('runs the golden verifier through the read-only-safe Vite runner loader', () => {
+    const source = readFileSync('scripts/verify-paper-production.mjs', 'utf8');
+    expect(source).toMatch(/vitestEntrypoint,[\s\S]{0,160}'--configLoader',[\s\S]{0,80}'runner'/);
   });
 });

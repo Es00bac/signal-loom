@@ -301,6 +301,7 @@
       "label": "File", "labelJa": "ファイル",
       "items": [
         { "command": "paper:file-open", "label": "Open...", "labelJa": "開く...", "accelerator": "Ctrl+O" },
+        { "command": "paper:file-save", "label": "Save", "labelJa": "保存", "accelerator": "Ctrl+S" },
         { "command": "paper:file-save-as", "label": "Save As...", "labelJa": "名前を付けて保存...", "accelerator": "Ctrl+Shift+S" }
       ]
     },

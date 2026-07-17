@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { afterEach, describe, expect, it } from 'vitest';
-import { usePaperStore } from '../store/paperStore';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { capturePaperWorkspaceAuthorization, usePaperStore } from '../store/paperStore';
 import { useSourceBinStore } from '../store/sourceBinStore';
 import { useFlowStore } from '../store/flowStore';
 import { useFlowWorkspaceStore } from '../store/flowWorkspaceStore';
@@ -226,7 +226,9 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     await wipePaperAssetRepository();
     expect(await paperAssetRepository.listRefs()).toHaveLength(0);
 
-    await restoreProjectDocument(saved);
+    await restoreProjectDocument(saved, {
+      paperAuthorization: capturePaperWorkspaceAuthorization(),
+    });
 
     const paperState = usePaperStore.getState();
     expect(paperState.documents.map((tab) => tab.id)).toEqual(['tab-a', 'tab-b']);
@@ -272,7 +274,9 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     await resetAllStores();
     await wipePaperAssetRepository();
 
-    await restoreProjectDocument(saved);
+    await restoreProjectDocument(saved, {
+      paperAuthorization: capturePaperWorkspaceAuthorization(),
+    });
 
     const paperState = usePaperStore.getState();
     expect(paperState.documents.map((tab) => tab.id)).toEqual(['tab-a', 'tab-b']);
@@ -297,7 +301,9 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     await wipePaperAssetRepository();
     const previousTitle = usePaperStore.getState().document.title;
 
-    await expect(restoreProjectDocument(saved)).rejects.toThrow(/hash|digest|corrupt|verif/i);
+    await expect(restoreProjectDocument(saved, {
+      paperAuthorization: capturePaperWorkspaceAuthorization(),
+    })).rejects.toThrow(/hash|digest|corrupt|verif/i);
     expect(usePaperStore.getState().document.title).toBe(previousTitle);
     expect(await paperAssetRepository.listRefs()).toHaveLength(0);
   });
@@ -311,7 +317,9 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     await resetAllStores();
     await wipePaperAssetRepository();
 
-    await expect(restoreProjectDocument(saved)).rejects.toThrow(/length|truncat|hash|verif/i);
+    await expect(restoreProjectDocument(saved, {
+      paperAuthorization: capturePaperWorkspaceAuthorization(),
+    })).rejects.toThrow(/length|truncat|hash|verif/i);
     expect(await paperAssetRepository.listRefs()).toHaveLength(0);
   });
 
@@ -404,7 +412,9 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
 
     await resetAllStores();
     await wipePaperAssetRepository();
-    await restoreProjectDocument(saved);
+    await restoreProjectDocument(saved, {
+      paperAuthorization: capturePaperWorkspaceAuthorization(),
+    });
 
     const repairs = usePaperStore.getState().recovery?.repairs ?? [];
     expect(repairs.join('\n')).toMatch(/Restricted Family/);
@@ -465,7 +475,9 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     // Simulate a corrupted profile: the id claims imageA's digest but holds different bytes.
     await paperAssetRepository.put({ ref: { ...refs.imageA }, bytes: Uint8Array.from([9, 9, 9]) });
 
-    await restoreProjectDocument(saved);
+    await restoreProjectDocument(saved, {
+      paperAuthorization: capturePaperWorkspaceAuthorization(),
+    });
 
     const repaired = await paperAssetRepository.get(refs.imageA.id);
     expect(repaired).toBeDefined();
@@ -487,11 +499,59 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
       },
     });
     try {
-      await expect(restoreProjectDocument(saved)).rejects.toThrow(/source bin failed/);
+      await expect(restoreProjectDocument(saved, {
+        paperAuthorization: capturePaperWorkspaceAuthorization(),
+      })).rejects.toThrow(/source bin failed/);
       expect(await paperAssetRepository.get(refs.imageA.id)).toBeUndefined();
       expect(await paperAssetRepository.listRefs()).toHaveLength(0);
     } finally {
       useSourceBinStore.setState({ prepareProjectSnapshot: originalPrepare });
+    }
+  });
+
+  it('awaits memoized Paper asset rollback after a commit-phase failure before returning', async () => {
+    const { refs } = await seedTwoTabProject();
+    const saved = await buildSavedPortableProject();
+    await resetAllStores();
+    await wipePaperAssetRepository();
+    const originalRestorePaperSnapshot = usePaperStore.getState().restoreSnapshot;
+    usePaperStore.setState({
+      restoreSnapshot: (snapshot, options) => {
+        if (snapshot?.document?.title === 'Tab A Layout') {
+          throw new Error('commit phase failed');
+        }
+        originalRestorePaperSnapshot(snapshot, options);
+      },
+    });
+    const originalDelete = paperAssetRepository.delete.bind(paperAssetRepository);
+    let rollbackDeleteStarted!: () => void;
+    let releaseRollbackDelete!: () => void;
+    const deleteStarted = new Promise<void>((resolve) => { rollbackDeleteStarted = resolve; });
+    const deleteBlocked = new Promise<void>((resolve) => { releaseRollbackDelete = resolve; });
+    const deleteSpy = vi.spyOn(paperAssetRepository, 'delete').mockImplementation(async (id) => {
+      rollbackDeleteStarted();
+      await deleteBlocked;
+      await originalDelete(id);
+    });
+    let operationSettled = false;
+    try {
+      const operation = restoreProjectDocument(saved, {
+        paperAuthorization: capturePaperWorkspaceAuthorization(),
+      }).finally(() => { operationSettled = true; });
+      await deleteStarted;
+
+      expect(operationSettled).toBe(false);
+      expect(await paperAssetRepository.get(refs.imageA.id)).toBeDefined();
+      releaseRollbackDelete();
+
+      await expect(operation).rejects.toThrow(/commit phase failed/);
+      expect(operationSettled).toBe(true);
+      expect(await paperAssetRepository.get(refs.imageA.id)).toBeUndefined();
+      expect(await paperAssetRepository.listRefs()).toHaveLength(0);
+    } finally {
+      releaseRollbackDelete?.();
+      deleteSpy.mockRestore();
+      usePaperStore.setState({ restoreSnapshot: originalRestorePaperSnapshot });
     }
   });
 
@@ -502,7 +562,9 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     await resetAllStores();
     await wipePaperAssetRepository();
 
-    const transaction = await prepareProjectDocumentTransaction(saved);
+    const transaction = await prepareProjectDocumentTransaction(saved, {
+      paperAuthorization: capturePaperWorkspaceAuthorization(),
+    });
     expect(await paperAssetRepository.get(refs.imageA.id)).toBeDefined();
 
     await transaction.rollback();

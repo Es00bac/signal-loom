@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useFlowStore } from '../store/flowStore';
 import { useEditorStore } from '../store/editorStore';
 import { useProjectUsageStore } from '../store/projectUsageStore';
@@ -6,7 +6,9 @@ import { useSourceBinStore } from '../store/sourceBinStore';
 import { useFlowWorkspaceStore } from '../store/flowWorkspaceStore';
 import {
   buildCurrentProjectDocument,
+  captureProjectReplacementAuthorization,
   prepareProjectDocumentTransaction,
+  replaceProjectDocument,
   resetProjectDocument,
   restoreProjectDocument,
 } from './projectDocumentActions';
@@ -68,6 +70,14 @@ function installLiveSource(items: Parameters<typeof sourceSnapshot>[0]): void {
 function countRevocations(revokeObjectUrl: ReturnType<typeof vi.fn>, url: string): number {
   return revokeObjectUrl.mock.calls.filter(([revokedUrl]) => revokedUrl === url).length;
 }
+
+beforeEach(() => {
+  // The persistence-fingerprint dirty model treats a `kind: 'new'` tab as unsaved, so every
+  // test starts from an explicit clean project baseline instead of the pristine default tab.
+  const document = createDefaultPaperDocument({ title: 'Clean project baseline' });
+  usePaperStore.getState().restoreSnapshot({ document, tool: 'select', zoom: 0.8 });
+  usePaperStore.setState({ discardedDocumentRecoveries: [] });
+});
 
 afterEach(() => {
   useSourceBinStore.setState({
@@ -141,7 +151,9 @@ describe('restoreProjectDocument', () => {
     await expect(resetProjectDocument()).rejects.toThrow('dirty Image document');
     expect(useImageEditorStore.getState().documents).toEqual([liveDocument]);
 
-    await resetProjectDocument({ allowDirtyImageReplacement: true });
+    await resetProjectDocument({
+      imageAuthorization: captureProjectReplacementAuthorization().image,
+    });
     expect(useImageEditorStore.getState().documents).toEqual([]);
   });
 
@@ -166,7 +178,7 @@ describe('restoreProjectDocument', () => {
       name: 'Incoming Paper',
       savedAt: 1,
       flow: { version: 3, nodes: [], edges: [] },
-    }, { allowDirtyPaperReplacement: true });
+    }, { paperAuthorization: captureProjectReplacementAuthorization().paper });
   });
 
   it('blocks replacement for a dirty inactive Paper tab, not merely the active undo stack', async () => {
@@ -190,6 +202,34 @@ describe('restoreProjectDocument', () => {
       savedAt: 1,
       flow: { version: 3, nodes: [], edges: [] },
     })).rejects.toThrow('Edited inactive tab');
+  });
+
+  it('captures dirty Paper recovery before a user-initiated project replacement', async () => {
+    const current = createDefaultPaperDocument({ title: 'Dirty outgoing Paper' });
+    usePaperStore.getState().restoreSnapshot({ document: current, tool: 'select', zoom: 0.8 });
+    usePaperStore.setState({ discardedDocumentRecoveries: [] });
+    usePaperStore.getState().addPage();
+    const incoming = createDefaultPaperDocument({ title: 'Incoming saved Paper' });
+
+    const replaced = await replaceProjectDocument({
+      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      id: 'incoming-project',
+      name: 'Incoming Project',
+      savedAt: 1,
+      flow: { version: 3, nodes: [], edges: [] },
+      sourceBin: { dismissedSourceKeys: [] },
+      paper: { document: incoming, tool: 'select', zoom: 0.8 },
+    }, {
+      save: async () => ({ status: 'failed', error: 'not selected in automation' }),
+    });
+
+    expect(replaced).toBe(true);
+    expect(usePaperStore.getState().document.title).toBe('Incoming saved Paper');
+    expect(usePaperStore.getState().isDocumentDirty()).toBe(false);
+    expect(usePaperStore.getState().discardedDocumentRecoveries.at(-1)).toMatchObject({
+      reason: 'project-replacement',
+      snapshot: { document: { title: 'Dirty outgoing Paper' } },
+    });
   });
 
   it('serializes Image documents as a clean saved baseline without clearing live dirty state', async () => {
@@ -558,10 +598,7 @@ describe('restoreProjectDocument', () => {
       },
     });
 
-    await expect(resetProjectDocument({
-      allowDirtyImageReplacement: true,
-      allowDirtyPaperReplacement: true,
-    })).rejects.toThrow('late Source reset failed');
+    await expect(resetProjectDocument()).rejects.toThrow('late Source reset failed');
 
     expect(useFlowStore.getState().exportProjectFlowSnapshot().nodes.map((node) => node.id)).toEqual(['concurrent-edit']);
   });
@@ -572,7 +609,10 @@ describe('restoreProjectDocument', () => {
     const liveBitmap = { __live: 'pixels' } as unknown as NonNullable<ImageDocument['layers'][number]['bitmap']>;
     const liveDocument = {
       id: 'doc-live',
-      name: 'Live Art',
+      title: 'Live Art',
+      // The fail-closed authorization projection requires inspectable own dirty/title data
+      // properties before any replacement (even a clean one) may proceed.
+      dirty: false,
       width: 64,
       height: 64,
       activeLayerId: 'layer-live',
@@ -696,8 +736,8 @@ describe('restoreProjectDocument', () => {
       },
     });
 
-    expect(() => transaction.assertCanCommit()).toThrow('current project changed');
-    expect(() => transaction.commit()).toThrow('current project changed');
+    expect(() => transaction.assertCanCommit()).toThrow('workspace changed while project replacement was prepared');
+    expect(() => transaction.commit()).toThrow('workspace changed while project replacement was prepared');
     transaction.rollback();
     expect(useImageEditorStore.getState().documents[0]).toBe(liveDocument);
     expect(useImageEditorStore.getState().undoStacks[liveDocument.id]).toHaveLength(1);
@@ -822,7 +862,7 @@ describe('restoreProjectDocument', () => {
       edges: [],
     });
 
-    expect(() => transaction.assertCanCommit()).toThrow('current project changed');
+    expect(() => transaction.assertCanCommit()).toThrow('workspace changed while project replacement was prepared');
     transaction.rollback();
 
     expect(useSourceBinStore.getState().getAllItems()[0]?.assetUrl).toBe('blob:assert-a');
@@ -1257,7 +1297,7 @@ describe('restoreProjectDocument', () => {
       flow: { version: 3, nodes: [{ id: 'observer-flow-b', type: 'textNode', position: { x: 1, y: 1 }, data: {} }], edges: [] },
       sourceBin: sourceSnapshot([{ id: 'observer-source-b', assetUrl: 'blob:observer-source-b' }]),
       paper: { document: createDefaultPaperDocument({ title: 'Observer Paper B' }) },
-    }, { allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
+    });
     const unsubscribe = useSourceBinStore.subscribe(() => {
       throw new Error('throwing Source observer');
     });

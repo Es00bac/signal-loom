@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import {
   clearNonSecretPersistedRecoveryState,
+  CONFIRMED_CRASH_RECOVERY_RESET,
   resetDockableAndWorkspaceLayout,
   resetProjectToBlank,
 } from '../../lib/appRecovery';
@@ -21,6 +22,7 @@ interface ErrorBoundaryState {
   errorInfo: ErrorInfo | null;
   copied: boolean;
   actionStatus: string | null;
+  confirmProjectReset: boolean;
 }
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
@@ -29,10 +31,11 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     errorInfo: null,
     copied: false,
     actionStatus: null,
+    confirmProjectReset: false,
   };
 
   static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
-    return { error, copied: false, actionStatus: null };
+    return { error, copied: false, actionStatus: null, confirmProjectReset: false };
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
@@ -47,7 +50,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   resetBoundary = (actionStatus: string | null = null): void => {
-    this.setState({ error: null, errorInfo: null, copied: false, actionStatus });
+    this.setState({ error: null, errorInfo: null, copied: false, actionStatus, confirmProjectReset: false });
   };
 
   reloadApp = (): void => {
@@ -57,7 +60,34 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   };
 
   resetProject = (): void => {
-    void resetProjectToBlank().then(() => this.resetBoundary('Project reset to a blank workspace.'));
+    this.setState({
+      actionStatus: 'Choose Cancel Reset or Reset with Recovery. No project state has changed.',
+      confirmProjectReset: true,
+    });
+  };
+
+  cancelProjectReset = (): void => {
+    this.setState({
+      actionStatus: 'Blank project reset canceled. Your Image and Paper documents remain open.',
+      confirmProjectReset: false,
+    });
+  };
+
+  confirmProjectReset = (): void => {
+    this.setState({
+      actionStatus: 'Capturing dirty Image and Paper tabs before reset…',
+      confirmProjectReset: false,
+    });
+    void resetProjectToBlank(CONFIRMED_CRASH_RECOVERY_RESET).then(
+      ({ capturedDirtyImageDocuments, capturedDirtyPaperDocuments }) => this.resetBoundary(
+        formatCrashRecoveryResetStatus(capturedDirtyImageDocuments, capturedDirtyPaperDocuments),
+      ),
+      (error) => this.setState({
+        actionStatus: error instanceof Error
+          ? error.message
+          : 'The project reset failed. The previous workspace remains open.',
+      }),
+    );
   };
 
   resetLayout = (): void => {
@@ -102,11 +132,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         errorInfo={this.state.errorInfo}
         level={this.props.level ?? 'workspace'}
         onClearPersistedState={this.clearPersistedState}
+        onConfirmResetProject={this.confirmProjectReset}
+        onCancelResetProject={this.cancelProjectReset}
         onCopyDetails={this.copyDetails}
         onReloadApp={this.reloadApp}
         onResetBoundary={() => this.resetBoundary()}
         onResetLayout={this.resetLayout}
         onResetProject={this.resetProject}
+        confirmProjectReset={this.state.confirmProjectReset}
         title={this.props.title}
       />
     );
@@ -127,6 +160,9 @@ export interface RecoveryFallbackProps {
   onResetLayout: () => void;
   onClearPersistedState: () => void;
   onCopyDetails: () => void;
+  confirmProjectReset?: boolean;
+  onCancelResetProject?: () => void;
+  onConfirmResetProject?: () => void;
 }
 
 export function RecoveryFallback({
@@ -142,6 +178,9 @@ export function RecoveryFallback({
   onResetLayout,
   onClearPersistedState,
   onCopyDetails,
+  confirmProjectReset = false,
+  onCancelResetProject,
+  onConfirmResetProject,
 }: RecoveryFallbackProps) {
   const isRoot = level === 'root';
   const heading = title ?? (isRoot ? 'Sloom Studio recovered from a render crash' : 'This surface crashed');
@@ -162,6 +201,17 @@ export function RecoveryFallback({
           {error.name}: {error.message}
         </pre>
         {actionStatus ? <p className="mt-3 text-xs text-cyan-100/80">{actionStatus}</p> : null}
+        {confirmProjectReset ? (
+          <div className="mt-4 rounded-lg border border-amber-300/25 bg-amber-300/10 p-3">
+            <p className="text-xs text-amber-50">
+              Reset Blank Project will replace every open workspace. Every dirty Image and Paper tab will be captured in bounded local recovery first.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <RecoveryButton onClick={onCancelResetProject ?? (() => undefined)}>Cancel Reset</RecoveryButton>
+              <RecoveryButton onClick={onConfirmResetProject ?? (() => undefined)}>Reset with Recovery</RecoveryButton>
+            </div>
+          </div>
+        ) : null}
         <div className="mt-5 flex flex-wrap gap-2">
           <RecoveryButton onClick={onResetBoundary}>Try Again</RecoveryButton>
           <RecoveryButton onClick={onReloadApp}>Reload App</RecoveryButton>
@@ -170,12 +220,20 @@ export function RecoveryFallback({
           <RecoveryButton onClick={onClearPersistedState}>Clear Recoverable State</RecoveryButton>
           <RecoveryButton onClick={onCopyDetails}>{copied ? 'Copied Details' : 'Copy Error Details'}</RecoveryButton>
         </div>
+        <p className="mt-4 text-xs text-amber-100/75">
+          A render crash cannot safely offer or guarantee an asynchronous editable save. Reset Blank Project requires explicit confirmation and captures every dirty Image and Paper tab in bounded local recovery; Reset Layout and Clear Recoverable State do not clear live Paper or Image documents.
+        </p>
         <p className="mt-4 text-xs text-gray-500">
           Provider and API keys are preserved by these recovery actions.
         </p>
       </div>
     </div>
   );
+}
+
+function formatCrashRecoveryResetStatus(imageCount: number, paperCount: number): string {
+  if (imageCount === 0 && paperCount === 0) return 'Project reset to a blank workspace.';
+  return `Project reset to a blank workspace. Captured ${imageCount} dirty Image tab${imageCount === 1 ? '' : 's'} and ${paperCount} dirty Paper tab${paperCount === 1 ? '' : 's'} in bounded local recovery.`;
 }
 
 function RecoveryButton({ children, onClick }: { children: ReactNode; onClick: () => void }) {

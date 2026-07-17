@@ -587,6 +587,16 @@ export interface PaperManagedFontFace {
 export type PaperImportedFont = PaperManagedFontFace;
 
 /** One open Paper document tab and its local editor/view state. */
+export type PaperDocumentPersistenceKind = 'new' | 'project' | 'standalone';
+
+export interface PaperDocumentPersistenceState {
+  kind: PaperDocumentPersistenceKind;
+  /** Canonical authored-content fingerprint at the last acknowledged editable save. */
+  savedFingerprint?: string;
+  /** Native standalone path obtained from an acknowledged Open/Save dialog. */
+  path?: string;
+}
+
 export interface PaperWorkspaceDocumentSnapshot {
   id: string;
   document: PaperDocument;
@@ -597,6 +607,45 @@ export interface PaperWorkspaceDocumentSnapshot {
   selectedFrameIds?: string[];
   tool: PaperTool;
   zoom: number;
+  /** Local-only save provenance. Project validation deliberately omits this from .sloom payloads. */
+  persistence?: PaperDocumentPersistenceState;
+}
+
+export type PaperDocumentRecoveryReason =
+  | 'discard'
+  | 'document-replacement'
+  | 'project-replacement'
+  | 'crash-recovery'
+  | 'shutdown'
+  | 'baton-handoff';
+
+/** Bounded local recovery copy created before a deliberate destructive Paper action. */
+export interface PaperDiscardedDocumentRecovery {
+  id: string;
+  /** One destructive action may capture many tabs; history is bounded by action batches. */
+  batchId?: string;
+  reason: PaperDocumentRecoveryReason;
+  capturedAt: number;
+  originalIndex: number;
+  wasActive: boolean;
+  snapshot: PaperWorkspaceDocumentSnapshot;
+  /** Active-tab history is retained when available so a recovered tab can continue undoing. */
+  undoStack?: Array<{
+    document: PaperDocument;
+    selectedPageId: string;
+    selectedFrameId: string | null;
+    selectedFrameIds: string[];
+    tool: PaperTool;
+    zoom: number;
+  }>;
+  redoStack?: Array<{
+    document: PaperDocument;
+    selectedPageId: string;
+    selectedFrameId: string | null;
+    selectedFrameIds: string[];
+    tool: PaperTool;
+    zoom: number;
+  }>;
 }
 
 /** A Paper tab that failed restore validation, retained verbatim so the owner can recover it. */

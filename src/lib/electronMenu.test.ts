@@ -130,17 +130,19 @@ describe('Electron native menu template (per-workspace)', () => {
     expect(commands).toEqual(['image:file-open', 'image:file-save-as']);
   });
 
-  it('wires the Paper File menu to the .slppr open/save-as commands', async () => {
+  it('wires the Paper File menu to the .slppr open/save/save-as commands', async () => {
     const { createApplicationMenuTemplate } = await loadMenuModule();
     const commands: string[] = [];
     const template = createApplicationMenuTemplate({ appName: 'Sloom Studio', activeWorkspace: 'paper', sendCommand: (c) => commands.push(c) });
     const file = template.find((entry) => entry.label === 'File');
     expect(file).toBeTruthy();
     const open = findItem(file?.submenu, 'Open...');
+    const save = findItem(file?.submenu, 'Save');
     const saveAs = findItem(file?.submenu, 'Save As...');
     open?.click?.();
+    save?.click?.();
     saveAs?.click?.();
-    expect(commands).toEqual(['paper:file-open', 'paper:file-save-as']);
+    expect(commands).toEqual(['paper:file-open', 'paper:file-save', 'paper:file-save-as']);
   });
 
   it('keeps the per-document File menu out of the Flow and Video workspaces', async () => {

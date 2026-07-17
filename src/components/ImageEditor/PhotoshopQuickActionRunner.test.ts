@@ -36,7 +36,15 @@ class FakeContext {
     } as ImageData;
   }
 
-  drawImage() {}
+  drawImage(source: CanvasImageSource) {
+    const sourceCanvas = source as unknown as FakeOffscreenCanvas;
+    if (!sourceCanvas.context?.imageData) return;
+    this.imageData = {
+      width: sourceCanvas.context.imageData.width,
+      height: sourceCanvas.context.imageData.height,
+      data: new Uint8ClampedArray(sourceCanvas.context.imageData.data),
+    } as ImageData;
+  }
   save() {}
   restore() {}
   clearRect() {}

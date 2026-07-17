@@ -23,9 +23,15 @@ import { prepareFlowSnapshotImportedAssets, useFlowStore } from '../store/flowSt
 import { useFlowWorkspaceStore } from '../store/flowWorkspaceStore';
 import {
   useImageEditorStore,
+  type ImageEditorProjectSnapshot,
   type ImageEditorProjectSnapshotTransaction,
 } from '../store/imageEditorStore';
-import { getDirtyPaperWorkspaceDocumentTitles, usePaperStore } from '../store/paperStore';
+import {
+  capturePaperWorkspaceAuthorization,
+  isPaperWorkspaceAuthorizationCurrent,
+  usePaperStore,
+  type PaperWorkspaceAuthorization,
+} from '../store/paperStore';
 import { useProjectUsageStore } from '../store/projectUsageStore';
 import {
   leaseSourceBinProjectSnapshotObjectUrls,
@@ -42,32 +48,404 @@ import {
   upgradeLegacyBundledFontIssuesInProject,
 } from './managedBundledFonts';
 import { getFloatingSelection, getSelection } from '../components/ImageEditor/selectionRegistry';
+import { requestPaperDestructiveAction } from './paperLossPrevention';
+import type { PaperLossSaveResult } from '../store/paperLossPreventionStore';
+import type { ImageDocument } from '../types/imageEditor';
+import { toImageDocumentWire } from './imageDocumentNativeSync';
+import {
+  getSourceLibraryRendererNativeVersion,
+  setSourceLibraryRendererNativeVersion,
+} from './sourceLibraryNativeSync';
+
+export interface WorkspaceReplacementAuthorization {
+  /** Opaque lookup for an exact internally held Image authorization capability. */
+  token: string;
+}
+
+export interface ProjectReplacementAuthorization {
+  paper: PaperWorkspaceAuthorization;
+  image: WorkspaceReplacementAuthorization;
+}
+
+export type ProjectReplacementRequestGuard = () => boolean;
+
+type ProjectReplacementBookkeepingRollback = () => void;
+export type ProjectReplacementTransactionBookkeeping = 'reset-source-library-native-sync';
+
+interface InternalWorkspaceReplacementAuthorization {
+  signature: string;
+  documentsIdentity: object;
+  macrosIdentity: object;
+}
+
+interface InternalPaperReplacementAuthorization {
+  signature: string;
+}
+
+interface InternalProjectReplacementAuthorization {
+  paper?: InternalPaperReplacementAuthorization;
+  image?: InternalWorkspaceReplacementAuthorization;
+}
+
+interface NormalizedProjectDocumentReplacementOptions {
+  paper?: InternalPaperReplacementAuthorization;
+  imageToken?: string;
+  transactionBookkeeping?: ProjectReplacementTransactionBookkeeping;
+}
 
 export interface ProjectDocumentReplacementOptions {
-  /** Set only after the user explicitly chose Discard or the current project was saved successfully. */
-  allowDirtyImageReplacement?: boolean;
-  /** Set only after the user explicitly chose Discard or the current Paper document was saved. */
-  allowDirtyPaperReplacement?: boolean;
+  /** Exact Image state covered by an explicit discard/save/recovery decision. */
+  imageAuthorization?: WorkspaceReplacementAuthorization;
+  /** Exact Paper tab set/content/dirty baseline covered by Paper loss prevention. */
+  paperAuthorization?: PaperWorkspaceAuthorization;
+  /** Closed, synchronous bookkeeping performed and rolled back by the replacement transaction. */
+  transactionBookkeeping?: ProjectReplacementTransactionBookkeeping;
 }
 
-function assertDirtyImageReplacementAllowed(options: ProjectDocumentReplacementOptions): void {
-  if (options.allowDirtyImageReplacement) return;
-  const dirtyDocument = useImageEditorStore.getState().documents.find((document) => document.dirty);
+type RuntimeDataRecord = Readonly<Record<string, unknown>>;
+
+const LEGACY_BEFORE_REPLACE_ERROR = 'Arbitrary project replacement beforeReplace callbacks are not supported. '
+  + 'Use transaction-owned synchronous bookkeeping.';
+let untrustedNormalizationDepth = 0;
+let replacementRequestSequence = 0;
+let imageAuthorizationSequence = 0;
+const imageAuthorizationCapabilities = new Map<string, InternalWorkspaceReplacementAuthorization>();
+
+function inspectRuntimeDataRecord(
+  value: unknown,
+  label: string,
+  supportedKeys: ReadonlySet<string>,
+): RuntimeDataRecord {
+  if (value === undefined) return Object.freeze(Object.create(null) as Record<string, unknown>);
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+    throw new Error(`${label} must be a plain data object.`);
+  }
+
+  // Reflective compatibility inspection is explicitly untrusted. A Proxy may run arbitrary code
+  // from any trap, so no authority captured before this function is accepted by the transaction.
+  const prototype = Reflect.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    if (Reflect.getOwnPropertyDescriptor(prototype, 'beforeReplace')) {
+      throw new Error(LEGACY_BEFORE_REPLACE_ERROR);
+    }
+    throw new Error(`${label} must be a plain data object.`);
+  }
+
+  const normalized = Object.create(null) as Record<string, unknown>;
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== 'string' || !supportedKeys.has(key)) {
+      if (key === 'beforeReplace') throw new Error(LEGACY_BEFORE_REPLACE_ERROR);
+      throw new Error(`${label} contains an unsupported option.`);
+    }
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+      throw new Error(`${label}.${key} must be an inert data property.`);
+    }
+    normalized[key] = descriptor.value;
+  }
+  return Object.freeze(normalized);
+}
+
+function runUntrustedNormalizationPhase<T>(normalize: () => T): T {
+  if (untrustedNormalizationDepth > 0) {
+    throw new Error('Re-entrant project replacement option normalization is not supported.');
+  }
+  untrustedNormalizationDepth += 1;
+  try {
+    return normalize();
+  } finally {
+    untrustedNormalizationDepth -= 1;
+  }
+}
+
+function runStableWorkspaceNormalizationPhase<T>(normalize: () => T): T {
+  // Incoming documents/options may be Proxy-backed or expose accessors. Never let their traps
+  // mutate a live workspace and then have that newer state silently become the replacement
+  // authorization baseline.
+  const workspaceToken = captureProjectWorkspaceToken();
+  const normalized = runUntrustedNormalizationPhase(normalize);
+  if (!isProjectWorkspaceTokenCurrent(workspaceToken)) {
+    throw new Error('Project replacement was blocked because the workspace changed after replacement was authorized.');
+  }
+  return normalized;
+}
+
+function optionalString(record: RuntimeDataRecord, key: string, label: string): string | undefined {
+  const value = record[key];
+  if (value === undefined || typeof value === 'string') return value;
+  throw new Error(`${label}.${key} must be a string.`);
+}
+
+function optionalFunction<T extends (...args: never[]) => unknown>(
+  record: RuntimeDataRecord,
+  key: string,
+  label: string,
+): T | undefined {
+  const value = record[key];
+  if (value === undefined || typeof value === 'function') return value as T | undefined;
+  throw new Error(`${label}.${key} must be a function.`);
+}
+
+function normalizePaperAuthorization(value: unknown): InternalPaperReplacementAuthorization | undefined {
+  if (value === undefined) return undefined;
+  const record = inspectRuntimeDataRecord(
+    value,
+    'Paper replacement authorization',
+    new Set(['activeDocumentId', 'documents', 'signature']),
+  );
+  if (typeof record.signature !== 'string') {
+    throw new Error('Paper replacement authorization.signature must be a string.');
+  }
+  return Object.freeze({ signature: record.signature });
+}
+
+function normalizeImageAuthorizationToken(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  const record = inspectRuntimeDataRecord(
+    value,
+    'Image replacement authorization',
+    new Set(['token']),
+  );
+  if (typeof record.token !== 'string') {
+    throw new Error('Image replacement authorization.token must be a string.');
+  }
+  return record.token;
+}
+
+function normalizeTransactionBookkeeping(value: unknown): ProjectReplacementTransactionBookkeeping | undefined {
+  if (value === undefined || value === 'reset-source-library-native-sync') return value;
+  throw new Error('Unsupported project replacement bookkeeping primitive.');
+}
+
+function normalizeProjectDocumentReplacementOptions(
+  value: unknown,
+): NormalizedProjectDocumentReplacementOptions {
+  const record = inspectRuntimeDataRecord(
+    value,
+    'Project replacement options',
+    new Set(['imageAuthorization', 'paperAuthorization', 'transactionBookkeeping']),
+  );
+  return Object.freeze({
+    imageToken: normalizeImageAuthorizationToken(record.imageAuthorization),
+    paper: normalizePaperAuthorization(record.paperAuthorization),
+    transactionBookkeeping: normalizeTransactionBookkeeping(record.transactionBookkeeping),
+  });
+}
+
+function assertDirtyImageReplacementAllowed(
+  authorization: InternalWorkspaceReplacementAuthorization | undefined,
+): void {
+  if (authorization) {
+    if (isInternalImageReplacementAuthorizationCurrent(authorization)) return;
+    throw new Error('Project replacement was blocked because the Image workspace changed after replacement was authorized.');
+  }
+  const workspaceToken = captureProjectWorkspaceToken();
+  const projection = tryBuildDirtyImageReplacementProjection(workspaceToken.image.documents);
+  if (!projection || !isProjectWorkspaceTokenCurrent(workspaceToken)) {
+    throw new Error('Project replacement was blocked because Image document metadata could not be inspected safely.');
+  }
+  if (projection.dirtyDocumentCount === 0) return;
+  throw new Error(
+    `Project replacement was blocked because dirty Image document "${projection.soleDocument?.title ?? 'Untitled Image'}" is still open. `
+    + 'Save or discard it explicitly before replacing the project.',
+  );
+}
+
+function assertDirtyPaperReplacementAllowed(
+  authorization: InternalPaperReplacementAuthorization | undefined,
+): void {
+  if (authorization) {
+    if (isInternalPaperReplacementAuthorizationCurrent(authorization)) return;
+    throw new Error('Project replacement was blocked because the Paper workspace changed after replacement was authorized.');
+  }
+  const paperState = usePaperStore.getState();
+  const dirtyDocument = paperState.exportSnapshot().documents
+    ?.find((document) => paperState.isDocumentDirty(document.id));
   if (!dirtyDocument) return;
   throw new Error(
-    `Project replacement was blocked because dirty Image document "${dirtyDocument.title}" is still open. `
-    + 'Save or discard it explicitly before replacing the project.',
+    `Project replacement was blocked because dirty Paper document "${dirtyDocument.document.title}" is still open. `
+    + 'Save or discard it through the Paper loss-prevention policy before replacing the project.',
   );
 }
 
-function assertDirtyPaperReplacementAllowed(options: ProjectDocumentReplacementOptions): void {
-  if (options.allowDirtyPaperReplacement) return;
-  const dirtyTitles = getDirtyPaperWorkspaceDocumentTitles();
-  if (dirtyTitles.length === 0) return;
-  throw new Error(
-    `Project replacement was blocked because Paper document "${dirtyTitles[0]}" has unsaved edits. `
-    + 'Save or discard it explicitly before replacing the project.',
-  );
+function assertProjectReplacementAllowed(
+  paperAuthorization: InternalPaperReplacementAuthorization | undefined,
+  imageAuthorization: InternalWorkspaceReplacementAuthorization | undefined,
+): void {
+  const workspaceToken = captureProjectWorkspaceToken();
+  assertDirtyImageReplacementAllowed(imageAuthorization);
+  if (!isProjectWorkspaceTokenCurrent(workspaceToken)) {
+    throw new Error('Project replacement was blocked because the workspace changed during Image authorization inspection.');
+  }
+  assertDirtyPaperReplacementAllowed(paperAuthorization);
+  if (!isProjectWorkspaceTokenCurrent(workspaceToken)) {
+    throw new Error('Project replacement was blocked because the workspace changed during Paper authorization inspection.');
+  }
+}
+
+function stableReplacementStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableReplacementStringify).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, candidate]) => candidate !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right));
+  return `{${entries.map(([key, candidate]) => `${JSON.stringify(key)}:${stableReplacementStringify(candidate)}`).join(',')}}`;
+}
+
+function imageDocumentReplacementProjection(document: ImageDocument): unknown {
+  // Authorization intentionally relies on sanctioned Image mutations advancing bitmapVersion and
+  // replacing store collections. Hashing every full-resolution canvas here would stall project
+  // replacement. Raw in-place pixel writes that bypass Image store APIs are out of contract.
+  const wire = toImageDocumentWire(document);
+  const {
+    dirty: _dirty,
+    viewport: _viewport,
+    activeLayerId: _activeLayerId,
+    selectedLayerIds: _selectedLayerIds,
+    activeLayerEditTarget: _activeLayerEditTarget,
+    hasSelection: _hasSelection,
+    selectionVersion: _selectionVersion,
+    ...authored
+  } = wire;
+  return authored;
+}
+
+function imageReplacementSignatureFromSnapshot(
+  snapshot: Pick<ImageEditorProjectSnapshot, 'documents' | 'activeDocId' | 'quickActionMacros'>,
+  includeDirtyBaseline: boolean,
+): string {
+  return stableReplacementStringify({
+    activeDocId: snapshot.activeDocId,
+    documents: snapshot.documents.map((document) => ({
+      id: document.id,
+      ...(includeDirtyBaseline ? { dirty: document.dirty } : {}),
+      authored: imageDocumentReplacementProjection(document),
+    })),
+    quickActionMacros: snapshot.quickActionMacros ?? [],
+  });
+}
+
+function imageReplacementSignature(): string {
+  const state = useImageEditorStore.getState();
+  return imageReplacementSignatureFromSnapshot({
+    documents: state.documents,
+    activeDocId: state.activeDocId,
+    quickActionMacros: state.quickActionMacros,
+  }, true);
+}
+
+function captureInternalImageReplacementAuthorization(): InternalWorkspaceReplacementAuthorization {
+  const workspaceToken = captureProjectWorkspaceToken();
+  return captureInternalImageReplacementAuthorizationForState(workspaceToken.image);
+}
+
+function captureInternalImageReplacementAuthorizationForState(
+  state: ReturnType<typeof useImageEditorStore.getState>,
+): InternalWorkspaceReplacementAuthorization {
+  return Object.freeze({
+    signature: imageReplacementSignatureFromSnapshot({
+      documents: state.documents,
+      activeDocId: state.activeDocId,
+      quickActionMacros: state.quickActionMacros,
+    }, true),
+    documentsIdentity: state.documents,
+    macrosIdentity: state.quickActionMacros,
+  });
+}
+
+function mintImageReplacementAuthorization(
+  internalAuthorization = captureInternalImageReplacementAuthorization(),
+): WorkspaceReplacementAuthorization {
+  imageAuthorizationSequence += 1;
+  const token = `${globalThis.crypto?.randomUUID?.() ?? 'image-authorization'}:${imageAuthorizationSequence}`;
+  imageAuthorizationCapabilities.set(token, internalAuthorization);
+  if (imageAuthorizationCapabilities.size > 256) {
+    const oldest = imageAuthorizationCapabilities.keys().next().value;
+    if (typeof oldest === 'string') imageAuthorizationCapabilities.delete(oldest);
+  }
+  return Object.freeze({ token });
+}
+
+function consumeImageReplacementAuthorization(
+  token: string | undefined,
+): InternalWorkspaceReplacementAuthorization | undefined {
+  if (!token) return undefined;
+  const authorization = imageAuthorizationCapabilities.get(token);
+  imageAuthorizationCapabilities.delete(token);
+  return authorization;
+}
+
+export function captureProjectReplacementAuthorization(): ProjectReplacementAuthorization {
+  const workspaceToken = captureProjectWorkspaceToken();
+  const paper = capturePaperWorkspaceAuthorization();
+  const image = captureInternalImageReplacementAuthorizationForState(workspaceToken.image);
+  if (!isProjectWorkspaceTokenCurrent(workspaceToken)
+    || !isInternalImageReplacementAuthorizationCurrent(image)) {
+    throw new Error('Project replacement authorization was blocked because the workspace changed during metadata inspection.');
+  }
+  return {
+    paper,
+    image: mintImageReplacementAuthorization(image),
+  };
+}
+
+function captureInternalProjectReplacementAuthorization(): Required<InternalProjectReplacementAuthorization> {
+  const workspaceToken = captureProjectWorkspaceToken();
+  const paper = capturePaperWorkspaceAuthorization();
+  const image = captureInternalImageReplacementAuthorizationForState(workspaceToken.image);
+  if (!isProjectWorkspaceTokenCurrent(workspaceToken)
+    || !isInternalImageReplacementAuthorizationCurrent(image)) {
+    throw new Error('Project replacement authorization was blocked because the workspace changed during metadata inspection.');
+  }
+  return Object.freeze({
+    paper: Object.freeze({ signature: paper.signature }),
+    image,
+  });
+}
+
+function isInternalPaperReplacementAuthorizationCurrent(
+  authorization: InternalPaperReplacementAuthorization,
+): boolean {
+  return authorization.signature === capturePaperWorkspaceAuthorization().signature;
+}
+
+function isInternalImageReplacementAuthorizationCurrent(
+  authorization: InternalWorkspaceReplacementAuthorization,
+): boolean {
+  const state = useImageEditorStore.getState();
+  try {
+    return authorization.signature === imageReplacementSignature()
+      && authorization.documentsIdentity === state.documents
+      && authorization.macrosIdentity === state.quickActionMacros;
+  } catch {
+    return false;
+  }
+}
+
+export function isPaperReplacementAuthorizationCurrent(
+  authorization: PaperWorkspaceAuthorization,
+): boolean {
+  return isPaperWorkspaceAuthorizationCurrent(authorization);
+}
+
+export function isImageReplacementAuthorizationCurrent(
+  authorization: WorkspaceReplacementAuthorization,
+): boolean {
+  const internal = imageAuthorizationCapabilities.get(authorization.token);
+  return Boolean(internal && isInternalImageReplacementAuthorizationCurrent(internal));
+}
+
+/** True only when live Image authored state is still the exact snapshot acknowledged by project save. */
+export function isCurrentImageWorkspaceAtProjectSnapshot(
+  snapshot: ImageEditorProjectSnapshot | undefined,
+): boolean {
+  if (!snapshot) return useImageEditorStore.getState().documents.length === 0;
+  const current = useImageEditorStore.getState();
+  return imageReplacementSignatureFromSnapshot({
+    documents: current.documents,
+    activeDocId: current.activeDocId,
+    quickActionMacros: current.quickActionMacros,
+  }, false) === imageReplacementSignatureFromSnapshot(snapshot, false);
 }
 
 export async function buildCurrentProjectDocument(options: {
@@ -133,6 +511,111 @@ async function buildProjectPaperPortableAssets(
   return built.section;
 }
 
+function rollbackBookkeeping(rollback: ProjectReplacementBookkeepingRollback | undefined): void {
+  if (!rollback) return;
+  try {
+    rollback();
+  } catch (error) {
+    console.error('[project-replacement] Bookkeeping rollback failed.', error);
+  }
+}
+
+function runProjectReplacementBookkeeping(
+  transactionBookkeeping: ProjectReplacementTransactionBookkeeping | undefined,
+): ProjectReplacementBookkeepingRollback | undefined {
+  if (!transactionBookkeeping) return undefined;
+
+  switch (transactionBookkeeping) {
+    case 'reset-source-library-native-sync': {
+      const previousVersion = getSourceLibraryRendererNativeVersion();
+      const previousStatus = useSourceBinStore.getState().nativeSyncStatus;
+      setSourceLibraryRendererNativeVersion(0);
+      useSourceBinStore.getState().setNativeSyncStatus({ state: 'idle' });
+      return () => {
+        setSourceLibraryRendererNativeVersion(previousVersion);
+        useSourceBinStore.getState().setNativeSyncStatus(previousStatus);
+      };
+    }
+    default: {
+      const unsupported: never = transactionBookkeeping;
+      throw new Error(`Unsupported project replacement bookkeeping primitive: ${unsupported}`);
+    }
+  }
+}
+
+function normalizeIncomingProjectDocument(document: unknown): FlowProjectDocument {
+  const candidateName = (document as { name?: unknown } | null | undefined)?.name;
+  const fallbackName = typeof candidateName === 'string' ? candidateName : DEFAULT_PROJECT_NAME;
+  return sanitizeProjectDocument(document ?? {
+    schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+    id: globalThis.crypto?.randomUUID?.() ?? `project-${Date.now()}`,
+    name: DEFAULT_PROJECT_NAME,
+    savedAt: Date.now(),
+    flow: { version: 3, nodes: [], edges: [] },
+  }, fallbackName);
+}
+
+interface ProjectWorkspaceToken {
+  flow: ReturnType<typeof useFlowStore.getState>;
+  flowWorkspaces: ReturnType<typeof useFlowWorkspaceStore.getState>;
+  editor: ReturnType<typeof useEditorStore.getState>;
+  source: ReturnType<typeof useSourceBinStore.getState>;
+  usage: ReturnType<typeof useProjectUsageStore.getState>;
+  paper: ReturnType<typeof usePaperStore.getState>;
+  image: ReturnType<typeof useImageEditorStore.getState>;
+  sourceNativeVersion: number;
+}
+
+class ProjectReplacementPreparationStaleError extends Error {
+  constructor() {
+    super('The workspace changed while project replacement was prepared.');
+  }
+}
+
+function beginProjectReplacementRequest(): number {
+  replacementRequestSequence += 1;
+  return replacementRequestSequence;
+}
+
+function isProjectReplacementRequestCurrent(requestId: number): boolean {
+  return requestId === replacementRequestSequence;
+}
+
+function captureProjectWorkspaceToken(): ProjectWorkspaceToken {
+  return {
+    flow: useFlowStore.getState(),
+    flowWorkspaces: useFlowWorkspaceStore.getState(),
+    editor: useEditorStore.getState(),
+    source: useSourceBinStore.getState(),
+    usage: useProjectUsageStore.getState(),
+    paper: usePaperStore.getState(),
+    image: useImageEditorStore.getState(),
+    sourceNativeVersion: getSourceLibraryRendererNativeVersion(),
+  };
+}
+
+function isProjectWorkspaceTokenCurrent(token: ProjectWorkspaceToken): boolean {
+  return token.flow === useFlowStore.getState()
+    && token.flowWorkspaces === useFlowWorkspaceStore.getState()
+    && token.editor === useEditorStore.getState()
+    && token.source === useSourceBinStore.getState()
+    && token.usage === useProjectUsageStore.getState()
+    && token.paper === usePaperStore.getState()
+    && token.image === useImageEditorStore.getState()
+    && token.sourceNativeVersion === getSourceLibraryRendererNativeVersion();
+}
+
+/** Paper has its own exact authorization loop, so a Paper-only callback race re-enters that policy. */
+function isImageConfirmationEnvironmentTokenCurrent(token: ProjectWorkspaceToken): boolean {
+  return token.flow === useFlowStore.getState()
+    && token.flowWorkspaces === useFlowWorkspaceStore.getState()
+    && token.editor === useEditorStore.getState()
+    && token.source === useSourceBinStore.getState()
+    && token.usage === useProjectUsageStore.getState()
+    && token.image === useImageEditorStore.getState()
+    && token.sourceNativeVersion === getSourceLibraryRendererNativeVersion();
+}
+
 export interface PreparedProjectDocumentTransaction {
   readonly document: FlowProjectDocument;
   assertCanCommit: () => void;
@@ -149,6 +632,7 @@ interface ProjectStoreIdentity {
   editor: unknown;
   sourceBins: unknown;
   sourceDismissals: unknown;
+  sourceNativeVersion: number;
   usageLedger: unknown;
   paperDocuments: unknown;
   paperDocument: unknown;
@@ -178,6 +662,7 @@ function captureProjectStoreIdentity(): ProjectStoreIdentity {
     editor: editor,
     sourceBins: source.bins,
     sourceDismissals: source.dismissedSourceKeys,
+    sourceNativeVersion: getSourceLibraryRendererNativeVersion(),
     usageLedger: usage.ledger,
     paperDocuments: paper.documents,
     paperDocument: paper.document,
@@ -238,20 +723,38 @@ export async function prepareProjectDocumentTransaction(
   document: unknown,
   options: ProjectDocumentReplacementOptions = {},
 ): Promise<PreparedProjectDocumentTransaction> {
-  assertDirtyImageReplacementAllowed(options);
-  assertDirtyPaperReplacementAllowed(options);
+  const normalized = runStableWorkspaceNormalizationPhase(() => ({
+    document: normalizeIncomingProjectDocument(document),
+    options: normalizeProjectDocumentReplacementOptions(options),
+  }));
+  const requestId = beginProjectReplacementRequest();
+  const imageAuthorization = consumeImageReplacementAuthorization(normalized.options.imageToken);
+  return prepareNormalizedProjectDocumentTransaction(
+    requestId,
+    normalized.document,
+    normalized.options.paper,
+    imageAuthorization,
+    normalized.options.transactionBookkeeping,
+  );
+}
+
+async function prepareNormalizedProjectDocumentTransaction(
+  requestId: number,
+  sanitizedDocument: FlowProjectDocument,
+  paperAuthorization: InternalPaperReplacementAuthorization | undefined,
+  imageAuthorization: InternalWorkspaceReplacementAuthorization | undefined,
+  transactionBookkeeping: ProjectReplacementTransactionBookkeeping | undefined,
+  requestGuard?: ProjectReplacementRequestGuard,
+): Promise<PreparedProjectDocumentTransaction> {
+  assertGuardedReplacementRequestCurrent(requestId, requestGuard);
+  assertProjectReplacementAllowed(paperAuthorization, imageAuthorization);
   const baseIdentity = captureProjectStoreIdentity();
-  const fallbackName = typeof (document as { name?: unknown } | undefined)?.name === 'string'
-    ? (document as { name: string }).name
-    : DEFAULT_PROJECT_NAME;
-  let preparedDocument = sanitizeProjectDocument(document ?? {
-    schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
-    id: globalThis.crypto?.randomUUID?.() ?? `project-${Date.now()}`,
-    name: DEFAULT_PROJECT_NAME,
-    savedAt: Date.now(),
-    flow: { version: 3, nodes: [], edges: [] },
-  }, fallbackName);
+  // Coarse whole-store staleness for the async preparation window: any store-state churn (even
+  // non-authored, like sync status or the native Source version) invalidates the prepared commit.
+  const preparationToken = captureProjectWorkspaceToken();
+  let preparedDocument = sanitizedDocument;
   await upgradeLegacyBundledFontIssuesInProject(preparedDocument);
+  assertGuardedReplacementRequestCurrent(requestId, requestGuard);
   let paperAssetsImport: PaperPortableAssetsImportResult | undefined;
   let paperAssetsFinalized = false;
   let paperAssetsRollbackPromise: Promise<void> | undefined;
@@ -270,9 +773,11 @@ export async function prepareProjectDocumentTransaction(
         preparedDocument.paperAssets,
         paperAssetRepository,
       );
+      assertGuardedReplacementRequestCurrent(requestId, requestGuard);
     }
     if (preparedDocument.paper?.document) {
       preparedDocument = await migrateProjectPaperDocuments(preparedDocument);
+      assertGuardedReplacementRequestCurrent(requestId, requestGuard);
     }
 
     const imageFontReferences = collectImageBundledFontFaceReferences(preparedDocument.imageEditor?.documents ?? []);
@@ -285,6 +790,7 @@ export async function prepareProjectDocumentTransaction(
       })
     )));
     await ensureBundledFontFaceReferencesRegistered([...imageFontReferences, ...videoFontReferences]);
+    assertGuardedReplacementRequestCurrent(requestId, requestGuard);
     preparedDocument = {
       ...preparedDocument,
       paper: await attachPaperMissingAssetDiagnostics(
@@ -294,6 +800,7 @@ export async function prepareProjectDocumentTransaction(
     };
 
     const preparedSource = await useSourceBinStore.getState().prepareProjectSnapshot(preparedDocument.sourceBin);
+    assertGuardedReplacementRequestCurrent(requestId, requestGuard);
     const releasePreparedSourceUrls = leaseSourceBinProjectSnapshotObjectUrls(preparedSource);
     const sourceItems = preparedSource.bins.flatMap((bin) => bin.items);
     try {
@@ -316,6 +823,12 @@ export async function prepareProjectDocumentTransaction(
         activeFlowWorkspaceId: activeWorkspace?.id,
       };
       const preparedImage = await useImageEditorStore.getState().prepareProjectSnapshotWithPixels(preparedDocument.imageEditor);
+      try {
+        assertGuardedReplacementRequestCurrent(requestId, requestGuard);
+      } catch (error) {
+        useImageEditorStore.getState().disposePreparedProjectSnapshotWithPixels(preparedImage);
+        throw error;
+      }
       return {
         preparedFlow,
         preparedImage,
@@ -349,7 +862,9 @@ export async function prepareProjectDocumentTransaction(
       dismissedSourceKeys: useSourceBinStore.getState().dismissedSourceKeys,
     } satisfies PreparedSourceBinProjectSnapshot,
     usage: useProjectUsageStore.getState().exportSnapshot(),
-    paper: usePaperStore.getState().exportSnapshot(),
+    // Local persistence baselines ride along so a rollback restores each tab's exact
+    // dirty/save state instead of silently marking edited tabs clean.
+    paper: usePaperStore.getState().exportSnapshot({ includeLocalPersistence: true }),
   };
   const releasePreviousSourceUrls = leaseSourceBinProjectSnapshotObjectUrls(previous.source, {
     adoptSnapshotOwnership: true,
@@ -361,6 +876,7 @@ export async function prepareProjectDocumentTransaction(
     settleSkippedRollback?: () => void;
   }> = [];
   let imageTransaction: ImageEditorProjectSnapshotTransaction | undefined;
+  let bookkeepingRollback: ProjectReplacementBookkeepingRollback | undefined;
   let committed = false;
   let settled = false;
 
@@ -384,6 +900,8 @@ export async function prepareProjectDocumentTransaction(
     }
     appliedStores.length = 0;
     committed = false;
+    rollbackBookkeeping(bookkeepingRollback);
+    bookkeepingRollback = undefined;
   };
 
   const applyStore = (
@@ -409,15 +927,25 @@ export async function prepareProjectDocumentTransaction(
     appliedStores.push({ keys, postIdentity, restore, settleSkippedRollback });
   };
 
+  const assertCanCommit = () => {
+    assertGuardedReplacementRequestCurrent(requestId, requestGuard);
+    assertProjectReplacementAllowed(paperAuthorization, imageAuthorization);
+    if (!isProjectWorkspaceTokenCurrent(preparationToken)) {
+      throw new ProjectReplacementPreparationStaleError();
+    }
+    if (!sameProjectStoreIdentity(baseIdentity, captureProjectStoreIdentity())) {
+      throw new Error('The current project changed while the replacement was being prepared. Retry the project switch.');
+    }
+  };
+
   const commit = () => {
     if (committed) return;
     if (settled) {
       throw new Error('This project replacement transaction has already been settled.');
     }
-    if (!sameProjectStoreIdentity(baseIdentity, captureProjectStoreIdentity())) {
-      throw new Error('The current project changed while the replacement was being prepared. Retry the project switch.');
-    }
+    assertCanCommit();
     try {
+      bookkeepingRollback = runProjectReplacementBookkeeping(transactionBookkeeping);
       applyStore(
         ['sourceBins', 'sourceDismissals'],
         () => useSourceBinStore.getState().commitPreparedProjectSnapshot(preparedSource, { publishNative: false }),
@@ -452,7 +980,7 @@ export async function prepareProjectDocumentTransaction(
       applyStore(
         ['paperDocuments', 'paperDocument'],
         () => usePaperStore.getState().restoreSnapshot(preparedDocument.paper),
-        () => usePaperStore.getState().restoreSnapshot(previous.paper),
+        () => usePaperStore.getState().restoreSnapshot(previous.paper, { baseline: 'preserve' }),
       );
       applyStore(
         [
@@ -484,15 +1012,12 @@ export async function prepareProjectDocumentTransaction(
 
   return {
     document: preparedDocument,
-    assertCanCommit: () => {
-      if (!sameProjectStoreIdentity(baseIdentity, captureProjectStoreIdentity())) {
-        throw new Error('The current project changed while the replacement was being prepared. Retry the project switch.');
-      }
-    },
+    assertCanCommit,
     commit,
     finalize: () => {
       if (!committed) return;
       paperAssetsFinalized = true;
+      bookkeepingRollback = undefined;
       try {
         imageTransaction?.finalize();
       } finally {
@@ -518,18 +1043,73 @@ export async function prepareProjectDocumentTransaction(
   };
 }
 
-export async function restoreProjectDocument(
-  document: unknown,
-  options: ProjectDocumentReplacementOptions = {},
+async function restoreNormalizedProjectDocument(
+  requestId: number,
+  sanitizedDocument: FlowProjectDocument,
+  paperAuthorization: InternalPaperReplacementAuthorization | undefined,
+  imageAuthorization: InternalWorkspaceReplacementAuthorization | undefined,
+  transactionBookkeeping: ProjectReplacementTransactionBookkeeping | undefined,
+  operationKind: 'restore' | 'reset' = 'restore',
+  requestGuard?: ProjectReplacementRequestGuard,
 ): Promise<void> {
-  const transaction = await prepareProjectDocumentTransaction(document, options);
+  const transaction = await prepareNormalizedProjectDocumentTransaction(
+    requestId,
+    sanitizedDocument,
+    paperAuthorization,
+    imageAuthorization,
+    transactionBookkeeping,
+    requestGuard,
+  );
   try {
     transaction.commit();
     transaction.finalize();
   } catch (error) {
     await transaction.rollback();
-    throw error;
+    const message = error instanceof Error
+      ? error.message
+      : operationKind === 'reset' ? 'Unknown reset error' : 'Unknown restore error';
+    throw new Error(operationKind === 'reset'
+      ? `The project could not be reset safely. Previous workspace was left unchanged. ${message}`
+      : `The selected project could not be restored safely. Previous workspace was left unchanged. ${message}`);
   }
+}
+
+export async function restoreProjectDocument(
+  document: unknown,
+  options: ProjectDocumentReplacementOptions = {},
+): Promise<void> {
+  const normalized = runStableWorkspaceNormalizationPhase(() => ({
+    document: normalizeIncomingProjectDocument(document),
+    options: normalizeProjectDocumentReplacementOptions(options),
+  }));
+  const requestId = beginProjectReplacementRequest();
+  const imageAuthorization = consumeImageReplacementAuthorization(normalized.options.imageToken);
+  return restoreNormalizedProjectDocument(
+    requestId,
+    normalized.document,
+    normalized.options.paper,
+    imageAuthorization,
+    normalized.options.transactionBookkeeping,
+  );
+}
+
+export async function resetProjectDocument(
+  options: ProjectDocumentReplacementOptions = {},
+): Promise<void> {
+  const normalized = runStableWorkspaceNormalizationPhase(() => ({
+    document: normalizeIncomingProjectDocument(undefined),
+    options: normalizeProjectDocumentReplacementOptions(options),
+  }));
+  const requestId = beginProjectReplacementRequest();
+  const imageAuthorization = consumeImageReplacementAuthorization(normalized.options.imageToken);
+  return restoreNormalizedProjectDocument(
+    requestId,
+    normalized.document,
+    normalized.options.paper,
+    imageAuthorization,
+    normalized.options.transactionBookkeeping,
+    'reset',
+  );
 }
 
 /**
@@ -574,15 +1154,541 @@ async function migrateProjectPaperDocuments(
   };
 }
 
-export async function resetProjectDocument(
-  options: ProjectDocumentReplacementOptions = {},
-): Promise<void> {
-  const transaction = await prepareProjectDocumentTransaction(undefined, options);
+const MAX_DIRTY_IMAGE_PROJECTION_TITLE_LENGTH = 512;
+
+export interface DirtyImageReplacementDocumentProjection {
+  readonly title: string;
+}
+
+/**
+ * The complete Image data exposed to project-replacement confirmation UI. The shape stays bounded
+ * regardless of how many Image documents are open: the UI needs the exact dirty count, and needs a
+ * title only when there is exactly one dirty document.
+ */
+export interface DirtyImageReplacementProjection {
+  readonly dirtyDocumentCount: number;
+  readonly soleDocument: DirtyImageReplacementDocumentProjection | null;
+}
+
+export type DirtyImageReplacementAuthorization = (
+  projection: DirtyImageReplacementProjection,
+) => Promise<boolean>;
+
+export function buildDirtyImageReplacementConfirmationMessage(
+  projection: DirtyImageReplacementProjection,
+): string {
+  return projection.dirtyDocumentCount === 1
+    ? `Discard unsaved layered changes in Image document “${projection.soleDocument?.title ?? 'Untitled Image'}” and replace the project?`
+    : `Discard unsaved layered changes in ${projection.dirtyDocumentCount} Image documents and replace the project?`;
+}
+
+function boundedDirtyImageProjectionTitle(value: unknown): string {
+  if (typeof value !== 'string') return 'Untitled Image';
+  if (value.length <= MAX_DIRTY_IMAGE_PROJECTION_TITLE_LENGTH) return value;
+  return `${value.slice(0, MAX_DIRTY_IMAGE_PROJECTION_TITLE_LENGTH - 1)}…`;
+}
+
+function ownDataDescriptorValue(
+  object: object,
+  key: PropertyKey,
+): Readonly<{ found: boolean; value?: unknown }> | null {
   try {
-    transaction.commit();
-    transaction.finalize();
-  } catch (error) {
-    await transaction.rollback();
-    throw error;
+    const descriptor = Reflect.getOwnPropertyDescriptor(object, key);
+    if (!descriptor) return Object.freeze({ found: false });
+    if (!Object.prototype.hasOwnProperty.call(descriptor, 'value')) return null;
+    return Object.freeze({ found: true, value: descriptor.value });
+  } catch {
+    return null;
+  }
+}
+
+function tryBuildDirtyImageReplacementProjection(
+  documents: readonly ImageDocument[],
+): DirtyImageReplacementProjection | null {
+  return tryInspectDirtyImageReplacementDocuments(documents)?.projection ?? null;
+}
+
+function tryInspectDirtyImageReplacementDocuments(
+  documents: readonly ImageDocument[],
+): Readonly<{
+  projection: DirtyImageReplacementProjection;
+  dirtyDocumentIds: readonly string[];
+}> | null {
+  if ((typeof documents !== 'object' && typeof documents !== 'function') || documents === null) return null;
+  const lengthDescriptor = ownDataDescriptorValue(documents, 'length');
+  if (!lengthDescriptor?.found
+    || typeof lengthDescriptor.value !== 'number'
+    || !Number.isSafeInteger(lengthDescriptor.value)
+    || lengthDescriptor.value < 0) return null;
+
+  let dirtyDocumentCount = 0;
+  let soleDirtyTitle: unknown;
+  const dirtyDocumentIds: string[] = [];
+  for (let index = 0; index < lengthDescriptor.value; index += 1) {
+    const entry = ownDataDescriptorValue(documents, String(index));
+    if (!entry) return null;
+    if (!entry.found || !entry.value) continue;
+    if (typeof entry.value !== 'object' && typeof entry.value !== 'function') return null;
+    const document = entry.value as ImageDocument;
+    const dirty = ownDataDescriptorValue(document, 'dirty');
+    if (!dirty?.found) return null;
+    if (dirty.value !== true) continue;
+    const id = ownDataDescriptorValue(document, 'id');
+    if (!id?.found || typeof id.value !== 'string' || !id.value) return null;
+    const title = ownDataDescriptorValue(document, 'title');
+    if (!title?.found) return null;
+    dirtyDocumentCount += 1;
+    dirtyDocumentIds.push(id.value);
+    soleDirtyTitle = dirtyDocumentCount === 1 ? title.value : undefined;
+  }
+
+  let soleDocument: DirtyImageReplacementDocumentProjection | null = null;
+  if (dirtyDocumentCount === 1) {
+    soleDocument = Object.freeze({ title: boundedDirtyImageProjectionTitle(soleDirtyTitle) });
+  }
+  return Object.freeze({
+    projection: Object.freeze({ dirtyDocumentCount, soleDocument }),
+    dirtyDocumentIds: Object.freeze(dirtyDocumentIds),
+  });
+}
+
+export interface CompleteRecoveryProjectResetResult {
+  capturedDirtyImageDocuments: number;
+  capturedDirtyPaperDocuments: number;
+}
+
+/**
+ * Privileged reset boundary used only after the recovery UI's explicit confirmation. It does not
+ * mint or consume a caller capability: it first captures every dirty Image/Paper document, then
+ * authorizes only that exact post-capture workspace inside the closed replacement transaction.
+ */
+export async function resetProjectDocumentWithCompleteRecovery(): Promise<CompleteRecoveryProjectResetResult> {
+  const requestId = beginProjectReplacementRequest();
+  const workspaceToken = captureProjectWorkspaceToken();
+  const imageInspection = tryInspectDirtyImageReplacementDocuments(workspaceToken.image.documents);
+  if (!imageInspection || !isProjectWorkspaceTokenCurrent(workspaceToken)) {
+    throw new Error('Crash reset was blocked because Image document metadata could not be inspected safely.');
+  }
+
+  const paperSnapshot = workspaceToken.paper.exportSnapshot();
+  const dirtyPaperIds = paperSnapshot.documents
+    ?.filter((document) => workspaceToken.paper.isDocumentDirty(document.id))
+    .map((document) => document.id) ?? [];
+  if (!isProjectReplacementRequestCurrent(requestId) || !isProjectWorkspaceTokenCurrent(workspaceToken)) {
+    throw new ProjectReplacementPreparationStaleError();
+  }
+
+  const preparedImageRecoveries = await workspaceToken.image.prepareDocumentRecovery(
+    imageInspection.dirtyDocumentIds,
+    'crash-recovery',
+  );
+  let imageRecoveryCommitted = false;
+  let capturedDirtyImageDocuments: number;
+  try {
+    // Encoding pixels is asynchronous. No recovery or project mutation is allowed until every live
+    // store identity/version is proven to still be the one inspected above.
+    if (!isProjectReplacementRequestCurrent(requestId) || !isProjectWorkspaceTokenCurrent(workspaceToken)) {
+      throw new ProjectReplacementPreparationStaleError();
+    }
+    if (preparedImageRecoveries.length !== imageInspection.dirtyDocumentIds.length) {
+      throw new Error('Crash reset was blocked because not every dirty Image document could be captured.');
+    }
+
+    capturedDirtyImageDocuments = workspaceToken.image
+      .commitPreparedDocumentRecovery(preparedImageRecoveries);
+    imageRecoveryCommitted = true;
+  } finally {
+    if (!imageRecoveryCommitted) {
+      workspaceToken.image.disposePreparedDocumentRecovery(preparedImageRecoveries);
+    }
+  }
+  const currentPaper = usePaperStore.getState();
+  const capturedDirtyPaperDocuments = currentPaper.captureDocumentRecovery(
+    dirtyPaperIds,
+    'crash-recovery',
+  ).length;
+  if (capturedDirtyPaperDocuments !== dirtyPaperIds.length) {
+    throw new Error('Crash reset was blocked because not every dirty Paper document could be captured.');
+  }
+
+  const authorization = captureInternalProjectReplacementAuthorization();
+  await restoreNormalizedProjectDocument(
+    requestId,
+    normalizeIncomingProjectDocument(undefined),
+    authorization.paper,
+    authorization.image,
+    undefined,
+    'reset',
+  );
+  return { capturedDirtyImageDocuments, capturedDirtyPaperDocuments };
+}
+
+function captureDirtyImageReplacementAuthorizationCandidate(): Readonly<{
+  projection: DirtyImageReplacementProjection;
+  authorization: InternalWorkspaceReplacementAuthorization;
+  workspaceToken: ProjectWorkspaceToken;
+}> | null {
+  // Capture every live store identity/version before inspecting document metadata. Descriptor and
+  // Proxy traps are untrusted code; any resulting store drift invalidates the whole request.
+  const workspaceToken = captureProjectWorkspaceToken();
+  const state = workspaceToken.image;
+  const projection = tryBuildDirtyImageReplacementProjection(state.documents);
+  if (!projection || !isProjectWorkspaceTokenCurrent(workspaceToken)) return null;
+  const authorization = captureInternalImageReplacementAuthorizationForState(state);
+  if (!isProjectWorkspaceTokenCurrent(workspaceToken)
+    || !isInternalImageReplacementAuthorizationCurrent(authorization)) return null;
+  return Object.freeze({ projection, authorization, workspaceToken });
+}
+
+interface GuardedProjectReplacementOptions {
+  key?: string;
+  title?: string;
+  message?: string;
+  save: () => Promise<PaperLossSaveResult>;
+  /** A previously completed exact Image authorization, used when Image policy ran first. */
+  imageAuthorization?: WorkspaceReplacementAuthorization;
+  /** Called only when dirty Image documents still require their independent authorization. */
+  authorizeDirtyImageReplacement?: DirtyImageReplacementAuthorization;
+  /** Testable ordering; production defaults to Paper first. */
+  authorizationOrder?: 'paper-first' | 'image-first';
+  /** Closed, synchronous bookkeeping run inside the replacement transaction. */
+  transactionBookkeeping?: ProjectReplacementTransactionBookkeeping;
+  /** Exact external request/authority epoch that must remain current through commit. */
+  isReplacementRequestCurrent?: ProjectReplacementRequestGuard;
+}
+
+interface UntrustedGuardedProjectReplacementOptions {
+  key?: string;
+  title?: string;
+  message?: string;
+  save: () => Promise<PaperLossSaveResult>;
+  imageAuthorizationToken?: string;
+  authorizeDirtyImageReplacement?: DirtyImageReplacementAuthorization;
+  authorizationOrder?: 'paper-first' | 'image-first';
+  transactionBookkeeping?: ProjectReplacementTransactionBookkeeping;
+  confirmOtherChanges?: () => Promise<boolean>;
+  isReplacementRequestCurrent?: ProjectReplacementRequestGuard;
+}
+
+function normalizeGuardedProjectReplacementOptions(
+  value: unknown,
+  includeBlankConfirmation: boolean,
+): UntrustedGuardedProjectReplacementOptions {
+  const supportedKeys = new Set([
+    'key',
+    'title',
+    'message',
+    'save',
+    'imageAuthorization',
+    'authorizeDirtyImageReplacement',
+    'authorizationOrder',
+    'transactionBookkeeping',
+    'isReplacementRequestCurrent',
+    ...(includeBlankConfirmation ? ['confirmOtherChanges'] : []),
+  ]);
+  const record = inspectRuntimeDataRecord(value, 'Guarded project replacement options', supportedKeys);
+  const save = optionalFunction<() => Promise<PaperLossSaveResult>>(
+    record,
+    'save',
+    'Guarded project replacement options',
+  );
+  if (!save) throw new Error('Guarded project replacement options.save is required.');
+  const authorizationOrder = record.authorizationOrder;
+  if (authorizationOrder !== undefined
+    && authorizationOrder !== 'paper-first'
+    && authorizationOrder !== 'image-first') {
+    throw new Error('Guarded project replacement options.authorizationOrder is unsupported.');
+  }
+  return Object.freeze({
+    key: optionalString(record, 'key', 'Guarded project replacement options'),
+    title: optionalString(record, 'title', 'Guarded project replacement options'),
+    message: optionalString(record, 'message', 'Guarded project replacement options'),
+    save,
+    imageAuthorizationToken: normalizeImageAuthorizationToken(record.imageAuthorization),
+    authorizeDirtyImageReplacement: optionalFunction<DirtyImageReplacementAuthorization>(
+      record,
+      'authorizeDirtyImageReplacement',
+      'Guarded project replacement options',
+    ),
+    authorizationOrder,
+    transactionBookkeeping: normalizeTransactionBookkeeping(record.transactionBookkeeping),
+    confirmOtherChanges: includeBlankConfirmation
+      ? optionalFunction<() => Promise<boolean>>(
+          record,
+          'confirmOtherChanges',
+          'Guarded project replacement options',
+        )
+      : undefined,
+    isReplacementRequestCurrent: optionalFunction<ProjectReplacementRequestGuard>(
+      record,
+      'isReplacementRequestCurrent',
+      'Guarded project replacement options',
+    ),
+  });
+}
+
+function isGuardedReplacementRequestCurrent(
+  requestId: number,
+  guard: ProjectReplacementRequestGuard | undefined,
+): boolean {
+  if (!isProjectReplacementRequestCurrent(requestId)) return false;
+  try {
+    return guard?.() !== false;
+  } catch {
+    return false;
+  }
+}
+
+function assertGuardedReplacementRequestCurrent(
+  requestId: number,
+  guard: ProjectReplacementRequestGuard | undefined,
+): void {
+  if (!isGuardedReplacementRequestCurrent(requestId, guard)) {
+    throw new ProjectReplacementPreparationStaleError();
+  }
+}
+
+async function requestDirtyImageReplacementAuthorization(
+  options: Pick<UntrustedGuardedProjectReplacementOptions, 'authorizeDirtyImageReplacement'>,
+): Promise<InternalWorkspaceReplacementAuthorization | null | undefined> {
+  // All live access, including hostile getters/Proxy traps, finishes while this candidate is made.
+  // Only its deeply frozen display projection crosses into caller code.
+  const candidate = captureDirtyImageReplacementAuthorizationCandidate();
+  if (!candidate) return null;
+  if (!isProjectWorkspaceTokenCurrent(candidate.workspaceToken)
+    || !isInternalImageReplacementAuthorizationCurrent(candidate.authorization)) return null;
+  const { projection } = candidate;
+  if (projection.dirtyDocumentCount > 0) {
+    if (!options.authorizeDirtyImageReplacement) return null;
+    const approved = await options.authorizeDirtyImageReplacement(projection);
+    if (!isImageConfirmationEnvironmentTokenCurrent(candidate.workspaceToken)
+      || !isInternalImageReplacementAuthorizationCurrent(candidate.authorization)) return undefined;
+    if (!approved) return null;
+  }
+  return isImageConfirmationEnvironmentTokenCurrent(candidate.workspaceToken)
+    && isInternalImageReplacementAuthorizationCurrent(candidate.authorization)
+    ? candidate.authorization
+    : undefined;
+}
+
+async function requestProjectReplacementAuthorizations(
+  requestId: number,
+  options: UntrustedGuardedProjectReplacementOptions,
+  initialImageAuthorization: InternalWorkspaceReplacementAuthorization | undefined,
+): Promise<Required<InternalProjectReplacementAuthorization> | null> {
+  let paperAuthorization: InternalPaperReplacementAuthorization | undefined;
+  let imageAuthorization = initialImageAuthorization;
+  const order = options.authorizationOrder ?? 'paper-first';
+
+  const authorizePaper = async (): Promise<boolean> => {
+    if (paperAuthorization && isInternalPaperReplacementAuthorizationCurrent(paperAuthorization)) return true;
+    const approved = await requestPaperDestructiveAction({
+      key: options.key ?? 'project-replacement',
+      title: options.title ?? 'Save Paper changes before opening another project?',
+      message: options.message ?? 'Opening another project replaces every open Paper tab. Save the current project, discard with recovery, or cancel.',
+      reason: 'project-replacement',
+      save: options.save,
+    });
+    if (!approved || !isGuardedReplacementRequestCurrent(requestId, options.isReplacementRequestCurrent)) return false;
+    const paper = capturePaperWorkspaceAuthorization();
+    paperAuthorization = Object.freeze({ signature: paper.signature });
+    return true;
+  };
+
+  const authorizeImage = async (): Promise<boolean> => {
+    if (imageAuthorization && isInternalImageReplacementAuthorizationCurrent(imageAuthorization)) return true;
+    const requested = await requestDirtyImageReplacementAuthorization(options);
+    if (requested === null || !isGuardedReplacementRequestCurrent(requestId, options.isReplacementRequestCurrent)) return false;
+    imageAuthorization = requested;
+    return true;
+  };
+
+  for (;;) {
+    if (!isGuardedReplacementRequestCurrent(requestId, options.isReplacementRequestCurrent)) return null;
+    const approved = order === 'paper-first'
+      ? await authorizePaper() && await authorizeImage()
+      : await authorizeImage() && await authorizePaper();
+    if (!approved) return null;
+    if (
+      paperAuthorization
+      && imageAuthorization
+      && isInternalPaperReplacementAuthorizationCurrent(paperAuthorization)
+      && isInternalImageReplacementAuthorizationCurrent(imageAuthorization)
+    ) {
+      return { paper: paperAuthorization, image: imageAuthorization };
+    }
+  }
+}
+
+/** Guarded project replacement for every user-initiated open/import/library load path. */
+export async function replaceProjectDocument(
+  document: unknown,
+  options: GuardedProjectReplacementOptions,
+): Promise<boolean> {
+  const normalized = runStableWorkspaceNormalizationPhase(() => ({
+    document: normalizeIncomingProjectDocument(document),
+    options: normalizeGuardedProjectReplacementOptions(options, false),
+  }));
+  const requestId = beginProjectReplacementRequest();
+  const initialImageAuthorization = consumeImageReplacementAuthorization(
+    normalized.options.imageAuthorizationToken,
+  );
+  return authorizeAndReplaceProjectDocument(
+    requestId,
+    normalized.document,
+    normalized.options,
+    initialImageAuthorization,
+  );
+}
+
+async function authorizeAndReplaceProjectDocument(
+  requestId: number,
+  document: FlowProjectDocument,
+  options: UntrustedGuardedProjectReplacementOptions,
+  initialImageAuthorization: InternalWorkspaceReplacementAuthorization | undefined,
+): Promise<boolean> {
+  const authorization = await requestProjectReplacementAuthorizations(
+    requestId,
+    options,
+    initialImageAuthorization,
+  );
+  if (!authorization || !isGuardedReplacementRequestCurrent(requestId, options.isReplacementRequestCurrent)) return false;
+  const transactionBookkeeping = options.transactionBookkeeping;
+  return restoreNormalizedProjectDocument(
+    requestId,
+    document,
+    authorization.paper,
+    authorization.image,
+    transactionBookkeeping,
+    'restore',
+    options.isReplacementRequestCurrent,
+  ).then(() => true);
+}
+
+/**
+ * Run only the guarded authorization policy (Paper loss prevention plus dirty-Image confirmation)
+ * and mint an exact-capability result the caller passes to prepareProjectDocumentTransaction.
+ * Used by native two-phase project switches where a native prepared transaction must commit
+ * between renderer authorization and renderer finalize; every capability is revalidated inside
+ * the closed transaction before any store changes.
+ */
+export async function requestProjectReplacementAuthorization(
+  options: GuardedProjectReplacementOptions,
+): Promise<ProjectReplacementAuthorization | null> {
+  const normalized = runStableWorkspaceNormalizationPhase(
+    () => normalizeGuardedProjectReplacementOptions(options, false),
+  );
+  const requestId = beginProjectReplacementRequest();
+  const initialImageAuthorization = consumeImageReplacementAuthorization(
+    normalized.imageAuthorizationToken,
+  );
+  const authorization = await requestProjectReplacementAuthorizations(
+    requestId,
+    normalized,
+    initialImageAuthorization,
+  );
+  if (!authorization || !isGuardedReplacementRequestCurrent(requestId, normalized.isReplacementRequestCurrent)) return null;
+  return {
+    paper: capturePaperWorkspaceAuthorization(),
+    image: mintImageReplacementAuthorization(authorization.image),
+  };
+}
+
+/** Guarded blank-project authorization for native two-phase New Project. See requestProjectReplacementAuthorization. */
+export async function requestBlankProjectReplacementAuthorization(options: {
+  key?: string;
+  title?: string;
+  message?: string;
+  save: () => Promise<PaperLossSaveResult>;
+  confirmOtherChanges?: () => Promise<boolean>;
+  imageAuthorization?: WorkspaceReplacementAuthorization;
+  authorizeDirtyImageReplacement?: DirtyImageReplacementAuthorization;
+  authorizationOrder?: 'paper-first' | 'image-first';
+  isReplacementRequestCurrent?: ProjectReplacementRequestGuard;
+}): Promise<ProjectReplacementAuthorization | null> {
+  const normalized = runStableWorkspaceNormalizationPhase(
+    () => normalizeGuardedProjectReplacementOptions(options, true),
+  );
+  const requestId = beginProjectReplacementRequest();
+  const initialImageAuthorization = consumeImageReplacementAuthorization(normalized.imageAuthorizationToken);
+  const authorization = await requestBlankProjectReplacementAuthorizations(
+    requestId,
+    normalized,
+    initialImageAuthorization,
+  );
+  if (!authorization || !isGuardedReplacementRequestCurrent(requestId, normalized.isReplacementRequestCurrent)) return null;
+  return {
+    paper: capturePaperWorkspaceAuthorization(),
+    image: mintImageReplacementAuthorization(authorization.image),
+  };
+}
+
+/** Guarded blank-project reset for user actions and normal startup. Crash recovery has its own closed reset. */
+export async function replaceWithBlankProject(options: {
+  key?: string;
+  title?: string;
+  message?: string;
+  save: () => Promise<PaperLossSaveResult>;
+  confirmOtherChanges?: () => Promise<boolean>;
+  imageAuthorization?: WorkspaceReplacementAuthorization;
+  authorizeDirtyImageReplacement?: DirtyImageReplacementAuthorization;
+  authorizationOrder?: 'paper-first' | 'image-first';
+  transactionBookkeeping?: ProjectReplacementTransactionBookkeeping;
+  isReplacementRequestCurrent?: ProjectReplacementRequestGuard;
+}): Promise<boolean> {
+  const normalized = runStableWorkspaceNormalizationPhase(
+    () => normalizeGuardedProjectReplacementOptions(options, true),
+  );
+  const requestId = beginProjectReplacementRequest();
+  const initialImageAuthorization = consumeImageReplacementAuthorization(normalized.imageAuthorizationToken);
+  const authorization = await requestBlankProjectReplacementAuthorizations(
+    requestId,
+    normalized,
+    initialImageAuthorization,
+  );
+  if (!authorization || !isGuardedReplacementRequestCurrent(requestId, normalized.isReplacementRequestCurrent)) return false;
+  return restoreNormalizedProjectDocument(
+    requestId,
+    normalizeIncomingProjectDocument(undefined),
+    authorization.paper,
+    authorization.image,
+    normalized.transactionBookkeeping,
+    'reset',
+    normalized.isReplacementRequestCurrent,
+  ).then(() => true);
+}
+
+async function requestBlankProjectReplacementAuthorizations(
+  requestId: number,
+  options: UntrustedGuardedProjectReplacementOptions,
+  initialImageAuthorization: InternalWorkspaceReplacementAuthorization | undefined,
+): Promise<Required<InternalProjectReplacementAuthorization> | null> {
+  for (;;) {
+    let generalConfirmationWasRequested = false;
+    const authorization = await requestProjectReplacementAuthorizations(requestId, {
+      ...options,
+      key: options.key ?? 'project-reset',
+      title: options.title ?? 'Save Paper changes before starting a blank project?',
+      message: options.message ?? 'Starting a blank project replaces every open Paper tab. Save the current project, discard with recovery, or cancel.',
+      authorizeDirtyImageReplacement: async (projection) => {
+        if (options.confirmOtherChanges) {
+          generalConfirmationWasRequested = true;
+          return options.confirmOtherChanges();
+        }
+        return options.authorizeDirtyImageReplacement?.(projection) ?? false;
+      },
+    }, initialImageAuthorization);
+    if (!authorization || !isGuardedReplacementRequestCurrent(requestId, options.isReplacementRequestCurrent)) return null;
+    // The general New Project confirmation is still required when Image happens to be clean.
+    if (options.confirmOtherChanges && !generalConfirmationWasRequested) {
+      const before = captureInternalProjectReplacementAuthorization();
+      if (!await options.confirmOtherChanges()
+        || !isGuardedReplacementRequestCurrent(requestId, options.isReplacementRequestCurrent)) return null;
+      if (!isInternalPaperReplacementAuthorizationCurrent(before.paper)
+        || !isInternalImageReplacementAuthorizationCurrent(before.image)) {
+        continue;
+      }
+    }
+    return authorization;
   }
 }

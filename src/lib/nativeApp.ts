@@ -117,6 +117,7 @@ export const NATIVE_MENU_COMMANDS = [
   'paper:new-document',
   'paper:add-page',
   'paper:file-open',
+  'paper:file-save',
   'paper:file-save-as',
   'paper:export-pdf',
   'paper:export-kdp-assets',
@@ -301,6 +302,29 @@ export function getCurrentProjectAuthorityClaim(): NativeProjectAuthorityDescrip
 export interface ProjectAuthorityMutationScope {
   claim: NativeProjectAuthorityDescriptor;
   epoch: number;
+}
+
+/**
+ * Renderer-local authority epoch captured around delayed startup work. Unlike a mutation scope,
+ * this intentionally represents the initial no-claim state too: any Open/New/Save/adoption or
+ * authority transition advances the epoch and invalidates the delayed startup response.
+ */
+export interface ProjectAuthorityStateScope {
+  claim?: NativeProjectAuthorityDescriptor;
+  epoch: number;
+}
+
+export function captureProjectAuthorityStateScope(): ProjectAuthorityStateScope {
+  return {
+    claim: currentProjectAuthorityClaim ? { ...currentProjectAuthorityClaim } : undefined,
+    epoch: currentProjectAuthorityEpoch,
+  };
+}
+
+export function isCurrentProjectAuthorityStateScope(scope: ProjectAuthorityStateScope): boolean {
+  return scope.epoch === currentProjectAuthorityEpoch
+    && scope.claim?.authorityId === currentProjectAuthorityClaim?.authorityId
+    && scope.claim?.version === currentProjectAuthorityClaim?.version;
 }
 
 export function captureProjectAuthorityMutationScope(): ProjectAuthorityMutationScope | undefined {
@@ -653,6 +677,8 @@ export interface SignalLoomNativeBridge {
   writeImageDocumentFile?: (path: string, bytes: Uint8Array) => Promise<{ ok?: boolean; error?: string }>;
   openPaperDocumentFile: () => Promise<NativePaperOpenResult>;
   savePaperDocumentFileAs: (bytes: Uint8Array) => Promise<NativePaperSaveResult>;
+  /** Overwrite an acknowledged standalone .slppr path without another chooser. */
+  writePaperDocumentFile?: (path: string, bytes: Uint8Array) => Promise<{ ok?: boolean; path?: string; error?: string }>;
   importMediaFiles: (options: {
     scratchDirectoryPath?: string;
     claim?: NativeProjectAuthorityDescriptor;

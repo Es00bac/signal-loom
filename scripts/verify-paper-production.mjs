@@ -58,7 +58,13 @@ async function generateGoldenPdfs() {
   if (!existsSync(vitestEntrypoint)) {
     return { status: 'failed', detail: 'Vitest is not installed; golden PDFs cannot be generated.' };
   }
-  const result = spawnSync(process.execPath, [vitestEntrypoint, 'run', 'src/lib/paperProductionGolden.test.ts'], {
+  const result = spawnSync(process.execPath, [
+    vitestEntrypoint,
+    'run',
+    '--configLoader',
+    'runner',
+    'src/lib/paperProductionGolden.test.ts',
+  ], {
     cwd: ROOT,
     env: { ...process.env, PAPER_PRODUCTION_OUTPUT_DIR: outputDirectory },
     encoding: 'utf8',

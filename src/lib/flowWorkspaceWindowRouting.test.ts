@@ -1,10 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createWorkspaceWindowCommandEnvelope,
   getWorkspaceWindowCommandForWorkspace,
 } from './workspaceWindowCommands';
+import { setCurrentProjectAuthorityClaim } from './nativeApp';
 
 describe('flow workspace window routing', () => {
+  beforeEach(() => {
+    setCurrentProjectAuthorityClaim({ authorityId: 'flow-routing-test', version: 1 });
+  });
+
+  afterEach(() => {
+    setCurrentProjectAuthorityClaim(undefined);
+  });
+
   it('accepts Flow commands even when targeting another active Flow workspace id', () => {
     const envelope = createWorkspaceWindowCommandEnvelope('remote', {
       type: 'flow-create-source-node',

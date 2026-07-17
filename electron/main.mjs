@@ -1114,6 +1114,21 @@ function createWorkspaceWindow(workspace = 'flow') {
     void workspaceWindow.loadURL(buildWorkspaceRendererUrl(workspace));
   });
 
+  workspaceWindow.webContents.on('will-prevent-unload', (event) => {
+    const choice = dialog.showMessageBoxSync(workspaceWindow, {
+      type: 'warning',
+      title: 'Unsaved Paper changes',
+      message: 'This window has unsaved Paper documents.',
+      detail: 'Unsaved Image or Paper changes are still open. Leave without saving, or cancel and use Image Save, Paper Save, or Project Save.',
+      buttons: ['Leave', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+    // Electron prevents unloading by default. preventDefault here means the owner explicitly chose Leave.
+    if (choice === 0) event.preventDefault();
+  });
+
   workspaceWindow.setMenu(menuForWorkspace(workspace));
   workspaceWindow.setAutoHideMenuBar(false);
   workspaceWindow.setMenuBarVisibility(true);
@@ -3179,6 +3194,18 @@ function installIpcHandlers() {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, Buffer.from(bytes));
     return { canceled: false, path };
+  });
+
+  ipcMain.handle('signal-loom:paper-write-path', async (_event, path, bytes) => {
+    try {
+      if (typeof path !== 'string' || !path.toLowerCase().endsWith('.slppr')) {
+        return { error: 'Only .slppr paths from an acknowledged Open or Save dialog can be overwritten.' };
+      }
+      await writeFile(path, Buffer.from(bytes));
+      return { ok: true, path };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   ipcMain.handle('signal-loom:normalize-imported-media-batch', async (_event, items) => {

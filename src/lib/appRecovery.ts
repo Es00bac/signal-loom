@@ -1,14 +1,11 @@
 import { useDockablePanelStore } from '../store/dockablePanelStore';
-import { useImageEditorStore } from '../store/imageEditorStore';
-import { usePaperStore } from '../store/paperStore';
 import { useWorkspaceLayoutStore } from '../store/workspaceLayoutStore';
-import { resetProjectDocument } from './projectDocumentActions';
+import {
+  resetProjectDocumentWithCompleteRecovery,
+  type CompleteRecoveryProjectResetResult,
+} from './projectDocumentActions';
 
 export const NON_SECRET_RECOVERY_STORAGE_KEYS = [
-  'flow-canvas-storage',
-  'flow-editor-workspace',
-  'flow-global-source-bin',
-  'signal-loom-paper-workspace',
   'signal-loom-workspace-layouts',
   'signal-loom-dockable-panels',
   'signal-loom-activity-trail',
@@ -45,9 +42,16 @@ export function safeRemoveLocalStorageKeys(
   });
 }
 
-export async function resetProjectToBlank(): Promise<void> {
-  await resetProjectDocument({ allowDirtyImageReplacement: true });
-  resetVolatileWorkspaceState();
+export type CrashRecoveryResetResult = CompleteRecoveryProjectResetResult;
+export const CONFIRMED_CRASH_RECOVERY_RESET = 'reset-with-recovery' as const;
+
+export async function resetProjectToBlank(
+  decision: typeof CONFIRMED_CRASH_RECOVERY_RESET,
+): Promise<CrashRecoveryResetResult> {
+  if (decision !== CONFIRMED_CRASH_RECOVERY_RESET) {
+    throw new Error('Blank project reset requires an explicit Reset with Recovery decision.');
+  }
+  return resetProjectDocumentWithCompleteRecovery();
 }
 
 export function resetDockableAndWorkspaceLayout(): void {
@@ -60,27 +64,15 @@ export function clearNonSecretPersistedRecoveryState(
 ): RecoveryRemovalResult[] {
   const results = safeRemoveLocalStorageKeys(NON_SECRET_RECOVERY_STORAGE_KEYS, storage);
   resetDockableAndWorkspaceLayout();
-  resetVolatileWorkspaceState();
   return results;
 }
 
 export async function resetProjectAndClearNonSecretState(
+  decision: typeof CONFIRMED_CRASH_RECOVERY_RESET,
   storage: AppRecoveryStorage | undefined = getBrowserLocalStorage(),
 ): Promise<RecoveryRemovalResult[]> {
-  const results = clearNonSecretPersistedRecoveryState(storage);
-  await resetProjectToBlank();
-  return results;
-}
-
-function resetVolatileWorkspaceState(): void {
-  useImageEditorStore.setState({
-    documents: [],
-    activeDocId: null,
-    tool: 'move',
-    undoStacks: {},
-    redoStacks: {},
-  });
-  usePaperStore.getState().restoreSnapshot(undefined);
+  await resetProjectToBlank(decision);
+  return clearNonSecretPersistedRecoveryState(storage);
 }
 
 function getBrowserLocalStorage(): Storage | undefined {

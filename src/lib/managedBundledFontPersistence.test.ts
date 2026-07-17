@@ -247,6 +247,7 @@ describe('FBL-011 fresh-process bundled face persistence', () => {
 
     vi.stubGlobal('fetch', fetchImpl);
     const freshProjectActions = await import('./projectDocumentActions');
+    const replacementAuthorization = freshProjectActions.captureProjectReplacementAuthorization();
     await freshProjectActions.restoreProjectDocument({
       schemaVersion: 1,
       id: 'transferred-project',
@@ -254,6 +255,9 @@ describe('FBL-011 fresh-process bundled face persistence', () => {
       savedAt: 1,
       flow: transferredFlow,
       imageEditor: transferredImage,
+    }, {
+      imageAuthorization: replacementAuthorization.image,
+      paperAuthorization: replacementAuthorization.paper,
     });
     const freshImageStore = await import('../store/imageEditorStore');
     const freshFlowStore = await import('../store/flowStore');
@@ -374,7 +378,11 @@ describe('FBL-011 fresh-process bundled face persistence', () => {
     };
 
     const actions = await import('./projectDocumentActions');
-    await actions.restoreProjectDocument(rawProject, { allowDirtyImageReplacement: true });
+    const replacementAuthorization = actions.captureProjectReplacementAuthorization();
+    await actions.restoreProjectDocument(rawProject, {
+      imageAuthorization: replacementAuthorization.image,
+      paperAuthorization: replacementAuthorization.paper,
+    });
     const imageStore = await import('../store/imageEditorStore');
     const flowStore = await import('../store/flowStore');
     const collectors = await import('./managedBundledFonts');

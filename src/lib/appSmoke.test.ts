@@ -94,6 +94,8 @@ describe('application smoke tests', () => {
     expect(source).not.toContain(
       "}, [handleAppMenuCommand, setNativeScratchDirectoryPath, setWorkspaceView, windowWorkspaceView]);",
     );
+    expect(source).toContain('applyNativeStartupProjectReplacement({');
+    expect(source).not.toContain("localStorage.getItem('signal-loom-paper-workspace')");
   });
 
   it('can build the non-provider Paper frames required by the workspace smoke path', () => {

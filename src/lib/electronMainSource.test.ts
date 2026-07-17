@@ -3,6 +3,20 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('Electron main process source guards', () => {
+  it('uses platform Leave/Cancel for dirty renderer shutdown after a recovery capture', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+
+    expect(source).toMatch(/webContents\.on\('will-prevent-unload'[\s\S]*buttons: \['Leave', 'Cancel'\][\s\S]*choice === 0[\s\S]*event\.preventDefault\(\)/);
+    expect(source).toContain('Unsaved Image or Paper changes are still open.');
+    expect(source).not.toContain('A local recovery copy was captured.');
+  });
+
+  it('overwrites only acknowledged standalone .slppr paths for Paper Save', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+
+    expect(source).toMatch(/signal-loom:paper-write-path[\s\S]*endsWith\('\.slppr'\)[\s\S]*writeFile\(path, Buffer\.from\(bytes\)\)[\s\S]*ok: true, path/);
+  });
+
   it('awaits scratch-directory reads inside the guarded catch block', () => {
     const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
 
