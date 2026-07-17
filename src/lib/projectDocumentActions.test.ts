@@ -724,13 +724,45 @@ describe('restoreProjectDocument', () => {
     expect(countRevocations(revokeObjectUrl, 'blob:success-b-only')).toBe(1);
   });
 
-  it.each(['workspaces', 'flow', 'editor', 'usage', 'paper', 'image'] as const)(
+  it('retains an unregistered live A URL when a concurrent edit rejects the transaction before Source commit', async () => {
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const liveA = sourceSnapshot([{ id: 'assert-a', assetUrl: 'blob:assert-a' }]);
+    useSourceBinStore.setState({ bins: liveA.bins, dismissedSourceKeys: [] });
+    const transaction = await prepareProjectDocumentTransaction(projectWithSource(
+      'assert-b',
+      sourceSnapshot([{ id: 'assert-b', assetUrl: 'blob:assert-b' }]),
+    ));
+    useFlowStore.getState().replaceFlowSnapshot({
+      version: 3,
+      nodes: [{ id: 'assert-concurrent', type: 'textNode', position: { x: 1, y: 1 }, data: {} }],
+      edges: [],
+    });
+
+    expect(() => transaction.assertCanCommit()).toThrow('current project changed');
+    transaction.rollback();
+
+    expect(useSourceBinStore.getState().getAllItems()[0]?.assetUrl).toBe('blob:assert-a');
+    expect(countRevocations(revokeObjectUrl, 'blob:assert-a')).toBe(0);
+    expect(countRevocations(revokeObjectUrl, 'blob:assert-b')).toBe(1);
+
+    installLiveSource([]);
+    expect(countRevocations(revokeObjectUrl, 'blob:assert-a')).toBe(1);
+  });
+
+  it.each(['source', 'workspaces', 'flow', 'editor', 'usage', 'paper', 'image'] as const)(
     'preserves usable A URLs and disposes B when the later %s stage fails',
     async (failingStore) => {
       const aUrl = `blob:stage-url-a-${failingStore}`;
       const bUrl = `blob:stage-url-b-${failingStore}`;
       const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
-      installLiveSource([{ id: `stage-url-a-${failingStore}`, assetUrl: aUrl }]);
+      const liveA = sourceSnapshot([{ id: `stage-url-a-${failingStore}`, assetUrl: aUrl }]);
+      if (failingStore === 'source') {
+        // Reproduce direct import/live-sync fallbacks that can put a blob URL in Zustand before
+        // the runtime handle registry has adopted it.
+        useSourceBinStore.setState({ bins: liveA.bins, dismissedSourceKeys: [] });
+      } else {
+        installLiveSource([{ id: `stage-url-a-${failingStore}`, assetUrl: aUrl }]);
+      }
       const transaction = await prepareProjectDocumentTransaction(projectWithSource(
         `stage-url-project-b-${failingStore}`,
         sourceSnapshot([{ id: `stage-url-b-${failingStore}`, assetUrl: bUrl }]),
@@ -740,6 +772,13 @@ describe('restoreProjectDocument', () => {
       };
       let restoreInjectedMethod: () => void;
       switch (failingStore) {
+        case 'source': {
+          const state = useSourceBinStore.getState();
+          const original = state.commitPreparedProjectSnapshot;
+          state.commitPreparedProjectSnapshot = injectedFailure;
+          restoreInjectedMethod = () => { state.commitPreparedProjectSnapshot = original; };
+          break;
+        }
         case 'workspaces': {
           const state = useFlowWorkspaceStore.getState();
           const original = state.hydrateProjectSnapshot;

@@ -337,27 +337,34 @@ let sourceUrlLeaseSequence = 0;
  */
 export function leaseSourceBinProjectSnapshotObjectUrls(
   snapshot: PreparedSourceBinProjectSnapshot,
+  options: { adoptSnapshotOwnership?: boolean } = {},
 ): () => void {
   const leaseId = ++sourceUrlLeaseSequence;
-  const handles = snapshot.bins
+  const snapshotHandles = snapshot.bins
     .flatMap((bin) => bin.items)
     .flatMap((item, index) => (
       isRevocableObjectUrl(item.assetUrl)
-        ? [{ id: `project-source-url-lease:${leaseId}:${index}`, url: item.assetUrl }]
+        ? [{ itemId: item.id, leaseId: `project-source-url-lease:${leaseId}:${index}`, url: item.assetUrl }]
         : []
     ));
   let released = false;
 
-  for (const handle of handles) {
-    revocableSourceAssetHandles.acquire(handle.id, handle.url);
+  for (const handle of snapshotHandles) {
+    if (options.adoptSnapshotOwnership) {
+      // Some import/live-sync paths install a blob URL directly in Zustand before the runtime
+      // registry sees it. Adopt that live store ownership before taking the transaction lease, so
+      // a first-stage failure can release the lease without revoking the still-observable A URL.
+      revocableSourceAssetHandles.replace(handle.itemId, handle.url);
+    }
+    revocableSourceAssetHandles.acquire(handle.leaseId, handle.url);
   }
 
   return () => {
     if (released) return;
     released = true;
-    for (const handle of handles) {
+    for (const handle of snapshotHandles) {
       try {
-        revocableSourceAssetHandles.release(handle.id);
+        revocableSourceAssetHandles.release(handle.leaseId);
       } catch {
         // URL cleanup is best-effort and must never mask the project transaction result.
       }

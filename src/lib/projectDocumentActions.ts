@@ -284,7 +284,9 @@ export async function prepareProjectDocumentTransaction(
       quickActionMacros: useImageEditorStore.getState().quickActionMacros,
     },
   };
-  const releasePreviousSourceUrls = leaseSourceBinProjectSnapshotObjectUrls(previous.source);
+  const releasePreviousSourceUrls = leaseSourceBinProjectSnapshotObjectUrls(previous.source, {
+    adoptSnapshotOwnership: true,
+  });
   const appliedStores: Array<{
     keys: readonly ProjectStoreIdentityKey[];
     postIdentity: ProjectStoreIdentity;
