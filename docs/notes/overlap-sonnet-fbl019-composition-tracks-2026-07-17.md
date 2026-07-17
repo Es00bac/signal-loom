@@ -270,4 +270,257 @@ git diff --check
 - `a30a116` — production fixes (flowStore.ts, snapshotActions.ts, compositionEdgeMigration.ts,
   CompositionNode.tsx) and their tests (flowStore.test.ts, flowStore.remoteSync.test.ts,
   compositionEdgeMigration.test.ts, CompositionNode.test.tsx, new file), in one commit.
-- This note update is a separate commit on top of `a30a116`.
+- `81973e1` — note update for the above, separate commit on top of `a30a116`.
+
+## Second correction (independent review, 3 remaining gaps closed on top of `81973e1`)
+
+A second independent review of `81973e1` found the "dropped-overflow-edge diagnostic" was still
+incomplete in three ways, none exercised by the first correction's test suite:
+
+1. **`classifyCompositionAudioHandle`'s regex silently accepted nonnumeric handles.**
+   `/^composition-audio-(\d+)$/` requires a pure-digit suffix, so `composition-audio-x`,
+   `composition-audio--1`, and `composition-audio-1.5` all failed the regex and fell through to
+   `return null` — the same "not audio-track-shaped at all" result the function returns for the
+   unrelated video handle. `normalizeCompositionEdgesWithDiagnostics` treated a `null` classification
+   as "nothing to diagnose" and silently preserved the invalid edge untouched, so a hand-edited or
+   corrupted project could carry a dangling, non-functional audio edge with no track, no execution
+   input, and no visible warning.
+2. **The migration branch recognized only `audioGen` as an audio-producing source.** Execution's own
+   `collectResultInputForHandle` accepts `['audioGen', 'functionNode']` for every
+   `composition-audio-N` handle (flowStore.ts, `buildExecutionContextForNode`), but
+   `normalizeCompositionEdgesWithDiagnostics` gated its whole audio-handle validation branch on
+   `sourceNode?.type === 'audioGen'`. A `functionNode`-sourced edge with an overflow or malformed
+   handle skipped the branch entirely and fell to `preserved.push(edge)`, bypassing recovery the same
+   way the regex bug did, just from a different source type.
+3. **The recovery diagnostic was written to the transient `node.data.error` field.** Both persistence
+   serializers (`stripRuntimeData` for local autosave/export, `stripProjectRuntimeData` for
+   project/workspace snapshot export) intentionally null out `error` before writing, so the warning
+   never survived a save/reopen cycle. Independently, any later successful operation on the same node
+   (e.g. a valid new connection via `onConnect`, which resets `error: undefined` on success) silently
+   erased the warning while the underlying edge remained dropped — the rejection reason vanished even
+   though the drop itself was correct. Only `hydratePersistedState` and `replaceFlowSnapshot` ever
+   wired the diagnostics callback at all; `onEdgesChange`, `insertTemplate`, `pasteClipboard`, and the
+   incremental branch of `applyRemoteFlowGraphChange` used the diagnostics-discarding default of
+   `normalizeFlowEdges`, so a malformed/overflow handle arriving through any of those paths (a synced
+   remote edge, a pasted clipboard edge injected by another bug, a template) was dropped with no trace
+   at all.
+
+### Fix
+
+1. **`classifyCompositionAudioHandle` (compositionTracks.ts)** now checks the
+   `composition-audio-` prefix directly instead of relying on the numeric-only regex to reject
+   non-matches as "unrelated." Anything with the prefix that isn't a valid positive integer suffix
+   — nonnumeric, negative, fractional, or otherwise malformed — now classifies as `malformed`
+   instead of `null`. The video handle and any genuinely unrelated string still classify as `null`
+   (unchanged).
+2. **`normalizeCompositionEdgesWithDiagnostics` (compositionEdgeMigration.ts)** now gates its
+   audio-handle branch on `isCompositionAudioProducingSourceType(sourceNode?.type)` — a new shared
+   predicate over `COMPOSITION_AUDIO_PRODUCING_SOURCE_TYPES = ['audioGen', 'functionNode']`,
+   matching execution's own accepted list exactly. Within that branch, only a truly handleless
+   (`== null`) edge from `audioGen` is still auto-assigned to the next open lane; a null-handle
+   `functionNode` edge is left untouched (functionNode can also legitimately feed the video handle,
+   so a bare `null` is genuinely ambiguous and is not guessed at). Every other non-null handle that
+   isn't one of the four valid `composition-audio-N` handles — whether malformed-suffix, overflow,
+   or not audio-track-shaped at all (e.g. `"banana"`) — now fails closed with a diagnostic and is
+   dropped, regardless of source type.
+3. **A new bounded, typed, persisted field replaces `data.error` for this diagnostic.**
+   `NodeData.compositionAudioMigrationWarnings?: CompositionAudioMigrationWarning[]` (types/flow.ts)
+   holds `{ handle, reason, message }` records. `surfaceCompositionEdgeDiagnostics`
+   (compositionEdgeMigration.ts) now writes to this field instead of `data.error`, **merging** new
+   diagnostics with whatever a node already has (deduped by `reason:handle`, so re-normalizing after
+   the bad edge is already gone doesn't wipe the record) rather than replacing it outright. Bounds:
+   `COMPOSITION_AUDIO_MIGRATION_WARNING_LIMIT = 8` entries, `..._HANDLE_MAX_LENGTH = 64` and
+   `..._MESSAGE_MAX_LENGTH = 200` characters (truncated with an ellipsis), enforced by
+   `sanitizeCompositionAudioMigrationWarnings` — reused at every persistence/import boundary
+   (`sanitizePersistedFlowState` in flowStore.ts for local autosave rehydrate,
+   `sanitizeNodeData`/`sanitizeFlowSnapshot` in projectValidation.ts for project/snapshot import) so
+   a corrupted or hostile project file can never grow this field unbounded. Neither serializer nor
+   `data.error`/`statusMessage` is touched by this field — `stripRuntimeData`/`stripProjectRuntimeData`
+   were left as-is and naturally preserve it via their `...data` spread since it isn't in either
+   strip list. `CompositionNode.tsx` derives its visible error-banner text via
+   `data.error ?? formatCompositionAudioMigrationWarningMessage(data.compositionAudioMigrationWarnings)`
+   — a live runtime error still takes priority, but with none active the persisted warning becomes
+   visible without ever being written into `data.error` itself. `collectFlowDiagnostics`
+   (flowDiagnostics.ts) surfaces each persisted record as its own non-blocking (`blocksRun: false`,
+   `severity: 'warning'`) entry in the existing Diagnostics panel.
+4. **Every graph-ingress path now surfaces the same diagnostic.** A new `flowStore.ts`-private
+   helper, `normalizeFlowEdgesWithCompositionDiagnostics(nodes, edges)`, wraps
+   `normalizeFlowEdges` + `surfaceCompositionEdgeDiagnostics` atomically and replaces the ad hoc
+   per-call-site wiring. It is now used by `hydratePersistedState`, `onEdgesChange`,
+   `insertTemplate`, `pasteClipboard`, and the incremental (`flow-edge-added`/etc.) branch of
+   `applyRemoteFlowGraphChange` — previously only `hydratePersistedState` and (via
+   `replaceFlowSnapshotState` in snapshotActions.ts, unchanged) `replaceFlowSnapshot` wired
+   diagnostics at all. `onConnect` (live connection) is deliberately untouched: a malformed/overflow
+   handle is already rejected up front by `validateFlowConnection` (the contract never exposes a port
+   for it), so it can never admit a bad edge in the first place and doesn't need this recovery path.
+
+### Red before fix
+
+All new tests below fail against `81973e1` before the fix, for the reasons recorded at the top of
+each file's new test block (nonnumeric handles classify as `null` instead of `malformed`; the new
+sanitize/format helpers don't exist yet; `surfaceCompositionEdgeDiagnostics`/hydrate/onEdgesChange/
+insertTemplate/pasteClipboard/remote-sync tests assert `data.compositionAudioMigrationWarnings` which
+is `undefined` on `81973e1` because the field didn't exist and the old code wrote `data.error`
+instead; `CompositionNode` render test looks for the warning text with no live `data.error`, which
+`81973e1`'s render never shows).
+
+```
+npx vitest run --configLoader runner \
+  src/lib/compositionTracks.test.ts src/lib/compositionEdgeMigration.test.ts \
+  src/lib/flowDiagnostics.test.ts src/store/flowStore.test.ts \
+  src/store/flowStore.remoteSync.test.ts src/components/Nodes/CompositionNode.test.tsx
+# (run against 81973e1, before any production change)
+# Test Files  6 failed (6)
+#      Tests  30 failed | 90 passed (120)
+```
+
+All 30 failures are the newly added tests (one per required scenario below); all 90 pre-existing
+tests in those six files were already green and stayed untouched by the red run.
+
+### Green after fix
+
+```
+npx vitest run --configLoader runner \
+  src/lib/compositionTracks.test.ts src/lib/compositionEdgeMigration.test.ts \
+  src/lib/flowDiagnostics.test.ts src/store/flowStore.test.ts \
+  src/store/flowStore.remoteSync.test.ts src/components/Nodes/CompositionNode.test.tsx
+# Test Files  6 passed (6)
+#      Tests  121 passed (121)   (120 + 1 additional onEdgesChange "replace"-variant test)
+
+npx vitest run --configLoader runner \
+  src/lib/compositionTracks.test.ts src/lib/compositionEdgeMigration.test.ts \
+  src/lib/flowDiagnostics.test.ts src/lib/flowNodeContracts.test.ts \
+  src/lib/flowConnectionContracts.test.ts src/lib/flowSignals.test.ts \
+  src/lib/flowRuntimePortCapabilities.test.ts src/lib/imageEditConnections.test.ts \
+  src/lib/videoFrameConnections.test.ts src/lib/sourceBin.test.ts \
+  src/lib/costEstimation.test.ts src/lib/listExecution.test.ts \
+  src/lib/flowExecutionComposition.test.ts src/lib/mediaComposition.test.ts \
+  src/lib/projectValidation.test.ts src/store/flowStore.test.ts \
+  src/store/flowStore.runNode.test.ts src/store/flowStore.bookmarks.test.ts \
+  src/store/flowStoreCancellation.test.ts src/store/flowStore.remoteSync.test.ts \
+  src/components/Nodes/CompositionNode.test.tsx src/components/Nodes/AdvancedImageEditorNode.test.tsx
+# Test Files  22 passed (22)
+#      Tests  651 passed (651)
+
+npm run verify:flow-production
+# Test Files  9 passed (9)
+#      Tests  365 passed (365)
+# Flow production audit passed: 63 nodes, 182 model contracts, 178 normal model options.
+
+npx tsc -b --force --pretty false
+# clean (fresh, non-incremental)
+
+npx eslint <13 changed files>
+# clean
+
+git diff --check
+# clean
+```
+
+### Required scenarios and where each is proven
+
+- **Nonnumeric malformed handles classify correctly** —
+  `compositionTracks.test.ts > classifyCompositionAudioHandle > "classifies nonnumeric or
+  malformed-suffix audio-shaped handles as malformed instead of returning null"` covers
+  `composition-audio-x`, `composition-audio--1`, `composition-audio-1.5`.
+- **Hydration drops+reports `composition-audio-x`/`--1`/`1.5`/zero/overflow; valid 1-4 and a null
+  legacy handle retain their existing semantics** — `flowStore.test.ts > "drops every
+  malformed/overflow persisted audio handle on hydration while keeping valid 1-4 and a legacy null
+  handle intact"` (all seven edge shapes in one graph) plus the parametrized
+  `compositionEdgeMigration.test.ts > "drops a persisted nonnumeric malformed audio handle %s..."`.
+- **Durability across persist/serialize/reopen without persisting unrelated runtime errors** —
+  `flowStore.test.ts > "keeps a composition audio migration warning durable across local
+  export/reopen..."` (drives the real `exportFlow()`/`stripRuntimeData` serializer +
+  `replaceFlowSnapshot` reopen) and `"...across project/workspace snapshot export and reopen..."`
+  (drives `exportProjectFlowSnapshot()`/`stripProjectRuntimeData`); both assert `data.error` is
+  absent from the exported JSON and the warning round-trips unchanged.
+  `compositionEdgeMigration.test.ts > "merges new diagnostics with a node's existing persisted
+  warnings instead of replacing them (durability)"` proves the same at the pure-function level: a
+  second call with zero new diagnostics (simulating "the bad edge is already gone") is a reference
+  no-op that keeps the first warning.
+- **Unrelated successful operations cannot erase the warning** — `flowStore.test.ts > "does not let
+  an unrelated successful connection erase a persisted composition audio migration warning"` drives
+  a real `onConnect` success (which resets `data.error: undefined`) on the same node afterward and
+  asserts the warning list is unchanged by reference-equal deep equality.
+- **`collectFlowDiagnostics` exposes the persisted record as a non-blocking warning** —
+  `flowDiagnostics.test.ts > "surfaces a persisted Composition audio migration warning as a
+  non-blocking diagnostic"` asserts `severity: 'warning'`, `blocksRun: false` in the Diagnostics
+  panel's diagnostic list.
+- **Template insertion, clipboard paste, `onEdgesChange` add/replace, and incremental remote edge
+  addition all surface the warning and never silently drop or preserve the bad handle** —
+  `flowStore.test.ts > "...when a template ships a malformed persisted audio handle"` (drives
+  `insertTemplate`), `"...when pasting a clipboard-copied malformed audio edge"` (drives
+  `copySelection`/`pasteClipboard` on a malformed edge injected directly into the live graph, since
+  a normally-drawn connection can never carry one), `"...when onEdgesChange adds a persisted
+  overflow edge"` and `"...when onEdgesChange replaces an edge with a malformed handle"` (drive the
+  `add` and `replace` `EdgeChange` variants), and
+  `flowStore.remoteSync.test.ts > "rejects and diagnoses an overflow audio handle delivered via an
+  incremental remote edge-added change"` (drives the non-snapshot branch of
+  `applyRemoteFlowGraphChange`).
+- **Bounded/deduplicated diagnostics; hostile long handle strings cannot grow the persisted message
+  unbounded; unrelated nodes/valid connections keep their own warnings** —
+  `compositionEdgeMigration.test.ts > "bounds and deduplicates warnings deterministically when many
+  diagnostics accumulate"` (12 diagnostics → capped at 8, deterministic across repeat calls,
+  duplicate handle+reason collapses to one entry), `"truncates a hostile long handle string instead
+  of persisting it verbatim"` (5000-character handle → bounded output), and `"does not erase an
+  existing warning on a node when new diagnostics target a different node"`. Mirrored at the
+  sanitizer level in `compositionTracks.test.ts > sanitizeCompositionAudioMigrationWarnings` (drops
+  malformed entries, bounds count, truncates long strings).
+- **`audioGen` plus every audio-producing effective source accepted by execution (including
+  `functionNode`) get the same recovery** — `compositionEdgeMigration.test.ts > "rejects an overflow
+  audio handle from a functionNode audio-producing source the same way as audioGen"`, "...a
+  malformed audio handle from a functionNode...", "does not touch a valid functionNode audio edge,
+  mirroring audioGen" (regression guard), "leaves a legacy null-handle edge from a functionNode
+  source untouched instead of auto-assigning it (ambiguous with video)" (regression guard for the
+  intentional audioGen-only auto-assign scope), and "leaves a functionNode edge explicitly targeting
+  the video handle untouched" (regression guard against false-positive audio misclassification).
+  Store-level: `flowStore.test.ts > "rejects overflow/malformed audio handles from a functionNode
+  audio-producing source at hydration, matching audioGen"`.
+- **Already-fixed candidate-inclusive connection, unresolved-media UI handle visibility, track-count
+  settlement, and valid 1-4 execution remain green** — confirmed unmodified and passing in the same
+  full regression run above (all pre-`a30a116` and `a30a116` tests, 651/651).
+
+### Bounds chosen
+
+- Entry count: 8 (`COMPOSITION_AUDIO_MIGRATION_WARNING_LIMIT`) — generous for the realistic case (a
+  handful of corrupted edges on one node) while bounding a pathological project with dozens of bad
+  edges targeting the same node.
+- Handle length: 64 chars, message length: 200 chars
+  (`COMPOSITION_AUDIO_MIGRATION_HANDLE_MAX_LENGTH`/`..._MESSAGE_MAX_LENGTH`), truncated with a
+  trailing `…` — enough for any real handle (`composition-audio-` + a huge but plausible integer)
+  while capping a hostile multi-kilobyte handle string from ever reaching persisted JSON verbatim.
+- Enforced at both the diagnostic-surfacing merge (`surfaceCompositionEdgeDiagnostics`) and the two
+  untrusted-input boundaries (`sanitizePersistedFlowState` for local autosave rehydrate,
+  `sanitizeNodeData`/`sanitizeFlowSnapshot` for project/snapshot import), so a value that reached
+  persisted storage some other way is re-bounded on every read, not just on write.
+
+### Ingress paths covered (exhaustive per the review's list)
+
+`hydratePersistedState`, `replaceFlowSnapshotState` (via `replaceFlowSnapshot`, unchanged code path
+that already called `surfaceCompositionEdgeDiagnostics` and now inherits the field change
+automatically), `onEdgesChange` (add and replace), `insertTemplate`, `pasteClipboard`, and the
+incremental branch of `applyRemoteFlowGraphChange`. `onConnect` is intentionally left on its existing
+immediate-rejection behavior (never admits a bad edge, so nothing to recover). Grepped the whole
+`src/` tree for every caller of `normalizeFlowEdges`/`normalizeCompositionEdgesWithDiagnostics`:
+only `flowStore.ts`, `compositionEdgeMigration.ts` (self), and `snapshotActions.ts` call either — all
+covered.
+
+### Residual risk
+
+- The 8-entry/64/200-character bounds are a judgment call with no product-specified limit; if a
+  future case needs to distinguish more than 8 simultaneously-broken tracks on one node the oldest
+  entries are silently evicted (`slice(-LIMIT)`) rather than surfaced as "N more truncated" — no
+  count-truncation indicator was added, consistent with keeping the diff scoped to the review's
+  explicit asks.
+- `formatCompositionAudioMigrationWarningMessage` joins all persisted messages into one string for
+  the node's single error-banner slot; a node with many distinct warnings shows one long banner
+  rather than a structured list. The Diagnostics panel (`collectFlowDiagnostics`) does list each
+  warning as a separate entry, so the structured view exists there.
+
+### Final commits
+
+- `17057bf` — production fixes (compositionTracks.ts, compositionEdgeMigration.ts, flowStore.ts,
+  flowDiagnostics.ts, projectValidation.ts, CompositionNode.tsx, types/flow.ts) and their tests
+  (compositionTracks.test.ts, compositionEdgeMigration.test.ts, flowStore.test.ts,
+  flowStore.remoteSync.test.ts, flowDiagnostics.test.ts, CompositionNode.test.tsx), in one commit.
+- This note update is a separate commit on top of `17057bf`.
