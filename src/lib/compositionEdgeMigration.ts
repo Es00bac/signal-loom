@@ -133,6 +133,41 @@ export function normalizeCompositionEdgesWithDiagnostics(
   return { edges: dedupeExclusiveCompositionEdges(nodesById, preserved), diagnostics };
 }
 
+/**
+ * Turns dropped-edge diagnostics into a visible, durable node error instead of letting the edge
+ * vanish without a trace (FBL-019). Applied at restore/import boundaries, where a persisted or
+ * imported overflow/malformed audio handle would otherwise be silently discarded by
+ * `normalizeCompositionEdgesWithDiagnostics`.
+ */
+export function surfaceCompositionEdgeDiagnostics(
+  nodes: AppNode[],
+  diagnostics: readonly CompositionAudioEdgeMigrationDiagnostic[],
+): AppNode[] {
+  if (diagnostics.length === 0) {
+    return nodes;
+  }
+
+  const messageByTarget = new Map<string, string>();
+
+  for (const diagnostic of diagnostics) {
+    const reason = diagnostic.reason === 'overflow'
+      ? 'beyond the supported 4-track limit'
+      : 'not a valid track index';
+    const detail = `Removed unsupported audio connection on handle "${diagnostic.handle}" (${reason}).`;
+    const existing = messageByTarget.get(diagnostic.targetNodeId);
+    messageByTarget.set(diagnostic.targetNodeId, existing ? `${existing} ${detail}` : detail);
+  }
+
+  return nodes.map((node) => {
+    const message = messageByTarget.get(node.id);
+    if (!message) {
+      return node;
+    }
+
+    return { ...node, data: { ...node.data, error: message } };
+  });
+}
+
 export function normalizeCompositionConnectionTargetHandle(
   connection: Connection,
   nodes: AppNode[],

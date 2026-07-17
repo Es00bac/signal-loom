@@ -23,6 +23,7 @@ import {
   COMPOSITION_VIDEO_HANDLE,
   getCompositionTrackKeys,
   getCompositionTrackSettings,
+  getConnectedCompositionAudioHandles,
   resolveCompositionAudioTrackModel,
 } from '../../lib/compositionTracks';
 import { isCompositionVideoConnection } from '../../lib/compositionEdgeMigration';
@@ -56,12 +57,14 @@ function CompositionNodeComponent({ id, data }: AppNodeProps) {
       findConnectedMedia(state.nodes, state.edges, id, handle, ['audioGen']),
     );
     const primary = [video, ...audio].filter(Boolean) as ConnectedMedia[];
+    const connectedAudioHandles = getConnectedCompositionAudioHandles(id, state.edges);
     return [
       buildCompositionMediaSignature(primary),
       primary.map((entry) => entry.label).join(''),
+      connectedAudioHandles.join(''),
     ].join('');
   });
-  const { connectedVideo, connectedAudioTracks } = useMemo(() => {
+  const { connectedVideo, connectedAudioTracks, connectedAudioHandleIds } = useMemo(() => {
     void connectionSignature;
     const state = useFlowStore.getState();
     const video = findConnectedMedia(
@@ -74,7 +77,11 @@ function CompositionNodeComponent({ id, data }: AppNodeProps) {
     const audio = COMPOSITION_AUDIO_HANDLES.map((handle) =>
       findConnectedMedia(state.nodes, state.edges, id, handle, ['audioGen']),
     );
-    return { connectedVideo: video, connectedAudioTracks: audio };
+    // Handle visibility must track the raw connection model (contracts and execution use it
+    // the same way), not whether the connected source has produced media yet (FBL-019): an
+    // explicitly connected higher track with no result yet must still show its slot and Handle.
+    const connectedAudioHandleIds = getConnectedCompositionAudioHandles(id, state.edges);
+    return { connectedVideo: video, connectedAudioTracks: audio, connectedAudioHandleIds };
   }, [connectionSignature, id]);
   const openEditorForComposition = useEditorStore((state) => state.openEditorForComposition);
   const [durations, setDurations] = useState<Record<string, number>>({});
@@ -84,7 +91,6 @@ function CompositionNodeComponent({ id, data }: AppNodeProps) {
   const mediaSources = [connectedVideo, ...connectedAudioTracks].filter(Boolean) as ConnectedMedia[];
   const mediaSignature = buildCompositionMediaSignature(mediaSources);
   const stableMediaSources = useMemo(() => parseCompositionMediaSignature(mediaSignature), [mediaSignature]);
-  const connectedAudioHandleIds = COMPOSITION_AUDIO_HANDLES.filter((_, index) => connectedAudioTracks[index]);
   const visibleAudioHandles = resolveCompositionAudioTrackModel(data.compositionAudioTrackCount, connectedAudioHandleIds).handles;
   const visibleAudioTrackCount = visibleAudioHandles.length;
 

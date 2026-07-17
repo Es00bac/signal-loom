@@ -827,6 +827,115 @@ describe('flow store Composition audio track normalization (FBL-019)', () => {
       { url: 'https://example.test/a2.mp3', sourceNodeId: 'audio-2', delayMs: 500, volumePercent: 80, enabled: true },
     ]);
   });
+
+  it('accepts a newly drawn connection onto an explicit higher track even though the saved count is stale (FBL-019 gap 1)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('audio-1', 'audioGen', {}),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [],
+    });
+
+    useFlowStore.getState().onConnect({
+      source: 'audio-1',
+      sourceHandle: null,
+      target: 'composition-1',
+      targetHandle: 'composition-audio-3',
+    });
+
+    const edges = useFlowStore.getState().edges;
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({ target: 'composition-1', targetHandle: 'composition-audio-3' });
+    expect(useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')?.data.error).toBeUndefined();
+    // The persisted count settles to match the accepted connection, not just the dynamic contract.
+    expect(useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')?.data.compositionAudioTrackCount).toBe(3);
+  });
+
+  it('accepts a legacy (implicit-handle) connection normalized onto a track beyond the stale saved count (FBL-019 gap 1)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('audio-existing', 'audioGen', {}),
+        createNode('audio-new', 'audioGen', {}),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [
+        { id: 'existing', source: 'audio-existing', target: 'composition-1', targetHandle: 'composition-audio-1' },
+      ],
+    });
+
+    // No explicit targetHandle: normalizeCompositionConnectionTargetHandle assigns the next open
+    // lane (track 2) before contract validation runs, even though the authored count is still 1.
+    useFlowStore.getState().onConnect({
+      source: 'audio-new',
+      sourceHandle: null,
+      target: 'composition-1',
+      targetHandle: null,
+    });
+
+    const edges = useFlowStore.getState().edges;
+    const newEdge = edges.find((edge) => edge.source === 'audio-new');
+    expect(newEdge).toMatchObject({ targetHandle: 'composition-audio-2' });
+    expect(useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')?.data.error).toBeUndefined();
+    expect(useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')?.data.compositionAudioTrackCount).toBe(2);
+  });
+
+  it('settles a stale template-authored count against a template edge whose audio source has no media yet (FBL-019 gap 2)', () => {
+    useFlowStore.setState({ nodes: [], edges: [] });
+
+    useFlowStore.getState().insertTemplate(
+      {
+        nodes: [
+          { id: 'audio-1', type: 'audioGen', position: { x: 0, y: 0 }, data: {} },
+          { id: 'composition-1', type: 'composition', position: { x: 0, y: 0 }, data: { compositionAudioTrackCount: 1 } },
+        ],
+        edges: [
+          { id: 'template-edge', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-3' },
+        ],
+      },
+      { x: 0, y: 0 },
+    );
+
+    const composition = useFlowStore.getState().nodes.find((node) => node.type === 'composition')!;
+    expect(composition.data.compositionAudioTrackCount).toBe(3);
+  });
+
+  it('surfaces a visible, durable node error instead of silently dropping a persisted overflow handle on restore', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('audio-1', 'audioGen', { result: 'https://example.test/a1.mp3' }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [{ id: 'overflow-edge', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-9' }],
+    });
+
+    useFlowStore.getState().hydratePersistedState();
+
+    // The malformed/overflow edge is still not silently promoted into a real track...
+    expect(useFlowStore.getState().edges.find((edge) => edge.id === 'overflow-edge')).toBeUndefined();
+    // ...but its rejection must be visible on the node instead of vanishing without a trace.
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    expect(composition.data.error).toBeTruthy();
+    expect(composition.data.error).toContain('composition-audio-9');
+  });
+
+  it('surfaces a visible node error for a dropped overflow handle when restoring a project snapshot', () => {
+    useFlowStore.setState({ nodes: [], edges: [] });
+
+    useFlowStore.getState().replaceFlowSnapshot({
+      version: 3,
+      nodes: [
+        createNode('audio-1', 'audioGen', { result: 'https://example.test/a1.mp3' }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [{ id: 'overflow-edge', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-9' }],
+    });
+
+    expect(useFlowStore.getState().edges.find((edge) => edge.id === 'overflow-edge')).toBeUndefined();
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    expect(composition.data.error).toBeTruthy();
+    expect(composition.data.error).toContain('composition-audio-9');
+  });
 });
 
 describe('flow store Boolean loop persistence', () => {

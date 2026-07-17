@@ -5,6 +5,7 @@ import {
   normalizeCompositionConnectionTargetHandle,
   normalizeCompositionEdges,
   normalizeCompositionEdgesWithDiagnostics,
+  surfaceCompositionEdgeDiagnostics,
 } from './compositionEdgeMigration';
 
 function createNode(id: string, type: AppNode['type']): AppNode {
@@ -202,5 +203,39 @@ describe('normalizeCompositionEdges', () => {
     expect(normalizeCompositionEdges(nodes, edges)).toEqual([
       expect.objectContaining({ id: 'legacy-video-2', targetHandle: 'composition-video' }),
     ]);
+  });
+});
+
+describe('surfaceCompositionEdgeDiagnostics (FBL-019 gap 3)', () => {
+  it('sets a visible, durable error on the target node describing the dropped handle', () => {
+    const nodes = [createNode('composition-1', 'composition'), createNode('other', 'composition')];
+
+    const patched = surfaceCompositionEdgeDiagnostics(nodes, [
+      { targetNodeId: 'composition-1', edgeId: 'overflow-audio', handle: 'composition-audio-9', reason: 'overflow' },
+    ]);
+
+    const patchedTarget = patched.find((node) => node.id === 'composition-1')!;
+    expect(patchedTarget.data.error).toBeTruthy();
+    expect(patchedTarget.data.error).toContain('composition-audio-9');
+    // Unrelated nodes are untouched.
+    expect(patched.find((node) => node.id === 'other')?.data.error).toBeUndefined();
+  });
+
+  it('combines multiple diagnostics for the same target into one visible message', () => {
+    const nodes = [createNode('composition-1', 'composition')];
+
+    const patched = surfaceCompositionEdgeDiagnostics(nodes, [
+      { targetNodeId: 'composition-1', edgeId: 'bad-1', handle: 'composition-audio-9', reason: 'overflow' },
+      { targetNodeId: 'composition-1', edgeId: 'bad-2', handle: 'composition-audio-0', reason: 'malformed' },
+    ]);
+
+    const message = patched.find((node) => node.id === 'composition-1')!.data.error;
+    expect(message).toContain('composition-audio-9');
+    expect(message).toContain('composition-audio-0');
+  });
+
+  it('is a no-op returning the same nodes array when there are no diagnostics', () => {
+    const nodes = [createNode('composition-1', 'composition')];
+    expect(surfaceCompositionEdgeDiagnostics(nodes, [])).toBe(nodes);
   });
 });

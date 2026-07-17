@@ -27,7 +27,9 @@ import {
 import {
   isCompositionVideoConnection,
   normalizeCompositionConnectionTargetHandle,
-  normalizeCompositionEdges,
+  normalizeCompositionEdgesWithDiagnostics,
+  surfaceCompositionEdgeDiagnostics,
+  type CompositionAudioEdgeMigrationDiagnostic,
 } from '../lib/compositionEdgeMigration';
 import {
   DEFAULT_EXECUTION_CONFIG,
@@ -906,12 +908,16 @@ function hasNodeDataPatchChange(data: NodeData, patch: Partial<NodeData>): boole
   return Object.entries(patch).some(([key, value]) => !Object.is(data[key], value));
 }
 
-function normalizeFlowEdges(nodes: AppNode[], edges: Edge[]): Edge[] {
+function normalizeFlowEdges(
+  nodes: AppNode[],
+  edges: Edge[],
+  onCompositionDiagnostics?: (diagnostics: CompositionAudioEdgeMigrationDiagnostic[]) => void,
+): Edge[] {
   const visibleEdges = edges.filter((edge) => !isPortalSyntheticEdge(edge));
-  const normalizedEdges = normalizePortalEdges(nodes, normalizeCompositionEdges(
-    nodes,
-    normalizeVideoImageEdges(nodes, normalizeImageEdges(nodes, visibleEdges)),
-  ));
+  const preComposition = normalizeVideoImageEdges(nodes, normalizeImageEdges(nodes, visibleEdges));
+  const { edges: compositionNormalized, diagnostics } = normalizeCompositionEdgesWithDiagnostics(nodes, preComposition);
+  onCompositionDiagnostics?.(diagnostics);
+  const normalizedEdges = normalizePortalEdges(nodes, compositionNormalized);
   return annotateFlowEdges(normalizedEdges, nodes);
 }
 
@@ -3297,9 +3303,16 @@ export const useFlowStore = create<FlowState>()(
           get().nodes,
           listValidation.edges,
         );
-        const contractValidation = validateFlowConnection(listValidation.connection, {
+        // Ports that depend on the edge set (e.g. Composition audio tracks) must see this
+        // candidate connection as already present, or an authored-count-1 node with no other
+        // connections would reject its own first higher-track connection (FBL-019). The candidate
+        // carries a synthetic id so maxConnections/connectionGroup counting can exclude it as "not
+        // yet an existing connection", matching how `annotateFlowEdge` treats an edge against a
+        // context that already contains itself.
+        const candidateEdge = { ...listValidation.connection, id: `candidate-${makeFlowId()}` } as Edge;
+        const contractValidation = validateFlowConnection(candidateEdge, {
           nodes: get().nodes,
-          edges: prunedEdges,
+          edges: [...prunedEdges, candidateEdge],
         });
 
         if (!contractValidation.valid) {
@@ -3319,7 +3332,8 @@ export const useFlowStore = create<FlowState>()(
           });
         }
 
-        set({ edges: normalizeFlowEdges(get().nodes, addEdge(listValidation.connection, prunedEdges)) });
+        const nextEdges = normalizeFlowEdges(get().nodes, addEdge(listValidation.connection, prunedEdges));
+        set({ nodes: normalizeCompositionAudioTrackCounts(get().nodes, nextEdges), edges: nextEdges });
       },
       addNode: (type, position, initialData) => {
         const settings = useSettingsStore.getState();
@@ -3415,9 +3429,11 @@ export const useFlowStore = create<FlowState>()(
           target: idMap.get(templateEdge.target!) || templateEdge.target!,
         })) as Edge[];
 
+        const nextNodes = [...get().nodes, ...newNodes];
+        const nextEdges = normalizeFlowEdges(nextNodes, [...get().edges, ...newEdges]);
         set({
-          nodes: [...get().nodes, ...newNodes],
-          edges: normalizeFlowEdges([...get().nodes, ...newNodes], [...get().edges, ...newEdges])
+          nodes: normalizeCompositionAudioTrackCounts(nextNodes, nextEdges),
+          edges: nextEdges,
         });
       },
       copySelection: () => {
@@ -3831,9 +3847,13 @@ export const useFlowStore = create<FlowState>()(
         const safe = sanitizePersistedFlowState(get());
         const normalizedNodes = attachHydratedRuntimeDataToNodes(safe.nodes, get);
         hydratedCanvasWorkspaceId = useFlowWorkspaceStore.getState().hydratedWorkspaceId;
-        const edges = normalizeFlowEdges(normalizedNodes, safe.edges);
+        let compositionDiagnostics: CompositionAudioEdgeMigrationDiagnostic[] = [];
+        const edges = normalizeFlowEdges(normalizedNodes, safe.edges, (diagnostics) => {
+          compositionDiagnostics = diagnostics;
+        });
+        const nodesWithDiagnostics = surfaceCompositionEdgeDiagnostics(normalizedNodes, compositionDiagnostics);
         set({
-          nodes: normalizeCompositionAudioTrackCounts(normalizedNodes, edges),
+          nodes: normalizeCompositionAudioTrackCounts(nodesWithDiagnostics, edges),
           edges,
           bookmarkSidebarOpen: safe.bookmarkSidebarOpen,
         });
@@ -3986,7 +4006,13 @@ export const useFlowStore = create<FlowState>()(
           // already-attached nodes, so a move/patch/remove only re-runs the cheap identity checks.
           const nodes =
             next.nodes === state.nodes ? state.nodes : attachRuntimeDataToNodes(next.nodes, get);
-          return { nodes, edges: next.edges };
+          // Only an edge change can move a Composition audio track's effective count — a plain
+          // move/patch/removal-of-other-node doesn't need edges renormalized (FBL-019).
+          if (next.edges === state.edges) {
+            return { nodes, edges: next.edges };
+          }
+          const edges = normalizeFlowEdges(nodes, next.edges);
+          return { nodes: normalizeCompositionAudioTrackCounts(nodes, edges), edges };
         });
         return changed;
       },

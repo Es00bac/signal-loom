@@ -102,6 +102,31 @@ describe('flowStore.applyRemoteFlowGraphChange', () => {
     ).toBe(false);
   });
 
+  it('settles a stale Composition audio-track count when a remote edge-added change lands on a higher track (FBL-019 gap 2)', () => {
+    useFlowStore.setState({
+      nodes: [
+        { id: 'audio-1', type: 'audioGen', position: { x: 0, y: 0 }, data: {} } as unknown as AppNode,
+        {
+          id: 'composition-1',
+          type: 'composition',
+          position: { x: 0, y: 0 },
+          data: { compositionAudioTrackCount: 1 },
+        } as unknown as AppNode,
+      ],
+      edges: [],
+      bookmarkSidebarOpen: true,
+    });
+
+    const changed = useFlowStore.getState().applyRemoteFlowGraphChange({
+      type: 'flow-edge-added',
+      edge: { id: 'remote-edge', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-3' } as Edge,
+    });
+
+    expect(changed).toBe(true);
+    const composition = useFlowStore.getState().nodes.find((n) => n.id === 'composition-1');
+    expect(composition?.data.compositionAudioTrackCount).toBe(3);
+  });
+
   it('replaces the whole graph from a snapshot and re-attaches runtime data', () => {
     useFlowStore.setState({ nodes: [node('old')], edges: [], bookmarkSidebarOpen: true });
     const snapshot: FlowProjectFlowSnapshot = {
