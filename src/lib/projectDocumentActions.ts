@@ -40,6 +40,8 @@ import { toSnapshot } from '../components/ImageEditor/SelectionMask';
 export interface ProjectDocumentReplacementOptions {
   /** Set only after the user explicitly chose Discard or the current project was saved successfully. */
   allowDirtyImageReplacement?: boolean;
+  /** Set only after the user explicitly chose Discard or the current Paper document was saved. */
+  allowDirtyPaperReplacement?: boolean;
 }
 
 function assertDirtyImageReplacementAllowed(options: ProjectDocumentReplacementOptions): void {
@@ -48,6 +50,19 @@ function assertDirtyImageReplacementAllowed(options: ProjectDocumentReplacementO
   if (!dirtyDocument) return;
   throw new Error(
     `Project replacement was blocked because dirty Image document "${dirtyDocument.title}" is still open. `
+    + 'Save or discard it explicitly before replacing the project.',
+  );
+}
+
+function assertDirtyPaperReplacementAllowed(options: ProjectDocumentReplacementOptions): void {
+  if (options.allowDirtyPaperReplacement) return;
+  const paperStore = usePaperStore.getState();
+  // Paper's undo history is its durable unsaved-edit indicator. It is reset only on restore;
+  // unlike Image, Paper has multiple canonical tabs, so protecting the active history prevents
+  // an Open in another renderer from silently replacing authored layout work.
+  if (paperStore.undoStack.length === 0) return;
+  throw new Error(
+    `Project replacement was blocked because the active Paper document "${paperStore.document.title}" has unsaved edits. `
     + 'Save or discard it explicitly before replacing the project.',
   );
 }
@@ -120,6 +135,7 @@ export async function restoreProjectDocument(
   options: ProjectDocumentReplacementOptions = {},
 ): Promise<void> {
   assertDirtyImageReplacementAllowed(options);
+  assertDirtyPaperReplacementAllowed(options);
   const fallbackName = typeof (document as { name?: unknown } | undefined)?.name === 'string'
     ? (document as { name: string }).name
     : DEFAULT_PROJECT_NAME;
@@ -270,6 +286,7 @@ export async function resetProjectDocument(
   options: ProjectDocumentReplacementOptions = {},
 ): Promise<void> {
   assertDirtyImageReplacementAllowed(options);
+  assertDirtyPaperReplacementAllowed(options);
   useFlowStore.getState().replaceFlowSnapshot({
     nodes: [],
     edges: [],

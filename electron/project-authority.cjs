@@ -48,6 +48,8 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
 
   /** The one authoritative project: immutable identity + monotonic accepted-save version. */
   let current = { authorityId: mint(), version: 1, filePath: undefined };
+  /** Canonical snapshot is coupled to `current`; adoption never reads main globals separately. */
+  let canonical = { filePath: undefined, scratchDirectoryPath: undefined, document: undefined };
   /** senderId (webContents id) -> the authority descriptor that renderer confirmed adopting. */
   const adoptions = new Map();
   /** Serializes every project mutation so validation and disk writes are atomic. */
@@ -74,7 +76,17 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
     };
   }
 
-  function authorizeSave(senderId, claim) {
+  function senderIsLive(isSenderLive) {
+    return typeof isSenderLive !== 'function' || isSenderLive();
+  }
+
+  function authorizeSave(senderId, claim, rendererEpoch = 0, isSenderLive) {
+    if (!senderIsLive(isSenderLive)) {
+      return buildRejection(
+        'sender-gone',
+        'This window was reloaded, navigated, or closed before its request completed, so saving was stopped.',
+      );
+    }
     if (!isClaimShape(claim)) {
       return buildRejection(
         'unopened',
@@ -99,7 +111,7 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
       );
     }
     const adopted = adoptions.get(senderId);
-    if (!adopted || adopted.authorityId !== current.authorityId || adopted.version !== current.version) {
+    if (!adopted || adopted.authorityId !== current.authorityId || adopted.version !== current.version || adopted.rendererEpoch !== rendererEpoch) {
       return buildRejection(
         'unauthorized',
         'This window has not confirmed adopting the current project state, so saving was stopped. '
@@ -109,8 +121,8 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
     return { ok: true };
   }
 
-  function recordAdoption(senderId) {
-    adoptions.set(senderId, { authorityId: current.authorityId, version: current.version });
+  function recordAdoption(senderId, rendererEpoch = 0) {
+    adoptions.set(senderId, { authorityId: current.authorityId, version: current.version, rendererEpoch });
   }
 
   return {
@@ -118,8 +130,10 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
     authorizeSave,
 
     /** Bind the remembered startup project before any window exists (no broadcast needed). */
-    commitStartup(filePath) {
-      current = { authorityId: mint(), version: 1, filePath };
+    commitStartup(snapshot = {}) {
+      if (typeof snapshot === 'string') snapshot = { filePath: snapshot };
+      current = { authorityId: mint(), version: 1, filePath: snapshot.filePath };
+      canonical = { ...canonical, ...snapshot, filePath: snapshot.filePath };
       return getCurrent();
     },
 
@@ -129,10 +143,20 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
      * renderer is NOT auto-adopted: it must hydrate the returned document and confirm, the
      * same as every other window.
      */
-    async openProject({ senderId, load }) {
+    async openProject({ senderId, rendererEpoch = 0, isSenderLive, load, publish }) {
       return runExclusive(async () => {
+        if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
         const loaded = await load();
+        if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
         current = { authorityId: mint(), version: 1, filePath: loaded.filePath };
+        canonical = {
+          filePath: loaded.filePath,
+          scratchDirectoryPath: loaded.scratchDirectoryPath,
+          document: loaded.document,
+        };
+        // Publication is deliberately synchronous: authority and visible canonical state change
+        // in one main-owned commit, after every awaited dialog/I/O preparation boundary.
+        if (publish) publish({ ...canonical, authority: getCurrent() });
         emit({ authority: getCurrent(), reason: 'open', initiatorWebContentsId: senderId });
         return { ...loaded, authority: getCurrent() };
       });
@@ -145,8 +169,8 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
      * A same-path save advances the version; a path rebind (first save of a blank project,
      * or Save As) mints a fresh identity at version 1. Only the writer is auto-adopted.
      */
-    async saveProject({ senderId, claim, resolveFilePath, write }) {
-      const precheck = authorizeSave(senderId, claim);
+    async saveProject({ senderId, rendererEpoch = 0, isSenderLive, claim, resolveFilePath, write, publish }) {
+      const precheck = authorizeSave(senderId, claim, rendererEpoch, isSenderLive);
       if (!precheck.ok) {
         return { canceled: false, rejected: precheck.rejected };
       }
@@ -155,19 +179,33 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
       if (!filePath) {
         return { canceled: true };
       }
+      if (!senderIsLive(isSenderLive)) {
+        const rejected = buildRejection('sender-gone', 'The requesting window is no longer live.');
+        return { canceled: false, rejected: rejected.rejected };
+      }
 
       return runExclusive(async () => {
-        const recheck = authorizeSave(senderId, claim);
+        const recheck = authorizeSave(senderId, claim, rendererEpoch, isSenderLive);
         if (!recheck.ok) {
           return { canceled: false, rejected: recheck.rejected };
         }
 
-        const written = await write(filePath);
+        const written = await write(filePath, () => senderIsLive(isSenderLive));
+        if (!senderIsLive(isSenderLive)) {
+          const rejected = buildRejection('sender-gone', 'The requesting window is no longer live.');
+          return { canceled: false, rejected: rejected.rejected };
+        }
         const rebinding = filePath !== current.filePath;
         current = rebinding
           ? { authorityId: mint(), version: 1, filePath }
           : { ...current, version: current.version + 1 };
-        recordAdoption(senderId);
+        canonical = {
+          filePath,
+          scratchDirectoryPath: written.scratchDirectoryPath,
+          document: written.document,
+        };
+        if (publish) publish({ ...canonical, authority: getCurrent() });
+        recordAdoption(senderId, rendererEpoch);
         emit({
           authority: getCurrent(),
           reason: rebinding ? 'save-as' : 'save',
@@ -182,13 +220,17 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
      * own stores before invoking this, so its state IS the new canonical blank snapshot and
      * it is adopted directly.
      */
-    async clearProject({ senderId, reset }) {
+    async clearProject({ senderId, rendererEpoch = 0, isSenderLive, reset, publish }) {
       return runExclusive(async () => {
+        if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
         if (reset) {
           await reset();
         }
+        if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
         current = { authorityId: mint(), version: 1, filePath: undefined };
-        recordAdoption(senderId);
+        canonical = { filePath: undefined, scratchDirectoryPath: undefined, document: undefined };
+        if (publish) publish({ ...canonical, authority: getCurrent() });
+        recordAdoption(senderId, rendererEpoch);
         emit({ authority: getCurrent(), reason: 'clear', initiatorWebContentsId: senderId });
         return { ok: true, authority: getCurrent() };
       });
@@ -198,21 +240,27 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
      * A renderer confirms it hydrated the claimed authority's canonical snapshot. Delayed
      * confirmations from before a switch/save are reported stale and grant nothing.
      */
-    confirmAdoption(senderId, claim) {
+    confirmAdoption(senderId, claim, rendererEpoch = 0, isSenderLive) {
+      if (!senderIsLive(isSenderLive)) return { ok: false, stale: true, current: getCurrent() };
       if (!isClaimShape(claim) || claim.authorityId !== current.authorityId || claim.version !== current.version) {
         return { ok: false, stale: true, current: getCurrent() };
       }
-      recordAdoption(senderId);
+      recordAdoption(senderId, rendererEpoch);
       return { ok: true, current: getCurrent() };
     },
 
     /** Canonical snapshot + authority for pull-based adoption after a change broadcast. */
-    buildAdoptResponse(getCanonical) {
-      return { authority: getCurrent(), ...getCanonical() };
+    buildAdoptResponse() {
+      return { authority: getCurrent(), ...canonical };
     },
 
     /** Forget a destroyed renderer's adoption record. */
     dropRenderer(senderId) {
+      adoptions.delete(senderId);
+    },
+
+    /** Reload/navigation/crash invalidates a claim even when Electron retains webContents.id. */
+    invalidateRenderer(senderId) {
       adoptions.delete(senderId);
     },
   };

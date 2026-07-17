@@ -1300,7 +1300,7 @@ function FlowApp() {
         }
 
         resetSourceLibraryNativeSyncTracking();
-        await resetProjectDocument({ allowDirtyImageReplacement: true });
+        await resetProjectDocument({ allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
         const clearResult = await bridge?.clearProjectPath();
         if (clearResult?.authority) {
           // This window's freshly reset stores are the new blank project's canonical state.
@@ -1385,12 +1385,12 @@ function FlowApp() {
             await authorityClient.adoptSnapshot(
               { authority: result.authority, filePath: result.filePath },
               async () => {
-                await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true });
+                await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
               },
             );
           } else {
             if (savedDocument) {
-              await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true });
+              await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
             }
             setNativeProjectPath(result.filePath);
           }
@@ -1424,12 +1424,12 @@ function FlowApp() {
             await authorityClient.adoptSnapshot(
               { authority: result.authority, filePath: result.filePath },
               async () => {
-                await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true });
+                await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
               },
             );
           } else {
             if (savedDocument) {
-              await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true });
+              await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
             }
             setNativeProjectPath(result.filePath);
           }

@@ -34,19 +34,26 @@ interface ProjectAuthorityGateway {
   commitStartup: (filePath: string | undefined) => NativeProjectAuthorityDescriptor;
   openProject: (request: {
     senderId: number;
+    rendererEpoch?: number;
+    isSenderLive?: () => boolean;
     load: () => Promise<{ canceled: false; filePath: string; document: unknown; scratchDirectoryPath?: string }>;
+    publish?: (snapshot: HarnessAdoptResult) => void;
   }) => Promise<HarnessProjectFileResult>;
   saveProject: (request: {
     senderId: number;
+    rendererEpoch?: number;
+    isSenderLive?: () => boolean;
     claim?: NativeProjectAuthorityDescriptor;
     resolveFilePath: (currentFilePath: string | undefined) => Promise<string | undefined> | string | undefined;
     write: (filePath: string) => Promise<{ canceled: false; filePath: string; document: unknown; scratchDirectoryPath?: string }>;
+    publish?: (snapshot: HarnessAdoptResult) => void;
   }) => Promise<HarnessProjectFileResult>;
-  clearProject: (request: { senderId: number; reset?: () => Promise<void> }) => Promise<{ ok: boolean; authority: NativeProjectAuthorityDescriptor }>;
-  confirmAdoption: (senderId: number, claim: unknown) => { ok: boolean; stale?: boolean; current: NativeProjectAuthorityDescriptor };
-  buildAdoptResponse: (getCanonical: () => Omit<HarnessAdoptResult, 'authority'>) => HarnessAdoptResult;
+  clearProject: (request: { senderId: number; reset?: () => Promise<void>; publish?: (snapshot: HarnessAdoptResult) => void }) => Promise<{ ok: boolean; authority: NativeProjectAuthorityDescriptor }>;
+  confirmAdoption: (senderId: number, claim: unknown, rendererEpoch?: number, isSenderLive?: () => boolean) => { ok: boolean; stale?: boolean; current: NativeProjectAuthorityDescriptor };
+  buildAdoptResponse: () => HarnessAdoptResult;
   authorizeSave: (senderId: number, claim: unknown) => { ok: true } | { ok: false; rejected: NativeProjectSaveRejection };
   dropRenderer: (senderId: number) => void;
+  invalidateRenderer: (senderId: number) => void;
 }
 
 interface ProjectAuthorityModule {
@@ -173,6 +180,11 @@ function createMainHarness(module: ProjectAuthorityModule, options: { startup?: 
       return gateway.openProject({
         senderId,
         load: () => openDocumentFromPath(filePath),
+        publish: ({ filePath: committedPath, document, scratchDirectoryPath }) => {
+          currentProjectPath = committedPath;
+          startupProject = document ? { filePath: committedPath!, document: document as HarnessDocument } : undefined;
+          void scratchDirectoryPath;
+        },
       });
     },
     // Mirrors ipcMain.handle('signal-loom:project-save').
@@ -188,6 +200,10 @@ function createMainHarness(module: ProjectAuthorityModule, options: { startup?: 
         claim,
         resolveFilePath: resolveFilePath ?? ((currentFilePath) => currentFilePath ?? '/projects/untitled.sloom'),
         write: (filePath) => writeDocumentToPath(filePath, document as HarnessDocument),
+        publish: ({ filePath: committedPath, document }) => {
+          currentProjectPath = committedPath;
+          startupProject = document ? { filePath: committedPath!, document: document as HarnessDocument } : undefined;
+        },
       });
     },
     // Mirrors ipcMain.handle('signal-loom:project-save-as') — always a dialog-chosen path.
@@ -199,6 +215,10 @@ function createMainHarness(module: ProjectAuthorityModule, options: { startup?: 
         claim,
         resolveFilePath: () => choosePath(),
         write: (filePath) => writeDocumentToPath(filePath, document as HarnessDocument),
+        publish: ({ filePath: committedPath, document }) => {
+          currentProjectPath = committedPath;
+          startupProject = document ? { filePath: committedPath!, document: document as HarnessDocument } : undefined;
+        },
       });
     },
     // Mirrors ipcMain.handle('signal-loom:clear-project-path').
@@ -209,14 +229,15 @@ function createMainHarness(module: ProjectAuthorityModule, options: { startup?: 
           currentProjectPath = undefined;
           startupProject = undefined;
         },
+        publish: () => {
+          currentProjectPath = undefined;
+          startupProject = undefined;
+        },
       });
     },
     // Mirrors ipcMain.handle('signal-loom:project-adopt').
     invokeAdopt(): HarnessAdoptResult {
-      return gateway.buildAdoptResponse(() => ({
-        filePath: currentProjectPath,
-        document: startupProject?.document,
-      }));
+      return gateway.buildAdoptResponse();
     },
     // Mirrors ipcMain.handle('signal-loom:project-confirm-adoption').
     invokeConfirmAdoption(senderId: number, claim: unknown) {
@@ -834,9 +855,104 @@ describe('desktop project authority arbitration (AUD-001, two independent render
     expect(result.rejected?.code).toBe('unopened');
     expect(main.writes).toHaveLength(0);
   });
+
+  it('keeps the canonical adoption snapshot coupled to authority while an Open is in flight', async () => {
+    const module = await loadProjectAuthorityModule();
+    const gateway = module.createProjectAuthority({ mintAuthorityId: (() => { let id = 0; return () => `auth-${++id}`; })() });
+    gateway.commitStartup({ filePath: '/projects/A.sloom', document: DOC_A });
+    const authorityA = gateway.getCurrent();
+    const load = createDeferred<{ canceled: false; filePath: string; document: HarnessDocument }>();
+    const opening = gateway.openProject({ senderId: 1, load: () => load.promise });
+
+    expect(gateway.buildAdoptResponse()).toMatchObject({ authority: authorityA, filePath: '/projects/A.sloom', document: DOC_A });
+    load.resolve({ canceled: false, filePath: '/projects/B.sloom', document: DOC_B });
+    await opening;
+    expect(gateway.buildAdoptResponse()).toMatchObject({ authority: gateway.getCurrent(), filePath: '/projects/B.sloom', document: DOC_B });
+  });
+
+  it('aborts a delayed Save As after its renderer is destroyed without writing N+1', async () => {
+    const module = await loadProjectAuthorityModule();
+    const gateway = module.createProjectAuthority({ mintAuthorityId: (() => { let id = 0; return () => `auth-${++id}`; })() });
+    gateway.commitStartup({ filePath: '/projects/A.sloom', document: DOC_A });
+    const claim = gateway.getCurrent();
+    let live = true;
+    expect(gateway.confirmAdoption(7, claim, 0, () => live).ok).toBe(true);
+    const dialog = createDeferred<string | undefined>();
+    let writes = 0;
+    const pending = gateway.saveProject({
+      senderId: 7,
+      rendererEpoch: 0,
+      isSenderLive: () => live,
+      claim,
+      resolveFilePath: () => dialog.promise,
+      write: async () => { writes += 1; return { canceled: false, filePath: '/projects/late.sloom', document: DOC_B }; },
+    });
+    live = false;
+    dialog.resolve('/projects/late.sloom');
+
+    const result = await pending;
+    expect(result.rejected?.code).toBe('sender-gone');
+    expect(writes).toBe(0);
+    expect(gateway.getCurrent()).toEqual(claim);
+  });
+
+  it('requires a fresh adoption after a reload even when the webContents id is reused', async () => {
+    const module = await loadProjectAuthorityModule();
+    const gateway = module.createProjectAuthority();
+    gateway.commitStartup({ filePath: '/projects/A.sloom', document: DOC_A });
+    const claim = gateway.getCurrent();
+    expect(gateway.confirmAdoption(5, claim, 0).ok).toBe(true);
+    gateway.invalidateRenderer(5);
+
+    expect(gateway.authorizeSave(5, claim, 1).rejected?.code).toBe('unauthorized');
+    expect(gateway.confirmAdoption(5, claim, 1).ok).toBe(true);
+  });
+
+  it('aborts a failed Save As before authority or canonical snapshot publication', async () => {
+    const module = await loadProjectAuthorityModule();
+    const gateway = module.createProjectAuthority();
+    gateway.commitStartup({ filePath: '/projects/A.sloom', document: DOC_A });
+    const claim = gateway.getCurrent();
+    gateway.confirmAdoption(1, claim);
+    const canonicalBefore = gateway.buildAdoptResponse();
+    let published = 0;
+
+    await expect(gateway.saveProject({
+      senderId: 1,
+      claim,
+      resolveFilePath: () => '/projects/B.sloom',
+      write: async () => { throw new Error('remember path failed'); },
+      publish: () => { published += 1; },
+    })).rejects.toThrow('remember path failed');
+
+    expect(published).toBe(0);
+    expect(gateway.getCurrent()).toEqual(claim);
+    expect(gateway.buildAdoptResponse()).toEqual(canonicalBefore);
+  });
 });
 
 describe('project authority renderer wiring source guards (AUD-001)', () => {
+  it('keeps native save/open preparation side-effect free until the authority transaction commits', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+    const saveBody = source.slice(source.indexOf('async function writeProjectDocument('), source.indexOf('async function backupExistingProjectBeforeOverwrite('));
+    const openBody = source.slice(source.indexOf('async function openProjectDocumentFromPath('), source.indexOf('/** Synchronous half of the authority commit:'));
+
+    // Sol's reproducer: a failed remember-path write currently observes a disk/canonical
+    // publication that happened first; Open has the same early global publication shape.
+    expect(saveBody.indexOf('await rememberProjectPath(filePath)')).toBeLessThan(saveBody.indexOf('await writeFile(filePath'));
+    expect(saveBody).not.toContain('setCurrentProjectAssetRoots(');
+    expect(openBody).not.toContain('setCurrentProjectAssetRoots(');
+    expect(source).toMatch(/function publishCommittedProjectSnapshot\([\s\S]{0,700}setCurrentProjectAssetRoots/);
+  });
+
+  it('invalidates authority adoption at every renderer epoch boundary, not only destruction', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+
+    expect(source).toMatch(/did-start-navigation[\s\S]{0,280}invalidateRendererAuthority/);
+    expect(source).toMatch(/render-process-gone[\s\S]{0,280}invalidateRendererAuthority/);
+    expect(source).toMatch(/destroyed[\s\S]{0,280}invalidateRendererAuthority/);
+  });
+
   it('preload exposes the adoption bridge and forwards save payloads with claims', () => {
     const source = readFileSync(join(process.cwd(), 'electron/preload.cjs'), 'utf8');
 

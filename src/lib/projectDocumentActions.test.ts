@@ -28,6 +28,7 @@ afterEach(() => {
   useFlowWorkspaceStore.getState().reset();
   useProjectUsageStore.getState().restoreSnapshot(undefined);
   useImageEditorStore.getState().restoreProjectSnapshot(undefined);
+  usePaperStore.getState().restoreSnapshot(undefined);
 });
 
 describe('restoreProjectDocument', () => {
@@ -85,6 +86,30 @@ describe('restoreProjectDocument', () => {
 
     await resetProjectDocument({ allowDirtyImageReplacement: true });
     expect(useImageEditorStore.getState().documents).toEqual([]);
+  });
+
+  it('fails closed before project replacement when an unsaved Paper document is active', async () => {
+    const paperStore = usePaperStore.getState();
+    paperStore.addPage();
+    expect(usePaperStore.getState().undoStack).not.toHaveLength(0);
+    const before = usePaperStore.getState().document;
+
+    await expect(restoreProjectDocument({
+      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      id: 'incoming-paper-project',
+      name: 'Incoming Paper',
+      savedAt: 1,
+      flow: { version: 3, nodes: [], edges: [] },
+    })).rejects.toThrow('active Paper document');
+
+    expect(usePaperStore.getState().document).toEqual(before);
+    await restoreProjectDocument({
+      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      id: 'incoming-paper-project',
+      name: 'Incoming Paper',
+      savedAt: 1,
+      flow: { version: 3, nodes: [], edges: [] },
+    }, { allowDirtyPaperReplacement: true });
   });
 
   it('serializes Image documents as a clean saved baseline without clearing live dirty state', async () => {

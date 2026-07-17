@@ -118,6 +118,7 @@ let currentProjectPath = undefined;
 let currentScratchDirectoryPath = undefined;
 let currentAssetCapabilityRootPaths = [];
 let startupProject = undefined;
+const rendererAuthorityEpochs = new Map();
 let activeWorkspace = 'flow';
 let keyboardShortcuts = {};
 // Interface language for menu labels (mirrors the renderer's settingsStore.locale, pushed over IPC).
@@ -566,6 +567,19 @@ function broadcastProjectAuthorityChanged(event) {
   broadcastProjectPathChanged();
 }
 
+function getRendererAuthorityEpoch(webContentsId) {
+  return rendererAuthorityEpochs.get(webContentsId) ?? 0;
+}
+
+function invalidateRendererAuthority(webContentsId) {
+  rendererAuthorityEpochs.set(webContentsId, getRendererAuthorityEpoch(webContentsId) + 1);
+  projectAuthority.invalidateRenderer(webContentsId);
+}
+
+function isLiveAuthoritySender(sender, rendererEpoch) {
+  return Boolean(sender && !sender.isDestroyed() && getRendererAuthorityEpoch(sender.id) === rendererEpoch);
+}
+
 // Authoritative project identity/version arbitration (AUD-001): every open/save/clear commits
 // through this gateway, and saves from renderers that never adopted the current identity and
 // version are rejected before any disk IO.
@@ -574,7 +588,11 @@ const projectAuthority = createProjectAuthority({
 });
 
 function commitStartupProjectAuthority() {
-  return projectAuthority.commitStartup(currentProjectPath);
+  return projectAuthority.commitStartup({
+    filePath: currentProjectPath,
+    scratchDirectoryPath: currentScratchDirectoryPath,
+    document: startupProject?.document,
+  });
 }
 
 function createEmptySourceLibrarySnapshot() {
@@ -1011,7 +1029,13 @@ function createWorkspaceWindow(workspace = 'flow') {
 
   const workspaceWebContentsId = workspaceWindow.webContents.id;
   workspaceWindow.webContents.once('destroyed', () => {
-    projectAuthority.dropRenderer(workspaceWebContentsId);
+    invalidateRendererAuthority(workspaceWebContentsId);
+  });
+  workspaceWindow.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
+    if (isMainFrame) invalidateRendererAuthority(workspaceWebContentsId);
+  });
+  workspaceWindow.webContents.on('render-process-gone', () => {
+    invalidateRendererAuthority(workspaceWebContentsId);
   });
 
   workspaceWindow.webContents.on('did-create-window', (childWindow, details) => {
@@ -1291,25 +1315,29 @@ async function chooseProjectSavePath(existingPath, parentWindow) {
   return ensureSignalLoomProjectExtension(result.filePath);
 }
 
-async function writeProjectDocument(filePath, document) {
-  await mkdir(dirname(filePath), { recursive: true });
-  const prepared = await prepareProjectDocumentForNativeSave(filePath, document);
-  await backupExistingProjectBeforeOverwrite(filePath);
-  await writeFile(filePath, `${JSON.stringify(prepared.document, null, 2)}\n`, 'utf8');
-  setCurrentProjectAssetRoots(filePath, prepared.document, prepared.scratchDirectoryPath);
-  startupProject = {
-    canceled: false,
-    filePath,
-    scratchDirectoryPath: currentScratchDirectoryPath,
-    document: prepared.document,
+async function writeProjectDocument(filePath, document, isSenderLive = () => true) {
+  const assertSenderLive = () => {
+    if (!isSenderLive()) throw new Error('The requesting renderer is no longer live.');
   };
-  await syncSourceLibraryFromDocument(prepared.document, { broadcast: true });
+  assertSenderLive();
+  await mkdir(dirname(filePath), { recursive: true });
+  assertSenderLive();
+  const prepared = await prepareProjectDocumentForNativeSave(filePath, document);
+  assertSenderLive();
+  await backupExistingProjectBeforeOverwrite(filePath);
+  assertSenderLive();
+  // Make the restart record durable before the target is touched. If remembering fails, no
+  // project bytes or canonical in-memory state have been changed.
   await rememberProjectPath(filePath);
+  assertSenderLive();
+  await writeFile(filePath, `${JSON.stringify(prepared.document, null, 2)}\n`, 'utf8');
+  assertSenderLive();
+  await syncSourceLibraryFromDocument(prepared.document, { broadcast: true });
 
   return {
     canceled: false,
     filePath,
-    scratchDirectoryPath: currentScratchDirectoryPath,
+    scratchDirectoryPath: prepared.scratchDirectoryPath,
     document: prepared.document,
   };
 }
@@ -1332,25 +1360,39 @@ async function backupExistingProjectBeforeOverwrite(filePath) {
   await copyFile(filePath, backupPath);
 }
 
-async function openProjectDocumentFromPath(filePath) {
-  const contents = await readFile(filePath, 'utf8');
-  const prepared = await prepareProjectDocumentForNativeOpen(filePath, parseProjectDocumentJson(contents));
-  setCurrentProjectAssetRoots(filePath, prepared.document, prepared.scratchDirectoryPath);
-  startupProject = {
-    canceled: false,
-    filePath,
-    scratchDirectoryPath: currentScratchDirectoryPath,
-    document: prepared.document,
+async function openProjectDocumentFromPath(filePath, isSenderLive = () => true) {
+  const assertSenderLive = () => {
+    if (!isSenderLive()) throw new Error('The requesting renderer is no longer live.');
   };
+  assertSenderLive();
+  const contents = await readFile(filePath, 'utf8');
+  assertSenderLive();
+  const prepared = await prepareProjectDocumentForNativeOpen(filePath, parseProjectDocumentJson(contents));
+  assertSenderLive();
   await syncSourceLibraryFromDocument(prepared.document, { broadcast: true });
+  assertSenderLive();
   await rememberProjectPath(filePath);
+  assertSenderLive();
 
   return {
     canceled: false,
     filePath,
-    scratchDirectoryPath: currentScratchDirectoryPath,
+    scratchDirectoryPath: prepared.scratchDirectoryPath,
     document: prepared.document,
   };
+}
+
+/** Synchronous half of the authority commit: never call this during preparation/I/O. */
+function publishCommittedProjectSnapshot(snapshot) {
+  setCurrentProjectAssetRoots(snapshot.filePath, snapshot.document, snapshot.scratchDirectoryPath);
+  startupProject = snapshot.document
+    ? {
+      canceled: false,
+      filePath: snapshot.filePath,
+      scratchDirectoryPath: snapshot.scratchDirectoryPath,
+      document: snapshot.document,
+    }
+    : undefined;
 }
 
 async function getNativeFilePathFromAssetUrl(assetUrl) {
@@ -2590,23 +2632,30 @@ function installIpcHandlers() {
   });
 
   ipcMain.handle('signal-loom:clear-project-path', async (event) => {
+    const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
     return projectAuthority.clearProject({
       senderId: event.sender.id,
+      rendererEpoch,
+      isSenderLive: () => isLiveAuthoritySender(event.sender, rendererEpoch),
       reset: async () => {
-        setCurrentProjectAssetRoots(undefined, undefined, undefined);
-        startupProject = undefined;
         await resetSourceLibrarySnapshot({ broadcast: true });
-        void forgetRememberedProjectPath().catch(() => undefined);
+        await forgetRememberedProjectPath();
       },
+      publish: publishCommittedProjectSnapshot,
     });
   });
 
   ipcMain.handle('signal-loom:project-open', async (event) => {
+    const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
+    const isSenderLive = () => isLiveAuthoritySender(event.sender, rendererEpoch);
     const automationPath = getAutomationProjectOpenPath(process.env);
     if (automationPath) {
       return projectAuthority.openProject({
         senderId: event.sender.id,
-        load: () => openProjectDocumentFromPath(automationPath),
+        rendererEpoch,
+        isSenderLive,
+        load: () => openProjectDocumentFromPath(automationPath, isSenderLive),
+        publish: publishCommittedProjectSnapshot,
       });
     }
 
@@ -2619,18 +2668,27 @@ function installIpcHandlers() {
     if (result.canceled || result.filePaths.length === 0) {
       return { canceled: true };
     }
+    if (!isSenderLive()) {
+      return { canceled: false, rejected: { code: 'sender-gone', message: 'The requesting window is no longer live.', current: projectAuthority.getCurrent() } };
+    }
 
     return projectAuthority.openProject({
       senderId: event.sender.id,
-      load: () => openProjectDocumentFromPath(result.filePaths[0]),
+      rendererEpoch,
+      isSenderLive,
+      load: () => openProjectDocumentFromPath(result.filePaths[0], isSenderLive),
+      publish: publishCommittedProjectSnapshot,
     });
   });
 
   ipcMain.handle('signal-loom:project-save', async (event, payload) => {
+    const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
     const { document, claim } = normalizeProjectSavePayload(payload);
 
     return projectAuthority.saveProject({
       senderId: event.sender.id,
+      rendererEpoch,
+      isSenderLive: () => isLiveAuthoritySender(event.sender, rendererEpoch),
       claim,
       resolveFilePath: (currentFilePath) => {
         const automationPath = getAutomationProjectSavePath(process.env);
@@ -2641,31 +2699,38 @@ function installIpcHandlers() {
           ? currentFilePath
           : chooseProjectSavePath(currentFilePath, getIpcWindow(event));
       },
-      write: (filePath) => writeProjectDocument(filePath, document),
+      write: (filePath, isLiveImmediatelyBeforeWrite) => writeProjectDocument(filePath, document, isLiveImmediatelyBeforeWrite),
+      publish: publishCommittedProjectSnapshot,
     });
   });
 
   ipcMain.handle('signal-loom:project-save-as', async (event, payload) => {
+    const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
     const { document, claim } = normalizeProjectSavePayload(payload);
 
     return projectAuthority.saveProject({
       senderId: event.sender.id,
+      rendererEpoch,
+      isSenderLive: () => isLiveAuthoritySender(event.sender, rendererEpoch),
       claim,
       resolveFilePath: (currentFilePath) => chooseProjectSavePath(currentFilePath, getIpcWindow(event)),
-      write: (filePath) => writeProjectDocument(filePath, document),
+      write: (filePath, isLiveImmediatelyBeforeWrite) => writeProjectDocument(filePath, document, isLiveImmediatelyBeforeWrite),
+      publish: publishCommittedProjectSnapshot,
     });
   });
 
   ipcMain.handle('signal-loom:project-adopt', async () => {
-    return projectAuthority.buildAdoptResponse(() => ({
-      filePath: currentProjectPath,
-      scratchDirectoryPath: currentScratchDirectoryPath,
-      document: startupProject?.document,
-    }));
+    return projectAuthority.buildAdoptResponse();
   });
 
   ipcMain.handle('signal-loom:project-confirm-adoption', async (event, claim) => {
-    return projectAuthority.confirmAdoption(event.sender.id, claim);
+    const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
+    return projectAuthority.confirmAdoption(
+      event.sender.id,
+      claim,
+      rendererEpoch,
+      () => isLiveAuthoritySender(event.sender, rendererEpoch),
+    );
   });
 
   ipcMain.handle('signal-loom:image-open', async (event) => {
