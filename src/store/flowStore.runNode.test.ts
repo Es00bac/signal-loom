@@ -6,11 +6,14 @@ import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
 import type { ExecutionContext } from '../lib/flowExecution';
 import { executeNodeRequest, hashExecutionParameters } from '../lib/flowExecution';
 import { buildListItemTargetHandle } from '../lib/listNodes';
+import { LOOP_BREAK_TARGET_HANDLE } from '../lib/loopControl';
 import { buildMinimalIsoBmffFixture } from '../lib/isoBmffResumeFixtures.testSupport';
 import { useFlowStore } from './flowStore';
 import { useConfirmationStore } from './confirmationStore';
 import { useSettingsStore } from './settingsStore';
 import { useSourceBinStore } from './sourceBinStore';
+import { useFlowWorkspaceStore } from './flowWorkspaceStore';
+import { useProjectUsageStore } from './projectUsageStore';
 
 const capturedContexts: {
   nodeId: string;
@@ -51,6 +54,24 @@ function videoResultDataUrl(): string {
   let binary = '';
   for (const byte of buildMinimalIsoBmffFixture()) binary += String.fromCharCode(byte);
   return `data:video/mp4;base64,${btoa(binary)}`;
+}
+
+function httpImageResponse(dataUrl: string, etag: string): Response {
+  const payload = dataUrl.slice(dataUrl.indexOf(',') + 1);
+  const bytes = Uint8Array.from(atob(payload), (character) => character.charCodeAt(0));
+  return new Response(bytes.buffer, {
+    headers: {
+      'content-type': 'image/png',
+      'content-length': String(bytes.byteLength),
+      etag,
+    },
+  });
+}
+
+function deferredValue<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
 }
 
 vi.mock('../lib/flowExecution', async () => {
@@ -252,6 +273,7 @@ describe('runNode list expansion regression (FBL-017 follow-up)', () => {
       requestConfirmation: requestConfirmationSpy,
       respond: () => {},
     });
+    useProjectUsageStore.getState().restoreSnapshot();
     capturedContexts.length = 0;
   });
 
@@ -266,7 +288,21 @@ describe('runNode list expansion regression (FBL-017 follow-up)', () => {
       },
       providerSettings: { ...baselineRuntimeSettings.providerSettings },
     });
+    vi.unstubAllGlobals();
     vi.clearAllMocks();
+    vi.mocked(executeNodeRequest).mockImplementation(async (node: AppNode, context: ExecutionContext, settings: RuntimeSettingsSnapshot) => {
+      capturedContexts.push({
+        nodeId: node.id, context, index: capturedContexts.length, provider: node.data.provider, modelId: node.data.modelId, settings,
+      });
+      const resultType = node.type === 'imageGen' ? 'image' : node.type === 'videoGen' ? 'video' : 'text';
+      return {
+        result: resultType === 'image'
+          ? imageResultDataUrl(node.id, capturedContexts.length)
+          : resultType === 'video' ? videoResultDataUrl() : `result-${node.id}-${capturedContexts.length}`,
+        resultType,
+        statusMessage: 'Done',
+      };
+    });
   });
 
   it('runs a text envelope prompt in allCombinations exactly N times, not N squared', async () => {
@@ -485,6 +521,158 @@ describe('runNode list expansion regression (FBL-017 follow-up)', () => {
       expect.stringContaining('3 unknown-rate models'),
       'Final Run Cost Confirmation',
     );
+  });
+
+  it('B: approves the false Vision Verify loop path before dispatching all three paid root calls', async () => {
+    const prompts = createTextEnvelopeNode('prompts', ['one', 'two', 'three']);
+    const images = createImageEnvelopeNode('images', [imageResultDataUrl('verify', 1), imageResultDataUrl('verify', 2), imageResultDataUrl('verify', 3)]);
+    const verify = createNode('verify', 'visionVerifyNode', {
+      modelId: 'gemini-3.5-flash', listLoopMode: 'allCombinations', result: false, resultType: 'boolean',
+    });
+    const stop = createNode('stop', 'loopBreakNode');
+    const root = createNode('root', 'imageGen', {
+      mediaMode: 'generate', provider: 'bfl', modelId: 'flux-2-pro', listLoopMode: 'allCombinations',
+    });
+    vi.mocked(executeNodeRequest).mockImplementation(async (node, context, settings) => {
+      capturedContexts.push({ nodeId: node.id, context, index: capturedContexts.length, provider: node.data.provider, modelId: node.data.modelId, settings });
+      if (node.type === 'visionVerifyNode') return { result: false, resultType: 'boolean', statusMessage: 'No match' };
+      return { result: imageResultDataUrl(node.id, capturedContexts.length), resultType: 'image', mimeType: 'image/png', statusMessage: 'Done' };
+    });
+    useFlowStore.setState({
+      nodes: [prompts, images, verify, stop, root],
+      edges: [
+        { id: 'images-verify', source: images.id, target: verify.id, targetHandle: 'image' },
+        { id: 'verify-stop', source: verify.id, target: stop.id, targetHandle: 'condition' },
+        { id: 'stop-root', source: stop.id, target: root.id, targetHandle: LOOP_BREAK_TARGET_HANDLE },
+        { id: 'prompts-root', source: prompts.id, target: root.id },
+      ],
+    });
+
+    await useFlowStore.getState().runNode(root.id);
+
+    expect(useFlowStore.getState().nodes.find((node) => node.id === root.id)?.data.error).toBeUndefined();
+    expect(requestConfirmationSpy).toHaveBeenCalledTimes(1);
+    expect(plannedProviderCallCount(requestConfirmationSpy.mock.calls[0][0])).toBe(6);
+    expect(capturedContexts.filter((call) => call.nodeId === verify.id)).toHaveLength(3);
+    expect(capturedContexts.filter((call) => call.nodeId === root.id)).toHaveLength(3);
+  });
+
+  it('projects no list axis through a direct Atlas Sequential provider connection', async () => {
+    const upstream = createNode('seedream', 'imageGen', {
+      mediaMode: 'generate', provider: 'atlas', modelId: 'bytedance/seedream-v4.5/sequential',
+      atlasParams: { max_images: 3 }, prompt: 'three studies',
+    });
+    const prompts = createTextEnvelopeNode('prompts', ['first treatment', 'second treatment']);
+    const root = createNode('root', 'imageGen', {
+      mediaMode: 'generate', provider: 'bfl', modelId: 'flux-2-pro', listLoopMode: 'allCombinations',
+    });
+    vi.mocked(executeNodeRequest).mockImplementation(async (node, context, settings) => {
+      capturedContexts.push({ nodeId: node.id, context, index: capturedContexts.length, provider: node.data.provider, modelId: node.data.modelId, settings });
+      const result = imageResultDataUrl(node.id, capturedContexts.length);
+      return node.id === upstream.id
+        ? { result, resultType: 'image', mimeType: 'image/png', statusMessage: 'Three images', additionalResults: [
+          { result: imageResultDataUrl(node.id, 2), mimeType: 'image/png' }, { result: imageResultDataUrl(node.id, 3), mimeType: 'image/png' },
+        ] }
+        : { result, resultType: 'image', mimeType: 'image/png', statusMessage: 'Done' };
+    });
+    useFlowStore.setState({ nodes: [upstream, prompts, root], edges: [
+      { id: 'seedream-root', source: upstream.id, target: root.id, targetHandle: 'image-edit-source' },
+      { id: 'prompts-root', source: prompts.id, target: root.id },
+    ] });
+
+    await useFlowStore.getState().runNode(root.id);
+
+    expect(useFlowStore.getState().nodes.find((node) => node.id === root.id)?.data.error).toBeUndefined();
+    expect(requestConfirmationSpy).toHaveBeenCalledTimes(1);
+    expect(plannedProviderCallCount(requestConfirmationSpy.mock.calls[0][0])).toBe(3);
+    expect(capturedContexts).toHaveLength(3);
+    expect(capturedContexts.filter((call) => call.nodeId === upstream.id)).toHaveLength(1);
+    expect(capturedContexts.filter((call) => call.nodeId === root.id)).toHaveLength(2);
+    expect(useFlowStore.getState().nodes.find((node) => node.id === root.id)?.data).toMatchObject({ error: undefined, isRunning: false });
+    expect(useFlowStore.getState().nodes.find((node) => node.id === root.id)?.data.result).toBeDefined();
+  });
+
+  it('projects one Atlas Sequential Envelope axis into exactly three paid root calls', async () => {
+    const upstream = createNode('seedream', 'imageGen', {
+      mediaMode: 'generate', provider: 'atlas', modelId: 'bytedance/seedream-v4.5/sequential',
+      atlasParams: { max_images: 3 }, prompt: 'three studies',
+    });
+    const envelope = createNode('images', 'envelope', { envelopeItemKind: 'image' });
+    const root = createNode('root', 'imageGen', {
+      mediaMode: 'generate', provider: 'bfl', modelId: 'flux-2-pro', listLoopMode: 'allCombinations', prompt: 'refine',
+    });
+    vi.mocked(executeNodeRequest).mockImplementation(async (node, context, settings) => {
+      capturedContexts.push({ nodeId: node.id, context, index: capturedContexts.length, provider: node.data.provider, modelId: node.data.modelId, settings });
+      const result = imageResultDataUrl(node.id, capturedContexts.length);
+      return node.id === upstream.id
+        ? { result, resultType: 'image', mimeType: 'image/png', statusMessage: 'Three images', additionalResults: [
+          { result: imageResultDataUrl(node.id, 2), mimeType: 'image/png' }, { result: imageResultDataUrl(node.id, 3), mimeType: 'image/png' },
+        ] }
+        : { result, resultType: 'image', mimeType: 'image/png', statusMessage: 'Done' };
+    });
+    useFlowStore.setState({ nodes: [upstream, envelope, root], edges: [
+      { id: 'upstream-envelope', source: upstream.id, target: envelope.id },
+      { id: 'envelope-root', source: envelope.id, target: root.id, targetHandle: 'image-edit-source' },
+    ] });
+
+    await useFlowStore.getState().runNode(root.id);
+
+    expect(requestConfirmationSpy).toHaveBeenCalledTimes(1);
+    expect(plannedProviderCallCount(requestConfirmationSpy.mock.calls[0][0])).toBe(4);
+    expect(capturedContexts).toHaveLength(4);
+    expect(capturedContexts.filter((call) => call.nodeId === upstream.id)).toHaveLength(1);
+    expect(capturedContexts.filter((call) => call.nodeId === root.id)).toHaveLength(3);
+    expect(useFlowStore.getState().nodes.find((node) => node.id === root.id)?.data).toMatchObject({ error: undefined, isRunning: false });
+    expect(useFlowStore.getState().nodes.find((node) => node.id === root.id)?.data.result).toBeDefined();
+  });
+
+  it('projects two independent Atlas Sequential Envelope axes as one exact Cartesian product', async () => {
+    const left = createNode('left-seedream', 'imageGen', {
+      mediaMode: 'generate', provider: 'atlas', modelId: 'bytedance/seedream-v4.5/sequential',
+      atlasParams: { max_images: 3 }, prompt: 'left studies',
+    });
+    const right = createNode('right-seedream', 'imageGen', {
+      mediaMode: 'generate', provider: 'atlas', modelId: 'bytedance/seedream-v4.5/sequential',
+      atlasParams: { max_images: 3 }, prompt: 'right studies',
+    });
+    const leftEnvelope = createNode('left-images', 'envelope', { envelopeItemKind: 'image' });
+    const rightEnvelope = createNode('right-images', 'envelope', { envelopeItemKind: 'image' });
+    const prompts = createTextEnvelopeNode('prompts', ['first treatment', 'second treatment']);
+    const root = createNode('root', 'imageGen', {
+      mediaMode: 'generate', provider: 'bfl', modelId: 'flux-2-pro', listLoopMode: 'allCombinations',
+    });
+    vi.mocked(executeNodeRequest).mockImplementation(async (node, context, settings) => {
+      capturedContexts.push({ nodeId: node.id, context, index: capturedContexts.length, provider: node.data.provider, modelId: node.data.modelId, settings });
+      const result = node.id === left.id
+        ? imageResultDataUrl(node.id, 1)
+        : node.id === right.id
+          ? imageResultDataUrl(node.id, 11)
+          : imageResultDataUrl(node.id, capturedContexts.length);
+      return node.id === left.id || node.id === right.id
+        ? { result, resultType: 'image', mimeType: 'image/png', statusMessage: 'Three images', additionalResults: [
+          { result: imageResultDataUrl(node.id, node.id === left.id ? 2 : 12), mimeType: 'image/png' },
+          { result: imageResultDataUrl(node.id, node.id === left.id ? 3 : 13), mimeType: 'image/png' },
+        ] }
+        : { result, resultType: 'image', mimeType: 'image/png', statusMessage: 'Done' };
+    });
+    useFlowStore.setState({ nodes: [left, right, leftEnvelope, rightEnvelope, prompts, root], edges: [
+      { id: 'left-envelope', source: left.id, target: leftEnvelope.id },
+      { id: 'right-envelope', source: right.id, target: rightEnvelope.id },
+      { id: 'left-root', source: leftEnvelope.id, target: root.id, targetHandle: 'image-edit-source' },
+      { id: 'right-root', source: rightEnvelope.id, target: root.id, targetHandle: 'image-reference-1' },
+      { id: 'prompts-root', source: prompts.id, target: root.id },
+    ] });
+
+    await useFlowStore.getState().runNode(root.id);
+
+    expect(requestConfirmationSpy).toHaveBeenCalledTimes(1);
+    expect(plannedProviderCallCount(requestConfirmationSpy.mock.calls[0][0])).toBe(20);
+    expect(capturedContexts).toHaveLength(20);
+    expect(capturedContexts.filter((call) => call.nodeId === left.id)).toHaveLength(1);
+    expect(capturedContexts.filter((call) => call.nodeId === right.id)).toHaveLength(1);
+    expect(capturedContexts.filter((call) => call.nodeId === root.id)).toHaveLength(18);
+    expect(useFlowStore.getState().nodes.find((node) => node.id === root.id)?.data).toMatchObject({ error: undefined, isRunning: false });
+    expect(useFlowStore.getState().nodes.find((node) => node.id === root.id)?.data.result).toBeDefined();
   });
 
   it('declining the final plan prevents both a fresh paid Text dependency and its paid target', async () => {
@@ -925,16 +1113,15 @@ describe('runNode list expansion regression (FBL-017 follow-up)', () => {
       return { shared, target };
     }
 
-    it('feeds a valid textual dependency resume downstream without another dependency call', async () => {
+    it('reruns a paid textual dependency even when a valid Source Bin item matches it', async () => {
       const { shared, target } = await prepareTextDependencyResume('cached usable dependency');
 
       await useFlowStore.getState().runNode(target.id);
 
-      expect(capturedContexts.map((record) => record.nodeId)).toEqual([target.id]);
-      expect(capturedContexts.some((record) => record.nodeId === shared.id)).toBe(false);
-      expect(capturedContexts[0].context.prompt).toBe('cached usable dependency');
+      expect(capturedContexts.map((record) => record.nodeId)).toEqual([shared.id, target.id]);
+      expect(capturedContexts[1].context.prompt).toBe('result-shared-text-1');
       expect(requestConfirmationSpy).toHaveBeenCalledTimes(1);
-      expect(requestConfirmationSpy.mock.calls[0][0]).toContain('1 provider call');
+      expect(plannedProviderCallCount(requestConfirmationSpy.mock.calls[0][0])).toBe(2);
     });
 
     it('reruns an empty textual dependency cache before building the downstream envelope', async () => {
@@ -1188,6 +1375,142 @@ describe('runNode list expansion regression (FBL-017 follow-up)', () => {
       expect(requestConfirmationSpy.mock.calls[1][0]).toContain('2 provider calls');
       expect(capturedContexts).toHaveLength(2);
     });
+
+    it('C1: re-plans and re-confirms when a partially resumed HTTP Source Library item changes after final consent', async () => {
+      const prompts = createTextEnvelopeNode('prompts', ['one', 'two', 'three']);
+      const target = createNode('target', 'imageGen', {
+        mediaMode: 'generate', provider: 'bfl', modelId: 'flux-2-pro', listLoopMode: 'allCombinations',
+      });
+      useFlowStore.setState({
+        nodes: [prompts, target],
+        edges: [{ id: 'prompts-target', source: prompts.id, target: target.id }],
+      });
+      await useFlowStore.getState().runNode(target.id);
+      const generated = useSourceBinStore.getState().getAllItems();
+      expect(generated).toHaveLength(3);
+
+      const httpResume = generated[1]!;
+      const httpUrl = 'https://assets.example.test/resume-race.png';
+      patchSourceBinItem(httpResume.id, { assetUrl: httpUrl });
+      useSourceBinStore.getState().removeItem(generated[0]!.id);
+
+      const handoffValidationStarted = deferredValue<void>();
+      const handoffValidation = deferredValue<Response>();
+      const validators: string[] = [];
+      const before = imageResultDataUrl('before', 1);
+      const after = imageResultDataUrl('after', 2);
+      let fetchCount = 0;
+      vi.stubGlobal('fetch', vi.fn(() => {
+        fetchCount += 1;
+        if (fetchCount === 1) {
+          validators.push('before');
+          return Promise.resolve(httpImageResponse(before, '"before"'));
+        }
+        if (fetchCount === 2) {
+          validators.push('after');
+          handoffValidationStarted.resolve();
+          return handoffValidation.promise;
+        }
+        validators.push('after');
+        return Promise.resolve(httpImageResponse(after, '"after"'));
+      }));
+      requestConfirmationSpy.mockClear();
+      requestConfirmationSpy.mockResolvedValue(true);
+      vi.mocked(executeNodeRequest).mockClear();
+      vi.mocked(executeNodeRequest).mockResolvedValue({
+        result: imageResultDataUrl('paid-after-replan', 1),
+        resultType: 'image',
+        statusMessage: 'Paid result',
+        usage: {
+          source: 'actual',
+          confidence: 'fixed',
+          provider: 'bfl',
+          modelId: 'flux-2-pro',
+          costUsd: 0.012,
+        },
+      });
+      useProjectUsageStore.getState().restoreSnapshot();
+
+      const run = useFlowStore.getState().runNode(target.id);
+      await handoffValidationStarted.promise;
+      expect(requestConfirmationSpy).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(executeNodeRequest)).not.toHaveBeenCalled();
+      handoffValidation.resolve(httpImageResponse(after, '"after"'));
+      await run;
+
+      expect(requestConfirmationSpy).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(executeNodeRequest)).toHaveBeenCalledTimes(1);
+      expect(fetchCount).toBe(5);
+      expect(validators).toEqual(['before', 'after', 'after', 'after', 'after']);
+      const finalTarget = useFlowStore.getState().nodes.find((node) => node.id === target.id);
+      expect(finalTarget?.data).toMatchObject({ isRunning: false, error: undefined });
+      expect(finalTarget?.data.result).toBeDefined();
+      expect(finalTarget?.data.envelopeItems).toHaveLength(3);
+      expect(finalTarget?.data.envelopeItems?.some((item) => item.sourceBinItemId === httpResume.id && item.value === httpUrl)).toBe(true);
+      expect(useProjectUsageStore.getState().ledger.entries).toHaveLength(1);
+      expect(useProjectUsageStore.getState().ledger.entries[0]?.costUsd).toBe(0.012);
+      const workspaceId = useFlowWorkspaceStore.getState().hydratedWorkspaceId;
+      expect(useFlowWorkspaceStore.getState().getActiveFlowRunId(workspaceId, target.id)).toBeUndefined();
+    });
+
+    it('C2: re-plans a fully resumed no-dialog run when its HTTP Source Library identity changes at the handoff', async () => {
+      const prompts = createTextEnvelopeNode('prompts', ['one', 'two', 'three']);
+      const target = createNode('target', 'imageGen', {
+        mediaMode: 'generate', provider: 'bfl', modelId: 'flux-2-pro', listLoopMode: 'allCombinations',
+      });
+      useFlowStore.setState({
+        nodes: [prompts, target],
+        edges: [{ id: 'prompts-target', source: prompts.id, target: target.id }],
+      });
+      await useFlowStore.getState().runNode(target.id);
+      const generated = useSourceBinStore.getState().getAllItems();
+      expect(generated).toHaveLength(3);
+
+      const httpResume = generated[1]!;
+      const httpUrl = 'https://assets.example.test/full-resume-race.png';
+      patchSourceBinItem(httpResume.id, { assetUrl: httpUrl });
+      const handoffValidationStarted = deferredValue<void>();
+      const handoffValidation = deferredValue<Response>();
+      const validators: string[] = [];
+      const before = imageResultDataUrl('before', 1);
+      const after = imageResultDataUrl('after', 2);
+      let fetchCount = 0;
+      vi.stubGlobal('fetch', vi.fn(() => {
+        fetchCount += 1;
+        if (fetchCount === 1) {
+          validators.push('before');
+          return Promise.resolve(httpImageResponse(before, '"before"'));
+        }
+        if (fetchCount === 2) {
+          validators.push('after');
+          handoffValidationStarted.resolve();
+          return handoffValidation.promise;
+        }
+        validators.push('after');
+        return Promise.resolve(httpImageResponse(after, '"after"'));
+      }));
+      requestConfirmationSpy.mockClear();
+      vi.mocked(executeNodeRequest).mockClear();
+      useProjectUsageStore.getState().restoreSnapshot();
+
+      const run = useFlowStore.getState().runNode(target.id);
+      await handoffValidationStarted.promise;
+      handoffValidation.resolve(httpImageResponse(after, '"after"'));
+      await run;
+
+      expect(requestConfirmationSpy).not.toHaveBeenCalled();
+      expect(vi.mocked(executeNodeRequest)).not.toHaveBeenCalled();
+      expect(fetchCount).toBe(5);
+      expect(validators).toEqual(['before', 'after', 'after', 'after', 'after']);
+      const finalTarget = useFlowStore.getState().nodes.find((node) => node.id === target.id);
+      expect(finalTarget?.data).toMatchObject({ isRunning: false, error: undefined });
+      expect(finalTarget?.data.result).toBeDefined();
+      expect(finalTarget?.data.envelopeItems).toHaveLength(3);
+      expect(finalTarget?.data.envelopeItems?.some((item) => item.sourceBinItemId === httpResume.id && item.value === httpUrl)).toBe(true);
+      expect(useProjectUsageStore.getState().ledger.entries).toHaveLength(0);
+      const workspaceId = useFlowWorkspaceStore.getState().hydratedWorkspaceId;
+      expect(useFlowWorkspaceStore.getState().getActiveFlowRunId(workspaceId, target.id)).toBeUndefined();
+    });
   });
 
   describe('diamond dependency identity', () => {
@@ -1262,7 +1585,7 @@ describe('runNode list expansion regression (FBL-017 follow-up)', () => {
         .toEqual(sharedResults);
     });
 
-    it('preserves full and partial Source Bin resume through a vector diamond', async () => {
+    it('reruns every paid branch of a vector diamond despite prior Source Bin outputs', async () => {
       const seed = createNode('seed', 'textNode', { mode: 'prompt', prompt: 'seed image' });
       const branchPrompt = createNode('branch-prompt', 'textNode', { mode: 'prompt', prompt: 'refine image' });
       const targetPrompts = createTextEnvelopeNode('target-prompts', ['first target', 'second target']);
@@ -1299,8 +1622,9 @@ describe('runNode list expansion regression (FBL-017 follow-up)', () => {
       requestConfirmationSpy.mockClear();
       await useFlowStore.getState().runNode(target.id);
 
-      expect(capturedContexts).toHaveLength(0);
-      expect(requestConfirmationSpy).not.toHaveBeenCalled();
+      expect(capturedContexts).toHaveLength(5);
+      expect(requestConfirmationSpy).toHaveBeenCalledTimes(1);
+      expect(plannedProviderCallCount(requestConfirmationSpy.mock.calls[0][0])).toBe(5);
 
       useSourceBinStore.getState().removeItem(targetItems[0].id);
       await Promise.resolve();
@@ -1310,10 +1634,10 @@ describe('runNode list expansion regression (FBL-017 follow-up)', () => {
       requestConfirmationSpy.mockClear();
       await useFlowStore.getState().runNode(target.id);
 
-      expect(capturedContexts.map((record) => record.nodeId)).toEqual([target.id]);
-      expect(capturedContexts.some((record) => [shared.id, left.id, right.id].includes(record.nodeId))).toBe(false);
+      expect(capturedContexts).toHaveLength(5);
+      expect(capturedContexts.some((record) => [shared.id, left.id, right.id].includes(record.nodeId))).toBe(true);
       expect(requestConfirmationSpy).toHaveBeenCalledTimes(1);
-      expect(requestConfirmationSpy.mock.calls[0][0]).toContain('1 provider call');
+      expect(plannedProviderCallCount(requestConfirmationSpy.mock.calls[0][0])).toBe(5);
     });
   });
 
@@ -1395,4 +1719,3 @@ describe('runNode list expansion regression (FBL-017 follow-up)', () => {
     });
   });
 });
-

@@ -44,6 +44,7 @@ import {
   aggregateUsageTelemetries,
   estimateNodeExecutionTelemetry,
   formatRollupSummary,
+  projectedImageOutputCount,
   type UsageRollup,
 } from '../lib/costEstimation';
 import { IMAGE_MASK_HANDLE, IMAGE_REFERENCE_HANDLES } from '../lib/imageModelSupport';
@@ -227,6 +228,8 @@ export interface FlowState {
 const activeRunControllers = new Map<string, AbortController>();
 const activeGraphRuns = new Map<string, Promise<void>>();
 const activePlanningControllers = new Map<string, AbortController>();
+const activePlanningRunIds = new Set<string>();
+const reconfirmablePlanningRunIds = new Set<string>();
 let hydratedFlowGraphGeneration = 0;
 let hydratedCanvasWorkspaceId = useFlowWorkspaceStore.getState().hydratedWorkspaceId;
 let flowClipboard: FlowClipboardPayload | null = null;
@@ -2220,6 +2223,10 @@ interface PlannedNodeSpend {
 interface ProviderSpendPlan {
   nodes: PlannedNodeSpend[];
   rollup: UsageRollup;
+  /** Root-only Source Bin proofs approved as no-spend work. */
+  resumeProofs: Map<string, string>;
+  /** Cardinality of every non-free provider dispatch in final confirmation. */
+  providerCallCounts: Map<string, number>;
 }
 
 type SourceBinItemSnapshot = ReturnType<ReturnType<typeof useSourceBinStore.getState>['getAllItems']>[number];
@@ -2542,7 +2549,14 @@ function collectExecutionOrder(rootNodeId: string, nodes: AppNode[], edges: Edge
     const node = nodesById.get(nodeId);
     if (!node) return;
     if (nodeId !== rootNodeId && shouldReuseExistingNodeOutput(node)) return;
-    for (const dependencyId of getExecutionDependencies(node, edges, nodesById)) {
+    // Traverse passive routing/container nodes as well as runnable effective
+    // sources. Their projected outputs determine downstream cardinality during
+    // spend planning (for example Seedream -> Envelope -> image root).
+    const dependencyIds = new Set([
+      ...getExecutionDependencies(node, edges, nodesById),
+      ...edges.filter((edge) => edge.target === nodeId).map((edge) => edge.source),
+    ]);
+    for (const dependencyId of dependencyIds) {
       visit(dependencyId);
     }
     order.push(nodeId);
@@ -2556,17 +2570,21 @@ function projectedResultValue(
   node: AppNode,
   iteration: NodeExecutionIterationPlan,
   telemetry: UsageTelemetry | undefined,
+  outputIndex = 0,
 ): string {
   const kind = projectedResultType(node);
   if (kind === 'text') {
     const projectedTokens = Math.max(1, Math.min(512, telemetry?.outputTokens ?? 32));
     return Array.from({ length: projectedTokens }, () => 'projected').join(' ');
   }
-  if (kind === 'boolean') return 'true';
+  // Provider-derived loop controls are not knowable during spend planning.
+  // Project the non-breaking branch so the final approval covers every bounded
+  // downstream call that runtime may execute.
+  if (kind === 'boolean') return 'false';
   if (kind === 'number') return '0';
   if (kind === 'json' || kind === 'list' || kind === 'envelope') return '{}';
-  if (kind === 'package') return `projected-package:${node.id}:${iteration.index}`;
-  return `data:${getResultMimeType(kind)};base64,planning-${node.id}-${iteration.index}`;
+  if (kind === 'package') return `projected-package:${node.id}:${iteration.index}:${outputIndex}`;
+  return `data:${getResultMimeType(kind)};base64,planning-${node.id}-${iteration.index}-${outputIndex}`;
 }
 
 function applyProjectedNodeOutput(
@@ -2582,17 +2600,18 @@ function applyProjectedNodeOutput(
   }
 
   const kind = projectedResultType(node);
-  const items = plan.iterations.map((iteration) => ({
-    id: `planning-${node.id}-${iteration.index}`,
-    index: iteration.index,
+  const outputCount = projectedImageOutputCount(node);
+  const items = plan.iterations.flatMap((iteration) => Array.from({ length: outputCount }, (_, outputIndex) => ({
+    id: `planning-${node.id}-${iteration.index}-${outputIndex}`,
+    index: iteration.index * outputCount + outputIndex,
     kind,
-    label: `Planned ${kind} ${iteration.index + 1}`,
+    label: `Planned ${kind} ${iteration.index + 1}${outputCount > 1 ? `.${outputIndex + 1}` : ''}`,
     value: iteration.existingResume?.value
-      ?? projectedResultValue(node, iteration, telemetryByIndex.get(iteration.index)),
+      ?? projectedResultValue(node, iteration, telemetryByIndex.get(iteration.index), outputIndex),
     mimeType: iteration.existingResume?.mimeType ?? getResultMimeType(kind),
     sourceBinItemId: iteration.existingResume?.item.id,
     sourceNodeId: node.id,
-  } satisfies EnvelopeItem));
+  } satisfies EnvelopeItem)));
   const firstItem = items[0];
 
   return {
@@ -2602,13 +2621,48 @@ function applyProjectedNodeOutput(
       result: firstItem.value,
       resultType: firstItem.kind,
       resultMimeType: firstItem.mimeType,
-      envelopeItems: plan.isLoopRun ? items : undefined,
+      envelopeItems: plan.isLoopRun || outputCount > 1 ? items : undefined,
     },
   };
 }
 
 function isPaidProviderTelemetry(telemetry: UsageTelemetry): boolean {
   return telemetry.provider !== 'local' && telemetry.costUsd !== 0;
+}
+
+/** Keep planning and runtime authorization on the same dispatch class. */
+function providerDispatchTelemetry(
+  node: AppNode,
+  context: ExecutionContext,
+  settings: RuntimeSettingsSnapshot,
+): UsageTelemetry | undefined {
+  const estimated = estimateNodeExecutionTelemetry(node, context, settings);
+  if (estimated) return estimated;
+
+  const provider = typeof node.data.provider === 'string' ? node.data.provider : undefined;
+  // Android execution is on-device and has no provider spend. An unmapped
+  // provider is deliberately unknown-cost and therefore consent-requiring.
+  if (!provider || provider === 'android') return undefined;
+  return {
+    source: 'estimate',
+    confidence: 'unknown',
+    provider,
+    modelId: typeof node.data.modelId === 'string' ? node.data.modelId : undefined,
+    notes: ['No catalog rate is available; provider cost is unknown.'],
+  };
+}
+
+function requiresApprovedProviderDispatch(
+  node: AppNode,
+  context: ExecutionContext,
+  settings: RuntimeSettingsSnapshot,
+): boolean {
+  const telemetry = providerDispatchTelemetry(node, context, settings);
+  return Boolean(telemetry && isPaidProviderTelemetry(telemetry));
+}
+
+function plannedResumeKey(nodeId: string, envelopeId: string, envelopeIndex: number): string {
+  return `${nodeId}:${envelopeId}:${envelopeIndex}`;
 }
 
 async function buildProviderSpendPlan(
@@ -2622,40 +2676,60 @@ async function buildProviderSpendPlan(
   let planningNodes = nodes.map((node) => ({ ...node, data: { ...node.data } }));
   const order = collectExecutionOrder(rootNodeId, planningNodes, edges);
   const plannedNodes: PlannedNodeSpend[] = [];
+  const resumeProofs = new Map<string, string>();
+  const providerCallCounts = new Map<string, number>();
 
   for (const currentId of order) {
     if (signal?.aborted) {
       throw new DOMException('The run was cancelled.', 'AbortError');
     }
     const node = planningNodes.find((candidate) => candidate.id === currentId);
-    if (!node || !canRunNode(node)) continue;
-    const plan = await buildNodeExecutionPlan(node, planningNodes, edges, sourceBinItems, signal, false);
+    if (!node) continue;
+    if (!canRunNode(node)) {
+      // Materialize passive envelope routing against the already-projected
+      // upstream nodes before a paid downstream plan reads its cardinality.
+      if (node.type === 'envelope') {
+        const envelopeItems = collectEnvelopeItemsForEnvelopeNode(node.id, planningNodes, edges);
+        planningNodes = planningNodes.map((candidate) => candidate.id === node.id
+          ? { ...candidate, data: { ...candidate.data, envelopeItems } }
+          : candidate);
+      }
+      continue;
+    }
+    // A previous Source Bin result is a resume only for the explicitly
+    // requested root. Dependencies are current work of this provider-root run.
+    const plan = await buildNodeExecutionPlan(
+      node,
+      planningNodes,
+      edges,
+      node.id === rootNodeId ? sourceBinItems : [],
+      signal,
+      false,
+    );
     try {
       if (signal?.aborted) {
         throw new DOMException('The run was cancelled.', 'AbortError');
       }
       const telemetryByIndex = new Map<number, UsageTelemetry>();
       const paidTelemetries: UsageTelemetry[] = [];
-
       for (const iteration of plan.iterations) {
-        if (iteration.existingResume) continue;
-        const estimatedTelemetry = estimateNodeExecutionTelemetry(node, iteration.context, settings);
-        const provider = typeof node.data.provider === 'string' ? node.data.provider : undefined;
-        // Lack of a catalog price is an unknown spend, not permission to bypass
-        // final consent. Local/function work has no provider identity and remains free.
-        const telemetry = estimatedTelemetry ?? (provider
-          ? {
-              source: 'estimate' as const,
-              confidence: 'unknown' as const,
-              provider,
-              modelId: typeof node.data.modelId === 'string' ? node.data.modelId : undefined,
-              notes: ['No catalog rate is available; provider cost is unknown.'],
-            }
-          : undefined);
+        if (iteration.existingResume) {
+          resumeProofs.set(
+            plannedResumeKey(node.id, iteration.envelopeId, iteration.index),
+            iteration.existingResume.proof,
+          );
+          continue;
+        }
+        const telemetry = providerDispatchTelemetry(node, iteration.context, settings);
         if (!telemetry) continue;
         telemetryByIndex.set(iteration.index, telemetry);
-        if (isPaidProviderTelemetry(telemetry)) {
+        if (requiresApprovedProviderDispatch(node, iteration.context, settings)) {
+          // `plan` is built after projected provider envelopes have traversed
+          // passive Envelope nodes. Its iterations therefore represent the
+          // real routed axes (including paired/broadcast/cartesian behavior),
+          // not a lossy ancestry-wide output multiplier.
           paidTelemetries.push(telemetry);
+          providerCallCounts.set(node.id, (providerCallCounts.get(node.id) ?? 0) + 1);
         }
       }
 
@@ -2680,7 +2754,50 @@ async function buildProviderSpendPlan(
   return {
     nodes: plannedNodes,
     rollup: aggregateUsageTelemetries(telemetries),
+    resumeProofs,
+    providerCallCounts,
   };
+}
+
+/**
+ * A Source Library item can retain an HTTP/native/stored-asset locator whose
+ * bytes change without altering the item record. Re-read each root resume at
+ * the final planning boundary so the approval is tied to the exact bounded
+ * content that dispatch will be allowed to consume.
+ */
+async function areApprovedSourceBinResumesCurrent(
+  rootNodeId: string,
+  spendPlan: ProviderSpendPlan,
+  snapshot: ProviderRunSnapshot,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (spendPlan.resumeProofs.size === 0) return true;
+  const rootNode = snapshot.nodes.find((node) => node.id === rootNodeId);
+  if (!rootNode || !canRunNode(rootNode)) return false;
+
+  const plan = await buildNodeExecutionPlan(
+    rootNode,
+    snapshot.nodes,
+    snapshot.edges,
+    snapshot.sourceBinItems,
+    signal,
+    false,
+  );
+  try {
+    const currentProofs = new Map<string, string>();
+    for (const iteration of plan.iterations) {
+      if (iteration.existingResume) {
+        currentProofs.set(
+          plannedResumeKey(rootNodeId, iteration.envelopeId, iteration.index),
+          iteration.existingResume.proof,
+        );
+      }
+    }
+    return currentProofs.size === spendPlan.resumeProofs.size
+      && [...spendPlan.resumeProofs].every(([key, proof]) => currentProofs.get(key) === proof);
+  } finally {
+    releaseExecutionPlanResumes(plan);
+  }
 }
 
 function formatProviderSpendPlan(plan: ProviderSpendPlan): string {
@@ -3438,11 +3555,16 @@ export const useFlowStore = create<FlowState>()(
           return;
         }
 
+        const activeRunId = useFlowWorkspaceStore.getState().getActiveFlowRunId(
+          useFlowWorkspaceStore.getState().hydratedWorkspaceId,
+          id,
+        );
+        // Edits while the consent dialog is open invalidate the candidate
+        // snapshot and re-plan. Once execution starts, the same edit cancels
+        // the graph-wide owner immediately.
         const invalidatesRun = shouldBumpInputRevision(patch)
-          && Boolean(useFlowWorkspaceStore.getState().getActiveFlowRunId(
-            useFlowWorkspaceStore.getState().hydratedWorkspaceId,
-            id,
-          ));
+          && Boolean(activeRunId)
+          && (!activePlanningRunIds.has(activeRunId!) || !reconfirmablePlanningRunIds.has(activeRunId!));
         const effectivePatch = shouldBumpInputRevision(patch)
           ? { ...patch, inputRevision: makeFlowId() }
           : patch;
@@ -3543,6 +3665,9 @@ export const useFlowStore = create<FlowState>()(
           return;
         }
 
+        // Planning and final confirmation have not crossed the provider
+        // dispatch boundary. Preserve that fact in the terminal state.
+        const cancelledBeforeDispatch = Boolean(runId && activePlanningRunIds.has(runId));
         controller.abort();
         const runNodeIds = runId ? workspaceState.invalidateFlowRunForNode(workspaceId, id) : [id];
         const cancelledNodeOwners = runNodeIds.map((runNodeId) => {
@@ -3573,7 +3698,9 @@ export const useFlowStore = create<FlowState>()(
             }
             get().patchNodeData(cancelledOwner.nodeId, {
               isRunning: false,
-              statusMessage: 'Run cancelled.',
+              statusMessage: cancelledBeforeDispatch
+                ? 'Run cancelled before sending any provider requests.'
+                : 'Run cancelled.',
               error: undefined,
             });
           }
@@ -3751,7 +3878,7 @@ export const useFlowStore = create<FlowState>()(
 
         const run = (async () => {
         const preflightState = get();
-        const executionNodeIds = collectExecutionOrder(nodeId, preflightState.nodes, preflightState.edges);
+        let executionNodeIds = collectExecutionOrder(nodeId, preflightState.nodes, preflightState.edges);
         const runningNode = executionNodeIds
           .map((id) => preflightState.nodes.find((node) => node.id === id))
           .find((node) => node?.data.isRunning);
@@ -3789,15 +3916,53 @@ export const useFlowStore = create<FlowState>()(
 
         const runController = new AbortController();
         activePlanningControllers.set(runKey, runController);
+        activeRunControllers.set(owner.runId, runController);
+        activePlanningRunIds.add(owner.runId);
+        // Ownership begins before any asynchronous planning or confirmation.
+        // Register the whole frozen traversal now, not lazily as recursion
+        // reaches it, so reset/edit/cancel of a later branch cancels this run.
+        workspaceState.registerFlowRun(owner, { abort: () => runController.abort() });
+        for (const executionNodeId of executionNodeIds) {
+          const executionNode = preflightState.nodes.find((node) => node.id === executionNodeId);
+          workspaceState.registerFlowRunNode(owner, {
+            nodeId: executionNodeId,
+            nodeInstanceId: executionNode?.data.nodeInstanceId,
+            inputRevision: executionNode?.data.inputRevision,
+          });
+        }
         const abortSignal = runController.signal;
+        const refreshPlannedGraphOwnership = (snapshot: ProviderRunSnapshot) => {
+          const snapshotRoot = snapshot.nodes.find((node) => node.id === nodeId);
+          owner.nodeInstanceId = snapshotRoot?.data.nodeInstanceId;
+          owner.inputRevision = snapshotRoot?.data.inputRevision;
+          executionNodeIds = collectExecutionOrder(nodeId, snapshot.nodes, snapshot.edges);
+          workspaceState.unregisterFlowRun(owner);
+          workspaceState.registerFlowRun(owner, { abort: () => runController.abort() });
+          for (const executionNodeId of executionNodeIds) {
+            const executionNode = snapshot.nodes.find((node) => node.id === executionNodeId);
+            workspaceState.registerFlowRunNode(owner, {
+              nodeId: executionNodeId,
+              nodeInstanceId: executionNode?.data.nodeInstanceId,
+              inputRevision: executionNode?.data.inputRevision,
+            });
+          }
+        };
+        const isPlanningOwnerValid = () => (
+          ownerWorkspaceSnapshotGeneration === getFlowWorkspaceSnapshotGeneration()
+          && workspaceState.getActiveFlowRunId(owner.workspaceId, owner.nodeId) === owner.runId
+        );
         const requestedRootNode = get().nodes.find((node) => node.id === nodeId);
         const throwIfRunAborted = () => {
-          if (abortSignal.aborted) {
+          if (abortSignal.aborted || !isPlanningOwnerValid()) {
             throw new DOMException('The run was cancelled.', 'AbortError');
           }
         };
         const releasePlanningOwner = () => {
           activePlanningControllers.delete(runKey);
+          activePlanningRunIds.delete(owner.runId);
+          reconfirmablePlanningRunIds.delete(owner.runId);
+          activeRunControllers.delete(owner.runId);
+          workspaceState.unregisterFlowRun(owner);
         };
 
         get().patchNodeData(nodeId, {
@@ -3807,6 +3972,7 @@ export const useFlowStore = create<FlowState>()(
         });
 
         let approvedSnapshot: ProviderRunSnapshot | undefined;
+        let approvedSpendPlan: ProviderSpendPlan | undefined;
         while (!approvedSnapshot) {
           const candidateSnapshot = captureProviderRunSnapshot(nodeId);
           try {
@@ -3830,11 +3996,13 @@ export const useFlowStore = create<FlowState>()(
             throwIfRunAborted();
 
             if (spendPlan.nodes.length > 0) {
+              reconfirmablePlanningRunIds.add(owner.runId);
               const proceed = await requestRunConfirmation(
                 formatProviderSpendPlan(spendPlan),
                 'Final Run Cost Confirmation',
                 abortSignal,
               );
+              reconfirmablePlanningRunIds.delete(owner.runId);
               if (!proceed) {
                 get().patchNodeData(nodeId, {
                   isRunning: false,
@@ -3847,6 +4015,14 @@ export const useFlowStore = create<FlowState>()(
             }
 
             throwIfRunAborted();
+            if (!await areApprovedSourceBinResumesCurrent(nodeId, spendPlan, candidateSnapshot, abortSignal)) {
+              get().patchNodeData(nodeId, {
+                statusMessage: 'Source Library content changed while awaiting final dispatch. Re-planning before any provider request…',
+                error: undefined,
+              });
+              continue;
+            }
+            throwIfRunAborted();
             const switchedWorkspace = useFlowWorkspaceStore.getState().hydratedWorkspaceId !== owner.workspaceId;
             if (!switchedWorkspace && !isProviderRunSnapshotCurrent(candidateSnapshot, nodeId)) {
               get().patchNodeData(nodeId, {
@@ -3855,14 +4031,19 @@ export const useFlowStore = create<FlowState>()(
               });
               continue;
             }
+            throwIfRunAborted();
+            refreshPlannedGraphOwnership(candidateSnapshot);
             approvedSnapshot = candidateSnapshot;
+            approvedSpendPlan = spendPlan;
           } catch (error) {
             if (isAbortError(error)) {
-              get().patchNodeData(nodeId, {
-                isRunning: false,
-                statusMessage: 'Run cancelled before sending any provider requests.',
-                error: undefined,
-              });
+              if (isPlanningOwnerValid()) {
+                get().patchNodeData(nodeId, {
+                  isRunning: false,
+                  statusMessage: 'Run cancelled before sending any provider requests.',
+                  error: undefined,
+                });
+              }
               releasePlanningOwner();
               return;
             }
@@ -3877,8 +4058,21 @@ export const useFlowStore = create<FlowState>()(
         }
 
         activePlanningControllers.delete(runKey);
-        workspaceState.registerFlowRun(owner, { abort: () => runController.abort() });
-        activeRunControllers.set(owner.runId, runController);
+        activePlanningRunIds.delete(owner.runId);
+        reconfirmablePlanningRunIds.delete(owner.runId);
+        if (!approvedSpendPlan) {
+          throw new Error('The provider spend plan was not retained for execution.');
+        }
+        const dispatchedProviderCalls = new Map<string, number>();
+        const authorizeProviderDispatch = (node: AppNode, context: ExecutionContext) => {
+          if (!requiresApprovedProviderDispatch(node, context, executionSettings)) return;
+          const dispatched = (dispatchedProviderCalls.get(node.id) ?? 0) + 1;
+          const approved = approvedSpendPlan.providerCallCounts.get(node.id) ?? 0;
+          if (dispatched > approved) {
+            throw new Error('This provider request is not represented in the approved final spend plan. Re-plan and reconfirm before continuing.');
+          }
+          dispatchedProviderCalls.set(node.id, dispatched);
+        };
 
         const workspaceStore = useFlowWorkspaceStore.getState();
         let executionNodes = approvedSnapshot.nodes.map((node) => ({ ...node, data: { ...node.data } }));
@@ -4160,15 +4354,23 @@ export const useFlowStore = create<FlowState>()(
                 const existingAsset = allSourceBinItems.find(
                   (item) => item.originNodeId === currentId && item.envelopeId === envelopeId && item.envelopeIndex === index
                 );
-                const existingResume = existingAsset
+                const approvedResumeProof = currentId === nodeId
+                  ? approvedSpendPlan.resumeProofs.get(plannedResumeKey(currentId, envelopeId, index))
+                  : undefined;
+                const existingResume = approvedResumeProof && existingAsset
                   ? await validateSourceBinResumeItem(existingAsset, projectedResultType(latestNode), abortSignal)
                   : undefined;
+                if (approvedResumeProof && (!existingResume || existingResume.proof !== approvedResumeProof)) {
+                  existingResume?.release?.();
+                  throw new Error('A Source Bin resume changed after spend planning. Re-plan and reconfirm before any provider request.');
+                }
 
                 // A Source result belongs to the root that produced it. Dependencies
                 // must execute for every root run, even when a prior root persisted
                 // an otherwise-matching envelope item.
                 if (existingResume) {
                   envelopeItems.push(buildEnvelopeItemFromSourceBinItem(existingResume));
+                  existingResume.release?.();
                   commitRunPatch(currentId, {
                     envelopeItems,
                     statusMessage: `${loopStatusLabel} ${index + 1}/${combinedIterationCount}: Resumed from Source Bin`,
@@ -4177,6 +4379,10 @@ export const useFlowStore = create<FlowState>()(
                   continue;
                 }
 
+                if (!isRunOwnerValid(currentId)) {
+                  throw new DOMException('The run was cancelled.', 'AbortError');
+                }
+                authorizeProviderDispatch(latestNode, loopContext);
                 const execution = await executeNodeRequest(latestNode, loopContext, settings, (statusMessage) => {
                   if (abortSignal.aborted) {
                     return;
@@ -4284,9 +4490,16 @@ export const useFlowStore = create<FlowState>()(
             const existingAsset = allSourceBinItems.find(
               (item) => item.originNodeId === currentId && item.envelopeId === envelopeId && item.envelopeIndex === 0
             );
-            const existingResume = existingAsset
+            const approvedResumeProof = currentId === nodeId
+              ? approvedSpendPlan.resumeProofs.get(plannedResumeKey(currentId, envelopeId, 0))
+              : undefined;
+            const existingResume = approvedResumeProof && existingAsset
               ? await validateSourceBinResumeItem(existingAsset, projectedResultType(latestNode), abortSignal)
               : undefined;
+            if (approvedResumeProof && (!existingResume || existingResume.proof !== approvedResumeProof)) {
+              existingResume?.release?.();
+              throw new Error('A Source Bin resume changed after spend planning. Re-plan and reconfirm before any provider request.');
+            }
 
             // Never satisfy a dependency from an earlier root's saved Source item.
             // Root-level resume remains available for an explicit direct rerun.
@@ -4313,9 +4526,14 @@ export const useFlowStore = create<FlowState>()(
                 statusMessage: execution.statusMessage,
                 error: undefined,
               });
+              existingResume.release?.();
               return;
             }
 
+            if (!isRunOwnerValid(currentId)) {
+              throw new DOMException('The run was cancelled.', 'AbortError');
+            }
+            authorizeProviderDispatch(latestNode, context);
             const execution = await executeNodeRequest(latestNode, context, settings, (statusMessage) => {
               if (abortSignal.aborted) {
                 return;

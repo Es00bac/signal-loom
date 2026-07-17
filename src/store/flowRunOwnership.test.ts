@@ -238,9 +238,9 @@ describe('Flow run ownership (AUD-002)', () => {
     expect(mockExecuteNodeRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('drops stale completion when the node input revision changed', async () => {
-    const { promise, resolve } = deferred<ReturnType<typeof makeTextResult>>();
-    mockExecuteNodeRequest.mockReturnValue(promise);
+  it('records incurred usage when a post-dispatch edit makes completion stale', async () => {
+    const runControl = createControllableRunPromise<ReturnType<typeof makeTextResult>>();
+    mockExecuteNodeRequest.mockImplementation(() => runControl.getPromise());
 
     const nodeId = useFlowStore.getState().addNode('textNode', { x: 0, y: 0 }, {
       mode: 'generate',
@@ -251,6 +251,7 @@ describe('Flow run ownership (AUD-002)', () => {
     const workspaceAId = useFlowWorkspaceStore.getState().hydratedWorkspaceId;
 
     const runPromise = useFlowStore.getState().runNode(nodeId);
+    await runControl.waitForCall();
 
     // Change execution-relevant input before switching away.
     useFlowStore.getState().updateNodeData(nodeId, 'prompt', 'edited prompt');
@@ -258,7 +259,7 @@ describe('Flow run ownership (AUD-002)', () => {
     const workspaceBId = useFlowWorkspaceStore.getState().duplicateWorkspace(workspaceAId);
     switchToWorkspace(workspaceBId);
 
-    resolve(makeTextResult());
+    runControl.resolve(makeTextResult());
     await runPromise;
 
     expect(findNodeInWorkspace(workspaceAId, nodeId)?.data.result).toBeUndefined();
@@ -640,16 +641,17 @@ describe('Flow run ownership (AUD-002)', () => {
     await firstRun;
   });
 
-  it('records an incurred success cost once but drops result and Source output after a mid-run edit', async () => {
-    const { promise, resolve } = deferred<ReturnType<typeof makeImageResult>>();
-    mockExecuteNodeRequest.mockReturnValue(promise);
+  it('records an incurred success cost once but drops stale result and Source output after a mid-run edit', async () => {
+    const runControl = createControllableRunPromise<ReturnType<typeof makeImageResult>>();
+    mockExecuteNodeRequest.mockImplementation(() => runControl.getPromise());
     const nodeId = useFlowStore.getState().addNode('textNode', { x: 0, y: 0 }, {
       mode: 'generate', provider: 'gemini', modelId: 'gemini-1.5-flash', prompt: 'before',
     });
 
     const run = useFlowStore.getState().runNode(nodeId);
+    await runControl.waitForCall();
     useFlowStore.getState().updateNodeData(nodeId, 'prompt', 'after');
-    resolve(makeImageResult({ usage: { costUsd: 0.02 } }));
+    runControl.resolve(makeImageResult({ usage: { costUsd: 0.02 } }));
     await run;
 
     expect(findNodeInHydratedCanvas(nodeId)?.data.result).toBeUndefined();
@@ -727,19 +729,61 @@ describe('Flow run ownership (AUD-002)', () => {
   });
 
   it('invalidates a reset run graph so a recycled default workspace cannot accept a zombie result', async () => {
-    const { promise, resolve } = deferred<ReturnType<typeof makeTextResult>>();
-    mockExecuteNodeRequest.mockReturnValue(promise);
+    const runControl = createControllableRunPromise<ReturnType<typeof makeTextResult>>();
+    mockExecuteNodeRequest.mockImplementation(() => runControl.getPromise());
     const nodeId = useFlowStore.getState().addNode('textNode', { x: 0, y: 0 }, {
       mode: 'generate', provider: 'gemini', modelId: 'gemini-1.5-flash', prompt: 'hello',
     });
     const run = useFlowStore.getState().runNode(nodeId);
+    await runControl.waitForCall();
 
     useFlowWorkspaceStore.getState().reset();
-    resolve(makeTextResult({ result: 'zombie' }));
+    runControl.resolve(makeTextResult({ result: 'zombie' }));
     await run;
 
     expect(findNodeInHydratedCanvas(nodeId)?.data.result).toBeUndefined();
     expect(useProjectUsageStore.getState().ledger.entries).toHaveLength(1);
+  });
+
+  it('D: reset and hydration while final confirmation is pending cannot dispatch stale provider work after approval', async () => {
+    let approve!: (value: boolean) => void;
+    useConfirmationStore.setState({ requestConfirmation: vi.fn(() => new Promise<boolean>((resolve) => { approve = resolve; })) });
+    const nodeId = useFlowStore.getState().addNode('textNode', { x: 0, y: 0 }, {
+      mode: 'generate', provider: 'gemini', modelId: 'gemini-1.5-flash', prompt: 'confirm then reset',
+    });
+
+    const run = useFlowStore.getState().runNode(nodeId);
+    await vi.waitFor(() => expect(useConfirmationStore.getState().requestConfirmation).toHaveBeenCalledTimes(1));
+    useFlowWorkspaceStore.getState().reset();
+    approve(true);
+    await run;
+
+    expect(mockExecuteNodeRequest).not.toHaveBeenCalled();
+    expect(useProjectUsageStore.getState().ledger.entries).toHaveLength(0);
+  });
+
+  it('E: editing a later planned diamond branch while the shared dependency is in flight prevents that old branch dispatch', async () => {
+    const sharedRun = createControllableRunPromise<ReturnType<typeof makeTextResult>>();
+    let shared = '';
+    mockExecuteNodeRequest.mockImplementation((node: AppNode) => (
+      node.id === shared ? sharedRun.getPromise() : Promise.resolve(makeTextResult({ result: node.id }))
+    ));
+    shared = useFlowStore.getState().addNode('textNode', { x: 0, y: 0 }, { mode: 'generate', provider: 'gemini', modelId: 'gemini-1.5-flash', prompt: 'shared' });
+    const left = useFlowStore.getState().addNode('textNode', { x: 200, y: 0 }, { mode: 'generate', provider: 'gemini', modelId: 'gemini-1.5-flash', prompt: 'left' });
+    const right = useFlowStore.getState().addNode('textNode', { x: 200, y: 120 }, { mode: 'generate', provider: 'gemini', modelId: 'gemini-1.5-flash', prompt: 'right' });
+    const root = useFlowStore.getState().addNode('textNode', { x: 400, y: 0 }, { mode: 'generate', provider: 'gemini', modelId: 'gemini-1.5-flash', prompt: 'root' });
+    useFlowStore.setState({ edges: [
+      { id: 'shared-left', source: shared, target: left }, { id: 'shared-right', source: shared, target: right },
+      { id: 'left-root', source: left, target: root }, { id: 'right-root', source: right, target: root },
+    ] });
+
+    const run = useFlowStore.getState().runNode(root);
+    await sharedRun.waitForCall();
+    useFlowStore.getState().updateNodeData(right, 'prompt', 'edited later branch');
+    sharedRun.resolve(makeTextResult({ result: 'shared result' }));
+    await run;
+
+    expect(mockExecuteNodeRequest.mock.calls.map(([node]) => (node as AppNode).id)).toEqual([shared]);
   });
 
   it('aborts the exact active graph when its node is deleted', async () => {

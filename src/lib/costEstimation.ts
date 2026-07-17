@@ -87,6 +87,19 @@ export interface ExecutionPlanEstimate {
   rollup: UsageRollup;
 }
 
+/**
+ * Atlas sequential Seedream models return a bounded image envelope from one
+ * provider request.  The envelope cardinality is spend-affecting for every
+ * downstream loop, so planning must use the same bound as execution.
+ */
+export function projectedImageOutputCount(node: Pick<AppNode, 'type' | 'data'>): number {
+  if (node.type !== 'imageGen' || node.data.provider !== 'atlas') return 1;
+  const modelId = typeof node.data.modelId === 'string' ? node.data.modelId.toLowerCase() : '';
+  if (!modelId.includes('seedream') || !modelId.includes('sequential')) return 1;
+  const configured = Number((node.data.atlasParams as Record<string, unknown> | undefined)?.max_images);
+  return Number.isFinite(configured) ? Math.max(1, Math.min(15, Math.floor(configured))) : 1;
+}
+
 const GEMINI_TEXT_PRICING: Array<{ match: (modelId: string) => boolean; pricing: TokenPricing }> = [
   {
     match: (modelId) => modelId.startsWith('gemini-3.5-flash') || modelId.startsWith('gemini-1.5-flash'),
@@ -1338,11 +1351,12 @@ function estimateNodeOwnTelemetry(
       modelDefinition.supportedOperations,
       Boolean(context.editImageInput),
     );
+    const imageCount = projectedImageOutputCount(node);
     const imageCost = estimateImageModelCostUsd({
       providerId: provider,
       modelId,
       operation,
-      imageCount: 1,
+      imageCount,
       textInputTokens: inputTokens,
     });
 
@@ -1351,7 +1365,7 @@ function estimateNodeOwnTelemetry(
       modelId,
       inputTokens,
       totalTokens: inputTokens,
-      imageCount: 1,
+      imageCount,
       costUsd: imageCost.costUsd,
       notes: imageCost.notes,
     }), node.data, settings);

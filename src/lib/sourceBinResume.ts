@@ -23,6 +23,8 @@ export interface ValidatedSourceBinResume {
   kind: ResultType;
   value: string;
   mimeType: string;
+  /** Identity of the bounded content that validation actually checked. */
+  proof: string;
   release?: () => void;
 }
 
@@ -31,6 +33,7 @@ const DIRECT_SAMPLE_TIMEOUT_MS = 15_000;
 interface SampledBinary {
   sample: BinaryResumeSample;
   mimeType?: string;
+  validator?: string;
 }
 
 export interface SourceBinResumeValidationOptions {
@@ -59,7 +62,8 @@ export async function validateSourceBinResumeItem(
   if (kind === 'text') {
     const text = item.text;
     if (typeof text !== 'string' || text.trim().length === 0) return undefined;
-    return { item, kind, value: text, mimeType: item.mimeType?.trim() || 'text/plain' };
+    const mimeType = item.mimeType?.trim() || 'text/plain';
+    return { item, kind, value: text, mimeType, proof: `text:${mimeType}:${text}` };
   }
   if (!isAssetResultKind(kind)) return undefined;
 
@@ -67,7 +71,7 @@ export async function validateSourceBinResumeItem(
   if (item.assetId !== undefined && !assetId) return undefined;
 
   const direct = await validateAssetUrl(item, kind, assetId, limits, signal);
-  if (direct) return { item, kind, value: direct.value, mimeType: direct.mimeType };
+  if (direct) return { item, kind, value: direct.value, mimeType: direct.mimeType, proof: direct.proof };
   if (!assetId) return undefined;
 
   return validateStoredAsset(item, kind, assetId, limits, signal, options.materializeStoredAsset !== false);
@@ -123,6 +127,7 @@ async function validateStoredAsset(
       kind,
       value: `signal-loom-asset://asset/${encodeURIComponent(storedAsset.id)}`,
       mimeType: detectedMimeType,
+      proof: sampleProof(sample),
     };
   }
 
@@ -139,7 +144,7 @@ async function validateStoredAsset(
     : undefined;
   try {
     throwIfAborted(signal);
-    return { item, kind, value, mimeType: detectedMimeType, release };
+    return { item, kind, value, mimeType: detectedMimeType, proof: sampleProof(sample), release };
   } catch (error) {
     release?.();
     throw error;
@@ -152,7 +157,7 @@ async function validateAssetUrl(
   assetId: string | undefined,
   limits: SourceBinResumeLimits,
   signal?: AbortSignal,
-): Promise<{ value: string; mimeType: string } | undefined> {
+): Promise<{ value: string; mimeType: string; proof: string } | undefined> {
   const value = item.assetUrl?.trim();
   if (!value) return undefined;
 
@@ -160,7 +165,7 @@ async function validateAssetUrl(
     const sampled = sampleDataUrl(value, limits);
     if (!sampled) return undefined;
     const mimeType = validateSample(sampled.sample, kind, collectItemClaims(item, [sampled.mimeType]));
-    return mimeType ? { value, mimeType } : undefined;
+    return mimeType ? { value, mimeType, proof: sampleProof(sampled.sample) } : undefined;
   }
 
   if (value.startsWith('signal-loom-asset:')) {
@@ -177,7 +182,14 @@ async function validateAssetUrl(
     sampled.mimeType,
     inferMimeTypeFromFile(urlPath(value)),
   ]));
-  return mimeType ? { value, mimeType } : undefined;
+  return mimeType ? { value, mimeType, proof: sampleProof(sampled.sample, sampled.validator) } : undefined;
+}
+
+function sampleProof(sample: BinaryResumeSample, validator?: string): string {
+  // Keep the exact bounded sample rather than a lossy hash. The proof is of
+  // the bytes validation inspected, plus an HTTP validator when available.
+  const encode = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${validator ?? ''}:${sample.size}:${sample.tailOffset}:${encode(sample.head)}:${encode(sample.tail)}`;
 }
 
 function validateSample(
@@ -274,6 +286,7 @@ async function fetchBinarySample(
 
   return {
     mimeType: first.mimeType,
+    validator: first.validator,
     sample: { head: first.bytes, tail, size, tailOffset },
   };
 }
