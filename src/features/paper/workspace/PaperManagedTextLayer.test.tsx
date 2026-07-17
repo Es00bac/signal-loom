@@ -61,6 +61,7 @@ function composition(): PaperComposedTextFrame {
         face: managedFace,
         fontSizePt: 12,
         unitsPerEm: 1000,
+        variations: { opsz: 18 },
         color: { kind: 'css-color', color: '#112233' },
         glyphs: [{ glyphId: 1, cluster: 0, xAdvance: 6, yAdvance: 0, xOffset: 0, yOffset: 0, xPt: 0, yPt: 10 }],
         sourceStart: 0,
@@ -105,11 +106,12 @@ describe('PaperManagedTextLayer', () => {
     const root = createRoot(host);
     roots.push(root);
 
+    const variations: Array<Record<string, number> | undefined> = [];
     await act(async () => {
       root.render(
         <PaperManagedTextLayer
           composition={composition()}
-          glyphPathFor={() => 'M0 0 L1000 0 L1000 1000 Z'}
+          glyphPathFor={(_face, _glyph, selectedVariations) => { variations.push(selectedVariations); return 'M0 0 L1000 0 L1000 1000 Z'; }}
           zoom={1}
         />,
       );
@@ -120,5 +122,6 @@ describe('PaperManagedTextLayer', () => {
     expect(host.querySelectorAll('rect')).toHaveLength(2);
     expect(host.querySelectorAll('line')).toHaveLength(3);
     expect(host.textContent).toBe('');
+    expect(variations).toEqual([{ opsz: 18 }]);
   });
 });

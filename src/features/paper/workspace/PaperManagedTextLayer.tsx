@@ -33,7 +33,7 @@ export interface PaperManagedTextLayerProps {
   frame?: PaperFrame;
   zoom: number;
   /** Optional direct outline resolver for tests or an already-owned export renderer. */
-  glyphPathFor?: (face: PaperManagedFontFace, glyphId: number) => string | undefined;
+  glyphPathFor?: (face: PaperManagedFontFace, glyphId: number, variations?: Record<string, number>) => string | undefined;
   onReadyChange?: (ready: boolean) => void;
   onDoubleClick?: MouseEventHandler<SVGSVGElement>;
   style?: CSSProperties;
@@ -97,7 +97,7 @@ function PaperManagedGlyphRun({
   pathFor,
   run,
 }: {
-  pathFor: (face: PaperManagedFontFace, glyphId: number) => string | undefined;
+  pathFor: (face: PaperManagedFontFace, glyphId: number, variations?: Record<string, number>) => string | undefined;
   run: PaperPositionedGlyphRun;
 }) {
   const bounds = runBounds(run);
@@ -118,7 +118,7 @@ function PaperManagedGlyphRun({
           : <line stroke={run.color.color} strokeWidth={decorationWidth} x1={bounds.xPt} x2={bounds.xPt + bounds.widthPt} y1={bounds.yPt + bounds.heightPt * 0.55} y2={bounds.yPt + bounds.heightPt * 0.55} />
       ) : null}
       {run.glyphs.map((glyph, glyphIndex) => {
-        const path = pathFor(run.face, glyph.glyphId);
+        const path = pathFor(run.face, glyph.glyphId, run.variations);
         if (!path) return null;
         const scale = run.fontSizePt / Math.max(1, run.unitsPerEm);
         return (
@@ -212,9 +212,9 @@ export function PaperManagedTextLayer({
 
   if (!composition || !ready) return null;
   const { bounds } = composition;
-  const pathFor = glyphPathFor ?? ((face: PaperManagedFontFace, glyphId: number) => {
+  const pathFor = glyphPathFor ?? ((face: PaperManagedFontFace, glyphId: number, variations?: Record<string, number>) => {
     try {
-      return state?.shapers.get(face.id)?.glyphPath(glyphId);
+      return state?.shapers.get(face.id)?.glyphPath(glyphId, variations);
     } catch {
       return undefined;
     }

@@ -46,6 +46,7 @@ import { getEditorStageObjects } from './editorStageObjects';
 import { ensureBundledFontFaceReferencesRegistered } from './bundledFontLibrary';
 import { assertNoConflictingPaperManagedFontDescriptors } from './paperExactManagedFonts';
 import { classifyPaperFontPackaging } from './paperManagedFonts';
+import { isBinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import {
   collectImageBundledFontFaceReferences,
   collectVideoBundledFontFaceReferences,
@@ -1184,6 +1185,17 @@ function assertPortablePaperFontRecordsPresent(
       }
       if (declaredMissing.has(face.fontAsset.id)) {
         throw new Error(`Portable Paper document "${document.title}" declares required managed font ${face.postscriptName || face.id} missing. Exact composition cannot reopen safely.`);
+      }
+      const license = face.license?.textAsset;
+      if (!isBinaryAssetRef(license)) {
+        throw new Error(`Portable Paper document "${document.title}" is missing required license text for managed font ${face.postscriptName || face.id}. Exact portable reopen is blocked before partial restore.`);
+      }
+      if (!packaged.has(license.id)) {
+        const listed = declaredMissing.has(license.id) ? ' (it is listed as missing in the portable section)' : '';
+        throw new Error(`Portable Paper document "${document.title}" is missing required license text for managed font ${face.postscriptName || face.id}${listed}. Exact portable reopen is blocked before partial restore.`);
+      }
+      if (declaredMissing.has(license.id)) {
+        throw new Error(`Portable Paper document "${document.title}" declares required license text for managed font ${face.postscriptName || face.id} missing. Exact composition cannot reopen safely.`);
       }
     }
   }

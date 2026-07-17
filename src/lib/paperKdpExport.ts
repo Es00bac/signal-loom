@@ -228,7 +228,7 @@ export async function buildPaperKdpImageArchiveExport(
   for (let index = 0; index < allPages.length; index += 1) {
     const page = allPages[index];
     const directory = page.role === 'front-cover' || page.role === 'back-cover' ? 'cover' : 'interior';
-    const dataUrl = await renderKdpPage(kdpDocument, page, rasterize, resolveImageSrc);
+    const dataUrl = await renderKdpPage(kdpDocument, page, rasterize, resolveImageSrc, options.fontFaceCss);
     const entryName = `${plan.directoryName}/${directory}/${page.fileName}`;
     // Invisible provenance metadata (licensing spec §6) — never drawn on pixels.
     entries[entryName] = applyImageExportProvenance(dataUrlToU8(dataUrl, 'image/png'), 'image/png');
@@ -446,11 +446,13 @@ async function renderKdpPage(
   page: PaperKdpPagePlan,
   rasterize: PaperKdpRasterizePage,
   resolveImageSrc: NonNullable<PaperKdpExportOptions['resolveImageSrc']>,
+  fontFaceCss: string | undefined,
 ): Promise<string> {
   const sourceExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(document, page.pageId, {
     includeBleed: true,
     outputDpi: document.page.dpi,
     resolveImageSrc,
+    fontFaceCss,
   });
   const bleedPx = paperPixelsFromMm(KDP_BLEED_MM, document.page.dpi);
   const cropX = page.outsideEdge === 'left' ? 0 : bleedPx;

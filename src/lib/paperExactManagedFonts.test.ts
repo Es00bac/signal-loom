@@ -6,6 +6,7 @@ import {
   buildExactPaperManagedFontCss,
   collectExactPaperManagedFaces,
   paperFontStyleDescriptor,
+  paperManagedFontFamilyForLivePaint,
   readPaperManagedFontManifest,
   verifyExactPaperManagedFontReadiness,
 } from './paperExactManagedFonts';
@@ -49,12 +50,19 @@ describe('exact managed Paper font identities', () => {
     });
     const css = await buildExactPaperManagedFontCss([variableCollection], async () => Uint8Array.from([1, 2, 3]));
     expect(css).toContain('format("collection")');
-    expect(readPaperManagedFontManifest(css)?.faces[0]).toMatchObject({ collectionIndex: 1, variationSettings: { opsz: 18 } });
+    expect(css).toContain('#ManagedSerif-Oblique');
+    expect(readPaperManagedFontManifest(css)?.faces[0]).toMatchObject({ postscriptName: 'ManagedSerif-Oblique', collectionIndex: 1, variationSettings: { opsz: 18 } });
   });
 
   it('rejects conflicting descriptor bytes before a registration order can choose one', () => {
     expect(() => assertNoConflictingPaperManagedFontDescriptors([
       face(), face({ id: 'same-descriptor-other-bytes', fontAsset: { ...asset, sha256: 'b'.repeat(64), id: `sha256:${'b'.repeat(64)}` } }),
     ])).toThrow(/descriptor collision/i);
+  });
+
+  it('maps live managed paint to its registered alias and blocks an unmatched descriptor', () => {
+    const exact = face();
+    expect(paperManagedFontFamilyForLivePaint({ ...frame().typography, fontWeight: '900' }, [exact])).toContain('sloom-managed-oblique-12');
+    expect(paperManagedFontFamilyForLivePaint({ ...frame().typography, fontWeight: '400' }, [exact])).toBe('sloom-managed-font-blocked');
   });
 });

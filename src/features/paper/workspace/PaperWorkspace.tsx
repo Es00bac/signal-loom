@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { paperFontStyleFromCss } from '../../../lib/paperExactManagedFonts';
+import { paperFontStyleFromCss, paperManagedFontFamilyForLivePaint } from '../../../lib/paperExactManagedFonts';
 import {
   AlertTriangle,
   BookOpen,
@@ -62,7 +62,7 @@ import { PaperIccProfileManager, type PaperIccProfileManagerChange } from './Pap
 import { PaperManagedTextLayer } from './PaperManagedTextLayer';
 import { PaperBundledFontFaceBrowser, PaperBundledFontPicker } from './PaperBundledFontPicker';
 import { PaperDocumentTabs } from './PaperDocumentTabs';
-import { materializePaperDocumentAssetUrls, paperAssetRepository } from '../assets/PaperAssetRuntime';
+import { buildPaperDocumentExactManagedFontOutput, materializePaperDocumentAssetUrls, paperAssetRepository } from '../assets/PaperAssetRuntime';
 import { useSettingsStore } from '../../../store/settingsStore';
 import { useSourceBinStore } from '../../../store/sourceBinStore';
 import { useFlowStore } from '../../../store/flowStore';
@@ -403,6 +403,7 @@ import type {
   PaperFrameKind,
   PaperFramePatch,
   PaperGuide,
+  PaperManagedFontStyle,
   PaperLineBreak,
   PaperNumericStyle,
   PaperPage,
@@ -698,7 +699,7 @@ export function PaperWorkspace() {
   const document = usePaperStore((s) => s.document);
   const activeDocumentId = usePaperStore((s) => s.activeDocumentId);
   // Register the document's imported fonts as live browser faces so the editor renders them.
-  useRegisterImportedFonts(document.importedFonts);
+  const managedFontRegistration = useRegisterImportedFonts(document.importedFonts);
   const selectedPageId = usePaperStore((s) => s.selectedPageId);
   const selectedFrameId = usePaperStore((s) => s.selectedFrameId);
   const selectedFrameIds = usePaperStore((s) => s.selectedFrameIds);
@@ -1515,8 +1516,10 @@ export function PaperWorkspace() {
         if (!await confirmPreflightBeforeExport('raster CBZ export')) return;
         const outputDocument = await materializePaperOutputDocument(document);
         if (!outputDocument) return;
+        const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
         setStatus(`Rasterizing ${outputDocument.pages.length} Paper page${outputDocument.pages.length === 1 ? '' : 's'} for CBZ export...`);
-        void buildPaperCbzRasterExport(outputDocument, {
+        void buildPaperCbzRasterExport(exact.document, {
+          fontFaceCss: exact.fontFaceCss,
           onPageRasterized: ({ pageNumber, pageIndex, pageCount }) => {
             setStatus(`Rasterized page ${pageNumber} (${pageIndex + 1}/${pageCount}) for CBZ export...`);
           },
@@ -3493,8 +3496,10 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
     } = {},
   ): Promise<SourceBinLibraryItem> => {
     const outputDocument = await materializePaperDocumentAssetUrls(document, sourceItems);
-    const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(outputDocument, pageId, {
+    const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
+    const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(exact.document, pageId, {
       resolveImageSrc: (src) => imageSourceToDataUrl(src),
+      fontFaceCss: exact.fontFaceCss,
     });
     let dataUrl = svgExport.dataUrl;
     let mimeType: string = svgExport.mimeType;
@@ -3508,7 +3513,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       mimeType = svgExport.mimeType;
     }
 
-    const item = await addSourceAssetItem(buildFlattenedPaperPageSourcePayload(outputDocument, pageId, {
+    const item = await addSourceAssetItem(buildFlattenedPaperPageSourcePayload(exact.document, pageId, {
       ...options,
       dataUrl,
       mimeType,
@@ -3625,12 +3630,14 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
     setStatus(`Building KDP asset package: ${plan.interiorPageCount} interior page image${plan.interiorPageCount === 1 ? '' : 's'} plus cover wrap...`);
     const outputDocument = await materializePaperOutputDocument(document);
     if (!outputDocument) return;
-    void buildPaperKdpImageArchiveExport(outputDocument, {
+    const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
+    void buildPaperKdpImageArchiveExport(exact.document, {
       directoryName: normalizedSettings.directoryName,
       dpi: normalizedSettings.dpi,
       interiorType: normalizedSettings.interiorType,
       paperType: normalizedSettings.paperType,
       resolveImageSrc: (src) => imageSourceToDataUrl(src),
+      fontFaceCss: exact.fontFaceCss,
       spineFillColor: normalizedSettings.spineFillColor,
       spineWidthMm: normalizedSettings.spineWidthMm,
       onPageRasterized: ({ pageNumber, pageIndex, pageCount, role }) => {
@@ -3970,6 +3977,11 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       data-paper-title={document.title}
       data-signal-loom-paper-workspace="true"
     >
+      {managedFontRegistration.blocked.length > 0 ? (
+        <div aria-live="assertive" className="border-b border-rose-300/35 bg-rose-950/90 px-3 py-2 text-xs text-rose-100" data-paper-managed-font-blocked="true">
+          Exact managed typography is blocked — no fallback face will be painted. {managedFontRegistration.blocked.map((entry) => entry.message).join(' ')}
+        </div>
+      ) : null}
       <input
         accept=".json,.sloom-paper.json,.sloom-idml.json,.txt,.md,.markdown,.rtf,.html,.htm,.docx,.pdf,application/json,text/plain,text/markdown,application/rtf,text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.signal-loom.paper-idml+json"
         className="hidden"
@@ -8343,7 +8355,7 @@ function PaperFrameView({
         ? '999px'
         : frame.cornerRadiusMm * PX_PER_MM * zoom,
     color: frame.typography.color,
-    fontFamily: frame.typography.fontFamily,
+    fontFamily: paperManagedFontFamilyForLivePaint(frame.typography, managedTextDocument.importedFonts) ?? frame.typography.fontFamily,
     fontSize: frame.typography.fontSizePt * PT_TO_PX * zoom,
     lineHeight: `${frame.typography.leadingPt * PT_TO_PX * zoom}px`,
     fontWeight: frame.typography.fontWeight,
@@ -9916,13 +9928,17 @@ function PaperRichEditableText({
   const applyFontSizePt = (pt: number) => {
     applySelectionTypographyPatch({ fontSizePt: pt });
   };
-  const applyBundledFontFace = (familyName: string, weight: number, style: 'normal' | 'italic') => {
-    if (!savedRangeRef.current || savedRangeRef.current.collapsed) {
-      runCommand('fontName', familyName);
-      setFontMenuOpen(false);
-      return;
-    }
-    applySelectionTypographyPatch({ fontFamily: familyName, fontWeight: String(weight), fontStyle: style });
+  const applyBundledFontFace = (familyName: string, face: { weight: number; style: PaperManagedFontStyle; stretchPercent: number; axes: Record<string, { default: number }> }) => {
+    const variationSettings = Object.keys(face.axes).length
+      ? Object.fromEntries(Object.entries(face.axes).map(([tag, axis]) => [tag, axis.default]))
+      : undefined;
+    applySelectionTypographyPatch({
+      fontFamily: familyName,
+      fontWeight: String(face.weight),
+      fontStyle: face.style === 'oblique' ? 'oblique 14deg' : face.style,
+      fontStretch: `${face.stretchPercent}%`,
+      ...(variationSettings ? { fontVariationSettings: variationSettings } : {}),
+    });
     setFontMenuOpen(false);
   };
   // Wrap the selection in Japanese inline notation (furigana 語《》 or emphasis 《《語》》). The notation is
@@ -10091,11 +10107,7 @@ function PaperRichEditableText({
                   fontStyle={paperFontStyleFromCss(frame.typography.fontStyle)}
                   fontWeight={Number.parseInt(frame.typography.fontWeight, 10) || 400}
                   initiallyOpen
-                  onSelect={(family, face) => applyBundledFontFace(
-                    family.family,
-                    face.weight,
-                    face.style === 'normal' ? 'normal' : 'italic',
-                  )}
+                  onSelect={(family, face) => applyBundledFontFace(family.family, face)}
                 />
               </div>
             ) : null}

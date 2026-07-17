@@ -153,6 +153,7 @@ export async function buildPaperWebcomicImageDataPages(
       outputHeightPx: pagePlan.heightPx,
       resolveImageSrc,
       backdropOnly: options.backdropOnly,
+      fontFaceCss: options.fontFaceCss,
     });
     pages.push({
       ...pagePlan,

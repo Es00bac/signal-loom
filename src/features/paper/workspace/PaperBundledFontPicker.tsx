@@ -19,11 +19,18 @@ export function PaperBundledFontPicker({
       fontStyle={paperFontStyleFromCss(typography.fontStyle)}
       fontWeight={Number.parseInt(typography.fontWeight, 10) || 400}
       onSelect={(family, face) => {
+        const variationSettings = Object.keys(face.axes).length
+          ? Object.fromEntries(Object.entries(face.axes).map(([tag, axis]) => [tag, axis.default]))
+          : undefined;
         onChange({
           ...typography,
           fontFamily: family.family,
-          fontStyle: face.style,
+          fontStyle: face.style === 'oblique'
+            ? (paperFontStyleFromCss(typography.fontStyle) === 'oblique' ? typography.fontStyle : 'oblique 14deg')
+            : face.style,
           fontWeight: String(face.weight),
+          fontStretch: `${face.stretchPercent}%`,
+          ...(variationSettings ? { fontVariationSettings: variationSettings } : {}),
         });
       }}
     />

@@ -72,6 +72,22 @@ describe('paperPageFlattenExport', () => {
     expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 
+  it('blocks an isolated SVG before decode when an exact managed alias did not load', async () => {
+    const image = vi.fn();
+    vi.stubGlobal('Image', class { decoding = ''; set src(_value: string) { image(); } decode() { return Promise.resolve(); } });
+    const css = '/* signal-loom-managed-font-manifest:eyJ2ZXJzaW9uIjoxLCJmYWNlcyI6W3siaWRlbnRpdHkiOiJmIiwgImZhbWlseUFsaWFzIjoic2xvb20tbWFuYWdlZC1mIiwgInBvc3RzY3JpcHROYW1lIjoiRiIsICJ3ZWlnaHQiOjQwMCwic3R5bGUiOiJub3JtYWwiLCJzdHJldGNoUGVyY2VudCI6MTAwLCJjb2xsZWN0aW9uSW5kZXgiOjB9XX0 */ @font-face{}';
+    const browserDocument = {
+      fonts: { ready: Promise.resolve(), load: async () => new Set(), check: () => false },
+      createElement: vi.fn(),
+    } as unknown as Document;
+    await expect(rasterizeFlattenedPaperPageToPng({
+      pageId: 'page-1', pageNumber: 1, label: 'Exact page', mimeType: 'image/svg+xml',
+      svg: `<svg><style>${css}</style><text>sloom-managed-f</text></svg>`, dataUrl: 'data:image/svg+xml,exact', exactManagedFontCss: css,
+      widthMm: 10, heightMm: 10, widthPx: 10, heightPx: 10, scale: 1, includeBleed: false,
+    }, browserDocument)).rejects.toThrow(/requested identity|did not load/i);
+    expect(image).not.toHaveBeenCalled();
+  });
+
   it('escapes quoted font-family values so the flattened SVG stays valid XML', () => {
     const doc = createDefaultPaperDocument({ title: 'Quoted font family' });
     const pageId = doc.pages[0].id;

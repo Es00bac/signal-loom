@@ -89,6 +89,24 @@ describe('rich Inspector typography synchronization', () => {
     }]);
   });
 
+  it('retains exact stretch and variable-axis coordinates on selected rich-text runs', () => {
+    const original: PaperRichParagraph[] = [{
+      runs: [{ text: 'Condensed variable face', fontFamily: 'Old Face' }],
+    }];
+    expect(applyTypographyPatchToRichText(original, {
+      fontFamily: 'Exact Face Alias',
+      fontStretch: '75%',
+      fontVariationSettings: { wdth: 75, wght: 640 },
+    })).toEqual([{
+      runs: [{
+        text: 'Condensed variable face',
+        fontFamily: 'Exact Face Alias',
+        fontStretch: '75%',
+        fontVariationSettings: { wdth: 75, wght: 640 },
+      }],
+    }]);
+  });
+
   it('does not touch retained rich text for a frame-only or unchanged typography edit', () => {
     const original: PaperRichParagraph[] = [{ runs: [{ text: 'Vertical', color: '#123456' }] }];
     const next = { ...baseTypography, writingMode: 'vertical-rl' as const };

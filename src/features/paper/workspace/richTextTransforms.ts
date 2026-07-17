@@ -230,7 +230,8 @@ export function ensureRichTextForTransform(
 }
 
 const RUN_TYPOGRAPHY_KEYS = [
-  'fontFamily', 'fontSizePt', 'fontWeight', 'fontStyle', 'fontKerning', 'color', 'tracking',
+  'fontFamily', 'fontSizePt', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariationSettings',
+  'fontKerning', 'color', 'tracking',
   'smallCaps', 'numericStyle', 'textOrientation', 'emphasis',
 ] as const satisfies ReadonlyArray<keyof PaperTypography & keyof PaperTextRun>;
 
@@ -242,7 +243,8 @@ const PARAGRAPH_TYPOGRAPHY_KEYS = [
 /** Typography fields that can be represented by retained run/paragraph overrides. Writing direction remains
  * frame-level because it changes the containing flow, not a character range. */
 export const RICH_TYPOGRAPHY_KEYS = [
-  'fontFamily', 'fontSizePt', 'leadingPt', 'fontWeight', 'fontStyle', 'fontKerning', 'color', 'tracking',
+  'fontFamily', 'fontSizePt', 'leadingPt', 'fontWeight', 'fontStyle', 'fontStretch',
+  'fontVariationSettings', 'fontKerning', 'color', 'tracking',
   'smallCaps', 'numericStyle', 'textOrientation', 'emphasis', 'align', 'alignLast', 'hyphenate', 'lineBreak',
   'lineBreakStrict', 'firstLineIndentMm', 'spaceBeforeMm', 'spaceAfterMm', 'dropCapLines',
 ] as const;

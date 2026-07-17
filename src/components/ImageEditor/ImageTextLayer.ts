@@ -15,7 +15,6 @@ import {
   bundledFontFaceIdentitySignature,
   bundledFontFaceRuntimeFamilyName,
   bundledFontFaceStyleDescriptor,
-  bundledFontFaceVariationSettingsCss,
   normalizeBundledFontFaceState,
   normalizeBundledFontFaceStateForTypography,
 } from '../../lib/bundledFontLibrary';
@@ -1698,6 +1697,7 @@ export function buildTextLayerName(content: string): string {
 
 export function rasterizeImageTextStyle(styleInput: Partial<ImageTextLayerStyle>): LayerBitmap {
   const style = normalizeImageTextStyle(styleInput);
+  assertCanvasCanPaintManagedImageText(style);
   if (style.pathLayout) {
     return rasterizeImageTextOnPathStyle(style);
   }
@@ -2656,15 +2656,21 @@ function applyCanvasTypographySettings(
   const typographyContext = ctx as unknown as {
     fontKerning?: ImageTextLayerStyle['fontKerning'];
     fontStretch?: string;
-    fontVariationSettings?: string;
     fontVariantCaps?: ImageTextLayerStyle['fontVariantCaps'];
   };
   typographyContext.fontKerning = style.fontKerning;
   if (style.managedFace) typographyContext.fontStretch = `${style.managedFace.stretchPercent}%`;
-  if (style.managedFace) typographyContext.fontVariationSettings = bundledFontFaceVariationSettingsCss(style.managedFace);
   // Canvas font shorthand cannot express `all-small-caps`, so it is applied through this context
   // property after the font shorthand is set. The retained text content is left unchanged.
   typographyContext.fontVariantCaps = style.fontVariantCaps;
+}
+
+/** Canvas 2D has no standard variable-coordinate setter. Do not paint a default instance as exact. */
+export function assertCanvasCanPaintManagedImageText(style: Pick<ImageTextLayerStyle, 'managedFace'>): void {
+  const coordinates = style.managedFace?.variationSettings;
+  if (coordinates && Object.keys(coordinates).length > 0) {
+    throw new Error('Exact managed variable-font coordinates require the supported Paper shaping route; Canvas 2D raster paint is blocked rather than substituting the default instance.');
+  }
 }
 
 function buildImageTextLiveEditStatusDescriptor(editable: boolean): ImageTextLiveEditStatusDescriptor {

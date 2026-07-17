@@ -49,6 +49,8 @@ export interface PaperPositionedGlyphRun {
   /** The font's native glyph-path scale, never assumed to be 1000. */
   unitsPerEm: number;
   color: PaperPrintPaintSource;
+  /** Coordinates remain attached to the outline request; glyphPath must not reset to defaults. */
+  variations?: Record<string, number>;
   glyphs: Array<PaperShapedGlyph & { xPt: number; yPt: number }>;
   sourceStart: number;
   sourceEnd: number;
@@ -565,6 +567,7 @@ function positionHorizontalLine(
       fontSizePt: group.style.fontSizePt,
       unitsPerEm: group.style.shaper.unitsPerEm ?? DEFAULT_UNITS_PER_EM,
       color: group.style.color,
+      variations: group.style.variations,
       glyphs,
       sourceStart: group.units[0].sourceStart,
       sourceEnd: group.units[group.units.length - 1].sourceEnd,
@@ -627,6 +630,7 @@ function positionVerticalLine(
       fontSizePt: group.style.fontSizePt,
       unitsPerEm: group.style.shaper.unitsPerEm ?? DEFAULT_UNITS_PER_EM,
       color: group.style.color,
+      variations: group.style.variations,
       glyphs,
       sourceStart: group.units[0].sourceStart,
       sourceEnd: group.units[group.units.length - 1].sourceEnd,

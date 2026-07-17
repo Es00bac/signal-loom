@@ -29,6 +29,7 @@ import {
   describeSequenceRenderBackend,
   describeSequenceRenderBackendCaveat,
   drawTextStageObject,
+  assertCanvasCanPaintExactManagedVideoFace,
   packageSequenceFramesAsZip,
   resolveSequenceVisualClipDuration,
 } from './mediaComposition';
@@ -1552,6 +1553,13 @@ describe('buildSequenceCommand', () => {
 });
 
 describe('drawTextStageObject', () => {
+  it('blocks variable managed Canvas paint rather than drawing a default instance', () => {
+    expect(() => assertCanvasCanPaintExactManagedVideoFace({
+      kind: 'bundled', schemaVersion: 2, faceId: 'variable', family: 'Variable', weight: 400, style: 'normal', stretchPercent: 100,
+      collectionIndex: 0, variationSettings: { opsz: 18 }, sha256: 'a'.repeat(64), byteLength: 100,
+    })).toThrow(/blocked before fallback pixels/i);
+  });
+
   it('uses quoted multi-word families and object weight/style (FBL-012 / AUD-026)', () => {
     const state = {
       font: '',

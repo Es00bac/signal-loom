@@ -7,6 +7,7 @@ import {
   updatePaperDocumentSetup,
 } from './paperDocument';
 import { resolvePaperFrameAssetUrl } from './paperAssetReferences';
+import { collectExactPaperManagedFaces, readPaperManagedFontManifest, verifyExactPaperManagedFontReadiness } from './paperExactManagedFonts';
 
 export interface PaperPageExportDimensions {
   widthMm: number;
@@ -24,6 +25,8 @@ export interface FlattenedPaperPageSvgExport extends PaperPageExportDimensions {
   mimeType: 'image/svg+xml';
   svg: string;
   dataUrl: string;
+  /** The exact alias payload embedded in this isolated SVG; required before any raster decode. */
+  exactManagedFontCss?: string;
 }
 
 export interface FlattenedPaperPageRasterExport extends Omit<FlattenedPaperPageSvgExport, 'mimeType' | 'svg' | 'dataUrl'> {
@@ -126,6 +129,13 @@ export function buildFlattenedPaperPageSvgExport(
   options: PaperPageFlattenExportOptions = {},
 ): FlattenedPaperPageSvgExport {
   const page = findPaperPage(document, pageId);
+  const managedFaces = collectExactPaperManagedFaces(
+    [...document.pages, ...document.parentPages].flatMap((candidate) => candidate.frames),
+    document.importedFonts,
+  );
+  if (managedFaces.length > 0 && !readPaperManagedFontManifest(options.fontFaceCss)) {
+    throw new Error('Flattened Paper output is blocked because its exact managed-font alias payload is missing.');
+  }
   const dimensions = getPaperPageExportDimensions(document, options);
   const onePageDocument = buildOnePageExportDocument(document, page, options);
   const html = exportPaperDocumentToPrintHtml(onePageDocument, {
@@ -156,6 +166,7 @@ export function buildFlattenedPaperPageSvgExport(
     mimeType: 'image/svg+xml',
     svg,
     dataUrl: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+    ...(options.fontFaceCss ? { exactManagedFontCss: options.fontFaceCss } : {}),
   };
 }
 
@@ -244,7 +255,7 @@ export async function rasterizeFlattenedPaperPageToPng(
   if (!browserDocument) {
     throw new Error('Paper page raster export needs a browser document.');
   }
-
+  await verifyFlattenedPaperPageExactManagedFonts(exported, browserDocument);
   const decoded = await decodeFlattenedPaperPageSvg(exported);
   try {
     const canvas = browserDocument.createElement('canvas');
@@ -293,6 +304,7 @@ export async function rasterizeFlattenedPaperPageToRgba(
   if (!browserDocument) {
     throw new Error('Paper page raster export needs a browser document.');
   }
+  await verifyFlattenedPaperPageExactManagedFonts(exported, browserDocument);
   const decoded = await decodeFlattenedPaperPageSvg(exported);
   try {
     const canvas = browserDocument.createElement('canvas');
@@ -457,6 +469,30 @@ async function decodeFlattenedPaperPageSvg(
     image,
     dispose: () => undefined,
   };
+}
+
+/**
+ * The SVG is an isolated document: verify its own embedded payload before Image.decode() can turn
+ * a missing alias into fallback pixels. The host FontFaceSet check is deliberately descriptor- and
+ * alias-specific, while the containment check proves those same aliases were embedded in this SVG.
+ */
+async function verifyFlattenedPaperPageExactManagedFonts(
+  exported: FlattenedPaperPageSvgExport,
+  browserDocument: Document,
+): Promise<void> {
+  const css = exported.exactManagedFontCss;
+  if (!css?.includes('@font-face')) return;
+  const manifest = readPaperManagedFontManifest(css);
+  if (!manifest) throw new Error('Flattened Paper SVG has managed font rules without an exact identity manifest.');
+  if (!exported.svg.includes(css)) {
+    throw new Error('Flattened Paper SVG is missing its exact managed-font payload; raster paint is blocked.');
+  }
+  for (const face of manifest.faces) {
+    if (!exported.svg.includes(face.familyAlias)) {
+      throw new Error(`Flattened Paper SVG is missing requested managed alias ${face.familyAlias}; raster paint is blocked.`);
+    }
+  }
+  await verifyExactPaperManagedFontReadiness(browserDocument, css);
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {

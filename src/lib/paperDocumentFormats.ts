@@ -163,6 +163,8 @@ export interface PaperZipExport {
 
 export interface PaperCbzRasterExportOptions {
   includeBleed?: boolean;
+  /** Required exact alias payload when a document contains managed Paper text. */
+  fontFaceCss?: string;
   resolveImageSrc?: (src: string, context: { frameId: string; pageId: string }) => Promise<string | undefined> | string | undefined;
   rasterize?: (exported: FlattenedPaperPageSvgExport) => Promise<FlattenedPaperPageRasterExport> | FlattenedPaperPageRasterExport;
   onPageRasterized?: (progress: { pageNumber: number; pageIndex: number; pageCount: number }) => void;
@@ -844,6 +846,7 @@ export async function buildPaperCbzRasterExport(
     const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(document, page.id, {
       includeBleed: options.includeBleed,
       resolveImageSrc,
+      fontFaceCss: options.fontFaceCss,
     });
     const rasterExport = await Promise.resolve(rasterize(svgExport));
     const path = `pages/page-${String(index + 1).padStart(padLength, '0')}.png`;

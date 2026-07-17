@@ -288,6 +288,32 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     expect(refs.imageA.id).toMatch(/^sha256:/);
   });
 
+  it('rejects a current portable section before staging when required license text is absent', async () => {
+    const { refs } = await seedTwoTabProject();
+    const saved = await buildSavedPortableProject();
+    const paperDocuments = [saved.paper?.document, ...(saved.paper?.documents ?? []).map((tab) => tab.document)]
+      .filter((document): document is PaperDocument => Boolean(document));
+    for (const paperDocument of paperDocuments) {
+      for (const face of paperDocument.importedFonts ?? []) face.license = { id: face.license.id };
+    }
+    await resetAllStores();
+    await wipePaperAssetRepository();
+
+    await expect(restoreProjectDocument(saved)).rejects.toThrow(/required license text|partial restore/i);
+    expect(await paperAssetRepository.get(refs.font.id)).toBeUndefined();
+  });
+
+  it('rejects a current portable section that declares required license bytes missing', async () => {
+    const { refs } = await seedTwoTabProject();
+    const saved = await buildSavedPortableProject();
+    saved.paperAssets!.missingAssets = [{ id: refs.license.id, context: 'required font license text' }];
+    await resetAllStores();
+    await wipePaperAssetRepository();
+
+    await expect(restoreProjectDocument(saved)).rejects.toThrow(/required license text.*missing/i);
+    expect(await paperAssetRepository.get(refs.font.id)).toBeUndefined();
+  });
+
   it('rejects a corrupted asset payload before mutating any store or repository state', async () => {
     await seedTwoTabProject();
     const saved = await buildSavedPortableProject();

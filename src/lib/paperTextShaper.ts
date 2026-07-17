@@ -41,7 +41,7 @@ export interface PaperTextShaper {
   readonly unitsPerEm?: number;
   shape(request: PaperShapeRequest): PaperShapedRun;
   /** Returns an SVG path in the face's units-per-em coordinate space. */
-  glyphPath(glyphId: number): string;
+  glyphPath(glyphId: number, variations?: Record<string, number>): string;
   /** Releases this wrapper's references and makes future calls fail closed. */
   destroy(): void;
 }
@@ -165,9 +165,15 @@ class HarfBuzzPaperTextShaper implements PaperTextShaper {
     }
   }
 
-  glyphPath(glyphId: number): string {
+  glyphPath(glyphId: number, variations?: Record<string, number>): string {
     if (!Number.isInteger(glyphId) || glyphId < 0) throw new Error('Glyph id must be a non-negative integer.');
-    return this.requireFont().glyphToPath(glyphId);
+    const font = this.requireFont();
+    font.setVariations(variationsFor(variations));
+    try {
+      return font.glyphToPath(glyphId);
+    } finally {
+      font.setVariations([]);
+    }
   }
 
   destroy(): void {

@@ -11,7 +11,7 @@ import type { PaperImportedFont } from '../../../types/paper';
 import { createBinaryAssetRecord } from '../../../shared/assets/contentAddressedAsset';
 import { verifyBinaryAssetRecord } from '../../../shared/assets/contentAddressedAsset';
 import { paperAssetRepository } from '../assets/PaperAssetRuntime';
-import { paperFontStyleDescriptor, paperManagedFontFamilyAlias } from '../../../lib/paperExactManagedFonts';
+import { paperFontStyleDescriptor, paperManagedFontCssSource, paperManagedFontFamilyAlias } from '../../../lib/paperExactManagedFonts';
 
 function genFontId(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -22,16 +22,27 @@ function genFontId(): string {
  * Register every imported font as a browser FontFace (idempotent) so the editor + font picker render it.
  * Runs at the workspace root so fonts are live regardless of selection, and re-registers on reopen.
  */
-export function useRegisterImportedFonts(importedFonts: readonly PaperImportedFont[] | undefined): void {
+export interface PaperImportedFontRegistrationState {
+  pendingFaceIds: string[];
+  blocked: Array<{ faceId: string; message: string }>;
+}
+
+export function useRegisterImportedFonts(importedFonts: readonly PaperImportedFont[] | undefined): PaperImportedFontRegistrationState {
   const registered = useRef(new Set<string>());
   const pending = useRef(new Set<string>());
+  const [state, setState] = useState<PaperImportedFontRegistrationState>({ pendingFaceIds: [], blocked: [] });
+  const registrationUnavailable = typeof FontFace === 'undefined' || typeof document === 'undefined';
   useEffect(() => {
-    if (typeof FontFace === 'undefined' || typeof document === 'undefined') return;
+    if (registrationUnavailable) return;
     let cancelled = false;
     for (const font of importedFonts ?? []) {
       const key = `${font.id}:${font.fontAsset.id}`;
       if (registered.current.has(key) || pending.current.has(key)) continue;
       pending.current.add(key);
+      setState((current) => ({
+        pendingFaceIds: [...new Set([...current.pendingFaceIds, font.id])],
+        blocked: current.blocked.filter((entry) => entry.faceId !== font.id),
+      }));
       void (async () => {
         try {
           const record = await paperAssetRepository.get(font.fontAsset.id);
@@ -40,11 +51,10 @@ export function useRegisterImportedFonts(importedFonts: readonly PaperImportedFo
             || record.ref.sha256 !== font.fontAsset.sha256
             || record.ref.byteLength !== font.fontAsset.byteLength
             || record.ref.mimeType !== font.fontAsset.mimeType
-            || !(await verifyBinaryAssetRecord(record))) return;
-          // Copy into a concrete ArrayBuffer so the FontFace source type is exact (not ArrayBufferLike).
-          const buffer = new ArrayBuffer(record.bytes.byteLength);
-          new Uint8Array(buffer).set(record.bytes);
-          const face = new FontFace(paperManagedFontFamilyAlias(font), buffer, {
+            || !(await verifyBinaryAssetRecord(record))) throw new Error(`Exact bytes for ${font.postscriptName || font.id} are unavailable or do not match the document reference.`);
+          // Collections must use their PostScript fragment. Passing a TTC/OTC ArrayBuffer lets the
+          // browser choose member zero, which is not this document's recorded collectionIndex.
+          const face = new FontFace(paperManagedFontFamilyAlias(font), paperManagedFontCssSource(font, record.bytes), {
             weight: String(font.weight),
             style: paperFontStyleDescriptor(font.style, font.obliqueAngleDeg),
             stretch: `${font.stretchPercent}%`,
@@ -53,10 +63,17 @@ export function useRegisterImportedFonts(importedFonts: readonly PaperImportedFo
           if (cancelled) return;
           document.fonts.add(loaded);
           registered.current.add(key);
-        } catch {
-          // A face the browser can't load still embeds fine on export; this is only the on-screen preview.
+        } catch (error) {
+          if (!cancelled) {
+            const detail = error instanceof Error ? error.message : 'registration failed';
+            setState((current) => ({
+              pendingFaceIds: current.pendingFaceIds.filter((faceId) => faceId !== font.id),
+              blocked: [...current.blocked.filter((entry) => entry.faceId !== font.id), { faceId: font.id, message: `Exact managed face ${font.postscriptName || font.id} is blocked: ${detail}` }],
+            }));
+          }
         } finally {
           pending.current.delete(key);
+          if (!cancelled) setState((current) => ({ ...current, pendingFaceIds: current.pendingFaceIds.filter((faceId) => faceId !== font.id) }));
         }
       })();
     }
@@ -64,7 +81,10 @@ export function useRegisterImportedFonts(importedFonts: readonly PaperImportedFo
     return () => {
       cancelled = true;
     };
-  }, [importedFonts]);
+  }, [importedFonts, registrationUnavailable]);
+  return registrationUnavailable
+    ? { pendingFaceIds: [], blocked: (importedFonts ?? []).map((font) => ({ faceId: font.id, message: `Exact managed face ${font.postscriptName || font.id} cannot register because this renderer does not expose FontFace.` })) }
+    : state;
 }
 
 function fontMimeType(file: File, format: string): string {

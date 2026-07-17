@@ -18,7 +18,7 @@ import type {
 } from '../types/flow';
 import { buildAutomationExpression } from './clipAutomation';
 import { formatFontFamily } from './formatFontFamily';
-import { bundledFontFaceRuntimeFamilyName, bundledFontFaceStyleDescriptor, bundledFontFaceVariationSettingsCss, ensureBundledFontDependenciesReady } from './bundledFontLibrary';
+import { bundledFontFaceRuntimeFamilyName, bundledFontFaceStyleDescriptor, ensureBundledFontDependenciesReady } from './bundledFontLibrary';
 import { managedBundledFontDependenciesForState } from './managedBundledFonts';
 import type { ManagedBundledFontFaceReference } from '../types/managedFont';
 import {
@@ -1475,6 +1475,7 @@ function paintTypesetTextBlock(
   style: TypesetPaintStyle,
   origin: { xPx: number; yPx: number },
 ): void {
+  assertCanvasCanPaintExactManagedVideoFace(style.managedFace);
   context.save();
   const stylePrefix = style.managedFace
     ? `${bundledFontFaceStyleDescriptor(style.managedFace)} `
@@ -1484,9 +1485,6 @@ function paintTypesetTextBlock(
   context.fontKerning = style.fontKerning ?? 'auto';
   if (style.managedFace && 'fontStretch' in context) {
     (context as unknown as { fontStretch: string }).fontStretch = `${style.managedFace.stretchPercent}%`;
-  }
-  if (style.managedFace && 'fontVariationSettings' in context) {
-    (context as unknown as { fontVariationSettings?: string }).fontVariationSettings = bundledFontFaceVariationSettingsCss(style.managedFace);
   }
   if ('letterSpacing' in context) {
     (context as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${style.letterSpacingPx}px`;
@@ -1534,6 +1532,13 @@ function paintTypesetTextBlock(
   }
 
   context.restore();
+}
+
+/** Canvas 2D cannot set variable coordinates through a standards-track API. */
+export function assertCanvasCanPaintExactManagedVideoFace(face: ManagedBundledFontFaceReference | undefined): void {
+  if (face?.variationSettings && Object.keys(face.variationSettings).length > 0) {
+    throw new Error('Exact managed variable-font coordinates require a supported shaping/render route; Canvas 2D video paint is blocked before fallback pixels are produced.');
+  }
 }
 
 /** Draws one line's text as individually-placed, individually-rotated glyphs along an arc (see

@@ -28,6 +28,7 @@ import {
   normalizeImageTextStyle,
   normalizeImageTextOpenTypeFeatures,
   rasterizeImageTextStyle,
+  assertCanvasCanPaintManagedImageText,
   serializeImageTextStylePackage,
   serializeImageTextCharacterStyle,
   serializeImageTextParagraphStyle,
@@ -120,6 +121,13 @@ describe('ImageTextLayer', () => {
       { ...managedFace, variationSettings: { opsz: 18 } },
       { ...managedFace, sha256: 'b'.repeat(64) }, { ...managedFace, byteLength: 101 },
     ]) expect(signatureFor(changed)).not.toBe(base);
+  });
+
+  it('fails closed instead of assigning non-standard Canvas variation settings', () => {
+    expect(() => assertCanvasCanPaintManagedImageText({ managedFace: {
+      kind: 'bundled', schemaVersion: 2, faceId: 'variable', family: 'Variable', weight: 400, style: 'normal', stretchPercent: 100,
+      collectionIndex: 0, variationSettings: { opsz: 18 }, sha256: 'a'.repeat(64), byteLength: 100,
+    } })).toThrow(/Canvas 2D raster paint is blocked/i);
   });
 
   beforeEach(() => {

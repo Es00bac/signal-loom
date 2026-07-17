@@ -1220,7 +1220,10 @@ export async function exportPaperWebcomicImages(
   setStatus: (status: string) => void,
   options: PaperWebcomicImageExportOptions = {},
 ): Promise<PaperExportOutcome> {
-  const plan = buildPaperWebcomicImageExportPlan(document, options);
+  const exact = await buildPaperDocumentExactManagedFontOutput(document);
+  const outputDocument = exact.document;
+  const exactOptions = { ...options, fontFaceCss: exact.fontFaceCss };
+  const plan = buildPaperWebcomicImageExportPlan(outputDocument, exactOptions);
   const nativeBridge = getSignalLoomNativeBridge();
 
   try {
@@ -1251,8 +1254,8 @@ export async function exportPaperWebcomicImages(
         setStatus(`Preparing ${plan.format.toUpperCase()} page images for ${directoryPath}...`);
       }
       setStatus(`Rasterizing ${plan.pages.length} Paper page${plan.pages.length === 1 ? '' : 's'} for ${plan.format.toUpperCase()} export...`);
-      const pages = await buildPaperWebcomicImageDataPages(document, {
-        ...options,
+      const pages = await buildPaperWebcomicImageDataPages(outputDocument, {
+        ...exactOptions,
         plan,
         onPageRasterized: ({ pageNumber, pageIndex, pageCount }) => {
           setStatus(`Rasterized page ${pageNumber} (${pageIndex + 1}/${pageCount}) for ${plan.format.toUpperCase()} export...`);
@@ -1304,7 +1307,7 @@ export async function exportPaperWebcomicImages(
     }
 
     setStatus(`Building browser ZIP fallback for ${plan.pages.length} Paper page image${plan.pages.length === 1 ? '' : 's'}...`);
-    const archive = await buildPaperWebcomicImageArchiveExport(document, options);
+    const archive = await buildPaperWebcomicImageArchiveExport(outputDocument, exactOptions);
     downloadSharedBlob(archive.blob, archive.fileName);
     return finishPaperExport(setStatus, {
       state: 'success',
