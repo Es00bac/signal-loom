@@ -84,6 +84,10 @@ function licensedVerdict(): unknown {
 }
 
 function seedPersistedSettings(state: Record<string, unknown>): void {
+  // This helper models replacing the entire durable profile from outside the adapter. Reset its
+  // ownership sidecars too; production adapter writes always stamp/advance all three together.
+  window.localStorage.removeItem(`${SETTINGS_STORAGE_KEY}:write-version`);
+  window.localStorage.removeItem(`${SETTINGS_STORAGE_KEY}:committed-write-version`);
   window.localStorage.setItem(SETTINGS_STORAGE_KEY, `enc:${JSON.stringify({ state, version: 0 })}`);
 }
 
@@ -348,5 +352,30 @@ describe('late hydration versus local mutation (AUD-015 residual)', () => {
     await recovery;
 
     expect(useSettingsStore.getState().apiKeys.openai).toBe('');
+  });
+
+  it('fails closed in memory when durable storage is unavailable, without poisoning later reads', async () => {
+    const storage = window.localStorage;
+    const storageGetter = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new Error('storage unavailable');
+    });
+    try {
+      const { settings, gates } = await importFreshModules();
+      await settings.waitForSettingsHydration();
+
+      settings.useSettingsStore.getState().setApiKey('openai', 'sk-memory-only');
+      settings.useSettingsStore.getState().removeLicenseKey();
+      await settle();
+
+      expect(settings.useSettingsStore.getState().apiKeys.openai).toBe('sk-memory-only');
+      expect(settings.useSettingsStore.getState().license.licensed).toBe(false);
+      expect(gates.isCommercialExportUnlocked()).toBe(false);
+    } finally {
+      storageGetter.mockRestore();
+    }
+
+    // No fallback write may appear as plaintext after the backing store comes back.
+    expect(storage.getItem(SETTINGS_STORAGE_KEY)).toBeNull();
+    expect(storage.getItem(`${SETTINGS_STORAGE_KEY}:write-version`)).toBeNull();
   });
 });

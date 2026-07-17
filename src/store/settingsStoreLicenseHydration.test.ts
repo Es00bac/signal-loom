@@ -35,6 +35,8 @@ vi.mock('../lib/licenseKey', () => ({
 }));
 
 function seedPersistedSettings(state: Record<string, unknown>): void {
+  window.localStorage.removeItem(`${SETTINGS_STORAGE_KEY}:write-version`);
+  window.localStorage.removeItem(`${SETTINGS_STORAGE_KEY}:committed-write-version`);
   window.localStorage.setItem(SETTINGS_STORAGE_KEY, `enc:${JSON.stringify({ state, version: 0 })}`);
 }
 

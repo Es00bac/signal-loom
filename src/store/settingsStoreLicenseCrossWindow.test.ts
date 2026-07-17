@@ -23,6 +23,8 @@ vi.mock('../lib/licenseKey', () => ({
 }));
 
 const cipherControl = vi.hoisted(() => ({
+  holdNextDecryptions: 0,
+  pendingDecryptions: [] as Array<{ envelope: string; resolve: (plain: string | null) => void }>,
   holdNextEncryptions: 0,
   pendingEncryptions: [] as Array<{ plain: string; resolve: (envelope: string) => void }>,
 }));
@@ -30,7 +32,15 @@ const cipherControl = vi.hoisted(() => ({
 vi.mock('../lib/secretCipher', () => ({
   isEncryptedSecretEnvelope: (value: unknown): boolean =>
     typeof value === 'string' && value.startsWith('enc:'),
-  decryptSecret: async (envelope: string) => envelope.slice('enc:'.length),
+  decryptSecret: (envelope: string) => {
+    if (cipherControl.holdNextDecryptions > 0) {
+      cipherControl.holdNextDecryptions -= 1;
+      return new Promise<string | null>((resolve) => {
+        cipherControl.pendingDecryptions.push({ envelope, resolve });
+      });
+    }
+    return Promise.resolve(envelope.slice('enc:'.length));
+  },
   encryptSecret: (plain: string) => {
     if (cipherControl.holdNextEncryptions > 0) {
       cipherControl.holdNextEncryptions -= 1;
@@ -57,8 +67,20 @@ vi.mock('../lib/settingsBackup', () => ({
   },
 }));
 
-function seedPersistedSettings(state: Record<string, unknown>): void {
-  window.localStorage.setItem(SETTINGS_STORAGE_KEY, `enc:${JSON.stringify({ state, version: 0 })}`);
+function seedPersistedSettings(state: Record<string, unknown>, writeVersion = 0): void {
+  const stamped = {
+    state,
+    version: 0,
+    ...(writeVersion > 0 ? { __flowSettingsWriteVersion: writeVersion } : {}),
+  };
+  window.localStorage.setItem(SETTINGS_STORAGE_KEY, `enc:${JSON.stringify(stamped)}`);
+  if (writeVersion > 0) {
+    window.localStorage.setItem(`${SETTINGS_STORAGE_KEY}:write-version`, String(writeVersion));
+    window.localStorage.setItem(`${SETTINGS_STORAGE_KEY}:committed-write-version`, String(writeVersion));
+  } else {
+    window.localStorage.removeItem(`${SETTINGS_STORAGE_KEY}:write-version`);
+    window.localStorage.removeItem(`${SETTINGS_STORAGE_KEY}:committed-write-version`);
+  }
 }
 
 function readPersistedState(): Record<string, unknown> {
@@ -69,17 +91,23 @@ function readPersistedState(): Record<string, unknown> {
 }
 
 type SettingsStoreModule = typeof import('./settingsStore');
+type LicenseGatesModule = typeof import('../lib/licenseGates');
+type RendererWindow = SettingsStoreModule & Pick<LicenseGatesModule, 'isCommercialExportUnlocked'>;
 
 /** Import a fresh settings-store universe, as a second renderer window would evaluate it. */
-async function importRendererWindow(): Promise<SettingsStoreModule> {
+async function importRendererWindow(): Promise<RendererWindow> {
   vi.resetModules();
-  return import('./settingsStore');
+  const settings = await import('./settingsStore');
+  const gates = await import('../lib/licenseGates');
+  return { ...settings, isCommercialExportUnlocked: gates.isCommercialExportUnlocked };
 }
 
 const teardowns: Array<() => void> = [];
 
 beforeEach(() => {
   window.localStorage.clear();
+  cipherControl.holdNextDecryptions = 0;
+  cipherControl.pendingDecryptions.length = 0;
   cipherControl.holdNextEncryptions = 0;
   cipherControl.pendingEncryptions.length = 0;
 });
@@ -91,6 +119,66 @@ afterEach(() => {
 });
 
 describe('license identity cross-window sync (AUD-015)', () => {
+  it('never resurrects a delayed version-10 read after a dropped remote removal and unrelated write', async () => {
+    // Exact AUD-015 final-gate reproduction. Window A has physically read version 10 and is
+    // stuck decrypting it; Window B commits removal of both secrets plus an unrelated provider
+    // change. Neither window installs the channel listener, deliberately dropping B's notice.
+    seedPersistedSettings({
+      licenseKey: VALID_KEY,
+      apiKeys: { openai: 'sk-version-10-secret' },
+      providerSettings: { atlasBaseUrl: 'https://version-10.example.test' },
+    }, 10);
+    cipherControl.holdNextDecryptions = 1;
+    const windowA = await importRendererWindow();
+    await vi.waitFor(() => {
+      expect(cipherControl.pendingDecryptions).toHaveLength(1);
+    });
+    const staleRead = cipherControl.pendingDecryptions.splice(0, 1)[0];
+
+    const windowB = await importRendererWindow();
+    await windowB.waitForSettingsHydration();
+    await vi.waitFor(() => {
+      expect(windowB.useSettingsStore.getState().license.licensed).toBe(true);
+    });
+
+    windowB.useSettingsStore.getState().removeLicenseKey();
+    windowB.useSettingsStore.getState().setApiKey('openai', '');
+    windowB.useSettingsStore.getState().setProviderSetting('atlasBaseUrl', 'https://version-11.example.test');
+    await vi.waitFor(() => {
+      const persisted = readPersistedState();
+      expect(persisted.licenseKey).toBe('');
+      expect(persisted.apiKeys).toMatchObject({ openai: '' });
+      expect(persisted.providerSettings).toMatchObject({ atlasBaseUrl: 'https://version-11.example.test' });
+      expect(windowB.useSettingsStore.getState().license.licensed).toBe(false);
+      expect(windowB.isCommercialExportUnlocked()).toBe(false);
+      expect(Number(window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}:committed-write-version`))).toBeGreaterThan(10);
+    });
+
+    // Releasing A's old decrypt must force a durable re-read before merge, not turn its old
+    // complete snapshot into a fresh version-13 resurrection write.
+    staleRead.resolve(staleRead.envelope.slice('enc:'.length));
+    await windowA.waitForSettingsHydration();
+    await vi.waitFor(() => {
+      expect(windowA.useSettingsStore.getState().licenseKey).toBe('');
+      expect(windowA.useSettingsStore.getState().apiKeys.openai).toBe('');
+      expect(windowA.useSettingsStore.getState().providerSettings.atlasBaseUrl).toBe('https://version-11.example.test');
+      expect(windowA.useSettingsStore.getState().license.licensed).toBe(false);
+      expect(windowA.isCommercialExportUnlocked()).toBe(false);
+      expect(readPersistedState().licenseKey).toBe('');
+    });
+
+    // Reload is another delivery-independent reader of the encrypted durable blob.
+    const windowC = await importRendererWindow();
+    await windowC.waitForSettingsHydration();
+    await vi.waitFor(() => {
+      expect(windowC.useSettingsStore.getState().licenseKey).toBe('');
+      expect(windowC.useSettingsStore.getState().apiKeys.openai).toBe('');
+      expect(windowC.useSettingsStore.getState().providerSettings.atlasBaseUrl).toBe('https://version-11.example.test');
+      expect(windowC.useSettingsStore.getState().license.licensed).toBe(false);
+      expect(windowC.isCommercialExportUnlocked()).toBe(false);
+    });
+  });
+
   it('a key removal in one renderer fail-closes the license in the other renderer', async () => {
     seedPersistedSettings({ licenseKey: VALID_KEY });
 
@@ -116,6 +204,38 @@ describe('license identity cross-window sync (AUD-015)', () => {
       expect(windowB.useSettingsStore.getState().licenseKey).toBe('');
       expect(windowB.useSettingsStore.getState().license.licensed).toBe(false);
     });
+  });
+
+  it('duplicate durable-change notices are idempotent after a removal tombstone', async () => {
+    seedPersistedSettings({ licenseKey: VALID_KEY }, 4);
+    const windowA = await importRendererWindow();
+    const windowB = await importRendererWindow();
+    teardowns.push(windowA.installLicenseCrossWindowSync(), windowB.installLicenseCrossWindowSync());
+    await Promise.all([windowA.waitForSettingsHydration(), windowB.waitForSettingsHydration()]);
+    await vi.waitFor(() => {
+      expect(windowA.useSettingsStore.getState().license.licensed).toBe(true);
+      expect(windowB.useSettingsStore.getState().license.licensed).toBe(true);
+    });
+
+    windowB.useSettingsStore.getState().removeLicenseKey();
+    await vi.waitFor(() => {
+      expect(windowA.useSettingsStore.getState().licenseKey).toBe('');
+    });
+    const tombstoneVersion = window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}:committed-write-version`);
+    const duplicateSender = new BroadcastChannel('flow-license-identity-sync');
+    try {
+      duplicateSender.postMessage('license-identity-changed');
+      duplicateSender.postMessage('license-identity-changed');
+      await vi.waitFor(() => {
+        expect(windowA.useSettingsStore.getState().licenseKey).toBe('');
+        expect(windowA.useSettingsStore.getState().license.licensed).toBe(false);
+        expect(windowB.useSettingsStore.getState().licenseKey).toBe('');
+        expect(readPersistedState().licenseKey).toBe('');
+      });
+    } finally {
+      duplicateSender.close();
+    }
+    expect(window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}:committed-write-version`)).toBe(tombstoneVersion);
   });
 
   it('a backup import in one renderer re-keys and re-verifies the other renderer', async () => {

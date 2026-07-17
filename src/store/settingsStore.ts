@@ -66,6 +66,7 @@ type ApiKeyStorageDescriptorMap = {
 const API_KEY_REDACTION = '[redacted]';
 const SETTINGS_STORAGE_KEY = 'flow-settings-storage';
 const SETTINGS_WRITE_VERSION_SUFFIX = ':write-version';
+const SETTINGS_COMMITTED_WRITE_VERSION_SUFFIX = ':committed-write-version';
 const LOCAL_STORAGE_CAVEAT = 'API keys are stored in browser localStorage without at-rest encryption in this app.';
 const MEMORY_ONLY_CAVEAT = 'API keys are currently not persisted to browser storage in this session.';
 const ENCRYPTED_CAVEAT = 'API keys are encrypted at rest (the OS keychain on desktop, WebCrypto on web and mobile) and only decrypted in memory while the app is open.';
@@ -339,10 +340,30 @@ function createEncryptedSettingsStorage(): StateStorage {
       const raw = store.getItem(name);
       if (raw == null) return null;
       if (isEncryptedSecretEnvelope(raw)) {
-        // null => can't decrypt (e.g. profile copied to another machine) -> hydrate from defaults.
-        const plaintext = await decryptSecret(raw);
-        recordHydrationSnapshotVersion(hydrationRead, plaintext);
-        return plaintext;
+        // `getItem` and decrypt are asynchronous. A different renderer may commit while this
+        // read is suspended, so decrypt the current durable blob again before allowing a merge.
+        // The small bound prevents a permanently busy or failing storage backend from spinning;
+        // merge still performs the definitive generation check below.
+        let candidateRaw = raw;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          // null => can't decrypt (e.g. profile copied to another machine) -> hydrate defaults.
+          const plaintext = await decryptSecret(candidateRaw);
+          recordHydrationSnapshotVersion(hydrationRead, plaintext);
+          if (
+            isHydrationSnapshotCurrent(store, name, hydrationRead)
+            || localMutationOwnsLaterStorageGeneration(store, name, hydrationRead)
+          ) {
+            return plaintext;
+          }
+          const currentRaw = store.getItem(name);
+          if (!currentRaw || currentRaw === candidateRaw || !isEncryptedSecretEnvelope(currentRaw)) {
+            return plaintext;
+          }
+          candidateRaw = currentRaw;
+        }
+        const finalPlaintext = await decryptSecret(candidateRaw);
+        recordHydrationSnapshotVersion(hydrationRead, finalPlaintext);
+        return finalPlaintext;
       }
       // Legacy plaintext from before encryption shipped: use it, then re-write it encrypted.
       void encryptSecret(raw).then((envelope) => {
@@ -378,11 +399,15 @@ function createEncryptedSettingsStorage(): StateStorage {
             // Never let this older completion replace that durable intent.
             if (isLatestSettingsWriteVersion(store, name, writeVersion)) {
               store.setItem(name, envelope);
+              commitSettingsWriteVersion(store, name, writeVersion);
               didPersist = true;
             }
           } catch {
             /* encryption / quota / availability */
           }
+        }
+        if (!didPersist) {
+          releaseSettingsWriteVersion(store, name, writeVersion);
         }
         settleLocalMutationWrite(localMutationWrite, didPersist);
         if (broadcastAfterWrite && didPersist) {
@@ -436,6 +461,10 @@ function settingsWriteVersionKey(name: string): string {
   return `${name}${SETTINGS_WRITE_VERSION_SUFFIX}`;
 }
 
+function settingsCommittedWriteVersionKey(name: string): string {
+  return `${name}${SETTINGS_COMMITTED_WRITE_VERSION_SUFFIX}`;
+}
+
 function readSettingsWriteVersion(store: Storage | null, name: string): number {
   if (!store) return fallbackSettingsWriteVersion;
   try {
@@ -460,6 +489,39 @@ function reserveSettingsWriteVersion(store: Storage | null, name: string): numbe
 
 function isLatestSettingsWriteVersion(store: Storage, name: string, version: number): boolean {
   return readSettingsWriteVersion(store, name) === version;
+}
+
+/** The committed generation changes only after the matching ciphertext has reached storage. */
+function readCommittedSettingsWriteVersion(store: Storage | null, name: string): number {
+  if (!store) return fallbackSettingsWriteVersion;
+  try {
+    const value = Number.parseInt(store.getItem(settingsCommittedWriteVersionKey(name)) ?? '0', 10);
+    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  } catch {
+    return fallbackSettingsWriteVersion;
+  }
+}
+
+function commitSettingsWriteVersion(store: Storage, name: string, version: number): void {
+  try {
+    // There is no await between blob write and commit. A later reservation cannot interleave in
+    // this renderer turn, and every reader can reject a snapshot whose stamped generation lost.
+    store.setItem(settingsCommittedWriteVersionKey(name), String(version));
+  } catch {
+    /* The ciphertext itself remains version stamped; claim revalidation still protects readers. */
+  }
+}
+
+/** A failed claimant must not permanently poison a later durable read. */
+function releaseSettingsWriteVersion(store: Storage | null, name: string, version: number): void {
+  if (!store) return;
+  try {
+    if (readSettingsWriteVersion(store, name) === version) {
+      store.setItem(settingsWriteVersionKey(name), String(readCommittedSettingsWriteVersion(store, name)));
+    }
+  } catch {
+    /* unavailable storage already falls back to in-memory ordering */
+  }
 }
 
 function stampSettingsWriteVersion(value: string, writeVersion: number): string {
@@ -603,6 +665,39 @@ function recordHydrationSnapshotVersion(read: HydrationRead | undefined, value: 
   if (read) {
     read.snapshotWriteVersion = readStampedSettingsWriteVersion(value);
   }
+}
+
+/**
+ * A snapshot owns a merge only while no later write is either committed or in progress. The
+ * claim protects the gap while another renderer encrypts; failed claimants release themselves,
+ * so an unavailable storage backend cannot poison reads indefinitely.
+ */
+function isHydrationSnapshotCurrent(store: Storage | null, name: string, read: HydrationRead | undefined): boolean {
+  if (!read) return true;
+  const snapshotVersion = read.snapshotWriteVersion;
+  return snapshotVersion >= readCommittedSettingsWriteVersion(store, name)
+    && snapshotVersion >= readSettingsWriteVersion(store, name);
+}
+
+/**
+ * A write that this renderer started after the read is the one exception to rejecting an older
+ * snapshot: the per-key merge guard will retain that local state, then persist the resolved
+ * snapshot. A remote claim can never satisfy this check because it has no local marker.
+ */
+function localMutationOwnsLaterStorageGeneration(
+  store: Storage | null,
+  name: string,
+  read: HydrationRead | undefined,
+): boolean {
+  if (!read) return false;
+  const latestGeneration = Math.max(
+    readSettingsWriteVersion(store, name),
+    readCommittedSettingsWriteVersion(store, name),
+  );
+  if (latestGeneration <= read.snapshotWriteVersion) return false;
+  return [...localMutationRevisionByKey.values()].some((marker) =>
+    marker.revision > read.startRevision && marker.writeVersion === latestGeneration,
+  );
 }
 
 function localMutationsAfterReadStart(read: HydrationRead | null): Array<keyof SettingsState> {
@@ -992,7 +1087,10 @@ export const useSettingsStore = create<SettingsState>()(
         // mutations landed, so the mutation-vs-hydration guard records this read's start
         // revision. Zustand applies only its latest rehydrate, and therefore only this latest
         // captured revision can pair with merge.
-        const read: HydrationRead = { startRevision: localMutationRevision, snapshotWriteVersion: 0 };
+        const read: HydrationRead = {
+          startRevision: localMutationRevision,
+          snapshotWriteVersion: 0,
+        };
         activeHydrationRead = read;
         queuedHydrationReads.push(read);
         return (hydratedState: SettingsState | undefined) => {
@@ -1014,13 +1112,35 @@ export const useSettingsStore = create<SettingsState>()(
         };
       },
       merge: (persistedState, currentState) => {
+        const hydrationRead = activeHydrationRead;
+        // The final ownership check is intentionally adjacent to the merge. A snapshot can be
+        // read/decrypted long before this callback runs; if another renderer committed (or is
+        // still claiming) a later storage generation, returning that snapshot would let Zustand
+        // immediately persist it as a brand-new write and resurrect removed secrets.
+        if (
+          hydrationRead
+          && !isHydrationSnapshotCurrent(
+            typeof window !== 'undefined' ? window.localStorage : null,
+            SETTINGS_STORAGE_KEY,
+            hydrationRead,
+          )
+          && !localMutationOwnsLaterStorageGeneration(
+            typeof window !== 'undefined' ? window.localStorage : null,
+            SETTINGS_STORAGE_KEY,
+            hydrationRead,
+          )
+        ) {
+          activeHydrationRead = null;
+          lastHydrationKeptLocalMutations = false;
+          return currentState;
+        }
         // Every applied rehydrate replaces the license identity and fail-closes `license` below,
         // so whatever verification was in flight before it is stale by definition.
         claimLicenseIdentityGeneration();
         // Mutation-vs-hydration guard: this read may have started before local mutations landed,
         // making its blob stale for exactly the keys those mutations wrote. Everything else in
         // the snapshot is still the newest durable fact and applies normally.
-        const locallyMutatedKeys = localMutationsAfterReadStart(activeHydrationRead);
+        const locallyMutatedKeys = localMutationsAfterReadStart(hydrationRead);
         activeHydrationRead = null;
         const typedPersistedState = persistedState as Partial<SettingsState> | undefined;
         const persistedApiKeys = sanitizePersistedApiKeys(typedPersistedState?.apiKeys);
