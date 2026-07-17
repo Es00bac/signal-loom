@@ -172,6 +172,8 @@ export interface PaperPrintHtmlOptions {
   mediaBox?: 'bleed' | 'trim';
   includeScreenGuides?: boolean;
   resolveAssetUrl?: (frame: PaperFrame) => string | undefined;
+  /** Exact managed faces for an isolated browser/Electron document. */
+  fontFaceCss?: string;
 }
 
 export function createDefaultPaperDocument({
@@ -721,6 +723,7 @@ export function exportPaperDocumentToPrintHtml(
 ${renderPrintProductionMetaTags(productionMeta)}
 <title>${escapeHtml(doc.title)}</title>
 <style>
+${options.fontFaceCss ?? ''}
 @page {
   size: ${formatMm(sheetWidthMm)} ${formatMm(sheetHeightMm)};
   margin: 0;

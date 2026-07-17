@@ -156,6 +156,7 @@ export interface PaperManagedFontFaceRequest {
   familyId: string;
   weight: number;
   style: PaperManagedFontStyle;
+  obliqueAngleDeg?: number;
   stretchPercent?: number;
 }
 
@@ -167,8 +168,17 @@ export type PaperManagedFontFaceSelection =
     familyId: string;
     requestedWeight: number;
     requestedStyle: PaperManagedFontStyle;
+    requestedObliqueAngleDeg?: number;
     requestedStretchPercent: number;
-  };
+  }
+  | { status: 'ambiguous-face'; faceIds: string[] };
+
+/** Oblique is an exact descriptor: CSS's omitted-angle default is 14deg, not italic. */
+export function canonicalPaperFontObliqueAngle(style: PaperManagedFontStyle, angle?: number): number | undefined {
+  if (style !== 'oblique') return undefined;
+  const resolved = angle === undefined ? 14 : angle;
+  return Number.isFinite(resolved) ? Math.min(90, Math.max(-90, Math.round(resolved * 100) / 100)) : 14;
+}
 
 /**
  * Finds only an exact family/weight/style/stretch face. Production never synthesizes bold, italic, or a
@@ -181,19 +191,26 @@ export function selectManagedFontFace(
   const familyId = normalizePaperFontFamilyId(request.familyId);
   const requestedWeight = normalizePaperFontWeight(request.weight);
   const requestedStyle = request.style;
+  const requestedObliqueAngleDeg = canonicalPaperFontObliqueAngle(requestedStyle, request.obliqueAngleDeg);
   const requestedStretchPercent = normalizePaperFontStretch(request.stretchPercent);
   const familyFaces = faces.filter((face) => normalizePaperFontFamilyId(face.familyId) === familyId);
   if (familyFaces.length === 0) return { status: 'missing-family', familyId };
 
-  const face = familyFaces.find((candidate) =>
+  const matches = familyFaces.filter((candidate) =>
     candidate.weight === requestedWeight
     && candidate.style === requestedStyle
+    && canonicalPaperFontObliqueAngle(candidate.style, candidate.obliqueAngleDeg) === requestedObliqueAngleDeg
     && candidate.stretchPercent === requestedStretchPercent,
   );
-  if (!face) {
-    return { status: 'missing-face', familyId, requestedWeight, requestedStyle, requestedStretchPercent };
+  if (matches.length === 0) {
+    return {
+      status: 'missing-face', familyId, requestedWeight, requestedStyle,
+      ...(requestedObliqueAngleDeg !== undefined ? { requestedObliqueAngleDeg } : {}),
+      requestedStretchPercent,
+    };
   }
-  return { status: 'selected', face };
+  if (matches.length > 1) return { status: 'ambiguous-face', faceIds: matches.map((face) => face.id).sort() };
+  return { status: 'selected', face: matches[0] };
 }
 
 /** Stable document-facing family identifier derived from a foundry family name. */

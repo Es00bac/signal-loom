@@ -34,6 +34,7 @@ export interface FontVetFace {
   unitsPerEm?: number;
   weight: number;
   style: PaperManagedFontStyle;
+  obliqueAngleDeg?: number;
   stretchPercent: number;
   variableAxes: Record<string, PaperManagedFontAxisRange>;
   unicodeRanges: Array<{ start: number; end: number }>;
@@ -126,6 +127,14 @@ function fontStyle(font: FontkitFont): PaperManagedFontStyle {
   if (/oblique/.test(subfamily)) return 'oblique';
   if (/italic/.test(subfamily) || (typeof font.italicAngle === 'number' && font.italicAngle !== 0)) return 'italic';
   return 'normal';
+}
+
+function obliqueAngle(font: FontkitFont, style: PaperManagedFontStyle): number | undefined {
+  if (style !== 'oblique') return undefined;
+  const angle = font.italicAngle;
+  // OpenType italicAngle is conventionally negative for right-leaning glyphs; CSS uses the
+  // authored oblique angle sign. Preserve a finite value and retain the CSS default otherwise.
+  return typeof angle === 'number' && Number.isFinite(angle) ? Math.min(90, Math.max(-90, angle)) : 14;
 }
 
 function inferredWeight(font: FontkitFont): number {
@@ -235,6 +244,7 @@ function vetFace(font: FontkitFont, collectionIndex: number, fallbackFormat: Fon
     errors.push('The font Unicode coverage could not be read; it cannot be used for production output.');
   }
 
+  const style = fontStyle(font);
   return {
     collectionIndex,
     ok: errors.length === 0,
@@ -245,7 +255,8 @@ function vetFace(font: FontkitFont, collectionIndex: number, fallbackFormat: Fon
     numGlyphs,
     unitsPerEm: safe(() => (typeof font.unitsPerEm === 'number' ? font.unitsPerEm : undefined)),
     weight: inferredWeight(font),
-    style: fontStyle(font),
+    style,
+    ...(style === 'oblique' ? { obliqueAngleDeg: obliqueAngle(font, style) } : {}),
     stretchPercent: stretchPercent(font),
     variableAxes: normalizeVariableAxes(font),
     unicodeRanges: coverage ?? [],

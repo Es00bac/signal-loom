@@ -133,6 +133,7 @@ export function buildImportedFont(
     postscriptName: vettedFace.postscriptName ?? vettedFace.familyName ?? id,
     weight: vettedFace.weight,
     style: vettedFace.style,
+    ...(vettedFace.obliqueAngleDeg !== undefined ? { obliqueAngleDeg: vettedFace.obliqueAngleDeg } : {}),
     stretchPercent: vettedFace.stretchPercent,
     collectionIndex,
     variableAxes: vettedFace.variableAxes,

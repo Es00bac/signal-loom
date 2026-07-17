@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { BundledFontBrowser } from '../../../components/Common/BundledFontBrowser';
 import { installBundledPaperFontFace, type BundledFontFace, type BundledFontFamily } from '../../../lib/bundledFontLibrary';
 import { usePaperStore } from '../../../store/paperStore';
-import type { PaperTypography } from '../../../types/paper';
+import type { PaperManagedFontStyle, PaperTypography } from '../../../types/paper';
 import { paperAssetRepository } from '../assets/PaperAssetRuntime';
 
 export function PaperBundledFontPicker({
@@ -21,7 +21,7 @@ export function PaperBundledFontPicker({
         onChange({
           ...typography,
           fontFamily: family.family,
-          fontStyle: face.style === 'normal' ? 'normal' : 'italic',
+          fontStyle: face.style,
           fontWeight: String(face.weight),
         });
       }}
@@ -37,7 +37,7 @@ export function PaperBundledFontFaceBrowser({
   onSelect,
 }: {
   fontFamily: string;
-  fontStyle: 'normal' | 'italic';
+  fontStyle: PaperManagedFontStyle;
   fontWeight: number;
   initiallyOpen?: boolean;
   onSelect: (family: BundledFontFamily, face: BundledFontFace) => void | Promise<void>;

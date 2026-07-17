@@ -209,6 +209,10 @@ function normalizeManagedFontFace(candidate: LegacyPaperImportedFont, fontAsset:
   const style = hasManagedFontStyle(candidate.style)
     ? candidate.style
     : candidate.italic === true ? 'italic' : 'normal';
+  const obliqueAngleDeg = style === 'oblique' && typeof candidate.obliqueAngleDeg === 'number'
+    && Number.isFinite(candidate.obliqueAngleDeg)
+    ? Math.min(90, Math.max(-90, Math.round(candidate.obliqueAngleDeg * 100) / 100))
+    : undefined;
   const collectionIndex = typeof candidate.collectionIndex === 'number'
     && Number.isInteger(candidate.collectionIndex)
     && candidate.collectionIndex >= 0
@@ -226,6 +230,7 @@ function normalizeManagedFontFace(candidate: LegacyPaperImportedFont, fontAsset:
       : familyName,
     weight,
     style,
+    ...(style === 'oblique' ? { obliqueAngleDeg: obliqueAngleDeg ?? 14 } : {}),
     stretchPercent: normalizePaperFontStretch(
       typeof candidate.stretchPercent === 'number' ? candidate.stretchPercent : undefined,
     ),

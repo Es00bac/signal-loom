@@ -1391,6 +1391,26 @@ export function sanitizeProjectDocument(input: unknown, fallbackName = 'Sloom St
 
   const sourceBin = sanitizeSourceBinSnapshot(input.sourceBin);
   const flowWorkspaceState = sanitizeFlowWorkspaceState(input, sourceBin);
+  const paper = sanitizePaperSnapshot(input.paper);
+  const paperAssets = sanitizePaperPortableAssetsSection(input.paperAssets);
+  const paperAssetIds = new Set<BinaryAssetId>([
+    ...(paper?.assetIds ?? []),
+    ...((paper?.documents ?? []).flatMap((entry) => entry.assetIds ?? [])),
+  ]);
+  if (paperAssetIds.size > 0 && !paperAssets) {
+    throw new Error('The selected project references managed Paper assets but omits the required paperAssets section.');
+  }
+  if (paperAssets) {
+    const supplied = new Set(paperAssets.assets.map((entry) => entry.ref.id));
+    // Explicit policy exclusions/missing-at-save records are not an integrity mismatch: opening
+    // retains their diagnostics and later output is still blocked rather than silently painted.
+    const declaredUnavailable = new Set([
+      ...(paperAssets.excludedFonts ?? []).map((entry) => entry.assetId),
+      ...(paperAssets.missingAssets ?? []).map((entry) => entry.id),
+    ]);
+    const missing = [...paperAssetIds].filter((id) => !supplied.has(id) && !declaredUnavailable.has(id));
+    if (missing.length > 0) throw new Error(`The selected project is missing portable Paper assets required by its document references: ${missing.join(', ')}.`);
+  }
 
   return {
     schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
@@ -1403,8 +1423,8 @@ export function sanitizeProjectDocument(input: unknown, fallbackName = 'Sloom St
     editor: sanitizeEditorSnapshot(input.editor),
     sourceBin,
     usageLedger: sanitizeProjectUsageLedgerSnapshot(input.usageLedger),
-    paper: sanitizePaperSnapshot(input.paper),
-    paperAssets: sanitizePaperPortableAssetsSection(input.paperAssets),
+    paper,
+    paperAssets,
     imageEditor: sanitizeImageEditorSnapshot(input.imageEditor),
     fileSystem: sanitizeFileSystemMetadata(input.fileSystem),
   };

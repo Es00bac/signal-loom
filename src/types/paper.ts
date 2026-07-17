@@ -568,6 +568,8 @@ export interface PaperManagedFontFace {
   postscriptName: string;
   weight: number;
   style: PaperManagedFontStyle;
+  /** Exact CSS oblique angle. Omitted only for historical documents; oblique defaults to 14deg. */
+  obliqueAngleDeg?: number;
   stretchPercent: number;
   collectionIndex: number;
   variableAxes: Record<string, PaperManagedFontAxisRange>;

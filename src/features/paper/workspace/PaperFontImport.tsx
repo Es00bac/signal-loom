@@ -9,7 +9,9 @@ import { vetFontBytes } from '../../../lib/paperFontVetting';
 import { buildImportedFont } from '../../../lib/paperFontLibrary';
 import type { PaperImportedFont } from '../../../types/paper';
 import { createBinaryAssetRecord } from '../../../shared/assets/contentAddressedAsset';
+import { verifyBinaryAssetRecord } from '../../../shared/assets/contentAddressedAsset';
 import { paperAssetRepository } from '../assets/PaperAssetRuntime';
+import { paperFontStyleDescriptor } from '../../../lib/paperExactManagedFonts';
 
 function genFontId(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -33,13 +35,19 @@ export function useRegisterImportedFonts(importedFonts: readonly PaperImportedFo
       void (async () => {
         try {
           const record = await paperAssetRepository.get(font.fontAsset.id);
-          if (!record || cancelled) return;
+          if (!record || cancelled
+            || record.ref.id !== font.fontAsset.id
+            || record.ref.sha256 !== font.fontAsset.sha256
+            || record.ref.byteLength !== font.fontAsset.byteLength
+            || record.ref.mimeType !== font.fontAsset.mimeType
+            || !(await verifyBinaryAssetRecord(record))) return;
           // Copy into a concrete ArrayBuffer so the FontFace source type is exact (not ArrayBufferLike).
           const buffer = new ArrayBuffer(record.bytes.byteLength);
           new Uint8Array(buffer).set(record.bytes);
           const face = new FontFace(font.familyName, buffer, {
             weight: String(font.weight),
-            style: font.style,
+            style: paperFontStyleDescriptor(font.style, font.obliqueAngleDeg),
+            stretch: `${font.stretchPercent}%`,
           });
           const loaded = await face.load();
           if (cancelled) return;

@@ -19,7 +19,8 @@ import { validatePaperPdfx } from '../../lib/paperPdfxValidate';
 import { exportValidatedPaperPdfx, type PaperProductionPreflightOptions } from '../../lib/paperProductionPreflight';
 import { formatProductionValidationStatus } from '../../lib/paperProductionReport';
 import { normalizePaperPrintProductionSpec } from '../../lib/paperPrintProduction';
-import { paperAssetRepository } from '../../features/paper/assets/PaperAssetRuntime';
+import { buildPaperDocumentExactManagedFontOutput, paperAssetRepository } from '../../features/paper/assets/PaperAssetRuntime';
+import { verifyExactPaperManagedFontReadiness } from '../../lib/paperExactManagedFonts';
 import { verifyBinaryAssetRecord, type BinaryAssetRef } from '../../shared/assets/contentAddressedAsset';
 import { usePaperStore } from '../../store/paperStore';
 import {
@@ -817,18 +818,28 @@ export function getDraggedSourceItemId(dataTransfer: DataTransfer): string | und
   }
 }
 
-export function openPrintPreview(document: ReturnType<typeof usePaperStore.getState>['document']): void {
-  const html = exportPaperDocumentToPrintHtml(document, { includeScreenGuides: true });
+export async function openPrintPreview(document: ReturnType<typeof usePaperStore.getState>['document']): Promise<{ state: 'printed' | 'html-fallback'; message: string }> {
+  const exact = await buildPaperDocumentExactManagedFontOutput(document);
+  const html = exportPaperDocumentToPrintHtml(exact.document, { includeScreenGuides: true, fontFaceCss: exact.fontFaceCss });
   const printWindow = window.open('', '_blank', 'noopener,noreferrer');
   if (!printWindow) {
     downloadText(`${safeFileName(document.title)}-print.html`, html, 'text/html');
-    return;
+    return { state: 'html-fallback', message: 'Browser popup was blocked; downloaded print HTML instead.' };
   }
   printWindow.document.open();
   printWindow.document.write(html);
   printWindow.document.close();
   printWindow.focus();
-  window.setTimeout(() => printWindow.print(), 250);
+  try {
+    await verifyExactPaperManagedFontReadiness(printWindow.document, exact.fontFaceCss);
+    printWindow.print();
+    return { state: 'printed', message: 'Opened browser print dialog after exact managed-face verification.' };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Managed face readiness failed.';
+    const note = printWindow.document.createElement?.('p');
+    if (note) { note.textContent = `Print preview blocked: ${message}`; printWindow.document.body?.prepend(note); }
+    throw error;
+  }
 }
 
 export interface PaperExportOutcome {
@@ -855,10 +866,10 @@ export async function exportPaperPdfDocument(
   const nativeBridge = getSignalLoomNativeBridge();
 
   if (!nativeBridge?.exportPaperPdf) {
-    openPrintPreview(document);
+    const preview = await openPrintPreview(document);
     return finishPaperExport(setStatus, {
-      state: 'success',
-      message: 'Opened browser print dialog. In the desktop app this exports directly to PDF.',
+      state: preview.state === 'printed' ? 'success' : 'error',
+      message: preview.state === 'printed' ? 'Opened browser print dialog. In the desktop app this exports directly to PDF.' : preview.message,
       targetKind: 'file',
     });
   }

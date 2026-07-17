@@ -5,8 +5,6 @@ import type { BinaryAssetId, BinaryAssetRef } from '../shared/assets/contentAddr
 import type {
   PaperDocument,
   PaperFrame,
-  PaperManagedFontStyle,
-  PaperTextRun,
   PaperTypography,
 } from '../types/paper';
 import { collectReachablePaperAssetIds } from '../features/paper/assets/PaperDocumentAssets';
@@ -16,6 +14,7 @@ import {
   selectManagedFontFace,
 } from './paperManagedFonts';
 import { normalizeFamilyName } from './paperFontLibrary';
+import { paperFontObliqueAngleFromCss, paperFontStretchFromCss, paperFontStyleFromCss, paperFontWeightFromCss, paperFrameTextStyles } from './paperExactManagedFonts';
 import { isPaperManagedIccProfile } from './paperManagedIccProfiles';
 import { PAPER_OUTPUT_INTENT_PROFILES, normalizePaperPrintProductionSpec } from './paperPrintProduction';
 import { paperPrintPaintTotalInk, type PaperPrintPaint } from './paperPrintPaint';
@@ -99,36 +98,8 @@ function documentContainers(document: PaperDocument): Array<{ id: string; frames
   return [...document.pages, ...document.parentPages];
 }
 
-function textFrame(frame: PaperFrame): boolean {
-  return frame.kind === 'text' || frame.kind === 'caption' || frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble';
-}
-
-function numericWeight(value: string | undefined): number {
-  const normalized = (value ?? '').trim().toLowerCase();
-  if (normalized === 'bold' || normalized === 'bolder') return 700;
-  if (normalized === 'normal' || normalized === 'lighter' || !normalized) return 400;
-  const parsed = Number.parseInt(normalized, 10);
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(1000, parsed)) : 400;
-}
-
-function requestedStyle(value: string | undefined): PaperManagedFontStyle {
-  return value === 'italic' ? 'italic' : value === 'oblique' ? 'oblique' : 'normal';
-}
-
 function textStyles(frame: PaperFrame): Array<{ text: string; typography: PaperTypography }> {
-  if (!textFrame(frame)) return [];
-  if (frame.richText?.length) {
-    return frame.richText.flatMap((paragraph) => paragraph.runs.map((run: PaperTextRun) => ({
-      text: run.text,
-      typography: {
-        ...frame.typography,
-        ...(run.fontFamily !== undefined ? { fontFamily: run.fontFamily } : {}),
-        ...(run.fontWeight !== undefined ? { fontWeight: run.fontWeight } : {}),
-        ...(run.fontStyle !== undefined ? { fontStyle: run.fontStyle } : {}),
-      },
-    }))).filter((run) => run.text.trim().length > 0);
-  }
-  return (frame.text ?? '').trim() ? [{ text: frame.text ?? '', typography: frame.typography }] : [];
+  return paperFrameTextStyles(frame);
 }
 
 function assetReferences(document: PaperDocument): BinaryAssetRef[] {
@@ -458,9 +429,13 @@ async function preflightFrozenPaperProduction(
         for (const style of textStyles(frame)) {
           const family = normalizeFamilyName(style.typography.fontFamily);
           const familyId = normalizePaperFontFamilyId(family);
-          const weight = numericWeight(style.typography.fontWeight);
-          const fontStyle = requestedStyle(style.typography.fontStyle);
-          const selected = selectManagedFontFace(document.importedFonts ?? [], { familyId, weight, style: fontStyle });
+          const weight = paperFontWeightFromCss(style.typography.fontWeight);
+          const fontStyle = paperFontStyleFromCss(style.typography.fontStyle);
+          const selected = selectManagedFontFace(document.importedFonts ?? [], {
+            familyId, weight, style: fontStyle,
+            obliqueAngleDeg: paperFontObliqueAngleFromCss(style.typography.fontStyle),
+            stretchPercent: paperFontStretchFromCss(style.typography.fontStretch),
+          });
           if (selected.status !== 'selected') {
             addIssue(issues, {
               code: 'MISSING_MANAGED_FONT',

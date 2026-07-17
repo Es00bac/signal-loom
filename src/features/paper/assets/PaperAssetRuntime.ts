@@ -6,6 +6,11 @@ import type { SourceBinLibraryItem } from '../../../store/sourceBinStore';
 import type { PaperDocument, PaperFrame } from '../../../types/paper';
 import { resolvePaperFrameAssetUrl } from '../../../lib/paperAssetReferences';
 import type { BinaryAssetRef } from '../../../shared/assets/contentAddressedAsset';
+import {
+  aliasPaperDocumentManagedFontFamilies,
+  buildExactPaperManagedFontCss,
+  collectExactPaperManagedFaces,
+} from '../../../lib/paperExactManagedFonts';
 
 /** Shared renderer-side Paper asset storage. Native project storage joins this contract in Project 3. */
 export const paperAssetRepository: PaperAssetRepository = globalThis.indexedDB
@@ -14,6 +19,21 @@ export const paperAssetRepository: PaperAssetRepository = globalThis.indexedDB
 
 /** Object URLs are runtime leases only and never become Paper document state. */
 export const paperAssetUrlRegistry = new PaperAssetUrlRegistry(paperAssetRepository);
+
+/** Exact isolated-document payload for browser print, SVG flattening, soft proof and Electron PDF. */
+export async function buildPaperDocumentExactManagedFontOutput(document: PaperDocument): Promise<{ document: PaperDocument; fontFaceCss?: string }> {
+  const frames = [...document.pages, ...document.parentPages].flatMap((page) => page.frames);
+  const faces = collectExactPaperManagedFaces(frames, document.importedFonts);
+  if (faces.length === 0) return { document };
+  const fontFaceCss = await buildExactPaperManagedFontCss(faces, async (ref) => {
+    const record = await paperAssetRepository.get(ref.id);
+    if (!record || record.ref.id !== ref.id || record.ref.sha256 !== ref.sha256 || record.ref.byteLength !== ref.byteLength || record.ref.mimeType !== ref.mimeType || !(await verifyBinaryAssetRecord(record))) {
+      throw new Error(`Managed font ${ref.id} is unavailable or does not match its document reference.`);
+    }
+    return record.bytes;
+  });
+  return { document: aliasPaperDocumentManagedFontFamilies(document), fontFaceCss };
+}
 
 /**
  * Produces an export-only Paper document whose image/document locators are concrete URLs. Managed records

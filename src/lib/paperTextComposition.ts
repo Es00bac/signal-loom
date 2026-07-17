@@ -14,6 +14,7 @@ import type {
 } from '../types/paper';
 import { resolvePaperFrameTextContentBoxMm } from './paperDocument';
 import { normalizeFamilyName } from './paperFontLibrary';
+import { paperFontObliqueAngleFromCss, paperFontStretchFromCss, paperFontStyleFromCss, paperFontWeightFromCss } from './paperExactManagedFonts';
 import {
   canUseManagedFontForProduction,
   normalizePaperFontFamilyId,
@@ -200,17 +201,6 @@ function clampNonNegative(value: number | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
-function numericWeight(value: string | undefined): number {
-  const normalized = (value ?? '').trim().toLowerCase();
-  if (normalized === 'bold' || normalized === 'bolder') return 700;
-  if (normalized === 'normal' || normalized === 'lighter' || !normalized) return 400;
-  const parsed = Number.parseInt(normalized, 10);
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(1000, parsed)) : 400;
-}
-
-function requestedStyle(value: PaperTextRun['fontStyle'] | PaperTypography['fontStyle'] | undefined): PaperManagedFontStyle {
-  return value === 'italic' ? 'italic' : 'normal';
-}
 
 function splitGraphemes(text: string): Array<{ text: string; start: number; end: number }> {
   const maybeIntl = globalThis.Intl as typeof Intl & {
@@ -873,9 +863,14 @@ async function resolveStyle(
   sourceEnd: number,
 ): Promise<{ style?: ResolvedStyle; missing?: PaperMissingManagedFace }> {
   const familyId = normalizePaperFontFamilyId(normalizeFamilyName(run.fontFamily ?? typography.fontFamily));
-  const weight = numericWeight(run.fontWeight ?? typography.fontWeight);
-  const style = requestedStyle(run.fontStyle ?? typography.fontStyle);
-  const selection = selectManagedFontFace(importedFonts ?? [], { familyId, weight, style });
+  const inheritedWeight = paperFontWeightFromCss(typography.fontWeight);
+  const weight = paperFontWeightFromCss(run.fontWeight ?? typography.fontWeight, inheritedWeight);
+  const styleValue = run.fontStyle ?? typography.fontStyle;
+  const style = paperFontStyleFromCss(styleValue);
+  const selection = selectManagedFontFace(importedFonts ?? [], {
+    familyId, weight, style, obliqueAngleDeg: paperFontObliqueAngleFromCss(styleValue),
+    stretchPercent: paperFontStretchFromCss(run.fontStretch ?? typography.fontStretch),
+  });
   if (selection.status !== 'selected') {
     return {
       missing: {

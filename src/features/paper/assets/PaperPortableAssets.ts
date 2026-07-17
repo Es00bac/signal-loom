@@ -413,7 +413,13 @@ export async function collectVerifiedPaperAssetRecords(
         `repository record ${source.id} (${source.role} "${source.label}") failed digest verification; re-import the source file before exporting.`,
       );
     }
-    if (source.ref && (source.ref.sha256 !== record.ref.sha256 || source.ref.byteLength !== record.ref.byteLength)) {
+    if (source.ref && (
+      source.ref.id !== record.ref.id
+      || source.ref.sha256 !== record.ref.sha256
+      || source.ref.byteLength !== record.ref.byteLength
+      || source.ref.mimeType !== record.ref.mimeType
+      || source.ref.fileName !== record.ref.fileName
+    )) {
       throw new PaperPortableAssetsError(
         `repository record ${source.id} does not match the document reference for ${source.role} "${source.label}".`,
       );
@@ -544,7 +550,7 @@ export async function importPaperPortableAssetsSection(
       mimeType: entry.ref.mimeType,
       ...(entry.ref.fileName ? { fileName: entry.ref.fileName } : {}),
     });
-    if (rebuilt.ref.id !== entry.ref.id || rebuilt.ref.sha256 !== entry.ref.sha256) {
+    if (!sameRef(rebuilt.ref, entry.ref)) {
       throw new PaperPortableAssetsError(
         `asset ${entry.ref.id} failed content hash verification; the project file is corrupt.`,
       );

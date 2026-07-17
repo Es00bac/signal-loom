@@ -55,6 +55,7 @@ import {
   migrateLegacyPaperBinaryFields,
 } from '../features/paper/assets/PaperDocumentAssets';
 import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
+import { canonicalPaperFontObliqueAngle } from '../lib/paperManagedFonts';
 import type {
   PaperDocument,
   PaperDiscardedDocumentRecovery,
@@ -890,6 +891,7 @@ export const usePaperStore = create<PaperState & PaperActions>()(
               f.familyId === font.familyId
               && f.weight === font.weight
               && f.style === font.style
+              && canonicalPaperFontObliqueAngle(f.style, f.obliqueAngleDeg) === canonicalPaperFontObliqueAngle(font.style, font.obliqueAngleDeg)
               && f.stretchPercent === font.stretchPercent
               && f.collectionIndex === font.collectionIndex
             ),

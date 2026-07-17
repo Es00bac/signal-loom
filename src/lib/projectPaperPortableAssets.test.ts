@@ -271,7 +271,7 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     }
   });
 
-  it('opens a legacy .sloom without the section using explicit missing-asset diagnostics instead of fabricated completeness', async () => {
+  it('fails closed when a .sloom has managed Paper references but omits the required portable section', async () => {
     const { refs } = await seedTwoTabProject();
     const saved = await buildSavedPortableProject();
     delete saved.paperAssets;
@@ -279,18 +279,13 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     await resetAllStores();
     await wipePaperAssetRepository();
 
-    await restoreProjectDocument(saved, {
+    await expect(restoreProjectDocument(saved, {
       paperAuthorization: capturePaperWorkspaceAuthorization(),
-    });
-
+    })).rejects.toThrow(/paperAssets|required/i);
     const paperState = usePaperStore.getState();
-    expect(paperState.documents.map((tab) => tab.id)).toEqual(['tab-a', 'tab-b']);
+    expect(paperState.document.title).not.toBe('Tab A');
     expect(await paperAssetRepository.get(refs.imageA.id)).toBeUndefined();
-    const repairs = paperState.recovery?.repairs ?? [];
-    expect(repairs.length).toBeGreaterThan(0);
-    expect(repairs.join('\n')).toContain(refs.imageA.id);
-    // Export honestly fails on the missing bytes rather than inventing them.
-    await expect(materializePaperDocumentAssetUrls(paperState.document)).rejects.toThrow(/unavailable/i);
+    expect(refs.imageA.id).toMatch(/^sha256:/);
   });
 
   it('rejects a corrupted asset payload before mutating any store or repository state', async () => {
@@ -404,6 +399,19 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     await wipePaperAssetRepository();
 
     await expect(restoreProjectDocument(saved)).rejects.toThrow(/file name|unsafe|traversal/i);
+    expect(await paperAssetRepository.listRefs()).toHaveLength(0);
+  });
+
+  it('rejects a digest-correct payload whose MIME or file metadata conflicts with the document reference', async () => {
+    await seedTwoTabProject();
+    const saved = await buildSavedPortableProject();
+    const entry = saved.paperAssets!.assets[0];
+    entry.ref = { ...entry.ref, mimeType: 'text/plain', fileName: '../wrong.bin' };
+
+    await resetAllStores();
+    await wipePaperAssetRepository();
+
+    await expect(restoreProjectDocument(saved)).rejects.toThrow(/file name|unsafe|metadata|reference/i);
     expect(await paperAssetRepository.listRefs()).toHaveLength(0);
   });
 
