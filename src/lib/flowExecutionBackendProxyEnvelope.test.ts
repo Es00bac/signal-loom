@@ -182,6 +182,8 @@ describe('backend proxy result envelope — processed terminal responses call th
     ['malformed metadata', () => jsonResponse({ envelopeVersion: V, result: '{}', resultType: 'json', outputMetadata: [1, 2] })],
     ['tempting fields in an error payload', () => jsonResponse({ envelopeVersion: V, error: 'provider rejected', result: 'data:image/png;base64,AAAA', resultType: 'image', additionalResults: [{ result: 'data:image/png;base64,BBBB' }] })],
     ['legacy payload claiming a Blob', () => jsonResponse({ result: 'data:image/png;base64,AAAA', resultType: 'image', binary: { encoding: 'base64', mimeType: 'image/png', byteLength: 2, data: 'AQI=' } })],
+    ['image-declared primary carrying a foreign-family (video) data URL', () => jsonResponse({ envelopeVersion: V, result: 'data:video/mp4;base64,AAAA', resultType: 'image' })],
+    ['image-declared additional result being a foreign-family (audio) asset', () => jsonResponse({ envelopeVersion: V, result: 'data:image/png;base64,AAAA', resultType: 'image', additionalResults: [{ result: 'data:audio/wav;base64,BBBB' }] })],
   ])('rejects %s without resubmitting the job', async (_label, makeResponse) => {
     const fetchMock = vi.fn(async () => (typeof makeResponse === 'function' ? makeResponse() : makeResponse));
     vi.stubGlobal('fetch', fetchMock);

@@ -186,6 +186,57 @@ function parseBase64DataUrl(url: string): { mimeType: string; data: string } | n
   return { mimeType: parts[0] || 'text/plain', data: url.slice(comma + 1) };
 }
 
+/** The MIME top-level type each asset result type is constrained to; null for non-asset result types. */
+function assetMediaFamily(resultType: ResultType): 'image' | 'video' | 'audio' | 'application' | null {
+  switch (resultType) {
+    case 'image': return 'image';
+    case 'video': return 'video';
+    case 'audio': return 'audio';
+    // A package is a file container/archive (application/zip and the like); it is application-typed.
+    case 'package': return 'application';
+    default: return null;
+  }
+}
+
+/** Top-level type token of a normalized MIME ("image/png" → "image"). */
+function mimeTopType(normalizedMime: string): string {
+  const slash = normalizedMime.indexOf('/');
+  return slash < 0 ? normalizedMime : normalizedMime.slice(0, slash);
+}
+
+/** Media type declared by ANY `data:` URL (base64 or not); null when `url` is not a data URL. */
+function dataUrlMimeType(url: string): string | null {
+  if (!url.startsWith('data:')) return null;
+  const comma = url.indexOf(',');
+  const header = comma < 0 ? url.slice('data:'.length) : url.slice('data:'.length, comma);
+  const mediaType = header.split(';')[0].trim();
+  return mediaType || 'text/plain';
+}
+
+/**
+ * Enforce that an asset value stays within its declared media family. A `data:` URL exposes an
+ * inspectable MIME that is authoritative: it must sit in `family`, and any supplied MIME must agree
+ * with it exactly. An HTTP(S) URL has no inspectable MIME, so a supplied MIME (when present) must sit
+ * in `family`; with none, the declared result type governs — the direct executors only emit
+ * same-family HTTP assets, which are unprovable but never heterogeneous.
+ */
+function enforceAssetMediaFamily(url: string, suppliedMimeType: string | undefined, family: string, field: string): void {
+  const dataMimeRaw = dataUrlMimeType(url);
+  if (dataMimeRaw !== null) {
+    const dataMime = normalizeMimeType(dataMimeRaw);
+    if (mimeTopType(dataMime) !== family) {
+      fail(`Backend proxy result envelope ${field} data-URL MIME (${dataMime}) is not a ${family} asset.`);
+    }
+    if (suppliedMimeType !== undefined && normalizeMimeType(suppliedMimeType) !== dataMime) {
+      fail(`Backend proxy result envelope ${field} MIME disagrees with its data URL.`);
+    }
+    return;
+  }
+  if (suppliedMimeType !== undefined && mimeTopType(normalizeMimeType(suppliedMimeType)) !== family) {
+    fail(`Backend proxy result envelope ${field} MIME (${suppliedMimeType}) is not a ${family} asset.`);
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -482,13 +533,41 @@ function bindPrimaryResultToBinary(
   }
 }
 
+/**
+ * Gate an asset-typed primary value, its supplied top-level MIME, and (when present) the binary MIME
+ * to the declared result family. Shared by the versioned and legacy decoders; non-asset result types
+ * have no family and are left untouched (their string payloads are validated elsewhere).
+ */
+function enforcePrimaryAssetFamily(
+  resultType: ResultType,
+  result: string | boolean,
+  topLevelMimeType: string | undefined,
+  binary: ReconstructedBinary | undefined,
+): void {
+  const family = assetMediaFamily(resultType);
+  if (family === null) return;
+  if (typeof result === 'string') {
+    enforceAssetMediaFamily(result, topLevelMimeType, family, 'result');
+  }
+  if (binary !== undefined && mimeTopType(normalizeMimeType(binary.mimeType)) !== family) {
+    fail(`Backend proxy result envelope binary MIME (${binary.mimeType}) is not a ${family} asset.`);
+  }
+}
+
 function validateAdditionalResults(
   value: unknown,
+  resultType: ResultType,
   limits: BackendProxyResultEnvelopeLimits,
 ): Array<{ result: string; mimeType?: string }> | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
     fail('Backend proxy result envelope additionalResults must be an array.');
+  }
+  const family = assetMediaFamily(resultType);
+  if (family === null) {
+    // The direct executors only emit sibling outputs for asset result types; a non-asset result
+    // (text/number/boolean/json/list/envelope) carrying asset siblings is not a shape any produce.
+    fail('Backend proxy result envelope additionalResults require an asset result type (image, video, audio, or package).');
   }
   if (value.length > limits.maxAdditionalResults) {
     fail(`Backend proxy result envelope additionalResults exceeds the ${limits.maxAdditionalResults}-item limit.`);
@@ -499,6 +578,9 @@ function validateAdditionalResults(
     }
     const result = requireAssetUrl(entry.result, `additionalResults[${index}].result`, limits.maxAdditionalResultValueLength);
     const mimeType = requireOptionalString(entry.mimeType, `additionalResults[${index}].mimeType`, limits.maxMimeTypeLength);
+    // Every sibling must stay in the parent's media family so heterogeneous media can never be
+    // persisted under the parent kind.
+    enforceAssetMediaFamily(result, mimeType, family, `additionalResults[${index}].result`);
     return mimeType === undefined ? { result } : { result, mimeType };
   });
 }
@@ -533,7 +615,12 @@ function decodeVersionedEnvelope(
   const fileName = requireOptionalString(payload.fileName, 'fileName', limits.maxFileNameLength);
   const outputMetadata = validateOutputMetadata(payload.outputMetadata, limits);
   const binary = payload.binary === undefined ? undefined : reconstructBinary(payload.binary, limits);
-  const additionalResults = validateAdditionalResults(payload.additionalResults, limits);
+  const additionalResults = validateAdditionalResults(payload.additionalResults, resultType, limits);
+
+  // One canonical family contract: the primary value, any supplied top-level MIME, the binary MIME, and
+  // every additional sibling (checked as they were validated) must all sit in the family the declared
+  // result type constrains — exactly the same-family shape the direct executors emit.
+  enforcePrimaryAssetFamily(resultType, result, declaredMimeType, binary);
 
   let mimeType = declaredMimeType;
   let blob: Blob | undefined;
@@ -588,6 +675,10 @@ function decodeLegacyEnvelope(
   const extension = requireOptionalString(payload.extension, 'extension', limits.maxExtensionLength);
   const fileName = requireOptionalString(payload.fileName, 'fileName', limits.maxFileNameLength);
   const outputMetadata = validateOutputMetadata(payload.outputMetadata, limits);
+
+  // Legacy single-asset payloads carry no binary/additionalResults (rejected above), but the primary
+  // value and any supplied MIME must still stay within the declared result family.
+  enforcePrimaryAssetFamily(resultType, result, mimeType, undefined);
 
   return {
     result,

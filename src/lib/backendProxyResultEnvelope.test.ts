@@ -99,10 +99,11 @@ describe('decodeBackendProxyResultEnvelope — Blob round-trip', () => {
     const raw = new Uint8Array([0x00, 0xff, 0xfe, 0x80, 0x7f, 0x01, 0xc3, 0x28]); // 0xC3 0x28 is invalid UTF-8
     const blob = new Blob([raw], { type: 'application/octet-stream' });
     // The primary result and the binary describe the SAME asset: the data URL carries the identical
-    // bytes and MIME as the Blob, which the decoder now binds and enforces.
+    // bytes and MIME as the Blob, which the decoder now binds and enforces. A `package` (application/*
+    // archive) is the family-coherent home for these opaque octet-stream bytes.
     const envelope = await encodeBackendProxyResultEnvelope({
       result: `data:application/octet-stream;base64,${Buffer.from(raw).toString('base64')}`,
-      resultType: 'video',
+      resultType: 'package',
       blob,
     });
     // Survives a JSON hop, proving it is genuinely serializable over the wire.
@@ -158,6 +159,69 @@ describe('decodeBackendProxyResultEnvelope — primary/binary binding', () => {
     const decoded = decodeBackendProxyResultEnvelope(versioned({ result: 'https://cdn.example/img.png', resultType: 'image' }));
     expect(decoded.result).toBe('https://cdn.example/img.png');
     expect(decoded.blob).toBeUndefined();
+  });
+});
+
+describe('decodeBackendProxyResultEnvelope — media-family contract', () => {
+  // A direct executor only ever emits a primary and siblings of ITS OWN family (imageGen → image/*,
+  // etc.). A proxied envelope must not be able to declare one family while smuggling another as the
+  // primary, the binary, or an additional sibling — the store would otherwise persist heterogeneous
+  // media under the parent kind.
+  it.each<[string, Record<string, unknown>]>([
+    ['image-declared primary carries a video data URL', versioned({ result: 'data:video/mp4;base64,AAAA', resultType: 'image' })],
+    ['image-declared primary carries an audio data URL', versioned({ result: 'data:audio/wav;base64,AAAA', resultType: 'image' })],
+    ['image primary supplied MIME disagrees with its (same-family) data URL', versioned({ result: 'data:image/png;base64,AAAA', resultType: 'image', mimeType: 'image/webp' })],
+    ['image primary supplied MIME is a foreign family', versioned({ result: 'https://cdn.example/x', resultType: 'image', mimeType: 'audio/mpeg' })],
+    ['image additional result is an audio data URL', versioned({ result: 'data:image/png;base64,AAAA', resultType: 'image', additionalResults: [{ result: 'data:audio/wav;base64,BBBB' }] })],
+    ['image additional result is a video data URL (even with matching MIME)', versioned({ result: 'data:image/png;base64,AAAA', resultType: 'image', additionalResults: [{ result: 'data:video/mp4;base64,BBBB', mimeType: 'video/mp4' }] })],
+    ['image additional result HTTP URL carries a foreign explicit MIME', versioned({ result: 'data:image/png;base64,AAAA', resultType: 'image', additionalResults: [{ result: 'https://cdn.example/clip', mimeType: 'video/mp4' }] })],
+    ['video-declared primary carries an image data URL', versioned({ result: 'data:image/png;base64,AAAA', resultType: 'video' })],
+    ['video HTTP primary carries a foreign explicit MIME', versioned({ result: 'https://cdn.example/clip', resultType: 'video', mimeType: 'image/png' })],
+    ['audio-declared additional result is an image data URL', versioned({ result: 'data:audio/mpeg;base64,AAAA', resultType: 'audio', additionalResults: [{ result: 'data:image/png;base64,BBBB' }] })],
+    ['package-declared primary carries a video data URL', versioned({ result: 'data:video/mp4;base64,AAAA', resultType: 'package' })],
+    ['non-asset (text) result declares asset siblings', versioned({ result: 'hello', resultType: 'text', additionalResults: [{ result: 'data:image/png;base64,AAAA' }] })],
+    ['an internally-consistent video binary+primary is still rejected under an image declaration', versioned({
+      result: `data:video/mp4;base64,${Buffer.from([0x00, 0x00, 0x00, 0x18]).toString('base64')}`,
+      resultType: 'image',
+      binary: { encoding: 'base64', mimeType: 'video/mp4', byteLength: 4, data: Buffer.from([0x00, 0x00, 0x00, 0x18]).toString('base64') },
+    })],
+  ])('rejects when %s', (_label, payload) => {
+    expect(() => decodeBackendProxyResultEnvelope(payload)).toThrow(NonRetryableError);
+  });
+
+  it('accepts a video HTTP(S) primary with a same-family explicit MIME', () => {
+    const decoded = decodeBackendProxyResultEnvelope(versioned({ result: 'https://cdn.example/clip.mp4', resultType: 'video', mimeType: 'video/mp4' }));
+    expect(decoded.result).toBe('https://cdn.example/clip.mp4');
+    expect(decoded.mimeType).toBe('video/mp4');
+  });
+
+  it('accepts a video HTTP(S) primary with no MIME (unprovable but same-family by the direct contract)', () => {
+    const decoded = decodeBackendProxyResultEnvelope(versioned({ result: 'https://cdn.example/clip', resultType: 'video' }));
+    expect(decoded.result).toBe('https://cdn.example/clip');
+  });
+
+  it('preserves ordered same-family image additionalResults (with and without explicit MIME)', () => {
+    const decoded = decodeBackendProxyResultEnvelope(versioned({
+      result: 'data:image/png;base64,AAAA',
+      resultType: 'image',
+      additionalResults: [
+        { result: 'data:image/webp;base64,BBBB', mimeType: 'image/webp' },
+        { result: 'data:image/jpeg;base64,CCCC' },
+      ],
+    }));
+    expect(decoded.additionalResults).toEqual([
+      { result: 'data:image/webp;base64,BBBB', mimeType: 'image/webp' },
+      { result: 'data:image/jpeg;base64,CCCC' },
+    ]);
+  });
+
+  it('preserves ordered same-family audio additionalResults', () => {
+    const decoded = decodeBackendProxyResultEnvelope(versioned({
+      result: 'data:audio/mpeg;base64,AAAA',
+      resultType: 'audio',
+      additionalResults: [{ result: 'data:audio/wav;base64,BBBB', mimeType: 'audio/wav' }],
+    }));
+    expect(decoded.additionalResults).toEqual([{ result: 'data:audio/wav;base64,BBBB', mimeType: 'audio/wav' }]);
   });
 });
 

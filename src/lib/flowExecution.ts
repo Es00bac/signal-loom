@@ -684,6 +684,16 @@ export async function readBoundedResponseText(
 ): Promise<string> {
   const contentLength = Number(response.headers.get('content-length'));
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    // Reject on the header alone, but first release the body best-effort so a large or stalled response
+    // cannot keep consuming the connection after this early failure. The size error stays authoritative:
+    // a cancel() that throws or rejects is swallowed and never replaces it, and it is called exactly once.
+    if (response.body) {
+      try {
+        void Promise.resolve(response.body.cancel()).catch(() => undefined);
+      } catch {
+        // The size error below remains authoritative.
+      }
+    }
     throw new NonRetryableError(overLimitMessage);
   }
   if (!response.body) return '';
