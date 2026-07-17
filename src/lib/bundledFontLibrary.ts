@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { PaperAssetRepository } from '../features/paper/assets/PaperAssetRepository';
 import { createBinaryAssetRecord } from '../shared/assets/contentAddressedAsset';
 import type { PaperManagedFontFace, PaperManagedFontStyle } from '../types/paper';
@@ -7,7 +8,7 @@ import type {
   ManagedBundledFontFaceState,
   ManagedBundledFontSerializableValue,
 } from '../types/managedFont';
-import { getSignalLoomNativeBridge } from './nativeApp';
+import { getSignalLoomNativeBridge, type SignalLoomNativeBridge } from './nativeApp';
 import { buildImportedFont } from './paperFontLibrary';
 import { normalizePaperFontFamilyId } from './paperManagedFonts';
 import { vetFontBytes } from './paperFontVetting';
@@ -15,17 +16,67 @@ import { vetFontBytes } from './paperFontVetting';
 /**
  * signal-loom-font:// is registered only by this app's own Electron main process
  * (electron/main.mjs installProtocolHandlers), wired up alongside the same preload that
- * exposes window.signalLoomNative. Web/LAN-served/Android renderers never register that
- * scheme, so an absent or incomplete bridge means the transport cannot resolve here.
- * Never infer support from user agent, URL, process globals, or an optimistic fetch.
+ * exposes window.signalLoomNative. A complete signalLoomNative bridge (getNativeState +
+ * onMenuCommand) is installed even when the main process found no bundled-font-library root on
+ * disk — in that reachable packaged state every signal-loom-font request 404s, so generic bridge
+ * shape is not proof the transport actually works. Only the dedicated
+ * bridge.bundledFontLibraryStatus() IPC round trip — sourced from the same
+ * resolveBundledFontLibraryRoot() the active protocol handler uses — answers that. Never infer
+ * support from user agent, URL, process globals, or an optimistic fetch.
  */
-export function isBundledFontLibraryAvailable(): boolean {
+
+// Keyed by bridge object identity so a fresh bridge (real renderer/window reload, or a fresh
+// object stubbed in a test) always re-queries instead of replaying a stale cached answer; the
+// same bridge instance reuses one in-flight/settled query rather than issuing a new IPC round
+// trip per caller. A WeakMap also means an old renderer bridge is not retained by this module.
+const capabilityPromises = new WeakMap<SignalLoomNativeBridge, Promise<boolean>>();
+
+function queryBundledFontLibraryCapabilityForBridge(bridge: SignalLoomNativeBridge | undefined): Promise<boolean> {
+  if (
+    !bridge
+    || typeof bridge.getNativeState !== 'function'
+    || typeof bridge.onMenuCommand !== 'function'
+    || typeof bridge.bundledFontLibraryStatus !== 'function'
+  ) {
+    return Promise.resolve(false);
+  }
+  const cached = capabilityPromises.get(bridge);
+  if (cached) return cached;
+  // Defer invocation into the promise chain: an incomplete/malicious bridge can synchronously
+  // throw just as readily as IPC can reject, and both must resolve to the same closed gate.
+  const capability = Promise.resolve().then(() => bridge.bundledFontLibraryStatus!())
+    .then((status) => status?.available === true)
+    .catch(() => false);
+  capabilityPromises.set(bridge, capability);
+  return capability;
+}
+
+export function queryBundledFontLibraryCapability(): Promise<boolean> {
+  return queryBundledFontLibraryCapabilityForBridge(getSignalLoomNativeBridge());
+}
+
+/**
+ * Shared React contract for gating bundled-font UI. Starts (and stays, until positively
+ * confirmed) false — callers must fail closed while the main-process round trip is pending, not
+ * just once it resolves negative. One query per bridge identity is shared across every mounted
+ * consumer via queryBundledFontLibraryCapability's cache.
+ */
+export function useBundledFontLibraryCapability(): boolean {
   const bridge = getSignalLoomNativeBridge();
-  return Boolean(
-    bridge
-    && typeof bridge.getNativeState === 'function'
-    && typeof bridge.onMenuCommand === 'function',
-  );
+  const [state, setState] = useState<{ bridge: SignalLoomNativeBridge | undefined; available: boolean }>({
+    bridge,
+    available: false,
+  });
+  useEffect(() => {
+    let cancelled = false;
+    void queryBundledFontLibraryCapabilityForBridge(bridge).then((available) => {
+      if (!cancelled) setState({ bridge, available });
+    });
+    return () => { cancelled = true; };
+  }, [bridge]);
+  // React has rendered against a new bridge before its effect can complete. Do not expose a
+  // previous bridge's positive capability for that intermediate render.
+  return state.bridge === bridge && state.available;
 }
 
 export type BundledFontCollection = 'base' | 'optional-chinese' | 'optional-korean';
@@ -749,23 +800,39 @@ export function ensureBundledFontFaceRegistered(
 }
 
 let catalogPromise: Promise<BundledFontCatalog> | undefined;
+let catalogBridge: SignalLoomNativeBridge | undefined;
 
-export function loadBundledFontCatalog(fetchImpl: typeof fetch = fetch): Promise<BundledFontCatalog> {
-  if (!isBundledFontLibraryAvailable()) {
-    return Promise.reject(new Error('The bundled font library requires the Sloom Studio desktop app; this renderer has no signal-loom-font transport.'));
+async function fetchBundledFontCatalog(
+  bridge: SignalLoomNativeBridge | undefined,
+  fetchImpl: typeof fetch,
+): Promise<BundledFontCatalog> {
+  const available = await queryBundledFontLibraryCapabilityForBridge(bridge);
+  if (!available) {
+    throw new Error('The bundled font library requires the Sloom Studio desktop app with a resolved font-library root; this renderer has no usable signal-loom-font transport.');
   }
-  catalogPromise ??= fetchImpl(bundledFontResourceUrl('inventory/font-inventory.json'), {
+  const response = await fetchImpl(bundledFontResourceUrl('inventory/font-inventory.json'), {
     method: 'GET',
     credentials: 'omit',
     headers: { Accept: 'application/json' },
-  }).then(async (response) => {
-    if (!response.ok) throw new Error(`Bundled font library is unavailable (${response.status}).`);
-    return parseBundledFontInventory(await response.json());
-  }).catch((error) => {
-    catalogPromise = undefined;
+  });
+  if (!response.ok) throw new Error(`Bundled font library is unavailable (${response.status}).`);
+  return parseBundledFontInventory(await response.json());
+}
+
+export function loadBundledFontCatalog(fetchImpl: typeof fetch = fetch): Promise<BundledFontCatalog> {
+  const bridge = getSignalLoomNativeBridge();
+  if (catalogPromise && catalogBridge === bridge) return catalogPromise;
+  catalogBridge = bridge;
+  const nextCatalogPromise = fetchBundledFontCatalog(bridge, fetchImpl);
+  const handledCatalogPromise = nextCatalogPromise.catch((error) => {
+    if (catalogPromise === handledCatalogPromise) {
+      catalogPromise = undefined;
+      catalogBridge = undefined;
+    }
     throw error;
   });
-  return catalogPromise;
+  catalogPromise = handledCatalogPromise;
+  return handledCatalogPromise;
 }
 
 export function selectBundledFontFace(

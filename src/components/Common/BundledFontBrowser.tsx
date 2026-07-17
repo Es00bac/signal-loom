@@ -2,9 +2,9 @@ import { ChevronDown, ChevronUp, LoaderCircle, Search, ShieldCheck, Type } from 
 import { useEffect, useMemo, useState } from 'react';
 import {
   ensureBundledFontFaceRegistered,
-  isBundledFontLibraryAvailable,
   loadBundledFontCatalog,
   selectBundledFontFace,
+  useBundledFontLibraryCapability,
   type BundledFontCatalog,
   type BundledFontFace,
   type BundledFontFamily,
@@ -43,8 +43,10 @@ export function BundledFontBrowser({
   value,
   weight = 400,
 }: BundledFontBrowserProps) {
-  const available = isBundledFontLibraryAvailable();
-  const [open, setOpen] = useState(initiallyOpen && available);
+  // Starts (and stays) false until the main-process round trip positively confirms a usable
+  // font-library root — fail closed while pending, not just once it resolves negative.
+  const available = useBundledFontLibraryCapability();
+  const [open, setOpen] = useState(initiallyOpen);
   const [loadedCatalog, setLoadedCatalog] = useState<BundledFontCatalog>();
   const [query, setQuery] = useState('');
   const [role, setRole] = useState<'' | BundledFontRole>('');

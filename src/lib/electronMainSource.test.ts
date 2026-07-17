@@ -111,8 +111,16 @@ describe('Electron main process source guards', () => {
 
     expect(source).toContain("scheme: 'signal-loom-font'");
     expect(source).toContain('resolveBundledFontLibraryRoot');
-    expect(source).toMatch(/protocol\.handle\('signal-loom-font'[\s\S]*resolveBundledFontResourcePath\(bundledFontLibraryRoot, request\.url\)/);
+    expect(source).toMatch(/resolvedBundledFontLibraryRoot = resolveBundledFontLibraryRoot\([\s\S]*protocol\.handle\('signal-loom-font'[\s\S]*resolveBundledFontResourcePath\(resolvedBundledFontLibraryRoot, request\.url\)/);
     expect(source).toMatch(/protocol\.handle\('signal-loom-font'[\s\S]*status: 404/);
+  });
+
+  it('reports bundled-font capability only from the exact root serving the protocol and cleans up its IPC handler', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+
+    expect(source).toContain("const BUNDLED_FONT_LIBRARY_STATUS_CHANNEL = 'signal-loom:font-library-status'");
+    expect(source).toMatch(/installIpcHandlers\(\)[\s\S]*ipcMain\.removeHandler\(BUNDLED_FONT_LIBRARY_STATUS_CHANNEL\)[\s\S]*ipcMain\.handle\(BUNDLED_FONT_LIBRARY_STATUS_CHANNEL, \(\) => \(\{[\s\S]*available: Boolean\(resolvedBundledFontLibraryRoot\)/);
+    expect(source).toMatch(/app\.on\('will-quit', \(\) => \{[\s\S]*ipcMain\.removeHandler\(BUNDLED_FONT_LIBRARY_STATUS_CHANNEL\)/);
   });
 
   it('registers opaque native asset ids from source-library capabilities', () => {

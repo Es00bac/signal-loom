@@ -33,7 +33,36 @@ const catalog: BundledFontCatalog = {
 };
 
 function stubCompleteNativeBridge(): void {
-  window.signalLoomNative = { getNativeState: vi.fn(), onMenuCommand: vi.fn() } as never;
+  window.signalLoomNative = {
+    getNativeState: vi.fn(),
+    onMenuCommand: vi.fn(),
+    bundledFontLibraryStatus: vi.fn(async () => ({ available: true })),
+  } as never;
+}
+
+function stubNativeBridgeWithStatus(status: () => Promise<{ available: boolean }>): ReturnType<typeof vi.fn> {
+  const bundledFontLibraryStatus = vi.fn(status);
+  window.signalLoomNative = {
+    getNativeState: vi.fn(),
+    onMenuCommand: vi.fn(),
+    bundledFontLibraryStatus,
+  } as never;
+  return bundledFontLibraryStatus;
+}
+
+/** Flushes the async main-process capability round trip the shared hook awaits on mount. */
+async function waitForBrowserToggle(host: HTMLElement): Promise<HTMLButtonElement> {
+  await act(async () => {
+    await vi.waitFor(() => expect(host.querySelector('button[aria-expanded]')).not.toBeNull());
+  });
+  return host.querySelector<HTMLButtonElement>('button[aria-expanded]')!;
+}
+
+/** Flushes the same round trip when it's expected to resolve to "unavailable" (nothing appears). */
+async function flushPendingCapabilityQuery(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+  });
 }
 
 beforeEach(() => {
@@ -63,7 +92,8 @@ describe('BundledFontBrowser', () => {
     const root = createRoot(host);
     await act(async () => root.render(<BundledFontBrowser catalog={catalog} onSelect={onSelect} value="Current Font" weight={400} style="normal" />));
 
-    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click());
+    const toggle = await waitForBrowserToggle(host);
+    await act(async () => toggle.click());
     const search = host.querySelector<HTMLInputElement>('input[role="searchbox"]')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(search, 'Tokyo');
@@ -85,7 +115,8 @@ describe('BundledFontBrowser', () => {
     const host = document.createElement('div');
     const root = createRoot(host);
     await act(async () => root.render(<BundledFontBrowser catalog={catalog} onSelect={vi.fn()} value="" weight={400} style="normal" />));
-    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click());
+    const toggle = await waitForBrowserToggle(host);
+    await act(async () => toggle.click());
     const select = host.querySelector<HTMLSelectElement>('select[aria-label="Font role"]')!;
     await act(async () => {
       select.value = 'serif';
@@ -118,9 +149,10 @@ describe('BundledFontBrowser platform capability gate (FBL-025)', () => {
     await act(async () => root.unmount());
   });
 
-  it('fails closed the same way with a malformed/incomplete bridge', async () => {
-    // Missing onMenuCommand: present but not the real preload shape.
-    window.signalLoomNative = { getNativeState: vi.fn() } as never;
+  it('fails closed with an old complete generic bridge that lacks the dedicated transport', async () => {
+    // Older Electron preload code can expose all former generic methods but cannot prove that
+    // this main process has a usable signal-loom-font root.
+    window.signalLoomNative = { getNativeState: vi.fn(), onMenuCommand: vi.fn() } as never;
     const fetchSpy = vi.fn(async () => new Response(testFontBytes));
     vi.stubGlobal('fetch', fetchSpy);
     const host = document.createElement('div');
@@ -129,10 +161,102 @@ describe('BundledFontBrowser platform capability gate (FBL-025)', () => {
     await act(async () => root.render(
       <BundledFontBrowser catalog={catalog} initiallyOpen onSelect={vi.fn()} style="normal" value="" weight={400} />,
     ));
+    await flushPendingCapabilityQuery();
 
     expect(host.querySelector('button')).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
     await act(async () => root.unmount());
+  });
+
+  it('fails closed with a complete generic bridge whose dedicated transport reports no root', async () => {
+    // This is the packaged-but-font-pack-missing state: the ordinary Electron bridge is complete,
+    // but every signal-loom-font request would 404. It must not advertise or fetch the library.
+    const status = stubNativeBridgeWithStatus(async () => ({ available: false }));
+    const fetchSpy = vi.fn(async () => new Response(testFontBytes));
+    vi.stubGlobal('fetch', fetchSpy);
+    const host = document.createElement('div');
+    const root = createRoot(host);
+
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={catalog} initiallyOpen onSelect={vi.fn()} style="normal" value="" weight={400} />,
+    ));
+    await flushPendingCapabilityQuery();
+
+    expect(host.querySelector('button')).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+  });
+
+  it('renders nothing and fetches nothing while the dedicated capability query is pending', async () => {
+    let resolveStatus: ((status: { available: boolean }) => void) | undefined;
+    const status = stubNativeBridgeWithStatus(() => new Promise((resolve) => { resolveStatus = resolve; }));
+    const fetchSpy = vi.fn(async () => new Response(testFontBytes));
+    vi.stubGlobal('fetch', fetchSpy);
+    const host = document.createElement('div');
+    const root = createRoot(host);
+
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={catalog} initiallyOpen onSelect={vi.fn()} style="normal" value="" weight={400} />,
+    ));
+    await flushPendingCapabilityQuery();
+
+    expect(host.querySelector('button')).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledTimes(1);
+
+    await act(async () => resolveStatus?.({ available: true }));
+    expect(await waitForBrowserToggle(host)).not.toBeNull();
+    await act(async () => root.unmount());
+  });
+
+  it('fails closed when the dedicated capability transport rejects', async () => {
+    const status = stubNativeBridgeWithStatus(async () => { throw new Error('IPC disconnected'); });
+    const fetchSpy = vi.fn(async () => new Response(testFontBytes));
+    vi.stubGlobal('fetch', fetchSpy);
+    const host = document.createElement('div');
+    const root = createRoot(host);
+
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={catalog} initiallyOpen onSelect={vi.fn()} style="normal" value="" weight={400} />,
+    ));
+    await flushPendingCapabilityQuery();
+
+    expect(host.querySelector('button')).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+  });
+
+  it('fails closed immediately on bridge replacement and re-queries after remount', async () => {
+    const firstStatus = stubNativeBridgeWithStatus(async () => ({ available: true }));
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={catalog} onSelect={vi.fn()} style="normal" value="" weight={400} />,
+    ));
+    expect(await waitForBrowserToggle(host)).not.toBeNull();
+    expect(firstStatus).toHaveBeenCalledTimes(1);
+
+    const replacementStatus = stubNativeBridgeWithStatus(async () => ({ available: false }));
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={catalog} onSelect={vi.fn()} style="normal" value="" weight={400} />,
+    ));
+    // A rerender that sees a new bridge may not replay the old bridge's positive capability.
+    expect(host.querySelector('button')).toBeNull();
+    await flushPendingCapabilityQuery();
+    expect(host.querySelector('button')).toBeNull();
+    expect(replacementStatus).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+
+    const remountStatus = stubNativeBridgeWithStatus(async () => ({ available: true }));
+    const remountedRoot = createRoot(host);
+    await act(async () => remountedRoot.render(
+      <BundledFontBrowser catalog={catalog} onSelect={vi.fn()} style="normal" value="" weight={400} />,
+    ));
+    expect(await waitForBrowserToggle(host)).not.toBeNull();
+    expect(remountStatus).toHaveBeenCalledTimes(1);
+    await act(async () => remountedRoot.unmount());
   });
 
   it('loads the audited catalog over signal-loom-font:// with a complete Electron bridge', async () => {
@@ -181,7 +305,8 @@ describe('BundledFontBrowser platform capability gate (FBL-025)', () => {
     const root = createRoot(host);
 
     await act(async () => root.render(<BundledFontBrowser onSelect={onSelect} value="" weight={400} style="normal" />));
-    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click());
+    const toggle = await waitForBrowserToggle(host);
+    await act(async () => toggle.click());
     await act(async () => {
       await vi.waitFor(() => expect(host.textContent).toContain('Liberation Sans'));
     });

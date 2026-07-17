@@ -343,7 +343,7 @@ describe('EditableTextLayerControls', () => {
     expect(onClearTextPath).toHaveBeenCalled();
   });
 
-  it('protects the shared bundled font browser through the central platform capability gate (FBL-025)', () => {
+  it('protects the shared bundled font browser through the central platform capability gate (FBL-025)', async () => {
     delete window.signalLoomNative;
 
     act(() => {
@@ -352,12 +352,29 @@ describe('EditableTextLayerControls', () => {
 
     expect(container.textContent).not.toContain('Browse bundled fonts');
 
+    // A complete generic Electron bridge is still not permission to advertise a protocol whose
+    // main process found no library root.
     window.signalLoomNative = { getNativeState: vi.fn(), onMenuCommand: vi.fn() } as never;
 
-    act(() => {
+    await act(async () => {
       root.render(<EditableTextLayerControls layer={textLayer()} onChange={vi.fn()} />);
     });
 
-    expect(container.textContent).toContain('Browse bundled fonts');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.textContent).not.toContain('Browse bundled fonts');
+
+    const bundledFontLibraryStatus = vi.fn(async () => ({ available: true }));
+    window.signalLoomNative = {
+      getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus,
+    } as never;
+    await act(async () => {
+      root.render(<EditableTextLayerControls layer={textLayer()} onChange={vi.fn()} />);
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(container.textContent).toContain('Browse bundled fonts'));
+    });
+    expect(bundledFontLibraryStatus).toHaveBeenCalledTimes(1);
   });
 });

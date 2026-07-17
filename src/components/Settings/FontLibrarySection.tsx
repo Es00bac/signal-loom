@@ -2,7 +2,7 @@ import { Check, Download, LoaderCircle, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { paperAssetRepository } from '../../features/paper/assets/PaperAssetRuntime';
 import type { PaperAssetRepository } from '../../features/paper/assets/PaperAssetRepository';
-import { isBundledFontLibraryAvailable } from '../../lib/bundledFontLibrary';
+import { useBundledFontLibraryCapability } from '../../lib/bundledFontLibrary';
 import {
   createOpenFontCatalogClient,
   downloadOpenFontFace,
@@ -28,6 +28,7 @@ export function FontLibrarySection({
   repository = paperAssetRepository,
 }: FontLibrarySectionProps) {
   const { t } = useI18n();
+  const bundledFontLibraryAvailable = useBundledFontLibraryCapability();
   const [client] = useState(() => catalog ?? createOpenFontCatalogClient());
   const [families, setFamilies] = useState<OpenFontCatalogFamily[]>([]);
   const [selectedFamily, setSelectedFamily] = useState<OpenFontCatalogFamily | null>(null);
@@ -111,7 +112,7 @@ export function FontLibrarySection({
         </button>
       </div>
 
-      {isBundledFontLibraryAvailable() ? (
+      {bundledFontLibraryAvailable ? (
         <div className="space-y-2 rounded-xl border border-emerald-300/15 bg-emerald-400/[0.03] p-3">
           <div>
             <div className="text-xs font-semibold text-gray-100">Sloom publishing font library</div>

@@ -698,8 +698,20 @@ export interface LocalUpscalerStatus {
   error?: string;
 }
 
+export interface NativeBundledFontLibraryStatus {
+  /** True only when the main process resolved a real, validated font-library root on disk. */
+  available: boolean;
+}
+
 export interface SignalLoomNativeBridge {
   getNativeState: () => Promise<NativeState>;
+  /**
+   * Dedicated signal-loom-font:// transport capability (FBL-025). A complete bridge is installed
+   * even when the main process found no bundled-font-library root, in which case every
+   * signal-loom-font request 404s — callers must query this, not infer availability from the
+   * presence of other bridge methods.
+   */
+  bundledFontLibraryStatus?: () => Promise<NativeBundledFontLibraryStatus>;
   clearProjectPath: (request: { claim?: NativeProjectAuthorityDescriptor }) => Promise<NativePreparedProjectSwitchResult>;
   openProjectFile: (request: { claim?: NativeProjectAuthorityDescriptor }) => Promise<NativePreparedProjectSwitchResult>;
   requestProjectOpen?: () => Promise<NativeProjectFileResult & { queued?: boolean; error?: string }>;

@@ -21,8 +21,11 @@ describe('FontLibrarySection', () => {
     delete window.signalLoomNative;
   });
 
-  it('omits the bundled-library card without a native bridge while keeping online/user font controls (FBL-025)', async () => {
-    delete window.signalLoomNative;
+  it('omits the bundled-library card when the dedicated transport reports no root while keeping online/user font controls (FBL-025)', async () => {
+    const bundledFontLibraryStatus = vi.fn(async () => ({ available: false }));
+    window.signalLoomNative = {
+      getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus,
+    } as never;
     const fetchImpl = vi.fn(async () => new Response('not found', { status: 404 })) as unknown as typeof fetch;
     const originalFetch = globalThis.fetch;
     const globalFetchSpy = vi.fn(async () => new Response('not found', { status: 404 }));
@@ -36,12 +39,16 @@ describe('FontLibrarySection', () => {
       await act(async () => {
         root.render(<FontLibrarySection catalog={catalog} library={[]} onInstall={vi.fn()} repository={repository} />);
       });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
 
       expect(host.textContent).not.toContain('Sloom publishing font library');
       expect(host.textContent).not.toContain('Browse bundled fonts');
       expect(host.querySelector('button[name="browse-open-fonts"]')).not.toBeNull();
       expect(fetchImpl).not.toHaveBeenCalled();
       expect(globalFetchSpy).not.toHaveBeenCalled();
+      expect(bundledFontLibraryStatus).toHaveBeenCalledTimes(1);
 
       await act(async () => root.unmount());
     } finally {
@@ -50,7 +57,8 @@ describe('FontLibrarySection', () => {
   });
 
   it('shows the bundled-library card with a complete Electron bridge (FBL-025)', async () => {
-    window.signalLoomNative = { getNativeState: vi.fn(), onMenuCommand: vi.fn() } as never;
+    const bundledFontLibraryStatus = vi.fn(async () => ({ available: true }));
+    window.signalLoomNative = { getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus } as never;
     const catalog = createOpenFontCatalogClient({ fetchImpl: vi.fn(async () => new Response('not found', { status: 404 })) as unknown as typeof fetch });
     const repository = new MemoryPaperAssetRepository();
     const host = document.createElement('div');
@@ -59,9 +67,13 @@ describe('FontLibrarySection', () => {
     await act(async () => {
       root.render(<FontLibrarySection catalog={catalog} library={[]} onInstall={vi.fn()} repository={repository} />);
     });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.textContent).toContain('Sloom publishing font library'));
+    });
 
     expect(host.textContent).toContain('Sloom publishing font library');
     expect(host.textContent).toContain('Browse bundled fonts');
+    expect(bundledFontLibraryStatus).toHaveBeenCalledTimes(1);
 
     await act(async () => root.unmount());
   });

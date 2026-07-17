@@ -117,6 +117,7 @@ const isDev = Boolean(rendererUrl);
 const DEV_RENDERER_READY_RETRY_COUNT = 12;
 const DEV_RENDERER_READY_RETRY_DELAY_MS = 250;
 const DEV_RENDERER_READY_TIMEOUT_ERROR = 'Renderer URL is unavailable.';
+const BUNDLED_FONT_LIBRARY_STATUS_CHANNEL = 'signal-loom:font-library-status';
 const appName = 'Sloom Studio';
 const execFileAsync = promisify(execFile);
 let mainWindow = null;
@@ -129,6 +130,10 @@ let currentProjectPath = undefined;
 let currentScratchDirectoryPath = undefined;
 let currentAssetCapabilityRootPaths = [];
 let startupProject = undefined;
+// Set once by installProtocolHandlers() from the same resolveBundledFontLibraryRoot() call that
+// decides whether signal-loom-font:// can actually serve a face (FBL-025). undefined means no
+// audited font-library root was found, so every signal-loom-font request will 404.
+let resolvedBundledFontLibraryRoot;
 const rendererAuthorityEpochs = new Map();
 let activeWorkspace = 'flow';
 let keyboardShortcuts = {};
@@ -2420,7 +2425,10 @@ async function exportPaperImagesToDirectory(request, directoryPath) {
 }
 
 function installProtocolHandlers() {
-  const bundledFontLibraryRoot = resolveBundledFontLibraryRoot({
+  // This is the sole root-resolution call. Both the font protocol and its renderer-facing
+  // capability status read this exact value; a generic preload bridge is never evidence that
+  // this root exists.
+  resolvedBundledFontLibraryRoot = resolveBundledFontLibraryRoot({
     appIsPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     appRoot: APP_ROOT,
@@ -2440,8 +2448,8 @@ function installProtocolHandlers() {
   });
 
   protocol.handle('signal-loom-font', async (request) => {
-    const filePath = bundledFontLibraryRoot
-      ? resolveBundledFontResourcePath(bundledFontLibraryRoot, request.url)
+    const filePath = resolvedBundledFontLibraryRoot
+      ? resolveBundledFontResourcePath(resolvedBundledFontLibraryRoot, request.url)
       : undefined;
     if (!filePath) {
       return new Response('The requested bundled font resource is unavailable.', { status: 404 });
@@ -3114,6 +3122,16 @@ async function materializeSourceAsset(request, scratchJournal) {
 }
 
 function installIpcHandlers() {
+  // Dedicated font-transport capability (FBL-025): a complete signalLoomNative bridge is
+  // installed even when signal-loom-font:// has no usable root (every request 404s), so the
+  // renderer must query this rather than infer availability from generic bridge shape.
+  // Keep startup/reload installation idempotent and release the handler on app teardown. This
+  // matters in Electron test/reload lifecycles where a second registration would otherwise throw.
+  ipcMain.removeHandler(BUNDLED_FONT_LIBRARY_STATUS_CHANNEL);
+  ipcMain.handle(BUNDLED_FONT_LIBRARY_STATUS_CHANNEL, () => ({
+    available: Boolean(resolvedBundledFontLibraryRoot),
+  }));
+
   ipcMain.handle('signal-loom:get-native-state', (event) => {
     const window = getIpcWindow(event);
     return {
@@ -4493,6 +4511,7 @@ if (!hasSingleInstanceLock) {
 
   // Tear down the global-menu DBus export cleanly so KDE drops our registrations on exit.
   app.on('will-quit', () => {
+    ipcMain.removeHandler(BUNDLED_FONT_LIBRARY_STATUS_CHANNEL);
     void globalMenuController?.stop();
     void panelMenuService?.stop();
   });

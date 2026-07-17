@@ -247,9 +247,15 @@ describe('FBL-011 fresh-process bundled face persistence', () => {
 
     vi.stubGlobal('fetch', fetchImpl);
     // Managed bundled-face registration resolves signal-loom-font:// only through the same
-    // Electron preload bridge that registers it (FBL-025); this restore/render flow only ever
-    // runs inside that desktop app, so stub the complete bridge to reflect that environment.
-    vi.stubGlobal('window', { signalLoomNative: { getNativeState: vi.fn(), onMenuCommand: vi.fn() } });
+    // Electron preload bridge that registers it (FBL-025). The dedicated status call proves the
+    // main process resolved the protocol's root; generic bridge shape alone is deliberately not
+    // enough. This restore/render flow only runs inside that desktop app.
+    vi.stubGlobal('window', {
+      signalLoomNative: {
+        getNativeState: vi.fn(), onMenuCommand: vi.fn(),
+        bundledFontLibraryStatus: vi.fn(async () => ({ available: true })),
+      },
+    });
     const freshProjectActions = await import('./projectDocumentActions');
     const replacementAuthorization = freshProjectActions.captureProjectReplacementAuthorization();
     await freshProjectActions.restoreProjectDocument({
@@ -324,7 +330,12 @@ describe('FBL-011 fresh-process bundled face persistence', () => {
       async load() { return this; }
     });
     vi.stubGlobal('document', { fonts: { add: vi.fn() } });
-    vi.stubGlobal('window', { signalLoomNative: { getNativeState: vi.fn(), onMenuCommand: vi.fn() } });
+    vi.stubGlobal('window', {
+      signalLoomNative: {
+        getNativeState: vi.fn(), onMenuCommand: vi.fn(),
+        bundledFontLibraryStatus: vi.fn(async () => ({ available: true })),
+      },
+    });
 
     await expect(runtime.ensureBundledFontFaceReferencesRegistered([ref], { fetchImpl })).rejects.toThrow(
       /Liberation Sans.*unavailable or unauthorized.*reinstall.*font library/i,

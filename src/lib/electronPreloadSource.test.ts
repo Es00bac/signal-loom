@@ -22,4 +22,10 @@ describe('Electron preload source guards', () => {
     expect(source).toContain("savePaperPdfBytes: (request) => ipcRenderer.invoke('signal-loom:paper-save-pdf-bytes', request)");
     expect(source).toContain("writePaperDocumentFile: (path, bytes) => ipcRenderer.invoke('signal-loom:paper-write-path', path, bytes)");
   });
+
+  it('exposes the dedicated bundled-font transport capability instead of relying on generic bridge shape', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/preload.cjs'), 'utf8');
+
+    expect(source).toContain("bundledFontLibraryStatus: () => ipcRenderer.invoke('signal-loom:font-library-status')");
+  });
 });

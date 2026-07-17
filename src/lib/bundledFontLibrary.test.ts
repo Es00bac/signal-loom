@@ -10,9 +10,9 @@ import {
   bundledFontFaceCssDescriptor,
   bundledFontFaceRuntimeFamilyName,
   installBundledPaperFontFace,
-  isBundledFontLibraryAvailable,
   loadBundledFontCatalog,
   parseBundledFontInventory,
+  queryBundledFontLibraryCapability,
   resolveBundledFontFaceReference,
   selectBundledFontFace,
   upgradeLegacyBundledFontFaceIssue,
@@ -240,30 +240,114 @@ describe('bundled font library platform capability gate (FBL-025)', () => {
   it('is unavailable and loadBundledFontCatalog fails closed before any fetch without a native bridge', async () => {
     const fetchImpl = vi.fn(async () => new Response('{}')) as unknown as typeof fetch;
 
-    expect(isBundledFontLibraryAvailable()).toBe(false);
+    await expect(queryBundledFontLibraryCapability()).resolves.toBe(false);
     await expect(loadBundledFontCatalog(fetchImpl)).rejects.toThrow(/desktop app/i);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('is unavailable and fails closed the same way with a malformed/incomplete bridge', async () => {
+  it('is unavailable and fails closed the same way with a malformed/incomplete general bridge', async () => {
     vi.stubGlobal('window', { signalLoomNative: { getNativeState: vi.fn() } });
     const fetchImpl = vi.fn(async () => new Response('{}')) as unknown as typeof fetch;
 
-    expect(isBundledFontLibraryAvailable()).toBe(false);
+    await expect(queryBundledFontLibraryCapability()).resolves.toBe(false);
     await expect(loadBundledFontCatalog(fetchImpl)).rejects.toThrow(/desktop app/i);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('is available and loads the catalog over signal-loom-font:// with a complete Electron bridge', async () => {
+  it('is unavailable with a complete general bridge that has no dedicated bundledFontLibraryStatus method', async () => {
+    // Generic shape (getNativeState + onMenuCommand) alone is exactly the flaw Terra caught:
+    // it does not prove signal-loom-font:// has a usable root. An older/partial bridge without
+    // the dedicated capability method must still fail closed.
     vi.stubGlobal('window', { signalLoomNative: { getNativeState: vi.fn(), onMenuCommand: vi.fn() } });
+    const fetchImpl = vi.fn(async () => new Response('{}')) as unknown as typeof fetch;
+
+    await expect(queryBundledFontLibraryCapability()).resolves.toBe(false);
+    await expect(loadBundledFontCatalog(fetchImpl)).rejects.toThrow(/desktop app/i);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('is unavailable when a complete bridge reports no resolved font-library root (packaged build with a missing font pack)', async () => {
+    const bundledFontLibraryStatus = vi.fn(async () => ({ available: false }));
+    vi.stubGlobal('window', {
+      signalLoomNative: { getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus },
+    });
+    const fetchImpl = vi.fn(async () => new Response('{}')) as unknown as typeof fetch;
+
+    await expect(queryBundledFontLibraryCapability()).resolves.toBe(false);
+    await expect(loadBundledFontCatalog(fetchImpl)).rejects.toThrow(/desktop app/i);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(bundledFontLibraryStatus).toHaveBeenCalled();
+  });
+
+  it('fails closed before any fetch when the dedicated capability transport rejects', async () => {
+    const bundledFontLibraryStatus = vi.fn(async () => { throw new Error('renderer IPC disconnected'); });
+    vi.stubGlobal('window', {
+      signalLoomNative: { getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus },
+    });
+    const fetchImpl = vi.fn(async () => new Response('{}')) as unknown as typeof fetch;
+
+    await expect(queryBundledFontLibraryCapability()).resolves.toBe(false);
+    await expect(loadBundledFontCatalog(fetchImpl)).rejects.toThrow(/desktop app/i);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(bundledFontLibraryStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('is available and loads the catalog over signal-loom-font:// only once the dedicated capability positively confirms a root', async () => {
+    const bundledFontLibraryStatus = vi.fn(async () => ({ available: true }));
+    vi.stubGlobal('window', {
+      signalLoomNative: { getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus },
+    });
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       expect(String(input)).toBe('signal-loom-font://library/inventory/font-inventory.json');
       return new Response(JSON.stringify(sampleInventory()), { status: 200 });
     }) as unknown as typeof fetch;
 
-    expect(isBundledFontLibraryAvailable()).toBe(true);
+    await expect(queryBundledFontLibraryCapability()).resolves.toBe(true);
     const catalog = await loadBundledFontCatalog(fetchImpl);
     expect(catalog.familyCount).toBe(1);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one capability query per bridge instance but never carries a stale positive across a bridge reset', async () => {
+    const firstStatus = vi.fn(async () => ({ available: true }));
+    vi.stubGlobal('window', {
+      signalLoomNative: { getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: firstStatus },
+    });
+    await expect(Promise.all([
+      queryBundledFontLibraryCapability(),
+      queryBundledFontLibraryCapability(),
+      queryBundledFontLibraryCapability(),
+    ])).resolves.toEqual([true, true, true]);
+    expect(firstStatus).toHaveBeenCalledTimes(1);
+
+    // A fresh bridge instance (renderer reload / new test environment) must re-query rather than
+    // replay the previous bridge's cached positive answer, even though nothing else changed.
+    const secondStatus = vi.fn(async () => ({ available: false }));
+    vi.stubGlobal('window', {
+      signalLoomNative: { getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: secondStatus },
+    });
+    await expect(queryBundledFontLibraryCapability()).resolves.toBe(false);
+    expect(secondStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reuse a catalog authorized by an earlier bridge after bridge replacement', async () => {
+    const firstStatus = vi.fn(async () => ({ available: true }));
+    vi.stubGlobal('window', {
+      signalLoomNative: { getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: firstStatus },
+    });
+    const firstFetch = vi.fn(async () => new Response(JSON.stringify(sampleInventory()), { status: 200 })) as unknown as typeof fetch;
+
+    await expect(loadBundledFontCatalog(firstFetch)).resolves.toMatchObject({ familyCount: 1 });
+    expect(firstFetch).toHaveBeenCalledTimes(1);
+
+    const replacementStatus = vi.fn(async () => ({ available: false }));
+    vi.stubGlobal('window', {
+      signalLoomNative: { getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: replacementStatus },
+    });
+    const replacementFetch = vi.fn(async () => new Response(JSON.stringify(sampleInventory()), { status: 200 })) as unknown as typeof fetch;
+
+    await expect(loadBundledFontCatalog(replacementFetch)).rejects.toThrow(/desktop app/i);
+    expect(replacementStatus).toHaveBeenCalledTimes(1);
+    expect(replacementFetch).not.toHaveBeenCalled();
   });
 });
