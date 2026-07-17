@@ -1,8 +1,9 @@
-import type { EditorStageObject, EditorVisualClip, TextClipEffect } from '../types/flow';
+import type { EditorStageObject, EditorTextTypography, EditorVisualClip, TextClipEffect } from '../types/flow';
 import { getAutomationValueAtLocalTime } from './clipAutomation';
 import { buildClipEffectDescriptorForClip, type ClipCropSettings, type ClipEffectSourceClip } from './editorClipEffects';
 import { getVisualKeyframeStateAtProgress, type VisualKeyframeClip } from './editorKeyframes';
 import { measureTextObjectBounds } from './editorTextRender';
+import { resolveVideoTextCardLayout } from './videoTextCardLayout';
 
 /**
  * The subset of `EditorVisualClip` the layout descriptor actually reads. Widened (rather than left
@@ -25,6 +26,7 @@ export type VisualLayoutClip = VisualKeyframeClip & ClipEffectSourceClip & Pick<
   | 'textSizePx'
   | 'textColor'
   | 'textEffect'
+  | 'textTypography'
   | 'shapeFillColor'
   | 'shapeBorderColor'
   | 'shapeBorderWidth'
@@ -180,6 +182,7 @@ export function buildVisualClipLayoutDescriptor({
           fontSizePx: clip.textSizePx,
           color: clip.textColor,
           effect: clip.textEffect,
+          videoTextCard: { typography: clip.textTypography },
         })
       : undefined,
     shape: clip.sourceKind === 'shape'
@@ -253,13 +256,16 @@ export function resolveTextSourceDimensions({
   fontSizePx,
   effect,
   fontFamily,
+  typography,
 }: {
   text: string;
   fontSizePx: number;
   effect: TextClipEffect;
   fontFamily: string;
+  typography?: EditorTextTypography;
 }): VisualSourceDimensions {
-  return measureTextObjectBounds({ text, fontSizePx, effect, fontFamily });
+  const resolved = resolveVideoTextCardLayout({ text, fontSizePx, effect, fontFamily, typography });
+  return { width: resolved.width, height: resolved.height };
 }
 
 export function fitVisualDimensions(
@@ -326,15 +332,19 @@ export function buildTextLayoutDescriptor({
   fontSizePx,
   color,
   effect,
+  videoTextCard,
 }: {
   text: string;
   fontFamily: string;
   fontSizePx: number;
   color: string;
   effect: TextClipEffect;
+  videoTextCard?: { typography?: EditorTextTypography };
 }): TextLayoutDescriptor {
   const safeFontSize = Math.max(8, fontSizePx || 64);
-  const bounds = measureTextObjectBounds({ text, fontSizePx: safeFontSize, effect, fontFamily });
+  const bounds = videoTextCard
+    ? resolveVideoTextCardLayout({ text, fontSizePx: safeFontSize, effect, fontFamily, typography: videoTextCard.typography })
+    : measureTextObjectBounds({ text, fontSizePx: safeFontSize, effect, fontFamily });
 
   return {
     text: text || 'Text',

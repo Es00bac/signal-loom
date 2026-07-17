@@ -328,12 +328,7 @@ async function resolveVisualClipMedia(
   const clipDurationSeconds = await resolveSequenceVisualClipDuration(clip, resolveMediaDuration);
 
   if (clip.sourceKind === 'text') {
-    const dims = resolveTextSourceDimensions({
-      text: clip.textContent ?? clip.text ?? 'Text',
-      fontSizePx: clip.textSizePx || 64,
-      effect: clip.textEffect,
-      fontFamily: clip.textFontFamily,
-    });
+    const dims = await resolveStageFrameTextClipDimensions(clip);
     return { clip, clipDurationSeconds, sourceWidth: dims.width, sourceHeight: dims.height, sourceDurationSeconds: 0, isAnimatedGif: false };
   }
 
@@ -366,6 +361,22 @@ async function resolveVisualClipMedia(
   ]);
 
   return { clip, clipDurationSeconds, sourceWidth: dims.width, sourceHeight: dims.height, sourceDurationSeconds, isAnimatedGif: false };
+}
+
+/** Native frame-export text pre-layout is an explicitly registered boundary. Keeping readiness in
+ * this helper (as well as the whole-export preflight) prevents future direct callers from measuring
+ * an exact face before its audited bytes and runtime alias are available. */
+export async function resolveStageFrameTextClipDimensions(
+  clip: ComposeSequenceVisualClip,
+): Promise<{ width: number; height: number }> {
+  await ensureBundledFontDependenciesReady(collectVideoBundledFontDependencies({ visualClips: [clip] }));
+  return resolveTextSourceDimensions({
+    text: clip.textContent ?? clip.text ?? 'Text',
+    fontSizePx: clip.textSizePx || 64,
+    effect: clip.textEffect,
+    fontFamily: clip.textFontFamily,
+    typography: clip.textTypography,
+  });
 }
 
 function probeImageDimensions(url: string): Promise<{ width: number; height: number }> {

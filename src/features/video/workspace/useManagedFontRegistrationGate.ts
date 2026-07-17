@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   bundledFontFaceIdentitySignature,
   ensureBundledFontDependenciesReady,
@@ -31,34 +31,30 @@ export function useManagedFontRegistrationGate(
   const signature = buildManagedFontDependencySignature(dependencies);
   const [retryNonce, setRetryNonce] = useState(0);
   const [settled, setSettled] = useState<{
+    dependencies: readonly ManagedBundledFontDependency[];
+    register: ManagedFontDependencyRegistrar;
+    retryNonce: number;
     signature: string;
     status: 'ready' | 'loading' | 'error';
     error?: string;
-  }>(() => ({ signature, status: dependencies.length > 0 ? 'loading' : 'ready' }));
-  const generation = useRef({ signature, value: 0 });
-
-  if (generation.current.signature !== signature) {
-    generation.current = { signature, value: generation.current.value + 1 };
-  }
-  const currentGeneration = generation.current.value;
-
+  }>(() => ({ dependencies, register, retryNonce: 0, signature, status: dependencies.length > 0 ? 'loading' : 'ready' }));
   useEffect(() => {
-    const requestGeneration = currentGeneration;
     if (dependencies.length === 0) {
-      setSettled({ signature, status: 'ready' });
       return undefined;
     }
-    setSettled({ signature, status: 'loading' });
     let active = true;
     void register(dependencies).then(
       () => {
-        if (active && generation.current.signature === signature && generation.current.value === requestGeneration) {
-          setSettled({ signature, status: 'ready' });
+        if (active) {
+          setSettled({ dependencies, register, retryNonce, signature, status: 'ready' });
         }
       },
       (error) => {
-        if (active && generation.current.signature === signature && generation.current.value === requestGeneration) {
+        if (active) {
           setSettled({
+            dependencies,
+            register,
+            retryNonce,
             signature,
             status: 'error',
             error: error instanceof Error ? error.message : 'A bundled font face is unavailable.',
@@ -67,15 +63,20 @@ export function useManagedFontRegistrationGate(
       },
     );
     return () => { active = false; };
-  }, [currentGeneration, dependencies, register, retryNonce, signature]);
+  }, [dependencies, register, retryNonce, signature]);
 
   const retry = useCallback(() => {
-    setSettled({ signature, status: dependencies.length > 0 ? 'loading' : 'ready' });
     setRetryNonce((value) => value + 1);
-  }, [dependencies.length, signature]);
+  }, []);
 
-  if (settled.signature !== signature) {
-    return dependencies.length > 0 ? { status: 'loading', retry } : { status: 'ready', retry };
+  if (dependencies.length === 0) return { status: 'ready', retry };
+  if (
+    settled.dependencies !== dependencies
+    || settled.register !== register
+    || settled.retryNonce !== retryNonce
+    || settled.signature !== signature
+  ) {
+    return { status: 'loading', retry };
   }
   if (settled.status === 'error') return { status: 'error', error: settled.error ?? 'A bundled font face is unavailable.', retry };
   return { status: settled.status, retry };

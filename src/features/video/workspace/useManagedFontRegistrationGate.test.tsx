@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { act } from 'react';
+import { act, startTransition, Suspense } from 'react';
+import { flushSync } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ManagedBundledFontDependency } from '../../../lib/bundledFontLibrary';
@@ -9,6 +10,8 @@ import {
   useManagedFontRegistrationGate,
   type ManagedFontDependencyRegistrar,
 } from './useManagedFontRegistrationGate';
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function reference(seed: string): ManagedBundledFontFaceReference {
   return {
@@ -31,11 +34,19 @@ function deferred() {
 function Harness({
   dependencies,
   register,
+  suspend,
+  onSuspendedRender,
 }: {
   dependencies: ManagedBundledFontDependency[];
   register: ManagedFontDependencyRegistrar;
+  suspend?: Promise<never>;
+  onSuspendedRender?: () => void;
 }) {
   const gate = useManagedFontRegistrationGate(dependencies, register);
+  if (suspend) {
+    onSuspendedRender?.();
+    throw suspend;
+  }
   return (
     <div data-gate-status={gate.status}>
       {gate.status === 'ready' ? <div data-exact-preview="true">Exact preview</div> : null}
@@ -93,6 +104,71 @@ describe('useManagedFontRegistrationGate', () => {
     expect(host.querySelector('[data-gate-status]')?.getAttribute('data-gate-status')).toBe('loading');
     bRetry.resolve();
     await act(async () => { await bRetry.promise; });
+    expect(host.querySelector('[data-gate-status]')?.getAttribute('data-gate-status')).toBe('ready');
+    expect(host.querySelector('[data-exact-preview]')).not.toBeNull();
+  });
+
+  it('does not let an abandoned suspended render invalidate the active committed registration', async () => {
+    const activeRegistration = deferred();
+    const register = vi.fn<ManagedFontDependencyRegistrar>(() => activeRegistration.promise);
+    const dependenciesA: ManagedBundledFontDependency[] = [{ reference: reference('a') }];
+    const dependenciesB: ManagedBundledFontDependency[] = [{ reference: reference('b') }];
+    const neverSettles = new Promise<never>(() => undefined);
+    const sawSuspendedRender = vi.fn();
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+
+    const committedA = (
+      <Suspense fallback={<div data-fallback="true" />}>
+        <Harness dependencies={dependenciesA} register={register} />
+      </Suspense>
+    );
+    await act(async () => root?.render(committedA));
+    expect(register).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[data-gate-status]')?.getAttribute('data-gate-status')).toBe('loading');
+
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+    try {
+      startTransition(() => root?.render(
+        <Suspense fallback={<div data-fallback="true" />}>
+          <Harness
+            dependencies={dependenciesB}
+            onSuspendedRender={sawSuspendedRender}
+            register={register}
+            suspend={neverSettles}
+          />
+        </Suspense>,
+      ));
+      await vi.waitFor(() => expect(sawSuspendedRender).toHaveBeenCalled());
+    } finally {
+      (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    }
+
+    expect(sawSuspendedRender).toHaveBeenCalled();
+    expect(register).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[data-fallback]')).toBeNull();
+
+    // A synchronous return to the already-committed A tree abandons the suspended B work. The A
+    // effect must remain the sole active request; render-only B work cannot cancel or supersede it.
+    await act(async () => flushSync(() => root?.render(committedA)));
+    expect(register).toHaveBeenCalledTimes(1);
+
+    activeRegistration.resolve();
+    await act(async () => { await activeRegistration.promise; });
+    expect(host.querySelector('[data-gate-status]')?.getAttribute('data-gate-status')).toBe('ready');
+    expect(host.querySelector('[data-exact-preview]')).not.toBeNull();
+  });
+
+  it('starts ready for an empty dependency set without exposing a fallback', async () => {
+    const register = vi.fn<ManagedFontDependencyRegistrar>(() => Promise.resolve());
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+
+    await act(async () => root?.render(<Harness dependencies={[]} register={register} />));
+
+    expect(register).not.toHaveBeenCalled();
     expect(host.querySelector('[data-gate-status]')?.getAttribute('data-gate-status')).toBe('ready');
     expect(host.querySelector('[data-exact-preview]')).not.toBeNull();
   });

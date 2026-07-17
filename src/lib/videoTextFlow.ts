@@ -143,8 +143,8 @@ function resolveTypesetting(typography: VideoTextTypesetting | undefined): {
   textAlign: VideoTextAlign;
 } {
   return {
-    fontWeight: typography?.fontWeight ?? DEFAULT_FONT_WEIGHT,
-    fontStyle: typography?.fontStyle ?? DEFAULT_FONT_STYLE,
+    fontWeight: typography?.managedFace?.weight ?? typography?.fontWeight ?? DEFAULT_FONT_WEIGHT,
+    fontStyle: typography?.managedFace?.style ?? typography?.fontStyle ?? DEFAULT_FONT_STYLE,
     fontStretchPercent: typography?.managedFace?.stretchPercent ?? 100,
     fontKerning: typography?.fontKerning ?? DEFAULT_FONT_KERNING,
     lineHeightPercent: typography?.lineHeightPercent ?? DEFAULT_LINE_HEIGHT_PERCENT,

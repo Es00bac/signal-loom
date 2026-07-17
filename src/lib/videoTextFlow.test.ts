@@ -121,10 +121,58 @@ describe('layoutVideoText', () => {
       recordingMeasure,
     );
 
-    expect(seen[0]).toMatchObject({ fontWeight: 700, fontStyle: 'italic', fontKerning: 'none', letterSpacingPx: 5 });
+    expect(seen[0]).toMatchObject({
+      fontFamily: 'Inter',
+      fontWeight: 700,
+      fontStyle: 'italic',
+      fontStretchPercent: 100,
+      fontKerning: 'none',
+      letterSpacingPx: 5,
+    });
     expect(result.lines[0].widthPx).toBe(2 * 10 + 1 * 5); // 'ab' + one gap of letter-spacing
     expect(result.letterSpacingPx).toBe(5);
     expect(result.fontKerning).toBe('none');
+  });
+
+  it('takes alias, weight, style, and stretch from an exact managed identity', () => {
+    const seen: VideoTextFont[] = [];
+    const managedFace = {
+      kind: 'bundled' as const,
+      schemaVersion: 2 as const,
+      faceId: 'same-name-oblique',
+      family: 'Same Named Family',
+      weight: 530,
+      style: 'oblique' as const,
+      stretchPercent: 82,
+      collectionIndex: 0,
+      sha256: 'a'.repeat(64),
+      byteLength: 1234,
+    };
+
+    layoutVideoText({
+      text: 'exact',
+      fontFamily: 'Same Named Family, sans-serif',
+      fontSizePx: 64,
+      typography: {
+        // Deliberately inconsistent unsanitized fields: the exact identity remains authoritative.
+        fontWeight: 700,
+        fontStyle: 'normal',
+        managedFace,
+        letterSpacingPx: 3.5,
+      },
+    }, (text, font) => {
+      seen.push(font);
+      return text.length * 10;
+    });
+
+    expect(seen[0]).toMatchObject({
+      fontFamily: expect.stringContaining('Sloom Managed Face'),
+      fontWeight: 530,
+      fontStyle: 'oblique',
+      fontStretchPercent: 82,
+      letterSpacingPx: 3.5,
+    });
+    expect(seen[0].fontFamily).not.toContain('Same Named Family');
   });
 
   it('quotes multi-word families in the shared canvas measurer (FBL-012)', () => {

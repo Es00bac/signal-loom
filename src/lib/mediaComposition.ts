@@ -63,10 +63,10 @@ import {
 } from './videoComicTail';
 import {
   computeArcTextGlyphs,
-  createVideoTextCanvasMeasurer,
   layoutVideoText,
   type VideoTextLayoutResult,
 } from './videoTextFlow';
+import { getVideoTextCanvasMeasurer, resolveVideoTextCardLayout } from './videoTextCardLayout';
 
 interface CompositionCommandTrack {
   inputName: string;
@@ -1439,18 +1439,6 @@ function paintStageBlendNeutralBackground(
   context.fillRect(0, 0, canvasSize.width, canvasSize.height);
 }
 
-/**
- * Lazily-created shared canvas measurer for `videoTextFlow`'s layout engine (px-native, honors
- * letter-spacing) — reused by every canvas-painted text surface (stage text objects, comic
- * typesetting, and the text-clip export card) so wrapping/measurement stays consistent across them.
- */
-let sharedVideoTextMeasurer: ReturnType<typeof createVideoTextCanvasMeasurer> | undefined;
-
-function getVideoTextMeasurer(): ReturnType<typeof createVideoTextCanvasMeasurer> {
-  sharedVideoTextMeasurer ??= createVideoTextCanvasMeasurer();
-  return sharedVideoTextMeasurer;
-}
-
 /** Paint-time typography a `VideoTextLayoutResult` doesn't itself carry (color + stroke/shadow/arc,
  *  which are rendering concerns, not layout concerns — see `videoTextFlow.ts`'s module doc). */
 interface TypesetPaintStyle {
@@ -1554,7 +1542,7 @@ function paintArcTextRun(
   style: TypesetPaintStyle,
   hasStroke: boolean,
 ): void {
-  const measurer = getVideoTextMeasurer();
+  const measurer = getVideoTextCanvasMeasurer();
   const font = {
     fontFamily: style.managedFace
       ? bundledFontFaceRuntimeFamilyName(style.managedFace)
@@ -1613,7 +1601,7 @@ export function drawTextStageObject(
         textAlign: typography?.textAlign ?? 'center',
       },
     },
-    getVideoTextMeasurer(),
+    getVideoTextCanvasMeasurer(),
   );
 
   paintTypesetTextBlock(
@@ -1761,7 +1749,7 @@ export function drawComicStageObject(
         textAlign: object.textAlign,
       },
     },
-    getVideoTextMeasurer(),
+    getVideoTextCanvasMeasurer(),
   );
 
   paintTypesetTextBlock(
@@ -2363,45 +2351,6 @@ export async function getMediaDuration(url: string, kind: 'audio' | 'video'): Pr
   });
 }
 
-/** Text-clip-specific typography defaults, matching this render path's PRE-existing look (a bold,
- *  tightly-leaded title card) so clips created before `textTypography` existed don't visually shift
- *  when this function switched from an SVG+CSS render to a direct canvas render. */
-const TEXT_CARD_DEFAULT_FONT_WEIGHT = 600;
-const TEXT_CARD_DEFAULT_LINE_HEIGHT_PERCENT = 112;
-/** Generous fixed padding baseline (independent of stroke/shadow/arc reach, added on top below) —
- *  matches the old SVG render's safety-padding intent so normal (no-typography) clips keep their
- *  existing card size. */
-const TEXT_CARD_BASE_PADDING_FACTOR = 0.16;
-
-/**
- * Derives stroke/shadow typography from the legacy per-clip `TextClipEffect` (none/shadow/glow/
- * outline), approximating `editorTextRender.ts`'s old CSS look (a single canvas shadow can't
- * reproduce `glow`'s double CSS text-shadow exactly, so it uses the more prominent of the two).
- * Only used as a FALLBACK for clips that predate `textTypography` — explicit typography fields
- * always win (see the merge in `renderTextCard`).
- */
-function legacyTextEffectTypography(effect: 'none' | 'shadow' | 'glow' | 'outline'): Pick<
-  EditorTextTypography,
-  'strokeColor' | 'strokeWidthPx' | 'shadowColor' | 'shadowBlurPx' | 'shadowOffsetXPx' | 'shadowOffsetYPx'
-> {
-  if (effect === 'outline') {
-    return {
-      strokeColor: 'rgba(0,0,0,0.75)',
-      strokeWidthPx: 2,
-      shadowColor: 'rgba(0,0,0,0.5)',
-      shadowBlurPx: 6,
-      shadowOffsetYPx: 2,
-    };
-  }
-  if (effect === 'shadow') {
-    return { shadowColor: 'rgba(0,0,0,0.65)', shadowBlurPx: 20, shadowOffsetYPx: 6 };
-  }
-  if (effect === 'glow') {
-    return { shadowColor: 'rgba(96,165,250,0.5)', shadowBlurPx: 32 };
-  }
-  return {};
-}
-
 /**
  * Renders a text CLIP's title card as a flat PNG for FFmpeg export, via the same
  * `paintTypesetTextBlock` canvas engine `drawTextStageObject`/`drawComicStageObject` use (this used
@@ -2433,47 +2382,17 @@ export async function renderTextCard({
     typography?.managedFace,
     typography?.managedFaceIssue,
   ));
-  const resolved: EditorTextTypography = { ...legacyTextEffectTypography(effect), ...(typography ?? {}) };
-  const fontWeight = resolved.fontWeight ?? TEXT_CARD_DEFAULT_FONT_WEIGHT;
-  const fontStyle = resolved.fontStyle ?? 'normal';
-  const letterSpacingPx = resolved.letterSpacingPx ?? 0;
-  const safeFontSizePx = Math.max(8, fontSizePx || 64);
-  const safeText = text || 'Text';
-
-  const layout = layoutVideoText(
-    {
-      text: safeText,
-      fontFamily: fontFamily || 'Inter, system-ui, sans-serif',
-      fontSizePx: safeFontSizePx,
-      typography: {
-        fontWeight,
-        fontStyle,
-        managedFace: resolved.managedFace,
-        managedFaceIssue: resolved.managedFaceIssue,
-        fontKerning: resolved.fontKerning,
-        lineHeightPercent: resolved.lineHeightPercent ?? TEXT_CARD_DEFAULT_LINE_HEIGHT_PERCENT,
-        letterSpacingPx,
-        textAlign: resolved.textAlign ?? 'center',
-      },
-    },
-    getVideoTextMeasurer(),
-  );
-
-  const strokeWidthPx = Math.max(0, resolved.strokeWidthPx ?? 0);
-  const shadowBlurPx = Math.max(0, resolved.shadowBlurPx ?? 0);
-  const shadowOffsetXPx = resolved.shadowOffsetXPx ?? 0;
-  const shadowOffsetYPx = resolved.shadowOffsetYPx ?? 0;
-  const arcPercent = resolved.arcPercent ?? 0;
-  // Generous, independent-of-content padding: covers the base safety margin the old SVG render
-  // used, plus whatever room stroke/shadow/arc need so nothing clips at the canvas edge.
-  const basePaddingPx = Math.max(8, safeFontSizePx * TEXT_CARD_BASE_PADDING_FACTOR);
-  const strokeShadowPaddingPx = strokeWidthPx + shadowBlurPx + Math.max(Math.abs(shadowOffsetXPx), Math.abs(shadowOffsetYPx));
-  const arcPaddingPx = arcPercent ? safeFontSizePx * 1.5 : 0;
-  const paddingPx = Math.ceil(basePaddingPx + strokeShadowPaddingPx + arcPaddingPx);
+  const resolved = resolveVideoTextCardLayout({ text, fontFamily, fontSizePx, effect, typography });
+  const { layout } = resolved;
+  const strokeWidthPx = Math.max(0, resolved.typography.strokeWidthPx ?? 0);
+  const shadowBlurPx = Math.max(0, resolved.typography.shadowBlurPx ?? 0);
+  const shadowOffsetXPx = resolved.typography.shadowOffsetXPx ?? 0;
+  const shadowOffsetYPx = resolved.typography.shadowOffsetYPx ?? 0;
+  const arcPercent = resolved.typography.arcPercent ?? 0;
 
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.ceil(Math.max(safeFontSizePx, layout.contentWidthPx) + paddingPx * 2));
-  canvas.height = Math.max(1, Math.ceil(Math.max(safeFontSizePx, layout.contentHeightPx) + paddingPx * 2));
+  canvas.width = resolved.width;
+  canvas.height = resolved.height;
   const context = canvas.getContext('2d');
 
   if (!context) {
@@ -2485,23 +2404,23 @@ export async function renderTextCard({
     context,
     layout,
     {
-      fontFamily: fontFamily || 'Inter, system-ui, sans-serif',
-      fontSizePx: safeFontSizePx,
-      fontWeight,
-      fontStyle,
-      managedFace: resolved.managedFace,
+      fontFamily: resolved.fontFamily,
+      fontSizePx: resolved.fontSizePx,
+      fontWeight: resolved.fontWeight,
+      fontStyle: resolved.fontStyle,
+      managedFace: resolved.typography.managedFace,
       fontKerning: resolved.fontKerning,
-      letterSpacingPx,
+      letterSpacingPx: resolved.letterSpacingPx,
       color: color || '#f3f4f6',
-      strokeColor: resolved.strokeColor,
+      strokeColor: resolved.typography.strokeColor,
       strokeWidthPx,
-      shadowColor: resolved.shadowColor,
+      shadowColor: resolved.typography.shadowColor,
       shadowBlurPx,
       shadowOffsetXPx,
       shadowOffsetYPx,
       arcPercent,
     },
-    { xPx: paddingPx, yPx: paddingPx },
+    { xPx: resolved.paddingPx, yPx: resolved.paddingPx },
   );
 
   return canvas.toDataURL('image/png');

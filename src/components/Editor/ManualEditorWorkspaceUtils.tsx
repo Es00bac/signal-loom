@@ -503,6 +503,7 @@ export function getStageClipSourceDimensions(
       fontSizePx: clip.textSizePx || asset?.textDefaults?.fontSizePx || 64,
       effect: clip.textEffect || asset?.textDefaults?.textEffect || 'none',
       fontFamily: clip.textFontFamily || asset?.textDefaults?.fontFamily || 'Inter, system-ui, sans-serif',
+      typography: clip.textTypography,
     });
   }
 
