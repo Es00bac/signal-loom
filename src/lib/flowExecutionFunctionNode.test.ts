@@ -314,6 +314,120 @@ describe('executeNodeRequest collapsed reusable functions', () => {
     expect(execution.functionOutputs?.['second-output']?.result).toBe('SECOND');
   });
 
+  it('executes every advertised output subtree once: two providers, different types, exact submission counts', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:multi-output-image');
+    const fetchMock = vi.fn().mockResolvedValue(imageResponse('FRESH-MULTI'));
+    vi.stubGlobal('fetch', fetchMock);
+    openAiTextCapture.create = async () => ({
+      choices: [{ message: { content: 'fresh openai text' } }],
+      usage: { prompt_tokens: 7, completion_tokens: 11 },
+    });
+
+    const config = createDefaultFunctionNodeConfig('Two provider outputs');
+    config.contract.outputPorts = [
+      { id: 'image-output', key: 'image', label: 'Image', resultType: 'image', required: true, order: 0 },
+      { id: 'text-output', key: 'text', label: 'Text', resultType: 'text', required: true, order: 1 },
+    ];
+    config.graph = {
+      version: 1,
+      nodes: [
+        node('img-prompt', 'textNode', { mode: 'prompt', prompt: 'paint a fox', resultType: 'text' }),
+        node('img-src', 'imageGen', {
+          provider: 'stability',
+          modelId: 'stable-image-core',
+          result: FROZEN_INTERNAL_IMAGE,
+          resultType: 'image',
+        }),
+        node('text-prompt', 'textNode', { mode: 'prompt', prompt: 'describe a fox', resultType: 'text' }),
+        node('text-src', 'textNode', {
+          mode: 'generate',
+          provider: 'openai',
+          modelId: 'gpt-4.1-mini',
+          result: 'stale internal text frozen at collapse',
+          resultType: 'text',
+        }),
+      ],
+      edges: [
+        { id: 'e-img', source: 'img-prompt', target: 'img-src', sourceHandle: null, targetHandle: null },
+        { id: 'e-text', source: 'text-prompt', target: 'text-src', sourceHandle: null, targetHandle: null },
+      ],
+    };
+    config.outputBindings = [
+      { ...config.outputBindings[0], targetOutputPortId: 'image-output', sourceNodeId: 'img-src', resultType: 'image' },
+      { ...config.outputBindings[0], id: 'text-output-binding', targetOutputPortId: 'text-output', sourceNodeId: 'text-src', resultType: 'text' },
+    ];
+
+    const execution = await executeNodeRequest(functionNodeFor(config, 'fn-two-providers'), {
+      prompt: '', config: DEFAULT_EXECUTION_CONFIG,
+    }, baseSettings, undefined, { functionRuntime: flowFunctionNodeExecutionRuntime });
+
+    // Exactly one submission per provider-backed internal node — no skips, no repeats.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://api.stability.ai/v2beta/stable-image/generate/core');
+    expect(openAiTextCapture.calls).toHaveLength(1);
+
+    expect(execution.result).toBe('blob:multi-output-image');
+    expect(execution.resultType).toBe('image');
+    expect(execution.functionOutputs?.['image-output']).toMatchObject({
+      result: 'blob:multi-output-image',
+      resultType: 'image',
+    });
+    expect(execution.functionOutputs?.['text-output']).toMatchObject({
+      result: 'fresh openai text',
+      resultType: 'text',
+    });
+    expect(execution.usage?.costUsd).toBeGreaterThanOrEqual(0.03);
+    expect(execution.usage).toMatchObject({ source: 'actual', inputTokens: 7, outputTokens: 11 });
+  });
+
+  it('never serves stale persisted data on a provider-backed second output behind a local first output', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:second-output-fresh');
+    const fetchMock = vi.fn().mockResolvedValue(imageResponse('FRESH-SECOND'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const config = createDefaultFunctionNodeConfig('Local first, provider second');
+    config.contract.outputPorts = [
+      { id: 'text-output', key: 'text', label: 'Text', resultType: 'text', required: true, order: 0 },
+      { id: 'image-output', key: 'image', label: 'Image', resultType: 'image', required: true, order: 1 },
+    ];
+    config.graph = {
+      version: 1,
+      nodes: [
+        node('local-src', 'textNode', { mode: 'prompt', prompt: 'LOCAL VALUE', resultType: 'text' }),
+        node('img-prompt', 'textNode', { mode: 'prompt', prompt: 'a fresh harbor', resultType: 'text' }),
+        node('img-src', 'imageGen', {
+          provider: 'stability',
+          modelId: 'stable-image-core',
+          result: FROZEN_INTERNAL_IMAGE,
+          resultType: 'image',
+        }),
+      ],
+      edges: [
+        { id: 'e-img', source: 'img-prompt', target: 'img-src', sourceHandle: null, targetHandle: null },
+      ],
+    };
+    config.outputBindings = [
+      { ...config.outputBindings[0], targetOutputPortId: 'text-output', sourceNodeId: 'local-src', resultType: 'text' },
+      { ...config.outputBindings[0], id: 'image-output-binding', targetOutputPortId: 'image-output', sourceNodeId: 'img-src', resultType: 'image' },
+    ];
+
+    const execution = await executeNodeRequest(functionNodeFor(config, 'fn-local-then-provider'), {
+      prompt: '', config: DEFAULT_EXECUTION_CONFIG,
+    }, baseSettings, undefined, { functionRuntime: flowFunctionNodeExecutionRuntime });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = fetchMock.mock.calls[0][1]?.body as FormData;
+    expect(body.get('prompt')).toBe('a fresh harbor');
+
+    expect(execution.result).toBe('LOCAL VALUE');
+    expect(execution.resultType).toBe('text');
+    expect(execution.functionOutputs?.['text-output']?.result).toBe('LOCAL VALUE');
+    expect(execution.functionOutputs?.['image-output']?.result).toBe('blob:second-output-fresh');
+    expect(execution.functionOutputs?.['image-output']?.result).not.toBe(FROZEN_INTERNAL_IMAGE);
+    expect(execution.usage).toMatchObject({ source: 'actual', costUsd: 0.03 });
+    expect(execution.usage?.notes?.join(' ')).not.toContain('without provider spend');
+  });
+
   it('retains provider additional media, MIME, and internal usage on a named Function output', async () => {
     const config = createDefaultFunctionNodeConfig('Atlas image pair');
     config.contract.outputPorts = [{
