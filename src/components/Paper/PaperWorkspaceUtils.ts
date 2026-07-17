@@ -16,6 +16,7 @@ import { getSignalLoomNativeBridge, type NativePaperPdfExportResult } from '../.
 import { buildProvenanceLabel } from '../../lib/exportProvenance';
 import { downloadBlob as downloadSharedBlob, downloadTextFile } from '../../lib/downloadAsset';
 import { exportPaperDocumentToPdfxInBrowser } from '../../lib/paperPdfxBrowser';
+import { assertPaperDocumentSupportsRasterization } from '../../lib/paperPlacedDocumentRasterization';
 import { validatePaperPdfx } from '../../lib/paperPdfxValidate';
 import { exportValidatedPaperPdfx, type PaperProductionPreflightOptions } from '../../lib/paperProductionPreflight';
 import { formatProductionValidationStatus } from '../../lib/paperProductionReport';
@@ -875,6 +876,10 @@ export async function exportPaperPdfDocument(
     });
   }
 
+  // The default native PDF route first builds page rasters. Do not open a destination chooser or
+  // report progress until the complete document has passed the PDF-placement capability boundary.
+  if (!request) assertPaperDocumentSupportsRasterization(document);
+
   let result: NativePaperPdfExportResult;
   try {
     let filePath: string | undefined;
@@ -1026,6 +1031,9 @@ export async function exportPaperPdfxAndSave(
   const profileLabel = profile?.description ?? 'managed CMYK profile';
   let delivery: NativePaperPdfExportResult | undefined;
   try {
+    // Strict production preflight may inspect managed assets. The raster capability boundary comes
+    // first so a placed PDF cannot trigger those reads or an overridable generic preflight path.
+    assertPaperDocumentSupportsRasterization(document);
     setStatus(`Checking managed assets and production constraints for ${standardLabel} (${profileLabel})…`);
     const transaction = await exportValidatedPaperPdfx(document, {
       standard,
@@ -1086,6 +1094,7 @@ export async function exportPaperKdpPdfAndSave(
   const profileLabel = profile?.description ?? 'managed CMYK profile';
   let delivery: NativePaperPdfExportResult | undefined;
   try {
+    assertPaperDocumentSupportsRasterization(document);
     setStatus(`Checking managed assets and production constraints for a ${dpi} DPI KDP PDF/X-1a…`);
     const kdpDocument = updatePaperDocumentSetup(document, {
       bleedMm: KDP_BLEED_MM,
@@ -1187,6 +1196,7 @@ async function buildDefaultRasterPaperPdfRequest(
   setStatus: (status: string) => void,
   options: PaperPdfDocumentExportOptions,
 ): Promise<PaperPdfExportRequest> {
+  assertPaperDocumentSupportsRasterization(document);
   const exact = await buildPaperDocumentExactManagedFontOutput(document);
   const rasterSettings = buildPaperPdfRasterExportSettings(document, options);
   const pageCount = document.pages.length;
@@ -1220,6 +1230,7 @@ export async function exportPaperWebcomicImages(
   setStatus: (status: string) => void,
   options: PaperWebcomicImageExportOptions = {},
 ): Promise<PaperExportOutcome> {
+  assertPaperDocumentSupportsRasterization(document);
   const exact = await buildPaperDocumentExactManagedFontOutput(document);
   const outputDocument = exact.document;
   const exactOptions = { ...options, fontFaceCss: exact.fontFaceCss };

@@ -8,7 +8,7 @@ import {
   collectPaperPlacedDocumentRasterizationIssues,
   PaperPlacedDocumentRasterizationError,
 } from './paperPlacedDocumentRasterization';
-import { buildFlattenedPaperPageSvgExportWithEmbeddedAssets } from './paperPageFlattenExport';
+import { buildFlattenedPaperPageSvgExport, buildFlattenedPaperPageSvgExportWithEmbeddedAssets } from './paperPageFlattenExport';
 import { buildPaperWebcomicImageDataPages } from './paperWebcomicExport';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -101,6 +101,77 @@ describe('placed-document rasterization capability boundary', () => {
     const html = exportPaperDocumentToPrintHtml(document);
 
     expect(html).toContain('<object data="data:application/pdf;base64,JVBERi0=" type="application/pdf"');
-    expect(html).toContain('Linked PDF: Inline reference.pdf');
+    expect(html).toContain('PDF-capable print viewer required for Inline reference.pdf');
+  });
+
+  it.each(['application/pdf', 'application/x-pdf', 'application/acrobat'] as const)(
+    'blocks %s on image frames before any resolver/decode work and keeps it as a live-print object',
+    async (mimeType) => {
+      const base = createDefaultPaperDocument({ title: 'Image-frame PDF alias' });
+      const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+        kind: 'image', label: 'Placed artwork', xMm: 10, yMm: 10, widthMm: 50, heightMm: 40,
+        asset: { label: 'Placed artwork', kind: 'image', mimeType, locator: { kind: 'external', url: `data:${mimeType};base64,JVBERi0=` } },
+      });
+      const resolveImageSrc = vi.fn(() => { throw new Error('resolver must not run'); });
+
+      await expect(buildFlattenedPaperPageSvgExportWithEmbeddedAssets(document, document.pages[0].id, { resolveImageSrc }))
+        .rejects.toThrow(PaperPlacedDocumentRasterizationError);
+      expect(resolveImageSrc).not.toHaveBeenCalled();
+      expect(exportPaperDocumentToPrintHtml(document)).toContain(`<object data="data:${mimeType};base64,JVBERi0=" type="application/pdf"`);
+    },
+  );
+
+  it('detects managed aliases and PDF-labelled missing assets without reading payload bytes or promising a placeholder', () => {
+    const base = createDefaultPaperDocument({ title: 'Managed and missing PDFs' });
+    const sha256 = 'b'.repeat(64);
+    const managed = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Misfiled image', xMm: 10, yMm: 10, widthMm: 40, heightMm: 40,
+      asset: { label: 'Misfiled image', kind: 'image', locator: { kind: 'managed', ref: {
+        id: `sha256:${sha256}` as BinaryAssetId, sha256, mimeType: 'application/acrobat', byteLength: 12,
+      } } },
+    }).document;
+    const document = addFrameToPaperPage(managed, managed.pages[0].id, {
+      kind: 'document', label: 'Missing-but-labelled.PDF', xMm: 55, yMm: 10, widthMm: 40, heightMm: 40,
+    }).document;
+
+    const issues = collectPaperPlacedDocumentRasterizationIssues(document);
+    expect(issues).toHaveLength(2);
+    expect(issues.map((issue) => issue.mimeType)).toContain('application/acrobat');
+    expect(issues.find((issue) => issue.frameLabel === 'Missing-but-labelled.PDF')?.message).toContain('Restore or relink');
+    expect(exportPaperDocumentToPrintHtml(document)).toContain('PDF asset unavailable: relink Missing-but-labelled.PDF');
+  });
+
+  it('classifies a bounded data URL header and leaves non-PDF vectors available', () => {
+    const base = createDefaultPaperDocument({ title: 'Bounded PDF classification' });
+    const hugePayload = `data:application/x-pdf;base64,${'x'.repeat(1024 * 1024)}`;
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Huge placed payload', xMm: 10, yMm: 10, widthMm: 40, heightMm: 40,
+      asset: { label: 'Huge placed payload', kind: 'image', locator: { kind: 'external', url: hugePayload } },
+    });
+    expect(collectPaperPlacedDocumentRasterizationIssues(document)[0]).toMatchObject({ mimeType: 'application/x-pdf', isPdf: true });
+
+    const vectorBase = createDefaultPaperDocument({ title: 'SVG remains available' });
+    const vector = addFrameToPaperPage(vectorBase, vectorBase.pages[0].id, {
+      kind: 'image', label: 'Vector art', xMm: 10, yMm: 10, widthMm: 40, heightMm: 40,
+      asset: { label: 'Vector art', kind: 'image', mimeType: 'image/svg+xml', locator: { kind: 'external', url: 'data:image/svg+xml,%3Csvg/%3E' } },
+    }).document;
+    expect(() => assertPaperDocumentSupportsRasterization(vector)).not.toThrow();
+  });
+
+  it('preflights all pages for a selected-page flatten and rejects unknown page ids without falling back', async () => {
+    const first = createDefaultPaperDocument({ title: 'Selected page transaction' });
+    const second = { ...first.pages[0], id: 'page-2', pageNumber: 2, frames: [] };
+    const withSecondPage = { ...first, pages: [first.pages[0], second] };
+    const document = addFrameToPaperPage(withSecondPage, second.id, {
+      kind: 'document', label: 'Later.pdf', xMm: 10, yMm: 10, widthMm: 50, heightMm: 50,
+      asset: { label: 'Later.pdf', kind: 'document', mimeType: 'application/pdf', locator: { kind: 'external', url: 'data:application/pdf;base64,JVBERi0=' } },
+    }).document;
+    const resolver = vi.fn();
+
+    expect(() => buildFlattenedPaperPageSvgExport(document, document.pages[0].id)).toThrow(PaperPlacedDocumentRasterizationError);
+    await expect(buildFlattenedPaperPageSvgExportWithEmbeddedAssets(document, document.pages[0].id, { resolveImageSrc: resolver }))
+      .rejects.toThrow(PaperPlacedDocumentRasterizationError);
+    expect(resolver).not.toHaveBeenCalled();
+    expect(() => buildFlattenedPaperPageSvgExport(first, 'missing-page')).toThrow(/Unknown Paper page id/);
   });
 });

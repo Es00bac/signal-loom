@@ -49,6 +49,7 @@ import {
   buildPaperFrameAssetFromSourceItem,
   resolvePaperFrameAssetUrl,
 } from './paperAssetReferences';
+import { classifyPaperPlacedPdf } from './paperPlacedPdf';
 import { isPaperManagedIccProfile } from './paperManagedIccProfiles';
 import { buildPaperCanvasFrameLayers } from './paperCanvasStacking';
 import { resolvePaperColumnGutterMm } from './paperColumns';
@@ -1319,6 +1320,13 @@ export function renderPrintFrame(
     return `<div class="frame frame-${frame.kind}" style="${escapeHtml(`${outerStyle}; background: transparent; border: 0; padding: 0;`)}">${renderPrintBubbleSvg(frame)}${renderPrintTextBox(frame, bubbleText)}</div>`;
   }
 
+  const placedPdf = classifyPaperPlacedPdf(frame);
+  if (placedPdf.isPdf) {
+    return `<figure class="frame frame-document" style="${escapeHtml(outerStyle)}">
+  <div class="frame-content" style="${escapeHtml(contentStyle)}">${renderPrintPdfFrameContent(frame, assetUrl, placedPdf.canEmbedForLivePrint)}</div>
+</figure>`;
+  }
+
   if (isShapedContentFrame(frame)) {
     return renderPrintShapedContentFrame(outerStyle, frame, assetUrl);
   }
@@ -1582,10 +1590,15 @@ function renderPrintImageFrameContent(frame: PaperFrame, assetUrl: string): stri
 
 function renderPrintDocumentFrameContent(frame: PaperFrame, assetUrl?: string): string {
   const label = escapeHtml(frame.asset?.label ?? frame.label);
-  if (assetUrl && frame.asset?.mimeType === 'application/pdf') {
-    return `<object data="${escapeHtml(assetUrl)}" type="application/pdf" width="100%" height="100%"><div class="paper-document-placeholder">Linked PDF: ${label}</div></object>`;
-  }
   return `<div class="paper-document-placeholder" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;border:0.35mm dashed #64748b;background:#f8fafc;color:#334155;text-align:center;padding:3mm;">Linked document: ${label}</div>`;
+}
+
+function renderPrintPdfFrameContent(frame: PaperFrame, assetUrl: string | undefined, canEmbedForLivePrint: boolean): string {
+  const label = escapeHtml(frame.asset?.label ?? frame.label);
+  if (canEmbedForLivePrint && assetUrl) {
+    return `<object data="${escapeHtml(assetUrl)}" type="application/pdf" width="100%" height="100%"><span>PDF-capable print viewer required for ${label}</span></object>`;
+  }
+  return `<div class="paper-document-placeholder" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;border:0.35mm dashed #64748b;background:#f8fafc;color:#334155;text-align:center;padding:3mm;">PDF asset unavailable: relink ${label} to a PDF URL before live print.</div>`;
 }
 
 function renderPrintFrameShapeStrokeSvg(frame: PaperFrame): string {

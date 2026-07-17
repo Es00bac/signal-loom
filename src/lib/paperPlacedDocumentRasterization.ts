@@ -5,6 +5,7 @@
 
 import type { PaperDocument, PaperFrame } from '../types/paper';
 import { resolvePaperPageFramesForOutput } from './paperDocument';
+import { classifyPaperPlacedPdf, type PaperPlacedPdfClassification } from './paperPlacedPdf';
 
 export interface PaperPlacedDocumentRasterizationIssue {
   code: 'paper-placed-document-rasterization-unsupported';
@@ -31,23 +32,22 @@ export class PaperPlacedDocumentRasterizationError extends Error {
 }
 
 /**
- * Returns every placed document that would otherwise be passed through the image-only flatten
- * adapter.  We intentionally block unknown/wrong MIME document records too: a remote URL or
- * mislabeled data URL cannot establish that it is a decodable image, and silently probing it would
- * both be unsafe and reintroduce the late failure this boundary eliminates.
+ * Returns every PDF placement that would otherwise be passed through an image-only flatten adapter.
+ * Classification is metadata-only and bounded, so this inspection never materializes document bytes.
  */
 export function collectPaperPlacedDocumentRasterizationIssues(
   document: PaperDocument,
   pageIds: readonly string[] = document.pages.map((page) => page.id),
 ): PaperPlacedDocumentRasterizationIssue[] {
-  const requested = new Set(pageIds);
+  const requested = validatePaperRasterPageIds(document, pageIds);
   const issues: PaperPlacedDocumentRasterizationIssue[] = [];
 
   for (const page of document.pages) {
     if (!requested.has(page.id)) continue;
     for (const frame of resolvePaperPageFramesForOutput(document, page)) {
-      if (frame.kind !== 'document' || !frame.asset) continue;
-      issues.push(createIssue(page.id, page.pageNumber, frame));
+      const classification = classifyPaperPlacedPdf(frame);
+      if (!classification.isPdf) continue;
+      issues.push(createIssue(page.id, page.pageNumber, frame, classification));
     }
   }
   return issues;
@@ -58,7 +58,10 @@ export function assertPaperDocumentSupportsRasterization(
   document: PaperDocument,
   pageIds?: readonly string[],
 ): void {
-  const issues = collectPaperPlacedDocumentRasterizationIssues(document, pageIds);
+  // Raster output is transactional. A supplied id proves that the requested page exists, but never
+  // narrows the capability pass: a PDF on a later page must block before page one has side effects.
+  if (pageIds) validatePaperRasterPageIds(document, pageIds);
+  const issues = collectPaperPlacedDocumentRasterizationIssues(document);
   if (issues.length > 0) throw new PaperPlacedDocumentRasterizationError(issues);
 }
 
@@ -68,36 +71,35 @@ export function isPaperPlacedDocumentRasterizationError(value: unknown): value i
       && (value as { code?: unknown }).code === 'paper-placed-document-rasterization-unsupported');
 }
 
-function createIssue(pageId: string, pageNumber: number, frame: PaperFrame): PaperPlacedDocumentRasterizationIssue {
-  // A data URL self-identifies its payload and is more trustworthy than stale imported metadata.
-  const mimeType = mimeTypeFromDataUrl(frame.asset?.locator?.kind === 'external' ? frame.asset.locator.url : undefined)
-    ?? normalizeMimeType(frame.asset?.mimeType)
-    ?? normalizeMimeType(frame.asset?.locator?.kind === 'managed' ? frame.asset.locator.ref.mimeType : undefined);
-  const isPdf = mimeType === 'application/pdf';
-  const kind = isPdf ? 'PDF' : 'document';
+function createIssue(
+  pageId: string,
+  pageNumber: number,
+  frame: PaperFrame,
+  classification: PaperPlacedPdfClassification,
+): PaperPlacedDocumentRasterizationIssue {
+  const livePrintRemediation = classification.canEmbedForLivePrint
+    ? 'Print HTML/live print will emit this URL-backed PDF as a real <object>; use that route or replace it with a raster image before raster export.'
+    : 'Restore or relink this PDF to a URL-backed asset before live print, or replace it with a raster image before raster export.';
   return {
     code: 'paper-placed-document-rasterization-unsupported',
     pageId,
     pageNumber,
     frameId: frame.id,
     frameLabel: frame.asset?.label || frame.label,
-    mimeType,
-    isPdf,
-    message: `Page ${pageNumber}, frame "${frame.asset?.label || frame.label}" places a ${kind} that this browser build cannot rasterize. Use Print HTML/live print to preserve the placed PDF, or replace it with a raster image before exporting PNG, CBZ/KDP, soft proof, or PDF/X.`,
+    mimeType: classification.mimeType,
+    isPdf: true,
+    message: `Page ${pageNumber}, frame "${frame.asset?.label || frame.label}" places a PDF that this browser build cannot rasterize. ${livePrintRemediation}`,
   };
 }
 
-function normalizeMimeType(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  const normalized = value.split(';', 1)[0]?.trim().toLowerCase();
-  return normalized || undefined;
-}
-
-function mimeTypeFromDataUrl(value: string | undefined): string | undefined {
-  if (!value || !value.startsWith('data:')) return undefined;
-  const comma = value.indexOf(',');
-  const header = value.slice(5, comma >= 0 ? comma : undefined);
-  return normalizeMimeType(header);
+function validatePaperRasterPageIds(document: PaperDocument, pageIds: readonly string[]): Set<string> {
+  const knownPageIds = new Set(document.pages.map((page) => page.id));
+  for (const pageId of pageIds) {
+    if (!knownPageIds.has(pageId)) {
+      throw new Error(`Unknown Paper page id "${pageId}" requested for raster export.`);
+    }
+  }
+  return new Set(pageIds);
 }
 
 function formatPlacedDocumentRasterizationIssues(issues: readonly PaperPlacedDocumentRasterizationIssue[]): string {

@@ -25,6 +25,8 @@ export interface PaperPreflightProfile {
 
 export interface PaperPreflightIssue {
   id: string;
+  /** Stable machine-readable blocker; unlike ordinary warnings, capability blockers cannot be overridden. */
+  code?: string;
   severity: PaperPreflightSeverity;
   title: string;
   detail: string;
@@ -157,6 +159,7 @@ export function analyzePaperPreflight(
       capabilityIssue.isPdf ? 'Placed PDF cannot be flattened in this build' : 'Placed document cannot be flattened in this build',
       capabilityIssue.message,
       {
+        code: capabilityIssue.code,
         pageNumber: capabilityIssue.pageNumber,
         frameId: capabilityIssue.frameId,
         category: 'links',
@@ -465,7 +468,7 @@ function issue(
   severity: PaperPreflightSeverity,
   title: string,
   detail: string,
-  context: Partial<Pick<PaperPreflightIssue, 'pageNumber' | 'frameId' | 'category'>> = {},
+  context: Partial<Pick<PaperPreflightIssue, 'code' | 'pageNumber' | 'frameId' | 'category'>> = {},
 ): PaperPreflightIssue {
   return {
     id: `${severity}-${context.pageNumber ?? 'doc'}-${context.frameId ?? title}-${title}`,

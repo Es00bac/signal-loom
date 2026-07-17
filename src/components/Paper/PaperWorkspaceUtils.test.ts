@@ -370,6 +370,27 @@ describe('PaperWorkspaceUtils export', () => {
     vi.unstubAllGlobals();
   });
 
+  it('blocks a placed-PDF raster export before chooser, status success, or canvas work', async () => {
+    const choosePaperPdfExportPath = vi.fn();
+    const exportPaperPdf = vi.fn();
+    const createElement = vi.fn();
+    vi.stubGlobal('window', { signalLoomNative: { choosePaperPdfExportPath, exportPaperPdf } });
+    vi.stubGlobal('document', { createElement });
+    const base = createDefaultPaperDocument({ title: 'Native preflight first' });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'document', label: 'Placed.pdf', xMm: 10, yMm: 10, widthMm: 50, heightMm: 40,
+      asset: { label: 'Placed.pdf', kind: 'document', mimeType: 'application/pdf', locator: { kind: 'external', url: 'data:application/pdf;base64,JVBERi0=' } },
+    });
+    const statuses: string[] = [];
+
+    await expect(exportPaperPdfDocument(document, (status) => statuses.push(status))).rejects.toThrow('cannot rasterize');
+    expect(choosePaperPdfExportPath).not.toHaveBeenCalled();
+    expect(exportPaperPdf).not.toHaveBeenCalled();
+    expect(createElement).not.toHaveBeenCalled();
+    expect(statuses).toEqual([]);
+    vi.unstubAllGlobals();
+  });
+
   it('asks for the native page-image directory before creating any raster canvas', async () => {
     const order: string[] = [];
     const choosePaperImageExportDirectory = vi.fn().mockImplementation(async () => {

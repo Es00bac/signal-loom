@@ -100,6 +100,7 @@ import {
   publishRasterizedPaperPageSourcePayload,
   publishRasterizedPaperPagesSourcePayloads,
 } from '../../../lib/paperPageFlattenExport';
+import { assertPaperDocumentSupportsRasterization } from '../../../lib/paperPlacedDocumentRasterization';
 import { buildPaperBookletProofHtmlExportRequest, buildPaperBookletProofPdfExportRequest, buildPaperReaderSpreadHtmlExportRequest, buildPaperReaderSpreadPdfExportRequest } from '../../../lib/paperPdfExport';
 import { buildPaperPackageExport } from '../../../lib/paperPackageExport';
 import { paperEmphasisMarkToCss, tokenizePaperInlineText } from '../../../lib/paperJapaneseText';
@@ -1123,7 +1124,14 @@ export function PaperWorkspace() {
     setStatus(target.frameId ? `Selected frame on page ${page.pageNumber}.` : `Selected page ${page.pageNumber}.`);
   }, [document.pages, selectFrame, selectPage, selectedPage]);
 
-  const confirmPreflightBeforeExport = useCallback(async (label: string): Promise<boolean> => {
+  const confirmPreflightBeforeExport = useCallback(async (label: string, options: { rasterTarget?: boolean } = {}): Promise<boolean> => {
+    if (options.rasterTarget) {
+      const capabilityBlocker = preflightReport.issues.find((issue) => issue.code === 'paper-placed-document-rasterization-unsupported');
+      if (capabilityBlocker) {
+        setStatus(`Blocked ${label}: ${capabilityBlocker.detail}`);
+        return false;
+      }
+    }
     const summary = summarizePreflightForExport(preflightReport);
     if (!summary) return true;
     const proceed = await useConfirmationStore.getState().requestConfirmation(
@@ -1400,11 +1408,17 @@ export function PaperWorkspace() {
         // Plain browser-PDF stays free; a PDF/X standard or CMYK press intent is commercial.
         if (isCommercialPrintProductionTarget(document.printProduction)
           && !(await requestCommercialExportUnlock('PDF/X and CMYK print production'))) return;
-        if (await confirmPreflightBeforeExport('PDF export')) {
+        if (await confirmPreflightBeforeExport('PDF export', { rasterTarget: true })) {
           if (isPdfXProductionTarget(document.printProduction)) {
             // Strict PDF/X consumes the original content-addressed document and freezes it before validation.
             void exportPaperPdfxAndSave(document, setStatus);
           } else {
+            try {
+              assertPaperDocumentSupportsRasterization(document);
+            } catch (error) {
+              setStatus(error instanceof Error ? error.message : 'PDF export is unavailable.');
+              return;
+            }
             const outputDocument = await materializePaperOutputDocument(document);
             if (!outputDocument) return;
             void exportPaperPdfDocument(
@@ -1423,7 +1437,7 @@ export function PaperWorkspace() {
         return;
       case 'paper:export-kdp-pdf':
         if (!(await requestCommercialExportUnlock('KDP print PDF'))) return;
-        if (await confirmPreflightBeforeExport('KDP print PDF export')) {
+        if (await confirmPreflightBeforeExport('KDP print PDF export', { rasterTarget: true })) {
           void exportPaperKdpPdfAndSave(document, setStatus);
         }
         return;
@@ -1523,7 +1537,15 @@ export function PaperWorkspace() {
         return;
       }
       case 'paper:export-cbz': {
-        if (!await confirmPreflightBeforeExport('raster CBZ export')) return;
+        if (!await confirmPreflightBeforeExport('raster CBZ export', { rasterTarget: true })) return;
+        try {
+          assertPaperDocumentSupportsRasterization(document);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'CBZ export is unavailable.';
+          setStatus(`CBZ export failed: ${message}`);
+          void showAlertDialog({ title: 'CBZ Export Failed', message, tone: 'danger' });
+          return;
+        }
         const outputDocument = await materializePaperOutputDocument(document);
         if (!outputDocument) return;
         const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
@@ -3505,6 +3527,9 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       envelopeIndex?: number;
     } = {},
   ): Promise<SourceBinLibraryItem> => {
+    // Complete-document capability preflight must happen before source/repository asset reads or
+    // the first Source item write, so a PDF on page two cannot leak page one.
+    assertPaperDocumentSupportsRasterization(document, [pageId]);
     const outputDocument = await materializePaperDocumentAssetUrls(document, sourceItems);
     const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
     const item = await publishRasterizedPaperPageSourcePayload(exact.document, pageId, {
@@ -3545,6 +3570,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       if (label === null) return;
       const envelopeLabel = label.trim() || `${document.title} flattened pages`;
       const envelopeId = `paper-envelope-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`;
+      assertPaperDocumentSupportsRasterization(document);
       setStatus(`Flattening ${document.pages.length} page${document.pages.length === 1 ? '' : 's'} into "${envelopeLabel}"...`);
       const outputDocument = await materializePaperDocumentAssetUrls(document, sourceItems);
       const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
@@ -3570,7 +3596,15 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
   }, [addSourceAssetItem, document, setSourceSidebarOpen, sourceItems]);
 
   const runWebcomicImageExport = useCallback(async (settings: PaperWebcomicExportSettings) => {
-    if (!await confirmPreflightBeforeExport('webcomic page image export')) return;
+    try {
+      assertPaperDocumentSupportsRasterization(document);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Paper page image export is unavailable.';
+      setStatus(message);
+      await showAlertDialog({ title: 'Page Image Export Blocked', message, tone: 'danger' });
+      return;
+    }
+    if (!await confirmPreflightBeforeExport('webcomic page image export', { rasterTarget: true })) return;
     const outputDocument = await materializePaperOutputDocument(document);
     if (!outputDocument) return;
     setWebcomicExportSettings(settings);
@@ -3601,6 +3635,14 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
   ]);
 
   const runKdpImageExport = useCallback(async (settings: PaperKdpExportSettings) => {
+    try {
+      assertPaperDocumentSupportsRasterization(document);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'KDP raster export is unavailable.';
+      setStatus(message);
+      await showAlertDialog({ title: 'KDP Export Blocked', message, tone: 'danger' });
+      return;
+    }
     const pendingUpscales = collectPaperPrintUpscaleFrameJobs(document, sourceItems);
     if (pendingUpscales.length > 0) {
       const message = `Run Finalize Print before KDP export. ${pendingUpscales.length} image frame${pendingUpscales.length === 1 ? '' : 's'} still need print-resolution replacement.`;
@@ -3626,7 +3668,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       });
       return;
     }
-    if (!await confirmPreflightBeforeExport('KDP image asset export')) return;
+    if (!await confirmPreflightBeforeExport('KDP image asset export', { rasterTarget: true })) return;
 
     setKdpExportSettings(normalizedSettings);
     setKdpExportOpen(false);

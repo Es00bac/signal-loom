@@ -48,6 +48,7 @@ describe('paperPreflight', () => {
 
     expect(analyzePaperPreflight(document).issues).toContainEqual(expect.objectContaining({
       severity: 'error', category: 'links', pageNumber: 1,
+      code: 'paper-placed-document-rasterization-unsupported',
       title: 'Placed PDF cannot be flattened in this build',
       detail: expect.stringContaining('Print HTML/live print'),
     }));

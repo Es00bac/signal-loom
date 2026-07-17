@@ -97,6 +97,7 @@ export async function buildPaperWebcomicImageArchiveExport(
   document: PaperDocument,
   options: PaperWebcomicImageExportOptions & { rasterize?: PaperWebcomicRasterizePage } = {},
 ): Promise<PaperWebcomicImageArchiveExport> {
+  assertPaperDocumentSupportsRasterization(document);
   const plan = buildPaperWebcomicImageExportPlan(document, options);
   const entries: Record<string, Uint8Array> = {};
   const entryNames: string[] = [];

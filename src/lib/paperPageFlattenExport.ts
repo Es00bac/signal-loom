@@ -206,12 +206,12 @@ export async function buildFlattenedPaperPageSvgExportWithEmbeddedAssets(
 ): Promise<FlattenedPaperPageSvgExport> {
   // This must precede resolver/fetch/decode work. A placed PDF is valid live-print content but is
   // not an HTMLImageElement source in this build.
+  const page = findPaperPage(document, pageId);
   assertPaperDocumentSupportsRasterization(document, [pageId]);
   if (!options.resolveImageSrc) {
     return buildFlattenedPaperPageSvgExport(document, pageId, options);
   }
 
-  const page = findPaperPage(document, pageId);
   const frames = await Promise.all(page.frames.map(async (frame) => {
     const sourceUrl = resolvePaperFrameAssetUrl(frame.asset);
     if (!frame.asset) return frame;
@@ -516,11 +516,9 @@ function buildOnePageExportDocument(
 }
 
 function findPaperPage(document: PaperDocument, pageId: string): PaperPage {
-  const page = document.pages.find((candidate) => candidate.id === pageId) ?? document.pages[0];
-  if (!page) {
-    throw new Error('Paper page export needs at least one page.');
-  }
-  return page;
+  const page = document.pages.find((candidate) => candidate.id === pageId);
+  if (page) return page;
+  throw new Error(`Unknown Paper page id "${pageId}" requested for export.`);
 }
 
 function extractHtmlSection(html: string, tagName: 'style' | 'body'): string {
