@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { linkSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { describe, expect, it, vi } from 'vitest';
+import { linkSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -27,7 +27,7 @@ interface ExternalOpenQueue {
   takeWorkspaceRequests: () => Array<{ kind: 'workspace'; workspace: string }>;
   authorizeRenderer: (rendererId: string) => { authorized: true; epoch: string };
   offerNextDocumentIntent: (authorization: { rendererId: string; epoch: string }) =>
-    | { status: 'offered'; intent: { id: string; kind: 'project' | 'paper'; filePath: string } }
+    | { status: 'offered'; intent: { id: string; kind: 'project' | 'paper'; filePath: string; bytes?: Uint8Array } }
     | { status: 'empty' | 'unauthorized' };
   acceptDocumentIntent: (request: { rendererId: string; epoch: string; intentId: string }) => { status: string };
   rejectDocumentIntent: (request: { rendererId: string; epoch: string; intentId: string }) => { status: string };
@@ -59,9 +59,19 @@ interface ElectronExternalOpenModule {
     context?: {
       platform?: string;
       resolveRealPath?: (filePath: string) => string;
-      readStat?: (filePath: string) => { isFile: () => boolean; dev?: number; ino?: number };
+      readStat?: (descriptor: unknown) => {
+        isFile: () => boolean;
+        dev?: number;
+        ino?: number;
+        size?: number;
+        mtimeMs?: number;
+        ctimeMs?: number;
+      };
+      openFile?: (filePath: string) => unknown;
+      readBytes?: (descriptor: unknown) => Uint8Array;
+      closeFile?: (descriptor: unknown) => void;
     },
-  ) => { status: 'accepted'; filePath: string; fileIdentity: string } | { status: 'rejected'; reason: string };
+  ) => { status: 'accepted'; filePath: string; fileIdentity: string; bytes: Uint8Array; byteDigest: string } | { status: 'rejected'; reason: string };
   mergeExternalOpenSourceRollback: (previous: unknown, staged: unknown, current: unknown) => {
     bins: Array<{ id: string; items: Array<{ id: string; label?: string }> }>;
     dismissedSourceKeys: string[];
@@ -439,6 +449,28 @@ describe('external open canonical file identity', () => {
     });
     expect(linuxUpper).not.toEqual(linuxLower);
   });
+
+  it('rejects a file that mutates while its enqueue snapshot is being read', async () => {
+    const { canonicalizeExternalOpenFilePath } = await loadExternalOpenModule();
+    const closeFile = vi.fn();
+    let statRead = 0;
+    const outcome = canonicalizeExternalOpenFilePath('/changing.sloom', {
+      resolveRealPath: (value) => value,
+      openFile: () => 7,
+      readStat: () => ({
+        isFile: () => true,
+        dev: 1,
+        ino: 2,
+        size: 1,
+        ctimeMs: statRead++ === 0 ? 10 : 11,
+      }),
+      readBytes: () => new Uint8Array([65]),
+      closeFile,
+    });
+
+    expect(outcome).toEqual({ status: 'rejected', reason: 'file-changed-during-read' });
+    expect(closeFile).toHaveBeenCalledWith(7);
+  });
 });
 
 describe('external open queue', () => {
@@ -512,6 +544,54 @@ describe('external open queue', () => {
     expect(queue.enqueueValue('/home/user/comic.sloom', firstContext)).toMatchObject({ status: 'duplicate' });
     expect(queue.enqueueValue('/home/user/comic.sloom', { ...context, deliveryId: 'os-delivery-genuine-later' }))
       .toMatchObject({ status: 'enqueued' });
+  });
+
+  it('binds an event to enqueue-time bytes and never reaccepts it after the path changes inode', async () => {
+    const { canonicalizeExternalOpenFilePath, createExternalOpenQueue } = await loadExternalOpenModule();
+    const root = mkdtempSync(join(tmpdir(), 'sloom-file-snapshot-'));
+    const target = join(root, 'same-name.sloom');
+    const moved = join(root, 'original.sloom');
+    try {
+      writeFileSync(target, '{"name":"A"}');
+      const queue = createExternalOpenQueue({ canonicalizeFile: canonicalizeExternalOpenFilePath });
+      expect(queue.enqueueValue(target, { platform: process.platform, deliveryId: 'one-delivered-argv-message' }))
+        .toMatchObject({ status: 'enqueued' });
+
+      renameSync(target, moved);
+      writeFileSync(target, '{"name":"B"}');
+      const authorization = queue.authorizeRenderer('renderer-snapshot');
+      const offer = queue.offerNextDocumentIntent({ rendererId: 'renderer-snapshot', epoch: authorization.epoch });
+      if (offer.status !== 'offered') throw new Error('Expected the enqueue-time snapshot.');
+      expect(Buffer.from(offer.intent.bytes ?? []).toString('utf8')).toBe('{"name":"A"}');
+      queue.acceptDocumentIntent({ rendererId: 'renderer-snapshot', epoch: authorization.epoch, intentId: offer.intent.id });
+      queue.commitDocumentIntent({ rendererId: 'renderer-snapshot', epoch: authorization.epoch, intentId: offer.intent.id });
+
+      expect(queue.enqueueValue(target, { platform: process.platform, deliveryId: 'one-delivered-argv-message' }))
+        .toMatchObject({ status: 'duplicate' });
+      expect(queue.enqueueValue(target, { platform: process.platform, deliveryId: 'genuinely-new-user-open' }))
+        .toMatchObject({ status: 'enqueued' });
+      const laterOffer = queue.offerNextDocumentIntent({ rendererId: 'renderer-snapshot', epoch: authorization.epoch });
+      if (laterOffer.status !== 'offered') throw new Error('Expected the later user open.');
+      expect(Buffer.from(laterOffer.intent.bytes ?? []).toString('utf8')).toBe('{"name":"B"}');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('deduplicates a repeated argv callback by its stable event identity while allowing a later launch', async () => {
+    const { createExternalOpenQueue } = await loadExternalOpenModule();
+    const queue = createExternalOpenQueue({ canonicalizeFile: canonicalizeByPath });
+    const argv = ['/opt/sloom', '/home/user/comic.sloom'];
+    const argvContext = { ...context, execPath: '/opt/sloom', deliveryId: 'loser-launch-token' };
+    expect(queue.enqueueArgv(argv, argvContext).enqueued).toHaveLength(1);
+    expect(queue.enqueueArgv(argv, argvContext).enqueued).toHaveLength(0);
+    const authorization = queue.authorizeRenderer('renderer-event');
+    const offer = queue.offerNextDocumentIntent({ rendererId: 'renderer-event', epoch: authorization.epoch });
+    if (offer.status !== 'offered') throw new Error('Expected one event.');
+    queue.acceptDocumentIntent({ rendererId: 'renderer-event', epoch: authorization.epoch, intentId: offer.intent.id });
+    queue.commitDocumentIntent({ rendererId: 'renderer-event', epoch: authorization.epoch, intentId: offer.intent.id });
+    expect(queue.enqueueArgv(argv, argvContext).enqueued).toHaveLength(0);
+    expect(queue.enqueueArgv(argv, { ...argvContext, deliveryId: 'next-loser-launch-token' }).enqueued).toHaveLength(1);
   });
 
   it('does not consume or deduplicate a rejected dirty-guard intent', async () => {

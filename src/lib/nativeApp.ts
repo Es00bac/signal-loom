@@ -699,6 +699,7 @@ export interface SignalLoomNativeBridge {
   getNativeState: () => Promise<NativeState>;
   clearProjectPath: (request: { claim?: NativeProjectAuthorityDescriptor }) => Promise<NativePreparedProjectSwitchResult>;
   openProjectFile: (request: { claim?: NativeProjectAuthorityDescriptor }) => Promise<NativePreparedProjectSwitchResult>;
+  requestProjectOpen?: () => Promise<NativeProjectFileResult & { queued?: boolean; error?: string }>;
   commitProjectSwitch: (request: { transactionId: string }) => Promise<NativeProjectFileResult & { ok?: boolean }>;
   cancelProjectSwitch: (request: { transactionId: string }) => Promise<{ ok?: boolean }>;
   saveProjectFile: (payload: NativeProjectSavePayload) => Promise<NativeProjectFileResult>;

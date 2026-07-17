@@ -322,13 +322,14 @@ describe('Electron single-instance and external-open source guards', () => {
     expect(source).toMatch(/} else \{[\s\S]*gpuFallbackSentinelPath[\s\S]*registerSchemesAsPrivileged[\s\S]*app\.whenReady\(\)[\s\S]*app\.on\('window-all-closed'[\s\S]*app\.on\('will-quit'/);
   });
 
-  it('keeps the proven bare Electron lock and mints bounded identity at native delivery', () => {
+  it('carries one bounded loser identity through repeated native callback delivery', () => {
     expect(source).toMatch(/const externalOpenLaunchDeliveryId = createExternalOpenDeliveryId\(\);/);
-    expect(source).toMatch(/const hasSingleInstanceLock = app\.requestSingleInstanceLock\(\);/);
+    expect(source).toMatch(/const externalOpenLaunchPayload = buildSecondInstanceOpenPayload\(\[\], '', externalOpenLaunchDeliveryId\);/);
+    expect(source).toMatch(/const hasSingleInstanceLock = app\.requestSingleInstanceLock\(externalOpenLaunchPayload\);/);
     expect(source).toMatch(/app\.on\('second-instance', \(_event, argv, workingDirectory, additionalData\) => \{[\s\S]*parseSecondInstanceOpenPayload\(additionalData\)/);
-    expect(source).toMatch(/payload\?\.deliveryId \?\? createExternalOpenDeliveryId\(\)/);
+    expect(source).toMatch(/enqueueExternalOpenArgv\([\s\S]*argv,[\s\S]*workingDirectory,[\s\S]*payload\?\.deliveryId \?\? createExternalOpenDeliveryId\(\)/);
     const probe = readFileSync(join(process.cwd(), 'scripts/electron-single-instance-probe.mjs'), 'utf8');
-    expect(probe).toContain('requestSingleInstanceLock()');
+    expect(probe).toContain('requestSingleInstanceLock(externalOpenLaunchPayload)');
     expect(probe).toContain('second-instance');
     expect(probe).toContain('Comic 週刊.sloom');
   });
@@ -372,6 +373,27 @@ describe('Electron single-instance and external-open source guards', () => {
     expect(rejectHandler.slice(0, 1200)).toContain('rollbackAcceptedExternalProject(request?.intentId)');
     expect(source).toMatch(/async function commitAcceptedExternalProject[\s\S]*rememberProjectPath[\s\S]*commitDocumentIntent[\s\S]*broadcastSourceLibraryChanged[\s\S]*broadcastProjectPathChanged/);
     expect(source).toMatch(/async function rollbackAcceptedExternalProject[\s\S]*sourceLibraryVersion === transaction\.stagedSourceLibraryVersion[\s\S]*mergeExternalOpenSourceRollback/);
+  });
+
+  it('prepares queued documents from enqueue-time bytes rather than reopening a mutable path', () => {
+    const offerHandler = source.slice(source.indexOf("ipcMain.handle('signal-loom:external-open-next'"));
+    expect(offerHandler.slice(0, 2400)).toContain('prepareProjectDocumentFromBytes(outcome.intent.filePath, outcome.intent.bytes)');
+    expect(offerHandler.slice(0, 2400)).toContain('{ bytes: outcome.intent.bytes }');
+    expect(offerHandler.slice(0, 2400)).not.toContain('readFile(outcome.intent.filePath)');
+  });
+
+  it('routes interactive File Open through the external project lifecycle instead of committing directly', () => {
+    const requestHandler = source.slice(source.indexOf("ipcMain.handle('signal-loom:project-open-request'"));
+    expect(requestHandler.slice(0, 1800)).toContain('enqueueExternalOpenValue(filePath, createExternalOpenDeliveryId())');
+    expect(requestHandler.slice(0, 1800)).toContain('dispatchPendingExternalOpenRequests()');
+    expect(requestHandler.slice(0, 1800)).not.toContain('openProjectDocumentFromPath(result.filePaths[0])');
+  });
+
+  it('serializes normal Open/New/Save state with accepted external project commits', () => {
+    expect(source).toMatch(/signal-loom:clear-project-path[\s\S]{0,500}serializeExternalOpenLifecycle[\s\S]{0,500}acceptedExternalProjectTransactions\.size/);
+    expect(source).toMatch(/signal-loom:project-open'[\s\S]{0,500}serializeExternalOpenLifecycle[\s\S]{0,500}acceptedExternalProjectTransactions\.size/);
+    expect(source).toMatch(/signal-loom:project-save'[\s\S]{0,500}serializeExternalOpenLifecycle[\s\S]{0,500}acceptedExternalProjectTransactions\.size/);
+    expect(source).toMatch(/signal-loom:project-save-as'[\s\S]{0,500}serializeExternalOpenLifecycle[\s\S]{0,500}acceptedExternalProjectTransactions\.size/);
   });
 
   it('authorizes only the designated live Flow renderer and rotates authorization on reload or death', () => {

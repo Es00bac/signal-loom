@@ -91,6 +91,7 @@ const {
 } = automationPathModule;
 const {
   EXTERNAL_OPEN_DEEP_LINK_SCHEME,
+  buildSecondInstanceOpenPayload,
   canonicalizeExternalOpenFilePath,
   createExternalOpenDeliveryId,
   createExternalOpenQueue,
@@ -177,10 +178,12 @@ if (isolatedUserDataDir) {
 // immediately after the userData override and before ANY shared side effect (the GPU
 // fallback sentinel, privileged protocol schemes, fixed-port services, windows). A losing
 // instance quits untouched; its file arguments reach the winner through Electron's native argv
-// relay. Electron 41 must use the bare lock here: its additionalData path can strand the loser.
-// The winner mints a bounded delivery identity when it receives each native launch event.
+// relay. Only a small bounded identity token crosses additionalData (never argv/file bytes), so
+// repeated delivery of one native callback retains the loser's identity without exercising the
+// oversized Electron 41 payload path that previously stranded a loser.
 const externalOpenLaunchDeliveryId = createExternalOpenDeliveryId();
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+const externalOpenLaunchPayload = buildSecondInstanceOpenPayload([], '', externalOpenLaunchDeliveryId);
+const hasSingleInstanceLock = app.requestSingleInstanceLock(externalOpenLaunchPayload);
 
 function getRendererEntryUrl() {
   return activeRendererEntryUrl;
@@ -1598,13 +1601,12 @@ function stagePreparedProjectSave(filePath, prepared, previousTarget, stagedTarg
   };
 }
 
-async function openProjectDocumentFromPath(filePath, isSenderLive = () => true) {
+async function openProjectDocumentFromBytes(filePath, bytes, isSenderLive = () => true) {
   const assertSenderLive = () => {
     if (!isSenderLive()) throw new Error('The requesting renderer is no longer live.');
   };
   assertSenderLive();
-  const contents = await readFile(filePath, 'utf8');
-  assertSenderLive();
+  const contents = Buffer.from(bytes).toString('utf8');
   let prepared;
   try {
     prepared = await prepareProjectDocumentForNativeOpen(filePath, parseProjectDocumentJson(contents));
@@ -1644,6 +1646,13 @@ async function openProjectDocumentFromPath(filePath, isSenderLive = () => true) 
     await prepared?.rollbackPreparationEffects?.().catch(() => undefined);
     throw error;
   }
+}
+
+async function openProjectDocumentFromPath(filePath, isSenderLive = () => true) {
+  if (!isSenderLive()) throw new Error('The requesting renderer is no longer live.');
+  const bytes = await readFile(filePath);
+  if (!isSenderLive()) throw new Error('The requesting renderer is no longer live.');
+  return openProjectDocumentFromBytes(filePath, bytes, isSenderLive);
 }
 
 async function prepareProjectPublication(filePath, document, scratchDirectoryPath) {
@@ -1761,8 +1770,20 @@ async function commitAcceptedExternalProject(intentId, authorization) {
     return { status: 'error', error: authorityOutcome.rejected?.message ?? 'The external project commit failed.' };
   }
   const outcome = externalOpenQueue.commitDocumentIntent({ ...authorization, intentId });
-  if (outcome.status === 'committed') acceptedExternalProjectTransactions.delete(intentId);
-  return outcome;
+  if (outcome.status === 'committed') {
+    acceptedExternalProjectTransactions.delete(intentId);
+    if (process.env.SIGNAL_LOOM_EXTERNAL_OPEN_PROBE === '1') {
+      console.log(`[external-open-probe] committed project ${intentId}: ${transaction.result.filePath}`);
+    }
+  }
+  return {
+    ...outcome,
+    ...(outcome.status === 'committed' ? {
+      authority: authorityOutcome.authority,
+      filePath: authorityOutcome.filePath,
+      scratchDirectoryPath: authorityOutcome.scratchDirectoryPath,
+    } : {}),
+  };
 }
 
 async function getNativeFilePathFromAssetUrl(assetUrl) {
@@ -3131,14 +3152,15 @@ function installIpcHandlers() {
         try {
           if (outcome.intent.kind === 'project') {
             const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
-            const staged = await openProjectDocumentFromPath(
+            const staged = await openProjectDocumentFromBytes(
               outcome.intent.filePath,
+              outcome.intent.bytes,
               () => isLiveAuthoritySender(event.sender, rendererEpoch),
             );
             const { preparedPublication: _preparedPublication, ...result } = staged.result;
             prepared = { result, staged };
           } else {
-            prepared = { bytes: await readFile(outcome.intent.filePath) };
+            prepared = { bytes: outcome.intent.bytes };
           }
         } catch (error) {
           prepared = {
@@ -3156,7 +3178,8 @@ function installIpcHandlers() {
         : prepared.result
           ? { result: prepared.result }
           : { bytes: prepared.bytes };
-      return { status: 'offered', state: outcome.state, intent: { ...outcome.intent, ...publicPrepared } };
+      const { bytes: _queuedBytes, ...publicIntent } = outcome.intent;
+      return { status: 'offered', state: outcome.state, intent: { ...publicIntent, ...publicPrepared } };
     }));
 
   ipcMain.handle('signal-loom:external-open-accept', (event, request) =>
@@ -3246,6 +3269,27 @@ function installIpcHandlers() {
       claim: request?.claim,
       load: () => openProjectDocumentFromPath(result.filePaths[0], isSenderLive),
     });
+  });
+
+  ipcMain.handle('signal-loom:project-open-request', async (event) => {
+    const result = await dialog.showOpenDialog(getIpcWindow(event), {
+      title: 'Open Sloom Studio Project',
+      properties: ['openFile'],
+      filters: getProjectDialogFilters(),
+    });
+    if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+
+    const filePath = result.filePaths[0];
+    const outcome = enqueueExternalOpenValue(filePath, createExternalOpenDeliveryId());
+    if (outcome.status !== 'enqueued' && outcome.status !== 'duplicate') {
+      return {
+        canceled: false,
+        filePath,
+        error: `The selected project could not enter the open queue (${outcome.reason ?? outcome.status}).`,
+      };
+    }
+    dispatchPendingExternalOpenRequests();
+    return { canceled: false, filePath, queued: true };
   });
 
   ipcMain.handle('signal-loom:project-switch-commit', async (event, request) => {
@@ -4343,13 +4387,12 @@ if (!hasSingleInstanceLock) {
   enqueueExternalOpenArgv(process.argv, process.cwd(), externalOpenLaunchDeliveryId);
 
   app.on('second-instance', (_event, argv, workingDirectory, additionalData) => {
-    // The natively relayed argv/workingDirectory carry the loser's open targets (extra
-    // Chromium switches are filtered). The bounded delivery id keeps a delayed replay of this
-    // exact launch distinct from a genuinely later launch of the same canonical file.
+    // Native argv/workingDirectory remain the source of target values. The bounded additionalData
+    // token was minted once by the loser, so a repeated callback cannot acquire a fresh identity.
     const payload = parseSecondInstanceOpenPayload(additionalData);
     enqueueExternalOpenArgv(
-      payload?.argv ?? argv,
-      payload?.workingDirectory || workingDirectory,
+      argv,
+      workingDirectory,
       payload?.deliveryId ?? createExternalOpenDeliveryId(),
     );
     focusExternalOpenTargetWindow();
@@ -4362,7 +4405,7 @@ if (!hasSingleInstanceLock) {
     event.preventDefault();
     enqueueExternalOpenValue(
       filePath,
-      app.isReady() ? createExternalOpenDeliveryId() : externalOpenLaunchDeliveryId,
+      createExternalOpenDeliveryId(),
     );
     dispatchPendingExternalOpenRequests();
   });
@@ -4371,7 +4414,7 @@ if (!hasSingleInstanceLock) {
     event.preventDefault();
     enqueueExternalOpenValue(
       url,
-      app.isReady() ? createExternalOpenDeliveryId() : externalOpenLaunchDeliveryId,
+      createExternalOpenDeliveryId(),
     );
     dispatchPendingExternalOpenRequests();
   });

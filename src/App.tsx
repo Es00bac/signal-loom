@@ -1556,6 +1556,12 @@ function FlowApp() {
 
         try {
           if (projectSwitchInProgressRef.current) return;
+          if (bridge.requestProjectOpen) {
+            const queued = await bridge.requestProjectOpen();
+            if (queued.rejected) throw new Error(queued.rejected.message);
+            if (queued.error) throw new Error(queued.error);
+            return;
+          }
           const authorityClient = getProjectAuthorityClient();
           const result = await bridge.openProjectFile({ claim: authorityClient.getClaim() });
 
@@ -2502,9 +2508,7 @@ function FlowApp() {
           save: () => lossPreventionSaveRef.current(),
           authorizeDirtyImageReplacement: (projection) => imageReplacementAuthorizationRef.current(projection),
         }) ?? undefined;
-        if (!replacementAuthorization) {
-          throw new Error('Project replacement canceled.');
-        }
+        return replacementAuthorization ? true : false;
       },
       applyProject: async (result) => {
         if (!result.document) {
@@ -2533,11 +2537,24 @@ function FlowApp() {
         setWorkspaceView('paper');
       },
       onError: async ({ kind, message }) => {
+        if (kind === 'project') getProjectAuthorityClient().noteAdoptionFailure(message);
         await showAlertDialog({
           title: kind === 'paper' ? 'Open Paper Failed' : 'Open Project Failed',
           message,
           tone: 'danger',
         });
+      },
+    }, {
+      runProjectTransition: async <T,>(operation: () => Promise<T>): Promise<T> => {
+        if (projectSwitchInProgressRef.current) return undefined as T;
+        projectSwitchInProgressRef.current = true;
+        const endAuthorityTransition = beginProjectAuthorityTransition();
+        try {
+          return await operation();
+        } finally {
+          endAuthorityTransition();
+          projectSwitchInProgressRef.current = false;
+        }
       },
     });
   }, [getProjectAuthorityClient, nativeStartupSettled, setNativeScratchDirectoryPath, setWorkspaceView]);

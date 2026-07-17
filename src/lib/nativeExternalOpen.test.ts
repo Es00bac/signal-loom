@@ -11,7 +11,7 @@ const projectDocumentStub = {} as FlowProjectDocument;
 
 function createHandlers() {
   return {
-    authorizeProject: vi.fn(async (_result: NativeProjectFileResult) => {}),
+    authorizeProject: vi.fn(async (_result: NativeProjectFileResult): Promise<boolean | void> => {}),
     applyProject: vi.fn(async (_result: NativeProjectFileResult) => {}),
     onProjectCommitted: vi.fn(async (_result: NativeProjectFileResult) => {}),
     applyPaper: vi.fn(async (_bytes: Uint8Array, _filePath?: string) => {}),
@@ -128,6 +128,26 @@ describe('registerNativeExternalOpenConsumer', () => {
     expect(handlers.applyProject).not.toHaveBeenCalled();
     expect(bridge.commitExternalOpenIntent).not.toHaveBeenCalled();
     expect(handlers.onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'dirty Image document' }));
+  });
+
+  it('treats shared dirty-project cancel as a quiet rejection that preserves the live project', async () => {
+    const projectResult = { canceled: false, filePath: '/cancel.sloom', document: projectDocumentStub };
+    const { bridge } = createBridge([{
+      status: 'offered',
+      state: 'offered',
+      intent: { id: 'cancel-intent', kind: 'project', filePath: '/cancel.sloom', result: projectResult },
+    }]);
+    const handlers = createHandlers();
+    handlers.authorizeProject.mockResolvedValue(false);
+
+    const dispose = registerNativeExternalOpenConsumer(bridge, handlers);
+    await flushMicrotasks();
+    dispose();
+
+    expect(bridge.rejectExternalOpenIntent).toHaveBeenCalledWith(expect.objectContaining({ intentId: 'cancel-intent' }));
+    expect(bridge.acceptExternalOpenIntent).not.toHaveBeenCalled();
+    expect(handlers.applyProject).not.toHaveBeenCalled();
+    expect(handlers.onError).not.toHaveBeenCalled();
   });
 
   it('commits an already-accepted intent without applying it twice', async () => {
@@ -317,6 +337,35 @@ describe('registerNativeExternalOpenConsumer', () => {
     await flushMicrotasks(30);
     dispose();
     expect(events).toEqual(['project:start', 'project:end', 'paper']);
+  });
+
+  it('holds the shared project lifecycle across guard, apply, commit, and path publication', async () => {
+    const projectResult = { canceled: false, filePath: '/sequence.sloom', document: projectDocumentStub };
+    const { bridge } = createBridge([{
+      status: 'offered',
+      state: 'offered',
+      intent: { id: 'sequence', kind: 'project', filePath: '/sequence.sloom', result: projectResult },
+    }]);
+    const events: string[] = [];
+    const handlers = createHandlers();
+    handlers.authorizeProject.mockImplementation(async () => { events.push('guard'); });
+    handlers.applyProject.mockImplementation(async () => { events.push('apply'); });
+    handlers.onProjectCommitted.mockImplementation(async () => { events.push('publish'); });
+    let transitionCalls = 0;
+    const runProjectTransition = async <T>(operation: () => Promise<T>): Promise<T> => {
+      transitionCalls += 1;
+      events.push('sequence:start');
+      const result = await operation();
+      events.push('sequence:end');
+      return result;
+    };
+
+    const dispose = registerNativeExternalOpenConsumer(bridge, handlers, { runProjectTransition });
+    await flushMicrotasks(30);
+    dispose();
+
+    expect(transitionCalls).toBe(1);
+    expect(events).toEqual(['sequence:start', 'guard', 'apply', 'publish', 'sequence:end']);
   });
 
   it('does not let a non-designated renderer ask for an intent', async () => {

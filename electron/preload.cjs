@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('signalLoomNative', {
   getNativeState: () => ipcRenderer.invoke('signal-loom:get-native-state'),
   clearProjectPath: (request) => ipcRenderer.invoke('signal-loom:clear-project-path', request),
   openProjectFile: (request) => ipcRenderer.invoke('signal-loom:project-open', request),
+  requestProjectOpen: () => ipcRenderer.invoke('signal-loom:project-open-request'),
   commitProjectSwitch: (request) => ipcRenderer.invoke('signal-loom:project-switch-commit', request),
   cancelProjectSwitch: (request) => ipcRenderer.invoke('signal-loom:project-switch-cancel', request),
   saveProjectFile: (payload) => ipcRenderer.invoke('signal-loom:project-save', payload),

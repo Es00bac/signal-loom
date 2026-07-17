@@ -8,7 +8,7 @@
 // Filesystem identity resolution is injectable so the contract stays testable outside Electron.
 'use strict';
 
-const { realpathSync, statSync } = require('node:fs');
+const { closeSync, fstatSync, openSync, readFileSync, realpathSync } = require('node:fs');
 const { createHash, randomUUID } = require('node:crypto');
 const { posix, win32 } = require('node:path');
 
@@ -167,18 +167,22 @@ function normalizeIdentityPath(filePath, platform) {
 }
 
 /**
- * Resolve an accepted document path to the filesystem object the OS will actually open.
+ * Resolve an accepted document path and snapshot its bytes through one owned descriptor.
  * `realpath` collapses relative/symlink aliases and the observable device/inode pair also
- * collapses hard links. Windows' case-insensitive path spelling is used only as a fallback on
- * filesystems that do not expose a usable inode. Missing and non-file targets have distinct,
- * stable rejection reasons so callers never silently queue an unresolved spelling.
+ * collapses hard links. Before/after descriptor metadata rejects a file mutating during the
+ * read; later path replacement cannot change the queued bytes. Windows' case-insensitive path
+ * spelling is only a fallback when the filesystem exposes no usable inode.
  */
 function canonicalizeExternalOpenFilePath(filePath, context = {}) {
   const {
     platform = process.platform,
     resolveRealPath = (value) => realpathSync.native(value),
-    readStat = (value) => statSync(value),
   } = context;
+  const usesInjectedStatOnly = typeof context.readStat === 'function' && typeof context.openFile !== 'function';
+  const openFile = context.openFile ?? (usesInjectedStatOnly ? (value) => value : (value) => openSync(value, 'r'));
+  const readStat = context.readStat ?? ((descriptor) => fstatSync(descriptor));
+  const readBytes = context.readBytes ?? (usesInjectedStatOnly ? (() => Buffer.alloc(0)) : ((descriptor) => readFileSync(descriptor)));
+  const closeFile = context.closeFile ?? (usesInjectedStatOnly ? (() => undefined) : ((descriptor) => closeSync(descriptor)));
 
   let canonicalPath;
   try {
@@ -191,9 +195,9 @@ function canonicalizeExternalOpenFilePath(filePath, context = {}) {
     };
   }
 
-  let fileStat;
+  let descriptor;
   try {
-    fileStat = readStat(canonicalPath);
+    descriptor = openFile(canonicalPath);
   } catch (error) {
     const code = error && typeof error === 'object' ? error.code : undefined;
     return {
@@ -202,16 +206,66 @@ function canonicalizeExternalOpenFilePath(filePath, context = {}) {
     };
   }
 
-  if (!fileStat?.isFile?.()) {
-    return { status: 'rejected', reason: 'not-a-file' };
-  }
+  try {
+    const before = readStat(descriptor);
+    if (!before?.isFile?.()) {
+      return { status: 'rejected', reason: 'not-a-file' };
+    }
 
-  const device = typeof fileStat.dev === 'bigint' || Number.isFinite(fileStat.dev) ? String(fileStat.dev) : '';
-  const inode = typeof fileStat.ino === 'bigint' || Number.isFinite(fileStat.ino) ? String(fileStat.ino) : '';
-  const fileIdentity = device && inode && inode !== '0'
-    ? `inode:${device}:${inode}`
-    : `path:${normalizeIdentityPath(canonicalPath, platform)}`;
-  return { status: 'accepted', filePath: canonicalPath, fileIdentity };
+    const bytes = Buffer.from(readBytes(descriptor));
+    const after = readStat(descriptor);
+    const device = typeof before.dev === 'bigint' || Number.isFinite(before.dev) ? String(before.dev) : '';
+    const inode = typeof before.ino === 'bigint' || Number.isFinite(before.ino) ? String(before.ino) : '';
+    const afterDevice = typeof after.dev === 'bigint' || Number.isFinite(after.dev) ? String(after.dev) : '';
+    const afterInode = typeof after.ino === 'bigint' || Number.isFinite(after.ino) ? String(after.ino) : '';
+    const beforeSize = typeof before.size === 'bigint' || Number.isFinite(before.size) ? String(before.size) : String(bytes.byteLength);
+    const afterSize = typeof after.size === 'bigint' || Number.isFinite(after.size) ? String(after.size) : String(bytes.byteLength);
+    const beforeMtime = typeof before.mtimeNs === 'bigint'
+      ? String(before.mtimeNs)
+      : Number.isFinite(before.mtimeMs) ? String(before.mtimeMs) : '';
+    const afterMtime = typeof after.mtimeNs === 'bigint'
+      ? String(after.mtimeNs)
+      : Number.isFinite(after.mtimeMs) ? String(after.mtimeMs) : '';
+    const beforeCtime = typeof before.ctimeNs === 'bigint'
+      ? String(before.ctimeNs)
+      : Number.isFinite(before.ctimeMs) ? String(before.ctimeMs) : '';
+    const afterCtime = typeof after.ctimeNs === 'bigint'
+      ? String(after.ctimeNs)
+      : Number.isFinite(after.ctimeMs) ? String(after.ctimeMs) : '';
+    if (
+      device !== afterDevice
+      || inode !== afterInode
+      || beforeSize !== afterSize
+      || (beforeMtime && afterMtime && beforeMtime !== afterMtime)
+      || (beforeCtime && afterCtime && beforeCtime !== afterCtime)
+      || afterSize !== String(bytes.byteLength)
+    ) {
+      return { status: 'rejected', reason: 'file-changed-during-read' };
+    }
+
+    const fileIdentity = device && inode && inode !== '0'
+      ? `inode:${device}:${inode}`
+      : `path:${normalizeIdentityPath(canonicalPath, platform)}`;
+    return {
+      status: 'accepted',
+      filePath: canonicalPath,
+      fileIdentity,
+      bytes,
+      byteDigest: digestReceipt(bytes),
+    };
+  } catch (error) {
+    const code = error && typeof error === 'object' ? error.code : undefined;
+    return {
+      status: 'rejected',
+      reason: code === 'ENOENT' || code === 'ENOTDIR' ? 'missing-file' : 'unresolvable-file',
+    };
+  } finally {
+    try {
+      closeFile(descriptor);
+    } catch {
+      /* best effort; the enqueue is rejected above when the owned read itself fails */
+    }
+  }
 }
 
 function createExternalOpenDeliveryId() {
@@ -305,9 +359,9 @@ function digestReceipt(value) {
  * Main-owned transactional queue for validated external-open intents. Documents remain owned by
  * main until the designated renderer accepts and commits them. A rejection removes the intent
  * without creating an idempotency receipt. A commit records the bounded delivery identity as a
- * fixed-size, non-expiring receipt digest: capacity pressure and wall-clock delay cannot make an
- * already committed OS event authoritative again, while a later user open carries a new delivery
- * identity and remains eligible.
+ * fixed-size, non-expiring event receipt digest: capacity pressure, wall-clock delay, and a path
+ * resolving to a new inode cannot make an already committed OS event authoritative again, while
+ * a later user open carries a new delivery identity and remains eligible.
  */
 function createExternalOpenQueue(options) {
   const {
@@ -330,14 +384,16 @@ function createExternalOpenQueue(options) {
     return target.kind === 'workspace' ? `workspace\n${target.workspace}` : `${target.kind}\n${target.fileIdentity}`;
   }
 
-  function receiptKey(key, deliveryId) {
-    return digestReceipt(`${deliveryId || 'legacy-delivery'}\n${key}`);
+  function receiptKey(deliveryId, candidateIndex, key) {
+    return digestReceipt(deliveryId
+      ? `${deliveryId}\n${candidateIndex ?? 0}`
+      : `legacy-delivery\n${key}`);
   }
 
   function publicIntent(entry) {
     return entry.kind === 'workspace'
       ? { id: entry.id, kind: 'workspace', workspace: entry.workspace }
-      : { id: entry.id, kind: entry.kind, filePath: entry.filePath };
+      : { id: entry.id, kind: entry.kind, filePath: entry.filePath, bytes: entry.bytes };
   }
 
   function isAuthorized(request) {
@@ -372,6 +428,22 @@ function createExternalOpenQueue(options) {
       return classified;
     }
 
+    const deliveryId = typeof context.deliveryId === 'string'
+      && context.deliveryId.length > 0
+      && context.deliveryId.length <= MAX_EXTERNAL_OPEN_DELIVERY_ID_LENGTH
+      ? context.deliveryId
+      : undefined;
+    const deliveryReceiptKey = deliveryId
+      ? receiptKey(deliveryId, context.candidateIndex, '')
+      : undefined;
+    if (
+      deliveryReceiptKey
+      && (pending.some((entry) => entry.committedReceiptKey === deliveryReceiptKey)
+        || committedReceipts.has(deliveryReceiptKey))
+    ) {
+      return { status: 'duplicate', kind: classified.kind };
+    }
+
     let canonical = classified;
     if (classified.kind !== 'workspace') {
       const resolution = canonicalizeFile(classified.filePath, { platform: context.platform });
@@ -382,17 +454,18 @@ function createExternalOpenQueue(options) {
           value: String(rawValue),
         };
       }
-      canonical = { ...classified, filePath: resolution.filePath, fileIdentity: resolution.fileIdentity };
+      canonical = {
+        ...classified,
+        filePath: resolution.filePath,
+        fileIdentity: resolution.fileIdentity,
+        bytes: resolution.bytes,
+        byteDigest: resolution.byteDigest,
+      };
     }
 
-    const deliveryId = typeof context.deliveryId === 'string'
-      && context.deliveryId.length > 0
-      && context.deliveryId.length <= MAX_EXTERNAL_OPEN_DELIVERY_ID_LENGTH
-      ? context.deliveryId
-      : undefined;
     const key = targetKey(canonical);
-    const committedReceiptKey = receiptKey(key, deliveryId);
-    if (pending.some((entry) => entry.key === key)) {
+    const committedReceiptKey = deliveryReceiptKey ?? receiptKey(undefined, context.candidateIndex, key);
+    if (pending.some((entry) => entry.committedReceiptKey === committedReceiptKey || entry.key === key)) {
       return { status: 'duplicate', kind: canonical.kind };
     }
     if (committedReceipts.has(committedReceiptKey)) {
@@ -416,8 +489,8 @@ function createExternalOpenQueue(options) {
     const enqueued = [];
     const rejected = [];
 
-    for (const candidate of extractExternalOpenCandidatesFromArgv(argv, context)) {
-      const outcome = enqueueValue(candidate, context);
+    for (const [candidateIndex, candidate] of extractExternalOpenCandidatesFromArgv(argv, context).entries()) {
+      const outcome = enqueueValue(candidate, { ...context, candidateIndex });
       if (outcome.status === 'enqueued') {
         const entry = pending[pending.length - 1];
         enqueued.push(entry.kind === 'workspace'

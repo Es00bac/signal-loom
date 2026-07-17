@@ -11,7 +11,7 @@ const targetPath = join(probeRoot, 'Comic 週刊.sloom');
 const rememberedPath = join(userDataPath, 'startup-project.json');
 const mainSource = await readFile(resolve('electron/main.mjs'), 'utf8');
 
-if (!mainSource.includes('requestSingleInstanceLock()') || !mainSource.includes('externalOpenLaunchDeliveryId')) {
+if (!mainSource.includes('requestSingleInstanceLock(externalOpenLaunchPayload)') || !mainSource.includes('externalOpenLaunchDeliveryId')) {
   throw new Error('The application no longer relays the bounded external-open delivery identity covered by this probe.');
 }
 
@@ -30,6 +30,7 @@ function launch(extraArgs = []) {
       XDG_SESSION_TYPE: 'x11',
       SIGNAL_LOOM_ELECTRON_DISABLE_GPU: '1',
       SIGNAL_LOOM_ELECTRON_USER_DATA_DIR: userDataPath,
+      SIGNAL_LOOM_EXTERNAL_OPEN_PROBE: '1',
       WAYLAND_DISPLAY: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -116,11 +117,16 @@ try {
   }
   await waitForFile(rememberedPath);
   await waitForRememberedTarget();
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+  const commitLines = winner.logs().split('\n').filter((line) => line.includes('[external-open-probe] committed project'));
+  if (commitLines.length !== 1) {
+    throw new Error(`Expected exactly one external project commit, received ${commitLines.length}.\n${winner.logs()}`);
+  }
   if (winner.child.exitCode !== null) {
     throw new Error(`The lock winner died while processing the second-instance relay.\n${winner.logs()}`);
   }
 
-  console.log(`Bare single-instance identity relay passed (winner ${winner.child.pid}, Unicode/spaces argv, loser exit 0).`);
+  console.log(`Stable single-instance identity relay passed (winner ${winner.child.pid}, Unicode/spaces argv, loser exit 0, one committed path).`);
 } finally {
   if (loser?.child.exitCode === null) loser.child.kill('SIGTERM');
   if (winner?.child.exitCode === null) {

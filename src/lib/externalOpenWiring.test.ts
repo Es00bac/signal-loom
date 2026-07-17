@@ -49,8 +49,10 @@ describe('desktop external-open wiring guards', () => {
     const appSource = readFileSync(join(process.cwd(), 'src/App.tsx'), 'utf8');
 
     expect(appSource).toContain('registerNativeExternalOpenConsumer(');
-    // Dirty authorization precedes acceptance; renderer-local path ownership follows commit.
-    expect(appSource).toMatch(/authorizeProject[\s\S]{0,300}assertProjectDocumentReplacementAllowed\(\)/);
+    // Shared dirty Paper/Image authorization precedes acceptance; renderer path follows commit.
+    expect(appSource).toMatch(/authorizeProject: authorizeCurrentProjectReplacement/);
+    expect(appSource).toContain('requestProjectReplacementDecision');
+    expect(appSource).toContain('runProjectLifecycleTransition');
     expect(appSource).toMatch(/applyProject[\s\S]{0,700}resetSourceLibraryNativeSyncTracking\(\);[\s\S]{0,250}restoreProjectDocument\(result\.document, \{ allowDirtyImageReplacement: true \}\)/);
     expect(appSource).toMatch(/onProjectCommitted[\s\S]{0,300}setNativeProjectPath\(result\.filePath\);/);
     // Paper entries reuse the canonical .slppr import transaction and land in the Paper workspace.
@@ -69,5 +71,6 @@ describe('desktop external-open wiring guards', () => {
     expect(nativeAppSource).toContain('commitExternalOpenIntent?:');
     expect(nativeAppSource).toContain('onExternalOpenPending?:');
     expect(nativeAppSource).toContain('NativeExternalOpenNextResult');
+    expect(nativeAppSource).toContain('requestProjectOpen?:');
   });
 });

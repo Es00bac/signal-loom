@@ -13,7 +13,7 @@ export interface NativeExternalOpenErrorContext {
 
 export interface NativeExternalOpenHandlers {
   /** Run the renderer-owned dirty-document guard before main may stage canonical project state. */
-  authorizeProject: (result: NativeProjectFileResult) => Promise<void> | void;
+  authorizeProject: (result: NativeProjectFileResult) => Promise<boolean | void> | boolean | void;
   /** Apply a prepared project after main acknowledges acceptance. */
   applyProject: (result: NativeProjectFileResult) => Promise<void> | void;
   /** Publish renderer-local path/scratch ownership only after main commits. */
@@ -26,6 +26,7 @@ export interface NativeExternalOpenConsumerOptions {
   /** Delays before commit-only retries after the first failed commit attempt. */
   commitRetryDelaysMs?: readonly number[];
   wait?: (delayMs: number) => Promise<void>;
+  runProjectTransition?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
 const DEFAULT_COMMIT_RETRY_DELAYS_MS = [100, 250, 500, 1_000] as const;
@@ -78,6 +79,7 @@ export function registerNativeExternalOpenConsumer(
   const wait = options.wait ?? ((delayMs: number) => new Promise<void>((resolve) => {
     globalThis.setTimeout(resolve, delayMs);
   }));
+  const runProjectTransition = options.runProjectTransition ?? (async <T>(operation: () => Promise<T>) => operation());
 
   const ensureAuthorization = async (): Promise<string | undefined> => {
     if (epoch) return epoch;
@@ -88,7 +90,7 @@ export function registerNativeExternalOpenConsumer(
   };
 
   const drain = () => {
-    chain = chain.then(async () => {
+    chain = chain.then(() => runProjectTransition(async () => {
       if (disposed) return;
       let activeEpoch: string | undefined;
       try {
@@ -170,7 +172,11 @@ export function registerNativeExternalOpenConsumer(
         try {
           validateIntent(intent);
           if (intent.kind === 'project') {
-            await handlers.authorizeProject(intent.result!);
+            const authorized = await handlers.authorizeProject(intent.result!);
+            if (authorized === false) {
+              await reject({ ...request, reason: 'Project replacement canceled.' }).catch(() => undefined);
+              continue;
+            }
           }
           assertTransition(await accept(request), 'accepted');
           if (intent.kind === 'project') {
@@ -197,7 +203,7 @@ export function registerNativeExternalOpenConsumer(
           if (applySucceeded) return;
         }
       }
-    });
+    }));
   };
 
   const unsubscribe = bridge?.onExternalOpenPending?.(drain);
