@@ -1,6 +1,6 @@
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import type { PaperDocument } from '../types/paper';
-import { strToU8, unzipSync, zipSync } from 'fflate';
+import { deflateSync, strToU8, unzipSync, zipSync } from 'fflate';
 import { serializePaperDocument } from './paperDocument';
 import {
   analyzePaperPreflight,
@@ -91,6 +91,8 @@ const MAX_PACKAGE_LABEL_BYTES = 96;
 const ZIP_LOCAL_FILE_HEADER = 0x04034b50;
 const ZIP_CENTRAL_DIRECTORY_HEADER = 0x02014b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY = 0x06054b50;
+const ZIP_PACKER_VERSION = 20;
+const ZIP_PACKER_BLOCK_BYTES = 7000;
 const WINDOWS_RESERVED_PATH_PARTS = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 
 const PACKAGE_MIME_EXTENSIONS: Readonly<Record<string, string>> = {
@@ -466,10 +468,15 @@ function assertManifestMatchesArchive(manifest: PaperPackageManifest, entries: R
 
 interface ZipCentralDirectoryMember {
   path: string;
+  pathBytes: Uint8Array;
+  flags: number;
+  crc32: number;
   compressedBytes: number;
   uncompressedBytes: number;
   compressionMethod: number;
   localHeaderOffset: number;
+  dataStart: number;
+  dataEnd: number;
 }
 
 /**
@@ -486,6 +493,9 @@ function assertReturnedZipMatchesPackage(
     throw new Error('the compressor returned no ZIP bytes.');
   }
   const expectedPaths = Object.keys(intendedEntries).sort();
+  if (zipped.byteLength > maximumCanonicalZipBytes(intendedEntries)) {
+    throw new Error('the compressor returned ZIP bytes beyond the bounded canonical package size.');
+  }
   const members = inspectZipCentralDirectory(zipped, expectedPaths.length);
   const actualPaths = members.map((member) => member.path).sort();
   if (actualPaths.length !== expectedPaths.length || actualPaths.join('\n') !== expectedPaths.join('\n')) {
@@ -517,6 +527,9 @@ function assertReturnedZipMatchesPackage(
     if (!sameBytes(entries[path], intendedEntries[path])) {
       throw new Error(`the returned ZIP changed requested member "${path}".`);
     }
+    const member = members.find((candidate) => candidate.path === path);
+    if (!member) throw new Error(`the returned ZIP omitted requested member "${path}".`);
+    assertZipMemberIntegrity(zipped, member, entries[path]);
   }
 
   let returnedManifest: unknown;
@@ -538,7 +551,7 @@ function inspectZipCentralDirectory(bytes: Uint8Array, maximumMembers: number): 
   const endOffset = findZipEndOfCentralDirectory(bytes);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const commentBytes = readU16(view, endOffset + 20, 'ZIP comment length');
-  if (endOffset + 22 + commentBytes !== bytes.byteLength) throw new Error('the ZIP end record is malformed.');
+  if (endOffset + 22 + commentBytes !== bytes.byteLength || commentBytes !== 0) throw new Error('the ZIP end record is malformed or outside the private packer subset.');
   if (readU16(view, endOffset + 4, 'ZIP disk number') !== 0 || readU16(view, endOffset + 6, 'ZIP central disk number') !== 0) {
     throw new Error('multi-volume ZIP archives are not supported.');
   }
@@ -546,7 +559,7 @@ function inspectZipCentralDirectory(bytes: Uint8Array, maximumMembers: number): 
   const entryCount = readU16(view, endOffset + 10, 'ZIP entry count');
   const centralBytes = readU32(view, endOffset + 12, 'ZIP central directory size');
   const centralOffset = readU32(view, endOffset + 16, 'ZIP central directory offset');
-  if (entriesOnDisk !== entryCount || entryCount === 0 || entryCount > maximumMembers || entryCount === 0xffff || centralBytes === 0xffff_ffff || centralOffset === 0xffff_ffff) {
+  if (entriesOnDisk !== entryCount || entryCount === 0 || entryCount > maximumMembers || entriesOnDisk === 0xffff || entryCount === 0xffff || centralBytes === 0xffff_ffff || centralOffset === 0xffff_ffff) {
     throw new Error('the ZIP uses unsupported or malformed directory metadata.');
   }
   if (centralOffset + centralBytes !== endOffset || centralOffset > endOffset) {
@@ -560,8 +573,11 @@ function inspectZipCentralDirectory(bytes: Uint8Array, maximumMembers: number): 
     if (readU32(view, offset, 'ZIP central header') !== ZIP_CENTRAL_DIRECTORY_HEADER) {
       throw new Error('the ZIP central directory has an invalid member header.');
     }
+    const versionMadeBy = readU16(view, offset + 4, 'ZIP member creator version');
+    const versionNeeded = readU16(view, offset + 6, 'ZIP member version');
     const flags = readU16(view, offset + 8, 'ZIP member flags');
     const compressionMethod = readU16(view, offset + 10, 'ZIP compression method');
+    const crc32 = readU32(view, offset + 16, 'ZIP member CRC-32');
     const compressedBytes = readU32(view, offset + 20, 'ZIP compressed size');
     const uncompressedBytes = readU32(view, offset + 24, 'ZIP uncompressed size');
     const nameBytes = readU16(view, offset + 28, 'ZIP file name length');
@@ -570,53 +586,110 @@ function inspectZipCentralDirectory(bytes: Uint8Array, maximumMembers: number): 
     const localHeaderOffset = readU32(view, offset + 42, 'ZIP local header offset');
     const nextOffset = offset + 46 + nameBytes + extraBytes + memberCommentBytes;
     if (nextOffset > endOffset) throw new Error('the ZIP central directory is truncated.');
-    if ((flags & 0x0009) !== 0 || compressionMethod !== 0 && compressionMethod !== 8) {
+    if (versionMadeBy !== ZIP_PACKER_VERSION || versionNeeded !== ZIP_PACKER_VERSION || flags !== 0 || compressionMethod !== 0 && compressionMethod !== 8) {
       throw new Error('the ZIP has encrypted, streamed, or unsupported members.');
     }
-    if (extraBytes !== 0 || memberCommentBytes !== 0) throw new Error('the ZIP has unsupported member metadata.');
-    const path = decodeZipPath(bytes.subarray(offset + 46, offset + 46 + nameBytes));
+    if (extraBytes !== 0 || memberCommentBytes !== 0 || localHeaderOffset === 0xffff_ffff) throw new Error('the ZIP has unsupported member metadata.');
+    if (compressionMethod === 0 && compressedBytes !== uncompressedBytes) throw new Error('the ZIP stored member has inconsistent size metadata.');
+    if (compressionMethod === 8 && compressedBytes > maximumCanonicalDeflateBytes(uncompressedBytes)) throw new Error('the ZIP compressed member exceeds the bounded private packer input.');
+    const pathBytes = bytes.slice(offset + 46, offset + 46 + nameBytes);
+    const path = decodeZipPath(pathBytes);
     assertSafePackageMemberPath(path);
     if (exactPaths.has(path)) throw new Error(`the ZIP has duplicate member "${path}".`);
     exactPaths.add(path);
-    assertMatchingLocalZipHeader(bytes, path, flags, compressionMethod, compressedBytes, uncompressedBytes, localHeaderOffset);
-    members.push({ path, compressedBytes, uncompressedBytes, compressionMethod, localHeaderOffset });
+    const local = assertMatchingLocalZipHeader(bytes, path, pathBytes, flags, compressionMethod, crc32, compressedBytes, uncompressedBytes, localHeaderOffset);
+    members.push({ path, pathBytes, flags, crc32, compressedBytes, uncompressedBytes, compressionMethod, localHeaderOffset, ...local });
     offset = nextOffset;
   }
   if (offset !== endOffset) throw new Error('the ZIP central directory contains trailing data.');
+  let expectedLocalOffset = 0;
+  for (const member of [...members].sort((left, right) => left.localHeaderOffset - right.localHeaderOffset)) {
+    if (member.localHeaderOffset !== expectedLocalOffset) {
+      throw new Error('the ZIP local records contain a preamble, gap, overlap, or out-of-order offset.');
+    }
+    expectedLocalOffset = member.dataEnd;
+  }
+  if (expectedLocalOffset !== centralOffset) throw new Error('the ZIP local records do not cover exactly through the central directory.');
   return members;
 }
 
 function assertMatchingLocalZipHeader(
   bytes: Uint8Array,
   expectedPath: string,
+  expectedPathBytes: Uint8Array,
   expectedFlags: number,
   expectedMethod: number,
+  expectedCrc32: number,
   expectedCompressedBytes: number,
   expectedUncompressedBytes: number,
   offset: number,
-): void {
+): { dataStart: number; dataEnd: number } {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (readU32(view, offset, 'ZIP local header') !== ZIP_LOCAL_FILE_HEADER) throw new Error('the ZIP has an invalid local member header.');
+  const versionNeeded = readU16(view, offset + 4, 'ZIP local member version');
   const flags = readU16(view, offset + 6, 'ZIP local member flags');
   const method = readU16(view, offset + 8, 'ZIP local compression method');
+  const crc32 = readU32(view, offset + 14, 'ZIP local CRC-32');
   const compressedBytes = readU32(view, offset + 18, 'ZIP local compressed size');
   const uncompressedBytes = readU32(view, offset + 22, 'ZIP local uncompressed size');
   const nameBytes = readU16(view, offset + 26, 'ZIP local file name length');
   const extraBytes = readU16(view, offset + 28, 'ZIP local extra field length');
   const dataOffset = offset + 30 + nameBytes + extraBytes;
-  if (dataOffset + compressedBytes > bytes.byteLength || extraBytes !== 0 || flags !== expectedFlags || method !== expectedMethod
+  const dataEnd = dataOffset + compressedBytes;
+  if (dataEnd > bytes.byteLength || versionNeeded !== ZIP_PACKER_VERSION || extraBytes !== 0 || flags !== expectedFlags || method !== expectedMethod || crc32 !== expectedCrc32
     || compressedBytes !== expectedCompressedBytes || uncompressedBytes !== expectedUncompressedBytes
+    || !sameBytes(bytes.subarray(offset + 30, offset + 30 + nameBytes), expectedPathBytes)
     || decodeZipPath(bytes.subarray(offset + 30, offset + 30 + nameBytes)) !== expectedPath) {
     throw new Error(`the ZIP local header for "${expectedPath}" disagrees with its central directory.`);
   }
+  return { dataStart: dataOffset, dataEnd };
 }
 
 function findZipEndOfCentralDirectory(bytes: Uint8Array): number {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   for (let offset = bytes.byteLength - 22; offset >= Math.max(0, bytes.byteLength - 0x10016); offset -= 1) {
-    if (readU32(view, offset, 'ZIP end record') === ZIP_END_OF_CENTRAL_DIRECTORY) return offset;
+    if (readU32(view, offset, 'ZIP end record') !== ZIP_END_OF_CENTRAL_DIRECTORY) continue;
+    const commentBytes = readU16(view, offset + 20, 'ZIP comment length');
+    if (offset + 22 + commentBytes === bytes.byteLength) return offset;
   }
   throw new Error('the returned bytes are not a complete ZIP archive.');
+}
+
+function maximumCanonicalDeflateBytes(uncompressedBytes: number): number {
+  return uncompressedBytes + 5 * (1 + Math.ceil(uncompressedBytes / ZIP_PACKER_BLOCK_BYTES));
+}
+
+function maximumCanonicalZipBytes(entries: Record<string, Uint8Array>): number {
+  const entryCount = Object.keys(entries).length;
+  const payloadBytes = Object.values(entries).reduce((total, entry) => total + maximumCanonicalDeflateBytes(entry.byteLength), 0);
+  return payloadBytes + entryCount * (30 + 46 + 2 * MAX_PACKAGE_MEMBER_PATH_BYTES) + 22;
+}
+
+const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_unused, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
+  return value >>> 0;
+});
+
+function crc32(bytes: Uint8Array): number {
+  let value = 0xffffffff;
+  for (const byte of bytes) value = CRC32_TABLE[(value ^ byte) & 0xff] ^ (value >>> 8);
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+function assertZipMemberIntegrity(bytes: Uint8Array, member: ZipCentralDirectoryMember, output: Uint8Array): void {
+  if (crc32(output) !== member.crc32) throw new Error(`the ZIP CRC-32 does not match member "${member.path}".`);
+  const compressed = bytes.subarray(member.dataStart, member.dataEnd);
+  if (member.compressionMethod === 0) {
+    if (!sameBytes(compressed, output)) throw new Error(`the ZIP stored member "${member.path}" does not cover its declared data exactly.`);
+    return;
+  }
+  // fflate at level 6 is the only deflater used by the app. Equality against
+  // its deterministic raw stream proves this member consumes its entire slice,
+  // including bytes an inflater may otherwise treat as ignorable trailing data.
+  if (!sameBytes(deflateSync(output, { level: 6 }), compressed)) {
+    throw new Error(`the ZIP deflate member "${member.path}" is non-canonical or does not consume its declared data exactly.`);
+  }
 }
 
 function readU16(view: DataView, offset: number, label: string): number {

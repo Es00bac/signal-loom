@@ -157,6 +157,66 @@ function appendZipEntryCompressedData(
   return output;
 }
 
+function findEndRecord(bytes: Uint8Array): number {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let offset = bytes.byteLength - 22; offset >= Math.max(0, bytes.byteLength - 0x10016); offset -= 1) {
+    if (view.getUint32(offset, true) === 0x06054b50) return offset;
+  }
+  throw new Error('ZIP fixture has no end record.');
+}
+
+function setMatchingEntryCrc(bytes: Uint8Array, path: string, crc: number): Uint8Array {
+  const output = bytes.slice();
+  const offsets = findZipEntryHeaderOffsets(output, path);
+  const view = new DataView(output.buffer);
+  view.setUint32(offsets.local + 14, crc, true);
+  view.setUint32(offsets.central + 16, crc, true);
+  return output;
+}
+
+function insertBeforeCentralDirectory(bytes: Uint8Array, inserted: Uint8Array): Uint8Array {
+  const end = findEndRecord(bytes);
+  const source = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const central = source.getUint32(end + 16, true);
+  const output = new Uint8Array(bytes.byteLength + inserted.byteLength);
+  output.set(bytes.subarray(0, central));
+  output.set(inserted, central);
+  output.set(bytes.subarray(central), central + inserted.byteLength);
+  const view = new DataView(output.buffer);
+  view.setUint32(end + inserted.byteLength + 16, central + inserted.byteLength, true);
+  return output;
+}
+
+function prependUnreferencedBytes(bytes: Uint8Array, prefix: Uint8Array): Uint8Array {
+  const end = findEndRecord(bytes);
+  const source = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const central = source.getUint32(end + 16, true);
+  const entries = source.getUint16(end + 10, true);
+  const output = new Uint8Array(bytes.byteLength + prefix.byteLength);
+  output.set(prefix);
+  output.set(bytes, prefix.byteLength);
+  const view = new DataView(output.buffer);
+  let offset = central + prefix.byteLength;
+  for (let index = 0; index < entries; index += 1) {
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    view.setUint32(offset + 42, view.getUint32(offset + 42, true) + prefix.byteLength, true);
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  view.setUint32(end + prefix.byteLength + 16, central + prefix.byteLength, true);
+  return output;
+}
+
+function addEocdComment(bytes: Uint8Array): Uint8Array {
+  const end = findEndRecord(bytes);
+  const output = new Uint8Array(bytes.byteLength + 1);
+  output.set(bytes);
+  output[output.byteLength - 1] = 0x21;
+  new DataView(output.buffer).setUint16(end + 20, 1, true);
+  return output;
+}
+
 describe('ValidatedAssetContainer', () => {
   it('round-trips and verifies content-addressed entries', async () => {
     const asset = await createBinaryAssetRecord(
@@ -323,13 +383,108 @@ describe('ValidatedAssetContainer', () => {
     await expect(unpackValidatedAssetContainer(padded)).rejects.toThrow(/compressed.*work budget/i);
   });
 
-  it('rejects trailing deflate input through the inflater remaining-input contract', async () => {
+  it('rejects trailing deflate input through canonical compressed-slice equality', async () => {
     const asset = await createBinaryAssetRecord(new Uint8Array([1, 2, 3]), { mimeType: 'image/png' });
     const path = assetPath(asset.ref);
     const archive = zipWithManifest(manifest([asset.ref]), { [path]: asset.bytes });
     const trailing = appendZipEntryCompressedData(archive, path, new Uint8Array([0]));
 
-    await expect(unpackValidatedAssetContainer(trailing)).rejects.toThrow(/1 trailing compressed byte/i);
+    await expect(unpackValidatedAssetContainer(trailing)).rejects.toThrow(/non-canonical|trailing compressed/i);
+  });
+
+  it.each([
+    'matching forged local and central CRC',
+    'local and central CRC disagreement',
+    'EOCD comment and trailing bytes',
+    'unreferenced gap before central directory',
+    'prepended unreferenced bytes',
+    'deflated member data overlapping the next local header',
+    'one MiB padding declared as deflate data',
+  ])('rejects the Sol canonical-ZIP mutation: %s', async (mutation) => {
+    const bytes = mutation === 'one MiB padding declared as deflate data'
+      ? new Uint8Array(1_050_000).fill(65)
+      : new Uint8Array([1, 2, 3]);
+    const asset = await createBinaryAssetRecord(bytes, { mimeType: 'image/png' });
+    const path = assetPath(asset.ref);
+    const archive = zipWithManifest(manifest([asset.ref]), { [path]: asset.bytes });
+    const offsets = findZipEntryHeaderOffsets(archive, path);
+    const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
+    let mutated: Uint8Array;
+
+    if (mutation === 'matching forged local and central CRC') {
+      mutated = setMatchingEntryCrc(archive, path, view.getUint32(offsets.central + 16, true) ^ 0xffffffff);
+    } else if (mutation === 'local and central CRC disagreement') {
+      mutated = archive.slice();
+      new DataView(mutated.buffer).setUint32(offsets.local + 14, 0, true);
+    } else if (mutation === 'EOCD comment and trailing bytes') {
+      await expect(unpackValidatedAssetContainer(addEocdComment(archive))).rejects.toThrow(/comment|end-of-central/i);
+      mutated = new Uint8Array(archive.byteLength + 1);
+      mutated.set(archive);
+      mutated[mutated.byteLength - 1] = 0x21;
+    } else if (mutation === 'unreferenced gap before central directory') {
+      mutated = insertBeforeCentralDirectory(archive, new Uint8Array([0]));
+    } else if (mutation === 'prepended unreferenced bytes') {
+      mutated = prependUnreferencedBytes(archive, new Uint8Array([0, 1]));
+    } else if (mutation === 'deflated member data overlapping the next local header') {
+      const manifestOffsets = findZipEntryHeaderOffsets(archive, 'manifest.json');
+      mutated = archive.slice();
+      const output = new DataView(mutated.buffer);
+      const nextLocalOffset = offsets.local;
+      const manifestDataStart = manifestOffsets.local + 30
+        + output.getUint16(manifestOffsets.local + 26, true)
+        + output.getUint16(manifestOffsets.local + 28, true);
+      const overlappingSize = nextLocalOffset - manifestDataStart + 1;
+      output.setUint32(manifestOffsets.local + 18, overlappingSize, true);
+      output.setUint32(manifestOffsets.central + 20, overlappingSize, true);
+    } else {
+      mutated = appendZipEntryCompressedData(archive, path, new Uint8Array(1024 * 1024));
+    }
+
+    await expect(unpackValidatedAssetContainer(mutated)).rejects.toThrow(/CRC|local|layout|central|canonical|trailing|end-of-central/i);
+  });
+
+  it.each([0, 6])('checks the CRC of every stored and deflated member (level %s)', async (level) => {
+    const asset = await createBinaryAssetRecord(new Uint8Array([1, 2, 3]), { mimeType: 'image/png' });
+    const archive = zipSync({
+      'manifest.json': [strToU8(JSON.stringify(manifest([asset.ref]))), { level }],
+      [assetPath(asset.ref)]: [asset.bytes, { level }],
+    });
+
+    for (const path of ['manifest.json', assetPath(asset.ref)]) {
+      await expect(unpackValidatedAssetContainer(setMatchingEntryCrc(archive, path, 0))).rejects.toThrow(/CRC/i);
+    }
+  });
+
+  it('accepts exact fflate stored and level-six compressor output', async () => {
+    const asset = await createBinaryAssetRecord(new Uint8Array([1, 2, 3]), { mimeType: 'image/png' });
+    for (const level of [0, 6]) {
+      const archive = zipSync({
+        'manifest.json': [strToU8(JSON.stringify(manifest([asset.ref]))), { level }],
+        [assetPath(asset.ref)]: [asset.bytes, { level }],
+      });
+      await expect(unpackValidatedAssetContainer(archive)).resolves.toMatchObject({
+        manifest: manifest([asset.ref]),
+      });
+    }
+  });
+
+  it('rejects duplicate, overlapping, and overflowing local offsets', async () => {
+    const asset = await createBinaryAssetRecord(new Uint8Array([1, 2, 3]), { mimeType: 'image/png' });
+    const archive = zipWithManifest(manifest([asset.ref]), { [assetPath(asset.ref)]: asset.bytes });
+    const assetOffsets = findZipEntryHeaderOffsets(archive, assetPath(asset.ref));
+    const manifestOffsets = findZipEntryHeaderOffsets(archive, 'manifest.json');
+
+    const duplicateOffset = archive.slice();
+    new DataView(duplicateOffset.buffer).setUint32(assetOffsets.central + 42, 0, true);
+    await expect(unpackValidatedAssetContainer(duplicateOffset)).rejects.toThrow(/local|layout/i);
+
+    const overlapOffset = archive.slice();
+    new DataView(overlapOffset.buffer).setUint32(assetOffsets.central + 42, manifestOffsets.local + 1, true);
+    await expect(unpackValidatedAssetContainer(overlapOffset)).rejects.toThrow(/local|layout|header/i);
+
+    const overflowOffset = archive.slice();
+    new DataView(overflowOffset.buffer).setUint32(assetOffsets.central + 42, 0xffff_fffe, true);
+    await expect(unpackValidatedAssetContainer(overflowOffset)).rejects.toThrow(/outside|local|layout/i);
   });
 
   it('rejects archives beyond the packer-derived total input cap', async () => {

@@ -173,6 +173,18 @@ function mutateZipFlags(bytes: Uint8Array): Uint8Array {
   return result;
 }
 
+function mutateFirstZipCrc(bytes: Uint8Array, localOnly = false): Uint8Array {
+  const result = bytes.slice();
+  const end = findEndOfCentralDirectory(result);
+  const view = new DataView(result.buffer);
+  const centralOffset = view.getUint32(end + 16, true);
+  const localOffset = view.getUint32(centralOffset + 42, true);
+  const forged = view.getUint32(centralOffset + 16, true) ^ 0xffff_ffff;
+  view.setUint32(localOffset + 14, forged, true);
+  if (!localOnly) view.setUint32(centralOffset + 16, forged, true);
+  return result;
+}
+
 function declareZipBombSize(bytes: Uint8Array): Uint8Array {
   const result = bytes.slice();
   const end = findEndOfCentralDirectory(result);
@@ -473,6 +485,12 @@ describe('paperPackageExport managed asset payloads (AUD-004)', () => {
     ['duplicate member', (entries: Record<string, Uint8Array>) => duplicateFirstCentralDirectoryMember(zipSync(entries))],
     ['encrypted member', (entries: Record<string, Uint8Array>) => mutateZipFlags(zipSync(entries))],
     ['zip-bomb-like declared member size', (entries: Record<string, Uint8Array>) => declareZipBombSize(zipSync(entries))],
+    ['matching forged local and central CRC', (entries: Record<string, Uint8Array>) => mutateFirstZipCrc(zipSync(entries))],
+    ['local and central CRC disagreement', (entries: Record<string, Uint8Array>) => mutateFirstZipCrc(zipSync(entries), true)],
+    ['valid but non-parity manifest', (entries: Record<string, Uint8Array>) => {
+      const manifest = JSON.parse(new TextDecoder().decode(entries['manifest.json'])) as Record<string, unknown>;
+      return zipSync({ ...entries, 'manifest.json': strToU8(JSON.stringify({ ...manifest, title: 'forged package manifest' })) });
+    }],
   ])('rejects %s returned by a compressor before callers can download or report success', async (_label, zip) => {
     const { document } = await buildManagedDocument();
 

@@ -1,9 +1,8 @@
 import {
+  deflateSync,
   strFromU8,
   strToU8,
-  unzipSync,
   zipSync,
-  type UnzipFileInfo,
 } from 'fflate';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { Inflate as PakoInflate } from 'pako';
@@ -70,13 +69,6 @@ const MIME_EXTENSIONS: Readonly<Record<string, string>> = {
 
 function containerError(message: string): Error {
   return new Error(`${ERROR_PREFIX} ${message}`);
-}
-
-function rethrowZipError(error: unknown): never {
-  if (error instanceof Error && error.message.startsWith(ERROR_PREFIX)) {
-    throw error;
-  }
-  throw new Error(`${ERROR_PREFIX} invalid ZIP data.`, { cause: error });
 }
 
 function resolveLimits(overrides?: Partial<AssetContainerLimits>): AssetContainerLimits {
@@ -285,6 +277,7 @@ const END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 const LOCAL_FILE_HEADER_BYTES = 30;
 const CENTRAL_DIRECTORY_HEADER_BYTES = 46;
 const END_OF_CENTRAL_DIRECTORY_BYTES = 22;
+const PACKER_ZIP_VERSION = 20;
 const MAX_ZIP_COMMENT_BYTES = 65_535;
 const UTF8_FILENAME_FLAG = 0x0800;
 const MAX_PACKER_ENTRY_NAME_BYTES = 'assets/'.length + 64 + 1 + 16;
@@ -351,58 +344,6 @@ function maxPackerArchiveBytes(limits: AssetContainerLimits): number {
   return Number.isSafeInteger(maximum) ? maximum : Number.MAX_SAFE_INTEGER;
 }
 
-function inspectWithFflateMetadata(
-  bytes: Uint8Array,
-  limits: AssetContainerLimits,
-): Map<string, UnzipFileInfo> {
-  const entries = new Map<string, UnzipFileInfo>();
-  let entryCount = 0;
-  let totalBytes = 0;
-
-  try {
-    unzipSync(bytes, {
-      filter: (entry) => {
-        assertSafeArchivePath(entry.name);
-        if (entries.has(entry.name)) {
-          throw containerError(`duplicate archive entry ${entry.name}.`);
-        }
-        if (
-          !Number.isSafeInteger(entry.size)
-          || entry.size < 0
-          || !Number.isSafeInteger(entry.originalSize)
-          || entry.originalSize < 0
-        ) {
-          throw containerError(`archive entry ${entry.name} has invalid size metadata.`);
-        }
-        assertSupportedEntryEncoding(entry.name, entry.compression, entry.size, entry.originalSize);
-
-        entryCount += 1;
-        if (entryCount > limits.maxEntries) {
-          throw containerError(`entries limit exceeded (${entryCount} > ${limits.maxEntries}).`);
-        }
-        if (entry.name === MANIFEST_PATH) {
-          if (entry.originalSize > limits.maxManifestBytes) {
-            throw containerError(`manifest size exceeds manifest limit (${entry.originalSize} > ${limits.maxManifestBytes}).`);
-          }
-        } else if (entry.originalSize > limits.maxAssetBytes) {
-          throw containerError(`asset size exceeds asset limit (${entry.originalSize} > ${limits.maxAssetBytes}).`);
-        }
-
-        totalBytes += entry.originalSize;
-        if (!Number.isSafeInteger(totalBytes) || totalBytes > limits.maxTotalBytes) {
-          throw containerError(`total uncompressed size exceeds total limit (${totalBytes} > ${limits.maxTotalBytes}).`);
-        }
-        entries.set(entry.name, { ...entry });
-        return false;
-      },
-    });
-  } catch (error) {
-    rethrowZipError(error);
-  }
-
-  return entries;
-}
-
 function assertByteRange(bytes: Uint8Array, offset: number, length: number, context: string): void {
   if (
     !Number.isSafeInteger(offset)
@@ -448,6 +389,14 @@ function findEndOfCentralDirectory(bytes: Uint8Array, view: DataView): EndOfCent
     const entryCount = view.getUint16(offset + 10, true);
     const centralDirectorySize = view.getUint32(offset + 12, true);
     const centralDirectoryOffset = view.getUint32(offset + 16, true);
+    if (
+      diskEntryCount === 0xffff
+      || entryCount === 0xffff
+      || centralDirectorySize === 0xffffffff
+      || centralDirectoryOffset === 0xffffffff
+    ) {
+      throw containerError('ZIP64 archives are not supported.');
+    }
     if (diskNumber !== 0 || centralDirectoryDisk !== 0 || diskEntryCount !== entryCount) {
       throw containerError('multi-disk ZIP archives are not supported.');
     }
@@ -482,6 +431,8 @@ function parseCentralDirectory(
       throw containerError('central directory header signature mismatch.');
     }
 
+    const versionMadeBy = view.getUint16(offset + 4, true);
+    const versionNeeded = view.getUint16(offset + 6, true);
     const flags = view.getUint16(offset + 8, true);
     const compression = view.getUint16(offset + 10, true);
     const crc32 = view.getUint32(offset + 16, true);
@@ -501,6 +452,9 @@ function parseCentralDirectory(
       || localHeaderOffset === 0xffffffff
     ) {
       throw containerError('ZIP64 archives are not supported.');
+    }
+    if (versionMadeBy !== PACKER_ZIP_VERSION || versionNeeded !== PACKER_ZIP_VERSION) {
+      throw containerError('central directory entry is outside the private packer ZIP version.');
     }
     if (diskNumber !== 0) {
       throw containerError('multi-disk ZIP entries are not supported.');
@@ -555,6 +509,7 @@ function reconcileLocalHeaders(
       throw containerError(`local header signature mismatch for ${entry.name}.`);
     }
 
+    const versionNeeded = view.getUint16(entry.localHeaderOffset + 4, true);
     const flags = view.getUint16(entry.localHeaderOffset + 6, true);
     const compression = view.getUint16(entry.localHeaderOffset + 8, true);
     const crc32 = view.getUint32(entry.localHeaderOffset + 14, true);
@@ -567,7 +522,8 @@ function reconcileLocalHeaders(
     const localNameBytes = bytes.subarray(nameOffset, nameOffset + nameLength);
 
     if (
-      extraLength !== 0
+      versionNeeded !== PACKER_ZIP_VERSION
+      || extraLength !== 0
       || flags !== entry.flags
       || compression !== entry.compression
       || crc32 !== entry.crc32
@@ -596,7 +552,6 @@ function inspectArchive(bytes: Uint8Array, limits: AssetContainerLimits): Archiv
   if (bytes.byteLength > archiveLimit) {
     throw containerError(`archive size exceeds the private packer input limit (${bytes.byteLength} > ${archiveLimit}).`);
   }
-  const fflateEntries = inspectWithFflateMetadata(bytes, limits);
   if (bytes.byteLength < END_OF_CENTRAL_DIRECTORY_BYTES) {
     throw containerError('invalid ZIP data.');
   }
@@ -615,20 +570,7 @@ function inspectArchive(bytes: Uint8Array, limits: AssetContainerLimits): Archiv
     if (entries.has(entry.name)) {
       throw containerError(`duplicate archive entry ${entry.name}.`);
     }
-    const fflateEntry = fflateEntries.get(entry.name);
-    if (
-      !fflateEntry
-      || fflateEntry.compression !== entry.compression
-      || fflateEntry.size !== entry.compressedSize
-      || fflateEntry.originalSize !== entry.uncompressedSize
-    ) {
-      throw containerError(`fflate metadata mismatch for ${entry.name}.`);
-    }
     entries.set(entry.name, entry);
-  }
-
-  if (entries.size !== fflateEntries.size) {
-    throw containerError('central directory entry mismatch.');
   }
   const manifest = entries.get(MANIFEST_PATH);
   if (!manifest) {
@@ -657,6 +599,17 @@ function assertEntryCrc(entry: ZipEntryMetadata, crc: number): void {
   const actualCrc = (crc ^ 0xffffffff) >>> 0;
   if (actualCrc !== entry.crc32) {
     throw containerError(`CRC mismatch for ${entry.name}.`);
+  }
+}
+
+function assertCanonicalDeflateData(entry: ZipEntryMetadata, output: Uint8Array, compressed: Uint8Array): void {
+  // pako's public stream state does not promise that avail_in remains meaningful
+  // after a final push. Re-encoding with the only encoder/level used by our
+  // writer makes complete consumption explicit: a valid member has exactly one
+  // accepted raw-DEFLATE byte sequence for this private archive format.
+  const canonical = deflateSync(output, { level: 6 });
+  if (!equalBytes(canonical, compressed)) {
+    throw containerError(`non-canonical or trailing compressed data for ${entry.name}.`);
   }
 }
 
@@ -706,16 +659,11 @@ function inflateBoundedEntry(
   if (!succeeded || inflater.err !== 0 || !inflater.ended) {
     throw containerError(`incomplete or invalid DEFLATE data for ${entry.name}${inflater.msg ? `: ${inflater.msg}` : '.'}`);
   }
-  if (inflater.strm.avail_in > 0) {
-    const trailingBytes = inflater.strm.avail_in;
-    throw containerError(
-      `${trailingBytes} trailing compressed byte${trailingBytes === 1 ? '' : 's'} for ${entry.name}.`,
-    );
-  }
   if (outputBytes !== entry.uncompressedSize) {
     throw containerError(`actual output size mismatch for ${entry.name}.`);
   }
   assertEntryCrc(entry, crc);
+  assertCanonicalDeflateData(entry, output, compressed);
   return output;
 }
 
