@@ -10,7 +10,6 @@ import {
   decryptSettingsBackup,
   encryptSettingsBackup,
   isSettingsBackupSupported,
-  SettingsBackupError,
 } from '../lib/settingsBackup';
 import { DEFAULT_INTERFACE_THEME_ID, resolveInterfaceTheme } from '../lib/interfaceThemes';
 import { normalizeLocale, resolveDefaultLocale, type AppLocale } from '../lib/i18n';
@@ -65,8 +64,8 @@ type ApiKeyStorageDescriptorMap = {
 
 const API_KEY_REDACTION = '[redacted]';
 const SETTINGS_STORAGE_KEY = 'flow-settings-storage';
-const SETTINGS_WRITE_VERSION_SUFFIX = ':write-version';
-const SETTINGS_COMMITTED_WRITE_VERSION_SUFFIX = ':committed-write-version';
+const SETTINGS_RECORD_SUFFIX = ':record:';
+const SETTINGS_CHANGE_TOKEN_SUFFIX = ':change-token';
 const LOCAL_STORAGE_CAVEAT = 'API keys are stored in browser localStorage without at-rest encryption in this app.';
 const MEMORY_ONLY_CAVEAT = 'API keys are currently not persisted to browser storage in this session.';
 const ENCRYPTED_CAVEAT = 'API keys are encrypted at rest (the OS keychain on desktop, WebCrypto on web and mobile) and only decrypted in memory while the app is open.';
@@ -217,6 +216,11 @@ export interface SettingsBackupData {
   licenseKey?: string;
 }
 
+/** A caller may only present success when its own identity operation committed durable state. */
+export type LicenseOperationOutcome = LicenseVerification & {
+  status: 'committed' | 'superseded' | 'failed';
+};
+
 /** Desktop integrated app-menu presentation: a single ☰ button, or a classic horizontal menu bar. */
 export type AppMenuStyle = 'compact' | 'menubar';
 
@@ -249,7 +253,7 @@ interface SettingsState {
   /** Encrypt the current settings (keys + credentials) into a portable, passphrase-locked backup blob. */
   exportSettingsBackup: (passphrase: string) => Promise<string>;
   /** Decrypt + restore a settings backup blob produced by exportSettingsBackup. */
-  importSettingsBackup: (envelopeText: string, passphrase: string) => Promise<void>;
+  importSettingsBackup: (envelopeText: string, passphrase: string) => Promise<LicenseOperationOutcome>;
   settingsBackupSupported: boolean;
   setApiKey: (provider: keyof ApiKeys, key: string) => void;
   setDefaultModel: <
@@ -289,8 +293,8 @@ interface SettingsState {
   /** Offline Ed25519 verification result for licenseKey; fail-closed {licensed:false} until revalidated. */
   license: LicenseVerification;
   /** Verify + store a pasted key. Invalid keys are NOT stored; the returned verification carries the reason. */
-  setLicenseKey: (key: string) => Promise<LicenseVerification>;
-  removeLicenseKey: () => void;
+  setLicenseKey: (key: string) => Promise<LicenseOperationOutcome>;
+  removeLicenseKey: () => LicenseOperationOutcome;
   /** Re-verify the persisted key (app boot; license is fail-closed after rehydration). */
   revalidateLicense: () => Promise<void>;
   /**
@@ -332,87 +336,19 @@ function createEncryptedSettingsStorage(): StateStorage {
       return null;
     }
   };
-  return {
+  const adapter: StateStorage = {
     getItem: async (name) => {
       const hydrationRead = takeNextHydrationRead();
-      const store = backing();
-      if (!store) return null;
-      const raw = store.getItem(name);
-      if (raw == null) return null;
-      if (isEncryptedSecretEnvelope(raw)) {
-        // `getItem` and decrypt are asynchronous. A different renderer may commit while this
-        // read is suspended, so decrypt the current durable blob again before allowing a merge.
-        // The small bound prevents a permanently busy or failing storage backend from spinning;
-        // merge still performs the definitive generation check below.
-        let candidateRaw = raw;
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          // null => can't decrypt (e.g. profile copied to another machine) -> hydrate defaults.
-          const plaintext = await decryptSecret(candidateRaw);
-          recordHydrationSnapshotVersion(hydrationRead, plaintext);
-          if (
-            isHydrationSnapshotCurrent(store, name, hydrationRead)
-            || localMutationOwnsLaterStorageGeneration(store, name, hydrationRead)
-          ) {
-            return plaintext;
-          }
-          const currentRaw = store.getItem(name);
-          if (!currentRaw || currentRaw === candidateRaw || !isEncryptedSecretEnvelope(currentRaw)) {
-            return plaintext;
-          }
-          candidateRaw = currentRaw;
-        }
-        const finalPlaintext = await decryptSecret(candidateRaw);
-        recordHydrationSnapshotVersion(hydrationRead, finalPlaintext);
-        return finalPlaintext;
-      }
-      // Legacy plaintext from before encryption shipped: use it, then re-write it encrypted.
-      void encryptSecret(raw).then((envelope) => {
-        try {
-          backing()?.setItem(name, envelope);
-        } catch {
-          /* ignore */
-        }
-      });
-      recordHydrationSnapshotVersion(hydrationRead, raw);
-      return raw;
+      const plaintext = await readConvergedSettings(backing(), name, hydrationRead?.startRevision);
+      recordHydrationSnapshotVersion(hydrationRead, plaintext);
+      return plaintext;
     },
     setItem: (name, value) => {
-      // Serialize writes: parallel encryptions could otherwise land out of order and leave a
-      // stale blob on disk, and the license-identity broadcast below must never fire before the
-      // write that actually carries the new identity. The armed flag is captured at enqueue
-      // time, so only the write enqueued by the mutating set() triggers the broadcast.
       const broadcastAfterWrite = licenseSyncBroadcastArmed;
-      if (broadcastAfterWrite) {
-        licenseSyncBroadcastArmed = false;
-      }
-      const storeAtEnqueue = backing();
-      const writeVersion = reserveSettingsWriteVersion(storeAtEnqueue, name);
-      const localMutationWrite = takePendingLocalMutationWrite(writeVersion);
-      const versionedValue = stampSettingsWriteVersion(value, writeVersion);
+      licenseSyncBroadcastArmed = false;
       const write = pendingSettingsWrite.then(async () => {
-        const store = backing();
-        let didPersist = false;
-        if (store && isLatestSettingsWriteVersion(store, name, writeVersion)) {
-          try {
-            const envelope = await encryptSecret(versionedValue);
-            // A different renderer can reserve a newer write while this renderer encrypts.
-            // Never let this older completion replace that durable intent.
-            if (isLatestSettingsWriteVersion(store, name, writeVersion)) {
-              store.setItem(name, envelope);
-              commitSettingsWriteVersion(store, name, writeVersion);
-              didPersist = true;
-            }
-          } catch {
-            /* encryption / quota / availability */
-          }
-        }
-        if (!didPersist) {
-          releaseSettingsWriteVersion(store, name, writeVersion);
-        }
-        settleLocalMutationWrite(localMutationWrite, didPersist);
-        if (broadcastAfterWrite && didPersist) {
-          postLicenseSyncBroadcast();
-        }
+        const didPersist = await writeConvergedSettings(backing(), name, value);
+        if (broadcastAfterWrite && didPersist) postLicenseSyncBroadcast();
       });
       pendingSettingsWrite = write;
       return write;
@@ -425,6 +361,8 @@ function createEncryptedSettingsStorage(): StateStorage {
       }
     },
   };
+  settingsStorageAdapter = adapter;
+  return adapter;
 }
 
 /**
@@ -453,96 +391,184 @@ function markSettingsHydrated(): void {
   resolveSettingsHydration();
 }
 
-/** Serializes encrypted settings writes so the persisted blob always converges on the latest state. */
+/** Serializes this renderer's writes. Other renderers meet only in per-record durable truth. */
 let pendingSettingsWrite: Promise<void> = Promise.resolve();
-let fallbackSettingsWriteVersion = 0;
+let settingsStorageAdapter: StateStorage | null = null;
+type PersistedEnvelope = { state?: Record<string, unknown>; version?: number } & Record<string, unknown>;
+interface DurableSettingsRecord { clock: number; actor: string; value: unknown; tombstone?: boolean }
 
-function settingsWriteVersionKey(name: string): string {
-  return `${name}${SETTINGS_WRITE_VERSION_SUFFIX}`;
+let lastObservedSettingsEnvelope: PersistedEnvelope | null = null;
+let operationClock = 0;
+const operationActor = (() => {
+  const bytes = new Uint32Array(2);
+  globalThis.crypto?.getRandomValues?.(bytes);
+  return `renderer-${bytes[0].toString(36)}${bytes[1].toString(36)}-${Math.random().toString(36).slice(2)}`;
+})();
+
+function recordStoragePrefix(name: string, path: string): string {
+  return `${name}${SETTINGS_RECORD_SUFFIX}${encodeURIComponent(path)}:`;
 }
 
-function settingsCommittedWriteVersionKey(name: string): string {
-  return `${name}${SETTINGS_COMMITTED_WRITE_VERSION_SUFFIX}`;
+function recordStorageKey(name: string, path: string, record: DurableSettingsRecord): string {
+  // The identity is part of the key, not a read/increment/write reservation. Simultaneous
+  // renderers therefore append distinct immutable candidates even when both observed clock 10.
+  return `${recordStoragePrefix(name, path)}${record.clock.toString(36)}.${encodeURIComponent(record.actor)}`;
 }
 
-function readSettingsWriteVersion(store: Storage | null, name: string): number {
-  if (!store) return fallbackSettingsWriteVersion;
-  try {
-    const value = Number.parseInt(store.getItem(settingsWriteVersionKey(name)) ?? '0', 10);
-    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
-  } catch {
-    return fallbackSettingsWriteVersion;
-  }
-}
-
-/** Reserve a durable, cross-window write order before asynchronous encryption begins. */
-function reserveSettingsWriteVersion(store: Storage | null, name: string): number {
-  const next = Math.max(readSettingsWriteVersion(store, name), fallbackSettingsWriteVersion) + 1;
-  fallbackSettingsWriteVersion = next;
-  try {
-    store?.setItem(settingsWriteVersionKey(name), String(next));
-  } catch {
-    /* The per-renderer fallback still preserves ordering when storage is unavailable. */
-  }
-  return next;
-}
-
-function isLatestSettingsWriteVersion(store: Storage, name: string, version: number): boolean {
-  return readSettingsWriteVersion(store, name) === version;
-}
-
-/** The committed generation changes only after the matching ciphertext has reached storage. */
-function readCommittedSettingsWriteVersion(store: Storage | null, name: string): number {
-  if (!store) return fallbackSettingsWriteVersion;
-  try {
-    const value = Number.parseInt(store.getItem(settingsCommittedWriteVersionKey(name)) ?? '0', 10);
-    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
-  } catch {
-    return fallbackSettingsWriteVersion;
-  }
-}
-
-function commitSettingsWriteVersion(store: Storage, name: string, version: number): void {
-  try {
-    // There is no await between blob write and commit. A later reservation cannot interleave in
-    // this renderer turn, and every reader can reject a snapshot whose stamped generation lost.
-    store.setItem(settingsCommittedWriteVersionKey(name), String(version));
-  } catch {
-    /* The ciphertext itself remains version stamped; claim revalidation still protects readers. */
-  }
-}
-
-/** A failed claimant must not permanently poison a later durable read. */
-function releaseSettingsWriteVersion(store: Storage | null, name: string, version: number): void {
-  if (!store) return;
-  try {
-    if (readSettingsWriteVersion(store, name) === version) {
-      store.setItem(settingsWriteVersionKey(name), String(readCommittedSettingsWriteVersion(store, name)));
+function splitSettingsRecords(state: Record<string, unknown> | undefined): Record<string, unknown> {
+  const records: Record<string, unknown> = {};
+  if (!state) return records;
+  for (const [key, value] of Object.entries(state)) {
+    if (key === 'license' || key === 'settingsHydrated' || key === 'isSettingsOpen' || key === 'settingsPanel') continue;
+    if ((key === 'apiKeys' || key === 'providerSettings' || key === 'defaultModels') && isRecord(value)) {
+      for (const [nestedKey, nestedValue] of Object.entries(value)) {
+        if (key === 'defaultModels' && isRecord(nestedValue)) {
+          for (const [modelProvider, modelValue] of Object.entries(nestedValue)) {
+            records[`${key}.${nestedKey}.${modelProvider}`] = modelValue;
+          }
+        } else {
+          records[`${key}.${nestedKey}`] = nestedValue;
+        }
+      }
+    } else {
+      records[key] = value;
     }
-  } catch {
-    /* unavailable storage already falls back to in-memory ordering */
   }
+  return records;
 }
 
-function stampSettingsWriteVersion(value: string, writeVersion: number): string {
-  try {
-    const parsed = JSON.parse(value) as Record<string, unknown>;
-    return JSON.stringify({ ...parsed, __flowSettingsWriteVersion: writeVersion });
-  } catch {
-    // createJSONStorage always gives us JSON. Keep the original value if a custom caller breaks
-    // that contract; it will still be ordered by the sidecar write version.
-    return value;
+function applySettingsRecord(state: Record<string, unknown>, path: string, record: DurableSettingsRecord): void {
+  const keys = path.split('.');
+  let target: Record<string, unknown> = state;
+  for (const key of keys.slice(0, -1)) {
+    target[key] = isRecord(target[key]) ? { ...target[key] } : {};
+    target = target[key] as Record<string, unknown>;
   }
+  const key = keys[keys.length - 1];
+  if (record.tombstone) delete target[key];
+  else target[key] = record.value;
 }
 
-function readStampedSettingsWriteVersion(value: string | null): number {
-  if (!value) return 0;
-  try {
-    const version = (JSON.parse(value) as { __flowSettingsWriteVersion?: unknown }).__flowSettingsWriteVersion;
-    return typeof version === 'number' && Number.isSafeInteger(version) && version > 0 ? version : 0;
-  } catch {
-    return 0;
+function compareOperations(a: DurableSettingsRecord, b: DurableSettingsRecord): number {
+  return a.clock === b.clock ? a.actor.localeCompare(b.actor) : a.clock - b.clock;
+}
+
+function parseEnvelope(value: string | null): PersistedEnvelope | null {
+  if (!value) return null;
+  try { return JSON.parse(value) as PersistedEnvelope; } catch { return null; }
+}
+
+async function decryptEnvelope(raw: string | null): Promise<PersistedEnvelope | null> {
+  if (!raw) return null;
+  const plaintext = isEncryptedSecretEnvelope(raw) ? await decryptSecret(raw) : raw;
+  return parseEnvelope(plaintext);
+}
+
+async function readDurableRecord(store: Storage, name: string, path: string): Promise<DurableSettingsRecord | null> {
+  const prefix = recordStoragePrefix(name, path);
+  let winner: DurableSettingsRecord | null = null;
+  for (let index = 0; index < store.length; index += 1) {
+    const key = store.key(index);
+    if (!key?.startsWith(prefix)) continue;
+    const parsed = await decryptEnvelope(store.getItem(key));
+    if (!parsed || !isRecord(parsed)) continue;
+    const clock = parsed.clock;
+    const actor = parsed.actor;
+    if (typeof clock !== 'number' || !Number.isSafeInteger(clock) || clock < 0 || typeof actor !== 'string') continue;
+    const candidate = parsed as unknown as DurableSettingsRecord;
+    if (!winner || compareOperations(candidate, winner) > 0) winner = candidate;
   }
+  return winner;
+}
+
+async function garbageCollectDurableRecords(store: Storage, name: string, path: string, winner: DurableSettingsRecord): Promise<void> {
+  const prefix = recordStoragePrefix(name, path);
+  const stale: string[] = [];
+  for (let index = 0; index < store.length; index += 1) {
+    const key = store.key(index);
+    if (!key?.startsWith(prefix)) continue;
+    const parsed = await decryptEnvelope(store.getItem(key));
+    if (!parsed || !isRecord(parsed)) continue;
+    const clock = parsed.clock;
+    const actor = parsed.actor;
+    if (typeof clock !== 'number' || typeof actor !== 'string') continue;
+    if (compareOperations(parsed as unknown as DurableSettingsRecord, winner) < 0) stale.push(key);
+  }
+  for (const key of stale) store.removeItem(key);
+}
+
+async function readConvergedSettings(store: Storage | null, name: string, readStartRevision?: number): Promise<string | null> {
+  if (!store) return lastObservedSettingsEnvelope ? JSON.stringify(lastObservedSettingsEnvelope) : null;
+  let envelope: PersistedEnvelope | null;
+  try { envelope = await decryptEnvelope(store.getItem(name)); } catch { return null; }
+  if (!envelope) return null;
+  // A mutation made by this renderer while its old ciphertext was decrypting already owns its
+  // exact records. Let the merge's local guard retain it instead of awaiting those just-written
+  // sidecars; a later poll/reload still replays them. Remote writers never satisfy this branch.
+  if (readStartRevision !== undefined && localMutationRevision > readStartRevision) {
+    lastObservedSettingsEnvelope = envelope;
+    return JSON.stringify(envelope);
+  }
+  const state = isRecord(envelope.state) ? { ...envelope.state } : {};
+  const paths = new Set(Object.keys(splitSettingsRecords(state)));
+  for (const provider of API_KEY_PROVIDERS) paths.add(`apiKeys.${provider}`);
+  for (const path of paths) {
+    try {
+      const record = await readDurableRecord(store, name, path);
+      if (record) applySettingsRecord(state, path, record);
+    } catch { /* a corrupt sidecar cannot erase the last valid encrypted profile */ }
+  }
+  const resolved = { ...envelope, state };
+  lastObservedSettingsEnvelope = resolved;
+  return JSON.stringify(resolved);
+}
+
+async function writeConvergedSettings(store: Storage | null, name: string, serialized: string): Promise<boolean> {
+  const next = parseEnvelope(serialized);
+  if (!next || !isRecord(next.state)) return false;
+  const previous = lastObservedSettingsEnvelope;
+  const before = splitSettingsRecords(previous?.state);
+  const after = splitSettingsRecords(next.state);
+  const paths = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((path) => JSON.stringify(before[path]) !== JSON.stringify(after[path]));
+  // Advance our local observation immediately. A later unrelated set must not reassert stale
+  // complete-snapshot values merely because this write is still encrypting.
+  lastObservedSettingsEnvelope = next;
+  if (!store) return false;
+  let didPersist = false;
+  for (const path of paths) {
+    try {
+      const existing = await readDurableRecord(store, name, path);
+      operationClock = Math.max(operationClock, existing?.clock ?? 0) + 1;
+      const candidate: DurableSettingsRecord = {
+        clock: operationClock,
+        actor: operationActor,
+        value: after[path],
+        tombstone: !(path in after),
+      };
+      // Each record has its own key. A racing same-key writer is resolved by the Lamport clock
+      // plus actor identity; after write, a loser restores the greater value rather than trusting
+      // localStorage timing.
+      store.setItem(recordStorageKey(name, path, candidate), await encryptSecret(JSON.stringify(candidate)));
+      const winner = await readDurableRecord(store, name, path);
+      if (winner) await garbageCollectDurableRecords(store, name, path, winner);
+      didPersist = true;
+    } catch { /* this record was not committed; the prior durable record remains authoritative */ }
+  }
+  try {
+    // Cache only after sidecars. A crash here leaves the last committed encrypted profile valid;
+    // on restart record tombstones/operations are replayed over it.
+    const cache = await encryptSecret(JSON.stringify(next));
+    store.setItem(name, cache);
+    store.setItem(`${name}${SETTINGS_CHANGE_TOKEN_SUFFIX}`, `${operationClock}:${operationActor}`);
+    didPersist = true;
+  } catch { /* sidecars still carry all successfully committed mutations */ }
+  return didPersist;
+}
+
+function persistResolvedSettingsState(): void {
+  const state = useSettingsStore.getState();
+  void settingsStorageAdapter?.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ state, version: 0 }));
 }
 
 /**
@@ -585,31 +611,6 @@ function recordLocalMutationKeys(partial: unknown, persists = false): void {
   }
 }
 
-/** Bind the synchronous persist setItem call to the local keys that just changed. */
-function takePendingLocalMutationWrite(writeVersion: number): Map<keyof SettingsState, number> {
-  const write = new Map(pendingLocalMutationWrite);
-  pendingLocalMutationWrite.clear();
-  for (const [key, revision] of write) {
-    const marker = localMutationRevisionByKey.get(key);
-    if (marker?.revision === revision) {
-      marker.writeVersion = writeVersion;
-    }
-  }
-  return write;
-}
-
-/** A failed write stays pending so a later read cannot erase an identity that never became durable. */
-function settleLocalMutationWrite(write: Map<keyof SettingsState, number>, didPersist: boolean): void {
-  if (!didPersist) {
-    return;
-  }
-  for (const [key, revision] of write) {
-    const marker = localMutationRevisionByKey.get(key);
-    if (marker?.revision === revision) {
-      marker.pendingWrite = false;
-    }
-  }
-}
 
 /**
  * Wrap a zustand set function so every local mutation records the top-level keys it writes.
@@ -651,7 +652,6 @@ let lastHydrationKeptLocalMutations = false;
  */
 interface HydrationRead {
   startRevision: number;
-  snapshotWriteVersion: number;
 }
 
 let activeHydrationRead: HydrationRead | null = null;
@@ -662,9 +662,10 @@ function takeNextHydrationRead(): HydrationRead | undefined {
 }
 
 function recordHydrationSnapshotVersion(read: HydrationRead | undefined, value: string | null): void {
-  if (read) {
-    read.snapshotWriteVersion = readStampedSettingsWriteVersion(value);
-  }
+  // Reading replays per-key durable records over the encrypted cache. The argument is retained
+  // for the storage adapter boundary and intentionally has no scalar snapshot generation.
+  void read;
+  void value;
 }
 
 /**
@@ -673,10 +674,9 @@ function recordHydrationSnapshotVersion(read: HydrationRead | undefined, value: 
  * so an unavailable storage backend cannot poison reads indefinitely.
  */
 function isHydrationSnapshotCurrent(store: Storage | null, name: string, read: HydrationRead | undefined): boolean {
-  if (!read) return true;
-  const snapshotVersion = read.snapshotWriteVersion;
-  return snapshotVersion >= readCommittedSettingsWriteVersion(store, name)
-    && snapshotVersion >= readSettingsWriteVersion(store, name);
+  void store;
+  void name;
+  return Boolean(read);
 }
 
 /**
@@ -689,15 +689,10 @@ function localMutationOwnsLaterStorageGeneration(
   name: string,
   read: HydrationRead | undefined,
 ): boolean {
-  if (!read) return false;
-  const latestGeneration = Math.max(
-    readSettingsWriteVersion(store, name),
-    readCommittedSettingsWriteVersion(store, name),
-  );
-  if (latestGeneration <= read.snapshotWriteVersion) return false;
-  return [...localMutationRevisionByKey.values()].some((marker) =>
-    marker.revision > read.startRevision && marker.writeVersion === latestGeneration,
-  );
+  void store;
+  void name;
+  void read;
+  return false;
 }
 
 function localMutationsAfterReadStart(read: HydrationRead | null): Array<keyof SettingsState> {
@@ -705,11 +700,7 @@ function localMutationsAfterReadStart(read: HydrationRead | null): Array<keyof S
     return [];
   }
   return [...localMutationRevisionByKey]
-    .filter(([, marker]) =>
-      marker.revision > read.startRevision
-      || (marker.pendingWrite
-        && (marker.writeVersion === undefined || marker.writeVersion > read.snapshotWriteVersion)),
-    )
+    .filter(([, marker]) => marker.revision > read.startRevision)
     .map(([key]) => key);
 }
 
@@ -787,18 +778,53 @@ function postLicenseSyncBroadcast(): void {
  */
 export function installLicenseCrossWindowSync(): () => void {
   const channel = getLicenseSyncChannel();
-  if (!channel) {
-    return () => {};
-  }
+  let scheduled = false;
+  const rehydrate = () => {
+    if (scheduled) return;
+    scheduled = true;
+    queueMicrotask(() => {
+      scheduled = false;
+      void useSettingsStore.persist.rehydrate();
+    });
+  };
   const handleMessage = (event: MessageEvent) => {
     if (event.data !== LICENSE_SYNC_MESSAGE) {
       return;
     }
-    // Re-read the shared blob: merge fail-closes `license`, the post-rehydrate hook re-verifies.
-    void useSettingsStore.persist.rehydrate();
+    rehydrate();
   };
-  channel.addEventListener('message', handleMessage);
-  return () => channel.removeEventListener('message', handleMessage);
+  const handleStorage = (event: StorageEvent) => {
+    if (
+      event.key === SETTINGS_STORAGE_KEY
+      || event.key === `${SETTINGS_STORAGE_KEY}${SETTINGS_CHANGE_TOKEN_SUFFIX}`
+      || event.key?.startsWith(`${SETTINGS_STORAGE_KEY}${SETTINGS_RECORD_SUFFIX}`)
+    ) rehydrate();
+  };
+  channel?.addEventListener('message', handleMessage);
+  const eventWindow = window as unknown as {
+    addEventListener?: (type: string, listener: (event: StorageEvent) => void) => void;
+    removeEventListener?: (type: string, listener: (event: StorageEvent) => void) => void;
+    setInterval?: typeof setInterval;
+    clearInterval?: typeof clearInterval;
+  };
+  eventWindow.addEventListener?.('storage', handleStorage);
+  let lastChangeToken: string | null = null;
+  try { lastChangeToken = window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}${SETTINGS_CHANGE_TOKEN_SUFFIX}`); } catch { /* unavailable */ }
+  const timer = (eventWindow.setInterval ?? setInterval)(() => {
+    try {
+      const next = window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}${SETTINGS_CHANGE_TOKEN_SUFFIX}`);
+      if (next !== lastChangeToken) {
+        lastChangeToken = next;
+        rehydrate();
+      }
+    } catch { /* unavailable storage remains fail-closed */ }
+  }, 2_000);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  return () => {
+    channel?.removeEventListener('message', handleMessage);
+    eventWindow.removeEventListener?.('storage', handleStorage);
+    (eventWindow.clearInterval ?? clearInterval)(timer);
+  };
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -974,13 +1000,18 @@ export const useSettingsStore = create<SettingsState>()(
         // ownership before the first await so a later removal/import can make this older import
         // harmless when its decrypt eventually succeeds.
         const generation = claimLicenseIdentityGeneration();
-        const plaintext = await decryptSettingsBackup(envelopeText, passphrase);
+        let plaintext: string;
+        try {
+          plaintext = await decryptSettingsBackup(envelopeText, passphrase);
+        } catch (error) {
+          return { licensed: false, status: 'failed', reason: error instanceof Error ? error.message : 'The backup could not be decrypted.' };
+        }
         let parsed: unknown;
         try {
           parsed = JSON.parse(plaintext);
         } catch {
           // Decryption succeeded but the payload wasn't JSON — a corrupted or tampered backup.
-          throw new SettingsBackupError('decrypt-failed', 'The backup contents were unreadable.');
+          return { licensed: false, status: 'failed', reason: 'The backup contents were unreadable.' };
         }
         // The sanitizers below defend every field, so the structural cast is safe even on a
         // hand-edited or corrupt payload (same trust model as the persist `merge` above).
@@ -990,11 +1021,15 @@ export const useSettingsStore = create<SettingsState>()(
         // Callers get a deterministic postcondition — when this resolves, `license` reflects the
         // verifier's verdict on the imported key. Other windows learn through the broadcast.
         if (!isCurrentLicenseIdentityGeneration(generation)) {
-          return;
+          return { licensed: false, status: 'superseded', reason: 'A newer settings operation superseded this import.' };
         }
         armLicenseSyncBroadcast();
         set((current) => mergeSettingsBackupData(current, data));
         await get().revalidateLicense();
+        if (!isCurrentLicenseIdentityGeneration(generation)) {
+          return { licensed: false, status: 'superseded', reason: 'A newer settings operation superseded this import.' };
+        }
+        return { ...get().license, status: 'committed' };
       },
       settingsBackupSupported: isSettingsBackupSupported(),
       isSettingsOpen: false,
@@ -1015,8 +1050,12 @@ export const useSettingsStore = create<SettingsState>()(
           // superseded activations never write either key or verdict into newer state.
           armLicenseSyncBroadcast();
           set({ licenseKey: key.trim(), license: verification });
+          return { ...verification, status: 'committed' };
         }
-        return verification;
+        if (!isCurrentLicenseIdentityGeneration(generation)) {
+          return { ...verification, status: 'superseded', reason: 'A newer license operation superseded this activation.' };
+        }
+        return { ...verification, status: 'failed' };
       },
       removeLicenseKey: () => {
         // Removal fail-closes immediately and invalidates whatever verification is still in
@@ -1024,6 +1063,7 @@ export const useSettingsStore = create<SettingsState>()(
         claimLicenseIdentityGeneration();
         armLicenseSyncBroadcast();
         set({ licenseKey: '', license: { licensed: false } });
+        return { licensed: false, status: 'committed' };
       },
       revalidateLicense: async () => {
         // AUD-015: encrypted hydration is asynchronous, so a boot-time call can observe the
@@ -1089,26 +1129,27 @@ export const useSettingsStore = create<SettingsState>()(
         // captured revision can pair with merge.
         const read: HydrationRead = {
           startRevision: localMutationRevision,
-          snapshotWriteVersion: 0,
         };
         activeHydrationRead = read;
         queuedHydrationReads.push(read);
-        return (hydratedState: SettingsState | undefined) => {
+        return (_hydratedState: SettingsState | undefined) => {
           // Read failures skip merge. Do not leave a stale arm for an out-of-band merge after
           // that failure; a later real hydration will capture a new start revision.
           if (activeHydrationRead === read) {
             activeHydrationRead = null;
           }
           markSettingsHydrated();
-          if (hydratedState && lastHydrationKeptLocalMutations) {
+          if (lastHydrationKeptLocalMutations) {
             lastHydrationKeptLocalMutations = false;
             // The merge kept locally-mutated keys at their newer values, so memory is now
             // ahead of what the mutating writes persisted (they captured pre-hydration state).
             // Enqueue one write of the resolved state — on the same serialized write chain — so
             // storage converges on the newer local mutation instead of the stale snapshot.
-            useSettingsStore.setState({});
+            persistResolvedSettingsState();
           }
-          void useSettingsStore.getState().revalidateLicense();
+          // Let an already-resolved verifier clear its in-flight slot before a same-key
+          // rehydrate asks for the canonical fresh verdict.
+          queueMicrotask(() => void useSettingsStore.getState().revalidateLicense());
         };
       },
       merge: (persistedState, currentState) => {

@@ -27,9 +27,11 @@ export const LicenseSection: React.FC = () => {
     setFeedback(null);
     try {
       const result = await setLicenseKey(draftKey);
-      if (result.licensed) {
+      if (result.status === 'committed' && result.licensed) {
         setDraftKey('');
         setFeedback({ tone: 'ok', text: `License activated — licensed to ${result.email}.` });
+      } else if (result.status === 'superseded') {
+        setFeedback({ tone: 'error', text: 'This activation was superseded by a newer license change.' });
       } else {
         setFeedback({ tone: 'error', text: result.reason ?? 'This license key could not be verified.' });
       }

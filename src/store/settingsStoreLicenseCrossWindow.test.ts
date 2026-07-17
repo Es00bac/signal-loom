@@ -151,7 +151,9 @@ describe('license identity cross-window sync (AUD-015)', () => {
       expect(persisted.providerSettings).toMatchObject({ atlasBaseUrl: 'https://version-11.example.test' });
       expect(windowB.useSettingsStore.getState().license.licensed).toBe(false);
       expect(windowB.isCommercialExportUnlocked()).toBe(false);
-      expect(Number(window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}:committed-write-version`))).toBeGreaterThan(10);
+      expect(window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}:change-token`)).toBeTruthy();
+      expect(Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index))
+        .some((key) => key?.startsWith(`${SETTINGS_STORAGE_KEY}:record:licenseKey:`))).toBe(true);
     });
 
     // Releasing A's old decrypt must force a durable re-read before merge, not turn its old

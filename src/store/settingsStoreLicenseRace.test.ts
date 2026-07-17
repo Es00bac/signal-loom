@@ -48,10 +48,12 @@ const cipherControl = vi.hoisted(() => ({
 vi.mock('../lib/secretCipher', () => ({
   isEncryptedSecretEnvelope: (value: unknown): boolean =>
     typeof value === 'string' && value.startsWith('enc:'),
-  decryptSecret: (envelope: string) =>
-    new Promise<string | null>((resolve) => {
+  decryptSecret: (envelope: string) => {
+    if (envelope.startsWith('enc:{"clock"')) return Promise.resolve(envelope.slice('enc:'.length));
+    return new Promise<string | null>((resolve) => {
       cipherControl.pending.push({ envelope, resolve });
-    }),
+    });
+  },
   encryptSecret: async (plain: string) => `enc:${plain}`,
   isSecretEncryptionActive: () => true,
 }));
@@ -204,6 +206,7 @@ describe('license verification race hardening (AUD-015)', () => {
     await vi.waitFor(() => {
       expect(useSettingsStore.getState().license.licensed).toBe(true);
     });
+    await settle();
     expect(useSettingsStore.getState().settingsHydrated).toBe(true);
 
     // A rehydrate that restores the SAME key: merge fail-closes `license`, and because the key

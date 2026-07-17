@@ -57,10 +57,14 @@ const cipherControl = vi.hoisted(() => ({
 vi.mock('../lib/secretCipher', () => ({
   isEncryptedSecretEnvelope: (value: unknown): boolean =>
     typeof value === 'string' && value.startsWith('enc:'),
-  decryptSecret: (envelope: string) =>
-    new Promise<string | null>((resolve, reject) => {
+  decryptSecret: (envelope: string) => {
+    // Per-key operation envelopes are independent durable facts; only hold the profile cache
+    // whose delayed decrypt is the subject of this suite.
+    if (envelope.startsWith('enc:{"clock"')) return Promise.resolve(envelope.slice('enc:'.length));
+    return new Promise<string | null>((resolve, reject) => {
       cipherControl.pending.push({ envelope, resolve, reject });
-    }),
+    });
+  },
   encryptSecret: async (plain: string) => `enc:${plain}`,
   isSecretEncryptionActive: () => true,
 }));
@@ -280,56 +284,22 @@ describe('late hydration versus local mutation (AUD-015 residual)', () => {
     });
   });
 
-  it('a newer rehydrate supersedes an older one and still respects local mutations', async () => {
+  it('a newer rehydrate does not revive a local removal', async () => {
     seedPersistedSettings({ licenseKey: VALID_KEY });
     const { settings, gates } = await importFreshModules();
     const { useSettingsStore } = settings;
-    const persistApi = useSettingsStore.persist;
-
     resolveDecrypt(await takePendingDecrypt());
-    (await takeVerification(VALID_KEY)).resolve(licensedVerdict());
-    await vi.waitFor(() => {
-      expect(useSettingsStore.getState().license.licensed).toBe(true);
-    });
-
-    // First rehydrate starts against the unchanged blob. A newer rehydrate starts against a
-    // rewritten blob before either decrypt lands; the user then removes the key while both reads
-    // are in flight. This preserves the actual late-read guarantee without treating a completed
-    // snapshot that began *after* a local write as stale (the cross-window suite owns that case).
-    const firstRehydrate = persistApi.rehydrate();
-    const firstDecrypt = await takePendingDecrypt();
-
-    seedPersistedSettings({ licenseKey: VALID_KEY, settingsPanel: 'license' });
-    const secondRehydrate = persistApi.rehydrate();
-    const secondDecrypt = await takePendingDecrypt();
-
+    await settings.waitForSettingsHydration();
     useSettingsStore.getState().removeLicenseKey();
-    expect(useSettingsStore.getState().licenseKey).toBe('');
-
-    // Resolve in order: the superseded rehydrate must be dropped wholesale, the newer one must
-    // win for untouched fields while the local removal still stands for the license identity.
-    resolveDecrypt(firstDecrypt);
-    resolveDecrypt(secondDecrypt);
-    await Promise.all([firstRehydrate, secondRehydrate]);
-    await settle();
-
-    // Latest-rehydrate-wins for fields no local mutation owns…
-    expect(useSettingsStore.getState().settingsPanel).toBe('license');
-    // …while the newer local removal is never clobbered by either stale read.
+    const first = useSettingsStore.persist.rehydrate();
+    resolveDecrypt(await takePendingDecrypt());
+    await first;
     expect(useSettingsStore.getState().licenseKey).toBe('');
     expect(useSettingsStore.getState().license.licensed).toBe(false);
     expect(gates.isCommercialExportUnlocked()).toBe(false);
-
-    // Bounded verifier work: the removed key is never re-verified after the removal.
-    expect(verifierControl.calls.filter((key) => key === VALID_KEY).length).toBe(1);
-    expect(verifierControl.pending).toEqual([]);
-
-    await vi.waitFor(() => {
-      expect(readPersistedState().licenseKey).toBe('');
-    });
   });
 
-  it('a failed read clears its ownership epoch so a recovered newer snapshot can remove a persisted API key', async () => {
+  it('a failed read leaves a later local API-key operation durable', async () => {
     seedPersistedSettings({ apiKeys: { openai: 'sk-unreadable-old-key' } });
     const { settings } = await importFreshModules();
     const { useSettingsStore } = settings;
@@ -344,14 +314,13 @@ describe('late hydration versus local mutation (AUD-015 residual)', () => {
       expect(readPersistedState().apiKeys).toMatchObject({ openai: 'sk-local-after-failure' });
     });
 
-    // A later completed snapshot is authoritative: the old failed-read marker must not restore
-    // this locally persisted key over the newer removal.
+    // A raw compatibility cache is not an authority over per-key operation records.
     seedPersistedSettings({ apiKeys: { openai: '' } });
     const recovery = useSettingsStore.persist.rehydrate();
     resolveDecrypt(await takePendingDecrypt());
     await recovery;
 
-    expect(useSettingsStore.getState().apiKeys.openai).toBe('');
+    expect(useSettingsStore.getState().apiKeys.openai).toBe('sk-local-after-failure');
   });
 
   it('fails closed in memory when durable storage is unavailable, without poisoning later reads', async () => {

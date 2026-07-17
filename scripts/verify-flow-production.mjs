@@ -83,8 +83,10 @@ export async function verifyFlowProduction({ root = DEFAULT_ROOT } = {}) {
   );
 
   const settingsSource = await readFile(resolve(root, 'src/store/settingsStore.ts'), 'utf8');
-  if (!settingsSource.includes('encryptSecret(value)')) {
-    errors.push('Settings persistence no longer encrypts the serialized provider credential blob.');
+  const encryptsSerializedSettings = /encryptSecret\(JSON\.stringify\((?:next|winner)\)\)/.test(settingsSource);
+  const rejectsPlaintextSettingsWrite = !/store\.setItem\(name,\s*JSON\.stringify\(/.test(settingsSource);
+  if (!encryptsSerializedSettings || !rejectsPlaintextSettingsWrite) {
+    errors.push('Settings persistence no longer proves encrypted serialization before durable storage.');
   }
   const projectSchema = await readFile(resolve(root, 'shared/project-schema.json'), 'utf8');
   if (projectSchema.includes('vertexServiceAccountJson')) {

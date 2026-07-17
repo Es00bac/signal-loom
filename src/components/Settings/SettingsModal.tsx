@@ -37,6 +37,7 @@ import { NATIVE_MENU_COMMANDS, type NativeMenuCommand } from '../../lib/nativeAp
 import { useCatalogStore } from '../../store/catalogStore';
 import {
   getApiKeyStorageStatus,
+  type LicenseOperationOutcome,
   useSettingsStore,
 } from '../../store/settingsStore';
 import type { Capability, ProviderSettings } from '../../types/flow';
@@ -1009,7 +1010,7 @@ function SettingsBackupSection({
   supported,
 }: {
   exportSettingsBackup: (passphrase: string) => Promise<string>;
-  importSettingsBackup: (envelopeText: string, passphrase: string) => Promise<void>;
+  importSettingsBackup: (envelopeText: string, passphrase: string) => Promise<LicenseOperationOutcome>;
   supported: boolean;
 }) {
   const [mode, setMode] = React.useState<'export' | 'import'>('export');
@@ -1086,11 +1087,15 @@ function SettingsBackupSection({
     }
     setBusy(true);
     try {
-      await importSettingsBackup(importText, passphrase);
-      setStatus({ tone: 'ok', message: t('settings.backup.restored') });
-      setImportText('');
-      setImportFileName('');
-      setPassphrase('');
+      const outcome = await importSettingsBackup(importText, passphrase);
+      if (outcome.status === 'committed') {
+        setStatus({ tone: 'ok', message: t('settings.backup.restored') });
+        setImportText('');
+        setImportFileName('');
+        setPassphrase('');
+      } else {
+        setStatus({ tone: 'error', message: outcome.reason ?? 'The restore did not commit.' });
+      }
     } catch (error) {
       setStatus({ tone: 'error', message: backupErrorMessage(error) });
     } finally {
