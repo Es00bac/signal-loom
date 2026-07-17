@@ -391,4 +391,94 @@ describe('surfaceCompositionEdgeDiagnostics (FBL-019 gap 3 + correction)', () =>
     const dedupedWarnings = withDuplicate.find((node) => node.id === 'composition-1')!.data.compositionAudioMigrationWarnings!;
     expect(dedupedWarnings.filter((warning) => warning.handle === 'composition-audio-100')).toHaveLength(1);
   });
+
+  it('canonicalizes truncation-colliding diagnostics before they count toward the unique warning cap', () => {
+    const existingWarnings = Array.from({ length: 7 }, (_, index) => ({
+      handle: `unique-existing-${index + 1}`,
+      reason: 'overflow' as const,
+      message: `Existing warning ${index + 1}.`,
+    }));
+    const nodes = [{
+      ...createNode('composition-1', 'composition'),
+      data: { compositionAudioMigrationWarnings: existingWarnings },
+    }];
+    const sharedPrefix = 'x'.repeat(64);
+    const diagnostics = Array.from({ length: 8 }, (_, index) => ({
+      targetNodeId: 'composition-1',
+      edgeId: `colliding-edge-${index}`,
+      handle: `${sharedPrefix}${index}`,
+      reason: 'malformed' as const,
+    }));
+
+    const warnings = surfaceCompositionEdgeDiagnostics(nodes, diagnostics)[0]
+      .data.compositionAudioMigrationWarnings!;
+
+    expect(warnings).toHaveLength(8);
+    expect(warnings.map((warning) => warning.handle)).toEqual([
+      ...existingWarnings.map((warning) => warning.handle),
+      `${sharedPrefix}…`,
+    ]);
+  });
+
+  it('preserves an existing warning message and order when a new diagnostic has the same canonical identity', () => {
+    const existingWarnings = [
+      { handle: 'composition-audio-9', reason: 'overflow' as const, message: 'First-seen persisted message.' },
+      { handle: 'composition-audio-x', reason: 'malformed' as const, message: 'Second persisted message.' },
+    ];
+    const nodes = [{
+      ...createNode('composition-1', 'composition'),
+      data: { compositionAudioMigrationWarnings: existingWarnings },
+    }];
+
+    const warnings = surfaceCompositionEdgeDiagnostics(nodes, [
+      { targetNodeId: 'composition-1', edgeId: 'duplicate-edge', handle: 'composition-audio-9', reason: 'overflow' },
+      { targetNodeId: 'composition-1', edgeId: 'new-edge', handle: 'composition-audio-0', reason: 'malformed' },
+    ])[0].data.compositionAudioMigrationWarnings;
+
+    expect(warnings).toEqual([
+      ...existingWarnings,
+      expect.objectContaining({ handle: 'composition-audio-0', reason: 'malformed' }),
+    ]);
+  });
+
+  it('fills but never exceeds the unique cap when incoming diagnostics mix canonical collisions and unique handles', () => {
+    const existingWarnings = [
+      { handle: 'existing-1', reason: 'overflow' as const, message: 'Existing 1.' },
+      { handle: 'existing-2', reason: 'malformed' as const, message: 'Existing 2.' },
+    ];
+    const nodes = [{
+      ...createNode('composition-1', 'composition'),
+      data: { compositionAudioMigrationWarnings: existingWarnings },
+    }];
+    const sharedPrefix = 'y'.repeat(64);
+    const collidingDiagnostics = Array.from({ length: 4 }, (_, index) => ({
+      targetNodeId: 'composition-1',
+      edgeId: `collision-${index}`,
+      handle: `${sharedPrefix}${index}`,
+      reason: 'malformed' as const,
+    }));
+    const uniqueDiagnostics = Array.from({ length: 7 }, (_, index) => ({
+      targetNodeId: 'composition-1',
+      edgeId: `unique-${index}`,
+      handle: `new-unique-${index + 1}`,
+      reason: 'overflow' as const,
+    }));
+
+    const warnings = surfaceCompositionEdgeDiagnostics(
+      nodes,
+      [...collidingDiagnostics, ...uniqueDiagnostics],
+    )[0].data.compositionAudioMigrationWarnings!;
+
+    expect(warnings).toHaveLength(8);
+    expect(warnings.map((warning) => warning.handle)).toEqual([
+      'existing-1',
+      'existing-2',
+      `${sharedPrefix}…`,
+      'new-unique-1',
+      'new-unique-2',
+      'new-unique-3',
+      'new-unique-4',
+      'new-unique-5',
+    ]);
+  });
 });

@@ -1,9 +1,8 @@
 import type { Connection, Edge } from '@xyflow/react';
-import type { AppNode, CompositionAudioMigrationWarning, CompositionTargetHandle } from '../types/flow';
+import type { AppNode, CompositionTargetHandle } from '../types/flow';
 import {
   classifyCompositionAudioHandle,
   COMPOSITION_AUDIO_HANDLES,
-  COMPOSITION_AUDIO_MIGRATION_WARNING_LIMIT,
   COMPOSITION_VIDEO_HANDLE,
   isCompositionAudioHandle,
   isCompositionAudioProducingSourceType,
@@ -177,24 +176,21 @@ export function surfaceCompositionEdgeDiagnostics(
     }
 
     const existing = sanitizeCompositionAudioMigrationWarnings(node.data.compositionAudioMigrationWarnings) ?? [];
-    const byKey = new Map<string, CompositionAudioMigrationWarning>(
-      existing.map((warning) => [`${warning.reason}:${warning.handle}`, warning]),
-    );
-
-    for (const diagnostic of nodeDiagnostics) {
+    const incoming = nodeDiagnostics.map((diagnostic) => {
       const reasonText = diagnostic.reason === 'overflow'
         ? 'beyond the supported 4-track limit'
         : 'not a valid track index';
-      byKey.set(`${diagnostic.reason}:${diagnostic.handle}`, {
+      return {
         handle: diagnostic.handle,
         reason: diagnostic.reason,
         message: `Removed unsupported audio connection on handle "${diagnostic.handle}" (${reasonText}).`,
-      });
-    }
+      };
+    });
 
-    const merged = sanitizeCompositionAudioMigrationWarnings(
-      Array.from(byKey.values()).slice(-COMPOSITION_AUDIO_MIGRATION_WARNING_LIMIT),
-    );
+    // Canonicalize the complete first-seen stream before the unique-record cap is applied. Raw
+    // hostile handles can differ only after the persisted truncation boundary; pre-slicing those
+    // records would let canonical duplicates evict unrelated existing warnings (FBL-019).
+    const merged = sanitizeCompositionAudioMigrationWarnings([...existing, ...incoming]);
 
     return { ...node, data: { ...node.data, compositionAudioMigrationWarnings: merged } };
   });
