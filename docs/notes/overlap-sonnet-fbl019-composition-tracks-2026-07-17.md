@@ -794,3 +794,83 @@ git diff --check
 - The evidence-note update is a separate commit on top.
 - This is author evidence only. The corrected clean head still requires a fresh independent
   read-only review; no approval is claimed here.
+
+## Fifth correction (Terra final Medium, canonical warning deduplication on top of `d7a4376`)
+
+Terra's final read-only gate found one remaining Medium persistence issue in the bounded Composition
+audio recovery record. `sanitizeCompositionAudioMigrationWarnings` validated, truncated, and capped
+records but did not deduplicate them. A hand-edited or repeated imported warning list could therefore
+retain the same logical `{ reason, handle }` several times, consume the eight-record budget, and make
+`collectFlowDiagnostics` emit duplicate warnings for one removed edge. Two distinct hostile handles
+that truncated to the same persisted 64-character display form also survived as separate records.
+
+### Fix
+
+The sanitizer now builds each fully bounded canonical record first, then derives an unambiguous
+serialized `[reason, truncatedHandle]` identity. A first-seen set drops later records with the same
+canonical identity before they count toward `COMPOSITION_AUDIO_MIGRATION_WARNING_LIMIT`.
+
+This preserves all previous bounds and validation behavior:
+
+- invalid records are still dropped;
+- handles and messages are still truncated at the existing limits;
+- at most eight **unique** warnings survive;
+- warning order and the first record's message remain deterministic; and
+- the same sanitizer continues to protect local persisted state, project snapshots, diagnostic
+  surfacing merges, and imported warning fields.
+
+### Permanent red/green evidence
+
+The initial pre-fix run failed all five requested regressions:
+
+```text
+Test Files  4 failed (4)
+Tests       5 failed | 160 skipped (165)
+```
+
+Those failures proved ordinary duplicate records, records colliding only after handle truncation,
+local persisted-state sanitization, project snapshot sanitization, and duplicate Diagnostics-panel
+entries. A sixth permanent test additionally proves a duplicate does not consume one of the eight
+unique-entry slots, allowing the seventh later unique warning to survive.
+
+After the correction:
+
+```text
+npx vitest run --configLoader runner \
+  src/lib/compositionTracks.test.ts src/lib/projectValidation.test.ts \
+  src/store/flowStore.test.ts src/lib/flowDiagnostics.test.ts \
+  -t "deduplicates|emits one diagnostic|duplicates consume"
+# 4 files passed; 6 tests passed, 160 skipped
+
+npx vitest run --configLoader runner \
+  src/lib/compositionTracks.test.ts src/lib/projectValidation.test.ts \
+  src/store/flowStore.test.ts src/lib/flowDiagnostics.test.ts
+# 4 files passed; 166 tests passed
+
+npx vitest run --configLoader runner \
+  src/components/Nodes/CompositionNode.test.tsx \
+  src/lib/compositionTracks.test.ts src/lib/compositionEdgeMigration.test.ts \
+  src/lib/compositionMediaState.test.ts src/lib/flowExecutionComposition.test.ts \
+  src/lib/mediaComposition.test.ts src/lib/flowDiagnostics.test.ts \
+  src/lib/flowNodeContracts.test.ts src/store/flowStore.test.ts \
+  src/store/flowStore.remoteSync.test.ts
+# 10 files passed; 330 tests passed
+
+npx tsc -b tsconfig.app.json --force --pretty false
+# clean
+
+npx eslint src/lib/compositionTracks.ts src/lib/compositionTracks.test.ts \
+  src/lib/projectValidation.test.ts src/store/flowStore.test.ts \
+  src/lib/flowDiagnostics.test.ts
+# clean
+
+git diff --check
+# clean
+```
+
+### Fifth-correction commits and review state
+
+- `a6992ac` — canonical deduplication plus permanent tests.
+- The evidence-note update is a separate commit on top.
+- This remains author evidence only. A fresh independent read-only review of the final clean head is
+  required; no self-approval is claimed.
