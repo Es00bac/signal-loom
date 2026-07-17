@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { unzipSync } from 'fflate';
+import { strToU8, unzipSync, zipSync } from 'fflate';
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import { addFrameToPaperPage, createDefaultPaperDocument } from './paperDocument';
 import { buildPaperPackageExport } from './paperPackageExport';
@@ -132,6 +132,58 @@ function expectManifestAndArchiveToAgree(
     expect(entries[file.path], `archive must contain ${file.path}`).toBeDefined();
     expect(entries[file.path].byteLength, `${file.path} size must match the manifest`).toBe(file.bytes);
   }
+}
+
+function findEndOfCentralDirectory(bytes: Uint8Array): number {
+  for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 0x10016); offset -= 1) {
+    if (new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(offset, true) === 0x06054b50) return offset;
+  }
+  throw new Error('ZIP fixture has no end-of-central-directory record.');
+}
+
+function duplicateFirstCentralDirectoryMember(bytes: Uint8Array): Uint8Array {
+  const end = findEndOfCentralDirectory(bytes);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const centralOffset = view.getUint32(end + 16, true);
+  const nameLength = view.getUint16(centralOffset + 28, true);
+  const extraLength = view.getUint16(centralOffset + 30, true);
+  const commentLength = view.getUint16(centralOffset + 32, true);
+  const memberLength = 46 + nameLength + extraLength + commentLength;
+  const duplicate = bytes.slice(centralOffset, centralOffset + memberLength);
+  const result = new Uint8Array(bytes.length + duplicate.byteLength);
+  result.set(bytes.subarray(0, end), 0);
+  result.set(duplicate, end);
+  result.set(bytes.subarray(end), end + duplicate.byteLength);
+  const resultView = new DataView(result.buffer);
+  const newEnd = end + duplicate.byteLength;
+  resultView.setUint16(newEnd + 8, view.getUint16(end + 8, true) + 1, true);
+  resultView.setUint16(newEnd + 10, view.getUint16(end + 10, true) + 1, true);
+  resultView.setUint32(newEnd + 12, view.getUint32(end + 12, true) + duplicate.byteLength, true);
+  return result;
+}
+
+function mutateZipFlags(bytes: Uint8Array): Uint8Array {
+  const result = bytes.slice();
+  const end = findEndOfCentralDirectory(result);
+  const view = new DataView(result.buffer);
+  const centralOffset = view.getUint32(end + 16, true);
+  const localOffset = view.getUint32(centralOffset + 42, true);
+  view.setUint16(centralOffset + 8, view.getUint16(centralOffset + 8, true) | 1, true);
+  view.setUint16(localOffset + 6, view.getUint16(localOffset + 6, true) | 1, true);
+  return result;
+}
+
+function declareZipBombSize(bytes: Uint8Array): Uint8Array {
+  const result = bytes.slice();
+  const end = findEndOfCentralDirectory(result);
+  const view = new DataView(result.buffer);
+  const centralOffset = view.getUint32(end + 16, true);
+  view.setUint32(centralOffset + 24, 0x7fff_ffff, true);
+  return result;
+}
+
+function portablePathKey(path: string): string {
+  return path.normalize('NFKC').toLocaleLowerCase('en-US');
 }
 
 afterEach(async () => {
@@ -319,6 +371,53 @@ describe('paperPackageExport managed asset payloads (AUD-004)', () => {
     expect(firstExport.entries).toEqual(secondExport.entries);
   });
 
+  it('reserves paths in a portable NFKC case-folded namespace, including Windows-reserved labels', async () => {
+    const labels = [
+      'Repeated',
+      'repeated',
+      'Asset',
+      'Ａｓｓｅｔ',
+      'CON. ',
+      'trailing dot...   ',
+      '../control\\\u0000name',
+      `${'long-label-'.repeat(400)}.tiff`,
+    ];
+    let document = createDefaultPaperDocument({ title: 'Portable paths' });
+    const sourceItems: SourceBinLibraryItem[] = [];
+    for (const [index, label] of labels.entries()) {
+      const id = `portable-${index}`;
+      document = addFrameToPaperPage(document, document.pages[0].id, {
+        kind: 'image',
+        xMm: 5 + index * 2,
+        yMm: 5,
+        widthMm: 10,
+        heightMm: 10,
+        asset: { sourceBinItemId: id, label, kind: 'image' },
+      } as never).document;
+      sourceItems.push({
+        id,
+        label,
+        kind: 'image',
+        mimeType: 'image/tiff',
+        assetUrl: `https://example.test/${id}.tiff`,
+        createdAt: 1,
+      } as SourceBinLibraryItem);
+    }
+
+    const exported = await buildPaperPackageExport(document, sourceItems);
+    const keys = exported.entries.map(portablePathKey);
+    const repeatedPaths = exported.entries.filter((path) => /^Links\/repeated(?:-\d+)?\.json$/i.test(path));
+
+    expect(new Set(keys).size, 'portable extractors must not collide by case or Unicode normalization').toBe(keys.length);
+    expect(repeatedPaths).toHaveLength(2);
+    expect(exported.entries.some((path) => /(?:^|\/)CON(?:\.|$)/i.test(path))).toBe(false);
+    for (const path of exported.entries) {
+      expect(new TextEncoder().encode(path).byteLength).toBeLessThanOrEqual(240);
+      expect(path.split('/').every((segment) => !/[. ]$/.test(segment))).toBe(true);
+      expect(path.split('/')).not.toContain('..');
+    }
+  });
+
   it('bounds hostile labels so the ZIP remains self-contained and its paths stay safe', async () => {
     const binary = await seedRecord(Uint8Array.from([1, 2, 3, 4]), 'image/png', 'art.png');
     const hostileLabel = `  ../\\\u0000\u0001日本語/😀 ${'very-long-'.repeat(8_000)}  `;
@@ -355,5 +454,28 @@ describe('paperPackageExport managed asset payloads (AUD-004)', () => {
     } as unknown as Parameters<typeof buildPaperPackageExport>[2];
 
     await expect(buildPaperPackageExport(document, [], forcedZipFailure)).rejects.toThrow(/no file was downloaded/i);
+  });
+
+  it.each([
+    ['empty bytes', () => new Uint8Array()],
+    ['truncated ZIP', (entries: Record<string, Uint8Array>) => zipSync(entries).slice(0, -1)],
+    ['missing manifest', (entries: Record<string, Uint8Array>) => {
+      const { 'manifest.json': _manifest, ...withoutManifest } = entries;
+      return zipSync(withoutManifest);
+    }],
+    ['invalid manifest JSON', (entries: Record<string, Uint8Array>) => zipSync({ ...entries, 'manifest.json': strToU8('{not json') })],
+    ['altered requested member', (entries: Record<string, Uint8Array>) => {
+      const document = entries['document.sloom-paper.json'].slice();
+      document[0] ^= 1;
+      return zipSync({ ...entries, 'document.sloom-paper.json': document });
+    }],
+    ['extra member', (entries: Record<string, Uint8Array>) => zipSync({ ...entries, 'unexpected.txt': strToU8('not requested') })],
+    ['duplicate member', (entries: Record<string, Uint8Array>) => duplicateFirstCentralDirectoryMember(zipSync(entries))],
+    ['encrypted member', (entries: Record<string, Uint8Array>) => mutateZipFlags(zipSync(entries))],
+    ['zip-bomb-like declared member size', (entries: Record<string, Uint8Array>) => declareZipBombSize(zipSync(entries))],
+  ])('rejects %s returned by a compressor before callers can download or report success', async (_label, zip) => {
+    const { document } = await buildManagedDocument();
+
+    await expect(buildPaperPackageExport(document, [], { zip })).rejects.toThrow(/no file was downloaded/i);
   });
 });

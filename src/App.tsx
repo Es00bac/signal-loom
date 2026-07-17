@@ -1737,7 +1737,7 @@ function FlowApp() {
             // Browser / Android: no Electron bridge — stream the .slimg to the device's
             // Downloads folder (Documents on Android via the Filesystem plugin).
             downloadBlob(
-              new Blob([bytes as BlobPart], { type: 'application/octet-stream' }),
+              new Blob([copyBytesToOwnedArrayBuffer(bytes)], { type: 'application/octet-stream' }),
               buildWorkspaceDownloadFilename(activeDoc.title, 'slimg'),
             );
           }
@@ -3089,6 +3089,13 @@ function AppBootSplashDismissor() {
   }, []);
 
   return null;
+}
+
+/** BlobPart requires an ArrayBuffer-backed view; copy bytes that may be SharedArrayBuffer-backed. */
+function copyBytesToOwnedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
 }
 
 export default function App() {
