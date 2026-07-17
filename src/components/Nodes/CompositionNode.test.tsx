@@ -75,3 +75,42 @@ describe('CompositionNode audio track visibility (FBL-019 gap 2)', () => {
     expect(html).not.toContain('data-handleid="composition-audio-2"');
   });
 });
+
+describe('CompositionNode composition audio migration warning display (FBL-019 correction)', () => {
+  beforeEach(() => {
+    useFlowStore.setState({ nodes: [], edges: [], bookmarkSidebarOpen: true });
+  });
+
+  it('derives the visible node message from a persisted composition audio migration warning when there is no live error', () => {
+    const html = renderToStaticMarkup(
+      <ReactFlowProvider>
+        <CompositionNode
+          data={{
+            compositionAudioTrackCount: 1,
+            onChange: () => undefined,
+            compositionAudioMigrationWarnings: [
+              {
+                handle: 'composition-audio-9',
+                reason: 'overflow',
+                message: 'Removed unsupported audio connection on handle "composition-audio-9" (beyond the supported 4-track limit).',
+              },
+            ],
+          }}
+          deletable
+          dragging={false}
+          draggable
+          id="composition-1"
+          isConnectable
+          positionAbsoluteX={0}
+          positionAbsoluteY={0}
+          selectable
+          selected={false}
+          type="composition"
+          zIndex={0}
+        />
+      </ReactFlowProvider>,
+    );
+
+    expect(html).toContain('composition-audio-9');
+  });
+});

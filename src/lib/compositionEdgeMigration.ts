@@ -1,10 +1,13 @@
 import type { Connection, Edge } from '@xyflow/react';
-import type { AppNode, CompositionTargetHandle } from '../types/flow';
+import type { AppNode, CompositionAudioMigrationWarning, CompositionTargetHandle } from '../types/flow';
 import {
   classifyCompositionAudioHandle,
   COMPOSITION_AUDIO_HANDLES,
+  COMPOSITION_AUDIO_MIGRATION_WARNING_LIMIT,
   COMPOSITION_VIDEO_HANDLE,
   isCompositionAudioHandle,
+  isCompositionAudioProducingSourceType,
+  sanitizeCompositionAudioMigrationWarnings,
 } from './compositionTracks';
 import { resolveEffectiveSourceNode } from './virtualNodes';
 
@@ -57,27 +60,37 @@ export function normalizeCompositionEdgesWithDiagnostics(
       continue;
     }
 
-    if (sourceNode?.type === 'audioGen' && !isCompositionAudioHandle(edge.targetHandle)) {
+    if (
+      isCompositionAudioProducingSourceType(sourceNode?.type)
+      && edge.targetHandle !== COMPOSITION_VIDEO_HANDLE
+      && !isCompositionAudioHandle(edge.targetHandle)
+    ) {
       if (edge.targetHandle == null) {
-        const bucket = legacyByTarget.get(edge.target) ?? [];
-        bucket.push(edge);
-        legacyByTarget.set(edge.target, bucket);
+        // Only a truly handleless legacy audio edge is auto-assigned to the next open lane, and
+        // only from `audioGen` — a null-handle `functionNode` edge is genuinely ambiguous
+        // (functionNode can also feed the video handle), so it is left untouched rather than
+        // guessed at (FBL-019 correction).
+        if (sourceNode?.type === 'audioGen') {
+          const bucket = legacyByTarget.get(edge.target) ?? [];
+          bucket.push(edge);
+          legacyByTarget.set(edge.target, bucket);
+          continue;
+        }
+
+        preserved.push(edge);
         continue;
       }
 
+      // Every other non-null handle on a recognized audio-producing source fails closed with a
+      // diagnostic instead of being silently preserved — including handles that aren't even
+      // audio-track-shaped (classification `null`), which used to slip through untouched.
       const classification = classifyCompositionAudioHandle(edge.targetHandle);
-
-      if (classification && classification.status !== 'valid') {
-        diagnostics.push({
-          targetNodeId: edge.target,
-          edgeId: edge.id,
-          handle: classification.handle,
-          reason: classification.status,
-        });
-        continue;
-      }
-
-      preserved.push(edge);
+      diagnostics.push({
+        targetNodeId: edge.target,
+        edgeId: edge.id,
+        handle: classification?.handle ?? edge.targetHandle,
+        reason: classification?.status === 'overflow' ? 'overflow' : 'malformed',
+      });
       continue;
     }
 
@@ -134,10 +147,13 @@ export function normalizeCompositionEdgesWithDiagnostics(
 }
 
 /**
- * Turns dropped-edge diagnostics into a visible, durable node error instead of letting the edge
- * vanish without a trace (FBL-019). Applied at restore/import boundaries, where a persisted or
- * imported overflow/malformed audio handle would otherwise be silently discarded by
- * `normalizeCompositionEdgesWithDiagnostics`.
+ * Turns dropped-edge diagnostics into a bounded, typed, durable node warning instead of letting
+ * the edge vanish without a trace (FBL-019). Applied at every graph-ingress boundary that can
+ * carry persisted/authored edges. Written to `data.compositionAudioMigrationWarnings`, never
+ * `data.error` — that field is transient and reset by unrelated successful operations (connects,
+ * runs), which used to silently erase this warning. New diagnostics are merged with whatever a
+ * node already has (deduped by handle+reason, bounded, truncated) rather than replacing it, so the
+ * warning survives a later pass where the bad edge is already gone and no new diagnostic fires.
  */
 export function surfaceCompositionEdgeDiagnostics(
   nodes: AppNode[],
@@ -147,24 +163,40 @@ export function surfaceCompositionEdgeDiagnostics(
     return nodes;
   }
 
-  const messageByTarget = new Map<string, string>();
-
+  const diagnosticsByTarget = new Map<string, CompositionAudioEdgeMigrationDiagnostic[]>();
   for (const diagnostic of diagnostics) {
-    const reason = diagnostic.reason === 'overflow'
-      ? 'beyond the supported 4-track limit'
-      : 'not a valid track index';
-    const detail = `Removed unsupported audio connection on handle "${diagnostic.handle}" (${reason}).`;
-    const existing = messageByTarget.get(diagnostic.targetNodeId);
-    messageByTarget.set(diagnostic.targetNodeId, existing ? `${existing} ${detail}` : detail);
+    const bucket = diagnosticsByTarget.get(diagnostic.targetNodeId) ?? [];
+    bucket.push(diagnostic);
+    diagnosticsByTarget.set(diagnostic.targetNodeId, bucket);
   }
 
   return nodes.map((node) => {
-    const message = messageByTarget.get(node.id);
-    if (!message) {
+    const nodeDiagnostics = diagnosticsByTarget.get(node.id);
+    if (!nodeDiagnostics || nodeDiagnostics.length === 0) {
       return node;
     }
 
-    return { ...node, data: { ...node.data, error: message } };
+    const existing = sanitizeCompositionAudioMigrationWarnings(node.data.compositionAudioMigrationWarnings) ?? [];
+    const byKey = new Map<string, CompositionAudioMigrationWarning>(
+      existing.map((warning) => [`${warning.reason}:${warning.handle}`, warning]),
+    );
+
+    for (const diagnostic of nodeDiagnostics) {
+      const reasonText = diagnostic.reason === 'overflow'
+        ? 'beyond the supported 4-track limit'
+        : 'not a valid track index';
+      byKey.set(`${diagnostic.reason}:${diagnostic.handle}`, {
+        handle: diagnostic.handle,
+        reason: diagnostic.reason,
+        message: `Removed unsupported audio connection on handle "${diagnostic.handle}" (${reasonText}).`,
+      });
+    }
+
+    const merged = sanitizeCompositionAudioMigrationWarnings(
+      Array.from(byKey.values()).slice(-COMPOSITION_AUDIO_MIGRATION_WARNING_LIMIT),
+    );
+
+    return { ...node, data: { ...node.data, compositionAudioMigrationWarnings: merged } };
   });
 }
 

@@ -202,6 +202,12 @@ export type CompositionTargetHandle =
   | 'composition-audio-3'
   | 'composition-audio-4';
 export type ListTargetHandle = `list-item-${number}`;
+export type CompositionAudioMigrationWarningReason = 'overflow' | 'malformed';
+export interface CompositionAudioMigrationWarning {
+  handle: string;
+  reason: CompositionAudioMigrationWarningReason;
+  message: string;
+}
 export type Capability = 'text' | 'image' | 'video' | 'audio';
 export type UsageTelemetrySource = 'estimate' | 'actual';
 export type UsageTelemetryConfidence = 'measured' | 'heuristic' | 'fixed' | 'unknown';
@@ -1056,6 +1062,13 @@ export interface NodeData {
   compositionAudio2Enabled?: boolean;
   compositionAudio3Enabled?: boolean;
   compositionAudio4Enabled?: boolean;
+  /**
+   * Durable, bounded record of persisted Composition audio-track handles dropped as
+   * overflow/malformed during edge normalization (FBL-019). Independent of the transient
+   * `error`/`statusMessage` runtime fields so an unrelated successful operation can never
+   * silently erase it; survives local persistence and project/workspace snapshot export.
+   */
+  compositionAudioMigrationWarnings?: CompositionAudioMigrationWarning[];
   editorVisualClips?: EditorVisualClip[];
   /** Per-visual-track role (index-aligned with the visual tracks). Lets text/comic clips live on
    *  dedicated `overlay` tracks that composite above the `standard` media tracks. */

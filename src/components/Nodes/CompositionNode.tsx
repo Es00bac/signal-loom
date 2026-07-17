@@ -21,6 +21,7 @@ import { resultValueAsMediaUrl } from '../../lib/flowResultValues';
 import {
   COMPOSITION_AUDIO_HANDLES,
   COMPOSITION_VIDEO_HANDLE,
+  formatCompositionAudioMigrationWarningMessage,
   getCompositionTrackKeys,
   getCompositionTrackSettings,
   getConnectedCompositionAudioHandles,
@@ -232,7 +233,7 @@ function CompositionNodeComponent({ id, data }: AppNodeProps) {
       outputActions={getCompatibleNodeActions('composition')}
       onRun={data.onRun}
       isRunning={data.isRunning}
-      error={data.error}
+      error={data.error ?? formatCompositionAudioMigrationWarningMessage(data.compositionAudioMigrationWarnings)}
       statusMessage={data.statusMessage}
       retryState={data.retryState}
       onToggleCollapsed={() => data.onChange?.('collapsed', !isCollapsed)}

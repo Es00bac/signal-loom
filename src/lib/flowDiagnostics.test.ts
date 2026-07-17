@@ -68,6 +68,32 @@ describe('flow diagnostics', () => {
     }));
   });
 
+  it('surfaces a persisted Composition audio migration warning as a non-blocking diagnostic (FBL-019 correction)', () => {
+    const nodes = [
+      createNode({
+        id: 'composition-1',
+        type: 'composition',
+        data: {
+          compositionAudioMigrationWarnings: [
+            {
+              handle: 'composition-audio-9',
+              reason: 'overflow',
+              message: 'Removed unsupported audio connection on handle "composition-audio-9" (beyond the supported 4-track limit).',
+            },
+          ],
+        },
+      }),
+    ];
+
+    const diagnostics = collectFlowDiagnostics(nodes, []);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      nodeId: 'composition-1',
+      severity: 'warning',
+      blocksRun: false,
+      message: expect.stringContaining('composition-audio-9'),
+    }));
+  });
+
   it('reports cardinality violations without deleting either saved edge', () => {
     const nodes = [
       createNode({ id: 'a', type: 'textNode' }),

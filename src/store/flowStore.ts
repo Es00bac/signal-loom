@@ -23,6 +23,7 @@ import {
   COMPOSITION_VIDEO_HANDLE,
   getCompositionTrackSettings,
   normalizeCompositionAudioTrackCounts,
+  sanitizeCompositionAudioMigrationWarnings,
 } from '../lib/compositionTracks';
 import {
   isCompositionVideoConnection,
@@ -921,10 +922,45 @@ function normalizeFlowEdges(
   return annotateFlowEdges(normalizedEdges, nodes);
 }
 
+/**
+ * Every graph-ingress mutation path (hydrate, edge changes, template insert, paste, incremental
+ * remote sync) must normalize edges and surface any dropped Composition audio handle on the same
+ * pass so nodes/edges/diagnostics stay atomic (FBL-019 correction) — centralized here instead of
+ * duplicating the diagnostics-capture callback at every call site.
+ */
+function normalizeFlowEdgesWithCompositionDiagnostics(
+  nodes: AppNode[],
+  edges: Edge[],
+): { nodes: AppNode[]; edges: Edge[] } {
+  let compositionDiagnostics: CompositionAudioEdgeMigrationDiagnostic[] = [];
+  const normalizedEdges = normalizeFlowEdges(nodes, edges, (diagnostics) => {
+    compositionDiagnostics = diagnostics;
+  });
+  return {
+    nodes: surfaceCompositionEdgeDiagnostics(nodes, compositionDiagnostics),
+    edges: normalizedEdges,
+  };
+}
+
+function sanitizePersistedCompositionAudioMigrationWarnings(node: AppNode): AppNode {
+  if (!isRecord(node) || !isRecord(node.data) || !('compositionAudioMigrationWarnings' in node.data)) {
+    return node;
+  }
+
+  const sanitized = sanitizeCompositionAudioMigrationWarnings(node.data.compositionAudioMigrationWarnings);
+  if (sanitized === node.data.compositionAudioMigrationWarnings) {
+    return node;
+  }
+
+  return { ...node, data: { ...node.data, compositionAudioMigrationWarnings: sanitized } };
+}
+
 export function sanitizePersistedFlowState(value: unknown): { nodes: AppNode[]; edges: Edge[]; bookmarkSidebarOpen: boolean } {
   const input = isRecord(value) ? value : {};
   return {
-    nodes: Array.isArray(input.nodes) ? (input.nodes as AppNode[]) : [],
+    nodes: Array.isArray(input.nodes)
+      ? (input.nodes as AppNode[]).map(sanitizePersistedCompositionAudioMigrationWarnings)
+      : [],
     edges: Array.isArray(input.edges) ? (input.edges as Edge[]) : [],
     bookmarkSidebarOpen: typeof input.bookmarkSidebarOpen === 'boolean' ? input.bookmarkSidebarOpen : true,
   };
@@ -3268,7 +3304,8 @@ export const useFlowStore = create<FlowState>()(
           removedEdgeIds,
         );
 
-        set({ edges: normalizeFlowEdges(get().nodes, prunedEdges) });
+        const { nodes, edges } = normalizeFlowEdgesWithCompositionDiagnostics(get().nodes, prunedEdges);
+        set({ nodes, edges });
       },
       onConnect: (connection: Connection) => {
         const normalizedImageConnection = normalizeImageConnectionTargetHandle(
@@ -3430,10 +3467,10 @@ export const useFlowStore = create<FlowState>()(
         })) as Edge[];
 
         const nextNodes = [...get().nodes, ...newNodes];
-        const nextEdges = normalizeFlowEdges(nextNodes, [...get().edges, ...newEdges]);
+        const normalized = normalizeFlowEdgesWithCompositionDiagnostics(nextNodes, [...get().edges, ...newEdges]);
         set({
-          nodes: normalizeCompositionAudioTrackCounts(nextNodes, nextEdges),
-          edges: nextEdges,
+          nodes: normalizeCompositionAudioTrackCounts(normalized.nodes, normalized.edges),
+          edges: normalized.edges,
         });
       },
       copySelection: () => {
@@ -3476,10 +3513,10 @@ export const useFlowStore = create<FlowState>()(
             : node
         ));
 
-        const pastedEdges = normalizeFlowEdges(nodesWithIdentity, pasted.nextEdges);
+        const normalized = normalizeFlowEdgesWithCompositionDiagnostics(nodesWithIdentity, pasted.nextEdges);
         set({
-          nodes: normalizeCompositionAudioTrackCounts(attachRuntimeDataToNodes(nodesWithIdentity, get), pastedEdges),
-          edges: pastedEdges,
+          nodes: normalizeCompositionAudioTrackCounts(attachRuntimeDataToNodes(normalized.nodes, get), normalized.edges),
+          edges: normalized.edges,
         });
         return true;
       },
@@ -3847,14 +3884,10 @@ export const useFlowStore = create<FlowState>()(
         const safe = sanitizePersistedFlowState(get());
         const normalizedNodes = attachHydratedRuntimeDataToNodes(safe.nodes, get);
         hydratedCanvasWorkspaceId = useFlowWorkspaceStore.getState().hydratedWorkspaceId;
-        let compositionDiagnostics: CompositionAudioEdgeMigrationDiagnostic[] = [];
-        const edges = normalizeFlowEdges(normalizedNodes, safe.edges, (diagnostics) => {
-          compositionDiagnostics = diagnostics;
-        });
-        const nodesWithDiagnostics = surfaceCompositionEdgeDiagnostics(normalizedNodes, compositionDiagnostics);
+        const normalized = normalizeFlowEdgesWithCompositionDiagnostics(normalizedNodes, safe.edges);
         set({
-          nodes: normalizeCompositionAudioTrackCounts(nodesWithDiagnostics, edges),
-          edges,
+          nodes: normalizeCompositionAudioTrackCounts(normalized.nodes, normalized.edges),
+          edges: normalized.edges,
           bookmarkSidebarOpen: safe.bookmarkSidebarOpen,
         });
       },
@@ -4011,8 +4044,11 @@ export const useFlowStore = create<FlowState>()(
           if (next.edges === state.edges) {
             return { nodes, edges: next.edges };
           }
-          const edges = normalizeFlowEdges(nodes, next.edges);
-          return { nodes: normalizeCompositionAudioTrackCounts(nodes, edges), edges };
+          const normalized = normalizeFlowEdgesWithCompositionDiagnostics(nodes, next.edges);
+          return {
+            nodes: normalizeCompositionAudioTrackCounts(normalized.nodes, normalized.edges),
+            edges: normalized.edges,
+          };
         });
         return changed;
       },

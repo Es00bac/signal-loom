@@ -70,6 +70,17 @@ export function collectFlowDiagnostics(nodes: AppNode[], edges: Edge[]): FlowDia
 
     diagnostics.push(...collectSignalDiagnostics(evaluateNodeSignal(node.id, nodes, edges)));
 
+    if (node.type === 'composition' && Array.isArray(node.data.compositionAudioMigrationWarnings)) {
+      diagnostics.push(...node.data.compositionAudioMigrationWarnings.map((warning, index) => ({
+        id: `composition-audio-migration-${node.id}-${index}-${warning.handle}`,
+        nodeId: node.id,
+        severity: 'warning' as const,
+        message: warning.message,
+        suggestedFix: 'Reconnect this audio track to a supported handle (composition-audio-1 through composition-audio-4).',
+        blocksRun: false,
+      })));
+    }
+
     if (node.type === 'functionNode' && node.data.functionNode) {
       diagnostics.push(...collectFunctionNodeWarnings(node.data.functionNode).map((message, index) => ({
         id: `function-warning-${node.id}-${index}`,

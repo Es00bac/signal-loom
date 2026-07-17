@@ -3,9 +3,11 @@ import type { AppNode } from '../types/flow';
 import {
   classifyCompositionAudioHandle,
   COMPOSITION_AUDIO_HANDLES,
+  formatCompositionAudioMigrationWarningMessage,
   getConnectedCompositionAudioHandles,
   normalizeCompositionAudioTrackCounts,
   resolveCompositionAudioTrackModel,
+  sanitizeCompositionAudioMigrationWarnings,
 } from './compositionTracks';
 
 function compositionNode(id: string, compositionAudioTrackCount?: unknown): AppNode {
@@ -43,6 +45,12 @@ describe('classifyCompositionAudioHandle', () => {
 
   it('classifies non-positive or non-integer indexes as malformed', () => {
     expect(classifyCompositionAudioHandle('composition-audio-0')).toMatchObject({ status: 'malformed', index: null });
+  });
+
+  it('classifies nonnumeric or malformed-suffix audio-shaped handles as malformed instead of returning null (FBL-019 correction)', () => {
+    expect(classifyCompositionAudioHandle('composition-audio-x')).toMatchObject({ status: 'malformed', index: null });
+    expect(classifyCompositionAudioHandle('composition-audio--1')).toMatchObject({ status: 'malformed', index: null });
+    expect(classifyCompositionAudioHandle('composition-audio-1.5')).toMatchObject({ status: 'malformed', index: null });
   });
 });
 
@@ -173,5 +181,44 @@ describe('COMPOSITION_AUDIO_HANDLES', () => {
       'composition-audio-3',
       'composition-audio-4',
     ]);
+  });
+});
+
+describe('sanitizeCompositionAudioMigrationWarnings (FBL-019 correction)', () => {
+  it('returns undefined for non-array or empty input', () => {
+    expect(sanitizeCompositionAudioMigrationWarnings(undefined)).toBeUndefined();
+    expect(sanitizeCompositionAudioMigrationWarnings('not-an-array')).toBeUndefined();
+    expect(sanitizeCompositionAudioMigrationWarnings([])).toBeUndefined();
+  });
+
+  it('drops malformed entries and keeps well-shaped ones', () => {
+    expect(sanitizeCompositionAudioMigrationWarnings([
+      { handle: 'composition-audio-9', reason: 'overflow', message: 'ok' },
+      { handle: 123, reason: 'overflow', message: 'bad handle type' },
+      { handle: 'x', reason: 'not-a-real-reason', message: 'bad reason' },
+      null,
+      'not-an-object',
+    ])).toEqual([{ handle: 'composition-audio-9', reason: 'overflow', message: 'ok' }]);
+  });
+
+  it('bounds entry count and truncates long handle/message strings', () => {
+    const many = Array.from({ length: 20 }, (_, i) => ({ handle: `h${i}`, reason: 'overflow', message: 'm' }));
+    expect(sanitizeCompositionAudioMigrationWarnings(many)?.length).toBeLessThanOrEqual(8);
+
+    const long = [{ handle: 'h'.repeat(5000), reason: 'malformed', message: 'm'.repeat(5000) }];
+    const sanitized = sanitizeCompositionAudioMigrationWarnings(long)!;
+    expect(sanitized[0].handle.length).toBeLessThan(100);
+    expect(sanitized[0].message.length).toBeLessThan(300);
+  });
+});
+
+describe('formatCompositionAudioMigrationWarningMessage (FBL-019 correction)', () => {
+  it('joins multiple warning messages and returns undefined when empty', () => {
+    expect(formatCompositionAudioMigrationWarningMessage(undefined)).toBeUndefined();
+    expect(formatCompositionAudioMigrationWarningMessage([])).toBeUndefined();
+    expect(formatCompositionAudioMigrationWarningMessage([
+      { handle: 'composition-audio-9', reason: 'overflow', message: 'A.' },
+      { handle: 'composition-audio-0', reason: 'malformed', message: 'B.' },
+    ])).toBe('A. B.');
   });
 });

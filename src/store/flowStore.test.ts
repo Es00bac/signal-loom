@@ -900,7 +900,7 @@ describe('flow store Composition audio track normalization (FBL-019)', () => {
     expect(composition.data.compositionAudioTrackCount).toBe(3);
   });
 
-  it('surfaces a visible, durable node error instead of silently dropping a persisted overflow handle on restore', () => {
+  it('surfaces a bounded, durable node warning instead of silently dropping a persisted overflow handle on restore, not data.error', () => {
     useFlowStore.setState({
       nodes: [
         createNode('audio-1', 'audioGen', { result: 'https://example.test/a1.mp3' }),
@@ -913,13 +913,15 @@ describe('flow store Composition audio track normalization (FBL-019)', () => {
 
     // The malformed/overflow edge is still not silently promoted into a real track...
     expect(useFlowStore.getState().edges.find((edge) => edge.id === 'overflow-edge')).toBeUndefined();
-    // ...but its rejection must be visible on the node instead of vanishing without a trace.
+    // ...but its rejection must be visible on the node via the durable, typed field, not data.error.
     const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
-    expect(composition.data.error).toBeTruthy();
-    expect(composition.data.error).toContain('composition-audio-9');
+    expect(composition.data.error).toBeUndefined();
+    expect(composition.data.compositionAudioMigrationWarnings).toEqual([
+      { handle: 'composition-audio-9', reason: 'overflow', message: expect.stringContaining('composition-audio-9') },
+    ]);
   });
 
-  it('surfaces a visible node error for a dropped overflow handle when restoring a project snapshot', () => {
+  it('surfaces a bounded node warning for a dropped overflow handle when restoring a project snapshot, not data.error', () => {
     useFlowStore.setState({ nodes: [], edges: [] });
 
     useFlowStore.getState().replaceFlowSnapshot({
@@ -933,8 +935,226 @@ describe('flow store Composition audio track normalization (FBL-019)', () => {
 
     expect(useFlowStore.getState().edges.find((edge) => edge.id === 'overflow-edge')).toBeUndefined();
     const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
-    expect(composition.data.error).toBeTruthy();
-    expect(composition.data.error).toContain('composition-audio-9');
+    expect(composition.data.error).toBeUndefined();
+    expect(composition.data.compositionAudioMigrationWarnings).toEqual([
+      { handle: 'composition-audio-9', reason: 'overflow', message: expect.stringContaining('composition-audio-9') },
+    ]);
+  });
+
+  it('drops every malformed/overflow persisted audio handle on hydration while keeping valid 1-4 and a legacy null handle intact (FBL-019 correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('audio-x', 'audioGen', {}),
+        createNode('audio-neg', 'audioGen', {}),
+        createNode('audio-frac', 'audioGen', {}),
+        createNode('audio-zero', 'audioGen', {}),
+        createNode('audio-overflow', 'audioGen', {}),
+        createNode('audio-valid', 'audioGen', { result: 'https://example.test/valid.mp3' }),
+        createNode('audio-legacy', 'audioGen', { result: 'https://example.test/legacy.mp3' }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [
+        { id: 'e-x', source: 'audio-x', target: 'composition-1', targetHandle: 'composition-audio-x' },
+        { id: 'e-neg', source: 'audio-neg', target: 'composition-1', targetHandle: 'composition-audio--1' },
+        { id: 'e-frac', source: 'audio-frac', target: 'composition-1', targetHandle: 'composition-audio-1.5' },
+        { id: 'e-zero', source: 'audio-zero', target: 'composition-1', targetHandle: 'composition-audio-0' },
+        { id: 'e-overflow', source: 'audio-overflow', target: 'composition-1', targetHandle: 'composition-audio-9' },
+        { id: 'e-valid', source: 'audio-valid', target: 'composition-1', targetHandle: 'composition-audio-1' },
+        { id: 'e-legacy', source: 'audio-legacy', target: 'composition-1' },
+      ],
+    });
+
+    useFlowStore.getState().hydratePersistedState();
+
+    const edges = useFlowStore.getState().edges;
+    for (const id of ['e-x', 'e-neg', 'e-frac', 'e-zero', 'e-overflow']) {
+      expect(edges.find((edge) => edge.id === id)).toBeUndefined();
+    }
+    expect(edges.find((edge) => edge.id === 'e-valid')).toMatchObject({ targetHandle: 'composition-audio-1' });
+    expect(edges.find((edge) => edge.id === 'e-legacy')).toMatchObject({ targetHandle: 'composition-audio-2' });
+
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    const warnings = composition.data.compositionAudioMigrationWarnings!;
+    expect(warnings).toHaveLength(5);
+    expect(warnings.map((warning) => warning.reason).sort()).toEqual(['malformed', 'malformed', 'malformed', 'malformed', 'overflow']);
+  });
+
+  it('rejects overflow/malformed audio handles from a functionNode audio-producing source at hydration, matching audioGen (FBL-019 correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('fn-1', 'functionNode', { result: 'https://example.test/fn.mp3' }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [{ id: 'fn-overflow', source: 'fn-1', target: 'composition-1', targetHandle: 'composition-audio-9' }],
+    });
+
+    useFlowStore.getState().hydratePersistedState();
+
+    expect(useFlowStore.getState().edges.find((edge) => edge.id === 'fn-overflow')).toBeUndefined();
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    expect(composition.data.compositionAudioMigrationWarnings).toEqual([
+      { handle: 'composition-audio-9', reason: 'overflow', message: expect.stringContaining('composition-audio-9') },
+    ]);
+  });
+
+  it('does not let an unrelated successful connection erase a persisted composition audio migration warning (FBL-019 correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('audio-1', 'audioGen', { result: 'https://example.test/a1.mp3' }),
+        createNode('audio-2', 'audioGen', {}),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [{ id: 'overflow-edge', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-9' }],
+    });
+
+    useFlowStore.getState().hydratePersistedState();
+    const warningsAfterHydrate = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')?.data.compositionAudioMigrationWarnings;
+    expect(warningsAfterHydrate).toHaveLength(1);
+
+    useFlowStore.getState().onConnect({
+      source: 'audio-2',
+      sourceHandle: null,
+      target: 'composition-1',
+      targetHandle: 'composition-audio-2',
+    });
+
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    expect(composition.data.error).toBeUndefined();
+    expect(composition.data.compositionAudioMigrationWarnings).toEqual(warningsAfterHydrate);
+  });
+
+  it('keeps a composition audio migration warning durable across local export/reopen and does not persist a general runtime error (FBL-019 correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('audio-1', 'audioGen', { result: 'https://example.test/a1.mp3' }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [{ id: 'overflow-edge', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-9' }],
+    });
+
+    useFlowStore.getState().hydratePersistedState();
+
+    const exported = JSON.parse(useFlowStore.getState().exportFlow());
+    const compositionExport = exported.nodes.find((node: AppNode) => node.id === 'composition-1');
+    expect(compositionExport.data.error).toBeUndefined();
+    expect(compositionExport.data.compositionAudioMigrationWarnings).toEqual([
+      expect.objectContaining({ handle: 'composition-audio-9', reason: 'overflow' }),
+    ]);
+    expect(compositionExport.data.compositionAudioMigrationWarnings[0].message).toContain('composition-audio-9');
+
+    useFlowStore.setState({ nodes: [], edges: [], bookmarkSidebarOpen: true });
+    useFlowStore.getState().replaceFlowSnapshot({ version: 3, nodes: exported.nodes, edges: exported.edges });
+
+    expect(useFlowStore.getState().edges.find((edge) => edge.targetHandle === 'composition-audio-9')).toBeUndefined();
+    const reopened = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    expect(reopened.data.compositionAudioMigrationWarnings).toEqual(compositionExport.data.compositionAudioMigrationWarnings);
+  });
+
+  it('keeps a composition audio migration warning durable across project/workspace snapshot export and reopen (FBL-019 correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('audio-1', 'audioGen', { result: 'https://example.test/a1.mp3' }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [{ id: 'overflow-edge', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-9' }],
+    });
+
+    useFlowStore.getState().hydratePersistedState();
+
+    const exported = useFlowStore.getState().exportProjectFlowSnapshot();
+    const compositionExport = exported.nodes.find((node) => node.id === 'composition-1')!;
+    expect(compositionExport.data.error).toBeUndefined();
+    expect(compositionExport.data.compositionAudioMigrationWarnings).toEqual([
+      expect.objectContaining({ handle: 'composition-audio-9', reason: 'overflow' }),
+    ]);
+
+    useFlowStore.setState({ nodes: [], edges: [], bookmarkSidebarOpen: true });
+    useFlowStore.getState().replaceFlowSnapshot(exported);
+
+    const reopened = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    expect(reopened.data.compositionAudioMigrationWarnings).toEqual(compositionExport.data.compositionAudioMigrationWarnings);
+  });
+
+  it('surfaces a composition audio migration warning when onEdgesChange adds a persisted overflow edge (FBL-019 correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('audio-1', 'audioGen', {}),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [],
+    });
+
+    useFlowStore.getState().onEdgesChange([
+      { type: 'add', item: { id: 'overflow-edge', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-9' } },
+    ]);
+
+    expect(useFlowStore.getState().edges.find((edge) => edge.id === 'overflow-edge')).toBeUndefined();
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    expect(composition.data.compositionAudioMigrationWarnings).toEqual([
+      expect.objectContaining({ handle: 'composition-audio-9', reason: 'overflow' }),
+    ]);
+  });
+
+  it('surfaces a composition audio migration warning when onEdgesChange replaces an edge with a malformed handle (FBL-019 correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('audio-1', 'audioGen', {}),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [{ id: 'e1', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-1' }],
+    });
+
+    useFlowStore.getState().onEdgesChange([
+      { type: 'replace', id: 'e1', item: { id: 'e1', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-x' } },
+    ]);
+
+    expect(useFlowStore.getState().edges.find((edge) => edge.id === 'e1')).toBeUndefined();
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    expect(composition.data.compositionAudioMigrationWarnings).toEqual([
+      expect.objectContaining({ handle: 'composition-audio-x', reason: 'malformed' }),
+    ]);
+  });
+
+  it('surfaces a composition audio migration warning when a template ships a malformed persisted audio handle (FBL-019 correction)', () => {
+    useFlowStore.setState({ nodes: [], edges: [] });
+
+    useFlowStore.getState().insertTemplate(
+      {
+        nodes: [
+          { id: 'audio-1', type: 'audioGen', position: { x: 0, y: 0 }, data: {} },
+          { id: 'composition-1', type: 'composition', position: { x: 0, y: 0 }, data: { compositionAudioTrackCount: 1 } },
+        ],
+        edges: [
+          { id: 'template-edge', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-x' },
+        ],
+      },
+      { x: 0, y: 0 },
+    );
+
+    const composition = useFlowStore.getState().nodes.find((node) => node.type === 'composition')!;
+    expect(useFlowStore.getState().edges.find((edge) => edge.id === 'template-edge')).toBeUndefined();
+    expect(composition.data.compositionAudioMigrationWarnings).toEqual([
+      expect.objectContaining({ handle: 'composition-audio-x', reason: 'malformed' }),
+    ]);
+  });
+
+  it('surfaces a composition audio migration warning when pasting a clipboard-copied malformed audio edge (FBL-019 correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        { ...createNode('audio-1', 'audioGen', {}), selected: true },
+        { ...createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }), selected: true },
+      ],
+      edges: [{ id: 'malformed-edge', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-x', selected: true }],
+    });
+
+    expect(useFlowStore.getState().copySelection()).toBe(true);
+    expect(useFlowStore.getState().pasteClipboard({ x: 200, y: 200 })).toBe(true);
+
+    const pastedComposition = useFlowStore.getState().nodes.find((node) => node.type === 'composition' && node.id !== 'composition-1')!;
+    expect(useFlowStore.getState().edges.some((edge) => edge.target === pastedComposition.id)).toBe(false);
+    expect(pastedComposition.data.compositionAudioMigrationWarnings).toEqual([
+      expect.objectContaining({ handle: 'composition-audio-x', reason: 'malformed' }),
+    ]);
   });
 });
 

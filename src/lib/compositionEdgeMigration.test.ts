@@ -187,6 +187,84 @@ describe('normalizeCompositionEdges', () => {
     ]);
   });
 
+  it.each(['composition-audio-x', 'composition-audio--1', 'composition-audio-1.5'])(
+    'drops a persisted nonnumeric malformed audio handle %s with a diagnostic (FBL-019 correction)',
+    (handle) => {
+      const nodes = [createNode('audio-1', 'audioGen'), createNode('composition-1', 'composition')];
+      const edges: Edge[] = [{ id: 'bad-edge', source: 'audio-1', target: 'composition-1', targetHandle: handle }];
+
+      const result = normalizeCompositionEdgesWithDiagnostics(nodes, edges);
+      expect(result.edges).toEqual([]);
+      expect(result.diagnostics).toEqual([
+        { targetNodeId: 'composition-1', edgeId: 'bad-edge', handle, reason: 'malformed' },
+      ]);
+    },
+  );
+
+  it('rejects an arbitrary non-null handle on an audio-producing source that is not shaped like a composition-audio handle (FBL-019 correction)', () => {
+    const nodes = [createNode('audio-1', 'audioGen'), createNode('composition-1', 'composition')];
+    const edges: Edge[] = [
+      { id: 'weird-handle', source: 'audio-1', target: 'composition-1', targetHandle: 'banana' },
+    ];
+
+    const result = normalizeCompositionEdgesWithDiagnostics(nodes, edges);
+    expect(result.edges).toEqual([]);
+    expect(result.diagnostics).toEqual([
+      { targetNodeId: 'composition-1', edgeId: 'weird-handle', handle: 'banana', reason: 'malformed' },
+    ]);
+  });
+
+  it('rejects an overflow audio handle from a functionNode audio-producing source the same way as audioGen (FBL-019 correction)', () => {
+    const nodes = [createNode('fn-1', 'functionNode'), createNode('composition-1', 'composition')];
+    const edges: Edge[] = [
+      { id: 'fn-overflow', source: 'fn-1', target: 'composition-1', targetHandle: 'composition-audio-9' },
+    ];
+
+    const result = normalizeCompositionEdgesWithDiagnostics(nodes, edges);
+    expect(result.edges).toEqual([]);
+    expect(result.diagnostics).toEqual([
+      { targetNodeId: 'composition-1', edgeId: 'fn-overflow', handle: 'composition-audio-9', reason: 'overflow' },
+    ]);
+  });
+
+  it('rejects a malformed audio handle from a functionNode audio-producing source (FBL-019 correction)', () => {
+    const nodes = [createNode('fn-1', 'functionNode'), createNode('composition-1', 'composition')];
+    const edges: Edge[] = [
+      { id: 'fn-malformed', source: 'fn-1', target: 'composition-1', targetHandle: 'composition-audio-x' },
+    ];
+
+    const result = normalizeCompositionEdgesWithDiagnostics(nodes, edges);
+    expect(result.edges).toEqual([]);
+    expect(result.diagnostics).toEqual([
+      { targetNodeId: 'composition-1', edgeId: 'fn-malformed', handle: 'composition-audio-x', reason: 'malformed' },
+    ]);
+  });
+
+  it('does not touch a valid functionNode audio edge, mirroring audioGen', () => {
+    const nodes = [createNode('fn-1', 'functionNode'), createNode('composition-1', 'composition')];
+    const edges: Edge[] = [
+      { id: 'fn-valid', source: 'fn-1', target: 'composition-1', targetHandle: 'composition-audio-2' },
+    ];
+
+    expect(normalizeCompositionEdges(nodes, edges)).toEqual(edges);
+  });
+
+  it('leaves a legacy null-handle edge from a functionNode source untouched instead of auto-assigning it (ambiguous with video)', () => {
+    const nodes = [createNode('fn-1', 'functionNode'), createNode('composition-1', 'composition')];
+    const edges: Edge[] = [{ id: 'fn-legacy', source: 'fn-1', target: 'composition-1' }];
+
+    expect(normalizeCompositionEdges(nodes, edges)).toEqual(edges);
+  });
+
+  it('leaves a functionNode edge explicitly targeting the video handle untouched (not misclassified as audio)', () => {
+    const nodes = [createNode('fn-1', 'functionNode'), createNode('composition-1', 'composition')];
+    const edges: Edge[] = [
+      { id: 'fn-video', source: 'fn-1', target: 'composition-1', targetHandle: 'composition-video' },
+    ];
+
+    expect(normalizeCompositionEdges(nodes, edges)).toEqual(edges);
+  });
+
   it('leaves unrelated Composition video-handle migration unchanged', () => {
     const nodes = [
       createNode('video-1', 'videoGen'),
@@ -206,8 +284,8 @@ describe('normalizeCompositionEdges', () => {
   });
 });
 
-describe('surfaceCompositionEdgeDiagnostics (FBL-019 gap 3)', () => {
-  it('sets a visible, durable error on the target node describing the dropped handle', () => {
+describe('surfaceCompositionEdgeDiagnostics (FBL-019 gap 3 + correction)', () => {
+  it('sets a bounded, typed, persisted warning on the target node describing the dropped handle, not data.error', () => {
     const nodes = [createNode('composition-1', 'composition'), createNode('other', 'composition')];
 
     const patched = surfaceCompositionEdgeDiagnostics(nodes, [
@@ -215,13 +293,17 @@ describe('surfaceCompositionEdgeDiagnostics (FBL-019 gap 3)', () => {
     ]);
 
     const patchedTarget = patched.find((node) => node.id === 'composition-1')!;
-    expect(patchedTarget.data.error).toBeTruthy();
-    expect(patchedTarget.data.error).toContain('composition-audio-9');
+    expect(patchedTarget.data.error).toBeUndefined();
+    expect(patchedTarget.data.compositionAudioMigrationWarnings).toEqual([
+      { handle: 'composition-audio-9', reason: 'overflow', message: expect.stringContaining('composition-audio-9') },
+    ]);
     // Unrelated nodes are untouched.
-    expect(patched.find((node) => node.id === 'other')?.data.error).toBeUndefined();
+    const other = patched.find((node) => node.id === 'other')!;
+    expect(other.data.error).toBeUndefined();
+    expect(other.data.compositionAudioMigrationWarnings).toBeUndefined();
   });
 
-  it('combines multiple diagnostics for the same target into one visible message', () => {
+  it('combines multiple diagnostics for the same target into one warning list', () => {
     const nodes = [createNode('composition-1', 'composition')];
 
     const patched = surfaceCompositionEdgeDiagnostics(nodes, [
@@ -229,13 +311,84 @@ describe('surfaceCompositionEdgeDiagnostics (FBL-019 gap 3)', () => {
       { targetNodeId: 'composition-1', edgeId: 'bad-2', handle: 'composition-audio-0', reason: 'malformed' },
     ]);
 
-    const message = patched.find((node) => node.id === 'composition-1')!.data.error;
-    expect(message).toContain('composition-audio-9');
-    expect(message).toContain('composition-audio-0');
+    const warnings = patched.find((node) => node.id === 'composition-1')!.data.compositionAudioMigrationWarnings!;
+    expect(warnings.map((warning) => warning.handle).sort()).toEqual(['composition-audio-0', 'composition-audio-9']);
   });
 
   it('is a no-op returning the same nodes array when there are no diagnostics', () => {
     const nodes = [createNode('composition-1', 'composition')];
     expect(surfaceCompositionEdgeDiagnostics(nodes, [])).toBe(nodes);
+  });
+
+  it('merges new diagnostics with a node\'s existing persisted warnings instead of replacing them (durability)', () => {
+    const nodes = [createNode('composition-1', 'composition')];
+    const firstPass = surfaceCompositionEdgeDiagnostics(nodes, [
+      { targetNodeId: 'composition-1', edgeId: 'e1', handle: 'composition-audio-9', reason: 'overflow' },
+    ]);
+
+    // Simulate reopening: the bad edge is already gone, so no new diagnostics fire this pass.
+    const secondPass = surfaceCompositionEdgeDiagnostics(firstPass, []);
+    expect(secondPass).toBe(firstPass);
+    expect(secondPass.find((node) => node.id === 'composition-1')!.data.compositionAudioMigrationWarnings).toHaveLength(1);
+
+    // A different bad edge shows up later — it should be appended, not replace the first.
+    const thirdPass = surfaceCompositionEdgeDiagnostics(secondPass, [
+      { targetNodeId: 'composition-1', edgeId: 'e2', handle: 'composition-audio-0', reason: 'malformed' },
+    ]);
+    const warnings = thirdPass.find((node) => node.id === 'composition-1')!.data.compositionAudioMigrationWarnings!;
+    expect(warnings).toHaveLength(2);
+    expect(warnings.map((warning) => warning.handle).sort()).toEqual(['composition-audio-0', 'composition-audio-9']);
+  });
+
+  it('does not erase an existing warning on a node when new diagnostics target a different node', () => {
+    const nodes = [createNode('composition-1', 'composition'), createNode('composition-2', 'composition')];
+    const firstPass = surfaceCompositionEdgeDiagnostics(nodes, [
+      { targetNodeId: 'composition-1', edgeId: 'e1', handle: 'composition-audio-9', reason: 'overflow' },
+    ]);
+    const secondPass = surfaceCompositionEdgeDiagnostics(firstPass, [
+      { targetNodeId: 'composition-2', edgeId: 'e2', handle: 'composition-audio-x', reason: 'malformed' },
+    ]);
+
+    const node1 = secondPass.find((node) => node.id === 'composition-1')!;
+    expect(node1.data.compositionAudioMigrationWarnings).toHaveLength(1);
+    expect(node1.data.compositionAudioMigrationWarnings![0].handle).toBe('composition-audio-9');
+  });
+
+  it('truncates a hostile long handle string instead of persisting it verbatim', () => {
+    const nodes = [createNode('composition-1', 'composition')];
+    const hostileHandle = `composition-audio-${'x'.repeat(5000)}`;
+
+    const patched = surfaceCompositionEdgeDiagnostics(nodes, [
+      { targetNodeId: 'composition-1', edgeId: 'hostile', handle: hostileHandle, reason: 'malformed' },
+    ]);
+
+    const warning = patched.find((node) => node.id === 'composition-1')!.data.compositionAudioMigrationWarnings![0];
+    expect(warning.handle.length).toBeLessThan(100);
+    expect(warning.message.length).toBeLessThan(300);
+  });
+
+  it('bounds and deduplicates warnings deterministically when many diagnostics accumulate', () => {
+    const nodes = [createNode('composition-1', 'composition')];
+    const diagnostics = Array.from({ length: 12 }, (_, index) => ({
+      targetNodeId: 'composition-1',
+      edgeId: `edge-${index}`,
+      handle: `composition-audio-${100 + index}`,
+      reason: 'overflow' as const,
+    }));
+
+    const patched = surfaceCompositionEdgeDiagnostics(nodes, diagnostics);
+    const warnings = patched.find((node) => node.id === 'composition-1')!.data.compositionAudioMigrationWarnings!;
+    expect(warnings.length).toBeLessThanOrEqual(8);
+
+    const patchedAgain = surfaceCompositionEdgeDiagnostics(nodes, diagnostics);
+    expect(patchedAgain.find((node) => node.id === 'composition-1')!.data.compositionAudioMigrationWarnings)
+      .toEqual(warnings);
+
+    const withDuplicate = surfaceCompositionEdgeDiagnostics(nodes, [
+      ...diagnostics.slice(0, 3),
+      { targetNodeId: 'composition-1', edgeId: 'dup', handle: 'composition-audio-100', reason: 'overflow' },
+    ]);
+    const dedupedWarnings = withDuplicate.find((node) => node.id === 'composition-1')!.data.compositionAudioMigrationWarnings!;
+    expect(dedupedWarnings.filter((warning) => warning.handle === 'composition-audio-100')).toHaveLength(1);
   });
 });

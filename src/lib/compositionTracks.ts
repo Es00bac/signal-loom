@@ -1,5 +1,11 @@
 import type { Edge } from '@xyflow/react';
-import type { AppNode, CompositionTargetHandle, NodeData } from '../types/flow';
+import type {
+  AppNode,
+  CompositionAudioMigrationWarning,
+  CompositionTargetHandle,
+  FlowNodeType,
+  NodeData,
+} from '../types/flow';
 
 export const COMPOSITION_VIDEO_HANDLE: CompositionTargetHandle = 'composition-video';
 export const COMPOSITION_AUDIO_HANDLES: CompositionTargetHandle[] = [
@@ -9,7 +15,15 @@ export const COMPOSITION_AUDIO_HANDLES: CompositionTargetHandle[] = [
   'composition-audio-4',
 ];
 
-const COMPOSITION_AUDIO_HANDLE_PATTERN = /^composition-audio-(\d+)$/;
+/** Node types execution/migration accept as a Composition audio track's effective source. */
+export const COMPOSITION_AUDIO_PRODUCING_SOURCE_TYPES: readonly FlowNodeType[] = ['audioGen', 'functionNode'];
+
+export function isCompositionAudioProducingSourceType(type: FlowNodeType | undefined): boolean {
+  return type != null && COMPOSITION_AUDIO_PRODUCING_SOURCE_TYPES.includes(type);
+}
+
+const COMPOSITION_AUDIO_HANDLE_PREFIX = 'composition-audio-';
+const COMPOSITION_AUDIO_HANDLE_NUMERIC_PATTERN = /^composition-audio-(\d+)$/;
 
 export type CompositionAudioHandleStatus = 'valid' | 'overflow' | 'malformed';
 
@@ -22,7 +36,8 @@ export interface CompositionAudioHandleClassification {
 
 /**
  * Classifies a handle string as a supported audio track (`valid`), an audio-track-shaped handle
- * beyond the supported 1-4 range (`overflow`), or a non-positive/non-integer index (`malformed`).
+ * beyond the supported 1-4 range (`overflow`), or otherwise malformed — a non-positive/non-integer
+ * index, or any other suffix after the `composition-audio-` prefix (e.g. `composition-audio-x`).
  * Returns `null` for anything that isn't audio-track-shaped at all (e.g. the video handle).
  */
 export function classifyCompositionAudioHandle(
@@ -32,10 +47,14 @@ export function classifyCompositionAudioHandle(
     return null;
   }
 
-  const match = COMPOSITION_AUDIO_HANDLE_PATTERN.exec(handle);
+  if (!handle.startsWith(COMPOSITION_AUDIO_HANDLE_PREFIX)) {
+    return null;
+  }
+
+  const match = COMPOSITION_AUDIO_HANDLE_NUMERIC_PATTERN.exec(handle);
 
   if (!match) {
-    return null;
+    return { handle, index: null, status: 'malformed' };
   }
 
   const index = Number(match[1]);
@@ -53,6 +72,70 @@ export function classifyCompositionAudioHandle(
 
 export function isCompositionAudioHandle(handle: string | null | undefined): handle is CompositionTargetHandle {
   return COMPOSITION_AUDIO_HANDLES.includes(handle as CompositionTargetHandle);
+}
+
+export const COMPOSITION_AUDIO_MIGRATION_WARNING_LIMIT = 8;
+export const COMPOSITION_AUDIO_MIGRATION_HANDLE_MAX_LENGTH = 64;
+export const COMPOSITION_AUDIO_MIGRATION_MESSAGE_MAX_LENGTH = 200;
+
+function truncateForDisplay(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength)}…` : value;
+}
+
+function isCompositionAudioMigrationWarningReason(value: unknown): value is CompositionAudioMigrationWarning['reason'] {
+  return value === 'overflow' || value === 'malformed';
+}
+
+/**
+ * Validates and bounds an untrusted `compositionAudioMigrationWarnings` value from persisted
+ * local storage or an imported/synced project file: drops malformed entries, truncates hostile
+ * handle/message strings, and caps the entry count so a corrupted or hand-edited project can
+ * never grow this field without bound. Returns `undefined` for anything that sanitizes to empty.
+ */
+export function sanitizeCompositionAudioMigrationWarnings(
+  value: unknown,
+): CompositionAudioMigrationWarning[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const sanitized: CompositionAudioMigrationWarning[] = [];
+
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const record = entry as Record<string, unknown>;
+
+    if (
+      typeof record.handle !== 'string'
+      || typeof record.message !== 'string'
+      || !isCompositionAudioMigrationWarningReason(record.reason)
+    ) {
+      continue;
+    }
+
+    sanitized.push({
+      handle: truncateForDisplay(record.handle, COMPOSITION_AUDIO_MIGRATION_HANDLE_MAX_LENGTH),
+      reason: record.reason,
+      message: truncateForDisplay(record.message, COMPOSITION_AUDIO_MIGRATION_MESSAGE_MAX_LENGTH),
+    });
+
+    if (sanitized.length >= COMPOSITION_AUDIO_MIGRATION_WARNING_LIMIT) {
+      break;
+    }
+  }
+
+  return sanitized.length > 0 ? sanitized : undefined;
+}
+
+/** Derives the single visible runtime message from persisted migration warnings, if any. */
+export function formatCompositionAudioMigrationWarningMessage(
+  warnings: readonly CompositionAudioMigrationWarning[] | undefined,
+): string | undefined {
+  if (!warnings || warnings.length === 0) {
+    return undefined;
+  }
+
+  return warnings.map((warning) => warning.message).join(' ');
 }
 
 export interface CompositionAudioTrackModel {

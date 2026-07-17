@@ -34,6 +34,7 @@ import { buildFlowNodeGeneratedResultPatch, collectSourceBinItemsForFlowNode } f
 import { buildMediaAssetSignaturePart } from './mediaAssetSignature';
 import { CURRENT_PROJECT_SCHEMA_VERSION, isFlowNodeType } from './projectSchema';
 import { sanitizeProjectUsageLedgerSnapshot } from './projectUsageLedger';
+import { sanitizeCompositionAudioMigrationWarnings } from './compositionTracks';
 import { sanitizeImageLayerLocks } from './imageLayerLocks';
 import {
   assertImageDocumentSnapshotDecodeBounds,
@@ -344,6 +345,12 @@ function sanitizeNodeData(value: unknown, options: { preserveRuntimeRunState?: b
 
   if (Object.hasOwn(data, 'resultOutputMetadata')) {
     data.resultOutputMetadata = sanitizeOutputMetadata(data.resultOutputMetadata);
+  }
+
+  if (Object.hasOwn(data, 'compositionAudioMigrationWarnings')) {
+    data.compositionAudioMigrationWarnings = sanitizeCompositionAudioMigrationWarnings(
+      data.compositionAudioMigrationWarnings,
+    );
   }
 
   if (data.resultType === 'boolean' && Object.hasOwn(data, 'result')) {

@@ -127,6 +127,34 @@ describe('flowStore.applyRemoteFlowGraphChange', () => {
     expect(composition?.data.compositionAudioTrackCount).toBe(3);
   });
 
+  it('rejects and diagnoses an overflow audio handle delivered via an incremental remote edge-added change (FBL-019 correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        { id: 'audio-1', type: 'audioGen', position: { x: 0, y: 0 }, data: {} } as unknown as AppNode,
+        {
+          id: 'composition-1',
+          type: 'composition',
+          position: { x: 0, y: 0 },
+          data: { compositionAudioTrackCount: 1 },
+        } as unknown as AppNode,
+      ],
+      edges: [],
+      bookmarkSidebarOpen: true,
+    });
+
+    const changed = useFlowStore.getState().applyRemoteFlowGraphChange({
+      type: 'flow-edge-added',
+      edge: { id: 'remote-overflow', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-9' } as Edge,
+    });
+
+    expect(changed).toBe(true);
+    expect(useFlowStore.getState().edges.find((edge) => edge.id === 'remote-overflow')).toBeUndefined();
+    const composition = useFlowStore.getState().nodes.find((n) => n.id === 'composition-1')!;
+    expect(composition.data.compositionAudioMigrationWarnings).toEqual([
+      expect.objectContaining({ handle: 'composition-audio-9', reason: 'overflow' }),
+    ]);
+  });
+
   it('replaces the whole graph from a snapshot and re-attaches runtime data', () => {
     useFlowStore.setState({ nodes: [node('old')], edges: [], bookmarkSidebarOpen: true });
     const snapshot: FlowProjectFlowSnapshot = {
