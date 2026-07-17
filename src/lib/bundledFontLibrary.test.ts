@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryPaperAssetRepository } from '../features/paper/assets/PaperAssetRepository';
 import {
   createBundledFontFaceReference,
@@ -10,6 +10,8 @@ import {
   bundledFontFaceCssDescriptor,
   bundledFontFaceRuntimeFamilyName,
   installBundledPaperFontFace,
+  isBundledFontLibraryAvailable,
+  loadBundledFontCatalog,
   parseBundledFontInventory,
   resolveBundledFontFaceReference,
   selectBundledFontFace,
@@ -227,5 +229,41 @@ describe('bundled font library', () => {
     expect(installed.fontAsset.sha256).toBe(face.sha256);
     expect(installed.license.textAsset).toBeDefined();
     expect(await repository.listRefs()).toHaveLength(2);
+  });
+});
+
+describe('bundled font library platform capability gate (FBL-025)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('is unavailable and loadBundledFontCatalog fails closed before any fetch without a native bridge', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{}')) as unknown as typeof fetch;
+
+    expect(isBundledFontLibraryAvailable()).toBe(false);
+    await expect(loadBundledFontCatalog(fetchImpl)).rejects.toThrow(/desktop app/i);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('is unavailable and fails closed the same way with a malformed/incomplete bridge', async () => {
+    vi.stubGlobal('window', { signalLoomNative: { getNativeState: vi.fn() } });
+    const fetchImpl = vi.fn(async () => new Response('{}')) as unknown as typeof fetch;
+
+    expect(isBundledFontLibraryAvailable()).toBe(false);
+    await expect(loadBundledFontCatalog(fetchImpl)).rejects.toThrow(/desktop app/i);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('is available and loads the catalog over signal-loom-font:// with a complete Electron bridge', async () => {
+    vi.stubGlobal('window', { signalLoomNative: { getNativeState: vi.fn(), onMenuCommand: vi.fn() } });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe('signal-loom-font://library/inventory/font-inventory.json');
+      return new Response(JSON.stringify(sampleInventory()), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    expect(isBundledFontLibraryAvailable()).toBe(true);
+    const catalog = await loadBundledFontCatalog(fetchImpl);
+    expect(catalog.familyCount).toBe(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

@@ -2,6 +2,7 @@ import { ChevronDown, ChevronUp, LoaderCircle, Search, ShieldCheck, Type } from 
 import { useEffect, useMemo, useState } from 'react';
 import {
   ensureBundledFontFaceRegistered,
+  isBundledFontLibraryAvailable,
   loadBundledFontCatalog,
   selectBundledFontFace,
   type BundledFontCatalog,
@@ -42,7 +43,8 @@ export function BundledFontBrowser({
   value,
   weight = 400,
 }: BundledFontBrowserProps) {
-  const [open, setOpen] = useState(initiallyOpen);
+  const available = isBundledFontLibraryAvailable();
+  const [open, setOpen] = useState(initiallyOpen && available);
   const [loadedCatalog, setLoadedCatalog] = useState<BundledFontCatalog>();
   const [query, setQuery] = useState('');
   const [role, setRole] = useState<'' | BundledFontRole>('');
@@ -52,7 +54,7 @@ export function BundledFontBrowser({
   const catalog = suppliedCatalog ?? loadedCatalog;
 
   useEffect(() => {
-    if (!open || catalog) return;
+    if (!available || !open || catalog) return;
     let cancelled = false;
     void loadBundledFontCatalog().then((loaded) => {
       if (!cancelled) setLoadedCatalog(loaded);
@@ -60,7 +62,7 @@ export function BundledFontBrowser({
       if (!cancelled) setError(reason instanceof Error ? reason.message : 'Bundled font library is unavailable.');
     });
     return () => { cancelled = true; };
-  }, [catalog, open]);
+  }, [available, catalog, open]);
 
   const visibleFamilies = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
@@ -82,6 +84,8 @@ export function BundledFontBrowser({
       setBusyFace(null);
     }
   };
+
+  if (!available) return null;
 
   return (
     <div className="rounded-lg border border-cyan-300/15 bg-[#0b121d]">

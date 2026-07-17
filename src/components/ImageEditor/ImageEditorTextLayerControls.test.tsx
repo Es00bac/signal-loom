@@ -87,6 +87,7 @@ describe('EditableTextLayerControls', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    delete window.signalLoomNative;
     vi.unstubAllGlobals();
   });
 
@@ -340,5 +341,23 @@ describe('EditableTextLayerControls', () => {
     });
 
     expect(onClearTextPath).toHaveBeenCalled();
+  });
+
+  it('protects the shared bundled font browser through the central platform capability gate (FBL-025)', () => {
+    delete window.signalLoomNative;
+
+    act(() => {
+      root.render(<EditableTextLayerControls layer={textLayer()} onChange={vi.fn()} />);
+    });
+
+    expect(container.textContent).not.toContain('Browse bundled fonts');
+
+    window.signalLoomNative = { getNativeState: vi.fn(), onMenuCommand: vi.fn() } as never;
+
+    act(() => {
+      root.render(<EditableTextLayerControls layer={textLayer()} onChange={vi.fn()} />);
+    });
+
+    expect(container.textContent).toContain('Browse bundled fonts');
   });
 });

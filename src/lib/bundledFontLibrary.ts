@@ -7,9 +7,26 @@ import type {
   ManagedBundledFontFaceState,
   ManagedBundledFontSerializableValue,
 } from '../types/managedFont';
+import { getSignalLoomNativeBridge } from './nativeApp';
 import { buildImportedFont } from './paperFontLibrary';
 import { normalizePaperFontFamilyId } from './paperManagedFonts';
 import { vetFontBytes } from './paperFontVetting';
+
+/**
+ * signal-loom-font:// is registered only by this app's own Electron main process
+ * (electron/main.mjs installProtocolHandlers), wired up alongside the same preload that
+ * exposes window.signalLoomNative. Web/LAN-served/Android renderers never register that
+ * scheme, so an absent or incomplete bridge means the transport cannot resolve here.
+ * Never infer support from user agent, URL, process globals, or an optimistic fetch.
+ */
+export function isBundledFontLibraryAvailable(): boolean {
+  const bridge = getSignalLoomNativeBridge();
+  return Boolean(
+    bridge
+    && typeof bridge.getNativeState === 'function'
+    && typeof bridge.onMenuCommand === 'function',
+  );
+}
 
 export type BundledFontCollection = 'base' | 'optional-chinese' | 'optional-korean';
 export type BundledFontRole = 'sans' | 'serif' | 'mono' | 'display' | 'handwriting' | 'japanese' | 'cjk';
@@ -734,6 +751,9 @@ export function ensureBundledFontFaceRegistered(
 let catalogPromise: Promise<BundledFontCatalog> | undefined;
 
 export function loadBundledFontCatalog(fetchImpl: typeof fetch = fetch): Promise<BundledFontCatalog> {
+  if (!isBundledFontLibraryAvailable()) {
+    return Promise.reject(new Error('The bundled font library requires the Sloom Studio desktop app; this renderer has no signal-loom-font transport.'));
+  }
   catalogPromise ??= fetchImpl(bundledFontResourceUrl('inventory/font-inventory.json'), {
     method: 'GET',
     credentials: 'omit',

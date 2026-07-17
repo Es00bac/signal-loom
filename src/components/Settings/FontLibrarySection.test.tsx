@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { MemoryPaperAssetRepository } from '../../features/paper/assets/PaperAssetRepository';
 import { createOpenFontCatalogClient, type OpenFontLibraryFace } from '../../lib/paperOpenFontCatalog';
@@ -17,6 +17,55 @@ function jsonResponse(value: unknown): Response {
 }
 
 describe('FontLibrarySection', () => {
+  afterEach(() => {
+    delete window.signalLoomNative;
+  });
+
+  it('omits the bundled-library card without a native bridge while keeping online/user font controls (FBL-025)', async () => {
+    delete window.signalLoomNative;
+    const fetchImpl = vi.fn(async () => new Response('not found', { status: 404 })) as unknown as typeof fetch;
+    const originalFetch = globalThis.fetch;
+    const globalFetchSpy = vi.fn(async () => new Response('not found', { status: 404 }));
+    globalThis.fetch = globalFetchSpy as unknown as typeof fetch;
+    const catalog = createOpenFontCatalogClient({ fetchImpl });
+    const repository = new MemoryPaperAssetRepository();
+    const host = document.createElement('div');
+    const root: Root = createRoot(host);
+
+    try {
+      await act(async () => {
+        root.render(<FontLibrarySection catalog={catalog} library={[]} onInstall={vi.fn()} repository={repository} />);
+      });
+
+      expect(host.textContent).not.toContain('Sloom publishing font library');
+      expect(host.textContent).not.toContain('Browse bundled fonts');
+      expect(host.querySelector('button[name="browse-open-fonts"]')).not.toBeNull();
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(globalFetchSpy).not.toHaveBeenCalled();
+
+      await act(async () => root.unmount());
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('shows the bundled-library card with a complete Electron bridge (FBL-025)', async () => {
+    window.signalLoomNative = { getNativeState: vi.fn(), onMenuCommand: vi.fn() } as never;
+    const catalog = createOpenFontCatalogClient({ fetchImpl: vi.fn(async () => new Response('not found', { status: 404 })) as unknown as typeof fetch });
+    const repository = new MemoryPaperAssetRepository();
+    const host = document.createElement('div');
+    const root: Root = createRoot(host);
+
+    await act(async () => {
+      root.render(<FontLibrarySection catalog={catalog} library={[]} onInstall={vi.fn()} repository={repository} />);
+    });
+
+    expect(host.textContent).toContain('Sloom publishing font library');
+    expect(host.textContent).toContain('Browse bundled fonts');
+
+    await act(async () => root.unmount());
+  });
+
   it('browses and downloads an open font only after explicit user actions', async () => {
     const fontBytes = readFileSync(resolve(process.cwd(), 'public/fonts/liberation/LiberationSans-Regular.ttf'));
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {

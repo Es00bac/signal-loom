@@ -32,6 +32,10 @@ const catalog: BundledFontCatalog = {
   ],
 };
 
+function stubCompleteNativeBridge(): void {
+  window.signalLoomNative = { getNativeState: vi.fn(), onMenuCommand: vi.fn() } as never;
+}
+
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.stubGlobal('crypto', webcrypto);
@@ -40,9 +44,15 @@ beforeEach(() => {
     async load() { return this; }
   });
   Object.defineProperty(document, 'fonts', { configurable: true, value: { add: vi.fn() } });
+  // The Electron main process registers signal-loom-font:// alongside this same preload
+  // bridge (electron/main.mjs installProtocolHandlers + electron/preload.cjs); these tests
+  // exercise the complete-bridge (desktop) path by default. Platform-gate tests below stub
+  // an absent/malformed bridge explicitly.
+  stubCompleteNativeBridge();
 });
 
 afterEach(() => {
+  delete window.signalLoomNative;
   vi.unstubAllGlobals();
 });
 
@@ -86,6 +96,103 @@ describe('BundledFontBrowser', () => {
     expect(host.textContent).not.toContain('Tokyo Gothic');
     expect(host.textContent).toMatch(/2 families.*2 faces/i);
     expect(host.textContent).toMatch(/Exact face.*PDF/i);
+    await act(async () => root.unmount());
+  });
+});
+
+describe('BundledFontBrowser platform capability gate (FBL-025)', () => {
+  it('renders nothing actionable and issues zero signal-loom-font fetches without a native bridge', async () => {
+    delete window.signalLoomNative;
+    const fetchSpy = vi.fn(async () => new Response(testFontBytes));
+    vi.stubGlobal('fetch', fetchSpy);
+    const host = document.createElement('div');
+    const root = createRoot(host);
+
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={catalog} initiallyOpen onSelect={vi.fn()} style="normal" value="" weight={400} />,
+    ));
+
+    expect(host.querySelector('button')).toBeNull();
+    expect(host.textContent).toBe('');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it('fails closed the same way with a malformed/incomplete bridge', async () => {
+    // Missing onMenuCommand: present but not the real preload shape.
+    window.signalLoomNative = { getNativeState: vi.fn() } as never;
+    const fetchSpy = vi.fn(async () => new Response(testFontBytes));
+    vi.stubGlobal('fetch', fetchSpy);
+    const host = document.createElement('div');
+    const root = createRoot(host);
+
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={catalog} initiallyOpen onSelect={vi.fn()} style="normal" value="" weight={400} />,
+    ));
+
+    expect(host.querySelector('button')).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it('loads the audited catalog over signal-loom-font:// with a complete Electron bridge', async () => {
+    stubCompleteNativeBridge();
+    const inventoryResponse = {
+      schemaVersion: 1,
+      catalogFamilyCount: 1,
+      faceCount: 1,
+      criticalErrorCount: 0,
+      families: [{
+        collection: 'base',
+        family: 'Liberation Sans',
+        slug: 'liberationsans',
+        source: { url: 'https://example.test', commit: '1' },
+        licenses: [{ file: 'licenses/liberationsans.txt', spdx: 'OFL-1.1', sha256: 'a'.repeat(64), byteLength: 1 }],
+        faces: [{
+          file: 'collection/base/liberationsans/Regular.ttf',
+          collectionIndex: 0,
+          sha256: testFontSha256,
+          byteLength: testFontBytes.byteLength,
+          family: 'Liberation Sans',
+          subfamily: 'Regular',
+          fullName: 'Liberation Sans Regular',
+          postscriptName: 'LiberationSans-Regular',
+          version: '1',
+          weight: 400,
+          stretchPercent: 100,
+          glyphCount: 100,
+          variable: false,
+          axes: [],
+          hasVerticalSubstitution: false,
+        }],
+        warnings: [],
+      }],
+    };
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith('signal-loom-font://library/inventory/font-inventory.json')) {
+        return new Response(JSON.stringify(inventoryResponse), { status: 200 });
+      }
+      return new Response(testFontBytes);
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const onSelect = vi.fn();
+    const host = document.createElement('div');
+    const root = createRoot(host);
+
+    await act(async () => root.render(<BundledFontBrowser onSelect={onSelect} value="" weight={400} style="normal" />));
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click());
+    await act(async () => {
+      await vi.waitFor(() => expect(host.textContent).toContain('Liberation Sans'));
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith('signal-loom-font://library/inventory/font-inventory.json', expect.any(Object));
+    const face = host.querySelector<HTMLButtonElement>('button[aria-label*="Liberation Sans"]')!;
+    await act(async () => face.click());
+    await act(async () => {
+      await vi.waitFor(() => expect(onSelect).toHaveBeenCalled());
+    });
+
     await act(async () => root.unmount());
   });
 });

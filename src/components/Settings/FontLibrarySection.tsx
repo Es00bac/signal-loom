@@ -2,6 +2,7 @@ import { Check, Download, LoaderCircle, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { paperAssetRepository } from '../../features/paper/assets/PaperAssetRuntime';
 import type { PaperAssetRepository } from '../../features/paper/assets/PaperAssetRepository';
+import { isBundledFontLibraryAvailable } from '../../lib/bundledFontLibrary';
 import {
   createOpenFontCatalogClient,
   downloadOpenFontFace,
@@ -110,17 +111,19 @@ export function FontLibrarySection({
         </button>
       </div>
 
-      <div className="space-y-2 rounded-xl border border-emerald-300/15 bg-emerald-400/[0.03] p-3">
-        <div>
-          <div className="text-xs font-semibold text-gray-100">Sloom publishing font library</div>
-          <p className="mt-1 text-[11px] leading-4 text-gray-500">116 audited families and 430 exact faces are bundled for offline design, Japanese/CJK typesetting, and commercial print.</p>
+      {isBundledFontLibraryAvailable() ? (
+        <div className="space-y-2 rounded-xl border border-emerald-300/15 bg-emerald-400/[0.03] p-3">
+          <div>
+            <div className="text-xs font-semibold text-gray-100">Sloom publishing font library</div>
+            <p className="mt-1 text-[11px] leading-4 text-gray-500">116 audited families and 430 exact faces are bundled for offline design, Japanese/CJK typesetting, and commercial print.</p>
+          </div>
+          <BundledFontBrowser
+            onSelect={(family) => setBundledPreview(family.family)}
+            value={bundledPreview}
+            weight={400}
+          />
         </div>
-        <BundledFontBrowser
-          onSelect={(family) => setBundledPreview(family.family)}
-          value={bundledPreview}
-          weight={400}
-        />
-      </div>
+      ) : null}
 
       <div className="border-t border-gray-800 pt-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500">Additional online fonts</div>
 
