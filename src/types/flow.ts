@@ -733,6 +733,21 @@ export interface UsageTelemetry {
   notes?: string[];
 }
 
+/** A named result exposed by a collapsed reusable Function.  Unlike `result`, this
+ * preserves the declared output-handle identity so two outputs cannot alias the
+ * first completed value. */
+export interface FunctionNodeOutput {
+  result: string;
+  resultType: ResultType;
+  /** Runtime-only media bytes used when the outer Function result enters Source Bin. */
+  blob?: Blob;
+  mimeType?: string;
+  extension?: string;
+  fileName?: string;
+  outputMetadata?: Record<string, unknown>;
+  additionalResults?: Array<{ result: string; mimeType?: string }>;
+}
+
 export interface VideoExportPresetPlanData {
   presetId: VideoExportPresetId;
   notes?: string;
@@ -1097,6 +1112,10 @@ export interface NodeData {
   resultExtension?: string;
   resultFileName?: string;
   resultOutputMetadata?: Record<string, unknown>;
+  /** Runtime result table keyed by the declared Function output port id. */
+  functionOutputs?: Record<string, FunctionNodeOutput>;
+  /** Stable snapshot of the inputs used to produce the current reusable result. */
+  resultInputSignature?: string;
   functionNode?: FunctionNodeConfig;
   groupNode?: GroupNodeConfig;
 }

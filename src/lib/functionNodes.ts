@@ -4,6 +4,7 @@ import type {
   DynamicValue,
   FunctionBoundaryLink,
   FunctionInputBinding,
+  FunctionNodeOutput,
   FunctionNodeConfig,
   FunctionOutputBinding,
   FunctionPortKind,
@@ -858,9 +859,84 @@ export function executeFunctionNodeConfig(config: FunctionNodeConfig, flowInputs
     };
   }
 
-  const prepared = prepareFunctionSubgraph(config, flowInputs);
-  const rawValue = resolveFunctionOutputFromGraph(config, outputBinding, prepared, flowInputs);
+  const resolvedInputs = resolveFunctionInputBindings(config, flowInputs);
+  const prepared = prepareFunctionSubgraph(config, resolvedInputs);
+  const rawValue = resolveFunctionOutputFromGraph(config, outputBinding, prepared, resolvedInputs);
   return serializeFunctionExecutionOutcome(config, outputBinding, rawValue);
+}
+
+/** Resolve every advertised Function input before the internal graph is prepared.
+ * Persisted Functions may deliberately use constants and expressions instead of an
+ * incoming canvas edge; treating those ports as empty silently changed their API. */
+export function resolveFunctionInputBindings(
+  config: FunctionNodeConfig,
+  supplied: Record<string, DynamicValue> = {},
+): Record<string, DynamicValue> {
+  const resolved: Record<string, DynamicValue> = { ...supplied };
+  const portsById = new Map(config.contract.inputPorts.map((port) => [port.id, port]));
+
+  for (const binding of config.inputBindings) {
+    const port = portsById.get(binding.targetInputPortId);
+    if (!port) continue;
+
+    let value: DynamicValue;
+    if (binding.source.mode === 'constant') {
+      value = binding.source.value;
+    } else if (binding.source.mode === 'expression') {
+      value = renderTemplate(binding.source.expression, buildFunctionTemplateContext(config, resolved));
+    } else {
+      const source = binding.source;
+      value = resolved[source.sourceHandle ?? '']
+        ?? resolved[source.sourceVariable ?? '']
+        ?? resolved[port.id]
+        ?? resolved[port.key]
+        ?? '';
+    }
+
+    if (isEmptyValue(value)) {
+      value = resolveMissingInput(binding, port);
+    }
+    value = applyFunctionTransforms(value, binding.transforms);
+    resolved[port.id] = value;
+    resolved[port.key] = value;
+  }
+
+  // Ports without an explicit binding still honour supplied values/defaults.
+  for (const port of config.contract.inputPorts) {
+    const value = resolved[port.id] ?? resolved[port.key] ?? port.defaultValue ?? '';
+    resolved[port.id] = value;
+    resolved[port.key] = value;
+  }
+  return resolved;
+}
+
+function resolveMissingInput(binding: FunctionInputBinding, port: FunctionPortKind): DynamicValue {
+  switch (binding.missing.strategy) {
+    case 'null': return null;
+    case 'error': throw new Error(`Function input ${port.label} is missing.`);
+    case 'skip': return '';
+    case 'default': return binding.missing.value ?? port.defaultValue ?? '';
+  }
+}
+
+export function getFunctionNodeOutput(node: AppNode, sourceHandle?: string | null): FunctionNodeOutput | undefined {
+  if (node.type !== 'functionNode') return undefined;
+  const outputs = node.data.functionOutputs;
+  if (sourceHandle && outputs?.[sourceHandle]) return outputs[sourceHandle];
+  const primaryBinding = node.data.functionNode?.outputBindings[0];
+  if (primaryBinding && outputs?.[primaryBinding.targetOutputPortId]) {
+    return outputs[primaryBinding.targetOutputPortId];
+  }
+  return node.data.result !== undefined && node.data.resultType !== undefined
+    ? {
+      result: node.data.result,
+      resultType: node.data.resultType,
+      mimeType: node.data.resultMimeType,
+      extension: node.data.resultExtension,
+      fileName: node.data.resultFileName,
+      outputMetadata: node.data.resultOutputMetadata,
+    }
+    : undefined;
 }
 
 export function serializeFunctionExecutionOutcome(
@@ -893,6 +969,7 @@ export function prepareFunctionSubgraph(
     return null;
   }
 
+  const resolvedInputs = resolveFunctionInputBindings(config, flowInputs);
   const nodes = config.graph.nodes.map((node) => ({
     ...node,
     data: { ...node.data },
@@ -909,7 +986,7 @@ export function prepareFunctionSubgraph(
       const portKey = typeof node.data.functionPortKey === 'string' ? node.data.functionPortKey : slugifyIdentifier(portLabel);
       const portId = `input-marker-${node.id}`;
 
-      const val = flowInputs[portId] ?? flowInputs[portKey] ?? node.data.value ?? '';
+      const val = resolvedInputs[portId] ?? resolvedInputs[portKey] ?? node.data.value ?? '';
       const valStr = typeof val === 'string' ? val : JSON.stringify(val);
       node.data.result = valStr;
       node.data.value = val;
@@ -923,7 +1000,7 @@ export function prepareFunctionSubgraph(
       return;
     }
 
-    const val = flowInputs[link.portId] ?? '';
+    const val = resolvedInputs[link.portId] ?? '';
     if (link.internalHandle) {
       targetNode.data[link.internalHandle] = val;
     } else {

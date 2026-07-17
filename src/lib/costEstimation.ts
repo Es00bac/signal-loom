@@ -1463,9 +1463,37 @@ function estimateNodeOwnTelemetry(
   }
 
   if (node.type === 'functionNode') {
-    return buildUsageTelemetry('estimate', 'fixed', {
-      costUsd: 0,
-      notes: ['Function nodes route existing graph outputs and local transforms without provider spend.'],
+    const internalNodes = node.data.functionNode?.graph.nodes;
+    if (!Array.isArray(internalNodes)) {
+      return buildUsageTelemetry('estimate', 'unknown', {
+        notes: ['Function wiring is malformed; provider cost cannot be estimated.'],
+      });
+    }
+    const internal = internalNodes
+      .filter((entry) => canRunNode(entry as AppNode))
+      .map((entry) => estimateNodeOwnTelemetry(entry as AppNode, {
+        prompt: context.prompt,
+        editImageInput: context.editImageInput,
+        refImageInput: context.refImageInput,
+        audioSourceInput: context.audioSourceInput,
+        sourceVideoInput: context.sourceVideoInput,
+        extensionVideoInput: context.extensionVideoInput,
+        config: context.config,
+      }, settings))
+      .filter((entry): entry is UsageTelemetry => Boolean(entry));
+    if (internal.length === 0) {
+      return buildUsageTelemetry('estimate', 'fixed', {
+        costUsd: 0,
+        notes: ['Function has no reachable provider-backed internal node.'],
+      });
+    }
+    const costKnown = internal.every((entry) => entry.costUsd !== undefined);
+    return buildUsageTelemetry('estimate', costKnown ? 'heuristic' : 'unknown', {
+      costUsd: costKnown ? internal.reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0) : undefined,
+      inputTokens: internal.reduce((sum, entry) => sum + (entry.inputTokens ?? 0), 0),
+      outputTokens: internal.reduce((sum, entry) => sum + (entry.outputTokens ?? 0), 0),
+      imageCount: internal.reduce((sum, entry) => sum + (entry.imageCount ?? 0), 0),
+      notes: [`Estimated ${internal.length} internal provider node${internal.length === 1 ? '' : 's'} before execution.`],
     });
   }
 

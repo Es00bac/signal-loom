@@ -232,6 +232,13 @@ export function evaluateNodeSignal(
     case 'audioGen':
       return mediaSignal(node, 'audio');
     case 'functionNode': {
+      const namedOutput = sourceHandle ? node.data.functionOutputs?.[sourceHandle] : undefined;
+      if (namedOutput) {
+        return scalarSignal(namedOutput.resultType, namedOutput.result, node.id, {
+          label: node.data.customTitle ?? node.data.functionNode?.title,
+          mimeType: namedOutput.mimeType,
+        });
+      }
       if (Array.isArray(node.data.envelopeItems) && node.data.envelopeItems.length > 0) {
         return listSignal(node.data.envelopeItems.map((item) => signalFromEnvelopeItem(item)), node.id, 'envelope');
       }

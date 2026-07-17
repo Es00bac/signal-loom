@@ -6,6 +6,8 @@ import type {
   EditorStageObject,
   AudioProvider,
   ExecutionConfig,
+  FunctionNodeConfig,
+  FunctionNodeOutput,
   ImageProvider,
   ResultType,
   RuntimeSettingsSnapshot,
@@ -148,6 +150,7 @@ import {
   createDefaultFunctionNodeConfig,
   executeFunctionNodeConfig,
   prepareFunctionSubgraph,
+  resolveFunctionInputBindings,
   resolveFunctionOutputFromGraph,
   serializeFunctionExecutionOutcome,
   type FunctionExecutionOutcome,
@@ -261,6 +264,8 @@ export interface ExecuteNodeRequestOptions {
    * is a recursion cycle and is rejected explicitly.
    */
   functionOwnerChain?: string[];
+  /** Persist successful internal provider attribution before a later step fails/cancels. */
+  onInternalUsage?: (entry: { node: AppNode; usage: UsageTelemetry }) => void;
 }
 
 interface ExecutionResult {
@@ -279,6 +284,8 @@ interface ExecutionResult {
    * every image lands in the Source Library / downstream list instead of being dropped.
    */
   additionalResults?: Array<{ result: string; mimeType?: string }>;
+  functionOutputs?: Record<string, FunctionNodeOutput>;
+  usageAttributions?: Array<{ node: AppNode; usage: UsageTelemetry }>;
 }
 
 interface GeminiVideoOperation {
@@ -508,14 +515,14 @@ async function executeFunctionNode(
   }
 
   const explicitFunctionInputs = context.functionInputs ?? {};
-  const flowInputs = {
+  const flowInputs = resolveFunctionInputBindings(config, {
     ...explicitFunctionInputs,
     prompt: context.prompt,
     'input-flow': context.prompt,
     image: context.editImageInput ?? '',
     video: context.videoInput ?? context.sourceVideoInput ?? '',
     audio: context.audioSourceInput ?? '',
-  };
+  });
 
   const outputBinding = config.outputBindings[0];
   const prepared = prepareFunctionSubgraph(config, flowInputs);
@@ -529,9 +536,16 @@ async function executeFunctionNode(
   const nodesById = new Map(prepared.nodes.map((entry) => [entry.id, entry]));
   const plan = planInternalProviderExecution(prepared, outputBinding.sourceNodeId, options.functionRuntime, nodesById);
 
+  validateFunctionExecutionPreflight(config, prepared, plan, settings);
+
   if (plan.length === 0) {
-    const rawValue = resolveFunctionOutputFromGraph(config, outputBinding, prepared, flowInputs);
-    return withoutProviderSpend(serializeFunctionExecutionOutcome(config, outputBinding, rawValue));
+    const functionOutputs: Record<string, FunctionNodeOutput> = {};
+    for (const binding of config.outputBindings) {
+      const rawValue = resolveFunctionOutputFromGraph(config, binding, prepared, flowInputs);
+      functionOutputs[binding.targetOutputPortId] = serializeFunctionExecutionOutcome(config, binding, rawValue);
+    }
+    const primary = functionOutputs[outputBinding.targetOutputPortId];
+    return { ...withoutProviderSpend(primary), functionOutputs };
   }
 
   if (!options.functionRuntime) {
@@ -560,6 +574,8 @@ async function executeFunctionNode(
   }
 
   const usages: UsageTelemetry[] = [];
+  const usageAttributions: Array<{ node: AppNode; usage: UsageTelemetry }> = [];
+  const internalResults = new Map<string, ExecutionResult>();
   for (const [index, internalId] of plan.entries()) {
     throwIfAborted(options.signal);
 
@@ -597,30 +613,115 @@ async function executeFunctionNode(
       result: execution.result,
       resultType: execution.resultType,
       resultMimeType: execution.mimeType,
+      resultExtension: execution.extension,
+      resultFileName: execution.fileName,
+      resultOutputMetadata: execution.outputMetadata,
       envelopeItems: undefined,
       statusMessage: execution.statusMessage,
       error: undefined,
     };
+    internalResults.set(internalId, execution);
 
     if (execution.usage) {
       usages.push(execution.usage);
+      const attribution = { node: { ...internalNode, data: { ...internalNode.data } }, usage: execution.usage };
+      usageAttributions.push(attribution);
+      options.onInternalUsage?.(attribution);
     }
   }
 
   throwIfAborted(options.signal);
 
-  const rawValue = resolveFunctionOutputFromGraph(config, outputBinding, prepared, flowInputs);
-  const outcome = serializeFunctionExecutionOutcome(config, outputBinding, rawValue);
-  const outputSourceNode = outputBinding.sourceNodeId ? nodesById.get(outputBinding.sourceNodeId) : undefined;
-
+  const resolvedOutputs: Record<string, FunctionNodeOutput> = {};
+  for (const binding of config.outputBindings) {
+    const rawValue = resolveFunctionOutputFromGraph(config, binding, prepared, flowInputs);
+    const outcome = serializeFunctionExecutionOutcome(config, binding, rawValue);
+    const source = binding.sourceNodeId ? nodesById.get(binding.sourceNodeId) : undefined;
+    const sourceExecution = binding.sourceNodeId ? internalResults.get(binding.sourceNodeId) : undefined;
+    resolvedOutputs[binding.targetOutputPortId] = {
+      result: outcome.result,
+      resultType: outcome.resultType,
+      blob: sourceExecution && outcome.result === sourceExecution.result ? sourceExecution.blob : undefined,
+      mimeType: source && outcome.result === source.data.result ? source.data.resultMimeType : undefined,
+      extension: source && outcome.result === source.data.result ? source.data.resultExtension : undefined,
+      fileName: source && outcome.result === source.data.result ? source.data.resultFileName : undefined,
+      outputMetadata: source && outcome.result === source.data.result ? source.data.resultOutputMetadata : undefined,
+    };
+  }
+  const outcome = resolvedOutputs[outputBinding.targetOutputPortId];
   return {
     ...outcome,
     statusMessage: `Executed ${config.title}: ${plan.length} provider node${plan.length === 1 ? '' : 's'} across ${config.graph.nodes.length} internal node${config.graph.nodes.length === 1 ? '' : 's'}`,
-    mimeType: outputSourceNode && outcome.result === outputSourceNode.data.result
-      ? outputSourceNode.data.resultMimeType
-      : undefined,
+    blob: outcome.blob,
+    functionOutputs: resolvedOutputs,
+    usageAttributions,
     usage: aggregateFunctionSubgraphUsage(usages, plan.length),
   };
+}
+
+/** Validate persisted Function wiring and credentials before the first provider call.
+ * This deliberately does not attempt to repair malformed saved graphs: a repair could
+ * silently select a different paid path. */
+function validateFunctionExecutionPreflight(
+  config: FunctionNodeConfig,
+  prepared: PreparedFunctionSubgraph,
+  plan: string[],
+  settings: RuntimeSettingsSnapshot,
+): void {
+  // A provider-free missing binding retains its documented local missing strategy.
+  // Strict persisted-wiring rejection begins exactly where a malformed graph could
+  // otherwise select or conceal paid work.
+  if (plan.length === 0) return;
+  if (!Array.isArray(config.graph.edges)) {
+    throw new NonRetryableError('Reusable function wiring is malformed (edges must be an array). No provider request was sent.');
+  }
+  const persistedIds = new Set(config.graph.nodes.map((node) => node.id));
+  for (const edge of config.graph.edges) {
+    if (!edge || typeof edge.source !== 'string' || typeof edge.target !== 'string' || !persistedIds.has(edge.source) || !persistedIds.has(edge.target)) {
+      throw new NonRetryableError('Reusable function wiring references a missing internal node. No provider request was sent.');
+    }
+  }
+  const inputIds = new Set(config.contract.inputPorts.map((port) => port.id));
+  const outputIds = new Set(config.contract.outputPorts.map((port) => port.id));
+  if (config.inputBindings.some((binding) => !inputIds.has(binding.targetInputPortId)) ||
+      config.outputBindings.some((binding) => !outputIds.has(binding.targetOutputPortId) || !persistedIds.has(binding.sourceNodeId))) {
+    throw new NonRetryableError('Reusable function bindings reference a missing port or internal source. No provider request was sent.');
+  }
+  for (const id of plan) {
+    const internal = prepared.nodes.find((node) => node.id === id);
+    if (!internal) continue;
+    assertInternalProviderCredentials(internal, settings);
+  }
+}
+
+function assertInternalProviderCredentials(node: AppNode, settings: RuntimeSettingsSnapshot): void {
+  const provider = typeof node.data.provider === 'string' ? node.data.provider : '';
+  const requires = (key: keyof RuntimeSettingsSnapshot['apiKeys'], label: string) => {
+    if (!settings.apiKeys[key]?.trim()) {
+      throw new NonRetryableError(`Reusable function cannot start: ${label} API key is missing. No provider request was sent.`);
+    }
+  };
+  if (node.type === 'textNode' || node.type === 'visionVerifyNode') {
+    if (provider === 'openai') requires('openai', 'OpenAI');
+    else if (provider === 'gemini') requires('gemini', 'Gemini');
+    else if (provider === 'huggingface') requires('huggingface', 'Hugging Face');
+  } else if (node.type === 'imageGen') {
+    if (provider === 'openai') requires('openai', 'OpenAI');
+    else if (provider === 'atlas') requires('atlas', 'Atlas');
+    else if (provider === 'gemini' && settings.providerSettings.geminiCredentialMode !== 'vertex-adc') requires('gemini', 'Gemini');
+    else if (provider === 'huggingface') requires('huggingface', 'Hugging Face');
+    else if (provider === 'bfl') requires('bfl', 'Black Forest Labs');
+    else if (provider === 'stability') requires('stability', 'Stability AI');
+    else if (provider === 'byteplus') requires('byteplus', 'BytePlus');
+  } else if (node.type === 'videoGen') {
+    if (provider === 'gemini') requires('gemini', 'Gemini');
+    else if (provider === 'atlas') requires('atlas', 'Atlas');
+    else if (provider === 'huggingface') requires('huggingface', 'Hugging Face');
+  } else if (node.type === 'audioGen') {
+    if (provider === 'gemini') requires('gemini', 'Gemini');
+    else if (provider === 'elevenlabs') requires('elevenlabs', 'ElevenLabs');
+    else if (provider === 'huggingface') requires('huggingface', 'Hugging Face');
+  }
 }
 
 function withoutProviderSpend(outcome: FunctionExecutionOutcome): ExecutionResult {

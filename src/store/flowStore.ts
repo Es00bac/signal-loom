@@ -82,6 +82,7 @@ import {
   createDefaultFunctionNodeConfig,
   createGroupNodeConfig,
   getNodeResultForFunctionRouting,
+  getFunctionNodeOutput,
   pasteFlowClipboard,
   serializeFlowSelection,
   type FlowClipboardPayload,
@@ -387,7 +388,10 @@ function createDebouncedLocalStorage(delayMs: number): StateStorage {
   };
 }
 
-export function resolveNodeOutputAsset(node: AppNode): string | undefined {
+export function resolveNodeOutputAsset(node: AppNode, sourceHandle?: string | null): string | undefined {
+  if (node.type === 'functionNode') {
+    return getFunctionNodeOutput(node, sourceHandle)?.result;
+  }
   if (
     (node.type === 'imageGen' || node.type === 'audioGen' || node.type === 'videoGen') &&
     (node.data.mediaMode ?? 'generate') === 'import'
@@ -581,6 +585,8 @@ function stripRuntimeData(node: AppNode): AppNode {
       resultExtension: undefined,
       resultFileName: undefined,
       resultOutputMetadata: undefined,
+      functionOutputs: undefined,
+      resultInputSignature: undefined,
       resultHistory: undefined,
       selectedResultId: undefined,
       usage: undefined,
@@ -1931,7 +1937,7 @@ function collectFunctionNodeInputs(
       continue;
     }
 
-    const value = resolveFunctionInputValue(sourceNode, nodesById, edges);
+    const value = resolveFunctionInputValue(sourceNode, nodesById, edges, edge.sourceHandle);
     inputs[port.id] = value;
     inputs[port.key] = value;
   }
@@ -1943,8 +1949,9 @@ function resolveFunctionInputValue(
   sourceNode: AppNode,
   nodesById: Map<string, AppNode>,
   edges: Edge[],
+  sourceHandle?: string | null,
 ): DynamicValue {
-  const asset = resolveNodeOutputAsset(sourceNode);
+  const asset = resolveNodeOutputAsset(sourceNode, sourceHandle);
   if (asset !== undefined) {
     return asset;
   }
@@ -4641,9 +4648,12 @@ export const useFlowStore = create<FlowState>()(
                   signal: abortSignal,
                   graph: { nodes: latestState.nodes, edges: latestState.edges },
                   functionRuntime: flowFunctionNodeExecutionRuntime,
+                  onInternalUsage: (entry) => recordIncurredUsage(entry.node, entry.usage),
                 });
 
-                recordIncurredUsage(latestNode, execution.usage);
+                if (!execution.usageAttributions?.length) {
+                  recordIncurredUsage(latestNode, execution.usage);
+                }
                 throwIfRunAborted();
                 if (!isRunOwnerValid(currentId)) return;
                 
@@ -4793,9 +4803,12 @@ export const useFlowStore = create<FlowState>()(
               signal: abortSignal,
               graph: { nodes: latestState.nodes, edges: latestState.edges },
               functionRuntime: flowFunctionNodeExecutionRuntime,
+              onInternalUsage: (entry) => recordIncurredUsage(entry.node, entry.usage),
             });
 
-            recordIncurredUsage(latestNode, execution.usage);
+            if (!execution.usageAttributions?.length) {
+              recordIncurredUsage(latestNode, execution.usage);
+            }
             throwIfRunAborted();
             if (!isRunOwnerValid(currentId)) return;
 
@@ -4914,6 +4927,7 @@ export const useFlowStore = create<FlowState>()(
               resultExtension: execution.extension,
               resultFileName: execution.fileName,
               resultOutputMetadata: execution.outputMetadata,
+              functionOutputs: execution.functionOutputs,
               envelopeItems: undefined,
               resultHistory: nextAttemptState.attempts,
               selectedResultId: nextAttemptState.selectedAttemptId,
