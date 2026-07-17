@@ -61,6 +61,7 @@ interface ElectronProjectFilesModule {
     fileExists: (filePath: string) => boolean,
   ) => string | undefined;
   shouldWriteProjectSaveDirectly: (filePath: string | undefined) => boolean;
+  sanitizeProjectDocument: (document: Record<string, unknown>) => Record<string, unknown>;
 }
 
 async function loadProjectFilesModule(): Promise<ElectronProjectFilesModule> {
@@ -97,6 +98,44 @@ describe('Electron project file helpers', () => {
 
     expect(projectFiles.CURRENT_PROJECT_SCHEMA_VERSION).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
     expect(projectFiles.FLOW_NODE_TYPES).toEqual(FLOW_NODE_TYPES);
+  });
+
+  it.each([
+    ['prototype keys from JSON', JSON.parse('{"safe":"value","__proto__":{"polluted":true}}')],
+    ['nested constructor key', { safe: { constructor: { polluted: true } } }],
+    ['nested prototype key', { safe: { prototype: { polluted: true } } }],
+    ['enumerable throwing getter', (() => {
+      const value: Record<string, unknown> = { safe: 'value' };
+      Object.defineProperty(value, 'boom', { enumerable: true, get: () => { throw new Error('getter must not run'); } });
+      return value;
+    })()],
+    ['throwing Proxy', new Proxy({ safe: 'value' }, { ownKeys: () => { throw new Error('proxy must not run'); } })],
+  ])('fails closed for hostile metadata (%s) without losing selected Boolean attempt siblings', async (_description, outputMetadata) => {
+    const { sanitizeProjectDocument: sanitizeElectronProjectDocument } = await loadProjectFilesModule();
+    const raw = {
+      id: 'hostile-metadata', name: 'Hostile metadata', savedAt: 1,
+      flow: { version: 3, nodes: [{
+        id: 'function', type: 'functionNode', position: { x: 0, y: 0 }, data: {
+          selectedResultId: 'false-result', resultHistory: [{
+            id: 'false-result', result: false, resultType: 'boolean', statusMessage: 'Completed', createdAt: '2026-07-16T00:00:00.000Z',
+            mimeType: 'application/json', extension: 'json', fileName: 'decision.json', outputMetadata,
+            variableName: 'is_safe', sourceBinItemId: 'boolean-source',
+          }],
+        },
+      }], edges: [] },
+    };
+    const project = sanitizeElectronProjectDocument(raw);
+    const renderer = sanitizeProjectDocument(raw);
+    expect(project.flow).toEqual(renderer.flow);
+    const data = ((project.flow as { nodes: Array<{ data: Record<string, unknown> }> }).nodes[0].data);
+
+    expect(data).toMatchObject({
+      selectedResultId: 'false-result', result: false, resultType: 'boolean', resultMimeType: 'application/json',
+      resultExtension: 'json', resultFileName: 'decision.json',
+    });
+    expect((data.resultHistory as Array<Record<string, unknown>>)[0]).toMatchObject({
+      result: false, variableName: 'is_safe', sourceBinItemId: 'boolean-source', outputMetadata: undefined,
+    });
   });
 
   it('adds the Sloom Studio extension to save-as paths without one', async () => {

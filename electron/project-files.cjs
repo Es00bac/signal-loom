@@ -717,6 +717,7 @@ const SAFE_OUTPUT_METADATA_MAX_STRING_BYTES = 16 * 1024;
 const SAFE_OUTPUT_METADATA_MAX_KEY_BYTES = 512;
 const SAFE_OUTPUT_METADATA_MAX_NODES = 1024;
 const SAFE_OUTPUT_METADATA_MAX_UTF8_BYTES = 1024 * 1024;
+const UNSAFE_METADATA_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function utf8ByteLength(value) {
   return Buffer.byteLength(value, 'utf8');
@@ -745,10 +746,17 @@ function sanitizeMetadataValue(value) {
     seen.add(candidate);
 
     if (Array.isArray(candidate)) {
-      if (candidate.length > SAFE_OUTPUT_METADATA_MAX_ARRAY_LENGTH) return undefined;
+      const lengthDescriptor = Object.getOwnPropertyDescriptor(candidate, 'length');
+      const length = lengthDescriptor?.value;
+      if (!Number.isSafeInteger(length) || length < 0 || length > SAFE_OUTPUT_METADATA_MAX_ARRAY_LENGTH) return undefined;
+      const keys = Reflect.ownKeys(candidate);
+      if (keys.length !== length + 1 || keys.some((key) => typeof key !== 'string')) return undefined;
       const items = [];
-      for (const item of candidate) {
-        const sanitized = visit(item, depth + 1);
+      for (let index = 0; index < length; index += 1) {
+        const key = String(index);
+        const descriptor = Object.getOwnPropertyDescriptor(candidate, key);
+        if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) return undefined;
+        const sanitized = visit(descriptor.value, depth + 1);
         if (sanitized === undefined) return undefined;
         items.push(sanitized);
       }
@@ -757,26 +765,29 @@ function sanitizeMetadataValue(value) {
 
     const prototype = Object.getPrototypeOf(candidate);
     if (prototype !== Object.prototype && prototype !== null) return undefined;
-    const entries = Object.entries(candidate);
-    if (entries.length > SAFE_OUTPUT_METADATA_MAX_KEYS_PER_OBJECT) return undefined;
-    keyCount += entries.length;
+    const keys = Reflect.ownKeys(candidate);
+    if (keys.length > SAFE_OUTPUT_METADATA_MAX_KEYS_PER_OBJECT || keys.some((key) => typeof key !== 'string')) return undefined;
+    keyCount += keys.length;
     if (keyCount > SAFE_OUTPUT_METADATA_MAX_KEYS) return undefined;
 
-    const result = {};
-    for (const [key, item] of entries) {
+    const result = Object.create(null);
+    for (const key of keys) {
+      if (typeof key !== 'string' || UNSAFE_METADATA_KEYS.has(key)) return undefined;
+      const descriptor = Object.getOwnPropertyDescriptor(candidate, key);
+      if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) return undefined;
       const keyBytes = utf8ByteLength(key);
       estimatedUtf8Bytes += keyBytes;
       if (keyBytes > SAFE_OUTPUT_METADATA_MAX_KEY_BYTES || estimatedUtf8Bytes > SAFE_OUTPUT_METADATA_MAX_UTF8_BYTES) return undefined;
-      const sanitized = visit(item, depth + 1);
+      const sanitized = visit(descriptor.value, depth + 1);
       if (sanitized === undefined) return undefined;
-      result[key] = sanitized;
+      Object.defineProperty(result, key, { value: sanitized, enumerable: true, configurable: true, writable: true });
     }
     return result;
   };
 
-  const sanitized = visit(value, 0);
-  if (sanitized === undefined) return undefined;
   try {
+    const sanitized = visit(value, 0);
+    if (sanitized === undefined) return undefined;
     return utf8ByteLength(JSON.stringify(sanitized)) <= SAFE_OUTPUT_METADATA_MAX_UTF8_BYTES ? sanitized : undefined;
   } catch {
     return undefined;
@@ -1205,6 +1216,7 @@ module.exports = {
   parseProjectDocumentJson,
   removeTransientRecoveredScratchAssetsFromSourceBin,
   resolveScratchAssetNativePath,
+  sanitizeProjectDocument,
   sanitizeFileName,
   shouldWriteProjectSaveDirectly,
   stripSignalLoomProjectExtension,

@@ -472,8 +472,8 @@ export function getNodeTheme(nodeType?: FlowNodeType, nodeData?: Record<string, 
   }
 
   if ((nodeType === 'logicNode' || nodeType === 'comparisonNode' || nodeType === 'visionVerifyNode') && nodeData) {
-    const result = nodeData.result as string | undefined;
-    return result === 'true' ? nodeThemes['runMeNode'] : nodeThemes['forkSwitchNode'];
+    const result = nodeData.result;
+    return result === true || result === 'true' ? nodeThemes['runMeNode'] : nodeThemes['forkSwitchNode'];
   }
 
   return nodeType ? nodeThemes[nodeType] : defaultTheme;

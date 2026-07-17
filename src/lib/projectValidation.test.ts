@@ -210,6 +210,61 @@ describe('sanitizeProjectDocument', () => {
     }
   });
 
+  it.each([
+    ['prototype keys from JSON', JSON.parse('{"safe":"value","__proto__":{"polluted":true}}')],
+    ['nested constructor key', { safe: { constructor: { polluted: true } } }],
+    ['nested prototype key', { safe: { prototype: { polluted: true } } }],
+    ['enumerable throwing getter', (() => {
+      const value: Record<string, unknown> = { safe: 'value' };
+      Object.defineProperty(value, 'boom', { enumerable: true, get: () => { throw new Error('getter must not run'); } });
+      return value;
+    })()],
+    ['throwing Proxy', new Proxy({ safe: 'value' }, { ownKeys: () => { throw new Error('proxy must not run'); } })],
+  ])('fails closed for hostile metadata (%s) without losing its selected Boolean attempt', (_description, outputMetadata) => {
+    const project = projectWith({
+      flow: {
+        version: 3,
+        nodes: [{
+          id: 'function', type: 'functionNode', position: { x: 1, y: 2 }, data: {
+            selectedResultId: 'false-result',
+            resultHistory: [{
+              id: 'false-result', result: false, resultType: 'boolean', statusMessage: 'Completed',
+              createdAt: '2026-07-16T00:00:00.000Z', mimeType: 'application/json', extension: 'json', fileName: 'decision.json',
+              outputMetadata, variableName: 'is_safe', sourceBinItemId: 'boolean-source',
+            }],
+          },
+        }],
+        edges: [],
+      },
+    });
+
+    const data = project.flow.nodes[0].data;
+    expect(data).toMatchObject({
+      selectedResultId: 'false-result', result: false, resultType: 'boolean', resultMimeType: 'application/json',
+      resultExtension: 'json', resultFileName: 'decision.json',
+    });
+    expect(data.resultHistory?.[0]).toMatchObject({
+      result: false, variableName: 'is_safe', sourceBinItemId: 'boolean-source', outputMetadata: undefined,
+    });
+  });
+
+  it('retains valid null-prototype output metadata as own data without prototype pollution', () => {
+    const metadata = Object.create(null) as Record<string, unknown>;
+    metadata.safe = { mime: 'image/png', dimensions: [1024, 768] };
+    const project = projectWith({
+      flow: { version: 3, nodes: [{
+        id: 'image', type: 'imageGen', position: { x: 1, y: 2 }, data: {
+          result: 'data:image/png;base64,SAFE', resultType: 'image', resultOutputMetadata: metadata,
+        },
+      }], edges: [] },
+    });
+
+    const restored = project.flow.nodes[0].data.resultOutputMetadata as Record<string, unknown>;
+    expect(restored).toEqual({ safe: { mime: 'image/png', dimensions: [1024, 768] } });
+    expect(Object.getPrototypeOf(restored)).toBeNull();
+    expect(Object.hasOwn(restored, '__proto__')).toBe(false);
+  });
+
   it('drops over-depth nested metadata deterministically', () => {
     let outputMetadata: unknown = 'leaf';
     for (let index = 0; index < 14; index += 1) outputMetadata = { nested: outputMetadata };

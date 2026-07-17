@@ -34,7 +34,10 @@ function getConditionNodeValue(
   visited.add(node.id);
 
   if (node.type === 'logicNode' || node.type === 'comparisonNode' || node.type === 'visionVerifyNode') {
-    const res = String(node.data.result || '').toLowerCase().trim();
+    const result = node.data.result;
+    if (result === true) return true;
+    if (result === false) return false;
+    const res = typeof result === 'string' ? result.toLowerCase().trim() : '';
     return res === 'true' || res === '1';
   }
   if (node.type === 'textNode') {

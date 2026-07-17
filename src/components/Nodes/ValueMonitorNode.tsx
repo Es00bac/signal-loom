@@ -165,7 +165,7 @@ function ValueMonitorNodeComponent({ id, data }: AppNodeProps) {
     const SUPPORTED_MONITOR_TYPES = [
       'textNode', 'logicNode', 'comparisonNode', 'visionVerifyNode',
       'listLengthNode', 'mathNode', 'conditionalNode',
-      'stringTemplateNode', 'promptsJoinerNode', 'regexReplaceNode', 'numberNode'
+      'stringTemplateNode', 'promptsJoinerNode', 'regexReplaceNode', 'numberNode', 'functionNode'
     ];
 
     if (SUPPORTED_MONITOR_TYPES.includes(sourceNode.type)) {

@@ -50,4 +50,25 @@ describe('virtual node resolution', () => {
 
     expect(resolveVirtualSourceNode(firstVirtual, nodesById, edges)).toBeUndefined();
   });
+
+  it.each([
+    [true, 'A'],
+    [false, 'B'],
+    [undefined, 'B'],
+    ['true', 'A'],
+    ['false', 'B'],
+  ])('routes typed and legacy Vision Verify decisions without collapsing %s', (result, activeHandle) => {
+    const source = createNode('source', 'textNode');
+    const decision = createNode('decision', 'visionVerifyNode');
+    decision.data = result === undefined ? {} : { result, resultType: 'boolean' };
+    const fork = createNode('fork', 'forkSwitchNode');
+    const nodesById = new Map([source, decision, fork].map((node) => [node.id, node]));
+    const edges: Edge[] = [
+      { id: 'source-fork', source: source.id, target: fork.id, targetHandle: 'input' },
+      { id: 'decision-fork', source: decision.id, target: fork.id, targetHandle: 'condition' },
+    ];
+
+    expect(resolveEffectiveSourceNode(fork, nodesById, edges, activeHandle)).toBe(source);
+    expect(resolveEffectiveSourceNode(fork, nodesById, edges, activeHandle === 'A' ? 'B' : 'A')).toBeUndefined();
+  });
 });

@@ -29,4 +29,13 @@ describe('getNodeTheme', () => {
     expect(theme.headerClassName).toContain('border-');
     expect(theme.iconClassName).toContain('text-');
   });
+
+  it.each([
+    [true, 'runMeNode'],
+    [false, 'forkSwitchNode'],
+    ['true', 'runMeNode'],
+    ['false', 'forkSwitchNode'],
+  ] as const)('themes canonical and legacy Boolean %s as %s', (result, expectedNodeType) => {
+    expect(getNodeTheme('visionVerifyNode', { result })).toEqual(getNodeTheme(expectedNodeType));
+  });
 });
