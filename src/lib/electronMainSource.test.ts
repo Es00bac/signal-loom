@@ -322,12 +322,13 @@ describe('Electron single-instance and external-open source guards', () => {
     expect(source).toMatch(/} else \{[\s\S]*gpuFallbackSentinelPath[\s\S]*registerSchemesAsPrivileged[\s\S]*app\.whenReady\(\)[\s\S]*app\.on\('window-all-closed'[\s\S]*app\.on\('will-quit'/);
   });
 
-  it('relays a bounded launch identity alongside canonical second-instance argv', () => {
+  it('keeps the proven bare Electron lock and mints bounded identity at native delivery', () => {
     expect(source).toMatch(/const externalOpenLaunchDeliveryId = createExternalOpenDeliveryId\(\);/);
-    expect(source).toMatch(/app\.requestSingleInstanceLock\(\s*buildSecondInstanceOpenPayload\(process\.argv, process\.cwd\(\), externalOpenLaunchDeliveryId\)/);
+    expect(source).toMatch(/const hasSingleInstanceLock = app\.requestSingleInstanceLock\(\);/);
     expect(source).toMatch(/app\.on\('second-instance', \(_event, argv, workingDirectory, additionalData\) => \{[\s\S]*parseSecondInstanceOpenPayload\(additionalData\)/);
+    expect(source).toMatch(/payload\?\.deliveryId \?\? createExternalOpenDeliveryId\(\)/);
     const probe = readFileSync(join(process.cwd(), 'scripts/electron-single-instance-probe.mjs'), 'utf8');
-    expect(probe).toContain('buildSecondInstanceOpenPayload');
+    expect(probe).toContain('requestSingleInstanceLock()');
     expect(probe).toContain('second-instance');
     expect(probe).toContain('Comic 週刊.sloom');
   });

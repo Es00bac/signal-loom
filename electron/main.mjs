@@ -91,7 +91,6 @@ const {
 } = automationPathModule;
 const {
   EXTERNAL_OPEN_DEEP_LINK_SCHEME,
-  buildSecondInstanceOpenPayload,
   canonicalizeExternalOpenFilePath,
   createExternalOpenDeliveryId,
   createExternalOpenQueue,
@@ -177,13 +176,11 @@ if (isolatedUserDataDir) {
 // The single-instance lock keys on the resolved userData directory, so it is acquired
 // immediately after the userData override and before ANY shared side effect (the GPU
 // fallback sentinel, privileged protocol schemes, fixed-port services, windows). A losing
-// instance quits untouched; its file arguments and bounded delivery identity reach the winner
-// through Electron's second-instance relay. The identity is replay authority only: argv remains
-// the canonical target payload, and the lifecycle probe exercises both on Electron 41.
+// instance quits untouched; its file arguments reach the winner through Electron's native argv
+// relay. Electron 41 must use the bare lock here: its additionalData path can strand the loser.
+// The winner mints a bounded delivery identity when it receives each native launch event.
 const externalOpenLaunchDeliveryId = createExternalOpenDeliveryId();
-const hasSingleInstanceLock = app.requestSingleInstanceLock(
-  buildSecondInstanceOpenPayload(process.argv, process.cwd(), externalOpenLaunchDeliveryId),
-);
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 function getRendererEntryUrl() {
   return activeRendererEntryUrl;
