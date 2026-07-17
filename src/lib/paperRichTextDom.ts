@@ -191,7 +191,7 @@ export interface RichEditorBase {
   fontSizePx: number;
   leadingPx?: number;
   fontWeight?: string;
-  fontStyle?: 'normal' | 'italic';
+  fontStyle?: PaperTypography['fontStyle'];
   fontKerning?: 'auto' | 'normal' | 'none';
   tracking?: number;
   smallCaps?: boolean;

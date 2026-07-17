@@ -3,6 +3,7 @@ import { createDefaultPaperDocument } from './paperDocument';
 
 const mocks = vi.hoisted(() => ({
   buildPage: vi.fn(),
+  exact: vi.fn(),
   createProof: vi.fn(),
   materialize: vi.fn(),
   rasterize: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock('./paperIccEngine', () => ({ createSoftProofTransform: mocks.createProof
 vi.mock('./paperManagedIccProfiles', () => ({ resolveExactPaperOutputProfile: mocks.resolveProfile }));
 vi.mock('./paperSoftProofImage', () => ({ softProofRgba: mocks.softProof }));
 vi.mock('../features/paper/assets/PaperAssetRuntime', () => ({
+  buildPaperDocumentExactManagedFontOutput: mocks.exact,
   materializePaperDocumentAssetUrls: mocks.materialize,
   paperAssetRepository: { get: vi.fn() },
 }));
@@ -34,6 +36,7 @@ describe('softProofPaperPageInBrowser', () => {
     vi.clearAllMocks();
     mocks.resolveProfile.mockResolvedValue({ status: 'ready', bytes: new Uint8Array([1, 2, 3]) });
     mocks.createProof.mockResolvedValue({ profileName: 'FOGRA39L Coated', dispose: vi.fn() });
+    mocks.exact.mockImplementation(async (document) => ({ document }));
     mocks.buildPage.mockResolvedValue({ widthPx: 1, heightPx: 1 });
     mocks.rasterize.mockResolvedValue({ rgba: new Uint8ClampedArray([20, 30, 40, 255]), widthPx: 1, heightPx: 1 });
     mocks.softProof.mockImplementation((rgba) => rgba);
@@ -61,12 +64,20 @@ describe('softProofPaperPageInBrowser', () => {
     const result = await softProofPaperPageInBrowser(document, document.pages[0].id);
 
     expect(mocks.materialize).toHaveBeenCalledWith(document, [{ id: 'source-art' }]);
+    expect(mocks.exact).toHaveBeenCalledWith(materialized);
     expect(mocks.buildPage).toHaveBeenCalledWith(
       materialized,
       document.pages[0].id,
       expect.objectContaining({ includeBleed: false, outputDpi: 150 }),
     );
     expect(result.dataUrl).toBe('data:image/png;base64,proof');
+  });
+
+  it('passes the shared exact managed-font payload into the raster proof', async () => {
+    const document = createDefaultPaperDocument();
+    mocks.exact.mockResolvedValueOnce({ document, fontFaceCss: '/* exact managed payload */ @font-face{}' });
+    await softProofPaperPageInBrowser(document, document.pages[0].id);
+    expect(mocks.buildPage.mock.calls[0]?.[2]).toMatchObject({ fontFaceCss: '/* exact managed payload */ @font-face{}' });
   });
 
   it('releases each owned proof exactly once across repeated successful previews', async () => {

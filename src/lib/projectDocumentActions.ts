@@ -44,6 +44,8 @@ import { getEditorAssets } from './editorAssets';
 import { getEditorVisualClips } from './manualEditorState';
 import { getEditorStageObjects } from './editorStageObjects';
 import { ensureBundledFontFaceReferencesRegistered } from './bundledFontLibrary';
+import { assertNoConflictingPaperManagedFontDescriptors } from './paperExactManagedFonts';
+import { classifyPaperFontPackaging } from './paperManagedFonts';
 import {
   collectImageBundledFontFaceReferences,
   collectVideoBundledFontFaceReferences,
@@ -802,6 +804,10 @@ async function prepareNormalizedProjectDocumentTransaction(
   let preparedDocument = sanitizedDocument;
   await upgradeLegacyBundledFontIssuesInProject(preparedDocument);
   assertGuardedReplacementRequestCurrent(requestId, requestGuard);
+  assertPortablePaperFontRecordsPresent(preparedDocument.paper, preparedDocument.paperAssets);
+  for (const paperDocument of collectProjectPaperDocuments(preparedDocument.paper)) {
+    assertNoConflictingPaperManagedFontDescriptors(paperDocument.importedFonts);
+  }
   let paperAssetsImport: PaperPortableAssetsImportResult | undefined;
   let paperAssetsFinalized = false;
   let paperAssetsRollbackPromise: Promise<void> | undefined;
@@ -1157,6 +1163,30 @@ export async function resetProjectDocument(
     normalized.options.transactionBookkeeping,
     'reset',
   );
+}
+
+/** A current portable section is a self-contained contract. Only genuinely older projects omit it. */
+function assertPortablePaperFontRecordsPresent(
+  paper: FlowProjectDocument['paper'],
+  section: PaperPortableAssetsSection | undefined,
+): void {
+  if (!section) return;
+  const packaged = new Set(section.assets.map((entry) => entry.ref.id));
+  const declaredMissing = new Set((section.missingAssets ?? []).map((entry) => entry.id));
+  for (const document of collectProjectPaperDocuments(paper)) {
+    for (const face of document.importedFonts ?? []) {
+      // An explicitly excluded non-portable face is retained as a truthful compatibility diagnostic;
+      // it is not a record the portable format promised to carry. Any packageable face is required.
+      if (!classifyPaperFontPackaging(face).allowed) continue;
+      if (!packaged.has(face.fontAsset.id)) {
+        const listed = declaredMissing.has(face.fontAsset.id) ? ' (it is listed as missing in the portable section)' : '';
+        throw new Error(`Portable Paper document "${document.title}" is missing required managed font ${face.postscriptName || face.id}${listed}. Re-save after restoring the exact font bytes.`);
+      }
+      if (declaredMissing.has(face.fontAsset.id)) {
+        throw new Error(`Portable Paper document "${document.title}" declares required managed font ${face.postscriptName || face.id} missing. Exact composition cannot reopen safely.`);
+      }
+    }
+  }
 }
 
 /**

@@ -151,7 +151,12 @@ export interface PaperTypography {
    * Auto-cleared whenever `color` changes by any other path (see patchPaperFrame), so it can't go stale. */
   colorSwatchId?: string;
   fontWeight: string;
-  fontStyle: 'normal' | 'italic';
+  /** CSS style is durable because oblique is an authored face descriptor, not an italic fallback. */
+  fontStyle: 'normal' | 'italic' | `oblique${string}`;
+  /** CSS width descriptor. This is part of managed-face selection and may be inherited by runs. */
+  fontStretch?: string;
+  /** Exact variable-font coordinates used for composition (for example `opsz: 12`). */
+  fontVariationSettings?: Record<string, number>;
   /** First-line indent (mm) applied to each paragraph (CSS text-indent each-line). */
   firstLineIndentMm?: number;
   /** Alignment of the last line of justified paragraphs (CSS text-align-last). */
@@ -199,13 +204,17 @@ export type PaperTextVertAlign = 'baseline' | 'super' | 'sub';
  * This is what lets a single paragraph mix styles — the thing a uniform `text` + one `typography` can't do.
  */
 export interface PaperTextRun {
+  /** Historical/imported rich-text ids are retained when supplied. */
+  id?: string;
   text: string;
   fontFamily?: string;
   fontSizePt?: number;
   /** Per-selection leading. Browsers resolve this into the line box touched by the run. */
   leadingPt?: number;
   fontWeight?: string;
-  fontStyle?: 'normal' | 'italic';
+  fontStyle?: 'normal' | 'italic' | `oblique${string}`;
+  fontStretch?: string;
+  fontVariationSettings?: Record<string, number>;
   fontKerning?: 'auto' | 'normal' | 'none';
   underline?: boolean;
   strike?: boolean;
@@ -247,6 +256,8 @@ export interface PaperParagraphBorders {
 }
 
 export interface PaperRichParagraph {
+  /** Preserved import/editor identifier; paragraph identity is never used as a font fallback. */
+  id?: string;
   runs: PaperTextRun[];
   align?: PaperTextAlign;
   alignLast?: PaperTextAlignLast;
@@ -573,6 +584,8 @@ export interface PaperManagedFontFace {
   stretchPercent: number;
   collectionIndex: number;
   variableAxes: Record<string, PaperManagedFontAxisRange>;
+  /** Default coordinates authored with this face; per-run settings may override these axes. */
+  variationSettings?: Record<string, number>;
   unicodeRanges: Array<{ start: number; end: number }>;
   format: PaperManagedFontFormat;
   /** Immutable content-addressed bytes for this exact face. */

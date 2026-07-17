@@ -476,6 +476,22 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     await expect(buildSavedPortableProject({ strict: true })).rejects.toThrow(/restrict/i);
   });
 
+  it('fails closed when a current portable section declares a packageable font record missing', async () => {
+    const portableFont = await seedRecord(fontBytes, 'font/ttf', 'portable.ttf');
+    seedPaperTabs([{
+      id: 'tab-required-font',
+      document: paperTabDocument({ title: 'Required Portable Font', imageRefs: [], fonts: [managedFace(portableFont)] }),
+    }]);
+    const saved = await buildSavedPortableProject();
+    const section = saved.paperAssets!;
+    section.assets = section.assets.filter((entry) => entry.ref.id !== portableFont.id);
+    section.missingAssets = [{ id: portableFont.id, context: 'font: PortableTestFamily-Regular' }];
+
+    await resetAllStores();
+    await wipePaperAssetRepository();
+    await expect(restoreProjectDocument(saved)).rejects.toThrow(/missing required managed font|declares required managed font missing/i);
+  });
+
   it('packages an unknown-rights face only with a byte-bound packaging attestation', async () => {
     const attestedFont = await seedRecord(fontBytes, 'font/ttf', 'attested.ttf');
     const tab = paperTabDocument({

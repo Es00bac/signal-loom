@@ -4,6 +4,7 @@ import { installBundledPaperFontFace, type BundledFontFace, type BundledFontFami
 import { usePaperStore } from '../../../store/paperStore';
 import type { PaperManagedFontStyle, PaperTypography } from '../../../types/paper';
 import { paperAssetRepository } from '../assets/PaperAssetRuntime';
+import { paperFontStyleFromCss } from '../../../lib/paperExactManagedFonts';
 
 export function PaperBundledFontPicker({
   onChange,
@@ -15,7 +16,7 @@ export function PaperBundledFontPicker({
   return (
     <PaperBundledFontFaceBrowser
       fontFamily={typography.fontFamily}
-      fontStyle={typography.fontStyle}
+      fontStyle={paperFontStyleFromCss(typography.fontStyle)}
       fontWeight={Number.parseInt(typography.fontWeight, 10) || 400}
       onSelect={(family, face) => {
         onChange({

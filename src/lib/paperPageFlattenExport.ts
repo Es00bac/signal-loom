@@ -32,6 +32,8 @@ export interface FlattenedPaperPageRasterExport extends Omit<FlattenedPaperPageS
 }
 
 export interface PaperPageFlattenExportOptions {
+  /** Exact managed-font payload created once for every browser/Electron raster output. */
+  fontFaceCss?: string;
   includeBleed?: boolean;
   outputDpi?: number;
   outputWidthPx?: number;
@@ -129,6 +131,7 @@ export function buildFlattenedPaperPageSvgExport(
   const html = exportPaperDocumentToPrintHtml(onePageDocument, {
     mediaBox: dimensions.includeBleed ? 'bleed' : 'trim',
     includeScreenGuides: false,
+    fontFaceCss: options.fontFaceCss,
   });
   const body = extractHtmlSection(html, 'body');
   const style = extractHtmlSection(html, 'style');

@@ -11,7 +11,7 @@ import type { PaperImportedFont } from '../../../types/paper';
 import { createBinaryAssetRecord } from '../../../shared/assets/contentAddressedAsset';
 import { verifyBinaryAssetRecord } from '../../../shared/assets/contentAddressedAsset';
 import { paperAssetRepository } from '../assets/PaperAssetRuntime';
-import { paperFontStyleDescriptor } from '../../../lib/paperExactManagedFonts';
+import { paperFontStyleDescriptor, paperManagedFontFamilyAlias } from '../../../lib/paperExactManagedFonts';
 
 function genFontId(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -44,7 +44,7 @@ export function useRegisterImportedFonts(importedFonts: readonly PaperImportedFo
           // Copy into a concrete ArrayBuffer so the FontFace source type is exact (not ArrayBufferLike).
           const buffer = new ArrayBuffer(record.bytes.byteLength);
           new Uint8Array(buffer).set(record.bytes);
-          const face = new FontFace(font.familyName, buffer, {
+          const face = new FontFace(paperManagedFontFamilyAlias(font), buffer, {
             weight: String(font.weight),
             style: paperFontStyleDescriptor(font.style, font.obliqueAngleDeg),
             stretch: `${font.stretchPercent}%`,

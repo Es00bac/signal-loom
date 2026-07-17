@@ -2,6 +2,7 @@ import { isBinaryAssetRef, type BinaryAssetRef } from '../shared/assets/contentA
 import type {
   PaperDocument,
   PaperFontEmbeddability,
+  PaperManagedFontAxisRange,
   PaperManagedFontFace,
   PaperManagedFontStyle,
 } from '../types/paper';
@@ -158,6 +159,7 @@ export interface PaperManagedFontFaceRequest {
   style: PaperManagedFontStyle;
   obliqueAngleDeg?: number;
   stretchPercent?: number;
+  variationSettings?: Record<string, number>;
 }
 
 export type PaperManagedFontFaceSelection =
@@ -180,6 +182,29 @@ export function canonicalPaperFontObliqueAngle(style: PaperManagedFontStyle, ang
   return Number.isFinite(resolved) ? Math.min(90, Math.max(-90, Math.round(resolved * 100) / 100)) : 14;
 }
 
+/** Stable, bounded OpenType variation coordinates. Unknown axes and non-finite values never reach output. */
+export function normalizePaperFontVariationSettings(
+  value: Record<string, number> | undefined,
+  axes: Record<string, PaperManagedFontAxisRange> | undefined,
+): Record<string, number> | undefined {
+  if (!value) return undefined;
+  const output: Record<string, number> = {};
+  for (const [tag, coordinate] of Object.entries(value)) {
+    const axis = axes?.[tag];
+    if (!/^[ -~]{4}$/.test(tag) || !axis || !Number.isFinite(coordinate)
+      || coordinate < axis.min || coordinate > axis.max) return undefined;
+    output[tag] = Math.round(coordinate * 1000) / 1000;
+  }
+  return Object.keys(output).length ? Object.fromEntries(Object.entries(output).sort(([left], [right]) => left.localeCompare(right))) : undefined;
+}
+
+export function paperFontVariationSettingsEqual(
+  left: Record<string, number> | undefined,
+  right: Record<string, number> | undefined,
+): boolean {
+  return JSON.stringify(left ?? {}) === JSON.stringify(right ?? {});
+}
+
 /**
  * Finds only an exact family/weight/style/stretch face. Production never synthesizes bold, italic, or a
  * nearby weight from a different file because those substitutions change metrics and glyph outlines.
@@ -196,12 +221,19 @@ export function selectManagedFontFace(
   const familyFaces = faces.filter((face) => normalizePaperFontFamilyId(face.familyId) === familyId);
   if (familyFaces.length === 0) return { status: 'missing-family', familyId };
 
-  const matches = familyFaces.filter((candidate) =>
+  const matches = familyFaces.filter((candidate) => {
+    const requestedVariations = normalizePaperFontVariationSettings(
+      request.variationSettings ?? candidate.variationSettings,
+      candidate.variableAxes,
+    );
+    return (
     candidate.weight === requestedWeight
     && candidate.style === requestedStyle
     && canonicalPaperFontObliqueAngle(candidate.style, candidate.obliqueAngleDeg) === requestedObliqueAngleDeg
-    && candidate.stretchPercent === requestedStretchPercent,
-  );
+    && candidate.stretchPercent === requestedStretchPercent
+    && (!(request.variationSettings ?? candidate.variationSettings) || requestedVariations !== undefined)
+    );
+  });
   if (matches.length === 0) {
     return {
       status: 'missing-face', familyId, requestedWeight, requestedStyle,

@@ -276,8 +276,10 @@ describe('FBL-011 fresh-process bundled face persistence', () => {
       family: freshRuntime.bundledFontFaceRuntimeFamilyName(managedFace),
       descriptors: { style: 'normal', weight: '400', stretch: '100%' },
     });
-    expect(fontFaceRecords[1]).toMatchObject({ family: 'Liberation Sans' });
-    expect(addedFaces).toHaveLength(2);
+    // Do not register a human-family duplicate: it can paint as a silent fallback while the
+    // exact alias is pending or has failed. Image/Video use the identity-bearing alias only.
+    expect(fontFaceRecords).toHaveLength(1);
+    expect(addedFaces).toHaveLength(1);
 
     const freshImageText = await import('../components/ImageEditor/ImageTextLayer');
     const runtimeFamily = freshRuntime.bundledFontFaceRuntimeFamilyName(managedFace);

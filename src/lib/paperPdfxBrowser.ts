@@ -19,6 +19,7 @@ import type { PaperDocument } from '../types/paper';
 import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import {
   materializePaperDocumentAssetUrls,
+  buildPaperDocumentExactManagedFontOutput,
   paperAssetRepository,
 } from '../features/paper/assets/PaperAssetRuntime';
 import { useSourceBinStore } from '../store/sourceBinStore';
@@ -44,10 +45,12 @@ export async function exportPaperDocumentToPdfxInBrowser(
     const detail = outputProfile.status === 'invalid' ? `: ${outputProfile.reason}` : '';
     throw new Error(`The selected managed CMYK output profile is unavailable${detail}`);
   }
-  const exportDocument = await materializePaperDocumentAssetUrls(
+  const materializedDocument = await materializePaperDocumentAssetUrls(
     document,
     useSourceBinStore.getState().getAllItems(),
   );
+  const exact = await buildPaperDocumentExactManagedFontOutput(materializedDocument);
+  const exportDocument = exact.document;
   return exportPaperDocumentToPdfx(exportDocument, { ...options, outputProfile }, {
     createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
     loadManagedFontBytes: loadManagedPaperFont,
@@ -62,6 +65,7 @@ export async function exportPaperDocumentToPdfxInBrowser(
         renderFrameIds: rasterOptions?.renderFrameIds,
         includePageBackground: rasterOptions?.includePageBackground,
         resolveImageSrc: imageSourceToDataUrl,
+        fontFaceCss: exact.fontFaceCss,
       });
       const raster = await rasterizeFlattenedPaperPageToRgba(svgExport);
       return { rgba: raster.rgba, widthPx: raster.widthPx, heightPx: raster.heightPx };

@@ -50,6 +50,38 @@ function buildPaperPdfRenderReadyScript(options = {}) {
         await waitBounded(document.fonts.ready, ${fontTimeoutMs});
       }
 
+      // The renderer puts the exact managed-face manifest beside its @font-face payload. Waiting
+      // for document.fonts alone is insufficient: Chromium can resolve a human-family fallback and
+      // still report ready. Native PDF must make the same requested-alias decision as browser print.
+      const manifestMatch = document.documentElement?.innerHTML?.match(/signal-loom-managed-font-manifest:([A-Za-z0-9_-]+)/);
+      if (manifestMatch) {
+        if (!document.fonts?.load || !document.fonts?.check) {
+          throw new Error('Browser does not expose requested-face verification.');
+        }
+        let manifest;
+        try {
+          const encoded = manifestMatch[1].replace(/-/g, '+').replace(/_/g, '/');
+          manifest = JSON.parse(atob(encoded));
+        } catch {
+          throw new Error('Managed font payload has no readable exact identity manifest.');
+        }
+        if (manifest?.version !== 1 || !Array.isArray(manifest.faces)) {
+          throw new Error('Managed font payload has an invalid exact identity manifest.');
+        }
+        for (const face of manifest.faces) {
+          const style = face.style === 'oblique' ? 'oblique ' + (face.obliqueAngleDeg ?? 14) + 'deg' : face.style;
+          const descriptor = style + ' ' + face.weight + ' ' + face.stretchPercent + '% 16px "' + face.familyAlias + '"';
+          const loaded = await Promise.race([
+            Promise.resolve(document.fonts.load(descriptor, 'WMWMWMiiiii012345')),
+            sleep(${fontTimeoutMs}).then(() => { throw new Error('Managed face ' + face.identity + ' timed out.'); }),
+          ]);
+          const exact = Array.from(loaded ?? []).some((candidate) => candidate.family === face.familyAlias && candidate.status === 'loaded');
+          if (!exact || !document.fonts.check(descriptor, 'WMWMWMiiiii012345')) {
+            throw new Error('Managed face did not load with its requested identity: ' + face.identity + '.');
+          }
+        }
+      }
+
       await Promise.all(Array.from(document.images).map((image) => {
         if (image.complete) return undefined;
         return waitBounded(new Promise((resolve) => {

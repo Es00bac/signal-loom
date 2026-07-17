@@ -14,6 +14,8 @@ import { formatFontFamily } from '../../lib/formatFontFamily';
 import {
   bundledFontFaceIdentitySignature,
   bundledFontFaceRuntimeFamilyName,
+  bundledFontFaceStyleDescriptor,
+  bundledFontFaceVariationSettingsCss,
   normalizeBundledFontFaceState,
   normalizeBundledFontFaceStateForTypography,
 } from '../../lib/bundledFontLibrary';
@@ -739,7 +741,8 @@ export function imageTextCanvasFont(style: Pick<ImageTextLayerStyle, 'fontFamily
     : style.managedFaceIssue
       ? 'Sloom Managed Face Blocked'
       : style.fontFamily;
-  return `${style.fontStyle} ${caps}${style.fontWeight} ${style.fontSize}px ${formatFontFamily(family)}`;
+  const fontStyle = style.managedFace ? bundledFontFaceStyleDescriptor(style.managedFace) : style.fontStyle;
+  return `${fontStyle} ${caps}${style.fontWeight} ${style.fontSize}px ${formatFontFamily(family)}`;
 }
 
 
@@ -2653,10 +2656,12 @@ function applyCanvasTypographySettings(
   const typographyContext = ctx as unknown as {
     fontKerning?: ImageTextLayerStyle['fontKerning'];
     fontStretch?: string;
+    fontVariationSettings?: string;
     fontVariantCaps?: ImageTextLayerStyle['fontVariantCaps'];
   };
   typographyContext.fontKerning = style.fontKerning;
   if (style.managedFace) typographyContext.fontStretch = `${style.managedFace.stretchPercent}%`;
+  if (style.managedFace) typographyContext.fontVariationSettings = bundledFontFaceVariationSettingsCss(style.managedFace);
   // Canvas font shorthand cannot express `all-small-caps`, so it is applied through this context
   // property after the font shorthand is set. The retained text content is left unchanged.
   typographyContext.fontVariantCaps = style.fontVariantCaps;

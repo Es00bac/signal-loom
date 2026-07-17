@@ -1,5 +1,6 @@
 import { exportPaperDocumentToPrintHtml, updatePaperDocumentSetup } from '../../lib/paperDocument';
 import {
+  buildPaperPdfExportRequest,
   buildPaperRasterPdfExportRequest,
   safePaperPdfFileName,
   type PaperPdfExportRequest,
@@ -900,7 +901,15 @@ export async function exportPaperPdfDocument(
       filePath = destination.filePath;
       setStatus(`Preparing PDF export for ${filePath}...`);
     }
-    const pdfRequest = request ?? await buildDefaultRasterPaperPdfRequest(document, setStatus, options);
+    // Every native route resolves and validates the exact payload before it hands HTML to Electron.
+    // A caller-provided vector request is rebuilt from the alias-bearing document; raster requests
+    // have already passed the same payload through the shared flatten path below.
+    const exact = await buildPaperDocumentExactManagedFontOutput(document);
+    const pdfRequest = request
+      ? (request.mode === 'pages'
+        ? { ...buildPaperPdfExportRequest(exact.document), html: exportPaperDocumentToPrintHtml(exact.document, { mediaBox: 'trim', fontFaceCss: exact.fontFaceCss }) }
+        : request)
+      : await buildDefaultRasterPaperPdfRequest(document, setStatus, options);
     if (request) {
       setStatus('Preparing print-quality PDF...');
     }
@@ -1178,15 +1187,17 @@ async function buildDefaultRasterPaperPdfRequest(
   setStatus: (status: string) => void,
   options: PaperPdfDocumentExportOptions,
 ): Promise<PaperPdfExportRequest> {
+  const exact = await buildPaperDocumentExactManagedFontOutput(document);
   const rasterSettings = buildPaperPdfRasterExportSettings(document, options);
   const pageCount = document.pages.length;
   setStatus(`Rasterizing ${pageCount} Paper page${pageCount === 1 ? '' : 's'} as ${rasterSettings.label} PDF (${rasterSettings.outputDpi} DPI)...`);
-  const pages = await buildPaperWebcomicImageDataPages(document, {
+  const pages = await buildPaperWebcomicImageDataPages(exact.document, {
     format: rasterSettings.format,
     quality: rasterSettings.quality,
     includeBleed: false,
     outputDpi: rasterSettings.outputDpi,
     backdropOnly: true,
+    fontFaceCss: exact.fontFaceCss,
     onPageRasterized: ({ pageNumber, pageIndex, pageCount }) => {
       setStatus(`Rasterized page ${pageNumber} (${pageIndex + 1}/${pageCount}) for PDF export...`);
     },

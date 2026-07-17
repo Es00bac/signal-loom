@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { PaperFrame, PaperManagedFontFace } from '../types/paper';
 import {
   aliasPaperDocumentManagedFontFamilies,
+  assertNoConflictingPaperManagedFontDescriptors,
+  buildExactPaperManagedFontCss,
   collectExactPaperManagedFaces,
   paperFontStyleDescriptor,
+  readPaperManagedFontManifest,
   verifyExactPaperManagedFontReadiness,
 } from './paperExactManagedFonts';
 import { createDefaultPaperDocument } from './paperDocument';
@@ -36,5 +39,22 @@ describe('exact managed Paper font identities', () => {
       check: () => true,
     };
     await expect(verifyExactPaperManagedFontReadiness({ fonts } as unknown as Document, '/* signal-loom-managed-font-manifest:eyJ2ZXJzaW9uIjoxLCJmYWNlcyI6W3siaWRlbnRpdHkiOiJmIiwgImZhbWlseUFsaWFzIjoic2xvb20tbWFuYWdlZC1mIiwid2VpZ2h0Ijo0MDAsInN0eWxlIjoibm9ybWFsIiwic3RyZXRjaFBlcmNlbnQiOjEwMH1dfQ */ @font-face{}')).rejects.toThrow(/requested identity/i);
+  });
+
+  it('keeps a collection member and optical-size coordinate in the exact browser payload', async () => {
+    const variableCollection = face({
+      id: 'collection-opsz', format: 'collection', collectionIndex: 1,
+      variableAxes: { opsz: { min: 8, default: 12, max: 72 } },
+      variationSettings: { opsz: 18 },
+    });
+    const css = await buildExactPaperManagedFontCss([variableCollection], async () => Uint8Array.from([1, 2, 3]));
+    expect(css).toContain('format("collection")');
+    expect(readPaperManagedFontManifest(css)?.faces[0]).toMatchObject({ collectionIndex: 1, variationSettings: { opsz: 18 } });
+  });
+
+  it('rejects conflicting descriptor bytes before a registration order can choose one', () => {
+    expect(() => assertNoConflictingPaperManagedFontDescriptors([
+      face(), face({ id: 'same-descriptor-other-bytes', fontAsset: { ...asset, sha256: 'b'.repeat(64), id: `sha256:${'b'.repeat(64)}` } }),
+    ])).toThrow(/descriptor collision/i);
   });
 });

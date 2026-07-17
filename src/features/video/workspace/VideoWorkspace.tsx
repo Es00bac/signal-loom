@@ -167,6 +167,8 @@ import { AdvancedColorPicker } from '../../../components/Common/AdvancedColorPic
 import { BundledFontBrowser } from '../../../components/Common/BundledFontBrowser';
 import {
   bundledFontFaceRuntimeFamilyName,
+  bundledFontFaceStyleDescriptor,
+  bundledFontFaceVariationSettingsCss,
   createBundledFontFaceReference,
 } from '../../../lib/bundledFontLibrary';
 import { collectVideoBundledFontDependencies } from '../../../lib/managedBundledFonts';
@@ -8065,6 +8067,8 @@ function ProgramStageMedia({
                 : textFontFamily),
               fontSize: `${safeFontSizePx}px`,
               fontStretch: typography?.managedFace ? `${typography.managedFace.stretchPercent}%` : undefined,
+              fontStyle: typography?.managedFace ? bundledFontFaceStyleDescriptor(typography.managedFace) : undefined,
+              fontVariationSettings: typography?.managedFace ? bundledFontFaceVariationSettingsCss(typography.managedFace) : undefined,
               lineHeight: TEXT_LINE_HEIGHT,
               ...getTextTypographyStyle(typography, text?.effect ?? clip.clip.textEffect ?? textDefaults?.textEffect ?? 'none'),
             }}

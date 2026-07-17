@@ -15,6 +15,7 @@ import { softProofRgba } from './paperSoftProofImage';
 import type { PaperDocument } from '../types/paper';
 import {
   materializePaperDocumentAssetUrls,
+  buildPaperDocumentExactManagedFontOutput,
   paperAssetRepository,
 } from '../features/paper/assets/PaperAssetRuntime';
 import { useSourceBinStore } from '../store/sourceBinStore';
@@ -52,14 +53,16 @@ export async function softProofPaperPageInBrowser(
   const { previewDpi, ...proofOptions } = options;
   const proof = await createSoftProofTransform(iccBytes, proofOptions);
   return usingOwnedPaperResource(proof, async () => {
-    const proofDocument = await materializePaperDocumentAssetUrls(
+    const materializedDocument = await materializePaperDocumentAssetUrls(
       document,
       useSourceBinStore.getState().getAllItems(),
     );
-    const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(proofDocument, pageId, {
+    const exact = await buildPaperDocumentExactManagedFontOutput(materializedDocument);
+    const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(exact.document, pageId, {
       includeBleed: false,
       outputDpi: previewDpi ?? 150,
       resolveImageSrc: imageSourceToDataUrl,
+      fontFaceCss: exact.fontFaceCss,
     });
     const raster = await rasterizeFlattenedPaperPageToRgba(svgExport);
     const proofed = softProofRgba(raster.rgba, proof);

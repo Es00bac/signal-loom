@@ -8,6 +8,7 @@ import { resolvePaperFrameAssetUrl } from '../../../lib/paperAssetReferences';
 import type { BinaryAssetRef } from '../../../shared/assets/contentAddressedAsset';
 import {
   aliasPaperDocumentManagedFontFamilies,
+  assertNoConflictingPaperManagedFontDescriptors,
   buildExactPaperManagedFontCss,
   collectExactPaperManagedFaces,
 } from '../../../lib/paperExactManagedFonts';
@@ -22,6 +23,7 @@ export const paperAssetUrlRegistry = new PaperAssetUrlRegistry(paperAssetReposit
 
 /** Exact isolated-document payload for browser print, SVG flattening, soft proof and Electron PDF. */
 export async function buildPaperDocumentExactManagedFontOutput(document: PaperDocument): Promise<{ document: PaperDocument; fontFaceCss?: string }> {
+  assertNoConflictingPaperManagedFontDescriptors(document.importedFonts);
   const frames = [...document.pages, ...document.parentPages].flatMap((page) => page.frames);
   const faces = collectExactPaperManagedFaces(frames, document.importedFonts);
   if (faces.length === 0) return { document };

@@ -65,6 +65,7 @@ function composeFixture(
   runs: PaperTextRun[],
   typographyPatch: Partial<PaperTypography> = {},
   onShapeFeatures?: (features: Record<string, boolean | number>) => void,
+  onShapeRequest?: (request: Parameters<PaperTextShaper['shape']>[0]) => void,
 ) {
   let document = createDefaultPaperDocument({ title: 'Composition fixture' });
   const pageId = document.pages[0].id;
@@ -76,7 +77,7 @@ function composeFixture(
     widthMm: 100,
     heightMm: 30,
   });
-  const regular = face(400);
+  const regular = face(400, { variableAxes: { opsz: { min: 8, default: 12, max: 72 } } });
   const bold = face(700);
   document = {
     ...added.document,
@@ -97,10 +98,11 @@ function composeFixture(
   };
   const resolver: PaperManagedFontResolver = async () => {
     const shaper = fixtureShaper();
-    return onShapeFeatures ? {
+    return onShapeFeatures || onShapeRequest ? {
       ...shaper,
       shape: (request) => {
-        onShapeFeatures(request.features);
+        onShapeFeatures?.(request.features);
+        onShapeRequest?.(request);
         return shaper.shape(request);
       },
     } : shaper;
@@ -148,6 +150,13 @@ describe('composePaperTextFrame', () => {
 
     expect(shapedFeatures.length).toBeGreaterThan(0);
     expect(shapedFeatures.every((features) => features.kern === false)).toBe(true);
+  });
+
+  it('passes retained optical-size coordinates through deterministic HarfBuzz measurement and shaping', async () => {
+    const requests: Array<Parameters<PaperTextShaper['shape']>[0]> = [];
+    await composeFixture([{ text: 'Optical proof', fontVariationSettings: { opsz: 18 } }], {}, undefined, (request) => requests.push(request));
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.every((request) => request.variations?.opsz === 18)).toBe(true);
   });
 
   it('composes vertical Japanese with right-to-left columns and kinsoku', async () => {

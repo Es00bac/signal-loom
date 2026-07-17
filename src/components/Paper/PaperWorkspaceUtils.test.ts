@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { addFrameToPaperPage, createDefaultPaperDocument, updatePaperDocumentSetup } from '../../lib/paperDocument';
 import type { BinaryAssetRef } from '../../shared/assets/contentAddressedAsset';
-import type { PaperFrame, PaperManagedIccProfile } from '../../types/paper';
+import type { PaperFrame, PaperManagedFontFace, PaperManagedIccProfile } from '../../types/paper';
+import { createBinaryAssetRecord } from '../../shared/assets/contentAddressedAsset';
+import { paperAssetRepository } from '../../features/paper/assets/PaperAssetRuntime';
 import {
   bubbleHandlePatch,
   buildPaperEyedropperFrameColorPatch,
@@ -477,6 +479,35 @@ describe('PaperWorkspaceUtils export', () => {
     expect(request.html).toContain('PDF parity text');
     expect(statuses[0]).toContain('Rasterizing 1 Paper page');
     expect(statuses.at(-1)).toContain('/tmp/PDF-Parity.pdf');
+    vi.unstubAllGlobals();
+  });
+
+  it('rebuilds a native vector PDF request with the same exact alias and byte payload as browser print', async () => {
+    const record = await createBinaryAssetRecord(Uint8Array.from([1, 2, 3]), { mimeType: 'font/ttf' });
+    const fontAsset = await paperAssetRepository.put(record);
+    let doc = createDefaultPaperDocument({ title: 'Exact Native PDF' });
+    const face: PaperManagedFontFace = {
+      id: 'native-collection-opsz', familyId: 'native proof family', familyName: 'Native Proof Family', postscriptName: 'NativeProof-Oblique',
+      weight: 400, style: 'oblique', obliqueAngleDeg: 11, stretchPercent: 87.5, collectionIndex: 1,
+      variableAxes: { opsz: { min: 8, default: 12, max: 72 } }, variationSettings: { opsz: 18 }, unicodeRanges: [], format: 'collection', fontAsset,
+      embeddability: 'installable', canSubset: true, source: { kind: 'user-import' }, license: {},
+    };
+    doc = addFrameToPaperPage(doc, doc.pages[0].id, {
+      kind: 'text', text: 'Exact', xMm: 10, yMm: 10, widthMm: 40, heightMm: 20,
+      typography: { ...doc.pages[0].frames[0]?.typography, fontFamily: face.familyName, fontWeight: '400', fontStyle: 'oblique 11deg', fontStretch: '87.5%', fontVariationSettings: { opsz: 18 } },
+    } as never).document;
+    doc = { ...doc, importedFonts: [face] };
+    const exportPaperPdf = vi.fn().mockResolvedValue({ canceled: false, filePath: '/tmp/exact-native.pdf' });
+    vi.stubGlobal('window', { signalLoomNative: { exportPaperPdf } });
+
+    await exportPaperPdfDocument(doc, vi.fn(), {
+      title: doc.title, fileName: 'exact-native.pdf', html: '<html/>', page: doc.page, mode: 'pages', production: {} as never,
+    });
+
+    const request = exportPaperPdf.mock.calls[0][0];
+    expect(request.html).toContain('signal-loom-managed-font-manifest:');
+    expect(request.html).toContain('format("collection")');
+    expect(request.html).toContain('sloom-managed-native-collection-opsz');
     vi.unstubAllGlobals();
   });
 

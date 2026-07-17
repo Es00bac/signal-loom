@@ -18,7 +18,7 @@ import type {
 } from '../types/flow';
 import { buildAutomationExpression } from './clipAutomation';
 import { formatFontFamily } from './formatFontFamily';
-import { bundledFontFaceRuntimeFamilyName, ensureBundledFontDependenciesReady } from './bundledFontLibrary';
+import { bundledFontFaceRuntimeFamilyName, bundledFontFaceStyleDescriptor, bundledFontFaceVariationSettingsCss, ensureBundledFontDependenciesReady } from './bundledFontLibrary';
 import { managedBundledFontDependenciesForState } from './managedBundledFonts';
 import type { ManagedBundledFontFaceReference } from '../types/managedFont';
 import {
@@ -1476,12 +1476,17 @@ function paintTypesetTextBlock(
   origin: { xPx: number; yPx: number },
 ): void {
   context.save();
-  const stylePrefix = style.fontStyle === 'normal' ? '' : `${style.fontStyle} `;
+  const stylePrefix = style.managedFace
+    ? `${bundledFontFaceStyleDescriptor(style.managedFace)} `
+    : style.fontStyle === 'normal' ? '' : `${style.fontStyle} `;
   const family = style.managedFace ? bundledFontFaceRuntimeFamilyName(style.managedFace) : style.fontFamily;
   context.font = `${stylePrefix}${style.fontWeight} ${style.fontSizePx}px ${formatFontFamily(family)}`;
   context.fontKerning = style.fontKerning ?? 'auto';
   if (style.managedFace && 'fontStretch' in context) {
     (context as unknown as { fontStretch: string }).fontStretch = `${style.managedFace.stretchPercent}%`;
+  }
+  if (style.managedFace && 'fontVariationSettings' in context) {
+    (context as unknown as { fontVariationSettings?: string }).fontVariationSettings = bundledFontFaceVariationSettingsCss(style.managedFace);
   }
   if ('letterSpacing' in context) {
     (context as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${style.letterSpacingPx}px`;

@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { paperFontStyleFromCss } from '../../../lib/paperExactManagedFonts';
 import {
   AlertTriangle,
   BookOpen,
@@ -8281,7 +8282,6 @@ function PaperFrameView({
   const [textEditing, setTextEditing] = useState(false);
   const [textDraft, setTextDraft] = useState(frame.text ?? '');
   const managedTextDocument = usePaperStore((state) => state.document);
-  const [managedTextReady, setManagedTextReady] = useState(false);
   const sourceBins = useSourceBinStore((state) => state.bins);
   const sourceItem = useMemo(
     () => frame.asset?.sourceBinItemId
@@ -8428,7 +8428,6 @@ function PaperFrameView({
     event.preventDefault();
     event.stopPropagation();
     onSelect(event);
-    setManagedTextReady(false);
     setTextDraft(frame.text ?? '');
     setTextEditing(true);
   };
@@ -8568,12 +8567,11 @@ function PaperFrameView({
                 document={managedTextDocument}
                 frame={frame}
                 onDoubleClick={beginTextEdit}
-                onReadyChange={setManagedTextReady}
                 style={{ ...paperManagedTextLayerStyle(frame, zoom), zIndex: 45 }}
                 zoom={zoom}
               />
             ) : null}
-            <div className={managedTextReady && managedTextEligible ? 'invisible' : undefined}>
+            <div className={managedTextEligible && !textEditing ? 'invisible' : undefined}>
               <PaperBubbleText
                 draft={textDraft}
                 frame={frame}
@@ -8596,12 +8594,11 @@ function PaperFrameView({
                 document={managedTextDocument}
                 frame={frame}
                 onDoubleClick={beginTextEdit}
-                onReadyChange={setManagedTextReady}
                 style={{ ...paperManagedTextLayerStyle(frame, zoom), zIndex: 1 }}
                 zoom={zoom}
               />
             ) : null}
-            <div className={`h-full w-full${managedTextReady && managedTextEligible ? ' invisible' : ''}`}>
+            <div className={`h-full w-full${managedTextEligible && !textEditing ? ' invisible' : ''}`}>
               <PaperInlineText
                 displayText={displayText}
                 frame={frame}
@@ -9338,6 +9335,11 @@ function paperRunReactStyle(run: PaperTextRun, zoom: number): React.CSSPropertie
   if (run.fontFamily) style.fontFamily = run.fontFamily;
   if (run.fontWeight) style.fontWeight = run.fontWeight;
   if (run.fontStyle) style.fontStyle = run.fontStyle;
+  if (run.fontStretch) style.fontStretch = run.fontStretch;
+  if (run.fontVariationSettings) style.fontVariationSettings = Object.entries(run.fontVariationSettings)
+    .filter(([tag, value]) => /^[ -~]{4}$/.test(tag) && Number.isFinite(value))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([tag, value]) => `"${tag}" ${value}`).join(', ');
   if (run.fontKerning) style.fontKerning = run.fontKerning;
   if (run.color) style.color = run.color;
   if (run.highlight) { style.backgroundColor = run.highlight; style.borderRadius = '1px'; style.boxDecorationBreak = 'clone'; style.WebkitBoxDecorationBreak = 'clone'; }
@@ -10086,7 +10088,7 @@ function PaperRichEditableText({
               <div className="absolute left-0 top-7 z-[1000] w-[28rem] rounded-lg bg-slate-950 p-1 shadow-2xl">
                 <PaperBundledFontFaceBrowser
                   fontFamily={frame.typography.fontFamily}
-                  fontStyle={frame.typography.fontStyle}
+                  fontStyle={paperFontStyleFromCss(frame.typography.fontStyle)}
                   fontWeight={Number.parseInt(frame.typography.fontWeight, 10) || 400}
                   initiallyOpen
                   onSelect={(family, face) => applyBundledFontFace(

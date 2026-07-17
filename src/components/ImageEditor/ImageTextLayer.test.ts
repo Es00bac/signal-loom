@@ -117,6 +117,7 @@ describe('ImageTextLayer', () => {
       { ...managedFace, family: 'Other Family' }, { ...managedFace, weight: 500 },
       { ...managedFace, style: 'italic' as const },
       { ...managedFace, stretchPercent: 87.5 }, { ...managedFace, collectionIndex: 1 },
+      { ...managedFace, variationSettings: { opsz: 18 } },
       { ...managedFace, sha256: 'b'.repeat(64) }, { ...managedFace, byteLength: 101 },
     ]) expect(signatureFor(changed)).not.toBe(base);
   });

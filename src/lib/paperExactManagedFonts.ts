@@ -1,7 +1,7 @@
 import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import type { PaperDocument, PaperFrame, PaperManagedFontFace, PaperManagedFontStyle, PaperTextRun, PaperTypography } from '../types/paper';
 import { normalizeFamilyName } from './paperFontLibrary';
-import { canonicalPaperFontObliqueAngle, canUseManagedFontForProduction, normalizePaperFontFamilyId, normalizePaperFontStretch, selectManagedFontFace } from './paperManagedFonts';
+import { canonicalPaperFontObliqueAngle, canUseManagedFontForProduction, normalizePaperFontFamilyId, normalizePaperFontStretch, normalizePaperFontVariationSettings, selectManagedFontFace } from './paperManagedFonts';
 
 /** Failure here is deliberately terminal for browser/raster/print output: fallback paint lies. */
 export class PaperExactManagedFontError extends Error {}
@@ -45,6 +45,7 @@ export function effectivePaperFrameTypography(frame: PaperFrame, run?: PaperText
     ...(run?.fontWeight !== undefined ? { fontWeight: String(paperFontWeightFromCss(run.fontWeight, inheritedWeight)) } : {}),
     ...(run?.fontStyle !== undefined ? { fontStyle: run.fontStyle } : {}),
     ...(run?.fontStretch !== undefined ? { fontStretch: run.fontStretch } : {}),
+    ...(run?.fontVariationSettings !== undefined ? { fontVariationSettings: run.fontVariationSettings } : {}),
   };
 }
 
@@ -66,6 +67,7 @@ function requestedFace(typography: PaperTypography, fonts: readonly PaperManaged
   const selection = selectManagedFontFace(candidates, {
     familyId: familyIds[0], weight: paperFontWeightFromCss(typography.fontWeight), style,
     obliqueAngleDeg: paperFontObliqueAngleFromCss(typography.fontStyle), stretchPercent: paperFontStretchFromCss(typography.fontStretch),
+    variationSettings: typography.fontVariationSettings,
   });
   if (selection.status === 'ambiguous-face') throw new PaperExactManagedFontError(`Managed family "${rawFamily}" has conflicting byte identities for the requested descriptor (${selection.faceIds.join(', ')}).`);
   if (selection.status !== 'selected') throw new PaperExactManagedFontError(`Managed family "${rawFamily}" has no exact requested face; fallback paint is blocked.`);
@@ -81,6 +83,20 @@ export function collectExactPaperManagedFaces(frames: readonly PaperFrame[], fon
     if (face) output.set(face.id, face);
   }
   return [...output.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+/** Reject a descriptor that would make browser/CSS member selection depend on insertion order. */
+export function assertNoConflictingPaperManagedFontDescriptors(fonts: readonly PaperManagedFontFace[] | undefined): void {
+  const owners = new Map<string, PaperManagedFontFace>();
+  for (const face of fonts ?? []) {
+    const variationSettings = normalizePaperFontVariationSettings(face.variationSettings, face.variableAxes);
+    const key = `${normalizePaperFontFamilyId(face.familyId)}:${face.weight}:${paperFontStyleDescriptor(face.style, face.obliqueAngleDeg)}:${face.stretchPercent}:${JSON.stringify(variationSettings ?? {})}`;
+    const existing = owners.get(key);
+    if (existing && (existing.id !== face.id || existing.fontAsset.sha256 !== face.fontAsset.sha256 || existing.collectionIndex !== face.collectionIndex)) {
+      throw new PaperExactManagedFontError(`Managed font descriptor collision for ${face.familyName}; exact registration is blocked.`);
+    }
+    owners.set(key, face);
+  }
 }
 
 export function paperManagedFontFamilyAlias(face: PaperManagedFontFace): string {
@@ -108,7 +124,7 @@ export function aliasPaperDocumentManagedFontFamilies(document: PaperDocument): 
   return { ...document, pages: document.pages.map((page) => ({ ...page, frames: page.frames.map((frame) => aliasFrame(frame, fonts)) })), parentPages: document.parentPages.map((page) => ({ ...page, frames: page.frames.map((frame) => aliasFrame(frame, fonts)) })) };
 }
 
-export interface PaperManagedFontManifestFace { identity: string; familyAlias: string; weight: number; style: PaperManagedFontStyle; obliqueAngleDeg?: number; stretchPercent: number; }
+export interface PaperManagedFontManifestFace { identity: string; familyAlias: string; weight: number; style: PaperManagedFontStyle; obliqueAngleDeg?: number; stretchPercent: number; collectionIndex: number; variationSettings?: Record<string, number>; }
 export interface PaperManagedFontManifest { version: 1; faces: PaperManagedFontManifestFace[]; }
 const manifestPrefix = 'signal-loom-managed-font-manifest:';
 
@@ -116,22 +132,18 @@ function cssString(value: string): string { return `"${[...value].map((char) => 
 function base64(bytes: Uint8Array): string { let output = ''; for (let index = 0; index < bytes.length; index += 0x8000) output += String.fromCharCode(...bytes.subarray(index, index + 0x8000)); return btoa(output); }
 
 export async function buildExactPaperManagedFontCss(faces: readonly PaperManagedFontFace[], load: (ref: BinaryAssetRef) => Promise<Uint8Array>): Promise<string> {
-  const descriptorOwners = new Map<string, PaperManagedFontFace>();
-  for (const face of faces) {
-    const key = `${normalizePaperFontFamilyId(face.familyId)}:${face.weight}:${paperFontStyleDescriptor(face.style, face.obliqueAngleDeg)}:${face.stretchPercent}`;
-    const existing = descriptorOwners.get(key);
-    if (existing && (existing.fontAsset.sha256 !== face.fontAsset.sha256 || existing.collectionIndex !== face.collectionIndex || existing.id !== face.id)) throw new PaperExactManagedFontError(`Managed font descriptor collision for ${face.familyName}.`);
-    descriptorOwners.set(key, face);
-  }
+  assertNoConflictingPaperManagedFontDescriptors(faces);
   const rules: string[] = [];
   for (const face of faces) {
-    if (face.format === 'collection' || face.collectionIndex !== 0) throw new PaperExactManagedFontError(`Collection face ${face.familyName} cannot be isolated without an extracted standalone face.`);
     const bytes = await load(face.fontAsset);
     if (!bytes.byteLength) throw new PaperExactManagedFontError(`Managed face ${face.familyName} is unavailable.`);
-    const source = `url(data:${face.fontAsset.mimeType};base64,${base64(bytes)})`;
+    const source = `url(data:${face.fontAsset.mimeType};base64,${base64(bytes)})${face.format === 'collection' ? ' format("collection")' : ''}`;
     rules.push(`@font-face{font-family:${cssString(paperManagedFontFamilyAlias(face))};font-weight:${face.weight};font-style:${paperFontStyleDescriptor(face.style, face.obliqueAngleDeg)};font-stretch:${face.stretchPercent}%;src:${source};}`);
   }
-  const manifest: PaperManagedFontManifest = { version: 1, faces: faces.map((face) => ({ identity: `${face.id}:${face.fontAsset.sha256}:${face.collectionIndex}`, familyAlias: paperManagedFontFamilyAlias(face), weight: face.weight, style: face.style, ...(face.style === 'oblique' ? { obliqueAngleDeg: canonicalPaperFontObliqueAngle(face.style, face.obliqueAngleDeg) } : {}), stretchPercent: face.stretchPercent })) };
+  const manifest: PaperManagedFontManifest = { version: 1, faces: faces.map((face) => {
+    const variationSettings = normalizePaperFontVariationSettings(face.variationSettings, face.variableAxes);
+    return { identity: `${face.id}:${face.fontAsset.sha256}:${face.collectionIndex}:${JSON.stringify(variationSettings ?? {})}`, familyAlias: paperManagedFontFamilyAlias(face), weight: face.weight, style: face.style, ...(face.style === 'oblique' ? { obliqueAngleDeg: canonicalPaperFontObliqueAngle(face.style, face.obliqueAngleDeg) } : {}), stretchPercent: face.stretchPercent, collectionIndex: face.collectionIndex, ...(variationSettings ? { variationSettings } : {}) };
+  }) };
   return `/* ${manifestPrefix}${btoa(JSON.stringify(manifest)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')} */\n${rules.join('\n')}`;
 }
 

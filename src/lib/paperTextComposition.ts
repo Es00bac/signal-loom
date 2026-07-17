@@ -18,6 +18,7 @@ import { paperFontObliqueAngleFromCss, paperFontStretchFromCss, paperFontStyleFr
 import {
   canUseManagedFontForProduction,
   normalizePaperFontFamilyId,
+  normalizePaperFontVariationSettings,
   selectManagedFontFace,
 } from './paperManagedFonts';
 import {
@@ -137,6 +138,7 @@ interface ResolvedStyle {
   script: string;
   language: string;
   features: Record<string, boolean | number>;
+  variations?: Record<string, number>;
   decorations: { underline?: boolean; strike?: boolean; highlight?: string };
   superscriptShiftPt: number;
 }
@@ -289,6 +291,7 @@ function styleKey(input: Omit<ResolvedStyle, 'key'>): string {
     input.script,
     input.language,
     Object.entries(input.features).sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => `${key}:${value}`).join(','),
+    JSON.stringify(input.variations ?? {}),
     input.superscriptShiftPt,
     input.decorations.underline ? 'u' : '',
     input.decorations.strike ? 's' : '',
@@ -419,6 +422,7 @@ function unitMeasure(unit: CompositionUnit): number {
     language: unit.style.language,
     fontSizePt: unit.style.fontSizePt,
     features: unit.style.features,
+    variations: unit.style.variations,
   });
   const advance = unit.style.direction === 'ttb' ? Math.abs(shaped.advanceY) : Math.abs(shaped.advanceX);
   return Math.max(unit.style.fontSizePt * 0.05, advance || unit.style.fontSizePt) + unit.style.trackingPt;
@@ -462,6 +466,7 @@ function shapeGroup(units: CompositionUnit[]): ShapedGroup {
     language: style.language,
     fontSizePt: style.fontSizePt,
     features: style.features,
+    variations: style.variations,
   });
   const glyphs = shaped.glyphs.map((glyph) => ({ ...glyph, cluster: sourceOffsetForCluster(units, glyph.cluster) }));
   const baseAdvance = direction === 'ttb' ? Math.abs(shaped.advanceY) : Math.abs(shaped.advanceX);
@@ -663,6 +668,7 @@ function appendAnnotations(
       language: annotation.style.language,
       fontSizePt,
       features: annotation.style.features,
+      variations: annotation.style.variations,
     });
     const advance = vertical ? Math.abs(shaped.advanceY) : Math.abs(shaped.advanceX);
     const first = baseGlyphs[0];
@@ -870,6 +876,7 @@ async function resolveStyle(
   const selection = selectManagedFontFace(importedFonts ?? [], {
     familyId, weight, style, obliqueAngleDeg: paperFontObliqueAngleFromCss(styleValue),
     stretchPercent: paperFontStretchFromCss(run.fontStretch ?? typography.fontStretch),
+    variationSettings: run.fontVariationSettings ?? typography.fontVariationSettings,
   });
   if (selection.status !== 'selected') {
     return {
@@ -904,6 +911,7 @@ async function resolveStyle(
     script: script.script,
     language: script.language,
     features: paperFeatures(typography, run, vertical),
+    variations: normalizePaperFontVariationSettings(run.fontVariationSettings ?? typography.fontVariationSettings ?? selection.face.variationSettings, selection.face.variableAxes),
     decorations: { underline: run.underline, strike: run.strike, highlight: run.highlight },
     superscriptShiftPt: run.vertAlign === 'super' ? fontSizePt * 0.35 : run.vertAlign === 'sub' ? -fontSizePt * 0.18 : 0,
   };

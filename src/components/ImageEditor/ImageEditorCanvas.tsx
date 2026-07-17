@@ -34,7 +34,7 @@ import {
   imageTextLayerContainsPoint,
 } from './ImageTextPresets';
 import { formatFontFamily } from '../../lib/formatFontFamily';
-import { bundledFontFaceRuntimeFamilyName } from '../../lib/bundledFontLibrary';
+import { bundledFontFaceRuntimeFamilyName, bundledFontFaceStyleDescriptor, bundledFontFaceVariationSettingsCss } from '../../lib/bundledFontLibrary';
 import { updateTextLayerFromStyle } from './ImageTextLayer';
 import {
   calculateLayerPerspectiveValue,
@@ -2057,13 +2057,14 @@ export function ImageTextEditOverlay({
               ? 'Sloom Managed Face Blocked'
               : text.fontFamily),
           fontSize: Math.max(11, text.fontSize * zoom),
-          fontStyle: text.fontStyle,
+          fontStyle: text.managedFace ? bundledFontFaceStyleDescriptor(text.managedFace) : text.fontStyle,
           fontWeight: text.fontWeight,
           letterSpacing: text.letterSpacing * zoom,
           lineHeight: text.lineHeight,
           minHeight: Math.max(36, bounds.height),
           textAlign: text.align === 'justify' ? 'justify' : text.align,
           fontVariantCaps: text.fontVariantCaps === 'all-small-caps' ? 'all-small-caps' : text.fontVariantCaps,
+          fontVariationSettings: text.managedFace ? bundledFontFaceVariationSettingsCss(text.managedFace) : undefined,
         }}
         value={draft}
       />

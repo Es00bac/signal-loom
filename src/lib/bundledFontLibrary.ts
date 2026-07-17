@@ -278,11 +278,26 @@ export function bundledFontFaceIdentitySignature(reference: ManagedBundledFontFa
     reference.family,
     reference.weight,
     reference.style,
+    reference.obliqueAngleDeg ?? (reference.style === 'oblique' ? 14 : undefined),
     reference.stretchPercent,
+    Object.entries(reference.variationSettings ?? {}).sort(([left], [right]) => left.localeCompare(right)),
     reference.collectionIndex,
     reference.sha256,
     reference.byteLength,
   ]);
+}
+
+export function bundledFontFaceStyleDescriptor(reference: ManagedBundledFontFaceReference): string {
+  return reference.style === 'oblique'
+    ? reference.obliqueAngleDeg === undefined ? 'oblique' : `oblique ${reference.obliqueAngleDeg}deg`
+    : reference.style;
+}
+
+export function bundledFontFaceVariationSettingsCss(reference: ManagedBundledFontFaceReference): string | undefined {
+  const entries = Object.entries(reference.variationSettings ?? {})
+    .filter(([tag, value]) => /^[ -~]{4}$/.test(tag) && Number.isFinite(value))
+    .sort(([left], [right]) => left.localeCompare(right));
+  return entries.length ? entries.map(([tag, value]) => `"${tag}" ${value}`).join(', ') : undefined;
 }
 
 export function bundledFontFaceRuntimeFamilyName(
@@ -321,7 +336,9 @@ export function createBundledFontFaceReference(
     family: family.family,
     weight: face.weight,
     style: face.style,
+    ...(face.style === 'oblique' ? { obliqueAngleDeg: 14 } : {}),
     stretchPercent: face.stretchPercent,
+    ...(face.variable ? { variationSettings: Object.fromEntries(Object.entries(face.axes).map(([tag, axis]) => [tag, axis.default])) } : {}),
     collectionIndex: face.collectionIndex,
     sha256: face.sha256,
     byteLength: face.byteLength,
@@ -357,6 +374,11 @@ export function normalizeBundledFontFaceReference(value: unknown): ManagedBundle
     || !Number.isInteger(candidate.byteLength)
     || candidate.byteLength < 1
   ) return undefined;
+  const variationSettings = candidate.variationSettings;
+  if (variationSettings !== undefined && (!variationSettings || typeof variationSettings !== 'object' || Array.isArray(variationSettings)
+    || Object.entries(variationSettings).some(([tag, coordinate]) => !/^[ -~]{4}$/.test(tag) || typeof coordinate !== 'number' || !Number.isFinite(coordinate)))) return undefined;
+  const obliqueAngleDeg = candidate.obliqueAngleDeg;
+  if (obliqueAngleDeg !== undefined && (candidate.style !== 'oblique' || typeof obliqueAngleDeg !== 'number' || !Number.isFinite(obliqueAngleDeg) || obliqueAngleDeg < -90 || obliqueAngleDeg > 90)) return undefined;
   return {
     kind: 'bundled',
     schemaVersion: 2,
@@ -364,7 +386,9 @@ export function normalizeBundledFontFaceReference(value: unknown): ManagedBundle
     family: candidate.family.trim(),
     weight: candidate.weight,
     style: candidate.style,
+    ...(candidate.style === 'oblique' && obliqueAngleDeg !== undefined ? { obliqueAngleDeg } : {}),
     stretchPercent: candidate.stretchPercent,
+    ...(variationSettings ? { variationSettings: Object.fromEntries(Object.entries(variationSettings as Record<string, number>).sort(([left], [right]) => left.localeCompare(right))) } : {}),
     collectionIndex: candidate.collectionIndex,
     sha256: candidate.sha256,
     byteLength: candidate.byteLength,
@@ -470,6 +494,7 @@ export function resolveBundledFontFaceReference(
     family.family === reference.family
     && face.weight === reference.weight
     && face.style === reference.style
+    && (reference.style !== 'oblique' || (reference.obliqueAngleDeg ?? 14) >= -90)
     && face.stretchPercent === reference.stretchPercent
     && face.collectionIndex === reference.collectionIndex
     && face.sha256 === reference.sha256
@@ -570,21 +595,14 @@ async function registerResolvedBundledFontFace(
     ) {
       throw new Error(`${face.fullName} no longer matches its saved family/weight/style/stretch face metadata. Reinstall the matching bundled font library before rendering.`);
     }
-    if (vet.format === 'collection' && face.collectionIndex !== 0) {
-      throw new Error(`${face.fullName} is collection face ${face.collectionIndex}; this renderer cannot select a nonzero TTC/OTC face from ArrayBuffer bytes safely. Exact rendering is blocked.`);
-    }
     registeredFaceStretch.set(identity, vettedFace.stretchPercent);
     const runtimeReference = reference ?? createBundledFontFaceReference(family, face);
     resolvedIdentity = bundledFontFaceIdentitySignature(runtimeReference);
     registeredFaceStretch.set(resolvedIdentity, vettedFace.stretchPercent);
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-    const descriptor = bundledFontFaceCssDescriptor(face);
-    const [managed, familyPreview] = await Promise.all([
-      new FontFace(bundledFontFaceRuntimeFamilyName(runtimeReference), buffer, descriptor).load(),
-      new FontFace(family.family, buffer, descriptor).load(),
-    ]);
+    const descriptor = { ...bundledFontFaceCssDescriptor(face), style: bundledFontFaceStyleDescriptor(runtimeReference) };
+    const managed = await new FontFace(bundledFontFaceRuntimeFamilyName(runtimeReference), buffer, descriptor).load();
     document.fonts.add(managed);
-    document.fonts.add(familyPreview);
     browserFontErrors.delete(identity);
     if (resolvedIdentity) {
       browserFontErrors.delete(resolvedIdentity);

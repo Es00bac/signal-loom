@@ -1365,6 +1365,8 @@ function printRunInlineStyle(run: PaperTextRun): string {
   if (run.fontFamily) parts.push(`font-family: ${resolvePaperFontFamily(run.fontFamily)}`);
   if (run.fontWeight) parts.push(`font-weight: ${run.fontWeight}`);
   if (run.fontStyle) parts.push(`font-style: ${run.fontStyle}`);
+  if (run.fontStretch) parts.push(`font-stretch: ${run.fontStretch}`);
+  if (run.fontVariationSettings) parts.push(`font-variation-settings: ${paperFontVariationSettingsToCss(run.fontVariationSettings)}`);
   if (run.fontKerning) parts.push(`font-kerning: ${run.fontKerning}`);
   if (run.color) parts.push(`color: ${run.color}`);
   if (run.highlight) {
@@ -1733,6 +1735,8 @@ function textStyle(frame: PaperFrame): string {
     `color: ${frame.typography.color}`,
     `font-weight: ${frame.typography.fontWeight}`,
     `font-style: ${frame.typography.fontStyle}`,
+    frame.typography.fontStretch ? `font-stretch: ${frame.typography.fontStretch}` : '',
+    frame.typography.fontVariationSettings ? `font-variation-settings: ${paperFontVariationSettingsToCss(frame.typography.fontVariationSettings)}` : '',
     frame.typography.firstLineIndentMm ? `text-indent: ${formatMm(frame.typography.firstLineIndentMm)} each-line` : '',
     frame.typography.alignLast && frame.typography.alignLast !== 'auto' ? `text-align-last: ${frame.typography.alignLast}` : '',
     frame.typography.smallCaps ? 'font-variant-caps: small-caps' : '',
@@ -1744,6 +1748,14 @@ function textStyle(frame: PaperFrame): string {
     emphasis ? `text-emphasis: ${emphasis}` : '',
     buildPaperTextPaintEffectCssText(frame),
   ].filter(Boolean).join('; ');
+}
+
+function paperFontVariationSettingsToCss(settings: Record<string, number>): string {
+  return Object.entries(settings)
+    .filter(([tag, value]) => /^[ -~]{4}$/.test(tag) && Number.isFinite(value))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([tag, value]) => `"${tag}" ${value}`)
+    .join(', ');
 }
 
 function paperNumericStyleToCss(style: PaperTypography['numericStyle']): string | undefined {

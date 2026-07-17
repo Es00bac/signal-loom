@@ -8,7 +8,11 @@ export interface ManagedBundledFontFaceReference {
   family: string;
   weight: number;
   style: ManagedBundledFontStyle;
+  /** Exact oblique descriptor; omitted only when the style is not oblique. */
+  obliqueAngleDeg?: number;
   stretchPercent: number;
+  /** Exact variable-font coordinates selected for this managed composition. */
+  variationSettings?: Record<string, number>;
   collectionIndex: number;
   sha256: string;
   byteLength: number;
