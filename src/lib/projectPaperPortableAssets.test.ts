@@ -6,7 +6,11 @@ import { useFlowStore } from '../store/flowStore';
 import { useFlowWorkspaceStore } from '../store/flowWorkspaceStore';
 import { useProjectUsageStore } from '../store/projectUsageStore';
 import { useImageEditorStore } from '../store/imageEditorStore';
-import { buildCurrentProjectDocument, restoreProjectDocument } from './projectDocumentActions';
+import {
+  buildCurrentProjectDocument,
+  prepareProjectDocumentTransaction,
+  restoreProjectDocument,
+} from './projectDocumentActions';
 import { addFrameToPaperPage, createDefaultPaperDocument } from './paperDocument';
 import {
   materializePaperDocumentAssetUrls,
@@ -476,18 +480,34 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     await resetAllStores();
     await wipePaperAssetRepository();
 
-    const originalRestore = useSourceBinStore.getState().restoreProjectSnapshot;
+    const originalPrepare = useSourceBinStore.getState().prepareProjectSnapshot;
     useSourceBinStore.setState({
-      restoreProjectSnapshot: async () => {
+      prepareProjectSnapshot: async () => {
         throw new Error('source bin failed');
       },
     });
     try {
-      await expect(restoreProjectDocument(saved)).rejects.toThrow(/could not be restored safely/);
+      await expect(restoreProjectDocument(saved)).rejects.toThrow(/source bin failed/);
       expect(await paperAssetRepository.get(refs.imageA.id)).toBeUndefined();
       expect(await paperAssetRepository.listRefs()).toHaveLength(0);
     } finally {
-      useSourceBinStore.setState({ restoreProjectSnapshot: originalRestore });
+      useSourceBinStore.setState({ prepareProjectSnapshot: originalPrepare });
     }
+  });
+
+  it('rolls back staged repository records when a prepared project switch is canceled', async () => {
+    const { refs } = await seedTwoTabProject();
+    const saved = await buildSavedPortableProject();
+
+    await resetAllStores();
+    await wipePaperAssetRepository();
+
+    const transaction = await prepareProjectDocumentTransaction(saved);
+    expect(await paperAssetRepository.get(refs.imageA.id)).toBeDefined();
+
+    await transaction.rollback();
+
+    expect(await paperAssetRepository.get(refs.imageA.id)).toBeUndefined();
+    expect(await paperAssetRepository.listRefs()).toHaveLength(0);
   });
 });

@@ -1374,14 +1374,14 @@ function FlowApp() {
           rendererTransaction.commit();
           const commitResult = await bridge.commitProjectSwitch({ transactionId: preparedNative.transactionId });
           if (commitResult.rejected || !commitResult.authority) {
-            rendererTransaction.rollback();
+            await rendererTransaction.rollback();
             throw new Error(commitResult.rejected?.message ?? 'The native project reset could not commit.');
           }
           await authorityClient.adoptSnapshot({ authority: commitResult.authority });
           setNativeScratchDirectoryPath(undefined);
           rendererTransaction.finalize();
         } catch (error) {
-          rendererTransaction?.rollback();
+          await rendererTransaction?.rollback();
           await bridge.cancelProjectSwitch({ transactionId: preparedNative.transactionId }).catch(() => undefined);
           await showAlertDialog({
             title: 'New Project Failed',
@@ -1440,7 +1440,7 @@ function FlowApp() {
               rendererTransaction.commit();
               const commitResult = await bridge.commitProjectSwitch({ transactionId: result.transactionId });
               if (commitResult.rejected || !commitResult.authority) {
-                rendererTransaction.rollback();
+                await rendererTransaction.rollback();
                 throw new Error(commitResult.rejected?.message ?? 'The prepared project could not commit.');
               }
               await authorityClient.adoptSnapshot({
@@ -1450,7 +1450,7 @@ function FlowApp() {
               setNativeScratchDirectoryPath(commitResult.scratchDirectoryPath);
               rendererTransaction.finalize();
             } catch (error) {
-              rendererTransaction?.rollback();
+              await rendererTransaction?.rollback();
               await bridge.cancelProjectSwitch({ transactionId: result.transactionId }).catch(() => undefined);
               throw error;
             } finally {

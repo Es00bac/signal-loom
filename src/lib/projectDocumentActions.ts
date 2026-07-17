@@ -21,7 +21,10 @@ import type { PaperDocument } from '../types/paper';
 import { useEditorStore } from '../store/editorStore';
 import { prepareFlowSnapshotImportedAssets, useFlowStore } from '../store/flowStore';
 import { useFlowWorkspaceStore } from '../store/flowWorkspaceStore';
-import { useImageEditorStore } from '../store/imageEditorStore';
+import {
+  useImageEditorStore,
+  type ImageEditorProjectSnapshotTransaction,
+} from '../store/imageEditorStore';
 import { getDirtyPaperWorkspaceDocumentTitles, usePaperStore } from '../store/paperStore';
 import { useProjectUsageStore } from '../store/projectUsageStore';
 import {
@@ -38,8 +41,7 @@ import {
   collectVideoBundledFontFaceReferences,
   upgradeLegacyBundledFontIssuesInProject,
 } from './managedBundledFonts';
-import { getSelection } from '../components/ImageEditor/selectionRegistry';
-import { toSnapshot } from '../components/ImageEditor/SelectionMask';
+import { getFloatingSelection, getSelection } from '../components/ImageEditor/selectionRegistry';
 
 export interface ProjectDocumentReplacementOptions {
   /** Set only after the user explicitly chose Discard or the current project was saved successfully. */
@@ -136,7 +138,7 @@ export interface PreparedProjectDocumentTransaction {
   assertCanCommit: () => void;
   commit: () => void;
   finalize: () => void;
-  rollback: () => void;
+  rollback: () => Promise<void>;
 }
 
 interface ProjectStoreIdentity {
@@ -152,7 +154,12 @@ interface ProjectStoreIdentity {
   paperDocument: unknown;
   imageDocuments: unknown;
   imageActiveDocId: string | null;
+  imageUndoStacks: unknown;
+  imageRedoStacks: unknown;
   imageQuickActionMacros: unknown;
+  imageActiveQuickActionRecording: unknown;
+  imageGenerativeFillDismissedByDocId: unknown;
+  imageSelections: ReadonlyArray<readonly [string, unknown, unknown]>;
 }
 
 function captureProjectStoreIdentity(): ProjectStoreIdentity {
@@ -176,14 +183,36 @@ function captureProjectStoreIdentity(): ProjectStoreIdentity {
     paperDocument: paper.document,
     imageDocuments: image.documents,
     imageActiveDocId: image.activeDocId,
+    imageUndoStacks: image.undoStacks,
+    imageRedoStacks: image.redoStacks,
     imageQuickActionMacros: image.quickActionMacros,
+    imageActiveQuickActionRecording: image.activeQuickActionRecording,
+    imageGenerativeFillDismissedByDocId: image.generativeFillDismissedByDocId,
+    imageSelections: image.documents.map((document) => [
+      document.id,
+      getSelection(document.id),
+      getFloatingSelection(document.id),
+    ] as const),
   };
 }
 
+function sameProjectStoreIdentityField(
+  left: ProjectStoreIdentity,
+  right: ProjectStoreIdentity,
+  key: keyof ProjectStoreIdentity,
+): boolean {
+  if (key !== 'imageSelections') return left[key] === right[key];
+  return left.imageSelections.length === right.imageSelections.length
+    && left.imageSelections.every(([documentId, selection, floatingSelection], index) => (
+      right.imageSelections[index]?.[0] === documentId
+      && right.imageSelections[index]?.[1] === selection
+      && right.imageSelections[index]?.[2] === floatingSelection
+    ));
+}
+
 function sameProjectStoreIdentity(left: ProjectStoreIdentity, right: ProjectStoreIdentity): boolean {
-  return Object.keys(left).every((key) => (
-    left[key as keyof ProjectStoreIdentity] === right[key as keyof ProjectStoreIdentity]
-  ));
+  return (Object.keys(left) as Array<keyof ProjectStoreIdentity>)
+    .every((key) => sameProjectStoreIdentityField(left, right, key));
 }
 
 type ProjectStoreIdentityKey = keyof ProjectStoreIdentity;
@@ -193,7 +222,7 @@ function sameProjectStoreIdentityFields(
   right: ProjectStoreIdentity,
   keys: readonly ProjectStoreIdentityKey[],
 ): boolean {
-  return keys.every((key) => left[key] === right[key]);
+  return keys.every((key) => sameProjectStoreIdentityField(left, right, key));
 }
 
 function commitWithoutObserverFailure(commit: () => void): void {
@@ -223,49 +252,92 @@ export async function prepareProjectDocumentTransaction(
     flow: { version: 3, nodes: [], edges: [] },
   }, fallbackName);
   await upgradeLegacyBundledFontIssuesInProject(preparedDocument);
-  if (preparedDocument.paper?.document) preparedDocument = await migrateProjectPaperDocuments(preparedDocument);
+  let paperAssetsImport: PaperPortableAssetsImportResult | undefined;
+  let paperAssetsFinalized = false;
+  let paperAssetsRollbackPromise: Promise<void> | undefined;
+  const rollbackPaperAssets = (): Promise<void> => {
+    if (paperAssetsFinalized || !paperAssetsImport) return Promise.resolve();
+    paperAssetsRollbackPromise ??= paperAssetsImport.rollback();
+    return paperAssetsRollbackPromise;
+  };
 
-  const imageFontReferences = collectImageBundledFontFaceReferences(preparedDocument.imageEditor?.documents ?? []);
-  const flowSnapshots = [preparedDocument.flow, ...(preparedDocument.flowWorkspaces ?? []).map((workspace) => workspace.flow)];
-  const videoFontReferences = flowSnapshots.flatMap((flow) => flow.nodes.flatMap((node) => (
-    collectVideoBundledFontFaceReferences({
-      assets: getEditorAssets(node.data),
-      visualClips: getEditorVisualClips(node.data),
-      stageObjects: getEditorStageObjects(node.data),
-    })
-  )));
-  await ensureBundledFontFaceReferencesRegistered([...imageFontReferences, ...videoFontReferences]);
-
-  const sourceStore = useSourceBinStore.getState();
-  const preparedSource = await sourceStore.prepareProjectSnapshot(preparedDocument.sourceBin);
-  const releasePreparedSourceUrls = leaseSourceBinProjectSnapshotObjectUrls(preparedSource);
   const preparedStores = await (async () => {
-    const sourceItems = preparedSource.bins.flatMap((bin) => bin.items);
-    preparedDocument = resolveProjectMediaReferencesForRestore(preparedDocument, sourceItems);
-    const preparedWorkspaces = await Promise.all(
-      (preparedDocument.flowWorkspaces ?? [buildDefaultFlowWorkspace(preparedDocument.flow)])
-        .map(async (workspace) => ({
-          ...workspace,
-          flow: await prepareFlowSnapshotImportedAssets(workspace.flow, sourceItems),
-        })),
-    );
-    const activeWorkspace = preparedWorkspaces.find((workspace) => workspace.id === preparedDocument.activeFlowWorkspaceId)
-      ?? preparedWorkspaces[0];
-    const preparedFlow = activeWorkspace?.flow
-      ?? await prepareFlowSnapshotImportedAssets(preparedDocument.flow, sourceItems);
+    // Paper bytes are validated and staged before any renderer store can change. They remain
+    // provisional until finalize(), so a canceled native handoff or any later preparation failure
+    // can restore the repository exactly to its pre-open state.
+    if (preparedDocument.paperAssets) {
+      paperAssetsImport = await importPaperPortableAssetsSection(
+        preparedDocument.paperAssets,
+        paperAssetRepository,
+      );
+    }
+    if (preparedDocument.paper?.document) {
+      preparedDocument = await migrateProjectPaperDocuments(preparedDocument);
+    }
+
+    const imageFontReferences = collectImageBundledFontFaceReferences(preparedDocument.imageEditor?.documents ?? []);
+    const flowSnapshots = [preparedDocument.flow, ...(preparedDocument.flowWorkspaces ?? []).map((workspace) => workspace.flow)];
+    const videoFontReferences = flowSnapshots.flatMap((flow) => flow.nodes.flatMap((node) => (
+      collectVideoBundledFontFaceReferences({
+        assets: getEditorAssets(node.data),
+        visualClips: getEditorVisualClips(node.data),
+        stageObjects: getEditorStageObjects(node.data),
+      })
+    )));
+    await ensureBundledFontFaceReferencesRegistered([...imageFontReferences, ...videoFontReferences]);
     preparedDocument = {
       ...preparedDocument,
-      flow: preparedFlow,
-      flowWorkspaces: preparedWorkspaces,
-      activeFlowWorkspaceId: activeWorkspace?.id,
+      paper: await attachPaperMissingAssetDiagnostics(
+        preparedDocument.paper,
+        preparedDocument.paperAssets,
+      ),
     };
-    const preparedImage = await useImageEditorStore.getState().prepareProjectSnapshotWithPixels(preparedDocument.imageEditor);
-    return { preparedFlow, preparedImage, preparedWorkspaces };
-  })().catch((error) => {
-    releasePreparedSourceUrls();
+
+    const preparedSource = await useSourceBinStore.getState().prepareProjectSnapshot(preparedDocument.sourceBin);
+    const releasePreparedSourceUrls = leaseSourceBinProjectSnapshotObjectUrls(preparedSource);
+    const sourceItems = preparedSource.bins.flatMap((bin) => bin.items);
+    try {
+      preparedDocument = resolveProjectMediaReferencesForRestore(preparedDocument, sourceItems);
+      const preparedWorkspaces = await Promise.all(
+        (preparedDocument.flowWorkspaces ?? [buildDefaultFlowWorkspace(preparedDocument.flow)])
+          .map(async (workspace) => ({
+            ...workspace,
+            flow: await prepareFlowSnapshotImportedAssets(workspace.flow, sourceItems),
+          })),
+      );
+      const activeWorkspace = preparedWorkspaces.find((workspace) => workspace.id === preparedDocument.activeFlowWorkspaceId)
+        ?? preparedWorkspaces[0];
+      const preparedFlow = activeWorkspace?.flow
+        ?? await prepareFlowSnapshotImportedAssets(preparedDocument.flow, sourceItems);
+      preparedDocument = {
+        ...preparedDocument,
+        flow: preparedFlow,
+        flowWorkspaces: preparedWorkspaces,
+        activeFlowWorkspaceId: activeWorkspace?.id,
+      };
+      const preparedImage = await useImageEditorStore.getState().prepareProjectSnapshotWithPixels(preparedDocument.imageEditor);
+      return {
+        preparedFlow,
+        preparedImage,
+        preparedSource,
+        preparedWorkspaces,
+        releasePreparedSourceUrls,
+      };
+    } catch (error) {
+      releasePreparedSourceUrls();
+      throw error;
+    }
+  })().catch(async (error) => {
+    await rollbackPaperAssets();
     throw error;
   });
-  const { preparedFlow, preparedImage, preparedWorkspaces } = preparedStores;
+  const {
+    preparedFlow,
+    preparedImage,
+    preparedSource,
+    preparedWorkspaces,
+    releasePreparedSourceUrls,
+  } = preparedStores;
 
   const previous = {
     flow: useFlowStore.getState().exportProjectFlowSnapshot(),
@@ -278,11 +350,6 @@ export async function prepareProjectDocumentTransaction(
     } satisfies PreparedSourceBinProjectSnapshot,
     usage: useProjectUsageStore.getState().exportSnapshot(),
     paper: usePaperStore.getState().exportSnapshot(),
-    image: {
-      documents: useImageEditorStore.getState().documents,
-      activeDocId: useImageEditorStore.getState().activeDocId,
-      quickActionMacros: useImageEditorStore.getState().quickActionMacros,
-    },
   };
   const releasePreviousSourceUrls = leaseSourceBinProjectSnapshotObjectUrls(previous.source, {
     adoptSnapshotOwnership: true,
@@ -291,7 +358,9 @@ export async function prepareProjectDocumentTransaction(
     keys: readonly ProjectStoreIdentityKey[];
     postIdentity: ProjectStoreIdentity;
     restore: () => void;
+    settleSkippedRollback?: () => void;
   }> = [];
+  let imageTransaction: ImageEditorProjectSnapshotTransaction | undefined;
   let committed = false;
   let settled = false;
 
@@ -309,6 +378,8 @@ export async function prepareProjectDocumentTransaction(
     for (const applied of [...appliedStores].reverse()) {
       if (sameProjectStoreIdentityFields(captureProjectStoreIdentity(), applied.postIdentity, applied.keys)) {
         commitWithoutObserverFailure(applied.restore);
+      } else {
+        applied.settleSkippedRollback?.();
       }
     }
     appliedStores.length = 0;
@@ -319,6 +390,7 @@ export async function prepareProjectDocumentTransaction(
     keys: readonly ProjectStoreIdentityKey[],
     apply: () => void,
     restore: () => void,
+    settleSkippedRollback?: () => void,
   ) => {
     const before = captureProjectStoreIdentity();
     if (!sameProjectStoreIdentityFields(before, baseIdentity, keys)) {
@@ -334,7 +406,7 @@ export async function prepareProjectDocumentTransaction(
     if (observerError && sameProjectStoreIdentityFields(before, postIdentity, keys)) {
       throw observerError;
     }
-    appliedStores.push({ keys, postIdentity, restore });
+    appliedStores.push({ keys, postIdentity, restore, settleSkippedRollback });
   };
 
   const commit = () => {
@@ -383,14 +455,29 @@ export async function prepareProjectDocumentTransaction(
         () => usePaperStore.getState().restoreSnapshot(previous.paper),
       );
       applyStore(
-        ['imageDocuments', 'imageActiveDocId', 'imageQuickActionMacros'],
-        () => useImageEditorStore.getState().commitPreparedProjectSnapshotWithPixels(preparedImage),
-        () => useImageEditorStore.getState().restoreLiveProjectRollback(previous.image),
+        [
+          'imageDocuments',
+          'imageActiveDocId',
+          'imageUndoStacks',
+          'imageRedoStacks',
+          'imageQuickActionMacros',
+          'imageActiveQuickActionRecording',
+          'imageGenerativeFillDismissedByDocId',
+          'imageSelections',
+        ],
+        () => {
+          imageTransaction = useImageEditorStore.getState()
+            .commitPreparedProjectSnapshotWithPixels(preparedImage);
+        },
+        () => imageTransaction?.rollback(),
+        () => imageTransaction?.finalize(),
       );
       committed = true;
     } catch (error) {
       rollbackAppliedStores();
+      useImageEditorStore.getState().disposePreparedProjectSnapshotWithPixels(preparedImage);
       releaseSourceUrlLeases();
+      void rollbackPaperAssets();
       throw error;
     }
   };
@@ -405,12 +492,28 @@ export async function prepareProjectDocumentTransaction(
     commit,
     finalize: () => {
       if (!committed) return;
-      releaseSourceUrlLeases();
+      paperAssetsFinalized = true;
+      try {
+        imageTransaction?.finalize();
+      } finally {
+        releaseSourceUrlLeases();
+      }
     },
-    rollback: () => {
-      if (settled) return;
-      if (committed) rollbackAppliedStores();
-      releaseSourceUrlLeases();
+    rollback: async () => {
+      if (settled) {
+        await rollbackPaperAssets();
+        return;
+      }
+      try {
+        if (committed) rollbackAppliedStores();
+      } finally {
+        try {
+          useImageEditorStore.getState().disposePreparedProjectSnapshotWithPixels(preparedImage);
+        } finally {
+          releaseSourceUrlLeases();
+        }
+      }
+      await rollbackPaperAssets();
     },
   };
 }
@@ -420,8 +523,13 @@ export async function restoreProjectDocument(
   options: ProjectDocumentReplacementOptions = {},
 ): Promise<void> {
   const transaction = await prepareProjectDocumentTransaction(document, options);
-  transaction.commit();
-  transaction.finalize();
+  try {
+    transaction.commit();
+    transaction.finalize();
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  }
 }
 
 /**
@@ -470,6 +578,11 @@ export async function resetProjectDocument(
   options: ProjectDocumentReplacementOptions = {},
 ): Promise<void> {
   const transaction = await prepareProjectDocumentTransaction(undefined, options);
-  transaction.commit();
-  transaction.finalize();
+  try {
+    transaction.commit();
+    transaction.finalize();
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  }
 }

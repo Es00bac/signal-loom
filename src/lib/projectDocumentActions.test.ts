@@ -12,7 +12,7 @@ import {
 } from './projectDocumentActions';
 import { CURRENT_PROJECT_SCHEMA_VERSION } from './projectSchema';
 import { useImageEditorStore } from '../store/imageEditorStore';
-import type { ImageDocument } from '../types/imageEditor';
+import type { ImageDocument, LayerBitmap } from '../types/imageEditor';
 import { usePaperStore } from '../store/paperStore';
 import { addFrameToPaperPage, createDefaultPaperDocument } from './paperDocument';
 import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
@@ -666,6 +666,88 @@ describe('restoreProjectDocument', () => {
       expect(restoredState.documents[0].layers[0].bitmap).toBe(liveBitmap);
       expect(restoredState.undoStacks[liveDocument.id]).toEqual([historyEntry]);
       expect(Array.from(getSelection(liveDocument.id)?.data ?? [])).toEqual(Array.from(selection.data));
+    } finally {
+      defaultImageLayerPixelCodec.decode = originalDecode;
+    }
+  });
+
+  it('rejects a history-only concurrent Image edit before project commit', async () => {
+    const liveDocument = {
+      id: 'history-identity-a', title: 'History A', width: 4, height: 3, layers: [], activeLayerId: null,
+      hasSelection: false, selectionVersion: 0, viewport: { zoom: 1, panX: 0, panY: 0 }, dirty: false,
+    } satisfies ImageDocument;
+    useImageEditorStore.setState({
+      documents: [liveDocument],
+      activeDocId: liveDocument.id,
+      undoStacks: {},
+      redoStacks: {},
+    });
+    const transaction = await prepareProjectDocumentTransaction({
+      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      id: 'history-identity-b',
+      name: 'History B',
+      savedAt: 2,
+      flow: { version: 3, nodes: [], edges: [] },
+      imageEditor: { documents: [], activeDocId: null },
+    });
+    useImageEditorStore.setState({
+      undoStacks: {
+        [liveDocument.id]: [{ kind: 'selection', docId: liveDocument.id, before: null, after: null }],
+      },
+    });
+
+    expect(() => transaction.assertCanCommit()).toThrow('current project changed');
+    expect(() => transaction.commit()).toThrow('current project changed');
+    transaction.rollback();
+    expect(useImageEditorStore.getState().documents[0]).toBe(liveDocument);
+    expect(useImageEditorStore.getState().undoStacks[liveDocument.id]).toHaveLength(1);
+  });
+
+  it('disposes prepared Image pixels on precommit rollback while preserving live Image pixels', async () => {
+    const livePixels = { width: 4, height: 3 } as LayerBitmap;
+    const preparedPixels = { width: 4, height: 3 } as LayerBitmap;
+    const liveDocument = {
+      id: 'precommit-image-a', title: 'Image A', width: 4, height: 3,
+      layers: [{
+        id: 'layer-a', name: 'Layer A', type: 'image', visible: true, locked: false,
+        opacity: 1, blendMode: 'normal', x: 0, y: 0, bitmap: livePixels, mask: null, bitmapVersion: 0,
+      }],
+      activeLayerId: 'layer-a', hasSelection: false, selectionVersion: 0,
+      viewport: { zoom: 1, panX: 0, panY: 0 }, dirty: false,
+    } satisfies ImageDocument;
+    useImageEditorStore.setState({ documents: [liveDocument], activeDocId: liveDocument.id });
+    const originalDecode = defaultImageLayerPixelCodec.decode;
+    defaultImageLayerPixelCodec.decode = async () => preparedPixels;
+    try {
+      const transaction = await prepareProjectDocumentTransaction({
+        schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+        id: 'precommit-image-b',
+        name: 'Image B',
+        savedAt: 2,
+        flow: { version: 3, nodes: [], edges: [] },
+        imageEditor: {
+          documents: [{
+            ...liveDocument,
+            id: 'precommit-image-b',
+            title: 'Image B',
+            activeLayerId: 'layer-b',
+            layers: [{
+              ...liveDocument.layers[0],
+              id: 'layer-b',
+              name: 'Layer B',
+              bitmap: null,
+              bitmapData: 'data:image/png;base64,AA==',
+            }],
+          }],
+          activeDocId: 'precommit-image-b',
+        },
+      });
+
+      transaction.rollback();
+      transaction.rollback();
+      expect(preparedPixels.width).toBe(0);
+      expect(livePixels.width).toBe(4);
+      expect(useImageEditorStore.getState().documents[0]).toBe(liveDocument);
     } finally {
       defaultImageLayerPixelCodec.decode = originalDecode;
     }

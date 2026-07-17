@@ -42,7 +42,7 @@ import {
 } from '../components/ImageEditor/ImageRulersGuides';
 import { normalizeBrushSettings } from '../components/ImageEditor/ImageBrushEngine';
 import { toggleLayerInSelection } from '../components/ImageEditor/ImageGroupTransform';
-import { cloneBitmap } from '../components/ImageEditor/LayerBitmap';
+import { cloneBitmap, releaseImmutableBitmap } from '../components/ImageEditor/LayerBitmap';
 import {
   decodeImageDocumentSnapshotProjectPixels,
   decodeImageSelectionMaskProjectData,
@@ -63,10 +63,17 @@ import {
 import {
   clearAllSelections,
   clearSelection,
+  getFloatingSelection,
   getSelection,
+  setFloatingSelection,
   setSelection,
 } from '../components/ImageEditor/selectionRegistry';
-import { fromSnapshot, isMaskEmpty, toSnapshot } from '../components/ImageEditor/SelectionMask';
+import {
+  fromSnapshot,
+  isMaskEmpty,
+  toSnapshot,
+  type SelectionMask,
+} from '../components/ImageEditor/SelectionMask';
 import { buildPerspectiveCroppedImageDocumentState } from '../components/ImageEditor/tools/perspectiveCropDocument';
 import type { CropPoint as PerspectiveCropCorner } from '../components/ImageEditor/tools/perspectiveCrop';
 import {
@@ -177,6 +184,21 @@ export interface ImageEditorProjectSnapshot {
   quickActionMacros?: ImageQuickActionMacro[];
 }
 
+/**
+ * Opaque ownership token for fully decoded project pixels. Callers must either commit it or
+ * dispose it; exposing the decoded document graph would let prepared canvases escape before the
+ * surrounding native project switch has committed.
+ */
+export interface PreparedImageEditorProjectSnapshot {
+  readonly kind: 'prepared-image-editor-project-snapshot';
+}
+
+/** Owns both sides of one installed Image project until the outer project switch settles. */
+export interface ImageEditorProjectSnapshotTransaction {
+  rollback: () => void;
+  finalize: () => void;
+}
+
 interface ImageEditorActions {
   openDocument: (doc: ImageDocument) => void;
   /** Close only when no editable layered changes are pending. */
@@ -251,8 +273,11 @@ interface ImageEditorActions {
   exportProjectSnapshot: () => ImageEditorProjectSnapshot;
   restoreProjectSnapshot: (snapshot?: ImageEditorProjectSnapshot) => void;
   exportProjectSnapshotWithPixels: () => Promise<ImageEditorProjectSnapshot>;
-  prepareProjectSnapshotWithPixels: (snapshot?: ImageEditorProjectSnapshot) => Promise<ImageEditorProjectSnapshot>;
-  commitPreparedProjectSnapshotWithPixels: (snapshot: ImageEditorProjectSnapshot) => void;
+  prepareProjectSnapshotWithPixels: (snapshot?: ImageEditorProjectSnapshot) => Promise<PreparedImageEditorProjectSnapshot>;
+  disposePreparedProjectSnapshotWithPixels: (snapshot: PreparedImageEditorProjectSnapshot) => void;
+  commitPreparedProjectSnapshotWithPixels: (
+    snapshot: PreparedImageEditorProjectSnapshot,
+  ) => ImageEditorProjectSnapshotTransaction;
   restoreProjectSnapshotWithPixels: (snapshot?: ImageEditorProjectSnapshot) => Promise<void>;
   /**
    * Lossless rollback for a failed project restore: puts back the exact live
@@ -309,6 +334,148 @@ function removeImageDocumentState(state: ImageEditorState, id: string): Partial<
 function disposeAllImageHistory(state: Pick<ImageEditorState, 'undoStacks' | 'redoStacks'>): void {
   for (const stack of Object.values(state.undoStacks)) disposeEditorOperations(stack);
   for (const stack of Object.values(state.redoStacks)) disposeEditorOperations(stack);
+}
+
+interface PreparedImageEditorProjectSnapshotData {
+  snapshot: ImageEditorProjectSnapshot;
+  phase: 'prepared' | 'committed' | 'disposed';
+}
+
+interface ImageEditorProjectRuntimeSide {
+  documents: ImageDocument[];
+  activeDocId: string | null;
+  undoStacks: Record<string, EditorOperation[]>;
+  redoStacks: Record<string, EditorOperation[]>;
+  quickActionMacros: ImageQuickActionMacro[];
+  activeQuickActionRecording: ImageEditorState['activeQuickActionRecording'];
+  generativeFillDismissedByDocId: Record<string, boolean>;
+  selections: Map<string, SelectionMask>;
+  floatingSelections: Map<string, { layerId: string }>;
+}
+
+const preparedImageEditorProjectSnapshots = new WeakMap<
+  PreparedImageEditorProjectSnapshot,
+  PreparedImageEditorProjectSnapshotData
+>();
+
+function collectImageDocumentBitmaps(
+  documents: readonly ImageDocument[],
+  target: Set<LayerBitmap>,
+): void {
+  for (const document of documents) {
+    for (const layer of document.layers) {
+      if (layer.bitmap) target.add(layer.bitmap);
+      if (layer.mask) target.add(layer.mask);
+    }
+    for (const snapshot of document.snapshots ?? []) {
+      for (const layer of snapshot.layers) {
+        if (layer.bitmap) target.add(layer.bitmap);
+        if (layer.mask) target.add(layer.mask);
+      }
+    }
+  }
+}
+
+function disposeImageProjectDocumentResources(
+  documents: readonly ImageDocument[],
+  protectedDocuments: readonly ImageDocument[] = [],
+): void {
+  const protectedBitmaps = new Set<LayerBitmap>();
+  collectImageDocumentBitmaps(protectedDocuments, protectedBitmaps);
+  const liveBitmaps = new Set<LayerBitmap>();
+  for (const document of documents) {
+    for (const layer of document.layers) {
+      if (layer.bitmap) liveBitmaps.add(layer.bitmap);
+      if (layer.mask) liveBitmaps.add(layer.mask);
+    }
+  }
+  const snapshotProtectedBitmaps = new Set([...protectedBitmaps, ...liveBitmaps]);
+  for (const document of documents) {
+    for (const snapshot of document.snapshots ?? []) {
+      disposeImageDocumentSnapshotResources(snapshot, snapshotProtectedBitmaps);
+    }
+  }
+  for (const bitmap of liveBitmaps) {
+    if (protectedBitmaps.has(bitmap) || (bitmap.width === 0 && bitmap.height === 0)) continue;
+    releaseImmutableBitmap(bitmap);
+    bitmap.width = 0;
+    bitmap.height = 0;
+  }
+}
+
+function captureImageProjectSelections(documents: readonly ImageDocument[]): {
+  selections: Map<string, SelectionMask>;
+  floatingSelections: Map<string, { layerId: string }>;
+} {
+  const selections = new Map<string, SelectionMask>();
+  const floatingSelections = new Map<string, { layerId: string }>();
+  for (const document of documents) {
+    const selection = getSelection(document.id);
+    if (selection) selections.set(document.id, selection);
+    const floatingSelection = getFloatingSelection(document.id);
+    if (floatingSelection) floatingSelections.set(document.id, floatingSelection);
+  }
+  return { selections, floatingSelections };
+}
+
+function installImageProjectSelections(
+  selections: ReadonlyMap<string, SelectionMask>,
+  floatingSelections: ReadonlyMap<string, { layerId: string }>,
+): void {
+  clearAllSelections();
+  for (const [documentId, selection] of selections) setSelection(documentId, selection);
+  for (const [documentId, floatingSelection] of floatingSelections) {
+    setFloatingSelection(documentId, floatingSelection);
+  }
+}
+
+function captureImageProjectRuntimeSide(state: ImageEditorState): ImageEditorProjectRuntimeSide {
+  const selectionState = captureImageProjectSelections(state.documents);
+  return {
+    documents: state.documents,
+    activeDocId: state.activeDocId,
+    undoStacks: state.undoStacks,
+    redoStacks: state.redoStacks,
+    quickActionMacros: state.quickActionMacros,
+    activeQuickActionRecording: state.activeQuickActionRecording,
+    generativeFillDismissedByDocId: state.generativeFillDismissedByDocId,
+    ...selectionState,
+  };
+}
+
+function sameImageProjectSelections(
+  expected: ReadonlyMap<string, SelectionMask>,
+  expectedFloating: ReadonlyMap<string, { layerId: string }>,
+  documents: readonly ImageDocument[],
+): boolean {
+  if (expected.size !== documents.filter((document) => getSelection(document.id)).length) return false;
+  if (expectedFloating.size !== documents.filter((document) => getFloatingSelection(document.id)).length) return false;
+  return documents.every((document) => (
+    getSelection(document.id) === expected.get(document.id)
+    && getFloatingSelection(document.id) === (expectedFloating.get(document.id) ?? null)
+  ));
+}
+
+function sameImageProjectRuntimeSide(
+  state: ImageEditorState,
+  expected: ImageEditorProjectRuntimeSide,
+): boolean {
+  return state.documents === expected.documents
+    && state.activeDocId === expected.activeDocId
+    && state.undoStacks === expected.undoStacks
+    && state.redoStacks === expected.redoStacks
+    && state.quickActionMacros === expected.quickActionMacros
+    && state.activeQuickActionRecording === expected.activeQuickActionRecording
+    && state.generativeFillDismissedByDocId === expected.generativeFillDismissedByDocId
+    && sameImageProjectSelections(expected.selections, expected.floatingSelections, expected.documents);
+}
+
+function disposeImageProjectRuntimeSide(
+  side: ImageEditorProjectRuntimeSide,
+  protectedDocuments: readonly ImageDocument[] = [],
+): void {
+  disposeAllImageHistory(side);
+  disposeImageProjectDocumentResources(side.documents, protectedDocuments);
 }
 
 export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>()(
@@ -1258,27 +1425,131 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
       const activeDocId = safeSnapshot?.activeDocId && documents.some((document) => document.id === safeSnapshot.activeDocId)
         ? safeSnapshot.activeDocId
         : documents[0]?.id ?? null;
-      return {
+      const prepared = Object.freeze({
+        kind: 'prepared-image-editor-project-snapshot' as const,
+      });
+      preparedImageEditorProjectSnapshots.set(prepared, {
+        phase: 'prepared',
+        snapshot: {
+          documents,
+          activeDocId,
+          quickActionMacros: safeSnapshot?.quickActionMacros?.map(cloneImageQuickActionMacro) ?? [],
+        },
+      });
+      return prepared;
+    },
+
+    disposePreparedProjectSnapshotWithPixels: (prepared) => {
+      const data = preparedImageEditorProjectSnapshots.get(prepared);
+      if (!data || data.phase !== 'prepared') return;
+      data.phase = 'disposed';
+      preparedImageEditorProjectSnapshots.delete(prepared);
+      disposeImageProjectDocumentResources(data.snapshot.documents);
+    },
+
+    commitPreparedProjectSnapshotWithPixels: (prepared) => {
+      const data = preparedImageEditorProjectSnapshots.get(prepared);
+      if (!data || data.phase !== 'prepared') {
+        throw new Error('The prepared Image project snapshot is no longer available.');
+      }
+      const previous = captureImageProjectRuntimeSide(get());
+      const selections = new Map<string, SelectionMask>();
+      const documents = data.snapshot.documents.map((document) => {
+        const selection = document.hasSelection && document.selectionMask
+          ? fromSnapshot(document.selectionMask)
+          : undefined;
+        if (selection) selections.set(document.id, selection);
+        return {
+          ...document,
+          hasSelection: Boolean(selection),
+          selectionMask: undefined,
+          selectionMaskData: undefined,
+        };
+      });
+      const installed: ImageEditorProjectRuntimeSide = {
         documents,
-        activeDocId,
-        quickActionMacros: safeSnapshot?.quickActionMacros?.map(cloneImageQuickActionMacro) ?? [],
+        activeDocId: data.snapshot.activeDocId && documents.some((document) => document.id === data.snapshot.activeDocId)
+          ? data.snapshot.activeDocId
+          : documents[0]?.id ?? null,
+        undoStacks: {},
+        redoStacks: {},
+        quickActionMacros: data.snapshot.quickActionMacros?.map(cloneImageQuickActionMacro) ?? [],
+        activeQuickActionRecording: null,
+        generativeFillDismissedByDocId: {},
+        selections,
+        floatingSelections: new Map(),
+      };
+
+      installImageProjectSelections(installed.selections, installed.floatingSelections);
+      let observerError: unknown;
+      try {
+        set({
+          documents: installed.documents,
+          activeDocId: installed.activeDocId,
+          undoStacks: installed.undoStacks,
+          redoStacks: installed.redoStacks,
+          quickActionMacros: installed.quickActionMacros,
+          activeQuickActionRecording: installed.activeQuickActionRecording,
+          generativeFillDismissedByDocId: installed.generativeFillDismissedByDocId,
+        });
+      } catch (error) {
+        observerError = error;
+      }
+      if (!sameImageProjectRuntimeSide(get(), installed)) {
+        installImageProjectSelections(previous.selections, previous.floatingSelections);
+        if (observerError) throw observerError;
+        throw new Error('The prepared Image project snapshot could not be installed.');
+      }
+      data.phase = 'committed';
+
+      let settled = false;
+      const settle = (outcome: 'rollback' | 'finalize') => {
+        if (settled) return;
+        settled = true;
+        data.phase = 'disposed';
+        preparedImageEditorProjectSnapshots.delete(prepared);
+        const current = get();
+        if (outcome === 'rollback' && sameImageProjectRuntimeSide(current, installed)) {
+          installImageProjectSelections(previous.selections, previous.floatingSelections);
+          try {
+            set({
+              documents: previous.documents,
+              activeDocId: previous.activeDocId,
+              undoStacks: previous.undoStacks,
+              redoStacks: previous.redoStacks,
+              quickActionMacros: previous.quickActionMacros,
+              activeQuickActionRecording: previous.activeQuickActionRecording,
+              generativeFillDismissedByDocId: previous.generativeFillDismissedByDocId,
+            });
+          } catch {
+            // Zustand publishes the state before notifying synchronous observers. The exact A
+            // side is already restored even if one observer rejects its notification.
+          }
+          disposeImageProjectRuntimeSide(installed, previous.documents);
+          return;
+        }
+        // Successful settlement, or a concurrent Image edit after commit: the installed/current
+        // side wins and only the superseded A resources may be released.
+        disposeImageProjectRuntimeSide(previous, current.documents);
+      };
+
+      return {
+        rollback: () => settle('rollback'),
+        finalize: () => settle('finalize'),
       };
     },
 
-    commitPreparedProjectSnapshotWithPixels: (snapshot) => {
-      set({
-        documents: snapshot.documents,
-        activeDocId: snapshot.activeDocId,
-        undoStacks: {},
-        redoStacks: {},
-        quickActionMacros: snapshot.quickActionMacros?.map(cloneImageQuickActionMacro) ?? [],
-        activeQuickActionRecording: null,
-        generativeFillDismissedByDocId: {},
-      });
-    },
-
     restoreProjectSnapshotWithPixels: async (snapshot) => {
-      get().commitPreparedProjectSnapshotWithPixels(await get().prepareProjectSnapshotWithPixels(snapshot));
+      const prepared = await get().prepareProjectSnapshotWithPixels(snapshot);
+      let transaction: ImageEditorProjectSnapshotTransaction | undefined;
+      try {
+        transaction = get().commitPreparedProjectSnapshotWithPixels(prepared);
+        transaction.finalize();
+      } catch (error) {
+        if (transaction) transaction.rollback();
+        else get().disposePreparedProjectSnapshotWithPixels(prepared);
+        throw error;
+      }
     },
 
     restoreLiveProjectRollback: (rollback) => {
