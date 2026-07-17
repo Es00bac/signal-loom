@@ -30,7 +30,7 @@ describe('paperPackageExport', () => {
       asset: { sourceBinItemId: item.id, label: item.label, kind: item.kind },
     });
 
-    const exported = buildPaperPackageExport(document, [item], { profileId: 'comic-print' });
+    const exported = await buildPaperPackageExport(document, [item], { profileId: 'comic-print' });
     const parsed = JSON.parse(exported.json) as {
       manifest: typeof exported.manifest;
       preflightReport: { profile: { id: string } };

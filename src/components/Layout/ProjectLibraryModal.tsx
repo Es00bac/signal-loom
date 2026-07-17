@@ -232,6 +232,9 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
         project = await buildFullProjectDocument({
           name: projectName.trim() || selectedProject?.name,
           includeAssetData: true,
+          // Exported .sloom copies promise self-containment; Paper asset policy failures surface
+          // here as the status message instead of producing a file that lies about completeness.
+          strictPaperAssets: true,
         });
       }
 

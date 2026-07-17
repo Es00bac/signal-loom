@@ -75,6 +75,60 @@ export function canUseManagedFontForProduction(face: PaperManagedFontFace):
   return { allowed: true };
 }
 
+export type PaperFontPackagingVerdict =
+  | { allowed: true; licenseTextRequired: boolean }
+  | { allowed: false; reason: PaperFontRightsReason; detail: string };
+
+/**
+ * Whether this exact face's BYTES may be redistributed inside a portable editable project or a
+ * print package. This is a stricter right than embedding rendered output: fsType installable and
+ * editable embedding cover a travelling editable document, while preview/print-only and
+ * unknown-rights faces need the explicit byte-bound `mayPackageEditableProject` attestation.
+ * Disallowed faces must fail closed in strict flows — never be silently omitted or substituted.
+ */
+export function classifyPaperFontPackaging(face: PaperManagedFontFace): PaperFontPackagingVerdict {
+  const identity = `"${face.familyName}" (${face.postscriptName})`;
+  if (face.embeddability === 'bitmap-only') {
+    return {
+      allowed: false,
+      reason: 'bitmap-only',
+      detail: `${identity} permits bitmap embedding only, so its font file cannot be packaged. Replace this font or remove it from the document.`,
+    };
+  }
+  if (face.embeddability === 'restricted') {
+    return {
+      allowed: false,
+      reason: 'restricted',
+      detail: `${identity} forbids embedding (OS/2 fsType Restricted License), so its font file cannot be packaged. Replace this font or remove it from the document.`,
+    };
+  }
+  if (face.source.kind === 'bundled' || hasAuthoritativeOpenCatalogLicense(face)) {
+    return { allowed: true, licenseTextRequired: isBinaryAssetRef(face.license.textAsset) };
+  }
+
+  const attestation = face.attestation;
+  if (attestation && attestation.assetSha256 !== face.fontAsset.sha256) {
+    return {
+      allowed: false,
+      reason: 'attestation-mismatch',
+      detail: `${identity} carries a rights attestation for different font bytes. Re-confirm the packaging rights for the current file in the font manager.`,
+    };
+  }
+  if (attestation?.mayPackageEditableProject) {
+    return { allowed: true, licenseTextRequired: isBinaryAssetRef(face.license.textAsset) };
+  }
+  if (face.embeddability === 'installable' || face.embeddability === 'editable') {
+    return { allowed: true, licenseTextRequired: isBinaryAssetRef(face.license.textAsset) };
+  }
+  return {
+    allowed: false,
+    reason: 'attestation-required',
+    detail: face.embeddability === 'print-preview'
+      ? `${identity} permits print/preview embedding only. Attest that you hold packaging rights for this font in the font manager, or remove it from the document.`
+      : `${identity} has unknown embedding rights. Attest that you hold packaging rights for this font in the font manager, or remove it from the document.`,
+  };
+}
+
 /**
  * The download flow fetches and hashes the license text before producing these metadata fields. This exception
  * exists only for the approved, version-pinned catalog shape; every user-imported unknown-rights font still

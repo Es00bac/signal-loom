@@ -11,6 +11,7 @@ import type {
   PaperWorkspaceDocumentSnapshot,
 } from '../types/paper';
 import { mergePaperSnapshotRecovery, sanitizePaperSnapshotRecovery } from './paperSnapshotRecovery';
+import { sanitizePaperPortableAssetsSection } from '../features/paper/assets/PaperPortableAssets';
 import { isBinaryAssetRef, type BinaryAssetId } from '../shared/assets/contentAddressedAsset';
 import type {
   ImageDocumentSnapshot,
@@ -1215,6 +1216,7 @@ export function sanitizeProjectDocument(input: unknown, fallbackName = 'Sloom St
     sourceBin,
     usageLedger: sanitizeProjectUsageLedgerSnapshot(input.usageLedger),
     paper: sanitizePaperSnapshot(input.paper),
+    paperAssets: sanitizePaperPortableAssetsSection(input.paperAssets),
     imageEditor: sanitizeImageEditorSnapshot(input.imageEditor),
     fileSystem: sanitizeFileSystemMetadata(input.fileSystem),
   };

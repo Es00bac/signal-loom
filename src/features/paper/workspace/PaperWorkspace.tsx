@@ -1472,9 +1472,13 @@ export function PaperWorkspace() {
         if (isCommercialPrintProductionTarget(document.printProduction)
           && !(await requestCommercialExportUnlock('CMYK/spot print-production packaging'))) return;
         if (!await confirmPreflightBeforeExport('package for print')) return;
-        const pack = buildPaperPackageExport(document, sourceItems);
-        downloadBlob(pack.fileName, pack.blob);
-        setStatus(`Downloaded Paper print package with ${pack.manifest.linkedAssets.length} linked asset records${pack.entries.length ? ` and ${pack.entries.length} ZIP entries` : ''}.`);
+        try {
+          const pack = await buildPaperPackageExport(document, sourceItems);
+          downloadBlob(pack.fileName, pack.blob);
+          setStatus(`Downloaded Paper print package with ${pack.manifest.packagedAssets.length} embedded asset files, ${pack.manifest.linkedAssets.length} linked asset records${pack.entries.length ? `, and ${pack.entries.length} ZIP entries` : ''}.`);
+        } catch (error) {
+          setStatus(`Print packaging failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+        }
         return;
       }
       case 'paper:export-idml':
@@ -3452,7 +3456,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
 
       const latestDocument = usePaperStore.getState().document;
       const latestSourceItems = useSourceBinStore.getState().getAllItems();
-      const pack = buildPaperPackageExport(latestDocument, latestSourceItems);
+      const pack = await buildPaperPackageExport(latestDocument, latestSourceItems);
       downloadBlob(pack.fileName, pack.blob);
       setSourceSidebarOpen(true);
       const failureText = failedCount > 0

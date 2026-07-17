@@ -1440,15 +1440,27 @@ function FlowApp() {
         return;
       }
       case 'file:export-project': {
-        const document = await buildCurrentProjectDocument({
-          name: getNativeProjectName(),
-          includeAssetData: true,
-        });
+        try {
+          // A portable export promises a self-contained project, so Paper asset policy failures
+          // (unpackagable fonts, missing managed records) fail closed here instead of shipping
+          // a file that silently loses art, exact fonts, or ICC profiles on another machine.
+          const document = await buildCurrentProjectDocument({
+            name: getNativeProjectName(),
+            includeAssetData: true,
+            strictPaperAssets: true,
+          });
 
-        if (bridge) {
-          await bridge.saveProjectFileAs(document);
-        } else {
-          downloadJsonFile(getProjectExportFileName(), document);
+          if (bridge) {
+            await bridge.saveProjectFileAs(document);
+          } else {
+            downloadJsonFile(getProjectExportFileName(), document);
+          }
+        } catch (error) {
+          await showAlertDialog({
+            title: 'Export Project Failed',
+            message: error instanceof Error ? error.message : 'The portable project could not be exported.',
+            tone: 'danger',
+          });
         }
         return;
       }

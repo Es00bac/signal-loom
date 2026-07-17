@@ -1,5 +1,6 @@
 import type { EditorWorkspaceSnapshot } from '../store/editorStore';
 import type { ImageEditorProjectSnapshot } from '../store/imageEditorStore';
+import type { PaperPortableAssetsSection } from '../features/paper/assets/PaperPortableAssets';
 import type { PaperDocumentSnapshot } from '../types/paper';
 import type { SourceBinProjectSnapshot } from '../store/sourceBinStore';
 import type {
@@ -29,6 +30,8 @@ export interface FlowProjectDocument {
   sourceBin?: SourceBinProjectSnapshot;
   usageLedger?: ProjectUsageLedgerSnapshot;
   paper?: Partial<PaperDocumentSnapshot>;
+  /** Validated content-addressed Paper bytes (images, exact fonts, license texts, ICC profiles). */
+  paperAssets?: PaperPortableAssetsSection;
   imageEditor?: ImageEditorProjectSnapshot;
   fileSystem?: {
     projectDirectoryName?: string;

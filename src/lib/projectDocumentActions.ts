@@ -9,6 +9,15 @@ import {
 import { sanitizeProjectDocument } from './projectValidation';
 import { migrateLegacyPaperBinaryFields } from '../features/paper/assets/PaperDocumentAssets';
 import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
+import {
+  buildPaperPortableAssetsSection,
+  collectMissingPaperAssetDiagnostics,
+  importPaperPortableAssetsSection,
+  type PaperPortableAssetsImportResult,
+  type PaperPortableAssetsSection,
+} from '../features/paper/assets/PaperPortableAssets';
+import { mergePaperSnapshotRecovery } from './paperSnapshotRecovery';
+import type { PaperDocument } from '../types/paper';
 import { useEditorStore } from '../store/editorStore';
 import { useFlowStore } from '../store/flowStore';
 import { useFlowWorkspaceStore } from '../store/flowWorkspaceStore';
@@ -47,6 +56,12 @@ export async function buildCurrentProjectDocument(options: {
   id?: string;
   name?: string;
   includeAssetData?: boolean;
+  /**
+   * Explicit portable-export flows fail closed when a Paper font's rights forbid packaging or a
+   * reachable managed record is missing. Plain Save never fails for policy reasons; it records
+   * exclusions explicitly in the section instead.
+   */
+  strictPaperAssets?: boolean;
 } = {}): Promise<FlowProjectDocument> {
   const name = options.name?.trim() || `${DEFAULT_PROJECT_NAME} ${new Date().toLocaleString()}`;
   const savedAt = Date.now();
@@ -71,7 +86,33 @@ export async function buildCurrentProjectDocument(options: {
     imageEditor: await useImageEditorStore.getState().exportProjectSnapshotWithPixels(),
   };
 
-  return normalizeProjectMediaReferencesForSave(document).document;
+  const normalized = normalizeProjectMediaReferencesForSave(document).document;
+  // Enumerate from the NORMALIZED Paper documents: reference normalization can remap a managed
+  // locator to a durable external URL, and the section must carry exactly what reopen will need.
+  const paperAssets = await buildProjectPaperPortableAssets(normalized.paper, {
+    strict: options.strictPaperAssets,
+  });
+  return { ...normalized, ...(paperAssets ? { paperAssets } : {}) };
+}
+
+function collectProjectPaperDocuments(paper: FlowProjectDocument['paper']): PaperDocument[] {
+  if (!paper?.document) return [];
+  const documents = (paper.documents ?? [])
+    .map((workspaceDocument) => workspaceDocument.document)
+    .filter((document): document is PaperDocument => Boolean(document));
+  return [paper.document, ...documents];
+}
+
+async function buildProjectPaperPortableAssets(
+  paper: FlowProjectDocument['paper'],
+  options: { strict?: boolean },
+): Promise<PaperPortableAssetsSection | undefined> {
+  const documents = collectProjectPaperDocuments(paper);
+  if (documents.length === 0) return undefined;
+  const built = await buildPaperPortableAssetsSection(documents, paperAssetRepository, {
+    strict: options.strict,
+  });
+  return built.section;
 }
 
 export async function restoreProjectDocument(
@@ -127,7 +168,16 @@ export async function restoreProjectDocument(
     })),
   };
 
+  let paperAssetsImport: PaperPortableAssetsImportResult | undefined;
   try {
+    // Stage Paper's managed bytes FIRST: every entry is metadata- and digest-validated before the
+    // first repository write, and staged records roll back if any later restore step fails.
+    if (sanitizedDocument.paperAssets) {
+      paperAssetsImport = await importPaperPortableAssetsSection(
+        sanitizedDocument.paperAssets,
+        paperAssetRepository,
+      );
+    }
     await sourceBinStore.restoreProjectSnapshot(sanitizedDocument.sourceBin, { publishNative: false });
     const resolvedDocument = resolveProjectMediaReferencesForRestore(
       sanitizedDocument,
@@ -144,7 +194,10 @@ export async function restoreProjectDocument(
     await flowStore.restoreImportedAssets();
     editorStore.restoreWorkspaceSnapshot(restoredDocument.editor);
     projectUsageStore.restoreSnapshot(restoredDocument.usageLedger);
-    paperStore.restoreSnapshot(restoredDocument.paper);
+    paperStore.restoreSnapshot(await attachPaperMissingAssetDiagnostics(
+      restoredDocument.paper,
+      sanitizedDocument.paperAssets,
+    ));
     // Multi-window desktop: the source-bin restore above replaced the Source Library with the
     // saved project bin (resolved against flow media refs first). The native main process holds
     // the authoritative live snapshot — which also contains assets generated in *other* windows
@@ -155,6 +208,7 @@ export async function restoreProjectDocument(
     // corruption, while successful replacement disposes the prior graph's owned snapshots.
     await imageEditorStore.restoreProjectSnapshotWithPixels(restoredDocument.imageEditor);
   } catch (error) {
+    await paperAssetsImport?.rollback().catch(() => undefined);
     flowStore.replaceFlowSnapshot(previous.flow);
     flowWorkspaceStore.hydrateProjectSnapshot({
       workspaces: previous.flowWorkspaces,
@@ -168,6 +222,25 @@ export async function restoreProjectDocument(
     const message = error instanceof Error ? error.message : 'Unknown restore error';
     throw new Error(`The selected project could not be restored safely. Previous workspace was left unchanged. ${message}`);
   }
+}
+
+/**
+ * Explicit missing-asset diagnostics for open: whatever the repository still cannot supply after
+ * staging (legacy `.sloom` without the section, or faces excluded by rights policy at save time)
+ * is reported through the Paper recovery channel instead of pretending the project is complete.
+ */
+async function attachPaperMissingAssetDiagnostics(
+  paper: FlowProjectDocument['paper'],
+  section: PaperPortableAssetsSection | undefined,
+): Promise<FlowProjectDocument['paper']> {
+  const documents = collectProjectPaperDocuments(paper);
+  if (!paper || documents.length === 0) return paper;
+  const repairs = await collectMissingPaperAssetDiagnostics(documents, paperAssetRepository, section);
+  if (repairs.length === 0) return paper;
+  return {
+    ...paper,
+    recovery: mergePaperSnapshotRecovery(paper.recovery, { quarantinedDocuments: [], repairs }),
+  };
 }
 
 async function migrateProjectPaperDocuments(
