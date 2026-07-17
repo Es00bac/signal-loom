@@ -84,6 +84,19 @@ function waitForExit(child, timeoutMs = 20_000, getLogs = () => '') {
   });
 }
 
+async function removeProbeRootStrictly() {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await rm(probeRoot, { recursive: true, force: true });
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+    try {
+      await access(probeRoot, constants.F_OK);
+    } catch {
+      return;
+    }
+  }
+  throw new Error(`Electron processes kept recreating probe state after cleanup: ${probeRoot}`);
+}
+
 let winner;
 let loser;
 try {
@@ -114,5 +127,5 @@ try {
     winner.child.kill('SIGTERM');
     await waitForExit(winner.child, 5_000, winner.logs).catch(() => undefined);
   }
-  await rm(probeRoot, { recursive: true, force: true });
+  await removeProbeRootStrictly();
 }
