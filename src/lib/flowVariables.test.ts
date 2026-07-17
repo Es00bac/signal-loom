@@ -120,4 +120,18 @@ describe('flowVariables', () => {
     expect(attempts[0]?.variableName).toBeUndefined();
     expect(attempts[1]?.variableName).toBe('hero_prompt');
   });
+
+  it.each([true, false])('keeps Boolean %s attempts assignable and renders them deterministically', (decision) => {
+    const nodes = [node('verify', 'visionVerifyNode', {
+      resultHistory: [{
+        id: 'verify-attempt', result: decision, resultType: 'boolean', statusMessage: 'Verified',
+        createdAt: '2026-07-16T00:00:00.000Z', variableName: 'verified',
+      }],
+    })];
+
+    expect(collectFlowVariableBindings(nodes, []).find((binding) => binding.name === 'verified')).toMatchObject({
+      kind: 'boolean', value: String(decision),
+    });
+    expect(resolveFlowVariablesInText('Decision: {{verified}}', nodes, []).text).toBe(`Decision: ${decision}`);
+  });
 });

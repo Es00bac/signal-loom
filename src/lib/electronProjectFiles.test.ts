@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CURRENT_PROJECT_SCHEMA_VERSION, FLOW_NODE_TYPES } from './projectSchema';
+import { sanitizeProjectDocument } from './projectValidation';
 
 interface ElectronProjectFilesModule {
   CURRENT_PROJECT_SCHEMA_VERSION: number;
@@ -780,7 +781,7 @@ describe('Electron project file helpers', () => {
             resultHistory: [
               ...resultTypes.map((resultType, index) => ({
                 id: `attempt-${resultType}`,
-                result: `result-${index}`,
+                result: resultType === 'boolean' ? false : `result-${index}`,
                 resultType,
                 statusMessage: resultType,
                 createdAt: '2026-01-01T00:00:00.000Z',
@@ -800,6 +801,64 @@ describe('Electron project file helpers', () => {
     })) as { flow?: { nodes?: Array<{ data?: { resultHistory?: Array<{ resultType?: string }> } }> } };
 
     expect(parsed.flow?.nodes?.[0].data?.resultHistory?.map((attempt) => attempt.resultType)).toEqual(resultTypes);
+  });
+
+  it('preserves real true and false histories and migrates only legacy Vision Verify text decisions', async () => {
+    const { parseProjectDocumentJson } = await loadProjectFilesModule();
+    const parsed = parseProjectDocumentJson(JSON.stringify({
+      id: 'p1', name: 'Boolean restore', savedAt: 1,
+      flow: {
+        version: 3,
+        nodes: [
+          {
+            id: 'verify', type: 'visionVerifyNode', position: { x: 0, y: 0 }, data: {
+              selectedResultId: 'legacy-false',
+              result: 'true', resultType: 'text',
+              resultHistory: [
+                { id: 'native-true', result: true, resultType: 'boolean', statusMessage: 'TRUE', createdAt: '2026-01-01T00:00:00.000Z' },
+                { id: 'legacy-false', result: 'false', resultType: 'text', statusMessage: 'FALSE', createdAt: '2026-01-01T00:01:00.000Z' },
+              ],
+            },
+          },
+          {
+            id: 'text', type: 'textNode', position: { x: 1, y: 0 }, data: {
+              result: 'true', resultType: 'text',
+              resultHistory: [{ id: 'text-true', result: 'true', resultType: 'text', statusMessage: 'Literal', createdAt: '2026-01-01T00:00:00.000Z' }],
+            },
+          },
+        ],
+        edges: [],
+      },
+    })) as { flow: { nodes: Array<{ id: string; data: Record<string, unknown> }> } };
+
+    const verify = parsed.flow.nodes.find((node) => node.id === 'verify')!.data;
+    expect(verify).toMatchObject({ result: false, resultType: 'boolean', selectedResultId: 'legacy-false' });
+    expect(verify.resultHistory).toEqual([
+      expect.objectContaining({ id: 'native-true', result: true, resultType: 'boolean' }),
+      expect.objectContaining({ id: 'legacy-false', result: false, resultType: 'boolean' }),
+    ]);
+    expect(parsed.flow.nodes.find((node) => node.id === 'text')!.data).toMatchObject({ result: 'true', resultType: 'text' });
+  });
+
+  it('keeps Electron and app project sanitizers in parity for Boolean history migration', async () => {
+    const { parseProjectDocumentJson } = await loadProjectFilesModule();
+    const raw = {
+      id: 'parity', name: 'Parity', savedAt: 1,
+      flow: { version: 3, nodes: [{
+        id: 'verify', type: 'visionVerifyNode', position: { x: 0, y: 0 },
+        data: {
+          selectedResultId: 'false',
+          resultHistory: [
+            { id: 'true', result: 'true', resultType: 'text', statusMessage: 'TRUE', createdAt: '2026-01-01T00:00:00.000Z' },
+            { id: 'false', result: 'false', resultType: 'text', statusMessage: 'FALSE', createdAt: '2026-01-01T00:01:00.000Z' },
+          ],
+        },
+      }], edges: [] },
+    };
+    const renderer = sanitizeProjectDocument(raw);
+    const electron = parseProjectDocumentJson(JSON.stringify(raw)) as typeof renderer;
+
+    expect(electron.flow.nodes).toEqual(renderer.flow.nodes);
   });
 
   it('preserves Paper page-import envelopes and linked page frames while parsing native project documents', async () => {

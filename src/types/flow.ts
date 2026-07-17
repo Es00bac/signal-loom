@@ -732,10 +732,17 @@ export interface VideoExportPresetPlanData {
   notes?: string;
 }
 
+/**
+ * The value retained at node, history, and project boundaries. Containers
+ * deliberately use string payloads, but scalar Boolean ports retain a real
+ * Boolean so `false` cannot be lost to string/truthiness checks.
+ */
+export type ResultValue = string | boolean;
+
 export interface NodeResultAttempt {
   id: string;
   /** The typed value emitted by a node. Media and text results are strings; Boolean ports retain booleans. */
-  result: string | boolean;
+  result: ResultValue;
   resultType: ResultType;
   statusMessage: string;
   createdAt: string;
@@ -902,7 +909,7 @@ export interface NodeData {
   collapsed?: boolean;
   customTitle?: string;
   /** The typed value emitted by a node. Media and text results are strings; Boolean ports retain booleans. */
-  result?: string | boolean;
+  result?: ResultValue;
   resultType?: ResultType;
   declaredOutputType?: ResultType;
   resultHistory?: NodeResultAttempt[];

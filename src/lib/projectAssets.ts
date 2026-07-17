@@ -1,4 +1,5 @@
 import type { AppNode } from '../types/flow';
+import { resultValueAsMediaUrl } from './flowResultValues';
 import { buildDownloadFilename, downloadAsset } from './downloadAsset';
 
 export interface ExportableProjectAsset {
@@ -98,13 +99,13 @@ function buildProjectAsset(node: AppNode): ExportableProjectAsset | undefined {
 
 function resolveNodeAssetUrl(node: AppNode): string | undefined {
   if (node.type === 'composition') {
-    return node.data.result;
+    return resultValueAsMediaUrl(node.data.result);
   }
 
   if (node.type === 'imageGen' || node.type === 'cropImageNode' || node.type === 'videoGen' || node.type === 'audioGen') {
     return (node.data.mediaMode ?? 'generate') === 'import'
-      ? node.data.sourceAssetUrl
-      : node.data.result;
+      ? resultValueAsMediaUrl(node.data.sourceAssetUrl)
+      : resultValueAsMediaUrl(node.data.result);
   }
 
   return undefined;

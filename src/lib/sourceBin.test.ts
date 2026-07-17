@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Edge } from '@xyflow/react';
 import type { AppNode } from '../types/flow';
-import { buildSourceBinItem, collectGlobalSourceBinItems, collectSourceBinItems } from './sourceBin';
+import { buildSourceBinItem, collectGlobalSourceBinItems, collectSourceBinItems, resolveMediaNodeAsset } from './sourceBin';
 
 function createNode(node: Partial<AppNode> & Pick<AppNode, 'id' | 'type'>): AppNode {
   return {
@@ -12,6 +12,13 @@ function createNode(node: Partial<AppNode> & Pick<AppNode, 'id' | 'type'>): AppN
 }
 
 describe('buildSourceBinItem', () => {
+  it.each([true, false])('never accepts Boolean %s as a media asset URL', (decision) => {
+    const node = createNode({ id: 'bad-image', type: 'imageGen', data: { result: decision, resultType: 'boolean' } });
+
+    expect(resolveMediaNodeAsset(node)).toBeUndefined();
+    expect(buildSourceBinItem(node)).toBeUndefined();
+  });
+
   it('extracts prompt text from prompt-mode text nodes', () => {
     const item = buildSourceBinItem(
       createNode({

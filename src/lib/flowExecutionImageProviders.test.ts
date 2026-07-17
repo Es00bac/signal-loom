@@ -485,6 +485,10 @@ describe('executeNodeRequest advanced image providers', () => {
       moderation: 'low',
       quality: 'high',
     });
+    expect(typeof result.result).toBe('string');
+    if (typeof result.result !== 'string') {
+      throw new Error('Image execution returned a non-media value.');
+    }
     expect(result.result.startsWith('data:image/webp;base64,')).toBe(true);
   });
 

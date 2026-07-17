@@ -5,6 +5,7 @@ import { BaseNode } from './BaseNode';
 import { TypedHandle as Handle } from './TypedHandle';
 import { useFlowStore } from '../../store/flowStore';
 import type { AppNodeProps } from '../../types/flow';
+import { resultValueAsMediaUrl } from '../../lib/flowResultValues';
 
 function PackageNodeComponent({ id, data }: AppNodeProps) {
   const [isViewerOpen, setIsViewerOpen] = useState(false);
@@ -31,7 +32,9 @@ function PackageNodeComponent({ id, data }: AppNodeProps) {
         }
       } else if (edge.targetHandle === 'image') {
         if (rawSource.type === 'imageGen' || rawSource.type === 'cropImageNode') {
-          imageUrl = rawSource.data.mediaMode === 'import' ? rawSource.data.sourceAssetUrl : rawSource.data.result;
+          imageUrl = resultValueAsMediaUrl(rawSource.data.mediaMode === 'import'
+            ? rawSource.data.sourceAssetUrl
+            : rawSource.data.result);
         }
       }
     }

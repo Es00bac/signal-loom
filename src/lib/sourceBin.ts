@@ -8,6 +8,7 @@ import {
 } from './listNodes';
 import { evaluateNodeSignal, signalToText } from './flowSignals';
 import { resolveEffectiveSourceNode } from './virtualNodes';
+import { resultValueAsMediaUrl } from './flowResultValues';
 
 type SourceBinItemKind = 'text' | 'image' | 'video' | 'audio' | 'package';
 
@@ -187,14 +188,15 @@ export function buildSourceBinItem(node: AppNode, nodes?: AppNode[], edges?: Edg
           }
         : undefined;
     }
-    case 'composition':
-      return node.data.result
+    case 'composition': {
+      const assetUrl = resultValueAsMediaUrl(node.data.result);
+      return assetUrl
         ? {
             id: `source-${node.id}`,
             nodeId: node.id,
             kind: node.data.resultType === 'package' ? 'package' : 'composition',
             label: node.data.resultType === 'package' ? 'Composition package' : 'Composition output',
-            assetUrl: node.data.result,
+            assetUrl,
             mimeType: typeof node.data.resultMimeType === 'string'
               ? node.data.resultMimeType
               : node.data.resultType === 'package'
@@ -202,6 +204,7 @@ export function buildSourceBinItem(node: AppNode, nodes?: AppNode[], edges?: Edg
                 : 'video/mp4',
           }
         : undefined;
+    }
     case 'functionNode': {
       const result = typeof node.data.result === 'string' ? node.data.result : undefined;
       if (!result) {
@@ -236,7 +239,8 @@ export function buildSourceBinItem(node: AppNode, nodes?: AppNode[], edges?: Edg
     }
     case 'textNode': {
       const mode = node.data.mode ?? 'prompt';
-      const text = (mode === 'generate' ? node.data.result : node.data.prompt)?.trim();
+      const rawText = mode === 'generate' ? node.data.result : node.data.prompt;
+      const text = typeof rawText === 'string' ? rawText.trim() : '';
       return text
         ? {
             id: `source-${node.id}`,
@@ -455,12 +459,12 @@ function isSourceNodeGenerationOutput(node: AppNode | undefined): boolean {
 export function resolveMediaNodeAsset(node: AppNode): string | undefined {
   if (node.type === 'imageGen' || node.type === 'cropImageNode' || node.type === 'videoGen' || node.type === 'audioGen') {
     return (node.data.mediaMode ?? 'generate') === 'import'
-      ? node.data.sourceAssetUrl
-      : node.data.result;
+      ? resultValueAsMediaUrl(node.data.sourceAssetUrl)
+      : resultValueAsMediaUrl(node.data.result);
   }
 
   if (node.type === 'composition') {
-    return node.data.result;
+    return resultValueAsMediaUrl(node.data.result);
   }
 
   if (node.type === 'functionNode') {

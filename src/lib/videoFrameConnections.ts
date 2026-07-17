@@ -3,6 +3,7 @@ import type { AppNode, VideoTargetHandle } from '../types/flow';
 import { resolveFlowImageSource } from './flowImageSources';
 import { isVideoImageConditioningHandle } from './videoModelSupport';
 import { resolveEffectiveSourceNode } from './virtualNodes';
+import { resultValueAsMediaUrl } from './flowResultValues';
 
 interface MiswiredVideoImageSource {
   nodeId: string;
@@ -84,8 +85,8 @@ export function resolveConnectedVideoSourceAsset(
   }
 
   return (sourceNode.data.mediaMode ?? 'generate') === 'import'
-    ? sourceNode.data.sourceAssetUrl
-    : sourceNode.data.result;
+    ? resultValueAsMediaUrl(sourceNode.data.sourceAssetUrl)
+    : resultValueAsMediaUrl(sourceNode.data.result);
 }
 
 function findConnectedVideoFrameSource(

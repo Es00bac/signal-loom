@@ -222,7 +222,7 @@ function ImageNodeComponent({ id, data }: AppNodeProps) {
   // (capacitor / blob / `signal-loom-asset:` / the inline `sourceAssetUrl` that read-only project-open
   // restores) and fail to load — only a `data:` URL is safe. Off a served session every URL is local, so
   // anything paints. Painting an unloadable URL is what produced the broken-image glyph on the desktop.
-  const canPaint = (url: string | undefined): url is string =>
+  const canPaint = (url: unknown): url is string =>
     typeof url === 'string' && url.length > 0 && (!servedSession || url.startsWith('data:'));
 
   // Import mode. A node dragged from the source library carries `sourceBinItemId` (the library item id)

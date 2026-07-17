@@ -5,6 +5,7 @@ import {
   resolveExpandedListItemForNode,
   resolvePackageNodeData,
 } from './listNodes';
+import { resultValueAsMediaUrl } from './flowResultValues';
 
 export interface FlowImageSourceResolution {
   recognized: boolean;
@@ -28,8 +29,8 @@ export function resolveFlowImageSource(
     return {
       recognized: true,
       assetUrl: (node.data.mediaMode ?? 'generate') === 'import'
-        ? node.data.sourceAssetUrl ?? node.data.result
-        : node.data.result,
+        ? resultValueAsMediaUrl(node.data.sourceAssetUrl) ?? resultValueAsMediaUrl(node.data.result)
+        : resultValueAsMediaUrl(node.data.result),
     };
   }
 

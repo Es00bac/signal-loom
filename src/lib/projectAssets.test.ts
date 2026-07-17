@@ -11,6 +11,13 @@ function createNode(node: Partial<AppNode> & Pick<AppNode, 'id' | 'type'>): AppN
 }
 
 describe('collectExportableProjectAssets', () => {
+  it.each([true, false])('does not export Boolean %s as a media URL', (decision) => {
+    expect(collectExportableProjectAssets([
+      createNode({ id: 'bad-image', type: 'imageGen', data: { result: decision, resultType: 'boolean' } }),
+      createNode({ id: 'bad-composition', type: 'composition', data: { result: decision, resultType: 'boolean' } }),
+    ])).toEqual([]);
+  });
+
   it('collects generated and imported media assets for export', () => {
     const assets = collectExportableProjectAssets([
       createNode({

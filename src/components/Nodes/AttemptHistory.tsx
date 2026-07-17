@@ -3,6 +3,7 @@ import { Archive, Music, Type } from 'lucide-react';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 import { fetchRemoteHostSourceAssetDataUrl, isServedLanSession } from '../../lib/remoteHostClient';
 import type { NodeResultAttempt } from '../../types/flow';
+import { resultValueAsMediaUrl } from '../../lib/flowResultValues';
 
 interface AttemptHistoryProps {
   attempts?: NodeResultAttempt[];
@@ -115,13 +116,13 @@ export function AttemptHistory({
 }
 
 function renderAttemptPreview(attempt: NodeResultAttempt, index: number, resolvedThumb?: string) {
-  const previewSrc = resolvedThumb ?? attempt.result;
+  const previewSrc = resolvedThumb ?? resultValueAsMediaUrl(attempt.result);
 
-  if (attempt.resultType === 'image') {
+  if (attempt.resultType === 'image' && previewSrc) {
     return <img alt={`Run ${index + 1}`} className="h-full w-full object-cover" src={previewSrc} />;
   }
 
-  if (attempt.resultType === 'video') {
+  if (attempt.resultType === 'video' && previewSrc) {
     return (
       <video
         className="h-full w-full object-cover"

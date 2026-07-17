@@ -9,6 +9,11 @@ import {
   isFlowResultKind,
   serializeManualEnvelopeValue,
 } from './flowValueTypes';
+import {
+  parseCanonicalBoolean,
+  resultValueAsMediaUrl,
+  serializeResultValueForContainer,
+} from './flowResultValues';
 import { formatColorSwatchListPrompt, formatColorSwatchPrompt, normalizeHexColor } from './colorSwatchNode';
 import { buildLoraWeightsJson } from './loraSpecNode';
 import { analyzeTextSentiment, splitDialogueForPrefix } from './storyUtilityNodes';
@@ -464,7 +469,7 @@ export function evaluateNodeTextForMonitor(
   }
 
   if (node.type === 'visionVerifyNode') {
-    return node.data.result === true ? 'true' : 'false';
+    return typeof node.data.result === 'boolean' ? (node.data.result ? 'true' : 'false') : '';
   }
 
   if (node.type === 'seedSequencerNode') {
@@ -668,7 +673,8 @@ export function buildListItemFromNode(
 ): FlowListItem | undefined {
   if (node.type === 'textNode') {
     const mode = node.data.mode ?? 'prompt';
-    const text = (mode === 'generate' ? node.data.result : node.data.prompt)?.trim();
+    const rawText = mode === 'generate' ? node.data.result : node.data.prompt;
+    const text = typeof rawText === 'string' ? rawText.trim() : '';
 
     if (!text) {
       return undefined;
@@ -744,11 +750,14 @@ export function buildListItemFromNode(
   }
 
   if (node.type === 'functionNode') {
-    const result = typeof node.data.result === 'string' ? node.data.result : '';
-    if (!result) {
+    const kind = isResultType(node.data.resultType) ? node.data.resultType : 'text';
+    let result: string;
+    try {
+      result = serializeResultValueForContainer(node.data.result ?? '', kind);
+    } catch {
       return undefined;
     }
-    const kind = isResultType(node.data.resultType) ? node.data.resultType : 'text';
+    if (!result) return undefined;
     return {
       id: `${node.id}-${index}`,
       index,
@@ -936,6 +945,9 @@ export function buildListItemFromNode(
     'logicNode', 'comparisonNode', 'visionVerifyNode', 'loopBreakNode',
   ].includes(node.type)) {
     const val = nodes && edges ? evaluateNodeTextForMonitor(node.id, nodes, edges) : '';
+    if (parseCanonicalBoolean(val) === undefined) {
+      return undefined;
+    }
     return {
       id: `${node.id}-${index}`,
       index,
@@ -1022,6 +1034,13 @@ export function normalizeEnvelopeItems(value: unknown): EnvelopeItem[] {
       typeof candidate.label !== 'string' ||
       !isResultType(candidate.kind)
     ) {
+      return [];
+    }
+
+    // List/envelope payloads are intentionally strings. A Boolean item must
+    // still use one of the two canonical spellings so it can be restored to a
+    // real Boolean at the scalar node/history/project boundary.
+    if (candidate.kind === 'boolean' && parseCanonicalBoolean(candidate.value) === undefined) {
       return [];
     }
 
@@ -1242,17 +1261,17 @@ function resolveMediaNodeAsset(node: AppNode): string | undefined {
   if (node.type === 'imageGen' || node.type === 'cropImageNode' || node.type === 'videoGen' || node.type === 'audioGen') {
     const mode = node.data.mediaMode ?? 'generate';
     if (mode === 'import') {
-      return node.data.sourceAssetUrl || node.data.result;
+      return resultValueAsMediaUrl(node.data.sourceAssetUrl) ?? resultValueAsMediaUrl(node.data.result);
     }
-    return node.data.result || node.data.sourceAssetUrl;
+    return resultValueAsMediaUrl(node.data.result) ?? resultValueAsMediaUrl(node.data.sourceAssetUrl);
   }
 
   if (node.type === 'composition') {
-    return node.data.result;
+    return resultValueAsMediaUrl(node.data.result);
   }
 
   if (node.type === 'slimgNode') {
-    return node.data.result;
+    return resultValueAsMediaUrl(node.data.result);
   }
 
   return undefined;

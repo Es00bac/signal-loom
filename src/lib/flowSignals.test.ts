@@ -32,6 +32,21 @@ describe('flow signal evaluation', () => {
     expect(evaluateNodeSignal('not', nodes, edges)).toMatchObject({ kind: 'boolean', value: expectedNot });
   });
 
+  it.each([true, false])('round-trips Boolean %s through list and envelope transport as a real signal', (decision) => {
+    const nodes = [
+      createNode({ id: 'verify', type: 'visionVerifyNode', data: { result: decision, resultType: 'boolean' } }),
+      createNode({ id: 'list', type: 'list' }),
+      createNode({ id: 'envelope', type: 'envelope' }),
+    ];
+    const edges: Edge[] = [
+      { id: 'list-value', source: 'verify', target: 'list', targetHandle: buildListItemTargetHandle(0) },
+      { id: 'envelope-value', source: 'verify', target: 'envelope' },
+    ];
+
+    expect(evaluateNodeSignal('list', nodes, edges).items?.[0]).toMatchObject({ kind: 'boolean', value: decision });
+    expect(evaluateNodeSignal('envelope', nodes, edges).items?.[0]).toMatchObject({ kind: 'boolean', value: decision });
+  });
+
   it('renders local string-template slots across casing without corrupting double braces or literal braces', () => {
     const nodes = [
       createNode({ id: 'slot-a', type: 'textNode', data: { prompt: 'alpha' } }),

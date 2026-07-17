@@ -61,6 +61,7 @@ import { normalizeBundledFontFaceState, normalizeBundledFontFaceStateForTypograp
 import { getEditorAssets } from './editorAssets';
 import { getEditorVisualClips } from './manualEditorState';
 import { getEditorStageObjects } from './editorStageObjects';
+import { parseCanonicalBoolean } from './flowResultValues';
 
 const VALID_RESULT_TYPES = new Set<ResultType>(['text', 'number', 'boolean', 'json', 'image', 'video', 'audio', 'package', 'list', 'envelope']);
 const VALID_SOURCE_KINDS = new Set<EditorSourceKind>(['text', 'image', 'video', 'audio', 'composition', 'document', 'subtitle', 'package']);
@@ -99,13 +100,7 @@ function sanitizeResultHistory(value: unknown): NodeResultAttempt[] | undefined 
     if (!isRecord(attempt)) return [];
     const resultType = optionalString(attempt.resultType);
     const result = resultType === 'boolean'
-      ? (typeof attempt.result === 'boolean'
-        ? attempt.result
-        : attempt.result === 'true'
-          ? true
-          : attempt.result === 'false'
-            ? false
-            : undefined)
+      ? (typeof attempt.result === 'boolean' ? attempt.result : undefined)
       : optionalString(attempt.result);
 
     if (result === undefined || result === '' || !resultType || !VALID_RESULT_TYPES.has(resultType as ResultType)) {
@@ -228,18 +223,30 @@ function sanitizeNodeData(value: unknown): NodeData {
 }
 
 function normalizeVisionVerifyNodeData(data: NodeData): NodeData {
-  if (data.result === true || data.result === false) {
-    return { ...data, resultType: 'boolean' };
-  }
+  const legacyBoolean = data.resultType === 'text' ? parseCanonicalBoolean(data.result) : undefined;
+  const history = Array.isArray(data.resultHistory)
+    ? data.resultHistory.map((attempt) => {
+      const legacyAttemptBoolean = attempt.resultType === 'text'
+        ? parseCanonicalBoolean(attempt.result)
+        : undefined;
+      return legacyAttemptBoolean === undefined
+        ? attempt
+        : { ...attempt, result: legacyAttemptBoolean, resultType: 'boolean' as const };
+    })
+    : undefined;
+  const normalized: NodeData = {
+    ...data,
+    ...(history ? { resultHistory: history } : {}),
+    ...(typeof data.result === 'boolean' ? { resultType: 'boolean' as const } : {}),
+    ...(legacyBoolean === undefined ? {} : { result: legacyBoolean, resultType: 'boolean' as const }),
+  };
 
-  // AUD-033 stored the old string wire form with a text tag. Convert saved
-  // verify decisions while loading so an old selected attempt cannot re-open
-  // as a text result.
-  if (data.result === 'true' || data.result === 'false') {
-    return { ...data, result: data.result === 'true', resultType: 'boolean' };
+  // Re-select after converting history so the active value and its port type
+  // agree even when the user last selected a legacy false attempt.
+  if (history) {
+    restoreSelectedResultFromHistory(normalized, history);
   }
-
-  return data;
+  return normalized;
 }
 
 export function sanitizeFlowSnapshot(snapshot: unknown): FlowProjectDocument['flow'] {

@@ -20,6 +20,7 @@ import {
 import { useConfirmationStore } from './confirmationStore';
 import { useFlowStore } from './flowStore';
 import { useSourceBinStore } from './sourceBinStore';
+import * as flowExecution from '../lib/flowExecution';
 
 function createNode(id: string, type: AppNode['type'], data: Record<string, unknown> = {}): AppNode {
   return {
@@ -444,6 +445,62 @@ describe('flow store typed connections', () => {
         },
       },
     });
+  });
+});
+
+describe('flow store Boolean loop persistence', () => {
+  beforeEach(() => {
+    useFlowStore.setState({ nodes: [], edges: [], bookmarkSidebarOpen: true });
+    useSourceBinStore.setState({
+      bins: [{ id: 'default', name: 'Source Library', items: [], collapsed: false, createdAt: 1 }],
+      dismissedSourceKeys: [],
+      sidebarOpen: true,
+      nativeSyncStatus: { state: 'idle' },
+      scratchDirectoryHandle: undefined,
+      nativeScratchDirectoryPath: undefined,
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([true, false])('serializes loop envelope %s but retains a Boolean node attempt', async (decision) => {
+    vi.spyOn(flowExecution, 'executeNodeRequest').mockResolvedValue({
+      result: decision,
+      resultType: 'boolean',
+      statusMessage: `Verified: ${decision ? 'TRUE' : 'FALSE'}`,
+    });
+    vi.spyOn(flowExecution, 'hashExecutionParameters').mockResolvedValue(`boolean-${decision}`);
+    useFlowStore.setState({
+      nodes: [
+        createNode('decision', 'valueNode', { valueKind: 'boolean', value: decision }),
+        createNode('decisions', 'list'),
+        createNode('verify', 'functionNode', {
+          functionNode: {
+            title: 'Boolean loop sink',
+            contract: {
+              inputPorts: [{ id: 'decision-input', key: 'decision', label: 'Decision', resultType: 'any', required: true, order: 0 }],
+              outputPorts: [{ id: 'decision-output', key: 'decision', label: 'Decision', resultType: 'boolean', required: true, order: 0 }],
+            },
+            graph: { nodes: [], edges: [] },
+            inputBindings: [],
+            outputBindings: [],
+          },
+        }),
+      ],
+      edges: [
+        { id: 'decision-list', source: 'decision', target: 'decisions', targetHandle: 'list-item-0' },
+        { id: 'list-verify', source: 'decisions', target: 'verify', targetHandle: 'decision-input' },
+      ],
+    });
+
+    await useFlowStore.getState().runNode('verify');
+
+    const verify = useFlowStore.getState().nodes.find((node) => node.id === 'verify')!;
+    expect(verify.data).toMatchObject({ result: decision, resultType: 'boolean' });
+    expect(verify.data.resultHistory?.[0]).toMatchObject({ result: decision, resultType: 'boolean' });
+    expect(verify.data.envelopeItems?.[0]).toMatchObject({ value: String(decision), kind: 'boolean' });
   });
 });
 

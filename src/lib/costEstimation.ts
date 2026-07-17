@@ -31,6 +31,7 @@ import {
   evaluateNodeTextForMonitor,
 } from './listNodes';
 import { resolveEffectiveSourceNode } from './virtualNodes';
+import { resultValueAsMediaUrl } from './flowResultValues';
 import type {
   AppNode,
   AudioProvider,
@@ -503,11 +504,13 @@ function resolveNodeOutputAsset(node: AppNode): string | undefined {
     (node.type === 'imageGen' || node.type === 'audioGen' || node.type === 'videoGen') &&
     (node.data.mediaMode ?? 'generate') === 'import'
   ) {
-    if (node.data.sourceAssetUrl) {
-      return node.data.sourceAssetUrl;
+    const sourceAssetUrl = resultValueAsMediaUrl(node.data.sourceAssetUrl);
+    if (sourceAssetUrl) {
+      return sourceAssetUrl;
     }
-    if (node.data.result) {
-      return node.data.result;
+    const result = resultValueAsMediaUrl(node.data.result);
+    if (result) {
+      return result;
     }
     if (node.data.sourceBinItemId) {
       const item = useSourceBinStore.getState().getAllItems().find((item) => item.id === node.data.sourceBinItemId);
@@ -518,7 +521,7 @@ function resolveNodeOutputAsset(node: AppNode): string | undefined {
     return undefined;
   }
 
-  return node.data.result;
+  return resultValueAsMediaUrl(node.data.result);
 }
 
 function shouldReuseExistingNodeOutput(node: AppNode): boolean {
@@ -944,11 +947,13 @@ function collectImageInputFromSource(
 
   if (node.type === 'imageGen' || node.type === 'cropImageNode') {
     if ((node.data.mediaMode ?? 'generate') === 'import') {
-      if (node.data.sourceAssetUrl) {
-        return node.data.sourceAssetUrl;
+      const sourceAssetUrl = resultValueAsMediaUrl(node.data.sourceAssetUrl);
+      if (sourceAssetUrl) {
+        return sourceAssetUrl;
       }
-      if (node.data.result) {
-        return node.data.result;
+      const result = resultValueAsMediaUrl(node.data.result);
+      if (result) {
+        return result;
       }
       if (node.data.sourceBinItemId) {
         const item = useSourceBinStore.getState().getAllItems().find((item) => item.id === node.data.sourceBinItemId);
@@ -958,7 +963,7 @@ function collectImageInputFromSource(
       }
       return undefined;
     }
-    return node.data.result;
+    return resultValueAsMediaUrl(node.data.result);
   }
 
   if (node.type === 'functionNode') {

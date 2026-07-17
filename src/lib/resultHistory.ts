@@ -1,7 +1,7 @@
-import type { NodeResultAttempt, ResultType, UsageTelemetry } from '../types/flow';
+import type { NodeResultAttempt, ResultType, ResultValue, UsageTelemetry } from '../types/flow';
 
 interface AttemptPayload {
-  result: string | boolean;
+  result: ResultValue;
   resultType: ResultType;
   statusMessage: string;
   usage?: UsageTelemetry;

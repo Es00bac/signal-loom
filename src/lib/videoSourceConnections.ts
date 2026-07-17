@@ -1,6 +1,7 @@
 import type { Edge } from '@xyflow/react';
 import type { AppNode } from '../types/flow';
 import { resolveEffectiveSourceNode } from './virtualNodes';
+import { resultValueAsMediaUrl } from './flowResultValues';
 
 export function hasConnectedVideoSource(
   nodes: AppNode[],
@@ -22,10 +23,10 @@ export function resolveConnectedVideoSourceAsset(
   }
 
   if (sourceNode.type === 'videoGen' && (sourceNode.data.mediaMode ?? 'generate') === 'import') {
-    return sourceNode.data.sourceAssetUrl;
+    return resultValueAsMediaUrl(sourceNode.data.sourceAssetUrl);
   }
 
-  return sourceNode.data.result;
+  return resultValueAsMediaUrl(sourceNode.data.result);
 }
 
 function findConnectedVideoSource(

@@ -273,6 +273,7 @@ import {
   getVideoExportPresetOption,
   getVideoMonitorParityNotices,
 } from '../../../lib/videoPremiereParity';
+import { resultValueAsMediaUrl } from '../../../lib/flowResultValues';
 import {
   captionCuesToTextClips,
   getCaptionFormatFromFileName,
@@ -1518,7 +1519,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
   useEffect(() => {
     displayTimelineSecondsRef.current = displayTimelineSeconds;
   }, [displayTimelineSeconds]);
-  const previewUrl = activeComposition?.data.result;
+  const previewUrl = resultValueAsMediaUrl(activeComposition?.data.result);
   const previewOutputMetadata = activeComposition?.data.resultOutputMetadata;
   const isProgramImageSequenceOutput = activeComposition?.data.resultMimeType === 'application/zip' &&
     Boolean(previewOutputMetadata && 'imageSequence' in previewOutputMetadata);
@@ -3243,7 +3244,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
         settings,
       );
 
-      if (!execution.result.startsWith('data:')) {
+      if (typeof execution.result !== 'string' || !execution.result.startsWith('data:')) {
         throw new Error('The narration provider returned a remote URL. Import the audio result manually or use a provider/proxy that returns a data URL.');
       }
 

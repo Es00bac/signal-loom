@@ -74,7 +74,7 @@ export interface FlowNodeContract {
   implementation: {
     status: 'implemented' | 'structural';
     path: string;
-    apiCapability?: 'text' | 'image' | 'video' | 'audio';
+    apiCapability?: 'text' | 'number' | 'boolean' | 'json' | 'image' | 'video' | 'audio';
   };
 }
 
@@ -468,7 +468,7 @@ function define(
   resolvePorts: PortResolver,
   upstream: readonly FlowNodeType[],
   downstream: readonly FlowNodeType[],
-  apiCapability?: 'text' | 'image' | 'video' | 'audio',
+  apiCapability?: 'text' | 'number' | 'boolean' | 'json' | 'image' | 'video' | 'audio',
 ): FlowNodeContract {
   return {
     type: nodeType,

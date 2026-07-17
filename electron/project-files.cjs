@@ -683,12 +683,16 @@ function sanitizeResultHistory(value) {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) return [];
   return value.flatMap((attempt, index) => {
-    if (!isObject(attempt) || typeof attempt.result !== 'string' || !VALID_RESULT_TYPES.has(attempt.resultType)) {
+    if (!isObject(attempt) || !VALID_RESULT_TYPES.has(attempt.resultType)) {
       return [];
     }
+    const result = attempt.resultType === 'boolean'
+      ? (typeof attempt.result === 'boolean' ? attempt.result : undefined)
+      : optionalString(attempt.result);
+    if (result === undefined || result === '') return [];
     return [{
       id: stringOr(attempt.id, `attempt-${index}`),
-      result: attempt.result,
+      result,
       resultType: attempt.resultType,
       statusMessage: stringOr(attempt.statusMessage, 'Restored result'),
       createdAt: stringOr(attempt.createdAt, new Date(0).toISOString()),
@@ -697,7 +701,27 @@ function sanitizeResultHistory(value) {
   });
 }
 
-function sanitizeNodeData(value) {
+function parseCanonicalBoolean(value) {
+  if (typeof value === 'boolean') return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return undefined;
+}
+
+function restoreSelectedResultFromHistory(data, history) {
+  if (history.length === 0) return;
+  const selected = typeof data.selectedResultId === 'string'
+    ? history.find((attempt) => attempt.id === data.selectedResultId)
+    : undefined;
+  const active = selected ?? history[history.length - 1];
+  if (!active) return;
+  data.selectedResultId = active.id;
+  data.result = active.result;
+  data.resultType = active.resultType;
+  data.usage = active.usage;
+}
+
+function sanitizeNodeData(value, nodeType) {
   const data = isObject(value) ? { ...value } : {};
   const history = sanitizeResultHistory(data.resultHistory);
   delete data.onChange;
@@ -706,7 +730,34 @@ function sanitizeNodeData(value) {
   data.isRunning = undefined;
   data.error = undefined;
   data.statusMessage = undefined;
-  if (history !== undefined) data.resultHistory = history;
+  if (history !== undefined) {
+    data.resultHistory = history;
+    if (data.selectedResultId && !history.some((attempt) => attempt.id === data.selectedResultId)) {
+      data.selectedResultId = history[history.length - 1]?.id;
+    }
+    restoreSelectedResultFromHistory(data, history);
+  }
+
+  // AUD-033 wrote legacy Vision Verify decisions as text. Do not apply this
+  // migration to arbitrary Text nodes whose literal value happens to be true/false.
+  if (nodeType === 'visionVerifyNode') {
+    if (Array.isArray(data.resultHistory)) {
+      data.resultHistory = data.resultHistory.map((attempt) => {
+        const legacyValue = attempt.resultType === 'text' ? parseCanonicalBoolean(attempt.result) : undefined;
+        return legacyValue === undefined
+          ? attempt
+          : { ...attempt, result: legacyValue, resultType: 'boolean' };
+      });
+      restoreSelectedResultFromHistory(data, data.resultHistory);
+    }
+    const legacyValue = data.resultType === 'text' ? parseCanonicalBoolean(data.result) : undefined;
+    if (legacyValue !== undefined) {
+      data.result = legacyValue;
+      data.resultType = 'boolean';
+    } else if (typeof data.result === 'boolean') {
+      data.resultType = 'boolean';
+    }
+  }
   return data;
 }
 
@@ -728,7 +779,7 @@ function sanitizeFlowSnapshot(flow) {
       id,
       type,
       position: { x: finiteOr(position.x, 0), y: finiteOr(position.y, 0) },
-      data: sanitizeNodeData(node.data),
+      data: sanitizeNodeData(node.data, type),
     }];
   });
   const nodeIds = new Set(nodes.map((node) => node.id));

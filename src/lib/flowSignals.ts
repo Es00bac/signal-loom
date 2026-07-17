@@ -14,6 +14,10 @@ import { resolveFlowVariablesInText } from './flowVariables';
 import { buildLoraWeightsJson } from './loraSpecNode';
 import { buildDoodleAssetPackage } from './doodleNode';
 import { analyzeTextSentiment, splitDialogueForPrefix } from './storyUtilityNodes';
+import {
+  deserializeResultValueFromContainer,
+  resultValueAsMediaUrl,
+} from './flowResultValues';
 
 export type FlowSignalKind = ResultType | 'boolean' | 'any';
 export type FlowDiagnosticSeverity = 'info' | 'warning' | 'critical';
@@ -156,7 +160,7 @@ export function evaluateNodeSignal(
     case 'settings':
       return evaluateSettingsNode(node);
     case 'advancedImageEditor':
-      return scalarSignal('image', sourceHandle === 'maskOutput' ? String(node.data.maskOutput ?? '') : String(node.data.result ?? ''), node.id);
+      return scalarSignal('image', resultValueAsMediaUrl(sourceHandle === 'maskOutput' ? node.data.maskOutput : node.data.result) ?? '', node.id);
     case 'switchNode':
       return evaluateSwitchNode(node, nodes, edges, nextVisited, nodesById);
     case 'forkSwitchNode':
@@ -204,9 +208,19 @@ export function evaluateNodeSignal(
     case 'loraSpecNode':
       return evaluateLoraSpecNode(node);
     case 'slimgNode':
-      return scalarSignal('image', String(node.data.result ?? ''), node.id, { mimeType: node.data.resultMimeType });
+      return scalarSignal('image', resultValueAsMediaUrl(node.data.result) ?? '', node.id, { mimeType: node.data.resultMimeType });
     case 'visionVerifyNode': {
-      const value = parseBoolean(node.data.result ?? false);
+      if (typeof node.data.result !== 'boolean') {
+        return emptySignal('boolean', node.id, [{
+          id: `invalid-vision-boolean-${node.id}`,
+          severity: 'critical',
+          nodeId: node.id,
+          message: 'Vision Verify has no canonical Boolean result. Run it again or reopen the migrated project.',
+          suggestedFix: 'Run Vision Verify again to produce a true or false decision.',
+          blocksRun: true,
+        }]);
+      }
+      const value = node.data.result;
       return scalarSignal('boolean', value, node.id, { label: String(value) });
     }
     case 'imageGen':
@@ -969,14 +983,40 @@ function withDefaultSignals(inputs: SignalRecord, defaults: SignalRecord): Signa
 }
 
 function signalFromListItem(item: FlowListItem): FlowSignal {
-  return scalarSignal(item.kind, item.kind === 'package' ? item.text ?? item.value : item.value, item.nodeId, {
+  const value = item.kind === 'package'
+    ? item.text ?? item.value
+    : deserializeResultValueFromContainer(item.value, item.kind);
+  if (value === undefined) {
+    return emptySignal(item.kind, item.nodeId, [{
+      id: `invalid-list-boolean-${item.id}`,
+      severity: 'critical',
+      nodeId: item.nodeId,
+      message: 'This Boolean list item is not a canonical true/false value.',
+      suggestedFix: 'Replace the invalid list item with true or false.',
+      blocksRun: true,
+    }]);
+  }
+  return scalarSignal(item.kind, value, item.nodeId, {
     label: item.label,
     mimeType: item.mimeType,
   });
 }
 
 function signalFromEnvelopeItem(item: EnvelopeItem): FlowSignal {
-  return scalarSignal(item.kind, item.kind === 'package' ? item.text ?? item.value : item.value, item.sourceNodeId, {
+  const value = item.kind === 'package'
+    ? item.text ?? item.value
+    : deserializeResultValueFromContainer(item.value, item.kind);
+  if (value === undefined) {
+    return emptySignal(item.kind, item.sourceNodeId, [{
+      id: `invalid-envelope-boolean-${item.id}`,
+      severity: 'critical',
+      nodeId: item.sourceNodeId,
+      message: 'This Boolean envelope item is not a canonical true/false value.',
+      suggestedFix: 'Replace the invalid envelope item with true or false.',
+      blocksRun: true,
+    }]);
+  }
+  return scalarSignal(item.kind, value, item.sourceNodeId, {
     label: item.label,
     mimeType: item.mimeType,
   });
@@ -984,7 +1024,7 @@ function signalFromEnvelopeItem(item: EnvelopeItem): FlowSignal {
 
 function mediaSignal(node: AppNode, kind: Extract<ResultType, 'image' | 'video' | 'audio'>): FlowSignal {
   const value = node.data.mediaMode === 'import' ? node.data.sourceAssetUrl ?? node.data.result : node.data.result ?? node.data.sourceAssetUrl;
-  return scalarSignal(kind, value ?? '', node.id, {
+  return scalarSignal(kind, resultValueAsMediaUrl(value) ?? '', node.id, {
     label: node.data.sourceAssetName ?? node.data.customTitle ?? node.id,
     mimeType: node.data.sourceAssetMimeType ?? node.data.resultMimeType,
   });

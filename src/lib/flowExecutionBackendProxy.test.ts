@@ -83,6 +83,12 @@ function proxiedImageNode(data: AppNode['data'] = {}): AppNode {
   } as AppNode;
 }
 
+function proxiedVisionVerifyNode(): AppNode {
+  return {
+    id: 'verify-proxy-1', type: 'visionVerifyNode', position: { x: 0, y: 0 }, data: { modelId: 'gemini-3.5-flash' },
+  } as AppNode;
+}
+
 function jsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
     status: 200,
@@ -109,6 +115,23 @@ afterEach(() => {
 });
 
 describe('backend proxy node execution with client-side auto-upscale', () => {
+  it.each([true, false])('keeps proxied Vision Verify %s aligned with direct Boolean execution', async (decision) => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      result: decision,
+      resultType: 'boolean',
+      statusMessage: `Verified: ${decision ? 'TRUE' : 'FALSE'}`,
+    })));
+
+    const result = await executeNodeRequest(
+      proxiedVisionVerifyNode(),
+      { prompt: 'check', editImageInput: 'data:image/png;base64,AA==', config: DEFAULT_EXECUTION_CONFIG },
+      proxySettings(),
+    );
+
+    expect(result).toMatchObject({ result: decision, resultType: 'boolean' });
+    expect(typeof result.result).toBe('boolean');
+  });
+
   it('applies the Android accelerator upscale on the client after the proxy returns, without forwarding the token', async () => {
     const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
       void _init;

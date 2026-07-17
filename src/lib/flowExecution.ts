@@ -143,6 +143,7 @@ import {
 import {
   getBlockingFlowDiagnostics,
 } from './flowDiagnostics';
+import { deserializeResultValueFromContainer, resultValueAsMediaUrl } from './flowResultValues';
 import type { FlowGraphContractContext } from './flowConnectionContracts';
 
 export interface ExecutionContext {
@@ -417,9 +418,14 @@ async function executeFunctionNode(
     video: context.videoInput ?? context.sourceVideoInput ?? '',
     audio: context.audioSourceInput ?? '',
   });
+  const result = deserializeResultValueFromContainer(execution.result, execution.resultType);
+  if (result === undefined) {
+    throw new NonRetryableError(`Function returned an invalid ${execution.resultType} value.`);
+  }
 
   return {
     ...execution,
+    result,
     usage: {
       source: 'actual',
       confidence: 'fixed',
@@ -534,7 +540,8 @@ function shouldProxyNodeExecution(node: AppNode, settings: RuntimeSettingsSnapsh
     node.type === 'textNode' ||
     node.type === 'imageGen' ||
     node.type === 'videoGen' ||
-    node.type === 'audioGen'
+    node.type === 'audioGen' ||
+    node.type === 'visionVerifyNode'
   );
 }
 
@@ -577,19 +584,22 @@ async function executeNodeViaBackendProxy(
     throw new Error(payload.error);
   }
 
-  const acceptsBooleanResult = node.type === 'visionVerifyNode' && typeof payload.result === 'boolean';
-  if ((typeof payload.result !== 'string' && !acceptsBooleanResult) || typeof payload.resultType !== 'string') {
+  const payloadResult = payload.result;
+  const acceptsBooleanResult = node.type === 'visionVerifyNode' && typeof payloadResult === 'boolean';
+  if ((typeof payloadResult !== 'string' && !acceptsBooleanResult) || typeof payload.resultType !== 'string') {
     throw new Error('Backend proxy returned an invalid execution payload.');
   }
 
   if (node.type === 'visionVerifyNode') {
-    const verification = parseVisionVerificationResponse(payload.result);
+    const verification = parseVisionVerificationResponse(payloadResult);
     const existingNotes = payload.usage?.notes ?? [];
     return {
       result: verification.value,
       resultType: 'boolean',
       statusMessage: payload.statusMessage ?? `Verified: ${verification.value ? 'TRUE' : 'FALSE'}`,
       usage: {
+        source: payload.usage?.source ?? 'actual',
+        confidence: payload.usage?.confidence ?? 'unknown',
         ...payload.usage,
         notes: verification.explanation && !existingNotes.includes(verification.explanation)
           ? [verification.explanation, ...existingNotes]
@@ -599,7 +609,7 @@ async function executeNodeViaBackendProxy(
   }
 
   return {
-    result: payload.result,
+    result: payloadResult as string,
     resultType: payload.resultType as ResultType,
     statusMessage: payload.statusMessage ?? 'Generated through backend proxy',
     usage: payload.usage,
@@ -1979,8 +1989,12 @@ async function applyConfiguredAutoUpscaleIfRequested(input: {
   }
 
   input.onStatus?.(`Auto-upscaling with ${plan.label}...`);
+  const sourceImage = resultValueAsMediaUrl(input.result.result);
+  if (!sourceImage) {
+    throw new NonRetryableError('The image executor returned a non-media value.');
+  }
   const upscaled = await runConfiguredFlowImageUpscale({
-    sourceImage: input.result.result,
+    sourceImage,
     outputFormat: input.context.config.imageOutputFormat,
     fallbackDimensions: mapAspectRatioToImageDimensions(input.context.config.aspectRatio),
     plan,

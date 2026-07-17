@@ -152,7 +152,7 @@ describe('sanitizeProjectDocument', () => {
     ]));
   });
 
-  it('migrates the old Vision Verify string result into the Boolean port representation', () => {
+  it('migrates legacy Vision Verify current and text-tagged history values, including a selected false attempt', () => {
     const project = projectWith({
       flow: {
         version: 3,
@@ -160,13 +160,41 @@ describe('sanitizeProjectDocument', () => {
           id: 'verify',
           type: 'visionVerifyNode',
           position: { x: 1, y: 2 },
-          data: { result: 'false', resultType: 'text' },
+          data: {
+            result: 'true',
+            resultType: 'text',
+            selectedResultId: 'false-attempt',
+            resultHistory: [
+              { id: 'true-attempt', result: 'true', resultType: 'text', statusMessage: 'TRUE', createdAt: '2026-07-16T00:00:00.000Z' },
+              { id: 'false-attempt', result: 'false', resultType: 'text', statusMessage: 'FALSE', createdAt: '2026-07-16T00:01:00.000Z' },
+            ],
+          },
         }],
         edges: [],
       },
     });
 
-    expect(project.flow.nodes[0].data).toMatchObject({ result: false, resultType: 'boolean' });
+    expect(project.flow.nodes[0].data).toMatchObject({ result: false, resultType: 'boolean', selectedResultId: 'false-attempt' });
+    expect(project.flow.nodes[0].data.resultHistory).toEqual([
+      expect.objectContaining({ id: 'true-attempt', result: true, resultType: 'boolean' }),
+      expect.objectContaining({ id: 'false-attempt', result: false, resultType: 'boolean' }),
+    ]);
+  });
+
+  it('does not reinterpret non-Vision text that happens to spell true', () => {
+    const project = projectWith({
+      flow: {
+        version: 3,
+        nodes: [{
+          id: 'text', type: 'textNode', position: { x: 1, y: 2 },
+          data: { result: 'true', resultType: 'text', resultHistory: [{ id: 'literal', result: 'true', resultType: 'text', statusMessage: 'Literal', createdAt: '2026-07-16T00:00:00.000Z' }] },
+        }],
+        edges: [],
+      },
+    });
+
+    expect(project.flow.nodes[0].data).toMatchObject({ result: 'true', resultType: 'text' });
+    expect(project.flow.nodes[0].data.resultHistory?.[0]).toMatchObject({ result: 'true', resultType: 'text' });
   });
 
   it('repairs null node position and null node data', () => {

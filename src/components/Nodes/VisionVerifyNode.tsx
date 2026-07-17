@@ -5,6 +5,7 @@ import { BaseNode } from './BaseNode';
 import { TypedHandle as Handle } from './TypedHandle';
 import { useFlowStore } from '../../store/flowStore';
 import type { AppNodeProps } from '../../types/flow';
+import { resultValueAsMediaUrl } from '../../lib/flowResultValues';
 
 function VisionVerifyNodeComponent({ id, data }: AppNodeProps) {
   const runNode = useFlowStore((state) => state.runNode);
@@ -27,7 +28,9 @@ function VisionVerifyNodeComponent({ id, data }: AppNodeProps) {
     if (!indexEdge) return undefined;
     const rawSource = nodes.find((n) => n.id === indexEdge.source);
     if (!rawSource) return undefined;
-    return rawSource.type === 'imageGen' ? (rawSource.data.mediaMode === 'import' ? rawSource.data.sourceAssetUrl : rawSource.data.result) : undefined;
+    return rawSource.type === 'imageGen'
+      ? resultValueAsMediaUrl(rawSource.data.mediaMode === 'import' ? rawSource.data.sourceAssetUrl : rawSource.data.result)
+      : undefined;
   }, [id, nodes, edges]);
 
   const customHandles = (
@@ -90,7 +93,7 @@ function VisionVerifyNodeComponent({ id, data }: AppNodeProps) {
         {refImageConnected && (
           <div className="flex items-center gap-2 rounded-md border border-gray-800 bg-gray-950 p-2 mt-1">
             <div className="h-8 w-8 rounded border border-gray-700 overflow-hidden flex items-center justify-center bg-gray-900 shrink-0">
-              <img src={refImageConnected as string} alt="Reference Preview" className="h-full w-full object-cover" />
+              <img src={refImageConnected} alt="Reference Preview" className="h-full w-full object-cover" />
             </div>
             <div className="min-w-0 flex-1 flex flex-col">
               <span className="font-bold text-[9px] text-amber-400 uppercase tracking-wider">Side-By-Side Mode</span>
@@ -102,7 +105,7 @@ function VisionVerifyNodeComponent({ id, data }: AppNodeProps) {
         {result !== undefined && (
           <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-gray-700 bg-gray-900/60 p-2">
             <div className="flex items-center gap-1.5 font-bold">
-              {result === true || result === 'true' ? (
+              {result === true ? (
                 <>
                   <CheckCircle2 size={14} className="text-emerald-400" />
                   <span className="text-emerald-400 uppercase">Passed (Consistent)</span>

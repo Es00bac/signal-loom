@@ -75,4 +75,14 @@ describe('video source connections', () => {
 
     expect(resolveConnectedVideoSourceAsset(nodes, edges, 'image-1')).toBe('blob:generated-video');
   });
+
+  it.each([true, false])('never exposes Boolean %s as a connected video URL', (decision) => {
+    const nodes = [
+      createNode({ id: 'video-1', type: 'videoGen', data: { result: decision, resultType: 'boolean' } }),
+      createNode({ id: 'image-1', type: 'imageGen' }),
+    ];
+    const edges: Edge[] = [{ id: 'edge-1', source: 'video-1', target: 'image-1' }];
+
+    expect(resolveConnectedVideoSourceAsset(nodes, edges, 'image-1')).toBeUndefined();
+  });
 });

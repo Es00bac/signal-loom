@@ -10,6 +10,7 @@ import { buildDownloadFilename, downloadAsset } from '../../lib/downloadAsset';
 import { EXPORT_BASENAME } from '../../lib/brand';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 import { assignVariableToResultAttempt } from '../../lib/flowVariables';
+import { resultValueAsMediaUrl } from '../../lib/flowResultValues';
 import { getCompatibleNodeActions } from '../../lib/nodeActionMenu';
 import {
   describeAudioModelCompatibility,
@@ -117,7 +118,9 @@ function AudioNodeComponent({ id, data }: AppNodeProps) {
     enabled: mediaMode === 'generate',
     resultSourceBinItemId,
   });
-  const assetUrl = mediaMode === 'import' ? data.sourceAssetUrl : (liveResultAssetUrl ?? data.result);
+  const assetUrl = mediaMode === 'import'
+    ? resultValueAsMediaUrl(data.sourceAssetUrl)
+    : (liveResultAssetUrl ?? resultValueAsMediaUrl(data.result));
   const assetMimeType =
     mediaMode === 'import'
       ? data.sourceAssetMimeType

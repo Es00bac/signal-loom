@@ -6,6 +6,7 @@ import {
   getValidListNodeItems,
   type FlowListItem,
 } from './listNodes';
+import { serializeResultValueForContainer } from './flowResultValues';
 
 export interface FlowVariableDiagnostic {
   id: string;
@@ -205,7 +206,17 @@ function collectAttemptBindings(node: AppNode): FlowVariableBinding[] {
 
   return node.data.resultHistory.flatMap((attempt, attemptIndex) => {
     const name = normalizeFlowVariableName(attempt.variableName);
-    if (!name || !attempt.result) {
+    if (!name) {
+      return [];
+    }
+
+    let value: string;
+    try {
+      // Variable substitution is a text/presentation boundary. Keep the
+      // attempt itself typed, including a false decision, and serialize only
+      // the rendered reference.
+      value = serializeResultValueForContainer(attempt.result, attempt.resultType);
+    } catch {
       return [];
     }
 
@@ -214,7 +225,7 @@ function collectAttemptBindings(node: AppNode): FlowVariableBinding[] {
       nodeId: node.id,
       kind: attempt.resultType,
       label: node.data.customTitle ?? `${node.type} run ${attemptIndex + 1}`,
-      value: attempt.result,
+      value,
       sourceNodeId: node.id,
       attemptId: attempt.id,
     }];

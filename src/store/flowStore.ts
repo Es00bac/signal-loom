@@ -57,6 +57,11 @@ import {
   type ManualEditorVisualSequenceClip,
 } from '../lib/manualEditorSequence';
 import { appendResultAttempt, resolveSelectedResultAttempt } from '../lib/resultHistory';
+import {
+  deserializeResultValueFromContainer,
+  resultValueAsMediaUrl,
+  serializeResultValueForContainer,
+} from '../lib/flowResultValues';
 import { executeNodeRequest, hashExecutionParameters } from '../lib/flowExecution';
 import {
   buildCollapsedFunctionNode,
@@ -315,11 +320,13 @@ function resolveNodeOutputAsset(node: AppNode): string | undefined {
     (node.type === 'imageGen' || node.type === 'audioGen' || node.type === 'videoGen') &&
     (node.data.mediaMode ?? 'generate') === 'import'
   ) {
-    if (node.data.sourceAssetUrl) {
-      return node.data.sourceAssetUrl;
+    const sourceAssetUrl = resultValueAsMediaUrl(node.data.sourceAssetUrl);
+    if (sourceAssetUrl) {
+      return sourceAssetUrl;
     }
-    if (node.data.result) {
-      return node.data.result;
+    const result = resultValueAsMediaUrl(node.data.result);
+    if (result) {
+      return result;
     }
     if (node.data.sourceBinItemId) {
       const item = useSourceBinStore.getState().getAllItems().find((item) => item.id === node.data.sourceBinItemId);
@@ -330,7 +337,7 @@ function resolveNodeOutputAsset(node: AppNode): string | undefined {
     return undefined;
   }
 
-  return node.data.result;
+  return resultValueAsMediaUrl(node.data.result);
 }
 
 function shouldReuseExistingNodeOutput(node: AppNode): boolean {
@@ -1582,11 +1589,13 @@ function collectImageInputFromSource(
 
   if (node.type === 'imageGen' || node.type === 'cropImageNode') {
     if ((node.data.mediaMode ?? 'generate') === 'import') {
-      if (node.data.sourceAssetUrl) {
-        return node.data.sourceAssetUrl;
+      const sourceAssetUrl = resultValueAsMediaUrl(node.data.sourceAssetUrl);
+      if (sourceAssetUrl) {
+        return sourceAssetUrl;
       }
-      if (node.data.result) {
-        return node.data.result;
+      const result = resultValueAsMediaUrl(node.data.result);
+      if (result) {
+        return result;
       }
       if (node.data.sourceBinItemId) {
         const item = useSourceBinStore.getState().getAllItems().find((item) => item.id === node.data.sourceBinItemId);
@@ -1596,7 +1605,7 @@ function collectImageInputFromSource(
       }
       return undefined;
     }
-    return node.data.result;
+    return resultValueAsMediaUrl(node.data.result);
   }
 
   if (node.type === 'functionNode') {
@@ -1902,7 +1911,7 @@ function buildEnvelopeItemFromExecution(
   nodeId: string,
   index: number,
   execution: {
-    result: string;
+    result: import('../types/flow').ResultValue;
     resultType: ResultType;
     statusMessage: string;
     usage?: UsageTelemetry;
@@ -1915,7 +1924,7 @@ function buildEnvelopeItemFromExecution(
     index,
     kind: execution.resultType,
     label: buildEnvelopeItemLabel(execution.resultType, index, iterationItems),
-    value: execution.result,
+    value: serializeResultValueForContainer(execution.result, execution.resultType),
     mimeType: execution.mimeType ?? getResultMimeType(execution.resultType),
     sourceNodeId: nodeId,
     usage: execution.usage,
@@ -3156,8 +3165,12 @@ export const useFlowStore = create<FlowState>()(
                 ? `${stoppedLoopMessage}. Kept ${envelopeItems.length} ${firstItem.kind} item${envelopeItems.length === 1 ? '' : 's'}.`
                 : `Generated envelope with ${envelopeItems.length} ${firstItem.kind} item${envelopeItems.length === 1 ? '' : 's'}`;
               const usage = aggregateEnvelopeUsage(envelopeItems);
+              const selectedResult = deserializeResultValueFromContainer(firstItem.value, firstItem.kind);
+              if (selectedResult === undefined) {
+                throw new Error(`The generated ${firstItem.kind} envelope value is invalid and cannot be restored.`);
+              }
               const nextAttemptState = appendResultAttempt(latestNode.data.resultHistory ?? [], {
-                result: firstItem.value,
+                result: selectedResult,
                 resultType: firstItem.kind,
                 statusMessage,
                 usage,
@@ -3165,7 +3178,7 @@ export const useFlowStore = create<FlowState>()(
               });
 
               latestState.patchNodeData(currentId, {
-                result: firstItem.value,
+                result: selectedResult,
                 resultType: firstItem.kind,
                 envelopeItems,
                 resultHistory: nextAttemptState.attempts,
@@ -3236,7 +3249,11 @@ export const useFlowStore = create<FlowState>()(
             // Multi-image output from a SINGLE call (e.g. Seedream Sequential's `max_images`): surface every
             // image as an envelope so they all land in the Source Library + downstream list, not just the first.
             if (isAssetSourceKind(execution.resultType) && execution.additionalResults && execution.additionalResults.length > 0) {
-              const allOutputs = [{ result: execution.result, mimeType: execution.mimeType }, ...execution.additionalResults];
+              const firstMediaResult = resultValueAsMediaUrl(execution.result);
+              if (!firstMediaResult) {
+                throw new Error(`The ${execution.resultType} executor returned a non-media value.`);
+              }
+              const allOutputs = [{ result: firstMediaResult, mimeType: execution.mimeType }, ...execution.additionalResults];
               const baseLabel = (latestNode.data.title as string) || `${latestNode.type} result`;
               const envelopeItems: EnvelopeItem[] = [];
               for (let index = 0; index < allOutputs.length; index += 1) {
@@ -3289,11 +3306,15 @@ export const useFlowStore = create<FlowState>()(
 
             let generatedSourceBinItemId: string | undefined;
             if (isAssetSourceKind(execution.resultType)) {
+              const mediaResult = resultValueAsMediaUrl(execution.result);
+              if (!mediaResult) {
+                throw new Error(`The ${execution.resultType} executor returned a non-media value.`);
+              }
               const sourceItem = await useSourceBinStore.getState().addAssetItem({
                 label: (latestNode.data.title as string) || `${latestNode.type} result`,
                 kind: execution.resultType,
                 mimeType: execution.mimeType ?? 'application/octet-stream',
-                dataUrl: execution.result,
+                dataUrl: mediaResult,
                 blob: execution.blob,
                 originNodeId: currentId,
                 envelopeId,
@@ -3301,7 +3322,7 @@ export const useFlowStore = create<FlowState>()(
                 envelopeIndex: 0,
                 envelopeCollapsed: false,
               });
-              execution.result = sourceItem.assetUrl ?? execution.result;
+              execution.result = sourceItem.assetUrl ?? mediaResult;
               generatedSourceBinItemId = sourceItem.id;
             }
 

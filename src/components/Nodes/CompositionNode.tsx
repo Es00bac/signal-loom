@@ -17,6 +17,7 @@ import { buildDownloadFilename, downloadAsset } from '../../lib/downloadAsset';
 import { EXPORT_BASENAME } from '../../lib/brand';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 import { assignVariableToResultAttempt } from '../../lib/flowVariables';
+import { resultValueAsMediaUrl } from '../../lib/flowResultValues';
 import {
   COMPOSITION_AUDIO_HANDLES,
   COMPOSITION_VIDEO_HANDLE,
@@ -97,7 +98,9 @@ function CompositionNodeComponent({ id, data }: AppNodeProps) {
   }, [connectedAudioTracks, data, visibleAudioTrackCount]);
 
   const hasPackageResult = data.resultType === 'package';
-  const previewUrl = hasPackageResult ? connectedVideo?.url : data.result ?? connectedVideo?.url;
+  const previewUrl = hasPackageResult
+    ? connectedVideo?.url
+    : resultValueAsMediaUrl(data.result) ?? connectedVideo?.url;
   const connectedVideoDuration = connectedVideo ? durations[connectedVideo.nodeId] ?? 0 : 0;
   const videoAudioSettings = getCompositionTrackSettings(data, COMPOSITION_VIDEO_HANDLE);
 
@@ -137,11 +140,12 @@ function CompositionNodeComponent({ id, data }: AppNodeProps) {
   );
 
   const handleDownload = async () => {
-    if (!data.result) {
+    const result = resultValueAsMediaUrl(data.result);
+    if (!result) {
       return;
     }
 
-    await downloadAsset(data.result, buildDownloadFilename(`${EXPORT_BASENAME}-composition`, 'video/mp4', 'mp4'));
+    await downloadAsset(result, buildDownloadFilename(`${EXPORT_BASENAME}-composition`, 'video/mp4', 'mp4'));
   };
 
   const updateTrackField = (handle: CompositionTargetHandle, key: 'offsetKey' | 'volumeKey' | 'enabledKey', value: SerializableNodeValue) => {
@@ -588,11 +592,12 @@ function findConnectedMedia(
     return undefined;
   }
 
-  const result =
+  const result = resultValueAsMediaUrl(
     (sourceNode.type === 'audioGen' || sourceNode.type === 'videoGen') &&
     (sourceNode.data.mediaMode ?? 'generate') === 'import'
       ? sourceNode.data.sourceAssetUrl
-      : sourceNode.data.result;
+      : sourceNode.data.result,
+  );
 
   if (!result) {
     return undefined;

@@ -17,6 +17,7 @@ import { EXPORT_BASENAME } from '../../lib/brand';
 import { withFlowNodeInteractionClasses } from '../../lib/flowNodeInteraction';
 import { getCompatibleNodeActions } from '../../lib/nodeActionMenu';
 import { assignVariableToResultAttempt } from '../../lib/flowVariables';
+import { resultValueAsMediaUrl } from '../../lib/flowResultValues';
 import {
   CAPABILITY_PROVIDERS,
   getConfiguredProviders,
@@ -98,7 +99,9 @@ function VideoNodeComponent({ id, data }: AppNodeProps) {
     enabled: mediaMode === 'generate',
     resultSourceBinItemId,
   });
-  const assetUrl = mediaMode === 'import' ? data.sourceAssetUrl : (liveResultAssetUrl ?? data.result);
+  const assetUrl = mediaMode === 'import'
+    ? resultValueAsMediaUrl(data.sourceAssetUrl)
+    : (liveResultAssetUrl ?? resultValueAsMediaUrl(data.result));
   const assetMimeType = mediaMode === 'import' ? data.sourceAssetMimeType : 'video/mp4';
 
   const connections = useFlowStore(
