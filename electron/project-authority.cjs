@@ -181,7 +181,12 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
       return runExclusive(async () => {
         if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
         const staged = asStagedResult(await load());
-        if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
+        if (!senderIsLive(isSenderLive)) {
+          // Preparation is allowed to create staging/scratch state.  It is not authority
+          // state, and it must be unwound even when the sender disappears in this gap.
+          try { await staged.rollback(); } catch {}
+          return buildRejection('sender-gone', 'The requesting window is no longer live.');
+        }
         const previous = { current, canonical };
         let loaded;
         try {
@@ -197,7 +202,7 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
         } catch (error) {
           current = previous.current;
           canonical = previous.canonical;
-          try { staged.rollback(); } catch {}
+          try { await staged.rollback(); } catch {}
           return { canceled: false, rejected: buildRejection('commit-failed', error instanceof Error ? error.message : 'Project commit failed.').rejected };
         }
       });
@@ -233,6 +238,7 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
 
         const staged = asStagedResult(await write(filePath, () => senderIsLive(isSenderLive)));
         if (!senderIsLive(isSenderLive)) {
+          try { await staged.rollback(); } catch {}
           const rejected = buildRejection('sender-gone', 'The requesting window is no longer live.');
           return { canceled: false, rejected: rejected.rejected };
         }
@@ -254,7 +260,7 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
         } catch (error) {
           current = previous.current;
           canonical = previous.canonical;
-          try { staged.rollback(); } catch {}
+          try { await staged.rollback(); } catch {}
           return { canceled: false, rejected: buildRejection('commit-failed', error instanceof Error ? error.message : 'Project commit failed.').rejected };
         }
       });
@@ -269,7 +275,10 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
       return runExclusive(async () => {
         if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
         const staged = asStagedResult(reset ? await reset() : undefined);
-        if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
+        if (!senderIsLive(isSenderLive)) {
+          try { await staged.rollback(); } catch {}
+          return buildRejection('sender-gone', 'The requesting window is no longer live.');
+        }
         const previous = { current, canonical };
         try {
           staged.commit();
@@ -285,7 +294,7 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
         } catch (error) {
           current = previous.current;
           canonical = previous.canonical;
-          try { staged.rollback(); } catch {}
+          try { await staged.rollback(); } catch {}
           return { ok: false, rejected: buildRejection('commit-failed', error instanceof Error ? error.message : 'Project commit failed.').rejected };
         }
       });

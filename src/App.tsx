@@ -968,7 +968,7 @@ function FlowApp() {
         return;
       }
       const claim = getCurrentProjectAuthorityClaim();
-      if (event.authority && (!claim || event.authority.authorityId !== claim.authorityId || event.authority.version !== claim.version)) {
+      if (!event.authority || !claim || event.authority.authorityId !== claim.authorityId || event.authority.version !== claim.version) {
         return;
       }
 
@@ -979,7 +979,10 @@ function FlowApp() {
       const claim = getCurrentProjectAuthorityClaim();
       if (
         cancelled || !result?.snapshot || result.version <= 0
-        || (result.authority && (!claim || result.authority.authorityId !== claim.authorityId || result.authority.version !== claim.version))
+        || !result.authority
+        || !claim
+        || result.authority.authorityId !== claim.authorityId
+        || result.authority.version !== claim.version
       ) {
         return;
       }
@@ -994,7 +997,7 @@ function FlowApp() {
       cancelled = true;
       removeListener?.();
     };
-  }, [applySourceLibraryChangeToRenderer]);
+  }, [applySourceLibraryChangeToRenderer, projectAuthorityUiState.claim?.authorityId, projectAuthorityUiState.claim?.version]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {

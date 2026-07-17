@@ -288,19 +288,45 @@ export async function resetProjectDocument(
   // work after Flow/Paper/Image have already changed; retain an exact project snapshot and put
   // every workspace back if any later phase fails.
   const previous = await buildCurrentProjectDocument({ includeAssetData: true });
+  // Each reset phase has an observable post-state.  On a late failure, only restore a
+  // store that is still in that exact post-state: a concurrent edit belongs to the user,
+  // not to this transaction, and must never be overwritten by an old whole-project image.
+  let resetFlow: ReturnType<typeof useFlowStore.getState>['exportProjectFlowSnapshot'] extends () => infer T ? T : never;
+  let resetFlowWorkspaces: ReturnType<typeof useFlowWorkspaceStore.getState>['exportProjectSnapshot'] extends (flow: never) => infer T ? T : never;
+  let resetEditor: ReturnType<typeof useEditorStore.getState>['exportWorkspaceSnapshot'] extends () => infer T ? T : never;
+  let resetUsage: ReturnType<typeof useProjectUsageStore.getState>['exportSnapshot'] extends () => infer T ? T : never;
+  let resetPaper: ReturnType<typeof usePaperStore.getState>['exportSnapshot'] extends () => infer T ? T : never;
+  const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
   try {
     useFlowStore.getState().replaceFlowSnapshot({ nodes: [], edges: [] });
+    resetFlow = useFlowStore.getState().exportProjectFlowSnapshot();
     useFlowWorkspaceStore.getState().reset();
+    resetFlowWorkspaces = useFlowWorkspaceStore.getState().exportProjectSnapshot(resetFlow);
     useEditorStore.getState().restoreWorkspaceSnapshot(undefined);
+    resetEditor = useEditorStore.getState().exportWorkspaceSnapshot();
     await useSourceBinStore.getState().restoreProjectSnapshot(undefined);
     useProjectUsageStore.getState().restoreSnapshot(undefined);
+    resetUsage = useProjectUsageStore.getState().exportSnapshot();
     usePaperStore.getState().restoreSnapshot(undefined);
+    resetPaper = usePaperStore.getState().exportSnapshot();
     await useImageEditorStore.getState().restoreProjectSnapshot(undefined);
   } catch (error) {
-    await restoreProjectDocument(previous, {
-      allowDirtyImageReplacement: true,
-      allowDirtyPaperReplacement: true,
-    }).catch(() => undefined);
+    const flowStore = useFlowStore.getState();
+    const workspaceStore = useFlowWorkspaceStore.getState();
+    const editorStore = useEditorStore.getState();
+    const usageStore = useProjectUsageStore.getState();
+    const paperStore = usePaperStore.getState();
+    if (resetFlow && same(flowStore.exportProjectFlowSnapshot(), resetFlow)) {
+      flowStore.replaceFlowSnapshot(previous.flow);
+    }
+    if (resetFlowWorkspaces && same(workspaceStore.exportProjectSnapshot(flowStore.exportProjectFlowSnapshot()), resetFlowWorkspaces)) {
+      workspaceStore.hydrateProjectSnapshot({ workspaces: previous.flowWorkspaces ?? [], activeWorkspaceId: previous.activeFlowWorkspaceId });
+    }
+    if (resetEditor && same(editorStore.exportWorkspaceSnapshot(), resetEditor)) editorStore.restoreWorkspaceSnapshot(previous.editor);
+    if (resetUsage && same(usageStore.exportSnapshot(), resetUsage)) usageStore.restoreSnapshot(previous.usageLedger);
+    if (resetPaper && same(paperStore.exportSnapshot(), resetPaper)) paperStore.restoreSnapshot(previous.paper);
+    // Source/Image restoration can itself be asynchronous and may race remote work.  Their
+    // individual stores retain their own guarded rollback; avoid a blind whole-project replay.
     throw error;
   }
 }

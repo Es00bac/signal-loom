@@ -997,6 +997,58 @@ describe('desktop project authority arbitration (AUD-001, two independent render
     expect(gateway.getCurrent().version).toBe(claim.version + 1);
     expect(broadcasts).toHaveLength(1);
   });
+
+  it('rolls every prepared operation back when its sender dies before the closed commit', async () => {
+    const module = await loadProjectAuthorityModule();
+    const gateway = module.createProjectAuthority();
+    gateway.commitStartup({ filePath: '/projects/A.sloom', document: DOC_A });
+    const claim = gateway.getCurrent();
+    gateway.confirmAdoption(1, claim);
+
+    let live = true;
+    let openRollback = 0;
+    const opened = await gateway.openProject({
+      senderId: 1,
+      isSenderLive: () => live,
+      load: async () => {
+        live = false;
+        return { filePath: '/projects/B.sloom', document: DOC_B, commit: () => ({ filePath: '/projects/B.sloom', document: DOC_B }), rollback: () => { openRollback += 1; } };
+      },
+    });
+    expect(opened.rejected?.code).toBe('sender-gone');
+    expect(openRollback).toBe(1);
+    expect(gateway.getCurrent()).toEqual(claim);
+
+    live = true;
+    let saveRollback = 0;
+    const saved = await gateway.saveProject({
+      senderId: 1,
+      claim,
+      isSenderLive: () => live,
+      resolveFilePath: () => '/projects/A.sloom',
+      write: async () => {
+        live = false;
+        return { commit: () => ({ canceled: false, filePath: '/projects/A.sloom', document: DOC_B }), rollback: () => { saveRollback += 1; } };
+      },
+    });
+    expect(saved.rejected?.code).toBe('sender-gone');
+    expect(saveRollback).toBe(1);
+    expect(gateway.getCurrent()).toEqual(claim);
+
+    live = true;
+    let resetRollback = 0;
+    const cleared = await gateway.clearProject({
+      senderId: 1,
+      isSenderLive: () => live,
+      reset: async () => {
+        live = false;
+        return { commit: () => undefined, rollback: () => { resetRollback += 1; } };
+      },
+    });
+    expect(cleared.rejected?.code).toBe('sender-gone');
+    expect(resetRollback).toBe(1);
+    expect(gateway.getCurrent()).toEqual(claim);
+  });
 });
 
 describe('project authority renderer wiring source guards (AUD-001)', () => {
@@ -1007,7 +1059,7 @@ describe('project authority renderer wiring source guards (AUD-001)', () => {
 
     // Save/Open only stage asynchronous work. Their commit closures use sync rename/startup
     // replacement, so no sender-liveness callback can run after the target changes.
-    expect(saveBody).toContain('const stagedTarget =');
+    expect(saveBody).toContain('stagedTarget =');
     expect(saveBody).toContain('renameSync(stagedTarget, filePath)');
     expect(saveBody).toContain('startupRecord.commit()');
     expect(saveBody).not.toContain('await rememberProjectPath(filePath)');

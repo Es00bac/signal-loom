@@ -488,6 +488,29 @@ describe('restoreProjectDocument', () => {
     expect(useFlowStore.getState().nodes.map((node) => node.id)).toEqual(['existing']);
   });
 
+  it('preserves a concurrent Flow edit when a late Source reset failure rolls back only its own reset', async () => {
+    useFlowStore.getState().replaceFlowSnapshot({
+      nodes: [{ id: 'before-reset', type: 'textNode', position: { x: 1, y: 1 }, data: {} }],
+      edges: [],
+    });
+    useSourceBinStore.setState({
+      restoreProjectSnapshot: async () => {
+        useFlowStore.getState().replaceFlowSnapshot({
+          nodes: [{ id: 'concurrent-edit', type: 'textNode', position: { x: 9, y: 9 }, data: { prompt: 'keep me' } }],
+          edges: [],
+        });
+        throw new Error('late Source reset failed');
+      },
+    });
+
+    await expect(resetProjectDocument({
+      allowDirtyImageReplacement: true,
+      allowDirtyPaperReplacement: true,
+    })).rejects.toThrow('late Source reset failed');
+
+    expect(useFlowStore.getState().exportProjectFlowSnapshot().nodes.map((node) => node.id)).toEqual(['concurrent-edit']);
+  });
+
   it('keeps live Image bitmaps when a restore fails after the image section (lossless rollback)', async () => {
     // A failed restore must put back the EXACT live document objects — a
     // pixel-stripped snapshot rollback would blank every open Image canvas.

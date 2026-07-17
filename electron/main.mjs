@@ -1331,7 +1331,7 @@ async function stageProjectStartupRecord(filePath) {
         rmSync(statePath, { force: true });
       }
     },
-    rollback() {
+    async rollback() {
       if (previous) {
         writeFileSync(statePath, previous);
       } else {
@@ -1356,15 +1356,27 @@ async function writeProjectDocument(filePath, document, isSenderLive = () => tru
   assertSenderLive();
   await mkdir(dirname(filePath), { recursive: true });
   assertSenderLive();
-  const prepared = await prepareProjectDocumentForNativeSave(filePath, document);
-  assertSenderLive();
-  const previousTarget = await readFile(filePath).catch(() => undefined);
-  assertSenderLive();
-  const stagedTarget = `${filePath}.sloom-stage-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  await writeFile(stagedTarget, `${JSON.stringify(prepared.document, null, 2)}\n`, 'utf8');
-  assertSenderLive();
-  const startupRecord = await stageProjectStartupRecord(filePath);
-  assertSenderLive();
+  let prepared;
+  let stagedTarget;
+  try {
+    prepared = await prepareProjectDocumentForNativeSave(filePath, document);
+    assertSenderLive();
+    const previousTarget = await readFile(filePath).catch(() => undefined);
+    assertSenderLive();
+    stagedTarget = `${filePath}.sloom-stage-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await writeFile(stagedTarget, `${JSON.stringify(prepared.document, null, 2)}\n`, 'utf8');
+    assertSenderLive();
+    const startupRecord = await stageProjectStartupRecord(filePath);
+    assertSenderLive();
+    return stagePreparedProjectSave(filePath, prepared, previousTarget, stagedTarget, startupRecord);
+  } catch (error) {
+    if (stagedTarget) await rm(stagedTarget, { force: true }).catch(() => undefined);
+    await prepared?.rollbackPreparationEffects?.().catch(() => undefined);
+    throw error;
+  }
+}
+
+function stagePreparedProjectSave(filePath, prepared, previousTarget, stagedTarget, startupRecord) {
   const backupPath = previousTarget && shouldWriteProjectSaveDirectly(filePath)
     ? buildProjectOverwriteBackupPath(filePath)
     : undefined;
@@ -1388,13 +1400,13 @@ async function writeProjectDocument(filePath, document, isSenderLive = () => tru
       } catch (error) {
         if (previousTarget) writeFileSync(filePath, previousTarget);
         else rmSync(filePath, { force: true });
-        if (createdBackupPath) rmSync(createdBackupPath, { force: true });
-        startupRecord.rollback();
-        throw error;
+      if (createdBackupPath) rmSync(createdBackupPath, { force: true });
+      startupRecord.rollback();
+      throw error;
       }
       return { canceled: false, filePath, scratchDirectoryPath: prepared.scratchDirectoryPath, document: prepared.document };
     },
-    rollback() {
+    async rollback() {
       if (committed) {
         if (previousTarget) writeFileSync(filePath, previousTarget);
         else rmSync(filePath, { force: true });
@@ -1402,6 +1414,7 @@ async function writeProjectDocument(filePath, document, isSenderLive = () => tru
       rmSync(stagedTarget, { force: true });
       if (createdBackupPath) rmSync(createdBackupPath, { force: true });
       startupRecord.rollback();
+      await prepared.rollbackPreparationEffects?.();
     },
   };
 }
@@ -1413,17 +1426,26 @@ async function openProjectDocumentFromPath(filePath, isSenderLive = () => true) 
   assertSenderLive();
   const contents = await readFile(filePath, 'utf8');
   assertSenderLive();
-  const prepared = await prepareProjectDocumentForNativeOpen(filePath, parseProjectDocumentJson(contents));
-  assertSenderLive();
-  const startupRecord = await stageProjectStartupRecord(filePath);
-  assertSenderLive();
-  return {
-    commit() {
-      startupRecord.commit();
-      return { canceled: false, filePath, scratchDirectoryPath: prepared.scratchDirectoryPath, document: prepared.document };
-    },
-    rollback: () => startupRecord.rollback(),
-  };
+  let prepared;
+  try {
+    prepared = await prepareProjectDocumentForNativeOpen(filePath, parseProjectDocumentJson(contents));
+    assertSenderLive();
+    const startupRecord = await stageProjectStartupRecord(filePath);
+    assertSenderLive();
+    return {
+      commit() {
+        startupRecord.commit();
+        return { canceled: false, filePath, scratchDirectoryPath: prepared.scratchDirectoryPath, document: prepared.document };
+      },
+      async rollback() {
+        startupRecord.rollback();
+        await prepared.rollbackPreparationEffects?.();
+      },
+    };
+  } catch (error) {
+    await prepared?.rollbackPreparationEffects?.().catch(() => undefined);
+    throw error;
+  }
 }
 
 /** Synchronous half of the authority commit: never call this during preparation/I/O. */
@@ -1576,6 +1598,34 @@ async function attachRecoveredScratchAssetsToSourceBin(sourceBin) {
   return removeTransientRecoveredScratchAssetsFromSourceBin(sourceBin);
 }
 
+// Preparation may need to materialize assets before an authority transaction reaches its
+// closed commit.  Keep an exact byte journal for every scratch target it touches, including
+// whether the scratch directory existed at all, so cancellation/sender loss/publication
+// failure cannot leave a future project with this transaction's files.
+function createScratchPreparationJournal(scratchDirectoryPath) {
+  const directoryExisted = existsSync(scratchDirectoryPath);
+  const previousBytesByPath = new Map();
+  return {
+    async beforeWrite(targetPath) {
+      if (previousBytesByPath.has(targetPath)) return;
+      previousBytesByPath.set(targetPath, await readFile(targetPath).catch(() => undefined));
+    },
+    async rollback() {
+      for (const [targetPath, previousBytes] of [...previousBytesByPath.entries()].reverse()) {
+        if (previousBytes) {
+          await mkdir(dirname(targetPath), { recursive: true });
+          await writeFile(targetPath, previousBytes);
+        } else {
+          await rm(targetPath, { force: true });
+        }
+      }
+      // Deliberately non-recursive: only remove a directory this prepare created and only
+      // when no unrelated writer placed something in it while the transaction was pending.
+      if (!directoryExisted) await rm(scratchDirectoryPath, { force: true }).catch(() => undefined);
+    },
+  };
+}
+
 function removeBrokenNativeAssetReference(item, nativeFilePath) {
   if (typeof item?.assetUrl !== 'string' || !item.assetUrl.startsWith('signal-loom-asset://')) {
     return item;
@@ -1593,6 +1643,7 @@ async function materializeProjectSourceBinItem(
   scratchDirectoryPath,
   scratchDirectoryPaths = [scratchDirectoryPath],
   sourceKeyAssetRecoveryIndex = new Map(),
+  scratchJournal,
 ) {
   if (!item || item.kind === 'text') {
     return item;
@@ -1634,8 +1685,10 @@ async function materializeProjectSourceBinItem(
     }
 
     if (materializationSourcePath && resolve(materializationSourcePath) !== resolve(targetPath)) {
+      await scratchJournal?.beforeWrite(targetPath);
       await copyFile(materializationSourcePath, targetPath);
     } else if (dataUrlAsset) {
+      await scratchJournal?.beforeWrite(targetPath);
       await writeFile(targetPath, dataUrlAsset.buffer);
     }
 
@@ -1661,6 +1714,7 @@ async function materializeProjectSourceBinItem(
 async function prepareProjectDocumentForNativeSave(filePath, document) {
   const scratchDirectoryPaths = buildProjectScratchDirectoryCandidates(filePath, document);
   const scratchDirectoryPath = scratchDirectoryPaths[0];
+  const scratchJournal = createScratchPreparationJournal(scratchDirectoryPath);
   const sourceKeyAssetRecoveryIndex = document?.sourceBin
     ? await buildScratchAssetSignatureRecoveryIndex(document.sourceBin, scratchDirectoryPath)
     : new Map();
@@ -1672,6 +1726,7 @@ async function prepareProjectDocumentForNativeSave(filePath, document) {
           scratchDirectoryPath,
           scratchDirectoryPaths,
           sourceKeyAssetRecoveryIndex,
+          scratchJournal,
         ),
       )
     : document?.sourceBin;
@@ -1681,6 +1736,7 @@ async function prepareProjectDocumentForNativeSave(filePath, document) {
 
   return {
     scratchDirectoryPath,
+    rollbackPreparationEffects: () => scratchJournal.rollback(),
     document: {
       ...document,
       schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
@@ -1700,6 +1756,7 @@ async function prepareProjectDocumentForNativeSave(filePath, document) {
 async function prepareProjectDocumentForNativeOpen(filePath, document) {
   const scratchDirectoryPaths = buildProjectScratchDirectoryCandidates(filePath, document);
   const scratchDirectoryPath = scratchDirectoryPaths[0];
+  const scratchJournal = createScratchPreparationJournal(scratchDirectoryPath);
   const sourceKeyAssetRecoveryIndex = document?.sourceBin
     ? await buildScratchAssetSignatureRecoveryIndex(document.sourceBin, scratchDirectoryPath)
     : new Map();
@@ -1713,6 +1770,7 @@ async function prepareProjectDocumentForNativeOpen(filePath, document) {
 
     return {
       scratchDirectoryPath,
+      rollbackPreparationEffects: () => scratchJournal.rollback(),
       document: {
         ...openedDocument,
         sourceBin: await attachRecoveredScratchAssetsToSourceBin(openedDocument?.sourceBin, scratchDirectoryPath),
@@ -1731,6 +1789,7 @@ async function prepareProjectDocumentForNativeOpen(filePath, document) {
         scratchDirectoryPath,
         scratchDirectoryPaths,
         sourceKeyAssetRecoveryIndex,
+        scratchJournal,
       );
     }
 
@@ -1763,6 +1822,7 @@ async function prepareProjectDocumentForNativeOpen(filePath, document) {
 
   return {
     scratchDirectoryPath,
+    rollbackPreparationEffects: () => scratchJournal.rollback(),
     document: openedDocument,
   };
 }
