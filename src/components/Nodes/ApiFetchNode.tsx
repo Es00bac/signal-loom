@@ -51,6 +51,8 @@ function ApiFetchNodeComponent({ id, data }: AppNodeProps) {
       title="API Requester"
       hasInput={true}
       hasOutput={true}
+      onRun={data.onRun}
+      isRunning={data.isRunning}
       error={data.error}
       statusMessage={data.statusMessage}
       retryState={data.retryState}

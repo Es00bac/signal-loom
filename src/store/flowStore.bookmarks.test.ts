@@ -99,7 +99,14 @@ describe('flow store node bookmark actions', () => {
 
   it('ignores node data patches that do not change any values', () => {
     useFlowStore.setState({
-      nodes: [{ ...makeNode('node-1'), data: { aspectRatio: '1:1' } }],
+      nodes: [{
+        ...makeNode('node-1'),
+        data: {
+          aspectRatio: '1:1',
+          nodeInstanceId: 'stable-instance',
+          inputRevision: 'stable-revision',
+        },
+      }],
       edges: [],
       bookmarkSidebarOpen: false,
     });
@@ -115,6 +122,44 @@ describe('flow store node bookmark actions', () => {
     unsubscribe();
     expect(useFlowStore.getState().nodes).toBe(initialNodes);
     expect(notifications).toHaveLength(0);
+    expect(useFlowStore.getState().nodes[0]?.data).toMatchObject({
+      nodeInstanceId: 'stable-instance',
+      inputRevision: 'stable-revision',
+    });
+  });
+
+  it('assigns new identities only to nodes created by paste', () => {
+    useFlowStore.setState({
+      nodes: [
+        {
+          ...makeNode('existing'),
+          selected: true,
+          data: { nodeInstanceId: 'existing-instance', inputRevision: 'existing-revision' },
+        },
+        {
+          ...makeNode('untouched'),
+          data: { nodeInstanceId: 'untouched-instance', inputRevision: 'untouched-revision' },
+        },
+      ],
+      edges: [],
+    });
+
+    expect(useFlowStore.getState().copySelection()).toBe(true);
+    expect(useFlowStore.getState().pasteClipboard({ x: 400, y: 200 })).toBe(true);
+
+    const nodes = useFlowStore.getState().nodes;
+    expect(nodes.find((node) => node.id === 'existing')?.data).toMatchObject({
+      nodeInstanceId: 'existing-instance',
+      inputRevision: 'existing-revision',
+    });
+    expect(nodes.find((node) => node.id === 'untouched')?.data).toMatchObject({
+      nodeInstanceId: 'untouched-instance',
+      inputRevision: 'untouched-revision',
+    });
+    const pasted = nodes.find((node) => node.id !== 'existing' && node.id !== 'untouched');
+    expect(pasted?.data.nodeInstanceId).toBeTruthy();
+    expect(pasted?.data.nodeInstanceId).not.toBe('existing-instance');
+    expect(pasted?.data.inputRevision).not.toBe('existing-revision');
   });
 
   it('hydrates malformed persisted flow arrays to safe defaults', () => {

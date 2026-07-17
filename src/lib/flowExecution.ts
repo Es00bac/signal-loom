@@ -19,6 +19,11 @@ import type {
 import type { GenerateContentConfig, PartUnion } from '@google/genai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import {
+  isApiRequesterCredentialFieldName,
+  isApiRequesterSensitiveHeaderName,
+  isPersistedApiRequesterCredential,
+} from './apiRequesterCredentials';
+import {
   createElevenLabsTtsUsage,
   createGeminiImageUsage,
   createGeminiVideoUsage,
@@ -145,6 +150,7 @@ import {
 } from './flowDiagnostics';
 import { deserializeResultValueFromContainer, resultValueAsMediaUrl } from './flowResultValues';
 import type { FlowGraphContractContext } from './flowConnectionContracts';
+import { abortableSleep, createAbortError, isAbortError, raceWithAbort, throwIfAborted } from './abortSignals';
 
 export interface ExecutionContext {
   prompt: string;
@@ -266,7 +272,17 @@ export async function executeNodeRequest(
   // immediately, to the user — it is never silently resurrected.
   if (node.type === 'composition') {
     throwIfAborted(options.signal);
-    return executeCompositionNode(node, context, settings, onStatus);
+    return raceWithAbort(executeCompositionNode(node, context, settings, onStatus), options.signal);
+  }
+
+  // API Requester targets are arbitrary user endpoints and Function nodes are
+  // local deterministic transforms. Neither belongs to the shared AI-provider
+  // throttle, and both are already submit-once operations.
+  if (node.type === 'apiFetchNode') {
+    return executeApiFetchNode(node, context, onStatus, options.signal);
+  }
+  if (node.type === 'functionNode') {
+    return executeFunctionNode(node, context, options.signal);
   }
 
   const providerId = typeof node.data.provider === 'string' ? node.data.provider : 'default';
@@ -281,12 +297,12 @@ export async function executeNodeRequest(
       // (Android accelerator token, local endpoints, Stability key, Vertex auth) stay on this
       // device, so a proxied image result takes exactly the same upscale path as a direct
       // provider result instead of silently skipping the node's requested upscale.
-      return applyConfiguredAutoUpscaleIfRequested({ node, context, settings, result: proxied, onStatus });
+      return applyConfiguredAutoUpscaleIfRequested({ node, context, settings, result: proxied, onStatus, abortSignal: options.signal });
     }
 
     switch (node.type) {
       case 'textNode':
-        return executeTextNode(node, context, settings, onStatus);
+        return executeTextNode(node, context, settings, onStatus, options.signal);
       case 'imageGen':
         return executeImageNode(node, context, settings, onStatus, options.signal);
       case 'cropImageNode':
@@ -294,23 +310,22 @@ export async function executeNodeRequest(
       case 'videoGen':
         return executeVideoNode(node, context, settings, onStatus, options.signal);
       case 'audioGen':
-        return executeAudioNode(node, context, settings, onStatus);
+        return executeAudioNode(node, context, settings, onStatus, options.signal);
       // 'composition' is handled above, before the retry wrapper — see that comment.
       case 'visionVerifyNode':
-        return executeVisionVerifyNode(node, context, settings, onStatus);
-      case 'functionNode':
-        return executeFunctionNode(node, context);
-      case 'apiFetchNode':
-        return executeApiFetchNode(node, context, onStatus);
+        return executeVisionVerifyNode(node, context, settings, onStatus, options.signal);
       default:
         throw new NonRetryableError(`Unsupported node type: ${node.type}`);
     }
-  });
+  }, options.signal);
 
   // These direct-provider routes submit paid, non-idempotent asynchronous jobs.
   // Retrying the whole operation after a poll/download fault can create another
   // charge. They submit once; their poll/materialize phases retry the existing
   // prediction ID, polling URL, or operation name inside the provider function.
+  // API Requester targets are user-defined. There is no provider-specific operation ID that
+  // lets us distinguish a failed submission from a completed side effect, so replaying any
+  // request here would be dishonest (and can duplicate a POST, PUT, PATCH, or DELETE).
   if (isDirectPaidAsyncRequest(node, settings)) {
     return operation();
   }
@@ -408,7 +423,9 @@ export async function hashExecutionParameters(nodeData: unknown, context: Execut
 async function executeFunctionNode(
   node: AppNode,
   context: ExecutionContext,
+  signal?: AbortSignal,
 ): Promise<ExecutionResult> {
+  throwIfAborted(signal);
   const config = node.data.functionNode ?? createDefaultFunctionNodeConfig('Reusable function');
   const explicitFunctionInputs = context.functionInputs ?? {};
   const execution = executeFunctionNodeConfig(config, {
@@ -419,6 +436,7 @@ async function executeFunctionNode(
     video: context.videoInput ?? context.sourceVideoInput ?? '',
     audio: context.audioSourceInput ?? '',
   });
+  throwIfAborted(signal);
   const result = deserializeResultValueFromContainer(execution.result, execution.resultType);
   if (result === undefined) {
     throw new NonRetryableError(`Function returned an invalid ${execution.resultType} value.`);
@@ -440,21 +458,23 @@ async function executeApiFetchNode(
   node: AppNode,
   context: ExecutionContext,
   onStatus?: (statusMessage: string) => void,
+  signal?: AbortSignal,
 ): Promise<ExecutionResult> {
   onStatus?.('Preparing API Web Request...');
-  const url = String(context.prompt || node.data.url || '').trim();
+  const rawUrl = String(context.prompt || node.data.url || '').trim();
   const method = String(node.data.method ?? 'GET').toUpperCase();
   const rawHeaders = String(node.data.headers ?? '').trim();
   const rawBody = String(node.data.body ?? '').trim();
 
-  if (!url) {
+  if (!rawUrl) {
     throw new NonRetryableError('API Requester node needs a valid URL to run.');
   }
+  const url = validateApiRequesterUrl(rawUrl);
+  assertApiRequesterCredentialsAreLive(rawHeaders, rawBody);
 
-  // Parse custom headers
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
+  // Headers#set has the fetch-standard, case-insensitive replacement semantics. A plain object
+  // can carry both Content-Type and content-type, which fetch combines into an invalid value.
+  const headers = new Headers({ 'Content-Type': 'application/json' });
   if (rawHeaders) {
     try {
       const lines = rawHeaders.split('\n');
@@ -463,7 +483,7 @@ async function executeApiFetchNode(
         if (colonIndex !== -1) {
           const name = line.substring(0, colonIndex).trim();
           const val = line.substring(colonIndex + 1).trim();
-          if (name) headers[name] = val;
+          if (name) headers.set(name, val);
         }
       });
     } catch (err) {
@@ -486,16 +506,29 @@ async function executeApiFetchNode(
     }
   }
 
-  onStatus?.(`Sending ${method} request to ${url}...`);
+  onStatus?.(`Sending ${method} request…`);
   try {
     const response = await fetch(url, {
       method,
       headers,
       body: method !== 'GET' ? body : undefined,
+      signal,
     });
 
     onStatus?.('Parsing API Response...');
-    const text = await response.text();
+    const text = await readBoundedApiResponse(response, signal);
+
+    if (!response.ok) {
+      // Server error pages can reflect credentials. Keep the useful status but never store the body.
+      throw new HttpStatusError(response.status, 'API request failed');
+    }
+
+    const contentType = normalizeApiRequesterMimeType(response.headers.get('content-type'));
+    if (contentType && !isApiRequesterTextMimeType(contentType)) {
+      throw new NonRetryableError(
+        `API Requester only accepts text or JSON responses; received ${contentType.split(';', 1)[0]}.`,
+      );
+    }
     let result: unknown = text;
     let resultType: ResultType = 'text';
     const declaredOutputType = node.data.declaredOutputType;
@@ -510,7 +543,7 @@ async function executeApiFetchNode(
           { cause: error },
         );
       }
-    } else if (declaredOutputType !== 'text' && response.headers.get('content-type')?.includes('application/json')) {
+    } else if (declaredOutputType !== 'text' && isApiRequesterJsonMimeType(contentType)) {
       try {
         result = JSON.parse(text);
         resultType = 'json';
@@ -519,21 +552,187 @@ async function executeApiFetchNode(
       }
     }
 
-    if (!response.ok) {
-      throw new HttpStatusError(response.status, text || 'API request failed');
-    }
-
     return {
       result: typeof result === 'string' ? result : JSON.stringify(result),
       resultType,
       statusMessage: `Completed with status ${response.status}`,
+      mimeType: contentType.split(';', 1)[0] || (resultType === 'json' ? 'application/json' : 'text/plain'),
+      usage: {
+        source: 'actual',
+        confidence: 'unknown',
+        provider: 'api-requester',
+        notes: ['External API Requester pricing is not known to Sloom Studio.'],
+      },
     };
   } catch (err) {
+    if (isAbortError(err) || signal?.aborted) {
+      throw isAbortError(err) ? err : createAbortError();
+    }
     if (err instanceof NonRetryableError || err instanceof HttpStatusError) {
       throw err;
     }
-    throw new Error(`Network request failed: ${(err as Error).message}`);
+    throw new Error(`Network request failed: ${redactApiRequesterMessage((err as Error).message)}`);
   }
+}
+
+const API_REQUESTER_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+const API_REQUESTER_SECRET_QUERY_KEYS = /^(?:api[_-]?key|access[_-]?token|auth(?:orization)?|password|secret|token)$/i;
+
+function validateApiRequesterUrl(rawUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new NonRetryableError('API Requester node needs an absolute HTTP or HTTPS URL.');
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new NonRetryableError('API Requester only permits HTTP and HTTPS URLs.');
+  }
+  if (parsed.username || parsed.password || [...parsed.searchParams.keys()].some((key) => API_REQUESTER_SECRET_QUERY_KEYS.test(key))) {
+    throw new NonRetryableError('Put API credentials in request headers, not the URL.');
+  }
+  return parsed.toString();
+}
+
+function assertApiRequesterCredentialsAreLive(rawHeaders: string, rawBody: string): void {
+  if (hasPersistedApiRequesterCredential(rawHeaders, rawBody)) {
+    throw new NonRetryableError(
+      'This API Requester contains redacted credentials from persisted data. Replace each redacted value before running it.',
+    );
+  }
+}
+
+function isApiRequesterTextMimeType(contentType: string): boolean {
+  return isApiRequesterJsonMimeType(contentType) || contentType.startsWith('text/');
+}
+
+function normalizeApiRequesterMimeType(contentType: string | null): string {
+  return contentType?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+}
+
+function isApiRequesterJsonMimeType(mimeType: string): boolean {
+  return mimeType === 'application/json' || mimeType === 'application/problem+json' || mimeType.endsWith('+json');
+}
+
+function hasPersistedApiRequesterCredential(rawHeaders: string, rawBody: string): boolean {
+  for (const line of rawHeaders.split(/\r?\n/)) {
+    const separator = line.indexOf(':');
+    if (separator < 0) continue;
+    const name = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim();
+    if (isApiRequesterSensitiveHeaderName(name) && isPersistedApiRequesterCredential(value)) return true;
+  }
+
+  try {
+    const visit = (value: unknown): boolean => {
+      if (Array.isArray(value)) return value.some(visit);
+      if (!value || typeof value !== 'object') return false;
+      return Object.entries(value).some(([key, entry]) => (
+        (isApiRequesterCredentialFieldName(key) && isPersistedApiRequesterCredential(entry)) || visit(entry)
+      ));
+    };
+    return visit(JSON.parse(rawBody));
+  } catch {
+    return rawBody.split('&').some((part) => {
+      const separator = part.indexOf('=');
+      if (separator < 0) return false;
+      const rawKey = part.slice(0, separator);
+      const rawValue = part.slice(separator + 1);
+      let key = rawKey;
+      let value = rawValue;
+      try {
+        key = decodeURIComponent(rawKey.replace(/\+/g, ' '));
+        value = decodeURIComponent(rawValue.replace(/\+/g, ' '));
+      } catch {
+        // A malformed form is submitted as-is; only an exact explicit marker blocks it.
+      }
+      return isApiRequesterCredentialFieldName(key) && isPersistedApiRequesterCredential(value);
+    });
+  }
+}
+
+async function readBoundedApiResponse(response: Response, signal?: AbortSignal): Promise<string> {
+  const contentLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(contentLength) && contentLength > API_REQUESTER_MAX_RESPONSE_BYTES) {
+    throw new NonRetryableError('API response exceeds the 5 MB safety limit.');
+  }
+  if (!response.body) return '';
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let cancelled = false;
+  const cancelReaderOnce = (): void => {
+    if (cancelled) return;
+    cancelled = true;
+    // `cancel()` is best-effort cleanup. Some hostile/broken stream implementations never
+    // settle it; do not let that retain this run or its lock forever. Attach a rejection
+    // handler immediately so a late failure cannot become an unhandled rejection.
+    try {
+      void Promise.resolve(reader.cancel()).catch(() => undefined);
+    } catch {
+      // The primary read/abort error remains authoritative.
+    }
+  };
+
+  const readNext = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+    if (signal?.aborted) {
+      cancelReaderOnce();
+      throw new DOMException('The run was cancelled.', 'AbortError');
+    }
+
+    if (!signal) return reader.read();
+
+    return new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+      let settled = false;
+      const settle = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        callback();
+      };
+      const onAbort = () => {
+        cancelReaderOnce();
+        settle(() => reject(new DOMException('The run was cancelled.', 'AbortError')));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      Promise.resolve(reader.read()).then(
+        (value) => settle(() => resolve(value)),
+        (error: unknown) => settle(() => reject(error)),
+      );
+    });
+  };
+
+  try {
+    while (true) {
+      if (signal?.aborted) throw new DOMException('The run was cancelled.', 'AbortError');
+      const { done, value } = await readNext();
+      if (done) break;
+      size += value.byteLength;
+      if (size > API_REQUESTER_MAX_RESPONSE_BYTES) {
+        cancelReaderOnce();
+        throw new NonRetryableError('API response exceeds the 5 MB safety limit.');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    if (signal?.aborted) cancelReaderOnce();
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+function redactApiRequesterMessage(message: string): string {
+  return message
+    .replace(/(bearer\s+)[^\s,;]+/gi, '$1[redacted]')
+    .replace(/((?:api[_-]?key|access[_-]?token|token|password|secret)=)[^\s&]+/gi, '$1[redacted]');
 }
 
 function shouldProxyNodeExecution(node: AppNode, settings: RuntimeSettingsSnapshot): boolean {
@@ -673,17 +872,12 @@ function validateBackendProxyVisionVerificationResult(
   return { value: payload.result, explanation: '', outputMetadata: metadata };
 }
 
-function throwIfAborted(signal: AbortSignal | undefined) {
-  if (signal?.aborted) {
-    throw new DOMException('The run was cancelled.', 'AbortError');
-  }
-}
-
 async function executeVisionVerifyNode(
   node: AppNode,
   context: ExecutionContext,
   settings: RuntimeSettingsSnapshot,
   onStatus?: (statusMessage: string) => void,
+  signal?: AbortSignal,
 ): Promise<ExecutionResult> {
   const modelId = node.data.modelId ?? 'gemini-3.5-flash';
 
@@ -719,8 +913,8 @@ async function executeVisionVerifyNode(
 
     geminiParts.push(
       { text: verificationPrompt },
-      { inlineData: await dataUrlToInlineImage(image) },
-      { inlineData: await dataUrlToInlineImage(refImage) }
+      { inlineData: await dataUrlToInlineImage(image, signal) },
+      { inlineData: await dataUrlToInlineImage(refImage, signal) }
     );
   } else {
     verificationPrompt = [
@@ -737,7 +931,7 @@ async function executeVisionVerifyNode(
 
     geminiParts.push(
       { text: verificationPrompt },
-      { inlineData: await dataUrlToInlineImage(image) }
+      { inlineData: await dataUrlToInlineImage(image, signal) }
     );
   }
 
@@ -750,6 +944,7 @@ async function executeVisionVerifyNode(
         config: {},
       }),
       label: 'Vertex Gemini vision verification',
+      signal,
     }));
     const verification = parseVisionVerificationResponse(responseText);
 
@@ -778,6 +973,7 @@ async function executeVisionVerifyNode(
   const response = await ai.models.generateContent({
     model: modelId,
     contents: geminiParts,
+    config: { abortSignal: signal },
   });
 
   const verification = parseVisionVerificationResponse(response.text);
@@ -873,6 +1069,7 @@ async function executeTextNode(
   context: ExecutionContext,
   settings: RuntimeSettingsSnapshot,
   onStatus?: (statusMessage: string) => void,
+  signal?: AbortSignal,
 ): Promise<ExecutionResult> {
   const mode = node.data.mode ?? 'prompt';
   const promptText = (node.data.prompt ?? '').trim();
@@ -931,6 +1128,8 @@ async function executeTextNode(
           const inlineData = await dataUrlToInlineData(
             input.url,
             input.mimeType ?? getDefaultGeminiTextMimeType(input.kind) ?? 'application/octet-stream',
+            undefined,
+            signal,
           );
 
           return buildGeminiTextInlinePart({
@@ -943,6 +1142,7 @@ async function executeTextNode(
       const geminiConfig = {
         ...buildGeminiTextConfig(node.data, modelId),
         systemInstruction: systemPrompt || undefined,
+        abortSignal: signal,
       } as GenerateContentConfig;
       const geminiContents = [
         ...mediaParts,
@@ -960,6 +1160,7 @@ async function executeTextNode(
             systemPrompt,
           }),
           label: 'Vertex Gemini text',
+          signal,
         });
 
         return {
@@ -1025,7 +1226,7 @@ async function executeTextNode(
       const response = await client.chat.completions.create({
         model: modelId,
         messages: await buildOpenAITextMessages(systemPrompt, effectivePrompt, textImageInputs),
-      });
+      }, { signal });
       const message = response.choices[0]?.message?.content;
       const result = typeof message === 'string' ? message.trim() : '';
 
@@ -1061,7 +1262,7 @@ async function executeTextNode(
       const response = await client.chatCompletion({
         model: modelId,
         messages: buildChatMessages(systemPrompt, effectivePrompt),
-      });
+      }, { signal });
       const content = response.choices?.[0]?.message?.content;
       const result = extractTextContent(content);
 
@@ -1159,6 +1360,7 @@ async function executeImageNode(
           referenceImageInputs,
           settings,
           onStatus,
+          abortSignal,
         });
       }
 
@@ -1177,13 +1379,13 @@ async function executeImageNode(
 
       if (sourceImageInput) {
         geminiParts.push({
-          inlineData: await dataUrlToInlineImage(sourceImageInput),
+          inlineData: await dataUrlToInlineImage(sourceImageInput, abortSignal),
         });
       }
 
       for (const referenceInput of referenceImageInputs) {
         geminiParts.push({
-          inlineData: await dataUrlToInlineImage(referenceInput),
+          inlineData: await dataUrlToInlineImage(referenceInput, abortSignal),
         });
       }
 
@@ -1193,6 +1395,7 @@ async function executeImageNode(
           parts: geminiParts,
         }],
         config: {
+          abortSignal,
           responseModalities: ['IMAGE'],
           imageConfig: {
             aspectRatio: geminiAspectRatio,
@@ -1223,6 +1426,7 @@ async function executeImageNode(
         ),
         },
         onStatus,
+        abortSignal,
       });
     }
     case 'openai': {
@@ -1237,6 +1441,7 @@ async function executeImageNode(
         node,
         settings,
         onStatus,
+        abortSignal,
       });
     }
     case 'atlas': {
@@ -1258,6 +1463,7 @@ async function executeImageNode(
             abortSignal,
           }),
           onStatus,
+          abortSignal,
         });
       }
 
@@ -1272,6 +1478,7 @@ async function executeImageNode(
         node,
         settings,
         onStatus,
+        abortSignal,
       });
     }
     case 'byteplus': {
@@ -1295,14 +1502,15 @@ async function executeImageNode(
           ? `${Math.round(bytePlusWidth)}x${Math.round(bytePlusHeight)}`
           : undefined,
         seed: coerceOptionalNumber(node.data.imageSeed),
+        signal: abortSignal,
       });
       const bytePlusResult = urlOrData.startsWith('data:')
         ? { result: urlOrData, resultType: 'image' as const, statusMessage: `Generated with ${modelId}` }
         : await (async () => {
-            const materialized = await materializeRemoteMediaResult(urlOrData, 'BytePlus result download failed');
+            const materialized = await materializeRemoteMediaResult(urlOrData, 'BytePlus result download failed', undefined, abortSignal);
             return { result: materialized.result, resultType: 'image' as const, mimeType: materialized.mimeType, statusMessage: `Generated with ${modelId}` };
           })();
-      return applyConfiguredAutoUpscaleIfRequested({ node, settings, context, result: bytePlusResult, onStatus });
+      return applyConfiguredAutoUpscaleIfRequested({ node, settings, context, result: bytePlusResult, onStatus, abortSignal });
     }
     case 'huggingface': {
       if (sourceImageInput || referenceImageInputs.length > 0) {
@@ -1333,7 +1541,7 @@ async function executeImageNode(
           ...(hfSeed !== undefined ? { seed: Math.max(0, Math.floor(hfSeed)) } : {}),
           ...(hfGuidanceScale !== undefined ? { guidance_scale: hfGuidanceScale } : {}),
         },
-      });
+      }, { signal: abortSignal });
 
       return applyConfiguredAutoUpscaleIfRequested({
         node,
@@ -1345,6 +1553,7 @@ async function executeImageNode(
         statusMessage: `Generated with ${modelId}`,
         },
         onStatus,
+        abortSignal,
       });
     }
     case 'bfl':
@@ -1366,6 +1575,7 @@ async function executeImageNode(
         abortSignal,
         }),
         onStatus,
+        abortSignal,
       });
     case 'stability':
       return applyConfiguredAutoUpscaleIfRequested({
@@ -1385,6 +1595,7 @@ async function executeImageNode(
         abortSignal,
         }),
         onStatus,
+        abortSignal,
       });
     case 'localOpen':
       return applyConfiguredAutoUpscaleIfRequested({
@@ -1400,8 +1611,10 @@ async function executeImageNode(
         maskImageInput,
         referenceImageInputs,
         onStatus,
+        abortSignal,
         }),
         onStatus,
+        abortSignal,
       });
     case 'android':
       return applyConfiguredAutoUpscaleIfRequested({
@@ -1415,8 +1628,10 @@ async function executeImageNode(
           settings,
           seed: coerceOptionalNumber(node.data.imageSeed),
           onStatus,
+          abortSignal,
         }),
         onStatus,
+        abortSignal,
       });
   }
 }
@@ -1497,6 +1712,7 @@ async function executeAtlasNativeImageNode(input: {
   onStatus?: (statusMessage: string) => void;
   abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
+  throwIfAborted(input.abortSignal);
   const definition = getImageModelDefinition('atlas', input.modelId);
   const isEditOperation = Boolean(input.sourceImageInput || input.maskImageInput || input.referenceImageInputs.length > 0);
 
@@ -1517,19 +1733,20 @@ async function executeAtlasNativeImageNode(input: {
   const width = customDimension(input.node.data.imageWidth) ?? presetDimensions.width;
   const height = customDimension(input.node.data.imageHeight) ?? presetDimensions.height;
   const sourceImage = input.sourceImageInput
-    ? await uploadAtlasMedia(baseUrl, apiKey, input.sourceImageInput, 'flow-atlas-source.png')
+    ? await uploadAtlasMedia(baseUrl, apiKey, input.sourceImageInput, 'flow-atlas-source.png', input.abortSignal)
     : undefined;
   const maskImage = input.maskImageInput && input.sourceImageInput
     ? await uploadAtlasMedia(
         baseUrl,
         apiKey,
-        `data:image/png;base64,${await blobToBase64(await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, 'atlas', input.modelId))}`,
+        `data:image/png;base64,${await blobToBase64(await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, 'atlas', input.modelId, input.abortSignal), input.abortSignal)}`,
         'flow-atlas-mask.png',
+        input.abortSignal,
       )
     : undefined;
   const referenceImages = await Promise.all(
     input.referenceImageInputs.map((imageInput, index) =>
-      uploadAtlasMedia(baseUrl, apiKey, imageInput, `flow-atlas-reference-${index + 1}.png`)),
+      uploadAtlasMedia(baseUrl, apiKey, imageInput, `flow-atlas-reference-${index + 1}.png`, input.abortSignal)),
   );
   const seed = coerceOptionalNumber(input.node.data.imageSeed);
   const guidanceScale = coerceOptionalNumber(input.node.data.imageGuidanceScale);
@@ -1604,6 +1821,7 @@ async function executeAtlasNativeImageNode(input: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(requestBody),
+    signal: input.abortSignal,
   });
 
   if (!response.ok) {
@@ -1624,7 +1842,7 @@ async function executeAtlasNativeImageNode(input: {
     : (predictionId
         ? await retryExistingAsyncJobPhase({
             phaseLabel: `Atlas image prediction ${predictionId} polling failed`,
-            operation: () => pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'image'),
+            operation: () => pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'image', input.abortSignal),
             settings: input.settings,
             onStatus: input.onStatus,
             abortSignal: input.abortSignal,
@@ -1646,7 +1864,7 @@ async function executeAtlasNativeImageNode(input: {
   const materialized = await retryExistingAsyncJobPhase({
     phaseLabel: 'Atlas image result materialization failed',
     operation: () => Promise.all(outputUrls.map((url) =>
-      materializeAtlasImageResult(normalizeAtlasResultUrl(url, input.context.config.imageOutputFormat)))),
+      materializeAtlasImageResult(normalizeAtlasResultUrl(url, input.context.config.imageOutputFormat), input.abortSignal))),
     settings: input.settings,
     onStatus: input.onStatus,
     abortSignal: input.abortSignal,
@@ -1692,19 +1910,22 @@ async function uploadAtlasMedia(
   apiKey: string,
   imageInput: string,
   filename: string,
+  signal?: AbortSignal,
 ): Promise<string> {
+  throwIfAborted(signal);
   if (/^https?:\/\//i.test(imageInput)) {
     return imageInput;
   }
 
   const formData = new FormData();
-  formData.append('file', await dataUrlToFile(imageInput, filename));
+  formData.append('file', await dataUrlToFile(imageInput, filename, signal));
   const response = await fetch(`${baseUrl}/model/uploadMedia`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
     },
     body: formData,
+    signal,
   });
 
   if (!response.ok) {
@@ -1727,6 +1948,7 @@ async function pollAtlasPredictionResult(
   predictionId: string,
   onStatus?: (statusMessage: string) => void,
   mediaLabel: 'image' | 'video' = 'image',
+  signal?: AbortSignal,
 ): Promise<string[]> {
   // Video jobs take longer than images, so allow a longer poll window.
   const maxAttempts = mediaLabel === 'video' ? 300 : 120;
@@ -1735,6 +1957,7 @@ async function pollAtlasPredictionResult(
       headers: {
         Authorization: `Bearer ${apiKey}`,
       },
+      signal,
     });
 
     if (!response.ok) {
@@ -1758,7 +1981,7 @@ async function pollAtlasPredictionResult(
     }
 
     onStatus?.(`Atlas ${mediaLabel} is still in progress... ${attempt + 1} check${attempt === 0 ? '' : 's'} so far`);
-    await sleep(2000);
+    await abortableSleep(2000, signal);
   }
 
   throw new NonRetryableError(`Atlas ${mediaLabel} generation timed out.`);
@@ -1884,20 +2107,26 @@ async function materializeRemoteMediaResult(
   resultUrl: string,
   downloadErrorLabel: string,
   fallbackMimeType?: string,
+  signal?: AbortSignal,
 ): Promise<{ result: string; mimeType?: string }> {
+  throwIfAborted(signal);
   if (!/^https?:\/\//i.test(resultUrl)) {
     return { result: resultUrl, mimeType: resultUrl.match(/^data:([^;,]+)/)?.[1] ?? fallbackMimeType };
   }
   try {
-    const blob = await fetchImageResultBlob(resultUrl, downloadErrorLabel);
+    const blob = await fetchImageResultBlob(resultUrl, downloadErrorLabel, signal);
     return { result: await toResultUrl(blob), mimeType: blob.type || fallbackMimeType };
-  } catch {
+  } catch (error) {
+    if (isAbortError(error) || signal?.aborted) {
+      throw isAbortError(error) ? error : createAbortError();
+    }
     // The renderer fetch is CORS-blocked (provider result CDNs send no CORS
     // headers). The raw URL won't display either — those CDNs force-download
     // (Content-Disposition: attachment), so an <img src> of it refuses to
     // render. Pull the bytes through a non-CORS-bound native path (Electron
     // main net.fetch / Android CapacitorHttp) and inline them as a data URL.
-    const native = await fetchRemoteMediaAsDataUrl(resultUrl);
+    const native = await fetchRemoteMediaAsDataUrl(resultUrl, undefined, signal);
+    throwIfAborted(signal);
     if (native) {
       return { result: native.dataUrl, mimeType: native.mimeType ?? fallbackMimeType };
     }
@@ -1906,8 +2135,8 @@ async function materializeRemoteMediaResult(
   }
 }
 
-function materializeAtlasImageResult(resultUrl: string): Promise<{ result: string; mimeType?: string }> {
-  return materializeRemoteMediaResult(resultUrl, 'Atlas result download failed');
+function materializeAtlasImageResult(resultUrl: string, signal?: AbortSignal): Promise<{ result: string; mimeType?: string }> {
+  return materializeRemoteMediaResult(resultUrl, 'Atlas result download failed', undefined, signal);
 }
 
 function parseAtlasLoraWeights(value: unknown): unknown {
@@ -1974,10 +2203,10 @@ async function executeBflImageNode(input: {
 }): Promise<ExecutionResult> {
   input.onStatus?.(input.sourceImageInput ? 'Editing image with BFL FLUX.2…' : 'Generating image with BFL FLUX.2…');
   const sourceImage = input.sourceImageInput
-    ? await normalizeRemoteImageInput(input.sourceImageInput)
+    ? await normalizeRemoteImageInput(input.sourceImageInput, input.abortSignal)
     : undefined;
   const referenceImages = await Promise.all(
-    input.referenceImageInputs.map((imageInput) => normalizeRemoteImageInput(imageInput)),
+    input.referenceImageInputs.map((imageInput) => normalizeRemoteImageInput(imageInput, input.abortSignal)),
   );
   const built = buildBflFlux2Request({
     modelId: input.modelId,
@@ -1998,6 +2227,7 @@ async function executeBflImageNode(input: {
       'x-key': input.apiKey,
     },
     body: JSON.stringify(built.body),
+    signal: input.abortSignal,
   });
 
   if (!response.ok) {
@@ -2015,14 +2245,14 @@ async function executeBflImageNode(input: {
   input.onStatus?.('Waiting for BFL image result…');
   const resultUrl = await retryExistingAsyncJobPhase({
     phaseLabel: `BFL job ${created.id ?? created.polling_url} polling failed`,
-    operation: () => pollBflImageResult(created.polling_url!, input.apiKey, input.onStatus),
+    operation: () => pollBflImageResult(created.polling_url!, input.apiKey, input.onStatus, input.abortSignal),
     settings: input.settings,
     onStatus: input.onStatus,
     abortSignal: input.abortSignal,
   });
   const result = (await retryExistingAsyncJobPhase({
     phaseLabel: 'BFL image result materialization failed',
-    operation: () => materializeRemoteMediaResult(resultUrl, 'BFL result download failed'),
+    operation: () => materializeRemoteMediaResult(resultUrl, 'BFL result download failed', undefined, input.abortSignal),
     settings: input.settings,
     onStatus: input.onStatus,
     abortSignal: input.abortSignal,
@@ -2049,7 +2279,9 @@ async function applyConfiguredAutoUpscaleIfRequested(input: {
   settings: RuntimeSettingsSnapshot;
   result: ExecutionResult;
   onStatus?: (statusMessage: string) => void;
+  abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
+  throwIfAborted(input.abortSignal);
   if (!input.node.data.imageAutoUpscale || input.result.resultType !== 'image') {
     return input.result;
   }
@@ -2075,7 +2307,9 @@ async function applyConfiguredAutoUpscaleIfRequested(input: {
     plan,
     prompt: input.context.prompt,
     settings: input.settings,
+    abortSignal: input.abortSignal,
   });
+  throwIfAborted(input.abortSignal);
 
   return {
     ...input.result,
@@ -2093,10 +2327,15 @@ async function runConfiguredFlowImageUpscale(input: {
   plan: UniversalConfiguredUpscalePlan;
   prompt: string;
   settings: RuntimeSettingsSnapshot;
+  abortSignal?: AbortSignal;
 }): Promise<{ result: string; mimeType?: string }> {
   if (input.plan.provider === 'android-accelerator') {
-    const dimensions = await resolveImageDimensions(input.sourceImage).catch(() => input.fallbackDimensions);
-    const sourceDataUrl = await normalizeRemoteImageInput(input.sourceImage);
+    const dimensions = await resolveImageDimensions(input.sourceImage, input.abortSignal).catch((error) => {
+      if (isAbortError(error)) throw error;
+      if (input.abortSignal?.aborted) throw createAbortError();
+      return input.fallbackDimensions;
+    });
+    const sourceDataUrl = await normalizeRemoteImageInput(input.sourceImage, input.abortSignal);
     const result = await runAndroidAcceleratorUpscale({
       baseUrl: normalizeAndroidAcceleratorBaseUrl(input.settings.providerSettings.androidAcceleratorBaseUrl),
       authToken: input.settings.providerSettings.androidAcceleratorAuthToken,
@@ -2105,6 +2344,7 @@ async function runConfiguredFlowImageUpscale(input: {
       targetHeightPx: dimensions.height * 2,
       upscalerId: input.settings.providerSettings.androidAcceleratorDefaultUpscaler ?? 'upscaler_realistic',
       outputFormat: input.outputFormat,
+      abortSignal: input.abortSignal,
     });
     return {
       result: result.dataUrl,
@@ -2113,14 +2353,18 @@ async function runConfiguredFlowImageUpscale(input: {
   }
 
   if (input.plan.provider === 'android-native') {
-    const dimensions = await resolveImageDimensions(input.sourceImage).catch(() => input.fallbackDimensions);
-    const sourceDataUrl = await normalizeRemoteImageInput(input.sourceImage);
-    const result = await runAndroidNativeImageUpscale({
+    const dimensions = await resolveImageDimensions(input.sourceImage, input.abortSignal).catch((error) => {
+      if (isAbortError(error)) throw error;
+      if (input.abortSignal?.aborted) throw createAbortError();
+      return input.fallbackDimensions;
+    });
+    const sourceDataUrl = await normalizeRemoteImageInput(input.sourceImage, input.abortSignal);
+    const result = await raceWithAbort(runAndroidNativeImageUpscale({
       sourceDataUrl,
       targetWidthPx: dimensions.width * 2,
       targetHeightPx: dimensions.height * 2,
       outputFormat: input.outputFormat,
-    });
+    }), input.abortSignal);
     return {
       result: result.dataUrl,
       mimeType: result.mimeType,
@@ -2128,8 +2372,12 @@ async function runConfiguredFlowImageUpscale(input: {
   }
 
   if (input.plan.provider === 'local-ai-cpu') {
-    const dimensions = await resolveImageDimensions(input.sourceImage).catch(() => input.fallbackDimensions);
-    const sourceDataUrl = await normalizeRemoteImageInput(input.sourceImage);
+    const dimensions = await resolveImageDimensions(input.sourceImage, input.abortSignal).catch((error) => {
+      if (isAbortError(error)) throw error;
+      if (input.abortSignal?.aborted) throw createAbortError();
+      return input.fallbackDimensions;
+    });
+    const sourceDataUrl = await normalizeRemoteImageInput(input.sourceImage, input.abortSignal);
     const result = await runLocalCpuUpscaler({
       baseUrl: input.settings.providerSettings.localAiCpuEndpointUrl ?? '',
       authHeader: input.settings.providerSettings.localAiCpuAuthHeader,
@@ -2138,6 +2386,7 @@ async function runConfiguredFlowImageUpscale(input: {
       targetHeightPx: dimensions.height * 2,
       model: input.settings.providerSettings.localAiCpuModel,
       outputFormat: input.outputFormat,
+      abortSignal: input.abortSignal,
     } as LocalCpuUpscalerInput);
 
     return {
@@ -2156,6 +2405,7 @@ async function runConfiguredFlowImageUpscale(input: {
       apiKey: requireApiKey(input.settings.apiKeys.stability ?? '', 'Stability AI'),
       sourceFilename: 'flow-auto-upscale-source.png',
       errorLabel: 'Configured Stability image upscale failed',
+      signal: input.abortSignal,
     });
   }
 
@@ -2165,19 +2415,24 @@ async function runConfiguredFlowImageUpscale(input: {
       providerSettings: input.settings.providerSettings,
       outputFormat: input.outputFormat,
       generateVertexImage: resolveVertexImageGenerator(input.settings.providerSettings),
-      normalizeSourceImage: normalizeRemoteImageInput,
+      normalizeSourceImage: (image) => normalizeRemoteImageInput(image, input.abortSignal),
+      signal: input.abortSignal,
     });
   }
 
-  const dimensions = await resolveImageDimensions(input.sourceImage).catch(() => input.fallbackDimensions);
+  const dimensions = await resolveImageDimensions(input.sourceImage, input.abortSignal).catch((error) => {
+    if (isAbortError(error)) throw error;
+    if (input.abortSignal?.aborted) throw createAbortError();
+    return input.fallbackDimensions;
+  });
   return {
-    result: await locallyScaleImageResult(input.sourceImage, dimensions.width * 2, dimensions.height * 2, input.outputFormat),
+    result: await locallyScaleImageResult(input.sourceImage, dimensions.width * 2, dimensions.height * 2, input.outputFormat, input.abortSignal),
     mimeType: `image/${input.outputFormat}`,
   };
 }
 
-async function resolveImageDimensions(imageInput: string): Promise<{ width: number; height: number }> {
-  const response = await fetch(imageInput);
+async function resolveImageDimensions(imageInput: string, signal?: AbortSignal): Promise<{ width: number; height: number }> {
+  const response = await fetch(imageInput, { signal });
   const blob = await response.blob();
   const bitmap = await createImageBitmap(blob);
   try {
@@ -2195,8 +2450,9 @@ async function locallyScaleImageResult(
   width: number,
   height: number,
   outputFormat: ExecutionConfig['imageOutputFormat'],
+  signal?: AbortSignal,
 ): Promise<string> {
-  const response = await fetch(imageInput);
+  const response = await fetch(imageInput, { signal });
   const blob = await response.blob();
   const bitmap = await createImageBitmap(blob);
   try {
@@ -2250,6 +2506,7 @@ async function pollBflImageResult(
   pollingUrl: string,
   apiKey: string,
   onStatus?: (statusMessage: string) => void,
+  signal?: AbortSignal,
 ): Promise<string> {
   for (let attempt = 0; attempt < 120; attempt += 1) {
     const response = await fetch(pollingUrl, {
@@ -2257,6 +2514,7 @@ async function pollBflImageResult(
         accept: 'application/json',
         'x-key': apiKey,
       },
+      signal,
     });
 
     if (!response.ok) {
@@ -2272,7 +2530,7 @@ async function pollBflImageResult(
     }
 
     onStatus?.(`BFL image is still in progress… ${attempt + 1} check${attempt === 0 ? '' : 's'} so far`);
-    await sleep(2000);
+    await abortableSleep(2000, signal);
   }
 
   throw new NonRetryableError('BFL image generation timed out after 240 seconds.');
@@ -2309,6 +2567,7 @@ async function executeStabilityImageNode(input: {
       method: 'POST',
       headers,
       body: formData,
+      signal: input.abortSignal,
     });
 
     if (!response.ok) {
@@ -2340,11 +2599,12 @@ async function executeStabilityImageNode(input: {
       outputFormat: input.context.config.imageOutputFormat,
     });
     const formData = formDataFromFields(built.fields);
-    formData.append('image', await dataUrlToFile(input.sourceImageInput, 'flow-stability-upscale-source.png'));
+    formData.append('image', await dataUrlToFile(input.sourceImageInput, 'flow-stability-upscale-source.png', input.abortSignal));
     const response = await fetch(built.endpoint, {
       method: 'POST',
       headers,
       body: formData,
+      signal: input.abortSignal,
     });
 
     if (!response.ok) {
@@ -2392,10 +2652,10 @@ async function executeStabilityImageNode(input: {
       : undefined,
   });
   const formData = formDataFromFields(built.fields);
-  formData.append(built.imageFieldName, await dataUrlToFile(input.sourceImageInput, 'flow-stability-source.png'));
+  formData.append(built.imageFieldName, await dataUrlToFile(input.sourceImageInput, 'flow-stability-source.png', input.abortSignal));
 
   if (input.maskImageInput) {
-    const maskBlob = await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, 'stability', input.modelId);
+    const maskBlob = await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, 'stability', input.modelId, input.abortSignal);
     formData.append('mask', new File([maskBlob], 'flow-stability-mask.png', { type: 'image/png' }));
   }
 
@@ -2403,6 +2663,7 @@ async function executeStabilityImageNode(input: {
     method: 'POST',
     headers: built.async ? { ...headers, Accept: 'application/json' } : headers,
     body: formData,
+    signal: input.abortSignal,
   });
 
   if (!response.ok) {
@@ -2452,6 +2713,7 @@ async function executeLocalOpenImageNode(input: {
   maskImageInput?: string;
   referenceImageInputs: string[];
   onStatus?: (statusMessage: string) => void;
+  abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
   const endpoint = normalizeOptionalString(input.settings.providerSettings.localOpenImageEndpointUrl);
   if (!endpoint) {
@@ -2463,14 +2725,14 @@ async function executeLocalOpenImageNode(input: {
 
   input.onStatus?.('Editing image with Local/Open endpoint…');
   const referenceImages = await Promise.all(
-    input.referenceImageInputs.map((imageInput) => imageInputToBase64(imageInput)),
+    input.referenceImageInputs.map((imageInput) => imageInputToBase64(imageInput, input.abortSignal)),
   );
   const body = buildLocalOpenImageEditRequest({
     model: input.modelId || input.settings.providerSettings.localOpenImageDefaultModel || 'Qwen/Qwen-Image-Edit',
     prompt: input.prompt,
-    image: await imageInputToBase64(input.sourceImageInput),
+    image: await imageInputToBase64(input.sourceImageInput, input.abortSignal),
     mask: input.maskImageInput
-      ? await blobToBase64(await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, 'localOpen', input.modelId))
+      ? await blobToBase64(await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, 'localOpen', input.modelId, input.abortSignal), input.abortSignal)
       : undefined,
     referenceImages,
     outputFormat: input.context.config.imageOutputFormat,
@@ -2488,6 +2750,7 @@ async function executeLocalOpenImageNode(input: {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
+    signal: input.abortSignal,
   });
 
   if (!response.ok) {
@@ -2524,6 +2787,7 @@ async function executeAndroidAcceleratorImageNode(input: {
   settings: RuntimeSettingsSnapshot;
   seed?: number;
   onStatus?: (statusMessage: string) => void;
+  abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
   const baseUrl = normalizeAndroidAcceleratorBaseUrl(input.settings.providerSettings.androidAcceleratorBaseUrl);
   if (!baseUrl) {
@@ -2542,6 +2806,7 @@ async function executeAndroidAcceleratorImageNode(input: {
     steps: input.context.config.steps,
     seed: input.seed,
     outputFormat: input.context.config.imageOutputFormat,
+    abortSignal: input.abortSignal,
   });
 
   return {
@@ -2615,21 +2880,22 @@ function formDataFromFields(fields: Record<string, string | number>): FormData {
   return formData;
 }
 
-async function normalizeRemoteImageInput(imageInput: string): Promise<string> {
+async function normalizeRemoteImageInput(imageInput: string, signal?: AbortSignal): Promise<string> {
+  throwIfAborted(signal);
   if (imageInput.startsWith('data:')) {
     return imageInput;
   }
 
-  const inline = await dataUrlToInlineData(imageInput, 'image/png');
+  const inline = await dataUrlToInlineData(imageInput, 'image/png', undefined, signal);
   return `data:${inline.mimeType};base64,${inline.data}`;
 }
 
-async function imageInputToBase64(imageInput: string): Promise<string> {
-  return (await dataUrlToInlineData(imageInput, 'image/png')).data;
+async function imageInputToBase64(imageInput: string, signal?: AbortSignal): Promise<string> {
+  return (await dataUrlToInlineData(imageInput, 'image/png', undefined, signal)).data;
 }
 
-async function fetchImageResultBlob(url: string, fallback: string): Promise<Blob> {
-  const response = await fetch(url);
+async function fetchImageResultBlob(url: string, fallback: string, signal?: AbortSignal): Promise<Blob> {
+  const response = await (signal ? fetch(url, { signal }) : fetch(url));
 
   if (!response.ok) {
     throw await createHttpStatusError(response, fallback);
@@ -2699,6 +2965,7 @@ async function executeVertexImageNode(input: {
   referenceImageInputs: string[];
   settings: RuntimeSettingsSnapshot;
   onStatus?: (statusMessage: string) => void;
+  abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
   const vertexConfig = getVertexProjectConfig(input.settings.providerSettings);
 
@@ -2721,6 +2988,7 @@ async function executeVertexImageNode(input: {
     imageSize: input.imageSize,
     sourceImageInput: input.sourceImageInput,
     referenceImageInputs: input.referenceImageInputs,
+    signal: input.abortSignal,
   });
 
   input.onStatus?.(route === 'imagen-predict' ? 'Generating image with Vertex Imagen…' : 'Generating image with Vertex Gemini…');
@@ -2732,7 +3000,7 @@ async function executeVertexImageNode(input: {
     modelId: input.modelId,
     route,
     body,
-  });
+  }, input.abortSignal);
 
   if (result.error) {
     throw new Error(result.error);
@@ -2761,6 +3029,7 @@ async function buildVertexImageRequestBody(input: {
   imageSize?: '1K' | '2K' | '4K';
   sourceImageInput?: string;
   referenceImageInputs: string[];
+  signal?: AbortSignal;
 }): Promise<Record<string, unknown>> {
   if (input.route === 'imagen-predict') {
     if (input.sourceImageInput || input.referenceImageInputs.length > 0) {
@@ -2773,9 +3042,9 @@ async function buildVertexImageRequestBody(input: {
     });
   }
 
-  const sourceImage = input.sourceImageInput ? await dataUrlToInlineImage(input.sourceImageInput) : undefined;
+  const sourceImage = input.sourceImageInput ? await dataUrlToInlineImage(input.sourceImageInput, input.signal) : undefined;
   const referenceImages = await Promise.all(
-    input.referenceImageInputs.map((referenceImageInput) => dataUrlToInlineImage(referenceImageInput)),
+    input.referenceImageInputs.map((referenceImageInput) => dataUrlToInlineImage(referenceImageInput, input.signal)),
   );
 
   return buildVertexGeminiImageRequestBody({
@@ -2796,29 +3065,82 @@ async function buildVertexImageRequestBody(input: {
 // when neither path is available so callers keep their explicit errors.
 function resolveVertexImageGenerator(providerSettings: ProviderSettings) {
   const bridge = getSignalLoomNativeBridge();
-  if (bridge?.generateVertexImage) return bridge.generateVertexImage;
+  if (bridge?.generateVertexImage) {
+    return (request: NativeVertexImageRequest, signal?: AbortSignal) => runCancelableVertexBridgeRequest(
+      request,
+      bridge.generateVertexImage,
+      bridge.cancelVertexGeneration,
+      signal,
+    );
+  }
   if (isVertexDirectRestAvailable(providerSettings)) {
-    return (request: NativeVertexImageRequest) => generateVertexImageDirect(request, providerSettings);
+    return (request: NativeVertexImageRequest, signal?: AbortSignal) => generateVertexImageDirect(request, providerSettings, { signal });
   }
   return undefined;
 }
 
 function resolveVertexTextGenerator(providerSettings: ProviderSettings) {
   const bridge = getSignalLoomNativeBridge();
-  if (bridge?.generateVertexText) return bridge.generateVertexText;
+  if (bridge?.generateVertexText) {
+    return (request: NativeVertexTextRequest, signal?: AbortSignal) => runCancelableVertexBridgeRequest(
+      request,
+      bridge.generateVertexText,
+      bridge.cancelVertexGeneration,
+      signal,
+    );
+  }
   if (isVertexDirectRestAvailable(providerSettings)) {
-    return (request: NativeVertexTextRequest) => generateVertexTextDirect(request, providerSettings);
+    return (request: NativeVertexTextRequest, signal?: AbortSignal) => generateVertexTextDirect(request, providerSettings, { signal });
   }
   return undefined;
 }
 
 function resolveVertexVideoGenerator(providerSettings: ProviderSettings) {
   const bridge = getSignalLoomNativeBridge();
-  if (bridge?.generateVertexVideo) return bridge.generateVertexVideo;
+  if (bridge?.generateVertexVideo) {
+    return (request: NativeVertexVideoRequest, signal?: AbortSignal) => runCancelableVertexBridgeRequest(
+      request,
+      bridge.generateVertexVideo,
+      bridge.cancelVertexGeneration,
+      signal,
+    );
+  }
   if (isVertexDirectRestAvailable(providerSettings)) {
-    return (request: NativeVertexVideoRequest) => generateVertexVideoDirect(request, providerSettings);
+    return (request: NativeVertexVideoRequest, signal?: AbortSignal) => generateVertexVideoDirect(request, providerSettings, { signal });
   }
   return undefined;
+}
+
+let vertexBridgeRequestSequence = 0;
+
+async function runCancelableVertexBridgeRequest<
+  TRequest extends NativeVertexImageRequest | NativeVertexTextRequest | NativeVertexVideoRequest,
+  TResult,
+>(
+  request: TRequest,
+  invoke: (request: TRequest) => Promise<TResult>,
+  cancel: ((cancellationId: string) => Promise<{ cancelled?: boolean }>) | undefined,
+  signal?: AbortSignal,
+): Promise<TResult> {
+  throwIfAborted(signal);
+  if (!signal || !cancel) {
+    return raceWithAbort(invoke(request), signal);
+  }
+
+  vertexBridgeRequestSequence += 1;
+  const cancellationId = `flow-vertex-${Date.now()}-${vertexBridgeRequestSequence}`;
+  let cancellationSent = false;
+  const cancelNativeRequest = () => {
+    if (cancellationSent) return;
+    cancellationSent = true;
+    void cancel(cancellationId).catch(() => undefined);
+  };
+  signal.addEventListener('abort', cancelNativeRequest, { once: true });
+  try {
+    return await raceWithAbort(invoke({ ...request, cancellationId }), signal);
+  } finally {
+    signal.removeEventListener('abort', cancelNativeRequest);
+  }
 }
 
 async function executeVertexGeminiTextContent(input: {
@@ -2826,6 +3148,7 @@ async function executeVertexGeminiTextContent(input: {
   settings: RuntimeSettingsSnapshot;
   body: Record<string, unknown>;
   label: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const vertexConfig = getVertexProjectConfig(input.settings.providerSettings);
 
@@ -2845,7 +3168,7 @@ async function executeVertexGeminiTextContent(input: {
     auth: vertexConfig.auth,
     modelId: input.modelId,
     body: input.body,
-  });
+  }, input.signal);
 
   if (result.error) {
     throw new NonRetryableError(result.error);
@@ -2921,6 +3244,7 @@ async function executeVideoNode(
               context,
               settings,
               onStatus,
+              abortSignal,
             })
           : executeVertexVeoVideoNode({
               modelId,
@@ -2931,6 +3255,7 @@ async function executeVideoNode(
               negativePrompt: normalizeOptionalString(node.data.videoNegativePrompt as string | undefined),
               sampleCount: coerceOptionalNumber(node.data.videoBatchCount),
               onStatus,
+              abortSignal,
             });
       }
 
@@ -2941,7 +3266,7 @@ async function executeVideoNode(
       }
 
       if (isGeminiOmniModelId(modelId)) {
-        return executeGeminiOmniVideoNode(apiKey, modelId, prompt, context, onStatus);
+        return executeGeminiOmniVideoNode(apiKey, modelId, prompt, context, onStatus, abortSignal);
       }
 
       onStatus?.('Submitting video render to Gemini…');
@@ -2953,10 +3278,11 @@ async function executeVideoNode(
         coerceOptionalNumber(node.data.videoSeed),
         normalizeOptionalString(node.data.videoNegativePrompt as string | undefined),
         coerceOptionalNumber(node.data.videoBatchCount),
+        abortSignal,
       );
       const videoBlob = await retryExistingAsyncJobPhase({
         phaseLabel: `Gemini operation ${operation.name ?? 'result'} polling/materialization failed`,
-        operation: () => pollGeminiVideoResult(apiKey, operation, onStatus),
+        operation: () => pollGeminiVideoResult(apiKey, operation, onStatus, abortSignal),
         settings,
         onStatus,
         abortSignal,
@@ -2989,7 +3315,7 @@ async function executeVideoNode(
       const blob = await client.textToVideo({
         model: modelId,
         inputs: prompt,
-      });
+      }, { signal: abortSignal });
 
       return {
         result: await toResultUrl(blob),
@@ -3016,7 +3342,7 @@ async function executeAtlasVideoNode(input: {
   const baseUrl = normalizeAtlasBaseUrl(input.settings.providerSettings.atlasBaseUrl);
   // Image-to-video models take an uploaded start frame; text-to-video does not.
   const startImage = input.context.startImageInput
-    ? await uploadAtlasMedia(baseUrl, apiKey, input.context.startImageInput, 'flow-atlas-video-start.png')
+    ? await uploadAtlasMedia(baseUrl, apiKey, input.context.startImageInput, 'flow-atlas-video-start.png', input.abortSignal)
     : undefined;
   const body: Record<string, unknown> = {
     model: input.modelId,
@@ -3040,6 +3366,7 @@ async function executeAtlasVideoNode(input: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    signal: input.abortSignal,
   });
 
   if (!response.ok) {
@@ -3056,7 +3383,7 @@ async function executeAtlasVideoNode(input: {
   const resultUrl = immediateOutput ?? (predictionId
     ? (await retryExistingAsyncJobPhase({
         phaseLabel: `Atlas video prediction ${predictionId} polling failed`,
-        operation: () => pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'video'),
+        operation: () => pollAtlasPredictionResult(baseUrl, apiKey, predictionId, input.onStatus, 'video', input.abortSignal),
         settings: input.settings,
         onStatus: input.onStatus,
         abortSignal: input.abortSignal,
@@ -3069,7 +3396,7 @@ async function executeAtlasVideoNode(input: {
 
   const materialized = await retryExistingAsyncJobPhase({
     phaseLabel: 'Atlas video result materialization failed',
-    operation: () => materializeAtlasVideoResult(resultUrl),
+    operation: () => materializeAtlasVideoResult(resultUrl, input.abortSignal),
     settings: input.settings,
     onStatus: input.onStatus,
     abortSignal: input.abortSignal,
@@ -3082,8 +3409,8 @@ async function executeAtlasVideoNode(input: {
   };
 }
 
-function materializeAtlasVideoResult(resultUrl: string): Promise<{ result: string; mimeType?: string }> {
-  return materializeRemoteMediaResult(resultUrl, 'Atlas video download failed', 'video/mp4');
+function materializeAtlasVideoResult(resultUrl: string, signal?: AbortSignal): Promise<{ result: string; mimeType?: string }> {
+  return materializeRemoteMediaResult(resultUrl, 'Atlas video download failed', 'video/mp4', signal);
 }
 
 async function executeVertexVeoVideoNode(input: {
@@ -3095,6 +3422,7 @@ async function executeVertexVeoVideoNode(input: {
   negativePrompt?: string;
   sampleCount?: number;
   onStatus?: (statusMessage: string) => void;
+  abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
   const vertexConfig = getVertexProjectConfig(input.settings.providerSettings);
 
@@ -3109,7 +3437,7 @@ async function executeVertexVeoVideoNode(input: {
   }
 
   validateGeminiVeoVideoRequest(input.modelId, input.prompt, input.context);
-  const videoInputs = await buildGeminiVideoRequestInputs(input.context);
+  const videoInputs = await buildGeminiVideoRequestInputs(input.context, input.abortSignal);
   const body = buildVertexVeoVideoRequestBody(
     {
       prompt: input.prompt,
@@ -3133,7 +3461,7 @@ async function executeVertexVeoVideoNode(input: {
     modelId: input.modelId,
     route: 'veo-predict-long-running',
     body,
-  });
+  }, input.abortSignal);
 
   if (result.error) {
     throw new Error(result.error);
@@ -3164,6 +3492,7 @@ async function executeVertexOmniVideoNode(input: {
   context: ExecutionContext;
   settings: RuntimeSettingsSnapshot;
   onStatus?: (statusMessage: string) => void;
+  abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
   validateOmniVideoRequest(input.context);
   const vertexConfig = getVertexProjectConfig(input.settings.providerSettings);
@@ -3178,7 +3507,7 @@ async function executeVertexOmniVideoNode(input: {
     throw new NonRetryableError('Vertex AI Gemini Omni video requires the Sloom Studio desktop app, or a service-account key on this device (Settings > Providers > Vertex AI).');
   }
 
-  const media = await buildOmniVideoMediaParts(input.context);
+  const media = await buildOmniVideoMediaParts(input.context, input.abortSignal);
 
   if (!input.prompt.trim() && media.length === 0) {
     throw new NonRetryableError('Gemini Omni video needs a prompt, image reference, or video reference.');
@@ -3196,7 +3525,7 @@ async function executeVertexOmniVideoNode(input: {
       prompt: input.prompt,
       media,
     }),
-  });
+  }, input.abortSignal);
 
   if (result.error) {
     throw new Error(result.error);
@@ -3227,6 +3556,7 @@ async function executeGeminiOmniVideoNode(
   prompt: string,
   context: ExecutionContext,
   onStatus?: (statusMessage: string) => void,
+  abortSignal?: AbortSignal,
 ): Promise<ExecutionResult> {
   validateOmniVideoRequest(context);
   onStatus?.('Generating video with Gemini Omni…');
@@ -3235,7 +3565,7 @@ async function executeGeminiOmniVideoNode(
     'Google Gemini Omni video',
   );
   const client = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: 'v1beta' } });
-  const media = await buildOmniVideoMediaParts(context);
+  const media = await buildOmniVideoMediaParts(context, abortSignal);
 
   if (!prompt.trim() && media.length === 0) {
     throw new NonRetryableError('Gemini Omni video needs a prompt, image reference, or video reference.');
@@ -3262,7 +3592,7 @@ async function executeGeminiOmniVideoNode(
         ? 'image_to_video'
         : 'text_to_video';
 
-  const interaction = await client.interactions.create({
+  const interactionRequest = {
     model: modelId,
     input: interactionInput as never,
     response_format: {
@@ -3275,7 +3605,10 @@ async function executeGeminiOmniVideoNode(
         duration: context.config.durationSeconds,
       },
     } as never,
-  });
+  };
+  const interaction = abortSignal
+    ? await client.interactions.create(interactionRequest, { signal: abortSignal })
+    : await client.interactions.create(interactionRequest);
   const videoPart = extractOmniInteractionVideo(interaction);
 
   if (!videoPart) {
@@ -3284,7 +3617,7 @@ async function executeGeminiOmniVideoNode(
 
   const result = videoPart.data
     ? await toResultUrl(inlineDataToBlob(videoPart.data, videoPart.mimeType))
-    : await materializeRemoteMediaResult(videoPart.uri as string, 'Gemini Omni video download failed', videoPart.mimeType);
+    : await materializeRemoteMediaResult(videoPart.uri as string, 'Gemini Omni video download failed', videoPart.mimeType, abortSignal);
 
   return {
     result: typeof result === 'string' ? result : result.result,
@@ -3358,7 +3691,7 @@ function validateGeminiVeoVideoRequest(
   });
 }
 
-async function buildGeminiVideoRequestInputs(context: ExecutionContext): Promise<{
+async function buildGeminiVideoRequestInputs(context: ExecutionContext, signal?: AbortSignal): Promise<{
   startImage?: Awaited<ReturnType<typeof dataUrlToGeminiImage>>;
   endImage?: Awaited<ReturnType<typeof dataUrlToGeminiImage>>;
   referenceImages?: Array<{
@@ -3367,18 +3700,18 @@ async function buildGeminiVideoRequestInputs(context: ExecutionContext): Promise
   }>;
   extensionVideo?: Awaited<ReturnType<typeof dataUrlToGeminiVideo>>;
 }> {
-  const startImage = context.startImageInput ? await dataUrlToGeminiImage(context.startImageInput) : undefined;
-  const endImage = context.endImageInput ? await dataUrlToGeminiImage(context.endImageInput) : undefined;
+  const startImage = context.startImageInput ? await dataUrlToGeminiImage(context.startImageInput, signal) : undefined;
+  const endImage = context.endImageInput ? await dataUrlToGeminiImage(context.endImageInput, signal) : undefined;
   const referenceImages = context.referenceImageInputs
     ? await Promise.all(
         context.referenceImageInputs.map(async (reference) => ({
-          image: await dataUrlToGeminiImage(reference.url),
+          image: await dataUrlToGeminiImage(reference.url, signal),
           referenceType: reference.referenceType,
         })),
       )
     : [];
   const extensionVideo = context.extensionVideoInput
-    ? await dataUrlToGeminiVideo(context.extensionVideoInput)
+    ? await dataUrlToGeminiVideo(context.extensionVideoInput, signal)
     : undefined;
 
   return {
@@ -3389,7 +3722,7 @@ async function buildGeminiVideoRequestInputs(context: ExecutionContext): Promise
   };
 }
 
-async function buildOmniVideoMediaParts(context: ExecutionContext): Promise<Array<{
+async function buildOmniVideoMediaParts(context: ExecutionContext, signal?: AbortSignal): Promise<Array<{
   inlineData: {
     data: string;
     mimeType: string;
@@ -3407,21 +3740,21 @@ async function buildOmniVideoMediaParts(context: ExecutionContext): Promise<Arra
   if (context.startImageInput) {
     media.push({
       instruction: 'Use this as the starting visual reference.',
-      inlineData: await dataUrlToInlineImage(context.startImageInput),
+      inlineData: await dataUrlToInlineImage(context.startImageInput, signal),
     });
   }
 
   for (const reference of context.referenceImageInputs ?? []) {
     media.push({
       instruction: `Use this as a ${reference.referenceType} reference.`,
-      inlineData: await dataUrlToInlineImage(reference.url),
+      inlineData: await dataUrlToInlineImage(reference.url, signal),
     });
   }
 
   if (context.extensionVideoInput) {
     media.push({
       instruction: 'Continue, remix, or edit this source video.',
-      inlineData: await dataUrlToInlineData(context.extensionVideoInput, 'video/mp4'),
+      inlineData: await dataUrlToInlineData(context.extensionVideoInput, 'video/mp4', undefined, signal),
     });
   }
 
@@ -3444,6 +3777,7 @@ async function executeAudioNode(
   context: ExecutionContext,
   settings: RuntimeSettingsSnapshot,
   onStatus?: (statusMessage: string) => void,
+  abortSignal?: AbortSignal,
 ): Promise<ExecutionResult> {
   const provider = (node.data.provider as AudioProvider | undefined) ?? 'elevenlabs';
   const modelId = getModelId(settings, 'audio', provider, node.data.modelId);
@@ -3492,20 +3826,24 @@ async function executeAudioNode(
       );
       let audioBase64: string | undefined;
       if (modelContract.apiFamily === 'google-interactions') {
-        const interaction = await client.interactions.create({
+        const interactionRequest = {
           model: modelId,
           input: ttsPrompt,
           response_format: { type: 'audio' },
           generation_config: {
             speech_config: [{ voice: voiceName }],
           },
-        } as never);
+        } as never;
+        const interaction = abortSignal
+          ? await client.interactions.create(interactionRequest, { signal: abortSignal })
+          : await client.interactions.create(interactionRequest);
         audioBase64 = extractGeminiInteractionAudio(interaction);
       } else {
         const response = await client.models.generateContent({
           model: modelId,
           contents: [{ parts: [{ text: ttsPrompt }] }],
           config: {
+            abortSignal,
             responseModalities: ['AUDIO'],
             speechConfig: {
               voiceConfig: {
@@ -3563,6 +3901,7 @@ async function executeAudioNode(
               ...(speechSeed !== undefined ? { seed: Math.min(4_294_967_295, Math.max(0, Math.floor(speechSeed))) } : {}),
               ...(voiceSettings ? { voice_settings: voiceSettings } : {}),
             }),
+            signal: abortSignal,
           },
         );
 
@@ -3595,6 +3934,7 @@ async function executeAudioNode(
               duration_seconds: clampOptionalNumber(coerceOptionalNumber(node.data.audioDurationSeconds), 0.5, 30),
               prompt_influence: clampOptionalNumber(coerceOptionalNumber(node.data.audioPromptInfluence), 0, 1),
             }),
+            signal: abortSignal,
           },
         );
 
@@ -3636,6 +3976,7 @@ async function executeAudioNode(
               ...(durationSeconds !== undefined ? { music_length_ms: Math.round(durationSeconds * 1_000) } : {}),
               force_instrumental: Boolean(node.data.audioForceInstrumental),
             }),
+            signal: abortSignal,
           },
         );
 
@@ -3664,7 +4005,7 @@ async function executeAudioNode(
       }
 
       onStatus?.('Changing voice with ElevenLabs…');
-      const sourceAudio = await fetch(context.audioSourceInput);
+      const sourceAudio = await fetch(context.audioSourceInput, { signal: abortSignal });
       const sourceBlob = await sourceAudio.blob();
       const formData = new FormData();
       formData.append('audio', sourceBlob, 'flow-audio-input.wav');
@@ -3688,6 +4029,7 @@ async function executeAudioNode(
             'xi-api-key': apiKey,
           },
           body: formData,
+          signal: abortSignal,
         },
       );
 
@@ -3720,7 +4062,7 @@ async function executeAudioNode(
       const blob = await client.textToSpeech({
         model: modelId,
         inputs: prompt,
-      });
+      }, { signal: abortSignal });
 
       return {
         result: await toResultUrl(blob),
@@ -4050,6 +4392,7 @@ async function startGeminiVideoGeneration(
   seed?: number,
   negativePrompt?: string,
   sampleCount?: number,
+  signal?: AbortSignal,
 ): Promise<GeminiVideoOperation> {
   const normalizedModelId = normalizeGeminiVideoModelId(modelId);
 
@@ -4065,7 +4408,7 @@ async function startGeminiVideoGeneration(
     hasExtensionVideo: Boolean(context.extensionVideoInput),
   });
 
-  const videoInputs = await buildGeminiVideoRequestInputs(context);
+  const videoInputs = await buildGeminiVideoRequestInputs(context, signal);
 
   try {
     const response = await fetch(
@@ -4092,6 +4435,7 @@ async function startGeminiVideoGeneration(
             },
           ),
         ),
+        signal,
       },
     );
 
@@ -4101,6 +4445,9 @@ async function startGeminiVideoGeneration(
 
     return (await response.json()) as GeminiVideoOperation;
   } catch (error) {
+    if (isAbortError(error) || signal?.aborted) {
+      throw isAbortError(error) ? error : createAbortError();
+    }
     if (error instanceof HttpStatusError || error instanceof NonRetryableError) {
       throw error;
     }
@@ -4112,6 +4459,7 @@ async function pollGeminiVideoResult(
   apiKey: string,
   operation: GeminiVideoOperation,
   onStatus?: (statusMessage: string) => void,
+  signal?: AbortSignal,
 ): Promise<Blob> {
   let currentOperation = operation;
 
@@ -4136,6 +4484,7 @@ async function pollGeminiVideoResult(
         headers: {
           'x-goog-api-key': apiKey,
         },
+        signal,
       });
 
       if (!videoResponse.ok) {
@@ -4146,7 +4495,7 @@ async function pollGeminiVideoResult(
     }
 
     onStatus?.(`Video render is still in progress… ${attempt + 1} check${attempt === 0 ? '' : 's'} so far`);
-    await sleep(10_000);
+    await abortableSleep(10_000, signal);
 
     if (!currentOperation.name) {
       throw new NonRetryableError('Gemini video generation started without an operation name.');
@@ -4156,6 +4505,7 @@ async function pollGeminiVideoResult(
       headers: {
         'x-goog-api-key': apiKey,
       },
+      signal,
     });
 
     if (!response.ok) {
@@ -4202,6 +4552,7 @@ async function executeOpenAiCompatibleImageNode(input: {
   node: AppNode;
   settings: RuntimeSettingsSnapshot;
   onStatus?: (statusMessage: string) => void;
+  abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
   // GPT image models accept up to 16 images on /images/edit (source + references). Only the
   // first-party OpenAI endpoint is known to take the array shape, so Atlas's OpenAI-compatible
@@ -4254,10 +4605,10 @@ async function executeOpenAiCompatibleImageNode(input: {
 
   if (useEditEndpoint) {
     if (input.sourceImageInput) {
-      editImages.push(await dataUrlToFile(input.sourceImageInput, 'flow-image-edit.png'));
+      editImages.push(await dataUrlToFile(input.sourceImageInput, 'flow-image-edit.png', input.abortSignal));
     }
     for (const [index, referenceInput] of referenceImageInputs.entries()) {
-      editImages.push(await dataUrlToFile(referenceInput, `flow-image-reference-${index + 1}.png`));
+      editImages.push(await dataUrlToFile(referenceInput, `flow-image-reference-${index + 1}.png`, input.abortSignal));
     }
   }
 
@@ -4265,18 +4616,18 @@ async function executeOpenAiCompatibleImageNode(input: {
     ? await client.images.edit({
         model: input.modelId,
         image: editImages.length === 1 ? editImages[0] : editImages,
-        ...(input.maskImageInput && input.sourceImageInput ? { mask: new File([await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, input.provider, input.modelId)], 'flow-image-mask.png', { type: 'image/png' }) } : {}),
+        ...(input.maskImageInput && input.sourceImageInput ? { mask: new File([await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, input.provider, input.modelId, input.abortSignal)], 'flow-image-mask.png', { type: 'image/png' }) } : {}),
         prompt: input.prompt,
         size: mapAspectRatioToImageSize(aspectRatio),
         ...gptImageParams,
-      })
+      }, { signal: input.abortSignal })
     : await client.images.generate({
         model: input.modelId,
         prompt: input.prompt,
         size: mapAspectRatioToImageSize(aspectRatio),
         ...(input.provider === 'openai' && isGptImageModel ? { moderation: 'low' as const } : {}),
         ...gptImageParams,
-      });
+      }, { signal: input.abortSignal });
   const image = response.data?.[0];
   const b64MimeType = input.provider === 'openai' && isGptImageModel ? `image/${outputFormat}` : 'image/png';
 
@@ -4293,6 +4644,7 @@ async function executeOpenAiCompatibleImageNode(input: {
         usage: extractOpenAIImageUsage(response, input.modelId, input.provider),
       },
       onStatus: input.onStatus,
+      abortSignal: input.abortSignal,
     });
   }
 
@@ -4301,7 +4653,7 @@ async function executeOpenAiCompatibleImageNode(input: {
     // (no CORS + Content-Disposition: attachment) refuses to render in an <img>, so download + inline it
     // (renderer fetch, else native net.fetch / CapacitorHttp) to a data: URL. Without this an OpenAI /
     // Atlas-OpenAI-compatible model that returns a `url` instead of `b64_json` shows a broken-image glyph.
-    const materialized = await materializeRemoteMediaResult(image.url, `${providerLabel} result download failed`);
+    const materialized = await materializeRemoteMediaResult(image.url, `${providerLabel} result download failed`, undefined, input.abortSignal);
     return applyConfiguredAutoUpscaleIfRequested({
       node: input.node,
       settings: input.settings,
@@ -4314,21 +4666,24 @@ async function executeOpenAiCompatibleImageNode(input: {
         usage: extractOpenAIImageUsage(response, input.modelId, input.provider),
       },
       onStatus: input.onStatus,
+      abortSignal: input.abortSignal,
     });
   }
 
   throw new Error(`${providerLabel} did not return an image payload.`);
 }
 
-async function dataUrlToInlineImage(dataUrl: string): Promise<{ mimeType: string; data: string }> {
-  return dataUrlToInlineData(dataUrl, 'image/png', 'Unsupported image data URL format.');
+async function dataUrlToInlineImage(dataUrl: string, signal?: AbortSignal): Promise<{ mimeType: string; data: string }> {
+  return dataUrlToInlineData(dataUrl, 'image/png', 'Unsupported image data URL format.', signal);
 }
 
 async function dataUrlToInlineData(
   dataUrl: string,
   fallbackMimeType: string,
-  dataUrlError = 'Unsupported media data URL format.',
+  dataUrlError: string | undefined = 'Unsupported media data URL format.',
+  signal?: AbortSignal,
 ): Promise<{ mimeType: string; data: string }> {
+  throwIfAborted(signal);
   if (dataUrl.startsWith('data:')) {
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
 
@@ -4342,9 +4697,9 @@ async function dataUrlToInlineData(
     };
   }
 
-  const response = await fetch(dataUrl);
+  const response = await fetch(dataUrl, { signal });
   const blob = await response.blob();
-  const base64 = await blobToBase64(blob);
+  const base64 = await blobToBase64(blob, signal);
 
   return {
     mimeType: blob.type || fallbackMimeType,
@@ -4352,7 +4707,8 @@ async function dataUrlToInlineData(
   };
 }
 
-async function dataUrlToGeminiImage(dataUrl: string): Promise<{ imageBytes: string; mimeType: string }> {
+async function dataUrlToGeminiImage(dataUrl: string, signal?: AbortSignal): Promise<{ imageBytes: string; mimeType: string }> {
+  throwIfAborted(signal);
   if (dataUrl.startsWith('data:')) {
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
 
@@ -4366,9 +4722,9 @@ async function dataUrlToGeminiImage(dataUrl: string): Promise<{ imageBytes: stri
     };
   }
 
-  const response = await fetch(dataUrl);
+  const response = await fetch(dataUrl, { signal });
   const blob = await response.blob();
-  const base64 = await blobToBase64(blob);
+  const base64 = await blobToBase64(blob, signal);
 
   return {
     mimeType: blob.type || 'image/png',
@@ -4376,10 +4732,11 @@ async function dataUrlToGeminiImage(dataUrl: string): Promise<{ imageBytes: stri
   };
 }
 
-async function dataUrlToGeminiVideo(dataUrl: string): Promise<{ videoBytes: string; mimeType: string }> {
-  const response = await fetch(dataUrl);
+async function dataUrlToGeminiVideo(dataUrl: string, signal?: AbortSignal): Promise<{ videoBytes: string; mimeType: string }> {
+  throwIfAborted(signal);
+  const response = await fetch(dataUrl, { signal });
   const blob = await response.blob();
-  const base64 = await blobToBase64(blob);
+  const base64 = await blobToBase64(blob, signal);
 
   return {
     mimeType: blob.type || 'video/mp4',
@@ -4387,9 +4744,11 @@ async function dataUrlToGeminiVideo(dataUrl: string): Promise<{ videoBytes: stri
   };
 }
 
-async function dataUrlToFile(dataUrl: string, filename: string): Promise<File> {
-  const response = await fetch(dataUrl);
+async function dataUrlToFile(dataUrl: string, filename: string, signal?: AbortSignal): Promise<File> {
+  throwIfAborted(signal);
+  const response = await fetch(dataUrl, { signal });
   const blob = await response.blob();
+  throwIfAborted(signal);
   const mimeType = blob.type || 'image/png';
 
   return new File([blob], filename, { type: mimeType });
@@ -4401,30 +4760,33 @@ async function normalizeMaskBlob(
   sourceDataUrl: string,
   provider: string,
   modelId: string | undefined,
+  signal?: AbortSignal,
 ): Promise<Blob> {
+  throwIfAborted(signal);
   if (!canDecodeImages()) {
     // Skip Image/canvas dimension probing in headless envs; normalizeMaskForProvider passes through.
-    return normalizeMaskForProvider(maskDataUrl, { provider, modelId, width: 0, height: 0 });
+    return raceWithAbort(normalizeMaskForProvider(maskDataUrl, { provider, modelId, width: 0, height: 0 }), signal);
   }
-  const { width, height } = await getDataUrlDimensions(sourceDataUrl);
-  return normalizeMaskForProvider(maskDataUrl, { provider, modelId, width, height });
+  const { width, height } = await raceWithAbort(getDataUrlDimensions(sourceDataUrl), signal);
+  return raceWithAbort(normalizeMaskForProvider(maskDataUrl, { provider, modelId, width, height }), signal);
 }
 
 async function toResultUrl(value: Blob | string): Promise<string> {
   return typeof value === 'string' ? value : URL.createObjectURL(value);
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
+async function blobToBase64(blob: Blob, signal?: AbortSignal): Promise<string> {
+  throwIfAborted(signal);
   if (typeof FileReader === 'undefined') {
-    const arrayBuffer = await blob.arrayBuffer();
+    const arrayBuffer = await raceWithAbort(blob.arrayBuffer(), signal);
     return Buffer.from(arrayBuffer).toString('base64');
   }
-  const dataUrl = await new Promise<string>((resolve, reject) => {
+  const dataUrl = await raceWithAbort(new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result ?? ''));
     reader.onerror = () => reject(reader.error ?? new Error('Unable to read blob.'));
     reader.readAsDataURL(blob);
-  });
+  }), signal);
 
   const [, base64 = ''] = dataUrl.split(',', 2);
   return base64;
@@ -4576,10 +4938,4 @@ function extractSdkOperationError(error: Record<string, unknown>): string {
   }
 
   return JSON.stringify(error);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    globalThis.setTimeout(resolve, ms);
-  });
 }

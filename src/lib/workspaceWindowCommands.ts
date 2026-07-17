@@ -243,6 +243,8 @@ const SOURCE_BIN_ITEM_COMPARE_FIELDS = {
   createdAt: true,
   sourceKey: true,
   originNodeId: true,
+  originWorkspaceId: true,
+  originRunId: true,
   starred: true,
   collapsed: true,
   envelopeId: true,

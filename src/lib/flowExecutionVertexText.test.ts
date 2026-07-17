@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { executeNodeRequest } from './flowExecution';
 import { DEFAULT_EXECUTION_CONFIG } from './providerCatalog';
+import { getProviderLimiter } from './providerRateLimiter';
 import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
 
 // Gemini TTS has no Vertex execution path, so (unlike text/image/video) it must run through the
@@ -100,6 +101,7 @@ const baseSettings: RuntimeSettingsSnapshot = {
 
 describe('executeNodeRequest Vertex text routing', () => {
   afterEach(() => {
+    getProviderLimiter('gemini').minDelayMs = 1500;
     vi.unstubAllGlobals();
   });
 
@@ -146,6 +148,45 @@ describe('executeNodeRequest Vertex text routing', () => {
         parts: [{ text: 'Answer tersely.' }],
       },
     });
+  });
+
+  it('cancels the native Vertex request once and rejects a late bridge result', async () => {
+    getProviderLimiter('gemini').minDelayMs = 0;
+    let resolveVertex!: (value: { text: string; statusMessage: string }) => void;
+    const generateVertexText = vi.fn((_request: Record<string, unknown>) => new Promise<{ text: string; statusMessage: string }>((resolve) => {
+      resolveVertex = resolve;
+    }));
+    const cancelVertexGeneration = vi.fn().mockResolvedValue({ cancelled: true });
+    vi.stubGlobal('window', { signalLoomNative: { generateVertexText, cancelVertexGeneration } });
+    const controller = new AbortController();
+    const node: AppNode = {
+      id: 'text-cancel',
+      type: 'textNode',
+      position: { x: 0, y: 0 },
+      data: { mode: 'generate', provider: 'gemini', modelId: 'gemini-3.5-flash' },
+    };
+
+    const pending = executeNodeRequest(
+      node,
+      { prompt: 'Hold this request.', config: DEFAULT_EXECUTION_CONFIG },
+      baseSettings,
+      undefined,
+      { signal: controller.signal },
+    );
+    pending.catch(() => undefined);
+    await vi.waitFor(() => expect(generateVertexText).toHaveBeenCalledOnce());
+    const cancellationId = generateVertexText.mock.calls[0][0].cancellationId;
+    expect(cancellationId).toMatch(/^flow-vertex-/);
+
+    controller.abort();
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(cancelVertexGeneration).toHaveBeenCalledOnce();
+    expect(cancelVertexGeneration).toHaveBeenCalledWith(cancellationId);
+
+    resolveVertex({ text: 'late stale result', statusMessage: 'late' });
+    await Promise.resolve();
+    expect(cancelVertexGeneration).toHaveBeenCalledOnce();
   });
 
   it('runs Gemini TTS through the API key even when Vertex mode is selected', async () => {

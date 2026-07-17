@@ -21,6 +21,8 @@ import { useConfirmationStore } from './confirmationStore';
 import { useFlowStore } from './flowStore';
 import { useSourceBinStore } from './sourceBinStore';
 import * as flowExecution from '../lib/flowExecution';
+import { createDefaultFunctionNodeConfig } from '../lib/functionNodes';
+import { API_REQUESTER_PERSISTED_CREDENTIAL_MARKER } from '../lib/apiRequesterCredentials';
 
 function createNode(id: string, type: AppNode['type'], data: Record<string, unknown> = {}): AppNode {
   return {
@@ -46,6 +48,197 @@ function buildIncomingMap(edges: Edge[]): Map<string, string[]> {
 }
 
 describe('flow store package and envelope input gathering', () => {
+  it('classifies API Requester as runnable and recursively reaches it from Run Me exactly once', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"ok":true}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    useConfirmationStore.setState({ requestConfirmation: vi.fn().mockResolvedValue(true) });
+    useFlowStore.setState({
+      nodes: [
+        createNode('request', 'apiFetchNode', {
+          url: 'https://example.test/data',
+          declaredOutputType: 'text',
+        }),
+        createNode('run-me', 'runMeNode'),
+      ],
+      edges: [{ id: 'request-run-me', source: 'request', target: 'run-me' }],
+    });
+    useFlowStore.getState().hydratePersistedState();
+
+    const request = useFlowStore.getState().nodes.find((node) => node.id === 'request')!;
+    expect(storeCanRunNode(request)).toBe(true);
+    expect(storeGetExecutionDependencies(
+      useFlowStore.getState().nodes.find((node) => node.id === 'run-me')!,
+      useFlowStore.getState().edges,
+      buildNodeMap(useFlowStore.getState().nodes),
+    )).toEqual(['request']);
+
+    await useFlowStore.getState().runNode('run-me');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(useFlowStore.getState().nodes.find((node) => node.id === 'request')?.data).toMatchObject({
+      result: '{"ok":true}',
+      resultType: 'text',
+      usage: { source: 'actual', confidence: 'unknown' },
+    });
+    expect(useSourceBinStore.getState().getAllItems().filter((item) => item.originNodeId === 'request')).toEqual([]);
+  });
+
+  it('redacts URL userinfo and credential fields from browser export and Electron project snapshots without overredacting creative fields', () => {
+    useFlowStore.setState({
+      nodes: [createNode('request', 'apiFetchNode', {
+        url: 'https://alice:top-secret@example.test/data?client_secret=client-secret&refresh_token=refresh-secret&colorToken=teal&cameraToken=close-up',
+        headers: 'Authorization: Bearer top-secret\nApi-Key: api-key-secret\nX-Client-Secret: client-secret\nX-Trace: safe',
+        body: '{"prompt":"keep [redacted] editorial text safe","apiKey":"body-api-secret","nested":{"client_secret":"body-client-secret","refresh_token":"body-refresh-secret"},"colorToken":"teal","cameraToken":"close-up"}',
+      })],
+      edges: [],
+    });
+
+    const exported = useFlowStore.getState().exportFlow();
+    const snapshot = useFlowStore.getState().exportProjectFlowSnapshot();
+    expect(exported).not.toContain('top-secret');
+    expect(exported).not.toContain('api-key-secret');
+    expect(exported).not.toContain('client-secret');
+    expect(exported).not.toContain('body-api-secret');
+    expect(exported).not.toContain('body-client-secret');
+    expect(exported).not.toContain('body-refresh-secret');
+    expect(exported).not.toContain('refresh-secret');
+    expect(snapshot.nodes[0]?.data).toMatchObject({
+      headers: `Authorization: ${API_REQUESTER_PERSISTED_CREDENTIAL_MARKER}\nApi-Key: ${API_REQUESTER_PERSISTED_CREDENTIAL_MARKER}\nX-Client-Secret: ${API_REQUESTER_PERSISTED_CREDENTIAL_MARKER}\nX-Trace: safe`,
+    });
+    const persistedUrl = new URL(String(snapshot.nodes[0]?.data.url));
+    expect(persistedUrl.username).toBe(API_REQUESTER_PERSISTED_CREDENTIAL_MARKER);
+    expect(persistedUrl.password).toBe(API_REQUESTER_PERSISTED_CREDENTIAL_MARKER);
+    expect(persistedUrl.searchParams.get('client_secret')).toBe(API_REQUESTER_PERSISTED_CREDENTIAL_MARKER);
+    expect(persistedUrl.searchParams.get('refresh_token')).toBe(API_REQUESTER_PERSISTED_CREDENTIAL_MARKER);
+    expect(persistedUrl.searchParams.get('colorToken')).toBe('teal');
+    expect(persistedUrl.searchParams.get('cameraToken')).toBe('close-up');
+    expect(snapshot.nodes[0]?.data.body).toContain('"prompt":"keep [redacted] editorial text safe"');
+    expect(snapshot.nodes[0]?.data.body).toContain('"colorToken":"teal"');
+    expect(snapshot.nodes[0]?.data.body).toContain('"cameraToken":"close-up"');
+    expect(snapshot.nodes[0]?.data.body).toContain(API_REQUESTER_PERSISTED_CREDENTIAL_MARKER);
+  });
+
+  it('redacts credential-like form fields while keeping safe persisted request fields intact', () => {
+    useFlowStore.setState({
+      nodes: [createNode('request', 'apiFetchNode', {
+        url: 'https://example.test/data',
+        headers: 'X-Trace: safe',
+        body: 'prompt=keep+this&api_key=form-secret&clientSecret=client-secret',
+      })],
+      edges: [],
+    });
+
+    const exported = useFlowStore.getState().exportFlow();
+    const snapshot = useFlowStore.getState().exportProjectFlowSnapshot();
+    expect(exported).not.toContain('form-secret');
+    expect(exported).not.toContain('client-secret');
+    expect(snapshot.nodes[0]?.data.body).toBe(`prompt=keep+this&api_key=${API_REQUESTER_PERSISTED_CREDENTIAL_MARKER}&clientSecret=${API_REQUESTER_PERSISTED_CREDENTIAL_MARKER}`);
+  });
+
+  it('reopens persisted requester credentials fail-closed without retaining executable secrets', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    useConfirmationStore.setState({ requestConfirmation: vi.fn().mockResolvedValue(true) });
+    useFlowStore.setState({
+      nodes: [
+        createNode('request', 'apiFetchNode', {
+          url: 'https://example.test/data',
+          headers: 'Api-Key: browser-and-electron-secret',
+          declaredOutputType: 'text',
+        }),
+        createNode('run-me', 'runMeNode'),
+      ],
+      edges: [{ id: 'request-run', source: 'request', target: 'run-me' }],
+    });
+
+    // Browser export and the Electron project-save snapshot share the persistence projection.
+    const browserExport = useFlowStore.getState().exportFlow();
+    const electronSnapshot = useFlowStore.getState().exportProjectFlowSnapshot();
+    expect(browserExport).not.toContain('browser-and-electron-secret');
+    expect(JSON.stringify(electronSnapshot)).not.toContain('browser-and-electron-secret');
+
+    useFlowStore.getState().replaceFlowSnapshot(electronSnapshot);
+    await useFlowStore.getState().runNode('run-me');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(useFlowStore.getState().nodes.find((node) => node.id === 'request')?.data.error)
+      .toContain('Replace each redacted value');
+  });
+
+  it('resets stale running state only during hydration while restoring runtime callbacks', () => {
+    useFlowStore.setState({
+      nodes: [createNode('request', 'apiFetchNode', {
+        url: 'https://example.test/data',
+        isRunning: true,
+      })],
+      edges: [],
+    });
+
+    useFlowStore.getState().hydratePersistedState();
+    const request = useFlowStore.getState().nodes[0]!;
+    expect(request.data.isRunning).toBe(false);
+    expect(request.data.onRun).toEqual(expect.any(Function));
+  });
+
+  it('keeps a live request visibly running, rejects a duplicate click, and exposes cancellation state', async () => {
+    let resolveFetch: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { resolveFetch = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+    useConfirmationStore.setState({ requestConfirmation: vi.fn().mockResolvedValue(true) });
+    useFlowStore.setState({ nodes: [createNode('request', 'apiFetchNode', {
+      url: 'https://example.test/data', declaredOutputType: 'text', provider: 'api-running-test',
+    }), createNode('run-me', 'runMeNode')], edges: [{ id: 'request-run', source: 'request', target: 'run-me' }] });
+    useFlowStore.getState().hydratePersistedState();
+
+    const first = useFlowStore.getState().runNode('run-me');
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1), { timeout: 3_000 });
+    expect(useFlowStore.getState().nodes.find((node) => node.id === 'request')?.data.isRunning).toBe(true);
+    expect(useFlowStore.getState().nodes[0]?.data.onRun).toEqual(expect.any(Function));
+
+    const second = useFlowStore.getState().runNode('run-me');
+    await Promise.resolve();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    useFlowStore.getState().cancelNodeRun('request');
+    expect(useFlowStore.getState().nodes.find((node) => node.id === 'request')?.data.statusMessage).toBe('Cancelling run…');
+
+    resolveFetch?.(new Response('cancelled too late', { status: 200 }));
+    await Promise.all([first, second]);
+  });
+
+  it('executes a real Function-output diamond once per root run but never reuses the prior root run', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response('shared', { status: 200 })));
+    vi.stubGlobal('fetch', fetchMock);
+    useConfirmationStore.setState({ requestConfirmation: vi.fn().mockResolvedValue(true) });
+    const functionA = createDefaultFunctionNodeConfig('Function A');
+    const functionB = createDefaultFunctionNodeConfig('Function B');
+    functionA.contract.outputPorts[0]!.resultType = 'text';
+    functionB.contract.outputPorts[0]!.resultType = 'text';
+    useFlowStore.setState({
+      nodes: [
+        createNode('request', 'apiFetchNode', { url: 'https://example.test/data', declaredOutputType: 'text', provider: 'api-diamond-test' }),
+        createNode('function-a', 'functionNode', { functionNode: functionA, result: 'retained Function A output' }),
+        createNode('function-b', 'functionNode', { functionNode: functionB, result: 'retained Function B output' }),
+        createNode('run-me', 'runMeNode'),
+      ],
+      edges: [
+        { id: 'request-a', source: 'request', target: 'function-a', targetHandle: 'input-flow' },
+        { id: 'request-b', source: 'request', target: 'function-b', targetHandle: 'input-flow' },
+        { id: 'a-run', source: 'function-a', sourceHandle: 'output-result', target: 'run-me' },
+        { id: 'b-run', source: 'function-b', sourceHandle: 'output-result', target: 'run-me' },
+      ],
+    });
+    useFlowStore.getState().hydratePersistedState();
+
+    await useFlowStore.getState().runNode('run-me');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await useFlowStore.getState().runNode('run-me');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  }, 15_000);
+
   it('correctly resolves text and image payloads from an upstream packageNode connected to an imageGen', () => {
     const nodes = [
       createNode('text-1', 'textNode', {

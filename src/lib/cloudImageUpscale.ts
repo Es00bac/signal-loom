@@ -29,6 +29,7 @@ import {
   normalizeAtlasBaseUrl,
 } from './imageEditorAi/atlasNativeImage';
 import { fetchProviderResultBlob } from './remoteMediaFetch';
+import { throwIfAborted } from './abortSignals';
 
 export interface CloudImageUpscaleOutput {
   result: string;
@@ -49,6 +50,7 @@ export interface StabilityImageUpscaleInput {
   sourceFilename?: string;
   errorLabel?: string;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
 }
 
 /**
@@ -78,7 +80,7 @@ export async function runStabilityImageUpscale(
   });
   formData.append(
     'image',
-    await dataUrlToUpscaleFile(input.sourceImage, input.sourceFilename ?? 'image-upscale-source.png'),
+    await dataUrlToUpscaleFile(input.sourceImage, input.sourceFilename ?? 'image-upscale-source.png', input.signal),
   );
 
   const doFetch = input.fetchImpl ?? fetch;
@@ -89,6 +91,7 @@ export async function runStabilityImageUpscale(
       Accept: 'image/*',
     },
     body: formData,
+    signal: input.signal,
   });
 
   if (!response.ok) {
@@ -113,9 +116,10 @@ export interface VertexImagenImageUpscaleInput {
    * that already resolve one (Flow) pass it so behaviour is provably identical;
    * omit it to let this module resolve the shared bridge-or-service-account path.
    */
-  generateVertexImage?: (request: NativeVertexImageRequest) => Promise<NativeVertexImageResult>;
+  generateVertexImage?: (request: NativeVertexImageRequest, signal?: AbortSignal) => Promise<NativeVertexImageResult>;
   /** Optional source normalizer (blob/remote → data URL); defaults to a shared one. */
   normalizeSourceImage?: (imageInput: string) => Promise<string>;
+  signal?: AbortSignal;
 }
 
 /**
@@ -147,7 +151,7 @@ export async function runVertexImagenImageUpscale(
       outputMimeType: input.outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png',
       upscaleFactor: input.upscaleFactor ?? 'x2',
     }),
-  });
+  }, input.signal);
 
   if (result.error) {
     throw new Error(result.error);
@@ -361,9 +365,11 @@ export function resolveVertexImageGenerator(
   return undefined;
 }
 
-async function dataUrlToUpscaleFile(dataUrl: string, filename: string): Promise<File> {
-  const response = await fetch(dataUrl);
+async function dataUrlToUpscaleFile(dataUrl: string, filename: string, signal?: AbortSignal): Promise<File> {
+  throwIfAborted(signal);
+  const response = await fetch(dataUrl, { signal });
   const blob = await response.blob();
+  throwIfAborted(signal);
   return new File([blob], filename, { type: blob.type || 'image/png' });
 }
 

@@ -537,7 +537,8 @@ export function canRunNode(node: AppNode): boolean {
     node.type === 'composition' ||
     node.type === 'cropImageNode' ||
     node.type === 'visionVerifyNode' ||
-    node.type === 'functionNode'
+    node.type === 'functionNode' ||
+    node.type === 'apiFetchNode'
   ) {
     return true;
   }
@@ -1451,6 +1452,13 @@ function estimateNodeOwnTelemetry(
     return buildUsageTelemetry('estimate', 'fixed', {
       costUsd: 0,
       notes: ['Function nodes route existing graph outputs and local transforms without provider spend.'],
+    });
+  }
+
+  if (node.type === 'apiFetchNode') {
+    return buildUsageTelemetry('estimate', 'unknown', {
+      provider: 'api-requester',
+      notes: ['External API Requester pricing is not known to Sloom Studio.'],
     });
   }
 

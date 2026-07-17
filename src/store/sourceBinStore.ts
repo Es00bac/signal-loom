@@ -82,6 +82,8 @@ export interface SourceBinLibraryItem {
   createdAt: number;
   sourceKey?: string;
   originNodeId?: string;
+  originWorkspaceId?: string;
+  originRunId?: string;
   starred?: boolean;
   collapsed?: boolean;
   envelopeId?: string;
@@ -209,6 +211,8 @@ export interface SourceBinState {
     isGenerated?: boolean;
     sourceKey?: string;
     originNodeId?: string;
+    originWorkspaceId?: string;
+    originRunId?: string;
     envelopeId?: string;
     envelopeLabel?: string;
     envelopeIndex?: number;
@@ -1310,6 +1314,12 @@ export const useSourceBinStore = create<SourceBinState>()(
           starred: existingSourceKeyItem?.starred,
           collapsed: existingSourceKeyItem?.collapsed,
         }, get().scratchDirectoryHandle);
+        if (item.originWorkspaceId) {
+          nextItem.originWorkspaceId = item.originWorkspaceId;
+        }
+        if (item.originRunId) {
+          nextItem.originRunId = item.originRunId;
+        }
         let resultItem = nextItem;
 
         set((state) => {
@@ -1357,6 +1367,8 @@ export const useSourceBinStore = create<SourceBinState>()(
                   pixelHeight: nextItem.pixelHeight,
                   sourceKey: nextItem.sourceKey,
                   originNodeId: nextItem.originNodeId,
+                  originWorkspaceId: nextItem.originWorkspaceId,
+                  originRunId: nextItem.originRunId,
                   isGenerated: nextItem.isGenerated,
                   envelopeId: nextItem.envelopeId,
                   envelopeLabel: nextItem.envelopeLabel,

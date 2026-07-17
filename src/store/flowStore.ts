@@ -73,6 +73,11 @@ import {
   type FlowClipboardPayload,
 } from '../lib/functionNodes';
 import {
+  API_REQUESTER_PERSISTED_CREDENTIAL_MARKER,
+  isApiRequesterCredentialFieldName,
+  isApiRequesterSensitiveHeaderName,
+} from '../lib/apiRequesterCredentials';
+import {
   buildListNodeItems,
   getListNodeKind,
   isListItemTargetHandle,
@@ -159,7 +164,7 @@ import { useSettingsStore } from './settingsStore';
 import { useSourceBinStore } from './sourceBinStore';
 import { useProjectUsageStore } from './projectUsageStore';
 import { useConfirmationStore } from './confirmationStore';
-import { useFlowWorkspaceStore } from './flowWorkspaceStore';
+import { useFlowWorkspaceStore, type FlowRunOwner } from './flowWorkspaceStore';
 
 export interface FlowState {
   nodes: AppNode[];
@@ -207,22 +212,19 @@ export interface FlowState {
 }
 
 const activeRunControllers = new Map<string, AbortController>();
+const activeGraphRuns = new Map<string, Promise<void>>();
+let hydratedFlowGraphGeneration = 0;
+let hydratedCanvasWorkspaceId = useFlowWorkspaceStore.getState().hydratedWorkspaceId;
 let flowClipboard: FlowClipboardPayload | null = null;
 
-function getActiveFlowWorkspaceUsageContext(): {
-  flowWorkspaceId?: string;
-  flowWorkspaceName?: string;
-} {
-  const flowWorkspaceState = useFlowWorkspaceStore.getState();
-  const flowWorkspaceId = flowWorkspaceState.activeWorkspaceId;
-  const flowWorkspaceName = flowWorkspaceId
-    ? flowWorkspaceState.getWorkspace(flowWorkspaceId)?.name
-    : undefined;
-
-  return {
-    flowWorkspaceId,
-    flowWorkspaceName,
-  };
+function activeGraphRunKey(workspaceId: string, nodeId: string, node: AppNode | undefined): string {
+  return [
+    workspaceId,
+    hydratedFlowGraphGeneration,
+    nodeId,
+    node?.data.nodeInstanceId ?? '',
+    node?.data.inputRevision ?? '',
+  ].join(':');
 }
 
 function isAbortError(error: unknown): boolean {
@@ -235,6 +237,41 @@ const VIDEO_REFERENCE_HANDLES = ['video-reference-1', 'video-reference-2', 'vide
 
 function makeFlowId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+}
+
+const RUNTIME_NODE_DATA_KEYS = new Set<string>([
+  'onChange',
+  'onRun',
+  'onSelectAttempt',
+  'isRunning',
+  'retryState',
+  'error',
+  'statusMessage',
+  'result',
+  'resultType',
+  'resultMimeType',
+  'resultExtension',
+  'resultFileName',
+  'resultOutputMetadata',
+  'resultHistory',
+  'selectedResultId',
+  'usage',
+  'envelopeItems',
+  'envelopeItemKind',
+  'expandedItemIndex',
+  'sourceAssetUrl',
+  'loopBreakReason',
+]);
+
+function shouldBumpInputRevision(patch: Partial<NodeData>): boolean {
+  return Object.keys(patch).some(
+    (key) => key !== 'nodeInstanceId' && key !== 'inputRevision' && !RUNTIME_NODE_DATA_KEYS.has(key),
+  );
+}
+
+function makeNodeIdentity(): { nodeInstanceId: string; inputRevision: string } {
+  const id = makeFlowId();
+  return { nodeInstanceId: id, inputRevision: id };
 }
 
 function createDebouncedLocalStorage(delayMs: number): StateStorage {
@@ -340,20 +377,13 @@ function resolveNodeOutputAsset(node: AppNode): string | undefined {
   return resultValueAsMediaUrl(node.data.result);
 }
 
-function shouldReuseExistingNodeOutput(node: AppNode): boolean {
-  if (!['imageGen', 'cropImageNode', 'videoGen', 'audioGen', 'composition', 'functionNode'].includes(node.type)) {
-    return false;
-  }
-
-  return Boolean(resolveNodeOutputAsset(node));
-}
-
 export function canRunNode(node: AppNode): boolean {
   if (
     node.type === 'composition' ||
     node.type === 'cropImageNode' ||
     node.type === 'visionVerifyNode' ||
-    node.type === 'functionNode'
+    node.type === 'functionNode' ||
+    node.type === 'apiFetchNode'
   ) {
     return true;
   }
@@ -492,10 +522,11 @@ function createInitialNodeData(type: FlowNodeType, settings: RuntimeSettingsSnap
 }
 
 function stripRuntimeData(node: AppNode): AppNode {
+  const persistedData = redactApiRequesterCredentialsForPersistence(node);
   return {
     ...node,
     data: {
-      ...node.data,
+      ...persistedData,
       onChange: undefined,
       onRun: undefined,
       onSelectAttempt: undefined,
@@ -517,19 +548,106 @@ function stripRuntimeData(node: AppNode): AppNode {
 }
 
 function stripProjectRuntimeData(node: AppNode): AppNode {
+  const persistedData = redactApiRequesterCredentialsForPersistence(node);
+  const requesterTransientData: Partial<NodeData> = node.type === 'apiFetchNode'
+    ? {
+        result: undefined,
+        resultType: undefined,
+        resultMimeType: undefined,
+        resultExtension: undefined,
+        resultFileName: undefined,
+        resultOutputMetadata: undefined,
+        resultHistory: undefined,
+        selectedResultId: undefined,
+        usage: undefined,
+      }
+    : {};
   return {
     ...node,
     data: {
-      ...node.data,
+      ...persistedData,
+      ...requesterTransientData,
       onChange: undefined,
       onRun: undefined,
       onSelectAttempt: undefined,
-      isRunning: undefined,
       error: undefined,
       statusMessage: undefined,
       sourceAssetUrl: undefined,
     },
   };
+}
+
+function redactApiRequesterCredentialsForPersistence(node: AppNode): NodeData {
+  if (node.type !== 'apiFetchNode') return node.data;
+
+  const headers = typeof node.data.headers === 'string'
+    ? node.data.headers.split(/\r?\n/).map((line) => {
+      const separator = line.indexOf(':');
+      if (separator < 0) return line;
+      const name = line.slice(0, separator).trim();
+      return isApiRequesterSensitiveHeaderName(name)
+        ? `${name}: ${API_REQUESTER_PERSISTED_CREDENTIAL_MARKER}`
+        : line;
+    }).join('\n')
+    : node.data.headers;
+  const url = typeof node.data.url === 'string' ? redactApiRequesterUrlForPersistence(node.data.url) : node.data.url;
+  const body = typeof node.data.body === 'string' ? redactApiRequesterBodyForPersistence(node.data.body) : node.data.body;
+
+  return { ...node.data, headers, url, body };
+}
+
+function redactApiRequesterBodyForPersistence(rawBody: string): string {
+  const trimmed = rawBody.trim();
+  if (!trimmed) return rawBody;
+
+  try {
+    const parsed = JSON.parse(rawBody) as unknown;
+    const redactJson = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(redactJson);
+      if (!isRecord(value)) return value;
+      return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
+        key,
+        isApiRequesterCredentialFieldName(key) ? API_REQUESTER_PERSISTED_CREDENTIAL_MARKER : redactJson(entry),
+      ]));
+    };
+    return JSON.stringify(redactJson(parsed));
+  } catch {
+    // A form body is still structured credential-bearing input. Preserve non-secret fields and
+    // the original separator layout rather than applying a broad text replacement.
+    if (!rawBody.includes('=')) return rawBody;
+    return rawBody.split('&').map((part) => {
+      const separator = part.indexOf('=');
+      if (separator < 0) return part;
+      const rawKey = part.slice(0, separator);
+      let key = rawKey;
+      try {
+        key = decodeURIComponent(rawKey.replace(/\+/g, ' '));
+      } catch {
+        // Use the raw key if it is malformed; this is persistence redaction, not request parsing.
+      }
+      return isApiRequesterCredentialFieldName(key)
+        ? `${rawKey}=${API_REQUESTER_PERSISTED_CREDENTIAL_MARKER}`
+        : part;
+    }).join('&');
+  }
+}
+
+function redactApiRequesterUrlForPersistence(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    if (url.username) url.username = API_REQUESTER_PERSISTED_CREDENTIAL_MARKER;
+    if (url.password) url.password = API_REQUESTER_PERSISTED_CREDENTIAL_MARKER;
+    for (const [key] of url.searchParams) {
+      if (isApiRequesterCredentialFieldName(key)) {
+        url.searchParams.set(key, API_REQUESTER_PERSISTED_CREDENTIAL_MARKER);
+      }
+    }
+    return url.toString();
+  } catch {
+    // Invalid URLs are rejected before execution. Do not use substring heuristics here:
+    // they corrupt ordinary creative text and cannot establish URL structure safely.
+    return rawUrl;
+  }
 }
 
 function combineNodeDataPatches(...patches: Array<Partial<NodeData> | undefined>): Partial<NodeData> | undefined {
@@ -589,13 +707,27 @@ export async function prepareFlowSnapshotImportedAssets(
 }
 
 function normalizePersistedNode(node: AppNode): AppNode {
-  const normalizedNode =
+  let normalizedNode =
     (node.type as string) === 'input'
       ? ({
           ...node,
           type: 'textNode',
         } as AppNode)
       : node;
+
+  // Old projects and remote graph operations can arrive without the execution
+  // identity introduced in schema v2. Treat the hydration boundary as creation
+  // of that local node instance so an id reused by a later snapshot cannot
+  // accept a completion belonging to the previous instance.
+  if (!normalizedNode.data.nodeInstanceId || !normalizedNode.data.inputRevision) {
+    normalizedNode = {
+      ...normalizedNode,
+      data: {
+        ...normalizedNode.data,
+        ...makeNodeIdentity(),
+      },
+    };
+  }
 
   if (
     normalizedNode.type === 'videoGen' &&
@@ -615,6 +747,20 @@ function normalizePersistedNode(node: AppNode): AppNode {
   }
 
   return normalizedNode;
+}
+
+function normalizeHydratedNode(node: AppNode): AppNode {
+  const normalized = normalizePersistedNode(node);
+  return {
+    ...normalized,
+    data: {
+      ...normalized.data,
+      // A saved snapshot cannot own a live AbortController. Always reset stale activity only
+      // while hydrating; ordinary runtime re-attachment must preserve the current state.
+      isRunning: false,
+      retryState: undefined,
+    },
+  };
 }
 
 type StableRuntimeCallbacks = {
@@ -652,12 +798,13 @@ function getStableRuntimeCallbacks(
 
 function attachRuntimeData(node: AppNode, get: () => FlowState): AppNode {
   const callbacks = getStableRuntimeCallbacks(node.id, canRunNode(node), get);
+  const isRunning = node.data.isRunning === true;
 
   if (
     node.data.onChange === callbacks.onChange &&
     node.data.onSelectAttempt === callbacks.onSelectAttempt &&
     node.data.onRun === callbacks.onRun &&
-    node.data.isRunning === false
+    node.data.isRunning === isRunning
   ) {
     return node;
   }
@@ -669,7 +816,7 @@ function attachRuntimeData(node: AppNode, get: () => FlowState): AppNode {
       onChange: callbacks.onChange,
       onSelectAttempt: callbacks.onSelectAttempt,
       onRun: callbacks.onRun,
-      isRunning: false,
+      isRunning,
     },
   };
 }
@@ -688,6 +835,10 @@ function attachRuntimeDataToNodes(nodes: AppNode[], get: () => FlowState): AppNo
   });
 
   return mutated ? next : nodes;
+}
+
+function attachHydratedRuntimeDataToNodes(nodes: AppNode[], get: () => FlowState): AppNode[] {
+  return attachRuntimeDataToNodes(nodes.map(normalizeHydratedNode), get);
 }
 
 async function confirmGeneratedAssetCleanupForRemovedNodes(removedNodeIds: Iterable<string>): Promise<void> {
@@ -710,6 +861,13 @@ async function confirmGeneratedAssetCleanupForRemovedNodes(removedNodeIds: Itera
 
   if (shouldDelete) {
     itemsToRemove.forEach((item) => sourceBinStore.removeItem(item.id));
+  }
+}
+
+function invalidateHydratedRunGraphs(nodeIds: Iterable<string>): void {
+  const workspaceStore = useFlowWorkspaceStore.getState();
+  for (const nodeId of nodeIds) {
+    workspaceStore.invalidateFlowRunForNode(workspaceStore.hydratedWorkspaceId, nodeId);
   }
 }
 
@@ -2227,6 +2385,7 @@ export const useFlowStore = create<FlowState>()(
           .map((change) => change.id);
 
         if (removedNodeIds.length > 0) {
+          invalidateHydratedRunGraphs(removedNodeIds);
           await confirmGeneratedAssetCleanupForRemovedNodes(removedNodeIds);
         }
 
@@ -2319,6 +2478,7 @@ export const useFlowStore = create<FlowState>()(
               position,
               data: {
                 ...createInitialNodeData(type, settings),
+                ...makeNodeIdentity(),
                 portalRole: 'entry',
                 portalPairId: pairId,
                 portalLabel: 'Portal pair',
@@ -2336,6 +2496,7 @@ export const useFlowStore = create<FlowState>()(
               },
               data: {
                 ...createInitialNodeData(type, settings),
+                ...makeNodeIdentity(),
                 portalRole: 'exit',
                 portalPairId: pairId,
                 portalLabel: 'Portal pair',
@@ -2354,7 +2515,10 @@ export const useFlowStore = create<FlowState>()(
             id,
             type,
             position,
-            data: combineNodeDataPatches(createInitialNodeData(type, settings), initialData) ?? {},
+            data: {
+              ...(combineNodeDataPatches(createInitialNodeData(type, settings), initialData) ?? {}),
+              ...makeNodeIdentity(),
+            },
           },
           get,
         );
@@ -2379,7 +2543,10 @@ export const useFlowStore = create<FlowState>()(
                 x: position.x + (templateNode.position?.x ?? 0),
                 y: position.y + (templateNode.position?.y ?? 0)
               },
-              data: combineNodeDataPatches(createInitialNodeData(templateNode.type as AppNode['type'], settings), templateNode.data) ?? {},
+              data: {
+                ...(combineNodeDataPatches(createInitialNodeData(templateNode.type as AppNode['type'], settings), templateNode.data) ?? {}),
+                ...makeNodeIdentity(),
+              },
             },
             get
           );
@@ -2424,9 +2591,22 @@ export const useFlowStore = create<FlowState>()(
           return false;
         }
 
+        const pastedNodeIds = new Set(pasted.nodes.map((node) => node.id));
+        const nodesWithIdentity = pasted.nextNodes.map((node) => (
+          pastedNodeIds.has(node.id)
+            ? {
+              ...node,
+              data: {
+                ...node.data,
+                ...makeNodeIdentity(),
+              },
+            }
+            : node
+        ));
+
         set({
-          nodes: attachRuntimeDataToNodes(pasted.nextNodes, get),
-          edges: normalizeFlowEdges(pasted.nextNodes, pasted.nextEdges),
+          nodes: attachRuntimeDataToNodes(nodesWithIdentity, get),
+          edges: normalizeFlowEdges(nodesWithIdentity, pasted.nextEdges),
         });
         return true;
       },
@@ -2438,6 +2618,7 @@ export const useFlowStore = create<FlowState>()(
           return false;
         }
 
+        invalidateHydratedRunGraphs(selectedNodeIds);
         await confirmGeneratedAssetCleanupForRemovedNodes(selectedNodeIds);
 
         const nextNodes = get().nodes.filter((node) => !selectedNodeIds.has(node.id));
@@ -2488,6 +2669,7 @@ export const useFlowStore = create<FlowState>()(
                 childEdgeIds: clipboard.edges.map((edge) => edge.id),
                 bounds: clipboard.bounds,
               }),
+              ...makeNodeIdentity(),
             },
           },
           get,
@@ -2514,7 +2696,11 @@ export const useFlowStore = create<FlowState>()(
         }
 
         set({
-          nodes: attachRuntimeDataToNodes(collapsed.nextNodes, get),
+          nodes: attachRuntimeDataToNodes(collapsed.nextNodes.map((node) => (
+            node.id === collapsed.functionNode.id
+              ? { ...node, data: { ...node.data, ...makeNodeIdentity() } }
+              : node
+          )), get),
           edges: normalizeFlowEdges(collapsed.nextNodes, collapsed.nextEdges),
         });
         return collapsed.functionNode.id;
@@ -2541,6 +2727,7 @@ export const useFlowStore = create<FlowState>()(
               },
               data: {
                 ...createInitialNodeData(type, settings),
+                ...makeNodeIdentity(),
                 portalRole: 'entry',
                 portalPairId: pairId,
                 portalLabel: 'Portal pair',
@@ -2558,6 +2745,7 @@ export const useFlowStore = create<FlowState>()(
               },
               data: {
                 ...createInitialNodeData(type, settings),
+                ...makeNodeIdentity(),
                 portalRole: 'exit',
                 portalPairId: pairId,
                 portalLabel: 'Portal pair',
@@ -2594,7 +2782,10 @@ export const useFlowStore = create<FlowState>()(
               x: sourceNode.position.x + xOffset,
               y: sourceNode.position.y + 24,
             },
-            data: createInitialNodeData(type, settings),
+            data: {
+              ...createInitialNodeData(type, settings),
+              ...makeNodeIdentity(),
+            },
           },
           get,
         );
@@ -2620,18 +2811,39 @@ export const useFlowStore = create<FlowState>()(
       },
       patchNodeData: (id, patch) => {
         const currentNodes = get().nodes;
+        const requestedPatchChanged = currentNodes.some((node) => (
+          node.id === id && hasNodeDataPatchChange(node.data, patch)
+        ));
+
+        if (!requestedPatchChanged) {
+          return;
+        }
+
+        const invalidatesRun = shouldBumpInputRevision(patch)
+          && Boolean(useFlowWorkspaceStore.getState().getActiveFlowRunId(
+            useFlowWorkspaceStore.getState().hydratedWorkspaceId,
+            id,
+          ));
+        const effectivePatch = shouldBumpInputRevision(patch)
+          ? { ...patch, inputRevision: makeFlowId() }
+          : patch;
         let changed = false;
         const nodes = currentNodes.map((node) => {
-          if (node.id !== id || !hasNodeDataPatchChange(node.data, patch)) {
+          if (node.id !== id || !hasNodeDataPatchChange(node.data, effectivePatch)) {
             return node;
           }
 
           changed = true;
-          return attachRuntimeData({ ...node, data: { ...node.data, ...patch } }, get);
+          return attachRuntimeData({ ...node, data: { ...node.data, ...effectivePatch } }, get);
         });
 
         if (!changed) {
           return;
+        }
+
+        if (invalidatesRun) {
+          const workspaceStore = useFlowWorkspaceStore.getState();
+          workspaceStore.invalidateFlowRunForNode(workspaceStore.hydratedWorkspaceId, id);
         }
 
         set({ nodes });
@@ -2696,21 +2908,55 @@ export const useFlowStore = create<FlowState>()(
         });
       },
       cancelNodeRun: (id) => {
-        const controller = activeRunControllers.get(id);
+        const workspaceState = useFlowWorkspaceStore.getState();
+        const workspaceId = workspaceState.hydratedWorkspaceId;
+        const runId = workspaceState.getActiveFlowRunId(workspaceId, id);
+        const controller = runId ? activeRunControllers.get(runId) : undefined;
 
         if (!controller) {
           return;
         }
 
         controller.abort();
-        get().patchNodeData(id, {
-          statusMessage: 'Cancelling run…',
-          error: undefined,
+        const runNodeIds = workspaceState.invalidateFlowRunForNode(workspaceId, id);
+        const cancelledNodeOwners = runNodeIds.map((runNodeId) => {
+          const data = get().nodes.find((node) => node.id === runNodeId)?.data;
+          return {
+            nodeId: runNodeId,
+            nodeInstanceId: data?.nodeInstanceId,
+            inputRevision: data?.inputRevision,
+          };
+        });
+        for (const runNodeId of runNodeIds) {
+          get().patchNodeData(runNodeId, {
+            isRunning: false,
+            statusMessage: 'Cancelling run…',
+            error: undefined,
+          });
+        }
+        queueMicrotask(() => {
+          if (useFlowWorkspaceStore.getState().hydratedWorkspaceId !== workspaceId) return;
+          for (const cancelledOwner of cancelledNodeOwners) {
+            if (useFlowWorkspaceStore.getState().getActiveFlowRunId(workspaceId, cancelledOwner.nodeId)) continue;
+            const current = get().nodes.find((node) => node.id === cancelledOwner.nodeId);
+            if (
+              current?.data.nodeInstanceId !== cancelledOwner.nodeInstanceId
+              || current?.data.inputRevision !== cancelledOwner.inputRevision
+            ) {
+              continue;
+            }
+            get().patchNodeData(cancelledOwner.nodeId, {
+              isRunning: false,
+              statusMessage: 'Run cancelled.',
+              error: undefined,
+            });
+          }
         });
       },
       hydratePersistedState: () => {
         const safe = sanitizePersistedFlowState(get());
-        const normalizedNodes = attachRuntimeDataToNodes(safe.nodes, get);
+        const normalizedNodes = attachHydratedRuntimeDataToNodes(safe.nodes, get);
+        hydratedCanvasWorkspaceId = useFlowWorkspaceStore.getState().hydratedWorkspaceId;
         set({
           nodes: normalizedNodes,
           edges: normalizeFlowEdges(normalizedNodes, safe.edges),
@@ -2823,17 +3069,34 @@ export const useFlowStore = create<FlowState>()(
         edges: get().edges,
       }),
       replaceFlowSnapshot: (snapshot) => {
+        const targetWorkspaceId = useFlowWorkspaceStore.getState().hydratedWorkspaceId;
+        const isWorkspaceSwitch = targetWorkspaceId !== hydratedCanvasWorkspaceId;
+        // Replacing the current canvas creates a new graph boundary. Any active
+        // graph owned by this workspace must be invalidated before reused node IDs
+        // can receive a completion from the graph it replaced. A workspace switch
+        // updates hydratedWorkspaceId first, so runs owned by the workspace being
+        // left remain eligible to publish to their immutable owner snapshot.
+        if (!isWorkspaceSwitch) {
+          invalidateHydratedRunGraphs(get().nodes.map((node) => node.id));
+        }
+        hydratedFlowGraphGeneration += 1;
         set(replaceFlowSnapshotState(
           snapshot,
-          (nodes) => attachRuntimeDataToNodes(nodes, get),
+          (nodes) => isWorkspaceSwitch
+            ? attachRuntimeDataToNodes(nodes, get)
+            : attachHydratedRuntimeDataToNodes(nodes, get),
           normalizeFlowEdges,
         ));
+        hydratedCanvasWorkspaceId = targetWorkspaceId;
       },
       applyRemoteFlowGraphChange: (change) => {
         // A full snapshot reuses the existing restore path (runtime re-attach + edge normalization).
         if (change.type === 'flow-graph-snapshot') {
           get().replaceFlowSnapshot(change.snapshot);
           return true;
+        }
+        if (change.type === 'flow-node-removed') {
+          invalidateHydratedRunGraphs([change.nodeId]);
         }
         let changed = false;
         set((state) => {
@@ -2848,7 +3111,19 @@ export const useFlowStore = create<FlowState>()(
         });
         return changed;
       },
-      runNode: async (nodeId: string) => {
+      runNode: (nodeId: string) => {
+        const runWorkspaceId = useFlowWorkspaceStore.getState().hydratedWorkspaceId;
+        const runKey = activeGraphRunKey(
+          runWorkspaceId,
+          nodeId,
+          get().nodes.find((node) => node.id === nodeId),
+        );
+        const existingRun = activeGraphRuns.get(runKey);
+        if (existingRun) {
+          return existingRun;
+        }
+
+        const run = (async () => {
         const preflightState = get();
         const preflightSettings = useSettingsStore.getState();
         const preflightEstimate = estimateExecutionPlan(
@@ -2944,20 +3219,93 @@ export const useFlowStore = create<FlowState>()(
           }
         }
 
+        const workspaceState = useFlowWorkspaceStore.getState();
+        const ownerWorkspaceId = workspaceState.hydratedWorkspaceId;
+        const ownerWorkspace = workspaceState.getWorkspace(ownerWorkspaceId);
+        const ownerNode = get().nodes.find((node) => node.id === nodeId);
+        const owner: FlowRunOwner = {
+          workspaceId: ownerWorkspaceId,
+          workspaceName: ownerWorkspace?.name,
+          nodeId,
+          nodeInstanceId: ownerNode?.data.nodeInstanceId,
+          inputRevision: ownerNode?.data.inputRevision,
+          runId: makeFlowId(),
+        };
+
         const runController = new AbortController();
+        workspaceState.registerFlowRun(owner, { abort: () => runController.abort() });
+        activeRunControllers.set(owner.runId, runController);
         const abortSignal = runController.signal;
+        const requestedRootNode = get().nodes.find((node) => node.id === nodeId);
         const throwIfRunAborted = () => {
           if (abortSignal.aborted) {
             throw new DOMException('The run was cancelled.', 'AbortError');
           }
         };
 
-        const executeRecursively = async (currentId: string, stack: Set<string>): Promise<void> => {
-          throwIfRunAborted();
-
-          if (stack.has(currentId)) {
-            throw new Error('Flow execution cannot continue because the graph contains a cycle.');
+        const workspaceStore = useFlowWorkspaceStore.getState();
+        const commitRunPatch = (currentId: string, patch: Partial<NodeData>) => {
+          return workspaceStore.commitFlowRunPatch(owner, currentId, patch, {
+            getHydratedNodeData: (currentNodeId) => get().nodes.find((node) => node.id === currentNodeId)?.data,
+            applyToHydratedCanvas: (currentNodeId, nodePatch) => get().patchNodeData(currentNodeId, nodePatch),
+          });
+        };
+        const isRunOwnerValid = (currentId: string) => {
+          return workspaceStore.isFlowRunOwnerValid(owner, currentId, {
+            getHydratedNodeData: (currentNodeId) => get().nodes.find((node) => node.id === currentNodeId)?.data,
+          });
+        };
+        if (requestedRootNode && !canRunNode(requestedRootNode)) {
+          commitRunPatch(nodeId, {
+            isRunning: true,
+            error: undefined,
+            statusMessage: 'Running…',
+          });
+        }
+        const recordedUsageEvents = new Set<string>();
+        let usageEventSequence = 0;
+        const recordIncurredUsage = (node: AppNode, usage: UsageTelemetry | undefined) => {
+          if (!usage) return;
+          const eventId = `${owner.runId}:${node.id}:${usageEventSequence++}`;
+          if (recordedUsageEvents.has(eventId)) return;
+          recordedUsageEvents.add(eventId);
+          // A provider response is a financial fact even if the owner became stale
+          // while it was in flight. Always ledger it to the immutable starting owner;
+          // publication remains separately guarded below.
+          recordProjectUsageFromExecution({
+            node,
+            usage,
+            workspace: 'flow',
+            flowWorkspaceId: owner.workspaceId,
+            flowWorkspaceName: owner.workspaceName,
+            recordUsage: useProjectUsageStore.getState().recordUsage,
+          });
+        };
+        const discardRunSourceItems = (items: Array<import('./sourceBinStore').SourceBinLibraryItem | undefined>) => {
+          const sourceBin = useSourceBinStore.getState();
+          for (const item of items) {
+            if (item?.originWorkspaceId === owner.workspaceId && item.originRunId === owner.runId) {
+              sourceBin.removeItem(item.id);
+            }
           }
+        };
+        // A dependency can feed multiple branches of one root execution. Memoize
+        // the in-flight/completed promise for this root only: it deduplicates a
+        // diamond without treating a saved result from an earlier root run as a
+        // dependency result for this one.
+        const completedNodePromises = new Map<string, Promise<void>>();
+        const executeRecursively = (currentId: string, stack: Set<string>): Promise<void> => {
+          if (stack.has(currentId)) {
+            return Promise.reject(new Error('Flow execution cannot continue because the graph contains a cycle.'));
+          }
+
+          const existingExecution = completedNodePromises.get(currentId);
+          if (existingExecution) {
+            return existingExecution;
+          }
+
+          const execution = (async (): Promise<void> => {
+            throwIfRunAborted();
 
           const state = get();
           const currentNode = state.nodes.find((node) => node.id === currentId);
@@ -2965,7 +3313,13 @@ export const useFlowStore = create<FlowState>()(
             return;
           }
 
-          if (currentId !== nodeId && shouldReuseExistingNodeOutput(currentNode)) {
+          workspaceStore.registerFlowRunNode(owner, {
+            nodeId: currentId,
+            nodeInstanceId: currentNode.data.nodeInstanceId,
+            inputRevision: currentNode.data.inputRevision,
+          });
+
+          if (!isRunOwnerValid(currentId)) {
             return;
           }
 
@@ -2973,8 +3327,7 @@ export const useFlowStore = create<FlowState>()(
           nextStack.add(currentId);
 
           if (canRunNode(currentNode)) {
-            activeRunControllers.set(currentId, runController);
-            state.patchNodeData(currentId, {
+            commitRunPatch(currentId, {
               isRunning: true,
               error: undefined,
               statusMessage: 'Running…',
@@ -2996,6 +3349,10 @@ export const useFlowStore = create<FlowState>()(
             const latestNode = latestState.nodes.find((node) => node.id === currentId);
 
             if (!latestNode || !canRunNode(latestNode)) {
+              return;
+            }
+
+            if (!isRunOwnerValid(currentId)) {
               return;
             }
 
@@ -3111,7 +3468,7 @@ export const useFlowStore = create<FlowState>()(
                 const breakDecision = shouldBreakLoopAtIteration(currentId, latestState.nodes, latestState.edges, index);
                 if (breakDecision.shouldBreak) {
                   stoppedLoopMessage = `Stopped before iteration ${index + 1}/${combinedIterationCount}${breakDecision.reason ? `: ${breakDecision.reason}` : ''}`;
-                  get().patchNodeData(currentId, {
+                  commitRunPatch(currentId, {
                     envelopeItems,
                     statusMessage: stoppedLoopMessage,
                     error: undefined,
@@ -3138,9 +3495,12 @@ export const useFlowStore = create<FlowState>()(
                   (item) => item.originNodeId === currentId && item.envelopeId === envelopeId && item.envelopeIndex === index
                 );
 
-                if (existingAsset) {
+                // A Source result belongs to the root that produced it. Dependencies
+                // must execute for every root run, even when a prior root persisted
+                // an otherwise-matching envelope item.
+                if (currentId === nodeId && existingAsset) {
                   envelopeItems.push(buildEnvelopeItemFromSourceBinItem(existingAsset));
-                  get().patchNodeData(currentId, {
+                  commitRunPatch(currentId, {
                     envelopeItems,
                     statusMessage: `${loopStatusLabel} ${index + 1}/${combinedIterationCount}: Resumed from Source Bin`,
                     error: undefined,
@@ -3153,7 +3513,7 @@ export const useFlowStore = create<FlowState>()(
                     return;
                   }
 
-                  get().patchNodeData(currentId, {
+                  commitRunPatch(currentId, {
                     statusMessage: `${loopStatusLabel} ${index + 1}/${combinedIterationCount}: ${statusMessage}`,
                     error: undefined,
                   });
@@ -3162,18 +3522,15 @@ export const useFlowStore = create<FlowState>()(
                   graph: { nodes: latestState.nodes, edges: latestState.edges },
                 });
 
+                recordIncurredUsage(latestNode, execution.usage);
                 throwIfRunAborted();
-                recordProjectUsageFromExecution({
-                  node: latestNode,
-                  usage: execution.usage,
-                  workspace: 'flow',
-                  ...getActiveFlowWorkspaceUsageContext(),
-                  recordUsage: useProjectUsageStore.getState().recordUsage,
-                });
+                if (!isRunOwnerValid(currentId)) return;
                 
                 const newEnvelopeItem = buildEnvelopeItemFromExecution(currentId, index, execution, iterationItems);
+                const sourceItemsForPatch: Array<import('./sourceBinStore').SourceBinLibraryItem> = [];
                 
                 if (isAssetSourceKind(execution.resultType)) {
+                  if (!isRunOwnerValid(currentId)) return;
                   const sourceItem = await useSourceBinStore.getState().addAssetItem({
                     label: newEnvelopeItem.label,
                     kind: execution.resultType,
@@ -3181,27 +3538,37 @@ export const useFlowStore = create<FlowState>()(
                     dataUrl: newEnvelopeItem.value,
                     blob: execution.blob,
                     originNodeId: currentId,
+                    originWorkspaceId: owner.workspaceId,
+                    originRunId: owner.runId,
                     envelopeId,
                     envelopeLabel: newEnvelopeItem.label,
                     envelopeIndex: index,
                     envelopeCollapsed: false,
                   });
+                  sourceItemsForPatch.push(sourceItem);
+                  if (!isRunOwnerValid(currentId)) {
+                    discardRunSourceItems(sourceItemsForPatch);
+                    return;
+                  }
                   newEnvelopeItem.value = sourceItem.assetUrl ?? newEnvelopeItem.value;
                   newEnvelopeItem.sourceBinItemId = sourceItem.id;
                 }
 
                 envelopeItems.push(newEnvelopeItem);
 
-                get().patchNodeData(currentId, {
+                if (!commitRunPatch(currentId, {
                   envelopeItems,
                   statusMessage: `${loopStatusLabel} ${index + 1}/${combinedIterationCount}: ${execution.statusMessage}`,
                   error: undefined,
-                });
+                })) {
+                  discardRunSourceItems(sourceItemsForPatch);
+                  return;
+                }
               }
 
               const firstItem = envelopeItems[0];
               if (!firstItem) {
-                latestState.patchNodeData(currentId, {
+                commitRunPatch(currentId, {
                   envelopeItems,
                   error: undefined,
                   statusMessage: stoppedLoopMessage ?? 'The connected list did not contain any runnable items.',
@@ -3225,7 +3592,7 @@ export const useFlowStore = create<FlowState>()(
                 sourceBinItemId: firstItem.sourceBinItemId,
               });
 
-              latestState.patchNodeData(currentId, {
+              commitRunPatch(currentId, {
                 result: selectedResult,
                 resultType: firstItem.kind,
                 envelopeItems,
@@ -3244,7 +3611,9 @@ export const useFlowStore = create<FlowState>()(
               (item) => item.originNodeId === currentId && item.envelopeId === envelopeId && item.envelopeIndex === 0
             );
 
-            if (existingAsset) {
+            // Never satisfy a dependency from an earlier root's saved Source item.
+            // Root-level resume remains available for an explicit direct rerun.
+            if (currentId === nodeId && existingAsset) {
               const execution = {
                 result: existingAsset.assetUrl ?? existingAsset.text ?? '',
                 resultType: existingAsset.kind as import('../types/flow').ResultType,
@@ -3257,7 +3626,7 @@ export const useFlowStore = create<FlowState>()(
                 sourceBinItemId: existingAsset.id,
               });
 
-              latestState.patchNodeData(currentId, {
+              commitRunPatch(currentId, {
                 result: execution.result,
                 resultType: execution.resultType,
                 resultMimeType: execution.mimeType,
@@ -3275,7 +3644,7 @@ export const useFlowStore = create<FlowState>()(
                 return;
               }
 
-              get().patchNodeData(currentId, {
+              commitRunPatch(currentId, {
                 statusMessage,
                 error: undefined,
               });
@@ -3284,15 +3653,9 @@ export const useFlowStore = create<FlowState>()(
               graph: { nodes: latestState.nodes, edges: latestState.edges },
             });
 
+            recordIncurredUsage(latestNode, execution.usage);
             throwIfRunAborted();
-
-            recordProjectUsageFromExecution({
-              node: latestNode,
-              usage: execution.usage,
-              workspace: 'flow',
-              ...getActiveFlowWorkspaceUsageContext(),
-              recordUsage: useProjectUsageStore.getState().recordUsage,
-            });
+            if (!isRunOwnerValid(currentId)) return;
 
             // Multi-image output from a SINGLE call (e.g. Seedream Sequential's `max_images`): surface every
             // image as an envelope so they all land in the Source Library + downstream list, not just the first.
@@ -3304,8 +3667,13 @@ export const useFlowStore = create<FlowState>()(
               const allOutputs = [{ result: firstMediaResult, mimeType: execution.mimeType }, ...execution.additionalResults];
               const baseLabel = (latestNode.data.title as string) || `${latestNode.type} result`;
               const envelopeItems: EnvelopeItem[] = [];
+              const sourceItemsForPatch: Array<import('./sourceBinStore').SourceBinLibraryItem> = [];
               for (let index = 0; index < allOutputs.length; index += 1) {
                 throwIfRunAborted();
+                if (!isRunOwnerValid(currentId)) {
+                  discardRunSourceItems(sourceItemsForPatch);
+                  return;
+                }
                 const output = allOutputs[index];
                 const sourceItem = await useSourceBinStore.getState().addAssetItem({
                   label: `${baseLabel} ${index + 1}`,
@@ -3313,11 +3681,18 @@ export const useFlowStore = create<FlowState>()(
                   mimeType: output.mimeType ?? execution.mimeType ?? 'application/octet-stream',
                   dataUrl: output.result,
                   originNodeId: currentId,
+                  originWorkspaceId: owner.workspaceId,
+                  originRunId: owner.runId,
                   envelopeId,
                   envelopeLabel: baseLabel,
                   envelopeIndex: index,
                   envelopeCollapsed: false,
                 });
+                sourceItemsForPatch.push(sourceItem);
+                if (!isRunOwnerValid(currentId)) {
+                  discardRunSourceItems(sourceItemsForPatch);
+                  return;
+                }
                 envelopeItems.push({
                   id: `${currentId}-envelope-${Date.now()}-${index}`,
                   index,
@@ -3338,7 +3713,7 @@ export const useFlowStore = create<FlowState>()(
                 usage: execution.usage,
                 sourceBinItemId: firstItem.sourceBinItemId,
               });
-              latestState.patchNodeData(currentId, {
+              if (!commitRunPatch(currentId, {
                 result: firstItem.value,
                 resultType: execution.resultType,
                 resultMimeType: firstItem.mimeType,
@@ -3348,16 +3723,20 @@ export const useFlowStore = create<FlowState>()(
                 usage: execution.usage,
                 error: undefined,
                 statusMessage: execution.statusMessage,
-              });
+              })) {
+                discardRunSourceItems(sourceItemsForPatch);
+              }
               return;
             }
 
             let generatedSourceBinItemId: string | undefined;
+            const sourceItemsForPatch: Array<import('./sourceBinStore').SourceBinLibraryItem> = [];
             if (isAssetSourceKind(execution.resultType)) {
               const mediaResult = resultValueAsMediaUrl(execution.result);
               if (!mediaResult) {
                 throw new Error(`The ${execution.resultType} executor returned a non-media value.`);
               }
+              if (!isRunOwnerValid(currentId)) return;
               const sourceItem = await useSourceBinStore.getState().addAssetItem({
                 label: (latestNode.data.title as string) || `${latestNode.type} result`,
                 kind: execution.resultType,
@@ -3365,11 +3744,18 @@ export const useFlowStore = create<FlowState>()(
                 dataUrl: mediaResult,
                 blob: execution.blob,
                 originNodeId: currentId,
+                originWorkspaceId: owner.workspaceId,
+                originRunId: owner.runId,
                 envelopeId,
                 envelopeLabel: (latestNode.data.title as string) || `${latestNode.type} result`,
                 envelopeIndex: 0,
                 envelopeCollapsed: false,
               });
+              sourceItemsForPatch.push(sourceItem);
+              if (!isRunOwnerValid(currentId)) {
+                discardRunSourceItems(sourceItemsForPatch);
+                return;
+              }
               execution.result = sourceItem.assetUrl ?? mediaResult;
               generatedSourceBinItemId = sourceItem.id;
             }
@@ -3379,7 +3765,7 @@ export const useFlowStore = create<FlowState>()(
               sourceBinItemId: generatedSourceBinItemId,
             });
 
-            latestState.patchNodeData(currentId, {
+            if (!commitRunPatch(currentId, {
               result: execution.result,
               resultType: execution.resultType,
               resultMimeType: execution.mimeType,
@@ -3392,10 +3778,16 @@ export const useFlowStore = create<FlowState>()(
               usage: execution.usage,
               error: undefined,
               statusMessage: execution.statusMessage,
-            });
+            })) {
+              discardRunSourceItems(sourceItemsForPatch);
+            }
           } catch (error) {
+            const partialUsage = (error as { usage?: UsageTelemetry }).usage;
+            if (partialUsage && canRunNode(currentNode)) {
+              recordIncurredUsage(currentNode, partialUsage);
+            }
             if (isAbortError(error)) {
-              get().patchNodeData(currentId, {
+              commitRunPatch(currentId, {
                 error: undefined,
                 statusMessage: 'Run cancelled.',
               });
@@ -3404,22 +3796,22 @@ export const useFlowStore = create<FlowState>()(
 
             const message =
               error instanceof Error ? error.message : 'Flow execution failed for an unknown reason.';
-            get().patchNodeData(currentId, {
+            commitRunPatch(currentId, {
               error: message,
               statusMessage: undefined,
             });
+
             throw error;
           } finally {
             if (canRunNode(currentNode)) {
-              if (activeRunControllers.get(currentId) === runController) {
-                activeRunControllers.delete(currentId);
-              }
-
-              get().patchNodeData(currentId, {
+              commitRunPatch(currentId, {
                 isRunning: false,
               });
             }
           }
+          })();
+          completedNodePromises.set(currentId, execution);
+          return execution;
         };
 
         try {
@@ -3428,7 +3820,24 @@ export const useFlowStore = create<FlowState>()(
           if (!isAbortError(error)) {
             console.error(error);
           }
+        } finally {
+          if (requestedRootNode && !canRunNode(requestedRootNode)) {
+            commitRunPatch(nodeId, { isRunning: false });
+          }
+          activeRunControllers.delete(owner.runId);
+          workspaceStore.unregisterFlowRun(owner);
         }
+        })();
+
+        activeGraphRuns.set(runKey, run);
+        void run.finally(() => {
+          if (activeGraphRuns.get(runKey) === run) {
+            activeGraphRuns.delete(runKey);
+          }
+        }).catch(() => {
+          // runNode deliberately renders failures into node state instead of rejecting to callers.
+        });
+        return run;
       },
     }),
     {

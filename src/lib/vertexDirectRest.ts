@@ -22,10 +22,12 @@ import type { ProviderSettings } from '../types/flow';
 import { getVertexCredentialAccessToken, type MintAccessTokenDeps } from './vertex/vertexServiceAccountAuth';
 import { blobToDataUrl, readBinaryImageResponseBlob } from './imageEditorAi/blobUtils';
 import { NonRetryableError } from './exponentialBackoff';
+import { abortableSleep, createAbortError, isAbortError, raceWithAbort, throwIfAborted } from './abortSignals';
 
 export interface VertexDirectRestDeps extends MintAccessTokenDeps {
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
+  signal?: AbortSignal;
 }
 
 /** Direct REST is available whenever a service-account or authorized-user ADC JSON is configured. */
@@ -259,10 +261,6 @@ function vertexGcsUriToDownloadUrl(gcsUri: string): string | undefined {
 const VIDEO_POLL_ATTEMPTS = 45;
 const VIDEO_POLL_INTERVAL_MS = 10_000;
 
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export async function generateVertexImageDirect(
   request: NativeVertexImageRequest,
   providerSettings: ProviderSettings,
@@ -270,8 +268,10 @@ export async function generateVertexImageDirect(
 ): Promise<NativeVertexImageResult> {
   const doFetch = deps.fetch ?? globalThis.fetch;
   try {
+    throwIfAborted(deps.signal);
     const endpoint = buildImageEndpoint(request);
     const token = await getDirectAccessToken(providerSettings, deps);
+    throwIfAborted(deps.signal);
     const quotaProjectId = resolveQuotaProjectId(request, endpoint.projectId);
     const response = await doFetch(endpoint.url, {
       method: 'POST',
@@ -281,6 +281,7 @@ export async function generateVertexImageDirect(
         'x-goog-user-project': quotaProjectId,
       },
       body: JSON.stringify(request.body),
+      signal: deps.signal,
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -297,6 +298,8 @@ export async function generateVertexImageDirect(
       statusMessage: `Generated with ${endpoint.modelId}`,
     };
   } catch (error) {
+    if (isAbortError(error)) throw error;
+    if (deps.signal?.aborted) throw createAbortError();
     return { error: error instanceof Error ? error.message : 'Vertex AI image generation failed.' };
   }
 }
@@ -308,8 +311,10 @@ export async function generateVertexTextDirect(
 ): Promise<NativeVertexTextResult> {
   const doFetch = deps.fetch ?? globalThis.fetch;
   try {
+    throwIfAborted(deps.signal);
     const endpoint = buildTextEndpoint(request);
     const token = await getDirectAccessToken(providerSettings, deps);
+    throwIfAborted(deps.signal);
     const quotaProjectId = resolveQuotaProjectId(request, endpoint.projectId);
     const response = await doFetch(endpoint.url, {
       method: 'POST',
@@ -319,6 +324,7 @@ export async function generateVertexTextDirect(
         'x-goog-user-project': quotaProjectId,
       },
       body: JSON.stringify(request.body),
+      signal: deps.signal,
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -330,6 +336,8 @@ export async function generateVertexTextDirect(
     }
     return { text, statusMessage: `Generated with ${endpoint.modelId}` };
   } catch (error) {
+    if (isAbortError(error)) throw error;
+    if (deps.signal?.aborted) throw createAbortError();
     return { error: error instanceof Error ? error.message : 'Vertex AI text generation failed.' };
   }
 }
@@ -341,6 +349,7 @@ async function pollVertexVideoOperation(input: {
   quotaProjectId: string;
   doFetch: typeof fetch;
   sleep: (ms: number) => Promise<void>;
+  signal?: AbortSignal;
 }): Promise<unknown> {
   let currentOperation = input.operation as {
     error?: { message?: string };
@@ -366,6 +375,7 @@ async function pollVertexVideoOperation(input: {
         'x-goog-user-project': input.quotaProjectId,
       },
       body: JSON.stringify({ operationName: currentOperation.name }),
+      signal: input.signal,
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -381,6 +391,7 @@ async function materializeVertexVideoDirect(input: {
   token: string;
   quotaProjectId: string;
   doFetch: typeof fetch;
+  signal?: AbortSignal;
 }): Promise<{ result: string; mimeType: string }> {
   if (input.video.data) {
     return {
@@ -397,6 +408,7 @@ async function materializeVertexVideoDirect(input: {
       Authorization: `Bearer ${input.token}`,
       'x-goog-user-project': input.quotaProjectId,
     },
+    signal: input.signal,
   });
   if (!response.ok) {
     const payload = await response.text().catch(() => '');
@@ -415,10 +427,14 @@ export async function generateVertexVideoDirect(
   deps: VertexDirectRestDeps = {},
 ): Promise<NativeVertexVideoResult> {
   const doFetch = deps.fetch ?? globalThis.fetch;
-  const sleep = deps.sleep ?? defaultSleep;
+  const sleep = deps.sleep
+    ? (ms: number) => raceWithAbort(deps.sleep!(ms), deps.signal)
+    : (ms: number) => abortableSleep(ms, deps.signal);
   try {
+    throwIfAborted(deps.signal);
     const endpoint = buildVideoEndpoint(request);
     const token = await getDirectAccessToken(providerSettings, deps);
+    throwIfAborted(deps.signal);
     const quotaProjectId = resolveQuotaProjectId(request, endpoint.projectId);
     const initialResponse = await doFetch(endpoint.url, {
       method: 'POST',
@@ -428,6 +444,7 @@ export async function generateVertexVideoDirect(
         'x-goog-user-project': quotaProjectId,
       },
       body: JSON.stringify(request.body),
+      signal: deps.signal,
     });
     const initialPayload = await initialResponse.json().catch(() => ({}));
     if (!initialResponse.ok) {
@@ -441,13 +458,14 @@ export async function generateVertexVideoDirect(
           quotaProjectId,
           doFetch,
           sleep,
+          signal: deps.signal,
         })
       : initialPayload;
     const video = extractVertexGeneratedVideo(finalPayload);
     if (!video) {
       return { error: 'Vertex AI returned no video data.' };
     }
-    const materialized = await materializeVertexVideoDirect({ video, token, quotaProjectId, doFetch });
+    const materialized = await materializeVertexVideoDirect({ video, token, quotaProjectId, doFetch, signal: deps.signal });
     return {
       result: materialized.result,
       resultType: 'video',
@@ -455,6 +473,8 @@ export async function generateVertexVideoDirect(
       statusMessage: `Generated with ${endpoint.modelId}`,
     };
   } catch (error) {
+    if (isAbortError(error)) throw error;
+    if (deps.signal?.aborted) throw createAbortError();
     return { error: error instanceof Error ? error.message : 'Vertex AI video generation failed.' };
   }
 }

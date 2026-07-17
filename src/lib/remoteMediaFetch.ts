@@ -1,5 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { getSignalLoomNativeBridge } from './nativeApp';
+import { createAbortError, isAbortError, raceWithAbort, throwIfAborted } from './abortSignals';
 
 export interface RemoteMediaBytes {
   dataUrl: string;
@@ -18,12 +19,21 @@ interface CapacitorHttpPlugin {
 
 export type ElectronRemoteMediaDownloader = (
   url: string,
+  cancellationId?: string,
 ) => Promise<{ base64?: string; mimeType?: string; error?: string } | null>;
 
 export interface RemoteMediaFetchRuntime {
   isAndroidNative?: boolean;
   capacitorHttp?: CapacitorHttpPlugin;
   electronDownload?: ElectronRemoteMediaDownloader;
+  electronCancelDownload?: (cancellationId: string) => Promise<{ cancelled?: boolean }>;
+}
+
+let nativeDownloadSequence = 0;
+
+function createNativeDownloadCancellationId(): string {
+  nativeDownloadSequence += 1;
+  return `flow-media-${Date.now()}-${nativeDownloadSequence}`;
 }
 
 function headerValue(headers: Record<string, string> | undefined, name: string): string | undefined {
@@ -59,9 +69,11 @@ function resolveDefaultRuntime(): RemoteMediaFetchRuntime {
     capacitorHttp = undefined;
   }
 
-  const electronDownload = getSignalLoomNativeBridge()?.downloadRemoteMedia;
+  const bridge = getSignalLoomNativeBridge();
+  const electronDownload = bridge?.downloadRemoteMedia;
+  const electronCancelDownload = bridge?.cancelRemoteMediaDownload;
 
-  return { isAndroidNative, capacitorHttp, electronDownload };
+  return { isAndroidNative, capacitorHttp, electronDownload, electronCancelDownload };
 }
 
 /**
@@ -81,26 +93,47 @@ function resolveDefaultRuntime(): RemoteMediaFetchRuntime {
 export async function fetchRemoteMediaAsDataUrl(
   url: string,
   runtime: RemoteMediaFetchRuntime = resolveDefaultRuntime(),
+  signal?: AbortSignal,
 ): Promise<RemoteMediaBytes | undefined> {
+  throwIfAborted(signal);
   if (!/^https?:\/\//i.test(url)) {
     return undefined;
   }
 
   if (runtime.electronDownload) {
+    const cancellationId = signal && runtime.electronCancelDownload
+      ? createNativeDownloadCancellationId()
+      : undefined;
+    let cancellationSent = false;
+    const cancelNativeDownload = () => {
+      if (!cancellationId || cancellationSent) return;
+      cancellationSent = true;
+      void runtime.electronCancelDownload?.(cancellationId).catch(() => undefined);
+    };
+    signal?.addEventListener('abort', cancelNativeDownload, { once: true });
     try {
-      const result = await runtime.electronDownload(url);
+      const result = await raceWithAbort(
+        cancellationId
+          ? runtime.electronDownload(url, cancellationId)
+          : runtime.electronDownload(url),
+        signal,
+      );
       if (result && result.base64 && !result.error) {
         const mimeType = normalizeMimeType(result.mimeType);
         return { dataUrl: `data:${mimeType};base64,${result.base64}`, mimeType };
       }
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      if (signal?.aborted) throw createAbortError();
       // Fall through to other strategies.
+    } finally {
+      signal?.removeEventListener('abort', cancelNativeDownload);
     }
   }
 
   if (runtime.isAndroidNative && runtime.capacitorHttp) {
     try {
-      const response = await runtime.capacitorHttp.get({ url, responseType: 'blob' });
+      const response = await raceWithAbort(runtime.capacitorHttp.get({ url, responseType: 'blob' }), signal);
       if (
         response.status >= 200 &&
         response.status < 300 &&
@@ -110,7 +143,9 @@ export async function fetchRemoteMediaAsDataUrl(
         const mimeType = normalizeMimeType(headerValue(response.headers, 'content-type'));
         return { dataUrl: `data:${mimeType};base64,${response.data}`, mimeType };
       }
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      if (signal?.aborted) throw createAbortError();
       // Fall through.
     }
   }
@@ -161,11 +196,13 @@ export async function fetchProviderResultBlob(
     if (response.ok) {
       return await response.blob();
     }
-  } catch {
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    if (signal?.aborted) throw createAbortError();
     // CORS / network error — fall through to the native path.
   }
 
-  const native = runtime ? await fetchRemoteMediaAsDataUrl(url, runtime) : await fetchRemoteMediaAsDataUrl(url);
+  const native = runtime ? await fetchRemoteMediaAsDataUrl(url, runtime, signal) : await fetchRemoteMediaAsDataUrl(url, undefined, signal);
   if (native) {
     return base64DataUrlToBlob(native.dataUrl, native.mimeType);
   }

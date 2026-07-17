@@ -1,3 +1,5 @@
+import { abortableSleep, createAbortError, isAbortError, throwIfAborted } from './abortSignals';
+
 export interface ExponentialBackoffOptions<T> {
   operation: () => Promise<T>;
   maxRetries: number;
@@ -73,13 +75,14 @@ export async function withExponentialBackoff<T>({
 
   while (true) {
     try {
-      if (abortSignal?.aborted) {
-        throw new Error('Operation aborted');
-      }
+      throwIfAborted(abortSignal);
       return await operation();
     } catch (error) {
-      if (abortSignal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+      if (isAbortError(error)) {
         throw error;
+      }
+      if (abortSignal?.aborted) {
+        throw createAbortError();
       }
 
       // Do not retry on configuration, validation, auth, or missing-resource errors.
@@ -111,15 +114,7 @@ export async function withExponentialBackoff<T>({
         onRetry(attempt, maxRetries, delayMs, error);
       }
 
-      await new Promise<void>((resolve, reject) => {
-        const timeoutId = setTimeout(resolve, delayMs);
-        if (abortSignal) {
-          abortSignal.addEventListener('abort', () => {
-            clearTimeout(timeoutId);
-            reject(new Error('Operation aborted'));
-          }, { once: true });
-        }
-      });
+      await abortableSleep(delayMs, abortSignal);
     }
   }
 }

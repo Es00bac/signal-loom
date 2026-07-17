@@ -328,7 +328,7 @@ function restoreSelectedResultFromHistory(data: NodeData, history: NodeResultAtt
   data.resultOutputMetadata = selected.outputMetadata;
 }
 
-function sanitizeNodeData(value: unknown): NodeData {
+function sanitizeNodeData(value: unknown, options: { preserveRuntimeRunState?: boolean } = {}): NodeData {
   const data: NodeData = isRecord(value) ? { ...value } : {};
   const history = sanitizeResultHistory(data.resultHistory);
   const envelopeItems = sanitizeEnvelopeItems(data.envelopeItems);
@@ -336,7 +336,9 @@ function sanitizeNodeData(value: unknown): NodeData {
   delete data.onChange;
   delete data.onRun;
   delete data.onSelectAttempt;
-  data.isRunning = undefined;
+  if (!options.preserveRuntimeRunState) {
+    data.isRunning = undefined;
+  }
   data.error = undefined;
   data.statusMessage = undefined;
 
@@ -400,7 +402,10 @@ function normalizeVisionVerifyNodeData(data: NodeData): NodeData {
   return normalized;
 }
 
-export function sanitizeFlowSnapshot(snapshot: unknown): FlowProjectDocument['flow'] {
+export function sanitizeFlowSnapshot(
+  snapshot: unknown,
+  options: { preserveRuntimeRunState?: boolean } = {},
+): FlowProjectDocument['flow'] {
   if (!isRecord(snapshot) || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.edges)) {
     throw new Error('The selected file is not a valid Sloom Studio .sloom project: flow nodes and edges must be arrays.');
   }
@@ -428,8 +433,8 @@ export function sanitizeFlowSnapshot(snapshot: unknown): FlowProjectDocument['fl
         y: finiteNumber(rawPosition?.y, 0),
       },
       data: rawType === 'visionVerifyNode'
-        ? normalizeVisionVerifyNodeData(sanitizeNodeData(node.data))
-        : sanitizeNodeData(node.data),
+        ? normalizeVisionVerifyNodeData(sanitizeNodeData(node.data, options))
+        : sanitizeNodeData(node.data, options),
     } as AppNode];
   });
 

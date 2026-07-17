@@ -1,5 +1,15 @@
+import { abortableSleep, createAbortError, throwIfAborted } from './abortSignals';
+
+interface QueueWaiter {
+  grant: () => void;
+  reject: (error: unknown) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+}
+
 export class ProviderRateLimiter {
-  private queue: Promise<void> = Promise.resolve();
+  private active = false;
+  private readonly waiters: QueueWaiter[] = [];
   private lastRequestTime = 0;
   minDelayMs: number;
 
@@ -7,29 +17,67 @@ export class ProviderRateLimiter {
     this.minDelayMs = minDelayMs;
   }
 
-  async acquire<T>(task: () => Promise<T>): Promise<T> {
-    let resolveQueue: () => void;
-    const nextQueue = new Promise<void>((resolve) => {
-      resolveQueue = resolve;
-    });
-
-    const previousQueue = this.queue;
-    this.queue = nextQueue;
-
-    await previousQueue;
-
+  async acquire<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    await this.acquireSlot(signal);
     try {
+      throwIfAborted(signal);
       const now = Date.now();
-      const timeSinceLast = now - this.lastRequestTime;
+      // Wall clocks and test clocks can move backwards. Treat that as no
+      // elapsed delay rather than sleeping until the old future timestamp.
+      const timeSinceLast = Math.max(0, now - this.lastRequestTime);
       if (timeSinceLast < this.minDelayMs) {
-        await new Promise((r) => setTimeout(r, this.minDelayMs - timeSinceLast));
+        await abortableSleep(this.minDelayMs - timeSinceLast, signal);
       }
+      throwIfAborted(signal);
       this.lastRequestTime = Date.now();
       return await task();
     } finally {
       this.lastRequestTime = Date.now();
-      resolveQueue!();
+      this.releaseSlot();
     }
+  }
+
+  private acquireSlot(signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+
+    return new Promise<void>((resolve, reject) => {
+      const waiter: QueueWaiter = {
+        reject,
+        signal,
+        grant: () => {
+          if (waiter.onAbort) {
+            signal?.removeEventListener('abort', waiter.onAbort);
+          }
+          resolve();
+        },
+      };
+
+      if (!this.active) {
+        this.active = true;
+        waiter.grant();
+        return;
+      }
+
+      waiter.onAbort = () => {
+        const index = this.waiters.indexOf(waiter);
+        if (index >= 0) {
+          this.waiters.splice(index, 1);
+        }
+        signal?.removeEventListener('abort', waiter.onAbort!);
+        reject(createAbortError());
+      };
+      signal?.addEventListener('abort', waiter.onAbort, { once: true });
+      this.waiters.push(waiter);
+    });
+  }
+
+  private releaseSlot(): void {
+    const next = this.waiters.shift();
+    if (next) {
+      next.grant();
+      return;
+    }
+    this.active = false;
   }
 }
 

@@ -913,6 +913,17 @@ export interface NodeData {
   statusMessage?: string;
   collapsed?: boolean;
   customTitle?: string;
+  /**
+   * Immutable identity token for this node instance. New nodes get a fresh token;
+   * duplicate workspaces clone it, but recreating a deleted node with the same id
+   * yields a different token so stale async completions can be rejected.
+   */
+  nodeInstanceId?: string;
+  /**
+   * Revision of execution-relevant inputs. Bumped when non-runtime node data changes
+   * so a run started with one input revision can be rejected after the inputs change.
+   */
+  inputRevision?: string;
   /** The typed value emitted by a node. Media and text results are strings; Boolean ports retain booleans. */
   result?: ResultValue;
   resultType?: ResultType;

@@ -113,6 +113,8 @@ const execFileAsync = promisify(execFile);
 let mainWindow = null;
 let splashWindow = null;
 const workspaceWindows = new Map();
+const remoteMediaDownloadControllers = new Map();
+const vertexGenerationControllers = new Map();
 let applicationMenu = null;
 let currentProjectPath = undefined;
 let currentScratchDirectoryPath = undefined;
@@ -2545,8 +2547,22 @@ function stringOrUndefined(value) {
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms, signal) {
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException('Operation aborted', 'AbortError'));
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      reject(new DOMException('Operation aborted', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function buildVertexErrorMessage(status, payload, label = 'generation') {
@@ -2559,7 +2575,7 @@ function buildVertexErrorMessage(status, payload, label = 'generation') {
   return `Vertex AI ${label} failed (${status}).`;
 }
 
-async function generateVertexImage(request) {
+async function generateVertexImage(request, signal) {
   if (!isPlainObject(request) || !isPlainObject(request.body)) {
     return { error: 'Invalid Vertex image request.' };
   }
@@ -2567,6 +2583,7 @@ async function generateVertexImage(request) {
   try {
     const endpoint = buildVertexImageEndpoint(request);
     const token = await getGcloudAccessToken(request.auth);
+    signal?.throwIfAborted();
     const quotaProjectId = resolveVertexQuotaProjectId(request, endpoint.projectId);
     const response = await fetch(endpoint.url, {
       method: 'POST',
@@ -2576,6 +2593,7 @@ async function generateVertexImage(request) {
         'x-goog-user-project': quotaProjectId,
       },
       body: JSON.stringify(request.body),
+      signal,
     });
     const payload = await response.json().catch(() => ({}));
 
@@ -2602,7 +2620,7 @@ async function generateVertexImage(request) {
   }
 }
 
-async function generateVertexText(request) {
+async function generateVertexText(request, signal) {
   if (!isPlainObject(request) || !isPlainObject(request.body)) {
     return { error: 'Invalid Vertex text request.' };
   }
@@ -2610,6 +2628,7 @@ async function generateVertexText(request) {
   try {
     const endpoint = buildVertexTextEndpoint(request);
     const token = await getGcloudAccessToken(request.auth);
+    signal?.throwIfAborted();
     const quotaProjectId = resolveVertexQuotaProjectId(request, endpoint.projectId);
     const response = await fetch(endpoint.url, {
       method: 'POST',
@@ -2619,6 +2638,7 @@ async function generateVertexText(request) {
         'x-goog-user-project': quotaProjectId,
       },
       body: JSON.stringify(request.body),
+      signal,
     });
     const payload = await response.json().catch(() => ({}));
 
@@ -2643,7 +2663,7 @@ async function generateVertexText(request) {
   }
 }
 
-async function generateVertexVideo(request) {
+async function generateVertexVideo(request, signal) {
   if (!isPlainObject(request) || !isPlainObject(request.body)) {
     return { error: 'Invalid Vertex video request.' };
   }
@@ -2651,6 +2671,7 @@ async function generateVertexVideo(request) {
   try {
     const endpoint = buildVertexVideoEndpoint(request);
     const token = await getGcloudAccessToken(request.auth);
+    signal?.throwIfAborted();
     const quotaProjectId = resolveVertexQuotaProjectId(request, endpoint.projectId);
     const initialResponse = await fetch(endpoint.url, {
       method: 'POST',
@@ -2660,6 +2681,7 @@ async function generateVertexVideo(request) {
         'x-goog-user-project': quotaProjectId,
       },
       body: JSON.stringify(request.body),
+      signal,
     });
     const initialPayload = await initialResponse.json().catch(() => ({}));
 
@@ -2673,6 +2695,7 @@ async function generateVertexVideo(request) {
           operation: initialPayload,
           token,
           quotaProjectId,
+          signal,
         })
       : initialPayload;
     const video = extractVertexGeneratedVideo(finalPayload);
@@ -2681,7 +2704,7 @@ async function generateVertexVideo(request) {
       return { error: 'Vertex AI returned no video data.' };
     }
 
-    const materialized = await materializeVertexVideo(video, token, quotaProjectId);
+    const materialized = await materializeVertexVideo(video, token, quotaProjectId, signal);
 
     return {
       result: materialized.result,
@@ -2696,7 +2719,7 @@ async function generateVertexVideo(request) {
   }
 }
 
-async function pollVertexVideoOperation({ endpoint, operation, token, quotaProjectId }) {
+async function pollVertexVideoOperation({ endpoint, operation, token, quotaProjectId, signal }) {
   let currentOperation = operation;
 
   for (let attempt = 0; attempt < 45; attempt += 1) {
@@ -2712,7 +2735,7 @@ async function pollVertexVideoOperation({ endpoint, operation, token, quotaProje
       throw new Error('Vertex AI video generation started without an operation name.');
     }
 
-    await sleep(10_000);
+    await sleep(10_000, signal);
     const response = await fetch(endpoint.fetchOperationUrl, {
       method: 'POST',
       headers: {
@@ -2723,6 +2746,7 @@ async function pollVertexVideoOperation({ endpoint, operation, token, quotaProje
       body: JSON.stringify({
         operationName: currentOperation.name,
       }),
+      signal,
     });
     const payload = await response.json().catch(() => ({}));
 
@@ -2736,7 +2760,7 @@ async function pollVertexVideoOperation({ endpoint, operation, token, quotaProje
   throw new Error('Vertex AI video generation timed out after waiting 7.5 minutes.');
 }
 
-async function materializeVertexVideo(video, token, quotaProjectId) {
+async function materializeVertexVideo(video, token, quotaProjectId, signal) {
   if (video.data) {
     return {
       result: `data:${video.mimeType};base64,${video.data}`,
@@ -2757,6 +2781,7 @@ async function materializeVertexVideo(video, token, quotaProjectId) {
       Authorization: `Bearer ${token}`,
       'x-goog-user-project': quotaProjectId,
     },
+    signal,
   });
 
   if (!response.ok) {
@@ -2771,6 +2796,23 @@ async function materializeVertexVideo(video, token, quotaProjectId) {
     result: `data:${mimeType};base64,${buffer.toString('base64')}`,
     mimeType,
   };
+}
+
+async function runCancelableVertexGeneration(request, generate) {
+  const controller = new AbortController();
+  const cancellationId = typeof request?.cancellationId === 'string' && request.cancellationId.trim()
+    ? request.cancellationId
+    : undefined;
+  if (cancellationId) {
+    vertexGenerationControllers.set(cancellationId, controller);
+  }
+  try {
+    return await generate(request, controller.signal);
+  } finally {
+    if (cancellationId && vertexGenerationControllers.get(cancellationId) === controller) {
+      vertexGenerationControllers.delete(cancellationId);
+    }
+  }
 }
 
 function vertexGcsUriToDownloadUrl(gcsUri) {
@@ -3341,13 +3383,20 @@ function installIpcHandlers() {
   // bound by the renderer's CORS policy and ignores Content-Disposition), so
   // provider result CDNs that block fetch() and force-download can still be
   // inlined and displayed in the renderer. Returns base64 bytes + mime type.
-  ipcMain.handle('signal-loom:download-remote-media', async (_event, url) => {
+  ipcMain.handle('signal-loom:download-remote-media', async (_event, url, cancellationId) => {
     if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
       return { error: 'A valid http(s) URL is required.' };
     }
 
+    const controller = new AbortController();
+    const registeredCancellationId = typeof cancellationId === 'string' && cancellationId.trim()
+      ? cancellationId
+      : undefined;
+    if (registeredCancellationId) {
+      remoteMediaDownloadControllers.set(registeredCancellationId, controller);
+    }
     try {
-      const response = await net.fetch(url);
+      const response = await net.fetch(url, { signal: controller.signal });
       if (!response.ok) {
         return { error: `Remote media download failed with status ${response.status}.` };
       }
@@ -3362,19 +3411,41 @@ function installIpcHandlers() {
       return { base64: buffer.toString('base64'), mimeType };
     } catch (error) {
       return { error: error instanceof Error ? error.message : 'Remote media download failed.' };
+    } finally {
+      if (registeredCancellationId && remoteMediaDownloadControllers.get(registeredCancellationId) === controller) {
+        remoteMediaDownloadControllers.delete(registeredCancellationId);
+      }
     }
   });
 
+  ipcMain.handle('signal-loom:cancel-remote-media-download', async (_event, cancellationId) => {
+    if (typeof cancellationId !== 'string') return { cancelled: false };
+    const controller = remoteMediaDownloadControllers.get(cancellationId);
+    if (!controller) return { cancelled: false };
+    remoteMediaDownloadControllers.delete(cancellationId);
+    controller.abort();
+    return { cancelled: true };
+  });
+
   ipcMain.handle('signal-loom:vertex-generate-image', async (_event, request) => {
-    return generateVertexImage(request);
+    return runCancelableVertexGeneration(request, generateVertexImage);
   });
 
   ipcMain.handle('signal-loom:vertex-generate-text', async (_event, request) => {
-    return generateVertexText(request);
+    return runCancelableVertexGeneration(request, generateVertexText);
   });
 
   ipcMain.handle('signal-loom:vertex-generate-video', async (_event, request) => {
-    return generateVertexVideo(request);
+    return runCancelableVertexGeneration(request, generateVertexVideo);
+  });
+
+  ipcMain.handle('signal-loom:vertex-cancel', async (_event, cancellationId) => {
+    if (typeof cancellationId !== 'string') return { cancelled: false };
+    const controller = vertexGenerationControllers.get(cancellationId);
+    if (!controller) return { cancelled: false };
+    vertexGenerationControllers.delete(cancellationId);
+    controller.abort();
+    return { cancelled: true };
   });
 
   ipcMain.handle('signal-loom:vertex-login', async (_event, request = {}) => {

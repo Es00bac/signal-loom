@@ -53,6 +53,36 @@ describe('fetchRemoteMediaAsDataUrl', () => {
     expect(result).toEqual({ dataUrl: 'data:image/webp;base64,QUJD', mimeType: 'image/webp' });
   });
 
+  it('cancels an in-flight Electron download once and never accepts its late bytes', async () => {
+    let resolveDownload!: (value: { base64: string; mimeType: string }) => void;
+    const electronDownload = vi.fn((_url: string, _cancellationId?: string) => new Promise<{
+      base64: string;
+      mimeType: string;
+    }>((resolve) => {
+      resolveDownload = resolve;
+    }));
+    const electronCancelDownload = vi.fn().mockResolvedValue({ cancelled: true });
+    const controller = new AbortController();
+
+    const pending = fetchRemoteMediaAsDataUrl(ATLAS_URL, {
+      electronDownload,
+      electronCancelDownload,
+    }, controller.signal);
+    await vi.waitFor(() => expect(electronDownload).toHaveBeenCalledOnce());
+    const cancellationId = electronDownload.mock.calls[0][1];
+    expect(cancellationId).toMatch(/^flow-media-/);
+
+    controller.abort();
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(electronCancelDownload).toHaveBeenCalledOnce();
+    expect(electronCancelDownload).toHaveBeenCalledWith(cancellationId);
+
+    resolveDownload({ base64: 'TEFURQ==', mimeType: 'image/png' });
+    await Promise.resolve();
+    expect(electronCancelDownload).toHaveBeenCalledOnce();
+  });
+
   it('falls through to CapacitorHttp when the Electron downloader reports an error', async () => {
     const electronDownload = vi.fn().mockResolvedValue({ error: 'HTTP 500' });
     const get = vi.fn().mockResolvedValue({

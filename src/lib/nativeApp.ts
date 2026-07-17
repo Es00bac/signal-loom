@@ -497,6 +497,7 @@ export interface NativePaperImageExportResult {
 }
 
 export interface NativeVertexImageRequest {
+  cancellationId?: string;
   projectId: string;
   location: string;
   modelId: string;
@@ -514,6 +515,7 @@ export interface NativeVertexImageResult {
 }
 
 export interface NativeVertexTextRequest {
+  cancellationId?: string;
   projectId: string;
   location: string;
   modelId: string;
@@ -528,6 +530,7 @@ export interface NativeVertexTextResult {
 }
 
 export interface NativeVertexVideoRequest {
+  cancellationId?: string;
   projectId: string;
   location: string;
   modelId: string;
@@ -668,10 +671,12 @@ export interface SignalLoomNativeBridge {
   exportPaperImages: (request: NativePaperImageExportRequest) => Promise<NativePaperImageExportResult>;
   captureCurrentWindowPng: () => Promise<NativeWindowCaptureResult>;
   readClipboardImage: () => Promise<string | null | { error: string }>;
-  downloadRemoteMedia: (url: string) => Promise<{ base64?: string; mimeType?: string; error?: string } | null>;
+  downloadRemoteMedia: (url: string, cancellationId?: string) => Promise<{ base64?: string; mimeType?: string; error?: string } | null>;
+  cancelRemoteMediaDownload?: (cancellationId: string) => Promise<{ cancelled?: boolean }>;
   generateVertexImage: (request: NativeVertexImageRequest) => Promise<NativeVertexImageResult>;
   generateVertexText: (request: NativeVertexTextRequest) => Promise<NativeVertexTextResult>;
   generateVertexVideo: (request: NativeVertexVideoRequest) => Promise<NativeVertexVideoResult>;
+  cancelVertexGeneration?: (cancellationId: string) => Promise<{ cancelled?: boolean }>;
   loginVertex: (request: NativeVertexAuthRequest) => Promise<NativeVertexLoginResult>;
   detectVertexAdc: (request: NativeVertexAuthRequest) => Promise<NativeVertexDetectResult>;
   listVertexProjects: (request: NativeVertexAuthRequest) => Promise<NativeVertexProjectsResult>;

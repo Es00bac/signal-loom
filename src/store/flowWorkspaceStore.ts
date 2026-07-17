@@ -6,6 +6,24 @@ import {
   type FlowProjectFlowSnapshot,
   type FlowWorkspaceProjectSnapshot,
 } from '../lib/flowProjectWorkspaces';
+import type { NodeData } from '../types/flow';
+
+export interface FlowRunOwner {
+  workspaceId: string;
+  workspaceName?: string;
+  nodeId: string;
+  nodeInstanceId?: string;
+  inputRevision?: string;
+  runId: string;
+}
+
+type FlowRunNodeOwner = Pick<FlowRunOwner, 'nodeId' | 'nodeInstanceId' | 'inputRevision'>;
+
+type ActiveFlowRun = {
+  owner: FlowRunOwner;
+  nodeOwners: Map<string, FlowRunNodeOwner>;
+  abort?: () => void;
+};
 
 export interface FlowWorkspaceStoreState {
   activeWorkspaceId: string;
@@ -25,10 +43,82 @@ export interface FlowWorkspaceStoreState {
   exportProjectSnapshot: (activeSnapshot: FlowProjectFlowSnapshot) => FlowWorkspaceProjectSnapshot[];
   getWorkspace: (id: string) => FlowWorkspaceProjectSnapshot | undefined;
   reset: () => void;
+  /** Register a Flow run so commits can be validated by runId. */
+  registerFlowRun: (owner: FlowRunOwner, options?: { abort?: () => void }) => void;
+  /** Add a dependency to the immutable run graph before it can publish runtime state. */
+  registerFlowRunNode: (owner: FlowRunOwner, node: FlowRunNodeOwner) => void;
+  /** Unregister a Flow run. Only the current runId for the node may remove itself. */
+  unregisterFlowRun: (owner: FlowRunOwner) => void;
+  /** Get the active runId for a node in a workspace, if any. */
+  getActiveFlowRunId: (workspaceId: string, nodeId: string) => string | undefined;
+  /** Cancel and invalidate the complete run graph that contains this node. */
+  invalidateFlowRunForNode: (workspaceId: string, nodeId: string) => string[];
+  /**
+   * Check whether the owner is still allowed to commit to the target node.
+   * Returns `true` when the workspace/node exist and the instance identity and
+   * input revision (for the root node) have not changed.
+   */
+  isFlowRunOwnerValid: (
+    owner: FlowRunOwner,
+    nodeId: string,
+    options?: {
+      getHydratedNodeData?: (nodeId: string) => NodeData | undefined;
+    },
+  ) => boolean;
+  /**
+   * Commit a node-data patch to the workspace/run that owns it.
+   * Returns `true` when the patch was applied, `false` when the run is stale
+   * (workspace/node deleted, node instance changed, input revision changed,
+   * or a newer run superseded this one).
+   */
+  commitFlowRunPatch: (
+    owner: FlowRunOwner,
+    nodeId: string,
+    patch: Partial<NodeData>,
+    options?: {
+      getHydratedNodeData?: (nodeId: string) => NodeData | undefined;
+      applyToHydratedCanvas?: (nodeId: string, patch: Partial<NodeData>) => void;
+    },
+  ) => boolean;
 }
 
 function makeWorkspaceId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `flow-workspace-${Date.now()}`;
+}
+
+const activeFlowRuns = new Map<string, ActiveFlowRun>();
+
+function flowRunKey(workspaceId: string, nodeId: string): string {
+  return `${workspaceId}:${nodeId}`;
+}
+
+function invalidateActiveFlowRun(run: ActiveFlowRun): void {
+  for (const [key, candidate] of activeFlowRuns) {
+    if (candidate === run) {
+      activeFlowRuns.delete(key);
+    }
+  }
+  run.abort?.();
+}
+
+function removeActiveFlowRun(run: ActiveFlowRun): void {
+  for (const [key, candidate] of activeFlowRuns) {
+    if (candidate === run) {
+      activeFlowRuns.delete(key);
+    }
+  }
+}
+
+function invalidateFlowRunsForWorkspace(workspaceId: string): void {
+  const runs = new Set<ActiveFlowRun>();
+  for (const [key, run] of activeFlowRuns) {
+    if (key.startsWith(`${workspaceId}:`)) {
+      runs.add(run);
+    }
+  }
+  for (const run of runs) {
+    invalidateActiveFlowRun(run);
+  }
 }
 
 function cloneFlowSnapshot<T>(snapshot: T): T {
@@ -123,6 +213,7 @@ export const useFlowWorkspaceStore = create<FlowWorkspaceStoreState>()((set, get
     return duplicate.id;
   },
   deleteWorkspace: (id) => {
+    invalidateFlowRunsForWorkspace(id);
     set((state) => {
       const deletedIndex = state.workspaces.findIndex((workspace) => workspace.id === id);
       const remaining = state.workspaces.filter((workspace) => workspace.id !== id);
@@ -198,6 +289,9 @@ export const useFlowWorkspaceStore = create<FlowWorkspaceStoreState>()((set, get
     return cloneFlowSnapshot(nextWorkspace.flow);
   },
   hydrateProjectSnapshot: ({ workspaces, activeWorkspaceId }) => {
+    for (const run of new Set(activeFlowRuns.values())) {
+      invalidateActiveFlowRun(run);
+    }
     const nextWorkspaces = workspaces.length > 0
       ? workspaces.map((workspace) => ({ ...workspace, flow: cloneFlowSnapshot(workspace.flow) }))
       : createInitialState().workspaces;
@@ -225,6 +319,142 @@ export const useFlowWorkspaceStore = create<FlowWorkspaceStoreState>()((set, get
     return get().workspaces.find((workspace) => workspace.id === id);
   },
   reset: () => {
+    for (const run of new Set(activeFlowRuns.values())) {
+      invalidateActiveFlowRun(run);
+    }
     set(createInitialState());
+  },
+  registerFlowRun: (owner, options) => {
+    const key = flowRunKey(owner.workspaceId, owner.nodeId);
+    const existing = activeFlowRuns.get(key);
+    if (existing) {
+      invalidateActiveFlowRun(existing);
+    }
+    const run: ActiveFlowRun = {
+      owner,
+      nodeOwners: new Map([[owner.nodeId, {
+        nodeId: owner.nodeId,
+        nodeInstanceId: owner.nodeInstanceId,
+        inputRevision: owner.inputRevision,
+      }]]),
+      abort: options?.abort,
+    };
+    activeFlowRuns.set(key, run);
+  },
+  registerFlowRunNode: (owner, node) => {
+    const run = activeFlowRuns.get(flowRunKey(owner.workspaceId, owner.nodeId));
+    if (!run || run.owner.runId !== owner.runId) {
+      return;
+    }
+    const existing = run.nodeOwners.get(node.nodeId);
+    if (existing) {
+      return;
+    }
+    run.nodeOwners.set(node.nodeId, node);
+    activeFlowRuns.set(flowRunKey(owner.workspaceId, node.nodeId), run);
+  },
+  unregisterFlowRun: (owner) => {
+    const run = activeFlowRuns.get(flowRunKey(owner.workspaceId, owner.nodeId));
+    if (run?.owner.runId === owner.runId) {
+      removeActiveFlowRun(run);
+    }
+  },
+  getActiveFlowRunId: (workspaceId, nodeId) => {
+    return activeFlowRuns.get(flowRunKey(workspaceId, nodeId))?.owner.runId;
+  },
+  invalidateFlowRunForNode: (workspaceId, nodeId) => {
+    const run = activeFlowRuns.get(flowRunKey(workspaceId, nodeId));
+    if (!run) return [];
+    const nodeIds = [...run.nodeOwners.keys()];
+    invalidateActiveFlowRun(run);
+    return nodeIds;
+  },
+  isFlowRunOwnerValid: (owner, nodeId, options) => {
+    const run = activeFlowRuns.get(flowRunKey(owner.workspaceId, nodeId));
+    if (!run || run.owner.runId !== owner.runId) {
+      return false;
+    }
+
+    const expectedNodeOwner = run.nodeOwners.get(nodeId);
+    if (!expectedNodeOwner) return false;
+
+    const state = get();
+    const workspace = state.workspaces.find((workspace) => workspace.id === owner.workspaceId);
+    if (!workspace) {
+      return false;
+    }
+
+    const isHydrated = state.hydratedWorkspaceId === owner.workspaceId;
+    const node = isHydrated
+      ? (() => {
+        const data = options?.getHydratedNodeData?.(nodeId);
+        return data
+          ? ({ id: nodeId, data } as import('../types/flow').AppNode)
+          : workspace.flow.nodes.find((node) => node.id === nodeId);
+      })()
+      : workspace.flow.nodes.find((node) => node.id === nodeId);
+
+    if (!node) {
+      return false;
+    }
+
+    // Every node in the immutable run graph must still be the exact instance and input
+    // revision captured before its execution begins, not merely the root node.
+    {
+      if (
+        expectedNodeOwner.nodeInstanceId !== undefined &&
+        node.data.nodeInstanceId !== undefined &&
+        expectedNodeOwner.nodeInstanceId !== node.data.nodeInstanceId
+      ) {
+        return false;
+      }
+
+      if (
+        expectedNodeOwner.inputRevision !== undefined &&
+        node.data.inputRevision !== undefined &&
+        expectedNodeOwner.inputRevision !== node.data.inputRevision
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  },
+  commitFlowRunPatch: (owner, nodeId, patch, options) => {
+    if (!get().isFlowRunOwnerValid(owner, nodeId, options)) {
+      return false;
+    }
+
+    const state = get();
+    const workspace = state.workspaces.find((workspace) => workspace.id === owner.workspaceId);
+    if (!workspace) {
+      return false;
+    }
+
+    const isHydrated = state.hydratedWorkspaceId === owner.workspaceId;
+    if (isHydrated && options?.applyToHydratedCanvas) {
+      options.applyToHydratedCanvas(nodeId, patch);
+    } else {
+      set((state) => ({
+        workspaces: state.workspaces.map((workspace) => (
+          workspace.id === owner.workspaceId
+            ? {
+              ...workspace,
+              updatedAt: Date.now(),
+              flow: {
+                ...workspace.flow,
+                nodes: workspace.flow.nodes.map((node) => (
+                  node.id === nodeId
+                    ? { ...node, data: { ...node.data, ...patch } }
+                    : node
+                )),
+              },
+            }
+            : workspace
+        )),
+      }));
+    }
+
+    return true;
   },
 }));
