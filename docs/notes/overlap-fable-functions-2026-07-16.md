@@ -1,6 +1,7 @@
 # AUD-007 repair: collapsed reusable functions execute their internal provider subgraph
 
 **Lane:** overlap/fable-functions · **Commit:** `f1f91ae` · **Date:** 2026-07-16
+**Post-review blocker repair (2026-07-16, follow-up session):** `e8b0a10` + `4bf9fea` — see the addendum at the end; it corrects two claims in this note.
 
 ## The defect
 
@@ -148,3 +149,44 @@ git diff --check                                                                
 - Internal execution intentionally skips `assertFlowExecutionPreflight` on the cut internal
   graph (boundary edges are severed by design and would false-block); blocking prompt-signal
   diagnostics are still enforced per internal node.
+
+## Addendum — post-review blocker repair (corrected evidence)
+
+Two corrections to the evidence above, found by running the gate this note never ran and by
+an adversarial re-review of the shipped diff. No external review artifact specified these;
+they were located and verified in this session.
+
+**Correction 1 — "malformed graphs" coverage was narrower than claimed, and `f1f91ae`
+regressed one malformed shape.** The focused cases above cover a *missing output source* and
+a *provider dependency cycle*, but not a persisted config whose `graph.edges` is not an
+array. Pre-repair code degraded gracefully there (the edges spread sat inside
+`resolveFunctionOutputValue`'s try/catch); the refactor moved preparation outside that
+guard, so `prepareFunctionSubgraph` crashed with `TypeError: config.graph.edges is not
+iterable`. Fixed in **`e8b0a10`** (red test first — watched it fail with exactly that
+TypeError — then a one-line `Array.isArray` normalization to an unwired graph). The new
+suite is now 10 tests.
+
+**Correction 2 — the full-suite gate was not part of the original validation and was red in
+this worktree.** The matrix above ran 18 focused files; the full 625-file suite, when run,
+failed collection of `src/lib/bundledFontPdfxIntegration.test.ts` (module-scope
+`readFileSync` of `build/font-library/inventory/font-inventory.json`, a packaging artifact
+staged only by `npm run prepare:font-library` — pre-existing from checkpoint `cef276d`,
+unrelated to Functions code, masked in the first full-suite attempt by a `| tail` pipe
+swallowing vitest's exit code). Fixed in **`4bf9fea`**: the suite skips loudly when the
+staged inventory is absent and still runs in full where it exists. Both sides verified: `1
+skipped` without the artifact; after staging locally (116 families / 430 faces), `1 passed`
+executing the real pin/shape/subset/embed + PDF/X-4 validation. The staged library was left
+in place in this worktree (git-invisible) so future full-suite runs keep exercising it.
+
+**Final gates for this lane (all exit codes captured directly, no pipe masking):**
+
+```
+npx vitest run --configLoader runner                       # 625/625 files, 4863/4863 tests, exit 0
+npx vitest run --configLoader runner <18 focused files>    # 144/144 (function/flow/store suites)
+npx tsc -b                                                 # exit 0
+git diff --check                                           # clean
+```
+
+Commits, in order: `f1f91ae` (AUD-007 repair + suite), `ddecb68` (this note),
+`e8b0a10` (malformed-wiring guard + regression test), `4bf9fea` (staged-font skip guard),
+plus the docs commit recording this addendum. Worktree clean at the end of the session.
