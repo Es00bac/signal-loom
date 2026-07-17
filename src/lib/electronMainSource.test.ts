@@ -322,14 +322,12 @@ describe('Electron single-instance and external-open source guards', () => {
     expect(source).toMatch(/} else \{[\s\S]*gpuFallbackSentinelPath[\s\S]*registerSchemesAsPrivileged[\s\S]*app\.whenReady\(\)[\s\S]*app\.on\('window-all-closed'[\s\S]*app\.on\('will-quit'/);
   });
 
-  it('acquires the lock bare and consumes the natively relayed second-instance argv', () => {
-    // The deterministic Electron lifecycle probe proves bare-lock argv relay with Unicode and
-    // spaces. The app does not rely on the unconfirmed additionalData crash report.
-    expect(source).toMatch(/const hasSingleInstanceLock = app\.requestSingleInstanceLock\(\);/);
-    expect(source).not.toMatch(/requestSingleInstanceLock\(\s*[^)\s]/);
+  it('relays a bounded launch identity alongside canonical second-instance argv', () => {
+    expect(source).toMatch(/const externalOpenLaunchDeliveryId = createExternalOpenDeliveryId\(\);/);
+    expect(source).toMatch(/app\.requestSingleInstanceLock\(\s*buildSecondInstanceOpenPayload\(process\.argv, process\.cwd\(\), externalOpenLaunchDeliveryId\)/);
     expect(source).toMatch(/app\.on\('second-instance', \(_event, argv, workingDirectory, additionalData\) => \{[\s\S]*parseSecondInstanceOpenPayload\(additionalData\)/);
     const probe = readFileSync(join(process.cwd(), 'scripts/electron-single-instance-probe.mjs'), 'utf8');
-    expect(probe).toContain('requestSingleInstanceLock()');
+    expect(probe).toContain('buildSecondInstanceOpenPayload');
     expect(probe).toContain('second-instance');
     expect(probe).toContain('Comic 週刊.sloom');
   });
@@ -352,8 +350,9 @@ describe('Electron single-instance and external-open source guards', () => {
   });
 
   it('validates initial argv into the queue with the packaged/dev app path context', () => {
-    expect(source).toMatch(/enqueueExternalOpenArgv\(process\.argv, process\.cwd\(\)\)/);
-    expect(source).toMatch(/createExternalOpenQueue\(\{[\s\S]*isFile:/);
+    expect(source).toMatch(/enqueueExternalOpenArgv\(process\.argv, process\.cwd\(\), externalOpenLaunchDeliveryId\)/);
+    expect(source).toMatch(/createExternalOpenQueue\(\{\s*canonicalizeFile: canonicalizeExternalOpenFilePath,\s*workspaceViews: WORKSPACE_VIEWS/);
+    expect(source).toContain('canonicalizeExternalOpenFilePath');
   });
 
   it('stages external projects without publishing canonical state before renderer acceptance', () => {
@@ -371,6 +370,7 @@ describe('Electron single-instance and external-open source guards', () => {
     const rejectHandler = source.slice(source.indexOf("ipcMain.handle('signal-loom:external-open-reject'"));
     expect(rejectHandler.slice(0, 1200)).toContain('rollbackAcceptedExternalProject(request?.intentId)');
     expect(source).toMatch(/async function commitAcceptedExternalProject[\s\S]*rememberProjectPath[\s\S]*commitDocumentIntent[\s\S]*broadcastSourceLibraryChanged[\s\S]*broadcastProjectPathChanged/);
+    expect(source).toMatch(/async function rollbackAcceptedExternalProject[\s\S]*sourceLibraryVersion === transaction\.stagedSourceLibraryVersion[\s\S]*mergeExternalOpenSourceRollback/);
   });
 
   it('authorizes only the designated live Flow renderer and rotates authorization on reload or death', () => {

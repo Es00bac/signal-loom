@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { linkSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 type ClassifiedExternalOpenTarget =
   | { status: 'accepted'; kind: 'project' | 'paper'; filePath: string }
@@ -9,7 +12,7 @@ type ClassifiedExternalOpenTarget =
 interface ExternalOpenQueue {
   enqueueValue: (
     rawValue: unknown,
-    context: { cwd?: string; platform?: string },
+    context: { cwd?: string; platform?: string; deliveryId?: string },
   ) =>
     | { status: 'enqueued'; kind: string }
     | { status: 'duplicate'; kind: string }
@@ -17,7 +20,7 @@ interface ExternalOpenQueue {
     | { status: 'rejected'; reason: string; value: string };
   enqueueArgv: (
     argv: readonly string[],
-    context: { cwd?: string; platform?: string; appPath?: string; execPath?: string },
+    context: { cwd?: string; platform?: string; appPath?: string; execPath?: string; deliveryId?: string },
   ) => { enqueued: Array<{ kind: string }>; rejected: Array<{ value: string; reason: string }> };
   hasPending: (kind?: string) => boolean;
   pendingCount: () => number;
@@ -46,17 +49,29 @@ interface ElectronExternalOpenModule {
   buildSecondInstanceOpenPayload: (
     argv: readonly string[],
     workingDirectory: string,
-  ) => { kind: string; version: number; argv: string[]; workingDirectory: string };
+    deliveryId?: string,
+  ) => { kind: string; version: number; argv: string[]; workingDirectory: string; deliveryId?: string };
   parseSecondInstanceOpenPayload: (
     value: unknown,
-  ) => { argv: string[]; workingDirectory: string } | undefined;
+  ) => { argv: string[]; workingDirectory: string; deliveryId?: string } | undefined;
+  canonicalizeExternalOpenFilePath: (
+    filePath: string,
+    context?: {
+      platform?: string;
+      resolveRealPath?: (filePath: string) => string;
+      readStat?: (filePath: string) => { isFile: () => boolean; dev?: number; ino?: number };
+    },
+  ) => { status: 'accepted'; filePath: string; fileIdentity: string } | { status: 'rejected'; reason: string };
+  mergeExternalOpenSourceRollback: (previous: unknown, staged: unknown, current: unknown) => {
+    bins: Array<{ id: string; items: Array<{ id: string; label?: string }> }>;
+    dismissedSourceKeys: string[];
+  };
   createExternalOpenQueue: (options: {
-    isFile: (filePath: string) => boolean;
+    canonicalizeFile?: (filePath: string, context?: { platform?: string }) =>
+      | { status: 'accepted'; filePath: string; fileIdentity: string }
+      | { status: 'rejected'; reason: string };
     workspaceViews?: readonly string[];
     maxPending?: number;
-    maxRecentCommits?: number;
-    idempotencyWindowMs?: number;
-    now?: () => number;
   }) => ExternalOpenQueue;
 }
 
@@ -64,6 +79,12 @@ async function loadExternalOpenModule(): Promise<ElectronExternalOpenModule> {
   // @ts-expect-error CommonJS Electron helper lives outside the renderer tsconfig module graph.
   return await import('../../electron/external-open.cjs') as ElectronExternalOpenModule;
 }
+
+const canonicalizeByPath = (filePath: string) => ({
+  status: 'accepted' as const,
+  filePath,
+  fileIdentity: `path:${filePath}`,
+});
 
 describe('external open target classification', () => {
   it('accepts absolute .sloom and .slppr paths with case-insensitive extensions', async () => {
@@ -295,13 +316,14 @@ describe('external open argv extraction', () => {
 });
 
 describe('second instance open payload', () => {
-  it('round-trips argv and working directory', async () => {
+  it('round-trips argv, working directory, and bounded delivery identity', async () => {
     const { buildSecondInstanceOpenPayload, parseSecondInstanceOpenPayload } = await loadExternalOpenModule();
 
-    const payload = buildSecondInstanceOpenPayload(['/home/user/comic.sloom'], '/home/user');
+    const payload = buildSecondInstanceOpenPayload(['/home/user/comic.sloom'], '/home/user', 'launch-27');
     expect(parseSecondInstanceOpenPayload(payload)).toEqual({
       argv: ['/home/user/comic.sloom'],
       workingDirectory: '/home/user',
+      deliveryId: 'launch-27',
     });
   });
 
@@ -324,6 +346,98 @@ describe('second instance open payload', () => {
       argv: Array.from({ length: 500 }, () => '/a.sloom'),
       workingDirectory: '/',
     })).toBeUndefined();
+    expect(parseSecondInstanceOpenPayload({
+      kind: 'signal-loom-external-open',
+      version: 1,
+      argv: ['/a.sloom'],
+      workingDirectory: '/',
+      deliveryId: 'x'.repeat(257),
+    })).toBeUndefined();
+  });
+});
+
+describe('external open canonical file identity', () => {
+  it('collapses real, relative, symlink, and observable hard-link aliases with Unicode and spaces', async () => {
+    const { canonicalizeExternalOpenFilePath, createExternalOpenQueue } = await loadExternalOpenModule();
+    const root = mkdtempSync(join(tmpdir(), 'sloom-canonical-'));
+    const real = join(root, 'Comic 週刊 volume 1.sloom');
+    const symlink = join(root, 'Comic alias.sloom');
+    const hardLink = join(root, 'Comic hard link.sloom');
+    try {
+      writeFileSync(real, '{}\n');
+      symlinkSync(real, symlink);
+      linkSync(real, hardLink);
+      const realIdentity = canonicalizeExternalOpenFilePath(real);
+      const relativeIdentity = canonicalizeExternalOpenFilePath(join(root, '.', 'Comic 週刊 volume 1.sloom'));
+      const symlinkIdentity = canonicalizeExternalOpenFilePath(symlink);
+      const hardLinkIdentity = canonicalizeExternalOpenFilePath(hardLink);
+      expect(realIdentity).toMatchObject({ status: 'accepted', filePath: real });
+      expect(relativeIdentity).toEqual(realIdentity);
+      expect(symlinkIdentity).toEqual(realIdentity);
+      expect(hardLinkIdentity).toMatchObject({ status: 'accepted' });
+      if (realIdentity.status !== 'accepted' || hardLinkIdentity.status !== 'accepted') throw new Error('Expected files.');
+      expect(hardLinkIdentity.fileIdentity).toBe(realIdentity.fileIdentity);
+
+      const queue = createExternalOpenQueue({ canonicalizeFile: canonicalizeExternalOpenFilePath });
+      expect(queue.enqueueValue(real, { platform: process.platform, deliveryId: 'same-os-event' })).toMatchObject({ status: 'enqueued' });
+      expect(queue.enqueueValue(symlink, { platform: process.platform, deliveryId: 'same-os-event' })).toMatchObject({ status: 'duplicate' });
+      expect(queue.enqueueValue(hardLink, { platform: process.platform, deliveryId: 'same-os-event' })).toMatchObject({ status: 'duplicate' });
+      const authorization = queue.authorizeRenderer('renderer-canonical');
+      const offer = queue.offerNextDocumentIntent({ rendererId: 'renderer-canonical', epoch: authorization.epoch });
+      if (offer.status !== 'offered') throw new Error('Expected one canonical offer.');
+      expect(queue.acceptDocumentIntent({
+        rendererId: 'renderer-canonical',
+        epoch: authorization.epoch,
+        intentId: offer.intent.id,
+      })).toMatchObject({ status: 'accepted' });
+      expect(queue.commitDocumentIntent({
+        rendererId: 'renderer-canonical',
+        epoch: authorization.epoch,
+        intentId: offer.intent.id,
+      })).toMatchObject({ status: 'committed' });
+      expect(queue.enqueueValue(symlink, { platform: process.platform, deliveryId: 'same-os-event' }))
+        .toMatchObject({ status: 'duplicate' });
+      expect(queue.offerNextDocumentIntent({ rendererId: 'renderer-canonical', epoch: authorization.epoch }))
+        .toEqual({ status: 'empty' });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('defines missing/non-file failures and platform case fallback semantics', async () => {
+    const { canonicalizeExternalOpenFilePath } = await loadExternalOpenModule();
+    const missingError = Object.assign(new Error('missing'), { code: 'ENOENT' });
+    expect(canonicalizeExternalOpenFilePath('/missing.sloom', {
+      resolveRealPath: () => { throw missingError; },
+    })).toEqual({ status: 'rejected', reason: 'missing-file' });
+    expect(canonicalizeExternalOpenFilePath('/directory.sloom', {
+      resolveRealPath: (value) => value,
+      readStat: () => ({ isFile: () => false }),
+    })).toEqual({ status: 'rejected', reason: 'not-a-file' });
+
+    const windowsUpper = canonicalizeExternalOpenFilePath('C:\\Art\\Comic.sloom', {
+      platform: 'win32',
+      resolveRealPath: (value) => value,
+      readStat: () => ({ isFile: () => true, dev: 0, ino: 0 }),
+    });
+    const windowsLower = canonicalizeExternalOpenFilePath('c:\\art\\comic.sloom', {
+      platform: 'win32',
+      resolveRealPath: (value) => value,
+      readStat: () => ({ isFile: () => true, dev: 0, ino: 0 }),
+    });
+    expect(windowsUpper).toMatchObject({ status: 'accepted', fileIdentity: 'path:c:\\art\\comic.sloom' });
+    expect(windowsLower).toMatchObject({ status: 'accepted', fileIdentity: 'path:c:\\art\\comic.sloom' });
+    const linuxUpper = canonicalizeExternalOpenFilePath('/Art/Comic.sloom', {
+      platform: 'linux',
+      resolveRealPath: (value) => value,
+      readStat: () => ({ isFile: () => true, dev: 0, ino: 0 }),
+    });
+    const linuxLower = canonicalizeExternalOpenFilePath('/art/comic.sloom', {
+      platform: 'linux',
+      resolveRealPath: (value) => value,
+      readStat: () => ({ isFile: () => true, dev: 0, ino: 0 }),
+    });
+    expect(linuxUpper).not.toEqual(linuxLower);
   });
 });
 
@@ -332,7 +446,7 @@ describe('external open queue', () => {
 
   it('enqueues validated document targets and commits them exactly once', async () => {
     const { createExternalOpenQueue } = await loadExternalOpenModule();
-    const queue = createExternalOpenQueue({ isFile: () => true });
+    const queue = createExternalOpenQueue({ canonicalizeFile: canonicalizeByPath });
 
     expect(queue.enqueueValue('/home/user/comic.sloom', context)).toMatchObject({ status: 'enqueued', kind: 'project' });
     expect(queue.enqueueValue('/home/user/layout.slppr', context)).toMatchObject({ status: 'enqueued', kind: 'paper' });
@@ -363,17 +477,13 @@ describe('external open queue', () => {
     expect(queue.hasPending()).toBe(false);
   });
 
-  it('keeps bounded idempotency after commit, then permits a genuinely later user open', async () => {
+  it('keeps committed delivery identity after delay/capacity churn and permits a later user event', async () => {
     const { createExternalOpenQueue } = await loadExternalOpenModule();
-    let now = 1_000;
-    const queue = createExternalOpenQueue({
-      isFile: () => true,
-      now: () => now,
-      idempotencyWindowMs: 2_000,
-    });
+    const queue = createExternalOpenQueue({ canonicalizeFile: canonicalizeByPath, maxPending: 600 });
+    const firstContext = { ...context, deliveryId: 'os-delivery-original' };
 
-    expect(queue.enqueueValue('/home/user/comic.sloom', context)).toMatchObject({ status: 'enqueued' });
-    expect(queue.enqueueValue('/home/user/comic.sloom', context)).toMatchObject({ status: 'duplicate' });
+    expect(queue.enqueueValue('/home/user/comic.sloom', firstContext)).toMatchObject({ status: 'enqueued' });
+    expect(queue.enqueueValue('/home/user/comic.sloom', firstContext)).toMatchObject({ status: 'duplicate' });
     expect(queue.pendingCount()).toBe(1);
 
     const authorization = queue.authorizeRenderer('renderer-a');
@@ -391,14 +501,22 @@ describe('external open queue', () => {
       intentId: offer.intent.id,
     })).toMatchObject({ status: 'committed' });
 
-    expect(queue.enqueueValue('/home/user/comic.sloom', context)).toMatchObject({ status: 'duplicate' });
-    now += 2_001;
-    expect(queue.enqueueValue('/home/user/comic.sloom', context)).toMatchObject({ status: 'enqueued' });
+    for (let index = 0; index < 512; index += 1) {
+      const path = `/home/user/churn-${index}.sloom`;
+      expect(queue.enqueueValue(path, { ...context, deliveryId: `churn-${index}` })).toMatchObject({ status: 'enqueued' });
+      const churnOffer = queue.offerNextDocumentIntent({ rendererId: 'renderer-a', epoch: authorization.epoch });
+      if (churnOffer.status !== 'offered') throw new Error('Expected churn offer.');
+      queue.acceptDocumentIntent({ rendererId: 'renderer-a', epoch: authorization.epoch, intentId: churnOffer.intent.id });
+      queue.commitDocumentIntent({ rendererId: 'renderer-a', epoch: authorization.epoch, intentId: churnOffer.intent.id });
+    }
+    expect(queue.enqueueValue('/home/user/comic.sloom', firstContext)).toMatchObject({ status: 'duplicate' });
+    expect(queue.enqueueValue('/home/user/comic.sloom', { ...context, deliveryId: 'os-delivery-genuine-later' }))
+      .toMatchObject({ status: 'enqueued' });
   });
 
   it('does not consume or deduplicate a rejected dirty-guard intent', async () => {
     const { createExternalOpenQueue } = await loadExternalOpenModule();
-    const queue = createExternalOpenQueue({ isFile: () => true });
+    const queue = createExternalOpenQueue({ canonicalizeFile: canonicalizeByPath });
     queue.enqueueValue('/home/user/comic.sloom', context);
 
     const authorization = queue.authorizeRenderer('renderer-a');
@@ -415,7 +533,7 @@ describe('external open queue', () => {
 
   it('can reject after acceptance and still permits a deliberate retry', async () => {
     const { createExternalOpenQueue } = await loadExternalOpenModule();
-    const queue = createExternalOpenQueue({ isFile: () => true });
+    const queue = createExternalOpenQueue({ canonicalizeFile: canonicalizeByPath });
     queue.enqueueValue('/home/user/comic.sloom', context);
     const authorization = queue.authorizeRenderer('renderer-a');
     const offer = queue.offerNextDocumentIntent({ rendererId: 'renderer-a', epoch: authorization.epoch });
@@ -432,7 +550,7 @@ describe('external open queue', () => {
 
   it('authorizes one renderer epoch and rejects stale or competing drains', async () => {
     const { createExternalOpenQueue } = await loadExternalOpenModule();
-    const queue = createExternalOpenQueue({ isFile: () => true });
+    const queue = createExternalOpenQueue({ canonicalizeFile: canonicalizeByPath });
     queue.enqueueValue('/home/user/comic.sloom', context);
 
     const first = queue.authorizeRenderer('renderer-a');
@@ -455,11 +573,15 @@ describe('external open queue', () => {
 
   it('rejects targets that are not existing regular files', async () => {
     const { createExternalOpenQueue } = await loadExternalOpenModule();
-    const queue = createExternalOpenQueue({ isFile: (filePath: string) => filePath.endsWith('exists.sloom') });
+    const queue = createExternalOpenQueue({
+      canonicalizeFile: (filePath: string) => filePath.endsWith('exists.sloom')
+        ? canonicalizeByPath(filePath)
+        : { status: 'rejected' as const, reason: 'missing-file' },
+    });
 
     expect(queue.enqueueValue('/home/user/missing.sloom', context)).toMatchObject({
       status: 'rejected',
-      reason: 'not-a-file',
+      reason: 'missing-file',
     });
     expect(queue.enqueueValue('/home/user/exists.sloom', context)).toMatchObject({ status: 'enqueued' });
     expect(queue.pendingCount()).toBe(1);
@@ -467,7 +589,7 @@ describe('external open queue', () => {
 
   it('keeps workspace deep links separate from document requests', async () => {
     const { createExternalOpenQueue } = await loadExternalOpenModule();
-    const queue = createExternalOpenQueue({ isFile: () => true });
+    const queue = createExternalOpenQueue({ canonicalizeFile: canonicalizeByPath });
 
     expect(queue.enqueueValue('signal-loom://workspace/paper', context)).toMatchObject({
       status: 'enqueued',
@@ -487,7 +609,7 @@ describe('external open queue', () => {
 
   it('enqueues from raw argv, reporting rejected values without dropping valid ones', async () => {
     const { createExternalOpenQueue } = await loadExternalOpenModule();
-    const queue = createExternalOpenQueue({ isFile: () => true });
+    const queue = createExternalOpenQueue({ canonicalizeFile: canonicalizeByPath });
 
     const outcome = queue.enqueueArgv(
       [
@@ -510,7 +632,7 @@ describe('external open queue', () => {
 
   it('caps the pending queue to a bounded size', async () => {
     const { createExternalOpenQueue } = await loadExternalOpenModule();
-    const queue = createExternalOpenQueue({ isFile: () => true, maxPending: 2 });
+    const queue = createExternalOpenQueue({ canonicalizeFile: canonicalizeByPath, maxPending: 2 });
 
     expect(queue.enqueueValue('/home/user/a.sloom', context)).toMatchObject({ status: 'enqueued' });
     expect(queue.enqueueValue('/home/user/b.sloom', context)).toMatchObject({ status: 'enqueued' });
@@ -518,5 +640,48 @@ describe('external open queue', () => {
       status: 'rejected',
       reason: 'queue-overflow',
     });
+  });
+});
+
+describe('external project Source rollback', () => {
+  it('removes transaction-owned replacement state while preserving concurrent Source mutations', async () => {
+    const { mergeExternalOpenSourceRollback } = await loadExternalOpenModule();
+    const previous = {
+      bins: [{ id: 'default', name: 'Previous', items: [
+        { id: 'kept', label: 'Kept before open' },
+        { id: 'removed-concurrently', label: 'Remove me' },
+      ] }],
+      dismissedSourceKeys: ['previous-dismissed'],
+    };
+    const staged = {
+      bins: [{ id: 'default', name: 'Incoming project', items: [
+        { id: 'incoming-owned', label: 'Incoming only' },
+        { id: 'renamed-concurrently', label: 'Before rename' },
+        { id: 'removed-concurrently', label: 'Remove me' },
+      ] }],
+      dismissedSourceKeys: ['incoming-dismissed'],
+    };
+    const current = {
+      bins: [
+        { id: 'default', name: 'Incoming project', items: [
+          { id: 'incoming-owned', label: 'Incoming only' },
+          { id: 'renamed-concurrently', label: 'After rename' },
+          { id: 'concurrent-add', label: 'Added elsewhere' },
+        ] },
+        { id: 'concurrent-bin', name: 'Other workspace', items: [{ id: 'other', label: 'Other' }] },
+      ],
+      dismissedSourceKeys: ['incoming-dismissed', 'concurrent-dismissed'],
+    };
+
+    const rolledBack = mergeExternalOpenSourceRollback(previous, staged, current);
+    expect(rolledBack.bins).toEqual([
+      { id: 'default', name: 'Previous', items: [
+        { id: 'kept', label: 'Kept before open' },
+        { id: 'renamed-concurrently', label: 'After rename' },
+        { id: 'concurrent-add', label: 'Added elsewhere' },
+      ] },
+      { id: 'concurrent-bin', name: 'Other workspace', items: [{ id: 'other', label: 'Other' }] },
+    ]);
+    expect(rolledBack.dismissedSourceKeys).toEqual(['previous-dismissed', 'concurrent-dismissed']);
   });
 });

@@ -150,6 +150,119 @@ describe('registerNativeExternalOpenConsumer', () => {
     expect(handlers.onProjectCommitted).toHaveBeenCalledWith(projectResult);
   });
 
+  it('autonomously retries a transient post-apply commit failure without rerunning replacement', async () => {
+    const projectResult = { canceled: false, filePath: '/retry.sloom', document: projectDocumentStub };
+    const { bridge } = createBridge([{
+      status: 'offered',
+      state: 'offered',
+      intent: { id: 'retry-intent', kind: 'project', filePath: '/retry.sloom', result: projectResult },
+    }]);
+    const typedBridge = bridge as SignalLoomNativeBridge;
+    vi.mocked(typedBridge.commitExternalOpenIntent!)
+      .mockRejectedValueOnce(new Error('rememberProjectPath IPC failed'))
+      .mockResolvedValueOnce({ status: 'committed' });
+    const wait = vi.fn(async () => {});
+    const handlers = createHandlers();
+
+    const dispose = registerNativeExternalOpenConsumer(bridge, handlers, {
+      commitRetryDelaysMs: [7, 11],
+      wait,
+    });
+    await flushMicrotasks(30);
+    dispose();
+
+    expect(handlers.authorizeProject).toHaveBeenCalledTimes(1);
+    expect(bridge.acceptExternalOpenIntent).toHaveBeenCalledTimes(1);
+    expect(handlers.applyProject).toHaveBeenCalledTimes(1);
+    expect(bridge.commitExternalOpenIntent).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledTimes(1);
+    expect(wait).toHaveBeenCalledWith(7);
+    expect(handlers.onProjectCommitted).toHaveBeenCalledTimes(1);
+    expect(handlers.onError).not.toHaveBeenCalled();
+  });
+
+  it('bounds commit-only retries, reports exhaustion once, and never replaces twice', async () => {
+    const projectResult = { canceled: false, filePath: '/exhaust.sloom', document: projectDocumentStub };
+    const { bridge } = createBridge([{
+      status: 'offered',
+      state: 'offered',
+      intent: { id: 'exhaust-intent', kind: 'project', filePath: '/exhaust.sloom', result: projectResult },
+    }]);
+    vi.mocked((bridge as SignalLoomNativeBridge).commitExternalOpenIntent!)
+      .mockRejectedValue(new Error('persistent IPC failure'));
+    const wait = vi.fn(async () => {});
+    const handlers = createHandlers();
+
+    const dispose = registerNativeExternalOpenConsumer(bridge, handlers, {
+      commitRetryDelaysMs: [3, 5],
+      wait,
+    });
+    await flushMicrotasks(30);
+    dispose();
+
+    expect(handlers.applyProject).toHaveBeenCalledTimes(1);
+    expect(bridge.acceptExternalOpenIntent).toHaveBeenCalledTimes(1);
+    expect(bridge.commitExternalOpenIntent).toHaveBeenCalledTimes(3);
+    expect(wait.mock.calls).toEqual([[3], [5]]);
+    expect(handlers.onProjectCommitted).not.toHaveBeenCalled();
+    expect(handlers.onError).toHaveBeenCalledTimes(1);
+    expect(handlers.onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'persistent IPC failure' }));
+  });
+
+  it('does not retry a stale epoch transition result', async () => {
+    const projectResult = { canceled: false, filePath: '/stale.sloom', document: projectDocumentStub };
+    const { bridge } = createBridge([{
+      status: 'offered',
+      state: 'accepted',
+      intent: { id: 'stale-intent', kind: 'project', filePath: '/stale.sloom', result: projectResult },
+    }]);
+    vi.mocked((bridge as SignalLoomNativeBridge).commitExternalOpenIntent!)
+      .mockResolvedValue({ status: 'unauthorized' });
+    const wait = vi.fn(async () => {});
+    const handlers = createHandlers();
+
+    const dispose = registerNativeExternalOpenConsumer(bridge, handlers, {
+      commitRetryDelaysMs: [1, 2, 3],
+      wait,
+    });
+    await flushMicrotasks(20);
+    dispose();
+
+    expect(bridge.commitExternalOpenIntent).toHaveBeenCalledTimes(1);
+    expect(wait).not.toHaveBeenCalled();
+    expect(handlers.applyProject).not.toHaveBeenCalled();
+    expect(handlers.onError).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels a pending commit retry on renderer reload/crash disposal', async () => {
+    let releaseWait = () => {};
+    const retryGate = new Promise<void>((resolve) => { releaseWait = resolve; });
+    const projectResult = { canceled: false, filePath: '/reload.sloom', document: projectDocumentStub };
+    const { bridge } = createBridge([{
+      status: 'offered',
+      state: 'offered',
+      intent: { id: 'reload-intent', kind: 'project', filePath: '/reload.sloom', result: projectResult },
+    }]);
+    vi.mocked((bridge as SignalLoomNativeBridge).commitExternalOpenIntent!)
+      .mockRejectedValue(new Error('renderer connection interrupted'));
+    const handlers = createHandlers();
+    const dispose = registerNativeExternalOpenConsumer(bridge, handlers, {
+      commitRetryDelaysMs: [10, 20],
+      wait: () => retryGate,
+    });
+    await flushMicrotasks(20);
+    expect(bridge.commitExternalOpenIntent).toHaveBeenCalledTimes(1);
+
+    dispose();
+    releaseWait();
+    await flushMicrotasks(20);
+
+    expect(handlers.applyProject).toHaveBeenCalledTimes(1);
+    expect(bridge.commitExternalOpenIntent).toHaveBeenCalledTimes(1);
+    expect(handlers.onError).not.toHaveBeenCalled();
+    expect(bridge.releaseExternalOpenRenderer).toHaveBeenCalledWith('epoch-1');
+  });
+
   it('rolls back an accepted intent when renderer application fails before commit', async () => {
     const projectResult = { canceled: false, filePath: '/broken.sloom', document: projectDocumentStub };
     const { bridge } = createBridge([{

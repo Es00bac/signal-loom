@@ -5,9 +5,11 @@
 // through this module: raw values are classified against a strict allowlist (local `.sloom`
 // projects, local `.slppr` Paper layouts, and the already-defined `signal-loom://workspace/<view>`
 // deep links), then held in a transactional queue until the designated renderer commits them.
-// The module is pure (filesystem/time access is injected) so the contract is testable outside Electron.
+// Filesystem identity resolution is injectable so the contract stays testable outside Electron.
 'use strict';
 
+const { realpathSync, statSync } = require('node:fs');
+const { randomUUID } = require('node:crypto');
 const { posix, win32 } = require('node:path');
 
 const EXTERNAL_OPEN_DEEP_LINK_SCHEME = 'signal-loom';
@@ -21,8 +23,9 @@ const SECOND_INSTANCE_PAYLOAD_KIND = 'signal-loom-external-open';
 const MAX_EXTERNAL_OPEN_TARGET_LENGTH = 4096;
 const MAX_SECOND_INSTANCE_ARGV_ENTRIES = 64;
 const DEFAULT_MAX_PENDING_REQUESTS = 16;
-const DEFAULT_MAX_RECENT_COMMITS = 64;
-const DEFAULT_IDEMPOTENCY_WINDOW_MS = 1_500;
+const MAX_EXTERNAL_OPEN_DELIVERY_ID_LENGTH = 256;
+const COMMITTED_RECEIPT_FILTER_WORDS = 2_048;
+const COMMITTED_RECEIPT_FILTER_BITS = COMMITTED_RECEIPT_FILTER_WORDS * 32;
 
 function hasControlCharacters(value) {
   for (const character of value) {
@@ -158,6 +161,65 @@ function classifyExternalOpenTarget(rawValue, context = {}) {
   return classifyDocumentPath(value, value);
 }
 
+function normalizeIdentityPath(filePath, platform) {
+  const normalized = platform === 'win32'
+    ? win32.normalize(filePath)
+    : posix.normalize(filePath);
+  return platform === 'win32' ? normalized.toLocaleLowerCase('en-US') : normalized;
+}
+
+/**
+ * Resolve an accepted document path to the filesystem object the OS will actually open.
+ * `realpath` collapses relative/symlink aliases and the observable device/inode pair also
+ * collapses hard links. Windows' case-insensitive path spelling is used only as a fallback on
+ * filesystems that do not expose a usable inode. Missing and non-file targets have distinct,
+ * stable rejection reasons so callers never silently queue an unresolved spelling.
+ */
+function canonicalizeExternalOpenFilePath(filePath, context = {}) {
+  const {
+    platform = process.platform,
+    resolveRealPath = (value) => realpathSync.native(value),
+    readStat = (value) => statSync(value),
+  } = context;
+
+  let canonicalPath;
+  try {
+    canonicalPath = resolveRealPath(filePath);
+  } catch (error) {
+    const code = error && typeof error === 'object' ? error.code : undefined;
+    return {
+      status: 'rejected',
+      reason: code === 'ENOENT' || code === 'ENOTDIR' ? 'missing-file' : 'unresolvable-file',
+    };
+  }
+
+  let fileStat;
+  try {
+    fileStat = readStat(canonicalPath);
+  } catch (error) {
+    const code = error && typeof error === 'object' ? error.code : undefined;
+    return {
+      status: 'rejected',
+      reason: code === 'ENOENT' || code === 'ENOTDIR' ? 'missing-file' : 'unresolvable-file',
+    };
+  }
+
+  if (!fileStat?.isFile?.()) {
+    return { status: 'rejected', reason: 'not-a-file' };
+  }
+
+  const device = typeof fileStat.dev === 'bigint' || Number.isFinite(fileStat.dev) ? String(fileStat.dev) : '';
+  const inode = typeof fileStat.ino === 'bigint' || Number.isFinite(fileStat.ino) ? String(fileStat.ino) : '';
+  const fileIdentity = device && inode && inode !== '0'
+    ? `inode:${device}:${inode}`
+    : `path:${normalizeIdentityPath(canonicalPath, platform)}`;
+  return { status: 'accepted', filePath: canonicalPath, fileIdentity };
+}
+
+function createExternalOpenDeliveryId() {
+  return `external-open-delivery-${randomUUID()}`;
+}
+
 /**
  * Pull candidate open targets out of a raw process argv. Launcher-owned tokens (the executable,
  * the default-app path argument, `.`, `--dev`, and Chromium switches) carry no user intent and
@@ -188,7 +250,7 @@ function extractExternalOpenCandidatesFromArgv(argv, context = {}) {
  * argv/workingDirectory relay, which is covered by the real lifecycle probe; these helpers remain
  * defensive compatibility parsers only.
  */
-function buildSecondInstanceOpenPayload(argv, workingDirectory) {
+function buildSecondInstanceOpenPayload(argv, workingDirectory, deliveryId) {
   const entries = (Array.isArray(argv) ? argv : [])
     .filter((value) => typeof value === 'string')
     .slice(0, MAX_SECOND_INSTANCE_ARGV_ENTRIES)
@@ -199,6 +261,9 @@ function buildSecondInstanceOpenPayload(argv, workingDirectory) {
     version: 1,
     argv: entries,
     workingDirectory: typeof workingDirectory === 'string' ? workingDirectory : '',
+    ...(typeof deliveryId === 'string' && deliveryId.length > 0 && deliveryId.length <= MAX_EXTERNAL_OPEN_DELIVERY_ID_LENGTH
+      ? { deliveryId }
+      : {}),
   };
 }
 
@@ -219,53 +284,82 @@ function parseSecondInstanceOpenPayload(value) {
   if (typeof value.workingDirectory !== 'string') {
     return undefined;
   }
+  if (value.deliveryId !== undefined && (
+    typeof value.deliveryId !== 'string'
+    || value.deliveryId.length === 0
+    || value.deliveryId.length > MAX_EXTERNAL_OPEN_DELIVERY_ID_LENGTH
+  )) {
+    return undefined;
+  }
 
-  return { argv: [...value.argv], workingDirectory: value.workingDirectory };
+  return {
+    argv: [...value.argv],
+    workingDirectory: value.workingDirectory,
+    ...(value.deliveryId ? { deliveryId: value.deliveryId } : {}),
+  };
+}
+
+function hashReceipt(value, seed) {
+  let hash = seed >>> 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+    hash ^= hash >>> 13;
+  }
+  return hash >>> 0;
+}
+
+function createCommittedReceiptFilter() {
+  const words = new Uint32Array(COMMITTED_RECEIPT_FILTER_WORDS);
+
+  function bitIndexes(value) {
+    const first = hashReceipt(value, 0x811c9dc5);
+    const second = hashReceipt(value, 0x9e3779b9) | 1;
+    return [0, 1, 2, 3].map((probe) => (first + Math.imul(probe, second)) >>> 0)
+      .map((hash) => hash % COMMITTED_RECEIPT_FILTER_BITS);
+  }
+
+  return {
+    has(value) {
+      return bitIndexes(value).every((bit) => (words[bit >>> 5] & (1 << (bit & 31))) !== 0);
+    },
+    add(value) {
+      for (const bit of bitIndexes(value)) words[bit >>> 5] |= 1 << (bit & 31);
+    },
+  };
 }
 
 /**
  * Main-owned transactional queue for validated external-open intents. Documents remain owned by
  * main until the designated renderer accepts and commits them. A rejection removes the intent
- * without creating an idempotency receipt, while a commit creates a bounded, time-limited receipt
- * that collapses duplicate OS delivery without blocking a genuinely later user open.
+ * without creating an idempotency receipt. A commit records the bounded delivery identity in a
+ * fixed-memory, non-expiring replay filter: capacity pressure and wall-clock delay cannot make an
+ * already committed OS event authoritative again, while a later user open carries a new delivery
+ * identity and remains eligible.
  */
 function createExternalOpenQueue(options) {
   const {
-    isFile,
+    canonicalizeFile = canonicalizeExternalOpenFilePath,
     workspaceViews = DEFAULT_EXTERNAL_OPEN_WORKSPACE_VIEWS,
     maxPending = DEFAULT_MAX_PENDING_REQUESTS,
-    maxRecentCommits = DEFAULT_MAX_RECENT_COMMITS,
-    idempotencyWindowMs = DEFAULT_IDEMPOTENCY_WINDOW_MS,
-    now = Date.now,
   } = options ?? {};
 
-  if (typeof isFile !== 'function') {
-    throw new Error('createExternalOpenQueue requires an isFile(filePath) predicate.');
+  if (typeof canonicalizeFile !== 'function') {
+    throw new Error('createExternalOpenQueue requires a canonicalizeFile(filePath) resolver.');
   }
 
   const pending = [];
-  const recentCommits = [];
+  const committedReceipts = createCommittedReceiptFilter();
   let nextIntentSequence = 1;
   let nextEpochSequence = 1;
   let authorization;
 
-  function pendingKey(target) {
-    return target.kind === 'workspace' ? `workspace\n${target.workspace}` : `${target.kind}\n${target.filePath}`;
+  function targetKey(target) {
+    return target.kind === 'workspace' ? `workspace\n${target.workspace}` : `${target.kind}\n${target.fileIdentity}`;
   }
 
-  function pruneRecentCommits() {
-    const cutoff = now() - idempotencyWindowMs;
-    while (recentCommits.length > 0 && recentCommits[0].committedAt <= cutoff) {
-      recentCommits.shift();
-    }
-  }
-
-  function rememberCommit(key) {
-    pruneRecentCommits();
-    recentCommits.push({ key, committedAt: now() });
-    while (recentCommits.length > maxRecentCommits) {
-      recentCommits.shift();
-    }
+  function receiptKey(key, deliveryId) {
+    return `${deliveryId || 'legacy-delivery'}\n${key}`;
   }
 
   function publicIntent(entry) {
@@ -306,29 +400,44 @@ function createExternalOpenQueue(options) {
       return classified;
     }
 
-    if (classified.kind !== 'workspace' && !isFile(classified.filePath)) {
-      return { status: 'rejected', reason: 'not-a-file', value: String(rawValue) };
+    let canonical = classified;
+    if (classified.kind !== 'workspace') {
+      const resolution = canonicalizeFile(classified.filePath, { platform: context.platform });
+      if (!resolution || resolution.status !== 'accepted') {
+        return {
+          status: 'rejected',
+          reason: resolution?.reason ?? 'unresolvable-file',
+          value: String(rawValue),
+        };
+      }
+      canonical = { ...classified, filePath: resolution.filePath, fileIdentity: resolution.fileIdentity };
     }
 
-    const key = pendingKey(classified);
-    pruneRecentCommits();
+    const deliveryId = typeof context.deliveryId === 'string'
+      && context.deliveryId.length > 0
+      && context.deliveryId.length <= MAX_EXTERNAL_OPEN_DELIVERY_ID_LENGTH
+      ? context.deliveryId
+      : undefined;
+    const key = targetKey(canonical);
+    const committedReceiptKey = receiptKey(key, deliveryId);
     if (pending.some((entry) => entry.key === key)) {
-      return { status: 'duplicate', kind: classified.kind };
+      return { status: 'duplicate', kind: canonical.kind };
     }
-    if (recentCommits.some((entry) => entry.key === key)) {
-      return { status: 'duplicate', kind: classified.kind };
+    if (committedReceipts.has(committedReceiptKey)) {
+      return { status: 'duplicate', kind: canonical.kind };
     }
     if (pending.length >= maxPending) {
       return { status: 'rejected', reason: 'queue-overflow', value: String(rawValue) };
     }
 
     pending.push({
-      ...classified,
+      ...canonical,
       id: `external-open-${nextIntentSequence++}`,
       key,
+      committedReceiptKey,
       state: 'pending',
     });
-    return { status: 'enqueued', kind: classified.kind };
+    return { status: 'enqueued', kind: canonical.kind };
   }
 
   function enqueueArgv(argv, context = {}) {
@@ -355,7 +464,7 @@ function createExternalOpenQueue(options) {
     for (let index = pending.length - 1; index >= 0; index -= 1) {
       if (pending[index].kind !== 'workspace') continue;
       const [entry] = pending.splice(index, 1);
-      rememberCommit(entry.key);
+      committedReceipts.add(entry.committedReceiptKey);
       taken.unshift({ kind: 'workspace', workspace: entry.workspace });
     }
     return taken;
@@ -439,7 +548,7 @@ function createExternalOpenQueue(options) {
     const entry = pending[index];
     if (entry.state !== 'accepted') return { status: 'invalid-state', state: entry.state };
     pending.splice(index, 1);
-    rememberCommit(entry.key);
+    committedReceipts.add(entry.committedReceiptKey);
     return { status: 'committed' };
   }
 
@@ -458,13 +567,69 @@ function createExternalOpenQueue(options) {
   };
 }
 
+function mergeExternalOpenSourceRollback(previousSnapshot, stagedSnapshot, currentSnapshot) {
+  const previous = previousSnapshot && typeof previousSnapshot === 'object' ? previousSnapshot : { bins: [], dismissedSourceKeys: [] };
+  const staged = stagedSnapshot && typeof stagedSnapshot === 'object' ? stagedSnapshot : { bins: [], dismissedSourceKeys: [] };
+  const current = currentSnapshot && typeof currentSnapshot === 'object' ? currentSnapshot : { bins: [], dismissedSourceKeys: [] };
+  const previousBins = new Map((previous.bins ?? []).map((bin) => [bin.id, structuredClone(bin)]));
+  const stagedBins = new Map((staged.bins ?? []).map((bin) => [bin.id, bin]));
+  const currentBins = new Map((current.bins ?? []).map((bin) => [bin.id, bin]));
+
+  for (const [binId, stagedBin] of stagedBins) {
+    const currentBin = currentBins.get(binId);
+    if (!currentBin) {
+      previousBins.delete(binId);
+      continue;
+    }
+    const previousBin = previousBins.get(binId) ?? { ...structuredClone(currentBin), items: [] };
+    const previousItems = new Map((previousBin.items ?? []).map((item) => [item.id, item]));
+    const stagedItems = new Map((stagedBin.items ?? []).map((item) => [item.id, item]));
+    const currentItems = new Map((currentBin.items ?? []).map((item) => [item.id, item]));
+
+    for (const [itemId, stagedItem] of stagedItems) {
+      const currentItem = currentItems.get(itemId);
+      if (!currentItem) {
+        previousItems.delete(itemId);
+      } else if (JSON.stringify(currentItem) !== JSON.stringify(stagedItem)) {
+        previousItems.set(itemId, structuredClone(currentItem));
+      }
+    }
+    for (const [itemId, currentItem] of currentItems) {
+      if (!stagedItems.has(itemId)) previousItems.set(itemId, structuredClone(currentItem));
+    }
+
+    const stagedMetadata = { ...stagedBin, items: undefined };
+    const currentMetadata = { ...currentBin, items: undefined };
+    previousBins.set(binId, {
+      ...(JSON.stringify(stagedMetadata) === JSON.stringify(currentMetadata)
+        ? previousBin
+        : { ...previousBin, ...structuredClone(currentMetadata) }),
+      items: [...previousItems.values()],
+    });
+  }
+  for (const [binId, currentBin] of currentBins) {
+    if (!stagedBins.has(binId)) previousBins.set(binId, structuredClone(currentBin));
+  }
+
+  const stagedDismissed = new Set(staged.dismissedSourceKeys ?? []);
+  const currentDismissed = new Set(current.dismissedSourceKeys ?? []);
+  const dismissed = new Set(previous.dismissedSourceKeys ?? []);
+  for (const key of stagedDismissed) if (!currentDismissed.has(key)) dismissed.delete(key);
+  for (const key of currentDismissed) if (!stagedDismissed.has(key)) dismissed.add(key);
+
+  return { bins: [...previousBins.values()], dismissedSourceKeys: [...dismissed] };
+}
+
 module.exports = {
   DEFAULT_EXTERNAL_OPEN_WORKSPACE_VIEWS,
   EXTERNAL_OPEN_DEEP_LINK_SCHEME,
   EXTERNAL_OPEN_DOCUMENT_EXTENSIONS,
   buildSecondInstanceOpenPayload,
+  canonicalizeExternalOpenFilePath,
   classifyExternalOpenTarget,
+  createExternalOpenDeliveryId,
   createExternalOpenQueue,
   extractExternalOpenCandidatesFromArgv,
+  mergeExternalOpenSourceRollback,
   parseSecondInstanceOpenPayload,
 };

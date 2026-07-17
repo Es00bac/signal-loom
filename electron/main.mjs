@@ -91,7 +91,11 @@ const {
 } = automationPathModule;
 const {
   EXTERNAL_OPEN_DEEP_LINK_SCHEME,
+  buildSecondInstanceOpenPayload,
+  canonicalizeExternalOpenFilePath,
+  createExternalOpenDeliveryId,
   createExternalOpenQueue,
+  mergeExternalOpenSourceRollback,
   parseSecondInstanceOpenPayload,
 } = externalOpenModule;
 const {
@@ -173,13 +177,13 @@ if (isolatedUserDataDir) {
 // The single-instance lock keys on the resolved userData directory, so it is acquired
 // immediately after the userData override and before ANY shared side effect (the GPU
 // fallback sentinel, privileged protocol schemes, fixed-port services, windows). A losing
-// instance quits untouched; its file arguments reach the winner through the natively
-// relayed second-instance argv. The lock is deliberately bare: the native argv relay already
-// carries every supported target, and scripts/electron-single-instance-probe.mjs verifies that
-// contract deterministically with spaces and Unicode. No correctness claim depends on the
-// unconfirmed additionalData failure report. Everything below the declarations runs only inside
-// the winner branch at the bottom of this module.
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+// instance quits untouched; its file arguments and bounded delivery identity reach the winner
+// through Electron's second-instance relay. The identity is replay authority only: argv remains
+// the canonical target payload, and the lifecycle probe exercises both on Electron 41.
+const externalOpenLaunchDeliveryId = createExternalOpenDeliveryId();
+const hasSingleInstanceLock = app.requestSingleInstanceLock(
+  buildSecondInstanceOpenPayload(process.argv, process.cwd(), externalOpenLaunchDeliveryId),
+);
 
 function getRendererEntryUrl() {
   return activeRendererEntryUrl;
@@ -545,13 +549,7 @@ function commitStartupProjectAuthority() {
 // funnels through this validated transactional queue. Main retains document intents until the
 // designated renderer epoch accepts/rejects and commits them.
 const externalOpenQueue = createExternalOpenQueue({
-  isFile: (filePath) => {
-    try {
-      return statSync(filePath).isFile();
-    } catch {
-      return false;
-    }
-  },
+  canonicalizeFile: canonicalizeExternalOpenFilePath,
   workspaceViews: WORKSPACE_VIEWS,
 });
 const preparedExternalOpenIntents = new Map();
@@ -601,12 +599,13 @@ function revokeExternalOpenRenderer(webContents) {
   });
 }
 
-function enqueueExternalOpenArgv(argv, workingDirectory) {
+function enqueueExternalOpenArgv(argv, workingDirectory, deliveryId) {
   const outcome = externalOpenQueue.enqueueArgv(argv, {
     cwd: workingDirectory,
     platform: process.platform,
     appPath: APP_ROOT,
     execPath: process.execPath,
+    deliveryId,
   });
   for (const rejection of outcome.rejected) {
     console.warn(`Ignoring unsupported external open target (${rejection.reason}): ${rejection.value}`);
@@ -614,10 +613,11 @@ function enqueueExternalOpenArgv(argv, workingDirectory) {
   return outcome;
 }
 
-function enqueueExternalOpenValue(rawValue) {
+function enqueueExternalOpenValue(rawValue, deliveryId) {
   const outcome = externalOpenQueue.enqueueValue(rawValue, {
     cwd: process.cwd(),
     platform: process.platform,
+    deliveryId,
   });
   if (outcome.status === 'rejected') {
     console.warn(`Ignoring unsupported external open target (${outcome.reason}): ${String(rawValue)}`);
@@ -4343,14 +4343,18 @@ if (!hasSingleInstanceLock) {
 
   // Initial launch argv (Linux/Windows file managers, terminals, the dev launcher). macOS
   // delivers documents through open-file/open-url below instead.
-  enqueueExternalOpenArgv(process.argv, process.cwd());
+  enqueueExternalOpenArgv(process.argv, process.cwd(), externalOpenLaunchDeliveryId);
 
   app.on('second-instance', (_event, argv, workingDirectory, additionalData) => {
     // The natively relayed argv/workingDirectory carry the loser's open targets (extra
-    // Chromium switches in it are filtered by the queue's argv extraction). additionalData
-    // is parsed defensively only — this build never sends it (see the lock comment above).
+    // Chromium switches are filtered). The bounded delivery id keeps a delayed replay of this
+    // exact launch distinct from a genuinely later launch of the same canonical file.
     const payload = parseSecondInstanceOpenPayload(additionalData);
-    enqueueExternalOpenArgv(payload?.argv ?? argv, payload?.workingDirectory || workingDirectory);
+    enqueueExternalOpenArgv(
+      payload?.argv ?? argv,
+      payload?.workingDirectory || workingDirectory,
+      payload?.deliveryId ?? createExternalOpenDeliveryId(),
+    );
     focusExternalOpenTargetWindow();
     dispatchPendingExternalOpenRequests();
   });
@@ -4359,13 +4363,19 @@ if (!hasSingleInstanceLock) {
   // here (not inside whenReady) and rely on the queue to hold pre-readiness requests.
   app.on('open-file', (event, filePath) => {
     event.preventDefault();
-    enqueueExternalOpenValue(filePath);
+    enqueueExternalOpenValue(
+      filePath,
+      app.isReady() ? createExternalOpenDeliveryId() : externalOpenLaunchDeliveryId,
+    );
     dispatchPendingExternalOpenRequests();
   });
 
   app.on('open-url', (event, url) => {
     event.preventDefault();
-    enqueueExternalOpenValue(url);
+    enqueueExternalOpenValue(
+      url,
+      app.isReady() ? createExternalOpenDeliveryId() : externalOpenLaunchDeliveryId,
+    );
     dispatchPendingExternalOpenRequests();
   });
 

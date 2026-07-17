@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { buildNativeSmokeProjectDocument } from './native-smoke-lib.mjs';
+import externalOpenModule from '../electron/external-open.cjs';
+
+const { buildSecondInstanceOpenPayload } = externalOpenModule;
 
 const electronPath = resolve('node_modules/electron/dist/electron');
 const probeRoot = await mkdtemp(join(tmpdir(), 'sloom-single-instance-probe-'));
@@ -12,8 +15,11 @@ const targetPath = join(probeRoot, 'Comic 週刊.sloom');
 const rememberedPath = join(userDataPath, 'startup-project.json');
 const mainSource = await readFile(resolve('electron/main.mjs'), 'utf8');
 
-if (!mainSource.includes('requestSingleInstanceLock()')) {
-  throw new Error('The application no longer uses the bare single-instance lock covered by this probe.');
+if (!mainSource.includes('requestSingleInstanceLock(') || !mainSource.includes('externalOpenLaunchDeliveryId')) {
+  throw new Error('The application no longer relays the bounded external-open delivery identity covered by this probe.');
+}
+if (!buildSecondInstanceOpenPayload([targetPath], probeRoot, 'probe-delivery').deliveryId) {
+  throw new Error('The second-instance delivery identity did not survive payload construction.');
 }
 
 function launch(extraArgs = []) {
@@ -108,7 +114,7 @@ try {
     throw new Error(`The lock winner died while processing the second-instance relay.\n${winner.logs()}`);
   }
 
-  console.log(`Bare single-instance relay passed (winner ${winner.child.pid}, Unicode/spaces argv, loser exit 0).`);
+  console.log(`Single-instance identity relay passed (winner ${winner.child.pid}, Unicode/spaces argv, loser exit 0).`);
 } finally {
   if (loser?.child.exitCode === null) loser.child.kill('SIGTERM');
   if (winner?.child.exitCode === null) {

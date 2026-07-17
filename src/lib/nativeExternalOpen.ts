@@ -22,6 +22,14 @@ export interface NativeExternalOpenHandlers {
   onError: (context: NativeExternalOpenErrorContext) => Promise<void> | void;
 }
 
+export interface NativeExternalOpenConsumerOptions {
+  /** Delays before commit-only retries after the first failed commit attempt. */
+  commitRetryDelaysMs?: readonly number[];
+  wait?: (delayMs: number) => Promise<void>;
+}
+
+const DEFAULT_COMMIT_RETRY_DELAYS_MS = [100, 250, 500, 1_000] as const;
+
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -54,6 +62,7 @@ function validateIntent(intent: NativeExternalOpenIntent): void {
 export function registerNativeExternalOpenConsumer(
   bridge: SignalLoomNativeBridge | undefined,
   handlers: NativeExternalOpenHandlers,
+  options: NativeExternalOpenConsumerOptions = {},
 ): () => void {
   const authorize = bridge?.authorizeExternalOpenRenderer;
   const next = bridge?.nextExternalOpenIntent;
@@ -65,6 +74,10 @@ export function registerNativeExternalOpenConsumer(
   let disposed = false;
   let epoch: string | undefined;
   let chain: Promise<void> = Promise.resolve();
+  const commitRetryDelaysMs = options.commitRetryDelaysMs ?? DEFAULT_COMMIT_RETRY_DELAYS_MS;
+  const wait = options.wait ?? ((delayMs: number) => new Promise<void>((resolve) => {
+    globalThis.setTimeout(resolve, delayMs);
+  }));
 
   const ensureAuthorization = async (): Promise<string | undefined> => {
     if (epoch) return epoch;
@@ -103,18 +116,53 @@ export function registerNativeExternalOpenConsumer(
         const intent = response.intent;
         const request = { epoch: activeEpoch, intentId: intent.id };
 
+        const commitAcceptedIntent = async (): Promise<boolean> => {
+          let lastError: unknown;
+          let committed = false;
+          for (let attempt = 0; attempt <= commitRetryDelaysMs.length; attempt += 1) {
+            if (disposed) return false;
+            try {
+              const result = await commit(request);
+              if (result.status !== 'committed' && result.status !== 'error') {
+                lastError = new Error(result.error ?? `External open commit failed (${result.status}).`);
+                break;
+              }
+              assertTransition(result, 'committed');
+              committed = true;
+              break;
+            } catch (error) {
+              lastError = error;
+              if (attempt >= commitRetryDelaysMs.length) break;
+              await wait(commitRetryDelaysMs[attempt]);
+            }
+          }
+          if (!committed && !disposed) {
+            await handlers.onError({
+              kind: intent.kind,
+              filePath: intent.filePath,
+              message: toErrorMessage(lastError),
+            });
+          }
+          if (!committed || disposed) return false;
+          if (intent.kind === 'project' && intent.result) {
+            try {
+              await handlers.onProjectCommitted(intent.result);
+            } catch (error) {
+              await handlers.onError({
+                kind: intent.kind,
+                filePath: intent.filePath,
+                message: toErrorMessage(error),
+              });
+              return false;
+            }
+          }
+          return true;
+        };
+
         // An accepted intent has already been applied by this renderer; only its durable main
         // commit needs retrying. Reapplying would violate exactly-once behavior.
         if (response.state === 'accepted') {
-          try {
-            assertTransition(await commit(request), 'committed');
-            if (intent.kind === 'project' && intent.result) {
-              await handlers.onProjectCommitted(intent.result);
-            }
-          } catch (error) {
-            await handlers.onError({ kind: intent.kind, filePath: intent.filePath, message: toErrorMessage(error) });
-            return;
-          }
+          if (!await commitAcceptedIntent()) return;
           continue;
         }
 
@@ -131,10 +179,7 @@ export function registerNativeExternalOpenConsumer(
             await handlers.applyPaper(new Uint8Array(intent.bytes!), intent.filePath);
           }
           applySucceeded = true;
-          assertTransition(await commit(request), 'committed');
-          if (intent.kind === 'project') {
-            await handlers.onProjectCommitted(intent.result!);
-          }
+          if (!await commitAcceptedIntent()) return;
         } catch (error) {
           // Apply failures are safe to reject: project restore rolls renderer state back and main
           // rolls its accepted staging state back. A commit failure is different — apply already
@@ -142,11 +187,13 @@ export function registerNativeExternalOpenConsumer(
           if (!applySucceeded) {
             await reject({ ...request, reason: toErrorMessage(error) }).catch(() => undefined);
           }
-          await handlers.onError({
-            kind: intent.kind,
-            filePath: intent.filePath,
-            message: toErrorMessage(error),
-          });
+          if (!applySucceeded) {
+            await handlers.onError({
+              kind: intent.kind,
+              filePath: intent.filePath,
+              message: toErrorMessage(error),
+            });
+          }
           if (applySucceeded) return;
         }
       }
