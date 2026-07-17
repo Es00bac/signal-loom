@@ -141,6 +141,7 @@ import { savePaperDocumentEditable } from './lib/paperDocumentSave';
 import { installPaperBeforeUnloadProtection } from './lib/paperBeforeUnload';
 import { PaperLossPreventionDialog } from './components/Common/PaperLossPreventionDialog';
 import { buildNativeSaveProjectDocument } from './lib/nativeProjectDocument';
+import { runFileOperation } from './lib/fileOperationBoundary';
 import {
   downloadJsonFile,
   parseProjectDocument,
@@ -1623,7 +1624,11 @@ function FlowApp() {
       case 'file:save': {
         if (projectSwitchInProgressRef.current) return;
         if (!bridge) {
-          await downloadCurrentProjectDocument();
+          await runFileOperation(
+            'Save Project Failed',
+            downloadCurrentProjectDocument,
+            'The current project could not be saved.',
+          );
           return;
         }
 
@@ -1631,44 +1636,50 @@ function FlowApp() {
         if (await projectSaveBlockedByAuthority()) {
           return;
         }
-        const imageDocumentsAtSave = new Map(
-          useImageEditorStore.getState().documents.map((imageDocument) => [imageDocument.id, imageDocument]),
-        );
-        const document = await buildNativeSaveProjectDocument(getNativeProjectName());
-        const result = await bridge.saveProjectFile({ document, claim: authorityClient.getClaim() });
-        authorityClient.applySaveResult(result);
+        await runFileOperation('Save Project Failed', async () => {
+          const imageDocumentsAtSave = new Map(
+            useImageEditorStore.getState().documents.map((imageDocument) => [imageDocument.id, imageDocument]),
+          );
+          const document = await buildNativeSaveProjectDocument(getNativeProjectName());
+          const result = await bridge.saveProjectFile({ document, claim: authorityClient.getClaim() });
+          authorityClient.applySaveResult(result);
 
-        if (result.rejected) {
-          await confirmStaleProjectReload();
-          return;
-        }
-        if (!result.canceled) {
-          if (result.scratchDirectoryPath) {
-            setNativeScratchDirectoryPath(result.scratchDirectoryPath);
+          if (result.rejected) {
+            await confirmStaleProjectReload();
+            return;
           }
-          if (result.document?.sourceBin && result.sourceLibraryVersion) {
-            resetSourceLibraryNativeSyncTracking();
-            applySourceLibraryChangeToRenderer(
-              { type: 'source-library-snapshot', snapshot: result.document.sourceBin },
-              result.sourceLibraryVersion,
-              { repairVersionGaps: false },
-            );
-          }
-          for (const imageDocument of useImageEditorStore.getState().documents) {
-            if (imageDocumentsAtSave.get(imageDocument.id) === imageDocument) {
-              useImageEditorStore.getState().markDocumentClean(imageDocument.id);
+          if (!result.canceled) {
+            if (result.scratchDirectoryPath) {
+              setNativeScratchDirectoryPath(result.scratchDirectoryPath);
             }
+            if (result.document?.sourceBin && result.sourceLibraryVersion) {
+              resetSourceLibraryNativeSyncTracking();
+              applySourceLibraryChangeToRenderer(
+                { type: 'source-library-snapshot', snapshot: result.document.sourceBin },
+                result.sourceLibraryVersion,
+                { repairVersionGaps: false },
+              );
+            }
+            for (const imageDocument of useImageEditorStore.getState().documents) {
+              if (imageDocumentsAtSave.get(imageDocument.id) === imageDocument) {
+                useImageEditorStore.getState().markDocumentClean(imageDocument.id);
+              }
+            }
+            // Baselines come from the exact acknowledged snapshot, so a Paper edit made while the
+            // native save was in flight stays dirty instead of being silently marked clean.
+            acknowledgePaperProjectSnapshot(result.document?.paper ?? document.paper);
           }
-          // Baselines come from the exact acknowledged snapshot, so a Paper edit made while the
-          // native save was in flight stays dirty instead of being silently marked clean.
-          acknowledgePaperProjectSnapshot(result.document?.paper ?? document.paper);
-        }
+        }, 'The current project could not be saved.');
         return;
       }
       case 'file:save-as': {
         if (projectSwitchInProgressRef.current) return;
         if (!bridge) {
-          await downloadCurrentProjectDocument();
+          await runFileOperation(
+            'Save Project Failed',
+            downloadCurrentProjectDocument,
+            'The current project could not be saved.',
+          );
           return;
         }
 
@@ -1676,38 +1687,40 @@ function FlowApp() {
         if (await projectSaveBlockedByAuthority()) {
           return;
         }
-        const imageDocumentsAtSave = new Map(
-          useImageEditorStore.getState().documents.map((imageDocument) => [imageDocument.id, imageDocument]),
-        );
-        const document = await buildNativeSaveProjectDocument(getNativeProjectName());
-        const result = await bridge.saveProjectFileAs({ document, claim: authorityClient.getClaim() });
-        authorityClient.applySaveResult(result);
+        await runFileOperation('Save Project Failed', async () => {
+          const imageDocumentsAtSave = new Map(
+            useImageEditorStore.getState().documents.map((imageDocument) => [imageDocument.id, imageDocument]),
+          );
+          const document = await buildNativeSaveProjectDocument(getNativeProjectName());
+          const result = await bridge.saveProjectFileAs({ document, claim: authorityClient.getClaim() });
+          authorityClient.applySaveResult(result);
 
-        if (result.rejected) {
-          await confirmStaleProjectReload();
-          return;
-        }
-        if (!result.canceled) {
-          if (result.scratchDirectoryPath) {
-            setNativeScratchDirectoryPath(result.scratchDirectoryPath);
+          if (result.rejected) {
+            await confirmStaleProjectReload();
+            return;
           }
-          if (result.document?.sourceBin && result.sourceLibraryVersion) {
-            resetSourceLibraryNativeSyncTracking();
-            applySourceLibraryChangeToRenderer(
-              { type: 'source-library-snapshot', snapshot: result.document.sourceBin },
-              result.sourceLibraryVersion,
-              { repairVersionGaps: false },
-            );
-          }
-          for (const imageDocument of useImageEditorStore.getState().documents) {
-            if (imageDocumentsAtSave.get(imageDocument.id) === imageDocument) {
-              useImageEditorStore.getState().markDocumentClean(imageDocument.id);
+          if (!result.canceled) {
+            if (result.scratchDirectoryPath) {
+              setNativeScratchDirectoryPath(result.scratchDirectoryPath);
             }
+            if (result.document?.sourceBin && result.sourceLibraryVersion) {
+              resetSourceLibraryNativeSyncTracking();
+              applySourceLibraryChangeToRenderer(
+                { type: 'source-library-snapshot', snapshot: result.document.sourceBin },
+                result.sourceLibraryVersion,
+                { repairVersionGaps: false },
+              );
+            }
+            for (const imageDocument of useImageEditorStore.getState().documents) {
+              if (imageDocumentsAtSave.get(imageDocument.id) === imageDocument) {
+                useImageEditorStore.getState().markDocumentClean(imageDocument.id);
+              }
+            }
+            // Baselines come from the exact acknowledged snapshot, so a Paper edit made while the
+            // native save was in flight stays dirty instead of being silently marked clean.
+            acknowledgePaperProjectSnapshot(result.document?.paper ?? document.paper);
           }
-          // Baselines come from the exact acknowledged snapshot, so a Paper edit made while the
-          // native save was in flight stays dirty instead of being silently marked clean.
-          acknowledgePaperProjectSnapshot(result.document?.paper ?? document.paper);
-        }
+        }, 'The current project could not be saved as a new file.');
         return;
       }
       case 'image:file-open': {
@@ -1825,21 +1838,26 @@ function FlowApp() {
           return;
         }
 
-        const result = await bridge.importMediaFiles({
-          scratchDirectoryPath: nativeScratchDirectoryPath,
-          claim: getProjectAuthorityClient().getClaim(),
-        });
+        await runFileOperation('Import Media Failed', async () => {
+          const result = await bridge.importMediaFiles({
+            scratchDirectoryPath: nativeScratchDirectoryPath,
+            claim: getProjectAuthorityClient().getClaim(),
+          });
 
-        if (result.rejected) {
-          getProjectAuthorityClient().noteAdoptionFailure(result.rejected.message);
-          await confirmStaleProjectReload();
-          return;
-        }
+          if (result.rejected) {
+            getProjectAuthorityClient().noteAdoptionFailure(result.rejected.message);
+            await confirmStaleProjectReload();
+            return;
+          }
+          if (result.error) {
+            throw new Error(result.error);
+          }
 
-        if (!result.canceled && result.items.length > 0) {
-          await importNativeFiles(result.items, flowImportTargetBinId);
-          setPanelVisibility('sourceBinVisible', true);
-        }
+          if (!result.canceled && result.items.length > 0) {
+            await importNativeFiles(result.items, flowImportTargetBinId);
+            setPanelVisibility('sourceBinVisible', true);
+          }
+        }, 'The selected media could not be imported.');
         return;
       }
       case 'file:set-scratch-folder': {
@@ -1853,24 +1871,31 @@ function FlowApp() {
             return;
           }
 
-          const scratchDirectoryHandle = await pickDirectory();
-          await migrateAssetsToScratch(scratchDirectoryHandle);
-          setPanelVisibility('sourceBinVisible', true);
+          await runFileOperation('Set Scratch Folder Failed', async () => {
+            const scratchDirectoryHandle = await pickDirectory();
+            await migrateAssetsToScratch(scratchDirectoryHandle);
+            setPanelVisibility('sourceBinVisible', true);
+          }, 'The scratch folder could not be set.');
           return;
         }
 
-        const result = await bridge.chooseScratchDirectory({ claim: getProjectAuthorityClient().getClaim() });
+        await runFileOperation('Set Scratch Folder Failed', async () => {
+          const result = await bridge.chooseScratchDirectory({ claim: getProjectAuthorityClient().getClaim() });
 
-        if (result.rejected) {
-          getProjectAuthorityClient().noteAdoptionFailure(result.rejected.message);
-          await confirmStaleProjectReload();
-          return;
-        }
+          if (result.rejected) {
+            getProjectAuthorityClient().noteAdoptionFailure(result.rejected.message);
+            await confirmStaleProjectReload();
+            return;
+          }
+          if (result.error) {
+            throw new Error(result.error);
+          }
 
-        if (!result.canceled && result.directoryPath) {
-          setNativeScratchDirectoryPath(result.directoryPath);
-          setPanelVisibility('sourceBinVisible', true);
-        }
+          if (!result.canceled && result.directoryPath) {
+            setNativeScratchDirectoryPath(result.directoryPath);
+            setPanelVisibility('sourceBinVisible', true);
+          }
+        }, 'The scratch folder could not be set.');
         return;
       }
       case 'file:export-project': {
@@ -1911,7 +1936,11 @@ function FlowApp() {
         return;
       }
       case 'file:export-assets': {
-        await exportProjectAssets(nodes);
+        await runFileOperation(
+          'Export Assets Failed',
+          () => exportProjectAssets(nodes).then(() => undefined),
+          'The project assets could not be exported.',
+        );
         return;
       }
       case 'settings:keyboard-shortcuts':
