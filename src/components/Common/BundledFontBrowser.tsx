@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, LoaderCircle, Search, ShieldCheck, Type } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ensureBundledFontFaceRegistered,
   loadBundledFontCatalog,
@@ -39,14 +39,28 @@ export interface BundledFontSelectionAuthority {
   isCurrent: () => boolean;
 }
 
+interface SelectionAuthorityGeneration {
+  id: number;
+}
+
 interface SelectionScopedErrorState {
   authority: BundledFontSelectionAuthority;
   error: string | null;
+  generation: SelectionAuthorityGeneration;
 }
 
 interface SelectionScopedBusyState {
   authority: BundledFontSelectionAuthority;
   faceId: string;
+  generation: SelectionAuthorityGeneration;
+}
+
+// An identity is never reused, including after A → B → A bridge replacement or an unmount and
+// remount that happens to receive the same bridge object again.
+let nextSelectionAuthorityGeneration = 0;
+
+function createSelectionAuthorityGeneration(..._inputs: readonly unknown[]): SelectionAuthorityGeneration {
+  return { id: ++nextSelectionAuthorityGeneration };
 }
 
 export interface BundledFontBrowserProps {
@@ -79,13 +93,33 @@ export function BundledFontBrowser({
   const [busyState, setBusyState] = useState<SelectionScopedBusyState | null>(null);
   const [selectionErrorState, setSelectionErrorState] = useState<SelectionScopedErrorState | null>(null);
   const selectionTurn = useRef(0);
+  const activeSelectionGeneration = useRef<SelectionAuthorityGeneration | null>(null);
+  const selectionInputGeneration = useMemo(
+    () => createSelectionAuthorityGeneration(bridge, suppliedCatalog, value, style, weight, onSelect),
+    [bridge, onSelect, style, suppliedCatalog, value, weight],
+  );
+
+  // A selection authority belongs to one committed input generation, not merely a bridge object.
+  // Cleanup irrevocably revokes it before the next input generation commits and on unmount.
+  useLayoutEffect(() => {
+    activeSelectionGeneration.current = selectionInputGeneration;
+    return () => {
+      if (activeSelectionGeneration.current === selectionInputGeneration) {
+        activeSelectionGeneration.current = null;
+      }
+    };
+  }, [selectionInputGeneration]);
 
   // A catalog/error has authority only while the exact bridge that loaded it remains current.
   // This makes bridge replacement fail closed even in the render before effects can clean up.
   const loadedCatalog = catalogState.bridge === bridge ? catalogState.catalog : undefined;
   const catalogError = catalogState.bridge === bridge ? catalogState.error : null;
-  const selectionError = selectionErrorState?.authority.isCurrent() ? selectionErrorState.error : null;
-  const busyFace = busyState?.authority.isCurrent() ? busyState.faceId : null;
+  const selectionError = selectionErrorState?.generation === selectionInputGeneration && selectionErrorState.authority.isCurrent()
+    ? selectionErrorState.error
+    : null;
+  const busyFace = busyState?.generation === selectionInputGeneration && busyState.authority.isCurrent()
+    ? busyState.faceId
+    : null;
   const error = catalogError ?? selectionError;
   const catalog = suppliedCatalog ?? loadedCatalog;
 
@@ -116,18 +150,23 @@ export function BundledFontBrowser({
   }, [catalog, query, role]);
 
   const choose = async (family: BundledFontFamily, face: BundledFontFace) => {
+    const generation = activeSelectionGeneration.current;
+    if (!generation) return;
     const turn = ++selectionTurn.current;
     const authority: BundledFontSelectionAuthority = {
-      isCurrent: () => getSignalLoomNativeBridge() === bridge && selectionTurn.current === turn,
+      isCurrent: () => (
+        activeSelectionGeneration.current === generation
+        && getSignalLoomNativeBridge() === bridge
+        && selectionTurn.current === turn
+      ),
     };
     if (!authority.isCurrent()) return;
-    setBusyState({ authority, faceId: face.id });
+    setBusyState({ authority, faceId: face.id, generation });
     setSelectionErrorState(null);
     try {
       await ensureBundledFontFaceRegistered(family, face);
       // Registration can outlive a bridge replacement. Check both directly after it settles and
       // at the ordinary-callback boundary so no stale renderer authority can publish selection.
-      if (!authority.isCurrent()) return;
       if (!authority.isCurrent()) return;
       await onSelect(family, face, authority);
     } catch (reason) {
@@ -135,6 +174,7 @@ export function BundledFontBrowser({
         setSelectionErrorState({
           authority,
           error: reason instanceof Error ? reason.message : 'The font face could not be selected.',
+          generation,
         });
       }
     } finally {

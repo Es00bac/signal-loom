@@ -180,6 +180,132 @@ describe('BundledFontBrowser', () => {
 });
 
 describe('BundledFontBrowser selection authority (FBL-025)', () => {
+  it('does not publish a delayed selection after unmount and remount on the same bridge', async () => {
+    const aCatalog = selectionCatalog('selection-unmount-a');
+    const remountedCatalog = selectionCatalog('selection-unmount-remount');
+    const stableBridge = {
+      getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: vi.fn(async () => ({ available: true })),
+    };
+    window.signalLoomNative = stableBridge as never;
+    let resolveARegistration: (() => void) | undefined;
+    vi.stubGlobal('FontFace', class {
+      load() {
+        return new Promise((resolve) => { resolveARegistration = () => resolve(this); });
+      }
+    });
+    const staleOnSelect = vi.fn();
+    const host = document.createElement('div');
+    const firstRoot = createRoot(host);
+
+    await act(async () => firstRoot.render(
+      <BundledFontBrowser catalog={aCatalog} initiallyOpen onSelect={staleOnSelect} style="normal" value="" weight={400} />,
+    ));
+    await waitForBrowserToggle(host);
+    await act(async () => selectedFaceButton(host).click());
+    await act(async () => {
+      await vi.waitFor(() => expect(resolveARegistration).toBeTypeOf('function'));
+    });
+    await act(async () => firstRoot.unmount());
+
+    vi.stubGlobal('FontFace', class { async load() { return this; } });
+    const remountedOnSelect = vi.fn();
+    const remountedRoot = createRoot(host);
+    await act(async () => remountedRoot.render(
+      <BundledFontBrowser catalog={remountedCatalog} initiallyOpen onSelect={remountedOnSelect} style="normal" value="" weight={400} />,
+    ));
+    await waitForBrowserToggle(host);
+    await act(async () => resolveARegistration?.());
+
+    expect(staleOnSelect).not.toHaveBeenCalled();
+    expect(remountedOnSelect).not.toHaveBeenCalled();
+    await act(async () => remountedRoot.unmount());
+  });
+
+  it('does not publish a delayed selection after same-bridge catalog and callback replacement', async () => {
+    const aCatalog = selectionCatalog('selection-input-a');
+    const bCatalog = selectionCatalog('selection-input-b');
+    const stableBridge = {
+      getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: vi.fn(async () => ({ available: true })),
+    };
+    window.signalLoomNative = stableBridge as never;
+    let resolveARegistration: (() => void) | undefined;
+    vi.stubGlobal('FontFace', class {
+      load() {
+        return new Promise((resolve) => { resolveARegistration = () => resolve(this); });
+      }
+    });
+    const staleOnSelect = vi.fn();
+    const replacementOnSelect = vi.fn();
+    const host = document.createElement('div');
+    const root = createRoot(host);
+
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={aCatalog} initiallyOpen onSelect={staleOnSelect} style="normal" value="A" weight={400} />,
+    ));
+    await waitForBrowserToggle(host);
+    await act(async () => selectedFaceButton(host).click());
+    await act(async () => {
+      await vi.waitFor(() => expect(resolveARegistration).toBeTypeOf('function'));
+    });
+
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={bCatalog} initiallyOpen onSelect={replacementOnSelect} style="italic" value="B" weight={700} />,
+    ));
+    await act(async () => resolveARegistration?.());
+
+    expect(staleOnSelect).not.toHaveBeenCalled();
+    expect(replacementOnSelect).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it('does not revive delayed A callback, busy, or error authority after A to B to the same A bridge', async () => {
+    const aCatalog = selectionCatalog('selection-return-a');
+    const bCatalog = selectionCatalog('selection-return-b');
+    const aBridge = {
+      getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: vi.fn(async () => ({ available: true })),
+    };
+    const bBridge = {
+      getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: vi.fn(async () => ({ available: true })),
+    };
+    window.signalLoomNative = aBridge as never;
+    let resolveARegistration: (() => void) | undefined;
+    vi.stubGlobal('FontFace', class {
+      load() {
+        return new Promise((resolve) => { resolveARegistration = () => resolve(this); });
+      }
+    });
+    const staleOnSelect = vi.fn(() => { throw new Error('stale A callback rejected'); });
+    const host = document.createElement('div');
+    const root = createRoot(host);
+
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={aCatalog} initiallyOpen onSelect={staleOnSelect} style="normal" value="" weight={400} />,
+    ));
+    await waitForBrowserToggle(host);
+    await act(async () => selectedFaceButton(host).click());
+    await act(async () => {
+      await vi.waitFor(() => expect(resolveARegistration).toBeTypeOf('function'));
+    });
+
+    window.signalLoomNative = bBridge as never;
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={bCatalog} initiallyOpen onSelect={vi.fn()} style="normal" value="" weight={400} />,
+    ));
+    await waitForBrowserToggle(host);
+
+    window.signalLoomNative = aBridge as never;
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={aCatalog} initiallyOpen onSelect={vi.fn()} style="normal" value="" weight={400} />,
+    ));
+    await waitForBrowserToggle(host);
+    expect(selectedFaceButton(host).disabled).toBe(false);
+
+    await act(async () => resolveARegistration?.());
+    expect(staleOnSelect).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain('stale A callback rejected');
+    await act(async () => root.unmount());
+  });
+
   it('does not publish a delayed A selection into B and leaves B busy until B completes', async () => {
     const aCatalog = selectionCatalog('selection-authority-a');
     const bCatalog = selectionCatalog('selection-authority-b');
