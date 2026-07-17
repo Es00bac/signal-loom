@@ -19,6 +19,37 @@ function createNode(node: Partial<AppNode> & Pick<AppNode, 'id' | 'type'>): AppN
 
 describe('flow signal evaluation', () => {
   it.each([
+    ['true', true],
+    ['false', false],
+  ])('restores legacy Function Boolean %s as a typed scalar signal', (result, expected) => {
+    const nodes = [createNode({
+      id: 'function', type: 'functionNode', data: { result, resultType: 'boolean' },
+    })];
+
+    expect(evaluateNodeSignal('function', nodes, [])).toMatchObject({ kind: 'boolean', value: expected, diagnostics: [] });
+  });
+
+  it.each(['TRUE', ' false', 'false ', '0', 'yes'])('blocks ambiguous Function Boolean scalar signals: %s', (result) => {
+    const nodes = [createNode({
+      id: 'function', type: 'functionNode', data: { result, resultType: 'boolean' },
+    })];
+
+    expect(evaluateNodeSignal('function', nodes, []).diagnostics).toEqual([
+      expect.objectContaining({ severity: 'critical', blocksRun: true }),
+    ]);
+  });
+
+  it('restores a legacy Function false through list transport without truthiness', () => {
+    const nodes = [
+      createNode({ id: 'function', type: 'functionNode', data: { result: 'false', resultType: 'boolean' } }),
+      createNode({ id: 'list', type: 'list' }),
+    ];
+    const edges: Edge[] = [{ id: 'function-list', source: 'function', target: 'list', targetHandle: buildListItemTargetHandle(0) }];
+
+    expect(evaluateNodeSignal('list', nodes, edges).items?.[0]).toMatchObject({ kind: 'boolean', value: false });
+  });
+
+  it.each([
     [true, false],
     [false, true],
   ])('routes Vision Verify %s as a typed Boolean to downstream logic', (verification, expectedNot) => {

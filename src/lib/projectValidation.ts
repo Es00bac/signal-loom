@@ -61,7 +61,7 @@ import { normalizeBundledFontFaceState, normalizeBundledFontFaceStateForTypograp
 import { getEditorAssets } from './editorAssets';
 import { getEditorVisualClips } from './manualEditorState';
 import { getEditorStageObjects } from './editorStageObjects';
-import { parseCanonicalBoolean } from './flowResultValues';
+import { restoreResultValue } from './flowResultValues';
 
 const VALID_RESULT_TYPES = new Set<ResultType>(['text', 'number', 'boolean', 'json', 'image', 'video', 'audio', 'package', 'list', 'envelope']);
 const VALID_SOURCE_KINDS = new Set<EditorSourceKind>(['text', 'image', 'video', 'audio', 'composition', 'document', 'subtitle', 'package']);
@@ -211,11 +211,11 @@ function sanitizeResultHistory(value: unknown): NodeResultAttempt[] | undefined 
   return value.flatMap((attempt, index) => {
     if (!isRecord(attempt)) return [];
     const resultType = optionalString(attempt.resultType);
-    const result = resultType === 'boolean'
-      ? (typeof attempt.result === 'boolean' ? attempt.result : undefined)
-      : optionalString(attempt.result);
+    const result = resultType && VALID_RESULT_TYPES.has(resultType as ResultType)
+      ? restoreResultValue(attempt.result, resultType as ResultType)
+      : undefined;
 
-    if (result === undefined || result === '' || !resultType || !VALID_RESULT_TYPES.has(resultType as ResultType)) {
+    if (result === undefined || (typeof result === 'string' && result === '') || !resultType || !VALID_RESULT_TYPES.has(resultType as ResultType)) {
       return [];
     }
 
@@ -325,6 +325,20 @@ function sanitizeNodeData(value: unknown): NodeData {
   data.error = undefined;
   data.statusMessage = undefined;
 
+  if (Object.hasOwn(data, 'resultOutputMetadata')) {
+    data.resultOutputMetadata = sanitizeOutputMetadata(data.resultOutputMetadata);
+  }
+
+  if (data.resultType === 'boolean' && Object.hasOwn(data, 'result')) {
+    const result = restoreResultValue(data.result, 'boolean');
+    if (result === undefined) {
+      delete data.result;
+      delete data.resultType;
+    } else {
+      data.result = result;
+    }
+  }
+
   if (history !== undefined) {
     data.resultHistory = history;
     if (data.selectedResultId && !history.some((attempt) => attempt.id === data.selectedResultId)) {
@@ -345,11 +359,11 @@ function sanitizeNodeData(value: unknown): NodeData {
 }
 
 function normalizeVisionVerifyNodeData(data: NodeData): NodeData {
-  const legacyBoolean = data.resultType === 'text' ? parseCanonicalBoolean(data.result) : undefined;
+  const legacyBoolean = data.resultType === 'text' ? restoreResultValue(data.result, 'boolean') : undefined;
   const history = Array.isArray(data.resultHistory)
     ? data.resultHistory.map((attempt) => {
       const legacyAttemptBoolean = attempt.resultType === 'text'
-        ? parseCanonicalBoolean(attempt.result)
+        ? restoreResultValue(attempt.result, 'boolean')
         : undefined;
       return legacyAttemptBoolean === undefined
         ? attempt

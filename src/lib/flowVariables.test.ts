@@ -134,4 +134,29 @@ describe('flowVariables', () => {
     });
     expect(resolveFlowVariablesInText('Decision: {{verified}}', nodes, []).text).toBe(`Decision: ${decision}`);
   });
+
+  it.each([
+    ['true', 'true'],
+    ['false', 'false'],
+  ])('restores exact legacy Boolean attempt values for variable presentation: %s', (result, expected) => {
+    const nodes = [node('function', 'functionNode', {
+      resultHistory: [{
+        id: 'function-attempt', result: result as never, resultType: 'boolean', statusMessage: 'Completed',
+        createdAt: '2026-07-16T00:00:00.000Z', variableName: 'decision',
+      }],
+    })];
+
+    expect(resolveFlowVariablesInText('{{decision}}', nodes, []).text).toBe(expected);
+  });
+
+  it.each(['TRUE', ' false', 'false ', '0', 'yes'])('does not bind ambiguous Boolean attempt values: %s', (result) => {
+    const nodes = [node('function', 'functionNode', {
+      resultHistory: [{
+        id: 'function-attempt', result: result as never, resultType: 'boolean', statusMessage: 'Completed',
+        createdAt: '2026-07-16T00:00:00.000Z', variableName: 'decision',
+      }],
+    })];
+
+    expect(collectFlowVariableBindings(nodes, [])).toEqual([]);
+  });
 });

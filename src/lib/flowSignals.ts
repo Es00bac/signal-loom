@@ -17,6 +17,7 @@ import { analyzeTextSentiment, splitDialogueForPrefix } from './storyUtilityNode
 import {
   deserializeResultValueFromContainer,
   resultValueAsMediaUrl,
+  restoreResultValue,
 } from './flowResultValues';
 
 export type FlowSignalKind = ResultType | 'boolean' | 'any';
@@ -210,17 +211,8 @@ export function evaluateNodeSignal(
     case 'slimgNode':
       return scalarSignal('image', resultValueAsMediaUrl(node.data.result) ?? '', node.id, { mimeType: node.data.resultMimeType });
     case 'visionVerifyNode': {
-      if (typeof node.data.result !== 'boolean') {
-        return emptySignal('boolean', node.id, [{
-          id: `invalid-vision-boolean-${node.id}`,
-          severity: 'critical',
-          nodeId: node.id,
-          message: 'Vision Verify has no canonical Boolean result. Run it again or reopen the migrated project.',
-          suggestedFix: 'Run Vision Verify again to produce a true or false decision.',
-          blocksRun: true,
-        }]);
-      }
-      const value = node.data.result;
+      const value = restoreResultValue(node.data.result, 'boolean');
+      if (typeof value !== 'boolean') return invalidBooleanSignal(node.id, 'Vision Verify');
       return scalarSignal('boolean', value, node.id, { label: String(value) });
     }
     case 'imageGen':
@@ -236,7 +228,13 @@ export function evaluateNodeSignal(
         return listSignal(node.data.envelopeItems.map((item) => signalFromEnvelopeItem(item)), node.id, 'envelope');
       }
       const kind = isResultType(node.data.resultType) ? node.data.resultType : inferKindFromValue(node.data.result);
-      return scalarSignal(kind, node.data.result ?? '', node.id, {
+      const value = restoreResultValue(node.data.result, kind);
+      if (value === undefined) {
+        return kind === 'boolean'
+          ? invalidBooleanSignal(node.id, node.data.customTitle ?? node.data.functionNode?.title ?? 'Function')
+          : emptySignal(kind, node.id);
+      }
+      return scalarSignal(kind, value, node.id, {
         label: node.data.customTitle ?? node.data.functionNode?.title,
         mimeType: node.data.resultMimeType,
       });
@@ -247,11 +245,19 @@ export function evaluateNodeSignal(
         return evaluateNodeSignal(incomingEdge.source, nodes, edges, nextVisited, nodesById, incomingEdge.sourceHandle);
       }
       const val = node.data.result !== undefined ? node.data.result : (node.data.value !== undefined ? node.data.value : '');
-      return scalarSignal(inferKindFromValue(val), val, node.id);
+      const kind = isResultType(node.data.resultType) ? node.data.resultType : inferKindFromValue(val);
+      const value = restoreResultValue(val, kind);
+      return value === undefined && kind === 'boolean'
+        ? invalidBooleanSignal(node.id, 'Function output')
+        : scalarSignal(kind, value ?? '', node.id);
     }
     case 'functionInputNode': {
       const val = node.data.result !== undefined ? node.data.result : (node.data.value !== undefined ? node.data.value : '');
-      return scalarSignal(inferKindFromValue(val), val, node.id);
+      const kind = isResultType(node.data.resultType) ? node.data.resultType : inferKindFromValue(val);
+      const value = restoreResultValue(val, kind);
+      return value === undefined && kind === 'boolean'
+        ? invalidBooleanSignal(node.id, 'Function input')
+        : scalarSignal(kind, value ?? '', node.id);
     }
     case 'javascriptNode':
       return evaluateJavaScriptNode(node, nodes, edges, nextVisited, nodesById);
@@ -277,7 +283,11 @@ export function evaluateNodeSignal(
       return evaluateXmlYamlNode(node, nodes, edges, nextVisited, nodesById);
     default:
       if (node.data.result !== undefined && node.data.result !== null) {
-        return scalarSignal(inferKindFromValue(node.data.result), node.data.result, node.id);
+        const kind = isResultType(node.data.resultType) ? node.data.resultType : inferKindFromValue(node.data.result);
+        const value = restoreResultValue(node.data.result, kind);
+        return value === undefined && kind === 'boolean'
+          ? invalidBooleanSignal(node.id, node.type)
+          : scalarSignal(kind, value ?? '', node.id);
       }
       if (node.data.value !== undefined && node.data.value !== null) {
         return scalarSignal(inferKindFromValue(node.data.value), node.data.value, node.id);
@@ -1614,7 +1624,21 @@ function evaluateApiFetchNode(
 ): FlowSignal {
   const val = node.data.result !== undefined ? node.data.result : '';
   const resultType = isResultType(node.data.resultType) ? node.data.resultType : inferKindFromValue(val);
-  return signalWithDeclaredOutput(node, val, resultType);
+  const value = restoreResultValue(val, resultType);
+  return value === undefined && resultType === 'boolean'
+    ? invalidBooleanSignal(node.id, node.data.customTitle ?? 'API Fetch')
+    : signalWithDeclaredOutput(node, value ?? '', resultType);
+}
+
+function invalidBooleanSignal(nodeId: string, label: string): FlowSignal {
+  return emptySignal('boolean', nodeId, [{
+    id: `invalid-boolean-result-${nodeId}`,
+    severity: 'critical',
+    nodeId,
+    message: `${label} has no canonical Boolean result. Run it again or reopen the migrated project.`,
+    suggestedFix: 'Use only the exact persisted true or false Boolean encoding, or run the node again.',
+    blocksRun: true,
+  }]);
 }
 
 function evaluateSqlQueryNode(

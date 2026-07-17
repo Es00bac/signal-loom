@@ -68,6 +68,29 @@ async function loadProjectFilesModule(): Promise<ElectronProjectFilesModule> {
   return await import('../../electron/project-files.cjs') as ElectronProjectFilesModule;
 }
 
+function nestedOutputMetadata(depth: number): Record<string, unknown> {
+  let value: unknown = 'leaf';
+  for (let index = 0; index < depth; index += 1) {
+    value = { nested: value };
+  }
+  return value as Record<string, unknown>;
+}
+
+const TOP_LEVEL_OUTPUT_METADATA_CASES: Array<[string, Record<string, unknown>, boolean]> = [
+  ['exact string limit', { note: 'x'.repeat(16 * 1024) }, true],
+  ['string one byte over', { note: 'x'.repeat(16 * 1024 + 1) }, false],
+  ['exact object key limit', Object.fromEntries(Array.from({ length: 64 }, (_, index) => [`key-${index}`, index])), true],
+  ['object key one over', Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`key-${index}`, index])), false],
+  ['exact array limit', { values: Array.from({ length: 256 }, (_, index) => index) }, true],
+  ['array one over', { values: Array.from({ length: 257 }, (_, index) => index) }, false],
+  ['exact key byte limit', { ['k'.repeat(512)]: true }, true],
+  ['key byte one over', { ['k'.repeat(513)]: true }, false],
+  ['exact depth limit', nestedOutputMetadata(12), true],
+  ['depth one over', nestedOutputMetadata(13), false],
+  ['aggregate byte overflow', Object.fromEntries(Array.from({ length: 64 }, (_, index) => [`entry-${index}`, 'x'.repeat(16 * 1024)])), false],
+  ['node-count overflow', { values: Array.from({ length: 256 }, () => [0, 0, 0, 0]) }, false],
+];
+
 describe('Electron project file helpers', () => {
   it('keeps the Electron schema mirror aligned with the renderer schema', async () => {
     const projectFiles = await loadProjectFilesModule();
@@ -937,6 +960,34 @@ describe('Electron project file helpers', () => {
       { note: 'x'.repeat(16 * 1024) }, undefined, undefined,
     ]);
   });
+
+  it.each(TOP_LEVEL_OUTPUT_METADATA_CASES)(
+    'applies matching top-level metadata bounds without history: %s',
+    async (_description, resultOutputMetadata, preserved) => {
+      const { parseProjectDocumentJson } = await loadProjectFilesModule();
+      const raw = {
+        id: 'top-level-metadata', name: 'Top level metadata', savedAt: 1,
+        flow: {
+          version: 3,
+          nodes: [{
+            id: 'function', type: 'functionNode', position: { x: 0, y: 0 },
+            data: { result: 'false', resultType: 'boolean', resultOutputMetadata },
+          }],
+          edges: [],
+        },
+      };
+      const renderer = sanitizeProjectDocument(raw);
+      const electron = parseProjectDocumentJson(JSON.stringify(raw)) as typeof renderer;
+
+      expect(electron.flow.nodes).toEqual(renderer.flow.nodes);
+      const data = electron.flow.nodes[0].data;
+      expect(data).toMatchObject({ result: false, resultType: 'boolean' });
+      expect(data.resultOutputMetadata === undefined).toBe(!preserved);
+      if (preserved) {
+        expect(data.resultOutputMetadata).toEqual(resultOutputMetadata);
+      }
+    },
+  );
 
   it('round-trips selected Boolean and media attempts with validated metadata, variables, and Source Bin linkage', async () => {
     const { parseProjectDocumentJson } = await loadProjectFilesModule();

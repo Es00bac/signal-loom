@@ -5,14 +5,14 @@ import { BaseNode } from './BaseNode';
 import { TypedHandle as Handle } from './TypedHandle';
 import { useFlowStore } from '../../store/flowStore';
 import type { AppNodeProps } from '../../types/flow';
-import { resultValueAsMediaUrl } from '../../lib/flowResultValues';
+import { resultValueAsMediaUrl, restoreResultValue } from '../../lib/flowResultValues';
 
 function VisionVerifyNodeComponent({ id, data }: AppNodeProps) {
   const runNode = useFlowStore((state) => state.runNode);
   const patchNodeData = useFlowStore((state) => state.patchNodeData);
   const nodes = useFlowStore((state) => state.nodes);
   const edges = useFlowStore((state) => state.edges);
-  const result = data.result;
+  const result = restoreResultValue(data.result, 'boolean');
   const explanation = data.usage?.notes?.[0] as string | undefined;
 
   const handleRun = () => {
@@ -102,7 +102,7 @@ function VisionVerifyNodeComponent({ id, data }: AppNodeProps) {
           </div>
         )}
 
-        {result !== undefined && (
+        {typeof result === 'boolean' && (
           <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-gray-700 bg-gray-900/60 p-2">
             <div className="flex items-center gap-1.5 font-bold">
               {result === true ? (

@@ -6,7 +6,7 @@ import {
   getValidListNodeItems,
   type FlowListItem,
 } from './listNodes';
-import { serializeResultValueForContainer } from './flowResultValues';
+import { restoreResultValue, serializeResultValueForContainer } from './flowResultValues';
 
 export interface FlowVariableDiagnostic {
   id: string;
@@ -215,7 +215,9 @@ function collectAttemptBindings(node: AppNode): FlowVariableBinding[] {
       // Variable substitution is a text/presentation boundary. Keep the
       // attempt itself typed, including a false decision, and serialize only
       // the rendered reference.
-      value = serializeResultValueForContainer(attempt.result, attempt.resultType);
+      const result = restoreResultValue(attempt.result, attempt.resultType);
+      if (result === undefined) return [];
+      value = serializeResultValueForContainer(result, attempt.resultType);
     } catch {
       return [];
     }

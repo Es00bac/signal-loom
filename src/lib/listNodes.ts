@@ -12,6 +12,7 @@ import {
 import {
   parseCanonicalBoolean,
   resultValueAsMediaUrl,
+  restoreResultValue,
   serializeResultValueForContainer,
 } from './flowResultValues';
 import { formatColorSwatchListPrompt, formatColorSwatchPrompt, normalizeHexColor } from './colorSwatchNode';
@@ -469,7 +470,8 @@ export function evaluateNodeTextForMonitor(
   }
 
   if (node.type === 'visionVerifyNode') {
-    return typeof node.data.result === 'boolean' ? (node.data.result ? 'true' : 'false') : '';
+    const result = restoreResultValue(node.data.result, 'boolean');
+    return typeof result === 'boolean' ? String(result) : '';
   }
 
   if (node.type === 'seedSequencerNode') {
@@ -513,7 +515,9 @@ export function evaluateNodeTextForMonitor(
   }
 
   if (node.data.result !== undefined && node.data.result !== null && node.data.result !== '') {
-    return String(node.data.result);
+    const kind = isResultType(node.data.resultType) ? node.data.resultType : undefined;
+    const result = kind ? restoreResultValue(node.data.result, kind) : node.data.result;
+    return result === undefined ? '' : String(result);
   }
 
   if (node.data.value !== undefined && node.data.value !== null && node.data.value !== '') {
@@ -751,9 +755,13 @@ export function buildListItemFromNode(
 
   if (node.type === 'functionNode') {
     const kind = isResultType(node.data.resultType) ? node.data.resultType : 'text';
+    const scalarResult = restoreResultValue(node.data.result, kind);
+    if (scalarResult === undefined) {
+      return undefined;
+    }
     let result: string;
     try {
-      result = serializeResultValueForContainer(node.data.result ?? '', kind);
+      result = serializeResultValueForContainer(scalarResult, kind);
     } catch {
       return undefined;
     }

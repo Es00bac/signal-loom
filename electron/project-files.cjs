@@ -11,6 +11,9 @@ const {
   CURRENT_PROJECT_SCHEMA_VERSION,
   FLOW_NODE_TYPES,
 } = require('./project-schema.cjs');
+const {
+  restoreCanonicalScalarResult,
+} = require('../shared/flow-result-values.cjs');
 
 const SIGNAL_LOOM_PROJECT_EXTENSION = '.sloom';
 const SIGNAL_LOOM_PROJECT_SCRATCH_SUFFIX = '.signal-loom-scratch';
@@ -792,10 +795,8 @@ function sanitizeResultHistory(value) {
     if (!isObject(attempt) || !VALID_RESULT_TYPES.has(attempt.resultType)) {
       return [];
     }
-    const result = attempt.resultType === 'boolean'
-      ? (typeof attempt.result === 'boolean' ? attempt.result : undefined)
-      : optionalString(attempt.result);
-    if (result === undefined || result === '') return [];
+    const result = restoreCanonicalScalarResult(attempt.result, attempt.resultType);
+    if (result === undefined || (typeof result === 'string' && result === '')) return [];
     return [{
       id: stringOr(attempt.id, `attempt-${index}`),
       result,
@@ -811,13 +812,6 @@ function sanitizeResultHistory(value) {
       sourceBinItemId: optionalNonBlankString(attempt.sourceBinItemId),
     }];
   });
-}
-
-function parseCanonicalBoolean(value) {
-  if (typeof value === 'boolean') return value;
-  if (value === 'true') return true;
-  if (value === 'false') return false;
-  return undefined;
 }
 
 function restoreSelectedResultFromHistory(data, history) {
@@ -847,6 +841,18 @@ function sanitizeNodeData(value, nodeType) {
   data.isRunning = undefined;
   data.error = undefined;
   data.statusMessage = undefined;
+  if (Object.hasOwn(data, 'resultOutputMetadata')) {
+    data.resultOutputMetadata = sanitizeOutputMetadata(data.resultOutputMetadata);
+  }
+  if (data.resultType === 'boolean' && Object.hasOwn(data, 'result')) {
+    const result = restoreCanonicalScalarResult(data.result, 'boolean');
+    if (result === undefined) {
+      delete data.result;
+      delete data.resultType;
+    } else {
+      data.result = result;
+    }
+  }
   if (history !== undefined) {
     data.resultHistory = history;
     if (data.selectedResultId && !history.some((attempt) => attempt.id === data.selectedResultId)) {
@@ -860,14 +866,14 @@ function sanitizeNodeData(value, nodeType) {
   if (nodeType === 'visionVerifyNode') {
     if (Array.isArray(data.resultHistory)) {
       data.resultHistory = data.resultHistory.map((attempt) => {
-        const legacyValue = attempt.resultType === 'text' ? parseCanonicalBoolean(attempt.result) : undefined;
+        const legacyValue = attempt.resultType === 'text' ? restoreCanonicalScalarResult(attempt.result, 'boolean') : undefined;
         return legacyValue === undefined
           ? attempt
           : { ...attempt, result: legacyValue, resultType: 'boolean' };
       });
       restoreSelectedResultFromHistory(data, data.resultHistory);
     }
-    const legacyValue = data.resultType === 'text' ? parseCanonicalBoolean(data.result) : undefined;
+    const legacyValue = data.resultType === 'text' ? restoreCanonicalScalarResult(data.result, 'boolean') : undefined;
     if (legacyValue !== undefined) {
       data.result = legacyValue;
       data.resultType = 'boolean';

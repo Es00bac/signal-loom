@@ -446,6 +446,25 @@ describe('list node model', () => {
 });
 describe('evaluateNodeTextForMonitor', () => {
   it.each([
+    ['true', 'true'],
+    ['false', 'false'],
+  ])('restores exact legacy Function Boolean %s for generic list/monitor consumers', (result, expected) => {
+    const nodes = [createNode({
+      id: 'function', type: 'functionNode', data: { result, resultType: 'boolean' },
+    })];
+
+    expect(evaluateNodeTextForMonitor('function', nodes, [])).toBe(expected);
+  });
+
+  it.each(['TRUE', ' false', 'false ', '0', 'yes'])('does not stringify ambiguous Function Boolean %s for list/monitor consumers', (result) => {
+    const nodes = [createNode({
+      id: 'function', type: 'functionNode', data: { result, resultType: 'boolean' },
+    })];
+
+    expect(evaluateNodeTextForMonitor('function', nodes, [])).toBe('');
+  });
+
+  it.each([
     [true, 'true'],
     [false, 'false'],
   ])('serializes Vision Verify Boolean %s for generic text/monitor consumers', (result, expected) => {

@@ -272,6 +272,67 @@ describe('sanitizeProjectDocument', () => {
     expect(project.flow.nodes[0].data.resultHistory?.[0]).toMatchObject({ result: 'true', resultType: 'text' });
   });
 
+  it.each([
+    ['true', true],
+    ['false', false],
+  ])('restores exact legacy Boolean scalars for generic Function results without history: %s', (legacyResult, expected) => {
+    const project = projectWith({
+      flow: {
+        version: 3,
+        nodes: [{
+          id: 'function', type: 'functionNode', position: { x: 1, y: 2 },
+          data: { result: legacyResult, resultType: 'boolean' },
+        }],
+        edges: [],
+      },
+    });
+
+    expect(project.flow.nodes[0].data).toMatchObject({ result: expected, resultType: 'boolean' });
+  });
+
+  it('restores a selected exact legacy Function Boolean attempt without losing literal false', () => {
+    const project = projectWith({
+      flow: {
+        version: 3,
+        nodes: [{
+          id: 'function', type: 'functionNode', position: { x: 1, y: 2 },
+          data: {
+            selectedResultId: 'false-attempt',
+            resultHistory: [{
+              id: 'false-attempt', result: 'false', resultType: 'boolean', statusMessage: 'Completed',
+              createdAt: '2026-07-16T00:00:00.000Z',
+            }],
+          },
+        }],
+        edges: [],
+      },
+    });
+
+    expect(project.flow.nodes[0].data).toMatchObject({
+      selectedResultId: 'false-attempt', result: false, resultType: 'boolean',
+    });
+    expect(project.flow.nodes[0].data.resultHistory?.[0]).toMatchObject({ result: false, resultType: 'boolean' });
+  });
+
+  it.each(['TRUE', ' false', 'false ', '0', 'yes', '', 0, null])(
+    'rejects ambiguous generic Boolean scalars without reopening them through truthiness: %s',
+    (legacyResult) => {
+      const project = projectWith({
+        flow: {
+          version: 3,
+          nodes: [{
+            id: 'function', type: 'functionNode', position: { x: 1, y: 2 },
+            data: { result: legacyResult, resultType: 'boolean' },
+          }],
+          edges: [],
+        },
+      });
+
+      expect(project.flow.nodes[0].data).not.toHaveProperty('result');
+      expect(project.flow.nodes[0].data).not.toHaveProperty('resultType');
+    },
+  );
+
   it('repairs null node position and null node data', () => {
     const project = projectWith({
       flow: {
