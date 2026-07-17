@@ -1,10 +1,10 @@
 # FBL-011 Terra blocker repair
 
-Date: 2026-07-16  
-Branch: `overlap/kimi-managed-font-identity`  
-Base: `fbdad282e5edd107c479fe6babe03175824f07c2`  
-Original production/tests: `34ba7f36016c17ece6a97556b817527d1d1afd9f`  
-Original evidence: `1dbcb27`  
+Date: 2026-07-16
+Branch: `overlap/kimi-managed-font-identity`
+Base: `fbdad282e5edd107c479fe6babe03175824f07c2`
+Original production/tests: `34ba7f36016c17ece6a97556b817527d1d1afd9f`
+Original evidence: `1dbcb27`
 Production/tests follow-up: `4592393f37b25335da93f64bcccd5edebcabb698`
 
 ## Outcome
