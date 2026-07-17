@@ -2275,7 +2275,7 @@ export function buildExecutionContextForNode(
   node: AppNode,
   nodes: AppNode[],
   edges: Edge[],
-  prompt: string,
+  prompt = signalToTextAt(collectNodePromptSignals(node.id, nodes, edges).prompt, 0),
 ): ExecutionContext {
   const nodesById = buildNodeMap(nodes);
   const incoming = buildIncomingMap(edges);
